@@ -1,0 +1,7 @@
+id: meeting-core-no-ambient-clock
+valid:
+  - function execute(now) { return now; }
+  - const parsed = new Date("2026-08-01T00:00:00Z");
+invalid:
+  - const now = Date.now();
+  - const now = new Date();

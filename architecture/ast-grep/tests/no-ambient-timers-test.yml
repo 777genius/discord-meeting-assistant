@@ -1,0 +1,7 @@
+id: meeting-core-no-ambient-timers
+valid:
+  - scheduler.schedule(command);
+invalid:
+  - setTimeout(work, 1000);
+  - setInterval(work, 1000);
+  - setImmediate(work);

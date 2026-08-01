@@ -1,0 +1,60 @@
+import { createHash } from "node:crypto";
+import {
+  chmod,
+  mkdtemp,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { afterEach, describe, expect, it } from "vitest";
+
+import { FileInstallationInspector } from "../src/installation-inspector.js";
+
+describe("FileInstallationInspector", () => {
+  let root: string | undefined;
+
+  afterEach(async () => {
+    if (root !== undefined) {
+      await rm(root, { force: true, recursive: true });
+    }
+    root = undefined;
+  });
+
+  it("realpaths and admits only the exact launcher digest and package version", async () => {
+    root = await mkdtemp(join(tmpdir(), "sidecar-installation-test-"));
+    const launcherPath = join(root, "launcher.mjs");
+    const manifestPath = join(root, "package.json");
+    const launcher = "#!/usr/bin/env node\n";
+    await writeFile(launcherPath, launcher);
+    await chmod(launcherPath, 0o755);
+    await writeFile(
+      manifestPath,
+      JSON.stringify({
+        name: "@vioxen/subscription-runtime",
+        version: "0.1.0-main.2",
+      }),
+    );
+    const expectedLauncherSha256 = createHash("sha256")
+      .update(launcher)
+      .digest("hex");
+    const inspector = new FileInstallationInspector({
+      expectedLauncherSha256,
+      launcherPath,
+      packageManifestPath: manifestPath,
+    });
+
+    await expect(inspector.inspect()).resolves.toEqual({
+      executableRealpath: await realpath(launcherPath),
+      launcherSha256: expectedLauncherSha256,
+      packageManifestRealpath: await realpath(manifestPath),
+      packageRootRealpath: await realpath(root),
+      runtimePackageVersion: "0.1.0-main.2",
+    });
+
+    await writeFile(launcherPath, `${launcher}// changed\n`);
+    await expect(inspector.inspect()).rejects.toThrow("digest");
+  });
+});

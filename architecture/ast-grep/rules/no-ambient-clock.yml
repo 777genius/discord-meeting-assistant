@@ -1,0 +1,12 @@
+id: meeting-core-no-ambient-clock
+language: TypeScript
+severity: error
+message: Domain and application code must receive time through an explicit boundary.
+note: Pass an Instant or Clock port instead of reading the ambient wall clock.
+files:
+  - "packages/**/src/**/domain/**/*.ts"
+  - "packages/**/src/**/application/**/*.ts"
+rule:
+  any:
+    - pattern: Date.now()
+    - pattern: new Date()

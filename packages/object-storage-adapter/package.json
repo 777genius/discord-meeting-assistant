@@ -1,0 +1,25 @@
+{
+  "name": "@discord-meeting/object-storage-adapter",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "check": "pnpm run typecheck && pnpm run test",
+    "test": "vitest run",
+    "test:integration": "vitest run test/s3-seaweedfs.integration.test.ts",
+    "test:unit": "vitest run test",
+    "typecheck": "tsc --project tsconfig.json --noEmit --pretty false"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "catalog:",
+    "@aws-sdk/lib-storage": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

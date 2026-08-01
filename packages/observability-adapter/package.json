@@ -1,0 +1,23 @@
+{
+  "name": "@discord-meeting/observability-adapter",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:unit": "vitest run test",
+    "typecheck": "tsc --project tsconfig.json --noEmit --pretty false",
+    "check": "pnpm run typecheck && pnpm run test"
+  },
+  "dependencies": {
+    "pino": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

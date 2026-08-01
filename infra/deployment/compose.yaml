@@ -1,0 +1,185 @@
+name: discord-meeting-assistant
+
+services:
+  postgres:
+    image: postgres:18.4-alpine@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15
+    init: true
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: meeting
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres-password
+      POSTGRES_USER: meeting
+    volumes:
+      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/data/postgres:/var/lib/postgresql/data
+      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/secrets/postgres-password:/run/secrets/postgres-password:ro
+      - ../../infra/postgres/migrations/0001_create_meeting_core.sql:/docker-entrypoint-initdb.d/0001_create_meeting_core.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U meeting -d meeting"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+    networks: [meeting-internal]
+    security_opt: [no-new-privileges:true]
+
+  redis:
+    image: redis:8.8.1-alpine@sha256:8096655e437712b07503796fb64d81359256cfcff0ab29d95a7da72863786efb
+    init: true
+    restart: unless-stopped
+    command: ["redis-server", "/run/secrets/redis.conf"]
+    volumes:
+      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/data/redis:/data
+      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/secrets/redis.conf:/run/secrets/redis.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "export REDISCLI_AUTH=$$(sed -n 's/^requirepass //p' /run/secrets/redis.conf); redis-cli ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    networks: [meeting-internal]
+    security_opt: [no-new-privileges:true]
+
+  object-storage:
+    image: chrislusf/seaweedfs:4.29@sha256:d47c7ee99fcb951351d7194915f4e3a5ea604a8e8871183d713907dec4fb9bf5
+    init: true
+    restart: unless-stopped
+    command:
+      - server
+      - -dir=/data
+      - -ip=object-storage
+      - -s3
+      - -s3.port=8333
+      - -s3.config=/run/secrets/s3-config.json
+    volumes:
+      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/data/object-storage:/data
+      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/secrets/s3-config.json:/run/secrets/s3-config.json:ro
+    networks: [meeting-internal]
+    security_opt: [no-new-privileges:true]
+
+  speaches:
+    image: ghcr.io/speaches-ai/speaches:0.9.0-rc.3-cpu@sha256:2163775b6df5e451a71200e8f675fed68dbd8ab184fc604453d549e486f22fd2
+    init: true
+    restart: unless-stopped
+    environment:
+      ENABLE_UI: "false"
+      LOG_LEVEL: info
+      PRELOAD_MODELS: '["${SPEACHES_MODEL_ID:-Systran/faster-whisper-small}"]'
+      STT_MODEL_TTL: "-1"
+      WHISPER__COMPUTE_TYPE: int8
+      WHISPER__CPU_THREADS: "4"
+      WHISPER__INFERENCE_DEVICE: cpu
+      WHISPER__NUM_WORKERS: "1"
+    volumes:
+      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/data/huggingface:/home/ubuntu/.cache/huggingface/hub
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://127.0.0.1:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 180s
+    networks: [meeting-internal, meeting-egress]
+    security_opt: [no-new-privileges:true]
+    cpus: ${SPEACHES_CPUS:-4.0}
+    mem_limit: ${SPEACHES_MEMORY_LIMIT:-7g}
+
+  subscription-runtime-sidecar:
+    build:
+      context: ../..
+      dockerfile: apps/subscription-runtime-sidecar/Dockerfile
+    image: discord-meeting/subscription-runtime-sidecar:0.1.0
+    init: true
+    restart: unless-stopped
+    read_only: true
+    environment:
+      SUBSCRIPTION_RUNTIME_AUTH_JSON_PATH: /run/subscription-runtime-auth/auth.json
+      SUBSCRIPTION_RUNTIME_DISABLE_TOOLS: "1"
+      SUBSCRIPTION_RUNTIME_EXECUTION_PROFILE: stateless-completion
+      SUBSCRIPTION_RUNTIME_EXPECTED_LAUNCHER_SHA256: ${SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256:?set launcher SHA-256}
+      SUBSCRIPTION_RUNTIME_EXPECTED_PACKAGE_VERSION: 0.1.0-main.2
+      SUBSCRIPTION_RUNTIME_GRPC_BIND: 0.0.0.0:50052
+      SUBSCRIPTION_RUNTIME_ISOLATED_CWD: /run/discord-meeting-subscription-runtime/workspace
+      SUBSCRIPTION_RUNTIME_LAUNCHER_PATH: /opt/subscription-runtime/launcher.mjs
+      SUBSCRIPTION_RUNTIME_LOCAL_ENCRYPTION_KEY_FILE: /run/subscription-runtime-secrets/local-encryption-key
+      SUBSCRIPTION_RUNTIME_MODEL: gpt-5.6-sol
+      SUBSCRIPTION_RUNTIME_PACKAGE_MANIFEST_PATH: /opt/subscription-runtime/node_modules/@vioxen/subscription-runtime/package.json
+      SUBSCRIPTION_RUNTIME_PROTO_PATH: /app/apps/meeting-platform/proto/agent_runtime.proto
+      SUBSCRIPTION_RUNTIME_PROVIDER: codex
+      SUBSCRIPTION_RUNTIME_PROVIDER_INSTANCE_ID: discord-meeting-summary-v1
+      SUBSCRIPTION_RUNTIME_PURPOSE_POLICY_FILE: /etc/subscription-runtime/sidecar-policy.json
+      SUBSCRIPTION_RUNTIME_REASONING_EFFORT: xhigh
+      SUBSCRIPTION_RUNTIME_SERVICE_TOKEN_FILE: /run/subscription-runtime-secrets/service-token
+      SUBSCRIPTION_RUNTIME_STATE_ROOT: /var/lib/subscription-runtime
+      PATH: /opt/subscription-runtime/node_modules/.bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    volumes:
+      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/runtime/installation:/opt/subscription-runtime:ro
+      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/runtime/auth-current:/run/subscription-runtime-auth:ro
+      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/runtime/state:/var/lib/subscription-runtime
+      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/secrets/runtime:/run/subscription-runtime-secrets:ro
+      - ../../infra/subscription-runtime/sidecar-policy.json:/etc/subscription-runtime/sidecar-policy.json:ro
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=256m,mode=0700,uid=10001,gid=10001
+      - /run/discord-meeting-subscription-runtime/workspace:rw,noexec,nosuid,nodev,size=32m,mode=0700,uid=10001,gid=10001
+    cap_drop: [ALL]
+    networks: [meeting-internal, meeting-egress]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 256
+    stop_grace_period: 30s
+
+  meeting-platform:
+    build:
+      context: ../..
+      dockerfile: apps/meeting-platform/Dockerfile
+    image: discord-meeting/meeting-platform:0.1.0
+    init: true
+    restart: unless-stopped
+    read_only: true
+    environment:
+      BIND_ADDRESS: 0.0.0.0
+      CRAIG_BEARER_TOKEN_FILE: /run/secrets/craig-bearer-token
+      DISCORD_RESULTS_CHANNEL_ID: "1533228891827736657"
+      DISCORD_TOKEN_FILE: /run/secrets/discord-sut-token
+      NODE_ENV: production
+      PORT: "4310"
+      POSTGRES_URL_FILE: /run/secrets/postgres-url
+      RECORDING_SPOOL_ROOT: /var/lib/discord-meeting/spool
+      REDIS_URL_FILE: /run/secrets/redis-url
+      S3_ACCESS_KEY_ID_FILE: /run/secrets/s3-access-key-id
+      S3_BUCKET: meeting-artifacts
+      S3_ENDPOINT: http://object-storage:8333
+      S3_PREFIX: recordings/
+      S3_REGION: us-east-1
+      S3_SECRET_ACCESS_KEY_FILE: /run/secrets/s3-secret-access-key
+      SPEACHES_BASE_URL: http://speaches:8000
+      SPEACHES_MODEL: ${SPEACHES_MODEL_ID:-Systran/faster-whisper-small}
+      SUBSCRIPTION_RUNTIME_ADDRESS: subscription-runtime-sidecar:50052
+      SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256: ${SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256:?set launcher SHA-256}
+      SUBSCRIPTION_RUNTIME_TOKEN_FILE: /run/secrets/runtime-service-token
+    volumes:
+      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/data/spool:/var/lib/discord-meeting/spool
+      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/secrets/platform:/run/secrets:ro
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=0700,uid=10001,gid=10001
+    cap_drop: [ALL]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      speaches: { condition: service_healthy }
+      object-storage: { condition: service_started }
+      subscription-runtime-sidecar: { condition: service_started }
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4310/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 7s
+      retries: 30
+      start_period: 30s
+    networks: [meeting-internal, meeting-egress]
+    security_opt: [no-new-privileges:true]
+    cpus: ${MEETING_PLATFORM_CPUS:-2.0}
+    mem_limit: ${MEETING_PLATFORM_MEMORY_LIMIT:-2g}
+    stop_grace_period: 45s
+
+networks:
+  meeting-internal:
+    name: discord-meeting-internal
+    internal: true
+  meeting-egress:
+    name: discord-meeting-egress

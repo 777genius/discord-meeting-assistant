@@ -1,0 +1,34 @@
+name: discord-meeting-speaches
+
+services:
+  speaches:
+    image: ghcr.io/speaches-ai/speaches:0.9.0-rc.3-cpu@sha256:2163775b6df5e451a71200e8f675fed68dbd8ab184fc604453d549e486f22fd2
+    init: true
+    restart: unless-stopped
+    pull_policy: if_not_present
+    ports:
+      - "${SPEACHES_BIND_ADDRESS:-127.0.0.1}:${SPEACHES_PORT:-8000}:8000"
+    environment:
+      ENABLE_UI: "false"
+      LOG_LEVEL: "info"
+      PRELOAD_MODELS: '["${SPEACHES_MODEL_ID:-Systran/faster-whisper-small}"]'
+      STT_MODEL_TTL: "-1"
+      WHISPER__COMPUTE_TYPE: "${SPEACHES_COMPUTE_TYPE:-int8}"
+      WHISPER__CPU_THREADS: "${SPEACHES_CPU_THREADS:-4}"
+      WHISPER__INFERENCE_DEVICE: "cpu"
+      WHISPER__NUM_WORKERS: "${SPEACHES_NUM_WORKERS:-1}"
+    volumes:
+      - speaches-huggingface-cache:/home/ubuntu/.cache/huggingface/hub
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://127.0.0.1:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 120s
+    security_opt:
+      - no-new-privileges:true
+    cpus: "${SPEACHES_CPUS:-4.0}"
+    mem_limit: "${SPEACHES_MEMORY_LIMIT:-8g}"
+
+volumes:
+  speaches-huggingface-cache:

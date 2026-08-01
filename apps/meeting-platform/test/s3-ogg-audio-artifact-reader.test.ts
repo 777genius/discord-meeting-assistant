@@ -1,0 +1,59 @@
+import type { BinaryArtifactReader } from "@discord-meeting/object-storage-adapter";
+import { describe, expect, it } from "vitest";
+
+import { S3OggAudioArtifactReader } from "../src/s3-ogg-audio-artifact-reader.js";
+
+function artifactReader(
+  bytes: Uint8Array,
+  contentType = "audio/ogg",
+): BinaryArtifactReader {
+  return {
+    read: async () => ({
+      body: (async function* () {
+        yield bytes.slice(0, 2);
+        yield bytes.slice(2);
+      })(),
+      checksumSha256: "a".repeat(64),
+      contentType,
+      metadata: {},
+      sizeBytes: bytes.byteLength,
+    }),
+  };
+}
+
+describe("S3 Ogg audio artifact reader", () => {
+  it("drains one verified object as one media-safe Ogg chunk", async () => {
+    const reader = new S3OggAudioArtifactReader(
+      artifactReader(Uint8Array.from([1, 2, 3, 4])),
+    );
+
+    await expect(
+      reader.read("s3://meeting/recordings/speaker.ogg", {
+        maxChunkBytes: 64,
+        maxChunks: 1,
+        signal: new AbortController().signal,
+      }),
+    ).resolves.toEqual({
+      chunks: [{
+        bytes: Uint8Array.from([1, 2, 3, 4]),
+        fileName: "speaker-track.ogg",
+        mediaType: "audio/ogg",
+        timelineOffsetMs: 0,
+      }],
+    });
+  });
+
+  it("rejects non-Ogg artifacts and arbitrary byte splitting", async () => {
+    const reader = new S3OggAudioArtifactReader(
+      artifactReader(Uint8Array.from([1, 2, 3]), "audio/mpeg"),
+    );
+
+    await expect(
+      reader.read("s3://meeting/recordings/speaker.mp3", {
+        maxChunkBytes: 64,
+        maxChunks: 1,
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("must be Ogg");
+  });
+});

@@ -1,0 +1,33 @@
+name: discord-meeting-redis
+
+services:
+  redis:
+    image: redis:8.8.1-alpine@sha256:8096655e437712b07503796fb64d81359256cfcff0ab29d95a7da72863786efb
+    init: true
+    restart: "no"
+    pull_policy: if_not_present
+    command:
+      - redis-server
+      - --appendonly
+      - "no"
+      - --save
+      - ""
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - noeviction
+    ports:
+      - "${REDIS_BIND_ADDRESS:-127.0.0.1}:${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+      start_period: 2s
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /data:rw,noexec,nosuid,size=256m
+    cpus: "${REDIS_CPUS:-1.0}"
+    mem_limit: "${REDIS_MEMORY_LIMIT:-384m}"

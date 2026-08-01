@@ -1,0 +1,13 @@
+id: meeting-core-no-ambient-timers
+language: TypeScript
+severity: error
+message: Domain and application code must not schedule ambient timers.
+note: Model timers as commands or use a scheduler port.
+files:
+  - "packages/**/src/**/domain/**/*.ts"
+  - "packages/**/src/**/application/**/*.ts"
+rule:
+  any:
+    - pattern: setTimeout($$$ARGS)
+    - pattern: setInterval($$$ARGS)
+    - pattern: setImmediate($$$ARGS)

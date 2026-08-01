@@ -1,0 +1,85 @@
+# Subscription runtime sidecar
+
+This deployment boundary supplies meeting-summary generation through a Codex
+subscription account. It does not use an OpenAI SDK, API key, or separate API
+billing account.
+
+## Ownership boundary
+
+The Meeting Platform application talks to the sidecar only through an
+authenticated, non-published internal transport implementing
+`SubscriptionRuntimeTransportPort`. The sidecar owns provider composition,
+session materialization, refresh, encrypted state, leases, capacity signals,
+and account recovery. Application and domain code never read credentials or
+runtime volumes.
+
+The host allocator must reserve a dedicated pre-authenticated slot from the
+existing account inventory, exclude that reservation from other project
+candidates, and atomically materialize only that slot at:
+
+```text
+${SUBSCRIPTION_RUNTIME_PRIVATE_ROOT}/
+  auth-current/auth.json
+  secrets/local-encryption-key
+  secrets/service-token
+  state/
+```
+
+Credential values, account names, and source inventory paths do not belong in
+Compose, repository files, logs, task requests, health responses, or
+attestations. Directly mounting `social-monitor/auth-current`, its runtime state,
+or any other mutable project directory is forbidden.
+
+## Required sidecar behavior
+
+The immutable sidecar image must:
+
+1. pin `@vioxen/subscription-runtime` to `0.1.0-main.2` and verify both the
+   package version and admitted launcher SHA-256 before every execution;
+2. admit only `discord_meeting.summary.generate` with `gpt-5.6-sol`, `xhigh`,
+   stateless completion, disabled tools, read-only permission, no interactive
+   input, and the isolated tmpfs working directory;
+3. start children from an explicit environment allowlist and remove every
+   `*_API_KEY`, `*_API_KEY_FILE`, session-scoped Codex identifier, and unrelated
+   application secret;
+4. accept Agent Task protocol v1 structured prompts and JSON Schema, return only
+   structured output for completed requests, and reject unknown purposes or
+   conflicting controls before provider execution;
+5. attach an execution attestation containing the canonical request hash,
+   selected output hash, provider/model/profile, runtime package version, and
+   launcher digest;
+6. expose `RunAgentTask` and `CheckHealth` only on the internal meeting network
+   and authenticate both methods from the mounted service-token file;
+7. keep safe error codes separate from provider stderr/stdout and never return
+   auth data, raw provider payloads, account identities, or token-shaped text.
+
+`sidecar-policy.json` is a declarative deployment contract. The sidecar must
+fail closed if its executable policy differs from that file.
+
+## Integration
+
+The Meeting Platform composition layer provides a concrete gRPC transport for
+`SubscriptionRuntimeTransportPort`. The adapter package remains independent of
+gRPC and provider SDKs. This keeps transport replacement and the future
+host-wide Subscription Runtime Gateway outside Meeting Intelligence.
+
+The adapter checks `CheckHealth` identity before readiness and verifies every
+completed result's attestation and output hash. Product retries use the returned
+safe failure class and the existing stage idempotency key. Quota, reconnect,
+invalid session, stale generation, backend unavailable, and timeout may be
+retried with bounded exponential backoff and jitter; invalid schema, evidence,
+attestation, permission, and interactive-input failures are terminal.
+
+## Deployment gate
+
+Before real Discord E2E, verify without printing secrets:
+
+- the private root is outside every other project's directory;
+- auth and secret files are regular, non-symlink files with least-privilege
+  ownership and modes;
+- the reserved slot is excluded from all other project allocators;
+- Compose publishes no host port and joins only `discord-meeting-internal`;
+- health reports the exact package version and launcher digest;
+- a deterministic contract request passes before any real provider request;
+- logs contain no API-key variables, auth JSON, provider payload, or account
+  identity.

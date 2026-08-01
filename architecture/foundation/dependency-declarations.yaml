@@ -1,0 +1,24 @@
+schemaVersion: 1
+packageManager:
+  kind: pnpm
+  workspaceManifest: pnpm-workspace.yaml
+policies:
+  externalDependencies: catalog
+  catalogVersions: exact
+  internalDependencies: workspace-protocol
+  reservedScopes:
+    - "@discord-meeting/"
+  developmentOnlyPackages:
+    - "@agent-teams/engineering-foundation"
+    - "@ast-grep/cli"
+    - "@types/node"
+    - knip
+    - nx
+    - oxlint
+    - oxlint-tsgolint
+    - typescript
+    - vitest
+    - testcontainers
+    - tsx
+  exactRegistryDevelopmentOnlyPackages:
+    - "@agent-teams/engineering-foundation"

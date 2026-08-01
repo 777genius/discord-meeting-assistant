@@ -1,0 +1,12 @@
+id: meeting-core-no-ambient-environment
+language: TypeScript
+severity: error
+message: Domain and application code must not read process.env directly.
+note: Validate deployment configuration at composition and pass typed settings inward.
+files:
+  - "packages/**/src/**/domain/**/*.ts"
+  - "packages/**/src/**/application/**/*.ts"
+rule:
+  any:
+    - pattern: process.env.$KEY
+    - pattern: process.env[$KEY]

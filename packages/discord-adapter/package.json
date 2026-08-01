@@ -1,0 +1,24 @@
+{
+  "name": "@discord-meeting/discord-adapter",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --project tsconfig.json --noEmit --pretty false",
+    "check": "pnpm run typecheck && pnpm run test"
+  },
+  "dependencies": {
+    "@discord-meeting/meeting-core": "workspace:*",
+    "discord.js": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

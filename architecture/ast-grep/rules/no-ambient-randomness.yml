@@ -1,0 +1,10 @@
+id: meeting-core-no-ambient-randomness
+language: TypeScript
+severity: error
+message: Domain and application code must receive generated values explicitly.
+note: Use an injected ID or randomness port.
+files:
+  - "packages/**/src/**/domain/**/*.ts"
+  - "packages/**/src/**/application/**/*.ts"
+rule:
+  pattern: Math.random()

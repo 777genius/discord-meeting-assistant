@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "protocolVersion": 1,
+  "runtime": {
+    "packageName": "@vioxen/subscription-runtime",
+    "packageVersion": "0.1.0-main.2",
+    "launcherSha256Source": "SUBSCRIPTION_RUNTIME_EXPECTED_LAUNCHER_SHA256"
+  },
+  "transport": {
+    "bind": "0.0.0.0:50052",
+    "publishHostPort": false,
+    "serviceTokenFile": "/run/subscription-runtime-secrets/service-token"
+  },
+  "custody": {
+    "mode": "dedicated-preauthenticated-slot",
+    "authJsonPath": "/run/subscription-runtime-auth/auth.json",
+    "stateRoot": "/var/lib/subscription-runtime",
+    "localEncryptionKeyFile": "/run/subscription-runtime-secrets/local-encryption-key",
+    "sharedMutableStateAllowed": false
+  },
+  "purposeProfiles": {
+    "discord_meeting.summary.generate": {
+      "provider": "codex",
+      "model": "gpt-5.6-sol",
+      "reasoningEffort": "xhigh",
+      "taskKind": "structured-prompt",
+      "executionProfile": "stateless-completion",
+      "disableTools": true,
+      "permissionMode": "read-only",
+      "interactive": false,
+      "responseFormat": "json",
+      "selectedOutputKind": "structured_output",
+      "outputSchemaName": "discord_meeting_summary_v1",
+      "isolatedCwd": "/run/discord-meeting-subscription-runtime/workspace"
+    }
+  },
+  "environment": {
+    "inheritHostEnvironment": false,
+    "denyKeySuffixes": ["_API_KEY", "_API_KEY_FILE"],
+    "denyExactKeys": [
+      "CODEX_GOAL_ID",
+      "CODEX_SESSION_ID",
+      "CODEX_THREAD_ID",
+      "CODEX_TURN_ID",
+      "OPENAI_API_KEY"
+    ]
+  },
+  "attestation": {
+    "requiredForCompletedResult": true,
+    "requireCanonicalRequestSha256": true,
+    "requireSelectedOutputSha256": true,
+    "requireLauncherIdentity": true
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "@discord-meeting/architecture-baseline",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Repository-local verification for the pinned development toolchain.",
+  "type": "module",
+  "engines": {
+    "node": ">=24.18.0 <25",
+    "pnpm": "11.18.0"
+  },
+  "scripts": {
+    "check": "node src/verify-toolchain.ts"
+  }
+}

@@ -1,0 +1,5 @@
+id: meeting-core-no-ambient-randomness
+valid:
+  - function execute(id) { return id; }
+invalid:
+  - const value = Math.random();

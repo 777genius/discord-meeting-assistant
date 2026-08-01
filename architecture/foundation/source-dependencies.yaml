@@ -1,0 +1,227 @@
+schemaVersion: 1
+workspace:
+  kind: pnpm
+  manifest: pnpm-workspace.yaml
+governedRoots:
+  - apps/discord-e2e-actors/src
+  - apps/meeting-platform/src
+  - apps/subscription-runtime-sidecar/src
+  - packages/ai-adapters/src
+  - packages/bullmq-adapter/src
+  - packages/craig-gateway-contracts/src
+  - packages/discord-adapter/src
+  - packages/meeting-core/src
+  - packages/object-storage-adapter/src
+  - packages/observability-adapter/src
+  - packages/postgres-adapter/src
+  - packages/recording-ingress-adapter/src
+  - packages/speaches-adapter/src
+  - packages/subscription-runtime-adapter/src
+  - tooling/architecture-baseline/src
+boundaries:
+  - id: core.meeting
+    roots:
+      - packages/meeting-core/src
+    allow:
+      boundaries: []
+      packages: []
+      builtins: []
+      runtimeReferences: []
+  - id: contracts.craig-gateway
+    roots:
+      - packages/craig-gateway-contracts/src
+    allow:
+      boundaries: []
+      packages:
+        - zod
+      builtins: []
+      runtimeReferences: []
+  - id: adapters.ai
+    roots:
+      - packages/ai-adapters/src
+    allow:
+      boundaries:
+        - core.meeting
+      packages:
+        - "@discord-meeting/meeting-core"
+        - openai
+        - zod
+      builtins: []
+      runtimeReferences: []
+  - id: adapters.bullmq
+    roots:
+      - packages/bullmq-adapter/src
+    allow:
+      boundaries: []
+      packages:
+        - bullmq
+        - zod
+      builtins:
+        - node:crypto
+      runtimeReferences: []
+  - id: adapters.discord
+    roots:
+      - packages/discord-adapter/src
+    allow:
+      boundaries:
+        - core.meeting
+      packages:
+        - "@discord-meeting/meeting-core"
+        - discord.js
+        - zod
+      builtins:
+        - node:crypto
+      runtimeReferences: []
+  - id: adapters.postgres
+    roots:
+      - packages/postgres-adapter/src
+    allow:
+      boundaries:
+        - core.meeting
+      packages:
+        - "@discord-meeting/meeting-core"
+        - pg
+      builtins: []
+      runtimeReferences: []
+  - id: adapters.recording-ingress
+    roots:
+      - packages/recording-ingress-adapter/src
+    allow:
+      boundaries:
+        - contracts.craig-gateway
+        - core.meeting
+      packages:
+        - "@discord-meeting/craig-gateway-contracts"
+        - "@discord-meeting/meeting-core"
+      builtins:
+        - node:crypto
+        - node:fs
+        - node:fs/promises
+        - node:path
+      runtimeReferences: []
+  - id: adapters.object-storage
+    roots:
+      - packages/object-storage-adapter/src
+    allow:
+      boundaries: []
+      packages:
+        - "@aws-sdk/client-s3"
+        - "@aws-sdk/lib-storage"
+      builtins:
+        - node:crypto
+        - node:stream
+      runtimeReferences: []
+  - id: adapters.observability
+    roots:
+      - packages/observability-adapter/src
+    allow:
+      boundaries: []
+      packages:
+        - pino
+      builtins:
+        - node:async_hooks
+      runtimeReferences: []
+  - id: adapters.speaches
+    roots:
+      - packages/speaches-adapter/src
+    allow:
+      boundaries:
+        - core.meeting
+      packages:
+        - "@discord-meeting/meeting-core"
+      builtins: []
+      runtimeReferences: []
+  - id: adapters.subscription-runtime
+    roots:
+      - packages/subscription-runtime-adapter/src
+    allow:
+      boundaries:
+        - core.meeting
+      packages:
+        - "@discord-meeting/meeting-core"
+        - zod
+      builtins:
+        - node:crypto
+      runtimeReferences: []
+  - id: e2e.discord-actors
+    roots:
+      - apps/discord-e2e-actors/src
+    allow:
+      boundaries: []
+      packages:
+        - "@discordjs/voice"
+        - discord.js
+        - zod
+      builtins:
+        - node:child_process
+        - node:fs/promises
+      runtimeReferences: []
+  - id: apps.meeting-platform
+    roots:
+      - apps/meeting-platform/src
+    allow:
+      boundaries:
+        - adapters.bullmq
+        - adapters.discord
+        - adapters.object-storage
+        - adapters.observability
+        - adapters.postgres
+        - adapters.recording-ingress
+        - adapters.speaches
+        - adapters.subscription-runtime
+        - contracts.craig-gateway
+        - core.meeting
+      packages:
+        - "@aws-sdk/client-s3"
+        - "@discord-meeting/bullmq-adapter"
+        - "@discord-meeting/craig-gateway-contracts"
+        - "@discord-meeting/discord-adapter"
+        - "@discord-meeting/meeting-core"
+        - "@discord-meeting/object-storage-adapter"
+        - "@discord-meeting/observability-adapter"
+        - "@discord-meeting/postgres-adapter"
+        - "@discord-meeting/recording-ingress-adapter"
+        - "@discord-meeting/speaches-adapter"
+        - "@discord-meeting/subscription-runtime-adapter"
+        - "@grpc/grpc-js"
+        - "@grpc/proto-loader"
+        - bullmq
+        - discord.js
+        - pg
+        - zod
+      builtins:
+        - node:crypto
+        - node:events
+        - node:fs/promises
+        - node:http
+        - node:url
+      runtimeReferences: []
+  - id: apps.subscription-runtime-sidecar
+    roots:
+      - apps/subscription-runtime-sidecar/src
+    allow:
+      boundaries:
+        - adapters.subscription-runtime
+      packages:
+        - "@discord-meeting/subscription-runtime-adapter"
+        - "@grpc/grpc-js"
+        - "@grpc/proto-loader"
+        - zod
+      builtins:
+        - node:child_process
+        - node:crypto
+        - node:fs
+        - node:fs/promises
+        - node:os
+        - node:path
+        - node:url
+      runtimeReferences: []
+  - id: tooling.architecture-baseline
+    roots:
+      - tooling/architecture-baseline/src
+    allow:
+      boundaries: []
+      packages: []
+      builtins:
+        - node:fs/promises
+      runtimeReferences: []

@@ -1,0 +1,96 @@
+export type LogFields = Readonly<Record<string, unknown>>;
+
+export interface Logger {
+  child(context: LogFields): Logger;
+  debug(message: string, fields?: LogFields): void;
+  error(message: string, fields?: LogFields): void;
+  flush(): Promise<void>;
+  info(message: string, fields?: LogFields): void;
+  warn(message: string, fields?: LogFields): void;
+}
+
+export type IngressOutcome = "accepted" | "dropped";
+export type IngressReason =
+  | "accepted"
+  | "duplicate"
+  | "invalid"
+  | "over-capacity"
+  | "shutting-down"
+  | "unknown";
+export type QueueState = "active" | "delayed" | "failed" | "paused" | "waiting";
+export type QueueRetryCause =
+  | "rate-limit"
+  | "stalled"
+  | "timeout"
+  | "transient"
+  | "unknown";
+export type DeadLetterCause =
+  | "attempts-exhausted"
+  | "invalid-payload"
+  | "non-retryable"
+  | "unknown";
+export type ProcessingStage = "publication" | "summary" | "transcription";
+export type StageOutcome =
+  | "retryable-failure"
+  | "succeeded"
+  | "terminal-failure";
+export type DiscordPublicationOutcome =
+  | "duplicate"
+  | "reconciled"
+  | "retryable-failure"
+  | "succeeded"
+  | "terminal-failure";
+export type ProviderDependency =
+  | "database"
+  | "discord"
+  | "object-storage"
+  | "queue"
+  | "stt"
+  | "summary-provider";
+export type DependencyHealth = "degraded" | "healthy" | "unhealthy";
+
+export interface Metrics {
+  observeStage(
+    stage: ProcessingStage,
+    outcome: StageOutcome,
+    durationSeconds: number,
+  ): void;
+  recordDeadLetter(cause: DeadLetterCause): void;
+  recordDiscordPublication(outcome: DiscordPublicationOutcome): void;
+  recordIngress(outcome: IngressOutcome, reason: IngressReason): void;
+  recordQueueRetry(cause: QueueRetryCause): void;
+  setProviderHealth(
+    dependency: ProviderDependency,
+    health: DependencyHealth,
+  ): void;
+  setQueueState(state: QueueState, jobs: number): void;
+}
+
+export interface HealthProbeResult {
+  readonly code?: string;
+  readonly status: DependencyHealth;
+}
+
+export interface HealthProbe {
+  readonly critical: boolean;
+  readonly name: string;
+  check(signal: AbortSignal): Promise<HealthProbeResult>;
+}
+
+export interface DependencyHealthSnapshot {
+  readonly code?: string;
+  readonly critical: boolean;
+  readonly name: string;
+  readonly status: DependencyHealth;
+}
+
+export interface HealthSnapshot {
+  readonly checkedAt: string;
+  readonly dependencies: readonly DependencyHealthSnapshot[];
+  readonly ready: boolean;
+  readonly status: DependencyHealth;
+}
+
+export interface HealthReporter {
+  snapshot(): Promise<HealthSnapshot>;
+}

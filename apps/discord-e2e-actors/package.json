@@ -1,0 +1,23 @@
+{
+  "name": "@discord-meeting/discord-e2e-actors",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc --project tsconfig.build.json --pretty false",
+    "start": "pnpm run build && node dist/main.js",
+    "test": "vitest run",
+    "typecheck": "tsc --project tsconfig.json --noEmit --pretty false",
+    "check": "pnpm run typecheck && pnpm run test"
+  },
+  "dependencies": {
+    "@discordjs/voice": "catalog:",
+    "discord.js": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

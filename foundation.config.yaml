@@ -1,0 +1,8 @@
+schemaVersion: 1
+project:
+  id: discord-ai-meeting-assistant
+capabilities:
+  architecture.source-dependencies:
+    configPath: architecture/foundation/source-dependencies.yaml
+  workspace.dependency-declarations:
+    configPath: architecture/foundation/dependency-declarations.yaml

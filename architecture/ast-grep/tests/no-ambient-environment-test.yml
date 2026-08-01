@@ -1,0 +1,6 @@
+id: meeting-core-no-ambient-environment
+valid:
+  - function execute(settings) { return settings.region; }
+invalid:
+  - const value = process.env.HOST;
+  - const value = process.env["HOST"];

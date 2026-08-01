@@ -1,0 +1,148 @@
+import { lstat, readFile } from "node:fs/promises";
+
+import { z } from "zod";
+
+const snowflake = z.string().regex(/^\d{17,20}$/u);
+const sha256 = z.string().regex(/^[0-9a-f]{64}$/u);
+const absolutePath = z.string().startsWith("/").refine((value) => !value.includes("\0"));
+const httpUrl = z.url().refine((value) => {
+  const url = new URL(value);
+  return (
+    ["http:", "https:"].includes(url.protocol) &&
+    url.username.length === 0 &&
+    url.password.length === 0 &&
+    url.search.length === 0 &&
+    url.hash.length === 0
+  );
+});
+
+const environmentSchema = z
+  .object({
+    BIND_ADDRESS: z.union([z.ipv4(), z.ipv6()]).default("0.0.0.0"),
+    CRAIG_BEARER_TOKEN_FILE: absolutePath,
+    DISCORD_RESULTS_CHANNEL_ID: snowflake,
+    DISCORD_TOKEN_FILE: absolutePath,
+    NODE_ENV: z.enum(["development", "production", "test"]).default("production"),
+    PORT: z.coerce.number().int().min(1).max(65_535).default(4_310),
+    POSTGRES_URL_FILE: absolutePath,
+    RECORDING_SPOOL_ROOT: absolutePath,
+    REDIS_URL_FILE: absolutePath,
+    S3_ACCESS_KEY_ID_FILE: absolutePath,
+    S3_BUCKET: z.string().regex(/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/u),
+    S3_ENDPOINT: httpUrl,
+    S3_PREFIX: z.string().max(512).regex(/^[a-zA-Z0-9][a-zA-Z0-9/_-]*\/$/u),
+    S3_REGION: z.string().min(1).max(64),
+    S3_SECRET_ACCESS_KEY_FILE: absolutePath,
+    SPEACHES_BASE_URL: httpUrl,
+    SPEACHES_MODEL: z.string().min(1).max(256),
+    SUBSCRIPTION_RUNTIME_ADDRESS: z
+      .string()
+      .regex(/^(?:[a-zA-Z0-9][a-zA-Z0-9.-]*|\[[0-9a-fA-F:]+\]):\d{1,5}$/u),
+    SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256: sha256,
+    SUBSCRIPTION_RUNTIME_TOKEN_FILE: absolutePath,
+  });
+
+interface PlatformSecrets {
+  readonly craigBearerToken: string;
+  readonly discordToken: string;
+  readonly postgresUrl: string;
+  readonly redisUrl: string;
+  readonly s3AccessKeyId: string;
+  readonly s3SecretAccessKey: string;
+  readonly subscriptionRuntimeToken: string;
+}
+
+export interface PlatformConfig {
+  readonly bindAddress: string;
+  readonly discordResultsChannelId: string;
+  readonly nodeEnvironment: "development" | "production" | "test";
+  readonly port: number;
+  readonly recordingSpoolRoot: string;
+  readonly s3: {
+    readonly bucket: string;
+    readonly endpoint: string;
+    readonly prefix: string;
+    readonly region: string;
+  };
+  readonly secrets: PlatformSecrets;
+  readonly speaches: { readonly baseUrl: string; readonly model: string };
+  readonly subscriptionRuntime: {
+    readonly address: string;
+    readonly launcherSha256: string;
+  };
+}
+
+export type SecretFileReader = (path: string) => Promise<string>;
+
+export async function loadPlatformConfig(
+  rawEnvironment: Readonly<Record<string, string | undefined>> = process.env,
+  readSecret: SecretFileReader = readSecretFile,
+): Promise<PlatformConfig> {
+  const forbiddenApiKey = Object.keys(rawEnvironment).find((key) =>
+    /_API_KEY(?:_FILE)?$/u.test(key),
+  );
+  if (forbiddenApiKey !== undefined) {
+    throw new Error(`API-key environment is forbidden: ${forbiddenApiKey}`);
+  }
+  const environment = environmentSchema.parse(rawEnvironment);
+  const [
+    craigBearerToken,
+    discordToken,
+    postgresUrl,
+    redisUrl,
+    s3AccessKeyId,
+    s3SecretAccessKey,
+    subscriptionRuntimeToken,
+  ] = await Promise.all([
+    readSecret(environment.CRAIG_BEARER_TOKEN_FILE),
+    readSecret(environment.DISCORD_TOKEN_FILE),
+    readSecret(environment.POSTGRES_URL_FILE),
+    readSecret(environment.REDIS_URL_FILE),
+    readSecret(environment.S3_ACCESS_KEY_ID_FILE),
+    readSecret(environment.S3_SECRET_ACCESS_KEY_FILE),
+    readSecret(environment.SUBSCRIPTION_RUNTIME_TOKEN_FILE),
+  ]);
+
+  return Object.freeze({
+    bindAddress: environment.BIND_ADDRESS,
+    discordResultsChannelId: environment.DISCORD_RESULTS_CHANNEL_ID,
+    nodeEnvironment: environment.NODE_ENV,
+    port: environment.PORT,
+    recordingSpoolRoot: environment.RECORDING_SPOOL_ROOT,
+    s3: {
+      bucket: environment.S3_BUCKET,
+      endpoint: environment.S3_ENDPOINT,
+      prefix: environment.S3_PREFIX,
+      region: environment.S3_REGION,
+    },
+    secrets: Object.freeze({
+      craigBearerToken,
+      discordToken,
+      postgresUrl,
+      redisUrl,
+      s3AccessKeyId,
+      s3SecretAccessKey,
+      subscriptionRuntimeToken,
+    }),
+    speaches: {
+      baseUrl: environment.SPEACHES_BASE_URL,
+      model: environment.SPEACHES_MODEL,
+    },
+    subscriptionRuntime: {
+      address: environment.SUBSCRIPTION_RUNTIME_ADDRESS,
+      launcherSha256: environment.SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256,
+    },
+  });
+}
+
+async function readSecretFile(path: string): Promise<string> {
+  const descriptor = await lstat(path);
+  if (!descriptor.isFile() || descriptor.isSymbolicLink() || descriptor.size > 65_536) {
+    throw new Error("Secret path must be a small regular non-symlink file");
+  }
+  const value = (await readFile(path, "utf8")).trim();
+  if (value.length === 0 || value.includes("\0")) {
+    throw new Error("Secret file must contain a non-empty text value");
+  }
+  return value;
+}

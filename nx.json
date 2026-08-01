@@ -1,0 +1,9 @@
+{
+  "$schema": "./node_modules/nx/schemas/nx-schema.json",
+  "analytics": false,
+  "defaultBase": "main",
+  "neverConnectToCloud": true,
+  "tui": {
+    "enabled": false
+  }
+}

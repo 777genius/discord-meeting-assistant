@@ -1,0 +1,44 @@
+{
+  "name": "@discord-meeting/repository",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Summary-first Discord AI Meeting Assistant built around an isolated Craig voice gateway.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "packageManager": "pnpm@11.18.0",
+  "engines": {
+    "node": ">=24.18.0 <25",
+    "pnpm": "11.18.0"
+  },
+  "scripts": {
+    "architecture:patterns": "ast-grep scan --config sgconfig.yml --error=unused-suppression",
+    "architecture:patterns:test": "ast-grep test --config sgconfig.yml --skip-snapshot-tests",
+    "architecture:source": "agent-teams-foundation check architecture.source-dependencies",
+    "check": "pnpm run workspace:check && pnpm run lint && pnpm run typecheck && pnpm run foundation:check && pnpm run architecture:patterns && pnpm run architecture:patterns:test && pnpm run dead-code:check && pnpm run nx:projects",
+    "dead-code:check": "knip --config knip.json --no-progress",
+    "foundation:assert-dev-only": "agent-teams-foundation assert-dev-only",
+    "foundation:assert-registry": "agent-teams-foundation assert-registry",
+    "foundation:attach": "agent-teams-foundation attach",
+    "foundation:check": "agent-teams-foundation check && pnpm run foundation:assert-dev-only && pnpm run foundation:assert-registry",
+    "foundation:detach": "agent-teams-foundation detach",
+    "foundation:status": "agent-teams-foundation status",
+    "lint": "pnpm run lint:fast && pnpm run lint:type-aware",
+    "lint:fast": "oxlint --config .oxlintrc.json --deny-warnings --disable-nested-config .",
+    "lint:type-aware": "oxlint --config .oxlintrc.type-aware.json --deny-warnings --disable-nested-config apps packages tooling",
+    "nx:affected": "NX_NO_CLOUD=true NX_DAEMON=false nx show projects --affected",
+    "nx:projects": "NX_NO_CLOUD=true NX_DAEMON=false nx show projects",
+    "tooling:check": "pnpm --filter @discord-meeting/architecture-baseline run check",
+    "workspace:check": "pnpm --recursive --if-present run check",
+    "typecheck": "tsc --project tsconfig.json --noEmit --pretty false"
+  },
+  "devDependencies": {
+    "@agent-teams/engineering-foundation": "0.3.0",
+    "@ast-grep/cli": "catalog:",
+    "@types/node": "catalog:",
+    "knip": "catalog:",
+    "nx": "catalog:",
+    "oxlint": "catalog:",
+    "oxlint-tsgolint": "catalog:",
+    "typescript": "catalog:"
+  }
+}
