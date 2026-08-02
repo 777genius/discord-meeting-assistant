@@ -1,1 +1,1 @@
-Проверю Discord thread, Redis queue и idempotency key до седьмого августа две тысячи двадцать шестого года. Открытый вопрос - нужен ли live Pipecat assistant после первой версии?
+Проверю Redis queue и idempotency key до седьмого августа две тысячи двадцать шестого года в Discord thread. Открытый вопрос - нужен ли live Pipecat assistant после первой версии?

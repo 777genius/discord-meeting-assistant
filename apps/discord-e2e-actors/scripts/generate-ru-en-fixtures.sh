@@ -5,6 +5,18 @@ script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 package_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
 fixture_dir="$package_dir/test/fixtures"
 voice=${DISCORD_E2E_TTS_VOICE:-Milena}
+rate=${DISCORD_E2E_TTS_RATE:-150}
+
+case "$rate" in
+  ''|*[!0-9]*)
+    echo "DISCORD_E2E_TTS_RATE must be an integer from 100 to 250" >&2
+    exit 1
+    ;;
+esac
+if [ "$rate" -lt 100 ] || [ "$rate" -gt 250 ]; then
+  echo "DISCORD_E2E_TTS_RATE must be an integer from 100 to 250" >&2
+  exit 1
+fi
 
 command -v say >/dev/null 2>&1 || {
   echo "macOS say is required" >&2
@@ -24,7 +36,7 @@ for speaker in speaker-a speaker-b; do
   aiff_file="$fixture_dir/$speaker.ru-en.aiff"
   output_file="$fixture_dir/$speaker.ru-en.ogg"
 
-  say -v "$voice" -f "$source_file" -o "$aiff_file"
+  say -v "$voice" -r "$rate" -f "$source_file" -o "$aiff_file"
   ffmpeg -hide_banner -loglevel error -y -i "$aiff_file" \
     -ar 48000 -ac 1 -c:a libopus -b:a 64k "$output_file"
   rm "$aiff_file"

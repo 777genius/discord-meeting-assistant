@@ -14,6 +14,10 @@ SHA-256 values that are pinned in the manifest and captured by the collector:
 pnpm --filter @discord-meeting/discord-e2e-actors fixtures:generate
 ```
 
+The default speech rate is the real-provider-qualified `150` words per minute.
+`DISCORD_E2E_TTS_VOICE` and `DISCORD_E2E_TTS_RATE` are permitted only when the
+new audio is re-qualified and its hashes and durations are repinned.
+
 The versioned ground truth is `test/fixtures/manifest.v1.json`. It pins the exact
 UTF-8 source and Ogg SHA-256 hashes, Ogg duration, expected Discord speaker IDs,
 required Russian/English terminology, scenario timing, and overlap behavior.
