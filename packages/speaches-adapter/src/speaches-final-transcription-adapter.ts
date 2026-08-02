@@ -65,6 +65,7 @@ interface ResolvedSpeakerAudio {
 }
 
 interface ChunkTask {
+  readonly artifact: BinaryAudioArtifact;
   readonly chunk: BinaryAudioChunk;
   readonly chunkIndex: number;
   readonly reference: SpeakerAudioReferenceSnapshot;
@@ -131,17 +132,26 @@ export class SpeachesFinalTranscriptionAdapter implements FinalTranscriptionPort
 
     const tasks = resolvedAudio.flatMap(({ artifact, reference, sourceAudioIndex }) =>
       artifact.chunks.map((chunk, chunkIndex): ChunkTask => ({
+        artifact,
         chunk,
         chunkIndex,
         reference,
         sourceAudioIndex,
       })),
     );
+    const recordingMediaOriginMs = Math.min(
+      ...request.recording.speakerAudio.map(({ timelineOffsetMs }) => timelineOffsetMs),
+    );
     const chunkTurns = await mapWithConcurrency(
       tasks,
       this.options.maxConcurrency,
       request.signal,
-      async (task) => this.transcribeChunk(task, request.idempotencyKey, request.signal),
+      async (task) => this.transcribeChunk(
+        task,
+        request.idempotencyKey,
+        recordingMediaOriginMs,
+        request.signal,
+      ),
     );
     const providerTurns = chunkTurns.flat().toSorted(compareProviderTurns);
 
@@ -200,6 +210,7 @@ export class SpeachesFinalTranscriptionAdapter implements FinalTranscriptionPort
   private async transcribeChunk(
     task: ChunkTask,
     idempotencyKey: string,
+    recordingMediaOriginMs: number,
     externalSignal: AbortSignal | undefined,
   ): Promise<readonly ProviderTranscriptTurn[]> {
     const timeoutSignal = AbortSignal.timeout(this.options.providerRequestTimeoutMs);
@@ -241,7 +252,7 @@ export class SpeachesFinalTranscriptionAdapter implements FinalTranscriptionPort
       throw classified;
     }
 
-    return parseProviderTurns(response, task, idempotencyKey);
+    return parseProviderTurns(response, task, idempotencyKey, recordingMediaOriginMs);
   }
 }
 
@@ -352,6 +363,17 @@ function validateArtifact(
   artifact: BinaryAudioArtifact,
   options: ValidatedOptions,
 ): void {
+  const providerTimestampOrigin: unknown = Reflect.get(artifact, "providerTimestampOrigin");
+  if (
+    providerTimestampOrigin !== "recording-media-origin" &&
+    providerTimestampOrigin !== "speaker-track-origin"
+  ) {
+    throw new SpeachesAdapterError(
+      "invalid_input",
+      "speaker audio must declare its provider timestamp origin",
+      false,
+    );
+  }
   if (artifact.chunks.length === 0 || artifact.chunks.length > options.maxChunksPerSpeaker) {
     throw new SpeachesAdapterError(
       "invalid_input",
@@ -421,6 +443,7 @@ function parseProviderTurns(
   response: unknown,
   task: ChunkTask,
   idempotencyKey: string,
+  recordingMediaOriginMs: number,
 ): readonly ProviderTranscriptTurn[] {
   if (!isRecord(response) || typeof response.text !== "string") {
     throw invalidProviderResponse("Speaches verbose transcription is not an object");
@@ -467,10 +490,10 @@ function parseProviderTurns(
       throw invalidProviderResponse("Speaches returned an invalid segment time range");
     }
 
-    const baseOffsetMs = addSafeIntegers(
-      task.reference.timelineOffsetMs,
-      task.chunk.timelineOffsetMs,
-    );
+    const timestampOriginMs = task.artifact.providerTimestampOrigin === "recording-media-origin"
+      ? recordingMediaOriginMs
+      : task.reference.timelineOffsetMs;
+    const baseOffsetMs = addSafeIntegers(timestampOriginMs, task.chunk.timelineOffsetMs);
     const startMs = addSafeIntegers(baseOffsetMs, secondsToMilliseconds(segment.start));
     const endMs = addSafeIntegers(baseOffsetMs, secondsToMilliseconds(segment.end));
     if (endMs <= startMs) {

@@ -45,6 +45,7 @@ export class S3OggAudioArtifactReader implements BinaryAudioArtifactReader {
 
     return {
       chunks: [{ bytes, fileName: "speaker-track.ogg", mediaType: "audio/ogg", timelineOffsetMs: 0 }],
+      providerTimestampOrigin: "recording-media-origin",
     };
   }
 }

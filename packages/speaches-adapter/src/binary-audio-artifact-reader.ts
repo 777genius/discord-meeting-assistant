@@ -8,6 +8,12 @@ export interface BinaryAudioChunk {
 
 export interface BinaryAudioArtifact {
   readonly chunks: readonly BinaryAudioChunk[];
+  /**
+   * Declares the zero used by timestamps decoded from the artifact. Craig's
+   * partwise Ogg tracks retain one shared recording-media timeline, while
+   * ordinary speaker files start at the speaker track itself.
+   */
+  readonly providerTimestampOrigin: "recording-media-origin" | "speaker-track-origin";
 }
 
 export interface BinaryAudioReadOptions {

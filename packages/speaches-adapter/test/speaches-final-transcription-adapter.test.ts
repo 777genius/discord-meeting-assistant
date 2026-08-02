@@ -107,6 +107,52 @@ describe("SpeachesFinalTranscriptionAdapter", () => {
     });
   });
 
+  it("does not double-add Craig offsets when cooked tracks retain one media timeline", async () => {
+    const reader = new MemoryArtifactReader({
+      "recording://speaker-a": artifact(
+        "speaker-a.ogg",
+        0,
+        [1, 2],
+        "recording-media-origin",
+      ),
+      "recording://speaker-b": artifact(
+        "speaker-b.ogg",
+        0,
+        [3, 4],
+        "recording-media-origin",
+      ),
+    });
+    const client = new FakeSpeachesClient({
+      "speaker-a.ogg": verboseTranscript("ru", "Speaker A", [
+        { id: 1, start: 0, end: 12.6, text: "Speaker A" },
+      ]),
+      "speaker-b.ogg": verboseTranscript("ru", "Speaker B", [
+        { id: 1, start: 14.032, end: 24.779, text: "Speaker B" },
+      ]),
+    });
+    const adapter = new SpeachesFinalTranscriptionAdapter(client, reader, {
+      model: "Systran/faster-whisper-small",
+    });
+
+    const result = await adapter.transcribe({
+      ...transcriptionRequest(),
+      recording: {
+        ...transcriptionRequest().recording,
+        speakerAudio: [speakerReference("a", 6_098), speakerReference("b", 20_601)],
+      },
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        turns: [
+          { endMs: 18_698, speakerId: "discord-user-a", startMs: 6_098 },
+          { endMs: 30_877, speakerId: "discord-user-b", startMs: 20_130 },
+        ],
+      },
+    });
+  });
+
   it("bounds provider concurrency across all speaker chunks", async () => {
     const reader = new MemoryArtifactReader({
       "recording://speaker-a": artifact("speaker-a.wav", 0, [1]),
@@ -302,6 +348,7 @@ function artifact(
   fileName: string,
   timelineOffsetMs: number,
   bytes: readonly number[],
+  providerTimestampOrigin: BinaryAudioArtifact["providerTimestampOrigin"] = "speaker-track-origin",
 ): BinaryAudioArtifact {
   return {
     chunks: [{
@@ -310,6 +357,7 @@ function artifact(
       mediaType: fileName.endsWith(".flac") ? "audio/flac" : "audio/wav",
       timelineOffsetMs,
     }],
+    providerTimestampOrigin,
   };
 }
 

@@ -40,6 +40,7 @@ describe("S3 Ogg audio artifact reader", () => {
         mediaType: "audio/ogg",
         timelineOffsetMs: 0,
       }],
+      providerTimestampOrigin: "recording-media-origin",
     });
   });
 
