@@ -241,14 +241,21 @@ function sequentialEvidence(): RetainedE2eEvidenceV1 {
     { actorName: "speaker-b", atRecordingMs: 15_600, fixtureId: "speaker-b", type: "playback-end" },
   ];
   evidence.recording.durationMs = 15_600;
+  const speakerAS3Track = evidence.recording.s3.tracks[0];
   const speakerBS3Track = evidence.recording.s3.tracks[1];
   const speakerBTurn = evidence.transcript.turns[1];
-  if (speakerBS3Track === undefined || speakerBTurn === undefined) {
-    throw new Error("speaker-b sequential fixtures are required");
+  if (speakerAS3Track === undefined || speakerBS3Track === undefined || speakerBTurn === undefined) {
+    throw new Error("sequential fixtures are required");
   }
+  evidence.recording.s3.tracks[0] = {
+    ...speakerAS3Track,
+    durationMs: 15_600,
+    timelineOffsetMs: 0,
+  };
   evidence.recording.s3.tracks[1] = {
     ...speakerBS3Track,
-    timelineOffsetMs: 8_600,
+    durationMs: 15_600,
+    timelineOffsetMs: 0,
   };
   evidence.transcript.turns[1] = {
     ...speakerBTurn,
@@ -347,6 +354,62 @@ describe("verifyRetainedE2eEvidence", () => {
     expect(codes).toEqual(expect.arrayContaining(["WER_EXCEEDED", "CER_EXCEEDED", "TERM_MISSING"]));
   });
 
+  it("treats the fixed spoken Russian date and its numeric STT form as equivalent", () => {
+    const dateManifest = manifest();
+    const speakerAFixture = dateManifest.fixtures[0];
+    if (speakerAFixture === undefined) {
+      throw new Error("speaker-a manifest fixture is required");
+    }
+    speakerAFixture.sourceText =
+      "Проверить Discord thread до седьмого августа две тысячи двадцать шестого года";
+    speakerAFixture.requiredTerms = ["Discord thread", "августа", "2026"];
+
+    const evidence = overlapEvidence();
+    const speakerATurn = evidence.transcript.turns[0];
+    if (speakerATurn === undefined) {
+      throw new Error("speaker-a transcript turn is required");
+    }
+    evidence.transcript.turns[0] = {
+      ...speakerATurn,
+      text: "Проверить Discord thread до 7 августа 2026 года",
+    };
+
+    const verification = verifyRetainedE2eEvidence(dateManifest, evidence);
+    const speakerAMetrics = verification.metrics.find(({ speakerId }) => speakerId === speakerAId);
+
+    expect(speakerAMetrics).toEqual({
+      characterErrorRate: 0,
+      speakerId: speakerAId,
+      wordErrorRate: 0,
+    });
+    expect(verification.failures.map(({ code }) => code)).not.toContain("TERM_MISSING");
+  });
+
+  it("still fails required year evidence when STT loses 2026", () => {
+    const dateManifest = manifest();
+    const speakerAFixture = dateManifest.fixtures[0];
+    if (speakerAFixture === undefined) {
+      throw new Error("speaker-a manifest fixture is required");
+    }
+    speakerAFixture.sourceText =
+      "Проверить Discord thread до седьмого августа две тысячи двадцать шестого года";
+    speakerAFixture.requiredTerms = ["Discord thread", "августа", "2026"];
+
+    const evidence = overlapEvidence();
+    const speakerATurn = evidence.transcript.turns[0];
+    if (speakerATurn === undefined) {
+      throw new Error("speaker-a transcript turn is required");
+    }
+    evidence.transcript.turns[0] = {
+      ...speakerATurn,
+      text: "Проверить Discord thread до 7 августа года",
+    };
+
+    const codes = verifyRetainedE2eEvidence(dateManifest, evidence).failures.map(({ code }) => code);
+
+    expect(codes).toContain("TERM_MISSING");
+  });
+
   it("rejects missing evidence turns and duplicate replay effects", () => {
     const evidence = overlapEvidence();
     const decision = evidence.summary.decisions[0];
@@ -379,8 +442,62 @@ describe("verifyRetainedE2eEvidence", () => {
     expect(codes).toEqual(expect.arrayContaining(["ACTOR_NOT_READY", "RECONNECT_SEQUENCE_INVALID"]));
   });
 
-  it("accepts a strictly sequential transcript and playback timeline", () => {
+  it("accepts sequential Craig tracks with offset zero and retained initial silence", () => {
     expect(verifyRetainedE2eEvidence(manifest(), sequentialEvidence()).passed).toBe(true);
+  });
+
+  it("compares sequential transcript speech to actor playback instead of silent S3 origin", () => {
+    const evidence = sequentialEvidence();
+    const speakerBTurn = evidence.transcript.turns[1];
+    if (speakerBTurn === undefined) {
+      throw new Error("speaker-b sequential turn is required");
+    }
+    evidence.transcript.turns[1] = {
+      ...speakerBTurn,
+      startMs: 0,
+    };
+
+    const codes = verifyRetainedE2eEvidence(manifest(), evidence).failures.map(({ code }) => code);
+
+    expect(codes).toContain("START_TIMESTAMP_MISMATCH");
+  });
+
+  it("rejects an actor playback window extending beyond its silent S3 track", () => {
+    const evidence = sequentialEvidence();
+    const speakerBTrack = evidence.recording.s3.tracks[1];
+    if (speakerBTrack === undefined) {
+      throw new Error("speaker-b sequential track is required");
+    }
+    evidence.recording.s3.tracks[1] = {
+      ...speakerBTrack,
+      durationMs: 8_000,
+    };
+
+    const codes = verifyRetainedE2eEvidence(manifest(), evidence).failures.map(({ code }) => code);
+
+    expect(codes).toContain("ACTOR_S3_TIMELINE_MISMATCH");
+  });
+
+  it("uses the first and last reconnect playback windows as transcript bounds", () => {
+    const lateStart = reconnectEvidence();
+    const lateStartTurn = lateStart.transcript.turns[1];
+    if (lateStartTurn === undefined) {
+      throw new Error("speaker-b reconnect turn is required");
+    }
+    lateStart.transcript.turns[1] = { ...lateStartTurn, startMs: 8_300 };
+    expect(
+      verifyRetainedE2eEvidence(manifest(), lateStart).failures.map(({ code }) => code),
+    ).toContain("START_TIMESTAMP_MISMATCH");
+
+    const earlyEnd = reconnectEvidence();
+    const earlyEndTurn = earlyEnd.transcript.turns[1];
+    if (earlyEndTurn === undefined) {
+      throw new Error("speaker-b reconnect turn is required");
+    }
+    earlyEnd.transcript.turns[1] = { ...earlyEndTurn, endMs: 7_600 };
+    expect(
+      verifyRetainedE2eEvidence(manifest(), earlyEnd).failures.map(({ code }) => code),
+    ).toContain("END_TIMESTAMP_MISMATCH");
   });
 
   it("requires all scenarios and isolated identities across the campaign", () => {

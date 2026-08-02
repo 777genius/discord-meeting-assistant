@@ -18,11 +18,15 @@ but replacing libraries inside the published Speaches image would make the
 deployment unverified. Upgrade the complete image only after its provider
 contract and Russian/mixed-language benchmark pass.
 
-The disposable default is `Systran/faster-whisper-small` with CPU `int8`.
-Production can set `SPEACHES_MODEL_ID` to a benchmarked multilingual model
-without changing Meeting Core or the adapter. Leaving the adapter `language`
-unset enables mixed-language detection; setting it to `ru` biases known-Russian
-meetings. Vocabulary is sent as both standard `prompt` and Speaches `hotwords`.
+The standalone disposable default is `Systran/faster-whisper-small` with CPU
+`int8`. The isolated Meeting Platform deployment example selects
+`Systran/faster-whisper-medium`, which passed the retained Russian/English Discord
+fixture more accurately than `large-v3-turbo` on the current CPU host. Another
+benchmarked multilingual model can be selected through `SPEACHES_MODEL_ID`
+without changing Meeting Core or the adapter. The deployed adapter sets
+`language=ru` while preserving English technical hotwords. Vocabulary is sent
+only through Speaches `hotwords`; using the same list as an initial prompt caused
+prompt-loop hallucinations in the real Discord campaign.
 
 ```bash
 docker compose --env-file .env.example up --detach --wait

@@ -24,11 +24,11 @@
       "actorName": "speaker-a",
       "speakerId": "1533227577286852649",
       "sourcePath": "test/fixtures/speaker-a.ru-en.txt",
-      "sourceSha256": "7d3dc05c096e5b8d15435f8b5862d0c0fce99fe444125ba79e47dcb5550c1e1d",
+      "sourceSha256": "d75ef22920bbd6750b7f698b52bd6bd114ecc8112778b275799eaf7db4ada3ff",
       "audioPath": "test/fixtures/speaker-a.ru-en.ogg",
-      "audioSha256": "60217e24e7145f5ee86db1eae104eac577f786a32666e75360165b6e75b43c7f",
-      "durationMs": 13761,
-      "sourceText": "Meeting Platform сохраняет Craig recording и запускает PostgreSQL pipeline. Решение - выпустить версию в пятницу. Задача для спикера Б - проверить Discord thread до седьмого августа две тысячи двадцать шестого года.",
+      "audioSha256": "013ab837a19d5063a649d82f6040aa10c8fd79fdb1ef6d57fa57188619b2a370",
+      "durationMs": 12728,
+      "sourceText": "Meeting Platform сохраняет Craig recording и запускает PostgreSQL pipeline. Решение - выпустить версию в пятницу. До седьмого августа две тысячи двадцать шестого года спикер Б проверит Discord thread.",
       "requiredTerms": ["Meeting Platform", "Craig recording", "PostgreSQL pipeline", "Discord thread", "августа", "2026"]
     },
     {
@@ -38,7 +38,7 @@
       "sourcePath": "test/fixtures/speaker-b.ru-en.txt",
       "sourceSha256": "5212ba5ecd2d3ebd5f928a9eaf6bb41e3be147202b73c09160c6bf5ed55f2439",
       "audioPath": "test/fixtures/speaker-b.ru-en.ogg",
-      "audioSha256": "391806e4a2c03498af2484f6b43454809ae75663b7fe5f50df3c88222acaf031",
+      "audioSha256": "cb516f1dadaa91a0f90379f11e14cbe8917280613426be306faf2506054a483e",
       "durationMs": 10747,
       "sourceText": "Проверю Discord thread, Redis queue и idempotency key до седьмого августа две тысячи двадцать шестого года. Открытый вопрос - нужен ли live Pipecat assistant после первой версии?",
       "requiredTerms": ["Discord thread", "Redis queue", "idempotency key", "Pipecat assistant", "августа", "2026"]

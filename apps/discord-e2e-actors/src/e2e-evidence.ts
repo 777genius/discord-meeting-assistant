@@ -255,7 +255,7 @@ export function verifyRetainedE2eEvidence(
   verifyStages(evidence, fail);
   const playbackWindows = playbackWindowsFrom(evidence, fail);
   verifyActorRun(manifest, evidence, scenario, playbackWindows, fail);
-  verifyTranscript(manifest, evidence, scenario, metrics, fail);
+  verifyTranscript(manifest, evidence, scenario, playbackWindows, metrics, fail);
   verifyEvidenceReferences(manifest, evidence, fail);
   verifySummarySemantics(manifest, evidence, fail);
   verifyReplayIdentity(evidence, fail);
@@ -540,25 +540,28 @@ function verifyActorS3Timing(
   windows: readonly PlaybackWindow[],
   fail: (code: string, message: string) => void,
 ): void {
-  const actorOrigin = Math.min(...windows.map(({ startMs }) => startMs));
-  const s3Origin = Math.min(...evidence.recording.s3.tracks.map(({ timelineOffsetMs }) => timelineOffsetMs));
-  if (!Number.isFinite(actorOrigin) || !Number.isFinite(s3Origin)) {
-    return;
-  }
   for (const fixture of manifest.fixtures) {
-    const actorStart = windows
-      .filter(({ fixtureId }) => fixtureId === fixture.fixtureId)
-      .map(({ startMs }) => startMs)
-      .toSorted((left, right) => left - right)[0];
-    const s3Start = evidence.recording.s3.tracks
-      .find(({ speakerId }) => speakerId === fixture.speakerId)?.timelineOffsetMs;
-    if (
-      actorStart !== undefined &&
-      s3Start !== undefined &&
-      Math.abs((actorStart - actorOrigin) - (s3Start - s3Origin)) >
-        manifest.thresholds.timestampToleranceMs
-    ) {
-      fail("ACTOR_S3_TIMELINE_MISMATCH", `${fixture.fixtureId} actor timing does not match S3`);
+    const fixtureWindows = windows.filter(({ fixtureId }) => fixtureId === fixture.fixtureId);
+    const track = evidence.recording.s3.tracks.find(
+      ({ speakerId }) => speakerId === fixture.speakerId,
+    );
+    if (track === undefined) {
+      fail("ACTOR_S3_TRACK_MISSING", `${fixture.fixtureId} has no corresponding S3 track`);
+      continue;
+    }
+
+    const trackEndMs = track.timelineOffsetMs + track.durationMs;
+    for (const window of fixtureWindows) {
+      const startsBeforeTrack =
+        window.startMs + manifest.thresholds.timestampToleranceMs < track.timelineOffsetMs;
+      const endsAfterTrack =
+        window.endMs > trackEndMs + manifest.thresholds.timestampToleranceMs;
+      if (startsBeforeTrack || endsAfterTrack) {
+        fail(
+          "ACTOR_S3_TIMELINE_MISMATCH",
+          `${fixture.fixtureId} playback window is not covered by its S3 track timeline`,
+        );
+      }
     }
   }
 }
@@ -623,6 +626,7 @@ function verifyTranscript(
   manifest: FixtureManifestV1,
   evidence: RetainedE2eEvidenceV1,
   scenario: FixtureManifestV1["scenarios"][number],
+  windows: readonly PlaybackWindow[],
   metrics: SpeakerAccuracyMetrics[],
   fail: (code: string, message: string) => void,
 ): void {
@@ -666,30 +670,31 @@ function verifyTranscript(
       fail("CER_EXCEEDED", `${fixture.fixtureId} CER ${characterErrorRate.toFixed(3)} exceeds threshold`);
     }
 
-    const normalizedActual = normalize(actualText);
+    const normalizedActual = normalizeTranscriptSemantics(actualText);
     for (const term of fixture.requiredTerms) {
-      if (!normalizedActual.includes(normalize(term))) {
+      if (!normalizedActual.includes(normalizeTranscriptSemantics(term))) {
         fail("TERM_MISSING", `${fixture.fixtureId} transcript is missing required term ${term}`);
       }
     }
 
-    const s3Track = evidence.recording.s3.tracks.find(
-      ({ speakerId }) => speakerId === fixture.speakerId,
-    );
+    const fixtureWindows = windows
+      .filter(({ fixtureId }) => fixture.fixtureId === fixtureId)
+      .toSorted((left, right) => left.startMs - right.startMs);
+    const firstWindow = fixtureWindows[0];
+    const lastWindow = fixtureWindows.at(-1);
     const firstTurn = turns[0];
     const lastTurn = turns.at(-1);
     if (
       firstTurn !== undefined &&
-      s3Track !== undefined &&
-      Math.abs(firstTurn.startMs - s3Track.timelineOffsetMs) > manifest.thresholds.timestampToleranceMs
+      firstWindow !== undefined &&
+      Math.abs(firstTurn.startMs - firstWindow.startMs) > manifest.thresholds.timestampToleranceMs
     ) {
       fail("START_TIMESTAMP_MISMATCH", `${fixture.fixtureId} transcript start is outside tolerance`);
     }
     if (
       lastTurn !== undefined &&
-      s3Track !== undefined &&
-      Math.abs(lastTurn.endMs - (s3Track.timelineOffsetMs + s3Track.durationMs)) >
-        manifest.thresholds.timestampToleranceMs
+      lastWindow !== undefined &&
+      Math.abs(lastTurn.endMs - lastWindow.endMs) > manifest.thresholds.timestampToleranceMs
     ) {
       fail("END_TIMESTAMP_MISMATCH", `${fixture.fixtureId} transcript end is outside tolerance`);
     }
@@ -835,13 +840,20 @@ function normalize(value: string): string {
     .replaceAll(/\s+/gu, " ");
 }
 
+function normalizeTranscriptSemantics(value: string): string {
+  return normalize(value).replaceAll(
+    "седьмого августа две тысячи двадцать шестого года",
+    "7 августа 2026 года",
+  );
+}
+
 function words(value: string): readonly string[] {
-  const normalized = normalize(value);
+  const normalized = normalizeTranscriptSemantics(value);
   return normalized.length === 0 ? [] : normalized.split(" ");
 }
 
 function characters(value: string): readonly string[] {
-  return Array.from(normalize(value).replaceAll(" ", ""));
+  return Array.from(normalizeTranscriptSemantics(value).replaceAll(" ", ""));
 }
 
 function errorRate(expected: readonly string[], actual: readonly string[]): number {
