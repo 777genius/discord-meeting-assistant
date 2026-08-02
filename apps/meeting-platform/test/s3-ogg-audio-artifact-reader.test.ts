@@ -1,7 +1,10 @@
 import type { BinaryArtifactReader } from "@discord-meeting/object-storage-adapter";
 import { describe, expect, it } from "vitest";
 
-import { S3OggAudioArtifactReader } from "../src/s3-ogg-audio-artifact-reader.js";
+import {
+  S3CompleteOggArtifactReader,
+  S3OggAudioArtifactReader,
+} from "../src/s3-ogg-audio-artifact-reader.js";
 
 function artifactReader(
   bytes: Uint8Array,
@@ -56,5 +59,22 @@ describe("S3 Ogg audio artifact reader", () => {
         signal: new AbortController().signal,
       }),
     ).rejects.toThrow("must be Ogg");
+  });
+
+  it("exposes the same complete Ogg through the Voicetext reader port", async () => {
+    const reader = new S3CompleteOggArtifactReader(
+      artifactReader(Uint8Array.from([79, 103, 103, 83, 1, 2])),
+    );
+
+    await expect(
+      reader.read("s3://meeting/recordings/speaker.ogg", {
+        maxBytes: 64,
+        signal: new AbortController().signal,
+      }),
+    ).resolves.toEqual({
+      bytes: Uint8Array.from([79, 103, 103, 83, 1, 2]),
+      complete: true,
+      container: "ogg",
+    });
   });
 });

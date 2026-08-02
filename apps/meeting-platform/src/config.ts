@@ -15,6 +15,16 @@ const httpUrl = z.url().refine((value) => {
     url.hash.length === 0
   );
 });
+const secureWebSocketUrl = z.url().refine((value) => {
+  const url = new URL(value);
+  return (
+    url.protocol === "wss:" &&
+    url.username.length === 0 &&
+    url.password.length === 0 &&
+    url.search.length === 0 &&
+    url.hash.length === 0
+  );
+});
 
 const environmentSchema = z
   .object({
@@ -40,6 +50,28 @@ const environmentSchema = z
       .regex(/^(?:[a-zA-Z0-9][a-zA-Z0-9.-]*|\[[0-9a-fA-F:]+\]):\d{1,5}$/u),
     SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256: sha256,
     SUBSCRIPTION_RUNTIME_TOKEN_FILE: absolutePath,
+    TRANSCRIPTION_PROVIDER: z.enum(["speaches", "voicetext"]).default("speaches"),
+    VOICETEXT_SERVICE_TOKEN_FILE: absolutePath.optional(),
+    VOICETEXT_WS_URL: secureWebSocketUrl.optional(),
+  })
+  .superRefine((environment, context) => {
+    if (environment.TRANSCRIPTION_PROVIDER !== "voicetext") {
+      return;
+    }
+    if (environment.VOICETEXT_SERVICE_TOKEN_FILE === undefined) {
+      context.addIssue({
+        code: "custom",
+        message: "VOICETEXT_SERVICE_TOKEN_FILE is required for Voicetext transcription",
+        path: ["VOICETEXT_SERVICE_TOKEN_FILE"],
+      });
+    }
+    if (environment.VOICETEXT_WS_URL === undefined) {
+      context.addIssue({
+        code: "custom",
+        message: "VOICETEXT_WS_URL is required for Voicetext transcription",
+        path: ["VOICETEXT_WS_URL"],
+      });
+    }
   });
 
 interface PlatformSecrets {
@@ -50,6 +82,7 @@ interface PlatformSecrets {
   readonly s3AccessKeyId: string;
   readonly s3SecretAccessKey: string;
   readonly subscriptionRuntimeToken: string;
+  readonly voicetextServiceToken?: string;
 }
 
 export interface PlatformConfig {
@@ -66,10 +99,12 @@ export interface PlatformConfig {
   };
   readonly secrets: PlatformSecrets;
   readonly speaches: { readonly baseUrl: string; readonly model: string };
+  readonly transcriptionProvider: "speaches" | "voicetext";
   readonly subscriptionRuntime: {
     readonly address: string;
     readonly launcherSha256: string;
   };
+  readonly voicetext?: { readonly webSocketUrl: string };
 }
 
 export type SecretFileReader = (path: string) => Promise<string>;
@@ -93,6 +128,7 @@ export async function loadPlatformConfig(
     s3AccessKeyId,
     s3SecretAccessKey,
     subscriptionRuntimeToken,
+    voicetextServiceToken,
   ] = await Promise.all([
     readSecret(environment.CRAIG_BEARER_TOKEN_FILE),
     readSecret(environment.DISCORD_TOKEN_FILE),
@@ -101,6 +137,9 @@ export async function loadPlatformConfig(
     readSecret(environment.S3_ACCESS_KEY_ID_FILE),
     readSecret(environment.S3_SECRET_ACCESS_KEY_FILE),
     readSecret(environment.SUBSCRIPTION_RUNTIME_TOKEN_FILE),
+    environment.VOICETEXT_SERVICE_TOKEN_FILE === undefined
+      ? Promise.resolve()
+      : readSecret(environment.VOICETEXT_SERVICE_TOKEN_FILE),
   ]);
 
   return Object.freeze({
@@ -123,6 +162,7 @@ export async function loadPlatformConfig(
       s3AccessKeyId,
       s3SecretAccessKey,
       subscriptionRuntimeToken,
+      ...(voicetextServiceToken === undefined ? {} : { voicetextServiceToken }),
     }),
     speaches: {
       baseUrl: environment.SPEACHES_BASE_URL,
@@ -132,6 +172,10 @@ export async function loadPlatformConfig(
       address: environment.SUBSCRIPTION_RUNTIME_ADDRESS,
       launcherSha256: environment.SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256,
     },
+    transcriptionProvider: environment.TRANSCRIPTION_PROVIDER,
+    ...(environment.VOICETEXT_WS_URL === undefined
+      ? {}
+      : { voicetext: { webSocketUrl: environment.VOICETEXT_WS_URL } }),
   });
 }
 

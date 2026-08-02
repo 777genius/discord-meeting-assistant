@@ -1,0 +1,147 @@
+import { VoicetextAdapterError } from "./errors.js";
+
+export interface VoicetextFinalSegment {
+  readonly confidence?: number;
+  readonly durationMs: number;
+  readonly startMs: number;
+  readonly text: string;
+}
+
+export type VoicetextServerMessage =
+  | { readonly sessionId: string; readonly type: "ready" }
+  | { readonly seq: number; readonly type: "ack" }
+  | ({ readonly type: "final" } & VoicetextFinalSegment)
+  | { readonly type: "partial" }
+  | ({ readonly type: "segment_final" } & VoicetextFinalSegment)
+  | { readonly type: "usage_update" }
+  | { readonly code: string; readonly message: string; readonly type: "error" }
+  | {
+    readonly sawResult: boolean;
+    readonly status: "flushed" | "no_provider" | "timeout";
+    readonly type: "finalize_complete";
+  }
+  | { readonly type: "resumed" };
+
+export interface VoicetextConfigMessage {
+  readonly capabilities: readonly ["finalize_ack"];
+  readonly channels: 1;
+  readonly client_session_id: string;
+  readonly encoding: "pcm_s16le";
+  readonly keyterms?: readonly string[];
+  readonly language: string;
+  readonly protocol_v: 2;
+  readonly provider: "deepgram";
+  readonly sample_rate: 16_000;
+  readonly type: "config";
+}
+
+export function parseServerMessage(
+  raw: string,
+  maxTranscriptChars: number,
+): VoicetextServerMessage {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw) as unknown;
+  } catch (error: unknown) {
+    throw protocolError("Voicetext returned malformed JSON", error);
+  }
+  if (!isRecord(value) || typeof value.type !== "string") {
+    throw protocolError("Voicetext returned a malformed protocol message");
+  }
+
+  switch (value.type) {
+    case "ready": {
+      if (typeof value.session_id !== "string" || !uuidPattern.test(value.session_id)) {
+        throw protocolError("Voicetext returned an invalid ready message");
+      }
+      return { sessionId: value.session_id, type: "ready" };
+    }
+    case "ack": {
+      if (!Number.isSafeInteger(value.seq) || (value.seq as number) < 1) {
+        throw protocolError("Voicetext returned an invalid audio acknowledgement");
+      }
+      return { seq: value.seq as number, type: "ack" };
+    }
+    case "partial":
+      return value.is_segment_final === true
+        ? { ...parseFinalSegment(value, maxTranscriptChars), type: "segment_final" }
+        : { type: "partial" };
+    case "usage_update":
+      return { type: "usage_update" };
+    case "final":
+      return parseFinalSegment(value, maxTranscriptChars);
+    case "error": {
+      if (
+        typeof value.code !== "string" ||
+        value.code.length < 1 ||
+        value.code.length > 128 ||
+        typeof value.message !== "string" ||
+        value.message.length > 2_048
+      ) {
+        throw protocolError("Voicetext returned an invalid error message");
+      }
+      return { code: value.code, message: value.message, type: "error" };
+    }
+    case "finalize_complete": {
+      if (
+        (value.status !== "flushed" && value.status !== "timeout" && value.status !== "no_provider") ||
+        typeof value.saw_result !== "boolean"
+      ) {
+        throw protocolError("Voicetext returned an invalid finalize acknowledgement");
+      }
+      return {
+        sawResult: value.saw_result,
+        status: value.status,
+        type: "finalize_complete",
+      };
+    }
+    case "resumed":
+      return { type: "resumed" };
+    default:
+      throw protocolError(`Voicetext returned unsupported protocol message type ${value.type}`);
+  }
+}
+
+function parseFinalSegment(
+  value: Readonly<Record<string, unknown>>,
+  maxTranscriptChars: number,
+): { readonly type: "final" } & VoicetextFinalSegment {
+  if (
+    typeof value.text !== "string" ||
+    value.text.length > maxTranscriptChars ||
+    !Number.isSafeInteger(value.start_ms) ||
+    (value.start_ms as number) < 0 ||
+    !Number.isSafeInteger(value.duration_ms) ||
+    (value.duration_ms as number) < 0 ||
+    (value.confidence !== undefined &&
+      (typeof value.confidence !== "number" ||
+        !Number.isFinite(value.confidence) ||
+        value.confidence < 0 ||
+        value.confidence > 1))
+  ) {
+    throw protocolError("Voicetext returned an invalid final transcript segment");
+  }
+
+  return {
+    ...(value.confidence === undefined ? {} : { confidence: value.confidence }),
+    durationMs: value.duration_ms as number,
+    startMs: value.start_ms as number,
+    text: value.text,
+    type: "final",
+  };
+}
+
+function protocolError(message: string, cause?: unknown): VoicetextAdapterError {
+  return new VoicetextAdapterError(
+    "protocol_error",
+    message,
+    false,
+    cause === undefined ? {} : { cause },
+  );
+}
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null;
+}
+
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;

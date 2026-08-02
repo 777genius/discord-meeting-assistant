@@ -23,6 +23,7 @@ const environment = {
   SUBSCRIPTION_RUNTIME_ADDRESS: "subscription-runtime-sidecar:50052",
   SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256: "a".repeat(64),
   SUBSCRIPTION_RUNTIME_TOKEN_FILE: "/run/secrets/runtime",
+  TRANSCRIPTION_PROVIDER: "speaches",
 } as const;
 
 describe("platform configuration", () => {
@@ -36,6 +37,44 @@ describe("platform configuration", () => {
     expect(paths).toHaveLength(7);
     expect(config.secrets.discordToken).toBe("value-for:/run/secrets/discord");
     expect(Object.keys(environment)).not.toContain("OPENAI_API_KEY");
+  });
+
+  it("loads a Voicetext machine bearer only from a secret file", async () => {
+    const config = await loadPlatformConfig(
+      {
+        ...environment,
+        TRANSCRIPTION_PROVIDER: "voicetext",
+        VOICETEXT_SERVICE_TOKEN_FILE: "/run/secrets/voicetext",
+        VOICETEXT_WS_URL: "wss://api.voicetext.site/api/v1/transcribe/stream",
+      },
+      async (path) => `value-for:${path}`,
+    );
+
+    expect(config.transcriptionProvider).toBe("voicetext");
+    expect(config.secrets.voicetextServiceToken).toBe("value-for:/run/secrets/voicetext");
+    expect(config.voicetext?.webSocketUrl).toBe(
+      "wss://api.voicetext.site/api/v1/transcribe/stream",
+    );
+  });
+
+  it("requires secure complete Voicetext configuration", async () => {
+    await expect(
+      loadPlatformConfig(
+        { ...environment, TRANSCRIPTION_PROVIDER: "voicetext" },
+        async () => "x",
+      ),
+    ).rejects.toThrow();
+    await expect(
+      loadPlatformConfig(
+        {
+          ...environment,
+          TRANSCRIPTION_PROVIDER: "voicetext",
+          VOICETEXT_SERVICE_TOKEN_FILE: "/run/secrets/voicetext",
+          VOICETEXT_WS_URL: "ws://api.voicetext.site/api/v1/transcribe/stream",
+        },
+        async () => "x",
+      ),
+    ).rejects.toThrow();
   });
 
   it("rejects unknown environment input and credential-bearing endpoints", async () => {

@@ -19,14 +19,16 @@ deployment unverified. Upgrade the complete image only after its provider
 contract and Russian/mixed-language benchmark pass.
 
 The standalone disposable default is `Systran/faster-whisper-small` with CPU
-`int8`. The isolated Meeting Platform deployment example selects
-`Systran/faster-whisper-medium`, which passed the retained Russian/English Discord
-fixture more accurately than `large-v3-turbo` on the current CPU host. Another
-benchmarked multilingual model can be selected through `SPEACHES_MODEL_ID`
-without changing Meeting Core or the adapter. The deployed adapter sets
-`language=ru` while preserving English technical hotwords. Vocabulary is sent
-only through Speaches `hotwords`; using the same list as an initial prompt caused
-prompt-loop hallucinations in the real Discord campaign.
+`int8`. The `local-stt` deployment profile can select another model through
+`SPEACHES_MODEL_ID` without changing Meeting Core. The adapter sets `language=ru`
+while preserving English technical hotwords. Vocabulary is sent only through
+Speaches `hotwords`; using the same list as an initial prompt caused prompt-loop
+hallucinations in the real Discord campaign.
+
+The CPU `medium`, `large-v3-turbo`, and full `large-v3` candidates all failed at
+least one high-value retained term or dropped speech on the 2026-08-02 fixture.
+They are therefore local/development options, not the accepted production final
+transcription provider. ADR 0006 records the Voicetext/Deepgram production choice.
 
 ```bash
 docker compose --env-file .env.example up --detach --wait

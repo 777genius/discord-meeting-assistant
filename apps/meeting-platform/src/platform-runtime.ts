@@ -20,7 +20,10 @@ import {
   DiscordSummaryPublisher,
   InProcessProjectionLock,
 } from "@discord-meeting/discord-adapter";
-import { ProcessMeetingSummary } from "@discord-meeting/meeting-core";
+import {
+  ProcessMeetingSummary,
+  type FinalTranscriptionPort,
+} from "@discord-meeting/meeting-core";
 import {
   createS3BinaryArtifactReader,
   createS3BinaryArtifactWriter,
@@ -43,6 +46,10 @@ import {
   SpeachesFinalTranscriptionAdapter,
 } from "@discord-meeting/speaches-adapter";
 import { SubscriptionRuntimeSummaryAdapter } from "@discord-meeting/subscription-runtime-adapter";
+import {
+  FfmpegPcmTranscoder,
+  VoicetextFinalTranscriptionAdapter,
+} from "@discord-meeting/voicetext-adapter";
 import type { ConnectionOptions } from "bullmq";
 import { Client, GatewayIntentBits } from "discord.js";
 import { Pool } from "pg";
@@ -56,7 +63,10 @@ import {
 } from "./instrumented-processing-ports.js";
 import { PlatformCraigIngress } from "./platform-ingress.js";
 import { PostCallOutboxDispatcher } from "./post-call-outbox-dispatcher.js";
-import { S3OggAudioArtifactReader } from "./s3-ogg-audio-artifact-reader.js";
+import {
+  S3CompleteOggArtifactReader,
+  S3OggAudioArtifactReader,
+} from "./s3-ogg-audio-artifact-reader.js";
 import { GrpcSubscriptionRuntimeTransport } from "./subscription-runtime-grpc-transport.js";
 
 const queuePrefix = "discord-meeting-v1";
@@ -96,31 +106,7 @@ export async function startMeetingPlatform(
     writer: artifactWriter,
   });
   const meetings = new PostgresMeetingRepository(pool);
-  const rawTranscriber = new SpeachesFinalTranscriptionAdapter(
-    new FetchSpeachesTranscriptionClient(config.speaches.baseUrl),
-    new S3OggAudioArtifactReader(artifactReader),
-    {
-      language: "ru",
-      maxBytesPerSpeaker: 64 * 1_024 * 1_024,
-      maxSpeakerTracks: 64,
-      model: config.speaches.model,
-      vocabulary: [
-        "BullMQ",
-        "Craig",
-        "Craig recording",
-        "Discord",
-        "Discord thread",
-        "idempotency key",
-        "live Pipecat assistant",
-        "Meeting Platform",
-        "Pipecat",
-        "PostgreSQL",
-        "PostgreSQL pipeline",
-        "Redis",
-        "Redis queue",
-      ],
-    },
-  );
+  const rawTranscriber = createFinalTranscriber(config, artifactReader);
   const runtimeTransport = new GrpcSubscriptionRuntimeTransport({
     address: config.subscriptionRuntime.address,
     serviceToken: config.secrets.subscriptionRuntimeToken,
@@ -273,6 +259,56 @@ export async function startMeetingPlatform(
   };
 }
 
+function createFinalTranscriber(
+  config: PlatformConfig,
+  artifactReader: ReturnType<typeof createS3BinaryArtifactReader>,
+): FinalTranscriptionPort {
+  const vocabulary = [
+    "BullMQ",
+    "Craig",
+    "Craig recording",
+    "Discord",
+    "Discord thread",
+    "idempotency key",
+    "live Pipecat assistant",
+    "Meeting Platform",
+    "Pipecat",
+    "PostgreSQL",
+    "PostgreSQL pipeline",
+    "Redis",
+    "Redis queue",
+  ] as const;
+  if (config.transcriptionProvider === "speaches") {
+    return new SpeachesFinalTranscriptionAdapter(
+      new FetchSpeachesTranscriptionClient(config.speaches.baseUrl),
+      new S3OggAudioArtifactReader(artifactReader),
+      {
+        language: "ru",
+        maxBytesPerSpeaker: 64 * 1_024 * 1_024,
+        maxSpeakerTracks: 64,
+        model: config.speaches.model,
+        vocabulary,
+      },
+    );
+  }
+  if (config.voicetext === undefined || config.secrets.voicetextServiceToken === undefined) {
+    throw new Error("Voicetext transcription configuration is incomplete");
+  }
+  return new VoicetextFinalTranscriptionAdapter(
+    new S3CompleteOggArtifactReader(artifactReader),
+    new FfmpegPcmTranscoder({ executablePath: "/usr/bin/ffmpeg", timeoutMs: 900_000 }),
+    {
+      endpoint: config.voicetext.webSocketUrl,
+      keyterms: vocabulary,
+      language: "ru",
+      maxArtifactBytesPerSpeaker: 256 * 1_024 * 1_024,
+      maxPcmBytesPerSpeaker: 512 * 1_024 * 1_024,
+      maxSpeakerTracks: 64,
+      token: config.secrets.voicetextServiceToken,
+    },
+  );
+}
+
 function classifyCraigIngressError(error: unknown): Readonly<Record<string, unknown>> {
   if (error instanceof RecordingIngressError) {
     return {
@@ -350,13 +386,7 @@ function createHealthProbes(input: {
       await input.s3.send(new HeadBucketCommand({ Bucket: input.config.s3.bucket }));
     }),
     probe("queue", true, async () => input.queue.waitUntilReady()),
-    probe("stt", true, async (signal) => {
-      const response = await fetch(new URL("/v1/models", input.config.speaches.baseUrl), { signal });
-      await response.body?.cancel();
-      if (!response.ok) {
-        throw new Error("STT dependency is not ready");
-      }
-    }),
+    createTranscriptionHealthProbe(input.config),
     {
       check: async () => {
         const result = await input.runtime.checkHealth();
@@ -369,6 +399,42 @@ function createHealthProbes(input: {
       name: "summary-provider",
     },
   ];
+}
+
+function createTranscriptionHealthProbe(config: PlatformConfig): HealthProbe {
+  if (config.transcriptionProvider === "speaches") {
+    return probe("stt", true, async (signal) => {
+      const response = await fetch(new URL("/v1/models", config.speaches.baseUrl), { signal });
+      await response.body?.cancel();
+      if (!response.ok) {
+        throw new Error("STT dependency is not ready");
+      }
+    });
+  }
+  return probe("stt", true, async (signal) => {
+    const response = await fetch(voicetextHealthUrl(config), { signal });
+    const body = await response.json();
+    if (!response.ok || !isVoicetextHealthy(body)) {
+      throw new Error("STT dependency is not ready");
+    }
+  });
+}
+
+function isVoicetextHealthy(value: unknown): boolean {
+  return typeof value === "object"
+    && value !== null
+    && "status" in value
+    && value.status === "ok";
+}
+
+function voicetextHealthUrl(config: PlatformConfig): URL {
+  if (config.voicetext === undefined) {
+    throw new Error("Voicetext transcription configuration is incomplete");
+  }
+  const endpoint = new URL(config.voicetext.webSocketUrl);
+  endpoint.protocol = "https:";
+  endpoint.pathname = "/health";
+  return endpoint;
 }
 
 function probe(

@@ -4,3 +4,5 @@
 - [ADR-0002: Summary-first V1 with live-ready boundaries](0002-summary-first-v1-with-live-ready-boundaries.md)
 - [ADR-0003: Versioned engineering foundation](0003-versioned-engineering-foundation.md)
 - [ADR-0004: Hosted subscription runtime without an OpenAI API key](0004-hosted-subscription-runtime-without-openai-api-key.md)
+- [ADR-0005: Subscription account custody](0005-subscription-account-custody.md)
+- [ADR-0006: Voicetext-authenticated Deepgram transcription](0006-voicetext-deepgram-streaming-transcription.md)

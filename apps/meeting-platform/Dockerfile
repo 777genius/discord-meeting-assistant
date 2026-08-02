@@ -9,7 +9,10 @@ RUN printf '%s' "${SOURCE_REVISION}" \
 ENV PNPM_HOME=/opt/pnpm \
     PATH=/opt/pnpm:$PATH
 
-RUN corepack enable && corepack prepare pnpm@11.18.0 --activate \
+RUN apt-get update \
+  && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends ca-certificates ffmpeg \
+  && rm -rf /var/lib/apt/lists/* \
+  && corepack enable && corepack prepare pnpm@11.18.0 --activate \
   && groupadd --gid 10001 meeting \
   && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin meeting
 

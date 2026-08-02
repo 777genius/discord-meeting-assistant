@@ -59,6 +59,7 @@ services:
     security_opt: [no-new-privileges:true]
 
   speaches:
+    profiles: [local-stt]
     image: ghcr.io/speaches-ai/speaches:0.9.0-rc.3-cpu@sha256:2163775b6df5e451a71200e8f675fed68dbd8ab184fc604453d549e486f22fd2
     init: true
     restart: unless-stopped
@@ -158,6 +159,9 @@ services:
       SUBSCRIPTION_RUNTIME_ADDRESS: subscription-runtime-sidecar:50052
       SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256: ${SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256:?set launcher SHA-256}
       SUBSCRIPTION_RUNTIME_TOKEN_FILE: /run/secrets/runtime-service-token
+      TRANSCRIPTION_PROVIDER: voicetext
+      VOICETEXT_SERVICE_TOKEN_FILE: /run/secrets/voicetext-service-token
+      VOICETEXT_WS_URL: ${VOICETEXT_WS_URL:-wss://api.voicetext.site/api/v1/transcribe/stream}
     volumes:
       - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/data/spool:/var/lib/discord-meeting/spool
       - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/secrets/platform:/run/secrets:ro
@@ -167,7 +171,6 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
-      speaches: { condition: service_healthy }
       object-storage: { condition: service_started }
       subscription-runtime-sidecar: { condition: service_started }
     healthcheck:

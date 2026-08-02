@@ -17,6 +17,7 @@ governedRoots:
   - packages/recording-ingress-adapter/src
   - packages/speaches-adapter/src
   - packages/subscription-runtime-adapter/src
+  - packages/voicetext-adapter/src
   - tooling/architecture-baseline/src
 boundaries:
   - id: core.meeting
@@ -143,6 +144,25 @@ boundaries:
       builtins:
         - node:crypto
       runtimeReferences: []
+  - id: adapters.voicetext
+    roots:
+      - packages/voicetext-adapter/src
+    allow:
+      boundaries:
+        - core.meeting
+      packages:
+        - "@discord-meeting/meeting-core"
+        - ws
+      builtins:
+        - node:child_process
+        - node:crypto
+        - node:events
+        - node:http
+        - node:perf_hooks
+        - node:stream
+        - node:stream/promises
+        - node:timers/promises
+      runtimeReferences: []
   - id: e2e.discord-actors
     roots:
       - apps/discord-e2e-actors/src
@@ -170,6 +190,7 @@ boundaries:
         - adapters.recording-ingress
         - adapters.speaches
         - adapters.subscription-runtime
+        - adapters.voicetext
         - contracts.craig-gateway
         - core.meeting
       packages:
@@ -184,6 +205,7 @@ boundaries:
         - "@discord-meeting/recording-ingress-adapter"
         - "@discord-meeting/speaches-adapter"
         - "@discord-meeting/subscription-runtime-adapter"
+        - "@discord-meeting/voicetext-adapter"
         - "@grpc/grpc-js"
         - "@grpc/proto-loader"
         - bullmq

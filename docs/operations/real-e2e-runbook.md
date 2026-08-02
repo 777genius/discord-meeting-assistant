@@ -37,6 +37,23 @@ Secrets must be provisioned through the host's existing secret mechanism or a
 new permission-restricted deployment environment file outside the checkout.
 Never print them during provisioning or health checks.
 
+Production transcription uses the Voicetext protocol-v2 machine boundary from
+ADR 0006. Rotate the `meeting-platform` machine identity with the Voicetext CLI
+and route its one-time stdout directly into the host secret file; never put the
+bearer in argv, an environment variable, shell history, or this repository. The
+isolated deployment expects:
+
+```text
+secrets/platform/voicetext-service-token  root:root 0400
+```
+
+Before a Discord campaign, a canary must prove `ready`, immutable finalized
+segments, and `finalize_complete` against the same Voicetext endpoint. A transport
+success is insufficient: verify the canary transcript against its pinned
+required terms and WER/CER thresholds. The local Speaches container is available
+only through the `local-stt` Compose profile and is not part of the production
+campaign.
+
 ## Required proof
 
 Local deterministic and disposable-container tests are the default gate. A real
