@@ -1,0 +1,58 @@
+{
+  "events": [
+    {
+      "actorName": "speaker-a",
+      "atEpochMs": 1785686078032,
+      "type": "ready"
+    },
+    {
+      "actorName": "speaker-b",
+      "atEpochMs": 1785686078032,
+      "type": "ready"
+    },
+    {
+      "actorName": "speaker-a",
+      "fixtureId": "speaker-a",
+      "type": "playback-start",
+      "atEpochMs": 1785686082710
+    },
+    {
+      "actorName": "speaker-a",
+      "fixtureId": "speaker-a",
+      "type": "playback-end",
+      "atEpochMs": 1785686109057
+    },
+    {
+      "actorName": "speaker-b",
+      "fixtureId": "speaker-b",
+      "type": "playback-start",
+      "atEpochMs": 1785686113077
+    },
+    {
+      "actorName": "speaker-b",
+      "fixtureId": "speaker-b",
+      "type": "playback-end",
+      "atEpochMs": 1785686148189
+    }
+  ],
+  "fixtureSetId": "discord-meeting-ru-en-v6",
+  "fixtures": [
+    {
+      "audioSha256": "8e29a933ef95eaf1f149b150ff123f90a3276847fcd4941ccb6c55b24561b9d8",
+      "durationMs": 26235,
+      "fixtureId": "speaker-a",
+      "sourceSha256": "5aa51fdfca1325cf5b78a35927f1a256989dffc5adcf50cd6d8e5c02b0493a44"
+    },
+    {
+      "audioSha256": "f169479293fcf2911c8b3bffc32a187fdae0899b67267fde3171e2d2b8de3d2e",
+      "durationMs": 34996,
+      "fixtureId": "speaker-b",
+      "sourceSha256": "ce6d53650f73aac8872289ede15a67b6a74535d4620c572bd17a46fd1322df00"
+    }
+  ],
+  "recordingId": null,
+  "runId": "campaign-v14-sequential-2",
+  "scenario": "sequential",
+  "schemaVersion": 1,
+  "timelineOrigin": "unix-epoch"
+}
