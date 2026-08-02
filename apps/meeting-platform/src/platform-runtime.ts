@@ -101,12 +101,17 @@ export async function startMeetingPlatform(
       vocabulary: [
         "BullMQ",
         "Craig",
+        "Craig recording",
         "Discord",
+        "Discord thread",
         "idempotency key",
+        "live Pipecat assistant",
         "Meeting Platform",
         "Pipecat",
         "PostgreSQL",
+        "PostgreSQL pipeline",
         "Redis",
+        "Redis queue",
       ],
     },
   );

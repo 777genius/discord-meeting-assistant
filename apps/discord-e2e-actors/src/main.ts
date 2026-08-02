@@ -52,9 +52,14 @@ async function main(): Promise<void> {
       throw new Error("Both Discord E2E actors are required");
     }
     await speakerA.waitForVoiceMember(config.recorderBotId, config.readyTimeoutMilliseconds);
+    const epochOriginMs = Date.now();
+    const monotonicOrigin = process.hrtime.bigint();
+    const epochNow = (): number => epochOriginMs + Number(
+      (process.hrtime.bigint() - monotonicOrigin) / 1_000_000n,
+    );
     const events: Array<ActorScenarioEvent & { readonly atEpochMs: number }> = [
-      { actorName: "speaker-a", atEpochMs: Date.now(), type: "ready" },
-      { actorName: "speaker-b", atEpochMs: Date.now(), type: "ready" },
+      { actorName: "speaker-a", atEpochMs: epochNow(), type: "ready" },
+      { actorName: "speaker-b", atEpochMs: epochNow(), type: "ready" },
     ];
     process.stdout.write(`Discord E2E starting ${config.scenario} synthetic playback.\n`);
     await runActorScenario(speakerA, speakerB, {
@@ -63,7 +68,7 @@ async function main(): Promise<void> {
     }, systemScenarioClock, (event) => {
       events.push({
         ...event,
-        atEpochMs: Date.now(),
+        atEpochMs: epochNow(),
       });
     });
     await writeActorRun(config.actorRunOutputPath, {
