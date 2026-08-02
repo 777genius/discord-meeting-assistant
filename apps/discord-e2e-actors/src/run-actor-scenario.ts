@@ -1,6 +1,11 @@
 export interface VoiceActor {
-  play(): Promise<void>;
+  play(lifecycle: VoicePlaybackLifecycleObserver): Promise<void>;
   close(): Promise<void>;
+}
+
+export interface VoicePlaybackLifecycleObserver {
+  onIdle(): void;
+  onPlaying(): void;
 }
 
 export interface ReconnectableVoiceActor extends VoiceActor {
@@ -50,7 +55,6 @@ export async function runActorScenario(
   try {
     await clock.wait(scenario.speakerBDelayMilliseconds);
     if (scenario.kind === "reconnect") {
-      await playObserved(speakerB, "speaker-b", observe);
       observe({ actorName: "speaker-b", type: "disconnected" });
       await speakerB.reconnect();
       observe({ actorName: "speaker-b", type: "ready" });
@@ -71,9 +75,26 @@ async function playObserved(
   actorName: "speaker-a" | "speaker-b",
   observe: ActorScenarioObserver,
 ): Promise<void> {
-  observe({ actorName, fixtureId: actorName, type: "playback-start" });
-  await actor.play();
-  observe({ actorName, fixtureId: actorName, type: "playback-end" });
+  const state: { value: "idle" | "pending" | "playing" } = { value: "pending" };
+  await actor.play({
+    onIdle: () => {
+      if (state.value !== "playing") {
+        throw new Error(`${actorName} reported playback idle before playing`);
+      }
+      state.value = "idle";
+      observe({ actorName, fixtureId: actorName, type: "playback-end" });
+    },
+    onPlaying: () => {
+      if (state.value !== "pending") {
+        throw new Error(`${actorName} reported playback playing more than once`);
+      }
+      state.value = "playing";
+      observe({ actorName, fixtureId: actorName, type: "playback-start" });
+    },
+  });
+  if (state.value !== "idle") {
+    throw new Error(`${actorName} completed playback without reaching idle`);
+  }
 }
 
 export async function closeActors(actors: readonly VoiceActor[]): Promise<void> {

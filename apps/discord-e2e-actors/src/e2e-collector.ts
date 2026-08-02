@@ -165,9 +165,18 @@ export async function collectRetainedE2eEvidence(
   const replayPublication = parsePublication(replaySnapshot.publication.externalPublicationId);
   assertDiscordReference(afterDiscord, replayPublication);
 
-  const recordingDurationMs = Math.max(
-    ...s3.tracks.map((track) => track.timelineOffsetMs + track.durationMs),
+  if (s3.tracks.length === 0) {
+    throw new Error("Authoritative S3 manifest has no speaker tracks");
+  }
+  const recordingMediaOriginMs = Math.min(
+    ...s3.tracks.map(({ timelineOffsetMs }) => timelineOffsetMs),
   );
+  const recordingDurationMs = recordingMediaOriginMs + Math.max(
+    ...s3.tracks.map(({ durationMs }) => durationMs),
+  );
+  if (!Number.isSafeInteger(recordingDurationMs)) {
+    throw new Error("Authoritative S3 recording duration is outside the safe range");
+  }
   return retainedE2eEvidenceV1Schema.parse({
     actorRun,
     database: {

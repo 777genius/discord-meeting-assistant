@@ -71,7 +71,7 @@ function manifest(): FixtureManifestV1 {
       {
         expectOverlap: true,
         kind: "reconnect",
-        playbackCountByFixture: { "speaker-a": 1, "speaker-b": 2 },
+        playbackCountByFixture: { "speaker-a": 1, "speaker-b": 1 },
         requireReconnect: true,
         speakerBDelayMs: 500,
       },
@@ -166,7 +166,7 @@ function overlapEvidence(): RetainedE2eEvidenceV1 {
           },
           {
             checksumSha256: "2".repeat(64),
-            durationMs: 7_000,
+            durationMs: 7_750,
             locator: "s3://bucket/meeting-1/b.ogg",
             sizeBytes: 1_000,
             speakerId: speakerBId,
@@ -272,15 +272,13 @@ function reconnectEvidence(): RetainedE2eEvidenceV1 {
     { actorName: "speaker-a", atRecordingMs: 0, type: "ready" },
     { actorName: "speaker-b", atRecordingMs: 0, type: "ready" },
     { actorName: "speaker-a", atRecordingMs: 100, fixtureId: "speaker-a", type: "playback-start" },
-    { actorName: "speaker-b", atRecordingMs: 600, fixtureId: "speaker-b", type: "playback-start" },
+    { actorName: "speaker-b", atRecordingMs: 600, type: "disconnected" },
+    { actorName: "speaker-b", atRecordingMs: 1_100, type: "ready" },
+    { actorName: "speaker-b", atRecordingMs: 1_200, fixtureId: "speaker-b", type: "playback-start" },
     { actorName: "speaker-a", atRecordingMs: 7_100, fixtureId: "speaker-a", type: "playback-end" },
-    { actorName: "speaker-b", atRecordingMs: 7_600, fixtureId: "speaker-b", type: "playback-end" },
-    { actorName: "speaker-b", atRecordingMs: 7_700, type: "disconnected" },
-    { actorName: "speaker-b", atRecordingMs: 8_200, type: "ready" },
-    { actorName: "speaker-b", atRecordingMs: 8_300, fixtureId: "speaker-b", type: "playback-start" },
-    { actorName: "speaker-b", atRecordingMs: 15_300, fixtureId: "speaker-b", type: "playback-end" },
+    { actorName: "speaker-b", atRecordingMs: 8_200, fixtureId: "speaker-b", type: "playback-end" },
   ];
-  evidence.recording.durationMs = 15_300;
+  evidence.recording.durationMs = 8_200;
   const speakerBS3Track = evidence.recording.s3.tracks[1];
   const turnB = evidence.transcript.turns[1];
   if (speakerBS3Track === undefined || turnB === undefined) {
@@ -288,14 +286,14 @@ function reconnectEvidence(): RetainedE2eEvidenceV1 {
   }
   evidence.recording.s3.tracks[1] = {
     ...speakerBS3Track,
-    durationMs: 14_700,
-    timelineOffsetMs: 600,
+    durationMs: 8_100,
+    timelineOffsetMs: 100,
   };
   evidence.transcript.turns[1] = {
     ...turnB,
-    endMs: 15_300,
-    startMs: 600,
-    text: `${speakerBText} ${speakerBText}`,
+    endMs: 8_200,
+    startMs: 1_200,
+    text: speakerBText,
   };
   return evidence;
 }
@@ -336,6 +334,17 @@ describe("verifyRetainedE2eEvidence", () => {
       ],
       passed: true,
     });
+  });
+
+  it("uses the shared Craig media origin once for cooked track durations", () => {
+    const evidence = overlapEvidence();
+
+    expect(evidence.recording.s3.tracks).toMatchObject([
+      { durationMs: 7_000, timelineOffsetMs: 100 },
+      { durationMs: 7_750, timelineOffsetMs: 850 },
+    ]);
+    expect(evidence.recording.durationMs).toBe(7_850);
+    expect(verifyRetainedE2eEvidence(manifest(), evidence).passed).toBe(true);
   });
 
   it("rejects inaccurate transcription and missing required terminology", () => {
@@ -432,14 +441,64 @@ describe("verifyRetainedE2eEvidence", () => {
     ]));
   });
 
-  it("requires playback before and after a ready reconnect", () => {
+  it("requires initial ready, reconnect during speaker A, then one playback", () => {
     const evidence = reconnectEvidence();
 
     expect(verifyRetainedE2eEvidence(manifest(), evidence).passed).toBe(true);
 
-    evidence.actorRun.events = evidence.actorRun.events.filter(({ type }) => type !== "ready");
+    const initialReadyIndex = evidence.actorRun.events.findIndex(
+      (event) => event.actorName === "speaker-b" && event.type === "ready",
+    );
+    if (initialReadyIndex < 0) {
+      throw new Error("speaker-b initial ready event is required");
+    }
+    evidence.actorRun.events.splice(initialReadyIndex, 1);
     const codes = verifyRetainedE2eEvidence(manifest(), evidence).failures.map(({ code }) => code);
-    expect(codes).toEqual(expect.arrayContaining(["ACTOR_NOT_READY", "RECONNECT_SEQUENCE_INVALID"]));
+    expect(codes).toContain("RECONNECT_SEQUENCE_INVALID");
+  });
+
+  it("rejects reconnect evidence bound to a different recording", () => {
+    const evidence = reconnectEvidence();
+    evidence.actorRun.recordingId = "different-recording";
+
+    const codes = verifyRetainedE2eEvidence(manifest(), evidence).failures.map(({ code }) => code);
+
+    expect(codes).toContain("ACTOR_RECORDING_CORRELATION_MISMATCH");
+  });
+
+  it("rejects speaker B playback beginning before reconnect ready", () => {
+    const evidence = reconnectEvidence();
+    const reconnectReadyIndex = evidence.actorRun.events.findIndex(
+      (event, index) => index > 1 && event.actorName === "speaker-b" && event.type === "ready",
+    );
+    const reconnectReady = evidence.actorRun.events[reconnectReadyIndex];
+    if (reconnectReady === undefined) {
+      throw new Error("speaker-b reconnect ready event is required");
+    }
+    evidence.actorRun.events[reconnectReadyIndex] = {
+      ...reconnectReady,
+      atRecordingMs: 1_300,
+    };
+
+    const codes = verifyRetainedE2eEvidence(manifest(), evidence).failures.map(({ code }) => code);
+
+    expect(codes).toContain("RECONNECT_SEQUENCE_INVALID");
+  });
+
+  it("rejects reconnect completion outside the continuing speaker A playback", () => {
+    const evidence = reconnectEvidence();
+    const readyIndex = evidence.actorRun.events.findIndex(
+      (event, index) => index > 1 && event.actorName === "speaker-b" && event.type === "ready",
+    );
+    const ready = evidence.actorRun.events[readyIndex];
+    if (ready === undefined) {
+      throw new Error("speaker-b reconnect ready event is required");
+    }
+    evidence.actorRun.events[readyIndex] = { ...ready, atRecordingMs: 7_200 };
+
+    const codes = verifyRetainedE2eEvidence(manifest(), evidence).failures.map(({ code }) => code);
+
+    expect(codes).toContain("RECONNECT_NOT_DURING_SPEAKER_A");
   });
 
   it("accepts sequential Craig tracks with offset zero and retained initial silence", () => {
@@ -478,13 +537,13 @@ describe("verifyRetainedE2eEvidence", () => {
     expect(codes).toContain("ACTOR_S3_TIMELINE_MISMATCH");
   });
 
-  it("uses the first and last reconnect playback windows as transcript bounds", () => {
+  it("uses the single post-reconnect playback window as transcript bounds", () => {
     const lateStart = reconnectEvidence();
     const lateStartTurn = lateStart.transcript.turns[1];
     if (lateStartTurn === undefined) {
       throw new Error("speaker-b reconnect turn is required");
     }
-    lateStart.transcript.turns[1] = { ...lateStartTurn, startMs: 8_300 };
+    lateStart.transcript.turns[1] = { ...lateStartTurn, startMs: 2_500 };
     expect(
       verifyRetainedE2eEvidence(manifest(), lateStart).failures.map(({ code }) => code),
     ).toContain("START_TIMESTAMP_MISMATCH");

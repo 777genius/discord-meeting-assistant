@@ -1,8 +1,20 @@
-import { describe, expect, it } from "vitest";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { MacOsKeychainSecretReader } from "../src/keychain.js";
+import { afterEach, describe, expect, it } from "vitest";
+
+import { FileSecretReader, MacOsKeychainSecretReader } from "../src/keychain.js";
 
 const validToken = `${"a".repeat(24)}.${"b".repeat(6)}.${"c".repeat(38)}`;
+const temporaryDirectories: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(temporaryDirectories.splice(0).map(async (path) => rm(path, {
+    force: true,
+    recursive: true,
+  })));
+});
 
 describe("MacOsKeychainSecretReader", () => {
   it.runIf(process.platform === "darwin")(
@@ -44,4 +56,27 @@ describe("MacOsKeychainSecretReader", () => {
       );
     },
   );
+});
+
+describe("FileSecretReader", () => {
+  it("reads a private regular secret file", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "discord-e2e-secrets-"));
+    temporaryDirectories.push(directory);
+    await writeFile(join(directory, "speaker-a"), `${validToken}\n`, { mode: 0o600 });
+
+    await expect(new FileSecretReader(directory).read("speaker-a")).resolves.toBe(validToken);
+  });
+
+  it("rejects traversal, malformed tokens, and group-readable files", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "discord-e2e-secrets-"));
+    temporaryDirectories.push(directory);
+    await writeFile(join(directory, "speaker-a"), "short", { mode: 0o600 });
+    await writeFile(join(directory, "speaker-b"), `${validToken}\n`, { mode: 0o600 });
+    await chmod(join(directory, "speaker-b"), 0o640);
+    const reader = new FileSecretReader(directory);
+
+    await expect(reader.read("../speaker-a")).rejects.toThrow("Invalid");
+    await expect(reader.read("speaker-a")).rejects.toThrow("Missing or unsafe");
+    await expect(reader.read("speaker-b")).rejects.toThrow("Missing or unsafe");
+  });
 });

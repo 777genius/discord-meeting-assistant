@@ -377,8 +377,11 @@ function verifyS3Evidence(
   if (s3.manifestLocator.length === 0 || s3.sourceChecksumSha256.length !== 64) {
     fail("INVALID_S3_MANIFEST", "authoritative S3 manifest proof is incomplete");
   }
-  const durationMs = Math.max(
-    ...s3.tracks.map((track) => track.timelineOffsetMs + track.durationMs),
+  const recordingMediaOriginMs = Math.min(
+    ...s3.tracks.map(({ timelineOffsetMs }) => timelineOffsetMs),
+  );
+  const durationMs = recordingMediaOriginMs + Math.max(
+    ...s3.tracks.map(({ durationMs: trackDurationMs }) => trackDurationMs),
   );
   if (Math.abs(durationMs - evidence.recording.durationMs) > 1) {
     fail("S3_DURATION_MISMATCH", "recording duration does not match verified S3 tracks");
@@ -508,7 +511,7 @@ function verifyActorRun(
     verifyReconnect(manifest, evidence, windows, fail);
   }
 
-  verifyScenarioTiming(manifest, scenario, windows, fail);
+  verifyScenarioTiming(manifest, evidence, scenario, windows, fail);
   verifyActorS3Timing(manifest, evidence, windows, fail);
 
   const playbackHasOverlap = windows.some((left, leftIndex) =>
@@ -540,6 +543,9 @@ function verifyActorS3Timing(
   windows: readonly PlaybackWindow[],
   fail: (code: string, message: string) => void,
 ): void {
+  const recordingMediaOriginMs = Math.min(
+    ...evidence.recording.s3.tracks.map(({ timelineOffsetMs }) => timelineOffsetMs),
+  );
   for (const fixture of manifest.fixtures) {
     const fixtureWindows = windows.filter(({ fixtureId }) => fixtureId === fixture.fixtureId);
     const track = evidence.recording.s3.tracks.find(
@@ -550,7 +556,7 @@ function verifyActorS3Timing(
       continue;
     }
 
-    const trackEndMs = track.timelineOffsetMs + track.durationMs;
+    const trackEndMs = recordingMediaOriginMs + track.durationMs;
     for (const window of fixtureWindows) {
       const startsBeforeTrack =
         window.startMs + manifest.thresholds.timestampToleranceMs < track.timelineOffsetMs;
@@ -568,6 +574,7 @@ function verifyActorS3Timing(
 
 function verifyScenarioTiming(
   manifest: FixtureManifestV1,
+  evidence: RetainedE2eEvidenceV1,
   scenario: FixtureManifestV1["scenarios"][number],
   windows: readonly PlaybackWindow[],
   fail: (code: string, message: string) => void,
@@ -580,9 +587,14 @@ function verifyScenarioTiming(
     return;
   }
 
+  const reconnectDisconnect = evidence.actorRun.events.find(
+    (event) => event.actorName === "speaker-b" && event.type === "disconnected",
+  );
   const observedDelay = scenario.kind === "sequential"
     ? speakerBWindow.startMs - speakerAWindow.endMs
-    : speakerBWindow.startMs - speakerAWindow.startMs;
+    : scenario.kind === "reconnect"
+      ? (reconnectDisconnect?.atRecordingMs ?? speakerBWindow.startMs) - speakerAWindow.startMs
+      : speakerBWindow.startMs - speakerAWindow.startMs;
   if (Math.abs(observedDelay - scenario.speakerBDelayMs) > manifest.thresholds.timestampToleranceMs) {
     fail("SCENARIO_DELAY_MISMATCH", `speaker-b delay ${observedDelay}ms is outside tolerance`);
   }
@@ -602,23 +614,59 @@ function verifyReconnect(
   const speakerBWindows = windows
     .filter(({ fixtureId }) => fixtureId === speakerB.fixtureId)
     .toSorted((left, right) => left.startMs - right.startMs);
-  const first = speakerBWindows[0];
-  const second = speakerBWindows[1];
-  if (first === undefined || second === undefined) {
-    fail("RECONNECT_PLAYBACK_MISSING", "speaker-b must play before and after reconnect");
+  const playback = speakerBWindows[0];
+  if (playback === undefined || speakerBWindows.length !== 1) {
+    fail("RECONNECT_PLAYBACK_INVALID", "speaker-b must play exactly once after reconnect");
     return;
   }
 
-  const between = evidence.actorRun.events.filter(
-    (event) =>
-      event.actorName === speakerB.actorName &&
-      event.atRecordingMs >= first.endMs &&
-      event.atRecordingMs <= second.startMs,
+  const speakerBEvents = evidence.actorRun.events.filter(
+    ({ actorName }) => actorName === speakerB.actorName,
   );
-  const disconnectedIndex = between.findIndex(({ type }) => type === "disconnected");
-  const readyIndex = between.findIndex(({ type }) => type === "ready");
-  if (disconnectedIndex < 0 || readyIndex <= disconnectedIndex) {
-    fail("RECONNECT_SEQUENCE_INVALID", "speaker-b needs disconnected then ready events between playbacks");
+  const expectedTypes = [
+    "ready",
+    "disconnected",
+    "ready",
+    "playback-start",
+    "playback-end",
+  ] as const;
+  if (
+    speakerBEvents.length !== expectedTypes.length ||
+    speakerBEvents.some((event, index) => event.type !== expectedTypes[index])
+  ) {
+    fail(
+      "RECONNECT_SEQUENCE_INVALID",
+      "speaker-b needs initial ready, disconnected, ready, then exactly one playback",
+    );
+    return;
+  }
+
+  const disconnected = speakerBEvents[1];
+  const reconnectedReady = speakerBEvents[2];
+  const initialReady = speakerBEvents[0];
+  const speakerA = manifest.fixtures.find(({ actorName }) => actorName === "speaker-a");
+  const speakerAWindow = windows.find(({ fixtureId }) => fixtureId === speakerA?.fixtureId);
+  if (
+    initialReady === undefined ||
+    disconnected === undefined ||
+    reconnectedReady === undefined ||
+    (speakerAWindow !== undefined && initialReady.atRecordingMs > speakerAWindow.startMs) ||
+    disconnected.atRecordingMs > reconnectedReady.atRecordingMs ||
+    reconnectedReady.atRecordingMs > playback.startMs
+  ) {
+    fail(
+      "RECONNECT_SEQUENCE_INVALID",
+      "speaker-b initial ready must precede speaker-a and playback must start after reconnect ready",
+    );
+  }
+  if (
+    speakerAWindow === undefined ||
+    disconnected === undefined ||
+    reconnectedReady === undefined ||
+    disconnected.atRecordingMs < speakerAWindow.startMs ||
+    reconnectedReady.atRecordingMs > speakerAWindow.endMs
+  ) {
+    fail("RECONNECT_NOT_DURING_SPEAKER_A", "speaker-b must disconnect and become ready while speaker-a plays");
   }
 }
 

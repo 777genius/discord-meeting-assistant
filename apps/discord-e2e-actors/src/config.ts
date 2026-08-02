@@ -12,6 +12,7 @@ const actorEnvironmentSchema = z.object({
   DISCORD_E2E_SPEAKER_A_FIXTURE: z.string().min(1).default("test/fixtures/speaker-a.ru-en.ogg"),
   DISCORD_E2E_SPEAKER_B_FIXTURE: z.string().min(1).default("test/fixtures/speaker-b.ru-en.ogg"),
   DISCORD_E2E_KEYCHAIN_SERVICE: z.string().min(1).default("discord-voice-bot-e2e"),
+  DISCORD_E2E_SECRET_DIRECTORY: z.string().refine(isAbsolute).optional(),
   DISCORD_E2E_SPEAKER_A_ACCOUNT: z.string().min(1).default("speaker-a"),
   DISCORD_E2E_SPEAKER_B_ACCOUNT: z.string().min(1).default("speaker-b"),
   DISCORD_E2E_SPEAKER_B_DELAY_MS: z.coerce.number().int().min(0).max(60_000).default(750),
@@ -27,6 +28,7 @@ export interface ActorConfig {
   readonly guildId: string;
   readonly voiceChannelId: string;
   readonly keychainService: string;
+  readonly secretDirectory: string | undefined;
   readonly scenario: "overlap" | "sequential" | "reconnect";
   readonly speakerBDelayMilliseconds: number;
   readonly readyTimeoutMilliseconds: number;
@@ -47,6 +49,7 @@ export function loadActorConfig(environment: NodeJS.ProcessEnv): ActorConfig {
     guildId: parsed.DISCORD_E2E_GUILD_ID,
     voiceChannelId: parsed.DISCORD_E2E_VOICE_CHANNEL_ID,
     keychainService: parsed.DISCORD_E2E_KEYCHAIN_SERVICE,
+    secretDirectory: parsed.DISCORD_E2E_SECRET_DIRECTORY,
     scenario: parsed.DISCORD_E2E_SCENARIO,
     speakerBDelayMilliseconds: parsed.DISCORD_E2E_SPEAKER_B_DELAY_MS,
     readyTimeoutMilliseconds: parsed.DISCORD_E2E_READY_TIMEOUT_MS,

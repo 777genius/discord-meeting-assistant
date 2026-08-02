@@ -3,7 +3,7 @@
 This test-only CLI connects two official bot applications to one private guild
 voice channel and plays synthetic Ogg Opus fixtures with controlled overlap,
 strictly sequential playback, or one speaker reconnecting during the same recording.
-It never accepts bot tokens through environment variables or files.
+It never accepts bot tokens directly through environment variables.
 
 Generate the Russian fixtures with embedded English technical terms before the
 first external run. The command uses macOS `say` (voice `Milena` by default),
@@ -31,6 +31,12 @@ DISCORD_E2E_ACTOR_RUN_OUTPUT=/absolute/evidence/overlap.actor-run.json \
 pnpm --filter @discord-meeting/discord-e2e-actors start
 ```
 
+For an isolated Linux test host, build the package Dockerfile and mount a private
+read-only directory containing `speaker-a` and `speaker-b` files. Set
+`DISCORD_E2E_SECRET_DIRECTORY` to the mount path; every file must be regular,
+owned by the container user, and have no group/other permission bits. Delete the
+host copies immediately after the campaign.
+
 `runId` is chosen before the call. Craig's random `recordingId` is deliberately
 not required by the actor process. Actor evidence contains absolute wall-clock
 events and is bound to one explicit recording only by the collector after the
@@ -40,9 +46,10 @@ Optional environment settings override the Keychain service/account names,
 fixture paths, scenario, speaker B delay, and readiness/playback timeouts. The
 scenario is selected with `DISCORD_E2E_SCENARIO=overlap|sequential|reconnect` and
 defaults to `overlap`. For `sequential`, the delay is the silent gap after speaker
-A completes. For `reconnect`, speaker B plays once, disconnects, waits for a new
-ready voice connection, and plays again. Do not run this CLI against a public or
-user-owned guild.
+A completes. For `reconnect`, the delay selects when speaker B disconnects while
+speaker A continues; speaker B then waits for a new ready voice connection and
+plays its fixture exactly once. Do not run this CLI against a public or user-owned
+guild.
 
 After the call finishes, run the collector with the explicit Craig recording ID.
 It reads the actual Postgres snapshot/counts over the isolated SSH deployment,

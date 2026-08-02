@@ -31,6 +31,9 @@ describe("synthetic actor fixtures", () => {
       "overlap",
       "reconnect",
     ]);
+    expect(
+      manifest.scenarios.find(({ kind }) => kind === "reconnect")?.playbackCountByFixture,
+    ).toEqual({ "speaker-a": 1, "speaker-b": 1 });
     for (const fixture of manifest.fixtures) {
       const source = await readFile(fixture.sourcePath);
       expect(createHash("sha256").update(source).digest("hex")).toBe(fixture.sourceSha256);

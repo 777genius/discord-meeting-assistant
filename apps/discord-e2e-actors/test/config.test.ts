@@ -15,12 +15,30 @@ describe("loadActorConfig", () => {
     });
 
     expect(config.keychainService).toBe("discord-voice-bot-e2e");
+    expect(config.secretDirectory).toBeUndefined();
     expect(config.scenario).toBe("overlap");
     expect(config.speakers).toEqual([
       { name: "speaker-a", account: "speaker-a", fixturePath: "test/fixtures/speaker-a.ru-en.ogg" },
       { name: "speaker-b", account: "speaker-b", fixturePath: "test/fixtures/speaker-b.ru-en.ogg" },
     ]);
     expect(config.speakerBDelayMilliseconds).toBe(750);
+  });
+
+  it("accepts only an absolute file-secret directory for isolated host actors", () => {
+    const baseEnvironment = {
+      DISCORD_E2E_GUILD_ID: "11111111111111111",
+      DISCORD_E2E_VOICE_CHANNEL_ID: "22222222222222222",
+      ...requiredCorrelation,
+    };
+
+    expect(loadActorConfig({
+      ...baseEnvironment,
+      DISCORD_E2E_SECRET_DIRECTORY: "/run/secrets/discord-e2e",
+    }).secretDirectory).toBe("/run/secrets/discord-e2e");
+    expect(() => loadActorConfig({
+      ...baseEnvironment,
+      DISCORD_E2E_SECRET_DIRECTORY: "relative/secrets",
+    })).toThrow();
   });
 
   it("selects sequential and reconnect scenarios without accepting arbitrary commands", () => {

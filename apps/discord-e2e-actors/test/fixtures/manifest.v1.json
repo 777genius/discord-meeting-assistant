@@ -64,7 +64,7 @@
       "expectOverlap": true,
       "requireReconnect": true,
       "speakerBDelayMs": 750,
-      "playbackCountByFixture": { "speaker-a": 1, "speaker-b": 2 }
+      "playbackCountByFixture": { "speaker-a": 1, "speaker-b": 1 }
     }
   ]
 }

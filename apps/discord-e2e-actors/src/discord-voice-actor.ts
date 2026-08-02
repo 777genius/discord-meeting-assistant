@@ -20,7 +20,10 @@ import {
   type VoiceChannel,
 } from "discord.js";
 
-import type { ReconnectableVoiceActor } from "./run-actor-scenario.js";
+import type {
+  ReconnectableVoiceActor,
+  VoicePlaybackLifecycleObserver,
+} from "./run-actor-scenario.js";
 
 export interface DiscordVoiceActorInput {
   readonly name: string;
@@ -70,7 +73,7 @@ class ConnectedDiscordVoiceActor implements RecorderAwareVoiceActor {
     });
   }
 
-  async play(): Promise<void> {
+  async play(lifecycle: VoicePlaybackLifecycleObserver): Promise<void> {
     const connection = this.connection;
     if (connection === undefined) {
       throw new Error("Discord voice actor is not connected");
@@ -85,7 +88,12 @@ class ConnectedDiscordVoiceActor implements RecorderAwareVoiceActor {
 
     try {
       player.play(createAudioResource(this.fixturePath, { inputType: StreamType.OggOpus }));
+      // Playing excludes local resource buffering; the first Discord voice dispatch follows on
+      // the next player tick. It is a sender-side boundary, not a remote Craig receive ack.
+      await entersState(player, AudioPlayerStatus.Playing, this.playbackTimeoutMilliseconds);
+      lifecycle.onPlaying();
       await entersState(player, AudioPlayerStatus.Idle, this.playbackTimeoutMilliseconds);
+      lifecycle.onIdle();
     } finally {
       player.stop(true);
       subscription.unsubscribe();

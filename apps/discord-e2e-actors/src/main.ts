@@ -6,7 +6,7 @@ import {
   connectDiscordVoiceActor,
   type RecorderAwareVoiceActor,
 } from "./discord-voice-actor.js";
-import { MacOsKeychainSecretReader } from "./keychain.js";
+import { FileSecretReader, MacOsKeychainSecretReader } from "./keychain.js";
 import { loadVerifiedFixtureSet } from "./fixture-integrity.js";
 import {
   closeActors,
@@ -15,13 +15,17 @@ import {
   type ActorScenarioEvent,
 } from "./run-actor-scenario.js";
 
+const recorderVoiceSettleMilliseconds = 5_000;
+
 async function main(): Promise<void> {
   const config = loadActorConfig(process.env);
   const verifiedFixtureSet = await loadVerifiedFixtureSet(
     config.fixtureManifestPath,
     config.speakers.map(({ name, fixturePath }) => ({ actorName: name, fixturePath })),
   );
-  const secretReader = new MacOsKeychainSecretReader(config.keychainService);
+  const secretReader = config.secretDirectory === undefined
+    ? new MacOsKeychainSecretReader(config.keychainService)
+    : new FileSecretReader(config.secretDirectory);
   const tokens = await Promise.all(
     config.speakers.map(async (speaker) => secretReader.read(speaker.account)),
   );
@@ -52,7 +56,7 @@ async function main(): Promise<void> {
       throw new Error("Both Discord E2E actors are required");
     }
     await speakerA.waitForVoiceMember(config.recorderBotId, config.readyTimeoutMilliseconds);
-    await systemScenarioClock.wait(1_000);
+    await systemScenarioClock.wait(recorderVoiceSettleMilliseconds);
     const epochOriginMs = Date.now();
     const monotonicOrigin = process.hrtime.bigint();
     const epochNow = (): number => epochOriginMs + Number(
