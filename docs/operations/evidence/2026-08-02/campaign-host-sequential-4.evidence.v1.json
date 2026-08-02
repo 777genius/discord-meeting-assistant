@@ -1,0 +1,269 @@
+{
+  "actorRun": {
+    "events": [
+      {
+        "actorName": "speaker-a",
+        "atRecordingMs": 5653,
+        "type": "ready"
+      },
+      {
+        "actorName": "speaker-b",
+        "atRecordingMs": 5653,
+        "type": "ready"
+      },
+      {
+        "actorName": "speaker-a",
+        "atRecordingMs": 5653,
+        "fixtureId": "speaker-a",
+        "type": "playback-start"
+      },
+      {
+        "actorName": "speaker-a",
+        "atRecordingMs": 18823,
+        "fixtureId": "speaker-a",
+        "type": "playback-end"
+      },
+      {
+        "actorName": "speaker-b",
+        "atRecordingMs": 20325,
+        "fixtureId": "speaker-b",
+        "type": "playback-start"
+      },
+      {
+        "actorName": "speaker-b",
+        "atRecordingMs": 31537,
+        "fixtureId": "speaker-b",
+        "type": "playback-end"
+      }
+    ],
+    "fixtureSetId": "discord-meeting-ru-en-v1",
+    "fixtures": [
+      {
+        "audioSha256": "013ab837a19d5063a649d82f6040aa10c8fd79fdb1ef6d57fa57188619b2a370",
+        "durationMs": 12728,
+        "fixtureId": "speaker-a",
+        "sourceSha256": "d75ef22920bbd6750b7f698b52bd6bd114ecc8112778b275799eaf7db4ada3ff"
+      },
+      {
+        "audioSha256": "cb516f1dadaa91a0f90379f11e14cbe8917280613426be306faf2506054a483e",
+        "durationMs": 10747,
+        "fixtureId": "speaker-b",
+        "sourceSha256": "5212ba5ecd2d3ebd5f928a9eaf6bb41e3be147202b73c09160c6bf5ed55f2439"
+      }
+    ],
+    "recordingId": "b4zZuCrbEOQH",
+    "runId": "campaign-host-sequential-4",
+    "scenario": "sequential",
+    "schemaVersion": 1,
+    "timelineOrigin": "actor-run-start-correlated-to-recording-id"
+  },
+  "fixtureManifestVersion": 1,
+  "fixtureSetId": "discord-meeting-ru-en-v1",
+  "database": {
+    "matchingMeetingCount": 1,
+    "matchingRecordingCount": 1,
+    "matchingSummaryCount": 1,
+    "matchingTranscriptCount": 1
+  },
+  "fixtures": [
+    {
+      "audioSha256": "013ab837a19d5063a649d82f6040aa10c8fd79fdb1ef6d57fa57188619b2a370",
+      "codec": "opus",
+      "durationMs": 12728,
+      "fixtureId": "speaker-a",
+      "sourceSha256": "d75ef22920bbd6750b7f698b52bd6bd114ecc8112778b275799eaf7db4ada3ff"
+    },
+    {
+      "audioSha256": "cb516f1dadaa91a0f90379f11e14cbe8917280613426be306faf2506054a483e",
+      "codec": "opus",
+      "durationMs": 10747,
+      "fixtureId": "speaker-b",
+      "sourceSha256": "5212ba5ecd2d3ebd5f928a9eaf6bb41e3be147202b73c09160c6bf5ed55f2439"
+    }
+  ],
+  "meetingId": "b4zZuCrbEOQH",
+  "publication": {
+    "matchingMessageCount": 1,
+    "matchingThreadCount": 1,
+    "messageId": "1533414337341816854",
+    "threadId": "1533414333462216845"
+  },
+  "recording": {
+    "durationMs": 31533,
+    "recordingId": "b4zZuCrbEOQH",
+    "s3": {
+      "manifestChecksumSha256": "d9e13f649cad1e3215445d0cd57f7d10050f81fe150d309b1de21c542cc6f6fd",
+      "manifestLocator": "s3://meeting-artifacts/recordings/d9d0173f24ace82cd178e2633f8b079f295b178f0dd2762342a9e247525077ef/authoritative/manifest.json",
+      "sourceChecksumSha256": "370585da4f578cff179add062396b1053d1728b84cfa62085eb4949712c53ae1",
+      "tracks": [
+        {
+          "checksumSha256": "cab060d8111969a4b357528a6156c906d022ae2e3dc5e2408e23bc7492cc5aaa",
+          "durationMs": 12780,
+          "locator": "s3://meeting-artifacts/recordings/d9d0173f24ace82cd178e2633f8b079f295b178f0dd2762342a9e247525077ef/authoritative/speakers/1533227577286852649.ogg",
+          "sizeBytes": 154891,
+          "speakerId": "1533227577286852649",
+          "timelineOffsetMs": 6053
+        },
+        {
+          "checksumSha256": "d2e8d6f8087c00cc6a73b30c9ba6888cfb0c42f59296023bd01c2f71f0e36a42",
+          "durationMs": 25480,
+          "locator": "s3://meeting-artifacts/recordings/d9d0173f24ace82cd178e2633f8b079f295b178f0dd2762342a9e247525077ef/authoritative/speakers/1533228054724346087.ogg",
+          "sizeBytes": 152746,
+          "speakerId": "1533228054724346087",
+          "timelineOffsetMs": 6053
+        }
+      ]
+    },
+    "speakerIds": [
+      "1533227577286852649",
+      "1533228054724346087"
+    ]
+  },
+  "replay": {
+    "matchingMeetingCount": 1,
+    "matchingMessageCount": 1,
+    "matchingRecordingCount": 1,
+    "matchingSummaryCount": 1,
+    "matchingThreadCount": 1,
+    "matchingTranscriptCount": 1,
+    "meetingId": "b4zZuCrbEOQH",
+    "messageId": "1533414337341816854",
+    "recordingId": "b4zZuCrbEOQH",
+    "summaryId": "summary-f9f610f07677282b490f0f5c961f98e5",
+    "threadId": "1533414333462216845",
+    "transcriptId": "transcript:v1:54:final-transcription:v1|12:b4zZuCrbEOQH|12:b4zZuCrbEOQH",
+    "replayJob": {
+      "afterProcessedOn": 1785664991128,
+      "beforeProcessedOn": 1785664760812,
+      "jobId": "post-call-v1-4c97881a94441701ba05dac9cd8bf4e23e615af1b6c5d8913c12ccdc005a70f4",
+      "state": "completed"
+    }
+  },
+  "schemaVersion": 1,
+  "stages": [
+    {
+      "attempts": 1,
+      "stage": "transcription",
+      "status": "succeeded"
+    },
+    {
+      "attempts": 1,
+      "stage": "summary",
+      "status": "succeeded"
+    },
+    {
+      "attempts": 1,
+      "stage": "publication",
+      "status": "succeeded"
+    }
+  ],
+  "summary": {
+    "actionItems": [
+      {
+        "deadline": "до 7 августа 2026 года",
+        "evidenceTurnIds": [
+          "turn:v1:54:final-transcription:v1|12:b4zZuCrbEOQH|12:b4zZuCrbEOQH:1:2:1:1:1:1"
+        ],
+        "ownerSpeakerId": "1533228054724346087",
+        "text": "Проверить Discord Thread и Redis Queue idempotency key.",
+        "actionItemId": "action-938c385fe1b892010a935da397732c99"
+      }
+    ],
+    "decisions": [
+      {
+        "evidenceTurnIds": [
+          "turn:v1:54:final-transcription:v1|12:b4zZuCrbEOQH|12:b4zZuCrbEOQH:1:1:1:1:1:2"
+        ],
+        "text": "Выпустить версию в пятницу.",
+        "decisionId": "decision-99d484eb728e006988aa28b0c5685e9f"
+      }
+    ],
+    "summaryId": "summary-f9f610f07677282b490f0f5c961f98e5",
+    "topics": [
+      {
+        "evidenceTurnIds": [
+          "turn:v1:54:final-transcription:v1|12:b4zZuCrbEOQH|12:b4zZuCrbEOQH:1:1:1:1:1:1"
+        ],
+        "points": [
+          "Meeting Platform сохраняет Craig recording и запускает PostgreSQL pipeline."
+        ],
+        "title": "Meeting Platform pipeline"
+      },
+      {
+        "evidenceTurnIds": [
+          "turn:v1:54:final-transcription:v1|12:b4zZuCrbEOQH|12:b4zZuCrbEOQH:1:1:1:1:1:2"
+        ],
+        "points": [
+          "Версию планируется выпустить в пятницу."
+        ],
+        "title": "План релиза"
+      },
+      {
+        "evidenceTurnIds": [
+          "turn:v1:54:final-transcription:v1|12:b4zZuCrbEOQH|12:b4zZuCrbEOQH:1:1:1:1:1:3",
+          "turn:v1:54:final-transcription:v1|12:b4zZuCrbEOQH|12:b4zZuCrbEOQH:1:2:1:1:1:1"
+        ],
+        "points": [
+          "Нужно проверить Discord Thread и Redis Queue idempotency key до 7 августа 2026 года."
+        ],
+        "title": "Проверка Discord Thread и Redis Queue"
+      },
+      {
+        "evidenceTurnIds": [
+          "turn:v1:54:final-transcription:v1|12:b4zZuCrbEOQH|12:b4zZuCrbEOQH:1:2:1:1:1:2"
+        ],
+        "points": [
+          "Открыт вопрос о необходимости Live Pipecat Assistant после первой версии."
+        ],
+        "title": "Live Pipecat Assistant"
+      }
+    ],
+    "title": "Релиз Meeting Platform и проверка pipeline",
+    "version": 1,
+    "overview": "Обсудили сохранение Craig recording, запуск PostgreSQL pipeline, срок выпуска версии и проверку Discord Thread вместе с Redis Queue idempotency key. Остался вопрос о необходимости Live Pipecat Assistant после первой версии.",
+    "transcriptId": "transcript:v1:54:final-transcription:v1|12:b4zZuCrbEOQH|12:b4zZuCrbEOQH",
+    "openQuestions": [
+      "Нужен ли Live Pipecat Assistant после первой версии?"
+    ]
+  },
+  "transcript": {
+    "transcriptId": "transcript:v1:54:final-transcription:v1|12:b4zZuCrbEOQH|12:b4zZuCrbEOQH",
+    "turns": [
+      {
+        "endMs": 11053,
+        "speakerId": "1533227577286852649",
+        "startMs": 6053,
+        "text": "Meeting Platform сохраняет Craig recording и запускает PostgreSQL pipeline.",
+        "turnId": "turn:v1:54:final-transcription:v1|12:b4zZuCrbEOQH|12:b4zZuCrbEOQH:1:1:1:1:1:1"
+      },
+      {
+        "endMs": 13693,
+        "speakerId": "1533227577286852649",
+        "startMs": 11053,
+        "text": "Решение – выпустить версию в пятницу.",
+        "turnId": "turn:v1:54:final-transcription:v1|12:b4zZuCrbEOQH|12:b4zZuCrbEOQH:1:1:1:1:1:2"
+      },
+      {
+        "endMs": 18653,
+        "speakerId": "1533227577286852649",
+        "startMs": 13693,
+        "text": "До 7 августа 2026 года спикер B проверит Discord thread.",
+        "turnId": "turn:v1:54:final-transcription:v1|12:b4zZuCrbEOQH|12:b4zZuCrbEOQH:1:1:1:1:1:3"
+      },
+      {
+        "endMs": 26837,
+        "speakerId": "1533228054724346087",
+        "startMs": 20277,
+        "text": "проверю Discord Thread, Redis Queue idempotency key до 7 августа 2026 года",
+        "turnId": "turn:v1:54:final-transcription:v1|12:b4zZuCrbEOQH|12:b4zZuCrbEOQH:1:2:1:1:1:1"
+      },
+      {
+        "endMs": 31397,
+        "speakerId": "1533228054724346087",
+        "startMs": 26837,
+        "text": "открытый вопрос, нужен ли Live Pipecat Assistant после первой версии?",
+        "turnId": "turn:v1:54:final-transcription:v1|12:b4zZuCrbEOQH|12:b4zZuCrbEOQH:1:2:1:1:1:2"
+      }
+    ]
+  }
+}
