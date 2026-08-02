@@ -256,9 +256,9 @@ describe("VoicetextFinalTranscriptionAdapter", () => {
     expect(binarySendTimesMs).toHaveLength(25);
     expect(binarySendTimesMs[0]).toBe(0);
     for (const [frameIndex, sentAtMs] of binarySendTimesMs.entries()) {
-      expect(sentAtMs).toBeGreaterThanOrEqual(frameIndex * 32_000 * 1_000 / 224_000);
+      expect(sentAtMs).toBeGreaterThanOrEqual(frameIndex * 32_000 * 1_000 / 32_000);
     }
-    expect(binarySendTimesMs.at(-1)).toBe(3_429);
+    expect(binarySendTimesMs.at(-1)).toBe(24_000);
   });
 
   it("cancels while waiting for the next paced audio frame", async () => {
@@ -294,7 +294,7 @@ describe("VoicetextFinalTranscriptionAdapter", () => {
   });
 
   it.each([
-    [{ maxAudioBytesPerSecond: 256_002 }, "maxAudioBytesPerSecond"],
+    [{ maxAudioBytesPerSecond: 64_000 }, "maxAudioBytesPerSecond"],
     [{ audioFrameBytes: 65_538 }, "audioFrameBytes"],
     [{ audioFrameBytes: 64_000, maxAudioBytesPerSecond: 32_000 }, "audioFrameBytes"],
   ])("rejects unsafe pacing options %#", (overrides, field) => {

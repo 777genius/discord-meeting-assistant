@@ -45,8 +45,9 @@ same idempotency identity produce provider-dependent evidence.
   second artifact. V1 materializes one speaker's PCM in memory, processes speaker
   tracks sequentially, and releases each track before advancing.
 - Long meetings remain bounded by explicit per-speaker and whole-job byte limits.
-  Client pacing stays below the Voicetext ingress limit, so post-call upload is
-  approximately seven times faster than real time before provider finalization.
+  Client pacing is real time. Voicetext acknowledgements prove ingress, not that
+  Deepgram has finalized every late utterance; faster post-call upload can race
+  provider finalization and silently truncate an otherwise successful result.
   Replacing the bounded whole-track decoder with a pipe is a later optimization,
   not a different domain contract.
 - A live Pipecat assistant can later consume the same streaming provider boundary,

@@ -40,9 +40,10 @@ import { WsVoicetextWebSocketConnector } from "./ws-websocket-connector.js";
 
 const mebibyte = 1_024 * 1_024;
 const pcmBytesPerSecond = 16_000 * 2;
-const backendMaximumAudioBytesPerSecond = 256_000;
 const backendMaximumAudioFrameBytes = 65_536;
-const defaultMaximumAudioBytesPerSecond = 224_000;
+// Voicetext ACKs ingress, not Deepgram processing. Real-time pacing prevents
+// finalize_complete from racing the provider's late utterances.
+const defaultMaximumAudioBytesPerSecond = pcmBytesPerSecond;
 const neverAbortedSignal = new AbortController().signal;
 
 export interface VoicetextFinalTranscriptionOptions {
@@ -522,7 +523,7 @@ function validateOptions(options: VoicetextFinalTranscriptionOptions): Validated
     options.maxAudioBytesPerSecond,
     defaultMaximumAudioBytesPerSecond,
     pcmBytesPerSecond,
-    backendMaximumAudioBytesPerSecond,
+    pcmBytesPerSecond,
     "maxAudioBytesPerSecond",
   );
   const audioFrameBytes = evenIntegerOption(
