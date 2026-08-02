@@ -23,6 +23,16 @@ interface RevisionRow {
   readonly revision: number;
 }
 
+export interface PendingPostCall {
+  readonly meetingId: string;
+  readonly schemaVersion: 1;
+}
+
+interface PendingPostCallRow {
+  readonly meeting_id: string;
+  readonly schema_version: number;
+}
+
 function requireExpectedRevision(expectedRevision: number): void {
   if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
     throw new RangeError("expectedRevision must be a non-negative safe integer");
@@ -51,6 +61,22 @@ async function rollback(client: PoolClient): Promise<void> {
   } catch {
     // Preserve the business or driver error that caused the rollback.
   }
+}
+
+function sameRecording(
+  left: MeetingSnapshot["recording"],
+  right: MeetingSnapshot["recording"],
+): boolean {
+  return left.recordingId === right.recordingId &&
+    left.manifestLocator === right.manifestLocator &&
+    left.speakerAudio.length === right.speakerAudio.length &&
+    left.speakerAudio.every((track, index) => {
+      const candidate = right.speakerAudio[index];
+      return candidate !== undefined &&
+        track.audioLocator === candidate.audioLocator &&
+        track.speakerId === candidate.speakerId &&
+        track.timelineOffsetMs === candidate.timelineOffsetMs;
+    });
 }
 
 export class PostgresMeetingRepository implements MeetingRepository {
@@ -82,17 +108,130 @@ export class PostgresMeetingRepository implements MeetingRepository {
 
     try {
       await client.query("BEGIN");
-      if (normalized.revision === expectedRevision) {
-        await this.insertOrReplay(client, normalized, expectedRevision);
-      } else {
-        await this.updateOrReplay(client, normalized, expectedRevision);
-      }
+      await this.persist(client, normalized, expectedRevision);
       await client.query("COMMIT");
     } catch (error) {
       await rollback(client);
       throw error;
     } finally {
       client.release();
+    }
+  }
+
+  public async recordAndSchedule(
+    snapshot: MeetingSnapshot,
+    expectedRevision: number,
+  ): Promise<void> {
+    requireExpectedRevision(expectedRevision);
+    const normalized = normalizeSnapshot(snapshot);
+    if (normalized.revision !== 0 || expectedRevision !== 0) {
+      throw new RangeError("recordAndSchedule requires an initial revision-zero snapshot");
+    }
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await this.insertRecordedOrValidateExisting(client, normalized);
+      await client.query(
+        `
+          INSERT INTO meeting_core.post_call_outbox (meeting_id, schema_version)
+          VALUES ($1, 1)
+          ON CONFLICT (meeting_id) DO NOTHING
+        `,
+        [normalized.meetingId],
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await rollback(client);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  private async insertRecordedOrValidateExisting(
+    client: PoolClient,
+    snapshot: MeetingSnapshot,
+  ): Promise<void> {
+    const inserted = await client.query<RevisionRow>(
+      `
+        INSERT INTO meeting_core.meetings (meeting_id, revision, snapshot)
+        VALUES ($1, $2, $3::jsonb)
+        ON CONFLICT (meeting_id) DO NOTHING
+        RETURNING revision::float8 AS revision
+      `,
+      [snapshot.meetingId, snapshot.revision, snapshot],
+    );
+    if (inserted.rowCount === 1) {
+      return;
+    }
+
+    const current = await this.lockCurrent(client, snapshot);
+    if (current === null) {
+      throw new Error("meeting disappeared while validating a recording replay");
+    }
+    const currentSnapshot = restoreStoredSnapshot(current, snapshot.meetingId);
+    if (
+      currentSnapshot.publicationTargetId === snapshot.publicationTargetId &&
+      sameRecording(currentSnapshot.recording, snapshot.recording)
+    ) {
+      return;
+    }
+
+    throw new MeetingPersistenceConflictError({
+      actualRevision: current.revision,
+      attemptedRevision: snapshot.revision,
+      expectedRevision: 0,
+      kind: "meeting-already-exists",
+      meetingId: snapshot.meetingId,
+    });
+  }
+
+  public async listPendingPostCall(limit = 100): Promise<readonly PendingPostCall[]> {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1_000) {
+      throw new RangeError("post-call outbox limit must be between 1 and 1000");
+    }
+    const result = await this.pool.query<PendingPostCallRow>(
+      `
+        SELECT meeting_id, schema_version::float8 AS schema_version
+        FROM meeting_core.post_call_outbox
+        WHERE dispatched_at IS NULL
+        ORDER BY created_at, meeting_id
+        LIMIT $1
+      `,
+      [limit],
+    );
+    return result.rows.map((row) => {
+      if (row.schema_version !== 1) {
+        throw new Error("unsupported post-call outbox schema version");
+      }
+      return Object.freeze({ meetingId: row.meeting_id, schemaVersion: 1 as const });
+    });
+  }
+
+  public async markPostCallDispatched(meetingId: string): Promise<void> {
+    const result = await this.pool.query(
+      `
+        UPDATE meeting_core.post_call_outbox
+        SET dispatched_at = transaction_timestamp()
+        WHERE meeting_id = $1
+          AND dispatched_at IS NULL
+      `,
+      [meetingId],
+    );
+    if (result.rowCount !== 0 && result.rowCount !== 1) {
+      throw new Error("unexpected post-call outbox update count");
+    }
+  }
+
+  private async persist(
+    client: PoolClient,
+    normalized: MeetingSnapshot,
+    expectedRevision: number,
+  ): Promise<void> {
+    if (normalized.revision === expectedRevision) {
+      await this.insertOrReplay(client, normalized, expectedRevision);
+    } else {
+      await this.updateOrReplay(client, normalized, expectedRevision);
     }
   }
 

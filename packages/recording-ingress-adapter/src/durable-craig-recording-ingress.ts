@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import type {
+  AuthoritativeTrackUploadMetadata,
   CraigLifecycleEvent,
   VoicePacketBatch,
 } from "@discord-meeting/craig-gateway-contracts";
@@ -35,6 +36,7 @@ import {
   type CompletedRecordingState,
   type RecordingSpoolState,
   type StoredLifecycleEvent,
+  type StoredAuthoritativeTrack,
   type StoredSpeaker,
 } from "./spool.js";
 
@@ -53,8 +55,8 @@ export const DEFAULT_RECORDING_INGRESS_LIMITS: RecordingIngressLimits =
     maxPacketsPerRecording: 2_000_000,
     maxPacketsPerSpeaker: 500_000,
     maxRecordingOpusBytes: 2 * 1_024 * 1_024 * 1_024,
-    maxSpeakerOpusBytes: 512 * 1_024 * 1_024,
-    maxSpeakersPerRecording: 1_000,
+    maxSpeakerOpusBytes: 64 * 1_024 * 1_024,
+    maxSpeakersPerRecording: 64,
   });
 
 interface DecodedPacket extends JournalPacket {
@@ -196,6 +198,13 @@ function canonicalLifecycleEvent(event: CraigLifecycleEvent): Record<string, unk
         multitrackManifestKey: event.multitrackManifestKey,
         usersManifestKey: event.usersManifestKey,
       };
+    case "recording.authoritative_ready":
+      return {
+        ...common,
+        endedAt: requireInstant(event.endedAt, "event.endedAt"),
+        sourceFilesChecksumSha256: event.sourceFilesChecksumSha256,
+        trackCount: event.trackCount,
+      };
   }
 }
 
@@ -309,6 +318,7 @@ function verifyWriteReceipt(
 export class DurableCraigRecordingIngress {
   readonly #artifactLocatorPrefix: string;
   readonly #limits: RecordingIngressLimits;
+  readonly #finalizationSource: DurableCraigRecordingIngressOptions["finalizationSource"];
   readonly #locks = new Map<string | symbol, Promise<void>>();
   readonly #spool: DurableSpool;
   readonly #writer: DurableCraigRecordingIngressOptions["writer"];
@@ -316,8 +326,119 @@ export class DurableCraigRecordingIngress {
   public constructor(options: DurableCraigRecordingIngressOptions) {
     this.#artifactLocatorPrefix = normalizeLocatorPrefix(options.artifactLocatorPrefix);
     this.#limits = validateLimits(options.limits);
+    this.#finalizationSource = options.finalizationSource;
     this.#spool = new DurableSpool(options.spoolRoot);
     this.#writer = options.writer;
+  }
+
+  public async ingestAuthoritativeTrack(
+    metadata: AuthoritativeTrackUploadMetadata,
+    body: AsyncIterable<Uint8Array>,
+    options: { readonly signal?: AbortSignal } = {},
+  ): Promise<{
+    readonly locator: string;
+    readonly recordingId: string;
+    readonly replayed: boolean;
+    readonly speakerId: string;
+  }> {
+    abortIfRequested(options.signal);
+    if (this.#finalizationSource !== "craig-original") {
+      throw new RecordingIngressError(
+        "unsupported-event",
+        "authoritative track upload is disabled for this ingress",
+      );
+    }
+    const recordingId = requireIdentifier(metadata.recordingId, "track.recordingId");
+    const identity = {
+      channelId: requireSnowflake(metadata.channelId, "track.channelId"),
+      guildId: requireSnowflake(metadata.guildId, "track.guildId"),
+      recordingId,
+    };
+    const speakerId = requireSnowflake(metadata.speakerId, "track.speakerId");
+    const recordingToken = spoolToken("recording-v1", recordingId);
+    const locator = `${this.#artifactLocatorPrefix}/${recordingToken}/authoritative/speakers/${speakerId}.ogg`;
+    const request = {
+      body,
+      checksumSha256: metadata.checksumSha256,
+      contentType: "audio/ogg",
+      locator,
+      metadata: {
+        "recording-token": recordingToken,
+        "source-kind": "craig-original-multitrack",
+        "speaker-id": speakerId,
+        "track-number": String(metadata.trackNumber),
+      },
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      sizeBytes: metadata.sizeBytes,
+    } as const;
+
+    return this.#exclusive(recordingId, async () => {
+      abortIfRequested(options.signal);
+      const completed = await this.#spool.readCompleted(recordingId);
+      if (completed !== undefined) {
+        ensureRecordingIdentity(completed, identity);
+        const receipt = await this.#writer.write(request);
+        verifyWriteReceipt(request, receipt);
+        return { locator: receipt.locator, recordingId, replayed: true, speakerId };
+      }
+      const state = await this.#spool.readRecording(recordingId);
+      if (state === undefined) {
+        throw new RecordingIngressError(
+          "invalid-state",
+          "meeting.started must precede authoritative track upload",
+        );
+      }
+      ensureRecordingIdentity(state, identity);
+      if (state.status === "aborted") {
+        throw new RecordingIngressError(
+          "invalid-state",
+          "cannot upload an authoritative track for an aborted recording",
+        );
+      }
+      const candidate: StoredAuthoritativeTrack = {
+        audioLocator: locator,
+        checksumSha256: metadata.checksumSha256,
+        sizeBytes: metadata.sizeBytes,
+        speakerId,
+        timelineOffsetMs: metadata.timelineOffsetMs,
+        trackNumber: metadata.trackNumber,
+        uploadId: requireIdentifier(metadata.uploadId, "track.uploadId"),
+      };
+      const existing = state.authoritativeTracks.find(
+        (track) =>
+          track.uploadId === candidate.uploadId ||
+          track.trackNumber === candidate.trackNumber ||
+          track.speakerId === candidate.speakerId,
+      );
+      if (existing !== undefined && JSON.stringify(existing) !== JSON.stringify(candidate)) {
+        throw new RecordingIngressError(
+          "conflicting-duplicate",
+          "authoritative track identity was replayed with different content",
+        );
+      }
+      if (existing === undefined && state.authoritativeTracks.length >= this.#limits.maxSpeakersPerRecording) {
+        throw new RecordingIngressError(
+          "limit-exceeded",
+          "authoritative recording exceeds the configured speaker limit",
+        );
+      }
+
+      const receipt = await this.#writer.write(request);
+      verifyWriteReceipt(request, receipt);
+      if (existing === undefined) {
+        await this.#spool.writeRecording({
+          ...state,
+          authoritativeTracks: [...state.authoritativeTracks, { ...candidate, audioLocator: receipt.locator }]
+            .toSorted((left, right) => left.trackNumber - right.trackNumber),
+        });
+      }
+      return {
+        locator: receipt.locator,
+        recordingId,
+        replayed: existing !== undefined,
+        speakerId,
+      };
+    });
   }
 
   async #exclusive<T>(key: string | symbol, operation: () => Promise<T>): Promise<T> {
@@ -522,7 +643,8 @@ export class DurableCraigRecordingIngress {
           );
         }
         await this.#cleanupAfterSuccess(event.recordingId);
-        return event.type === "meeting.ended"
+        return event.type === "recording.authoritative_ready" ||
+          (event.type === "meeting.ended" && this.#finalizationSource === "live-packet-spool")
           ? { kind: "finalized", recording: completed.recording, replayed: true }
           : { kind: "accepted", recordingId: completed.recordingId, replayed: true };
       }
@@ -543,6 +665,7 @@ export class DurableCraigRecordingIngress {
             );
           }
           const initialState: RecordingSpoolState = {
+            authoritativeTracks: [],
             channelId: event.channelId,
             events: [storedEvent(event, digest)],
             guildId: event.guildId,
@@ -567,8 +690,20 @@ export class DurableCraigRecordingIngress {
             "lifecycle event ID was replayed with different content",
           );
         }
-        if (event.type === "meeting.ended" && state.status === "finalizing") {
-          const recording = await this.#finalize(state, options.signal);
+        if (
+          event.type === "meeting.ended" &&
+          state.status === "finalizing" &&
+          this.#finalizationSource === "live-packet-spool"
+        ) {
+          const recording = await this.#finalizePacketSpool(state, options.signal);
+          return { kind: "finalized", recording, replayed: true };
+        }
+        if (
+          event.type === "recording.authoritative_ready" &&
+          state.status === "finalizing" &&
+          this.#finalizationSource === "craig-original"
+        ) {
+          const recording = await this.#finalizeAuthoritative(state, event, options.signal);
           return { kind: "finalized", recording, replayed: true };
         }
         return state.status === "aborted"
@@ -581,6 +716,52 @@ export class DurableCraigRecordingIngress {
           "unsupported-event",
           "recording.artifact_ready is outbound evidence, not an ingress command",
         );
+      }
+      if (event.type === "recording.authoritative_ready") {
+        if (this.#finalizationSource !== "craig-original") {
+          throw new RecordingIngressError(
+            "unsupported-event",
+            "authoritative-ready is disabled for this ingress",
+          );
+        }
+        if (state.status !== "finalizing" || state.endedAt === undefined) {
+          throw new RecordingIngressError(
+            "invalid-state",
+            "meeting.ended must precede authoritative-ready",
+          );
+        }
+        const authoritativeEndedAt = Date.parse(event.endedAt);
+        const lifecycleEndedAt = Date.parse(state.endedAt);
+        const startedAt = Date.parse(state.startedAt);
+        if (
+          authoritativeEndedAt < startedAt ||
+          authoritativeEndedAt > lifecycleEndedAt + 60_000
+        ) {
+          throw new RecordingIngressError(
+            "invalid-state",
+            "authoritative-ready endedAt is outside the recording lifecycle",
+          );
+        }
+        if (event.trackCount !== state.authoritativeTracks.length) {
+          throw new RecordingIngressError(
+            "invalid-state",
+            "authoritative-ready track count does not match durable uploads",
+          );
+        }
+        const finalizingState: RecordingSpoolState = {
+          ...state,
+          endedAt: event.endedAt,
+          events: [...state.events, storedEvent(event, digest)],
+          finalEventDigest: digest,
+          finalEventId: event.eventId,
+        };
+        await this.#spool.writeRecording(finalizingState);
+        const recording = await this.#finalizeAuthoritative(
+          finalizingState,
+          event,
+          options.signal,
+        );
+        return { kind: "finalized", recording, replayed: false };
       }
       if (state.status !== "active") {
         throw new RecordingIngressError(
@@ -616,7 +797,10 @@ export class DurableCraigRecordingIngress {
           status: "finalizing",
         };
         await this.#spool.writeRecording(finalizingState);
-        const recording = await this.#finalize(finalizingState, options.signal);
+        if (this.#finalizationSource === "craig-original") {
+          return { kind: "accepted", recordingId: state.recordingId, replayed: false };
+        }
+        const recording = await this.#finalizePacketSpool(finalizingState, options.signal);
         return { kind: "finalized", recording, replayed: false };
       }
 
@@ -626,7 +810,7 @@ export class DurableCraigRecordingIngress {
     });
   }
 
-  async #finalize(
+  async #finalizePacketSpool(
     state: RecordingSpoolState,
     signal?: AbortSignal,
   ): Promise<RecordingArtifactSnapshot> {
@@ -731,6 +915,98 @@ export class DurableCraigRecordingIngress {
         timelineOffsetMs: track.timelineOffsetMs,
       })),
     };
+    await this.#persistCompleted(state, recording);
+    return recording;
+  }
+
+  async #finalizeAuthoritative(
+    state: RecordingSpoolState,
+    event: Extract<CraigLifecycleEvent, { readonly type: "recording.authoritative_ready" }>,
+    signal?: AbortSignal,
+  ): Promise<RecordingArtifactSnapshot> {
+    abortIfRequested(signal);
+    if (
+      state.status !== "finalizing" ||
+      state.endedAt === undefined ||
+      state.finalEventId !== event.eventId ||
+      state.finalEventDigest === undefined ||
+      state.authoritativeTracks.length !== event.trackCount
+    ) {
+      throw new RecordingIngressError(
+        "invalid-state",
+        "authoritative recording is not ready to finalize",
+      );
+    }
+    const tracks = state.authoritativeTracks.toSorted(
+      (left, right) => left.trackNumber - right.trackNumber,
+    );
+    if (
+      new Set(tracks.map(({ speakerId }) => speakerId)).size !== tracks.length ||
+      new Set(tracks.map(({ trackNumber }) => trackNumber)).size !== tracks.length
+    ) {
+      throw new RecordingIngressError(
+        "corrupt-spool",
+        "authoritative recording contains duplicate track identities",
+      );
+    }
+
+    const manifest = {
+      channelId: state.channelId,
+      endedAt: state.endedAt,
+      guildId: state.guildId,
+      recordingId: state.recordingId,
+      schemaVersion: 1,
+      source: {
+        checksumSha256: event.sourceFilesChecksumSha256,
+        kind: "craig-original-multitrack",
+      },
+      startedAt: state.startedAt,
+      tracks: tracks.map((track) => ({
+        checksumSha256: track.checksumSha256,
+        locator: track.audioLocator,
+        sizeBytes: track.sizeBytes,
+        speakerId: track.speakerId,
+        timelineOffsetMs: track.timelineOffsetMs,
+        trackNumber: track.trackNumber,
+      })),
+    } as const;
+    const manifestBytes = new TextEncoder().encode(`${JSON.stringify(manifest)}\n`);
+    const manifestChecksum = sha256(manifestBytes);
+    const recordingToken = spoolToken("recording-v1", state.recordingId);
+    const request = {
+      body: manifestBytes,
+      checksumSha256: manifestChecksum,
+      contentType: "application/json",
+      locator: `${this.#artifactLocatorPrefix}/${recordingToken}/authoritative/manifest.json`,
+      metadata: {
+        "recording-token": recordingToken,
+        "source-kind": "craig-original-multitrack",
+      },
+      ...(signal === undefined ? {} : { signal }),
+      sizeBytes: manifestBytes.byteLength,
+    } as const;
+    const receipt = await this.#writer.write(request);
+    verifyWriteReceipt(request, receipt);
+    const recording: RecordingArtifactSnapshot = {
+      manifestLocator: receipt.locator,
+      recordingId: state.recordingId,
+      speakerAudio: tracks.map((track) => ({
+        audioLocator: track.audioLocator,
+        speakerId: track.speakerId,
+        timelineOffsetMs: track.timelineOffsetMs,
+      })),
+    };
+    await this.#persistCompleted(state, recording);
+    return recording;
+  }
+
+  async #persistCompleted(
+    state: RecordingSpoolState,
+    recording: RecordingArtifactSnapshot,
+  ): Promise<void> {
+    if (state.finalEventDigest === undefined || state.finalEventId === undefined) {
+      throw new RecordingIngressError("corrupt-spool", "final event evidence is missing");
+    }
     const completed: CompletedRecordingState = {
       channelId: state.channelId,
       events: state.events,
@@ -743,7 +1019,6 @@ export class DurableCraigRecordingIngress {
     };
     await this.#spool.writeCompleted(completed);
     await this.#cleanupAfterSuccess(state.recordingId);
-    return recording;
   }
 
   async #cleanupAfterSuccess(recordingId: string): Promise<void> {

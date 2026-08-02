@@ -44,6 +44,13 @@ export const structuredOutput: JsonObject = {
   openQuestions: [],
   overview: "Команда согласовала выпуск.",
   title: "Выпуск релиза",
+  topics: [
+    {
+      evidenceTurnIds: ["turn-1"],
+      points: ["Релиз запланирован на пятницу"],
+      title: "План релиза",
+    },
+  ],
 };
 
 export function grpcRequest(
@@ -56,7 +63,7 @@ export function grpcRequest(
     workspaceId: request.context.metadata.meetingId,
     correlationId: request.context.correlationId,
     provider: "AGENT_RUNTIME_PROVIDER_CODEX",
-    providerInstanceId: "discord-meeting-summary-v1",
+    providerInstanceId: "discord-meeting-summary-v2",
     purpose: request.context.purpose,
     systemPrompt: request.task.systemPrompt,
     prompt: request.task.prompt,

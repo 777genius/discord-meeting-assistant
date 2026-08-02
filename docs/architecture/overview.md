@@ -13,7 +13,9 @@ Meeting Core owns business state and post-call processing.
 
 ```text
 Craig Voice Gateway
-  -> versioned lifecycle and recording references
+  -> best-effort live packet tee (derived, never final evidence)
+  -> checksummed speaker artifacts cooked from the authoritative original
+  -> versioned lifecycle and authoritative-ready evidence
   -> Meeting Core
        -> Transcription
        -> Meeting Intelligence
@@ -56,6 +58,10 @@ with the first executable use case and deterministic fake.
 ## Reliability invariants
 
 - Original recording success is independent from every AI path.
+- Final transcription starts only from artifacts derived from Craig's original
+  recording; packet-tee gaps cannot be accepted as complete evidence.
+- Meeting persistence and post-call scheduling share one PostgreSQL transaction;
+  a durable outbox reconciles crashes before BullMQ acknowledgement.
 - Async work uses bounded admission and stable idempotency identities.
 - Unknown external outcomes are reconciled rather than retried with a new ID.
 - A later stage never destroys an earlier authoritative artifact.

@@ -258,6 +258,7 @@ function validateEvidence(
   const knownTurnIds = new Set(turns.map((turn) => turn.turnId));
   const knownSpeakerIds = new Set(turns.map((turn) => turn.speakerId));
   const evidenceGroups = [
+    ...summary.topics.map((topic) => topic.evidenceTurnIds),
     ...summary.decisions.map((decision) => decision.evidenceTurnIds),
     ...summary.actionItems.map((actionItem) => actionItem.evidenceTurnIds),
   ];
@@ -299,6 +300,7 @@ function mapSummary(
         idempotencyKey,
         String(index + 1),
       ),
+      deadline: actionItem.deadline,
       evidenceTurnIds: [...actionItem.evidenceTurnIds],
       ownerSpeakerId: actionItem.ownerSpeakerId,
       text: actionItem.text,
@@ -316,6 +318,11 @@ function mapSummary(
     overview: summary.overview,
     summaryId: stableSubscriptionRuntimeId("summary", idempotencyKey),
     title: summary.title,
+    topics: summary.topics.map((topic) => ({
+      evidenceTurnIds: [...topic.evidenceTurnIds],
+      points: [...topic.points],
+      title: topic.title,
+    })),
     version: 1,
   };
 }

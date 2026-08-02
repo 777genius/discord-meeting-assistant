@@ -186,7 +186,9 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   if (pool !== undefined) {
-    await pool.query("TRUNCATE TABLE meeting_core.meetings");
+    await pool.query(
+      "TRUNCATE TABLE meeting_core.post_call_outbox, meeting_core.meetings",
+    );
   }
 });
 
@@ -196,6 +198,37 @@ afterAll(async () => {
 });
 
 describe("PostgresMeetingRepository", () => {
+  it("atomically records a meeting and a recoverable post-call outbox item", async (context) => {
+    const database = databaseOrSkip(context);
+    const repository = new PostgresMeetingRepository(database);
+    const snapshot = recordedMeeting("meeting-outbox-1").toSnapshot();
+
+    await repository.recordAndSchedule(snapshot, 0);
+    await repository.recordAndSchedule(snapshot, 0);
+    expect(await repository.listPendingPostCall()).toEqual([
+      { meetingId: snapshot.meetingId, schemaVersion: 1 },
+    ]);
+
+    await repository.markPostCallDispatched(snapshot.meetingId);
+    expect(await repository.listPendingPostCall()).toEqual([]);
+    expect(await repository.findById(snapshot.meetingId)).toEqual(snapshot);
+  });
+
+  it("accepts a finalized-ingress replay after post-call processing advanced the meeting", async (context) => {
+    const database = databaseOrSkip(context);
+    const repository = new PostgresMeetingRepository(database);
+    const initial = recordedMeeting("meeting-ready-replay").toSnapshot();
+    await repository.recordAndSchedule(initial, 0);
+
+    const processed = evidenceBackedMeeting("meeting-ready-replay").toSnapshot();
+    await repository.save(processed, 0);
+    await repository.markPostCallDispatched(initial.meetingId);
+
+    await expect(repository.recordAndSchedule(initial, 0)).resolves.toBeUndefined();
+    expect(await repository.findById(initial.meetingId)).toEqual(processed);
+    expect(await repository.listPendingPostCall()).toEqual([]);
+  });
+
   it("round-trips the complete JSONB evidence snapshot", async (context) => {
     const database = databaseOrSkip(context);
     const repository = new PostgresMeetingRepository(database);

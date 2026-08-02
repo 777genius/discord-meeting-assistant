@@ -23,30 +23,45 @@ export const verboseTranscriptionSchema = z
   })
   .loose();
 
-const evidenceTurnIdsSchema = z.array(z.string().min(1)).min(1);
+const shortTextSchema = z.string().trim().min(1).max(240);
+const titleSchema = z.string().trim().min(1).max(120);
+const evidenceTurnIdsSchema = z
+  .array(z.string().trim().min(1).max(128))
+  .min(1)
+  .max(8);
 
 export const providerSummarySchema = z
   .object({
-    title: z.string().min(1),
-    overview: z.string().min(1),
+    title: titleSchema,
+    overview: z.string().trim().min(1).max(800),
+    topics: z.array(
+      z
+        .object({
+          title: titleSchema,
+          points: z.array(shortTextSchema).min(1).max(6),
+          evidenceTurnIds: evidenceTurnIdsSchema,
+        })
+        .strict(),
+    ).max(10),
     decisions: z.array(
       z
         .object({
-          text: z.string().min(1),
+          text: shortTextSchema,
           evidenceTurnIds: evidenceTurnIdsSchema,
         })
         .strict(),
-    ),
+    ).max(12),
     actionItems: z.array(
       z
         .object({
-          text: z.string().min(1),
-          ownerSpeakerId: z.string().min(1).nullable(),
+          text: shortTextSchema,
+          ownerSpeakerId: z.string().trim().min(1).max(128).nullable(),
+          deadline: z.string().trim().min(1).max(120).nullable(),
           evidenceTurnIds: evidenceTurnIdsSchema,
         })
         .strict(),
-    ),
-    openQuestions: z.array(z.string().min(1)),
+    ).max(12),
+    openQuestions: z.array(shortTextSchema).max(12),
   })
   .strict();
 

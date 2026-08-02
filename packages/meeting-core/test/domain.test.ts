@@ -50,6 +50,7 @@ const summarySnapshot = {
   actionItems: [
     {
       actionItemId: "action-1",
+      deadline: "Friday",
       evidenceTurnIds: ["turn-2"],
       ownerSpeakerId: "speaker-b",
       text: "Prepare the release checklist.",
@@ -66,6 +67,13 @@ const summarySnapshot = {
   overview: "The team agreed on a Friday release.",
   summaryId: "summary-1",
   title: "Release planning",
+  topics: [
+    {
+      evidenceTurnIds: ["turn-1", "turn-2"],
+      points: ["Friday release", "Release checklist ownership"],
+      title: "Release readiness",
+    },
+  ],
   transcriptId: "transcript-1",
   version: 1,
 } as const;
@@ -182,6 +190,40 @@ describe("Final transcript", () => {
 });
 
 describe("Evidence-backed summary", () => {
+  it("requires every structured topic to reference real transcript evidence", () => {
+    const transcript = FinalTranscript.create(transcriptSnapshot);
+
+    expect(() =>
+      EvidenceBackedSummary.create(
+        {
+          ...summarySnapshot,
+          topics: [
+            {
+              ...summarySnapshot.topics[0],
+              evidenceTurnIds: ["missing-turn"],
+            },
+          ],
+        },
+        transcript,
+      ),
+    ).toThrow(/unknown transcript turn/u);
+  });
+
+  it("normalizes legacy persisted summaries without topics or deadlines", () => {
+    const transcript = FinalTranscript.create(transcriptSnapshot);
+    const legacySummary = {
+      ...summarySnapshot,
+      actionItems: summarySnapshot.actionItems.map(({ deadline: _, ...item }) => item),
+    };
+    const { topics: _, ...legacySnapshot } = legacySummary;
+
+    expect(EvidenceBackedSummary.create(legacySnapshot, transcript).toSnapshot())
+      .toMatchObject({
+        actionItems: [{ deadline: null }],
+        topics: [],
+      });
+  });
+
   it("rejects decision evidence that does not reference an existing turn", () => {
     const transcript = FinalTranscript.create(transcriptSnapshot);
 
@@ -233,6 +275,21 @@ describe("Evidence-backed summary", () => {
         transcript,
       ),
     ).toThrow(/is not a transcript speaker/u);
+
+    expect(() =>
+      EvidenceBackedSummary.create(
+        {
+          ...summarySnapshot,
+          actionItems: [
+            {
+              ...summarySnapshot.actionItems[0],
+              deadline: "   ",
+            },
+          ],
+        },
+        transcript,
+      ),
+    ).toThrow(/deadline must not be empty/u);
   });
 
   it("derives a stable collision-safe publication identity", () => {

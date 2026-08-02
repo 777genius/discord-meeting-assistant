@@ -3,6 +3,7 @@ import { z } from "zod";
 const discordSnowflakeSchema = z.string().regex(/^\d{17,20}$/u);
 const identifierSchema = z.string().min(1).max(128);
 const instantSchema = z.iso.datetime({ offset: true });
+const sha256Schema = z.string().regex(/^[0-9a-f]{64}$/u);
 const storageKeySchema = z
   .string()
   .min(1)
@@ -49,15 +50,42 @@ const artifactReadySchema = envelopeSchema.extend({
   usersManifestKey: storageKeySchema,
 });
 
+const authoritativeRecordingReadySchema = envelopeSchema.extend({
+  type: z.literal("recording.authoritative_ready"),
+  endedAt: instantSchema,
+  sourceFilesChecksumSha256: sha256Schema,
+  trackCount: z.number().int().min(1).max(64),
+});
+
 export const craigLifecycleEventSchema = z.discriminatedUnion("type", [
   meetingStartedSchema,
   participantChangedSchema,
   connectionChangedSchema,
   meetingStoppedSchema,
   artifactReadySchema,
+  authoritativeRecordingReadySchema,
 ]);
 
 export type CraigLifecycleEvent = z.infer<typeof craigLifecycleEventSchema>;
+
+export const authoritativeTrackUploadMetadataSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    uploadId: identifierSchema,
+    recordingId: identifierSchema,
+    guildId: discordSnowflakeSchema,
+    channelId: discordSnowflakeSchema,
+    speakerId: discordSnowflakeSchema,
+    trackNumber: z.number().int().min(1).max(1_000),
+    timelineOffsetMs: z.number().int().nonnegative(),
+    checksumSha256: sha256Schema,
+    sizeBytes: z.number().int().positive().max(64 * 1_024 * 1_024),
+  })
+  .strict();
+
+export type AuthoritativeTrackUploadMetadata = z.infer<
+  typeof authoritativeTrackUploadMetadataSchema
+>;
 
 export const voicePacketSchema = z
   .object({
@@ -93,6 +121,12 @@ export type VoicePacketBatch = z.infer<typeof voicePacketBatchSchema>;
 
 export function parseCraigLifecycleEvent(input: unknown): CraigLifecycleEvent {
   return craigLifecycleEventSchema.parse(input);
+}
+
+export function parseAuthoritativeTrackUploadMetadata(
+  input: unknown,
+): AuthoritativeTrackUploadMetadata {
+  return authoritativeTrackUploadMetadataSchema.parse(input);
 }
 
 export function parseVoicePacket(input: unknown): VoicePacket {

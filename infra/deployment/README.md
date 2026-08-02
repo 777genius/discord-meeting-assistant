@@ -12,3 +12,8 @@ UID `10001`; `redis.conf` uses UID `999`; `s3-config.json` uses UID `1000`.
 Root-owned bootstrap files are limited to services whose entrypoints read them
 before dropping privileges. Persistent service data stays on the large host
 volume rather than the root filesystem.
+
+For an existing isolated deployment, apply every newly added idempotent SQL
+migration before restarting Meeting Platform. Fresh PostgreSQL volumes execute
+the mounted migrations automatically. Migration `0002_create_post_call_outbox.sql`
+must be present before deploying the crash-safe post-call dispatcher.

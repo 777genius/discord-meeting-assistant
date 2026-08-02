@@ -2,10 +2,7 @@ import type {
   CraigLifecycleEvent,
   VoicePacketBatch,
 } from "@discord-meeting/craig-gateway-contracts";
-import type {
-  MeetingRepository,
-  MeetingSnapshot,
-} from "@discord-meeting/meeting-core";
+import type { MeetingSnapshot } from "@discord-meeting/meeting-core";
 import type { Logger, Metrics } from "@discord-meeting/observability-adapter";
 import type {
   LifecycleIngressResult,
@@ -46,18 +43,16 @@ const metrics: Metrics = {
 };
 
 describe("Platform Craig ingress", () => {
-  it("persists a finalized recording before idempotently enqueueing post-call work", async () => {
+  it("atomically records and schedules a finalized recording before dispatch", async () => {
     const order: string[] = [];
     const saved: MeetingSnapshot[] = [];
-    const meetings: MeetingRepository = {
-      findById: async () => null,
-      save: async (snapshot) => {
-        order.push("save");
+    const recordAndSchedule = vi.fn(async (snapshot: MeetingSnapshot) => {
+        order.push("record-and-schedule");
         saved.push(snapshot);
-      },
-    };
-    const enqueue = vi.fn(async () => {
-      order.push("enqueue");
+    });
+    const dispatchPending = vi.fn(async () => {
+      order.push("dispatch");
+      return { dispatched: 1, failed: 0 };
     });
     const lifecycleResult: LifecycleIngressResult = {
       kind: "finalized",
@@ -73,8 +68,9 @@ describe("Platform Craig ingress", () => {
       replayed: false,
     };
     const ingress = new PlatformCraigIngress({
-      enqueuer: { enqueue },
+      dispatcher: { dispatchPending },
       ingress: {
+        ingestAuthoritativeTrack: async () => ({ replayed: false }),
         ingestLifecycleEvent: async (): Promise<LifecycleIngressResult> => lifecycleResult,
         ingestPacketBatch: async (): Promise<PacketBatchIngressResult> => ({
           acceptedPackets: 1,
@@ -83,27 +79,30 @@ describe("Platform Craig ingress", () => {
         }),
       },
       logger,
-      meetings,
       metrics,
+      outbox: { recordAndSchedule },
       publicationTargetId: "1533228891827736657",
     });
 
     await ingress.ingestLifecycle(meetingEnded);
 
-    expect(order).toEqual(["save", "enqueue"]);
+    expect(order).toEqual(["record-and-schedule", "dispatch"]);
     expect(saved[0]).toMatchObject({
       meetingId: "recording-1",
       publicationTargetId: "1533228891827736657",
       revision: 0,
     });
-    expect(enqueue).toHaveBeenCalledWith({ meetingId: "recording-1", schemaVersion: 1 });
+    expect(recordAndSchedule).toHaveBeenCalledWith(saved[0], 0);
+    expect(dispatchPending).toHaveBeenCalledOnce();
   });
 
   it("does not enqueue non-final lifecycle events", async () => {
-    const enqueue = vi.fn(async () => {});
+    const recordAndSchedule = vi.fn(async () => {});
+    const dispatchPending = vi.fn(async () => ({ dispatched: 0, failed: 0 }));
     const ingress = new PlatformCraigIngress({
-      enqueuer: { enqueue },
+      dispatcher: { dispatchPending },
       ingress: {
+        ingestAuthoritativeTrack: async () => ({ replayed: false }),
         ingestLifecycleEvent: async (): Promise<LifecycleIngressResult> => ({
           kind: "accepted",
           recordingId: "recording-1",
@@ -116,13 +115,14 @@ describe("Platform Craig ingress", () => {
         }),
       },
       logger,
-      meetings: { findById: async () => null, save: async () => {} },
       metrics,
+      outbox: { recordAndSchedule },
       publicationTargetId: "1533228891827736657",
     });
 
     await ingress.ingestLifecycle({ ...meetingEnded, type: "meeting.aborted" });
 
-    expect(enqueue).not.toHaveBeenCalled();
+    expect(recordAndSchedule).not.toHaveBeenCalled();
+    expect(dispatchPending).not.toHaveBeenCalled();
   });
 });

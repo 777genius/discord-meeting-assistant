@@ -50,6 +50,7 @@ import { Pool } from "pg";
 import type { PlatformConfig } from "./config.js";
 import { createCraigHttpServer } from "./craig-http-server.js";
 import { PlatformCraigIngress } from "./platform-ingress.js";
+import { PostCallOutboxDispatcher } from "./post-call-outbox-dispatcher.js";
 import { S3OggAudioArtifactReader } from "./s3-ogg-audio-artifact-reader.js";
 import { GrpcSubscriptionRuntimeTransport } from "./subscription-runtime-grpc-transport.js";
 
@@ -84,6 +85,7 @@ export async function startMeetingPlatform(
   const artifactWriter = createS3BinaryArtifactWriter(s3, { accessPolicy });
   const recordings = new DurableCraigRecordingIngress({
     artifactLocatorPrefix: `s3://${config.s3.bucket}/${config.s3.prefix.slice(0, -1)}`,
+    finalizationSource: "craig-original",
     spoolRoot: config.recordingSpoolRoot,
     writer: artifactWriter,
   });
@@ -91,7 +93,22 @@ export async function startMeetingPlatform(
   const transcriber = new SpeachesFinalTranscriptionAdapter(
     new FetchSpeachesTranscriptionClient(config.speaches.baseUrl),
     new S3OggAudioArtifactReader(artifactReader),
-    { model: config.speaches.model },
+    {
+      language: "ru",
+      maxBytesPerSpeaker: 64 * 1_024 * 1_024,
+      maxSpeakerTracks: 64,
+      model: config.speaches.model,
+      vocabulary: [
+        "BullMQ",
+        "Craig",
+        "Discord",
+        "idempotency key",
+        "Meeting Platform",
+        "Pipecat",
+        "PostgreSQL",
+        "Redis",
+      ],
+    },
   );
   const runtimeTransport = new GrpcSubscriptionRuntimeTransport({
     address: config.subscriptionRuntime.address,
@@ -122,6 +139,7 @@ export async function startMeetingPlatform(
   });
   const queueEvents = createPostCallQueueEvents({ connection, observer, prefix: queuePrefix });
   const enqueuer = new BullMqPostCallEnqueuer(queue, {}, observer);
+  const outboxDispatcher = new PostCallOutboxDispatcher(meetings, enqueuer, logger);
   const worker = createPostCallWorker({
     connection,
     deadLetterRecorder: new BullMqPostCallDeadLetterRecorder(deadLetterQueue),
@@ -150,10 +168,10 @@ export async function startMeetingPlatform(
   });
 
   const ingress = new PlatformCraigIngress({
-    enqueuer,
+    dispatcher: outboxDispatcher,
     ingress: recordings,
     logger,
-    meetings,
+    outbox: meetings,
     metrics,
     publicationTargetId: config.discordResultsChannelId,
   });
@@ -182,6 +200,7 @@ export async function startMeetingPlatform(
 
   try {
     await Promise.all([pool.query("SELECT 1"), queue.waitUntilReady(), queueEvents.waitUntilReady()]);
+    await outboxDispatcher.dispatchPending();
     const ready = once(discord, "ready");
     await discord.login(config.secrets.discordToken);
     if (!discord.isReady()) {
@@ -206,9 +225,14 @@ export async function startMeetingPlatform(
     throw error;
   }
 
+  const outboxReconcileTimer = setInterval(() => {
+    void outboxDispatcher.dispatchPending();
+  }, 5_000);
+  outboxReconcileTimer.unref();
   let closing: Promise<void> | undefined;
   return {
     close: async () => {
+      clearInterval(outboxReconcileTimer);
       closing ??= closeResources({
         discord,
         logger,

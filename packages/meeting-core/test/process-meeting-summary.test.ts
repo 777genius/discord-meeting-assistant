@@ -60,6 +60,7 @@ const generatedSummary: GeneratedSummary = {
   actionItems: [
     {
       actionItemId: "action-1",
+      deadline: null,
       evidenceTurnIds: ["turn-2"],
       ownerSpeakerId: "speaker-b",
       text: "Prepare the release checklist.",
@@ -76,6 +77,13 @@ const generatedSummary: GeneratedSummary = {
   overview: "The team planned the first release.",
   summaryId: "summary-1",
   title: "Release planning",
+  topics: [
+    {
+      evidenceTurnIds: ["turn-1", "turn-2"],
+      points: ["Friday release", "Checklist ownership"],
+      title: "Release readiness",
+    },
+  ],
   version: 1,
 };
 

@@ -26,7 +26,18 @@ export interface StoredSpeaker {
   readonly speakerId: string;
 }
 
+export interface StoredAuthoritativeTrack {
+  readonly audioLocator: string;
+  readonly checksumSha256: string;
+  readonly sizeBytes: number;
+  readonly speakerId: string;
+  readonly timelineOffsetMs: number;
+  readonly trackNumber: number;
+  readonly uploadId: string;
+}
+
 export interface RecordingSpoolState {
+  readonly authoritativeTracks: readonly StoredAuthoritativeTrack[];
   readonly channelId: string;
   readonly endedAt?: string;
   readonly events: readonly StoredLifecycleEvent[];
@@ -93,6 +104,33 @@ function parseStoredSpeaker(value: unknown): StoredSpeaker {
   };
 }
 
+function parseStoredAuthoritativeTrack(value: unknown): StoredAuthoritativeTrack {
+  const record = objectValue(value);
+  if (
+    !Number.isSafeInteger(record.sizeBytes) ||
+    (record.sizeBytes as number) <= 0 ||
+    !Number.isSafeInteger(record.timelineOffsetMs) ||
+    (record.timelineOffsetMs as number) < 0 ||
+    !Number.isSafeInteger(record.trackNumber) ||
+    (record.trackNumber as number) < 1
+  ) {
+    throw new RecordingIngressError("corrupt-spool", "invalid authoritative track metadata");
+  }
+  const checksumSha256 = stringValue(record.checksumSha256, "authoritativeTracks.checksumSha256");
+  if (!/^[0-9a-f]{64}$/u.test(checksumSha256)) {
+    throw new RecordingIngressError("corrupt-spool", "invalid authoritative track checksum");
+  }
+  return {
+    audioLocator: stringValue(record.audioLocator, "authoritativeTracks.audioLocator"),
+    checksumSha256,
+    sizeBytes: record.sizeBytes as number,
+    speakerId: stringValue(record.speakerId, "authoritativeTracks.speakerId"),
+    timelineOffsetMs: record.timelineOffsetMs as number,
+    trackNumber: record.trackNumber as number,
+    uploadId: stringValue(record.uploadId, "authoritativeTracks.uploadId"),
+  };
+}
+
 function optionalString(value: unknown, field: string): string | undefined {
   return value === undefined ? undefined : stringValue(value, field);
 }
@@ -109,6 +147,9 @@ function parseRecordingSpoolState(input: unknown): RecordingSpoolState {
   const finalEventDigest = optionalString(record.finalEventDigest, "finalEventDigest");
   const finalEventId = optionalString(record.finalEventId, "finalEventId");
   return {
+    authoritativeTracks: Array.isArray(record.authoritativeTracks)
+      ? record.authoritativeTracks.map(parseStoredAuthoritativeTrack)
+      : [],
     channelId: stringValue(record.channelId, "channelId"),
     ...(endedAt === undefined ? {} : { endedAt }),
     events: record.events.map(parseStoredEvent),

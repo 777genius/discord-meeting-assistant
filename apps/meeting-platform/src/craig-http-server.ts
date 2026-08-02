@@ -2,16 +2,23 @@ import { timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 
 import {
+  parseAuthoritativeTrackUploadMetadata,
   parseCraigLifecycleEvent,
   parseVoicePacketBatch,
   type CraigLifecycleEvent,
+  type AuthoritativeTrackUploadMetadata,
   type VoicePacketBatch,
 } from "@discord-meeting/craig-gateway-contracts";
+import { RecordingIngressError } from "@discord-meeting/recording-ingress-adapter";
 import { ZodError } from "zod";
 
 const maximumBodyBytes = 4 * 1_024 * 1_024;
 
 interface CraigIngressPort {
+  ingestAuthoritativeTrack(
+    metadata: AuthoritativeTrackUploadMetadata,
+    body: AsyncIterable<Uint8Array>,
+  ): Promise<{ readonly replayed: boolean }>;
   ingestLifecycle(event: CraigLifecycleEvent): Promise<void>;
   ingestVoiceBatch(batch: VoicePacketBatch): Promise<void>;
 }
@@ -39,7 +46,7 @@ export function createCraigHttpServer(options: CraigHttpServerOptions): Server {
     });
   });
   server.headersTimeout = 10_000;
-  server.requestTimeout = 30_000;
+  server.requestTimeout = 300_000;
   server.keepAliveTimeout = 5_000;
   server.maxRequestsPerSocket = 1_000;
   return server;
@@ -84,12 +91,30 @@ async function handleRequest(
     sendJson(response, 401, { code: "UNAUTHORIZED" });
     return;
   }
-  if (request.headers["content-type"]?.split(";", 1)[0]?.trim() !== "application/json") {
+  const contentType = request.headers["content-type"]?.split(";", 1)[0]?.trim();
+  const authoritativeTrack = url.pathname === "/v1/craig/authoritative-tracks";
+  if (contentType !== (authoritativeTrack ? "audio/ogg" : "application/json")) {
     sendJson(response, 415, { code: "CONTENT_TYPE_REQUIRED" });
     return;
   }
 
   try {
+    if (authoritativeTrack) {
+      const metadata = parseAuthoritativeTrackMetadataHeader(
+        request.headers["x-craig-authoritative-track-metadata"],
+      );
+      const declaredLength = Number(request.headers["content-length"]);
+      if (!Number.isSafeInteger(declaredLength) || declaredLength !== metadata.sizeBytes) {
+        sendJson(response, 400, { code: "INVALID_CONTENT_LENGTH" });
+        request.resume();
+        return;
+      }
+      const result = await options.ingress.ingestAuthoritativeTrack(metadata, request);
+      sendJson(response, result.replayed ? 200 : 201, {
+        status: result.replayed ? "reused" : "accepted",
+      });
+      return;
+    }
     const body = await readJsonBody(request);
     if (url.pathname === "/v1/craig/events") {
       await options.ingress.ingestLifecycle(parseCraigLifecycleEvent(body));
@@ -102,14 +127,65 @@ async function handleRequest(
       sendJson(response, 413, { code: "BODY_TOO_LARGE" });
     } else if (error instanceof SyntaxError || error instanceof ZodError) {
       sendJson(response, 400, { code: "INVALID_REQUEST" });
+    } else if (error instanceof RecordingIngressError) {
+      const status = recordingIngressStatus(error);
+      if (status === undefined) {
+        throw error;
+      }
+      sendJson(response, status, {
+        code: status === 409 ? "INGRESS_CONFLICT" :
+          status === 413 ? "INGRESS_LIMIT_EXCEEDED" : "INVALID_INGRESS_STATE",
+      });
     } else {
       throw error;
     }
   }
 }
 
+function recordingIngressStatus(error: RecordingIngressError): 400 | 409 | 413 | undefined {
+  switch (error.failure) {
+    case "invalid-input":
+    case "path-policy":
+    case "unsupported-event":
+      return 400;
+    case "conflicting-duplicate":
+    case "invalid-state":
+      return 409;
+    case "limit-exceeded":
+      return 413;
+    case "aborted":
+    case "artifact-write-mismatch":
+    case "corrupt-spool":
+      return undefined;
+  }
+}
+
 function isCraigPath(pathname: string): boolean {
-  return pathname === "/v1/craig/events" || pathname === "/v1/craig/voice-packets";
+  return (
+    pathname === "/v1/craig/events" ||
+    pathname === "/v1/craig/voice-packets" ||
+    pathname === "/v1/craig/authoritative-tracks"
+  );
+}
+
+function parseAuthoritativeTrackMetadataHeader(
+  value: string | readonly string[] | undefined,
+): AuthoritativeTrackUploadMetadata {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > 4_096 ||
+    !/^[A-Za-z0-9_-]+$/u.test(value)
+  ) {
+    throw new SyntaxError("invalid authoritative track metadata header");
+  }
+  const decoded = Buffer.from(value, "base64url");
+  if (decoded.toString("base64url") !== value) {
+    throw new SyntaxError("non-canonical authoritative track metadata header");
+  }
+  return parseAuthoritativeTrackUploadMetadata(
+    JSON.parse(decoded.toString("utf8")) as unknown,
+  );
 }
 
 function isAuthorized(header: string | undefined, token: string): boolean {

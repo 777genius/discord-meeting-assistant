@@ -191,7 +191,7 @@ export class ProcessMeetingSummary {
     try {
       result = await this.summarizer.generate({
         idempotencyKey: operationIdentity(
-          "evidence-summary:v1",
+          "evidence-summary:v2",
           meeting.meetingId,
           transcript.transcriptId,
         ),

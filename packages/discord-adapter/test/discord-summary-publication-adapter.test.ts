@@ -31,12 +31,14 @@ const request: SummaryPublicationRequest = {
     actionItems: [
       {
         actionItemId: "action-1",
+        deadline: "к четвергу",
         evidenceTurnIds: ["turn-2"],
         ownerSpeakerId: "speaker-b",
         text: "Подготовить дашборд к четвергу",
       },
       {
         actionItemId: "action-2",
+        deadline: null,
         evidenceTurnIds: ["turn-3"],
         ownerSpeakerId: null,
         text: "Проверить точность транскрипции",
@@ -53,6 +55,13 @@ const request: SummaryPublicationRequest = {
     overview: "Команда согласовала выпуск и владельцев подготовки.",
     summaryId: "summary-42",
     title: "  Итоги   встречи  ",
+    topics: [
+      {
+        evidenceTurnIds: ["turn-1", "turn-2"],
+        points: ["Релиз запланирован на пятницу", "Дашборд готовит speaker-b"],
+        title: "Подготовка релиза",
+      },
+    ],
     transcriptId: "transcript-42",
     version: 1,
   },
@@ -105,6 +114,12 @@ describe("DiscordSummaryPublicationAdapter", () => {
         "## Кратко",
         "Команда согласовала выпуск и владельцев подготовки.",
         "",
+        "## Основные темы",
+        "1. Подготовка релиза",
+        "   - Релиз запланирован на пятницу",
+        "   - Дашборд готовит speaker-b",
+        "   - Доказательства: `turn-1` [00:00.000-00:01.250] `speaker-a`, `turn-2` [00:00.900-00:02.800] `speaker-b`",
+        "",
         "## Решения",
         "1. Выпустить ассистента в пятницу",
         "   - Доказательства: `turn-1` [00:00.000-00:01.250] `speaker-a`, `turn-2` [00:00.900-00:02.800] `speaker-b`",
@@ -112,9 +127,11 @@ describe("DiscordSummaryPublicationAdapter", () => {
         "## Задачи",
         "1. Подготовить дашборд к четвергу",
         "   - Ответственный: `speaker-b`",
+        "   - Срок: к четвергу",
         "   - Доказательства: `turn-2` [00:00.900-00:02.800] `speaker-b`",
         "2. Проверить точность транскрипции",
         "   - Ответственный: не назначен",
+        "   - Срок: не указан",
         "   - Доказательства: `turn-3` [00:03.000-00:04.200] `speaker-a`",
         "",
         "## Открытые вопросы",
@@ -136,12 +153,36 @@ describe("DiscordSummaryPublicationAdapter", () => {
         actionItems: [],
         decisions: [],
         openQuestions: [],
+        topics: [],
       },
     });
 
     expect(projector.inputs[0]?.markdown).toContain("Зафиксированных решений нет.");
     expect(projector.inputs[0]?.markdown).toContain("Зафиксированных задач нет.");
+    expect(projector.inputs[0]?.markdown).toContain("Основные темы не выделены.");
     expect(projector.inputs[0]?.markdown).toContain("Открытых вопросов нет.");
+  });
+
+  it("deterministically bounds oversized summaries to the Discord limit", async () => {
+    const projector = new FakeProjector();
+    const adapter = new DiscordSummaryPublicationAdapter(projector);
+
+    const result = await adapter.publish({
+      ...request,
+      summary: {
+        ...request.summary,
+        overview: "Очень длинное описание встречи. ".repeat(400),
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(projector.inputs[0]?.markdown.length).toBeLessThanOrEqual(4_000);
+    expect(projector.inputs[0]?.markdown).toContain(
+      "Саммари сокращено из-за лимита Discord.",
+    );
+    expect(projector.inputs[0]?.markdown).toContain(
+      "Встреча: `meeting-42` · Саммари: `summary-42` · Версия: 1",
+    );
   });
 
   it.each([

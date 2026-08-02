@@ -155,6 +155,7 @@ boundaries:
       builtins:
         - node:child_process
         - node:fs/promises
+        - node:path
       runtimeReferences: []
   - id: apps.meeting-platform
     roots:

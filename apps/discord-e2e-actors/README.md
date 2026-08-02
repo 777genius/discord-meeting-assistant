@@ -5,6 +5,20 @@ voice channel and plays synthetic Ogg Opus fixtures with controlled overlap,
 strictly sequential playback, or one speaker reconnecting during the same recording.
 It never accepts bot tokens through environment variables or files.
 
+Generate the Russian fixtures with embedded English technical terms before the
+first external run. The command uses macOS `say` (voice `Milena` by default),
+encodes Ogg Opus with `ffmpeg`, verifies it with `ffprobe`, and prints the audio
+SHA-256 values that are pinned in the manifest and captured by the collector:
+
+```sh
+pnpm --filter @discord-meeting/discord-e2e-actors fixtures:generate
+```
+
+The versioned ground truth is `test/fixtures/manifest.v1.json`. It pins the exact
+UTF-8 source and Ogg SHA-256 hashes, Ogg duration, expected Discord speaker IDs,
+required Russian/English terminology, scenario timing, and overlap behavior.
+The harness refuses to connect if a configured fixture differs from the manifest.
+
 Before a coordinated real-provider run, store both tokens in macOS Keychain
 under service `discord-voice-bot-e2e`, accounts `speaker-a` and `speaker-b`.
 Provide only the private test guild and voice channel IDs:
@@ -12,12 +26,62 @@ Provide only the private test guild and voice channel IDs:
 ```sh
 DISCORD_E2E_GUILD_ID=... \
 DISCORD_E2E_VOICE_CHANNEL_ID=... \
+DISCORD_E2E_RUN_ID=campaign-2026-08-02-overlap \
+DISCORD_E2E_ACTOR_RUN_OUTPUT=/absolute/evidence/overlap.actor-run.json \
 pnpm --filter @discord-meeting/discord-e2e-actors start
 ```
+
+`runId` is chosen before the call. Craig's random `recordingId` is deliberately
+not required by the actor process. Actor evidence contains absolute wall-clock
+events and is bound to one explicit recording only by the collector after the
+authoritative Craig manifest exists.
 
 Optional environment settings override the Keychain service/account names,
 fixture paths, scenario, speaker B delay, and readiness/playback timeouts. The
 scenario is selected with `DISCORD_E2E_SCENARIO=overlap|sequential|reconnect` and
 defaults to `overlap`. For `sequential`, the delay is the silent gap after speaker
-A completes. For `reconnect`, speaker B reconnects after the delay while speaker A
-keeps the recording active. Do not run this CLI against a public or user-owned guild.
+A completes. For `reconnect`, speaker B plays once, disconnects, waits for a new
+ready voice connection, and plays again. Do not run this CLI against a public or
+user-owned guild.
+
+After the call finishes, run the collector with the explicit Craig recording ID.
+It reads the actual Postgres snapshot/counts over the isolated SSH deployment,
+downloads and hashes the authoritative S3 manifest and every speaker track,
+counts Discord projection markers, replays the completed BullMQ job, then repeats
+the Postgres and Discord counts. It writes nothing unless correlation and the
+single-run verifier pass:
+
+```sh
+DISCORD_E2E_RUN_ID=campaign-2026-08-02-overlap \
+DISCORD_E2E_RECORDING_ID=<craig-recording-id> \
+DISCORD_E2E_ACTOR_RUN_INPUT=/absolute/evidence/overlap.actor-run.json \
+DISCORD_E2E_EVIDENCE_OUTPUT=/absolute/evidence/overlap.evidence.v1.json \
+pnpm --filter @discord-meeting/discord-e2e-actors collect:e2e
+```
+
+The collector performs a real post-call replay. Run it only against the isolated
+official-bot test deployment. Infrastructure paths/host/project have safe
+environment overrides for another disposable deployment.
+
+An individual evidence file can be checked again deterministically:
+
+```sh
+pnpm --filter @discord-meeting/discord-e2e-actors verify:e2e -- \
+  test/fixtures/manifest.v1.json /absolute/path/to/retained-evidence.v1.json
+```
+
+The command exits non-zero for WER/CER or terminology failure, wrong speakers or
+timestamps, missing overlap, invalid summary evidence, broken reconnect ordering,
+changed replay identities, or any duplicate business effect.
+
+Finally verify the full campaign. At least one passing run for each scenario is
+required and meeting, recording, transcript, summary, thread, and message IDs
+must all be isolated between runs:
+
+```sh
+pnpm --filter @discord-meeting/discord-e2e-actors verify:campaign -- \
+  test/fixtures/manifest.v1.json \
+  /absolute/evidence/sequential.evidence.v1.json \
+  /absolute/evidence/overlap.evidence.v1.json \
+  /absolute/evidence/reconnect.evidence.v1.json
+```

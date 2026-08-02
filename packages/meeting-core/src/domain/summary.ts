@@ -21,9 +21,16 @@ export interface SummaryDecisionSnapshot {
 
 export interface SummaryActionItemSnapshot {
   readonly actionItemId: string;
+  readonly deadline: string | null;
   readonly evidenceTurnIds: readonly string[];
   readonly ownerSpeakerId: string | null;
   readonly text: string;
+}
+
+export interface SummaryTopicSnapshot {
+  readonly evidenceTurnIds: readonly string[];
+  readonly points: readonly string[];
+  readonly title: string;
 }
 
 export interface EvidenceBackedSummarySnapshot {
@@ -33,6 +40,7 @@ export interface EvidenceBackedSummarySnapshot {
   readonly overview: string;
   readonly summaryId: string;
   readonly title: string;
+  readonly topics: readonly SummaryTopicSnapshot[];
   readonly transcriptId: string;
   readonly version: number;
 }
@@ -45,10 +53,30 @@ export interface SummaryDecision {
 
 export interface SummaryActionItem {
   readonly actionItemId: string;
+  readonly deadline: string | null;
   readonly evidenceTurnIds: readonly string[];
   readonly ownerSpeakerId: SpeakerId | null;
   readonly text: string;
 }
+
+export interface SummaryTopic {
+  readonly evidenceTurnIds: readonly string[];
+  readonly points: readonly string[];
+  readonly title: string;
+}
+
+type LegacySummaryActionItemSnapshot = Omit<SummaryActionItemSnapshot, "deadline">;
+
+type LegacyEvidenceBackedSummarySnapshot = Omit<
+  EvidenceBackedSummarySnapshot,
+  "actionItems" | "topics"
+> & {
+  readonly actionItems: readonly LegacySummaryActionItemSnapshot[];
+};
+
+type SummaryCreationSnapshot =
+  | EvidenceBackedSummarySnapshot
+  | LegacyEvidenceBackedSummarySnapshot;
 
 function validateEvidence(
   evidenceTurnIds: readonly string[],
@@ -91,8 +119,9 @@ export class EvidenceBackedSummary {
   public readonly decisions: readonly SummaryDecision[];
   public readonly actionItems: readonly SummaryActionItem[];
   public readonly openQuestions: readonly string[];
+  public readonly topics: readonly SummaryTopic[];
 
-  private constructor(snapshot: EvidenceBackedSummarySnapshot, transcript: FinalTranscript) {
+  private constructor(snapshot: SummaryCreationSnapshot, transcript: FinalTranscript) {
     this.summaryId = createSummaryId(snapshot.summaryId);
     this.transcriptId = createTranscriptId(snapshot.transcriptId);
     if (this.transcriptId !== transcript.transcriptId) {
@@ -140,6 +169,10 @@ export class EvidenceBackedSummary {
           actionItem.actionItemId,
           "summary.actionItemId",
         ),
+        deadline:
+          "deadline" in actionItem && actionItem.deadline !== null
+            ? requireNonEmpty(actionItem.deadline, "summary.actionItem.deadline")
+            : null,
         evidenceTurnIds: validateEvidence(
           actionItem.evidenceTurnIds,
           transcript,
@@ -161,6 +194,29 @@ export class EvidenceBackedSummary {
 
     this.decisions = Object.freeze(decisions);
     this.actionItems = Object.freeze(actionItems);
+    this.topics = Object.freeze(
+      ("topics" in snapshot ? snapshot.topics : []).map((topic) => {
+        if (topic.points.length === 0) {
+          throw new DomainInvariantError(
+            "EMPTY_VALUE",
+            "summary.topic.points must contain at least one point",
+          );
+        }
+        return Object.freeze({
+          evidenceTurnIds: validateEvidence(
+            topic.evidenceTurnIds,
+            transcript,
+            "summary.topic.evidenceTurnIds",
+          ),
+          points: Object.freeze(
+            topic.points.map((point) =>
+              requireNonEmpty(point, "summary.topic.point"),
+            ),
+          ),
+          title: requireNonEmpty(topic.title, "summary.topic.title"),
+        });
+      }),
+    );
     this.openQuestions = Object.freeze(
       snapshot.openQuestions.map((question) =>
         requireNonEmpty(question, "summary.openQuestion"),
@@ -171,6 +227,16 @@ export class EvidenceBackedSummary {
   public static create(
     snapshot: EvidenceBackedSummarySnapshot,
     transcript: FinalTranscript,
+  ): EvidenceBackedSummary;
+
+  /** Restores summaries persisted before topics and action deadlines were added. */
+  public static create(
+    snapshot: LegacyEvidenceBackedSummarySnapshot,
+    transcript: FinalTranscript,
+  ): EvidenceBackedSummary;
+  public static create(
+    snapshot: SummaryCreationSnapshot,
+    transcript: FinalTranscript,
   ): EvidenceBackedSummary {
     return new EvidenceBackedSummary(snapshot, transcript);
   }
@@ -179,6 +245,7 @@ export class EvidenceBackedSummary {
     return {
       actionItems: this.actionItems.map((actionItem) => ({
         actionItemId: actionItem.actionItemId,
+        deadline: actionItem.deadline,
         evidenceTurnIds: [...actionItem.evidenceTurnIds],
         ownerSpeakerId: actionItem.ownerSpeakerId,
         text: actionItem.text,
@@ -192,6 +259,11 @@ export class EvidenceBackedSummary {
       overview: this.overview,
       summaryId: this.summaryId,
       title: this.title,
+      topics: this.topics.map((topic) => ({
+        evidenceTurnIds: [...topic.evidenceTurnIds],
+        points: [...topic.points],
+        title: topic.title,
+      })),
       transcriptId: this.transcriptId,
       version: this.version,
     };

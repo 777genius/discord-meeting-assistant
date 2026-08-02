@@ -78,7 +78,7 @@ describe("SubscriptionRuntimeExecutor", () => {
         "--provider",
         "codex",
         "--provider-instance",
-        "discord-meeting-summary-v1",
+        "discord-meeting-summary-v2",
         "--model",
         "gpt-5.6-sol",
       ]),

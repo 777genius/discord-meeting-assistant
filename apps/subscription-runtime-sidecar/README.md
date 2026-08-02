@@ -29,7 +29,7 @@ wrapper is not an admitted production installation.
 
 The sidecar invokes the audited bridge with `--provider codex`, `--input`,
 `--format result-json`, `--timeout-ms`, `--state-root`, `--codex-auth-json`,
-`--provider-instance discord-meeting-summary-v1`, and
+`--provider-instance discord-meeting-summary-v2`, and
 `--model gpt-5.6-sol`. The auth JSON and state root must belong only to this
 sidecar. Never mount another project's mutable runtime state.
 

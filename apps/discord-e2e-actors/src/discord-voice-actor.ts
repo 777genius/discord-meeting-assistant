@@ -15,6 +15,7 @@ import {
   ChannelType,
   Client,
   GatewayIntentBits,
+  type Guild,
   type GuildBasedChannel,
   type VoiceChannel,
 } from "discord.js";
@@ -31,14 +32,43 @@ export interface DiscordVoiceActorInput {
   readonly playbackTimeoutMilliseconds: number;
 }
 
-class ConnectedDiscordVoiceActor implements ReconnectableVoiceActor {
+export interface RecorderAwareVoiceActor extends ReconnectableVoiceActor {
+  waitForVoiceMember(memberId: string, timeoutMilliseconds: number): Promise<void>;
+}
+
+class ConnectedDiscordVoiceActor implements RecorderAwareVoiceActor {
   constructor(
     private readonly client: Client,
     private connection: VoiceConnection | undefined,
     private readonly connect: () => Promise<VoiceConnection>,
     private readonly fixturePath: string,
     private readonly playbackTimeoutMilliseconds: number,
+    private readonly guild: Guild,
+    private readonly voiceChannelId: string,
   ) {}
+
+  async waitForVoiceMember(memberId: string, timeoutMilliseconds: number): Promise<void> {
+    if (this.guild.voiceStates.cache.get(memberId)?.channelId === this.voiceChannelId) {
+      return;
+    }
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        cleanup();
+        reject(new Error(`Recorder bot ${memberId} did not join the E2E voice channel`));
+      }, timeoutMilliseconds);
+      const onVoiceStateUpdate = (): void => {
+        if (this.guild.voiceStates.cache.get(memberId)?.channelId === this.voiceChannelId) {
+          cleanup();
+          resolve();
+        }
+      };
+      const cleanup = (): void => {
+        clearTimeout(timeout);
+        this.client.off("voiceStateUpdate", onVoiceStateUpdate);
+      };
+      this.client.on("voiceStateUpdate", onVoiceStateUpdate);
+    });
+  }
 
   async play(): Promise<void> {
     const connection = this.connection;
@@ -79,7 +109,7 @@ class ConnectedDiscordVoiceActor implements ReconnectableVoiceActor {
 
 export async function connectDiscordVoiceActor(
   input: DiscordVoiceActorInput,
-): Promise<ReconnectableVoiceActor> {
+): Promise<RecorderAwareVoiceActor> {
   await access(input.fixturePath);
   const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates],
@@ -121,6 +151,8 @@ export async function connectDiscordVoiceActor(
       connect,
       input.fixturePath,
       input.playbackTimeoutMilliseconds,
+      guild,
+      channel.id,
     );
   } catch (error: unknown) {
     connection?.destroy();

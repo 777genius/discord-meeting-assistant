@@ -1,0 +1,1 @@
+Спикер A подтверждает: Meeting Platform сохраняет Craig recording и запускает PostgreSQL pipeline. Решение - выпустить версию в пятницу. Задача для спикера B - проверить Discord thread до 2026-08-07.

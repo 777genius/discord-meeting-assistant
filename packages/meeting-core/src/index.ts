@@ -62,6 +62,8 @@ export {
   type SummaryActionItemSnapshot,
   type SummaryDecision,
   type SummaryDecisionSnapshot,
+  type SummaryTopic,
+  type SummaryTopicSnapshot,
 } from "./domain/summary.js";
 export {
   FinalTranscript,

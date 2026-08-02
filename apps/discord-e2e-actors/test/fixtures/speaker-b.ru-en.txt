@@ -1,0 +1,1 @@
+Спикер B отвечает: проверю Discord thread, Redis queue и idempotency key до 2026-08-07. Открытый вопрос - нужен ли live Pipecat assistant после V1?

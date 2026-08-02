@@ -23,10 +23,13 @@ The critical flow is:
 1. official test bots join a private test voice channel;
 2. synthetic speaker fixtures include sequential and overlapping speech;
 3. Craig produces the original multitrack recording;
-4. final transcription preserves Discord speaker identity and timestamps;
-5. summary schema, action owner, and evidence turn references are validated;
-6. publishing creates or updates exactly one Discord thread;
-7. rerunning each stage produces no duplicate business effect.
+4. Craig restart recovery cooks and uploads checksummed speaker tracks from that
+   original, while an intentionally incomplete live tee is never finalized;
+5. final transcription preserves Discord speaker identity and timestamps;
+6. summary topics, action owner/deadline, and evidence turn references are validated;
+7. publishing creates or updates exactly one Discord thread;
+8. a save/enqueue crash is recovered from the PostgreSQL outbox;
+9. rerunning each stage produces no duplicate business effect.
 
 Transcript assertions use WER/CER thresholds, required terminology, exact speaker
 IDs, timestamp tolerance, and overlap checks. Summary assertions are deterministic

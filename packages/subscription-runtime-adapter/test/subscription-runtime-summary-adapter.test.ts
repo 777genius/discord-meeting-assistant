@@ -50,6 +50,7 @@ const requestFixture: SummaryGenerationRequest = {
 const validStructuredOutput: JsonObject = {
   actionItems: [
     {
+      deadline: "к пятнице",
       evidenceTurnIds: ["turn-b"],
       ownerSpeakerId: "speaker-b",
       text: "Подготовить релиз к пятнице",
@@ -64,6 +65,13 @@ const validStructuredOutput: JsonObject = {
   openQuestions: [],
   overview: "Команда согласовала дату первой версии.",
   title: "План выпуска первой версии",
+  topics: [
+    {
+      evidenceTurnIds: ["turn-a", "turn-b"],
+      points: ["Дата выпуска", "Ответственный за подготовку"],
+      title: "Подготовка выпуска",
+    },
+  ],
 };
 
 class FakeTransport implements SubscriptionRuntimeTransportPort {
@@ -104,6 +112,7 @@ describe("SubscriptionRuntimeSummaryAdapter", () => {
     expect(result.value).toMatchObject({
       actionItems: [
         {
+          deadline: "к пятнице",
           evidenceTurnIds: ["turn-b"],
           ownerSpeakerId: "speaker-b",
           text: "Подготовить релиз к пятнице",
@@ -113,6 +122,13 @@ describe("SubscriptionRuntimeSummaryAdapter", () => {
         {
           evidenceTurnIds: ["turn-a"],
           text: "Выпустить первую версию в пятницу",
+        },
+      ],
+      topics: [
+        {
+          evidenceTurnIds: ["turn-a", "turn-b"],
+          points: ["Дата выпуска", "Ответственный за подготовку"],
+          title: "Подготовка выпуска",
         },
       ],
       version: 1,
@@ -153,6 +169,7 @@ describe("SubscriptionRuntimeSummaryAdapter", () => {
       },
     });
     expect(captured.task.systemPrompt).toContain("untrusted quoted evidence");
+    expect(captured.task.systemPrompt).toContain("exact deadline wording");
     expect(captured.task.controls.outputSchema).toMatchObject({
       additionalProperties: false,
       type: "object",
@@ -218,6 +235,7 @@ describe("SubscriptionRuntimeSummaryAdapter", () => {
         ...validStructuredOutput,
         actionItems: [
           {
+            deadline: null,
             evidenceTurnIds: ["turn-missing"],
             ownerSpeakerId: "speaker-missing",
             text: "Invented action",
@@ -232,6 +250,76 @@ describe("SubscriptionRuntimeSummaryAdapter", () => {
       failure: {
         code: "SUBSCRIPTION_RUNTIME_SUMMARY_INVALID_EVIDENCE",
         message: "Summary references a transcript turn that does not exist",
+        retryable: false,
+      },
+      ok: false,
+    });
+  });
+
+  it("rejects unknown topic evidence before mapping provider output", async () => {
+    const transport = new FakeTransport((request) =>
+      completedResult(request, {
+        ...validStructuredOutput,
+        topics: [
+          {
+            evidenceTurnIds: ["turn-missing"],
+            points: ["Придуманный тезис"],
+            title: "Придуманная тема",
+          },
+        ],
+      }),
+    );
+
+    const result = await createAdapter(transport).generate(requestFixture);
+
+    expect(result).toEqual({
+      failure: {
+        code: "SUBSCRIPTION_RUNTIME_SUMMARY_INVALID_EVIDENCE",
+        message: "Summary references a transcript turn that does not exist",
+        retryable: false,
+      },
+      ok: false,
+    });
+  });
+
+  it("requires an explicit nullable deadline in every provider action item", async () => {
+    const transport = new FakeTransport((request) =>
+      completedResult(request, {
+        ...validStructuredOutput,
+        actionItems: [
+          {
+            evidenceTurnIds: ["turn-b"],
+            ownerSpeakerId: "speaker-b",
+            text: "Подготовить релиз",
+          },
+        ],
+      }),
+    );
+
+    const result = await createAdapter(transport).generate(requestFixture);
+
+    expect(result).toMatchObject({
+      failure: {
+        code: "SUBSCRIPTION_RUNTIME_SUMMARY_INVALID_PROVIDER_RESPONSE",
+        retryable: false,
+      },
+      ok: false,
+    });
+  });
+
+  it("rejects provider text that exceeds the bounded summary schema", async () => {
+    const transport = new FakeTransport((request) =>
+      completedResult(request, {
+        ...validStructuredOutput,
+        overview: "x".repeat(801),
+      }),
+    );
+
+    const result = await createAdapter(transport).generate(requestFixture);
+
+    expect(result).toMatchObject({
+      failure: {
+        code: "SUBSCRIPTION_RUNTIME_SUMMARY_INVALID_PROVIDER_RESPONSE",
         retryable: false,
       },
       ok: false,

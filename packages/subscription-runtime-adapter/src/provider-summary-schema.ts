@@ -1,30 +1,43 @@
 import { z } from "zod";
 
-const nonEmptyStringSchema = z.string().trim().min(1);
-const evidenceTurnIdsSchema = z.array(nonEmptyStringSchema).min(1);
+const shortTextSchema = z.string().trim().min(1).max(240);
+const titleSchema = z.string().trim().min(1).max(120);
+const overviewSchema = z.string().trim().min(1).max(800);
+const evidenceTurnIdSchema = z.string().trim().min(1).max(128);
+const evidenceTurnIdsSchema = z.array(evidenceTurnIdSchema).min(1).max(8);
 
 export const providerMeetingSummarySchema = z
   .object({
     actionItems: z.array(
       z
         .object({
+          deadline: z.string().trim().min(1).max(120).nullable(),
           evidenceTurnIds: evidenceTurnIdsSchema,
-          ownerSpeakerId: nonEmptyStringSchema.nullable(),
-          text: nonEmptyStringSchema,
+          ownerSpeakerId: z.string().trim().min(1).max(128).nullable(),
+          text: shortTextSchema,
         })
         .strict(),
-    ),
+    ).max(12),
     decisions: z.array(
       z
         .object({
           evidenceTurnIds: evidenceTurnIdsSchema,
-          text: nonEmptyStringSchema,
+          text: shortTextSchema,
         })
         .strict(),
-    ),
-    openQuestions: z.array(nonEmptyStringSchema),
-    overview: nonEmptyStringSchema,
-    title: nonEmptyStringSchema,
+    ).max(12),
+    openQuestions: z.array(shortTextSchema).max(12),
+    overview: overviewSchema,
+    title: titleSchema,
+    topics: z.array(
+      z
+        .object({
+          evidenceTurnIds: evidenceTurnIdsSchema,
+          points: z.array(shortTextSchema).min(1).max(6),
+          title: titleSchema,
+        })
+        .strict(),
+    ).max(10),
   })
   .strict();
 
@@ -34,37 +47,47 @@ export const providerMeetingSummaryJsonSchema = {
   additionalProperties: false,
   properties: {
     actionItems: {
+      maxItems: 12,
       items: {
         additionalProperties: false,
         properties: {
+          deadline: {
+            anyOf: [
+              { maxLength: 120, minLength: 1, type: "string" },
+              { type: "null" },
+            ],
+          },
           evidenceTurnIds: {
-            items: { minLength: 1, type: "string" },
+            items: { maxLength: 128, minLength: 1, type: "string" },
+            maxItems: 8,
             minItems: 1,
             type: "array",
           },
           ownerSpeakerId: {
             anyOf: [
-              { minLength: 1, type: "string" },
+              { maxLength: 128, minLength: 1, type: "string" },
               { type: "null" },
             ],
           },
-          text: { minLength: 1, type: "string" },
+          text: { maxLength: 240, minLength: 1, type: "string" },
         },
-        required: ["text", "ownerSpeakerId", "evidenceTurnIds"],
+        required: ["text", "ownerSpeakerId", "deadline", "evidenceTurnIds"],
         type: "object",
       },
       type: "array",
     },
     decisions: {
+      maxItems: 12,
       items: {
         additionalProperties: false,
         properties: {
           evidenceTurnIds: {
-            items: { minLength: 1, type: "string" },
+            items: { maxLength: 128, minLength: 1, type: "string" },
+            maxItems: 8,
             minItems: 1,
             type: "array",
           },
-          text: { minLength: 1, type: "string" },
+          text: { maxLength: 240, minLength: 1, type: "string" },
         },
         required: ["text", "evidenceTurnIds"],
         type: "object",
@@ -72,12 +95,44 @@ export const providerMeetingSummaryJsonSchema = {
       type: "array",
     },
     openQuestions: {
-      items: { minLength: 1, type: "string" },
+      items: { maxLength: 240, minLength: 1, type: "string" },
+      maxItems: 12,
       type: "array",
     },
-    overview: { minLength: 1, type: "string" },
-    title: { minLength: 1, type: "string" },
+    overview: { maxLength: 800, minLength: 1, type: "string" },
+    title: { maxLength: 120, minLength: 1, type: "string" },
+    topics: {
+      items: {
+        additionalProperties: false,
+        properties: {
+          evidenceTurnIds: {
+            items: { maxLength: 128, minLength: 1, type: "string" },
+            maxItems: 8,
+            minItems: 1,
+            type: "array",
+          },
+          points: {
+            items: { maxLength: 240, minLength: 1, type: "string" },
+            maxItems: 6,
+            minItems: 1,
+            type: "array",
+          },
+          title: { maxLength: 120, minLength: 1, type: "string" },
+        },
+        required: ["title", "points", "evidenceTurnIds"],
+        type: "object",
+      },
+      maxItems: 10,
+      type: "array",
+    },
   },
-  required: ["title", "overview", "decisions", "actionItems", "openQuestions"],
+  required: [
+    "title",
+    "overview",
+    "topics",
+    "decisions",
+    "actionItems",
+    "openQuestions",
+  ],
   type: "object",
 } as const;

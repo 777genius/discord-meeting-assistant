@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  parseAuthoritativeTrackUploadMetadata,
   parseCraigLifecycleEvent,
   parseVoicePacket,
   parseVoicePacketBatch,
@@ -26,6 +27,35 @@ describe("Craig gateway contracts", () => {
     });
 
     expect(event.type).toBe("recording.artifact_ready");
+  });
+
+  it("accepts an authoritative-ready event with source evidence", () => {
+    const event = parseCraigLifecycleEvent({
+      ...baseEvent,
+      type: "recording.authoritative_ready",
+      endedAt: "2026-08-02T20:30:00.000Z",
+      sourceFilesChecksumSha256: "a".repeat(64),
+      trackCount: 2,
+    });
+
+    expect(event.type).toBe("recording.authoritative_ready");
+  });
+
+  it("validates bounded authoritative track upload metadata", () => {
+    expect(
+      parseAuthoritativeTrackUploadMetadata({
+        schemaVersion: 1,
+        uploadId: "recording-1:track:1",
+        recordingId: "recording-1",
+        guildId: "1533224474609057793",
+        channelId: "1533224474609057794",
+        speakerId: "1533224474609057795",
+        trackNumber: 1,
+        timelineOffsetMs: 0,
+        checksumSha256: "b".repeat(64),
+        sizeBytes: 4096,
+      }),
+    ).toMatchObject({ trackNumber: 1, sizeBytes: 4096 });
   });
 
   it("fails closed when Craig leaks a secret or adds an unknown field", () => {

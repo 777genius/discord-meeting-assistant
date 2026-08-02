@@ -5,9 +5,13 @@
   "type": "module",
   "scripts": {
     "build": "tsc --project tsconfig.build.json --pretty false",
+    "collect:e2e": "pnpm run build && node dist/collect-retained-evidence.js",
+    "fixtures:generate": "./scripts/generate-ru-en-fixtures.sh",
     "start": "pnpm run build && node dist/main.js",
     "test": "vitest run",
     "typecheck": "tsc --project tsconfig.json --noEmit --pretty false",
+    "verify:e2e": "pnpm run build && node dist/verify-retained-evidence.js",
+    "verify:campaign": "pnpm run build && node dist/verify-campaign.js",
     "check": "pnpm run typecheck && pnpm run test"
   },
   "dependencies": {

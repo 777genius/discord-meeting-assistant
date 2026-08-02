@@ -15,6 +15,9 @@ interface DiscordSummaryProjector {
   publish(input: PublishDiscordSummary): Promise<DiscordProjectionReference>;
 }
 
+const discordMarkdownLimit = 4_000;
+const truncationNotice = "_Саммари сокращено из-за лимита Discord._";
+
 type PublicationResult = PortResult<
   Pick<PublicationReceiptSnapshot, "externalPublicationId">
 >;
@@ -51,11 +54,21 @@ export function renderRussianSummaryMarkdown(
 ): string {
   const { summary } = request;
   const evidence = new Map(request.transcript.turns.map((turn) => [turn.turnId, turn]));
-  const lines = [
+  const bodyLines = [
     `# ${normalizeInline(summary.title)}`,
     "",
     "## Кратко",
     summary.overview.trim(),
+    "",
+    "## Основные темы",
+    ...numberedOrEmpty(
+      summary.topics.map((topic) => [
+        topic.title.trim(),
+        ...topic.points.map((point) => point.trim()),
+        evidenceLine(topic.evidenceTurnIds, evidence),
+      ]),
+      "Основные темы не выделены.",
+    ),
     "",
     "## Решения",
     ...numberedOrEmpty(
@@ -75,6 +88,9 @@ export function renderRussianSummaryMarkdown(
             ? "не назначен"
             : inlineCode(actionItem.ownerSpeakerId)
         }`,
+        `Срок: ${
+          actionItem.deadline === null ? "не указан" : actionItem.deadline.trim()
+        }`,
         evidenceLine(actionItem.evidenceTurnIds, evidence),
       ]),
       "Зафиксированных задач нет.",
@@ -84,11 +100,45 @@ export function renderRussianSummaryMarkdown(
     ...(summary.openQuestions.length === 0
       ? ["Открытых вопросов нет."]
       : summary.openQuestions.map((question) => `- ${question.trim()}`)),
-    "",
-    `Встреча: ${inlineCode(request.meetingId)} · Саммари: ${inlineCode(summary.summaryId)} · Версия: ${summary.version}`,
   ];
+  const footer = `Встреча: ${boundedInlineCode(request.meetingId)} · Саммари: ${boundedInlineCode(summary.summaryId)} · Версия: ${summary.version}`;
 
-  return lines.join("\n");
+  return boundedMarkdown(bodyLines, footer);
+}
+
+function boundedMarkdown(bodyLines: readonly string[], footer: string): string {
+  const body = bodyLines.join("\n").trimEnd();
+  const complete = `${body}\n\n${footer}`;
+  if (complete.length <= discordMarkdownLimit) {
+    return complete;
+  }
+
+  const suffix = `\n\n${truncationNotice}\n\n${footer}`;
+  const bodyBudget = discordMarkdownLimit - suffix.length;
+  const shortenedBody = truncateAtStableBoundary(body, bodyBudget);
+  return `${shortenedBody}${suffix}`;
+}
+
+function truncateAtStableBoundary(value: string, maximumLength: number): string {
+  if (value.length <= maximumLength) {
+    return value.trimEnd();
+  }
+  const ellipsis = "…";
+  const sliced = safeCodeUnitSlice(value, Math.max(0, maximumLength - ellipsis.length));
+  const finalNewline = sliced.lastIndexOf("\n");
+  const stable = finalNewline >= sliced.length - 320
+    ? sliced.slice(0, finalNewline)
+    : sliced;
+  return `${stable.trimEnd()}${ellipsis}`;
+}
+
+function safeCodeUnitSlice(value: string, maximumLength: number): string {
+  let sliced = value.slice(0, maximumLength);
+  const finalCodeUnit = sliced.charCodeAt(sliced.length - 1);
+  if (finalCodeUnit >= 0xD800 && finalCodeUnit <= 0xDBFF) {
+    sliced = sliced.slice(0, -1);
+  }
+  return sliced;
 }
 
 function numberedOrEmpty(
@@ -132,6 +182,15 @@ function formatTimestamp(milliseconds: number): string {
 
 function inlineCode(value: string): string {
   return `\`${value.trim().replaceAll("`", "ˋ")}\``;
+}
+
+function boundedInlineCode(value: string): string {
+  const normalized = value.trim().replaceAll("`", "ˋ");
+  return inlineCode(
+    normalized.length <= 96
+      ? normalized
+      : `${safeCodeUnitSlice(normalized, 95)}…`,
+  );
 }
 
 function normalizeInline(value: string): string {

@@ -3,4 +3,7 @@ export {
   MeetingPersistenceConflictError,
   type MeetingPersistenceConflict,
 } from "./errors.js";
-export { PostgresMeetingRepository } from "./postgres-meeting-repository.js";
+export {
+  PostgresMeetingRepository,
+  type PendingPostCall,
+} from "./postgres-meeting-repository.js";

@@ -30,7 +30,7 @@
       "interactive": false,
       "responseFormat": "json",
       "selectedOutputKind": "structured_output",
-      "outputSchemaName": "discord_meeting_summary_v1",
+      "outputSchemaName": "discord_meeting_summary_v2",
       "isolatedCwd": "/run/discord-meeting-subscription-runtime/workspace"
     }
   },

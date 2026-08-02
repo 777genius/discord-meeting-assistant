@@ -15,6 +15,8 @@ export {
   type JournalPacket,
 } from "./ogg-opus.js";
 export {
+  type AuthoritativeTrackIngressPort,
+  type AuthoritativeTrackIngressResult,
   type DurableCraigRecordingIngressOptions,
   type LifecycleIngressResult,
   type OggOpusPageSummary,

@@ -1,21 +1,33 @@
+import { mkdir, rename, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
+
 import { loadActorConfig } from "./config.js";
-import { connectDiscordVoiceActor } from "./discord-voice-actor.js";
+import {
+  connectDiscordVoiceActor,
+  type RecorderAwareVoiceActor,
+} from "./discord-voice-actor.js";
 import { MacOsKeychainSecretReader } from "./keychain.js";
+import { loadVerifiedFixtureSet } from "./fixture-integrity.js";
 import {
   closeActors,
   runActorScenario,
-  type ReconnectableVoiceActor,
+  systemScenarioClock,
+  type ActorScenarioEvent,
 } from "./run-actor-scenario.js";
 
 async function main(): Promise<void> {
   const config = loadActorConfig(process.env);
+  const verifiedFixtureSet = await loadVerifiedFixtureSet(
+    config.fixtureManifestPath,
+    config.speakers.map(({ name, fixturePath }) => ({ actorName: name, fixturePath })),
+  );
   const secretReader = new MacOsKeychainSecretReader(config.keychainService);
   const tokens = await Promise.all(
     config.speakers.map(async (speaker) => secretReader.read(speaker.account)),
   );
   process.stdout.write("Discord E2E credentials loaded from Keychain.\n");
 
-  const actors: ReconnectableVoiceActor[] = [];
+  const actors: RecorderAwareVoiceActor[] = [];
   try {
     for (const [index, speaker] of config.speakers.entries()) {
       const token = tokens[index];
@@ -39,15 +51,46 @@ async function main(): Promise<void> {
     if (speakerA === undefined || speakerB === undefined) {
       throw new Error("Both Discord E2E actors are required");
     }
+    await speakerA.waitForVoiceMember(config.recorderBotId, config.readyTimeoutMilliseconds);
+    const events: Array<ActorScenarioEvent & { readonly atEpochMs: number }> = [
+      { actorName: "speaker-a", atEpochMs: Date.now(), type: "ready" },
+      { actorName: "speaker-b", atEpochMs: Date.now(), type: "ready" },
+    ];
     process.stdout.write(`Discord E2E starting ${config.scenario} synthetic playback.\n`);
     await runActorScenario(speakerA, speakerB, {
       kind: config.scenario,
       speakerBDelayMilliseconds: config.speakerBDelayMilliseconds,
+    }, systemScenarioClock, (event) => {
+      events.push({
+        ...event,
+        atEpochMs: Date.now(),
+      });
     });
+    await writeActorRun(config.actorRunOutputPath, {
+      events,
+      fixtureSetId: verifiedFixtureSet.manifest.fixtureSetId,
+      fixtures: verifiedFixtureSet.fixtures,
+      recordingId: null,
+      runId: config.runId,
+      scenario: config.scenario,
+      schemaVersion: 1,
+      timelineOrigin: "unix-epoch",
+    });
+    process.stdout.write(`Discord E2E actor evidence written to ${config.actorRunOutputPath}.\n`);
     process.stdout.write("Discord E2E actors completed synthetic playback.\n");
   } finally {
     await closeActors(actors);
   }
+}
+
+async function writeActorRun(path: string, actorRun: unknown): Promise<void> {
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  const temporaryPath = `${path}.tmp-${process.pid}`;
+  await writeFile(temporaryPath, `${JSON.stringify(actorRun, undefined, 2)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+  await rename(temporaryPath, path);
 }
 
 void main().catch((error: unknown) => {

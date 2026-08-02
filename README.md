@@ -6,12 +6,12 @@ evidence-backed summary, and publishes it to Discord.
 
 ## Current phase
 
-This repository currently contains only the engineering and architecture
-baseline. No production package has been materialized yet. The first vertical
-slice is:
+This repository contains the executable V1 vertical slice and its architecture
+governance. The deployed flow is:
 
 ```text
-Craig recording
+authoritative Craig multitrack recording
+  -> checksummed per-speaker artifact import
   -> post-call transcription
   -> final speaker-attributed transcript
   -> evidence-backed summary
@@ -47,6 +47,10 @@ Install and run every local gate:
 pnpm install --frozen-lockfile
 pnpm run check
 ```
+
+The private real-Discord acceptance flow, Russian/English synthetic fixtures,
+recovery checks, and retained-evidence verifier are documented in the
+[E2E runbook](docs/operations/real-e2e-runbook.md).
 
 `@agent-teams/engineering-foundation` is an exact development-only dependency.
 Production code must never import it.

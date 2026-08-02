@@ -67,8 +67,9 @@ describe("runActorScenario", () => {
     expect(events).toEqual(["a:start", "a:finish", "wait:1500", "b:start", "b:finish"]);
   });
 
-  it("reconnects speaker B while speaker A keeps the recording active", async () => {
+  it("plays speaker B before and after a ready reconnect", async () => {
     const events: string[] = [];
+    const observed: string[] = [];
     let releaseSpeakerA: (() => void) | undefined;
     const speakerAPlayback = new Promise<void>((resolve) => {
       releaseSpeakerA = resolve;
@@ -83,11 +84,14 @@ describe("runActorScenario", () => {
     };
     const speakerB: ReconnectableVoiceActor = {
       play: async () => {
+        const playbackNumber = events.filter((event) => event === "b:start").length + 1;
         events.push("b:start", "b:finish");
-        releaseSpeakerA?.();
+        if (playbackNumber === 2) {
+          releaseSpeakerA?.();
+        }
       },
       reconnect: async () => {
-        events.push("b:reconnect");
+        events.push("b:disconnect", "b:ready");
       },
       close: () => Promise.resolve(),
     };
@@ -102,15 +106,31 @@ describe("runActorScenario", () => {
       speakerB,
       { kind: "reconnect", speakerBDelayMilliseconds: 500 },
       clock,
+      (event) => {
+        observed.push(`${event.actorName}:${event.type}`);
+      },
     );
 
     expect(events).toEqual([
       "a:start",
       "wait:500",
-      "b:reconnect",
+      "b:start",
+      "b:finish",
+      "b:disconnect",
+      "b:ready",
       "b:start",
       "b:finish",
       "a:finish",
+    ]);
+    expect(observed).toEqual([
+      "speaker-a:playback-start",
+      "speaker-b:playback-start",
+      "speaker-b:playback-end",
+      "speaker-b:disconnected",
+      "speaker-b:ready",
+      "speaker-b:playback-start",
+      "speaker-b:playback-end",
+      "speaker-a:playback-end",
     ]);
   });
 });

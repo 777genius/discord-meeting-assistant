@@ -49,7 +49,12 @@
       "project": ["src/**/*.ts", "test/**/*.ts"]
     },
     "apps/discord-e2e-actors": {
-      "entry": ["src/main.ts"],
+      "entry": [
+        "src/main.ts",
+        "src/collect-retained-evidence.ts",
+        "src/verify-campaign.ts",
+        "src/verify-retained-evidence.ts"
+      ],
       "project": ["src/**/*.ts", "test/**/*.ts"]
     },
     "apps/meeting-platform": {

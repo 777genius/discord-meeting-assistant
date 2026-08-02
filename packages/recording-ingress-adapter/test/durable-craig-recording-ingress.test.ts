@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  parseAuthoritativeTrackUploadMetadata,
   parseCraigLifecycleEvent,
   parseVoicePacketBatch,
   type CraigLifecycleEvent,
@@ -42,20 +43,41 @@ class MemoryArtifactWriter implements RecordingBinaryArtifactWriter {
       this.failNextManifest = false;
       throw new Error("synthetic manifest failure");
     }
-    const actualChecksum = createHash("sha256").update(request.body).digest("hex");
+    const body = await readBody(request.body);
+    const actualChecksum = createHash("sha256").update(body).digest("hex");
     expect(actualChecksum).toBe(request.checksumSha256);
-    expect(request.body.byteLength).toBe(request.sizeBytes);
+    expect(body.byteLength).toBe(request.sizeBytes);
     const existing = this.artifacts.get(request.locator);
     if (existing !== undefined) {
-      expect(existing).toEqual(request.body);
+      expect(existing).toEqual(body);
     }
-    this.artifacts.set(request.locator, request.body.slice());
+    this.artifacts.set(request.locator, body.slice());
     return {
       checksumSha256: request.checksumSha256,
       locator: request.locator,
       sizeBytes: request.sizeBytes + (this.returnMismatchedReceipt ? 1 : 0),
     };
   }
+}
+
+async function readBody(
+  body: RecordingBinaryArtifactWriteRequest["body"],
+): Promise<Uint8Array> {
+  if (body instanceof Uint8Array) {
+    return body;
+  }
+  const chunks: Uint8Array[] = [];
+  for await (const chunk of body) {
+    chunks.push(chunk);
+  }
+  const size = chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
 }
 
 afterEach(async () => {
@@ -123,9 +145,11 @@ function ingress(
   root: string,
   writer: MemoryArtifactWriter,
   limits?: ConstructorParameters<typeof DurableCraigRecordingIngress>[0]["limits"],
+  finalizationSource: ConstructorParameters<typeof DurableCraigRecordingIngress>[0]["finalizationSource"] = "live-packet-spool",
 ): DurableCraigRecordingIngress {
   return new DurableCraigRecordingIngress({
     artifactLocatorPrefix: "memory://recordings",
+    finalizationSource,
     ...(limits === undefined ? {} : { limits }),
     spoolRoot: root,
     writer,
@@ -133,6 +157,101 @@ function ingress(
 }
 
 describe("DurableCraigRecordingIngress", () => {
+  it("finalizes only checksummed tracks derived from the authoritative Craig original", async () => {
+    const root = await spoolRoot();
+    const writer = new MemoryArtifactWriter();
+    const adapter = ingress(root, writer, undefined, "craig-original");
+    await adapter.ingestLifecycleEvent(lifecycle("meeting.started"));
+    await adapter.ingestPacketBatch(
+      packetBatch({
+        relativeTimeMs: 0,
+        rtpSequence: 1,
+        rtpTimestamp: 960,
+        speakerId: firstSpeakerId,
+      }),
+    );
+
+    await expect(
+      adapter.ingestLifecycleEvent(lifecycle("meeting.ended")),
+    ).resolves.toMatchObject({ kind: "accepted" });
+
+    const track = Uint8Array.from([0x4f, 0x67, 0x67, 0x53, 1, 2, 3]);
+    const metadata = parseAuthoritativeTrackUploadMetadata({
+      schemaVersion: 1,
+      uploadId: "recording-1:track:1",
+      recordingId: "recording-1",
+      guildId,
+      channelId,
+      speakerId: firstSpeakerId,
+      trackNumber: 1,
+      timelineOffsetMs: 0,
+      checksumSha256: createHash("sha256").update(track).digest("hex"),
+      sizeBytes: track.byteLength,
+    });
+    await expect(
+      adapter.ingestAuthoritativeTrack(metadata, (async function* () {
+        yield track;
+      })()),
+    ).resolves.toMatchObject({ replayed: false, speakerId: firstSpeakerId });
+
+    const ready = parseCraigLifecycleEvent({
+      channelId,
+      eventId: "recording-1:authoritative-ready",
+      guildId,
+      occurredAt: "2026-08-01T10:05:01.000Z",
+      recordingId: "recording-1",
+      schemaVersion: 1,
+      type: "recording.authoritative_ready",
+      endedAt: "2026-08-01T10:04:59.000Z",
+      sourceFilesChecksumSha256: "a".repeat(64),
+      trackCount: 1,
+    });
+    const finalized = await adapter.ingestLifecycleEvent(ready);
+
+    expect(finalized).toMatchObject({
+      kind: "finalized",
+      recording: {
+        recordingId: "recording-1",
+        speakerAudio: [{ speakerId: firstSpeakerId, timelineOffsetMs: 0 }],
+      },
+    });
+    const manifestRequest = writer.requests.find(
+      ({ locator }) => locator.endsWith("/authoritative/manifest.json"),
+    );
+    expect(manifestRequest).toBeDefined();
+    const manifest = JSON.parse(
+      new TextDecoder().decode(await readBody(manifestRequest!.body)),
+    ) as { endedAt: string; source: { kind: string }; startedAt: string; tracks: unknown[] };
+    expect(manifest.endedAt).toBe("2026-08-01T10:04:59.000Z");
+    expect(manifest.source.kind).toBe("craig-original-multitrack");
+    expect(manifest.startedAt).toBe("2026-08-01T10:00:00.000Z");
+    expect(manifest.tracks).toHaveLength(1);
+  });
+
+  it("refuses authoritative-ready until every declared original track is durable", async () => {
+    const root = await spoolRoot();
+    const adapter = ingress(root, new MemoryArtifactWriter(), undefined, "craig-original");
+    await adapter.ingestLifecycleEvent(lifecycle("meeting.started"));
+    await adapter.ingestLifecycleEvent(lifecycle("meeting.ended"));
+
+    await expect(
+      adapter.ingestLifecycleEvent(
+        parseCraigLifecycleEvent({
+          channelId,
+          eventId: "recording-1:authoritative-ready",
+          guildId,
+          occurredAt: "2026-08-01T10:05:01.000Z",
+          recordingId: "recording-1",
+          schemaVersion: 1,
+          type: "recording.authoritative_ready",
+          endedAt: "2026-08-01T10:05:00.000Z",
+          sourceFilesChecksumSha256: "a".repeat(64),
+          trackCount: 1,
+        }),
+      ),
+    ).rejects.toMatchObject({ failure: "invalid-state" });
+  });
+
   it("finalizes sequential speaker tracks and a verified manifest", async () => {
     const root = await spoolRoot();
     const writer = new MemoryArtifactWriter();
@@ -473,6 +592,7 @@ describe("DurableCraigRecordingIngress", () => {
       () =>
         new DurableCraigRecordingIngress({
           artifactLocatorPrefix: "memory://recordings",
+          finalizationSource: "live-packet-spool",
           spoolRoot: "relative/spool",
           writer,
         }),
@@ -481,6 +601,7 @@ describe("DurableCraigRecordingIngress", () => {
       () =>
         new DurableCraigRecordingIngress({
           artifactLocatorPrefix: "memory://recordings/../escape",
+          finalizationSource: "live-packet-spool",
           spoolRoot: tmpdir(),
           writer,
         }),

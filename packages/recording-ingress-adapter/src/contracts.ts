@@ -1,7 +1,8 @@
+import type { AuthoritativeTrackUploadMetadata } from "@discord-meeting/craig-gateway-contracts";
 import type { RecordingArtifactSnapshot } from "@discord-meeting/meeting-core";
 
 export interface RecordingBinaryArtifactWriteRequest {
-  readonly body: Uint8Array;
+  readonly body: AsyncIterable<Uint8Array> | Uint8Array;
   readonly checksumSha256: string;
   readonly contentType: string;
   readonly locator: string;
@@ -41,9 +42,25 @@ export interface RecordingIngressLimits {
 
 export interface DurableCraigRecordingIngressOptions {
   readonly artifactLocatorPrefix: string;
+  readonly finalizationSource: "craig-original" | "live-packet-spool";
   readonly limits?: Partial<RecordingIngressLimits>;
   readonly spoolRoot: string;
   readonly writer: RecordingBinaryArtifactWriter;
+}
+
+export interface AuthoritativeTrackIngressResult {
+  readonly locator: string;
+  readonly recordingId: string;
+  readonly replayed: boolean;
+  readonly speakerId: string;
+}
+
+export interface AuthoritativeTrackIngressPort {
+  ingestAuthoritativeTrack(
+    metadata: AuthoritativeTrackUploadMetadata,
+    body: AsyncIterable<Uint8Array>,
+    options?: { readonly signal?: AbortSignal },
+  ): Promise<AuthoritativeTrackIngressResult>;
 }
 
 export interface PacketBatchIngressResult {

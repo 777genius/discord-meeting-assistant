@@ -36,13 +36,14 @@ async function startServer(
     ingestLifecycle.mockRejectedValue(overrides.lifecycleError);
   }
   const ingestVoiceBatch = vi.fn(async () => {});
+  const ingestAuthoritativeTrack = vi.fn(async () => ({ replayed: false }));
   const server = createCraigHttpServer({
     bearerToken: token,
     health: {
       metrics: () => "meeting_ingress_accepted_total 1\n",
       readiness: async () => ({ ready: overrides.ready ?? true }),
     },
-    ingress: { ingestLifecycle, ingestVoiceBatch },
+    ingress: { ingestAuthoritativeTrack, ingestLifecycle, ingestVoiceBatch },
     ...(overrides.onInternalError === undefined
       ? {}
       : { onInternalError: overrides.onInternalError }),
@@ -54,11 +55,44 @@ async function startServer(
   return {
     baseUrl: `http://127.0.0.1:${address.port}`,
     ingestLifecycle,
+    ingestAuthoritativeTrack,
     ingestVoiceBatch,
   };
 }
 
 describe("Craig HTTP ingress", () => {
+  it("streams a bounded checksummed authoritative Craig track", async () => {
+    const context = await startServer();
+    const body = Buffer.from("OggS-authoritative-test", "utf8");
+    const metadata = Buffer.from(
+      JSON.stringify({
+        schemaVersion: 1,
+        uploadId: "recording-1:track:1",
+        recordingId: "recording-1",
+        guildId: "1533224474609057793",
+        channelId: "1533224474609057794",
+        speakerId: "1533224474609057795",
+        trackNumber: 1,
+        timelineOffsetMs: 0,
+        checksumSha256: "a".repeat(64),
+        sizeBytes: body.byteLength,
+      }),
+      "utf8",
+    ).toString("base64url");
+    const response = await fetch(`${context.baseUrl}/v1/craig/authoritative-tracks`, {
+      body,
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "audio/ogg",
+        "x-craig-authoritative-track-metadata": metadata,
+      },
+      method: "POST",
+    });
+
+    expect(response.status).toBe(201);
+    expect(context.ingestAuthoritativeTrack).toHaveBeenCalledOnce();
+  });
+
   it("authenticates and accepts a strict lifecycle event", async () => {
     const context = await startServer();
     const response = await fetch(`${context.baseUrl}/v1/craig/events`, {

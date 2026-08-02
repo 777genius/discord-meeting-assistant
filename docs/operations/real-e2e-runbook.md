@@ -55,6 +55,24 @@ thread/message IDs. The acceptance result is invalid if any decision or action
 item references a missing transcript turn, or if a retry creates a duplicate
 meeting, summary, thread, or message.
 
+Use the versioned Russian/English ground truth at
+`apps/discord-e2e-actors/test/fixtures/manifest.v1.json`. Generate its audio with
+the actor package `fixtures:generate` script. The committed manifest pins the
+resulting Ogg SHA-256 and duration; actor startup fails on any mismatch.
+
+Choose a unique `DISCORD_E2E_RUN_ID` and actor evidence path before each call.
+Do not guess Craig's future random recording ID. Actor evidence uses absolute
+wall-clock timestamps. After Craig finalizes, pass the explicit recording ID and
+actor file to `collect:e2e`. The collector fail-closed binds them using the
+authoritative manifest `startedAt`/`endedAt`, speaker tracks, checksums and timing.
+
+The collector obtains both Postgres observations, S3 bytes, Discord marker counts,
+and the completed-job replay itself. Manually authored identity counts are not
+accepted evidence. Retain its non-secret JSON output and the verifier result.
+Run `verify:campaign` over passing sequential, overlap, and reconnect evidence;
+it also rejects any cross-meeting identity reuse. A successful provider call
+without a passing campaign result is not accepted.
+
 Synthetic fixtures may be generated for deterministic speech. They must contain
 only invented test content, identify the expected Discord speaker explicitly in
 fixture metadata, and be checked with `ffprobe` before use. Provider/network

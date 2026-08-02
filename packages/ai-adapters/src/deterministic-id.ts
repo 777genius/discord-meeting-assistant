@@ -4,6 +4,7 @@ export function deterministicAdapterId(
     | "decision"
     | "summary"
     | "summary-request"
+    | "summary-request-v2"
     | "transcript"
     | "transcription-request"
     | "turn",

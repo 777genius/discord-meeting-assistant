@@ -8,6 +8,7 @@ import type {
   EvidenceBackedSummarySnapshot,
   SummaryActionItemSnapshot,
   SummaryDecisionSnapshot,
+  SummaryTopicSnapshot,
 } from "../domain/summary.js";
 import type {
   FinalTranscriptSnapshot,
@@ -55,6 +56,7 @@ export interface GeneratedSummary {
   readonly overview: string;
   readonly summaryId: string;
   readonly title: string;
+  readonly topics: readonly SummaryTopicSnapshot[];
   readonly version: number;
 }
 

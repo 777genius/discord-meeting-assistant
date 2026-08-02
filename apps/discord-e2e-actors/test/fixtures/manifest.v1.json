@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "fixtureSetId": "discord-meeting-ru-en-v1",
+  "locale": "ru-RU",
+  "summaryExpectations": {
+    "decisionTerms": ["пятницу"],
+    "actionItems": [
+      {
+        "ownerSpeakerId": "1533228054724346087",
+        "deadline": "2026-08-07",
+        "requiredTerms": ["Discord thread"]
+      }
+    ],
+    "topicTerms": ["Meeting Platform", "Craig recording", "PostgreSQL pipeline"]
+  },
+  "thresholds": {
+    "maxWordErrorRate": 0.35,
+    "maxCharacterErrorRate": 0.2,
+    "timestampToleranceMs": 2500
+  },
+  "fixtures": [
+    {
+      "fixtureId": "speaker-a",
+      "actorName": "speaker-a",
+      "speakerId": "1533227577286852649",
+      "sourcePath": "test/fixtures/speaker-a.ru-en.txt",
+      "sourceSha256": "c10f73107bcfdac1eac201d737cae0a19c8a397c40e9c5e34f5f409c5e74eb8f",
+      "audioPath": "test/fixtures/speaker-a.ru-en.ogg",
+      "audioSha256": "d0facdd5b58acd2699987fd3a18669b2b3e0d1c93ce0f4a494bf8ac31f6b860c",
+      "durationMs": 16001,
+      "sourceText": "Спикер A подтверждает: Meeting Platform сохраняет Craig recording и запускает PostgreSQL pipeline. Решение - выпустить версию в пятницу. Задача для спикера B - проверить Discord thread до 2026-08-07.",
+      "requiredTerms": ["Meeting Platform", "Craig recording", "PostgreSQL pipeline", "Discord thread", "2026-08-07"]
+    },
+    {
+      "fixtureId": "speaker-b",
+      "actorName": "speaker-b",
+      "speakerId": "1533228054724346087",
+      "sourcePath": "test/fixtures/speaker-b.ru-en.txt",
+      "sourceSha256": "582d01de7c10d16a84d2cb608281b504ddc21a0b46ebf7450e3a260f94a033d8",
+      "audioPath": "test/fixtures/speaker-b.ru-en.ogg",
+      "audioSha256": "7b695fae2699368b12211961ee01ce00f983b656627003e0ce009b4d1e5e69b4",
+      "durationMs": 12367,
+      "sourceText": "Спикер B отвечает: проверю Discord thread, Redis queue и idempotency key до 2026-08-07. Открытый вопрос - нужен ли live Pipecat assistant после V1?",
+      "requiredTerms": ["Discord thread", "Redis queue", "idempotency key", "Pipecat assistant", "V1", "2026-08-07"]
+    }
+  ],
+  "scenarios": [
+    {
+      "kind": "sequential",
+      "expectOverlap": false,
+      "requireReconnect": false,
+      "speakerBDelayMs": 1500,
+      "playbackCountByFixture": { "speaker-a": 1, "speaker-b": 1 }
+    },
+    {
+      "kind": "overlap",
+      "expectOverlap": true,
+      "requireReconnect": false,
+      "speakerBDelayMs": 750,
+      "playbackCountByFixture": { "speaker-a": 1, "speaker-b": 1 }
+    },
+    {
+      "kind": "reconnect",
+      "expectOverlap": true,
+      "requireReconnect": true,
+      "speakerBDelayMs": 750,
+      "playbackCountByFixture": { "speaker-a": 1, "speaker-b": 2 }
+    }
+  ]
+}
