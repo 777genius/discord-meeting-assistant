@@ -11,6 +11,7 @@ const RECORD_CRC_BYTES = 4;
 const MIN_RECORD_BYTES = RECORD_FIXED_BODY_BYTES + RECORD_CRC_BYTES;
 
 export interface JournalScan {
+  readonly journalBytes: number;
   readonly opusBytes: number;
   readonly packets: readonly JournalPacket[];
 }
@@ -88,6 +89,21 @@ async function assertRegularFile(path: string): Promise<void> {
   }
 }
 
+export async function journalFileSize(path: string): Promise<number> {
+  try {
+    const stats = await lstat(path);
+    if (!stats.isFile() || stats.isSymbolicLink()) {
+      throw new RecordingIngressError("path-policy", "journal path is not a regular file");
+    }
+    return stats.size;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return 0;
+    }
+    throw error;
+  }
+}
+
 export async function scanJournal(
   path: string,
   options: {
@@ -100,7 +116,7 @@ export async function scanJournal(
     await assertRegularFile(path);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return { opusBytes: 0, packets: [] };
+      return { journalBytes: 0, opusBytes: 0, packets: [] };
     }
     throw error;
   }
@@ -161,15 +177,15 @@ export async function scanJournal(
       await repairHandle.close();
     }
   }
-  return { opusBytes, packets };
+  return { journalBytes: offset, opusBytes, packets };
 }
 
 export async function appendJournal(
   path: string,
   packets: readonly JournalPacket[],
-): Promise<void> {
+): Promise<number> {
   if (packets.length === 0) {
-    return;
+    return 0;
   }
   const records = packets.map(encodePacket);
   const totalLength = records.reduce((total, record) => total + record.byteLength, 0);
@@ -192,6 +208,7 @@ export async function appendJournal(
   } finally {
     await handle.close();
   }
+  return bytes.byteLength;
 }
 
 export function journalPacketIdentity(packet: JournalPacket): string {

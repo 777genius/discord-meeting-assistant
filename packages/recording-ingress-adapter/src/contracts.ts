@@ -44,6 +44,10 @@ export interface DurableCraigRecordingIngressOptions {
   readonly artifactLocatorPrefix: string;
   readonly finalizationSource: "craig-original" | "live-packet-spool";
   readonly limits?: Partial<RecordingIngressLimits>;
+  /**
+   * One live ingress owner must have exclusive write authority for a spool
+   * root. Horizontal scaling shards recordings across distinct spool roots.
+   */
   readonly spoolRoot: string;
   readonly writer: RecordingBinaryArtifactWriter;
 }

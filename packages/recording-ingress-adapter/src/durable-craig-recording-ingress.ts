@@ -20,10 +20,9 @@ import {
 } from "./errors.js";
 import {
   appendJournal,
+  journalFileSize,
   journalPacketIdentity,
-  journalPacketsEqual,
   scanJournal,
-  type JournalScan,
 } from "./journal.js";
 import {
   compileOggOpus,
@@ -44,6 +43,7 @@ import {
 const DISCORD_SNOWFLAKE = /^\d{17,20}$/u;
 const BASE64 = /^(?:[A-Za-z\d+/]{4})*(?:[A-Za-z\d+/]{2}==|[A-Za-z\d+/]{3}=)?$/u;
 const ACTIVE_CAPACITY_LOCK = Symbol("active-capacity");
+const MAX_CACHED_JOURNAL_PACKETS = 1_000_000;
 const noOperation = (): void => undefined;
 
 export const DEFAULT_RECORDING_INGRESS_LIMITS: RecordingIngressLimits =
@@ -71,6 +71,17 @@ interface CompiledTrack extends CompiledOggOpus {
   readonly checksumSha256: string;
   readonly locator: string;
   readonly speakerId: string;
+}
+
+interface CachedJournalIndex {
+  journalBytes: number;
+  opusBytes: number;
+  packetCount: number;
+  readonly packetFingerprintsByIdentity: Map<string, string>;
+}
+
+function journalPacketFingerprint(packet: JournalPacket): string {
+  return `${packet.receivedAtMs}:${sha256(packet.opus)}`;
 }
 
 function abortIfRequested(signal?: AbortSignal): void {
@@ -318,8 +329,10 @@ function verifyWriteReceipt(
 
 export class DurableCraigRecordingIngress {
   readonly #artifactLocatorPrefix: string;
+  #cachedJournalPackets = 0;
   readonly #limits: RecordingIngressLimits;
   readonly #finalizationSource: DurableCraigRecordingIngressOptions["finalizationSource"];
+  readonly #journalIndexes = new Map<string, Map<string, CachedJournalIndex>>();
   readonly #locks = new Map<string | symbol, Promise<void>>();
   readonly #spool: DurableSpool;
   readonly #writer: DurableCraigRecordingIngressOptions["writer"];
@@ -471,6 +484,105 @@ export class DurableCraigRecordingIngress {
     }
   }
 
+  async #journalIndex(
+    recordingId: string,
+    speaker: StoredSpeaker,
+  ): Promise<CachedJournalIndex> {
+    const journalPath = this.#spool.speakerJournalPath(recordingId, speaker.fileToken);
+    const recordingIndexes = this.#journalIndexes.get(recordingId);
+    const cached = recordingIndexes?.get(speaker.speakerId);
+    if (cached !== undefined && recordingIndexes !== undefined) {
+      if (await journalFileSize(journalPath) === cached.journalBytes) {
+        if (this.#journalIndexes.get(recordingId)?.get(speaker.speakerId) === cached) {
+          // Map insertion order acts as a recording-level LRU.
+          this.#journalIndexes.delete(recordingId);
+          this.#journalIndexes.set(recordingId, recordingIndexes);
+        } else {
+          // Another recording may have evicted this index while the file stat
+          // was in flight. Re-cache through the accounting path.
+          this.#cacheJournalIndex(recordingId, speaker.speakerId, cached);
+        }
+        return cached;
+      }
+      this.#forgetJournalIndex(recordingId, speaker.speakerId);
+    }
+    const scan = await scanJournal(
+      journalPath,
+      {
+        maxOpusBytesPerPacket: this.#limits.maxOpusBytesPerPacket,
+        maxPackets: this.#limits.maxPacketsPerSpeaker,
+        repairIncompleteTail: true,
+      },
+    );
+    const created: CachedJournalIndex = {
+      journalBytes: scan.journalBytes,
+      opusBytes: scan.opusBytes,
+      packetCount: scan.packets.length,
+      packetFingerprintsByIdentity: new Map(
+        scan.packets.map((packet) => [
+          journalPacketIdentity(packet),
+          journalPacketFingerprint(packet),
+        ]),
+      ),
+    };
+    this.#cacheJournalIndex(recordingId, speaker.speakerId, created);
+    return created;
+  }
+
+  #cacheJournalIndex(
+    recordingId: string,
+    speakerId: string,
+    index: CachedJournalIndex,
+  ): void {
+    for (const cachedRecordingId of this.#journalIndexes.keys()) {
+      if (
+        this.#cachedJournalPackets + index.packetCount <= MAX_CACHED_JOURNAL_PACKETS ||
+        cachedRecordingId === recordingId
+      ) {
+        continue;
+      }
+      this.#forgetJournalIndexes(cachedRecordingId);
+    }
+    if (this.#cachedJournalPackets + index.packetCount > MAX_CACHED_JOURNAL_PACKETS) {
+      return;
+    }
+    let recordingIndexes = this.#journalIndexes.get(recordingId);
+    if (recordingIndexes === undefined) {
+      recordingIndexes = new Map();
+      this.#journalIndexes.set(recordingId, recordingIndexes);
+    }
+    const replaced = recordingIndexes.get(speakerId);
+    if (replaced !== undefined) {
+      this.#cachedJournalPackets -= replaced.packetCount;
+    }
+    recordingIndexes.set(speakerId, index);
+    this.#cachedJournalPackets += index.packetCount;
+  }
+
+  #forgetJournalIndex(recordingId: string, speakerId: string): void {
+    const recordingIndexes = this.#journalIndexes.get(recordingId);
+    const forgotten = recordingIndexes?.get(speakerId);
+    if (recordingIndexes === undefined || forgotten === undefined) {
+      return;
+    }
+    recordingIndexes.delete(speakerId);
+    this.#cachedJournalPackets -= forgotten.packetCount;
+    if (recordingIndexes.size === 0) {
+      this.#journalIndexes.delete(recordingId);
+    }
+  }
+
+  #forgetJournalIndexes(recordingId: string): void {
+    const recordingIndexes = this.#journalIndexes.get(recordingId);
+    if (recordingIndexes === undefined) {
+      return;
+    }
+    for (const index of recordingIndexes.values()) {
+      this.#cachedJournalPackets -= index.packetCount;
+    }
+    this.#journalIndexes.delete(recordingId);
+  }
+
   public async ingestPacketBatch(
     batch: VoicePacketBatch,
     options: { readonly signal?: AbortSignal } = {},
@@ -511,12 +623,14 @@ export class DurableCraigRecordingIngress {
     return this.#exclusive(first.recordingId, async () => {
       abortIfRequested(options.signal);
       if ((await this.#spool.readCompleted(first.recordingId)) !== undefined) {
+        this.#forgetJournalIndexes(first.recordingId);
         throw new RecordingIngressError("invalid-state", "recording is already finalized");
       }
       const aborted = await this.#spool.readAborted(first.recordingId);
       if (aborted !== undefined) {
         ensureRecordingIdentity(aborted, first);
         await this.#spool.cleanupActive(first.recordingId);
+        this.#forgetJournalIndexes(first.recordingId);
         throw new RecordingIngressError("invalid-state", "recording is already aborted");
       }
       let state = await this.#spool.readRecording(first.recordingId);
@@ -527,6 +641,7 @@ export class DurableCraigRecordingIngress {
       if (state.status !== "active") {
         if (state.status === "aborted") {
           await this.#spool.archiveAborted(state);
+          this.#forgetJournalIndexes(first.recordingId);
         }
         throw new RecordingIngressError(
           "invalid-state",
@@ -559,39 +674,35 @@ export class DurableCraigRecordingIngress {
         await this.#spool.writeRecording(state);
       }
 
-      const scans = new Map<string, JournalScan>();
+      const journalIndexes = new Map<string, CachedJournalIndex>();
       let recordingPacketCount = 0;
       let recordingOpusBytes = 0;
       for (const speaker of state.speakers) {
-        const scan = await scanJournal(
-          this.#spool.speakerJournalPath(state.recordingId, speaker.fileToken),
-          {
-            maxOpusBytesPerPacket: this.#limits.maxOpusBytesPerPacket,
-            maxPackets: this.#limits.maxPacketsPerSpeaker,
-            repairIncompleteTail: true,
-          },
-        );
-        scans.set(speaker.speakerId, scan);
-        recordingPacketCount += scan.packets.length;
-        recordingOpusBytes += scan.opusBytes;
+        const journalIndex = await this.#journalIndex(state.recordingId, speaker);
+        journalIndexes.set(speaker.speakerId, journalIndex);
+        recordingPacketCount += journalIndex.packetCount;
+        recordingOpusBytes += journalIndex.opusBytes;
       }
 
       let duplicatePackets = 0;
       const acceptedBySpeaker = new Map<string, JournalPacket[]>();
+      const acceptedBytesBySpeaker = new Map<string, number>();
+      const acceptedPacketFingerprints = new Map<string, Map<string, string>>();
       for (const packet of packets) {
         abortIfRequested(options.signal);
-        const scan = scans.get(packet.speakerId);
-        if (scan === undefined) {
+        const journalIndex = journalIndexes.get(packet.speakerId);
+        if (journalIndex === undefined) {
           throw new RecordingIngressError("corrupt-spool", "speaker mapping is missing");
         }
         const accepted = acceptedBySpeaker.get(packet.speakerId) ?? [];
-        const candidates = [...scan.packets, ...accepted];
+        const acceptedByIdentity = acceptedPacketFingerprints.get(packet.speakerId) ??
+          new Map<string, string>();
         const identity = journalPacketIdentity(packet);
-        const duplicate = candidates.find(
-          (candidate) => journalPacketIdentity(candidate) === identity,
-        );
-        if (duplicate !== undefined) {
-          if (!journalPacketsEqual(duplicate, packet)) {
+        const fingerprint = journalPacketFingerprint(packet);
+        const duplicateFingerprint = journalIndex.packetFingerprintsByIdentity.get(identity) ??
+          acceptedByIdentity.get(identity);
+        if (duplicateFingerprint !== undefined) {
+          if (duplicateFingerprint !== fingerprint) {
             throw new RecordingIngressError(
               "conflicting-duplicate",
               "packet identity was replayed with different content",
@@ -602,13 +713,16 @@ export class DurableCraigRecordingIngress {
         }
         accepted.push(packet);
         acceptedBySpeaker.set(packet.speakerId, accepted);
+        acceptedByIdentity.set(identity, fingerprint);
+        acceptedPacketFingerprints.set(packet.speakerId, acceptedByIdentity);
+        const acceptedOpusBytes =
+          (acceptedBytesBySpeaker.get(packet.speakerId) ?? 0) + packet.opus.byteLength;
+        acceptedBytesBySpeaker.set(packet.speakerId, acceptedOpusBytes);
         recordingPacketCount += 1;
         recordingOpusBytes += packet.opus.byteLength;
         if (
-          scan.packets.length + accepted.length > this.#limits.maxPacketsPerSpeaker ||
-          scan.opusBytes +
-              accepted.reduce((total, candidate) => total + candidate.opus.byteLength, 0) >
-            this.#limits.maxSpeakerOpusBytes ||
+          journalIndex.packetCount + accepted.length > this.#limits.maxPacketsPerSpeaker ||
+          journalIndex.opusBytes + acceptedOpusBytes > this.#limits.maxSpeakerOpusBytes ||
           recordingPacketCount > this.#limits.maxPacketsPerRecording ||
           recordingOpusBytes > this.#limits.maxRecordingOpusBytes
         ) {
@@ -623,10 +737,39 @@ export class DurableCraigRecordingIngress {
         const accepted = acceptedBySpeaker.get(speaker.speakerId) ?? [];
         if (accepted.length > 0) {
           abortIfRequested(options.signal);
-          await appendJournal(
-            this.#spool.speakerJournalPath(state.recordingId, speaker.fileToken),
-            accepted,
-          );
+          const journalIndex = journalIndexes.get(speaker.speakerId);
+          if (journalIndex === undefined) {
+            throw new RecordingIngressError("corrupt-spool", "speaker journal index is missing");
+          }
+          let appendedJournalBytes: number;
+          try {
+            appendedJournalBytes = await appendJournal(
+              this.#spool.speakerJournalPath(state.recordingId, speaker.fileToken),
+              accepted,
+            );
+          } catch (error) {
+            // A failed append can have an unknown durable outcome. Force the
+            // next retry to rescan and repair the journal before deduplicating.
+            this.#forgetJournalIndexes(state.recordingId);
+            throw error;
+          }
+          for (const packet of accepted) {
+            journalIndex.packetFingerprintsByIdentity.set(
+              journalPacketIdentity(packet),
+              journalPacketFingerprint(packet),
+            );
+          }
+          journalIndex.journalBytes += appendedJournalBytes;
+          journalIndex.opusBytes += acceptedBytesBySpeaker.get(speaker.speakerId) ?? 0;
+          journalIndex.packetCount += accepted.length;
+          if (
+            this.#journalIndexes.get(state.recordingId)?.get(speaker.speakerId) === journalIndex
+          ) {
+            this.#cachedJournalPackets += accepted.length;
+            if (this.#cachedJournalPackets > MAX_CACHED_JOURNAL_PACKETS) {
+              this.#forgetJournalIndexes(state.recordingId);
+            }
+          }
         }
       }
       return {
@@ -811,6 +954,7 @@ export class DurableCraigRecordingIngress {
           status: "aborted",
         };
         await this.#spool.archiveAborted(abortedState);
+        this.#forgetJournalIndexes(state.recordingId);
         return { kind: "aborted", recordingId: state.recordingId, replayed: false };
       }
       if (event.type === "meeting.ended") {
@@ -823,6 +967,10 @@ export class DurableCraigRecordingIngress {
           status: "finalizing",
         };
         await this.#spool.writeRecording(finalizingState);
+        // Packet ingestion is closed once finalization starts. Release the
+        // per-packet deduplication index before waiting for authoritative Craig
+        // artifacts, which may be retried much later.
+        this.#forgetJournalIndexes(state.recordingId);
         if (this.#finalizationSource === "craig-original") {
           return { kind: "accepted", recordingId: state.recordingId, replayed: false };
         }
@@ -853,6 +1001,7 @@ export class DurableCraigRecordingIngress {
       );
     }
     await this.#spool.cleanupActive(event.recordingId);
+    this.#forgetJournalIndexes(event.recordingId);
     return { kind: "aborted", recordingId: aborted.recordingId, replayed: true };
   }
 
@@ -1068,6 +1217,7 @@ export class DurableCraigRecordingIngress {
   }
 
   async #cleanupAfterSuccess(recordingId: string): Promise<void> {
+    this.#forgetJournalIndexes(recordingId);
     try {
       await this.#spool.cleanupActive(recordingId);
     } catch {

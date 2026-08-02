@@ -364,6 +364,34 @@ describe("DurableCraigRecordingIngress", () => {
     } satisfies Partial<RecordingIngressError>);
   });
 
+  it("invalidates a cached index when another ingress owner grows the journal", async () => {
+    const root = await spoolRoot();
+    const writer = new MemoryArtifactWriter();
+    const firstOwner = ingress(root, writer);
+    const secondOwner = ingress(root, writer);
+    const firstBatch = packetBatch({
+      relativeTimeMs: 0,
+      rtpSequence: 1,
+      rtpTimestamp: 100,
+      speakerId: firstSpeakerId,
+    });
+    const secondBatch = packetBatch({
+      relativeTimeMs: 20,
+      rtpSequence: 2,
+      rtpTimestamp: 1_060,
+      speakerId: firstSpeakerId,
+    });
+
+    await firstOwner.ingestLifecycleEvent(lifecycle("meeting.started"));
+    await firstOwner.ingestPacketBatch(firstBatch);
+    await secondOwner.ingestPacketBatch(secondBatch);
+
+    await expect(firstOwner.ingestPacketBatch(secondBatch)).resolves.toMatchObject({
+      acceptedPackets: 0,
+      duplicatePackets: 1,
+    });
+  });
+
   it("repairs a crash-torn journal tail before replay", async () => {
     const root = await spoolRoot();
     const writer = new MemoryArtifactWriter();
