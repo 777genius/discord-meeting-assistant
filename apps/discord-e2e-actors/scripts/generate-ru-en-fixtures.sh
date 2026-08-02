@@ -38,7 +38,7 @@ for speaker in speaker-a speaker-b; do
 
   say -v "$voice" -r "$rate" -f "$source_file" -o "$aiff_file"
   ffmpeg -hide_banner -loglevel error -y -i "$aiff_file" \
-    -ar 48000 -ac 1 -c:a libopus -b:a 64k "$output_file"
+    -af "apad=pad_dur=0.75" -ar 48000 -ac 1 -c:a libopus -b:a 64k "$output_file"
   rm "$aiff_file"
 
   codec=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_name \
