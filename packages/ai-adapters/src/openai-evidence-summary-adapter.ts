@@ -18,6 +18,7 @@ const summaryInstructions = [
   "Every topic, decision, and action item must cite at least one turn that directly supports it.",
   "Omit unsupported topics, decisions, and action items instead of guessing.",
   "Set ownerSpeakerId to an exact input speakerId only when the transcript explicitly assigns the action; otherwise use null.",
+  "A first-person commitment in a transcript turn explicitly assigns the action to that turn's speakerId.",
   "Set an action deadline to the exact deadline wording in the transcript, or null when none was explicitly stated; never infer or normalize it.",
   "Do not invent facts, attendees, deadlines, decisions, or action owners.",
 ].join(" ");

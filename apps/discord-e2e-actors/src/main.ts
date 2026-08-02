@@ -52,6 +52,7 @@ async function main(): Promise<void> {
       throw new Error("Both Discord E2E actors are required");
     }
     await speakerA.waitForVoiceMember(config.recorderBotId, config.readyTimeoutMilliseconds);
+    await systemScenarioClock.wait(1_000);
     const epochOriginMs = Date.now();
     const monotonicOrigin = process.hrtime.bigint();
     const epochNow = (): number => epochOriginMs + Number(

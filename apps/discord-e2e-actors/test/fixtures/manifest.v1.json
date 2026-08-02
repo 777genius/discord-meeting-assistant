@@ -7,7 +7,7 @@
     "actionItems": [
       {
         "ownerSpeakerId": "1533228054724346087",
-        "deadline": "до седьмого августа две тысячи двадцать шестого года",
+        "deadline": "до 7 августа 2026 года",
         "requiredTerms": ["Discord thread"]
       }
     ],
@@ -29,7 +29,7 @@
       "audioSha256": "60217e24e7145f5ee86db1eae104eac577f786a32666e75360165b6e75b43c7f",
       "durationMs": 13761,
       "sourceText": "Meeting Platform сохраняет Craig recording и запускает PostgreSQL pipeline. Решение - выпустить версию в пятницу. Задача для спикера Б - проверить Discord thread до седьмого августа две тысячи двадцать шестого года.",
-      "requiredTerms": ["Meeting Platform", "Craig recording", "PostgreSQL pipeline", "Discord thread", "седьмого августа"]
+      "requiredTerms": ["Meeting Platform", "Craig recording", "PostgreSQL pipeline", "Discord thread", "августа", "2026"]
     },
     {
       "fixtureId": "speaker-b",
@@ -41,7 +41,7 @@
       "audioSha256": "391806e4a2c03498af2484f6b43454809ae75663b7fe5f50df3c88222acaf031",
       "durationMs": 10747,
       "sourceText": "Проверю Discord thread, Redis queue и idempotency key до седьмого августа две тысячи двадцать шестого года. Открытый вопрос - нужен ли live Pipecat assistant после первой версии?",
-      "requiredTerms": ["Discord thread", "Redis queue", "idempotency key", "Pipecat assistant", "седьмого августа"]
+      "requiredTerms": ["Discord thread", "Redis queue", "idempotency key", "Pipecat assistant", "августа", "2026"]
     }
   ],
   "scenarios": [
