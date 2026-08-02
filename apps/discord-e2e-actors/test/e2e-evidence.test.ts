@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   fixtureManifestV1Schema,
-  retainedE2eEvidenceV1Schema,
+  retainedE2eEvidenceV2Schema,
   verifyE2eCampaign,
   verifyRetainedE2eEvidence,
   type FixtureManifestV1,
-  type RetainedE2eEvidenceV1,
+  type RetainedE2eEvidenceV2,
 } from "../src/e2e-evidence.js";
 
 const speakerAId = "1533227577286852649";
@@ -85,8 +85,8 @@ function manifest(): FixtureManifestV1 {
   });
 }
 
-function overlapEvidence(): RetainedE2eEvidenceV1 {
-  return retainedE2eEvidenceV1Schema.parse({
+function overlapEvidence(): RetainedE2eEvidenceV2 {
+  return retainedE2eEvidenceV2Schema.parse({
     actorRun: {
       events: [
         { actorName: "speaker-a", atRecordingMs: 0, type: "ready" },
@@ -117,6 +117,28 @@ function overlapEvidence(): RetainedE2eEvidenceV1 {
       schemaVersion: 1,
       timelineOrigin: "actor-run-start-correlated-to-recording-id",
     },
+    deployment: {
+      craig: {
+        composeConfigHash: "3".repeat(64),
+        composeProject: "craig-meeting-e2e",
+        composeService: "bot",
+        containerId: "4".repeat(64),
+        containerStartedAt: "1969-12-31T23:00:00.000Z",
+        imageId: `sha256:${"5".repeat(64)}`,
+        repositoryDigest: null,
+        sourceRevision: "6".repeat(40),
+      },
+      meetingPlatform: {
+        composeConfigHash: "7".repeat(64),
+        composeProject: "discord-meeting-assistant",
+        composeService: "meeting-platform",
+        containerId: "8".repeat(64),
+        containerStartedAt: "1969-12-31T23:00:00.000Z",
+        imageId: `sha256:${"9".repeat(64)}`,
+        repositoryDigest: "registry.example/meeting-platform@sha256:" + "a".repeat(64),
+        sourceRevision: "b".repeat(40),
+      },
+    },
     fixtureManifestVersion: 1,
     fixtureSetId: "fixture-v1",
     database: {
@@ -143,6 +165,12 @@ function overlapEvidence(): RetainedE2eEvidenceV1 {
     ],
     meetingId: "meeting-1",
     publication: {
+      embedDescription: [
+        "## Задачи",
+        `Ответственный: <@${speakerBId}>`,
+        `Основание: **00:00-00:07 · <@${speakerAId}>:** «Релиз в пятницу»`,
+        `Основание: **00:00-00:07 · <@${speakerBId}>:** «Проверить очередь»`,
+      ].join("\n"),
       matchingMessageCount: 1,
       matchingThreadCount: 1,
       messageId: "message-1",
@@ -150,6 +178,7 @@ function overlapEvidence(): RetainedE2eEvidenceV1 {
     },
     recording: {
       durationMs: 7_850,
+      endedAt: "1970-01-01T00:00:07.850Z",
       recordingId: "meeting-1",
       s3: {
         manifestChecksumSha256: "e".repeat(64),
@@ -175,6 +204,7 @@ function overlapEvidence(): RetainedE2eEvidenceV1 {
         ],
       },
       speakerIds: [speakerAId, speakerBId],
+      startedAt: "1970-01-01T00:00:00.000Z",
     },
     replay: {
       matchingMeetingCount: 1,
@@ -196,7 +226,7 @@ function overlapEvidence(): RetainedE2eEvidenceV1 {
       threadId: "thread-1",
       transcriptId: "transcript-1",
     },
-    schemaVersion: 1,
+    schemaVersion: 2,
     stages: [
       { attempts: 1, stage: "transcription", status: "succeeded" },
       { attempts: 1, stage: "summary", status: "succeeded" },
@@ -205,19 +235,33 @@ function overlapEvidence(): RetainedE2eEvidenceV1 {
     summary: {
       actionItems: [
         {
+          actionItemId: "action-1",
           deadline: null,
           evidenceTurnIds: ["turn-b"],
           ownerSpeakerId: speakerBId,
           text: "Проверить очередь",
         },
       ],
-      decisions: [{ evidenceTurnIds: ["turn-a"], text: "Использовать Craig" }],
+      decisions: [{
+        decisionId: "decision-1",
+        evidenceTurnIds: ["turn-a"],
+        text: "Использовать Craig",
+      }],
+      openQuestions: [{
+        evidenceTurnIds: ["turn-b"],
+        id: "question-1",
+        text: "Нужен ли следующий этап?",
+      }],
+      overview: "Команда согласовала релиз и проверку очереди.",
       summaryId: "summary-1",
+      title: "Итоги встречи",
       topics: [{
         evidenceTurnIds: ["turn-a"],
         points: ["Обсудили Meeting Platform"],
         title: "Архитектура",
       }],
+      transcriptId: "transcript-1",
+      version: 1,
     },
     transcript: {
       transcriptId: "transcript-1",
@@ -229,7 +273,7 @@ function overlapEvidence(): RetainedE2eEvidenceV1 {
   });
 }
 
-function sequentialEvidence(): RetainedE2eEvidenceV1 {
+function sequentialEvidence(): RetainedE2eEvidenceV2 {
   const evidence = overlapEvidence();
   evidence.actorRun.scenario = "sequential";
   evidence.actorRun.events = [
@@ -265,7 +309,7 @@ function sequentialEvidence(): RetainedE2eEvidenceV1 {
   return evidence;
 }
 
-function reconnectEvidence(): RetainedE2eEvidenceV1 {
+function reconnectEvidence(): RetainedE2eEvidenceV2 {
   const evidence = overlapEvidence();
   evidence.actorRun.scenario = "reconnect";
   evidence.actorRun.events = [
@@ -299,9 +343,9 @@ function reconnectEvidence(): RetainedE2eEvidenceV1 {
 }
 
 function reidentify(
-  source: RetainedE2eEvidenceV1,
+  source: RetainedE2eEvidenceV2,
   suffix: string,
-): RetainedE2eEvidenceV1 {
+): RetainedE2eEvidenceV2 {
   const evidence = structuredClone(source);
   evidence.actorRun.runId = `run-${suffix}`;
   evidence.actorRun.recordingId = `meeting-${suffix}`;
@@ -310,6 +354,7 @@ function reidentify(
   evidence.recording.s3.manifestLocator = `s3://bucket/meeting-${suffix}/manifest.json`;
   evidence.transcript.transcriptId = `transcript-${suffix}`;
   evidence.summary.summaryId = `summary-${suffix}`;
+  evidence.summary.transcriptId = `transcript-${suffix}`;
   evidence.publication.threadId = `thread-${suffix}`;
   evidence.publication.messageId = `message-${suffix}`;
   evidence.replay.meetingId = `meeting-${suffix}`;
@@ -441,6 +486,33 @@ describe("verifyRetainedE2eEvidence", () => {
     ]));
   });
 
+  it("requires the complete summary contract and validates open-question evidence", () => {
+    const evidence = overlapEvidence();
+    const question = evidence.summary.openQuestions[0];
+    if (question === undefined) {
+      throw new Error("summary open-question fixture is required");
+    }
+    evidence.summary.openQuestions[0] = {
+      ...question,
+      evidenceTurnIds: ["invented-question-turn"],
+    };
+    evidence.summary.transcriptId = "different-transcript";
+
+    const failures = verifyRetainedE2eEvidence(manifest(), evidence).failures;
+
+    expect(failures).toContainEqual({
+      code: "UNKNOWN_EVIDENCE_TURN",
+      message: "open question references missing turn invented-question-turn",
+    });
+    expect(failures.map(({ code }) => code)).toContain("SUMMARY_TRANSCRIPT_MISMATCH");
+
+    const incomplete = structuredClone(evidence) as unknown as {
+      summary: { overview?: string };
+    };
+    delete incomplete.summary.overview;
+    expect(retainedE2eEvidenceV2Schema.safeParse(incomplete).success).toBe(false);
+  });
+
   it("requires initial ready, reconnect during speaker A, then one playback", () => {
     const evidence = reconnectEvidence();
 
@@ -559,6 +631,31 @@ describe("verifyRetainedE2eEvidence", () => {
     ).toContain("END_TIMESTAMP_MISMATCH");
   });
 
+  it("rejects internal Discord identifiers and missing human-readable UX evidence", () => {
+    const evidence = overlapEvidence();
+    evidence.publication.embedDescription =
+      `turn:v1:hidden meeting-projection:raw ${evidence.summary.summaryId}`;
+
+    const codes = verifyRetainedE2eEvidence(manifest(), evidence).failures.map(({ code }) => code);
+
+    expect(codes).toEqual(expect.arrayContaining([
+      "DISCORD_ACTION_OWNER_MENTION_MISSING",
+      "DISCORD_EVIDENCE_INTERVAL_MISSING",
+      "DISCORD_EVIDENCE_LABEL_MISSING",
+      "DISCORD_INTERNAL_ID_VISIBLE",
+      "DISCORD_SPEAKER_MENTION_MISSING",
+    ]));
+  });
+
+  it("rejects provenance captured from containers deployed after the recording began", () => {
+    const evidence = overlapEvidence();
+    evidence.deployment.craig.containerStartedAt = "1970-01-01T00:00:01.000Z";
+
+    const codes = verifyRetainedE2eEvidence(manifest(), evidence).failures.map(({ code }) => code);
+
+    expect(codes).toContain("DEPLOYMENT_STARTED_AFTER_RECORDING");
+  });
+
   it("requires all scenarios and isolated identities across the campaign", () => {
     const runs = [
       reidentify(sequentialEvidence(), "sequential"),
@@ -572,5 +669,18 @@ describe("verifyRetainedE2eEvidence", () => {
     runs[2]!.replay.threadId = runs[1]!.replay.threadId;
     const failed = verifyE2eCampaign(manifest(), runs);
     expect(failed.failures.map(({ code }) => code)).toContain("CAMPAIGN_STATE_LEAK");
+  });
+
+  it("requires identical immutable deployment provenance across campaign runs", () => {
+    const runs = [
+      reidentify(sequentialEvidence(), "sequential"),
+      reidentify(overlapEvidence(), "overlap"),
+      reidentify(reconnectEvidence(), "reconnect"),
+    ];
+    runs[2]!.deployment.meetingPlatform.imageId = `sha256:${"c".repeat(64)}`;
+
+    const codes = verifyE2eCampaign(manifest(), runs).failures.map(({ code }) => code);
+
+    expect(codes).toContain("CAMPAIGN_DEPLOYMENT_CHANGED");
   });
 });

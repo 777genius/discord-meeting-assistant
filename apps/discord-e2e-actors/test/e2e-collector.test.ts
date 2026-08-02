@@ -7,6 +7,7 @@ import {
   type DiscordEvidenceProbe,
   type S3RecordingEvidence,
 } from "../src/e2e-collector.js";
+import type { DeploymentProvenance } from "../src/e2e-evidence.js";
 
 const speakerA = "1533227577286852649";
 const speakerB = "1533228054724346087";
@@ -64,18 +65,32 @@ function snapshot() {
     revision: 6,
     summary: {
       actionItems: [{
+        actionItemId: "action-1",
         deadline: "2026-08-07",
         evidenceTurnIds: ["turn-b"],
         ownerSpeakerId: speakerB,
         text: "Проверить Discord thread",
       }],
-      decisions: [{ evidenceTurnIds: ["turn-a"], text: "Выпустить в пятницу" }],
+      decisions: [{
+        decisionId: "decision-1",
+        evidenceTurnIds: ["turn-a"],
+        text: "Выпустить в пятницу",
+      }],
+      openQuestions: [{
+        evidenceTurnIds: ["turn-b"],
+        id: "question-1",
+        text: "Нужен ли следующий этап?",
+      }],
+      overview: "Команда согласовала выпуск и владельца проверки.",
       summaryId: "summary-1",
+      title: "Итоги встречи",
       topics: [{
         evidenceTurnIds: ["turn-a"],
         points: ["Meeting Platform хранит Craig recording"],
         title: "PostgreSQL pipeline",
       }],
+      transcriptId: "transcript-1",
+      version: 1,
     },
     summaryStage: { attempts: 1, status: "succeeded" },
     transcript: {
@@ -128,15 +143,46 @@ function s3(): S3RecordingEvidence {
   };
 }
 
+function provenance(): DeploymentProvenance {
+  return {
+    craig: {
+      composeConfigHash: "3".repeat(64),
+      composeProject: "craig-meeting-e2e",
+      composeService: "bot",
+      containerId: "4".repeat(64),
+      containerStartedAt: "1970-01-01T00:15:00.000Z",
+      imageId: `sha256:${"5".repeat(64)}`,
+      repositoryDigest: null,
+      sourceRevision: "6".repeat(40),
+    },
+    meetingPlatform: {
+      composeConfigHash: "7".repeat(64),
+      composeProject: "discord-meeting-assistant",
+      composeService: "meeting-platform",
+      containerId: "8".repeat(64),
+      containerStartedAt: "1970-01-01T00:15:00.000Z",
+      imageId: `sha256:${"9".repeat(64)}`,
+      repositoryDigest: null,
+      sourceRevision: "a".repeat(40),
+    },
+  };
+}
+
 describe("collectRetainedE2eEvidence", () => {
   it("collects before state, verifies S3/Discord, performs replay, then collects after state", async () => {
     const calls: string[] = [];
     let databaseCall = 0;
+    let provenanceCall = 0;
     const deployment: DeploymentEvidenceProbe = {
       collectDatabase: async () => {
         databaseCall += 1;
         calls.push(`database-${databaseCall}`);
         return database();
+      },
+      collectProvenance: async () => {
+        provenanceCall += 1;
+        calls.push(`provenance-${provenanceCall}`);
+        return provenance();
       },
       collectS3: async () => {
         calls.push("s3");
@@ -154,7 +200,14 @@ describe("collectRetainedE2eEvidence", () => {
     };
     const discord: DiscordEvidenceProbe = {
       inspect: async () => ({
-        matchingMessageIds: ["message-1"],
+        matchingMessages: [{
+          embedDescription: [
+            "Ответственный: <@1533228054724346087>",
+            "Основание: **00:00-00:16 · <@1533227577286852649>:** «Meeting Platform»",
+            "Основание: **00:00-00:13 · <@1533228054724346087>:** «Discord thread»",
+          ].join("\n"),
+          messageId: "message-1",
+        }],
         matchingThreadIds: ["thread-1"],
       }),
     };
@@ -165,7 +218,14 @@ describe("collectRetainedE2eEvidence", () => {
       discord,
     );
 
-    expect(calls).toEqual(["database-1", "s3", "replay", "database-2"]);
+    expect(calls).toEqual([
+      "provenance-1",
+      "database-1",
+      "s3",
+      "replay",
+      "database-2",
+      "provenance-2",
+    ]);
     expect(evidence.database).toEqual({
       matchingMeetingCount: 1,
       matchingRecordingCount: 1,
@@ -175,6 +235,47 @@ describe("collectRetainedE2eEvidence", () => {
     expect(evidence.replay.replayJob.afterProcessedOn).toBe(2_000);
     expect(evidence.publication.matchingThreadCount).toBe(1);
     expect(evidence.recording.s3.sourceChecksumSha256).toBe("f".repeat(64));
+    expect(evidence.deployment).toEqual(provenance());
+    expect(evidence.publication.embedDescription).toContain("Основание:");
+  });
+
+  it("rejects a deployment change while evidence is collected", async () => {
+    let provenanceCall = 0;
+    const deployment: DeploymentEvidenceProbe = {
+      collectDatabase: async () => database(),
+      collectProvenance: async () => {
+        provenanceCall += 1;
+        const observed = provenance();
+        return provenanceCall === 2
+          ? {
+            ...observed,
+            meetingPlatform: {
+              ...observed.meetingPlatform,
+              imageId: `sha256:${"b".repeat(64)}`,
+            },
+          }
+          : observed;
+      },
+      collectS3: async () => s3(),
+      replayPostCall: async () => ({
+        afterProcessedOn: 2_000,
+        beforeProcessedOn: 1_000,
+        jobId: "post-call-v1-job",
+        state: "completed",
+      }),
+    };
+    const discord: DiscordEvidenceProbe = {
+      inspect: async () => ({
+        matchingMessages: [{ embedDescription: "Основание: 00:00-00:01", messageId: "message-1" }],
+        matchingThreadIds: ["thread-1"],
+      }),
+    };
+
+    await expect(collectRetainedE2eEvidence(
+      { actorRun: actorRun(), recordingId: "recording-1", runId: "run-1" },
+      deployment,
+      discord,
+    )).rejects.toThrow("provenance changed");
   });
 
   it("rejects an actor file from another explicit run before external reads", async () => {

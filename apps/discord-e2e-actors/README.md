@@ -54,27 +54,34 @@ guild.
 After the call finishes, run the collector with the explicit Craig recording ID.
 It reads the actual Postgres snapshot/counts over the isolated SSH deployment,
 downloads and hashes the authoritative S3 manifest and every speaker track,
-counts Discord projection markers, replays the completed BullMQ job, then repeats
-the Postgres and Discord counts. It writes nothing unless correlation and the
-single-run verifier pass:
+counts Discord projection markers and retains the visible embed description,
+captures immutable Craig and Meeting Platform deployment provenance, replays the
+completed BullMQ job, then repeats the Postgres, Discord, and provenance probes.
+It writes nothing unless correlation, stable provenance, and the single-run
+verifier pass:
 
 ```sh
 DISCORD_E2E_RUN_ID=campaign-2026-08-02-overlap \
 DISCORD_E2E_RECORDING_ID=<craig-recording-id> \
 DISCORD_E2E_ACTOR_RUN_INPUT=/absolute/evidence/overlap.actor-run.json \
-DISCORD_E2E_EVIDENCE_OUTPUT=/absolute/evidence/overlap.evidence.v1.json \
+DISCORD_E2E_EVIDENCE_OUTPUT=/absolute/evidence/overlap.evidence.v2.json \
 pnpm --filter @discord-meeting/discord-e2e-actors collect:e2e
 ```
 
 The collector performs a real post-call replay. Run it only against the isolated
 official-bot test deployment. Infrastructure paths/host/project have safe
-environment overrides for another disposable deployment.
+environment overrides for another disposable deployment. Craig defaults to
+Compose project `craig-meeting-e2e`, service `bot`; override them with
+`DISCORD_E2E_REMOTE_CRAIG_PROJECT` and `DISCORD_E2E_REMOTE_CRAIG_SERVICE`.
+Both running images must carry a lowercase 40- or 64-character
+`org.opencontainers.image.revision` OCI label. Do not restart either service
+between the call and collection.
 
 An individual evidence file can be checked again deterministically:
 
 ```sh
-pnpm --filter @discord-meeting/discord-e2e-actors verify:e2e -- \
-  test/fixtures/manifest.v1.json /absolute/path/to/retained-evidence.v1.json
+pnpm --filter @discord-meeting/discord-e2e-actors run verify:e2e -- \
+  test/fixtures/manifest.v1.json /absolute/path/to/retained-evidence.v2.json
 ```
 
 The command exits non-zero for WER/CER or terminology failure, wrong speakers or
@@ -86,9 +93,9 @@ required and meeting, recording, transcript, summary, thread, and message IDs
 must all be isolated between runs:
 
 ```sh
-pnpm --filter @discord-meeting/discord-e2e-actors verify:campaign -- \
+pnpm --filter @discord-meeting/discord-e2e-actors run verify:campaign -- \
   test/fixtures/manifest.v1.json \
-  /absolute/evidence/sequential.evidence.v1.json \
-  /absolute/evidence/overlap.evidence.v1.json \
-  /absolute/evidence/reconnect.evidence.v1.json
+  /absolute/evidence/sequential.evidence.v2.json \
+  /absolute/evidence/overlap.evidence.v2.json \
+  /absolute/evidence/reconnect.evidence.v2.json
 ```

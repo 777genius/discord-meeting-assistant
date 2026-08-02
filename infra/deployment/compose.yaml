@@ -106,7 +106,7 @@ services:
       SUBSCRIPTION_RUNTIME_PACKAGE_MANIFEST_PATH: /opt/subscription-runtime/node_modules/@vioxen/subscription-runtime/package.json
       SUBSCRIPTION_RUNTIME_PROTO_PATH: /app/apps/meeting-platform/proto/agent_runtime.proto
       SUBSCRIPTION_RUNTIME_PROVIDER: codex
-      SUBSCRIPTION_RUNTIME_PROVIDER_INSTANCE_ID: discord-meeting-summary-v2
+      SUBSCRIPTION_RUNTIME_PROVIDER_INSTANCE_ID: discord-meeting-summary-v3
       SUBSCRIPTION_RUNTIME_PURPOSE_POLICY_FILE: /etc/subscription-runtime/sidecar-policy.json
       SUBSCRIPTION_RUNTIME_REASONING_EFFORT: xhigh
       SUBSCRIPTION_RUNTIME_SERVICE_TOKEN_FILE: /run/subscription-runtime-secrets/service-token
@@ -129,9 +129,11 @@ services:
 
   meeting-platform:
     build:
+      args:
+        SOURCE_REVISION: ${MEETING_PLATFORM_SOURCE_REVISION:?set immutable source revision}
       context: ../..
       dockerfile: apps/meeting-platform/Dockerfile
-    image: discord-meeting/meeting-platform:0.1.0
+    image: discord-meeting/meeting-platform:${MEETING_PLATFORM_SOURCE_REVISION:?set immutable source revision}
     init: true
     restart: unless-stopped
     read_only: true

@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 
 import {
   fixtureManifestV1Schema,
-  retainedE2eEvidenceV1Schema,
+  retainedE2eEvidenceV2Schema,
   verifyRetainedE2eEvidence,
 } from "./e2e-evidence.js";
 
@@ -17,7 +17,7 @@ async function main(): Promise<void> {
     readFile(evidencePath, "utf8"),
   ]);
   const manifest = fixtureManifestV1Schema.parse(JSON.parse(manifestJson));
-  const evidence = retainedE2eEvidenceV1Schema.parse(JSON.parse(evidenceJson));
+  const evidence = retainedE2eEvidenceV2Schema.parse(JSON.parse(evidenceJson));
   const verification = verifyRetainedE2eEvidence(manifest, evidence);
   process.stdout.write(`${JSON.stringify(verification, undefined, 2)}\n`);
   if (!verification.passed) {

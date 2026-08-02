@@ -11,8 +11,11 @@ import {
 
 import type {
   DiscordEvidenceProbe,
+  DiscordProjectionMessageObservation,
   DiscordProjectionObservation,
 } from "./e2e-collector.js";
+
+const projectionFooter = "Meeting Platform · итог встречи";
 
 export class DiscordJsEvidenceProbe implements DiscordEvidenceProbe {
   readonly #client = new Client({ intents: [GatewayIntentBits.Guilds] });
@@ -33,12 +36,14 @@ export class DiscordJsEvidenceProbe implements DiscordEvidenceProbe {
       throw new Error("Discord evidence parent must be a text or announcement channel");
     }
     const threads = await matchingThreads(channel, marker);
-    const matchingMessageIds: string[] = [];
+    const matchingMessages: DiscordProjectionMessageObservation[] = [];
     for (const thread of threads) {
-      matchingMessageIds.push(...await matchingMessages(thread, marker));
+      matchingMessages.push(...await findMatchingMessages(thread, marker));
     }
     return {
-      matchingMessageIds: Object.freeze(matchingMessageIds.toSorted()),
+      matchingMessages: Object.freeze(
+        matchingMessages.toSorted((left, right) => left.messageId.localeCompare(right.messageId)),
+      ),
       matchingThreadIds: Object.freeze(threads.map(({ id }) => id).toSorted()),
     };
   }
@@ -52,7 +57,6 @@ async function matchingThreads(
   parent: TextChannel | NewsChannel,
   marker: string,
 ): Promise<readonly TextThreadChannel[]> {
-  const suffix = `[${marker.slice(-20)}]`;
   const [active, archived] = await Promise.all([
     parent.threads.fetchActive(false),
     parent.threads.fetchArchived({ fetchAll: true, type: "public" }, false),
@@ -62,7 +66,7 @@ async function matchingThreads(
     if (
       isTextThreadChannel(thread) &&
       thread.parentId === parent.id &&
-      thread.name.endsWith(suffix)
+      threadNameHasMarker(thread.name, marker)
     ) {
       matches.set(thread.id, thread);
     }
@@ -75,11 +79,11 @@ function isTextThreadChannel(thread: AnyThreadChannel): thread is TextThreadChan
     thread.parent?.type === ChannelType.GuildAnnouncement;
 }
 
-async function matchingMessages(
+async function findMatchingMessages(
   thread: TextThreadChannel,
   marker: string,
-): Promise<readonly string[]> {
-  const matches: string[] = [];
+): Promise<readonly DiscordProjectionMessageObservation[]> {
+  const matches: DiscordProjectionMessageObservation[] = [];
   let before: string | undefined;
   do {
     const page = await thread.messages.fetch({
@@ -87,8 +91,9 @@ async function matchingMessages(
       ...(before === undefined ? {} : { before }),
     });
     for (const message of page.values()) {
-      if (hasMarker(message, marker)) {
-        matches.push(message.id);
+      const embedDescription = projectionDescription(message, marker);
+      if (embedDescription !== undefined) {
+        matches.push({ embedDescription, messageId: message.id });
       }
     }
     before = page.size === 100 ? page.last()?.id : undefined;
@@ -96,6 +101,16 @@ async function matchingMessages(
   return matches;
 }
 
-function hasMarker(message: Message, marker: string): boolean {
-  return message.embeds.some((embed) => embed.footer?.text === marker);
+function projectionDescription(message: Message, marker: string): string | undefined {
+  return message.embeds.find((embed) => footerHasMarker(embed.footer?.text, marker))
+    ?.description ?? undefined;
+}
+
+export function threadNameHasMarker(name: string, marker: string): boolean {
+  const shortMarker = marker.slice(-20);
+  return name.endsWith(`[код ${shortMarker}]`) || name.endsWith(`[${shortMarker}]`);
+}
+
+export function footerHasMarker(footer: string | undefined, marker: string): boolean {
+  return footer === projectionFooter || footer === marker;
 }

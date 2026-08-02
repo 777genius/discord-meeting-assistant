@@ -89,9 +89,28 @@ export const actorRunEvidenceV1Schema = z.object({
 });
 
 const identifierCountSchema = z.number().int().nonnegative();
+const dockerContainerIdSchema = z.string().regex(/^[a-f\d]{64}$/u);
+const dockerImageIdSchema = z.string().regex(/^sha256:[a-f\d]{64}$/u);
+const repositoryDigestSchema = z.string().regex(/^[^\s@]+@sha256:[a-f\d]{64}$/u);
+const sourceRevisionSchema = z.string().regex(/^(?:[a-f\d]{40}|[a-f\d]{64})$/u);
 
-export const retainedE2eEvidenceV1Schema = z.object({
+const deployedServiceProvenanceSchema = z.object({
+  composeConfigHash: sha256Schema,
+  composeProject: identifierSchema,
+  composeService: identifierSchema,
+  containerId: dockerContainerIdSchema,
+  containerStartedAt: z.iso.datetime(),
+  imageId: dockerImageIdSchema,
+  repositoryDigest: repositoryDigestSchema.nullable(),
+  sourceRevision: sourceRevisionSchema,
+});
+
+export const retainedE2eEvidenceV2Schema = z.object({
   actorRun: actorRunEvidenceV1Schema,
+  deployment: z.object({
+    craig: deployedServiceProvenanceSchema,
+    meetingPlatform: deployedServiceProvenanceSchema,
+  }),
   fixtureManifestVersion: z.literal(1),
   fixtureSetId: identifierSchema,
   database: z.object({
@@ -109,6 +128,7 @@ export const retainedE2eEvidenceV1Schema = z.object({
   })).min(2),
   meetingId: identifierSchema,
   publication: z.object({
+    embedDescription: z.string().min(1).max(4_000).refine((value) => value.trim().length > 0),
     matchingMessageCount: identifierCountSchema,
     matchingThreadCount: identifierCountSchema,
     messageId: identifierSchema,
@@ -116,6 +136,7 @@ export const retainedE2eEvidenceV1Schema = z.object({
   }),
   recording: z.object({
     durationMs: z.number().int().positive(),
+    endedAt: z.iso.datetime(),
     recordingId: identifierSchema,
     s3: z.object({
       manifestChecksumSha256: sha256Schema,
@@ -131,6 +152,7 @@ export const retainedE2eEvidenceV1Schema = z.object({
       })).min(1),
     }),
     speakerIds: z.array(identifierSchema).min(1),
+    startedAt: z.iso.datetime(),
   }),
   replay: z.object({
     matchingMeetingCount: identifierCountSchema,
@@ -152,7 +174,7 @@ export const retainedE2eEvidenceV1Schema = z.object({
       state: z.literal("completed"),
     }),
   }),
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(2),
   stages: z.array(z.object({
     attempts: z.number().int().positive(),
     stage: z.enum(["publication", "summary", "transcription"]),
@@ -160,22 +182,33 @@ export const retainedE2eEvidenceV1Schema = z.object({
   })).min(3),
   summary: z.object({
     actionItems: z.array(z.object({
+      actionItemId: identifierSchema,
       deadline: identifierSchema.nullable(),
       evidenceTurnIds: z.array(identifierSchema).min(1),
       ownerSpeakerId: identifierSchema.nullable(),
       text: identifierSchema,
-    }).loose()),
+    }).strict()),
     decisions: z.array(z.object({
+      decisionId: identifierSchema,
       evidenceTurnIds: z.array(identifierSchema).min(1),
       text: identifierSchema,
-    }).loose()),
+    }).strict()),
+    openQuestions: z.array(z.object({
+      evidenceTurnIds: z.array(identifierSchema).min(1),
+      id: identifierSchema,
+      text: identifierSchema,
+    }).strict()),
+    overview: identifierSchema,
     summaryId: identifierSchema,
+    title: identifierSchema,
     topics: z.array(z.object({
       evidenceTurnIds: z.array(identifierSchema).min(1),
       points: z.array(identifierSchema).min(1),
       title: identifierSchema,
-    }).loose()),
-  }).loose(),
+    }).strict()),
+    transcriptId: identifierSchema,
+    version: z.number().int().positive(),
+  }).strict(),
   transcript: z.object({
     transcriptId: identifierSchema,
     turns: z.array(z.object({
@@ -191,7 +224,9 @@ export const retainedE2eEvidenceV1Schema = z.object({
 export type FixtureManifestV1 = z.infer<typeof fixtureManifestV1Schema>;
 export type ActorRunEvidenceV1 = z.infer<typeof actorRunEvidenceV1Schema>;
 export type UnboundActorRunEvidenceV1 = z.infer<typeof unboundActorRunEvidenceV1Schema>;
-export type RetainedE2eEvidenceV1 = z.infer<typeof retainedE2eEvidenceV1Schema>;
+export type DeployedServiceProvenance = z.infer<typeof deployedServiceProvenanceSchema>;
+export type DeploymentProvenance = z.infer<typeof retainedE2eEvidenceV2Schema>["deployment"];
+export type RetainedE2eEvidenceV2 = z.infer<typeof retainedE2eEvidenceV2Schema>;
 
 interface VerificationFailure {
   readonly code: string;
@@ -225,7 +260,7 @@ interface PlaybackWindow {
 
 export function verifyRetainedE2eEvidence(
   manifest: FixtureManifestV1,
-  evidence: RetainedE2eEvidenceV1,
+  evidence: RetainedE2eEvidenceV2,
 ): E2eVerificationResult {
   const failures: VerificationFailure[] = [];
   const metrics: SpeakerAccuracyMetrics[] = [];
@@ -251,6 +286,7 @@ export function verifyRetainedE2eEvidence(
   }
 
   verifyFixtures(manifest, evidence, fail);
+  verifyDeploymentProvenance(evidence, fail);
   verifyS3Evidence(evidence, fail);
   verifyStages(evidence, fail);
   const playbackWindows = playbackWindowsFrom(evidence, fail);
@@ -258,6 +294,7 @@ export function verifyRetainedE2eEvidence(
   verifyTranscript(manifest, evidence, scenario, playbackWindows, metrics, fail);
   verifyEvidenceReferences(manifest, evidence, fail);
   verifySummarySemantics(manifest, evidence, fail);
+  verifyDiscordSummaryUx(manifest, evidence, fail);
   verifyReplayIdentity(evidence, fail);
 
   return result(failures, metrics);
@@ -265,7 +302,7 @@ export function verifyRetainedE2eEvidence(
 
 export function verifyE2eCampaign(
   manifest: FixtureManifestV1,
-  runs: readonly RetainedE2eEvidenceV1[],
+  runs: readonly RetainedE2eEvidenceV2[],
 ): CampaignVerificationResult {
   const failures: VerificationFailure[] = [];
   const runResults: Record<string, E2eVerificationResult> = {};
@@ -290,6 +327,7 @@ export function verifyE2eCampaign(
     }
   }
   verifyCampaignIsolation(runs, fail);
+  verifyCampaignDeploymentProvenance(runs, fail);
   return {
     failures: Object.freeze(failures),
     passed: failures.length === 0,
@@ -298,10 +336,10 @@ export function verifyE2eCampaign(
 }
 
 function verifyCampaignIsolation(
-  runs: readonly RetainedE2eEvidenceV1[],
+  runs: readonly RetainedE2eEvidenceV2[],
   fail: (code: string, message: string) => void,
 ): void {
-  const identities: ReadonlyArray<readonly [string, (run: RetainedE2eEvidenceV1) => string]> = [
+  const identities: ReadonlyArray<readonly [string, (run: RetainedE2eEvidenceV2) => string]> = [
     ["meeting", (run) => run.meetingId],
     ["recording", (run) => run.recording.recordingId],
     ["transcript", (run) => run.transcript.transcriptId],
@@ -317,9 +355,79 @@ function verifyCampaignIsolation(
   }
 }
 
+function verifyDeploymentProvenance(
+  evidence: RetainedE2eEvidenceV2,
+  fail: (code: string, message: string) => void,
+): void {
+  const { craig, meetingPlatform } = evidence.deployment;
+  if (
+    craig.composeProject === meetingPlatform.composeProject &&
+    craig.composeService === meetingPlatform.composeService
+  ) {
+    fail(
+      "DEPLOYMENT_COMPONENT_COLLISION",
+      "Craig and Meeting Platform provenance resolve to the same Compose service",
+    );
+  }
+  const recordingStartedAt = Date.parse(evidence.recording.startedAt);
+  for (const [component, provenance] of [
+    ["craig", craig],
+    ["meetingPlatform", meetingPlatform],
+  ] as const) {
+    if (Date.parse(provenance.containerStartedAt) > recordingStartedAt) {
+      fail(
+        "DEPLOYMENT_STARTED_AFTER_RECORDING",
+        `${component} container started after the authoritative recording began`,
+      );
+    }
+  }
+}
+
+function verifyCampaignDeploymentProvenance(
+  runs: readonly RetainedE2eEvidenceV2[],
+  fail: (code: string, message: string) => void,
+): void {
+  const baseline = runs[0];
+  if (baseline === undefined) {
+    return;
+  }
+  for (const run of runs.slice(1)) {
+    for (const component of ["craig", "meetingPlatform"] as const) {
+      if (!sameServiceProvenance(baseline.deployment[component], run.deployment[component])) {
+        fail(
+          "CAMPAIGN_DEPLOYMENT_CHANGED",
+          `${component} immutable deployment provenance changed between campaign runs`,
+        );
+      }
+    }
+  }
+}
+
+export function sameDeploymentProvenance(
+  left: DeploymentProvenance,
+  right: DeploymentProvenance,
+): boolean {
+  return sameServiceProvenance(left.craig, right.craig) &&
+    sameServiceProvenance(left.meetingPlatform, right.meetingPlatform);
+}
+
+function sameServiceProvenance(
+  left: DeployedServiceProvenance,
+  right: DeployedServiceProvenance,
+): boolean {
+  return left.composeConfigHash === right.composeConfigHash &&
+    left.composeProject === right.composeProject &&
+    left.composeService === right.composeService &&
+    left.containerId === right.containerId &&
+    left.containerStartedAt === right.containerStartedAt &&
+    left.imageId === right.imageId &&
+    left.repositoryDigest === right.repositoryDigest &&
+    left.sourceRevision === right.sourceRevision;
+}
+
 function verifyFixtures(
   manifest: FixtureManifestV1,
-  evidence: RetainedE2eEvidenceV1,
+  evidence: RetainedE2eEvidenceV2,
   fail: (code: string, message: string) => void,
 ): void {
   const retainedById = new Map(evidence.fixtures.map((fixture) => [fixture.fixtureId, fixture]));
@@ -366,10 +474,13 @@ function verifyFixtures(
 }
 
 function verifyS3Evidence(
-  evidence: RetainedE2eEvidenceV1,
+  evidence: RetainedE2eEvidenceV2,
   fail: (code: string, message: string) => void,
 ): void {
   const s3 = evidence.recording.s3;
+  if (Date.parse(evidence.recording.endedAt) <= Date.parse(evidence.recording.startedAt)) {
+    fail("INVALID_RECORDING_INTERVAL", "authoritative recording must end after it starts");
+  }
   const speakers = new Set(s3.tracks.map(({ speakerId }) => speakerId));
   if (speakers.size !== s3.tracks.length) {
     fail("DUPLICATE_S3_TRACK", "S3 manifest contains duplicate speaker tracks");
@@ -396,7 +507,7 @@ function verifyS3Evidence(
 }
 
 function verifyStages(
-  evidence: RetainedE2eEvidenceV1,
+  evidence: RetainedE2eEvidenceV2,
   fail: (code: string, message: string) => void,
 ): void {
   for (const required of ["transcription", "summary", "publication"] as const) {
@@ -408,7 +519,7 @@ function verifyStages(
 }
 
 function playbackWindowsFrom(
-  evidence: RetainedE2eEvidenceV1,
+  evidence: RetainedE2eEvidenceV2,
   fail: (code: string, message: string) => void,
 ): readonly PlaybackWindow[] {
   const events = evidence.actorRun.events;
@@ -463,7 +574,7 @@ function playbackWindowsFrom(
 
 function verifyActorRun(
   manifest: FixtureManifestV1,
-  evidence: RetainedE2eEvidenceV1,
+  evidence: RetainedE2eEvidenceV2,
   scenario: FixtureManifestV1["scenarios"][number],
   windows: readonly PlaybackWindow[],
   fail: (code: string, message: string) => void,
@@ -539,7 +650,7 @@ function verifyActorRun(
 
 function verifyActorS3Timing(
   manifest: FixtureManifestV1,
-  evidence: RetainedE2eEvidenceV1,
+  evidence: RetainedE2eEvidenceV2,
   windows: readonly PlaybackWindow[],
   fail: (code: string, message: string) => void,
 ): void {
@@ -574,7 +685,7 @@ function verifyActorS3Timing(
 
 function verifyScenarioTiming(
   manifest: FixtureManifestV1,
-  evidence: RetainedE2eEvidenceV1,
+  evidence: RetainedE2eEvidenceV2,
   scenario: FixtureManifestV1["scenarios"][number],
   windows: readonly PlaybackWindow[],
   fail: (code: string, message: string) => void,
@@ -602,7 +713,7 @@ function verifyScenarioTiming(
 
 function verifyReconnect(
   manifest: FixtureManifestV1,
-  evidence: RetainedE2eEvidenceV1,
+  evidence: RetainedE2eEvidenceV2,
   windows: readonly PlaybackWindow[],
   fail: (code: string, message: string) => void,
 ): void {
@@ -672,7 +783,7 @@ function verifyReconnect(
 
 function verifyTranscript(
   manifest: FixtureManifestV1,
-  evidence: RetainedE2eEvidenceV1,
+  evidence: RetainedE2eEvidenceV2,
   scenario: FixtureManifestV1["scenarios"][number],
   windows: readonly PlaybackWindow[],
   metrics: SpeakerAccuracyMetrics[],
@@ -763,7 +874,7 @@ function verifyTranscript(
 
 function verifyEvidenceReferences(
   manifest: FixtureManifestV1,
-  evidence: RetainedE2eEvidenceV1,
+  evidence: RetainedE2eEvidenceV2,
   fail: (code: string, message: string) => void,
 ): void {
   const turnIds = new Set(evidence.transcript.turns.map(({ turnId }) => turnId));
@@ -771,6 +882,7 @@ function verifyEvidenceReferences(
   for (const [kind, items] of [
     ["decision", evidence.summary.decisions],
     ["action item", evidence.summary.actionItems],
+    ["open question", evidence.summary.openQuestions],
     ["topic", evidence.summary.topics],
   ] as const) {
     for (const item of items) {
@@ -786,11 +898,20 @@ function verifyEvidenceReferences(
       fail("UNKNOWN_ACTION_OWNER", `action owner ${actionItem.ownerSpeakerId} is not a fixture speaker`);
     }
   }
+  if (evidence.summary.transcriptId !== evidence.transcript.transcriptId) {
+    fail("SUMMARY_TRANSCRIPT_MISMATCH", "summary references a different final transcript");
+  }
+  if (
+    new Set(evidence.summary.openQuestions.map(({ id }) => id)).size !==
+    evidence.summary.openQuestions.length
+  ) {
+    fail("DUPLICATE_OPEN_QUESTION", "summary contains duplicate open-question IDs");
+  }
 }
 
 function verifySummarySemantics(
   manifest: FixtureManifestV1,
-  evidence: RetainedE2eEvidenceV1,
+  evidence: RetainedE2eEvidenceV2,
   fail: (code: string, message: string) => void,
 ): void {
   const decisionText = normalize(
@@ -828,8 +949,45 @@ function verifySummarySemantics(
   }
 }
 
+function verifyDiscordSummaryUx(
+  manifest: FixtureManifestV1,
+  evidence: RetainedE2eEvidenceV2,
+  fail: (code: string, message: string) => void,
+): void {
+  const description = evidence.publication.embedDescription;
+  if (
+    description.includes("turn:v1:") ||
+    description.includes("meeting-projection:") ||
+    description.includes(evidence.summary.summaryId)
+  ) {
+    fail("DISCORD_INTERNAL_ID_VISIBLE", "Discord summary exposes an internal identifier");
+  }
+  if (!description.includes("Основание:")) {
+    fail("DISCORD_EVIDENCE_LABEL_MISSING", "Discord summary has no human-readable evidence label");
+  }
+  if (!/\b\d{2}:\d{2}-\d{2}:\d{2}\b/u.test(description)) {
+    fail("DISCORD_EVIDENCE_INTERVAL_MISSING", "Discord summary has no MM:SS-MM:SS evidence interval");
+  }
+  for (const fixture of manifest.fixtures) {
+    if (!description.includes(`<@${fixture.speakerId}>`)) {
+      fail(
+        "DISCORD_SPEAKER_MENTION_MISSING",
+        `Discord summary has no human-readable mention for speaker ${fixture.speakerId}`,
+      );
+    }
+  }
+  for (const expected of manifest.summaryExpectations.actionItems) {
+    if (!description.includes(`Ответственный: <@${expected.ownerSpeakerId}>`)) {
+      fail(
+        "DISCORD_ACTION_OWNER_MENTION_MISSING",
+        `Discord summary has no owner mention for expected action ${expected.ownerSpeakerId}`,
+      );
+    }
+  }
+}
+
 function verifyReplayIdentity(
-  evidence: RetainedE2eEvidenceV1,
+  evidence: RetainedE2eEvidenceV2,
   fail: (code: string, message: string) => void,
 ): void {
   if (evidence.replay.replayJob.afterProcessedOn <= evidence.replay.replayJob.beforeProcessedOn) {

@@ -8,11 +8,36 @@ import type {
   ReplayJobEvidence,
   S3RecordingEvidence,
 } from "./e2e-collector.js";
+import type {
+  DeployedServiceProvenance,
+  DeploymentProvenance,
+} from "./e2e-evidence.js";
 
 const safeHost = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,252}$/u);
 const safeProject = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,62}$/u);
+const safeService = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,62}$/u);
 const absolutePath = z.string().startsWith("/").refine((value) => !value.includes("\0"));
 const correlationId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u);
+const dockerContainerId = z.string().regex(/^[a-f\d]{64}$/u);
+const dockerImageId = z.string().regex(/^sha256:[a-f\d]{64}$/u);
+const repositoryDigest = z.string().regex(/^[^\s@]+@sha256:[a-f\d]{64}$/u);
+const sha256 = z.string().regex(/^[a-f\d]{64}$/u);
+const sourceRevision = z.string().regex(/^(?:[a-f\d]{40}|[a-f\d]{64})$/u);
+
+const containerProvenanceOutputSchema = z.object({
+  composeConfigHash: sha256,
+  composeProject: safeProject,
+  composeService: safeService,
+  containerId: dockerContainerId,
+  containerStartedAt: z.iso.datetime(),
+  imageId: dockerImageId,
+});
+
+const imageProvenanceOutputSchema = z.object({
+  imageId: dockerImageId,
+  repositoryDigests: z.array(repositoryDigest).nullable(),
+  sourceRevision,
+});
 
 const databaseOutputSchema = z.object({
   matchingMeetingCount: z.number().int().nonnegative(),
@@ -48,6 +73,8 @@ const replayOutputSchema = z.object({
 
 export interface SshDeploymentProbeOptions {
   readonly composeFile: string;
+  readonly craigProjectName: string;
+  readonly craigServiceName: string;
   readonly envFile: string;
   readonly host: string;
   readonly projectName: string;
@@ -61,6 +88,8 @@ export class SshDeploymentEvidenceProbe implements DeploymentEvidenceProbe {
   public constructor(options: SshDeploymentProbeOptions) {
     this.#options = {
       composeFile: absolutePath.parse(options.composeFile),
+      craigProjectName: safeProject.parse(options.craigProjectName),
+      craigServiceName: safeService.parse(options.craigServiceName),
       envFile: absolutePath.parse(options.envFile),
       host: safeHost.parse(options.host),
       projectName: safeProject.parse(options.projectName),
@@ -83,6 +112,17 @@ export class SshDeploymentEvidenceProbe implements DeploymentEvidenceProbe {
       postgresEvidenceQuery.replaceAll("__RECORDING_ID__", validatedId),
     ]);
     return databaseOutputSchema.parse(parseLastJsonLine(output));
+  }
+
+  public async collectProvenance(): Promise<DeploymentProvenance> {
+    const [craig, meetingPlatform] = await Promise.all([
+      this.#collectServiceProvenance(
+        this.#options.craigProjectName,
+        this.#options.craigServiceName,
+      ),
+      this.#collectServiceProvenance(this.#options.projectName, "meeting-platform"),
+    ]);
+    return { craig, meetingPlatform };
   }
 
   public async collectS3(
@@ -111,6 +151,58 @@ export class SshDeploymentEvidenceProbe implements DeploymentEvidenceProbe {
     return replayOutputSchema.parse(parseLastJsonLine(output));
   }
 
+  async #collectServiceProvenance(
+    projectName: string,
+    serviceName: string,
+  ): Promise<DeployedServiceProvenance> {
+    const containerIds = (await this.#runRemote([
+      "docker",
+      "ps",
+      "--no-trunc",
+      "--quiet",
+      "--filter",
+      `label=com.docker.compose.project=${projectName}`,
+      "--filter",
+      `label=com.docker.compose.service=${serviceName}`,
+    ])).trim().split("\n").filter((value) => value.length > 0);
+    if (containerIds.length !== 1) {
+      throw new Error(
+        `expected one running ${projectName}/${serviceName} container, found ${containerIds.length}`,
+      );
+    }
+    const containerId = dockerContainerId.parse(containerIds[0]);
+    const container = containerProvenanceOutputSchema.parse(parseLastJsonLine(
+      await this.#runRemote([
+        "docker",
+        "inspect",
+        "--format",
+        containerProvenanceFormat,
+        containerId,
+      ]),
+    ));
+    if (container.composeProject !== projectName || container.composeService !== serviceName) {
+      throw new Error("Docker container provenance does not match the requested Compose service");
+    }
+    const image = imageProvenanceOutputSchema.parse(parseLastJsonLine(
+      await this.#runRemote([
+        "docker",
+        "image",
+        "inspect",
+        "--format",
+        imageProvenanceFormat,
+        container.imageId,
+      ]),
+    ));
+    if (image.imageId !== container.imageId) {
+      throw new Error("Running container image differs from inspected immutable image ID");
+    }
+    return {
+      ...container,
+      repositoryDigest: (image.repositoryDigests ?? []).toSorted()[0] ?? null,
+      sourceRevision: image.sourceRevision,
+    };
+  }
+
   async #dockerExec(service: "meeting-platform" | "postgres", args: readonly string[]): Promise<string> {
     const compose = [
       "docker",
@@ -134,7 +226,25 @@ export class SshDeploymentEvidenceProbe implements DeploymentEvidenceProbe {
       this.#options.timeoutMs,
     );
   }
+
+  async #runRemote(args: readonly string[]): Promise<string> {
+    return runProcess(
+      "ssh",
+      [
+        "-o",
+        "BatchMode=yes",
+        "--",
+        this.#options.host,
+        args.map(shellQuote).join(" "),
+      ],
+      this.#options.timeoutMs,
+    );
+  }
 }
+
+const containerProvenanceFormat = `{"composeConfigHash":{{json (index .Config.Labels "com.docker.compose.config-hash")}},"composeProject":{{json (index .Config.Labels "com.docker.compose.project")}},"composeService":{{json (index .Config.Labels "com.docker.compose.service")}},"containerId":{{json .Id}},"containerStartedAt":{{json .State.StartedAt}},"imageId":{{json .Image}}}`;
+
+const imageProvenanceFormat = `{"imageId":{{json .Id}},"repositoryDigests":{{json .RepoDigests}},"sourceRevision":{{json (index .Config.Labels "org.opencontainers.image.revision")}}}`;
 
 const postgresEvidenceQuery = `
 WITH target AS (

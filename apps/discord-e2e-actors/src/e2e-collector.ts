@@ -2,11 +2,13 @@ import { z } from "zod";
 
 import {
   actorRunEvidenceV1Schema,
+  retainedE2eEvidenceV2Schema,
+  sameDeploymentProvenance,
   unboundActorRunEvidenceV1Schema,
-  retainedE2eEvidenceV1Schema,
   type ActorRunEvidenceV1,
+  type DeploymentProvenance,
+  type RetainedE2eEvidenceV2,
   type UnboundActorRunEvidenceV1,
-  type RetainedE2eEvidenceV1,
 } from "./e2e-evidence.js";
 
 const identifier = z.string().trim().min(1);
@@ -36,22 +38,33 @@ const meetingSnapshotSchema = z.object({
   revision: z.number().int().nonnegative(),
   summary: z.object({
     actionItems: z.array(z.object({
+      actionItemId: identifier,
       deadline: identifier.nullable(),
       evidenceTurnIds: z.array(identifier).min(1),
       ownerSpeakerId: identifier.nullable(),
       text: identifier,
-    }).loose()),
+    }).strict()),
     decisions: z.array(z.object({
+      decisionId: identifier,
       evidenceTurnIds: z.array(identifier).min(1),
       text: identifier,
-    }).loose()),
+    }).strict()),
+    openQuestions: z.array(z.object({
+      evidenceTurnIds: z.array(identifier).min(1),
+      id: identifier,
+      text: identifier,
+    }).strict()),
+    overview: identifier,
     summaryId: identifier,
+    title: identifier,
     topics: z.array(z.object({
       evidenceTurnIds: z.array(identifier).min(1),
       points: z.array(identifier).min(1),
       title: identifier,
-    }).loose()),
-  }).loose(),
+    }).strict()),
+    transcriptId: identifier,
+    version: z.number().int().positive(),
+  }).strict(),
   summaryStage: stage,
   transcript: z.object({
     transcriptId: identifier,
@@ -104,13 +117,19 @@ export interface ReplayJobEvidence {
 
 export interface DeploymentEvidenceProbe {
   collectDatabase(recordingId: string): Promise<DatabaseObservation>;
+  collectProvenance(): Promise<DeploymentProvenance>;
   collectS3(manifestLocator: string, recordingId: string): Promise<S3RecordingEvidence>;
   replayPostCall(meetingId: string): Promise<ReplayJobEvidence>;
 }
 
 export interface DiscordProjectionObservation {
-  readonly matchingMessageIds: readonly string[];
+  readonly matchingMessages: readonly DiscordProjectionMessageObservation[];
   readonly matchingThreadIds: readonly string[];
+}
+
+export interface DiscordProjectionMessageObservation {
+  readonly embedDescription: string;
+  readonly messageId: string;
 }
 
 export interface DiscordEvidenceProbe {
@@ -127,12 +146,13 @@ export async function collectRetainedE2eEvidence(
   input: CollectEvidenceInput,
   deployment: DeploymentEvidenceProbe,
   discord: DiscordEvidenceProbe,
-): Promise<RetainedE2eEvidenceV1> {
+): Promise<RetainedE2eEvidenceV2> {
   const unboundActorRun = unboundActorRunEvidenceV1Schema.parse(input.actorRun);
   if (unboundActorRun.runId !== input.runId) {
     throw new Error("Actor evidence does not match the requested run correlation");
   }
 
+  const provenanceBefore = await deployment.collectProvenance();
   const before = normalizeDatabase(await deployment.collectDatabase(input.recordingId));
   assertExactDatabaseCounts(before, "before replay");
   const snapshot = before.snapshot;
@@ -146,10 +166,10 @@ export async function collectRetainedE2eEvidence(
     discord.inspect(snapshot.publicationTargetId, marker),
   ]);
   assertS3MatchesSnapshot(s3, snapshot);
-  assertDiscordReference(beforeDiscord, publication);
+  const beforeMessage = assertDiscordReference(beforeDiscord, publication);
   if (
     beforeDiscord.matchingThreadIds.length !== 1 ||
-    beforeDiscord.matchingMessageIds.length !== 1
+    beforeDiscord.matchingMessages.length !== 1
   ) {
     throw new Error("Discord projection is not exact-one before replay");
   }
@@ -161,9 +181,16 @@ export async function collectRetainedE2eEvidence(
   }
   const after = normalizeDatabase(await deployment.collectDatabase(input.recordingId));
   const afterDiscord = await discord.inspect(snapshot.publicationTargetId, marker);
+  const provenanceAfter = await deployment.collectProvenance();
+  if (!sameDeploymentProvenance(provenanceBefore, provenanceAfter)) {
+    throw new Error("Deployment provenance changed while retained evidence was collected");
+  }
   const replaySnapshot = after.snapshot;
   const replayPublication = parsePublication(replaySnapshot.publication.externalPublicationId);
-  assertDiscordReference(afterDiscord, replayPublication);
+  const afterMessage = assertDiscordReference(afterDiscord, replayPublication);
+  if (afterMessage.embedDescription !== beforeMessage.embedDescription) {
+    throw new Error("Discord projection visible text changed after idempotent replay");
+  }
 
   if (s3.tracks.length === 0) {
     throw new Error("Authoritative S3 manifest has no speaker tracks");
@@ -177,8 +204,9 @@ export async function collectRetainedE2eEvidence(
   if (!Number.isSafeInteger(recordingDurationMs)) {
     throw new Error("Authoritative S3 recording duration is outside the safe range");
   }
-  return retainedE2eEvidenceV1Schema.parse({
+  return retainedE2eEvidenceV2Schema.parse({
     actorRun,
+    deployment: provenanceBefore,
     database: {
       matchingMeetingCount: before.matchingMeetingCount,
       matchingRecordingCount: before.matchingRecordingCount,
@@ -190,13 +218,15 @@ export async function collectRetainedE2eEvidence(
     fixtures: actorRun.fixtures.map((fixture) => ({ ...fixture, codec: "opus" })),
     meetingId: snapshot.meetingId,
     publication: {
-      matchingMessageCount: beforeDiscord.matchingMessageIds.length,
+      embedDescription: beforeMessage.embedDescription,
+      matchingMessageCount: beforeDiscord.matchingMessages.length,
       matchingThreadCount: beforeDiscord.matchingThreadIds.length,
       messageId: publication.messageId,
       threadId: publication.threadId,
     },
     recording: {
       durationMs: recordingDurationMs,
+      endedAt: s3.endedAt,
       recordingId: snapshot.recording.recordingId,
       s3: {
         manifestChecksumSha256: s3.manifestChecksumSha256,
@@ -205,10 +235,11 @@ export async function collectRetainedE2eEvidence(
         tracks: s3.tracks,
       },
       speakerIds: s3.tracks.map(({ speakerId }) => speakerId),
+      startedAt: s3.startedAt,
     },
     replay: {
       matchingMeetingCount: after.matchingMeetingCount,
-      matchingMessageCount: afterDiscord.matchingMessageIds.length,
+      matchingMessageCount: afterDiscord.matchingMessages.length,
       matchingRecordingCount: after.matchingRecordingCount,
       matchingSummaryCount: after.matchingSummaryCount,
       matchingThreadCount: afterDiscord.matchingThreadIds.length,
@@ -221,7 +252,7 @@ export async function collectRetainedE2eEvidence(
       threadId: replayPublication.threadId,
       transcriptId: replaySnapshot.transcript.transcriptId,
     },
-    schemaVersion: 1,
+    schemaVersion: 2,
     stages: [
       { ...snapshot.transcriptionStage, stage: "transcription" },
       { ...snapshot.summaryStage, stage: "summary" },
@@ -317,13 +348,14 @@ function assertS3MatchesSnapshot(
 function assertDiscordReference(
   observation: DiscordProjectionObservation,
   reference: { readonly messageId: string; readonly threadId: string },
-): void {
-  if (
-    !observation.matchingThreadIds.includes(reference.threadId) ||
-    !observation.matchingMessageIds.includes(reference.messageId)
-  ) {
+): DiscordProjectionMessageObservation {
+  const message = observation.matchingMessages.find(({ messageId }) =>
+    messageId === reference.messageId
+  );
+  if (!observation.matchingThreadIds.includes(reference.threadId) || message === undefined) {
     throw new Error("Discord publication receipt is absent from the marker scan");
   }
+  return message;
 }
 
 function parsePublication(value: string): { readonly messageId: string; readonly threadId: string } {

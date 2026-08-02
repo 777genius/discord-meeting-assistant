@@ -20,6 +20,8 @@ const environmentSchema = z.object({
   DISCORD_E2E_FIXTURE_MANIFEST: z.string().min(1).default("test/fixtures/manifest.v1.json"),
   DISCORD_E2E_KEYCHAIN_SERVICE: z.string().min(1).default("discord-voice-bot-e2e"),
   DISCORD_E2E_RECORDING_ID: correlationId,
+  DISCORD_E2E_REMOTE_CRAIG_PROJECT: z.string().min(1).default("craig-meeting-e2e"),
+  DISCORD_E2E_REMOTE_CRAIG_SERVICE: z.string().min(1).default("bot"),
   DISCORD_E2E_REMOTE_COMPOSE_FILE: absolutePath.default(
     "/mnt/volume_ams3_1784742570542/discord-meeting-assistant/source/infra/deployment/compose.yaml",
   ),
@@ -47,6 +49,8 @@ async function main(): Promise<void> {
   ]);
   const deployment = new SshDeploymentEvidenceProbe({
     composeFile: config.DISCORD_E2E_REMOTE_COMPOSE_FILE,
+    craigProjectName: config.DISCORD_E2E_REMOTE_CRAIG_PROJECT,
+    craigServiceName: config.DISCORD_E2E_REMOTE_CRAIG_SERVICE,
     envFile: config.DISCORD_E2E_REMOTE_ENV_FILE,
     host: config.DISCORD_E2E_REMOTE_HOST,
     projectName: config.DISCORD_E2E_REMOTE_PROJECT,

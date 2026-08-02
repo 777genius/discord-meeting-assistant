@@ -51,9 +51,30 @@ Discord run is a separate external gate and must exercise at least:
 Each run must retain non-secret evidence: meeting and recording IDs, stage
 transitions, audio duration, speaker IDs, transcript WER/CER and terminology
 checks, overlap assertions, evidence-reference validation, and the final Discord
-thread/message IDs. The acceptance result is invalid if any decision or action
-item references a missing transcript turn, or if a retry creates a duplicate
-meeting, summary, thread, or message.
+thread/message IDs. Retained evidence schema v2 also records the exact Craig and
+Meeting Platform container IDs/start times, immutable image IDs, optional
+repository digests, image-bound source revisions, and Compose config hashes. The
+acceptance result is invalid if any decision or action item references a missing
+transcript turn, if a retry creates a duplicate meeting, summary, thread, or
+message, or if deployment provenance changes during collection or between
+campaign runs.
+
+Before building each local deployment image, obtain the source revision from its
+authoritative checkout. Pass that 40- or 64-character lowercase hex revision as
+`SOURCE_REVISION` and bind it into the image, not only the mutable tag:
+
+```dockerfile
+ARG SOURCE_REVISION
+LABEL org.opencontainers.image.revision="${SOURCE_REVISION}"
+```
+
+Meeting Platform receives this through `MEETING_PLATFORM_SOURCE_REVISION` in
+the deployment environment. Apply the same `SOURCE_REVISION` label to the
+isolated Craig gateway image in its own deployment Dockerfile. A copied host
+source tree does not need `.git`; the revision is captured before copying and is
+made immutable by the built image ID plus OCI label. Verify both labels with
+`docker image inspect` before the first call. Do not restart or redeploy Craig or
+Meeting Platform between actor start and retained evidence collection.
 
 Use the versioned Russian/English ground truth at
 `apps/discord-e2e-actors/test/fixtures/manifest.v1.json`. Generate its audio with
@@ -66,12 +87,25 @@ wall-clock timestamps. After Craig finalizes, pass the explicit recording ID and
 actor file to `collect:e2e`. The collector fail-closed binds them using the
 authoritative manifest `startedAt`/`endedAt`, speaker tracks, checksums and timing.
 
-The collector obtains both Postgres observations, S3 bytes, Discord marker counts,
-and the completed-job replay itself. Manually authored identity counts are not
-accepted evidence. Retain its non-secret JSON output and the verifier result.
-Run `verify:campaign` over passing sequential, overlap, and reconnect evidence;
-it also rejects any cross-meeting identity reuse. A successful provider call
-without a passing campaign result is not accepted.
+The collector obtains both Postgres observations, S3 bytes, Discord marker counts
+and visible embed text, the completed-job replay, and deployment provenance
+directly from Docker. It accepts current human-readable projection markers and
+legacy markers during rollout. Manually authored identity counts or provenance
+are not accepted evidence. Retain its non-secret JSON output and the verifier
+result. Run the campaign verifier with the standard pnpm separator:
+
+```sh
+pnpm --filter @discord-meeting/discord-e2e-actors run verify:campaign -- \
+  apps/discord-e2e-actors/test/fixtures/manifest.v1.json \
+  /absolute/evidence/sequential.evidence.v2.json \
+  /absolute/evidence/overlap.evidence.v2.json \
+  /absolute/evidence/reconnect.evidence.v2.json
+```
+
+The verifier rejects cross-meeting identity reuse, mixed deployments, raw
+internal IDs in Discord text, missing human evidence intervals, and missing
+speaker/action-owner mentions. A successful provider call without a passing
+campaign result is not accepted.
 
 Synthetic fixtures may be generated for deterministic speech. They must contain
 only invented test content, identify the expected Discord speaker explicitly in
