@@ -7,6 +7,7 @@
     "build": "tsc --project tsconfig.build.json --pretty false",
     "collect:e2e": "pnpm run build && node dist/collect-retained-evidence.js",
     "fixtures:generate": "./scripts/generate-ru-en-fixtures.sh",
+    "observe:live": "pnpm run build && node dist/observe-live-discord.js",
     "start": "pnpm run build && node dist/main.js",
     "test": "vitest run",
     "typecheck": "tsc --project tsconfig.json --noEmit --pretty false",

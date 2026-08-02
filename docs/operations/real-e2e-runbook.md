@@ -102,6 +102,30 @@ five-second projection tick as STT or model latency. The API-equivalent cost is
 an observability estimate only; the subscription runtime does not create an API
 invoice.
 
+### Live Discord mutation trace
+
+Start the observer immediately before the private five-minute call. It uses the
+SUT token from macOS Keychain by default, or from an isolated host secret
+directory when `DISCORD_E2E_LIVE_SECRET_DIRECTORY` is supplied. It scans public
+active and archived threads under the dedicated results channel, never parent
+channel messages. It retains only SUT-authored messages created during this
+bounded observation and writes a trace only when a visible projection changes.
+
+```sh
+DISCORD_E2E_LIVE_RUN_ID=campaign-2026-08-02-live-1 \
+DISCORD_E2E_LIVE_RESULT_CHANNEL_ID=1533228891827736657 \
+DISCORD_E2E_LIVE_SUT_APPLICATION_ID=1533224474609057793 \
+DISCORD_E2E_LIVE_DURATION_MS=600000 \
+DISCORD_E2E_LIVE_POLL_INTERVAL_MS=2000 \
+DISCORD_E2E_LIVE_OUTPUT=/absolute/evidence/live-discord.trace.v1.json \
+pnpm --filter @discord-meeting/discord-e2e-actors observe:live
+```
+
+On the host, add only `DISCORD_E2E_LIVE_SECRET_DIRECTORY=/run/secrets/discord-e2e`
+or its isolated equivalent. The trace is a create-only, atomic `0600` file; an
+existing output path, non-text results channel, invalid configuration, wrong SUT
+identity, or no observed projection fails the run without replacing evidence.
+
 Before building each local deployment image, obtain the source revision from its
 authoritative checkout. Pass that 40- or 64-character lowercase hex revision as
 `SOURCE_REVISION` and bind it into the image, not only the mutable tag:
