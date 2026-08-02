@@ -439,6 +439,43 @@ describe("verifyRetainedE2eEvidence", () => {
     expect(verification.failures.map(({ code }) => code)).not.toContain("TERM_MISSING");
   });
 
+  it("accepts mixed numeric and spoken dates in transcripts and summary deadlines", () => {
+    const dateManifest = manifest();
+    const speakerAFixture = dateManifest.fixtures[0];
+    if (speakerAFixture === undefined) {
+      throw new Error("speaker-a manifest fixture is required");
+    }
+    speakerAFixture.sourceText =
+      "Проверить Discord thread до седьмого августа две тысячи двадцать шестого года";
+    speakerAFixture.requiredTerms = ["Discord thread", "августа", "2026"];
+    dateManifest.summaryExpectations.actionItems = [{
+      deadline: "до 7 августа 2026 года",
+      ownerSpeakerId: speakerBId,
+      requiredTerms: ["очередь"],
+    }];
+
+    const evidence = overlapEvidence();
+    const speakerATurn = evidence.transcript.turns[0];
+    const actionItem = evidence.summary.actionItems[0];
+    if (speakerATurn === undefined || actionItem === undefined) {
+      throw new Error("speaker-a turn and action item are required");
+    }
+    evidence.transcript.turns[0] = {
+      ...speakerATurn,
+      text: "Проверить Discord thread до 7 августа две тысячи двадцать шестого года",
+    };
+    evidence.summary.actionItems[0] = {
+      ...actionItem,
+      deadline: "до 7 августа две тысячи двадцать шестого года",
+    };
+
+    const verification = verifyRetainedE2eEvidence(dateManifest, evidence);
+
+    expect(verification.failures.map(({ code }) => code)).not.toEqual(
+      expect.arrayContaining(["TERM_MISSING", "ACTION_SEMANTICS_MISSING"]),
+    );
+  });
+
   it("still fails required year evidence when STT loses 2026", () => {
     const dateManifest = manifest();
     const speakerAFixture = dateManifest.fixtures[0];

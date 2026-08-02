@@ -926,8 +926,10 @@ function verifySummarySemantics(
   for (const expected of manifest.summaryExpectations.actionItems) {
     const match = evidence.summary.actionItems.find((action) =>
       action.ownerSpeakerId === expected.ownerSpeakerId &&
-      action.deadline === expected.deadline &&
-      expected.requiredTerms.every((term) => normalize(action.text).includes(normalize(term))),
+      equivalentMeetingText(action.deadline, expected.deadline) &&
+      expected.requiredTerms.every((term) =>
+        normalizeTranscriptSemantics(action.text).includes(normalizeTranscriptSemantics(term)),
+      ),
     );
     if (match === undefined) {
       fail(
@@ -1047,10 +1049,24 @@ function normalize(value: string): string {
 }
 
 function normalizeTranscriptSemantics(value: string): string {
-  return normalize(value).replaceAll(
-    "седьмого августа две тысячи двадцать шестого года",
-    "7 августа 2026 года",
-  );
+  return normalize(value)
+    .replaceAll(
+      "седьмого августа две тысячи двадцать шестого года",
+      "7 августа 2026 года",
+    )
+    .replaceAll(
+      "7 августа две тысячи двадцать шестого года",
+      "7 августа 2026 года",
+    )
+    .replaceAll("две тысячи двадцать шестого года", "2026 года")
+    .replaceAll("две тысячи двадцать шестом году", "2026 году");
+}
+
+function equivalentMeetingText(left: string | null, right: string | null): boolean {
+  if (left === null || right === null) {
+    return left === right;
+  }
+  return normalizeTranscriptSemantics(left) === normalizeTranscriptSemantics(right);
 }
 
 function words(value: string): readonly string[] {
