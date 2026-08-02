@@ -100,7 +100,6 @@ describe("SpeachesFinalTranscriptionAdapter", () => {
       idempotencyKey: "transcription-request:v1:7:job-key:1:1:1:1",
       language: "ru",
       model: "Systran/faster-whisper-small",
-      prompt: "Vocabulary: Craig, Meeting Platform",
     });
     expect(reader.reads[0]?.options).toMatchObject({
       maxChunkBytes: 64 * 1_024 * 1_024,

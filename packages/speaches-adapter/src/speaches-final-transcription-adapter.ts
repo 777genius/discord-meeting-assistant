@@ -311,7 +311,7 @@ function validateOptions(options: SpeachesFinalTranscriptionOptions): ValidatedO
     maxSpeakerTracks,
     maxTotalAudioBytes,
     model,
-    prompt: vocabulary.length === 0 ? undefined : `Vocabulary: ${vocabulary.join(", ")}`,
+    prompt: undefined,
     providerRequestTimeoutMs,
   };
 }
@@ -601,11 +601,11 @@ function normalizeVocabulary(vocabulary: readonly string[] | undefined): readonl
       false,
     );
   }
-  const promptLength = `Vocabulary: ${normalized.join(", ")}`.length;
-  if (promptLength > 4_096) {
+  const hotwordsLength = normalized.join(", ").length;
+  if (hotwordsLength > 4_096) {
     throw new SpeachesAdapterError(
       "invalid_input",
-      "vocabulary prompt cannot exceed 4096 characters",
+      "vocabulary hotwords cannot exceed 4096 characters",
       false,
     );
   }
