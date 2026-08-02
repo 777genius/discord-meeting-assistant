@@ -13,7 +13,7 @@ Oxlint presets without owning product architecture.
 
 ## Decision
 
-Use exact `@agent-teams/engineering-foundation` version `0.3.0` as a development-
+Use exact `@agent-teams/engineering-foundation` version `0.4.1` as a development-
 only registry dependency. Enable both `workspace.dependency-declarations` and
 `architecture.source-dependencies` through strict YAML configuration.
 

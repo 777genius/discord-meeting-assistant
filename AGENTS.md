@@ -35,7 +35,7 @@ and its closed source-dependency classification.
 - Do not add a generic `shared`, `common`, `utils`, base repository, service
   locator, or universal event type.
 - The engineering foundation is development-only and must use exact registry
-  version `0.3.0`.
+  version `0.4.1`.
 
 ## Workflow
 
