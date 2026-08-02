@@ -14,6 +14,7 @@ import type {
 import { WsVoicetextWebSocketConnector } from "./ws-websocket-connector.js";
 
 const maximumOpusPacketBytes = 65_536;
+const maximumOutstandingPacketAcks = 256;
 const maximumRememberedPacketIds = 4_096;
 
 export interface VoicetextLiveTranscriptEvent {
@@ -225,6 +226,8 @@ class LiveSession implements VoicetextLiveSession {
         false,
       );
     }
+    await this.waitForAckCapacity();
+    this.requireActive();
     this.sending = true;
     const sequence = this.nextSequence + 1;
     const waiter = deferred<void>();
@@ -232,16 +235,13 @@ class LiveSession implements VoicetextLiveSession {
     this.firstPacketRelativeTimeMs ??= packet.relativeTimeMs;
     try {
       await this.socket.sendBinary(packet.opus, this.abortController.signal);
-      await withTimeout(
-        waiter.promise,
-        this.options.audioAckTimeoutMs,
-        "Voicetext live packet acknowledgement timed out",
-      );
       this.nextSequence = sequence;
       this.rememberPacketId(packet.packetId);
       return "accepted";
-    } finally {
+    } catch (error) {
       this.ackWaiters.delete(sequence);
+      throw error;
+    } finally {
       this.sending = false;
     }
   }
@@ -258,6 +258,8 @@ class LiveSession implements VoicetextLiveSession {
         false,
       );
     }
+    await this.waitForOutstandingAcks();
+    this.requireActive();
     this.finalizeWaiter = deferred();
     await this.socket.sendText(JSON.stringify({ type: "finalize" }), this.abortController.signal);
     const status = await withTimeout(
@@ -328,6 +330,7 @@ class LiveSession implements VoicetextLiveSession {
               false,
             );
           }
+          this.ackWaiters.delete(message.seq);
           waiter.resolve();
         } else if (message.type === "partial" && message.segment !== null) {
           this.emitSegment(message.segment, false);
@@ -401,6 +404,31 @@ class LiveSession implements VoicetextLiveSession {
         this.packetIds.delete(evicted);
       }
     }
+  }
+
+  private async waitForAckCapacity(): Promise<void> {
+    if (this.ackWaiters.size < maximumOutstandingPacketAcks) {
+      return;
+    }
+    const oldest = this.ackWaiters.values().next().value as Deferred<void> | undefined;
+    if (oldest !== undefined) {
+      await withTimeout(
+        oldest.promise,
+        this.options.audioAckTimeoutMs,
+        "Voicetext live packet acknowledgement timed out",
+      );
+    }
+  }
+
+  private async waitForOutstandingAcks(): Promise<void> {
+    if (this.ackWaiters.size === 0) {
+      return;
+    }
+    await withTimeout(
+      Promise.all([...this.ackWaiters.values()].map(({ promise }) => promise)),
+      this.options.audioAckTimeoutMs,
+      "Voicetext live packet acknowledgement timed out",
+    );
   }
 
   private requireActive(): void {

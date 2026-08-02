@@ -113,6 +113,16 @@ class SingleSocketConnector implements VoicetextWebSocketConnector {
   }
 }
 
+class DelayedAckSocket extends QueueSocket {
+  public override async sendBinary(data: Uint8Array): Promise<void> {
+    this.binary.push(Uint8Array.from(data));
+  }
+
+  public acknowledge(sequence: number): void {
+    this.enqueue({ seq: sequence, type: "ack" });
+  }
+}
+
 function adapter(socket: QueueSocket): VoicetextLiveTranscriptionAdapter {
   return new VoicetextLiveTranscriptionAdapter(
     {
@@ -205,5 +215,33 @@ describe("VoicetextLiveTranscriptionAdapter", () => {
     expect(socket.binary).toEqual([]);
     session.terminate();
     expect(socket.terminated).toBe(true);
+  });
+
+  it("pipelines packets without a network round trip and fences finalize on all ACKs", async () => {
+    const socket = new DelayedAckSocket();
+    const session = await adapter(socket).openSession({
+      idempotencyKey: "live-session-pipelined",
+      meetingId: "meeting-1",
+      onTranscript: () => {},
+      speakerId: "speaker-a",
+    });
+
+    for (let sequence = 1; sequence <= 3; sequence += 1) {
+      await expect(session.sendPacket({
+        opus: Uint8Array.from([0xf8, 0xff, 0xfe]),
+        packetId: `packet-${sequence}`,
+        relativeTimeMs: sequence * 20,
+      })).resolves.toBe("accepted");
+    }
+    expect(socket.binary).toHaveLength(3);
+
+    const finalize = session.finalize();
+    await Promise.resolve();
+    expect(socket.text.some(({ type }) => type === "finalize")).toBe(false);
+    socket.acknowledge(1);
+    socket.acknowledge(2);
+    socket.acknowledge(3);
+    await finalize;
+    expect(socket.text.some(({ type }) => type === "finalize")).toBe(true);
   });
 });
