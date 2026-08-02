@@ -64,6 +64,32 @@ describe("synthetic actor fixtures", () => {
     ]);
   });
 
+  it("pins the long heartbeat fixtures used at the five-minute live boundary", async () => {
+    const liveFixturePaths = [
+      "test/fixtures/speaker-a.live.ru-en.ogg",
+      "test/fixtures/speaker-b.live.ru-en.ogg",
+    ] as const;
+    const verified = await loadVerifiedFixtureSet("test/fixtures/manifest.live.v1.json", [
+      { actorName: "speaker-a", fixturePath: liveFixturePaths[0] },
+      { actorName: "speaker-b", fixturePath: liveFixturePaths[1] },
+    ]);
+
+    expect(verified.fixtures).toEqual([
+      {
+        audioSha256: "1f5314c3ea9d8767cc4c304142eeb92a77c76cc8f36c212b1d10670daf73a162",
+        durationMs: 296_235,
+        fixtureId: "speaker-a",
+        sourceSha256: "5aa51fdfca1325cf5b78a35927f1a256989dffc5adcf50cd6d8e5c02b0493a44",
+      },
+      {
+        audioSha256: "cb6fc152aaed139947c40064a615cb0b5708f096fc8e1166191804784ea7b0b5",
+        durationMs: 304_996,
+        fixtureId: "speaker-b",
+        sourceSha256: "ce6d53650f73aac8872289ede15a67b6a74535d4620c572bd17a46fd1322df00",
+      },
+    ]);
+  });
+
   it("rejects a truncated fixture even if it starts with an Ogg header", async () => {
     const bytes = await readFile(fixturePaths[0] ?? "");
     await expect(inspectOggOpus(bytes.subarray(0, 100))).rejects.toThrow("truncated");

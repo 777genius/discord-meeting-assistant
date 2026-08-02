@@ -66,6 +66,13 @@ from `0` to `600000`. For example, `PRE=285000` plus `POST=30000` keeps recent
 per-speaker captions visible around `05:00`, then leaves time to observe edits before
 the actors close. Do not use these holds outside the private test guild.
 
+Craig stops a completely silent test recording after one minute. The reproducible
+live gate therefore uses `test/fixtures/manifest.live.v1.json` with the pinned
+`speaker-*.live.ru-en.ogg` files: a very quiet 270-second heartbeat keeps the RTP
+recording active, then the qualified Russian/English speech crosses the `05:00`
+boundary. Select that manifest and both matching fixture paths, leave the pre-hold
+at `0`, and use a short post-hold to observe the final live edits.
+
 After the call finishes, run the collector with the explicit Craig recording ID.
 It reads the actual Postgres snapshot/counts over the isolated SSH deployment,
 downloads and hashes the authoritative S3 manifest and every speaker track,

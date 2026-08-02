@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "fixtureSetId": "discord-meeting-ru-en-live-v1",
+  "locale": "ru-RU",
+  "summaryExpectations": {
+    "decisionTerms": ["пятницу"],
+    "actionItems": [
+      {
+        "ownerSpeakerId": "1533228054724346087",
+        "deadline": "до 7 августа 2026 года",
+        "requiredTerms": ["Discord thread"]
+      }
+    ],
+    "topicTerms": ["Meeting Platform", "Craig recording", "PostgreSQL pipeline"]
+  },
+  "thresholds": {
+    "maxWordErrorRate": 0.35,
+    "maxCharacterErrorRate": 0.2,
+    "timestampToleranceMs": 3500
+  },
+  "fixtures": [
+    {
+      "fixtureId": "speaker-a",
+      "actorName": "speaker-a",
+      "speakerId": "1533227577286852649",
+      "sourcePath": "test/fixtures/speaker-a.ru-en.txt",
+      "sourceSha256": "5aa51fdfca1325cf5b78a35927f1a256989dffc5adcf50cd6d8e5c02b0493a44",
+      "audioPath": "test/fixtures/speaker-a.live.ru-en.ogg",
+      "audioSha256": "1f5314c3ea9d8767cc4c304142eeb92a77c76cc8f36c212b1d10670daf73a162",
+      "durationMs": 296235,
+      "sourceText": "Meeting Platform сохраняет Craig recording. Затем запускает PostgreSQL pipeline. Решение - выпустить версию в пятницу. Повторяю решение - выпуск версии в пятницу. До седьмого августа две тысячи двадцать шестого года спикер Б проверит Discord thread. Повторяю - Discord thread будет проверен в две тысячи двадцать шестом году.",
+      "requiredTerms": ["Meeting Platform", "Craig recording", "PostgreSQL pipeline", "Discord thread", "пятницу"]
+    },
+    {
+      "fixtureId": "speaker-b",
+      "actorName": "speaker-b",
+      "speakerId": "1533228054724346087",
+      "sourcePath": "test/fixtures/speaker-b.ru-en.txt",
+      "sourceSha256": "ce6d53650f73aac8872289ede15a67b6a74535d4620c572bd17a46fd1322df00",
+      "audioPath": "test/fixtures/speaker-b.live.ru-en.ogg",
+      "audioSha256": "cb6fc152aaed139947c40064a615cb0b5708f096fc8e1166191804784ea7b0b5",
+      "durationMs": 304996,
+      "sourceText": "Я проверю Redis queue. Я лично проверю idempotency key. Это моя задача. Срок - до седьмого августа две тысячи двадцать шестого года. Результат я оставлю в Discord thread. Повторяю термин - Discord thread. Idempotency key проверю до седьмого августа две тысячи двадцать шестого года. Открытый вопрос - нужен ли Pipecat assistant после первой версии? Повторяю термин - Pipecat assistant.",
+      "requiredTerms": ["Discord thread", "Redis queue", "idempotency key", "Pipecat assistant", "августа", "2026"]
+    }
+  ],
+  "scenarios": [
+    {
+      "kind": "sequential",
+      "expectOverlap": false,
+      "requireReconnect": false,
+      "speakerBDelayMs": 3500,
+      "playbackCountByFixture": { "speaker-a": 1, "speaker-b": 1 }
+    },
+    {
+      "kind": "overlap",
+      "expectOverlap": true,
+      "requireReconnect": false,
+      "speakerBDelayMs": 750,
+      "playbackCountByFixture": { "speaker-a": 1, "speaker-b": 1 }
+    },
+    {
+      "kind": "reconnect",
+      "expectOverlap": true,
+      "requireReconnect": true,
+      "speakerBDelayMs": 750,
+      "playbackCountByFixture": { "speaker-a": 1, "speaker-b": 1 }
+    }
+  ]
+}
