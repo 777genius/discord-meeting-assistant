@@ -41,6 +41,9 @@ same idempotency identity produce provider-dependent evidence.
 
 - Deepgram credential rotation remains inside Voicetext; Meeting Platform rotates
   only its revocable machine bearer.
+- Production requests use Nova-3 multilingual recognition because Russian
+  meetings contain English technical code-switching; the monolingual Russian
+  mode is retained only by explicitly configured alternatives.
 - Stored Ogg is decoded into bounded per-speaker PCM and is never persisted as a
   second artifact. V1 materializes one speaker's PCM in memory, processes speaker
   tracks sequentially, and releases each track before advancing.

@@ -5,7 +5,7 @@ script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 package_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
 fixture_dir="$package_dir/test/fixtures"
 voice=${DISCORD_E2E_TTS_VOICE:-Milena}
-rate=${DISCORD_E2E_TTS_RATE:-150}
+rate=${DISCORD_E2E_TTS_RATE:-130}
 
 case "$rate" in
   ''|*[!0-9]*)

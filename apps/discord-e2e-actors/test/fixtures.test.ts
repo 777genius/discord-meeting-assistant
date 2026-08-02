@@ -50,16 +50,16 @@ describe("synthetic actor fixtures", () => {
 
     expect(verified.fixtures).toEqual([
       {
-        audioSha256: "1537b7b1b3cd91486811b5cf195febe254551b10f5d675e3771a2f53e42a347d",
-        durationMs: 14_003,
+        audioSha256: "ba61f71aa15343b5187bff075003901f9abb07409e07fbc8e020d63e1e525844",
+        durationMs: 16_150,
         fixtureId: "speaker-a",
-        sourceSha256: "d75ef22920bbd6750b7f698b52bd6bd114ecc8112778b275799eaf7db4ada3ff",
+        sourceSha256: "4cf35555ae6c77881dcddc093919dd7b70dfbc5fca56a3b147c29902a0260b03",
       },
       {
-        audioSha256: "749eabd3a4520b576f6f68ecbb0d4e4fbf86a4af39aea10c26bbc0ffaca073e4",
-        durationMs: 11_458,
+        audioSha256: "f1b173b7b8f82c8a7387481d161c704e91bb000ba9ba94185adfe360e86e5647",
+        durationMs: 16_822,
         fixtureId: "speaker-b",
-        sourceSha256: "1a5117165ffc7a03b1260823b6c4488866424932a946bee3180a5d6553a8d756",
+        sourceSha256: "595f2e8016d8ef2d2733f586501e8e9d5dc488b88cc3a4613c1d42e680104d10",
       },
     ]);
   });

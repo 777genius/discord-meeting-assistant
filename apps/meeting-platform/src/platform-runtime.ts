@@ -300,7 +300,7 @@ function createFinalTranscriber(
     {
       endpoint: config.voicetext.webSocketUrl,
       keyterms: vocabulary,
-      language: "ru",
+      language: "multi",
       maxArtifactBytesPerSpeaker: 256 * 1_024 * 1_024,
       maxPcmBytesPerSpeaker: 512 * 1_024 * 1_024,
       maxSpeakerTracks: 64,
