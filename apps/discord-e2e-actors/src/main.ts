@@ -66,6 +66,12 @@ async function main(): Promise<void> {
       { actorName: "speaker-a", atEpochMs: epochNow(), type: "ready" },
       { actorName: "speaker-b", atEpochMs: epochNow(), type: "ready" },
     ];
+    if (config.prePlaybackHoldMilliseconds > 0) {
+      process.stdout.write(
+        `Discord E2E holding both actors before playback for ${config.prePlaybackHoldMilliseconds}ms.\n`,
+      );
+      await systemScenarioClock.wait(config.prePlaybackHoldMilliseconds);
+    }
     process.stdout.write(`Discord E2E starting ${config.scenario} synthetic playback.\n`);
     await runActorScenario(speakerA, speakerB, {
       kind: config.scenario,
@@ -76,6 +82,12 @@ async function main(): Promise<void> {
         atEpochMs: epochNow(),
       });
     });
+    if (config.postPlaybackHoldMilliseconds > 0) {
+      process.stdout.write(
+        `Discord E2E holding both actors in voice for ${config.postPlaybackHoldMilliseconds}ms.\n`,
+      );
+      await systemScenarioClock.wait(config.postPlaybackHoldMilliseconds);
+    }
     await writeActorRun(config.actorRunOutputPath, {
       events,
       fixtureSetId: verifiedFixtureSet.manifest.fixtureSetId,

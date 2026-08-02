@@ -22,6 +22,37 @@ describe("loadActorConfig", () => {
       { name: "speaker-b", account: "speaker-b", fixturePath: "test/fixtures/speaker-b.ru-en.ogg" },
     ]);
     expect(config.speakerBDelayMilliseconds).toBe(750);
+    expect(config.prePlaybackHoldMilliseconds).toBe(0);
+    expect(config.postPlaybackHoldMilliseconds).toBe(0);
+  });
+
+  it.each([
+    ["DISCORD_E2E_PRE_PLAYBACK_HOLD_MS", "prePlaybackHoldMilliseconds"],
+    ["DISCORD_E2E_POST_PLAYBACK_HOLD_MS", "postPlaybackHoldMilliseconds"],
+  ] as const)("allows an opt-in %s only within the safe E2E limit", (key, property) => {
+    const baseEnvironment = {
+      DISCORD_E2E_GUILD_ID: "11111111111111111",
+      DISCORD_E2E_VOICE_CHANNEL_ID: "22222222222222222",
+      ...requiredCorrelation,
+    };
+
+    const maximum = loadActorConfig({
+      ...baseEnvironment,
+      [key]: "600000",
+    });
+    expect(maximum[property]).toBe(600_000);
+    expect(() => loadActorConfig({
+      ...baseEnvironment,
+      [key]: "-1",
+    })).toThrow();
+    expect(() => loadActorConfig({
+      ...baseEnvironment,
+      [key]: "600001",
+    })).toThrow();
+    expect(() => loadActorConfig({
+      ...baseEnvironment,
+      [key]: "1.5",
+    })).toThrow();
   });
 
   it("accepts only an absolute file-secret directory for isolated host actors", () => {

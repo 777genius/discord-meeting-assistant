@@ -18,6 +18,8 @@ const actorEnvironmentSchema = z.object({
   DISCORD_E2E_SPEAKER_B_DELAY_MS: z.coerce.number().int().min(0).max(60_000).default(750),
   DISCORD_E2E_READY_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(120_000).default(30_000),
   DISCORD_E2E_PLAYBACK_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(600_000).default(120_000),
+  DISCORD_E2E_PRE_PLAYBACK_HOLD_MS: z.coerce.number().int().min(0).max(600_000).default(0),
+  DISCORD_E2E_POST_PLAYBACK_HOLD_MS: z.coerce.number().int().min(0).max(600_000).default(0),
   DISCORD_E2E_RECORDER_BOT_ID: snowflakeSchema.default("1533224474609057793"),
   DISCORD_E2E_ACTOR_RUN_OUTPUT: z.string().refine(isAbsolute).default("/tmp/discord-meeting-e2e-actor-run.json"),
   DISCORD_E2E_FIXTURE_MANIFEST: z.string().min(1).default("test/fixtures/manifest.v1.json"),
@@ -33,6 +35,8 @@ export interface ActorConfig {
   readonly speakerBDelayMilliseconds: number;
   readonly readyTimeoutMilliseconds: number;
   readonly playbackTimeoutMilliseconds: number;
+  readonly prePlaybackHoldMilliseconds: number;
+  readonly postPlaybackHoldMilliseconds: number;
   readonly recorderBotId: string;
   readonly actorRunOutputPath: string;
   readonly fixtureManifestPath: string;
@@ -54,6 +58,8 @@ export function loadActorConfig(environment: NodeJS.ProcessEnv): ActorConfig {
     speakerBDelayMilliseconds: parsed.DISCORD_E2E_SPEAKER_B_DELAY_MS,
     readyTimeoutMilliseconds: parsed.DISCORD_E2E_READY_TIMEOUT_MS,
     playbackTimeoutMilliseconds: parsed.DISCORD_E2E_PLAYBACK_TIMEOUT_MS,
+    prePlaybackHoldMilliseconds: parsed.DISCORD_E2E_PRE_PLAYBACK_HOLD_MS,
+    postPlaybackHoldMilliseconds: parsed.DISCORD_E2E_POST_PLAYBACK_HOLD_MS,
     recorderBotId: parsed.DISCORD_E2E_RECORDER_BOT_ID,
     actorRunOutputPath: parsed.DISCORD_E2E_ACTOR_RUN_OUTPUT,
     fixtureManifestPath: parsed.DISCORD_E2E_FIXTURE_MANIFEST,

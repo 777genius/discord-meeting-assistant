@@ -1,11 +1,5 @@
 FROM node:24.18.0-bookworm-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d
 
-ARG SOURCE_REVISION
-LABEL org.opencontainers.image.revision="${SOURCE_REVISION}"
-
-RUN printf '%s' "${SOURCE_REVISION}" \
-  | grep -Eq '^([0-9a-f]{40}|[0-9a-f]{64})$'
-
 ENV PNPM_HOME=/opt/pnpm \
     PATH=/opt/pnpm:$PATH
 
@@ -15,6 +9,14 @@ RUN apt-get update \
   && corepack enable && corepack prepare pnpm@11.18.0 --activate \
   && groupadd --gid 10001 meeting \
   && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin meeting
+
+# Keep the expensive system dependency layer independent from the immutable
+# source revision so a rollout does not download and install apt packages again.
+ARG SOURCE_REVISION
+LABEL org.opencontainers.image.revision="${SOURCE_REVISION}"
+
+RUN printf '%s' "${SOURCE_REVISION}" \
+  | grep -Eq '^([0-9a-f]{40}|[0-9a-f]{64})$'
 
 WORKDIR /app
 COPY --chown=10001:10001 . .

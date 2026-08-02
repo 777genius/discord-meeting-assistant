@@ -58,6 +58,14 @@ speaker A continues; speaker B then waits for a new ready voice connection and
 plays its fixture exactly once. Do not run this CLI against a public or user-owned
 guild.
 
+For the opt-in five-minute live-summary check, use
+`DISCORD_E2E_PRE_PLAYBACK_HOLD_MS` to place the pinned speech near the five-minute
+publication boundary and `DISCORD_E2E_POST_PLAYBACK_HOLD_MS` to keep both official
+actors connected after their fixtures end. Both default to `0` and accept an integer
+from `0` to `600000`. For example, `PRE=285000` plus `POST=30000` keeps recent
+per-speaker captions visible around `05:00`, then leaves time to observe edits before
+the actors close. Do not use these holds outside the private test guild.
+
 After the call finishes, run the collector with the explicit Craig recording ID.
 It reads the actual Postgres snapshot/counts over the isolated SSH deployment,
 downloads and hashes the authoritative S3 manifest and every speaker track,
