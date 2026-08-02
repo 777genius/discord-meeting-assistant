@@ -410,7 +410,7 @@ class LiveSession implements VoicetextLiveSession {
     if (this.ackWaiters.size < maximumOutstandingPacketAcks) {
       return;
     }
-    const oldest = this.ackWaiters.values().next().value as Deferred<void> | undefined;
+    const oldest = this.ackWaiters.values().next().value;
     if (oldest !== undefined) {
       await withTimeout(
         oldest.promise,
