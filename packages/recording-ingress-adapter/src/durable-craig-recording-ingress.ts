@@ -33,6 +33,7 @@ import {
 import {
   DurableSpool,
   spoolToken,
+  type AbortedRecordingState,
   type CompletedRecordingState,
   type RecordingSpoolState,
   type StoredLifecycleEvent,
@@ -381,6 +382,15 @@ export class DurableCraigRecordingIngress {
         verifyWriteReceipt(request, receipt);
         return { locator: receipt.locator, recordingId, replayed: true, speakerId };
       }
+      const aborted = await this.#spool.readAborted(recordingId);
+      if (aborted !== undefined) {
+        ensureRecordingIdentity(aborted, identity);
+        await this.#spool.cleanupActive(recordingId);
+        throw new RecordingIngressError(
+          "invalid-state",
+          "cannot upload an authoritative track for an aborted recording",
+        );
+      }
       const state = await this.#spool.readRecording(recordingId);
       if (state === undefined) {
         throw new RecordingIngressError(
@@ -390,6 +400,7 @@ export class DurableCraigRecordingIngress {
       }
       ensureRecordingIdentity(state, identity);
       if (state.status === "aborted") {
+        await this.#spool.archiveAborted(state);
         throw new RecordingIngressError(
           "invalid-state",
           "cannot upload an authoritative track for an aborted recording",
@@ -502,12 +513,21 @@ export class DurableCraigRecordingIngress {
       if ((await this.#spool.readCompleted(first.recordingId)) !== undefined) {
         throw new RecordingIngressError("invalid-state", "recording is already finalized");
       }
+      const aborted = await this.#spool.readAborted(first.recordingId);
+      if (aborted !== undefined) {
+        ensureRecordingIdentity(aborted, first);
+        await this.#spool.cleanupActive(first.recordingId);
+        throw new RecordingIngressError("invalid-state", "recording is already aborted");
+      }
       let state = await this.#spool.readRecording(first.recordingId);
       if (state === undefined) {
         throw new RecordingIngressError("invalid-state", "meeting.started must precede audio packets");
       }
       ensureRecordingIdentity(state, first);
       if (state.status !== "active") {
+        if (state.status === "aborted") {
+          await this.#spool.archiveAborted(state);
+        }
         throw new RecordingIngressError(
           "invalid-state",
           `cannot append packets while recording is ${state.status}`,
@@ -649,6 +669,11 @@ export class DurableCraigRecordingIngress {
           : { kind: "accepted", recordingId: completed.recordingId, replayed: true };
       }
 
+      const aborted = await this.#spool.readAborted(event.recordingId);
+      if (aborted !== undefined) {
+        return this.#replayAborted(aborted, event, digest);
+      }
+
       let state = await this.#spool.readRecording(event.recordingId);
       if (state === undefined) {
         if (event.type !== "meeting.started") {
@@ -682,6 +707,9 @@ export class DurableCraigRecordingIngress {
       }
 
       ensureRecordingIdentity(state, event);
+      if (state.status === "aborted") {
+        return this.#replayAborted(await this.#spool.archiveAborted(state), event, digest);
+      }
       const replay = state.events.find(({ eventId }) => eventId === event.eventId);
       if (replay !== undefined) {
         if (replay.digest !== digest) {
@@ -706,9 +734,7 @@ export class DurableCraigRecordingIngress {
           const recording = await this.#finalizeAuthoritative(state, event, options.signal);
           return { kind: "finalized", recording, replayed: true };
         }
-        return state.status === "aborted"
-          ? { kind: "aborted", recordingId: state.recordingId, replayed: true }
-          : { kind: "accepted", recordingId: state.recordingId, replayed: true };
+        return { kind: "accepted", recordingId: state.recordingId, replayed: true };
       }
 
       if (event.type === "recording.artifact_ready") {
@@ -778,13 +804,13 @@ export class DurableCraigRecordingIngress {
 
       const events = [...state.events, storedEvent(event, digest)];
       if (event.type === "meeting.aborted") {
-        const abortedState: RecordingSpoolState = {
+        const abortedState: AbortedRecordingState = {
           ...state,
           endedAt: event.occurredAt,
           events,
           status: "aborted",
         };
-        await this.#spool.writeRecording(abortedState);
+        await this.#spool.archiveAborted(abortedState);
         return { kind: "aborted", recordingId: state.recordingId, replayed: false };
       }
       if (event.type === "meeting.ended") {
@@ -808,6 +834,26 @@ export class DurableCraigRecordingIngress {
       await this.#spool.writeRecording(nextState);
       return { kind: "accepted", recordingId: state.recordingId, replayed: false };
     });
+  }
+
+  async #replayAborted(
+    aborted: AbortedRecordingState,
+    event: CraigLifecycleEvent,
+    digest: string,
+  ): Promise<LifecycleIngressResult> {
+    ensureRecordingIdentity(aborted, event);
+    const replay = aborted.events.find(({ eventId }) => eventId === event.eventId);
+    if (replay === undefined) {
+      throw new RecordingIngressError("invalid-state", "recording is already aborted");
+    }
+    if (digest !== replay.digest) {
+      throw new RecordingIngressError(
+        "conflicting-duplicate",
+        "lifecycle event ID was replayed with different content",
+      );
+    }
+    await this.#spool.cleanupActive(event.recordingId);
+    return { kind: "aborted", recordingId: aborted.recordingId, replayed: true };
   }
 
   async #finalizePacketSpool(

@@ -51,6 +51,11 @@ export interface RecordingSpoolState {
   readonly status: RecordingSpoolStatus;
 }
 
+export type AbortedRecordingState = RecordingSpoolState & {
+  readonly endedAt: string;
+  readonly status: "aborted";
+};
+
 export interface CompletedRecordingState {
   readonly channelId: string;
   readonly events: readonly StoredLifecycleEvent[];
@@ -164,6 +169,14 @@ function parseRecordingSpoolState(input: unknown): RecordingSpoolState {
   };
 }
 
+function parseAbortedRecordingState(input: unknown): AbortedRecordingState {
+  const state = parseRecordingSpoolState(input);
+  if (state.status !== "aborted" || state.endedAt === undefined) {
+    throw new RecordingIngressError("corrupt-spool", "aborted receipt is not terminal");
+  }
+  return { ...state, endedAt: state.endedAt, status: "aborted" };
+}
+
 function parseCompletedRecordingState(input: unknown): CompletedRecordingState {
   const record = objectValue(input);
   const recording = objectValue(record.recording);
@@ -233,6 +246,7 @@ async function atomicWriteJson(path: string, value: unknown): Promise<void> {
 }
 
 export class DurableSpool {
+  public readonly abortedRoot: string;
   public readonly activeRoot: string;
   public readonly completedRoot: string;
   public readonly root: string;
@@ -246,6 +260,7 @@ export class DurableSpool {
     if (this.root === parse(this.root).root) {
       throw new RecordingIngressError("path-policy", "filesystem root cannot be used as spool root");
     }
+    this.abortedRoot = join(this.root, "aborted-v1");
     this.activeRoot = join(this.root, "active-v1");
     this.completedRoot = join(this.root, "completed-v1");
   }
@@ -256,9 +271,10 @@ export class DurableSpool {
     if (!rootStats.isDirectory() || rootStats.isSymbolicLink()) {
       throw new RecordingIngressError("path-policy", "spool root cannot be a symlink");
     }
+    await mkdir(this.abortedRoot, { recursive: true, mode: 0o700 });
     await mkdir(this.activeRoot, { recursive: true, mode: 0o700 });
     await mkdir(this.completedRoot, { recursive: true, mode: 0o700 });
-    for (const path of [this.activeRoot, this.completedRoot]) {
+    for (const path of [this.abortedRoot, this.activeRoot, this.completedRoot]) {
       const stats = await lstat(path);
       if (!stats.isDirectory() || stats.isSymbolicLink()) {
         throw new RecordingIngressError("path-policy", "spool namespace is unsafe");
@@ -294,6 +310,10 @@ export class DurableSpool {
     return join(this.completedRoot, `${spoolToken("recording-v1", recordingId)}.json`);
   }
 
+  public abortedPath(recordingId: string): string {
+    return join(this.abortedRoot, `${spoolToken("recording-v1", recordingId)}.json`);
+  }
+
   public async createRecordingDirectories(recordingId: string): Promise<void> {
     await this.ready();
     const recordingDirectory = this.recordingDirectory(recordingId);
@@ -312,8 +332,21 @@ export class DurableSpool {
 
   public async activeRecordingCount(): Promise<number> {
     await this.ready();
-    const entries = await readdir(this.activeRoot, { withFileTypes: true });
-    return entries.filter((entry) => entry.isDirectory() && /^[a-f\d]{64}$/u.test(entry.name)).length;
+    const [activeEntries, abortedEntries] = await Promise.all([
+      readdir(this.activeRoot, { withFileTypes: true }),
+      readdir(this.abortedRoot, { withFileTypes: true }),
+    ]);
+    const abortedTokens = new Set(
+      abortedEntries
+        .filter((entry) => entry.isFile() && /^[a-f\d]{64}\.json$/u.test(entry.name))
+        .map((entry) => entry.name.slice(0, -".json".length)),
+    );
+    return activeEntries.filter(
+      (entry) =>
+        entry.isDirectory() &&
+        /^[a-f\d]{64}$/u.test(entry.name) &&
+        !abortedTokens.has(entry.name),
+    ).length;
   }
 
   public async readRecording(recordingId: string): Promise<RecordingSpoolState | undefined> {
@@ -336,6 +369,33 @@ export class DurableSpool {
   public async writeRecording(state: RecordingSpoolState): Promise<void> {
     await this.createRecordingDirectories(state.recordingId);
     await atomicWriteJson(this.metadataPath(state.recordingId), state);
+  }
+
+  public async readAborted(recordingId: string): Promise<AbortedRecordingState | undefined> {
+    await this.ready();
+    try {
+      return parseAbortedRecordingState(
+        JSON.parse(await readFile(this.abortedPath(recordingId), "utf8")),
+      );
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return undefined;
+      }
+      if (error instanceof SyntaxError) {
+        throw new RecordingIngressError("corrupt-spool", "aborted receipt is invalid JSON", {
+          cause: error,
+        });
+      }
+      throw error;
+    }
+  }
+
+  public async archiveAborted(state: RecordingSpoolState): Promise<AbortedRecordingState> {
+    await this.ready();
+    const aborted = parseAbortedRecordingState(state);
+    await atomicWriteJson(this.abortedPath(aborted.recordingId), aborted);
+    await this.cleanupActive(aborted.recordingId);
+    return aborted;
   }
 
   public async readCompleted(recordingId: string): Promise<CompletedRecordingState | undefined> {

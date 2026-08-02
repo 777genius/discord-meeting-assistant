@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { appendFile, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -504,6 +504,58 @@ describe("DurableCraigRecordingIngress", () => {
         }),
       ),
     ).rejects.toMatchObject({ failure: "invalid-state" });
+    expect(writer.requests).toEqual([]);
+    expect(await readdir(join(root, "active-v1"))).toEqual([]);
+    const abortedReceipts = await readdir(join(root, "aborted-v1"));
+    expect(abortedReceipts).toHaveLength(1);
+    await expect(
+      readFile(join(root, "aborted-v1", abortedReceipts[0] ?? "missing"), "utf8")
+        .then((value) => JSON.parse(value) as unknown),
+    ).resolves.toMatchObject({
+      endedAt: aborted.occurredAt,
+      events: [
+        { eventId: "meeting.started-1", type: "meeting.started" },
+        { eventId: aborted.eventId, type: "meeting.aborted" },
+      ],
+      recordingId: aborted.recordingId,
+      status: "aborted",
+    });
+  });
+
+  it("keeps repeated aborts replayable without consuming active capacity", async () => {
+    const root = await spoolRoot();
+    const writer = new MemoryArtifactWriter();
+    const adapter = ingress(root, writer, { maxActiveRecordings: 1 });
+
+    const recordingIds = ["aborted-recording-1", "aborted-recording-2"] as const;
+    for (const recordingId of recordingIds) {
+      const started = lifecycle("meeting.started", recordingId);
+      const aborted = lifecycle("meeting.aborted", recordingId);
+      await expect(adapter.ingestLifecycleEvent(started)).resolves.toMatchObject({
+        kind: "accepted",
+        replayed: false,
+      });
+      await expect(adapter.ingestLifecycleEvent(aborted)).resolves.toMatchObject({
+        kind: "aborted",
+        replayed: false,
+      });
+      if (recordingId === recordingIds[0]) {
+        const [receiptName] = await readdir(join(root, "aborted-v1"));
+        if (receiptName === undefined) {
+          throw new Error("aborted receipt is required for crash-window simulation");
+        }
+        await mkdir(join(root, "active-v1", receiptName.slice(0, -".json".length)));
+      }
+    }
+
+    for (const recordingId of recordingIds) {
+      const aborted = lifecycle("meeting.aborted", recordingId);
+      await expect(ingress(root, writer, { maxActiveRecordings: 1 }).ingestLifecycleEvent(aborted))
+        .resolves.toEqual({ kind: "aborted", recordingId, replayed: true });
+    }
+
+    expect(await readdir(join(root, "active-v1"))).toEqual([]);
+    expect(await readdir(join(root, "aborted-v1"))).toHaveLength(2);
     expect(writer.requests).toEqual([]);
   });
 
