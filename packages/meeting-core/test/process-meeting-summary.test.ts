@@ -227,6 +227,12 @@ describe("ProcessMeetingSummary", () => {
 
     expect(transcriber.requests).toHaveLength(1);
     expect(summarizer.requests).toHaveLength(1);
+    expect(summarizer.requests[0]?.idempotencyKey).toContain(
+      "evidence-summary:v2",
+    );
+    expect(summarizer.requests[0]?.idempotencyKey).not.toContain(
+      "evidence-summary:v1",
+    );
     expect(publisher.requests).toHaveLength(1);
     expect(meetings.snapshot.recording).toEqual(recording);
   });
