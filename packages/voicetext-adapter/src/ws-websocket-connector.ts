@@ -134,9 +134,11 @@ class WsConnection implements VoicetextWebSocketConnection {
         reject(signal.reason);
       };
       signal.addEventListener("abort", onAbort, { once: true });
-      this.socket.send(data, { binary }, (error) => {
+      this.socket.send(data, { binary }, (error: Error | null | undefined) => {
         signal.removeEventListener("abort", onAbort);
-        if (error === undefined) {
+        // Node's writable callback convention permits null on success even though
+        // @types/ws currently models only undefined here.
+        if (error === undefined || error === null) {
           resolve();
         } else {
           reject(new VoicetextTransportError("network", "Voicetext WebSocket send failed", {}, { cause: error }));
