@@ -27,6 +27,12 @@ export interface SummaryActionItemSnapshot {
   readonly text: string;
 }
 
+export interface SummaryOpenQuestionSnapshot {
+  readonly evidenceTurnIds: readonly string[];
+  readonly id: string;
+  readonly text: string;
+}
+
 export interface SummaryTopicSnapshot {
   readonly evidenceTurnIds: readonly string[];
   readonly points: readonly string[];
@@ -36,7 +42,9 @@ export interface SummaryTopicSnapshot {
 export interface EvidenceBackedSummarySnapshot {
   readonly actionItems: readonly SummaryActionItemSnapshot[];
   readonly decisions: readonly SummaryDecisionSnapshot[];
-  readonly openQuestions: readonly string[];
+  /** Legacy question text retained during restore but excluded from publication. */
+  readonly legacyUnverifiedOpenQuestions?: readonly string[];
+  readonly openQuestions: readonly SummaryOpenQuestionSnapshot[];
   readonly overview: string;
   readonly summaryId: string;
   readonly title: string;
@@ -56,6 +64,12 @@ export interface SummaryActionItem {
   readonly deadline: string | null;
   readonly evidenceTurnIds: readonly string[];
   readonly ownerSpeakerId: SpeakerId | null;
+  readonly text: string;
+}
+
+export interface SummaryOpenQuestion {
+  readonly evidenceTurnIds: readonly string[];
+  readonly id: string;
   readonly text: string;
 }
 
@@ -110,6 +124,33 @@ function validateEvidence(
   return Object.freeze(normalized);
 }
 
+function requireOpenQuestionSnapshot(value: unknown): SummaryOpenQuestionSnapshot {
+  if (typeof value !== "object" || value === null) {
+    throw new DomainInvariantError(
+      "INVALID_SNAPSHOT",
+      "summary.openQuestions must use the evidence-backed question contract",
+    );
+  }
+  const candidate = value as Record<string, unknown>;
+  const evidenceTurnIds = candidate["evidenceTurnIds"];
+  if (
+    !Array.isArray(evidenceTurnIds) ||
+    evidenceTurnIds.some((turnId) => typeof turnId !== "string") ||
+    typeof candidate["id"] !== "string" ||
+    typeof candidate["text"] !== "string"
+  ) {
+    throw new DomainInvariantError(
+      "INVALID_SNAPSHOT",
+      "summary.openQuestions must use the evidence-backed question contract",
+    );
+  }
+  return {
+    evidenceTurnIds,
+    id: candidate["id"],
+    text: candidate["text"],
+  };
+}
+
 export class EvidenceBackedSummary {
   public readonly summaryId: SummaryId;
   public readonly transcriptId: TranscriptId;
@@ -118,8 +159,9 @@ export class EvidenceBackedSummary {
   public readonly overview: string;
   public readonly decisions: readonly SummaryDecision[];
   public readonly actionItems: readonly SummaryActionItem[];
-  public readonly openQuestions: readonly string[];
+  public readonly openQuestions: readonly SummaryOpenQuestion[];
   public readonly topics: readonly SummaryTopic[];
+  private readonly legacyUnverifiedOpenQuestions: readonly string[];
 
   private constructor(snapshot: SummaryCreationSnapshot, transcript: FinalTranscript) {
     this.summaryId = createSummaryId(snapshot.summaryId);
@@ -133,6 +175,11 @@ export class EvidenceBackedSummary {
     this.version = requirePositiveInteger(snapshot.version, "summary.version");
     this.title = requireNonEmpty(snapshot.title, "summary.title");
     this.overview = requireNonEmpty(snapshot.overview, "summary.overview");
+    this.legacyUnverifiedOpenQuestions = Object.freeze(
+      (snapshot.legacyUnverifiedOpenQuestions ?? []).map((question) =>
+        requireNonEmpty(question, "summary.legacyUnverifiedOpenQuestion"),
+      ),
+    );
 
     const decisions = snapshot.decisions.map((decision) =>
       Object.freeze({
@@ -217,11 +264,27 @@ export class EvidenceBackedSummary {
         });
       }),
     );
-    this.openQuestions = Object.freeze(
-      snapshot.openQuestions.map((question) =>
-        requireNonEmpty(question, "summary.openQuestion"),
-      ),
+    const openQuestions = (snapshot.openQuestions as readonly unknown[]).map(
+      (value) => {
+        const question = requireOpenQuestionSnapshot(value);
+        return Object.freeze({
+          evidenceTurnIds: validateEvidence(
+            question.evidenceTurnIds,
+            transcript,
+            "summary.openQuestion.evidenceTurnIds",
+          ),
+          id: requireNonEmpty(question.id, "summary.openQuestion.id"),
+          text: requireNonEmpty(question.text, "summary.openQuestion.text"),
+        });
+      },
     );
+    if (new Set(openQuestions.map(({ id }) => id)).size !== openQuestions.length) {
+      throw new DomainInvariantError(
+        "DUPLICATE_IDENTIFIER",
+        "summary open question IDs must be unique",
+      );
+    }
+    this.openQuestions = Object.freeze(openQuestions);
   }
 
   public static create(
@@ -241,6 +304,41 @@ export class EvidenceBackedSummary {
     return new EvidenceBackedSummary(snapshot, transcript);
   }
 
+  /** Restores current snapshots and quarantines legacy string-only questions. */
+  public static restore(
+    snapshot: EvidenceBackedSummarySnapshot,
+    transcript: FinalTranscript,
+  ): EvidenceBackedSummary {
+    const openQuestions = snapshot.openQuestions as readonly (
+      | string
+      | SummaryOpenQuestionSnapshot
+    )[];
+    const legacyQuestions = openQuestions.filter(
+      (question): question is string => typeof question === "string",
+    );
+    if (legacyQuestions.length === 0) {
+      return new EvidenceBackedSummary(snapshot, transcript);
+    }
+    if (legacyQuestions.length !== openQuestions.length) {
+      throw new DomainInvariantError(
+        "INVALID_SNAPSHOT",
+        "summary.openQuestions cannot mix legacy and evidence-backed questions",
+      );
+    }
+
+    return new EvidenceBackedSummary(
+      {
+        ...snapshot,
+        legacyUnverifiedOpenQuestions: [
+          ...(snapshot.legacyUnverifiedOpenQuestions ?? []),
+          ...legacyQuestions,
+        ],
+        openQuestions: [],
+      },
+      transcript,
+    );
+  }
+
   public toSnapshot(): EvidenceBackedSummarySnapshot {
     return {
       actionItems: this.actionItems.map((actionItem) => ({
@@ -255,7 +353,18 @@ export class EvidenceBackedSummary {
         evidenceTurnIds: [...decision.evidenceTurnIds],
         text: decision.text,
       })),
-      openQuestions: [...this.openQuestions],
+      ...(this.legacyUnverifiedOpenQuestions.length === 0
+        ? {}
+        : {
+            legacyUnverifiedOpenQuestions: [
+              ...this.legacyUnverifiedOpenQuestions,
+            ],
+          }),
+      openQuestions: this.openQuestions.map((question) => ({
+        evidenceTurnIds: [...question.evidenceTurnIds],
+        id: question.id,
+        text: question.text,
+      })),
       overview: this.overview,
       summaryId: this.summaryId,
       title: this.title,

@@ -62,7 +62,12 @@ const validStructuredOutput: JsonObject = {
       text: "Выпустить первую версию в пятницу",
     },
   ],
-  openQuestions: [],
+  openQuestions: [
+    {
+      evidenceTurnIds: ["turn-b"],
+      text: "Кто проверит развертывание?",
+    },
+  ],
   overview: "Команда согласовала дату первой версии.",
   title: "План выпуска первой версии",
   topics: [
@@ -124,6 +129,12 @@ describe("SubscriptionRuntimeSummaryAdapter", () => {
           text: "Выпустить первую версию в пятницу",
         },
       ],
+      openQuestions: [
+        {
+          evidenceTurnIds: ["turn-b"],
+          text: "Кто проверит развертывание?",
+        },
+      ],
       topics: [
         {
           evidenceTurnIds: ["turn-a", "turn-b"],
@@ -134,6 +145,7 @@ describe("SubscriptionRuntimeSummaryAdapter", () => {
       version: 1,
     });
     expect(result.value.summaryId).toMatch(/^summary-[0-9a-f]{32}$/u);
+    expect(result.value.openQuestions[0]?.id).toMatch(/^question-[0-9a-f]{32}$/u);
 
     const captured = transport.request;
     expect(captured).toBeDefined();
@@ -276,6 +288,50 @@ describe("SubscriptionRuntimeSummaryAdapter", () => {
       failure: {
         code: "SUBSCRIPTION_RUNTIME_SUMMARY_INVALID_EVIDENCE",
         message: "Summary references a transcript turn that does not exist",
+        retryable: false,
+      },
+      ok: false,
+    });
+  });
+
+  it("rejects an open question that cites a nonexistent transcript turn", async () => {
+    const transport = new FakeTransport((request) =>
+      completedResult(request, {
+        ...validStructuredOutput,
+        openQuestions: [
+          {
+            evidenceTurnIds: ["turn-missing"],
+            text: "Кто проверит развертывание?",
+          },
+        ],
+      }),
+    );
+
+    const result = await createAdapter(transport).generate(requestFixture);
+
+    expect(result).toEqual({
+      failure: {
+        code: "SUBSCRIPTION_RUNTIME_SUMMARY_INVALID_EVIDENCE",
+        message: "Summary references a transcript turn that does not exist",
+        retryable: false,
+      },
+      ok: false,
+    });
+  });
+
+  it("rejects legacy string-only open questions", async () => {
+    const transport = new FakeTransport((request) =>
+      completedResult(request, {
+        ...validStructuredOutput,
+        openQuestions: ["Кто проверит развертывание?"],
+      }),
+    );
+
+    const result = await createAdapter(transport).generate(requestFixture);
+
+    expect(result).toMatchObject({
+      failure: {
+        code: "SUBSCRIPTION_RUNTIME_SUMMARY_INVALID_PROVIDER_RESPONSE",
         retryable: false,
       },
       ok: false,

@@ -39,12 +39,12 @@ describe("subscription runtime request contract", () => {
     expect(canonicalJsonSha256(second)).toBe(canonicalJsonSha256(first));
     expect(first.runId).toMatch(/^summary-request-[0-9a-f]{32}$/u);
     expect(first.context.metadata.policyVersion).toBe(
-      "meeting-summary.subscription-runtime.v2",
+      "meeting-summary.subscription-runtime.v3",
     );
     expect(first.task.controls.outputSchemaName).toBe(
-      "discord_meeting_summary_v2",
+      "discord_meeting_summary_v3",
     );
-    expect(first.task.outputSchemaName).toBe("discord_meeting_summary_v2");
+    expect(first.task.outputSchemaName).toBe("discord_meeting_summary_v3");
   });
 
   it("rejects an oversized transcript before transport", () => {

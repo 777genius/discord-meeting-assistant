@@ -158,7 +158,7 @@ export class Meeting {
         ? null
         : this.finalTranscript === null
           ? this.throwInvalidSnapshot("summary cannot exist without a transcript")
-          : EvidenceBackedSummary.create(snapshot.summary, this.finalTranscript);
+          : EvidenceBackedSummary.restore(snapshot.summary, this.finalTranscript);
     this.publicationReceipt =
       snapshot.publication === null
         ? null

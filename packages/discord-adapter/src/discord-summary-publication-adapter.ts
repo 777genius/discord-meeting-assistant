@@ -17,6 +17,8 @@ interface DiscordSummaryProjector {
 
 const discordMarkdownLimit = 4_000;
 const truncationNotice = "_Саммари сокращено из-за лимита Discord._";
+const maximumEvidenceQuoteGraphemes = 180;
+const discordSnowflake = /^\d{17,20}$/u;
 
 type PublicationResult = PortResult<
   Pick<PublicationReceiptSnapshot, "externalPublicationId">
@@ -65,7 +67,7 @@ export function renderRussianSummaryMarkdown(
       summary.topics.map((topic) => [
         topic.title.trim(),
         ...topic.points.map((point) => point.trim()),
-        evidenceLine(topic.evidenceTurnIds, evidence),
+        ...evidenceLines(topic.evidenceTurnIds, evidence),
       ]),
       "Основные темы не выделены.",
     ),
@@ -74,7 +76,7 @@ export function renderRussianSummaryMarkdown(
     ...numberedOrEmpty(
       summary.decisions.map((decision) => [
         decision.text.trim(),
-        evidenceLine(decision.evidenceTurnIds, evidence),
+        ...evidenceLines(decision.evidenceTurnIds, evidence),
       ]),
       "Зафиксированных решений нет.",
     ),
@@ -86,34 +88,35 @@ export function renderRussianSummaryMarkdown(
         `Ответственный: ${
           actionItem.ownerSpeakerId === null
             ? "не назначен"
-            : inlineCode(actionItem.ownerSpeakerId)
+            : speakerLabel(actionItem.ownerSpeakerId)
         }`,
         `Срок: ${
           actionItem.deadline === null ? "не указан" : actionItem.deadline.trim()
         }`,
-        evidenceLine(actionItem.evidenceTurnIds, evidence),
+        ...evidenceLines(actionItem.evidenceTurnIds, evidence),
       ]),
       "Зафиксированных задач нет.",
     ),
     "",
     "## Открытые вопросы",
-    ...(summary.openQuestions.length === 0
-      ? ["Открытых вопросов нет."]
-      : summary.openQuestions.map((question) => `- ${question.trim()}`)),
+    ...numberedOrEmpty(
+      summary.openQuestions.map((question) => [
+        question.text.trim(),
+        ...evidenceLines(question.evidenceTurnIds, evidence),
+      ]),
+      "Открытых вопросов нет.",
+    ),
   ];
-  const footer = `Встреча: ${boundedInlineCode(request.meetingId)} · Саммари: ${boundedInlineCode(summary.summaryId)} · Версия: ${summary.version}`;
-
-  return boundedMarkdown(bodyLines, footer);
+  return boundedMarkdown(bodyLines);
 }
 
-function boundedMarkdown(bodyLines: readonly string[], footer: string): string {
+function boundedMarkdown(bodyLines: readonly string[]): string {
   const body = bodyLines.join("\n").trimEnd();
-  const complete = `${body}\n\n${footer}`;
-  if (complete.length <= discordMarkdownLimit) {
-    return complete;
+  if (body.length <= discordMarkdownLimit) {
+    return body;
   }
 
-  const suffix = `\n\n${truncationNotice}\n\n${footer}`;
+  const suffix = `\n\n${truncationNotice}`;
   const bodyBudget = discordMarkdownLimit - suffix.length;
   const shortenedBody = truncateAtStableBoundary(body, bodyBudget);
   return `${shortenedBody}${suffix}`;
@@ -155,42 +158,56 @@ function numberedOrEmpty(
   ]);
 }
 
-function evidenceLine(
+function evidenceLines(
   evidenceTurnIds: readonly string[],
   evidence: ReadonlyMap<
     string,
     SummaryPublicationRequest["transcript"]["turns"][number]
   >,
-): string {
-  return `Доказательства: ${evidenceTurnIds.map((turnId) => {
+): readonly string[] {
+  return evidenceTurnIds.map((turnId) => {
     const turn = evidence.get(turnId);
     if (turn === undefined) {
-      return inlineCode(turnId);
+      return "Основание: исходная реплика недоступна";
     }
-    return `${inlineCode(turnId)} [${formatTimestamp(turn.startMs)}-${formatTimestamp(turn.endMs)}] ${inlineCode(turn.speakerId)}`;
-  }).join(", ")}`;
+    const interval = `${formatTimestamp(turn.startMs)}-${formatTimestamp(turn.endMs)}`;
+    return `Основание: **${interval} · ${speakerLabel(turn.speakerId)}:** «${evidenceQuote(turn.text)}»`;
+  });
 }
 
 function formatTimestamp(milliseconds: number): string {
-  const hours = Math.floor(milliseconds / 3_600_000);
-  const minutes = Math.floor((milliseconds % 3_600_000) / 60_000);
-  const seconds = Math.floor((milliseconds % 60_000) / 1_000);
-  const fraction = milliseconds % 1_000;
-  const base = `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${String(fraction).padStart(3, "0")}`;
+  const totalSeconds = Math.floor(milliseconds / 1_000);
+  const hours = Math.floor(totalSeconds / 3_600);
+  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+  const seconds = totalSeconds % 60;
+  const base = `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
   return hours === 0 ? base : `${String(hours).padStart(2, "0")}:${base}`;
 }
 
-function inlineCode(value: string): string {
-  return `\`${value.trim().replaceAll("`", "ˋ")}\``;
+function speakerLabel(speakerId: string): string {
+  const normalized = speakerId.trim();
+  return discordSnowflake.test(normalized)
+    ? `<@${normalized}>`
+    : escapeDiscordMarkdown(normalized);
 }
 
-function boundedInlineCode(value: string): string {
-  const normalized = value.trim().replaceAll("`", "ˋ");
-  return inlineCode(
-    normalized.length <= 96
-      ? normalized
-      : `${safeCodeUnitSlice(normalized, 95)}…`,
+function evidenceQuote(value: string): string {
+  const normalized = escapeDiscordMarkdown(value.trim().replaceAll(/\s+/gu, " "));
+  const graphemes = Array.from(
+    new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(normalized),
+    (segment) => segment.segment,
   );
+  return graphemes.length <= maximumEvidenceQuoteGraphemes
+    ? normalized
+    : `${graphemes.slice(0, maximumEvidenceQuoteGraphemes - 1).join("")}…`;
+}
+
+function escapeDiscordMarkdown(value: string): string {
+  return value
+    .replaceAll("\\", "\\\\")
+    .replaceAll(/([*_~`|>()])/gu, "\\$1")
+    .replaceAll("[", "\\[")
+    .replaceAll("]", "\\]");
 }
 
 function normalizeInline(value: string): string {

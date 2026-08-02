@@ -102,7 +102,13 @@ function evidenceBackedMeeting(meetingId = "meeting-postgres-1"): Meeting {
             text: "Ship the first release on Friday.",
           },
         ],
-        openQuestions: ["Who runs the final deployment?"],
+        openQuestions: [
+          {
+            evidenceTurnIds: ["turn-action"],
+            id: "question-final-deployment",
+            text: "Who runs the final deployment?",
+          },
+        ],
         overview: "The speakers agreed on the first release plan.",
         summaryId: `summary-${meetingId}`,
         title: "First release planning",
@@ -245,6 +251,40 @@ describe("PostgresMeetingRepository", () => {
       "turn-decision",
     ]);
     expect(restored?.summary?.actionItems[0]?.ownerSpeakerId).toBe("speaker-b");
+    expect(restored?.summary?.openQuestions).toEqual([
+      {
+        evidenceTurnIds: ["turn-action"],
+        id: "question-final-deployment",
+        text: "Who runs the final deployment?",
+      },
+    ]);
+  });
+
+  it("restores legacy string questions into the unverified quarantine", async (context) => {
+    const database = databaseOrSkip(context);
+    const repository = new PostgresMeetingRepository(database);
+    const current = evidenceBackedMeeting("meeting-legacy-questions").toSnapshot();
+    const legacy = {
+      ...current,
+      summary: {
+        ...current.summary,
+        openQuestions: ["Who runs the final deployment?"],
+      },
+    };
+    await database.query(
+      `
+        INSERT INTO meeting_core.meetings (meeting_id, revision, snapshot)
+        VALUES ($1, $2, $3::jsonb)
+      `,
+      [legacy.meetingId, legacy.revision, legacy],
+    );
+
+    const restored = await repository.findById(legacy.meetingId);
+
+    expect(restored?.summary).toMatchObject({
+      legacyUnverifiedOpenQuestions: ["Who runs the final deployment?"],
+      openQuestions: [],
+    });
   });
 
   it("treats identical inserts and CAS retries as idempotent", async (context) => {

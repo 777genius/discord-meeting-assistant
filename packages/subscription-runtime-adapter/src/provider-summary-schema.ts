@@ -26,7 +26,14 @@ export const providerMeetingSummarySchema = z
         })
         .strict(),
     ).max(12),
-    openQuestions: z.array(shortTextSchema).max(12),
+    openQuestions: z.array(
+      z
+        .object({
+          evidenceTurnIds: evidenceTurnIdsSchema,
+          text: shortTextSchema,
+        })
+        .strict(),
+    ).max(12),
     overview: overviewSchema,
     title: titleSchema,
     topics: z.array(
@@ -95,7 +102,20 @@ export const providerMeetingSummaryJsonSchema = {
       type: "array",
     },
     openQuestions: {
-      items: { maxLength: 240, minLength: 1, type: "string" },
+      items: {
+        additionalProperties: false,
+        properties: {
+          evidenceTurnIds: {
+            items: { maxLength: 128, minLength: 1, type: "string" },
+            maxItems: 8,
+            minItems: 1,
+            type: "array",
+          },
+          text: { maxLength: 240, minLength: 1, type: "string" },
+        },
+        required: ["text", "evidenceTurnIds"],
+        type: "object",
+      },
       maxItems: 12,
       type: "array",
     },

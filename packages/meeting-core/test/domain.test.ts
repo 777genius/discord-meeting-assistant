@@ -63,7 +63,13 @@ const summarySnapshot = {
       text: "Ship the first version on Friday.",
     },
   ],
-  openQuestions: [],
+  openQuestions: [
+    {
+      evidenceTurnIds: ["turn-2"],
+      id: "question-1",
+      text: "Who will verify the deployment?",
+    },
+  ],
   overview: "The team agreed on a Friday release.",
   summaryId: "summary-1",
   title: "Release planning",
@@ -290,6 +296,85 @@ describe("Evidence-backed summary", () => {
         transcript,
       ),
     ).toThrow(/deadline must not be empty/u);
+  });
+
+  it("requires every open question to have a unique id and real evidence", () => {
+    const transcript = FinalTranscript.create(transcriptSnapshot);
+
+    expect(() =>
+      EvidenceBackedSummary.create(
+        {
+          ...summarySnapshot,
+          openQuestions: [
+            {
+              ...summarySnapshot.openQuestions[0],
+              evidenceTurnIds: [],
+            },
+          ],
+        },
+        transcript,
+      ),
+    ).toThrow(/at least one transcript turn/u);
+
+    expect(() =>
+      EvidenceBackedSummary.create(
+        {
+          ...summarySnapshot,
+          openQuestions: [
+            {
+              ...summarySnapshot.openQuestions[0],
+              evidenceTurnIds: ["missing-turn"],
+            },
+          ],
+        },
+        transcript,
+      ),
+    ).toThrow(/unknown transcript turn/u);
+
+    expect(() =>
+      EvidenceBackedSummary.create(
+        {
+          ...summarySnapshot,
+          openQuestions: [
+            summarySnapshot.openQuestions[0],
+            {
+              ...summarySnapshot.openQuestions[0],
+              text: "Is a rollback drill required?",
+            },
+          ],
+        },
+        transcript,
+      ),
+    ).toThrow(/IDs must be unique/u);
+  });
+
+  it("restores legacy string questions without inventing evidence or losing text", () => {
+    const meeting = recordedMeeting();
+    const transcript = FinalTranscript.create(transcriptSnapshot);
+    meeting.beginTranscription();
+    meeting.completeTranscription(transcript);
+    meeting.beginSummary();
+    meeting.completeSummary(EvidenceBackedSummary.create(summarySnapshot, transcript));
+    const snapshot = meeting.toSnapshot();
+    const legacySnapshot = {
+      ...snapshot,
+      summary: {
+        ...snapshot.summary,
+        openQuestions: ["Who will verify the deployment?"],
+      },
+    } as unknown as Parameters<typeof Meeting.restore>[0];
+
+    expect(() =>
+      EvidenceBackedSummary.create(
+        legacySnapshot.summary!,
+        transcript,
+      ),
+    ).toThrow(/evidence-backed question contract/u);
+
+    expect(Meeting.restore(legacySnapshot).toSnapshot().summary).toMatchObject({
+      legacyUnverifiedOpenQuestions: ["Who will verify the deployment?"],
+      openQuestions: [],
+    });
   });
 
   it("derives a stable collision-safe publication identity", () => {

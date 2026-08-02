@@ -18,6 +18,7 @@ import type {
 
 const UNKNOWN_CHANNEL = 10_003;
 const UNKNOWN_MESSAGE = 10_008;
+const PROJECTION_FOOTER = "Meeting Platform · итог встречи";
 
 export class DiscordProjectionConflictError extends Error {
   constructor(entity: "thread" | "message", marker: string) {
@@ -90,7 +91,7 @@ export class DiscordJsProjectionClient implements DiscordProjectionClient {
     readonly marker: string;
   }): Promise<string> {
     const thread = await this.fetchThread(input.threadId);
-    const message = await thread.send(messageBody(input.markdown, input.marker));
+    const message = await thread.send(messageBody(input.markdown));
     return message.id;
   }
 
@@ -102,7 +103,7 @@ export class DiscordJsProjectionClient implements DiscordProjectionClient {
   }): Promise<void> {
     const thread = await this.fetchThread(input.threadId);
     const message = await thread.messages.fetch(input.messageId);
-    await message.edit(messageBody(input.markdown, input.marker));
+    await message.edit(messageBody(input.markdown));
   }
 
   private async inspectHint(
@@ -121,7 +122,7 @@ export class DiscordJsProjectionClient implements DiscordProjectionClient {
         throw error;
       }
     }
-    if (thread === undefined) {
+    if (thread === undefined || !threadNameHasMarker(thread.name, marker)) {
       return undefined;
     }
 
@@ -165,7 +166,6 @@ async function findProjectionThread(
   parent: TextChannel | NewsChannel,
   marker: string,
 ): Promise<TextThreadChannel | undefined> {
-  const markerSuffix = `[${marker.slice(-20)}]`;
   const [active, archived] = await Promise.all([
     parent.threads.fetchActive(false),
     parent.threads.fetchArchived({ type: "public", fetchAll: true }, false),
@@ -175,7 +175,7 @@ async function findProjectionThread(
     if (
       isTextThreadChannel(thread) &&
       thread.parentId === parent.id &&
-      thread.name.endsWith(markerSuffix)
+      threadNameHasMarker(thread.name, marker)
     ) {
       candidates.set(thread.id, thread);
     }
@@ -209,13 +209,16 @@ async function findProjectionMessage(
 }
 
 function hasProjectionMarker(message: Message, marker: string): boolean {
-  return message.embeds.some((embed) => embed.footer?.text === marker);
+  return message.embeds.some((embed) => {
+    const footer = embed.footer?.text;
+    return footer === marker || footer === PROJECTION_FOOTER;
+  });
 }
 
-function messageBody(markdown: string, marker: string) {
+function messageBody(markdown: string) {
   return {
     allowedMentions: { parse: [] as const, repliedUser: false },
-    embeds: [{ description: markdown, footer: { text: marker } }],
+    embeds: [{ description: markdown, footer: { text: PROJECTION_FOOTER } }],
   };
 }
 
@@ -232,11 +235,20 @@ function isTextThreadChannel(thread: AnyThreadChannel): thread is TextThreadChan
 }
 
 function assertThreadNameContainsMarker(name: string, marker: string): void {
-  if (!name.endsWith(`[${marker.slice(-20)}]`)) {
+  if (!threadNameHasMarker(name, marker, false)) {
     throw new DiscordProjectionConfigurationError(
       "Discord projection thread name is missing its idempotency marker",
     );
   }
+}
+
+function threadNameHasMarker(
+  name: string,
+  marker: string,
+  allowLegacy = true,
+): boolean {
+  return name.endsWith(`[код ${marker.slice(-20)}]`) ||
+    (allowLegacy && name.endsWith(`[${marker.slice(-20)}]`));
 }
 
 function isUnknownDiscordEntity(error: unknown): boolean {

@@ -51,7 +51,13 @@ const request: SummaryPublicationRequest = {
         text: "Выпустить ассистента в пятницу",
       },
     ],
-    openQuestions: ["Достигнута ли целевая точность?"],
+    openQuestions: [
+      {
+        evidenceTurnIds: ["turn-3"],
+        id: "question-1",
+        text: "Достигнута ли целевая точность?",
+      },
+    ],
     overview: "Команда согласовала выпуск и владельцев подготовки.",
     summaryId: "summary-42",
     title: "  Итоги   встречи  ",
@@ -118,28 +124,69 @@ describe("DiscordSummaryPublicationAdapter", () => {
         "1. Подготовка релиза",
         "   - Релиз запланирован на пятницу",
         "   - Дашборд готовит speaker-b",
-        "   - Доказательства: `turn-1` [00:00.000-00:01.250] `speaker-a`, `turn-2` [00:00.900-00:02.800] `speaker-b`",
+        "   - Основание: **00:00-00:01 · speaker-a:** «Релиз в пятницу»",
+        "   - Основание: **00:00-00:02 · speaker-b:** «Подготовлю дашборд»",
         "",
         "## Решения",
         "1. Выпустить ассистента в пятницу",
-        "   - Доказательства: `turn-1` [00:00.000-00:01.250] `speaker-a`, `turn-2` [00:00.900-00:02.800] `speaker-b`",
+        "   - Основание: **00:00-00:01 · speaker-a:** «Релиз в пятницу»",
+        "   - Основание: **00:00-00:02 · speaker-b:** «Подготовлю дашборд»",
         "",
         "## Задачи",
         "1. Подготовить дашборд к четвергу",
-        "   - Ответственный: `speaker-b`",
+        "   - Ответственный: speaker-b",
         "   - Срок: к четвергу",
-        "   - Доказательства: `turn-2` [00:00.900-00:02.800] `speaker-b`",
+        "   - Основание: **00:00-00:02 · speaker-b:** «Подготовлю дашборд»",
         "2. Проверить точность транскрипции",
         "   - Ответственный: не назначен",
         "   - Срок: не указан",
-        "   - Доказательства: `turn-3` [00:03.000-00:04.200] `speaker-a`",
+        "   - Основание: **00:03-00:04 · speaker-a:** «Проверить транскрипцию»",
         "",
         "## Открытые вопросы",
-        "- Достигнута ли целевая точность?",
-        "",
-        "Встреча: `meeting-42` · Саммари: `summary-42` · Версия: 1",
+        "1. Достигнута ли целевая точность?",
+        "   - Основание: **00:03-00:04 · speaker-a:** «Проверить транскрипцию»",
       ].join("\n"),
     });
+    expect(projector.inputs[0]?.markdown).not.toContain("turn-1");
+    expect(projector.inputs[0]?.markdown).not.toContain("summary-42");
+  });
+
+  it("renders Discord speakers as quiet mentions with human time intervals", async () => {
+    const projector = new FakeProjector();
+    const adapter = new DiscordSummaryPublicationAdapter(projector);
+    const speakerId = "1533228054724346087";
+
+    await adapter.publish({
+      ...request,
+      transcript: {
+        ...request.transcript,
+        turns: [{
+          endMs: 25_300,
+          speakerId,
+          startMs: 18_740,
+          text: "Проверю Discord thread и Redis queue.",
+          turnId: "turn:v1:internal",
+        }],
+      },
+      summary: {
+        ...request.summary,
+        actionItems: [{
+          ...request.summary.actionItems[0]!,
+          evidenceTurnIds: ["turn:v1:internal"],
+          ownerSpeakerId: speakerId,
+        }],
+        decisions: [],
+        topics: [],
+      },
+    });
+
+    expect(projector.inputs[0]?.markdown).toContain(
+      "Ответственный: <@1533228054724346087>",
+    );
+    expect(projector.inputs[0]?.markdown).toContain(
+      "Основание: **00:18-00:25 · <@1533228054724346087>:** «Проверю Discord thread и Redis queue.»",
+    );
+    expect(projector.inputs[0]?.markdown).not.toContain("turn:v1:internal");
   });
 
   it("renders explicit empty states instead of omitting sections", async () => {
@@ -180,9 +227,7 @@ describe("DiscordSummaryPublicationAdapter", () => {
     expect(projector.inputs[0]?.markdown).toContain(
       "Саммари сокращено из-за лимита Discord.",
     );
-    expect(projector.inputs[0]?.markdown).toContain(
-      "Встреча: `meeting-42` · Саммари: `summary-42` · Версия: 1",
-    );
+    expect(projector.inputs[0]?.markdown).not.toContain("summary-42");
   });
 
   it.each([

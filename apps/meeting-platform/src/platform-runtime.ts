@@ -49,12 +49,18 @@ import { Pool } from "pg";
 
 import type { PlatformConfig } from "./config.js";
 import { createCraigHttpServer } from "./craig-http-server.js";
+import {
+  InstrumentedFinalTranscriptionPort,
+  InstrumentedSummaryGenerationPort,
+  InstrumentedSummaryPublicationPort,
+} from "./instrumented-processing-ports.js";
 import { PlatformCraigIngress } from "./platform-ingress.js";
 import { PostCallOutboxDispatcher } from "./post-call-outbox-dispatcher.js";
 import { S3OggAudioArtifactReader } from "./s3-ogg-audio-artifact-reader.js";
 import { GrpcSubscriptionRuntimeTransport } from "./subscription-runtime-grpc-transport.js";
 
 const queuePrefix = "discord-meeting-v1";
+const monotonicNowMilliseconds = (): number => performance.now();
 
 export interface MeetingPlatformRuntime {
   close(): Promise<void>;
@@ -90,7 +96,7 @@ export async function startMeetingPlatform(
     writer: artifactWriter,
   });
   const meetings = new PostgresMeetingRepository(pool);
-  const transcriber = new SpeachesFinalTranscriptionAdapter(
+  const rawTranscriber = new SpeachesFinalTranscriptionAdapter(
     new FetchSpeachesTranscriptionClient(config.speaches.baseUrl),
     new S3OggAudioArtifactReader(artifactReader),
     {
@@ -119,16 +125,34 @@ export async function startMeetingPlatform(
     address: config.subscriptionRuntime.address,
     serviceToken: config.secrets.subscriptionRuntimeToken,
   });
-  const summarizer = new SubscriptionRuntimeSummaryAdapter(runtimeTransport, {
+  const rawSummarizer = new SubscriptionRuntimeSummaryAdapter(runtimeTransport, {
     expectedLauncherSha256: config.subscriptionRuntime.launcherSha256,
     outputLanguage: "Russian; preserve English technical terms",
   });
   const discord = new Client({ intents: [GatewayIntentBits.Guilds] });
-  const publisher = new DiscordSummaryPublicationAdapter(
+  const rawPublisher = new DiscordSummaryPublicationAdapter(
     new DiscordSummaryPublisher(
       new DiscordJsProjectionClient(discord),
       new InProcessProjectionLock(),
     ),
+  );
+  const transcriber = new InstrumentedFinalTranscriptionPort(
+    rawTranscriber,
+    metrics,
+    logger,
+    monotonicNowMilliseconds,
+  );
+  const summarizer = new InstrumentedSummaryGenerationPort(
+    rawSummarizer,
+    metrics,
+    logger,
+    monotonicNowMilliseconds,
+  );
+  const publisher = new InstrumentedSummaryPublicationPort(
+    rawPublisher,
+    metrics,
+    logger,
+    monotonicNowMilliseconds,
   );
   const processMeeting = new ProcessMeetingSummary({
     meetings,
@@ -149,7 +173,6 @@ export async function startMeetingPlatform(
     connection,
     deadLetterRecorder: new BullMqPostCallDeadLetterRecorder(deadLetterQueue),
     handler: async ({ meetingId }) => {
-      const startedAt = performance.now();
       const result = await processMeeting.execute(meetingId);
       if (result.status === "published") {
         metrics.recordDiscordPublication(result.reused ? "duplicate" : "succeeded");
@@ -159,11 +182,6 @@ export async function startMeetingPlatform(
       if (result.status === "not-found") {
         throw new NonRetryablePostCallError("MEETING_NOT_FOUND");
       }
-      metrics.observeStage(
-        result.stage,
-        result.failure.retryable ? "retryable-failure" : "terminal-failure",
-        (performance.now() - startedAt) / 1_000,
-      );
       throw result.failure.retryable
         ? new RetryablePostCallError(result.failure.code)
         : new NonRetryablePostCallError(result.failure.code);
@@ -186,7 +204,7 @@ export async function startMeetingPlatform(
       discord,
       pool,
       queue,
-      runtime: summarizer,
+      runtime: rawSummarizer,
       s3,
     }),
     { timeoutMs: 5_000 },

@@ -128,7 +128,7 @@ export function toGrpcTaskRequest(request: SubscriptionRuntimeAgentTaskRequest) 
     workspaceId: request.context.metadata.meetingId,
     correlationId: request.context.correlationId,
     provider: "AGENT_RUNTIME_PROVIDER_CODEX",
-    providerInstanceId: "discord-meeting-summary-v2",
+    providerInstanceId: "discord-meeting-summary-v3",
     purpose: request.context.purpose,
     systemPrompt: request.task.systemPrompt,
     prompt: request.task.prompt,

@@ -261,6 +261,7 @@ function validateEvidence(
     ...summary.topics.map((topic) => topic.evidenceTurnIds),
     ...summary.decisions.map((decision) => decision.evidenceTurnIds),
     ...summary.actionItems.map((actionItem) => actionItem.evidenceTurnIds),
+    ...summary.openQuestions.map((question) => question.evidenceTurnIds),
   ];
   for (const evidenceTurnIds of evidenceGroups) {
     if (new Set(evidenceTurnIds).size !== evidenceTurnIds.length) {
@@ -314,7 +315,15 @@ function mapSummary(
       evidenceTurnIds: [...decision.evidenceTurnIds],
       text: decision.text,
     })),
-    openQuestions: [...summary.openQuestions],
+    openQuestions: summary.openQuestions.map((question, index) => ({
+      evidenceTurnIds: [...question.evidenceTurnIds],
+      id: stableSubscriptionRuntimeId(
+        "question",
+        idempotencyKey,
+        String(index + 1),
+      ),
+      text: question.text,
+    })),
     overview: summary.overview,
     summaryId: stableSubscriptionRuntimeId("summary", idempotencyKey),
     title: summary.title,

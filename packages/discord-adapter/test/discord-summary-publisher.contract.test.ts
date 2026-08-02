@@ -138,6 +138,7 @@ describe("DiscordSummaryPublisher contract", () => {
     expect(client.threads).toHaveLength(1);
     expect(client.createThreadCount).toBe(1);
     expect(client.createMessageCount).toBe(1);
+    expect(client.threads[0]?.name).toMatch(/ \[код [0-9a-f]{20}\]$/u);
     expect(client.threads[0]?.message?.markdown).toContain("Corrected summary");
   });
 

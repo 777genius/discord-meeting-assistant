@@ -73,7 +73,13 @@ const generatedSummary: GeneratedSummary = {
       text: "Ship on Friday.",
     },
   ],
-  openQuestions: [],
+  openQuestions: [
+    {
+      evidenceTurnIds: ["turn-2"],
+      id: "question-1",
+      text: "Who will verify the deployment?",
+    },
+  ],
   overview: "The team planned the first release.",
   summaryId: "summary-1",
   title: "Release planning",
@@ -228,10 +234,10 @@ describe("ProcessMeetingSummary", () => {
     expect(transcriber.requests).toHaveLength(1);
     expect(summarizer.requests).toHaveLength(1);
     expect(summarizer.requests[0]?.idempotencyKey).toContain(
-      "evidence-summary:v2",
+      "evidence-summary:v3",
     );
     expect(summarizer.requests[0]?.idempotencyKey).not.toContain(
-      "evidence-summary:v1",
+      "evidence-summary:v2",
     );
     expect(publisher.requests).toHaveLength(1);
     expect(meetings.snapshot.recording).toEqual(recording);
@@ -386,6 +392,37 @@ describe("ProcessMeetingSummary", () => {
     expect(publisher.requests).toHaveLength(0);
     expect(meetings.snapshot.recording).toEqual(recording);
     expect(meetings.snapshot.transcript).not.toBeNull();
+  });
+
+  it("rejects unsupported open questions before publication", async () => {
+    const meetings = new MemoryMeetingRepository(initialSnapshot());
+    const transcriber = new SequenceTranscriber([success(generatedTranscript)]);
+    const summarizer = new SequenceSummarizer([
+      success({
+        ...generatedSummary,
+        openQuestions: [
+          {
+            evidenceTurnIds: ["hallucinated-turn"],
+            id: "question-unsupported",
+            text: "Is an unsupported requirement approved?",
+          },
+        ],
+      }),
+    ]);
+    const publisher = new SequencePublisher([]);
+    const useCase = new ProcessMeetingSummary({
+      meetings,
+      publisher,
+      summarizer,
+      transcriber,
+    });
+
+    await expect(useCase.execute("meeting-1")).resolves.toMatchObject({
+      failure: { code: "INVALID_SUMMARY_OUTPUT", retryable: false },
+      stage: "summary",
+      status: "failed",
+    });
+    expect(publisher.requests).toHaveLength(0);
   });
 
   it("retries a classified transcription failure with the same operation identity", async () => {

@@ -61,7 +61,14 @@ export const providerSummarySchema = z
         })
         .strict(),
     ).max(12),
-    openQuestions: z.array(shortTextSchema).max(12),
+    openQuestions: z.array(
+      z
+        .object({
+          text: shortTextSchema,
+          evidenceTurnIds: evidenceTurnIdsSchema,
+        })
+        .strict(),
+    ).max(12),
   })
   .strict();
 

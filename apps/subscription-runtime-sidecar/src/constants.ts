@@ -1,6 +1,6 @@
 export const runtimePackageName = "@vioxen/subscription-runtime" as const;
 export const runtimePackageVersion = "0.1.0-main.2" as const;
-export const providerInstanceId = "discord-meeting-summary-v2" as const;
+export const providerInstanceId = "discord-meeting-summary-v3" as const;
 export const applicationName = "discord-meeting" as const;
 export const tenantId = "discord-meeting" as const;
 export const healthServiceName = "discord-meeting-summary" as const;

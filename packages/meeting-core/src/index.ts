@@ -62,6 +62,8 @@ export {
   type SummaryActionItemSnapshot,
   type SummaryDecision,
   type SummaryDecisionSnapshot,
+  type SummaryOpenQuestion,
+  type SummaryOpenQuestionSnapshot,
   type SummaryTopic,
   type SummaryTopicSnapshot,
 } from "./domain/summary.js";
