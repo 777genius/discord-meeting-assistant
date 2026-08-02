@@ -7,6 +7,7 @@ import {
   canonicalJsonSha256,
   providerMeetingSummarySchema,
   subscriptionRuntimeEngine,
+  subscriptionRuntimeIncrementalPurpose,
   subscriptionRuntimeProvider,
   subscriptionRuntimeProfileForPurpose,
   subscriptionRuntimeReasoningEffort,
@@ -45,6 +46,7 @@ const failureCodes = new Set<SubscriptionRuntimeFailureCode>([
   "task_cancelled",
   "task_mode_unsupported",
   "task_timeout",
+  "telemetry_unavailable",
   "unknown_runtime_failure",
 ]);
 const warningSchema = z
@@ -191,26 +193,41 @@ export class SubscriptionRuntimeExecutor implements SidecarExecutorPort {
       }
 
       const parsed = parseCliResult(execution.stdout);
-      if (parsed === undefined || execution.exitCode !== (parsed.status === "completed" ? 0 : 1)) {
+      if (parsed === undefined) {
         return failedResult(
           execution.exitCode === 0
             ? "provider_output_invalid"
             : "backend_unavailable",
         );
       }
+      const usage = readCompleteUsage(parsed.telemetry?.usage);
+      if (usage.status === "invalid") {
+        return failedResult("provider_output_invalid");
+      }
+      const completeUsage = usage.status === "complete" ? usage.value : undefined;
+      if (execution.exitCode !== (parsed.status === "completed" ? 0 : 1)) {
+        return failedResult(
+          execution.exitCode === 0
+            ? "provider_output_invalid"
+            : "backend_unavailable",
+          completeUsage,
+        );
+      }
       if (parsed.status === "failed") {
-        return failedResult(normalizeFailureCode(parsed.failure.code));
+        return failedResult(normalizeFailureCode(parsed.failure.code), completeUsage);
+      }
+      if (
+        profile.purpose === subscriptionRuntimeIncrementalPurpose &&
+        usage.status === "missing"
+      ) {
+        return failedResult("telemetry_unavailable");
       }
 
       const validatedOutput = providerMeetingSummarySchema.safeParse(
         parsed.structuredOutput,
       );
       if (!validatedOutput.success) {
-        return failedResult("provider_output_invalid");
-      }
-      const usage = readCompleteUsage(parsed.telemetry?.usage);
-      if (usage.status === "invalid") {
-        return failedResult("provider_output_invalid");
+        return failedResult("provider_output_invalid", completeUsage);
       }
       const structuredOutput = validatedOutput.data as unknown as JsonObject;
       return {
@@ -231,7 +248,7 @@ export class SubscriptionRuntimeExecutor implements SidecarExecutorPort {
         protocolVersion: 1,
         status: "completed",
         structuredOutput,
-        ...(usage.status === "complete" ? { usage: usage.value } : {}),
+        ...(completeUsage === undefined ? {} : { usage: completeUsage }),
       };
     } catch {
       return failedResult("backend_unavailable");
@@ -401,6 +418,7 @@ function normalizeFailureCode(code: string): SubscriptionRuntimeFailureCode {
 
 function failedResult(
   code: SubscriptionRuntimeFailureCode,
+  usage?: SubscriptionRuntimeUsage,
 ): Extract<SubscriptionRuntimeTaskResult, { readonly status: "failed" }> {
   const policy = failurePolicy(code);
   return {
@@ -413,6 +431,7 @@ function failedResult(
     },
     protocolVersion: 1,
     status: "failed",
+    ...(usage === undefined ? {} : { usage }),
   };
 }
 
@@ -453,6 +472,13 @@ function failurePolicy(code: SubscriptionRuntimeFailureCode): {
         reconnectRequired: false,
         retryable: false,
         safeMessage: "Subscription runtime rejected an unsafe or invalid task result",
+      };
+    case "telemetry_unavailable":
+      return {
+        causeCategory: "telemetry",
+        reconnectRequired: false,
+        retryable: false,
+        safeMessage: "Subscription runtime did not return complete generation telemetry",
       };
     case "task_cancelled":
     case "stale_generation":

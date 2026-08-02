@@ -73,6 +73,7 @@ import {
   InstrumentedSummaryGenerationPort,
   InstrumentedSummaryPublicationPort,
 } from "./instrumented-processing-ports.js";
+import { LiveFencedSummaryPublicationPort } from "./live-fenced-summary-publication.js";
 import { PlatformLiveMeetingRuntime } from "./live-meeting-runtime.js";
 import { PlatformCraigIngress } from "./platform-ingress.js";
 import { PostCallOutboxDispatcher } from "./post-call-outbox-dispatcher.js";
@@ -153,8 +154,11 @@ export async function startMeetingPlatform(
     logger,
     monotonicNowMilliseconds,
   );
+  const finalPublisher = live === undefined
+    ? rawPublisher
+    : new LiveFencedSummaryPublicationPort(rawPublisher, live);
   const publisher = new InstrumentedSummaryPublicationPort(
-    rawPublisher,
+    finalPublisher,
     metrics,
     logger,
     monotonicNowMilliseconds,

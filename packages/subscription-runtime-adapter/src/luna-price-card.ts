@@ -14,42 +14,62 @@ export const lunaStandardPriceCard = Object.freeze({
   maximumInputTokens: 272_000,
   model: subscriptionRuntimeIncrementalModel,
   outputUsdPerMillion: 1.20,
-  source: "https://developers.openai.com/api/docs/models/gpt-5.6-luna",
+  source: "https://developers.openai.com/api/docs/pricing#text-tokens",
   tier: "standard",
 });
 
-const unavailableLongContextPriceCard = `${lunaStandardPriceCard.id}:context-over-272000-unpriced`;
+export const lunaLongContextPriceCard = Object.freeze({
+  cacheWriteInputUsdPerMillion: 0.50,
+  cachedInputUsdPerMillion: 0.04,
+  id: `${lunaStandardPriceCard.id}:context-over-272000`,
+  inputUsdPerMillion: 0.40,
+  model: subscriptionRuntimeIncrementalModel,
+  outputUsdPerMillion: 1.80,
+  source: "https://developers.openai.com/api/docs/models/gpt-5.6-luna",
+  tier: "long-context",
+});
+
+type LunaPriceCard =
+  | typeof lunaLongContextPriceCard
+  | typeof lunaStandardPriceCard;
 
 export function mapLunaGenerationUsage(
   usage: SubscriptionRuntimeUsage,
   runId: string,
 ): LiveGenerationUsageSnapshot {
   validateUsage(usage);
-  const hasShortContextPrice = usage.inputTokens <= lunaStandardPriceCard.maximumInputTokens;
+  const priceCard = priceCardForUsage(usage);
   return {
-    apiEquivalentCostUsd: hasShortContextPrice ? shortContextCost(usage) : null,
+    apiEquivalentCostUsd: apiEquivalentCost(usage, priceCard),
     cacheWriteInputTokens: usage.cacheWriteInputTokens,
     cachedInputTokens: usage.cachedInputTokens,
     inputTokens: usage.inputTokens,
     model: subscriptionRuntimeIncrementalModel,
     outputTokens: usage.outputTokens,
-    priceCard: hasShortContextPrice
-      ? lunaStandardPriceCard.id
-      : unavailableLongContextPriceCard,
+    priceCard: priceCard.id,
     reasoningOutputTokens: usage.reasoningOutputTokens,
     runId,
     totalTokens: usage.totalTokens,
   };
 }
 
-function shortContextCost(usage: SubscriptionRuntimeUsage): number {
+function priceCardForUsage(usage: SubscriptionRuntimeUsage): LunaPriceCard {
+  return usage.inputTokens <= lunaStandardPriceCard.maximumInputTokens
+    ? lunaStandardPriceCard
+    : lunaLongContextPriceCard;
+}
+
+function apiEquivalentCost(
+  usage: SubscriptionRuntimeUsage,
+  priceCard: LunaPriceCard,
+): number {
   const uncachedInputTokens =
     usage.inputTokens - usage.cachedInputTokens - usage.cacheWriteInputTokens;
   const millionTokenCost =
-    uncachedInputTokens * lunaStandardPriceCard.inputUsdPerMillion +
-    usage.cachedInputTokens * lunaStandardPriceCard.cachedInputUsdPerMillion +
-    usage.cacheWriteInputTokens * lunaStandardPriceCard.cacheWriteInputUsdPerMillion +
-    usage.outputTokens * lunaStandardPriceCard.outputUsdPerMillion;
+    uncachedInputTokens * priceCard.inputUsdPerMillion +
+    usage.cachedInputTokens * priceCard.cachedInputUsdPerMillion +
+    usage.cacheWriteInputTokens * priceCard.cacheWriteInputUsdPerMillion +
+    usage.outputTokens * priceCard.outputUsdPerMillion;
   // Reasoning tokens are a subset of outputTokens and must not be billed twice.
   return Number((millionTokenCost / 1_000_000).toFixed(12));
 }

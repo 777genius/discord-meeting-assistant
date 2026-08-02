@@ -88,9 +88,11 @@ services:
 
   subscription-runtime-sidecar:
     build:
+      args:
+        SOURCE_REVISION: ${SUBSCRIPTION_RUNTIME_SOURCE_REVISION:?set immutable source revision}
       context: ../..
       dockerfile: apps/subscription-runtime-sidecar/Dockerfile
-    image: discord-meeting/subscription-runtime-sidecar:0.1.0
+    image: discord-meeting/subscription-runtime-sidecar:${SUBSCRIPTION_RUNTIME_SOURCE_REVISION:?set immutable source revision}
     init: true
     restart: unless-stopped
     read_only: true

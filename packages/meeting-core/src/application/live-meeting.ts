@@ -117,6 +117,8 @@ export interface RefreshLiveMeetingInput {
   readonly captions: readonly LiveCaptionSnapshot[];
   readonly meetingId: string;
   readonly nowMs: number;
+  readonly projectionRequested?: boolean;
+  readonly summaryGeneration?: "cadence" | "skip";
 }
 
 export type RefreshLiveMeetingResult =
@@ -177,15 +179,22 @@ export class RefreshLiveMeeting {
     const newTurns = meeting.turns
       .filter(({ turnId }) => !meeting.summarizedTurnIds.has(turnId))
       .map((turn) => turn.toSnapshot());
-    const shouldGenerate = this.shouldGenerate(meeting, elapsedMs, nowMs, newTurns);
+    const shouldGenerate = input.summaryGeneration !== "skip" &&
+      this.shouldGenerate(meeting, elapsedMs, nowMs, newTurns);
     let generated = false;
     let generationFailure: StageFailure | undefined;
     let generationUsage: LiveGenerationUsageSnapshot | undefined;
 
-    const shouldProject =
-      meeting.projectionExternalId !== null ||
+    const projectionRequested = input.projectionRequested ?? true;
+    const initialProjectionDue =
       meeting.status === "ended" ||
-      elapsedMs >= this.policy.publishAfterMs;
+      elapsedMs >= this.policy.publishAfterMs ||
+      input.captions.some(({ text }) => text.trim().length > 0);
+    const canProject = meeting.projectionExternalId !== null || initialProjectionDue;
+    const projectionStateDirty = meeting.projectedRevision < meeting.revision;
+    const shouldProject =
+      canProject &&
+      (meeting.status === "ended" || projectionStateDirty || projectionRequested);
     let projected = false;
     let projectionFailure: StageFailure | undefined;
     if (shouldProject) {
@@ -199,7 +208,7 @@ export class RefreshLiveMeeting {
       generated = result.generated;
       generationFailure = result.failure;
       generationUsage = result.usage;
-      if (generated && shouldProject) {
+      if (generated && canProject) {
         const updatedProjection = await this.project(
           meeting,
           input.captions,

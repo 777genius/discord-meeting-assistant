@@ -42,7 +42,7 @@ The immutable sidecar image must:
 1. pin `@vioxen/subscription-runtime` to `0.1.0-main.2` and verify both the
    package version and admitted launcher SHA-256 before every execution;
 2. admit exactly `discord_meeting.summary.generate` with `gpt-5.6-sol`/`xhigh`
-   and `discord_meeting.summary.incremental` with `gpt-5.6-luna`/`low`; both use
+   and `discord_meeting.summary.incremental` with `gpt-5.6-luna`/`medium`; both use
    stateless completion, disabled tools, read-only permission, no interactive
    input, the same structured schema, and the isolated tmpfs working directory;
 3. start children from an explicit environment allowlist and remove every
@@ -61,12 +61,14 @@ The immutable sidecar image must:
 
 Incremental usage is returned only when the runtime supplies every real token
 class: input, cached input, cache-write input, output, reasoning output, and
-total. Missing classes are not replaced with zero. API-equivalent Luna cost uses
-the immutable `openai-standard-2026-08-02` short-context card sourced from
-`https://developers.openai.com/api/docs/models/gpt-5.6-luna`: $0.20/M input, $0.02/M cached
-input, $0.25/M cache writes, and $1.20/M output. Reasoning is already included
-in output tokens. Above 272,000 input tokens, token usage remains available but
-cost is intentionally unavailable until a long-context card is admitted.
+total. Missing classes fail the incremental task with `telemetry_unavailable`;
+they are never replaced with zero. API-equivalent Luna cost uses the immutable
+`openai-standard-2026-08-02` cards sourced from the official pricing table and
+Luna model page: through 272,000 input tokens, $0.20/M input, $0.02/M cached
+input, $0.25/M cache writes, and $1.20/M output. Above that threshold, the
+documented full-request long-context rates are $0.40/M input, $0.04/M cached
+input, $0.50/M cache writes, and $1.80/M output. Reasoning is already included
+in output tokens.
 
 `sidecar-policy.json` is a declarative deployment contract. The sidecar must
 fail closed if its executable policy differs from that file.
@@ -89,6 +91,8 @@ attestation, permission, and interactive-input failures are terminal.
 
 Before real Discord E2E, verify without printing secrets:
 
+- `SUBSCRIPTION_RUNTIME_SOURCE_REVISION` is the exact 40-character deployed Git
+  commit and matches the sidecar image revision label;
 - the private root is outside every other project's directory;
 - auth and secret files are regular, non-symlink files with least-privilege
   ownership and modes;

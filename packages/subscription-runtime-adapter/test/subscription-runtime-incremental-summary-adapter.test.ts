@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   auditedSubscriptionRuntimePackageVersion,
   canonicalJsonSha256,
+  lunaLongContextPriceCard,
   lunaStandardPriceCard,
   SubscriptionRuntimeIncrementalSummaryAdapter,
   subscriptionRuntimeEngine,
@@ -20,6 +21,14 @@ import {
 } from "../src/index.js";
 
 const launcherSha256 = "a".repeat(64);
+const completeUsage: SubscriptionRuntimeUsage = {
+  cacheWriteInputTokens: 100,
+  cachedInputTokens: 200,
+  inputTokens: 1_000,
+  outputTokens: 300,
+  reasoningOutputTokens: 100,
+  totalTokens: 1_300,
+};
 
 const requestFixture: IncrementalSummaryGenerationRequest = {
   idempotencyKey: "live-summary-revision-2",
@@ -121,8 +130,12 @@ class FakeTransport implements SubscriptionRuntimeTransportPort {
 }
 
 describe("SubscriptionRuntimeIncrementalSummaryAdapter", () => {
-  it("sends previous summary, new evidence, bounded context and known IDs with Luna low", async () => {
-    const transport = new FakeTransport((request) => completed(request));
+  it("sends previous summary, new evidence, bounded context and known IDs with Luna medium", async () => {
+    const transport = new FakeTransport((request) => completed(
+      request,
+      structuredOutput,
+      completeUsage,
+    ));
 
     const result = await createAdapter(transport).generate(requestFixture);
 
@@ -175,9 +188,9 @@ describe("SubscriptionRuntimeIncrementalSummaryAdapter", () => {
 
   it("rejects an attested profile mismatch", async () => {
     const transport = new FakeTransport((request) => ({
-      ...completed(request),
+      ...completed(request, structuredOutput, completeUsage),
       executionAttestation: {
-        ...completed(request).executionAttestation,
+        ...completed(request, structuredOutput, completeUsage).executionAttestation,
         model: "gpt-5.6-sol",
         reasoningEffort: "xhigh",
       },
@@ -222,15 +235,11 @@ describe("SubscriptionRuntimeIncrementalSummaryAdapter", () => {
   });
 
   it("maps complete real usage to the official short-context API-equivalent card", async () => {
-    const usage: SubscriptionRuntimeUsage = {
-      cacheWriteInputTokens: 100,
-      cachedInputTokens: 200,
-      inputTokens: 1_000,
-      outputTokens: 300,
-      reasoningOutputTokens: 100,
-      totalTokens: 1_300,
-    };
-    const transport = new FakeTransport((request) => completed(request, structuredOutput, usage));
+    const transport = new FakeTransport((request) => completed(
+      request,
+      structuredOutput,
+      completeUsage,
+    ));
 
     const result = await createAdapter(transport).generate(requestFixture);
 
@@ -250,20 +259,27 @@ describe("SubscriptionRuntimeIncrementalSummaryAdapter", () => {
         },
       },
     });
+    if (!result.ok || result.value.usage === undefined) {
+      throw new Error("Expected complete incremental generation usage");
+    }
+    expect(result.value.usage.runId).toMatch(/^incremental-summary-request-[0-9a-f]{32}$/u);
   });
 
-  it("does not fabricate usage when the runtime omits it", async () => {
+  it("fails closed when the runtime omits incremental usage", async () => {
     const result = await createAdapter(
       new FakeTransport((request) => completed(request)),
     ).generate(requestFixture);
 
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.value).not.toHaveProperty("usage");
-    }
+    expect(result).toMatchObject({
+      failure: {
+        code: "SUBSCRIPTION_RUNTIME_SUMMARY_TELEMETRY_UNAVAILABLE",
+        retryable: false,
+      },
+      ok: false,
+    });
   });
 
-  it("keeps real long-context tokens but leaves API-equivalent cost unavailable", async () => {
+  it("calculates the documented long-context API-equivalent cost", async () => {
     const usage: SubscriptionRuntimeUsage = {
       cacheWriteInputTokens: 0,
       cachedInputTokens: 0,
@@ -280,12 +296,40 @@ describe("SubscriptionRuntimeIncrementalSummaryAdapter", () => {
       ok: true,
       value: {
         usage: {
-          apiEquivalentCostUsd: null,
+          apiEquivalentCostUsd: 0.110_600_4,
           inputTokens: 272_001,
-          priceCard: `${lunaStandardPriceCard.id}:context-over-272000-unpriced`,
+          priceCard: lunaLongContextPriceCard.id,
         },
       },
     });
+  });
+
+  it("preserves complete real usage when the provider task fails after consuming tokens", async () => {
+    const result = await createAdapter(
+      new FakeTransport(() => failed(completeUsage)),
+    ).generate(requestFixture);
+
+    expect(result).toMatchObject({
+      failure: {
+        code: "SUBSCRIPTION_RUNTIME_SUMMARY_TASK_TIMEOUT",
+        retryable: true,
+      },
+      ok: false,
+      usage: {
+        apiEquivalentCostUsd: 0.000_529,
+        cacheWriteInputTokens: 100,
+        cachedInputTokens: 200,
+        inputTokens: 1_000,
+        model: "gpt-5.6-luna",
+        outputTokens: 300,
+        reasoningOutputTokens: 100,
+        totalTokens: 1_300,
+      },
+    });
+    if (result.ok || result.usage === undefined) {
+      throw new Error("Expected rejected incremental generation usage");
+    }
+    expect(result.usage.runId).toMatch(/^incremental-summary-request-[0-9a-f]{32}$/u);
   });
 });
 
@@ -321,6 +365,22 @@ function completed(
     protocolVersion: 1,
     status: "completed",
     structuredOutput: output,
+    ...(usage === undefined ? {} : { usage }),
+  };
+}
+
+function failed(
+  usage?: SubscriptionRuntimeUsage,
+): Extract<SubscriptionRuntimeTaskResult, { readonly status: "failed" }> {
+  return {
+    failure: {
+      code: "task_timeout",
+      reconnectRequired: false,
+      retryable: true,
+      safeMessage: "Subscription runtime task timed out",
+    },
+    protocolVersion: 1,
+    status: "failed",
     ...(usage === undefined ? {} : { usage }),
   };
 }

@@ -49,6 +49,7 @@ const failureCodes = new Set<SubscriptionRuntimeFailureCode>([
   "task_cancelled",
   "task_mode_unsupported",
   "task_timeout",
+  "telemetry_unavailable",
   "unknown_runtime_failure",
 ]);
 
@@ -152,6 +153,7 @@ export function fromGrpcTaskResponse(input: unknown): SubscriptionRuntimeTaskRes
   if (status === "AGENT_RUNTIME_TASK_STATUS_FAILED" || status === "2") {
     const failure = recordValue(response.failure, "failure");
     const causeCategory = optionalString(failure.causeCategory);
+    const usage = completeUsage(response.usage);
     return {
       failure: {
         ...(causeCategory === undefined ? {} : { causeCategory }),
@@ -163,6 +165,7 @@ export function fromGrpcTaskResponse(input: unknown): SubscriptionRuntimeTaskRes
       },
       protocolVersion,
       status: "failed",
+      ...(usage === undefined ? {} : { usage }),
     };
   }
   if (status === "AGENT_RUNTIME_TASK_STATUS_WAITING_FOR_INPUT" || status === "3") {

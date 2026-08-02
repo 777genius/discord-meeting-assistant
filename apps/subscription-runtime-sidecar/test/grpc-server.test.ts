@@ -83,6 +83,33 @@ describe("authenticated agent runtime gRPC handlers", () => {
       },
     });
   });
+
+  it("forwards complete token classes when the provider task fails", async () => {
+    const handlers = createGrpcHandlers(new FailedWithUsageExecutor(), handlerOptions);
+    const metadata = new Metadata();
+    metadata.set("authorization", `Bearer ${serviceToken}`);
+
+    const response = await invoke(
+      handlers.runAgentTask,
+      grpcRequest(incrementalCanonicalRequest),
+      metadata,
+    );
+
+    expect(response.error).toBeNull();
+    expect(response.value).toMatchObject({
+      failure: { code: "task_timeout" },
+      status: "AGENT_RUNTIME_TASK_STATUS_FAILED",
+      usage: {
+        cacheWriteInputTokens: 100,
+        cachedInputTokens: 200,
+        complete: true,
+        inputTokens: 1_000,
+        outputTokens: 300,
+        reasoningOutputTokens: 100,
+        totalTokens: 1_300,
+      },
+    });
+  });
 });
 
 class CompletedExecutor implements SidecarExecutorPort {
@@ -94,7 +121,7 @@ class CompletedExecutor implements SidecarExecutorPort {
         model: "gpt-5.6-luna",
         provider: "codex",
         purpose: "discord_meeting.summary.incremental",
-        reasoningEffort: "low",
+        reasoningEffort: "medium",
         requestId: incrementalCanonicalRequest.runId,
         runtimeEngine: "subscription-runtime-cli",
         runtimePackageVersion: "0.1.0-main.2",
@@ -105,6 +132,38 @@ class CompletedExecutor implements SidecarExecutorPort {
       protocolVersion: 1 as const,
       status: "completed" as const,
       structuredOutput,
+      usage: {
+        cacheWriteInputTokens: 100,
+        cachedInputTokens: 200,
+        inputTokens: 1_000,
+        outputTokens: 300,
+        reasoningOutputTokens: 100,
+        totalTokens: 1_300,
+      },
+    };
+  }
+
+  public async checkHealth() {
+    return {
+      runtimeEngine: "subscription-runtime-cli",
+      runtimeVersion: "0.1.0-main.2",
+      status: "serving" as const,
+      warningCodes: [],
+    };
+  }
+}
+
+class FailedWithUsageExecutor implements SidecarExecutorPort {
+  public async execute() {
+    return {
+      failure: {
+        code: "task_timeout" as const,
+        reconnectRequired: false,
+        retryable: true,
+        safeMessage: "Subscription runtime task timed out",
+      },
+      protocolVersion: 1 as const,
+      status: "failed" as const,
       usage: {
         cacheWriteInputTokens: 100,
         cachedInputTokens: 200,

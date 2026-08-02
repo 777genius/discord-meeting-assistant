@@ -5,7 +5,7 @@ export const subscriptionRuntimeProvider = "codex" as const;
 export const subscriptionRuntimeModel = "gpt-5.6-sol" as const;
 export const subscriptionRuntimeIncrementalModel = "gpt-5.6-luna" as const;
 export const subscriptionRuntimeReasoningEffort = "xhigh" as const;
-export const subscriptionRuntimeIncrementalReasoningEffort = "low" as const;
+export const subscriptionRuntimeIncrementalReasoningEffort = "medium" as const;
 export const subscriptionRuntimeEngine = "subscription-runtime-cli" as const;
 export const auditedSubscriptionRuntimePackageVersion = "0.1.0-main.2" as const;
 export const meetingSummaryOutputSchemaName = "discord_meeting_summary_v3" as const;
@@ -120,6 +120,7 @@ export type SubscriptionRuntimeFailureCode =
   | "task_cancelled"
   | "task_mode_unsupported"
   | "task_timeout"
+  | "telemetry_unavailable"
   | "unknown_runtime_failure";
 
 export interface SubscriptionRuntimeFailure {
@@ -167,6 +168,8 @@ export type SubscriptionRuntimeTaskResult =
       readonly failure: SubscriptionRuntimeFailure;
       readonly protocolVersion: number;
       readonly status: "failed";
+      /** Present only when every provider token class was reported. */
+      readonly usage?: SubscriptionRuntimeUsage;
     }
   | {
       readonly protocolVersion: number;

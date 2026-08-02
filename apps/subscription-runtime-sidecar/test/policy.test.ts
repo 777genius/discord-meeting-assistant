@@ -25,7 +25,7 @@ describe("subscription runtime request policy", () => {
     );
   });
 
-  it("reconstructs only the exact incremental Luna low profile", () => {
+  it("reconstructs only the exact incremental Luna medium profile", () => {
     const reconstructed = reconstructCanonicalRequest(
       grpcRequest(incrementalCanonicalRequest),
       options,
@@ -35,7 +35,7 @@ describe("subscription runtime request policy", () => {
     expect(reconstructed.context.purpose).toBe("discord_meeting.summary.incremental");
     expect(reconstructed.task.controls).toMatchObject({
       model: "gpt-5.6-luna",
-      reasoningEffort: "low",
+      reasoningEffort: "medium",
     });
   });
 

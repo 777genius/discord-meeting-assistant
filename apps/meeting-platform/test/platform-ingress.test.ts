@@ -81,8 +81,8 @@ describe("Platform Craig ingress", () => {
       live: {
         acceptLifecycle: () => order.push("live-lifecycle"),
         acceptVoiceBatch: () => {},
-        settleBeforeAuthoritativeFinal: async () => {
-          order.push("live-settled");
+        prepareForAuthoritativeFinal: () => {
+          order.push("live-prepared");
         },
       },
       logger,
@@ -95,7 +95,7 @@ describe("Platform Craig ingress", () => {
 
     expect(order).toEqual([
       "live-lifecycle",
-      "live-settled",
+      "live-prepared",
       "record-and-schedule",
       "dispatch",
     ]);
@@ -161,7 +161,7 @@ describe("Platform Craig ingress", () => {
       live: {
         acceptLifecycle: () => {},
         acceptVoiceBatch: () => order.push("live"),
-        settleBeforeAuthoritativeFinal: async () => {},
+        prepareForAuthoritativeFinal: () => {},
       },
       logger,
       metrics,

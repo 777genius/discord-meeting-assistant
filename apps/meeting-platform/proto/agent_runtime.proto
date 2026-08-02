@@ -78,13 +78,19 @@ message AgentRuntimeExecutionAttestation {
 }
 
 message AgentRuntimeUsage {
+  // Token values are carried only when complete is true. Zero is a valid measured
+  // value and must not be used to stand in for an omitted token class.
   uint32 input_tokens = 1;
   uint32 output_tokens = 2;
   uint32 total_tokens = 3;
-  double estimated_cost_usd = 4;
+  // Deprecated: proto3 uses zero for an absent scalar, so this cannot represent
+  // a trustworthy cost. Meeting Platform derives a versioned API-equivalent cost
+  // only from complete measured token classes.
+  double estimated_cost_usd = 4 [deprecated = true];
   uint32 cached_input_tokens = 5;
   uint32 cache_write_input_tokens = 6;
   uint32 reasoning_output_tokens = 7;
+  // True only when every token class in this message was measured by the runtime.
   bool complete = 8;
 }
 

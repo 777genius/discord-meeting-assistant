@@ -16,7 +16,7 @@ const profiles = Object.freeze({
     outputKind: "structured_output",
     provider: "codex",
     purpose: "discord_meeting.summary.incremental",
-    reasoningEffort: "low",
+    reasoningEffort: "medium",
     responseFormat: "json",
   }),
 });

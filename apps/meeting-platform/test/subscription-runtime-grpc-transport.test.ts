@@ -81,17 +81,17 @@ describe("subscription runtime gRPC transport mapping", () => {
     expect(JSON.stringify(request)).not.toContain("OPENAI_API_KEY");
   });
 
-  it("maps the incremental request without changing its Luna low profile", () => {
+  it("maps the incremental request without changing its Luna medium profile", () => {
     const request = toGrpcTaskRequest(incrementalRuntimeRequest);
 
     expect(request.purpose).toBe("discord_meeting.summary.incremental");
     expect(JSON.parse(request.controlsJson)).toMatchObject({
       model: "gpt-5.6-luna",
-      reasoningEffort: "low",
+      reasoningEffort: "medium",
     });
     expect(request.metadata).toMatchObject({
       model: "gpt-5.6-luna",
-      reasoningEffort: "low",
+      reasoningEffort: "medium",
       summaryRevision: "1",
       throughTurnCount: "1",
     });
@@ -133,7 +133,7 @@ describe("subscription runtime gRPC transport mapping", () => {
     }
   });
 
-  it("maps complete real usage and ignores absent/default usage", () => {
+  it("maps complete real usage and never fabricates absent/default usage", () => {
     const baseResponse = {
       schemaVersion: 1,
       status: "AGENT_RUNTIME_TASK_STATUS_COMPLETED",
@@ -152,7 +152,7 @@ describe("subscription runtime gRPC transport mapping", () => {
         canonicalRequestSha256: canonicalJsonSha256(incrementalRuntimeRequest),
         provider: "AGENT_RUNTIME_PROVIDER_CODEX",
         model: "gpt-5.6-luna",
-        reasoningEffort: "low",
+        reasoningEffort: "medium",
         runtimeEngine: "subscription-runtime-cli",
         runtimePackageVersion: "0.1.0-main.2",
         launcherSha256: "a".repeat(64),
@@ -212,6 +212,15 @@ describe("subscription runtime gRPC transport mapping", () => {
         causeCategory: "subscription_runtime_cli",
         details: { stderr: "must-not-cross" },
       },
+      usage: {
+        cacheWriteInputTokens: 100,
+        cachedInputTokens: 200,
+        complete: true,
+        inputTokens: 1_000,
+        outputTokens: 300,
+        reasoningOutputTokens: 100,
+        totalTokens: 1_300,
+      },
     });
 
     expect(result).toEqual({
@@ -223,6 +232,14 @@ describe("subscription runtime gRPC transport mapping", () => {
         reconnectRequired: false,
         retryable: true,
         safeMessage: "Agent runtime task timed out",
+      },
+      usage: {
+        cacheWriteInputTokens: 100,
+        cachedInputTokens: 200,
+        inputTokens: 1_000,
+        outputTokens: 300,
+        reasoningOutputTokens: 100,
+        totalTokens: 1_300,
       },
     });
   });

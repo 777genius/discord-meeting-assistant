@@ -6,7 +6,8 @@ export type SubscriptionRuntimeAdapterErrorCode =
   | "invalid_attestation"
   | "invalid_evidence"
   | "invalid_input"
-  | "invalid_provider_response";
+  | "invalid_provider_response"
+  | "telemetry_unavailable";
 
 export class SubscriptionRuntimeAdapterError extends Error {
   public constructor(
@@ -113,6 +114,8 @@ function runtimeFailureMessage(
       return "Subscription runtime returned invalid summary output";
     case "task_mode_unsupported":
       return "Subscription runtime rejected the summary execution profile";
+    case "telemetry_unavailable":
+      return "Subscription runtime did not return complete generation telemetry";
     case "task_cancelled":
       return "Subscription runtime summary task was cancelled";
     case "unknown_runtime_failure":

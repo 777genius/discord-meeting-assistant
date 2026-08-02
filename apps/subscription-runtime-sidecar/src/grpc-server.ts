@@ -133,6 +133,7 @@ function toGrpcTaskResponse(
         causeCategory: result.failure.causeCategory ?? "subscription_runtime",
         details: {},
       },
+      ...(result.usage === undefined ? {} : { usage: toGrpcUsage(result.usage) }),
     };
   }
   if (result.status === "waiting_for_input") {
@@ -153,15 +154,7 @@ function toGrpcTaskResponse(
     ...(result.usage === undefined
       ? {}
       : {
-          usage: {
-            cacheWriteInputTokens: result.usage.cacheWriteInputTokens,
-            cachedInputTokens: result.usage.cachedInputTokens,
-            complete: true,
-            inputTokens: result.usage.inputTokens,
-            outputTokens: result.usage.outputTokens,
-            reasoningOutputTokens: result.usage.reasoningOutputTokens,
-            totalTokens: result.usage.totalTokens,
-          },
+          usage: toGrpcUsage(result.usage),
         }),
     executionAttestation: {
       schemaVersion: result.executionAttestation.schemaVersion,
@@ -180,6 +173,25 @@ function toGrpcTaskResponse(
       selectedOutputSha256:
         result.executionAttestation.selectedOutputSha256,
     },
+  };
+}
+
+function toGrpcUsage(usage: {
+  readonly cacheWriteInputTokens: number;
+  readonly cachedInputTokens: number;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly reasoningOutputTokens: number;
+  readonly totalTokens: number;
+}): RawMessage {
+  return {
+    cacheWriteInputTokens: usage.cacheWriteInputTokens,
+    cachedInputTokens: usage.cachedInputTokens,
+    complete: true,
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    reasoningOutputTokens: usage.reasoningOutputTokens,
+    totalTokens: usage.totalTokens,
   };
 }
 

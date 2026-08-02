@@ -54,6 +54,7 @@ interface LiveMeetingState {
   domainChain: Promise<void>;
   finishPromise: Promise<void> | null;
   finishing: boolean;
+  lastProjectedCaptionsSignature: string | null;
   readonly meetingId: string;
   readonly packetIdOrder: string[];
   readonly packetIds: Set<string>;
@@ -84,9 +85,8 @@ export class PlatformLiveMeetingRuntime {
     }
     if (event.type === "meeting.ended" || event.type === "meeting.aborted") {
       const state = this.meetings.get(event.recordingId);
-      if (state !== undefined && !state.finishing) {
-        state.finishing = true;
-        state.finishPromise = this.finish(state, Date.parse(event.occurredAt));
+      if (state !== undefined) {
+        this.beginFinish(state, Date.parse(event.occurredAt));
       }
     }
   }
@@ -182,15 +182,20 @@ export class PlatformLiveMeetingRuntime {
     }
   }
 
-  public async settleBeforeAuthoritativeFinal(recordingId: string): Promise<void> {
+  public prepareForAuthoritativeFinal(recordingId: string): void {
     const state = this.meetings.get(recordingId);
     if (state === undefined) {
       return;
     }
-    if (!state.finishing) {
-      state.finishing = true;
-      state.finishPromise = this.finish(state, Date.now());
+    this.beginFinish(state, Date.now());
+  }
+
+  public async settleBeforeFinalPublication(recordingId: string): Promise<void> {
+    const state = this.meetings.get(recordingId);
+    if (state === undefined) {
+      return;
     }
+    this.beginFinish(state, Date.now());
     await state.finishPromise;
   }
 
@@ -199,10 +204,7 @@ export class PlatformLiveMeetingRuntime {
     const nowMs = Date.now();
     await Promise.allSettled(
       [...this.meetings.values()].map((state) => {
-        if (!state.finishing) {
-          state.finishing = true;
-          state.finishPromise = this.finish(state, nowMs);
-        }
+        this.beginFinish(state, nowMs);
         return state.finishPromise ?? Promise.resolve();
       }),
     );
@@ -217,6 +219,7 @@ export class PlatformLiveMeetingRuntime {
       domainChain: Promise.resolve(),
       finishPromise: null,
       finishing: false,
+      lastProjectedCaptionsSignature: null,
       meetingId: event.recordingId,
       packetIdOrder: [],
       packetIds: new Set(),
@@ -299,6 +302,9 @@ export class PlatformLiveMeetingRuntime {
       state.refreshQueued = true;
       this.enqueueDomain(state, async () => {
         try {
+          if (state.finishing) {
+            return;
+          }
           await this.refresh(state, nowMs);
         } finally {
           state.refreshQueued = false;
@@ -307,15 +313,22 @@ export class PlatformLiveMeetingRuntime {
     }
   }
 
-  private async refresh(state: LiveMeetingState, nowMs: number): Promise<void> {
+  private async refresh(
+    state: LiveMeetingState,
+    nowMs: number,
+    summaryGeneration: "cadence" | "skip" = "cadence",
+  ): Promise<void> {
     const refreshStartedAtMs = performance.now();
     const captions = [...state.captions.values()]
       .filter(({ endMs }) => nowMs - state.startedAtMs - endMs <= captionRetentionMs)
       .toSorted((left, right) => left.startMs - right.startMs || left.speakerId.localeCompare(right.speakerId));
+    const captionsSignature = liveCaptionsSignature(captions);
     const result = await this.dependencies.refreshMeeting.execute({
       captions,
       meetingId: state.meetingId,
       nowMs,
+      projectionRequested: captionsSignature !== state.lastProjectedCaptionsSignature,
+      summaryGeneration,
     });
     if (result.status === "not-found") {
       throw new Error("Live meeting disappeared before refresh");
@@ -350,6 +363,9 @@ export class PlatformLiveMeetingRuntime {
         retryable: result.projectionFailure.retryable,
       });
     }
+    if (result.projected) {
+      state.lastProjectedCaptionsSignature = captionsSignature;
+    }
     this.dependencies.logger.info("Live meeting refresh completed", {
       durationMs: Math.max(0, performance.now() - refreshStartedAtMs),
       generated: result.generated,
@@ -379,10 +395,31 @@ export class PlatformLiveMeetingRuntime {
       if (result === "not-found") {
         throw new Error("Live meeting disappeared before finish");
       }
-      await this.refresh(state, endedAtMs);
-      this.meetings.delete(state.meetingId);
+      // Craig acknowledgement is no longer coupled to this work. The final
+      // publisher waits on this finish promise, so keep the terminal projection
+      // fast and let the durable post-call summary reconcile every turn.
+      await this.refresh(state, endedAtMs, "skip");
     });
-    await state.domainChain;
+    try {
+      await state.domainChain;
+    } finally {
+      this.meetings.delete(state.meetingId);
+    }
+  }
+
+  private beginFinish(state: LiveMeetingState, endedAtMs: number): void {
+    if (state.finishing) {
+      return;
+    }
+    state.finishing = true;
+    const finishPromise = this.finish(state, endedAtMs);
+    state.finishPromise = finishPromise;
+    void finishPromise.catch((error: unknown) => {
+      this.dependencies.logger.error("Derived live meeting finalization failed", {
+        errorName: error instanceof Error ? error.name : "UnknownError",
+        meetingId: state.meetingId,
+      });
+    });
   }
 
   private scheduleSpeakerIdleFinalization(
@@ -435,6 +472,12 @@ export class PlatformLiveMeetingRuntime {
     };
     state.domainChain = state.domainChain.then(guarded, guarded);
   }
+}
+
+function liveCaptionsSignature(captions: readonly LiveCaptionSnapshot[]): string {
+  return createHash("sha256")
+    .update(JSON.stringify(captions))
+    .digest("hex");
 }
 
 function validateSpeakerIdleFinalizeMs(value: number | undefined): number {

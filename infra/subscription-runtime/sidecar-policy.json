@@ -36,7 +36,7 @@
     "discord_meeting.summary.incremental": {
       "provider": "codex",
       "model": "gpt-5.6-luna",
-      "reasoningEffort": "low",
+      "reasoningEffort": "medium",
       "taskKind": "structured-prompt",
       "executionProfile": "stateless-completion",
       "disableTools": true,

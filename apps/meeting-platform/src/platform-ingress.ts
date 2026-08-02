@@ -33,7 +33,7 @@ interface RecordingIngressPort {
 interface DerivedLiveIngressPort {
   acceptLifecycle(event: CraigLifecycleEvent): void;
   acceptVoiceBatch(batch: VoicePacketBatch): void;
-  settleBeforeAuthoritativeFinal(recordingId: string): Promise<void>;
+  prepareForAuthoritativeFinal(recordingId: string): void;
 }
 
 export interface PlatformCraigIngressDependencies {
@@ -83,9 +83,7 @@ export class PlatformCraigIngress {
       return;
     }
 
-    await this.dependencies.live?.settleBeforeAuthoritativeFinal(
-      result.recording.recordingId,
-    );
+    this.dependencies.live?.prepareForAuthoritativeFinal(result.recording.recordingId);
 
     const meeting = Meeting.record({
       meetingId: result.recording.recordingId,

@@ -96,9 +96,6 @@ export class SubscriptionRuntimeIncrementalSummaryAdapter
         "Subscription runtime returned an unsupported protocol version",
       );
     }
-    if (result.status === "failed") {
-      throw new RuntimeTaskFailureError(result.failure);
-    }
     if (result.status === "waiting_for_input") {
       throw new SubscriptionRuntimeAdapterError(
         "invalid_provider_response",
@@ -110,6 +107,15 @@ export class SubscriptionRuntimeIncrementalSummaryAdapter
       : mapLunaGenerationUsage(result.usage, runtimeRequest.runId);
     if (usage !== undefined) {
       captureUsage(usage);
+    }
+    if (result.status === "failed") {
+      throw new RuntimeTaskFailureError(result.failure);
+    }
+    if (usage === undefined) {
+      throw new SubscriptionRuntimeAdapterError(
+        "telemetry_unavailable",
+        "Subscription runtime did not return complete generation telemetry",
+      );
     }
 
     verifySubscriptionRuntimeAttestation(
@@ -135,7 +141,7 @@ export class SubscriptionRuntimeIncrementalSummaryAdapter
         request.idempotencyKey,
         request.revision,
       ),
-      ...(usage === undefined ? {} : { usage }),
+      usage,
     };
   }
 }

@@ -24,7 +24,7 @@ The package manifest must be exactly `@vioxen/subscription-runtime` version
 after every task. It must call that version's
 `subscription-runtime-run-agent-task` JSON bridge while constructing the Codex
 worker with the exact selected profile: `gpt-5.6-sol`/`xhigh` for final summary
-or `gpt-5.6-luna`/`low` for incremental summary, disabled tools, no interactive
+or `gpt-5.6-luna`/`medium` for incremental summary, disabled tools, no interactive
 flow, and stateless-completion semantics. A generic launcher that does not
 enforce both exact profiles is not an admitted production installation.
 
@@ -34,6 +34,12 @@ The sidecar invokes the audited bridge with `--provider codex`, `--input`,
 exact `--model`. The child reasoning environment must match that same request
 profile. The auth JSON and state root must belong only to this sidecar. Never
 mount another project's mutable runtime state.
+
+An incremental completion is rejected with `telemetry_unavailable` unless the
+runtime measured every token class: input, cached input, cache-write input,
+output, reasoning output, and total. Complete measured usage is forwarded for
+both completed and failed provider tasks; callers derive the versioned
+API-equivalent cost rather than consuming a default zero-valued cost field.
 
 ## Secrets and network
 

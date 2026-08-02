@@ -70,6 +70,28 @@ class RecordingProjector implements LiveMeetingProjectionPort {
   }
 }
 
+class FailingCallProjector implements LiveMeetingProjectionPort {
+  public readonly requests: LiveMeetingProjectionRequest[] = [];
+
+  public constructor(private readonly failingCalls: ReadonlySet<number>) {}
+
+  public publish(
+    request: LiveMeetingProjectionRequest,
+  ): Promise<PortResult<{ readonly externalPublicationId: string }>> {
+    this.requests.push(structuredClone(request));
+    if (this.failingCalls.has(this.requests.length)) {
+      return Promise.resolve({
+        failure: { code: "DISCORD_UNAVAILABLE", message: "retry", retryable: true },
+        ok: false,
+      });
+    }
+    return Promise.resolve({
+      ok: true,
+      value: { externalPublicationId: "thread-1" },
+    });
+  }
+}
+
 function generatedSummary(
   request: IncrementalSummaryGenerationRequest,
 ): PortResult<GeneratedIncrementalSummary> {
@@ -125,6 +147,41 @@ async function startedRepository(): Promise<MemoryLiveMeetingRepository> {
 }
 
 describe("live meeting orchestration", () => {
+  it("opens the live projection on the first caption and skips an unchanged refresh", async () => {
+    const meetings = await startedRepository();
+    const summarizer = new RecordingSummarizer(generatedSummary);
+    const projector = new RecordingProjector();
+    const refresh = new RefreshLiveMeeting({ meetings, projector, summarizer });
+    const caption = {
+      endMs: 8_000,
+      isFinal: false,
+      speakerId: "speaker-a",
+      startMs: 5_000,
+      text: "Начинаем обсуждение релиза.",
+    } as const;
+
+    await expect(refresh.execute({
+      captions: [caption],
+      meetingId: "meeting-1",
+      nowMs: 10_000,
+      projectionRequested: true,
+    })).resolves.toMatchObject({ generated: false, projected: true });
+    await expect(refresh.execute({
+      captions: [caption],
+      meetingId: "meeting-1",
+      nowMs: 15_000,
+      projectionRequested: false,
+    })).resolves.toMatchObject({ generated: false, projected: false });
+
+    expect(projector.requests).toHaveLength(1);
+    expect(projector.requests[0]).toMatchObject({
+      captions: [caption],
+      currentExternalPublicationId: null,
+      summary: null,
+    });
+    expect(summarizer.requests).toHaveLength(0);
+  });
+
   it("waits five minutes, then creates one mutable projection with captions", async () => {
     const meetings = await startedRepository();
     await new AppendLiveTranscriptTurn(meetings).execute("meeting-1", {
@@ -217,6 +274,91 @@ describe("live meeting orchestration", () => {
       throughTurnCount: 2,
     });
     expect(summarizer.requests[1]?.recentContextTurns).toEqual([]);
+  });
+
+  it("retries a failed summary projection without requiring another caption change", async () => {
+    const meetings = await startedRepository();
+    const append = new AppendLiveTranscriptTurn(meetings);
+    const summarizer = new RecordingSummarizer(generatedSummary);
+    const projector = new FailingCallProjector(new Set([3]));
+    const refresh = new RefreshLiveMeeting({ meetings, projector, summarizer });
+    const caption = {
+      endMs: 8_000,
+      isFinal: true,
+      speakerId: "speaker-a",
+      startMs: 5_000,
+      text: "Выпускаем версию в пятницу.",
+    } as const;
+
+    await refresh.execute({
+      captions: [caption],
+      meetingId: "meeting-1",
+      nowMs: 10_000,
+      projectionRequested: true,
+    });
+    await append.execute("meeting-1", { ...caption, turnId: "turn-1" });
+
+    const generated = await refresh.execute({
+      captions: [caption],
+      meetingId: "meeting-1",
+      nowMs: 300_000,
+      projectionRequested: false,
+    });
+    expect(generated).toMatchObject({ generated: true, projected: true });
+    expect(generated.status).toBe("refreshed");
+    if (generated.status !== "refreshed") {
+      throw new Error("expected refreshed live meeting");
+    }
+    expect(generated.projectionFailure).toMatchObject({ code: "DISCORD_UNAVAILABLE" });
+
+    await expect(refresh.execute({
+      captions: [caption],
+      meetingId: "meeting-1",
+      nowMs: 305_000,
+      projectionRequested: false,
+    })).resolves.toMatchObject({ generated: false, projected: true });
+    expect(projector.requests).toHaveLength(4);
+    expect(meetings.snapshot?.projectedRevision).toBe(meetings.snapshot?.revision);
+  });
+
+  it("projects an ended meeting without generating when terminal generation is skipped", async () => {
+    const repository = new MemoryLiveMeetingRepository();
+    const summarizer = new RecordingSummarizer(generatedSummary);
+    const projector = new RecordingProjector();
+    const start = new StartLiveMeeting({ meetings: repository });
+    const append = new AppendLiveTranscriptTurn(repository);
+    const finish = new FinishLiveMeeting(repository);
+    const refresh = new RefreshLiveMeeting({
+      meetings: repository,
+      projector,
+      summarizer,
+    });
+
+    await start.execute({
+      meetingId: "meeting-terminal-skip",
+      publicationTargetId: "channel-1",
+      startedAtMs: 1_000,
+    });
+    await append.execute("meeting-terminal-skip", {
+      endMs: 2_000,
+      speakerId: "speaker-1",
+      startMs: 1_000,
+      text: "Последняя реплика встречи.",
+      turnId: "turn-terminal-1",
+    });
+    await finish.execute("meeting-terminal-skip", 4_000);
+
+    const result = await refresh.execute({
+      captions: [],
+      meetingId: "meeting-terminal-skip",
+      nowMs: 4_000,
+      summaryGeneration: "skip",
+    });
+
+    expect(result).toMatchObject({ generated: false, projected: true });
+    expect(summarizer.requests).toHaveLength(0);
+    expect(projector.requests).toHaveLength(1);
+    expect(projector.requests[0]).toMatchObject({ status: "ended" });
   });
 
   it("publishes and summarizes a short meeting as soon as it ends", async () => {

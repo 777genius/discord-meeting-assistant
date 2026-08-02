@@ -182,6 +182,71 @@ function packets(): VoicePacketBatch {
 describe("PlatformLiveMeetingRuntime", () => {
   afterEach(() => vi.useRealTimers());
 
+  it("projects the first live caption within one tick and suppresses unchanged edits", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime("2026-08-02T10:00:00.000Z");
+    const meetings = new MemoryLiveMeetingRepository();
+    const summarizer = new SummaryStub();
+    const projector = new ProjectionStub();
+    const transcriber = new LiveTranscriberStub();
+    const runtime = new PlatformLiveMeetingRuntime({
+      appendTurn: new AppendLiveTranscriptTurn(meetings),
+      finishMeeting: new FinishLiveMeeting(meetings),
+      logger,
+      publicationTargetId: "1533228891827736657",
+      refreshMeeting: new RefreshLiveMeeting({ meetings, projector, summarizer }),
+      startMeeting: new StartLiveMeeting({ meetings }),
+      transcriber,
+    });
+    const firstBatch = packets();
+    firstBatch.packets[0] = { ...firstBatch.packets[0]!, relativeTimeMs: 0 };
+
+    runtime.acceptLifecycle(started());
+    runtime.acceptVoiceBatch(firstBatch);
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(projector.requests).toHaveLength(1);
+    expect(projector.requests[0]).toMatchObject({
+      elapsedMs: 5_000,
+      status: "active",
+      summary: null,
+    });
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(projector.requests).toHaveLength(1);
+    expect(summarizer.requests).toHaveLength(0);
+
+    await runtime.close();
+  });
+
+  it("starts live finalization when the authoritative publisher reaches the fence", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime("2026-08-02T10:00:01.000Z");
+    const meetings = new MemoryLiveMeetingRepository();
+    const runtime = new PlatformLiveMeetingRuntime({
+      appendTurn: new AppendLiveTranscriptTurn(meetings),
+      finishMeeting: new FinishLiveMeeting(meetings),
+      logger,
+      publicationTargetId: "1533228891827736657",
+      refreshMeeting: new RefreshLiveMeeting({
+        meetings,
+        projector: new ProjectionStub(),
+        summarizer: new SummaryStub(),
+      }),
+      startMeeting: new StartLiveMeeting({ meetings }),
+      transcriber: new LiveTranscriberStub(),
+    });
+
+    runtime.acceptLifecycle(started());
+    await runtime.settleBeforeFinalPublication("recording-live-1");
+
+    expect(meetings.snapshot).toMatchObject({
+      endedAtMs: Date.parse("2026-08-02T10:00:01.000Z"),
+      status: "ended",
+    });
+    await runtime.close();
+  });
+
   it("keeps Opus and derived state off the authoritative request path", async () => {
     const meetings = new MemoryLiveMeetingRepository();
     const summarizer = new SummaryStub();
@@ -204,23 +269,19 @@ describe("PlatformLiveMeetingRuntime", () => {
 
     expect(transcriber.packets).toHaveLength(1);
     expect(transcriber.finalizationCount).toBe(1);
-    expect(summarizer.requests).toHaveLength(1);
-    expect(summarizer.requests[0]?.newTurns).toMatchObject([
-      { speakerId: "1533228054724346087", text: "Выпускаем версию в пятницу." },
-    ]);
-    expect(projector.requests).toHaveLength(2);
+    expect(summarizer.requests).toHaveLength(0);
+    expect(projector.requests).toHaveLength(1);
     expect(projector.requests[0]).toMatchObject({
       captions: [{ isFinal: true, speakerId: "1533228054724346087" }],
       elapsedMs: 360_000,
       status: "ended",
       summary: null,
     });
-    expect(projector.requests[1]?.summary).toMatchObject({ revision: 1 });
     expect(meetings.snapshot).toMatchObject({
-      draftSummary: { revision: 1 },
+      draftSummary: null,
       endedAtMs: Date.parse("2026-08-02T10:06:00.000Z"),
       status: "ended",
-      summarizedTurnIds: [expect.any(String)],
+      summarizedTurnIds: [],
       turns: [{ text: "Выпускаем версию в пятницу." }],
     });
   });

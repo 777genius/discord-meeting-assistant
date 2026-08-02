@@ -93,7 +93,7 @@ describe("SubscriptionRuntimeExecutor", () => {
     await expect(stat(String(inputPath))).rejects.toThrow();
   });
 
-  it("selects Luna low from the incremental purpose and preserves complete real usage", async () => {
+  it("selects Luna medium from the incremental purpose and preserves complete real usage", async () => {
     root = await mkdtemp(join(tmpdir(), "sidecar-executor-test-"));
     const keyFile = join(root, "local-encryption-key");
     await writeFile(keyFile, "private-test-key\n", { mode: 0o600 });
@@ -124,7 +124,7 @@ describe("SubscriptionRuntimeExecutor", () => {
       executionAttestation: {
         model: "gpt-5.6-luna",
         purpose: "discord_meeting.summary.incremental",
-        reasoningEffort: "low",
+        reasoningEffort: "medium",
       },
       status: "completed",
       usage: {
@@ -140,10 +140,10 @@ describe("SubscriptionRuntimeExecutor", () => {
       "--model",
       "gpt-5.6-luna",
     ]));
-    expect(processRequest?.env.AGENT_RUNTIME_REASONING_EFFORT).toBe("low");
+    expect(processRequest?.env.AGENT_RUNTIME_REASONING_EFFORT).toBe("medium");
   });
 
-  it("omits partial telemetry instead of fabricating missing token classes", async () => {
+  it("fails closed on partial incremental telemetry instead of fabricating token classes", async () => {
     root = await mkdtemp(join(tmpdir(), "sidecar-executor-test-"));
     const keyFile = join(root, "local-encryption-key");
     await writeFile(keyFile, "private-test-key\n", { mode: 0o600 });
@@ -159,10 +159,48 @@ describe("SubscriptionRuntimeExecutor", () => {
 
     const result = await executor.execute(incrementalCanonicalRequest);
 
-    expect(result.status).toBe("completed");
-    if (result.status === "completed") {
-      expect(result).not.toHaveProperty("usage");
-    }
+    expect(result).toMatchObject({
+      failure: {
+        code: "telemetry_unavailable",
+        retryable: false,
+      },
+      status: "failed",
+    });
+  });
+
+  it("preserves complete usage when a runtime task fails after consuming tokens", async () => {
+    root = await mkdtemp(join(tmpdir(), "sidecar-executor-test-"));
+    const keyFile = join(root, "local-encryption-key");
+    await writeFile(keyFile, "private-test-key\n", { mode: 0o600 });
+    const executor = new SubscriptionRuntimeExecutor(
+      options(keyFile, {
+        processRunner: {
+          run: async () => failedProcess({
+            usage: {
+              cacheWriteInputTokens: 100,
+              cachedInputTokens: 200,
+              inputTokens: 1_000,
+              outputTokens: 300,
+              reasoningOutputTokens: 100,
+              totalTokens: 1_300,
+            },
+          }),
+        },
+      }),
+    );
+
+    await expect(executor.execute(incrementalCanonicalRequest)).resolves.toMatchObject({
+      failure: { code: "task_timeout", retryable: true },
+      status: "failed",
+      usage: {
+        cacheWriteInputTokens: 100,
+        cachedInputTokens: 200,
+        inputTokens: 1_000,
+        outputTokens: 300,
+        reasoningOutputTokens: 100,
+        totalTokens: 1_300,
+      },
+    });
   });
 
   it("rejects policy conflicts before inspecting or spawning", async () => {
@@ -357,6 +395,29 @@ function completedProcess(
       status: "completed",
       outputText: JSON.stringify(structuredOutput),
       structuredOutput,
+      ...(telemetry === undefined ? {} : { telemetry }),
+      warnings: [],
+    }),
+    timedOut: false,
+  };
+}
+
+function failedProcess(
+  telemetry?: Record<string, unknown>,
+): ProcessRunResult {
+  return {
+    exitCode: 1,
+    outputLimitExceeded: false,
+    signal: null,
+    stderr: "",
+    stdout: JSON.stringify({
+      failure: {
+        code: "task_timeout",
+        reconnectRequired: false,
+        retryable: true,
+      },
+      protocolVersion: 1,
+      status: "failed",
       ...(telemetry === undefined ? {} : { telemetry }),
       warnings: [],
     }),

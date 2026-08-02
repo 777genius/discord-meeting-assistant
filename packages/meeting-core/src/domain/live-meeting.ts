@@ -337,6 +337,10 @@ export class LiveMeeting {
     return this.externalProjectionId;
   }
 
+  public get projectedRevision(): number {
+    return this.lastProjectedRevision;
+  }
+
   public appendFinalTurn(snapshot: TranscriptTurnSnapshot): boolean {
     const turn = TranscriptTurn.create(snapshot);
     const existing = this.finalizedTurns.find(({ turnId }) => turnId === turn.turnId);
@@ -421,11 +425,16 @@ export class LiveMeeting {
           "live projection identity cannot change after publication",
         );
       }
-      return false;
+      if (revision <= this.lastProjectedRevision) {
+        return false;
+      }
+      this.incrementRevision();
+      this.lastProjectedRevision = this.currentRevision;
+      return true;
     }
     this.externalProjectionId = normalized;
-    this.lastProjectedRevision = revision;
     this.incrementRevision();
+    this.lastProjectedRevision = this.currentRevision;
     return true;
   }
 
