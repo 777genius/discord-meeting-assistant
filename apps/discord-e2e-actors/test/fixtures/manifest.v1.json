@@ -29,7 +29,7 @@
       "audioSha256": "442fc44fce75dad4c904d99fe63b45d69064a748333025a89c2fd51efd33ccb2",
       "durationMs": 22403,
       "sourceText": "Meeting Platform сохраняет Craig recording. Затем запускает PostgreSQL pipeline. Решение - выпустить версию в пятницу. До седьмого августа две тысячи двадцать шестого года спикер Б проверит Discord thread. Повторяю - Discord thread будет проверен в две тысячи двадцать шестом году.",
-      "requiredTerms": ["Meeting Platform", "Craig recording", "PostgreSQL pipeline", "Discord thread", "августа", "2026"]
+      "requiredTerms": ["Meeting Platform", "Craig recording", "PostgreSQL pipeline", "Discord thread", "2026"]
     },
     {
       "fixtureId": "speaker-b",

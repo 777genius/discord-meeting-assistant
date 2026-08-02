@@ -24,6 +24,7 @@ const summarySystemPrompt = [
   "Omit unsupported topics, decisions, action items, and open questions instead of guessing.",
   "Set ownerSpeakerId to an exact input speakerId only when the transcript explicitly assigns the action; otherwise use null.",
   "A first-person commitment in a transcript turn explicitly assigns the action to that turn's speakerId.",
+  "Consolidate related first-person commitments from the same speaker across neighboring turns into one action item, including its owner, explicit deadline, complete task wording, and every directly supporting turn; do not split one commitment into fragments.",
   "Set an action deadline to the exact deadline wording in the transcript, or null when none was explicitly stated; never infer or normalize it.",
   "Write concise natural Russian for people reading Discord, with concrete wording and no technical metadata.",
   "Never expose meetingId, recordingId, transcriptId, turnId, summaryId, or raw speakerId values inside human-readable text fields.",

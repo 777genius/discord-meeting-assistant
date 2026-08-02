@@ -6,7 +6,7 @@ export const subscriptionRuntimeReasoningEffort = "xhigh" as const;
 export const subscriptionRuntimeEngine = "subscription-runtime-cli" as const;
 export const auditedSubscriptionRuntimePackageVersion = "0.1.0-main.2" as const;
 export const meetingSummaryOutputSchemaName = "discord_meeting_summary_v3" as const;
-export const meetingSummaryPolicyVersion = "meeting-summary.subscription-runtime.v3" as const;
+export const meetingSummaryPolicyVersion = "meeting-summary.subscription-runtime.v4" as const;
 
 export type JsonPrimitive = boolean | null | number | string;
 export type JsonValue = JsonPrimitive | JsonObject | readonly JsonValue[];
