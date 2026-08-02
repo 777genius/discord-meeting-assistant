@@ -10,11 +10,26 @@ describe("loadActorConfig", () => {
     });
 
     expect(config.keychainService).toBe("discord-voice-bot-e2e");
+    expect(config.scenario).toBe("overlap");
     expect(config.speakers).toEqual([
       { name: "speaker-a", account: "speaker-a", fixturePath: "test/fixtures/speaker-a.ogg" },
       { name: "speaker-b", account: "speaker-b", fixturePath: "test/fixtures/speaker-b.ogg" },
     ]);
     expect(config.speakerBDelayMilliseconds).toBe(750);
+  });
+
+  it("selects sequential and reconnect scenarios without accepting arbitrary commands", () => {
+    const baseEnvironment = {
+      DISCORD_E2E_GUILD_ID: "11111111111111111",
+      DISCORD_E2E_VOICE_CHANNEL_ID: "22222222222222222",
+    };
+
+    expect(loadActorConfig({ ...baseEnvironment, DISCORD_E2E_SCENARIO: "sequential" }).scenario)
+      .toBe("sequential");
+    expect(loadActorConfig({ ...baseEnvironment, DISCORD_E2E_SCENARIO: "reconnect" }).scenario)
+      .toBe("reconnect");
+    expect(() => loadActorConfig({ ...baseEnvironment, DISCORD_E2E_SCENARIO: "custom" }))
+      .toThrow();
   });
 
   it("rejects non-Discord channel identifiers before any connection", () => {

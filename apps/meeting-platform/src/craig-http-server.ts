@@ -25,7 +25,7 @@ export interface CraigHttpServerOptions {
   readonly bearerToken: string;
   readonly health: PlatformHealthPort;
   readonly ingress: CraigIngressPort;
-  readonly onInternalError?: () => void;
+  readonly onInternalError?: (error: unknown) => void;
 }
 
 export function createCraigHttpServer(options: CraigHttpServerOptions): Server {
@@ -33,8 +33,8 @@ export function createCraigHttpServer(options: CraigHttpServerOptions): Server {
     throw new Error("Craig integration bearer token is too short");
   }
   const server = createServer((request, response) => {
-    void handleRequest(request, response, options).catch(() => {
-      options.onInternalError?.();
+    void handleRequest(request, response, options).catch((error: unknown) => {
+      options.onInternalError?.(error);
       sendJson(response, 500, { code: "INTERNAL_ERROR" });
     });
   });

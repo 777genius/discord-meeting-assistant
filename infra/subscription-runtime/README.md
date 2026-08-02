@@ -30,6 +30,11 @@ Compose, repository files, logs, task requests, health responses, or
 attestations. Directly mounting `social-monitor/auth-current`, its runtime state,
 or any other mutable project directory is forbidden.
 
+`local-encryption-key` is a standard or URL-safe base64 encoding of exactly 32
+random bytes (for example, `openssl rand -base64 32`), not hexadecimal text.
+The launcher must be executable by UID `10001`, while auth and secret files stay
+regular, non-symlink files with mode `0400`.
+
 ## Required sidecar behavior
 
 The immutable sidecar image must:

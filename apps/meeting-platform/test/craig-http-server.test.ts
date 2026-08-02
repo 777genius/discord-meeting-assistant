@@ -24,8 +24,17 @@ afterEach(async () => {
   );
 });
 
-async function startServer(overrides: { readonly ready?: boolean } = {}) {
+async function startServer(
+  overrides: {
+    readonly lifecycleError?: Error;
+    readonly onInternalError?: (error: unknown) => void;
+    readonly ready?: boolean;
+  } = {},
+) {
   const ingestLifecycle = vi.fn(async () => {});
+  if (overrides.lifecycleError !== undefined) {
+    ingestLifecycle.mockRejectedValue(overrides.lifecycleError);
+  }
   const ingestVoiceBatch = vi.fn(async () => {});
   const server = createCraigHttpServer({
     bearerToken: token,
@@ -34,6 +43,9 @@ async function startServer(overrides: { readonly ready?: boolean } = {}) {
       readiness: async () => ({ ready: overrides.ready ?? true }),
     },
     ingress: { ingestLifecycle, ingestVoiceBatch },
+    ...(overrides.onInternalError === undefined
+      ? {}
+      : { onInternalError: overrides.onInternalError }),
   });
   servers.push(server);
   server.listen(0, "127.0.0.1");
@@ -81,6 +93,33 @@ describe("Craig HTTP ingress", () => {
 
     expect(response.status).toBe(401);
     expect(context.ingestVoiceBatch).not.toHaveBeenCalled();
+  });
+
+  it("reports the internal error while keeping response details private", async () => {
+    const cause = new Error("private filesystem detail");
+    const onInternalError = vi.fn();
+    const context = await startServer({ lifecycleError: cause, onInternalError });
+    const response = await fetch(`${context.baseUrl}/v1/craig/events`, {
+      body: JSON.stringify({
+        schemaVersion: 1,
+        eventId: "recording-1:1",
+        recordingId: "recording-1",
+        guildId: "1533228590643155034",
+        channelId: "1533228823045214398",
+        occurredAt: "2026-08-02T00:00:00.000Z",
+        type: "meeting.started",
+        participantIds: ["1533227577286852649"],
+      }),
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+      },
+      method: "POST",
+    });
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ code: "INTERNAL_ERROR" });
+    expect(onInternalError).toHaveBeenCalledWith(cause);
   });
 
   it("fails closed on unknown contract fields", async () => {

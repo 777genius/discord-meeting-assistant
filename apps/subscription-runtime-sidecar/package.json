@@ -16,6 +16,7 @@
     "@discord-meeting/subscription-runtime-adapter": "workspace:*",
     "@grpc/grpc-js": "catalog:",
     "@grpc/proto-loader": "catalog:",
+    "@openai/codex": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {

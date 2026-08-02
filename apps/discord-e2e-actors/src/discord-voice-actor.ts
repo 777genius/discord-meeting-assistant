@@ -19,7 +19,7 @@ import {
   type VoiceChannel,
 } from "discord.js";
 
-import type { VoiceActor } from "./run-actor-scenario.js";
+import type { ReconnectableVoiceActor } from "./run-actor-scenario.js";
 
 export interface DiscordVoiceActorInput {
   readonly name: string;
@@ -31,19 +31,24 @@ export interface DiscordVoiceActorInput {
   readonly playbackTimeoutMilliseconds: number;
 }
 
-class ConnectedDiscordVoiceActor implements VoiceActor {
+class ConnectedDiscordVoiceActor implements ReconnectableVoiceActor {
   constructor(
     private readonly client: Client,
-    private readonly connection: VoiceConnection,
+    private connection: VoiceConnection | undefined,
+    private readonly connect: () => Promise<VoiceConnection>,
     private readonly fixturePath: string,
     private readonly playbackTimeoutMilliseconds: number,
   ) {}
 
   async play(): Promise<void> {
+    const connection = this.connection;
+    if (connection === undefined) {
+      throw new Error("Discord voice actor is not connected");
+    }
     const player = createAudioPlayer({
       behaviors: { noSubscriber: NoSubscriberBehavior.Pause },
     });
-    const subscription = this.connection.subscribe(player);
+    const subscription = connection.subscribe(player);
     if (subscription === undefined) {
       throw new Error("Discord voice connection rejected the audio subscription");
     }
@@ -57,15 +62,24 @@ class ConnectedDiscordVoiceActor implements VoiceActor {
     }
   }
 
+  async reconnect(): Promise<void> {
+    const connection = this.connection;
+    this.connection = undefined;
+    connection?.destroy();
+    this.connection = await this.connect();
+  }
+
   async close(): Promise<void> {
-    this.connection.destroy();
+    const connection = this.connection;
+    this.connection = undefined;
+    connection?.destroy();
     await this.client.destroy();
   }
 }
 
 export async function connectDiscordVoiceActor(
   input: DiscordVoiceActorInput,
-): Promise<VoiceActor> {
+): Promise<ReconnectableVoiceActor> {
   await access(input.fixturePath);
   const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates],
@@ -78,19 +92,33 @@ export async function connectDiscordVoiceActor(
     const channel = await guild.channels.fetch(input.voiceChannelId);
     assertConnectableVoiceChannel(channel);
 
-    connection = joinVoiceChannel({
-      adapterCreator: guild.voiceAdapterCreator,
-      channelId: channel.id,
-      guildId: guild.id,
-      group: input.name,
-      selfDeaf: true,
-      selfMute: false,
-    });
-    await entersState(connection, VoiceConnectionStatus.Ready, input.readyTimeoutMilliseconds);
+    const connect = async (): Promise<VoiceConnection> => {
+      const nextConnection = joinVoiceChannel({
+        adapterCreator: guild.voiceAdapterCreator,
+        channelId: channel.id,
+        guildId: guild.id,
+        group: input.name,
+        selfDeaf: true,
+        selfMute: false,
+      });
+      try {
+        await entersState(
+          nextConnection,
+          VoiceConnectionStatus.Ready,
+          input.readyTimeoutMilliseconds,
+        );
+        return nextConnection;
+      } catch (error: unknown) {
+        nextConnection.destroy();
+        throw error;
+      }
+    };
+    connection = await connect();
 
     return new ConnectedDiscordVoiceActor(
       client,
       connection,
+      connect,
       input.fixturePath,
       input.playbackTimeoutMilliseconds,
     );

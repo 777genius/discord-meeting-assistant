@@ -34,7 +34,10 @@ import {
   type Logger,
 } from "@discord-meeting/observability-adapter";
 import { PostgresMeetingRepository } from "@discord-meeting/postgres-adapter";
-import { DurableCraigRecordingIngress } from "@discord-meeting/recording-ingress-adapter";
+import {
+  DurableCraigRecordingIngress,
+  RecordingIngressError,
+} from "@discord-meeting/recording-ingress-adapter";
 import {
   FetchSpeachesTranscriptionClient,
   SpeachesFinalTranscriptionAdapter,
@@ -172,8 +175,8 @@ export async function startMeetingPlatform(
       readiness: async () => ({ ready: (await health.snapshot()).ready }),
     },
     ingress,
-    onInternalError: () => {
-      logger.error("Craig ingress request failed");
+    onInternalError: (error) => {
+      logger.error("Craig ingress request failed", classifyCraigIngressError(error));
     },
   });
 
@@ -221,6 +224,24 @@ export async function startMeetingPlatform(
       await closing;
     },
   };
+}
+
+function classifyCraigIngressError(error: unknown): Readonly<Record<string, unknown>> {
+  if (error instanceof RecordingIngressError) {
+    return {
+      errorCode: error.code,
+      failure: error.failure,
+    };
+  }
+  if (error instanceof Error) {
+    const errorWithCode = error as Error & { readonly code?: unknown };
+    return {
+      errorCode:
+        typeof errorWithCode.code === "string" ? errorWithCode.code : "UNEXPECTED_ERROR",
+      errorName: error.name,
+    };
+  }
+  return { errorCode: "UNEXPECTED_THROWABLE" };
 }
 
 function createQueueObserver(logger: Logger, metrics: PrometheusMetrics): PostCallObserver {

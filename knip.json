@@ -58,6 +58,7 @@
     },
     "apps/subscription-runtime-sidecar": {
       "entry": ["src/main.ts", "src/index.ts"],
+      "ignoreDependencies": ["@openai/codex"],
       "project": ["src/**/*.ts", "test/**/*.ts"]
     },
     "packages/recording-ingress-adapter": {

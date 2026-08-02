@@ -8,7 +8,13 @@ COPY packages/meeting-core/package.json packages/meeting-core/package.json
 RUN pnpm install --frozen-lockfile
 
 FROM node:24.18.0-bookworm-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d AS runtime
-ENV NODE_ENV=production
+RUN apt-get update \
+  && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+ENV NODE_ENV=production \
+    PATH=/app/apps/subscription-runtime-sidecar/node_modules/.bin:$PATH \
+    SSL_CERT_DIR=/etc/ssl/certs \
+    SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 WORKDIR /app
 COPY --from=dependencies /app/node_modules ./node_modules
 COPY --from=dependencies /app/apps/subscription-runtime-sidecar/node_modules ./apps/subscription-runtime-sidecar/node_modules

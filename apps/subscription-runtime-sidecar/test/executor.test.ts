@@ -213,6 +213,7 @@ describe("subscription runtime child environment", () => {
       {
         PATH: "/usr/bin",
         LANG: "C.UTF-8",
+        SSL_CERT_FILE: "/etc/ssl/certs/ca-certificates.crt",
         OPENAI_API_KEY: "must-not-cross",
         OTHER_API_KEY_FILE: "/secret/key",
         unrelatedSecret: "must-not-cross",
@@ -225,6 +226,7 @@ describe("subscription runtime child environment", () => {
       AGENT_RUNTIME_REASONING_EFFORT: "xhigh",
       LANG: "C.UTF-8",
       PATH: "/usr/bin",
+      SSL_CERT_FILE: "/etc/ssl/certs/ca-certificates.crt",
       SUBSCRIPTION_RUNTIME_LOCAL_ENCRYPTION_KEY: "private-encryption-key",
     });
     expect(Object.keys(env)).not.toEqual(

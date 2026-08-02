@@ -3,6 +3,17 @@ export interface VoiceActor {
   close(): Promise<void>;
 }
 
+export interface ReconnectableVoiceActor extends VoiceActor {
+  reconnect(): Promise<void>;
+}
+
+type ActorScenarioKind = "overlap" | "sequential" | "reconnect";
+
+export interface ActorScenario {
+  readonly kind: ActorScenarioKind;
+  readonly speakerBDelayMilliseconds: number;
+}
+
 export interface ScenarioClock {
   wait(milliseconds: number): Promise<void>;
 }
@@ -15,14 +26,29 @@ const systemScenarioClock: ScenarioClock = {
 
 export async function runActorScenario(
   speakerA: VoiceActor,
-  speakerB: VoiceActor,
-  speakerBDelayMilliseconds: number,
+  speakerB: ReconnectableVoiceActor,
+  scenario: ActorScenario,
   clock: ScenarioClock = systemScenarioClock,
 ): Promise<void> {
+  if (scenario.kind === "sequential") {
+    await speakerA.play();
+    await clock.wait(scenario.speakerBDelayMilliseconds);
+    await speakerB.play();
+    return;
+  }
+
   const speakerAPlayback = speakerA.play();
-  await clock.wait(speakerBDelayMilliseconds);
-  const speakerBPlayback = speakerB.play();
-  await Promise.all([speakerAPlayback, speakerBPlayback]);
+  try {
+    await clock.wait(scenario.speakerBDelayMilliseconds);
+    if (scenario.kind === "reconnect") {
+      await speakerB.reconnect();
+    }
+    const speakerBPlayback = speakerB.play();
+    await Promise.all([speakerAPlayback, speakerBPlayback]);
+  } catch (error: unknown) {
+    await Promise.allSettled([speakerAPlayback]);
+    throw error;
+  }
 }
 
 export async function closeActors(actors: readonly VoiceActor[]): Promise<void> {

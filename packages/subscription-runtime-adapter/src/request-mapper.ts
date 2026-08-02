@@ -44,6 +44,7 @@ export function buildSubscriptionRuntimeSummaryRequest(
   const prompt = JSON.stringify({
     meetingId: request.meetingId,
     outputLanguage: options.outputLanguage ?? null,
+    outputSchema: providerMeetingSummaryJsonSchema,
     transcript: {
       recordingId: request.transcript.recordingId,
       transcriptId: request.transcript.transcriptId,

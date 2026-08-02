@@ -15,4 +15,4 @@ RUN pnpm install --frozen-lockfile \
 
 USER 10001:10001
 EXPOSE 4310
-ENTRYPOINT ["pnpm", "--filter", "@discord-meeting/meeting-platform", "start"]
+ENTRYPOINT ["/app/apps/meeting-platform/node_modules/.bin/tsx", "/app/apps/meeting-platform/src/main.ts"]

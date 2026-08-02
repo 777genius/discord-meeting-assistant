@@ -8,6 +8,7 @@ catalogMode: strict
 catalog:
   "@grpc/grpc-js": 1.14.4
   "@grpc/proto-loader": 0.8.1
+  "@openai/codex": 0.146.0
   "@aws-sdk/client-s3": 3.1101.0
   "@aws-sdk/lib-storage": 3.1101.0
   "@ast-grep/cli": 0.45.0
@@ -37,9 +38,9 @@ minimumReleaseAgeExclude:
 
 allowBuilds:
   "@ast-grep/cli": true
-  cpu-features: set this to true or false
+  cpu-features: false
   esbuild: true
   msgpackr-extract: false
   nx: true
-  protobufjs: set this to true or false
-  ssh2: set this to true or false
+  protobufjs: false
+  ssh2: false

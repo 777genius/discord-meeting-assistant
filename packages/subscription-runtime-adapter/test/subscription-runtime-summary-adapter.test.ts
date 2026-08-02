@@ -160,8 +160,10 @@ describe("SubscriptionRuntimeSummaryAdapter", () => {
     expect(JSON.stringify(captured)).not.toMatch(/OPENAI_API_KEY|apiKey|auth\.json/iu);
 
     const prompt = JSON.parse(captured.task.prompt) as {
+      outputSchema: { additionalProperties: boolean; type: string };
       transcript: { turns: readonly { turnId: string }[] };
     };
+    expect(prompt.outputSchema).toEqual(captured.task.controls.outputSchema);
     expect(prompt.transcript.turns.map(({ turnId }) => turnId)).toEqual([
       "turn-a",
       "turn-b",
