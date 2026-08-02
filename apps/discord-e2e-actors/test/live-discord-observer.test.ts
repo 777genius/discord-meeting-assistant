@@ -87,6 +87,25 @@ describe("live Discord projection normalization", () => {
       .not.toBe(liveDiscordProjectionFingerprint(original));
   });
 
+  it("accepts an embed-only Discord projection", () => {
+    const projection = normalizeLiveDiscordProjection({
+      message: {
+        ...message("", null),
+        embeds: [{
+          description: "Live-субтитры",
+          fields: [],
+          title: "Встреча идёт",
+        }],
+      },
+      observedAtMilliseconds: firstObservedAt,
+      resultChannelId: "11111111111111111",
+      thread,
+    });
+
+    expect(projection.message.content).toBe("");
+    expect(projection.message.embeds).toHaveLength(1);
+  });
+
   it("admits only the SUT's messages created within the bounded observation window", () => {
     const candidate = message("Обновление", null);
 

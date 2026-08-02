@@ -176,7 +176,9 @@ export function normalizeLiveDiscordProjection(input: {
     channel: Object.freeze({ id: requiredIdentifier(input.resultChannelId, "result channel") }),
     message: Object.freeze({
       authorId: requiredIdentifier(input.message.authorId, "message author"),
-      content: normalizeRequiredText(input.message.content, "message content"),
+      // Discord permits embed-only messages. Preserve an empty content field so
+      // the observer can still capture the visible embed projection.
+      content: normalizeText(input.message.content),
       createdAt: toIsoTimestamp(input.message.createdAtMilliseconds, "message creation"),
       editedAt: input.message.editedAtMilliseconds === null
         ? null
