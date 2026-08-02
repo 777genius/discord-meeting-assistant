@@ -11,10 +11,12 @@ import {
 } from "discord.js";
 
 import type {
+  DiscordProjectionBody,
   DiscordProjectionClient,
   DiscordProjectionReference,
   LocatedDiscordProjection,
 } from "./discord-projection.js";
+import { discordProjectionBodySchema } from "./discord-projection.js";
 
 const UNKNOWN_CHANNEL = 10_003;
 const UNKNOWN_MESSAGE = 10_008;
@@ -87,23 +89,23 @@ export class DiscordJsProjectionClient implements DiscordProjectionClient {
 
   async createMessage(input: {
     readonly threadId: string;
-    readonly markdown: string;
+    readonly body: DiscordProjectionBody;
     readonly marker: string;
   }): Promise<string> {
     const thread = await this.fetchThread(input.threadId);
-    const message = await thread.send(messageBody(input.markdown));
+    const message = await thread.send(toDiscordMessagePayload(input.body));
     return message.id;
   }
 
   async editMessage(input: {
     readonly threadId: string;
     readonly messageId: string;
-    readonly markdown: string;
+    readonly body: DiscordProjectionBody;
     readonly marker: string;
   }): Promise<void> {
     const thread = await this.fetchThread(input.threadId);
     const message = await thread.messages.fetch(input.messageId);
-    await message.edit(messageBody(input.markdown));
+    await message.edit(toDiscordMessagePayload(input.body));
   }
 
   private async inspectHint(
@@ -215,10 +217,16 @@ function hasProjectionMarker(message: Message, marker: string): boolean {
   });
 }
 
-function messageBody(markdown: string) {
+export function toDiscordMessagePayload(rawBody: DiscordProjectionBody) {
+  const body = discordProjectionBodySchema.parse(rawBody);
   return {
     allowedMentions: { parse: [] as const, repliedUser: false },
-    embeds: [{ description: markdown, footer: { text: PROJECTION_FOOTER } }],
+    embeds: [
+      { description: body.markdown, footer: { text: PROJECTION_FOOTER } },
+      ...(body.liveCaptionsMarkdown === undefined
+        ? []
+        : [{ description: body.liveCaptionsMarkdown }]),
+    ],
   };
 }
 

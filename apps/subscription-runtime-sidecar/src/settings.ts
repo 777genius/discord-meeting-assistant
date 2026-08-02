@@ -6,6 +6,9 @@ import {
   auditedSubscriptionRuntimePackageVersion,
   meetingSummaryOutputSchemaName,
   subscriptionRuntimeModel,
+  subscriptionRuntimeIncrementalModel,
+  subscriptionRuntimeIncrementalPurpose,
+  subscriptionRuntimeIncrementalReasoningEffort,
   subscriptionRuntimePurpose,
   subscriptionRuntimeReasoningEffort,
 } from "@discord-meeting/subscription-runtime-adapter";
@@ -43,8 +46,14 @@ const deploymentPolicySchema = z
       z.string(),
       z.object({
         provider: z.literal("codex"),
-        model: z.literal(subscriptionRuntimeModel),
-        reasoningEffort: z.literal(subscriptionRuntimeReasoningEffort),
+        model: z.union([
+          z.literal(subscriptionRuntimeModel),
+          z.literal(subscriptionRuntimeIncrementalModel),
+        ]),
+        reasoningEffort: z.union([
+          z.literal(subscriptionRuntimeReasoningEffort),
+          z.literal(subscriptionRuntimeIncrementalReasoningEffort),
+        ]),
         taskKind: z.literal("structured-prompt"),
         executionProfile: z.literal("stateless-completion"),
         disableTools: z.literal(true),
@@ -178,12 +187,26 @@ async function assertDeploymentPolicy(
   const policy = deploymentPolicySchema.safeParse(
     JSON.parse(await readFile(policyPath, "utf8")) as unknown,
   );
-  const profile = policy.success
+  const finalProfile = policy.success
     ? policy.data.purposeProfiles[subscriptionRuntimePurpose]
     : undefined;
+  const incrementalProfile = policy.success
+    ? policy.data.purposeProfiles[subscriptionRuntimeIncrementalPurpose]
+    : undefined;
+  const admittedPurposeNames = policy.success
+    ? Object.keys(policy.data.purposeProfiles).toSorted()
+    : [];
   if (
     !policy.success ||
-    profile === undefined ||
+    finalProfile === undefined ||
+    incrementalProfile === undefined ||
+    admittedPurposeNames.length !== 2 ||
+    admittedPurposeNames[0] !== subscriptionRuntimePurpose ||
+    admittedPurposeNames[1] !== subscriptionRuntimeIncrementalPurpose ||
+    finalProfile.model !== subscriptionRuntimeModel ||
+    finalProfile.reasoningEffort !== subscriptionRuntimeReasoningEffort ||
+    incrementalProfile.model !== subscriptionRuntimeIncrementalModel ||
+    incrementalProfile.reasoningEffort !== subscriptionRuntimeIncrementalReasoningEffort ||
     policy.data.transport.bind !== settings.bindAddress ||
     policy.data.transport.serviceTokenFile !==
       env.SUBSCRIPTION_RUNTIME_SERVICE_TOKEN_FILE ||
@@ -191,7 +214,8 @@ async function assertDeploymentPolicy(
     policy.data.custody.stateRoot !== settings.stateRoot ||
     policy.data.custody.localEncryptionKeyFile !==
       settings.localEncryptionKeyFile ||
-    profile.isolatedCwd !== settings.isolatedCwd ||
+    finalProfile.isolatedCwd !== settings.isolatedCwd ||
+    incrementalProfile.isolatedCwd !== settings.isolatedCwd ||
     !policy.data.environment.denyKeySuffixes.includes("_API_KEY") ||
     !policy.data.environment.denyKeySuffixes.includes("_API_KEY_FILE")
   ) {
@@ -219,13 +243,19 @@ function assertFrozenEnvironment(env: NodeJS.ProcessEnv): void {
     ["SUBSCRIPTION_RUNTIME_EXPECTED_PACKAGE_VERSION", env.SUBSCRIPTION_RUNTIME_EXPECTED_PACKAGE_VERSION, auditedSubscriptionRuntimePackageVersion],
     ["SUBSCRIPTION_RUNTIME_PROVIDER", env.SUBSCRIPTION_RUNTIME_PROVIDER, "codex"],
     ["SUBSCRIPTION_RUNTIME_PROVIDER_INSTANCE_ID", env.SUBSCRIPTION_RUNTIME_PROVIDER_INSTANCE_ID, providerInstanceId],
-    ["SUBSCRIPTION_RUNTIME_MODEL", env.SUBSCRIPTION_RUNTIME_MODEL, subscriptionRuntimeModel],
-    ["SUBSCRIPTION_RUNTIME_REASONING_EFFORT", env.SUBSCRIPTION_RUNTIME_REASONING_EFFORT, subscriptionRuntimeReasoningEffort],
     ["SUBSCRIPTION_RUNTIME_EXECUTION_PROFILE", env.SUBSCRIPTION_RUNTIME_EXECUTION_PROFILE, "stateless-completion"],
     ["SUBSCRIPTION_RUNTIME_DISABLE_TOOLS", env.SUBSCRIPTION_RUNTIME_DISABLE_TOOLS, "1"],
   ] as const) {
     if (value !== undefined && value.trim() !== expected) {
       throw new Error(`${key} conflicts with executable sidecar policy`);
+    }
+  }
+  for (const key of [
+    "SUBSCRIPTION_RUNTIME_MODEL",
+    "SUBSCRIPTION_RUNTIME_REASONING_EFFORT",
+  ] as const) {
+    if (env[key] !== undefined) {
+      throw new Error(`${key} must be selected per admitted request profile`);
     }
   }
   if (env.SUBSCRIPTION_RUNTIME_APPLICATION !== undefined && env.SUBSCRIPTION_RUNTIME_APPLICATION !== applicationName) {

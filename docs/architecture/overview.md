@@ -22,6 +22,11 @@ Craig Voice Gateway
        -> Discord Publishing
 ```
 
+The server also consumes Craig's best-effort Opus packet tee for a derived live
+projection. The browser is not part of this path: audio, Voicetext credentials,
+and subscription-runtime authentication remain server-side. Discord receives
+only rendered summary and caption embeds.
+
 ## Initial semantic ownership
 
 The first slice recognizes four focused ownership areas without requiring four
@@ -42,8 +47,9 @@ DDD requirement.
 
 ## V1 and future live conversation
 
-V1 ends after reliable Discord publication. It excludes live STT, Pipecat, TTS,
-wake phrase detection, and RAG.
+V1 includes derived live STT, incremental summary, and one mutable Discord
+projection, followed by authoritative post-call replacement. It still excludes
+the conversational Pipecat assistant, TTS, wake phrase detection, and RAG.
 
 Future live conversation connects through narrow ports owned by Meeting Core:
 

@@ -41,9 +41,10 @@ The immutable sidecar image must:
 
 1. pin `@vioxen/subscription-runtime` to `0.1.0-main.2` and verify both the
    package version and admitted launcher SHA-256 before every execution;
-2. admit only `discord_meeting.summary.generate` with `gpt-5.6-sol`, `xhigh`,
+2. admit exactly `discord_meeting.summary.generate` with `gpt-5.6-sol`/`xhigh`
+   and `discord_meeting.summary.incremental` with `gpt-5.6-luna`/`low`; both use
    stateless completion, disabled tools, read-only permission, no interactive
-   input, and the isolated tmpfs working directory;
+   input, the same structured schema, and the isolated tmpfs working directory;
 3. start children from an explicit environment allowlist and remove every
    `*_API_KEY`, `*_API_KEY_FILE`, session-scoped Codex identifier, and unrelated
    application secret;
@@ -57,6 +58,15 @@ The immutable sidecar image must:
    and authenticate both methods from the mounted service-token file;
 7. keep safe error codes separate from provider stderr/stdout and never return
    auth data, raw provider payloads, account identities, or token-shaped text.
+
+Incremental usage is returned only when the runtime supplies every real token
+class: input, cached input, cache-write input, output, reasoning output, and
+total. Missing classes are not replaced with zero. API-equivalent Luna cost uses
+the immutable `openai-standard-2026-08-02` short-context card sourced from
+`https://developers.openai.com/api/docs/models/gpt-5.6-luna`: $0.20/M input, $0.02/M cached
+input, $0.25/M cache writes, and $1.20/M output. Reasoning is already included
+in output tokens. Above 272,000 input tokens, token usage remains available but
+cost is intentionally unavailable until a long-context card is admitted.
 
 `sidecar-policy.json` is a declarative deployment contract. The sidecar must
 fail closed if its executable policy differs from that file.

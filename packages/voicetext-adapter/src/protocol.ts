@@ -7,11 +7,18 @@ export interface VoicetextFinalSegment {
   readonly text: string;
 }
 
+export interface VoicetextPartialSegment {
+  readonly confidence?: number;
+  readonly durationMs: number;
+  readonly startMs: number;
+  readonly text: string;
+}
+
 export type VoicetextServerMessage =
   | { readonly sessionId: string; readonly type: "ready" }
   | { readonly seq: number; readonly type: "ack" }
   | ({ readonly type: "final" } & VoicetextFinalSegment)
-  | { readonly type: "partial" }
+  | { readonly segment: VoicetextPartialSegment | null; readonly type: "partial" }
   | ({ readonly type: "segment_final" } & VoicetextFinalSegment)
   | { readonly type: "usage_update" }
   | { readonly code: string; readonly message: string; readonly type: "error" }
@@ -22,18 +29,21 @@ export type VoicetextServerMessage =
   }
   | { readonly type: "resumed" };
 
-export interface VoicetextConfigMessage {
+interface VoicetextConfigBase {
   readonly capabilities: readonly ["finalize_ack"];
   readonly channels: 1;
   readonly client_session_id: string;
-  readonly encoding: "pcm_s16le";
   readonly keyterms?: readonly string[];
   readonly language: string;
   readonly protocol_v: 2;
   readonly provider: "deepgram";
-  readonly sample_rate: 16_000;
   readonly type: "config";
 }
+
+export type VoicetextConfigMessage = VoicetextConfigBase & (
+  | { readonly encoding: "opus"; readonly sample_rate: 48_000 }
+  | { readonly encoding: "pcm_s16le"; readonly sample_rate: 16_000 }
+);
 
 export function parseServerMessage(
   raw: string,
@@ -65,7 +75,7 @@ export function parseServerMessage(
     case "partial":
       return value.is_segment_final === true
         ? { ...parseFinalSegment(value, maxTranscriptChars), type: "segment_final" }
-        : { type: "partial" };
+        : { segment: parsePartialSegment(value, maxTranscriptChars), type: "partial" };
     case "usage_update":
       return { type: "usage_update" };
     case "final":
@@ -99,6 +109,25 @@ export function parseServerMessage(
       return { type: "resumed" };
     default:
       throw protocolError(`Voicetext returned unsupported protocol message type ${value.type}`);
+  }
+}
+
+function parsePartialSegment(
+  value: Readonly<Record<string, unknown>>,
+  maxTranscriptChars: number,
+): VoicetextPartialSegment | null {
+  try {
+    const parsed = parseFinalSegment(value, maxTranscriptChars);
+    return {
+      ...(parsed.confidence === undefined ? {} : { confidence: parsed.confidence }),
+      durationMs: parsed.durationMs,
+      startMs: parsed.startMs,
+      text: parsed.text,
+    };
+  } catch {
+    // Final transcription historically tolerated provider-specific partial
+    // shapes. Live consumers receive only fully validated partial segments.
+    return null;
   }
 }
 

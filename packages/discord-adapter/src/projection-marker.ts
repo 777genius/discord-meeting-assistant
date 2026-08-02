@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 
+import { truncateDiscordGraphemesByCodeUnits } from "./discord-markdown-formatting.js";
+
 const MARKER_PREFIX = "meeting-projection:";
 const REFERENCE_PREFIX = "код ";
 
@@ -10,10 +12,6 @@ export function createProjectionMarker(projectionKey: string): string {
 
 export function createDiscordThreadName(title: string, marker: string): string {
   const suffix = ` [${REFERENCE_PREFIX}${marker.slice(-20)}]`;
-  const titleGraphemes = Array.from(
-    new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(title),
-    (segment) => segment.segment,
-  );
   const maximumTitleLength = 100 - suffix.length;
-  return `${titleGraphemes.slice(0, maximumTitleLength).join("")}${suffix}`;
+  return `${truncateDiscordGraphemesByCodeUnits(title, maximumTitleLength)}${suffix}`;
 }

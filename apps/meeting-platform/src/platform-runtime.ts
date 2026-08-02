@@ -16,12 +16,17 @@ import {
 } from "@discord-meeting/bullmq-adapter";
 import {
   DiscordJsProjectionClient,
+  DiscordLiveMeetingProjectionAdapter,
   DiscordSummaryPublicationAdapter,
   DiscordSummaryPublisher,
   InProcessProjectionLock,
 } from "@discord-meeting/discord-adapter";
 import {
   ProcessMeetingSummary,
+  AppendLiveTranscriptTurn,
+  FinishLiveMeeting,
+  RefreshLiveMeeting,
+  StartLiveMeeting,
   type FinalTranscriptionPort,
 } from "@discord-meeting/meeting-core";
 import {
@@ -36,7 +41,10 @@ import {
   type HealthProbe,
   type Logger,
 } from "@discord-meeting/observability-adapter";
-import { PostgresMeetingRepository } from "@discord-meeting/postgres-adapter";
+import {
+  PostgresLiveMeetingRepository,
+  PostgresMeetingRepository,
+} from "@discord-meeting/postgres-adapter";
 import {
   DurableCraigRecordingIngress,
   RecordingIngressError,
@@ -45,10 +53,14 @@ import {
   FetchSpeachesTranscriptionClient,
   SpeachesFinalTranscriptionAdapter,
 } from "@discord-meeting/speaches-adapter";
-import { SubscriptionRuntimeSummaryAdapter } from "@discord-meeting/subscription-runtime-adapter";
+import {
+  SubscriptionRuntimeIncrementalSummaryAdapter,
+  SubscriptionRuntimeSummaryAdapter,
+} from "@discord-meeting/subscription-runtime-adapter";
 import {
   FfmpegPcmTranscoder,
   VoicetextFinalTranscriptionAdapter,
+  VoicetextLiveTranscriptionAdapter,
 } from "@discord-meeting/voicetext-adapter";
 import type { ConnectionOptions } from "bullmq";
 import { Client, GatewayIntentBits } from "discord.js";
@@ -61,6 +73,7 @@ import {
   InstrumentedSummaryGenerationPort,
   InstrumentedSummaryPublicationPort,
 } from "./instrumented-processing-ports.js";
+import { PlatformLiveMeetingRuntime } from "./live-meeting-runtime.js";
 import { PlatformCraigIngress } from "./platform-ingress.js";
 import { PostCallOutboxDispatcher } from "./post-call-outbox-dispatcher.js";
 import {
@@ -116,12 +129,18 @@ export async function startMeetingPlatform(
     outputLanguage: "Russian; preserve English technical terms",
   });
   const discord = new Client({ intents: [GatewayIntentBits.Guilds] });
-  const rawPublisher = new DiscordSummaryPublicationAdapter(
-    new DiscordSummaryPublisher(
-      new DiscordJsProjectionClient(discord),
-      new InProcessProjectionLock(),
-    ),
+  const discordPublisher = new DiscordSummaryPublisher(
+    new DiscordJsProjectionClient(discord),
+    new InProcessProjectionLock(),
   );
+  const rawPublisher = new DiscordSummaryPublicationAdapter(discordPublisher);
+  const live = createLiveRuntime({
+    config,
+    discordPublisher,
+    logger,
+    meetings: new PostgresLiveMeetingRepository(pool),
+    runtimeTransport,
+  });
   const transcriber = new InstrumentedFinalTranscriptionPort(
     rawTranscriber,
     metrics,
@@ -179,6 +198,7 @@ export async function startMeetingPlatform(
   const ingress = new PlatformCraigIngress({
     dispatcher: outboxDispatcher,
     ingress: recordings,
+    ...(live === undefined ? {} : { live }),
     logger,
     outbox: meetings,
     metrics,
@@ -208,7 +228,14 @@ export async function startMeetingPlatform(
   });
 
   try {
-    await Promise.all([pool.query("SELECT 1"), queue.waitUntilReady(), queueEvents.waitUntilReady()]);
+    await Promise.all([
+      pool.query("SELECT 1"),
+      ...(live === undefined
+        ? []
+        : [pool.query("SELECT 1 FROM meeting_core.live_meetings LIMIT 0")]),
+      queue.waitUntilReady(),
+      queueEvents.waitUntilReady(),
+    ]);
     await outboxDispatcher.dispatchPending();
     const ready = once(discord, "ready");
     await discord.login(config.secrets.discordToken);
@@ -222,6 +249,7 @@ export async function startMeetingPlatform(
     await closeResources({
       discord,
       logger,
+      ...(live === undefined ? {} : { live }),
       pool,
       queue,
       queueEvents,
@@ -245,6 +273,7 @@ export async function startMeetingPlatform(
       closing ??= closeResources({
         discord,
         logger,
+        ...(live === undefined ? {} : { live }),
         pool,
         queue,
         queueEvents,
@@ -259,25 +288,70 @@ export async function startMeetingPlatform(
   };
 }
 
+function createLiveRuntime(input: {
+  readonly config: PlatformConfig;
+  readonly discordPublisher: DiscordSummaryPublisher;
+  readonly logger: Logger;
+  readonly meetings: PostgresLiveMeetingRepository;
+  readonly runtimeTransport: GrpcSubscriptionRuntimeTransport;
+}): PlatformLiveMeetingRuntime | undefined {
+  if (
+    input.config.transcriptionProvider !== "voicetext" ||
+    input.config.voicetext === undefined ||
+    input.config.secrets.voicetextServiceToken === undefined
+  ) {
+    return undefined;
+  }
+  const summarizer = new SubscriptionRuntimeIncrementalSummaryAdapter(
+    input.runtimeTransport,
+    {
+      expectedLauncherSha256: input.config.subscriptionRuntime.launcherSha256,
+      maxRecentContextTurns: 256,
+      outputLanguage: "Russian; preserve English technical terms",
+      timeoutMs: 30_000,
+    },
+  );
+  const projector = new DiscordLiveMeetingProjectionAdapter(input.discordPublisher);
+  return new PlatformLiveMeetingRuntime({
+    appendTurn: new AppendLiveTranscriptTurn(input.meetings),
+    finishMeeting: new FinishLiveMeeting(input.meetings),
+    logger: input.logger,
+    publicationTargetId: input.config.discordResultsChannelId,
+    refreshMeeting: new RefreshLiveMeeting({
+      meetings: input.meetings,
+      projector,
+      summarizer,
+    }),
+    startMeeting: new StartLiveMeeting({ meetings: input.meetings }),
+    transcriber: new VoicetextLiveTranscriptionAdapter({
+      endpoint: input.config.voicetext.webSocketUrl,
+      keyterms: meetingVocabulary,
+      language: "multi",
+      token: input.config.secrets.voicetextServiceToken,
+    }),
+  });
+}
+
+const meetingVocabulary = [
+  "BullMQ",
+  "Craig",
+  "Craig recording",
+  "Discord",
+  "Discord thread",
+  "idempotency key",
+  "live Pipecat assistant",
+  "Meeting Platform",
+  "Pipecat",
+  "PostgreSQL",
+  "PostgreSQL pipeline",
+  "Redis",
+  "Redis queue",
+] as const;
+
 function createFinalTranscriber(
   config: PlatformConfig,
   artifactReader: ReturnType<typeof createS3BinaryArtifactReader>,
 ): FinalTranscriptionPort {
-  const vocabulary = [
-    "BullMQ",
-    "Craig",
-    "Craig recording",
-    "Discord",
-    "Discord thread",
-    "idempotency key",
-    "live Pipecat assistant",
-    "Meeting Platform",
-    "Pipecat",
-    "PostgreSQL",
-    "PostgreSQL pipeline",
-    "Redis",
-    "Redis queue",
-  ] as const;
   if (config.transcriptionProvider === "speaches") {
     return new SpeachesFinalTranscriptionAdapter(
       new FetchSpeachesTranscriptionClient(config.speaches.baseUrl),
@@ -287,7 +361,7 @@ function createFinalTranscriber(
         maxBytesPerSpeaker: 64 * 1_024 * 1_024,
         maxSpeakerTracks: 64,
         model: config.speaches.model,
-        vocabulary,
+        vocabulary: meetingVocabulary,
       },
     );
   }
@@ -299,7 +373,7 @@ function createFinalTranscriber(
     new FfmpegPcmTranscoder({ executablePath: "/usr/bin/ffmpeg", timeoutMs: 900_000 }),
     {
       endpoint: config.voicetext.webSocketUrl,
-      keyterms: vocabulary,
+      keyterms: meetingVocabulary,
       language: "multi",
       maxArtifactBytesPerSpeaker: 256 * 1_024 * 1_024,
       maxPcmBytesPerSpeaker: 512 * 1_024 * 1_024,
@@ -471,6 +545,7 @@ async function closeResources(input: {
   readonly deadLetterQueue: { close(): Promise<void> };
   readonly discord: Client;
   readonly logger: Logger;
+  readonly live?: PlatformLiveMeetingRuntime;
   readonly pool: Pool;
   readonly queue: { close(): Promise<void> };
   readonly queueEvents: { close(): Promise<void> };
@@ -488,6 +563,7 @@ async function closeResources(input: {
     }
   };
   await settle(async () => closeServer(input.server));
+  await settle(async () => input.live?.close());
   await settle(async () =>
     drainActivePostCallJobsAndClose({
       queueEvents: input.queueEvents,

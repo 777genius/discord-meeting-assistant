@@ -1,7 +1,13 @@
 import { createHash } from "node:crypto";
 
 export function stableSubscriptionRuntimeId(
-  kind: "action" | "decision" | "question" | "summary" | "summary-request",
+  kind:
+    | "action"
+    | "decision"
+    | "incremental-summary-request"
+    | "question"
+    | "summary"
+    | "summary-request",
   ...parts: readonly string[]
 ): string {
   const hash = createHash("sha256");

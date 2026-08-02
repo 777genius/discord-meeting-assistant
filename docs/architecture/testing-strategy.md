@@ -25,11 +25,17 @@ The critical flow is:
 3. Craig produces the original multitrack recording;
 4. Craig restart recovery cooks and uploads checksummed speaker tracks from that
    original, while an intentionally incomplete live tee is never finalized;
-5. final transcription preserves Discord speaker identity and timestamps;
-6. summary topics, action owner/deadline, and evidence turn references are validated;
-7. publishing creates or updates exactly one Discord thread;
-8. a save/enqueue crash is recovered from the PostgreSQL outbox;
-9. rerunning each stage produces no duplicate business effect.
+5. live Opus packet boundaries reach streaming transcription without a decode and
+   re-encode step;
+6. mutable partials update speaker-attributed captions, while only finalized turns
+   can enter incremental-summary evidence;
+7. after five minutes, captions and the preliminary summary edit one stable
+   Discord message and expose exact runtime token/cost telemetry;
+8. final transcription preserves Discord speaker identity and timestamps;
+9. summary topics, action owner/deadline, and evidence turn references are validated;
+10. publishing replaces the live draft in exactly the same Discord thread/message;
+11. a save/enqueue crash is recovered from the PostgreSQL outbox;
+12. rerunning each stage produces no duplicate business effect.
 
 Transcript assertions use WER/CER thresholds, required terminology, exact speaker
 IDs, timestamp tolerance, and overlap checks. Summary assertions are deterministic

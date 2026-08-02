@@ -2,7 +2,12 @@ import { canonicalJsonSha256 } from "@discord-meeting/subscription-runtime-adapt
 import { describe, expect, it } from "vitest";
 
 import { reconstructCanonicalRequest } from "../src/policy.js";
-import { canonicalRequest, grpcRequest, isolatedCwd } from "./fixture.js";
+import {
+  canonicalRequest,
+  grpcRequest,
+  incrementalCanonicalRequest,
+  isolatedCwd,
+} from "./fixture.js";
 
 const options = {
   isolatedCwd,
@@ -18,6 +23,20 @@ describe("subscription runtime request policy", () => {
     expect(canonicalJsonSha256(reconstructed)).toBe(
       canonicalJsonSha256(canonicalRequest),
     );
+  });
+
+  it("reconstructs only the exact incremental Luna low profile", () => {
+    const reconstructed = reconstructCanonicalRequest(
+      grpcRequest(incrementalCanonicalRequest),
+      options,
+    );
+
+    expect(reconstructed).toEqual(incrementalCanonicalRequest);
+    expect(reconstructed.context.purpose).toBe("discord_meeting.summary.incremental");
+    expect(reconstructed.task.controls).toMatchObject({
+      model: "gpt-5.6-luna",
+      reasoningEffort: "low",
+    });
   });
 
   it.each([
@@ -51,5 +70,17 @@ describe("subscription runtime request policy", () => {
         options,
       ),
     ).toThrow("output schema");
+  });
+
+  it("rejects purpose/profile mismatches before execution", () => {
+    const request = grpcRequest(incrementalCanonicalRequest);
+    const controls = JSON.parse(String(request.controlsJson)) as Record<string, unknown>;
+    controls.model = "gpt-5.6-sol";
+    controls.reasoningEffort = "xhigh";
+
+    expect(() => reconstructCanonicalRequest(
+      { ...request, controlsJson: JSON.stringify(controls) },
+      options,
+    )).toThrow("profile");
   });
 });

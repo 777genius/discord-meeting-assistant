@@ -15,7 +15,12 @@ import type {
   ProcessRunRequest,
   ProcessRunResult,
 } from "../src/types.js";
-import { canonicalRequest, isolatedCwd, structuredOutput } from "./fixture.js";
+import {
+  canonicalRequest,
+  incrementalCanonicalRequest,
+  isolatedCwd,
+  structuredOutput,
+} from "./fixture.js";
 
 describe("SubscriptionRuntimeExecutor", () => {
   let root: string | undefined;
@@ -86,6 +91,78 @@ describe("SubscriptionRuntimeExecutor", () => {
     expect(runs[0]?.cwd).toBe(isolatedCwd);
     const inputPath = runs[0]?.args[runs[0].args.indexOf("--input") + 1];
     await expect(stat(String(inputPath))).rejects.toThrow();
+  });
+
+  it("selects Luna low from the incremental purpose and preserves complete real usage", async () => {
+    root = await mkdtemp(join(tmpdir(), "sidecar-executor-test-"));
+    const keyFile = join(root, "local-encryption-key");
+    await writeFile(keyFile, "private-test-key\n", { mode: 0o600 });
+    let processRequest: ProcessRunRequest | undefined;
+    const executor = new SubscriptionRuntimeExecutor(
+      options(keyFile, {
+        processRunner: {
+          run: async (request) => {
+            processRequest = request;
+            return completedProcess({
+              usage: {
+                cacheWriteInputTokens: 100,
+                cachedInputTokens: 200,
+                inputTokens: 1_000,
+                outputTokens: 300,
+                reasoningOutputTokens: 100,
+                totalTokens: 1_300,
+              },
+            });
+          },
+        },
+      }),
+    );
+
+    const result = await executor.execute(incrementalCanonicalRequest);
+
+    expect(result).toMatchObject({
+      executionAttestation: {
+        model: "gpt-5.6-luna",
+        purpose: "discord_meeting.summary.incremental",
+        reasoningEffort: "low",
+      },
+      status: "completed",
+      usage: {
+        cacheWriteInputTokens: 100,
+        cachedInputTokens: 200,
+        inputTokens: 1_000,
+        outputTokens: 300,
+        reasoningOutputTokens: 100,
+        totalTokens: 1_300,
+      },
+    });
+    expect(processRequest?.args).toEqual(expect.arrayContaining([
+      "--model",
+      "gpt-5.6-luna",
+    ]));
+    expect(processRequest?.env.AGENT_RUNTIME_REASONING_EFFORT).toBe("low");
+  });
+
+  it("omits partial telemetry instead of fabricating missing token classes", async () => {
+    root = await mkdtemp(join(tmpdir(), "sidecar-executor-test-"));
+    const keyFile = join(root, "local-encryption-key");
+    await writeFile(keyFile, "private-test-key\n", { mode: 0o600 });
+    const executor = new SubscriptionRuntimeExecutor(
+      options(keyFile, {
+        processRunner: {
+          run: async () => completedProcess({
+            usage: { inputTokens: 1_000, outputTokens: 300, totalTokens: 1_300 },
+          }),
+        },
+      }),
+    );
+
+    const result = await executor.execute(incrementalCanonicalRequest);
+
+    expect(result.status).toBe("completed");
+    if (result.status === "completed") {
+      expect(result).not.toHaveProperty("usage");
+    }
   });
 
   it("rejects policy conflicts before inspecting or spawning", async () => {
@@ -267,7 +344,9 @@ function installation(): InstallationIdentity {
   };
 }
 
-function completedProcess(): ProcessRunResult {
+function completedProcess(
+  telemetry?: Record<string, unknown>,
+): ProcessRunResult {
   return {
     exitCode: 0,
     outputLimitExceeded: false,
@@ -278,6 +357,7 @@ function completedProcess(): ProcessRunResult {
       status: "completed",
       outputText: JSON.stringify(structuredOutput),
       structuredOutput,
+      ...(telemetry === undefined ? {} : { telemetry }),
       warnings: [],
     }),
     timedOut: false,

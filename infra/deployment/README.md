@@ -16,4 +16,6 @@ volume rather than the root filesystem.
 For an existing isolated deployment, apply every newly added idempotent SQL
 migration before restarting Meeting Platform. Fresh PostgreSQL volumes execute
 the mounted migrations automatically. Migration `0002_create_post_call_outbox.sql`
-must be present before deploying the crash-safe post-call dispatcher.
+must be present before deploying the crash-safe post-call dispatcher. Migration
+`0003_create_live_meetings.sql` must be applied before enabling the derived live
+transcript and incremental-summary projection.

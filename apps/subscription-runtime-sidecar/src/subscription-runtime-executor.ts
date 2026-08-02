@@ -7,15 +7,16 @@ import {
   canonicalJsonSha256,
   providerMeetingSummarySchema,
   subscriptionRuntimeEngine,
-  subscriptionRuntimeModel,
   subscriptionRuntimeProvider,
-  subscriptionRuntimePurpose,
+  subscriptionRuntimeProfileForPurpose,
   subscriptionRuntimeReasoningEffort,
+  type SubscriptionRuntimeExecutionProfile,
   type JsonObject,
   type SubscriptionRuntimeAgentTaskRequest,
   type SubscriptionRuntimeFailureCode,
   type SubscriptionRuntimeHealthResult,
   type SubscriptionRuntimeTaskResult,
+  type SubscriptionRuntimeUsage,
 } from "@discord-meeting/subscription-runtime-adapter";
 import { z } from "zod";
 
@@ -66,7 +67,10 @@ const telemetrySchema = z
     usage: z
       .object({
         inputTokens: z.number().int().nonnegative().optional(),
+        cachedInputTokens: z.number().int().nonnegative().optional(),
+        cacheWriteInputTokens: z.number().int().nonnegative().optional(),
         outputTokens: z.number().int().nonnegative().optional(),
+        reasoningOutputTokens: z.number().int().nonnegative().optional(),
         totalTokens: z.number().int().nonnegative().optional(),
       })
       .optional(),
@@ -122,6 +126,10 @@ export class SubscriptionRuntimeExecutor implements SidecarExecutorPort {
     } catch {
       return failedResult("task_mode_unsupported");
     }
+    const profile = subscriptionRuntimeProfileForPurpose(request.context.purpose);
+    if (profile === undefined) {
+      return failedResult("task_mode_unsupported");
+    }
 
     let admittedInstallation;
     try {
@@ -148,12 +156,13 @@ export class SubscriptionRuntimeExecutor implements SidecarExecutorPort {
         return failedResult("backend_unavailable");
       }
       const execution = await this.options.processRunner.run({
-        args: buildCliArgs(request, inputPath, this.options),
+        args: buildCliArgs(request, inputPath, this.options, profile),
         command: admittedInstallation.executableRealpath,
         cwd: this.options.isolatedCwd,
         env: buildChildEnvironment(
           this.options.childSourceEnvironment,
           encryptionKey,
+          profile.reasoningEffort,
         ),
         killGraceMs: this.options.killGraceMs,
         maxStderrBytes: this.options.maxStderrBytes,
@@ -199,15 +208,19 @@ export class SubscriptionRuntimeExecutor implements SidecarExecutorPort {
       if (!validatedOutput.success) {
         return failedResult("provider_output_invalid");
       }
+      const usage = readCompleteUsage(parsed.telemetry?.usage);
+      if (usage.status === "invalid") {
+        return failedResult("provider_output_invalid");
+      }
       const structuredOutput = validatedOutput.data as unknown as JsonObject;
       return {
         executionAttestation: {
           canonicalRequestSha256: canonicalJsonSha256(request),
           launcherSha256: completedInstallation.launcherSha256,
-          model: subscriptionRuntimeModel,
+          model: profile.model,
           provider: subscriptionRuntimeProvider,
-          purpose: subscriptionRuntimePurpose,
-          reasoningEffort: subscriptionRuntimeReasoningEffort,
+          purpose: profile.purpose,
+          reasoningEffort: profile.reasoningEffort,
           requestId: request.runId,
           runtimeEngine: subscriptionRuntimeEngine,
           runtimePackageVersion: auditedSubscriptionRuntimePackageVersion,
@@ -218,6 +231,7 @@ export class SubscriptionRuntimeExecutor implements SidecarExecutorPort {
         protocolVersion: 1,
         status: "completed",
         structuredOutput,
+        ...(usage.status === "complete" ? { usage: usage.value } : {}),
       };
     } catch {
       return failedResult("backend_unavailable");
@@ -251,6 +265,7 @@ export class SubscriptionRuntimeExecutor implements SidecarExecutorPort {
 export function buildChildEnvironment(
   source: NodeJS.ProcessEnv,
   localEncryptionKey: string,
+  reasoningEffort: SubscriptionRuntimeExecutionProfile["reasoningEffort"] = subscriptionRuntimeReasoningEffort,
 ): Readonly<Record<string, string>> {
   const allowedExact = new Set([
     "HOME",
@@ -282,7 +297,7 @@ export function buildChildEnvironment(
     }
     env[key] = value;
   }
-  env.AGENT_RUNTIME_REASONING_EFFORT = subscriptionRuntimeReasoningEffort;
+  env.AGENT_RUNTIME_REASONING_EFFORT = reasoningEffort;
   env.SUBSCRIPTION_RUNTIME_LOCAL_ENCRYPTION_KEY = localEncryptionKey;
   return env;
 }
@@ -291,6 +306,7 @@ function buildCliArgs(
   request: SubscriptionRuntimeAgentTaskRequest,
   inputPath: string,
   options: SubscriptionRuntimeExecutorOptions,
+  profile: SubscriptionRuntimeExecutionProfile,
 ): readonly string[] {
   return [
     "--provider",
@@ -308,8 +324,64 @@ function buildCliArgs(
     "--provider-instance",
     providerInstanceId,
     "--model",
-    subscriptionRuntimeModel,
+    profile.model,
   ];
+}
+
+type CompleteUsageResult =
+  | { readonly status: "complete"; readonly value: SubscriptionRuntimeUsage }
+  | { readonly status: "invalid" }
+  | { readonly status: "missing" };
+
+function readCompleteUsage(
+  input: {
+    readonly cacheWriteInputTokens?: number | undefined;
+    readonly cachedInputTokens?: number | undefined;
+    readonly inputTokens?: number | undefined;
+    readonly outputTokens?: number | undefined;
+    readonly reasoningOutputTokens?: number | undefined;
+    readonly totalTokens?: number | undefined;
+  } | undefined,
+): CompleteUsageResult {
+  if (input === undefined) {
+    return { status: "missing" };
+  }
+  const {
+    cacheWriteInputTokens,
+    cachedInputTokens,
+    inputTokens,
+    outputTokens,
+    reasoningOutputTokens,
+    totalTokens,
+  } = input;
+  if (
+    cacheWriteInputTokens === undefined ||
+    cachedInputTokens === undefined ||
+    inputTokens === undefined ||
+    outputTokens === undefined ||
+    reasoningOutputTokens === undefined ||
+    totalTokens === undefined
+  ) {
+    return { status: "missing" };
+  }
+  if (
+    cachedInputTokens + cacheWriteInputTokens > inputTokens ||
+    reasoningOutputTokens > outputTokens ||
+    totalTokens < inputTokens + outputTokens
+  ) {
+    return { status: "invalid" };
+  }
+  return {
+    status: "complete",
+    value: {
+      cacheWriteInputTokens,
+      cachedInputTokens,
+      inputTokens,
+      outputTokens,
+      reasoningOutputTokens,
+      totalTokens,
+    },
+  };
 }
 
 function parseCliResult(value: string): z.infer<typeof cliResultSchema> | undefined {

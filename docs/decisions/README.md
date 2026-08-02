@@ -6,3 +6,4 @@
 - [ADR-0004: Hosted subscription runtime without an OpenAI API key](0004-hosted-subscription-runtime-without-openai-api-key.md)
 - [ADR-0005: Subscription account custody](0005-subscription-account-custody.md)
 - [ADR-0006: Voicetext-authenticated Deepgram transcription](0006-voicetext-deepgram-streaming-transcription.md)
+- [ADR-0007: Derived live summary and captions](0007-derived-live-summary-and-captions.md)

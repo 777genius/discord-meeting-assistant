@@ -3,6 +3,12 @@ import type {
   PublicationReceiptSnapshot,
   StageFailure,
 } from "../domain/meeting.js";
+import type {
+  LiveGenerationUsageSnapshot,
+  LiveMeetingSnapshot,
+  LiveMeetingStatus,
+  LiveSummaryDraftSnapshot,
+} from "../domain/live-meeting.js";
 import type { RecordingArtifactSnapshot } from "../domain/recording.js";
 import type {
   EvidenceBackedSummarySnapshot,
@@ -24,6 +30,70 @@ export interface MeetingRepository {
   findById(meetingId: string): Promise<MeetingSnapshot | null>;
 
   save(snapshot: MeetingSnapshot, expectedRevision: number): Promise<void>;
+}
+
+export interface LiveMeetingRepository {
+  findById(meetingId: string): Promise<LiveMeetingSnapshot | null>;
+
+  save(snapshot: LiveMeetingSnapshot, expectedRevision: number | null): Promise<void>;
+}
+
+export interface LiveCaptionSnapshot {
+  readonly endMs: number;
+  readonly isFinal: boolean;
+  readonly speakerId: string;
+  readonly startMs: number;
+  readonly text: string;
+}
+
+export interface IncrementalSummaryGenerationRequest {
+  readonly idempotencyKey: string;
+  readonly knownSpeakerIds: readonly string[];
+  readonly knownTurnIds: readonly string[];
+  readonly meetingId: string;
+  readonly newTurns: readonly TranscriptTurnSnapshot[];
+  readonly previousSummary: LiveSummaryDraftSnapshot | null;
+  readonly recentContextTurns: readonly TranscriptTurnSnapshot[];
+  readonly revision: number;
+  readonly throughTurnCount: number;
+}
+
+export interface GeneratedIncrementalSummary {
+  readonly summary: LiveSummaryDraftSnapshot;
+  readonly usage?: LiveGenerationUsageSnapshot;
+}
+
+export type IncrementalSummaryGenerationResult =
+  | { readonly ok: true; readonly value: GeneratedIncrementalSummary }
+  | {
+      readonly failure: StageFailure;
+      readonly ok: false;
+      readonly usage?: LiveGenerationUsageSnapshot;
+    };
+
+export interface IncrementalSummaryGenerationPort {
+  generate(
+    request: IncrementalSummaryGenerationRequest,
+  ): Promise<IncrementalSummaryGenerationResult>;
+}
+
+export interface LiveMeetingProjectionRequest {
+  readonly captions: readonly LiveCaptionSnapshot[];
+  readonly currentExternalPublicationId: string | null;
+  readonly elapsedMs: number;
+  readonly idempotencyKey: string;
+  readonly meetingId: string;
+  readonly publicationTargetId: string;
+  readonly revision: number;
+  readonly status: LiveMeetingStatus;
+  readonly summary: LiveSummaryDraftSnapshot | null;
+  readonly updatedAtMs: number;
+}
+
+export interface LiveMeetingProjectionPort {
+  publish(
+    request: LiveMeetingProjectionRequest,
+  ): Promise<PortResult<{ readonly externalPublicationId: string }>>;
 }
 
 export interface FinalTranscriptionRequest {

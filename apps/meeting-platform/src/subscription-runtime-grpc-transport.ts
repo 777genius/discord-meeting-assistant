@@ -18,6 +18,7 @@ import type {
   SubscriptionRuntimeHealthResult,
   SubscriptionRuntimeTaskResult,
   SubscriptionRuntimeTransportPort,
+  SubscriptionRuntimeUsage,
 } from "@discord-meeting/subscription-runtime-adapter";
 
 type UnaryMethod = (
@@ -139,9 +140,7 @@ export function toGrpcTaskRequest(request: SubscriptionRuntimeAgentTaskRequest) 
     metadata: {
       ...request.task.metadata,
       application: request.context.application,
-      meetingId: request.context.metadata.meetingId,
-      transcriptId: request.context.metadata.transcriptId,
-      transcriptVersion: request.context.metadata.transcriptVersion,
+      ...request.context.metadata,
     },
   };
 }
@@ -175,6 +174,7 @@ export function fromGrpcTaskResponse(input: unknown): SubscriptionRuntimeTaskRes
 
   const structuredOutput = jsonObject(response.structuredOutputJson, "structuredOutputJson");
   const attestation = recordValue(response.executionAttestation, "executionAttestation");
+  const usage = completeUsage(response.usage);
   return {
     executionAttestation: {
       canonicalRequestSha256: requiredString(
@@ -202,7 +202,43 @@ export function fromGrpcTaskResponse(input: unknown): SubscriptionRuntimeTaskRes
     protocolVersion,
     status: "completed",
     structuredOutput,
+    ...(usage === undefined ? {} : { usage }),
   };
+}
+
+function completeUsage(value: unknown): SubscriptionRuntimeUsage | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const usage = value as Record<string, unknown>;
+  if (usage.complete !== true) {
+    return undefined;
+  }
+  const parsed: SubscriptionRuntimeUsage = {
+    cacheWriteInputTokens: integerValue(
+      usage.cacheWriteInputTokens,
+      "usage.cacheWriteInputTokens",
+    ),
+    cachedInputTokens: integerValue(
+      usage.cachedInputTokens,
+      "usage.cachedInputTokens",
+    ),
+    inputTokens: integerValue(usage.inputTokens, "usage.inputTokens"),
+    outputTokens: integerValue(usage.outputTokens, "usage.outputTokens"),
+    reasoningOutputTokens: integerValue(
+      usage.reasoningOutputTokens,
+      "usage.reasoningOutputTokens",
+    ),
+    totalTokens: integerValue(usage.totalTokens, "usage.totalTokens"),
+  };
+  if (
+    parsed.cachedInputTokens + parsed.cacheWriteInputTokens > parsed.inputTokens ||
+    parsed.reasoningOutputTokens > parsed.outputTokens ||
+    parsed.totalTokens < parsed.inputTokens + parsed.outputTokens
+  ) {
+    throw new Error("Subscription runtime usage totals are inconsistent");
+  }
+  return parsed;
 }
 
 function readNestedService(root: Record<string, unknown>): ServiceClientConstructor {

@@ -2,6 +2,9 @@
 
 Status: Accepted
 
+Partially superseded by ADR-0007 for derived live transcription, summary, and
+captions. The exclusion of conversational Pipecat/TTS remains in force.
+
 Date: 2026-08-02
 
 ## Context

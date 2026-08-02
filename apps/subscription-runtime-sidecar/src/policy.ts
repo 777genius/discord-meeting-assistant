@@ -1,10 +1,15 @@
 import {
   canonicalJsonSha256,
+  incrementalMeetingSummaryPolicyVersion,
   meetingSummaryOutputSchemaName,
   meetingSummaryPolicyVersion,
   providerMeetingSummaryJsonSchema,
+  subscriptionRuntimeIncrementalModel,
+  subscriptionRuntimeIncrementalPurpose,
+  subscriptionRuntimeIncrementalReasoningEffort,
   subscriptionRuntimeModel,
   subscriptionRuntimeProtocolVersion,
+  subscriptionRuntimeProfileForPurpose,
   subscriptionRuntimePurpose,
   subscriptionRuntimeReasoningEffort,
   type JsonObject,
@@ -30,19 +35,25 @@ const controlsSchema = z
     interactive: z.literal(false),
     maxOutputTokens: z.number().int().min(256).max(32_768),
     maxTurns: z.literal(1),
-    model: z.literal(subscriptionRuntimeModel),
+    model: z.union([
+      z.literal(subscriptionRuntimeModel),
+      z.literal(subscriptionRuntimeIncrementalModel),
+    ]),
     outputKind: z.literal("structured_output"),
     outputSchema: jsonObjectSchema,
     outputSchemaName: z.literal(meetingSummaryOutputSchemaName),
     permissionMode: z.literal("read-only"),
-    reasoningEffort: z.literal(subscriptionRuntimeReasoningEffort),
+    reasoningEffort: z.union([
+      z.literal(subscriptionRuntimeReasoningEffort),
+      z.literal(subscriptionRuntimeIncrementalReasoningEffort),
+    ]),
     responseFormat: z.literal("json"),
     runtimeOutput: z.literal("structured_output"),
     selectedOutputKind: z.literal("structured_output"),
   })
   .strict();
 
-const transportMetadataSchema = z
+const finalTransportMetadataSchema = z
   .object({
     application: z.literal(applicationName),
     executionProfile: z.literal("stateless-completion"),
@@ -57,16 +68,53 @@ const transportMetadataSchema = z
   })
   .strict();
 
-const canonicalTaskMetadataSchema = z
+const incrementalTransportMetadataSchema = z
   .object({
+    application: z.literal(applicationName),
     executionProfile: z.literal("stateless-completion"),
-    model: z.literal(subscriptionRuntimeModel),
-    policyVersion: z.literal(meetingSummaryPolicyVersion),
-    reasoningEffort: z.literal(subscriptionRuntimeReasoningEffort),
+    meetingId: nonEmptyText,
+    model: z.literal(subscriptionRuntimeIncrementalModel),
+    policyVersion: z.literal(incrementalMeetingSummaryPolicyVersion),
+    reasoningEffort: z.literal(subscriptionRuntimeIncrementalReasoningEffort),
     runtimeOutput: z.literal("structured_output"),
+    summaryRevision: nonEmptyText,
+    throughTurnCount: nonEmptyText,
     toolsDisabled: z.literal("true"),
   })
   .strict();
+
+const transportMetadataSchema = z.union([
+  finalTransportMetadataSchema,
+  incrementalTransportMetadataSchema,
+]);
+
+const finalContextMetadataSchema = z
+  .object({
+    meetingId: nonEmptyText,
+    policyVersion: z.literal(meetingSummaryPolicyVersion),
+    transcriptId: nonEmptyText,
+    transcriptVersion: nonEmptyText,
+  })
+  .strict();
+
+const incrementalContextMetadataSchema = z
+  .object({
+    meetingId: nonEmptyText,
+    policyVersion: z.literal(incrementalMeetingSummaryPolicyVersion),
+    summaryRevision: nonEmptyText,
+    throughTurnCount: nonEmptyText,
+  })
+  .strict();
+
+const contextMetadataSchema = z.union([
+  finalContextMetadataSchema,
+  incrementalContextMetadataSchema,
+]);
+
+const canonicalTaskMetadataSchema = z.union([
+  finalTransportMetadataSchema.omit({ application: true, meetingId: true, transcriptId: true, transcriptVersion: true }),
+  incrementalTransportMetadataSchema.omit({ application: true, meetingId: true, summaryRevision: true, throughTurnCount: true }),
+]);
 
 const canonicalRequestSchema = z
   .object({
@@ -74,15 +122,11 @@ const canonicalRequestSchema = z
       .object({
         application: z.literal(applicationName),
         correlationId: nonEmptyText,
-        metadata: z
-          .object({
-            meetingId: nonEmptyText,
-            policyVersion: z.literal(meetingSummaryPolicyVersion),
-            transcriptId: nonEmptyText,
-            transcriptVersion: nonEmptyText,
-          })
-          .strict(),
-        purpose: z.literal(subscriptionRuntimePurpose),
+        metadata: contextMetadataSchema,
+        purpose: z.union([
+          z.literal(subscriptionRuntimePurpose),
+          z.literal(subscriptionRuntimeIncrementalPurpose),
+        ]),
       })
       .strict(),
     cwd: z.string().min(1),
@@ -114,7 +158,10 @@ const rawGrpcRequestSchema = z
     correlationId: nonEmptyText,
     provider: z.union([z.literal(grpcProviderCodex), z.literal("1"), z.literal(1)]),
     providerInstanceId: z.literal(providerInstanceId),
-    purpose: z.literal(subscriptionRuntimePurpose),
+    purpose: z.union([
+      z.literal(subscriptionRuntimePurpose),
+      z.literal(subscriptionRuntimeIncrementalPurpose),
+    ]),
     systemPrompt: z.string().min(1),
     prompt: z.string().min(1),
     outputSchemaJson: z.string().min(2),
@@ -173,17 +220,22 @@ export function reconstructCanonicalRequest(
     throw new RequestPolicyError("controls contain a conflicting output schema");
   }
 
+  const profile = subscriptionRuntimeProfileForPurpose(input.purpose);
+  if (
+    profile === undefined ||
+    controls.model !== profile.model ||
+    controls.reasoningEffort !== profile.reasoningEffort
+  ) {
+    throw new RequestPolicyError("request execution profile is not admitted");
+  }
+  const profileMetadata = reconstructProfileMetadata(input.purpose, input.metadata);
+
   const request: SubscriptionRuntimeAgentTaskRequest = {
     context: {
       application: applicationName,
       correlationId: input.correlationId,
-      metadata: {
-        meetingId: input.metadata.meetingId,
-        policyVersion: meetingSummaryPolicyVersion,
-        transcriptId: input.metadata.transcriptId,
-        transcriptVersion: input.metadata.transcriptVersion,
-      },
-      purpose: subscriptionRuntimePurpose,
+      metadata: profileMetadata.context,
+      purpose: profile.purpose,
     },
     cwd: input.cwd,
     protocolVersion: subscriptionRuntimeProtocolVersion,
@@ -191,14 +243,7 @@ export function reconstructCanonicalRequest(
     task: {
       controls: controls as unknown as SubscriptionRuntimeAgentTaskRequest["task"]["controls"],
       kind: "structured-prompt",
-      metadata: {
-        executionProfile: "stateless-completion",
-        model: subscriptionRuntimeModel,
-        policyVersion: meetingSummaryPolicyVersion,
-        reasoningEffort: subscriptionRuntimeReasoningEffort,
-        runtimeOutput: "structured_output",
-        toolsDisabled: "true",
-      },
+      metadata: profileMetadata.task,
       outputSchemaName: meetingSummaryOutputSchemaName,
       prompt: input.prompt,
       systemPrompt: input.systemPrompt,
@@ -223,7 +268,98 @@ export function assertCanonicalRequestPolicy(
   ) {
     throw new RequestPolicyError("canonical task conflicts with sidecar policy");
   }
+  assertCanonicalProfile(candidate);
   assertExactOutputSchema(candidate.task.controls.outputSchema);
+}
+
+function reconstructProfileMetadata(
+  purpose: string,
+  metadata: unknown,
+): {
+  readonly context: SubscriptionRuntimeAgentTaskRequest["context"]["metadata"];
+  readonly task: SubscriptionRuntimeAgentTaskRequest["task"]["metadata"];
+} {
+  if (purpose === subscriptionRuntimePurpose) {
+    const parsed = parseWithPolicy(finalTransportMetadataSchema, metadata);
+    return {
+      context: {
+        meetingId: parsed.meetingId,
+        policyVersion: meetingSummaryPolicyVersion,
+        transcriptId: parsed.transcriptId,
+        transcriptVersion: parsed.transcriptVersion,
+      },
+      task: {
+        executionProfile: "stateless-completion",
+        model: subscriptionRuntimeModel,
+        policyVersion: meetingSummaryPolicyVersion,
+        reasoningEffort: subscriptionRuntimeReasoningEffort,
+        runtimeOutput: "structured_output",
+        toolsDisabled: "true",
+      },
+    };
+  }
+  if (purpose === subscriptionRuntimeIncrementalPurpose) {
+    const parsed = parseWithPolicy(incrementalTransportMetadataSchema, metadata);
+    return {
+      context: {
+        meetingId: parsed.meetingId,
+        policyVersion: incrementalMeetingSummaryPolicyVersion,
+        summaryRevision: parsed.summaryRevision,
+        throughTurnCount: parsed.throughTurnCount,
+      },
+      task: {
+        executionProfile: "stateless-completion",
+        model: subscriptionRuntimeIncrementalModel,
+        policyVersion: incrementalMeetingSummaryPolicyVersion,
+        reasoningEffort: subscriptionRuntimeIncrementalReasoningEffort,
+        runtimeOutput: "structured_output",
+        toolsDisabled: "true",
+      },
+    };
+  }
+  throw new RequestPolicyError("request purpose is not admitted");
+}
+
+function assertCanonicalProfile(
+  request: z.infer<typeof canonicalRequestSchema>,
+): void {
+  const profile = subscriptionRuntimeProfileForPurpose(request.context.purpose);
+  if (
+    profile === undefined ||
+    request.context.metadata.policyVersion !== profile.policyVersion ||
+    request.task.controls.model !== profile.model ||
+    request.task.controls.reasoningEffort !== profile.reasoningEffort ||
+    request.task.metadata.model !== profile.model ||
+    request.task.metadata.policyVersion !== profile.policyVersion ||
+    request.task.metadata.reasoningEffort !== profile.reasoningEffort
+  ) {
+    throw new RequestPolicyError("canonical request profile is not admitted");
+  }
+  const commonMetadata = {
+    application: applicationName,
+    executionProfile: request.task.metadata.executionProfile,
+    meetingId: request.context.metadata.meetingId,
+    model: request.task.metadata.model,
+    policyVersion: request.task.metadata.policyVersion,
+    reasoningEffort: request.task.metadata.reasoningEffort,
+    runtimeOutput: request.task.metadata.runtimeOutput,
+    toolsDisabled: request.task.metadata.toolsDisabled,
+  };
+  if (request.context.purpose === subscriptionRuntimePurpose) {
+    const metadata = parseWithPolicy(finalContextMetadataSchema, request.context.metadata);
+    reconstructProfileMetadata(request.context.purpose, {
+      ...commonMetadata,
+      transcriptId: metadata.transcriptId,
+      transcriptVersion: metadata.transcriptVersion,
+    });
+    return;
+  }
+  const metadata = parseWithPolicy(incrementalContextMetadataSchema, request.context.metadata);
+  reconstructProfileMetadata(request.context.purpose, {
+    ...commonMetadata,
+    summaryRevision: metadata.summaryRevision,
+    throughTurnCount: metadata.throughTurnCount,
+  });
 }
 
 function assertExactOutputSchema(value: Record<string, unknown>): void {

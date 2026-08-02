@@ -4,10 +4,31 @@ export {
   type ProcessMeetingSummaryResult,
 } from "./application/process-meeting-summary.js";
 export {
+  AppendLiveTranscriptTurn,
+  FinishLiveMeeting,
+  RefreshLiveMeeting,
+  StartLiveMeeting,
+  defaultLiveSummaryCadencePolicy,
+  type LiveSummaryCadencePolicy,
+  type RefreshLiveMeetingDependencies,
+  type RefreshLiveMeetingInput,
+  type RefreshLiveMeetingResult,
+  type StartLiveMeetingDependencies,
+  type StartLiveMeetingResult,
+} from "./application/live-meeting.js";
+export {
   type FinalTranscriptionPort,
   type FinalTranscriptionRequest,
   type GeneratedSummary,
   type GeneratedTranscript,
+  type GeneratedIncrementalSummary,
+  type IncrementalSummaryGenerationPort,
+  type IncrementalSummaryGenerationResult,
+  type IncrementalSummaryGenerationRequest,
+  type LiveCaptionSnapshot,
+  type LiveMeetingProjectionPort,
+  type LiveMeetingProjectionRequest,
+  type LiveMeetingRepository,
   type MeetingRepository,
   type PortResult,
   type SummaryGenerationPort,
@@ -37,6 +58,14 @@ export {
   type TranscriptId,
   type TranscriptTurnId,
 } from "./domain/identifiers.js";
+export {
+  LiveMeeting,
+  type LiveGenerationUsageSnapshot,
+  type LiveMeetingSnapshot,
+  type LiveMeetingStatus,
+  type LiveSummaryDraftSnapshot,
+  type StartLiveMeetingInput,
+} from "./domain/live-meeting.js";
 export {
   Meeting,
   type BeginStageDisposition,

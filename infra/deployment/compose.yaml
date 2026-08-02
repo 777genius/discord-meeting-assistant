@@ -14,6 +14,7 @@ services:
       - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/secrets/postgres-password:/run/secrets/postgres-password:ro
       - ../../infra/postgres/migrations/0001_create_meeting_core.sql:/docker-entrypoint-initdb.d/0001_create_meeting_core.sql:ro
       - ../../infra/postgres/migrations/0002_create_post_call_outbox.sql:/docker-entrypoint-initdb.d/0002_create_post_call_outbox.sql:ro
+      - ../../infra/postgres/migrations/0003_create_live_meetings.sql:/docker-entrypoint-initdb.d/0003_create_live_meetings.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U meeting -d meeting"]
       interval: 5s
@@ -103,13 +104,11 @@ services:
       SUBSCRIPTION_RUNTIME_ISOLATED_CWD: /run/discord-meeting-subscription-runtime/workspace
       SUBSCRIPTION_RUNTIME_LAUNCHER_PATH: /opt/subscription-runtime/launcher.mjs
       SUBSCRIPTION_RUNTIME_LOCAL_ENCRYPTION_KEY_FILE: /run/subscription-runtime-secrets/local-encryption-key
-      SUBSCRIPTION_RUNTIME_MODEL: gpt-5.6-sol
       SUBSCRIPTION_RUNTIME_PACKAGE_MANIFEST_PATH: /opt/subscription-runtime/node_modules/@vioxen/subscription-runtime/package.json
       SUBSCRIPTION_RUNTIME_PROTO_PATH: /app/apps/meeting-platform/proto/agent_runtime.proto
       SUBSCRIPTION_RUNTIME_PROVIDER: codex
       SUBSCRIPTION_RUNTIME_PROVIDER_INSTANCE_ID: discord-meeting-summary-v3
       SUBSCRIPTION_RUNTIME_PURPOSE_POLICY_FILE: /etc/subscription-runtime/sidecar-policy.json
-      SUBSCRIPTION_RUNTIME_REASONING_EFFORT: xhigh
       SUBSCRIPTION_RUNTIME_SERVICE_TOKEN_FILE: /run/subscription-runtime-secrets/service-token
       SUBSCRIPTION_RUNTIME_STATE_ROOT: /var/lib/subscription-runtime
       PATH: /app/apps/subscription-runtime-sidecar/node_modules/.bin:/opt/subscription-runtime/node_modules/.bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin

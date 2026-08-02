@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  createMeetingDiscordProjectionKey,
   DiscordSummaryPublisher,
   InProcessProjectionLock,
+  type DiscordProjectionBody,
   type DiscordProjectionClient,
   type DiscordProjectionReference,
   type LocatedDiscordProjection,
@@ -22,13 +24,17 @@ class FakeDiscordProjectionClient implements DiscordProjectionClient {
     parentChannelId: string;
     name: string;
     marker: string;
-    message?: { messageId: string; markdown: string; marker: string };
+    message?: { messageId: string; body: DiscordProjectionBody; marker: string };
   }> = [];
 
   createThreadCount = 0;
   createMessageCount = 0;
+  inspectCount = 0;
+  renameCount = 0;
+  editMessageCount = 0;
   throwAfterNextThreadCreate = false;
   throwAfterNextMessageCreate = false;
+  throwAfterNextMessageEdit = false;
   createDelayMilliseconds = 0;
 
   async inspect(input: {
@@ -36,6 +42,7 @@ class FakeDiscordProjectionClient implements DiscordProjectionClient {
     marker: string;
     referenceHint?: DiscordProjectionReference;
   }): Promise<LocatedDiscordProjection | undefined> {
+    this.inspectCount += 1;
     const byHint = input.referenceHint === undefined
       ? undefined
       : this.threads.find(
@@ -77,12 +84,13 @@ class FakeDiscordProjectionClient implements DiscordProjectionClient {
   }
 
   async renameThread(input: { threadId: string; name: string }): Promise<void> {
+    this.renameCount += 1;
     this.thread(input.threadId).name = input.name;
   }
 
   async createMessage(input: {
     threadId: string;
-    markdown: string;
+    body: DiscordProjectionBody;
     marker: string;
   }): Promise<string> {
     this.createMessageCount += 1;
@@ -98,15 +106,20 @@ class FakeDiscordProjectionClient implements DiscordProjectionClient {
   async editMessage(input: {
     threadId: string;
     messageId: string;
-    markdown: string;
+    body: DiscordProjectionBody;
     marker: string;
   }): Promise<void> {
     const message = this.thread(input.threadId).message;
     if (message?.messageId !== input.messageId) {
       throw new Error("Message does not exist");
     }
-    message.markdown = input.markdown;
+    this.editMessageCount += 1;
+    message.body = input.body;
     message.marker = input.marker;
+    if (this.throwAfterNextMessageEdit) {
+      this.throwAfterNextMessageEdit = false;
+      throw new Error("unknown edit outcome");
+    }
   }
 
   private thread(threadId: string) {
@@ -139,7 +152,7 @@ describe("DiscordSummaryPublisher contract", () => {
     expect(client.createThreadCount).toBe(1);
     expect(client.createMessageCount).toBe(1);
     expect(client.threads[0]?.name).toMatch(/ \[код [0-9a-f]{20}\]$/u);
-    expect(client.threads[0]?.message?.markdown).toContain("Corrected summary");
+    expect(client.threads[0]?.message?.body.markdown).toContain("Corrected summary");
   });
 
   it("reconciles a thread create whose remote outcome was unknown", async () => {
@@ -178,6 +191,95 @@ describe("DiscordSummaryPublisher contract", () => {
     expect(results[0]).toEqual(results[1]);
     expect(client.createThreadCount).toBe(1);
     expect(client.createMessageCount).toBe(1);
-    expect(client.threads[0]?.message?.markdown).toContain("Newest summary");
+    expect(client.threads[0]?.message?.body.markdown).toContain("Newest summary");
+  });
+
+  it("creates once then directly edits many live revisions without another inspect or rename", async () => {
+    const client = new FakeDiscordProjectionClient();
+    const subject = publisher(client);
+    const first = await subject.publish(command);
+    const inspectionsAfterCreate = client.inspectCount;
+    const renamesAfterCreate = client.renameCount;
+
+    let current = first;
+    for (const markdown of [
+      "## Summary\n\nFast live update one.",
+      "## Summary\n\nFast live update two.",
+      "## Summary\n\nFast live update three.",
+    ]) {
+      current = await subject.publish({ ...command, markdown, currentReference: current });
+    }
+
+    expect(current).toEqual(first);
+    expect(client.inspectCount).toBe(inspectionsAfterCreate);
+    expect(client.renameCount).toBe(renamesAfterCreate);
+    expect(client.editMessageCount).toBe(4);
+    expect(client.createThreadCount).toBe(1);
+    expect(client.createMessageCount).toBe(1);
+  });
+
+  it("recovers a failed direct edit through the marker without creating a second projection", async () => {
+    const client = new FakeDiscordProjectionClient();
+    const subject = publisher(client);
+    const first = await subject.publish(command);
+    client.throwAfterNextMessageEdit = true;
+
+    const recovered = await subject.publish({
+      ...command,
+      markdown: "## Summary\n\nRecovered update.",
+      currentReference: first,
+    });
+
+    expect(recovered).toEqual(first);
+    expect(client.threads).toHaveLength(1);
+    expect(client.createThreadCount).toBe(1);
+    expect(client.createMessageCount).toBe(1);
+    expect(client.threads[0]?.message?.body.markdown).toContain("Recovered update");
+    expect(client.inspectCount).toBeGreaterThan(1);
+  });
+
+  it("reconciles a legacy operation marker into the canonical meeting projection", async () => {
+    const client = new FakeDiscordProjectionClient();
+    const subject = publisher(client);
+    const legacyKey = "meeting-summary-publication:v1|legacy";
+    const first = await subject.publish({ ...command, projectionKey: legacyKey });
+    const canonicalKey = createMeetingDiscordProjectionKey("meeting-42", command.parentChannelId);
+
+    const reconciled = await subject.publish({
+      ...command,
+      projectionKey: canonicalKey,
+      legacyProjectionKeys: [legacyKey],
+      markdown: "## Summary\n\nCanonical update.",
+    });
+
+    expect(reconciled).toEqual(first);
+    expect(client.createThreadCount).toBe(1);
+    expect(client.createMessageCount).toBe(1);
+    expect(client.threads[0]?.message?.body.markdown).toContain("Canonical update");
+  });
+
+  it("replaces a live captions embed with the final one-embed summary", async () => {
+    const client = new FakeDiscordProjectionClient();
+    const subject = publisher(client);
+    const projectionKey = createMeetingDiscordProjectionKey("meeting-42", command.parentChannelId);
+    const live = await subject.publish({
+      ...command,
+      projectionKey,
+      markdown: "# Встреча в процессе\n\nПредварительное саммари.",
+      liveCaptionsMarkdown: "## 🎙️ Сейчас говорят\n\n… `00:05` **Аня:** привет",
+    });
+
+    const final = await subject.publish({
+      ...command,
+      projectionKey,
+      markdown: "# Итоги встречи\n\nФинальное саммари.",
+      currentReference: live,
+    });
+
+    expect(final).toEqual(live);
+    expect(client.threads).toHaveLength(1);
+    expect(client.threads[0]?.message?.body).toEqual({
+      markdown: "# Итоги встречи\n\nФинальное саммари.",
+    });
   });
 });

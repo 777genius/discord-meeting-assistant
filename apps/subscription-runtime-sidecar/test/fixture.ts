@@ -1,4 +1,5 @@
 import {
+  buildSubscriptionRuntimeIncrementalSummaryRequest,
   buildSubscriptionRuntimeSummaryRequest,
   type JsonObject,
   type SubscriptionRuntimeAgentTaskRequest,
@@ -53,6 +54,49 @@ export const structuredOutput: JsonObject = {
   ],
 };
 
+export const incrementalCanonicalRequest = buildSubscriptionRuntimeIncrementalSummaryRequest(
+  {
+    idempotencyKey: "meeting-1:live-summary:2",
+    knownSpeakerIds: ["speaker-1"],
+    knownTurnIds: ["turn-1", "turn-2"],
+    meetingId: "meeting-1",
+    newTurns: [
+      {
+        endMs: 4_000,
+        speakerId: "speaker-1",
+        startMs: 2_000,
+        text: "Я подготовлю релиз к пятнице.",
+        turnId: "turn-2",
+      },
+    ],
+    previousSummary: {
+      actionItems: [],
+      decisions: [
+        {
+          decisionId: "decision-1",
+          evidenceTurnIds: ["turn-1"],
+          text: "Выпустить релиз",
+        },
+      ],
+      openQuestions: [],
+      overview: "Команда согласовала релиз.",
+      revision: 1,
+      title: "Релиз",
+      topics: [],
+    },
+    recentContextTurns: [],
+    revision: 2,
+    throughTurnCount: 2,
+  },
+  {
+    isolatedCwd,
+    maxOutputTokens: 4_096,
+    maxPromptBytes: 2 * 1_024 * 1_024,
+    maxRecentContextTurns: 256,
+    timeoutMs: 10_000,
+  },
+);
+
 export function grpcRequest(
   request: SubscriptionRuntimeAgentTaskRequest = canonicalRequest,
 ): Record<string, unknown> {
@@ -74,9 +118,7 @@ export function grpcRequest(
     metadata: {
       ...request.task.metadata,
       application: request.context.application,
-      meetingId: request.context.metadata.meetingId,
-      transcriptId: request.context.metadata.transcriptId,
-      transcriptVersion: request.context.metadata.transcriptVersion,
+      ...request.context.metadata,
     },
   };
 }

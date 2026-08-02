@@ -160,7 +160,11 @@ export async function collectRetainedE2eEvidence(
     throw new Error("Postgres snapshot is not correlated to the requested recording");
   }
   const publication = parsePublication(snapshot.publication.externalPublicationId);
-  const marker = await projectionMarker(snapshot.publication.idempotencyKey);
+  const projectionKey = await createMeetingDiscordProjectionKey(
+    snapshot.meetingId,
+    snapshot.publicationTargetId,
+  );
+  const marker = await projectionMarker(projectionKey);
   const [s3, beforeDiscord] = await Promise.all([
     deployment.collectS3(snapshot.recording.manifestLocator, input.recordingId),
     discord.inspect(snapshot.publicationTargetId, marker),
@@ -369,4 +373,22 @@ function parsePublication(value: string): { readonly messageId: string; readonly
 async function projectionMarker(idempotencyKey: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(idempotencyKey));
   return `meeting-projection:${Buffer.from(digest).toString("hex").slice(0, 20)}`;
+}
+
+// Kept independent from the production Discord adapter so retained E2E
+// evidence cannot pass because verifier and SUT share the same implementation.
+async function createMeetingDiscordProjectionKey(
+  meetingId: string,
+  targetChannelId: string,
+): Promise<string> {
+  const canonical = JSON.stringify([
+    "meeting-discord-projection:v2",
+    meetingId,
+    targetChannelId,
+  ]);
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(canonical),
+  );
+  return `meeting-discord-projection:v2:${Buffer.from(digest).toString("hex")}`;
 }

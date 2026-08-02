@@ -1,6 +1,7 @@
 import {
   EvidenceBackedSummary,
   FinalTranscript,
+  LiveMeeting,
   Meeting,
   type MeetingSnapshot,
 } from "@discord-meeting/meeting-core";
@@ -22,6 +23,7 @@ import {
 
 import {
   MeetingPersistenceConflictError,
+  PostgresLiveMeetingRepository,
   PostgresMeetingRepository,
 } from "../src/index.js";
 
@@ -182,6 +184,14 @@ beforeAll(async () => {
       "utf8",
     );
     await pool.query(migration);
+    const liveMigration = await readFile(
+      new URL(
+        "../../../infra/postgres/migrations/0003_create_live_meetings.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    await pool.query(liveMigration);
   } catch (error) {
     if (!isDockerUnavailable(error)) {
       throw error;
@@ -193,7 +203,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   if (pool !== undefined) {
     await pool.query(
-      "TRUNCATE TABLE meeting_core.post_call_outbox, meeting_core.meetings",
+      "TRUNCATE TABLE meeting_core.live_meetings, meeting_core.post_call_outbox, meeting_core.meetings",
     );
   }
 });
@@ -382,6 +392,66 @@ describe("PostgresMeetingRepository", () => {
 
     await expect(repository.save(snapshot, 1)).rejects.toThrow(
       "snapshot revision cannot be older than expectedRevision",
+    );
+  });
+});
+
+describe("PostgresLiveMeetingRepository", () => {
+  it("round-trips live state with create and revision CAS semantics", async (context) => {
+    const database = databaseOrSkip(context);
+    const repository = new PostgresLiveMeetingRepository(database);
+    const meeting = LiveMeeting.start({
+      meetingId: "live-postgres-1",
+      publicationTargetId: "discord-channel-1",
+      startedAtMs: 10_000,
+    });
+    const initial = meeting.toSnapshot();
+
+    await repository.save(initial, null);
+    await repository.save(initial, null);
+    meeting.appendFinalTurn({
+      endMs: 15_000,
+      speakerId: "speaker-a",
+      startMs: 11_000,
+      text: "Выпускаем версию в пятницу.",
+      turnId: "turn-live-1",
+    });
+    const updated = meeting.toSnapshot();
+    await repository.save(updated, initial.revision);
+    await repository.save(updated, initial.revision);
+
+    expect(await repository.findById(meeting.meetingId)).toEqual(updated);
+  });
+
+  it("rejects a stale live revision", async (context) => {
+    const database = databaseOrSkip(context);
+    const repository = new PostgresLiveMeetingRepository(database);
+    const meeting = LiveMeeting.start({
+      meetingId: "live-postgres-conflict",
+      publicationTargetId: "discord-channel-1",
+      startedAtMs: 0,
+    });
+    const initial = meeting.toSnapshot();
+    await repository.save(initial, null);
+    meeting.appendFinalTurn({
+      endMs: 2_000,
+      speakerId: "speaker-a",
+      startMs: 1_000,
+      text: "Первая реплика.",
+      turnId: "turn-live-1",
+    });
+    await repository.save(meeting.toSnapshot(), initial.revision);
+    const competing = LiveMeeting.restore(initial);
+    competing.appendFinalTurn({
+      endMs: 3_000,
+      speakerId: "speaker-b",
+      startMs: 2_000,
+      text: "Конкурирующая реплика.",
+      turnId: "turn-live-2",
+    });
+
+    await expect(repository.save(competing.toSnapshot(), initial.revision)).rejects.toBeInstanceOf(
+      MeetingPersistenceConflictError,
     );
   });
 });

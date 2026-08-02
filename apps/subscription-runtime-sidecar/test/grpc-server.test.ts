@@ -3,7 +3,12 @@ import { describe, expect, it } from "vitest";
 
 import { createGrpcHandlers } from "../src/grpc-server.js";
 import type { SidecarExecutorPort } from "../src/types.js";
-import { grpcRequest, isolatedCwd } from "./fixture.js";
+import {
+  grpcRequest,
+  incrementalCanonicalRequest,
+  isolatedCwd,
+  structuredOutput,
+} from "./fixture.js";
 
 const serviceToken = "test-service-token-long-enough";
 const handlerOptions = {
@@ -52,7 +57,74 @@ describe("authenticated agent runtime gRPC handlers", () => {
     expect(rejected.error).toMatchObject({ code: status.INVALID_ARGUMENT });
     expect(executor.executions).toBe(1);
   });
+
+  it("forwards complete token classes with an explicit presence marker", async () => {
+    const handlers = createGrpcHandlers(new CompletedExecutor(), handlerOptions);
+    const metadata = new Metadata();
+    metadata.set("authorization", `Bearer ${serviceToken}`);
+
+    const response = await invoke(
+      handlers.runAgentTask,
+      grpcRequest(incrementalCanonicalRequest),
+      metadata,
+    );
+
+    expect(response.error).toBeNull();
+    expect(response.value).toMatchObject({
+      status: "AGENT_RUNTIME_TASK_STATUS_COMPLETED",
+      usage: {
+        cacheWriteInputTokens: 100,
+        cachedInputTokens: 200,
+        complete: true,
+        inputTokens: 1_000,
+        outputTokens: 300,
+        reasoningOutputTokens: 100,
+        totalTokens: 1_300,
+      },
+    });
+  });
 });
+
+class CompletedExecutor implements SidecarExecutorPort {
+  public async execute() {
+    return {
+      executionAttestation: {
+        canonicalRequestSha256: "a".repeat(64),
+        launcherSha256: "b".repeat(64),
+        model: "gpt-5.6-luna",
+        provider: "codex",
+        purpose: "discord_meeting.summary.incremental",
+        reasoningEffort: "low",
+        requestId: incrementalCanonicalRequest.runId,
+        runtimeEngine: "subscription-runtime-cli",
+        runtimePackageVersion: "0.1.0-main.2",
+        schemaVersion: 1,
+        selectedOutputKind: "structured_output",
+        selectedOutputSha256: "c".repeat(64),
+      },
+      protocolVersion: 1 as const,
+      status: "completed" as const,
+      structuredOutput,
+      usage: {
+        cacheWriteInputTokens: 100,
+        cachedInputTokens: 200,
+        inputTokens: 1_000,
+        outputTokens: 300,
+        reasoningOutputTokens: 100,
+        totalTokens: 1_300,
+      },
+    };
+  }
+
+  public async checkHealth() {
+    return {
+      runtimeEngine: "subscription-runtime-cli",
+      runtimeVersion: "0.1.0-main.2",
+      status: "serving" as const,
+      warningCodes: [],
+    };
+  }
+}
 
 class CountingExecutor implements SidecarExecutorPort {
   public executions = 0;

@@ -172,7 +172,7 @@ function validateSummaryGenerationRequest(request: SummaryGenerationRequest): vo
   }
 }
 
-function validateTranscriptTurn(turn: TranscriptTurnSnapshot): void {
+export function validateTranscriptTurn(turn: TranscriptTurnSnapshot): void {
   if (
     turn.turnId.trim().length === 0 ||
     turn.speakerId.trim().length === 0 ||
@@ -196,7 +196,7 @@ function validateTranscriptTurn(turn: TranscriptTurnSnapshot): void {
   }
 }
 
-function compareTranscriptTurns(
+export function compareTranscriptTurns(
   left: TranscriptTurnSnapshot,
   right: TranscriptTurnSnapshot,
 ): number {

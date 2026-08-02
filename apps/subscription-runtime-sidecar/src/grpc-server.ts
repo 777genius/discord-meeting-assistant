@@ -150,6 +150,19 @@ function toGrpcTaskResponse(
     outputText: "",
     structuredOutputJson: JSON.stringify(result.structuredOutput),
     warnings: [],
+    ...(result.usage === undefined
+      ? {}
+      : {
+          usage: {
+            cacheWriteInputTokens: result.usage.cacheWriteInputTokens,
+            cachedInputTokens: result.usage.cachedInputTokens,
+            complete: true,
+            inputTokens: result.usage.inputTokens,
+            outputTokens: result.usage.outputTokens,
+            reasoningOutputTokens: result.usage.reasoningOutputTokens,
+            totalTokens: result.usage.totalTokens,
+          },
+        }),
     executionAttestation: {
       schemaVersion: result.executionAttestation.schemaVersion,
       requestId: result.executionAttestation.requestId,

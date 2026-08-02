@@ -2,13 +2,23 @@
 
 import { readFile } from "node:fs/promises";
 
-const profile = Object.freeze({
-  model: "gpt-5.6-sol",
-  outputKind: "structured_output",
-  provider: "codex",
-  purpose: "discord_meeting.summary.generate",
-  reasoningEffort: "xhigh",
-  responseFormat: "json",
+const profiles = Object.freeze({
+  "discord_meeting.summary.generate": Object.freeze({
+    model: "gpt-5.6-sol",
+    outputKind: "structured_output",
+    provider: "codex",
+    purpose: "discord_meeting.summary.generate",
+    reasoningEffort: "xhigh",
+    responseFormat: "json",
+  }),
+  "discord_meeting.summary.incremental": Object.freeze({
+    model: "gpt-5.6-luna",
+    outputKind: "structured_output",
+    provider: "codex",
+    purpose: "discord_meeting.summary.incremental",
+    reasoningEffort: "low",
+    responseFormat: "json",
+  }),
 });
 
 const argv = process.argv.slice(2);
@@ -18,6 +28,7 @@ const requestedModel = optionalArgument(argv, "--model");
 const requestedReasoningEffort =
   process.env.AGENT_RUNTIME_REASONING_EFFORT?.trim();
 const request = JSON.parse(await readFile(inputPath, "utf8"));
+const profile = profileForRequest(request);
 admitRequest({
   model: requestedModel,
   provider,
@@ -81,6 +92,17 @@ function admitRequest(input) {
     throw new Error("Interactive or tool-enabled execution is not admitted");
   }
   record(controls.outputSchema, "request.task.controls.outputSchema");
+}
+
+function profileForRequest(requestValue) {
+  const requestRecord = record(requestValue, "request");
+  const context = record(requestRecord.context, "request.context");
+  const purpose = typeof context.purpose === "string" ? context.purpose.trim() : "";
+  const selected = profiles[purpose];
+  if (selected === undefined) {
+    throw new Error("Purpose conflicts with the admitted meeting policy");
+  }
+  return selected;
 }
 
 function subscriptionOnlyEnvironment(environment) {

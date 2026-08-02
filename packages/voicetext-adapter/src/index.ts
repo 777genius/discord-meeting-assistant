@@ -25,6 +25,14 @@ export {
   type CancellableVoicetextTranscriptionRequest,
   type VoicetextFinalTranscriptionOptions,
 } from "./voicetext-final-transcription-adapter.js";
+export {
+  VoicetextLiveTranscriptionAdapter,
+  type OpenVoicetextLiveSessionRequest,
+  type VoicetextLivePacket,
+  type VoicetextLiveSession,
+  type VoicetextLiveTranscriptEvent,
+  type VoicetextLiveTranscriptionOptions,
+} from "./voicetext-live-transcription-adapter.js";
 export type {
   VoicetextInboundFrame,
   VoicetextWebSocketConnection,

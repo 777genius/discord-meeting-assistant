@@ -3,7 +3,6 @@ import type {
   PortResult,
   SummaryGenerationPort,
   SummaryGenerationRequest,
-  TranscriptTurnSnapshot,
 } from "@discord-meeting/meeting-core";
 
 import {
@@ -15,35 +14,27 @@ import {
   SubscriptionRuntimeAdapterError,
   toSubscriptionRuntimePortFailure,
 } from "./errors.js";
-import {
-  type ProviderMeetingSummary,
-  providerMeetingSummarySchema,
-} from "./provider-summary-schema.js";
+import { providerMeetingSummarySchema } from "./provider-summary-schema.js";
 import {
   buildSubscriptionRuntimeSummaryRequest,
   type SubscriptionRuntimeSummaryRequestOptions,
 } from "./request-mapper.js";
-import { stableSubscriptionRuntimeId } from "./stable-id.js";
 import {
-  auditedSubscriptionRuntimePackageVersion,
+  type BaseSubscriptionRuntimeSummaryAdapterOptions,
+  validateAttestationExpectation,
+  validateSummaryRequestOptions,
+} from "./summary-adapter-options.js";
+import {
+  mapFinalProviderSummary,
+  validateProviderSummaryEvidence,
+} from "./summary-output.js";
+import {
   subscriptionRuntimeEngine,
   type SubscriptionRuntimeTransportPort,
 } from "./subscription-runtime-contract.js";
 
-const defaultIsolatedCwd = "/run/discord-meeting-subscription-runtime/workspace";
-const defaultMaxOutputTokens = 4_096;
-const defaultMaxPromptBytes = 2 * 1_024 * 1_024;
-const defaultTimeoutMs = 600_000;
-
-export interface SubscriptionRuntimeSummaryAdapterOptions {
-  readonly expectedLauncherSha256: string;
-  readonly expectedRuntimePackageVersion?: string;
-  readonly isolatedCwd?: string;
-  readonly maxOutputTokens?: number;
-  readonly maxPromptBytes?: number;
-  readonly outputLanguage?: string;
-  readonly timeoutMs?: number;
-}
+export interface SubscriptionRuntimeSummaryAdapterOptions
+  extends BaseSubscriptionRuntimeSummaryAdapterOptions {}
 
 export interface SubscriptionRuntimeSummaryHealth {
   readonly code:
@@ -67,7 +58,7 @@ export class SubscriptionRuntimeSummaryAdapter
     options: SubscriptionRuntimeSummaryAdapterOptions,
   ) {
     this.attestationExpectation = validateAttestationExpectation(options);
-    this.requestOptions = validateRequestOptions(options);
+    this.requestOptions = validateSummaryRequestOptions(options);
   }
 
   public async generate(
@@ -155,183 +146,11 @@ export class SubscriptionRuntimeSummaryAdapter
         "Subscription runtime returned an invalid meeting summary",
       );
     }
-    validateEvidence(parsed.data, request.transcript.turns);
-    return mapSummary(parsed.data, request.idempotencyKey);
-  }
-}
-
-function validateAttestationExpectation(
-  options: SubscriptionRuntimeSummaryAdapterOptions,
-): AttestationExpectation {
-  if (!/^[0-9a-f]{64}$/u.test(options.expectedLauncherSha256)) {
-    throw new SubscriptionRuntimeAdapterError(
-      "invalid_input",
-      "expectedLauncherSha256 must be a lowercase SHA-256 digest",
+    validateProviderSummaryEvidence(
+      parsed.data,
+      new Set(request.transcript.turns.map(({ turnId }) => turnId)),
+      new Set(request.transcript.turns.map(({ speakerId }) => speakerId)),
     );
+    return mapFinalProviderSummary(parsed.data, request.idempotencyKey);
   }
-  const runtimePackageVersion =
-    options.expectedRuntimePackageVersion ??
-    auditedSubscriptionRuntimePackageVersion;
-  if (
-    runtimePackageVersion !== auditedSubscriptionRuntimePackageVersion
-  ) {
-    throw new SubscriptionRuntimeAdapterError(
-      "invalid_input",
-      `Only audited subscription runtime ${auditedSubscriptionRuntimePackageVersion} is admitted`,
-    );
-  }
-  return {
-    launcherSha256: options.expectedLauncherSha256,
-    runtimePackageVersion,
-  };
-}
-
-function validateRequestOptions(
-  options: SubscriptionRuntimeSummaryAdapterOptions,
-): SubscriptionRuntimeSummaryRequestOptions {
-  const isolatedCwd = options.isolatedCwd ?? defaultIsolatedCwd;
-  if (!isolatedCwd.startsWith("/") || isolatedCwd.includes("\0")) {
-    throw new SubscriptionRuntimeAdapterError(
-      "invalid_input",
-      "isolatedCwd must be an absolute safe path",
-    );
-  }
-  const outputLanguage = options.outputLanguage?.trim();
-  if (options.outputLanguage !== undefined && outputLanguage?.length === 0) {
-    throw new SubscriptionRuntimeAdapterError(
-      "invalid_input",
-      "outputLanguage must not be empty",
-    );
-  }
-  return {
-    isolatedCwd,
-    maxOutputTokens: positiveIntegerOption(
-      options.maxOutputTokens,
-      defaultMaxOutputTokens,
-      256,
-      32_768,
-      "maxOutputTokens",
-    ),
-    maxPromptBytes: positiveIntegerOption(
-      options.maxPromptBytes,
-      defaultMaxPromptBytes,
-      1_024,
-      16 * 1_024 * 1_024,
-      "maxPromptBytes",
-    ),
-    timeoutMs: positiveIntegerOption(
-      options.timeoutMs,
-      defaultTimeoutMs,
-      1_000,
-      3_600_000,
-      "timeoutMs",
-    ),
-    ...(outputLanguage === undefined ? {} : { outputLanguage }),
-  };
-}
-
-function positiveIntegerOption(
-  value: number | undefined,
-  fallback: number,
-  minimum: number,
-  maximum: number,
-  field: string,
-): number {
-  const resolved = value ?? fallback;
-  if (
-    !Number.isSafeInteger(resolved) ||
-    resolved < minimum ||
-    resolved > maximum
-  ) {
-    throw new SubscriptionRuntimeAdapterError(
-      "invalid_input",
-      `${field} must be a safe integer from ${minimum} through ${maximum}`,
-    );
-  }
-  return resolved;
-}
-
-function validateEvidence(
-  summary: ProviderMeetingSummary,
-  turns: readonly TranscriptTurnSnapshot[],
-): void {
-  const knownTurnIds = new Set(turns.map((turn) => turn.turnId));
-  const knownSpeakerIds = new Set(turns.map((turn) => turn.speakerId));
-  const evidenceGroups = [
-    ...summary.topics.map((topic) => topic.evidenceTurnIds),
-    ...summary.decisions.map((decision) => decision.evidenceTurnIds),
-    ...summary.actionItems.map((actionItem) => actionItem.evidenceTurnIds),
-    ...summary.openQuestions.map((question) => question.evidenceTurnIds),
-  ];
-  for (const evidenceTurnIds of evidenceGroups) {
-    if (new Set(evidenceTurnIds).size !== evidenceTurnIds.length) {
-      throw new SubscriptionRuntimeAdapterError(
-        "invalid_evidence",
-        "Summary evidence references must not contain duplicates",
-      );
-    }
-    if (evidenceTurnIds.some((turnId) => !knownTurnIds.has(turnId))) {
-      throw new SubscriptionRuntimeAdapterError(
-        "invalid_evidence",
-        "Summary references a transcript turn that does not exist",
-      );
-    }
-  }
-  if (
-    summary.actionItems.some(
-      ({ ownerSpeakerId }) =>
-        ownerSpeakerId !== null && !knownSpeakerIds.has(ownerSpeakerId),
-    )
-  ) {
-    throw new SubscriptionRuntimeAdapterError(
-      "invalid_evidence",
-      "Summary action owner is not a transcript speaker",
-    );
-  }
-}
-
-function mapSummary(
-  summary: ProviderMeetingSummary,
-  idempotencyKey: string,
-): GeneratedSummary {
-  return {
-    actionItems: summary.actionItems.map((actionItem, index) => ({
-      actionItemId: stableSubscriptionRuntimeId(
-        "action",
-        idempotencyKey,
-        String(index + 1),
-      ),
-      deadline: actionItem.deadline,
-      evidenceTurnIds: [...actionItem.evidenceTurnIds],
-      ownerSpeakerId: actionItem.ownerSpeakerId,
-      text: actionItem.text,
-    })),
-    decisions: summary.decisions.map((decision, index) => ({
-      decisionId: stableSubscriptionRuntimeId(
-        "decision",
-        idempotencyKey,
-        String(index + 1),
-      ),
-      evidenceTurnIds: [...decision.evidenceTurnIds],
-      text: decision.text,
-    })),
-    openQuestions: summary.openQuestions.map((question, index) => ({
-      evidenceTurnIds: [...question.evidenceTurnIds],
-      id: stableSubscriptionRuntimeId(
-        "question",
-        idempotencyKey,
-        String(index + 1),
-      ),
-      text: question.text,
-    })),
-    overview: summary.overview,
-    summaryId: stableSubscriptionRuntimeId("summary", idempotencyKey),
-    title: summary.title,
-    topics: summary.topics.map((topic) => ({
-      evidenceTurnIds: [...topic.evidenceTurnIds],
-      points: [...topic.points],
-      title: topic.title,
-    })),
-    version: 1,
-  };
 }

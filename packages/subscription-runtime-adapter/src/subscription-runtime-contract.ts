@@ -1,12 +1,56 @@
 export const subscriptionRuntimeProtocolVersion = 1 as const;
 export const subscriptionRuntimePurpose = "discord_meeting.summary.generate" as const;
+export const subscriptionRuntimeIncrementalPurpose = "discord_meeting.summary.incremental" as const;
 export const subscriptionRuntimeProvider = "codex" as const;
 export const subscriptionRuntimeModel = "gpt-5.6-sol" as const;
+export const subscriptionRuntimeIncrementalModel = "gpt-5.6-luna" as const;
 export const subscriptionRuntimeReasoningEffort = "xhigh" as const;
+export const subscriptionRuntimeIncrementalReasoningEffort = "low" as const;
 export const subscriptionRuntimeEngine = "subscription-runtime-cli" as const;
 export const auditedSubscriptionRuntimePackageVersion = "0.1.0-main.2" as const;
 export const meetingSummaryOutputSchemaName = "discord_meeting_summary_v3" as const;
 export const meetingSummaryPolicyVersion = "meeting-summary.subscription-runtime.v4" as const;
+export const incrementalMeetingSummaryPolicyVersion = "meeting-summary.incremental.subscription-runtime.v1" as const;
+
+export interface SubscriptionRuntimeExecutionProfile {
+  readonly model:
+    | typeof subscriptionRuntimeIncrementalModel
+    | typeof subscriptionRuntimeModel;
+  readonly policyVersion:
+    | typeof incrementalMeetingSummaryPolicyVersion
+    | typeof meetingSummaryPolicyVersion;
+  readonly purpose:
+    | typeof subscriptionRuntimeIncrementalPurpose
+    | typeof subscriptionRuntimePurpose;
+  readonly reasoningEffort:
+    | typeof subscriptionRuntimeIncrementalReasoningEffort
+    | typeof subscriptionRuntimeReasoningEffort;
+}
+
+export const finalSummaryExecutionProfile: SubscriptionRuntimeExecutionProfile = Object.freeze({
+  model: subscriptionRuntimeModel,
+  policyVersion: meetingSummaryPolicyVersion,
+  purpose: subscriptionRuntimePurpose,
+  reasoningEffort: subscriptionRuntimeReasoningEffort,
+});
+
+export const incrementalSummaryExecutionProfile: SubscriptionRuntimeExecutionProfile = Object.freeze({
+  model: subscriptionRuntimeIncrementalModel,
+  policyVersion: incrementalMeetingSummaryPolicyVersion,
+  purpose: subscriptionRuntimeIncrementalPurpose,
+  reasoningEffort: subscriptionRuntimeIncrementalReasoningEffort,
+});
+
+export const admittedSummaryExecutionProfiles = Object.freeze([
+  finalSummaryExecutionProfile,
+  incrementalSummaryExecutionProfile,
+]);
+
+export function subscriptionRuntimeProfileForPurpose(
+  purpose: string,
+): SubscriptionRuntimeExecutionProfile | undefined {
+  return admittedSummaryExecutionProfiles.find((profile) => profile.purpose === purpose);
+}
 
 export type JsonPrimitive = boolean | null | number | string;
 export type JsonValue = JsonPrimitive | JsonObject | readonly JsonValue[];
@@ -19,12 +63,12 @@ export interface SubscriptionRuntimeTaskControls extends JsonObject {
   readonly interactive: false;
   readonly maxOutputTokens: number;
   readonly maxTurns: 1;
-  readonly model: typeof subscriptionRuntimeModel;
+  readonly model: SubscriptionRuntimeExecutionProfile["model"];
   readonly outputKind: "structured_output";
   readonly outputSchema: JsonObject;
   readonly outputSchemaName: typeof meetingSummaryOutputSchemaName;
   readonly permissionMode: "read-only";
-  readonly reasoningEffort: typeof subscriptionRuntimeReasoningEffort;
+  readonly reasoningEffort: SubscriptionRuntimeExecutionProfile["reasoningEffort"];
   readonly responseFormat: "json";
   readonly runtimeOutput: "structured_output";
   readonly selectedOutputKind: "structured_output";
@@ -36,11 +80,13 @@ export interface SubscriptionRuntimeAgentTaskRequest extends JsonObject {
     readonly correlationId: string;
     readonly metadata: {
       readonly meetingId: string;
-      readonly policyVersion: typeof meetingSummaryPolicyVersion;
-      readonly transcriptId: string;
-      readonly transcriptVersion: string;
-    };
-    readonly purpose: typeof subscriptionRuntimePurpose;
+      readonly policyVersion: SubscriptionRuntimeExecutionProfile["policyVersion"];
+      readonly summaryRevision?: string;
+      readonly throughTurnCount?: string;
+      readonly transcriptId?: string;
+      readonly transcriptVersion?: string;
+    } & JsonObject;
+    readonly purpose: SubscriptionRuntimeExecutionProfile["purpose"];
   };
   readonly cwd: string;
   readonly protocolVersion: typeof subscriptionRuntimeProtocolVersion;
@@ -50,9 +96,9 @@ export interface SubscriptionRuntimeAgentTaskRequest extends JsonObject {
     readonly kind: "structured-prompt";
     readonly metadata: {
       readonly executionProfile: "stateless-completion";
-      readonly model: typeof subscriptionRuntimeModel;
-      readonly policyVersion: typeof meetingSummaryPolicyVersion;
-      readonly reasoningEffort: typeof subscriptionRuntimeReasoningEffort;
+      readonly model: SubscriptionRuntimeExecutionProfile["model"];
+      readonly policyVersion: SubscriptionRuntimeExecutionProfile["policyVersion"];
+      readonly reasoningEffort: SubscriptionRuntimeExecutionProfile["reasoningEffort"];
       readonly runtimeOutput: "structured_output";
       readonly toolsDisabled: "true";
     };
@@ -99,6 +145,15 @@ export interface SubscriptionRuntimeExecutionAttestation {
   readonly selectedOutputSha256: string;
 }
 
+export interface SubscriptionRuntimeUsage {
+  readonly cacheWriteInputTokens: number;
+  readonly cachedInputTokens: number;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly reasoningOutputTokens: number;
+  readonly totalTokens: number;
+}
+
 export type SubscriptionRuntimeTaskResult =
   | {
       readonly executionAttestation: SubscriptionRuntimeExecutionAttestation;
@@ -106,6 +161,7 @@ export type SubscriptionRuntimeTaskResult =
       readonly protocolVersion: number;
       readonly status: "completed";
       readonly structuredOutput: JsonObject;
+      readonly usage?: SubscriptionRuntimeUsage;
     }
   | {
       readonly failure: SubscriptionRuntimeFailure;

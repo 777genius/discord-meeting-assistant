@@ -30,9 +30,16 @@ interface RecordingIngressPort {
   ingestPacketBatch(batch: VoicePacketBatch): Promise<PacketBatchIngressResult>;
 }
 
+interface DerivedLiveIngressPort {
+  acceptLifecycle(event: CraigLifecycleEvent): void;
+  acceptVoiceBatch(batch: VoicePacketBatch): void;
+  settleBeforeAuthoritativeFinal(recordingId: string): Promise<void>;
+}
+
 export interface PlatformCraigIngressDependencies {
   readonly dispatcher: PostCallOutboxDispatcherPort;
   readonly ingress: RecordingIngressPort;
+  readonly live?: DerivedLiveIngressPort;
   readonly logger: Logger;
   readonly outbox: RecordedMeetingOutbox;
   readonly metrics: Metrics;
@@ -59,6 +66,7 @@ export class PlatformCraigIngress {
 
   public async ingestVoiceBatch(batch: VoicePacketBatch): Promise<void> {
     const result = await this.dependencies.ingress.ingestPacketBatch(batch);
+    this.dependencies.live?.acceptVoiceBatch(batch);
     this.dependencies.metrics.recordIngress("accepted", "accepted");
     this.dependencies.logger.debug("Craig packet batch accepted", {
       acceptedPackets: result.acceptedPackets,
@@ -69,10 +77,15 @@ export class PlatformCraigIngress {
 
   public async ingestLifecycle(event: CraigLifecycleEvent): Promise<void> {
     const result = await this.dependencies.ingress.ingestLifecycleEvent(event);
+    this.dependencies.live?.acceptLifecycle(event);
     this.dependencies.metrics.recordIngress("accepted", "accepted");
     if (result.kind !== "finalized") {
       return;
     }
+
+    await this.dependencies.live?.settleBeforeAuthoritativeFinal(
+      result.recording.recordingId,
+    );
 
     const meeting = Meeting.record({
       meetingId: result.recording.recordingId,

@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import {
+  createMeetingDiscordProjectionKey,
   DiscordProjectionConfigurationError,
   DiscordProjectionConflictError,
   DiscordSummaryPublicationAdapter,
@@ -111,7 +112,8 @@ describe("DiscordSummaryPublicationAdapter", () => {
     expect(projector.inputs).toHaveLength(2);
     expect(projector.inputs[0]).toEqual(projector.inputs[1]);
     expect(projector.inputs[0]).toEqual({
-      projectionKey: "meeting:42:publication:v1",
+      projectionKey: createMeetingDiscordProjectionKey("meeting-42", "11111111111111111"),
+      legacyProjectionKeys: ["meeting:42:publication:v1"],
       parentChannelId: "11111111111111111",
       threadTitle: "Итоги встречи",
       markdown: [
@@ -228,6 +230,20 @@ describe("DiscordSummaryPublicationAdapter", () => {
       "Саммари сокращено из-за лимита Discord.",
     );
     expect(projector.inputs[0]?.markdown).not.toContain("summary-42");
+  });
+
+  it("keeps a Unicode thread title within Discord's code-unit limit", async () => {
+    const projector = new FakeProjector();
+    const adapter = new DiscordSummaryPublicationAdapter(projector);
+
+    await adapter.publish({
+      ...request,
+      summary: { ...request.summary, title: "🧑‍🚀".repeat(80) },
+    });
+
+    const title = projector.inputs[0]?.threadTitle ?? "";
+    expect(title.length).toBeLessThanOrEqual(80);
+    expect(title).not.toMatch(/[\uD800-\uDBFF]$/u);
   });
 
   it.each([

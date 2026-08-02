@@ -78,6 +78,13 @@ describe("Platform Craig ingress", () => {
           recordingId: "recording-1",
         }),
       },
+      live: {
+        acceptLifecycle: () => order.push("live-lifecycle"),
+        acceptVoiceBatch: () => {},
+        settleBeforeAuthoritativeFinal: async () => {
+          order.push("live-settled");
+        },
+      },
       logger,
       metrics,
       outbox: { recordAndSchedule },
@@ -86,7 +93,12 @@ describe("Platform Craig ingress", () => {
 
     await ingress.ingestLifecycle(meetingEnded);
 
-    expect(order).toEqual(["record-and-schedule", "dispatch"]);
+    expect(order).toEqual([
+      "live-lifecycle",
+      "live-settled",
+      "record-and-schedule",
+      "dispatch",
+    ]);
     expect(saved[0]).toMatchObject({
       meetingId: "recording-1",
       publicationTargetId: "1533228891827736657",
@@ -124,5 +136,56 @@ describe("Platform Craig ingress", () => {
 
     expect(recordAndSchedule).not.toHaveBeenCalled();
     expect(dispatchPending).not.toHaveBeenCalled();
+  });
+
+  it("tees voice packets to live processing only after durable ingress succeeds", async () => {
+    const order: string[] = [];
+    const ingress = new PlatformCraigIngress({
+      dispatcher: { dispatchPending: async () => ({ dispatched: 0, failed: 0 }) },
+      ingress: {
+        ingestAuthoritativeTrack: async () => ({ replayed: false }),
+        ingestLifecycleEvent: async () => ({
+          kind: "accepted" as const,
+          recordingId: "recording-1",
+          replayed: false,
+        }),
+        ingestPacketBatch: async () => {
+          order.push("durable");
+          return {
+            acceptedPackets: 1,
+            duplicatePackets: 0,
+            recordingId: "recording-1",
+          };
+        },
+      },
+      live: {
+        acceptLifecycle: () => {},
+        acceptVoiceBatch: () => order.push("live"),
+        settleBeforeAuthoritativeFinal: async () => {},
+      },
+      logger,
+      metrics,
+      outbox: { recordAndSchedule: async () => {} },
+      publicationTargetId: "1533228891827736657",
+    });
+    const batch: VoicePacketBatch = {
+      packets: [{
+        channelId: "1533228823045214398",
+        guildId: "1533228590643155034",
+        opusBase64: Buffer.from([0xf8, 0xff, 0xfe]).toString("base64"),
+        receivedAtMs: 1_000,
+        recordingId: "recording-1",
+        relativeTimeMs: 0,
+        rtpSequence: 1,
+        rtpTimestamp: 960,
+        schemaVersion: 1,
+        speakerId: "1533227577286852649",
+      }],
+      schemaVersion: 1,
+    };
+
+    await ingress.ingestVoiceBatch(batch);
+
+    expect(order).toEqual(["durable", "live"]);
   });
 });

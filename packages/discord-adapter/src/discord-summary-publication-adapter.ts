@@ -9,6 +9,17 @@ import type {
   DiscordProjectionReference,
   PublishDiscordSummary,
 } from "./discord-projection.js";
+import {
+  createMeetingDiscordProjectionKey,
+  encodeDiscordExternalPublicationId,
+} from "./discord-projection.js";
+import {
+  escapeDiscordMarkdown,
+  formatDiscordSpeaker,
+  formatDiscordTimestamp,
+  truncateDiscordCodeUnits,
+  truncateDiscordGraphemesByCodeUnits,
+} from "./discord-markdown-formatting.js";
 import { toDiscordPublicationFailure } from "./discord-publication-errors.js";
 
 interface DiscordSummaryProjector {
@@ -18,7 +29,6 @@ interface DiscordSummaryProjector {
 const discordMarkdownLimit = 4_000;
 const truncationNotice = "_Саммари сокращено из-за лимита Discord._";
 const maximumEvidenceQuoteGraphemes = 180;
-const discordSnowflake = /^\d{17,20}$/u;
 
 type PublicationResult = PortResult<
   Pick<PublicationReceiptSnapshot, "externalPublicationId">
@@ -30,7 +40,11 @@ export class DiscordSummaryPublicationAdapter implements SummaryPublicationPort 
   public async publish(request: SummaryPublicationRequest): Promise<PublicationResult> {
     try {
       const reference = await this.publisher.publish({
-        projectionKey: request.idempotencyKey,
+        projectionKey: createMeetingDiscordProjectionKey(
+          request.meetingId,
+          request.publicationTargetId,
+        ),
+        legacyProjectionKeys: [request.idempotencyKey],
         parentChannelId: request.publicationTargetId,
         threadTitle: discordThreadTitle(request.summary.title),
         markdown: renderRussianSummaryMarkdown(request),
@@ -43,12 +57,6 @@ export class DiscordSummaryPublicationAdapter implements SummaryPublicationPort 
       return { ok: false, failure: toDiscordPublicationFailure(error) };
     }
   }
-}
-
-export function encodeDiscordExternalPublicationId(
-  reference: DiscordProjectionReference,
-): string {
-  return `discord:v1:thread:${reference.threadId}:message:${reference.messageId}`;
 }
 
 export function renderRussianSummaryMarkdown(
@@ -88,7 +96,7 @@ export function renderRussianSummaryMarkdown(
         `Ответственный: ${
           actionItem.ownerSpeakerId === null
             ? "не назначен"
-            : speakerLabel(actionItem.ownerSpeakerId)
+            : formatDiscordSpeaker(actionItem.ownerSpeakerId)
         }`,
         `Срок: ${
           actionItem.deadline === null ? "не указан" : actionItem.deadline.trim()
@@ -127,21 +135,12 @@ function truncateAtStableBoundary(value: string, maximumLength: number): string 
     return value.trimEnd();
   }
   const ellipsis = "…";
-  const sliced = safeCodeUnitSlice(value, Math.max(0, maximumLength - ellipsis.length));
+  const sliced = truncateDiscordCodeUnits(value, Math.max(0, maximumLength - ellipsis.length));
   const finalNewline = sliced.lastIndexOf("\n");
   const stable = finalNewline >= sliced.length - 320
     ? sliced.slice(0, finalNewline)
     : sliced;
   return `${stable.trimEnd()}${ellipsis}`;
-}
-
-function safeCodeUnitSlice(value: string, maximumLength: number): string {
-  let sliced = value.slice(0, maximumLength);
-  const finalCodeUnit = sliced.charCodeAt(sliced.length - 1);
-  if (finalCodeUnit >= 0xD800 && finalCodeUnit <= 0xDBFF) {
-    sliced = sliced.slice(0, -1);
-  }
-  return sliced;
 }
 
 function numberedOrEmpty(
@@ -170,25 +169,9 @@ function evidenceLines(
     if (turn === undefined) {
       return "Основание: исходная реплика недоступна";
     }
-    const interval = `${formatTimestamp(turn.startMs)}-${formatTimestamp(turn.endMs)}`;
-    return `Основание: **${interval} · ${speakerLabel(turn.speakerId)}:** «${evidenceQuote(turn.text)}»`;
+    const interval = `${formatDiscordTimestamp(turn.startMs)}-${formatDiscordTimestamp(turn.endMs)}`;
+    return `Основание: **${interval} · ${formatDiscordSpeaker(turn.speakerId)}:** «${evidenceQuote(turn.text)}»`;
   });
-}
-
-function formatTimestamp(milliseconds: number): string {
-  const totalSeconds = Math.floor(milliseconds / 1_000);
-  const hours = Math.floor(totalSeconds / 3_600);
-  const minutes = Math.floor((totalSeconds % 3_600) / 60);
-  const seconds = totalSeconds % 60;
-  const base = `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-  return hours === 0 ? base : `${String(hours).padStart(2, "0")}:${base}`;
-}
-
-function speakerLabel(speakerId: string): string {
-  const normalized = speakerId.trim();
-  return discordSnowflake.test(normalized)
-    ? `<@${normalized}>`
-    : escapeDiscordMarkdown(normalized);
 }
 
 function evidenceQuote(value: string): string {
@@ -202,22 +185,11 @@ function evidenceQuote(value: string): string {
     : `${graphemes.slice(0, maximumEvidenceQuoteGraphemes - 1).join("")}…`;
 }
 
-function escapeDiscordMarkdown(value: string): string {
-  return value
-    .replaceAll("\\", "\\\\")
-    .replaceAll(/([*_~`|>()])/gu, "\\$1")
-    .replaceAll("[", "\\[")
-    .replaceAll("]", "\\]");
-}
-
 function normalizeInline(value: string): string {
   return value.trim().replaceAll(/\s+/gu, " ");
 }
 
 function discordThreadTitle(value: string): string {
   const normalized = normalizeInline(value);
-  return Array.from(
-    new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(normalized),
-    (segment) => segment.segment,
-  ).slice(0, 80).join("");
+  return truncateDiscordGraphemesByCodeUnits(normalized, 80);
 }

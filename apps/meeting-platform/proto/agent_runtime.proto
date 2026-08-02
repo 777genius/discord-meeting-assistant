@@ -82,6 +82,10 @@ message AgentRuntimeUsage {
   uint32 output_tokens = 2;
   uint32 total_tokens = 3;
   double estimated_cost_usd = 4;
+  uint32 cached_input_tokens = 5;
+  uint32 cache_write_input_tokens = 6;
+  uint32 reasoning_output_tokens = 7;
+  bool complete = 8;
 }
 
 message AgentRuntimeFailure {

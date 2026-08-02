@@ -44,8 +44,12 @@ bearer in argv, an environment variable, shell history, or this repository. The
 isolated deployment expects:
 
 ```text
-secrets/platform/voicetext-service-token  root:root 0400
+secrets/platform/voicetext-service-token  10001:10001 0400
 ```
+
+The Meeting Platform image runs as UID/GID `10001:10001`; bind-mounted secret
+files must be readable only by that service identity. `root:root 0400` is not a
+valid deployment state because the non-root container cannot read it.
 
 Before a Discord campaign, a canary must prove `ready`, immutable finalized
 segments, and `finalize_complete` against the same Voicetext endpoint. A transport
@@ -75,6 +79,28 @@ acceptance result is invalid if any decision or action item references a missing
 transcript turn, if a retry creates a duplicate meeting, summary, thread, or
 message, or if deployment provenance changes during collection or between
 campaign runs.
+
+The live slice adds a separate timing and mutation proof. For a call longer than
+five minutes, retain timestamps for the first audio packet, first finalized
+transcript turn, first Discord publication, every incremental-summary generation,
+the meeting end, and the final authoritative replacement. The gate requires:
+
+1. no Discord publication before five minutes and the first publication by
+   `05:05` unless the external provider is unavailable;
+2. one stable Discord thread/message identity across captions, preliminary
+   summaries, retries, and the authoritative post-call summary;
+3. captions grouped by the real Discord speaker, with visible relative start
+   times, while mutable partials never appear in summary evidence;
+4. Luna usage captured from runtime telemetry for every successful generation:
+   input, cached input, cache-write input, output, reasoning output, total tokens,
+   model, run ID, price card, and API-equivalent USD cost;
+5. a live-finalization fence before the durable post-call dispatcher can replace
+   the same message, so a late live edit cannot overwrite the authoritative result.
+
+Record provider, Luna, and Discord latencies independently. Do not report the
+five-second projection tick as STT or model latency. The API-equivalent cost is
+an observability estimate only; the subscription runtime does not create an API
+invoice.
 
 Before building each local deployment image, obtain the source revision from its
 authoritative checkout. Pass that 40- or 64-character lowercase hex revision as

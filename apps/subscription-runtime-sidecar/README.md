@@ -1,9 +1,10 @@
 # Subscription runtime gRPC sidecar
 
 This package is the internal server counterpart of
-`SubscriptionRuntimeTransportPort`. It admits only
-`discord_meeting.summary.generate` and returns no credential, provider payload,
-account identity, raw stdout, or stderr.
+`SubscriptionRuntimeTransportPort`. It admits exactly
+`discord_meeting.summary.generate` and `discord_meeting.summary.incremental`,
+and returns no credential, provider payload, account identity, raw stdout, or
+stderr.
 
 ## Runtime artifact boundary
 
@@ -22,16 +23,17 @@ The package manifest must be exactly `@vioxen/subscription-runtime` version
 `0.1.0-main.2`. The launcher is inspected by realpath and SHA-256 before and
 after every task. It must call that version's
 `subscription-runtime-run-agent-task` JSON bridge while constructing the Codex
-worker with model `gpt-5.6-sol`, reasoning effort `xhigh`, disabled tools, no
-interactive flow, and stateless-completion semantics. The generic v0.1.0-main.2
-launcher defaults reasoning to `low`, so mounting it without the audited xhigh
-wrapper is not an admitted production installation.
+worker with the exact selected profile: `gpt-5.6-sol`/`xhigh` for final summary
+or `gpt-5.6-luna`/`low` for incremental summary, disabled tools, no interactive
+flow, and stateless-completion semantics. A generic launcher that does not
+enforce both exact profiles is not an admitted production installation.
 
 The sidecar invokes the audited bridge with `--provider codex`, `--input`,
 `--format result-json`, `--timeout-ms`, `--state-root`, `--codex-auth-json`,
-`--provider-instance discord-meeting-summary-v3`, and
-`--model gpt-5.6-sol`. The auth JSON and state root must belong only to this
-sidecar. Never mount another project's mutable runtime state.
+`--provider-instance discord-meeting-summary-v3`, and the selected profile's
+exact `--model`. The child reasoning environment must match that same request
+profile. The auth JSON and state root must belong only to this sidecar. Never
+mount another project's mutable runtime state.
 
 ## Secrets and network
 
