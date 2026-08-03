@@ -138,6 +138,7 @@ export async function main(argv = process.argv.slice(2), dependencies = {}) {
         // auth-custody controls.
         codexBinaryPath: capture.wrapperPath,
         encryptionKey: input.encryptionKey,
+        executionEngine: "packaged-exec",
         model,
         providerInstanceId: input.providerInstanceId,
         reasoningEffort: profile.reasoningEffort,

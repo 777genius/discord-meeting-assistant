@@ -184,6 +184,7 @@ test("generated capture wrapper survives the runtime-pruned environment", async 
           Object.keys(workerOptions.sourceEnv).toSorted(),
           ["CI", "CODEX_HOME", "HOME", "PATH"],
         );
+        assert.equal(workerOptions.executionEngine, "packaged-exec");
         assert.equal(workerOptions.sourceEnv.LOCAL_ENCRYPTION_KEY, undefined);
         assert.equal(workerOptions.sourceEnv.OPENAI_API_KEY, undefined);
         assert.equal(
