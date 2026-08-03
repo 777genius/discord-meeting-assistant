@@ -41,10 +41,14 @@ The immutable sidecar image must:
 
 1. pin `@vioxen/subscription-runtime` to `0.1.0-main.2` and verify both the
    package version and admitted launcher SHA-256 before every execution;
-2. admit both `discord_meeting.summary.generate` and
-   `discord_meeting.summary.incremental` with `gpt-5.6-luna`/`medium`; both use
-   stateless completion, disabled tools, read-only permission, no interactive
-   input, the same structured schema, and the isolated tmpfs working directory;
+2. admit `discord_meeting.summary.generate` only with
+   `gpt-5.6-sol`/`medium`, a 4096-token post-execution output budget, and policy version
+   `meeting-summary.subscription-runtime.v6`; admit
+   `discord_meeting.summary.incremental` only with `gpt-5.6-luna`/`low`, a
+   2048-token post-execution output budget, and policy version
+   `meeting-summary.incremental.subscription-runtime.v2`; both use stateless
+   completion, disabled tools, read-only permission, no interactive input, the
+   same structured schema, and the isolated tmpfs working directory;
 3. start children from an explicit environment allowlist and remove every
    `*_API_KEY`, `*_API_KEY_FILE`, session-scoped Codex identifier, and unrelated
    application secret;
@@ -58,6 +62,10 @@ The immutable sidecar image must:
    and authenticate both methods from the mounted service-token file;
 7. keep safe error codes separate from provider stderr/stdout and never return
    auth data, raw provider payloads, account identities, or token-shaped text.
+
+The output budget is checked against measured provider output after completion.
+It is not a provider generation cap and does not guarantee latency; the compact
+incremental prompt and `low` reasoning are the latency optimizations.
 
 The audited launcher wraps only the admitted `codexBinaryPath` and observes
 `codex exec --json` JSONL `turn.completed` events. It keeps the private runtime

@@ -23,9 +23,14 @@ describe("subscription runtime request policy", () => {
     expect(canonicalJsonSha256(reconstructed)).toBe(
       canonicalJsonSha256(canonicalRequest),
     );
+    expect(reconstructed.task.controls).toMatchObject({
+      maxOutputTokens: 4_096,
+      model: "gpt-5.6-sol",
+      reasoningEffort: "medium",
+    });
   });
 
-  it("reconstructs only the exact incremental Luna medium profile", () => {
+  it("reconstructs only the exact incremental Luna low 2048-token profile", () => {
     const reconstructed = reconstructCanonicalRequest(
       grpcRequest(incrementalCanonicalRequest),
       options,
@@ -33,9 +38,13 @@ describe("subscription runtime request policy", () => {
 
     expect(reconstructed).toEqual(incrementalCanonicalRequest);
     expect(reconstructed.context.purpose).toBe("discord_meeting.summary.incremental");
+    expect(reconstructed.context.metadata.policyVersion).toBe(
+      "meeting-summary.incremental.subscription-runtime.v2",
+    );
     expect(reconstructed.task.controls).toMatchObject({
+      maxOutputTokens: 2_048,
       model: "gpt-5.6-luna",
-      reasoningEffort: "medium",
+      reasoningEffort: "low",
     });
   });
 
@@ -77,6 +86,35 @@ describe("subscription runtime request policy", () => {
 
     expect(() => reconstructCanonicalRequest(
       { ...request, purpose: "discord_meeting.summary.generate" },
+      options,
+    )).toThrow("profile");
+  });
+
+  it("fails closed for stale incremental policy and output-budget profiles", () => {
+    const request = grpcRequest(incrementalCanonicalRequest);
+    const controls = JSON.parse(String(request.controlsJson)) as Record<string, unknown>;
+    controls.maxOutputTokens = 4_096;
+    expect(() => reconstructCanonicalRequest(
+      { ...request, controlsJson: JSON.stringify(controls) },
+      options,
+    )).toThrow("profile");
+
+    const swappedModelControls = JSON.parse(String(request.controlsJson)) as Record<string, unknown>;
+    swappedModelControls.model = "gpt-5.6-sol";
+    expect(() => reconstructCanonicalRequest(
+      { ...request, controlsJson: JSON.stringify(swappedModelControls) },
+      options,
+    )).toThrow("profile");
+
+    const metadata = request.metadata as Record<string, unknown>;
+    expect(() => reconstructCanonicalRequest(
+      {
+        ...request,
+        metadata: {
+          ...metadata,
+          policyVersion: "meeting-summary.incremental.subscription-runtime.v1",
+        },
+      },
       options,
     )).toThrow("policy");
   });

@@ -1,10 +1,13 @@
 import type { AttestationExpectation } from "./attestation.js";
 import { SubscriptionRuntimeAdapterError } from "./errors.js";
 import type { SubscriptionRuntimeSummaryRequestOptions } from "./request-mapper.js";
-import { auditedSubscriptionRuntimePackageVersion } from "./subscription-runtime-contract.js";
+import {
+  auditedSubscriptionRuntimePackageVersion,
+  subscriptionRuntimeIncrementalMaxOutputTokens,
+  subscriptionRuntimeSummaryMaxOutputTokens,
+} from "./subscription-runtime-contract.js";
 
 const defaultIsolatedCwd = "/run/discord-meeting-subscription-runtime/workspace";
-const defaultMaxOutputTokens = 4_096;
 const defaultMaxPromptBytes = 2 * 1_024 * 1_024;
 const defaultTimeoutMs = 600_000;
 
@@ -45,6 +48,22 @@ export function validateAttestationExpectation(
 export function validateSummaryRequestOptions(
   options: BaseSubscriptionRuntimeSummaryAdapterOptions,
 ): SubscriptionRuntimeSummaryRequestOptions {
+  return validateRequestOptions(options, subscriptionRuntimeSummaryMaxOutputTokens);
+}
+
+export function validateIncrementalSummaryRequestOptions(
+  options: BaseSubscriptionRuntimeSummaryAdapterOptions,
+): SubscriptionRuntimeSummaryRequestOptions {
+  return validateRequestOptions(
+    options,
+    subscriptionRuntimeIncrementalMaxOutputTokens,
+  );
+}
+
+function validateRequestOptions(
+  options: BaseSubscriptionRuntimeSummaryAdapterOptions,
+  expectedMaxOutputTokens: number,
+): SubscriptionRuntimeSummaryRequestOptions {
   const isolatedCwd = options.isolatedCwd ?? defaultIsolatedCwd;
   if (!isolatedCwd.startsWith("/") || isolatedCwd.includes("\0")) {
     throw new SubscriptionRuntimeAdapterError(
@@ -59,15 +78,22 @@ export function validateSummaryRequestOptions(
       "outputLanguage must not be empty",
     );
   }
+  const maxOutputTokens = positiveIntegerOption(
+    options.maxOutputTokens,
+    expectedMaxOutputTokens,
+    256,
+    32_768,
+    "maxOutputTokens",
+  );
+  if (maxOutputTokens !== expectedMaxOutputTokens) {
+    throw new SubscriptionRuntimeAdapterError(
+      "invalid_input",
+      `maxOutputTokens must match the admitted profile value ${expectedMaxOutputTokens}`,
+    );
+  }
   return {
     isolatedCwd,
-    maxOutputTokens: positiveIntegerOption(
-      options.maxOutputTokens,
-      defaultMaxOutputTokens,
-      256,
-      32_768,
-      "maxOutputTokens",
-    ),
+    maxOutputTokens,
     maxPromptBytes: positiveIntegerOption(
       options.maxPromptBytes,
       defaultMaxPromptBytes,

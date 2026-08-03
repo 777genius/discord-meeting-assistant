@@ -165,6 +165,7 @@ describe("SubscriptionRuntimeSummaryAdapter", () => {
           disableTools: true,
           executionProfile: "stateless-completion",
           interactive: false,
+          maxOutputTokens: 4_096,
           maxTurns: 1,
           model: subscriptionRuntimeModel,
           outputKind: "structured_output",

@@ -29,7 +29,7 @@ import {
   type BaseSubscriptionRuntimeSummaryAdapterOptions,
   positiveIntegerOption,
   validateAttestationExpectation,
-  validateSummaryRequestOptions,
+  validateIncrementalSummaryRequestOptions,
 } from "./summary-adapter-options.js";
 import {
   mapIncrementalProviderSummary,
@@ -56,7 +56,7 @@ export class SubscriptionRuntimeIncrementalSummaryAdapter
   ) {
     this.attestationExpectation = validateAttestationExpectation(options);
     this.requestOptions = {
-      ...validateSummaryRequestOptions(options),
+      ...validateIncrementalSummaryRequestOptions(options),
       maxRecentContextTurns: positiveIntegerOption(
         options.maxRecentContextTurns,
         defaultMaxRecentContextTurns,

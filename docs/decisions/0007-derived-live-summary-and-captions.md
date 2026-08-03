@@ -26,9 +26,13 @@ authentication, and subscription authentication must remain server-side.
 - Send the previous structured summary, only new finalized turns, and up to
   three minutes of recent finalized context to the incremental generator. The
   provider returns a complete next snapshot rather than an ambiguous patch.
-- Admit exactly `gpt-5.6-luna` with medium reasoning for both incremental and
-  final-summary purposes. Keep the purposes and attestations independent so a
-  live snapshot can never satisfy the authoritative final-summary receipt.
+- Admit final summaries only with `gpt-5.6-sol`, `medium` reasoning, a 4096-token
+  post-execution output budget, and policy version v6; admit incremental snapshots
+  only with `gpt-5.6-luna`, `low` reasoning, a 2048-token post-execution output
+  budget, and policy version v2. The budget is not a provider generation cap or
+  a latency guarantee; the compact prompt and `low` reasoning are latency
+  optimizations. Keep the purposes and attestations independent so a live snapshot
+  can never satisfy the authoritative final-summary receipt.
 - Persist real provider token telemetry when available. API-equivalent cost is
   derived from a versioned price card and is never represented as an actual
   subscription invoice.

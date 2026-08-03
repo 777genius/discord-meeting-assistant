@@ -15,61 +15,68 @@ import { delimiter, isAbsolute, join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
 
-const subscriptionRuntimeCodexModel = "gpt-5.6-luna";
+const subscriptionRuntimeFinalCodexModel = "gpt-5.6-sol";
+const subscriptionRuntimeIncrementalCodexModel = "gpt-5.6-luna";
 const profiles = Object.freeze({
   "discord_meeting.summary.generate": Object.freeze({
-    model: subscriptionRuntimeCodexModel,
+    maxOutputTokens: 4_096,
+    model: subscriptionRuntimeFinalCodexModel,
     outputKind: "structured_output",
+    policyVersion: "meeting-summary.subscription-runtime.v6",
     provider: "codex",
     purpose: "discord_meeting.summary.generate",
     reasoningEffort: "medium",
     responseFormat: "json",
   }),
   "discord_meeting.summary.incremental": Object.freeze({
-    model: subscriptionRuntimeCodexModel,
+    maxOutputTokens: 2_048,
+    model: subscriptionRuntimeIncrementalCodexModel,
     outputKind: "structured_output",
+    policyVersion: "meeting-summary.incremental.subscription-runtime.v2",
     provider: "codex",
     purpose: "discord_meeting.summary.incremental",
-    reasoningEffort: "medium",
+    reasoningEffort: "low",
     responseFormat: "json",
   }),
 });
 
-const pinnedCodexTaskArgv = Object.freeze([
-  "exec",
-  "--json",
-  "--model",
-  subscriptionRuntimeCodexModel,
-  "--sandbox",
-  "read-only",
-  "--config",
-  'approval_policy="never"',
-  "--config",
-  'model_reasoning_effort="medium"',
-  "--config",
-  'model_verbosity="low"',
-  "--config",
-  'web_search="disabled"',
-  "--config",
-  "features.apps=false",
-  "--config",
-  "features.hooks=false",
-  "--config",
-  "features.memories=false",
-  "--config",
-  "features.multi_agent=false",
-  "--config",
-  "features.shell_snapshot=false",
-  "--config",
-  "features.skill_mcp_dependency_install=false",
-  "--ephemeral",
-  "--ignore-user-config",
-  "--ignore-rules",
-  "--color",
-  "never",
-  "--skip-git-repo-check",
-  "-",
-]);
+function pinnedCodexTaskArgv(model, reasoningEffort) {
+  return Object.freeze([
+    "exec",
+    "--json",
+    "--model",
+    model,
+    "--sandbox",
+    "read-only",
+    "--config",
+    'approval_policy="never"',
+    "--config",
+    `model_reasoning_effort="${reasoningEffort}"`,
+    "--config",
+    'model_verbosity="low"',
+    "--config",
+    'web_search="disabled"',
+    "--config",
+    "features.apps=false",
+    "--config",
+    "features.hooks=false",
+    "--config",
+    "features.memories=false",
+    "--config",
+    "features.multi_agent=false",
+    "--config",
+    "features.shell_snapshot=false",
+    "--config",
+    "features.skill_mcp_dependency_install=false",
+    "--ephemeral",
+    "--ignore-user-config",
+    "--ignore-rules",
+    "--color",
+    "never",
+    "--skip-git-repo-check",
+    "-",
+  ]);
+}
 
 const childEnvironmentNames = Object.freeze([
   "PATH",
@@ -104,10 +111,8 @@ export async function main(argv = process.argv.slice(2), dependencies = {}) {
   const requestedReasoningEffort =
     process.env.AGENT_RUNTIME_REASONING_EFFORT?.trim();
   const request = JSON.parse(await readFile(inputPath, "utf8"));
-  const profile = profileForRequest(request);
-  admitRequest({
+  const profile = admitMeetingSummaryRequest({
     model: requestedModel,
-    profile,
     provider,
     reasoningEffort: requestedReasoningEffort,
     request,
@@ -131,7 +136,7 @@ export async function main(argv = process.argv.slice(2), dependencies = {}) {
         input.codexBinaryPath,
         input.env,
       );
-      capture.configure(admittedCodexBinaryPath);
+      capture.configure(admittedCodexBinaryPath, profile);
       return new FileBackendCodexWorker({
         // The wrapper delegates only to the admitted Codex executable and passes
         // stdout through unchanged, so the private worker retains its tool and
@@ -201,8 +206,8 @@ export async function runCodexJsonlCapture(
   configuration,
   environment = process.env,
 ) {
-  const { target, usagePath } = captureConfiguration(configuration);
-  const captureUsage = isPinnedCodexTaskInvocation(argv);
+  const { model, reasoningEffort, target, usagePath } = captureConfiguration(configuration);
+  const captureUsage = isPinnedCodexTaskInvocation(argv, model, reasoningEffort);
   await rm(usagePath, { force: true });
   const decoder = new StringDecoder("utf8");
   let buffered = "";
@@ -434,13 +439,21 @@ async function createCodexJsonlCapture(stateRoot) {
   );
   const usagePath = join(root, "usage.json");
   const wrapperPath = join(root, "codex-jsonl-capture.mjs");
+  let configuredModel;
   let configuredTarget;
+  let configuredReasoningEffort;
   return {
-    configure: (target) => {
+    configure: (target, profile) => {
       const verifiedTarget = realpathSync(target);
+      const model = profile.model;
+      const reasoningEffort = profile.reasoningEffort;
       if (configuredTarget !== undefined) {
-        if (configuredTarget !== verifiedTarget) {
-          throw new Error("Codex capture target changed after admission");
+        if (
+          configuredTarget !== verifiedTarget ||
+          configuredModel !== model ||
+          configuredReasoningEffort !== reasoningEffort
+        ) {
+          throw new Error("Codex capture configuration changed after admission");
         }
         return;
       }
@@ -450,6 +463,8 @@ async function createCodexJsonlCapture(stateRoot) {
           "#!/usr/bin/env node",
           `import { runCodexJsonlCapture } from ${JSON.stringify(import.meta.url)};`,
           `const configuration = Object.freeze(${JSON.stringify({
+            model,
+            reasoningEffort,
             target: verifiedTarget,
             usagePath,
           })});`,
@@ -458,7 +473,9 @@ async function createCodexJsonlCapture(stateRoot) {
         ].join("\n"),
         { encoding: "utf8", flag: "wx", mode: 0o700 },
       );
+      configuredModel = model;
       configuredTarget = verifiedTarget;
+      configuredReasoningEffort = reasoningEffort;
     },
     dispose: async () => rm(root, { force: true, recursive: true }),
     usagePath,
@@ -528,11 +545,12 @@ function captureOwnerIsAlive(name) {
   }
 }
 
-function isPinnedCodexTaskInvocation(argv) {
+function isPinnedCodexTaskInvocation(argv, model, reasoningEffort) {
+  const expected = pinnedCodexTaskArgv(model, reasoningEffort);
   return (
     Array.isArray(argv) &&
-    argv.length === pinnedCodexTaskArgv.length &&
-    argv.every((value, index) => value === pinnedCodexTaskArgv[index])
+    argv.length === expected.length &&
+    argv.every((value, index) => value === expected[index])
   );
 }
 
@@ -540,8 +558,9 @@ function captureConfiguration(value) {
   if (!isRecord(value)) {
     throw new Error("Codex capture configuration must be an object");
   }
-  const { target, usagePath } = value;
+  const { model, reasoningEffort, target, usagePath } = value;
   if (
+    !isAdmittedCodexExecution(model, reasoningEffort) ||
     typeof target !== "string" ||
     !isAbsolute(target) ||
     typeof usagePath !== "string" ||
@@ -549,7 +568,14 @@ function captureConfiguration(value) {
   ) {
     throw new Error("Codex capture configuration paths must be absolute");
   }
-  return { target, usagePath };
+  return { model, reasoningEffort, target, usagePath };
+}
+
+function isAdmittedCodexExecution(model, reasoningEffort) {
+  return Object.values(profiles).some(
+    (profile) =>
+      profile.model === model && profile.reasoningEffort === reasoningEffort,
+  );
 }
 
 async function readCapturedCodexUsage(usagePath) {
@@ -620,23 +646,45 @@ function isCompleteBridgeUsage(value) {
   return completeTokenNames.every((name) => isTokenCount(value[name]));
 }
 
+export function admitMeetingSummaryRequest(input) {
+  const profile = profileForRequest(input.request);
+  admitRequest({ ...input, profile });
+  return profile;
+}
+
 function admitRequest(input) {
   const requestRecord = record(input.request, "request");
   const context = record(requestRecord.context, "request.context");
+  const contextMetadata = record(context.metadata, "request.context.metadata");
   const task = record(requestRecord.task, "request.task");
   const controls = record(task.controls, "request.task.controls");
   const metadata = record(task.metadata, "request.task.metadata");
 
   const { profile } = input;
   assertExact(context.purpose, profile.purpose, "purpose");
+  assertExact(
+    contextMetadata.policyVersion,
+    profile.policyVersion,
+    "context.metadata.policyVersion",
+  );
   assertExact(input.provider, profile.provider, "provider");
   assertExact(input.model, profile.model, "CLI model");
   assertExact(input.reasoningEffort, profile.reasoningEffort, "runtime reasoning effort");
   assertExact(controls.model, profile.model, "controls.model");
+  assertExact(
+    controls.maxOutputTokens,
+    profile.maxOutputTokens,
+    "controls.maxOutputTokens",
+  );
   assertExact(controls.reasoningEffort, profile.reasoningEffort, "controls.reasoningEffort");
   assertExact(controls.responseFormat, profile.responseFormat, "controls.responseFormat");
   assertExact(controls.selectedOutputKind, profile.outputKind, "controls.selectedOutputKind");
   assertExact(metadata.model, profile.model, "metadata.model");
+  assertExact(
+    metadata.policyVersion,
+    profile.policyVersion,
+    "metadata.policyVersion",
+  );
   assertExact(metadata.reasoningEffort, profile.reasoningEffort, "metadata.reasoningEffort");
   assertExact(metadata.runtimeOutput, profile.outputKind, "metadata.runtimeOutput");
   if (controls.disableTools !== true || controls.interactive !== false) {
@@ -721,7 +769,10 @@ function optionalArgument(args, name) {
 }
 
 function assertExact(value, expected, label) {
-  if (typeof value !== "string" || value.trim() !== expected) {
+  const matches = typeof expected === "string"
+    ? typeof value === "string" && value.trim() === expected
+    : value === expected;
+  if (!matches) {
     throw new Error(`${label} conflicts with the admitted meeting policy`);
   }
 }

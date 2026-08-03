@@ -16,6 +16,7 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 
 import {
+  admitMeetingSummaryRequest,
   attachCodexJsonlTelemetry,
   codexExecJsonlCompatibilityAgentMessage,
   codexExecJsonlUsage,
@@ -135,6 +136,73 @@ test("enriches bridge metadata but does not overwrite fully measured bridge usag
   assert.equal(attachCodexJsonlTelemetry(complete, captured), complete);
 });
 
+test("admits only the immutable final and incremental execution profiles", () => {
+  const finalProfile = admitMeetingSummaryRequest(admissionInput(finalRequest(), "medium"));
+  assert.deepEqual(
+    {
+      maxOutputTokens: finalProfile.maxOutputTokens,
+      model: finalProfile.model,
+      policyVersion: finalProfile.policyVersion,
+      purpose: finalProfile.purpose,
+      reasoningEffort: finalProfile.reasoningEffort,
+    },
+    {
+      maxOutputTokens: 4_096,
+      model: "gpt-5.6-sol",
+      policyVersion: "meeting-summary.subscription-runtime.v6",
+      purpose: "discord_meeting.summary.generate",
+      reasoningEffort: "medium",
+    },
+  );
+
+  const incrementalProfile = admitMeetingSummaryRequest(
+    admissionInput(incrementalRequest(), "low"),
+  );
+  assert.deepEqual(
+    {
+      maxOutputTokens: incrementalProfile.maxOutputTokens,
+      model: incrementalProfile.model,
+      policyVersion: incrementalProfile.policyVersion,
+      purpose: incrementalProfile.purpose,
+      reasoningEffort: incrementalProfile.reasoningEffort,
+    },
+    {
+      maxOutputTokens: 2_048,
+      model: "gpt-5.6-luna",
+      policyVersion: "meeting-summary.incremental.subscription-runtime.v2",
+      purpose: "discord_meeting.summary.incremental",
+      reasoningEffort: "low",
+    },
+  );
+
+  const staleIncremental = incrementalRequest();
+  staleIncremental.context.metadata.policyVersion =
+    "meeting-summary.incremental.subscription-runtime.v1";
+  assert.throws(
+    () => admitMeetingSummaryRequest(admissionInput(staleIncremental, "low")),
+    /context\.metadata\.policyVersion conflicts with the admitted meeting policy/,
+  );
+
+  const oversizedIncremental = incrementalRequest();
+  oversizedIncremental.task.controls.maxOutputTokens = 4_096;
+  assert.throws(
+    () => admitMeetingSummaryRequest(admissionInput(oversizedIncremental, "low")),
+    /controls\.maxOutputTokens conflicts with the admitted meeting policy/,
+  );
+
+  assert.throws(
+    () => admitMeetingSummaryRequest(admissionInput(finalRequest(), "low")),
+    /runtime reasoning effort conflicts with the admitted meeting policy/,
+  );
+
+  const swappedIncrementalModel = incrementalRequest();
+  swappedIncrementalModel.task.controls.model = "gpt-5.6-sol";
+  assert.throws(
+    () => admitMeetingSummaryRequest(admissionInput(swappedIncrementalModel, "low")),
+    /controls\.model conflicts with the admitted meeting policy/,
+  );
+});
+
 test("generated capture wrapper survives the runtime-pruned environment", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "subscription-runtime-launcher-test-"));
   t.after(async () => rm(root, { force: true, recursive: true }));
@@ -176,7 +244,7 @@ test("generated capture wrapper survives the runtime-pruned environment", async 
   );
   const cleanupFixture = await createCaptureCleanupFixture(root, t);
   const previousReasoningEffort = process.env.AGENT_RUNTIME_REASONING_EFFORT;
-  process.env.AGENT_RUNTIME_REASONING_EFFORT = "medium";
+  process.env.AGENT_RUNTIME_REASONING_EFFORT = "low";
   t.after(() => {
     if (previousReasoningEffort === undefined) {
       delete process.env.AGENT_RUNTIME_REASONING_EFFORT;
@@ -227,6 +295,7 @@ test("generated capture wrapper survives the runtime-pruned environment", async 
           ["CI", "CODEX_HOME", "HOME", "PATH"],
         );
         assert.equal(workerOptions.executionEngine, "packaged-exec");
+        assert.equal(workerOptions.reasoningEffort, "low");
         assert.equal(workerOptions.sourceEnv.LOCAL_ENCRYPTION_KEY, undefined);
         assert.equal(workerOptions.sourceEnv.OPENAI_API_KEY, undefined);
         assert.equal(
@@ -271,7 +340,7 @@ test("generated capture wrapper survives the runtime-pruned environment", async 
         await assert.rejects(readFile(usagePath(), "utf8"), { code: "ENOENT" });
         const captured = await runExecutable(
           workerOptions.codexBinaryPath,
-          pinnedTaskArgv(),
+          pinnedTaskArgv("gpt-5.6-luna", "low"),
           prunedEnvironment,
         );
         assert.equal(captured.exitCode, 0);
@@ -280,7 +349,7 @@ test("generated capture wrapper survives the runtime-pruned environment", async 
         const events = captured.stdout.trim().split("\n").map(JSON.parse);
         assert.deepEqual(events[0], {
           type: "stub.invoked",
-          argv: pinnedTaskArgv(),
+          argv: pinnedTaskArgv("gpt-5.6-luna", "low"),
         });
         assert.deepEqual(events[1], {
           type: "item.completed",
@@ -356,24 +425,58 @@ test("rejects malformed or multiple bridge result JSON payloads", () => {
 });
 
 function incrementalRequest() {
+  return summaryRequest({
+    maxOutputTokens: 2_048,
+    model: "gpt-5.6-luna",
+    policyVersion: "meeting-summary.incremental.subscription-runtime.v2",
+    purpose: "discord_meeting.summary.incremental",
+    reasoningEffort: "low",
+  });
+}
+
+function finalRequest() {
+  return summaryRequest({
+    maxOutputTokens: 4_096,
+    model: "gpt-5.6-sol",
+    policyVersion: "meeting-summary.subscription-runtime.v6",
+    purpose: "discord_meeting.summary.generate",
+    reasoningEffort: "medium",
+  });
+}
+
+function summaryRequest(profile) {
   return {
-    context: { purpose: "discord_meeting.summary.incremental" },
+    context: {
+      metadata: { policyVersion: profile.policyVersion },
+      purpose: profile.purpose,
+    },
     task: {
       controls: {
         disableTools: true,
         interactive: false,
-        model: "gpt-5.6-luna",
+        maxOutputTokens: profile.maxOutputTokens,
+        model: profile.model,
         outputSchema: {},
-        reasoningEffort: "medium",
+        reasoningEffort: profile.reasoningEffort,
         responseFormat: "json",
         selectedOutputKind: "structured_output",
       },
       metadata: {
-        model: "gpt-5.6-luna",
-        reasoningEffort: "medium",
+        model: profile.model,
+        policyVersion: profile.policyVersion,
+        reasoningEffort: profile.reasoningEffort,
         runtimeOutput: "structured_output",
       },
     },
+  };
+}
+
+function admissionInput(request, reasoningEffort) {
+  return {
+    model: request.task.metadata.model,
+    provider: "codex",
+    reasoningEffort,
+    request,
   };
 }
 
@@ -387,18 +490,18 @@ function completedBridgeResult() {
   };
 }
 
-function pinnedTaskArgv() {
+function pinnedTaskArgv(model, reasoningEffort) {
   return [
     "exec",
     "--json",
     "--model",
-    "gpt-5.6-luna",
+    model,
     "--sandbox",
     "read-only",
     "--config",
     'approval_policy="never"',
     "--config",
-    'model_reasoning_effort="medium"',
+    `model_reasoning_effort="${reasoningEffort}"`,
     "--config",
     'model_verbosity="low"',
     "--config",

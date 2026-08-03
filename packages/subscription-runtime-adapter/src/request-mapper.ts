@@ -12,6 +12,7 @@ import {
   subscriptionRuntimeProtocolVersion,
   subscriptionRuntimePurpose,
   subscriptionRuntimeReasoningEffort,
+  subscriptionRuntimeSummaryMaxOutputTokens,
   type SubscriptionRuntimeAgentTaskRequest,
 } from "./subscription-runtime-contract.js";
 import { stableSubscriptionRuntimeId } from "./stable-id.js";
@@ -46,6 +47,12 @@ export function buildSubscriptionRuntimeSummaryRequest(
   options: SubscriptionRuntimeSummaryRequestOptions,
 ): SubscriptionRuntimeAgentTaskRequest {
   validateSummaryGenerationRequest(request);
+  if (options.maxOutputTokens !== subscriptionRuntimeSummaryMaxOutputTokens) {
+    throw new SubscriptionRuntimeAdapterError(
+      "invalid_input",
+      `maxOutputTokens must match the admitted final profile value ${subscriptionRuntimeSummaryMaxOutputTokens}`,
+    );
+  }
   const orderedTurns = request.transcript.turns.toSorted(compareTranscriptTurns);
   const prompt = JSON.stringify({
     meetingId: request.meetingId,

@@ -23,10 +23,17 @@ The package manifest must be exactly `@vioxen/subscription-runtime` version
 `0.1.0-main.2`. The launcher is inspected by realpath and SHA-256 before and
 after every task. It must call that version's
 `subscription-runtime-run-agent-task` JSON bridge while constructing the Codex
-worker with the exact selected profile: `gpt-5.6-luna`/`medium` for both final
-and incremental summaries, disabled tools, no interactive
-flow, and stateless-completion semantics. A generic launcher that does not
-enforce both exact profiles is not an admitted production installation.
+worker with the exact selected profile: `gpt-5.6-sol`/`medium` for final
+summaries with an admitted 4096-token post-execution output budget and policy
+version `v6`, and `gpt-5.6-luna`/`low` for incremental summaries with an
+admitted 2048-token post-execution output budget and policy version `v2`,
+disabled tools, no interactive flow, and
+stateless-completion semantics. A generic launcher that does not enforce both
+exact profiles is not an admitted production installation.
+
+The budget is checked against measured provider output after completion. It is
+not a provider generation cap and does not guarantee latency; the compact
+incremental prompt and `low` reasoning are the latency optimizations.
 
 The sidecar invokes the audited bridge with `--provider codex`, `--input`,
 `--format result-json`, `--timeout-ms`, `--state-root`, `--codex-auth-json`,

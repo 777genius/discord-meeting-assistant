@@ -4,13 +4,17 @@ import { z } from "zod";
 
 import {
   auditedSubscriptionRuntimePackageVersion,
+  incrementalMeetingSummaryPolicyVersion,
   meetingSummaryOutputSchemaName,
+  meetingSummaryPolicyVersion,
+  subscriptionRuntimeIncrementalMaxOutputTokens,
   subscriptionRuntimeModel,
   subscriptionRuntimeIncrementalModel,
   subscriptionRuntimeIncrementalPurpose,
   subscriptionRuntimeIncrementalReasoningEffort,
   subscriptionRuntimePurpose,
   subscriptionRuntimeReasoningEffort,
+  subscriptionRuntimeSummaryMaxOutputTokens,
 } from "@discord-meeting/subscription-runtime-adapter";
 
 import {
@@ -49,6 +53,14 @@ const deploymentPolicySchema = z
         model: z.union([
           z.literal(subscriptionRuntimeModel),
           z.literal(subscriptionRuntimeIncrementalModel),
+        ]),
+        policyVersion: z.union([
+          z.literal(meetingSummaryPolicyVersion),
+          z.literal(incrementalMeetingSummaryPolicyVersion),
+        ]),
+        maxOutputTokens: z.union([
+          z.literal(subscriptionRuntimeSummaryMaxOutputTokens),
+          z.literal(subscriptionRuntimeIncrementalMaxOutputTokens),
         ]),
         reasoningEffort: z.union([
           z.literal(subscriptionRuntimeReasoningEffort),
@@ -204,8 +216,21 @@ async function assertDeploymentPolicy(
     admittedPurposeNames[0] !== subscriptionRuntimePurpose ||
     admittedPurposeNames[1] !== subscriptionRuntimeIncrementalPurpose ||
     valuesDiffer(finalProfile.model, subscriptionRuntimeModel) ||
+    valuesDiffer(finalProfile.policyVersion, meetingSummaryPolicyVersion) ||
+    valuesDiffer(
+      finalProfile.maxOutputTokens,
+      subscriptionRuntimeSummaryMaxOutputTokens,
+    ) ||
     valuesDiffer(finalProfile.reasoningEffort, subscriptionRuntimeReasoningEffort) ||
     valuesDiffer(incrementalProfile.model, subscriptionRuntimeIncrementalModel) ||
+    valuesDiffer(
+      incrementalProfile.policyVersion,
+      incrementalMeetingSummaryPolicyVersion,
+    ) ||
+    valuesDiffer(
+      incrementalProfile.maxOutputTokens,
+      subscriptionRuntimeIncrementalMaxOutputTokens,
+    ) ||
     valuesDiffer(
       incrementalProfile.reasoningEffort,
       subscriptionRuntimeIncrementalReasoningEffort,
@@ -226,7 +251,7 @@ async function assertDeploymentPolicy(
   }
 }
 
-function valuesDiffer(actual: string, expected: string): boolean {
+function valuesDiffer<T extends number | string>(actual: T, expected: T): boolean {
   return actual !== expected;
 }
 

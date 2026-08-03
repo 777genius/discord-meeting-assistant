@@ -223,6 +223,20 @@ export class SubscriptionRuntimeExecutor implements SidecarExecutorPort {
       if (telemetry.status === "missing") {
         return failedResult("telemetry_unavailable");
       }
+      if (telemetry.value.outputTokens.availability !== "measured") {
+        return failedResult(
+          "telemetry_unavailable",
+          completeUsage,
+          partialTelemetry,
+        );
+      }
+      if (telemetry.value.outputTokens.value > profile.maxOutputTokens) {
+        return failedResult(
+          "provider_output_invalid",
+          completeUsage,
+          partialTelemetry,
+        );
+      }
 
       const validatedOutput = providerMeetingSummarySchema.safeParse(
         parsed.structuredOutput,

@@ -224,7 +224,8 @@ export function reconstructCanonicalRequest(
   if (
     profile === undefined ||
     valuesDiffer(controls.model, profile.model) ||
-    valuesDiffer(controls.reasoningEffort, profile.reasoningEffort)
+    valuesDiffer(controls.reasoningEffort, profile.reasoningEffort) ||
+    valuesDiffer(controls.maxOutputTokens, profile.maxOutputTokens)
   ) {
     throw new RequestPolicyError("request execution profile is not admitted");
   }
@@ -327,6 +328,7 @@ function assertCanonicalProfile(
   if (
     profile === undefined ||
     request.context.metadata.policyVersion !== profile.policyVersion ||
+    valuesDiffer(request.task.controls.maxOutputTokens, profile.maxOutputTokens) ||
     valuesDiffer(request.task.controls.model, profile.model) ||
     valuesDiffer(request.task.controls.reasoningEffort, profile.reasoningEffort) ||
     valuesDiffer(request.task.metadata.model, profile.model) ||
@@ -362,7 +364,7 @@ function assertCanonicalProfile(
   });
 }
 
-function valuesDiffer(actual: string, expected: string): boolean {
+function valuesDiffer<T extends number | string>(actual: T, expected: T): boolean {
   return actual !== expected;
 }
 

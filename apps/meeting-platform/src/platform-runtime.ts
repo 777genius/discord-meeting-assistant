@@ -57,6 +57,8 @@ import {
 import {
   SubscriptionRuntimeIncrementalSummaryAdapter,
   SubscriptionRuntimeSummaryAdapter,
+  subscriptionRuntimeIncrementalMaxOutputTokens,
+  subscriptionRuntimeSummaryMaxOutputTokens,
 } from "@discord-meeting/subscription-runtime-adapter";
 import {
   FetchVoicetextBatchClient,
@@ -129,6 +131,7 @@ export async function startMeetingPlatform(
   });
   const rawSummarizer = new SubscriptionRuntimeSummaryAdapter(runtimeTransport, {
     expectedLauncherSha256: config.subscriptionRuntime.launcherSha256,
+    maxOutputTokens: subscriptionRuntimeSummaryMaxOutputTokens,
     outputLanguage: "Russian; preserve English technical terms",
   });
   const discord = new Client({ intents: [GatewayIntentBits.Guilds] });
@@ -316,6 +319,7 @@ function createLiveRuntime(input: {
     input.runtimeTransport,
     {
       expectedLauncherSha256: input.config.subscriptionRuntime.launcherSha256,
+      maxOutputTokens: subscriptionRuntimeIncrementalMaxOutputTokens,
       maxRecentContextTurns: 256,
       outputLanguage: "Russian; preserve English technical terms",
       timeoutMs: 30_000,

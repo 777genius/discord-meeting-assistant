@@ -59,7 +59,7 @@ const incrementalRuntimeRequest = buildSubscriptionRuntimeIncrementalSummaryRequ
   },
   {
     isolatedCwd: "/runtime/workspace",
-    maxOutputTokens: 4_096,
+    maxOutputTokens: 2_048,
     maxPromptBytes: 1_048_576,
     maxRecentContextTurns: 256,
     timeoutMs: 600_000,
@@ -75,23 +75,31 @@ describe("subscription runtime gRPC transport mapping", () => {
     expect(JSON.parse(request.controlsJson)).toMatchObject({
       disableTools: true,
       executionProfile: "stateless-completion",
-      model: "gpt-5.6-luna",
+      maxOutputTokens: 4_096,
+      model: "gpt-5.6-sol",
+      reasoningEffort: "medium",
+    });
+    expect(request.metadata).toMatchObject({
+      model: "gpt-5.6-sol",
+      policyVersion: "meeting-summary.subscription-runtime.v6",
       reasoningEffort: "medium",
     });
     expect(JSON.stringify(request)).not.toContain("OPENAI_API_KEY");
   });
 
-  it("maps the incremental request without changing its Luna medium profile", () => {
+  it("maps the incremental request with its Luna low 2048-token profile", () => {
     const request = toGrpcTaskRequest(incrementalRuntimeRequest);
 
     expect(request.purpose).toBe("discord_meeting.summary.incremental");
     expect(JSON.parse(request.controlsJson)).toMatchObject({
+      maxOutputTokens: 2_048,
       model: "gpt-5.6-luna",
-      reasoningEffort: "medium",
+      reasoningEffort: "low",
     });
     expect(request.metadata).toMatchObject({
       model: "gpt-5.6-luna",
-      reasoningEffort: "medium",
+      policyVersion: "meeting-summary.incremental.subscription-runtime.v2",
+      reasoningEffort: "low",
       summaryRevision: "1",
       throughTurnCount: "1",
     });
@@ -115,7 +123,7 @@ describe("subscription runtime gRPC transport mapping", () => {
         purpose: runtimeRequest.context.purpose,
         canonicalRequestSha256: canonicalJsonSha256(runtimeRequest),
         provider: "AGENT_RUNTIME_PROVIDER_CODEX",
-        model: "gpt-5.6-luna",
+        model: "gpt-5.6-sol",
         reasoningEffort: "medium",
         runtimeEngine: "subscription-runtime-cli",
         runtimePackageVersion: "0.1.0-main.2",
@@ -152,7 +160,7 @@ describe("subscription runtime gRPC transport mapping", () => {
         canonicalRequestSha256: canonicalJsonSha256(incrementalRuntimeRequest),
         provider: "AGENT_RUNTIME_PROVIDER_CODEX",
         model: "gpt-5.6-luna",
-        reasoningEffort: "medium",
+        reasoningEffort: "low",
         runtimeEngine: "subscription-runtime-cli",
         runtimePackageVersion: "0.1.0-main.2",
         launcherSha256: "a".repeat(64),
@@ -350,7 +358,7 @@ function attestationFor(request: typeof incrementalRuntimeRequest) {
     canonicalRequestSha256: canonicalJsonSha256(request),
     provider: "AGENT_RUNTIME_PROVIDER_CODEX",
     model: "gpt-5.6-luna",
-    reasoningEffort: "medium",
+    reasoningEffort: "low",
     runtimeEngine: "subscription-runtime-cli",
     runtimePackageVersion: "0.1.0-main.2",
     launcherSha256: "a".repeat(64),

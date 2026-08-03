@@ -2,28 +2,38 @@ export const subscriptionRuntimeProtocolVersion = 1 as const;
 export const subscriptionRuntimePurpose = "discord_meeting.summary.generate" as const;
 export const subscriptionRuntimeIncrementalPurpose = "discord_meeting.summary.incremental" as const;
 export const subscriptionRuntimeProvider = "codex" as const;
-export const subscriptionRuntimeModel = "gpt-5.6-luna" as const;
+export const subscriptionRuntimeModel = "gpt-5.6-sol" as const;
 export const subscriptionRuntimeIncrementalModel = "gpt-5.6-luna" as const;
 export const subscriptionRuntimeReasoningEffort = "medium" as const;
-export const subscriptionRuntimeIncrementalReasoningEffort = "medium" as const;
+export const subscriptionRuntimeIncrementalReasoningEffort = "low" as const;
+export const subscriptionRuntimeSummaryMaxOutputTokens = 4_096 as const;
+export const subscriptionRuntimeIncrementalMaxOutputTokens = 2_048 as const;
 export const subscriptionRuntimeEngine = "subscription-runtime-cli" as const;
 export const auditedSubscriptionRuntimePackageVersion = "0.1.0-main.2" as const;
 export const meetingSummaryOutputSchemaName = "discord_meeting_summary_v3" as const;
-export const meetingSummaryPolicyVersion = "meeting-summary.subscription-runtime.v5" as const;
-export const incrementalMeetingSummaryPolicyVersion = "meeting-summary.incremental.subscription-runtime.v1" as const;
+export const meetingSummaryPolicyVersion = "meeting-summary.subscription-runtime.v6" as const;
+export const incrementalMeetingSummaryPolicyVersion = "meeting-summary.incremental.subscription-runtime.v2" as const;
 
 export interface SubscriptionRuntimeExecutionProfile {
-  readonly model: typeof subscriptionRuntimeModel;
+  readonly maxOutputTokens:
+    | typeof subscriptionRuntimeIncrementalMaxOutputTokens
+    | typeof subscriptionRuntimeSummaryMaxOutputTokens;
+  readonly model:
+    | typeof subscriptionRuntimeIncrementalModel
+    | typeof subscriptionRuntimeModel;
   readonly policyVersion:
     | typeof incrementalMeetingSummaryPolicyVersion
     | typeof meetingSummaryPolicyVersion;
   readonly purpose:
     | typeof subscriptionRuntimeIncrementalPurpose
     | typeof subscriptionRuntimePurpose;
-  readonly reasoningEffort: typeof subscriptionRuntimeReasoningEffort;
+  readonly reasoningEffort:
+    | typeof subscriptionRuntimeIncrementalReasoningEffort
+    | typeof subscriptionRuntimeReasoningEffort;
 }
 
 export const finalSummaryExecutionProfile: SubscriptionRuntimeExecutionProfile = Object.freeze({
+  maxOutputTokens: subscriptionRuntimeSummaryMaxOutputTokens,
   model: subscriptionRuntimeModel,
   policyVersion: meetingSummaryPolicyVersion,
   purpose: subscriptionRuntimePurpose,
@@ -31,6 +41,7 @@ export const finalSummaryExecutionProfile: SubscriptionRuntimeExecutionProfile =
 });
 
 export const incrementalSummaryExecutionProfile: SubscriptionRuntimeExecutionProfile = Object.freeze({
+  maxOutputTokens: subscriptionRuntimeIncrementalMaxOutputTokens,
   model: subscriptionRuntimeIncrementalModel,
   policyVersion: incrementalMeetingSummaryPolicyVersion,
   purpose: subscriptionRuntimeIncrementalPurpose,

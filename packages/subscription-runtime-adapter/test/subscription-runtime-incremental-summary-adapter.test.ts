@@ -131,7 +131,7 @@ class FakeTransport implements SubscriptionRuntimeTransportPort {
 }
 
 describe("SubscriptionRuntimeIncrementalSummaryAdapter", () => {
-  it("sends previous summary, new evidence, bounded context and known IDs with Luna medium", async () => {
+  it("sends previous summary, new evidence, bounded context and known IDs with Luna low and a 2048-token budget", async () => {
     const transport = new FakeTransport((request) => completed(
       request,
       structuredOutput,
@@ -161,9 +161,15 @@ describe("SubscriptionRuntimeIncrementalSummaryAdapter", () => {
       return;
     }
     expect(captured).toMatchObject({
-      context: { purpose: subscriptionRuntimeIncrementalPurpose },
+      context: {
+        metadata: {
+          policyVersion: "meeting-summary.incremental.subscription-runtime.v2",
+        },
+        purpose: subscriptionRuntimeIncrementalPurpose,
+      },
       task: {
         controls: {
+          maxOutputTokens: 2_048,
           model: subscriptionRuntimeIncrementalModel,
           reasoningEffort: subscriptionRuntimeIncrementalReasoningEffort,
         },
@@ -183,8 +189,23 @@ describe("SubscriptionRuntimeIncrementalSummaryAdapter", () => {
       revision: 2,
       throughTurnCount: 3,
     });
-    expect(captured.task.systemPrompt).toContain("previous summary is an editable draft");
+    expect(captured.task.systemPrompt).toContain("Previous summary is editable context");
     expect(captured.task.systemPrompt).toContain("untrusted quoted evidence");
+    expect(captured.task.systemPrompt).toContain("overview exactly one sentence");
+    expect(captured.task.systemPrompt).toContain("at most four topics");
+    expect(captured.task.systemPrompt).toContain("one or two points");
+    expect(captured.task.systemPrompt).toContain(
+      "Consolidate related items",
+    );
+    expect(captured.task.systemPrompt).toContain(
+      "Decisions, action items, and open questions each permit 12",
+    );
+    expect(captured.task.systemPrompt).toContain(
+      "Never claim completeness",
+    );
+    expect(captured.task.systemPrompt).not.toContain(
+      "Keep every explicitly evidenced decision",
+    );
   });
 
   it("rejects an attested profile mismatch", async () => {
@@ -193,7 +214,7 @@ describe("SubscriptionRuntimeIncrementalSummaryAdapter", () => {
       executionAttestation: {
         ...completed(request, structuredOutput, completeUsage).executionAttestation,
         model: "gpt-5.6-sol",
-        reasoningEffort: "xhigh",
+        reasoningEffort: "low",
       },
     }));
 

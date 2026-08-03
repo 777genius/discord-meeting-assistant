@@ -2,7 +2,11 @@ import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { canonicalJsonSha256 } from "@discord-meeting/subscription-runtime-adapter";
+import {
+  canonicalJsonSha256,
+  subscriptionRuntimeIncrementalMaxOutputTokens,
+  subscriptionRuntimeSummaryMaxOutputTokens,
+} from "@discord-meeting/subscription-runtime-adapter";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -72,7 +76,7 @@ describe("SubscriptionRuntimeExecutor", () => {
     expect(result.executionAttestation).toMatchObject({
       canonicalRequestSha256: canonicalJsonSha256(canonicalRequest),
       selectedOutputSha256: canonicalJsonSha256(structuredOutput),
-      model: "gpt-5.6-luna",
+      model: "gpt-5.6-sol",
       reasoningEffort: "medium",
       runtimePackageVersion: "0.1.0-main.2",
     });
@@ -85,7 +89,7 @@ describe("SubscriptionRuntimeExecutor", () => {
         "--provider-instance",
         "discord-meeting-summary-v3",
         "--model",
-        "gpt-5.6-luna",
+        "gpt-5.6-sol",
       ]),
     );
     expect(runs[0]?.cwd).toBe(isolatedCwd);
@@ -93,7 +97,7 @@ describe("SubscriptionRuntimeExecutor", () => {
     await expect(stat(String(inputPath))).rejects.toThrow();
   });
 
-  it("selects Luna medium from the incremental purpose and preserves complete real usage", async () => {
+  it("selects Luna low from the incremental purpose and preserves complete real usage", async () => {
     root = await mkdtemp(join(tmpdir(), "sidecar-executor-test-"));
     const keyFile = join(root, "local-encryption-key");
     await writeFile(keyFile, "private-test-key\n", { mode: 0o600 });
@@ -124,7 +128,7 @@ describe("SubscriptionRuntimeExecutor", () => {
       executionAttestation: {
         model: "gpt-5.6-luna",
         purpose: "discord_meeting.summary.incremental",
-        reasoningEffort: "medium",
+        reasoningEffort: "low",
       },
       status: "completed",
       usage: {
@@ -140,7 +144,7 @@ describe("SubscriptionRuntimeExecutor", () => {
       "--model",
       "gpt-5.6-luna",
     ]));
-    expect(processRequest?.env.AGENT_RUNTIME_REASONING_EFFORT).toBe("medium");
+    expect(processRequest?.env.AGENT_RUNTIME_REASONING_EFFORT).toBe("low");
   });
 
   it("preserves Codex JSONL partial telemetry without fabricating cache-write input", async () => {
@@ -197,6 +201,82 @@ describe("SubscriptionRuntimeExecutor", () => {
       failure: { code: "telemetry_unavailable", retryable: false },
       status: "failed",
     });
+  });
+
+  it.each([
+    [
+      "final summary",
+      canonicalRequest,
+      subscriptionRuntimeSummaryMaxOutputTokens,
+    ],
+    [
+      "incremental summary",
+      incrementalCanonicalRequest,
+      subscriptionRuntimeIncrementalMaxOutputTokens,
+    ],
+  ])("rejects a completed %s that exceeds its admitted output budget", async (
+    _label,
+    request,
+    outputBudget,
+  ) => {
+    root = await mkdtemp(join(tmpdir(), "sidecar-executor-test-"));
+    const keyFile = join(root, "local-encryption-key");
+    await writeFile(keyFile, "private-test-key\n", { mode: 0o600 });
+    const outputTokens = outputBudget + 1;
+    const executor = new SubscriptionRuntimeExecutor(
+      options(keyFile, {
+        processRunner: {
+          run: async () => completedProcess({
+            usage: {
+              cacheWriteInputTokens: 0,
+              cachedInputTokens: 0,
+              inputTokens: 100,
+              outputTokens,
+              reasoningOutputTokens: 0,
+              totalTokens: 100 + outputTokens,
+            },
+          }),
+        },
+      }),
+    );
+
+    await expect(executor.execute(request)).resolves.toMatchObject({
+      failure: { code: "provider_output_invalid", retryable: false },
+      status: "failed",
+      usage: { outputTokens },
+    });
+  });
+
+  it("fails closed when completed telemetry leaves output tokens unmeasured", async () => {
+    root = await mkdtemp(join(tmpdir(), "sidecar-executor-test-"));
+    const keyFile = join(root, "local-encryption-key");
+    await writeFile(keyFile, "private-test-key\n", { mode: 0o600 });
+    const executor = new SubscriptionRuntimeExecutor(
+      options(keyFile, {
+        processRunner: {
+          run: async () => completedProcess({
+            usage: {
+              source: "codex_exec_jsonl",
+              cacheWriteInputTokens: { availability: "unavailable" },
+              cachedInputTokens: { availability: "measured", value: 200 },
+              inputTokens: { availability: "measured", value: 1_000 },
+              outputTokens: { availability: "unavailable" },
+              reasoningOutputTokens: { availability: "unavailable" },
+              totalTokens: { availability: "unavailable" },
+            },
+          }),
+        },
+      }),
+    );
+
+    await expect(executor.execute(incrementalCanonicalRequest)).resolves
+      .toMatchObject({
+        failure: { code: "telemetry_unavailable", retryable: false },
+        status: "failed",
+        telemetry: {
+          outputTokens: { availability: "unavailable" },
+        },
+      });
   });
 
   it("rejects a derived total that does not equal measured input plus output", async () => {
