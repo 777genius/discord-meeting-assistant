@@ -13,6 +13,7 @@ import {
   createDiscordGuildInstallUrl,
   discordGuildSetupCommand,
   meetingPlatformInstallPermissions,
+  registerDiscordGuildSetupCommand,
 } from "../src/index.js";
 
 const ids = {
@@ -53,6 +54,32 @@ describe("/setup command contract", () => {
       "voice-channel",
       "results-channel",
     ]);
+  });
+
+  it("repairs guild-install and context drift without bulk command replacement", async () => {
+    const expected = discordGuildSetupCommand.toJSON();
+    const edit = vi.fn(async () => ({}));
+    const create = vi.fn(async () => ({}));
+    const client = {
+      application: {
+        commands: {
+          create,
+          edit,
+          fetch: () => Promise.resolve([{
+            id: "77777777777777777",
+            name: expected.name,
+            toJSON: () => ({ ...expected, contexts: [1], integration_types: [1] }),
+          }]),
+        },
+      },
+      isReady: () => true,
+    } as unknown as Client;
+
+    await registerDiscordGuildSetupCommand(client);
+
+    expect(create).not.toHaveBeenCalled();
+    expect(edit).toHaveBeenCalledOnce();
+    expect(edit).toHaveBeenCalledWith("77777777777777777", expected);
   });
 });
 
