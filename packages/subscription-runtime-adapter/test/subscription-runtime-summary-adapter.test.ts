@@ -81,6 +81,7 @@ const validStructuredOutput: JsonObject = {
 
 class FakeTransport implements SubscriptionRuntimeTransportPort {
   public request: SubscriptionRuntimeAgentTaskRequest | undefined;
+  public readonly requests: SubscriptionRuntimeAgentTaskRequest[] = [];
 
   public constructor(
     private readonly responder: (
@@ -93,6 +94,7 @@ class FakeTransport implements SubscriptionRuntimeTransportPort {
     request: SubscriptionRuntimeAgentTaskRequest,
   ): Promise<SubscriptionRuntimeTaskResult> {
     this.request = request;
+    this.requests.push(request);
     return this.responder(request);
   }
 
@@ -406,6 +408,87 @@ describe("SubscriptionRuntimeSummaryAdapter", () => {
       },
       ok: false,
     });
+  });
+
+  it("repairs one provider output validation failure with a distinct request identity", async () => {
+    let attempt = 0;
+    const transport = new FakeTransport((request) => {
+      attempt += 1;
+      return attempt === 1
+        ? {
+          failure: {
+            code: "provider_output_invalid",
+            reconnectRequired: false,
+            retryable: false,
+            safeMessage: "provider output failed validation",
+          },
+          protocolVersion: 1,
+          status: "failed",
+        }
+        : completedResult(request, validStructuredOutput);
+    });
+
+    const result = await createAdapter(transport).generate(requestFixture);
+
+    expect(result.ok).toBe(true);
+    expect(transport.requests).toHaveLength(2);
+    expect(transport.requests[1]?.runId).not.toBe(transport.requests[0]?.runId);
+    expect(transport.requests[1]?.context.correlationId).toBe(
+      transport.requests[1]?.runId,
+    );
+    expect(transport.requests[1]?.task.systemPrompt).toContain(
+      "previous generation failed strict output validation",
+    );
+    expect(transport.requests[1]?.task.prompt).toBe(transport.requests[0]?.task.prompt);
+  });
+
+  it("fails closed before repair when the runtime protocol is unsupported", async () => {
+    const transport = new FakeTransport(() => ({
+      failure: {
+        code: "provider_output_invalid",
+        reconnectRequired: false,
+        retryable: false,
+        safeMessage: "provider output failed validation",
+      },
+      protocolVersion: 2,
+      status: "failed",
+    } as unknown as SubscriptionRuntimeTaskResult));
+
+    const result = await createAdapter(transport).generate(requestFixture);
+
+    expect(result).toMatchObject({
+      failure: {
+        code: "SUBSCRIPTION_RUNTIME_SUMMARY_INVALID_PROVIDER_RESPONSE",
+        retryable: false,
+      },
+      ok: false,
+    });
+    expect(transport.requests).toHaveLength(1);
+  });
+
+  it("keeps an exhausted provider output repair terminal", async () => {
+    const transport = new FakeTransport(async () => ({
+      failure: {
+        code: "provider_output_invalid",
+        reconnectRequired: true,
+        retryable: true,
+        safeMessage: "provider output failed validation",
+      },
+      protocolVersion: 1,
+      status: "failed",
+    }));
+
+    const result = await createAdapter(transport).generate(requestFixture);
+
+    expect(result).toEqual({
+      failure: {
+        code: "SUBSCRIPTION_RUNTIME_SUMMARY_PROVIDER_OUTPUT_INVALID",
+        message: "Subscription runtime returned invalid summary output",
+        retryable: false,
+      },
+      ok: false,
+    });
+    expect(transport.requests).toHaveLength(2);
   });
 
   it("maps quota and reconnect failures to safe retryable failures", async () => {

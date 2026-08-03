@@ -7,6 +7,7 @@ export function stableSubscriptionRuntimeId(
     | "incremental-summary-request"
     | "question"
     | "summary"
+    | "summary-provider-output-repair"
     | "summary-request",
   ...parts: readonly string[]
 ): string {

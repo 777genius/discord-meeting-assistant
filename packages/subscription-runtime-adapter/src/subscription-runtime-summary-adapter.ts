@@ -19,6 +19,7 @@ import {
   buildSubscriptionRuntimeSummaryRequest,
   type SubscriptionRuntimeSummaryRequestOptions,
 } from "./request-mapper.js";
+import { stableSubscriptionRuntimeId } from "./stable-id.js";
 import {
   type BaseSubscriptionRuntimeSummaryAdapterOptions,
   validateAttestationExpectation,
@@ -113,19 +114,29 @@ export class SubscriptionRuntimeSummaryAdapter
   private async generateOrThrow(
     request: SummaryGenerationRequest,
   ): Promise<GeneratedSummary> {
-    const runtimeRequest = buildSubscriptionRuntimeSummaryRequest(
+    let runtimeRequest = buildSubscriptionRuntimeSummaryRequest(
       request,
       this.requestOptions,
     );
-    const result = await this.transport.execute(runtimeRequest);
-    if (result.protocolVersion !== 1) {
-      throw new SubscriptionRuntimeAdapterError(
-        "invalid_provider_response",
-        "Subscription runtime returned an unsupported protocol version",
-      );
+    let result = await this.transport.execute(runtimeRequest);
+    assertSupportedProtocolVersion(result);
+    let repairedProviderOutput = false;
+    if (result.status === "failed" && result.failure.code === "provider_output_invalid") {
+      runtimeRequest = providerOutputRepairRequest(runtimeRequest);
+      result = await this.transport.execute(runtimeRequest);
+      assertSupportedProtocolVersion(result);
+      repairedProviderOutput = true;
     }
     if (result.status === "failed") {
-      throw new RuntimeTaskFailureError(result.failure);
+      throw new RuntimeTaskFailureError(
+        repairedProviderOutput && result.failure.code === "provider_output_invalid"
+          ? {
+            ...result.failure,
+            reconnectRequired: false,
+            retryable: false,
+          }
+          : result.failure,
+      );
     }
     if (result.status === "waiting_for_input") {
       throw new SubscriptionRuntimeAdapterError(
@@ -153,4 +164,39 @@ export class SubscriptionRuntimeSummaryAdapter
     );
     return mapFinalProviderSummary(parsed.data, request.idempotencyKey);
   }
+}
+
+function assertSupportedProtocolVersion(
+  result: Awaited<ReturnType<SubscriptionRuntimeTransportPort["execute"]>>,
+): void {
+  if (result.protocolVersion !== 1) {
+    throw new SubscriptionRuntimeAdapterError(
+      "invalid_provider_response",
+      "Subscription runtime returned an unsupported protocol version",
+    );
+  }
+}
+
+function providerOutputRepairRequest(
+  request: ReturnType<typeof buildSubscriptionRuntimeSummaryRequest>,
+): ReturnType<typeof buildSubscriptionRuntimeSummaryRequest> {
+  const runId = stableSubscriptionRuntimeId(
+    "summary-provider-output-repair",
+    request.runId,
+  );
+  return {
+    ...request,
+    context: {
+      ...request.context,
+      correlationId: runId,
+    },
+    runId,
+    task: {
+      ...request.task,
+      systemPrompt: [
+        request.task.systemPrompt,
+        "A previous generation failed strict output validation. Regenerate once from the original transcript and obey every schema bound exactly.",
+      ].join(" "),
+    },
+  };
 }
