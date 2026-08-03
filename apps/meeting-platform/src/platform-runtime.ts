@@ -296,7 +296,7 @@ export async function startMeetingPlatform(
       queueEvents.waitUntilReady(),
     ]);
     await outboxDispatcher.dispatchPending();
-    const ready = once(discord, "ready");
+    const ready = once(discord, "clientReady");
     await discord.login(config.secrets.discordToken);
     if (!discord.isReady()) {
       await ready;
