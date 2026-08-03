@@ -247,6 +247,71 @@ describe("VoicetextBatchFinalTranscriptionAdapter", () => {
     });
   });
 
+  it("normalizes an adjacent f32-style batch timestamp seam without creating an overlap", async () => {
+    const client = new ScriptedBatchClient(async () => completed({
+      durationSeconds: 6,
+      utterances: [
+        { endSeconds: 5.7599998, startSeconds: 5, transcript: "первая реплика" },
+        { endSeconds: 6, startSeconds: 5.7599998, transcript: "вторая реплика" },
+      ],
+    }));
+    const adapter = new VoicetextBatchFinalTranscriptionAdapter(
+      client,
+      new MemoryOggReader({ "s3://recording/speaker-a.ogg": validOgg(1) }),
+      {},
+      new TestPollingScheduler(),
+    );
+
+    await expect(adapter.transcribe(requestFixture())).resolves.toEqual({
+      ok: true,
+      value: {
+        transcriptId: "transcript:v2:7:job-key",
+        turns: [
+          {
+            endMs: 15_760,
+            speakerId: "discord-user-a",
+            startMs: 15_000,
+            text: "первая реплика",
+            turnId: "turn:v2:7:job-key:1:1:1:1",
+          },
+          {
+            endMs: 16_000,
+            speakerId: "discord-user-a",
+            startMs: 15_760,
+            text: "вторая реплика",
+            turnId: "turn:v2:7:job-key:1:1:1:2",
+          },
+        ],
+        version: 1,
+      },
+    });
+  });
+
+  it("rejects a true raw-second overlap instead of normalizing it away", async () => {
+    const client = new ScriptedBatchClient(async () => completed({
+      durationSeconds: 6,
+      utterances: [
+        { endSeconds: 5.7599998, startSeconds: 5, transcript: "первая реплика" },
+        { endSeconds: 6, startSeconds: 5.7599997, transcript: "перекрывающаяся реплика" },
+      ],
+    }));
+    const adapter = new VoicetextBatchFinalTranscriptionAdapter(
+      client,
+      new MemoryOggReader({ "s3://recording/speaker-a.ogg": validOgg(1) }),
+      {},
+      new TestPollingScheduler(),
+    );
+
+    await expect(adapter.transcribe(requestFixture())).resolves.toEqual({
+      failure: {
+        code: "VOICETEXT_TRANSCRIPTION_INVALID_PROVIDER_RESPONSE",
+        message: "Voicetext batch final segments are overlapping or zero-length",
+        retryable: false,
+      },
+      ok: false,
+    });
+  });
+
   it("fails the entire final transcription when one concurrent speaker track fails", async () => {
     const client = new ScriptedBatchClient(async (request) => {
       await Promise.resolve();

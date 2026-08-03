@@ -518,6 +518,7 @@ function mapProviderTurns(
 ): readonly ProviderTurn[] {
   const audioDurationMs = ceilingMilliseconds(result.durationSeconds);
   let previousEndMs = -1;
+  let previousEndSeconds = -1;
   let totalCharacters = 0;
   const turns: ProviderTurn[] = [];
   for (const [utteranceIndex, utterance] of result.utterances.entries()) {
@@ -528,9 +529,16 @@ function mapProviderTurns(
         false,
       );
     }
-    const relativeStartMs = floorMilliseconds(utterance.startSeconds);
+    const rawStartSeconds = utterance.startSeconds;
+    const rawEndSeconds = utterance.endSeconds;
+    const roundedStartMs = floorMilliseconds(rawStartSeconds);
+    const relativeStartMs = Math.max(roundedStartMs, previousEndMs);
     const relativeEndMs = ceilingMilliseconds(utterance.endSeconds);
-    if (relativeStartMs < previousEndMs || relativeEndMs <= relativeStartMs) {
+    if (
+      rawStartSeconds < previousEndSeconds ||
+      rawEndSeconds <= rawStartSeconds ||
+      relativeEndMs <= relativeStartMs
+    ) {
       throw new VoicetextAdapterError(
         "invalid_provider_response",
         "Voicetext batch final segments are overlapping or zero-length",
@@ -545,6 +553,7 @@ function mapProviderTurns(
       );
     }
     previousEndMs = relativeEndMs;
+    previousEndSeconds = rawEndSeconds;
     const text = utterance.transcript.trim();
     if (text.length === 0) {
       continue;
