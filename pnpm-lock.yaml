@@ -87,8 +87,8 @@ importers:
   .:
     devDependencies:
       '@agent-teams/engineering-foundation':
-        specifier: 0.4.1
-        version: 0.4.1(@types/node@24.13.3)
+        specifier: 0.5.0
+        version: 0.5.0(@types/node@24.13.3)
       '@ast-grep/cli':
         specifier: 'catalog:'
         version: 0.45.0
@@ -492,8 +492,8 @@ importers:
 
 packages:
 
-  '@agent-teams/engineering-foundation@0.4.1':
-    resolution: {integrity: sha512-5gbwAmynORLIgyWzQ69cK3uxmvt6YgAH2fcd/0QGbROZZTZGpZMvyTjksUf5dmeTzmDBKpl6oM0Wz1Aq8x/CFQ==}
+  '@agent-teams/engineering-foundation@0.5.0':
+    resolution: {integrity: sha512-EJFnekI31QOwKgsnrzFU43m0Wvm7xaaLdSQGOI/sUGDbD72VyAZXpaoB4pxd58qZFROht2czdcVDouSGqTbKFA==}
     engines: {node: '>=24.18.0 <25', pnpm: '>=11.17.0 <12'}
     hasBin: true
 
@@ -3394,7 +3394,7 @@ packages:
 
 snapshots:
 
-  '@agent-teams/engineering-foundation@0.4.1(@types/node@24.13.3)':
+  '@agent-teams/engineering-foundation@0.5.0(@types/node@24.13.3)':
     dependencies:
       '@microsoft/api-extractor': 7.58.12(@types/node@24.13.3)
       '@microsoft/api-extractor-model': 7.33.10(@types/node@24.13.3)

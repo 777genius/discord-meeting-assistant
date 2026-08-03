@@ -32,7 +32,7 @@
     "typecheck": "tsc --project tsconfig.json --noEmit --pretty false"
   },
   "devDependencies": {
-    "@agent-teams/engineering-foundation": "0.4.1",
+    "@agent-teams/engineering-foundation": "0.5.0",
     "@ast-grep/cli": "catalog:",
     "@types/node": "catalog:",
     "knip": "catalog:",

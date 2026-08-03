@@ -36,7 +36,7 @@ minimumReleaseAge: 1440
 minimumReleaseAgeStrict: true
 
 minimumReleaseAgeExclude:
-  - "@agent-teams/engineering-foundation@0.4.1"
+  - "@agent-teams/engineering-foundation@0.5.0"
 
 allowBuilds:
   "@ast-grep/cli": true
