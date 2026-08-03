@@ -189,6 +189,12 @@ async function runtimeDependencies(overrides) {
 /**
  * Called by the per-task executable shim. It forwards every byte from Codex
  * stdout while retaining only the final documented `turn.completed` usage.
+ *
+ * The pinned runtime currently understands its legacy `agent_message` event,
+ * while current `codex exec --json` emits the same message as
+ * `item.completed` with `item.type = agent_message`. For an admitted task only,
+ * the shim preserves the public event byte-for-byte and appends one compatible
+ * event immediately after it.
  */
 export async function runCodexJsonlCapture(
   argv,
@@ -205,20 +211,41 @@ export async function runCodexJsonlCapture(
     buffered += text;
     let newline;
     while ((newline = buffered.indexOf("\n")) !== -1) {
-      const usage = captureUsage
-        ? codexExecJsonlUsage(buffered.slice(0, newline))
-        : undefined;
-      if (usage !== undefined) {
-        lastUsage = usage;
-      }
+      inspectLine(buffered.slice(0, newline));
       buffered = buffered.slice(newline + 1);
     }
     if (flush && buffered.length > 0) {
-      const usage = captureUsage ? codexExecJsonlUsage(buffered) : undefined;
-      if (usage !== undefined) {
-        lastUsage = usage;
-      }
+      inspectLine(buffered, true);
       buffered = "";
+    }
+  };
+  const inspectLine = (line, requiresLeadingNewline = false) => {
+    const usage = captureUsage ? codexExecJsonlUsage(line) : undefined;
+    if (usage !== undefined) {
+      lastUsage = usage;
+    }
+    const compatibilityEvent = captureUsage
+      ? codexExecJsonlCompatibilityAgentMessage(line)
+      : undefined;
+    if (compatibilityEvent !== undefined) {
+      process.stdout.write(
+        `${requiresLeadingNewline ? "\n" : ""}${JSON.stringify(compatibilityEvent)}\n`,
+      );
+    }
+  };
+  const forward = (chunk) => {
+    let start = 0;
+    let newline;
+    while ((newline = chunk.indexOf(0x0a, start)) !== -1) {
+      const segment = chunk.subarray(start, newline + 1);
+      process.stdout.write(segment);
+      observe(decoder.write(segment));
+      start = newline + 1;
+    }
+    if (start < chunk.length) {
+      const segment = chunk.subarray(start);
+      process.stdout.write(segment);
+      observe(decoder.write(segment));
     }
   };
   const completion = await new Promise((resolve, reject) => {
@@ -229,8 +256,7 @@ export async function runCodexJsonlCapture(
     });
     child.once("error", reject);
     child.stdout.on("data", (chunk) => {
-      process.stdout.write(chunk);
-      observe(decoder.write(chunk));
+      forward(chunk);
     });
     child.once("close", (code, signal) => {
       observe(decoder.end(), true);
@@ -258,6 +284,33 @@ export async function runCodexJsonlCapture(
     return 1;
   }
   return completion.code ?? 1;
+}
+
+/**
+ * Adapts only the public current Codex completion event that contains an
+ * assistant message. The text is carried through unchanged; all other events
+ * continue through the shim without a synthetic companion.
+ */
+export function codexExecJsonlCompatibilityAgentMessage(line) {
+  try {
+    const event = JSON.parse(line);
+    if (
+      !isRecord(event) ||
+      event.type !== "item.completed" ||
+      !isRecord(event.item) ||
+      event.item.type !== "agent_message" ||
+      typeof event.item.text !== "string"
+    ) {
+      return;
+    }
+    return {
+      type: "agent_message",
+      role: "assistant",
+      text: event.item.text,
+    };
+  } catch {
+    return;
+  }
 }
 
 /**

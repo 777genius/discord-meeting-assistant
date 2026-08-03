@@ -17,6 +17,7 @@ import test from "node:test";
 
 import {
   attachCodexJsonlTelemetry,
+  codexExecJsonlCompatibilityAgentMessage,
   codexExecJsonlUsage,
   codexJsonlTelemetry,
   main,
@@ -46,6 +47,36 @@ test("extracts the documented Codex turn.completed JSONL usage", () => {
     outputTokens: 122,
     reasoningOutputTokens: 0,
   });
+});
+
+test("normalizes only current Codex completed agent messages", () => {
+  const text = '{"summary":"keep this text exactly"}';
+  const normalized = codexExecJsonlCompatibilityAgentMessage(
+    JSON.stringify({
+      type: "item.completed",
+      item: {
+        id: "item-agent-message",
+        text,
+        type: "agent_message",
+      },
+    }),
+  );
+
+  assert.deepEqual(normalized, {
+    type: "agent_message",
+    role: "assistant",
+    text,
+  });
+  assert.equal(
+    codexExecJsonlCompatibilityAgentMessage(
+      JSON.stringify({
+        type: "item.completed",
+        item: { text: "not an assistant message", type: "command_execution" },
+      }),
+    ),
+    undefined,
+  );
+  assert.equal(codexExecJsonlCompatibilityAgentMessage("{malformed"), undefined);
 });
 
 test("marks missing cache-write input unavailable and derives only total tokens", () => {
@@ -118,6 +149,17 @@ test("generated capture wrapper survives the runtime-pruned environment", async 
     [
       "#!/usr/bin/env node",
       "process.stdout.write(`${JSON.stringify({ type: 'stub.invoked', argv: process.argv.slice(2) })}\\n`);",
+      "const agentMessage = JSON.stringify({",
+      "  type: 'item.completed',",
+      "  item: {",
+      "    id: 'item-agent-message',",
+      "    text: '{\\\"summary\\\":\\\"chunked assistant message\\\"}',",
+      "    type: 'agent_message',",
+      "  },",
+      "});",
+      "process.stdout.write(agentMessage.slice(0, 17));",
+      "await new Promise((resolve) => setTimeout(resolve, 5));",
+      "process.stdout.write(`${agentMessage.slice(17)}\\n`);",
       "const refreshProbe = !process.argv.includes('--ignore-user-config');",
       "process.stdout.write(`${JSON.stringify({",
       "  type: 'turn.completed',",
@@ -218,6 +260,14 @@ test("generated capture wrapper survives the runtime-pruned environment", async 
           prunedEnvironment,
         );
         assert.equal(refresh.exitCode, 0);
+        assert.equal(
+          refresh.stdout
+            .trim()
+            .split("\n")
+            .map(JSON.parse)
+            .some((event) => event.type === "agent_message"),
+          false,
+        );
         await assert.rejects(readFile(usagePath(), "utf8"), { code: "ENOENT" });
         const captured = await runExecutable(
           workerOptions.codexBinaryPath,
@@ -232,7 +282,20 @@ test("generated capture wrapper survives the runtime-pruned environment", async 
           type: "stub.invoked",
           argv: pinnedTaskArgv(),
         });
-        assert.equal(events[1].type, "turn.completed");
+        assert.deepEqual(events[1], {
+          type: "item.completed",
+          item: {
+            id: "item-agent-message",
+            text: '{"summary":"chunked assistant message"}',
+            type: "agent_message",
+          },
+        });
+        assert.deepEqual(events[2], {
+          type: "agent_message",
+          role: "assistant",
+          text: '{"summary":"chunked assistant message"}',
+        });
+        assert.equal(events[3].type, "turn.completed");
         assert.deepEqual(
           JSON.parse(
             await readFile(
