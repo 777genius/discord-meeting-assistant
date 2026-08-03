@@ -88,6 +88,13 @@ describe("synthetic actor fixtures", () => {
         sourceSha256: "ce6d53650f73aac8872289ede15a67b6a74535d4620c572bd17a46fd1322df00",
       },
     ]);
+    expect(verified.manifest.fixtures.map(({ fixtureId, speechStartOffsetMs }) => ({
+      fixtureId,
+      speechStartOffsetMs,
+    }))).toEqual([
+      { fixtureId: "speaker-a", speechStartOffsetMs: 270_004 },
+      { fixtureId: "speaker-b", speechStartOffsetMs: 270_004 },
+    ]);
   });
 
   it("rejects a truncated fixture even if it starts with an Ogg header", async () => {

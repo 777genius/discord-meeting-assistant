@@ -28,6 +28,7 @@
       "audioPath": "test/fixtures/speaker-a.live.ru-en.ogg",
       "audioSha256": "1f5314c3ea9d8767cc4c304142eeb92a77c76cc8f36c212b1d10670daf73a162",
       "durationMs": 296235,
+      "speechStartOffsetMs": 270004,
       "sourceText": "Meeting Platform сохраняет Craig recording. Затем запускает PostgreSQL pipeline. Решение - выпустить версию в пятницу. Повторяю решение - выпуск версии в пятницу. До седьмого августа две тысячи двадцать шестого года спикер Б проверит Discord thread. Повторяю - Discord thread будет проверен в две тысячи двадцать шестом году.",
       "requiredTerms": ["Meeting Platform", "Craig recording", "PostgreSQL pipeline", "Discord thread", "пятницу"]
     },
@@ -40,6 +41,7 @@
       "audioPath": "test/fixtures/speaker-b.live.ru-en.ogg",
       "audioSha256": "cb6fc152aaed139947c40064a615cb0b5708f096fc8e1166191804784ea7b0b5",
       "durationMs": 304996,
+      "speechStartOffsetMs": 270004,
       "sourceText": "Я проверю Redis queue. Я лично проверю idempotency key. Это моя задача. Срок - до седьмого августа две тысячи двадцать шестого года. Результат я оставлю в Discord thread. Повторяю термин - Discord thread. Idempotency key проверю до седьмого августа две тысячи двадцать шестого года. Открытый вопрос - нужен ли Pipecat assistant после первой версии? Повторяю термин - Pipecat assistant.",
       "requiredTerms": ["Discord thread", "Redis queue", "idempotency key", "Pipecat assistant", "августа", "2026"]
     }

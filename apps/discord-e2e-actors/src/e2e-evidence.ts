@@ -3,6 +3,10 @@ import { z } from "zod";
 const identifierSchema = z.string().trim().min(1);
 const sha256Schema = z.string().regex(/^[a-f\d]{64}$/u);
 const nonNegativeMillisecondsSchema = z.number().int().nonnegative();
+const nonNegativeSafeIntegerSchema = z.number().refine(
+  (value) => Number.isSafeInteger(value) && value >= 0,
+  "Expected a nonnegative safe integer",
+);
 const scenarioKindSchema = z.enum(["overlap", "sequential", "reconnect"]);
 
 const fixtureSchema = z.object({
@@ -12,11 +16,18 @@ const fixtureSchema = z.object({
   durationMs: z.number().int().positive(),
   fixtureId: identifierSchema,
   requiredTerms: z.array(identifierSchema).min(1),
+  speechStartOffsetMs: nonNegativeSafeIntegerSchema.default(0),
   sourcePath: identifierSchema,
   sourceSha256: sha256Schema,
   sourceText: identifierSchema,
   speakerId: identifierSchema,
-});
+}).refine(
+  ({ durationMs, speechStartOffsetMs }) => speechStartOffsetMs < durationMs,
+  {
+    message: "speechStartOffsetMs must be less than durationMs",
+    path: ["speechStartOffsetMs"],
+  },
+);
 
 const scenarioSchema = z.object({
   expectOverlap: z.boolean(),
@@ -846,7 +857,9 @@ function verifyTranscript(
     if (
       firstTurn !== undefined &&
       firstWindow !== undefined &&
-      Math.abs(firstTurn.startMs - firstWindow.startMs) > manifest.thresholds.timestampToleranceMs
+      Math.abs(
+        firstTurn.startMs - (firstWindow.startMs + fixture.speechStartOffsetMs),
+      ) > manifest.thresholds.timestampToleranceMs
     ) {
       fail("START_TIMESTAMP_MISMATCH", `${fixture.fixtureId} transcript start is outside tolerance`);
     }

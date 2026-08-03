@@ -368,6 +368,28 @@ function reidentify(
 }
 
 describe("verifyRetainedE2eEvidence", () => {
+  it("defaults a fixture speech start offset to playback start for existing manifests", () => {
+    expect(manifest().fixtures.map(({ speechStartOffsetMs }) => speechStartOffsetMs)).toEqual([0, 0]);
+  });
+
+  it.each([
+    -1,
+    1.5,
+    Number.MAX_SAFE_INTEGER + 1,
+    7_000,
+  ])("rejects an invalid fixture speech start offset: %s", (speechStartOffsetMs) => {
+    const candidate = manifest();
+    const firstFixture = candidate.fixtures[0];
+    if (firstFixture === undefined) {
+      throw new Error("speaker-a fixture is required");
+    }
+
+    expect(fixtureManifestV1Schema.safeParse({
+      ...candidate,
+      fixtures: [{ ...firstFixture, speechStartOffsetMs }, ...candidate.fixtures.slice(1)],
+    }).success).toBe(false);
+  });
+
   it("accepts accurate speaker, timing, overlap, evidence and replay proof", () => {
     const verification = verifyRetainedE2eEvidence(manifest(), overlapEvidence());
 
@@ -626,6 +648,34 @@ describe("verifyRetainedE2eEvidence", () => {
     };
 
     const codes = verifyRetainedE2eEvidence(manifest(), evidence).failures.map(({ code }) => code);
+
+    expect(codes).toContain("START_TIMESTAMP_MISMATCH");
+  });
+
+  it("anchors transcript speech after a configured silent fixture prefix", () => {
+    const offsetManifest = manifest();
+    const speakerA = offsetManifest.fixtures[0];
+    const evidence = overlapEvidence();
+    const speakerATurn = evidence.transcript.turns[0];
+    if (speakerA === undefined || speakerATurn === undefined) {
+      throw new Error("speaker-a fixture and turn are required");
+    }
+    speakerA.speechStartOffsetMs = 3_000;
+    evidence.transcript.turns[0] = { ...speakerATurn, startMs: 3_100 };
+
+    expect(verifyRetainedE2eEvidence(offsetManifest, evidence).passed).toBe(true);
+  });
+
+  it("still rejects transcript speech before a configured silent fixture prefix", () => {
+    const offsetManifest = manifest();
+    const speakerA = offsetManifest.fixtures[0];
+    if (speakerA === undefined) {
+      throw new Error("speaker-a fixture is required");
+    }
+    speakerA.speechStartOffsetMs = 3_000;
+
+    const codes = verifyRetainedE2eEvidence(offsetManifest, overlapEvidence())
+      .failures.map(({ code }) => code);
 
     expect(codes).toContain("START_TIMESTAMP_MISMATCH");
   });
