@@ -76,6 +76,7 @@ import {
   VoicetextBatchFinalTranscriptionAdapter,
   VoicetextLiveTranscriptionAdapter,
   batchEndpointFromWebSocketUrl,
+  type VoicetextBatchFinalTranscriptionOptions,
 } from "@discord-meeting/voicetext-adapter";
 import type { ConnectionOptions } from "bullmq";
 import { Client, GatewayIntentBits } from "discord.js";
@@ -83,6 +84,7 @@ import { Pool } from "pg";
 
 import type { PlatformConfig } from "./config.js";
 import { createCraigHttpServer } from "./craig-http-server.js";
+import { InProcessFinalTranscriptionAdmissionPort } from "./final-transcription-admission-port.js";
 import {
   InstrumentedFinalTranscriptionPort,
   InstrumentedSummaryGenerationPort,
@@ -101,6 +103,7 @@ import { GrpcSubscriptionRuntimeTransport } from "./subscription-runtime-grpc-tr
 
 const queuePrefix = "discord-meeting-v1";
 const monotonicNowMilliseconds = (): number => performance.now();
+const maximumFinalSpeakerTracks = 10;
 
 export interface MeetingPlatformRuntime {
   close(): Promise<void>;
@@ -421,6 +424,21 @@ const meetingVocabulary = [
   "Redis queue",
 ] as const;
 
+export function createVoicetextBatchFinalTranscriptionOptions(
+  config: NonNullable<PlatformConfig["voicetext"]>,
+): VoicetextBatchFinalTranscriptionOptions {
+  return {
+    keyterms: meetingVocabulary,
+    maxArtifactBytesPerSpeaker: config.batchMaxArtifactBytes,
+    maxConcurrency: config.batchMaxConcurrency,
+    // Reserve the worst-case capacity before any provider upload. The bounded
+    // worker pool retains at most maxConcurrency complete artifacts at once.
+    maxTotalArtifactBytes: config.batchMaxArtifactBytes * maximumFinalSpeakerTracks,
+    maxSpeakerTracks: maximumFinalSpeakerTracks,
+    pollTimeoutMs: 900_000,
+  };
+}
+
 function createFinalTranscriber(
   config: PlatformConfig,
   artifactReader: ReturnType<typeof createS3BinaryArtifactReader>,
@@ -432,7 +450,7 @@ function createFinalTranscriber(
       {
         language: "ru",
         maxBytesPerSpeaker: 64 * 1_024 * 1_024,
-        maxSpeakerTracks: 64,
+        maxSpeakerTracks: maximumFinalSpeakerTracks,
         model: config.speaches.model,
         vocabulary: meetingVocabulary,
       },
@@ -441,20 +459,17 @@ function createFinalTranscriber(
   if (config.voicetext === undefined || config.secrets.voicetextServiceToken === undefined) {
     throw new Error("Voicetext transcription configuration is incomplete");
   }
-  return new VoicetextBatchFinalTranscriptionAdapter(
+  const batchTranscriber = new VoicetextBatchFinalTranscriptionAdapter(
     new FetchVoicetextBatchClient({
       endpoint: batchEndpointFromWebSocketUrl(config.voicetext.webSocketUrl),
       token: config.secrets.voicetextServiceToken,
     }),
     new S3CompleteOggArtifactReader(artifactReader),
-    {
-      keyterms: meetingVocabulary,
-      maxArtifactBytesPerSpeaker: config.voicetext.batchMaxArtifactBytes,
-      maxConcurrency: 2,
-      maxTotalArtifactBytes: 256 * 1_024 * 1_024,
-      maxSpeakerTracks: 64,
-      pollTimeoutMs: 900_000,
-    },
+    createVoicetextBatchFinalTranscriptionOptions(config.voicetext),
+  );
+  return new InProcessFinalTranscriptionAdmissionPort(
+    batchTranscriber,
+    config.voicetext.batchMaxConcurrentMeetings,
   );
 }
 

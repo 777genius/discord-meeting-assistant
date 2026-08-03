@@ -51,6 +51,25 @@ The Meeting Platform image runs as UID/GID `10001:10001`; bind-mounted secret
 files must be readable only by that service identity. `root:root 0400` is not a
 valid deployment state because the non-root container cannot read it.
 
+Set `VOICETEXT_BATCH_MAX_CONCURRENCY` in the deployment environment to an
+integer from `1` through `10`; it limits provider work within each meeting. The
+production template targets `6`. Final transcription hard-limits a meeting to
+ten speaker tracks and validates `10 x VOICETEXT_BATCH_MAX_ARTIFACT_BYTES` before
+the bounded workers begin, which is 640 MiB with the production 64 MiB cap.
+Workers read one Ogg immediately before upload rather than retaining all ten;
+six workers have at most 384 MiB of caller Ogg payloads live, plus up to another
+384 MiB of Fetch Blob copies during uploads.
+
+Set `VOICETEXT_BATCH_MAX_CONCURRENT_MEETINGS=1` for the current 2 GiB Meeting
+Platform container. This process-local FIFO gate covers only final Voicetext
+transcription, so it does not directly gate completed-transcript summary
+generation or publication. A job waiting for admission still occupies a BullMQ
+worker slot; fully isolating stages would require a separate stage-job design.
+Do not raise it to `2` on this host: two fully active six-worker meetings can
+require about 1.5 GiB of Ogg and Blob payloads before runtime and transport
+overhead. Raising it requires a separately sized host and a disposable canary;
+it is not a distributed admission control.
+
 Before a Discord campaign, a canary must prove authenticated batch submission,
 poll/re-submit recovery under one idempotency key, immutable final utterances,
 and exact speaker timeline mapping against the same Voicetext endpoint. A

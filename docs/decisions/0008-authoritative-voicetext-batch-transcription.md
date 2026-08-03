@@ -31,9 +31,21 @@ neither the raw provider key nor a provider-specific core contract.
 - Derive one stable lowercase SHA-256 idempotency key per meeting recording and
   speaker. A retry either polls the existing job or re-submits the exact artifact
   with the same key; an identity conflict fails closed.
-- Process at most two speaker tracks concurrently. Bound each artifact, the total
-  in-flight artifact budget, provider response size, polling attempts, elapsed
-  time, and transcript size.
+- Admit no more than ten speaker tracks for one final transcript. Validate the
+  worst-case logical capacity before provider work as `track limit x
+  per-track byte limit`; the production limit is `10 x 64 MiB = 640 MiB`.
+  This accepts ten one-hour tracks without pre-reading them all.
+- Use a configuration-selected bounded read-and-provider worker pool per
+  meeting. Production uses six workers: each reads an Ogg immediately before a
+  submit, releases the bytes before polling, and re-reads only for an explicit
+  provider re-submit after verifying the same SHA-256 body. The pipeline does
+  not retain all ten artifacts.
+- Use process-local FIFO admission around the Voicetext final-transcription
+  port. The production 2 GiB container admits one meeting at a time. The
+  configuration permits at most two only after separately sizing a larger host;
+  summary generation and publication are not directly gated. A job waiting for
+  admission still occupies one BullMQ worker slot; isolating that queue would
+  require a separate stage-job design.
 - Preserve each Craig speaker ID and timeline offset when provider utterances are
   mapped into authoritative transcript turns. A partial speaker result is never
   published as a complete final transcript.
@@ -51,9 +63,17 @@ neither the raw provider key nor a provider-specific core contract.
   target for a normal one-hour meeting is a 30-90 second post-call transcript,
   followed by final LLM generation; real E2E measurements remain the release
   gate.
-- Meeting Platform temporarily holds only bounded complete Ogg artifacts. The
-  default cap is 64 MiB per speaker, configurable up to the audited hard limit;
-  oversized meetings fail explicitly without weakening the original recording.
+- Meeting Platform hard-limits a final meeting to ten 64 MiB tracks and validates
+  640 MiB logical recording capacity. With six workers, no more than 384 MiB of
+  complete Ogg caller buffers are live for one admitted meeting; the Fetch
+  client can temporarily create up to another 384 MiB of Blob upload copies.
+  The resulting 768 MiB is a payload budget, not a process-RSS guarantee:
+  runtime, HTTP, and GC overhead still require headroom. The current 2 GiB
+  deployment therefore keeps final-meeting admission at one. Oversized meetings
+  fail explicitly without weakening the original recording.
+- Admission is process-local. Adding Meeting Platform replicas or raising it to
+  two requires explicit host-level capacity planning and a disposable canary;
+  it does not create a distributed quota.
 - A failed speaker cancels queued sibling work. Already accepted provider jobs
   remain recoverable by their stable idempotency keys.
 - The browser and Voicetext frontend are not part of this path. Audio,

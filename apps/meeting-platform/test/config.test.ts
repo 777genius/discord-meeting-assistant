@@ -91,6 +91,8 @@ describe("platform configuration", () => {
         TRANSCRIPTION_PROVIDER: "voicetext",
         VOICETEXT_SERVICE_TOKEN_FILE: "/run/secrets/voicetext",
         VOICETEXT_WS_URL: "wss://api.voicetext.site/api/v1/transcribe/stream",
+        VOICETEXT_BATCH_MAX_CONCURRENCY: "6",
+        VOICETEXT_BATCH_MAX_CONCURRENT_MEETINGS: "2",
       },
       async (path) => `value-for:${path}`,
     );
@@ -101,12 +103,49 @@ describe("platform configuration", () => {
       "wss://api.voicetext.site/api/v1/transcribe/stream",
     );
     expect(config.voicetext?.batchMaxArtifactBytes).toBe(64 * 1_024 * 1_024);
+    expect(config.voicetext?.batchMaxConcurrency).toBe(6);
+    expect(config.voicetext?.batchMaxConcurrentMeetings).toBe(2);
+
+    const defaults = await loadPlatformConfig(
+      {
+        ...environment,
+        TRANSCRIPTION_PROVIDER: "voicetext",
+        VOICETEXT_SERVICE_TOKEN_FILE: "/run/secrets/voicetext",
+        VOICETEXT_WS_URL: "wss://api.voicetext.site/api/v1/transcribe/stream",
+      },
+      async () => "value",
+    );
+    expect(defaults.voicetext?.batchMaxConcurrentMeetings).toBe(1);
   });
 
   it("requires secure complete Voicetext configuration", async () => {
     await expect(
       loadPlatformConfig(
         { ...environment, TRANSCRIPTION_PROVIDER: "voicetext" },
+        async () => "x",
+      ),
+    ).rejects.toThrow();
+    await expect(
+      loadPlatformConfig(
+        {
+          ...environment,
+          TRANSCRIPTION_PROVIDER: "voicetext",
+          VOICETEXT_BATCH_MAX_CONCURRENT_MEETINGS: "0",
+          VOICETEXT_SERVICE_TOKEN_FILE: "/run/secrets/voicetext",
+          VOICETEXT_WS_URL: "wss://api.voicetext.site/api/v1/transcribe/stream",
+        },
+        async () => "x",
+      ),
+    ).rejects.toThrow();
+    await expect(
+      loadPlatformConfig(
+        {
+          ...environment,
+          TRANSCRIPTION_PROVIDER: "voicetext",
+          VOICETEXT_BATCH_MAX_CONCURRENT_MEETINGS: "3",
+          VOICETEXT_SERVICE_TOKEN_FILE: "/run/secrets/voicetext",
+          VOICETEXT_WS_URL: "wss://api.voicetext.site/api/v1/transcribe/stream",
+        },
         async () => "x",
       ),
     ).rejects.toThrow();
@@ -139,6 +178,30 @@ describe("platform configuration", () => {
           ...environment,
           TRANSCRIPTION_PROVIDER: "voicetext",
           VOICETEXT_BATCH_MAX_ARTIFACT_BYTES: String(64 * 1_024 * 1_024 + 1),
+          VOICETEXT_SERVICE_TOKEN_FILE: "/run/secrets/voicetext",
+          VOICETEXT_WS_URL: "wss://api.voicetext.site/api/v1/transcribe/stream",
+        },
+        async () => "x",
+      ),
+    ).rejects.toThrow();
+    await expect(
+      loadPlatformConfig(
+        {
+          ...environment,
+          TRANSCRIPTION_PROVIDER: "voicetext",
+          VOICETEXT_BATCH_MAX_CONCURRENCY: "0",
+          VOICETEXT_SERVICE_TOKEN_FILE: "/run/secrets/voicetext",
+          VOICETEXT_WS_URL: "wss://api.voicetext.site/api/v1/transcribe/stream",
+        },
+        async () => "x",
+      ),
+    ).rejects.toThrow();
+    await expect(
+      loadPlatformConfig(
+        {
+          ...environment,
+          TRANSCRIPTION_PROVIDER: "voicetext",
+          VOICETEXT_BATCH_MAX_CONCURRENCY: "11",
           VOICETEXT_SERVICE_TOKEN_FILE: "/run/secrets/voicetext",
           VOICETEXT_WS_URL: "wss://api.voicetext.site/api/v1/transcribe/stream",
         },

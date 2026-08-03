@@ -10,8 +10,13 @@ const optionalSnowflake = z.preprocess(
 const sha256 = z.string().regex(/^[0-9a-f]{64}$/u);
 const mebibyte = 1_024 * 1_024;
 const defaultVoicetextBatchMaxArtifactBytes = 64 * mebibyte;
+const defaultVoicetextBatchMaxConcurrency = 2;
+const defaultVoicetextBatchMaxConcurrentMeetings = 1;
 // Voicetext batch-v2 rejects bodies above this fixed contract maximum.
 const maximumVoicetextBatchMaxArtifactBytes = 64 * mebibyte;
+const maximumVoicetextBatchMaxConcurrency = 10;
+// Two is an explicit scale-up option; the production 2 GiB container admits one.
+const maximumVoicetextBatchMaxConcurrentMeetings = 2;
 const absolutePath = z.string().startsWith("/").refine((value) => !value.includes("\0"));
 const httpUrl = z.url().refine((value) => {
   const url = new URL(value);
@@ -69,6 +74,16 @@ const environmentSchema = z
       .min(27)
       .max(maximumVoicetextBatchMaxArtifactBytes)
       .default(defaultVoicetextBatchMaxArtifactBytes),
+    VOICETEXT_BATCH_MAX_CONCURRENCY: z.coerce.number()
+      .int()
+      .min(1)
+      .max(maximumVoicetextBatchMaxConcurrency)
+      .default(defaultVoicetextBatchMaxConcurrency),
+    VOICETEXT_BATCH_MAX_CONCURRENT_MEETINGS: z.coerce.number()
+      .int()
+      .min(1)
+      .max(maximumVoicetextBatchMaxConcurrentMeetings)
+      .default(defaultVoicetextBatchMaxConcurrentMeetings),
     VOICETEXT_SERVICE_TOKEN_FILE: absolutePath.optional(),
     VOICETEXT_WS_URL: secureWebSocketUrl.optional(),
   })
@@ -144,6 +159,8 @@ export interface PlatformConfig {
   };
   readonly voicetext?: {
     readonly batchMaxArtifactBytes: number;
+    readonly batchMaxConcurrency: number;
+    readonly batchMaxConcurrentMeetings: number;
     readonly webSocketUrl: string;
   };
 }
@@ -232,6 +249,8 @@ export async function loadPlatformConfig(
       : {
           voicetext: {
             batchMaxArtifactBytes: environment.VOICETEXT_BATCH_MAX_ARTIFACT_BYTES,
+            batchMaxConcurrency: environment.VOICETEXT_BATCH_MAX_CONCURRENCY,
+            batchMaxConcurrentMeetings: environment.VOICETEXT_BATCH_MAX_CONCURRENT_MEETINGS,
             webSocketUrl: environment.VOICETEXT_WS_URL,
           },
         }),

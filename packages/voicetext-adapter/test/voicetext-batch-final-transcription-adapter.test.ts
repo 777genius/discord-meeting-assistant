@@ -90,9 +90,10 @@ describe("VoicetextBatchFinalTranscriptionAdapter", () => {
       },
       async () => pending("retry", 1_500),
     );
+    const reader = new MemoryOggReader({ "s3://recording/speaker-a.ogg": validOgg(1) });
     const adapter = new VoicetextBatchFinalTranscriptionAdapter(
       client,
-      new MemoryOggReader({ "s3://recording/speaker-a.ogg": validOgg(1) }),
+      reader,
       { keyterms: ["Craig"] },
       scheduler,
     );
@@ -124,6 +125,7 @@ describe("VoicetextBatchFinalTranscriptionAdapter", () => {
     expect(client.submissions[0]?.idempotencyKey).toMatch(/^[a-f0-9]{64}$/u);
     expect(client.submissions[1]?.idempotencyKey).toBe(client.submissions[0]?.idempotencyKey);
     expect(client.submissions[1]?.audio).toEqual(client.submissions[0]?.audio);
+    expect(reader.reads).toHaveLength(2);
     expect(scheduler.delaysMs).toEqual([1_000, 2_000]);
   });
 
@@ -152,6 +154,37 @@ describe("VoicetextBatchFinalTranscriptionAdapter", () => {
     expect(client.submissions[1]?.idempotencyKey).toBe(client.submissions[0]?.idempotencyKey);
     expect(client.submissions[1]?.audio).toEqual(client.submissions[0]?.audio);
     expect(scheduler.delaysMs).toEqual([1_000]);
+  });
+
+  it("fails closed when a re-read artifact changes before a provider re-submit", async () => {
+    let readCount = 0;
+    const reader: CompleteOggArtifactReader = {
+      read: async () => {
+        readCount += 1;
+        return {
+          bytes: validOgg(readCount),
+          complete: true,
+          container: "ogg",
+        } as const;
+      },
+    };
+    const client = new ScriptedBatchClient(async () => pending("retry", 0));
+    const adapter = new VoicetextBatchFinalTranscriptionAdapter(
+      client,
+      reader,
+      {},
+      new TestPollingScheduler(),
+    );
+
+    await expect(adapter.transcribe(requestFixture())).resolves.toEqual({
+      failure: {
+        code: "VOICETEXT_TRANSCRIPTION_INVALID_INPUT",
+        message: "authoritative speaker artifact changed while retrying",
+        retryable: false,
+      },
+      ok: false,
+    });
+    expect(client.submissions).toHaveLength(1);
   });
 
   it("honors a retryable 429 Retry-After hint before re-uploading with the same key", async () => {
@@ -245,6 +278,89 @@ describe("VoicetextBatchFinalTranscriptionAdapter", () => {
         version: 1,
       },
     });
+  });
+
+  it("bounds reads and uploads to the configured worker pool instead of pre-reading a meeting", async () => {
+    const speakers = Array.from({ length: 10 }, (_, index) => ({
+      audioLocator: `s3://recording/speaker-${String(index + 1)}.ogg`,
+      speakerId: `discord-user-${String(index + 1)}`,
+      timelineOffsetMs: index * 1_000,
+    }));
+    const pendingByMarker = new Map(
+      speakers.map((_, index) => [index + 1, deferred<VoicetextBatchTaskResult>()]),
+    );
+    const client = new ScriptedBatchClient(async (request) => {
+      const deferredResult = pendingByMarker.get(request.audio[5] ?? -1);
+      if (deferredResult === undefined) {
+        throw new Error("unexpected Ogg marker");
+      }
+      return await deferredResult.promise;
+    });
+    const reader = new MemoryOggReader(Object.fromEntries(
+      speakers.map((speaker, index) => [speaker.audioLocator, validOgg(index + 1)]),
+    ));
+    const adapter = new VoicetextBatchFinalTranscriptionAdapter(
+      client,
+      reader,
+      { maxConcurrency: 6 },
+      new TestPollingScheduler(),
+    );
+
+    const processing = adapter.transcribe(requestFixture(speakers));
+    await waitForSubmissions(client, 6);
+    expect(reader.reads).toHaveLength(6);
+    for (const marker of [1, 2, 3, 4]) {
+      const deferredResult = pendingByMarker.get(marker);
+      if (deferredResult === undefined) {
+        throw new Error("missing deferred batch result");
+      }
+      deferredResult.resolve(completed({
+        durationSeconds: 1,
+        utterances: [{ endSeconds: 1, startSeconds: 0, transcript: "готово" }],
+      }));
+      await waitForSubmissions(client, 6 + marker);
+    }
+    expect(reader.reads).toHaveLength(10);
+    for (const marker of [5, 6, 7, 8, 9, 10]) {
+      const deferredResult = pendingByMarker.get(marker);
+      if (deferredResult === undefined) {
+        throw new Error("missing deferred batch result");
+      }
+      deferredResult.resolve(completed({
+        durationSeconds: 1,
+        utterances: [{ endSeconds: 1, startSeconds: 0, transcript: "готово" }],
+      }));
+    }
+
+    await expect(processing).resolves.toMatchObject({ ok: true });
+  });
+
+  it("rejects an eleventh speaker track before reading or submitting audio", async () => {
+    const speakers = Array.from({ length: 11 }, (_, index) => ({
+      audioLocator: `s3://recording/speaker-${String(index + 1)}.ogg`,
+      speakerId: `discord-user-${String(index + 1)}`,
+      timelineOffsetMs: index * 1_000,
+    }));
+    const reader = new MemoryOggReader({});
+    const client = new ScriptedBatchClient(async () => completed({
+      durationSeconds: 1,
+      utterances: [],
+    }));
+    const adapter = new VoicetextBatchFinalTranscriptionAdapter(
+      client,
+      reader,
+      {},
+      new TestPollingScheduler(),
+    );
+
+    await expect(adapter.transcribe(requestFixture(speakers))).resolves.toMatchObject({
+      failure: {
+        code: "VOICETEXT_TRANSCRIPTION_INVALID_INPUT",
+      },
+      ok: false,
+    });
+    expect(reader.reads).toEqual([]);
+    expect(client.submissions).toEqual([]);
   });
 
   it("normalizes an adjacent f32-style batch timestamp seam without creating an overlap", async () => {
@@ -398,6 +514,33 @@ describe("VoicetextBatchFinalTranscriptionAdapter", () => {
     )).toThrow("maxSegmentOverlapMs must be an integer between 0 and 10000");
   });
 
+  it("bounds final batch provider concurrency and speaker tracks from one through ten", () => {
+    const client = new ScriptedBatchClient(async () => completed({
+      durationSeconds: 1,
+      utterances: [{ endSeconds: 1, startSeconds: 0, transcript: "unused" }],
+    }));
+    const reader = new MemoryOggReader({ "s3://recording/speaker-a.ogg": validOgg(1) });
+
+    expect(() => new VoicetextBatchFinalTranscriptionAdapter(
+      client,
+      reader,
+      { maxConcurrency: 0 },
+      new TestPollingScheduler(),
+    )).toThrow("maxConcurrency must be an integer between 1 and 10");
+    expect(() => new VoicetextBatchFinalTranscriptionAdapter(
+      client,
+      reader,
+      { maxConcurrency: 11 },
+      new TestPollingScheduler(),
+    )).toThrow("maxConcurrency must be an integer between 1 and 10");
+    expect(() => new VoicetextBatchFinalTranscriptionAdapter(
+      client,
+      reader,
+      { maxSpeakerTracks: 11 },
+      new TestPollingScheduler(),
+    )).toThrow("maxSpeakerTracks must be an integer between 1 and 10");
+  });
+
   it("fails the entire final transcription when one concurrent speaker track fails", async () => {
     const client = new ScriptedBatchClient(async (request) => {
       await Promise.resolve();
@@ -542,6 +685,41 @@ describe("VoicetextBatchFinalTranscriptionAdapter", () => {
     expect(reader.reads[0]?.options.maxBytes).toBe(27);
     expect(client.submissions).toEqual([]);
   });
+
+  it("rejects an aggregate artifact capacity reservation before bounded workers start", async () => {
+    const speakers = Array.from({ length: 5 }, (_, index) => ({
+      audioLocator: `s3://recording/speaker-${String(index + 1)}.ogg`,
+      speakerId: `discord-user-${String(index + 1)}`,
+      timelineOffsetMs: index * 1_000,
+    }));
+    const reader = new MemoryOggReader(Object.fromEntries(
+      speakers.map((speaker, index) => [speaker.audioLocator, validOgg(index + 1)]),
+    ));
+    const client = new ScriptedBatchClient(async () => completed({
+      durationSeconds: 1,
+      utterances: [{ endSeconds: 1, startSeconds: 0, transcript: "must not submit" }],
+    }));
+    const adapter = new VoicetextBatchFinalTranscriptionAdapter(
+      client,
+      reader,
+      {
+        maxArtifactBytesPerSpeaker: 27,
+        maxConcurrency: 10,
+        maxTotalArtifactBytes: 4 * 27,
+      },
+      new TestPollingScheduler(),
+    );
+
+    await expect(adapter.transcribe(requestFixture(speakers))).resolves.toMatchObject({
+      failure: {
+        code: "VOICETEXT_TRANSCRIPTION_LIMIT_EXCEEDED",
+        retryable: false,
+      },
+      ok: false,
+    });
+    expect(reader.reads).toEqual([]);
+    expect(client.submissions).toEqual([]);
+  });
 });
 
 function requestFixture(speakerAudio = [
@@ -597,7 +775,7 @@ interface Deferred<Value> {
 }
 
 async function waitForSubmissions(client: ScriptedBatchClient, expected: number): Promise<void> {
-  for (let attempt = 0; attempt < 20; attempt += 1) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
     if (client.submissions.length === expected) {
       return;
     }

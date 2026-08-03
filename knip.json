@@ -55,6 +55,7 @@
     "apps/discord-e2e-actors": {
       "entry": [
         "src/main.ts",
+        "src/capacity-main.ts",
         "src/collect-retained-evidence.ts",
         "src/observe-live-discord.ts",
         "src/verify-campaign.ts",

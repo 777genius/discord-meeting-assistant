@@ -36,6 +36,10 @@ See [architecture overview](docs/architecture/overview.md),
 
 ## Discord guild onboarding
 
+[Add Voice Bot to Discord](https://discord.com/oauth2/authorize?client_id=1533224474609057793&integration_type=0&permissions=1133568&scope=bot%20applications.commands)
+
+After installation, open any text channel and run `/setup-voice-bot`.
+
 Meeting Platform generates and logs a least-privilege official Discord install
 URL. It also serves the same redirect at internal `GET /discord/install` for a
 deployment that reverse-proxies only that path. The current Meeting Platform and

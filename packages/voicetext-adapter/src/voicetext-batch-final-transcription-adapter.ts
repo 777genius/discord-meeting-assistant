@@ -26,6 +26,8 @@ import type {
 const mebibyte = 1_024 * 1_024;
 const maximumRetryAfterMilliseconds = 3_600_000;
 const maximumSegmentOverlapMilliseconds = 10_000;
+const maximumVoicetextBatchConcurrency = 10;
+const maximumVoicetextBatchSpeakerTracks = 10;
 
 export interface VoicetextBatchPollingScheduler {
   nowMs(): number;
@@ -85,6 +87,31 @@ type SpeakerOutcome =
   | { readonly ok: true; readonly turns: readonly ProviderTurn[] }
   | { readonly error: unknown; readonly ok: false };
 
+/**
+ * Retains only checksums, so a retry can prove that it is re-uploading the
+ * same authoritative object without retaining its complete bytes while a
+ * batch job is being polled.
+ */
+class AuthoritativeArtifactFingerprintBook {
+  private readonly fingerprints = new Map<number, string>();
+
+  public verify(speakerIndex: number, artifact: CompleteOggAudioArtifact): void {
+    const fingerprint = createHash("sha256").update(artifact.bytes).digest("hex");
+    const previous = this.fingerprints.get(speakerIndex);
+    if (previous === undefined) {
+      this.fingerprints.set(speakerIndex, fingerprint);
+      return;
+    }
+    if (previous !== fingerprint) {
+      throw new VoicetextAdapterError(
+        "invalid_input",
+        "authoritative speaker artifact changed while retrying",
+        false,
+      );
+    }
+  }
+}
+
 const systemVoicetextBatchPollingScheduler: VoicetextBatchPollingScheduler = {
   nowMs: () => Date.now(),
   sleep: async (delayMs, signal) => {
@@ -133,14 +160,14 @@ export class VoicetextBatchFinalTranscriptionAdapter implements FinalTranscripti
   private async transcribeOrThrow(
     request: CancellableVoicetextBatchTranscriptionRequest,
   ): Promise<GeneratedTranscript> {
-    validateRequest(request, this.options.maxSpeakerTracks);
+    validateRequest(request, this.options);
     request.signal?.throwIfAborted();
 
     const failureAbort = new AbortController();
     const workSignal = request.signal === undefined
       ? failureAbort.signal
       : AbortSignal.any([request.signal, failureAbort.signal]);
-    let totalArtifactBytes = 0;
+    const artifactFingerprints = new AuthoritativeArtifactFingerprintBook();
     let firstFailure: { readonly error: unknown } | undefined;
     const outcomes = await mapWithConcurrency(
       request.recording.speakerAudio,
@@ -148,21 +175,14 @@ export class VoicetextBatchFinalTranscriptionAdapter implements FinalTranscripti
       workSignal,
       async (reference, speakerIndex): Promise<SpeakerOutcome> => {
         try {
-          const artifact = await this.readArtifact(reference, workSignal);
-          totalArtifactBytes = addBoundedBytes(
-            totalArtifactBytes,
-            artifact.bytes.byteLength,
-            this.options.maxTotalArtifactBytes,
-            "Authoritative Ogg audio",
-          );
           return {
             ok: true,
             turns: await this.transcribeSpeaker(
-              artifact,
               reference,
               speakerIndex,
               request,
               workSignal,
+              artifactFingerprints,
             ),
           };
         } catch (error: unknown) {
@@ -221,11 +241,11 @@ export class VoicetextBatchFinalTranscriptionAdapter implements FinalTranscripti
   }
 
   private async transcribeSpeaker(
-    artifact: CompleteOggAudioArtifact,
     reference: SpeakerAudioReferenceSnapshot,
     speakerIndex: number,
     request: CancellableVoicetextBatchTranscriptionRequest,
     externalSignal: AbortSignal,
+    artifactFingerprints: AuthoritativeArtifactFingerprintBook,
   ): Promise<readonly ProviderTurn[]> {
     const idempotencyKey = stableBatchIdempotencyKey(
       request.idempotencyKey,
@@ -260,12 +280,13 @@ export class VoicetextBatchFinalTranscriptionAdapter implements FinalTranscripti
       let result: VoicetextBatchTaskResult;
       try {
         result = nextOperation.kind === "submit"
-          ? await this.client.submit({
-              audio: artifact.bytes,
+          ? await this.submitSpeakerArtifact(
+              reference,
+              speakerIndex,
               idempotencyKey,
-              keyterms: this.options.keyterms,
-              signal: operation.signal,
-            })
+              operation.signal,
+              artifactFingerprints,
+            )
           : await this.client.poll({ jobId: nextOperation.jobId, signal: operation.signal });
       } catch (error: unknown) {
         const classified = classifyOperationError(
@@ -310,6 +331,23 @@ export class VoicetextBatchFinalTranscriptionAdapter implements FinalTranscripti
         ? { kind: "submit" }
         : { jobId: result.jobId, kind: "poll" };
     }
+  }
+
+  private async submitSpeakerArtifact(
+    reference: SpeakerAudioReferenceSnapshot,
+    speakerIndex: number,
+    idempotencyKey: string,
+    signal: AbortSignal,
+    artifactFingerprints: AuthoritativeArtifactFingerprintBook,
+  ): Promise<VoicetextBatchTaskResult> {
+    const artifact = await this.readArtifact(reference, signal);
+    artifactFingerprints.verify(speakerIndex, artifact);
+    return await this.client.submit({
+      audio: artifact.bytes,
+      idempotencyKey,
+      keyterms: this.options.keyterms,
+      signal,
+    });
   }
 
   private async waitForNextAttempt(
@@ -367,6 +405,13 @@ function validateOptions(
     64 * mebibyte,
     "maxArtifactBytesPerSpeaker",
   );
+  const maxSpeakerTracks = integerOption(
+    options.maxSpeakerTracks,
+    maximumVoicetextBatchSpeakerTracks,
+    1,
+    maximumVoicetextBatchSpeakerTracks,
+    "maxSpeakerTracks",
+  );
   return {
     artifactReadTimeoutMs: timeoutOption(
       options.artifactReadTimeoutMs,
@@ -375,10 +420,14 @@ function validateOptions(
     ),
     keyterms: normalizeKeyterms(options.keyterms),
     maxArtifactBytesPerSpeaker,
-    // The batch backend admits two provider calls at once. Keeping this caller
-    // bound aligned prevents an unbounded local submit queue from consuming
-    // speaker artifacts before the backend can service them.
-    maxConcurrency: integerOption(options.maxConcurrency, 2, 1, 2, "maxConcurrency"),
+    // Composition selects the bounded read-and-provider worker pool per meeting.
+    maxConcurrency: integerOption(
+      options.maxConcurrency,
+      2,
+      1,
+      maximumVoicetextBatchConcurrency,
+      "maxConcurrency",
+    ),
     maxPollAttempts: integerOption(options.maxPollAttempts, 128, 1, 1_024, "maxPollAttempts"),
     maxPollBackoffMs: integerOption(
       options.maxPollBackoffMs,
@@ -408,16 +457,10 @@ function validateOptions(
       100_000,
       "maxSegmentsPerSpeaker",
     ),
-    maxSpeakerTracks: integerOption(
-      options.maxSpeakerTracks,
-      64,
-      1,
-      256,
-      "maxSpeakerTracks",
-    ),
+    maxSpeakerTracks,
     maxTotalArtifactBytes: integerOption(
       options.maxTotalArtifactBytes,
-      256 * mebibyte,
+      maxArtifactBytesPerSpeaker * maxSpeakerTracks,
       maxArtifactBytesPerSpeaker,
       8_192 * mebibyte,
       "maxTotalArtifactBytes",
@@ -449,7 +492,10 @@ function validateOptions(
 
 function validateRequest(
   request: FinalTranscriptionRequest,
-  maxSpeakerTracks: number,
+  options: Pick<
+    ValidatedOptions,
+    "maxArtifactBytesPerSpeaker" | "maxSpeakerTracks" | "maxTotalArtifactBytes"
+  >,
 ): void {
   requireNonEmpty(request.idempotencyKey, "idempotencyKey");
   requireNonEmpty(request.meetingId, "meetingId");
@@ -457,11 +503,20 @@ function validateRequest(
   requireNonEmpty(request.recording.manifestLocator, "recording.manifestLocator");
   if (
     request.recording.speakerAudio.length < 1 ||
-    request.recording.speakerAudio.length > maxSpeakerTracks
+    request.recording.speakerAudio.length > options.maxSpeakerTracks
   ) {
     throw new VoicetextAdapterError(
       "invalid_input",
-      `recording must contain between 1 and ${maxSpeakerTracks} speaker tracks`,
+      `recording must contain between 1 and ${options.maxSpeakerTracks} speaker tracks`,
+      false,
+    );
+  }
+  const maximumArtifactBytes =
+    request.recording.speakerAudio.length * options.maxArtifactBytesPerSpeaker;
+  if (maximumArtifactBytes > options.maxTotalArtifactBytes) {
+    throw new VoicetextAdapterError(
+      "limit_exceeded",
+      "recording exceeds the configured aggregate authoritative Ogg capacity",
       false,
     );
   }
@@ -829,18 +884,6 @@ function compareTurns(left: ProviderTurn, right: ProviderTurn): number {
     left.endMs - right.endMs ||
     left.speakerId.localeCompare(right.speakerId) ||
     left.stableTurnId.localeCompare(right.stableTurnId);
-}
-
-function addBoundedBytes(total: number, added: number, maximum: number, subject: string): number {
-  const next = total + added;
-  if (!Number.isSafeInteger(next) || next > maximum) {
-    throw new VoicetextAdapterError(
-      "limit_exceeded",
-      `${subject} exceeded its configured total byte limit`,
-      false,
-    );
-  }
-  return next;
 }
 
 function addSafeIntegers(left: number, right: number): number {

@@ -10,10 +10,25 @@ import { describe, expect, it } from "vitest";
 import { PlatformLiveMeetingRuntime } from "../src/live-meeting-runtime.js";
 import {
   closeMeetingPlatformResources,
+  createVoicetextBatchFinalTranscriptionOptions,
 } from "../src/platform-runtime.js";
 import type { GrpcSubscriptionRuntimeTransport } from "../src/subscription-runtime-grpc-transport.js";
 
-describe("meeting platform shutdown wiring", () => {
+describe("meeting platform runtime wiring", () => {
+  it("passes configured per-meeting batch concurrency into the Voicetext composition", () => {
+    expect(createVoicetextBatchFinalTranscriptionOptions({
+      batchMaxArtifactBytes: 64 * 1_024 * 1_024,
+      batchMaxConcurrency: 6,
+      batchMaxConcurrentMeetings: 1,
+      webSocketUrl: "wss://api.voicetext.site/api/v1/transcribe/stream",
+    })).toMatchObject({
+      maxArtifactBytesPerSpeaker: 64 * 1_024 * 1_024,
+      maxConcurrency: 6,
+      maxSpeakerTracks: 10,
+      maxTotalArtifactBytes: 640 * 1_024 * 1_024,
+    });
+  });
+
   it("starts BullMQ admission closure before slow HTTP and live drains", async () => {
     const calls: string[] = [];
     let resumePause!: () => void;
