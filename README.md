@@ -75,6 +75,10 @@ pnpm install --frozen-lockfile
 pnpm run check
 ```
 
+For faster feedback while editing, use `pnpm run check:changed`. Before handoff,
+run `pnpm run check:fast`; the complete `pnpm run check` remains the authoritative
+pull-request gate.
+
 The private real-Discord acceptance flow, Russian/English synthetic fixtures,
 recovery checks, and retained-evidence verifier are documented in the
 [E2E runbook](docs/operations/real-e2e-runbook.md).

@@ -9,10 +9,10 @@ Read these before changing the repository:
 
 ## Current phase
 
-The repository contains an executable architecture baseline but no production
-packages. Do not create empty DDD folders or speculative packages. A production
-package may be added only together with one real vertical slice, an owner, tests,
-and its closed source-dependency classification.
+The repository contains the executable V1 vertical slice and production
+packages. Do not create empty DDD folders or speculative packages. A new package
+may be added only together with one real vertical slice, an owner, tests, and its
+closed source-dependency classification.
 
 ## Hard rules
 
@@ -35,7 +35,7 @@ and its closed source-dependency classification.
 - Do not add a generic `shared`, `common`, `utils`, base repository, service
   locator, or universal event type.
 - The engineering foundation is development-only and must use exact registry
-  version `0.4.1`.
+  version `0.5.0`.
 
 ## Workflow
 
@@ -46,7 +46,8 @@ Before adding production source:
 3. extend `architecture/foundation/source-dependencies.yaml` so every new source
    file is classified fail-closed;
 4. add domain/application/contract tests before real external adapters;
-5. run focused checks while editing and `pnpm run check` before handoff.
+5. run `pnpm run check:changed` while editing, `pnpm run check:fast` before
+   handoff, and the complete `pnpm run check` before opening a pull request.
 
 Development currently happens on `main`. Keep changes small and use Conventional
 Commits when commits are requested.
