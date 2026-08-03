@@ -129,6 +129,55 @@ five-second projection tick as STT or model latency. The API-equivalent cost is
 an observability estimate only; the subscription runtime does not create an API
 invoice.
 
+### Long-call telemetry
+
+Meeting Platform writes one structured JSON event for every post-call stage and
+every Luna or Sol runtime execution. These events contain measurements only. Raw
+speech, transcript text, prompts, provider output, audio, and credentials are
+never logged.
+
+Use `Meeting processing stage completed` to inspect the full pipeline. Its safe
+fields include stage duration and outcome plus the evidence timeline duration,
+turn count, speaker count, character count, and final summary item counts when
+those values exist. Successful transcription also reports the ratio between
+processing time and the evidence timeline, which can be multiplied by a planned
+meeting duration for a rough capacity estimate.
+
+Use `Subscription runtime task completed` to inspect each Luna or Sol execution.
+It records the admitted model profile, request size, runtime duration, status,
+provider-unit availability, cache and reasoning breakdown, and the exact or
+bounded API-equivalent cost when the runtime supplies one. A bounded final-output
+repair is a separate execution with a separate run ID. Do not add both executions
+together when measuring latency from meeting end; use them together only for
+resource and cost analysis. Missing provider-unit classes and missing cost stay
+explicitly unavailable and must never be read as zero.
+
+Filter one meeting without printing unrelated container output:
+
+```sh
+MEETING_TELEMETRY_ID=NJMhJTt6ae58
+docker logs discord-meeting-assistant-meeting-platform-1 2>&1 \
+  | jq --arg meetingId "$MEETING_TELEMETRY_ID" -c '
+      fromjson?
+      | select(.meetingId == $meetingId)
+      | select(
+          .message == "Meeting processing stage completed"
+          or .message == "Subscription runtime task completed"
+          or .message == "Subscription runtime transport failed"
+          or .message == "Incremental meeting summary refresh completed"
+        )
+    '
+```
+
+The same process exposes bounded aggregate stage histograms at `/metrics` under
+`discord_meeting_stage_duration_seconds`. Meeting IDs and run IDs are intentionally
+excluded from Prometheus labels to avoid unbounded cardinality. Docker JSON logs
+are the per-meeting diagnostic record; export the filtered JSONL into the isolated
+evidence directory when it must survive container removal. Accepted Luna usage is
+also retained in the `meeting_core.live_meetings` snapshot. Final Sol provider
+telemetry remains log-only in this minimal V1 design so observability does not
+expand the authoritative Meeting aggregate.
+
 ### Live Discord mutation trace
 
 Start the observer immediately before the private five-minute call. It uses the

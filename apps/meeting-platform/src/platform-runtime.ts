@@ -70,6 +70,7 @@ import {
   SubscriptionRuntimeSummaryAdapter,
   subscriptionRuntimeIncrementalMaxOutputTokens,
   subscriptionRuntimeSummaryMaxOutputTokens,
+  type SubscriptionRuntimeTransportPort,
 } from "@discord-meeting/subscription-runtime-adapter";
 import {
   FetchVoicetextBatchClient,
@@ -90,6 +91,7 @@ import {
   InstrumentedSummaryGenerationPort,
   InstrumentedSummaryPublicationPort,
 } from "./instrumented-processing-ports.js";
+import { InstrumentedSubscriptionRuntimeTransport } from "./instrumented-subscription-runtime-transport.js";
 import { LiveFencedSummaryPublicationPort } from "./live-fenced-summary-publication.js";
 import { GuildPublicationTargetResolver } from "./guild-publication-target-resolver.js";
 import { PlatformLiveMeetingRuntime } from "./live-meeting-runtime.js";
@@ -148,10 +150,15 @@ export async function startMeetingPlatform(
     config.discordLegacyRoute,
   );
   const rawTranscriber = createFinalTranscriber(config, artifactReader);
-  const runtimeTransport = new GrpcSubscriptionRuntimeTransport({
+  const rawRuntimeTransport = new GrpcSubscriptionRuntimeTransport({
     address: config.subscriptionRuntime.address,
     serviceToken: config.secrets.subscriptionRuntimeToken,
   });
+  const runtimeTransport = new InstrumentedSubscriptionRuntimeTransport(
+    rawRuntimeTransport,
+    logger,
+    monotonicNowMilliseconds,
+  );
   const rawSummarizer = new SubscriptionRuntimeSummaryAdapter(
     runtimeTransport,
     {
@@ -369,7 +376,7 @@ export async function startMeetingPlatform(
       queue,
       queueEvents,
       deadLetterQueue,
-      runtimeTransport,
+      runtimeTransport: rawRuntimeTransport,
       s3,
       server,
       worker,
@@ -394,7 +401,7 @@ export async function startMeetingPlatform(
         queue,
         queueEvents,
         deadLetterQueue,
-        runtimeTransport,
+        runtimeTransport: rawRuntimeTransport,
         s3,
         server,
         worker,
@@ -410,7 +417,7 @@ function createLiveRuntime(input: {
   readonly logger: Logger;
   readonly meetings: PostgresLiveMeetingRepository;
   readonly publicationTargets: GuildPublicationTargetResolver;
-  readonly runtimeTransport: GrpcSubscriptionRuntimeTransport;
+  readonly runtimeTransport: SubscriptionRuntimeTransportPort;
 }): PlatformLiveMeetingRuntime | undefined {
   if (
     input.config.transcriptionProvider !== "voicetext" ||
