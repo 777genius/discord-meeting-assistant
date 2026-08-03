@@ -5,11 +5,24 @@ import { z } from "zod";
 const snowflakeSchema = z.string().regex(/^\d{17,20}$/u, "Expected a Discord snowflake");
 const discordEmbedDescriptionLimit = 4_096;
 const discordEmbedDescriptionsLimit = 6_000;
+const discordTranscriptAttachmentMaximumBytes = 8 * 1_024 * 1_024;
 const projectionKeySchema = z.string().trim().min(1).max(128);
 const legacyProjectionKeySchema = z.string().trim().min(1).max(4_096);
 const meetingProjectionKeyVersion = "meeting-discord-projection:v2";
 
 export const discordPublicationModeSchema = z.enum(["message", "thread"]);
+
+const transcriptAttachmentSchema = z.object({
+  content: z
+    .string()
+    .trim()
+    .min(1)
+    .refine(
+      (value) => new TextEncoder().encode(value).byteLength <= discordTranscriptAttachmentMaximumBytes,
+      `Transcript attachment must not exceed ${discordTranscriptAttachmentMaximumBytes} UTF-8 bytes`,
+    ),
+  filename: z.literal("meeting-transcript.md"),
+});
 
 const discordThreadProjectionReferenceSchema = z.object({
   kind: z.literal("thread"),
@@ -41,6 +54,7 @@ export const discordProjectionBodySchema = z.object({
     .min(1)
     .max(discordEmbedDescriptionLimit)
     .optional(),
+  transcriptAttachment: transcriptAttachmentSchema.optional(),
 }).superRefine(validateDiscordEmbedDescriptions);
 
 export const publishDiscordSummarySchema = z.object({
@@ -54,6 +68,7 @@ export const publishDiscordSummarySchema = z.object({
     .min(1)
     .max(discordEmbedDescriptionLimit)
     .optional(),
+  transcriptAttachment: transcriptAttachmentSchema.optional(),
   legacyProjectionKeys: z.array(legacyProjectionKeySchema).max(4).optional(),
   currentReference: discordProjectionReferenceSchema.optional(),
 }).superRefine(validateDiscordEmbedDescriptions);
@@ -72,6 +87,11 @@ export type DiscordProjectionContainer =
 
 export const DISCORD_EMBED_DESCRIPTION_LIMIT = discordEmbedDescriptionLimit;
 export const DISCORD_EMBED_DESCRIPTIONS_LIMIT = discordEmbedDescriptionsLimit;
+/**
+ * Conservative floor for standard Discord uploads. A publication outside this
+ * bound fails visibly instead of silently omitting evidence from the transcript.
+ */
+export const DISCORD_TRANSCRIPT_ATTACHMENT_MAX_BYTES = discordTranscriptAttachmentMaximumBytes;
 
 /**
  * Stable Discord projection identity for both live and final views of one
@@ -89,11 +109,20 @@ export function createMeetingDiscordProjectionKey(
 }
 
 export function toDiscordProjectionBody(
-  input: Pick<PublishDiscordSummary, "markdown" | "liveCaptionsMarkdown">,
+  input: Pick<
+    PublishDiscordSummary,
+    "markdown" | "liveCaptionsMarkdown" | "transcriptAttachment"
+  >,
 ): DiscordProjectionBody {
-  return input.liveCaptionsMarkdown === undefined
-    ? { markdown: input.markdown }
-    : { markdown: input.markdown, liveCaptionsMarkdown: input.liveCaptionsMarkdown };
+  return {
+    markdown: input.markdown,
+    ...(input.liveCaptionsMarkdown === undefined
+      ? {}
+      : { liveCaptionsMarkdown: input.liveCaptionsMarkdown }),
+    ...(input.transcriptAttachment === undefined
+      ? {}
+      : { transcriptAttachment: input.transcriptAttachment }),
+  };
 }
 
 export function encodeDiscordExternalPublicationId(

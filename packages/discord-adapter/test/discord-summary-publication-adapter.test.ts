@@ -7,10 +7,13 @@ import { z } from "zod";
 
 import {
   createMeetingDiscordProjectionKey,
+  discordProjectionBodySchema,
+  DISCORD_TRANSCRIPT_ATTACHMENT_MAX_BYTES,
   DiscordProjectionConfigurationError,
   DiscordProjectionConflictError,
   DiscordSummaryPublicationAdapter,
   renderRussianSummaryMarkdown,
+  toDiscordMessagePayload,
   type DiscordProjectionReference,
   type PublishDiscordSummary,
 } from "../src/index.js";
@@ -157,8 +160,28 @@ describe("DiscordSummaryPublicationAdapter", () => {
         "✓ `00:00-00:02` **speaker-b:** Подготовлю дашборд",
         "✓ `00:03-00:04` **speaker-a:** Проверить транскрипцию",
         "",
-        "_Final transcript based on the meeting recording._",
+        "_Final transcript based on the meeting recording. Full transcript attached: `meeting-transcript.md`._",
       ].join("\n"),
+      transcriptAttachment: {
+        filename: "meeting-transcript.md",
+        content: [
+          "# Meeting transcript",
+          "",
+          "_Final transcript based on the meeting recording._",
+          "",
+          "## `00:00-00:01` · speaker-a",
+          "",
+          "Релиз в пятницу",
+          "",
+          "## `00:00-00:02` · speaker-b",
+          "",
+          "Подготовлю дашборд",
+          "",
+          "## `00:03-00:04` · speaker-a",
+          "",
+          "Проверить транскрипцию",
+        ].join("\n"),
+      },
     });
     expect(projector.inputs[0]?.markdown).not.toContain("turn-1");
     expect(projector.inputs[0]?.markdown).not.toContain("summary-42");
@@ -218,6 +241,21 @@ describe("DiscordSummaryPublicationAdapter", () => {
     );
     expect(projector.inputs[0]?.markdown).not.toContain("Основание:");
     expect(projector.inputs[0]?.markdown).not.toContain("turn:v1:internal");
+    expect(projector.inputs[0]?.transcriptAttachment).toEqual({
+      content: [
+        "# Meeting transcript",
+        "",
+        "_Final transcript based on the meeting recording._",
+        "",
+        "## `00:18-00:25` · <@1533228054724346087>",
+        "",
+        "Проверю Discord thread и Redis queue.",
+      ].join("\n"),
+      filename: "meeting-transcript.md",
+    });
+    expect(projector.inputs[0]?.transcriptAttachment?.content).not.toContain(
+      "turn:v1:internal",
+    );
   });
 
   it("orders final topics by their earliest valid evidence timestamp", () => {
@@ -348,7 +386,62 @@ describe("DiscordSummaryPublicationAdapter", () => {
       expect(timeline).toContain(`<@${speakerId}>`);
     }
     expect(timeline).toContain("`00:10-00:15`");
-    expect(timeline).toContain("_Final transcript based on the meeting recording._");
+    expect(timeline).toContain("Full transcript attached: `meeting-transcript.md`.");
+  });
+
+  it("keeps every final caption in the attachment when the embed is shortened", async () => {
+    const projector = new FakeProjector();
+    const adapter = new DiscordSummaryPublicationAdapter(projector);
+    const turns = Array.from({ length: 45 }, (_, index) => ({
+      endMs: (index + 1) * 1_000,
+      speakerId: `speaker-${index % 6}`,
+      startMs: index * 1_000,
+      text: `Caption ${index}: ${"full source text ".repeat(24)}`,
+      turnId: `internal-turn-${index}`,
+    }));
+
+    await adapter.publish({
+      ...request,
+      transcript: { ...request.transcript, turns: turns.toReversed() },
+    });
+
+    const preview = projector.inputs[0]?.liveCaptionsMarkdown ?? "";
+    const attachment = projector.inputs[0]?.transcriptAttachment;
+    const attachmentContent = attachment?.content ?? "";
+    expect(preview.length).toBeLessThanOrEqual(1_900);
+    expect(preview).not.toContain("captions did not fit.");
+    expect(preview).toContain("available in the attached full transcript.");
+    expect(attachment?.filename).toBe("meeting-transcript.md");
+    expect(attachmentContent).toContain("Caption 0:");
+    expect(attachmentContent).toContain("Caption 44:");
+    expect(attachmentContent).toContain("full source text ".repeat(24).trim());
+    expect(attachmentContent.indexOf("Caption 0:")).toBeLessThan(
+      attachmentContent.indexOf("Caption 44:"),
+    );
+    expect(attachmentContent).not.toContain("internal-turn-");
+
+    const payload = toDiscordMessagePayload({
+      markdown: "# Meeting summary",
+      transcriptAttachment: attachment!,
+    });
+    const file = payload.files?.[0];
+    expect(file).toMatchObject({ name: "meeting-transcript.md" });
+    if (typeof file !== "object" || !("attachment" in file)) {
+      throw new Error("expected a Discord attachment payload");
+    }
+    const payloadAttachment = file as { readonly attachment: Buffer };
+    expect(Buffer.isBuffer(payloadAttachment.attachment)).toBe(true);
+    expect(payloadAttachment.attachment.toString("utf8")).toBe(attachmentContent);
+  });
+
+  it("rejects an attachment above the conservative Discord upload limit without truncating it", () => {
+    expect(discordProjectionBodySchema.safeParse({
+      markdown: "# Meeting summary",
+      transcriptAttachment: {
+        content: "a".repeat(DISCORD_TRANSCRIPT_ATTACHMENT_MAX_BYTES + 1),
+        filename: "meeting-transcript.md",
+      },
+    }).success).toBe(false);
   });
 
   it("renders explicit empty states instead of omitting sections", async () => {

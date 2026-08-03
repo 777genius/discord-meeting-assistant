@@ -25,13 +25,15 @@ const discordTimelineDescriptionLimit = 1_900;
 const maximumTimelineEntryCodeUnits = 320;
 const maximumTimelineEntryGraphemes = 280;
 
+export const finalTranscriptAttachmentFilename = "meeting-transcript.md";
+
 const liveTimeline = {
   footer: "_✓ - finalized; … - being refined. History remains until final reconciliation._",
   heading: "## 🎙️ Meeting captions",
 } as const;
 
 const finalTimeline = {
-  footer: "_Final transcript based on the meeting recording._",
+  footer: `_Final transcript based on the meeting recording. Full transcript attached: \`${finalTranscriptAttachmentFilename}\`._`,
   heading: "## 🗣️ Meeting transcript",
 } as const;
 
@@ -46,9 +48,7 @@ export function renderRussianTranscriptTimelineMarkdown(
   kind: DiscordTranscriptTimelineKind,
 ): string {
   const frame = kind === "live" ? liveTimeline : finalTimeline;
-  const orderedEntries = entries
-    .filter(({ text }) => text.trim().length > 0)
-    .toSorted(compareTimelineEntries);
+  const orderedEntries = orderedTranscriptEntries(entries);
 
   if (orderedEntries.length === 0) {
     return [
@@ -63,6 +63,38 @@ export function renderRussianTranscriptTimelineMarkdown(
   const budget = discordTimelineDescriptionLimit - frame.heading.length - frame.footer.length - 4;
   const body = selectTimelineEntries(orderedEntries, budget, kind);
   return [frame.heading, "", ...body, "", frame.footer].join("\n");
+}
+
+/**
+ * Produces the complete, human-readable authoritative transcript for the
+ * attachment on the final summary message. It intentionally does not inherit
+ * Discord's embed-description limit and never exposes internal evidence IDs.
+ */
+export function renderRussianFinalTranscriptAttachmentMarkdown(
+  entries: readonly DiscordTranscriptTimelineEntry[],
+): string {
+  const orderedEntries = orderedTranscriptEntries(entries);
+  const lines = [
+    "# Meeting transcript",
+    "",
+    "_Final transcript based on the meeting recording._",
+  ];
+
+  if (orderedEntries.length === 0) {
+    lines.push("", "No transcript turns were recorded.");
+    return lines.join("\n");
+  }
+
+  for (const entry of orderedEntries) {
+    const interval = `${formatDiscordTimestamp(entry.startMs)}-${formatDiscordTimestamp(entry.endMs)}`;
+    lines.push(
+      "",
+      `## \`${interval}\` · ${formatDiscordSpeaker(entry.speakerId)}`,
+      "",
+      escapeTranscriptAttachmentMarkdown(entry.text),
+    );
+  }
+  return lines.join("\n");
 }
 
 function selectTimelineEntries(
@@ -99,7 +131,7 @@ function selectTimelineEntries(
   const tail: string[] = [];
   for (let index = entries.length - 1; index >= 1; index -= 1) {
     const omittedCount = index - 1;
-    const candidate = [first, collapsedHistoryNotice(omittedCount), renderAt(index), ...tail];
+    const candidate = [first, collapsedHistoryNotice(omittedCount, kind), renderAt(index), ...tail];
     if (candidate.join("\n").length > budget) {
       break;
     }
@@ -108,17 +140,28 @@ function selectTimelineEntries(
 
   if (tail.length > 0) {
     const omittedCount = entries.length - tail.length - 1;
-    return [first, collapsedHistoryNotice(omittedCount), ...tail];
+    return [first, collapsedHistoryNotice(omittedCount, kind), ...tail];
   }
 
-  const firstBudget = Math.max(1, budget - collapsedHistoryNotice(entries.length - 1).length - 1);
+  const firstBudget = Math.max(
+    1,
+    budget - collapsedHistoryNotice(entries.length - 1, kind).length - 1,
+  );
   return [
     truncateTimelineLine(first, firstBudget),
-    collapsedHistoryNotice(entries.length - 1),
+    collapsedHistoryNotice(entries.length - 1, kind),
   ];
 }
 
-function collapsedHistoryNotice(omittedCount: number): string {
+function collapsedHistoryNotice(
+  omittedCount: number,
+  kind: DiscordTranscriptTimelineKind,
+): string {
+  if (kind === "final") {
+    return omittedCount <= 0
+      ? `_… Full transcript attached: \`${finalTranscriptAttachmentFilename}\`._`
+      : `_… ${omittedCount} captions are available in the attached full transcript._`;
+  }
   return omittedCount <= 0
     ? "_… Captions were shortened due to Discord's limit._"
     : `_… ${omittedCount} captions did not fit. Showing the beginning and most recent captions._`;
@@ -131,15 +174,32 @@ function renderTimelineEntry(
   const state = kind === "live" && entry.isFinal === false ? "…" : "✓";
   const interval = `${formatDiscordTimestamp(entry.startMs)}-${formatDiscordTimestamp(entry.endMs)}`;
   const text = escapeDiscordMarkdown(
-    truncateDiscordGraphemes(
-      entry.text.trim().replaceAll(/\s+/gu, " "),
-      maximumTimelineEntryGraphemes,
-    ),
+    truncateDiscordGraphemes(normalizeTranscriptText(entry.text), maximumTimelineEntryGraphemes),
   );
   return truncateTimelineLine(
     `${state} \`${interval}\` **${formatDiscordSpeaker(entry.speakerId)}:** ${text}`,
     maximumTimelineEntryCodeUnits,
   );
+}
+
+function orderedTranscriptEntries(
+  entries: readonly DiscordTranscriptTimelineEntry[],
+): readonly DiscordTranscriptTimelineEntry[] {
+  return entries
+    .filter(({ text }) => text.trim().length > 0)
+    .toSorted(compareTimelineEntries);
+}
+
+function normalizeTranscriptText(value: string): string {
+  return value.trim().replaceAll(/\s+/gu, " ");
+}
+
+function escapeTranscriptAttachmentMarkdown(value: string): string {
+  return value
+    .trim()
+    .split(/\r?\n/gu)
+    .map((line) => escapeDiscordMarkdown(line).replaceAll("#", "\\#"))
+    .join("\n");
 }
 
 function truncateTimelineLine(value: string, maximumLength: number): string {

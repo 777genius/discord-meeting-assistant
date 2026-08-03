@@ -6,6 +6,7 @@ export {
   discordProjectionBodySchema,
   DISCORD_EMBED_DESCRIPTION_LIMIT,
   DISCORD_EMBED_DESCRIPTIONS_LIMIT,
+  DISCORD_TRANSCRIPT_ATTACHMENT_MAX_BYTES,
   encodeDiscordExternalPublicationId,
   publishDiscordSummarySchema,
   toDiscordProjectionBody,
@@ -31,6 +32,8 @@ export {
 } from "./discord-live-meeting-projection-adapter.js";
 export {
   renderRussianTranscriptTimelineMarkdown,
+  renderRussianFinalTranscriptAttachmentMarkdown,
+  finalTranscriptAttachmentFilename,
   type DiscordTranscriptTimelineEntry,
   type DiscordTranscriptTimelineKind,
 } from "./discord-transcript-timeline.js";

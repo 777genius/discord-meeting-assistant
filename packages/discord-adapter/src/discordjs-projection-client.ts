@@ -401,6 +401,16 @@ export function toDiscordMessagePayload(rawBody: DiscordProjectionBody, marker?:
         ? []
         : [{ description: body.liveCaptionsMarkdown }]),
     ],
+    // discord.js sends only the supplied file IDs on edit, replacing an older
+    // transcript attachment rather than accumulating retry duplicates.
+    ...(body.transcriptAttachment === undefined
+      ? {}
+      : {
+        files: [{
+          attachment: Buffer.from(body.transcriptAttachment.content, "utf8"),
+          name: body.transcriptAttachment.filename,
+        }],
+      }),
   };
 }
 

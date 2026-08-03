@@ -22,7 +22,11 @@ import {
   truncateDiscordGraphemesByCodeUnits,
 } from "./discord-markdown-formatting.js";
 import { toDiscordPublicationFailure } from "./discord-publication-errors.js";
-import { renderRussianTranscriptTimelineMarkdown } from "./discord-transcript-timeline.js";
+import {
+  finalTranscriptAttachmentFilename,
+  renderRussianFinalTranscriptAttachmentMarkdown,
+  renderRussianTranscriptTimelineMarkdown,
+} from "./discord-transcript-timeline.js";
 
 interface DiscordSummaryProjector {
   publish(input: PublishDiscordSummary): Promise<DiscordProjectionReference>;
@@ -54,6 +58,10 @@ export class DiscordSummaryPublicationAdapter implements SummaryPublicationPort 
         liveCaptionsMarkdown: renderRussianFinalTranscriptTimelineMarkdown(
           request.transcript.turns,
         ),
+        transcriptAttachment: {
+          content: renderRussianFinalTranscriptAttachmentMarkdown(request.transcript.turns),
+          filename: finalTranscriptAttachmentFilename,
+        },
         ...(referenceHint === undefined ? {} : { currentReference: referenceHint }),
       });
       return {

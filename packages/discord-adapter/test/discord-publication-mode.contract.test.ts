@@ -441,5 +441,34 @@ describe("Discord publication container modes", () => {
     });
     expect(client.channelMessages.size).toBe(1);
     expect(client.threads.size).toBe(0);
+    const initialReference = decodeDiscordExternalPublicationId(
+      liveResult.value.externalPublicationId,
+    );
+    const message = initialReference?.kind === "channel-message"
+      ? client.channelMessages.get(initialReference.messageId)
+      : undefined;
+    expect(message?.body.transcriptAttachment).toEqual({
+      content: [
+        "# Meeting transcript",
+        "",
+        "_Final transcript based on the meeting recording._",
+        "",
+        "## `00:01-00:04` · speaker-a",
+        "",
+        "Согласуем выпуск.",
+      ].join("\n"),
+      filename: "meeting-transcript.md",
+    });
+
+    const retry = await final.publish({
+      ...finalRequest,
+      currentExternalPublicationId: finalResult.ok
+        ? finalResult.value.externalPublicationId
+        : null,
+    });
+    expect(retry).toEqual(finalResult);
+    expect(client.channelMessages.size).toBe(1);
+    expect(client.threads.size).toBe(0);
+    expect(client.editMessageCount).toBeGreaterThanOrEqual(2);
   });
 });
