@@ -249,6 +249,67 @@ describe("PostgresGuildConfigurationRepository", () => {
     expect((await repository.findByGuildId(initial.guildId))?.revision).toBe(1);
   });
 
+  it("lists only active guild voice channels in deterministic guild order", async (context) => {
+    const database = databaseOrSkip(context);
+    const repository = new PostgresGuildConfigurationRepository(database);
+    const configurations = [
+      GuildConfiguration.configure({
+        configuredByUserId: "11111111111111111",
+        guildId: "33333333333333333",
+        resultsChannelId: "44444444444444444",
+        voiceChannelId: "55555555555555555",
+      }),
+      GuildConfiguration.configure({
+        configuredByUserId: "11111111111111111",
+        guildId: "11111111111111111",
+        resultsChannelId: "22222222222222222",
+        voiceChannelId: "33333333333333333",
+      }),
+      GuildConfiguration.configure({
+        configuredByUserId: "11111111111111111",
+        guildId: "22222222222222222",
+        resultsChannelId: "33333333333333333",
+        voiceChannelId: "44444444444444444",
+      }),
+    ];
+    for (const configuration of configurations) {
+      await repository.save(configuration.toSnapshot(), null);
+    }
+    await database.query(
+      `
+        INSERT INTO guild_configuration.guild_installations (guild_id, revision, snapshot)
+        VALUES ($1, $2, $3::jsonb)
+      `,
+      [
+        "99999999999999999",
+        0,
+        {
+          configuredByUserId: "11111111111111111",
+          guildId: "99999999999999999",
+          resultsChannelId: "22222222222222222",
+          revision: 0,
+          status: "inactive",
+          voiceChannelId: "33333333333333333",
+        },
+      ],
+    );
+
+    expect(await repository.listActiveGuildVoiceChannels()).toEqual([
+      {
+        guildId: "11111111111111111",
+        voiceChannelId: "33333333333333333",
+      },
+      {
+        guildId: "22222222222222222",
+        voiceChannelId: "44444444444444444",
+      },
+      {
+        guildId: "33333333333333333",
+        voiceChannelId: "55555555555555555",
+      },
+    ]);
+  });
+
   it("reports insert and update conflicts without overwriting", async (context) => {
     const repository = new PostgresGuildConfigurationRepository(databaseOrSkip(context));
     const initial = configuredGuild();

@@ -21,7 +21,8 @@ import { createProjectionMarkerUrl } from "./projection-marker.js";
 
 const UNKNOWN_CHANNEL = 10_003;
 const UNKNOWN_MESSAGE = 10_008;
-const PROJECTION_FOOTER = "Meeting Platform · итог встречи";
+const PROJECTION_FOOTER = "Meeting Platform · meeting summary";
+const LEGACY_PROJECTION_FOOTER = "Meeting Platform · итог встречи";
 const maximumDirectMessageHistoryPages = 5;
 const maximumRecentThreadRecoveryCandidates = 10;
 
@@ -376,7 +377,9 @@ function hasProjectionMarker(
   return message.embeds.some((embed) =>
     embed.url === createProjectionMarkerUrl(marker) ||
     embed.footer?.text === marker ||
-    (allowLegacyFooter && embed.footer?.text === PROJECTION_FOOTER)
+    (allowLegacyFooter &&
+      (embed.footer?.text === PROJECTION_FOOTER ||
+        embed.footer?.text === LEGACY_PROJECTION_FOOTER))
   );
 }
 

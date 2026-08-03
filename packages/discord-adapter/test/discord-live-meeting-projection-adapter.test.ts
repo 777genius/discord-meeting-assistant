@@ -103,11 +103,11 @@ describe("DiscordLiveMeetingProjectionAdapter", () => {
         messageId: "33333333333333333",
       },
     });
-    expect(projector.inputs[0]?.markdown).toContain("## Предварительное саммари");
-    expect(projector.inputs[0]?.liveCaptionsMarkdown).toContain("## 🎙️ Реплики встречи");
+    expect(projector.inputs[0]?.markdown).toContain("## Live summary");
+    expect(projector.inputs[0]?.liveCaptionsMarkdown).toContain("## 🎙️ Meeting captions");
     expect(projector.inputs[0]?.liveCaptionsMarkdown).toContain("<@1533228054724346087>");
     expect(projector.inputs[0]?.liveCaptionsMarkdown).toContain("`00:05-00:08`");
-    expect(projector.inputs[0]?.threadTitle).toBe("Встреча · 2025-10-09 08:48 UTC");
+    expect(projector.inputs[0]?.threadTitle).toBe("Meeting · 2025-10-09 08:48 UTC");
   });
 
   it("keeps the deterministic meeting start in the live title after a summary update", async () => {
@@ -118,8 +118,8 @@ describe("DiscordLiveMeetingProjectionAdapter", () => {
     await adapter.publish(request);
 
     expect(projector.inputs.map(({ threadTitle }) => threadTitle)).toEqual([
-      "Встреча · 2025-10-09 08:48 UTC",
-      "Встреча · 2025-10-09 08:48 UTC",
+      "Meeting · 2025-10-09 08:48 UTC",
+      "Meeting · 2025-10-09 08:48 UTC",
     ]);
   });
 
@@ -133,7 +133,7 @@ describe("DiscordLiveMeetingProjectionAdapter", () => {
       summary: null,
     });
 
-    expect(projector.inputs[0]?.threadTitle).toBe("Встреча");
+    expect(projector.inputs[0]?.threadTitle).toBe("Meeting");
   });
 
   it("shows a clear placeholder while a live summary is not ready", () => {
@@ -143,8 +143,8 @@ describe("DiscordLiveMeetingProjectionAdapter", () => {
       summary: null,
     });
 
-    expect(markdown).toContain("Первые выводы появятся после первых минут разговора.");
-    expect(markdown).toContain("_Длительность: 05:00_");
+    expect(markdown).toContain("Initial insights will appear after the first few minutes.");
+    expect(markdown).toContain("_Duration: 05:00_");
   });
 
   it("bounds Unicode captions and summary descriptions without splitting surrogate pairs", () => {
@@ -165,8 +165,8 @@ describe("DiscordLiveMeetingProjectionAdapter", () => {
     expect(summary.length).toBeLessThanOrEqual(4_000);
     expect(hasLoneSurrogate(captions)).toBe(false);
     expect(hasLoneSurrogate(summary)).toBe(false);
-    expect(captions).toContain("🎙️ Реплики встречи");
-    expect(summary).toContain("Предварительное саммари сокращено из-за лимита Discord.");
+    expect(captions).toContain("🎙️ Meeting captions");
+    expect(summary).toContain("Live summary was shortened due to Discord's limit.");
   });
 
   it("keeps finalized history and attributes a third Discord participant", () => {
@@ -197,7 +197,7 @@ describe("DiscordLiveMeetingProjectionAdapter", () => {
     expect(history).toContain("✓ `00:00-00:04` **<@1533227577286852649>:** Открываю обсуждение.");
     expect(history).toContain("✓ `00:05-00:09` **<@1533228054724346087>:** Проверю очередь.");
     expect(history).toContain("… `00:10-00:15` **<@1533775868567224456>:** Подготовлю выпуск...");
-    expect(history).not.toContain("Пока нет распознанных реплик.");
+    expect(history).not.toContain("No captions recognized yet.");
   });
 
   it("deterministically keeps the beginning and newest transcript history within Discord limits", () => {
@@ -216,8 +216,8 @@ describe("DiscordLiveMeetingProjectionAdapter", () => {
     expect(first.length).toBeLessThanOrEqual(1_900);
     expect(first).toContain("Реплика 0:");
     expect(first).toContain("Реплика 39:");
-    expect(first).toContain("Не поместилось реплик:");
-    expect(first).toContain("Показаны начало и последние.");
+    expect(first).toContain("captions did not fit.");
+    expect(first).toContain("Showing the beginning and most recent captions.");
     expect(hasLoneSurrogate(first)).toBe(false);
   });
 

@@ -43,10 +43,10 @@ describe("Discord guild install URLs", () => {
   });
 });
 
-describe("/setup command contract", () => {
+describe("/setup-voice-bot command contract", () => {
   it("is guild-install only and defaults to Manage Guild", () => {
     const command = discordGuildSetupCommand.toJSON();
-    expect(command.name).toBe("setup");
+    expect(command.name).toBe("setup-voice-bot");
     expect(command.default_member_permissions).toBe(
       PermissionFlagsBits.ManageGuild.toString(),
     );
@@ -54,16 +54,22 @@ describe("/setup command contract", () => {
       "voice-channel",
       "results-channel",
     ]);
+    expect(command.description_localizations).toBeUndefined();
+    expect(command.options?.every((option) =>
+      option.description_localizations === undefined && option.name_localizations === undefined
+    )).toBe(true);
   });
 
   it("repairs guild-install and context drift without bulk command replacement", async () => {
     const expected = discordGuildSetupCommand.toJSON();
     const edit = vi.fn(async () => ({}));
     const create = vi.fn(async () => ({}));
+    const remove = vi.fn(async () => ({}));
     const client = {
       application: {
         commands: {
           create,
+          delete: remove,
           edit,
           fetch: () => Promise.resolve([{
             id: "77777777777777777",
@@ -78,8 +84,51 @@ describe("/setup command contract", () => {
     await registerDiscordGuildSetupCommand(client);
 
     expect(create).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
     expect(edit).toHaveBeenCalledOnce();
     expect(edit).toHaveBeenCalledWith("77777777777777777", expected);
+  });
+
+  it("creates the replacement before deleting only this app's legacy /setup command", async () => {
+    const expected = discordGuildSetupCommand.toJSON();
+    const calls: string[] = [];
+    const create = vi.fn(async () => {
+      calls.push("create");
+      return {};
+    });
+    const remove = vi.fn(async (id: string) => {
+      calls.push(`delete:${id}`);
+      return {};
+    });
+    const client = {
+      application: {
+        commands: {
+          create,
+          delete: remove,
+          edit: vi.fn(async () => ({})),
+          fetch: () => Promise.resolve([
+            {
+              id: "legacy-setup",
+              name: "setup",
+              toJSON: () => ({ name: "setup" }),
+            },
+            {
+              id: "unrelated-command",
+              name: "status",
+              toJSON: () => ({ name: "status" }),
+            },
+          ]),
+        },
+      },
+      isReady: () => true,
+    } as unknown as Client;
+
+    await registerDiscordGuildSetupCommand(client);
+
+    expect(create).toHaveBeenCalledWith(expected);
+    expect(remove).toHaveBeenCalledOnce();
+    expect(remove).toHaveBeenCalledWith("legacy-setup");
+    expect(calls).toEqual(["create", "delete:legacy-setup"]);
   });
 });
 
@@ -192,7 +241,7 @@ describe("DiscordGuildSetupAdapter", () => {
     expect(send).toHaveBeenCalledOnce();
     expect(sent[0]?.enforceNonce).toBe(true);
     expect(sent[0]?.nonce).toMatch(/^[0-9a-f]{25}$/u);
-    expect(sent[0]?.embeds[0]?.data.title).toBe("Проверка канала Meeting Assistant");
+    expect(sent[0]?.embeds[0]?.data.title).toBe("Meeting Assistant channel check");
   });
 });
 
@@ -206,7 +255,7 @@ describe("DiscordGuildSetupCommandHandler", () => {
     }, "https://discord.com/oauth2/authorize?client_id=22222222222222222", onError);
     handler.start();
     (client as unknown as EventEmitter).emit("interactionCreate", {
-      commandName: "setup",
+      commandName: "setup-voice-bot",
       deferReply: vi.fn(async () => ({})),
       deferred: true,
       editReply,
@@ -224,10 +273,49 @@ describe("DiscordGuildSetupCommandHandler", () => {
     await vi.waitFor(() => {
       expect(onError).toHaveBeenCalledOnce();
       expect(editReply).toHaveBeenCalledWith({
-        content: "Не удалось завершить настройку. Попробуйте /setup ещё раз.",
+        content: "Setup could not be completed. Please run /setup-voice-bot again.",
       });
     });
     handler.close();
+  });
+
+  it("confirms that recording starts automatically after setup", async () => {
+    const deferReply = vi.fn(async () => ({}));
+    const editReply = vi.fn(async () => ({}));
+    const handler = new DiscordGuildSetupCommandHandler(new EventEmitter() as unknown as Client, {
+      execute: async () => ({
+        configuration: {
+          configuredByUserId: ids.actor,
+          guildId: ids.guild,
+          resultsChannelId: ids.results,
+          revision: 0,
+          status: "active",
+          voiceChannelId: ids.voice,
+        },
+        idempotencyKey: "guild-setup:v1|candidate-a",
+        status: "configured",
+      }),
+    }, "https://discord.com/oauth2/authorize?client_id=22222222222222222");
+
+    await handler.handle({
+      commandName: "setup-voice-bot",
+      deferReply,
+      editReply,
+      guildId: ids.guild,
+      isChatInputCommand: () => true,
+      memberPermissions: new PermissionsBitField(PermissionFlagsBits.ManageGuild),
+      options: {
+        getChannel: (name: string) => ({
+          id: name === "voice-channel" ? ids.voice : ids.results,
+        }),
+      },
+      user: { id: ids.actor },
+    } as unknown as Parameters<DiscordGuildSetupCommandHandler["handle"]>[0]);
+
+    expect(deferReply).toHaveBeenCalledOnce();
+    expect(editReply).toHaveBeenCalledWith({
+      content: "✅ Setup complete. Permissions were verified, a test message was posted, and settings were saved. Recording starts automatically when people join the selected voice channel.",
+    });
   });
 });
 import { EventEmitter } from "node:events";

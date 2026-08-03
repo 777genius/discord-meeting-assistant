@@ -459,7 +459,7 @@ describe("DiscordSummaryPublisher contract", () => {
     expect(client.createMessageCount).toBe(1);
     expect(client.threads[0]?.message?.body.markdown).toContain("Выпуск согласован.");
     expect(client.threads[0]?.message?.body.liveCaptionsMarkdown).toContain(
-      "## 🗣️ Расшифровка встречи",
+      "## 🗣️ Meeting transcript",
     );
     expect(client.threads[0]?.message?.body.liveCaptionsMarkdown).toContain(
       "✓ `00:05-00:08` **speaker-a:** Обсуждаем выпуск.",

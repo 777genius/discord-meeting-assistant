@@ -65,14 +65,14 @@ export function renderRussianLiveSummaryMarkdown(
 ): string {
   if (request.summary === null) {
     return boundLiveSummary([
-      "# Встреча в процессе",
+      "# Meeting in progress",
       "",
-      "## Предварительное саммари",
+      "## Live summary",
       request.status === "ended"
-        ? "Звонок завершён, готовим финальное саммари по полной записи."
-        : "Первые выводы появятся после первых минут разговора. Пока бот показывает live-субтитры.",
+        ? "The call has ended. Preparing the final summary from the complete recording."
+        : "Initial insights will appear after the first few minutes. The bot is showing live captions in the meantime.",
       "",
-      `_Длительность: ${formatDiscordTimestamp(request.elapsedMs)}_`,
+      `_Duration: ${formatDiscordTimestamp(request.elapsedMs)}_`,
     ]);
   }
 
@@ -80,47 +80,47 @@ export function renderRussianLiveSummaryMarkdown(
   return boundLiveSummary([
     `# ${normalizeInline(summary.title)}`,
     "",
-    "## Предварительное саммари",
+    "## Live summary",
     summary.overview.trim(),
     "",
-    "## Основные темы",
+    "## Key topics",
     ...numberedOrEmpty(
       summary.topics.map((topic) => [
         topic.title.trim(),
         ...topic.points.map((point) => point.trim()),
       ]),
-      "Основные темы пока не выделены.",
+      "No key topics have been identified yet.",
     ),
     "",
-    "## Решения",
+    "## Decisions",
     ...numberedOrEmpty(
       summary.decisions.map((decision) => [decision.text.trim()]),
-      "Зафиксированных решений пока нет.",
+      "No decisions have been recorded yet.",
     ),
     "",
-    "## Задачи",
+    "## Action items",
     ...numberedOrEmpty(
       summary.actionItems.map((actionItem) => [
         actionItem.text.trim(),
-        `Ответственный: ${
+        `Owner: ${
           actionItem.ownerSpeakerId === null
-            ? "не назначен"
+            ? "unassigned"
             : formatDiscordSpeaker(actionItem.ownerSpeakerId)
         }`,
-        `Срок: ${actionItem.deadline === null ? "не указан" : actionItem.deadline.trim()}`,
+        `Due: ${actionItem.deadline === null ? "not specified" : actionItem.deadline.trim()}`,
       ]),
-      "Зафиксированных задач пока нет.",
+      "No action items have been recorded yet.",
     ),
     "",
-    "## Открытые вопросы",
+    "## Open questions",
     ...numberedOrEmpty(
       summary.openQuestions.map((question) => [question.text.trim()]),
-      "Открытых вопросов пока нет.",
+      "No open questions have been recorded yet.",
     ),
     "",
     request.status === "ended"
-      ? "_Звонок завершён. Это предварительная версия до финальной сверки._"
-      : `_Обновляется во время встречи · ${formatDiscordTimestamp(request.elapsedMs)}_`,
+      ? "_The call has ended. This is a preliminary version pending final review._"
+      : `_Updates during the meeting · ${formatDiscordTimestamp(request.elapsedMs)}_`,
   ]);
 }
 
@@ -141,7 +141,7 @@ function currentReference(
 function liveThreadTitle(
   request: Pick<LiveMeetingProjectionRequest, "elapsedMs" | "updatedAtMs">,
 ): string {
-  return formatLiveMeetingStartUtc(request.updatedAtMs, request.elapsedMs) ?? "Встреча";
+  return formatLiveMeetingStartUtc(request.updatedAtMs, request.elapsedMs) ?? "Meeting";
 }
 
 function formatLiveMeetingStartUtc(updatedAtMs: number, elapsedMs: number): string | undefined {
@@ -161,7 +161,7 @@ function formatLiveMeetingStartUtc(updatedAtMs: number, elapsedMs: number): stri
     return undefined;
   }
   return [
-    "Встреча ·",
+    "Meeting ·",
     `${startedAt.getUTCFullYear()}-${padUtc(startedAt.getUTCMonth() + 1)}-${padUtc(startedAt.getUTCDate())}`,
     `${padUtc(startedAt.getUTCHours())}:${padUtc(startedAt.getUTCMinutes())}`,
     "UTC",
@@ -178,7 +178,7 @@ function boundLiveSummary(lines: readonly string[]): string {
     return body;
   }
 
-  const suffix = "\n\n_Предварительное саммари сокращено из-за лимита Discord._";
+  const suffix = "\n\n_Live summary was shortened due to Discord's limit._";
   const shortened = truncateDiscordCodeUnits(
     body,
     Math.max(0, liveSummaryDescriptionLimit - suffix.length - 1),

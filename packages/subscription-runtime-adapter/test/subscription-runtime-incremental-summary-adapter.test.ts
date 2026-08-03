@@ -226,6 +226,7 @@ describe("SubscriptionRuntimeIncrementalSummaryAdapter", () => {
     expect(captured.task.systemPrompt).toContain("Previous summary is editable context");
     expect(captured.task.systemPrompt).toContain("untrusted quoted evidence");
     expect(captured.task.systemPrompt).toContain("overview exactly one short sentence");
+    expect(captured.task.systemPrompt).toContain("natural English");
     expect(captured.task.outputSchemaName).toBe(
       incrementalMeetingSummaryOutputSchemaName,
     );
@@ -233,7 +234,7 @@ describe("SubscriptionRuntimeIncrementalSummaryAdapter", () => {
       "6d9479e46e2f995c44871703664eb1a6965ac6f8cfb1f227d5f6795d003cbd28",
     );
     expect(createHash("sha256").update(captured.task.systemPrompt).digest("hex")).toBe(
-      "f0864d39e427e0b51527d93467e125e11d3c325481c29ccaff07503d4ae9fcba",
+      "95d3a777915af6115cab9586cda80e2d4966b4451dbcdfc1e167b2c6ef0441ac",
     );
     expect(captured.task.systemPrompt).toContain("selective live snapshot");
     expect(captured.task.systemPrompt).toContain("at most three topics");
@@ -481,7 +482,7 @@ function createAdapter(
 ): SubscriptionRuntimeIncrementalSummaryAdapter {
   return new SubscriptionRuntimeIncrementalSummaryAdapter(transport, {
     expectedLauncherSha256: launcherSha256,
-    outputLanguage: "ru",
+    outputLanguage: "English",
   });
 }
 

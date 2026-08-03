@@ -26,13 +26,13 @@ const maximumTimelineEntryCodeUnits = 320;
 const maximumTimelineEntryGraphemes = 280;
 
 const liveTimeline = {
-  footer: "_✓ - распознано; … - уточняется. История остаётся до финальной сверки._",
-  heading: "## 🎙️ Реплики встречи",
+  footer: "_✓ - finalized; … - being refined. History remains until final reconciliation._",
+  heading: "## 🎙️ Meeting captions",
 } as const;
 
 const finalTimeline = {
-  footer: "_Финальная расшифровка по записи встречи._",
-  heading: "## 🗣️ Расшифровка встречи",
+  footer: "_Final transcript based on the meeting recording._",
+  heading: "## 🗣️ Meeting transcript",
 } as const;
 
 /**
@@ -54,7 +54,7 @@ export function renderRussianTranscriptTimelineMarkdown(
     return [
       frame.heading,
       "",
-      "Пока нет распознанных реплик.",
+      "No captions recognized yet.",
       "",
       frame.footer,
     ].join("\n");
@@ -120,8 +120,8 @@ function selectTimelineEntries(
 
 function collapsedHistoryNotice(omittedCount: number): string {
   return omittedCount <= 0
-    ? "_… реплики сокращены из-за лимита Discord._"
-    : `_… Не поместилось реплик: ${omittedCount}. Показаны начало и последние._`;
+    ? "_… Captions were shortened due to Discord's limit._"
+    : `_… ${omittedCount} captions did not fit. Showing the beginning and most recent captions._`;
 }
 
 function renderTimelineEntry(

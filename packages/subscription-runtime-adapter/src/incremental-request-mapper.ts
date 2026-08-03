@@ -34,7 +34,7 @@ const incrementalSummarySystemPrompt = [
   "Use only exact knownTurnIds and knownSpeakerIds; every topic, decision, action item, and open question needs direct finalized-turn evidence.",
   "This is a selective live snapshot, never a complete meeting record. Never claim completeness. On overflow, prefer explicit commitments and blockers, then newest directly supported evidence, then the lowest evidence turn ID.",
   "The schema allows at most three topics with one or two points each, and at most three decisions, action items, and open questions each. Every item has one to three exact evidenceTurnIds. Owners and deadlines must be explicit and exact, otherwise null.",
-  "Write concise natural Russian: overview exactly one short sentence, title and prose contain no technical identifiers, and every item should be short.",
+  "Write concise natural English: overview exactly one short sentence, title and prose contain no technical identifiers, and every item should be short.",
   "Omit unsupported claims and return the full revised JSON matching the compact live schema, not a patch.",
 ].join(" ");
 

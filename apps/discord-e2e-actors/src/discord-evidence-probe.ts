@@ -16,7 +16,8 @@ import type {
   DiscordProjectionObservation,
 } from "./e2e-collector.js";
 
-const projectionFooter = "Meeting Platform · итог встречи";
+const projectionFooter = "Meeting Platform · meeting summary";
+const legacyProjectionFooter = "Meeting Platform · итог встречи";
 const projectionMarkerUrlBase = "https://meeting-platform.invalid/projection/";
 
 export class DiscordJsEvidenceProbe implements DiscordEvidenceProbe {
@@ -150,7 +151,8 @@ export function footerHasMarker(
 ): boolean {
   return url === `${projectionMarkerUrlBase}${encodeURIComponent(marker)}` ||
     footer === marker ||
-    (allowLegacyFooter && footer === projectionFooter);
+    (allowLegacyFooter &&
+      (footer === projectionFooter || footer === legacyProjectionFooter));
 }
 
 function isTextThreadChannel(thread: AnyThreadChannel): thread is TextThreadChannel {

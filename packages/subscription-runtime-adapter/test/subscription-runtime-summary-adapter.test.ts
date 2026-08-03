@@ -183,6 +183,7 @@ describe("SubscriptionRuntimeSummaryAdapter", () => {
     });
     expect(captured.task.systemPrompt).toContain("untrusted quoted evidence");
     expect(captured.task.systemPrompt).toContain("exact deadline wording");
+    expect(captured.task.systemPrompt).toContain("natural English");
     expect(captured.task.systemPrompt).toContain("Consolidate related first-person commitments");
     expect(captured.task.systemPrompt).toContain("do not split one commitment into fragments");
     expect(captured.task.controls.outputSchema).toMatchObject({
@@ -486,7 +487,7 @@ function createAdapter(
 ): SubscriptionRuntimeSummaryAdapter {
   return new SubscriptionRuntimeSummaryAdapter(transport, {
     expectedLauncherSha256: launcherSha256,
-    outputLanguage: "ru",
+    outputLanguage: "English",
   });
 }
 

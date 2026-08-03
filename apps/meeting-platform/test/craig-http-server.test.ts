@@ -26,6 +26,11 @@ afterEach(async () => {
 
 async function startServer(
   overrides: {
+    readonly activeGuildVoiceChannels?: readonly {
+      readonly guildId: string;
+      readonly voiceChannelId: string;
+    }[];
+    readonly configurationError?: Error;
     readonly installUrls?: { readonly craig: string; readonly meetingPlatform: string };
     readonly lifecycleError?: Error;
     readonly onInternalError?: (error: unknown) => void;
@@ -38,8 +43,15 @@ async function startServer(
   }
   const ingestVoiceBatch = vi.fn(async () => {});
   const ingestAuthoritativeTrack = vi.fn(async () => ({ replayed: false }));
+  const listActiveGuildVoiceChannels = vi.fn(async () => {
+    if (overrides.configurationError !== undefined) {
+      throw overrides.configurationError;
+    }
+    return overrides.activeGuildVoiceChannels ?? [];
+  });
   const server = createCraigHttpServer({
     bearerToken: token,
+    configuration: { listActiveGuildVoiceChannels },
     health: {
       metrics: () => "meeting_ingress_accepted_total 1\n",
       readiness: async () => ({ ready: overrides.ready ?? true }),
@@ -59,10 +71,82 @@ async function startServer(
     ingestLifecycle,
     ingestAuthoritativeTrack,
     ingestVoiceBatch,
+    listActiveGuildVoiceChannels,
   };
 }
 
 describe("Craig HTTP ingress", () => {
+  it("returns a versioned, deterministic active guild voice-channel snapshot", async () => {
+    const context = await startServer({
+      activeGuildVoiceChannels: [
+        {
+          guildId: "33333333333333333",
+          voiceChannelId: "88888888888888888",
+        },
+        {
+          guildId: "11111111111111111",
+          voiceChannelId: "99999999999999999",
+        },
+        {
+          guildId: "22222222222222222",
+          voiceChannelId: "77777777777777777",
+        },
+      ],
+    });
+
+    const response = await fetch(`${context.baseUrl}/v1/craig/configuration`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.json()).toEqual({
+      channels: [
+        {
+          guildId: "11111111111111111",
+          voiceChannelId: "99999999999999999",
+        },
+        {
+          guildId: "22222222222222222",
+          voiceChannelId: "77777777777777777",
+        },
+        {
+          guildId: "33333333333333333",
+          voiceChannelId: "88888888888888888",
+        },
+      ],
+      schemaVersion: 1,
+    });
+    expect(context.listActiveGuildVoiceChannels).toHaveBeenCalledOnce();
+  });
+
+  it("rejects configuration reads without a valid bearer before querying state", async () => {
+    const context = await startServer();
+
+    const missingBearer = await fetch(`${context.baseUrl}/v1/craig/configuration`);
+    const wrongBearer = await fetch(`${context.baseUrl}/v1/craig/configuration`, {
+      headers: { authorization: "Bearer incorrect-token" },
+    });
+
+    expect(missingBearer.status).toBe(401);
+    expect(wrongBearer.status).toBe(401);
+    expect(context.listActiveGuildVoiceChannels).not.toHaveBeenCalled();
+  });
+
+  it("fails configuration reads closed without disclosing repository failures", async () => {
+    const cause = new Error("private database detail");
+    const onInternalError = vi.fn();
+    const context = await startServer({ configurationError: cause, onInternalError });
+
+    const response = await fetch(`${context.baseUrl}/v1/craig/configuration`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ code: "INTERNAL_ERROR" });
+    expect(onInternalError).toHaveBeenCalledWith(cause);
+  });
+
   it("redirects both explicit bot installation steps without OAuth token custody", async () => {
     const context = await startServer({
       installUrls: {

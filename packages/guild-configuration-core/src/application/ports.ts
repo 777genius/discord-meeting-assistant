@@ -12,6 +12,19 @@ export interface GuildConfigurationRepository {
   ): Promise<GuildConfigurationSaveResult>;
 }
 
+export interface ActiveGuildVoiceChannel {
+  readonly guildId: string;
+  readonly voiceChannelId: string;
+}
+
+/**
+ * Read model for consumers that need to know which Discord voice channels are
+ * actively configured, without receiving the complete installation aggregate.
+ */
+export interface ActiveGuildVoiceChannelReader {
+  listActiveGuildVoiceChannels(): Promise<readonly ActiveGuildVoiceChannel[]>;
+}
+
 export type GuildSetupFailureCode =
   | "actor-not-authorized"
   | "craig-not-installed"

@@ -41,4 +41,6 @@ The application log includes the direct official Discord install URL, which can
 be linked from any product page without exposing Meeting Platform's private HTTP
 listener. If a reverse proxy is added, expose only `/discord/install` and, for a
 distinct Craig identity, `/discord/install/craig`; do not publish the Craig
-ingress listener itself.
+ingress listener itself. Craig reaches the authenticated
+`GET /v1/craig/configuration` snapshot only on the internal network using the
+existing Craig bearer; do not expose that route publicly.

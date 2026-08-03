@@ -1,5 +1,7 @@
 import {
   GuildConfiguration,
+  type ActiveGuildVoiceChannel,
+  type ActiveGuildVoiceChannelReader,
   type GuildConfigurationRepository,
   type GuildConfigurationSaveResult,
   type GuildConfigurationSnapshot,
@@ -11,6 +13,10 @@ import { CorruptMeetingSnapshotError } from "./errors.js";
 interface StoredGuildConfigurationRow {
   readonly revision: number;
   readonly snapshot: unknown;
+}
+
+interface StoredActiveGuildConfigurationRow extends StoredGuildConfigurationRow {
+  readonly guild_id: string;
 }
 
 function normalize(snapshot: GuildConfigurationSnapshot): GuildConfigurationSnapshot {
@@ -34,7 +40,10 @@ function restore(
   }
 }
 
-export class PostgresGuildConfigurationRepository implements GuildConfigurationRepository {
+export class PostgresGuildConfigurationRepository implements
+  ActiveGuildVoiceChannelReader,
+  GuildConfigurationRepository
+{
   public constructor(private readonly pool: Pool) {}
 
   public async findByGuildId(guildId: string): Promise<GuildConfigurationSnapshot | null> {
@@ -48,6 +57,24 @@ export class PostgresGuildConfigurationRepository implements GuildConfigurationR
     );
     const row = result.rows[0];
     return row === undefined ? null : restore(row, guildId);
+  }
+
+  public async listActiveGuildVoiceChannels(): Promise<readonly ActiveGuildVoiceChannel[]> {
+    const result = await this.pool.query<StoredActiveGuildConfigurationRow>(
+      `
+        SELECT guild_id, revision::float8 AS revision, snapshot
+        FROM guild_configuration.guild_installations
+        WHERE snapshot ->> 'status' = 'active'
+        ORDER BY guild_id ASC
+      `,
+    );
+    return result.rows.map((row) => {
+      const snapshot = restore(row, row.guild_id);
+      return {
+        guildId: snapshot.guildId,
+        voiceChannelId: snapshot.voiceChannelId,
+      };
+    });
   }
 
   public async save(

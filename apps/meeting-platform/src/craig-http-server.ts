@@ -9,6 +9,10 @@ import {
   type AuthoritativeTrackUploadMetadata,
   type VoicePacketBatch,
 } from "@discord-meeting/craig-gateway-contracts";
+import type {
+  ActiveGuildVoiceChannel,
+  ActiveGuildVoiceChannelReader,
+} from "@discord-meeting/guild-configuration-core";
 import { RecordingIngressError } from "@discord-meeting/recording-ingress-adapter";
 import { ZodError } from "zod";
 
@@ -32,6 +36,7 @@ interface PlatformHealthPort {
 
 export interface CraigHttpServerOptions {
   readonly bearerToken: string;
+  readonly configuration: ActiveGuildVoiceChannelReader;
   readonly health: PlatformHealthPort;
   readonly ingress: CraigIngressPort;
   readonly installUrls?: {
@@ -102,6 +107,17 @@ async function handleRequest(
       "x-content-type-options": "nosniff",
     });
     response.end(options.health.metrics());
+    return;
+  }
+  if (request.method === "GET" && url.pathname === "/v1/craig/configuration") {
+    if (!isAuthorized(request.headers.authorization, options.bearerToken)) {
+      sendJson(response, 401, { code: "UNAUTHORIZED" });
+      return;
+    }
+    const channels = (await options.configuration.listActiveGuildVoiceChannels())
+      .toSorted(compareActiveGuildVoiceChannels)
+      .map(({ guildId, voiceChannelId }) => ({ guildId, voiceChannelId }));
+    sendJson(response, 200, { channels, schemaVersion: 1 });
     return;
   }
 
@@ -204,6 +220,19 @@ function isCraigPath(pathname: string): boolean {
     pathname === "/v1/craig/voice-packets" ||
     pathname === "/v1/craig/authoritative-tracks"
   );
+}
+
+function compareActiveGuildVoiceChannels(
+  left: ActiveGuildVoiceChannel,
+  right: ActiveGuildVoiceChannel,
+): number {
+  if (left.guildId !== right.guildId) {
+    return left.guildId < right.guildId ? -1 : 1;
+  }
+  if (left.voiceChannelId !== right.voiceChannelId) {
+    return left.voiceChannelId < right.voiceChannelId ? -1 : 1;
+  }
+  return 0;
 }
 
 function parseAuthoritativeTrackMetadataHeader(

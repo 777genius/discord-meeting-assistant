@@ -71,7 +71,7 @@ export class DiscordGuildSetupAdapter implements
     if (actor === null || !actor.permissions.has(PermissionFlagsBits.ManageGuild)) {
       return failure(
         "actor-not-authorized",
-        "Для настройки требуется право Управление сервером.",
+        "You need the Manage Server permission to configure this server.",
       );
     }
     const [voiceChannel, resultsChannel] = await Promise.all([
@@ -79,10 +79,10 @@ export class DiscordGuildSetupAdapter implements
       guild.channels.fetch(request.resultsChannelId),
     ]);
     if (voiceChannel === null || !isVoiceChannel(voiceChannel)) {
-      return failure("voice-channel-invalid", "Выберите голосовой или Stage-канал.");
+      return failure("voice-channel-invalid", "Select a voice or Stage channel.");
     }
     if (resultsChannel === null || !isResultsChannel(resultsChannel)) {
-      return failure("results-channel-invalid", "Выберите обычный текстовый канал.");
+      return failure("results-channel-invalid", "Select a text or announcement channel.");
     }
     const platformUserId = this.client.user?.id;
     if (
@@ -91,7 +91,7 @@ export class DiscordGuildSetupAdapter implements
     ) {
       return failure(
         "platform-results-permission-missing",
-        "Meeting Assistant не может читать канал результатов, отправлять сообщения или embeds.",
+        "Meeting Assistant cannot view the results channel, send messages, or embed links.",
       );
     }
     const craig = await guild.members.fetch(this.craigBotUserId).catch((error: unknown) => {
@@ -103,13 +103,13 @@ export class DiscordGuildSetupAdapter implements
     if (craig === null) {
       return failure(
         "craig-not-installed",
-        "Сначала установите отдельный Craig Voice Gateway.",
+        "Install the separate Craig Voice Gateway first.",
       );
     }
     if (!hasAllPermissions(voiceChannel, craig.id, requiredCraigVoicePermissions)) {
       return failure(
         "craig-voice-permission-missing",
-        "Craig Voice Gateway нужны права Просмотр канала и Подключаться.",
+        "Craig Voice Gateway needs the View Channel and Connect permissions.",
       );
     }
     return { ok: true as const };
@@ -120,16 +120,16 @@ export class DiscordGuildSetupAdapter implements
       const guild = await this.fetchGuild(request.guildId);
       const channel = await guild.channels.fetch(request.resultsChannelId);
       if (channel === null || !isResultsChannel(channel)) {
-        return failure("results-channel-invalid", "Канал результатов больше недоступен.");
+        return failure("results-channel-invalid", "The results channel is no longer available.");
       }
-      const footer = `Настройка сервера · версия ${request.configurationRevision + 1}`;
+      const footer = `Server setup · revision ${request.configurationRevision + 1}`;
       const embed = new EmbedBuilder()
         .setColor(0x57_f2_87)
-        .setTitle("Проверка канала Meeting Assistant")
+        .setTitle("Meeting Assistant channel check")
         .setDescription(
-          "✅ Бот может публиковать сюда транскрипт и саммари.\n" +
-          `Голосовой канал: <#${request.voiceChannelId}>\n` +
-          `Проверил: <@${request.configuredByUserId}>`,
+          "✅ The bot can publish transcripts and summaries here.\n" +
+          `Voice channel: <#${request.voiceChannelId}>\n` +
+          `Checked by: <@${request.configuredByUserId}>`,
         )
         .setFooter({ text: footer });
       const nonce = createHash("sha256")
@@ -141,7 +141,7 @@ export class DiscordGuildSetupAdapter implements
     } catch {
       return failure(
         "setup-publication-failed",
-        "Не удалось отправить тестовое сообщение. Проверьте права канала и повторите.",
+        "Could not post the test message. Check channel permissions and try again.",
         true,
       );
     }

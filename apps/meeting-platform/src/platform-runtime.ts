@@ -149,7 +149,7 @@ export async function startMeetingPlatform(
   const rawSummarizer = new SubscriptionRuntimeSummaryAdapter(runtimeTransport, {
     expectedLauncherSha256: config.subscriptionRuntime.launcherSha256,
     maxOutputTokens: subscriptionRuntimeSummaryMaxOutputTokens,
-    outputLanguage: "Russian; preserve English technical terms",
+    outputLanguage: "Natural English; preserve technical terms exactly",
   });
   const discord = new Client({ intents: [GatewayIntentBits.Guilds] });
   const meetingPlatformInstallUrl = createDiscordGuildInstallUrl({
@@ -271,6 +271,7 @@ export async function startMeetingPlatform(
   );
   const server = createCraigHttpServer({
     bearerToken: config.secrets.craigBearerToken,
+    configuration: guildConfigurations,
     health: {
       metrics: () => metrics.render(),
       readiness: async () => ({ ready: (await health.snapshot()).ready }),
@@ -379,7 +380,7 @@ function createLiveRuntime(input: {
       expectedLauncherSha256: input.config.subscriptionRuntime.launcherSha256,
       maxOutputTokens: subscriptionRuntimeIncrementalMaxOutputTokens,
       maxRecentContextTurns: 256,
-      outputLanguage: "Russian; preserve English technical terms",
+      outputLanguage: "Natural English; preserve technical terms exactly",
       timeoutMs: 30_000,
     },
   );

@@ -5,19 +5,27 @@ import {
 
 import { discordGuildSetupCommand } from "./discord-guild-setup-command.js";
 
+const legacySetupCommandName = "setup";
+
 export async function registerDiscordGuildSetupCommand(client: Client): Promise<void> {
   if (!client.isReady()) {
     throw new Error("Discord client must be ready before command registration");
   }
   const commands = await client.application.commands.fetch();
   const current = commands.find((command) => command.name === discordGuildSetupCommand.name);
+  const legacy = commands.find((command) => command.name === legacySetupCommandName);
   const definition = discordGuildSetupCommand.toJSON();
   if (current === undefined) {
     await client.application.commands.create(definition);
-    return;
-  }
-  if (!sameCommandDefinition(current, definition)) {
+  } else if (!sameCommandDefinition(current, definition)) {
     await client.application.commands.edit(current.id, definition);
+  }
+
+  // Application command fetch returns commands owned by this application. Remove
+  // only the retired command after the replacement is available; never use a
+  // bulk replacement because unrelated application commands must remain intact.
+  if (legacy !== undefined) {
+    await client.application.commands.delete(legacy.id);
   }
 }
 

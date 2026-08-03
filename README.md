@@ -43,11 +43,19 @@ isolated Craig Voice Gateway processes share one official bot identity, so this
 is one installation step. Deployments using a distinct Craig identity can expose
 its explicit second redirect from internal `GET /discord/install/craig`.
 
-After the required application identity is installed, a server administrator runs `/setup`,
+After the required application identity is installed, a server administrator runs
+`/setup-voice-bot`,
 selects the recorded voice channel and the text results channel, and receives an
 ephemeral result. The command verifies `Manage Guild`, both bots' effective
 channel permissions, and a visible test publication before storing the
-guild-scoped route. No Discord user access token or OAuth callback is used.
+guild-scoped route. Recording starts automatically when people join the selected
+voice channel. No Discord user access token or OAuth callback is used.
+
+Craig refreshes its recordable targets through authenticated internal
+`GET /v1/craig/configuration`. Its `{ schemaVersion: 1, channels }` response
+contains only active `guildId` and `voiceChannelId` pairs in deterministic
+order; it never returns results-channel routes, administrator identities,
+revisions, or credentials.
 
 ## Development
 

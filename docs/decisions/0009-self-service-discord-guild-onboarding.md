@@ -20,13 +20,13 @@ bot applications through one authorization grant.
 ## Decision
 
 Introduce a `Guild Installation & Configuration` bounded context with an
-executable `/setup` vertical slice.
+executable `/setup-voice-bot` vertical slice.
 
 - The aggregate owns one active configuration per Discord guild: the selected
   voice channel, results channel, configuring user, and optimistic revision.
 - Application use cases depend on narrow repository and Discord-verification
   ports. Domain and application code contain no Discord SDK or PostgreSQL types.
-- The Discord inbound adapter registers a guild-only `/setup` command, requires
+- The Discord inbound adapter registers a guild-only `/setup-voice-bot` command, requires
   `Manage Guild` both declaratively and at runtime, validates channel types and
   least-privilege bot access, and publishes a visible configuration check before
   persistence is accepted.
@@ -39,6 +39,10 @@ executable `/setup` vertical slice.
 - Composition resolves a meeting publication target from `(guildId,
   voiceChannelId)`. The existing configured target remains a compatibility
   fallback for the private E2E guild while installations migrate.
+- Craig reads a bearer-authenticated `{ schemaVersion: 1, channels }` snapshot
+  of active `(guildId, voiceChannelId)` pairs from Meeting Platform. The
+  boundary deliberately omits results-channel routes, administrator identities,
+  revisions, and credentials.
 - New meetings publish as direct channel messages. Thread mode remains an
   explicit deployment option and is not widened by onboarding.
 

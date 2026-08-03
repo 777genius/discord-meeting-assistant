@@ -15,6 +15,8 @@ export {
   type ResolveGuildMeetingTargetResult,
 } from "./application/resolve-guild-meeting-target.js";
 export type {
+  ActiveGuildVoiceChannel,
+  ActiveGuildVoiceChannelReader,
   GuildConfigurationRepository,
   GuildConfigurationSaveResult,
   GuildConfigurationVerificationPort,

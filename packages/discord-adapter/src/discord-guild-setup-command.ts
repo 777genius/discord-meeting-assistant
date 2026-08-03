@@ -15,27 +15,22 @@ import {
 } from "discord.js";
 
 export const discordGuildSetupCommand = new SlashCommandBuilder()
-  .setName("setup")
-  .setDescription("Configure voice meetings and the results channel")
-  .setDescriptionLocalization("ru", "Настроить голосовые встречи и канал результатов")
+  .setName("setup-voice-bot")
+  .setDescription("Configure voice meeting recording and the results channel")
   .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
   .setContexts(InteractionContextType.Guild)
   .setIntegrationTypes(ApplicationIntegrationType.GuildInstall)
   .addChannelOption((option) =>
     option
       .setName("voice-channel")
-      .setNameLocalization("ru", "голосовой-канал")
       .setDescription("Voice channel recorded by Craig")
-      .setDescriptionLocalization("ru", "Голосовой канал, который записывает Craig")
       .addChannelTypes(ChannelType.GuildVoice, ChannelType.GuildStageVoice)
       .setRequired(true)
   )
   .addChannelOption((option) =>
     option
       .setName("results-channel")
-      .setNameLocalization("ru", "канал-результатов")
       .setDescription("Text channel for live transcript and summary")
-      .setDescriptionLocalization("ru", "Текстовый канал для транскрипта и саммари")
       .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
       .setRequired(true)
   );
@@ -72,7 +67,7 @@ export class DiscordGuildSetupCommandHandler {
   }
 
   public async handle(interaction: Interaction): Promise<boolean> {
-    if (!interaction.isChatInputCommand() || interaction.commandName !== "setup") {
+    if (!interaction.isChatInputCommand() || interaction.commandName !== "setup-voice-bot") {
       return false;
     }
     await this.handleSetup(interaction);
@@ -85,7 +80,7 @@ export class DiscordGuildSetupCommandHandler {
       interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild) !== true
     ) {
       await interaction.reply({
-        content: "Для /setup требуется право Управление сервером.",
+        content: "You need the Manage Server permission to use /setup-voice-bot.",
         flags: MessageFlags.Ephemeral,
       });
       return;
@@ -103,10 +98,10 @@ export class DiscordGuildSetupCommandHandler {
   }
 
   private async replyWithUnexpectedFailure(interaction: Interaction): Promise<void> {
-    if (!interaction.isChatInputCommand() || interaction.commandName !== "setup") {
+    if (!interaction.isChatInputCommand() || interaction.commandName !== "setup-voice-bot") {
       return;
     }
-    const response = "Не удалось завершить настройку. Попробуйте /setup ещё раз.";
+    const response = "Setup could not be completed. Please run /setup-voice-bot again.";
     if (interaction.deferred || interaction.replied) {
       await interaction.editReply({ content: response });
       return;
@@ -117,16 +112,16 @@ export class DiscordGuildSetupCommandHandler {
 
 function renderSetupResult(result: ConfigureGuildResult, craigInstallUrl: string): string {
   if (result.status === "configured") {
-    return "✅ Готово. Права проверены, тестовое сообщение опубликовано, настройки сохранены.";
+    return "✅ Setup complete. Permissions were verified, a test message was posted, and settings were saved. Recording starts automatically when people join the selected voice channel.";
   }
   if (result.status === "reused") {
-    return "✅ Этот сервер уже настроен. Каналы и маршрутизация не изменились.";
+    return "✅ This server is already configured. Channels and routing were unchanged. Recording starts automatically when people join the selected voice channel.";
   }
   if (result.status === "conflict") {
-    return "Настройки одновременно изменил другой администратор. Запустите /setup ещё раз.";
+    return "Another administrator changed the settings at the same time. Run /setup-voice-bot again.";
   }
   if ("failure" in result && result.failure.code === "craig-not-installed") {
-    return `${result.failure.message}\nУстановить Craig: ${craigInstallUrl}`;
+    return `${result.failure.message}\nInstall Craig: ${craigInstallUrl}`;
   }
-  return "failure" in result ? result.failure.message : "Настройка не завершена.";
+  return "failure" in result ? result.failure.message : "Setup was not completed.";
 }

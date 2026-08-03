@@ -43,10 +43,10 @@ The immutable sidecar image must:
    package version and admitted launcher SHA-256 before every execution;
 2. admit `discord_meeting.summary.generate` only with
    `gpt-5.6-sol`/`medium`, a 4096-token post-execution output budget, and policy version
-   `meeting-summary.subscription-runtime.v6`; admit
+   `meeting-summary.subscription-runtime.v7`; admit
    `discord_meeting.summary.incremental` only with `gpt-5.6-luna`/`low`, a
    2048-token post-execution output budget, and policy version
-   `meeting-summary.incremental.subscription-runtime.v3`; both use stateless
+   `meeting-summary.incremental.subscription-runtime.v4`; both use stateless
    completion, disabled tools, read-only permission, no interactive input, the
    isolated tmpfs working directory, and their exact purpose-bound structured
    schema. Final summaries use `discord_meeting_summary_v3`. Incremental live

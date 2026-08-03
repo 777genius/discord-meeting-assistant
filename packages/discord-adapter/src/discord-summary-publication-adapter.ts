@@ -29,7 +29,7 @@ interface DiscordSummaryProjector {
 }
 
 const discordMarkdownLimit = 4_000;
-const truncationNotice = "_Саммари сокращено из-за лимита Discord._";
+const truncationNotice = "_Summary was shortened due to Discord's limit._";
 const maximumEvidenceQuoteGraphemes = 180;
 
 type PublicationResult = PortResult<
@@ -82,52 +82,52 @@ export function renderRussianSummaryMarkdown(
   const bodyLines = [
     `# ${normalizeInline(summary.title)}`,
     "",
-    "## Кратко",
+    "## Overview",
     summary.overview.trim(),
     "",
-    "## Основные темы",
+    "## Key topics",
     ...numberedOrEmpty(
       topicsInTimelineOrder(summary.topics, evidence).map((topic) => [
         topic.title.trim(),
         ...topic.points.map((point) => point.trim()),
         ...evidenceLines(topic.evidenceTurnIds, evidence),
       ]),
-      "Основные темы не выделены.",
+      "No key topics were identified.",
     ),
     "",
-    "## Решения",
+    "## Decisions",
     ...numberedOrEmpty(
       entriesInTimelineOrder(summary.decisions, evidence).map((decision) => [
         decision.text.trim(),
         ...evidenceLines(decision.evidenceTurnIds, evidence),
       ]),
-      "Зафиксированных решений нет.",
+      "No decisions were recorded.",
     ),
     "",
-    "## Задачи",
+    "## Action items",
     ...numberedOrEmpty(
       entriesInTimelineOrder(summary.actionItems, evidence).map((actionItem) => [
         actionItem.text.trim(),
-        `Ответственный: ${
+        `Owner: ${
           actionItem.ownerSpeakerId === null
-            ? "не назначен"
+            ? "unassigned"
             : formatDiscordSpeaker(actionItem.ownerSpeakerId)
         }`,
-        `Срок: ${
-          actionItem.deadline === null ? "не указан" : actionItem.deadline.trim()
+        `Due: ${
+          actionItem.deadline === null ? "not specified" : actionItem.deadline.trim()
         }`,
         ...evidenceLines(actionItem.evidenceTurnIds, evidence),
       ]),
-      "Зафиксированных задач нет.",
+      "No action items were recorded.",
     ),
     "",
-    "## Открытые вопросы",
+    "## Open questions",
     ...numberedOrEmpty(
       entriesInTimelineOrder(summary.openQuestions, evidence).map((question) => [
         question.text.trim(),
         ...evidenceLines(question.evidenceTurnIds, evidence),
       ]),
-      "Открытых вопросов нет.",
+      "No open questions were recorded.",
     ),
   ];
   return boundedMarkdown(bodyLines);
@@ -202,7 +202,7 @@ function evidenceLines(
     .map(({ turnId }) => {
       const turn = evidence.get(turnId);
       if (turn === undefined) {
-        return "Исходная реплика недоступна.";
+        return "The source utterance is unavailable.";
       }
       const interval = `${formatDiscordTimestamp(turn.startMs)}-${formatDiscordTimestamp(turn.endMs)}`;
       return `**${interval} · ${formatDiscordSpeaker(turn.speakerId)}:** «${evidenceQuote(turn.text)}»`;

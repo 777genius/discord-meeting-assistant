@@ -16,11 +16,12 @@ describe("Discord projection marker compatibility", () => {
 
   it("accepts the hidden v3 marker and legacy thread metadata", () => {
     expect(footerHasMarker(
-      "Meeting Platform · итог встречи",
+      "Meeting Platform · meeting summary",
       `https://meeting-platform.invalid/projection/${encodeURIComponent(marker)}`,
       marker,
     )).toBe(true);
     expect(footerHasMarker(marker, undefined, marker)).toBe(true);
+    expect(footerHasMarker("Meeting Platform · meeting summary", undefined, marker, true)).toBe(true);
     expect(footerHasMarker("Meeting Platform · итог встречи", undefined, marker, true)).toBe(true);
     expect(footerHasMarker("unrelated", undefined, marker)).toBe(false);
   });

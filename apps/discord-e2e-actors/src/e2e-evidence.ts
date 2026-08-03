@@ -1080,7 +1080,12 @@ function verifyDiscordSummaryUx(
     }
   }
   for (const expected of manifest.summaryExpectations.actionItems) {
-    if (!description.includes(`Ответственный: <@${expected.ownerSpeakerId}>`)) {
+    const ownerMention = `<@${expected.ownerSpeakerId}>`;
+    if (
+      !description.includes(`Owner: ${ownerMention}`) &&
+      // Retained pre-English artifacts are valid historical evidence.
+      !description.includes(`Ответственный: ${ownerMention}`)
+    ) {
       fail(
         "DISCORD_ACTION_OWNER_MENTION_MISSING",
         `Discord summary has no owner mention for expected action ${expected.ownerSpeakerId}`,

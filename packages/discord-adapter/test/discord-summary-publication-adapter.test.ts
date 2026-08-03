@@ -96,7 +96,7 @@ class FakeProjector {
 }
 
 describe("DiscordSummaryPublicationAdapter", () => {
-  it("maps the core port request to one deterministic Russian Discord projection", async () => {
+  it("maps the core port request to one deterministic English Discord projection", async () => {
     const projector = new FakeProjector();
     const adapter: SummaryPublicationPort = new DiscordSummaryPublicationAdapter(projector);
 
@@ -121,43 +121,43 @@ describe("DiscordSummaryPublicationAdapter", () => {
       markdown: [
         "# Итоги встречи",
         "",
-        "## Кратко",
+        "## Overview",
         "Команда согласовала выпуск и владельцев подготовки.",
         "",
-        "## Основные темы",
+        "## Key topics",
         "1. Подготовка релиза",
         "   - Релиз запланирован на пятницу",
         "   - Дашборд готовит speaker-b",
         "   - **00:00-00:01 · speaker-a:** «Релиз в пятницу»",
         "   - **00:00-00:02 · speaker-b:** «Подготовлю дашборд»",
         "",
-        "## Решения",
+        "## Decisions",
         "1. Выпустить ассистента в пятницу",
         "   - **00:00-00:01 · speaker-a:** «Релиз в пятницу»",
         "   - **00:00-00:02 · speaker-b:** «Подготовлю дашборд»",
         "",
-        "## Задачи",
+        "## Action items",
         "1. Подготовить дашборд к четвергу",
-        "   - Ответственный: speaker-b",
-        "   - Срок: к четвергу",
+        "   - Owner: speaker-b",
+        "   - Due: к четвергу",
         "   - **00:00-00:02 · speaker-b:** «Подготовлю дашборд»",
         "2. Проверить точность транскрипции",
-        "   - Ответственный: не назначен",
-        "   - Срок: не указан",
+        "   - Owner: unassigned",
+        "   - Due: not specified",
         "   - **00:03-00:04 · speaker-a:** «Проверить транскрипцию»",
         "",
-        "## Открытые вопросы",
+        "## Open questions",
         "1. Достигнута ли целевая точность?",
         "   - **00:03-00:04 · speaker-a:** «Проверить транскрипцию»",
       ].join("\n"),
       liveCaptionsMarkdown: [
-        "## 🗣️ Расшифровка встречи",
+        "## 🗣️ Meeting transcript",
         "",
         "✓ `00:00-00:01` **speaker-a:** Релиз в пятницу",
         "✓ `00:00-00:02` **speaker-b:** Подготовлю дашборд",
         "✓ `00:03-00:04` **speaker-a:** Проверить транскрипцию",
         "",
-        "_Финальная расшифровка по записи встречи._",
+        "_Final transcript based on the meeting recording._",
       ].join("\n"),
     });
     expect(projector.inputs[0]?.markdown).not.toContain("turn-1");
@@ -211,7 +211,7 @@ describe("DiscordSummaryPublicationAdapter", () => {
     });
 
     expect(projector.inputs[0]?.markdown).toContain(
-      "Ответственный: <@1533228054724346087>",
+      "Owner: <@1533228054724346087>",
     );
     expect(projector.inputs[0]?.markdown).toContain(
       "**00:18-00:25 · <@1533228054724346087>:** «Проверю Discord thread и Redis queue.»",
@@ -343,12 +343,12 @@ describe("DiscordSummaryPublicationAdapter", () => {
     });
 
     const timeline = projector.inputs[0]?.liveCaptionsMarkdown ?? "";
-    expect(timeline).toContain("## 🗣️ Расшифровка встречи");
+    expect(timeline).toContain("## 🗣️ Meeting transcript");
     for (const speakerId of speakers) {
       expect(timeline).toContain(`<@${speakerId}>`);
     }
     expect(timeline).toContain("`00:10-00:15`");
-    expect(timeline).toContain("_Финальная расшифровка по записи встречи._");
+    expect(timeline).toContain("_Final transcript based on the meeting recording._");
   });
 
   it("renders explicit empty states instead of omitting sections", async () => {
@@ -366,10 +366,10 @@ describe("DiscordSummaryPublicationAdapter", () => {
       },
     });
 
-    expect(projector.inputs[0]?.markdown).toContain("Зафиксированных решений нет.");
-    expect(projector.inputs[0]?.markdown).toContain("Зафиксированных задач нет.");
-    expect(projector.inputs[0]?.markdown).toContain("Основные темы не выделены.");
-    expect(projector.inputs[0]?.markdown).toContain("Открытых вопросов нет.");
+    expect(projector.inputs[0]?.markdown).toContain("No decisions were recorded.");
+    expect(projector.inputs[0]?.markdown).toContain("No action items were recorded.");
+    expect(projector.inputs[0]?.markdown).toContain("No key topics were identified.");
+    expect(projector.inputs[0]?.markdown).toContain("No open questions were recorded.");
   });
 
   it("deterministically bounds oversized summaries to the Discord limit", async () => {
@@ -387,7 +387,7 @@ describe("DiscordSummaryPublicationAdapter", () => {
     expect(result.ok).toBe(true);
     expect(projector.inputs[0]?.markdown.length).toBeLessThanOrEqual(4_000);
     expect(projector.inputs[0]?.markdown).toContain(
-      "Саммари сокращено из-за лимита Discord.",
+      "Summary was shortened due to Discord's limit.",
     );
     expect(projector.inputs[0]?.markdown).not.toContain("summary-42");
   });
