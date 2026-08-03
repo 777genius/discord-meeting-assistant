@@ -16,9 +16,12 @@ export {
   type SubscriptionRuntimeIncrementalSummaryRequestOptions,
 } from "./incremental-request-mapper.js";
 export {
+  calculateLunaApiEquivalentCostRange,
   lunaLongContextPriceCard,
   lunaStandardPriceCard,
+  mapLunaGenerationTelemetry,
   mapLunaGenerationUsage,
+  type LunaApiEquivalentCostRange,
 } from "./luna-price-card.js";
 export {
   type ProviderMeetingSummary,
@@ -61,6 +64,7 @@ export {
   type JsonPrimitive,
   type JsonValue,
   type SubscriptionRuntimeAgentTaskRequest,
+  type SubscriptionRuntimeCostRange,
   type SubscriptionRuntimeExecutionAttestation,
   type SubscriptionRuntimeExecutionProfile,
   type SubscriptionRuntimeFailure,
@@ -69,6 +73,8 @@ export {
   type SubscriptionRuntimeHealthStatus,
   type SubscriptionRuntimeTaskControls,
   type SubscriptionRuntimeTaskResult,
+  type SubscriptionRuntimeTelemetry,
+  type SubscriptionRuntimeTokenAvailability,
   type SubscriptionRuntimeTransportPort,
   type SubscriptionRuntimeUsage,
 } from "./subscription-runtime-contract.js";

@@ -214,13 +214,3 @@ export async function appendJournal(
 export function journalPacketIdentity(packet: JournalPacket): string {
   return `${packet.rtpTimestamp}:${packet.rtpSequence}:${packet.relativeTimeMs}`;
 }
-
-export function journalPacketsEqual(left: JournalPacket, right: JournalPacket): boolean {
-  return (
-    left.rtpTimestamp === right.rtpTimestamp &&
-    left.rtpSequence === right.rtpSequence &&
-    left.relativeTimeMs === right.relativeTimeMs &&
-    left.receivedAtMs === right.receivedAtMs &&
-    Buffer.compare(left.opus, right.opus) === 0
-  );
-}

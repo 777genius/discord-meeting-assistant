@@ -1,7 +1,14 @@
+import type {
+  LiveMeetingProjectionRequest,
+  SummaryPublicationRequest,
+} from "@discord-meeting/meeting-core";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 
 import {
   createMeetingDiscordProjectionKey,
+  DiscordLiveMeetingProjectionAdapter,
+  DiscordSummaryPublicationAdapter,
   DiscordSummaryPublisher,
   InProcessProjectionLock,
   type DiscordProjectionBody,
@@ -35,6 +42,7 @@ class FakeDiscordProjectionClient implements DiscordProjectionClient {
   throwAfterNextThreadCreate = false;
   throwAfterNextMessageCreate = false;
   throwAfterNextMessageEdit = false;
+  nextMessageEditError: Error | null = null;
   createDelayMilliseconds = 0;
 
   async inspect(input: {
@@ -94,7 +102,7 @@ class FakeDiscordProjectionClient implements DiscordProjectionClient {
     marker: string;
   }): Promise<string> {
     this.createMessageCount += 1;
-    const messageId = `${3_000_000_000_000_0000 + this.createMessageCount}`;
+    const messageId = `3${String(this.createMessageCount).padStart(16, "0")}`;
     this.thread(input.threadId).message = { messageId, ...input };
     if (this.throwAfterNextMessageCreate) {
       this.throwAfterNextMessageCreate = false;
@@ -112,6 +120,11 @@ class FakeDiscordProjectionClient implements DiscordProjectionClient {
     const message = this.thread(input.threadId).message;
     if (message?.messageId !== input.messageId) {
       throw new Error("Message does not exist");
+    }
+    if (this.nextMessageEditError !== null) {
+      const error = this.nextMessageEditError;
+      this.nextMessageEditError = null;
+      throw error;
     }
     this.editMessageCount += 1;
     message.body = input.body;
@@ -136,6 +149,15 @@ function publisher(client: DiscordProjectionClient): DiscordSummaryPublisher {
 }
 
 describe("DiscordSummaryPublisher contract", () => {
+  it("does not edit a message immediately after a known-fresh create", async () => {
+    const client = new FakeDiscordProjectionClient();
+
+    await publisher(client).publish(command);
+
+    expect(client.createMessageCount).toBe(1);
+    expect(client.editMessageCount).toBe(0);
+  });
+
   it("creates one projection and updates that projection on rerun", async () => {
     const client = new FakeDiscordProjectionClient();
     const subject = publisher(client);
@@ -213,7 +235,7 @@ describe("DiscordSummaryPublisher contract", () => {
     expect(current).toEqual(first);
     expect(client.inspectCount).toBe(inspectionsAfterCreate);
     expect(client.renameCount).toBe(renamesAfterCreate);
-    expect(client.editMessageCount).toBe(4);
+    expect(client.editMessageCount).toBe(3);
     expect(client.createThreadCount).toBe(1);
     expect(client.createMessageCount).toBe(1);
   });
@@ -236,6 +258,89 @@ describe("DiscordSummaryPublisher contract", () => {
     expect(client.createMessageCount).toBe(1);
     expect(client.threads[0]?.message?.body.markdown).toContain("Recovered update");
     expect(client.inspectCount).toBeGreaterThan(1);
+  });
+
+  it("returns a new receipt after a deleted message and directly edits it on the next refresh", async () => {
+    const client = new FakeDiscordProjectionClient();
+    const subject = publisher(client);
+    const first = await subject.publish(command);
+    const thread = client.threads[0];
+    if (thread === undefined) {
+      throw new Error("expected an initial Discord thread");
+    }
+    delete thread.message;
+
+    const recovered = await subject.publish({
+      ...command,
+      markdown: "## Summary\n\nRecovered after deletion.",
+      currentReference: first,
+    });
+
+    expect(recovered.threadId).toBe(first.threadId);
+    expect(recovered.messageId).not.toBe(first.messageId);
+    expect(client.threads).toHaveLength(1);
+    expect(client.createMessageCount).toBe(2);
+    const inspectionsAfterRecovery = client.inspectCount;
+    const renamesAfterRecovery = client.renameCount;
+    const editsAfterRecovery = client.editMessageCount;
+
+    await expect(subject.publish({
+      ...command,
+      markdown: "## Summary\n\nDirect update after recovery.",
+      currentReference: recovered,
+    })).resolves.toEqual(recovered);
+
+    expect(client.createMessageCount).toBe(2);
+    expect(client.inspectCount).toBe(inspectionsAfterRecovery);
+    expect(client.renameCount).toBe(renamesAfterRecovery);
+    expect(client.editMessageCount).toBe(editsAfterRecovery + 1);
+  });
+
+  it.each([
+    Object.assign(new Error("rate limited"), { status: 429 }),
+    Object.assign(new Error("forbidden"), { status: 403 }),
+    z.string().safeParse(42).error!,
+  ])("does not reconcile a direct edit for a known failure", async (error) => {
+    const client = new FakeDiscordProjectionClient();
+    const subject = publisher(client);
+    const reference = await subject.publish(command);
+    const inspectionsBeforeFailure = client.inspectCount;
+    const renamesBeforeFailure = client.renameCount;
+    client.nextMessageEditError = error;
+
+    await expect(subject.publish({
+      ...command,
+      markdown: "## Summary\n\nKnown failure.",
+      currentReference: reference,
+    })).rejects.toBe(error);
+
+    expect(client.inspectCount).toBe(inspectionsBeforeFailure);
+    expect(client.renameCount).toBe(renamesBeforeFailure);
+    expect(client.createThreadCount).toBe(1);
+    expect(client.createMessageCount).toBe(1);
+  });
+
+  it("reconciles an archived thread so the existing projection can be edited", async () => {
+    const client = new FakeDiscordProjectionClient();
+    const subject = publisher(client);
+    const reference = await subject.publish(command);
+    const inspectionsBeforeFailure = client.inspectCount;
+    client.nextMessageEditError = Object.assign(new Error("thread is archived"), {
+      code: 50_083,
+      status: 403,
+    });
+
+    await expect(subject.publish({
+      ...command,
+      markdown: "## Summary\n\nRecovered archived thread.",
+      currentReference: reference,
+    })).resolves.toEqual(reference);
+
+    expect(client.inspectCount).toBeGreaterThan(inspectionsBeforeFailure);
+    expect(client.renameCount).toBe(2);
+    expect(client.createThreadCount).toBe(1);
+    expect(client.createMessageCount).toBe(1);
+    expect(client.threads[0]?.message?.body.markdown).toContain("Recovered archived thread");
   });
 
   it("reconciles a legacy operation marker into the canonical meeting projection", async () => {
@@ -281,5 +386,79 @@ describe("DiscordSummaryPublisher contract", () => {
     expect(client.threads[0]?.message?.body).toEqual({
       markdown: "# Итоги встречи\n\nФинальное саммари.",
     });
+  });
+
+  it("keeps one projection when a manually renamed live thread is finalized", async () => {
+    const client = new FakeDiscordProjectionClient();
+    const subject = publisher(client);
+    const livePublisher = new DiscordLiveMeetingProjectionAdapter(subject);
+    const finalPublisher = new DiscordSummaryPublicationAdapter(subject);
+    const liveRequest: LiveMeetingProjectionRequest = {
+      captions: [{
+        endMs: 8_000,
+        isFinal: false,
+        speakerId: "speaker-a",
+        startMs: 5_000,
+        text: "Обсуждаем выпуск.",
+      }],
+      currentExternalPublicationId: null,
+      elapsedMs: 8_000,
+      idempotencyKey: "meeting-live-projection:v1|meeting-42",
+      meetingId: "meeting-42",
+      publicationTargetId: command.parentChannelId,
+      revision: 1,
+      status: "active",
+      summary: null,
+      updatedAtMs: 8_000,
+    };
+    const finalRequest: SummaryPublicationRequest = {
+      idempotencyKey: "meeting-summary-publication:v1|meeting-42",
+      meetingId: "meeting-42",
+      publicationTargetId: command.parentChannelId,
+      summary: {
+        actionItems: [],
+        decisions: [],
+        openQuestions: [],
+        overview: "Выпуск согласован.",
+        summaryId: "summary-42",
+        title: "Итоги встречи",
+        topics: [],
+        transcriptId: "transcript-42",
+        version: 1,
+      },
+      transcript: {
+        recordingId: "recording-42",
+        transcriptId: "transcript-42",
+        turns: [],
+        version: 1,
+      },
+    };
+
+    const live = await livePublisher.publish(liveRequest);
+    expect(live.ok).toBe(true);
+    if (!live.ok) {
+      throw new Error("expected the live publication to succeed");
+    }
+
+    const liveThread = client.threads[0];
+    if (liveThread === undefined) {
+      throw new Error("expected a live Discord thread");
+    }
+    liveThread.name = "Ручное переименование [legacy marker]";
+    liveThread.marker = "legacy-manual-marker";
+
+    const final = await finalPublisher.publish({
+      ...finalRequest,
+      currentExternalPublicationId: live.value.externalPublicationId,
+    });
+
+    expect(final).toEqual({
+      ok: true,
+      value: { externalPublicationId: live.value.externalPublicationId },
+    });
+    expect(client.threads).toHaveLength(1);
+    expect(client.createThreadCount).toBe(1);
+    expect(client.createMessageCount).toBe(1);
+    expect(client.threads[0]?.message?.body.markdown).toContain("Выпуск согласован.");
   });
 });

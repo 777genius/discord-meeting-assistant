@@ -115,7 +115,7 @@ function runtimeFailureMessage(
     case "task_mode_unsupported":
       return "Subscription runtime rejected the summary execution profile";
     case "telemetry_unavailable":
-      return "Subscription runtime did not return complete generation telemetry";
+      return "Subscription runtime did not return generation telemetry";
     case "task_cancelled":
       return "Subscription runtime summary task was cancelled";
     case "unknown_runtime_failure":

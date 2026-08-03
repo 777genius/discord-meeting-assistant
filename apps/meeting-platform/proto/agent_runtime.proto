@@ -33,6 +33,19 @@ enum AgentRuntimeHealthStatus {
   AGENT_RUNTIME_HEALTH_STATUS_NOT_SERVING = 3;
 }
 
+enum AgentRuntimeTokenAvailability {
+  AGENT_RUNTIME_TOKEN_AVAILABILITY_UNSPECIFIED = 0;
+  AGENT_RUNTIME_TOKEN_AVAILABILITY_MEASURED = 1;
+  AGENT_RUNTIME_TOKEN_AVAILABILITY_DERIVED = 2;
+  AGENT_RUNTIME_TOKEN_AVAILABILITY_UNAVAILABLE = 3;
+}
+
+enum AgentRuntimeDerivedTokenSource {
+  AGENT_RUNTIME_DERIVED_TOKEN_SOURCE_UNSPECIFIED = 0;
+  AGENT_RUNTIME_DERIVED_TOKEN_SOURCE_INPUT = 1;
+  AGENT_RUNTIME_DERIVED_TOKEN_SOURCE_OUTPUT = 2;
+}
+
 message AgentRuntimeTaskRequest {
   uint32 schema_version = 1;
   string request_id = 2;
@@ -60,6 +73,7 @@ message AgentRuntimeTaskResponse {
   AgentRuntimeUsage usage = 6;
   AgentRuntimeFailure failure = 7;
   AgentRuntimeExecutionAttestation execution_attestation = 8;
+  AgentRuntimeTelemetry telemetry = 9;
 }
 
 message AgentRuntimeExecutionAttestation {
@@ -92,6 +106,35 @@ message AgentRuntimeUsage {
   uint32 reasoning_output_tokens = 7;
   // True only when every token class in this message was measured by the runtime.
   bool complete = 8;
+}
+
+message AgentRuntimeTokenClass {
+  // `value` is meaningful only for measured or derived availability. A zero
+  // remains a valid measured value and cannot represent unavailability.
+  AgentRuntimeTokenAvailability availability = 1;
+  uint64 value = 2;
+  repeated AgentRuntimeDerivedTokenSource derived_from = 3;
+}
+
+message AgentRuntimeCostRange {
+  double minimum_usd = 1;
+  double maximum_usd = 2;
+  // Guards the scalar below so an unavailable exact cost is never read as 0.
+  bool has_exact_usd = 3;
+  double exact_usd = 4;
+  string price_card_id = 5;
+  string price_card_source = 6;
+}
+
+message AgentRuntimeTelemetry {
+  string source = 1;
+  AgentRuntimeTokenClass input_tokens = 2;
+  AgentRuntimeTokenClass cached_input_tokens = 3;
+  AgentRuntimeTokenClass cache_write_input_tokens = 4;
+  AgentRuntimeTokenClass output_tokens = 5;
+  AgentRuntimeTokenClass reasoning_output_tokens = 6;
+  AgentRuntimeTokenClass total_tokens = 7;
+  AgentRuntimeCostRange cost = 8;
 }
 
 message AgentRuntimeFailure {

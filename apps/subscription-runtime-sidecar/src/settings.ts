@@ -203,10 +203,13 @@ async function assertDeploymentPolicy(
     admittedPurposeNames.length !== 2 ||
     admittedPurposeNames[0] !== subscriptionRuntimePurpose ||
     admittedPurposeNames[1] !== subscriptionRuntimeIncrementalPurpose ||
-    finalProfile.model !== subscriptionRuntimeModel ||
-    finalProfile.reasoningEffort !== subscriptionRuntimeReasoningEffort ||
-    incrementalProfile.model !== subscriptionRuntimeIncrementalModel ||
-    incrementalProfile.reasoningEffort !== subscriptionRuntimeIncrementalReasoningEffort ||
+    valuesDiffer(finalProfile.model, subscriptionRuntimeModel) ||
+    valuesDiffer(finalProfile.reasoningEffort, subscriptionRuntimeReasoningEffort) ||
+    valuesDiffer(incrementalProfile.model, subscriptionRuntimeIncrementalModel) ||
+    valuesDiffer(
+      incrementalProfile.reasoningEffort,
+      subscriptionRuntimeIncrementalReasoningEffort,
+    ) ||
     policy.data.transport.bind !== settings.bindAddress ||
     policy.data.transport.serviceTokenFile !==
       env.SUBSCRIPTION_RUNTIME_SERVICE_TOKEN_FILE ||
@@ -221,6 +224,10 @@ async function assertDeploymentPolicy(
   ) {
     throw new Error("Deployment policy conflicts with executable sidecar policy");
   }
+}
+
+function valuesDiffer(actual: string, expected: string): boolean {
+  return actual !== expected;
 }
 
 async function readSecretFile(path: string, minimumLength: number): Promise<string> {

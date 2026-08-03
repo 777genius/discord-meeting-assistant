@@ -75,8 +75,8 @@ describe("subscription runtime gRPC transport mapping", () => {
     expect(JSON.parse(request.controlsJson)).toMatchObject({
       disableTools: true,
       executionProfile: "stateless-completion",
-      model: "gpt-5.6-sol",
-      reasoningEffort: "xhigh",
+      model: "gpt-5.6-luna",
+      reasoningEffort: "medium",
     });
     expect(JSON.stringify(request)).not.toContain("OPENAI_API_KEY");
   });
@@ -115,8 +115,8 @@ describe("subscription runtime gRPC transport mapping", () => {
         purpose: runtimeRequest.context.purpose,
         canonicalRequestSha256: canonicalJsonSha256(runtimeRequest),
         provider: "AGENT_RUNTIME_PROVIDER_CODEX",
-        model: "gpt-5.6-sol",
-        reasoningEffort: "xhigh",
+        model: "gpt-5.6-luna",
+        reasoningEffort: "medium",
         runtimeEngine: "subscription-runtime-cli",
         runtimePackageVersion: "0.1.0-main.2",
         launcherSha256: "a".repeat(64),
@@ -200,6 +200,103 @@ describe("subscription runtime gRPC transport mapping", () => {
     expect(absent).not.toHaveProperty("usage");
   });
 
+  it("round-trips partial telemetry, a derived total, and an inexact cost range", () => {
+    const result = fromGrpcTaskResponse({
+      schemaVersion: 1,
+      status: "AGENT_RUNTIME_TASK_STATUS_COMPLETED",
+      structuredOutputJson: JSON.stringify({
+        actionItems: [],
+        decisions: [],
+        openQuestions: [],
+        overview: "Обсудили релиз.",
+        title: "Релиз",
+        topics: [],
+      }),
+      executionAttestation: attestationFor(incrementalRuntimeRequest),
+      telemetry: {
+        source: "codex_exec_jsonl",
+        cacheWriteInputTokens: {
+          availability: "AGENT_RUNTIME_TOKEN_AVAILABILITY_UNAVAILABLE",
+          value: "0",
+        },
+        cachedInputTokens: {
+          availability: "AGENT_RUNTIME_TOKEN_AVAILABILITY_MEASURED",
+          value: "200",
+        },
+        inputTokens: {
+          availability: "AGENT_RUNTIME_TOKEN_AVAILABILITY_MEASURED",
+          value: "1000",
+        },
+        outputTokens: {
+          availability: "AGENT_RUNTIME_TOKEN_AVAILABILITY_MEASURED",
+          value: "300",
+        },
+        reasoningOutputTokens: {
+          availability: "AGENT_RUNTIME_TOKEN_AVAILABILITY_MEASURED",
+          value: "100",
+        },
+        totalTokens: {
+          availability: "AGENT_RUNTIME_TOKEN_AVAILABILITY_DERIVED",
+          derivedFrom: [
+            "AGENT_RUNTIME_DERIVED_TOKEN_SOURCE_INPUT",
+            "AGENT_RUNTIME_DERIVED_TOKEN_SOURCE_OUTPUT",
+          ],
+          value: "1300",
+        },
+        cost: {
+          hasExactUsd: false,
+          maximumUsd: 0.000_564,
+          minimumUsd: 0.000_524,
+          priceCardId: "openai-standard-2026-08-02",
+          priceCardSource: "https://developers.openai.com/api/docs/pricing#text-tokens",
+        },
+      },
+    });
+
+    expect(result).toMatchObject({
+      status: "completed",
+      telemetry: {
+        source: "codex_exec_jsonl",
+        cacheWriteInputTokens: { availability: "unavailable" },
+        totalTokens: {
+          availability: "derived",
+          derivedFrom: ["inputTokens", "outputTokens"],
+          value: 1_300,
+        },
+        cost: {
+          maximumUsd: 0.000_564,
+          minimumUsd: 0.000_524,
+          priceCardId: "openai-standard-2026-08-02",
+        },
+      },
+    });
+    if (result.status !== "completed") {
+      throw new Error("expected completed result");
+    }
+    expect(result.telemetry?.cacheWriteInputTokens).toEqual({
+      availability: "unavailable",
+    });
+    expect(result.usage).toBeUndefined();
+  });
+
+  it("fails closed on an unsupported telemetry availability", () => {
+    expect(() => fromGrpcTaskResponse({
+      schemaVersion: 1,
+      status: "AGENT_RUNTIME_TASK_STATUS_COMPLETED",
+      structuredOutputJson: JSON.stringify({}),
+      executionAttestation: attestationFor(incrementalRuntimeRequest),
+      telemetry: {
+        source: "codex_exec_jsonl",
+        cacheWriteInputTokens: { availability: "AGENT_RUNTIME_TOKEN_AVAILABILITY_UNSPECIFIED" },
+        cachedInputTokens: { availability: "AGENT_RUNTIME_TOKEN_AVAILABILITY_UNAVAILABLE" },
+        inputTokens: { availability: "AGENT_RUNTIME_TOKEN_AVAILABILITY_UNAVAILABLE" },
+        outputTokens: { availability: "AGENT_RUNTIME_TOKEN_AVAILABILITY_UNAVAILABLE" },
+        reasoningOutputTokens: { availability: "AGENT_RUNTIME_TOKEN_AVAILABILITY_UNAVAILABLE" },
+        totalTokens: { availability: "AGENT_RUNTIME_TOKEN_AVAILABILITY_UNAVAILABLE" },
+      },
+    })).toThrow("telemetry.cacheWriteInputTokens.availability is invalid");
+  });
+
   it("normalizes transport-specific failures without exposing details", () => {
     const result = fromGrpcTaskResponse({
       schemaVersion: 1,
@@ -244,3 +341,20 @@ describe("subscription runtime gRPC transport mapping", () => {
     });
   });
 });
+
+function attestationFor(request: typeof incrementalRuntimeRequest) {
+  return {
+    schemaVersion: 1,
+    requestId: request.runId,
+    purpose: request.context.purpose,
+    canonicalRequestSha256: canonicalJsonSha256(request),
+    provider: "AGENT_RUNTIME_PROVIDER_CODEX",
+    model: "gpt-5.6-luna",
+    reasoningEffort: "medium",
+    runtimeEngine: "subscription-runtime-cli",
+    runtimePackageVersion: "0.1.0-main.2",
+    launcherSha256: "a".repeat(64),
+    selectedOutputKind: "AGENT_RUNTIME_SELECTED_OUTPUT_KIND_STRUCTURED_OUTPUT",
+    selectedOutputSha256: "b".repeat(64),
+  };
+}

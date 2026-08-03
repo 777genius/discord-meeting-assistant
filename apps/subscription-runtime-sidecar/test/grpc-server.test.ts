@@ -110,6 +110,47 @@ describe("authenticated agent runtime gRPC handlers", () => {
       },
     });
   });
+
+  it("forwards partial token availability, derived total, and cost range", async () => {
+    const handlers = createGrpcHandlers(new PartialTelemetryExecutor(), handlerOptions);
+    const metadata = new Metadata();
+    metadata.set("authorization", `Bearer ${serviceToken}`);
+
+    const response = await invoke(
+      handlers.runAgentTask,
+      grpcRequest(incrementalCanonicalRequest),
+      metadata,
+    );
+
+    expect(response.error).toBeNull();
+    expect(response.value).toMatchObject({
+      status: "AGENT_RUNTIME_TASK_STATUS_COMPLETED",
+      telemetry: {
+        source: "codex_exec_jsonl",
+        cacheWriteInputTokens: {
+          availability: "AGENT_RUNTIME_TOKEN_AVAILABILITY_UNAVAILABLE",
+        },
+        inputTokens: {
+          availability: "AGENT_RUNTIME_TOKEN_AVAILABILITY_MEASURED",
+          value: "1000",
+        },
+        totalTokens: {
+          availability: "AGENT_RUNTIME_TOKEN_AVAILABILITY_DERIVED",
+          derivedFrom: [
+            "AGENT_RUNTIME_DERIVED_TOKEN_SOURCE_INPUT",
+            "AGENT_RUNTIME_DERIVED_TOKEN_SOURCE_OUTPUT",
+          ],
+          value: "1300",
+        },
+        cost: {
+          hasExactUsd: false,
+          maximumUsd: 0.000_564,
+          minimumUsd: 0.000_524,
+          priceCardId: "openai-standard-2026-08-02",
+        },
+      },
+    });
+  });
 });
 
 class CompletedExecutor implements SidecarExecutorPort {
@@ -171,6 +212,58 @@ class FailedWithUsageExecutor implements SidecarExecutorPort {
         outputTokens: 300,
         reasoningOutputTokens: 100,
         totalTokens: 1_300,
+      },
+    };
+  }
+
+  public async checkHealth() {
+    return {
+      runtimeEngine: "subscription-runtime-cli",
+      runtimeVersion: "0.1.0-main.2",
+      status: "serving" as const,
+      warningCodes: [],
+    };
+  }
+}
+
+class PartialTelemetryExecutor implements SidecarExecutorPort {
+  public async execute() {
+    return {
+      executionAttestation: {
+        canonicalRequestSha256: "a".repeat(64),
+        launcherSha256: "b".repeat(64),
+        model: "gpt-5.6-luna",
+        provider: "codex" as const,
+        purpose: "discord_meeting.summary.incremental",
+        reasoningEffort: "medium",
+        requestId: incrementalCanonicalRequest.runId,
+        runtimeEngine: "subscription-runtime-cli",
+        runtimePackageVersion: "0.1.0-main.2",
+        schemaVersion: 1,
+        selectedOutputKind: "structured_output",
+        selectedOutputSha256: "c".repeat(64),
+      },
+      protocolVersion: 1 as const,
+      status: "completed" as const,
+      structuredOutput,
+      telemetry: {
+        source: "codex_exec_jsonl" as const,
+        cacheWriteInputTokens: { availability: "unavailable" as const },
+        cachedInputTokens: { availability: "measured" as const, value: 200 },
+        inputTokens: { availability: "measured" as const, value: 1_000 },
+        outputTokens: { availability: "measured" as const, value: 300 },
+        reasoningOutputTokens: { availability: "measured" as const, value: 100 },
+        totalTokens: {
+          availability: "derived" as const,
+          derivedFrom: ["inputTokens", "outputTokens"] as const,
+          value: 1_300,
+        },
+        cost: {
+          maximumUsd: 0.000_564,
+          minimumUsd: 0.000_524,
+          priceCardId: "openai-standard-2026-08-02",
+          priceCardSource: "https://developers.openai.com/api/docs/pricing#text-tokens",
+        },
       },
     };
   }

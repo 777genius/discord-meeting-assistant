@@ -72,15 +72,12 @@ describe("subscription runtime request policy", () => {
     ).toThrow("output schema");
   });
 
-  it("rejects purpose/profile mismatches before execution", () => {
+  it("rejects purpose/metadata profile mismatches before execution", () => {
     const request = grpcRequest(incrementalCanonicalRequest);
-    const controls = JSON.parse(String(request.controlsJson)) as Record<string, unknown>;
-    controls.model = "gpt-5.6-sol";
-    controls.reasoningEffort = "xhigh";
 
     expect(() => reconstructCanonicalRequest(
-      { ...request, controlsJson: JSON.stringify(controls) },
+      { ...request, purpose: "discord_meeting.summary.generate" },
       options,
-    )).toThrow("profile");
+    )).toThrow("policy");
   });
 });

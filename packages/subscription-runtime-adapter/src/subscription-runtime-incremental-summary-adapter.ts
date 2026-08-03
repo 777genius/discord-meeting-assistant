@@ -3,6 +3,7 @@ import type {
   IncrementalSummaryGenerationPort,
   IncrementalSummaryGenerationResult,
   IncrementalSummaryGenerationRequest,
+  LiveGenerationTelemetrySnapshot,
   LiveGenerationUsageSnapshot,
 } from "@discord-meeting/meeting-core";
 
@@ -19,7 +20,10 @@ import {
   buildSubscriptionRuntimeIncrementalSummaryRequest,
   type SubscriptionRuntimeIncrementalSummaryRequestOptions,
 } from "./incremental-request-mapper.js";
-import { mapLunaGenerationUsage } from "./luna-price-card.js";
+import {
+  mapLunaGenerationTelemetry,
+  mapLunaGenerationUsage,
+} from "./luna-price-card.js";
 import { providerMeetingSummarySchema } from "./provider-summary-schema.js";
 import {
   type BaseSubscriptionRuntimeSummaryAdapterOptions,
@@ -66,16 +70,24 @@ export class SubscriptionRuntimeIncrementalSummaryAdapter
   public async generate(
     request: IncrementalSummaryGenerationRequest,
   ): Promise<IncrementalSummaryGenerationResult> {
+    let telemetry: LiveGenerationTelemetrySnapshot | undefined;
     let usage: LiveGenerationUsageSnapshot | undefined;
     try {
-      const value = await this.generateOrThrow(request, (capturedUsage) => {
-        usage = capturedUsage;
-      });
+      const value = await this.generateOrThrow(
+        request,
+        (capturedTelemetry) => {
+          telemetry = capturedTelemetry;
+        },
+        (capturedUsage) => {
+          usage = capturedUsage;
+        },
+      );
       return { ok: true, value };
     } catch (error: unknown) {
       return {
         ok: false,
         failure: toSubscriptionRuntimePortFailure(error),
+        ...(telemetry === undefined ? {} : { telemetry }),
         ...(usage === undefined ? {} : { usage }),
       };
     }
@@ -83,6 +95,7 @@ export class SubscriptionRuntimeIncrementalSummaryAdapter
 
   private async generateOrThrow(
     request: IncrementalSummaryGenerationRequest,
+    captureTelemetry: (telemetry: LiveGenerationTelemetrySnapshot) => void,
     captureUsage: (usage: LiveGenerationUsageSnapshot) => void,
   ): Promise<GeneratedIncrementalSummary> {
     const runtimeRequest = buildSubscriptionRuntimeIncrementalSummaryRequest(
@@ -105,19 +118,24 @@ export class SubscriptionRuntimeIncrementalSummaryAdapter
     const usage = result.usage === undefined
       ? undefined
       : mapLunaGenerationUsage(result.usage, runtimeRequest.runId);
+    const telemetry = result.telemetry === undefined
+      ? undefined
+      : mapLunaGenerationTelemetry(result.telemetry, runtimeRequest.runId);
+    if (telemetry !== undefined) {
+      captureTelemetry(telemetry);
+    }
     if (usage !== undefined) {
       captureUsage(usage);
     }
     if (result.status === "failed") {
       throw new RuntimeTaskFailureError(result.failure);
     }
-    if (usage === undefined) {
+    if (telemetry === undefined && usage === undefined) {
       throw new SubscriptionRuntimeAdapterError(
         "telemetry_unavailable",
-        "Subscription runtime did not return complete generation telemetry",
+        "Subscription runtime did not return generation telemetry",
       );
     }
-
     verifySubscriptionRuntimeAttestation(
       runtimeRequest,
       result,
@@ -141,7 +159,8 @@ export class SubscriptionRuntimeIncrementalSummaryAdapter
         request.idempotencyKey,
         request.revision,
       ),
-      usage,
+      ...(telemetry === undefined ? {} : { telemetry }),
+      ...(usage === undefined ? {} : { usage }),
     };
   }
 }

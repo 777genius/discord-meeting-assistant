@@ -204,7 +204,7 @@ describe("post-call processor", () => {
       handler,
     });
 
-    const signal = AbortSignal.abort("test-only");
+    const signal = new AbortController().signal;
     await processor(postCallJob(), signal);
 
     expect(handler).toHaveBeenCalledWith(
@@ -216,6 +216,42 @@ describe("post-call processor", () => {
         signal,
       },
     );
+    expect(recorder.records).toEqual([]);
+  });
+
+  it("replays a cancelled final attempt without recording a dead letter", async () => {
+    const recorder = new CapturingDeadLetterRecorder();
+    const controller = new AbortController();
+    let notifyHandlerStarted: () => void;
+    const handlerStarted = new Promise<void>((resolve) => {
+      notifyHandlerStarted = resolve;
+    });
+    const processor = createPostCallProcessor({
+      attempts: 3,
+      deadLetterRecorder: recorder,
+      handler: async (_payload, context) => {
+        notifyHandlerStarted();
+        const signal = context.signal;
+        if (signal === undefined) {
+          throw new Error("expected worker cancellation signal");
+        }
+        await new Promise<void>((resolve) => {
+          signal.addEventListener("abort", () => {
+            resolve();
+          }, { once: true });
+        });
+      },
+    });
+
+    const processing = processor(postCallJob({ attemptsMade: 2 }), controller.signal);
+    await handlerStarted;
+    controller.abort(new Error("lock lost"));
+
+    await expect(processing).rejects.toMatchObject({
+      code: "JOB_CANCELLED",
+      name: "PostCallCancellationError",
+      retryable: true,
+    });
     expect(recorder.records).toEqual([]);
   });
 
@@ -237,7 +273,7 @@ describe("post-call processor", () => {
     expect(recorder.records).toEqual([]);
   });
 
-  it("dead-letters a retryable failure on its final bounded attempt", async () => {
+  it("defers a retryable final failure to the confirmed BullMQ failed event", async () => {
     const recorder = new CapturingDeadLetterRecorder();
     const processor = createPostCallProcessor({
       attempts: 3,
@@ -250,19 +286,10 @@ describe("post-call processor", () => {
     await expect(
       processor(postCallJob({ attemptsMade: 2 })),
     ).rejects.toMatchObject({ code: "UPSTREAM_UNAVAILABLE", retryable: true });
-    expect(recorder.records).toEqual([
-      {
-        attemptsMade: 3,
-        failureCode: "UPSTREAM_UNAVAILABLE",
-        meetingId: "meeting-queue-1",
-        retryable: true,
-        schemaVersion: 1,
-        sourceJobRef: postCallJobReference(postCallJobId("meeting-queue-1")),
-      },
-    ]);
+    expect(recorder.records).toEqual([]);
   });
 
-  it("fails fast and dead-letters a declared permanent failure", async () => {
+  it("maps a declared permanent failure without pre-committing a dead letter", async () => {
     const recorder = new CapturingDeadLetterRecorder();
     const processor = createPostCallProcessor({
       deadLetterRecorder: recorder,
@@ -276,14 +303,10 @@ describe("post-call processor", () => {
       name: "MappedUnrecoverableWorkerError",
       retryable: false,
     });
-    expect(recorder.records[0]).toMatchObject({
-      attemptsMade: 1,
-      failureCode: "INVALID_RECORDING_REFERENCE",
-      retryable: false,
-    });
+    expect(recorder.records).toEqual([]);
   });
 
-  it("never forwards malformed payload data to the handler or dead letter metadata", async () => {
+  it("never forwards malformed payload data to the handler", async () => {
     const recorder = new CapturingDeadLetterRecorder();
     const handler = vi.fn(() => Promise.resolve());
     const processor = createPostCallProcessor({
@@ -306,12 +329,27 @@ describe("post-call processor", () => {
       retryable: false,
     });
     expect(handler).not.toHaveBeenCalled();
-    expect(recorder.records[0]).toMatchObject({
-      failureCode: "INVALID_JOB_PAYLOAD",
-      meetingId: null,
+    expect(recorder.records).toEqual([]);
+  });
+
+  it("forces a retryable failure at the worker policy cap to be terminal", async () => {
+    const recorder = new CapturingDeadLetterRecorder();
+    const processor = createPostCallProcessor({
+      attempts: 1,
+      deadLetterRecorder: recorder,
+      handler: async () => {
+        throw new RetryablePostCallError("UPSTREAM_UNAVAILABLE");
+      },
     });
-    expect(JSON.stringify(recorder.records)).not.toContain("do-not-copy");
-    expect(JSON.stringify(recorder.records)).not.toContain("secret-meeting-id");
+
+    await expect(
+      processor(postCallJob({ opts: { attempts: 4 } })),
+    ).rejects.toMatchObject({
+      code: "UPSTREAM_UNAVAILABLE",
+      name: "CappedRetryableWorkerError",
+      retryable: true,
+    });
+    expect(recorder.records).toEqual([]);
   });
 
   it("falls back safely when a custom classifier throws or returns an unsafe code", async () => {
@@ -371,14 +409,64 @@ describe("graceful lifecycle", () => {
         },
       ],
       worker: {
+        cancelActivePostCallJobs: (reason) => {
+          calls.push(`cancel:${String(reason)}`);
+        },
         close: async (force) => {
           calls.push(`worker:${String(force)}`);
+        },
+        pause: async (doNotWaitActive) => {
+          calls.push(`pause:${String(doNotWaitActive)}`);
+        },
+        waitForActivePostCallJobs: async () => {
+          calls.push("wait-active");
         },
       },
     });
 
-    expect(calls[0]).toBe("worker:false");
-    expect(calls.slice(1).toSorted()).toEqual(["events", "queue"]);
+    expect(calls.slice(0, 4)).toEqual([
+      "pause:true",
+      "cancel:shutdown",
+      "wait-active",
+      "worker:true",
+    ]);
+    expect(calls.slice(4).toSorted()).toEqual(["events", "queue"]);
+  });
+
+  it("closes admission before asynchronous pause settles", async () => {
+    const calls: string[] = [];
+    let resumePause!: () => void;
+    const pause = new Promise<void>((resolve) => {
+      resumePause = resolve;
+    });
+
+    const shutdown = drainActivePostCallJobsAndClose({
+      worker: {
+        cancelActivePostCallJobs: (reason) => {
+          calls.push(`cancel:${String(reason)}`);
+        },
+        close: async (force) => {
+          calls.push(`worker:${String(force)}`);
+        },
+        pause: () => {
+          calls.push("pause");
+          return pause;
+        },
+        waitForActivePostCallJobs: async () => {
+          calls.push("wait-active");
+        },
+      },
+    });
+
+    expect(calls).toEqual(["pause", "cancel:shutdown"]);
+    resumePause();
+    await shutdown;
+    expect(calls).toEqual([
+      "pause",
+      "cancel:shutdown",
+      "wait-active",
+      "worker:true",
+    ]);
   });
 
   it("attempts every close and reports aggregate failure", async () => {
@@ -388,12 +476,108 @@ describe("graceful lifecycle", () => {
       drainActivePostCallJobsAndClose({
         queues: [{ close: queueClose }],
         worker: {
+          cancelActivePostCallJobs: () => {},
           close: async () => {
             throw new Error("worker close failed");
           },
+          pause: async () => {},
+          waitForActivePostCallJobs: async () => {},
         },
       }),
     ).rejects.toBeInstanceOf(AggregateError);
     expect(queueClose).toHaveBeenCalledOnce();
+  });
+
+  it("bounds a hung force-close and disconnects the worker", async () => {
+    const calls: string[] = [];
+    const never = new Promise<void>(() => {});
+
+    await expect(
+      drainActivePostCallJobsAndClose({
+        queues: [{ close: async () => { calls.push("queue"); } }],
+        // Keep this above normal event-loop scheduling noise so the assertion
+        // specifically exercises hung close operations, not an overloaded CI turn.
+        shutdownTimeoutMs: 250,
+        worker: {
+          cancelActivePostCallJobs: (reason) => {
+            calls.push(`cancel:${String(reason)}`);
+          },
+          close: (force) => {
+            calls.push(`close:${String(force)}`);
+            return never;
+          },
+          disconnect: () => {
+            calls.push("worker:disconnect");
+          },
+          pause: async () => { calls.push("pause"); },
+          waitForActivePostCallJobs: async () => { calls.push("wait-active"); },
+        },
+      }),
+    ).rejects.toBeInstanceOf(AggregateError);
+
+    expect(calls.slice(0, 5)).toEqual([
+      "pause",
+      "cancel:shutdown",
+      "wait-active",
+      "close:true",
+      "worker:disconnect",
+    ]);
+  });
+
+  it("force-closes once and rejects when active work cannot be confirmed", async () => {
+    const calls: string[] = [];
+    const never = new Promise<void>(() => {});
+
+    await expect(
+      drainActivePostCallJobsAndClose({
+        shutdownTimeoutMs: 250,
+        worker: {
+          cancelActivePostCallJobs: (reason) => {
+            calls.push(`cancel:${String(reason)}`);
+          },
+          close: async (force) => {
+            calls.push(`close:${String(force)}`);
+          },
+          pause: async () => {
+            calls.push("pause");
+          },
+          waitForActivePostCallJobs: () => never,
+        },
+      }),
+    ).rejects.toBeInstanceOf(AggregateError);
+
+    expect(calls).toEqual([
+      "pause",
+      "cancel:shutdown",
+      "close:true",
+    ]);
+  });
+
+  it("bounds a hung queue close and disconnects that queue", async () => {
+    const calls: string[] = [];
+    const never = new Promise<void>(() => {});
+
+    await expect(
+      drainActivePostCallJobsAndClose({
+        queues: [{
+          close: () => {
+            calls.push("queue:close");
+            return never;
+          },
+          disconnect: () => {
+            calls.push("queue:disconnect");
+          },
+        }],
+        shutdownTimeoutMs: 250,
+        worker: {
+          cancelActivePostCallJobs: () => {},
+          close: async () => {},
+          pause: async () => {},
+          waitForActivePostCallJobs: async () => {},
+        },
+      }),
+    ).rejects.toBeInstanceOf(AggregateError);
+
+    expect(calls).toEqual(["queue:close", "queue:disconnect"]);
   });
 });

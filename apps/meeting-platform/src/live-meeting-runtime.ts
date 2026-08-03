@@ -4,14 +4,17 @@ import type {
   CraigLifecycleEvent,
   VoicePacketBatch,
 } from "@discord-meeting/craig-gateway-contracts";
+import { renderRussianLiveCaptionsMarkdown } from "@discord-meeting/discord-adapter";
 import {
   AppendLiveTranscriptTurn,
   FinishLiveMeeting,
   RefreshLiveMeeting,
   StartLiveMeeting,
   type LiveCaptionSnapshot,
+  type LiveGenerationTelemetrySnapshot,
 } from "@discord-meeting/meeting-core";
 import type { Logger } from "@discord-meeting/observability-adapter";
+import { opusPacketDurationSamples } from "@discord-meeting/recording-ingress-adapter";
 import type {
   VoicetextLiveSession,
   VoicetextLiveTranscriptEvent,
@@ -19,11 +22,17 @@ import type {
 } from "@discord-meeting/voicetext-adapter";
 
 const refreshIntervalMs = 5_000;
+const refreshSchedulerIntervalMs = 100;
+const maximumInitialCaptionProjectionJitterMs = 900;
 const captionRetentionMs = 30_000;
-const maximumContinuousPacketGapMs = 120;
+const maximumRetainedFinalCaptions = 64;
 const maximumQueuedPacketsPerSpeaker = 512;
 const maximumRememberedMeetingPacketIds = 65_536;
 const defaultSpeakerIdleFinalizeMs = 750;
+const initialSummaryGenerationBackoffMs = 30_000;
+const maximumSummaryGenerationBackoffMs = 300_000;
+const initialProjectionBackoffMs = 10_000;
+const maximumProjectionBackoffMs = 300_000;
 
 export interface LiveMeetingRuntimeDependencies {
   readonly appendTurn: AppendLiveTranscriptTurn;
@@ -50,14 +59,24 @@ interface SpeakerStream {
 }
 
 interface LiveMeetingState {
-  readonly captions: Map<string, LiveCaptionSnapshot>;
+  readonly activeCaptions: Map<string, LiveCaptionSnapshot>;
   domainChain: Promise<void>;
+  readonly finalCaptions: Map<string, LiveCaptionSnapshot>;
   finishPromise: Promise<void> | null;
   finishing: boolean;
+  generationFailureCount: number;
+  permanentGenerationBase: string | null;
+  generationPromise: Promise<void> | null;
+  generationRetryAtMs: number;
   lastProjectedCaptionsSignature: string | null;
   readonly meetingId: string;
+  nextRefreshAtMs: number;
+  nextSummaryRefreshAtMs: number;
   readonly packetIdOrder: string[];
   readonly packetIds: Set<string>;
+  permanentProjectionFailureCode: string | null;
+  projectionFailureCount: number;
+  projectionRetryAtMs: number;
   refreshQueued: boolean;
   readonly speakers: Map<string, SpeakerStream>;
   readonly startedAtMs: number;
@@ -74,7 +93,7 @@ export class PlatformLiveMeetingRuntime {
     );
     this.refreshTimer = setInterval(() => {
       this.tick();
-    }, refreshIntervalMs);
+    }, refreshSchedulerIntervalMs);
     this.refreshTimer.unref();
   }
 
@@ -116,9 +135,6 @@ export class PlatformLiveMeetingRuntime {
         });
         continue;
       }
-      const rotateBeforeSend =
-        stream.lastRelativeTimeMs !== null &&
-        packet.relativeTimeMs - stream.lastRelativeTimeMs > maximumContinuousPacketGapMs;
       stream.lastRelativeTimeMs = packet.relativeTimeMs;
       this.cancelSpeakerIdleFinalization(stream);
       if (stream.queuedPackets >= maximumQueuedPacketsPerSpeaker) {
@@ -132,20 +148,8 @@ export class PlatformLiveMeetingRuntime {
       stream.queuedPackets += 1;
       const task = async () => {
         try {
-          if (rotateBeforeSend && stream.session !== null) {
-            const priorSession = stream.session;
-            stream.session = null;
-            try {
-              await priorSession.finalize();
-            } catch (error) {
-              priorSession.terminate();
-              this.dependencies.logger.warn("Derived live timeline-gap finalize failed", {
-                errorName: error instanceof Error ? error.name : "UnknownError",
-                meetingId: state.meetingId,
-                speakerId: packet.speakerId,
-              });
-            }
-          }
+          const opus = Buffer.from(packet.opusBase64, "base64");
+          const durationSamples48Khz = opusPacketDurationSamples(opus);
           if (stream.session === null) {
             const segment = stream.nextSegment;
             stream.nextSegment += 1;
@@ -159,7 +163,8 @@ export class PlatformLiveMeetingRuntime {
             });
           }
           await stream.session.sendPacket({
-            opus: Buffer.from(packet.opusBase64, "base64"),
+            durationSamples48Khz,
+            opus,
             packetId,
             relativeTimeMs: packet.relativeTimeMs,
           });
@@ -215,14 +220,24 @@ export class PlatformLiveMeetingRuntime {
       return;
     }
     const state: LiveMeetingState = {
-      captions: new Map(),
+      activeCaptions: new Map(),
       domainChain: Promise.resolve(),
+      finalCaptions: new Map(),
       finishPromise: null,
       finishing: false,
+      generationFailureCount: 0,
+      permanentGenerationBase: null,
+      generationPromise: null,
+      generationRetryAtMs: 0,
       lastProjectedCaptionsSignature: null,
       meetingId: event.recordingId,
+      nextRefreshAtMs: Date.now() + refreshIntervalMs,
+      nextSummaryRefreshAtMs: Date.now() + refreshIntervalMs,
       packetIdOrder: [],
       packetIds: new Set(),
+      permanentProjectionFailureCode: null,
+      projectionFailureCount: 0,
+      projectionRetryAtMs: 0,
       refreshQueued: false,
       speakers: new Map(),
       startedAtMs: Date.parse(event.occurredAt),
@@ -262,16 +277,21 @@ export class PlatformLiveMeetingRuntime {
     state: LiveMeetingState,
     event: VoicetextLiveTranscriptEvent,
   ): void {
-    state.captions.set(event.speakerId, {
+    const caption: LiveCaptionSnapshot = {
       endMs: event.endMs,
       isFinal: event.isFinal,
       speakerId: event.speakerId,
       startMs: event.startMs,
       text: event.text,
-    });
+    };
     if (!event.isFinal) {
+      state.activeCaptions.set(event.speakerId, caption);
+      scheduleFirstCaptionProjection(state, caption.text);
       return;
     }
+    state.activeCaptions.delete(event.speakerId);
+    state.finalCaptions.set(stableTurnId(event), caption);
+    scheduleFirstCaptionProjection(state, caption.text);
     this.dependencies.logger.info("Live transcript turn finalized", {
       endMs: event.endMs,
       meetingId: state.meetingId,
@@ -296,49 +316,189 @@ export class PlatformLiveMeetingRuntime {
   private tick(): void {
     const nowMs = Date.now();
     for (const state of this.meetings.values()) {
-      if (state.finishing || state.refreshQueued) {
+      const projectionDue = nowMs >= state.nextRefreshAtMs;
+      const summaryDue = nowMs >= state.nextSummaryRefreshAtMs;
+      if (state.finishing || state.refreshQueued || (!projectionDue && !summaryDue)) {
         continue;
       }
+      const refreshDueAtMs = state.nextRefreshAtMs;
+      const summaryDueAtMs = state.nextSummaryRefreshAtMs;
       state.refreshQueued = true;
       this.enqueueDomain(state, async () => {
         try {
           if (state.finishing) {
             return;
           }
-          await this.refresh(state, nowMs);
+          if (projectionDue) {
+            await this.refreshProjection(state, nowMs);
+          }
+          if (summaryDue) {
+            this.startSummaryGeneration(state, nowMs);
+          }
         } finally {
+          if (projectionDue) {
+            state.nextRefreshAtMs = nextRefreshAtMs(refreshDueAtMs, Date.now());
+          }
+          if (summaryDue) {
+            state.nextSummaryRefreshAtMs = nextRefreshAtMs(summaryDueAtMs, Date.now());
+          }
           state.refreshQueued = false;
         }
       });
     }
   }
 
-  private async refresh(
-    state: LiveMeetingState,
-    nowMs: number,
-    summaryGeneration: "cadence" | "skip" = "cadence",
-  ): Promise<void> {
+  private async refreshProjection(state: LiveMeetingState, nowMs: number): Promise<void> {
     const refreshStartedAtMs = performance.now();
-    const captions = [...state.captions.values()]
-      .filter(({ endMs }) => nowMs - state.startedAtMs - endMs <= captionRetentionMs)
-      .toSorted((left, right) => left.startMs - right.startMs || left.speakerId.localeCompare(right.speakerId));
+    const captions = collectLiveCaptions(state, Math.max(0, nowMs - state.startedAtMs));
     const captionsSignature = liveCaptionsSignature(captions);
+    const projectionAllowed = this.projectionAllowed(state, nowMs);
     const result = await this.dependencies.refreshMeeting.execute({
       captions,
       meetingId: state.meetingId,
       nowMs,
-      projectionRequested: captionsSignature !== state.lastProjectedCaptionsSignature,
-      summaryGeneration,
+      ...(projectionAllowed ? {} : { projection: "skip" as const }),
+      projectionRequested: projectionAllowed &&
+        captionsSignature !== state.lastProjectedCaptionsSignature,
+      summaryGeneration: "skip",
     });
     if (result.status === "not-found") {
       throw new Error("Live meeting disappeared before refresh");
     }
+    this.reconcilePermanentGenerationFence(state, result.generationBase);
+    if (result.projectionFailure !== undefined) {
+      if (result.projectionFailure.retryable) {
+        this.deferProjection(state, result.projectionFailure.code);
+      } else {
+        this.fencePermanentProjectionFailure(state, result.projectionFailure.code);
+      }
+      this.dependencies.logger.warn("Live Discord projection refresh failed", {
+        errorCode: result.projectionFailure.code,
+        meetingId: state.meetingId,
+        retryable: result.projectionFailure.retryable,
+      });
+    }
+    if (result.projected) {
+      state.lastProjectedCaptionsSignature = captionsSignature;
+      state.projectionFailureCount = 0;
+      state.projectionRetryAtMs = 0;
+    }
+    this.dependencies.logger.info("Live caption projection refresh completed", {
+      durationMs: Math.max(0, performance.now() - refreshStartedAtMs),
+      meetingId: state.meetingId,
+      projectionAllowed,
+      projected: result.projected,
+    });
+  }
+
+  private projectionAllowed(state: LiveMeetingState, nowMs: number): boolean {
+    return state.permanentProjectionFailureCode === null && nowMs >= state.projectionRetryAtMs;
+  }
+
+  private deferProjection(state: LiveMeetingState, errorCode: string): void {
+    state.projectionFailureCount += 1;
+    const delayMs = projectionBackoffDelayMs(state.meetingId, state.projectionFailureCount);
+    state.projectionRetryAtMs = Date.now() + delayMs;
+    this.dependencies.logger.info("Live Discord projection retry deferred", {
+      delayMs,
+      errorCode,
+      failureCount: state.projectionFailureCount,
+      meetingId: state.meetingId,
+    });
+  }
+
+  private fencePermanentProjectionFailure(state: LiveMeetingState, errorCode: string): void {
+    if (state.permanentProjectionFailureCode !== null) {
+      return;
+    }
+    state.permanentProjectionFailureCode = errorCode;
+    state.projectionFailureCount = 0;
+    state.projectionRetryAtMs = Number.POSITIVE_INFINITY;
+    this.dependencies.logger.error("Live Discord projection permanently fenced", {
+      errorCode,
+      meetingId: state.meetingId,
+      release: "runtime-restart-or-configuration-change",
+    });
+  }
+
+  private startSummaryGeneration(state: LiveMeetingState, nowMs: number): void {
+    if (
+      state.finishing ||
+      state.generationPromise !== null ||
+      state.permanentGenerationBase !== null ||
+      nowMs < state.generationRetryAtMs
+    ) {
+      return;
+    }
+    const generation = this.generateSummary(state, nowMs)
+      .catch((error: unknown) => {
+        this.deferSummaryGeneration(state, "UNEXPECTED_LIVE_GENERATION_FAILURE", true);
+        this.dependencies.logger.warn("Incremental meeting summary refresh failed", {
+          errorCode: "UNEXPECTED_LIVE_GENERATION_FAILURE",
+          errorName: error instanceof Error ? error.name : "UnknownError",
+          meetingId: state.meetingId,
+          retryable: true,
+        });
+      })
+      .finally(() => {
+        if (state.generationPromise === generation) {
+          state.generationPromise = null;
+        }
+      });
+    state.generationPromise = generation;
+  }
+
+  private async generateSummary(state: LiveMeetingState, nowMs: number): Promise<void> {
+    const generationStartedAtMs = performance.now();
+    const result = await this.dependencies.refreshMeeting.execute({
+      captions: [],
+      meetingId: state.meetingId,
+      nowMs,
+      projection: "skip",
+      projectionRequested: false,
+    });
+    if (result.status === "not-found") {
+      throw new Error("Live meeting disappeared before summary generation");
+    }
     if (result.generationFailure !== undefined) {
+      if (result.generationFailure.retryable) {
+        this.deferSummaryGeneration(
+          state,
+          result.generationFailure.code,
+          true,
+        );
+      } else {
+        this.fencePermanentGenerationFailure(
+          state,
+          result.generationBase,
+          result.generationFailure.code,
+        );
+      }
       this.dependencies.logger.warn("Incremental meeting summary refresh failed", {
         errorCode: result.generationFailure.code,
         meetingId: state.meetingId,
         retryable: result.generationFailure.retryable,
       });
+    } else if (result.generated) {
+      state.generationFailureCount = 0;
+      state.generationRetryAtMs = 0;
+      if (!state.finishing) {
+        this.enqueueDomain(state, async () => {
+          if (!state.finishing) {
+            await this.refreshProjection(state, Date.now());
+          }
+        });
+      }
+    } else if (result.generationStale === true) {
+      this.dependencies.logger.info("Incremental meeting summary result was stale", {
+        meetingId: state.meetingId,
+      });
+    }
+    if (result.generationTelemetry !== undefined) {
+      this.dependencies.logger.info(
+        "Incremental meeting summary telemetry recorded",
+        generationTelemetryLogFields(state.meetingId, result.generationTelemetry),
+      );
     }
     if (result.generationUsage !== undefined) {
       this.dependencies.logger.info("Incremental meeting summary usage measured", {
@@ -351,26 +511,74 @@ export class PlatformLiveMeetingRuntime {
         priceCard: result.generationUsage.priceCard,
         totalTokens: result.generationUsage.totalTokens,
       });
-    } else if (result.generated) {
+    } else if (result.generated && result.generationTelemetry === undefined) {
       this.dependencies.logger.warn("Incremental meeting summary usage telemetry is missing", {
         meetingId: state.meetingId,
       });
     }
-    if (result.projectionFailure !== undefined) {
-      this.dependencies.logger.warn("Live Discord projection refresh failed", {
-        errorCode: result.projectionFailure.code,
-        meetingId: state.meetingId,
-        retryable: result.projectionFailure.retryable,
-      });
-    }
-    if (result.projected) {
-      state.lastProjectedCaptionsSignature = captionsSignature;
-    }
-    this.dependencies.logger.info("Live meeting refresh completed", {
-      durationMs: Math.max(0, performance.now() - refreshStartedAtMs),
+    this.dependencies.logger.info("Incremental meeting summary refresh completed", {
+      durationMs: Math.max(0, performance.now() - generationStartedAtMs),
       generated: result.generated,
       meetingId: state.meetingId,
-      projected: result.projected,
+      stale: result.generationStale ?? false,
+    });
+  }
+
+  private deferSummaryGeneration(
+    state: LiveMeetingState,
+    errorCode: string,
+    retryable: boolean,
+  ): void {
+    state.generationFailureCount += 1;
+    const exponent = Math.min(state.generationFailureCount - 1, 4);
+    const delayMs = Math.min(
+      initialSummaryGenerationBackoffMs * 2 ** exponent,
+      maximumSummaryGenerationBackoffMs,
+    );
+    state.generationRetryAtMs = Date.now() + delayMs;
+    this.dependencies.logger.info("Incremental meeting summary retry deferred", {
+      delayMs,
+      errorCode,
+      failureCount: state.generationFailureCount,
+      meetingId: state.meetingId,
+      retryable,
+    });
+  }
+
+  private fencePermanentGenerationFailure(
+    state: LiveMeetingState,
+    generationBase: string | undefined,
+    errorCode: string,
+  ): void {
+    if (generationBase === undefined) {
+      this.deferSummaryGeneration(state, errorCode, true);
+      return;
+    }
+    state.generationFailureCount = 0;
+    state.generationRetryAtMs = Number.POSITIVE_INFINITY;
+    state.permanentGenerationBase = generationBase;
+    this.dependencies.logger.info("Incremental meeting summary permanently fenced", {
+      errorCode,
+      meetingId: state.meetingId,
+    });
+  }
+
+  private reconcilePermanentGenerationFence(
+    state: LiveMeetingState,
+    generationBase: string | undefined,
+  ): void {
+    if (
+      state.permanentGenerationBase === null ||
+      generationBase === undefined ||
+      generationBase === state.permanentGenerationBase
+    ) {
+      return;
+    }
+    state.generationFailureCount = 0;
+    state.generationRetryAtMs = 0;
+    state.permanentGenerationBase = null;
+    this.dependencies.logger.info("Incremental meeting summary fence cleared for new evidence", {
+      meetingId: state.meetingId,
     });
   }
 
@@ -390,6 +598,7 @@ export class PlatformLiveMeetingRuntime {
       }
     });
     await Promise.allSettled(finalizeTasks);
+    await state.generationPromise?.catch(() => {});
     this.enqueueDomain(state, async () => {
       const result = await this.dependencies.finishMeeting.execute(state.meetingId, endedAtMs);
       if (result === "not-found") {
@@ -398,7 +607,7 @@ export class PlatformLiveMeetingRuntime {
       // Craig acknowledgement is no longer coupled to this work. The final
       // publisher waits on this finish promise, so keep the terminal projection
       // fast and let the durable post-call summary reconcile every turn.
-      await this.refresh(state, endedAtMs, "skip");
+      await this.refreshProjection(state, endedAtMs);
     });
     try {
       await state.domainChain;
@@ -476,8 +685,139 @@ export class PlatformLiveMeetingRuntime {
 
 function liveCaptionsSignature(captions: readonly LiveCaptionSnapshot[]): string {
   return createHash("sha256")
-    .update(JSON.stringify(captions))
+    .update(renderRussianLiveCaptionsMarkdown(captions), "utf8")
     .digest("hex");
+}
+
+function scheduleFirstCaptionProjection(state: LiveMeetingState, captionText: string): void {
+  if (
+    state.finishing ||
+    state.lastProjectedCaptionsSignature !== null ||
+    captionText.trim().length === 0
+  ) {
+    return;
+  }
+  const dueAtMs = Date.now() + deterministicOffsetMs(
+    "live-first-caption-projection:v1",
+    state.meetingId,
+    maximumInitialCaptionProjectionJitterMs,
+  );
+  state.nextRefreshAtMs = Math.min(state.nextRefreshAtMs, dueAtMs);
+}
+
+function nextRefreshAtMs(previousDueAtMs: number, nowMs: number): number {
+  const scheduled = previousDueAtMs + refreshIntervalMs;
+  return scheduled > nowMs ? scheduled : nowMs + refreshIntervalMs;
+}
+
+function projectionBackoffDelayMs(meetingId: string, failureCount: number): number {
+  const exponent = Math.min(failureCount - 1, 5);
+  const baseDelayMs = Math.min(
+    initialProjectionBackoffMs * 2 ** exponent,
+    maximumProjectionBackoffMs,
+  );
+  const jitterBudgetMs = Math.floor(baseDelayMs / 5);
+  return baseDelayMs - deterministicOffsetMs(
+    `live-projection-retry:v1:${failureCount}`,
+    meetingId,
+    jitterBudgetMs,
+  );
+}
+
+function deterministicOffsetMs(namespace: string, meetingId: string, maximumOffsetMs: number): number {
+  if (maximumOffsetMs <= 0) {
+    return 0;
+  }
+  const digest = createHash("sha256")
+    .update(`${namespace}\0${meetingId}`, "utf8")
+    .digest();
+  return digest.readUInt32BE(0) % (maximumOffsetMs + 1);
+}
+
+function collectLiveCaptions(
+  state: LiveMeetingState,
+  elapsedMs: number,
+): readonly LiveCaptionSnapshot[] {
+  const cutoffMs = elapsedMs - captionRetentionMs;
+  for (const [speakerId, caption] of state.activeCaptions) {
+    if (caption.endMs < cutoffMs) {
+      state.activeCaptions.delete(speakerId);
+    }
+  }
+  for (const [turnId, caption] of state.finalCaptions) {
+    if (caption.endMs < cutoffMs) {
+      state.finalCaptions.delete(turnId);
+    }
+  }
+
+  const orderedFinals = [...state.finalCaptions.entries()].toSorted(
+    ([leftId, left], [rightId, right]) => compareLiveCaptions(left, right) ||
+      leftId.localeCompare(rightId),
+  );
+  const excessFinals = orderedFinals.length - maximumRetainedFinalCaptions;
+  if (excessFinals > 0) {
+    for (const [turnId] of orderedFinals.slice(0, excessFinals)) {
+      state.finalCaptions.delete(turnId);
+    }
+  }
+
+  return [...state.finalCaptions.values(), ...state.activeCaptions.values()]
+    .toSorted(compareLiveCaptions);
+}
+
+function compareLiveCaptions(
+  left: LiveCaptionSnapshot,
+  right: LiveCaptionSnapshot,
+): number {
+  return left.startMs - right.startMs ||
+    left.endMs - right.endMs ||
+    left.speakerId.localeCompare(right.speakerId) ||
+    left.text.localeCompare(right.text);
+}
+
+function generationTelemetryLogFields(
+  meetingId: string,
+  telemetry: LiveGenerationTelemetrySnapshot,
+): Record<string, unknown> {
+  return {
+    cacheWriteInputTokens: telemetryTokenLogValue(telemetry.cacheWriteInputTokens),
+    cachedInputTokens: telemetryTokenLogValue(telemetry.cachedInputTokens),
+    ...(telemetry.cost === undefined
+      ? {}
+      : {
+          ...(telemetry.cost.exactUsd === undefined
+            ? {}
+            : { exactCostUsd: telemetry.cost.exactUsd }),
+          maximumCostUsd: telemetry.cost.maximumUsd,
+          minimumCostUsd: telemetry.cost.minimumUsd,
+          priceCardId: telemetry.cost.priceCardId,
+          priceCardSource: telemetry.cost.priceCardSource,
+        }),
+    inputTokens: telemetryTokenLogValue(telemetry.inputTokens),
+    meetingId,
+    model: telemetry.model,
+    outputTokens: telemetryTokenLogValue(telemetry.outputTokens),
+    reasoningOutputTokens: telemetryTokenLogValue(telemetry.reasoningOutputTokens),
+    runId: telemetry.runId,
+    source: telemetry.source,
+    totalTokens: telemetryTokenLogValue(telemetry.totalTokens),
+  };
+}
+
+function telemetryTokenLogValue(
+  token: LiveGenerationTelemetrySnapshot["inputTokens"],
+): Record<string, unknown> {
+  if (token.availability === "unavailable") {
+    return { availability: "unavailable" };
+  }
+  if (token.availability === "measured") {
+    return { availability: "measured", value: token.value };
+  }
+  return {
+    availability: "derived",
+    derivedFrom: token.derivedFrom,
+    value: token.value,
+  };
 }
 
 function validateSpeakerIdleFinalizeMs(value: number | undefined): number {

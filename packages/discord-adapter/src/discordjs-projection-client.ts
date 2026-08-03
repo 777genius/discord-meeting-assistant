@@ -124,9 +124,13 @@ export class DiscordJsProjectionClient implements DiscordProjectionClient {
         throw error;
       }
     }
-    if (thread === undefined || !threadNameHasMarker(thread.name, marker)) {
+    if (thread === undefined) {
       return undefined;
     }
+
+    // The persisted Discord reference is the durable identity. A moderator may
+    // rename the human-facing thread and remove the marker, but that must not
+    // make a later recovery create a duplicate projection.
 
     try {
       const message = await thread.messages.fetch(hint.messageId);

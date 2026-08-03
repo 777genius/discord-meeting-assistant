@@ -5,5 +5,8 @@ export interface AudioContent {
 }
 
 export interface AudioContentReader {
-  read(audioLocator: string): Promise<AudioContent>;
+  read(
+    audioLocator: string,
+    options?: { readonly signal?: AbortSignal },
+  ): Promise<AudioContent>;
 }

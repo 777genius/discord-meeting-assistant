@@ -161,6 +161,7 @@ services:
       SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256: ${SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256:?set launcher SHA-256}
       SUBSCRIPTION_RUNTIME_TOKEN_FILE: /run/secrets/runtime-service-token
       TRANSCRIPTION_PROVIDER: voicetext
+      VOICETEXT_BATCH_MAX_ARTIFACT_BYTES: ${VOICETEXT_BATCH_MAX_ARTIFACT_BYTES:-67108864}
       VOICETEXT_SERVICE_TOKEN_FILE: /run/secrets/voicetext-service-token
       VOICETEXT_WS_URL: ${VOICETEXT_WS_URL:-wss://api.voicetext.site/api/v1/transcribe/stream}
     volumes:

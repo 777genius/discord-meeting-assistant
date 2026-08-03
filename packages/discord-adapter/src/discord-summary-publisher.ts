@@ -10,6 +10,7 @@ import {
   toDiscordProjectionBody,
 } from "./discord-projection.js";
 import { createDiscordThreadName, createProjectionMarker } from "./projection-marker.js";
+import { shouldReconcileDirectProjectionEditFailure } from "./discord-projection-error-classification.js";
 
 export class DiscordSummaryPublisher {
   constructor(
@@ -33,7 +34,10 @@ export class DiscordSummaryPublisher {
             marker,
           });
           return input.currentReference;
-        } catch {
+        } catch (error: unknown) {
+          if (!shouldReconcileDirectProjectionEditFailure(error)) {
+            throw error;
+          }
           // The direct reference can be stale, deleted, or have an unknown remote
           // outcome. Reconcile the marker before creating anything new.
         }
@@ -57,17 +61,20 @@ export class DiscordSummaryPublisher {
 
     await this.client.renameThread({ threadId: located.threadId, name: threadName });
 
-    const messageId = located.messageId ??
-      (await this.createOrRecoverMessage(input, located.threadId, marker, legacyMarkers));
+    const message = located.messageId === undefined
+      ? await this.createOrRecoverMessage(input, located.threadId, marker, legacyMarkers)
+      : { created: false, messageId: located.messageId };
 
-    await this.client.editMessage({
-      threadId: located.threadId,
-      messageId,
-      body: toDiscordProjectionBody(input),
-      marker,
-    });
+    if (!message.created) {
+      await this.client.editMessage({
+        threadId: located.threadId,
+        messageId: message.messageId,
+        body: toDiscordProjectionBody(input),
+        marker,
+      });
+    }
 
-    return { threadId: located.threadId, messageId };
+    return { threadId: located.threadId, messageId: message.messageId };
   }
 
   private async createOrRecoverThread(
@@ -98,17 +105,18 @@ export class DiscordSummaryPublisher {
     threadId: string,
     marker: string,
     legacyMarkers: readonly string[],
-  ): Promise<string> {
+  ): Promise<{ readonly created: boolean; readonly messageId: string }> {
     try {
-      return await this.client.createMessage({
+      const messageId = await this.client.createMessage({
         threadId,
         body: toDiscordProjectionBody(input),
         marker,
       });
+      return { created: true, messageId };
     } catch (error: unknown) {
       const recovered = await this.locateProjection(input, marker, legacyMarkers);
       if (recovered?.messageId !== undefined) {
-        return recovered.messageId;
+        return { created: false, messageId: recovered.messageId };
       }
       throw error;
     }

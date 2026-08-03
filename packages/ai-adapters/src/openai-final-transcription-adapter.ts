@@ -63,6 +63,7 @@ export class OpenAiFinalTranscriptionAdapter implements FinalTranscriptionPort {
     try {
       return { ok: true, value: await this.transcribeOrThrow(request) };
     } catch (error: unknown) {
+      request.signal?.throwIfAborted();
       return {
         ok: false,
         failure: toOpenAiPortFailure(error, "transcription"),
@@ -74,15 +75,18 @@ export class OpenAiFinalTranscriptionAdapter implements FinalTranscriptionPort {
     request: FinalTranscriptionRequest,
   ): Promise<GeneratedTranscript> {
     validateTranscriptionRequest(request);
+    request.signal?.throwIfAborted();
 
     const chunkResults = await mapWithConcurrency(
       request.recording.speakerAudio,
       this.maxConcurrency,
+      request.signal,
       async (reference, sourceAudioIndex) =>
         this.transcribeSpeakerAudio(
           reference,
           sourceAudioIndex,
           request.idempotencyKey,
+          request.signal,
         ),
     );
     const providerTurns = chunkResults.flat().toSorted(compareProviderTurns);
@@ -118,8 +122,14 @@ export class OpenAiFinalTranscriptionAdapter implements FinalTranscriptionPort {
     reference: SpeakerAudioReferenceSnapshot,
     sourceAudioIndex: number,
     idempotencyKey: string,
+    signal: AbortSignal | undefined,
   ): Promise<readonly ProviderTranscriptTurn[]> {
-    const audio = await this.audioContentReader.read(reference.audioLocator);
+    signal?.throwIfAborted();
+    const audio = await this.audioContentReader.read(
+      reference.audioLocator,
+      signal === undefined ? {} : { signal },
+    );
+    signal?.throwIfAborted();
     validateAudioContent(audio);
 
     const providerResponse = await this.client.createTranscription({
@@ -134,7 +144,9 @@ export class OpenAiFinalTranscriptionAdapter implements FinalTranscriptionPort {
       model: "whisper-1",
       ...(this.language === undefined ? {} : { language: this.language }),
       ...(this.prompt === undefined ? {} : { prompt: this.prompt }),
+      ...(signal === undefined ? {} : { signal }),
     });
+    signal?.throwIfAborted();
 
     const parsed = verboseTranscriptionSchema.safeParse(providerResponse);
     if (!parsed.success) {
@@ -288,6 +300,7 @@ function compareProviderTurns(left: ProviderTranscriptTurn, right: ProviderTrans
 async function mapWithConcurrency<T, U>(
   values: readonly T[],
   concurrency: number,
+  signal: AbortSignal | undefined,
   map: (value: T, index: number) => Promise<U>,
 ): Promise<U[]> {
   const results: U[] = [];
@@ -295,6 +308,7 @@ async function mapWithConcurrency<T, U>(
 
   async function worker(): Promise<void> {
     while (nextIndex < values.length) {
+      signal?.throwIfAborted();
       const index = nextIndex;
       nextIndex += 1;
       const value = values[index];
@@ -302,6 +316,7 @@ async function mapWithConcurrency<T, U>(
         throw new OpenAiAdapterError("invalid_input", "missing speaker audio reference");
       }
       results[index] = await map(value, index);
+      signal?.throwIfAborted();
     }
   }
 

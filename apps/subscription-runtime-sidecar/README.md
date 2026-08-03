@@ -23,8 +23,8 @@ The package manifest must be exactly `@vioxen/subscription-runtime` version
 `0.1.0-main.2`. The launcher is inspected by realpath and SHA-256 before and
 after every task. It must call that version's
 `subscription-runtime-run-agent-task` JSON bridge while constructing the Codex
-worker with the exact selected profile: `gpt-5.6-sol`/`xhigh` for final summary
-or `gpt-5.6-luna`/`medium` for incremental summary, disabled tools, no interactive
+worker with the exact selected profile: `gpt-5.6-luna`/`medium` for both final
+and incremental summaries, disabled tools, no interactive
 flow, and stateless-completion semantics. A generic launcher that does not
 enforce both exact profiles is not an admitted production installation.
 
@@ -35,11 +35,20 @@ exact `--model`. The child reasoning environment must match that same request
 profile. The auth JSON and state root must belong only to this sidecar. Never
 mount another project's mutable runtime state.
 
-An incremental completion is rejected with `telemetry_unavailable` unless the
-runtime measured every token class: input, cached input, cache-write input,
-output, reasoning output, and total. Complete measured usage is forwarded for
-both completed and failed provider tasks; callers derive the versioned
-API-equivalent cost rather than consuming a default zero-valued cost field.
+The audited launcher observes the documented `codex exec --json` JSONL
+`turn.completed` event through the worker's admitted `codexBinaryPath`; it does
+not replace the private worker or its auth/tool policy. Codex reports measured
+input, cached input, output, and reasoning-output tokens there, but does not
+report cache-write input or total. The sidecar forwards those classes as
+`telemetry`, marks cache-write input `unavailable`, and derives total only as
+`input + output` with an explicit `derived` marker. It never creates a zero for
+an absent token class. The legacy `usage` field remains present only when every
+class was measured, for both completed and failed provider tasks.
+
+The adapter can price partial Luna telemetry as a bounded estimate: the minimum
+assumes no cache writes and the maximum assumes all non-cached input was a cache
+write. An exact API-equivalent cost is emitted only when cache-write input is
+measured, with the price-card ID and source retained alongside the estimate.
 
 ## Secrets and network
 

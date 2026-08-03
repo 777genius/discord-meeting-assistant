@@ -29,8 +29,9 @@ The critical flow is:
    re-encode step;
 6. mutable partials update speaker-attributed captions, while only finalized turns
    can enter incremental-summary evidence;
-7. after five minutes, captions and the preliminary summary edit one stable
-   Discord message and expose exact runtime token/cost telemetry;
+7. the first caption opens one stable Discord message, later captions edit it,
+   and after five minutes the preliminary summary joins the same projection
+   with measured or explicitly bounded runtime token/cost telemetry;
 8. final transcription preserves Discord speaker identity and timestamps;
 9. summary topics, action owner/deadline, and evidence turn references are validated;
 10. publishing replaces the live draft in exactly the same Discord thread/message;

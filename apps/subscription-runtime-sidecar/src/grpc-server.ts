@@ -11,16 +11,25 @@ import {
   type UntypedServiceImplementation,
 } from "@grpc/grpc-js";
 import { loadSync } from "@grpc/proto-loader";
+import type {
+  SubscriptionRuntimeTelemetry,
+  SubscriptionRuntimeTokenAvailability,
+} from "@discord-meeting/subscription-runtime-adapter";
 
 import {
   grpcHealthDegraded,
   grpcHealthNotServing,
   grpcHealthServing,
+  grpcDerivedTokenInput,
+  grpcDerivedTokenOutput,
   grpcOutputStructured,
   grpcProviderCodex,
   grpcTaskCompleted,
   grpcTaskFailed,
   grpcTaskWaiting,
+  grpcTokenDerived,
+  grpcTokenMeasured,
+  grpcTokenUnavailable,
   healthServiceName,
 } from "./constants.js";
 import {
@@ -133,6 +142,9 @@ function toGrpcTaskResponse(
         causeCategory: result.failure.causeCategory ?? "subscription_runtime",
         details: {},
       },
+      ...(result.telemetry === undefined
+        ? {}
+        : { telemetry: toGrpcTelemetry(result.telemetry) }),
       ...(result.usage === undefined ? {} : { usage: toGrpcUsage(result.usage) }),
     };
   }
@@ -151,6 +163,9 @@ function toGrpcTaskResponse(
     outputText: "",
     structuredOutputJson: JSON.stringify(result.structuredOutput),
     warnings: [],
+    ...(result.telemetry === undefined
+      ? {}
+      : { telemetry: toGrpcTelemetry(result.telemetry) }),
     ...(result.usage === undefined
       ? {}
       : {
@@ -173,6 +188,46 @@ function toGrpcTaskResponse(
       selectedOutputSha256:
         result.executionAttestation.selectedOutputSha256,
     },
+  };
+}
+
+function toGrpcTelemetry(telemetry: SubscriptionRuntimeTelemetry): RawMessage {
+  return {
+    ...(telemetry.cost === undefined
+      ? {}
+      : {
+          cost: {
+            ...(telemetry.cost.exactUsd === undefined
+              ? {}
+              : { exactUsd: telemetry.cost.exactUsd }),
+            hasExactUsd: telemetry.cost.exactUsd !== undefined,
+            maximumUsd: telemetry.cost.maximumUsd,
+            minimumUsd: telemetry.cost.minimumUsd,
+            priceCardId: telemetry.cost.priceCardId,
+            priceCardSource: telemetry.cost.priceCardSource,
+          },
+        }),
+    source: telemetry.source,
+    inputTokens: toGrpcTokenClass(telemetry.inputTokens),
+    cachedInputTokens: toGrpcTokenClass(telemetry.cachedInputTokens),
+    cacheWriteInputTokens: toGrpcTokenClass(telemetry.cacheWriteInputTokens),
+    outputTokens: toGrpcTokenClass(telemetry.outputTokens),
+    reasoningOutputTokens: toGrpcTokenClass(telemetry.reasoningOutputTokens),
+    totalTokens: toGrpcTokenClass(telemetry.totalTokens),
+  };
+}
+
+function toGrpcTokenClass(token: SubscriptionRuntimeTokenAvailability): RawMessage {
+  if (token.availability === "unavailable") {
+    return { availability: grpcTokenUnavailable };
+  }
+  if (token.availability === "measured") {
+    return { availability: grpcTokenMeasured, value: String(token.value) };
+  }
+  return {
+    availability: grpcTokenDerived,
+    derivedFrom: [grpcDerivedTokenInput, grpcDerivedTokenOutput],
+    value: String(token.value),
   };
 }
 

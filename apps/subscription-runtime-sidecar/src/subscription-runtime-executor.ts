@@ -5,9 +5,10 @@ import { join } from "node:path";
 import {
   auditedSubscriptionRuntimePackageVersion,
   canonicalJsonSha256,
+  calculateLunaApiEquivalentCostRange,
   providerMeetingSummarySchema,
   subscriptionRuntimeEngine,
-  subscriptionRuntimeIncrementalPurpose,
+  subscriptionRuntimeIncrementalModel,
   subscriptionRuntimeProvider,
   subscriptionRuntimeProfileForPurpose,
   subscriptionRuntimeReasoningEffort,
@@ -17,6 +18,8 @@ import {
   type SubscriptionRuntimeFailureCode,
   type SubscriptionRuntimeHealthResult,
   type SubscriptionRuntimeTaskResult,
+  type SubscriptionRuntimeTelemetry,
+  type SubscriptionRuntimeTokenAvailability,
   type SubscriptionRuntimeUsage,
 } from "@discord-meeting/subscription-runtime-adapter";
 import { z } from "zod";
@@ -66,16 +69,7 @@ const failureSchema = z
   .loose();
 const telemetrySchema = z
   .object({
-    usage: z
-      .object({
-        inputTokens: z.number().int().nonnegative().optional(),
-        cachedInputTokens: z.number().int().nonnegative().optional(),
-        cacheWriteInputTokens: z.number().int().nonnegative().optional(),
-        outputTokens: z.number().int().nonnegative().optional(),
-        reasoningOutputTokens: z.number().int().nonnegative().optional(),
-        totalTokens: z.number().int().nonnegative().optional(),
-      })
-      .optional(),
+    usage: z.unknown().optional(),
     cost: z
       .object({ amount: z.number().nonnegative(), currency: z.literal("USD") })
       .optional(),
@@ -200,26 +194,33 @@ export class SubscriptionRuntimeExecutor implements SidecarExecutorPort {
             : "backend_unavailable",
         );
       }
-      const usage = readCompleteUsage(parsed.telemetry?.usage);
-      if (usage.status === "invalid") {
+      const telemetry = readTelemetry(parsed.telemetry?.usage);
+      if (telemetry.status === "invalid") {
         return failedResult("provider_output_invalid");
       }
-      const completeUsage = usage.status === "complete" ? usage.value : undefined;
+      const completeUsage =
+        telemetry.status === "available" ? telemetry.usage : undefined;
+      const partialTelemetry =
+        telemetry.status === "available"
+          ? withLunaCostRange(telemetry.value, profile)
+          : undefined;
       if (execution.exitCode !== (parsed.status === "completed" ? 0 : 1)) {
         return failedResult(
           execution.exitCode === 0
             ? "provider_output_invalid"
             : "backend_unavailable",
           completeUsage,
+          partialTelemetry,
         );
       }
       if (parsed.status === "failed") {
-        return failedResult(normalizeFailureCode(parsed.failure.code), completeUsage);
+        return failedResult(
+          normalizeFailureCode(parsed.failure.code),
+          completeUsage,
+          partialTelemetry,
+        );
       }
-      if (
-        profile.purpose === subscriptionRuntimeIncrementalPurpose &&
-        usage.status === "missing"
-      ) {
+      if (telemetry.status === "missing") {
         return failedResult("telemetry_unavailable");
       }
 
@@ -227,7 +228,11 @@ export class SubscriptionRuntimeExecutor implements SidecarExecutorPort {
         parsed.structuredOutput,
       );
       if (!validatedOutput.success) {
-        return failedResult("provider_output_invalid", completeUsage);
+        return failedResult(
+          "provider_output_invalid",
+          completeUsage,
+          partialTelemetry,
+        );
       }
       const structuredOutput = validatedOutput.data as unknown as JsonObject;
       return {
@@ -248,6 +253,7 @@ export class SubscriptionRuntimeExecutor implements SidecarExecutorPort {
         protocolVersion: 1,
         status: "completed",
         structuredOutput,
+        ...(partialTelemetry === undefined ? {} : { telemetry: partialTelemetry }),
         ...(completeUsage === undefined ? {} : { usage: completeUsage }),
       };
     } catch {
@@ -345,24 +351,191 @@ function buildCliArgs(
   ];
 }
 
-type CompleteUsageResult =
-  | { readonly status: "complete"; readonly value: SubscriptionRuntimeUsage }
+type TelemetryResult =
+  | {
+      readonly status: "available";
+      readonly usage?: SubscriptionRuntimeUsage;
+      readonly value: SubscriptionRuntimeTelemetry;
+    }
   | { readonly status: "invalid" }
   | { readonly status: "missing" };
 
-function readCompleteUsage(
-  input: {
-    readonly cacheWriteInputTokens?: number | undefined;
-    readonly cachedInputTokens?: number | undefined;
-    readonly inputTokens?: number | undefined;
-    readonly outputTokens?: number | undefined;
-    readonly reasoningOutputTokens?: number | undefined;
-    readonly totalTokens?: number | undefined;
-  } | undefined,
-): CompleteUsageResult {
+type TokenName =
+  | "cacheWriteInputTokens"
+  | "cachedInputTokens"
+  | "inputTokens"
+  | "outputTokens"
+  | "reasoningOutputTokens"
+  | "totalTokens";
+
+const tokenNames: readonly TokenName[] = [
+  "inputTokens",
+  "cachedInputTokens",
+  "cacheWriteInputTokens",
+  "outputTokens",
+  "reasoningOutputTokens",
+  "totalTokens",
+];
+
+function readTelemetry(input: unknown): TelemetryResult {
   if (input === undefined) {
     return { status: "missing" };
   }
+  if (!isRecord(input)) {
+    return { status: "invalid" };
+  }
+  if (typeof input.source === "string") {
+    return readStructuredTelemetry(input);
+  }
+  return readLegacyTelemetry(input);
+}
+
+function readStructuredTelemetry(input: Record<string, unknown>): TelemetryResult {
+  if (input.source !== "codex_exec_jsonl" && input.source !== "runtime_bridge") {
+    return { status: "invalid" };
+  }
+  const tokenValues = Object.fromEntries(
+    tokenNames.map((name) => [name, readTokenAvailability(input[name], name)]),
+  ) as Record<TokenName, SubscriptionRuntimeTokenAvailability | undefined>;
+  if (tokenNames.some((name) => tokenValues[name] === undefined)) {
+    return { status: "invalid" };
+  }
+  return completeTelemetry(
+    input.source,
+    tokenValues as Record<TokenName, SubscriptionRuntimeTokenAvailability>,
+  );
+}
+
+function readLegacyTelemetry(input: Record<string, unknown>): TelemetryResult {
+  if (!tokenNames.some((name) => name in input)) {
+    return { status: "missing" };
+  }
+  const tokenValues = Object.fromEntries(
+    tokenNames.map((name) => {
+      const value = input[name];
+      if (value === undefined) {
+        return [name, { availability: "unavailable" }];
+      }
+      if (!isTokenCount(value)) {
+        return [name, undefined];
+      }
+      return [name, { availability: "measured", value }];
+    }),
+  ) as Record<TokenName, SubscriptionRuntimeTokenAvailability | undefined>;
+  if (tokenNames.some((name) => tokenValues[name] === undefined)) {
+    return { status: "invalid" };
+  }
+  return completeTelemetry(
+    "runtime_bridge",
+    tokenValues as Record<TokenName, SubscriptionRuntimeTokenAvailability>,
+  );
+}
+
+function readTokenAvailability(
+  input: unknown,
+  tokenName: TokenName,
+): SubscriptionRuntimeTokenAvailability | undefined {
+  if (!isRecord(input) || typeof input.availability !== "string") {
+    return undefined;
+  }
+  if (input.availability === "unavailable") {
+    return Object.keys(input).length === 1 ? { availability: "unavailable" } : undefined;
+  }
+  if (input.availability === "measured") {
+    return Object.keys(input).length === 2 && isTokenCount(input.value)
+      ? { availability: "measured", value: input.value }
+      : undefined;
+  }
+  if (input.availability !== "derived" || tokenName !== "totalTokens") {
+    return undefined;
+  }
+  if (
+    Object.keys(input).length !== 3 ||
+    !isTokenCount(input.value) ||
+    !Array.isArray(input.derivedFrom) ||
+    input.derivedFrom.length !== 2 ||
+    input.derivedFrom[0] !== "inputTokens" ||
+    input.derivedFrom[1] !== "outputTokens"
+  ) {
+    return undefined;
+  }
+  return {
+    availability: "derived",
+    derivedFrom: ["inputTokens", "outputTokens"],
+    value: input.value,
+  };
+}
+
+function completeTelemetry(
+  source: SubscriptionRuntimeTelemetry["source"],
+  tokenValues: Record<TokenName, SubscriptionRuntimeTokenAvailability>,
+): TelemetryResult {
+  const inputTokens = tokenValues.inputTokens;
+  const cachedInputTokens = tokenValues.cachedInputTokens;
+  const cacheWriteInputTokens = tokenValues.cacheWriteInputTokens;
+  const outputTokens = tokenValues.outputTokens;
+  const reasoningOutputTokens = tokenValues.reasoningOutputTokens;
+  const totalTokens = tokenValues.totalTokens;
+  if (
+    cachedInputTokens.availability === "measured" &&
+    inputTokens.availability === "measured" &&
+    cachedInputTokens.value > inputTokens.value
+  ) {
+    return { status: "invalid" };
+  }
+  if (
+    cachedInputTokens.availability === "measured" &&
+    cacheWriteInputTokens.availability === "measured" &&
+    inputTokens.availability === "measured" &&
+    cachedInputTokens.value + cacheWriteInputTokens.value > inputTokens.value
+  ) {
+    return { status: "invalid" };
+  }
+  if (
+    reasoningOutputTokens.availability === "measured" &&
+    outputTokens.availability === "measured" &&
+    reasoningOutputTokens.value > outputTokens.value
+  ) {
+    return { status: "invalid" };
+  }
+  if (totalTokens.availability === "derived") {
+    if (
+      inputTokens.availability !== "measured" ||
+      outputTokens.availability !== "measured" ||
+      !Number.isSafeInteger(inputTokens.value + outputTokens.value) ||
+      totalTokens.value !== inputTokens.value + outputTokens.value
+    ) {
+      return { status: "invalid" };
+    }
+  }
+  if (
+    totalTokens.availability === "measured" &&
+    inputTokens.availability === "measured" &&
+    outputTokens.availability === "measured" &&
+    totalTokens.value < inputTokens.value + outputTokens.value
+  ) {
+    return { status: "invalid" };
+  }
+  const telemetry: SubscriptionRuntimeTelemetry = {
+    cacheWriteInputTokens,
+    cachedInputTokens,
+    inputTokens,
+    outputTokens,
+    reasoningOutputTokens,
+    source,
+    totalTokens,
+  };
+  const usage = completeMeasuredUsage(telemetry);
+  return {
+    status: "available",
+    ...(usage === undefined ? {} : { usage }),
+    value: telemetry,
+  };
+}
+
+function completeMeasuredUsage(
+  telemetry: SubscriptionRuntimeTelemetry,
+): SubscriptionRuntimeUsage | undefined {
   const {
     cacheWriteInputTokens,
     cachedInputTokens,
@@ -370,35 +543,55 @@ function readCompleteUsage(
     outputTokens,
     reasoningOutputTokens,
     totalTokens,
-  } = input;
+  } = telemetry;
   if (
-    cacheWriteInputTokens === undefined ||
-    cachedInputTokens === undefined ||
-    inputTokens === undefined ||
-    outputTokens === undefined ||
-    reasoningOutputTokens === undefined ||
-    totalTokens === undefined
+    cacheWriteInputTokens.availability !== "measured" ||
+    cachedInputTokens.availability !== "measured" ||
+    inputTokens.availability !== "measured" ||
+    outputTokens.availability !== "measured" ||
+    reasoningOutputTokens.availability !== "measured" ||
+    totalTokens.availability !== "measured"
   ) {
-    return { status: "missing" };
-  }
-  if (
-    cachedInputTokens + cacheWriteInputTokens > inputTokens ||
-    reasoningOutputTokens > outputTokens ||
-    totalTokens < inputTokens + outputTokens
-  ) {
-    return { status: "invalid" };
+    return undefined;
   }
   return {
-    status: "complete",
-    value: {
-      cacheWriteInputTokens,
-      cachedInputTokens,
-      inputTokens,
-      outputTokens,
-      reasoningOutputTokens,
-      totalTokens,
-    },
+    cacheWriteInputTokens: cacheWriteInputTokens.value,
+    cachedInputTokens: cachedInputTokens.value,
+    inputTokens: inputTokens.value,
+    outputTokens: outputTokens.value,
+    reasoningOutputTokens: reasoningOutputTokens.value,
+    totalTokens: totalTokens.value,
   };
+}
+
+function withLunaCostRange(
+  telemetry: SubscriptionRuntimeTelemetry,
+  profile: SubscriptionRuntimeExecutionProfile,
+): SubscriptionRuntimeTelemetry {
+  if (
+    valuesDiffer(profile.model, subscriptionRuntimeIncrementalModel) ||
+    telemetry.inputTokens.availability !== "measured" ||
+    telemetry.cachedInputTokens.availability !== "measured" ||
+    telemetry.outputTokens.availability !== "measured"
+  ) {
+    return telemetry;
+  }
+  return {
+    ...telemetry,
+    cost: calculateLunaApiEquivalentCostRange(telemetry),
+  };
+}
+
+function valuesDiffer(actual: string, expected: string): boolean {
+  return actual !== expected;
+}
+
+function isTokenCount(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function parseCliResult(value: string): z.infer<typeof cliResultSchema> | undefined {
@@ -419,6 +612,7 @@ function normalizeFailureCode(code: string): SubscriptionRuntimeFailureCode {
 function failedResult(
   code: SubscriptionRuntimeFailureCode,
   usage?: SubscriptionRuntimeUsage,
+  telemetry?: SubscriptionRuntimeTelemetry,
 ): Extract<SubscriptionRuntimeTaskResult, { readonly status: "failed" }> {
   const policy = failurePolicy(code);
   return {
@@ -431,6 +625,7 @@ function failedResult(
     },
     protocolVersion: 1,
     status: "failed",
+    ...(telemetry === undefined ? {} : { telemetry }),
     ...(usage === undefined ? {} : { usage }),
   };
 }
@@ -478,7 +673,7 @@ function failurePolicy(code: SubscriptionRuntimeFailureCode): {
         causeCategory: "telemetry",
         reconnectRequired: false,
         retryable: false,
-        safeMessage: "Subscription runtime did not return complete generation telemetry",
+        safeMessage: "Subscription runtime did not return generation telemetry",
       };
     case "task_cancelled":
     case "stale_generation":

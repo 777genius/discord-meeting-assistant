@@ -60,6 +60,10 @@ function invalidOutputFailure(stage: ProcessingStage, error: unknown): StageFail
   };
 }
 
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  signal?.throwIfAborted();
+}
+
 export class ProcessMeetingSummary {
   private readonly meetings: MeetingRepository;
   private readonly publisher: SummaryPublicationPort;
@@ -73,8 +77,14 @@ export class ProcessMeetingSummary {
     this.transcriber = dependencies.transcriber;
   }
 
-  public async execute(meetingId: string): Promise<ProcessMeetingSummaryResult> {
+  public async execute(
+    meetingId: string,
+    options: { readonly signal?: AbortSignal } = {},
+  ): Promise<ProcessMeetingSummaryResult> {
+    const { signal } = options;
+    throwIfAborted(signal);
     const snapshot = await this.meetings.findById(meetingId);
+    throwIfAborted(signal);
     if (snapshot === null) {
       return { status: "not-found" };
     }
@@ -89,22 +99,24 @@ export class ProcessMeetingSummary {
       };
     }
 
-    const transcriptionResult = await this.ensureTranscript(meeting);
+    const transcriptionResult = await this.ensureTranscript(meeting, signal);
     if (transcriptionResult !== null) {
       return transcriptionResult;
     }
 
-    const summaryResult = await this.ensureSummary(meeting);
+    const summaryResult = await this.ensureSummary(meeting, signal);
     if (summaryResult !== null) {
       return summaryResult;
     }
 
-    return this.ensurePublication(meeting);
+    return this.ensurePublication(meeting, signal);
   }
 
   private async ensureTranscript(
     meeting: Meeting,
+    signal: AbortSignal | undefined,
   ): Promise<ProcessMeetingSummaryResult | null> {
+    throwIfAborted(signal);
     if (meeting.transcript !== null) {
       return null;
     }
@@ -119,6 +131,7 @@ export class ProcessMeetingSummary {
     if (disposition === "started") {
       await this.meetings.save(meeting.toSnapshot(), expectedRevision);
     }
+    throwIfAborted(signal);
 
     let result: PortResult<GeneratedTranscript>;
     try {
@@ -130,16 +143,25 @@ export class ProcessMeetingSummary {
         ),
         meetingId: meeting.meetingId,
         recording: meeting.recording.toSnapshot(),
+        ...(signal === undefined ? {} : { signal }),
       });
     } catch (error) {
-      return this.fail(meeting, "transcription", unexpectedFailure("transcription", error));
+      throwIfAborted(signal);
+      return this.fail(
+        meeting,
+        "transcription",
+        unexpectedFailure("transcription", error),
+        signal,
+      );
     }
 
+    throwIfAborted(signal);
     if (!result.ok) {
-      return this.fail(meeting, "transcription", result.failure);
+      return this.fail(meeting, "transcription", result.failure, signal);
     }
 
     try {
+      throwIfAborted(signal);
       const transcript = FinalTranscript.create({
         recordingId: meeting.recording.recordingId,
         transcriptId: result.value.transcriptId,
@@ -147,6 +169,7 @@ export class ProcessMeetingSummary {
         version: result.value.version,
       });
       const beforeCompletion = meeting.revision;
+      throwIfAborted(signal);
       meeting.completeTranscription(transcript);
       await this.meetings.save(meeting.toSnapshot(), beforeCompletion);
       return null;
@@ -156,6 +179,7 @@ export class ProcessMeetingSummary {
           meeting,
           "transcription",
           invalidOutputFailure("transcription", error),
+          signal,
         );
       }
       throw error;
@@ -164,7 +188,9 @@ export class ProcessMeetingSummary {
 
   private async ensureSummary(
     meeting: Meeting,
+    signal: AbortSignal | undefined,
   ): Promise<ProcessMeetingSummaryResult | null> {
+    throwIfAborted(signal);
     if (meeting.summary !== null) {
       return null;
     }
@@ -186,6 +212,7 @@ export class ProcessMeetingSummary {
     if (disposition === "started") {
       await this.meetings.save(meeting.toSnapshot(), expectedRevision);
     }
+    throwIfAborted(signal);
 
     let result;
     try {
@@ -199,14 +226,17 @@ export class ProcessMeetingSummary {
         transcript: transcript.toSnapshot(),
       });
     } catch (error) {
-      return this.fail(meeting, "summary", unexpectedFailure("summary", error));
+      throwIfAborted(signal);
+      return this.fail(meeting, "summary", unexpectedFailure("summary", error), signal);
     }
 
+    throwIfAborted(signal);
     if (!result.ok) {
-      return this.fail(meeting, "summary", result.failure);
+      return this.fail(meeting, "summary", result.failure, signal);
     }
 
     try {
+      throwIfAborted(signal);
       const summary = EvidenceBackedSummary.create(
         {
           ...result.value,
@@ -215,18 +245,28 @@ export class ProcessMeetingSummary {
         transcript,
       );
       const beforeCompletion = meeting.revision;
+      throwIfAborted(signal);
       meeting.completeSummary(summary);
       await this.meetings.save(meeting.toSnapshot(), beforeCompletion);
       return null;
     } catch (error) {
       if (error instanceof DomainInvariantError) {
-        return this.fail(meeting, "summary", invalidOutputFailure("summary", error));
+        return this.fail(
+          meeting,
+          "summary",
+          invalidOutputFailure("summary", error),
+          signal,
+        );
       }
       throw error;
     }
   }
 
-  private async ensurePublication(meeting: Meeting): Promise<ProcessMeetingSummaryResult> {
+  private async ensurePublication(
+    meeting: Meeting,
+    signal: AbortSignal | undefined,
+  ): Promise<ProcessMeetingSummaryResult> {
+    throwIfAborted(signal);
     const summary = meeting.summary;
     const transcript = meeting.transcript;
     if (summary === null || transcript === null) {
@@ -246,6 +286,7 @@ export class ProcessMeetingSummary {
     if (disposition === "started") {
       await this.meetings.save(meeting.toSnapshot(), expectedRevision);
     }
+    throwIfAborted(signal);
 
     const idempotencyKey = meeting.publicationIdempotencyKey();
     let result;
@@ -258,19 +299,28 @@ export class ProcessMeetingSummary {
         transcript: transcript.toSnapshot(),
       });
     } catch (error) {
-      return this.fail(meeting, "publication", unexpectedFailure("publication", error));
+      throwIfAborted(signal);
+      return this.fail(
+        meeting,
+        "publication",
+        unexpectedFailure("publication", error),
+        signal,
+      );
     }
 
+    throwIfAborted(signal);
     if (!result.ok) {
-      return this.fail(meeting, "publication", result.failure);
+      return this.fail(meeting, "publication", result.failure, signal);
     }
 
     try {
+      throwIfAborted(signal);
       const beforeCompletion = meeting.revision;
       meeting.completePublication({
         externalPublicationId: result.value.externalPublicationId,
         idempotencyKey,
       });
+      throwIfAborted(signal);
       await this.meetings.save(meeting.toSnapshot(), beforeCompletion);
     } catch (error) {
       if (error instanceof DomainInvariantError) {
@@ -278,6 +328,7 @@ export class ProcessMeetingSummary {
           meeting,
           "publication",
           invalidOutputFailure("publication", error),
+          signal,
         );
       }
       throw error;
@@ -313,7 +364,9 @@ export class ProcessMeetingSummary {
     meeting: Meeting,
     stage: ProcessingStage,
     failure: StageFailure,
+    signal: AbortSignal | undefined,
   ): Promise<ProcessMeetingSummaryResult> {
+    throwIfAborted(signal);
     const expectedRevision = meeting.revision;
     if (stage === "transcription") {
       meeting.failTranscription(failure);

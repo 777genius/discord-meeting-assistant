@@ -21,6 +21,11 @@ export type PostCallObservabilityEvent =
       readonly kind: "job-active" | "job-completed" | "job-stalled";
     }
   | {
+      readonly component: "worker";
+      readonly jobRef: string;
+      readonly kind: "job-requeued";
+    }
+  | {
       readonly attemptsMade?: number;
       readonly component: "worker" | "queue-events";
       readonly failureCode?: string;

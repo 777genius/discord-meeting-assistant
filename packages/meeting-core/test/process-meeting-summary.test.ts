@@ -459,4 +459,69 @@ describe("ProcessMeetingSummary", () => {
       status: "succeeded",
     });
   });
+
+  it("cancels an in-flight transcription without recording a provider failure", async () => {
+    const meetings = new MemoryMeetingRepository(initialSnapshot());
+    const controller = new AbortController();
+    const cancellation = new Error("BullMQ lock was lost");
+    const requests: FinalTranscriptionRequest[] = [];
+    let notifyFirstRequest: () => void;
+    const firstRequest = new Promise<void>((resolve) => {
+      notifyFirstRequest = resolve;
+    });
+    const transcriber: FinalTranscriptionPort = {
+      transcribe: async (request) => {
+        requests.push(request);
+        if (requests.length === 1) {
+          notifyFirstRequest();
+          const signal = request.signal;
+          if (signal === undefined) {
+            throw new Error("expected worker cancellation signal");
+          }
+          await new Promise<void>((resolve) => {
+            signal.addEventListener("abort", () => {
+              resolve();
+            }, { once: true });
+          });
+          return retryableFailure("VOICETEXT_TRANSCRIPTION_CANCELLED");
+        }
+        return success(generatedTranscript);
+      },
+    };
+    const summarizer = new SequenceSummarizer([success(generatedSummary)]);
+    const publisher = new SequencePublisher([
+      success({ externalPublicationId: "thread-1" }),
+    ]);
+    const useCase = new ProcessMeetingSummary({
+      meetings,
+      publisher,
+      summarizer,
+      transcriber,
+    });
+
+    const execution = useCase.execute("meeting-1", { signal: controller.signal });
+    await firstRequest;
+    expect(requests[0]?.signal).toBe(controller.signal);
+
+    controller.abort(cancellation);
+    await expect(execution).rejects.toBe(cancellation);
+
+    expect(meetings.snapshot.transcriptionStage).toEqual({
+      attempts: 1,
+      status: "running",
+    });
+    expect(meetings.snapshot.transcript).toBeNull();
+    expect(summarizer.requests).toHaveLength(0);
+    expect(publisher.requests).toHaveLength(0);
+
+    await expect(useCase.execute("meeting-1")).resolves.toMatchObject({
+      status: "published",
+    });
+    expect(requests).toHaveLength(2);
+    expect(requests[1]?.idempotencyKey).toBe(requests[0]?.idempotencyKey);
+    expect(meetings.snapshot.transcriptionStage).toEqual({
+      attempts: 1,
+      status: "succeeded",
+    });
+  });
 });

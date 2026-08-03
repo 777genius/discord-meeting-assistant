@@ -45,7 +45,14 @@ describe("LiveFencedSummaryPublicationPort", () => {
     const delegate = {
       publish: vi.fn(async () => result),
     } satisfies SummaryPublicationPort;
-    const subject = new LiveFencedSummaryPublicationPort(delegate, barrier);
+    const liveReceipts = {
+      findById: vi.fn(async () => ({
+        projectionExternalId:
+          "discord:v1:thread:22222222222222222:message:33333333333333333",
+        publicationTargetId: "1533228891827736657",
+      })),
+    };
+    const subject = new LiveFencedSummaryPublicationPort(delegate, barrier, liveReceipts);
 
     const publication = subject.publish(request);
     await Promise.resolve();
@@ -54,6 +61,11 @@ describe("LiveFencedSummaryPublicationPort", () => {
     releaseBarrier?.();
     await expect(publication).resolves.toEqual(result);
     expect(barrier.settleBeforeFinalPublication).toHaveBeenCalledWith("meeting-1");
-    expect(delegate.publish).toHaveBeenCalledWith(request);
+    expect(liveReceipts.findById).toHaveBeenCalledWith("meeting-1");
+    expect(delegate.publish).toHaveBeenCalledWith({
+      ...request,
+      currentExternalPublicationId:
+        "discord:v1:thread:22222222222222222:message:33333333333333333",
+    });
   });
 });

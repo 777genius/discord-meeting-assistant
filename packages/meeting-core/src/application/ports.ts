@@ -4,6 +4,7 @@ import type {
   StageFailure,
 } from "../domain/meeting.js";
 import type {
+  LiveGenerationTelemetrySnapshot,
   LiveGenerationUsageSnapshot,
   LiveMeetingSnapshot,
   LiveMeetingStatus,
@@ -60,6 +61,7 @@ export interface IncrementalSummaryGenerationRequest {
 
 export interface GeneratedIncrementalSummary {
   readonly summary: LiveSummaryDraftSnapshot;
+  readonly telemetry?: LiveGenerationTelemetrySnapshot;
   readonly usage?: LiveGenerationUsageSnapshot;
 }
 
@@ -68,6 +70,7 @@ export type IncrementalSummaryGenerationResult =
   | {
       readonly failure: StageFailure;
       readonly ok: false;
+      readonly telemetry?: LiveGenerationTelemetrySnapshot;
       readonly usage?: LiveGenerationUsageSnapshot;
     };
 
@@ -100,6 +103,8 @@ export interface FinalTranscriptionRequest {
   readonly idempotencyKey: string;
   readonly meetingId: string;
   readonly recording: RecordingArtifactSnapshot;
+  /** Cancels only this in-flight attempt; retries reuse the same identity. */
+  readonly signal?: AbortSignal;
 }
 
 export interface GeneratedTranscript {
@@ -136,6 +141,12 @@ export interface SummaryGenerationPort {
 }
 
 export interface SummaryPublicationRequest {
+  /**
+   * A durable physical receipt from the settled live projection, when one
+   * exists. Publication adapters may use it to preserve the one visible
+   * projection even if its human-facing marker was changed externally.
+   */
+  readonly currentExternalPublicationId?: string | null;
   readonly idempotencyKey: string;
   readonly meetingId: string;
   readonly publicationTargetId: string;

@@ -72,8 +72,8 @@ describe("SubscriptionRuntimeExecutor", () => {
     expect(result.executionAttestation).toMatchObject({
       canonicalRequestSha256: canonicalJsonSha256(canonicalRequest),
       selectedOutputSha256: canonicalJsonSha256(structuredOutput),
-      model: "gpt-5.6-sol",
-      reasoningEffort: "xhigh",
+      model: "gpt-5.6-luna",
+      reasoningEffort: "medium",
       runtimePackageVersion: "0.1.0-main.2",
     });
     expect(capturedRequest).toEqual(canonicalRequest);
@@ -85,7 +85,7 @@ describe("SubscriptionRuntimeExecutor", () => {
         "--provider-instance",
         "discord-meeting-summary-v3",
         "--model",
-        "gpt-5.6-sol",
+        "gpt-5.6-luna",
       ]),
     );
     expect(runs[0]?.cwd).toBe(isolatedCwd);
@@ -143,7 +143,7 @@ describe("SubscriptionRuntimeExecutor", () => {
     expect(processRequest?.env.AGENT_RUNTIME_REASONING_EFFORT).toBe("medium");
   });
 
-  it("fails closed on partial incremental telemetry instead of fabricating token classes", async () => {
+  it("preserves Codex JSONL partial telemetry without fabricating cache-write input", async () => {
     root = await mkdtemp(join(tmpdir(), "sidecar-executor-test-"));
     const keyFile = join(root, "local-encryption-key");
     await writeFile(keyFile, "private-test-key\n", { mode: 0o600 });
@@ -151,7 +151,12 @@ describe("SubscriptionRuntimeExecutor", () => {
       options(keyFile, {
         processRunner: {
           run: async () => completedProcess({
-            usage: { inputTokens: 1_000, outputTokens: 300, totalTokens: 1_300 },
+            usage: codexJsonlTelemetry({
+              cachedInputTokens: 200,
+              inputTokens: 1_000,
+              outputTokens: 300,
+              reasoningOutputTokens: 100,
+            }),
           }),
         },
       }),
@@ -160,10 +165,68 @@ describe("SubscriptionRuntimeExecutor", () => {
     const result = await executor.execute(incrementalCanonicalRequest);
 
     expect(result).toMatchObject({
-      failure: {
-        code: "telemetry_unavailable",
-        retryable: false,
+      status: "completed",
+      telemetry: {
+        source: "codex_exec_jsonl",
+        cacheWriteInputTokens: { availability: "unavailable" },
+        cachedInputTokens: { availability: "measured", value: 200 },
+        inputTokens: { availability: "measured", value: 1_000 },
+        outputTokens: { availability: "measured", value: 300 },
+        reasoningOutputTokens: { availability: "measured", value: 100 },
+        totalTokens: {
+          availability: "derived",
+          derivedFrom: ["inputTokens", "outputTokens"],
+          value: 1_300,
+        },
       },
+    });
+    expect(result.status === "completed" && result.usage).toBeUndefined();
+  });
+
+  it("fails closed when a completed provider result has no usage telemetry", async () => {
+    root = await mkdtemp(join(tmpdir(), "sidecar-executor-test-"));
+    const keyFile = join(root, "local-encryption-key");
+    await writeFile(keyFile, "private-test-key\n", { mode: 0o600 });
+    const executor = new SubscriptionRuntimeExecutor(
+      options(keyFile, {
+        processRunner: { run: async () => completedProcessWithoutTelemetry() },
+      }),
+    );
+
+    await expect(executor.execute(incrementalCanonicalRequest)).resolves.toMatchObject({
+      failure: { code: "telemetry_unavailable", retryable: false },
+      status: "failed",
+    });
+  });
+
+  it("rejects a derived total that does not equal measured input plus output", async () => {
+    root = await mkdtemp(join(tmpdir(), "sidecar-executor-test-"));
+    const keyFile = join(root, "local-encryption-key");
+    await writeFile(keyFile, "private-test-key\n", { mode: 0o600 });
+    const executor = new SubscriptionRuntimeExecutor(
+      options(keyFile, {
+        processRunner: {
+          run: async () => completedProcess({
+            usage: {
+              ...codexJsonlTelemetry({
+                cachedInputTokens: 200,
+                inputTokens: 1_000,
+                outputTokens: 300,
+                reasoningOutputTokens: 100,
+              }),
+              totalTokens: {
+                availability: "derived",
+                derivedFrom: ["inputTokens", "outputTokens"],
+                value: 1_299,
+              },
+            },
+          }),
+        },
+      }),
+    );
+
+    await expect(executor.execute(incrementalCanonicalRequest)).resolves.toMatchObject({
+      failure: { code: "provider_output_invalid" },
       status: "failed",
     });
   });
@@ -308,6 +371,16 @@ describe("SubscriptionRuntimeExecutor", () => {
               status: "completed",
               outputText: "{}",
               structuredOutput: { invented: true },
+              telemetry: {
+                usage: {
+                  cacheWriteInputTokens: 0,
+                  cachedInputTokens: 0,
+                  inputTokens: 100,
+                  outputTokens: 20,
+                  reasoningOutputTokens: 0,
+                  totalTokens: 120,
+                },
+              },
               warnings: [],
             }),
           }),
@@ -338,7 +411,7 @@ describe("subscription runtime child environment", () => {
     );
 
     expect(env).toEqual({
-      AGENT_RUNTIME_REASONING_EFFORT: "xhigh",
+      AGENT_RUNTIME_REASONING_EFFORT: "medium",
       LANG: "C.UTF-8",
       PATH: "/usr/bin",
       SSL_CERT_FILE: "/etc/ssl/certs/ca-certificates.crt",
@@ -383,7 +456,16 @@ function installation(): InstallationIdentity {
 }
 
 function completedProcess(
-  telemetry?: Record<string, unknown>,
+  telemetry: Record<string, unknown> = {
+    usage: {
+      cacheWriteInputTokens: 0,
+      cachedInputTokens: 0,
+      inputTokens: 100,
+      outputTokens: 20,
+      reasoningOutputTokens: 0,
+      totalTokens: 120,
+    },
+  },
 ): ProcessRunResult {
   return {
     exitCode: 0,
@@ -395,10 +477,24 @@ function completedProcess(
       status: "completed",
       outputText: JSON.stringify(structuredOutput),
       structuredOutput,
-      ...(telemetry === undefined ? {} : { telemetry }),
+      telemetry,
       warnings: [],
     }),
     timedOut: false,
+  };
+}
+
+function completedProcessWithoutTelemetry(): ProcessRunResult {
+  const completed = completedProcess();
+  return {
+    ...completed,
+    stdout: JSON.stringify({
+      protocolVersion: 1,
+      status: "completed",
+      outputText: JSON.stringify(structuredOutput),
+      structuredOutput,
+      warnings: [],
+    }),
   };
 }
 
@@ -422,5 +518,32 @@ function failedProcess(
       warnings: [],
     }),
     timedOut: false,
+  };
+}
+
+function codexJsonlTelemetry(input: {
+  readonly cachedInputTokens: number;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly reasoningOutputTokens: number;
+}): Record<string, unknown> {
+  return {
+    source: "codex_exec_jsonl",
+    cacheWriteInputTokens: { availability: "unavailable" },
+    cachedInputTokens: {
+      availability: "measured",
+      value: input.cachedInputTokens,
+    },
+    inputTokens: { availability: "measured", value: input.inputTokens },
+    outputTokens: { availability: "measured", value: input.outputTokens },
+    reasoningOutputTokens: {
+      availability: "measured",
+      value: input.reasoningOutputTokens,
+    },
+    totalTokens: {
+      availability: "derived",
+      derivedFrom: ["inputTokens", "outputTokens"],
+      value: input.inputTokens + input.outputTokens,
+    },
   };
 }

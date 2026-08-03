@@ -69,4 +69,5 @@ export {
   type PostCallHandler,
   type PostCallHandlerContext,
   type PostCallJobLike,
+  type PostCallWorker,
 } from "./worker.js";

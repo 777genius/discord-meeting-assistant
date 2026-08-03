@@ -16,6 +16,7 @@ import {
   type JsonObject,
   type SubscriptionRuntimeAgentTaskRequest,
   type SubscriptionRuntimeTaskResult,
+  type SubscriptionRuntimeTelemetry,
   type SubscriptionRuntimeTransportPort,
   type SubscriptionRuntimeUsage,
 } from "../src/index.js";
@@ -265,9 +266,43 @@ describe("SubscriptionRuntimeIncrementalSummaryAdapter", () => {
     expect(result.value.usage.runId).toMatch(/^incremental-summary-request-[0-9a-f]{32}$/u);
   });
 
-  it("fails closed when the runtime omits incremental usage", async () => {
+  it("accepts a valid incremental summary when only partial Codex telemetry is available", async () => {
+    const telemetry = codexJsonlTelemetry();
     const result = await createAdapter(
-      new FakeTransport((request) => completed(request)),
+      new FakeTransport((request) => completed(
+        request,
+        structuredOutput,
+        undefined,
+        telemetry,
+      )),
+    ).generate(requestFixture);
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        summary: { revision: 2 },
+        telemetry: {
+          source: "codex_exec_jsonl",
+          cacheWriteInputTokens: { availability: "unavailable" },
+          totalTokens: {
+            availability: "derived",
+            derivedFrom: ["inputTokens", "outputTokens"],
+            value: 1_300,
+          },
+          cost: {
+            minimumUsd: 0.000_524,
+            maximumUsd: 0.000_564,
+            priceCardId: lunaStandardPriceCard.id,
+          },
+        },
+      },
+    });
+    expect(result.ok && result.value.usage).toBeUndefined();
+  });
+
+  it("fails closed when a completed result has no telemetry at all", async () => {
+    const result = await createAdapter(
+      new FakeTransport((request) => completed(request, structuredOutput)),
     ).generate(requestFixture);
 
     expect(result).toMatchObject({
@@ -331,6 +366,29 @@ describe("SubscriptionRuntimeIncrementalSummaryAdapter", () => {
     }
     expect(result.usage.runId).toMatch(/^incremental-summary-request-[0-9a-f]{32}$/u);
   });
+
+  it("preserves partial Codex telemetry when the provider task fails after consuming tokens", async () => {
+    const result = await createAdapter(
+      new FakeTransport(() => failed(undefined, codexJsonlTelemetry())),
+    ).generate(requestFixture);
+
+    expect(result).toMatchObject({
+      failure: {
+        code: "SUBSCRIPTION_RUNTIME_SUMMARY_TASK_TIMEOUT",
+        retryable: true,
+      },
+      ok: false,
+      telemetry: {
+        cacheWriteInputTokens: { availability: "unavailable" },
+        totalTokens: {
+          availability: "derived",
+          derivedFrom: ["inputTokens", "outputTokens"],
+          value: 1_300,
+        },
+      },
+    });
+    expect(result.ok || result.usage).toBeUndefined();
+  });
 });
 
 function createAdapter(
@@ -346,6 +404,7 @@ function completed(
   request: SubscriptionRuntimeAgentTaskRequest,
   output: JsonObject = structuredOutput,
   usage?: SubscriptionRuntimeUsage,
+  telemetry?: SubscriptionRuntimeTelemetry,
 ): Extract<SubscriptionRuntimeTaskResult, { readonly status: "completed" }> {
   return {
     executionAttestation: {
@@ -365,12 +424,14 @@ function completed(
     protocolVersion: 1,
     status: "completed",
     structuredOutput: output,
+    ...(telemetry === undefined ? {} : { telemetry }),
     ...(usage === undefined ? {} : { usage }),
   };
 }
 
 function failed(
   usage?: SubscriptionRuntimeUsage,
+  telemetry?: SubscriptionRuntimeTelemetry,
 ): Extract<SubscriptionRuntimeTaskResult, { readonly status: "failed" }> {
   return {
     failure: {
@@ -381,6 +442,23 @@ function failed(
     },
     protocolVersion: 1,
     status: "failed",
+    ...(telemetry === undefined ? {} : { telemetry }),
     ...(usage === undefined ? {} : { usage }),
+  };
+}
+
+function codexJsonlTelemetry(): SubscriptionRuntimeTelemetry {
+  return {
+    source: "codex_exec_jsonl",
+    cacheWriteInputTokens: { availability: "unavailable" },
+    cachedInputTokens: { availability: "measured", value: 200 },
+    inputTokens: { availability: "measured", value: 1_000 },
+    outputTokens: { availability: "measured", value: 300 },
+    reasoningOutputTokens: { availability: "measured", value: 100 },
+    totalTokens: {
+      availability: "derived",
+      derivedFrom: ["inputTokens", "outputTokens"],
+      value: 1_300,
+    },
   };
 }

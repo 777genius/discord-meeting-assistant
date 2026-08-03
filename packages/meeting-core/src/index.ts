@@ -60,6 +60,9 @@ export {
 } from "./domain/identifiers.js";
 export {
   LiveMeeting,
+  type LiveGenerationCostSnapshot,
+  type LiveGenerationTelemetrySnapshot,
+  type LiveGenerationTokenClassSnapshot,
   type LiveGenerationUsageSnapshot,
   type LiveMeetingSnapshot,
   type LiveMeetingStatus,

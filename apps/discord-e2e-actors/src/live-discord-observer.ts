@@ -1,10 +1,10 @@
-export interface LiveDiscordEmbedInput {
+interface LiveDiscordEmbedInput {
   readonly description: string | null | undefined;
   readonly fields: readonly LiveDiscordEmbedFieldInput[];
   readonly title: string | null | undefined;
 }
 
-export interface LiveDiscordEmbedFieldInput {
+interface LiveDiscordEmbedFieldInput {
   readonly inline: boolean | undefined;
   readonly name: string;
   readonly value: string;
@@ -42,13 +42,13 @@ export interface LiveDiscordObserverClock {
   wait(milliseconds: number): Promise<void>;
 }
 
-export interface NormalizedLiveDiscordEmbed {
+interface NormalizedLiveDiscordEmbed {
   readonly description: string | null;
   readonly fields: readonly NormalizedLiveDiscordEmbedField[];
   readonly title: string | null;
 }
 
-export interface NormalizedLiveDiscordEmbedField {
+interface NormalizedLiveDiscordEmbedField {
   readonly inline: boolean;
   readonly name: string;
   readonly value: string;

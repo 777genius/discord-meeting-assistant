@@ -3,6 +3,7 @@ import type { StageFailure } from "@discord-meeting/meeting-core";
 export type VoicetextAdapterErrorCode =
   | "artifact_read_failed"
   | "cancelled"
+  | "idempotency_conflict"
   | "invalid_input"
   | "invalid_provider_response"
   | "limit_exceeded"
@@ -10,19 +11,30 @@ export type VoicetextAdapterErrorCode =
   | "provider_error"
   | "quota_exceeded"
   | "rate_limited"
+  | "request_failed"
   | "timeout"
   | "transcode_failed"
   | "transport_error";
 
+export interface VoicetextAdapterErrorOptions extends ErrorOptions {
+  /** Bounded server retry hint. It is never derived from a response body. */
+  readonly retryAfterMs?: number;
+}
+
 export class VoicetextAdapterError extends Error {
+  public readonly retryAfterMs?: number;
+
   public constructor(
     public readonly code: VoicetextAdapterErrorCode,
     message: string,
     public readonly retryable: boolean,
-    options: ErrorOptions = {},
+    options: VoicetextAdapterErrorOptions = {},
   ) {
     super(message, options);
     this.name = "VoicetextAdapterError";
+    if (options.retryAfterMs !== undefined) {
+      this.retryAfterMs = options.retryAfterMs;
+    }
   }
 }
 

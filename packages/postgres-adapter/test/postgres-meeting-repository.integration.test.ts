@@ -10,6 +10,7 @@ import { Pool } from "pg";
 import {
   GenericContainer,
   type StartedTestContainer,
+  Wait,
 } from "testcontainers";
 import {
   afterAll,
@@ -164,6 +165,9 @@ beforeAll(async () => {
         POSTGRES_USER: "meeting_test",
       })
       .withExposedPorts(POSTGRES_PORT)
+      .withWaitStrategy(
+        Wait.forLogMessage(/database system is ready to accept connections/u, 2),
+      )
       .withStartupTimeout(120_000)
       .start();
 

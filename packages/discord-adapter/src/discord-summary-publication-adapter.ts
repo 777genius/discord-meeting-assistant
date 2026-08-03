@@ -11,6 +11,7 @@ import type {
 } from "./discord-projection.js";
 import {
   createMeetingDiscordProjectionKey,
+  decodeDiscordExternalPublicationId,
   encodeDiscordExternalPublicationId,
 } from "./discord-projection.js";
 import {
@@ -39,6 +40,7 @@ export class DiscordSummaryPublicationAdapter implements SummaryPublicationPort 
 
   public async publish(request: SummaryPublicationRequest): Promise<PublicationResult> {
     try {
+      const referenceHint = currentReference(request.currentExternalPublicationId);
       const reference = await this.publisher.publish({
         projectionKey: createMeetingDiscordProjectionKey(
           request.meetingId,
@@ -48,6 +50,7 @@ export class DiscordSummaryPublicationAdapter implements SummaryPublicationPort 
         parentChannelId: request.publicationTargetId,
         threadTitle: discordThreadTitle(request.summary.title),
         markdown: renderRussianSummaryMarkdown(request),
+        ...(referenceHint === undefined ? {} : { currentReference: referenceHint }),
       });
       return {
         ok: true,
@@ -57,6 +60,14 @@ export class DiscordSummaryPublicationAdapter implements SummaryPublicationPort 
       return { ok: false, failure: toDiscordPublicationFailure(error) };
     }
   }
+}
+
+function currentReference(
+  externalPublicationId: string | null | undefined,
+): DiscordProjectionReference | undefined {
+  return externalPublicationId === null || externalPublicationId === undefined
+    ? undefined
+    : decodeDiscordExternalPublicationId(externalPublicationId);
 }
 
 export function renderRussianSummaryMarkdown(

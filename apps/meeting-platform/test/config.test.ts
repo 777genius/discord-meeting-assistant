@@ -55,6 +55,7 @@ describe("platform configuration", () => {
     expect(config.voicetext?.webSocketUrl).toBe(
       "wss://api.voicetext.site/api/v1/transcribe/stream",
     );
+    expect(config.voicetext?.batchMaxArtifactBytes).toBe(64 * 1_024 * 1_024);
   });
 
   it("requires secure complete Voicetext configuration", async () => {
@@ -84,6 +85,18 @@ describe("platform configuration", () => {
     await expect(
       loadPlatformConfig(
         { ...environment, SPEACHES_BASE_URL: "http://user:pass@speaches:8000" },
+        async () => "x",
+      ),
+    ).rejects.toThrow();
+    await expect(
+      loadPlatformConfig(
+        {
+          ...environment,
+          TRANSCRIPTION_PROVIDER: "voicetext",
+          VOICETEXT_BATCH_MAX_ARTIFACT_BYTES: String(64 * 1_024 * 1_024 + 1),
+          VOICETEXT_SERVICE_TOKEN_FILE: "/run/secrets/voicetext",
+          VOICETEXT_WS_URL: "wss://api.voicetext.site/api/v1/transcribe/stream",
+        },
         async () => "x",
       ),
     ).rejects.toThrow();

@@ -153,6 +153,22 @@ describe("DiscordSummaryPublicationAdapter", () => {
     expect(projector.inputs[0]?.markdown).not.toContain("summary-42");
   });
 
+  it("passes a settled live receipt as the authoritative final reference", async () => {
+    const projector = new FakeProjector();
+    const adapter = new DiscordSummaryPublicationAdapter(projector);
+
+    await adapter.publish({
+      ...request,
+      currentExternalPublicationId:
+        "discord:v1:thread:22222222222222222:message:33333333333333333",
+    });
+
+    expect(projector.inputs[0]?.currentReference).toEqual({
+      threadId: "22222222222222222",
+      messageId: "33333333333333333",
+    });
+  });
+
   it("renders Discord speakers as quiet mentions with human time intervals", async () => {
     const projector = new FakeProjector();
     const adapter = new DiscordSummaryPublicationAdapter(projector);

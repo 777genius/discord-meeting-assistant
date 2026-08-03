@@ -13,6 +13,7 @@ import {
   createPostCallWorker,
   drainActivePostCallJobsAndClose,
   type PostCallObserver,
+  type PostCallWorker,
 } from "@discord-meeting/bullmq-adapter";
 import {
   DiscordJsProjectionClient,
@@ -58,9 +59,10 @@ import {
   SubscriptionRuntimeSummaryAdapter,
 } from "@discord-meeting/subscription-runtime-adapter";
 import {
-  FfmpegPcmTranscoder,
-  VoicetextFinalTranscriptionAdapter,
+  FetchVoicetextBatchClient,
+  VoicetextBatchFinalTranscriptionAdapter,
   VoicetextLiveTranscriptionAdapter,
+  batchEndpointFromWebSocketUrl,
 } from "@discord-meeting/voicetext-adapter";
 import type { ConnectionOptions } from "bullmq";
 import { Client, GatewayIntentBits } from "discord.js";
@@ -135,11 +137,12 @@ export async function startMeetingPlatform(
     new InProcessProjectionLock(),
   );
   const rawPublisher = new DiscordSummaryPublicationAdapter(discordPublisher);
+  const liveMeetings = new PostgresLiveMeetingRepository(pool);
   const live = createLiveRuntime({
     config,
     discordPublisher,
     logger,
-    meetings: new PostgresLiveMeetingRepository(pool),
+    meetings: liveMeetings,
     runtimeTransport,
   });
   const transcriber = new InstrumentedFinalTranscriptionPort(
@@ -156,7 +159,7 @@ export async function startMeetingPlatform(
   );
   const finalPublisher = live === undefined
     ? rawPublisher
-    : new LiveFencedSummaryPublicationPort(rawPublisher, live);
+    : new LiveFencedSummaryPublicationPort(rawPublisher, live, liveMeetings);
   const publisher = new InstrumentedSummaryPublicationPort(
     finalPublisher,
     metrics,
@@ -181,8 +184,11 @@ export async function startMeetingPlatform(
   const worker = createPostCallWorker({
     connection,
     deadLetterRecorder: new BullMqPostCallDeadLetterRecorder(deadLetterQueue),
-    handler: async ({ meetingId }) => {
-      const result = await processMeeting.execute(meetingId);
+    handler: async ({ meetingId }, { signal }) => {
+      const result = await processMeeting.execute(
+        meetingId,
+        signal === undefined ? {} : { signal },
+      );
       if (result.status === "published") {
         metrics.recordDiscordPublication(result.reused ? "duplicate" : "succeeded");
         logger.info("Meeting summary published", { meetingId, reused: result.reused });
@@ -250,7 +256,7 @@ export async function startMeetingPlatform(
     await once(server, "listening");
     logger.info("Meeting platform is ready", { port: config.port });
   } catch (error) {
-    await closeResources({
+    await closeMeetingPlatformResources({
       discord,
       logger,
       ...(live === undefined ? {} : { live }),
@@ -274,7 +280,7 @@ export async function startMeetingPlatform(
   return {
     close: async () => {
       clearInterval(outboxReconcileTimer);
-      closing ??= closeResources({
+      closing ??= closeMeetingPlatformResources({
         discord,
         logger,
         ...(live === undefined ? {} : { live }),
@@ -372,17 +378,19 @@ function createFinalTranscriber(
   if (config.voicetext === undefined || config.secrets.voicetextServiceToken === undefined) {
     throw new Error("Voicetext transcription configuration is incomplete");
   }
-  return new VoicetextFinalTranscriptionAdapter(
-    new S3CompleteOggArtifactReader(artifactReader),
-    new FfmpegPcmTranscoder({ executablePath: "/usr/bin/ffmpeg", timeoutMs: 900_000 }),
-    {
-      endpoint: config.voicetext.webSocketUrl,
-      keyterms: meetingVocabulary,
-      language: "multi",
-      maxArtifactBytesPerSpeaker: 256 * 1_024 * 1_024,
-      maxPcmBytesPerSpeaker: 512 * 1_024 * 1_024,
-      maxSpeakerTracks: 64,
+  return new VoicetextBatchFinalTranscriptionAdapter(
+    new FetchVoicetextBatchClient({
+      endpoint: batchEndpointFromWebSocketUrl(config.voicetext.webSocketUrl),
       token: config.secrets.voicetextServiceToken,
+    }),
+    new S3CompleteOggArtifactReader(artifactReader),
+    {
+      keyterms: meetingVocabulary,
+      maxArtifactBytesPerSpeaker: config.voicetext.batchMaxArtifactBytes,
+      maxConcurrency: 2,
+      maxTotalArtifactBytes: 256 * 1_024 * 1_024,
+      maxSpeakerTracks: 64,
+      pollTimeoutMs: 900_000,
     },
   );
 }
@@ -407,6 +415,9 @@ function classifyCraigIngressError(error: unknown): Readonly<Record<string, unkn
 
 function createQueueObserver(logger: Logger, metrics: PrometheusMetrics): PostCallObserver {
   return (event) => {
+    if (event.kind === "job-requeued") {
+      logger.info("Post-call job requeued after cancellation", { jobRef: event.jobRef });
+    }
     if (event.kind === "job-failed" && event.retryable === true) {
       metrics.recordQueueRetry("transient");
     }
@@ -545,7 +556,7 @@ async function closeServer(server: Server): Promise<void> {
   });
 }
 
-async function closeResources(input: {
+export async function closeMeetingPlatformResources(input: {
   readonly deadLetterQueue: { close(): Promise<void> };
   readonly discord: Client;
   readonly logger: Logger;
@@ -556,30 +567,39 @@ async function closeResources(input: {
   readonly runtimeTransport: GrpcSubscriptionRuntimeTransport;
   readonly s3: S3Client;
   readonly server: Server;
-  readonly worker: { close(force?: boolean): Promise<void> };
+  readonly worker: PostCallWorker;
 }): Promise<void> {
   const failures: unknown[] = [];
-  const settle = async (operation: () => unknown): Promise<void> => {
+  const settle = async (operation: Promise<unknown>): Promise<void> => {
     try {
-      await operation();
+      await operation;
     } catch (error) {
       failures.push(error);
     }
   };
-  await settle(async () => closeServer(input.server));
-  await settle(async () => input.live?.close());
-  await settle(async () =>
-    drainActivePostCallJobsAndClose({
-      queueEvents: input.queueEvents,
-      queues: [input.queue, input.deadLetterQueue],
-      worker: input.worker,
-    }),
-  );
-  await settle(async () => input.discord.destroy());
+
+  // `drainActivePostCallJobsAndClose` synchronously closes worker admission
+  // before its first await. Start it before any potentially slow HTTP or live
+  // drain so SIGTERM cannot leave an active final job uncancelled. The live
+  // runtime remains available while it settles, preserving the final-publication
+  // fence for work that already crossed into publication.
+  const postCallShutdown = drainActivePostCallJobsAndClose({
+    queueEvents: input.queueEvents,
+    queues: [input.queue, input.deadLetterQueue],
+    worker: input.worker,
+  });
+  const serverClose = closeServer(input.server);
+  const liveClose = input.live?.close() ?? Promise.resolve();
+  await Promise.all([
+    settle(postCallShutdown),
+    settle(serverClose),
+    settle(liveClose),
+  ]);
+  await settle(Promise.resolve(input.discord.destroy()));
   input.runtimeTransport.close();
   input.s3.destroy();
-  await settle(async () => input.pool.end());
-  await settle(async () => flushLoggers([input.logger]));
+  await settle(input.pool.end());
+  await settle(flushLoggers([input.logger]));
   if (failures.length > 0) {
     throw new AggregateError(failures, "Meeting platform shutdown was incomplete");
   }

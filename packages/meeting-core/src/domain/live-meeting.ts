@@ -45,9 +45,51 @@ export interface LiveGenerationUsageSnapshot {
   readonly totalTokens: number;
 }
 
+/** A provider-reported token class that is never represented by a synthetic zero. */
+export type LiveGenerationTokenClassSnapshot =
+  | {
+      readonly availability: "measured";
+      readonly value: number;
+    }
+  | {
+      readonly availability: "derived";
+      readonly derivedFrom: readonly ["inputTokens", "outputTokens"];
+      readonly value: number;
+    }
+  | {
+      readonly availability: "unavailable";
+    };
+
+export interface LiveGenerationCostSnapshot {
+  readonly exactUsd?: number;
+  readonly maximumUsd: number;
+  readonly minimumUsd: number;
+  readonly priceCardId: string;
+  readonly priceCardSource: string;
+}
+
+/**
+ * Provider-agnostic generation telemetry, including classes a provider cannot
+ * report. It is persisted separately from legacy complete usage.
+ */
+export interface LiveGenerationTelemetrySnapshot {
+  readonly cacheWriteInputTokens: LiveGenerationTokenClassSnapshot;
+  readonly cachedInputTokens: LiveGenerationTokenClassSnapshot;
+  readonly cost?: LiveGenerationCostSnapshot;
+  readonly inputTokens: LiveGenerationTokenClassSnapshot;
+  readonly model: string;
+  readonly outputTokens: LiveGenerationTokenClassSnapshot;
+  readonly reasoningOutputTokens: LiveGenerationTokenClassSnapshot;
+  readonly runId: string;
+  readonly source: string;
+  readonly totalTokens: LiveGenerationTokenClassSnapshot;
+}
+
 export interface LiveMeetingSnapshot {
   readonly draftSummary: LiveSummaryDraftSnapshot | null;
   readonly endedAtMs: number | null;
+  /** Optional while restoring snapshots persisted before partial telemetry. */
+  readonly generationTelemetry?: readonly LiveGenerationTelemetrySnapshot[];
   readonly generationUsage: readonly LiveGenerationUsageSnapshot[];
   readonly meetingId: string;
   readonly projectedRevision: number;
@@ -114,6 +156,169 @@ function validateUsage(input: LiveGenerationUsageSnapshot): LiveGenerationUsageS
     throw new DomainInvariantError("INVALID_SNAPSHOT", "generation usage totals are inconsistent");
   }
   return Object.freeze(usage);
+}
+
+function validateTokenClass(
+  input: LiveGenerationTokenClassSnapshot,
+  field: string,
+  allowDerived: boolean,
+): LiveGenerationTokenClassSnapshot {
+  const rawToken: unknown = input;
+  if (rawToken === null || typeof rawToken !== "object" || Array.isArray(rawToken)) {
+    throw new DomainInvariantError("INVALID_SNAPSHOT", `${field} token class is invalid`);
+  }
+  const token = rawToken as Record<string, unknown>;
+  if (token.availability === "unavailable") {
+    if ("value" in token || "derivedFrom" in token) {
+      throw new DomainInvariantError(
+        "INVALID_SNAPSHOT",
+        `${field} unavailable token class must not carry a value`,
+      );
+    }
+    return Object.freeze({ availability: "unavailable" });
+  }
+  if (token.availability === "measured") {
+    return Object.freeze({
+      availability: "measured",
+      value: requireNonNegativeInteger(token.value as number, `${field}.value`),
+    });
+  }
+  if (
+    !allowDerived ||
+    token.availability !== "derived" ||
+    !Array.isArray(token.derivedFrom) ||
+    token.derivedFrom.length !== 2 ||
+    token.derivedFrom[0] !== "inputTokens" ||
+    token.derivedFrom[1] !== "outputTokens"
+  ) {
+    throw new DomainInvariantError("INVALID_SNAPSHOT", `${field} token availability is invalid`);
+  }
+  return Object.freeze({
+    availability: "derived",
+    derivedFrom: ["inputTokens", "outputTokens"] as const,
+    value: requireNonNegativeInteger(token.value as number, `${field}.value`),
+  });
+}
+
+function measuredTokenValue(
+  input: LiveGenerationTokenClassSnapshot,
+): number | undefined {
+  return input.availability === "measured" ? input.value : undefined;
+}
+
+function validateGenerationCost(
+  input: LiveGenerationCostSnapshot,
+): LiveGenerationCostSnapshot {
+  const minimumUsd = requireFiniteNonNegative(input.minimumUsd, "telemetry.cost.minimumUsd");
+  const maximumUsd = requireFiniteNonNegative(input.maximumUsd, "telemetry.cost.maximumUsd");
+  if (minimumUsd > maximumUsd) {
+    throw new DomainInvariantError("INVALID_SNAPSHOT", "generation cost range is inverted");
+  }
+  const exactUsd = input.exactUsd === undefined
+    ? undefined
+    : requireFiniteNonNegative(input.exactUsd, "telemetry.cost.exactUsd");
+  if (
+    exactUsd !== undefined &&
+    (exactUsd !== minimumUsd || exactUsd !== maximumUsd)
+  ) {
+    throw new DomainInvariantError(
+      "INVALID_SNAPSHOT",
+      "exact generation cost must collapse the cost range",
+    );
+  }
+  return Object.freeze({
+    ...(exactUsd === undefined ? {} : { exactUsd }),
+    maximumUsd,
+    minimumUsd,
+    priceCardId: requireNonEmpty(input.priceCardId, "telemetry.cost.priceCardId"),
+    priceCardSource: requireNonEmpty(
+      input.priceCardSource,
+      "telemetry.cost.priceCardSource",
+    ),
+  });
+}
+
+function validateTelemetry(
+  input: LiveGenerationTelemetrySnapshot,
+): LiveGenerationTelemetrySnapshot {
+  const inputTokens = validateTokenClass(input.inputTokens, "telemetry.inputTokens", false);
+  const cachedInputTokens = validateTokenClass(
+    input.cachedInputTokens,
+    "telemetry.cachedInputTokens",
+    false,
+  );
+  const cacheWriteInputTokens = validateTokenClass(
+    input.cacheWriteInputTokens,
+    "telemetry.cacheWriteInputTokens",
+    false,
+  );
+  const outputTokens = validateTokenClass(input.outputTokens, "telemetry.outputTokens", false);
+  const reasoningOutputTokens = validateTokenClass(
+    input.reasoningOutputTokens,
+    "telemetry.reasoningOutputTokens",
+    false,
+  );
+  const totalTokens = validateTokenClass(input.totalTokens, "telemetry.totalTokens", true);
+  const measuredInputTokens = measuredTokenValue(inputTokens);
+  const measuredCachedInputTokens = measuredTokenValue(cachedInputTokens);
+  const measuredCacheWriteInputTokens = measuredTokenValue(cacheWriteInputTokens);
+  const measuredOutputTokens = measuredTokenValue(outputTokens);
+  const measuredReasoningOutputTokens = measuredTokenValue(reasoningOutputTokens);
+  const measuredTotalTokens = measuredTokenValue(totalTokens);
+
+  if (
+    measuredInputTokens !== undefined &&
+    measuredCachedInputTokens !== undefined &&
+    measuredCachedInputTokens > measuredInputTokens
+  ) {
+    throw new DomainInvariantError("INVALID_SNAPSHOT", "cached input exceeds input");
+  }
+  if (
+    measuredInputTokens !== undefined &&
+    measuredCachedInputTokens !== undefined &&
+    measuredCacheWriteInputTokens !== undefined &&
+    measuredCachedInputTokens + measuredCacheWriteInputTokens > measuredInputTokens
+  ) {
+    throw new DomainInvariantError("INVALID_SNAPSHOT", "cache-write input exceeds input");
+  }
+  if (
+    measuredOutputTokens !== undefined &&
+    measuredReasoningOutputTokens !== undefined &&
+    measuredReasoningOutputTokens > measuredOutputTokens
+  ) {
+    throw new DomainInvariantError("INVALID_SNAPSHOT", "reasoning output exceeds output");
+  }
+  if (
+    totalTokens.availability === "derived" &&
+    (measuredInputTokens === undefined ||
+      measuredOutputTokens === undefined ||
+      !Number.isSafeInteger(measuredInputTokens + measuredOutputTokens) ||
+      totalTokens.value !== measuredInputTokens + measuredOutputTokens)
+  ) {
+    throw new DomainInvariantError("INVALID_SNAPSHOT", "derived generation total is inconsistent");
+  }
+  if (
+    totalTokens.availability === "measured" &&
+    measuredInputTokens !== undefined &&
+    measuredOutputTokens !== undefined &&
+    measuredTotalTokens !== undefined &&
+    measuredTotalTokens < measuredInputTokens + measuredOutputTokens
+  ) {
+    throw new DomainInvariantError("INVALID_SNAPSHOT", "generation total is inconsistent");
+  }
+
+  return Object.freeze({
+    cacheWriteInputTokens,
+    cachedInputTokens,
+    ...(input.cost === undefined ? {} : { cost: validateGenerationCost(input.cost) }),
+    inputTokens,
+    model: requireNonEmpty(input.model, "telemetry.model"),
+    outputTokens,
+    reasoningOutputTokens,
+    runId: requireNonEmpty(input.runId, "telemetry.runId"),
+    source: requireNonEmpty(input.source, "telemetry.source"),
+    totalTokens,
+  });
 }
 
 function validateSummary(
@@ -213,6 +418,13 @@ function sameUsage(left: LiveGenerationUsageSnapshot, right: LiveGenerationUsage
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
+function sameTelemetry(
+  left: LiveGenerationTelemetrySnapshot,
+  right: LiveGenerationTelemetrySnapshot,
+): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
 export class LiveMeeting {
   public readonly meetingId: MeetingId;
   public readonly publicationTargetId: PublicationTargetId;
@@ -227,6 +439,7 @@ export class LiveMeeting {
   private summaryTimestampMs: number | null;
   private externalProjectionId: ExternalPublicationId | null;
   private lastProjectedRevision: number;
+  private readonly telemetryRecords: LiveGenerationTelemetrySnapshot[];
   private readonly usageRecords: LiveGenerationUsageSnapshot[];
 
   private constructor(snapshot: LiveMeetingSnapshot) {
@@ -280,6 +493,16 @@ export class LiveMeeting {
     if (new Set(this.usageRecords.map(({ runId }) => runId)).size !== this.usageRecords.length) {
       throw new DomainInvariantError("INVALID_SNAPSHOT", "generation usage run IDs must be unique");
     }
+    this.telemetryRecords = (snapshot.generationTelemetry ?? []).map(validateTelemetry);
+    if (
+      new Set(this.telemetryRecords.map(({ runId }) => runId)).size !==
+      this.telemetryRecords.length
+    ) {
+      throw new DomainInvariantError(
+        "INVALID_SNAPSHOT",
+        "generation telemetry run IDs must be unique",
+      );
+    }
     this.validateLifecycle();
   }
 
@@ -287,6 +510,7 @@ export class LiveMeeting {
     return new LiveMeeting({
       draftSummary: null,
       endedAtMs: null,
+      generationTelemetry: [],
       generationUsage: [],
       meetingId: input.meetingId,
       projectedRevision: 0,
@@ -373,6 +597,7 @@ export class LiveMeeting {
   public acceptSummary(input: {
     readonly generatedAtMs: number;
     readonly summary: LiveSummaryDraftSnapshot;
+    readonly telemetry?: LiveGenerationTelemetrySnapshot;
     readonly throughTurnCount: number;
     readonly usage?: LiveGenerationUsageSnapshot;
   }): void {
@@ -380,14 +605,15 @@ export class LiveMeeting {
       input.throughTurnCount,
       "liveSummary.throughTurnCount",
     );
-    if (throughTurnCount !== this.finalizedTurns.length) {
+    if (throughTurnCount > this.finalizedTurns.length) {
       throw new DomainInvariantError(
         "CONFLICTING_COMPLETION",
-        "live summary must cover the exact generation turn snapshot",
+        "live summary cannot cover turns outside the generation snapshot",
       );
     }
+    const coveredTurns = this.finalizedTurns.slice(0, throughTurnCount);
     const expectedSummaryRevision = (this.summaryDraft?.revision ?? 0) + 1;
-    const summary = validateSummary(input.summary, this.finalizedTurns, expectedSummaryRevision);
+    const summary = validateSummary(input.summary, coveredTurns, expectedSummaryRevision);
     const generatedAtMs = requireNonNegativeInteger(input.generatedAtMs, "liveSummary.generatedAtMs");
     if (generatedAtMs < this.startedAtMs) {
       throw new DomainInvariantError("INVALID_SNAPSHOT", "summary cannot predate the meeting");
@@ -395,9 +621,12 @@ export class LiveMeeting {
     if (input.usage !== undefined) {
       this.appendGenerationUsage(input.usage);
     }
+    if (input.telemetry !== undefined) {
+      this.appendGenerationTelemetry(input.telemetry);
+    }
     this.summaryDraft = summary;
     this.summarizedTurnIdSet.clear();
-    for (const turn of this.finalizedTurns) {
+    for (const turn of coveredTurns) {
       this.summarizedTurnIdSet.add(turn.turnId);
     }
     this.summaryTimestampMs = generatedAtMs;
@@ -408,7 +637,15 @@ export class LiveMeeting {
     if (!this.appendGenerationUsage(input)) {
       return false;
     }
-    this.incrementRevision();
+    this.incrementInvisibleRevision();
+    return true;
+  }
+
+  public recordGenerationTelemetry(input: LiveGenerationTelemetrySnapshot): boolean {
+    if (!this.appendGenerationTelemetry(input)) {
+      return false;
+    }
+    this.incrementInvisibleRevision();
     return true;
   }
 
@@ -418,20 +655,26 @@ export class LiveMeeting {
     if (revision > this.currentRevision) {
       throw new DomainInvariantError("CONFLICTING_COMPLETION", "cannot project a future revision");
     }
-    if (this.externalProjectionId !== null) {
-      if (this.externalProjectionId !== normalized) {
-        throw new DomainInvariantError(
-          "CONFLICTING_COMPLETION",
-          "live projection identity cannot change after publication",
-        );
-      }
-      if (revision <= this.lastProjectedRevision) {
-        return false;
-      }
-      this.incrementRevision();
-      this.lastProjectedRevision = this.currentRevision;
-      return true;
+    const receiptRotated = this.externalProjectionId !== null &&
+      this.externalProjectionId !== normalized;
+    if (receiptRotated && revision < this.lastProjectedRevision) {
+      throw new DomainInvariantError(
+        "CONFLICTING_COMPLETION",
+        "cannot rotate a live projection receipt from a stale revision",
+      );
     }
+    if (
+      !receiptRotated &&
+      this.externalProjectionId !== null &&
+      revision <= this.lastProjectedRevision
+    ) {
+      return false;
+    }
+
+    // The projection key remains stable outside the aggregate. This is only a
+    // physical receipt rotation after a deleted or otherwise stale Discord
+    // reference. The caller persists this state transition with the aggregate
+    // revision CAS, so a stale completion cannot overwrite a newer receipt.
     this.externalProjectionId = normalized;
     this.incrementRevision();
     this.lastProjectedRevision = this.currentRevision;
@@ -462,6 +705,7 @@ export class LiveMeeting {
     return {
       draftSummary: this.summaryDraft,
       endedAtMs: this.endedTimestampMs,
+      generationTelemetry: [...this.telemetryRecords],
       generationUsage: [...this.usageRecords],
       meetingId: this.meetingId,
       projectedRevision: this.lastProjectedRevision,
@@ -482,6 +726,15 @@ export class LiveMeeting {
     this.currentRevision += 1;
   }
 
+  private incrementInvisibleRevision(): void {
+    const projectionIsCurrent =
+      this.externalProjectionId !== null && this.lastProjectedRevision === this.currentRevision;
+    this.incrementRevision();
+    if (projectionIsCurrent) {
+      this.lastProjectedRevision = this.currentRevision;
+    }
+  }
+
   private appendGenerationUsage(input: LiveGenerationUsageSnapshot): boolean {
     const usage = validateUsage(input);
     const existing = this.usageRecords.find(({ runId }) => runId === usage.runId);
@@ -495,6 +748,22 @@ export class LiveMeeting {
       return false;
     }
     this.usageRecords.push(usage);
+    return true;
+  }
+
+  private appendGenerationTelemetry(input: LiveGenerationTelemetrySnapshot): boolean {
+    const telemetry = validateTelemetry(input);
+    const existing = this.telemetryRecords.find(({ runId }) => runId === telemetry.runId);
+    if (existing !== undefined) {
+      if (!sameTelemetry(existing, telemetry)) {
+        throw new DomainInvariantError(
+          "CONFLICTING_COMPLETION",
+          "generation telemetry run was replayed with different values",
+        );
+      }
+      return false;
+    }
+    this.telemetryRecords.push(telemetry);
     return true;
   }
 

@@ -19,3 +19,13 @@ export const grpcHealthDegraded =
   "AGENT_RUNTIME_HEALTH_STATUS_DEGRADED" as const;
 export const grpcHealthNotServing =
   "AGENT_RUNTIME_HEALTH_STATUS_NOT_SERVING" as const;
+export const grpcTokenMeasured =
+  "AGENT_RUNTIME_TOKEN_AVAILABILITY_MEASURED" as const;
+export const grpcTokenDerived =
+  "AGENT_RUNTIME_TOKEN_AVAILABILITY_DERIVED" as const;
+export const grpcTokenUnavailable =
+  "AGENT_RUNTIME_TOKEN_AVAILABILITY_UNAVAILABLE" as const;
+export const grpcDerivedTokenInput =
+  "AGENT_RUNTIME_DERIVED_TOKEN_SOURCE_INPUT" as const;
+export const grpcDerivedTokenOutput =
+  "AGENT_RUNTIME_DERIVED_TOKEN_SOURCE_OUTPUT" as const;

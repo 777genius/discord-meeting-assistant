@@ -36,6 +36,7 @@ function observability() {
 describe("instrumented processing ports", () => {
   it("records successful final transcription duration without changing the result", async () => {
     const { logger, metrics } = observability();
+    const signal = new AbortController().signal;
     const result = {
       ok: true,
       value: { transcriptId: "transcript-1", turns: [], version: 1 },
@@ -67,9 +68,11 @@ describe("instrumented processing ports", () => {
         }],
         version: 1,
       },
+      signal,
     } as const;
 
     await expect(subject.transcribe(request)).resolves.toEqual(result);
+    expect(delegate.transcribe).toHaveBeenCalledWith(request);
     expect(metrics.observeStage).toHaveBeenCalledWith(
       "transcription",
       "succeeded",

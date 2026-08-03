@@ -1,7 +1,10 @@
 import { DomainInvariantError } from "../domain/errors.js";
 import {
   LiveMeeting,
+  type LiveGenerationTelemetrySnapshot,
   type LiveGenerationUsageSnapshot,
+  type LiveMeetingSnapshot,
+  type LiveSummaryDraftSnapshot,
   type StartLiveMeetingInput,
 } from "../domain/live-meeting.js";
 import type { StageFailure } from "../domain/meeting.js";
@@ -117,6 +120,11 @@ export interface RefreshLiveMeetingInput {
   readonly captions: readonly LiveCaptionSnapshot[];
   readonly meetingId: string;
   readonly nowMs: number;
+  /**
+   * Keeps summary generation available to a separate single-flight worker
+   * without allowing it to concurrently edit the mutable live projection.
+   */
+  readonly projection?: "allow" | "skip";
   readonly projectionRequested?: boolean;
   readonly summaryGeneration?: "cadence" | "skip";
 }
@@ -125,6 +133,10 @@ export type RefreshLiveMeetingResult =
   | { readonly status: "not-found" }
   | {
       readonly generationFailure?: StageFailure;
+      /** Changes whenever the durable input base for an incremental run changes. */
+      readonly generationBase?: string;
+      readonly generationStale?: boolean;
+      readonly generationTelemetry?: LiveGenerationTelemetrySnapshot;
       readonly generationUsage?: LiveGenerationUsageSnapshot;
       readonly generated: boolean;
       readonly projected: boolean;
@@ -161,6 +173,61 @@ function invalidGenerationFailure(error: unknown): StageFailure {
   };
 }
 
+interface GenerationBase {
+  readonly draftSummaryRevision: number | null;
+  readonly status: LiveMeetingSnapshot["status"];
+  readonly summarizedTurnIds: readonly string[];
+  readonly turnIds: readonly string[];
+}
+
+const maximumCompatibleGenerationSaveAttempts = 3;
+const maximumProjectionSaveAttempts = 3;
+
+function generationBaseSnapshot(snapshot: LiveMeetingSnapshot): GenerationBase {
+  return {
+    draftSummaryRevision: snapshot.draftSummary?.revision ?? null,
+    status: snapshot.status,
+    summarizedTurnIds: [...snapshot.summarizedTurnIds].toSorted(),
+    turnIds: snapshot.turns.map(({ turnId }) => turnId),
+  };
+}
+
+function sameStrings(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function startsWithStrings(values: readonly string[], prefix: readonly string[]): boolean {
+  return values.length >= prefix.length &&
+    prefix.every((value, index) => values[index] === value);
+}
+
+function isCompatibleGenerationBase(
+  snapshot: LiveMeetingSnapshot,
+  base: GenerationBase,
+): boolean {
+  return (
+    snapshot.status === base.status &&
+    (snapshot.draftSummary?.revision ?? null) === base.draftSummaryRevision &&
+    sameStrings([...snapshot.summarizedTurnIds].toSorted(), base.summarizedTurnIds) &&
+    startsWithStrings(snapshot.turns.map(({ turnId }) => turnId), base.turnIds)
+  );
+}
+
+function generationBaseKey(
+  meeting: LiveMeeting,
+  turns: readonly TranscriptTurnSnapshot[],
+): string {
+  const nextSummaryRevision = (meeting.draftSummary?.revision ?? 0) + 1;
+  const lastTurnId = turns.at(-1)?.turnId ?? "none";
+  return operationIdentity(
+    "live-evidence-summary:v1",
+    meeting.meetingId,
+    String(nextSummaryRevision),
+    String(turns.length),
+    lastTurnId,
+  );
+}
+
 export class RefreshLiveMeeting {
   private readonly policy: LiveSummaryCadencePolicy;
 
@@ -181,15 +248,25 @@ export class RefreshLiveMeeting {
       .map((turn) => turn.toSnapshot());
     const shouldGenerate = input.summaryGeneration !== "skip" &&
       this.shouldGenerate(meeting, elapsedMs, nowMs, newTurns);
+    const generationBase = newTurns.length === 0
+      ? undefined
+      : generationBaseKey(meeting, meeting.turns.map((turn) => turn.toSnapshot()));
     let generated = false;
     let generationFailure: StageFailure | undefined;
+    let generationStale = false;
+    let generationTelemetry: LiveGenerationTelemetrySnapshot | undefined;
     let generationUsage: LiveGenerationUsageSnapshot | undefined;
+    const projectionAllowed = input.projection !== "skip";
 
     const projectionRequested = input.projectionRequested ?? true;
-    const initialProjectionDue =
+    const hasVisibleCaption = input.captions.some(({ text }) => text.trim().length > 0);
+    const hasRecognizedEvidence =
+      hasVisibleCaption || meeting.turns.length > 0 || meeting.draftSummary !== null;
+    const initialProjectionDue = hasRecognizedEvidence && (
       meeting.status === "ended" ||
       elapsedMs >= this.policy.publishAfterMs ||
-      input.captions.some(({ text }) => text.trim().length > 0);
+      hasVisibleCaption
+    );
     const canProject = meeting.projectionExternalId !== null || initialProjectionDue;
     const projectionStateDirty = meeting.projectedRevision < meeting.revision;
     const shouldProject =
@@ -197,7 +274,7 @@ export class RefreshLiveMeeting {
       (meeting.status === "ended" || projectionStateDirty || projectionRequested);
     let projected = false;
     let projectionFailure: StageFailure | undefined;
-    if (shouldProject) {
+    if (projectionAllowed && shouldProject) {
       const projectedResult = await this.project(meeting, input.captions, nowMs, elapsedMs);
       projected = projectedResult.projected;
       projectionFailure = projectedResult.failure;
@@ -207,10 +284,16 @@ export class RefreshLiveMeeting {
       const result = await this.generate(meeting, nowMs, newTurns);
       generated = result.generated;
       generationFailure = result.failure;
+      generationStale = result.stale;
+      generationTelemetry = result.telemetry;
       generationUsage = result.usage;
-      if (generated && canProject) {
+      if (generated && canProject && projectionAllowed) {
+        const generatedSnapshot = await this.dependencies.meetings.findById(input.meetingId);
+        if (generatedSnapshot === null) {
+          return { status: "not-found" };
+        }
         const updatedProjection = await this.project(
-          meeting,
+          LiveMeeting.restore(generatedSnapshot),
           input.captions,
           nowMs,
           elapsedMs,
@@ -222,6 +305,9 @@ export class RefreshLiveMeeting {
 
     return {
       ...(generationFailure === undefined ? {} : { generationFailure }),
+      ...(generationBase === undefined ? {} : { generationBase }),
+      ...(generationStale ? { generationStale: true } : {}),
+      ...(generationTelemetry === undefined ? {} : { generationTelemetry }),
       ...(generationUsage === undefined ? {} : { generationUsage }),
       generated,
       projected,
@@ -262,9 +348,12 @@ export class RefreshLiveMeeting {
   ): Promise<{
     readonly failure?: StageFailure;
     readonly generated: boolean;
+    readonly stale: boolean;
+    readonly telemetry?: LiveGenerationTelemetrySnapshot;
     readonly usage?: LiveGenerationUsageSnapshot;
   }> {
     const turns = meeting.turns.map((turn) => turn.toSnapshot());
+    const base = generationBaseSnapshot(meeting.toSnapshot());
     const newTurnIds = new Set(newTurns.map(({ turnId }) => turnId));
     const previousTurns = turns.filter(({ turnId }) => !newTurnIds.has(turnId));
     const overlapStartMs = Math.max(
@@ -275,17 +364,10 @@ export class RefreshLiveMeeting {
       .filter(({ endMs }) => endMs >= overlapStartMs)
       .slice(-this.policy.maximumRecentContextTurns);
     const nextSummaryRevision = (meeting.draftSummary?.revision ?? 0) + 1;
-    const lastTurnId = turns.at(-1)?.turnId ?? "none";
     let result;
     try {
       result = await this.dependencies.summarizer.generate({
-        idempotencyKey: operationIdentity(
-          "live-evidence-summary:v1",
-          meeting.meetingId,
-          String(nextSummaryRevision),
-          String(turns.length),
-          lastTurnId,
-        ),
+        idempotencyKey: generationBaseKey(meeting, turns),
         knownSpeakerIds: [...new Set(turns.map(({ speakerId }) => speakerId))],
         knownTurnIds: turns.map(({ turnId }) => turnId),
         meetingId: meeting.meetingId,
@@ -296,40 +378,58 @@ export class RefreshLiveMeeting {
         throughTurnCount: turns.length,
       });
     } catch (error) {
-      return { failure: unexpectedFailure("generation", error), generated: false };
+      return { failure: unexpectedFailure("generation", error), generated: false, stale: false };
     }
     if (!result.ok) {
-      if (result.usage !== undefined) {
-        await this.persistRejectedUsage(meeting, result.usage);
-      }
+      await this.persistRejectedGeneration(meeting.meetingId, result);
       return {
         failure: result.failure,
         generated: false,
+        stale: false,
+        ...(result.telemetry === undefined ? {} : { telemetry: result.telemetry }),
         ...(result.usage === undefined ? {} : { usage: result.usage }),
       };
     }
 
     try {
-      const expectedRevision = meeting.revision;
-      meeting.acceptSummary({
+      const applied = await this.applyGeneratedSummary(meeting.meetingId, base, {
         generatedAtMs: nowMs,
         summary: result.value.summary,
+        ...(result.value.telemetry === undefined
+          ? {}
+          : { telemetry: result.value.telemetry }),
         throughTurnCount: turns.length,
         ...(result.value.usage === undefined ? {} : { usage: result.value.usage }),
       });
-      await this.dependencies.meetings.save(meeting.toSnapshot(), expectedRevision);
+      if (!applied) {
+        await this.persistRejectedGeneration(meeting.meetingId, result.value);
+        return {
+          generated: false,
+          stale: true,
+          ...(result.value.telemetry === undefined
+            ? {}
+            : { telemetry: result.value.telemetry }),
+          ...(result.value.usage === undefined ? {} : { usage: result.value.usage }),
+        };
+      }
       return {
         generated: true,
+        stale: false,
+        ...(result.value.telemetry === undefined
+          ? {}
+          : { telemetry: result.value.telemetry }),
         ...(result.value.usage === undefined ? {} : { usage: result.value.usage }),
       };
     } catch (error) {
       if (error instanceof DomainInvariantError) {
-        if (result.value.usage !== undefined) {
-          await this.persistRejectedUsage(meeting, result.value.usage);
-        }
+        await this.persistRejectedGeneration(meeting.meetingId, result.value);
         return {
           failure: invalidGenerationFailure(error),
           generated: false,
+          stale: false,
+          ...(result.value.telemetry === undefined
+            ? {}
+            : { telemetry: result.value.telemetry }),
           ...(result.value.usage === undefined ? {} : { usage: result.value.usage }),
         };
       }
@@ -337,56 +437,154 @@ export class RefreshLiveMeeting {
     }
   }
 
-  private async persistRejectedUsage(
-    meeting: LiveMeeting,
-    usage: LiveGenerationUsageSnapshot,
+  private async persistRejectedGeneration(
+    meetingId: string,
+    input: {
+      readonly telemetry?: LiveGenerationTelemetrySnapshot;
+      readonly usage?: LiveGenerationUsageSnapshot;
+    },
   ): Promise<void> {
-    const expectedRevision = meeting.revision;
-    if (meeting.recordGenerationUsage(usage)) {
-      await this.dependencies.meetings.save(meeting.toSnapshot(), expectedRevision);
+    if (input.telemetry === undefined && input.usage === undefined) {
+      return;
     }
+    for (let attempt = 0; attempt < maximumCompatibleGenerationSaveAttempts; attempt += 1) {
+      const snapshot = await this.dependencies.meetings.findById(meetingId);
+      if (snapshot === null) {
+        return;
+      }
+      const meeting = LiveMeeting.restore(snapshot);
+      const expectedRevision = meeting.revision;
+      const usageChanged = input.usage === undefined
+        ? false
+        : meeting.recordGenerationUsage(input.usage);
+      const telemetryChanged = input.telemetry === undefined
+        ? false
+        : meeting.recordGenerationTelemetry(input.telemetry);
+      if (!usageChanged && !telemetryChanged) {
+        return;
+      }
+      try {
+        await this.dependencies.meetings.save(meeting.toSnapshot(), expectedRevision);
+        return;
+      } catch (error) {
+        const latest = await this.dependencies.meetings.findById(meetingId);
+        if (latest === null || latest.revision === expectedRevision) {
+          throw error;
+        }
+      }
+    }
+    throw new Error("Unable to persist rejected generation telemetry after concurrent updates");
+  }
+
+  private async applyGeneratedSummary(
+    meetingId: string,
+    base: GenerationBase,
+    input: {
+      readonly generatedAtMs: number;
+      readonly summary: LiveSummaryDraftSnapshot;
+      readonly telemetry?: LiveGenerationTelemetrySnapshot;
+      readonly throughTurnCount: number;
+      readonly usage?: LiveGenerationUsageSnapshot;
+    },
+  ): Promise<boolean> {
+    for (let attempt = 0; attempt < maximumCompatibleGenerationSaveAttempts; attempt += 1) {
+      const snapshot = await this.dependencies.meetings.findById(meetingId);
+      if (snapshot === null || !isCompatibleGenerationBase(snapshot, base)) {
+        return false;
+      }
+      const meeting = LiveMeeting.restore(snapshot);
+      const expectedRevision = meeting.revision;
+      meeting.acceptSummary(input);
+      try {
+        await this.dependencies.meetings.save(meeting.toSnapshot(), expectedRevision);
+        return true;
+      } catch (error) {
+        const latest = await this.dependencies.meetings.findById(meetingId);
+        if (latest === null || !isCompatibleGenerationBase(latest, base)) {
+          return false;
+        }
+        if (latest.revision === expectedRevision) {
+          throw error;
+        }
+      }
+    }
+    return false;
   }
 
   private async project(
-    meeting: LiveMeeting,
+    initialMeeting: LiveMeeting,
     captions: readonly LiveCaptionSnapshot[],
     nowMs: number,
     elapsedMs: number,
   ): Promise<{ readonly failure?: StageFailure; readonly projected: boolean }> {
-    const projectedRevision = meeting.revision;
-    let result;
-    try {
-      result = await this.dependencies.projector.publish({
-        captions,
-        currentExternalPublicationId: meeting.projectionExternalId,
-        elapsedMs,
-        idempotencyKey: operationIdentity(
-          "meeting-live-projection:v1",
-          meeting.meetingId,
-          meeting.publicationTargetId,
-        ),
-        meetingId: meeting.meetingId,
-        publicationTargetId: meeting.publicationTargetId,
-        revision: projectedRevision,
-        status: meeting.status,
-        summary: meeting.draftSummary,
-        updatedAtMs: nowMs,
-      });
-    } catch (error) {
-      return { failure: unexpectedFailure("projection", error), projected: false };
-    }
-    if (!result.ok) {
-      return { failure: result.failure, projected: false };
-    }
+    let meeting = initialMeeting;
+    for (let attempt = 0; attempt < maximumProjectionSaveAttempts; attempt += 1) {
+      const projectedRevision = meeting.revision;
+      let result;
+      try {
+        result = await this.dependencies.projector.publish({
+          captions,
+          currentExternalPublicationId: meeting.projectionExternalId,
+          elapsedMs,
+          idempotencyKey: operationIdentity(
+            "meeting-live-projection:v1",
+            meeting.meetingId,
+            meeting.publicationTargetId,
+          ),
+          meetingId: meeting.meetingId,
+          publicationTargetId: meeting.publicationTargetId,
+          revision: projectedRevision,
+          status: meeting.status,
+          summary: meeting.draftSummary,
+          updatedAtMs: nowMs,
+        });
+      } catch (error) {
+        return { failure: unexpectedFailure("projection", error), projected: false };
+      }
+      if (!result.ok) {
+        return { failure: result.failure, projected: false };
+      }
 
-    const expectedRevision = meeting.revision;
-    const receiptChanged = meeting.completeProjection(
-      result.value.externalPublicationId,
-      projectedRevision,
-    );
-    if (receiptChanged) {
-      await this.dependencies.meetings.save(meeting.toSnapshot(), expectedRevision);
+      const expectedRevision = meeting.revision;
+      try {
+        const receiptChanged = meeting.completeProjection(
+          result.value.externalPublicationId,
+          projectedRevision,
+        );
+        if (receiptChanged) {
+          await this.dependencies.meetings.save(meeting.toSnapshot(), expectedRevision);
+        }
+        return { projected: true };
+      } catch (error) {
+        const latest = await this.dependencies.meetings.findById(meeting.meetingId);
+        if (latest === null) {
+          return {
+            failure: unexpectedFailure(
+              "projection",
+              new Error("Live meeting disappeared after projection publication"),
+            ),
+            projected: false,
+          };
+        }
+        if (
+          latest.projectionExternalId === result.value.externalPublicationId &&
+          latest.projectedRevision >= projectedRevision
+        ) {
+          return { projected: true };
+        }
+        if (latest.revision === expectedRevision) {
+          return { failure: unexpectedFailure("projection", error), projected: false };
+        }
+        meeting = LiveMeeting.restore(latest);
+      }
     }
-    return { projected: true };
+    return {
+      failure: {
+        code: "LIVE_PROJECTION_CONFLICT",
+        message: "Live projection changed concurrently during receipt reconciliation",
+        retryable: true,
+      },
+      projected: false,
+    };
   }
 }

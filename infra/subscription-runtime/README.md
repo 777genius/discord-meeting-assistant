@@ -41,8 +41,8 @@ The immutable sidecar image must:
 
 1. pin `@vioxen/subscription-runtime` to `0.1.0-main.2` and verify both the
    package version and admitted launcher SHA-256 before every execution;
-2. admit exactly `discord_meeting.summary.generate` with `gpt-5.6-sol`/`xhigh`
-   and `discord_meeting.summary.incremental` with `gpt-5.6-luna`/`medium`; both use
+2. admit both `discord_meeting.summary.generate` and
+   `discord_meeting.summary.incremental` with `gpt-5.6-luna`/`medium`; both use
    stateless completion, disabled tools, read-only permission, no interactive
    input, the same structured schema, and the isolated tmpfs working directory;
 3. start children from an explicit environment allowlist and remove every
@@ -59,16 +59,24 @@ The immutable sidecar image must:
 7. keep safe error codes separate from provider stderr/stdout and never return
    auth data, raw provider payloads, account identities, or token-shaped text.
 
-Incremental usage is returned only when the runtime supplies every real token
-class: input, cached input, cache-write input, output, reasoning output, and
-total. Missing classes fail the incremental task with `telemetry_unavailable`;
-they are never replaced with zero. API-equivalent Luna cost uses the immutable
-`openai-standard-2026-08-02` cards sourced from the official pricing table and
-Luna model page: through 272,000 input tokens, $0.20/M input, $0.02/M cached
-input, $0.25/M cache writes, and $1.20/M output. Above that threshold, the
-documented full-request long-context rates are $0.40/M input, $0.04/M cached
-input, $0.50/M cache writes, and $1.80/M output. Reasoning is already included
-in output tokens.
+The audited launcher wraps only the admitted `codexBinaryPath` and observes
+`codex exec --json` JSONL `turn.completed` events. It keeps the private runtime
+worker responsible for auth custody and disabled-tool policy. Codex supplies
+measured input, cached input, output, and reasoning-output tokens in that event;
+it does not supply cache-write input or total. Those four classes are returned
+as measured telemetry, cache-write input is explicitly `unavailable`, and total
+is explicitly `derived` as input plus output. No absent class is replaced with
+zero. Legacy complete usage remains available only when every class was measured.
+
+API-equivalent Luna cost uses the immutable `openai-standard-2026-08-02` cards
+sourced from the official pricing table and Luna model page: through 272,000
+input tokens, $0.20/M input, $0.02/M cached input, $0.25/M cache writes, and
+$1.20/M output. Above that threshold, documented full-request long-context
+rates are $0.40/M input, $0.04/M cached input, $0.50/M cache writes, and
+$1.80/M output. Reasoning is already included in output tokens. When cache-write
+input is unavailable, callers receive a min/max range instead of an exact cost:
+minimum assumes no cache writes and maximum assumes all non-cached input was a
+cache write. The price-card ID and source travel with that estimate.
 
 `sidecar-policy.json` is a declarative deployment contract. The sidecar must
 fail closed if its executable policy differs from that file.

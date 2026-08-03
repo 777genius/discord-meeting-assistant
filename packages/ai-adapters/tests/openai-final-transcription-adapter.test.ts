@@ -9,11 +9,16 @@ import type {
 
 class FakeAudioContentReader implements AudioContentReader {
   public readonly locators: string[] = [];
+  public readonly signals: Array<AbortSignal | undefined> = [];
 
   public constructor(private readonly content: Readonly<Record<string, AudioContent>>) {}
 
-  public async read(audioLocator: string): Promise<AudioContent> {
+  public async read(
+    audioLocator: string,
+    options: { readonly signal?: AbortSignal } = {},
+  ): Promise<AudioContent> {
     this.locators.push(audioLocator);
+    this.signals.push(options.signal);
     const content = this.content[audioLocator];
     if (content === undefined) {
       throw new Error("fixture not found");
@@ -237,5 +242,73 @@ describe("OpenAiFinalTranscriptionAdapter", () => {
       failure: { code: "OPENAI_TRANSCRIPTION_INVALID_INPUT", retryable: false },
     });
     expect(client.requests).toEqual([]);
+  });
+
+  it("cancels queued and in-flight work through the shared AbortSignal", async () => {
+    const controller = new AbortController();
+    const cancellation = new Error("worker cancelled");
+    const reader = new FakeAudioContentReader({
+      "recording://speaker-a": {
+        bytes: new Uint8Array([1]),
+        fileName: "speaker-a.ogg",
+        mediaType: "audio/ogg",
+      },
+      "recording://speaker-b": {
+        bytes: new Uint8Array([2]),
+        fileName: "speaker-b.ogg",
+        mediaType: "audio/ogg",
+      },
+    });
+    let notifyProviderStarted: () => void;
+    const providerStarted = new Promise<void>((resolve) => {
+      notifyProviderStarted = resolve;
+    });
+    const requests: OpenAiTranscriptionRequest[] = [];
+    const client: OpenAiTranscriptionClient = {
+      createTranscription: async (request) => {
+        requests.push(request);
+        notifyProviderStarted();
+        await new Promise<void>((resolve) => {
+          request.signal?.addEventListener("abort", () => {
+            resolve();
+          }, { once: true });
+        });
+        request.signal?.throwIfAborted();
+        return {};
+      },
+    };
+    const adapter = new OpenAiFinalTranscriptionAdapter(client, reader, {
+      maxConcurrency: 1,
+    });
+    const processing = adapter.transcribe({
+      idempotencyKey: "transcription-key",
+      meetingId: "meeting-1",
+      recording: {
+        recordingId: "recording-1",
+        manifestLocator: "recording://manifest",
+        speakerAudio: [
+          {
+            audioLocator: "recording://speaker-a",
+            speakerId: "speaker-a",
+            timelineOffsetMs: 0,
+          },
+          {
+            audioLocator: "recording://speaker-b",
+            speakerId: "speaker-b",
+            timelineOffsetMs: 0,
+          },
+        ],
+      },
+      signal: controller.signal,
+    });
+
+    await providerStarted;
+    controller.abort(cancellation);
+
+    await expect(processing).rejects.toBe(cancellation);
+    expect(reader.locators).toEqual(["recording://speaker-a"]);
+    expect(reader.signals).toEqual([controller.signal]);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.signal).toBe(controller.signal);
   });
 });

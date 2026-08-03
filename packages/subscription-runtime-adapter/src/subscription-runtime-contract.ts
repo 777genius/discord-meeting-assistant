@@ -2,29 +2,25 @@ export const subscriptionRuntimeProtocolVersion = 1 as const;
 export const subscriptionRuntimePurpose = "discord_meeting.summary.generate" as const;
 export const subscriptionRuntimeIncrementalPurpose = "discord_meeting.summary.incremental" as const;
 export const subscriptionRuntimeProvider = "codex" as const;
-export const subscriptionRuntimeModel = "gpt-5.6-sol" as const;
+export const subscriptionRuntimeModel = "gpt-5.6-luna" as const;
 export const subscriptionRuntimeIncrementalModel = "gpt-5.6-luna" as const;
-export const subscriptionRuntimeReasoningEffort = "xhigh" as const;
+export const subscriptionRuntimeReasoningEffort = "medium" as const;
 export const subscriptionRuntimeIncrementalReasoningEffort = "medium" as const;
 export const subscriptionRuntimeEngine = "subscription-runtime-cli" as const;
 export const auditedSubscriptionRuntimePackageVersion = "0.1.0-main.2" as const;
 export const meetingSummaryOutputSchemaName = "discord_meeting_summary_v3" as const;
-export const meetingSummaryPolicyVersion = "meeting-summary.subscription-runtime.v4" as const;
+export const meetingSummaryPolicyVersion = "meeting-summary.subscription-runtime.v5" as const;
 export const incrementalMeetingSummaryPolicyVersion = "meeting-summary.incremental.subscription-runtime.v1" as const;
 
 export interface SubscriptionRuntimeExecutionProfile {
-  readonly model:
-    | typeof subscriptionRuntimeIncrementalModel
-    | typeof subscriptionRuntimeModel;
+  readonly model: typeof subscriptionRuntimeModel;
   readonly policyVersion:
     | typeof incrementalMeetingSummaryPolicyVersion
     | typeof meetingSummaryPolicyVersion;
   readonly purpose:
     | typeof subscriptionRuntimeIncrementalPurpose
     | typeof subscriptionRuntimePurpose;
-  readonly reasoningEffort:
-    | typeof subscriptionRuntimeIncrementalReasoningEffort
-    | typeof subscriptionRuntimeReasoningEffort;
+  readonly reasoningEffort: typeof subscriptionRuntimeReasoningEffort;
 }
 
 export const finalSummaryExecutionProfile: SubscriptionRuntimeExecutionProfile = Object.freeze({
@@ -155,6 +151,47 @@ export interface SubscriptionRuntimeUsage {
   readonly totalTokens: number;
 }
 
+/**
+ * A token class is never represented by a synthetic zero. `derived` is only
+ * used when the runtime documents the relationship used to calculate it.
+ */
+export type SubscriptionRuntimeTokenAvailability =
+  | {
+      readonly availability: "measured";
+      readonly value: number;
+    }
+  | {
+      readonly availability: "derived";
+      readonly derivedFrom: readonly ["inputTokens", "outputTokens"];
+      readonly value: number;
+    }
+  | {
+      readonly availability: "unavailable";
+    };
+
+export interface SubscriptionRuntimeCostRange {
+  readonly exactUsd?: number;
+  readonly maximumUsd: number;
+  readonly minimumUsd: number;
+  readonly priceCardId: string;
+  readonly priceCardSource: string;
+}
+
+/**
+ * Lossless telemetry for runtimes that report only a subset of token classes.
+ * `usage` remains available only for fully measured legacy consumers.
+ */
+export interface SubscriptionRuntimeTelemetry {
+  readonly cacheWriteInputTokens: SubscriptionRuntimeTokenAvailability;
+  readonly cachedInputTokens: SubscriptionRuntimeTokenAvailability;
+  readonly cost?: SubscriptionRuntimeCostRange;
+  readonly inputTokens: SubscriptionRuntimeTokenAvailability;
+  readonly outputTokens: SubscriptionRuntimeTokenAvailability;
+  readonly reasoningOutputTokens: SubscriptionRuntimeTokenAvailability;
+  readonly source: "codex_exec_jsonl" | "runtime_bridge";
+  readonly totalTokens: SubscriptionRuntimeTokenAvailability;
+}
+
 export type SubscriptionRuntimeTaskResult =
   | {
       readonly executionAttestation: SubscriptionRuntimeExecutionAttestation;
@@ -162,12 +199,17 @@ export type SubscriptionRuntimeTaskResult =
       readonly protocolVersion: number;
       readonly status: "completed";
       readonly structuredOutput: JsonObject;
+      /** Includes measured, derived, and unavailable token classes. */
+      readonly telemetry?: SubscriptionRuntimeTelemetry;
+      /** Present only when every token class was measured by the runtime. */
       readonly usage?: SubscriptionRuntimeUsage;
     }
   | {
       readonly failure: SubscriptionRuntimeFailure;
       readonly protocolVersion: number;
       readonly status: "failed";
+      /** Includes measured, derived, and unavailable token classes. */
+      readonly telemetry?: SubscriptionRuntimeTelemetry;
       /** Present only when every provider token class was reported. */
       readonly usage?: SubscriptionRuntimeUsage;
     }

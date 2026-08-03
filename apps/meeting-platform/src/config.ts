@@ -4,6 +4,10 @@ import { z } from "zod";
 
 const snowflake = z.string().regex(/^\d{17,20}$/u);
 const sha256 = z.string().regex(/^[0-9a-f]{64}$/u);
+const mebibyte = 1_024 * 1_024;
+const defaultVoicetextBatchMaxArtifactBytes = 64 * mebibyte;
+// Voicetext batch-v2 rejects bodies above this fixed contract maximum.
+const maximumVoicetextBatchMaxArtifactBytes = 64 * mebibyte;
 const absolutePath = z.string().startsWith("/").refine((value) => !value.includes("\0"));
 const httpUrl = z.url().refine((value) => {
   const url = new URL(value);
@@ -51,6 +55,11 @@ const environmentSchema = z
     SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256: sha256,
     SUBSCRIPTION_RUNTIME_TOKEN_FILE: absolutePath,
     TRANSCRIPTION_PROVIDER: z.enum(["speaches", "voicetext"]).default("speaches"),
+    VOICETEXT_BATCH_MAX_ARTIFACT_BYTES: z.coerce.number()
+      .int()
+      .min(27)
+      .max(maximumVoicetextBatchMaxArtifactBytes)
+      .default(defaultVoicetextBatchMaxArtifactBytes),
     VOICETEXT_SERVICE_TOKEN_FILE: absolutePath.optional(),
     VOICETEXT_WS_URL: secureWebSocketUrl.optional(),
   })
@@ -104,7 +113,10 @@ export interface PlatformConfig {
     readonly address: string;
     readonly launcherSha256: string;
   };
-  readonly voicetext?: { readonly webSocketUrl: string };
+  readonly voicetext?: {
+    readonly batchMaxArtifactBytes: number;
+    readonly webSocketUrl: string;
+  };
 }
 
 export type SecretFileReader = (path: string) => Promise<string>;
@@ -175,7 +187,12 @@ export async function loadPlatformConfig(
     transcriptionProvider: environment.TRANSCRIPTION_PROVIDER,
     ...(environment.VOICETEXT_WS_URL === undefined
       ? {}
-      : { voicetext: { webSocketUrl: environment.VOICETEXT_WS_URL } }),
+      : {
+          voicetext: {
+            batchMaxArtifactBytes: environment.VOICETEXT_BATCH_MAX_ARTIFACT_BYTES,
+            webSocketUrl: environment.VOICETEXT_WS_URL,
+          },
+        }),
   });
 }
 

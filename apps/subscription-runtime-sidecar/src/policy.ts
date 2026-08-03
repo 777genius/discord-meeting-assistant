@@ -223,8 +223,8 @@ export function reconstructCanonicalRequest(
   const profile = subscriptionRuntimeProfileForPurpose(input.purpose);
   if (
     profile === undefined ||
-    controls.model !== profile.model ||
-    controls.reasoningEffort !== profile.reasoningEffort
+    valuesDiffer(controls.model, profile.model) ||
+    valuesDiffer(controls.reasoningEffort, profile.reasoningEffort)
   ) {
     throw new RequestPolicyError("request execution profile is not admitted");
   }
@@ -327,11 +327,11 @@ function assertCanonicalProfile(
   if (
     profile === undefined ||
     request.context.metadata.policyVersion !== profile.policyVersion ||
-    request.task.controls.model !== profile.model ||
-    request.task.controls.reasoningEffort !== profile.reasoningEffort ||
-    request.task.metadata.model !== profile.model ||
+    valuesDiffer(request.task.controls.model, profile.model) ||
+    valuesDiffer(request.task.controls.reasoningEffort, profile.reasoningEffort) ||
+    valuesDiffer(request.task.metadata.model, profile.model) ||
     request.task.metadata.policyVersion !== profile.policyVersion ||
-    request.task.metadata.reasoningEffort !== profile.reasoningEffort
+    valuesDiffer(request.task.metadata.reasoningEffort, profile.reasoningEffort)
   ) {
     throw new RequestPolicyError("canonical request profile is not admitted");
   }
@@ -360,6 +360,10 @@ function assertCanonicalProfile(
     summaryRevision: metadata.summaryRevision,
     throughTurnCount: metadata.throughTurnCount,
   });
+}
+
+function valuesDiffer(actual: string, expected: string): boolean {
+  return actual !== expected;
 }
 
 function assertExactOutputSchema(value: Record<string, unknown>): void {

@@ -56,6 +56,7 @@
       "entry": [
         "src/main.ts",
         "src/collect-retained-evidence.ts",
+        "src/observe-live-discord.ts",
         "src/verify-campaign.ts",
         "src/verify-retained-evidence.ts"
       ],

@@ -10,6 +10,7 @@ export interface OpenAiTranscriptionRequest {
   readonly model: "whisper-1";
   readonly language?: string;
   readonly prompt?: string;
+  readonly signal?: AbortSignal;
 }
 
 export interface OpenAiStructuredMessage {
@@ -59,9 +60,11 @@ export class OfficialOpenAiClient
   public constructor(private readonly client: OpenAI) {}
 
   public async createTranscription(request: OpenAiTranscriptionRequest): Promise<unknown> {
+    request.signal?.throwIfAborted();
     const file = await toFile(new Uint8Array(request.audio), request.fileName, {
       type: request.mediaType,
     });
+    request.signal?.throwIfAborted();
 
     return this.client.audio.transcriptions.create(
       {
@@ -73,7 +76,10 @@ export class OfficialOpenAiClient
         temperature: 0,
         timestamp_granularities: ["segment"],
       },
-      { idempotencyKey: request.idempotencyKey },
+      {
+        idempotencyKey: request.idempotencyKey,
+        ...(request.signal === undefined ? {} : { signal: request.signal }),
+      },
     );
   }
 

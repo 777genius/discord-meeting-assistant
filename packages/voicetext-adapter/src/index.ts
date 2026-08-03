@@ -1,6 +1,7 @@
 export {
   VoicetextAdapterError,
   type VoicetextAdapterErrorCode,
+  type VoicetextAdapterErrorOptions,
   VoicetextTransportError,
   type VoicetextTransportErrorKind,
 } from "./errors.js";
@@ -25,6 +26,24 @@ export {
   type CancellableVoicetextTranscriptionRequest,
   type VoicetextFinalTranscriptionOptions,
 } from "./voicetext-final-transcription-adapter.js";
+export {
+  FetchVoicetextBatchClient,
+  batchEndpointFromWebSocketUrl,
+  type FetchVoicetextBatchClientOptions,
+  type VoicetextBatchClient,
+  type VoicetextBatchFetch,
+  type VoicetextBatchPollRequest,
+  type VoicetextBatchSubmitRequest,
+  type VoicetextBatchTaskResult,
+  type VoicetextBatchTranscriptionResult,
+  type VoicetextBatchUtterance,
+} from "./voicetext-batch-client.js";
+export {
+  VoicetextBatchFinalTranscriptionAdapter,
+  type CancellableVoicetextBatchTranscriptionRequest,
+  type VoicetextBatchFinalTranscriptionOptions,
+  type VoicetextBatchPollingScheduler,
+} from "./voicetext-batch-final-transcription-adapter.js";
 export {
   VoicetextLiveTranscriptionAdapter,
   type OpenVoicetextLiveSessionRequest,

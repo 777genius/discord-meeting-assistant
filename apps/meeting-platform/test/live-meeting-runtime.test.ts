@@ -12,6 +12,7 @@ import {
   type LiveMeetingRepository,
   type LiveMeetingSnapshot,
   type PortResult,
+  type StageFailure,
 } from "@discord-meeting/meeting-core";
 import type { Logger } from "@discord-meeting/observability-adapter";
 import type {
@@ -78,6 +79,87 @@ class SummaryStub implements IncrementalSummaryGenerationPort {
   }
 }
 
+class DeferredSummaryStub implements IncrementalSummaryGenerationPort {
+  public readonly requests: IncrementalSummaryGenerationRequest[] = [];
+  private readonly resolvers: Array<(result: PortResult<GeneratedIncrementalSummary>) => void> = [];
+
+  public generate(
+    request: IncrementalSummaryGenerationRequest,
+  ): Promise<PortResult<GeneratedIncrementalSummary>> {
+    this.requests.push(structuredClone(request));
+    return new Promise((resolve) => {
+      this.resolvers.push(resolve);
+    });
+  }
+
+  public resolveNext(): void {
+    const request = this.requests.shift();
+    const resolve = this.resolvers.shift();
+    if (request === undefined || resolve === undefined) {
+      throw new Error("no pending summary generation");
+    }
+    const evidenceTurnId = request.knownTurnIds[0]!;
+    resolve({
+      ok: true,
+      value: {
+        summary: {
+          actionItems: [],
+          decisions: [{
+            decisionId: "decision-1",
+            evidenceTurnIds: [evidenceTurnId],
+            text: "Выпустить версию в пятницу.",
+          }],
+          openQuestions: [],
+          overview: "Команда договорилась о выпуске.",
+          revision: request.revision,
+          title: "План выпуска",
+          topics: [{
+            evidenceTurnIds: [evidenceTurnId],
+            points: ["Релиз в пятницу"],
+            title: "Релиз",
+          }],
+        },
+      },
+    });
+  }
+}
+
+class FailingSummaryStub implements IncrementalSummaryGenerationPort {
+  public readonly requests: IncrementalSummaryGenerationRequest[] = [];
+
+  public generate(
+    request: IncrementalSummaryGenerationRequest,
+  ): Promise<PortResult<GeneratedIncrementalSummary>> {
+    this.requests.push(structuredClone(request));
+    return Promise.resolve({
+      failure: {
+        code: "TELEMETRY_UNAVAILABLE",
+        message: "generation telemetry is unavailable",
+        retryable: true,
+      },
+      ok: false,
+    });
+  }
+}
+
+class PermanentFailingSummaryStub implements IncrementalSummaryGenerationPort {
+  public readonly requests: IncrementalSummaryGenerationRequest[] = [];
+
+  public generate(
+    request: IncrementalSummaryGenerationRequest,
+  ): Promise<PortResult<GeneratedIncrementalSummary>> {
+    this.requests.push(structuredClone(request));
+    return Promise.resolve({
+      failure: {
+        code: "INVALID_LIVE_SUMMARY_OUTPUT",
+        message: "provider output is permanently invalid for this evidence base",
+        retryable: false,
+      },
+      ok: false,
+    });
+  }
+}
+
 class ProjectionStub implements LiveMeetingProjectionPort {
   public readonly requests: LiveMeetingProjectionRequest[] = [];
 
@@ -86,6 +168,30 @@ class ProjectionStub implements LiveMeetingProjectionPort {
   ): Promise<PortResult<{ readonly externalPublicationId: string }>> {
     this.requests.push(structuredClone(request));
     return Promise.resolve({ ok: true, value: { externalPublicationId: "thread-1" } });
+  }
+}
+
+class FailingProjectionStub implements LiveMeetingProjectionPort {
+  public readonly requests: LiveMeetingProjectionRequest[] = [];
+
+  public constructor(private readonly failure: StageFailure) {}
+
+  public publish(
+    request: LiveMeetingProjectionRequest,
+  ): Promise<PortResult<{ readonly externalPublicationId: string }>> {
+    this.requests.push(structuredClone(request));
+    return Promise.resolve({ failure: this.failure, ok: false });
+  }
+}
+
+class TimedProjectionStub implements LiveMeetingProjectionPort {
+  public readonly calls: Array<{ readonly meetingId: string; readonly publishedAtMs: number }> = [];
+
+  public publish(
+    request: LiveMeetingProjectionRequest,
+  ): Promise<PortResult<{ readonly externalPublicationId: string }>> {
+    this.calls.push({ meetingId: request.meetingId, publishedAtMs: Date.now() });
+    return Promise.resolve({ ok: true, value: { externalPublicationId: `thread-${request.meetingId}` } });
   }
 }
 
@@ -126,6 +232,19 @@ class LiveTranscriberStub {
   }
 }
 
+class SilentLiveTranscriberStub {
+  public readonly requests: OpenVoicetextLiveSessionRequest[] = [];
+
+  public openSession(request: OpenVoicetextLiveSessionRequest): Promise<VoicetextLiveSession> {
+    this.requests.push(request);
+    return Promise.resolve({
+      finalize: () => Promise.resolve(),
+      sendPacket: () => Promise.resolve("accepted" as const),
+      terminate: () => {},
+    });
+  }
+}
+
 const logger: Logger = {
   child: () => logger,
   debug: () => {},
@@ -135,14 +254,14 @@ const logger: Logger = {
   warn: () => {},
 };
 
-function started(): CraigLifecycleEvent {
+function started(recordingId = "recording-live-1"): CraigLifecycleEvent {
   return {
     channelId: "1533228891827736657",
     eventId: "start-1",
     guildId: "1533227577286852649",
     occurredAt: "2026-08-02T10:00:00.000Z",
     participantIds: ["1533228054724346087"],
-    recordingId: "recording-live-1",
+    recordingId,
     schemaVersion: 1,
     type: "meeting.started",
   };
@@ -161,14 +280,14 @@ function ended(): CraigLifecycleEvent {
   };
 }
 
-function packets(): VoicePacketBatch {
+function packets(recordingId = "recording-live-1"): VoicePacketBatch {
   return {
     packets: [{
       channelId: "1533228891827736657",
       guildId: "1533227577286852649",
       opusBase64: Buffer.from([0xf8, 0xff, 0xfe]).toString("base64"),
       receivedAtMs: 1_000,
-      recordingId: "recording-live-1",
+      recordingId,
       relativeTimeMs: 350_000,
       rtpSequence: 1,
       rtpTimestamp: 960,
@@ -182,7 +301,7 @@ function packets(): VoicePacketBatch {
 describe("PlatformLiveMeetingRuntime", () => {
   afterEach(() => vi.useRealTimers());
 
-  it("projects the first live caption within one tick and suppresses unchanged edits", async () => {
+  it("projects the first live caption within one second and suppresses unchanged edits", async () => {
     vi.useFakeTimers();
     vi.setSystemTime("2026-08-02T10:00:00.000Z");
     const meetings = new MemoryLiveMeetingRepository();
@@ -203,18 +322,482 @@ describe("PlatformLiveMeetingRuntime", () => {
 
     runtime.acceptLifecycle(started());
     runtime.acceptVoiceBatch(firstBatch);
-    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(1_000);
 
     expect(projector.requests).toHaveLength(1);
     expect(projector.requests[0]).toMatchObject({
-      elapsedMs: 5_000,
       status: "active",
       summary: null,
     });
+    expect(projector.requests[0]?.elapsedMs).toBeGreaterThanOrEqual(0);
+    expect(projector.requests[0]?.elapsedMs).toBeLessThanOrEqual(1_000);
 
     await vi.advanceTimersByTimeAsync(5_000);
     expect(projector.requests).toHaveLength(1);
     expect(summarizer.requests).toHaveLength(0);
+
+    await runtime.close();
+  });
+
+  it("does not edit Discord captions when only invisible rendered content changes", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime("2026-08-02T10:00:00.000Z");
+    const meetings = new MemoryLiveMeetingRepository();
+    const projector = new ProjectionStub();
+    const transcriber = new SilentLiveTranscriberStub();
+    const runtime = new PlatformLiveMeetingRuntime({
+      appendTurn: new AppendLiveTranscriptTurn(meetings),
+      finishMeeting: new FinishLiveMeeting(meetings),
+      logger,
+      publicationTargetId: "1533228891827736657",
+      refreshMeeting: new RefreshLiveMeeting({
+        meetings,
+        projector,
+        summarizer: new SummaryStub(),
+      }),
+      startMeeting: new StartLiveMeeting({ meetings }),
+      transcriber,
+    });
+    const firstBatch = packets();
+    firstBatch.packets[0] = { ...firstBatch.packets[0]!, relativeTimeMs: 0 };
+
+    runtime.acceptLifecycle(started());
+    runtime.acceptVoiceBatch(firstBatch);
+    await vi.advanceTimersByTimeAsync(0);
+
+    const onTranscript = transcriber.requests[0]?.onTranscript;
+    expect(onTranscript).toBeDefined();
+    const visiblePrefix = "x".repeat(280);
+    for (let index = 0; index < 13; index += 1) {
+      onTranscript?.({
+        endMs: index + 1,
+        isFinal: false,
+        meetingId: "recording-live-1",
+        speakerId: `speaker-${index}`,
+        startMs: index,
+        text: index === 12 ? `${visiblePrefix} initial hidden suffix` : `Caption ${index}`,
+      });
+    }
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(projector.requests).toHaveLength(1);
+
+    onTranscript?.({
+      endMs: 1,
+      isFinal: false,
+      meetingId: "recording-live-1",
+      speakerId: "speaker-0",
+      startMs: 0,
+      text: "Changed oldest caption that Discord does not render.",
+    });
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(projector.requests).toHaveLength(1);
+
+    onTranscript?.({
+      endMs: 13,
+      isFinal: false,
+      meetingId: "recording-live-1",
+      speakerId: "speaker-12",
+      startMs: 12,
+      text: `${visiblePrefix} changed hidden suffix`,
+    });
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(projector.requests).toHaveLength(1);
+
+    await runtime.close();
+  });
+
+  it("backs off retryable Discord projection failures instead of retrying on every caption cadence", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime("2026-08-02T10:00:00.000Z");
+    const meetings = new MemoryLiveMeetingRepository();
+    const projector = new FailingProjectionStub({
+      code: "DISCORD_PUBLICATION_REQUEST_FAILED",
+      message: "Discord rate limited the live projection",
+      retryable: true,
+    });
+    const runtime = new PlatformLiveMeetingRuntime({
+      appendTurn: new AppendLiveTranscriptTurn(meetings),
+      finishMeeting: new FinishLiveMeeting(meetings),
+      logger,
+      publicationTargetId: "1533228891827736657",
+      refreshMeeting: new RefreshLiveMeeting({
+        meetings,
+        projector,
+        summarizer: new SummaryStub(),
+      }),
+      startMeeting: new StartLiveMeeting({ meetings }),
+      transcriber: new LiveTranscriberStub(),
+    });
+    const firstBatch = packets();
+    firstBatch.packets[0] = { ...firstBatch.packets[0]!, relativeTimeMs: 0 };
+
+    runtime.acceptLifecycle(started());
+    runtime.acceptVoiceBatch(firstBatch);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(projector.requests).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(projector.requests).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(projector.requests).toHaveLength(2);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(projector.requests).toHaveLength(2);
+    await runtime.close();
+  });
+
+  it("permanently fences non-retryable Discord projection failures until restart or configuration change", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime("2026-08-02T10:00:00.000Z");
+    const meetings = new MemoryLiveMeetingRepository();
+    const projector = new FailingProjectionStub({
+      code: "DISCORD_PUBLICATION_CONFIGURATION",
+      message: "Discord projection target is invalid",
+      retryable: false,
+    });
+    const runtime = new PlatformLiveMeetingRuntime({
+      appendTurn: new AppendLiveTranscriptTurn(meetings),
+      finishMeeting: new FinishLiveMeeting(meetings),
+      logger,
+      publicationTargetId: "1533228891827736657",
+      refreshMeeting: new RefreshLiveMeeting({
+        meetings,
+        projector,
+        summarizer: new SummaryStub(),
+      }),
+      startMeeting: new StartLiveMeeting({ meetings }),
+      transcriber: new LiveTranscriberStub(),
+    });
+    const firstBatch = packets();
+    firstBatch.packets[0] = { ...firstBatch.packets[0]!, relativeTimeMs: 0 };
+
+    runtime.acceptLifecycle(started());
+    runtime.acceptVoiceBatch(firstBatch);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(projector.requests).toHaveLength(1);
+
+    const laterBatch = packets();
+    laterBatch.packets[0] = {
+      ...laterBatch.packets[0]!,
+      relativeTimeMs: 5_000,
+      rtpSequence: 2,
+      rtpTimestamp: 1_920,
+    };
+    runtime.acceptVoiceBatch(laterBatch);
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(projector.requests).toHaveLength(1);
+    await runtime.close();
+  });
+
+  it("bounds deterministic first-caption projection jitter to one second", async () => {
+    vi.useFakeTimers();
+    const startedAtMs = Date.parse("2026-08-02T10:00:00.000Z");
+    vi.setSystemTime(startedAtMs);
+    const projector = new TimedProjectionStub();
+    const meetingsA = new MemoryLiveMeetingRepository();
+    const runtimeA = new PlatformLiveMeetingRuntime({
+      appendTurn: new AppendLiveTranscriptTurn(meetingsA),
+      finishMeeting: new FinishLiveMeeting(meetingsA),
+      logger,
+      publicationTargetId: "1533228891827736657",
+      refreshMeeting: new RefreshLiveMeeting({
+        meetings: meetingsA,
+        projector,
+        summarizer: new SummaryStub(),
+      }),
+      startMeeting: new StartLiveMeeting({ meetings: meetingsA }),
+      transcriber: new LiveTranscriberStub(),
+    });
+    const meetingsB = new MemoryLiveMeetingRepository();
+    const runtimeB = new PlatformLiveMeetingRuntime({
+      appendTurn: new AppendLiveTranscriptTurn(meetingsB),
+      finishMeeting: new FinishLiveMeeting(meetingsB),
+      logger,
+      publicationTargetId: "1533228891827736657",
+      refreshMeeting: new RefreshLiveMeeting({
+        meetings: meetingsB,
+        projector,
+        summarizer: new SummaryStub(),
+      }),
+      startMeeting: new StartLiveMeeting({ meetings: meetingsB }),
+      transcriber: new LiveTranscriberStub(),
+    });
+    const firstA = packets("recording-spread-a");
+    firstA.packets[0] = { ...firstA.packets[0]!, relativeTimeMs: 0 };
+    const firstB = packets("recording-spread-b");
+    firstB.packets[0] = { ...firstB.packets[0]!, relativeTimeMs: 0 };
+
+    runtimeA.acceptLifecycle(started("recording-spread-a"));
+    runtimeB.acceptLifecycle(started("recording-spread-b"));
+    runtimeA.acceptVoiceBatch(firstA);
+    runtimeB.acceptVoiceBatch(firstB);
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(projector.calls).toHaveLength(2);
+    const firstAttemptByMeeting = new Map(
+      projector.calls.map(({ meetingId, publishedAtMs }) => [meetingId, publishedAtMs]),
+    );
+    const firstAttemptA = firstAttemptByMeeting.get("recording-spread-a")!;
+    const firstAttemptB = firstAttemptByMeeting.get("recording-spread-b")!;
+    expect(firstAttemptA).toBeLessThanOrEqual(startedAtMs + 1_000);
+    expect(firstAttemptB).toBeLessThanOrEqual(startedAtMs + 1_000);
+
+    await runtimeA.close();
+    await runtimeB.close();
+  });
+
+  it("keeps recent finalized turns from one speaker while mutable partials replace each other", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime("2026-08-02T10:00:00.000Z");
+    const meetings = new MemoryLiveMeetingRepository();
+    const projector = new ProjectionStub();
+    const transcriber = new SilentLiveTranscriberStub();
+    const runtime = new PlatformLiveMeetingRuntime({
+      appendTurn: new AppendLiveTranscriptTurn(meetings),
+      finishMeeting: new FinishLiveMeeting(meetings),
+      logger,
+      publicationTargetId: "1533228891827736657",
+      refreshMeeting: new RefreshLiveMeeting({
+        meetings,
+        projector,
+        summarizer: new SummaryStub(),
+      }),
+      startMeeting: new StartLiveMeeting({ meetings }),
+      transcriber,
+    });
+    const firstBatch = packets();
+    firstBatch.packets[0] = { ...firstBatch.packets[0]!, relativeTimeMs: 0 };
+    runtime.acceptLifecycle(started());
+    runtime.acceptVoiceBatch(firstBatch);
+    await vi.advanceTimersByTimeAsync(0);
+
+    const onTranscript = transcriber.requests[0]?.onTranscript;
+    expect(onTranscript).toBeDefined();
+    onTranscript?.({
+      endMs: 500,
+      isFinal: false,
+      meetingId: "recording-live-1",
+      speakerId: "1533228054724346087",
+      startMs: 0,
+      text: "Первая...",
+    });
+    onTranscript?.({
+      endMs: 750,
+      isFinal: false,
+      meetingId: "recording-live-1",
+      speakerId: "1533228054724346087",
+      startMs: 0,
+      text: "Первая реплика...",
+    });
+    onTranscript?.({
+      endMs: 1_000,
+      isFinal: true,
+      meetingId: "recording-live-1",
+      speakerId: "1533228054724346087",
+      startMs: 0,
+      text: "Первая реплика.",
+    });
+    onTranscript?.({
+      endMs: 6_500,
+      isFinal: false,
+      meetingId: "recording-live-1",
+      speakerId: "1533228054724346087",
+      startMs: 6_000,
+      text: "Вторая реплика...",
+    });
+    onTranscript?.({
+      endMs: 7_000,
+      isFinal: true,
+      meetingId: "recording-live-1",
+      speakerId: "1533228054724346087",
+      startMs: 6_000,
+      text: "Вторая реплика.",
+    });
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(projector.requests.at(-1)?.captions).toEqual([
+      expect.objectContaining({ isFinal: true, text: "Первая реплика." }),
+      expect.objectContaining({ isFinal: true, text: "Вторая реплика." }),
+    ]);
+
+    await vi.advanceTimersByTimeAsync(31_000);
+    expect(projector.requests.at(-1)?.captions).toEqual([
+      expect.objectContaining({ isFinal: true, text: "Вторая реплика." }),
+    ]);
+
+    await runtime.close();
+  });
+
+  it("keeps caption projection live while one incremental summary generation is in flight", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime("2026-08-02T10:00:00.000Z");
+    const meetings = new MemoryLiveMeetingRepository();
+    const summarizer = new DeferredSummaryStub();
+    const projector = new ProjectionStub();
+    const runtime = new PlatformLiveMeetingRuntime({
+      appendTurn: new AppendLiveTranscriptTurn(meetings),
+      finishMeeting: new FinishLiveMeeting(meetings),
+      logger,
+      publicationTargetId: "1533228891827736657",
+      refreshMeeting: new RefreshLiveMeeting({ meetings, projector, summarizer }),
+      startMeeting: new StartLiveMeeting({ meetings }),
+      transcriber: new LiveTranscriberStub(),
+    });
+    const firstBatch = packets();
+    firstBatch.packets[0] = { ...firstBatch.packets[0]!, relativeTimeMs: 0 };
+
+    runtime.acceptLifecycle(started());
+    runtime.acceptVoiceBatch(firstBatch);
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(summarizer.requests).toHaveLength(1);
+
+    const laterBatch = packets();
+    laterBatch.packets[0] = {
+      ...laterBatch.packets[0]!,
+      relativeTimeMs: 300_000,
+      rtpSequence: 2,
+      rtpTimestamp: 1_920,
+    };
+    runtime.acceptVoiceBatch(laterBatch);
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(summarizer.requests).toHaveLength(1);
+    expect(
+      projector.requests.some(({ captions }) =>
+        captions.some(({ startMs }) => startMs === 300_000)
+      ),
+    ).toBe(true);
+
+    summarizer.resolveNext();
+    await vi.advanceTimersByTimeAsync(0);
+    await runtime.close();
+  });
+
+  it("backs off retryable incremental generation failures instead of retrying every caption tick", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime("2026-08-02T10:00:00.000Z");
+    const meetings = new MemoryLiveMeetingRepository();
+    const summarizer = new FailingSummaryStub();
+    const runtime = new PlatformLiveMeetingRuntime({
+      appendTurn: new AppendLiveTranscriptTurn(meetings),
+      finishMeeting: new FinishLiveMeeting(meetings),
+      logger,
+      publicationTargetId: "1533228891827736657",
+      refreshMeeting: new RefreshLiveMeeting({
+        meetings,
+        projector: new ProjectionStub(),
+        summarizer,
+      }),
+      startMeeting: new StartLiveMeeting({ meetings }),
+      transcriber: new LiveTranscriberStub(),
+    });
+    const firstBatch = packets();
+    firstBatch.packets[0] = { ...firstBatch.packets[0]!, relativeTimeMs: 0 };
+
+    runtime.acceptLifecycle(started());
+    runtime.acceptVoiceBatch(firstBatch);
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(summarizer.requests).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(25_000);
+    expect(summarizer.requests).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(summarizer.requests).toHaveLength(2);
+
+    await runtime.close();
+  });
+
+  it("permanently fences a non-retryable generation failure until its evidence base changes", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime("2026-08-02T10:00:00.000Z");
+    const meetings = new MemoryLiveMeetingRepository();
+    const summarizer = new PermanentFailingSummaryStub();
+    const runtime = new PlatformLiveMeetingRuntime({
+      appendTurn: new AppendLiveTranscriptTurn(meetings),
+      finishMeeting: new FinishLiveMeeting(meetings),
+      logger,
+      publicationTargetId: "1533228891827736657",
+      refreshMeeting: new RefreshLiveMeeting({
+        meetings,
+        projector: new ProjectionStub(),
+        summarizer,
+      }),
+      startMeeting: new StartLiveMeeting({ meetings }),
+      transcriber: new LiveTranscriberStub(),
+    });
+    const firstBatch = packets();
+    firstBatch.packets[0] = { ...firstBatch.packets[0]!, relativeTimeMs: 0 };
+
+    runtime.acceptLifecycle(started());
+    runtime.acceptVoiceBatch(firstBatch);
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(summarizer.requests).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(summarizer.requests).toHaveLength(1);
+
+    const laterBatch = packets();
+    laterBatch.packets[0] = {
+      ...laterBatch.packets[0]!,
+      relativeTimeMs: 360_000,
+      rtpSequence: 2,
+      rtpTimestamp: 1_920,
+    };
+    runtime.acceptVoiceBatch(laterBatch);
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(summarizer.requests).toHaveLength(2);
+    await runtime.close();
+  });
+
+  it("drains an in-flight generation before the terminal projection and performs no post-final writes", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime("2026-08-02T10:00:00.000Z");
+    const meetings = new MemoryLiveMeetingRepository();
+    const summarizer = new DeferredSummaryStub();
+    const projector = new ProjectionStub();
+    const runtime = new PlatformLiveMeetingRuntime({
+      appendTurn: new AppendLiveTranscriptTurn(meetings),
+      finishMeeting: new FinishLiveMeeting(meetings),
+      logger,
+      publicationTargetId: "1533228891827736657",
+      refreshMeeting: new RefreshLiveMeeting({ meetings, projector, summarizer }),
+      startMeeting: new StartLiveMeeting({ meetings }),
+      transcriber: new LiveTranscriberStub(),
+    });
+    const firstBatch = packets();
+    firstBatch.packets[0] = { ...firstBatch.packets[0]!, relativeTimeMs: 0 };
+
+    runtime.acceptLifecycle(started());
+    runtime.acceptVoiceBatch(firstBatch);
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(summarizer.requests).toHaveLength(1);
+
+    let settled = false;
+    const fence = runtime.settleBeforeFinalPublication("recording-live-1").then(() => {
+      settled = true;
+      return settled;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    summarizer.resolveNext();
+    await fence;
+
+    expect(meetings.snapshot).toMatchObject({
+      draftSummary: { revision: 1 },
+      status: "ended",
+    });
+    expect(projector.requests.at(-1)).toMatchObject({
+      status: "ended",
+      summary: { revision: 1 },
+    });
+    const projectionCount = projector.requests.length;
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(projector.requests).toHaveLength(projectionCount);
 
     await runtime.close();
   });
@@ -335,7 +918,7 @@ describe("PlatformLiveMeetingRuntime", () => {
     ]);
   });
 
-  it("splits a relative timeline gap even when both packets arrive in one batch", async () => {
+  it("keeps one provider session across a relative timeline gap in one batch", async () => {
     const meetings = new MemoryLiveMeetingRepository();
     const summarizer = new SummaryStub();
     const projector = new ProjectionStub();
@@ -368,8 +951,12 @@ describe("PlatformLiveMeetingRuntime", () => {
     runtime.acceptLifecycle(ended());
     await runtime.close();
 
-    expect(transcriber.requests).toHaveLength(2);
-    expect(transcriber.finalizationCount).toBe(2);
+    expect(transcriber.requests).toHaveLength(1);
+    expect(transcriber.finalizationCount).toBe(1);
+    expect(transcriber.packets.map(({ durationSamples48Khz }) => durationSamples48Khz)).toEqual([
+      960,
+      960,
+    ]);
     expect(meetings.snapshot?.turns.map(({ startMs }) => startMs)).toEqual([
       350_000,
       352_000,
