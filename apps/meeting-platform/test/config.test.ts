@@ -53,35 +53,48 @@ describe("platform configuration", () => {
 
     expect(direct.discordPublicationMode).toBe("message");
     expect(thread.discordPublicationMode).toBe("thread");
-    await expect(loadPlatformConfig(
-      { ...environment, DISCORD_PUBLICATION_MODE: "channel" },
-      async () => "value",
-    )).rejects.toThrow();
+    await expect(
+      loadPlatformConfig(
+        { ...environment, DISCORD_PUBLICATION_MODE: "channel" },
+        async () => "value",
+      ),
+    ).rejects.toThrow();
   });
 
   it("accepts only a guild-bound legacy publication fallback", async () => {
-    const config = await loadPlatformConfig({
-      ...environment,
-      DISCORD_LEGACY_GUILD_ID: "1533224474609057795",
-      DISCORD_LEGACY_VOICE_CHANNEL_ID: "1533224474609057796",
-    }, async () => "value");
+    const config = await loadPlatformConfig(
+      {
+        ...environment,
+        DISCORD_LEGACY_GUILD_ID: "1533224474609057795",
+        DISCORD_LEGACY_VOICE_CHANNEL_ID: "1533224474609057796",
+      },
+      async () => "value",
+    );
     expect(config.discordLegacyRoute).toEqual({
       guildId: "1533224474609057795",
       publicationTargetId: "1533228891827736657",
       voiceChannelId: "1533224474609057796",
     });
-    const selfService = await loadPlatformConfig({
-      ...environment,
-      DISCORD_LEGACY_GUILD_ID: "",
-      DISCORD_LEGACY_VOICE_CHANNEL_ID: "",
-      DISCORD_RESULTS_CHANNEL_ID: "",
-    }, async () => "value");
+    const selfService = await loadPlatformConfig(
+      {
+        ...environment,
+        DISCORD_LEGACY_GUILD_ID: "",
+        DISCORD_LEGACY_VOICE_CHANNEL_ID: "",
+        DISCORD_RESULTS_CHANNEL_ID: "",
+      },
+      async () => "value",
+    );
     expect(selfService.discordLegacyRoute).toBeUndefined();
-    await expect(loadPlatformConfig({
-      ...environment,
-      DISCORD_LEGACY_VOICE_CHANNEL_ID: "",
-      DISCORD_RESULTS_CHANNEL_ID: "",
-    }, async () => "value")).rejects.toThrow();
+    await expect(
+      loadPlatformConfig(
+        {
+          ...environment,
+          DISCORD_LEGACY_VOICE_CHANNEL_ID: "",
+          DISCORD_RESULTS_CHANNEL_ID: "",
+        },
+        async () => "value",
+      ),
+    ).rejects.toThrow();
   });
 
   it("loads a Voicetext machine bearer only from a secret file", async () => {
@@ -93,18 +106,24 @@ describe("platform configuration", () => {
         VOICETEXT_WS_URL: "wss://api.voicetext.site/api/v1/transcribe/stream",
         VOICETEXT_BATCH_MAX_CONCURRENCY: "6",
         VOICETEXT_BATCH_MAX_CONCURRENT_MEETINGS: "2",
+        VOICETEXT_LIVE_MAX_CONCURRENT_SESSIONS: "10",
+        VOICETEXT_LIVE_PACKET_BACKPRESSURE_TIMEOUT_MS: "2000",
       },
       async (path) => `value-for:${path}`,
     );
 
     expect(config.transcriptionProvider).toBe("voicetext");
-    expect(config.secrets.voicetextServiceToken).toBe("value-for:/run/secrets/voicetext");
+    expect(config.secrets.voicetextServiceToken).toBe(
+      "value-for:/run/secrets/voicetext",
+    );
     expect(config.voicetext?.webSocketUrl).toBe(
       "wss://api.voicetext.site/api/v1/transcribe/stream",
     );
     expect(config.voicetext?.batchMaxArtifactBytes).toBe(64 * 1_024 * 1_024);
     expect(config.voicetext?.batchMaxConcurrency).toBe(6);
     expect(config.voicetext?.batchMaxConcurrentMeetings).toBe(2);
+    expect(config.voicetext?.liveMaxConcurrentSessions).toBe(10);
+    expect(config.voicetext?.livePacketBackpressureTimeoutMs).toBe(2_000);
 
     const defaults = await loadPlatformConfig(
       {
@@ -116,6 +135,7 @@ describe("platform configuration", () => {
       async () => "value",
     );
     expect(defaults.voicetext?.batchMaxConcurrentMeetings).toBe(1);
+    expect(defaults.voicetext?.liveMaxConcurrentSessions).toBe(3);
   });
 
   it("requires secure complete Voicetext configuration", async () => {
@@ -131,6 +151,30 @@ describe("platform configuration", () => {
           ...environment,
           TRANSCRIPTION_PROVIDER: "voicetext",
           VOICETEXT_BATCH_MAX_CONCURRENT_MEETINGS: "0",
+          VOICETEXT_SERVICE_TOKEN_FILE: "/run/secrets/voicetext",
+          VOICETEXT_WS_URL: "wss://api.voicetext.site/api/v1/transcribe/stream",
+        },
+        async () => "x",
+      ),
+    ).rejects.toThrow();
+    await expect(
+      loadPlatformConfig(
+        {
+          ...environment,
+          TRANSCRIPTION_PROVIDER: "voicetext",
+          VOICETEXT_LIVE_MAX_CONCURRENT_SESSIONS: "11",
+          VOICETEXT_SERVICE_TOKEN_FILE: "/run/secrets/voicetext",
+          VOICETEXT_WS_URL: "wss://api.voicetext.site/api/v1/transcribe/stream",
+        },
+        async () => "x",
+      ),
+    ).rejects.toThrow();
+    await expect(
+      loadPlatformConfig(
+        {
+          ...environment,
+          TRANSCRIPTION_PROVIDER: "voicetext",
+          VOICETEXT_LIVE_PACKET_BACKPRESSURE_TIMEOUT_MS: "99",
           VOICETEXT_SERVICE_TOKEN_FILE: "/run/secrets/voicetext",
           VOICETEXT_WS_URL: "wss://api.voicetext.site/api/v1/transcribe/stream",
         },
@@ -164,7 +208,10 @@ describe("platform configuration", () => {
 
   it("rejects unknown environment input and credential-bearing endpoints", async () => {
     await expect(
-      loadPlatformConfig({ ...environment, OPENAI_API_KEY: "forbidden" }, async () => "x"),
+      loadPlatformConfig(
+        { ...environment, OPENAI_API_KEY: "forbidden" },
+        async () => "x",
+      ),
     ).rejects.toThrow();
     await expect(
       loadPlatformConfig(

@@ -4,7 +4,7 @@ import { z } from "zod";
 
 const snowflake = z.string().regex(/^\d{17,20}$/u);
 const optionalSnowflake = z.preprocess(
-  (value) => value === "" ? undefined : value,
+  (value) => (value === "" ? undefined : value),
   snowflake.optional(),
 );
 const sha256 = z.string().regex(/^[0-9a-f]{64}$/u);
@@ -12,12 +12,19 @@ const mebibyte = 1_024 * 1_024;
 const defaultVoicetextBatchMaxArtifactBytes = 64 * mebibyte;
 const defaultVoicetextBatchMaxConcurrency = 2;
 const defaultVoicetextBatchMaxConcurrentMeetings = 1;
+const defaultVoicetextLiveMaxConcurrentSessions = 3;
+const defaultVoicetextLivePacketBackpressureTimeoutMs = 2_000;
 // Voicetext batch-v2 rejects bodies above this fixed contract maximum.
 const maximumVoicetextBatchMaxArtifactBytes = 64 * mebibyte;
 const maximumVoicetextBatchMaxConcurrency = 10;
 // Two is an explicit scale-up option; the production 2 GiB container admits one.
 const maximumVoicetextBatchMaxConcurrentMeetings = 2;
-const absolutePath = z.string().startsWith("/").refine((value) => !value.includes("\0"));
+const maximumVoicetextLiveMaxConcurrentSessions = 10;
+const maximumVoicetextLivePacketBackpressureTimeoutMs = 30_000;
+const absolutePath = z
+  .string()
+  .startsWith("/")
+  .refine((value) => !value.includes("\0"));
 const httpUrl = z.url().refine((value) => {
   const url = new URL(value);
   return (
@@ -50,7 +57,9 @@ const environmentSchema = z
     DISCORD_PUBLICATION_MODE: z.enum(["message", "thread"]).default("message"),
     DISCORD_RESULTS_CHANNEL_ID: optionalSnowflake,
     DISCORD_TOKEN_FILE: absolutePath,
-    NODE_ENV: z.enum(["development", "production", "test"]).default("production"),
+    NODE_ENV: z
+      .enum(["development", "production", "test"])
+      .default("production"),
     PORT: z.coerce.number().int().min(1).max(65_535).default(4_310),
     POSTGRES_URL_FILE: absolutePath,
     RECORDING_SPOOL_ROOT: absolutePath,
@@ -58,7 +67,10 @@ const environmentSchema = z
     S3_ACCESS_KEY_ID_FILE: absolutePath,
     S3_BUCKET: z.string().regex(/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/u),
     S3_ENDPOINT: httpUrl,
-    S3_PREFIX: z.string().max(512).regex(/^[a-zA-Z0-9][a-zA-Z0-9/_-]*\/$/u),
+    S3_PREFIX: z
+      .string()
+      .max(512)
+      .regex(/^[a-zA-Z0-9][a-zA-Z0-9/_-]*\/$/u),
     S3_REGION: z.string().min(1).max(64),
     S3_SECRET_ACCESS_KEY_FILE: absolutePath,
     SPEACHES_BASE_URL: httpUrl,
@@ -68,22 +80,39 @@ const environmentSchema = z
       .regex(/^(?:[a-zA-Z0-9][a-zA-Z0-9.-]*|\[[0-9a-fA-F:]+\]):\d{1,5}$/u),
     SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256: sha256,
     SUBSCRIPTION_RUNTIME_TOKEN_FILE: absolutePath,
-    TRANSCRIPTION_PROVIDER: z.enum(["speaches", "voicetext"]).default("speaches"),
-    VOICETEXT_BATCH_MAX_ARTIFACT_BYTES: z.coerce.number()
+    TRANSCRIPTION_PROVIDER: z
+      .enum(["speaches", "voicetext"])
+      .default("speaches"),
+    VOICETEXT_BATCH_MAX_ARTIFACT_BYTES: z.coerce
+      .number()
       .int()
       .min(27)
       .max(maximumVoicetextBatchMaxArtifactBytes)
       .default(defaultVoicetextBatchMaxArtifactBytes),
-    VOICETEXT_BATCH_MAX_CONCURRENCY: z.coerce.number()
+    VOICETEXT_BATCH_MAX_CONCURRENCY: z.coerce
+      .number()
       .int()
       .min(1)
       .max(maximumVoicetextBatchMaxConcurrency)
       .default(defaultVoicetextBatchMaxConcurrency),
-    VOICETEXT_BATCH_MAX_CONCURRENT_MEETINGS: z.coerce.number()
+    VOICETEXT_BATCH_MAX_CONCURRENT_MEETINGS: z.coerce
+      .number()
       .int()
       .min(1)
       .max(maximumVoicetextBatchMaxConcurrentMeetings)
       .default(defaultVoicetextBatchMaxConcurrentMeetings),
+    VOICETEXT_LIVE_MAX_CONCURRENT_SESSIONS: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(maximumVoicetextLiveMaxConcurrentSessions)
+      .default(defaultVoicetextLiveMaxConcurrentSessions),
+    VOICETEXT_LIVE_PACKET_BACKPRESSURE_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .min(100)
+      .max(maximumVoicetextLivePacketBackpressureTimeoutMs)
+      .default(defaultVoicetextLivePacketBackpressureTimeoutMs),
     VOICETEXT_SERVICE_TOKEN_FILE: absolutePath.optional(),
     VOICETEXT_WS_URL: secureWebSocketUrl.optional(),
   })
@@ -96,7 +125,8 @@ const environmentSchema = z
     if (legacyRouteParts !== 0 && legacyRouteParts !== 3) {
       context.addIssue({
         code: "custom",
-        message: "legacy Discord guild, voice channel and results channel must be configured together",
+        message:
+          "legacy Discord guild, voice channel and results channel must be configured together",
         path: ["DISCORD_LEGACY_GUILD_ID"],
       });
     }
@@ -106,7 +136,8 @@ const environmentSchema = z
     if (environment.VOICETEXT_SERVICE_TOKEN_FILE === undefined) {
       context.addIssue({
         code: "custom",
-        message: "VOICETEXT_SERVICE_TOKEN_FILE is required for Voicetext transcription",
+        message:
+          "VOICETEXT_SERVICE_TOKEN_FILE is required for Voicetext transcription",
         path: ["VOICETEXT_SERVICE_TOKEN_FILE"],
       });
     }
@@ -161,6 +192,8 @@ export interface PlatformConfig {
     readonly batchMaxArtifactBytes: number;
     readonly batchMaxConcurrency: number;
     readonly batchMaxConcurrentMeetings: number;
+    readonly liveMaxConcurrentSessions: number;
+    readonly livePacketBackpressureTimeoutMs: number;
     readonly webSocketUrl: string;
   };
 }
@@ -206,8 +239,8 @@ export async function loadPlatformConfig(
     discordApplicationId: environment.DISCORD_APPLICATION_ID,
     discordCraigApplicationId: environment.DISCORD_CRAIG_APPLICATION_ID,
     ...(environment.DISCORD_LEGACY_GUILD_ID === undefined ||
-      environment.DISCORD_LEGACY_VOICE_CHANNEL_ID === undefined ||
-      environment.DISCORD_RESULTS_CHANNEL_ID === undefined
+    environment.DISCORD_LEGACY_VOICE_CHANNEL_ID === undefined ||
+    environment.DISCORD_RESULTS_CHANNEL_ID === undefined
       ? {}
       : {
           discordLegacyRoute: {
@@ -248,9 +281,15 @@ export async function loadPlatformConfig(
       ? {}
       : {
           voicetext: {
-            batchMaxArtifactBytes: environment.VOICETEXT_BATCH_MAX_ARTIFACT_BYTES,
+            batchMaxArtifactBytes:
+              environment.VOICETEXT_BATCH_MAX_ARTIFACT_BYTES,
             batchMaxConcurrency: environment.VOICETEXT_BATCH_MAX_CONCURRENCY,
-            batchMaxConcurrentMeetings: environment.VOICETEXT_BATCH_MAX_CONCURRENT_MEETINGS,
+            batchMaxConcurrentMeetings:
+              environment.VOICETEXT_BATCH_MAX_CONCURRENT_MEETINGS,
+            liveMaxConcurrentSessions:
+              environment.VOICETEXT_LIVE_MAX_CONCURRENT_SESSIONS,
+            livePacketBackpressureTimeoutMs:
+              environment.VOICETEXT_LIVE_PACKET_BACKPRESSURE_TIMEOUT_MS,
             webSocketUrl: environment.VOICETEXT_WS_URL,
           },
         }),
@@ -259,7 +298,11 @@ export async function loadPlatformConfig(
 
 async function readSecretFile(path: string): Promise<string> {
   const descriptor = await lstat(path);
-  if (!descriptor.isFile() || descriptor.isSymbolicLink() || descriptor.size > 65_536) {
+  if (
+    !descriptor.isFile() ||
+    descriptor.isSymbolicLink() ||
+    descriptor.size > 65_536
+  ) {
     throw new Error("Secret path must be a small regular non-symlink file");
   }
   const value = (await readFile(path, "utf8")).trim();

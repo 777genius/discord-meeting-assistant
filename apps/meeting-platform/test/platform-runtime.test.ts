@@ -16,12 +16,16 @@ import type { GrpcSubscriptionRuntimeTransport } from "../src/subscription-runti
 
 describe("meeting platform runtime wiring", () => {
   it("passes configured per-meeting batch concurrency into the Voicetext composition", () => {
-    expect(createVoicetextBatchFinalTranscriptionOptions({
-      batchMaxArtifactBytes: 64 * 1_024 * 1_024,
-      batchMaxConcurrency: 6,
-      batchMaxConcurrentMeetings: 1,
-      webSocketUrl: "wss://api.voicetext.site/api/v1/transcribe/stream",
-    })).toMatchObject({
+    expect(
+      createVoicetextBatchFinalTranscriptionOptions({
+        batchMaxArtifactBytes: 64 * 1_024 * 1_024,
+        batchMaxConcurrency: 6,
+        batchMaxConcurrentMeetings: 1,
+        liveMaxConcurrentSessions: 10,
+        livePacketBackpressureTimeoutMs: 2_000,
+        webSocketUrl: "wss://api.voicetext.site/api/v1/transcribe/stream",
+      }),
+    ).toMatchObject({
       maxArtifactBytesPerSpeaker: 64 * 1_024 * 1_024,
       maxConcurrency: 6,
       maxSpeakerTracks: 10,

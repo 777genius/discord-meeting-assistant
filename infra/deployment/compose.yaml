@@ -36,7 +36,11 @@ services:
       - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/data/redis:/data
       - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/secrets/redis.conf:/run/secrets/redis.conf:ro
     healthcheck:
-      test: ["CMD-SHELL", "export REDISCLI_AUTH=$$(sed -n 's/^requirepass //p' /run/secrets/redis.conf); redis-cli ping"]
+      test:
+        [
+          "CMD-SHELL",
+          "export REDISCLI_AUTH=$$(sed -n 's/^requirepass //p' /run/secrets/redis.conf); redis-cli ping",
+        ]
       interval: 5s
       timeout: 3s
       retries: 30
@@ -170,6 +174,8 @@ services:
       VOICETEXT_BATCH_MAX_ARTIFACT_BYTES: ${VOICETEXT_BATCH_MAX_ARTIFACT_BYTES:-67108864}
       VOICETEXT_BATCH_MAX_CONCURRENCY: ${VOICETEXT_BATCH_MAX_CONCURRENCY:-6}
       VOICETEXT_BATCH_MAX_CONCURRENT_MEETINGS: ${VOICETEXT_BATCH_MAX_CONCURRENT_MEETINGS:-1}
+      VOICETEXT_LIVE_MAX_CONCURRENT_SESSIONS: ${VOICETEXT_LIVE_MAX_CONCURRENT_SESSIONS:-10}
+      VOICETEXT_LIVE_PACKET_BACKPRESSURE_TIMEOUT_MS: ${VOICETEXT_LIVE_PACKET_BACKPRESSURE_TIMEOUT_MS:-2000}
       VOICETEXT_SERVICE_TOKEN_FILE: /run/secrets/voicetext-service-token
       VOICETEXT_WS_URL: ${VOICETEXT_WS_URL:-wss://api.voicetext.site/api/v1/transcribe/stream}
     volumes:
@@ -184,7 +190,13 @@ services:
       object-storage: { condition: service_started }
       subscription-runtime-sidecar: { condition: service_started }
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4310/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:4310/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
       interval: 10s
       timeout: 7s
       retries: 30

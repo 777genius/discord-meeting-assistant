@@ -129,7 +129,10 @@ export async function startMeetingPlatform(
     forcePathStyle: true,
     region: config.s3.region,
   });
-  const accessPolicy = { bucket: config.s3.bucket, keyPrefix: config.s3.prefix } as const;
+  const accessPolicy = {
+    bucket: config.s3.bucket,
+    keyPrefix: config.s3.prefix,
+  } as const;
   const artifactReader = createS3BinaryArtifactReader(s3, { accessPolicy });
   const artifactWriter = createS3BinaryArtifactWriter(s3, { accessPolicy });
   const recordings = new DurableCraigRecordingIngress({
@@ -149,17 +152,21 @@ export async function startMeetingPlatform(
     address: config.subscriptionRuntime.address,
     serviceToken: config.secrets.subscriptionRuntimeToken,
   });
-  const rawSummarizer = new SubscriptionRuntimeSummaryAdapter(runtimeTransport, {
-    expectedLauncherSha256: config.subscriptionRuntime.launcherSha256,
-    maxOutputTokens: subscriptionRuntimeSummaryMaxOutputTokens,
-    outputLanguage: "Natural English; preserve technical terms exactly",
-  });
+  const rawSummarizer = new SubscriptionRuntimeSummaryAdapter(
+    runtimeTransport,
+    {
+      expectedLauncherSha256: config.subscriptionRuntime.launcherSha256,
+      maxOutputTokens: subscriptionRuntimeSummaryMaxOutputTokens,
+      outputLanguage: "Natural English; preserve technical terms exactly",
+    },
+  );
   const discord = new Client({ intents: [GatewayIntentBits.Guilds] });
   const meetingPlatformInstallUrl = createDiscordGuildInstallUrl({
     applicationId: config.discordApplicationId,
-    permissions: config.discordApplicationId === config.discordCraigApplicationId
-      ? meetingPlatformInstallPermissions | craigGatewayInstallPermissions
-      : meetingPlatformInstallPermissions,
+    permissions:
+      config.discordApplicationId === config.discordCraigApplicationId
+        ? meetingPlatformInstallPermissions | craigGatewayInstallPermissions
+        : meetingPlatformInstallPermissions,
   });
   const craigInstallUrl = createDiscordGuildInstallUrl({
     applicationId: config.discordCraigApplicationId,
@@ -171,10 +178,17 @@ export async function startMeetingPlatform(
   );
   const guildSetupHandler = new DiscordGuildSetupCommandHandler(
     discord,
-    new ConfigureGuild(guildConfigurations, guildSetupAdapter, guildSetupAdapter),
+    new ConfigureGuild(
+      guildConfigurations,
+      guildSetupAdapter,
+      guildSetupAdapter,
+    ),
     craigInstallUrl,
     (error) => {
-      logger.error("Discord guild setup failed", classifyCraigIngressError(error));
+      logger.error(
+        "Discord guild setup failed",
+        classifyCraigIngressError(error),
+      );
     },
   );
   const discordPublisher = new DiscordSummaryPublisher(
@@ -204,9 +218,10 @@ export async function startMeetingPlatform(
     logger,
     monotonicNowMilliseconds,
   );
-  const finalPublisher = live === undefined
-    ? rawPublisher
-    : new LiveFencedSummaryPublicationPort(rawPublisher, live, liveMeetings);
+  const finalPublisher =
+    live === undefined
+      ? rawPublisher
+      : new LiveFencedSummaryPublicationPort(rawPublisher, live, liveMeetings);
   const publisher = new InstrumentedSummaryPublicationPort(
     finalPublisher,
     metrics,
@@ -219,15 +234,27 @@ export async function startMeetingPlatform(
     summarizer,
     transcriber,
   });
-  const queue = createPostCallQueue({ connection, observer, prefix: queuePrefix });
+  const queue = createPostCallQueue({
+    connection,
+    observer,
+    prefix: queuePrefix,
+  });
   const deadLetterQueue = createPostCallDeadLetterQueue({
     connection,
     observer,
     prefix: queuePrefix,
   });
-  const queueEvents = createPostCallQueueEvents({ connection, observer, prefix: queuePrefix });
+  const queueEvents = createPostCallQueueEvents({
+    connection,
+    observer,
+    prefix: queuePrefix,
+  });
   const enqueuer = new BullMqPostCallEnqueuer(queue, {}, observer);
-  const outboxDispatcher = new PostCallOutboxDispatcher(meetings, enqueuer, logger);
+  const outboxDispatcher = new PostCallOutboxDispatcher(
+    meetings,
+    enqueuer,
+    logger,
+  );
   const worker = createPostCallWorker({
     connection,
     deadLetterRecorder: new BullMqPostCallDeadLetterRecorder(deadLetterQueue),
@@ -237,8 +264,13 @@ export async function startMeetingPlatform(
         signal === undefined ? {} : { signal },
       );
       if (result.status === "published") {
-        metrics.recordDiscordPublication(result.reused ? "duplicate" : "succeeded");
-        logger.info("Meeting summary published", { meetingId, reused: result.reused });
+        metrics.recordDiscordPublication(
+          result.reused ? "duplicate" : "succeeded",
+        );
+        logger.info("Meeting summary published", {
+          meetingId,
+          reused: result.reused,
+        });
         return;
       }
       if (result.status === "not-found") {
@@ -285,7 +317,10 @@ export async function startMeetingPlatform(
       meetingPlatform: meetingPlatformInstallUrl,
     },
     onInternalError: (error) => {
-      logger.error("Craig ingress request failed", classifyCraigIngressError(error));
+      logger.error(
+        "Craig ingress request failed",
+        classifyCraigIngressError(error),
+      );
     },
   });
 
@@ -295,7 +330,9 @@ export async function startMeetingPlatform(
       ...(live === undefined
         ? []
         : [pool.query("SELECT 1 FROM meeting_core.live_meetings LIMIT 0")]),
-      pool.query("SELECT 1 FROM guild_configuration.guild_installations LIMIT 0"),
+      pool.query(
+        "SELECT 1 FROM guild_configuration.guild_installations LIMIT 0",
+      ),
       queue.waitUntilReady(),
       queueEvents.waitUntilReady(),
     ]);
@@ -306,8 +343,13 @@ export async function startMeetingPlatform(
       await ready;
     }
     const discordApplication = discord.application;
-    if (discordApplication === null || discordApplication.id !== config.discordApplicationId) {
-      throw new Error("Discord application ID does not match the configured bot token");
+    if (
+      discordApplication === null ||
+      discordApplication.id !== config.discordApplicationId
+    ) {
+      throw new Error(
+        "Discord application ID does not match the configured bot token",
+      );
     }
     await registerDiscordGuildSetupCommand(discord);
     guildSetupHandler.start();
@@ -387,11 +429,19 @@ function createLiveRuntime(input: {
       timeoutMs: 30_000,
     },
   );
-  const projector = new DiscordLiveMeetingProjectionAdapter(input.discordPublisher);
+  const projector = new DiscordLiveMeetingProjectionAdapter(
+    input.discordPublisher,
+  );
   return new PlatformLiveMeetingRuntime({
     appendTurn: new AppendLiveTranscriptTurn(input.meetings),
     finishMeeting: new FinishLiveMeeting(input.meetings),
     logger: input.logger,
+    packetFlowControl: {
+      maximumConcurrentSessions:
+        input.config.voicetext.liveMaxConcurrentSessions,
+      packetBackpressureTimeoutMs:
+        input.config.voicetext.livePacketBackpressureTimeoutMs,
+    },
     publicationTargets: input.publicationTargets,
     refreshMeeting: new RefreshLiveMeeting({
       meetings: input.meetings,
@@ -433,7 +483,8 @@ export function createVoicetextBatchFinalTranscriptionOptions(
     maxConcurrency: config.batchMaxConcurrency,
     // Reserve the worst-case capacity before any provider upload. The bounded
     // worker pool retains at most maxConcurrency complete artifacts at once.
-    maxTotalArtifactBytes: config.batchMaxArtifactBytes * maximumFinalSpeakerTracks,
+    maxTotalArtifactBytes:
+      config.batchMaxArtifactBytes * maximumFinalSpeakerTracks,
     maxSpeakerTracks: maximumFinalSpeakerTracks,
     pollTimeoutMs: 900_000,
   };
@@ -456,7 +507,10 @@ function createFinalTranscriber(
       },
     );
   }
-  if (config.voicetext === undefined || config.secrets.voicetextServiceToken === undefined) {
+  if (
+    config.voicetext === undefined ||
+    config.secrets.voicetextServiceToken === undefined
+  ) {
     throw new Error("Voicetext transcription configuration is incomplete");
   }
   const batchTranscriber = new VoicetextBatchFinalTranscriptionAdapter(
@@ -473,7 +527,9 @@ function createFinalTranscriber(
   );
 }
 
-function classifyCraigIngressError(error: unknown): Readonly<Record<string, unknown>> {
+function classifyCraigIngressError(
+  error: unknown,
+): Readonly<Record<string, unknown>> {
   if (error instanceof RecordingIngressError) {
     return {
       errorCode: error.code,
@@ -484,17 +540,24 @@ function classifyCraigIngressError(error: unknown): Readonly<Record<string, unkn
     const errorWithCode = error as Error & { readonly code?: unknown };
     return {
       errorCode:
-        typeof errorWithCode.code === "string" ? errorWithCode.code : "UNEXPECTED_ERROR",
+        typeof errorWithCode.code === "string"
+          ? errorWithCode.code
+          : "UNEXPECTED_ERROR",
       errorName: error.name,
     };
   }
   return { errorCode: "UNEXPECTED_THROWABLE" };
 }
 
-function createQueueObserver(logger: Logger, metrics: PrometheusMetrics): PostCallObserver {
+function createQueueObserver(
+  logger: Logger,
+  metrics: PrometheusMetrics,
+): PostCallObserver {
   return (event) => {
     if (event.kind === "job-requeued") {
-      logger.info("Post-call job requeued after cancellation", { jobRef: event.jobRef });
+      logger.info("Post-call job requeued after cancellation", {
+        jobRef: event.jobRef,
+      });
     }
     if (event.kind === "job-failed" && event.retryable === true) {
       metrics.recordQueueRetry("transient");
@@ -503,7 +566,9 @@ function createQueueObserver(logger: Logger, metrics: PrometheusMetrics): PostCa
       metrics.recordDeadLetter("attempts-exhausted");
     }
     if (event.kind === "runtime-error") {
-      logger.warn("Post-call queue runtime error", { component: event.component });
+      logger.warn("Post-call queue runtime error", {
+        component: event.component,
+      });
     }
   };
 }
@@ -525,10 +590,12 @@ function redisConnection(value: string): ConnectionOptions {
   return {
     db: database,
     host: url.hostname,
-    password: url.password.length === 0 ? undefined : decodeURIComponent(url.password),
+    password:
+      url.password.length === 0 ? undefined : decodeURIComponent(url.password),
     port: url.port.length === 0 ? 6_379 : Number(url.port),
     tls: url.protocol === "rediss:" ? {} : undefined,
-    username: url.username.length === 0 ? undefined : decodeURIComponent(url.username),
+    username:
+      url.username.length === 0 ? undefined : decodeURIComponent(url.username),
   };
 }
 
@@ -550,7 +617,9 @@ function createHealthProbes(input: {
       }
     }),
     probe("object-storage", true, async () => {
-      await input.s3.send(new HeadBucketCommand({ Bucket: input.config.s3.bucket }));
+      await input.s3.send(
+        new HeadBucketCommand({ Bucket: input.config.s3.bucket }),
+      );
     }),
     probe("queue", true, async () => input.queue.waitUntilReady()),
     createTranscriptionHealthProbe(input.config),
@@ -571,7 +640,10 @@ function createHealthProbes(input: {
 function createTranscriptionHealthProbe(config: PlatformConfig): HealthProbe {
   if (config.transcriptionProvider === "speaches") {
     return probe("stt", true, async (signal) => {
-      const response = await fetch(new URL("/v1/models", config.speaches.baseUrl), { signal });
+      const response = await fetch(
+        new URL("/v1/models", config.speaches.baseUrl),
+        { signal },
+      );
       await response.body?.cancel();
       if (!response.ok) {
         throw new Error("STT dependency is not ready");
@@ -588,10 +660,12 @@ function createTranscriptionHealthProbe(config: PlatformConfig): HealthProbe {
 }
 
 function isVoicetextHealthy(value: unknown): boolean {
-  return typeof value === "object"
-    && value !== null
-    && "status" in value
-    && value.status === "ok";
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "status" in value &&
+    value.status === "ok"
+  );
 }
 
 function voicetextHealthUrl(config: PlatformConfig): URL {
@@ -681,6 +755,9 @@ export async function closeMeetingPlatformResources(input: {
   await settle(input.pool.end());
   await settle(flushLoggers([input.logger]));
   if (failures.length > 0) {
-    throw new AggregateError(failures, "Meeting platform shutdown was incomplete");
+    throw new AggregateError(
+      failures,
+      "Meeting platform shutdown was incomplete",
+    );
   }
 }

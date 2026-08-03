@@ -3,10 +3,7 @@ import type {
   CraigLifecycleEvent,
   VoicePacketBatch,
 } from "@discord-meeting/craig-gateway-contracts";
-import {
-  Meeting,
-  type MeetingSnapshot,
-} from "@discord-meeting/meeting-core";
+import { Meeting, type MeetingSnapshot } from "@discord-meeting/meeting-core";
 import type { Metrics, Logger } from "@discord-meeting/observability-adapter";
 import type {
   LifecycleIngressResult,
@@ -14,11 +11,17 @@ import type {
 } from "@discord-meeting/recording-ingress-adapter";
 
 interface RecordedMeetingOutbox {
-  recordAndSchedule(snapshot: MeetingSnapshot, expectedRevision: number): Promise<void>;
+  recordAndSchedule(
+    snapshot: MeetingSnapshot,
+    expectedRevision: number,
+  ): Promise<void>;
 }
 
 interface PostCallOutboxDispatcherPort {
-  dispatchPending(): Promise<{ readonly dispatched: number; readonly failed: number }>;
+  dispatchPending(): Promise<{
+    readonly dispatched: number;
+    readonly failed: number;
+  }>;
 }
 
 interface RecordingIngressPort {
@@ -26,13 +29,19 @@ interface RecordingIngressPort {
     metadata: AuthoritativeTrackUploadMetadata,
     body: AsyncIterable<Uint8Array>,
   ): Promise<{ readonly replayed: boolean }>;
-  ingestLifecycleEvent(event: CraigLifecycleEvent): Promise<LifecycleIngressResult>;
+  ingestLifecycleEvent(
+    event: CraigLifecycleEvent,
+  ): Promise<LifecycleIngressResult>;
   ingestPacketBatch(batch: VoicePacketBatch): Promise<PacketBatchIngressResult>;
 }
 
 interface DerivedLiveIngressPort {
   acceptLifecycle(event: CraigLifecycleEvent): void;
-  acceptVoiceBatch(batch: VoicePacketBatch): void;
+  /**
+   * Resolves after bounded derived admission. It must not reject the durable
+   * Craig request when live captions are degraded.
+   */
+  acceptVoiceBatch(batch: VoicePacketBatch): void | Promise<void>;
   prepareForAuthoritativeFinal(recordingId: string): void;
 }
 
@@ -66,7 +75,9 @@ export interface PlatformCraigIngressDependencies {
 }
 
 export class PlatformCraigIngress {
-  public constructor(private readonly dependencies: PlatformCraigIngressDependencies) {
+  public constructor(
+    private readonly dependencies: PlatformCraigIngressDependencies,
+  ) {
     if (
       dependencies.publicationTargets === undefined &&
       dependencies.publicationTargetId === undefined
@@ -79,20 +90,39 @@ export class PlatformCraigIngress {
     metadata: AuthoritativeTrackUploadMetadata,
     body: AsyncIterable<Uint8Array>,
   ): Promise<{ readonly replayed: boolean }> {
-    const result = await this.dependencies.ingress.ingestAuthoritativeTrack(metadata, body);
+    const result = await this.dependencies.ingress.ingestAuthoritativeTrack(
+      metadata,
+      body,
+    );
     this.dependencies.metrics.recordIngress("accepted", "accepted");
-    this.dependencies.logger.info("Authoritative Craig speaker track accepted", {
-      recordingId: metadata.recordingId,
-      replayed: result.replayed,
-      speakerId: metadata.speakerId,
-      trackNumber: metadata.trackNumber,
-    });
+    this.dependencies.logger.info(
+      "Authoritative Craig speaker track accepted",
+      {
+        recordingId: metadata.recordingId,
+        replayed: result.replayed,
+        speakerId: metadata.speakerId,
+        trackNumber: metadata.trackNumber,
+      },
+    );
     return result;
   }
 
   public async ingestVoiceBatch(batch: VoicePacketBatch): Promise<void> {
     const result = await this.dependencies.ingress.ingestPacketBatch(batch);
-    this.dependencies.live?.acceptVoiceBatch(batch);
+    // The recording spool is authoritative. Only after it accepted this batch
+    // may a bounded live-admission wait slow Craig down; live failure cannot
+    // turn a durable packet into a failed ingress request.
+    try {
+      await Promise.resolve(this.dependencies.live?.acceptVoiceBatch(batch));
+    } catch (error) {
+      this.dependencies.logger.warn(
+        "Derived live admission failed after durable Craig accept",
+        {
+          errorName: error instanceof Error ? error.name : "UnknownError",
+          recordingId: result.recordingId,
+        },
+      );
+    }
     this.dependencies.metrics.recordIngress("accepted", "accepted");
     this.dependencies.logger.debug("Craig packet batch accepted", {
       acceptedPackets: result.acceptedPackets,
@@ -109,15 +139,22 @@ export class PlatformCraigIngress {
       return;
     }
 
-    this.dependencies.live?.prepareForAuthoritativeFinal(result.recording.recordingId);
+    this.dependencies.live?.prepareForAuthoritativeFinal(
+      result.recording.recordingId,
+    );
 
-    const publicationTargetId = this.dependencies.publicationTargetId ??
-      await this.dependencies.publicationTargets?.resolve({
+    const publicationTargetId =
+      this.dependencies.publicationTargetId ??
+      (await this.dependencies.publicationTargets?.resolve({
         guildId: event.guildId,
         voiceChannelId: event.channelId,
-      }) ?? null;
+      })) ??
+      null;
     if (publicationTargetId === null) {
-      throw new MeetingPublicationTargetUnavailableError(event.guildId, event.channelId);
+      throw new MeetingPublicationTargetUnavailableError(
+        event.guildId,
+        event.channelId,
+      );
     }
     const meeting = Meeting.record({
       meetingId: result.recording.recordingId,
@@ -126,10 +163,13 @@ export class PlatformCraigIngress {
     });
     await this.dependencies.outbox.recordAndSchedule(meeting.toSnapshot(), 0);
     const dispatch = await this.dependencies.dispatcher.dispatchPending();
-    this.dependencies.logger.info("Finalized recording queued for post-call processing", {
-      dispatchFailures: dispatch.failed,
-      meetingId: meeting.meetingId,
-      replayed: result.replayed,
-    });
+    this.dependencies.logger.info(
+      "Finalized recording queued for post-call processing",
+      {
+        dispatchFailures: dispatch.failed,
+        meetingId: meeting.meetingId,
+        replayed: result.replayed,
+      },
+    );
   }
 }
