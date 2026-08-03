@@ -1,6 +1,8 @@
 import {
   canonicalJsonSha256,
   incrementalMeetingSummaryOutputSchemaName,
+  meetingSummaryOutputSchemaName,
+  meetingSummaryPolicyVersion,
   providerIncrementalMeetingSummaryJsonSchema,
   providerMeetingSummaryJsonSchema,
 } from "@discord-meeting/subscription-runtime-adapter";
@@ -29,10 +31,17 @@ describe("subscription runtime request policy", () => {
       canonicalJsonSha256(canonicalRequest),
     );
     expect(reconstructed.task.controls).toMatchObject({
-      maxOutputTokens: 4_096,
+      maxOutputTokens: 2_048,
       model: "gpt-5.6-sol",
+      outputSchemaName: meetingSummaryOutputSchemaName,
       reasoningEffort: "medium",
     });
+    expect(reconstructed.context.metadata.policyVersion).toBe(
+      meetingSummaryPolicyVersion,
+    );
+    expect(reconstructed.task.controls.outputSchema).toEqual(
+      providerMeetingSummaryJsonSchema,
+    );
   });
 
   it("reconstructs only the exact incremental Luna low 2048-token profile", () => {
@@ -106,7 +115,7 @@ describe("subscription runtime request policy", () => {
       unknown
     >;
     incrementalControls.outputSchema = providerMeetingSummaryJsonSchema;
-    incrementalControls.outputSchemaName = "discord_meeting_summary_v3";
+    incrementalControls.outputSchemaName = "discord_meeting_summary_v4";
     expect(() => reconstructCanonicalRequest(
       {
         ...incremental,

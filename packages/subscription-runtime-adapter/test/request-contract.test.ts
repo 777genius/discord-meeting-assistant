@@ -29,7 +29,7 @@ describe("subscription runtime request contract", () => {
     } as const;
     const options = {
       isolatedCwd: "/runtime/workspace",
-      maxOutputTokens: 4_096,
+      maxOutputTokens: 2_048,
       maxPromptBytes: 1_024 * 1_024,
       timeoutMs: 600_000,
     } as const;
@@ -41,20 +41,53 @@ describe("subscription runtime request contract", () => {
     expect(canonicalJsonSha256(second)).toBe(canonicalJsonSha256(first));
     expect(first.runId).toMatch(/^summary-request-[0-9a-f]{32}$/u);
     expect(first.context.metadata.policyVersion).toBe(
-      "meeting-summary.subscription-runtime.v7",
+      "meeting-summary.subscription-runtime.v8",
     );
     expect(first.task.controls.outputSchemaName).toBe(
-      "discord_meeting_summary_v3",
+      "discord_meeting_summary_v4",
     );
-    expect(first.task.outputSchemaName).toBe("discord_meeting_summary_v3");
+    expect(first.task.outputSchemaName).toBe("discord_meeting_summary_v4");
+    expect(first.task.controls.maxOutputTokens).toBe(2_048);
     expect(first.task.controls.model).toBe("gpt-5.6-sol");
     expect(first.task.controls.reasoningEffort).toBe("medium");
+    expect(first.task.controls.outputSchema).toMatchObject({
+      properties: {
+        actionItems: {
+          items: {
+            properties: {
+              deadline: {
+                anyOf: [{ maxLength: 96 }, { type: "null" }],
+              },
+              evidenceTurnIds: { maxItems: 2 },
+              text: { maxLength: 160 },
+            },
+          },
+          maxItems: 5,
+        },
+        decisions: { maxItems: 5 },
+        openQuestions: { maxItems: 5 },
+        overview: { maxLength: 320 },
+        title: { maxLength: 96 },
+        topics: {
+          items: {
+            properties: {
+              evidenceTurnIds: { maxItems: 2 },
+              points: { maxItems: 2 },
+            },
+          },
+          maxItems: 4,
+        },
+      },
+    });
+    expect(first.task.systemPrompt).toContain("one strongest evidenceTurnId");
+    expect(first.task.systemPrompt).toContain("Merge semantic duplicates");
+    expect(first.task.systemPrompt).toContain("full transcript remains authoritative");
     expect(canonicalJsonSha256(first.task.controls.outputSchema)).toBe(
-      "0fce6806195914a23398610f8284cdfe99a32ba17d2c4ecc71c103e77fb13bfd",
+      "a9822807c85eae1a5fc542bad4b40b62adea5539eb3a4eef8078ac47d3a1c8ee",
     );
     expect(
       createHash("sha256").update(first.task.systemPrompt).digest("hex"),
-    ).toBe("ad1df770820f372f350e395048c893e73f4a2841579b0a1152623b985bb99126");
+    ).toBe("48fbab59bea4863e43775eae167ecd4a19d044098a2ab4a052e2e9180a541731");
   });
 
   it("rejects an oversized transcript before transport", () => {
@@ -80,7 +113,7 @@ describe("subscription runtime request contract", () => {
         },
         {
           isolatedCwd: "/runtime/workspace",
-          maxOutputTokens: 4_096,
+          maxOutputTokens: 2_048,
           maxPromptBytes: 1_024,
           timeoutMs: 600_000,
         },

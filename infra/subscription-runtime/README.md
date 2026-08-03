@@ -42,14 +42,17 @@ The immutable sidecar image must:
 1. pin `@vioxen/subscription-runtime` to `0.1.0-main.2` and verify both the
    package version and admitted launcher SHA-256 before every execution;
 2. admit `discord_meeting.summary.generate` only with
-   `gpt-5.6-sol`/`medium`, a 4096-token post-execution output budget, and policy version
-   `meeting-summary.subscription-runtime.v7`; admit
+   `gpt-5.6-sol`/`medium`, a 2048-token post-execution output budget, and policy version
+   `meeting-summary.subscription-runtime.v8`; admit
    `discord_meeting.summary.incremental` only with `gpt-5.6-luna`/`low`, a
    2048-token post-execution output budget, and policy version
    `meeting-summary.incremental.subscription-runtime.v4`; both use stateless
    completion, disabled tools, read-only permission, no interactive input, the
    isolated tmpfs working directory, and their exact purpose-bound structured
-   schema. Final summaries use `discord_meeting_summary_v3`. Incremental live
+   schema. Final summaries use `discord_meeting_summary_v4`: title up to 96
+   characters, overview up to 320, up to four topics with at most two points,
+   up to five decisions/actions/questions, up to two evidence turns per item,
+   and 160-character prose (96 for deadlines). Incremental live
    snapshots use `discord_meeting_incremental_summary_v1`, which permits one
    short overview, at most three topics with one or two points, at most three
    decisions/actions/questions each, and one to three evidence turns per item.
@@ -71,7 +74,8 @@ The immutable sidecar image must:
 
 The output budget is checked against measured provider output after completion.
 It is not a provider generation cap and does not guarantee latency; the compact
-incremental prompt and `low` reasoning are the latency optimizations.
+final and incremental schemas/prompts reduce response volume, while `low`
+reasoning remains an incremental-only latency optimization.
 
 The audited launcher wraps only the admitted `codexBinaryPath` and observes
 `codex exec --json` JSONL `turn.completed` events. It keeps the private runtime

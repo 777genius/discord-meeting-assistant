@@ -29,17 +29,21 @@ authentication, and subscription authentication must remain server-side.
 - Send the previous structured summary, only new finalized turns, and up to
   three minutes of recent finalized context to the incremental generator. The
   provider returns a complete next snapshot rather than an ambiguous patch.
-- Admit final summaries only with `gpt-5.6-sol`, `medium` reasoning, a 4096-token
-  post-execution output budget, and policy version v6; admit incremental snapshots
+- Admit final summaries only with `gpt-5.6-sol`, `medium` reasoning, a 2048-token
+  post-execution output budget, and policy version v8; admit incremental snapshots
   only with `gpt-5.6-luna`, `low` reasoning, a 2048-token post-execution output
-  budget, and policy version v3. The final schema remains
-  `discord_meeting_summary_v3`; the live schema is the separately admitted
+  budget, and policy version v4. The final schema is
+  `discord_meeting_summary_v4`: a 96-character title, 320-character overview,
+  up to four topics with no more than two points, up to five entries per key
+  list, one or two evidence IDs per item, 160-character prose, and 96-character
+  deadlines. The live schema is the separately admitted
   `discord_meeting_incremental_summary_v1` with a one-sentence overview, up to
   three topics with no more than two points, up to three entries per key list,
   and one to three evidence IDs per item. It is explicitly a selective snapshot,
   not a claim of complete meeting history. The budget is not a provider generation
-  cap or a latency guarantee; the compact prompt and `low` reasoning are latency
-  optimizations. Keep the purposes, schemas, and attestations independent so a
+  cap or a latency guarantee; compact schemas/prompts reduce response volume,
+  while `low` reasoning is an incremental-only latency optimization. Keep the
+  purposes, schemas, and attestations independent so a
   live snapshot can never satisfy the authoritative final-summary receipt.
 - Persist real provider token telemetry when available. API-equivalent cost is
   derived from a versioned price card and is never represented as an actual

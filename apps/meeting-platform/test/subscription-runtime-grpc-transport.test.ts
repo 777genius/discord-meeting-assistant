@@ -31,7 +31,7 @@ const runtimeRequest = buildSubscriptionRuntimeSummaryRequest(
   },
   {
     isolatedCwd: "/runtime/workspace",
-    maxOutputTokens: 4_096,
+    maxOutputTokens: 2_048,
     maxPromptBytes: 1_048_576,
     timeoutMs: 600_000,
   },
@@ -75,13 +75,13 @@ describe("subscription runtime gRPC transport mapping", () => {
     expect(JSON.parse(request.controlsJson)).toMatchObject({
       disableTools: true,
       executionProfile: "stateless-completion",
-      maxOutputTokens: 4_096,
+      maxOutputTokens: 2_048,
       model: "gpt-5.6-sol",
       reasoningEffort: "medium",
     });
     expect(request.metadata).toMatchObject({
       model: "gpt-5.6-sol",
-      policyVersion: "meeting-summary.subscription-runtime.v7",
+      policyVersion: "meeting-summary.subscription-runtime.v8",
       reasoningEffort: "medium",
     });
     expect(JSON.stringify(request)).not.toContain("OPENAI_API_KEY");

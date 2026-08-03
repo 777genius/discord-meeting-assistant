@@ -165,7 +165,7 @@ describe("SubscriptionRuntimeSummaryAdapter", () => {
           disableTools: true,
           executionProfile: "stateless-completion",
           interactive: false,
-          maxOutputTokens: 4_096,
+          maxOutputTokens: 2_048,
           maxTurns: 1,
           model: subscriptionRuntimeModel,
           outputKind: "structured_output",
@@ -182,10 +182,10 @@ describe("SubscriptionRuntimeSummaryAdapter", () => {
       },
     });
     expect(captured.task.systemPrompt).toContain("untrusted quoted evidence");
-    expect(captured.task.systemPrompt).toContain("exact deadline wording");
+    expect(captured.task.systemPrompt).toContain("exact transcript wording");
     expect(captured.task.systemPrompt).toContain("natural English");
-    expect(captured.task.systemPrompt).toContain("Consolidate related first-person commitments");
-    expect(captured.task.systemPrompt).toContain("do not split one commitment into fragments");
+    expect(captured.task.systemPrompt).toContain("Merge semantic duplicates");
+    expect(captured.task.systemPrompt).toContain("one action for the same task, owner, and deadline");
     expect(captured.task.controls.outputSchema).toMatchObject({
       additionalProperties: false,
       type: "object",
@@ -371,7 +371,29 @@ describe("SubscriptionRuntimeSummaryAdapter", () => {
     const transport = new FakeTransport((request) =>
       completedResult(request, {
         ...validStructuredOutput,
-        overview: "x".repeat(801),
+        overview: "x".repeat(321),
+      }),
+    );
+
+    const result = await createAdapter(transport).generate(requestFixture);
+
+    expect(result).toMatchObject({
+      failure: {
+        code: "SUBSCRIPTION_RUNTIME_SUMMARY_INVALID_PROVIDER_RESPONSE",
+        retryable: false,
+      },
+      ok: false,
+    });
+  });
+
+  it("rejects provider output that exceeds the compact list or evidence bounds", async () => {
+    const transport = new FakeTransport((request) =>
+      completedResult(request, {
+        ...validStructuredOutput,
+        decisions: Array.from({ length: 6 }, (_, index) => ({
+          evidenceTurnIds: ["turn-a"],
+          text: `Decision ${index + 1}`,
+        })),
       }),
     );
 

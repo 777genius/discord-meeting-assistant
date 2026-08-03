@@ -19,11 +19,11 @@ const subscriptionRuntimeFinalCodexModel = "gpt-5.6-sol";
 const subscriptionRuntimeIncrementalCodexModel = "gpt-5.6-luna";
 const profiles = Object.freeze({
   "discord_meeting.summary.generate": Object.freeze({
-    maxOutputTokens: 4_096,
+    maxOutputTokens: 2_048,
     model: subscriptionRuntimeFinalCodexModel,
     outputKind: "structured_output",
-    outputSchemaName: "discord_meeting_summary_v3",
-    policyVersion: "meeting-summary.subscription-runtime.v7",
+    outputSchemaName: "discord_meeting_summary_v4",
+    policyVersion: "meeting-summary.subscription-runtime.v8",
     provider: "codex",
     purpose: "discord_meeting.summary.generate",
     reasoningEffort: "medium",
