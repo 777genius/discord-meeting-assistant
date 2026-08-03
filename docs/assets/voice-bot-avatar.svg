@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title description">
+  <title id="title">Voice Bot avatar</title>
+  <desc id="description">A smiling robot wearing blue headphones.</desc>
+  <defs>
+    <radialGradient id="background" cx="50%" cy="38%" r="70%">
+      <stop offset="0" stop-color="#273b8f"/>
+      <stop offset="0.62" stop-color="#111b4c"/>
+      <stop offset="1" stop-color="#080d29"/>
+    </radialGradient>
+    <linearGradient id="face" x1="0" y1="0" x2="0.85" y2="1">
+      <stop offset="0" stop-color="#f4f8ff"/>
+      <stop offset="1" stop-color="#b9c9ec"/>
+    </linearGradient>
+    <linearGradient id="headphones" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5ce1ff"/>
+      <stop offset="0.5" stop-color="#2688ff"/>
+      <stop offset="1" stop-color="#655cff"/>
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="9" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <circle cx="256" cy="256" r="246" fill="url(#background)"/>
+  <circle cx="256" cy="245" r="174" fill="#2ed8ff" opacity="0.13" filter="url(#glow)"/>
+  <path d="M126 238c0-91 58-164 130-164s130 73 130 164" fill="none" stroke="url(#headphones)" stroke-width="42" stroke-linecap="round"/>
+  <rect x="111" y="218" width="58" height="134" rx="29" fill="url(#headphones)"/>
+  <rect x="343" y="218" width="58" height="134" rx="29" fill="url(#headphones)"/>
+  <rect x="145" y="131" width="222" height="247" rx="86" fill="url(#face)"/>
+  <path d="M166 200c20-37 55-57 93-57 41 0 77 21 96 60v-12c0-41-33-74-74-74h-61c-41 0-74 33-74 74v21c6-4 13-8 20-12Z" fill="#ffffff" opacity="0.52"/>
+  <rect x="176" y="211" width="160" height="91" rx="42" fill="#17224f"/>
+  <ellipse cx="220" cy="254" rx="14" ry="18" fill="#5ce1ff" filter="url(#glow)"/>
+  <ellipse cx="292" cy="254" rx="14" ry="18" fill="#5ce1ff" filter="url(#glow)"/>
+  <path d="M207 320c13 24 30 36 49 36s36-12 49-36" fill="none" stroke="#27345f" stroke-width="14" stroke-linecap="round"/>
+  <circle cx="256" cy="102" r="19" fill="#5ce1ff" filter="url(#glow)"/>
+  <path d="M256 91V62" stroke="#8cecff" stroke-width="12" stroke-linecap="round"/>
+  <path d="M351 326c30 2 48 18 48 43v12" fill="none" stroke="url(#headphones)" stroke-width="17" stroke-linecap="round"/>
+  <circle cx="399" cy="390" r="17" fill="#5ce1ff" filter="url(#glow)"/>
+  <path d="M172 394c27 25 54 36 84 36s57-11 84-36" fill="none" stroke="#7388cf" stroke-width="24" stroke-linecap="round" opacity="0.58"/>
+</svg>
