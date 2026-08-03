@@ -2,6 +2,7 @@ import type { CraigLifecycleEvent, VoicePacketBatch } from "@discord-meeting/cra
 import {
   AppendLiveTranscriptTurn,
   FinishLiveMeeting,
+  LiveMeeting,
   RefreshLiveMeeting,
   StartLiveMeeting,
   type GeneratedIncrementalSummary,
@@ -339,6 +340,55 @@ describe("PlatformLiveMeetingRuntime", () => {
     await runtime.close();
   });
 
+  it("rehydrates finalized caption history when a persisted live meeting restarts", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime("2026-08-02T10:00:00.000Z");
+    const meetings = new MemoryLiveMeetingRepository();
+    const persisted = LiveMeeting.start({
+      meetingId: "recording-live-1",
+      publicationTargetId: "1533228891827736657",
+      startedAtMs: Date.parse("2026-08-02T10:00:00.000Z"),
+    });
+    persisted.appendFinalTurn({
+      endMs: 4_000,
+      speakerId: "1533228054724346087",
+      startMs: 1_000,
+      text: "Сохраненная реплика переживает рестарт.",
+      turnId: "live-turn:persisted",
+    });
+    const externalPublicationId =
+      "discord:v2:channel:1533228891827736657:message:1533228991827736657";
+    persisted.completeProjection(externalPublicationId, persisted.revision);
+    meetings.snapshot = persisted.toSnapshot();
+    const projector = new ProjectionStub();
+    const runtime = new PlatformLiveMeetingRuntime({
+      appendTurn: new AppendLiveTranscriptTurn(meetings),
+      finishMeeting: new FinishLiveMeeting(meetings),
+      logger,
+      publicationTargetId: "1533228891827736657",
+      refreshMeeting: new RefreshLiveMeeting({
+        meetings,
+        projector,
+        summarizer: new SummaryStub(),
+      }),
+      startMeeting: new StartLiveMeeting({ meetings }),
+      transcriber: new SilentLiveTranscriberStub(),
+    });
+
+    runtime.acceptLifecycle(started());
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(projector.requests).toHaveLength(1);
+    expect(projector.requests[0]).toMatchObject({
+      captions: [{
+        isFinal: true,
+        text: "Сохраненная реплика переживает рестарт.",
+      }],
+      currentExternalPublicationId: externalPublicationId,
+    });
+    await runtime.close();
+  });
+
   it("does not edit Discord captions when only invisible rendered content changes", async () => {
     vi.useFakeTimers();
     vi.setSystemTime("2026-08-02T10:00:00.000Z");
@@ -380,17 +430,6 @@ describe("PlatformLiveMeetingRuntime", () => {
     }
 
     await vi.advanceTimersByTimeAsync(1_000);
-    expect(projector.requests).toHaveLength(1);
-
-    onTranscript?.({
-      endMs: 1,
-      isFinal: false,
-      meetingId: "recording-live-1",
-      speakerId: "speaker-0",
-      startMs: 0,
-      text: "Changed oldest caption that Discord does not render.",
-    });
-    await vi.advanceTimersByTimeAsync(5_000);
     expect(projector.requests).toHaveLength(1);
 
     onTranscript?.({
@@ -549,7 +588,7 @@ describe("PlatformLiveMeetingRuntime", () => {
     await runtimeB.close();
   });
 
-  it("keeps recent finalized turns from one speaker while mutable partials replace each other", async () => {
+  it("keeps finalized turn history while mutable partials replace each other", async () => {
     vi.useFakeTimers();
     vi.setSystemTime("2026-08-02T10:00:00.000Z");
     const meetings = new MemoryLiveMeetingRepository();
@@ -625,6 +664,7 @@ describe("PlatformLiveMeetingRuntime", () => {
 
     await vi.advanceTimersByTimeAsync(31_000);
     expect(projector.requests.at(-1)?.captions).toEqual([
+      expect.objectContaining({ isFinal: true, text: "Первая реплика." }),
       expect.objectContaining({ isFinal: true, text: "Вторая реплика." }),
     ]);
 

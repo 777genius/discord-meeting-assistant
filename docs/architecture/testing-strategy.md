@@ -28,13 +28,15 @@ The critical flow is:
 5. live Opus packet boundaries reach streaming transcription without a decode and
    re-encode step;
 6. mutable partials update speaker-attributed captions, while only finalized turns
-   can enter incremental-summary evidence;
+   can enter incremental-summary evidence and finalized caption history remains
+   visible within Discord's message limits;
 7. the first caption opens one stable Discord message, later captions edit it,
    and after five minutes the preliminary summary joins the same projection
    with measured or explicitly bounded runtime token/cost telemetry;
 8. final transcription preserves Discord speaker identity and timestamps;
 9. summary topics, action owner/deadline, and evidence turn references are validated;
-10. publishing replaces the live draft in exactly the same Discord thread/message;
+10. publishing replaces the live draft in exactly the same Discord
+    container/message while retaining a bounded authoritative transcript timeline;
 11. a save/enqueue crash is recovered from the PostgreSQL outbox;
 12. rerunning each stage produces no duplicate business effect.
 

@@ -142,6 +142,7 @@ services:
     environment:
       BIND_ADDRESS: 0.0.0.0
       CRAIG_BEARER_TOKEN_FILE: /run/secrets/craig-bearer-token
+      DISCORD_PUBLICATION_MODE: ${DISCORD_PUBLICATION_MODE:-message}
       DISCORD_RESULTS_CHANNEL_ID: "1533228891827736657"
       DISCORD_TOKEN_FILE: /run/secrets/discord-sut-token
       NODE_ENV: production

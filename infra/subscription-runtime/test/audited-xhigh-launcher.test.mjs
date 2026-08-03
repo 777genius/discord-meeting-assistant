@@ -142,6 +142,7 @@ test("admits only the immutable final and incremental execution profiles", () =>
     {
       maxOutputTokens: finalProfile.maxOutputTokens,
       model: finalProfile.model,
+      outputSchemaName: finalProfile.outputSchemaName,
       policyVersion: finalProfile.policyVersion,
       purpose: finalProfile.purpose,
       reasoningEffort: finalProfile.reasoningEffort,
@@ -149,6 +150,7 @@ test("admits only the immutable final and incremental execution profiles", () =>
     {
       maxOutputTokens: 4_096,
       model: "gpt-5.6-sol",
+      outputSchemaName: "discord_meeting_summary_v3",
       policyVersion: "meeting-summary.subscription-runtime.v6",
       purpose: "discord_meeting.summary.generate",
       reasoningEffort: "medium",
@@ -162,6 +164,7 @@ test("admits only the immutable final and incremental execution profiles", () =>
     {
       maxOutputTokens: incrementalProfile.maxOutputTokens,
       model: incrementalProfile.model,
+      outputSchemaName: incrementalProfile.outputSchemaName,
       policyVersion: incrementalProfile.policyVersion,
       purpose: incrementalProfile.purpose,
       reasoningEffort: incrementalProfile.reasoningEffort,
@@ -169,7 +172,8 @@ test("admits only the immutable final and incremental execution profiles", () =>
     {
       maxOutputTokens: 2_048,
       model: "gpt-5.6-luna",
-      policyVersion: "meeting-summary.incremental.subscription-runtime.v2",
+      outputSchemaName: "discord_meeting_incremental_summary_v1",
+      policyVersion: "meeting-summary.incremental.subscription-runtime.v3",
       purpose: "discord_meeting.summary.incremental",
       reasoningEffort: "low",
     },
@@ -200,6 +204,22 @@ test("admits only the immutable final and incremental execution profiles", () =>
   assert.throws(
     () => admitMeetingSummaryRequest(admissionInput(swappedIncrementalModel, "low")),
     /controls\.model conflicts with the admitted meeting policy/,
+  );
+
+  const swappedIncrementalSchema = incrementalRequest();
+  swappedIncrementalSchema.task.controls.outputSchemaName =
+    "discord_meeting_summary_v3";
+  assert.throws(
+    () => admitMeetingSummaryRequest(admissionInput(swappedIncrementalSchema, "low")),
+    /controls\.outputSchemaName conflicts with the admitted meeting policy/,
+  );
+
+  const swappedFinalSchema = finalRequest();
+  swappedFinalSchema.task.outputSchemaName =
+    "discord_meeting_incremental_summary_v1";
+  assert.throws(
+    () => admitMeetingSummaryRequest(admissionInput(swappedFinalSchema, "medium")),
+    /task\.outputSchemaName conflicts with the admitted meeting policy/,
   );
 });
 
@@ -428,7 +448,8 @@ function incrementalRequest() {
   return summaryRequest({
     maxOutputTokens: 2_048,
     model: "gpt-5.6-luna",
-    policyVersion: "meeting-summary.incremental.subscription-runtime.v2",
+    outputSchemaName: "discord_meeting_incremental_summary_v1",
+    policyVersion: "meeting-summary.incremental.subscription-runtime.v3",
     purpose: "discord_meeting.summary.incremental",
     reasoningEffort: "low",
   });
@@ -438,6 +459,7 @@ function finalRequest() {
   return summaryRequest({
     maxOutputTokens: 4_096,
     model: "gpt-5.6-sol",
+    outputSchemaName: "discord_meeting_summary_v3",
     policyVersion: "meeting-summary.subscription-runtime.v6",
     purpose: "discord_meeting.summary.generate",
     reasoningEffort: "medium",
@@ -457,6 +479,7 @@ function summaryRequest(profile) {
         maxOutputTokens: profile.maxOutputTokens,
         model: profile.model,
         outputSchema: {},
+        outputSchemaName: profile.outputSchemaName,
         reasoningEffort: profile.reasoningEffort,
         responseFormat: "json",
         selectedOutputKind: "structured_output",
@@ -467,6 +490,7 @@ function summaryRequest(profile) {
         reasoningEffort: profile.reasoningEffort,
         runtimeOutput: "structured_output",
       },
+      outputSchemaName: profile.outputSchemaName,
     },
   };
 }

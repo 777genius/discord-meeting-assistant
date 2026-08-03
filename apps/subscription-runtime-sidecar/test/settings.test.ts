@@ -10,7 +10,9 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  incrementalMeetingSummaryOutputSchemaName,
   incrementalMeetingSummaryPolicyVersion,
+  meetingSummaryOutputSchemaName,
   meetingSummaryPolicyVersion,
   subscriptionRuntimeIncrementalPurpose,
   subscriptionRuntimePurpose,
@@ -26,6 +28,7 @@ let root: string | undefined;
 
 interface MutablePurposeProfile {
   isolatedCwd: string;
+  outputSchemaName?: string;
   policyVersion?: string;
   readonly [key: string]: unknown;
 }
@@ -66,6 +69,16 @@ const invalidPolicyVersionCases: readonly [
       incremental.policyVersion = meetingSummaryPolicyVersion;
     }
   }],
+  ["swapped final and incremental output schemas", (policy) => {
+    const final = policy.purposeProfiles[subscriptionRuntimePurpose];
+    const incremental = policy.purposeProfiles[subscriptionRuntimeIncrementalPurpose];
+    if (final !== undefined) {
+      final.outputSchemaName = incrementalMeetingSummaryOutputSchemaName;
+    }
+    if (incremental !== undefined) {
+      incremental.outputSchemaName = meetingSummaryOutputSchemaName;
+    }
+  }],
 ];
 
 describe("sidecar deployment policy", () => {
@@ -76,7 +89,7 @@ describe("sidecar deployment policy", () => {
     root = undefined;
   });
 
-  it("admits only the exact final and incremental policy versions", async () => {
+  it("admits only the exact final and incremental policy profiles", async () => {
     await expect(resolveSidecarSettings(await environmentForPolicy(() => {}))).resolves
       .toMatchObject({ bindAddress: "127.0.0.1:50052" });
   });

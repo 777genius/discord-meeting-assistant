@@ -1,8 +1,10 @@
 import {
   canonicalJsonSha256,
+  incrementalMeetingSummaryOutputSchemaName,
   incrementalMeetingSummaryPolicyVersion,
   meetingSummaryOutputSchemaName,
   meetingSummaryPolicyVersion,
+  providerIncrementalMeetingSummaryJsonSchema,
   providerMeetingSummaryJsonSchema,
   subscriptionRuntimeIncrementalModel,
   subscriptionRuntimeIncrementalPurpose,
@@ -41,7 +43,10 @@ const controlsSchema = z
     ]),
     outputKind: z.literal("structured_output"),
     outputSchema: jsonObjectSchema,
-    outputSchemaName: z.literal(meetingSummaryOutputSchemaName),
+    outputSchemaName: z.union([
+      z.literal(meetingSummaryOutputSchemaName),
+      z.literal(incrementalMeetingSummaryOutputSchemaName),
+    ]),
     permissionMode: z.literal("read-only"),
     reasoningEffort: z.union([
       z.literal(subscriptionRuntimeReasoningEffort),
@@ -137,7 +142,10 @@ const canonicalRequestSchema = z
         controls: controlsSchema,
         kind: z.literal("structured-prompt"),
         metadata: canonicalTaskMetadataSchema,
-        outputSchemaName: z.literal(meetingSummaryOutputSchemaName),
+        outputSchemaName: z.union([
+          z.literal(meetingSummaryOutputSchemaName),
+          z.literal(incrementalMeetingSummaryOutputSchemaName),
+        ]),
         prompt: z.string().min(1),
         systemPrompt: z.string().min(1),
       })
@@ -212,7 +220,7 @@ export function reconstructCanonicalRequest(
     controlsSchema,
     parseJsonObject(input.controlsJson, "controls"),
   );
-  assertExactOutputSchema(outputSchema);
+  assertExactOutputSchema(outputSchema, input.purpose);
   if (
     canonicalJsonSha256(controls.outputSchema) !==
     canonicalJsonSha256(outputSchema)
@@ -225,7 +233,8 @@ export function reconstructCanonicalRequest(
     profile === undefined ||
     valuesDiffer(controls.model, profile.model) ||
     valuesDiffer(controls.reasoningEffort, profile.reasoningEffort) ||
-    valuesDiffer(controls.maxOutputTokens, profile.maxOutputTokens)
+    valuesDiffer(controls.maxOutputTokens, profile.maxOutputTokens) ||
+    controls.outputSchemaName !== profile.outputSchemaName
   ) {
     throw new RequestPolicyError("request execution profile is not admitted");
   }
@@ -245,7 +254,7 @@ export function reconstructCanonicalRequest(
       controls: controls as unknown as SubscriptionRuntimeAgentTaskRequest["task"]["controls"],
       kind: "structured-prompt",
       metadata: profileMetadata.task,
-      outputSchemaName: meetingSummaryOutputSchemaName,
+      outputSchemaName: profile.outputSchemaName,
       prompt: input.prompt,
       systemPrompt: input.systemPrompt,
     },
@@ -270,7 +279,10 @@ export function assertCanonicalRequestPolicy(
     throw new RequestPolicyError("canonical task conflicts with sidecar policy");
   }
   assertCanonicalProfile(candidate);
-  assertExactOutputSchema(candidate.task.controls.outputSchema);
+  assertExactOutputSchema(
+    candidate.task.controls.outputSchema,
+    candidate.context.purpose,
+  );
 }
 
 function reconstructProfileMetadata(
@@ -331,9 +343,11 @@ function assertCanonicalProfile(
     valuesDiffer(request.task.controls.maxOutputTokens, profile.maxOutputTokens) ||
     valuesDiffer(request.task.controls.model, profile.model) ||
     valuesDiffer(request.task.controls.reasoningEffort, profile.reasoningEffort) ||
+    request.task.controls.outputSchemaName !== profile.outputSchemaName ||
     valuesDiffer(request.task.metadata.model, profile.model) ||
     request.task.metadata.policyVersion !== profile.policyVersion ||
-    valuesDiffer(request.task.metadata.reasoningEffort, profile.reasoningEffort)
+    valuesDiffer(request.task.metadata.reasoningEffort, profile.reasoningEffort) ||
+    request.task.outputSchemaName !== profile.outputSchemaName
   ) {
     throw new RequestPolicyError("canonical request profile is not admitted");
   }
@@ -368,10 +382,19 @@ function valuesDiffer<T extends number | string>(actual: T, expected: T): boolea
   return actual !== expected;
 }
 
-function assertExactOutputSchema(value: Record<string, unknown>): void {
+function assertExactOutputSchema(
+  value: Record<string, unknown>,
+  purpose: string,
+): void {
+  const expectedSchema = purpose === subscriptionRuntimePurpose
+    ? providerMeetingSummaryJsonSchema
+    : purpose === subscriptionRuntimeIncrementalPurpose
+      ? providerIncrementalMeetingSummaryJsonSchema
+      : undefined;
   if (
+    expectedSchema === undefined ||
     canonicalJsonSha256(value) !==
-    canonicalJsonSha256(providerMeetingSummaryJsonSchema)
+    canonicalJsonSha256(expectedSchema)
   ) {
     throw new RequestPolicyError("task output schema is not admitted");
   }

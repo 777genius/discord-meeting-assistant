@@ -19,3 +19,9 @@ the mounted migrations automatically. Migration `0002_create_post_call_outbox.sq
 must be present before deploying the crash-safe post-call dispatcher. Migration
 `0003_create_live_meetings.sql` must be applied before enabling the derived live
 transcript and incremental-summary projection.
+
+`DISCORD_PUBLICATION_MODE=message` is the default: each meeting owns one mutable
+SUT-authored message directly in the configured results channel. Set
+`DISCORD_PUBLICATION_MODE=thread` only to retain the opt-in thread presentation;
+the thread title is human-facing and never includes the internal idempotency
+digest.

@@ -6,11 +6,13 @@ import {
   auditedSubscriptionRuntimePackageVersion,
   canonicalJsonSha256,
   calculateLunaApiEquivalentCostRange,
+  providerIncrementalMeetingSummarySchema,
   providerMeetingSummarySchema,
   subscriptionRuntimeEngine,
   subscriptionRuntimeIncrementalModel,
   subscriptionRuntimeProvider,
   subscriptionRuntimeProfileForPurpose,
+  subscriptionRuntimePurpose,
   subscriptionRuntimeReasoningEffort,
   type SubscriptionRuntimeExecutionProfile,
   type JsonObject,
@@ -238,17 +240,17 @@ export class SubscriptionRuntimeExecutor implements SidecarExecutorPort {
         );
       }
 
-      const validatedOutput = providerMeetingSummarySchema.safeParse(
+      const structuredOutput = validateStructuredOutput(
+        profile,
         parsed.structuredOutput,
       );
-      if (!validatedOutput.success) {
+      if (structuredOutput === undefined) {
         return failedResult(
           "provider_output_invalid",
           completeUsage,
           partialTelemetry,
         );
       }
-      const structuredOutput = validatedOutput.data as unknown as JsonObject;
       return {
         executionAttestation: {
           canonicalRequestSha256: canonicalJsonSha256(request),
@@ -363,6 +365,18 @@ function buildCliArgs(
     "--model",
     profile.model,
   ];
+}
+
+function validateStructuredOutput(
+  profile: SubscriptionRuntimeExecutionProfile,
+  value: unknown,
+): JsonObject | undefined {
+  const parsed = profile.purpose === subscriptionRuntimePurpose
+    ? providerMeetingSummarySchema.safeParse(value)
+    : providerIncrementalMeetingSummarySchema.safeParse(value);
+  return parsed.success
+    ? parsed.data
+    : undefined;
 }
 
 type TelemetryResult =

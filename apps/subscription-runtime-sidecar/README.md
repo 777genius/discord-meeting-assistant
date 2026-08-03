@@ -26,10 +26,17 @@ after every task. It must call that version's
 worker with the exact selected profile: `gpt-5.6-sol`/`medium` for final
 summaries with an admitted 4096-token post-execution output budget and policy
 version `v6`, and `gpt-5.6-luna`/`low` for incremental summaries with an
-admitted 2048-token post-execution output budget and policy version `v2`,
+admitted 2048-token post-execution output budget and policy version `v3`,
 disabled tools, no interactive flow, and
 stateless-completion semantics. A generic launcher that does not enforce both
 exact profiles is not an admitted production installation.
+
+The final purpose admits only `discord_meeting_summary_v3`. The live purpose
+admits only `discord_meeting_incremental_summary_v1`: one short overview,
+at most three topics with one or two points, at most three entries in each key
+list, and one to three evidence turns per item. It is a selective snapshot, not
+a claim of complete meeting history. The schema names and full JSON Schemas are
+purpose-bound and fail closed if swapped.
 
 The budget is checked against measured provider output after completion. It is
 not a provider generation cap and does not guarantee latency; the compact

@@ -232,12 +232,72 @@ export const retainedE2eEvidenceV2Schema = z.object({
   }),
 });
 
+const publicationContainerV3Schema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("channel-message"),
+    parentChannelId: identifierSchema,
+  }),
+  z.object({
+    kind: z.literal("thread"),
+    parentChannelId: identifierSchema,
+    threadId: identifierSchema,
+  }),
+]);
+
+const publicationEvidenceV3Schema = z.object({
+  container: publicationContainerV3Schema,
+  embedDescription: z.string().min(1).max(4_000).refine((value) => value.trim().length > 0),
+  matchingMessageCount: identifierCountSchema,
+  matchingThreadCount: identifierCountSchema,
+  messageId: identifierSchema,
+});
+
+const replayEvidenceV3Schema = z.object({
+  container: publicationContainerV3Schema,
+  matchingMeetingCount: identifierCountSchema,
+  matchingMessageCount: identifierCountSchema,
+  matchingRecordingCount: identifierCountSchema,
+  matchingSummaryCount: identifierCountSchema,
+  matchingThreadCount: identifierCountSchema,
+  matchingTranscriptCount: identifierCountSchema,
+  meetingId: identifierSchema,
+  messageId: identifierSchema,
+  recordingId: identifierSchema,
+  summaryId: identifierSchema,
+  transcriptId: identifierSchema,
+  replayJob: z.object({
+    afterProcessedOn: z.number().int().positive(),
+    beforeProcessedOn: z.number().int().positive(),
+    jobId: identifierSchema,
+    state: z.literal("completed"),
+  }),
+});
+
+/**
+ * v3 records the physical Discord container faithfully. v2 always modelled a
+ * thread, so it remains a supported read format for retained historical proof.
+ */
+export const retainedE2eEvidenceV3Schema = retainedE2eEvidenceV2Schema
+  .omit({ publication: true, replay: true, schemaVersion: true })
+  .extend({
+    publication: publicationEvidenceV3Schema,
+    replay: replayEvidenceV3Schema,
+    schemaVersion: z.literal(3),
+  });
+
+export const retainedE2eEvidenceSchema = z.union([
+  retainedE2eEvidenceV2Schema,
+  retainedE2eEvidenceV3Schema,
+]);
+
 export type FixtureManifestV1 = z.infer<typeof fixtureManifestV1Schema>;
 export type ActorRunEvidenceV1 = z.infer<typeof actorRunEvidenceV1Schema>;
 export type UnboundActorRunEvidenceV1 = z.infer<typeof unboundActorRunEvidenceV1Schema>;
 export type DeployedServiceProvenance = z.infer<typeof deployedServiceProvenanceSchema>;
 export type DeploymentProvenance = z.infer<typeof retainedE2eEvidenceV2Schema>["deployment"];
 export type RetainedE2eEvidenceV2 = z.infer<typeof retainedE2eEvidenceV2Schema>;
+export type RetainedE2eEvidenceV3 = z.infer<typeof retainedE2eEvidenceV3Schema>;
+export type RetainedE2eEvidence = z.infer<typeof retainedE2eEvidenceSchema>;
 
 interface VerificationFailure {
   readonly code: string;
@@ -271,7 +331,7 @@ interface PlaybackWindow {
 
 export function verifyRetainedE2eEvidence(
   manifest: FixtureManifestV1,
-  evidence: RetainedE2eEvidenceV2,
+  evidence: RetainedE2eEvidence,
 ): E2eVerificationResult {
   const failures: VerificationFailure[] = [];
   const metrics: SpeakerAccuracyMetrics[] = [];
@@ -313,7 +373,7 @@ export function verifyRetainedE2eEvidence(
 
 export function verifyE2eCampaign(
   manifest: FixtureManifestV1,
-  runs: readonly RetainedE2eEvidenceV2[],
+  runs: readonly RetainedE2eEvidence[],
 ): CampaignVerificationResult {
   const failures: VerificationFailure[] = [];
   const runResults: Record<string, E2eVerificationResult> = {};
@@ -347,15 +407,14 @@ export function verifyE2eCampaign(
 }
 
 function verifyCampaignIsolation(
-  runs: readonly RetainedE2eEvidenceV2[],
+  runs: readonly RetainedE2eEvidence[],
   fail: (code: string, message: string) => void,
 ): void {
-  const identities: ReadonlyArray<readonly [string, (run: RetainedE2eEvidenceV2) => string]> = [
+  const identities: ReadonlyArray<readonly [string, (run: RetainedE2eEvidence) => string]> = [
     ["meeting", (run) => run.meetingId],
     ["recording", (run) => run.recording.recordingId],
     ["transcript", (run) => run.transcript.transcriptId],
     ["summary", (run) => run.summary.summaryId],
-    ["thread", (run) => run.publication.threadId],
     ["message", (run) => run.publication.messageId],
   ];
   for (const [kind, select] of identities) {
@@ -364,10 +423,36 @@ function verifyCampaignIsolation(
       fail("CAMPAIGN_STATE_LEAK", `${kind} identity is shared by independent runs`);
     }
   }
+  const threadContainers = runs
+    .filter((run) => expectedPublicationThreadCount(run.publication) === 1)
+    .map((run) => publicationContainerIdentity(run.publication));
+  if (new Set(threadContainers).size !== threadContainers.length) {
+    fail("CAMPAIGN_STATE_LEAK", "thread publication container is shared by independent runs");
+  }
+}
+
+function publicationContainerIdentity(
+  publication: RetainedE2eEvidence["publication"] | RetainedE2eEvidence["replay"],
+): string {
+  if ("threadId" in publication) {
+    return `thread:${publication.threadId}`;
+  }
+  return publication.container.kind === "thread"
+    ? `thread:${publication.container.threadId}`
+    : `channel-message:${publication.container.parentChannelId}`;
+}
+
+function expectedPublicationThreadCount(
+  publication: RetainedE2eEvidence["publication"] | RetainedE2eEvidence["replay"],
+): number {
+  if ("threadId" in publication) {
+    return 1;
+  }
+  return publication.container.kind === "thread" ? 1 : 0;
 }
 
 function verifyDeploymentProvenance(
-  evidence: RetainedE2eEvidenceV2,
+  evidence: RetainedE2eEvidence,
   fail: (code: string, message: string) => void,
 ): void {
   const { craig, meetingPlatform } = evidence.deployment;
@@ -395,7 +480,7 @@ function verifyDeploymentProvenance(
 }
 
 function verifyCampaignDeploymentProvenance(
-  runs: readonly RetainedE2eEvidenceV2[],
+  runs: readonly RetainedE2eEvidence[],
   fail: (code: string, message: string) => void,
 ): void {
   const baseline = runs[0];
@@ -438,7 +523,7 @@ function sameServiceProvenance(
 
 function verifyFixtures(
   manifest: FixtureManifestV1,
-  evidence: RetainedE2eEvidenceV2,
+  evidence: RetainedE2eEvidence,
   fail: (code: string, message: string) => void,
 ): void {
   const retainedById = new Map(evidence.fixtures.map((fixture) => [fixture.fixtureId, fixture]));
@@ -485,7 +570,7 @@ function verifyFixtures(
 }
 
 function verifyS3Evidence(
-  evidence: RetainedE2eEvidenceV2,
+  evidence: RetainedE2eEvidence,
   fail: (code: string, message: string) => void,
 ): void {
   const s3 = evidence.recording.s3;
@@ -518,7 +603,7 @@ function verifyS3Evidence(
 }
 
 function verifyStages(
-  evidence: RetainedE2eEvidenceV2,
+  evidence: RetainedE2eEvidence,
   fail: (code: string, message: string) => void,
 ): void {
   for (const required of ["transcription", "summary", "publication"] as const) {
@@ -530,7 +615,7 @@ function verifyStages(
 }
 
 function playbackWindowsFrom(
-  evidence: RetainedE2eEvidenceV2,
+  evidence: RetainedE2eEvidence,
   fail: (code: string, message: string) => void,
 ): readonly PlaybackWindow[] {
   const events = evidence.actorRun.events;
@@ -585,7 +670,7 @@ function playbackWindowsFrom(
 
 function verifyActorRun(
   manifest: FixtureManifestV1,
-  evidence: RetainedE2eEvidenceV2,
+  evidence: RetainedE2eEvidence,
   scenario: FixtureManifestV1["scenarios"][number],
   windows: readonly PlaybackWindow[],
   fail: (code: string, message: string) => void,
@@ -661,7 +746,7 @@ function verifyActorRun(
 
 function verifyActorS3Timing(
   manifest: FixtureManifestV1,
-  evidence: RetainedE2eEvidenceV2,
+  evidence: RetainedE2eEvidence,
   windows: readonly PlaybackWindow[],
   fail: (code: string, message: string) => void,
 ): void {
@@ -696,7 +781,7 @@ function verifyActorS3Timing(
 
 function verifyScenarioTiming(
   manifest: FixtureManifestV1,
-  evidence: RetainedE2eEvidenceV2,
+  evidence: RetainedE2eEvidence,
   scenario: FixtureManifestV1["scenarios"][number],
   windows: readonly PlaybackWindow[],
   fail: (code: string, message: string) => void,
@@ -724,7 +809,7 @@ function verifyScenarioTiming(
 
 function verifyReconnect(
   manifest: FixtureManifestV1,
-  evidence: RetainedE2eEvidenceV2,
+  evidence: RetainedE2eEvidence,
   windows: readonly PlaybackWindow[],
   fail: (code: string, message: string) => void,
 ): void {
@@ -794,7 +879,7 @@ function verifyReconnect(
 
 function verifyTranscript(
   manifest: FixtureManifestV1,
-  evidence: RetainedE2eEvidenceV2,
+  evidence: RetainedE2eEvidence,
   scenario: FixtureManifestV1["scenarios"][number],
   windows: readonly PlaybackWindow[],
   metrics: SpeakerAccuracyMetrics[],
@@ -887,7 +972,7 @@ function verifyTranscript(
 
 function verifyEvidenceReferences(
   manifest: FixtureManifestV1,
-  evidence: RetainedE2eEvidenceV2,
+  evidence: RetainedE2eEvidence,
   fail: (code: string, message: string) => void,
 ): void {
   const turnIds = new Set(evidence.transcript.turns.map(({ turnId }) => turnId));
@@ -924,7 +1009,7 @@ function verifyEvidenceReferences(
 
 function verifySummarySemantics(
   manifest: FixtureManifestV1,
-  evidence: RetainedE2eEvidenceV2,
+  evidence: RetainedE2eEvidence,
   fail: (code: string, message: string) => void,
 ): void {
   const decisionText = normalize(
@@ -966,7 +1051,7 @@ function verifySummarySemantics(
 
 function verifyDiscordSummaryUx(
   manifest: FixtureManifestV1,
-  evidence: RetainedE2eEvidenceV2,
+  evidence: RetainedE2eEvidence,
   fail: (code: string, message: string) => void,
 ): void {
   const description = evidence.publication.embedDescription;
@@ -977,7 +1062,10 @@ function verifyDiscordSummaryUx(
   ) {
     fail("DISCORD_INTERNAL_ID_VISIBLE", "Discord summary exposes an internal identifier");
   }
-  if (!description.includes("Основание:")) {
+  if (evidence.schemaVersion === 3 && description.includes("Основание:")) {
+    fail("DISCORD_LEGACY_EVIDENCE_LABEL_VISIBLE", "Discord summary exposes the legacy evidence label");
+  }
+  if (evidence.schemaVersion === 2 && !description.includes("Основание:")) {
     fail("DISCORD_EVIDENCE_LABEL_MISSING", "Discord summary has no human-readable evidence label");
   }
   if (!/\b\d{2}:\d{2}-\d{2}:\d{2}\b/u.test(description)) {
@@ -1002,7 +1090,7 @@ function verifyDiscordSummaryUx(
 }
 
 function verifyReplayIdentity(
-  evidence: RetainedE2eEvidenceV2,
+  evidence: RetainedE2eEvidence,
   fail: (code: string, message: string) => void,
 ): void {
   if (evidence.replay.replayJob.afterProcessedOn <= evidence.replay.replayJob.beforeProcessedOn) {
@@ -1013,7 +1101,11 @@ function verifyReplayIdentity(
     ["recording", evidence.recording.recordingId, evidence.replay.recordingId],
     ["transcript", evidence.transcript.transcriptId, evidence.replay.transcriptId],
     ["summary", evidence.summary.summaryId, evidence.replay.summaryId],
-    ["thread", evidence.publication.threadId, evidence.replay.threadId],
+    [
+      "publication container",
+      publicationContainerIdentity(evidence.publication),
+      publicationContainerIdentity(evidence.replay),
+    ],
     ["message", evidence.publication.messageId, evidence.replay.messageId],
   ];
   for (const [kind, initial, replayed] of identityPairs) {
@@ -1027,18 +1119,28 @@ function verifyReplayIdentity(
     ["initial recording", evidence.database.matchingRecordingCount],
     ["initial summary", evidence.database.matchingSummaryCount],
     ["initial transcript", evidence.database.matchingTranscriptCount],
-    ["initial thread", evidence.publication.matchingThreadCount],
     ["initial message", evidence.publication.matchingMessageCount],
     ["meeting", evidence.replay.matchingMeetingCount],
     ["recording", evidence.replay.matchingRecordingCount],
     ["summary", evidence.replay.matchingSummaryCount],
     ["transcript", evidence.replay.matchingTranscriptCount],
-    ["thread", evidence.replay.matchingThreadCount],
     ["message", evidence.replay.matchingMessageCount],
   ];
   for (const [kind, count] of counts) {
     if (count !== 1) {
       fail("DUPLICATE_BUSINESS_EFFECT", `${kind} marker count is ${count}, expected exactly one`);
+    }
+  }
+  for (const [phase, publication] of [
+    ["initial", evidence.publication],
+    ["replay", evidence.replay],
+  ] as const) {
+    const expectedThreadCount = expectedPublicationThreadCount(publication);
+    if (publication.matchingThreadCount !== expectedThreadCount) {
+      fail(
+        "DUPLICATE_BUSINESS_EFFECT",
+        `${phase} thread marker count is ${publication.matchingThreadCount}, expected ${expectedThreadCount}`,
+      );
     }
   }
 }

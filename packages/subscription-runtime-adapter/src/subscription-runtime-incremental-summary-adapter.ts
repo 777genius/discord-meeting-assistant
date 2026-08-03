@@ -24,7 +24,7 @@ import {
   mapLunaGenerationTelemetry,
   mapLunaGenerationUsage,
 } from "./luna-price-card.js";
-import { providerMeetingSummarySchema } from "./provider-summary-schema.js";
+import { providerIncrementalMeetingSummarySchema } from "./provider-summary-schema.js";
 import {
   type BaseSubscriptionRuntimeSummaryAdapterOptions,
   positiveIntegerOption,
@@ -141,7 +141,9 @@ export class SubscriptionRuntimeIncrementalSummaryAdapter
       result,
       this.attestationExpectation,
     );
-    const parsed = providerMeetingSummarySchema.safeParse(result.structuredOutput);
+    const parsed = providerIncrementalMeetingSummarySchema.safeParse(
+      result.structuredOutput,
+    );
     if (!parsed.success) {
       throw new SubscriptionRuntimeAdapterError(
         "invalid_provider_response",

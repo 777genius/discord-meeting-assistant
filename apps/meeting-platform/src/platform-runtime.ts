@@ -138,6 +138,7 @@ export async function startMeetingPlatform(
   const discordPublisher = new DiscordSummaryPublisher(
     new DiscordJsProjectionClient(discord),
     new InProcessProjectionLock(),
+    { publicationMode: config.discordPublicationMode },
   );
   const rawPublisher = new DiscordSummaryPublicationAdapter(discordPublisher);
   const liveMeetings = new PostgresLiveMeetingRepository(pool);

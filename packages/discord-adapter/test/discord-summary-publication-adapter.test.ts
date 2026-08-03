@@ -10,6 +10,7 @@ import {
   DiscordProjectionConfigurationError,
   DiscordProjectionConflictError,
   DiscordSummaryPublicationAdapter,
+  renderRussianSummaryMarkdown,
   type DiscordProjectionReference,
   type PublishDiscordSummary,
 } from "../src/index.js";
@@ -79,6 +80,7 @@ class FakeProjector {
 
   constructor(
     private readonly outcome: DiscordProjectionReference | Error = {
+      kind: "thread",
       threadId: "22222222222222222",
       messageId: "33333333333333333",
     },
@@ -105,7 +107,7 @@ describe("DiscordSummaryPublicationAdapter", () => {
       ok: true,
       value: {
         externalPublicationId:
-          "discord:v1:thread:22222222222222222:message:33333333333333333",
+          "discord:v2:thread:22222222222222222:message:33333333333333333",
       },
     });
     expect(second).toEqual(first);
@@ -126,27 +128,36 @@ describe("DiscordSummaryPublicationAdapter", () => {
         "1. Подготовка релиза",
         "   - Релиз запланирован на пятницу",
         "   - Дашборд готовит speaker-b",
-        "   - Основание: **00:00-00:01 · speaker-a:** «Релиз в пятницу»",
-        "   - Основание: **00:00-00:02 · speaker-b:** «Подготовлю дашборд»",
+        "   - **00:00-00:01 · speaker-a:** «Релиз в пятницу»",
+        "   - **00:00-00:02 · speaker-b:** «Подготовлю дашборд»",
         "",
         "## Решения",
         "1. Выпустить ассистента в пятницу",
-        "   - Основание: **00:00-00:01 · speaker-a:** «Релиз в пятницу»",
-        "   - Основание: **00:00-00:02 · speaker-b:** «Подготовлю дашборд»",
+        "   - **00:00-00:01 · speaker-a:** «Релиз в пятницу»",
+        "   - **00:00-00:02 · speaker-b:** «Подготовлю дашборд»",
         "",
         "## Задачи",
         "1. Подготовить дашборд к четвергу",
         "   - Ответственный: speaker-b",
         "   - Срок: к четвергу",
-        "   - Основание: **00:00-00:02 · speaker-b:** «Подготовлю дашборд»",
+        "   - **00:00-00:02 · speaker-b:** «Подготовлю дашборд»",
         "2. Проверить точность транскрипции",
         "   - Ответственный: не назначен",
         "   - Срок: не указан",
-        "   - Основание: **00:03-00:04 · speaker-a:** «Проверить транскрипцию»",
+        "   - **00:03-00:04 · speaker-a:** «Проверить транскрипцию»",
         "",
         "## Открытые вопросы",
         "1. Достигнута ли целевая точность?",
-        "   - Основание: **00:03-00:04 · speaker-a:** «Проверить транскрипцию»",
+        "   - **00:03-00:04 · speaker-a:** «Проверить транскрипцию»",
+      ].join("\n"),
+      liveCaptionsMarkdown: [
+        "## 🗣️ Расшифровка встречи",
+        "",
+        "✓ `00:00-00:01` **speaker-a:** Релиз в пятницу",
+        "✓ `00:00-00:02` **speaker-b:** Подготовлю дашборд",
+        "✓ `00:03-00:04` **speaker-a:** Проверить транскрипцию",
+        "",
+        "_Финальная расшифровка по записи встречи._",
       ].join("\n"),
     });
     expect(projector.inputs[0]?.markdown).not.toContain("turn-1");
@@ -164,6 +175,7 @@ describe("DiscordSummaryPublicationAdapter", () => {
     });
 
     expect(projector.inputs[0]?.currentReference).toEqual({
+      kind: "thread",
       threadId: "22222222222222222",
       messageId: "33333333333333333",
     });
@@ -202,9 +214,141 @@ describe("DiscordSummaryPublicationAdapter", () => {
       "Ответственный: <@1533228054724346087>",
     );
     expect(projector.inputs[0]?.markdown).toContain(
-      "Основание: **00:18-00:25 · <@1533228054724346087>:** «Проверю Discord thread и Redis queue.»",
+      "**00:18-00:25 · <@1533228054724346087>:** «Проверю Discord thread и Redis queue.»",
     );
+    expect(projector.inputs[0]?.markdown).not.toContain("Основание:");
     expect(projector.inputs[0]?.markdown).not.toContain("turn:v1:internal");
+  });
+
+  it("orders final topics by their earliest valid evidence timestamp", () => {
+    const markdown = renderRussianSummaryMarkdown({
+      ...request,
+      transcript: {
+        ...request.transcript,
+        turns: [
+          {
+            endMs: 175_000,
+            speakerId: "speaker-early",
+            startMs: 170_000,
+            text: "Ранняя тема в 02:50.",
+            turnId: "turn-early",
+          },
+          {
+            endMs: 281_000,
+            speakerId: "speaker-late",
+            startMs: 276_000,
+            text: "Поздняя тема в 04:36.",
+            turnId: "turn-late",
+          },
+        ],
+      },
+      summary: {
+        ...request.summary,
+        actionItems: [],
+        decisions: [],
+        openQuestions: [],
+        topics: [
+          {
+            evidenceTurnIds: ["turn-late"],
+            points: ["Эта тема пришла позже."],
+            title: "Поздняя тема",
+          },
+          {
+            evidenceTurnIds: ["turn-early"],
+            points: ["Эта тема должна быть первой."],
+            title: "Ранняя тема",
+          },
+          {
+            evidenceTurnIds: ["missing-turn"],
+            points: ["Без валидной временной привязки."],
+            title: "Без тайминга",
+          },
+        ],
+      },
+    });
+
+    expect(markdown.indexOf("1. Ранняя тема")).toBeLessThan(markdown.indexOf("2. Поздняя тема"));
+    expect(markdown.indexOf("2. Поздняя тема")).toBeLessThan(markdown.indexOf("3. Без тайминга"));
+    expect(markdown).toContain("**02:50-02:55 · speaker-early:**");
+    expect(markdown).toContain("**04:36-04:41 · speaker-late:**");
+    expect(markdown).not.toContain("Основание:");
+  });
+
+  it("orders decisions, tasks, and questions by their earliest evidence timestamp", () => {
+    const markdown = renderRussianSummaryMarkdown({
+      ...request,
+      summary: {
+        ...request.summary,
+        actionItems: request.summary.actionItems.toReversed(),
+        decisions: [
+          {
+            decisionId: "decision-late",
+            evidenceTurnIds: ["turn-3"],
+            text: "Позднее решение",
+          },
+          {
+            decisionId: "decision-early",
+            evidenceTurnIds: ["turn-1"],
+            text: "Раннее решение",
+          },
+        ],
+        openQuestions: [
+          {
+            evidenceTurnIds: ["turn-3"],
+            id: "question-late",
+            text: "Поздний вопрос?",
+          },
+          {
+            evidenceTurnIds: ["turn-1"],
+            id: "question-early",
+            text: "Ранний вопрос?",
+          },
+        ],
+        topics: [],
+      },
+    });
+
+    expect(markdown.indexOf("1. Раннее решение")).toBeLessThan(
+      markdown.indexOf("2. Позднее решение"),
+    );
+    expect(markdown.indexOf("1. Подготовить дашборд")).toBeLessThan(
+      markdown.indexOf("2. Проверить точность"),
+    );
+    expect(markdown.indexOf("1. Ранний вопрос?")).toBeLessThan(
+      markdown.indexOf("2. Поздний вопрос?"),
+    );
+  });
+
+  it("keeps the authoritative, speaker-attributed timeline beside the final summary", async () => {
+    const projector = new FakeProjector();
+    const adapter = new DiscordSummaryPublicationAdapter(projector);
+    const speakers = [
+      "1533227577286852649",
+      "1533228054724346087",
+      "1533775868567224456",
+    ];
+
+    await adapter.publish({
+      ...request,
+      transcript: {
+        ...request.transcript,
+        turns: speakers.map((speakerId, index) => ({
+          endMs: (index + 1) * 5_000,
+          speakerId,
+          startMs: index * 5_000,
+          text: `Реплика участника ${index + 1}`,
+          turnId: `turn-${index + 1}`,
+        })),
+      },
+    });
+
+    const timeline = projector.inputs[0]?.liveCaptionsMarkdown ?? "";
+    expect(timeline).toContain("## 🗣️ Расшифровка встречи");
+    for (const speakerId of speakers) {
+      expect(timeline).toContain(`<@${speakerId}>`);
+    }
+    expect(timeline).toContain("`00:10-00:15`");
+    expect(timeline).toContain("_Финальная расшифровка по записи встречи._");
   });
 
   it("renders explicit empty states instead of omitting sections", async () => {

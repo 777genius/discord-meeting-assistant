@@ -38,7 +38,7 @@
     "discord_meeting.summary.incremental": {
       "provider": "codex",
       "model": "gpt-5.6-luna",
-      "policyVersion": "meeting-summary.incremental.subscription-runtime.v2",
+      "policyVersion": "meeting-summary.incremental.subscription-runtime.v3",
       "maxOutputTokens": 2048,
       "reasoningEffort": "low",
       "taskKind": "structured-prompt",
@@ -48,7 +48,7 @@
       "interactive": false,
       "responseFormat": "json",
       "selectedOutputKind": "structured_output",
-      "outputSchemaName": "discord_meeting_summary_v3",
+      "outputSchemaName": "discord_meeting_incremental_summary_v1",
       "isolatedCwd": "/run/discord-meeting-subscription-runtime/workspace"
     }
   },

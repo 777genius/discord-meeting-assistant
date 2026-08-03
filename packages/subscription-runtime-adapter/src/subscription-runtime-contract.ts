@@ -11,8 +11,13 @@ export const subscriptionRuntimeIncrementalMaxOutputTokens = 2_048 as const;
 export const subscriptionRuntimeEngine = "subscription-runtime-cli" as const;
 export const auditedSubscriptionRuntimePackageVersion = "0.1.0-main.2" as const;
 export const meetingSummaryOutputSchemaName = "discord_meeting_summary_v3" as const;
+export const incrementalMeetingSummaryOutputSchemaName = "discord_meeting_incremental_summary_v1" as const;
 export const meetingSummaryPolicyVersion = "meeting-summary.subscription-runtime.v6" as const;
-export const incrementalMeetingSummaryPolicyVersion = "meeting-summary.incremental.subscription-runtime.v2" as const;
+export const incrementalMeetingSummaryPolicyVersion = "meeting-summary.incremental.subscription-runtime.v3" as const;
+
+export type SubscriptionRuntimeOutputSchemaName =
+  | typeof incrementalMeetingSummaryOutputSchemaName
+  | typeof meetingSummaryOutputSchemaName;
 
 export interface SubscriptionRuntimeExecutionProfile {
   readonly maxOutputTokens:
@@ -21,6 +26,7 @@ export interface SubscriptionRuntimeExecutionProfile {
   readonly model:
     | typeof subscriptionRuntimeIncrementalModel
     | typeof subscriptionRuntimeModel;
+  readonly outputSchemaName: SubscriptionRuntimeOutputSchemaName;
   readonly policyVersion:
     | typeof incrementalMeetingSummaryPolicyVersion
     | typeof meetingSummaryPolicyVersion;
@@ -35,6 +41,7 @@ export interface SubscriptionRuntimeExecutionProfile {
 export const finalSummaryExecutionProfile: SubscriptionRuntimeExecutionProfile = Object.freeze({
   maxOutputTokens: subscriptionRuntimeSummaryMaxOutputTokens,
   model: subscriptionRuntimeModel,
+  outputSchemaName: meetingSummaryOutputSchemaName,
   policyVersion: meetingSummaryPolicyVersion,
   purpose: subscriptionRuntimePurpose,
   reasoningEffort: subscriptionRuntimeReasoningEffort,
@@ -43,6 +50,7 @@ export const finalSummaryExecutionProfile: SubscriptionRuntimeExecutionProfile =
 export const incrementalSummaryExecutionProfile: SubscriptionRuntimeExecutionProfile = Object.freeze({
   maxOutputTokens: subscriptionRuntimeIncrementalMaxOutputTokens,
   model: subscriptionRuntimeIncrementalModel,
+  outputSchemaName: incrementalMeetingSummaryOutputSchemaName,
   policyVersion: incrementalMeetingSummaryPolicyVersion,
   purpose: subscriptionRuntimeIncrementalPurpose,
   reasoningEffort: subscriptionRuntimeIncrementalReasoningEffort,
@@ -73,7 +81,7 @@ export interface SubscriptionRuntimeTaskControls extends JsonObject {
   readonly model: SubscriptionRuntimeExecutionProfile["model"];
   readonly outputKind: "structured_output";
   readonly outputSchema: JsonObject;
-  readonly outputSchemaName: typeof meetingSummaryOutputSchemaName;
+  readonly outputSchemaName: SubscriptionRuntimeOutputSchemaName;
   readonly permissionMode: "read-only";
   readonly reasoningEffort: SubscriptionRuntimeExecutionProfile["reasoningEffort"];
   readonly responseFormat: "json";
@@ -109,7 +117,7 @@ export interface SubscriptionRuntimeAgentTaskRequest extends JsonObject {
       readonly runtimeOutput: "structured_output";
       readonly toolsDisabled: "true";
     };
-    readonly outputSchemaName: typeof meetingSummaryOutputSchemaName;
+    readonly outputSchemaName: SubscriptionRuntimeOutputSchemaName;
     readonly prompt: string;
     readonly systemPrompt: string;
   };

@@ -12,6 +12,7 @@ import {
   StartLiveMeeting,
   type LiveCaptionSnapshot,
   type LiveGenerationTelemetrySnapshot,
+  type TranscriptTurnSnapshot,
 } from "@discord-meeting/meeting-core";
 import type { Logger } from "@discord-meeting/observability-adapter";
 import { opusPacketDurationSamples } from "@discord-meeting/recording-ingress-adapter";
@@ -21,11 +22,15 @@ import type {
   OpenVoicetextLiveSessionRequest,
 } from "@discord-meeting/voicetext-adapter";
 
+import {
+  boundLiveFinalCaptionHistory,
+  compareLiveCaptionSnapshots,
+} from "./live-caption-history.js";
+
 const refreshIntervalMs = 5_000;
 const refreshSchedulerIntervalMs = 100;
 const maximumInitialCaptionProjectionJitterMs = 900;
-const captionRetentionMs = 30_000;
-const maximumRetainedFinalCaptions = 64;
+const activeCaptionRetentionMs = 30_000;
 const maximumQueuedPacketsPerSpeaker = 512;
 const maximumRememberedMeetingPacketIds = 65_536;
 const defaultSpeakerIdleFinalizeMs = 750;
@@ -249,6 +254,7 @@ export class PlatformLiveMeetingRuntime {
         publicationTargetId: this.dependencies.publicationTargetId,
         startedAtMs: state.startedAtMs,
       });
+      restoreFinalCaptions(state, result.finalizedTurns);
       this.dependencies.logger.info("Derived live meeting started", {
         meetingId: state.meetingId,
         reused: result.status === "reused",
@@ -291,6 +297,7 @@ export class PlatformLiveMeetingRuntime {
     }
     state.activeCaptions.delete(event.speakerId);
     state.finalCaptions.set(stableTurnId(event), caption);
+    boundLiveFinalCaptionHistory(state.finalCaptions);
     scheduleFirstCaptionProjection(state, caption.text);
     this.dependencies.logger.info("Live transcript turn finalized", {
       endMs: event.endMs,
@@ -689,6 +696,22 @@ function liveCaptionsSignature(captions: readonly LiveCaptionSnapshot[]): string
     .digest("hex");
 }
 
+function restoreFinalCaptions(
+  state: LiveMeetingState,
+  turns: readonly TranscriptTurnSnapshot[],
+): void {
+  for (const turn of turns) {
+    state.finalCaptions.set(turn.turnId, {
+      endMs: turn.endMs,
+      isFinal: true,
+      speakerId: turn.speakerId,
+      startMs: turn.startMs,
+      text: turn.text,
+    });
+  }
+  boundLiveFinalCaptionHistory(state.finalCaptions);
+}
+
 function scheduleFirstCaptionProjection(state: LiveMeetingState, captionText: string): void {
   if (
     state.finishing ||
@@ -738,41 +761,15 @@ function collectLiveCaptions(
   state: LiveMeetingState,
   elapsedMs: number,
 ): readonly LiveCaptionSnapshot[] {
-  const cutoffMs = elapsedMs - captionRetentionMs;
+  const cutoffMs = elapsedMs - activeCaptionRetentionMs;
   for (const [speakerId, caption] of state.activeCaptions) {
     if (caption.endMs < cutoffMs) {
       state.activeCaptions.delete(speakerId);
     }
   }
-  for (const [turnId, caption] of state.finalCaptions) {
-    if (caption.endMs < cutoffMs) {
-      state.finalCaptions.delete(turnId);
-    }
-  }
-
-  const orderedFinals = [...state.finalCaptions.entries()].toSorted(
-    ([leftId, left], [rightId, right]) => compareLiveCaptions(left, right) ||
-      leftId.localeCompare(rightId),
-  );
-  const excessFinals = orderedFinals.length - maximumRetainedFinalCaptions;
-  if (excessFinals > 0) {
-    for (const [turnId] of orderedFinals.slice(0, excessFinals)) {
-      state.finalCaptions.delete(turnId);
-    }
-  }
 
   return [...state.finalCaptions.values(), ...state.activeCaptions.values()]
-    .toSorted(compareLiveCaptions);
-}
-
-function compareLiveCaptions(
-  left: LiveCaptionSnapshot,
-  right: LiveCaptionSnapshot,
-): number {
-  return left.startMs - right.startMs ||
-    left.endMs - right.endMs ||
-    left.speakerId.localeCompare(right.speakerId) ||
-    left.text.localeCompare(right.text);
+    .toSorted(compareLiveCaptionSnapshots);
 }
 
 function generationTelemetryLogFields(

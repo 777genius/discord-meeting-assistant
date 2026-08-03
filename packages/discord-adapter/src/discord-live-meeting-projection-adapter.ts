@@ -2,7 +2,6 @@ import type {
   LiveCaptionSnapshot,
   LiveMeetingProjectionPort,
   LiveMeetingProjectionRequest,
-  LiveSummaryDraftSnapshot,
   PortResult,
 } from "@discord-meeting/meeting-core";
 
@@ -16,24 +15,18 @@ import {
   encodeDiscordExternalPublicationId,
 } from "./discord-projection.js";
 import {
-  escapeDiscordMarkdown,
   formatDiscordSpeaker,
   formatDiscordTimestamp,
   truncateDiscordCodeUnits,
-  truncateDiscordGraphemes,
-  truncateDiscordGraphemesByCodeUnits,
 } from "./discord-markdown-formatting.js";
 import { toDiscordPublicationFailure } from "./discord-publication-errors.js";
+import { renderRussianTranscriptTimelineMarkdown } from "./discord-transcript-timeline.js";
 
 interface DiscordLiveProjectionPublisher {
   publish(input: PublishDiscordSummary): Promise<DiscordProjectionReference>;
 }
 
 const liveSummaryDescriptionLimit = 4_000;
-const liveCaptionsDescriptionLimit = 1_900;
-const maximumRecentCaptions = 12;
-const maximumCaptionGraphemes = 280;
-const captionsFooter = "_Предварительные реплики могут уточняться._";
 
 export class DiscordLiveMeetingProjectionAdapter implements LiveMeetingProjectionPort {
   public constructor(private readonly publisher: DiscordLiveProjectionPublisher) {}
@@ -50,7 +43,7 @@ export class DiscordLiveMeetingProjectionAdapter implements LiveMeetingProjectio
         ),
         legacyProjectionKeys: [request.idempotencyKey],
         parentChannelId: request.publicationTargetId,
-        threadTitle: liveThreadTitle(request.summary),
+        threadTitle: liveThreadTitle(request),
         markdown: renderRussianLiveSummaryMarkdown(request),
         liveCaptionsMarkdown: renderRussianLiveCaptionsMarkdown(request.captions),
         ...(referenceHint === undefined
@@ -134,31 +127,7 @@ export function renderRussianLiveSummaryMarkdown(
 export function renderRussianLiveCaptionsMarkdown(
   captions: readonly LiveCaptionSnapshot[],
 ): string {
-  const heading = "## 🎙️ Сейчас говорят";
-  const visibleCaptions = captions
-    .filter((caption) => caption.text.trim().length > 0)
-    .toSorted(compareCaptions)
-    .slice(-maximumRecentCaptions)
-    .map(renderCaption);
-
-  if (visibleCaptions.length === 0) {
-    return [heading, "", "Пока нет распознанных реплик.", "", captionsFooter].join("\n");
-  }
-
-  const budget = liveCaptionsDescriptionLimit - heading.length - captionsFooter.length - 4;
-  const selected: string[] = [];
-  for (const caption of visibleCaptions.toReversed()) {
-    const candidateLength = caption.length + (selected.length === 0 ? 0 : 1);
-    if (selected.join("\n").length + candidateLength <= budget) {
-      selected.unshift(caption);
-    }
-  }
-  if (selected.length === 0) {
-    const newest = visibleCaptions.at(-1) ?? "";
-    selected.push(truncateDiscordCodeUnits(newest, Math.max(1, budget)));
-  }
-
-  return [heading, "", ...selected, "", captionsFooter].join("\n");
+  return renderRussianTranscriptTimelineMarkdown(captions, "live");
 }
 
 function currentReference(
@@ -169,10 +138,38 @@ function currentReference(
     : decodeDiscordExternalPublicationId(externalPublicationId);
 }
 
-function liveThreadTitle(summary: LiveSummaryDraftSnapshot | null): string {
-  return summary === null
-    ? "Встреча в процессе"
-    : truncateDiscordGraphemesByCodeUnits(normalizeInline(summary.title), 80);
+function liveThreadTitle(
+  request: Pick<LiveMeetingProjectionRequest, "elapsedMs" | "updatedAtMs">,
+): string {
+  return formatLiveMeetingStartUtc(request.updatedAtMs, request.elapsedMs) ?? "Встреча";
+}
+
+function formatLiveMeetingStartUtc(updatedAtMs: number, elapsedMs: number): string | undefined {
+  if (
+    !Number.isSafeInteger(updatedAtMs) ||
+    !Number.isSafeInteger(elapsedMs) ||
+    elapsedMs < 0
+  ) {
+    return undefined;
+  }
+  const startedAtMs = updatedAtMs - elapsedMs;
+  if (!Number.isSafeInteger(startedAtMs) || startedAtMs < 0) {
+    return undefined;
+  }
+  const startedAt = new Date(startedAtMs);
+  if (Number.isNaN(startedAt.valueOf())) {
+    return undefined;
+  }
+  return [
+    "Встреча ·",
+    `${startedAt.getUTCFullYear()}-${padUtc(startedAt.getUTCMonth() + 1)}-${padUtc(startedAt.getUTCDate())}`,
+    `${padUtc(startedAt.getUTCHours())}:${padUtc(startedAt.getUTCMinutes())}`,
+    "UTC",
+  ].join(" ");
+}
+
+function padUtc(value: number): string {
+  return String(value).padStart(2, "0");
 }
 
 function boundLiveSummary(lines: readonly string[]): string {
@@ -187,21 +184,6 @@ function boundLiveSummary(lines: readonly string[]): string {
     Math.max(0, liveSummaryDescriptionLimit - suffix.length - 1),
   ).trimEnd();
   return `${shortened}…${suffix}`;
-}
-
-function renderCaption(caption: LiveCaptionSnapshot): string {
-  const state = caption.isFinal ? "✓" : "…";
-  const text = escapeDiscordMarkdown(
-    truncateDiscordGraphemes(caption.text.trim().replaceAll(/\s+/gu, " "), maximumCaptionGraphemes),
-  );
-  return `${state} \`${formatDiscordTimestamp(caption.startMs)}\` **${formatDiscordSpeaker(caption.speakerId)}:** ${text}`;
-}
-
-function compareCaptions(left: LiveCaptionSnapshot, right: LiveCaptionSnapshot): number {
-  return left.startMs - right.startMs ||
-    left.endMs - right.endMs ||
-    left.speakerId.localeCompare(right.speakerId) ||
-    left.text.localeCompare(right.text);
 }
 
 function numberedOrEmpty(

@@ -2,12 +2,12 @@ import { z } from "zod";
 
 import {
   actorRunEvidenceV1Schema,
-  retainedE2eEvidenceV2Schema,
+  retainedE2eEvidenceV3Schema,
   sameDeploymentProvenance,
   unboundActorRunEvidenceV1Schema,
   type ActorRunEvidenceV1,
   type DeploymentProvenance,
-  type RetainedE2eEvidenceV2,
+  type RetainedE2eEvidenceV3,
   type UnboundActorRunEvidenceV1,
 } from "./e2e-evidence.js";
 
@@ -127,7 +127,12 @@ export interface DiscordProjectionObservation {
   readonly matchingThreadIds: readonly string[];
 }
 
+export type DiscordProjectionContainerObservation =
+  | { readonly kind: "channel-message"; readonly parentChannelId: string }
+  | { readonly kind: "thread"; readonly parentChannelId: string; readonly threadId: string };
+
 export interface DiscordProjectionMessageObservation {
+  readonly container: DiscordProjectionContainerObservation;
   readonly embedDescription: string;
   readonly messageId: string;
 }
@@ -146,7 +151,7 @@ export async function collectRetainedE2eEvidence(
   input: CollectEvidenceInput,
   deployment: DeploymentEvidenceProbe,
   discord: DiscordEvidenceProbe,
-): Promise<RetainedE2eEvidenceV2> {
+): Promise<RetainedE2eEvidenceV3> {
   const unboundActorRun = unboundActorRunEvidenceV1Schema.parse(input.actorRun);
   if (unboundActorRun.runId !== input.runId) {
     throw new Error("Actor evidence does not match the requested run correlation");
@@ -159,7 +164,10 @@ export async function collectRetainedE2eEvidence(
   if (snapshot.meetingId !== input.recordingId || snapshot.recording.recordingId !== input.recordingId) {
     throw new Error("Postgres snapshot is not correlated to the requested recording");
   }
-  const publication = parsePublication(snapshot.publication.externalPublicationId);
+  const publication = parsePublication(
+    snapshot.publication.externalPublicationId,
+    snapshot.publicationTargetId,
+  );
   const projectionKey = await createMeetingDiscordProjectionKey(
     snapshot.meetingId,
     snapshot.publicationTargetId,
@@ -171,12 +179,7 @@ export async function collectRetainedE2eEvidence(
   ]);
   assertS3MatchesSnapshot(s3, snapshot);
   const beforeMessage = assertDiscordReference(beforeDiscord, publication);
-  if (
-    beforeDiscord.matchingThreadIds.length !== 1 ||
-    beforeDiscord.matchingMessages.length !== 1
-  ) {
-    throw new Error("Discord projection is not exact-one before replay");
-  }
+  assertExactDiscordProjection(beforeDiscord, publication, "before replay");
   const actorRun = bindActorRun(unboundActorRun, input.recordingId, s3);
 
   const replayJob = await deployment.replayPostCall(snapshot.meetingId);
@@ -190,7 +193,10 @@ export async function collectRetainedE2eEvidence(
     throw new Error("Deployment provenance changed while retained evidence was collected");
   }
   const replaySnapshot = after.snapshot;
-  const replayPublication = parsePublication(replaySnapshot.publication.externalPublicationId);
+  const replayPublication = parsePublication(
+    replaySnapshot.publication.externalPublicationId,
+    replaySnapshot.publicationTargetId,
+  );
   const afterMessage = assertDiscordReference(afterDiscord, replayPublication);
   if (afterMessage.embedDescription !== beforeMessage.embedDescription) {
     throw new Error("Discord projection visible text changed after idempotent replay");
@@ -208,7 +214,8 @@ export async function collectRetainedE2eEvidence(
   if (!Number.isSafeInteger(recordingDurationMs)) {
     throw new Error("Authoritative S3 recording duration is outside the safe range");
   }
-  return retainedE2eEvidenceV2Schema.parse({
+  assertExactDiscordProjection(afterDiscord, replayPublication, "after replay");
+  return retainedE2eEvidenceV3Schema.parse({
     actorRun,
     deployment: provenanceBefore,
     database: {
@@ -222,11 +229,11 @@ export async function collectRetainedE2eEvidence(
     fixtures: actorRun.fixtures.map((fixture) => ({ ...fixture, codec: "opus" })),
     meetingId: snapshot.meetingId,
     publication: {
+      container: toEvidenceContainer(publication),
       embedDescription: beforeMessage.embedDescription,
       matchingMessageCount: beforeDiscord.matchingMessages.length,
       matchingThreadCount: beforeDiscord.matchingThreadIds.length,
       messageId: publication.messageId,
-      threadId: publication.threadId,
     },
     recording: {
       durationMs: recordingDurationMs,
@@ -242,6 +249,7 @@ export async function collectRetainedE2eEvidence(
       startedAt: s3.startedAt,
     },
     replay: {
+      container: toEvidenceContainer(replayPublication),
       matchingMeetingCount: after.matchingMeetingCount,
       matchingMessageCount: afterDiscord.matchingMessages.length,
       matchingRecordingCount: after.matchingRecordingCount,
@@ -253,10 +261,9 @@ export async function collectRetainedE2eEvidence(
       recordingId: replaySnapshot.recording.recordingId,
       replayJob,
       summaryId: replaySnapshot.summary.summaryId,
-      threadId: replayPublication.threadId,
       transcriptId: replaySnapshot.transcript.transcriptId,
     },
-    schemaVersion: 2,
+    schemaVersion: 3,
     stages: [
       { ...snapshot.transcriptionStage, stage: "transcription" },
       { ...snapshot.summaryStage, stage: "summary" },
@@ -351,23 +358,99 @@ function assertS3MatchesSnapshot(
 
 function assertDiscordReference(
   observation: DiscordProjectionObservation,
-  reference: { readonly messageId: string; readonly threadId: string },
+  reference: DiscordPublicationReference,
 ): DiscordProjectionMessageObservation {
-  const message = observation.matchingMessages.find(({ messageId }) =>
-    messageId === reference.messageId
+  const message = observation.matchingMessages.find((candidate) =>
+    candidate.messageId === reference.messageId && sameDiscordContainer(candidate.container, reference)
   );
-  if (!observation.matchingThreadIds.includes(reference.threadId) || message === undefined) {
+  const expectedThreadId = reference.kind === "thread" ? reference.threadId : undefined;
+  if (
+    message === undefined ||
+    (expectedThreadId !== undefined && !observation.matchingThreadIds.includes(expectedThreadId))
+  ) {
     throw new Error("Discord publication receipt is absent from the marker scan");
   }
   return message;
 }
 
-function parsePublication(value: string): { readonly messageId: string; readonly threadId: string } {
-  const match = /^discord:v1:thread:([^:]+):message:([^:]+)$/u.exec(value);
-  if (match?.[1] === undefined || match[2] === undefined) {
-    throw new Error("Postgres publication receipt is not a Discord v1 reference");
+function assertExactDiscordProjection(
+  observation: DiscordProjectionObservation,
+  reference: DiscordPublicationReference,
+  phase: string,
+): void {
+  const expectedThreadCount = reference.kind === "thread" ? 1 : 0;
+  if (
+    observation.matchingMessages.length !== 1 ||
+    observation.matchingThreadIds.length !== expectedThreadCount
+  ) {
+    throw new Error(`Discord projection is not exact-one ${phase}`);
   }
-  return { messageId: match[2], threadId: match[1] };
+}
+
+function toEvidenceContainer(
+  reference: DiscordPublicationReference,
+): DiscordProjectionContainerObservation {
+  return reference.kind === "thread"
+    ? {
+      kind: "thread",
+      parentChannelId: reference.parentChannelId,
+      threadId: reference.threadId,
+    }
+    : { kind: "channel-message", parentChannelId: reference.parentChannelId };
+}
+
+function sameDiscordContainer(
+  container: DiscordProjectionContainerObservation,
+  reference: DiscordPublicationReference,
+): boolean {
+  if (container.kind !== reference.kind || container.parentChannelId !== reference.parentChannelId) {
+    return false;
+  }
+  return container.kind !== "thread" ||
+    (reference.kind === "thread" && container.threadId === reference.threadId);
+}
+
+type DiscordPublicationReference =
+  | {
+    readonly kind: "channel-message";
+    readonly messageId: string;
+    readonly parentChannelId: string;
+  }
+  | {
+    readonly kind: "thread";
+    readonly messageId: string;
+    readonly parentChannelId: string;
+    readonly threadId: string;
+  };
+
+function parsePublication(value: string, parentChannelId: string): DiscordPublicationReference {
+  const legacyThread = /^discord:v1:thread:([^:]+):message:([^:]+)$/u.exec(value);
+  if (legacyThread?.[1] !== undefined && legacyThread[2] !== undefined) {
+    return {
+      kind: "thread",
+      parentChannelId,
+      threadId: legacyThread[1],
+      messageId: legacyThread[2],
+    };
+  }
+  const thread = /^discord:v2:thread:([^:]+):message:([^:]+)$/u.exec(value);
+  if (thread?.[1] !== undefined && thread[2] !== undefined) {
+    return {
+      kind: "thread",
+      parentChannelId,
+      threadId: thread[1],
+      messageId: thread[2],
+    };
+  }
+  const channel = /^discord:v2:channel:([^:]+):message:([^:]+)$/u.exec(value);
+  if (channel?.[1] !== undefined && channel[2] !== undefined) {
+    return {
+      kind: "channel-message",
+      parentChannelId: channel[1],
+      messageId: channel[2],
+    };
+  }
+  throw new Error("Postgres publication receipt is not a supported Discord reference");
 }
 
 async function projectionMarker(idempotencyKey: string): Promise<string> {

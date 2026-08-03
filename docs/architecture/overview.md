@@ -38,8 +38,9 @@ deployments:
   overlap preservation, and provider-independent transcription jobs.
 - Meeting Intelligence owns evidence-backed summary, decisions, action items,
   open questions, and generation versioning.
-- Publishing owns idempotent projection of an accepted summary into a Discord
-  thread and stores the resulting external references.
+- Publishing owns idempotent projection of an accepted summary into one Discord
+  container. New meetings use one direct results-channel message; thread mode is
+  explicit opt-in. It stores an honest versioned external reference.
 
 These names guide the first model. A separate workspace package is created only
 when a real slice and ownership boundary exist. Deployment separation is not a
@@ -71,6 +72,7 @@ with the first executable use case and deterministic fake.
 - Async work uses bounded admission and stable idempotency identities.
 - Unknown external outcomes are reconciled rather than retried with a new ID.
 - A later stage never destroys an earlier authoritative artifact.
-- Final transcript replaces live evidence only through explicit versioning.
+- Final transcript replaces live evidence only through explicit versioning and
+  becomes the timeline retained beside the final Discord summary.
 - Published summaries contain no decision or action item without valid evidence
   turn references.

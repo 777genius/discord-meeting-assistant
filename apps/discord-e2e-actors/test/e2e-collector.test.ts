@@ -114,6 +114,18 @@ function database(): DatabaseObservation {
   };
 }
 
+function directMessageDatabase(): DatabaseObservation {
+  const source = snapshot();
+  const directSnapshot = {
+    ...source,
+    publication: {
+      ...source.publication,
+      externalPublicationId: "discord:v2:channel:1533228891827736657:message:message-1",
+    },
+  };
+  return { ...database(), snapshot: directSnapshot };
+}
+
 function s3(): S3RecordingEvidence {
   return {
     endedAt: "1970-01-01T00:17:00.000Z",
@@ -201,6 +213,11 @@ describe("collectRetainedE2eEvidence", () => {
     const discord: DiscordEvidenceProbe = {
       inspect: async () => ({
         matchingMessages: [{
+          container: {
+            kind: "thread",
+            parentChannelId: "1533228891827736657",
+            threadId: "thread-1",
+          },
           embedDescription: [
             "Ответственный: <@1533228054724346087>",
             "Основание: **00:00-00:16 · <@1533227577286852649>:** «Meeting Platform»",
@@ -239,6 +256,50 @@ describe("collectRetainedE2eEvidence", () => {
     expect(evidence.publication.embedDescription).toContain("Основание:");
   });
 
+  it("collects a direct parent-channel publication without inventing a thread", async () => {
+    const deployment: DeploymentEvidenceProbe = {
+      collectDatabase: async () => directMessageDatabase(),
+      collectProvenance: async () => provenance(),
+      collectS3: async () => s3(),
+      replayPostCall: async () => ({
+        afterProcessedOn: 2_000,
+        beforeProcessedOn: 1_000,
+        jobId: "post-call-v1-job",
+        state: "completed",
+      }),
+    };
+    const discord: DiscordEvidenceProbe = {
+      inspect: async () => ({
+        matchingMessages: [{
+          container: {
+            kind: "channel-message",
+            parentChannelId: "1533228891827736657",
+          },
+          embedDescription: "**00:00-00:16 · <@1533227577286852649>:** «Meeting Platform»",
+          messageId: "message-1",
+        }],
+        matchingThreadIds: [],
+      }),
+    };
+
+    const evidence = await collectRetainedE2eEvidence(
+      { actorRun: actorRun(), recordingId: "recording-1", runId: "run-1" },
+      deployment,
+      discord,
+    );
+
+    expect(evidence.schemaVersion).toBe(3);
+    expect(evidence.publication).toMatchObject({
+      container: {
+        kind: "channel-message",
+        parentChannelId: "1533228891827736657",
+      },
+      matchingMessageCount: 1,
+      matchingThreadCount: 0,
+    });
+    expect(evidence.replay.container).toEqual(evidence.publication.container);
+  });
+
   it("rejects a deployment change while evidence is collected", async () => {
     let provenanceCall = 0;
     const deployment: DeploymentEvidenceProbe = {
@@ -266,7 +327,15 @@ describe("collectRetainedE2eEvidence", () => {
     };
     const discord: DiscordEvidenceProbe = {
       inspect: async () => ({
-        matchingMessages: [{ embedDescription: "Основание: 00:00-00:01", messageId: "message-1" }],
+        matchingMessages: [{
+          container: {
+            kind: "thread",
+            parentChannelId: "1533228891827736657",
+            threadId: "thread-1",
+          },
+          embedDescription: "Основание: 00:00-00:01",
+          messageId: "message-1",
+        }],
         matchingThreadIds: ["thread-1"],
       }),
     };

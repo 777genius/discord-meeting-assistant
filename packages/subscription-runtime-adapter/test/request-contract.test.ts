@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -45,6 +47,14 @@ describe("subscription runtime request contract", () => {
       "discord_meeting_summary_v3",
     );
     expect(first.task.outputSchemaName).toBe("discord_meeting_summary_v3");
+    expect(first.task.controls.model).toBe("gpt-5.6-sol");
+    expect(first.task.controls.reasoningEffort).toBe("medium");
+    expect(canonicalJsonSha256(first.task.controls.outputSchema)).toBe(
+      "0fce6806195914a23398610f8284cdfe99a32ba17d2c4ecc71c103e77fb13bfd",
+    );
+    expect(
+      createHash("sha256").update(first.task.systemPrompt).digest("hex"),
+    ).toBe("5c3b42df294a5e64e3ff0678628e29c58896644afc9f0841fb236d07054b2760");
   });
 
   it("rejects an oversized transcript before transport", () => {

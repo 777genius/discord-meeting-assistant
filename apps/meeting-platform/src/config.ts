@@ -34,6 +34,7 @@ const environmentSchema = z
   .object({
     BIND_ADDRESS: z.union([z.ipv4(), z.ipv6()]).default("0.0.0.0"),
     CRAIG_BEARER_TOKEN_FILE: absolutePath,
+    DISCORD_PUBLICATION_MODE: z.enum(["message", "thread"]).default("message"),
     DISCORD_RESULTS_CHANNEL_ID: snowflake,
     DISCORD_TOKEN_FILE: absolutePath,
     NODE_ENV: z.enum(["development", "production", "test"]).default("production"),
@@ -96,6 +97,8 @@ interface PlatformSecrets {
 
 export interface PlatformConfig {
   readonly bindAddress: string;
+  /** New meetings publish directly into the configured results channel by default. */
+  readonly discordPublicationMode: "message" | "thread";
   readonly discordResultsChannelId: string;
   readonly nodeEnvironment: "development" | "production" | "test";
   readonly port: number;
@@ -156,6 +159,7 @@ export async function loadPlatformConfig(
 
   return Object.freeze({
     bindAddress: environment.BIND_ADDRESS,
+    discordPublicationMode: environment.DISCORD_PUBLICATION_MODE,
     discordResultsChannelId: environment.DISCORD_RESULTS_CHANNEL_ID,
     nodeEnvironment: environment.NODE_ENV,
     port: environment.PORT,

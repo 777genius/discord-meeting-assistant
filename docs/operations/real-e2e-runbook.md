@@ -74,11 +74,13 @@ Discord run is a separate external gate and must exercise at least:
 Each run must retain non-secret evidence: meeting and recording IDs, stage
 transitions, audio duration, speaker IDs, transcript WER/CER and terminology
 checks, overlap assertions, evidence-reference validation, and the final Discord
-thread/message IDs. Retained evidence schema v2 also records the exact Craig and
+container/message IDs. Retained evidence schema v3 records whether the visible
+projection is a direct parent-channel message or a thread message. It continues
+to read historical v2 thread evidence and also records the exact Craig and
 Meeting Platform container IDs/start times, immutable image IDs, optional
 repository digests, image-bound source revisions, and Compose config hashes. The
 acceptance result is invalid if any decision or action item references a missing
-transcript turn, if a retry creates a duplicate meeting, summary, thread, or
+transcript turn, if a retry creates a duplicate meeting, summary, container, or
 message, or if deployment provenance changes during collection or between
 campaign runs.
 
@@ -89,8 +91,9 @@ the meeting end, and the final authoritative replacement. The gate requires:
 
 1. the first Discord publication within two seconds of the first recognized
    non-empty caption unless the external provider is unavailable;
-2. one stable Discord thread/message identity across captions, preliminary
-   summaries, retries, and the authoritative post-call summary;
+2. one stable Discord container/message identity across captions, preliminary
+   summaries, retries, and the authoritative post-call summary. The default
+   container is the results channel itself; thread mode is explicit opt-in;
 3. captions grouped by the real Discord speaker, with visible relative start
    times, while mutable partials never appear in summary evidence;
 4. no preliminary summary before five minutes and the first successful summary
@@ -111,10 +114,10 @@ invoice.
 
 Start the observer immediately before the private five-minute call. It uses the
 SUT token from macOS Keychain by default, or from an isolated host secret
-directory when `DISCORD_E2E_LIVE_SECRET_DIRECTORY` is supplied. It scans public
-active and archived threads under the dedicated results channel, never parent
-channel messages. It retains only SUT-authored messages created during this
-bounded observation and writes a trace only when a visible projection changes.
+directory when `DISCORD_E2E_LIVE_SECRET_DIRECTORY` is supplied. It scans both
+SUT-authored parent-channel messages and public active/archived thread messages
+under the dedicated results channel. It retains only messages created during this
+bounded observation and writes a v2 trace only when a visible projection changes.
 
 ```sh
 DISCORD_E2E_LIVE_RUN_ID=campaign-2026-08-02-live-1 \
@@ -161,17 +164,19 @@ authoritative manifest `startedAt`/`endedAt`, speaker tracks, checksums and timi
 
 The collector obtains both Postgres observations, S3 bytes, Discord marker counts
 and visible embed text, the completed-job replay, and deployment provenance
-directly from Docker. It accepts current human-readable projection markers and
-legacy markers during rollout. Manually authored identity counts or provenance
-are not accepted evidence. Retain its non-secret JSON output and the verifier
+directly from Docker. It accepts hidden v3 embed markers and legacy thread
+markers during rollout. A direct-message receipt must retain exactly one matching
+message and zero matching threads; a thread receipt must retain exactly one of
+each. Manually authored identity counts or provenance are not accepted evidence.
+Retain its non-secret JSON output and the verifier
 result. Run the campaign verifier with the standard pnpm separator:
 
 ```sh
 pnpm --filter @discord-meeting/discord-e2e-actors run verify:campaign -- \
   apps/discord-e2e-actors/test/fixtures/manifest.v1.json \
-  /absolute/evidence/sequential.evidence.v2.json \
-  /absolute/evidence/overlap.evidence.v2.json \
-  /absolute/evidence/reconnect.evidence.v2.json
+  /absolute/evidence/sequential.evidence.v3.json \
+  /absolute/evidence/overlap.evidence.v3.json \
+  /absolute/evidence/reconnect.evidence.v3.json
 ```
 
 The verifier rejects cross-meeting identity reuse, mixed deployments, raw

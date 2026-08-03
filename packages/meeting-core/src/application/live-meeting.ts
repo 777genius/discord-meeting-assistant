@@ -39,8 +39,8 @@ export interface StartLiveMeetingDependencies {
 }
 
 export type StartLiveMeetingResult =
-  | { readonly status: "started" }
-  | { readonly status: "reused" };
+  | { readonly finalizedTurns: readonly TranscriptTurnSnapshot[]; readonly status: "started" }
+  | { readonly finalizedTurns: readonly TranscriptTurnSnapshot[]; readonly status: "reused" };
 
 export class StartLiveMeeting {
   public constructor(private readonly dependencies: StartLiveMeetingDependencies) {}
@@ -58,12 +58,15 @@ export class StartLiveMeeting {
           "live meeting identity was reused with different start data",
         );
       }
-      return { status: "reused" };
+      return {
+        finalizedTurns: meeting.turns.map((turn) => turn.toSnapshot()),
+        status: "reused",
+      };
     }
 
     const meeting = LiveMeeting.start(input);
     await this.dependencies.meetings.save(meeting.toSnapshot(), null);
-    return { status: "started" };
+    return { finalizedTurns: [], status: "started" };
   }
 }
 
@@ -175,9 +178,14 @@ function invalidGenerationFailure(error: unknown): StageFailure {
 
 interface GenerationBase {
   readonly draftSummaryRevision: number | null;
+  /**
+   * Exact finalized evidence seen by the generator. Its membership and
+   * contents, rather than its position in the mutable timeline, form the
+   * optimistic-concurrency boundary for the generated result.
+   */
+  readonly evidenceTurns: readonly TranscriptTurnSnapshot[];
   readonly status: LiveMeetingSnapshot["status"];
   readonly summarizedTurnIds: readonly string[];
-  readonly turnIds: readonly string[];
 }
 
 const maximumCompatibleGenerationSaveAttempts = 3;
@@ -186,9 +194,9 @@ const maximumProjectionSaveAttempts = 3;
 function generationBaseSnapshot(snapshot: LiveMeetingSnapshot): GenerationBase {
   return {
     draftSummaryRevision: snapshot.draftSummary?.revision ?? null,
+    evidenceTurns: snapshot.turns.map((turn) => ({ ...turn })),
     status: snapshot.status,
     summarizedTurnIds: [...snapshot.summarizedTurnIds].toSorted(),
-    turnIds: snapshot.turns.map(({ turnId }) => turnId),
   };
 }
 
@@ -196,9 +204,26 @@ function sameStrings(left: readonly string[], right: readonly string[]): boolean
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
-function startsWithStrings(values: readonly string[], prefix: readonly string[]): boolean {
-  return values.length >= prefix.length &&
-    prefix.every((value, index) => values[index] === value);
+function sameTurn(
+  left: TranscriptTurnSnapshot,
+  right: TranscriptTurnSnapshot,
+): boolean {
+  return left.turnId === right.turnId &&
+    left.speakerId === right.speakerId &&
+    left.startMs === right.startMs &&
+    left.endMs === right.endMs &&
+    left.text === right.text;
+}
+
+function containsUnchangedEvidence(
+  turns: readonly TranscriptTurnSnapshot[],
+  evidenceTurns: readonly TranscriptTurnSnapshot[],
+): boolean {
+  const turnsById = new Map(turns.map((turn) => [turn.turnId, turn]));
+  return evidenceTurns.every((evidenceTurn) => {
+    const currentTurn = turnsById.get(evidenceTurn.turnId);
+    return currentTurn !== undefined && sameTurn(currentTurn, evidenceTurn);
+  });
 }
 
 function isCompatibleGenerationBase(
@@ -209,7 +234,7 @@ function isCompatibleGenerationBase(
     snapshot.status === base.status &&
     (snapshot.draftSummary?.revision ?? null) === base.draftSummaryRevision &&
     sameStrings([...snapshot.summarizedTurnIds].toSorted(), base.summarizedTurnIds) &&
-    startsWithStrings(snapshot.turns.map(({ turnId }) => turnId), base.turnIds)
+    containsUnchangedEvidence(snapshot.turns, base.evidenceTurns)
   );
 }
 
@@ -218,13 +243,21 @@ function generationBaseKey(
   turns: readonly TranscriptTurnSnapshot[],
 ): string {
   const nextSummaryRevision = (meeting.draftSummary?.revision ?? 0) + 1;
-  const lastTurnId = turns.at(-1)?.turnId ?? "none";
+  const summarizedTurnIds = [...meeting.summarizedTurnIds].toSorted();
+  // Final turns are immutable and append-only inside the aggregate. Therefore
+  // the count changes for every new evidence base, including a late turn that
+  // sorts into the middle of the timeline. Summary revision and covered-count
+  // changes fence every successfully accepted base without a platform hash in
+  // the Clean Architecture core.
   return operationIdentity(
-    "live-evidence-summary:v1",
+    "live-evidence-summary:v2",
     meeting.meetingId,
     String(nextSummaryRevision),
+    meeting.status,
+    String(summarizedTurnIds.length),
+    summarizedTurnIds.at(-1) ?? "none",
     String(turns.length),
-    lastTurnId,
+    turns.at(-1)?.turnId ?? "none",
   );
 }
 
@@ -352,8 +385,9 @@ export class RefreshLiveMeeting {
     readonly telemetry?: LiveGenerationTelemetrySnapshot;
     readonly usage?: LiveGenerationUsageSnapshot;
   }> {
-    const turns = meeting.turns.map((turn) => turn.toSnapshot());
-    const base = generationBaseSnapshot(meeting.toSnapshot());
+    const meetingSnapshot = meeting.toSnapshot();
+    const turns = meetingSnapshot.turns;
+    const base = generationBaseSnapshot(meetingSnapshot);
     const newTurnIds = new Set(newTurns.map(({ turnId }) => turnId));
     const previousTurns = turns.filter(({ turnId }) => !newTurnIds.has(turnId));
     const overlapStartMs = Math.max(
@@ -398,7 +432,7 @@ export class RefreshLiveMeeting {
         ...(result.value.telemetry === undefined
           ? {}
           : { telemetry: result.value.telemetry }),
-        throughTurnCount: turns.length,
+        evidenceTurns: base.evidenceTurns,
         ...(result.value.usage === undefined ? {} : { usage: result.value.usage }),
       });
       if (!applied) {
@@ -480,10 +514,10 @@ export class RefreshLiveMeeting {
     meetingId: string,
     base: GenerationBase,
     input: {
+      readonly evidenceTurns: readonly TranscriptTurnSnapshot[];
       readonly generatedAtMs: number;
       readonly summary: LiveSummaryDraftSnapshot;
       readonly telemetry?: LiveGenerationTelemetrySnapshot;
-      readonly throughTurnCount: number;
       readonly usage?: LiveGenerationUsageSnapshot;
     },
   ): Promise<boolean> {

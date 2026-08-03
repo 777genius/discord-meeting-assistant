@@ -22,6 +22,7 @@ const profiles = Object.freeze({
     maxOutputTokens: 4_096,
     model: subscriptionRuntimeFinalCodexModel,
     outputKind: "structured_output",
+    outputSchemaName: "discord_meeting_summary_v3",
     policyVersion: "meeting-summary.subscription-runtime.v6",
     provider: "codex",
     purpose: "discord_meeting.summary.generate",
@@ -32,7 +33,8 @@ const profiles = Object.freeze({
     maxOutputTokens: 2_048,
     model: subscriptionRuntimeIncrementalCodexModel,
     outputKind: "structured_output",
-    policyVersion: "meeting-summary.incremental.subscription-runtime.v2",
+    outputSchemaName: "discord_meeting_incremental_summary_v1",
+    policyVersion: "meeting-summary.incremental.subscription-runtime.v3",
     provider: "codex",
     purpose: "discord_meeting.summary.incremental",
     reasoningEffort: "low",
@@ -679,6 +681,11 @@ function admitRequest(input) {
   assertExact(controls.reasoningEffort, profile.reasoningEffort, "controls.reasoningEffort");
   assertExact(controls.responseFormat, profile.responseFormat, "controls.responseFormat");
   assertExact(controls.selectedOutputKind, profile.outputKind, "controls.selectedOutputKind");
+  assertExact(
+    controls.outputSchemaName,
+    profile.outputSchemaName,
+    "controls.outputSchemaName",
+  );
   assertExact(metadata.model, profile.model, "metadata.model");
   assertExact(
     metadata.policyVersion,
@@ -687,6 +694,7 @@ function admitRequest(input) {
   );
   assertExact(metadata.reasoningEffort, profile.reasoningEffort, "metadata.reasoningEffort");
   assertExact(metadata.runtimeOutput, profile.outputKind, "metadata.runtimeOutput");
+  assertExact(task.outputSchemaName, profile.outputSchemaName, "task.outputSchemaName");
   if (controls.disableTools !== true || controls.interactive !== false) {
     throw new Error("Interactive or tool-enabled execution is not admitted");
   }

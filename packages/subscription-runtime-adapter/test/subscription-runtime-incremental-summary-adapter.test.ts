@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import type {
   IncrementalSummaryGenerationRequest,
 } from "@discord-meeting/meeting-core";
@@ -6,8 +8,12 @@ import { describe, expect, it } from "vitest";
 import {
   auditedSubscriptionRuntimePackageVersion,
   canonicalJsonSha256,
+  incrementalMeetingSummaryOutputSchemaName,
+  incrementalMeetingSummaryPolicyVersion,
   lunaLongContextPriceCard,
   lunaStandardPriceCard,
+  providerIncrementalMeetingSummaryJsonSchema,
+  providerIncrementalMeetingSummarySchema,
   SubscriptionRuntimeIncrementalSummaryAdapter,
   subscriptionRuntimeEngine,
   subscriptionRuntimeIncrementalModel,
@@ -131,6 +137,32 @@ class FakeTransport implements SubscriptionRuntimeTransportPort {
 }
 
 describe("SubscriptionRuntimeIncrementalSummaryAdapter", () => {
+  it("enforces the compact live schema boundaries", () => {
+    expect(providerIncrementalMeetingSummarySchema.safeParse({
+      ...structuredOutput,
+      overview: "Обсудили PostgreSQL, Redis и т. д. перед релизом.",
+    }).success).toBe(true);
+    expect(providerIncrementalMeetingSummarySchema.safeParse({
+      ...structuredOutput,
+      overview: "Первое предложение. Второе предложение.",
+    }).success).toBe(false);
+    expect(providerIncrementalMeetingSummarySchema.safeParse({
+      ...structuredOutput,
+      topics: Array.from({ length: 4 }, () => ({
+        evidenceTurnIds: ["turn-1"],
+        points: ["Подтвержденный факт"],
+        title: "Тема",
+      })),
+    }).success).toBe(false);
+    expect(providerIncrementalMeetingSummarySchema.safeParse({
+      ...structuredOutput,
+      decisions: [{
+        evidenceTurnIds: ["turn-1", "turn-2", "turn-3", "turn-4"],
+        text: "Подтвержденное решение",
+      }],
+    }).success).toBe(false);
+  });
+
   it("sends previous summary, new evidence, bounded context and known IDs with Luna low and a 2048-token budget", async () => {
     const transport = new FakeTransport((request) => completed(
       request,
@@ -163,7 +195,7 @@ describe("SubscriptionRuntimeIncrementalSummaryAdapter", () => {
     expect(captured).toMatchObject({
       context: {
         metadata: {
-          policyVersion: "meeting-summary.incremental.subscription-runtime.v2",
+          policyVersion: incrementalMeetingSummaryPolicyVersion,
         },
         purpose: subscriptionRuntimeIncrementalPurpose,
       },
@@ -171,6 +203,7 @@ describe("SubscriptionRuntimeIncrementalSummaryAdapter", () => {
         controls: {
           maxOutputTokens: 2_048,
           model: subscriptionRuntimeIncrementalModel,
+          outputSchemaName: incrementalMeetingSummaryOutputSchemaName,
           reasoningEffort: subscriptionRuntimeIncrementalReasoningEffort,
         },
         metadata: {
@@ -188,17 +221,28 @@ describe("SubscriptionRuntimeIncrementalSummaryAdapter", () => {
       recentContextTurns: [{ turnId: "turn-2" }],
       revision: 2,
       throughTurnCount: 3,
+      outputSchema: providerIncrementalMeetingSummaryJsonSchema,
     });
     expect(captured.task.systemPrompt).toContain("Previous summary is editable context");
     expect(captured.task.systemPrompt).toContain("untrusted quoted evidence");
-    expect(captured.task.systemPrompt).toContain("overview exactly one sentence");
-    expect(captured.task.systemPrompt).toContain("at most four topics");
+    expect(captured.task.systemPrompt).toContain("overview exactly one short sentence");
+    expect(captured.task.outputSchemaName).toBe(
+      incrementalMeetingSummaryOutputSchemaName,
+    );
+    expect(canonicalJsonSha256(captured.task.controls.outputSchema)).toBe(
+      "6d9479e46e2f995c44871703664eb1a6965ac6f8cfb1f227d5f6795d003cbd28",
+    );
+    expect(createHash("sha256").update(captured.task.systemPrompt).digest("hex")).toBe(
+      "f0864d39e427e0b51527d93467e125e11d3c325481c29ccaff07503d4ae9fcba",
+    );
+    expect(captured.task.systemPrompt).toContain("selective live snapshot");
+    expect(captured.task.systemPrompt).toContain("at most three topics");
     expect(captured.task.systemPrompt).toContain("one or two points");
     expect(captured.task.systemPrompt).toContain(
-      "Consolidate related items",
+      "at most three decisions, action items, and open questions",
     );
     expect(captured.task.systemPrompt).toContain(
-      "Decisions, action items, and open questions each permit 12",
+      "one to three exact evidenceTurnIds",
     );
     expect(captured.task.systemPrompt).toContain(
       "Never claim completeness",
@@ -254,6 +298,26 @@ describe("SubscriptionRuntimeIncrementalSummaryAdapter", () => {
       ok: false,
       usage: { inputTokens: 100, outputTokens: 20 },
     });
+  });
+
+  it("rejects a live result that exceeds the compact item bounds", async () => {
+    const transport = new FakeTransport((request) => completed(
+      request,
+      {
+        ...structuredOutput,
+        decisions: Array.from({ length: 4 }, () => ({
+          evidenceTurnIds: ["turn-1"],
+          text: "Подтверждено решение",
+        })),
+      },
+      completeUsage,
+    ));
+
+    await expect(createAdapter(transport).generate(requestFixture)).resolves
+      .toMatchObject({
+        failure: { code: "SUBSCRIPTION_RUNTIME_SUMMARY_INVALID_PROVIDER_RESPONSE" },
+        ok: false,
+      });
   });
 
   it("maps complete real usage to the official short-context API-equivalent card", async () => {

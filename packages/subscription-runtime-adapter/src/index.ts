@@ -24,7 +24,11 @@ export {
   type LunaApiEquivalentCostRange,
 } from "./luna-price-card.js";
 export {
+  type ProviderIncrementalMeetingSummary,
   type ProviderMeetingSummary,
+  type ProviderMeetingSummaryWithEvidence,
+  providerIncrementalMeetingSummaryJsonSchema,
+  providerIncrementalMeetingSummarySchema,
   providerMeetingSummaryJsonSchema,
   providerMeetingSummarySchema,
 } from "./provider-summary-schema.js";
@@ -46,6 +50,7 @@ export {
   auditedSubscriptionRuntimePackageVersion,
   admittedSummaryExecutionProfiles,
   finalSummaryExecutionProfile,
+  incrementalMeetingSummaryOutputSchemaName,
   incrementalMeetingSummaryPolicyVersion,
   incrementalSummaryExecutionProfile,
   meetingSummaryOutputSchemaName,
@@ -79,4 +84,5 @@ export {
   type SubscriptionRuntimeTokenAvailability,
   type SubscriptionRuntimeTransportPort,
   type SubscriptionRuntimeUsage,
+  type SubscriptionRuntimeOutputSchemaName,
 } from "./subscription-runtime-contract.js";

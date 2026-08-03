@@ -22,6 +22,7 @@ import {
   truncateDiscordGraphemesByCodeUnits,
 } from "./discord-markdown-formatting.js";
 import { toDiscordPublicationFailure } from "./discord-publication-errors.js";
+import { renderRussianTranscriptTimelineMarkdown } from "./discord-transcript-timeline.js";
 
 interface DiscordSummaryProjector {
   publish(input: PublishDiscordSummary): Promise<DiscordProjectionReference>;
@@ -50,6 +51,9 @@ export class DiscordSummaryPublicationAdapter implements SummaryPublicationPort 
         parentChannelId: request.publicationTargetId,
         threadTitle: discordThreadTitle(request.summary.title),
         markdown: renderRussianSummaryMarkdown(request),
+        liveCaptionsMarkdown: renderRussianFinalTranscriptTimelineMarkdown(
+          request.transcript.turns,
+        ),
         ...(referenceHint === undefined ? {} : { currentReference: referenceHint }),
       });
       return {
@@ -83,7 +87,7 @@ export function renderRussianSummaryMarkdown(
     "",
     "## Основные темы",
     ...numberedOrEmpty(
-      summary.topics.map((topic) => [
+      topicsInTimelineOrder(summary.topics, evidence).map((topic) => [
         topic.title.trim(),
         ...topic.points.map((point) => point.trim()),
         ...evidenceLines(topic.evidenceTurnIds, evidence),
@@ -93,7 +97,7 @@ export function renderRussianSummaryMarkdown(
     "",
     "## Решения",
     ...numberedOrEmpty(
-      summary.decisions.map((decision) => [
+      entriesInTimelineOrder(summary.decisions, evidence).map((decision) => [
         decision.text.trim(),
         ...evidenceLines(decision.evidenceTurnIds, evidence),
       ]),
@@ -102,7 +106,7 @@ export function renderRussianSummaryMarkdown(
     "",
     "## Задачи",
     ...numberedOrEmpty(
-      summary.actionItems.map((actionItem) => [
+      entriesInTimelineOrder(summary.actionItems, evidence).map((actionItem) => [
         actionItem.text.trim(),
         `Ответственный: ${
           actionItem.ownerSpeakerId === null
@@ -119,7 +123,7 @@ export function renderRussianSummaryMarkdown(
     "",
     "## Открытые вопросы",
     ...numberedOrEmpty(
-      summary.openQuestions.map((question) => [
+      entriesInTimelineOrder(summary.openQuestions, evidence).map((question) => [
         question.text.trim(),
         ...evidenceLines(question.evidenceTurnIds, evidence),
       ]),
@@ -127,6 +131,16 @@ export function renderRussianSummaryMarkdown(
     ),
   ];
   return boundedMarkdown(bodyLines);
+}
+
+/**
+ * The final Discord timeline is rendered from the authoritative transcript,
+ * never from the best-effort live packet stream.
+ */
+export function renderRussianFinalTranscriptTimelineMarkdown(
+  turns: SummaryPublicationRequest["transcript"]["turns"],
+): string {
+  return renderRussianTranscriptTimelineMarkdown(turns, "final");
 }
 
 function boundedMarkdown(bodyLines: readonly string[]): string {
@@ -175,14 +189,95 @@ function evidenceLines(
     SummaryPublicationRequest["transcript"]["turns"][number]
   >,
 ): readonly string[] {
-  return evidenceTurnIds.map((turnId) => {
+  return evidenceTurnIds
+    .map((turnId, originalIndex) => ({
+      originalIndex,
+      startMs: evidence.get(turnId)?.startMs ?? null,
+      turnId,
+    }))
+    .toSorted((left, right) =>
+      compareNullableStartMs(left.startMs, right.startMs) ||
+      left.originalIndex - right.originalIndex
+    )
+    .map(({ turnId }) => {
+      const turn = evidence.get(turnId);
+      if (turn === undefined) {
+        return "Исходная реплика недоступна.";
+      }
+      const interval = `${formatDiscordTimestamp(turn.startMs)}-${formatDiscordTimestamp(turn.endMs)}`;
+      return `**${interval} · ${formatDiscordSpeaker(turn.speakerId)}:** «${evidenceQuote(turn.text)}»`;
+    });
+}
+
+function topicsInTimelineOrder(
+  topics: SummaryPublicationRequest["summary"]["topics"],
+  evidence: ReadonlyMap<
+    string,
+    SummaryPublicationRequest["transcript"]["turns"][number]
+  >,
+): readonly SummaryPublicationRequest["summary"]["topics"][number][] {
+  return topics
+    .map((topic, originalIndex) => ({
+      earliestStartMs: earliestEvidenceStartMs(topic.evidenceTurnIds, evidence),
+      originalIndex,
+      topic,
+    }))
+    .toSorted((left, right) => {
+      const timelineOrder = compareNullableStartMs(left.earliestStartMs, right.earliestStartMs);
+      return timelineOrder ||
+        left.originalIndex - right.originalIndex ||
+        normalizeInline(left.topic.title).localeCompare(normalizeInline(right.topic.title));
+    })
+    .map(({ topic }) => topic);
+}
+
+function entriesInTimelineOrder<T extends { readonly evidenceTurnIds: readonly string[] }>(
+  entries: readonly T[],
+  evidence: ReadonlyMap<
+    string,
+    SummaryPublicationRequest["transcript"]["turns"][number]
+  >,
+): readonly T[] {
+  return entries
+    .map((entry, originalIndex) => ({
+      earliestStartMs: earliestEvidenceStartMs(entry.evidenceTurnIds, evidence),
+      entry,
+      originalIndex,
+    }))
+    .toSorted((left, right) =>
+      compareNullableStartMs(left.earliestStartMs, right.earliestStartMs) ||
+      left.originalIndex - right.originalIndex
+    )
+    .map(({ entry }) => entry);
+}
+
+function earliestEvidenceStartMs(
+  evidenceTurnIds: readonly string[],
+  evidence: ReadonlyMap<
+    string,
+    SummaryPublicationRequest["transcript"]["turns"][number]
+  >,
+): number | null {
+  let earliest: number | null = null;
+  for (const turnId of evidenceTurnIds) {
     const turn = evidence.get(turnId);
-    if (turn === undefined) {
-      return "Основание: исходная реплика недоступна";
+    if (turn === undefined || !Number.isSafeInteger(turn.startMs) || turn.startMs < 0) {
+      continue;
     }
-    const interval = `${formatDiscordTimestamp(turn.startMs)}-${formatDiscordTimestamp(turn.endMs)}`;
-    return `Основание: **${interval} · ${formatDiscordSpeaker(turn.speakerId)}:** «${evidenceQuote(turn.text)}»`;
-  });
+    const { startMs } = turn;
+    earliest = earliest === null ? startMs : Math.min(earliest, startMs);
+  }
+  return earliest;
+}
+
+function compareNullableStartMs(left: number | null, right: number | null): number {
+  if (left === null) {
+    return right === null ? 0 : 1;
+  }
+  if (right === null) {
+    return -1;
+  }
+  return left - right;
 }
 
 function evidenceQuote(value: string): string {

@@ -3,10 +3,12 @@ import { describe, expect, it } from "vitest";
 import {
   fixtureManifestV1Schema,
   retainedE2eEvidenceV2Schema,
+  retainedE2eEvidenceV3Schema,
   verifyE2eCampaign,
   verifyRetainedE2eEvidence,
   type FixtureManifestV1,
   type RetainedE2eEvidenceV2,
+  type RetainedE2eEvidenceV3,
 } from "../src/e2e-evidence.js";
 
 const speakerAId = "1533227577286852649";
@@ -273,6 +275,41 @@ function overlapEvidence(): RetainedE2eEvidenceV2 {
   });
 }
 
+function directMessageEvidence(source: RetainedE2eEvidenceV2): RetainedE2eEvidenceV3 {
+  return retainedE2eEvidenceV3Schema.parse({
+    ...source,
+    publication: {
+      container: {
+        kind: "channel-message",
+        parentChannelId: "1533228891827736657",
+      },
+      embedDescription: source.publication.embedDescription.replaceAll("Основание: ", ""),
+      matchingMessageCount: source.publication.matchingMessageCount,
+      matchingThreadCount: 0,
+      messageId: source.publication.messageId,
+    },
+    replay: {
+      container: {
+        kind: "channel-message",
+        parentChannelId: "1533228891827736657",
+      },
+      matchingMeetingCount: source.replay.matchingMeetingCount,
+      matchingMessageCount: source.replay.matchingMessageCount,
+      matchingRecordingCount: source.replay.matchingRecordingCount,
+      matchingSummaryCount: source.replay.matchingSummaryCount,
+      matchingThreadCount: 0,
+      matchingTranscriptCount: source.replay.matchingTranscriptCount,
+      meetingId: source.replay.meetingId,
+      messageId: source.replay.messageId,
+      recordingId: source.replay.recordingId,
+      replayJob: source.replay.replayJob,
+      summaryId: source.replay.summaryId,
+      transcriptId: source.replay.transcriptId,
+    },
+    schemaVersion: 3,
+  });
+}
+
 function sequentialEvidence(): RetainedE2eEvidenceV2 {
   const evidence = overlapEvidence();
   evidence.actorRun.scenario = "sequential";
@@ -401,6 +438,25 @@ describe("verifyRetainedE2eEvidence", () => {
       ],
       passed: true,
     });
+  });
+
+  it("accepts a v3 direct-message receipt without inventing a thread", () => {
+    const evidence = directMessageEvidence(overlapEvidence());
+
+    expect(evidence.publication.container).toEqual({
+      kind: "channel-message",
+      parentChannelId: "1533228891827736657",
+    });
+    expect(evidence.publication.matchingThreadCount).toBe(0);
+    expect(verifyRetainedE2eEvidence(manifest(), evidence).passed).toBe(true);
+  });
+
+  it("rejects a direct-message receipt that reports a thread marker", () => {
+    const evidence = directMessageEvidence(overlapEvidence());
+    evidence.publication.matchingThreadCount = 1;
+
+    expect(verifyRetainedE2eEvidence(manifest(), evidence).failures.map(({ code }) => code))
+      .toContain("DUPLICATE_BUSINESS_EFFECT");
   });
 
   it("uses the shared Craig media origin once for cooked track durations", () => {
@@ -769,5 +825,20 @@ describe("verifyRetainedE2eEvidence", () => {
     const codes = verifyE2eCampaign(manifest(), runs).failures.map(({ code }) => code);
 
     expect(codes).toContain("CAMPAIGN_DEPLOYMENT_CHANGED");
+  });
+
+  it("allows a v3 direct-message campaign to share its results channel but not a message", () => {
+    const runs = [
+      directMessageEvidence(reidentify(sequentialEvidence(), "direct-sequential")),
+      directMessageEvidence(reidentify(overlapEvidence(), "direct-overlap")),
+      directMessageEvidence(reidentify(reconnectEvidence(), "direct-reconnect")),
+    ];
+
+    expect(verifyE2eCampaign(manifest(), runs).passed).toBe(true);
+
+    runs[2]!.publication.messageId = runs[1]!.publication.messageId;
+    runs[2]!.replay.messageId = runs[1]!.replay.messageId;
+    expect(verifyE2eCampaign(manifest(), runs).failures.map(({ code }) => code))
+      .toContain("CAMPAIGN_STATE_LEAK");
   });
 });

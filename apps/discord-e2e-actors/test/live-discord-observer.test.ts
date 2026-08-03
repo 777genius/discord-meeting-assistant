@@ -31,7 +31,8 @@ describe("live Discord projection normalization", () => {
       },
       observedAtMilliseconds: firstObservedAt,
       resultChannelId: "11111111111111111",
-      thread: {
+      container: {
+        kind: "thread",
         id: "44444444444444444",
         name: " Итоги live ",
         parentId: "11111111111111111",
@@ -53,7 +54,8 @@ describe("live Discord projection normalization", () => {
         id: "33333333333333333",
       },
       observedAt: "2026-08-02T12:00:08.000Z",
-      thread: {
+      container: {
+        kind: "thread",
         id: "44444444444444444",
         name: "Итоги live",
         parentId: "11111111111111111",
@@ -66,19 +68,19 @@ describe("live Discord projection normalization", () => {
       message: message("Первая версия", messageEditedAt),
       observedAtMilliseconds: firstObservedAt,
       resultChannelId: "11111111111111111",
-      thread,
+      container: thread,
     });
     const sameProjectionLater = normalizeLiveDiscordProjection({
       message: message("Первая версия", messageEditedAt + 1_000),
       observedAtMilliseconds: firstObservedAt + 2_000,
       resultChannelId: "11111111111111111",
-      thread,
+      container: thread,
     });
     const editedProjection = normalizeLiveDiscordProjection({
       message: message("Вторая версия", messageEditedAt + 2_000),
       observedAtMilliseconds: firstObservedAt + 4_000,
       resultChannelId: "11111111111111111",
-      thread,
+      container: thread,
     });
 
     expect(liveDiscordProjectionFingerprint(sameProjectionLater))
@@ -99,7 +101,7 @@ describe("live Discord projection normalization", () => {
       },
       observedAtMilliseconds: firstObservedAt,
       resultChannelId: "11111111111111111",
-      thread,
+      container: thread,
     });
 
     expect(projection.message.content).toBe("");
@@ -128,9 +130,24 @@ describe("live Discord projection normalization", () => {
       messageCreatedAt + 10_000,
     )).toBe(false);
   });
+
+  it("keeps a direct result-channel message distinct from a thread projection", () => {
+    const projection = normalizeLiveDiscordProjection({
+      message: message("Прямое обновление", null),
+      observedAtMilliseconds: firstObservedAt,
+      resultChannelId: "11111111111111111",
+      container: { kind: "channel-message", parentChannelId: "11111111111111111" },
+    });
+
+    expect(projection.container).toEqual({
+      kind: "channel-message",
+      parentChannelId: "11111111111111111",
+    });
+  });
 });
 
 const thread = {
+  kind: "thread",
   id: "44444444444444444",
   name: "Итоги live",
   parentId: "11111111111111111",

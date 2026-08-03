@@ -46,9 +46,15 @@ The immutable sidecar image must:
    `meeting-summary.subscription-runtime.v6`; admit
    `discord_meeting.summary.incremental` only with `gpt-5.6-luna`/`low`, a
    2048-token post-execution output budget, and policy version
-   `meeting-summary.incremental.subscription-runtime.v2`; both use stateless
+   `meeting-summary.incremental.subscription-runtime.v3`; both use stateless
    completion, disabled tools, read-only permission, no interactive input, the
-   same structured schema, and the isolated tmpfs working directory;
+   isolated tmpfs working directory, and their exact purpose-bound structured
+   schema. Final summaries use `discord_meeting_summary_v3`. Incremental live
+   snapshots use `discord_meeting_incremental_summary_v1`, which permits one
+   short overview, at most three topics with one or two points, at most three
+   decisions/actions/questions each, and one to three evidence turns per item.
+   The live schema is deliberately selective and must not claim completeness;
+   the two schemas and names are not interchangeable;
 3. start children from an explicit environment allowlist and remove every
    `*_API_KEY`, `*_API_KEY_FILE`, session-scoped Codex identifier, and unrelated
    application secret;

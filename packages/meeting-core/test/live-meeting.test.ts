@@ -14,6 +14,7 @@ import {
   type LiveMeetingProjectionRequest,
   type LiveMeetingRepository,
   type LiveMeetingSnapshot,
+  type LiveSummaryDraftSnapshot,
   type PortResult,
 } from "../src/index.js";
 
@@ -250,6 +251,29 @@ function generatedSummary(
   };
 }
 
+function summaryForEvidence(
+  turnId: string,
+  revision: number,
+): LiveSummaryDraftSnapshot {
+  return {
+    actionItems: [],
+    decisions: [{
+      decisionId: `decision-${revision}`,
+      evidenceTurnIds: [turnId],
+      text: "Зафиксированное решение.",
+    }],
+    openQuestions: [],
+    overview: "Зафиксирован ход встречи.",
+    revision,
+    title: "Ход встречи",
+    topics: [{
+      evidenceTurnIds: [turnId],
+      points: ["Подтвержденная тема"],
+      title: "Тема",
+    }],
+  };
+}
+
 function partialTelemetry(runId = "telemetry-1"): LiveGenerationTelemetrySnapshot {
   return {
     cacheWriteInputTokens: { availability: "unavailable" },
@@ -383,6 +407,44 @@ describe("live meeting orchestration", () => {
       0,
     )).toThrow(/stale revision/);
     expect(meeting.projectionExternalId).toBe(recoveredReceipt);
+  });
+
+  it("rejects a generated summary that drops previously covered evidence", () => {
+    const meeting = LiveMeeting.start({
+      meetingId: "meeting-evidence-regression",
+      publicationTargetId: "results-channel",
+      startedAtMs: 0,
+    });
+    const firstTurn = {
+      endMs: 2_000,
+      speakerId: "speaker-a",
+      startMs: 1_000,
+      text: "Первая подтвержденная реплика.",
+      turnId: "turn-first",
+    } as const;
+    const secondTurn = {
+      endMs: 4_000,
+      speakerId: "speaker-b",
+      startMs: 3_000,
+      text: "Вторая подтвержденная реплика.",
+      turnId: "turn-second",
+    } as const;
+    meeting.appendFinalTurn(firstTurn);
+    meeting.acceptSummary({
+      evidenceTurns: [firstTurn],
+      generatedAtMs: 2_500,
+      summary: summaryForEvidence(firstTurn.turnId, 1),
+    });
+    meeting.appendFinalTurn(secondTurn);
+
+    expect(() => {
+      meeting.acceptSummary({
+        evidenceTurns: [secondTurn],
+        generatedAtMs: 4_500,
+        summary: summaryForEvidence(secondTurn.turnId, 2),
+      });
+    }).toThrow(/coverage cannot regress/u);
+    expect([...meeting.summarizedTurnIds]).toEqual([firstTurn.turnId]);
   });
 
   it("does not create a live projection for a silent meeting at five minutes or at its end", async () => {
@@ -1001,15 +1063,22 @@ describe("live meeting orchestration", () => {
     })).toThrow(/unavailable token class must not carry a value/);
   });
 
-  it("applies a generation result while newer finalized turns remain unsummarized", async () => {
+  it("accepts exact generated evidence when a second speaker inserts a turn into its timeline", async () => {
     const meetings = await startedRepository();
     const append = new AppendLiveTranscriptTurn(meetings);
     await append.execute("meeting-1", {
-      endMs: 5_000,
+      endMs: 20_000,
       speakerId: "speaker-a",
-      startMs: 1_000,
-      text: "Первая финальная реплика.",
-      turnId: "turn-1",
+      startMs: 10_000,
+      text: "Первая финальная реплика от первого участника.",
+      turnId: "turn-a-first",
+    });
+    await append.execute("meeting-1", {
+      endMs: 60_000,
+      speakerId: "speaker-b",
+      startMs: 50_000,
+      text: "Поздняя по времени реплика второго участника.",
+      turnId: "turn-b-later",
     });
     const summarizer = new DeferredSummarizer();
     const projector = new RecordingProjector();
@@ -1024,22 +1093,273 @@ describe("live meeting orchestration", () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(summarizer.requests).toHaveLength(1);
+    expect(summarizer.requests[0]?.knownTurnIds).toEqual([
+      "turn-a-first",
+      "turn-b-later",
+    ]);
 
     await append.execute("meeting-1", {
-      endMs: 9_000,
+      endMs: 40_000,
       speakerId: "speaker-b",
-      startMs: 6_000,
-      text: "Новая реплика пришла во время генерации.",
-      turnId: "turn-2",
+      startMs: 30_000,
+      text: "Эта реплика пришла после запуска генерации, но раньше на таймлайне.",
+      turnId: "turn-b-inserted",
     });
     summarizer.resolveNext(generatedSummary(summarizer.requests[0]!));
 
     await expect(pending).resolves.toMatchObject({ generated: true, projected: false });
     expect(meetings.snapshot).toMatchObject({
       draftSummary: { revision: 1 },
-      summarizedTurnIds: ["turn-1"],
-      turns: [{ turnId: "turn-1" }, { turnId: "turn-2" }],
+      summarizedTurnIds: ["turn-a-first", "turn-b-later"],
+      turns: [
+        { turnId: "turn-a-first" },
+        { turnId: "turn-b-inserted" },
+        { turnId: "turn-b-later" },
+      ],
     });
     expect(projector.requests).toHaveLength(0);
+  });
+
+  it("rejects evidence that arrived after an incremental generation began", async () => {
+    const meetings = await startedRepository();
+    const append = new AppendLiveTranscriptTurn(meetings);
+    await append.execute("meeting-1", {
+      endMs: 5_000,
+      speakerId: "speaker-a",
+      startMs: 1_000,
+      text: "Исходная реплика для генерации.",
+      turnId: "turn-generated-evidence",
+    });
+    const summarizer = new DeferredSummarizer();
+    const refresh = new RefreshLiveMeeting({
+      meetings,
+      projector: new RecordingProjector(),
+      summarizer,
+    });
+
+    const pending = refresh.execute({
+      captions: [],
+      meetingId: "meeting-1",
+      nowMs: 300_000,
+      projection: "skip",
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    await append.execute("meeting-1", {
+      endMs: 9_000,
+      speakerId: "speaker-b",
+      startMs: 6_000,
+      text: "Реплика появилась после снимка доказательств.",
+      turnId: "turn-arrived-after-generation",
+    });
+    const completed = generatedSummary(summarizer.requests[0]!);
+    if (!completed.ok) {
+      throw new Error("expected a generated incremental summary");
+    }
+    const postSnapshotTurnId = "turn-arrived-after-generation";
+    summarizer.resolveNext({
+      ok: true,
+      value: {
+        ...completed.value,
+        summary: {
+          ...completed.value.summary,
+          decisions: completed.value.summary.decisions.map((decision) => ({
+            ...decision,
+            evidenceTurnIds: [postSnapshotTurnId],
+          })),
+          topics: completed.value.summary.topics.map((topic) => ({
+            ...topic,
+            evidenceTurnIds: [postSnapshotTurnId],
+          })),
+        },
+      },
+    });
+
+    await expect(pending).resolves.toMatchObject({
+      generated: false,
+      generationFailure: { code: "INVALID_LIVE_SUMMARY_OUTPUT", retryable: false },
+    });
+    expect(meetings.snapshot).toMatchObject({
+      draftSummary: null,
+      summarizedTurnIds: [],
+    });
+  });
+
+  it("fails closed when exact generated evidence is changed before it is applied", async () => {
+    const meetings = await startedRepository();
+    const append = new AppendLiveTranscriptTurn(meetings);
+    await append.execute("meeting-1", {
+      endMs: 5_000,
+      speakerId: "speaker-a",
+      startMs: 1_000,
+      text: "Первоначальный текст финальной реплики.",
+      turnId: "turn-mutated",
+    });
+    const summarizer = new DeferredSummarizer();
+    const refresh = new RefreshLiveMeeting({
+      meetings,
+      projector: new RecordingProjector(),
+      summarizer,
+    });
+
+    const pending = refresh.execute({
+      captions: [],
+      meetingId: "meeting-1",
+      nowMs: 300_000,
+      projection: "skip",
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    if (meetings.snapshot === null) {
+      throw new Error("expected live meeting snapshot");
+    }
+    meetings.snapshot = {
+      ...meetings.snapshot,
+      revision: meetings.snapshot.revision + 1,
+      turns: meetings.snapshot.turns.map((turn) => turn.turnId === "turn-mutated"
+        ? { ...turn, text: "Изменённый текст той же final-реплики." }
+        : turn),
+    };
+    summarizer.resolveNext(generatedSummary(summarizer.requests[0]!));
+
+    await expect(pending).resolves.toMatchObject({
+      generated: false,
+      generationStale: true,
+    });
+    expect(meetings.snapshot).toMatchObject({
+      draftSummary: null,
+      summarizedTurnIds: [],
+    });
+  });
+
+  it("fails closed when exact generated evidence disappears before it is applied", async () => {
+    const meetings = await startedRepository();
+    const append = new AppendLiveTranscriptTurn(meetings);
+    await append.execute("meeting-1", {
+      endMs: 5_000,
+      speakerId: "speaker-a",
+      startMs: 1_000,
+      text: "Реплика, которая не должна исчезнуть из доказательств.",
+      turnId: "turn-removed",
+    });
+    const summarizer = new DeferredSummarizer();
+    const refresh = new RefreshLiveMeeting({
+      meetings,
+      projector: new RecordingProjector(),
+      summarizer,
+    });
+
+    const pending = refresh.execute({
+      captions: [],
+      meetingId: "meeting-1",
+      nowMs: 300_000,
+      projection: "skip",
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    if (meetings.snapshot === null) {
+      throw new Error("expected live meeting snapshot");
+    }
+    meetings.snapshot = {
+      ...meetings.snapshot,
+      revision: meetings.snapshot.revision + 1,
+      turns: [],
+    };
+    summarizer.resolveNext(generatedSummary(summarizer.requests[0]!));
+
+    await expect(pending).resolves.toMatchObject({
+      generated: false,
+      generationStale: true,
+    });
+    expect(meetings.snapshot).toMatchObject({
+      draftSummary: null,
+      summarizedTurnIds: [],
+    });
+  });
+
+  it("keeps the terminal fence when a meeting ends during incremental generation", async () => {
+    const meetings = await startedRepository();
+    const append = new AppendLiveTranscriptTurn(meetings);
+    await append.execute("meeting-1", {
+      endMs: 5_000,
+      speakerId: "speaker-a",
+      startMs: 1_000,
+      text: "Реплика перед завершением звонка.",
+      turnId: "turn-before-end",
+    });
+    const summarizer = new DeferredSummarizer();
+    const refresh = new RefreshLiveMeeting({
+      meetings,
+      projector: new RecordingProjector(),
+      summarizer,
+    });
+
+    const pending = refresh.execute({
+      captions: [],
+      meetingId: "meeting-1",
+      nowMs: 300_000,
+      projection: "skip",
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    await new FinishLiveMeeting(meetings).execute("meeting-1", 301_000);
+    summarizer.resolveNext(generatedSummary(summarizer.requests[0]!));
+
+    await expect(pending).resolves.toMatchObject({
+      generated: false,
+      generationStale: true,
+    });
+    expect(meetings.snapshot).toMatchObject({
+      draftSummary: null,
+      status: "ended",
+      summarizedTurnIds: [],
+    });
+  });
+
+  it("allows only one replay of the same generated evidence to advance the summary revision", async () => {
+    const meetings = await startedRepository();
+    await new AppendLiveTranscriptTurn(meetings).execute("meeting-1", {
+      endMs: 5_000,
+      speakerId: "speaker-a",
+      startMs: 1_000,
+      text: "Единственная реплика для конкурентных генераций.",
+      turnId: "turn-replay",
+    });
+    const summarizer = new DeferredSummarizer();
+    const refresh = new RefreshLiveMeeting({
+      meetings,
+      projector: new RecordingProjector(),
+      summarizer,
+    });
+
+    const first = refresh.execute({
+      captions: [],
+      meetingId: "meeting-1",
+      nowMs: 300_000,
+      projection: "skip",
+    });
+    const second = refresh.execute({
+      captions: [],
+      meetingId: "meeting-1",
+      nowMs: 300_000,
+      projection: "skip",
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(summarizer.requests).toHaveLength(2);
+
+    summarizer.resolveNext(generatedSummary(summarizer.requests[0]!));
+    await expect(first).resolves.toMatchObject({ generated: true, projected: false });
+    summarizer.resolveNext(generatedSummary(summarizer.requests[1]!));
+    await expect(second).resolves.toMatchObject({
+      generated: false,
+      generationStale: true,
+      projected: false,
+    });
+    expect(meetings.snapshot).toMatchObject({
+      draftSummary: { revision: 1 },
+      summarizedTurnIds: ["turn-replay"],
+    });
   });
 });

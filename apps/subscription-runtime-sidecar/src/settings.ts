@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import {
   auditedSubscriptionRuntimePackageVersion,
+  incrementalMeetingSummaryOutputSchemaName,
   incrementalMeetingSummaryPolicyVersion,
   meetingSummaryOutputSchemaName,
   meetingSummaryPolicyVersion,
@@ -73,7 +74,10 @@ const deploymentPolicySchema = z
         interactive: z.literal(false),
         responseFormat: z.literal("json"),
         selectedOutputKind: z.literal("structured_output"),
-        outputSchemaName: z.literal(meetingSummaryOutputSchemaName),
+        outputSchemaName: z.union([
+          z.literal(meetingSummaryOutputSchemaName),
+          z.literal(incrementalMeetingSummaryOutputSchemaName),
+        ]),
         isolatedCwd: z.string().min(1),
       }),
     ),
@@ -222,6 +226,7 @@ async function assertDeploymentPolicy(
       subscriptionRuntimeSummaryMaxOutputTokens,
     ) ||
     valuesDiffer(finalProfile.reasoningEffort, subscriptionRuntimeReasoningEffort) ||
+    finalProfile.outputSchemaName !== meetingSummaryOutputSchemaName ||
     valuesDiffer(incrementalProfile.model, subscriptionRuntimeIncrementalModel) ||
     valuesDiffer(
       incrementalProfile.policyVersion,
@@ -235,6 +240,8 @@ async function assertDeploymentPolicy(
       incrementalProfile.reasoningEffort,
       subscriptionRuntimeIncrementalReasoningEffort,
     ) ||
+    incrementalProfile.outputSchemaName !==
+      incrementalMeetingSummaryOutputSchemaName ||
     policy.data.transport.bind !== settings.bindAddress ||
     policy.data.transport.serviceTokenFile !==
       env.SUBSCRIPTION_RUNTIME_SERVICE_TOKEN_FILE ||

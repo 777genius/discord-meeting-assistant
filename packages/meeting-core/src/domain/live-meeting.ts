@@ -405,6 +405,42 @@ function validateSummary(
   });
 }
 
+/**
+ * Resolves the immutable evidence snapshot used to generate a summary against
+ * the aggregate's current timeline. A live turn may be appended at any point
+ * in timestamp order while a request is in flight, but the request may never
+ * silently switch to that newer turn or to a changed version of old evidence.
+ */
+function resolveExactGeneratedEvidence(
+  finalizedTurns: readonly TranscriptTurn[],
+  evidenceSnapshots: readonly TranscriptTurnSnapshot[],
+): readonly TranscriptTurn[] {
+  if (evidenceSnapshots.length === 0) {
+    throw new DomainInvariantError(
+      "INVALID_EVIDENCE_REFERENCE",
+      "live summary must cover at least one finalized evidence turn",
+    );
+  }
+  const evidenceTurns = evidenceSnapshots.map((snapshot) => TranscriptTurn.create(snapshot));
+  if (new Set(evidenceTurns.map(({ turnId }) => turnId)).size !== evidenceTurns.length) {
+    throw new DomainInvariantError(
+      "DUPLICATE_IDENTIFIER",
+      "live summary generated evidence turn IDs must be unique",
+    );
+  }
+  const finalizedTurnsById = new Map(finalizedTurns.map((turn) => [turn.turnId, turn]));
+  return evidenceTurns.map((evidenceTurn) => {
+    const currentTurn = finalizedTurnsById.get(evidenceTurn.turnId);
+    if (currentTurn === undefined || !currentTurn.equals(evidenceTurn)) {
+      throw new DomainInvariantError(
+        "CONFLICTING_COMPLETION",
+        "live summary evidence changed after generation began",
+      );
+    }
+    return currentTurn;
+  });
+}
+
 function requireUniqueIdentifiers(identifiers: readonly string[]): void {
   if (new Set(identifiers).size !== identifiers.length) {
     throw new DomainInvariantError(
@@ -595,23 +631,24 @@ export class LiveMeeting {
   }
 
   public acceptSummary(input: {
+    /** Exact immutable transcript evidence supplied to the generator. */
+    readonly evidenceTurns: readonly TranscriptTurnSnapshot[];
     readonly generatedAtMs: number;
     readonly summary: LiveSummaryDraftSnapshot;
     readonly telemetry?: LiveGenerationTelemetrySnapshot;
-    readonly throughTurnCount: number;
     readonly usage?: LiveGenerationUsageSnapshot;
   }): void {
-    const throughTurnCount = requireNonNegativeInteger(
-      input.throughTurnCount,
-      "liveSummary.throughTurnCount",
+    const coveredTurns = resolveExactGeneratedEvidence(
+      this.finalizedTurns,
+      input.evidenceTurns,
     );
-    if (throughTurnCount > this.finalizedTurns.length) {
+    const coveredTurnIds = new Set<string>(coveredTurns.map(({ turnId }) => turnId));
+    if ([...this.summarizedTurnIdSet].some((turnId) => !coveredTurnIds.has(turnId))) {
       throw new DomainInvariantError(
         "CONFLICTING_COMPLETION",
-        "live summary cannot cover turns outside the generation snapshot",
+        "live summary evidence coverage cannot regress",
       );
     }
-    const coveredTurns = this.finalizedTurns.slice(0, throughTurnCount);
     const expectedSummaryRevision = (this.summaryDraft?.revision ?? 0) + 1;
     const summary = validateSummary(input.summary, coveredTurns, expectedSummaryRevision);
     const generatedAtMs = requireNonNegativeInteger(input.generatedAtMs, "liveSummary.generatedAtMs");

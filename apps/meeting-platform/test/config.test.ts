@@ -36,7 +36,23 @@ describe("platform configuration", () => {
 
     expect(paths).toHaveLength(7);
     expect(config.secrets.discordToken).toBe("value-for:/run/secrets/discord");
+    expect(config.discordPublicationMode).toBe("message");
     expect(Object.keys(environment)).not.toContain("OPENAI_API_KEY");
+  });
+
+  it("uses direct channel publication by default and accepts explicit legacy threads", async () => {
+    const direct = await loadPlatformConfig(environment, async () => "value");
+    const thread = await loadPlatformConfig(
+      { ...environment, DISCORD_PUBLICATION_MODE: "thread" },
+      async () => "value",
+    );
+
+    expect(direct.discordPublicationMode).toBe("message");
+    expect(thread.discordPublicationMode).toBe("thread");
+    await expect(loadPlatformConfig(
+      { ...environment, DISCORD_PUBLICATION_MODE: "channel" },
+      async () => "value",
+    )).rejects.toThrow();
   });
 
   it("loads a Voicetext machine bearer only from a secret file", async () => {

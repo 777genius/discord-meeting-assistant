@@ -49,13 +49,15 @@ class FakeDiscordProjectionClient implements DiscordProjectionClient {
     parentChannelId: string;
     marker: string;
     referenceHint?: DiscordProjectionReference;
+    threadRecoveryName?: string;
   }): Promise<LocatedDiscordProjection | undefined> {
     this.inspectCount += 1;
     const byHint = input.referenceHint === undefined
       ? undefined
       : this.threads.find(
           (thread) =>
-            thread.threadId === input.referenceHint?.threadId &&
+            input.referenceHint?.kind === "thread" &&
+            thread.threadId === input.referenceHint.threadId &&
             thread.message?.messageId === input.referenceHint.messageId,
         );
     const thread = byHint ?? this.threads.find(
@@ -67,8 +69,8 @@ class FakeDiscordProjectionClient implements DiscordProjectionClient {
       return undefined;
     }
     return thread.message === undefined
-      ? { threadId: thread.threadId }
-      : { threadId: thread.threadId, messageId: thread.message.messageId };
+      ? { kind: "thread", threadId: thread.threadId }
+      : { kind: "thread", threadId: thread.threadId, messageId: thread.message.messageId };
   }
 
   async createThread(input: {
@@ -91,19 +93,33 @@ class FakeDiscordProjectionClient implements DiscordProjectionClient {
     return threadId;
   }
 
+  async reopenThread(input: { threadId: string }): Promise<void> {
+    this.thread(input.threadId);
+  }
+
   async renameThread(input: { threadId: string; name: string }): Promise<void> {
     this.renameCount += 1;
     this.thread(input.threadId).name = input.name;
   }
 
   async createMessage(input: {
-    threadId: string;
+    container: { kind: "thread"; threadId: string } | {
+      kind: "channel-message";
+      parentChannelId: string;
+    };
     body: DiscordProjectionBody;
     marker: string;
   }): Promise<string> {
+    if (input.container.kind !== "thread") {
+      throw new Error("Fake supports thread-only contract coverage");
+    }
     this.createMessageCount += 1;
     const messageId = `3${String(this.createMessageCount).padStart(16, "0")}`;
-    this.thread(input.threadId).message = { messageId, ...input };
+    this.thread(input.container.threadId).message = {
+      messageId,
+      body: input.body,
+      marker: input.marker,
+    };
     if (this.throwAfterNextMessageCreate) {
       this.throwAfterNextMessageCreate = false;
       throw new Error("unknown create-message outcome");
@@ -112,13 +128,15 @@ class FakeDiscordProjectionClient implements DiscordProjectionClient {
   }
 
   async editMessage(input: {
-    threadId: string;
-    messageId: string;
+    reference: DiscordProjectionReference;
     body: DiscordProjectionBody;
     marker: string;
   }): Promise<void> {
-    const message = this.thread(input.threadId).message;
-    if (message?.messageId !== input.messageId) {
+    if (input.reference.kind !== "thread") {
+      throw new Error("Fake supports thread-only contract coverage");
+    }
+    const message = this.thread(input.reference.threadId).message;
+    if (message?.messageId !== input.reference.messageId) {
       throw new Error("Message does not exist");
     }
     if (this.nextMessageEditError !== null) {
@@ -145,7 +163,9 @@ class FakeDiscordProjectionClient implements DiscordProjectionClient {
 }
 
 function publisher(client: DiscordProjectionClient): DiscordSummaryPublisher {
-  return new DiscordSummaryPublisher(client, new InProcessProjectionLock());
+  return new DiscordSummaryPublisher(client, new InProcessProjectionLock(), {
+    publicationMode: "thread",
+  });
 }
 
 describe("DiscordSummaryPublisher contract", () => {
@@ -173,7 +193,8 @@ describe("DiscordSummaryPublisher contract", () => {
     expect(client.threads).toHaveLength(1);
     expect(client.createThreadCount).toBe(1);
     expect(client.createMessageCount).toBe(1);
-    expect(client.threads[0]?.name).toMatch(/ \[код [0-9a-f]{20}\]$/u);
+    expect(client.threads[0]?.name).toBe("Meeting summary");
+    expect(client.threads[0]?.name).not.toContain("код");
     expect(client.threads[0]?.message?.body.markdown).toContain("Corrected summary");
   });
 
@@ -183,6 +204,10 @@ describe("DiscordSummaryPublisher contract", () => {
 
     const reference = await publisher(client).publish(command);
 
+    expect(reference.kind).toBe("thread");
+    if (reference.kind !== "thread") {
+      throw new Error("expected a thread receipt");
+    }
     expect(reference.threadId).toBe(client.threads[0]?.threadId);
     expect(client.threads).toHaveLength(1);
     expect(client.createThreadCount).toBe(1);
@@ -276,6 +301,11 @@ describe("DiscordSummaryPublisher contract", () => {
       currentReference: first,
     });
 
+    expect(first.kind).toBe("thread");
+    expect(recovered.kind).toBe("thread");
+    if (first.kind !== "thread" || recovered.kind !== "thread") {
+      throw new Error("expected thread receipts");
+    }
     expect(recovered.threadId).toBe(first.threadId);
     expect(recovered.messageId).not.toBe(first.messageId);
     expect(client.threads).toHaveLength(1);
@@ -337,7 +367,7 @@ describe("DiscordSummaryPublisher contract", () => {
     })).resolves.toEqual(reference);
 
     expect(client.inspectCount).toBeGreaterThan(inspectionsBeforeFailure);
-    expect(client.renameCount).toBe(2);
+    expect(client.renameCount).toBe(1);
     expect(client.createThreadCount).toBe(1);
     expect(client.createMessageCount).toBe(1);
     expect(client.threads[0]?.message?.body.markdown).toContain("Recovered archived thread");
@@ -363,29 +393,77 @@ describe("DiscordSummaryPublisher contract", () => {
     expect(client.threads[0]?.message?.body.markdown).toContain("Canonical update");
   });
 
-  it("replaces a live captions embed with the final one-embed summary", async () => {
+  it("keeps an authoritative transcript timeline when finalizing the same message", async () => {
     const client = new FakeDiscordProjectionClient();
     const subject = publisher(client);
-    const projectionKey = createMeetingDiscordProjectionKey("meeting-42", command.parentChannelId);
-    const live = await subject.publish({
-      ...command,
-      projectionKey,
-      markdown: "# Встреча в процессе\n\nПредварительное саммари.",
-      liveCaptionsMarkdown: "## 🎙️ Сейчас говорят\n\n… `00:05` **Аня:** привет",
+    const livePublisher = new DiscordLiveMeetingProjectionAdapter(subject);
+    const finalPublisher = new DiscordSummaryPublicationAdapter(subject);
+    const live = await livePublisher.publish({
+      captions: [{
+        endMs: 8_000,
+        isFinal: false,
+        speakerId: "speaker-a",
+        startMs: 5_000,
+        text: "Обсуждаем выпуск.",
+      }],
+      currentExternalPublicationId: null,
+      elapsedMs: 8_000,
+      idempotencyKey: "meeting-live-projection:v1|meeting-42",
+      meetingId: "meeting-42",
+      publicationTargetId: command.parentChannelId,
+      revision: 1,
+      status: "active",
+      summary: null,
+      updatedAtMs: 8_000,
+    });
+    expect(live.ok).toBe(true);
+    if (!live.ok) {
+      throw new Error("expected the live publication to succeed");
+    }
+
+    const final = await finalPublisher.publish({
+      idempotencyKey: "meeting-summary-publication:v1|meeting-42",
+      meetingId: "meeting-42",
+      publicationTargetId: command.parentChannelId,
+      summary: {
+        actionItems: [],
+        decisions: [],
+        openQuestions: [],
+        overview: "Выпуск согласован.",
+        summaryId: "summary-42",
+        title: "Итоги встречи",
+        topics: [],
+        transcriptId: "transcript-42",
+        version: 1,
+      },
+      transcript: {
+        recordingId: "recording-42",
+        transcriptId: "transcript-42",
+        turns: [{
+          endMs: 8_000,
+          speakerId: "speaker-a",
+          startMs: 5_000,
+          text: "Обсуждаем выпуск.",
+          turnId: "turn-1",
+        }],
+        version: 1,
+      },
+      currentExternalPublicationId: live.value.externalPublicationId,
     });
 
-    const final = await subject.publish({
-      ...command,
-      projectionKey,
-      markdown: "# Итоги встречи\n\nФинальное саммари.",
-      currentReference: live,
+    expect(final).toEqual({
+      ok: true,
+      value: { externalPublicationId: live.value.externalPublicationId },
     });
-
-    expect(final).toEqual(live);
     expect(client.threads).toHaveLength(1);
-    expect(client.threads[0]?.message?.body).toEqual({
-      markdown: "# Итоги встречи\n\nФинальное саммари.",
-    });
+    expect(client.createMessageCount).toBe(1);
+    expect(client.threads[0]?.message?.body.markdown).toContain("Выпуск согласован.");
+    expect(client.threads[0]?.message?.body.liveCaptionsMarkdown).toContain(
+      "## 🗣️ Расшифровка встречи",
+    );
+    expect(client.threads[0]?.message?.body.liveCaptionsMarkdown).toContain(
+      "✓ `00:05-00:08` **speaker-a:** Обсуждаем выпуск.",
+    );
   });
 
   it("keeps one projection when a manually renamed live thread is finalized", async () => {

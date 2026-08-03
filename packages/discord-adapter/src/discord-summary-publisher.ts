@@ -1,22 +1,52 @@
 import type {
   DiscordProjectionClient,
+  DiscordProjectionContainer,
   DiscordProjectionReference,
+  DiscordPublicationMode,
   LocatedDiscordProjection,
   ProjectionLock,
   PublishDiscordSummary,
 } from "./discord-projection.js";
 import {
+  discordPublicationModeSchema,
   publishDiscordSummarySchema,
   toDiscordProjectionBody,
 } from "./discord-projection.js";
-import { createDiscordThreadName, createProjectionMarker } from "./projection-marker.js";
 import { shouldReconcileDirectProjectionEditFailure } from "./discord-projection-error-classification.js";
+import {
+  createDiscordThreadName,
+  createDiscordThreadRecoveryName,
+  createProjectionMarker,
+} from "./projection-marker.js";
+
+export interface DiscordSummaryPublisherOptions {
+  /**
+   * New meetings default to one mutable message in the results channel.
+   * Existing thread receipts remain in their original container so a rollout
+   * never creates a second visible projection for the same meeting.
+   */
+  readonly publicationMode?: DiscordPublicationMode;
+}
+
+type AcquiredProjection =
+  | { readonly createdThread: false; readonly located: LocatedDiscordProjection }
+  | {
+    readonly createdThread: true;
+    readonly located: Extract<LocatedDiscordProjection, { readonly kind: "thread" }>;
+  };
 
 export class DiscordSummaryPublisher {
+  private readonly publicationMode: DiscordPublicationMode;
+
   constructor(
     private readonly client: DiscordProjectionClient,
     private readonly lock: ProjectionLock,
-  ) {}
+    options: DiscordSummaryPublisherOptions = {},
+  ) {
+    this.publicationMode = discordPublicationModeSchema.parse(
+      options.publicationMode ?? "message",
+    );
+  }
 
   async publish(rawInput: PublishDiscordSummary): Promise<DiscordProjectionReference> {
     const input = publishDiscordSummarySchema.parse(rawInput);
@@ -28,8 +58,7 @@ export class DiscordSummaryPublisher {
       if (input.currentReference !== undefined) {
         try {
           await this.client.editMessage({
-            threadId: input.currentReference.threadId,
-            messageId: input.currentReference.messageId,
+            reference: input.currentReference,
             body: toDiscordProjectionBody(input),
             marker,
           });
@@ -52,49 +81,98 @@ export class DiscordSummaryPublisher {
     marker: string,
     legacyMarkers: readonly string[],
   ): Promise<DiscordProjectionReference> {
-    const threadName = createDiscordThreadName(input.threadTitle, marker);
-    let located = await this.locateProjection(input, marker, legacyMarkers);
+    const threadName = createDiscordThreadName(input.threadTitle);
+    const threadRecoveryName = createDiscordThreadRecoveryName(marker);
+    const existing = await this.locateProjection(
+      input,
+      marker,
+      legacyMarkers,
+      threadRecoveryName,
+    );
+    const acquired: AcquiredProjection = existing === undefined
+      ? await this.createOrRecoverContainer(
+        input,
+        threadRecoveryName,
+        marker,
+        legacyMarkers,
+      )
+      : existing.kind === "thread" && existing.messageId === undefined
+        ? {
+          // A recovery-name thread without a marker-bearing message is the
+          // durable remnant of a crash between Discord thread and message
+          // creation. Complete it and replace the temporary name.
+          createdThread: true,
+          located: existing,
+        }
+        : { createdThread: false, located: existing };
+    const { createdThread, located } = acquired;
 
-    if (located === undefined) {
-      located = await this.createOrRecoverThread(input, threadName, marker, legacyMarkers);
+    if (located.kind === "thread") {
+      await this.client.reopenThread({ threadId: located.threadId });
     }
 
-    await this.client.renameThread({ threadId: located.threadId, name: threadName });
-
     const message = located.messageId === undefined
-      ? await this.createOrRecoverMessage(input, located.threadId, marker, legacyMarkers)
+      ? await this.createOrRecoverMessage(
+        input,
+        toContainer(located),
+        marker,
+        legacyMarkers,
+        threadRecoveryName,
+      )
       : { created: false, messageId: located.messageId };
 
+    if (createdThread) {
+      await this.client.renameThread({ threadId: located.threadId, name: threadName });
+    }
+
+    const reference = toReference(located, message.messageId);
     if (!message.created) {
       await this.client.editMessage({
-        threadId: located.threadId,
-        messageId: message.messageId,
+        reference,
         body: toDiscordProjectionBody(input),
         marker,
       });
     }
 
-    return { threadId: located.threadId, messageId: message.messageId };
+    return reference;
   }
 
-  private async createOrRecoverThread(
+  private async createOrRecoverContainer(
     input: PublishDiscordSummary,
-    name: string,
+    threadRecoveryName: string,
     marker: string,
     legacyMarkers: readonly string[],
-  ): Promise<LocatedDiscordProjection> {
+  ): Promise<AcquiredProjection> {
+    if (this.publicationMode === "message") {
+      return {
+        createdThread: false,
+        located: { kind: "channel-message", parentChannelId: input.parentChannelId },
+      };
+    }
+
     try {
       return {
-        threadId: await this.client.createThread({
-          parentChannelId: input.parentChannelId,
-          name,
-          marker,
-        }),
+        createdThread: true,
+        located: {
+          kind: "thread",
+          threadId: await this.client.createThread({
+            parentChannelId: input.parentChannelId,
+            name: threadRecoveryName,
+            marker,
+          }),
+        },
       };
     } catch (error: unknown) {
-      const recovered = await this.locateProjection(input, marker, legacyMarkers);
+      const recovered = await this.locateProjection(
+        input,
+        marker,
+        legacyMarkers,
+        threadRecoveryName,
+      );
       if (recovered !== undefined) {
-        return recovered;
+        return recovered.kind === "thread" && recovered.messageId === undefined
+          ? { createdThread: true, located: recovered }
+          : { createdThread: false, located: recovered };
       }
       throw error;
     }
@@ -102,19 +180,25 @@ export class DiscordSummaryPublisher {
 
   private async createOrRecoverMessage(
     input: PublishDiscordSummary,
-    threadId: string,
+    container: DiscordProjectionContainer,
     marker: string,
     legacyMarkers: readonly string[],
+    threadRecoveryName: string,
   ): Promise<{ readonly created: boolean; readonly messageId: string }> {
     try {
       const messageId = await this.client.createMessage({
-        threadId,
+        container,
         body: toDiscordProjectionBody(input),
         marker,
       });
       return { created: true, messageId };
     } catch (error: unknown) {
-      const recovered = await this.locateProjection(input, marker, legacyMarkers);
+      const recovered = await this.locateProjection(
+        input,
+        marker,
+        legacyMarkers,
+        threadRecoveryName,
+      );
       if (recovered?.messageId !== undefined) {
         return { created: false, messageId: recovered.messageId };
       }
@@ -126,12 +210,18 @@ export class DiscordSummaryPublisher {
     input: PublishDiscordSummary,
     marker: string,
     legacyMarkers: readonly string[],
+    threadRecoveryName: string,
   ): Promise<LocatedDiscordProjection | undefined> {
-    for (const candidateMarker of [marker, ...legacyMarkers]) {
+    const candidates = [marker, ...legacyMarkers];
+    for (const [index, candidateMarker] of candidates.entries()) {
       const located = await this.client.inspect({
+        includeThreads: this.publicationMode === "thread" ||
+          input.currentReference?.kind === "thread" ||
+          index > 0,
         parentChannelId: input.parentChannelId,
         marker: candidateMarker,
         ...(input.currentReference === undefined ? {} : { referenceHint: input.currentReference }),
+        threadRecoveryName,
       });
       if (located !== undefined) {
         return located;
@@ -139,6 +229,21 @@ export class DiscordSummaryPublisher {
     }
     return undefined;
   }
+}
+
+function toContainer(located: LocatedDiscordProjection): DiscordProjectionContainer {
+  return located.kind === "thread"
+    ? { kind: "thread", threadId: located.threadId }
+    : { kind: "channel-message", parentChannelId: located.parentChannelId };
+}
+
+function toReference(
+  located: LocatedDiscordProjection,
+  messageId: string,
+): DiscordProjectionReference {
+  return located.kind === "thread"
+    ? { kind: "thread", threadId: located.threadId, messageId }
+    : { kind: "channel-message", parentChannelId: located.parentChannelId, messageId };
 }
 
 function uniqueMarkers(legacyProjectionKeys: readonly string[], primaryMarker: string): string[] {

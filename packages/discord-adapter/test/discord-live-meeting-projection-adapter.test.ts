@@ -71,7 +71,11 @@ class FakeLiveProjector {
 
   async publish(input: PublishDiscordSummary): Promise<DiscordProjectionReference> {
     this.inputs.push(input);
-    return { threadId: "22222222222222222", messageId: "33333333333333333" };
+    return {
+      kind: "thread",
+      threadId: "22222222222222222",
+      messageId: "33333333333333333",
+    };
   }
 }
 
@@ -86,7 +90,7 @@ describe("DiscordLiveMeetingProjectionAdapter", () => {
       ok: true,
       value: {
         externalPublicationId:
-          "discord:v1:thread:22222222222222222:message:33333333333333333",
+          "discord:v2:thread:22222222222222222:message:33333333333333333",
       },
     });
     expect(projector.inputs).toHaveLength(1);
@@ -94,14 +98,42 @@ describe("DiscordLiveMeetingProjectionAdapter", () => {
       projectionKey: createMeetingDiscordProjectionKey("meeting-42", "11111111111111111"),
       legacyProjectionKeys: ["meeting-live-projection:v1|meeting-42"],
       currentReference: {
+        kind: "thread",
         threadId: "22222222222222222",
         messageId: "33333333333333333",
       },
     });
     expect(projector.inputs[0]?.markdown).toContain("## Предварительное саммари");
-    expect(projector.inputs[0]?.liveCaptionsMarkdown).toContain("## 🎙️ Сейчас говорят");
+    expect(projector.inputs[0]?.liveCaptionsMarkdown).toContain("## 🎙️ Реплики встречи");
     expect(projector.inputs[0]?.liveCaptionsMarkdown).toContain("<@1533228054724346087>");
-    expect(projector.inputs[0]?.liveCaptionsMarkdown).toContain("`00:05`");
+    expect(projector.inputs[0]?.liveCaptionsMarkdown).toContain("`00:05-00:08`");
+    expect(projector.inputs[0]?.threadTitle).toBe("Встреча · 2025-10-09 08:48 UTC");
+  });
+
+  it("keeps the deterministic meeting start in the live title after a summary update", async () => {
+    const projector = new FakeLiveProjector();
+    const adapter = new DiscordLiveMeetingProjectionAdapter(projector);
+
+    await adapter.publish({ ...request, summary: null });
+    await adapter.publish(request);
+
+    expect(projector.inputs.map(({ threadTitle }) => threadTitle)).toEqual([
+      "Встреча · 2025-10-09 08:48 UTC",
+      "Встреча · 2025-10-09 08:48 UTC",
+    ]);
+  });
+
+  it("uses a safe generic title when live timestamp data is invalid", async () => {
+    const projector = new FakeLiveProjector();
+    const adapter = new DiscordLiveMeetingProjectionAdapter(projector);
+
+    await adapter.publish({
+      ...request,
+      elapsedMs: -1,
+      summary: null,
+    });
+
+    expect(projector.inputs[0]?.threadTitle).toBe("Встреча");
   });
 
   it("shows a clear placeholder while a live summary is not ready", () => {
@@ -133,8 +165,60 @@ describe("DiscordLiveMeetingProjectionAdapter", () => {
     expect(summary.length).toBeLessThanOrEqual(4_000);
     expect(hasLoneSurrogate(captions)).toBe(false);
     expect(hasLoneSurrogate(summary)).toBe(false);
-    expect(captions).toContain("🎙️ Сейчас говорят");
+    expect(captions).toContain("🎙️ Реплики встречи");
     expect(summary).toContain("Предварительное саммари сокращено из-за лимита Discord.");
+  });
+
+  it("keeps finalized history and attributes a third Discord participant", () => {
+    const history = renderRussianLiveCaptionsMarkdown([
+      {
+        endMs: 4_000,
+        isFinal: true,
+        speakerId: "1533227577286852649",
+        startMs: 0,
+        text: "Открываю обсуждение.",
+      },
+      {
+        endMs: 9_000,
+        isFinal: true,
+        speakerId: "1533228054724346087",
+        startMs: 5_000,
+        text: "Проверю очередь.",
+      },
+      {
+        endMs: 15_000,
+        isFinal: false,
+        speakerId: "1533775868567224456",
+        startMs: 10_000,
+        text: "Подготовлю выпуск...",
+      },
+    ]);
+
+    expect(history).toContain("✓ `00:00-00:04` **<@1533227577286852649>:** Открываю обсуждение.");
+    expect(history).toContain("✓ `00:05-00:09` **<@1533228054724346087>:** Проверю очередь.");
+    expect(history).toContain("… `00:10-00:15` **<@1533775868567224456>:** Подготовлю выпуск...");
+    expect(history).not.toContain("Пока нет распознанных реплик.");
+  });
+
+  it("deterministically keeps the beginning and newest transcript history within Discord limits", () => {
+    const captions = Array.from({ length: 40 }, (_, index) => ({
+      endMs: (index + 1) * 1_000,
+      isFinal: true,
+      speakerId: `speaker-${index % 3}`,
+      startMs: index * 1_000,
+      text: `Реплика ${index}: ${"подробности ".repeat(12)}`,
+    }));
+
+    const first = renderRussianLiveCaptionsMarkdown(captions);
+    const reordered = renderRussianLiveCaptionsMarkdown(captions.toReversed());
+
+    expect(reordered).toBe(first);
+    expect(first.length).toBeLessThanOrEqual(1_900);
+    expect(first).toContain("Реплика 0:");
+    expect(first).toContain("Реплика 39:");
+    expect(first).toContain("Не поместилось реплик:");
+    expect(first).toContain("Показаны начало и последние.");
+    expect(hasLoneSurrogate(first)).toBe(false);
   });
 
   it("enforces per-embed and aggregate limits while disabling pings for both embeds", () => {

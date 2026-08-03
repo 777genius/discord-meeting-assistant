@@ -19,7 +19,10 @@ authentication, and subscription authentication must remain server-side.
 - Publish one Discord thread/message on the first non-empty caption. Evaluate
   updates every five seconds, but edit only when captions or summary state
   changed. The message contains a preliminary summary and a separate bounded
-  `Сейчас говорят` embed with speaker mentions and timings.
+  `Реплики встречи` embed with speaker mentions, timing intervals, and
+  chronological history. Mutable partials may change, but finalized captions
+  remain visible until final publication; a bounded runtime cache and
+  Discord-length truncation explicitly retain the beginning and newest history.
 - Generate the first summary at five minutes. Later generations have a 90-second
   minimum interval, run after roughly 300 new scheduling tokens, or are forced
   after three minutes of new finalized speech.
@@ -29,10 +32,15 @@ authentication, and subscription authentication must remain server-side.
 - Admit final summaries only with `gpt-5.6-sol`, `medium` reasoning, a 4096-token
   post-execution output budget, and policy version v6; admit incremental snapshots
   only with `gpt-5.6-luna`, `low` reasoning, a 2048-token post-execution output
-  budget, and policy version v2. The budget is not a provider generation cap or
-  a latency guarantee; the compact prompt and `low` reasoning are latency
-  optimizations. Keep the purposes and attestations independent so a live snapshot
-  can never satisfy the authoritative final-summary receipt.
+  budget, and policy version v3. The final schema remains
+  `discord_meeting_summary_v3`; the live schema is the separately admitted
+  `discord_meeting_incremental_summary_v1` with a one-sentence overview, up to
+  three topics with no more than two points, up to three entries per key list,
+  and one to three evidence IDs per item. It is explicitly a selective snapshot,
+  not a claim of complete meeting history. The budget is not a provider generation
+  cap or a latency guarantee; the compact prompt and `low` reasoning are latency
+  optimizations. Keep the purposes, schemas, and attestations independent so a
+  live snapshot can never satisfy the authoritative final-summary receipt.
 - Persist real provider token telemetry when available. API-equivalent cost is
   derived from a versioned price card and is never represented as an actual
   subscription invoice.
@@ -45,7 +53,8 @@ authentication, and subscription authentication must remain server-side.
 ## Consequences
 
 - A live outage can cause gaps or a placeholder, but cannot corrupt the
-  authoritative Craig artifacts. The final pipeline repairs the visible result.
+  authoritative Craig artifacts. Final publication replaces the derived
+  timeline with a bounded timeline rendered from the authoritative transcript.
 - One hour of audio no longer waits for an hour-scale transcription pass before
   showing useful text; STT work runs alongside the call.
 - Per-speaker provider sessions consume bounded concurrency. Over-capacity live

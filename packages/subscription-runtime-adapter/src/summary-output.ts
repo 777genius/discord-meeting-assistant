@@ -4,11 +4,15 @@ import type {
 } from "@discord-meeting/meeting-core";
 
 import { SubscriptionRuntimeAdapterError } from "./errors.js";
-import type { ProviderMeetingSummary } from "./provider-summary-schema.js";
+import type {
+  ProviderIncrementalMeetingSummary,
+  ProviderMeetingSummary,
+  ProviderMeetingSummaryWithEvidence,
+} from "./provider-summary-schema.js";
 import { stableSubscriptionRuntimeId } from "./stable-id.js";
 
 export function validateProviderSummaryEvidence(
-  summary: ProviderMeetingSummary,
+  summary: ProviderMeetingSummaryWithEvidence,
   knownTurnIds: ReadonlySet<string>,
   knownSpeakerIds: ReadonlySet<string>,
 ): void {
@@ -57,7 +61,7 @@ export function mapFinalProviderSummary(
 }
 
 export function mapIncrementalProviderSummary(
-  summary: ProviderMeetingSummary,
+  summary: ProviderIncrementalMeetingSummary,
   idempotencyKey: string,
   revision: number,
 ): LiveSummaryDraftSnapshot {
@@ -68,7 +72,7 @@ export function mapIncrementalProviderSummary(
 }
 
 function mapProviderSummaryContent(
-  summary: ProviderMeetingSummary,
+  summary: ProviderMeetingSummaryWithEvidence,
   idempotencyKey: string,
 ): Omit<LiveSummaryDraftSnapshot, "revision"> {
   return {

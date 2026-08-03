@@ -6,6 +6,7 @@ import {
   canonicalJsonSha256,
   subscriptionRuntimeIncrementalMaxOutputTokens,
   subscriptionRuntimeSummaryMaxOutputTokens,
+  type JsonObject,
 } from "@discord-meeting/subscription-runtime-adapter";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -145,6 +146,48 @@ describe("SubscriptionRuntimeExecutor", () => {
       "gpt-5.6-luna",
     ]));
     expect(processRequest?.env.AGENT_RUNTIME_REASONING_EFFORT).toBe("low");
+  });
+
+  it("applies the compact schema only to the incremental purpose", async () => {
+    root = await mkdtemp(join(tmpdir(), "sidecar-executor-test-"));
+    const keyFile = join(root, "local-encryption-key");
+    await writeFile(keyFile, "private-test-key\n", { mode: 0o600 });
+    const expandedFinalOutput = {
+      ...structuredOutput,
+      decisions: Array.from({ length: 4 }, () => ({
+        evidenceTurnIds: ["turn-1"],
+        text: "Подтверждено решение",
+      })),
+    };
+    const executor = new SubscriptionRuntimeExecutor(
+      options(keyFile, {
+        processRunner: {
+          run: async () => completedProcess(
+            {
+              usage: {
+                cacheWriteInputTokens: 0,
+                cachedInputTokens: 0,
+                inputTokens: 100,
+                outputTokens: 100,
+                reasoningOutputTokens: 0,
+                totalTokens: 200,
+              },
+            },
+            expandedFinalOutput,
+          ),
+        },
+      }),
+    );
+
+    await expect(executor.execute(canonicalRequest)).resolves.toMatchObject({
+      status: "completed",
+      structuredOutput: expandedFinalOutput,
+    });
+    await expect(executor.execute(incrementalCanonicalRequest)).resolves
+      .toMatchObject({
+        failure: { code: "provider_output_invalid", retryable: false },
+        status: "failed",
+      });
   });
 
   it("preserves Codex JSONL partial telemetry without fabricating cache-write input", async () => {
@@ -546,6 +589,7 @@ function completedProcess(
       totalTokens: 120,
     },
   },
+  output: JsonObject = structuredOutput,
 ): ProcessRunResult {
   return {
     exitCode: 0,
@@ -555,8 +599,8 @@ function completedProcess(
     stdout: JSON.stringify({
       protocolVersion: 1,
       status: "completed",
-      outputText: JSON.stringify(structuredOutput),
-      structuredOutput,
+      outputText: JSON.stringify(output),
+      structuredOutput: output,
       telemetry,
       warnings: [],
     }),

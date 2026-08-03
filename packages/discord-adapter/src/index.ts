@@ -1,6 +1,7 @@
 export {
   createMeetingDiscordProjectionKey,
   decodeDiscordExternalPublicationId,
+  discordPublicationModeSchema,
   discordProjectionReferenceSchema,
   discordProjectionBodySchema,
   DISCORD_EMBED_DESCRIPTION_LIMIT,
@@ -10,7 +11,9 @@ export {
   toDiscordProjectionBody,
   type DiscordProjectionBody,
   type DiscordProjectionClient,
+  type DiscordProjectionContainer,
   type DiscordProjectionReference,
+  type DiscordPublicationMode,
   type LocatedDiscordProjection,
   type ProjectionLock,
   type PublishDiscordSummary,
@@ -18,6 +21,7 @@ export {
 export { DiscordSummaryPublisher } from "./discord-summary-publisher.js";
 export {
   DiscordSummaryPublicationAdapter,
+  renderRussianFinalTranscriptTimelineMarkdown,
   renderRussianSummaryMarkdown,
 } from "./discord-summary-publication-adapter.js";
 export {
@@ -25,6 +29,11 @@ export {
   renderRussianLiveCaptionsMarkdown,
   renderRussianLiveSummaryMarkdown,
 } from "./discord-live-meeting-projection-adapter.js";
+export {
+  renderRussianTranscriptTimelineMarkdown,
+  type DiscordTranscriptTimelineEntry,
+  type DiscordTranscriptTimelineKind,
+} from "./discord-transcript-timeline.js";
 export { toDiscordPublicationFailure } from "./discord-publication-errors.js";
 export { InProcessProjectionLock } from "./in-process-projection-lock.js";
 export {

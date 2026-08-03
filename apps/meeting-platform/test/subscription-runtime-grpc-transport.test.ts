@@ -94,11 +94,12 @@ describe("subscription runtime gRPC transport mapping", () => {
     expect(JSON.parse(request.controlsJson)).toMatchObject({
       maxOutputTokens: 2_048,
       model: "gpt-5.6-luna",
+      outputSchemaName: "discord_meeting_incremental_summary_v1",
       reasoningEffort: "low",
     });
     expect(request.metadata).toMatchObject({
       model: "gpt-5.6-luna",
-      policyVersion: "meeting-summary.incremental.subscription-runtime.v2",
+      policyVersion: "meeting-summary.incremental.subscription-runtime.v3",
       reasoningEffort: "low",
       summaryRevision: "1",
       throughTurnCount: "1",

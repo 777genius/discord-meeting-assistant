@@ -25,16 +25,23 @@ export interface LiveDiscordThreadInput {
   readonly parentId: string;
 }
 
-export interface LiveDiscordThreadMessages {
+export type LiveDiscordProjectionContainerInput =
+  | {
+    readonly kind: "channel-message";
+    readonly parentChannelId: string;
+  }
+  | ({ readonly kind: "thread" } & LiveDiscordThreadInput);
+
+export interface LiveDiscordProjectionMessages {
   readonly messages: readonly LiveDiscordMessageInput[];
-  readonly thread: LiveDiscordThreadInput;
+  readonly container: LiveDiscordProjectionContainerInput;
 }
 
 export interface LiveDiscordProjectionReader {
   poll(input: {
     readonly createdSinceMilliseconds: number;
     readonly resultChannelId: string;
-  }): Promise<readonly LiveDiscordThreadMessages[]>;
+  }): Promise<readonly LiveDiscordProjectionMessages[]>;
 }
 
 export interface LiveDiscordObserverClock {
@@ -67,11 +74,14 @@ export interface NormalizedLiveDiscordProjection {
     readonly id: string;
   };
   readonly observedAt: string;
-  readonly thread: {
-    readonly id: string;
-    readonly name: string;
-    readonly parentId: string;
-  };
+  readonly container:
+    | { readonly kind: "channel-message"; readonly parentChannelId: string }
+    | {
+      readonly kind: "thread";
+      readonly id: string;
+      readonly name: string;
+      readonly parentId: string;
+    };
 }
 
 export interface LiveDiscordObservationTrace {
@@ -85,7 +95,7 @@ export interface LiveDiscordObservationTrace {
     readonly sutApplicationId: string;
   };
   readonly runId: string;
-  readonly schemaVersion: 1;
+  readonly schemaVersion: 2;
   readonly snapshots: readonly NormalizedLiveDiscordProjection[];
 }
 
@@ -120,7 +130,7 @@ export async function observeLiveDiscord(
   const latestProjectionByMessage = new Map<string, string>();
   let shouldPoll = true;
   while (shouldPoll) {
-    const threadMessages = await reader.poll({
+    const projectionMessages = await reader.poll({
       createdSinceMilliseconds: startedAtMilliseconds,
       resultChannelId: input.resultChannelId,
     });
@@ -133,7 +143,7 @@ export async function observeLiveDiscord(
       snapshots,
       startedAtMilliseconds,
       sutApplicationId: input.sutApplicationId,
-      threadMessages,
+      projectionMessages,
       latestProjectionByMessage,
     });
 
@@ -161,7 +171,7 @@ export async function observeLiveDiscord(
       sutApplicationId: input.sutApplicationId,
     }),
     runId: input.runId,
-    schemaVersion: 1,
+    schemaVersion: 2,
     snapshots: Object.freeze(snapshots),
   });
 }
@@ -170,7 +180,7 @@ export function normalizeLiveDiscordProjection(input: {
   readonly message: LiveDiscordMessageInput;
   readonly observedAtMilliseconds: number;
   readonly resultChannelId: string;
-  readonly thread: LiveDiscordThreadInput;
+  readonly container: LiveDiscordProjectionContainerInput;
 }): NormalizedLiveDiscordProjection {
   return Object.freeze({
     channel: Object.freeze({ id: requiredIdentifier(input.resultChannelId, "result channel") }),
@@ -187,11 +197,7 @@ export function normalizeLiveDiscordProjection(input: {
       id: requiredIdentifier(input.message.id, "message"),
     }),
     observedAt: toIsoTimestamp(input.observedAtMilliseconds, "projection observation"),
-    thread: Object.freeze({
-      id: requiredIdentifier(input.thread.id, "thread"),
-      name: normalizeRequiredText(input.thread.name, "thread name"),
-      parentId: requiredIdentifier(input.thread.parentId, "thread parent"),
-    }),
+    container: normalizeContainer(input.container),
   });
 }
 
@@ -206,7 +212,7 @@ export function liveDiscordProjectionFingerprint(
       embeds: projection.message.embeds,
       id: projection.message.id,
     },
-    thread: projection.thread,
+    container: projection.container,
   });
 }
 
@@ -229,12 +235,12 @@ function collectChangedProjections(input: {
   readonly snapshots: NormalizedLiveDiscordProjection[];
   readonly startedAtMilliseconds: number;
   readonly sutApplicationId: string;
-  readonly threadMessages: readonly LiveDiscordThreadMessages[];
+  readonly projectionMessages: readonly LiveDiscordProjectionMessages[];
 }): void {
-  const orderedThreads = input.threadMessages.toSorted((left, right) =>
-    left.thread.id.localeCompare(right.thread.id)
+  const orderedContainers = input.projectionMessages.toSorted((left, right) =>
+    containerIdentity(left.container).localeCompare(containerIdentity(right.container))
   );
-  for (const { messages, thread } of orderedThreads) {
+  for (const { messages, container } of orderedContainers) {
     const orderedMessages = messages.toSorted((left, right) =>
       left.createdAtMilliseconds - right.createdAtMilliseconds || left.id.localeCompare(right.id)
     );
@@ -251,9 +257,9 @@ function collectChangedProjections(input: {
         message,
         observedAtMilliseconds: input.observedAtMilliseconds,
         resultChannelId: input.resultChannelId,
-        thread,
+        container,
       });
-      const identity = `${projection.thread.id}:${projection.message.id}`;
+      const identity = `${containerIdentity(projection.container)}:${projection.message.id}`;
       const fingerprint = liveDiscordProjectionFingerprint(projection);
       if (input.latestProjectionByMessage.get(identity) === fingerprint) {
         continue;
@@ -262,6 +268,29 @@ function collectChangedProjections(input: {
       input.snapshots.push(projection);
     }
   }
+}
+
+function normalizeContainer(
+  container: LiveDiscordProjectionContainerInput,
+): NormalizedLiveDiscordProjection["container"] {
+  if (container.kind === "channel-message") {
+    return Object.freeze({
+      kind: "channel-message" as const,
+      parentChannelId: requiredIdentifier(container.parentChannelId, "parent channel"),
+    });
+  }
+  return Object.freeze({
+    kind: "thread" as const,
+    id: requiredIdentifier(container.id, "thread"),
+    name: normalizeRequiredText(container.name, "thread name"),
+    parentId: requiredIdentifier(container.parentId, "thread parent"),
+  });
+}
+
+function containerIdentity(container: LiveDiscordProjectionContainerInput | NormalizedLiveDiscordProjection["container"]): string {
+  return container.kind === "thread"
+    ? `thread:${container.id}`
+    : `channel-message:${container.parentChannelId}`;
 }
 
 function normalizeEmbed(input: LiveDiscordEmbedInput): NormalizedLiveDiscordEmbed {

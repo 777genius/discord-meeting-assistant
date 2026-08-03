@@ -1,4 +1,9 @@
-import { canonicalJsonSha256 } from "@discord-meeting/subscription-runtime-adapter";
+import {
+  canonicalJsonSha256,
+  incrementalMeetingSummaryOutputSchemaName,
+  providerIncrementalMeetingSummaryJsonSchema,
+  providerMeetingSummaryJsonSchema,
+} from "@discord-meeting/subscription-runtime-adapter";
 import { describe, expect, it } from "vitest";
 
 import { reconstructCanonicalRequest } from "../src/policy.js";
@@ -39,13 +44,17 @@ describe("subscription runtime request policy", () => {
     expect(reconstructed).toEqual(incrementalCanonicalRequest);
     expect(reconstructed.context.purpose).toBe("discord_meeting.summary.incremental");
     expect(reconstructed.context.metadata.policyVersion).toBe(
-      "meeting-summary.incremental.subscription-runtime.v2",
+      "meeting-summary.incremental.subscription-runtime.v3",
     );
     expect(reconstructed.task.controls).toMatchObject({
       maxOutputTokens: 2_048,
       model: "gpt-5.6-luna",
+      outputSchemaName: incrementalMeetingSummaryOutputSchemaName,
       reasoningEffort: "low",
     });
+    expect(reconstructed.task.controls.outputSchema).toEqual(
+      providerIncrementalMeetingSummaryJsonSchema,
+    );
   });
 
   it.each([
@@ -87,7 +96,41 @@ describe("subscription runtime request policy", () => {
     expect(() => reconstructCanonicalRequest(
       { ...request, purpose: "discord_meeting.summary.generate" },
       options,
-    )).toThrow("profile");
+    )).toThrow("output schema");
+  });
+
+  it("rejects swapped final and incremental output schemas before execution", () => {
+    const incremental = grpcRequest(incrementalCanonicalRequest);
+    const incrementalControls = JSON.parse(String(incremental.controlsJson)) as Record<
+      string,
+      unknown
+    >;
+    incrementalControls.outputSchema = providerMeetingSummaryJsonSchema;
+    incrementalControls.outputSchemaName = "discord_meeting_summary_v3";
+    expect(() => reconstructCanonicalRequest(
+      {
+        ...incremental,
+        controlsJson: JSON.stringify(incrementalControls),
+        outputSchemaJson: JSON.stringify(providerMeetingSummaryJsonSchema),
+      },
+      options,
+    )).toThrow("output schema");
+
+    const final = grpcRequest(canonicalRequest);
+    const finalControls = JSON.parse(String(final.controlsJson)) as Record<
+      string,
+      unknown
+    >;
+    finalControls.outputSchema = providerIncrementalMeetingSummaryJsonSchema;
+    finalControls.outputSchemaName = incrementalMeetingSummaryOutputSchemaName;
+    expect(() => reconstructCanonicalRequest(
+      {
+        ...final,
+        controlsJson: JSON.stringify(finalControls),
+        outputSchemaJson: JSON.stringify(providerIncrementalMeetingSummaryJsonSchema),
+      },
+      options,
+    )).toThrow("output schema");
   });
 
   it("fails closed for stale incremental policy and output-budget profiles", () => {

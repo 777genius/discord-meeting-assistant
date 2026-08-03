@@ -27,7 +27,7 @@ import {
   type LiveDiscordMessageInput,
   type LiveDiscordProjectionReader,
   type LiveDiscordThreadInput,
-  type LiveDiscordThreadMessages,
+  type LiveDiscordProjectionMessages,
 } from "./live-discord-observer.js";
 import { FileSecretReader, MacOsKeychainSecretReader } from "./keychain.js";
 
@@ -49,16 +49,20 @@ class DiscordJsLiveDiscordProjectionReader implements LiveDiscordProjectionReade
   public async poll(input: {
     readonly createdSinceMilliseconds: number;
     readonly resultChannelId: string;
-  }): Promise<readonly LiveDiscordThreadMessages[]> {
+  }): Promise<readonly LiveDiscordProjectionMessages[]> {
     const parent = await this.#client.channels.fetch(input.resultChannelId);
     if (!isResultsTextChannel(parent)) {
       throw new Error("Discord live observer results channel must be a guild text or announcement channel");
     }
     const threads = await publicThreadsFor(parent, input.createdSinceMilliseconds);
-    return Promise.all(threads.map(async (thread) => ({
+    const threadProjections = await Promise.all(threads.map(async (thread) => ({
       messages: await recentMessagesSince(thread, input.createdSinceMilliseconds),
-      thread: toThreadInput(thread),
+      container: { kind: "thread" as const, ...toThreadInput(thread) },
     })));
+    return [{
+      messages: await recentMessagesSince(parent, input.createdSinceMilliseconds),
+      container: { kind: "channel-message", parentChannelId: parent.id },
+    }, ...threadProjections];
   }
 
   public async close(): Promise<void> {
@@ -124,24 +128,26 @@ function isPublicTextThread(thread: AnyThreadChannel): thread is TextThreadChann
 }
 
 async function recentMessagesSince(
-  thread: TextThreadChannel,
+  channel: TextChannel | NewsChannel | TextThreadChannel,
   createdSinceMilliseconds: number,
 ): Promise<readonly LiveDiscordMessageInput[]> {
   const messages = new Map<string, LiveDiscordMessageInput>();
   let before: string | undefined;
   do {
-    const page = await thread.messages.fetch({
+    const page = await channel.messages.fetch({
       limit: 100,
       ...(before === undefined ? {} : { before }),
     });
+    let oldestMessageId: string | undefined;
     for (const message of page.values()) {
       messages.set(message.id, toMessageInput(message));
+      oldestMessageId = message.id;
     }
     const oldestTimestamp = Math.min(
       ...[...page.values()].map(({ createdTimestamp }) => createdTimestamp),
     );
     before = page.size === 100 && oldestTimestamp >= createdSinceMilliseconds
-      ? page.last()?.id
+      ? oldestMessageId
       : undefined;
   } while (before !== undefined);
   return [...messages.values()];

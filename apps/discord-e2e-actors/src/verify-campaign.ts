@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 
 import {
   fixtureManifestV1Schema,
-  retainedE2eEvidenceV2Schema,
+  retainedE2eEvidenceSchema,
   verifyE2eCampaign,
 } from "./e2e-evidence.js";
 
@@ -10,7 +10,7 @@ async function main(): Promise<void> {
   const { evidencePaths, manifestPath } = parseCampaignArguments(process.argv.slice(2));
   const manifest = fixtureManifestV1Schema.parse(await readJson(manifestPath));
   const runs = await Promise.all(
-    evidencePaths.map(async (path) => retainedE2eEvidenceV2Schema.parse(await readJson(path))),
+    evidencePaths.map(async (path) => retainedE2eEvidenceSchema.parse(await readJson(path))),
   );
   const verification = verifyE2eCampaign(manifest, runs);
   process.stdout.write(`${JSON.stringify(verification, undefined, 2)}\n`);
