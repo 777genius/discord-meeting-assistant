@@ -1,15 +1,24 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
-import { accessSync, constants, realpathSync } from "node:fs";
-import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { accessSync, constants, realpathSync, writeFileSync } from "node:fs";
+import {
+  lstat,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { delimiter, isAbsolute, join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
 
+const subscriptionRuntimeCodexModel = "gpt-5.6-luna";
 const profiles = Object.freeze({
   "discord_meeting.summary.generate": Object.freeze({
-    model: "gpt-5.6-luna",
+    model: subscriptionRuntimeCodexModel,
     outputKind: "structured_output",
     provider: "codex",
     purpose: "discord_meeting.summary.generate",
@@ -17,7 +26,7 @@ const profiles = Object.freeze({
     responseFormat: "json",
   }),
   "discord_meeting.summary.incremental": Object.freeze({
-    model: "gpt-5.6-luna",
+    model: subscriptionRuntimeCodexModel,
     outputKind: "structured_output",
     provider: "codex",
     purpose: "discord_meeting.summary.incremental",
@@ -25,6 +34,55 @@ const profiles = Object.freeze({
     responseFormat: "json",
   }),
 });
+
+const pinnedCodexTaskArgv = Object.freeze([
+  "exec",
+  "--json",
+  "--model",
+  subscriptionRuntimeCodexModel,
+  "--sandbox",
+  "read-only",
+  "--config",
+  'approval_policy="never"',
+  "--config",
+  'model_reasoning_effort="medium"',
+  "--config",
+  'model_verbosity="low"',
+  "--config",
+  'web_search="disabled"',
+  "--config",
+  "features.apps=false",
+  "--config",
+  "features.hooks=false",
+  "--config",
+  "features.memories=false",
+  "--config",
+  "features.multi_agent=false",
+  "--config",
+  "features.shell_snapshot=false",
+  "--config",
+  "features.skill_mcp_dependency_install=false",
+  "--ephemeral",
+  "--ignore-user-config",
+  "--ignore-rules",
+  "--color",
+  "never",
+  "--skip-git-repo-check",
+  "-",
+]);
+
+const childEnvironmentNames = Object.freeze([
+  "PATH",
+  "HOME",
+  "CI",
+  "CODEX_HOME",
+]);
+const captureDirectoryPrefix = ".codex-jsonl-";
+const staleCaptureAgeMs = 30 * 60 * 1000;
+const processStartedAtMs = Math.max(
+  0,
+  Math.floor(Date.now() - process.uptime() * 1000),
+);
 
 const tokenNames = Object.freeze([
   "input_tokens",
@@ -73,6 +131,7 @@ export async function main(argv = process.argv.slice(2), dependencies = {}) {
         input.codexBinaryPath,
         input.env,
       );
+      capture.configure(admittedCodexBinaryPath);
       return new FileBackendCodexWorker({
         // The wrapper delegates only to the admitted Codex executable and passes
         // stdout through unchanged, so the private worker retains its tool and
@@ -82,11 +141,7 @@ export async function main(argv = process.argv.slice(2), dependencies = {}) {
         model,
         providerInstanceId: input.providerInstanceId,
         reasoningEffort: profile.reasoningEffort,
-        sourceEnv: {
-          ...subscriptionOnlyEnvironment(input.env),
-          SUBSCRIPTION_RUNTIME_CODEX_CAPTURE_PATH: capture.usagePath,
-          SUBSCRIPTION_RUNTIME_CODEX_CAPTURE_TARGET: admittedCodexBinaryPath,
-        },
+        sourceEnv: subscriptionRuntimeChildEnvironment(input.env),
         stateRootDir: input.stateRootDir,
         workspacePath: input.cwd,
         ...(input.timeoutMs ? { taskTimeoutMs: input.timeoutMs } : {}),
@@ -134,15 +189,14 @@ async function runtimeDependencies(overrides) {
  * Called by the per-task executable shim. It forwards every byte from Codex
  * stdout while retaining only the final documented `turn.completed` usage.
  */
-export async function runCodexJsonlCapture(argv, environment = process.env) {
-  const target = requiredEnvironment(
-    environment,
-    "SUBSCRIPTION_RUNTIME_CODEX_CAPTURE_TARGET",
-  );
-  const usagePath = requiredEnvironment(
-    environment,
-    "SUBSCRIPTION_RUNTIME_CODEX_CAPTURE_PATH",
-  );
+export async function runCodexJsonlCapture(
+  argv,
+  configuration,
+  environment = process.env,
+) {
+  const { target, usagePath } = captureConfiguration(configuration);
+  const captureUsage = isPinnedCodexTaskInvocation(argv);
+  await rm(usagePath, { force: true });
   const decoder = new StringDecoder("utf8");
   let buffered = "";
   let lastUsage;
@@ -150,14 +204,16 @@ export async function runCodexJsonlCapture(argv, environment = process.env) {
     buffered += text;
     let newline;
     while ((newline = buffered.indexOf("\n")) !== -1) {
-      const usage = codexExecJsonlUsage(buffered.slice(0, newline));
+      const usage = captureUsage
+        ? codexExecJsonlUsage(buffered.slice(0, newline))
+        : undefined;
       if (usage !== undefined) {
         lastUsage = usage;
       }
       buffered = buffered.slice(newline + 1);
     }
     if (flush && buffered.length > 0) {
-      const usage = codexExecJsonlUsage(buffered);
+      const usage = captureUsage ? codexExecJsonlUsage(buffered) : undefined;
       if (usage !== undefined) {
         lastUsage = usage;
       }
@@ -180,7 +236,7 @@ export async function runCodexJsonlCapture(argv, environment = process.env) {
       resolve({ code, signal });
     });
   });
-  if (lastUsage !== undefined) {
+  if (captureUsage && lastUsage !== undefined) {
     try {
       await writeFile(usagePath, JSON.stringify(lastUsage), {
         encoding: "utf8",
@@ -315,24 +371,131 @@ export function codexJsonlTelemetry(usage) {
 }
 
 async function createCodexJsonlCapture(stateRoot) {
-  const root = await mkdtemp(join(stateRoot, ".codex-jsonl-"));
+  await removeStaleCodexJsonlCaptures(stateRoot);
+  const root = await mkdtemp(
+    join(
+      stateRoot,
+      `${captureDirectoryPrefix}${process.pid}-${processStartedAtMs}-`,
+    ),
+  );
   const usagePath = join(root, "usage.json");
   const wrapperPath = join(root, "codex-jsonl-capture.mjs");
-  await writeFile(
-    wrapperPath,
-    [
-      "#!/usr/bin/env node",
-      `import { runCodexJsonlCapture } from ${JSON.stringify(import.meta.url)};`,
-      "process.exitCode = await runCodexJsonlCapture(process.argv.slice(2));",
-      "",
-    ].join("\n"),
-    { encoding: "utf8", mode: 0o700 },
-  );
+  let configuredTarget;
   return {
+    configure: (target) => {
+      const verifiedTarget = realpathSync(target);
+      if (configuredTarget !== undefined) {
+        if (configuredTarget !== verifiedTarget) {
+          throw new Error("Codex capture target changed after admission");
+        }
+        return;
+      }
+      writeFileSync(
+        wrapperPath,
+        [
+          "#!/usr/bin/env node",
+          `import { runCodexJsonlCapture } from ${JSON.stringify(import.meta.url)};`,
+          `const configuration = Object.freeze(${JSON.stringify({
+            target: verifiedTarget,
+            usagePath,
+          })});`,
+          "process.exitCode = await runCodexJsonlCapture(process.argv.slice(2), configuration);",
+          "",
+        ].join("\n"),
+        { encoding: "utf8", flag: "wx", mode: 0o700 },
+      );
+      configuredTarget = verifiedTarget;
+    },
     dispose: async () => rm(root, { force: true, recursive: true }),
     usagePath,
     wrapperPath,
   };
+}
+
+async function removeStaleCodexJsonlCaptures(
+  stateRoot,
+  nowMs = Date.now(),
+) {
+  let entries;
+  try {
+    entries = await readdir(stateRoot, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (
+      !entry.name.startsWith(captureDirectoryPrefix) ||
+      !entry.isDirectory() ||
+      entry.isSymbolicLink()
+    ) {
+      continue;
+    }
+    const candidate = join(stateRoot, entry.name);
+    try {
+      const metadata = await lstat(candidate);
+      if (
+        !metadata.isDirectory() ||
+        metadata.isSymbolicLink() ||
+        nowMs - metadata.mtimeMs <= staleCaptureAgeMs ||
+        captureOwnerIsAlive(entry.name)
+      ) {
+        continue;
+      }
+      await rm(candidate, { force: true, recursive: true });
+    } catch {
+      // Cleanup is best-effort and must not make a healthy runtime unavailable.
+    }
+  }
+}
+
+function captureOwnerIsAlive(name) {
+  const match = /^\.codex-jsonl-(\d+)-(\d+)-/.exec(name);
+  if (match === null) {
+    return false;
+  }
+  const pid = Number(match[1]);
+  const startedAtMs = Number(match[2]);
+  if (
+    !Number.isSafeInteger(pid) ||
+    pid <= 0 ||
+    !Number.isSafeInteger(startedAtMs) ||
+    startedAtMs < 0
+  ) {
+    return false;
+  }
+  if (pid === process.pid) {
+    return startedAtMs === processStartedAtMs;
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return isRecord(error) && error.code === "EPERM";
+  }
+}
+
+function isPinnedCodexTaskInvocation(argv) {
+  return (
+    Array.isArray(argv) &&
+    argv.length === pinnedCodexTaskArgv.length &&
+    argv.every((value, index) => value === pinnedCodexTaskArgv[index])
+  );
+}
+
+function captureConfiguration(value) {
+  if (!isRecord(value)) {
+    throw new Error("Codex capture configuration must be an object");
+  }
+  const { target, usagePath } = value;
+  if (
+    typeof target !== "string" ||
+    !isAbsolute(target) ||
+    typeof usagePath !== "string" ||
+    !isAbsolute(usagePath)
+  ) {
+    throw new Error("Codex capture configuration paths must be absolute");
+  }
+  return { target, usagePath };
 }
 
 async function readCapturedCodexUsage(usagePath) {
@@ -403,14 +566,6 @@ function isCompleteBridgeUsage(value) {
   return completeTokenNames.every((name) => isTokenCount(value[name]));
 }
 
-function requiredEnvironment(environment, name) {
-  const value = environment[name];
-  if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error(`${name} is required`);
-  }
-  return value;
-}
-
 function admitRequest(input) {
   const requestRecord = record(input.request, "request");
   const context = record(requestRecord.context, "request.context");
@@ -447,14 +602,12 @@ function profileForRequest(requestValue) {
   return selected;
 }
 
-function subscriptionOnlyEnvironment(environment) {
+function subscriptionRuntimeChildEnvironment(environment) {
   return Object.fromEntries(
-    Object.entries(environment ?? {}).filter(
-      ([key, value]) =>
-        value !== undefined &&
-        !key.toUpperCase().endsWith("_API_KEY") &&
-        !key.toUpperCase().endsWith("_API_KEY_FILE"),
-    ),
+    childEnvironmentNames.flatMap((name) => {
+      const value = environment?.[name];
+      return value === undefined ? [] : [[name, value]];
+    }),
   );
 }
 

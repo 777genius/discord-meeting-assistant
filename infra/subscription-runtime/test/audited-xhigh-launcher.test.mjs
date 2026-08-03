@@ -1,7 +1,18 @@
 import assert from "node:assert/strict";
-import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
 import {
@@ -93,11 +104,35 @@ test("enriches bridge metadata but does not overwrite fully measured bridge usag
   assert.equal(attachCodexJsonlTelemetry(complete, captured), complete);
 });
 
-test("main enriches one captured bridge result with Codex JSONL telemetry", async (t) => {
+test("generated capture wrapper survives the runtime-pruned environment", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "subscription-runtime-launcher-test-"));
   t.after(async () => rm(root, { force: true, recursive: true }));
   const requestPath = join(root, "request.json");
+  const codexStubPath = join(root, "codex-stub.mjs");
+  const secret = "must-not-cross-capture-boundary";
+  const usagePath = () =>
+    join(dirname(workerOptions.codexBinaryPath), "usage.json");
   await writeFile(requestPath, JSON.stringify(incrementalRequest()));
+  await writeFile(
+    codexStubPath,
+    [
+      "#!/usr/bin/env node",
+      "process.stdout.write(`${JSON.stringify({ type: 'stub.invoked', argv: process.argv.slice(2) })}\\n`);",
+      "const refreshProbe = !process.argv.includes('--ignore-user-config');",
+      "process.stdout.write(`${JSON.stringify({",
+      "  type: 'turn.completed',",
+      "  usage: {",
+      "    cached_input_tokens: refreshProbe ? 2 : 200,",
+      "    input_tokens: refreshProbe ? 10 : 1_000,",
+      "    output_tokens: refreshProbe ? 3 : 300,",
+      "    reasoning_output_tokens: refreshProbe ? 1 : 100,",
+      "  },",
+      "})}\\n`);",
+      "",
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+  const cleanupFixture = await createCaptureCleanupFixture(root, t);
   const previousReasoningEffort = process.env.AGENT_RUNTIME_REASONING_EFFORT;
   process.env.AGENT_RUNTIME_REASONING_EFFORT = "medium";
   t.after(() => {
@@ -127,24 +162,89 @@ test("main enriches one captured bridge result with Codex JSONL telemetry", asyn
       FileBackendCodexWorker: FakeWorker,
       runSubscriptionAgentTaskCli: async (_argv, _unused, createWorker) => {
         createWorker({
-          codexBinaryPath: process.execPath,
+          codexBinaryPath: codexStubPath,
           cwd: root,
           encryptionKey: "test-key",
-          env: { PATH: resolve(root, "hostile-path") },
+          env: {
+            CI: "true",
+            CODEX_HOME: join(root, "source-codex-home"),
+            HOME: join(root, "source-home"),
+            LOCAL_ENCRYPTION_KEY: secret,
+            OPENAI_API_KEY: secret,
+            PATH: process.env.PATH,
+            SUBSCRIPTION_RUNTIME_LOCAL_ENCRYPTION_KEY: secret,
+          },
           model: "gpt-5.6-luna",
           provider: "codex",
           providerInstanceId: "test-provider",
           stateRootDir: root,
           timeoutMs: 1_000,
         });
-        await writeFile(
-          workerOptions.sourceEnv.SUBSCRIPTION_RUNTIME_CODEX_CAPTURE_PATH,
-          JSON.stringify({
+        assert.deepEqual(
+          Object.keys(workerOptions.sourceEnv).toSorted(),
+          ["CI", "CODEX_HOME", "HOME", "PATH"],
+        );
+        assert.equal(workerOptions.sourceEnv.LOCAL_ENCRYPTION_KEY, undefined);
+        assert.equal(workerOptions.sourceEnv.OPENAI_API_KEY, undefined);
+        assert.equal(
+          workerOptions.sourceEnv.SUBSCRIPTION_RUNTIME_LOCAL_ENCRYPTION_KEY,
+          undefined,
+        );
+
+        const wrapperMode = (await stat(workerOptions.codexBinaryPath)).mode & 0o777;
+        assert.equal(wrapperMode, 0o700);
+        const prunedEnvironment = {
+          CI: "true",
+          CODEX_HOME: join(root, "codex-home"),
+          HOME: root,
+          PATH: process.env.PATH,
+        };
+        const refresh = await runExecutable(
+          workerOptions.codexBinaryPath,
+          [
+            "exec",
+            "--model",
+            "gpt-5.6-luna",
+            "--sandbox",
+            "read-only",
+            "--ignore-rules",
+            "--ephemeral",
+            "-C",
+            join(root, "refresh-cwd"),
+            "--skip-git-repo-check",
+            "-",
+          ],
+          prunedEnvironment,
+        );
+        assert.equal(refresh.exitCode, 0);
+        await assert.rejects(readFile(usagePath(), "utf8"), { code: "ENOENT" });
+        const captured = await runExecutable(
+          workerOptions.codexBinaryPath,
+          pinnedTaskArgv(),
+          prunedEnvironment,
+        );
+        assert.equal(captured.exitCode, 0);
+        assert.equal(captured.stderr, "");
+        assert.equal(captured.stdout.includes(secret), false);
+        const events = captured.stdout.trim().split("\n").map(JSON.parse);
+        assert.deepEqual(events[0], {
+          type: "stub.invoked",
+          argv: pinnedTaskArgv(),
+        });
+        assert.equal(events[1].type, "turn.completed");
+        assert.deepEqual(
+          JSON.parse(
+            await readFile(
+              usagePath(),
+              "utf8",
+            ),
+          ),
+          {
             cachedInputTokens: 200,
             inputTokens: 1_000,
             outputTokens: 300,
             reasoningOutputTokens: 100,
-          }),
+          },
         );
         process.stdout.write(JSON.stringify({
           outputText: "{}",
@@ -160,10 +260,6 @@ test("main enriches one captured bridge result with Codex JSONL telemetry", asyn
   ));
 
   assert.equal(value, 0);
-  assert.equal(
-    workerOptions.sourceEnv.SUBSCRIPTION_RUNTIME_CODEX_CAPTURE_TARGET,
-    await realpath(process.execPath),
-  );
   assert.deepEqual(JSON.parse(output), {
     outputText: "{}",
     protocolVersion: 1,
@@ -182,6 +278,7 @@ test("main enriches one captured bridge result with Codex JSONL telemetry", asyn
     warnings: [],
   });
   assert.equal(output.endsWith("\n"), true);
+  await assertCaptureCleanup(cleanupFixture);
 });
 
 test("rejects malformed or multiple bridge result JSON payloads", () => {
@@ -226,6 +323,88 @@ function completedBridgeResult() {
   };
 }
 
+function pinnedTaskArgv() {
+  return [
+    "exec",
+    "--json",
+    "--model",
+    "gpt-5.6-luna",
+    "--sandbox",
+    "read-only",
+    "--config",
+    'approval_policy="never"',
+    "--config",
+    'model_reasoning_effort="medium"',
+    "--config",
+    'model_verbosity="low"',
+    "--config",
+    'web_search="disabled"',
+    "--config",
+    "features.apps=false",
+    "--config",
+    "features.hooks=false",
+    "--config",
+    "features.memories=false",
+    "--config",
+    "features.multi_agent=false",
+    "--config",
+    "features.shell_snapshot=false",
+    "--config",
+    "features.skill_mcp_dependency_install=false",
+    "--ephemeral",
+    "--ignore-user-config",
+    "--ignore-rules",
+    "--color",
+    "never",
+    "--skip-git-repo-check",
+    "-",
+  ];
+}
+
+async function createCaptureCleanupFixture(root, t) {
+  const activeOwner = spawn(
+    process.execPath,
+    ["-e", "setInterval(() => {}, 60_000)"],
+    { stdio: "ignore" },
+  );
+  assert.equal(Number.isInteger(activeOwner.pid), true);
+  t.after(() => activeOwner.kill());
+  const stale = join(root, ".codex-jsonl-99999999-1-stale");
+  const active = join(root, `.codex-jsonl-${activeOwner.pid}-1-active`);
+  const recent = join(root, ".codex-jsonl-99999999-1-recent");
+  const protectedDirectory = join(root, "protected-capture-target");
+  const protectedMarker = join(protectedDirectory, "marker");
+  const link = join(root, ".codex-jsonl-99999999-1-link");
+  const oldFile = join(root, ".codex-jsonl-99999999-1-file");
+  await Promise.all([
+    mkdir(stale),
+    mkdir(active),
+    mkdir(recent),
+    mkdir(protectedDirectory),
+  ]);
+  await Promise.all([
+    writeFile(protectedMarker, "protected"),
+    writeFile(oldFile, "not-a-directory"),
+    symlink(protectedDirectory, link, "dir"),
+  ]);
+  const old = new Date(Date.now() - 31 * 60 * 1000);
+  await Promise.all([
+    utimes(stale, old, old),
+    utimes(active, old, old),
+    utimes(oldFile, old, old),
+  ]);
+  return { active, link, oldFile, protectedMarker, recent, stale };
+}
+
+async function assertCaptureCleanup(fixture) {
+  await assert.rejects(stat(fixture.stale), { code: "ENOENT" });
+  assert.equal((await stat(fixture.active)).isDirectory(), true);
+  assert.equal((await stat(fixture.recent)).isDirectory(), true);
+  assert.equal((await lstat(fixture.link)).isSymbolicLink(), true);
+  assert.equal((await stat(fixture.protectedMarker)).isFile(), true);
+  assert.equal((await stat(fixture.oldFile)).isFile(), true);
+}
+
 async function captureStdout(run) {
   const chunks = [];
   const originalWrite = process.stdout.write;
@@ -243,4 +422,26 @@ async function captureStdout(run) {
   } finally {
     process.stdout.write = originalWrite;
   }
+}
+
+async function runExecutable(command, args, env) {
+  return await new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      env,
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const stdout = [];
+    const stderr = [];
+    child.stdout.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
+    child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
+    child.once("error", reject);
+    child.once("close", (exitCode) => {
+      resolve({
+        exitCode,
+        stderr: Buffer.concat(stderr).toString("utf8"),
+        stdout: Buffer.concat(stdout).toString("utf8"),
+      });
+    });
+  });
 }
