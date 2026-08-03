@@ -15,6 +15,7 @@ services:
       - ../../infra/postgres/migrations/0001_create_meeting_core.sql:/docker-entrypoint-initdb.d/0001_create_meeting_core.sql:ro
       - ../../infra/postgres/migrations/0002_create_post_call_outbox.sql:/docker-entrypoint-initdb.d/0002_create_post_call_outbox.sql:ro
       - ../../infra/postgres/migrations/0003_create_live_meetings.sql:/docker-entrypoint-initdb.d/0003_create_live_meetings.sql:ro
+      - ../../infra/postgres/migrations/0004_create_guild_installations.sql:/docker-entrypoint-initdb.d/0004_create_guild_installations.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U meeting -d meeting"]
       interval: 5s
@@ -142,8 +143,12 @@ services:
     environment:
       BIND_ADDRESS: 0.0.0.0
       CRAIG_BEARER_TOKEN_FILE: /run/secrets/craig-bearer-token
+      DISCORD_APPLICATION_ID: ${DISCORD_APPLICATION_ID:-1533224474609057793}
+      DISCORD_CRAIG_APPLICATION_ID: ${DISCORD_CRAIG_APPLICATION_ID:-1533224474609057793}
+      DISCORD_LEGACY_GUILD_ID: ${DISCORD_LEGACY_GUILD_ID:-}
+      DISCORD_LEGACY_VOICE_CHANNEL_ID: ${DISCORD_LEGACY_VOICE_CHANNEL_ID:-}
       DISCORD_PUBLICATION_MODE: ${DISCORD_PUBLICATION_MODE:-message}
-      DISCORD_RESULTS_CHANNEL_ID: "1533228891827736657"
+      DISCORD_RESULTS_CHANNEL_ID: ${DISCORD_RESULTS_CHANNEL_ID:-}
       DISCORD_TOKEN_FILE: /run/secrets/discord-sut-token
       NODE_ENV: production
       PORT: "4310"

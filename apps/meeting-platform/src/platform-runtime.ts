@@ -16,12 +16,22 @@ import {
   type PostCallWorker,
 } from "@discord-meeting/bullmq-adapter";
 import {
+  DiscordGuildSetupAdapter,
+  DiscordGuildSetupCommandHandler,
   DiscordJsProjectionClient,
   DiscordLiveMeetingProjectionAdapter,
   DiscordSummaryPublicationAdapter,
   DiscordSummaryPublisher,
   InProcessProjectionLock,
+  craigGatewayInstallPermissions,
+  createDiscordGuildInstallUrl,
+  meetingPlatformInstallPermissions,
+  registerDiscordGuildSetupCommand,
 } from "@discord-meeting/discord-adapter";
+import {
+  ConfigureGuild,
+  ResolveGuildMeetingTarget,
+} from "@discord-meeting/guild-configuration-core";
 import {
   ProcessMeetingSummary,
   AppendLiveTranscriptTurn,
@@ -45,6 +55,7 @@ import {
 import {
   PostgresLiveMeetingRepository,
   PostgresMeetingRepository,
+  PostgresGuildConfigurationRepository,
 } from "@discord-meeting/postgres-adapter";
 import {
   DurableCraigRecordingIngress,
@@ -78,6 +89,7 @@ import {
   InstrumentedSummaryPublicationPort,
 } from "./instrumented-processing-ports.js";
 import { LiveFencedSummaryPublicationPort } from "./live-fenced-summary-publication.js";
+import { GuildPublicationTargetResolver } from "./guild-publication-target-resolver.js";
 import { PlatformLiveMeetingRuntime } from "./live-meeting-runtime.js";
 import { PlatformCraigIngress } from "./platform-ingress.js";
 import { PostCallOutboxDispatcher } from "./post-call-outbox-dispatcher.js";
@@ -124,6 +136,11 @@ export async function startMeetingPlatform(
     writer: artifactWriter,
   });
   const meetings = new PostgresMeetingRepository(pool);
+  const guildConfigurations = new PostgresGuildConfigurationRepository(pool);
+  const publicationTargets = new GuildPublicationTargetResolver(
+    new ResolveGuildMeetingTarget(guildConfigurations),
+    config.discordLegacyRoute,
+  );
   const rawTranscriber = createFinalTranscriber(config, artifactReader);
   const runtimeTransport = new GrpcSubscriptionRuntimeTransport({
     address: config.subscriptionRuntime.address,
@@ -135,6 +152,28 @@ export async function startMeetingPlatform(
     outputLanguage: "Russian; preserve English technical terms",
   });
   const discord = new Client({ intents: [GatewayIntentBits.Guilds] });
+  const meetingPlatformInstallUrl = createDiscordGuildInstallUrl({
+    applicationId: config.discordApplicationId,
+    permissions: config.discordApplicationId === config.discordCraigApplicationId
+      ? meetingPlatformInstallPermissions | craigGatewayInstallPermissions
+      : meetingPlatformInstallPermissions,
+  });
+  const craigInstallUrl = createDiscordGuildInstallUrl({
+    applicationId: config.discordCraigApplicationId,
+    permissions: craigGatewayInstallPermissions,
+  });
+  const guildSetupAdapter = new DiscordGuildSetupAdapter(
+    discord,
+    config.discordCraigApplicationId,
+  );
+  const guildSetupHandler = new DiscordGuildSetupCommandHandler(
+    discord,
+    new ConfigureGuild(guildConfigurations, guildSetupAdapter, guildSetupAdapter),
+    craigInstallUrl,
+    (error) => {
+      logger.error("Discord guild setup failed", classifyCraigIngressError(error));
+    },
+  );
   const discordPublisher = new DiscordSummaryPublisher(
     new DiscordJsProjectionClient(discord),
     new InProcessProjectionLock(),
@@ -147,6 +186,7 @@ export async function startMeetingPlatform(
     discordPublisher,
     logger,
     meetings: liveMeetings,
+    publicationTargets,
     runtimeTransport,
   });
   const transcriber = new InstrumentedFinalTranscriptionPort(
@@ -216,7 +256,7 @@ export async function startMeetingPlatform(
     logger,
     outbox: meetings,
     metrics,
-    publicationTargetId: config.discordResultsChannelId,
+    publicationTargets,
   });
   const health = new HealthAggregator(
     createHealthProbes({
@@ -236,6 +276,10 @@ export async function startMeetingPlatform(
       readiness: async () => ({ ready: (await health.snapshot()).ready }),
     },
     ingress,
+    installUrls: {
+      craig: craigInstallUrl,
+      meetingPlatform: meetingPlatformInstallUrl,
+    },
     onInternalError: (error) => {
       logger.error("Craig ingress request failed", classifyCraigIngressError(error));
     },
@@ -247,6 +291,7 @@ export async function startMeetingPlatform(
       ...(live === undefined
         ? []
         : [pool.query("SELECT 1 FROM meeting_core.live_meetings LIMIT 0")]),
+      pool.query("SELECT 1 FROM guild_configuration.guild_installations LIMIT 0"),
       queue.waitUntilReady(),
       queueEvents.waitUntilReady(),
     ]);
@@ -256,12 +301,22 @@ export async function startMeetingPlatform(
     if (!discord.isReady()) {
       await ready;
     }
+    const discordApplication = discord.application;
+    if (discordApplication === null || discordApplication.id !== config.discordApplicationId) {
+      throw new Error("Discord application ID does not match the configured bot token");
+    }
+    await registerDiscordGuildSetupCommand(discord);
+    guildSetupHandler.start();
     server.listen(config.port, config.bindAddress);
     await once(server, "listening");
-    logger.info("Meeting platform is ready", { port: config.port });
+    logger.info("Meeting platform is ready", {
+      discordInstallUrl: meetingPlatformInstallUrl,
+      port: config.port,
+    });
   } catch (error) {
     await closeMeetingPlatformResources({
       discord,
+      guildSetupHandler,
       logger,
       ...(live === undefined ? {} : { live }),
       pool,
@@ -286,6 +341,7 @@ export async function startMeetingPlatform(
       clearInterval(outboxReconcileTimer);
       closing ??= closeMeetingPlatformResources({
         discord,
+        guildSetupHandler,
         logger,
         ...(live === undefined ? {} : { live }),
         pool,
@@ -307,6 +363,7 @@ function createLiveRuntime(input: {
   readonly discordPublisher: DiscordSummaryPublisher;
   readonly logger: Logger;
   readonly meetings: PostgresLiveMeetingRepository;
+  readonly publicationTargets: GuildPublicationTargetResolver;
   readonly runtimeTransport: GrpcSubscriptionRuntimeTransport;
 }): PlatformLiveMeetingRuntime | undefined {
   if (
@@ -331,7 +388,7 @@ function createLiveRuntime(input: {
     appendTurn: new AppendLiveTranscriptTurn(input.meetings),
     finishMeeting: new FinishLiveMeeting(input.meetings),
     logger: input.logger,
-    publicationTargetId: input.config.discordResultsChannelId,
+    publicationTargets: input.publicationTargets,
     refreshMeeting: new RefreshLiveMeeting({
       meetings: input.meetings,
       projector,
@@ -564,6 +621,7 @@ async function closeServer(server: Server): Promise<void> {
 export async function closeMeetingPlatformResources(input: {
   readonly deadLetterQueue: { close(): Promise<void> };
   readonly discord: Client;
+  readonly guildSetupHandler?: DiscordGuildSetupCommandHandler;
   readonly logger: Logger;
   readonly live?: PlatformLiveMeetingRuntime;
   readonly pool: Pool;
@@ -594,6 +652,7 @@ export async function closeMeetingPlatformResources(input: {
     worker: input.worker,
   });
   const serverClose = closeServer(input.server);
+  input.guildSetupHandler?.close();
   const liveClose = input.live?.close() ?? Promise.resolve();
   await Promise.all([
     settle(postCallShutdown),

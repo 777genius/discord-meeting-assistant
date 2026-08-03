@@ -41,6 +41,9 @@ deployments:
 - Publishing owns idempotent projection of an accepted summary into one Discord
   container. New meetings use one direct results-channel message; thread mode is
   explicit opt-in. It stores an honest versioned external reference.
+- Guild Installation & Configuration owns the administrator-approved mapping
+  from one Discord guild and voice channel to its results channel. Discord
+  commands and PostgreSQL remain adapters around this context.
 
 These names guide the first model. A separate workspace package is created only
 when a real slice and ownership boundary exist. Deployment separation is not a

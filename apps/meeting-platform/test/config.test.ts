@@ -5,6 +5,10 @@ import { loadPlatformConfig } from "../src/config.js";
 const environment = {
   BIND_ADDRESS: "127.0.0.1",
   CRAIG_BEARER_TOKEN_FILE: "/run/secrets/craig",
+  DISCORD_APPLICATION_ID: "1533224474609057793",
+  DISCORD_CRAIG_APPLICATION_ID: "1533224474609057794",
+  DISCORD_LEGACY_GUILD_ID: "1533224474609057795",
+  DISCORD_LEGACY_VOICE_CHANNEL_ID: "1533224474609057796",
   DISCORD_RESULTS_CHANNEL_ID: "1533228891827736657",
   DISCORD_TOKEN_FILE: "/run/secrets/discord",
   NODE_ENV: "test",
@@ -53,6 +57,31 @@ describe("platform configuration", () => {
       { ...environment, DISCORD_PUBLICATION_MODE: "channel" },
       async () => "value",
     )).rejects.toThrow();
+  });
+
+  it("accepts only a guild-bound legacy publication fallback", async () => {
+    const config = await loadPlatformConfig({
+      ...environment,
+      DISCORD_LEGACY_GUILD_ID: "1533224474609057795",
+      DISCORD_LEGACY_VOICE_CHANNEL_ID: "1533224474609057796",
+    }, async () => "value");
+    expect(config.discordLegacyRoute).toEqual({
+      guildId: "1533224474609057795",
+      publicationTargetId: "1533228891827736657",
+      voiceChannelId: "1533224474609057796",
+    });
+    const selfService = await loadPlatformConfig({
+      ...environment,
+      DISCORD_LEGACY_GUILD_ID: "",
+      DISCORD_LEGACY_VOICE_CHANNEL_ID: "",
+      DISCORD_RESULTS_CHANNEL_ID: "",
+    }, async () => "value");
+    expect(selfService.discordLegacyRoute).toBeUndefined();
+    await expect(loadPlatformConfig({
+      ...environment,
+      DISCORD_LEGACY_VOICE_CHANNEL_ID: "",
+      DISCORD_RESULTS_CHANNEL_ID: "",
+    }, async () => "value")).rejects.toThrow();
   });
 
   it("loads a Voicetext machine bearer only from a secret file", async () => {

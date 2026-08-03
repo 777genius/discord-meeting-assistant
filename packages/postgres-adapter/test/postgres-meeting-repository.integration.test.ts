@@ -1,4 +1,7 @@
 import {
+  GuildConfiguration,
+} from "@discord-meeting/guild-configuration-core";
+import {
   EvidenceBackedSummary,
   FinalTranscript,
   LiveMeeting,
@@ -24,6 +27,7 @@ import {
 
 import {
   MeetingPersistenceConflictError,
+  PostgresGuildConfigurationRepository,
   PostgresLiveMeetingRepository,
   PostgresMeetingRepository,
 } from "../src/index.js";
@@ -58,6 +62,15 @@ function recordedMeeting(
         },
       ],
     },
+  });
+}
+
+function configuredGuild(): GuildConfiguration {
+  return GuildConfiguration.configure({
+    configuredByUserId: "11111111111111111",
+    guildId: "22222222222222222",
+    resultsChannelId: "33333333333333333",
+    voiceChannelId: "44444444444444444",
   });
 }
 
@@ -196,6 +209,14 @@ beforeAll(async () => {
       "utf8",
     );
     await pool.query(liveMigration);
+    const guildConfigurationMigration = await readFile(
+      new URL(
+        "../../../infra/postgres/migrations/0004_create_guild_installations.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    await pool.query(guildConfigurationMigration);
   } catch (error) {
     if (!isDockerUnavailable(error)) {
       throw error;
@@ -207,9 +228,49 @@ beforeAll(async () => {
 beforeEach(async () => {
   if (pool !== undefined) {
     await pool.query(
-      "TRUNCATE TABLE meeting_core.live_meetings, meeting_core.post_call_outbox, meeting_core.meetings",
+      "TRUNCATE TABLE guild_configuration.guild_installations, meeting_core.live_meetings, meeting_core.post_call_outbox, meeting_core.meetings",
     );
   }
+});
+
+describe("PostgresGuildConfigurationRepository", () => {
+  it("persists, restores and compare-and-swaps a guild configuration", async (context) => {
+    const repository = new PostgresGuildConfigurationRepository(databaseOrSkip(context));
+    const initial = configuredGuild();
+    expect(await repository.save(initial.toSnapshot(), null)).toEqual({ status: "saved" });
+    expect(await repository.findByGuildId(initial.guildId)).toEqual(initial.toSnapshot());
+
+    const changed = initial.reconfigure({
+      ...initial.toSnapshot(),
+      configuredByUserId: "55555555555555555",
+      resultsChannelId: "66666666666666666",
+    });
+    expect(await repository.save(changed.toSnapshot(), 0)).toEqual({ status: "saved" });
+    expect((await repository.findByGuildId(initial.guildId))?.revision).toBe(1);
+  });
+
+  it("reports insert and update conflicts without overwriting", async (context) => {
+    const repository = new PostgresGuildConfigurationRepository(databaseOrSkip(context));
+    const initial = configuredGuild();
+    await repository.save(initial.toSnapshot(), null);
+    expect(await repository.save(initial.toSnapshot(), null)).toEqual({
+      actualRevision: 0,
+      status: "conflict",
+    });
+    const changed = initial.reconfigure({
+      ...initial.toSnapshot(),
+      resultsChannelId: "66666666666666666",
+    });
+    await repository.save(changed.toSnapshot(), 0);
+    const stale = initial.reconfigure({
+      ...initial.toSnapshot(),
+      resultsChannelId: "77777777777777777",
+    });
+    expect(await repository.save(stale.toSnapshot(), 0)).toEqual({
+      actualRevision: 1,
+      status: "conflict",
+    });
+  });
 });
 
 afterAll(async () => {

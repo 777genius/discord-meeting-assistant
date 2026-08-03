@@ -8,3 +8,4 @@ export {
   type PendingPostCall,
 } from "./postgres-meeting-repository.js";
 export { PostgresLiveMeetingRepository } from "./postgres-live-meeting-repository.js";
+export { PostgresGuildConfigurationRepository } from "./postgres-guild-configuration-repository.js";

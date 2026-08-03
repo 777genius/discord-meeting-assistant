@@ -36,6 +36,23 @@ interface DerivedLiveIngressPort {
   prepareForAuthoritativeFinal(recordingId: string): void;
 }
 
+interface PublicationTargetResolverPort {
+  resolve(input: {
+    readonly guildId: string;
+    readonly voiceChannelId: string;
+  }): Promise<string | null>;
+}
+
+export class MeetingPublicationTargetUnavailableError extends Error {
+  public override readonly name = "MeetingPublicationTargetUnavailableError";
+  public constructor(
+    public readonly guildId: string,
+    public readonly voiceChannelId: string,
+  ) {
+    super("Discord guild and voice channel are not configured for publication");
+  }
+}
+
 export interface PlatformCraigIngressDependencies {
   readonly dispatcher: PostCallOutboxDispatcherPort;
   readonly ingress: RecordingIngressPort;
@@ -43,11 +60,20 @@ export interface PlatformCraigIngressDependencies {
   readonly logger: Logger;
   readonly outbox: RecordedMeetingOutbox;
   readonly metrics: Metrics;
-  readonly publicationTargetId: string;
+  /** Compatibility-only direct target for deterministic legacy tests. */
+  readonly publicationTargetId?: string;
+  readonly publicationTargets?: PublicationTargetResolverPort;
 }
 
 export class PlatformCraigIngress {
-  public constructor(private readonly dependencies: PlatformCraigIngressDependencies) {}
+  public constructor(private readonly dependencies: PlatformCraigIngressDependencies) {
+    if (
+      dependencies.publicationTargets === undefined &&
+      dependencies.publicationTargetId === undefined
+    ) {
+      throw new Error("a publication target source is required");
+    }
+  }
 
   public async ingestAuthoritativeTrack(
     metadata: AuthoritativeTrackUploadMetadata,
@@ -77,7 +103,7 @@ export class PlatformCraigIngress {
 
   public async ingestLifecycle(event: CraigLifecycleEvent): Promise<void> {
     const result = await this.dependencies.ingress.ingestLifecycleEvent(event);
-    this.dependencies.live?.acceptLifecycle(event);
+    await Promise.resolve(this.dependencies.live?.acceptLifecycle(event));
     this.dependencies.metrics.recordIngress("accepted", "accepted");
     if (result.kind !== "finalized") {
       return;
@@ -85,9 +111,17 @@ export class PlatformCraigIngress {
 
     this.dependencies.live?.prepareForAuthoritativeFinal(result.recording.recordingId);
 
+    const publicationTargetId = this.dependencies.publicationTargetId ??
+      await this.dependencies.publicationTargets?.resolve({
+        guildId: event.guildId,
+        voiceChannelId: event.channelId,
+      }) ?? null;
+    if (publicationTargetId === null) {
+      throw new MeetingPublicationTargetUnavailableError(event.guildId, event.channelId);
+    }
     const meeting = Meeting.record({
       meetingId: result.recording.recordingId,
-      publicationTargetId: this.dependencies.publicationTargetId,
+      publicationTargetId,
       recording: result.recording,
     });
     await this.dependencies.outbox.recordAndSchedule(meeting.toSnapshot(), 0);

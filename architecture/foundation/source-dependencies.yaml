@@ -10,6 +10,7 @@ governedRoots:
   - packages/bullmq-adapter/src
   - packages/craig-gateway-contracts/src
   - packages/discord-adapter/src
+  - packages/guild-configuration-core/src
   - packages/meeting-core/src
   - packages/object-storage-adapter/src
   - packages/observability-adapter/src
@@ -20,6 +21,14 @@ governedRoots:
   - packages/voicetext-adapter/src
   - tooling/architecture-baseline/src
 boundaries:
+  - id: core.guild-configuration
+    roots:
+      - packages/guild-configuration-core/src
+    allow:
+      boundaries: []
+      packages: []
+      builtins: []
+      runtimeReferences: []
   - id: core.meeting
     roots:
       - packages/meeting-core/src
@@ -65,8 +74,10 @@ boundaries:
       - packages/discord-adapter/src
     allow:
       boundaries:
+        - core.guild-configuration
         - core.meeting
       packages:
+        - "@discord-meeting/guild-configuration-core"
         - "@discord-meeting/meeting-core"
         - discord.js
         - zod
@@ -78,8 +89,10 @@ boundaries:
       - packages/postgres-adapter/src
     allow:
       boundaries:
+        - core.guild-configuration
         - core.meeting
       packages:
+        - "@discord-meeting/guild-configuration-core"
         - "@discord-meeting/meeting-core"
         - pg
       builtins: []
@@ -192,12 +205,14 @@ boundaries:
         - adapters.subscription-runtime
         - adapters.voicetext
         - contracts.craig-gateway
+        - core.guild-configuration
         - core.meeting
       packages:
         - "@aws-sdk/client-s3"
         - "@discord-meeting/bullmq-adapter"
         - "@discord-meeting/craig-gateway-contracts"
         - "@discord-meeting/discord-adapter"
+        - "@discord-meeting/guild-configuration-core"
         - "@discord-meeting/meeting-core"
         - "@discord-meeting/object-storage-adapter"
         - "@discord-meeting/observability-adapter"

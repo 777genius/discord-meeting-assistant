@@ -12,6 +12,8 @@ import {
 import { RecordingIngressError } from "@discord-meeting/recording-ingress-adapter";
 import { ZodError } from "zod";
 
+import { MeetingPublicationTargetUnavailableError } from "./platform-ingress.js";
+
 const maximumBodyBytes = 4 * 1_024 * 1_024;
 
 interface CraigIngressPort {
@@ -32,6 +34,10 @@ export interface CraigHttpServerOptions {
   readonly bearerToken: string;
   readonly health: PlatformHealthPort;
   readonly ingress: CraigIngressPort;
+  readonly installUrls?: {
+    readonly craig: string;
+    readonly meetingPlatform: string;
+  };
   readonly onInternalError?: (error: unknown) => void;
 }
 
@@ -58,6 +64,22 @@ async function handleRequest(
   options: CraigHttpServerOptions,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", "http://meeting-platform.internal");
+  if (request.method === "GET" && url.pathname === "/discord/install") {
+    if (options.installUrls === undefined) {
+      sendJson(response, 404, { code: "NOT_FOUND" });
+    } else {
+      sendRedirect(response, options.installUrls.meetingPlatform);
+    }
+    return;
+  }
+  if (request.method === "GET" && url.pathname === "/discord/install/craig") {
+    if (options.installUrls === undefined) {
+      sendJson(response, 404, { code: "NOT_FOUND" });
+    } else {
+      sendRedirect(response, options.installUrls.craig);
+    }
+    return;
+  }
   if (request.method === "GET" && url.pathname === "/livez") {
     sendJson(response, 200, { status: "live" });
     return;
@@ -136,10 +158,26 @@ async function handleRequest(
         code: status === 409 ? "INGRESS_CONFLICT" :
           status === 413 ? "INGRESS_LIMIT_EXCEEDED" : "INVALID_INGRESS_STATE",
       });
+    } else if (error instanceof MeetingPublicationTargetUnavailableError) {
+      sendJson(response, 503, { code: "GUILD_NOT_CONFIGURED" });
     } else {
       throw error;
     }
   }
+}
+
+function sendRedirect(response: ServerResponse, location: string): void {
+  const target = new URL(location);
+  if (target.protocol !== "https:" || target.hostname !== "discord.com") {
+    throw new Error("Discord install redirect must use https://discord.com");
+  }
+  response.writeHead(302, {
+    "cache-control": "no-store",
+    location: target.toString(),
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+  });
+  response.end();
 }
 
 function recordingIngressStatus(error: RecordingIngressError): 400 | 409 | 413 | undefined {

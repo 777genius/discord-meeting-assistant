@@ -321,7 +321,7 @@ describe("PlatformLiveMeetingRuntime", () => {
     const firstBatch = packets();
     firstBatch.packets[0] = { ...firstBatch.packets[0]!, relativeTimeMs: 0 };
 
-    runtime.acceptLifecycle(started());
+    await runtime.acceptLifecycle(started());
     runtime.acceptVoiceBatch(firstBatch);
     await vi.advanceTimersByTimeAsync(1_000);
 
@@ -375,7 +375,7 @@ describe("PlatformLiveMeetingRuntime", () => {
       transcriber: new SilentLiveTranscriberStub(),
     });
 
-    runtime.acceptLifecycle(started());
+    await runtime.acceptLifecycle(started());
     await vi.advanceTimersByTimeAsync(5_000);
 
     expect(projector.requests).toHaveLength(1);
@@ -411,7 +411,7 @@ describe("PlatformLiveMeetingRuntime", () => {
     const firstBatch = packets();
     firstBatch.packets[0] = { ...firstBatch.packets[0]!, relativeTimeMs: 0 };
 
-    runtime.acceptLifecycle(started());
+    await runtime.acceptLifecycle(started());
     runtime.acceptVoiceBatch(firstBatch);
     await vi.advanceTimersByTimeAsync(0);
 
@@ -471,7 +471,7 @@ describe("PlatformLiveMeetingRuntime", () => {
     const firstBatch = packets();
     firstBatch.packets[0] = { ...firstBatch.packets[0]!, relativeTimeMs: 0 };
 
-    runtime.acceptLifecycle(started());
+    await runtime.acceptLifecycle(started());
     runtime.acceptVoiceBatch(firstBatch);
     await vi.advanceTimersByTimeAsync(5_000);
     expect(projector.requests).toHaveLength(1);
@@ -512,7 +512,7 @@ describe("PlatformLiveMeetingRuntime", () => {
     const firstBatch = packets();
     firstBatch.packets[0] = { ...firstBatch.packets[0]!, relativeTimeMs: 0 };
 
-    runtime.acceptLifecycle(started());
+    await runtime.acceptLifecycle(started());
     runtime.acceptVoiceBatch(firstBatch);
     await vi.advanceTimersByTimeAsync(5_000);
     expect(projector.requests).toHaveLength(1);
@@ -569,8 +569,8 @@ describe("PlatformLiveMeetingRuntime", () => {
     const firstB = packets("recording-spread-b");
     firstB.packets[0] = { ...firstB.packets[0]!, relativeTimeMs: 0 };
 
-    runtimeA.acceptLifecycle(started("recording-spread-a"));
-    runtimeB.acceptLifecycle(started("recording-spread-b"));
+    await runtimeA.acceptLifecycle(started("recording-spread-a"));
+    await runtimeB.acceptLifecycle(started("recording-spread-b"));
     runtimeA.acceptVoiceBatch(firstA);
     runtimeB.acceptVoiceBatch(firstB);
     await vi.advanceTimersByTimeAsync(1_000);
@@ -609,7 +609,7 @@ describe("PlatformLiveMeetingRuntime", () => {
     });
     const firstBatch = packets();
     firstBatch.packets[0] = { ...firstBatch.packets[0]!, relativeTimeMs: 0 };
-    runtime.acceptLifecycle(started());
+    await runtime.acceptLifecycle(started());
     runtime.acceptVoiceBatch(firstBatch);
     await vi.advanceTimersByTimeAsync(0);
 
@@ -689,7 +689,7 @@ describe("PlatformLiveMeetingRuntime", () => {
     const firstBatch = packets();
     firstBatch.packets[0] = { ...firstBatch.packets[0]!, relativeTimeMs: 0 };
 
-    runtime.acceptLifecycle(started());
+    await runtime.acceptLifecycle(started());
     runtime.acceptVoiceBatch(firstBatch);
     await vi.advanceTimersByTimeAsync(300_000);
     expect(summarizer.requests).toHaveLength(1);
@@ -737,7 +737,7 @@ describe("PlatformLiveMeetingRuntime", () => {
     const firstBatch = packets();
     firstBatch.packets[0] = { ...firstBatch.packets[0]!, relativeTimeMs: 0 };
 
-    runtime.acceptLifecycle(started());
+    await runtime.acceptLifecycle(started());
     runtime.acceptVoiceBatch(firstBatch);
     await vi.advanceTimersByTimeAsync(300_000);
     expect(summarizer.requests).toHaveLength(1);
@@ -771,7 +771,7 @@ describe("PlatformLiveMeetingRuntime", () => {
     const firstBatch = packets();
     firstBatch.packets[0] = { ...firstBatch.packets[0]!, relativeTimeMs: 0 };
 
-    runtime.acceptLifecycle(started());
+    await runtime.acceptLifecycle(started());
     runtime.acceptVoiceBatch(firstBatch);
     await vi.advanceTimersByTimeAsync(300_000);
     expect(summarizer.requests).toHaveLength(1);
@@ -811,7 +811,7 @@ describe("PlatformLiveMeetingRuntime", () => {
     const firstBatch = packets();
     firstBatch.packets[0] = { ...firstBatch.packets[0]!, relativeTimeMs: 0 };
 
-    runtime.acceptLifecycle(started());
+    await runtime.acceptLifecycle(started());
     runtime.acceptVoiceBatch(firstBatch);
     await vi.advanceTimersByTimeAsync(300_000);
     expect(summarizer.requests).toHaveLength(1);
@@ -860,7 +860,7 @@ describe("PlatformLiveMeetingRuntime", () => {
       transcriber: new LiveTranscriberStub(),
     });
 
-    runtime.acceptLifecycle(started());
+    await runtime.acceptLifecycle(started());
     await runtime.settleBeforeFinalPublication("recording-live-1");
 
     expect(meetings.snapshot).toMatchObject({
@@ -885,9 +885,9 @@ describe("PlatformLiveMeetingRuntime", () => {
       transcriber,
     });
 
-    runtime.acceptLifecycle(started());
+    await runtime.acceptLifecycle(started());
     runtime.acceptVoiceBatch(packets());
-    runtime.acceptLifecycle(ended());
+    await runtime.acceptLifecycle(ended());
     await runtime.close();
 
     expect(transcriber.packets).toHaveLength(1);
@@ -926,7 +926,7 @@ describe("PlatformLiveMeetingRuntime", () => {
       transcriber,
     });
 
-    runtime.acceptLifecycle(started());
+    await runtime.acceptLifecycle(started());
     runtime.acceptVoiceBatch(packets());
     await vi.advanceTimersByTimeAsync(101);
     expect(transcriber.finalizationCount).toBe(1);
@@ -944,7 +944,7 @@ describe("PlatformLiveMeetingRuntime", () => {
     };
     runtime.acceptVoiceBatch(laterBatch);
     await vi.advanceTimersByTimeAsync(1);
-    runtime.acceptLifecycle(ended());
+    await runtime.acceptLifecycle(ended());
     await runtime.close();
 
     expect(transcriber.requests.map(({ idempotencyKey }) => idempotencyKey)).toEqual([
@@ -975,7 +975,7 @@ describe("PlatformLiveMeetingRuntime", () => {
     });
     const first = packets().packets[0]!;
 
-    runtime.acceptLifecycle(started());
+    await runtime.acceptLifecycle(started());
     runtime.acceptVoiceBatch({
       packets: [
         { ...first, relativeTimeMs: 350_000 },
@@ -988,7 +988,7 @@ describe("PlatformLiveMeetingRuntime", () => {
       ],
       schemaVersion: 1,
     });
-    runtime.acceptLifecycle(ended());
+    await runtime.acceptLifecycle(ended());
     await runtime.close();
 
     expect(transcriber.requests).toHaveLength(1);

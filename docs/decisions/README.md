@@ -8,3 +8,4 @@
 - [ADR-0006: Voicetext-authenticated Deepgram transcription](0006-voicetext-deepgram-streaming-transcription.md)
 - [ADR-0007: Derived live summary and captions](0007-derived-live-summary-and-captions.md)
 - [ADR-0008: Authoritative Voicetext batch transcription](0008-authoritative-voicetext-batch-transcription.md)
+- [ADR-0009: Self-service Discord guild onboarding](0009-self-service-discord-guild-onboarding.md)

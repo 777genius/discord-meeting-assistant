@@ -3,6 +3,10 @@ import { lstat, readFile } from "node:fs/promises";
 import { z } from "zod";
 
 const snowflake = z.string().regex(/^\d{17,20}$/u);
+const optionalSnowflake = z.preprocess(
+  (value) => value === "" ? undefined : value,
+  snowflake.optional(),
+);
 const sha256 = z.string().regex(/^[0-9a-f]{64}$/u);
 const mebibyte = 1_024 * 1_024;
 const defaultVoicetextBatchMaxArtifactBytes = 64 * mebibyte;
@@ -34,8 +38,12 @@ const environmentSchema = z
   .object({
     BIND_ADDRESS: z.union([z.ipv4(), z.ipv6()]).default("0.0.0.0"),
     CRAIG_BEARER_TOKEN_FILE: absolutePath,
+    DISCORD_APPLICATION_ID: snowflake,
+    DISCORD_CRAIG_APPLICATION_ID: snowflake,
+    DISCORD_LEGACY_GUILD_ID: optionalSnowflake,
+    DISCORD_LEGACY_VOICE_CHANNEL_ID: optionalSnowflake,
     DISCORD_PUBLICATION_MODE: z.enum(["message", "thread"]).default("message"),
-    DISCORD_RESULTS_CHANNEL_ID: snowflake,
+    DISCORD_RESULTS_CHANNEL_ID: optionalSnowflake,
     DISCORD_TOKEN_FILE: absolutePath,
     NODE_ENV: z.enum(["development", "production", "test"]).default("production"),
     PORT: z.coerce.number().int().min(1).max(65_535).default(4_310),
@@ -65,6 +73,18 @@ const environmentSchema = z
     VOICETEXT_WS_URL: secureWebSocketUrl.optional(),
   })
   .superRefine((environment, context) => {
+    const legacyRouteParts = [
+      environment.DISCORD_LEGACY_GUILD_ID,
+      environment.DISCORD_LEGACY_VOICE_CHANNEL_ID,
+      environment.DISCORD_RESULTS_CHANNEL_ID,
+    ].filter((value) => value !== undefined).length;
+    if (legacyRouteParts !== 0 && legacyRouteParts !== 3) {
+      context.addIssue({
+        code: "custom",
+        message: "legacy Discord guild, voice channel and results channel must be configured together",
+        path: ["DISCORD_LEGACY_GUILD_ID"],
+      });
+    }
     if (environment.TRANSCRIPTION_PROVIDER !== "voicetext") {
       return;
     }
@@ -99,7 +119,13 @@ export interface PlatformConfig {
   readonly bindAddress: string;
   /** New meetings publish directly into the configured results channel by default. */
   readonly discordPublicationMode: "message" | "thread";
-  readonly discordResultsChannelId: string;
+  readonly discordApplicationId: string;
+  readonly discordCraigApplicationId: string;
+  readonly discordLegacyRoute?: {
+    readonly guildId: string;
+    readonly publicationTargetId: string;
+    readonly voiceChannelId: string;
+  };
   readonly nodeEnvironment: "development" | "production" | "test";
   readonly port: number;
   readonly recordingSpoolRoot: string;
@@ -160,7 +186,19 @@ export async function loadPlatformConfig(
   return Object.freeze({
     bindAddress: environment.BIND_ADDRESS,
     discordPublicationMode: environment.DISCORD_PUBLICATION_MODE,
-    discordResultsChannelId: environment.DISCORD_RESULTS_CHANNEL_ID,
+    discordApplicationId: environment.DISCORD_APPLICATION_ID,
+    discordCraigApplicationId: environment.DISCORD_CRAIG_APPLICATION_ID,
+    ...(environment.DISCORD_LEGACY_GUILD_ID === undefined ||
+      environment.DISCORD_LEGACY_VOICE_CHANNEL_ID === undefined ||
+      environment.DISCORD_RESULTS_CHANNEL_ID === undefined
+      ? {}
+      : {
+          discordLegacyRoute: {
+            guildId: environment.DISCORD_LEGACY_GUILD_ID,
+            publicationTargetId: environment.DISCORD_RESULTS_CHANNEL_ID,
+            voiceChannelId: environment.DISCORD_LEGACY_VOICE_CHANNEL_ID,
+          },
+        }),
     nodeEnvironment: environment.NODE_ENV,
     port: environment.PORT,
     recordingSpoolRoot: environment.RECORDING_SPOOL_ROOT,

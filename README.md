@@ -34,6 +34,21 @@ See [architecture overview](docs/architecture/overview.md),
 [dependency rules](docs/architecture/dependency-rules.md), and
 [decisions](docs/decisions/README.md).
 
+## Discord guild onboarding
+
+Meeting Platform generates and logs a least-privilege official Discord install
+URL. It also serves the same redirect at internal `GET /discord/install` for a
+deployment that reverse-proxies only that path. The current Meeting Platform and
+isolated Craig Voice Gateway processes share one official bot identity, so this
+is one installation step. Deployments using a distinct Craig identity can expose
+its explicit second redirect from internal `GET /discord/install/craig`.
+
+After the required application identity is installed, a server administrator runs `/setup`,
+selects the recorded voice channel and the text results channel, and receives an
+ephemeral result. The command verifies `Manage Guild`, both bots' effective
+channel permissions, and a visible test publication before storing the
+guild-scoped route. No Discord user access token or OAuth callback is used.
+
 ## Development
 
 Required versions:

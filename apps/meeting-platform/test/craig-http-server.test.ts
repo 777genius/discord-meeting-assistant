@@ -26,6 +26,7 @@ afterEach(async () => {
 
 async function startServer(
   overrides: {
+    readonly installUrls?: { readonly craig: string; readonly meetingPlatform: string };
     readonly lifecycleError?: Error;
     readonly onInternalError?: (error: unknown) => void;
     readonly ready?: boolean;
@@ -44,6 +45,7 @@ async function startServer(
       readiness: async () => ({ ready: overrides.ready ?? true }),
     },
     ingress: { ingestAuthoritativeTrack, ingestLifecycle, ingestVoiceBatch },
+    ...(overrides.installUrls === undefined ? {} : { installUrls: overrides.installUrls }),
     ...(overrides.onInternalError === undefined
       ? {}
       : { onInternalError: overrides.onInternalError }),
@@ -61,6 +63,21 @@ async function startServer(
 }
 
 describe("Craig HTTP ingress", () => {
+  it("redirects both explicit bot installation steps without OAuth token custody", async () => {
+    const context = await startServer({
+      installUrls: {
+        craig: "https://discord.com/oauth2/authorize?client_id=22222222222222222",
+        meetingPlatform: "https://discord.com/oauth2/authorize?client_id=11111111111111111",
+      },
+    });
+    const platform = await fetch(`${context.baseUrl}/discord/install`, { redirect: "manual" });
+    const craig = await fetch(`${context.baseUrl}/discord/install/craig`, { redirect: "manual" });
+    expect(platform.status).toBe(302);
+    expect(platform.headers.get("location")).toContain("11111111111111111");
+    expect(craig.status).toBe(302);
+    expect(craig.headers.get("location")).toContain("22222222222222222");
+  });
+
   it("streams a bounded checksummed authoritative Craig track", async () => {
     const context = await startServer();
     const body = Buffer.from("OggS-authoritative-test", "utf8");

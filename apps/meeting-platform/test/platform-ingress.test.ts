@@ -10,7 +10,10 @@ import type {
 } from "@discord-meeting/recording-ingress-adapter";
 import { describe, expect, it, vi } from "vitest";
 
-import { PlatformCraigIngress } from "../src/platform-ingress.js";
+import {
+  MeetingPublicationTargetUnavailableError,
+  PlatformCraigIngress,
+} from "../src/platform-ingress.js";
 
 const meetingEnded: CraigLifecycleEvent = {
   channelId: "1533228823045214398",
@@ -136,6 +139,84 @@ describe("Platform Craig ingress", () => {
 
     expect(recordAndSchedule).not.toHaveBeenCalled();
     expect(dispatchPending).not.toHaveBeenCalled();
+  });
+
+  it("resolves the final target from the signed source guild and voice channel", async () => {
+    const saved: MeetingSnapshot[] = [];
+    const resolve = vi.fn(async () => "77777777777777777");
+    const ingress = new PlatformCraigIngress({
+      dispatcher: { dispatchPending: async () => ({ dispatched: 1, failed: 0 }) },
+      ingress: {
+        ingestAuthoritativeTrack: async () => ({ replayed: false }),
+        ingestLifecycleEvent: async () => ({
+          kind: "finalized" as const,
+          recording: {
+            manifestLocator: "s3://meeting/recordings/recording-1/manifest.json",
+            recordingId: "recording-1",
+            speakerAudio: [{
+              audioLocator: "s3://meeting/recordings/recording-1/speaker.ogg",
+              speakerId: "1533227577286852649",
+              timelineOffsetMs: 0,
+            }],
+          },
+          replayed: false,
+        }),
+        ingestPacketBatch: async () => ({
+          acceptedPackets: 0,
+          duplicatePackets: 0,
+          recordingId: "recording-1",
+        }),
+      },
+      logger,
+      metrics,
+      outbox: { recordAndSchedule: async (snapshot) => void saved.push(snapshot) },
+      publicationTargets: { resolve },
+    });
+
+    await ingress.ingestLifecycle(meetingEnded);
+
+    expect(resolve).toHaveBeenCalledWith({
+      guildId: meetingEnded.guildId,
+      voiceChannelId: meetingEnded.channelId,
+    });
+    expect(saved[0]?.publicationTargetId).toBe("77777777777777777");
+  });
+
+  it("retains finalized ingress but refuses cross-guild publication when unconfigured", async () => {
+    const recordAndSchedule = vi.fn(async () => {});
+    const ingress = new PlatformCraigIngress({
+      dispatcher: { dispatchPending: async () => ({ dispatched: 0, failed: 0 }) },
+      ingress: {
+        ingestAuthoritativeTrack: async () => ({ replayed: false }),
+        ingestLifecycleEvent: async () => ({
+          kind: "finalized" as const,
+          recording: {
+            manifestLocator: "s3://meeting/recordings/recording-1/manifest.json",
+            recordingId: "recording-1",
+            speakerAudio: [{
+              audioLocator: "s3://meeting/recordings/recording-1/speaker.ogg",
+              speakerId: "1533227577286852649",
+              timelineOffsetMs: 0,
+            }],
+          },
+          replayed: true,
+        }),
+        ingestPacketBatch: async () => ({
+          acceptedPackets: 0,
+          duplicatePackets: 0,
+          recordingId: "recording-1",
+        }),
+      },
+      logger,
+      metrics,
+      outbox: { recordAndSchedule },
+      publicationTargets: { resolve: async () => null },
+    });
+
+    await expect(ingress.ingestLifecycle(meetingEnded)).rejects.toBeInstanceOf(
+      MeetingPublicationTargetUnavailableError,
+    );
+    expect(recordAndSchedule).not.toHaveBeenCalled();
   });
 
   it("tees voice packets to live processing only after durable ingress succeeds", async () => {

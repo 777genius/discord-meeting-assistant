@@ -43,7 +43,14 @@ export interface LiveMeetingRuntimeDependencies {
   readonly appendTurn: AppendLiveTranscriptTurn;
   readonly finishMeeting: FinishLiveMeeting;
   readonly logger: Logger;
-  readonly publicationTargetId: string;
+  /** Compatibility-only direct target used by deterministic legacy tests. */
+  readonly publicationTargetId?: string;
+  readonly publicationTargets?: {
+    resolve(input: {
+      readonly guildId: string;
+      readonly voiceChannelId: string;
+    }): Promise<string | null>;
+  };
   readonly refreshMeeting: RefreshLiveMeeting;
   readonly speakerIdleFinalizeMs?: number;
   readonly startMeeting: StartLiveMeeting;
@@ -93,6 +100,12 @@ export class PlatformLiveMeetingRuntime {
   private readonly speakerIdleFinalizeMs: number;
 
   public constructor(private readonly dependencies: LiveMeetingRuntimeDependencies) {
+    if (
+      dependencies.publicationTargets === undefined &&
+      dependencies.publicationTargetId === undefined
+    ) {
+      throw new Error("a live meeting publication target source is required");
+    }
     this.speakerIdleFinalizeMs = validateSpeakerIdleFinalizeMs(
       dependencies.speakerIdleFinalizeMs,
     );
@@ -102,9 +115,9 @@ export class PlatformLiveMeetingRuntime {
     this.refreshTimer.unref();
   }
 
-  public acceptLifecycle(event: CraigLifecycleEvent): void {
+  public async acceptLifecycle(event: CraigLifecycleEvent): Promise<void> {
     if (event.type === "meeting.started") {
-      this.start(event);
+      await this.start(event);
       return;
     }
     if (event.type === "meeting.ended" || event.type === "meeting.aborted") {
@@ -220,8 +233,23 @@ export class PlatformLiveMeetingRuntime {
     );
   }
 
-  private start(event: Extract<CraigLifecycleEvent, { readonly type: "meeting.started" }>): void {
+  private async start(
+    event: Extract<CraigLifecycleEvent, { readonly type: "meeting.started" }>,
+  ): Promise<void> {
     if (this.meetings.has(event.recordingId)) {
+      return;
+    }
+    const publicationTargetId = this.dependencies.publicationTargetId ??
+      await this.dependencies.publicationTargets?.resolve({
+        guildId: event.guildId,
+        voiceChannelId: event.channelId,
+      }) ?? null;
+    if (publicationTargetId === null) {
+      this.dependencies.logger.warn("Derived live meeting skipped for unconfigured channel", {
+        guildId: event.guildId,
+        meetingId: event.recordingId,
+        voiceChannelId: event.channelId,
+      });
       return;
     }
     const state: LiveMeetingState = {
@@ -251,7 +279,7 @@ export class PlatformLiveMeetingRuntime {
     this.enqueueDomain(state, async () => {
       const result = await this.dependencies.startMeeting.execute({
         meetingId: state.meetingId,
-        publicationTargetId: this.dependencies.publicationTargetId,
+        publicationTargetId,
         startedAtMs: state.startedAtMs,
       });
       restoreFinalCaptions(state, result.finalizedTurns);

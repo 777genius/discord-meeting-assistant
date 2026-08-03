@@ -42,3 +42,14 @@ export {
   DiscordProjectionConflictError,
   toDiscordMessagePayload,
 } from "./discordjs-projection-client.js";
+export {
+  craigGatewayInstallPermissions,
+  createDiscordGuildInstallUrl,
+  meetingPlatformInstallPermissions,
+} from "./discord-install-url.js";
+export { DiscordGuildSetupAdapter } from "./discord-guild-setup-adapter.js";
+export {
+  DiscordGuildSetupCommandHandler,
+  discordGuildSetupCommand,
+} from "./discord-guild-setup-command.js";
+export { registerDiscordGuildSetupCommand } from "./register-discord-guild-setup-command.js";
