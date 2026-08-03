@@ -25,6 +25,7 @@ import type {
 
 const mebibyte = 1_024 * 1_024;
 const maximumRetryAfterMilliseconds = 3_600_000;
+const maximumSegmentOverlapMilliseconds = 10_000;
 
 export interface VoicetextBatchPollingScheduler {
   nowMs(): number;
@@ -39,6 +40,7 @@ export interface VoicetextBatchFinalTranscriptionOptions {
   readonly maxConcurrency?: number;
   readonly maxPollAttempts?: number;
   readonly maxPollBackoffMs?: number;
+  readonly maxSegmentOverlapMs?: number;
   readonly maxSegmentOverrunMs?: number;
   readonly maxSegmentsPerSpeaker?: number;
   readonly maxSpeakerTracks?: number;
@@ -60,6 +62,7 @@ interface ValidatedOptions {
   readonly maxConcurrency: number;
   readonly maxPollAttempts: number;
   readonly maxPollBackoffMs: number;
+  readonly maxSegmentOverlapMs: number;
   readonly maxSegmentOverrunMs: number;
   readonly maxSegmentsPerSpeaker: number;
   readonly maxSpeakerTracks: number;
@@ -384,6 +387,13 @@ function validateOptions(
       60_000,
       "maxPollBackoffMs",
     ),
+    maxSegmentOverlapMs: integerOption(
+      options.maxSegmentOverlapMs,
+      2_000,
+      0,
+      maximumSegmentOverlapMilliseconds,
+      "maxSegmentOverlapMs",
+    ),
     maxSegmentOverrunMs: integerOption(
       options.maxSegmentOverrunMs,
       2_000,
@@ -535,8 +545,12 @@ function mapProviderTurns(
     const relativeStartMs = Math.max(roundedStartMs, previousEndMs);
     const relativeEndMs = ceilingMilliseconds(utterance.endSeconds);
     if (
-      rawStartSeconds < previousEndSeconds ||
       rawEndSeconds <= rawStartSeconds ||
+      exceedsSegmentOverlapLimit(
+        previousEndSeconds,
+        rawStartSeconds,
+        options.maxSegmentOverlapMs,
+      ) ||
       relativeEndMs <= relativeStartMs
     ) {
       throw new VoicetextAdapterError(
@@ -790,6 +804,24 @@ function ceilingMilliseconds(value: number): number {
     );
   }
   return milliseconds;
+}
+
+function exceedsSegmentOverlapLimit(
+  previousEndSeconds: number,
+  nextStartSeconds: number,
+  maximumOverlapMilliseconds: number,
+): boolean {
+  const overlapSeconds = previousEndSeconds - nextStartSeconds;
+  const maximumOverlapSeconds = maximumOverlapMilliseconds / 1_000;
+  // JSON numbers can make a decimal boundary (for example 292.6 - 291.245)
+  // infinitesimally larger than its intended provider value. The tolerance is
+  // bounded to IEEE-754 representation error, not a semantic grace period.
+  const representationTolerance = Number.EPSILON * Math.max(
+    1,
+    Math.abs(previousEndSeconds),
+    Math.abs(nextStartSeconds),
+  );
+  return overlapSeconds > maximumOverlapSeconds + representationTolerance;
 }
 
 function compareTurns(left: ProviderTurn, right: ProviderTurn): number {

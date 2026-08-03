@@ -258,7 +258,7 @@ describe("VoicetextBatchFinalTranscriptionAdapter", () => {
     const adapter = new VoicetextBatchFinalTranscriptionAdapter(
       client,
       new MemoryOggReader({ "s3://recording/speaker-a.ogg": validOgg(1) }),
-      {},
+      { maxSegmentOverlapMs: 0 },
       new TestPollingScheduler(),
     );
 
@@ -287,12 +287,52 @@ describe("VoicetextBatchFinalTranscriptionAdapter", () => {
     });
   });
 
-  it("rejects a true raw-second overlap instead of normalizing it away", async () => {
+  it("clamps the exact 1.355-second Nova-3 provider overlap from production", async () => {
     const client = new ScriptedBatchClient(async () => completed({
-      durationSeconds: 6,
+      durationSeconds: 300,
       utterances: [
-        { endSeconds: 5.7599998, startSeconds: 5, transcript: "первая реплика" },
-        { endSeconds: 6, startSeconds: 5.7599997, transcript: "перекрывающаяся реплика" },
+        { endSeconds: 292.6, startSeconds: 290, transcript: "проверяем очередь Redis" },
+        { endSeconds: 294.925, startSeconds: 291.245, transcript: "проверяем idempotency key" },
+      ],
+    }));
+    const adapter = new VoicetextBatchFinalTranscriptionAdapter(
+      client,
+      new MemoryOggReader({ "s3://recording/speaker-a.ogg": validOgg(1) }),
+      { maxSegmentOverlapMs: 1_355 },
+      new TestPollingScheduler(),
+    );
+
+    await expect(adapter.transcribe(requestFixture())).resolves.toEqual({
+      ok: true,
+      value: {
+        transcriptId: "transcript:v2:7:job-key",
+        turns: [
+          {
+            endMs: 302_600,
+            speakerId: "discord-user-a",
+            startMs: 300_000,
+            text: "проверяем очередь Redis",
+            turnId: "turn:v2:7:job-key:1:1:1:1",
+          },
+          {
+            endMs: 304_925,
+            speakerId: "discord-user-a",
+            startMs: 302_600,
+            text: "проверяем idempotency key",
+            turnId: "turn:v2:7:job-key:1:1:1:2",
+          },
+        ],
+        version: 1,
+      },
+    });
+  });
+
+  it("rejects a raw overlap above the configured bound", async () => {
+    const client = new ScriptedBatchClient(async () => completed({
+      durationSeconds: 12,
+      utterances: [
+        { endSeconds: 10, startSeconds: 5, transcript: "первая реплика" },
+        { endSeconds: 11, startSeconds: 7.999, transcript: "перекрывающаяся реплика" },
       ],
     }));
     const adapter = new VoicetextBatchFinalTranscriptionAdapter(
@@ -310,6 +350,52 @@ describe("VoicetextBatchFinalTranscriptionAdapter", () => {
       },
       ok: false,
     });
+  });
+
+  it("rejects a fully contained provider segment with no forward progress after clamping", async () => {
+    const client = new ScriptedBatchClient(async () => completed({
+      durationSeconds: 12,
+      utterances: [
+        { endSeconds: 10, startSeconds: 5, transcript: "первая реплика" },
+        { endSeconds: 9.5, startSeconds: 8.5, transcript: "вложенная реплика" },
+      ],
+    }));
+    const adapter = new VoicetextBatchFinalTranscriptionAdapter(
+      client,
+      new MemoryOggReader({ "s3://recording/speaker-a.ogg": validOgg(1) }),
+      {},
+      new TestPollingScheduler(),
+    );
+
+    await expect(adapter.transcribe(requestFixture())).resolves.toEqual({
+      failure: {
+        code: "VOICETEXT_TRANSCRIPTION_INVALID_PROVIDER_RESPONSE",
+        message: "Voicetext batch final segments are overlapping or zero-length",
+        retryable: false,
+      },
+      ok: false,
+    });
+  });
+
+  it("bounds the segment-overlap normalizer configuration", () => {
+    const client = new ScriptedBatchClient(async () => completed({
+      durationSeconds: 1,
+      utterances: [{ endSeconds: 1, startSeconds: 0, transcript: "unused" }],
+    }));
+    const reader = new MemoryOggReader({ "s3://recording/speaker-a.ogg": validOgg(1) });
+
+    expect(() => new VoicetextBatchFinalTranscriptionAdapter(
+      client,
+      reader,
+      { maxSegmentOverlapMs: -1 },
+      new TestPollingScheduler(),
+    )).toThrow("maxSegmentOverlapMs must be an integer between 0 and 10000");
+    expect(() => new VoicetextBatchFinalTranscriptionAdapter(
+      client,
+      reader,
+      { maxSegmentOverlapMs: 10_001 },
+      new TestPollingScheduler(),
+    )).toThrow("maxSegmentOverlapMs must be an integer between 0 and 10000");
   });
 
   it("fails the entire final transcription when one concurrent speaker track fails", async () => {
