@@ -23,33 +23,55 @@ import { toDiscordPublicationFailure } from "./discord-publication-errors.js";
 import { renderRussianTranscriptTimelineMarkdown } from "./discord-transcript-timeline.js";
 
 interface DiscordLiveProjectionPublisher {
-  publish(input: PublishDiscordSummary): Promise<DiscordProjectionReference>;
+  publish(
+    input: PublishDiscordSummary,
+    options?: {
+      readonly directEditOnly?: boolean;
+      readonly signal?: AbortSignal;
+    },
+  ): Promise<DiscordProjectionReference>;
 }
 
 const liveSummaryDescriptionLimit = 4_000;
+const finalizingProjectionTimeoutMs = 5_000;
 
 export class DiscordLiveMeetingProjectionAdapter implements LiveMeetingProjectionPort {
-  public constructor(private readonly publisher: DiscordLiveProjectionPublisher) {}
+  private readonly finalizingTimeoutMs: number;
+
+  public constructor(
+    private readonly publisher: DiscordLiveProjectionPublisher,
+    options: { readonly finalizingTimeoutMs?: number } = {},
+  ) {
+    this.finalizingTimeoutMs = options.finalizingTimeoutMs ?? finalizingProjectionTimeoutMs;
+  }
 
   public async publish(
     request: LiveMeetingProjectionRequest,
   ): Promise<PortResult<{ readonly externalPublicationId: string }>> {
     try {
       const referenceHint = currentReference(request.currentExternalPublicationId);
-      const reference = await this.publisher.publish({
-        projectionKey: createMeetingDiscordProjectionKey(
-          request.meetingId,
-          request.publicationTargetId,
-        ),
-        legacyProjectionKeys: [request.idempotencyKey],
-        parentChannelId: request.publicationTargetId,
-        threadTitle: liveThreadTitle(request),
-        markdown: renderRussianLiveSummaryMarkdown(request),
-        liveCaptionsMarkdown: renderRussianLiveCaptionsMarkdown(request.captions),
-        ...(referenceHint === undefined
-          ? {}
-          : { currentReference: referenceHint }),
-      });
+      const reference = await this.publisher.publish(
+        {
+          projectionKey: createMeetingDiscordProjectionKey(
+            request.meetingId,
+            request.publicationTargetId,
+          ),
+          legacyProjectionKeys: [request.idempotencyKey],
+          parentChannelId: request.publicationTargetId,
+          threadTitle: liveThreadTitle(request),
+          markdown: renderRussianLiveSummaryMarkdown(request),
+          liveCaptionsMarkdown: renderRussianLiveCaptionsMarkdown(request.captions),
+          ...(referenceHint === undefined
+            ? {}
+            : { currentReference: referenceHint }),
+        },
+        request.phase === "finalizing"
+          ? {
+            directEditOnly: true,
+            signal: AbortSignal.timeout(this.finalizingTimeoutMs),
+          }
+          : {},
+      );
       return {
         ok: true,
         value: { externalPublicationId: encodeDiscordExternalPublicationId(reference) },
@@ -61,15 +83,15 @@ export class DiscordLiveMeetingProjectionAdapter implements LiveMeetingProjectio
 }
 
 export function renderRussianLiveSummaryMarkdown(
-  request: Pick<LiveMeetingProjectionRequest, "elapsedMs" | "status" | "summary">,
+  request: Pick<LiveMeetingProjectionRequest, "elapsedMs" | "phase" | "summary">,
 ): string {
   if (request.summary === null) {
     return boundLiveSummary([
-      "# Meeting in progress",
+      request.phase === "finalizing" ? "# Finalizing..." : "# Meeting in progress",
       "",
       "## Live summary",
-      request.status === "ended"
-        ? "The call has ended. Preparing the final summary from the complete recording."
+      request.phase === "finalizing"
+        ? "Finalizing... The latest live captions are being reconciled with the complete recording."
         : "Initial insights will appear after the first few minutes. The bot is showing live captions in the meantime.",
       "",
       `_Duration: ${formatDiscordTimestamp(request.elapsedMs)}_`,
@@ -78,7 +100,10 @@ export function renderRussianLiveSummaryMarkdown(
 
   const { summary } = request;
   return boundLiveSummary([
-    `# ${normalizeInline(summary.title)}`,
+    request.phase === "finalizing" ? "# Finalizing..." : `# ${normalizeInline(summary.title)}`,
+    ...(request.phase === "finalizing"
+      ? ["", `_Latest live draft: ${normalizeInline(summary.title)}_`]
+      : []),
     "",
     "## Live summary",
     summary.overview.trim(),
@@ -118,8 +143,8 @@ export function renderRussianLiveSummaryMarkdown(
       "No open questions have been recorded yet.",
     ),
     "",
-    request.status === "ended"
-      ? "_The call has ended. This is a preliminary version pending final review._"
+    request.phase === "finalizing"
+      ? "_Finalizing... This is the latest live draft and caption history while final transcription and review complete._"
       : `_Updates during the meeting · ${formatDiscordTimestamp(request.elapsedMs)}_`,
   ]);
 }

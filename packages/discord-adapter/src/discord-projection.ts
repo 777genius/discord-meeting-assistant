@@ -207,6 +207,7 @@ export interface DiscordProjectionClient {
     readonly reference: DiscordProjectionReference;
     readonly body: DiscordProjectionBody;
     readonly marker: string;
+    readonly signal?: AbortSignal;
   }): Promise<void>;
 }
 

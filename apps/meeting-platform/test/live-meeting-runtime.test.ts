@@ -210,6 +210,30 @@ class FailingProjectionStub implements LiveMeetingProjectionPort {
   }
 }
 
+class FinalizingFailingProjectionStub implements LiveMeetingProjectionPort {
+  public readonly requests: LiveMeetingProjectionRequest[] = [];
+
+  public publish(
+    request: LiveMeetingProjectionRequest,
+  ): Promise<PortResult<{ readonly externalPublicationId: string }>> {
+    this.requests.push(structuredClone(request));
+    if (request.phase === "finalizing") {
+      return Promise.resolve({
+        failure: {
+          code: "DISCORD_UNAVAILABLE",
+          message: "finalizing edit failed",
+          retryable: true,
+        },
+        ok: false,
+      });
+    }
+    return Promise.resolve({
+      ok: true,
+      value: { externalPublicationId: "thread-1" },
+    });
+  }
+}
+
 class TimedProjectionStub implements LiveMeetingProjectionPort {
   public readonly calls: Array<{
     readonly meetingId: string;
@@ -287,6 +311,43 @@ class LiveTranscriberStub {
       { once: true },
     );
     return Promise.resolve(session);
+  }
+}
+
+class BlockedFinalizeLiveTranscriberStub {
+  public finalizationStarted = false;
+  public readonly requests: OpenVoicetextLiveSessionRequest[] = [];
+  private releaseFinalize: (() => void) | undefined;
+
+  public openSession(
+    request: OpenVoicetextLiveSessionRequest,
+  ): Promise<VoicetextLiveSession> {
+    this.requests.push(request);
+    return Promise.resolve({
+      finalize: () => {
+        this.finalizationStarted = true;
+        return new Promise((resolve) => {
+          this.releaseFinalize = () => {
+            request.onTranscript({
+              endMs: 4_000,
+              isFinal: true,
+              meetingId: request.meetingId,
+              speakerId: request.speakerId,
+              startMs: 3_000,
+              text: "Late provider final turn.",
+            });
+            resolve();
+          };
+        });
+      },
+      sendPacket: () => Promise.resolve("accepted" as const),
+      terminate: () => {},
+    });
+  }
+
+  public release(): void {
+    this.releaseFinalize?.();
+    this.releaseFinalize = undefined;
   }
 }
 
@@ -1088,6 +1149,48 @@ describe("PlatformLiveMeetingRuntime", () => {
     await runtime.close();
   });
 
+  it("gives finalizing one fresh projection attempt during live backoff", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime("2026-08-02T10:00:00.000Z");
+    const meetings = new MemoryLiveMeetingRepository();
+    const projector = new FailingProjectionStub({
+      code: "DISCORD_PUBLICATION_REQUEST_FAILED",
+      message: "Discord rate limited the live projection",
+      retryable: true,
+    });
+    const runtime = new PlatformLiveMeetingRuntime({
+      appendTurn: new AppendLiveTranscriptTurn(meetings),
+      finishMeeting: new FinishLiveMeeting(meetings),
+      logger,
+      publicationTargetId: "1533228891827736657",
+      refreshMeeting: new RefreshLiveMeeting({
+        meetings,
+        projector,
+        summarizer: new SummaryStub(),
+      }),
+      startMeeting: new StartLiveMeeting({ meetings }),
+      transcriber: new LiveTranscriberStub(),
+    });
+    const firstBatch = packets();
+    firstBatch.packets[0] = { ...firstBatch.packets[0]!, relativeTimeMs: 0 };
+
+    await runtime.acceptLifecycle(started());
+    void runtime.acceptVoiceBatch(firstBatch);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(projector.requests).toHaveLength(1);
+    expect(projector.requests[0]).toMatchObject({ phase: "live" });
+
+    await runtime.acceptLifecycle(ended());
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(projector.requests).toHaveLength(3);
+    expect(projector.requests.slice(1)).toEqual([
+      expect.objectContaining({ phase: "finalizing", status: "active" }),
+      expect.objectContaining({ phase: "finalizing", status: "ended" }),
+    ]);
+    await runtime.close();
+  });
+
   it("permanently fences non-retryable Discord projection failures until restart or configuration change", async () => {
     vi.useFakeTimers();
     vi.setSystemTime("2026-08-02T10:00:00.000Z");
@@ -1484,6 +1587,171 @@ describe("PlatformLiveMeetingRuntime", () => {
     await runtime.close();
   });
 
+  it("projects finalizing before a blocked provider finalize and preserves the final fence", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime("2026-08-02T10:00:00.000Z");
+    const meetings = new MemoryLiveMeetingRepository();
+    const summarizer = new SummaryStub();
+    const projector = new ProjectionStub();
+    const startMeeting = new StartLiveMeeting({ meetings });
+    const appendTurn = new AppendLiveTranscriptTurn(meetings);
+    const startedAtMs = Date.parse("2026-08-02T10:00:00.000Z");
+
+    await startMeeting.execute({
+      meetingId: "recording-live-1",
+      publicationTargetId: "1533228891827736657",
+      startedAtMs,
+    });
+    await appendTurn.execute("recording-live-1", {
+      endMs: 2_000,
+      speakerId: "1533228054724346087",
+      startMs: 1_000,
+      text: "Existing caption before the call ends.",
+      turnId: "turn-before-finalizing",
+    });
+    await new RefreshLiveMeeting({ meetings, projector, summarizer }).execute({
+      captions: [{
+        endMs: 2_000,
+        isFinal: true,
+        speakerId: "1533228054724346087",
+        startMs: 1_000,
+        text: "Existing caption before the call ends.",
+      }],
+      meetingId: "recording-live-1",
+      nowMs: startedAtMs + 300_000,
+    });
+
+    const transcriber = new BlockedFinalizeLiveTranscriberStub();
+    const runtime = new PlatformLiveMeetingRuntime({
+      appendTurn,
+      finishMeeting: new FinishLiveMeeting(meetings),
+      logger,
+      publicationTargetId: "1533228891827736657",
+      refreshMeeting: new RefreshLiveMeeting({ meetings, projector, summarizer }),
+      speakerIdleFinalizeMs: 10_000,
+      startMeeting,
+      transcriber,
+    });
+    const packetBatch = packets();
+    packetBatch.packets[0] = {
+      ...packetBatch.packets[0]!,
+      relativeTimeMs: 0,
+    };
+
+    await runtime.acceptLifecycle(started());
+    await vi.advanceTimersByTimeAsync(0);
+    await runtime.acceptVoiceBatch(packetBatch);
+    await vi.advanceTimersByTimeAsync(0);
+    await runtime.acceptLifecycle(ended());
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(transcriber.finalizationStarted).toBe(true);
+    expect(projector.requests.at(-1)).toMatchObject({
+      captions: [expect.objectContaining({ text: "Existing caption before the call ends." })],
+      currentExternalPublicationId: "thread-1",
+      phase: "finalizing",
+      status: "active",
+      summary: { revision: 1 },
+    });
+    expect(meetings.snapshot?.status).toBe("active");
+
+    let fenceReleased = false;
+    const fence = runtime.settleBeforeFinalPublication("recording-live-1").then(() => {
+      fenceReleased = true;
+      return null;
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fenceReleased).toBe(false);
+
+    transcriber.release();
+    await fence;
+
+    expect(meetings.snapshot).toMatchObject({ status: "ended" });
+    expect(meetings.snapshot?.turns).toEqual(expect.arrayContaining([
+      expect.objectContaining({ text: "Late provider final turn." }),
+    ]));
+    expect(projector.requests.at(-1)).toMatchObject({
+      currentExternalPublicationId: "thread-1",
+      phase: "finalizing",
+      status: "ended",
+    });
+    await runtime.close();
+  });
+
+  it("does not let a finalizing projection failure hold the final fence", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime("2026-08-02T10:00:00.000Z");
+    const meetings = new MemoryLiveMeetingRepository();
+    const projector = new FinalizingFailingProjectionStub();
+    const startMeeting = new StartLiveMeeting({ meetings });
+    const appendTurn = new AppendLiveTranscriptTurn(meetings);
+    const startedAtMs = Date.parse("2026-08-02T10:00:00.000Z");
+
+    await startMeeting.execute({
+      meetingId: "recording-live-1",
+      publicationTargetId: "1533228891827736657",
+      startedAtMs,
+    });
+    await appendTurn.execute("recording-live-1", {
+      endMs: 2_000,
+      speakerId: "1533228054724346087",
+      startMs: 1_000,
+      text: "Existing caption before projection failure.",
+      turnId: "turn-before-projection-failure",
+    });
+    await new RefreshLiveMeeting({
+      meetings,
+      projector,
+      summarizer: new SummaryStub(),
+    }).execute({
+      captions: [{
+        endMs: 2_000,
+        isFinal: true,
+        speakerId: "1533228054724346087",
+        startMs: 1_000,
+        text: "Existing caption before projection failure.",
+      }],
+      meetingId: "recording-live-1",
+      nowMs: startedAtMs + 2_000,
+      summaryGeneration: "skip",
+    });
+
+    const transcriber = new BlockedFinalizeLiveTranscriberStub();
+    const runtime = new PlatformLiveMeetingRuntime({
+      appendTurn,
+      finishMeeting: new FinishLiveMeeting(meetings),
+      logger,
+      publicationTargetId: "1533228891827736657",
+      refreshMeeting: new RefreshLiveMeeting({
+        meetings,
+        projector,
+        summarizer: new SummaryStub(),
+      }),
+      speakerIdleFinalizeMs: 10_000,
+      startMeeting,
+      transcriber,
+    });
+    const packetBatch = packets();
+    packetBatch.packets[0] = {
+      ...packetBatch.packets[0]!,
+      relativeTimeMs: 0,
+    };
+
+    await runtime.acceptLifecycle(started());
+    await vi.advanceTimersByTimeAsync(0);
+    await runtime.acceptVoiceBatch(packetBatch);
+    await vi.advanceTimersByTimeAsync(0);
+    await runtime.acceptLifecycle(ended());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(projector.requests.at(-1)).toMatchObject({ phase: "finalizing" });
+
+    const fence = runtime.settleBeforeFinalPublication("recording-live-1");
+    transcriber.release();
+    await expect(fence).resolves.toBeUndefined();
+    expect(meetings.snapshot?.status).toBe("ended");
+    await runtime.close();
+  });
+
   it("keeps Opus and derived state off the authoritative request path", async () => {
     const meetings = new MemoryLiveMeetingRepository();
     const summarizer = new SummaryStub();
@@ -1513,12 +1781,18 @@ describe("PlatformLiveMeetingRuntime", () => {
     expect(transcriber.finalizationCount).toBe(1);
     expect(transcriber.terminatedSessionCount).toBe(0);
     expect(summarizer.requests).toHaveLength(0);
-    expect(projector.requests).toHaveLength(1);
+    expect(projector.requests).toHaveLength(2);
     expect(projector.requests[0]).toMatchObject({
       captions: [{ isFinal: true, speakerId: "1533228054724346087" }],
       elapsedMs: 360_000,
-      status: "ended",
+      phase: "finalizing",
+      status: "active",
       summary: null,
+    });
+    expect(projector.requests[1]).toMatchObject({
+      currentExternalPublicationId: "thread-1",
+      phase: "finalizing",
+      status: "ended",
     });
     expect(meetings.snapshot).toMatchObject({
       draftSummary: null,

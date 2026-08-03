@@ -265,6 +265,40 @@ describe("DiscordSummaryPublisher contract", () => {
     expect(client.createMessageCount).toBe(1);
   });
 
+  it("does not reconcile a direct-only projection without a durable receipt", async () => {
+    const client = new FakeDiscordProjectionClient();
+
+    await expect(publisher(client).publish(command, {
+      directEditOnly: true,
+      signal: AbortSignal.timeout(100),
+    })).rejects.toThrow("requires a current reference");
+
+    expect(client.inspectCount).toBe(0);
+    expect(client.createThreadCount).toBe(0);
+    expect(client.createMessageCount).toBe(0);
+  });
+
+  it("does not reconcile a failed direct-only projection edit", async () => {
+    const client = new FakeDiscordProjectionClient();
+    const subject = publisher(client);
+    const reference = await subject.publish(command);
+    const inspectionsBeforeFailure = client.inspectCount;
+    client.throwAfterNextMessageEdit = true;
+
+    await expect(subject.publish({
+      ...command,
+      currentReference: reference,
+      markdown: "## Summary\n\nBest-effort finalizing update.",
+    }, {
+      directEditOnly: true,
+      signal: AbortSignal.timeout(100),
+    })).rejects.toThrow("unknown edit outcome");
+
+    expect(client.inspectCount).toBe(inspectionsBeforeFailure);
+    expect(client.createThreadCount).toBe(1);
+    expect(client.createMessageCount).toBe(1);
+  });
+
   it("recovers a failed direct edit through the marker without creating a second projection", async () => {
     const client = new FakeDiscordProjectionClient();
     const subject = publisher(client);
@@ -410,6 +444,7 @@ describe("DiscordSummaryPublisher contract", () => {
       elapsedMs: 8_000,
       idempotencyKey: "meeting-live-projection:v1|meeting-42",
       meetingId: "meeting-42",
+      phase: "live",
       publicationTargetId: command.parentChannelId,
       revision: 1,
       status: "active",
@@ -483,6 +518,7 @@ describe("DiscordSummaryPublisher contract", () => {
       elapsedMs: 8_000,
       idempotencyKey: "meeting-live-projection:v1|meeting-42",
       meetingId: "meeting-42",
+      phase: "live",
       publicationTargetId: command.parentChannelId,
       revision: 1,
       status: "active",

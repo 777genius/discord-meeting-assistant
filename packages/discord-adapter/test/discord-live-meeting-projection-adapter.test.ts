@@ -33,6 +33,7 @@ const request: LiveMeetingProjectionRequest = {
   elapsedMs: 300_000,
   idempotencyKey: "meeting-live-projection:v1|meeting-42",
   meetingId: "meeting-42",
+  phase: "live",
   publicationTargetId: "11111111111111111",
   revision: 4,
   status: "active",
@@ -76,6 +77,31 @@ class FakeLiveProjector {
       threadId: "22222222222222222",
       messageId: "33333333333333333",
     };
+  }
+}
+
+class AbortableHangingLiveProjector {
+  public publish(
+    _input: PublishDiscordSummary,
+    options?: {
+      readonly directEditOnly?: boolean;
+      readonly signal?: AbortSignal;
+    },
+  ): Promise<DiscordProjectionReference> {
+    return new Promise((_resolve, reject) => {
+      if (options?.directEditOnly !== true) {
+        reject(new Error("Expected a direct-only finalizing projection"));
+        return;
+      }
+      const signal = options.signal;
+      if (signal === undefined) {
+        reject(new Error("Expected an abort signal for finalizing"));
+        return;
+      }
+      signal.addEventListener("abort", () => {
+        reject(signal.reason);
+      }, { once: true });
+    });
   }
 }
 
@@ -139,12 +165,42 @@ describe("DiscordLiveMeetingProjectionAdapter", () => {
   it("shows a clear placeholder while a live summary is not ready", () => {
     const markdown = renderRussianLiveSummaryMarkdown({
       elapsedMs: 300_000,
-      status: "active",
+      phase: "live",
       summary: null,
     });
 
     expect(markdown).toContain("Initial insights will appear after the first few minutes.");
     expect(markdown).toContain("_Duration: 05:00_");
+  });
+
+  it("renders a human finalizing state without changing the live draft", () => {
+    const markdown = renderRussianLiveSummaryMarkdown({
+      ...request,
+      phase: "finalizing",
+    });
+
+    expect(markdown).toContain("Finalizing...");
+    expect(markdown).toMatch(/^# Finalizing\.\.\./u);
+    expect(markdown).toContain(request.summary?.title);
+    expect(markdown).toContain(request.summary?.overview);
+    expect(markdown).toContain("## Key topics");
+  });
+
+  it("aborts a hung finalizing edit before the authoritative final write", async () => {
+    const adapter = new DiscordLiveMeetingProjectionAdapter(
+      new AbortableHangingLiveProjector(),
+      { finalizingTimeoutMs: 10 },
+    );
+
+    const result = await adapter.publish({ ...request, phase: "finalizing" });
+
+    expect(result).toMatchObject({
+      failure: {
+        code: "DISCORD_PUBLICATION_REQUEST_FAILED",
+        retryable: true,
+      },
+      ok: false,
+    });
   });
 
   it("bounds Unicode captions and summary descriptions without splitting surrogate pairs", () => {

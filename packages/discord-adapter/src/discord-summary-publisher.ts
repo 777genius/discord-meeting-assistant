@@ -13,6 +13,7 @@ import {
   toDiscordProjectionBody,
 } from "./discord-projection.js";
 import { shouldReconcileDirectProjectionEditFailure } from "./discord-projection-error-classification.js";
+import { DiscordProjectionConfigurationError } from "./discordjs-projection-client.js";
 import {
   createDiscordThreadName,
   createDiscordThreadRecoveryName,
@@ -26,6 +27,13 @@ export interface DiscordSummaryPublisherOptions {
    * never creates a second visible projection for the same meeting.
    */
   readonly publicationMode?: DiscordPublicationMode;
+}
+
+export interface DiscordSummaryPublicationAttemptOptions {
+  /** Cancels a best-effort live edit before the authoritative final write. */
+  readonly signal?: AbortSignal;
+  /** Never starts recovery work for a transient, non-authoritative projection. */
+  readonly directEditOnly?: boolean;
 }
 
 type AcquiredProjection =
@@ -48,22 +56,36 @@ export class DiscordSummaryPublisher {
     );
   }
 
-  async publish(rawInput: PublishDiscordSummary): Promise<DiscordProjectionReference> {
+  async publish(
+    rawInput: PublishDiscordSummary,
+    options: DiscordSummaryPublicationAttemptOptions = {},
+  ): Promise<DiscordProjectionReference> {
     const input = publishDiscordSummarySchema.parse(rawInput);
     const marker = createProjectionMarker(input.projectionKey);
     const legacyMarkers = uniqueMarkers(input.legacyProjectionKeys ?? [], marker);
     const lockKey = `${input.parentChannelId}:${marker}`;
 
     return this.lock.runExclusive(lockKey, async () => {
+      options.signal?.throwIfAborted();
+      if (options.directEditOnly === true && input.currentReference === undefined) {
+        throw new DiscordProjectionConfigurationError(
+          "Direct-only Discord projection requires a current reference",
+        );
+      }
       if (input.currentReference !== undefined) {
         try {
           await this.client.editMessage({
             reference: input.currentReference,
             body: toDiscordProjectionBody(input),
             marker,
+            ...(options.signal === undefined ? {} : { signal: options.signal }),
           });
           return input.currentReference;
         } catch (error: unknown) {
+          options.signal?.throwIfAborted();
+          if (options.directEditOnly === true) {
+            throw error;
+          }
           if (!shouldReconcileDirectProjectionEditFailure(error)) {
             throw error;
           }

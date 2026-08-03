@@ -12,6 +12,7 @@ import type { TranscriptTurnSnapshot } from "../domain/transcript.js";
 import type {
   IncrementalSummaryGenerationPort,
   LiveCaptionSnapshot,
+  LiveMeetingProjectionPhase,
   LiveMeetingProjectionPort,
   LiveMeetingRepository,
 } from "./ports.js";
@@ -123,6 +124,11 @@ export interface RefreshLiveMeetingInput {
   readonly captions: readonly LiveCaptionSnapshot[];
   readonly meetingId: string;
   readonly nowMs: number;
+  /**
+   * A user-visible phase which may advance before the aggregate reaches its
+   * terminal state, so late provider final turns remain admissible.
+   */
+  readonly projectionPhase?: LiveMeetingProjectionPhase;
   /**
    * Keeps summary generation available to a separate single-flight worker
    * without allowing it to concurrently edit the mutable live projection.
@@ -292,6 +298,9 @@ export class RefreshLiveMeeting {
     const projectionAllowed = input.projection !== "skip";
 
     const projectionRequested = input.projectionRequested ?? true;
+    const projectionPhase = input.projectionPhase ?? (
+      meeting.status === "ended" ? "finalizing" : "live"
+    );
     const hasVisibleCaption = input.captions.some(({ text }) => text.trim().length > 0);
     const hasRecognizedEvidence =
       hasVisibleCaption || meeting.turns.length > 0 || meeting.draftSummary !== null;
@@ -304,11 +313,22 @@ export class RefreshLiveMeeting {
     const projectionStateDirty = meeting.projectedRevision < meeting.revision;
     const shouldProject =
       canProject &&
-      (meeting.status === "ended" || projectionStateDirty || projectionRequested);
+      (
+        projectionPhase === "finalizing" ||
+        meeting.status === "ended" ||
+        projectionStateDirty ||
+        projectionRequested
+      );
     let projected = false;
     let projectionFailure: StageFailure | undefined;
     if (projectionAllowed && shouldProject) {
-      const projectedResult = await this.project(meeting, input.captions, nowMs, elapsedMs);
+      const projectedResult = await this.project(
+        meeting,
+        input.captions,
+        nowMs,
+        elapsedMs,
+        projectionPhase,
+      );
       projected = projectedResult.projected;
       projectionFailure = projectedResult.failure;
     }
@@ -330,6 +350,7 @@ export class RefreshLiveMeeting {
           input.captions,
           nowMs,
           elapsedMs,
+          projectionPhase,
         );
         projected = projected || updatedProjection.projected;
         projectionFailure = updatedProjection.failure;
@@ -550,6 +571,7 @@ export class RefreshLiveMeeting {
     captions: readonly LiveCaptionSnapshot[],
     nowMs: number,
     elapsedMs: number,
+    phase: LiveMeetingProjectionPhase,
   ): Promise<{ readonly failure?: StageFailure; readonly projected: boolean }> {
     let meeting = initialMeeting;
     for (let attempt = 0; attempt < maximumProjectionSaveAttempts; attempt += 1) {
@@ -566,6 +588,7 @@ export class RefreshLiveMeeting {
             meeting.publicationTargetId,
           ),
           meetingId: meeting.meetingId,
+          phase,
           publicationTargetId: meeting.publicationTargetId,
           revision: projectedRevision,
           status: meeting.status,

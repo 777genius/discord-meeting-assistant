@@ -138,7 +138,27 @@ export class DiscordJsProjectionClient implements DiscordProjectionClient {
     readonly reference: DiscordProjectionReference;
     readonly body: DiscordProjectionBody;
     readonly marker: string;
+    readonly signal?: AbortSignal;
   }): Promise<void> {
+    if (input.signal !== undefined) {
+      input.signal.throwIfAborted();
+      if (input.body.transcriptAttachment !== undefined) {
+        throw new DiscordProjectionConfigurationError(
+          "Abortable Discord projection edits cannot include transcript attachments",
+        );
+      }
+      const channelId = input.reference.kind === "thread"
+        ? input.reference.threadId
+        : input.reference.parentChannelId;
+      await this.client.rest.patch(
+        `/channels/${channelId}/messages/${input.reference.messageId}`,
+        {
+          body: toDiscordRestMessageEditBody(input.body, input.marker),
+          signal: input.signal,
+        },
+      );
+      return;
+    }
     const destination = input.reference.kind === "thread"
       ? await this.fetchThread(input.reference.threadId)
       : await this.fetchParentChannel(input.reference.parentChannelId);
@@ -411,6 +431,23 @@ export function toDiscordMessagePayload(rawBody: DiscordProjectionBody, marker?:
           name: body.transcriptAttachment.filename,
         }],
       }),
+  };
+}
+
+function toDiscordRestMessageEditBody(rawBody: DiscordProjectionBody, marker: string) {
+  const body = discordProjectionBodySchema.parse(rawBody);
+  return {
+    allowed_mentions: { parse: [] as const, replied_user: false },
+    embeds: [
+      {
+        description: body.markdown,
+        footer: { text: PROJECTION_FOOTER },
+        url: createProjectionMarkerUrl(marker),
+      },
+      ...(body.liveCaptionsMarkdown === undefined
+        ? []
+        : [{ description: body.liveCaptionsMarkdown }]),
+    ],
   };
 }
 

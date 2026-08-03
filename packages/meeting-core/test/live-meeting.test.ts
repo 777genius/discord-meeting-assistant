@@ -753,7 +753,64 @@ describe("live meeting orchestration", () => {
     expect(result).toMatchObject({ generated: false, projected: true });
     expect(summarizer.requests).toHaveLength(0);
     expect(projector.requests).toHaveLength(1);
-    expect(projector.requests[0]).toMatchObject({ status: "ended" });
+    expect(projector.requests[0]).toMatchObject({
+      phase: "finalizing",
+      status: "ended",
+    });
+  });
+
+  it("projects a finalizing phase without ending the aggregate", async () => {
+    const meetings = await startedRepository();
+    const append = new AppendLiveTranscriptTurn(meetings);
+    const projector = new RecordingProjector();
+    const refresh = new RefreshLiveMeeting({
+      meetings,
+      projector,
+      summarizer: new RecordingSummarizer(generatedSummary),
+    });
+
+    await append.execute("meeting-1", {
+      endMs: 2_000,
+      speakerId: "speaker-a",
+      startMs: 1_000,
+      text: "Последняя видимая реплика.",
+      turnId: "turn-before-finalizing",
+    });
+    await refresh.execute({
+      captions: [{
+        endMs: 2_000,
+        isFinal: true,
+        speakerId: "speaker-a",
+        startMs: 1_000,
+        text: "Последняя видимая реплика.",
+      }],
+      meetingId: "meeting-1",
+      nowMs: 2_000,
+      summaryGeneration: "skip",
+    });
+
+    await expect(refresh.execute({
+      captions: [],
+      meetingId: "meeting-1",
+      nowMs: 3_000,
+      projectionPhase: "finalizing",
+      projectionRequested: false,
+      summaryGeneration: "skip",
+    })).resolves.toMatchObject({ projected: true });
+
+    expect(projector.requests.at(-1)).toMatchObject({
+      currentExternalPublicationId: "thread-1",
+      phase: "finalizing",
+      status: "active",
+    });
+    await expect(append.execute("meeting-1", {
+      endMs: 4_000,
+      speakerId: "speaker-a",
+      startMs: 3_000,
+      text: "Поздняя final-реплика.",
+      turnId: "turn-after-finalizing",
+    })).resolves.toBe("appended");
+    expect(meetings.snapshot?.status).toBe("active");
   });
 
   it("publishes and summarizes a short meeting as soon as it ends", async () => {
@@ -776,7 +833,11 @@ describe("live meeting orchestration", () => {
     });
 
     expect(result).toMatchObject({ generated: true, projected: true });
-    expect(projector.requests[0]).toMatchObject({ elapsedMs: 25_000, status: "ended" });
+    expect(projector.requests[0]).toMatchObject({
+      elapsedMs: 25_000,
+      phase: "finalizing",
+      status: "ended",
+    });
   });
 
   it("summarizes a late finalized turn inserted before the prior timeline", async () => {

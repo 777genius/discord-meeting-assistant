@@ -389,6 +389,7 @@ describe("Discord publication container modes", () => {
       elapsedMs: 5_000,
       idempotencyKey: "meeting-live-projection:v1|meeting-mode-42",
       meetingId: "meeting-mode-42",
+      phase: "live",
       publicationTargetId: parentChannelId,
       revision: 1,
       status: "active",

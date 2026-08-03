@@ -26,6 +26,7 @@ export {
   type IncrementalSummaryGenerationResult,
   type IncrementalSummaryGenerationRequest,
   type LiveCaptionSnapshot,
+  type LiveMeetingProjectionPhase,
   type LiveMeetingProjectionPort,
   type LiveMeetingProjectionRequest,
   type LiveMeetingRepository,

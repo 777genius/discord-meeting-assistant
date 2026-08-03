@@ -47,6 +47,13 @@ export interface LiveCaptionSnapshot {
   readonly text: string;
 }
 
+/**
+ * Presentation lifecycle for the mutable live projection. It is deliberately
+ * separate from the aggregate status: provider final turns can still be
+ * appended while the user is told that the visible draft is finalizing.
+ */
+export type LiveMeetingProjectionPhase = "live" | "finalizing";
+
 export interface IncrementalSummaryGenerationRequest {
   readonly idempotencyKey: string;
   readonly knownSpeakerIds: readonly string[];
@@ -86,6 +93,7 @@ export interface LiveMeetingProjectionRequest {
   readonly elapsedMs: number;
   readonly idempotencyKey: string;
   readonly meetingId: string;
+  readonly phase: LiveMeetingProjectionPhase;
   readonly publicationTargetId: string;
   readonly revision: number;
   readonly status: LiveMeetingStatus;

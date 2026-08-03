@@ -12,6 +12,7 @@ import {
   StartLiveMeeting,
   type LiveCaptionSnapshot,
   type LiveGenerationTelemetrySnapshot,
+  type LiveMeetingProjectionPhase,
   type TranscriptTurnSnapshot,
 } from "@discord-meeting/meeting-core";
 import type { Logger } from "@discord-meeting/observability-adapter";
@@ -841,16 +842,24 @@ export class PlatformLiveMeetingRuntime {
     nowMs: number,
   ): Promise<void> {
     const refreshStartedAtMs = performance.now();
+    const phase: LiveMeetingProjectionPhase = state.finishing
+      ? "finalizing"
+      : "live";
     const captions = collectLiveCaptions(
       state,
       Math.max(0, nowMs - state.startedAtMs),
     );
     const captionsSignature = liveCaptionsSignature(captions);
-    const projectionAllowed = this.projectionAllowed(state, nowMs);
+    // Ending is a distinct best-effort UX transition. Give it one fresh edit
+    // even when a transient live retry window or permanent live fence is set;
+    // the adapter applies a short abortable deadline so this cannot hold the
+    // authoritative final publication fence.
+    const projectionAllowed = phase === "finalizing" || this.projectionAllowed(state, nowMs);
     const result = await this.dependencies.refreshMeeting.execute({
       captions,
       meetingId: state.meetingId,
       nowMs,
+      projectionPhase: phase,
       ...(projectionAllowed ? {} : { projection: "skip" as const }),
       projectionRequested:
         projectionAllowed &&
@@ -884,6 +893,7 @@ export class PlatformLiveMeetingRuntime {
     this.dependencies.logger.info("Live caption projection refresh completed", {
       durationMs: Math.max(0, performance.now() - refreshStartedAtMs),
       meetingId: state.meetingId,
+      phase,
       projectionAllowed,
       projected: result.projected,
     });
@@ -1143,6 +1153,10 @@ export class PlatformLiveMeetingRuntime {
     );
     await Promise.allSettled(finalizeTasks);
     await state.generationPromise?.catch(() => {});
+    // Provider finalization is the admission boundary for terminal callbacks.
+    // Flush every callback it queued before committing `ended`, otherwise a
+    // late provider final turn could be rejected by the aggregate.
+    await state.domainChain;
     this.enqueueDomain(state, async () => {
       const result = await this.dependencies.finishMeeting.execute(
         state.meetingId,
@@ -1173,6 +1187,13 @@ export class PlatformLiveMeetingRuntime {
       stream.packetFlow.cancel();
       stream.openingAbortController?.abort();
     }
+    // This runs through the same serialized live writer as caption refreshes,
+    // but starts before provider finalization. It keeps the existing Discord
+    // receipt visible in an honest finalizing phase while late final turns are
+    // still being admitted. Its guarded failure cannot hold the final fence.
+    this.enqueueDomain(state, async () => {
+      await this.refreshProjection(state, endedAtMs);
+    });
     const finishPromise = this.finish(state, endedAtMs);
     state.finishPromise = finishPromise;
     void finishPromise.catch((error: unknown) => {
