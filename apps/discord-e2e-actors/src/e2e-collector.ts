@@ -1,162 +1,50 @@
-import { z } from "zod";
-
 import {
-  actorRunEvidenceV1Schema,
   retainedE2eEvidenceV3Schema,
   sameDeploymentProvenance,
-  unboundActorRunEvidenceV1Schema,
-  type ActorRunEvidenceV1,
-  type DeploymentProvenance,
   type RetainedE2eEvidenceV3,
-  type UnboundActorRunEvidenceV1,
 } from "./e2e-evidence.js";
+import {
+  assertDiscordReference,
+  assertExactDiscordProjection,
+  createMeetingDiscordProjectionKey,
+  parseDiscordPublication,
+  projectionMarker,
+  toEvidenceContainer,
+} from "./e2e-discord-projection-inspection.js";
+import type {
+  CollectEvidenceInput,
+  DeploymentEvidenceProbe,
+  DiscordEvidenceProbe,
+} from "./e2e-retained-evidence-contracts.js";
+import {
+  assertExactDatabaseCounts,
+  assertS3MatchesSnapshot,
+  bindActorRun,
+  normalizeDatabase,
+  parseUnboundActorRun,
+} from "./e2e-retained-evidence-snapshot.js";
 
-const identifier = z.string().trim().min(1);
-const sha256 = z.string().regex(/^[a-f\d]{64}$/u);
-const stage = z.object({
-  attempts: z.number().int().positive(),
-  status: z.literal("succeeded"),
-});
-
-const meetingSnapshotSchema = z.object({
-  meetingId: identifier,
-  publication: z.object({
-    externalPublicationId: identifier,
-    idempotencyKey: identifier,
-  }),
-  publicationStage: stage,
-  publicationTargetId: identifier,
-  recording: z.object({
-    manifestLocator: identifier,
-    recordingId: identifier,
-    speakerAudio: z.array(z.object({
-      audioLocator: identifier,
-      speakerId: identifier,
-      timelineOffsetMs: z.number().int().nonnegative(),
-    })).min(1),
-  }),
-  revision: z.number().int().nonnegative(),
-  summary: z.object({
-    actionItems: z.array(z.object({
-      actionItemId: identifier,
-      deadline: identifier.nullable(),
-      evidenceTurnIds: z.array(identifier).min(1),
-      ownerSpeakerId: identifier.nullable(),
-      text: identifier,
-    }).strict()),
-    decisions: z.array(z.object({
-      decisionId: identifier,
-      evidenceTurnIds: z.array(identifier).min(1),
-      text: identifier,
-    }).strict()),
-    openQuestions: z.array(z.object({
-      evidenceTurnIds: z.array(identifier).min(1),
-      id: identifier,
-      text: identifier,
-    }).strict()),
-    overview: identifier,
-    summaryId: identifier,
-    title: identifier,
-    topics: z.array(z.object({
-      evidenceTurnIds: z.array(identifier).min(1),
-      points: z.array(identifier).min(1),
-      title: identifier,
-    }).strict()),
-    transcriptId: identifier,
-    version: z.number().int().positive(),
-  }).strict(),
-  summaryStage: stage,
-  transcript: z.object({
-    transcriptId: identifier,
-    turns: z.array(z.object({
-      endMs: z.number().int().nonnegative(),
-      speakerId: identifier,
-      startMs: z.number().int().nonnegative(),
-      text: identifier,
-      turnId: identifier,
-    })).min(1),
-  }),
-  transcriptionStage: stage,
-}).loose();
-
-type CollectedMeetingSnapshot = z.infer<typeof meetingSnapshotSchema>;
-
-export interface DatabaseObservation {
-  readonly matchingMeetingCount: number;
-  readonly matchingRecordingCount: number;
-  readonly matchingSummaryCount: number;
-  readonly matchingTranscriptCount: number;
-  readonly snapshot: unknown;
-}
-
-interface S3TrackEvidence {
-  readonly checksumSha256: string;
-  readonly durationMs: number;
-  readonly locator: string;
-  readonly sizeBytes: number;
-  readonly speakerId: string;
-  readonly timelineOffsetMs: number;
-}
-
-export interface S3RecordingEvidence {
-  readonly endedAt: string;
-  readonly manifestChecksumSha256: string;
-  readonly manifestLocator: string;
-  readonly recordingId: string;
-  readonly sourceChecksumSha256: string;
-  readonly startedAt: string;
-  readonly tracks: readonly S3TrackEvidence[];
-}
-
-export interface ReplayJobEvidence {
-  readonly afterProcessedOn: number;
-  readonly beforeProcessedOn: number;
-  readonly jobId: string;
-  readonly state: "completed";
-}
-
-export interface DeploymentEvidenceProbe {
-  collectDatabase(recordingId: string): Promise<DatabaseObservation>;
-  collectProvenance(): Promise<DeploymentProvenance>;
-  collectS3(manifestLocator: string, recordingId: string): Promise<S3RecordingEvidence>;
-  replayPostCall(meetingId: string): Promise<ReplayJobEvidence>;
-}
-
-export interface DiscordProjectionObservation {
-  readonly matchingMessages: readonly DiscordProjectionMessageObservation[];
-  readonly matchingThreadIds: readonly string[];
-}
-
-export type DiscordProjectionContainerObservation =
-  | { readonly kind: "channel-message"; readonly parentChannelId: string }
-  | { readonly kind: "thread"; readonly parentChannelId: string; readonly threadId: string };
-
-export interface DiscordProjectionMessageObservation {
-  readonly container: DiscordProjectionContainerObservation;
-  readonly embedDescription: string;
-  readonly messageId: string;
-}
-
-export interface DiscordEvidenceProbe {
-  inspect(parentChannelId: string, marker: string): Promise<DiscordProjectionObservation>;
-}
-
-export interface CollectEvidenceInput {
-  readonly actorRun: unknown;
-  readonly recordingId: string;
-  readonly runId: string;
-}
+export type {
+  CollectEvidenceInput,
+  DatabaseObservation,
+  DeploymentEvidenceProbe,
+  DiscordEvidenceProbe,
+  DiscordProjectionContainerObservation,
+  DiscordProjectionMessageObservation,
+  DiscordProjectionObservation,
+  ReplayJobEvidence,
+  S3RecordingEvidence,
+} from "./e2e-retained-evidence-contracts.js";
 
 export async function collectRetainedE2eEvidence(
   input: CollectEvidenceInput,
   deployment: DeploymentEvidenceProbe,
   discord: DiscordEvidenceProbe,
 ): Promise<RetainedE2eEvidenceV3> {
-  const unboundActorRun = unboundActorRunEvidenceV1Schema.parse(input.actorRun);
+  const unboundActorRun = parseUnboundActorRun(input.actorRun);
   if (unboundActorRun.runId !== input.runId) {
     throw new Error("Actor evidence does not match the requested run correlation");
   }
-
   const provenanceBefore = await deployment.collectProvenance();
   const before = normalizeDatabase(await deployment.collectDatabase(input.recordingId));
   assertExactDatabaseCounts(before, "before replay");
@@ -164,7 +52,7 @@ export async function collectRetainedE2eEvidence(
   if (snapshot.meetingId !== input.recordingId || snapshot.recording.recordingId !== input.recordingId) {
     throw new Error("Postgres snapshot is not correlated to the requested recording");
   }
-  const publication = parsePublication(
+  const publication = parseDiscordPublication(
     snapshot.publication.externalPublicationId,
     snapshot.publicationTargetId,
   );
@@ -181,7 +69,6 @@ export async function collectRetainedE2eEvidence(
   const beforeMessage = assertDiscordReference(beforeDiscord, publication);
   assertExactDiscordProjection(beforeDiscord, publication, "before replay");
   const actorRun = bindActorRun(unboundActorRun, input.recordingId, s3);
-
   const replayJob = await deployment.replayPostCall(snapshot.meetingId);
   if (replayJob.afterProcessedOn <= replayJob.beforeProcessedOn) {
     throw new Error("Replay job did not complete a later real processing attempt");
@@ -193,7 +80,7 @@ export async function collectRetainedE2eEvidence(
     throw new Error("Deployment provenance changed while retained evidence was collected");
   }
   const replaySnapshot = after.snapshot;
-  const replayPublication = parsePublication(
+  const replayPublication = parseDiscordPublication(
     replaySnapshot.publication.externalPublicationId,
     replaySnapshot.publicationTargetId,
   );
@@ -201,19 +88,7 @@ export async function collectRetainedE2eEvidence(
   if (afterMessage.embedDescription !== beforeMessage.embedDescription) {
     throw new Error("Discord projection visible text changed after idempotent replay");
   }
-
-  if (s3.tracks.length === 0) {
-    throw new Error("Authoritative S3 manifest has no speaker tracks");
-  }
-  const recordingMediaOriginMs = Math.min(
-    ...s3.tracks.map(({ timelineOffsetMs }) => timelineOffsetMs),
-  );
-  const recordingDurationMs = recordingMediaOriginMs + Math.max(
-    ...s3.tracks.map(({ durationMs }) => durationMs),
-  );
-  if (!Number.isSafeInteger(recordingDurationMs)) {
-    throw new Error("Authoritative S3 recording duration is outside the safe range");
-  }
+  const recordingDurationMs = recordingDuration(s3);
   assertExactDiscordProjection(afterDiscord, replayPublication, "after replay");
   return retainedE2eEvidenceV3Schema.parse({
     actorRun,
@@ -274,204 +149,18 @@ export async function collectRetainedE2eEvidence(
   });
 }
 
-function normalizeDatabase(observation: DatabaseObservation): Omit<DatabaseObservation, "snapshot"> & {
-  readonly snapshot: CollectedMeetingSnapshot;
-} {
-  for (const [name, count] of Object.entries(observation).filter(([key]) => key !== "snapshot")) {
-    if (!Number.isSafeInteger(count) || (count as number) < 0) {
-      throw new Error(`Postgres ${name} is not a safe count`);
-    }
+function recordingDuration(s3: { readonly tracks: readonly { readonly durationMs: number; readonly timelineOffsetMs: number }[] }): number {
+  if (s3.tracks.length === 0) {
+    throw new Error("Authoritative S3 manifest has no speaker tracks");
   }
-  return { ...observation, snapshot: meetingSnapshotSchema.parse(observation.snapshot) };
-}
-
-function assertExactDatabaseCounts(
-  observation: DatabaseObservation,
-  phase: string,
-): void {
-  const counts = [
-    observation.matchingMeetingCount,
-    observation.matchingRecordingCount,
-    observation.matchingSummaryCount,
-    observation.matchingTranscriptCount,
-  ];
-  if (counts.some((count) => count !== 1)) {
-    throw new Error(`Postgres business identities are not exact-one ${phase}`);
-  }
-}
-
-function bindActorRun(
-  unbound: UnboundActorRunEvidenceV1,
-  recordingId: string,
-  s3: S3RecordingEvidence,
-): ActorRunEvidenceV1 {
-  const startedAt = Date.parse(s3.startedAt);
-  const endedAt = Date.parse(s3.endedAt);
-  if (!Number.isFinite(startedAt) || !Number.isFinite(endedAt) || endedAt <= startedAt) {
-    throw new Error("Authoritative manifest has an invalid recording window");
-  }
-  const events = unbound.events.map((event) => {
-    if (event.atEpochMs < startedAt || event.atEpochMs > endedAt + 5_000) {
-      throw new Error("Actor event is outside the authoritative recording window");
-    }
-    const { atEpochMs, ...rest } = event;
-    return { ...rest, atRecordingMs: atEpochMs - startedAt };
-  });
-  return actorRunEvidenceV1Schema.parse({
-    ...unbound,
-    events,
-    recordingId,
-    timelineOrigin: "actor-run-start-correlated-to-recording-id",
-  });
-}
-
-function assertS3MatchesSnapshot(
-  s3: S3RecordingEvidence,
-  snapshot: CollectedMeetingSnapshot,
-): void {
-  if (
-    s3.recordingId !== snapshot.recording.recordingId ||
-    s3.manifestLocator !== snapshot.recording.manifestLocator ||
-    !sha256.safeParse(s3.manifestChecksumSha256).success ||
-    !sha256.safeParse(s3.sourceChecksumSha256).success
-  ) {
-    throw new Error("S3 manifest does not match the Postgres recording snapshot");
-  }
-  const snapshotTracks = new Map(
-    snapshot.recording.speakerAudio.map((track) => [track.speakerId, track]),
+  const recordingMediaOriginMs = Math.min(
+    ...s3.tracks.map(({ timelineOffsetMs }) => timelineOffsetMs),
   );
-  for (const track of s3.tracks) {
-    const expected = snapshotTracks.get(track.speakerId);
-    if (
-      expected === undefined ||
-      expected.audioLocator !== track.locator ||
-      expected.timelineOffsetMs !== track.timelineOffsetMs ||
-      !sha256.safeParse(track.checksumSha256).success
-    ) {
-      throw new Error(`S3 track ${track.speakerId} does not match the Postgres snapshot`);
-    }
-  }
-  if (s3.tracks.length !== snapshotTracks.size) {
-    throw new Error("S3 track count does not match the Postgres snapshot");
-  }
-}
-
-function assertDiscordReference(
-  observation: DiscordProjectionObservation,
-  reference: DiscordPublicationReference,
-): DiscordProjectionMessageObservation {
-  const message = observation.matchingMessages.find((candidate) =>
-    candidate.messageId === reference.messageId && sameDiscordContainer(candidate.container, reference)
+  const recordingDurationMs = recordingMediaOriginMs + Math.max(
+    ...s3.tracks.map(({ durationMs }) => durationMs),
   );
-  const expectedThreadId = reference.kind === "thread" ? reference.threadId : undefined;
-  if (
-    message === undefined ||
-    (expectedThreadId !== undefined && !observation.matchingThreadIds.includes(expectedThreadId))
-  ) {
-    throw new Error("Discord publication receipt is absent from the marker scan");
+  if (!Number.isSafeInteger(recordingDurationMs)) {
+    throw new Error("Authoritative S3 recording duration is outside the safe range");
   }
-  return message;
-}
-
-function assertExactDiscordProjection(
-  observation: DiscordProjectionObservation,
-  reference: DiscordPublicationReference,
-  phase: string,
-): void {
-  const expectedThreadCount = reference.kind === "thread" ? 1 : 0;
-  if (
-    observation.matchingMessages.length !== 1 ||
-    observation.matchingThreadIds.length !== expectedThreadCount
-  ) {
-    throw new Error(`Discord projection is not exact-one ${phase}`);
-  }
-}
-
-function toEvidenceContainer(
-  reference: DiscordPublicationReference,
-): DiscordProjectionContainerObservation {
-  return reference.kind === "thread"
-    ? {
-      kind: "thread",
-      parentChannelId: reference.parentChannelId,
-      threadId: reference.threadId,
-    }
-    : { kind: "channel-message", parentChannelId: reference.parentChannelId };
-}
-
-function sameDiscordContainer(
-  container: DiscordProjectionContainerObservation,
-  reference: DiscordPublicationReference,
-): boolean {
-  if (container.kind !== reference.kind || container.parentChannelId !== reference.parentChannelId) {
-    return false;
-  }
-  return container.kind !== "thread" ||
-    (reference.kind === "thread" && container.threadId === reference.threadId);
-}
-
-type DiscordPublicationReference =
-  | {
-    readonly kind: "channel-message";
-    readonly messageId: string;
-    readonly parentChannelId: string;
-  }
-  | {
-    readonly kind: "thread";
-    readonly messageId: string;
-    readonly parentChannelId: string;
-    readonly threadId: string;
-  };
-
-function parsePublication(value: string, parentChannelId: string): DiscordPublicationReference {
-  const legacyThread = /^discord:v1:thread:([^:]+):message:([^:]+)$/u.exec(value);
-  if (legacyThread?.[1] !== undefined && legacyThread[2] !== undefined) {
-    return {
-      kind: "thread",
-      parentChannelId,
-      threadId: legacyThread[1],
-      messageId: legacyThread[2],
-    };
-  }
-  const thread = /^discord:v2:thread:([^:]+):message:([^:]+)$/u.exec(value);
-  if (thread?.[1] !== undefined && thread[2] !== undefined) {
-    return {
-      kind: "thread",
-      parentChannelId,
-      threadId: thread[1],
-      messageId: thread[2],
-    };
-  }
-  const channel = /^discord:v2:channel:([^:]+):message:([^:]+)$/u.exec(value);
-  if (channel?.[1] !== undefined && channel[2] !== undefined) {
-    return {
-      kind: "channel-message",
-      parentChannelId: channel[1],
-      messageId: channel[2],
-    };
-  }
-  throw new Error("Postgres publication receipt is not a supported Discord reference");
-}
-
-async function projectionMarker(idempotencyKey: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(idempotencyKey));
-  return `meeting-projection:${Buffer.from(digest).toString("hex").slice(0, 20)}`;
-}
-
-// Kept independent from the production Discord adapter so retained E2E
-// evidence cannot pass because verifier and SUT share the same implementation.
-async function createMeetingDiscordProjectionKey(
-  meetingId: string,
-  targetChannelId: string,
-): Promise<string> {
-  const canonical = JSON.stringify([
-    "meeting-discord-projection:v2",
-    meetingId,
-    targetChannelId,
-  ]);
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(canonical),
-  );
-  return `meeting-discord-projection:v2:${Buffer.from(digest).toString("hex")}`;
+  return recordingDurationMs;
 }

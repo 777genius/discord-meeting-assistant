@@ -1,237 +1,31 @@
 import {
   canonicalJsonSha256,
-  conversationAnswerOutputSchemaName,
-  conversationAnswerPolicyVersion,
-  incrementalMeetingSummaryOutputSchemaName,
-  incrementalMeetingSummaryPolicyVersion,
-  meetingSummaryOutputSchemaName,
-  meetingSummaryPolicyVersion,
-  providerConversationAnswerJsonSchema,
-  providerIncrementalMeetingSummaryJsonSchema,
-  providerMeetingSummaryJsonSchema,
-  subscriptionRuntimeConversationModel,
-  subscriptionRuntimeConversationPurpose,
-  subscriptionRuntimeConversationReasoningEffort,
-  subscriptionRuntimeIncrementalModel,
-  subscriptionRuntimeIncrementalPurpose,
-  subscriptionRuntimeIncrementalReasoningEffort,
-  subscriptionRuntimeModel,
-  subscriptionRuntimeProtocolVersion,
   subscriptionRuntimeProfileForPurpose,
-  subscriptionRuntimePurpose,
-  subscriptionRuntimeReasoningEffort,
+  subscriptionRuntimeProtocolVersion,
   type JsonObject,
   type SubscriptionRuntimeAgentTaskRequest,
 } from "@discord-meeting/subscription-runtime-adapter";
 import { z } from "zod";
 
+import { applicationName } from "./constants.js";
+export { RequestPolicyError } from "./policy-error.js";
+import { RequestPolicyError } from "./policy-error.js";
 import {
-  applicationName,
-  grpcProviderCodex,
-  providerInstanceId,
-  tenantId,
-} from "./constants.js";
-
-const nonEmptyText = z.string().trim().min(1).max(1_024);
-const jsonObjectSchema = z.record(z.string(), z.unknown());
-
-const controlsSchema = z
-  .object({
-    allowedTools: z.array(z.never()).length(0),
-    disableTools: z.literal(true),
-    executionProfile: z.literal("stateless-completion"),
-    interactive: z.literal(false),
-    maxOutputTokens: z.number().int().min(256).max(32_768),
-    maxTurns: z.literal(1),
-    model: z.union([
-      z.literal(subscriptionRuntimeModel),
-      z.literal(subscriptionRuntimeIncrementalModel),
-      z.literal(subscriptionRuntimeConversationModel),
-    ]),
-    outputKind: z.literal("structured_output"),
-    outputSchema: jsonObjectSchema,
-    outputSchemaName: z.union([
-      z.literal(meetingSummaryOutputSchemaName),
-      z.literal(incrementalMeetingSummaryOutputSchemaName),
-      z.literal(conversationAnswerOutputSchemaName),
-    ]),
-    permissionMode: z.literal("read-only"),
-    reasoningEffort: z.union([
-      z.literal(subscriptionRuntimeReasoningEffort),
-      z.literal(subscriptionRuntimeIncrementalReasoningEffort),
-      z.literal(subscriptionRuntimeConversationReasoningEffort),
-    ]),
-    responseFormat: z.literal("json"),
-    runtimeOutput: z.literal("structured_output"),
-    selectedOutputKind: z.literal("structured_output"),
-  })
-  .strict();
-
-const finalTransportMetadataSchema = z
-  .object({
-    application: z.literal(applicationName),
-    executionProfile: z.literal("stateless-completion"),
-    meetingId: nonEmptyText,
-    model: z.literal(subscriptionRuntimeModel),
-    policyVersion: z.literal(meetingSummaryPolicyVersion),
-    reasoningEffort: z.literal(subscriptionRuntimeReasoningEffort),
-    runtimeOutput: z.literal("structured_output"),
-    toolsDisabled: z.literal("true"),
-    transcriptId: nonEmptyText,
-    transcriptVersion: nonEmptyText,
-  })
-  .strict();
-
-const incrementalTransportMetadataSchema = z
-  .object({
-    application: z.literal(applicationName),
-    executionProfile: z.literal("stateless-completion"),
-    meetingId: nonEmptyText,
-    model: z.literal(subscriptionRuntimeIncrementalModel),
-    policyVersion: z.literal(incrementalMeetingSummaryPolicyVersion),
-    reasoningEffort: z.literal(subscriptionRuntimeIncrementalReasoningEffort),
-    runtimeOutput: z.literal("structured_output"),
-    summaryRevision: nonEmptyText,
-    throughTurnCount: nonEmptyText,
-    toolsDisabled: z.literal("true"),
-  })
-  .strict();
-
-const conversationTransportMetadataSchema = z
-  .object({
-    application: z.literal(applicationName),
-    executionProfile: z.literal("stateless-completion"),
-    locale: nonEmptyText,
-    meetingId: nonEmptyText,
-    model: z.literal(subscriptionRuntimeConversationModel),
-    policyVersion: z.literal(conversationAnswerPolicyVersion),
-    reasoningEffort: z.literal(subscriptionRuntimeConversationReasoningEffort),
-    recordingId: nonEmptyText,
-    runtimeOutput: z.literal("structured_output"),
-    toolsDisabled: z.literal("true"),
-    turnId: nonEmptyText,
-  })
-  .strict();
-
-const transportMetadataSchema = z.union([
-  finalTransportMetadataSchema,
-  incrementalTransportMetadataSchema,
-  conversationTransportMetadataSchema,
-]);
-
-const finalContextMetadataSchema = z
-  .object({
-    meetingId: nonEmptyText,
-    policyVersion: z.literal(meetingSummaryPolicyVersion),
-    transcriptId: nonEmptyText,
-    transcriptVersion: nonEmptyText,
-  })
-  .strict();
-
-const incrementalContextMetadataSchema = z
-  .object({
-    meetingId: nonEmptyText,
-    policyVersion: z.literal(incrementalMeetingSummaryPolicyVersion),
-    summaryRevision: nonEmptyText,
-    throughTurnCount: nonEmptyText,
-  })
-  .strict();
-
-const conversationContextMetadataSchema = z
-  .object({
-    locale: nonEmptyText,
-    meetingId: nonEmptyText,
-    policyVersion: z.literal(conversationAnswerPolicyVersion),
-    recordingId: nonEmptyText,
-    turnId: nonEmptyText,
-  })
-  .strict();
-
-const contextMetadataSchema = z.union([
-  finalContextMetadataSchema,
-  incrementalContextMetadataSchema,
-  conversationContextMetadataSchema,
-]);
-
-const canonicalTaskMetadataSchema = z.union([
-  finalTransportMetadataSchema.omit({ application: true, meetingId: true, transcriptId: true, transcriptVersion: true }),
-  incrementalTransportMetadataSchema.omit({ application: true, meetingId: true, summaryRevision: true, throughTurnCount: true }),
-  conversationTransportMetadataSchema.omit({ application: true, locale: true, meetingId: true, recordingId: true, turnId: true }),
-]);
-
-const canonicalRequestSchema = z
-  .object({
-    context: z
-      .object({
-        application: z.literal(applicationName),
-        correlationId: nonEmptyText,
-        metadata: contextMetadataSchema,
-        purpose: z.union([
-          z.literal(subscriptionRuntimePurpose),
-          z.literal(subscriptionRuntimeIncrementalPurpose),
-          z.literal(subscriptionRuntimeConversationPurpose),
-        ]),
-      })
-      .strict(),
-    cwd: z.string().min(1),
-    protocolVersion: z.literal(subscriptionRuntimeProtocolVersion),
-    runId: nonEmptyText,
-    task: z
-      .object({
-        controls: controlsSchema,
-        kind: z.literal("structured-prompt"),
-        metadata: canonicalTaskMetadataSchema,
-        outputSchemaName: z.union([
-          z.literal(meetingSummaryOutputSchemaName),
-          z.literal(incrementalMeetingSummaryOutputSchemaName),
-          z.literal(conversationAnswerOutputSchemaName),
-        ]),
-        prompt: z.string().min(1),
-        systemPrompt: z.string().min(1),
-      })
-      .strict(),
-    timeoutMs: z.number().int().positive(),
-  })
-  .strict();
-
-const rawGrpcRequestSchema = z
-  .object({
-    schemaVersion: z.union([
-      z.literal(subscriptionRuntimeProtocolVersion),
-      z.literal(String(subscriptionRuntimeProtocolVersion)),
-    ]),
-    requestId: nonEmptyText,
-    tenantId: z.literal(tenantId),
-    workspaceId: nonEmptyText,
-    correlationId: nonEmptyText,
-    provider: z.union([z.literal(grpcProviderCodex), z.literal("1"), z.literal(1)]),
-    providerInstanceId: z.literal(providerInstanceId),
-    purpose: z.union([
-      z.literal(subscriptionRuntimePurpose),
-      z.literal(subscriptionRuntimeIncrementalPurpose),
-      z.literal(subscriptionRuntimeConversationPurpose),
-    ]),
-    systemPrompt: z.string().min(1),
-    prompt: z.string().min(1),
-    outputSchemaJson: z.string().min(2),
-    controlsJson: z.string().min(2),
-    timeoutMs: z.number().int().positive(),
-    cwd: z.string().min(1),
-    metadata: transportMetadataSchema,
-  })
-  .strict();
+  assertCanonicalProfile,
+  assertExactOutputSchema,
+  reconstructProfileMetadata,
+} from "./policy-profile.js";
+import {
+  canonicalRequestSchema,
+  controlsSchema,
+  jsonObjectSchema,
+  rawGrpcRequestSchema,
+} from "./policy-schemas.js";
 
 export interface RequestPolicyOptions {
   readonly isolatedCwd: string;
   readonly maxPromptBytes: number;
   readonly maxTaskTimeoutMs: number;
-}
-
-export class RequestPolicyError extends Error {
-  public constructor(message: string) {
-    super(message);
-    this.name = "RequestPolicyError";
-  }
 }
 
 export function reconstructCanonicalRequest(
@@ -248,39 +42,33 @@ export function reconstructCanonicalRequest(
   if (input.timeoutMs > options.maxTaskTimeoutMs) {
     throw new RequestPolicyError("task timeout exceeds the admitted bound");
   }
-  if (
-    Buffer.byteLength(input.prompt, "utf8") +
-      Buffer.byteLength(input.systemPrompt, "utf8") >
-    options.maxPromptBytes
-  ) {
+  if (promptByteLength(input.prompt, input.systemPrompt) > options.maxPromptBytes) {
     throw new RequestPolicyError("task prompt exceeds the admitted byte bound");
   }
-
   const outputSchema = parseJsonObject(input.outputSchemaJson, "output schema");
   const controls = parseWithPolicy(
     controlsSchema,
     parseJsonObject(input.controlsJson, "controls"),
   );
   assertExactOutputSchema(outputSchema, input.purpose);
-  if (
-    canonicalJsonSha256(controls.outputSchema) !==
-    canonicalJsonSha256(outputSchema)
-  ) {
+  if (canonicalJsonSha256(controls.outputSchema) !== canonicalJsonSha256(outputSchema)) {
     throw new RequestPolicyError("controls contain a conflicting output schema");
   }
-
   const profile = subscriptionRuntimeProfileForPurpose(input.purpose);
   if (
     profile === undefined ||
-    valuesDiffer(controls.model, profile.model) ||
-    valuesDiffer(controls.reasoningEffort, profile.reasoningEffort) ||
-    valuesDiffer(controls.maxOutputTokens, profile.maxOutputTokens) ||
+    controls.model !== profile.model ||
+    controls.reasoningEffort !== profile.reasoningEffort ||
+    controls.maxOutputTokens !== profile.maxOutputTokens ||
     controls.outputSchemaName !== profile.outputSchemaName
   ) {
     throw new RequestPolicyError("request execution profile is not admitted");
   }
-  const profileMetadata = reconstructProfileMetadata(input.purpose, input.metadata);
-
+  const profileMetadata = reconstructProfileMetadata(
+    input.purpose,
+    input.metadata,
+    parseWithPolicy,
+  );
   const request: SubscriptionRuntimeAgentTaskRequest = {
     context: {
       application: applicationName,
@@ -313,164 +101,19 @@ export function assertCanonicalRequestPolicy(
   if (
     candidate.cwd !== options.isolatedCwd ||
     candidate.timeoutMs > options.maxTaskTimeoutMs ||
-    Buffer.byteLength(candidate.task.prompt, "utf8") +
-      Buffer.byteLength(candidate.task.systemPrompt, "utf8") >
-      options.maxPromptBytes
+    promptByteLength(candidate.task.prompt, candidate.task.systemPrompt) > options.maxPromptBytes
   ) {
     throw new RequestPolicyError("canonical task conflicts with sidecar policy");
   }
-  assertCanonicalProfile(candidate);
+  assertCanonicalProfile(candidate, parseWithPolicy);
   assertExactOutputSchema(
     candidate.task.controls.outputSchema,
     candidate.context.purpose,
   );
 }
 
-function reconstructProfileMetadata(
-  purpose: string,
-  metadata: unknown,
-): {
-  readonly context: SubscriptionRuntimeAgentTaskRequest["context"]["metadata"];
-  readonly task: SubscriptionRuntimeAgentTaskRequest["task"]["metadata"];
-} {
-  if (purpose === subscriptionRuntimePurpose) {
-    const parsed = parseWithPolicy(finalTransportMetadataSchema, metadata);
-    return {
-      context: {
-        meetingId: parsed.meetingId,
-        policyVersion: meetingSummaryPolicyVersion,
-        transcriptId: parsed.transcriptId,
-        transcriptVersion: parsed.transcriptVersion,
-      },
-      task: {
-        executionProfile: "stateless-completion",
-        model: subscriptionRuntimeModel,
-        policyVersion: meetingSummaryPolicyVersion,
-        reasoningEffort: subscriptionRuntimeReasoningEffort,
-        runtimeOutput: "structured_output",
-        toolsDisabled: "true",
-      },
-    };
-  }
-  if (purpose === subscriptionRuntimeIncrementalPurpose) {
-    const parsed = parseWithPolicy(incrementalTransportMetadataSchema, metadata);
-    return {
-      context: {
-        meetingId: parsed.meetingId,
-        policyVersion: incrementalMeetingSummaryPolicyVersion,
-        summaryRevision: parsed.summaryRevision,
-        throughTurnCount: parsed.throughTurnCount,
-      },
-      task: {
-        executionProfile: "stateless-completion",
-        model: subscriptionRuntimeIncrementalModel,
-        policyVersion: incrementalMeetingSummaryPolicyVersion,
-        reasoningEffort: subscriptionRuntimeIncrementalReasoningEffort,
-        runtimeOutput: "structured_output",
-        toolsDisabled: "true",
-      },
-    };
-  }
-  if (purpose === subscriptionRuntimeConversationPurpose) {
-    const parsed = parseWithPolicy(conversationTransportMetadataSchema, metadata);
-    return {
-      context: {
-        locale: parsed.locale,
-        meetingId: parsed.meetingId,
-        policyVersion: conversationAnswerPolicyVersion,
-        recordingId: parsed.recordingId,
-        turnId: parsed.turnId,
-      },
-      task: {
-        executionProfile: "stateless-completion",
-        model: subscriptionRuntimeConversationModel,
-        policyVersion: conversationAnswerPolicyVersion,
-        reasoningEffort: subscriptionRuntimeConversationReasoningEffort,
-        runtimeOutput: "structured_output",
-        toolsDisabled: "true",
-      },
-    };
-  }
-  throw new RequestPolicyError("request purpose is not admitted");
-}
-
-function assertCanonicalProfile(
-  request: z.infer<typeof canonicalRequestSchema>,
-): void {
-  const profile = subscriptionRuntimeProfileForPurpose(request.context.purpose);
-  if (
-    profile === undefined ||
-    request.context.metadata.policyVersion !== profile.policyVersion ||
-    valuesDiffer(request.task.controls.maxOutputTokens, profile.maxOutputTokens) ||
-    valuesDiffer(request.task.controls.model, profile.model) ||
-    valuesDiffer(request.task.controls.reasoningEffort, profile.reasoningEffort) ||
-    request.task.controls.outputSchemaName !== profile.outputSchemaName ||
-    valuesDiffer(request.task.metadata.model, profile.model) ||
-    request.task.metadata.policyVersion !== profile.policyVersion ||
-    valuesDiffer(request.task.metadata.reasoningEffort, profile.reasoningEffort) ||
-    request.task.outputSchemaName !== profile.outputSchemaName
-  ) {
-    throw new RequestPolicyError("canonical request profile is not admitted");
-  }
-  const commonMetadata = {
-    application: applicationName,
-    executionProfile: request.task.metadata.executionProfile,
-    meetingId: request.context.metadata.meetingId,
-    model: request.task.metadata.model,
-    policyVersion: request.task.metadata.policyVersion,
-    reasoningEffort: request.task.metadata.reasoningEffort,
-    runtimeOutput: request.task.metadata.runtimeOutput,
-    toolsDisabled: request.task.metadata.toolsDisabled,
-  };
-  if (request.context.purpose === subscriptionRuntimePurpose) {
-    const metadata = parseWithPolicy(finalContextMetadataSchema, request.context.metadata);
-    reconstructProfileMetadata(request.context.purpose, {
-      ...commonMetadata,
-      transcriptId: metadata.transcriptId,
-      transcriptVersion: metadata.transcriptVersion,
-    });
-    return;
-  }
-  if (request.context.purpose === subscriptionRuntimeConversationPurpose) {
-    const metadata = parseWithPolicy(conversationContextMetadataSchema, request.context.metadata);
-    reconstructProfileMetadata(request.context.purpose, {
-      ...commonMetadata,
-      locale: metadata.locale,
-      recordingId: metadata.recordingId,
-      turnId: metadata.turnId,
-    });
-    return;
-  }
-  const metadata = parseWithPolicy(incrementalContextMetadataSchema, request.context.metadata);
-  reconstructProfileMetadata(request.context.purpose, {
-    ...commonMetadata,
-    summaryRevision: metadata.summaryRevision,
-    throughTurnCount: metadata.throughTurnCount,
-  });
-}
-
-function valuesDiffer<T extends number | string>(actual: T, expected: T): boolean {
-  return actual !== expected;
-}
-
-function assertExactOutputSchema(
-  value: Record<string, unknown>,
-  purpose: string,
-): void {
-  const expectedSchema = purpose === subscriptionRuntimePurpose
-    ? providerMeetingSummaryJsonSchema
-    : purpose === subscriptionRuntimeIncrementalPurpose
-      ? providerIncrementalMeetingSummaryJsonSchema
-      : purpose === subscriptionRuntimeConversationPurpose
-        ? providerConversationAnswerJsonSchema
-      : undefined;
-  if (
-    expectedSchema === undefined ||
-    canonicalJsonSha256(value) !==
-    canonicalJsonSha256(expectedSchema)
-  ) {
-    throw new RequestPolicyError("task output schema is not admitted");
-  }
+function promptByteLength(prompt: string, systemPrompt: string): number {
+  return Buffer.byteLength(prompt, "utf8") + Buffer.byteLength(systemPrompt, "utf8");
 }
 
 function parseJsonObject(text: string, label: string): JsonObject {

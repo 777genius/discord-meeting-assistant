@@ -11,22 +11,16 @@ import type {
   ConversationThinkingCuePort,
   ConversationThinkingCueStage,
   VoicePlaybackPort,
-  VoicePlaybackSession,
 } from "./ports.js";
 import type {
   ActiveConversationRun,
-  ConversationPlaybackFence,
   MeetingConversationState,
 } from "./conversation-coordinator-types.js";
 import {
-  advanceConversationState,
-  beginConversationPlaybackFence,
-  confirmConversationPlaybackTerminal,
   isCurrentConversationRun,
-  markConversationPlaybackTerminalMissing,
   trackConversationTask,
-  withConversationPlaybackOpen,
 } from "./conversation-state.js";
+import { ConversationCuePlayback } from "./conversation-cue-playback.js";
 
 export interface ConversationCueOrchestratorDependencies {
   readonly delay: ConversationDelayPort | null;
@@ -37,13 +31,21 @@ export interface ConversationCueOrchestratorDependencies {
 /** Owns optional acknowledgement and deliberation cue lifecycles. */
 export class ConversationCueOrchestrator {
   private readonly delay: ConversationDelayPort | null;
-  private readonly playback: VoicePlaybackPort;
+  private readonly cuePlayback: ConversationCuePlayback;
   private readonly thinkingCues: ConversationThinkingCuePort | null;
 
   public constructor(dependencies: ConversationCueOrchestratorDependencies) {
     this.delay = dependencies.delay;
-    this.playback = dependencies.playback;
     this.thinkingCues = dependencies.thinkingCues;
+    this.cuePlayback = new ConversationCuePlayback({
+      onFailed: async (run) => this.stop(run, "playback-failed"),
+      onFinished: async (state, run) => {
+        if (run.deliberationCueReady) {
+          await this.startStage(state, run, "deliberation");
+        }
+      },
+      playback: dependencies.playback,
+    });
   }
 
   public schedule(state: MeetingConversationState, run: ActiveConversationRun): void {
@@ -80,7 +82,7 @@ export class ConversationCueOrchestrator {
     run.cueDelays.clear();
     const playback = run.cuePlayback;
     if (playback !== null) {
-      this.cancelPlayback(run, playback, reason);
+      this.cuePlayback.cancel(run, playback, reason);
     }
   }
 
@@ -179,7 +181,7 @@ export class ConversationCueOrchestrator {
     stage: ConversationThinkingCueStage,
   ): Promise<void> {
     await this.withCuePlaybackOpening(state, run, stage, async () => {
-      await this.openPlayback(state, run, cue, stage);
+      await this.cuePlayback.open(state, run, cue, stage);
     });
   }
 
@@ -192,7 +194,7 @@ export class ConversationCueOrchestrator {
       await this.withCuePlaybackOpening(state, run, stage, async () => {
         const selected = await this.selectCue(run, stage);
         if (selected !== null && isCurrentConversationRun(state, run)) {
-          await this.openPlayback(state, run, selected, stage);
+          await this.cuePlayback.open(state, run, selected, stage);
         }
       });
     } catch {
@@ -288,216 +290,4 @@ export class ConversationCueOrchestrator {
     return selected.ok ? selected.value : null;
   }
 
-  private async openPlayback(
-    state: MeetingConversationState,
-    run: ActiveConversationRun,
-    cue: ConversationThinkingCue,
-    stage: ConversationThinkingCueStage,
-  ): Promise<void> {
-    const playback = await withConversationPlaybackOpen(state, async () => {
-      if (!this.canOpenPlayback(state, run)) {
-        return null;
-      }
-
-      const fence = beginConversationPlaybackFence(state);
-      let opened: Awaited<ReturnType<VoicePlaybackPort["open"]>>;
-      const openAbortController = new AbortController();
-      run.playbackOpenAbortController = openAbortController;
-      try {
-        opened = await this.playback.open({
-          attemptId: cue.playbackAttemptId,
-          meetingId: run.prepared.request.meetingId,
-          recordingId: run.prepared.request.recordingId,
-          turnId: run.prepared.request.turnId,
-        }, {
-          signal: openAbortController.signal,
-        });
-      } catch {
-        confirmConversationPlaybackTerminal(state, fence);
-        return null;
-      } finally {
-        if (run.playbackOpenAbortController === openAbortController) {
-          run.playbackOpenAbortController = null;
-        }
-      }
-      if (!opened.ok) {
-        confirmConversationPlaybackTerminal(state, fence);
-        return null;
-      }
-
-      run.cuePlayback = opened.value;
-      trackConversationTask(
-        state,
-        this.consumePlayback(state, run, opened.value, fence, cue.playbackAttemptId),
-      );
-      if (!this.canKeepPlayback(state, run, opened.value)) {
-        this.cancelPlayback(run, opened.value, "superseded");
-        return null;
-      }
-      if (stage === "deliberation") {
-        run.deliberationCueReady = false;
-      }
-      return opened.value;
-    });
-    if (playback === null) {
-      return;
-    }
-    try {
-      for (const [sequence, bytes] of cue.pcmChunks.entries()) {
-        if (
-          !isCurrentConversationRun(state, run) ||
-          run.answerAudioStarted ||
-          run.cancellationInFlight ||
-          run.cuePlayback !== playback
-        ) {
-          return;
-        }
-        const written = await playback.write({
-          attemptId: cue.playbackAttemptId,
-          bytes,
-          channels: 1,
-          format: "pcm_s16le",
-          sampleRateHz: 48_000,
-          sequence,
-          turnId: run.prepared.request.turnId,
-        });
-        if (!written.ok) {
-          await this.stop(run, "playback-failed");
-          return;
-        }
-      }
-      if (
-        isCurrentConversationRun(state, run) &&
-        !run.answerAudioStarted &&
-        !run.cancellationInFlight &&
-        run.cuePlayback === playback
-      ) {
-        const finished = await playback.finish();
-        if (!finished.ok) {
-          await this.stop(run, "playback-failed");
-        }
-      }
-    } catch {
-      await this.stop(run, "playback-failed");
-    }
-  }
-
-  private canOpenPlayback(
-    state: MeetingConversationState,
-    run: ActiveConversationRun,
-  ): boolean {
-    return (
-      isCurrentConversationRun(state, run) &&
-      !run.cancellationInFlight &&
-      !run.runtimeCompleted &&
-      !run.answerAudioStarted &&
-      run.playback === null &&
-      run.cuePlayback === null
-    );
-  }
-
-  private canKeepPlayback(
-    state: MeetingConversationState,
-    run: ActiveConversationRun,
-    playback: VoicePlaybackSession,
-  ): boolean {
-    return (
-      isCurrentConversationRun(state, run) &&
-      !run.cancellationInFlight &&
-      !run.runtimeCompleted &&
-      !run.answerAudioStarted &&
-      run.playback === null &&
-      run.cuePlayback === playback
-    );
-  }
-
-  private async consumePlayback(
-    state: MeetingConversationState,
-    run: ActiveConversationRun,
-    playback: VoicePlaybackSession,
-    fence: ConversationPlaybackFence,
-    expectedAttemptId: string,
-  ): Promise<void> {
-    let terminalReceiptReceived = false;
-    try {
-      for await (const event of playback.events) {
-        if (event.attemptId !== expectedAttemptId) {
-          continue;
-        }
-        if (event.type === "finished") {
-          if (terminalReceiptReceived) {
-            continue;
-          }
-          terminalReceiptReceived = true;
-          confirmConversationPlaybackTerminal(state, fence);
-          if (run.cuePlayback === playback) {
-            run.cuePlayback = null;
-          }
-          run.playbackTerminalReceiptMissing = false;
-          if (!isCurrentConversationRun(state, run)) {
-            continue;
-          }
-          advanceConversationState(state, event.finishedAtMs);
-          if (run.deliberationCueReady) {
-            await this.startStage(state, run, "deliberation");
-          }
-          continue;
-        }
-        if (event.type === "failed") {
-          if (terminalReceiptReceived) {
-            continue;
-          }
-          terminalReceiptReceived = true;
-          confirmConversationPlaybackTerminal(state, fence);
-          if (run.cuePlayback === playback) {
-            run.cuePlayback = null;
-          }
-          run.playbackTerminalReceiptMissing = false;
-          if (isCurrentConversationRun(state, run)) {
-            await this.stop(run, "playback-failed");
-          }
-          continue;
-        }
-        if (!isCurrentConversationRun(state, run) || run.cuePlayback !== playback) {
-          continue;
-        }
-        const processedAtMs = advanceConversationState(state, event.startedAtMs);
-        state.session.thinkingCueStarted(
-          run.prepared.turn.turnId,
-          event.startedAtMs,
-          processedAtMs,
-        );
-      }
-      if (!terminalReceiptReceived) {
-        run.playbackTerminalReceiptMissing = true;
-        markConversationPlaybackTerminalMissing(state, fence);
-      }
-    } catch {
-      if (!terminalReceiptReceived) {
-        run.playbackTerminalReceiptMissing = true;
-        markConversationPlaybackTerminalMissing(state, fence);
-      }
-    }
-  }
-
-  private cancelPlayback(
-    run: ActiveConversationRun,
-    playback: VoicePlaybackSession,
-    reason: ConversationCancellationReason,
-  ): void {
-    void playback.cancel(reason).then(
-      (result) => {
-        if (!result.ok && run.cuePlayback === playback) {
-          run.playbackTerminalReceiptMissing = true;
-        }
-        return null;
-      },
-      () => {
-        if (run.cuePlayback === playback) {
-          run.playbackTerminalReceiptMissing = true;
-        }
-        return null;
-      },
-    );
-  }
 }

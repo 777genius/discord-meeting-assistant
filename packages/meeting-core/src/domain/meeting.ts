@@ -2,7 +2,6 @@ import {
   DomainInvariantError,
   requireNonEmpty,
   requireNonNegativeInteger,
-  requirePositiveInteger,
 } from "./errors.js";
 import {
   createExternalPublicationId,
@@ -21,34 +20,24 @@ import {
   type EvidenceBackedSummarySnapshot,
 } from "./summary.js";
 import { FinalTranscript, type FinalTranscriptSnapshot } from "./transcript.js";
+import {
+  sameStageFailure,
+  validateStageFailure,
+  validateStageState,
+  type BeginStageDisposition,
+  type ProcessingStage,
+  type StageFailure,
+  type StageState,
+  type StageStateSnapshot,
+} from "./meeting-stage.js";
 
-export type ProcessingStage = "publication" | "summary" | "transcription";
-
-export interface StageFailure {
-  readonly code: string;
-  readonly message: string;
-  readonly retryable: boolean;
-}
-
-export type StageState =
-  | { readonly attempts: 0; readonly status: "pending" }
-  | { readonly attempts: number; readonly status: "running" }
-  | {
-      readonly attempts: number;
-      readonly failure: StageFailure;
-      readonly status: "failed";
-    }
-  | { readonly attempts: number; readonly status: "succeeded" };
-
-export type StageStateSnapshot =
-  | { readonly attempts: number; readonly status: "pending" }
-  | { readonly attempts: number; readonly status: "running" }
-  | {
-      readonly attempts: number;
-      readonly failure: StageFailure;
-      readonly status: "failed";
-    }
-  | { readonly attempts: number; readonly status: "succeeded" };
+export type {
+  BeginStageDisposition,
+  ProcessingStage,
+  StageFailure,
+  StageState,
+  StageStateSnapshot,
+} from "./meeting-stage.js";
 
 export interface PublicationReceiptSnapshot {
   readonly externalPublicationId: string;
@@ -77,50 +66,6 @@ export interface RecordedMeetingInput {
   readonly meetingId: string;
   readonly publicationTargetId: string;
   readonly recording: RecordingArtifactSnapshot;
-}
-
-export type BeginStageDisposition =
-  | "already-running"
-  | "already-succeeded"
-  | "started";
-
-function validateFailure(failure: StageFailure): StageFailure {
-  return Object.freeze({
-    code: requireNonEmpty(failure.code, "stageFailure.code"),
-    message: requireNonEmpty(failure.message, "stageFailure.message"),
-    retryable: failure.retryable,
-  });
-}
-
-function validateStageState(stage: StageStateSnapshot, field: string): StageState {
-  if (stage.status === "pending") {
-    if (stage.attempts !== 0) {
-      throw new DomainInvariantError(
-        "INVALID_SNAPSHOT",
-        `${field} pending state must have zero attempts`,
-      );
-    }
-    return Object.freeze({ attempts: 0, status: "pending" });
-  }
-
-  const attempts = requirePositiveInteger(stage.attempts, `${field}.attempts`);
-  if (stage.status === "failed") {
-    return Object.freeze({
-      attempts,
-      failure: validateFailure(stage.failure),
-      status: "failed",
-    });
-  }
-
-  return Object.freeze({ attempts, status: stage.status });
-}
-
-function sameFailure(left: StageFailure, right: StageFailure): boolean {
-  return (
-    left.code === right.code &&
-    left.message === right.message &&
-    left.retryable === right.retryable
-  );
 }
 
 function identityPart(value: string): string {
@@ -395,8 +340,8 @@ export class Meeting {
 
   private fail(stage: ProcessingStage, failure: StageFailure): boolean {
     const current = this.stages[stage];
-    const normalized = validateFailure(failure);
-    if (current.status === "failed" && sameFailure(current.failure, normalized)) {
+    const normalized = validateStageFailure(failure);
+    if (current.status === "failed" && sameStageFailure(current.failure, normalized)) {
       return false;
     }
     this.requireRunning(stage);

@@ -4,6 +4,13 @@ import {
   type ConversationTurn,
   type ConversationTurnInput,
 } from "./conversation-turn.js";
+import type {
+  ConversationAdmission,
+  ConversationCancellation,
+  ConversationCancellationReason,
+  ConversationCompletion,
+  ConversationTurnDisposition,
+} from "./conversation-session-results.js";
 
 export {
   CONVERSATION_ALIAS_ONLY_FALLBACK_PROMPT,
@@ -17,64 +24,19 @@ export {
   type ConversationTurn,
   type ConversationTurnInput,
 } from "./conversation-turn.js";
+export type {
+  ConversationAdmission,
+  ConversationCancellation,
+  ConversationCancellationReason,
+  ConversationCompletion,
+  ConversationTurnDisposition,
+} from "./conversation-session-results.js";
 
 export const CONVERSATION_INTERRUPT_GUARD_MS = 4_000;
 export const CONVERSATION_QUEUE_TTL_MS = 15_000;
 export const CONVERSATION_THINKING_CUE_DELAY_MS = 1_300;
 export const CONVERSATION_DELIBERATION_CUE_DELAY_MS = 3_200;
 export const CONVERSATION_WAKE_LATCH_MS = 4_000;
-
-export type ConversationCancellationReason =
-  | "barge-in"
-  | "meeting-ended"
-  | "playback-failed"
-  | "runtime-shutdown"
-  | "superseded";
-
-export type ConversationAdmission =
-  | {
-      readonly status: "active";
-      readonly turn: ConversationTurn;
-    }
-  | {
-      readonly expiresAtMs: number;
-      readonly status: "queued";
-      readonly turn: ConversationTurn;
-    }
-  | {
-      readonly status: "busy";
-      readonly turnId: string;
-    }
-  | {
-      readonly disposition: ConversationTurnDisposition;
-      readonly status: "reused";
-      readonly turnId: string;
-    };
-
-export type ConversationTurnDisposition =
-  | "active"
-  | "busy"
-  | "cancelled"
-  | "cancelling"
-  | "completed"
-  | "expired"
-  | "queued";
-
-export type ConversationCancellation =
-  | {
-      readonly reason: ConversationCancellationReason;
-      readonly status: "requested";
-      readonly turn: ConversationTurn;
-    }
-  | { readonly status: "ignored" };
-
-export type ConversationCompletion =
-  | {
-      readonly next: ConversationTurn | null;
-      readonly status: "completed" | "cancelled";
-      readonly turn: ConversationTurn;
-    }
-  | { readonly next: null; readonly status: "ignored" };
 
 interface ActiveConversation {
   cancellationReason: ConversationCancellationReason | null;

@@ -1,5 +1,4 @@
 import {
-  UnrecoverableError,
   WaitingError,
   Worker,
   type ConnectionOptions,
@@ -15,118 +14,37 @@ import {
   parsePostCallJobPayload,
   postCallJobReference,
 } from "./contracts.js";
-import {
-  type PostCallFailureClassification,
-  type PostCallFailureClassifier,
-  classifyPostCallFailure,
-  safelyClassifyPostCallFailure,
-} from "./errors.js";
+import type { PostCallFailureClassification } from "./errors.js";
 import type { PostCallObserver } from "./observability.js";
 import { safelyObserve } from "./observability.js";
+import {
+  PostCallCancellationError,
+  classifyPostCallWorkerError,
+  createPostCallProcessor,
+  effectivePostCallMaxAttempts,
+  postCallAttemptNumber,
+  type CreatePostCallProcessorOptions,
+  type PostCallJobLike,
+} from "./post-call-processor.js";
 import type { PostCallDeadLetterRecorder } from "./queue.js";
 import {
   type ResolvedPostCallWorkerPolicy,
-  type PostCallWorkerPolicyInput,
   resolvePostCallWorkerPolicy,
 } from "./policy.js";
 
-export interface PostCallHandlerContext {
-  readonly attempt: number;
-  readonly jobRef: string;
-  readonly maxAttempts: number;
-  readonly signal?: AbortSignal;
-}
-
-export type PostCallHandler = (
-  payload: PostCallJobPayload,
-  context: PostCallHandlerContext,
-) => Promise<void>;
-
-export interface PostCallJobLike {
-  readonly attemptsMade: number;
-  readonly data: unknown;
-  readonly id?: string;
-  readonly name: string;
-  readonly opts: { readonly attempts?: number };
-}
-
-export interface CreatePostCallProcessorOptions extends PostCallWorkerPolicyInput {
-  readonly classifyFailure?: PostCallFailureClassifier;
-  readonly deadLetterRecorder: PostCallDeadLetterRecorder;
-  readonly handler: PostCallHandler;
-  readonly observer?: PostCallObserver;
-}
+export {
+  createPostCallProcessor,
+  type CreatePostCallProcessorOptions,
+  type PostCallHandler,
+  type PostCallHandlerContext,
+  type PostCallJobLike,
+} from "./post-call-processor.js";
 
 export interface CreatePostCallWorkerOptions
   extends CreatePostCallProcessorOptions {
   readonly autorun?: boolean;
   readonly connection: ConnectionOptions;
   readonly prefix?: string;
-}
-
-class MappedRetryableWorkerError extends Error {
-  public readonly retryable = true;
-
-  public constructor(public readonly code: string) {
-    super(`Post-call job failed: ${code}`);
-    this.name = "MappedRetryableWorkerError";
-  }
-}
-
-class MappedUnrecoverableWorkerError extends UnrecoverableError {
-  public readonly retryable = false;
-
-  public constructor(public readonly code: string) {
-    super(`Post-call job failed permanently: ${code}`);
-    this.name = "MappedUnrecoverableWorkerError";
-  }
-}
-
-class CappedRetryableWorkerError extends UnrecoverableError {
-  public readonly retryable = true;
-
-  public constructor(public readonly code: string) {
-    super(`Post-call job reached its retry limit: ${code}`);
-    this.name = "CappedRetryableWorkerError";
-  }
-}
-
-class PostCallCancellationError extends Error {
-  public readonly code = "JOB_CANCELLED";
-  public readonly retryable = true;
-
-  public constructor(reason: unknown) {
-    super(
-      "Post-call job was cancelled",
-      reason === undefined ? {} : { cause: reason },
-    );
-    this.name = "PostCallCancellationError";
-  }
-}
-
-function throwIfCancelled(signal: AbortSignal | undefined): void {
-  if (signal?.aborted === true) {
-    throw new PostCallCancellationError(signal.reason);
-  }
-}
-
-function effectiveMaxAttempts(
-  job: PostCallJobLike,
-  policy: ResolvedPostCallWorkerPolicy,
-): number {
-  const configuredAttempts = job.opts.attempts;
-  if (
-    configuredAttempts === undefined ||
-    !Number.isSafeInteger(configuredAttempts) ||
-    configuredAttempts < 1
-  ) {
-    return policy.attempts;
-  }
-  return Math.min(configuredAttempts, policy.attempts);
-}
-
-function attemptNumber(job: PostCallJobLike): number {
-  return Math.max(1, job.attemptsMade + 1);
 }
 
 function tryMeetingId(data: unknown): string | null {
@@ -148,7 +66,7 @@ function terminalFailureAfterBullMqUpdate(
   policy: ResolvedPostCallWorkerPolicy,
 ): boolean {
   return (
-    !failure.retryable || job.attemptsMade >= effectiveMaxAttempts(job, policy)
+    !failure.retryable || job.attemptsMade >= effectivePostCallMaxAttempts(job, policy)
   );
 }
 
@@ -157,7 +75,7 @@ async function recordDeadLetter(
   job: PostCallJobLike,
   failure: PostCallFailureClassification,
   observer: PostCallObserver | undefined,
-  attemptsMade = attemptNumber(job),
+  attemptsMade = postCallAttemptNumber(job),
 ): Promise<void> {
   const sourceJobRef = postCallJobReference(job.id);
   const record: PostCallDeadLetterRecord = Object.freeze({
@@ -175,37 +93,6 @@ async function recordDeadLetter(
     jobRef: sourceJobRef,
     kind: "dead-letter-recorded",
   });
-}
-
-function toWorkerError(
-  failure: PostCallFailureClassification,
-  terminal: boolean,
-): Error {
-  if (!failure.retryable) {
-    return new MappedUnrecoverableWorkerError(failure.code);
-  }
-  return terminal
-    ? new CappedRetryableWorkerError(failure.code)
-    : new MappedRetryableWorkerError(failure.code);
-}
-
-function classificationFromWorkerError(
-  error: Error,
-): PostCallFailureClassification {
-  if (error instanceof PostCallCancellationError) {
-    return Object.freeze({ code: error.code, retryable: error.retryable });
-  }
-  if (
-    error instanceof MappedRetryableWorkerError ||
-    error instanceof MappedUnrecoverableWorkerError ||
-    error instanceof CappedRetryableWorkerError
-  ) {
-    return Object.freeze({ code: error.code, retryable: error.retryable });
-  }
-  if (error instanceof UnrecoverableError) {
-    return Object.freeze({ code: "UNRECOVERABLE_FAILURE", retryable: false });
-  }
-  return classifyPostCallFailure(error);
 }
 
 async function moveCancelledJobToWait(
@@ -245,53 +132,6 @@ function requiredWorkerToken(token: string | undefined): string {
     throw new Error("BullMQ active post-call job has no lock token");
   }
   return token;
-}
-
-export function createPostCallProcessor(
-  options: CreatePostCallProcessorOptions,
-): (job: PostCallJobLike, signal?: AbortSignal) => Promise<void> {
-  const policy = resolvePostCallWorkerPolicy(options);
-  const classifier = options.classifyFailure ?? classifyPostCallFailure;
-
-  return async (job, signal) => {
-    let payload: PostCallJobPayload;
-    let failure: PostCallFailureClassification | undefined;
-
-    if (job.name !== POST_CALL_JOB_NAME) {
-      failure = Object.freeze({
-        code: "UNSUPPORTED_JOB_NAME",
-        retryable: false,
-      });
-    } else {
-      try {
-        payload = parsePostCallJobPayload(job.data);
-      } catch {
-        failure = Object.freeze({ code: "INVALID_JOB_PAYLOAD", retryable: false });
-      }
-    }
-
-    if (failure === undefined) {
-      try {
-        throwIfCancelled(signal);
-        await options.handler(payload!, {
-          attempt: attemptNumber(job),
-          jobRef: postCallJobReference(job.id),
-          maxAttempts: effectiveMaxAttempts(job, policy),
-          ...(signal === undefined ? {} : { signal }),
-        });
-        throwIfCancelled(signal);
-        return;
-      } catch (error) {
-        throwIfCancelled(signal);
-        failure = safelyClassifyPostCallFailure(error, classifier);
-      }
-    }
-
-    throw toWorkerError(
-      failure,
-      attemptNumber(job) >= effectiveMaxAttempts(job, policy),
-    );
-  };
 }
 
 export function createPostCallWorker(
@@ -410,7 +250,7 @@ export function createPostCallWorker(
     });
   });
   postCallWorker.on("failed", (job, error) => {
-    const failure = classificationFromWorkerError(error);
+    const failure = classifyPostCallWorkerError(error);
     const cancelled = error instanceof PostCallCancellationError;
     const isTerminal = !cancelled && (
       job === undefined || terminalFailureAfterBullMqUpdate(job, failure, policy)
