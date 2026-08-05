@@ -239,7 +239,6 @@ function createRuntime(
     appendTurn: new AppendLiveTranscriptTurn(meetings),
     finishMeeting: overrides.finishMeeting ?? new FinishLiveMeeting(meetings),
     logger,
-    publicationTargetId: "1533228891827736657",
     refreshMeeting: new RefreshLiveMeeting({
       meetings,
       projector: new ProjectionStub(),

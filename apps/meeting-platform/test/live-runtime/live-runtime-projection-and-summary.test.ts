@@ -52,7 +52,6 @@ it("rehydrates finalized caption history when a persisted live meeting restarts"
     appendTurn: new AppendLiveTranscriptTurn(meetings),
     finishMeeting: new FinishLiveMeeting(meetings),
     logger,
-    publicationTargetId: "1533228891827736657",
     refreshMeeting: new RefreshLiveMeeting({
       meetings,
       projector,
@@ -88,7 +87,6 @@ it("does not edit Discord captions when only invisible rendered content changes"
     appendTurn: new AppendLiveTranscriptTurn(meetings),
     finishMeeting: new FinishLiveMeeting(meetings),
     logger,
-    publicationTargetId: "1533228891827736657",
     refreshMeeting: new RefreshLiveMeeting({
       meetings,
       projector,
@@ -151,7 +149,6 @@ it("backs off retryable Discord projection failures instead of retrying on every
     appendTurn: new AppendLiveTranscriptTurn(meetings),
     finishMeeting: new FinishLiveMeeting(meetings),
     logger,
-    publicationTargetId: "1533228891827736657",
     refreshMeeting: new RefreshLiveMeeting({
       meetings,
       projector,
@@ -192,7 +189,6 @@ it("gives finalizing one fresh projection attempt during live backoff", async ()
     appendTurn: new AppendLiveTranscriptTurn(meetings),
     finishMeeting: new FinishLiveMeeting(meetings),
     logger,
-    publicationTargetId: "1533228891827736657",
     refreshMeeting: new RefreshLiveMeeting({
       meetings,
       projector,
@@ -234,7 +230,6 @@ it("permanently fences non-retryable Discord projection failures until restart o
     appendTurn: new AppendLiveTranscriptTurn(meetings),
     finishMeeting: new FinishLiveMeeting(meetings),
     logger,
-    publicationTargetId: "1533228891827736657",
     refreshMeeting: new RefreshLiveMeeting({
       meetings,
       projector,
@@ -255,8 +250,8 @@ it("permanently fences non-retryable Discord projection failures until restart o
   laterBatch.packets[0] = {
     ...laterBatch.packets[0]!,
     relativeTimeMs: 5_000,
-    rtpSequence: 2,
-    rtpTimestamp: 1_920,
+    sequenceNumber: 2,
+    mediaTimestamp: 1_920,
   };
   void runtime.acceptVoiceBatch(laterBatch);
   await vi.advanceTimersByTimeAsync(60_000);
@@ -275,7 +270,6 @@ it("bounds deterministic first-caption projection jitter to one second", async (
     appendTurn: new AppendLiveTranscriptTurn(meetingsA),
     finishMeeting: new FinishLiveMeeting(meetingsA),
     logger,
-    publicationTargetId: "1533228891827736657",
     refreshMeeting: new RefreshLiveMeeting({
       meetings: meetingsA,
       projector,
@@ -289,7 +283,6 @@ it("bounds deterministic first-caption projection jitter to one second", async (
     appendTurn: new AppendLiveTranscriptTurn(meetingsB),
     finishMeeting: new FinishLiveMeeting(meetingsB),
     logger,
-    publicationTargetId: "1533228891827736657",
     refreshMeeting: new RefreshLiveMeeting({
       meetings: meetingsB,
       projector,
@@ -335,7 +328,6 @@ it("keeps finalized turn history while mutable partials replace each other", asy
     appendTurn: new AppendLiveTranscriptTurn(meetings),
     finishMeeting: new FinishLiveMeeting(meetings),
     logger,
-    publicationTargetId: "1533228891827736657",
     refreshMeeting: new RefreshLiveMeeting({
       meetings,
       projector,
@@ -418,7 +410,6 @@ it("keeps caption projection live while one incremental summary generation is in
     appendTurn: new AppendLiveTranscriptTurn(meetings),
     finishMeeting: new FinishLiveMeeting(meetings),
     logger,
-    publicationTargetId: "1533228891827736657",
     refreshMeeting: new RefreshLiveMeeting({
       meetings,
       projector,
@@ -439,8 +430,8 @@ it("keeps caption projection live while one incremental summary generation is in
   laterBatch.packets[0] = {
     ...laterBatch.packets[0]!,
     relativeTimeMs: 300_000,
-    rtpSequence: 2,
-    rtpTimestamp: 1_920,
+    sequenceNumber: 2,
+    mediaTimestamp: 1_920,
   };
   void runtime.acceptVoiceBatch(laterBatch);
   await vi.advanceTimersByTimeAsync(5_000);
@@ -466,7 +457,6 @@ it("backs off retryable incremental generation failures instead of retrying ever
     appendTurn: new AppendLiveTranscriptTurn(meetings),
     finishMeeting: new FinishLiveMeeting(meetings),
     logger,
-    publicationTargetId: "1533228891827736657",
     refreshMeeting: new RefreshLiveMeeting({
       meetings,
       projector: new ProjectionStub(),
@@ -500,7 +490,6 @@ it("permanently fences a non-retryable generation failure until its evidence bas
     appendTurn: new AppendLiveTranscriptTurn(meetings),
     finishMeeting: new FinishLiveMeeting(meetings),
     logger,
-    publicationTargetId: "1533228891827736657",
     refreshMeeting: new RefreshLiveMeeting({
       meetings,
       projector: new ProjectionStub(),
@@ -524,8 +513,8 @@ it("permanently fences a non-retryable generation failure until its evidence bas
   laterBatch.packets[0] = {
     ...laterBatch.packets[0]!,
     relativeTimeMs: 360_000,
-    rtpSequence: 2,
-    rtpTimestamp: 1_920,
+    sequenceNumber: 2,
+    mediaTimestamp: 1_920,
   };
   void runtime.acceptVoiceBatch(laterBatch);
   await vi.advanceTimersByTimeAsync(5_000);

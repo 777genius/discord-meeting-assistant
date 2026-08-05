@@ -1,16 +1,24 @@
+import type { RecordingArtifactSnapshot } from "@discord-meeting/meeting-core";
+
 /**
  * Consumer-owned commands accepted by the Meeting Platform application edge.
- * Provider adapters must validate and map their wire contracts into these
- * shapes before invoking application coordination.
+ * Provider adapters validate their wire contracts and normalize source identity
+ * and audio before invoking this boundary.
  */
 
+export interface RecordingSource {
+  /** Provider-owned tenant, workspace, or installation identity. */
+  readonly scopeId: string;
+  /** Provider-owned room or call identity within the source scope. */
+  readonly roomId: string;
+}
+
 interface RecordingLifecycleEnvelope {
-  readonly channelId: string;
   readonly eventId: string;
-  readonly guildId: string;
   readonly occurredAt: string;
   readonly recordingId: string;
   readonly schemaVersion: 1;
+  readonly source: RecordingSource;
 }
 
 export type RecordingLifecycleCommand =
@@ -43,45 +51,82 @@ export type RecordingLifecycleCommand =
       readonly type: "recording.authoritative_ready";
     });
 
-interface LiveVoicePacketCommand {
-  readonly channelId: string;
-  readonly guildId: string;
-  readonly opusBase64: string;
+export interface CanonicalLiveAudioFormat {
+  readonly channelCount: 1;
+  readonly codec: "opus";
+  readonly sampleRateHz: 48_000;
+}
+
+export const canonicalLiveAudioFormat: CanonicalLiveAudioFormat = Object.freeze({
+  channelCount: 1,
+  codec: "opus",
+  sampleRateHz: 48_000,
+});
+
+interface LiveVoicePacket {
+  readonly mediaTimestamp: number;
+  readonly payloadBase64: string;
   readonly receivedAtMs: number;
   readonly recordingId: string;
   readonly relativeTimeMs: number;
-  readonly rtpSequence: number;
-  readonly rtpTimestamp: number;
-  readonly schemaVersion: 1;
+  readonly sequenceNumber: number;
   readonly speakerId: string;
 }
 
+interface SourceLiveVoicePacketCommand extends LiveVoicePacket {
+  readonly schemaVersion: 1;
+  readonly source: RecordingSource;
+}
+
 export interface LiveVoicePacketBatchCommand {
-  readonly packets: LiveVoicePacketCommand[];
+  readonly format: CanonicalLiveAudioFormat;
+  readonly packets: readonly SourceLiveVoicePacketCommand[];
   readonly schemaVersion: 1;
 }
 
+export interface DerivedLiveVoicePacketBatch {
+  readonly format: CanonicalLiveAudioFormat;
+  readonly packets: readonly LiveVoicePacket[];
+}
+
 export interface AuthoritativeSpeakerTrackUpload {
-  readonly channelId: string;
   readonly checksumSha256: string;
-  readonly guildId: string;
   readonly recordingId: string;
   readonly schemaVersion: 1;
   readonly sizeBytes: number;
+  readonly source: RecordingSource;
   readonly speakerId: string;
   readonly timelineOffsetMs: number;
   readonly trackNumber: number;
   readonly uploadId: string;
 }
 
-export interface ActiveRecordingChannel {
-  readonly guildId: string;
-  readonly voiceChannelId: string;
-}
+export type DerivedLiveLifecycleEvent =
+  | {
+      readonly occurredAt: string;
+      readonly publicationTargetId: string;
+      readonly recordingId: string;
+      readonly type: "meeting.started";
+    }
+  | {
+      readonly occurredAt: string;
+      readonly recordingId: string;
+      readonly type: "meeting.ended" | "meeting.aborted";
+    }
+  | {
+      readonly occurredAt: string;
+      readonly recordingId: string;
+      readonly type:
+        | "meeting.connection_lost"
+        | "meeting.connection_recovered"
+        | "participant.joined"
+        | "participant.left"
+        | "recording.artifact_ready"
+        | "recording.authoritative_ready";
+    };
 
-/** Consumer-owned configuration capability used by inbound recording adapters. */
-export interface ActiveRecordingChannelReader {
-  listActiveGuildVoiceChannels(): Promise<readonly ActiveRecordingChannel[]>;
+export interface PublicationTargetResolverPort {
+  resolve(source: RecordingSource): Promise<string | null>;
 }
 
 export type RecordingIngressRejection =
@@ -89,10 +134,7 @@ export type RecordingIngressRejection =
   | "invalid-request"
   | "limit-exceeded";
 
-/**
- * Stable application failure exposed to inbound adapters. Concrete spool
- * failures are translated into this model at the composition boundary.
- */
+/** Stable application failure translated from a concrete durability adapter. */
 export class RecordingIngressRejectedError extends Error {
   public override readonly name = "RecordingIngressRejectedError";
 
@@ -102,6 +144,34 @@ export class RecordingIngressRejectedError extends Error {
   ) {
     super(`Recording ingress rejected: ${rejection}`, options);
   }
+}
+
+export type RecordingLifecycleIngressResult =
+  | {
+      readonly kind: "accepted" | "aborted";
+      readonly recordingId: string;
+      readonly replayed: boolean;
+    }
+  | {
+      readonly kind: "finalized";
+      readonly recording: RecordingArtifactSnapshot;
+      readonly replayed: boolean;
+    };
+
+/** Consumer-owned durability port implemented by one recording-source adapter. */
+export interface RecordingDurabilityPort {
+  ingestAuthoritativeTrack(
+    metadata: AuthoritativeSpeakerTrackUpload,
+    body: AsyncIterable<Uint8Array>,
+  ): Promise<{ readonly replayed: boolean }>;
+  ingestLifecycleEvent(
+    event: RecordingLifecycleCommand,
+  ): Promise<RecordingLifecycleIngressResult>;
+  ingestPacketBatch(batch: LiveVoicePacketBatchCommand): Promise<{
+    readonly acceptedPackets: number;
+    readonly duplicatePackets: number;
+    readonly recordingId: string;
+  }>;
 }
 
 export interface MeetingRecordingIngress {

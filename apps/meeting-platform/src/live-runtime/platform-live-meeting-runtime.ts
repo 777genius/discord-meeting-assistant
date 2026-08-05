@@ -19,10 +19,7 @@ import {
   type ActiveLiveMeeting,
 } from "./live-meeting-state.js";
 import { LiveMeetingFinalizer } from "./live-meeting-finalizer.js";
-import {
-  assertLivePublicationTargetSource,
-  resolveSpeakerIdleFinalizeMs,
-} from "./live-runtime-settings.js";
+import { resolveSpeakerIdleFinalizeMs } from "./live-runtime-settings.js";
 import { logFinalizedLiveTranscript } from "./live-transcript-observability.js";
 import {
   systemLiveRuntimeClock,
@@ -53,7 +50,6 @@ export class PlatformLiveMeetingRuntime {
   public constructor(
     private readonly dependencies: LiveMeetingRuntimeDependencies,
   ) {
-    assertLivePublicationTargetSource(dependencies);
     this.clock = dependencies.clock ?? systemLiveRuntimeClock;
     this.timer = dependencies.timer ?? systemLiveRuntimeTimer;
     this.packetFlow = resolveLivePacketFlowControl(dependencies.packetFlowControl);
@@ -168,22 +164,10 @@ export class PlatformLiveMeetingRuntime {
     if (this.meetings.has(event.recordingId)) {
       return;
     }
-    const publicationTargetId = await this.resolvePublicationTarget(event);
-    if (publicationTargetId === null) {
-      this.dependencies.logger.warn(
-        "Derived live meeting skipped for unconfigured channel",
-        {
-          guildId: event.guildId,
-          meetingId: event.recordingId,
-          voiceChannelId: event.channelId,
-        },
-      );
-      return;
-    }
     const startedAtMs = Date.parse(event.occurredAt);
     const result = await this.dependencies.startMeeting.execute({
       meetingId: event.recordingId,
-      publicationTargetId,
+      publicationTargetId: event.publicationTargetId,
       startedAtMs,
     });
     if (result.lifecycleStatus === "ended") {
@@ -232,19 +216,10 @@ export class PlatformLiveMeetingRuntime {
       }
       return;
     }
-    await state.transcription.accept({ packets });
-  }
-
-  private async resolvePublicationTarget(
-    event: LiveMeetingStartedEvent,
-  ): Promise<string | null> {
-    if (this.dependencies.publicationTargetId !== undefined) {
-      return this.dependencies.publicationTargetId;
-    }
-    return (await this.dependencies.publicationTargets?.resolve({
-      guildId: event.guildId,
-      voiceChannelId: event.channelId,
-    })) ?? null;
+    await state.transcription.accept({
+      format: { channelCount: 1, codec: "opus", sampleRateHz: 48_000 },
+      packets,
+    });
   }
 
   private acceptTranscript(

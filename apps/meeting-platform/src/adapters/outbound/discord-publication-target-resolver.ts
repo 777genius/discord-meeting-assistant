@@ -1,16 +1,17 @@
-export interface GuildPublicationTargetRequest {
+import type {
+  PublicationTargetResolverPort,
+  RecordingSource,
+} from "../../application/recording-ingress.js";
+
+interface DiscordPublicationTargetRequest {
   readonly guildId: string;
   readonly voiceChannelId: string;
 }
 
-interface GuildPublicationTargetResolverPort {
-  resolve(request: GuildPublicationTargetRequest): Promise<string | null>;
-}
-
-export class GuildPublicationTargetResolver implements GuildPublicationTargetResolverPort {
+export class DiscordPublicationTargetResolver implements PublicationTargetResolverPort {
   public constructor(
     private readonly configured: {
-      execute(request: GuildPublicationTargetRequest): Promise<
+      execute(request: DiscordPublicationTargetRequest): Promise<
         | { readonly publicationTargetId: string; readonly status: "configured" }
         | { readonly status: "not-configured" | "voice-channel-not-configured" }
       >;
@@ -22,7 +23,11 @@ export class GuildPublicationTargetResolver implements GuildPublicationTargetRes
     },
   ) {}
 
-  public async resolve(request: GuildPublicationTargetRequest): Promise<string | null> {
+  public async resolve(source: RecordingSource): Promise<string | null> {
+    const request = {
+      guildId: source.scopeId,
+      voiceChannelId: source.roomId,
+    };
     const result = await this.configured.execute(request);
     if (result.status === "configured") {
       return result.publicationTargetId;

@@ -13,14 +13,15 @@ import {
 import { ZodError } from "zod";
 
 import type {
-  ActiveRecordingChannel,
-  ActiveRecordingChannelReader,
   AuthoritativeSpeakerTrackUpload,
   LiveVoicePacketBatchCommand,
   MeetingRecordingIngress,
   RecordingLifecycleCommand,
 } from "../../../application/recording-ingress.js";
-import { RecordingIngressRejectedError } from "../../../application/recording-ingress.js";
+import {
+  canonicalLiveAudioFormat,
+  RecordingIngressRejectedError,
+} from "../../../application/recording-ingress.js";
 import { MeetingPublicationTargetUnavailableError } from "../../../application/platform-ingress.js";
 import {
   assertBearerToken,
@@ -33,9 +34,18 @@ export const maximumCraigJsonBodyBytes = 4 * 1_024 * 1_024;
 
 export type CraigIngressPort = MeetingRecordingIngress;
 
+interface ActiveCraigRecordingChannel {
+  readonly guildId: string;
+  readonly voiceChannelId: string;
+}
+
+export interface ActiveCraigRecordingChannelReader {
+  listActiveGuildVoiceChannels(): Promise<readonly ActiveCraigRecordingChannel[]>;
+}
+
 export interface CraigInboundRoutesOptions {
   readonly bearerToken: string;
-  readonly configuration: ActiveRecordingChannelReader;
+  readonly configuration: ActiveCraigRecordingChannelReader;
   readonly ingress: CraigIngressPort;
 }
 
@@ -187,19 +197,47 @@ function parseAuthoritativeTrackMetadataHeader(
 function mapLifecycleCommand(
   event: ReturnType<typeof parseCraigLifecycleEvent>,
 ): RecordingLifecycleCommand {
-  return { ...event };
+  const { channelId, guildId, ...providerNeutralEvent } = event;
+  return {
+    ...providerNeutralEvent,
+    source: { roomId: channelId, scopeId: guildId },
+  };
 }
 
 function mapVoicePacketBatch(
   batch: ReturnType<typeof parseVoicePacketBatch>,
 ): LiveVoicePacketBatchCommand {
-  return { schemaVersion: 1, packets: batch.packets.map((packet) => ({ ...packet })) };
+  return {
+    format: canonicalLiveAudioFormat,
+    packets: batch.packets.map((packet) => ({
+      mediaTimestamp: packet.rtpTimestamp,
+      payloadBase64: packet.opusBase64,
+      receivedAtMs: packet.receivedAtMs,
+      recordingId: packet.recordingId,
+      relativeTimeMs: packet.relativeTimeMs,
+      schemaVersion: packet.schemaVersion,
+      sequenceNumber: packet.rtpSequence,
+      source: { roomId: packet.channelId, scopeId: packet.guildId },
+      speakerId: packet.speakerId,
+    })),
+    schemaVersion: batch.schemaVersion,
+  };
 }
 
 function mapAuthoritativeTrackUpload(
   metadata: ReturnType<typeof parseAuthoritativeTrackUploadMetadata>,
 ): AuthoritativeSpeakerTrackUpload {
-  return { ...metadata };
+  return {
+    checksumSha256: metadata.checksumSha256,
+    recordingId: metadata.recordingId,
+    schemaVersion: metadata.schemaVersion,
+    sizeBytes: metadata.sizeBytes,
+    source: { roomId: metadata.channelId, scopeId: metadata.guildId },
+    speakerId: metadata.speakerId,
+    timelineOffsetMs: metadata.timelineOffsetMs,
+    trackNumber: metadata.trackNumber,
+    uploadId: metadata.uploadId,
+  };
 }
 
 function respondToCraigFailure(
@@ -233,8 +271,8 @@ function respondToRecordingIngressRejection(
 }
 
 function compareActiveGuildVoiceChannels(
-  left: ActiveRecordingChannel,
-  right: ActiveRecordingChannel,
+  left: ActiveCraigRecordingChannel,
+  right: ActiveCraigRecordingChannel,
 ): number {
   if (left.guildId !== right.guildId) {
     return left.guildId < right.guildId ? -1 : 1;

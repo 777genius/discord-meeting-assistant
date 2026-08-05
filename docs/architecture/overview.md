@@ -29,6 +29,12 @@ projection. The browser is not part of this path: audio, Voicetext credentials,
 and subscription-runtime authentication remain server-side. Discord receives
 only rendered summary and caption embeds.
 
+Craig is the first recording-source adapter, not application vocabulary. The
+application identifies a source by opaque scope and room IDs and accepts a
+canonical mono Opus 48 kHz live stream. A future Zoom or Google Meet adapter
+normalizes its identity and audio at the same boundary; it does not add provider
+branches to Meeting Core or the live runtime.
+
 ## Meeting Platform process boundaries
 
 Meeting Platform is assembled only in `composition`. Its application boundary

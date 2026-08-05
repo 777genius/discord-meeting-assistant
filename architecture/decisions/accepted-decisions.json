@@ -61,6 +61,11 @@
       "id": "ADR-0012",
       "path": "docs/decisions/0012-meeting-platform-boundary-refactoring.md",
       "immutableDigest": "sha256:d58384c839f98f84fadf5f4b360676af3becfc5c3c6cad104c2fea2c8982f4bb"
+    },
+    {
+      "id": "ADR-0013",
+      "path": "docs/decisions/0013-provider-neutral-meeting-source-boundary.md",
+      "immutableDigest": "sha256:058baba0bdce34b93d88f773ed925d127653633a00c8938d409cc773e9c8a743"
     }
   ]
 }

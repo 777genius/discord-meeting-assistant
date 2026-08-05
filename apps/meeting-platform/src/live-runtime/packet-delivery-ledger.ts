@@ -6,8 +6,8 @@ export function livePacketIdentity(packet: LiveVoicePacket): string {
   return [
     packet.recordingId,
     packet.speakerId,
-    packet.rtpTimestamp,
-    packet.rtpSequence,
+    packet.mediaTimestamp,
+    packet.sequenceNumber,
     packet.relativeTimeMs,
   ].join(":");
 }

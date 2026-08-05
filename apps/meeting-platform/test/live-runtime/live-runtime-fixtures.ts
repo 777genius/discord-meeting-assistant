@@ -1,8 +1,4 @@
 import type {
-  CraigLifecycleEvent,
-  VoicePacketBatch,
-} from "@discord-meeting/craig-gateway-contracts";
-import type {
   CommitLiveMeetingSummaryInput,
   FinalizedConversationTurnInput,
   GeneratedIncrementalSummary,
@@ -24,6 +20,16 @@ import type {
   VoicetextLivePacket,
   VoicetextLiveSession,
 } from "@discord-meeting/voicetext-adapter";
+
+import type {
+  LiveMeetingLifecycleEvent,
+  LiveVoicePacket,
+  LiveVoicePacketBatch,
+} from "../../src/live-runtime/contracts.js";
+
+type MutableLiveVoicePacketBatch = Omit<LiveVoicePacketBatch, "packets"> & {
+  readonly packets: LiveVoicePacket[];
+};
 
 export class MemoryLiveMeetingRepository implements LiveMeetingRepository {
   public snapshot: LiveMeetingSnapshot | null = null;
@@ -688,66 +694,54 @@ export const logger: Logger = {
   warn: () => {},
 };
 
-export function started(recordingId = "recording-live-1"): CraigLifecycleEvent {
+export function started(recordingId = "recording-live-1"): LiveMeetingLifecycleEvent {
   return {
-    channelId: "1533228891827736657",
-    eventId: "start-1",
-    guildId: "1533227577286852649",
     occurredAt: "2026-08-02T10:00:00.000Z",
-    participantIds: ["1533228054724346087"],
+    publicationTargetId: "1533228891827736657",
     recordingId,
-    schemaVersion: 1,
     type: "meeting.started",
   };
 }
 
-export function ended(): CraigLifecycleEvent {
+export function ended(): LiveMeetingLifecycleEvent {
   return {
-    channelId: "1533228891827736657",
-    eventId: "end-1",
-    guildId: "1533227577286852649",
     occurredAt: "2026-08-02T10:06:00.000Z",
-    reason: null,
     recordingId: "recording-live-1",
-    schemaVersion: 1,
     type: "meeting.ended",
   };
 }
 
-export function packets(recordingId = "recording-live-1"): VoicePacketBatch {
+export function packets(recordingId = "recording-live-1"): MutableLiveVoicePacketBatch {
   return {
+    format: { channelCount: 1, codec: "opus", sampleRateHz: 48_000 },
     packets: [
       {
-        channelId: "1533228891827736657",
-        guildId: "1533227577286852649",
-        opusBase64: Buffer.from([0xf8, 0xff, 0xfe]).toString("base64"),
+        mediaTimestamp: 960,
+        payloadBase64: Buffer.from([0xf8, 0xff, 0xfe]).toString("base64"),
         receivedAtMs: 1_000,
         recordingId,
         relativeTimeMs: 350_000,
-        rtpSequence: 1,
-        rtpTimestamp: 960,
-        schemaVersion: 1,
+        sequenceNumber: 1,
         speakerId: "1533228054724346087",
       },
     ],
-    schemaVersion: 1,
   };
 }
 
 export function packetsForSpeakers(
   relativeTimeMs: number,
   speakerCount = 10,
-): VoicePacketBatch {
+): MutableLiveVoicePacketBatch {
   const packet = packets().packets[0]!;
   return {
     packets: Array.from({ length: speakerCount }, (_, index) => ({
       ...packet,
       relativeTimeMs,
-      rtpSequence: index + Math.floor(relativeTimeMs / 20) * speakerCount + 1,
-      rtpTimestamp: 960 + index * 960 + relativeTimeMs * 48,
+      sequenceNumber: index + Math.floor(relativeTimeMs / 20) * speakerCount + 1,
+      mediaTimestamp: 960 + index * 960 + relativeTimeMs * 48,
       speakerId: `speaker-${index + 1}`,
     })),
-    schemaVersion: 1,
+    format: { channelCount: 1, codec: "opus", sampleRateHz: 48_000 },
   };
 }
 

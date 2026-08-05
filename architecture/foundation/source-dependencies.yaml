@@ -261,7 +261,6 @@ boundaries:
       - apps/meeting-platform/src/application
     entrypoints:
       - apps/meeting-platform/src/application/final-transcription-admission-port.ts
-      - apps/meeting-platform/src/application/guild-publication-target-resolver.ts
       - apps/meeting-platform/src/application/live-fenced-summary-publication.ts
       - apps/meeting-platform/src/application/platform-ingress.ts
       - apps/meeting-platform/src/application/post-call-outbox-dispatcher.ts
@@ -277,6 +276,8 @@ boundaries:
     roots:
       - apps/meeting-platform/src/adapters/outbound
     entrypoints:
+      - apps/meeting-platform/src/adapters/outbound/craig-recording-ingress-adapter.ts
+      - apps/meeting-platform/src/adapters/outbound/discord-publication-target-resolver.ts
       - apps/meeting-platform/src/adapters/outbound/file-conversation-thinking-cue-registry.ts
       - apps/meeting-platform/src/adapters/outbound/instrumented-processing-ports.ts
       - apps/meeting-platform/src/adapters/outbound/instrumented-subscription-runtime-transport.ts
@@ -290,8 +291,11 @@ boundaries:
         - adapters.speaches
         - adapters.subscription-runtime
         - adapters.voicetext
+        - apps.meeting-platform.application
+        - contracts.craig-gateway
         - core.meeting
       packages:
+        - "@discord-meeting/craig-gateway-contracts"
         - "@discord-meeting/meeting-core"
         - "@discord-meeting/object-storage-adapter"
         - "@discord-meeting/observability-adapter"

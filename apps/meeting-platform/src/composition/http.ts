@@ -6,9 +6,9 @@ import {
 import type { Logger } from "@discord-meeting/observability-adapter";
 
 import type { PlatformConfig } from "../config.js";
-import type { ActiveRecordingChannelReader } from "../application/recording-ingress.js";
 import {
   createCraigInboundRoutesPlugin,
+  type ActiveCraigRecordingChannelReader,
   type CraigIngressPort,
 } from "../adapters/inbound/craig/craig-inbound-routes.js";
 import { createDiscordInstallRoutesPlugin } from "../discord-install-http/discord-install-routes.js";
@@ -31,7 +31,7 @@ export interface PlatformHttpComposition {
 export function createPlatformHttpComposition(input: {
   readonly cleanup: PlatformStartupCleanup;
   readonly config: PlatformConfig;
-  readonly configuration: ActiveRecordingChannelReader;
+  readonly configuration: ActiveCraigRecordingChannelReader;
   readonly craigPlaybackGateway: CraigPlaybackGateway;
   readonly health: PlatformHealthPort;
   readonly ingress: CraigIngressPort;

@@ -7,8 +7,8 @@ import {
 import { afterEach, expect, it, vi } from "vitest";
 
 import { PlatformLiveMeetingRuntime } from "../../src/live-meeting-runtime.js";
-import type { VoicePacketBatch } from "@discord-meeting/craig-gateway-contracts";
 import type { Logger } from "@discord-meeting/observability-adapter";
+import type { LiveVoicePacketBatch } from "../../src/live-runtime/contracts.js";
 import {
   ConversationCoordinatorProbe,
   ControlledLiveTranscriberStub,
@@ -46,7 +46,6 @@ it("starts conversation only after durable final-turn append and isolates its fa
     },
     finishMeeting: new FinishLiveMeeting(meetings),
     logger,
-    publicationTargetId: "1533228891827736657",
     refreshMeeting: new RefreshLiveMeeting({
       meetings,
       projector: new ProjectionStub(),
@@ -94,7 +93,6 @@ it("keeps aggregate speech active while another participant is still speaking", 
     },
     finishMeeting: new FinishLiveMeeting(meetings),
     logger,
-    publicationTargetId: "1533228891827736657",
     refreshMeeting: new RefreshLiveMeeting({
       meetings,
       projector: new ProjectionStub(),
@@ -155,7 +153,6 @@ it("preserves the observed speech time while conversation work is queued", async
     },
     finishMeeting: new FinishLiveMeeting(meetings),
     logger,
-    publicationTargetId: "1533228891827736657",
     refreshMeeting: new RefreshLiveMeeting({
       meetings,
       projector: new ProjectionStub(),
@@ -209,7 +206,6 @@ it("projects the first live caption within one second and suppresses unchanged e
     appendTurn: new AppendLiveTranscriptTurn(meetings),
     finishMeeting: new FinishLiveMeeting(meetings),
     logger,
-    publicationTargetId: "1533228891827736657",
     refreshMeeting: new RefreshLiveMeeting({
       meetings,
       projector,
@@ -254,7 +250,6 @@ it("keeps all ten speakers live while a Discord projection is slow", async () =>
       maximumConcurrentSessions: 10,
       packetBackpressureTimeoutMs: 100,
     },
-    publicationTargetId: "1533228891827736657",
     refreshMeeting: new RefreshLiveMeeting({
       meetings,
       projector,
@@ -319,7 +314,6 @@ it("uses bounded post-durability backpressure instead of silently advancing a fu
       maximumQueuedPacketsPerSpeaker: 2,
       packetBackpressureTimeoutMs: 100,
     },
-    publicationTargetId: "1533228891827736657",
     refreshMeeting: new RefreshLiveMeeting({
       meetings,
       projector: new ProjectionStub(),
@@ -392,7 +386,6 @@ it("paces queued Opus packets at their source duration", async () => {
       maximumConcurrentSessions: 10,
       packetBackpressureTimeoutMs: 100,
     },
-    publicationTargetId: "1533228891827736657",
     refreshMeeting: new RefreshLiveMeeting({
       meetings,
       projector: new ProjectionStub(),
@@ -405,12 +398,12 @@ it("paces queued Opus packets at their source duration", async () => {
 
   await runtime.acceptLifecycle(started());
   await runtime.acceptVoiceBatch({
+    format: packets().format,
     packets: [
       { ...first, relativeTimeMs: 0 },
-      { ...first, relativeTimeMs: 20, rtpSequence: 2, rtpTimestamp: 1_920 },
-      { ...first, relativeTimeMs: 40, rtpSequence: 3, rtpTimestamp: 2_880 },
+      { ...first, relativeTimeMs: 20, sequenceNumber: 2, mediaTimestamp: 1_920 },
+      { ...first, relativeTimeMs: 40, sequenceNumber: 3, mediaTimestamp: 2_880 },
     ],
-    schemaVersion: 1,
   });
   await vi.advanceTimersByTimeAsync(0);
   expect(transcriber.sentAtMs).toEqual([startedAtMs]);
@@ -441,7 +434,6 @@ it("keeps a durable packet retryable after bounded provider recovery exhausts", 
       maximumConcurrentSessions: 10,
       packetBackpressureTimeoutMs: 100,
     },
-    publicationTargetId: "1533228891827736657",
     refreshMeeting: new RefreshLiveMeeting({
       meetings,
       projector: new ProjectionStub(),
@@ -488,7 +480,6 @@ it("retries a failed head packet before queued later audio and deduplicates its 
       maximumConcurrentSessions: 10,
       packetBackpressureTimeoutMs: 100,
     },
-    publicationTargetId: "1533228891827736657",
     refreshMeeting: new RefreshLiveMeeting({
       meetings,
       projector: new ProjectionStub(),
@@ -498,17 +489,17 @@ it("retries a failed head packet before queued later audio and deduplicates its 
     transcriber,
   });
   const first = packets().packets[0]!;
-  const firstAndSecond: VoicePacketBatch = {
+  const firstAndSecond: LiveVoicePacketBatch = {
+    format: packets().format,
     packets: [
       { ...first, relativeTimeMs: 0 },
       {
         ...first,
         relativeTimeMs: 20,
-        rtpSequence: 2,
-        rtpTimestamp: 1_920,
+        sequenceNumber: 2,
+        mediaTimestamp: 1_920,
       },
     ],
-    schemaVersion: 1,
   };
 
   await runtime.acceptLifecycle(started());
@@ -532,8 +523,8 @@ it("retries a failed head packet before queued later audio and deduplicates its 
   // Craig may redeliver A after B was already accepted. It is now a true
   // duplicate rather than an out-of-order packet silently omitted live.
   await runtime.acceptVoiceBatch({
+    format: packets().format,
     packets: [firstAndSecond.packets[0]!],
-    schemaVersion: 1,
   });
   await vi.advanceTimersByTimeAsync(0);
   expect(transcriber.sendAttempts.map(({ relativeTimeMs }) => relativeTimeMs)).toEqual([
@@ -571,7 +562,6 @@ it("replays a failed head after later audio without permanently omitting either 
       maximumConcurrentSessions: 10,
       packetBackpressureTimeoutMs: 100,
     },
-    publicationTargetId: "1533228891827736657",
     refreshMeeting: new RefreshLiveMeeting({
       meetings,
       projector: new ProjectionStub(),
@@ -581,17 +571,17 @@ it("replays a failed head after later audio without permanently omitting either 
     transcriber,
   });
   const first = packets().packets[0]!;
-  const firstAndSecond: VoicePacketBatch = {
+  const firstAndSecond: LiveVoicePacketBatch = {
+    format: packets().format,
     packets: [
       { ...first, relativeTimeMs: 0 },
       {
         ...first,
         relativeTimeMs: 20,
-        rtpSequence: 2,
-        rtpTimestamp: 1_920,
+        sequenceNumber: 2,
+        mediaTimestamp: 1_920,
       },
     ],
-    schemaVersion: 1,
   };
 
   await runtime.acceptLifecycle(started());
@@ -613,17 +603,17 @@ it("replays a failed head after later audio without permanently omitting either 
   // The durable replay of A remains eligible despite B's committed source
   // timeline. Its paced fallback lands after B, then the stream continues.
   await runtime.acceptVoiceBatch({
+    format: packets().format,
     packets: [firstAndSecond.packets[0]!],
-    schemaVersion: 1,
   });
   await vi.advanceTimersByTimeAsync(20);
   const third = {
     ...first,
     relativeTimeMs: 40,
-    rtpSequence: 3,
-    rtpTimestamp: 2_880,
+    sequenceNumber: 3,
+    mediaTimestamp: 2_880,
   };
-  await runtime.acceptVoiceBatch({ packets: [third], schemaVersion: 1 });
+  await runtime.acceptVoiceBatch({ format: packets().format, packets: [third] });
   await vi.advanceTimersByTimeAsync(20);
 
   expect(transcriber.deliveredPackets.map(({ relativeTimeMs }) => relativeTimeMs)).toEqual([

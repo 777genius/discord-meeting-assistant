@@ -1,0 +1,14 @@
+id: meeting-platform-core-no-provider-vocabulary
+language: TypeScript
+severity: error
+message: Meeting Platform application and live contracts must use provider-neutral vocabulary.
+note: Map Discord, Craig, and RTP fields in an inbound or outbound anti-corruption adapter.
+files:
+  - "apps/meeting-platform/src/application/**/*.ts"
+  - "apps/meeting-platform/src/live-runtime/contracts.ts"
+rule:
+  any:
+    - kind: identifier
+      regex: "^(guildId|voiceChannelId|channelId|rtpSequence|rtpTimestamp|opusBase64)$"
+    - kind: property_identifier
+      regex: "^(guildId|voiceChannelId|channelId|rtpSequence|rtpTimestamp|opusBase64)$"
