@@ -161,7 +161,10 @@ export class PersistentCodexProcessRunner implements ProcessRunnerPort {
         outputSchemaName: canonical.task.outputSchemaName,
         prompt: canonical.task.prompt,
         runId: canonical.runId,
-        systemPrompt: canonical.task.systemPrompt,
+        systemPrompt: structuredOutputSystemPrompt(
+          canonical.task.systemPrompt,
+          profile,
+        ),
       });
       if (timing.timedOut) {
         return timedOutResult();
@@ -363,6 +366,20 @@ function assertSameProfile(
   ) {
     throw new Error("Persistent worker profile changed after prewarm");
   }
+}
+
+function structuredOutputSystemPrompt(
+  systemPrompt: string,
+  profile: PersistentCodexProfile,
+): string {
+  return [
+    systemPrompt,
+    "",
+    "Output contract:",
+    "Return only one JSON value with no markdown or commentary.",
+    `It must match JSON Schema ${profile.execution.outputSchemaName}:`,
+    JSON.stringify(profile.outputSchema),
+  ].join("\n");
 }
 
 function safeRuntimeFailure(error: unknown): Readonly<Record<string, unknown>> {

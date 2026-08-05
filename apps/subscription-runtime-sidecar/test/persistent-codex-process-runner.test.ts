@@ -70,6 +70,15 @@ describe("PersistentCodexProcessRunner", () => {
     expect(worker.seededAuthPaths).toEqual([fixture.authJsonPath]);
     expect(worker.prewarmCalls).toBe(1);
     expect(worker.runInputs).toHaveLength(2);
+    expect(worker.runInputs[0]?.systemPrompt).toContain(
+      conversationCanonicalRequest.task.systemPrompt,
+    );
+    expect(worker.runInputs[0]?.systemPrompt).toContain(
+      "Return only one JSON value with no markdown or commentary.",
+    );
+    expect(worker.runInputs[0]?.systemPrompt).toContain(
+      JSON.stringify(providerConversationAnswerJsonSchema),
+    );
     expect(worker.options).toMatchObject({
       cleanThreadPrewarm: true,
       executionEngine: "app-server",
