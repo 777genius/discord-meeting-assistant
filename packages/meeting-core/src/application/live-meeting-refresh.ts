@@ -7,10 +7,12 @@ import type { StageFailure } from "../domain/meeting.js";
 import type {
   IncrementalSummaryGenerationPort,
   LiveCaptionSnapshot,
+  LiveMeetingGenerationLedger,
   LiveMeetingProjectionPhase,
   LiveMeetingProjectionPort,
-  LiveMeetingRepository,
   LiveMeetingSnapshotAndTimelineReader,
+  LiveMeetingStateRepository,
+  LiveMeetingSummaryRepository,
 } from "./ports/live-meeting.js";
 import {
   LiveMeetingProjectionCoordinator,
@@ -39,7 +41,10 @@ export { defaultLiveSummaryCadencePolicy };
 export type { LiveSummaryCadencePolicy };
 
 export interface RefreshLiveMeetingDependencies {
-  readonly meetings: LiveMeetingRepository & LiveMeetingSnapshotAndTimelineReader;
+  readonly meetings: LiveMeetingGenerationLedger &
+    LiveMeetingSnapshotAndTimelineReader &
+    LiveMeetingStateRepository &
+    LiveMeetingSummaryRepository;
   readonly policy?: LiveSummaryCadencePolicy;
   readonly projector: LiveMeetingProjectionPort;
   readonly summarizer: IncrementalSummaryGenerationPort;
