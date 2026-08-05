@@ -26,9 +26,10 @@ import {
 } from "./persistent-codex-run-result.js";
 import { createPersistentCodexWorkerSlot } from "./persistent-codex-worker.js";
 import type {
-  ProcessRunnerPort,
+  ProviderTaskStreamObserver,
   ProcessRunRequest,
   ProcessRunResult,
+  StreamingProcessRunnerPort,
 } from "./types.js";
 
 export type {
@@ -41,7 +42,7 @@ export type {
  * Runtime's app-server worker and clean-thread prewarm between requests.
  * The pinned runtime itself owns app-server -> packaged-exec fallback.
  */
-export class PersistentCodexProcessRunner implements ProcessRunnerPort {
+export class PersistentCodexProcessRunner implements StreamingProcessRunnerPort {
   public readonly runtimeEngine = subscriptionRuntimeEngine;
 
   private readonly slots = new Map<string, Promise<PersistentCodexWorkerSlot>>();
@@ -59,6 +60,20 @@ export class PersistentCodexProcessRunner implements ProcessRunnerPort {
   }
 
   public async run(request: ProcessRunRequest): Promise<ProcessRunResult> {
+    return await this.runRequest(request);
+  }
+
+  public async runStreaming(
+    request: ProcessRunRequest,
+    observer: ProviderTaskStreamObserver,
+  ): Promise<ProcessRunResult> {
+    return await this.runRequest(request, observer);
+  }
+
+  private async runRequest(
+    request: ProcessRunRequest,
+    observer?: ProviderTaskStreamObserver,
+  ): Promise<ProcessRunResult> {
     if (this.disposed) {
       throw new Error("Persistent Codex runner is disposed");
     }
@@ -88,7 +103,7 @@ export class PersistentCodexProcessRunner implements ProcessRunnerPort {
       profileForPersistentCodexRequest(canonical),
       request.env,
     );
-    return await this.runWorker(slot, canonical, request);
+    return await this.runWorker(slot, canonical, request, observer);
   }
 
   public async dispose(): Promise<void> {
@@ -109,6 +124,7 @@ export class PersistentCodexProcessRunner implements ProcessRunnerPort {
     slot: PersistentCodexWorkerSlot,
     canonical: ReturnType<typeof parsePersistentCodexRequest>,
     request: ProcessRunRequest,
+    observer?: ProviderTaskStreamObserver,
   ): Promise<ProcessRunResult> {
     const cancellation = new AbortController();
     const timing = { timedOut: false };
@@ -122,19 +138,34 @@ export class PersistentCodexProcessRunner implements ProcessRunnerPort {
     }, request.timeoutMs);
     timeout.unref();
     try {
-      const result = await slot.worker.run({
-        abortSignal: cancellation.signal,
-        controls: canonical.task.controls,
-        kind: "structured-prompt",
-        metadata: canonical.task.metadata,
-        outputSchemaName: canonical.task.outputSchemaName,
-        prompt: canonical.task.prompt,
-        runId: canonical.runId,
-        systemPrompt: structuredPersistentCodexOutputSystemPrompt(
-          canonical.task.systemPrompt,
-          slot.profile,
-        ),
-      });
+      const result = await slot.worker.run(
+        {
+          abortSignal: cancellation.signal,
+          controls: canonical.task.controls,
+          kind: "structured-prompt",
+          metadata: canonical.task.metadata,
+          outputSchemaName: canonical.task.outputSchemaName,
+          prompt: canonical.task.prompt,
+          runId: canonical.runId,
+          systemPrompt: structuredPersistentCodexOutputSystemPrompt(
+            canonical.task.systemPrompt,
+            slot.profile,
+          ),
+        },
+        {
+          abortSignal: cancellation.signal,
+          ...(observer === undefined
+            ? {}
+            : {
+                onProviderTaskStarted: async () => {
+                  await observer.onProviderTaskStarted();
+                },
+                onProviderTextDelta: (text: string) => {
+                  observer.onProviderTextDelta(text);
+                },
+              }),
+        },
+      );
       if (timing.timedOut) {
         return persistentCodexTimedOutResult();
       }

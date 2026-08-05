@@ -44,6 +44,16 @@ def _identifier(value: str, *, field_name: str) -> str:
     return _bounded_text(value, field_name=field_name, maximum=128)
 
 
+def bounded_text(value: str, *, field_name: str, maximum: int, minimum: int = 1) -> str:
+    """Validate text shared by application request and event boundaries."""
+    return _bounded_text(value, field_name=field_name, maximum=maximum, minimum=minimum)
+
+
+def identifier(value: str, *, field_name: str) -> str:
+    """Validate an identifier shared by application request and event boundaries."""
+    return _identifier(value, field_name=field_name)
+
+
 @dataclass(frozen=True, slots=True)
 class StartTurn:
     """A stateless request to answer one addressed participant utterance."""
@@ -57,6 +67,8 @@ class StartTurn:
     prompt: str
     locale: str
     voice_profile_id: str
+    turn_ended_at_unix_ms: int | None = None
+    wake_detected_at_unix_ms: int | None = None
     schema_version: int = field(default=PROTOCOL_VERSION, kw_only=True)
 
     def __post_init__(self) -> None:
@@ -90,6 +102,13 @@ class StartTurn:
             "locale",
             _bounded_text(self.locale, field_name="locale", maximum=35, minimum=2),
         )
+        turn_ended_at_unix_ms = self.turn_ended_at_unix_ms
+        wake_detected_at_unix_ms = self.wake_detected_at_unix_ms
+        if (turn_ended_at_unix_ms is None) != (wake_detected_at_unix_ms is None):
+            raise RuntimeInputError("conversation latency context must be complete")
+        if turn_ended_at_unix_ms is not None and wake_detected_at_unix_ms is not None:
+            if turn_ended_at_unix_ms < 0 or wake_detected_at_unix_ms < turn_ended_at_unix_ms:
+                raise RuntimeInputError("conversation latency context is invalid")
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,6 +205,33 @@ type TextGenerationResult = TextGenerationCompleted | TextGenerationFailed | Tex
 
 
 @dataclass(frozen=True, slots=True)
+class TextGenerationStreamStarted:
+    """The admitted provider task started using its already-warm runtime slot."""
+
+
+@dataclass(frozen=True, slots=True)
+class TextGenerationStreamDelta:
+    """A validated fragment of the answer string inside provisional structured output."""
+
+    text: str
+
+    def __post_init__(self) -> None:
+        if not self.text:
+            raise RuntimeInputError("streamed answer text must be non-empty")
+        if len(self.text) > 2_000:
+            raise RuntimeInputError("streamed answer text exceeds the answer boundary")
+
+
+type TextGenerationStreamEvent = (
+    TextGenerationStreamStarted
+    | TextGenerationStreamDelta
+    | TextGenerationCompleted
+    | TextGenerationFailed
+    | TextGenerationCancelled
+)
+
+
+@dataclass(frozen=True, slots=True)
 class CancelTurn:
     """An idempotent request to cancel a specific conversation attempt."""
 
@@ -207,158 +253,3 @@ class CancelTurn:
             "attempt_id",
             _identifier(self.attempt_id, field_name="attempt_id"),
         )
-
-
-@dataclass(frozen=True, slots=True)
-class EventEnvelope:
-    """Ordered provider-neutral metadata shared by each emitted event."""
-
-    turn_id: str
-    attempt_id: str
-    event_sequence: int
-    schema_version: int = field(default=PROTOCOL_VERSION, kw_only=True)
-
-    def __post_init__(self) -> None:
-        if self.schema_version != PROTOCOL_VERSION:
-            raise RuntimeInputError("unsupported conversation runtime schema version")
-        object.__setattr__(
-            self,
-            "turn_id",
-            _identifier(self.turn_id, field_name="turn_id"),
-        )
-        object.__setattr__(
-            self,
-            "attempt_id",
-            _identifier(self.attempt_id, field_name="attempt_id"),
-        )
-        if self.event_sequence < 0:
-            raise RuntimeInputError("event_sequence must be non-negative")
-
-
-@dataclass(frozen=True, slots=True)
-class Accepted(EventEnvelope):
-    """The runtime accepted the turn and assigned its attempt identity."""
-
-
-@dataclass(frozen=True, slots=True)
-class TextDelta(EventEnvelope):
-    """A streaming, provider-neutral text fragment."""
-
-    text: str
-
-    def __post_init__(self) -> None:
-        EventEnvelope.__post_init__(self)
-        object.__setattr__(self, "text", _bounded_text(self.text, field_name="text", maximum=8_000))
-
-
-@dataclass(frozen=True, slots=True)
-class AudioStart(EventEnvelope):
-    """Signals the start of normalized mono 48 kHz PCM output."""
-
-    format: AudioFormat = AudioFormat.PCM_S16LE
-    sample_rate_hz: int = PCM_S16LE_SAMPLE_RATE_HZ
-    channels: int = PCM_S16LE_CHANNELS
-
-    def __post_init__(self) -> None:
-        EventEnvelope.__post_init__(self)
-        if (
-            self.format is not AudioFormat.PCM_S16LE
-            or self.sample_rate_hz != PCM_S16LE_SAMPLE_RATE_HZ
-            or self.channels != PCM_S16LE_CHANNELS
-        ):
-            raise RuntimeInputError("audio output must be PCM S16LE, 48 kHz, mono")
-
-
-@dataclass(frozen=True, slots=True)
-class AudioChunk(EventEnvelope):
-    """One bounded normalized PCM payload."""
-
-    audio_sequence: int
-    pcm: bytes
-    format: AudioFormat = AudioFormat.PCM_S16LE
-    sample_rate_hz: int = PCM_S16LE_SAMPLE_RATE_HZ
-    channels: int = PCM_S16LE_CHANNELS
-
-    def __post_init__(self) -> None:
-        EventEnvelope.__post_init__(self)
-        if self.audio_sequence < 0:
-            raise RuntimeInputError("audio_sequence must be non-negative")
-        if (
-            self.format is not AudioFormat.PCM_S16LE
-            or self.sample_rate_hz != PCM_S16LE_SAMPLE_RATE_HZ
-            or self.channels != PCM_S16LE_CHANNELS
-        ):
-            raise RuntimeInputError("audio output must be PCM S16LE, 48 kHz, mono")
-        if not self.pcm or len(self.pcm) > MAXIMUM_PCM_CHUNK_BYTES or len(self.pcm) % 2 != 0:
-            raise RuntimeInputError("PCM chunks must be non-empty, even, and bounded")
-
-
-@dataclass(frozen=True, slots=True)
-class AudioEnd(EventEnvelope):
-    """Signals that no further PCM payloads belong to the attempt."""
-
-
-@dataclass(frozen=True, slots=True)
-class Usage(EventEnvelope):
-    """Provider-neutral token accounting for one stateless answer."""
-
-    input_tokens: int
-    output_tokens: int
-    total_tokens: int
-
-    def __post_init__(self) -> None:
-        EventEnvelope.__post_init__(self)
-        if min(self.input_tokens, self.output_tokens, self.total_tokens) < 0:
-            raise RuntimeInputError("usage values must be non-negative")
-        if self.total_tokens < self.input_tokens + self.output_tokens:
-            raise RuntimeInputError("total_tokens must include input and output tokens")
-
-
-@dataclass(frozen=True, slots=True)
-class Completed(EventEnvelope):
-    """The full requested response finished successfully."""
-
-
-@dataclass(frozen=True, slots=True)
-class Cancelled(EventEnvelope):
-    """The active response stopped due to an explicit cancellation reason."""
-
-    reason: CancellationReason
-
-
-@dataclass(frozen=True, slots=True)
-class Failed(EventEnvelope):
-    """A safe, provider-neutral terminal failure."""
-
-    code: str
-    safe_message: str
-    retryable: bool
-
-    def __post_init__(self) -> None:
-        EventEnvelope.__post_init__(self)
-        object.__setattr__(self, "code", _bounded_text(self.code, field_name="code", maximum=128))
-        object.__setattr__(
-            self,
-            "safe_message",
-            _bounded_text(self.safe_message, field_name="safe_message", maximum=512),
-        )
-
-
-type ConversationEvent = (
-    Accepted
-    | TextDelta
-    | AudioStart
-    | AudioChunk
-    | AudioEnd
-    | Usage
-    | Completed
-    | Cancelled
-    | Failed
-)
-
-type TerminalConversationEvent = Completed | Cancelled | Failed
-
-
-def is_terminal_event(event: ConversationEvent) -> bool:
-    """Return whether an event closes the runtime stream."""
-    return isinstance(event, (Completed, Cancelled, Failed))

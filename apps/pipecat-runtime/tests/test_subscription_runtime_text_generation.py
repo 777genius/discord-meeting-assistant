@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
-from collections.abc import Iterable, Sequence
+from collections.abc import AsyncIterator, Iterable, Sequence
 from dataclasses import dataclass
 from typing import cast
 
@@ -12,12 +13,13 @@ import grpc
 from pipecat.processors.frame_processor import FrameProcessor
 
 from pipecat_runtime.adapters.pipecat.processors import (
+    ConversationTextCaptureProcessor,
     DeterministicPipelineOptions,
     FixtureSpeechTTSProcessor,
 )
 from pipecat_runtime.adapters.pipecat.runtime import PipecatConversationRuntime
 from pipecat_runtime.adapters.pipecat.text_generation import (
-    SubscriptionRuntimeTextGenerationProcessor,
+    StreamingSubscriptionRuntimeTextGenerationProcessor,
 )
 from pipecat_runtime.adapters.subscription_runtime.generated import agent_runtime_pb2 as contract
 from pipecat_runtime.adapters.subscription_runtime.generated import agent_runtime_pb2_grpc
@@ -25,16 +27,20 @@ from pipecat_runtime.adapters.subscription_runtime.text_generation import (
     SubscriptionRuntimeTextGenerationAdapter,
     SubscriptionRuntimeTextGenerationSettings,
 )
+from pipecat_runtime.application.conversation_events import Cancelled, Failed
 from pipecat_runtime.application.models import (
     CancellationReason,
-    Cancelled,
     CancelTurn,
-    Failed,
     TextGenerationCompleted,
     TextGenerationFailed,
     TextGenerationRequest,
+    TextGenerationStreamDelta,
+    TextGenerationStreamStarted,
 )
-from pipecat_runtime.application.ports import ConversationTextGenerationPort
+from pipecat_runtime.application.ports import (
+    CancellationSignal,
+    StreamingConversationTextGenerationPort,
+)
 from pipecat_runtime.assets.deterministic_speech import deterministic_russian_speech_pcm
 from tests.support import sample_start_turn
 
@@ -77,6 +83,22 @@ class _RecordingAgentRuntime(agent_runtime_pb2_grpc.AgentRuntimeServiceServicer)
             runtime_version="test",
         )
 
+    async def StreamAgentTask(
+        self,
+        request: contract.AgentRuntimeTaskStreamRequest,
+        context: grpc.aio.ServicerContext[
+            contract.AgentRuntimeTaskStreamRequest,
+            contract.AgentRuntimeTaskEvent,
+        ],
+    ) -> AsyncIterator[contract.AgentRuntimeTaskEvent]:
+        self.request = request.task
+        self.authorization = _authorization_from_metadata(context.invocation_metadata())
+        yield contract.AgentRuntimeTaskEvent(
+            schema_version=1,
+            sequence=1,
+            completed=self.response,
+        )
+
 
 class _BlockingAgentRuntime(_RecordingAgentRuntime):
     """A loopback service that observes cancellation of its unary request."""
@@ -103,26 +125,116 @@ class _BlockingAgentRuntime(_RecordingAgentRuntime):
             self.cancelled.set()
         raise AssertionError("blocking test RPC unexpectedly resumed")
 
+    async def StreamAgentTask(
+        self,
+        request: contract.AgentRuntimeTaskStreamRequest,
+        context: grpc.aio.ServicerContext[
+            contract.AgentRuntimeTaskStreamRequest,
+            contract.AgentRuntimeTaskEvent,
+        ],
+    ) -> AsyncIterator[contract.AgentRuntimeTaskEvent]:
+        self.request = request.task
+        self.authorization = _authorization_from_metadata(context.invocation_metadata())
+        self.started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            self.cancelled.set()
+        if False:
+            yield contract.AgentRuntimeTaskEvent()
+
+
+class _StreamingAgentRuntime(_RecordingAgentRuntime):
+    """A loopback service that emits split structured output before final attestation."""
+
+    def __init__(self, deltas: tuple[str, ...], *, final_answer: str = "Привет, Ботик 🙂!") -> None:
+        super().__init__(_completed_response('{"answer":"unused"}'))
+        self.deltas = deltas
+        self.final_answer = final_answer
+
+    async def StreamAgentTask(
+        self,
+        request: contract.AgentRuntimeTaskStreamRequest,
+        context: grpc.aio.ServicerContext[
+            contract.AgentRuntimeTaskStreamRequest,
+            contract.AgentRuntimeTaskEvent,
+        ],
+    ) -> AsyncIterator[contract.AgentRuntimeTaskEvent]:
+        task = request.task
+        self.request = task
+        self.authorization = _authorization_from_metadata(context.invocation_metadata())
+        yield contract.AgentRuntimeTaskEvent(
+            schema_version=1,
+            sequence=1,
+            started=contract.AgentRuntimeTaskStarted(),
+        )
+        for sequence, delta in enumerate(self.deltas, start=2):
+            yield contract.AgentRuntimeTaskEvent(
+                schema_version=1,
+                sequence=sequence,
+                text_delta=contract.AgentRuntimeTextDelta(text=delta),
+            )
+        yield contract.AgentRuntimeTaskEvent(
+            schema_version=1,
+            sequence=len(self.deltas) + 2,
+            completed=_attested_completed_response(task, self.final_answer),
+        )
+
+
+class _MalformedBlockingStreamRuntime(_RecordingAgentRuntime):
+    """Emit one invalid provisional delta and observe fail-closed client cancellation."""
+
+    def __init__(self) -> None:
+        super().__init__(_completed_response('{"answer":"unused"}'))
+        self.cancelled = asyncio.Event()
+
+    async def StreamAgentTask(
+        self,
+        request: contract.AgentRuntimeTaskStreamRequest,
+        context: grpc.aio.ServicerContext[
+            contract.AgentRuntimeTaskStreamRequest,
+            contract.AgentRuntimeTaskEvent,
+        ],
+    ) -> AsyncIterator[contract.AgentRuntimeTaskEvent]:
+        del request, context
+        yield contract.AgentRuntimeTaskEvent(
+            schema_version=1,
+            sequence=1,
+            started=contract.AgentRuntimeTaskStarted(),
+        )
+        yield contract.AgentRuntimeTaskEvent(
+            schema_version=1,
+            sequence=2,
+            text_delta=contract.AgentRuntimeTextDelta(text="invalid-json"),
+        )
+        try:
+            await asyncio.Event().wait()
+        finally:
+            self.cancelled.set()
+        if False:
+            yield contract.AgentRuntimeTaskEvent()
+
 
 @dataclass(frozen=True, slots=True)
 class _SubscriptionRuntimeFixtureProfile:
     """A real Pipecat profile with fake speech around the concrete unary text adapter."""
 
     profile_id: str
-    text_generator: ConversationTextGenerationPort
+    text_generator: StreamingConversationTextGenerationPort
 
     def create_processors(
         self,
         request: object,
-        cancellation_requested: asyncio.Event,
+        cancellation_requested: CancellationSignal,
     ) -> Sequence[FrameProcessor]:
         del request
         options = DeterministicPipelineOptions()
         return (
-            SubscriptionRuntimeTextGenerationProcessor(
+            StreamingSubscriptionRuntimeTextGenerationProcessor(
                 text_generator=self.text_generator,
                 cancellation_requested=cancellation_requested,
             ),
+            ConversationTextCaptureProcessor(),
             FixtureSpeechTTSProcessor(
                 options=options,
                 fixture_pcm=deterministic_russian_speech_pcm(),
@@ -135,8 +247,9 @@ async def test_adapter_sends_the_admitted_stateless_conversation_profile() -> No
     """The unary request has fixed controls, exact schema, supplied token, and one turn only."""
     service = _RecordingAgentRuntime(_completed_response('{"answer":"Привет!"}'))
     server, address = await _start_server(service)
+    adapter = _adapter(address)
     try:
-        result = await _adapter(address).generate(
+        result = await adapter.generate(
             _request(),
             cancellation_requested=asyncio.Event(),
         )
@@ -197,6 +310,7 @@ async def test_adapter_sends_the_admitted_stateless_conversation_profile() -> No
             "turnId": "turn-1",
         }
     finally:
+        await adapter.close()
         await server.stop(0)
 
 
@@ -206,8 +320,9 @@ async def test_adapter_rejects_malformed_completed_output_and_hides_runtime_mess
         _completed_response('{"answer":"valid", "unexpected": true}')
     )
     server, address = await _start_server(service)
+    adapter = _adapter(address)
     try:
-        malformed = await _adapter(address).generate(
+        malformed = await adapter.generate(
             _request(),
             cancellation_requested=asyncio.Event(),
         )
@@ -226,7 +341,7 @@ async def test_adapter_rejects_malformed_completed_output_and_hides_runtime_mess
                 retryable=False,
             ),
         )
-        failed = await _adapter(address).generate(
+        failed = await adapter.generate(
             _request(),
             cancellation_requested=asyncio.Event(),
         )
@@ -236,6 +351,111 @@ async def test_adapter_rejects_malformed_completed_output_and_hides_runtime_mess
             retryable=True,
         )
     finally:
+        await adapter.close()
+        await server.stop(0)
+
+
+async def test_stream_adapter_decodes_json_escapes_and_validates_the_final_answer() -> None:
+    service = _StreamingAgentRuntime(
+        (' {"ans', 'wer":"Hello, \\nAlice \\uD83D', '\\uDE42!"}'),
+        final_answer="Hello, \nAlice 🙂!",
+    )
+    server, address = await _start_server(service)
+    adapter = _adapter(address)
+    try:
+        events = [
+            event
+            async for event in adapter.stream(
+                _request(),
+                cancellation_requested=asyncio.Event(),
+            )
+        ]
+
+        assert isinstance(events[0], TextGenerationStreamStarted)
+        assert isinstance(events[-1], TextGenerationCompleted)
+        assert "".join(
+            event.text for event in events if isinstance(event, TextGenerationStreamDelta)
+        ) == "Hello, \nAlice 🙂!"
+        assert events[-1].answer == "Hello, \nAlice 🙂!"
+    finally:
+        await adapter.close()
+        await server.stop(0)
+
+
+async def test_stream_adapter_fails_closed_when_provisional_text_differs_from_final() -> None:
+    service = _StreamingAgentRuntime(
+        ('{"answer":"Сначала один ответ."}',),
+        final_answer="Финальный другой ответ.",
+    )
+    server, address = await _start_server(service)
+    adapter = _adapter(address)
+    try:
+        events = [
+            event
+            async for event in adapter.stream(
+                _request(),
+                cancellation_requested=asyncio.Event(),
+            )
+        ]
+
+        assert any(isinstance(event, TextGenerationStreamDelta) for event in events)
+        assert events[-1] == TextGenerationFailed(
+            code="subscription-runtime-invalid-response",
+            safe_message="Conversation generation returned an invalid response.",
+            retryable=True,
+        )
+    finally:
+        await adapter.close()
+        await server.stop(0)
+
+
+async def test_stream_adapter_accepts_the_full_bounded_delta_event_budget() -> None:
+    answer = "a" * 254
+    service = _StreamingAgentRuntime(
+        ('{"answer":"', *("a" for _ in range(254)), '"}'),
+        final_answer=answer,
+    )
+    server, address = await _start_server(service)
+    adapter = _adapter(address)
+    try:
+        events = [
+            event
+            async for event in adapter.stream(
+                _request(),
+                cancellation_requested=asyncio.Event(),
+            )
+        ]
+
+        assert "".join(
+            event.text for event in events if isinstance(event, TextGenerationStreamDelta)
+        ) == answer
+        assert events[-1] == TextGenerationCompleted(answer=answer)
+    finally:
+        await adapter.close()
+        await server.stop(0)
+
+
+async def test_stream_adapter_cancels_provider_after_an_early_fail_closed_exit() -> None:
+    service = _MalformedBlockingStreamRuntime()
+    server, address = await _start_server(service)
+    adapter = _adapter(address)
+    try:
+        events = [
+            event
+            async for event in adapter.stream(
+                _request(),
+                cancellation_requested=asyncio.Event(),
+            )
+        ]
+
+        assert events[-1] == TextGenerationFailed(
+            code="subscription-runtime-invalid-response",
+            safe_message="Conversation generation returned an invalid response.",
+            retryable=True,
+        )
+        assert await _event_is_set(service.cancelled, limit=1)
+    finally:
+        await adapter.close()
         await server.stop(0)
 
 
@@ -253,10 +473,11 @@ async def test_runtime_emits_the_adapter_safe_failure_without_provider_details()
         )
     )
     server, address = await _start_server(service)
+    adapter = _adapter(address)
     try:
         profile = _SubscriptionRuntimeFixtureProfile(
             profile_id="subscription-runtime-test",
-            text_generator=_adapter(address),
+            text_generator=adapter,
         )
         runtime = PipecatConversationRuntime(profile=profile)
         session = await runtime.start(
@@ -265,23 +486,26 @@ async def test_runtime_emits_the_adapter_safe_failure_without_provider_details()
 
         events = [event async for event in session.events()]
         await session.wait()
+        await runtime.close()
 
         assert isinstance(events[-1], Failed)
         assert events[-1].code == "subscription-runtime-quota-limited"
         assert events[-1].safe_message == "Conversation generation is temporarily rate limited."
         assert events[-1].retryable is True
     finally:
+        await adapter.close()
         await server.stop(0)
 
 
-async def test_pipecat_turn_cancellation_cancels_the_unary_subscription_runtime_call() -> None:
-    """A Pipecat CancelTurn interrupts the active unary request before it can produce text."""
+async def test_pipecat_turn_cancellation_cancels_the_streaming_runtime_call() -> None:
+    """A Pipecat CancelTurn interrupts the active stream before it can produce text."""
     service = _BlockingAgentRuntime()
     server, address = await _start_server(service)
+    adapter = _adapter(address)
     try:
         profile = _SubscriptionRuntimeFixtureProfile(
             profile_id="subscription-runtime-test",
-            text_generator=_adapter(address),
+            text_generator=adapter,
         )
         runtime = PipecatConversationRuntime(profile=profile)
         session = await runtime.start(
@@ -300,11 +524,13 @@ async def test_pipecat_turn_cancellation_cancels_the_unary_subscription_runtime_
         )
         remaining = [event async for event in events]
         await session.wait()
+        await runtime.close()
 
         assert changed is True
         assert isinstance(remaining[-1], Cancelled)
         assert await _event_is_set(service.cancelled, limit=1)
     finally:
+        await adapter.close()
         await server.stop(0)
 
 
@@ -346,6 +572,77 @@ def _completed_response(answer_json: str) -> contract.AgentRuntimeTaskResponse:
         status=contract.AGENT_RUNTIME_TASK_STATUS_COMPLETED,
         structured_output_json=answer_json,
     )
+
+
+def _attested_completed_response(
+    request: contract.AgentRuntimeTaskRequest,
+    answer: str,
+) -> contract.AgentRuntimeTaskResponse:
+    structured = {"answer": answer}
+    return contract.AgentRuntimeTaskResponse(
+        schema_version=1,
+        status=contract.AGENT_RUNTIME_TASK_STATUS_COMPLETED,
+        structured_output_json=_canonical_json(structured),
+        execution_attestation=contract.AgentRuntimeExecutionAttestation(
+            schema_version=1,
+            request_id=request.request_id,
+            purpose=request.purpose,
+            canonical_request_sha256=_sha256(_canonical_runtime_request(request)),
+            provider=contract.AGENT_RUNTIME_PROVIDER_CODEX,
+            model="gpt-5.6-luna",
+            reasoning_effort="low",
+            runtime_engine="subscription-runtime-app-server",
+            runtime_package_version="0.1.0-main.27",
+            launcher_sha256="a" * 64,
+            selected_output_kind=contract.AGENT_RUNTIME_SELECTED_OUTPUT_KIND_STRUCTURED_OUTPUT,
+            selected_output_sha256=_sha256(structured),
+        ),
+    )
+
+
+def _canonical_runtime_request(request: contract.AgentRuntimeTaskRequest) -> dict[str, object]:
+    metadata = dict(request.metadata)
+    return {
+        "context": {
+            "application": "discord-meeting",
+            "correlationId": request.correlation_id,
+            "metadata": {
+                key: metadata[key]
+                for key in ("locale", "meetingId", "policyVersion", "recordingId", "turnId")
+            },
+            "purpose": request.purpose,
+        },
+        "cwd": request.cwd,
+        "protocolVersion": request.schema_version,
+        "runId": request.request_id,
+        "task": {
+            "controls": json.loads(request.controls_json),
+            "kind": "structured-prompt",
+            "metadata": {
+                key: metadata[key]
+                for key in (
+                    "executionProfile",
+                    "model",
+                    "policyVersion",
+                    "reasoningEffort",
+                    "runtimeOutput",
+                    "toolsDisabled",
+                )
+            },
+            "outputSchemaName": "discord_meeting_conversation_answer_v1",
+            "prompt": request.prompt,
+            "systemPrompt": request.system_prompt,
+        },
+        "timeoutMs": request.timeout_ms,
+    }
+
+
+def _sha256(value: object) -> str:
+    return hashlib.sha256(_canonical_json(value).encode()).hexdigest()
+
+
+def _canonical_json(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
 
 async def _event_is_set(event: asyncio.Event, *, limit: float) -> bool:

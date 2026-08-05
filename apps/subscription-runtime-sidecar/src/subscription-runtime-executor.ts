@@ -31,6 +31,9 @@ import type {
   ProcessRunResult,
   RuntimeReadinessInspectorPort,
   SidecarExecutorPort,
+  SidecarStreamingExecutorPort,
+  ProviderTaskStreamObserver,
+  StreamingProcessRunnerPort,
 } from "./types.js";
 
 export { buildChildEnvironment } from "./subscription-runtime-process-request.js";
@@ -39,6 +42,7 @@ export interface SubscriptionRuntimeExecutorOptions extends RequestPolicyOptions
   readonly authJsonPath: string;
   readonly childSourceEnvironment: NodeJS.ProcessEnv;
   readonly conversationProcessRunner?: ProcessRunnerPort;
+  readonly conversationStreamingProcessRunner?: StreamingProcessRunnerPort;
   readonly installationInspector: InstallationInspectorPort;
   readonly killGraceMs: number;
   readonly localEncryptionKeyFile: string;
@@ -52,6 +56,7 @@ export interface SubscriptionRuntimeExecutorOptions extends RequestPolicyOptions
 interface ExecutionPlan {
   readonly processRunner: ProcessRunnerPort;
   readonly profile: SubscriptionRuntimeExecutionProfile;
+  readonly streamingProcessRunner?: StreamingProcessRunnerPort;
 }
 
 interface AdmittedExecutionInput {
@@ -60,13 +65,15 @@ interface AdmittedExecutionInput {
   readonly plan: ExecutionPlan;
   readonly request: SubscriptionRuntimeAgentTaskRequest;
   readonly signal?: AbortSignal;
+  readonly streamObserver?: ProviderTaskStreamObserver;
 }
 
 interface CompletedExecutionInput extends AdmittedExecutionInput {
   readonly execution: ProcessRunResult;
 }
 
-export class SubscriptionRuntimeExecutor implements SidecarExecutorPort {
+export class SubscriptionRuntimeExecutor
+  implements SidecarExecutorPort, SidecarStreamingExecutorPort {
   public constructor(private readonly options: SubscriptionRuntimeExecutorOptions) {}
 
   public async execute(
@@ -89,6 +96,35 @@ export class SubscriptionRuntimeExecutor implements SidecarExecutorPort {
       options: this.options,
       plan,
       request,
+      ...(signal === undefined ? {} : { signal }),
+    });
+  }
+
+  public async executeStreaming(
+    request: SubscriptionRuntimeAgentTaskRequest,
+    observer: ProviderTaskStreamObserver,
+    signal?: AbortSignal,
+  ): Promise<SubscriptionRuntimeTaskResult> {
+    if (signalAborted(signal)) {
+      return failedResult("task_cancelled");
+    }
+    const plan = createExecutionPlan(request, this.options);
+    if (
+      plan?.profile.purpose !== subscriptionRuntimeConversationPurpose ||
+      plan.streamingProcessRunner === undefined
+    ) {
+      return failedResult("task_mode_unsupported");
+    }
+    const admittedInstallation = await admitRuntimeInstallation(this.options);
+    if (admittedInstallation === undefined) {
+      return failedResult("backend_unavailable");
+    }
+    return executeAdmittedRequest({
+      admittedInstallation,
+      options: this.options,
+      plan,
+      request,
+      streamObserver: observer,
       ...(signal === undefined ? {} : { signal }),
     });
   }
@@ -133,6 +169,10 @@ function createExecutionPlan(
       ? options.conversationProcessRunner ?? options.processRunner
       : options.processRunner,
     profile,
+    ...(profile.purpose === subscriptionRuntimeConversationPurpose &&
+    options.conversationStreamingProcessRunner !== undefined
+      ? { streamingProcessRunner: options.conversationStreamingProcessRunner }
+      : {}),
   };
 }
 
@@ -159,7 +199,7 @@ async function executeAdmittedRequest(
     if (encryptionKey.length === 0) {
       return failedResult("backend_unavailable");
     }
-    const execution = await input.plan.processRunner.run({
+    const processRequest = {
       args: buildCliArgs(input.request, inputPath, input.options, input.plan.profile),
       command: input.admittedInstallation.executableRealpath,
       cwd: input.options.isolatedCwd,
@@ -173,7 +213,13 @@ async function executeAdmittedRequest(
       maxStdoutBytes: input.options.maxStdoutBytes,
       ...(input.signal === undefined ? {} : { signal: input.signal }),
       timeoutMs: input.request.timeoutMs,
-    });
+    };
+    const execution = input.streamObserver === undefined
+      ? await input.plan.processRunner.run(processRequest)
+      : await input.plan.streamingProcessRunner!.runStreaming(
+          processRequest,
+          input.streamObserver,
+        );
     return completeAdmittedExecution({ ...input, execution });
   } catch {
     return failedResult("backend_unavailable");

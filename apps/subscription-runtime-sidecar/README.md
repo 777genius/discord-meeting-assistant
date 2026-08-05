@@ -21,7 +21,7 @@ SUBSCRIPTION_RUNTIME_EXPECTED_LAUNCHER_SHA256=<lowercase audited launcher bundle
 ```
 
 The package manifest must be exactly `@vioxen/subscription-runtime` version
-`0.1.0-main.2`. The launcher entrypoint and its two audited sibling modules are
+`0.1.0-main.27`. The launcher entrypoint and its two audited sibling modules are
 inspected by realpath and one canonical bundle SHA-256 before and after every
 task. Changing any executable part changes the admitted digest. The launcher
 must call that version's
@@ -58,6 +58,12 @@ keeps one purpose-scoped Subscription Runtime worker alive. It uses the
 app-server pool and clean-thread prewarm; packaged `codex exec` remains the
 runtime's fallback. The audited launcher validates the same exact request
 profile and installation identity.
+
+Conversation additionally exposes an authenticated server-streaming RPC. It
+forwards only bounded redacted text deltas and one terminal result from that
+same warm worker. Summary and incremental-summary calls retain the unary RPC.
+The client must validate ordering and the final execution attestation; streamed
+text is provisional until that terminal result succeeds.
 
 The fallback bridge uses `--provider codex`, `--input`,
 `--format result-json`, `--timeout-ms`, `--state-root`, `--codex-auth-json`,

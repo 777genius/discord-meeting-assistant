@@ -4,6 +4,7 @@ package social_monitor.agent_runtime.v1;
 
 service AgentRuntimeService {
   rpc RunAgentTask(AgentRuntimeTaskRequest) returns (AgentRuntimeTaskResponse);
+  rpc StreamAgentTask(AgentRuntimeTaskStreamRequest) returns (stream AgentRuntimeTaskEvent);
   rpc CheckHealth(AgentRuntimeHealthRequest) returns (AgentRuntimeHealthResponse);
 }
 
@@ -64,6 +65,8 @@ message AgentRuntimeTaskRequest {
   map<string, string> metadata = 15;
 }
 
+message AgentRuntimeTaskStreamRequest { AgentRuntimeTaskRequest task = 1; }
+
 message AgentRuntimeTaskResponse {
   uint32 schema_version = 1;
   AgentRuntimeTaskStatus status = 2;
@@ -75,6 +78,20 @@ message AgentRuntimeTaskResponse {
   AgentRuntimeExecutionAttestation execution_attestation = 8;
   AgentRuntimeTelemetry telemetry = 9;
 }
+
+message AgentRuntimeTaskEvent {
+  uint32 schema_version = 1;
+  uint64 sequence = 2;
+  oneof event {
+    AgentRuntimeTaskStarted started = 3;
+    AgentRuntimeTextDelta text_delta = 4;
+    AgentRuntimeTaskResponse completed = 5;
+  }
+}
+
+message AgentRuntimeTaskStarted {}
+
+message AgentRuntimeTextDelta { string text = 1; }
 
 message AgentRuntimeExecutionAttestation {
   uint32 schema_version = 1;

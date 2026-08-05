@@ -49,6 +49,7 @@ async function bootstrap(): Promise<void> {
     maxStdoutBytes: settings.maxStdoutBytes,
     maxTaskTimeoutMs: settings.maxTaskTimeoutMs,
     conversationProcessRunner: conversationRunner,
+    conversationStreamingProcessRunner: conversationRunner,
     processRunner: new NodeProcessRunner(),
     readinessInspector: new FileRuntimeReadinessInspector({
       authJsonPath: settings.authJsonPath,
@@ -70,6 +71,7 @@ async function bootstrap(): Promise<void> {
     startServer: async () => startGrpcServer({
       bindAddress: settings.bindAddress,
       executor,
+      streamingExecutor: executor,
       options: {
         isolatedCwd: settings.isolatedCwd,
         maxPromptBytes: settings.maxPromptBytes,

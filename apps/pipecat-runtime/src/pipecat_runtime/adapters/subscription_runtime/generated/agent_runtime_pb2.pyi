@@ -108,6 +108,12 @@ class AgentRuntimeTaskRequest(_message.Message):
     metadata: _containers.ScalarMap[str, str]
     def __init__(self, schema_version: _Optional[int] = ..., request_id: _Optional[str] = ..., tenant_id: _Optional[str] = ..., workspace_id: _Optional[str] = ..., correlation_id: _Optional[str] = ..., provider: _Optional[_Union[AgentRuntimeProvider, str]] = ..., provider_instance_id: _Optional[str] = ..., purpose: _Optional[str] = ..., system_prompt: _Optional[str] = ..., prompt: _Optional[str] = ..., output_schema_json: _Optional[str] = ..., controls_json: _Optional[str] = ..., timeout_ms: _Optional[int] = ..., cwd: _Optional[str] = ..., metadata: _Optional[_Mapping[str, str]] = ...) -> None: ...
 
+class AgentRuntimeTaskStreamRequest(_message.Message):
+    __slots__ = ("task",)
+    TASK_FIELD_NUMBER: _ClassVar[int]
+    task: AgentRuntimeTaskRequest
+    def __init__(self, task: _Optional[_Union[AgentRuntimeTaskRequest, _Mapping]] = ...) -> None: ...
+
 class AgentRuntimeTaskResponse(_message.Message):
     __slots__ = ("schema_version", "status", "output_text", "structured_output_json", "warnings", "usage", "failure", "execution_attestation", "telemetry")
     SCHEMA_VERSION_FIELD_NUMBER: _ClassVar[int]
@@ -129,6 +135,30 @@ class AgentRuntimeTaskResponse(_message.Message):
     execution_attestation: AgentRuntimeExecutionAttestation
     telemetry: AgentRuntimeTelemetry
     def __init__(self, schema_version: _Optional[int] = ..., status: _Optional[_Union[AgentRuntimeTaskStatus, str]] = ..., output_text: _Optional[str] = ..., structured_output_json: _Optional[str] = ..., warnings: _Optional[_Iterable[_Union[AgentRuntimeWarning, _Mapping]]] = ..., usage: _Optional[_Union[AgentRuntimeUsage, _Mapping]] = ..., failure: _Optional[_Union[AgentRuntimeFailure, _Mapping]] = ..., execution_attestation: _Optional[_Union[AgentRuntimeExecutionAttestation, _Mapping]] = ..., telemetry: _Optional[_Union[AgentRuntimeTelemetry, _Mapping]] = ...) -> None: ...
+
+class AgentRuntimeTaskEvent(_message.Message):
+    __slots__ = ("schema_version", "sequence", "started", "text_delta", "completed")
+    SCHEMA_VERSION_FIELD_NUMBER: _ClassVar[int]
+    SEQUENCE_FIELD_NUMBER: _ClassVar[int]
+    STARTED_FIELD_NUMBER: _ClassVar[int]
+    TEXT_DELTA_FIELD_NUMBER: _ClassVar[int]
+    COMPLETED_FIELD_NUMBER: _ClassVar[int]
+    schema_version: int
+    sequence: int
+    started: AgentRuntimeTaskStarted
+    text_delta: AgentRuntimeTextDelta
+    completed: AgentRuntimeTaskResponse
+    def __init__(self, schema_version: _Optional[int] = ..., sequence: _Optional[int] = ..., started: _Optional[_Union[AgentRuntimeTaskStarted, _Mapping]] = ..., text_delta: _Optional[_Union[AgentRuntimeTextDelta, _Mapping]] = ..., completed: _Optional[_Union[AgentRuntimeTaskResponse, _Mapping]] = ...) -> None: ...
+
+class AgentRuntimeTaskStarted(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...
+
+class AgentRuntimeTextDelta(_message.Message):
+    __slots__ = ("text",)
+    TEXT_FIELD_NUMBER: _ClassVar[int]
+    text: str
+    def __init__(self, text: _Optional[str] = ...) -> None: ...
 
 class AgentRuntimeExecutionAttestation(_message.Message):
     __slots__ = ("schema_version", "request_id", "purpose", "canonical_request_sha256", "provider", "model", "reasoning_effort", "runtime_engine", "runtime_package_version", "launcher_sha256", "selected_output_kind", "selected_output_sha256")

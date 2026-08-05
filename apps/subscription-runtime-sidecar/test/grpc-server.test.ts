@@ -4,7 +4,10 @@ import { Metadata, status } from "@grpc/grpc-js";
 import { describe, expect, it } from "vitest";
 
 import { createGrpcHandlers } from "../src/grpc-server.js";
-import type { SidecarExecutorPort } from "../src/types.js";
+import type {
+  SidecarExecutorPort,
+  SidecarStreamingExecutorPort,
+} from "../src/types.js";
 import {
   grpcRequest,
   incrementalCanonicalRequest,
@@ -160,7 +163,7 @@ describe("authenticated agent runtime gRPC handlers", () => {
     const executor: SidecarExecutorPort = {
       checkHealth: async () => ({
         runtimeEngine: "subscription-runtime-app-server",
-        runtimeVersion: "0.1.0-main.2",
+        runtimeVersion: "0.1.0-main.27",
         status: "serving",
         warningCodes: [],
       }),
@@ -215,6 +218,84 @@ describe("authenticated agent runtime gRPC handlers", () => {
     expect(signal.aborted).toBe(true);
     expect(callbacks).toBe(0);
   });
+
+  it("streams provider start and text deltas before the terminal response", async () => {
+    const executor = new CompletedExecutor();
+    const streamingExecutor: SidecarStreamingExecutorPort = {
+      executeStreaming: async (_request, observer) => {
+        await observer.onProviderTaskStarted();
+        observer.onProviderTextDelta('{"answer":"Привет, ');
+        observer.onProviderTextDelta('Ботик!"}');
+        return await executor.execute();
+      },
+    };
+    const handlers = createGrpcHandlers(
+      executor,
+      handlerOptions,
+      streamingExecutor,
+    );
+    const metadata = new Metadata();
+    metadata.set("authorization", `Bearer ${serviceToken}`);
+
+    const result = await invokeStream(
+      handlers.streamAgentTask,
+      { task: grpcRequest(incrementalCanonicalRequest) },
+      metadata,
+    );
+
+    expect(result.error).toBeNull();
+    expect(result.events).toMatchObject([
+      { schemaVersion: 1, sequence: "1", started: {} },
+      {
+        schemaVersion: 1,
+        sequence: "2",
+        textDelta: { text: '{"answer":"Привет, ' },
+      },
+      {
+        schemaVersion: 1,
+        sequence: "3",
+        textDelta: { text: 'Ботик!"}' },
+      },
+      {
+        schemaVersion: 1,
+        sequence: "4",
+        completed: { status: "AGENT_RUNTIME_TASK_STATUS_COMPLETED" },
+      },
+    ]);
+  });
+
+  it("allows the full 256-delta contract before the terminal event", async () => {
+    const executor = new CompletedExecutor();
+    const streamingExecutor: SidecarStreamingExecutorPort = {
+      executeStreaming: async (_request, observer) => {
+        await observer.onProviderTaskStarted();
+        for (let index = 0; index < 256; index += 1) {
+          observer.onProviderTextDelta("a");
+        }
+        return await executor.execute();
+      },
+    };
+    const handlers = createGrpcHandlers(
+      executor,
+      handlerOptions,
+      streamingExecutor,
+    );
+    const metadata = new Metadata();
+    metadata.set("authorization", `Bearer ${serviceToken}`);
+
+    const result = await invokeStream(
+      handlers.streamAgentTask,
+      { task: grpcRequest(incrementalCanonicalRequest) },
+      metadata,
+    );
+
+    expect(result.error).toBeNull();
+    expect(result.events).toHaveLength(258);
+    expect(result.events.at(-1)).toMatchObject({
+      sequence: "258",
+      completed: { status: "AGENT_RUNTIME_TASK_STATUS_COMPLETED" },
+    });
+  });
 });
 
 class CompletedExecutor implements SidecarExecutorPort {
@@ -229,7 +310,7 @@ class CompletedExecutor implements SidecarExecutorPort {
         reasoningEffort: "low",
         requestId: incrementalCanonicalRequest.runId,
         runtimeEngine: "subscription-runtime-app-server",
-        runtimePackageVersion: "0.1.0-main.2",
+        runtimePackageVersion: "0.1.0-main.27",
         schemaVersion: 1,
         selectedOutputKind: "structured_output",
         selectedOutputSha256: "c".repeat(64),
@@ -251,7 +332,7 @@ class CompletedExecutor implements SidecarExecutorPort {
   public async checkHealth() {
     return {
       runtimeEngine: "subscription-runtime-app-server",
-      runtimeVersion: "0.1.0-main.2",
+      runtimeVersion: "0.1.0-main.27",
       status: "serving" as const,
       warningCodes: [],
     };
@@ -283,7 +364,7 @@ class FailedWithUsageExecutor implements SidecarExecutorPort {
   public async checkHealth() {
     return {
       runtimeEngine: "subscription-runtime-app-server",
-      runtimeVersion: "0.1.0-main.2",
+      runtimeVersion: "0.1.0-main.27",
       status: "serving" as const,
       warningCodes: [],
     };
@@ -302,7 +383,7 @@ class PartialTelemetryExecutor implements SidecarExecutorPort {
         reasoningEffort: "low",
         requestId: incrementalCanonicalRequest.runId,
         runtimeEngine: "subscription-runtime-app-server",
-        runtimePackageVersion: "0.1.0-main.2",
+        runtimePackageVersion: "0.1.0-main.27",
         schemaVersion: 1,
         selectedOutputKind: "structured_output",
         selectedOutputSha256: "c".repeat(64),
@@ -335,7 +416,7 @@ class PartialTelemetryExecutor implements SidecarExecutorPort {
   public async checkHealth() {
     return {
       runtimeEngine: "subscription-runtime-app-server",
-      runtimeVersion: "0.1.0-main.2",
+      runtimeVersion: "0.1.0-main.27",
       status: "serving" as const,
       warningCodes: [],
     };
@@ -364,7 +445,7 @@ class CountingExecutor implements SidecarExecutorPort {
     this.healthChecks += 1;
     return {
       runtimeEngine: "subscription-runtime-app-server",
-      runtimeVersion: "0.1.0-main.2",
+      runtimeVersion: "0.1.0-main.27",
       status: "serving" as const,
       warningCodes: [],
     };
@@ -394,6 +475,40 @@ async function invoke(
 
 function createTestCall(request: Record<string, unknown>, metadata: Metadata): EventEmitter {
   return Object.assign(new EventEmitter(), { metadata, request });
+}
+
+async function invokeStream(
+  handler: ReturnType<typeof createGrpcHandlers>["streamAgentTask"],
+  request: Record<string, unknown>,
+  metadata: Metadata,
+): Promise<{
+  readonly error: (Error & { readonly code?: status }) | null;
+  readonly events: readonly Record<string, unknown>[];
+}> {
+  const finished = deferred<void>();
+  const events: Record<string, unknown>[] = [];
+  const call = Object.assign(new EventEmitter(), {
+    metadata,
+    request,
+    write: (event: Record<string, unknown>) => {
+      events.push(event);
+      return true;
+    },
+    end: () => {
+      finished.resolve();
+    },
+    destroy: (error: Error) => {
+      call.emit("error", error);
+    },
+  });
+  let streamError: (Error & { readonly code?: status }) | null = null;
+  call.once("error", (error) => {
+    streamError = error as Error & { readonly code?: status };
+    finished.resolve();
+  });
+  handler(call as Parameters<typeof handler>[0]);
+  await finished.promise;
+  return { error: streamError, events };
 }
 
 function deferred<T>(): {

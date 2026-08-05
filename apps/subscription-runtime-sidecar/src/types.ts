@@ -14,6 +14,19 @@ export interface SidecarExecutorPort {
   ): Promise<SubscriptionRuntimeTaskResult>;
 }
 
+export interface ProviderTaskStreamObserver {
+  onProviderTaskStarted(): Promise<void> | void;
+  onProviderTextDelta(text: string): void;
+}
+
+export interface SidecarStreamingExecutorPort {
+  executeStreaming(
+    request: SubscriptionRuntimeAgentTaskRequest,
+    observer: ProviderTaskStreamObserver,
+    signal?: AbortSignal,
+  ): Promise<SubscriptionRuntimeTaskResult>;
+}
+
 export interface InstallationIdentity {
   readonly executableRealpath: string;
   readonly launcherSha256: string;
@@ -56,4 +69,11 @@ export interface ProcessRunnerPort {
   readonly runtimeEngine: SubscriptionRuntimeEngine;
 
   run(request: ProcessRunRequest): Promise<ProcessRunResult>;
+}
+
+export interface StreamingProcessRunnerPort extends ProcessRunnerPort {
+  runStreaming(
+    request: ProcessRunRequest,
+    observer: ProviderTaskStreamObserver,
+  ): Promise<ProcessRunResult>;
 }
