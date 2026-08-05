@@ -70,7 +70,7 @@
     {
       "id": "ADR-0014",
       "path": "docs/decisions/0014-streaming-warm-conversation-pipeline.md",
-      "immutableDigest": "sha256:adb102ca9afc205a7d588319d2a0ebeef7fe30761f65acb389cc0e30da8888fd"
+      "immutableDigest": "sha256:9908d2e8901fd29531d866bedd2708cd40958dc329c2424c4b995babdc18abe0"
     }
   ]
 }

@@ -47,7 +47,6 @@ import type { PlatformStartupCleanup } from "./startup-cleanup.js";
 import { classifyPlatformError } from "./observability.js";
 import { discordLiveCaptionSignature } from "./discord-live-caption-signature.js";
 
-const monotonicNowMilliseconds = (): number => performance.now();
 const unixNowMilliseconds = (): number => Date.now();
 
 const meetingVocabulary = [
