@@ -1,4 +1,4 @@
-import type { AddressInfo } from "node:net";
+import { createServer, type AddressInfo } from "node:net";
 
 import { afterEach, describe, expect, it } from "vitest";
 import { WebSocketServer, type RawData } from "ws";
@@ -44,6 +44,42 @@ describe("WsVoicetextWebSocketConnector", () => {
     await expect(connection.sendBinary(Uint8Array.from([1, 2, 3]), signal)).resolves.toBeUndefined();
     await expect(received).resolves.toEqual(["Bearer service-token", "config:\u0001\u0002\u0003"]);
     await connection.close(1_000, "done");
+  });
+
+  it("absorbs the expected ws error when a pending handshake is aborted", async () => {
+    const server = createServer();
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address() as AddressInfo;
+    const controller = new AbortController();
+
+    try {
+      const connection = new WsVoicetextWebSocketConnector().connect({
+        authorization: "Bearer service-token",
+        endpoint: new URL(`ws://127.0.0.1:${address.port}`),
+        handshakeTimeoutMs: 5_000,
+        maxInboundFrameBytes: 1_024,
+        signal: controller.signal,
+      });
+      const cancellation = new Error("cancelled while connecting");
+      controller.abort(cancellation);
+
+      await expect(connection).rejects.toBe(cancellation);
+      await new Promise<void>((resolve) => {
+        setImmediate(resolve);
+      });
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error === undefined) {
+            resolve();
+          } else {
+            reject(error);
+          }
+        });
+      });
+    }
   });
 });
 

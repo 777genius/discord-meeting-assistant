@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 
 import {
+  deploymentRevisionExpectationSchema,
   fixtureManifestV1Schema,
   retainedE2eEvidenceSchema,
   verifyE2eCampaign,
@@ -12,7 +13,11 @@ async function main(): Promise<void> {
   const runs = await Promise.all(
     evidencePaths.map(async (path) => retainedE2eEvidenceSchema.parse(await readJson(path))),
   );
-  const verification = verifyE2eCampaign(manifest, runs);
+  const expectedRevisions = deploymentRevisionExpectationSchema.parse({
+    craig: process.env.DISCORD_E2E_EXPECTED_CRAIG_SOURCE_REVISION,
+    meetingPlatform: process.env.DISCORD_E2E_EXPECTED_MEETING_PLATFORM_SOURCE_REVISION,
+  });
+  const verification = verifyE2eCampaign(manifest, runs, expectedRevisions);
   process.stdout.write(`${JSON.stringify(verification, undefined, 2)}\n`);
   if (!verification.passed) {
     process.exitCode = 1;

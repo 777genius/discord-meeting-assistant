@@ -46,6 +46,7 @@ export interface RecordingSpoolState {
   readonly finalEventDigest?: string;
   readonly finalEventId?: string;
   readonly guildId: string;
+  readonly pendingAuthoritativeTracks: readonly StoredAuthoritativeTrack[];
   readonly recordingId: string;
   readonly schemaVersion: 1;
   readonly speakers: readonly StoredSpeaker[];
@@ -169,6 +170,9 @@ function parseRecordingSpoolState(input: unknown): RecordingSpoolState {
     ...(finalEventDigest === undefined ? {} : { finalEventDigest }),
     ...(finalEventId === undefined ? {} : { finalEventId }),
     guildId: stringValue(record.guildId, "guildId"),
+    pendingAuthoritativeTracks: Array.isArray(record.pendingAuthoritativeTracks)
+      ? record.pendingAuthoritativeTracks.map(parseStoredAuthoritativeTrack)
+      : [],
     recordingId: stringValue(record.recordingId, "recordingId"),
     schemaVersion: 1,
     speakers: record.speakers.map(parseStoredSpeaker),

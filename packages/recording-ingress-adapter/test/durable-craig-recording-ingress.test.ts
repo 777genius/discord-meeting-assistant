@@ -31,6 +31,7 @@ class MemoryArtifactWriter implements RecordingBinaryArtifactWriter {
   public readonly artifacts = new Map<string, Uint8Array>();
   public readonly requests: RecordingBinaryArtifactWriteRequest[] = [];
   public failNextManifest = false;
+  public failAfterNextTrackWrite = false;
   public returnMismatchedReceipt = false;
 
   public async write(request: RecordingBinaryArtifactWriteRequest) {
@@ -51,6 +52,10 @@ class MemoryArtifactWriter implements RecordingBinaryArtifactWriter {
       expect(existing).toEqual(body);
     }
     this.artifacts.set(request.locator, body.slice());
+    if (this.failAfterNextTrackWrite && request.contentType === "audio/ogg") {
+      this.failAfterNextTrackWrite = false;
+      throw new Error("synthetic committed track failure");
+    }
     return {
       checksumSha256: request.checksumSha256,
       locator: request.locator,
@@ -326,6 +331,40 @@ describe("authoritative Craig recording finalization", () => {
       ],
       schemaVersion: 2,
     });
+  });
+
+  it("persists track intent before storage and recovers a commit-then-fail retry", async () => {
+    const root = await spoolRoot();
+    const writer = new MemoryArtifactWriter();
+    const adapter = ingress(root, writer);
+    const track = originalTrack();
+    await adapter.ingestLifecycleEvent(lifecycle("meeting.started"));
+    await adapter.ingestLifecycleEvent(lifecycle("meeting.ended"));
+    writer.failAfterNextTrackWrite = true;
+
+    await expect(
+      adapter.ingestAuthoritativeTrack(track.metadata, bytesOnce(track.body)),
+    ).rejects.toThrow("synthetic committed track failure");
+    const requestsAfterFailure = writer.requests.length;
+    const conflicting = originalTrack({
+      body: Uint8Array.from([0x4f, 0x67, 0x67, 0x53, 9, 8, 7]),
+    });
+    await expect(
+      adapter.ingestAuthoritativeTrack(conflicting.metadata, bodyMustNotBeRead()),
+    ).rejects.toMatchObject({ failure: "conflicting-duplicate" });
+    expect(writer.requests).toHaveLength(requestsAfterFailure);
+
+    await adapter.close();
+    const recovered = ingress(root, writer);
+    await expect(
+      recovered.ingestLifecycleEvent(authoritativeReady()),
+    ).rejects.toMatchObject({ failure: "invalid-state" });
+    await expect(
+      recovered.ingestAuthoritativeTrack(track.metadata, bytesOnce(track.body)),
+    ).resolves.toMatchObject({ replayed: true, speakerId: firstSpeakerId });
+    await expect(
+      recovered.ingestLifecycleEvent(authoritativeReady()),
+    ).resolves.toMatchObject({ kind: "finalized" });
   });
 
   it("fails closed when a legacy completion receipt cannot prove track identity", async () => {

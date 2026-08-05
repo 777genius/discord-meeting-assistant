@@ -6,6 +6,7 @@ import { z } from "zod";
 import { DiscordJsEvidenceProbe } from "./discord-evidence-probe.js";
 import { collectRetainedE2eEvidence } from "./e2e-collector.js";
 import {
+  deploymentRevisionExpectationSchema,
   fixtureManifestV1Schema,
   verifyRetainedE2eEvidence,
 } from "./e2e-evidence.js";
@@ -17,6 +18,8 @@ const correlationId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u);
 const environmentSchema = z.object({
   DISCORD_E2E_ACTOR_RUN_INPUT: absolutePath,
   DISCORD_E2E_EVIDENCE_OUTPUT: absolutePath,
+  DISCORD_E2E_EXPECTED_CRAIG_SOURCE_REVISION: z.string().min(1),
+  DISCORD_E2E_EXPECTED_MEETING_PLATFORM_SOURCE_REVISION: z.string().min(1),
   DISCORD_E2E_FIXTURE_MANIFEST: z.string().min(1).default("test/fixtures/manifest.v1.json"),
   DISCORD_E2E_KEYCHAIN_SERVICE: z.string().min(1).default("discord-voice-bot-e2e"),
   DISCORD_E2E_RECORDING_ID: correlationId,
@@ -64,7 +67,11 @@ async function main(): Promise<void> {
       recordingId: config.DISCORD_E2E_RECORDING_ID,
       runId: config.DISCORD_E2E_RUN_ID,
     }, deployment, discord);
-    const verification = verifyRetainedE2eEvidence(manifest, evidence);
+    const expectedRevisions = deploymentRevisionExpectationSchema.parse({
+      craig: config.DISCORD_E2E_EXPECTED_CRAIG_SOURCE_REVISION,
+      meetingPlatform: config.DISCORD_E2E_EXPECTED_MEETING_PLATFORM_SOURCE_REVISION,
+    });
+    const verification = verifyRetainedE2eEvidence(manifest, evidence, expectedRevisions);
     if (!verification.passed) {
       throw new Error(`collected evidence failed: ${JSON.stringify(verification.failures)}`);
     }

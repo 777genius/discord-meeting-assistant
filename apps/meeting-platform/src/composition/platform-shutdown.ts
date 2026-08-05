@@ -31,7 +31,6 @@ interface CloseableRecordingIngress {
 }
 
 export interface PostCallShutdownResources {
-  readonly deadLetterQueue: CloseableQueue;
   readonly outboxDispatcher: Pick<PostCallOutboxDispatcher, "whenIdle">;
   readonly queue: CloseableQueue;
   readonly queueEvents: CloseableQueue;
@@ -66,7 +65,7 @@ export async function closePostCallResources(
   // waiting for the outbox so no prefetched job enters processing during exit.
   const workerAndQueues = drainActivePostCallJobsAndClose({
     queueEvents: input.queueEvents,
-    queues: [input.queue, input.deadLetterQueue],
+    queues: [input.queue],
     shutdownTimeoutMs: timeoutMilliseconds,
     worker: input.worker,
   });
@@ -84,9 +83,9 @@ export async function closeMeetingPlatformResources(
   const timeoutMilliseconds = resolvePlatformShutdownTimeoutMilliseconds(
     input.shutdownTimeoutMilliseconds,
   );
+  const deadlineAtMilliseconds = Date.now() + timeoutMilliseconds;
   const failures: unknown[] = [];
   const postCallShutdown = observeRejection(closePostCallResources({
-    deadLetterQueue: input.deadLetterQueue,
     outboxDispatcher: input.outboxDispatcher,
     queue: input.queue,
     queueEvents: input.queueEvents,
@@ -102,68 +101,76 @@ export async function closeMeetingPlatformResources(
     awaitBounded(
       "platform HTTP host",
       startOperation(() => input.server.close()),
-      timeoutMilliseconds,
+      remainingShutdownMilliseconds(deadlineAtMilliseconds),
     ),
   ]));
   // Active post-call processing may still be waiting on the live finalization
   // fence. Drain that consumer before closing the live runtime it depends on.
   failures.push(...await collectFailures([
-    awaitBounded("post-call resources", postCallShutdown, timeoutMilliseconds),
+    awaitBounded(
+      "post-call resources",
+      postCallShutdown,
+      remainingShutdownMilliseconds(deadlineAtMilliseconds),
+    ),
   ]));
   failures.push(...await collectFailures([
     awaitBounded(
       "Craig playback WebSocket",
       startOperation(() => input.craigPlayback?.webSocket.close()),
-      timeoutMilliseconds,
+      remainingShutdownMilliseconds(deadlineAtMilliseconds),
     ),
     awaitBounded(
       "derived live runtime",
       startOperation(() => input.live?.close()),
-      timeoutMilliseconds,
+      remainingShutdownMilliseconds(deadlineAtMilliseconds),
     ),
     awaitBounded(
       "recording ingress spool",
       startOperation(() => input.recordings.close()),
-      timeoutMilliseconds,
+      remainingShutdownMilliseconds(deadlineAtMilliseconds),
     ),
   ]));
   failures.push(...await collectFailures([
     awaitBounded(
       "Discord client",
       startOperation(() => input.discord.destroy()),
-      timeoutMilliseconds,
+      remainingShutdownMilliseconds(deadlineAtMilliseconds),
     ),
     awaitBounded(
       "Pipecat conversation runtime",
       startOperation(() => input.conversationRuntime?.close()),
-      timeoutMilliseconds,
+      remainingShutdownMilliseconds(deadlineAtMilliseconds),
     ),
     awaitBounded(
       "subscription runtime transport",
       startOperation(() => {
         input.runtimeTransport.close();
       }),
-      timeoutMilliseconds,
+      remainingShutdownMilliseconds(deadlineAtMilliseconds),
     ),
     awaitBounded(
       "S3 client",
       startOperation(() => {
         input.s3.destroy();
       }),
-      timeoutMilliseconds,
+      remainingShutdownMilliseconds(deadlineAtMilliseconds),
     ),
     awaitBounded(
       "PostgreSQL pool",
       startOperation(() => input.pool.end()),
-      timeoutMilliseconds,
+      remainingShutdownMilliseconds(deadlineAtMilliseconds),
     ),
     awaitBounded(
       "logger flush",
       flushLoggers([input.logger]),
-      timeoutMilliseconds,
+      remainingShutdownMilliseconds(deadlineAtMilliseconds),
     ),
   ]));
   throwIfShutdownIncomplete(failures, "Meeting platform shutdown was incomplete");
+}
+
+function remainingShutdownMilliseconds(deadlineAtMilliseconds: number): number {
+  return Math.max(0, deadlineAtMilliseconds - Date.now());
 }
 
 async function awaitBounded(

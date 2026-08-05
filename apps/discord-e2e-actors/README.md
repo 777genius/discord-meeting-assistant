@@ -132,6 +132,11 @@ DISCORD_E2E_EVIDENCE_OUTPUT=/absolute/evidence/overlap.evidence.v2.json \
 pnpm --filter @discord-meeting/discord-e2e-actors collect:e2e
 ```
 
+Collection and both verification commands require immutable candidate inputs
+`DISCORD_E2E_EXPECTED_CRAIG_SOURCE_REVISION` and
+`DISCORD_E2E_EXPECTED_MEETING_PLATFORM_SOURCE_REVISION`. Set them from the
+release candidate commits, never from an existing evidence file.
+
 The collector performs a real post-call replay. Run it only against the isolated
 official-bot test deployment. Infrastructure paths/host/project have safe
 environment overrides for another disposable deployment. Craig defaults to

@@ -39,6 +39,30 @@ test("governs the production launcher as an explicit dynamic-runtime boundary", 
   assert.match(suppressionGovernance, /infra\/subscription-runtime/u);
 });
 
+test("Pipecat receives only its two required Meeting Platform secrets", async () => {
+  const compose = await readFile(
+    join(repositoryRoot, "infra/deployment/compose.yaml"),
+    "utf8",
+  );
+  const pipecat = compose
+    .split("  pipecat-runtime:\n", 2)[1]
+    ?.split("  meeting-platform:\n", 1)[0];
+
+  assert.ok(pipecat);
+  assert.doesNotMatch(
+    pipecat,
+    /secrets\/platform:\/run\/platform-secrets/u,
+  );
+  assert.match(
+    pipecat,
+    /secrets\/platform\/conversation-runtime-token:\/run\/platform-secrets\/conversation-runtime-token:ro/u,
+  );
+  assert.match(
+    pipecat,
+    /secrets\/platform\/runtime-service-token:\/run\/platform-secrets\/runtime-service-token:ro/u,
+  );
+});
+
 test("Foundation rejects a forbidden launcher import", async () => {
   await withFixture(async (fixture) => {
     await writeSourceFixture(fixture, 'import "node:fs";\n');

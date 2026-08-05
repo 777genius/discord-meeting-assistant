@@ -170,6 +170,8 @@ export type LocatedDiscordProjection =
 
 export interface DiscordProjectionClient {
   inspect(input: {
+    /** Walks complete retained history only for crash/replacement recovery. */
+    readonly exhaustive?: boolean;
     /**
      * Thread history is materially more expensive than the parent-channel
      * path. Enable it only for thread mode or an explicit migration/recovery.
@@ -201,6 +203,8 @@ export interface DiscordProjectionClient {
     readonly container: DiscordProjectionContainer;
     readonly body: DiscordProjectionBody;
     readonly marker: string;
+    /** Stable Discord nonce for one logical create generation. */
+    readonly nonce: string;
   }): Promise<string>;
 
   editMessage(input: {

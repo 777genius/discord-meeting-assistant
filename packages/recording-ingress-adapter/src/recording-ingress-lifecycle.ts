@@ -130,6 +130,7 @@ async function startRecording(input: LifecycleIngressInput): Promise<LifecycleIn
       channelId: input.event.channelId,
       events: [storedEvent(input.event, input.digest)],
       guildId: input.event.guildId,
+      pendingAuthoritativeTracks: [],
       recordingId: input.event.recordingId,
       schemaVersion: 1,
       speakers: [],
@@ -197,6 +198,12 @@ function assertAuthoritativeReady(state: RecordingSpoolState, event: Authoritati
     throw new RecordingIngressError(
       "invalid-state",
       "authoritative-ready track count does not match durable uploads",
+    );
+  }
+  if (state.pendingAuthoritativeTracks.length > 0) {
+    throw new RecordingIngressError(
+      "invalid-state",
+      "authoritative-ready cannot finalize an upload with an unresolved write receipt",
     );
   }
 }

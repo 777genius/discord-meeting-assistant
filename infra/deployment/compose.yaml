@@ -38,6 +38,8 @@ services:
       POSTGRES_URL_FILE: /run/secrets/postgres-url
     volumes:
       - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/secrets/platform:/run/secrets:ro
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=0700,uid=10001,gid=10001
     depends_on:
       postgres: { condition: service_healthy }
     networks: [meeting-internal]
@@ -179,7 +181,8 @@ services:
       PIPECAT_RUNTIME_SUBSCRIPTION_RUNTIME_SERVICE_TOKEN_FILE: /run/platform-secrets/runtime-service-token
       PIPECAT_RUNTIME_SUBSCRIPTION_RUNTIME_TIMEOUT_MS: ${PIPECAT_RUNTIME_SUBSCRIPTION_RUNTIME_TIMEOUT_MS:-30000}
     volumes:
-      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/secrets/platform:/run/platform-secrets:ro
+      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/secrets/platform/conversation-runtime-token:/run/platform-secrets/conversation-runtime-token:ro
+      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/secrets/platform/runtime-service-token:/run/platform-secrets/runtime-service-token:ro
       - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/secrets/pipecat:/run/pipecat-secrets:ro
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=128m,mode=0700,uid=10001,gid=10001

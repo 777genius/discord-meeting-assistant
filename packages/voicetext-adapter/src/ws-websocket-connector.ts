@@ -186,8 +186,12 @@ async function waitForOpen(socket: WsClient, signal: AbortSignal): Promise<void>
       }
     };
     const onAbort = () => {
-      socket.terminate();
+      // ws reports termination during CONNECTING as an asynchronous `error`.
+      // `finish` removes the handshake listener, so retain one bounded absorber
+      // for that expected cancellation error before terminating.
+      socket.once("error", ignoreExpectedAbortError);
       finish(signal.reason);
+      socket.terminate();
     };
     const onOpen = () => {
       finish();
@@ -209,6 +213,10 @@ async function waitForOpen(socket: WsClient, signal: AbortSignal): Promise<void>
     socket.once("error", onError);
     socket.once("unexpected-response", onUnexpectedResponse);
   });
+}
+
+function ignoreExpectedAbortError(): void {
+  // The abort reason is already returned to the caller by waitForOpen.
 }
 
 function rawDataBytes(data: RawData): Buffer {

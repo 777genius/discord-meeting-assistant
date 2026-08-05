@@ -12,6 +12,7 @@ import {
 import { verifyTranscript } from "./e2e-evidence-transcript-verification.js";
 import type {
   FixtureManifestV1,
+  DeploymentRevisionExpectation,
   RetainedE2eEvidence,
 } from "./e2e-evidence-schema.js";
 import type {
@@ -23,6 +24,7 @@ import type {
 
 export {
   actorRunEvidenceV1Schema,
+  deploymentRevisionExpectationSchema,
   fixtureManifestV1Schema,
   retainedE2eEvidenceSchema,
   retainedE2eEvidenceV2Schema,
@@ -33,6 +35,7 @@ export type {
   ActorRunEvidenceV1,
   DeployedServiceProvenance,
   DeploymentProvenance,
+  DeploymentRevisionExpectation,
   FixtureManifestV1,
   RetainedE2eEvidence,
   RetainedE2eEvidenceV2,
@@ -47,6 +50,7 @@ export type {
 export function verifyRetainedE2eEvidence(
   manifest: FixtureManifestV1,
   evidence: RetainedE2eEvidence,
+  expectedRevisions: DeploymentRevisionExpectation,
 ): E2eVerificationResult {
   const failures: VerificationFailure[] = [];
   const metrics: SpeakerAccuracyMetrics[] = [];
@@ -62,7 +66,7 @@ export function verifyRetainedE2eEvidence(
   }
 
   verifyFixtures(manifest, evidence, fail);
-  verifyDeploymentProvenance(evidence, fail);
+  verifyDeploymentProvenance(evidence, expectedRevisions, fail);
   verifyS3Evidence(evidence, fail);
   verifyStages(evidence, fail);
   const playbackWindows = playbackWindowsFrom(evidence, fail);
@@ -80,11 +84,13 @@ export function verifyRetainedE2eEvidence(
 export function verifyE2eCampaign(
   manifest: FixtureManifestV1,
   runs: readonly RetainedE2eEvidence[],
+  expectedRevisions: DeploymentRevisionExpectation,
 ) {
   return verifyCampaign({
     manifest,
     runs,
-    verifyRun: verifyRetainedE2eEvidence,
+    verifyRun: (runManifest, evidence) =>
+      verifyRetainedE2eEvidence(runManifest, evidence, expectedRevisions),
   });
 }
 

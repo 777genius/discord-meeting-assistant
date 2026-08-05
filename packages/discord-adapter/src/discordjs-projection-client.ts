@@ -44,6 +44,7 @@ export class DiscordJsProjectionClient implements DiscordProjectionClient {
   constructor(private readonly client: Client) {}
 
   async inspect(input: {
+    readonly exhaustive?: boolean;
     readonly includeThreads?: boolean;
     readonly parentChannelId: string;
     readonly marker: string;
@@ -53,16 +54,28 @@ export class DiscordJsProjectionClient implements DiscordProjectionClient {
     const botUserId = this.requireBotUserId();
     const hinted = input.referenceHint === undefined
       ? undefined
-      : await this.inspectHint(input.parentChannelId, input.marker, input.referenceHint, botUserId);
+      : await this.inspectHint(
+        input.parentChannelId,
+        input.marker,
+        input.referenceHint,
+        botUserId,
+        input.exhaustive === true,
+      );
     if (hinted !== undefined) {
       return hinted;
     }
 
     const parent = await this.fetchParentChannel(input.parentChannelId);
     const [channelMessage, thread] = await Promise.all([
-      findProjectionChannelMessage(parent, input.marker, botUserId),
+      findProjectionChannelMessage(parent, input.marker, botUserId, input.exhaustive === true),
       input.includeThreads === true
-        ? findProjectionThread(parent, input.marker, input.threadRecoveryName, botUserId)
+        ? findProjectionThread(
+          parent,
+          input.marker,
+          input.threadRecoveryName,
+          botUserId,
+          input.exhaustive === true,
+        )
           .then((candidate) => candidate ?? null)
         : Promise.resolve(null),
     ]);
@@ -82,7 +95,15 @@ export class DiscordJsProjectionClient implements DiscordProjectionClient {
 
     return locatedThreadProjection(
       thread.id,
-      (await findProjectionMessage(thread, input.marker, botUserId, true))?.id,
+      (await findProjectionMessage(
+        thread,
+        input.marker,
+        botUserId,
+        true,
+        input.exhaustive === true
+          ? Number.POSITIVE_INFINITY
+          : maximumDirectMessageHistoryPages,
+      ))?.id,
     );
   }
 
@@ -126,11 +147,16 @@ export class DiscordJsProjectionClient implements DiscordProjectionClient {
       | { readonly kind: "channel-message"; readonly parentChannelId: string };
     readonly body: DiscordProjectionBody;
     readonly marker: string;
+    readonly nonce: string;
   }): Promise<string> {
     const destination = input.container.kind === "thread"
       ? await this.fetchThread(input.container.threadId)
       : await this.fetchParentChannel(input.container.parentChannelId);
-    const message = await destination.send(toDiscordMessagePayload(input.body, input.marker));
+    const message = await destination.send({
+      ...toDiscordMessagePayload(input.body, input.marker),
+      enforceNonce: true,
+      nonce: input.nonce,
+    });
     return message.id;
   }
 
@@ -171,6 +197,7 @@ export class DiscordJsProjectionClient implements DiscordProjectionClient {
     marker: string,
     hint: DiscordProjectionReference,
     botUserId: string,
+    exhaustive: boolean,
   ): Promise<LocatedDiscordProjection | undefined> {
     if (hint.kind === "channel-message") {
       if (hint.parentChannelId !== parentChannelId) {
@@ -195,7 +222,12 @@ export class DiscordJsProjectionClient implements DiscordProjectionClient {
         }
       }
       const parentForScan = await this.fetchParentChannel(parentChannelId);
-      const recovered = await findProjectionChannelMessage(parentForScan, marker, botUserId);
+      const recovered = await findProjectionChannelMessage(
+        parentForScan,
+        marker,
+        botUserId,
+        exhaustive,
+      );
       return recovered === undefined
         ? undefined
         : {
@@ -236,7 +268,13 @@ export class DiscordJsProjectionClient implements DiscordProjectionClient {
 
     return locatedThreadProjection(
       thread.id,
-      (await findProjectionMessage(thread, marker, botUserId, true))?.id,
+      (await findProjectionMessage(
+        thread,
+        marker,
+        botUserId,
+        true,
+        exhaustive ? Number.POSITIVE_INFINITY : maximumDirectMessageHistoryPages,
+      ))?.id,
     );
   }
 
@@ -277,10 +315,15 @@ async function findProjectionThread(
   marker: string,
   threadRecoveryName: string | undefined,
   botUserId: string,
+  exhaustive: boolean,
 ): Promise<TextThreadChannel | undefined> {
   const [active, archived] = await Promise.all([
     parent.threads.fetchActive(false),
-    parent.threads.fetchArchived({ type: "public", limit: 100 }, false),
+    parent.threads.fetchArchived({
+      fetchAll: exhaustive,
+      type: "public",
+      limit: 100,
+    }, false),
   ]);
   const available = new Map<string, TextThreadChannel>();
   for (const thread of [...active.threads.values(), ...archived.threads.values()]) {
@@ -299,17 +342,24 @@ async function findProjectionThread(
     return namedCandidates[0];
   }
 
-  // A crash after the marker message and human rename but before durable
-  // receipt persistence has no visible-name marker. It can only concern a
-  // newly-created thread, so inspect a small newest window and one message
-  // page per thread instead of walking the server's complete history.
-  const recentThreads = [...available.values()]
+  // Normal reconciliation inspects a small newest window. Recovery from an
+  // existing durable reservation deliberately scans the complete retained
+  // history before any replacement create is allowed.
+  const orderedThreads = [...available.values()]
     .toSorted((left, right) =>
       (right.createdTimestamp ?? 0) - (left.createdTimestamp ?? 0)
-    )
-    .slice(0, maximumRecentThreadRecoveryCandidates);
+    );
+  const recentThreads = exhaustive
+    ? orderedThreads
+    : orderedThreads.slice(0, maximumRecentThreadRecoveryCandidates);
   const markerMatches = await Promise.all(recentThreads.map(async (thread) =>
-    (await findProjectionMessage(thread, marker, botUserId, false, 1)) === undefined
+    (await findProjectionMessage(
+      thread,
+      marker,
+      botUserId,
+      false,
+      exhaustive ? Number.POSITIVE_INFINITY : 1,
+    )) === undefined
       ? undefined
       : thread
   ));
@@ -324,13 +374,14 @@ async function findProjectionChannelMessage(
   parent: TextChannel | NewsChannel,
   marker: string,
   botUserId: string,
+  exhaustive: boolean,
 ): Promise<Message | undefined> {
   return findSingleProjectionMessage(
     parent.messages,
     marker,
     botUserId,
     false,
-    maximumDirectMessageHistoryPages,
+    exhaustive ? Number.POSITIVE_INFINITY : maximumDirectMessageHistoryPages,
   );
 }
 

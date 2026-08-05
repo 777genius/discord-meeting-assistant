@@ -105,6 +105,11 @@ const dockerImageIdSchema = z.string().regex(/^sha256:[a-f\d]{64}$/u);
 const repositoryDigestSchema = z.string().regex(/^[^\s@]+@sha256:[a-f\d]{64}$/u);
 const sourceRevisionSchema = z.string().regex(/^(?:[a-f\d]{40}|[a-f\d]{64})$/u);
 
+export const deploymentRevisionExpectationSchema = z.object({
+  craig: sourceRevisionSchema,
+  meetingPlatform: sourceRevisionSchema,
+}).strict();
+
 const deployedServiceProvenanceSchema = z.object({
   composeConfigHash: sha256Schema,
   composeProject: identifierSchema,
@@ -295,6 +300,7 @@ export type ActorRunEvidenceV1 = z.infer<typeof actorRunEvidenceV1Schema>;
 export type UnboundActorRunEvidenceV1 = z.infer<typeof unboundActorRunEvidenceV1Schema>;
 export type DeployedServiceProvenance = z.infer<typeof deployedServiceProvenanceSchema>;
 export type DeploymentProvenance = z.infer<typeof retainedE2eEvidenceV2Schema>["deployment"];
+export type DeploymentRevisionExpectation = z.infer<typeof deploymentRevisionExpectationSchema>;
 export type RetainedE2eEvidenceV2 = z.infer<typeof retainedE2eEvidenceV2Schema>;
 export type RetainedE2eEvidenceV3 = z.infer<typeof retainedE2eEvidenceV3Schema>;
 export type RetainedE2eEvidence = z.infer<typeof retainedE2eEvidenceSchema>;

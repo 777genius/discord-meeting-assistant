@@ -42,6 +42,9 @@ describe("addressed conversation policy", () => {
     ["botyk, answer briefly.", "Botik", "answer briefly."],
     ["Ботык, ответь кратко.", "Ботик", "ответь кратко."],
     ["Ботыка, ответь кратко.", "Ботика", "ответь кратко."],
+    ["Бокtik, скажи коротко.", "Ботик", "скажи коротко."],
+    ["Baltic. Answer briefly.", "Botik", "Answer briefly."],
+    ["Ботк. Ответь одним словом.", "Ботик", "Ответь одним словом."],
   ])("recognises normalized whole-word alias %s", (text, alias, prompt) => {
     expect(detectAddressedConversation(text)).toEqual({
       alias,
@@ -82,6 +85,8 @@ describe("addressed conversation policy", () => {
     "Я вчера видел Ботик.",
     "Как дела Ботик?",
     "Я спросил про Ботик?",
+    "Baltic Sea is a region.",
+    "Балтик это обычное слово без обращения.",
   ])(
     "rejects non-whole-word form %s",
     (text) => {

@@ -45,16 +45,17 @@ class FakeDiscordProjectionClient implements DiscordProjectionClient {
   throwAfterNextMessageEdit = false;
   nextMessageEditError: Error | null = null;
   createDelayMilliseconds = 0;
-  hideProjectionFromInspection = false;
+  hideProjectionFromBoundedInspection = false;
 
   async inspect(input: {
+    exhaustive?: boolean;
     parentChannelId: string;
     marker: string;
     referenceHint?: DiscordProjectionReference;
     threadRecoveryName?: string;
   }): Promise<LocatedDiscordProjection | undefined> {
     this.inspectCount += 1;
-    if (this.hideProjectionFromInspection) {
+    if (this.hideProjectionFromBoundedInspection && input.exhaustive !== true) {
       return undefined;
     }
     const byHint = input.referenceHint === undefined
@@ -114,6 +115,7 @@ class FakeDiscordProjectionClient implements DiscordProjectionClient {
     };
     body: DiscordProjectionBody;
     marker: string;
+    nonce: string;
   }): Promise<string> {
     if (input.container.kind !== "thread") {
       throw new Error("Fake supports thread-only contract coverage");
@@ -208,18 +210,16 @@ function effectLedger(client: object): SummaryPublicationEffectLedger {
 }
 
 describe("DiscordSummaryPublisher contract", () => {
-  it("does not create a duplicate when an unknown outcome falls outside history recovery", async () => {
+  it("recovers a pending reservation exhaustively without creating a duplicate", async () => {
     const client = new FakeDiscordProjectionClient();
-    client.hideProjectionFromInspection = true;
+    client.hideProjectionFromBoundedInspection = true;
     client.throwAfterNextMessageCreate = true;
     const subject = publisher(client);
 
     await expect(subject.publish(command)).rejects.toThrow(
       "unknown create-message outcome",
     );
-    await expect(subject.publish(command)).rejects.toThrow(
-      "unresolved durable create reservation",
-    );
+    await expect(subject.publish(command)).resolves.toMatchObject({ kind: "thread" });
     expect(client.createMessageCount).toBe(1);
     expect(client.createThreadCount).toBe(1);
   });

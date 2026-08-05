@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { access, readFile, realpath, stat } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { z } from "zod";
 
 import { runtimePackageName, runtimePackageVersion } from "./constants.js";
@@ -16,6 +16,11 @@ const manifestSchema = z
     version: z.literal(runtimePackageVersion),
   })
   .loose();
+
+const auditedLauncherModuleNames = [
+  "audited-codex-jsonl-capture.mjs",
+  "audited-xhigh-policy.mjs",
+] as const;
 
 export interface FileInstallationInspectorOptions {
   readonly expectedLauncherSha256: string;
@@ -39,20 +44,39 @@ export class FileInstallationInspector
       realpath(this.options.launcherPath),
       realpath(this.options.packageManifestPath),
     ]);
+    const launcherDirectory = dirname(executableRealpath);
+    const moduleRealpaths = await Promise.all(
+      auditedLauncherModuleNames.map((name) => realpath(join(launcherDirectory, name))),
+    );
+    if (moduleRealpaths.some((path) => dirname(path) !== launcherDirectory)) {
+      throw new Error("Subscription runtime launcher bundle escapes its admitted directory");
+    }
     await access(executableRealpath, constants.X_OK);
-    const [executableStat, manifestStat, launcherBytes, manifestBytes] =
+    const [executableStat, manifestStat, launcherBytes, manifestBytes, ...modules] =
       await Promise.all([
         stat(executableRealpath),
         stat(packageManifestRealpath),
         readFile(executableRealpath),
         readFile(packageManifestRealpath, "utf8"),
+        ...moduleRealpaths.map(async (path) => ({
+          bytes: await readFile(path),
+          stat: await stat(path),
+        })),
       ]);
-    if (!executableStat.isFile() || !manifestStat.isFile()) {
+    if (
+      !executableStat.isFile() ||
+      !manifestStat.isFile() ||
+      modules.some((module) => !module.stat.isFile())
+    ) {
       throw new Error("Subscription runtime installation is not file-backed");
     }
-    const launcherSha256 = createHash("sha256")
-      .update(launcherBytes)
-      .digest("hex");
+    const launcherSha256 = createAuditedLauncherBundleSha256([
+      { bytes: launcherBytes, name: "launcher.mjs" },
+      ...modules.map((module, index) => ({
+        bytes: module.bytes,
+        name: auditedLauncherModuleNames[index] ?? "invalid-module",
+      })),
+    ]);
     if (launcherSha256 !== this.options.expectedLauncherSha256) {
       throw new Error("Subscription runtime launcher digest is not admitted");
     }
@@ -69,6 +93,18 @@ export class FileInstallationInspector
       runtimePackageVersion: manifest.data.version,
     };
   }
+}
+
+export function createAuditedLauncherBundleSha256(
+  files: readonly { readonly bytes: Uint8Array; readonly name: string }[],
+): string {
+  const digest = createHash("sha256");
+  for (const file of files.toSorted((left, right) => left.name.localeCompare(right.name))) {
+    digest.update(file.name).update("\0");
+    digest.update(String(file.bytes.byteLength)).update("\0");
+    digest.update(file.bytes);
+  }
+  return digest.digest("hex");
 }
 
 export function installationIdentitiesEqual(

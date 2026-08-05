@@ -17,12 +17,14 @@ set:
 ```text
 SUBSCRIPTION_RUNTIME_LAUNCHER_PATH=/opt/subscription-runtime/launcher.mjs
 SUBSCRIPTION_RUNTIME_PACKAGE_MANIFEST_PATH=/opt/subscription-runtime/package/package.json
-SUBSCRIPTION_RUNTIME_EXPECTED_LAUNCHER_SHA256=<lowercase sha256>
+SUBSCRIPTION_RUNTIME_EXPECTED_LAUNCHER_SHA256=<lowercase audited launcher bundle sha256>
 ```
 
 The package manifest must be exactly `@vioxen/subscription-runtime` version
-`0.1.0-main.2`. The launcher is inspected by realpath and SHA-256 before and
-after every task. It must call that version's
+`0.1.0-main.2`. The launcher entrypoint and its two audited sibling modules are
+inspected by realpath and one canonical bundle SHA-256 before and after every
+task. Changing any executable part changes the admitted digest. The launcher
+must call that version's
 `subscription-runtime-run-agent-task` JSON bridge while constructing the Codex
 worker with the exact selected profile: `gpt-5.6-sol`/`medium` for final
 summaries with an admitted 2048-token post-execution output budget and policy

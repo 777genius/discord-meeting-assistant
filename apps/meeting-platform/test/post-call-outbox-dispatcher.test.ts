@@ -266,22 +266,16 @@ describe("post-call composition cleanup", () => {
         await eventsClose;
       },
     };
-    const deadLetterQueue = {
-      close: async () => {
-        calls.push("dead-letter");
-        throw new Error("dead letter close failed");
-      },
-    };
     const queue = {
       close: async () => {
         calls.push("queue");
+        throw new Error("queue close failed");
       },
     };
 
     const closing = closePartiallyCreatedPostCallQueues(
       startupFailure,
       queueEvents,
-      deadLetterQueue,
       queue,
     );
     await eventsStarted;
@@ -295,12 +289,12 @@ describe("post-call composition cleanup", () => {
       failure = error;
     }
 
-    expect(calls).toEqual(["events", "dead-letter", "queue"]);
+    expect(calls).toEqual(["events", "queue"]);
     expect(failure).toBeInstanceOf(AggregateError);
     const aggregate = failure as AggregateError;
     expect(aggregate.errors[0]).toBe(startupFailure);
     expect(aggregate.errors[1]).toMatchObject({
-      message: "Could not close post-call dead-letter queue",
+      message: "Could not close post-call queue",
     });
   });
 });

@@ -1,11 +1,8 @@
 import {
-  BullMqPostCallDeadLetterRecorder,
   BullMqPostCallEnqueuer,
-  CompositePostCallDeadLetterRecorder,
   NonRetryablePostCallError,
   RetryablePostCallError,
   createRedisPolicyReadiness,
-  createPostCallDeadLetterQueue,
   createPostCallQueue,
   createPostCallQueueEvents,
   createPostCallWorker,
@@ -31,7 +28,6 @@ interface CloseablePostCallQueue {
 }
 
 export interface PlatformPostCallComposition {
-  readonly deadLetterQueue: ReturnType<typeof createPostCallDeadLetterQueue>;
   readonly outboxDispatcher: PostCallOutboxDispatcher;
   readonly queue: ReturnType<typeof createPostCallQueue>;
   readonly queueEvents: ReturnType<typeof createPostCallQueueEvents>;
@@ -48,15 +44,9 @@ export async function createPlatformPostCallComposition(input: {
   readonly processMeeting: ProcessMeetingSummary;
 }): Promise<PlatformPostCallComposition> {
   let queue: ReturnType<typeof createPostCallQueue> | undefined;
-  let deadLetterQueue: ReturnType<typeof createPostCallDeadLetterQueue> | undefined;
   let queueEvents: ReturnType<typeof createPostCallQueueEvents> | undefined;
   try {
     queue = createPostCallQueue({
-      connection: input.connection,
-      observer: input.observer,
-      prefix: postCallQueuePrefix,
-    });
-    deadLetterQueue = createPostCallDeadLetterQueue({
       connection: input.connection,
       observer: input.observer,
       prefix: postCallQueuePrefix,
@@ -71,21 +61,17 @@ export async function createPlatformPostCallComposition(input: {
         await input.meetings.settlePostCallFailure(record);
       },
     };
-    const deadLetterRecorder = new CompositePostCallDeadLetterRecorder(
-      deadLetterLedger,
-      new BullMqPostCallDeadLetterRecorder(deadLetterQueue),
-    );
     const enqueuer = new BullMqPostCallEnqueuer(queue, {}, input.observer);
     const outboxDispatcher = new PostCallOutboxDispatcher(
       input.meetings,
       enqueuer,
-      deadLetterRecorder,
+      deadLetterLedger,
       input.logger,
     );
     const worker = createPostCallWorker({
       autorun: false,
       connection: input.connection,
-      deadLetterRecorder,
+      deadLetterRecorder: deadLetterLedger,
       handler: createPostCallHandler(
         input.processMeeting,
         input.meetings,
@@ -96,7 +82,6 @@ export async function createPlatformPostCallComposition(input: {
       prefix: postCallQueuePrefix,
     });
     return {
-      deadLetterQueue,
       outboxDispatcher,
       queue,
       queueEvents,
@@ -107,7 +92,6 @@ export async function createPlatformPostCallComposition(input: {
     return closePartiallyCreatedPostCallQueues(
       error,
       queueEvents,
-      deadLetterQueue,
       queue,
     );
   }
@@ -152,12 +136,10 @@ export function createPostCallHandler(
 export async function closePartiallyCreatedPostCallQueues(
   startupFailure: unknown,
   queueEvents: CloseablePostCallQueue | undefined,
-  deadLetterQueue: CloseablePostCallQueue | undefined,
   queue: CloseablePostCallQueue | undefined,
 ): Promise<never> {
   const resources = [
     ["post-call queue events", queueEvents],
-    ["post-call dead-letter queue", deadLetterQueue],
     ["post-call queue", queue],
   ] as const;
   const failures: unknown[] = [];

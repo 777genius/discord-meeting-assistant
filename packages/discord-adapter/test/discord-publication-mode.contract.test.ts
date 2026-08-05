@@ -56,6 +56,7 @@ class InMemoryProjectionClient implements DiscordProjectionClient {
   throwBeforeNextThreadMessageCreate = false;
 
   async inspect(input: {
+    readonly exhaustive?: boolean;
     readonly includeThreads?: boolean;
     readonly parentChannelId: string;
     readonly marker: string;
@@ -128,6 +129,7 @@ class InMemoryProjectionClient implements DiscordProjectionClient {
     readonly container: DiscordProjectionContainer;
     readonly body: DiscordProjectionBody;
     readonly marker: string;
+    readonly nonce: string;
   }): Promise<string> {
     if (input.container.kind === "thread") {
       const thread = this.requireThread(input.container.threadId);

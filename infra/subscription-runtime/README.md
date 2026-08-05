@@ -40,7 +40,7 @@ regular, non-symlink files with mode `0400`.
 The immutable sidecar image must:
 
 1. pin `@vioxen/subscription-runtime` to `0.1.0-main.2` and verify both the
-   package version and admitted launcher SHA-256 before every execution;
+   package version and admitted audited-launcher bundle SHA-256 before every execution;
 2. admit `discord_meeting.summary.generate` only with
    `gpt-5.6-sol`/`medium`, a 2048-token post-execution output budget, and policy version
    `meeting-summary.subscription-runtime.v8`; admit
@@ -69,7 +69,7 @@ The immutable sidecar image must:
    conflicting controls before provider execution;
 5. attach an execution attestation containing the canonical request hash,
    selected output hash, provider/model/profile, runtime package version, and
-   launcher digest;
+   audited launcher bundle digest;
 6. expose `RunAgentTask` and `CheckHealth` only on the internal meeting network
    and authenticate both methods from the mounted service-token file;
 7. keep safe error codes separate from provider stderr/stdout and never return
@@ -130,7 +130,7 @@ Before real Discord E2E, verify without printing secrets:
   ownership and modes;
 - the reserved slot is excluded from all other project allocators;
 - Compose publishes no host port and joins only `discord-meeting-internal`;
-- health reports the exact package version and launcher digest;
+- health reports the exact package version and audited launcher bundle digest;
 - a deterministic contract request passes before any real provider request;
 - logs contain no API-key variables, auth JSON, provider payload, or account
   identity.

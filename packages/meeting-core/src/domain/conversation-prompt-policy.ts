@@ -12,6 +12,8 @@ const DELIBERATION_MARKER = /(?:^|[^\p{L}\p{N}_])(?:почему|зачем|об
 const PROMPT_WORD = /[\p{L}\p{M}\p{N}_]+/gu;
 
 const ADDRESS_ALIASES = {
+  baltic: "Botik",
+  baltik: "Botik",
   botic: "Botic",
   botik: "Botik",
   botek: "Botik",
@@ -19,6 +21,10 @@ const ADDRESS_ALIASES = {
   botica: "Ботика",
   botika: "Ботика",
   botyk: "Botik",
+  "балтик": "Ботик",
+  "бокtik": "Ботик",
+  "боктик": "Ботик",
+  "ботк": "Ботик",
   "ботик": "Ботик",
   "ботика": "Ботика",
   "ботек": "Ботик",
@@ -28,6 +34,15 @@ const ADDRESS_ALIASES = {
   "ботык": "Ботик",
   "ботыка": "Ботика",
 } as const;
+
+const PUNCTUATED_STT_VARIANT_KEYS: ReadonlySet<string> = new Set([
+  "baltic",
+  "baltik",
+  "балтик",
+  "бокtik",
+  "боктик",
+  "ботк",
+]);
 
 export type ConversationAlias = (typeof ADDRESS_ALIASES)[keyof typeof ADDRESS_ALIASES];
 
@@ -43,6 +58,11 @@ export interface AddressedConversation {
 
 function normalizedAlias(word: string): ConversationAlias | undefined {
   return ADDRESS_ALIAS_BY_KEY.get(word.toLowerCase());
+}
+
+function isPunctuatedSttVariant(word: string, normalizedText: string, end: number): boolean {
+  return !PUNCTUATED_STT_VARIANT_KEYS.has(word.toLowerCase()) ||
+    VOCATIVE_SUFFIX_PUNCTUATION.test(normalizedText.slice(end));
 }
 
 function stripAddress(normalizedText: string, start: number, end: number): string {
@@ -81,11 +101,16 @@ export function detectAddressedConversation(text: string): AddressedConversation
     const word = match[0];
     const start = match.index;
     const alias = normalizedAlias(word);
-    if (alias === undefined || !isExplicitAddress(normalizedText, start, start + word.length)) {
+    const end = start + word.length;
+    if (
+      alias === undefined ||
+      !isExplicitAddress(normalizedText, start, end) ||
+      !isPunctuatedSttVariant(word, normalizedText, end)
+    ) {
       continue;
     }
 
-    const prompt = stripAddress(normalizedText, start, start + word.length);
+    const prompt = stripAddress(normalizedText, start, end);
     return Object.freeze({
       alias,
       prompt: prompt.length === 0 ? CONVERSATION_ALIAS_ONLY_FALLBACK_PROMPT : prompt,

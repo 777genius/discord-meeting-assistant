@@ -141,7 +141,6 @@ export async function startMeetingPlatform(
         gateway: discordLive.craigPlaybackGateway,
         webSocket: http.craigPlaybackWebSocket,
       },
-      deadLetterQueue: postCall.deadLetterQueue,
       discord: discordLive.discord,
       guildSetupHandler: discordLive.guildSetupHandler,
       logger,

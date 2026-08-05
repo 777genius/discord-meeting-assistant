@@ -1,12 +1,14 @@
 import type {
   DeployedServiceProvenance,
   DeploymentProvenance,
+  DeploymentRevisionExpectation,
   RetainedE2eEvidence,
 } from "./e2e-evidence-schema.js";
 import type { VerificationFailureReporter } from "./e2e-evidence-verification-types.js";
 
 export function verifyDeploymentProvenance(
   evidence: RetainedE2eEvidence,
+  expectedRevisions: DeploymentRevisionExpectation,
   fail: VerificationFailureReporter,
 ): void {
   const { craig, meetingPlatform } = evidence.deployment;
@@ -24,6 +26,12 @@ export function verifyDeploymentProvenance(
     ["craig", craig],
     ["meetingPlatform", meetingPlatform],
   ] as const) {
+    if (provenance.sourceRevision !== expectedRevisions[component]) {
+      fail(
+        "DEPLOYMENT_SOURCE_REVISION_MISMATCH",
+        `${component} source revision does not match the release candidate`,
+      );
+    }
     if (Date.parse(provenance.containerStartedAt) > recordingStartedAt) {
       fail(
         "DEPLOYMENT_STARTED_AFTER_RECORDING",

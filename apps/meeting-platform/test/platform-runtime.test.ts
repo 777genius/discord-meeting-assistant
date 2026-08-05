@@ -256,11 +256,6 @@ describe("meeting platform shutdown", () => {
     } as unknown as Logger;
 
     const closing = closeMeetingPlatformResources({
-      deadLetterQueue: {
-        close: async () => {
-          calls.push("dead-letter:close");
-        },
-      },
       discord: {
         destroy: () => {
           calls.push("discord:destroy");
@@ -343,7 +338,6 @@ describe("meeting platform shutdown", () => {
     const startedAt = performance.now();
 
     await expect(closeMeetingPlatformResources({
-      deadLetterQueue: { close: async () => { calls.push("dead-letter:close"); } },
       discord: { destroy: () => { calls.push("discord:destroy"); } } as unknown as Client,
       logger: { flush: async () => { calls.push("logger:flush"); } } as unknown as Logger,
       outboxDispatcher: { whenIdle: async () => never },
@@ -374,6 +368,41 @@ describe("meeting platform shutdown", () => {
     ]));
   });
 
+  it("uses one deadline across stalled shutdown phases and still starts final cleanup", async () => {
+    const calls: string[] = [];
+    const never = new Promise<void>(() => {});
+    const startedAt = performance.now();
+
+    await expect(closeMeetingPlatformResources({
+      discord: { destroy: () => { calls.push("discord:destroy"); } } as unknown as Client,
+      live: { close: async () => never } as unknown as PlatformLiveMeetingRuntime,
+      logger: { flush: async () => never } as unknown as Logger,
+      outboxDispatcher: { whenIdle: async () => never },
+      pool: { end: async () => never } as unknown as Pool,
+      queue: { close: async () => never },
+      queueEvents: { close: async () => never },
+      recordings: { close: async () => never },
+      runtimeTransport: { close: () => { calls.push("runtime:close"); } } as unknown as GrpcSubscriptionRuntimeTransport,
+      s3: { destroy: () => { calls.push("s3:destroy"); } } as unknown as S3Client,
+      server: { close: async () => never, start: async () => {} },
+      shutdownTimeoutMilliseconds: 100,
+      worker: {
+        cancelActivePostCallJobs: () => { calls.push("worker:cancel"); },
+        close: async () => never,
+        pause: async () => never,
+        waitForActivePostCallJobs: async () => never,
+      } as unknown as PostCallWorker,
+    })).rejects.toBeInstanceOf(AggregateError);
+
+    expect(performance.now() - startedAt).toBeLessThan(250);
+    expect(calls).toEqual(expect.arrayContaining([
+      "discord:destroy",
+      "runtime:close",
+      "s3:destroy",
+      "worker:cancel",
+    ]));
+  });
+
   it("observes an immediate post-call rejection while HTTP shutdown is pending", async () => {
     let releaseServer!: () => void;
     const serverGate = new Promise<void>((resolve) => {
@@ -386,7 +415,6 @@ describe("meeting platform shutdown", () => {
     process.on("unhandledRejection", onUnhandled);
     try {
       const closing = closeMeetingPlatformResources({
-        deadLetterQueue: { close: async () => {} },
         discord: { destroy: () => {} } as unknown as Client,
         logger: { flush: async () => {} } as unknown as Logger,
         outboxDispatcher: { whenIdle: async () => {} },

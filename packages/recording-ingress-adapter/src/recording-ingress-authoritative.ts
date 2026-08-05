@@ -133,15 +133,29 @@ async function ingestLockedAuthoritativeTrack(
   }
   const candidate = createTrackCandidate(upload);
   const existing = findExistingTrack(state, candidate, runtime.limits.maxSpeakersPerRecording);
+  if (existing?.durability === "completed") {
+    return completedTrackResult(upload, existing.track.audioLocator, true);
+  }
+  const pendingState = existing === undefined
+    ? {
+        ...state,
+        pendingAuthoritativeTracks: [...state.pendingAuthoritativeTracks, candidate]
+          .toSorted((left, right) => left.trackNumber - right.trackNumber),
+      }
+    : state;
+  if (existing === undefined) {
+    await runtime.spool.writeRecording(pendingState);
+  }
   const receipt = await runtime.writer.write(request);
   verifyWriteReceipt(request, receipt);
-  if (existing === undefined) {
-    await runtime.spool.writeRecording({
-      ...state,
-      authoritativeTracks: [...state.authoritativeTracks, { ...candidate, audioLocator: receipt.locator }]
-        .toSorted((left, right) => left.trackNumber - right.trackNumber),
-    });
-  }
+  await runtime.spool.writeRecording({
+    ...pendingState,
+    authoritativeTracks: [...pendingState.authoritativeTracks, candidate]
+      .toSorted((left, right) => left.trackNumber - right.trackNumber),
+    pendingAuthoritativeTracks: pendingState.pendingAuthoritativeTracks.filter(
+      ({ uploadId }) => uploadId !== candidate.uploadId,
+    ),
+  });
   return completedTrackResult(upload, receipt.locator, existing !== undefined);
 }
 
@@ -161,26 +175,37 @@ function findExistingTrack(
   state: RecordingSpoolState,
   candidate: StoredAuthoritativeTrack,
   maxSpeakers: number,
-): StoredAuthoritativeTrack | undefined {
-  const existing = state.authoritativeTracks.find(
-    (track) =>
-      track.uploadId === candidate.uploadId ||
-      track.trackNumber === candidate.trackNumber ||
-      track.speakerId === candidate.speakerId,
+): { readonly durability: "completed" | "pending"; readonly track: StoredAuthoritativeTrack } | undefined {
+  const matches = [
+    ...state.authoritativeTracks.map((track) => ({ durability: "completed" as const, track })),
+    ...state.pendingAuthoritativeTracks.map((track) => ({ durability: "pending" as const, track })),
+  ].filter(({ track }) =>
+    track.uploadId === candidate.uploadId ||
+    track.trackNumber === candidate.trackNumber ||
+    track.speakerId === candidate.speakerId,
   );
-  if (existing !== undefined && !sameTrackIdentity(existing, candidate)) {
+  if (matches.some(({ track }) => !sameTrackIdentity(track, candidate))) {
     throw new RecordingIngressError(
       "conflicting-duplicate",
       "authoritative track identity was replayed with different content",
     );
   }
-  if (existing === undefined && state.authoritativeTracks.length >= maxSpeakers) {
+  if (matches.length > 1) {
+    throw new RecordingIngressError(
+      "corrupt-spool",
+      "authoritative track identity exists in multiple durability states",
+    );
+  }
+  if (
+    matches.length === 0 &&
+    state.authoritativeTracks.length + state.pendingAuthoritativeTracks.length >= maxSpeakers
+  ) {
     throw new RecordingIngressError(
       "limit-exceeded",
       "authoritative recording exceeds the configured speaker limit",
     );
   }
-  return existing;
+  return matches[0];
 }
 
 function completedTrackForUpload(
@@ -269,7 +294,8 @@ function assertReadyToFinalize(state: RecordingSpoolState, event: AuthoritativeR
     state.endedAt === undefined ||
     state.finalEventId !== event.eventId ||
     state.finalEventDigest === undefined ||
-    state.authoritativeTracks.length !== event.trackCount
+    state.authoritativeTracks.length !== event.trackCount ||
+    state.pendingAuthoritativeTracks.length > 0
   ) {
     throw new RecordingIngressError(
       "invalid-state",
