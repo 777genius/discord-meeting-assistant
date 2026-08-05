@@ -20,7 +20,7 @@ RUN printf '%s' "${SOURCE_REVISION}" \
 
 WORKDIR /app
 COPY --chown=10001:10001 . .
-RUN pnpm install --frozen-lockfile \
+RUN pnpm install --frozen-lockfile --filter @discord-meeting/meeting-platform... \
   && pnpm --filter @discord-meeting/meeting-platform check \
   && pnpm store prune
 

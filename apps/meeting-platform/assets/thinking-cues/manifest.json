@@ -1,0 +1,35 @@
+{
+  "version": 2,
+  "voiceId": "jqcCZkN6Knx8BJ5TBdYR",
+  "voiceProfileId": "elevenlabs-multilingual",
+  "audio": {
+    "format": "pcm_s16le",
+    "sampleRateHz": 48000,
+    "channels": 1
+  },
+  "groups": {
+    "ruAcknowledgement": [
+      { "cueId": "ru-seichas", "pcmFile": "ru-01.pcm" },
+      { "cueId": "ru-tak", "pcmFile": "ru-05.pcm" },
+      { "cueId": "ru-sekundocku", "pcmFile": "ru-06.pcm" }
+    ],
+    "ruDeliberation": [
+      { "cueId": "ru-dai-podumat", "pcmFile": "ru-02.pcm" },
+      { "cueId": "ru-interesnyi-vopros", "pcmFile": "ru-03.pcm" },
+      { "cueId": "ru-seichas-podumaiu", "pcmFile": "ru-04.pcm" }
+    ],
+    "enAcknowledgement": [
+      { "cueId": "en-one-moment", "pcmFile": "en-02.pcm" },
+      { "cueId": "en-lets-see", "pcmFile": "en-04.pcm" },
+      { "cueId": "en-hmm", "pcmFile": "en-05.pcm" },
+      { "cueId": "en-one-sec", "pcmFile": "en-06.pcm" }
+    ],
+    "enDeliberation": [
+      { "cueId": "en-let-me-think", "pcmFile": "en-01.pcm" },
+      { "cueId": "en-good-question", "pcmFile": "en-03.pcm" }
+    ],
+    "neutralAcknowledgement": [
+      { "cueId": "neutral-hmm", "pcmFile": "neutral-01.pcm" }
+    ]
+  }
+}

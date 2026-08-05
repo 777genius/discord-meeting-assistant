@@ -1,0 +1,50 @@
+schemaVersion: 1
+governedRoots:
+  - infra/subscription-runtime
+  - apps/discord-e2e-actors/src
+  - apps/discord-e2e-actors/test
+  - apps/meeting-platform/src
+  - apps/meeting-platform/test
+  - apps/subscription-runtime-sidecar/src
+  - apps/subscription-runtime-sidecar/test
+  - packages/ai-adapters/src
+  - packages/ai-adapters/tests
+  - packages/bullmq-adapter/src
+  - packages/bullmq-adapter/test
+  - packages/craig-gateway-contracts/src
+  - packages/craig-gateway-contracts/test
+  - packages/conversation-runtime-contracts/src
+  - packages/conversation-runtime-contracts/test
+  - packages/craig-playback-adapter/src
+  - packages/craig-playback-adapter/test
+  - packages/discord-adapter/src
+  - packages/discord-adapter/test
+  - packages/guild-configuration-core/src
+  - packages/guild-configuration-core/test
+  - packages/meeting-core/src
+  - packages/meeting-core/test
+  - packages/object-storage-adapter/src
+  - packages/object-storage-adapter/test
+  - packages/observability-adapter/src
+  - packages/observability-adapter/test
+  - packages/postgres-adapter/src
+  - packages/postgres-adapter/test
+  - packages/pipecat-runtime-adapter/e2e
+  - packages/pipecat-runtime-adapter/src
+  - packages/pipecat-runtime-adapter/test
+  - packages/recording-ingress-adapter/src
+  - packages/recording-ingress-adapter/test
+  - packages/speaches-adapter/src
+  - packages/speaches-adapter/test
+  - packages/subscription-runtime-adapter/src
+  - packages/subscription-runtime-adapter/test
+  - packages/voicetext-adapter/src
+  - packages/voicetext-adapter/test
+  - tooling/architecture-baseline/src
+nonWaivableRulePrefixes:
+  - architecture.
+  - no-ambient-
+  - security.
+  - tenancy.
+  - tenant-isolation.
+waivers: []

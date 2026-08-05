@@ -6,7 +6,7 @@ import type {
 } from "@discord-meeting/meeting-core";
 import { describe, expect, it, vi } from "vitest";
 
-import { InProcessFinalTranscriptionAdmissionPort } from "../src/final-transcription-admission-port.js";
+import { InProcessFinalTranscriptionAdmissionPort } from "../src/application/final-transcription-admission-port.js";
 
 const successfulTranscript: PortResult<GeneratedTranscript> = {
   ok: true,

@@ -1,5 +1,6 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
+  "ignoreBinaries": ["uv"],
   "workspaces": {
     ".": {
       "entry": [],
@@ -20,6 +21,14 @@
       "entry": ["src/index.ts"],
       "project": ["src/**/*.ts", "test/**/*.ts"]
     },
+    "packages/conversation-runtime-contracts": {
+      "entry": ["src/index.ts"],
+      "project": ["src/**/*.ts", "test/**/*.ts"]
+    },
+    "packages/craig-playback-adapter": {
+      "entry": ["src/index.ts"],
+      "project": ["src/**/*.ts", "test/**/*.ts"]
+    },
     "packages/ai-adapters": {
       "entry": ["src/index.ts"],
       "project": ["src/**/*.ts", "tests/**/*.ts"]
@@ -29,7 +38,7 @@
       "project": ["src/**/*.ts", "test/**/*.ts"]
     },
     "packages/postgres-adapter": {
-      "entry": ["src/index.ts"],
+      "entry": ["src/index.ts", "src/run-migrations.ts"],
       "project": ["src/**/*.ts", "test/**/*.ts"]
     },
     "packages/object-storage-adapter": {
@@ -57,6 +66,7 @@
         "src/main.ts",
         "src/capacity-main.ts",
         "src/collect-retained-evidence.ts",
+        "src/observe-conversation-voice.ts",
         "src/observe-live-discord.ts",
         "src/verify-campaign.ts",
         "src/verify-retained-evidence.ts"
@@ -75,6 +85,14 @@
     "packages/recording-ingress-adapter": {
       "entry": ["src/index.ts"],
       "project": ["src/**/*.ts", "test/**/*.ts"]
+    },
+    "packages/pipecat-runtime-adapter": {
+      "entry": ["src/index.ts", "test/**/*.test.ts", "e2e/providerless.e2e.ts"],
+      "project": ["src/**/*.ts", "test/**/*.ts", "e2e/**/*.ts"]
+    },
+    "infra/subscription-runtime": {
+      "entry": ["audited-xhigh-launcher.mjs", "test/**/*.test.mjs"],
+      "project": ["*.mjs", "test/**/*.mjs"]
     }
   }
 }

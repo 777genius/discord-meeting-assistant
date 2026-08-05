@@ -320,7 +320,9 @@ describe("SubscriptionRuntimeIncrementalSummaryAdapter", () => {
         ok: false,
       });
   });
+});
 
+describe("SubscriptionRuntimeIncrementalSummaryAdapter telemetry", () => {
   it("maps complete real usage to the official short-context API-equivalent card", async () => {
     const transport = new FakeTransport((request) => completed(
       request,

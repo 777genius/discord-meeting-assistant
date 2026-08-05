@@ -1,5 +1,6 @@
 import type {
   LiveMeetingProjectionRequest,
+  SummaryPublicationEffectLedger,
   SummaryPublicationRequest,
 } from "@discord-meeting/meeting-core";
 import { describe, expect, it } from "vitest";
@@ -44,14 +45,19 @@ class FakeDiscordProjectionClient implements DiscordProjectionClient {
   throwAfterNextMessageEdit = false;
   nextMessageEditError: Error | null = null;
   createDelayMilliseconds = 0;
+  hideProjectionFromBoundedInspection = false;
 
   async inspect(input: {
+    exhaustive?: boolean;
     parentChannelId: string;
     marker: string;
     referenceHint?: DiscordProjectionReference;
     threadRecoveryName?: string;
   }): Promise<LocatedDiscordProjection | undefined> {
     this.inspectCount += 1;
+    if (this.hideProjectionFromBoundedInspection && input.exhaustive !== true) {
+      return undefined;
+    }
     const byHint = input.referenceHint === undefined
       ? undefined
       : this.threads.find(
@@ -109,6 +115,7 @@ class FakeDiscordProjectionClient implements DiscordProjectionClient {
     };
     body: DiscordProjectionBody;
     marker: string;
+    nonce: string;
   }): Promise<string> {
     if (input.container.kind !== "thread") {
       throw new Error("Fake supports thread-only contract coverage");
@@ -137,7 +144,7 @@ class FakeDiscordProjectionClient implements DiscordProjectionClient {
     }
     const message = this.thread(input.reference.threadId).message;
     if (message?.messageId !== input.reference.messageId) {
-      throw new Error("Message does not exist");
+      throw Object.assign(new Error("Message does not exist"), { code: 10_008 });
     }
     if (this.nextMessageEditError !== null) {
       const error = this.nextMessageEditError;
@@ -163,12 +170,60 @@ class FakeDiscordProjectionClient implements DiscordProjectionClient {
 }
 
 function publisher(client: DiscordProjectionClient): DiscordSummaryPublisher {
-  return new DiscordSummaryPublisher(client, new InProcessProjectionLock(), {
-    publicationMode: "thread",
-  });
+  return new DiscordSummaryPublisher(
+    client,
+    new InProcessProjectionLock(),
+    effectLedger(client),
+    { publicationMode: "thread" },
+  );
+}
+
+const effectLedgers = new WeakMap<object, SummaryPublicationEffectLedger>();
+
+function effectLedger(client: object): SummaryPublicationEffectLedger {
+  const existing = effectLedgers.get(client);
+  if (existing !== undefined) {
+    return existing;
+  }
+  const entries = new Map<string, string | null>();
+  const created: SummaryPublicationEffectLedger = {
+    completeSummaryPublicationEffect: async (input) => {
+      entries.set(input.projectionKey, input.externalReceipt);
+    },
+    replaceSummaryPublicationEffect: async (input) => {
+      entries.set(input.projectionKey, input.externalReceipt);
+    },
+    reserveSummaryPublicationEffect: async (input) => {
+      const externalReceipt = entries.get(input.projectionKey);
+      if (typeof externalReceipt === "string") {
+        return { externalReceipt, status: "completed" };
+      }
+      if (externalReceipt === null) {
+        return { status: "pending" };
+      }
+      entries.set(input.projectionKey, null);
+      return { status: "acquired" };
+    },
+  };
+  effectLedgers.set(client, created);
+  return created;
 }
 
 describe("DiscordSummaryPublisher contract", () => {
+  it("recovers a pending reservation exhaustively without creating a duplicate", async () => {
+    const client = new FakeDiscordProjectionClient();
+    client.hideProjectionFromBoundedInspection = true;
+    client.throwAfterNextMessageCreate = true;
+    const subject = publisher(client);
+
+    await expect(subject.publish(command)).rejects.toThrow(
+      "unknown create-message outcome",
+    );
+    await expect(subject.publish(command)).resolves.toMatchObject({ kind: "thread" });
+    expect(client.createMessageCount).toBe(1);
+    expect(client.createThreadCount).toBe(1);
+  });
+
   it("does not edit a message immediately after a known-fresh create", async () => {
     const client = new FakeDiscordProjectionClient();
 
@@ -298,7 +353,9 @@ describe("DiscordSummaryPublisher contract", () => {
     expect(client.createThreadCount).toBe(1);
     expect(client.createMessageCount).toBe(1);
   });
+});
 
+describe("DiscordSummaryPublisher recovery contract", () => {
   it("recovers a failed direct edit through the marker without creating a second projection", async () => {
     const client = new FakeDiscordProjectionClient();
     const subject = publisher(client);
@@ -426,7 +483,9 @@ describe("DiscordSummaryPublisher contract", () => {
     expect(client.createMessageCount).toBe(1);
     expect(client.threads[0]?.message?.body.markdown).toContain("Canonical update");
   });
+});
 
+describe("DiscordSummaryPublisher finalization contract", () => {
   it("keeps an authoritative transcript timeline when finalizing the same message", async () => {
     const client = new FakeDiscordProjectionClient();
     const subject = publisher(client);

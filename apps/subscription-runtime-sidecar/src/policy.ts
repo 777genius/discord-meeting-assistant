@@ -1,11 +1,17 @@
 import {
   canonicalJsonSha256,
+  conversationAnswerOutputSchemaName,
+  conversationAnswerPolicyVersion,
   incrementalMeetingSummaryOutputSchemaName,
   incrementalMeetingSummaryPolicyVersion,
   meetingSummaryOutputSchemaName,
   meetingSummaryPolicyVersion,
+  providerConversationAnswerJsonSchema,
   providerIncrementalMeetingSummaryJsonSchema,
   providerMeetingSummaryJsonSchema,
+  subscriptionRuntimeConversationModel,
+  subscriptionRuntimeConversationPurpose,
+  subscriptionRuntimeConversationReasoningEffort,
   subscriptionRuntimeIncrementalModel,
   subscriptionRuntimeIncrementalPurpose,
   subscriptionRuntimeIncrementalReasoningEffort,
@@ -40,17 +46,20 @@ const controlsSchema = z
     model: z.union([
       z.literal(subscriptionRuntimeModel),
       z.literal(subscriptionRuntimeIncrementalModel),
+      z.literal(subscriptionRuntimeConversationModel),
     ]),
     outputKind: z.literal("structured_output"),
     outputSchema: jsonObjectSchema,
     outputSchemaName: z.union([
       z.literal(meetingSummaryOutputSchemaName),
       z.literal(incrementalMeetingSummaryOutputSchemaName),
+      z.literal(conversationAnswerOutputSchemaName),
     ]),
     permissionMode: z.literal("read-only"),
     reasoningEffort: z.union([
       z.literal(subscriptionRuntimeReasoningEffort),
       z.literal(subscriptionRuntimeIncrementalReasoningEffort),
+      z.literal(subscriptionRuntimeConversationReasoningEffort),
     ]),
     responseFormat: z.literal("json"),
     runtimeOutput: z.literal("structured_output"),
@@ -88,9 +97,26 @@ const incrementalTransportMetadataSchema = z
   })
   .strict();
 
+const conversationTransportMetadataSchema = z
+  .object({
+    application: z.literal(applicationName),
+    executionProfile: z.literal("stateless-completion"),
+    locale: nonEmptyText,
+    meetingId: nonEmptyText,
+    model: z.literal(subscriptionRuntimeConversationModel),
+    policyVersion: z.literal(conversationAnswerPolicyVersion),
+    reasoningEffort: z.literal(subscriptionRuntimeConversationReasoningEffort),
+    recordingId: nonEmptyText,
+    runtimeOutput: z.literal("structured_output"),
+    toolsDisabled: z.literal("true"),
+    turnId: nonEmptyText,
+  })
+  .strict();
+
 const transportMetadataSchema = z.union([
   finalTransportMetadataSchema,
   incrementalTransportMetadataSchema,
+  conversationTransportMetadataSchema,
 ]);
 
 const finalContextMetadataSchema = z
@@ -111,14 +137,26 @@ const incrementalContextMetadataSchema = z
   })
   .strict();
 
+const conversationContextMetadataSchema = z
+  .object({
+    locale: nonEmptyText,
+    meetingId: nonEmptyText,
+    policyVersion: z.literal(conversationAnswerPolicyVersion),
+    recordingId: nonEmptyText,
+    turnId: nonEmptyText,
+  })
+  .strict();
+
 const contextMetadataSchema = z.union([
   finalContextMetadataSchema,
   incrementalContextMetadataSchema,
+  conversationContextMetadataSchema,
 ]);
 
 const canonicalTaskMetadataSchema = z.union([
   finalTransportMetadataSchema.omit({ application: true, meetingId: true, transcriptId: true, transcriptVersion: true }),
   incrementalTransportMetadataSchema.omit({ application: true, meetingId: true, summaryRevision: true, throughTurnCount: true }),
+  conversationTransportMetadataSchema.omit({ application: true, locale: true, meetingId: true, recordingId: true, turnId: true }),
 ]);
 
 const canonicalRequestSchema = z
@@ -131,6 +169,7 @@ const canonicalRequestSchema = z
         purpose: z.union([
           z.literal(subscriptionRuntimePurpose),
           z.literal(subscriptionRuntimeIncrementalPurpose),
+          z.literal(subscriptionRuntimeConversationPurpose),
         ]),
       })
       .strict(),
@@ -145,6 +184,7 @@ const canonicalRequestSchema = z
         outputSchemaName: z.union([
           z.literal(meetingSummaryOutputSchemaName),
           z.literal(incrementalMeetingSummaryOutputSchemaName),
+          z.literal(conversationAnswerOutputSchemaName),
         ]),
         prompt: z.string().min(1),
         systemPrompt: z.string().min(1),
@@ -169,6 +209,7 @@ const rawGrpcRequestSchema = z
     purpose: z.union([
       z.literal(subscriptionRuntimePurpose),
       z.literal(subscriptionRuntimeIncrementalPurpose),
+      z.literal(subscriptionRuntimeConversationPurpose),
     ]),
     systemPrompt: z.string().min(1),
     prompt: z.string().min(1),
@@ -330,6 +371,26 @@ function reconstructProfileMetadata(
       },
     };
   }
+  if (purpose === subscriptionRuntimeConversationPurpose) {
+    const parsed = parseWithPolicy(conversationTransportMetadataSchema, metadata);
+    return {
+      context: {
+        locale: parsed.locale,
+        meetingId: parsed.meetingId,
+        policyVersion: conversationAnswerPolicyVersion,
+        recordingId: parsed.recordingId,
+        turnId: parsed.turnId,
+      },
+      task: {
+        executionProfile: "stateless-completion",
+        model: subscriptionRuntimeConversationModel,
+        policyVersion: conversationAnswerPolicyVersion,
+        reasoningEffort: subscriptionRuntimeConversationReasoningEffort,
+        runtimeOutput: "structured_output",
+        toolsDisabled: "true",
+      },
+    };
+  }
   throw new RequestPolicyError("request purpose is not admitted");
 }
 
@@ -370,6 +431,16 @@ function assertCanonicalProfile(
     });
     return;
   }
+  if (request.context.purpose === subscriptionRuntimeConversationPurpose) {
+    const metadata = parseWithPolicy(conversationContextMetadataSchema, request.context.metadata);
+    reconstructProfileMetadata(request.context.purpose, {
+      ...commonMetadata,
+      locale: metadata.locale,
+      recordingId: metadata.recordingId,
+      turnId: metadata.turnId,
+    });
+    return;
+  }
   const metadata = parseWithPolicy(incrementalContextMetadataSchema, request.context.metadata);
   reconstructProfileMetadata(request.context.purpose, {
     ...commonMetadata,
@@ -390,6 +461,8 @@ function assertExactOutputSchema(
     ? providerMeetingSummaryJsonSchema
     : purpose === subscriptionRuntimeIncrementalPurpose
       ? providerIncrementalMeetingSummaryJsonSchema
+      : purpose === subscriptionRuntimeConversationPurpose
+        ? providerConversationAnswerJsonSchema
       : undefined;
   if (
     expectedSchema === undefined ||

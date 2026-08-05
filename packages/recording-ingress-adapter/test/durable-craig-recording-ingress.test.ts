@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { appendFile, mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -16,7 +16,6 @@ import {
   DurableCraigRecordingIngress,
   RecordingIngressAbortedError,
   RecordingIngressError,
-  validateOggOpus,
   type RecordingBinaryArtifactWriter,
   type RecordingBinaryArtifactWriteRequest,
 } from "../src/index.js";
@@ -32,6 +31,7 @@ class MemoryArtifactWriter implements RecordingBinaryArtifactWriter {
   public readonly artifacts = new Map<string, Uint8Array>();
   public readonly requests: RecordingBinaryArtifactWriteRequest[] = [];
   public failNextManifest = false;
+  public failAfterNextTrackWrite = false;
   public returnMismatchedReceipt = false;
 
   public async write(request: RecordingBinaryArtifactWriteRequest) {
@@ -52,6 +52,10 @@ class MemoryArtifactWriter implements RecordingBinaryArtifactWriter {
       expect(existing).toEqual(body);
     }
     this.artifacts.set(request.locator, body.slice());
+    if (this.failAfterNextTrackWrite && request.contentType === "audio/ogg") {
+      this.failAfterNextTrackWrite = false;
+      throw new Error("synthetic committed track failure");
+    }
     return {
       checksumSha256: request.checksumSha256,
       locator: request.locator,
@@ -78,6 +82,18 @@ async function readBody(
     offset += chunk.byteLength;
   }
   return bytes;
+}
+
+async function* bytesOnce(bytes: Uint8Array): AsyncGenerator<Uint8Array> {
+  yield bytes;
+}
+
+function bodyMustNotBeRead(): AsyncIterable<Uint8Array> {
+  return {
+    [Symbol.asyncIterator]: () => {
+      throw new Error("completed upload replay must not read the request body");
+    },
+  };
 }
 
 afterEach(async () => {
@@ -141,26 +157,79 @@ function packetBatch(...inputs: readonly PacketInput[]): VoicePacketBatch {
   });
 }
 
+function originalTrack(
+  {
+    body = Uint8Array.from([0x4f, 0x67, 0x67, 0x53, 1, 2, 3]),
+    recordingId = "recording-1",
+    speakerId = firstSpeakerId,
+    timelineOffsetMs = 0,
+    trackNumber = 1,
+  }: {
+    readonly body?: Uint8Array;
+    readonly recordingId?: string;
+    readonly speakerId?: string;
+    readonly timelineOffsetMs?: number;
+    readonly trackNumber?: number;
+  } = {},
+) {
+  return {
+    body,
+    metadata: parseAuthoritativeTrackUploadMetadata({
+      schemaVersion: 1,
+      uploadId: `${recordingId}:track:${trackNumber}`,
+      recordingId,
+      guildId,
+      channelId,
+      speakerId,
+      trackNumber,
+      timelineOffsetMs,
+      checksumSha256: createHash("sha256").update(body).digest("hex"),
+      sizeBytes: body.byteLength,
+    }),
+  };
+}
+
+function authoritativeReady(
+  {
+    recordingId = "recording-1",
+    trackCount = 1,
+  }: {
+    readonly recordingId?: string;
+    readonly trackCount?: number;
+  } = {},
+): CraigLifecycleEvent {
+  return parseCraigLifecycleEvent({
+    channelId,
+    eventId: `${recordingId}:authoritative-ready`,
+    guildId,
+    occurredAt: "2026-08-01T10:05:01.000Z",
+    recordingId,
+    schemaVersion: 1,
+    type: "recording.authoritative_ready",
+    endedAt: "2026-08-01T10:04:59.000Z",
+    sourceFilesChecksumSha256: "a".repeat(64),
+    trackCount,
+  });
+}
+
 function ingress(
   root: string,
   writer: MemoryArtifactWriter,
   limits?: ConstructorParameters<typeof DurableCraigRecordingIngress>[0]["limits"],
-  finalizationSource: ConstructorParameters<typeof DurableCraigRecordingIngress>[0]["finalizationSource"] = "live-packet-spool",
 ): DurableCraigRecordingIngress {
   return new DurableCraigRecordingIngress({
     artifactLocatorPrefix: "memory://recordings",
-    finalizationSource,
     ...(limits === undefined ? {} : { limits }),
     spoolRoot: root,
     writer,
   });
 }
 
-describe("DurableCraigRecordingIngress", () => {
+describe("authoritative Craig recording finalization", () => {
   it("finalizes only checksummed tracks derived from the authoritative Craig original", async () => {
     const root = await spoolRoot();
     const writer = new MemoryArtifactWriter();
-    const adapter = ingress(root, writer, undefined, "craig-original");
+    const adapter = ingress(root, writer);
     await adapter.ingestLifecycleEvent(lifecycle("meeting.started"));
     await adapter.ingestPacketBatch(
       packetBatch({
@@ -171,41 +240,20 @@ describe("DurableCraigRecordingIngress", () => {
       }),
     );
 
-    await expect(
-      adapter.ingestLifecycleEvent(lifecycle("meeting.ended")),
-    ).resolves.toMatchObject({ kind: "accepted" });
-
-    const track = Uint8Array.from([0x4f, 0x67, 0x67, 0x53, 1, 2, 3]);
-    const metadata = parseAuthoritativeTrackUploadMetadata({
-      schemaVersion: 1,
-      uploadId: "recording-1:track:1",
+    await expect(adapter.ingestLifecycleEvent(lifecycle("meeting.ended"))).resolves.toEqual({
+      kind: "accepted",
       recordingId: "recording-1",
-      guildId,
-      channelId,
-      speakerId: firstSpeakerId,
-      trackNumber: 1,
-      timelineOffsetMs: 0,
-      checksumSha256: createHash("sha256").update(track).digest("hex"),
-      sizeBytes: track.byteLength,
+      replayed: false,
     });
+    expect(writer.requests).toEqual([]);
+    expect(await readdir(join(root, "completed-v1"))).toEqual([]);
+
+    const track = originalTrack();
     await expect(
-      adapter.ingestAuthoritativeTrack(metadata, (async function* () {
-        yield track;
-      })()),
+      adapter.ingestAuthoritativeTrack(track.metadata, bytesOnce(track.body)),
     ).resolves.toMatchObject({ replayed: false, speakerId: firstSpeakerId });
 
-    const ready = parseCraigLifecycleEvent({
-      channelId,
-      eventId: "recording-1:authoritative-ready",
-      guildId,
-      occurredAt: "2026-08-01T10:05:01.000Z",
-      recordingId: "recording-1",
-      schemaVersion: 1,
-      type: "recording.authoritative_ready",
-      endedAt: "2026-08-01T10:04:59.000Z",
-      sourceFilesChecksumSha256: "a".repeat(64),
-      trackCount: 1,
-    });
+    const ready = authoritativeReady();
     const finalized = await adapter.ingestLifecycleEvent(ready);
 
     expect(finalized).toMatchObject({
@@ -228,31 +276,163 @@ describe("DurableCraigRecordingIngress", () => {
     expect(manifest.tracks).toHaveLength(1);
   });
 
+  it("keeps completed Craig tracks immutable and reuses only an exact upload retry", async () => {
+    const root = await spoolRoot();
+    const writer = new MemoryArtifactWriter();
+    const adapter = ingress(root, writer);
+    const track = originalTrack();
+    await adapter.ingestLifecycleEvent(lifecycle("meeting.started"));
+    await adapter.ingestLifecycleEvent(lifecycle("meeting.ended"));
+    const accepted = await adapter.ingestAuthoritativeTrack(track.metadata, bytesOnce(track.body));
+    await adapter.ingestLifecycleEvent(authoritativeReady());
+
+    const storedBytes = writer.artifacts.get(accepted.locator)?.slice();
+    if (storedBytes === undefined) {
+      throw new Error("authoritative track bytes were not persisted");
+    }
+    const writesBeforeReplay = writer.requests.length;
+    await expect(
+      adapter.ingestAuthoritativeTrack(track.metadata, bodyMustNotBeRead()),
+    ).resolves.toEqual({ ...accepted, replayed: true });
+    expect(writer.requests).toHaveLength(writesBeforeReplay);
+
+    const conflicting = originalTrack({
+      body: Uint8Array.from([0x4f, 0x67, 0x67, 0x53, 9, 8, 7]),
+    });
+    await expect(
+      adapter.ingestAuthoritativeTrack(conflicting.metadata, bodyMustNotBeRead()),
+    ).rejects.toMatchObject({ failure: "conflicting-duplicate" });
+    const newTrack = originalTrack({ speakerId: secondSpeakerId, trackNumber: 2 });
+    await expect(
+      adapter.ingestAuthoritativeTrack(newTrack.metadata, bodyMustNotBeRead()),
+    ).rejects.toMatchObject({ failure: "invalid-state" });
+    expect(writer.requests).toHaveLength(writesBeforeReplay);
+    expect(writer.artifacts.get(accepted.locator)).toEqual(storedBytes);
+
+    const [receiptName] = await readdir(join(root, "completed-v1"));
+    if (receiptName === undefined) {
+      throw new Error("completion receipt is required");
+    }
+    await expect(
+      readFile(join(root, "completed-v1", receiptName), "utf8").then(
+        (value) => JSON.parse(value) as unknown,
+      ),
+    ).resolves.toMatchObject({
+      authoritativeTracks: [
+        {
+          audioLocator: accepted.locator,
+          checksumSha256: track.metadata.checksumSha256,
+          sizeBytes: track.metadata.sizeBytes,
+          speakerId: track.metadata.speakerId,
+          timelineOffsetMs: track.metadata.timelineOffsetMs,
+          trackNumber: track.metadata.trackNumber,
+          uploadId: track.metadata.uploadId,
+        },
+      ],
+      schemaVersion: 2,
+    });
+  });
+
+  it("persists track intent before storage and recovers a commit-then-fail retry", async () => {
+    const root = await spoolRoot();
+    const writer = new MemoryArtifactWriter();
+    const adapter = ingress(root, writer);
+    const track = originalTrack();
+    await adapter.ingestLifecycleEvent(lifecycle("meeting.started"));
+    await adapter.ingestLifecycleEvent(lifecycle("meeting.ended"));
+    writer.failAfterNextTrackWrite = true;
+
+    await expect(
+      adapter.ingestAuthoritativeTrack(track.metadata, bytesOnce(track.body)),
+    ).rejects.toThrow("synthetic committed track failure");
+    const requestsAfterFailure = writer.requests.length;
+    const conflicting = originalTrack({
+      body: Uint8Array.from([0x4f, 0x67, 0x67, 0x53, 9, 8, 7]),
+    });
+    await expect(
+      adapter.ingestAuthoritativeTrack(conflicting.metadata, bodyMustNotBeRead()),
+    ).rejects.toMatchObject({ failure: "conflicting-duplicate" });
+    expect(writer.requests).toHaveLength(requestsAfterFailure);
+
+    await adapter.close();
+    const recovered = ingress(root, writer);
+    await expect(
+      recovered.ingestLifecycleEvent(authoritativeReady()),
+    ).rejects.toMatchObject({ failure: "invalid-state" });
+    await expect(
+      recovered.ingestAuthoritativeTrack(track.metadata, bytesOnce(track.body)),
+    ).resolves.toMatchObject({ replayed: true, speakerId: firstSpeakerId });
+    await expect(
+      recovered.ingestLifecycleEvent(authoritativeReady()),
+    ).resolves.toMatchObject({ kind: "finalized" });
+  });
+
+  it("fails closed when a legacy completion receipt cannot prove track identity", async () => {
+    const root = await spoolRoot();
+    const writer = new MemoryArtifactWriter();
+    const adapter = ingress(root, writer);
+    const track = originalTrack();
+    await adapter.ingestLifecycleEvent(lifecycle("meeting.started"));
+    await adapter.ingestLifecycleEvent(lifecycle("meeting.ended"));
+    await adapter.ingestAuthoritativeTrack(track.metadata, bytesOnce(track.body));
+    await adapter.ingestLifecycleEvent(authoritativeReady());
+
+    const [receiptName] = await readdir(join(root, "completed-v1"));
+    if (receiptName === undefined) {
+      throw new Error("completion receipt is required");
+    }
+    const receiptPath = join(root, "completed-v1", receiptName);
+    const completed = JSON.parse(await readFile(receiptPath, "utf8")) as Record<string, unknown>;
+    const { authoritativeTracks: _authoritativeTracks, ...legacyReceipt } = completed;
+    await writeFile(receiptPath, `${JSON.stringify({ ...legacyReceipt, schemaVersion: 1 })}\n`);
+
+    const writesBeforeReplay = writer.requests.length;
+    await expect(
+      adapter.ingestAuthoritativeTrack(track.metadata, bodyMustNotBeRead()),
+    ).rejects.toMatchObject({ failure: "corrupt-spool" });
+    await expect(
+      adapter.ingestLifecycleEvent(lifecycle("meeting.started", "recording-2")),
+    ).rejects.toMatchObject({ failure: "corrupt-spool" });
+    expect(writer.requests).toHaveLength(writesBeforeReplay);
+  });
+
+  it("does not consume active capacity when a completed receipt survives the cleanup crash window", async () => {
+    const root = await spoolRoot();
+    const writer = new MemoryArtifactWriter();
+    const adapter = ingress(root, writer, { maxActiveRecordings: 1 });
+    const track = originalTrack();
+    await adapter.ingestLifecycleEvent(lifecycle("meeting.started"));
+    await adapter.ingestLifecycleEvent(lifecycle("meeting.ended"));
+    await adapter.ingestAuthoritativeTrack(track.metadata, bytesOnce(track.body));
+    await adapter.ingestLifecycleEvent(authoritativeReady());
+
+    const [receiptName] = await readdir(join(root, "completed-v1"));
+    if (receiptName === undefined) {
+      throw new Error("completion receipt is required for crash-window simulation");
+    }
+    // Simulates a crash after the durable completion receipt was fsynced but
+    // before best-effort active-spool removal completed.
+    await mkdir(join(root, "active-v1", receiptName.slice(0, -".json".length)));
+
+    await expect(
+      adapter.ingestLifecycleEvent(lifecycle("meeting.started", "recording-2")),
+    ).resolves.toEqual({ kind: "accepted", recordingId: "recording-2", replayed: false });
+  });
+
   it("refuses authoritative-ready until every declared original track is durable", async () => {
     const root = await spoolRoot();
-    const adapter = ingress(root, new MemoryArtifactWriter(), undefined, "craig-original");
+    const adapter = ingress(root, new MemoryArtifactWriter());
     await adapter.ingestLifecycleEvent(lifecycle("meeting.started"));
     await adapter.ingestLifecycleEvent(lifecycle("meeting.ended"));
 
     await expect(
       adapter.ingestLifecycleEvent(
-        parseCraigLifecycleEvent({
-          channelId,
-          eventId: "recording-1:authoritative-ready",
-          guildId,
-          occurredAt: "2026-08-01T10:05:01.000Z",
-          recordingId: "recording-1",
-          schemaVersion: 1,
-          type: "recording.authoritative_ready",
-          endedAt: "2026-08-01T10:05:00.000Z",
-          sourceFilesChecksumSha256: "a".repeat(64),
-          trackCount: 1,
-        }),
+        authoritativeReady(),
       ),
     ).rejects.toMatchObject({ failure: "invalid-state" });
   });
 
-  it("finalizes sequential speaker tracks and a verified manifest", async () => {
+  it("keeps the live packet tee derived until Craig sends authoritative-ready", async () => {
     const root = await spoolRoot();
     const writer = new MemoryArtifactWriter();
     const adapter = ingress(root, writer);
@@ -280,59 +460,35 @@ describe("DurableCraigRecordingIngress", () => {
       ),
     );
 
-    const result = await adapter.ingestLifecycleEvent(lifecycle("meeting.ended"));
-    expect(result.kind).toBe("finalized");
-    if (result.kind !== "finalized") {
-      throw new Error("expected a finalized recording");
-    }
-    expect(result.recording.speakerAudio).toEqual([
-      expect.objectContaining({ speakerId: firstSpeakerId, timelineOffsetMs: 0 }),
-      expect.objectContaining({ speakerId: secondSpeakerId, timelineOffsetMs: 40 }),
-    ]);
-    for (const reference of result.recording.speakerAudio) {
-      const bytes = writer.artifacts.get(reference.audioLocator);
-      expect(bytes).toBeDefined();
-      validateOggOpus(bytes ?? new Uint8Array());
-    }
-    const manifestBytes = writer.artifacts.get(result.recording.manifestLocator);
-    const manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as {
-      tracks: Array<{ speakerId: string; timelineOffsetMs: number }>;
-    };
-    expect(manifest.tracks).toMatchObject([
-      { speakerId: firstSpeakerId, timelineOffsetMs: 0 },
-      { speakerId: secondSpeakerId, timelineOffsetMs: 40 },
-    ]);
-  });
-
-  it("preserves overlapping global speaker offsets", async () => {
-    const root = await spoolRoot();
-    const writer = new MemoryArtifactWriter();
-    const adapter = ingress(root, writer);
-    await adapter.ingestLifecycleEvent(lifecycle("meeting.started"));
-    await adapter.ingestPacketBatch(
-      packetBatch(
-        {
-          relativeTimeMs: 100,
-          rtpSequence: 1,
-          rtpTimestamp: 0,
+    const ended = lifecycle("meeting.ended");
+    await expect(adapter.ingestLifecycleEvent(ended)).resolves.toEqual({
+      kind: "accepted",
+      recordingId: "recording-1",
+      replayed: false,
+    });
+    await adapter.close();
+    const recovered = ingress(root, writer);
+    await expect(recovered.ingestLifecycleEvent(ended)).resolves.toEqual({
+      kind: "accepted",
+      recordingId: "recording-1",
+      replayed: true,
+    });
+    expect(writer.requests).toEqual([]);
+    expect(await readdir(join(root, "completed-v1"))).toEqual([]);
+    await expect(
+      recovered.ingestPacketBatch(
+        packetBatch({
+          relativeTimeMs: 60,
+          rtpSequence: 3,
+          rtpTimestamp: 2_880,
           speakerId: firstSpeakerId,
-        },
-        {
-          relativeTimeMs: 110,
-          rtpSequence: 1,
-          rtpTimestamp: 0,
-          speakerId: secondSpeakerId,
-        },
+        }),
       ),
-    );
-
-    const result = await adapter.ingestLifecycleEvent(lifecycle("meeting.ended"));
-    expect(result.kind === "finalized" ? result.recording.speakerAudio : []).toMatchObject([
-      { speakerId: firstSpeakerId, timelineOffsetMs: 100 },
-      { speakerId: secondSpeakerId, timelineOffsetMs: 110 },
-    ]);
+    ).rejects.toMatchObject({ failure: "invalid-state" });
   });
+});
 
+describe("packet journal durability", () => {
   it("deduplicates retries durably and rejects conflicting packet content", async () => {
     const root = await spoolRoot();
     const writer = new MemoryArtifactWriter();
@@ -348,6 +504,7 @@ describe("DurableCraigRecordingIngress", () => {
       acceptedPackets: 1,
       duplicatePackets: 0,
     });
+    await adapter.close();
     const recovered = ingress(root, writer);
     await expect(recovered.ingestPacketBatch(batch)).resolves.toMatchObject({
       acceptedPackets: 0,
@@ -364,7 +521,7 @@ describe("DurableCraigRecordingIngress", () => {
     } satisfies Partial<RecordingIngressError>);
   });
 
-  it("invalidates a cached index when another ingress owner grows the journal", async () => {
+  it("fails fast for a concurrent spool owner and permits only a stop-first handoff", async () => {
     const root = await spoolRoot();
     const writer = new MemoryArtifactWriter();
     const firstOwner = ingress(root, writer);
@@ -375,18 +532,17 @@ describe("DurableCraigRecordingIngress", () => {
       rtpTimestamp: 100,
       speakerId: firstSpeakerId,
     });
-    const secondBatch = packetBatch({
-      relativeTimeMs: 20,
-      rtpSequence: 2,
-      rtpTimestamp: 1_060,
-      speakerId: firstSpeakerId,
+    await firstOwner.acquireExclusiveSpoolOwnership();
+    await expect(secondOwner.acquireExclusiveSpoolOwnership()).rejects.toMatchObject({
+      failure: "invalid-state",
     });
-
     await firstOwner.ingestLifecycleEvent(lifecycle("meeting.started"));
     await firstOwner.ingestPacketBatch(firstBatch);
-    await secondOwner.ingestPacketBatch(secondBatch);
+    await firstOwner.close();
 
-    await expect(firstOwner.ingestPacketBatch(secondBatch)).resolves.toMatchObject({
+    const replacement = ingress(root, writer);
+    await replacement.acquireExclusiveSpoolOwnership();
+    await expect(replacement.ingestPacketBatch(firstBatch)).resolves.toMatchObject({
       acceptedPackets: 0,
       duplicatePackets: 1,
     });
@@ -419,6 +575,7 @@ describe("DurableCraigRecordingIngress", () => {
       Uint8Array.from([0x20, 0x00]),
     );
 
+    await adapter.close();
     const recovered = ingress(root, writer);
     await expect(recovered.ingestPacketBatch(batch)).resolves.toMatchObject({
       acceptedPackets: 0,
@@ -426,7 +583,8 @@ describe("DurableCraigRecordingIngress", () => {
     });
     await expect(
       recovered.ingestLifecycleEvent(lifecycle("meeting.ended")),
-    ).resolves.toMatchObject({ kind: "finalized" });
+    ).resolves.toMatchObject({ kind: "accepted" });
+    expect(writer.requests).toEqual([]);
   });
 
   it("resumes finalization after an artifact writer failure", async () => {
@@ -435,19 +593,18 @@ describe("DurableCraigRecordingIngress", () => {
     const adapter = ingress(root, writer);
     const ended = lifecycle("meeting.ended");
     await adapter.ingestLifecycleEvent(lifecycle("meeting.started"));
-    await adapter.ingestPacketBatch(
-      packetBatch({
-        relativeTimeMs: 0,
-        rtpSequence: 1,
-        rtpTimestamp: 100,
-        speakerId: firstSpeakerId,
-      }),
-    );
+    await adapter.ingestLifecycleEvent(ended);
+    const track = originalTrack();
+    await adapter.ingestAuthoritativeTrack(track.metadata, (async function* () {
+      yield track.body;
+    })());
     writer.failNextManifest = true;
-    await expect(adapter.ingestLifecycleEvent(ended)).rejects.toThrow("synthetic manifest failure");
+    const ready = authoritativeReady();
+    await expect(adapter.ingestLifecycleEvent(ready)).rejects.toThrow("synthetic manifest failure");
 
+    await adapter.close();
     const recovered = ingress(root, writer);
-    await expect(recovered.ingestLifecycleEvent(ended)).resolves.toMatchObject({
+    await expect(recovered.ingestLifecycleEvent(ready)).resolves.toMatchObject({
       kind: "finalized",
       replayed: true,
     });
@@ -459,18 +616,15 @@ describe("DurableCraigRecordingIngress", () => {
     const writer = new MemoryArtifactWriter();
     const adapter = ingress(root, writer);
     await adapter.ingestLifecycleEvent(lifecycle("meeting.started"));
-    await adapter.ingestPacketBatch(
-      packetBatch({
-        relativeTimeMs: 0,
-        rtpSequence: 1,
-        rtpTimestamp: 100,
-        speakerId: firstSpeakerId,
-      }),
-    );
+    await adapter.ingestLifecycleEvent(lifecycle("meeting.ended"));
+    const track = originalTrack();
+    await adapter.ingestAuthoritativeTrack(track.metadata, (async function* () {
+      yield track.body;
+    })());
     writer.returnMismatchedReceipt = true;
 
     await expect(
-      adapter.ingestLifecycleEvent(lifecycle("meeting.ended")),
+      adapter.ingestLifecycleEvent(authoritativeReady()),
     ).rejects.toMatchObject({ failure: "artifact-write-mismatch" });
     expect(await readdir(join(root, "active-v1"))).toHaveLength(1);
     expect(await readdir(join(root, "completed-v1"))).toEqual([]);
@@ -480,20 +634,19 @@ describe("DurableCraigRecordingIngress", () => {
     const root = await spoolRoot();
     const writer = new MemoryArtifactWriter();
     const adapter = ingress(root, writer);
-    const ended = lifecycle("meeting.ended");
+    const ready = authoritativeReady();
     await adapter.ingestLifecycleEvent(lifecycle("meeting.started"));
-    await adapter.ingestPacketBatch(
-      packetBatch({
-        relativeTimeMs: 0,
-        rtpSequence: 1,
-        rtpTimestamp: 100,
-        speakerId: firstSpeakerId,
-      }),
-    );
-    const first = await adapter.ingestLifecycleEvent(ended);
+    await adapter.ingestLifecycleEvent(lifecycle("meeting.ended"));
+    const track = originalTrack();
+    await adapter.ingestAuthoritativeTrack(track.metadata, (async function* () {
+      yield track.body;
+    })());
+    const first = await adapter.ingestLifecycleEvent(ready);
     const writesAfterFirstFinalization = writer.requests.length;
-    const replay = await ingress(root, writer).ingestLifecycleEvent(ended);
-    const startedReplay = await ingress(root, writer).ingestLifecycleEvent(
+    await adapter.close();
+    const recovered = ingress(root, writer);
+    const replay = await recovered.ingestLifecycleEvent(ready);
+    const startedReplay = await recovered.ingestLifecycleEvent(
       lifecycle("meeting.started"),
     );
 
@@ -507,7 +660,9 @@ describe("DurableCraigRecordingIngress", () => {
     expect(await readdir(join(root, "active-v1"))).toEqual([]);
     expect(await readdir(join(root, "completed-v1"))).toHaveLength(1);
   });
+});
 
+describe("recording ingress lifecycle safety", () => {
   it("durably aborts without publishing artifacts", async () => {
     const root = await spoolRoot();
     const writer = new MemoryArtifactWriter();
@@ -518,12 +673,14 @@ describe("DurableCraigRecordingIngress", () => {
       kind: "aborted",
       replayed: false,
     });
-    await expect(ingress(root, writer).ingestLifecycleEvent(aborted)).resolves.toMatchObject({
+    await adapter.close();
+    const recovered = ingress(root, writer);
+    await expect(recovered.ingestLifecycleEvent(aborted)).resolves.toMatchObject({
       kind: "aborted",
       replayed: true,
     });
     await expect(
-      adapter.ingestPacketBatch(
+      recovered.ingestPacketBatch(
         packetBatch({
           relativeTimeMs: 0,
           rtpSequence: 1,
@@ -578,7 +735,7 @@ describe("DurableCraigRecordingIngress", () => {
 
     for (const recordingId of recordingIds) {
       const aborted = lifecycle("meeting.aborted", recordingId);
-      await expect(ingress(root, writer, { maxActiveRecordings: 1 }).ingestLifecycleEvent(aborted))
+      await expect(adapter.ingestLifecycleEvent(aborted))
         .resolves.toEqual({ kind: "aborted", recordingId, replayed: true });
     }
 
@@ -672,7 +829,6 @@ describe("DurableCraigRecordingIngress", () => {
       () =>
         new DurableCraigRecordingIngress({
           artifactLocatorPrefix: "memory://recordings",
-          finalizationSource: "live-packet-spool",
           spoolRoot: "relative/spool",
           writer,
         }),
@@ -681,7 +837,6 @@ describe("DurableCraigRecordingIngress", () => {
       () =>
         new DurableCraigRecordingIngress({
           artifactLocatorPrefix: "memory://recordings/../escape",
-          finalizationSource: "live-packet-spool",
           spoolRoot: tmpdir(),
           writer,
         }),

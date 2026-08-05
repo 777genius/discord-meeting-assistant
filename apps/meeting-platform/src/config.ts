@@ -21,6 +21,8 @@ const maximumVoicetextBatchMaxConcurrency = 10;
 const maximumVoicetextBatchMaxConcurrentMeetings = 2;
 const maximumVoicetextLiveMaxConcurrentSessions = 10;
 const maximumVoicetextLivePacketBackpressureTimeoutMs = 30_000;
+const defaultConversationThinkingCueRoot =
+  "/app/apps/meeting-platform/assets/thinking-cues";
 const absolutePath = z
   .string()
   .startsWith("/")
@@ -45,10 +47,32 @@ const secureWebSocketUrl = z.url().refine((value) => {
     url.hash.length === 0
   );
 });
+const runtimeAddress = z
+  .string()
+  .regex(/^(?:[a-zA-Z0-9][a-zA-Z0-9.-]*|\[[0-9a-fA-F:]+\]):\d{1,5}$/u);
+const profileIdentifier = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/u);
+const voiceIdentifier = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/u);
 
 const environmentSchema = z
   .object({
     BIND_ADDRESS: z.union([z.ipv4(), z.ipv6()]).default("0.0.0.0"),
+    CONVERSATION_ENABLED: z
+      .enum(["true", "false"])
+      .default("false")
+      .transform((value) => value === "true"),
+    CONVERSATION_RUNTIME_ADDRESS: runtimeAddress.optional(),
+    CONVERSATION_RUNTIME_TOKEN_FILE: absolutePath.optional(),
+    CONVERSATION_THINKING_CUE_ROOT: absolutePath.optional(),
+    CONVERSATION_VOICE_ID: voiceIdentifier.default("jqcCZkN6Knx8BJ5TBdYR"),
+    CONVERSATION_SYSTEM_PROMPT: z
+      .string()
+      .trim()
+      .min(1)
+      .max(4_000)
+      .default(
+        "You are Botik, a concise voice assistant. Answer in the participant's language. When that language uses grammatical gender, refer to yourself using feminine forms. Never claim to remember earlier turns.",
+      ),
+    CONVERSATION_VOICE_PROFILE_ID: profileIdentifier.default("deterministic-e2e-ru"),
     CRAIG_BEARER_TOKEN_FILE: absolutePath,
     DISCORD_APPLICATION_ID: snowflake,
     DISCORD_CRAIG_APPLICATION_ID: snowflake,
@@ -57,6 +81,7 @@ const environmentSchema = z
     DISCORD_PUBLICATION_MODE: z.enum(["message", "thread"]).default("message"),
     DISCORD_RESULTS_CHANNEL_ID: optionalSnowflake,
     DISCORD_TOKEN_FILE: absolutePath,
+    LIVE_INGRESS_OWNER_MODE: z.literal("singleton").default("singleton"),
     NODE_ENV: z
       .enum(["development", "production", "test"])
       .default("production"),
@@ -75,9 +100,7 @@ const environmentSchema = z
     S3_SECRET_ACCESS_KEY_FILE: absolutePath,
     SPEACHES_BASE_URL: httpUrl,
     SPEACHES_MODEL: z.string().min(1).max(256),
-    SUBSCRIPTION_RUNTIME_ADDRESS: z
-      .string()
-      .regex(/^(?:[a-zA-Z0-9][a-zA-Z0-9.-]*|\[[0-9a-fA-F:]+\]):\d{1,5}$/u),
+    SUBSCRIPTION_RUNTIME_ADDRESS: runtimeAddress,
     SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256: sha256,
     SUBSCRIPTION_RUNTIME_TOKEN_FILE: absolutePath,
     TRANSCRIPTION_PROVIDER: z
@@ -117,6 +140,39 @@ const environmentSchema = z
     VOICETEXT_WS_URL: secureWebSocketUrl.optional(),
   })
   .superRefine((environment, context) => {
+    if (environment.CONVERSATION_ENABLED) {
+      if (environment.TRANSCRIPTION_PROVIDER !== "voicetext") {
+        context.addIssue({
+          code: "custom",
+          message: "live conversation requires Voicetext streaming transcription",
+          path: ["TRANSCRIPTION_PROVIDER"],
+        });
+      }
+      if (environment.CONVERSATION_RUNTIME_ADDRESS === undefined) {
+        context.addIssue({
+          code: "custom",
+          message: "CONVERSATION_RUNTIME_ADDRESS is required when conversation is enabled",
+          path: ["CONVERSATION_RUNTIME_ADDRESS"],
+        });
+      }
+      if (environment.CONVERSATION_RUNTIME_TOKEN_FILE === undefined) {
+        context.addIssue({
+          code: "custom",
+          message: "CONVERSATION_RUNTIME_TOKEN_FILE is required when conversation is enabled",
+          path: ["CONVERSATION_RUNTIME_TOKEN_FILE"],
+        });
+      }
+      if (
+        environment.NODE_ENV === "production" &&
+        environment.CONVERSATION_VOICE_PROFILE_ID.startsWith("deterministic-e2e")
+      ) {
+        context.addIssue({
+          code: "custom",
+          message: "deterministic E2E voice profiles are forbidden in production",
+          path: ["CONVERSATION_VOICE_PROFILE_ID"],
+        });
+      }
+    }
     const legacyRouteParts = [
       environment.DISCORD_LEGACY_GUILD_ID,
       environment.DISCORD_LEGACY_VOICE_CHANNEL_ID,
@@ -151,6 +207,7 @@ const environmentSchema = z
   });
 
 interface PlatformSecrets {
+  readonly conversationRuntimeToken?: string;
   readonly craigBearerToken: string;
   readonly discordToken: string;
   readonly postgresUrl: string;
@@ -163,6 +220,13 @@ interface PlatformSecrets {
 
 export interface PlatformConfig {
   readonly bindAddress: string;
+  readonly conversation?: {
+    readonly runtimeAddress: string;
+    readonly systemPrompt: string;
+    readonly thinkingCueRoot: string;
+    readonly voiceId: string;
+    readonly voiceProfileId: string;
+  };
   /** New meetings publish directly into the configured results channel by default. */
   readonly discordPublicationMode: "message" | "thread";
   readonly discordApplicationId: string;
@@ -173,6 +237,7 @@ export interface PlatformConfig {
     readonly voiceChannelId: string;
   };
   readonly nodeEnvironment: "development" | "production" | "test";
+  readonly liveIngressOwnerMode: "singleton";
   readonly port: number;
   readonly recordingSpoolRoot: string;
   readonly s3: {
@@ -213,6 +278,7 @@ export async function loadPlatformConfig(
   const environment = environmentSchema.parse(rawEnvironment);
   const [
     craigBearerToken,
+    conversationRuntimeToken,
     discordToken,
     postgresUrl,
     redisUrl,
@@ -222,6 +288,10 @@ export async function loadPlatformConfig(
     voicetextServiceToken,
   ] = await Promise.all([
     readSecret(environment.CRAIG_BEARER_TOKEN_FILE),
+    !environment.CONVERSATION_ENABLED ||
+    environment.CONVERSATION_RUNTIME_TOKEN_FILE === undefined
+      ? Promise.resolve()
+      : readSecret(environment.CONVERSATION_RUNTIME_TOKEN_FILE),
     readSecret(environment.DISCORD_TOKEN_FILE),
     readSecret(environment.POSTGRES_URL_FILE),
     readSecret(environment.REDIS_URL_FILE),
@@ -235,6 +305,20 @@ export async function loadPlatformConfig(
 
   return Object.freeze({
     bindAddress: environment.BIND_ADDRESS,
+    ...(environment.CONVERSATION_ENABLED &&
+    environment.CONVERSATION_RUNTIME_ADDRESS !== undefined
+      ? {
+          conversation: {
+            runtimeAddress: environment.CONVERSATION_RUNTIME_ADDRESS,
+            systemPrompt: environment.CONVERSATION_SYSTEM_PROMPT,
+            thinkingCueRoot:
+              environment.CONVERSATION_THINKING_CUE_ROOT ??
+              defaultConversationThinkingCueRoot,
+            voiceId: environment.CONVERSATION_VOICE_ID,
+            voiceProfileId: environment.CONVERSATION_VOICE_PROFILE_ID,
+          },
+        }
+      : {}),
     discordPublicationMode: environment.DISCORD_PUBLICATION_MODE,
     discordApplicationId: environment.DISCORD_APPLICATION_ID,
     discordCraigApplicationId: environment.DISCORD_CRAIG_APPLICATION_ID,
@@ -249,6 +333,7 @@ export async function loadPlatformConfig(
             voiceChannelId: environment.DISCORD_LEGACY_VOICE_CHANNEL_ID,
           },
         }),
+    liveIngressOwnerMode: environment.LIVE_INGRESS_OWNER_MODE,
     nodeEnvironment: environment.NODE_ENV,
     port: environment.PORT,
     recordingSpoolRoot: environment.RECORDING_SPOOL_ROOT,
@@ -260,6 +345,9 @@ export async function loadPlatformConfig(
     },
     secrets: Object.freeze({
       craigBearerToken,
+      ...(conversationRuntimeToken === undefined
+        ? {}
+        : { conversationRuntimeToken }),
       discordToken,
       postgresUrl,
       redisUrl,

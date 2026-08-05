@@ -1,4 +1,11 @@
-# ADR 0006: Voicetext-authenticated Deepgram transcription
+---
+id: ADR-0006
+status: accepted
+supersedes: []
+superseded_by: []
+---
+
+# ADR-0006: Voicetext-authenticated Deepgram transcription
 
 - Status: Accepted
 - Date: 2026-08-02

@@ -137,7 +137,9 @@ describe("OpenAiEvidenceSummaryAdapter", () => {
     );
     expect(client.requests[0]?.messages[1]?.content).toContain('"turnId":"turn-a"');
   });
+});
 
+describe("OpenAiEvidenceSummaryAdapter evidence validation", () => {
   it("rejects a provider summary that cites a nonexistent turn", async () => {
     const client = new FakeOpenAiStructuredResponseClient({
       status: "completed",

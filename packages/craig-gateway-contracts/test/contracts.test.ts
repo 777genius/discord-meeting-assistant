@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   parseAuthoritativeTrackUploadMetadata,
   parseCraigLifecycleEvent,
+  parseCraigPlaybackCommand,
+  parseCraigPlaybackEvent,
   parseVoicePacket,
   parseVoicePacketBatch,
 } from "../src/index.js";
@@ -143,6 +145,83 @@ describe("voice packet batches", () => {
             token: "must-not-cross-boundary",
           },
         ],
+      }),
+    ).toThrow();
+  });
+});
+
+describe("Craig conversation playback", () => {
+  const playbackEnvelope = {
+    schemaVersion: 1,
+    recordingId: "recording-1",
+    turnId: "turn-1",
+    attemptId: "attempt-1",
+  } as const;
+
+  it("accepts one bounded PCM chunk and lifecycle commands", () => {
+    expect(
+      parseCraigPlaybackCommand({
+        ...playbackEnvelope,
+        type: "playback-start",
+        format: "pcm_s16le",
+        sampleRateHz: 48_000,
+        channels: 1,
+      }),
+    ).toMatchObject({ type: "playback-start" });
+    expect(
+      parseCraigPlaybackCommand({
+        ...playbackEnvelope,
+        type: "audio-chunk",
+        sequence: 0,
+        pcmBase64: Buffer.from(Uint8Array.of(1, 0, 2, 0)).toString("base64"),
+      }),
+    ).toMatchObject({ type: "audio-chunk", sequence: 0 });
+    expect(
+      parseCraigPlaybackCommand({
+        ...playbackEnvelope,
+        type: "playback-cancel",
+        reason: "barge-in",
+      }),
+    ).toMatchObject({ type: "playback-cancel" });
+  });
+
+  it("accepts recording-scoped readiness and sender-side playback evidence", () => {
+    expect(
+      parseCraigPlaybackEvent({
+        schemaVersion: 1,
+        type: "session-ready",
+        recordingId: "recording-1",
+        guildId: "1533224474609057793",
+        channelId: "1533224474609057794",
+        gatewaySessionId: "gateway-session-1",
+      }),
+    ).toMatchObject({ type: "session-ready" });
+    expect(
+      parseCraigPlaybackEvent({
+        ...playbackEnvelope,
+        type: "playback-started",
+        startedAtMs: 4_000,
+      }),
+    ).toMatchObject({ type: "playback-started", startedAtMs: 4_000 });
+  });
+
+  it("rejects unbounded, odd-length, or secret-bearing playback data", () => {
+    expect(() =>
+      parseCraigPlaybackCommand({
+        ...playbackEnvelope,
+        type: "audio-chunk",
+        sequence: 0,
+        pcmBase64: Buffer.from(Uint8Array.of(1)).toString("base64"),
+      }),
+    ).toThrow();
+    expect(() =>
+      parseCraigPlaybackCommand({
+        ...playbackEnvelope,
+        type: "playback-start",
+        format: "pcm_s16le",
+        sampleRateHz: 48_000,
+        channels: 1,
+        providerApiKey: "must-not-cross-the-boundary",
       }),
     ).toThrow();
   });

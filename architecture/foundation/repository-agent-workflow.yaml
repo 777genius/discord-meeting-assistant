@@ -1,0 +1,42 @@
+schemaVersion: 1
+instructions:
+  canonical: AGENTS.md
+  claude: CLAUDE.md
+  gemini: GEMINI.md
+  copilot: .github/copilot-instructions.md
+scripts:
+  changed: check:changed
+  fast: check:fast
+  full: check
+changedChecks:
+  - id: lint
+    script: lint:fast:files
+    extensions: [.js, .mjs, .cjs, .ts, .tsx]
+  - id: typecheck
+    script: typecheck
+    extensions: [.ts, .tsx]
+    passPaths: false
+  - id: source-dependencies
+    script: architecture:source
+    extensions: [.js, .mjs, .cjs, .ts, .tsx]
+    passPaths: false
+  - id: documentation-local-references
+    script: architecture:documentation
+    extensions: [.md]
+    passPaths: false
+  - id: protobuf-evolution
+    script: architecture:protobuf
+    extensions: [.proto]
+    passPaths: false
+fullScanPaths:
+  - .github/workflows
+  - architecture
+  - buf.yaml
+  - infra
+  - pnpm-lock.yaml
+  - pnpm-workspace.yaml
+  - tsconfig.json
+  - sgconfig.yml
+  - knip.json
+  - .oxlintrc.json
+  - .oxlintrc.type-aware.json

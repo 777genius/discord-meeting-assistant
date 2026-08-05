@@ -4,10 +4,16 @@ import { z } from "zod";
 
 import {
   auditedSubscriptionRuntimePackageVersion,
+  conversationAnswerOutputSchemaName,
+  conversationAnswerPolicyVersion,
   incrementalMeetingSummaryOutputSchemaName,
   incrementalMeetingSummaryPolicyVersion,
   meetingSummaryOutputSchemaName,
   meetingSummaryPolicyVersion,
+  subscriptionRuntimeConversationMaxOutputTokens,
+  subscriptionRuntimeConversationModel,
+  subscriptionRuntimeConversationPurpose,
+  subscriptionRuntimeConversationReasoningEffort,
   subscriptionRuntimeIncrementalMaxOutputTokens,
   subscriptionRuntimeModel,
   subscriptionRuntimeIncrementalModel,
@@ -54,18 +60,22 @@ const deploymentPolicySchema = z
         model: z.union([
           z.literal(subscriptionRuntimeModel),
           z.literal(subscriptionRuntimeIncrementalModel),
+          z.literal(subscriptionRuntimeConversationModel),
         ]),
         policyVersion: z.union([
           z.literal(meetingSummaryPolicyVersion),
           z.literal(incrementalMeetingSummaryPolicyVersion),
+          z.literal(conversationAnswerPolicyVersion),
         ]),
         maxOutputTokens: z.union([
           z.literal(subscriptionRuntimeSummaryMaxOutputTokens),
           z.literal(subscriptionRuntimeIncrementalMaxOutputTokens),
+          z.literal(subscriptionRuntimeConversationMaxOutputTokens),
         ]),
         reasoningEffort: z.union([
           z.literal(subscriptionRuntimeReasoningEffort),
           z.literal(subscriptionRuntimeIncrementalReasoningEffort),
+          z.literal(subscriptionRuntimeConversationReasoningEffort),
         ]),
         taskKind: z.literal("structured-prompt"),
         executionProfile: z.literal("stateless-completion"),
@@ -77,6 +87,7 @@ const deploymentPolicySchema = z
         outputSchemaName: z.union([
           z.literal(meetingSummaryOutputSchemaName),
           z.literal(incrementalMeetingSummaryOutputSchemaName),
+          z.literal(conversationAnswerOutputSchemaName),
         ]),
         isolatedCwd: z.string().min(1),
       }),
@@ -200,66 +211,107 @@ async function assertDeploymentPolicy(
   env: NodeJS.ProcessEnv,
   settings: SidecarSettings,
 ): Promise<void> {
-  const policy = deploymentPolicySchema.safeParse(
+  const parsed = deploymentPolicySchema.safeParse(
     JSON.parse(await readFile(policyPath, "utf8")) as unknown,
   );
-  const finalProfile = policy.success
-    ? policy.data.purposeProfiles[subscriptionRuntimePurpose]
-    : undefined;
-  const incrementalProfile = policy.success
-    ? policy.data.purposeProfiles[subscriptionRuntimeIncrementalPurpose]
-    : undefined;
-  const admittedPurposeNames = policy.success
-    ? Object.keys(policy.data.purposeProfiles).toSorted()
-    : [];
+  if (!parsed.success) {
+    rejectDeploymentPolicy();
+  }
+  const profiles = requiredPurposeProfiles(parsed.data);
+  assertFinalPurposeProfile(profiles.final);
+  assertIncrementalPurposeProfile(profiles.incremental);
+  assertConversationPurposeProfile(profiles.conversation);
+  assertDeploymentWiring(parsed.data, profiles, env, settings);
+}
+
+type DeploymentPolicy = z.infer<typeof deploymentPolicySchema>;
+type PurposeProfile = DeploymentPolicy["purposeProfiles"][string];
+
+interface RequiredPurposeProfiles {
+  readonly conversation: PurposeProfile;
+  readonly final: PurposeProfile;
+  readonly incremental: PurposeProfile;
+}
+
+function requiredPurposeProfiles(policy: DeploymentPolicy): RequiredPurposeProfiles {
+  const names = Object.keys(policy.purposeProfiles).toSorted();
   if (
-    !policy.success ||
-    finalProfile === undefined ||
-    incrementalProfile === undefined ||
-    admittedPurposeNames.length !== 2 ||
-    admittedPurposeNames[0] !== subscriptionRuntimePurpose ||
-    admittedPurposeNames[1] !== subscriptionRuntimeIncrementalPurpose ||
-    valuesDiffer(finalProfile.model, subscriptionRuntimeModel) ||
-    valuesDiffer(finalProfile.policyVersion, meetingSummaryPolicyVersion) ||
-    valuesDiffer(
-      finalProfile.maxOutputTokens,
-      subscriptionRuntimeSummaryMaxOutputTokens,
-    ) ||
-    valuesDiffer(finalProfile.reasoningEffort, subscriptionRuntimeReasoningEffort) ||
-    finalProfile.outputSchemaName !== meetingSummaryOutputSchemaName ||
-    valuesDiffer(incrementalProfile.model, subscriptionRuntimeIncrementalModel) ||
-    valuesDiffer(
-      incrementalProfile.policyVersion,
-      incrementalMeetingSummaryPolicyVersion,
-    ) ||
-    valuesDiffer(
-      incrementalProfile.maxOutputTokens,
-      subscriptionRuntimeIncrementalMaxOutputTokens,
-    ) ||
-    valuesDiffer(
-      incrementalProfile.reasoningEffort,
-      subscriptionRuntimeIncrementalReasoningEffort,
-    ) ||
-    incrementalProfile.outputSchemaName !==
-      incrementalMeetingSummaryOutputSchemaName ||
-    policy.data.transport.bind !== settings.bindAddress ||
-    policy.data.transport.serviceTokenFile !==
-      env.SUBSCRIPTION_RUNTIME_SERVICE_TOKEN_FILE ||
-    policy.data.custody.authJsonPath !== settings.authJsonPath ||
-    policy.data.custody.stateRoot !== settings.stateRoot ||
-    policy.data.custody.localEncryptionKeyFile !==
-      settings.localEncryptionKeyFile ||
-    finalProfile.isolatedCwd !== settings.isolatedCwd ||
-    incrementalProfile.isolatedCwd !== settings.isolatedCwd ||
-    !policy.data.environment.denyKeySuffixes.includes("_API_KEY") ||
-    !policy.data.environment.denyKeySuffixes.includes("_API_KEY_FILE")
+    names.length !== 3 ||
+    names[0] !== subscriptionRuntimeConversationPurpose ||
+    names[1] !== subscriptionRuntimePurpose ||
+    names[2] !== subscriptionRuntimeIncrementalPurpose
   ) {
-    throw new Error("Deployment policy conflicts with executable sidecar policy");
+    rejectDeploymentPolicy();
+  }
+  const final = policy.purposeProfiles[subscriptionRuntimePurpose];
+  const incremental = policy.purposeProfiles[subscriptionRuntimeIncrementalPurpose];
+  const conversation = policy.purposeProfiles[subscriptionRuntimeConversationPurpose];
+  if (final === undefined || incremental === undefined || conversation === undefined) {
+    rejectDeploymentPolicy();
+  }
+  return { conversation, final, incremental };
+}
+
+function assertFinalPurposeProfile(profile: PurposeProfile): void {
+  if (
+    profile.model !== subscriptionRuntimeModel ||
+    profile.policyVersion !== meetingSummaryPolicyVersion ||
+    profile.maxOutputTokens !== subscriptionRuntimeSummaryMaxOutputTokens ||
+    profile.reasoningEffort !== subscriptionRuntimeReasoningEffort ||
+    profile.outputSchemaName !== meetingSummaryOutputSchemaName
+  ) {
+    rejectDeploymentPolicy();
   }
 }
 
-function valuesDiffer<T extends number | string>(actual: T, expected: T): boolean {
-  return actual !== expected;
+function assertIncrementalPurposeProfile(profile: PurposeProfile): void {
+  if (
+    profile.model !== subscriptionRuntimeIncrementalModel ||
+    profile.policyVersion !== incrementalMeetingSummaryPolicyVersion ||
+    profile.maxOutputTokens !== subscriptionRuntimeIncrementalMaxOutputTokens ||
+    profile.reasoningEffort !== subscriptionRuntimeIncrementalReasoningEffort ||
+    profile.outputSchemaName !== incrementalMeetingSummaryOutputSchemaName
+  ) {
+    rejectDeploymentPolicy();
+  }
+}
+
+function assertConversationPurposeProfile(profile: PurposeProfile): void {
+  if (
+    profile.model !== subscriptionRuntimeConversationModel ||
+    profile.policyVersion !== conversationAnswerPolicyVersion ||
+    profile.maxOutputTokens !== subscriptionRuntimeConversationMaxOutputTokens ||
+    profile.reasoningEffort !== subscriptionRuntimeConversationReasoningEffort ||
+    profile.outputSchemaName !== conversationAnswerOutputSchemaName
+  ) {
+    rejectDeploymentPolicy();
+  }
+}
+
+function assertDeploymentWiring(
+  policy: DeploymentPolicy,
+  profiles: RequiredPurposeProfiles,
+  env: NodeJS.ProcessEnv,
+  settings: SidecarSettings,
+): void {
+  if (
+    policy.transport.bind !== settings.bindAddress ||
+    policy.transport.serviceTokenFile !== env.SUBSCRIPTION_RUNTIME_SERVICE_TOKEN_FILE ||
+    policy.custody.authJsonPath !== settings.authJsonPath ||
+    policy.custody.stateRoot !== settings.stateRoot ||
+    policy.custody.localEncryptionKeyFile !== settings.localEncryptionKeyFile ||
+    profiles.final.isolatedCwd !== settings.isolatedCwd ||
+    profiles.incremental.isolatedCwd !== settings.isolatedCwd ||
+    profiles.conversation.isolatedCwd !== settings.isolatedCwd ||
+    !policy.environment.denyKeySuffixes.includes("_API_KEY") ||
+    !policy.environment.denyKeySuffixes.includes("_API_KEY_FILE")
+  ) {
+    rejectDeploymentPolicy();
+  }
+}
+
+function rejectDeploymentPolicy(): never {
+  throw new Error("Deployment policy conflicts with executable sidecar policy");
 }
 
 async function readSecretFile(path: string, minimumLength: number): Promise<string> {

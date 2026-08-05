@@ -1,236 +1,54 @@
+import { GuildConfiguration } from "@discord-meeting/guild-configuration-core";
+import { type MeetingSnapshot } from "@discord-meeting/meeting-core";
 import {
-  GuildConfiguration,
-} from "@discord-meeting/guild-configuration-core";
-import {
-  EvidenceBackedSummary,
-  FinalTranscript,
-  LiveMeeting,
-  Meeting,
-  type MeetingSnapshot,
-} from "@discord-meeting/meeting-core";
-import { readFile } from "node:fs/promises";
-import { Pool } from "pg";
-import {
-  GenericContainer,
-  type StartedTestContainer,
-  Wait,
-} from "testcontainers";
-import {
-  afterAll,
-  beforeAll,
-  beforeEach,
   describe,
   expect,
   it,
-  type TestContext,
 } from "vitest";
 
 import {
+  configuredGuild,
+  databaseOrSkip,
+  evidenceBackedMeeting,
+  recordedMeeting,
+  usePostgresIntegrationDatabase,
+} from "./postgres-integration-fixtures.js";
+import {
   MeetingPersistenceConflictError,
+  PostCallDeadLetterConflictError,
   PostgresGuildConfigurationRepository,
-  PostgresLiveMeetingRepository,
   PostgresMeetingRepository,
+  PostgresSummaryPublicationEffectLedger,
 } from "../src/index.js";
 
-const POSTGRES_IMAGE = "postgres:18.4-alpine";
-const POSTGRES_PORT = 5432;
+usePostgresIntegrationDatabase();
 
-let container: StartedTestContainer | undefined;
-let pool: Pool | undefined;
-let dockerUnavailableReason: string | undefined;
+describe("PostgresSummaryPublicationEffectLedger", () => {
+  it("retains an unresolved create fence and reconciles one exact receipt", async (context) => {
+    const ledger = new PostgresSummaryPublicationEffectLedger(
+      databaseOrSkip(context),
+    );
+    const reservation = {
+      projectionKey: "meeting-projection-1",
+      publicationTargetId: "11111111111111111",
+    };
 
-function recordedMeeting(
-  meetingId = "meeting-postgres-1",
-  manifestLocator = "s3://recordings/meeting-postgres-1/manifest.json",
-): Meeting {
-  return Meeting.record({
-    meetingId,
-    publicationTargetId: "discord-channel-1",
-    recording: {
-      manifestLocator,
-      recordingId: `recording-${meetingId}`,
-      speakerAudio: [
-        {
-          audioLocator: `s3://recordings/${meetingId}/speaker-a.flac`,
-          speakerId: "speaker-a",
-          timelineOffsetMs: 0,
-        },
-        {
-          audioLocator: `s3://recordings/${meetingId}/speaker-b.flac`,
-          speakerId: "speaker-b",
-          timelineOffsetMs: 650,
-        },
-      ],
-    },
-  });
-}
-
-function configuredGuild(): GuildConfiguration {
-  return GuildConfiguration.configure({
-    configuredByUserId: "11111111111111111",
-    guildId: "22222222222222222",
-    resultsChannelId: "33333333333333333",
-    voiceChannelId: "44444444444444444",
-  });
-}
-
-function evidenceBackedMeeting(meetingId = "meeting-postgres-1"): Meeting {
-  const meeting = recordedMeeting(meetingId);
-  meeting.beginTranscription();
-  const transcript = FinalTranscript.create({
-    recordingId: meeting.recording.recordingId,
-    transcriptId: `transcript-${meetingId}`,
-    turns: [
-      {
-        endMs: 1_400,
-        speakerId: "speaker-a",
-        startMs: 0,
-        text: "We will ship the first release on Friday.",
-        turnId: "turn-decision",
-      },
-      {
-        endMs: 2_200,
-        speakerId: "speaker-b",
-        startMs: 900,
-        text: "I will prepare the release checklist.",
-        turnId: "turn-action",
-      },
-    ],
-    version: 1,
-  });
-  meeting.completeTranscription(transcript);
-  meeting.beginSummary();
-  meeting.completeSummary(
-    EvidenceBackedSummary.create(
-      {
-        actionItems: [
-          {
-            actionItemId: "action-checklist",
-            evidenceTurnIds: ["turn-action"],
-            ownerSpeakerId: "speaker-b",
-            text: "Prepare the release checklist.",
-          },
-        ],
-        decisions: [
-          {
-            decisionId: "decision-release-date",
-            evidenceTurnIds: ["turn-decision"],
-            text: "Ship the first release on Friday.",
-          },
-        ],
-        openQuestions: [
-          {
-            evidenceTurnIds: ["turn-action"],
-            id: "question-final-deployment",
-            text: "Who runs the final deployment?",
-          },
-        ],
-        overview: "The speakers agreed on the first release plan.",
-        summaryId: `summary-${meetingId}`,
-        title: "First release planning",
-        transcriptId: transcript.transcriptId,
-        version: 1,
-      },
-      transcript,
-    ),
-  );
-  return meeting;
-}
-
-function errorChain(error: unknown): string {
-  const messages: string[] = [];
-  let current = error;
-  while (current instanceof Error) {
-    messages.push(current.message);
-    current = current.cause;
-  }
-  return messages.join(" | ");
-}
-
-function isDockerUnavailable(error: unknown): boolean {
-  const message = errorChain(error).toLowerCase();
-  return (
-    message.includes("could not find a working container runtime strategy") ||
-    message.includes("cannot connect to the docker daemon") ||
-    message.includes("docker.sock") &&
-      (message.includes("enoent") ||
-        message.includes("econnrefused") ||
-        message.includes("eacces"))
-  );
-}
-
-function databaseOrSkip(context: TestContext): Pool {
-  if (pool !== undefined) {
-    return pool;
-  }
-
-  context.skip(
-    `Docker unavailable; disposable PostgreSQL integration test skipped: ${dockerUnavailableReason ?? "container runtime not initialized"}`,
-  );
-}
-
-beforeAll(async () => {
-  try {
-    container = await new GenericContainer(POSTGRES_IMAGE)
-      .withEnvironment({
-        POSTGRES_DB: "meeting_test",
-        POSTGRES_PASSWORD: "meeting_test_password",
-        POSTGRES_USER: "meeting_test",
-      })
-      .withExposedPorts(POSTGRES_PORT)
-      .withWaitStrategy(
-        Wait.forLogMessage(/database system is ready to accept connections/u, 2),
-      )
-      .withStartupTimeout(120_000)
-      .start();
-
-    pool = new Pool({
-      connectionTimeoutMillis: 10_000,
-      database: "meeting_test",
-      host: container.getHost(),
-      password: "meeting_test_password",
-      port: container.getMappedPort(POSTGRES_PORT),
-      user: "meeting_test",
+    await expect(ledger.reserveSummaryPublicationEffect(reservation))
+      .resolves.toEqual({ status: "acquired" });
+    await expect(ledger.reserveSummaryPublicationEffect(reservation))
+      .resolves.toEqual({ status: "pending" });
+    await ledger.completeSummaryPublicationEffect({
+      ...reservation,
+      externalReceipt:
+        "discord:v2:channel:11111111111111111:message:22222222222222222",
     });
-    await pool.query("SELECT 1");
-    const migration = await readFile(
-      new URL(
-        "../../../infra/postgres/migrations/0001_create_meeting_core.sql",
-        import.meta.url,
-      ),
-      "utf8",
-    );
-    await pool.query(migration);
-    const liveMigration = await readFile(
-      new URL(
-        "../../../infra/postgres/migrations/0003_create_live_meetings.sql",
-        import.meta.url,
-      ),
-      "utf8",
-    );
-    await pool.query(liveMigration);
-    const guildConfigurationMigration = await readFile(
-      new URL(
-        "../../../infra/postgres/migrations/0004_create_guild_installations.sql",
-        import.meta.url,
-      ),
-      "utf8",
-    );
-    await pool.query(guildConfigurationMigration);
-  } catch (error) {
-    if (!isDockerUnavailable(error)) {
-      throw error;
-    }
-    dockerUnavailableReason = errorChain(error).slice(0, 300);
-  }
-}, 150_000);
-
-beforeEach(async () => {
-  if (pool !== undefined) {
-    await pool.query(
-      "TRUNCATE TABLE guild_configuration.guild_installations, meeting_core.live_meetings, meeting_core.post_call_outbox, meeting_core.meetings",
-    );
-  }
+    await expect(ledger.reserveSummaryPublicationEffect(reservation))
+      .resolves.toEqual({
+        externalReceipt:
+          "discord:v2:channel:11111111111111111:message:22222222222222222",
+        status: "completed",
+      });
+  });
 });
 
 describe("PostgresGuildConfigurationRepository", () => {
@@ -334,25 +152,24 @@ describe("PostgresGuildConfigurationRepository", () => {
   });
 });
 
-afterAll(async () => {
-  await pool?.end();
-  await container?.stop();
-});
-
 describe("PostgresMeetingRepository", () => {
-  it("atomically records a meeting and a recoverable post-call outbox item", async (context) => {
+  it("keeps an enqueued post-call item recoverable until a durable processing receipt", async (context) => {
     const database = databaseOrSkip(context);
     const repository = new PostgresMeetingRepository(database);
     const snapshot = recordedMeeting("meeting-outbox-1").toSnapshot();
 
     await repository.recordAndSchedule(snapshot, 0);
     await repository.recordAndSchedule(snapshot, 0);
-    expect(await repository.listPendingPostCall()).toEqual([
+    expect(await repository.listRecoverablePostCall()).toEqual([
       { meetingId: snapshot.meetingId, schemaVersion: 1 },
     ]);
 
-    await repository.markPostCallDispatched(snapshot.meetingId);
-    expect(await repository.listPendingPostCall()).toEqual([]);
+    await repository.markPostCallEnqueued(snapshot.meetingId);
+    expect(await repository.listRecoverablePostCall()).toEqual([
+      { meetingId: snapshot.meetingId, schemaVersion: 1 },
+    ]);
+    await repository.markPostCallProcessed(snapshot.meetingId);
+    expect(await repository.listRecoverablePostCall()).toEqual([]);
     expect(await repository.findById(snapshot.meetingId)).toEqual(snapshot);
   });
 
@@ -364,11 +181,77 @@ describe("PostgresMeetingRepository", () => {
 
     const processed = evidenceBackedMeeting("meeting-ready-replay").toSnapshot();
     await repository.save(processed, 0);
-    await repository.markPostCallDispatched(initial.meetingId);
+    await repository.markPostCallProcessed(initial.meetingId);
 
     await expect(repository.recordAndSchedule(initial, 0)).resolves.toBeUndefined();
     expect(await repository.findById(initial.meetingId)).toEqual(processed);
-    expect(await repository.listPendingPostCall()).toEqual([]);
+    expect(await repository.listRecoverablePostCall()).toEqual([]);
+  });
+
+  it("fails closed for an unknown processing receipt and records idempotent dead-letter evidence", async (context) => {
+    const database = databaseOrSkip(context);
+    const repository = new PostgresMeetingRepository(database);
+    const sourceJobRef = "a".repeat(64);
+    const record = {
+      attemptsMade: 4,
+      failureCode: "SUMMARY_PROVIDER_FAILED",
+      meetingId: "meeting-dead-letter-1",
+      retryable: false,
+      schemaVersion: 1 as const,
+      sourceJobRef,
+    };
+
+    await expect(repository.markPostCallProcessed(record.meetingId)).rejects.toThrow(
+      "post-call processing receipt does not reference one outbox item",
+    );
+    expect(await repository.recordPostCallDeadLetter(record)).toBe("recorded");
+    expect(await repository.recordPostCallDeadLetter(record)).toBe("reused");
+    await expect(repository.recordPostCallDeadLetter({
+      ...record,
+      attemptsMade: record.attemptsMade + 1,
+    })).rejects.toBeInstanceOf(PostCallDeadLetterConflictError);
+    const evidence = await repository.listPostCallDeadLetters();
+    expect(evidence).toHaveLength(1);
+    const deadLetter = evidence[0];
+    if (deadLetter === undefined) {
+      throw new Error("recorded post-call dead-letter evidence disappeared");
+    }
+    expect(deadLetter).toMatchObject(record);
+    expect(new Date(deadLetter.recordedAt).toISOString()).toBe(deadLetter.recordedAt);
+  });
+
+  it("atomically settles a terminal failure so reconciliation cannot rerun it", async (context) => {
+    const database = databaseOrSkip(context);
+    const repository = new PostgresMeetingRepository(database);
+    const snapshot = recordedMeeting("meeting-terminal-settlement").toSnapshot();
+    await repository.recordAndSchedule(snapshot, 0);
+    const record = {
+      attemptsMade: 4,
+      failureCode: "SUMMARY_PROVIDER_FAILED",
+      meetingId: snapshot.meetingId,
+      retryable: true,
+      schemaVersion: 1 as const,
+      sourceJobRef: "b".repeat(64),
+    };
+
+    expect(await repository.settlePostCallFailure(record)).toBe("recorded");
+    expect(await repository.settlePostCallFailure(record)).toBe("reused");
+    expect(await repository.listRecoverablePostCall()).toEqual([]);
+    await expect(repository.markPostCallProcessed(snapshot.meetingId)).rejects.toThrow(
+      "post-call processing receipt does not reference one outbox item",
+    );
+    const receipt = await database.query<{
+      readonly dead_letter_source_job_ref: string;
+      readonly terminal: boolean;
+    }>(`
+      SELECT dead_letter_source_job_ref, dead_lettered_at IS NOT NULL AS terminal
+      FROM meeting_core.post_call_outbox
+      WHERE meeting_id = $1
+    `, [snapshot.meetingId]);
+    expect(receipt.rows).toEqual([{
+      dead_letter_source_job_ref: record.sourceJobRef,
+      terminal: true,
+    }]);
   });
 
   it("round-trips the complete JSONB evidence snapshot", async (context) => {
@@ -518,66 +401,6 @@ describe("PostgresMeetingRepository", () => {
 
     await expect(repository.save(snapshot, 1)).rejects.toThrow(
       "snapshot revision cannot be older than expectedRevision",
-    );
-  });
-});
-
-describe("PostgresLiveMeetingRepository", () => {
-  it("round-trips live state with create and revision CAS semantics", async (context) => {
-    const database = databaseOrSkip(context);
-    const repository = new PostgresLiveMeetingRepository(database);
-    const meeting = LiveMeeting.start({
-      meetingId: "live-postgres-1",
-      publicationTargetId: "discord-channel-1",
-      startedAtMs: 10_000,
-    });
-    const initial = meeting.toSnapshot();
-
-    await repository.save(initial, null);
-    await repository.save(initial, null);
-    meeting.appendFinalTurn({
-      endMs: 15_000,
-      speakerId: "speaker-a",
-      startMs: 11_000,
-      text: "Выпускаем версию в пятницу.",
-      turnId: "turn-live-1",
-    });
-    const updated = meeting.toSnapshot();
-    await repository.save(updated, initial.revision);
-    await repository.save(updated, initial.revision);
-
-    expect(await repository.findById(meeting.meetingId)).toEqual(updated);
-  });
-
-  it("rejects a stale live revision", async (context) => {
-    const database = databaseOrSkip(context);
-    const repository = new PostgresLiveMeetingRepository(database);
-    const meeting = LiveMeeting.start({
-      meetingId: "live-postgres-conflict",
-      publicationTargetId: "discord-channel-1",
-      startedAtMs: 0,
-    });
-    const initial = meeting.toSnapshot();
-    await repository.save(initial, null);
-    meeting.appendFinalTurn({
-      endMs: 2_000,
-      speakerId: "speaker-a",
-      startMs: 1_000,
-      text: "Первая реплика.",
-      turnId: "turn-live-1",
-    });
-    await repository.save(meeting.toSnapshot(), initial.revision);
-    const competing = LiveMeeting.restore(initial);
-    competing.appendFinalTurn({
-      endMs: 3_000,
-      speakerId: "speaker-b",
-      startMs: 2_000,
-      text: "Конкурирующая реплика.",
-      turnId: "turn-live-2",
-    });
-
-    await expect(repository.save(competing.toSnapshot(), initial.revision)).rejects.toBeInstanceOf(
-      MeetingPersistenceConflictError,
     );
   });
 });

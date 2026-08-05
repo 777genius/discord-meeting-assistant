@@ -2,10 +2,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   LiveSessionAdmission,
+  GlobalPacketFlowControl,
   SourceTimelinePacer,
   SpeakerPacketFlowControl,
   resolveLivePacketFlowControl,
-} from "../src/live-packet-flow-control.js";
+} from "../src/live-runtime/live-packet-flow-control.js";
 
 describe("live packet flow control", () => {
   afterEach(() => vi.useRealTimers());
@@ -61,6 +62,23 @@ describe("live packet flow control", () => {
 
     await expect(waiting).resolves.toBe(true);
     expect(flow.queuedPacketCount).toBe(0);
+  });
+
+  it("shares one bounded packet budget across meetings and speakers", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const flow = new GlobalPacketFlowControl(2);
+    const firstSignal = new AbortController().signal;
+    const secondSignal = new AbortController().signal;
+
+    await expect(flow.reserve(2, 1_100, firstSignal)).resolves.toBe(true);
+    const waiting = flow.reserve(1, 1_100, secondSignal);
+    await Promise.resolve();
+    flow.release(1);
+
+    await expect(waiting).resolves.toBe(true);
+    flow.release(2);
+    await expect(flow.reserve(3, 1_100, firstSignal)).resolves.toBe(false);
   });
 
   it("paces consecutive packets at their source duration", async () => {

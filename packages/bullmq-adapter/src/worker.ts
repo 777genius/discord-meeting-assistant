@@ -6,6 +6,7 @@ import {
   type Job,
 } from "bullmq";
 
+import { ActivePostCallJobs } from "./active-post-call-jobs.js";
 import {
   POST_CALL_JOB_NAME,
   POST_CALL_QUEUE_NAME,
@@ -61,147 +62,6 @@ export interface CreatePostCallWorkerOptions
   readonly autorun?: boolean;
   readonly connection: ConnectionOptions;
   readonly prefix?: string;
-}
-
-interface ActivePostCallJobLease {
-  readonly signal: AbortSignal;
-  release(): void;
-}
-
-class ActivePostCallJobs {
-  readonly #active = new Map<string, {
-    readonly controller: AbortController;
-    removeWorkerAbortListener?: () => void;
-  }>();
-  readonly #idleWaiters = new Set<() => void>();
-  readonly #terminalEffects = new Set<Promise<void>>();
-  #shutdownReason: string | undefined;
-
-  public markActive(jobId: string): void {
-    this.active(jobId);
-  }
-
-  public begin(
-    jobId: string,
-    workerSignal: AbortSignal | undefined,
-  ): ActivePostCallJobLease {
-    const active = this.active(jobId);
-    const { controller } = active;
-    const abortFromWorker = (): void => {
-      if (!controller.signal.aborted) {
-        controller.abort(workerSignal?.reason);
-      }
-    };
-    if (workerSignal?.aborted === true) {
-      abortFromWorker();
-    } else {
-      workerSignal?.addEventListener("abort", abortFromWorker, { once: true });
-    }
-    active.removeWorkerAbortListener = () =>
-      workerSignal?.removeEventListener("abort", abortFromWorker);
-    let released = false;
-    return {
-      signal: controller.signal,
-      release: () => {
-        if (released) {
-          return;
-        }
-        released = true;
-        const current = this.#active.get(jobId);
-        if (current !== active) {
-          return;
-        }
-        this.release(jobId, current);
-      },
-    };
-  }
-
-  public complete(jobId: string): void {
-    const active = this.#active.get(jobId);
-    if (active !== undefined) {
-      this.release(jobId, active);
-    }
-  }
-
-  public trackTerminalEffect(effect: Promise<void>): void {
-    this.#terminalEffects.add(effect);
-    void effect.then(
-      () => {
-        this.#terminalEffects.delete(effect);
-        this.notifyIfIdle();
-        return null;
-      },
-      () => {
-        this.#terminalEffects.delete(effect);
-        this.notifyIfIdle();
-        return null;
-      },
-    );
-  }
-
-  public cancelAll(reason: string): void {
-    this.#shutdownReason ??= reason;
-    for (const { controller } of this.#active.values()) {
-      if (!controller.signal.aborted) {
-        controller.abort(reason);
-      }
-    }
-  }
-
-  public isAdmissionClosed(): boolean {
-    return this.#shutdownReason !== undefined;
-  }
-
-  public waitForIdle(): Promise<void> {
-    if (this.isIdle()) {
-      return Promise.resolve();
-    }
-    return new Promise<void>((resolve) => {
-      this.#idleWaiters.add(resolve);
-    });
-  }
-
-  private active(jobId: string): {
-    readonly controller: AbortController;
-    removeWorkerAbortListener?: () => void;
-  } {
-    const existing = this.#active.get(jobId);
-    if (existing !== undefined) {
-      return existing;
-    }
-    const active = { controller: new AbortController() };
-    if (this.#shutdownReason !== undefined) {
-      active.controller.abort(this.#shutdownReason);
-    }
-    this.#active.set(jobId, active);
-    return active;
-  }
-
-  private release(
-    jobId: string,
-    active: {
-      readonly controller: AbortController;
-      readonly removeWorkerAbortListener?: () => void;
-    },
-  ): void {
-    active.removeWorkerAbortListener?.();
-    this.#active.delete(jobId);
-    this.notifyIfIdle();
-  }
-
-  private isIdle(): boolean {
-    return this.#active.size === 0 && this.#terminalEffects.size === 0;
-  }
-
-  private notifyIfIdle(): void {
-    if (!this.isIdle()) {
-      return;
-    }
-    for (const resolve of this.#idleWaiters) {
-      resolve();
-    }
-    this.#idleWaiters.clear();
-  }
 }
 
 class MappedRetryableWorkerError extends Error {
@@ -308,17 +168,13 @@ async function recordDeadLetter(
     schemaVersion: 1,
     sourceJobRef,
   });
-  try {
-    await recorder.record(record);
-    safelyObserve(observer, {
-      component: "worker",
-      failureCode: failure.code,
-      jobRef: sourceJobRef,
-      kind: "dead-letter-recorded",
-    });
-  } catch {
-    safelyObserve(observer, { component: "worker", kind: "runtime-error" });
-  }
+  await recorder.record(record);
+  safelyObserve(observer, {
+    component: "worker",
+    failureCode: failure.code,
+    jobRef: sourceJobRef,
+    kind: "dead-letter-recorded",
+  });
 }
 
 function toWorkerError(
@@ -501,6 +357,9 @@ export function createPostCallWorker(
   );
 
   const postCallWorker = Object.assign(worker, {
+    assertPostCallDurability: () => {
+      activeJobs.assertTerminalEffectsSucceeded();
+    },
     cancelActivePostCallJobs: (reason = "shutdown") => {
       activeJobs.cancelAll(reason);
       worker.cancelAllJobs(reason);
@@ -603,6 +462,7 @@ export type PostCallWorker = Worker<
   void,
   typeof POST_CALL_JOB_NAME
 > & {
+  assertPostCallDurability(): void;
   cancelActivePostCallJobs(reason?: string): void;
   waitForActivePostCallJobs(): Promise<void>;
 };

@@ -1,3 +1,10 @@
+---
+id: ADR-0008
+status: accepted
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0008: Authoritative Voicetext batch transcription
 
 ## Status
@@ -33,7 +40,8 @@ neither the raw provider key nor a provider-specific core contract.
   with the same key; an identity conflict fails closed.
 - Admit no more than ten speaker tracks for one final transcript. Validate the
   worst-case logical capacity before provider work as `track limit x
-  per-track byte limit`; the production limit is `10 x 64 MiB = 640 MiB`.
+  per-track byte limit`; the production limit is `11 x 64 MiB = 704 MiB`:
+  up to ten human speaker tracks plus one authoritative Botik playback track.
   This accepts ten one-hour tracks without pre-reading them all.
 - Use a configuration-selected bounded read-and-provider worker pool per
   meeting. Production uses six workers: each reads an Ogg immediately before a
@@ -64,7 +72,7 @@ neither the raw provider key nor a provider-specific core contract.
   followed by final LLM generation; real E2E measurements remain the release
   gate.
 - Meeting Platform hard-limits a final meeting to ten 64 MiB tracks and validates
-  640 MiB logical recording capacity. With six workers, no more than 384 MiB of
+  704 MiB logical recording capacity. With six workers, no more than 384 MiB of
   complete Ogg caller buffers are live for one admitted meeting; the Fetch
   client can temporarily create up to another 384 MiB of Blob upload copies.
   The resulting 768 MiB is a payload budget, not a process-RSS guarantee:

@@ -3,9 +3,11 @@ import { SubscriptionRuntimeAdapterError } from "./errors.js";
 import type { SubscriptionRuntimeSummaryRequestOptions } from "./request-mapper.js";
 import {
   auditedSubscriptionRuntimePackageVersion,
+  subscriptionRuntimeEngine,
   subscriptionRuntimeIncrementalMaxOutputTokens,
   subscriptionRuntimeSummaryMaxOutputTokens,
 } from "./subscription-runtime-contract.js";
+import type { SubscriptionRuntimeEngine } from "./subscription-runtime-contract.js";
 
 const defaultIsolatedCwd = "/run/discord-meeting-subscription-runtime/workspace";
 const defaultMaxPromptBytes = 2 * 1_024 * 1_024;
@@ -13,6 +15,7 @@ const defaultTimeoutMs = 600_000;
 
 export interface BaseSubscriptionRuntimeSummaryAdapterOptions {
   readonly expectedLauncherSha256: string;
+  readonly expectedRuntimeEngine?: SubscriptionRuntimeEngine;
   readonly expectedRuntimePackageVersion?: string;
   readonly isolatedCwd?: string;
   readonly maxOutputTokens?: number;
@@ -41,6 +44,7 @@ export function validateAttestationExpectation(
   }
   return {
     launcherSha256: options.expectedLauncherSha256,
+    runtimeEngine: options.expectedRuntimeEngine ?? subscriptionRuntimeEngine,
     runtimePackageVersion,
   };
 }

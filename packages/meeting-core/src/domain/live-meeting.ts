@@ -1,8 +1,6 @@
 import {
   DomainInvariantError,
-  requireNonEmpty,
   requireNonNegativeInteger,
-  requirePositiveInteger,
 } from "./errors.js";
 import {
   createExternalPublicationId,
@@ -12,85 +10,18 @@ import {
   type MeetingId,
   type PublicationTargetId,
 } from "./identifiers.js";
-import type {
-  SummaryActionItemSnapshot,
-  SummaryDecisionSnapshot,
-  SummaryOpenQuestionSnapshot,
-  SummaryTopicSnapshot,
-} from "./summary.js";
+import { normalizeLiveSummary, type LiveSummaryDraftSnapshot } from "./live-summary.js";
 import { TranscriptTurn, type TranscriptTurnSnapshot } from "./transcript.js";
 
 export type LiveMeetingStatus = "active" | "ended";
 
-export interface LiveSummaryDraftSnapshot {
-  readonly actionItems: readonly SummaryActionItemSnapshot[];
-  readonly decisions: readonly SummaryDecisionSnapshot[];
-  readonly openQuestions: readonly SummaryOpenQuestionSnapshot[];
-  readonly overview: string;
-  readonly revision: number;
-  readonly title: string;
-  readonly topics: readonly SummaryTopicSnapshot[];
-}
-
-export interface LiveGenerationUsageSnapshot {
-  readonly apiEquivalentCostUsd: number | null;
-  readonly cacheWriteInputTokens: number;
-  readonly cachedInputTokens: number;
-  readonly inputTokens: number;
-  readonly model: string;
-  readonly outputTokens: number;
-  readonly priceCard: string;
-  readonly reasoningOutputTokens: number;
-  readonly runId: string;
-  readonly totalTokens: number;
-}
-
-/** A provider-reported token class that is never represented by a synthetic zero. */
-export type LiveGenerationTokenClassSnapshot =
-  | {
-      readonly availability: "measured";
-      readonly value: number;
-    }
-  | {
-      readonly availability: "derived";
-      readonly derivedFrom: readonly ["inputTokens", "outputTokens"];
-      readonly value: number;
-    }
-  | {
-      readonly availability: "unavailable";
-    };
-
-export interface LiveGenerationCostSnapshot {
-  readonly exactUsd?: number;
-  readonly maximumUsd: number;
-  readonly minimumUsd: number;
-  readonly priceCardId: string;
-  readonly priceCardSource: string;
-}
-
 /**
- * Provider-agnostic generation telemetry, including classes a provider cannot
- * report. It is persisted separately from legacy complete usage.
+ * Compact CAS-owned business state. Finalized turns and provider telemetry are
+ * intentionally absent: both are append-only records owned by dedicated ports.
  */
-export interface LiveGenerationTelemetrySnapshot {
-  readonly cacheWriteInputTokens: LiveGenerationTokenClassSnapshot;
-  readonly cachedInputTokens: LiveGenerationTokenClassSnapshot;
-  readonly cost?: LiveGenerationCostSnapshot;
-  readonly inputTokens: LiveGenerationTokenClassSnapshot;
-  readonly model: string;
-  readonly outputTokens: LiveGenerationTokenClassSnapshot;
-  readonly reasoningOutputTokens: LiveGenerationTokenClassSnapshot;
-  readonly runId: string;
-  readonly source: string;
-  readonly totalTokens: LiveGenerationTokenClassSnapshot;
-}
-
 export interface LiveMeetingSnapshot {
   readonly draftSummary: LiveSummaryDraftSnapshot | null;
   readonly endedAtMs: number | null;
-  /** Optional while restoring snapshots persisted before partial telemetry. */
-  readonly generationTelemetry?: readonly LiveGenerationTelemetrySnapshot[];
-  readonly generationUsage: readonly LiveGenerationUsageSnapshot[];
   readonly meetingId: string;
   readonly projectedRevision: number;
   readonly projectionExternalId: string | null;
@@ -98,22 +29,13 @@ export interface LiveMeetingSnapshot {
   readonly revision: number;
   readonly startedAtMs: number;
   readonly status: LiveMeetingStatus;
-  readonly summarizedTurnIds: readonly string[];
   readonly summaryGeneratedAtMs: number | null;
-  readonly turns: readonly TranscriptTurnSnapshot[];
 }
 
 export interface StartLiveMeetingInput {
   readonly meetingId: string;
   readonly publicationTargetId: string;
   readonly startedAtMs: number;
-}
-
-function requireFiniteNonNegative(value: number, field: string): number {
-  if (!Number.isFinite(value) || value < 0) {
-    throw new DomainInvariantError("INVALID_SNAPSHOT", `${field} must be non-negative`);
-  }
-  return value;
 }
 
 function requireLiveMeetingStatus(value: unknown): LiveMeetingStatus {
@@ -123,342 +45,16 @@ function requireLiveMeetingStatus(value: unknown): LiveMeetingStatus {
   return value;
 }
 
-function validateUsage(input: LiveGenerationUsageSnapshot): LiveGenerationUsageSnapshot {
-  const usage = {
-    apiEquivalentCostUsd:
-      input.apiEquivalentCostUsd === null
-        ? null
-        : requireFiniteNonNegative(input.apiEquivalentCostUsd, "usage.apiEquivalentCostUsd"),
-    cacheWriteInputTokens: requireNonNegativeInteger(
-      input.cacheWriteInputTokens,
-      "usage.cacheWriteInputTokens",
-    ),
-    cachedInputTokens: requireNonNegativeInteger(
-      input.cachedInputTokens,
-      "usage.cachedInputTokens",
-    ),
-    inputTokens: requireNonNegativeInteger(input.inputTokens, "usage.inputTokens"),
-    model: requireNonEmpty(input.model, "usage.model"),
-    outputTokens: requireNonNegativeInteger(input.outputTokens, "usage.outputTokens"),
-    priceCard: requireNonEmpty(input.priceCard, "usage.priceCard"),
-    reasoningOutputTokens: requireNonNegativeInteger(
-      input.reasoningOutputTokens,
-      "usage.reasoningOutputTokens",
-    ),
-    runId: requireNonEmpty(input.runId, "usage.runId"),
-    totalTokens: requireNonNegativeInteger(input.totalTokens, "usage.totalTokens"),
-  };
-  if (
-    usage.cachedInputTokens + usage.cacheWriteInputTokens > usage.inputTokens ||
-    usage.reasoningOutputTokens > usage.outputTokens ||
-    usage.totalTokens < usage.inputTokens + usage.outputTokens
-  ) {
-    throw new DomainInvariantError("INVALID_SNAPSHOT", "generation usage totals are inconsistent");
+function restoreSummary(
+  snapshot: LiveMeetingSnapshot,
+): LiveSummaryDraftSnapshot | null {
+  if (snapshot.draftSummary === null) {
+    return null;
   }
-  return Object.freeze(usage);
-}
-
-function validateTokenClass(
-  input: LiveGenerationTokenClassSnapshot,
-  field: string,
-  allowDerived: boolean,
-): LiveGenerationTokenClassSnapshot {
-  const rawToken: unknown = input;
-  if (rawToken === null || typeof rawToken !== "object" || Array.isArray(rawToken)) {
-    throw new DomainInvariantError("INVALID_SNAPSHOT", `${field} token class is invalid`);
-  }
-  const token = rawToken as Record<string, unknown>;
-  if (token.availability === "unavailable") {
-    if ("value" in token || "derivedFrom" in token) {
-      throw new DomainInvariantError(
-        "INVALID_SNAPSHOT",
-        `${field} unavailable token class must not carry a value`,
-      );
-    }
-    return Object.freeze({ availability: "unavailable" });
-  }
-  if (token.availability === "measured") {
-    return Object.freeze({
-      availability: "measured",
-      value: requireNonNegativeInteger(token.value as number, `${field}.value`),
-    });
-  }
-  if (
-    !allowDerived ||
-    token.availability !== "derived" ||
-    !Array.isArray(token.derivedFrom) ||
-    token.derivedFrom.length !== 2 ||
-    token.derivedFrom[0] !== "inputTokens" ||
-    token.derivedFrom[1] !== "outputTokens"
-  ) {
-    throw new DomainInvariantError("INVALID_SNAPSHOT", `${field} token availability is invalid`);
-  }
-  return Object.freeze({
-    availability: "derived",
-    derivedFrom: ["inputTokens", "outputTokens"] as const,
-    value: requireNonNegativeInteger(token.value as number, `${field}.value`),
-  });
-}
-
-function measuredTokenValue(
-  input: LiveGenerationTokenClassSnapshot,
-): number | undefined {
-  return input.availability === "measured" ? input.value : undefined;
-}
-
-function validateGenerationCost(
-  input: LiveGenerationCostSnapshot,
-): LiveGenerationCostSnapshot {
-  const minimumUsd = requireFiniteNonNegative(input.minimumUsd, "telemetry.cost.minimumUsd");
-  const maximumUsd = requireFiniteNonNegative(input.maximumUsd, "telemetry.cost.maximumUsd");
-  if (minimumUsd > maximumUsd) {
-    throw new DomainInvariantError("INVALID_SNAPSHOT", "generation cost range is inverted");
-  }
-  const exactUsd = input.exactUsd === undefined
-    ? undefined
-    : requireFiniteNonNegative(input.exactUsd, "telemetry.cost.exactUsd");
-  if (
-    exactUsd !== undefined &&
-    (exactUsd !== minimumUsd || exactUsd !== maximumUsd)
-  ) {
-    throw new DomainInvariantError(
-      "INVALID_SNAPSHOT",
-      "exact generation cost must collapse the cost range",
-    );
-  }
-  return Object.freeze({
-    ...(exactUsd === undefined ? {} : { exactUsd }),
-    maximumUsd,
-    minimumUsd,
-    priceCardId: requireNonEmpty(input.priceCardId, "telemetry.cost.priceCardId"),
-    priceCardSource: requireNonEmpty(
-      input.priceCardSource,
-      "telemetry.cost.priceCardSource",
-    ),
-  });
-}
-
-function validateTelemetry(
-  input: LiveGenerationTelemetrySnapshot,
-): LiveGenerationTelemetrySnapshot {
-  const inputTokens = validateTokenClass(input.inputTokens, "telemetry.inputTokens", false);
-  const cachedInputTokens = validateTokenClass(
-    input.cachedInputTokens,
-    "telemetry.cachedInputTokens",
-    false,
-  );
-  const cacheWriteInputTokens = validateTokenClass(
-    input.cacheWriteInputTokens,
-    "telemetry.cacheWriteInputTokens",
-    false,
-  );
-  const outputTokens = validateTokenClass(input.outputTokens, "telemetry.outputTokens", false);
-  const reasoningOutputTokens = validateTokenClass(
-    input.reasoningOutputTokens,
-    "telemetry.reasoningOutputTokens",
-    false,
-  );
-  const totalTokens = validateTokenClass(input.totalTokens, "telemetry.totalTokens", true);
-  const measuredInputTokens = measuredTokenValue(inputTokens);
-  const measuredCachedInputTokens = measuredTokenValue(cachedInputTokens);
-  const measuredCacheWriteInputTokens = measuredTokenValue(cacheWriteInputTokens);
-  const measuredOutputTokens = measuredTokenValue(outputTokens);
-  const measuredReasoningOutputTokens = measuredTokenValue(reasoningOutputTokens);
-  const measuredTotalTokens = measuredTokenValue(totalTokens);
-
-  if (
-    measuredInputTokens !== undefined &&
-    measuredCachedInputTokens !== undefined &&
-    measuredCachedInputTokens > measuredInputTokens
-  ) {
-    throw new DomainInvariantError("INVALID_SNAPSHOT", "cached input exceeds input");
-  }
-  if (
-    measuredInputTokens !== undefined &&
-    measuredCachedInputTokens !== undefined &&
-    measuredCacheWriteInputTokens !== undefined &&
-    measuredCachedInputTokens + measuredCacheWriteInputTokens > measuredInputTokens
-  ) {
-    throw new DomainInvariantError("INVALID_SNAPSHOT", "cache-write input exceeds input");
-  }
-  if (
-    measuredOutputTokens !== undefined &&
-    measuredReasoningOutputTokens !== undefined &&
-    measuredReasoningOutputTokens > measuredOutputTokens
-  ) {
-    throw new DomainInvariantError("INVALID_SNAPSHOT", "reasoning output exceeds output");
-  }
-  if (
-    totalTokens.availability === "derived" &&
-    (measuredInputTokens === undefined ||
-      measuredOutputTokens === undefined ||
-      !Number.isSafeInteger(measuredInputTokens + measuredOutputTokens) ||
-      totalTokens.value !== measuredInputTokens + measuredOutputTokens)
-  ) {
-    throw new DomainInvariantError("INVALID_SNAPSHOT", "derived generation total is inconsistent");
-  }
-  if (
-    totalTokens.availability === "measured" &&
-    measuredInputTokens !== undefined &&
-    measuredOutputTokens !== undefined &&
-    measuredTotalTokens !== undefined &&
-    measuredTotalTokens < measuredInputTokens + measuredOutputTokens
-  ) {
-    throw new DomainInvariantError("INVALID_SNAPSHOT", "generation total is inconsistent");
-  }
-
-  return Object.freeze({
-    cacheWriteInputTokens,
-    cachedInputTokens,
-    ...(input.cost === undefined ? {} : { cost: validateGenerationCost(input.cost) }),
-    inputTokens,
-    model: requireNonEmpty(input.model, "telemetry.model"),
-    outputTokens,
-    reasoningOutputTokens,
-    runId: requireNonEmpty(input.runId, "telemetry.runId"),
-    source: requireNonEmpty(input.source, "telemetry.source"),
-    totalTokens,
-  });
-}
-
-function validateSummary(
-  input: LiveSummaryDraftSnapshot,
-  turns: readonly TranscriptTurn[],
-  expectedRevision: number,
-): LiveSummaryDraftSnapshot {
-  if (input.revision !== expectedRevision) {
-    throw new DomainInvariantError(
-      "CONFLICTING_COMPLETION",
-      "live summary revision must advance exactly once",
-    );
-  }
-  const knownTurns = new Set(turns.map(({ turnId }) => String(turnId)));
-  const knownSpeakers = new Set(turns.map(({ speakerId }) => String(speakerId)));
-  const evidenceGroups = [
-    ...input.topics.map(({ evidenceTurnIds }) => evidenceTurnIds),
-    ...input.decisions.map(({ evidenceTurnIds }) => evidenceTurnIds),
-    ...input.actionItems.map(({ evidenceTurnIds }) => evidenceTurnIds),
-    ...input.openQuestions.map(({ evidenceTurnIds }) => evidenceTurnIds),
-  ];
-  for (const evidenceTurnIds of evidenceGroups) {
-    if (
-      evidenceTurnIds.length === 0 ||
-      new Set(evidenceTurnIds).size !== evidenceTurnIds.length ||
-      evidenceTurnIds.some((turnId) => !knownTurns.has(turnId))
-    ) {
-      throw new DomainInvariantError(
-        "INVALID_EVIDENCE_REFERENCE",
-        "live summary evidence must reference unique known finalized turns",
-      );
-    }
-  }
-  if (
-    input.actionItems.some(
-      ({ ownerSpeakerId }) =>
-        ownerSpeakerId !== null && !knownSpeakers.has(ownerSpeakerId),
-    )
-  ) {
-    throw new DomainInvariantError(
-      "INVALID_EVIDENCE_REFERENCE",
-      "live summary action owner must be a known speaker",
-    );
-  }
-
-  const actionItems = input.actionItems.map((item) => Object.freeze({
-    actionItemId: requireNonEmpty(item.actionItemId, "liveSummary.actionItemId"),
-    deadline: item.deadline === null
-      ? null
-      : requireNonEmpty(item.deadline, "liveSummary.actionItem.deadline"),
-    evidenceTurnIds: Object.freeze([...item.evidenceTurnIds]),
-    ownerSpeakerId: item.ownerSpeakerId,
-    text: requireNonEmpty(item.text, "liveSummary.actionItem.text"),
-  }));
-  const decisions = input.decisions.map((item) => Object.freeze({
-    decisionId: requireNonEmpty(item.decisionId, "liveSummary.decisionId"),
-    evidenceTurnIds: Object.freeze([...item.evidenceTurnIds]),
-    text: requireNonEmpty(item.text, "liveSummary.decision.text"),
-  }));
-  const openQuestions = input.openQuestions.map((item) => Object.freeze({
-    evidenceTurnIds: Object.freeze([...item.evidenceTurnIds]),
-    id: requireNonEmpty(item.id, "liveSummary.openQuestion.id"),
-    text: requireNonEmpty(item.text, "liveSummary.openQuestion.text"),
-  }));
-  requireUniqueIdentifiers(actionItems.map(({ actionItemId }) => actionItemId));
-  requireUniqueIdentifiers(decisions.map(({ decisionId }) => decisionId));
-  requireUniqueIdentifiers(openQuestions.map(({ id }) => id));
-
-  return Object.freeze({
-    actionItems: Object.freeze(actionItems),
-    decisions: Object.freeze(decisions),
-    openQuestions: Object.freeze(openQuestions),
-    overview: requireNonEmpty(input.overview, "liveSummary.overview"),
-    revision: requirePositiveInteger(input.revision, "liveSummary.revision"),
-    title: requireNonEmpty(input.title, "liveSummary.title"),
-    topics: Object.freeze(input.topics.map((topic) => Object.freeze({
-      ...topic,
-      evidenceTurnIds: Object.freeze([...topic.evidenceTurnIds]),
-      points: Object.freeze(topic.points.map((point) =>
-        requireNonEmpty(point, "liveSummary.topic.point")
-      )),
-      title: requireNonEmpty(topic.title, "liveSummary.topic.title"),
-    }))),
-  });
-}
-
-/**
- * Resolves the immutable evidence snapshot used to generate a summary against
- * the aggregate's current timeline. A live turn may be appended at any point
- * in timestamp order while a request is in flight, but the request may never
- * silently switch to that newer turn or to a changed version of old evidence.
- */
-function resolveExactGeneratedEvidence(
-  finalizedTurns: readonly TranscriptTurn[],
-  evidenceSnapshots: readonly TranscriptTurnSnapshot[],
-): readonly TranscriptTurn[] {
-  if (evidenceSnapshots.length === 0) {
-    throw new DomainInvariantError(
-      "INVALID_EVIDENCE_REFERENCE",
-      "live summary must cover at least one finalized evidence turn",
-    );
-  }
-  const evidenceTurns = evidenceSnapshots.map((snapshot) => TranscriptTurn.create(snapshot));
-  if (new Set(evidenceTurns.map(({ turnId }) => turnId)).size !== evidenceTurns.length) {
-    throw new DomainInvariantError(
-      "DUPLICATE_IDENTIFIER",
-      "live summary generated evidence turn IDs must be unique",
-    );
-  }
-  const finalizedTurnsById = new Map(finalizedTurns.map((turn) => [turn.turnId, turn]));
-  return evidenceTurns.map((evidenceTurn) => {
-    const currentTurn = finalizedTurnsById.get(evidenceTurn.turnId);
-    if (currentTurn === undefined || !currentTurn.equals(evidenceTurn)) {
-      throw new DomainInvariantError(
-        "CONFLICTING_COMPLETION",
-        "live summary evidence changed after generation began",
-      );
-    }
-    return currentTurn;
-  });
-}
-
-function requireUniqueIdentifiers(identifiers: readonly string[]): void {
-  if (new Set(identifiers).size !== identifiers.length) {
-    throw new DomainInvariantError(
-      "DUPLICATE_IDENTIFIER",
-      "live summary structured item IDs must be unique",
-    );
-  }
-}
-
-function sameUsage(left: LiveGenerationUsageSnapshot, right: LiveGenerationUsageSnapshot): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
-}
-
-function sameTelemetry(
-  left: LiveGenerationTelemetrySnapshot,
-  right: LiveGenerationTelemetrySnapshot,
-): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
+  // Evidence membership is checked when a generated summary is accepted with
+  // its exact append-only timeline. At restoration time this compact aggregate
+  // deliberately has no transcript array to scan.
+  return normalizeLiveSummary(snapshot.draftSummary, undefined, snapshot.draftSummary.revision);
 }
 
 export class LiveMeeting {
@@ -469,14 +65,10 @@ export class LiveMeeting {
   private currentRevision: number;
   private currentStatus: LiveMeetingStatus;
   private endedTimestampMs: number | null;
-  private readonly finalizedTurns: TranscriptTurn[];
   private summaryDraft: LiveSummaryDraftSnapshot | null;
-  private readonly summarizedTurnIdSet: Set<string>;
   private summaryTimestampMs: number | null;
   private externalProjectionId: ExternalPublicationId | null;
   private lastProjectedRevision: number;
-  private readonly telemetryRecords: LiveGenerationTelemetrySnapshot[];
-  private readonly usageRecords: LiveGenerationUsageSnapshot[];
 
   private constructor(snapshot: LiveMeetingSnapshot) {
     this.meetingId = createMeetingId(snapshot.meetingId);
@@ -487,28 +79,7 @@ export class LiveMeeting {
     this.endedTimestampMs = snapshot.endedAtMs === null
       ? null
       : requireNonNegativeInteger(snapshot.endedAtMs, "liveMeeting.endedAtMs");
-    this.finalizedTurns = snapshot.turns.map((turn) => TranscriptTurn.create(turn));
-    if (new Set(this.finalizedTurns.map(({ turnId }) => turnId)).size !== this.finalizedTurns.length) {
-      throw new DomainInvariantError("INVALID_SNAPSHOT", "live turn IDs must be unique");
-    }
-    const summarizedTurnIds = snapshot.summarizedTurnIds.map((turnId) =>
-      requireNonEmpty(turnId, "liveMeeting.summarizedTurnId")
-    );
-    if (
-      new Set(summarizedTurnIds).size !== summarizedTurnIds.length ||
-      summarizedTurnIds.some((turnId) =>
-        !this.finalizedTurns.some((turn) => turn.turnId === turnId)
-      )
-    ) {
-      throw new DomainInvariantError(
-        "INVALID_SNAPSHOT",
-        "summarized live turn IDs must be unique known finalized turns",
-      );
-    }
-    this.summarizedTurnIdSet = new Set(summarizedTurnIds);
-    this.summaryDraft = snapshot.draftSummary === null
-      ? null
-      : validateSummary(snapshot.draftSummary, this.finalizedTurns, snapshot.draftSummary.revision);
+    this.summaryDraft = restoreSummary(snapshot);
     this.summaryTimestampMs = snapshot.summaryGeneratedAtMs === null
       ? null
       : requireNonNegativeInteger(
@@ -522,23 +93,6 @@ export class LiveMeeting {
       snapshot.projectedRevision,
       "liveMeeting.projectedRevision",
     );
-    if (this.lastProjectedRevision > this.currentRevision) {
-      throw new DomainInvariantError("INVALID_SNAPSHOT", "projected revision exceeds live state");
-    }
-    this.usageRecords = snapshot.generationUsage.map(validateUsage);
-    if (new Set(this.usageRecords.map(({ runId }) => runId)).size !== this.usageRecords.length) {
-      throw new DomainInvariantError("INVALID_SNAPSHOT", "generation usage run IDs must be unique");
-    }
-    this.telemetryRecords = (snapshot.generationTelemetry ?? []).map(validateTelemetry);
-    if (
-      new Set(this.telemetryRecords.map(({ runId }) => runId)).size !==
-      this.telemetryRecords.length
-    ) {
-      throw new DomainInvariantError(
-        "INVALID_SNAPSHOT",
-        "generation telemetry run IDs must be unique",
-      );
-    }
     this.validateLifecycle();
   }
 
@@ -546,8 +100,6 @@ export class LiveMeeting {
     return new LiveMeeting({
       draftSummary: null,
       endedAtMs: null,
-      generationTelemetry: [],
-      generationUsage: [],
       meetingId: input.meetingId,
       projectedRevision: 0,
       projectionExternalId: null,
@@ -555,9 +107,7 @@ export class LiveMeeting {
       revision: 0,
       startedAtMs: input.startedAtMs,
       status: "active",
-      summarizedTurnIds: [],
       summaryGeneratedAtMs: null,
-      turns: [],
     });
   }
 
@@ -577,16 +127,8 @@ export class LiveMeeting {
     return this.endedTimestampMs;
   }
 
-  public get turns(): readonly TranscriptTurn[] {
-    return [...this.finalizedTurns];
-  }
-
   public get draftSummary(): LiveSummaryDraftSnapshot | null {
     return this.summaryDraft;
-  }
-
-  public get summarizedTurnIds(): ReadonlySet<string> {
-    return new Set(this.summarizedTurnIdSet);
   }
 
   public get summaryGeneratedAtMs(): number | null {
@@ -601,89 +143,33 @@ export class LiveMeeting {
     return this.lastProjectedRevision;
   }
 
-  public appendFinalTurn(snapshot: TranscriptTurnSnapshot): boolean {
-    const turn = TranscriptTurn.create(snapshot);
-    const existing = this.finalizedTurns.find(({ turnId }) => turnId === turn.turnId);
-    if (existing !== undefined) {
-      if (existing.equals(turn)) {
-        return false;
-      }
-      throw new DomainInvariantError(
-        "CONFLICTING_COMPLETION",
-        "live turn identity was reused with different content",
-      );
-    }
-    if (this.currentStatus !== "active") {
-      throw new DomainInvariantError(
-        "INVALID_LIFECYCLE_STATE",
-        "cannot append a live turn after the meeting ended",
-      );
-    }
-    this.finalizedTurns.push(turn);
-    this.finalizedTurns.sort((left, right) =>
-      left.startMs - right.startMs ||
-      left.endMs - right.endMs ||
-      String(left.speakerId).localeCompare(String(right.speakerId)) ||
-      String(left.turnId).localeCompare(String(right.turnId))
-    );
-    this.incrementRevision();
-    return true;
-  }
-
   public acceptSummary(input: {
-    /** Exact immutable transcript evidence supplied to the generator. */
     readonly evidenceTurns: readonly TranscriptTurnSnapshot[];
     readonly generatedAtMs: number;
     readonly summary: LiveSummaryDraftSnapshot;
-    readonly telemetry?: LiveGenerationTelemetrySnapshot;
-    readonly usage?: LiveGenerationUsageSnapshot;
   }): void {
-    const coveredTurns = resolveExactGeneratedEvidence(
-      this.finalizedTurns,
-      input.evidenceTurns,
-    );
-    const coveredTurnIds = new Set<string>(coveredTurns.map(({ turnId }) => turnId));
-    if ([...this.summarizedTurnIdSet].some((turnId) => !coveredTurnIds.has(turnId))) {
+    const evidenceTurns = input.evidenceTurns.map((turn) => TranscriptTurn.create(turn));
+    if (evidenceTurns.length === 0) {
       throw new DomainInvariantError(
-        "CONFLICTING_COMPLETION",
-        "live summary evidence coverage cannot regress",
+        "INVALID_EVIDENCE_REFERENCE",
+        "live summary must cover at least one finalized evidence turn",
+      );
+    }
+    if (new Set(evidenceTurns.map(({ turnId }) => turnId)).size !== evidenceTurns.length) {
+      throw new DomainInvariantError(
+        "DUPLICATE_IDENTIFIER",
+        "live summary generated evidence turn IDs must be unique",
       );
     }
     const expectedSummaryRevision = (this.summaryDraft?.revision ?? 0) + 1;
-    const summary = validateSummary(input.summary, coveredTurns, expectedSummaryRevision);
+    const summary = normalizeLiveSummary(input.summary, evidenceTurns, expectedSummaryRevision);
     const generatedAtMs = requireNonNegativeInteger(input.generatedAtMs, "liveSummary.generatedAtMs");
     if (generatedAtMs < this.startedAtMs) {
       throw new DomainInvariantError("INVALID_SNAPSHOT", "summary cannot predate the meeting");
     }
-    if (input.usage !== undefined) {
-      this.appendGenerationUsage(input.usage);
-    }
-    if (input.telemetry !== undefined) {
-      this.appendGenerationTelemetry(input.telemetry);
-    }
     this.summaryDraft = summary;
-    this.summarizedTurnIdSet.clear();
-    for (const turn of coveredTurns) {
-      this.summarizedTurnIdSet.add(turn.turnId);
-    }
     this.summaryTimestampMs = generatedAtMs;
     this.incrementRevision();
-  }
-
-  public recordGenerationUsage(input: LiveGenerationUsageSnapshot): boolean {
-    if (!this.appendGenerationUsage(input)) {
-      return false;
-    }
-    this.incrementInvisibleRevision();
-    return true;
-  }
-
-  public recordGenerationTelemetry(input: LiveGenerationTelemetrySnapshot): boolean {
-    if (!this.appendGenerationTelemetry(input)) {
-      return false;
-    }
-    this.incrementInvisibleRevision();
-    return true;
   }
 
   public completeProjection(externalPublicationId: string, projectedRevision: number): boolean {
@@ -708,10 +194,6 @@ export class LiveMeeting {
       return false;
     }
 
-    // The projection key remains stable outside the aggregate. This is only a
-    // physical receipt rotation after a deleted or otherwise stale Discord
-    // reference. The caller persists this state transition with the aggregate
-    // revision CAS, so a stale completion cannot overwrite a newer receipt.
     this.externalProjectionId = normalized;
     this.incrementRevision();
     this.lastProjectedRevision = this.currentRevision;
@@ -742,8 +224,6 @@ export class LiveMeeting {
     return {
       draftSummary: this.summaryDraft,
       endedAtMs: this.endedTimestampMs,
-      generationTelemetry: [...this.telemetryRecords],
-      generationUsage: [...this.usageRecords],
       meetingId: this.meetingId,
       projectedRevision: this.lastProjectedRevision,
       projectionExternalId: this.externalProjectionId,
@@ -751,57 +231,12 @@ export class LiveMeeting {
       revision: this.currentRevision,
       startedAtMs: this.startedAtMs,
       status: this.currentStatus,
-      summarizedTurnIds: this.finalizedTurns
-        .filter(({ turnId }) => this.summarizedTurnIdSet.has(turnId))
-        .map(({ turnId }) => turnId),
       summaryGeneratedAtMs: this.summaryTimestampMs,
-      turns: this.finalizedTurns.map((turn) => turn.toSnapshot()),
     };
   }
 
   private incrementRevision(): void {
     this.currentRevision += 1;
-  }
-
-  private incrementInvisibleRevision(): void {
-    const projectionIsCurrent =
-      this.externalProjectionId !== null && this.lastProjectedRevision === this.currentRevision;
-    this.incrementRevision();
-    if (projectionIsCurrent) {
-      this.lastProjectedRevision = this.currentRevision;
-    }
-  }
-
-  private appendGenerationUsage(input: LiveGenerationUsageSnapshot): boolean {
-    const usage = validateUsage(input);
-    const existing = this.usageRecords.find(({ runId }) => runId === usage.runId);
-    if (existing !== undefined) {
-      if (!sameUsage(existing, usage)) {
-        throw new DomainInvariantError(
-          "CONFLICTING_COMPLETION",
-          "generation usage run was replayed with different values",
-        );
-      }
-      return false;
-    }
-    this.usageRecords.push(usage);
-    return true;
-  }
-
-  private appendGenerationTelemetry(input: LiveGenerationTelemetrySnapshot): boolean {
-    const telemetry = validateTelemetry(input);
-    const existing = this.telemetryRecords.find(({ runId }) => runId === telemetry.runId);
-    if (existing !== undefined) {
-      if (!sameTelemetry(existing, telemetry)) {
-        throw new DomainInvariantError(
-          "CONFLICTING_COMPLETION",
-          "generation telemetry run was replayed with different values",
-        );
-      }
-      return false;
-    }
-    this.telemetryRecords.push(telemetry);
-    return true;
   }
 
   private validateLifecycle(): void {
@@ -811,17 +246,14 @@ export class LiveMeeting {
     ) {
       throw new DomainInvariantError("INVALID_SNAPSHOT", "live meeting status is inconsistent");
     }
+    if (this.lastProjectedRevision > this.currentRevision) {
+      throw new DomainInvariantError("INVALID_SNAPSHOT", "projected revision exceeds live state");
+    }
     if (this.externalProjectionId === null && this.lastProjectedRevision !== 0) {
       throw new DomainInvariantError("INVALID_SNAPSHOT", "live projection state is inconsistent");
     }
-    const hasNoSummaryState =
-      this.summaryDraft === null &&
-      this.summaryTimestampMs === null &&
-      this.summarizedTurnIdSet.size === 0;
-    const hasCompleteSummaryState =
-      this.summaryDraft !== null &&
-      this.summaryTimestampMs !== null &&
-      this.summarizedTurnIdSet.size > 0;
+    const hasNoSummaryState = this.summaryDraft === null && this.summaryTimestampMs === null;
+    const hasCompleteSummaryState = this.summaryDraft !== null && this.summaryTimestampMs !== null;
     if (!hasNoSummaryState && !hasCompleteSummaryState) {
       throw new DomainInvariantError("INVALID_SNAPSHOT", "live summary state is inconsistent");
     }

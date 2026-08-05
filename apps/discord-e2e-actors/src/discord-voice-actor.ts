@@ -39,19 +39,25 @@ export interface RecorderAwareVoiceActor extends ReconnectableVoiceActor {
   waitForVoiceMember(memberId: string, timeoutMilliseconds: number): Promise<void>;
 }
 
+interface ConnectedDiscordVoiceActorOptions {
+  readonly client: Client;
+  readonly connect: () => Promise<VoiceConnection>;
+  readonly fixturePath: string;
+  readonly guild: Guild;
+  readonly initialConnection: VoiceConnection;
+  readonly playbackTimeoutMilliseconds: number;
+  readonly voiceChannelId: string;
+}
+
 class ConnectedDiscordVoiceActor implements RecorderAwareVoiceActor {
-  constructor(
-    private readonly client: Client,
-    private connection: VoiceConnection | undefined,
-    private readonly connect: () => Promise<VoiceConnection>,
-    private readonly fixturePath: string,
-    private readonly playbackTimeoutMilliseconds: number,
-    private readonly guild: Guild,
-    private readonly voiceChannelId: string,
-  ) {}
+  private connection: VoiceConnection | undefined;
+
+  constructor(private readonly options: ConnectedDiscordVoiceActorOptions) {
+    this.connection = options.initialConnection;
+  }
 
   async waitForVoiceMember(memberId: string, timeoutMilliseconds: number): Promise<void> {
-    if (this.guild.voiceStates.cache.get(memberId)?.channelId === this.voiceChannelId) {
+    if (this.options.guild.voiceStates.cache.get(memberId)?.channelId === this.options.voiceChannelId) {
       return;
     }
     await new Promise<void>((resolve, reject) => {
@@ -60,16 +66,16 @@ class ConnectedDiscordVoiceActor implements RecorderAwareVoiceActor {
         reject(new Error(`Recorder bot ${memberId} did not join the E2E voice channel`));
       }, timeoutMilliseconds);
       const onVoiceStateUpdate = (): void => {
-        if (this.guild.voiceStates.cache.get(memberId)?.channelId === this.voiceChannelId) {
+        if (this.options.guild.voiceStates.cache.get(memberId)?.channelId === this.options.voiceChannelId) {
           cleanup();
           resolve();
         }
       };
       const cleanup = (): void => {
         clearTimeout(timeout);
-        this.client.off("voiceStateUpdate", onVoiceStateUpdate);
+        this.options.client.off("voiceStateUpdate", onVoiceStateUpdate);
       };
-      this.client.on("voiceStateUpdate", onVoiceStateUpdate);
+      this.options.client.on("voiceStateUpdate", onVoiceStateUpdate);
     });
   }
 
@@ -87,12 +93,12 @@ class ConnectedDiscordVoiceActor implements RecorderAwareVoiceActor {
     }
 
     try {
-      player.play(createAudioResource(this.fixturePath, { inputType: StreamType.OggOpus }));
+      player.play(createAudioResource(this.options.fixturePath, { inputType: StreamType.OggOpus }));
       // Playing excludes local resource buffering; the first Discord voice dispatch follows on
       // the next player tick. It is a sender-side boundary, not a remote Craig receive ack.
-      await entersState(player, AudioPlayerStatus.Playing, this.playbackTimeoutMilliseconds);
+      await entersState(player, AudioPlayerStatus.Playing, this.options.playbackTimeoutMilliseconds);
       lifecycle.onPlaying();
-      await entersState(player, AudioPlayerStatus.Idle, this.playbackTimeoutMilliseconds);
+      await entersState(player, AudioPlayerStatus.Idle, this.options.playbackTimeoutMilliseconds);
       lifecycle.onIdle();
     } finally {
       player.stop(true);
@@ -104,14 +110,14 @@ class ConnectedDiscordVoiceActor implements RecorderAwareVoiceActor {
     const connection = this.connection;
     this.connection = undefined;
     connection?.destroy();
-    this.connection = await this.connect();
+    this.connection = await this.options.connect();
   }
 
   async close(): Promise<void> {
     const connection = this.connection;
     this.connection = undefined;
     connection?.destroy();
-    await this.client.destroy();
+    await this.options.client.destroy();
   }
 }
 
@@ -153,15 +159,15 @@ export async function connectDiscordVoiceActor(
     };
     connection = await connect();
 
-    return new ConnectedDiscordVoiceActor(
+    return new ConnectedDiscordVoiceActor({
       client,
-      connection,
       connect,
-      input.fixturePath,
-      input.playbackTimeoutMilliseconds,
+      fixturePath: input.fixturePath,
       guild,
-      channel.id,
-    );
+      initialConnection: connection,
+      playbackTimeoutMilliseconds: input.playbackTimeoutMilliseconds,
+      voiceChannelId: channel.id,
+    });
   } catch (error: unknown) {
     connection?.destroy();
     await client.destroy();

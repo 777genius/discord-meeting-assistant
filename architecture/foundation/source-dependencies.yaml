@@ -1,20 +1,24 @@
-schemaVersion: 1
+schemaVersion: 2
 workspace:
   kind: pnpm
   manifest: pnpm-workspace.yaml
 governedRoots:
+  - infra/subscription-runtime
   - apps/discord-e2e-actors/src
   - apps/meeting-platform/src
   - apps/subscription-runtime-sidecar/src
   - packages/ai-adapters/src
   - packages/bullmq-adapter/src
   - packages/craig-gateway-contracts/src
+  - packages/conversation-runtime-contracts/src
+  - packages/craig-playback-adapter/src
   - packages/discord-adapter/src
   - packages/guild-configuration-core/src
   - packages/meeting-core/src
   - packages/object-storage-adapter/src
   - packages/observability-adapter/src
   - packages/postgres-adapter/src
+  - packages/pipecat-runtime-adapter/src
   - packages/recording-ingress-adapter/src
   - packages/speaches-adapter/src
   - packages/subscription-runtime-adapter/src
@@ -24,6 +28,7 @@ boundaries:
   - id: core.guild-configuration
     roots:
       - packages/guild-configuration-core/src
+    entrypoints: []
     allow:
       boundaries: []
       packages: []
@@ -32,6 +37,7 @@ boundaries:
   - id: core.meeting
     roots:
       - packages/meeting-core/src
+    entrypoints: []
     allow:
       boundaries: []
       packages: []
@@ -40,6 +46,17 @@ boundaries:
   - id: contracts.craig-gateway
     roots:
       - packages/craig-gateway-contracts/src
+    entrypoints: []
+    allow:
+      boundaries: []
+      packages:
+        - zod
+      builtins: []
+      runtimeReferences: []
+  - id: contracts.conversation-runtime
+    roots:
+      - packages/conversation-runtime-contracts/src
+    entrypoints: []
     allow:
       boundaries: []
       packages:
@@ -49,6 +66,7 @@ boundaries:
   - id: adapters.ai
     roots:
       - packages/ai-adapters/src
+    entrypoints: []
     allow:
       boundaries:
         - core.meeting
@@ -58,9 +76,27 @@ boundaries:
         - zod
       builtins: []
       runtimeReferences: []
+  - id: adapters.craig-playback
+    roots:
+      - packages/craig-playback-adapter/src
+    entrypoints: []
+    allow:
+      boundaries:
+        - contracts.craig-gateway
+        - core.meeting
+      packages:
+        - "@discord-meeting/craig-gateway-contracts"
+        - "@discord-meeting/meeting-core"
+        - ws
+      builtins:
+        - node:crypto
+        - node:http
+        - node:stream
+      runtimeReferences: []
   - id: adapters.bullmq
     roots:
       - packages/bullmq-adapter/src
+    entrypoints: []
     allow:
       boundaries: []
       packages:
@@ -72,6 +108,7 @@ boundaries:
   - id: adapters.discord
     roots:
       - packages/discord-adapter/src
+    entrypoints: []
     allow:
       boundaries:
         - core.guild-configuration
@@ -87,6 +124,8 @@ boundaries:
   - id: adapters.postgres
     roots:
       - packages/postgres-adapter/src
+    entrypoints:
+      - packages/postgres-adapter/src/run-migrations.ts
     allow:
       boundaries:
         - core.guild-configuration
@@ -95,11 +134,30 @@ boundaries:
         - "@discord-meeting/guild-configuration-core"
         - "@discord-meeting/meeting-core"
         - pg
-      builtins: []
+      builtins:
+        - node:crypto
+        - node:fs/promises
+      runtimeReferences: []
+  - id: adapters.pipecat-runtime
+    roots:
+      - packages/pipecat-runtime-adapter/src
+    entrypoints: []
+    allow:
+      boundaries:
+        - contracts.conversation-runtime
+        - core.meeting
+      packages:
+        - "@discord-meeting/conversation-runtime-contracts"
+        - "@discord-meeting/meeting-core"
+        - "@grpc/grpc-js"
+        - "@grpc/proto-loader"
+      builtins:
+        - node:url
       runtimeReferences: []
   - id: adapters.recording-ingress
     roots:
       - packages/recording-ingress-adapter/src
+    entrypoints: []
     allow:
       boundaries:
         - contracts.craig-gateway
@@ -116,6 +174,7 @@ boundaries:
   - id: adapters.object-storage
     roots:
       - packages/object-storage-adapter/src
+    entrypoints: []
     allow:
       boundaries: []
       packages:
@@ -128,6 +187,7 @@ boundaries:
   - id: adapters.observability
     roots:
       - packages/observability-adapter/src
+    entrypoints: []
     allow:
       boundaries: []
       packages:
@@ -138,6 +198,7 @@ boundaries:
   - id: adapters.speaches
     roots:
       - packages/speaches-adapter/src
+    entrypoints: []
     allow:
       boundaries:
         - core.meeting
@@ -148,6 +209,7 @@ boundaries:
   - id: adapters.subscription-runtime
     roots:
       - packages/subscription-runtime-adapter/src
+    entrypoints: []
     allow:
       boundaries:
         - core.meeting
@@ -160,6 +222,7 @@ boundaries:
   - id: adapters.voicetext
     roots:
       - packages/voicetext-adapter/src
+    entrypoints: []
     allow:
       boundaries:
         - core.meeting
@@ -179,31 +242,169 @@ boundaries:
   - id: e2e.discord-actors
     roots:
       - apps/discord-e2e-actors/src
+    entrypoints: []
     allow:
       boundaries: []
       packages:
+        - "@discordjs/opus"
         - "@discordjs/voice"
         - discord.js
         - zod
       builtins:
         - node:child_process
+        - node:crypto
         - node:fs/promises
         - node:path
       runtimeReferences: []
-  - id: apps.meeting-platform
+  - id: apps.meeting-platform.application
     roots:
-      - apps/meeting-platform/src
+      - apps/meeting-platform/src/application
+    entrypoints:
+      - apps/meeting-platform/src/application/final-transcription-admission-port.ts
+      - apps/meeting-platform/src/application/guild-publication-target-resolver.ts
+      - apps/meeting-platform/src/application/live-fenced-summary-publication.ts
+      - apps/meeting-platform/src/application/platform-ingress.ts
+      - apps/meeting-platform/src/application/post-call-outbox-dispatcher.ts
+      - apps/meeting-platform/src/application/recording-ingress.ts
+    allow:
+      boundaries:
+        - core.meeting
+      packages:
+        - "@discord-meeting/meeting-core"
+      builtins: []
+      runtimeReferences: []
+  - id: apps.meeting-platform.outbound-adapters
+    roots:
+      - apps/meeting-platform/src/adapters/outbound
+    entrypoints:
+      - apps/meeting-platform/src/adapters/outbound/file-conversation-thinking-cue-registry.ts
+      - apps/meeting-platform/src/adapters/outbound/instrumented-processing-ports.ts
+      - apps/meeting-platform/src/adapters/outbound/instrumented-subscription-runtime-transport.ts
+      - apps/meeting-platform/src/adapters/outbound/s3-ogg-audio-artifact-reader.ts
+      - apps/meeting-platform/src/adapters/outbound/subscription-runtime-grpc-transport.ts
+      - apps/meeting-platform/src/adapters/outbound/system-conversation-delay.ts
+    allow:
+      boundaries:
+        - adapters.object-storage
+        - adapters.observability
+        - adapters.speaches
+        - adapters.subscription-runtime
+        - adapters.voicetext
+        - core.meeting
+      packages:
+        - "@discord-meeting/meeting-core"
+        - "@discord-meeting/object-storage-adapter"
+        - "@discord-meeting/observability-adapter"
+        - "@discord-meeting/speaches-adapter"
+        - "@discord-meeting/subscription-runtime-adapter"
+        - "@discord-meeting/voicetext-adapter"
+        - "@grpc/grpc-js"
+        - "@grpc/proto-loader"
+      builtins:
+        - node:crypto
+        - node:fs/promises
+        - node:url
+      runtimeReferences: []
+  - id: apps.meeting-platform.craig-ingress
+    roots:
+      - apps/meeting-platform/src/adapters/inbound/craig
+    entrypoints:
+      - apps/meeting-platform/src/adapters/inbound/craig/craig-inbound-routes.ts
+    allow:
+      boundaries:
+        - apps.meeting-platform.application
+        - apps.meeting-platform.http
+        - contracts.craig-gateway
+      packages:
+        - "@discord-meeting/craig-gateway-contracts"
+        - fastify
+        - zod
+      builtins: []
+      runtimeReferences: []
+  - id: apps.meeting-platform.discord-install-http
+    roots:
+      - apps/meeting-platform/src/discord-install-http
+    entrypoints:
+      - apps/meeting-platform/src/discord-install-http/discord-install-routes.ts
+    allow:
+      boundaries:
+        - apps.meeting-platform.http
+      packages:
+        - fastify
+      builtins: []
+      runtimeReferences: []
+  - id: apps.meeting-platform.http
+    roots:
+      - apps/meeting-platform/src/http
+    entrypoints:
+      - apps/meeting-platform/src/http/fastify-bearer-auth.ts
+      - apps/meeting-platform/src/http/fastify-platform-http-host.ts
+      - apps/meeting-platform/src/http/http-response.ts
+      - apps/meeting-platform/src/http/platform-http-host.ts
+    allow:
+      boundaries: []
+      packages:
+        - fastify
+      builtins:
+        - node:crypto
+        - node:http
+        - node:net
+      runtimeReferences: []
+  - id: apps.meeting-platform.live-runtime
+    roots:
+      - apps/meeting-platform/src/live-runtime
+    entrypoints:
+      - apps/meeting-platform/src/live-runtime/contracts.ts
+      - apps/meeting-platform/src/live-runtime/platform-live-meeting-runtime.ts
+    allow:
+      boundaries:
+        - core.meeting
+      packages:
+        - "@discord-meeting/meeting-core"
+      builtins:
+        - node:crypto
+      runtimeReferences: []
+  - id: apps.meeting-platform.operations-http
+    roots:
+      - apps/meeting-platform/src/operations-http
+    entrypoints:
+      - apps/meeting-platform/src/operations-http/operations-routes.ts
+    allow:
+      boundaries:
+        - apps.meeting-platform.http
+      packages:
+        - fastify
+      builtins: []
+      runtimeReferences: []
+  - id: apps.meeting-platform.composition
+    roots:
+      - apps/meeting-platform/src/composition
+      - apps/meeting-platform/src/config.ts
+      - apps/meeting-platform/src/live-meeting-runtime.ts
+      - apps/meeting-platform/src/main.ts
+      - apps/meeting-platform/src/platform-runtime.ts
+    entrypoints:
+      - apps/meeting-platform/src/main.ts
     allow:
       boundaries:
         - adapters.bullmq
+        - adapters.craig-playback
         - adapters.discord
         - adapters.object-storage
         - adapters.observability
         - adapters.postgres
+        - adapters.pipecat-runtime
         - adapters.recording-ingress
         - adapters.speaches
         - adapters.subscription-runtime
         - adapters.voicetext
+        - apps.meeting-platform.application
+        - apps.meeting-platform.craig-ingress
+        - apps.meeting-platform.discord-install-http
+        - apps.meeting-platform.http
+        - apps.meeting-platform.live-runtime
+        - apps.meeting-platform.operations-http
+        - apps.meeting-platform.outbound-adapters
         - contracts.craig-gateway
         - core.guild-configuration
         - core.meeting
@@ -211,12 +412,14 @@ boundaries:
         - "@aws-sdk/client-s3"
         - "@discord-meeting/bullmq-adapter"
         - "@discord-meeting/craig-gateway-contracts"
+        - "@discord-meeting/craig-playback-adapter"
         - "@discord-meeting/discord-adapter"
         - "@discord-meeting/guild-configuration-core"
         - "@discord-meeting/meeting-core"
         - "@discord-meeting/object-storage-adapter"
         - "@discord-meeting/observability-adapter"
         - "@discord-meeting/postgres-adapter"
+        - "@discord-meeting/pipecat-runtime-adapter"
         - "@discord-meeting/recording-ingress-adapter"
         - "@discord-meeting/speaches-adapter"
         - "@discord-meeting/subscription-runtime-adapter"
@@ -237,6 +440,7 @@ boundaries:
   - id: apps.subscription-runtime-sidecar
     roots:
       - apps/subscription-runtime-sidecar/src
+    entrypoints: []
     allow:
       boundaries:
         - adapters.subscription-runtime
@@ -253,13 +457,59 @@ boundaries:
         - node:os
         - node:path
         - node:url
-      runtimeReferences: []
-  - id: tooling.architecture-baseline
+      # Composition loads the path-attested deployment launcher and the
+      # exact-version runtime worker mounted outside the application image.
+      runtimeReferences:
+        - dynamic
+  - id: infra.subscription-runtime
     roots:
-      - tooling/architecture-baseline/src
+      - infra/subscription-runtime/audited-codex-jsonl-capture.mjs
+      - infra/subscription-runtime/audited-xhigh-launcher.mjs
+      - infra/subscription-runtime/audited-xhigh-policy.mjs
+    entrypoints:
+      - infra/subscription-runtime/audited-xhigh-launcher.mjs
     allow:
       boundaries: []
       packages: []
       builtins:
+        - node:child_process
+        - node:fs
         - node:fs/promises
+        - node:path
+        - node:string_decoder
+        - node:url
+      runtimeReferences:
+        - dynamic
+  - id: infra.subscription-runtime-tests
+    roots:
+      - infra/subscription-runtime/test
+    entrypoints: []
+    allow:
+      boundaries:
+        - infra.subscription-runtime
+      packages: []
+      builtins:
+        - node:assert/strict
+        - node:child_process
+        - node:fs/promises
+        - node:os
+        - node:path
+        - node:test
+        - node:url
+      runtimeReferences: []
+  - id: tooling.architecture-baseline
+    roots:
+      - tooling/architecture-baseline/src
+    entrypoints: []
+    allow:
+      boundaries: []
+      packages: []
+      builtins:
+        - node:child_process
+        - node:crypto
+        - node:fs/promises
+        - node:module
+        - node:os
+        - node:path
+        - node:util
       runtimeReferences: []

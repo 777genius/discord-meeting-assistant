@@ -1,4 +1,5 @@
 import type {
+  SummaryPublicationEffectLedger,
   LiveMeetingProjectionRequest,
   SummaryPublicationRequest,
 } from "@discord-meeting/meeting-core";
@@ -55,6 +56,7 @@ class InMemoryProjectionClient implements DiscordProjectionClient {
   throwBeforeNextThreadMessageCreate = false;
 
   async inspect(input: {
+    readonly exhaustive?: boolean;
     readonly includeThreads?: boolean;
     readonly parentChannelId: string;
     readonly marker: string;
@@ -127,6 +129,7 @@ class InMemoryProjectionClient implements DiscordProjectionClient {
     readonly container: DiscordProjectionContainer;
     readonly body: DiscordProjectionBody;
     readonly marker: string;
+    readonly nonce: string;
   }): Promise<string> {
     if (input.container.kind === "thread") {
       const thread = this.requireThread(input.container.threadId);
@@ -160,7 +163,7 @@ class InMemoryProjectionClient implements DiscordProjectionClient {
       ? this.requireThread(input.reference.threadId).message
       : this.findChannelMessage(input.reference.parentChannelId, input.reference.messageId);
     if (message?.messageId !== input.reference.messageId) {
-      throw new Error("Message does not exist");
+      throw Object.assign(new Error("Message does not exist"), { code: 10_008 });
     }
     this.editMessageCount += 1;
     const next = { ...message, body: input.body, marker: input.marker };
@@ -226,8 +229,40 @@ function publisher(
   return new DiscordSummaryPublisher(
     client,
     new InProcessProjectionLock(),
+    effectLedger(client),
     publicationMode === undefined ? {} : { publicationMode },
   );
+}
+
+const effectLedgers = new WeakMap<object, SummaryPublicationEffectLedger>();
+
+function effectLedger(client: object): SummaryPublicationEffectLedger {
+  const existing = effectLedgers.get(client);
+  if (existing !== undefined) {
+    return existing;
+  }
+  const entries = new Map<string, string | null>();
+  const created: SummaryPublicationEffectLedger = {
+    completeSummaryPublicationEffect: async (input) => {
+      entries.set(input.projectionKey, input.externalReceipt);
+    },
+    replaceSummaryPublicationEffect: async (input) => {
+      entries.set(input.projectionKey, input.externalReceipt);
+    },
+    reserveSummaryPublicationEffect: async (input) => {
+      const externalReceipt = entries.get(input.projectionKey);
+      if (typeof externalReceipt === "string") {
+        return { externalReceipt, status: "completed" };
+      }
+      if (externalReceipt === null) {
+        return { status: "pending" };
+      }
+      entries.set(input.projectionKey, null);
+      return { status: "acquired" };
+    },
+  };
+  effectLedgers.set(client, created);
+  return created;
 }
 
 describe("Discord publication container modes", () => {

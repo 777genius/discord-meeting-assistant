@@ -8,6 +8,7 @@
     "capacity:e2e": "pnpm run build && node dist/capacity-main.js",
     "collect:e2e": "pnpm run build && node dist/collect-retained-evidence.js",
     "fixtures:generate": "./scripts/generate-ru-en-fixtures.sh",
+    "observe:conversation": "pnpm run build && node dist/observe-conversation-voice.js",
     "observe:live": "pnpm run build && node dist/observe-live-discord.js",
     "start": "pnpm run build && node dist/main.js",
     "test": "vitest run",
@@ -17,6 +18,7 @@
     "check": "pnpm run typecheck && pnpm run test"
   },
   "dependencies": {
+    "@discordjs/opus": "catalog:",
     "@discordjs/voice": "catalog:",
     "discord.js": "catalog:",
     "zod": "catalog:"

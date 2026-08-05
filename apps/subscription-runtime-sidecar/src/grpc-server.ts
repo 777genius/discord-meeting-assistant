@@ -15,6 +15,7 @@ import type {
   SubscriptionRuntimeTelemetry,
   SubscriptionRuntimeTokenAvailability,
 } from "@discord-meeting/subscription-runtime-adapter";
+import { subscriptionRuntimeEngine } from "@discord-meeting/subscription-runtime-adapter";
 
 import {
   grpcHealthDegraded,
@@ -72,7 +73,15 @@ export function createGrpcHandlers(
         );
         return;
       }
-      void executeTask(executor, request, callback);
+      const cancellation = new AbortController();
+      const abort = (): void => {
+        cancellation.abort();
+      };
+      call.once("cancelled", abort);
+      void executeTask(executor, request, callback, cancellation.signal)
+        .finally(() => {
+          call.removeListener("cancelled", abort);
+        });
     },
     checkHealth(call, callback): void {
       if (!isAuthorized(call.metadata, options.serviceToken)) {
@@ -276,13 +285,19 @@ async function executeTask(
   executor: SidecarExecutorPort,
   request: Parameters<SidecarExecutorPort["execute"]>[0],
   callback: Parameters<UnaryHandler>[1],
+  signal: AbortSignal,
 ): Promise<void> {
   try {
-    callback(null, toGrpcTaskResponse(await executor.execute(request)));
+    const result = await executor.execute(request, signal);
+    if (!signal.aborted) {
+      callback(null, toGrpcTaskResponse(result));
+    }
   } catch {
-    callback(
-      grpcError(status.UNAVAILABLE, "Subscription runtime is unavailable"),
-    );
+    if (!signal.aborted) {
+      callback(
+        grpcError(status.UNAVAILABLE, "Subscription runtime is unavailable"),
+      );
+    }
   }
 }
 
@@ -305,7 +320,7 @@ async function checkRuntimeHealth(
   } catch {
     callback(null, {
       status: grpcHealthNotServing,
-      runtimeEngine: "subscription-runtime-cli",
+      runtimeEngine: subscriptionRuntimeEngine,
       runtimeVersion: "unknown",
       launcherSha256: "",
       warnings: [

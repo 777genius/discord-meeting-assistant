@@ -5,6 +5,48 @@ voice channel and plays synthetic Ogg Opus fixtures with controlled overlap,
 strictly sequential playback, or one speaker reconnecting during the same recording.
 It never accepts bot tokens directly through environment variables.
 
+## Providerless conversation voice observer
+
+`observe:conversation` is a separate Stage 7 diagnostic for a private,
+test-only guild. It uses one official observer bot, joins only the explicitly
+configured guild voice channel, and subscribes only to the configured Craig bot
+user. Set `DISCORD_E2E_CONVERSATION_VOICE_PRIVATE_TEST_GUILD=private-test-guild`;
+this acknowledgement is mandatory and is retained in the evidence. Do not use
+it in a public or user-owned guild.
+
+Store the observer token in macOS Keychain under service
+`discord-voice-bot-e2e`, account `conversation-observer` (or use the same
+private file-secret reader rules described above). Provide no token through an
+environment variable:
+
+```sh
+DISCORD_E2E_CONVERSATION_VOICE_PRIVATE_TEST_GUILD=private-test-guild \
+DISCORD_E2E_CONVERSATION_VOICE_GUILD_ID=... \
+DISCORD_E2E_CONVERSATION_VOICE_VOICE_CHANNEL_ID=... \
+DISCORD_E2E_CONVERSATION_VOICE_OBSERVER_APPLICATION_ID=... \
+DISCORD_E2E_CONVERSATION_VOICE_CRAIG_BOT_ID=... \
+DISCORD_E2E_CONVERSATION_VOICE_RUN_ID=... \
+DISCORD_E2E_CONVERSATION_VOICE_RECORDING_ID=... \
+DISCORD_E2E_CONVERSATION_VOICE_TURN_ID=... \
+DISCORD_E2E_CONVERSATION_VOICE_ATTEMPT_ID=... \
+DISCORD_E2E_CONVERSATION_VOICE_EXPECTED_DURATION_MS=5000 \
+DISCORD_E2E_CONVERSATION_VOICE_OUTPUT=/absolute/evidence/conversation-voice.json \
+pnpm --filter @discord-meeting/discord-e2e-actors observe:conversation
+```
+
+The observer decodes only bounded 48 kHz stereo S16LE PCM in memory (never more
+than 60 seconds / 11,520,000 bytes), then atomically writes a new JSON evidence
+file with packet/timing data, PCM SHA-256, RMS and non-silence metrics. It never
+stores bot tokens, PCM, Opus packets, or transcript text. It fails for no audio,
+timeout, silence, an unexpected sender, or an existing output path.
+
+This is transport evidence only: it does not run STT, does not verify a
+transcript, cannot establish the authoritative Craig recording, and cannot
+prove wire-level packet completeness because Discord's receiver exposes decoded
+Opus payloads rather than RTP sequence metadata. The configured recording,
+turn, and attempt IDs are retained only as operator-supplied labels; this
+observer does not independently verify their correlation or cancellation.
+
 Generate the Russian fixtures with embedded English technical terms before the
 first external run. The command uses macOS `say` (voice `Milena` by default),
 encodes Ogg Opus with `ffmpeg`, verifies it with `ffprobe`, and prints the audio
@@ -89,6 +131,11 @@ DISCORD_E2E_ACTOR_RUN_INPUT=/absolute/evidence/overlap.actor-run.json \
 DISCORD_E2E_EVIDENCE_OUTPUT=/absolute/evidence/overlap.evidence.v2.json \
 pnpm --filter @discord-meeting/discord-e2e-actors collect:e2e
 ```
+
+Collection and both verification commands require immutable candidate inputs
+`DISCORD_E2E_EXPECTED_CRAIG_SOURCE_REVISION` and
+`DISCORD_E2E_EXPECTED_MEETING_PLATFORM_SOURCE_REVISION`. Set them from the
+release candidate commits, never from an existing evidence file.
 
 The collector performs a real post-call replay. Run it only against the isolated
 official-bot test deployment. Infrastructure paths/host/project have safe

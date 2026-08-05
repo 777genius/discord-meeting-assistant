@@ -306,6 +306,9 @@ describe("VoicetextFinalTranscriptionAdapter", () => {
     )).toThrow(field);
   });
 
+});
+
+describe("VoicetextFinalTranscriptionAdapter failure handling", () => {
   it("fails closed on an out-of-order ACK", async () => {
     const connector = new ScriptedConnector((socket) => {
       socket.onText = (message) => {

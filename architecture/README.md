@@ -7,7 +7,7 @@ remain in `docs/architecture` and accepted decisions in `docs/decisions`.
   engineering foundation.
 - `ast-grep/` owns narrow structural rules that are not import-graph questions.
 
-The current source-dependency scope intentionally contains only the real tooling
-package. The first production package must extend the governed roots and add its
-closed boundary classification in the same change. Production source may not land
-outside a governed root.
+The source-dependency scope classifies every current production TypeScript root
+fail-closed. New production source must extend the governed roots and add its
+closed boundary classification in the same change. Production source may not
+land outside a governed root.

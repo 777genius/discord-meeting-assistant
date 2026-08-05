@@ -1,0 +1,141 @@
+import { isAbsolute } from "node:path";
+
+import { z } from "zod";
+
+import {
+  MAXIMUM_CONVERSATION_VOICE_CAPTURE_DURATION_MILLISECONDS,
+  MAXIMUM_CONVERSATION_VOICE_PCM_BYTES,
+  PCM_S16LE_STEREO_BYTES_PER_MILLISECOND,
+} from "./conversation-voice-observer.js";
+
+const snowflakeSchema = z.string().regex(/^\d{17,20}$/u, "Expected a Discord snowflake");
+const correlationIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u);
+const secretAccountSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/u);
+const absoluteOutputPathSchema = z.string()
+  .min(1)
+  .refine((value) => isAbsolute(value) && value !== "/", "Expected an absolute output file path");
+const absoluteDirectorySchema = z.string().min(1).refine(isAbsolute, "Expected an absolute directory path");
+
+const environmentSchema = z.object({
+  DISCORD_E2E_CONVERSATION_VOICE_ATTEMPT_ID: correlationIdSchema,
+  DISCORD_E2E_CONVERSATION_VOICE_CAPTURE_TIMEOUT_MS: z.coerce.number()
+    .int()
+    .min(1_000)
+    .max(MAXIMUM_CONVERSATION_VOICE_CAPTURE_DURATION_MILLISECONDS)
+    .default(MAXIMUM_CONVERSATION_VOICE_CAPTURE_DURATION_MILLISECONDS),
+  DISCORD_E2E_CONVERSATION_VOICE_CRAIG_BOT_ID: snowflakeSchema,
+  DISCORD_E2E_CONVERSATION_VOICE_EXPECTED_DURATION_MS: z.coerce.number()
+    .int()
+    .min(20)
+    .max(MAXIMUM_CONVERSATION_VOICE_CAPTURE_DURATION_MILLISECONDS),
+  DISCORD_E2E_CONVERSATION_VOICE_EXPECTED_DURATION_TOLERANCE_MS: z.coerce.number()
+    .int()
+    .min(0)
+    .max(5_000)
+    .default(500),
+  DISCORD_E2E_CONVERSATION_VOICE_GUILD_ID: snowflakeSchema,
+  DISCORD_E2E_CONVERSATION_VOICE_KEYCHAIN_SERVICE: z.string()
+    .trim()
+    .min(1)
+    .default("discord-voice-bot-e2e"),
+  DISCORD_E2E_CONVERSATION_VOICE_MAX_PCM_BYTES: z.coerce.number()
+    .int()
+    .min(4)
+    .max(MAXIMUM_CONVERSATION_VOICE_PCM_BYTES)
+    .refine((value) => value % 4 === 0, "Expected a complete PCM frame bound")
+    .default(MAXIMUM_CONVERSATION_VOICE_PCM_BYTES),
+  DISCORD_E2E_CONVERSATION_VOICE_OBSERVER_ACCOUNT: secretAccountSchema.default("conversation-observer"),
+  DISCORD_E2E_CONVERSATION_VOICE_OBSERVER_APPLICATION_ID: snowflakeSchema,
+  DISCORD_E2E_CONVERSATION_VOICE_OUTPUT: absoluteOutputPathSchema,
+  DISCORD_E2E_CONVERSATION_VOICE_PRIVATE_TEST_GUILD: z.literal("private-test-guild"),
+  DISCORD_E2E_CONVERSATION_VOICE_RECORDING_ID: correlationIdSchema,
+  DISCORD_E2E_CONVERSATION_VOICE_RUN_ID: correlationIdSchema,
+  DISCORD_E2E_CONVERSATION_VOICE_SECRET_DIRECTORY: absoluteDirectorySchema.optional(),
+  DISCORD_E2E_CONVERSATION_VOICE_TURN_ID: correlationIdSchema,
+  DISCORD_E2E_CONVERSATION_VOICE_VOICE_CHANNEL_ID: snowflakeSchema,
+}).superRefine((value, context) => {
+  const expectedMaximumDurationMilliseconds = value.DISCORD_E2E_CONVERSATION_VOICE_EXPECTED_DURATION_MS +
+    value.DISCORD_E2E_CONVERSATION_VOICE_EXPECTED_DURATION_TOLERANCE_MS;
+  if (expectedMaximumDurationMilliseconds > MAXIMUM_CONVERSATION_VOICE_CAPTURE_DURATION_MILLISECONDS) {
+    context.addIssue({
+      code: "custom",
+      message: "Expected duration plus tolerance must not exceed the sixty-second PCM capture bound",
+      path: ["DISCORD_E2E_CONVERSATION_VOICE_EXPECTED_DURATION_TOLERANCE_MS"],
+    });
+  }
+  if (value.DISCORD_E2E_CONVERSATION_VOICE_CAPTURE_TIMEOUT_MS <
+    value.DISCORD_E2E_CONVERSATION_VOICE_EXPECTED_DURATION_MS) {
+    context.addIssue({
+      code: "custom",
+      message: "Capture timeout must allow the expected PCM duration",
+      path: ["DISCORD_E2E_CONVERSATION_VOICE_CAPTURE_TIMEOUT_MS"],
+    });
+  }
+  if (value.DISCORD_E2E_CONVERSATION_VOICE_MAX_PCM_BYTES <
+    expectedMaximumDurationMilliseconds * PCM_S16LE_STEREO_BYTES_PER_MILLISECOND) {
+    context.addIssue({
+      code: "custom",
+      message: "PCM byte bound must cover the full expected duration range",
+      path: ["DISCORD_E2E_CONVERSATION_VOICE_MAX_PCM_BYTES"],
+    });
+  }
+  if (value.DISCORD_E2E_CONVERSATION_VOICE_CRAIG_BOT_ID ===
+    value.DISCORD_E2E_CONVERSATION_VOICE_OBSERVER_APPLICATION_ID) {
+    context.addIssue({
+      code: "custom",
+      message: "Observer and Craig bot IDs must be distinct",
+      path: ["DISCORD_E2E_CONVERSATION_VOICE_CRAIG_BOT_ID"],
+    });
+  }
+});
+
+export interface ConversationVoiceObserverConfig {
+  readonly attemptId: string;
+  readonly captureTimeoutMilliseconds: number;
+  readonly craigBotId: string;
+  readonly expectedDurationMilliseconds: number;
+  readonly expectedDurationToleranceMilliseconds: number;
+  readonly guildId: string;
+  readonly keychainService: string;
+  readonly maxPcmBytes: number;
+  readonly observerAccount: string;
+  readonly observerApplicationId: string;
+  readonly outputPath: string;
+  readonly privateTestGuildConfirmed: true;
+  readonly recordingId: string;
+  readonly runId: string;
+  readonly secretDirectory: string | undefined;
+  readonly turnId: string;
+  readonly voiceChannelId: string;
+}
+
+export function loadConversationVoiceObserverConfig(
+  environment: NodeJS.ProcessEnv,
+): ConversationVoiceObserverConfig {
+  if (Object.keys(environment).some((key) =>
+    key.startsWith("DISCORD_E2E_CONVERSATION_VOICE_") && key.includes("TOKEN")
+  )) {
+    throw new Error("Conversation voice observer does not accept bot tokens through environment variables");
+  }
+  const parsed = environmentSchema.parse(environment);
+  return Object.freeze({
+    attemptId: parsed.DISCORD_E2E_CONVERSATION_VOICE_ATTEMPT_ID,
+    captureTimeoutMilliseconds: parsed.DISCORD_E2E_CONVERSATION_VOICE_CAPTURE_TIMEOUT_MS,
+    craigBotId: parsed.DISCORD_E2E_CONVERSATION_VOICE_CRAIG_BOT_ID,
+    expectedDurationMilliseconds: parsed.DISCORD_E2E_CONVERSATION_VOICE_EXPECTED_DURATION_MS,
+    expectedDurationToleranceMilliseconds:
+      parsed.DISCORD_E2E_CONVERSATION_VOICE_EXPECTED_DURATION_TOLERANCE_MS,
+    guildId: parsed.DISCORD_E2E_CONVERSATION_VOICE_GUILD_ID,
+    keychainService: parsed.DISCORD_E2E_CONVERSATION_VOICE_KEYCHAIN_SERVICE,
+    maxPcmBytes: parsed.DISCORD_E2E_CONVERSATION_VOICE_MAX_PCM_BYTES,
+    observerAccount: parsed.DISCORD_E2E_CONVERSATION_VOICE_OBSERVER_ACCOUNT,
+    observerApplicationId: parsed.DISCORD_E2E_CONVERSATION_VOICE_OBSERVER_APPLICATION_ID,
+    outputPath: parsed.DISCORD_E2E_CONVERSATION_VOICE_OUTPUT,
+    privateTestGuildConfirmed: true,
+    recordingId: parsed.DISCORD_E2E_CONVERSATION_VOICE_RECORDING_ID,
+    runId: parsed.DISCORD_E2E_CONVERSATION_VOICE_RUN_ID,
+    secretDirectory: parsed.DISCORD_E2E_CONVERSATION_VOICE_SECRET_DIRECTORY,
+    turnId: parsed.DISCORD_E2E_CONVERSATION_VOICE_TURN_ID,
+    voiceChannelId: parsed.DISCORD_E2E_CONVERSATION_VOICE_VOICE_CHANNEL_ID,
+  });
+}

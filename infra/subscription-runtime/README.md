@@ -40,13 +40,16 @@ regular, non-symlink files with mode `0400`.
 The immutable sidecar image must:
 
 1. pin `@vioxen/subscription-runtime` to `0.1.0-main.2` and verify both the
-   package version and admitted launcher SHA-256 before every execution;
+   package version and admitted audited-launcher bundle SHA-256 before every execution;
 2. admit `discord_meeting.summary.generate` only with
    `gpt-5.6-sol`/`medium`, a 2048-token post-execution output budget, and policy version
    `meeting-summary.subscription-runtime.v8`; admit
    `discord_meeting.summary.incremental` only with `gpt-5.6-luna`/`low`, a
    2048-token post-execution output budget, and policy version
-   `meeting-summary.incremental.subscription-runtime.v4`; both use stateless
+   `meeting-summary.incremental.subscription-runtime.v4`; admit
+   `discord_meeting.conversation.answer` only with `gpt-5.6-luna`/`low`, a
+   512-token budget, policy `meeting-conversation.subscription-runtime.v1`,
+   and schema `discord_meeting_conversation_answer_v1`. All profiles use stateless
    completion, disabled tools, read-only permission, no interactive input, the
    isolated tmpfs working directory, and their exact purpose-bound structured
    schema. Final summaries use `discord_meeting_summary_v4`: title up to 96
@@ -57,7 +60,7 @@ The immutable sidecar image must:
    short overview, at most three topics with one or two points, at most three
    decisions/actions/questions each, and one to three evidence turns per item.
    The live schema is deliberately selective and must not claim completeness;
-   the two schemas and names are not interchangeable;
+   the three schemas and names are not interchangeable;
 3. start children from an explicit environment allowlist and remove every
    `*_API_KEY`, `*_API_KEY_FILE`, session-scoped Codex identifier, and unrelated
    application secret;
@@ -66,7 +69,7 @@ The immutable sidecar image must:
    conflicting controls before provider execution;
 5. attach an execution attestation containing the canonical request hash,
    selected output hash, provider/model/profile, runtime package version, and
-   launcher digest;
+   audited launcher bundle digest;
 6. expose `RunAgentTask` and `CheckHealth` only on the internal meeting network
    and authenticate both methods from the mounted service-token file;
 7. keep safe error codes separate from provider stderr/stdout and never return
@@ -75,9 +78,12 @@ The immutable sidecar image must:
 The output budget is checked against measured provider output after completion.
 It is not a provider generation cap and does not guarantee latency; the compact
 final and incremental schemas/prompts reduce response volume, while `low`
-reasoning remains an incremental-only latency optimization.
+reasoning is used by both latency-sensitive Luna purposes.
 
-The audited launcher wraps only the admitted `codexBinaryPath` and observes
+The sidecar keeps purpose-scoped workers alive and prewarms the conversation
+app-server/clean-thread path before opening its gRPC listener. Every turn stays
+stateless, and packaged exec remains the fallback. The audited launcher wraps
+only the admitted `codexBinaryPath` on that fallback and observes
 `codex exec --json` JSONL `turn.completed` events. It keeps the private runtime
 worker responsible for auth custody and disabled-tool policy. Codex supplies
 measured input, cached input, output, and reasoning-output tokens in that event;
@@ -124,7 +130,7 @@ Before real Discord E2E, verify without printing secrets:
   ownership and modes;
 - the reserved slot is excluded from all other project allocators;
 - Compose publishes no host port and joins only `discord-meeting-internal`;
-- health reports the exact package version and launcher digest;
+- health reports the exact package version and audited launcher bundle digest;
 - a deterministic contract request passes before any real provider request;
 - logs contain no API-key variables, auth JSON, provider payload, or account
   identity.

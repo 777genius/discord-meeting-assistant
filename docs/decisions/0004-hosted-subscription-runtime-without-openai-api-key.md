@@ -1,3 +1,10 @@
+---
+id: ADR-0004
+status: accepted
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0004: Hosted subscription runtime without an OpenAI API key
 
 Status: Accepted

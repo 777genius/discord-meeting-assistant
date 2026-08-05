@@ -1,0 +1,37 @@
+version: v2
+modules:
+  - path: .
+    excludes:
+      - node_modules
+      - apps/discord-e2e-actors/node_modules
+      - apps/meeting-platform/node_modules
+      - apps/pipecat-runtime/.venv
+      - apps/subscription-runtime-sidecar/node_modules
+      - packages/ai-adapters/node_modules
+      - packages/bullmq-adapter/node_modules
+      - packages/conversation-runtime-contracts/node_modules
+      - packages/craig-gateway-contracts/node_modules
+      - packages/craig-playback-adapter/node_modules
+      - packages/discord-adapter/node_modules
+      - packages/guild-configuration-core/node_modules
+      - packages/meeting-core/node_modules
+      - packages/object-storage-adapter/node_modules
+      - packages/observability-adapter/node_modules
+      - packages/pipecat-runtime-adapter/node_modules
+      - packages/postgres-adapter/node_modules
+      - packages/recording-ingress-adapter/node_modules
+      - packages/speaches-adapter/node_modules
+      - packages/subscription-runtime-adapter/node_modules
+      - packages/voicetext-adapter/node_modules
+lint:
+  use:
+    - STANDARD
+  except:
+    # Published runtime names predate Buf adoption; changing them would break
+    # existing clients and requires a separately versioned contract release.
+    - PACKAGE_DIRECTORY_MATCH
+    - RPC_REQUEST_STANDARD_NAME
+    - RPC_RESPONSE_STANDARD_NAME
+breaking:
+  use:
+    - FILE

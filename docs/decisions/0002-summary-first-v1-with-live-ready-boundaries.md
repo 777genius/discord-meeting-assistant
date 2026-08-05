@@ -1,3 +1,10 @@
+---
+id: ADR-0002
+status: accepted
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0002: Summary-first V1 with live-ready boundaries
 
 Status: Accepted

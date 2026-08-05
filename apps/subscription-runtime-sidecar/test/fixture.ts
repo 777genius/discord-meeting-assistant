@@ -1,4 +1,5 @@
 import {
+  buildSubscriptionRuntimeConversationRequest,
   buildSubscriptionRuntimeIncrementalSummaryRequest,
   buildSubscriptionRuntimeSummaryRequest,
   type JsonObject,
@@ -96,6 +97,28 @@ export const incrementalCanonicalRequest = buildSubscriptionRuntimeIncrementalSu
     timeoutMs: 10_000,
   },
 );
+
+export const conversationCanonicalRequest = buildSubscriptionRuntimeConversationRequest(
+  {
+    idempotencyKey: "conversation:meeting-1:turn-3",
+    locale: "auto",
+    meetingId: "meeting-1",
+    prompt: "Ботик, когда следующий релиз?",
+    recordingId: "recording-1",
+    systemPrompt: "Answer briefly in the participant's language.",
+    turnId: "turn-3",
+  },
+  {
+    isolatedCwd,
+    maxOutputTokens: 512,
+    maxPromptBytes: 2 * 1_024 * 1_024,
+    timeoutMs: 15_000,
+  },
+);
+
+export const conversationStructuredOutput: JsonObject = {
+  answer: "Следующий релиз запланирован на пятницу.",
+};
 
 export function grpcRequest(
   request: SubscriptionRuntimeAgentTaskRequest = canonicalRequest,

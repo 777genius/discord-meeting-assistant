@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
 
+import { subscriptionRuntimeCliEngine } from "@discord-meeting/subscription-runtime-adapter";
+
 import type {
   ProcessRunnerPort,
   ProcessRunRequest,
@@ -7,7 +9,12 @@ import type {
 } from "./types.js";
 
 export class NodeProcessRunner implements ProcessRunnerPort {
+  public readonly runtimeEngine = subscriptionRuntimeCliEngine;
+
   public async run(request: ProcessRunRequest): Promise<ProcessRunResult> {
+    if (request.signal?.aborted === true) {
+      return cancelledResult();
+    }
     return await new Promise((resolve, reject) => {
       const child = spawn(request.command, request.args, {
         cwd: request.cwd,
@@ -20,6 +27,7 @@ export class NodeProcessRunner implements ProcessRunnerPort {
       let stdoutBytes = 0;
       let stderrBytes = 0;
       let outputLimitExceeded = false;
+      let cancelled = false;
       let timedOut = false;
       let settled = false;
       let killTimer: NodeJS.Timeout | undefined;
@@ -36,6 +44,14 @@ export class NodeProcessRunner implements ProcessRunnerPort {
         terminate();
       }, request.timeoutMs);
       timeout.unref();
+      const cancel = (): void => {
+        cancelled = true;
+        terminate();
+      };
+      request.signal?.addEventListener("abort", cancel, { once: true });
+      if (request.signal?.aborted === true) {
+        cancel();
+      }
 
       child.stdout.on("data", (value: Buffer | string) => {
         const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
@@ -71,6 +87,7 @@ export class NodeProcessRunner implements ProcessRunnerPort {
         }
         settled = true;
         clearTimeout(timeout);
+        request.signal?.removeEventListener("abort", cancel);
         if (killTimer !== undefined) {
           clearTimeout(killTimer);
         }
@@ -82,11 +99,13 @@ export class NodeProcessRunner implements ProcessRunnerPort {
         }
         settled = true;
         clearTimeout(timeout);
+        request.signal?.removeEventListener("abort", cancel);
         if (killTimer !== undefined) {
           clearTimeout(killTimer);
         }
         resolve({
           exitCode,
+          cancelled,
           outputLimitExceeded,
           signal,
           stderr: Buffer.concat(stderr).toString("utf8"),
@@ -96,6 +115,18 @@ export class NodeProcessRunner implements ProcessRunnerPort {
       });
     });
   }
+}
+
+function cancelledResult(): ProcessRunResult {
+  return {
+    cancelled: true,
+    exitCode: null,
+    outputLimitExceeded: false,
+    signal: null,
+    stderr: "",
+    stdout: "",
+    timedOut: false,
+  };
 }
 
 function appendBounded(

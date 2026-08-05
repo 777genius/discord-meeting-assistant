@@ -12,6 +12,11 @@ const storageKeySchema = z
     message: "Storage keys must be relative and cannot traverse directories",
   });
 
+function decodedBase64ByteLength(value: string): number {
+  const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+  return (value.length / 4) * 3 - padding;
+}
+
 const envelopeSchema = z
   .object({
     schemaVersion: z.literal(1),
@@ -119,6 +124,119 @@ export const voicePacketBatchSchema = z
 
 export type VoicePacketBatch = z.infer<typeof voicePacketBatchSchema>;
 
+export const craigPlaybackProtocolVersion = 1 as const;
+export const craigPlaybackSampleRateHz = 48_000 as const;
+export const craigPlaybackChannels = 1 as const;
+export const maximumCraigPlaybackPcmBytes = 19_200;
+
+const playbackTurnEnvelopeSchema = z.object({
+  schemaVersion: z.literal(craigPlaybackProtocolVersion),
+  recordingId: identifierSchema,
+  turnId: identifierSchema,
+  attemptId: identifierSchema,
+});
+
+const playbackStartSchema = playbackTurnEnvelopeSchema
+  .extend({
+    type: z.literal("playback-start"),
+    format: z.literal("pcm_s16le"),
+    sampleRateHz: z.literal(craigPlaybackSampleRateHz),
+    channels: z.literal(craigPlaybackChannels),
+  })
+  .strict();
+
+const playbackAudioChunkSchema = playbackTurnEnvelopeSchema
+  .extend({
+    type: z.literal("audio-chunk"),
+    sequence: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    pcmBase64: z.base64().min(4).max(25_600),
+  })
+  .strict()
+  .refine(
+    (value) => {
+      const byteLength = decodedBase64ByteLength(value.pcmBase64);
+      return byteLength > 0 &&
+        byteLength <= maximumCraigPlaybackPcmBytes &&
+        byteLength % 2 === 0;
+    },
+    "PCM chunks must contain bounded 16-bit samples",
+  );
+
+const playbackFinishSchema = playbackTurnEnvelopeSchema
+  .extend({ type: z.literal("playback-finish") })
+  .strict();
+
+const playbackCancelSchema = playbackTurnEnvelopeSchema
+  .extend({
+    type: z.literal("playback-cancel"),
+    reason: z.enum([
+      "barge-in",
+      "meeting-ended",
+      "playback-failed",
+      "runtime-shutdown",
+      "superseded",
+    ]),
+  })
+  .strict();
+
+export const craigPlaybackCommandSchema = z.discriminatedUnion("type", [
+  playbackStartSchema,
+  playbackAudioChunkSchema,
+  playbackFinishSchema,
+  playbackCancelSchema,
+]);
+
+export type CraigPlaybackCommand = z.infer<typeof craigPlaybackCommandSchema>;
+
+const playbackSessionReadySchema = z
+  .object({
+    schemaVersion: z.literal(craigPlaybackProtocolVersion),
+    type: z.literal("session-ready"),
+    recordingId: identifierSchema,
+    guildId: discordSnowflakeSchema,
+    channelId: discordSnowflakeSchema,
+    gatewaySessionId: identifierSchema,
+  })
+  .strict();
+
+const playbackStartedSchema = playbackTurnEnvelopeSchema
+  .extend({
+    type: z.literal("playback-started"),
+    startedAtMs: z.number().int().nonnegative(),
+  })
+  .strict();
+
+const playbackFinishedSchema = playbackTurnEnvelopeSchema
+  .extend({
+    type: z.literal("playback-finished"),
+    finishedAtMs: z.number().int().nonnegative(),
+  })
+  .strict();
+
+const playbackFailedSchema = playbackTurnEnvelopeSchema
+  .extend({
+    type: z.literal("playback-failed"),
+    code: z.enum([
+      "backpressure",
+      "connection-unavailable",
+      "invalid-audio",
+      "playback-error",
+      "transport-disconnected",
+    ]),
+    safeMessage: z.string().trim().min(1).max(512),
+    retryable: z.boolean(),
+  })
+  .strict();
+
+export const craigPlaybackEventSchema = z.discriminatedUnion("type", [
+  playbackSessionReadySchema,
+  playbackStartedSchema,
+  playbackFinishedSchema,
+  playbackFailedSchema,
+]);
+
+export type CraigPlaybackEvent = z.infer<typeof craigPlaybackEventSchema>;
+
 export function parseCraigLifecycleEvent(input: unknown): CraigLifecycleEvent {
   return craigLifecycleEventSchema.parse(input);
 }
@@ -135,4 +253,12 @@ export function parseVoicePacket(input: unknown): VoicePacket {
 
 export function parseVoicePacketBatch(input: unknown): VoicePacketBatch {
   return voicePacketBatchSchema.parse(input);
+}
+
+export function parseCraigPlaybackCommand(input: unknown): CraigPlaybackCommand {
+  return craigPlaybackCommandSchema.parse(input);
+}
+
+export function parseCraigPlaybackEvent(input: unknown): CraigPlaybackEvent {
+  return craigPlaybackEventSchema.parse(input);
 }

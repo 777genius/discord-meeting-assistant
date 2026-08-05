@@ -30,7 +30,6 @@ import {
   validateProviderSummaryEvidence,
 } from "./summary-output.js";
 import {
-  subscriptionRuntimeEngine,
   type SubscriptionRuntimeTransportPort,
 } from "./subscription-runtime-contract.js";
 
@@ -76,7 +75,7 @@ export class SubscriptionRuntimeSummaryAdapter
     try {
       const health = await this.transport.checkHealth();
       const identityMatches =
-        health.runtimeEngine === subscriptionRuntimeEngine &&
+        health.runtimeEngine === this.attestationExpectation.runtimeEngine &&
         health.runtimeVersion ===
           this.attestationExpectation.runtimePackageVersion &&
         health.launcherSha256 === this.attestationExpectation.launcherSha256;

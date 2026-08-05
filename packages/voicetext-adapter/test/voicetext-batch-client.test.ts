@@ -127,7 +127,9 @@ describe("FetchVoicetextBatchClient", () => {
       signal,
     });
   });
+});
 
+describe("FetchVoicetextBatchClient failure policy", () => {
   it("fails closed when a poll response belongs to another batch job", async () => {
     const client = new FetchVoicetextBatchClient({
       endpoint: "https://api.voicetext.test/api/v1/transcribe/batch",
@@ -144,6 +146,30 @@ describe("FetchVoicetextBatchClient", () => {
       code: "invalid_provider_response",
       retryable: false,
     }));
+  });
+
+  it("cancels an oversized chunked response instead of retaining the connection", async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      cancel: () => {
+        cancelled = true;
+      },
+      start: (controller) => {
+        controller.enqueue(new Uint8Array(2_097_153));
+      },
+    });
+    const client = new FetchVoicetextBatchClient({
+      endpoint: "https://api.voicetext.test/api/v1/transcribe/batch",
+      token: "machine-service-token-for-test",
+    }, async () => new Response(body, { status: 200 }));
+
+    await expect(client.submit({
+      audio: validOgg(),
+      idempotencyKey,
+      keyterms: [],
+      signal: new AbortController().signal,
+    })).rejects.toMatchObject({ code: "invalid_provider_response" });
+    expect(cancelled).toBe(true);
   });
 
   it("fails closed when the server reports an idempotency fingerprint conflict", async () => {

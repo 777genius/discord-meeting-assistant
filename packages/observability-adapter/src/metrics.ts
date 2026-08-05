@@ -1,6 +1,7 @@
 import type {
   DeadLetterCause,
   DependencyHealth,
+  DerivedLiveFailurePhase,
   DiscordPublicationOutcome,
   IngressOutcome,
   IngressReason,
@@ -26,6 +27,11 @@ const INGRESS_REASONS = [
   "over-capacity",
   "shutting-down",
   "unknown",
+] as const;
+const DERIVED_LIVE_FAILURE_PHASES = [
+  "lifecycle",
+  "prepare-final",
+  "voice",
 ] as const;
 const QUEUE_STATES = ["active", "delayed", "failed", "paused", "waiting"] as const;
 const QUEUE_RETRY_CAUSES = [
@@ -213,6 +219,11 @@ const INGRESS = {
   name: "discord_meeting_ingress_total",
   type: "counter",
 } as const;
+const DERIVED_LIVE_FAILURES = {
+  help: "Derived live operations that failed after durable ingress acceptance.",
+  name: "discord_meeting_derived_live_failures_total",
+  type: "counter",
+} as const;
 const QUEUE_JOBS = {
   help: "Current post-call jobs by queue state.",
   name: "discord_meeting_queue_jobs",
@@ -251,6 +262,7 @@ const PROVIDER_HEALTH = {
 
 export class PrometheusMetrics implements Metrics {
   private readonly ingress = new ScalarMetric(INGRESS);
+  private readonly derivedLiveFailures = new ScalarMetric(DERIVED_LIVE_FAILURES);
   private readonly queueJobs = new ScalarMetric(QUEUE_JOBS);
   private readonly queueRetries = new ScalarMetric(QUEUE_RETRIES);
   private readonly deadLetters = new ScalarMetric(DEAD_LETTERS);
@@ -310,6 +322,19 @@ export class PrometheusMetrics implements Metrics {
     this.ingress.add({ outcome: safeOutcome, reason: safeReason }, 1);
   }
 
+  public recordDerivedLiveFailure(phase: DerivedLiveFailurePhase): void {
+    this.derivedLiveFailures.add(
+      {
+        phase: requireAllowed(
+          phase,
+          DERIVED_LIVE_FAILURE_PHASES,
+          "phase",
+        ),
+      },
+      1,
+    );
+  }
+
   public recordQueueRetry(cause: QueueRetryCause): void {
     this.queueRetries.add(
       { cause: requireAllowed(cause, QUEUE_RETRY_CAUSES, "cause") },
@@ -326,6 +351,7 @@ export class PrometheusMetrics implements Metrics {
 
     const metrics: readonly (ScalarMetric | HistogramMetric)[] = [
       this.ingress,
+      this.derivedLiveFailures,
       this.queueJobs,
       this.queueRetries,
       this.deadLetters,

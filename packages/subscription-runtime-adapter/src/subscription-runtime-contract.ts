@@ -1,34 +1,49 @@
 export const subscriptionRuntimeProtocolVersion = 1 as const;
 export const subscriptionRuntimePurpose = "discord_meeting.summary.generate" as const;
 export const subscriptionRuntimeIncrementalPurpose = "discord_meeting.summary.incremental" as const;
+export const subscriptionRuntimeConversationPurpose = "discord_meeting.conversation.answer" as const;
 export const subscriptionRuntimeProvider = "codex" as const;
 export const subscriptionRuntimeModel = "gpt-5.6-sol" as const;
 export const subscriptionRuntimeIncrementalModel = "gpt-5.6-luna" as const;
+export const subscriptionRuntimeConversationModel = "gpt-5.6-luna" as const;
 export const subscriptionRuntimeReasoningEffort = "medium" as const;
 export const subscriptionRuntimeIncrementalReasoningEffort = "low" as const;
+export const subscriptionRuntimeConversationReasoningEffort = "low" as const;
 export const subscriptionRuntimeSummaryMaxOutputTokens = 2_048 as const;
 export const subscriptionRuntimeIncrementalMaxOutputTokens = 2_048 as const;
-export const subscriptionRuntimeEngine = "subscription-runtime-cli" as const;
+export const subscriptionRuntimeConversationMaxOutputTokens = 512 as const;
+export const subscriptionRuntimeEngine = "subscription-runtime-app-server" as const;
+export const subscriptionRuntimeCliEngine = "subscription-runtime-cli" as const;
+export type SubscriptionRuntimeEngine =
+  | typeof subscriptionRuntimeEngine
+  | typeof subscriptionRuntimeCliEngine;
 export const auditedSubscriptionRuntimePackageVersion = "0.1.0-main.2" as const;
 export const meetingSummaryOutputSchemaName = "discord_meeting_summary_v4" as const;
 export const incrementalMeetingSummaryOutputSchemaName = "discord_meeting_incremental_summary_v1" as const;
+export const conversationAnswerOutputSchemaName = "discord_meeting_conversation_answer_v1" as const;
 export const meetingSummaryPolicyVersion = "meeting-summary.subscription-runtime.v8" as const;
 export const incrementalMeetingSummaryPolicyVersion = "meeting-summary.incremental.subscription-runtime.v4" as const;
+export const conversationAnswerPolicyVersion = "meeting-conversation.subscription-runtime.v1" as const;
 
 export type SubscriptionRuntimeOutputSchemaName =
+  | typeof conversationAnswerOutputSchemaName
   | typeof incrementalMeetingSummaryOutputSchemaName
   | typeof meetingSummaryOutputSchemaName;
 
 export interface SubscriptionRuntimeExecutionProfile {
-  readonly maxOutputTokens: typeof subscriptionRuntimeSummaryMaxOutputTokens;
+  readonly maxOutputTokens:
+    | typeof subscriptionRuntimeConversationMaxOutputTokens
+    | typeof subscriptionRuntimeSummaryMaxOutputTokens;
   readonly model:
     | typeof subscriptionRuntimeIncrementalModel
     | typeof subscriptionRuntimeModel;
   readonly outputSchemaName: SubscriptionRuntimeOutputSchemaName;
   readonly policyVersion:
+    | typeof conversationAnswerPolicyVersion
     | typeof incrementalMeetingSummaryPolicyVersion
     | typeof meetingSummaryPolicyVersion;
   readonly purpose:
+    | typeof subscriptionRuntimeConversationPurpose
     | typeof subscriptionRuntimeIncrementalPurpose
     | typeof subscriptionRuntimePurpose;
   readonly reasoningEffort:
@@ -54,6 +69,21 @@ export const incrementalSummaryExecutionProfile: SubscriptionRuntimeExecutionPro
   reasoningEffort: subscriptionRuntimeIncrementalReasoningEffort,
 });
 
+export const conversationAnswerExecutionProfile: SubscriptionRuntimeExecutionProfile = Object.freeze({
+  maxOutputTokens: subscriptionRuntimeConversationMaxOutputTokens,
+  model: subscriptionRuntimeConversationModel,
+  outputSchemaName: conversationAnswerOutputSchemaName,
+  policyVersion: conversationAnswerPolicyVersion,
+  purpose: subscriptionRuntimeConversationPurpose,
+  reasoningEffort: subscriptionRuntimeConversationReasoningEffort,
+});
+
+export const admittedSubscriptionRuntimeExecutionProfiles = Object.freeze([
+  conversationAnswerExecutionProfile,
+  finalSummaryExecutionProfile,
+  incrementalSummaryExecutionProfile,
+]);
+
 export const admittedSummaryExecutionProfiles = Object.freeze([
   finalSummaryExecutionProfile,
   incrementalSummaryExecutionProfile,
@@ -62,7 +92,7 @@ export const admittedSummaryExecutionProfiles = Object.freeze([
 export function subscriptionRuntimeProfileForPurpose(
   purpose: string,
 ): SubscriptionRuntimeExecutionProfile | undefined {
-  return admittedSummaryExecutionProfiles.find((profile) => profile.purpose === purpose);
+  return admittedSubscriptionRuntimeExecutionProfiles.find((profile) => profile.purpose === purpose);
 }
 
 export type JsonPrimitive = boolean | null | number | string;
@@ -94,10 +124,13 @@ export interface SubscriptionRuntimeAgentTaskRequest extends JsonObject {
     readonly metadata: {
       readonly meetingId: string;
       readonly policyVersion: SubscriptionRuntimeExecutionProfile["policyVersion"];
+      readonly locale?: string;
+      readonly recordingId?: string;
       readonly summaryRevision?: string;
       readonly throughTurnCount?: string;
       readonly transcriptId?: string;
       readonly transcriptVersion?: string;
+      readonly turnId?: string;
     } & JsonObject;
     readonly purpose: SubscriptionRuntimeExecutionProfile["purpose"];
   };

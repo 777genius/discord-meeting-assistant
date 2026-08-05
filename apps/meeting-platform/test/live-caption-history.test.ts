@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { boundLiveFinalCaptionHistory } from "../src/live-caption-history.js";
+import { boundLiveFinalCaptionHistory } from "../src/live-runtime/live-caption-history.js";
 
 describe("boundLiveFinalCaptionHistory", () => {
   it("retains an opening and a contiguous newest tail under the explicit safety bound", () => {

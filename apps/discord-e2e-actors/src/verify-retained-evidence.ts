@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 
 import {
+  deploymentRevisionExpectationSchema,
   fixtureManifestV1Schema,
   retainedE2eEvidenceSchema,
   verifyRetainedE2eEvidence,
@@ -18,7 +19,11 @@ async function main(): Promise<void> {
   ]);
   const manifest = fixtureManifestV1Schema.parse(JSON.parse(manifestJson));
   const evidence = retainedE2eEvidenceSchema.parse(JSON.parse(evidenceJson));
-  const verification = verifyRetainedE2eEvidence(manifest, evidence);
+  const expectedRevisions = deploymentRevisionExpectationSchema.parse({
+    craig: process.env.DISCORD_E2E_EXPECTED_CRAIG_SOURCE_REVISION,
+    meetingPlatform: process.env.DISCORD_E2E_EXPECTED_MEETING_PLATFORM_SOURCE_REVISION,
+  });
+  const verification = verifyRetainedE2eEvidence(manifest, evidence, expectedRevisions);
   process.stdout.write(`${JSON.stringify(verification, undefined, 2)}\n`);
   if (!verification.passed) {
     process.exitCode = 1;

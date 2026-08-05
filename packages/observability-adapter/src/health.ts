@@ -12,6 +12,11 @@ export interface HealthAggregatorOptions {
   readonly timeoutMs?: number;
 }
 
+interface InFlightHealthProbe {
+  readonly controller: AbortController;
+  readonly operation: Promise<HealthProbeResult>;
+}
+
 const HEALTH_STATUSES = new Set<DependencyHealth>([
   "degraded",
   "healthy",
@@ -61,6 +66,7 @@ function failedResult(code: "CHECK_FAILED" | "CHECK_TIMEOUT"): HealthProbeResult
 }
 
 export class HealthAggregator implements HealthReporter {
+  private readonly inFlight = new Map<string, InFlightHealthProbe>();
   private readonly now: () => Date;
   private readonly probes: readonly HealthProbe[];
   private readonly timeoutMs: number;
@@ -119,23 +125,19 @@ export class HealthAggregator implements HealthReporter {
   }
 
   private async checkProbe(probe: HealthProbe): Promise<DependencyHealthSnapshot> {
-    const controller = new AbortController();
+    const inFlight = this.inFlightProbe(probe);
     let timeout: ReturnType<typeof setTimeout> | undefined;
     const timeoutResult = new Promise<HealthProbeResult>((resolve) => {
       timeout = setTimeout(() => {
-        controller.abort();
+        inFlight.controller.abort();
         resolve(failedResult("CHECK_TIMEOUT"));
       }, this.timeoutMs);
+      timeout.unref();
     });
 
     let result: HealthProbeResult;
     try {
-      result = await Promise.race([
-        Promise.resolve(probe.check(controller.signal)).catch(() =>
-          failedResult("CHECK_FAILED"),
-        ),
-        timeoutResult,
-      ]);
+      result = await Promise.race([inFlight.operation, timeoutResult]);
     } catch {
       result = failedResult("CHECK_FAILED");
     } finally {
@@ -149,5 +151,25 @@ export class HealthAggregator implements HealthReporter {
       critical: probe.critical,
       name: probe.name,
     });
+  }
+
+  private inFlightProbe(probe: HealthProbe): InFlightHealthProbe {
+    const existing = this.inFlight.get(probe.name);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const controller = new AbortController();
+    const operation = Promise.resolve()
+      .then(async () => probe.check(controller.signal))
+      .catch(() => failedResult("CHECK_FAILED"));
+    const started = { controller, operation };
+    this.inFlight.set(probe.name, started);
+    void operation.then(() => {
+      if (this.inFlight.get(probe.name) === started) {
+        this.inFlight.delete(probe.name);
+      }
+      return null;
+    });
+    return started;
   }
 }

@@ -1,3 +1,10 @@
+---
+id: ADR-0009
+status: accepted
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0009: Self-service Discord guild onboarding
 
 ## Status

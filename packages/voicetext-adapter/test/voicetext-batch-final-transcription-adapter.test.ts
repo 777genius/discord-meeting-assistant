@@ -280,6 +280,9 @@ describe("VoicetextBatchFinalTranscriptionAdapter", () => {
     });
   });
 
+});
+
+describe("VoicetextBatchFinalTranscriptionAdapter capacity and timing", () => {
   it("bounds reads and uploads to the configured worker pool instead of pre-reading a meeting", async () => {
     const speakers = Array.from({ length: 10 }, (_, index) => ({
       audioLocator: `s3://recording/speaker-${String(index + 1)}.ogg`,
@@ -335,8 +338,8 @@ describe("VoicetextBatchFinalTranscriptionAdapter", () => {
     await expect(processing).resolves.toMatchObject({ ok: true });
   });
 
-  it("rejects an eleventh speaker track before reading or submitting audio", async () => {
-    const speakers = Array.from({ length: 11 }, (_, index) => ({
+  it("rejects a twelfth speaker track before reading or submitting audio", async () => {
+    const speakers = Array.from({ length: 12 }, (_, index) => ({
       audioLocator: `s3://recording/speaker-${String(index + 1)}.ogg`,
       speakerId: `discord-user-${String(index + 1)}`,
       timelineOffsetMs: index * 1_000,
@@ -514,6 +517,9 @@ describe("VoicetextBatchFinalTranscriptionAdapter", () => {
     )).toThrow("maxSegmentOverlapMs must be an integer between 0 and 10000");
   });
 
+});
+
+describe("VoicetextBatchFinalTranscriptionAdapter failure isolation", () => {
   it("bounds final batch provider concurrency and speaker tracks from one through ten", () => {
     const client = new ScriptedBatchClient(async () => completed({
       durationSeconds: 1,
@@ -536,9 +542,9 @@ describe("VoicetextBatchFinalTranscriptionAdapter", () => {
     expect(() => new VoicetextBatchFinalTranscriptionAdapter(
       client,
       reader,
-      { maxSpeakerTracks: 11 },
+      { maxSpeakerTracks: 12 },
       new TestPollingScheduler(),
-    )).toThrow("maxSpeakerTracks must be an integer between 1 and 10");
+    )).toThrow("maxSpeakerTracks must be an integer between 1 and 11");
   });
 
   it("fails the entire final transcription when one concurrent speaker track fails", async () => {

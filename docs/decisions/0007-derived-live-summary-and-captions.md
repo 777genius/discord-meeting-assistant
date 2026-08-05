@@ -1,3 +1,10 @@
+---
+id: ADR-0007
+status: accepted
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0007: Derived live summary and captions
 
 ## Status

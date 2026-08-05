@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "algorithm": "sha256",
+  "decisions": [
+    {
+      "id": "ADR-0001",
+      "path": "docs/decisions/0001-separate-craig-gateway-and-modular-meeting-core.md",
+      "immutableDigest": "sha256:5e4444280654d783278f1f3d54297bf74c341624d4192467139963839711d4c4"
+    },
+    {
+      "id": "ADR-0002",
+      "path": "docs/decisions/0002-summary-first-v1-with-live-ready-boundaries.md",
+      "immutableDigest": "sha256:c2caa518b1dae779f3e91e2b020f60526dc081b9c8829e3c925d32db98c81744"
+    },
+    {
+      "id": "ADR-0003",
+      "path": "docs/decisions/0003-versioned-engineering-foundation.md",
+      "immutableDigest": "sha256:8e93089a7a5c0821d86cfa2d8fb2407bd31c963160ea67baccc057d546cd9779"
+    },
+    {
+      "id": "ADR-0004",
+      "path": "docs/decisions/0004-hosted-subscription-runtime-without-openai-api-key.md",
+      "immutableDigest": "sha256:06430e4bac1ab7c95ad32a5781fabb13d83710b4d3035aa430066a8e854655f5"
+    },
+    {
+      "id": "ADR-0005",
+      "path": "docs/decisions/0005-subscription-account-custody.md",
+      "immutableDigest": "sha256:70f63856f9f0cb000654ae9dfe865d422a9e4561b6dc627f24d2bc965339a7c5"
+    },
+    {
+      "id": "ADR-0006",
+      "path": "docs/decisions/0006-voicetext-deepgram-streaming-transcription.md",
+      "immutableDigest": "sha256:718e6a831d5643297a39b602918a8402aa3f1ba979dbe570f924630f7e3b2fd5"
+    },
+    {
+      "id": "ADR-0007",
+      "path": "docs/decisions/0007-derived-live-summary-and-captions.md",
+      "immutableDigest": "sha256:1c39bdee7a66c7b92d53c5c2e8eea28e39990f57bbbd3618608aea19191ac641"
+    },
+    {
+      "id": "ADR-0008",
+      "path": "docs/decisions/0008-authoritative-voicetext-batch-transcription.md",
+      "immutableDigest": "sha256:d67452b4104cfb2735ea5e3b5b63f4129d346eb8895d0cf290530c7ba137a614"
+    },
+    {
+      "id": "ADR-0009",
+      "path": "docs/decisions/0009-self-service-discord-guild-onboarding.md",
+      "immutableDigest": "sha256:ba3f45f33dc88354b7dd35a6fb5d7e9cb065b94d3ae192c655fbec466a8c541e"
+    },
+    {
+      "id": "ADR-0010",
+      "path": "docs/decisions/0010-live-conversation-runtime.md",
+      "immutableDigest": "sha256:e5418140fcf0c9691c9a64d0bde5d5a15a49fc279f9ccc33fa5062e8e307ba0d"
+    },
+    {
+      "id": "ADR-0011",
+      "path": "docs/decisions/0011-subscription-conversation-and-authoritative-botik-track.md",
+      "immutableDigest": "sha256:3be89fca6d1bff637f8b58b3fd056ee7d99ad446a57faed8669ee31d694f8878"
+    },
+    {
+      "id": "ADR-0012",
+      "path": "docs/decisions/0012-meeting-platform-boundary-refactoring.md",
+      "immutableDigest": "sha256:d58384c839f98f84fadf5f4b360676af3becfc5c3c6cad104c2fea2c8982f4bb"
+    }
+  ]
+}

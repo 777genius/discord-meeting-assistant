@@ -102,6 +102,25 @@ describe("HealthAggregator", () => {
     expect(snapshot.ready).toBe(false);
   });
 
+  it("does not multiply a stuck probe across repeated health snapshots", async () => {
+    let checks = 0;
+    const health = new HealthAggregator(
+      [
+        probe("database", true, () => {
+          checks += 1;
+          return new Promise(() => {});
+        }),
+      ],
+      { now: () => NOW, timeoutMs: 1 },
+    );
+
+    const first = health.snapshot();
+    const second = health.snapshot();
+    await expect(Promise.all([first, second])).resolves.toHaveLength(2);
+    await expect(health.snapshot()).resolves.toMatchObject({ ready: false });
+    expect(checks).toBe(1);
+  });
+
   it("rejects duplicate or unbounded probe names", () => {
     expect(
       () =>

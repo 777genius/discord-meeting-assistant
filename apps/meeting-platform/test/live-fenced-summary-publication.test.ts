@@ -4,7 +4,7 @@ import type {
 } from "@discord-meeting/meeting-core";
 import { describe, expect, it, vi } from "vitest";
 
-import { LiveFencedSummaryPublicationPort } from "../src/live-fenced-summary-publication.js";
+import { LiveFencedSummaryPublicationPort } from "../src/application/live-fenced-summary-publication.js";
 
 const request: SummaryPublicationRequest = {
   idempotencyKey: "publication-1",

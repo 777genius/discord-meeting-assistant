@@ -14,6 +14,8 @@ Meeting Core owns business state and post-call processing.
 ```text
 Craig Voice Gateway
   -> best-effort live packet tee (derived, never final evidence)
+  -> authenticated conversation playback (derived, cancellable)
+  -> Botik playback packets appended to an authoritative track only after send
   -> checksummed speaker artifacts cooked from the authoritative original
   -> versioned lifecycle and authoritative-ready evidence
   -> Meeting Core
@@ -26,6 +28,20 @@ The server also consumes Craig's best-effort Opus packet tee for a derived live
 projection. The browser is not part of this path: audio, Voicetext credentials,
 and subscription-runtime authentication remain server-side. Discord receives
 only rendered summary and caption embeds.
+
+## Meeting Platform process boundaries
+
+Meeting Platform is assembled only in `composition`. Its application boundary
+owns provider-neutral recording commands and use-case ports. The concrete Craig
+ACL validates wire DTOs and maps them at `adapters/inbound/craig`; Fastify is an
+outer `http` adapter behind the small `PlatformHttpHost` lifecycle contract.
+Operations and Discord installation routes have separate source boundaries, and
+the derived `live-runtime` imports only Meeting Core and consumer-owned ports.
+
+The stateful recording/live process is intentionally singleton. Stateless HTTP
+surfaces may be deployed separately, but the live owner cannot gain replicas
+until record-ID routing, durable leases with fencing, distributed projection
+locks, and takeover tests exist.
 
 ## Initial semantic ownership
 
@@ -49,21 +65,35 @@ These names guide the first model. A separate workspace package is created only
 when a real slice and ownership boundary exist. Deployment separation is not a
 DDD requirement.
 
-## V1 and future live conversation
+## Live conversation vertical slice
 
-V1 includes derived live STT, incremental summary, and one mutable Discord
-projection, followed by authoritative post-call replacement. It still excludes
-the conversational Pipecat assistant, TTS, wake phrase detection, and RAG.
+The executable live slice includes derived live STT, addressed conversation,
+incremental summary, and one mutable Discord projection, followed by
+authoritative post-call replacement. Conversation remains stateless and excludes
+memory, RAG, and tools.
 
-Future live conversation connects through narrow ports owned by Meeting Core:
+Live conversation connects through narrow ports owned by Meeting Core:
 
 - `ConversationRuntime` for conversational execution;
-- `KnowledgeSource` for contextual retrieval;
-- `AnswerGenerator` for product-controlled answer generation;
-- playback and realtime transcript adapters at the Discord boundary.
+- `VoicePlaybackPort` for cancellable provider-neutral PCM playback.
 
-The future ports do not authorize empty packages today. They will be introduced
-with the first executable use case and deterministic fake.
+Text generation is a separate consumer-owned Pipecat port implemented by the
+Subscription Runtime adapter. Production uses a purpose-scoped warm
+`gpt-5.6-luna` app-server worker with stateless clean threads. Multilingual TTS
+is selected in Pipecat composition and can be replaced without changing Meeting
+Core.
+
+After 1.3 seconds of model latency, Meeting Core may play one pre-generated
+neutral acknowledgement. A deterministic prompt policy may schedule a later
+locale-aware deliberation cue for a complex request; simple requests never use
+deliberation phrases. Cue playback is immediately interruptible and does not
+start the four-second answer guard. Craig records cue and answer frames only
+after their direct Discord send succeeds; self audio never enters live STT.
+
+Pipecat and provider factories remain behind the runtime port. Craig remains the
+only owner of the Discord voice connection. The deterministic E2E profile
+replaces only external LLM/TTS calls; it still exercises Pipecat, gRPC, WebSocket,
+PCM-to-Opus playback, cancellation, and bounded queues.
 
 ## Reliability invariants
 
@@ -73,6 +103,9 @@ with the first executable use case and deterministic fake.
 - Meeting persistence and post-call scheduling share one PostgreSQL transaction;
   a durable outbox reconciles crashes before BullMQ acknowledgement.
 - Async work uses bounded admission and stable idempotency identities.
+- Finalized live turns, summary coverage, usage, and telemetry are append-only
+  ledgers; the compact live-meeting row retains only CAS lifecycle/projection
+  state and never grows by rewriting full history arrays.
 - Unknown external outcomes are reconciled rather than retried with a new ID.
 - A later stage never destroys an earlier authoritative artifact.
 - Final transcript replaces live evidence only through explicit versioning and

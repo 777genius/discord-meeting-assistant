@@ -60,18 +60,10 @@ export function parseServerMessage(
   }
 
   switch (value.type) {
-    case "ready": {
-      if (typeof value.session_id !== "string" || !uuidPattern.test(value.session_id)) {
-        throw protocolError("Voicetext returned an invalid ready message");
-      }
-      return { sessionId: value.session_id, type: "ready" };
-    }
-    case "ack": {
-      if (!Number.isSafeInteger(value.seq) || (value.seq as number) < 1) {
-        throw protocolError("Voicetext returned an invalid audio acknowledgement");
-      }
-      return { seq: value.seq as number, type: "ack" };
-    }
+    case "ready":
+      return parseReady(value);
+    case "ack":
+      return parseAcknowledgement(value);
     case "partial":
       return value.is_segment_final === true
         ? { ...parseFinalSegment(value, maxTranscriptChars), type: "segment_final" }
@@ -80,36 +72,66 @@ export function parseServerMessage(
       return { type: "usage_update" };
     case "final":
       return parseFinalSegment(value, maxTranscriptChars);
-    case "error": {
-      if (
-        typeof value.code !== "string" ||
-        value.code.length < 1 ||
-        value.code.length > 128 ||
-        typeof value.message !== "string" ||
-        value.message.length > 2_048
-      ) {
-        throw protocolError("Voicetext returned an invalid error message");
-      }
-      return { code: value.code, message: value.message, type: "error" };
-    }
-    case "finalize_complete": {
-      if (
-        (value.status !== "flushed" && value.status !== "timeout" && value.status !== "no_provider") ||
-        typeof value.saw_result !== "boolean"
-      ) {
-        throw protocolError("Voicetext returned an invalid finalize acknowledgement");
-      }
-      return {
-        sawResult: value.saw_result,
-        status: value.status,
-        type: "finalize_complete",
-      };
-    }
+    case "error":
+      return parseError(value);
+    case "finalize_complete":
+      return parseFinalizeComplete(value);
     case "resumed":
       return { type: "resumed" };
     default:
       throw protocolError(`Voicetext returned unsupported protocol message type ${value.type}`);
   }
+}
+
+function parseReady(
+  value: Readonly<Record<string, unknown>>,
+): Extract<VoicetextServerMessage, { readonly type: "ready" }> {
+  if (typeof value.session_id !== "string" || !uuidPattern.test(value.session_id)) {
+    throw protocolError("Voicetext returned an invalid ready message");
+  }
+  return { sessionId: value.session_id, type: "ready" };
+}
+
+function parseAcknowledgement(
+  value: Readonly<Record<string, unknown>>,
+): Extract<VoicetextServerMessage, { readonly type: "ack" }> {
+  if (!Number.isSafeInteger(value.seq) || (value.seq as number) < 1) {
+    throw protocolError("Voicetext returned an invalid audio acknowledgement");
+  }
+  return { seq: value.seq as number, type: "ack" };
+}
+
+function parseError(
+  value: Readonly<Record<string, unknown>>,
+): Extract<VoicetextServerMessage, { readonly type: "error" }> {
+  if (
+    typeof value.code !== "string" ||
+    value.code.length < 1 ||
+    value.code.length > 128 ||
+    typeof value.message !== "string" ||
+    value.message.length > 2_048
+  ) {
+    throw protocolError("Voicetext returned an invalid error message");
+  }
+  return { code: value.code, message: value.message, type: "error" };
+}
+
+function parseFinalizeComplete(
+  value: Readonly<Record<string, unknown>>,
+): Extract<VoicetextServerMessage, { readonly type: "finalize_complete" }> {
+  if (
+    (value.status !== "flushed" &&
+      value.status !== "timeout" &&
+      value.status !== "no_provider") ||
+    typeof value.saw_result !== "boolean"
+  ) {
+    throw protocolError("Voicetext returned an invalid finalize acknowledgement");
+  }
+  return {
+    sawResult: value.saw_result,
+    status: value.status,
+    type: "finalize_complete",
+  };
 }
 
 function parsePartialSegment(

@@ -126,7 +126,9 @@ describe("OpenAiFinalTranscriptionAdapter", () => {
       mediaType: "audio/flac",
     });
   });
+});
 
+describe("OpenAiFinalTranscriptionAdapter failures", () => {
   it("fails closed when provider text has no segment timestamps", async () => {
     const reader = new FakeAudioContentReader({
       "recording://speaker-a": {

@@ -1,0 +1,117 @@
+syntax = "proto3";
+
+package discord_meeting.conversation_runtime.v1;
+
+service ConversationRuntimeService {
+  rpc Converse(stream ConversationRuntimeClientMessage)
+      returns (stream ConversationRuntimeServerMessage);
+  rpc CheckHealth(ConversationRuntimeHealthRequest)
+      returns (ConversationRuntimeHealthResponse);
+}
+
+enum ConversationCancellationReason {
+  CONVERSATION_CANCELLATION_REASON_UNSPECIFIED = 0;
+  CONVERSATION_CANCELLATION_REASON_BARGE_IN = 1;
+  CONVERSATION_CANCELLATION_REASON_MEETING_ENDED = 2;
+  CONVERSATION_CANCELLATION_REASON_PLAYBACK_FAILED = 3;
+  CONVERSATION_CANCELLATION_REASON_RUNTIME_SHUTDOWN = 4;
+  CONVERSATION_CANCELLATION_REASON_SUPERSEDED = 5;
+}
+
+enum ConversationAudioFormat {
+  CONVERSATION_AUDIO_FORMAT_UNSPECIFIED = 0;
+  CONVERSATION_AUDIO_FORMAT_PCM_S16LE = 1;
+}
+
+message ConversationRuntimeClientMessage {
+  uint32 schema_version = 1;
+  oneof payload {
+    ConversationStartTurn start_turn = 2;
+    ConversationCancelTurn cancel_turn = 3;
+  }
+}
+
+message ConversationStartTurn {
+  string meeting_id = 1;
+  string recording_id = 2;
+  string turn_id = 3;
+  string speaker_id = 4;
+  string idempotency_key = 5;
+  string system_prompt = 6;
+  string prompt = 7;
+  string locale = 8;
+  string voice_profile_id = 9;
+}
+
+message ConversationCancelTurn {
+  string turn_id = 1;
+  string attempt_id = 2;
+  ConversationCancellationReason reason = 3;
+}
+
+message ConversationRuntimeServerMessage {
+  uint32 schema_version = 1;
+  string turn_id = 2;
+  string attempt_id = 3;
+  uint64 event_sequence = 4;
+  oneof payload {
+    ConversationAccepted accepted = 5;
+    ConversationTextDelta text_delta = 6;
+    ConversationAudioStart audio_start = 7;
+    ConversationAudioChunk audio_chunk = 8;
+    ConversationAudioEnd audio_end = 9;
+    ConversationUsage usage = 10;
+    ConversationCompleted completed = 11;
+    ConversationCancelled cancelled = 12;
+    ConversationFailed failed = 13;
+  }
+}
+
+message ConversationAccepted {}
+message ConversationAudioEnd {}
+message ConversationCompleted {}
+
+message ConversationTextDelta { string text = 1; }
+
+message ConversationAudioStart {
+  ConversationAudioFormat format = 1;
+  uint32 sample_rate_hz = 2;
+  uint32 channels = 3;
+}
+
+message ConversationAudioChunk {
+  uint64 audio_sequence = 1;
+  ConversationAudioFormat format = 2;
+  uint32 sample_rate_hz = 3;
+  uint32 channels = 4;
+  bytes pcm = 5;
+}
+
+message ConversationUsage {
+  uint64 input_tokens = 1;
+  uint64 output_tokens = 2;
+  uint64 total_tokens = 3;
+}
+
+message ConversationCancelled { ConversationCancellationReason reason = 1; }
+
+message ConversationFailed {
+  string code = 1;
+  string safe_message = 2;
+  bool retryable = 3;
+}
+
+message ConversationRuntimeHealthRequest { string service = 1; }
+
+message ConversationRuntimeHealthResponse {
+  enum Status {
+    STATUS_UNSPECIFIED = 0;
+    STATUS_SERVING = 1;
+    STATUS_DEGRADED = 2;
+    STATUS_NOT_SERVING = 3;
+  }
+  Status status = 1;
+  string runtime_name = 2;
+  string runtime_version = 3;
+  repeated string warning_codes = 4;
+}

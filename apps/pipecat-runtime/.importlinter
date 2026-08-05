@@ -1,0 +1,21 @@
+[importlinter]
+root_package = pipecat_runtime
+
+[importlinter:contract:1]
+name = Application has no transport, composition, or provider dependencies
+type = forbidden
+source_modules =
+    pipecat_runtime.application
+forbidden_modules =
+    pipecat_runtime.adapters
+    pipecat_runtime.composition
+    pipecat_runtime.entrypoint
+
+[importlinter:contract:2]
+name = Adapters do not select concrete composition
+type = forbidden
+source_modules =
+    pipecat_runtime.adapters
+forbidden_modules =
+    pipecat_runtime.composition
+    pipecat_runtime.entrypoint

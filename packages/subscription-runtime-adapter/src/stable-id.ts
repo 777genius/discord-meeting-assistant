@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 export function stableSubscriptionRuntimeId(
   kind:
     | "action"
+    | "conversation-answer-request"
     | "decision"
     | "incremental-summary-request"
     | "question"

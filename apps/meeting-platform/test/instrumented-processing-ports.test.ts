@@ -3,25 +3,22 @@ import type {
   SummaryGenerationPort,
   SummaryPublicationPort,
 } from "@discord-meeting/meeting-core";
-import type { Logger, Metrics } from "@discord-meeting/observability-adapter";
+import type {
+  Logger,
+  ProcessingStageMetrics,
+} from "@discord-meeting/observability-adapter";
 import { describe, expect, it, vi } from "vitest";
 
 import {
   InstrumentedFinalTranscriptionPort,
   InstrumentedSummaryGenerationPort,
   InstrumentedSummaryPublicationPort,
-} from "../src/instrumented-processing-ports.js";
+} from "../src/adapters/outbound/instrumented-processing-ports.js";
 
 function observability() {
   const metrics = {
     observeStage: vi.fn(),
-    recordDeadLetter: vi.fn(),
-    recordDiscordPublication: vi.fn(),
-    recordIngress: vi.fn(),
-    recordQueueRetry: vi.fn(),
-    setProviderHealth: vi.fn(),
-    setQueueState: vi.fn(),
-  } satisfies Metrics;
+  } satisfies ProcessingStageMetrics;
   const logger = {
     child: vi.fn(),
     debug: vi.fn(),
@@ -181,7 +178,9 @@ describe("instrumented processing ports", () => {
       },
     );
   });
+});
 
+describe("instrumented processing failure evidence", () => {
   it("records final-transcription failures with request track count and no result content", async () => {
     const { logger, metrics } = observability();
     const result = {

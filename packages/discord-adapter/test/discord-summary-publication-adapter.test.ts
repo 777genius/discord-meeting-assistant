@@ -356,7 +356,9 @@ describe("DiscordSummaryPublicationAdapter", () => {
       markdown.indexOf("2. Поздний вопрос?"),
     );
   });
+});
 
+describe("DiscordSummaryPublicationAdapter rendering bounds", () => {
   it("keeps the authoritative, speaker-attributed timeline beside the final summary", async () => {
     const projector = new FakeProjector();
     const adapter = new DiscordSummaryPublicationAdapter(projector);

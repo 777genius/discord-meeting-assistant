@@ -9,6 +9,6 @@
     "pnpm": "11.18.0"
   },
   "scripts": {
-    "check": "node src/verify-toolchain.ts"
+    "check": "node src/verify-toolchain.ts && node src/verify-protobuf-evolution.ts"
   }
 }

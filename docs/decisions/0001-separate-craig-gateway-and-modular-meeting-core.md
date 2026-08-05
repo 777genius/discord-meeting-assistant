@@ -1,3 +1,10 @@
+---
+id: ADR-0001
+status: accepted
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0001: Separate Craig gateway and modular Meeting Core
 
 Status: Accepted

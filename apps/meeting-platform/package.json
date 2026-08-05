@@ -12,6 +12,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "catalog:",
     "@discord-meeting/craig-gateway-contracts": "workspace:*",
+    "@discord-meeting/craig-playback-adapter": "workspace:*",
     "@discord-meeting/bullmq-adapter": "workspace:*",
     "@discord-meeting/discord-adapter": "workspace:*",
     "@discord-meeting/guild-configuration-core": "workspace:*",
@@ -19,6 +20,7 @@
     "@discord-meeting/object-storage-adapter": "workspace:*",
     "@discord-meeting/observability-adapter": "workspace:*",
     "@discord-meeting/postgres-adapter": "workspace:*",
+    "@discord-meeting/pipecat-runtime-adapter": "workspace:*",
     "@discord-meeting/recording-ingress-adapter": "workspace:*",
     "@discord-meeting/speaches-adapter": "workspace:*",
     "@discord-meeting/subscription-runtime-adapter": "workspace:*",
@@ -27,6 +29,7 @@
     "@grpc/proto-loader": "catalog:",
     "bullmq": "catalog:",
     "discord.js": "catalog:",
+    "fastify": "catalog:",
     "pg": "catalog:",
     "zod": "catalog:"
   },

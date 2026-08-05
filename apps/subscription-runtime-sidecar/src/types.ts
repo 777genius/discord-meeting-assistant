@@ -1,4 +1,5 @@
 import type {
+  SubscriptionRuntimeEngine,
   SubscriptionRuntimeAgentTaskRequest,
   SubscriptionRuntimeHealthResult,
   SubscriptionRuntimeTaskResult,
@@ -9,6 +10,7 @@ export interface SidecarExecutorPort {
 
   execute(
     request: SubscriptionRuntimeAgentTaskRequest,
+    signal?: AbortSignal,
   ): Promise<SubscriptionRuntimeTaskResult>;
 }
 
@@ -36,11 +38,13 @@ export interface ProcessRunRequest {
   readonly killGraceMs: number;
   readonly maxStderrBytes: number;
   readonly maxStdoutBytes: number;
+  readonly signal?: AbortSignal;
   readonly timeoutMs: number;
 }
 
 export interface ProcessRunResult {
   readonly exitCode: number | null;
+  readonly cancelled?: boolean;
   readonly outputLimitExceeded: boolean;
   readonly signal: NodeJS.Signals | null;
   readonly stderr: string;
@@ -49,5 +53,7 @@ export interface ProcessRunResult {
 }
 
 export interface ProcessRunnerPort {
+  readonly runtimeEngine: SubscriptionRuntimeEngine;
+
   run(request: ProcessRunRequest): Promise<ProcessRunResult>;
 }

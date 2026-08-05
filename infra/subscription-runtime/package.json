@@ -1,0 +1,15 @@
+{
+  "name": "@discord-meeting/subscription-runtime-launcher",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Policy-governed launcher for the externally supplied subscription runtime.",
+  "type": "module",
+  "scripts": {
+    "check": "pnpm run test",
+    "test": "node --test test/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=24.18.0 <25",
+    "pnpm": "11.18.0"
+  }
+}

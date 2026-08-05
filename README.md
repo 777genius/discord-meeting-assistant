@@ -18,9 +18,10 @@ authoritative Craig multitrack recording
   -> idempotent Discord publication
 ```
 
-Live voice conversation is deliberately outside V1. Its future boundaries are
-preserved through consumer-owned ports; Pipecat, realtime STT, TTS, and RAG must
-not enter the meeting domain.
+Live voice conversation is an executable stateless vertical slice behind
+consumer-owned `ConversationRuntime` and `VoicePlaybackPort` boundaries. Pipecat,
+realtime STT, TTS providers, and Craig transport do not enter the meeting domain.
+Memory, RAG, and tools remain intentionally out of scope.
 
 ## Repository boundary
 
@@ -74,6 +75,10 @@ Install and run every local gate:
 pnpm install --frozen-lockfile
 pnpm run check
 ```
+
+For faster feedback while editing, use `pnpm run check:changed`. Before handoff,
+run `pnpm run check:fast`; the complete `pnpm run check` remains the authoritative
+pull-request gate.
 
 The private real-Discord acceptance flow, Russian/English synthetic fixtures,
 recovery checks, and retained-evidence verifier are documented in the

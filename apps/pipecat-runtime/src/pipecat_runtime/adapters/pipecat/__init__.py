@@ -1,0 +1,1 @@
+"""Pipecat pipeline adapter."""

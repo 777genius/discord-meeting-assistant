@@ -4,8 +4,9 @@ import {
   fixtureManifestV1Schema,
   retainedE2eEvidenceV2Schema,
   retainedE2eEvidenceV3Schema,
-  verifyE2eCampaign,
-  verifyRetainedE2eEvidence,
+  verifyE2eCampaign as verifyE2eCampaignAgainstExpectedRevision,
+  verifyRetainedE2eEvidence as verifyRetainedE2eEvidenceAgainstExpectedRevision,
+  type DeploymentRevisionExpectation,
   type FixtureManifestV1,
   type RetainedE2eEvidenceV2,
   type RetainedE2eEvidenceV3,
@@ -15,6 +16,26 @@ const speakerAId = "1533227577286852649";
 const speakerBId = "1533228054724346087";
 const speakerAText = "Спикер A обсуждает Meeting Platform и Craig recording";
 const speakerBText = "Спикер B проверит Redis queue и idempotency key";
+const expectedRevisions: DeploymentRevisionExpectation =
+  { craig: "6".repeat(40), meetingPlatform: "b".repeat(40) };
+
+function verifyRetainedE2eEvidence(
+  fixtureManifest: FixtureManifestV1,
+  evidence: RetainedE2eEvidenceV2 | RetainedE2eEvidenceV3,
+) {
+  return verifyRetainedE2eEvidenceAgainstExpectedRevision(
+    fixtureManifest,
+    evidence,
+    expectedRevisions,
+  );
+}
+
+function verifyE2eCampaign(
+  fixtureManifest: FixtureManifestV1,
+  runs: readonly (RetainedE2eEvidenceV2 | RetainedE2eEvidenceV3)[],
+) {
+  return verifyE2eCampaignAgainstExpectedRevision(fixtureManifest, runs, expectedRevisions);
+}
 
 function manifest(): FixtureManifestV1 {
   return fixtureManifestV1Schema.parse({
@@ -553,7 +574,9 @@ describe("verifyRetainedE2eEvidence", () => {
       expect.arrayContaining(["TERM_MISSING", "ACTION_SEMANTICS_MISSING"]),
     );
   });
+});
 
+describe("verifyRetainedE2eEvidence failures and reconnect", () => {
   it("still fails required year evidence when STT loses 2026", () => {
     const dateManifest = manifest();
     const speakerAFixture = dateManifest.fixtures[0];
@@ -687,7 +710,9 @@ describe("verifyRetainedE2eEvidence", () => {
 
     expect(codes).toContain("RECONNECT_NOT_DURING_SPEAKER_A");
   });
+});
 
+describe("verifyRetainedE2eEvidence sequential and campaign bounds", () => {
   it("accepts sequential Craig tracks with offset zero and retained initial silence", () => {
     expect(verifyRetainedE2eEvidence(manifest(), sequentialEvidence()).passed).toBe(true);
   });
@@ -825,6 +850,22 @@ describe("verifyRetainedE2eEvidence", () => {
     const codes = verifyE2eCampaign(manifest(), runs).failures.map(({ code }) => code);
 
     expect(codes).toContain("CAMPAIGN_DEPLOYMENT_CHANGED");
+  });
+
+  it("rejects a consistent campaign retained from an older release candidate", () => {
+    const runs = [
+      reidentify(sequentialEvidence(), "sequential"),
+      reidentify(overlapEvidence(), "overlap"),
+      reidentify(reconnectEvidence(), "reconnect"),
+    ];
+    for (const run of runs) {
+      run.deployment.meetingPlatform.sourceRevision = "d".repeat(40);
+    }
+
+    const failed = verifyE2eCampaign(manifest(), runs);
+    const runFailureCodes = Object.values(failed.runResults)
+      .flatMap(({ failures }) => failures.map(({ code }) => code));
+    expect(runFailureCodes).toContain("DEPLOYMENT_SOURCE_REVISION_MISMATCH");
   });
 
   it("allows a v3 direct-message campaign to share its results channel but not a message", () => {

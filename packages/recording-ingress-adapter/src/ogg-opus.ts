@@ -285,79 +285,123 @@ function bytesEqualAt(
   return expected.every((value, index) => bytes[offset + index] === value);
 }
 
+interface ParsedOggPage {
+  readonly bodyOffset: number;
+  readonly nextOffset: number;
+  readonly summary: OggOpusPageSummary;
+}
+
+interface OggValidationState {
+  expectedSerial: number | undefined;
+  expectedSequence: number;
+  firstBodyOffset: number;
+  readonly pages: OggOpusPageSummary[];
+  previousGranule: bigint;
+  secondBodyOffset: number;
+}
+
 export function validateOggOpus(bytes: Uint8Array): OggOpusValidationResult {
-  const pages: OggOpusPageSummary[] = [];
+  const state: OggValidationState = {
+    expectedSequence: 0,
+    expectedSerial: undefined,
+    firstBodyOffset: 0,
+    pages: [],
+    previousGranule: 0n,
+    secondBodyOffset: 0,
+  };
   let offset = 0;
-  let expectedSerial: number | undefined;
-  let expectedSequence = 0;
-  let previousGranule = 0n;
-  let firstBodyOffset = 0;
-  let secondBodyOffset = 0;
-
   while (offset < bytes.byteLength) {
-    if (offset + 27 > bytes.byteLength || !bytesEqualAt(bytes, offset, CAPTURE_PATTERN)) {
-      throw new RecordingIngressError("corrupt-spool", "invalid Ogg page header");
-    }
-    if (bytes[offset + 4] !== 0) {
-      throw new RecordingIngressError("corrupt-spool", "unsupported Ogg version");
-    }
-
-    const segmentCount = bytes[offset + 26];
-    if (segmentCount === undefined || offset + 27 + segmentCount > bytes.byteLength) {
-      throw new RecordingIngressError("corrupt-spool", "truncated Ogg lacing table");
-    }
-    let bodyLength = 0;
-    for (let index = 0; index < segmentCount; index += 1) {
-      bodyLength += bytes[offset + 27 + index] ?? 0;
-    }
-    const pageLength = 27 + segmentCount + bodyLength;
-    if (offset + pageLength > bytes.byteLength) {
-      throw new RecordingIngressError("corrupt-spool", "truncated Ogg page body");
-    }
-
-    const page = bytes.slice(offset, offset + pageLength);
-    const pageView = new DataView(page.buffer, page.byteOffset, page.byteLength);
-    const storedCrc = pageView.getUint32(22, true);
-    pageView.setUint32(22, 0, true);
-    if (oggCrc32(page) !== storedCrc) {
-      throw new RecordingIngressError("corrupt-spool", "Ogg CRC mismatch");
-    }
-
-    const view = new DataView(bytes.buffer, bytes.byteOffset + offset, pageLength);
-    const serial = view.getUint32(14, true);
-    const sequence = view.getUint32(18, true);
-    const granulePosition = view.getBigUint64(6, true);
-    const headerType = bytes[offset + 5] ?? 0;
-    if (expectedSerial === undefined) {
-      expectedSerial = serial;
-      firstBodyOffset = offset + 27 + segmentCount;
-    } else if (serial !== expectedSerial) {
-      throw new RecordingIngressError("corrupt-spool", "Ogg serial changed midstream");
-    }
-    if (sequence !== expectedSequence) {
-      throw new RecordingIngressError("corrupt-spool", "Ogg page sequence is not contiguous");
-    }
-    if (granulePosition < previousGranule) {
-      throw new RecordingIngressError("corrupt-spool", "Ogg granule position regressed");
-    }
-    if (expectedSequence === 1) {
-      secondBodyOffset = offset + 27 + segmentCount;
-    }
-    pages.push({ bodyLength, granulePosition, headerType, sequence, serial });
-    previousGranule = granulePosition;
-    expectedSequence += 1;
-    offset += pageLength;
+    const page = parseOggPage(bytes, offset);
+    acceptOggPage(state, page);
+    offset = page.nextOffset;
   }
+  assertOggOpusStructure(bytes, state);
+  return { pages: state.pages, serial: state.expectedSerial ?? 0 };
+}
 
+function parseOggPage(bytes: Uint8Array, offset: number): ParsedOggPage {
+  assertOggPageHeader(bytes, offset);
+  const segmentCount = bytes[offset + 26];
+  if (segmentCount === undefined || offset + 27 + segmentCount > bytes.byteLength) {
+    throw new RecordingIngressError("corrupt-spool", "truncated Ogg lacing table");
+  }
+  const bodyLength = lacingBodyLength(bytes, offset, segmentCount);
+  const pageLength = 27 + segmentCount + bodyLength;
+  if (offset + pageLength > bytes.byteLength) {
+    throw new RecordingIngressError("corrupt-spool", "truncated Ogg page body");
+  }
+  verifyPageChecksum(bytes, offset, pageLength);
+  const view = new DataView(bytes.buffer, bytes.byteOffset + offset, pageLength);
+  return {
+    bodyOffset: offset + 27 + segmentCount,
+    nextOffset: offset + pageLength,
+    summary: {
+      bodyLength,
+      granulePosition: view.getBigUint64(6, true),
+      headerType: bytes[offset + 5] ?? 0,
+      sequence: view.getUint32(18, true),
+      serial: view.getUint32(14, true),
+    },
+  };
+}
+
+function assertOggPageHeader(bytes: Uint8Array, offset: number): void {
+  if (offset + 27 > bytes.byteLength || !bytesEqualAt(bytes, offset, CAPTURE_PATTERN)) {
+    throw new RecordingIngressError("corrupt-spool", "invalid Ogg page header");
+  }
+  if (bytes[offset + 4] !== 0) {
+    throw new RecordingIngressError("corrupt-spool", "unsupported Ogg version");
+  }
+}
+
+function lacingBodyLength(bytes: Uint8Array, offset: number, segmentCount: number): number {
+  let bodyLength = 0;
+  for (let index = 0; index < segmentCount; index += 1) {
+    bodyLength += bytes[offset + 27 + index] ?? 0;
+  }
+  return bodyLength;
+}
+
+function verifyPageChecksum(bytes: Uint8Array, offset: number, pageLength: number): void {
+  const page = bytes.slice(offset, offset + pageLength);
+  const view = new DataView(page.buffer, page.byteOffset, page.byteLength);
+  const storedCrc = view.getUint32(22, true);
+  view.setUint32(22, 0, true);
+  if (oggCrc32(page) !== storedCrc) {
+    throw new RecordingIngressError("corrupt-spool", "Ogg CRC mismatch");
+  }
+}
+
+function acceptOggPage(state: OggValidationState, page: ParsedOggPage): void {
+  const { granulePosition, sequence, serial } = page.summary;
+  if (state.expectedSerial === undefined) {
+    state.expectedSerial = serial;
+    state.firstBodyOffset = page.bodyOffset;
+  } else if (serial !== state.expectedSerial) {
+    throw new RecordingIngressError("corrupt-spool", "Ogg serial changed midstream");
+  }
+  if (sequence !== state.expectedSequence) {
+    throw new RecordingIngressError("corrupt-spool", "Ogg page sequence is not contiguous");
+  }
+  if (granulePosition < state.previousGranule) {
+    throw new RecordingIngressError("corrupt-spool", "Ogg granule position regressed");
+  }
+  if (state.expectedSequence === 1) {
+    state.secondBodyOffset = page.bodyOffset;
+  }
+  state.pages.push(page.summary);
+  state.previousGranule = granulePosition;
+  state.expectedSequence += 1;
+}
+
+function assertOggOpusStructure(bytes: Uint8Array, state: OggValidationState): void {
   if (
-    pages.length < 3 ||
-    (pages[0]?.headerType ?? 0) !== 0x02 ||
-    ((pages.at(-1)?.headerType ?? 0) & 0x04) === 0 ||
-    !bytesEqualAt(bytes, firstBodyOffset, OPUS_HEAD) ||
-    !bytesEqualAt(bytes, secondBodyOffset, OPUS_TAGS)
+    state.pages.length < 3 ||
+    (state.pages[0]?.headerType ?? 0) !== 0x02 ||
+    ((state.pages.at(-1)?.headerType ?? 0) & 0x04) === 0 ||
+    !bytesEqualAt(bytes, state.firstBodyOffset, OPUS_HEAD) ||
+    !bytesEqualAt(bytes, state.secondBodyOffset, OPUS_TAGS)
   ) {
     throw new RecordingIngressError("corrupt-spool", "invalid Ogg Opus structure");
   }
-
-  return { pages, serial: expectedSerial ?? 0 };
 }

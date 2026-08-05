@@ -1,3 +1,5 @@
+import { EventEmitter } from "node:events";
+
 import { Metadata, status } from "@grpc/grpc-js";
 import { describe, expect, it } from "vitest";
 
@@ -151,6 +153,68 @@ describe("authenticated agent runtime gRPC handlers", () => {
       },
     });
   });
+
+  it("propagates gRPC cancellation to the executor AbortSignal", async () => {
+    const receivedSignal = deferred<AbortSignal>();
+    const executionFinished = deferred<void>();
+    const executor: SidecarExecutorPort = {
+      checkHealth: async () => ({
+        runtimeEngine: "subscription-runtime-app-server",
+        runtimeVersion: "0.1.0-main.2",
+        status: "serving",
+        warningCodes: [],
+      }),
+      execute: async (_request, signal) => {
+        if (signal === undefined) {
+          throw new Error("gRPC handler did not supply a cancellation signal");
+        }
+        receivedSignal.resolve(signal);
+        await new Promise<void>((resolve) => {
+          signal.addEventListener(
+            "abort",
+            () => {
+              resolve();
+            },
+            { once: true },
+          );
+        });
+        executionFinished.resolve();
+        return {
+          failure: {
+            code: "task_cancelled",
+            reconnectRequired: false,
+            retryable: true,
+            safeMessage: "Subscription runtime task is temporarily unavailable",
+          },
+          protocolVersion: 1,
+          status: "failed",
+        };
+      },
+    };
+    const handlers = createGrpcHandlers(executor, handlerOptions);
+    const metadata = new Metadata();
+    metadata.set("authorization", `Bearer ${serviceToken}`);
+    const call = createTestCall(grpcRequest(), metadata);
+    let callbacks = 0;
+
+    handlers.runAgentTask(
+      call as Parameters<typeof handlers.runAgentTask>[0],
+      () => {
+        callbacks += 1;
+      },
+    );
+
+    const signal = await receivedSignal.promise;
+    expect(signal.aborted).toBe(false);
+    call.emit("cancelled");
+    await executionFinished.promise;
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve);
+    });
+
+    expect(signal.aborted).toBe(true);
+    expect(callbacks).toBe(0);
+  });
 });
 
 class CompletedExecutor implements SidecarExecutorPort {
@@ -164,7 +228,7 @@ class CompletedExecutor implements SidecarExecutorPort {
         purpose: "discord_meeting.summary.incremental",
         reasoningEffort: "low",
         requestId: incrementalCanonicalRequest.runId,
-        runtimeEngine: "subscription-runtime-cli",
+        runtimeEngine: "subscription-runtime-app-server",
         runtimePackageVersion: "0.1.0-main.2",
         schemaVersion: 1,
         selectedOutputKind: "structured_output",
@@ -186,7 +250,7 @@ class CompletedExecutor implements SidecarExecutorPort {
 
   public async checkHealth() {
     return {
-      runtimeEngine: "subscription-runtime-cli",
+      runtimeEngine: "subscription-runtime-app-server",
       runtimeVersion: "0.1.0-main.2",
       status: "serving" as const,
       warningCodes: [],
@@ -218,7 +282,7 @@ class FailedWithUsageExecutor implements SidecarExecutorPort {
 
   public async checkHealth() {
     return {
-      runtimeEngine: "subscription-runtime-cli",
+      runtimeEngine: "subscription-runtime-app-server",
       runtimeVersion: "0.1.0-main.2",
       status: "serving" as const,
       warningCodes: [],
@@ -237,7 +301,7 @@ class PartialTelemetryExecutor implements SidecarExecutorPort {
         purpose: "discord_meeting.summary.incremental",
         reasoningEffort: "low",
         requestId: incrementalCanonicalRequest.runId,
-        runtimeEngine: "subscription-runtime-cli",
+        runtimeEngine: "subscription-runtime-app-server",
         runtimePackageVersion: "0.1.0-main.2",
         schemaVersion: 1,
         selectedOutputKind: "structured_output",
@@ -270,7 +334,7 @@ class PartialTelemetryExecutor implements SidecarExecutorPort {
 
   public async checkHealth() {
     return {
-      runtimeEngine: "subscription-runtime-cli",
+      runtimeEngine: "subscription-runtime-app-server",
       runtimeVersion: "0.1.0-main.2",
       status: "serving" as const,
       warningCodes: [],
@@ -299,7 +363,7 @@ class CountingExecutor implements SidecarExecutorPort {
   public async checkHealth() {
     this.healthChecks += 1;
     return {
-      runtimeEngine: "subscription-runtime-cli",
+      runtimeEngine: "subscription-runtime-app-server",
       runtimeVersion: "0.1.0-main.2",
       status: "serving" as const,
       warningCodes: [],
@@ -317,7 +381,7 @@ async function invoke(
 }> {
   return await new Promise((resolve) => {
     handler(
-      { metadata, request } as Parameters<typeof handler>[0],
+      createTestCall(request, metadata) as Parameters<typeof handler>[0],
       (error, value) => {
         resolve({
           error: error as (Error & { readonly code?: status }) | null,
@@ -326,4 +390,22 @@ async function invoke(
       },
     );
   });
+}
+
+function createTestCall(request: Record<string, unknown>, metadata: Metadata): EventEmitter {
+  return Object.assign(new EventEmitter(), { metadata, request });
+}
+
+function deferred<T>(): {
+  readonly promise: Promise<T>;
+  readonly resolve: (value: T | PromiseLike<T>) => void;
+} {
+  let resolver: ((value: T | PromiseLike<T>) => void) | undefined;
+  const promise = new Promise<T>((resolve) => {
+    resolver = resolve;
+  });
+  if (resolver === undefined) {
+    throw new Error("Promise resolver was not initialized");
+  }
+  return { promise, resolve: resolver };
 }

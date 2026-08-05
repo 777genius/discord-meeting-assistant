@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "contractId": "meeting-platform-rpc",
+  "publicContractVersion": "0.1.0",
+  "bufVersion": "1.72.0",
+  "bufConfigDigest": "sha256:635a7cab1e684b9f2a8aa00960cfa441a32ce6cf011f646c2af54f70d6a19845",
+  "descriptorImageDigest": "sha256:a3ef4cf9c6bc1af8a43729874c0b557ae7afd0bcbe23553befc63c4f9df12988",
+  "generatorVersions": [],
+  "generatedOutputDigest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

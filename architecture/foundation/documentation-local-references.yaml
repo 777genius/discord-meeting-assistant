@@ -1,0 +1,6 @@
+schemaVersion: 1
+markdownRoots:
+  - architecture
+  - docs
+  - infra
+anchorProfile: github
