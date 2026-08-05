@@ -91,7 +91,14 @@ describe("Node to Python providerless conversation E2E", () => {
 
   it("streams normalized PCM through a real Pipecat PipelineTask", async () => {
     const activeRuntime = requireRuntime(runtime);
-    const started = await activeRuntime.startTurn(request);
+    const wakeDetectedAtUnixMs = Date.now();
+    const started = await activeRuntime.startTurn({
+      ...request,
+      latency: {
+        turnEndedAtUnixMs: wakeDetectedAtUnixMs - 25,
+        wakeDetectedAtUnixMs,
+      },
+    });
     if (!started.ok) {
       throw new Error(`Conversation runtime rejected E2E turn: ${started.failure.code}`);
     }
@@ -111,13 +118,30 @@ describe("Node to Python providerless conversation E2E", () => {
     const audioStartIndex = eventTypes.indexOf("audio-start");
     const firstAudioChunkIndex = eventTypes.indexOf("audio-chunk");
     const lastAudioChunkIndex = eventTypes.lastIndexOf("audio-chunk");
+    const lastTextDeltaIndex = eventTypes.lastIndexOf("text-delta");
     const audioEndIndex = eventTypes.indexOf("audio-end");
     const usageIndex = eventTypes.indexOf("usage");
     expect(audioStartIndex).toBeGreaterThan(0);
     expect(firstAudioChunkIndex).toBeGreaterThan(audioStartIndex);
+    expect(firstAudioChunkIndex).toBeLessThan(lastTextDeltaIndex);
     expect(audioEndIndex).toBeGreaterThan(lastAudioChunkIndex);
     expect(usageIndex).toBeGreaterThan(audioEndIndex);
     expect(eventTypes.length - 1).toBeGreaterThan(usageIndex);
+    const latency = events.find(
+      (event): event is Extract<ConversationRuntimeEvent, { type: "latency" }> =>
+        event.type === "latency",
+    );
+    expect(latency).toBeDefined();
+    expect(latency?.endTurnToWakeMs).toBe(25);
+    expect(latency?.wakeToFirstLlmTokenMs).toBeGreaterThanOrEqual(200);
+    expect(latency?.wakeToFirstLlmTokenMs).toBeLessThan(1_000);
+    expect(latency?.firstLlmTokenToAudioMs).toBeLessThan(500);
+    expect(latency?.totalToFirstAudioMs).toBeLessThan(1_500);
+    expect(latency?.totalToFirstAudioMs).toBe(
+      (latency?.endTurnToWakeMs ?? 0) +
+        (latency?.wakeToFirstLlmTokenMs ?? 0) +
+        (latency?.firstLlmTokenToAudioMs ?? 0),
+    );
   }, 15_000);
 
   it("propagates cancellation into an active Pipecat task", async () => {
@@ -143,6 +167,18 @@ describe("Node to Python providerless conversation E2E", () => {
       reason: "barge-in",
     });
     expect(remaining.some(({ type }) => type === "completed")).toBe(false);
+
+    const queued = await activeRuntime.startTurn({
+      ...request,
+      idempotencyKey: "providerless-e2e:meeting-1:turn-3",
+      turnId: "turn-3",
+    });
+    if (!queued.ok) {
+      throw new Error(`Conversation runtime rejected queued turn: ${queued.failure.code}`);
+    }
+    const queuedEvents = await collectWithTimeout(queued.value.events);
+    expect(queuedEvents[0]).toMatchObject({ type: "accepted" });
+    expect(queuedEvents.at(-1)).toMatchObject({ type: "completed" });
   }, 15_000);
 
   it("bridges an addressed turn through Pipecat and the real Craig WebSocket adapter", async () => {

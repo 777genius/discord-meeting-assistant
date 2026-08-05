@@ -15,13 +15,67 @@ from pipecat_runtime.adapters.subscription_runtime.text_generation import (
 from pipecat_runtime.composition.settings import RuntimeSettings
 
 
+class ConversationRuntimeServerHost:
+    """Own the gRPC listener and every long-lived runtime resource behind it."""
+
+    def __init__(
+        self,
+        *,
+        server: grpc.aio.Server,
+        runtime: PipecatConversationRuntime,
+        text_generator: SubscriptionRuntimeTextGenerationAdapter | None,
+    ) -> None:
+        self._server = server
+        self._runtime = runtime
+        self._text_generator = text_generator
+        self._stopped = False
+
+    async def start(self) -> None:
+        await self._server.start()
+
+    async def wait_for_termination(self) -> None:
+        await self._server.wait_for_termination()
+
+    async def stop(self, grace: float | None) -> None:
+        if self._stopped:
+            return
+        self._stopped = True
+        await self._server.stop(grace)
+        await self._runtime.close()
+        if self._text_generator is not None:
+            await self._text_generator.close()
+
+
 def create_grpc_server(
     settings: RuntimeSettings,
     *,
     bind_host: str | None = None,
     bind_port: int | None = None,
-) -> tuple[grpc.aio.Server, int]:
+) -> tuple[ConversationRuntimeServerHost, int]:
     """Compose a private gRPC server without starting it or making provider calls."""
+    server, resolved_port, runtime, text_generator = _compose_runtime(
+        settings, bind_host, bind_port
+    )
+    return (
+        ConversationRuntimeServerHost(
+            server=server,
+            runtime=runtime,
+            text_generator=text_generator,
+        ),
+        resolved_port,
+    )
+
+
+def _compose_runtime(
+    settings: RuntimeSettings,
+    bind_host: str | None,
+    bind_port: int | None,
+) -> tuple[
+    grpc.aio.Server,
+    int,
+    PipecatConversationRuntime,
+    SubscriptionRuntimeTextGenerationAdapter | None,
+]:
     text_generator = (
         None
         if settings.subscription_runtime is None
@@ -48,7 +102,7 @@ def create_grpc_server(
     resolved_port = server.add_insecure_port(f"{host}:{port}")
     if resolved_port == 0:
         raise RuntimeError("unable to bind Pipecat runtime gRPC listener")
-    return server, resolved_port
+    return server, resolved_port, runtime, text_generator
 
 
 async def serve(settings: RuntimeSettings) -> None:

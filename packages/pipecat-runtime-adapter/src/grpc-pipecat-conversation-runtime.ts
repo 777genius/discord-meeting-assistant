@@ -4,6 +4,7 @@ import {
   type ConversationRuntimeHealth,
 } from "@discord-meeting/conversation-runtime-contracts";
 import type {
+  ConversationCancellationReason,
   ConversationRuntime,
   ConversationRuntimeTurn,
   ConversationStartOptions,
@@ -13,12 +14,7 @@ import type {
 
 import { parseGrpcConversationRuntimeHealth } from "./grpc-pipecat-protocol.js";
 import { GrpcConversationRuntimeTurn } from "./grpc-pipecat-runtime-turn.js";
-import {
-  failure,
-  isAbortRequested,
-  rejectWhenAborted,
-  safeErrorMessage,
-} from "./grpc-pipecat-runtime-support.js";
+import { failure, safeErrorMessage } from "./grpc-pipecat-runtime-support.js";
 import {
   createAuthorizationMetadata,
   createGrpcConversationDuplexCallFactory,
@@ -55,7 +51,7 @@ export class GrpcPipecatConversationRuntime implements ConversationRuntime {
     request: ConversationStartRequest,
     options: ConversationStartOptions = {},
   ): Promise<PortResult<ConversationRuntimeTurn>> {
-    if (options.signal?.aborted === true) {
+    if (signalIsAborted(options.signal)) {
       return failure(
         "CONVERSATION_RUNTIME_START_CANCELLED",
         "Conversation runtime start was cancelled",
@@ -79,11 +75,17 @@ export class GrpcPipecatConversationRuntime implements ConversationRuntime {
     }
 
     const turn = new GrpcConversationRuntimeTurn(call, transportRequest.value.turnId);
+    let abortRequested = signalIsAborted(options.signal);
+    const recordAbort = () => {
+      abortRequested = true;
+    };
+    options.signal?.addEventListener("abort", recordAbort, { once: true });
     try {
-      await rejectWhenAborted(turn.start(transportRequest.value), options.signal);
+      await turn.start(transportRequest.value);
     } catch (error) {
+      options.signal?.removeEventListener("abort", recordAbort);
       turn.abortBeforeStart();
-      if (isAbortRequested(options.signal)) {
+      if (abortRequested || signalIsAborted(options.signal)) {
         return failure(
           "CONVERSATION_RUNTIME_START_CANCELLED",
           "Conversation runtime start was cancelled",
@@ -96,6 +98,16 @@ export class GrpcPipecatConversationRuntime implements ConversationRuntime {
         true,
       );
     }
+    if (abortRequested || signalIsAborted(options.signal)) {
+      await turn.cancel(cancellationReasonFromSignal(options.signal));
+      options.signal?.removeEventListener("abort", recordAbort);
+      return failure(
+        "CONVERSATION_RUNTIME_START_CANCELLED",
+        "Conversation runtime start was cancelled",
+        true,
+      );
+    }
+    options.signal?.removeEventListener("abort", recordAbort);
     return { ok: true, value: turn };
   }
 
@@ -129,4 +141,24 @@ export class GrpcPipecatConversationRuntime implements ConversationRuntime {
       );
     }
   }
+}
+
+function cancellationReasonFromSignal(
+  signal: AbortSignal | undefined,
+): ConversationCancellationReason {
+  const reason: unknown = signal?.reason;
+  switch (reason) {
+    case "barge-in":
+    case "meeting-ended":
+    case "playback-failed":
+    case "runtime-shutdown":
+    case "superseded":
+      return reason;
+    default:
+      return "runtime-shutdown";
+  }
+}
+
+function signalIsAborted(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true;
 }

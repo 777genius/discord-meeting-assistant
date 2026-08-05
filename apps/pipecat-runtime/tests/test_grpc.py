@@ -65,12 +65,14 @@ async def test_converse_streams_ordered_contract_events() -> None:
             messages = await _read_messages(call)
 
             assert [message.event_sequence for message in messages] == list(range(len(messages)))
-            assert [message.WhichOneof("payload") for message in messages] == [
+            payloads = [message.WhichOneof("payload") for message in messages]
+            contract_payloads = [payload for payload in payloads if payload != "latency"]
+            assert contract_payloads == [
                 "accepted",
-                "text_delta",
                 "text_delta",
                 "audio_start",
                 "audio_chunk",
+                "text_delta",
                 "audio_chunk",
                 "audio_chunk",
                 "audio_chunk",
@@ -79,6 +81,14 @@ async def test_converse_streams_ordered_contract_events() -> None:
                 "usage",
                 "completed",
             ]
+            assert payloads.index("latency") > payloads.index("audio_start")
+            latency = next(message.latency for message in messages if message.HasField("latency"))
+            assert latency.end_turn_to_wake_ms == 25
+            assert latency.total_to_first_audio_ms == (
+                latency.end_turn_to_wake_ms
+                + latency.wake_to_first_llm_token_ms
+                + latency.first_llm_token_to_audio_ms
+            )
             audio_chunks = [
                 message.audio_chunk for message in messages if message.HasField("audio_chunk")
             ]
@@ -136,6 +146,17 @@ async def test_converse_cancellation_interrupts_the_active_attempt() -> None:
                 messages[-1].cancelled.reason == contract.CONVERSATION_CANCELLATION_REASON_BARGE_IN
             )
             assert [message.event_sequence for message in messages] == list(range(len(messages)))
+
+            next_call = client.Converse(metadata=_authorization_metadata())
+            next_start = start_message()
+            next_start.start_turn.turn_id = "turn-after-cancellation"
+            next_start.start_turn.idempotency_key = "idempotency-after-cancellation"
+            await next_call.write(next_start)
+            await next_call.done_writing()
+            next_messages = await _read_messages(next_call)
+
+            assert next_messages[0].WhichOneof("payload") == "accepted"
+            assert next_messages[-1].WhichOneof("payload") == "completed"
     finally:
         await server.stop(0)
 

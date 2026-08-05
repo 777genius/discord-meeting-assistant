@@ -5,20 +5,20 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Callable
 
-from pipecat_runtime.application.models import (
+from pipecat_runtime.application.conversation_events import (
     Accepted,
     AudioChunk,
     AudioEnd,
     AudioStart,
-    CancellationReason,
     Cancelled,
     Completed,
     ConversationEvent,
     Failed,
-    StartTurn,
+    Latency,
     TextDelta,
     Usage,
 )
+from pipecat_runtime.application.models import CancellationReason, StartTurn
 
 
 class ConversationEventStream:
@@ -99,6 +99,23 @@ class ConversationEventStream:
                 total_tokens=input_tokens + self._output_tokens,
             )
             await self._emit_terminal_locked(Completed)
+
+    async def latency(
+        self,
+        *,
+        end_turn_to_wake_ms: int,
+        wake_to_first_llm_token_ms: int,
+        first_llm_token_to_audio_ms: int,
+        total_to_first_audio_ms: int,
+    ) -> None:
+        """Publish exact first-audio stage durations once for an instrumented turn."""
+        await self._emit(
+            Latency,
+            end_turn_to_wake_ms=end_turn_to_wake_ms,
+            wake_to_first_llm_token_ms=wake_to_first_llm_token_ms,
+            first_llm_token_to_audio_ms=first_llm_token_to_audio_ms,
+            total_to_first_audio_ms=total_to_first_audio_ms,
+        )
 
     async def cancelled(self, reason: CancellationReason) -> None:
         """Close a cancelled response after any previously streamed audio."""

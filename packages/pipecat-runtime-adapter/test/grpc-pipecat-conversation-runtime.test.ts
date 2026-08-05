@@ -142,7 +142,7 @@ describe("GrpcPipecatConversationRuntime", () => {
     runtime.close();
   });
 
-  it("aborts a pending start write", async () => {
+  it("waits for backend cancellation acknowledgement after aborting a pending start write", async () => {
     const factory = new FakeCallFactory();
     factory.deferNextCallWriteCompletion = true;
     const runtime = new GrpcPipecatConversationRuntime({
@@ -157,12 +157,38 @@ describe("GrpcPipecatConversationRuntime", () => {
       expect(factory.calls[0]?.writes).toHaveLength(1);
     });
     controller.abort("meeting-ended");
+    const call = factory.calls[0]!;
+    let settled = false;
+    void starting.then(() => {
+      settled = true;
+      return null;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    expect(call.cancelled).toBe(false);
+
+    call.completeNextWrite();
+    call.data(serverMessage("accepted", 0));
+    await vi.waitFor(() => {
+      expect(call.writes).toHaveLength(2);
+      expect(call.ended).toBe(true);
+    });
+    expect(call.writes[1]).toMatchObject({
+      cancelTurn: {
+        attemptId: "attempt-1",
+        reason: "CONVERSATION_CANCELLATION_REASON_MEETING_ENDED",
+        turnId: "turn-1",
+      },
+    });
+    call.data(serverMessage("cancelled", 1, {
+      reason: "CONVERSATION_CANCELLATION_REASON_MEETING_ENDED",
+    }));
 
     await expect(starting).resolves.toMatchObject({
       failure: { code: "CONVERSATION_RUNTIME_START_CANCELLED" },
       ok: false,
     });
-    expect(factory.calls[0]?.cancelled).toBe(true);
+    expect(call.cancelled).toBe(false);
   });
 
   it("authenticates and parses provider-neutral readiness", async () => {
@@ -222,8 +248,10 @@ describe("GrpcPipecatConversationRuntime", () => {
     expect(factory.authorization).toBe("Bearer test-service-token-1234");
     expect(call.ended).toBe(true);
   });
+});
 
-  it("aborts the transport when cancellation arrives before attempt acceptance", async () => {
+describe("GrpcPipecatConversationRuntime cancellation", () => {
+  it("waits for an attempt before cancelling a turn during admission", async () => {
     const factory = new FakeCallFactory();
     const runtime = new GrpcPipecatConversationRuntime({
       address: "127.0.0.1:50052",
@@ -235,14 +263,29 @@ describe("GrpcPipecatConversationRuntime", () => {
       throw new Error("turn did not start");
     }
     const call = factory.calls[0]!;
-    await result.value.cancel("barge-in");
+    const events = collect(result.value.events);
+    const cancellation = result.value.cancel("barge-in");
     expect(call.writes).toHaveLength(1);
-    expect(call.cancelled).toBe(true);
-    expect(call.ended).toBe(true);
-    await expect(collect(result.value.events)).resolves.toEqual([]);
+    expect(call.cancelled).toBe(false);
+    expect(call.ended).toBe(false);
+
+    call.data(serverMessage("accepted", 0));
+    await vi.waitFor(() => {
+      expect(call.writes).toHaveLength(2);
+      expect(call.ended).toBe(true);
+    });
+    call.data(serverMessage("cancelled", 1, {
+      reason: "CONVERSATION_CANCELLATION_REASON_BARGE_IN",
+    }));
+
+    await expect(cancellation).resolves.toBeUndefined();
+    await expect(events).resolves.toMatchObject([
+      { type: "accepted" },
+      { type: "cancelled", reason: "barge-in" },
+    ]);
   });
 
-  it("releases an accepted cancellation while its protocol write is pending", async () => {
+  it("waits for backend cancellation acknowledgement before releasing the turn", async () => {
     const factory = new FakeCallFactory();
     const runtime = new GrpcPipecatConversationRuntime({
       address: "127.0.0.1:50052",
@@ -254,6 +297,7 @@ describe("GrpcPipecatConversationRuntime", () => {
       throw new Error("turn did not start");
     }
     const call = factory.calls[0]!;
+    const events = collect(result.value.events);
     call.data(serverMessage("accepted", 0));
     call.deferNextWriteCompletion = true;
     const cancellation = result.value.cancel("barge-in");
@@ -266,13 +310,26 @@ describe("GrpcPipecatConversationRuntime", () => {
         reason: "CONVERSATION_CANCELLATION_REASON_BARGE_IN",
       },
     });
-    await expect(cancellation).resolves.toBeUndefined();
-    expect(call.cancelled).toBe(true);
-    expect(call.ended).toBe(true);
+    expect(call.cancelled).toBe(false);
+    expect(call.ended).toBe(false);
     call.completeNextWrite();
-    await collect(result.value.events);
-  });
+    await vi.waitFor(() => {
+      expect(call.ended).toBe(true);
+    });
+    call.data(serverMessage("cancelled", 1, {
+      reason: "CONVERSATION_CANCELLATION_REASON_BARGE_IN",
+    }));
 
+    await expect(cancellation).resolves.toBeUndefined();
+    await expect(events).resolves.toMatchObject([
+      { type: "accepted" },
+      { type: "cancelled", reason: "barge-in" },
+    ]);
+    expect(call.cancelled).toBe(false);
+  });
+});
+
+describe("GrpcPipecatConversationRuntime validation", () => {
   it("fails closed on sequence gaps and malformed provider audio", async () => {
     const factory = new FakeCallFactory();
     const runtime = new GrpcPipecatConversationRuntime({

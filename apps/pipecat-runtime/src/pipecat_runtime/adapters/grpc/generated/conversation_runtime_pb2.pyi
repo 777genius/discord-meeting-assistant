@@ -40,7 +40,7 @@ class ConversationRuntimeClientMessage(_message.Message):
     def __init__(self, schema_version: _Optional[int] = ..., start_turn: _Optional[_Union[ConversationStartTurn, _Mapping]] = ..., cancel_turn: _Optional[_Union[ConversationCancelTurn, _Mapping]] = ...) -> None: ...
 
 class ConversationStartTurn(_message.Message):
-    __slots__ = ("meeting_id", "recording_id", "turn_id", "speaker_id", "idempotency_key", "system_prompt", "prompt", "locale", "voice_profile_id")
+    __slots__ = ("meeting_id", "recording_id", "turn_id", "speaker_id", "idempotency_key", "system_prompt", "prompt", "locale", "voice_profile_id", "turn_ended_at_unix_ms", "wake_detected_at_unix_ms")
     MEETING_ID_FIELD_NUMBER: _ClassVar[int]
     RECORDING_ID_FIELD_NUMBER: _ClassVar[int]
     TURN_ID_FIELD_NUMBER: _ClassVar[int]
@@ -50,6 +50,8 @@ class ConversationStartTurn(_message.Message):
     PROMPT_FIELD_NUMBER: _ClassVar[int]
     LOCALE_FIELD_NUMBER: _ClassVar[int]
     VOICE_PROFILE_ID_FIELD_NUMBER: _ClassVar[int]
+    TURN_ENDED_AT_UNIX_MS_FIELD_NUMBER: _ClassVar[int]
+    WAKE_DETECTED_AT_UNIX_MS_FIELD_NUMBER: _ClassVar[int]
     meeting_id: str
     recording_id: str
     turn_id: str
@@ -59,7 +61,9 @@ class ConversationStartTurn(_message.Message):
     prompt: str
     locale: str
     voice_profile_id: str
-    def __init__(self, meeting_id: _Optional[str] = ..., recording_id: _Optional[str] = ..., turn_id: _Optional[str] = ..., speaker_id: _Optional[str] = ..., idempotency_key: _Optional[str] = ..., system_prompt: _Optional[str] = ..., prompt: _Optional[str] = ..., locale: _Optional[str] = ..., voice_profile_id: _Optional[str] = ...) -> None: ...
+    turn_ended_at_unix_ms: int
+    wake_detected_at_unix_ms: int
+    def __init__(self, meeting_id: _Optional[str] = ..., recording_id: _Optional[str] = ..., turn_id: _Optional[str] = ..., speaker_id: _Optional[str] = ..., idempotency_key: _Optional[str] = ..., system_prompt: _Optional[str] = ..., prompt: _Optional[str] = ..., locale: _Optional[str] = ..., voice_profile_id: _Optional[str] = ..., turn_ended_at_unix_ms: _Optional[int] = ..., wake_detected_at_unix_ms: _Optional[int] = ...) -> None: ...
 
 class ConversationCancelTurn(_message.Message):
     __slots__ = ("turn_id", "attempt_id", "reason")
@@ -72,7 +76,7 @@ class ConversationCancelTurn(_message.Message):
     def __init__(self, turn_id: _Optional[str] = ..., attempt_id: _Optional[str] = ..., reason: _Optional[_Union[ConversationCancellationReason, str]] = ...) -> None: ...
 
 class ConversationRuntimeServerMessage(_message.Message):
-    __slots__ = ("schema_version", "turn_id", "attempt_id", "event_sequence", "accepted", "text_delta", "audio_start", "audio_chunk", "audio_end", "usage", "completed", "cancelled", "failed")
+    __slots__ = ("schema_version", "turn_id", "attempt_id", "event_sequence", "accepted", "text_delta", "audio_start", "audio_chunk", "audio_end", "usage", "completed", "cancelled", "failed", "latency")
     SCHEMA_VERSION_FIELD_NUMBER: _ClassVar[int]
     TURN_ID_FIELD_NUMBER: _ClassVar[int]
     ATTEMPT_ID_FIELD_NUMBER: _ClassVar[int]
@@ -86,6 +90,7 @@ class ConversationRuntimeServerMessage(_message.Message):
     COMPLETED_FIELD_NUMBER: _ClassVar[int]
     CANCELLED_FIELD_NUMBER: _ClassVar[int]
     FAILED_FIELD_NUMBER: _ClassVar[int]
+    LATENCY_FIELD_NUMBER: _ClassVar[int]
     schema_version: int
     turn_id: str
     attempt_id: str
@@ -99,7 +104,8 @@ class ConversationRuntimeServerMessage(_message.Message):
     completed: ConversationCompleted
     cancelled: ConversationCancelled
     failed: ConversationFailed
-    def __init__(self, schema_version: _Optional[int] = ..., turn_id: _Optional[str] = ..., attempt_id: _Optional[str] = ..., event_sequence: _Optional[int] = ..., accepted: _Optional[_Union[ConversationAccepted, _Mapping]] = ..., text_delta: _Optional[_Union[ConversationTextDelta, _Mapping]] = ..., audio_start: _Optional[_Union[ConversationAudioStart, _Mapping]] = ..., audio_chunk: _Optional[_Union[ConversationAudioChunk, _Mapping]] = ..., audio_end: _Optional[_Union[ConversationAudioEnd, _Mapping]] = ..., usage: _Optional[_Union[ConversationUsage, _Mapping]] = ..., completed: _Optional[_Union[ConversationCompleted, _Mapping]] = ..., cancelled: _Optional[_Union[ConversationCancelled, _Mapping]] = ..., failed: _Optional[_Union[ConversationFailed, _Mapping]] = ...) -> None: ...
+    latency: ConversationLatency
+    def __init__(self, schema_version: _Optional[int] = ..., turn_id: _Optional[str] = ..., attempt_id: _Optional[str] = ..., event_sequence: _Optional[int] = ..., accepted: _Optional[_Union[ConversationAccepted, _Mapping]] = ..., text_delta: _Optional[_Union[ConversationTextDelta, _Mapping]] = ..., audio_start: _Optional[_Union[ConversationAudioStart, _Mapping]] = ..., audio_chunk: _Optional[_Union[ConversationAudioChunk, _Mapping]] = ..., audio_end: _Optional[_Union[ConversationAudioEnd, _Mapping]] = ..., usage: _Optional[_Union[ConversationUsage, _Mapping]] = ..., completed: _Optional[_Union[ConversationCompleted, _Mapping]] = ..., cancelled: _Optional[_Union[ConversationCancelled, _Mapping]] = ..., failed: _Optional[_Union[ConversationFailed, _Mapping]] = ..., latency: _Optional[_Union[ConversationLatency, _Mapping]] = ...) -> None: ...
 
 class ConversationAccepted(_message.Message):
     __slots__ = ()
@@ -168,6 +174,18 @@ class ConversationFailed(_message.Message):
     safe_message: str
     retryable: bool
     def __init__(self, code: _Optional[str] = ..., safe_message: _Optional[str] = ..., retryable: _Optional[bool] = ...) -> None: ...
+
+class ConversationLatency(_message.Message):
+    __slots__ = ("end_turn_to_wake_ms", "wake_to_first_llm_token_ms", "first_llm_token_to_audio_ms", "total_to_first_audio_ms")
+    END_TURN_TO_WAKE_MS_FIELD_NUMBER: _ClassVar[int]
+    WAKE_TO_FIRST_LLM_TOKEN_MS_FIELD_NUMBER: _ClassVar[int]
+    FIRST_LLM_TOKEN_TO_AUDIO_MS_FIELD_NUMBER: _ClassVar[int]
+    TOTAL_TO_FIRST_AUDIO_MS_FIELD_NUMBER: _ClassVar[int]
+    end_turn_to_wake_ms: int
+    wake_to_first_llm_token_ms: int
+    first_llm_token_to_audio_ms: int
+    total_to_first_audio_ms: int
+    def __init__(self, end_turn_to_wake_ms: _Optional[int] = ..., wake_to_first_llm_token_ms: _Optional[int] = ..., first_llm_token_to_audio_ms: _Optional[int] = ..., total_to_first_audio_ms: _Optional[int] = ...) -> None: ...
 
 class ConversationRuntimeHealthRequest(_message.Message):
     __slots__ = ("service",)

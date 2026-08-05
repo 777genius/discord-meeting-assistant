@@ -27,10 +27,13 @@ export class GrpcConversationRuntimeTurn implements ConversationRuntimeTurn {
   public readonly events: AsyncIterable<ConversationRuntimeEvent>;
   private readonly eventBuffer: AsyncEventBuffer<ConversationRuntimeEvent>;
   private attemptId: string | undefined;
+  private readonly attemptWaiters: Array<() => void> = [];
   private expectedEventSequence = 0;
   private queuedAudioBytes = 0;
   private paused = false;
   private terminal = false;
+  private readonly terminalWaiters: Array<() => void> = [];
+  private writeClosed = false;
 
   public constructor(
     private readonly call: ConversationDuplexCall,
@@ -60,25 +63,31 @@ export class GrpcConversationRuntimeTurn implements ConversationRuntimeTurn {
     this.complete();
   }
 
-  public cancel(reason: ConversationCancellationReason): Promise<void> {
+  public async cancel(reason: ConversationCancellationReason): Promise<void> {
     if (this.terminal) {
-      return Promise.resolve();
+      return;
     }
-    if (this.attemptId !== undefined) {
-      void this.write(
-        createGrpcConversationCancellationMessage(this.turnId, this.attemptId, reason),
-      ).catch(() => {
-        // The transport is cancelled below; the protocol write is best-effort.
-      });
-      this.eventBuffer.push({
-        attemptId: this.attemptId,
-        reason,
-        type: "cancelled",
-      });
+    if (this.attemptId === undefined) {
+      await this.waitForAttempt();
     }
-    this.call.cancel();
-    this.complete();
-    return Promise.resolve();
+    const attemptId = this.attemptId;
+    if (attemptId === undefined) {
+      return;
+    }
+    try {
+      await this.write(
+        createGrpcConversationCancellationMessage(this.turnId, attemptId, reason),
+      );
+    } catch (error) {
+      this.fail(
+        "CONVERSATION_RUNTIME_TRANSPORT_ERROR",
+        safeErrorMessage(error, "Conversation runtime cancellation failed"),
+        true,
+      );
+      return;
+    }
+    this.halfClose();
+    await this.waitForTerminal();
   }
 
   private receive(message: RawMessage): void {
@@ -91,6 +100,9 @@ export class GrpcConversationRuntimeTurn implements ConversationRuntimeTurn {
       const coreEvent = toCoreConversationRuntimeEvent(event);
       this.trackIncomingAudio(coreEvent);
       this.eventBuffer.push(coreEvent);
+      if (coreEvent.type === "accepted") {
+        this.releaseAttemptWaiters();
+      }
       if (isGrpcConversationTerminalEvent(event)) {
         this.complete();
       }
@@ -111,6 +123,9 @@ export class GrpcConversationRuntimeTurn implements ConversationRuntimeTurn {
       throw new Error(
         `Conversation runtime event sequence ${event.eventSequence} does not match ${this.expectedEventSequence}`,
       );
+    }
+    if (this.expectedEventSequence === 0 && event.type !== "accepted") {
+      throw new Error("Conversation runtime must accept a turn before emitting output");
     }
     this.expectedEventSequence += 1;
     if (this.attemptId !== undefined && event.attemptId !== this.attemptId) {
@@ -170,8 +185,12 @@ export class GrpcConversationRuntimeTurn implements ConversationRuntimeTurn {
       return;
     }
     this.terminal = true;
-    this.call.end();
+    this.halfClose();
     this.eventBuffer.close();
+    this.releaseAttemptWaiters();
+    for (const resolve of this.terminalWaiters.splice(0)) {
+      resolve();
+    }
   }
 
   private write(message: RawMessage): Promise<void> {
@@ -195,5 +214,37 @@ export class GrpcConversationRuntimeTurn implements ConversationRuntimeTurn {
       this.paused = false;
       this.call.resume();
     }
+  }
+
+  private async waitForTerminal(): Promise<void> {
+    if (this.terminal) {
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      this.terminalWaiters.push(resolve);
+    });
+  }
+
+  private async waitForAttempt(): Promise<void> {
+    if (this.attemptId !== undefined || this.terminal) {
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      this.attemptWaiters.push(resolve);
+    });
+  }
+
+  private releaseAttemptWaiters(): void {
+    for (const resolve of this.attemptWaiters.splice(0)) {
+      resolve();
+    }
+  }
+
+  private halfClose(): void {
+    if (this.writeClosed) {
+      return;
+    }
+    this.writeClosed = true;
+    this.call.end();
   }
 }

@@ -248,10 +248,12 @@ interface LiveConversationTurnInput {
   readonly systemPrompt: string;
   readonly text: string;
   readonly thinkingCueLocale: string;
+  readonly turnEndedAtUnixMs: number;
   readonly transcriptEndMs: number;
   readonly transcriptStartMs: number;
   readonly turnId: string;
   readonly voiceProfileId: string;
+  readonly wakeDetectedAtUnixMs: number;
 }
 
 interface LiveConversationCoordinator {

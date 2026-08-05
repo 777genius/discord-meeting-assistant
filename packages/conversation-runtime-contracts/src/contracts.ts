@@ -10,6 +10,7 @@ const localeSchema = z.string().trim().min(2).max(35);
 const systemPromptSchema = z.string().trim().min(1).max(16_000);
 const promptSchema = z.string().trim().min(1).max(8_000);
 const sequenceSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+const unixMillisecondsSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 
 export const conversationCancellationReasonSchema = z.enum([
   "barge-in",
@@ -31,6 +32,17 @@ export const conversationRuntimeStartTurnSchema = z
     turnId: identifierSchema,
     speakerId: identifierSchema,
     idempotencyKey: identifierSchema,
+    latency: z
+      .object({
+        turnEndedAtUnixMs: unixMillisecondsSchema,
+        wakeDetectedAtUnixMs: unixMillisecondsSchema,
+      })
+      .strict()
+      .refine(
+        (value) => value.wakeDetectedAtUnixMs >= value.turnEndedAtUnixMs,
+        "wake detection cannot precede the end of the transcript turn",
+      )
+      .optional(),
     systemPrompt: systemPromptSchema,
     prompt: promptSchema,
     locale: localeSchema,
@@ -120,6 +132,24 @@ const usageEventSchema = runtimeEventEnvelopeSchema
     "total tokens must include input and output tokens",
   );
 
+const latencyEventSchema = runtimeEventEnvelopeSchema
+  .extend({
+    type: z.literal("latency"),
+    endTurnToWakeMs: z.number().int().nonnegative(),
+    wakeToFirstLlmTokenMs: z.number().int().nonnegative(),
+    firstLlmTokenToAudioMs: z.number().int().nonnegative(),
+    totalToFirstAudioMs: z.number().int().nonnegative(),
+  })
+  .strict()
+  .refine(
+    (value) =>
+      value.totalToFirstAudioMs ===
+      value.endTurnToWakeMs +
+        value.wakeToFirstLlmTokenMs +
+        value.firstLlmTokenToAudioMs,
+    "total first-audio latency must equal its measured stages",
+  );
+
 const completedEventSchema = runtimeEventEnvelopeSchema
   .extend({ type: z.literal("completed") })
   .strict();
@@ -147,6 +177,7 @@ export const conversationRuntimeEventSchema = z.discriminatedUnion("type", [
   audioChunkEventSchema,
   audioEndEventSchema,
   usageEventSchema,
+  latencyEventSchema,
   completedEventSchema,
   cancelledEventSchema,
   failedEventSchema,

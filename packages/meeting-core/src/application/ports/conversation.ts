@@ -10,6 +10,10 @@ export type ConversationCancellationReason =
 
 export interface ConversationStartRequest {
   readonly idempotencyKey: string;
+  readonly latency?: {
+    readonly turnEndedAtUnixMs: number;
+    readonly wakeDetectedAtUnixMs: number;
+  };
   readonly locale: string;
   readonly meetingId: string;
   readonly prompt: string;
@@ -48,6 +52,14 @@ export type ConversationRuntimeEvent =
       readonly outputTokens: number;
       readonly totalTokens: number;
       readonly type: "usage";
+    }
+  | {
+      readonly attemptId: string;
+      readonly endTurnToWakeMs: number;
+      readonly firstLlmTokenToAudioMs: number;
+      readonly totalToFirstAudioMs: number;
+      readonly type: "latency";
+      readonly wakeToFirstLlmTokenMs: number;
     }
   | { readonly attemptId: string; readonly type: "completed" }
   | {

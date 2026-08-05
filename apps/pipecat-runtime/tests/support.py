@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 from pipecat_runtime.adapters.grpc.generated import conversation_runtime_pb2 as contract
 from pipecat_runtime.adapters.pipecat.processors import DeterministicPipelineOptions
 from pipecat_runtime.adapters.providers.profiles import (
@@ -56,6 +58,7 @@ def deterministic_runtime_settings(
 def start_message() -> contract.ConversationRuntimeClientMessage:
     """Encode the valid first gRPC client message."""
     request = sample_start_turn()
+    wake_detected_at_unix_ms = time.time_ns() // 1_000_000
     return contract.ConversationRuntimeClientMessage(
         schema_version=request.schema_version,
         start_turn=contract.ConversationStartTurn(
@@ -68,5 +71,7 @@ def start_message() -> contract.ConversationRuntimeClientMessage:
             prompt=request.prompt,
             locale=request.locale,
             voice_profile_id=request.voice_profile_id,
+            turn_ended_at_unix_ms=wake_detected_at_unix_ms - 25,
+            wake_detected_at_unix_ms=wake_detected_at_unix_ms,
         ),
     )

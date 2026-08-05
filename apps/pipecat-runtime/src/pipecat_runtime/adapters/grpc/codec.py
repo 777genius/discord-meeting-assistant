@@ -5,22 +5,25 @@ from __future__ import annotations
 from typing import Final
 
 from pipecat_runtime.adapters.grpc.generated import conversation_runtime_pb2 as contract
-from pipecat_runtime.application.models import (
-    PROTOCOL_VERSION,
+from pipecat_runtime.application.conversation_events import (
     Accepted,
     AudioChunk,
     AudioEnd,
     AudioStart,
-    CancellationReason,
     Cancelled,
-    CancelTurn,
     Completed,
     ConversationEvent,
     Failed,
-    RuntimeInputError,
-    StartTurn,
+    Latency,
     TextDelta,
     Usage,
+)
+from pipecat_runtime.application.models import (
+    PROTOCOL_VERSION,
+    CancellationReason,
+    CancelTurn,
+    RuntimeInputError,
+    StartTurn,
 )
 
 _FROM_CONTRACT_CANCELLATION_REASON: Final[
@@ -53,6 +56,8 @@ def start_turn_from_message(message: contract.ConversationRuntimeClientMessage) 
         prompt=payload.prompt,
         locale=payload.locale,
         voice_profile_id=payload.voice_profile_id,
+        turn_ended_at_unix_ms=payload.turn_ended_at_unix_ms or None,
+        wake_detected_at_unix_ms=payload.wake_detected_at_unix_ms or None,
         schema_version=message.schema_version,
     )
 
@@ -117,6 +122,20 @@ def event_to_message(event: ConversationEvent) -> contract.ConversationRuntimeSe
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
                     total_tokens=total_tokens,
+                )
+            )
+        case Latency(
+            end_turn_to_wake_ms=end_turn_to_wake_ms,
+            wake_to_first_llm_token_ms=wake_to_first_llm_token_ms,
+            first_llm_token_to_audio_ms=first_llm_token_to_audio_ms,
+            total_to_first_audio_ms=total_to_first_audio_ms,
+        ):
+            message.latency.CopyFrom(
+                contract.ConversationLatency(
+                    end_turn_to_wake_ms=end_turn_to_wake_ms,
+                    wake_to_first_llm_token_ms=wake_to_first_llm_token_ms,
+                    first_llm_token_to_audio_ms=first_llm_token_to_audio_ms,
+                    total_to_first_audio_ms=total_to_first_audio_ms,
                 )
             )
         case Completed():

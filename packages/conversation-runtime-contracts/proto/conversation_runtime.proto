@@ -41,6 +41,8 @@ message ConversationStartTurn {
   string prompt = 7;
   string locale = 8;
   string voice_profile_id = 9;
+  uint64 turn_ended_at_unix_ms = 10;
+  uint64 wake_detected_at_unix_ms = 11;
 }
 
 message ConversationCancelTurn {
@@ -64,6 +66,7 @@ message ConversationRuntimeServerMessage {
     ConversationCompleted completed = 11;
     ConversationCancelled cancelled = 12;
     ConversationFailed failed = 13;
+    ConversationLatency latency = 14;
   }
 }
 
@@ -99,6 +102,13 @@ message ConversationFailed {
   string code = 1;
   string safe_message = 2;
   bool retryable = 3;
+}
+
+message ConversationLatency {
+  uint64 end_turn_to_wake_ms = 1;
+  uint64 wake_to_first_llm_token_ms = 2;
+  uint64 first_llm_token_to_audio_ms = 3;
+  uint64 total_to_first_audio_ms = 4;
 }
 
 message ConversationRuntimeHealthRequest { string service = 1; }

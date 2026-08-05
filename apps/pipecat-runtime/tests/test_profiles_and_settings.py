@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
@@ -17,7 +18,11 @@ from pipecat_runtime.adapters.providers.profiles import (
     create_profile,
     elevenlabs_language_for_locale,
 )
-from pipecat_runtime.application.models import TextGenerationRequest, TextGenerationResult
+from pipecat_runtime.application.models import (
+    TextGenerationRequest,
+    TextGenerationResult,
+    TextGenerationStreamEvent,
+)
 from pipecat_runtime.application.ports import CancellationSignal
 from pipecat_runtime.composition.settings import RuntimeConfigurationError, RuntimeSettings
 
@@ -32,6 +37,17 @@ class _FakeTextGenerator:
         del request
         del cancellation_requested
         raise AssertionError("test profile factory must not generate text")
+
+    async def stream(
+        self,
+        request: TextGenerationRequest,
+        *,
+        cancellation_requested: CancellationSignal,
+    ) -> AsyncIterator[TextGenerationStreamEvent]:
+        del request
+        del cancellation_requested
+        raise AssertionError("test profile factory must not stream text")
+        yield
 
 
 def test_deterministic_profile_is_rejected_in_production() -> None:

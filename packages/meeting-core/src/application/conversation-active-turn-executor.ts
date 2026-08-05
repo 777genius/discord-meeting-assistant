@@ -238,6 +238,7 @@ export class ConversationActiveTurnExecutor {
         await this.requestCancellation(state, run, "runtime-shutdown");
         return;
       case "text-delta":
+      case "latency":
       case "usage":
         return;
     }

@@ -17,7 +17,21 @@ class ConversationTurnFrame(DataFrame):
 
 
 @dataclass
+class ConversationTextFrame(DataFrame):
+    """Preserve generated speech text across TTS services that consume LLM frames."""
+
+    text: str
+
+
+@dataclass
 class TextGenerationFailureFrame(DataFrame):
     """Carry a safe application failure through Pipecat without provider details."""
 
     failure: TextGenerationFailed
+
+
+@dataclass
+class TextGenerationFirstTokenFrame(DataFrame):
+    """Carry the first raw answer-delta timestamp through provider serialization."""
+
+    observed_at_unix_ms: int

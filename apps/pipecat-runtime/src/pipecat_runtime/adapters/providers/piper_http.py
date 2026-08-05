@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import wave
 from collections.abc import AsyncGenerator
 from io import BytesIO
@@ -11,6 +10,8 @@ from typing import Any, cast
 import aiohttp
 from pipecat.frames.frames import ErrorFrame, Frame, TTSAudioRawFrame
 from pipecat.services.tts_service import TextAggregationMode, TTSService
+
+from pipecat_runtime.application.ports import CancellationSignal
 
 # Pipecat 1.7.0's abstract method metadata models run_tts as a coroutine even
 # though its runtime and built-in providers require an async generator.
@@ -29,7 +30,7 @@ class PiperHttpTTSProcessor(_PipecatTTSService):
         *,
         base_url: str,
         voice_id: str,
-        cancellation_requested: asyncio.Event,
+        cancellation_requested: CancellationSignal,
     ) -> None:
         super().__init__(
             push_start_frame=True,
