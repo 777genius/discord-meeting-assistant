@@ -29,11 +29,13 @@ Live audio is normalized at the inbound edge to mono Opus at 48 kHz with generic
 packet sequence, media timestamp, and payload fields. A provider that cannot
 produce this format must transcode before calling the application boundary.
 
-Publication routing is resolved once by application coordination from the
-normalized source. The derived live runtime receives only the resolved target,
-meeting identity, lifecycle time, and normalized audio. Discord guild/channel
-mapping remains in the Discord outbound adapter. Guild installation and
-configuration remain intentionally Discord-specific bounded-context behavior.
+Application coordination provides publication routing as a lazy consumer-owned
+capability over the normalized source. The live runtime resolves it inside the
+per-recording operation queue, so concurrent packets cannot overtake meeting
+start. It receives neither source identity nor provider DTOs. Discord
+guild/channel mapping remains in the Discord outbound adapter. Guild
+installation and configuration remain intentionally Discord-specific
+bounded-context behavior.
 
 The authoritative recording and durability-before-derived invariants remain
 unchanged. Zoom, Google Meet, or another source is added as its own adapter and

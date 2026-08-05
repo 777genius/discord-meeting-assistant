@@ -12,6 +12,7 @@ import {
 import {
   canonicalLiveAudioFormat,
   RecordingIngressRejectedError,
+  type DerivedLiveLifecycleEvent,
   type LiveVoicePacketBatchCommand,
   type RecordingLifecycleCommand,
   type RecordingLifecycleIngressResult,
@@ -216,9 +217,16 @@ describe("Platform recording ingress", () => {
     expect(saved[0]?.publicationTargetId).toBe("77777777777777777");
   });
 
-  it("resolves publication before starting the source-neutral live runtime", async () => {
+  it("defers publication lookup until the live start enters its ordering boundary", async () => {
     const resolve = vi.fn(async () => "77777777777777777");
-    const acceptLifecycle = vi.fn();
+    const acceptLifecycle = vi.fn(async (event: DerivedLiveLifecycleEvent) => {
+      expect(resolve).not.toHaveBeenCalled();
+      if (event.type === "meeting.started") {
+        await expect(event.publicationTarget.resolve()).resolves.toBe(
+          "77777777777777777",
+        );
+      }
+    });
     const started: RecordingLifecycleCommand = {
       eventId: "recording-1:start",
       occurredAt: "2026-08-02T00:00:00.000Z",
@@ -260,12 +268,11 @@ describe("Platform recording ingress", () => {
     await ingress.ingestLifecycle(started);
 
     expect(resolve).toHaveBeenCalledWith(started.source);
-    expect(acceptLifecycle).toHaveBeenCalledWith({
+    expect(acceptLifecycle).toHaveBeenCalledWith(expect.objectContaining({
       occurredAt: started.occurredAt,
-      publicationTargetId: "77777777777777777",
       recordingId: started.recordingId,
       type: "meeting.started",
-    });
+    }));
   });
 });
 

@@ -205,18 +205,19 @@ export class PlatformRecordingIngress {
       return;
     }
     try {
-      const derivedEvent = await this.toDerivedLifecycleEvent(event);
-      if (derivedEvent !== null) {
-        await Promise.resolve(this.dependencies.live.acceptLifecycle(derivedEvent));
-      }
+      await Promise.resolve(
+        this.dependencies.live.acceptLifecycle(
+          this.toDerivedLifecycleEvent(event),
+        ),
+      );
     } catch (error) {
       this.recordDerivedFailure("lifecycle", event.recordingId, error);
     }
   }
 
-  private async toDerivedLifecycleEvent(
+  private toDerivedLifecycleEvent(
     event: RecordingLifecycleCommand,
-  ): Promise<DerivedLiveLifecycleEvent | null> {
+  ): DerivedLiveLifecycleEvent {
     const common = {
       occurredAt: event.occurredAt,
       recordingId: event.recordingId,
@@ -224,19 +225,13 @@ export class PlatformRecordingIngress {
     if (event.type !== "meeting.started") {
       return { ...common, type: event.type };
     }
-    const publicationTargetId = await this.resolvePublicationTarget(event.source);
-    if (publicationTargetId === null) {
-      this.dependencies.logger.warn(
-        "Derived live meeting skipped for unconfigured recording source",
-        {
-          meetingId: event.recordingId,
-          sourceRoomId: event.source.roomId,
-          sourceScopeId: event.source.scopeId,
-        },
-      );
-      return null;
-    }
-    return { ...common, publicationTargetId, type: event.type };
+    return {
+      ...common,
+      publicationTarget: {
+        resolve: () => this.resolvePublicationTarget(event.source),
+      },
+      type: event.type,
+    };
   }
 
   private async resolvePublicationTarget(

@@ -65,7 +65,7 @@
     {
       "id": "ADR-0013",
       "path": "docs/decisions/0013-provider-neutral-meeting-source-boundary.md",
-      "immutableDigest": "sha256:058baba0bdce34b93d88f773ed925d127653633a00c8938d409cc773e9c8a743"
+      "immutableDigest": "sha256:5302173b19704448a619723b943e00820666a6d3d71f06ec50479dc6ab729467"
     }
   ]
 }

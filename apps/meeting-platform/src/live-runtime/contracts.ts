@@ -34,8 +34,12 @@ interface LiveMeetingEventBase {
   readonly recordingId: string;
 }
 
+interface DeferredLivePublicationTarget {
+  resolve(): Promise<string | null>;
+}
+
 export interface LiveMeetingStartedEvent extends LiveMeetingEventBase {
-  readonly publicationTargetId: string;
+  readonly publicationTarget: DeferredLivePublicationTarget;
   readonly type: "meeting.started";
 }
 

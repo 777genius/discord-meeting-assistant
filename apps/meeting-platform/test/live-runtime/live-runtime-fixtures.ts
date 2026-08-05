@@ -23,6 +23,7 @@ import type {
 
 import type {
   LiveMeetingLifecycleEvent,
+  LiveMeetingStartedEvent,
   LiveVoicePacket,
   LiveVoicePacketBatch,
 } from "../../src/live-runtime/contracts.js";
@@ -694,10 +695,12 @@ export const logger: Logger = {
   warn: () => {},
 };
 
-export function started(recordingId = "recording-live-1"): LiveMeetingLifecycleEvent {
+export function started(recordingId = "recording-live-1"): LiveMeetingStartedEvent {
   return {
     occurredAt: "2026-08-02T10:00:00.000Z",
-    publicationTargetId: "1533228891827736657",
+    publicationTarget: {
+      resolve: async () => "1533228891827736657",
+    },
     recordingId,
     type: "meeting.started",
   };

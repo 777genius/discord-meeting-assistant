@@ -164,10 +164,18 @@ export class PlatformLiveMeetingRuntime {
     if (this.meetings.has(event.recordingId)) {
       return;
     }
+    const publicationTargetId = await event.publicationTarget.resolve();
+    if (publicationTargetId === null) {
+      this.dependencies.logger.warn(
+        "Derived live meeting skipped for unconfigured recording source",
+        { meetingId: event.recordingId },
+      );
+      return;
+    }
     const startedAtMs = Date.parse(event.occurredAt);
     const result = await this.dependencies.startMeeting.execute({
       meetingId: event.recordingId,
-      publicationTargetId: event.publicationTargetId,
+      publicationTargetId,
       startedAtMs,
     });
     if (result.lifecycleStatus === "ended") {

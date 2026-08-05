@@ -101,10 +101,14 @@ export interface AuthoritativeSpeakerTrackUpload {
   readonly uploadId: string;
 }
 
+interface DeferredPublicationTarget {
+  resolve(): Promise<string | null>;
+}
+
 export type DerivedLiveLifecycleEvent =
   | {
       readonly occurredAt: string;
-      readonly publicationTargetId: string;
+      readonly publicationTarget: DeferredPublicationTarget;
       readonly recordingId: string;
       readonly type: "meeting.started";
     }
