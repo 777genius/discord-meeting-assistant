@@ -7,7 +7,7 @@ import type {
   LiveCaptionSnapshot,
   LiveFinalizedTurn,
   LiveMeetingProjectionPhase,
-} from "./ports.js";
+} from "./ports/live-meeting.js";
 
 export interface CurrentLiveMeeting {
   readonly snapshot: LiveMeetingSnapshot;

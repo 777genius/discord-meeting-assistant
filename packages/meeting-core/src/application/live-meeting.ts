@@ -6,7 +6,7 @@ import type {
   LiveMeetingSnapshotAndTimelineReader,
   LiveMeetingStateRepository,
   LiveMeetingTimelineRepository,
-} from "./ports.js";
+} from "./ports/live-meeting.js";
 
 export interface StartLiveMeetingDependencies {
   readonly meetings: LiveMeetingSnapshotAndTimelineReader &

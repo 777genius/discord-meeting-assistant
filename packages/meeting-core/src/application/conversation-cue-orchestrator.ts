@@ -11,7 +11,7 @@ import type {
   ConversationThinkingCuePort,
   ConversationThinkingCueStage,
   VoicePlaybackPort,
-} from "./ports.js";
+} from "./ports/conversation.js";
 import type {
   ActiveConversationRun,
   MeetingConversationState,

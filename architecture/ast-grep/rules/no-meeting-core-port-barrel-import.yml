@@ -1,0 +1,10 @@
+id: meeting-core-no-internal-port-barrel-import
+language: TypeScript
+severity: error
+message: Meeting Core application code must depend on a capability-owned port module.
+note: Import from application/ports/<capability>.ts instead of the compatibility barrel.
+files:
+  - "packages/meeting-core/src/application/**/*.ts"
+rule:
+  kind: import_statement
+  regex: 'from\s+["''](?:\.\.?/)*ports\.js["'']'

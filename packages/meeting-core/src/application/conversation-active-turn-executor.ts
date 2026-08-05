@@ -9,7 +9,7 @@ import type {
   ConversationRuntime,
   ConversationRuntimeEvent,
   VoicePlaybackPort,
-} from "./ports.js";
+} from "./ports/conversation.js";
 import { ConversationAnswerPlayback } from "./conversation-answer-playback.js";
 import { ConversationCueOrchestrator } from "./conversation-cue-orchestrator.js";
 import type {

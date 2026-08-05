@@ -5,7 +5,7 @@ import type {
   LiveMeetingProjectionPhase,
   LiveMeetingProjectionPort,
   LiveMeetingStateRepository,
-} from "./ports.js";
+} from "./ports/live-meeting.js";
 
 export interface LiveProjectionResult {
   readonly failure?: StageFailure;
