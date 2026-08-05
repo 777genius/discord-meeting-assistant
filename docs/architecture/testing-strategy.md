@@ -26,7 +26,9 @@ seed.
 The default conversation suite needs no TTS API key. It uses a deterministic
 streaming LLM and spoken PCM fixture behind real Pipecat processors, then proves
 Node/Python gRPC, Craig WebSocket playback, PCM-to-Opus framing, cancellation,
-late-chunk rejection, and queue bounds. A local Ollama/Piper profile qualifies
+late-chunk rejection, queue bounds, worker reuse after normal turns and
+interruption, phrase streaming, terminal attestation, and exact additive
+first-audio telemetry. A local Ollama/Piper profile qualifies
 arbitrary Russian and English output separately.
 
 Application tests use a controllable delay and preloaded staged PCM cue registry
@@ -36,8 +38,9 @@ interruption, answer replacement, and that only real answer playback starts the
 four-second guard. They also prove exact alias normalization, ordinary-mention
 rejection, and the same-speaker transcript-time wake latch.
 The provider-backed canary uses an isolated Subscription Runtime workspace and
-the development ElevenLabs key; it records cold/warm end-of-turn to first-audio
-latency but is never required by the local or CI gate.
+the development ElevenLabs key; it records end-to-wake, wake-to-first-delta,
+delta-to-first-PCM, and total first-audio latency for consecutive warm turns,
+but is never required by the local or CI gate.
 
 The private Discord observer is opt-in. It uses an official test bot, listens
 only for the configured Craig bot in a private test channel, and retains bounded

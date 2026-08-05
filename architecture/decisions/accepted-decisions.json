@@ -66,6 +66,11 @@
       "id": "ADR-0013",
       "path": "docs/decisions/0013-provider-neutral-meeting-source-boundary.md",
       "immutableDigest": "sha256:5302173b19704448a619723b943e00820666a6d3d71f06ec50479dc6ab729467"
+    },
+    {
+      "id": "ADR-0014",
+      "path": "docs/decisions/0014-streaming-warm-conversation-pipeline.md",
+      "immutableDigest": "sha256:adb102ca9afc205a7d588319d2a0ebeef7fe30761f65acb389cc0e30da8888fd"
     }
   ]
 }

@@ -19,6 +19,7 @@ _None._
 - [ADR-0011: Subscription conversation and authoritative Botik playback](0011-subscription-conversation-and-authoritative-botik-track.md)
 - [ADR-0012: Meeting Platform transport and runtime boundary refactoring](0012-meeting-platform-boundary-refactoring.md)
 - [ADR-0013: Provider-neutral meeting source boundary](0013-provider-neutral-meeting-source-boundary.md)
+- [ADR-0014: Streaming warm conversation pipeline](0014-streaming-warm-conversation-pipeline.md)
 
 ## Superseded
 
