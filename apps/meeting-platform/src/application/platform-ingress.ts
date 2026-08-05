@@ -1,14 +1,18 @@
 import {
   Meeting,
   type MeetingSnapshot,
-  type RecordingArtifactSnapshot,
 } from "@discord-meeting/meeting-core";
 
 import type {
   AuthoritativeSpeakerTrackUpload,
+  DerivedLiveLifecycleEvent,
+  DerivedLiveVoicePacketBatch,
   LiveVoicePacketBatchCommand,
+  PublicationTargetResolverPort,
+  RecordingDurabilityPort,
   RecordingIngressRejection,
   RecordingLifecycleCommand,
+  RecordingSource,
 } from "./recording-ingress.js";
 import { RecordingIngressRejectedError } from "./recording-ingress.js";
 
@@ -39,24 +43,6 @@ interface IngressMetricsPort {
   recordDerivedLiveFailure(phase: "lifecycle" | "prepare-final" | "voice"): void;
 }
 
-interface PacketBatchIngressResult {
-  readonly acceptedPackets: number;
-  readonly duplicatePackets: number;
-  readonly recordingId: string;
-}
-
-type LifecycleIngressResult =
-  | {
-      readonly kind: "accepted" | "aborted";
-      readonly recordingId: string;
-      readonly replayed: boolean;
-    }
-  | {
-      readonly kind: "finalized";
-      readonly recording: RecordingArtifactSnapshot;
-      readonly replayed: boolean;
-    };
-
 interface PostCallOutboxDispatcherPort {
   dispatchPending(): Promise<{
     readonly dispatched: number;
@@ -64,24 +50,13 @@ interface PostCallOutboxDispatcherPort {
   }>;
 }
 
-interface RecordingIngressPort {
-  ingestAuthoritativeTrack(
-    metadata: AuthoritativeSpeakerTrackUpload,
-    body: AsyncIterable<Uint8Array>,
-  ): Promise<{ readonly replayed: boolean }>;
-  ingestLifecycleEvent(
-    event: RecordingLifecycleCommand,
-  ): Promise<LifecycleIngressResult>;
-  ingestPacketBatch(batch: LiveVoicePacketBatchCommand): Promise<PacketBatchIngressResult>;
-}
-
 interface DerivedLiveIngressPort {
-  acceptLifecycle(event: RecordingLifecycleCommand): void | Promise<void>;
+  acceptLifecycle(event: DerivedLiveLifecycleEvent): void | Promise<void>;
   /**
    * Resolves after bounded derived admission. It must not reject the durable
    * durable ingress request when live captions are degraded.
    */
-  acceptVoiceBatch(batch: LiveVoicePacketBatchCommand): void | Promise<void>;
+  acceptVoiceBatch(batch: DerivedLiveVoicePacketBatch): void | Promise<void>;
   prepareForAuthoritativeFinal(recordingId: string): void | Promise<void>;
 }
 
@@ -89,47 +64,31 @@ interface RecordingIngressFailureClassifier {
   classify(error: unknown): RecordingIngressRejection | null;
 }
 
-interface PublicationTargetResolverPort {
-  resolve(input: {
-    readonly guildId: string;
-    readonly voiceChannelId: string;
-  }): Promise<string | null>;
-}
-
 export class MeetingPublicationTargetUnavailableError extends Error {
   public override readonly name = "MeetingPublicationTargetUnavailableError";
   public constructor(
-    public readonly guildId: string,
-    public readonly voiceChannelId: string,
+    public readonly sourceScopeId: string,
+    public readonly sourceRoomId: string,
   ) {
-    super("Guild and voice channel are not configured for publication");
+    super("Recording source is not configured for publication");
   }
 }
 
 export interface PlatformRecordingIngressDependencies {
   readonly dispatcher: PostCallOutboxDispatcherPort;
   readonly failureClassifier: RecordingIngressFailureClassifier;
-  readonly ingress: RecordingIngressPort;
+  readonly ingress: RecordingDurabilityPort;
   readonly live?: DerivedLiveIngressPort;
   readonly logger: ApplicationLogger;
   readonly outbox: RecordedMeetingOutbox;
   readonly metrics: IngressMetricsPort;
-  /** Compatibility-only direct target for deterministic legacy tests. */
-  readonly publicationTargetId?: string;
-  readonly publicationTargets?: PublicationTargetResolverPort;
+  readonly publicationTargets: PublicationTargetResolverPort;
 }
 
 export class PlatformRecordingIngress {
   public constructor(
     private readonly dependencies: PlatformRecordingIngressDependencies,
-  ) {
-    if (
-      dependencies.publicationTargets === undefined &&
-      dependencies.publicationTargetId === undefined
-    ) {
-      throw new Error("a publication target source is required");
-    }
-  }
+  ) {}
 
   public async ingestAuthoritativeTrack(
     metadata: AuthoritativeSpeakerTrackUpload,
@@ -159,7 +118,20 @@ export class PlatformRecordingIngress {
     // may a bounded live-admission wait slow the source down; live failure cannot
     // turn a durable packet into a failed ingress request.
     try {
-      await Promise.resolve(this.dependencies.live?.acceptVoiceBatch(batch));
+      await Promise.resolve(
+        this.dependencies.live?.acceptVoiceBatch({
+          format: batch.format,
+          packets: batch.packets.map((packet) => ({
+            mediaTimestamp: packet.mediaTimestamp,
+            payloadBase64: packet.payloadBase64,
+            receivedAtMs: packet.receivedAtMs,
+            recordingId: packet.recordingId,
+            relativeTimeMs: packet.relativeTimeMs,
+            sequenceNumber: packet.sequenceNumber,
+            speakerId: packet.speakerId,
+          })),
+        }),
+      );
     } catch (error) {
       this.dependencies.metrics.recordDerivedLiveFailure("voice");
       this.dependencies.logger.warn(
@@ -190,17 +162,11 @@ export class PlatformRecordingIngress {
 
     await this.prepareDerivedAuthoritativeFinal(result.recording.recordingId);
 
-    const publicationTargetId =
-      this.dependencies.publicationTargetId ??
-      (await this.dependencies.publicationTargets?.resolve({
-        guildId: event.guildId,
-        voiceChannelId: event.channelId,
-      })) ??
-      null;
+    const publicationTargetId = await this.resolvePublicationTarget(event.source);
     if (publicationTargetId === null) {
       throw new MeetingPublicationTargetUnavailableError(
-        event.guildId,
-        event.channelId,
+        event.source.scopeId,
+        event.source.roomId,
       );
     }
     const meeting = Meeting.record({
@@ -235,11 +201,43 @@ export class PlatformRecordingIngress {
   private async acceptDerivedLifecycle(
     event: RecordingLifecycleCommand,
   ): Promise<void> {
+    if (this.dependencies.live === undefined) {
+      return;
+    }
     try {
-      await Promise.resolve(this.dependencies.live?.acceptLifecycle(event));
+      await Promise.resolve(
+        this.dependencies.live.acceptLifecycle(
+          this.toDerivedLifecycleEvent(event),
+        ),
+      );
     } catch (error) {
       this.recordDerivedFailure("lifecycle", event.recordingId, error);
     }
+  }
+
+  private toDerivedLifecycleEvent(
+    event: RecordingLifecycleCommand,
+  ): DerivedLiveLifecycleEvent {
+    const common = {
+      occurredAt: event.occurredAt,
+      recordingId: event.recordingId,
+    };
+    if (event.type !== "meeting.started") {
+      return { ...common, type: event.type };
+    }
+    return {
+      ...common,
+      publicationTarget: {
+        resolve: () => this.resolvePublicationTarget(event.source),
+      },
+      type: event.type,
+    };
+  }
+
+  private async resolvePublicationTarget(
+    source: RecordingSource,
+  ): Promise<string | null> {
+    return this.dependencies.publicationTargets.resolve(source);
   }
 
   private async prepareDerivedAuthoritativeFinal(recordingId: string): Promise<void> {

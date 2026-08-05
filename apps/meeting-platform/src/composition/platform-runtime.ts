@@ -56,7 +56,6 @@ export async function startMeetingPlatform(
       logger,
       meetings: core.liveMeetings,
       publicationEffects: core.publicationEffects,
-      publicationTargets: core.publicationTargets,
       runtimeTransport: core.runtimeTransport,
     });
     const processMeeting = createProcessingRuntime({
@@ -81,7 +80,7 @@ export async function startMeetingPlatform(
     const ingress = new PlatformRecordingIngress({
       dispatcher: postCall.outboxDispatcher,
       failureClassifier: { classify: classifyRecordingIngressRejection },
-      ingress: core.recordings,
+      ingress: core.recordingIngress,
       ...(discordLive.live === undefined ? {} : { live: discordLive.live }),
       logger,
       metrics,

@@ -1,10 +1,11 @@
-import { ProcessMeetingSummary } from "@discord-meeting/meeting-core";
-import type { DiscordSummaryPublicationAdapter } from "@discord-meeting/discord-adapter";
+import {
+  ProcessMeetingSummary,
+  type FinalTranscriptionPort,
+  type SummaryGenerationPort,
+  type SummaryPublicationPort,
+} from "@discord-meeting/meeting-core";
 import type { Logger, PrometheusMetrics } from "@discord-meeting/observability-adapter";
 import type { PostgresLiveMeetingRepository, PostgresMeetingRepository } from "@discord-meeting/postgres-adapter";
-import type {
-  SubscriptionRuntimeSummaryAdapter,
-} from "@discord-meeting/subscription-runtime-adapter";
 
 import {
   InstrumentedFinalTranscriptionPort,
@@ -13,7 +14,6 @@ import {
 } from "../adapters/outbound/instrumented-processing-ports.js";
 import { LiveFencedSummaryPublicationPort } from "../application/live-fenced-summary-publication.js";
 import type { PlatformLiveMeetingRuntime } from "../live-meeting-runtime.js";
-import type { FinalTranscriptionPort } from "@discord-meeting/meeting-core";
 
 export function createProcessingRuntime(input: {
   readonly live?: PlatformLiveMeetingRuntime;
@@ -21,8 +21,8 @@ export function createProcessingRuntime(input: {
   readonly logger: Logger;
   readonly meetings: PostgresMeetingRepository;
   readonly metrics: PrometheusMetrics;
-  readonly rawPublisher: DiscordSummaryPublicationAdapter;
-  readonly rawSummarizer: SubscriptionRuntimeSummaryAdapter;
+  readonly rawPublisher: SummaryPublicationPort;
+  readonly rawSummarizer: SummaryGenerationPort;
   readonly rawTranscriber: FinalTranscriptionPort;
 }): ProcessMeetingSummary {
   const transcriber = new InstrumentedFinalTranscriptionPort(

@@ -29,28 +29,23 @@ type RuntimeOverrides = Partial<Pick<LiveMeetingRuntimeDependencies,
 >>;
 type OpenSessionRequest = Parameters<LiveTranscriptionPort["openSession"]>[0];
 
-it("serializes a concurrent start, packet batch and terminal event per recording", async () => {
+it("serializes deferred target resolution, packets and terminal events per recording", async () => {
   const meetings = new MemoryLiveMeetingRepository();
-  const actualStart = new StartLiveMeeting({ meetings });
-  const startGate = deferred<void>();
+  const targetGate = deferred<string | null>();
   const transcriber = new ControlledLiveTranscriberStub();
-  const runtime = createRuntime(meetings, {
-    startMeeting: {
-      execute: async (input) => {
-        await startGate.promise;
-        return actualStart.execute(input);
-      },
-    },
-    transcriber,
-  });
+  const runtime = createRuntime(meetings, { transcriber });
+  const startEvent = {
+    ...started(),
+    publicationTarget: { resolve: () => targetGate.promise },
+  };
 
-  const lifecycle = runtime.acceptLifecycle(started());
+  const lifecycle = runtime.acceptLifecycle(startEvent);
   const admittedPackets = runtime.acceptVoiceBatch(packets());
   const terminal = runtime.acceptLifecycle(ended());
   await Promise.resolve();
   expect(transcriber.requests).toHaveLength(0);
 
-  startGate.resolve();
+  targetGate.resolve("1533228891827736657");
   await Promise.all([lifecycle, admittedPackets, terminal]);
   await runtime.settleBeforeFinalPublication("recording-live-1");
 
@@ -239,7 +234,6 @@ function createRuntime(
     appendTurn: new AppendLiveTranscriptTurn(meetings),
     finishMeeting: overrides.finishMeeting ?? new FinishLiveMeeting(meetings),
     logger,
-    publicationTargetId: "1533228891827736657",
     refreshMeeting: new RefreshLiveMeeting({
       meetings,
       projector: new ProjectionStub(),

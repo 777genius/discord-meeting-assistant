@@ -30,13 +30,16 @@ export interface LiveRuntimeTimer {
 }
 
 interface LiveMeetingEventBase {
-  readonly channelId: string;
-  readonly guildId: string;
   readonly occurredAt: string;
   readonly recordingId: string;
 }
 
+interface DeferredLivePublicationTarget {
+  resolve(): Promise<string | null>;
+}
+
 export interface LiveMeetingStartedEvent extends LiveMeetingEventBase {
+  readonly publicationTarget: DeferredLivePublicationTarget;
   readonly type: "meeting.started";
 }
 
@@ -60,20 +63,22 @@ export type LiveMeetingLifecycleEvent =
   | LiveMeetingStoppedEvent;
 
 export interface LiveVoicePacket {
-  readonly channelId: string;
-  readonly guildId: string;
-  readonly opusBase64: string;
+  readonly mediaTimestamp: number;
+  readonly payloadBase64: string;
   readonly receivedAtMs: number;
   readonly recordingId: string;
   readonly relativeTimeMs: number;
-  readonly rtpSequence: number;
-  readonly rtpTimestamp: number;
+  readonly sequenceNumber: number;
   readonly speakerId: string;
 }
 
 export interface LiveVoicePacketBatch {
+  readonly format: {
+    readonly channelCount: 1;
+    readonly codec: "opus";
+    readonly sampleRateHz: 48_000;
+  };
   readonly packets: readonly LiveVoicePacket[];
-  readonly schemaVersion?: number;
 }
 
 export interface LiveTranscriptionEvent {
@@ -230,13 +235,6 @@ export interface LiveMeetingRefresher {
   execute(input: LiveMeetingRefreshInput): Promise<LiveMeetingRefreshResult>;
 }
 
-interface LivePublicationTargetResolver {
-  resolve(input: {
-    readonly guildId: string;
-    readonly voiceChannelId: string;
-  }): Promise<string | null>;
-}
-
 interface LiveConversationOutcome {
   readonly status: string;
 }
@@ -291,8 +289,6 @@ export interface LiveMeetingRuntimeDependencies {
   readonly logger: LiveRuntimeLogger;
   readonly packetFlowControl?: LivePacketFlowControl;
   readonly packetInspector?: LivePacketInspector;
-  readonly publicationTargetId?: string;
-  readonly publicationTargets?: LivePublicationTargetResolver;
   readonly refreshMeeting: LiveMeetingRefresher;
   readonly speakerIdleFinalizeMs?: number;
   readonly startMeeting: LiveMeetingStartPort;

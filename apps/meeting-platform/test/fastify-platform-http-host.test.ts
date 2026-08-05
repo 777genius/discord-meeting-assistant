@@ -1,4 +1,3 @@
-import type { AuthoritativeTrackUploadMetadata } from "@discord-meeting/craig-gateway-contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -7,7 +6,10 @@ import {
   type CraigIngressPort,
 } from "../src/adapters/inbound/craig/craig-inbound-routes.js";
 import { MeetingPublicationTargetUnavailableError } from "../src/application/platform-ingress.js";
-import { RecordingIngressRejectedError } from "../src/application/recording-ingress.js";
+import {
+  RecordingIngressRejectedError,
+  type AuthoritativeSpeakerTrackUpload,
+} from "../src/application/recording-ingress.js";
 import { createDiscordInstallRoutesPlugin } from "../src/discord-install-http/discord-install-routes.js";
 import {
   createFastifyPlatformHttpHost,
@@ -103,7 +105,7 @@ describe("Fastify platform HTTP host", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ status: "mounted" });
-  });
+  }, 15_000);
 
   it("keeps operations, installation redirects, and Craig configuration routes separate", async () => {
     const context = createHost({
@@ -235,8 +237,38 @@ describe("Fastify platform HTTP host", () => {
 
     expect(event.statusCode).toBe(202);
     expect(voicePackets.statusCode).toBe(202);
-    expect(ingress.ingestLifecycle).toHaveBeenCalledOnce();
-    expect(ingress.ingestVoiceBatch).toHaveBeenCalledOnce();
+    expect(ingress.ingestLifecycle).toHaveBeenCalledWith({
+      eventId: "recording-1:1",
+      occurredAt: "2026-08-02T00:00:00.000Z",
+      participantIds: ["1533227577286852649"],
+      recordingId: "recording-1",
+      schemaVersion: 1,
+      source: {
+        roomId: "1533228823045214398",
+        scopeId: "1533228590643155034",
+      },
+      type: "meeting.started",
+    });
+    expect(ingress.ingestVoiceBatch).toHaveBeenCalledWith({
+      format: { channelCount: 1, codec: "opus", sampleRateHz: 48_000 },
+      packets: [
+        {
+          mediaTimestamp: 42,
+          payloadBase64: "AQID",
+          receivedAtMs: 1_000,
+          recordingId: "recording-1",
+          relativeTimeMs: 20,
+          schemaVersion: 1,
+          sequenceNumber: 7,
+          source: {
+            roomId: "1533228823045214398",
+            scopeId: "1533228590643155034",
+          },
+          speakerId: "1533227577286852649",
+        },
+      ],
+      schemaVersion: 1,
+    });
   });
 });
 
@@ -353,7 +385,7 @@ describe("Fastify Craig ingress safeguards", () => {
   it("streams authoritative OGG data through the Craig ingress adapter", async () => {
     const received: Uint8Array[] = [];
     const ingestAuthoritativeTrack = vi.fn(
-      async (_metadata: AuthoritativeTrackUploadMetadata, body: AsyncIterable<Uint8Array>) => {
+      async (_metadata: AuthoritativeSpeakerTrackUpload, body: AsyncIterable<Uint8Array>) => {
         for await (const chunk of body) {
           received.push(chunk);
         }

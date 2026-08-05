@@ -1,0 +1,8 @@
+id: meeting-platform-core-no-provider-vocabulary
+valid:
+  - "interface Source { scopeId: string; roomId: string }"
+  - "interface Packet { sequenceNumber: number; mediaTimestamp: number; payloadBase64: string }"
+invalid:
+  - "interface Source { guildId: string }"
+  - "const channelId = source.roomId;"
+  - "const rtpSequence = packet.sequenceNumber;"

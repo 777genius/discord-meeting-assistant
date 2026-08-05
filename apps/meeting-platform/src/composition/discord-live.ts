@@ -19,6 +19,7 @@ import {
   RefreshLiveMeeting,
   StartLiveMeeting,
   type ConversationRuntime,
+  type SummaryPublicationPort,
   type SummaryPublicationEffectLedger,
   type VoicePlaybackPort,
 } from "@discord-meeting/meeting-core";
@@ -39,7 +40,6 @@ import { Client, GatewayIntentBits } from "discord.js";
 
 import { FileConversationThinkingCueRegistry } from "../adapters/outbound/file-conversation-thinking-cue-registry.js";
 import { SystemConversationDelay } from "../adapters/outbound/system-conversation-delay.js";
-import type { GuildPublicationTargetResolver } from "../application/guild-publication-target-resolver.js";
 import type { PlatformConfig } from "../config.js";
 import { PlatformLiveMeetingRuntime } from "../live-meeting-runtime.js";
 import type { PlatformStartupCleanup } from "./startup-cleanup.js";
@@ -74,7 +74,7 @@ export interface PlatformDiscordLiveComposition {
     readonly meetingPlatform: string;
   };
   readonly live?: PlatformLiveMeetingRuntime;
-  readonly rawPublisher: DiscordSummaryPublicationAdapter;
+  readonly rawPublisher: SummaryPublicationPort;
 }
 
 export async function createPlatformDiscordLiveComposition(input: {
@@ -83,7 +83,6 @@ export async function createPlatformDiscordLiveComposition(input: {
   readonly guildConfigurations: PostgresGuildConfigurationRepository;
   readonly logger: Logger;
   readonly meetings: PostgresLiveMeetingRepository;
-  readonly publicationTargets: GuildPublicationTargetResolver;
   readonly publicationEffects: SummaryPublicationEffectLedger;
   readonly runtimeTransport: SubscriptionRuntimeTransportPort;
 }): Promise<PlatformDiscordLiveComposition> {
@@ -140,7 +139,6 @@ export async function createPlatformDiscordLiveComposition(input: {
     discordPublisher,
     logger: input.logger,
     meetings: input.meetings,
-    publicationTargets: input.publicationTargets,
     runtimeTransport: input.runtimeTransport,
   });
   if (live !== undefined) {
@@ -220,7 +218,6 @@ function createLiveRuntime(input: {
   readonly discordPublisher: DiscordSummaryPublisher;
   readonly logger: Logger;
   readonly meetings: PostgresLiveMeetingRepository;
-  readonly publicationTargets: GuildPublicationTargetResolver;
   readonly runtimeTransport: SubscriptionRuntimeTransportPort;
 }): PlatformLiveMeetingRuntime | undefined {
   if (!hasLiveTranscriptionConfiguration(input.config)) {
@@ -261,7 +258,6 @@ function createLiveRuntime(input: {
       packetBackpressureTimeoutMs:
         input.config.voicetext.livePacketBackpressureTimeoutMs,
     },
-    publicationTargets: input.publicationTargets,
     refreshMeeting: new RefreshLiveMeeting({
       meetings: input.meetings,
       projector,

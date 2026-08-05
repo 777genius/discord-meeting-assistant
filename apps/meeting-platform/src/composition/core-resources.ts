@@ -22,8 +22,10 @@ import {
 import { Pool } from "pg";
 
 import { InstrumentedSubscriptionRuntimeTransport } from "../adapters/outbound/instrumented-subscription-runtime-transport.js";
+import { CraigRecordingIngressAdapter } from "../adapters/outbound/craig-recording-ingress-adapter.js";
+import { DiscordPublicationTargetResolver } from "../adapters/outbound/discord-publication-target-resolver.js";
 import { GrpcSubscriptionRuntimeTransport } from "../adapters/outbound/subscription-runtime-grpc-transport.js";
-import { GuildPublicationTargetResolver } from "../application/guild-publication-target-resolver.js";
+import type { RecordingDurabilityPort } from "../application/recording-ingress.js";
 import type { PlatformConfig } from "../config.js";
 import type { PlatformStartupCleanup } from "./startup-cleanup.js";
 import { createFinalTranscriber } from "./transcription.js";
@@ -34,11 +36,12 @@ export interface PlatformCoreResources {
   readonly liveMeetings: PostgresLiveMeetingRepository;
   readonly meetings: PostgresMeetingRepository;
   readonly pool: Pool;
-  readonly publicationTargets: GuildPublicationTargetResolver;
+  readonly publicationTargets: DiscordPublicationTargetResolver;
   readonly publicationEffects: PostgresSummaryPublicationEffectLedger;
   readonly rawRuntimeTransport: GrpcSubscriptionRuntimeTransport;
   readonly rawSummarizer: SubscriptionRuntimeSummaryAdapter;
   readonly rawTranscriber: FinalTranscriptionPort;
+  readonly recordingIngress: RecordingDurabilityPort;
   readonly recordings: DurableCraigRecordingIngress;
   readonly runtimeTransport: InstrumentedSubscriptionRuntimeTransport;
   readonly s3: S3Client;
@@ -70,7 +73,7 @@ export function createPlatformCoreResources(input: {
   input.cleanup.defer("recording ingress spool", () => recordings.close());
   const meetings = new PostgresMeetingRepository(pool);
   const guildConfigurations = new PostgresGuildConfigurationRepository(pool);
-  const publicationTargets = new GuildPublicationTargetResolver(
+  const publicationTargets = new DiscordPublicationTargetResolver(
     new ResolveGuildMeetingTarget(guildConfigurations),
     input.config.discordLegacyRoute,
   );
@@ -102,6 +105,7 @@ export function createPlatformCoreResources(input: {
       outputLanguage: "Natural English; preserve technical terms exactly",
     }),
     rawTranscriber: createFinalTranscriber(input.config, artifactReader),
+    recordingIngress: new CraigRecordingIngressAdapter(recordings),
     recordings,
     runtimeTransport,
     s3,

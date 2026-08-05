@@ -175,7 +175,7 @@ export class SpeakerTranscriptionSession {
     if (this.isSuppressed(packet, packetId)) {
       return;
     }
-    const opus = Buffer.from(packet.opusBase64, "base64");
+    const opus = Buffer.from(packet.payloadBase64, "base64");
     const durationSamples48Khz = this.dependencies.packetInspector
       .durationSamples48Khz(opus);
     const earliestPacketAtMs = await this.pacer.waitForPacketTime(

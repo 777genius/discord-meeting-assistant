@@ -1,33 +1,52 @@
-import type {
-  CraigLifecycleEvent,
-  VoicePacketBatch,
-} from "@discord-meeting/craig-gateway-contracts";
 import type { MeetingSnapshot } from "@discord-meeting/meeting-core";
 import type {
   IngressMetrics,
   Logger,
 } from "@discord-meeting/observability-adapter";
-import type {
-  LifecycleIngressResult,
-  PacketBatchIngressResult,
-} from "@discord-meeting/recording-ingress-adapter";
 import { describe, expect, it, vi } from "vitest";
 
 import {
   MeetingPublicationTargetUnavailableError,
   PlatformRecordingIngress,
 } from "../src/application/platform-ingress.js";
-import { RecordingIngressRejectedError } from "../src/application/recording-ingress.js";
+import {
+  canonicalLiveAudioFormat,
+  RecordingIngressRejectedError,
+  type DerivedLiveLifecycleEvent,
+  type LiveVoicePacketBatchCommand,
+  type RecordingLifecycleCommand,
+  type RecordingLifecycleIngressResult,
+} from "../src/application/recording-ingress.js";
 
-const meetingEnded: CraigLifecycleEvent = {
-  channelId: "1533228823045214398",
+const meetingEnded: RecordingLifecycleCommand = {
   eventId: "recording-1:end",
-  guildId: "1533228590643155034",
   occurredAt: "2026-08-02T00:02:00.000Z",
   reason: "completed",
   recordingId: "recording-1",
   schemaVersion: 1,
+  source: {
+    roomId: "1533228823045214398",
+    scopeId: "1533228590643155034",
+  },
   type: "meeting.ended",
+};
+
+const voiceBatch: LiveVoicePacketBatchCommand = {
+  format: canonicalLiveAudioFormat,
+  packets: [
+    {
+      mediaTimestamp: 960,
+      payloadBase64: Buffer.from([0xf8, 0xff, 0xfe]).toString("base64"),
+      receivedAtMs: 1_000,
+      recordingId: "recording-1",
+      relativeTimeMs: 0,
+      schemaVersion: 1,
+      sequenceNumber: 1,
+      source: meetingEnded.source,
+      speakerId: "1533227577286852649",
+    },
+  ],
+  schemaVersion: 1,
 };
 
 const logger: Logger = {
@@ -45,8 +64,11 @@ const metrics: IngressMetrics = {
 };
 
 const failureClassifier = { classify: () => null } as const;
+const defaultPublicationTargets = {
+  resolve: async () => "1533228891827736657",
+} as const;
 
-describe("Platform Craig ingress", () => {
+describe("Platform recording ingress", () => {
   it("atomically records and schedules a finalized recording before dispatch", async () => {
     const order: string[] = [];
     const saved: MeetingSnapshot[] = [];
@@ -58,7 +80,7 @@ describe("Platform Craig ingress", () => {
       order.push("dispatch");
       return { dispatched: 1, failed: 0 };
     });
-    const lifecycleResult: LifecycleIngressResult = {
+    const lifecycleResult: RecordingLifecycleIngressResult = {
       kind: "finalized",
       recording: {
         manifestLocator: "s3://meeting/recordings/recording-1/manifest.json",
@@ -78,9 +100,9 @@ describe("Platform Craig ingress", () => {
       failureClassifier,
       ingress: {
         ingestAuthoritativeTrack: async () => ({ replayed: false }),
-        ingestLifecycleEvent: async (): Promise<LifecycleIngressResult> =>
+        ingestLifecycleEvent: async (): Promise<RecordingLifecycleIngressResult> =>
           lifecycleResult,
-        ingestPacketBatch: async (): Promise<PacketBatchIngressResult> => ({
+        ingestPacketBatch: async () => ({
           acceptedPackets: 1,
           duplicatePackets: 0,
           recordingId: "recording-1",
@@ -98,7 +120,7 @@ describe("Platform Craig ingress", () => {
       logger,
       metrics,
       outbox: { recordAndSchedule },
-      publicationTargetId: "1533228891827736657",
+      publicationTargets: defaultPublicationTargets,
     });
 
     await ingress.ingestLifecycle(meetingEnded);
@@ -126,12 +148,12 @@ describe("Platform Craig ingress", () => {
       failureClassifier,
       ingress: {
         ingestAuthoritativeTrack: async () => ({ replayed: false }),
-        ingestLifecycleEvent: async (): Promise<LifecycleIngressResult> => ({
+        ingestLifecycleEvent: async (): Promise<RecordingLifecycleIngressResult> => ({
           kind: "accepted",
           recordingId: "recording-1",
           replayed: false,
         }),
-        ingestPacketBatch: async (_batch: VoicePacketBatch) => ({
+        ingestPacketBatch: async () => ({
           acceptedPackets: 1,
           duplicatePackets: 0,
           recordingId: "recording-1",
@@ -140,7 +162,7 @@ describe("Platform Craig ingress", () => {
       logger,
       metrics,
       outbox: { recordAndSchedule },
-      publicationTargetId: "1533228891827736657",
+      publicationTargets: defaultPublicationTargets,
     });
 
     await ingress.ingestLifecycle({ ...meetingEnded, type: "meeting.aborted" });
@@ -149,7 +171,7 @@ describe("Platform Craig ingress", () => {
     expect(dispatchPending).not.toHaveBeenCalled();
   });
 
-  it("resolves the final target from the signed source guild and voice channel", async () => {
+  it("resolves the final target from the normalized recording source", async () => {
     const saved: MeetingSnapshot[] = [];
     const resolve = vi.fn(async () => "77777777777777777");
     const ingress = new PlatformRecordingIngress({
@@ -191,16 +213,71 @@ describe("Platform Craig ingress", () => {
 
     await ingress.ingestLifecycle(meetingEnded);
 
-    expect(resolve).toHaveBeenCalledWith({
-      guildId: meetingEnded.guildId,
-      voiceChannelId: meetingEnded.channelId,
-    });
+    expect(resolve).toHaveBeenCalledWith(meetingEnded.source);
     expect(saved[0]?.publicationTargetId).toBe("77777777777777777");
+  });
+
+  it("defers publication lookup until the live start enters its ordering boundary", async () => {
+    const resolve = vi.fn(async () => "77777777777777777");
+    const acceptLifecycle = vi.fn(async (event: DerivedLiveLifecycleEvent) => {
+      expect(resolve).not.toHaveBeenCalled();
+      if (event.type === "meeting.started") {
+        await expect(event.publicationTarget.resolve()).resolves.toBe(
+          "77777777777777777",
+        );
+      }
+    });
+    const started: RecordingLifecycleCommand = {
+      eventId: "recording-1:start",
+      occurredAt: "2026-08-02T00:00:00.000Z",
+      participantIds: [],
+      recordingId: "recording-1",
+      schemaVersion: 1,
+      source: meetingEnded.source,
+      type: "meeting.started",
+    };
+    const ingress = new PlatformRecordingIngress({
+      dispatcher: {
+        dispatchPending: async () => ({ dispatched: 0, failed: 0 }),
+      },
+      failureClassifier,
+      ingress: {
+        ingestAuthoritativeTrack: async () => ({ replayed: false }),
+        ingestLifecycleEvent: async () => ({
+          kind: "accepted" as const,
+          recordingId: "recording-1",
+          replayed: false,
+        }),
+        ingestPacketBatch: async () => ({
+          acceptedPackets: 0,
+          duplicatePackets: 0,
+          recordingId: "recording-1",
+        }),
+      },
+      live: {
+        acceptLifecycle,
+        acceptVoiceBatch: () => {},
+        prepareForAuthoritativeFinal: () => {},
+      },
+      logger,
+      metrics,
+      outbox: { recordAndSchedule: async () => {} },
+      publicationTargets: { resolve },
+    });
+
+    await ingress.ingestLifecycle(started);
+
+    expect(resolve).toHaveBeenCalledWith(started.source);
+    expect(acceptLifecycle).toHaveBeenCalledWith(expect.objectContaining({
+      occurredAt: started.occurredAt,
+      recordingId: started.recordingId,
+      type: "meeting.started",
+    }));
   });
 });
 
-describe("Platform Craig ingress failure isolation", () => {
-  it("retains finalized ingress but refuses cross-guild publication when unconfigured", async () => {
+describe("Platform recording ingress failure isolation", () => {
+  it("retains finalized ingress but refuses publication when the source is unconfigured", async () => {
     const recordAndSchedule = vi.fn(async () => {});
     const ingress = new PlatformRecordingIngress({
       dispatcher: {
@@ -245,6 +322,9 @@ describe("Platform Craig ingress failure isolation", () => {
 
   it("tees voice packets to live processing only after durable ingress succeeds", async () => {
     const order: string[] = [];
+    const acceptVoiceBatch = vi.fn(() => {
+      order.push("live");
+    });
     const ingress = new PlatformRecordingIngress({
       dispatcher: {
         dispatchPending: async () => ({ dispatched: 0, failed: 0 }),
@@ -268,37 +348,31 @@ describe("Platform Craig ingress failure isolation", () => {
       },
       live: {
         acceptLifecycle: () => {},
-        acceptVoiceBatch: () => {
-          order.push("live");
-        },
+        acceptVoiceBatch,
         prepareForAuthoritativeFinal: () => {},
       },
       logger,
       metrics,
       outbox: { recordAndSchedule: async () => {} },
-      publicationTargetId: "1533228891827736657",
+      publicationTargets: defaultPublicationTargets,
     });
-    const batch: VoicePacketBatch = {
+    await ingress.ingestVoiceBatch(voiceBatch);
+
+    expect(order).toEqual(["durable", "live"]);
+    expect(acceptVoiceBatch).toHaveBeenCalledWith({
+      format: canonicalLiveAudioFormat,
       packets: [
         {
-          channelId: "1533228823045214398",
-          guildId: "1533228590643155034",
-          opusBase64: Buffer.from([0xf8, 0xff, 0xfe]).toString("base64"),
+          mediaTimestamp: 960,
+          payloadBase64: voiceBatch.packets[0]?.payloadBase64,
           receivedAtMs: 1_000,
           recordingId: "recording-1",
           relativeTimeMs: 0,
-          rtpSequence: 1,
-          rtpTimestamp: 960,
-          schemaVersion: 1,
+          sequenceNumber: 1,
           speakerId: "1533227577286852649",
         },
       ],
-      schemaVersion: 1,
-    };
-
-    await ingress.ingestVoiceBatch(batch);
-
-    expect(order).toEqual(["durable", "live"]);
+    });
   });
 
   it("waits for bounded live admission only after the durable packet write", async () => {
@@ -339,28 +413,10 @@ describe("Platform Craig ingress failure isolation", () => {
       logger,
       metrics,
       outbox: { recordAndSchedule: async () => {} },
-      publicationTargetId: "1533228891827736657",
+      publicationTargets: defaultPublicationTargets,
     });
-    const batch: VoicePacketBatch = {
-      packets: [
-        {
-          channelId: "1533228823045214398",
-          guildId: "1533228590643155034",
-          opusBase64: Buffer.from([0xf8, 0xff, 0xfe]).toString("base64"),
-          receivedAtMs: 1_000,
-          recordingId: "recording-1",
-          relativeTimeMs: 0,
-          rtpSequence: 1,
-          rtpTimestamp: 960,
-          schemaVersion: 1,
-          speakerId: "1533227577286852649",
-        },
-      ],
-      schemaVersion: 1,
-    };
-
     let settled = false;
-    const accepted = ingress.ingestVoiceBatch(batch).then(() => {
+    const accepted = ingress.ingestVoiceBatch(voiceBatch).then(() => {
       settled = true;
       return null;
     });
@@ -375,10 +431,10 @@ describe("Platform Craig ingress failure isolation", () => {
   });
 });
 
-describe("Platform Craig derived ingress failure isolation", () => {
+describe("Platform derived ingress failure isolation", () => {
   it("keeps a durable packet accepted when derived live admission faults", async () => {
     const ingestPacketBatch = vi.fn(
-      async (): Promise<PacketBatchIngressResult> => ({
+      async () => ({
         acceptedPackets: 1,
         duplicatePackets: 0,
         recordingId: "recording-1",
@@ -408,28 +464,10 @@ describe("Platform Craig derived ingress failure isolation", () => {
       logger,
       metrics,
       outbox: { recordAndSchedule: async () => {} },
-      publicationTargetId: "1533228891827736657",
+      publicationTargets: defaultPublicationTargets,
     });
-    const batch: VoicePacketBatch = {
-      packets: [
-        {
-          channelId: "1533228823045214398",
-          guildId: "1533228590643155034",
-          opusBase64: Buffer.from([0xf8, 0xff, 0xfe]).toString("base64"),
-          receivedAtMs: 1_000,
-          recordingId: "recording-1",
-          relativeTimeMs: 0,
-          rtpSequence: 1,
-          rtpTimestamp: 960,
-          schemaVersion: 1,
-          speakerId: "1533227577286852649",
-        },
-      ],
-      schemaVersion: 1,
-    };
-
-    await expect(ingress.ingestVoiceBatch(batch)).resolves.toBeUndefined();
-    expect(ingestPacketBatch).toHaveBeenCalledWith(batch);
+    await expect(ingress.ingestVoiceBatch(voiceBatch)).resolves.toBeUndefined();
+    expect(ingestPacketBatch).toHaveBeenCalledWith(voiceBatch);
   });
 
   it("translates concrete durable failures into the application-owned model", async () => {
@@ -461,7 +499,7 @@ describe("Platform Craig derived ingress failure isolation", () => {
       logger,
       metrics,
       outbox: { recordAndSchedule: async () => {} },
-      publicationTargetId: "1533228891827736657",
+      publicationTargets: defaultPublicationTargets,
     });
 
     await expect(ingress.ingestLifecycle(meetingEnded)).rejects.toMatchObject({
@@ -508,7 +546,7 @@ describe("Platform Craig derived ingress failure isolation", () => {
       logger,
       metrics: { recordDerivedLiveFailure, recordIngress: vi.fn() },
       outbox: { recordAndSchedule },
-      publicationTargetId: "1533228891827736657",
+      publicationTargets: defaultPublicationTargets,
     });
 
     await expect(ingress.ingestLifecycle(meetingEnded)).resolves.toBeUndefined();

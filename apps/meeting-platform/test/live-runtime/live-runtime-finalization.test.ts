@@ -33,7 +33,6 @@ it("drains an in-flight generation before the terminal projection and performs n
     appendTurn: new AppendLiveTranscriptTurn(meetings),
     finishMeeting: new FinishLiveMeeting(meetings),
     logger,
-    publicationTargetId: "1533228891827736657",
     refreshMeeting: new RefreshLiveMeeting({
       meetings,
       projector,
@@ -86,7 +85,6 @@ it("starts live finalization when the authoritative publisher reaches the fence"
     appendTurn: new AppendLiveTranscriptTurn(meetings),
     finishMeeting: new FinishLiveMeeting(meetings),
     logger,
-    publicationTargetId: "1533228891827736657",
     refreshMeeting: new RefreshLiveMeeting({
       meetings,
       projector: new ProjectionStub(),
@@ -145,7 +143,6 @@ it("projects finalizing before a blocked provider finalize and preserves the fin
     appendTurn,
     finishMeeting: new FinishLiveMeeting(meetings),
     logger,
-    publicationTargetId: "1533228891827736657",
     refreshMeeting: new RefreshLiveMeeting({ meetings, projector, summarizer }),
     speakerIdleFinalizeMs: 10_000,
     startMeeting,
@@ -240,7 +237,6 @@ it("does not let a finalizing projection failure hold the final fence", async ()
     appendTurn,
     finishMeeting: new FinishLiveMeeting(meetings),
     logger,
-    publicationTargetId: "1533228891827736657",
     refreshMeeting: new RefreshLiveMeeting({
       meetings,
       projector,
@@ -280,7 +276,6 @@ it("keeps Opus and derived state off the authoritative request path", async () =
     appendTurn: new AppendLiveTranscriptTurn(meetings),
     finishMeeting: new FinishLiveMeeting(meetings),
     logger,
-    publicationTargetId: "1533228891827736657",
     refreshMeeting: new RefreshLiveMeeting({
       meetings,
       projector,
@@ -333,7 +328,6 @@ it("finalizes an idle speaker and reopens with a new absolute timeline segment",
     appendTurn: new AppendLiveTranscriptTurn(meetings),
     finishMeeting: new FinishLiveMeeting(meetings),
     logger,
-    publicationTargetId: "1533228891827736657",
     refreshMeeting: new RefreshLiveMeeting({
       meetings,
       projector,
@@ -357,8 +351,8 @@ it("finalizes an idle speaker and reopens with a new absolute timeline segment",
   laterBatch.packets[0] = {
     ...laterBatch.packets[0]!,
     relativeTimeMs: 355_000,
-    rtpSequence: 2,
-    rtpTimestamp: 1_920,
+    sequenceNumber: 2,
+    mediaTimestamp: 1_920,
   };
   void runtime.acceptVoiceBatch(laterBatch);
   await vi.advanceTimersByTimeAsync(1);
@@ -388,7 +382,6 @@ it("keeps one provider session across a relative timeline gap in one batch", asy
     appendTurn: new AppendLiveTranscriptTurn(meetings),
     finishMeeting: new FinishLiveMeeting(meetings),
     logger,
-    publicationTargetId: "1533228891827736657",
     refreshMeeting: new RefreshLiveMeeting({
       meetings,
       projector,
@@ -402,16 +395,16 @@ it("keeps one provider session across a relative timeline gap in one batch", asy
 
   await runtime.acceptLifecycle(started());
   await runtime.acceptVoiceBatch({
+    format: packets().format,
     packets: [
       { ...first, relativeTimeMs: 350_000 },
       {
         ...first,
         relativeTimeMs: 352_000,
-        rtpSequence: 2,
-        rtpTimestamp: 1_920,
+        sequenceNumber: 2,
+        mediaTimestamp: 1_920,
       },
     ],
-    schemaVersion: 1,
   });
   await vi.advanceTimersByTimeAsync(20);
   await runtime.acceptLifecycle(ended());
