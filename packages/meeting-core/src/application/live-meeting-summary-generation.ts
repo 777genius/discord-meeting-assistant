@@ -7,6 +7,7 @@ import {
 } from "../domain/live-generation.js";
 import { LiveMeeting } from "../domain/live-meeting.js";
 import type { LiveSummaryDraftSnapshot } from "../domain/live-summary.js";
+import type { StageFailure } from "../domain/meeting.js";
 import type { TranscriptTurnSnapshot } from "../domain/transcript.js";
 import {
   estimateSchedulingTokens,
@@ -21,6 +22,7 @@ import {
 } from "./live-meeting-generation.js";
 import type { CurrentLiveMeeting } from "./live-meeting-refresh-planning.js";
 import type {
+  GeneratedIncrementalSummary,
   IncrementalSummaryGenerationPort,
   LiveMeetingGenerationLedger,
   LiveMeetingSnapshotAndTimelineReader,
@@ -62,32 +64,45 @@ export interface GenerateLiveMeetingSummaryInput {
   readonly turns: readonly TranscriptTurnSnapshot[];
 }
 
+export interface IsLiveMeetingSummaryDueInput {
+  readonly elapsedMs: number;
+  readonly meeting: LiveMeeting;
+  readonly newTurns: readonly TranscriptTurnSnapshot[];
+  readonly nowMs: number;
+}
+
+type SummaryApplicationOutcome = "applied" | "conflict" | "stale";
+
+function summaryConflictFailure(): StageFailure {
+  return {
+    code: "LIVE_SUMMARY_CONFLICT",
+    message: "Live summary changed concurrently during persistence reconciliation",
+    retryable: true,
+  };
+}
+
 /** Owns incremental-summary cadence, provider execution and durable settlement. */
 export class LiveMeetingSummaryGenerationCoordinator {
   public constructor(
     private readonly dependencies: LiveMeetingSummaryGenerationDependencies,
   ) {}
 
-  public isDue(
-    meeting: LiveMeeting,
-    elapsedMs: number,
-    nowMs: number,
-    newTurns: readonly TranscriptTurnSnapshot[],
-  ): boolean {
-    if (newTurns.length === 0) {
+  public isDue(input: IsLiveMeetingSummaryDueInput): boolean {
+    if (input.newTurns.length === 0) {
       return false;
     }
-    if (meeting.status === "ended") {
+    if (input.meeting.status === "ended") {
       return true;
     }
-    if (meeting.draftSummary === null) {
-      return elapsedMs >= this.dependencies.policy.publishAfterMs;
+    if (input.meeting.draftSummary === null) {
+      return input.elapsedMs >= this.dependencies.policy.publishAfterMs;
     }
-    const sinceLastSummary = nowMs - (meeting.summaryGeneratedAtMs ?? meeting.startedAtMs);
+    const sinceLastSummary = input.nowMs -
+      (input.meeting.summaryGeneratedAtMs ?? input.meeting.startedAtMs);
     if (sinceLastSummary < this.dependencies.policy.minimumSummaryIntervalMs) {
       return false;
     }
-    return estimateSchedulingTokens(newTurns) >=
+    return estimateSchedulingTokens(input.newTurns) >=
       this.dependencies.policy.minimumNewTurnTokens ||
       sinceLastSummary >= this.dependencies.policy.forceSummaryAfterMs;
   }
@@ -136,21 +151,19 @@ export class LiveMeetingSummaryGenerationCoordinator {
     }
 
     try {
-      const applied = await this.applyGeneratedSummary(input.meeting.meetingId, base, {
+      const application = await this.applyGeneratedSummary(input.meeting.meetingId, base, {
         evidenceTurns: base.evidenceTurns,
         generatedAtMs: input.nowMs,
         summary: result.value.summary,
         ...(result.value.telemetry === undefined ? {} : { telemetry: result.value.telemetry }),
         ...(result.value.usage === undefined ? {} : { usage: result.value.usage }),
       });
-      if (!applied) {
-        await this.persistRejectedGeneration(input.meeting.meetingId, result.value);
-        return {
-          generated: false,
-          stale: true,
-          ...(result.value.telemetry === undefined ? {} : { telemetry: result.value.telemetry }),
-          ...(result.value.usage === undefined ? {} : { usage: result.value.usage }),
-        };
+      if (application !== "applied") {
+        return this.rejectedApplicationResult(
+          input.meeting.meetingId,
+          application,
+          result.value,
+        );
       }
       return {
         generated: true,
@@ -171,6 +184,21 @@ export class LiveMeetingSummaryGenerationCoordinator {
       }
       throw error;
     }
+  }
+
+  private async rejectedApplicationResult(
+    meetingId: string,
+    outcome: Exclude<SummaryApplicationOutcome, "applied">,
+    result: GeneratedIncrementalSummary,
+  ): Promise<GeneratedResult> {
+    await this.persistRejectedGeneration(meetingId, result);
+    return {
+      ...(outcome === "conflict" ? { failure: summaryConflictFailure() } : {}),
+      generated: false,
+      stale: outcome === "stale",
+      ...(result.telemetry === undefined ? {} : { telemetry: result.telemetry }),
+      ...(result.usage === undefined ? {} : { usage: result.usage }),
+    };
   }
 
   private async persistRejectedGeneration(
@@ -204,11 +232,11 @@ export class LiveMeetingSummaryGenerationCoordinator {
       readonly telemetry?: LiveGenerationTelemetrySnapshot;
       readonly usage?: LiveGenerationUsageSnapshot;
     },
-  ): Promise<boolean> {
+  ): Promise<SummaryApplicationOutcome> {
     for (let attempt = 0; attempt < maximumCompatibleGenerationSaveAttempts; attempt += 1) {
       const current = await this.readCurrent(meetingId);
       if (current === null || !isCompatibleGenerationBase(current, base)) {
-        return false;
+        return "stale";
       }
       const meeting = LiveMeeting.restore(current.snapshot);
       const expectedRevision = meeting.revision;
@@ -230,18 +258,18 @@ export class LiveMeetingSummaryGenerationCoordinator {
             ? {}
             : { usage: normalizeLiveGenerationUsage(input.usage) }),
         });
-        return true;
+        return "applied";
       } catch (error) {
         const latest = await this.readCurrent(meetingId);
         if (latest === null || !isCompatibleGenerationBase(latest, base)) {
-          return false;
+          return "stale";
         }
         if (latest.snapshot.revision === expectedRevision) {
           throw error;
         }
       }
     }
-    return false;
+    return "conflict";
   }
 
   private readCurrent(meetingId: string): Promise<CurrentLiveMeeting | null> {

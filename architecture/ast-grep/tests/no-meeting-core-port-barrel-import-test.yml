@@ -2,6 +2,11 @@ id: meeting-core-no-internal-port-barrel-import
 valid:
   - import type { LiveMeetingRepository } from "./ports/live-meeting.js";
   - import type { ConversationRuntime } from "../ports/conversation.js";
+  - export type { LiveMeetingRepository } from "./ports/live-meeting.js";
+  - export type * from "./ports/conversation.js";
 invalid:
   - import type { LiveMeetingRepository } from "./ports.js";
   - import { type ConversationRuntime } from "../ports.js";
+  - import type { MeetingRepository } from "../../ports.js";
+  - export type { LiveMeetingRepository } from "./ports.js";
+  - export type * from "../ports.js";

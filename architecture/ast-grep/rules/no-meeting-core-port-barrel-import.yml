@@ -6,5 +6,8 @@ note: Import from application/ports/<capability>.ts instead of the compatibility
 files:
   - "packages/meeting-core/src/application/**/*.ts"
 rule:
-  kind: import_statement
-  regex: 'from\s+["''](?:\.\.?/)*ports\.js["'']'
+  all:
+    - any:
+        - kind: import_statement
+        - kind: export_statement
+    - regex: 'from\s+["''](?:\.\.?/)*ports\.js["'']'

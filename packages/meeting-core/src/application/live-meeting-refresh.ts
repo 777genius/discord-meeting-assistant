@@ -163,7 +163,7 @@ export class RefreshLiveMeeting {
       projectionAllowed,
       projectionPhase,
       shouldGenerate: input.summaryGeneration !== "skip" &&
-        this.summaryGeneration.isDue(meeting, elapsedMs, nowMs, newTurns),
+        this.summaryGeneration.isDue({ elapsedMs, meeting, newTurns, nowMs }),
       shouldProject: isProjectionDue(
         meeting,
         projectionPhase,
