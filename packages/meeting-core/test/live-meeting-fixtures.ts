@@ -184,6 +184,19 @@ export class ConflictingTelemetryRepository extends MemoryLiveMeetingRepository 
   }
 }
 
+export class PerpetualSummaryConflictRepository extends MemoryLiveMeetingRepository {
+  public override commitSummary(_input: CommitLiveMeetingSummaryInput): Promise<void> {
+    if (this.snapshot === null) {
+      return Promise.reject(new Error("missing live meeting"));
+    }
+    this.snapshot = {
+      ...structuredClone(this.snapshot),
+      revision: this.snapshot.revision + 1,
+    };
+    return Promise.reject(new Error("injected summary revision conflict"));
+  }
+}
+
 export class RecordingSummarizer implements IncrementalSummaryGenerationPort {
   public readonly requests: IncrementalSummaryGenerationRequest[] = [];
 

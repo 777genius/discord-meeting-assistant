@@ -4,7 +4,7 @@ import type {
   ConversationThinkingCueStage,
   VoicePlaybackPort,
   VoicePlaybackSession,
-} from "./ports.js";
+} from "./ports/conversation.js";
 import type {
   ActiveConversationRun,
   ConversationPlaybackFence,

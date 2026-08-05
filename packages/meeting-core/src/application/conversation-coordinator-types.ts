@@ -9,7 +9,7 @@ import type {
   ConversationThinkingCuePort,
   VoicePlaybackPort,
   VoicePlaybackSession,
-} from "./ports.js";
+} from "./ports/conversation.js";
 
 export interface FinalizedConversationTurnInput {
   readonly locale: string;

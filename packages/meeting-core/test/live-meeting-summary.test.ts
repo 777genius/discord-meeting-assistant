@@ -14,6 +14,7 @@ import {
   ConflictingTelemetryRepository,
   DeferredSummarizer,
   MemoryLiveMeetingRepository,
+  PerpetualSummaryConflictRepository,
   RecordingProjector,
   RecordingSummarizer,
   flushMicrotasks,
@@ -226,6 +227,42 @@ import {
       nowMs: 300_000,
       projection: "skip",
     })).rejects.toThrow("simulated generation ledger write failure");
+  });
+
+  it("returns a retryable failure after repeated compatible summary conflicts", async () => {
+    const meetings = new PerpetualSummaryConflictRepository();
+    await new StartLiveMeeting({ meetings }).execute({
+      meetingId: "meeting-summary-conflict",
+      publicationTargetId: "results-channel",
+      startedAtMs: 0,
+    });
+    await new AppendLiveTranscriptTurn(meetings).execute("meeting-summary-conflict", {
+      endMs: 5_000,
+      speakerId: "speaker-a",
+      startMs: 1_000,
+      text: "Генерация столкнулась с повторяющимися совместимыми изменениями.",
+      turnId: "turn-summary-conflict",
+    });
+
+    const result = await new RefreshLiveMeeting({
+      meetings,
+      projector: new RecordingProjector(),
+      summarizer: new RecordingSummarizer(generatedSummary),
+    }).execute({
+      captions: [],
+      meetingId: "meeting-summary-conflict",
+      nowMs: 300_000,
+      projection: "skip",
+    });
+
+    expect(result).toMatchObject({
+      generated: false,
+      generationFailure: { code: "LIVE_SUMMARY_CONFLICT", retryable: true },
+      projected: false,
+    });
+    expect(result).not.toHaveProperty("generationStale");
+    expect(meetings.snapshot?.draftSummary).toBeNull();
+    expect(meetings.generationUsage).toHaveLength(1);
   });
 
   it("persists telemetry idempotently without advancing the business revision", async () => {

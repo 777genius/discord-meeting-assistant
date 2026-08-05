@@ -9,11 +9,11 @@ import { FinalTranscript } from "../domain/transcript.js";
 import type {
   FinalTranscriptionPort,
   GeneratedTranscript,
-  MeetingRepository,
-  PortResult,
-  SummaryGenerationPort,
-  SummaryPublicationPort,
-} from "./ports.js";
+} from "./ports/final-transcription.js";
+import type { MeetingRepository } from "./ports/meeting-lifecycle.js";
+import type { PortResult } from "./ports/shared.js";
+import type { SummaryGenerationPort } from "./ports/summary-generation.js";
+import type { SummaryPublicationPort } from "./ports/summary-publication.js";
 
 export type ProcessMeetingSummaryResult =
   | { readonly status: "not-found" }
