@@ -1,7 +1,38 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "extends": [
-    "./node_modules/@agent-teams/engineering-foundation/presets/oxlint/node.json"
+    "./node_modules/@agent-teams/engineering-foundation/presets/oxlint/node.json",
+    "./node_modules/@agent-teams/engineering-foundation/presets/oxlint/maintainability.json"
   ],
-  "ignorePatterns": ["node_modules/**", "dist/**", "coverage/**"]
+  "ignorePatterns": ["node_modules/**", "dist/**", "coverage/**"],
+  "rules": {
+    "max-lines": [
+      "error",
+      { "max": 500, "skipBlankLines": true, "skipComments": true }
+    ]
+  },
+  "overrides": [
+    {
+      "files": [
+        "**/test/**",
+        "**/tests/**",
+        "**/e2e/**",
+        "**/*.test.*",
+        "**/*.spec.*"
+      ],
+      "rules": {
+        "complexity": ["error", 30],
+        "max-depth": ["error", 5],
+        "max-lines": [
+          "error",
+          { "max": 800, "skipBlankLines": true, "skipComments": true }
+        ],
+        "max-lines-per-function": [
+          "error",
+          { "max": 250, "skipBlankLines": true, "skipComments": true }
+        ],
+        "max-params": ["error", 6]
+      }
+    }
+  ]
 }

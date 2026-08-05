@@ -4,6 +4,14 @@ project:
 capabilities:
   architecture.source-dependencies:
     configPath: architecture/foundation/source-dependencies.yaml
+  contract.protobuf-evolution:
+    configPath: architecture/foundation/protobuf-evolution.yaml
+  documentation.local-references:
+    configPath: architecture/foundation/documentation-local-references.yaml
+  governance.architecture-decisions:
+    configPath: architecture/foundation/architecture-decisions.yaml
+  quality.suppression-governance:
+    configPath: architecture/foundation/suppression-governance.yaml
   repository.agent-workflow:
     configPath: architecture/foundation/repository-agent-workflow.yaml
   workspace.dependency-declarations:

@@ -20,9 +20,18 @@ changedChecks:
     script: architecture:source
     extensions: [.js, .mjs, .cjs, .ts, .tsx]
     passPaths: false
+  - id: documentation-local-references
+    script: architecture:documentation
+    extensions: [.md]
+    passPaths: false
+  - id: protobuf-evolution
+    script: architecture:protobuf
+    extensions: [.proto]
+    passPaths: false
 fullScanPaths:
   - .github/workflows
   - architecture
+  - buf.yaml
   - infra
   - pnpm-lock.yaml
   - pnpm-workspace.yaml

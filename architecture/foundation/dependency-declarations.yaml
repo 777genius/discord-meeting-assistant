@@ -11,6 +11,7 @@ policies:
   developmentOnlyPackages:
     - "@agent-teams/engineering-foundation"
     - "@ast-grep/cli"
+    - "@bufbuild/buf"
     - "@types/node"
     - knip
     - nx

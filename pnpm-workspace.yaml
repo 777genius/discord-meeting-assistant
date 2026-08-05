@@ -1,23 +1,28 @@
 packages:
   - "apps/*"
+  - "infra/subscription-runtime"
   - "packages/**"
   - "tooling/*"
 
 catalogMode: strict
 
 catalog:
+  "@bufbuild/buf": 1.72.0
   "@grpc/grpc-js": 1.14.4
   "@grpc/proto-loader": 0.8.1
   "@openai/codex": 0.146.0
   "@aws-sdk/client-s3": 3.1101.0
   "@aws-sdk/lib-storage": 3.1101.0
   "@ast-grep/cli": 0.45.0
+  "@discordjs/opus": 0.10.0
   "@discordjs/voice": 0.19.2
   "@types/node": 24.13.3
   "@types/pg": 8.20.1
   "@types/ws": 8.18.1
   bullmq: 5.81.3
   discord.js: 14.27.0
+  fastify: 5.11.2
+  fast-check: 4.9.0
   knip: 6.31.0
   nx: 23.1.1
   openai: 7.3.0
@@ -36,10 +41,12 @@ minimumReleaseAge: 1440
 minimumReleaseAgeStrict: true
 
 minimumReleaseAgeExclude:
-  - "@agent-teams/engineering-foundation@0.5.0"
+  - "@agent-teams/engineering-foundation@0.6.0"
 
 allowBuilds:
   "@ast-grep/cli": true
+  "@bufbuild/buf": true
+  "@discordjs/opus": true
   cpu-features: false
   esbuild: true
   msgpackr-extract: false
