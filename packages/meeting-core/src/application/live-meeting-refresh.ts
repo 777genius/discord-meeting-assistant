@@ -7,7 +7,6 @@ import {
 } from "../domain/live-generation.js";
 import {
   LiveMeeting,
-  type LiveMeetingSnapshot,
 } from "../domain/live-meeting.js";
 import type { LiveSummaryDraftSnapshot } from "../domain/live-summary.js";
 import type { StageFailure } from "../domain/meeting.js";
@@ -33,6 +32,17 @@ import {
   type CurrentLiveMeeting,
   type RefreshPlan,
 } from "./live-meeting-refresh-planning.js";
+import {
+  estimateSchedulingTokens,
+  generationBaseKey,
+  generationBaseSnapshot,
+  invalidGenerationFailure,
+  isCompatibleGenerationBase,
+  maximumCompatibleGenerationSaveAttempts,
+  unexpectedLiveRefreshFailure,
+  type GeneratedResult,
+  type GenerationBase,
+} from "./live-meeting-generation.js";
 
 export interface LiveSummaryCadencePolicy {
   readonly forceSummaryAfterMs: number;
@@ -83,90 +93,6 @@ export type RefreshLiveMeetingResult =
       readonly status: "refreshed";
     };
 
-interface GenerationBase {
-  readonly draftSummaryRevision: number | null;
-  readonly evidenceTurns: readonly TranscriptTurnSnapshot[];
-  readonly status: LiveMeetingSnapshot["status"];
-}
-
-interface GeneratedResult {
-  readonly failure?: StageFailure;
-  readonly generated: boolean;
-  readonly stale: boolean;
-  readonly telemetry?: LiveGenerationTelemetrySnapshot;
-  readonly usage?: LiveGenerationUsageSnapshot;
-}
-
-const maximumCompatibleGenerationSaveAttempts = 3;
-
-function identityPart(value: string): string {
-  return `${value.length}:${value}`;
-}
-
-function operationIdentity(operation: string, ...parts: readonly string[]): string {
-  return [operation, ...parts.map(identityPart)].join("|");
-}
-
-function estimateSchedulingTokens(turns: readonly TranscriptTurnSnapshot[]): number {
-  const characters = turns.reduce((total, turn) => total + turn.text.length, 0);
-  return Math.ceil(characters / 3);
-}
-
-function unexpectedFailure(stage: "generation" | "projection", error: unknown): StageFailure {
-  return {
-    code: `UNEXPECTED_LIVE_${stage.toUpperCase()}_FAILURE`,
-    message: error instanceof Error ? error.message : `Unexpected live ${stage} failure`,
-    retryable: true,
-  };
-}
-
-function invalidGenerationFailure(error: unknown): StageFailure {
-  return {
-    code: "INVALID_LIVE_SUMMARY_OUTPUT",
-    message: error instanceof Error ? error.message : "Invalid live summary output",
-    retryable: false,
-  };
-}
-
-function sameTurn(left: TranscriptTurnSnapshot, right: TranscriptTurnSnapshot): boolean {
-  return left.turnId === right.turnId &&
-    left.speakerId === right.speakerId &&
-    left.startMs === right.startMs &&
-    left.endMs === right.endMs &&
-    left.text === right.text;
-}
-
-function generationBaseSnapshot(
-  meeting: LiveMeeting,
-  turns: readonly TranscriptTurnSnapshot[],
-): GenerationBase {
-  return {
-    draftSummaryRevision: meeting.draftSummary?.revision ?? null,
-    evidenceTurns: turns.map((turn) => ({ ...turn })),
-    status: meeting.status,
-  };
-}
-
-function containsUnchangedEvidence(
-  turns: readonly TranscriptTurnSnapshot[],
-  evidenceTurns: readonly TranscriptTurnSnapshot[],
-): boolean {
-  const turnsById = new Map(turns.map((turn) => [turn.turnId, turn]));
-  return evidenceTurns.every((evidenceTurn) => {
-    const currentTurn = turnsById.get(evidenceTurn.turnId);
-    return currentTurn !== undefined && sameTurn(currentTurn, evidenceTurn);
-  });
-}
-
-function isCompatibleGenerationBase(
-  current: CurrentLiveMeeting,
-  base: GenerationBase,
-): boolean {
-  return current.snapshot.status === base.status &&
-    (current.snapshot.draftSummary?.revision ?? null) === base.draftSummaryRevision &&
-    containsUnchangedEvidence(currentTurns(current.timeline), base.evidenceTurns);
-}
-
 function refreshedResult(
   generationBase: string | undefined,
   generation: GeneratedResult,
@@ -183,21 +109,6 @@ function refreshedResult(
     ...(projection.failure === undefined ? {} : { projectionFailure: projection.failure }),
     status: "refreshed",
   };
-}
-
-function generationBaseKey(
-  meeting: LiveMeeting,
-  turns: readonly TranscriptTurnSnapshot[],
-): string {
-  const nextSummaryRevision = (meeting.draftSummary?.revision ?? 0) + 1;
-  return operationIdentity(
-    "live-evidence-summary:v3",
-    meeting.meetingId,
-    String(nextSummaryRevision),
-    meeting.status,
-    String(turns.length),
-    turns.at(-1)?.turnId ?? "none",
-  );
 }
 
 export class RefreshLiveMeeting {
@@ -375,7 +286,11 @@ export class RefreshLiveMeeting {
         throughTurnCount: turns.length,
       });
     } catch (error) {
-      return { failure: unexpectedFailure("generation", error), generated: false, stale: false };
+      return {
+        failure: unexpectedLiveRefreshFailure("generation", error),
+        generated: false,
+        stale: false,
+      };
     }
     if (!result.ok) {
       await this.persistRejectedGeneration(meeting.meetingId, result);

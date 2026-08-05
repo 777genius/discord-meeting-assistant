@@ -11,15 +11,17 @@ import {
   type VoicetextPacingScheduler,
 } from "./audio-pacing.js";
 import {
-  addVoicetextFinalBoundedBytes,
-  validateVoicetextFinalArtifact,
-  validateVoicetextFinalPcm,
   validateVoicetextFinalTranscriptionOptions,
-  validateVoicetextFinalTranscriptionRequest,
   type CancellableVoicetextTranscriptionRequest,
   type ValidatedVoicetextFinalTranscriptionOptions,
   type VoicetextFinalTranscriptionOptions,
 } from "./voicetext-final-transcription-configuration.js";
+import {
+  addVoicetextFinalBoundedBytes,
+  validateVoicetextFinalArtifact,
+  validateVoicetextFinalPcm,
+  validateVoicetextFinalTranscriptionRequest,
+} from "./voicetext-final-transcription-input-validation.js";
 import {
   toVoicetextPortFailure,
   VoicetextAdapterError,

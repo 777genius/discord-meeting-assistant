@@ -3,7 +3,6 @@ import {
   GlobalPacketFlowControl,
   SourceTimelinePacer,
   SpeakerPacketFlowControl,
-  type LiveSessionRelease,
 } from "./live-packet-flow-control.js";
 
 import type {
@@ -14,13 +13,13 @@ import type {
   LiveRuntimeTimerHandle,
   LiveTranscriptionEvent,
   LiveTranscriptionPort,
-  LiveTranscriptionSession,
   LiveVoicePacket,
 } from "./contracts.js";
 import {
   LivePacketDeliveryLedger,
   livePacketIdentity,
 } from "./packet-delivery-ledger.js";
+import { SpeakerTranscriptionProviderSession } from "./speaker-transcription-provider-session.js";
 
 const maximumLivePacketDeliveryAttempts = 2;
 
@@ -50,12 +49,9 @@ export class SpeakerTranscriptionSession {
   private chain: Promise<void> = Promise.resolve();
   private inactivityTimer: LiveRuntimeTimerHandle | null = null;
   private lastRelativeTimeMs: number | null = null;
-  private nextSegment = 1;
-  private openingAbortController: AbortController | null = null;
   private readonly packetFlow: SpeakerPacketFlowControl;
   private readonly pacer: SourceTimelinePacer;
-  private session: LiveTranscriptionSession | null = null;
-  private sessionLease: LiveSessionRelease | null = null;
+  private readonly providerSession: SpeakerTranscriptionProviderSession;
 
   public constructor(
     private readonly dependencies: SpeakerTranscriptionSessionDependencies,
@@ -66,6 +62,14 @@ export class SpeakerTranscriptionSession {
       dependencies.timer,
     );
     this.pacer = new SourceTimelinePacer(dependencies.clock, dependencies.timer);
+    this.providerSession = new SpeakerTranscriptionProviderSession({
+      logger: dependencies.logger,
+      meetingId: dependencies.meetingId,
+      onTranscript: dependencies.onTranscript,
+      sessionAdmission: dependencies.sessionAdmission,
+      speakerId: dependencies.speakerId,
+      transcriber: dependencies.transcriber,
+    });
   }
 
   public async accept(
@@ -105,7 +109,7 @@ export class SpeakerTranscriptionSession {
   public beginFinish(): void {
     this.cancelIdleFinalization();
     this.packetFlow.cancel();
-    this.openingAbortController?.abort();
+    this.providerSession.abortOpening();
   }
 
   public async finish(): Promise<void> {
@@ -154,7 +158,7 @@ export class SpeakerTranscriptionSession {
       try {
         await this.send(packet);
       } catch (error) {
-        this.terminateSession();
+        this.providerSession.terminate();
         this.logPacketFailure(error);
       } finally {
         this.packetFlow.releaseQueueSlot();
@@ -200,7 +204,7 @@ export class SpeakerTranscriptionSession {
   }): Promise<void> {
     for (let attempt = 1; attempt <= maximumLivePacketDeliveryAttempts; attempt += 1) {
       try {
-        const session = await this.openSession();
+        const session = await this.providerSession.open(this.packetFlow.signal);
         if (session === null || this.packetFlow.signal.aborted) {
           return;
         }
@@ -214,7 +218,7 @@ export class SpeakerTranscriptionSession {
         this.commitDelivery(input, sendStartedAtMs);
         return;
       } catch (error) {
-        this.terminateSession();
+        this.providerSession.terminate();
         if (this.dependencies.isMeetingFinishing() || this.packetFlow.signal.aborted) {
           return;
         }
@@ -281,93 +285,14 @@ export class SpeakerTranscriptionSession {
     return true;
   }
 
-  private async openSession(): Promise<LiveTranscriptionSession | null> {
-    if (this.session !== null) {
-      return this.session;
-    }
-    const lease = await this.dependencies.sessionAdmission.acquire(
-      this.packetFlow.signal,
-    );
-    if (lease === null) {
-      return null;
-    }
-    this.sessionLease = lease;
-    const openingAbortController = new AbortController();
-    this.openingAbortController = openingAbortController;
-    try {
-      const segment = this.nextSegment;
-      this.nextSegment += 1;
-      const session = await this.dependencies.transcriber.openSession({
-        idempotencyKey: [
-          "live-transcription:v2",
-          this.dependencies.meetingId,
-          this.dependencies.speakerId,
-          segment,
-        ].join("|"),
-        meetingId: this.dependencies.meetingId,
-        onTranscript: this.dependencies.onTranscript,
-        signal: openingAbortController.signal,
-        speakerId: this.dependencies.speakerId,
-      });
-      if (openingAbortController.signal.aborted || this.sessionLease !== lease) {
-        session.terminate();
-        this.releaseLease(lease);
-        return null;
-      }
-      this.session = session;
-      return session;
-    } catch (error) {
-      this.releaseLease(lease);
-      throw error;
-    } finally {
-      if (this.openingAbortController === openingAbortController) {
-        this.openingAbortController = null;
-      }
-    }
-  }
-
-  private releaseLease(lease: LiveSessionRelease): void {
-    if (this.sessionLease === lease) {
-      this.sessionLease = null;
-      lease();
-    }
-  }
-
-  private terminateSession(): void {
-    const session = this.session;
-    const lease = this.sessionLease;
-    this.session = null;
-    this.sessionLease = null;
-    session?.terminate();
-    lease?.();
-  }
-
   private async finalize(failureMessage: string): Promise<void> {
-    const session = this.session;
-    const lease = this.sessionLease;
-    this.session = null;
-    this.sessionLease = null;
-    if (session === null) {
-      lease?.();
-      return;
-    }
-    try {
-      await session.finalize();
-    } catch (error) {
-      session.terminate();
-      this.dependencies.logger.warn(failureMessage, {
-        ...this.logFields(),
-        errorName: error instanceof Error ? error.name : "UnknownError",
-      });
-    } finally {
-      lease?.();
-    }
+    await this.providerSession.finalize(failureMessage);
   }
 
   private scheduleIdleFinalizationIfReady(): void {
     if (
       this.packetFlow.queuedPacketCount !== 0 ||
-      this.session === null ||
+      !this.providerSession.isOpen ||
       this.dependencies.isMeetingFinishing()
     ) {
       return;
@@ -392,7 +317,7 @@ export class SpeakerTranscriptionSession {
     return (
       this.dependencies.isMeetingFinishing() ||
       this.packetFlow.queuedPacketCount > 0 ||
-      this.session === null
+      !this.providerSession.isOpen
     );
   }
 

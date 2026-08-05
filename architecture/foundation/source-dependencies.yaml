@@ -463,7 +463,10 @@ boundaries:
         - dynamic
   - id: infra.subscription-runtime
     roots:
+      - infra/subscription-runtime/audited-codex-jsonl-bridge-output.mjs
       - infra/subscription-runtime/audited-codex-jsonl-capture.mjs
+      - infra/subscription-runtime/audited-codex-jsonl-capture-store.mjs
+      - infra/subscription-runtime/audited-codex-jsonl-events.mjs
       - infra/subscription-runtime/audited-xhigh-launcher.mjs
       - infra/subscription-runtime/audited-xhigh-policy.mjs
     entrypoints:

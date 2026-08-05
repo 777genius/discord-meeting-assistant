@@ -19,6 +19,10 @@ import {
   type ActiveLiveMeeting,
 } from "./live-meeting-state.js";
 import { LiveMeetingFinalizer } from "./live-meeting-finalizer.js";
+import {
+  assertLivePublicationTargetSource,
+  resolveSpeakerIdleFinalizeMs,
+} from "./live-runtime-settings.js";
 import { logFinalizedLiveTranscript } from "./live-transcript-observability.js";
 import {
   systemLiveRuntimeClock,
@@ -28,7 +32,6 @@ import { RecordingOperationQueue } from "./recording-operation-queue.js";
 import { stableLiveTranscriptTurnId } from "./transcript-turn-id.js";
 
 const refreshSchedulerIntervalMs = 100;
-const defaultSpeakerIdleFinalizeMs = 750;
 /**
  * Small lifecycle supervisor for derived live transcription, projection,
  * incremental summary and conversation. It owns no provider DTOs or SDKs.
@@ -50,12 +53,7 @@ export class PlatformLiveMeetingRuntime {
   public constructor(
     private readonly dependencies: LiveMeetingRuntimeDependencies,
   ) {
-    if (
-      dependencies.publicationTargets === undefined &&
-      dependencies.publicationTargetId === undefined
-    ) {
-      throw new Error("a live meeting publication target source is required");
-    }
+    assertLivePublicationTargetSource(dependencies);
     this.clock = dependencies.clock ?? systemLiveRuntimeClock;
     this.timer = dependencies.timer ?? systemLiveRuntimeTimer;
     this.packetFlow = resolveLivePacketFlowControl(dependencies.packetFlowControl);
@@ -64,7 +62,7 @@ export class PlatformLiveMeetingRuntime {
       this.clock,
       this.timer,
     );
-    this.speakerIdleFinalizeMs = validateSpeakerIdleFinalizeMs(
+    this.speakerIdleFinalizeMs = resolveSpeakerIdleFinalizeMs(
       dependencies.speakerIdleFinalizeMs,
     );
     this.sessionAdmission = new LiveSessionAdmission(
@@ -399,12 +397,4 @@ export class PlatformLiveMeetingRuntime {
     };
     state.domainChain = state.domainChain.then(guarded, guarded);
   }
-}
-
-function validateSpeakerIdleFinalizeMs(value: number | undefined): number {
-  const resolved = value ?? defaultSpeakerIdleFinalizeMs;
-  if (!Number.isSafeInteger(resolved) || resolved < 100 || resolved > 10_000) {
-    throw new RangeError("speakerIdleFinalizeMs must be between 100 and 10000");
-  }
-  return resolved;
 }
