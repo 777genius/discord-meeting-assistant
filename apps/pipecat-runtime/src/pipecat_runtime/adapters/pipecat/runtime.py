@@ -21,6 +21,11 @@ from pipecat_runtime.application.ports import ConversationRuntime, ConversationS
 
 type PipelineKey = tuple[str, str, str]
 
+# PersistentConversationPipeline has its own five-second graceful worker deadline.
+# Keep the detached-resource envelope wider so it can complete forced cleanup
+# instead of being cancelled at the exact same boundary and leaking its worker.
+_PIPELINE_CLOSE_TIMEOUT_SECONDS = 12.0
+
 
 class PipecatConversationRuntime(ConversationRuntime):
     """Reuse one isolated provider pipeline for sequential turns in each meeting."""
@@ -48,6 +53,8 @@ class PipecatConversationRuntime(ConversationRuntime):
         self._active_idempotency_keys: set[str] = set()
         self._active_meeting_ids: set[str] = set()
         self._pipelines: OrderedDict[PipelineKey, PersistentConversationPipeline] = OrderedDict()
+        self._pipeline_close_failures: list[Exception] = []
+        self._pipeline_close_tasks: set[asyncio.Task[None]] = set()
         self._attempt_id_factory = attempt_id_factory or _new_attempt_id
         self._state_lock = asyncio.Lock()
         self._closed = False
@@ -68,7 +75,7 @@ class PipecatConversationRuntime(ConversationRuntime):
                 maximum_events=self._maximum_pending_events,
             )
             turn = ActivePipelineTurn(request=request, attempt_id=attempt_id, events=events)
-            pipeline = await self._pipeline_for(turn)
+            pipeline, detached_pipelines = self._pipeline_for(turn)
             try:
                 await pipeline.reserve(turn)
             except RuntimeError as error:
@@ -76,6 +83,7 @@ class PipecatConversationRuntime(ConversationRuntime):
             self._idempotency_requests[request.idempotency_key] = request
             self._active_idempotency_keys.add(request.idempotency_key)
             self._active_meeting_ids.add(request.meeting_id)
+        self._schedule_pipeline_closes(detached_pipelines)
         await events.accepted()
         session = PipecatConversationSession(
             turn=turn,
@@ -93,7 +101,14 @@ class PipecatConversationRuntime(ConversationRuntime):
             self._closed = True
             pipelines = tuple(self._pipelines.values())
             self._pipelines.clear()
-        await asyncio.gather(*(pipeline.close() for pipeline in pipelines))
+        self._schedule_pipeline_closes(pipelines)
+        pending_closes = tuple(self._pipeline_close_tasks)
+        if pending_closes:
+            await asyncio.gather(*pending_closes, return_exceptions=True)
+        if self._pipeline_close_failures:
+            raise RuntimeError("one or more persistent pipelines failed to close") from (
+                self._pipeline_close_failures[0]
+            )
 
     def _validate_request(self, request: StartTurn) -> None:
         if self._closed:
@@ -106,16 +121,23 @@ class PipecatConversationRuntime(ConversationRuntime):
                 raise RuntimeInputError("idempotency key was reused for a different request")
             raise RuntimeInputError("conversation request was already admitted")
 
-    async def _pipeline_for(self, turn: ActivePipelineTurn) -> PersistentConversationPipeline:
+    def _pipeline_for(
+        self, turn: ActivePipelineTurn
+    ) -> tuple[
+        PersistentConversationPipeline,
+        tuple[PersistentConversationPipeline, ...],
+    ]:
+        """Select one pipeline while detaching stale resources for out-of-lock closure."""
         request = turn.request
         key = (request.meeting_id, request.voice_profile_id, request.locale.casefold())
+        detached: list[PersistentConversationPipeline] = []
         existing = self._pipelines.get(key)
         if existing is not None and existing.is_reusable:
             self._pipelines.move_to_end(key)
-            return existing
+            return existing, ()
         if existing is not None:
             self._pipelines.pop(key)
-            await existing.close()
+            detached.append(existing)
         if len(self._pipelines) >= self._maximum_persistent_pipelines:
             idle_key = next(
                 (
@@ -129,11 +151,38 @@ class PipecatConversationRuntime(ConversationRuntime):
                 raise RuntimeInputError(
                     "persistent pipeline capacity is occupied by active meetings"
                 )
-            evicted = self._pipelines.pop(idle_key)
-            await evicted.close()
+            detached.append(self._pipelines.pop(idle_key))
         created = PersistentConversationPipeline(profile=self._profile, first_turn=turn)
         self._pipelines[key] = created
-        return created
+        return created, tuple(detached)
+
+    def _schedule_pipeline_closes(
+        self,
+        pipelines: tuple[PersistentConversationPipeline, ...],
+    ) -> None:
+        for pipeline in pipelines:
+            task = asyncio.create_task(
+                self._close_pipeline_bounded(pipeline),
+                name="pipecat-pipeline-close",
+            )
+            self._pipeline_close_tasks.add(task)
+            task.add_done_callback(self._pipeline_close_tasks.discard)
+
+    async def _close_pipeline_bounded(
+        self,
+        pipeline: PersistentConversationPipeline,
+    ) -> None:
+        try:
+            await asyncio.wait_for(
+                pipeline.close(),
+                timeout=_PIPELINE_CLOSE_TIMEOUT_SECONDS,
+            )
+        except Exception:
+            # Detached provider cleanup must not retain admission or fail a new turn.
+            try:
+                await pipeline.abort()
+            except Exception as error:
+                self._pipeline_close_failures.append(error)
 
     def _evict_completed_idempotency_key_if_required(self) -> None:
         if len(self._idempotency_requests) < self._maximum_idempotency_keys:

@@ -6,6 +6,7 @@ import asyncio
 import time
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import replace
+from typing import Any, cast
 
 import pytest
 from pipecat.frames.frames import (
@@ -132,6 +133,20 @@ class _CountingProfile:
         del request, cancellation_requested
         self.create_count += 1
         return self.processor, ConversationTextCaptureProcessor()
+
+
+class _IndependentCountingProfile:
+    """Create isolated processors for tests that exercise multiple meeting pipelines."""
+
+    profile_id = "independent-persistent-test"
+
+    def create_processors(
+        self,
+        request: StartTurn,
+        cancellation_requested: CancellationSignal,
+    ) -> Sequence[FrameProcessor]:
+        del request, cancellation_requested
+        return _CountingTurnProcessor(), ConversationTextCaptureProcessor()
 
 
 class _InterruptibleTurnProcessor(FrameProcessor):
@@ -444,6 +459,140 @@ async def test_idempotency_capacity_never_evicts_an_active_turn() -> None:
     await runtime.close()
 
     assert isinstance(second_events[-1], Completed)
+
+
+async def test_evicted_pipeline_closes_without_holding_global_admission_lock() -> None:
+    """A slow provider close cannot block another cached meeting's admission."""
+    profile = _IndependentCountingProfile()
+    runtime = PipecatConversationRuntime(
+        profile=profile,
+        maximum_persistent_pipelines=2,
+    )
+    first_request = sample_start_turn(voice_profile_id=profile.profile_id)
+    first_session = await runtime.start(first_request)
+    await asyncio.wait_for(_collect(first_session.events()), timeout=2)
+    await asyncio.wait_for(first_session.wait(), timeout=2)
+
+    second_request = replace(
+        first_request,
+        meeting_id="meeting-persistent-2",
+        recording_id="recording-persistent-2",
+        turn_id="turn-persistent-2",
+        idempotency_key="idempotency-persistent-2",
+    )
+    second_session = await runtime.start(second_request)
+    await asyncio.wait_for(_collect(second_session.events()), timeout=2)
+    await asyncio.wait_for(second_session.wait(), timeout=2)
+
+    runtime_state = cast(Any, runtime)
+    first_pipeline = next(iter(runtime_state._pipelines.values()))
+    close_started = asyncio.Event()
+    allow_close = asyncio.Event()
+    original_close = first_pipeline.close
+
+    async def slow_close() -> None:
+        close_started.set()
+        await allow_close.wait()
+        await original_close()
+
+    first_pipeline.close = slow_close  # type: ignore[method-assign]
+    third_request = replace(
+        first_request,
+        meeting_id="meeting-persistent-3",
+        recording_id="recording-persistent-3",
+        turn_id="turn-persistent-3",
+        idempotency_key="idempotency-persistent-3",
+    )
+    third_start = asyncio.create_task(runtime.start(third_request))
+    await asyncio.wait_for(close_started.wait(), timeout=1)
+    third_session = await asyncio.wait_for(third_start, timeout=1)
+
+    with pytest.raises(RuntimeInputError, match="pipeline is busy"):
+        await runtime.start(
+            replace(
+                third_request,
+                turn_id="turn-persistent-3-overlap",
+                idempotency_key="idempotency-persistent-3-overlap",
+            )
+        )
+
+    second_again = await asyncio.wait_for(
+        runtime.start(
+            replace(
+                second_request,
+                turn_id="turn-persistent-2-again",
+                idempotency_key="idempotency-persistent-2-again",
+            )
+        ),
+        timeout=1,
+    )
+    second_again_events = await asyncio.wait_for(_collect(second_again.events()), timeout=2)
+    await asyncio.wait_for(second_again.wait(), timeout=2)
+    assert isinstance(second_again_events[-1], Completed)
+    assert len(runtime_state._pipelines) == 2
+
+    third_events = await asyncio.wait_for(_collect(third_session.events()), timeout=2)
+    await asyncio.wait_for(third_session.wait(), timeout=2)
+    allow_close.set()
+    retained_pipelines = tuple(runtime_state._pipelines.values())
+    await asyncio.wait_for(runtime.close(), timeout=15)
+
+    assert isinstance(third_events[-1], Completed)
+    assert all(
+        pipeline._runner_task is None or pipeline._runner_task.done()
+        for pipeline in (first_pipeline, *retained_pipelines)
+    )
+
+
+async def test_failed_evicted_pipeline_close_does_not_retain_meeting_admission() -> None:
+    """A detached provider cleanup failure cannot strand the newly admitted turn."""
+    profile = _IndependentCountingProfile()
+    runtime = PipecatConversationRuntime(
+        profile=profile,
+        maximum_persistent_pipelines=1,
+    )
+    first_request = sample_start_turn(voice_profile_id=profile.profile_id)
+    first_session = await runtime.start(first_request)
+    await asyncio.wait_for(_collect(first_session.events()), timeout=2)
+    await asyncio.wait_for(first_session.wait(), timeout=2)
+
+    runtime_state = cast(Any, runtime)
+    first_pipeline = next(iter(runtime_state._pipelines.values()))
+
+    async def failed_close() -> None:
+        raise RuntimeError("injected provider close failure")
+
+    first_pipeline.close = failed_close  # type: ignore[method-assign]
+    second_request = replace(
+        first_request,
+        meeting_id="meeting-after-failed-close",
+        recording_id="recording-after-failed-close",
+        turn_id="turn-after-failed-close",
+        idempotency_key="idempotency-after-failed-close",
+    )
+    second_session = await asyncio.wait_for(runtime.start(second_request), timeout=1)
+    second_events = await asyncio.wait_for(_collect(second_session.events()), timeout=2)
+    await asyncio.wait_for(second_session.wait(), timeout=2)
+
+    third_session = await asyncio.wait_for(
+        runtime.start(
+            replace(
+                second_request,
+                turn_id="turn-after-cleanup-failure",
+                idempotency_key="idempotency-after-cleanup-failure",
+            )
+        ),
+        timeout=1,
+    )
+    third_events = await asyncio.wait_for(_collect(third_session.events()), timeout=2)
+    await asyncio.wait_for(third_session.wait(), timeout=2)
+    retained_pipeline = next(iter(runtime_state._pipelines.values()))
+    await asyncio.wait_for(runtime.close(), timeout=15)
+
+    assert isinstance(second_events[-1], Completed)
+    assert isinstance(third_events[-1], Completed)
+    assert first_pipeline._runner_task is None or first_pipeline._runner_task.done()
+    assert retained_pipeline._runner_task is None or retained_pipeline._runner_task.done()
 
 
 async def test_abandoned_consumer_releases_backpressure_and_active_idempotency() -> None:

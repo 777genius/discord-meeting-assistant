@@ -42,9 +42,9 @@ class SpeechPhraseChunker:
         if len(self._buffer) <= self._maximum:
             return None
         whitespace = max(
-            self._buffer.rfind(" ", self._minimum, self._maximum + 1),
-            self._buffer.rfind("\n", self._minimum, self._maximum + 1),
-            self._buffer.rfind("\t", self._minimum, self._maximum + 1),
+            self._buffer.rfind(" ", self._minimum, self._maximum),
+            self._buffer.rfind("\n", self._minimum, self._maximum),
+            self._buffer.rfind("\t", self._minimum, self._maximum),
         )
         return whitespace + 1 if whitespace >= self._minimum else self._maximum
 

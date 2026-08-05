@@ -58,6 +58,21 @@ def test_phrase_chunker_prefers_natural_boundaries_and_preserves_exact_text() ->
     assert all(chunk.strip() for chunk in chunks)
 
 
+@pytest.mark.parametrize("boundary", [" ", "\n", "\t"])
+def test_phrase_chunker_never_includes_whitespace_beyond_hard_maximum(
+    boundary: str,
+) -> None:
+    """Whitespace exactly after the cap belongs to the next chunk."""
+    chunker = SpeechPhraseChunker(minimum_characters=4, maximum_characters=10)
+    source = f"abcdefghij{boundary}klmnop"
+
+    chunks = [*chunker.feed(source), *chunker.finish()]
+
+    assert "".join(chunks) == source
+    assert chunks[0] == "abcdefghij"
+    assert all(len(chunk) <= 10 for chunk in chunks)
+
+
 def _decode_all(payload: str) -> None:
     decoder = StructuredAnswerStreamDecoder()
     decoder.feed(payload)

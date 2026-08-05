@@ -70,6 +70,10 @@ class PersistentConversationPipeline:
                 self._ensure_runner_started()
                 await self._worker.queue_frame(ConversationTurnFrame(turn.request))
             await turn.finished.wait()
+            if self._runner_task is not None and not self._runner_task.done():
+                drained = await self._worker.flush_pipeline(timeout=5)
+                if not drained:
+                    turn.pipeline_failure = True
             if turn.pipeline_failure:
                 await self._retire_worker()
             await self._publish_terminal(turn)
@@ -127,6 +131,30 @@ class PersistentConversationPipeline:
                 await self._worker.cancel(reason="runtime-shutdown-timeout")
                 await runner_task
 
+    async def abort(self) -> None:
+        """Bound forced cleanup after graceful provider closure fails."""
+        async with self._state_lock:
+            self._closed = True
+            self._retired = True
+            active = self._active
+            runner_task = self._runner_task
+        if active is not None:
+            active.request_cancellation(CancellationReason.RUNTIME_SHUTDOWN)
+            active.finished.set()
+        if runner_task is None or runner_task.done():
+            return
+        try:
+            await self._worker.cancel(reason="runtime-forced-shutdown")
+        except Exception:
+            runner_task.cancel()
+        _, pending = await asyncio.wait({runner_task}, timeout=6)
+        if pending:
+            runner_task.cancel()
+            _, pending = await asyncio.wait({runner_task}, timeout=6)
+        if pending:
+            runner_task.cancel()
+            raise RuntimeError("persistent Pipecat worker did not stop after forced cleanup")
+
     def _create_worker(self, first_turn: ActivePipelineTurn) -> PipelineWorker:
         processors = self._profile.create_processors(first_turn.request, self._signal)
         pipeline = Pipeline(
@@ -139,6 +167,7 @@ class PersistentConversationPipeline:
         return PipelineWorker(
             pipeline,
             cancel_on_idle_timeout=False,
+            cancel_timeout_secs=5,
             enable_rtvi=False,
             enable_turn_tracking=False,
             params=PipelineParams(audio_out_sample_rate=PCM_S16LE_SAMPLE_RATE_HZ),
