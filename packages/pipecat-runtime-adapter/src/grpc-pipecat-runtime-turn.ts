@@ -38,6 +38,7 @@ export class GrpcConversationRuntimeTurn implements ConversationRuntimeTurn {
   public constructor(
     private readonly call: ConversationDuplexCall,
     private readonly turnId: string,
+    private readonly cancellationTimeoutMs: number,
   ) {
     this.eventBuffer = new AsyncEventBuffer((event) => {
       this.eventConsumed(event);
@@ -55,7 +56,11 @@ export class GrpcConversationRuntimeTurn implements ConversationRuntimeTurn {
   }
 
   public async start(request: ConversationRuntimeStartTurn): Promise<void> {
-    await this.write(createGrpcConversationStartMessage(request));
+    await this.writeWithTimeout(
+      createGrpcConversationStartMessage(request),
+      this.cancellationTimeoutMs,
+      "Conversation runtime did not accept the initial write before the deadline",
+    );
   }
 
   public abortBeforeStart(): void {
@@ -67,8 +72,30 @@ export class GrpcConversationRuntimeTurn implements ConversationRuntimeTurn {
     if (this.terminal) {
       return;
     }
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<void>((resolve) => {
+      timeout = setTimeout(() => {
+        this.fail(
+          "CONVERSATION_RUNTIME_CANCELLATION_TIMEOUT",
+          "Conversation runtime did not acknowledge cancellation before the deadline",
+          true,
+        );
+        resolve();
+      }, this.cancellationTimeoutMs);
+    });
+    try {
+      await Promise.race([this.cancelAndWait(reason), timedOut]);
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  private async cancelAndWait(reason: ConversationCancellationReason): Promise<void> {
     if (this.attemptId === undefined) {
       await this.waitForAttempt();
+    }
+    if (this.terminal) {
+      return;
     }
     const attemptId = this.attemptId;
     if (attemptId === undefined) {
@@ -84,6 +111,9 @@ export class GrpcConversationRuntimeTurn implements ConversationRuntimeTurn {
         safeErrorMessage(error, "Conversation runtime cancellation failed"),
         true,
       );
+      return;
+    }
+    if (this.terminal) {
       return;
     }
     this.halfClose();
@@ -203,6 +233,24 @@ export class GrpcConversationRuntimeTurn implements ConversationRuntimeTurn {
         }
       });
     });
+  }
+
+  private async writeWithTimeout(
+    message: RawMessage,
+    timeoutMs: number,
+    timeoutMessage: string,
+  ): Promise<void> {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<never>((_resolve, reject) => {
+      timeout = setTimeout(() => {
+        reject(new Error(timeoutMessage));
+      }, timeoutMs);
+    });
+    try {
+      await Promise.race([this.write(message), timedOut]);
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   private eventConsumed(event: ConversationRuntimeEvent): void {

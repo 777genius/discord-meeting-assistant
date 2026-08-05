@@ -25,6 +25,8 @@ import type {
   GrpcPipecatConversationRuntimeOptions,
 } from "./grpc-pipecat-types.js";
 
+const defaultCancellationTimeoutMs = 5_000;
+
 export type {
   ConversationDuplexCall,
   ConversationDuplexCallFactory,
@@ -37,12 +39,16 @@ export type {
  */
 export class GrpcPipecatConversationRuntime implements ConversationRuntime {
   private readonly callFactory: ConversationDuplexCallFactory;
+  private readonly cancellationTimeoutMs: number;
   private readonly metadata: ReturnType<typeof createAuthorizationMetadata>;
 
   public constructor(options: GrpcPipecatConversationRuntimeOptions) {
     if (options.serviceToken.trim().length < 16) {
       throw new Error("Pipecat runtime service token is too short");
     }
+    this.cancellationTimeoutMs = parseCancellationTimeout(
+      options.cancellationTimeoutMs ?? defaultCancellationTimeoutMs,
+    );
     this.callFactory = options.callFactory ?? createGrpcConversationDuplexCallFactory(options);
     this.metadata = createAuthorizationMetadata(options.serviceToken);
   }
@@ -74,7 +80,11 @@ export class GrpcPipecatConversationRuntime implements ConversationRuntime {
       );
     }
 
-    const turn = new GrpcConversationRuntimeTurn(call, transportRequest.value.turnId);
+    const turn = new GrpcConversationRuntimeTurn(
+      call,
+      transportRequest.value.turnId,
+      this.cancellationTimeoutMs,
+    );
     let abortRequested = signalIsAborted(options.signal);
     const recordAbort = () => {
       abortRequested = true;
@@ -141,6 +151,13 @@ export class GrpcPipecatConversationRuntime implements ConversationRuntime {
       );
     }
   }
+}
+
+function parseCancellationTimeout(value: number): number {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error("Pipecat runtime cancellation timeout must be a positive integer");
+  }
+  return value;
 }
 
 function cancellationReasonFromSignal(

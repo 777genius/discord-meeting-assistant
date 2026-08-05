@@ -191,6 +191,32 @@ describe("GrpcPipecatConversationRuntime", () => {
     expect(call.cancelled).toBe(false);
   });
 
+  it("fails closed when the initial gRPC write callback never settles", async () => {
+    vi.useFakeTimers();
+    try {
+      const factory = new FakeCallFactory();
+      factory.deferNextCallWriteCompletion = true;
+      const runtime = new GrpcPipecatConversationRuntime({
+        address: "127.0.0.1:50052",
+        cancellationTimeoutMs: 100,
+        serviceToken: "test-service-token-1234",
+        callFactory: factory,
+      });
+
+      const starting = runtime.startTurn(request);
+      await vi.advanceTimersByTimeAsync(100);
+
+      await expect(starting).resolves.toMatchObject({
+        failure: { code: "CONVERSATION_RUNTIME_TRANSPORT_ERROR", retryable: true },
+        ok: false,
+      });
+      expect(factory.calls[0]?.cancelled).toBe(true);
+      expect(factory.calls[0]?.ended).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("authenticates and parses provider-neutral readiness", async () => {
     const factory = new FakeCallFactory();
     const runtime = new GrpcPipecatConversationRuntime({
@@ -251,6 +277,88 @@ describe("GrpcPipecatConversationRuntime", () => {
 });
 
 describe("GrpcPipecatConversationRuntime cancellation", () => {
+  it("fails closed when the backend never accepts the turn", async () => {
+    vi.useFakeTimers();
+    try {
+      const factory = new FakeCallFactory();
+      const runtime = new GrpcPipecatConversationRuntime({
+        address: "127.0.0.1:50052",
+        cancellationTimeoutMs: 100,
+        serviceToken: "test-service-token-1234",
+        callFactory: factory,
+      });
+      const result = await runtime.startTurn(request);
+      if (!result.ok) {
+        throw new Error("turn did not start");
+      }
+      const call = factory.calls[0]!;
+      const events = collect(result.value.events);
+      const cancellation = result.value.cancel("barge-in");
+
+      await vi.advanceTimersByTimeAsync(99);
+      expect(call.cancelled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+
+      await expect(cancellation).resolves.toBeUndefined();
+      await expect(events).resolves.toMatchObject([
+        {
+          type: "failed",
+          failure: {
+            code: "CONVERSATION_RUNTIME_CANCELLATION_TIMEOUT",
+            retryable: true,
+          },
+        },
+      ]);
+      expect(call.cancelled).toBe(true);
+      expect(call.ended).toBe(true);
+      expect(call.writes).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("fails closed when the backend omits the terminal cancellation acknowledgement", async () => {
+    vi.useFakeTimers();
+    try {
+      const factory = new FakeCallFactory();
+      const runtime = new GrpcPipecatConversationRuntime({
+        address: "127.0.0.1:50052",
+        cancellationTimeoutMs: 100,
+        serviceToken: "test-service-token-1234",
+        callFactory: factory,
+      });
+      const result = await runtime.startTurn(request);
+      if (!result.ok) {
+        throw new Error("turn did not start");
+      }
+      const call = factory.calls[0]!;
+      const events = collect(result.value.events);
+      call.data(serverMessage("accepted", 0));
+      const cancellation = result.value.cancel("barge-in");
+      await Promise.resolve();
+
+      expect(call.writes).toHaveLength(2);
+      expect(call.ended).toBe(true);
+      expect(call.cancelled).toBe(false);
+      await vi.advanceTimersByTimeAsync(100);
+
+      await expect(cancellation).resolves.toBeUndefined();
+      await expect(events).resolves.toMatchObject([
+        { type: "accepted" },
+        {
+          type: "failed",
+          failure: {
+            code: "CONVERSATION_RUNTIME_CANCELLATION_TIMEOUT",
+            retryable: true,
+          },
+        },
+      ]);
+      expect(call.cancelled).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("waits for an attempt before cancelling a turn during admission", async () => {
     const factory = new FakeCallFactory();
     const runtime = new GrpcPipecatConversationRuntime({

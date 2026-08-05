@@ -24,6 +24,7 @@ export interface ConversationDuplexCallFactory {
 
 export interface GrpcPipecatConversationRuntimeOptions {
   readonly address: string;
+  readonly cancellationTimeoutMs?: number;
   readonly serviceToken: string;
   readonly callFactory?: ConversationDuplexCallFactory;
   readonly protoPath?: string;
