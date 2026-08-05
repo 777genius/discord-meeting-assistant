@@ -300,6 +300,33 @@ describe("SubscriptionRuntimeExecutor telemetry", () => {
     });
   });
 
+  it("accepts an attested conversation answer without inventing app-server usage", async () => {
+    root = await mkdtemp(join(tmpdir(), "sidecar-executor-test-"));
+    const keyFile = join(root, "local-encryption-key");
+    await writeFile(keyFile, "private-test-key\n", { mode: 0o600 });
+    const executor = new SubscriptionRuntimeExecutor(
+      options(keyFile, {
+        processRunner: {
+          run: async () => completedProcessWithoutTelemetry(
+            conversationStructuredOutput,
+          ),
+        },
+      }),
+    );
+
+    const result = await executor.execute(conversationCanonicalRequest);
+
+    expect(result).toMatchObject({
+      executionAttestation: {
+        purpose: "discord_meeting.conversation.answer",
+      },
+      status: "completed",
+      structuredOutput: conversationStructuredOutput,
+    });
+    expect(result.status === "completed" && result.usage).toBeUndefined();
+    expect(result.status === "completed" && result.telemetry).toBeUndefined();
+  });
+
   it.each([
     [
       "final summary",
@@ -754,15 +781,17 @@ function completedProcess(
   };
 }
 
-function completedProcessWithoutTelemetry(): ProcessRunResult {
-  const completed = completedProcess();
+function completedProcessWithoutTelemetry(
+  output: JsonObject = structuredOutput,
+): ProcessRunResult {
+  const completed = completedProcess(undefined, output);
   return {
     ...completed,
     stdout: JSON.stringify({
       protocolVersion: 1,
       status: "completed",
-      outputText: JSON.stringify(structuredOutput),
-      structuredOutput,
+      outputText: JSON.stringify(output),
+      structuredOutput: output,
       warnings: [],
     }),
   };
