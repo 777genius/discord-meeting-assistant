@@ -1,12 +1,38 @@
+import { readFile } from "node:fs/promises";
+
+import {
+  conversationAnswerExecutionProfile,
+  providerConversationAnswerJsonSchema,
+} from "@discord-meeting/subscription-runtime-adapter";
+
+import { providerInstanceId } from "./constants.js";
+import { startGrpcServer } from "./grpc-server.js";
 import { FileInstallationInspector } from "./installation-inspector.js";
 import { NodeProcessRunner } from "./node-process-runner.js";
+import { PersistentCodexProcessRunner } from "./persistent-codex-process-runner.js";
 import { FileRuntimeReadinessInspector } from "./runtime-readiness.js";
 import { resolveSidecarSettings } from "./settings.js";
-import { startGrpcServer } from "./grpc-server.js";
-import { SubscriptionRuntimeExecutor } from "./subscription-runtime-executor.js";
+import { startPreparedSidecar } from "./sidecar-startup.js";
+import {
+  buildChildEnvironment,
+  SubscriptionRuntimeExecutor,
+} from "./subscription-runtime-executor.js";
 
 async function bootstrap(): Promise<void> {
   const settings = await resolveSidecarSettings(process.env);
+  const conversationRunner = new PersistentCodexProcessRunner({
+    authJsonPath: settings.authJsonPath,
+    launcherPath: settings.launcherPath,
+    packageManifestPath: settings.packageManifestPath,
+    providerInstanceId,
+    stateRoot: settings.stateRoot,
+    workspacePath: settings.isolatedCwd,
+  });
+  const conversationEnvironment = buildChildEnvironment(
+    process.env,
+    (await readFile(settings.localEncryptionKeyFile, "utf8")).trim(),
+    conversationAnswerExecutionProfile.reasoningEffort,
+  );
   const executor = new SubscriptionRuntimeExecutor({
     authJsonPath: settings.authJsonPath,
     childSourceEnvironment: process.env,
@@ -22,6 +48,7 @@ async function bootstrap(): Promise<void> {
     maxStderrBytes: settings.maxStderrBytes,
     maxStdoutBytes: settings.maxStdoutBytes,
     maxTaskTimeoutMs: settings.maxTaskTimeoutMs,
+    conversationProcessRunner: conversationRunner,
     processRunner: new NodeProcessRunner(),
     readinessInspector: new FileRuntimeReadinessInspector({
       authJsonPath: settings.authJsonPath,
@@ -31,22 +58,40 @@ async function bootstrap(): Promise<void> {
     }),
     stateRoot: settings.stateRoot,
   });
-  const server = await startGrpcServer({
-    bindAddress: settings.bindAddress,
-    executor,
-    options: {
-      isolatedCwd: settings.isolatedCwd,
-      maxPromptBytes: settings.maxPromptBytes,
-      maxTaskTimeoutMs: settings.maxTaskTimeoutMs,
-      serviceToken: settings.serviceToken,
-    },
-    protoPath: settings.protoPath,
+  const server = await startPreparedSidecar({
+    disposePreparedRuntime: async () => conversationRunner.dispose(),
+    prepareRuntime: async () => conversationRunner.prewarm(
+      {
+        execution: conversationAnswerExecutionProfile,
+        outputSchema: providerConversationAnswerJsonSchema,
+      },
+      conversationEnvironment,
+    ),
+    startServer: async () => startGrpcServer({
+      bindAddress: settings.bindAddress,
+      executor,
+      options: {
+        isolatedCwd: settings.isolatedCwd,
+        maxPromptBytes: settings.maxPromptBytes,
+        maxTaskTimeoutMs: settings.maxTaskTimeoutMs,
+        serviceToken: settings.serviceToken,
+      },
+      protoPath: settings.protoPath,
+    }),
   });
 
+  let shuttingDown = false;
   const shutdown = (): void => {
-    server.tryShutdown(() => {});
+    if (shuttingDown) {
+      return;
+    }
+    shuttingDown = true;
+    server.tryShutdown(() => {
+      void conversationRunner.dispose();
+    });
     setTimeout(() => {
       server.forceShutdown();
+      void conversationRunner.dispose();
     }, 5_000).unref();
   };
   process.once("SIGINT", shutdown);

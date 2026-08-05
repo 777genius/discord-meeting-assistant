@@ -1,6 +1,7 @@
 import {
   auditedSubscriptionRuntimePackageVersion,
   canonicalJsonSha256,
+  subscriptionRuntimeConversationPurpose,
   subscriptionRuntimeProvider,
   type JsonObject,
   type SubscriptionRuntimeAgentTaskRequest,
@@ -80,14 +81,19 @@ function resolveCompletedCliResult(
   telemetry: Exclude<TelemetryResult, { readonly status: "invalid" }>,
   evidence: TelemetryEvidence,
 ): SubscriptionRuntimeTaskResult {
-  if (telemetry.status === "missing") {
+  if (
+    telemetry.status === "missing" &&
+    input.profile.purpose !== subscriptionRuntimeConversationPurpose
+  ) {
     return failedResult("telemetry_unavailable");
   }
-  if (telemetry.value.outputTokens.availability !== "measured") {
-    return failedWithEvidence("telemetry_unavailable", evidence);
-  }
-  if (telemetry.value.outputTokens.value > input.profile.maxOutputTokens) {
-    return failedWithEvidence("provider_output_invalid", evidence);
+  if (telemetry.status === "available") {
+    if (telemetry.value.outputTokens.availability !== "measured") {
+      return failedWithEvidence("telemetry_unavailable", evidence);
+    }
+    if (telemetry.value.outputTokens.value > input.profile.maxOutputTokens) {
+      return failedWithEvidence("provider_output_invalid", evidence);
+    }
   }
   const structuredOutput = validateStructuredOutput(
     input.profile,
