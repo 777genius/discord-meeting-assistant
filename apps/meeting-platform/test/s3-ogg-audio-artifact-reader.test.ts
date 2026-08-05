@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   S3CompleteOggArtifactReader,
   S3OggAudioArtifactReader,
-} from "../src/s3-ogg-audio-artifact-reader.js";
+} from "../src/adapters/outbound/s3-ogg-audio-artifact-reader.js";
 
 function artifactReader(
   bytes: Uint8Array,

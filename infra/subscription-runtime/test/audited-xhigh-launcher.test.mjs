@@ -136,7 +136,7 @@ test("enriches bridge metadata but does not overwrite fully measured bridge usag
   assert.equal(attachCodexJsonlTelemetry(complete, captured), complete);
 });
 
-test("admits only the immutable final and incremental execution profiles", () => {
+test("admits only the immutable final, incremental, and conversation profiles", () => {
   const finalProfile = admitMeetingSummaryRequest(admissionInput(finalRequest(), "medium"));
   assert.deepEqual(
     {
@@ -154,6 +154,28 @@ test("admits only the immutable final and incremental execution profiles", () =>
       policyVersion: "meeting-summary.subscription-runtime.v8",
       purpose: "discord_meeting.summary.generate",
       reasoningEffort: "medium",
+    },
+  );
+
+  const conversationProfile = admitMeetingSummaryRequest(
+    admissionInput(conversationRequest(), "low"),
+  );
+  assert.deepEqual(
+    {
+      maxOutputTokens: conversationProfile.maxOutputTokens,
+      model: conversationProfile.model,
+      outputSchemaName: conversationProfile.outputSchemaName,
+      policyVersion: conversationProfile.policyVersion,
+      purpose: conversationProfile.purpose,
+      reasoningEffort: conversationProfile.reasoningEffort,
+    },
+    {
+      maxOutputTokens: 512,
+      model: "gpt-5.6-luna",
+      outputSchemaName: "discord_meeting_conversation_answer_v1",
+      policyVersion: "meeting-conversation.subscription-runtime.v1",
+      purpose: "discord_meeting.conversation.answer",
+      reasoningEffort: "low",
     },
   );
 
@@ -451,6 +473,17 @@ function incrementalRequest() {
     outputSchemaName: "discord_meeting_incremental_summary_v1",
     policyVersion: "meeting-summary.incremental.subscription-runtime.v4",
     purpose: "discord_meeting.summary.incremental",
+    reasoningEffort: "low",
+  });
+}
+
+function conversationRequest() {
+  return summaryRequest({
+    maxOutputTokens: 512,
+    model: "gpt-5.6-luna",
+    outputSchemaName: "discord_meeting_conversation_answer_v1",
+    policyVersion: "meeting-conversation.subscription-runtime.v1",
+    purpose: "discord_meeting.conversation.answer",
     reasoningEffort: "low",
   });
 }

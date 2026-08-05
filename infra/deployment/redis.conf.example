@@ -1,0 +1,15 @@
+# Copy this file to ${DEPLOY_ROOT}/secrets/redis.conf, replace the password,
+# and keep the deployed copy mode 0400 and owned by the Redis service UID.
+# Do not commit the deployed file or its password.
+
+dir /data
+appendonly yes
+appendfsync everysec
+
+# The cap must fit the deployment's Redis allocation. Queue writes must fail
+# visibly under pressure instead of silently evicting BullMQ state.
+maxmemory 512mb
+maxmemory-policy noeviction
+
+# Replace before deployment and use the same value in the REDIS_URL secret.
+requirepass REPLACE_WITH_A_GENERATED_SECRET

@@ -2,7 +2,8 @@
 
 This package is the internal server counterpart of
 `SubscriptionRuntimeTransportPort`. It admits exactly
-`discord_meeting.summary.generate` and `discord_meeting.summary.incremental`,
+`discord_meeting.summary.generate`, `discord_meeting.summary.incremental`, and
+`discord_meeting.conversation.answer`,
 and returns no credential, provider payload, account identity, raw stdout, or
 stderr.
 
@@ -26,9 +27,12 @@ after every task. It must call that version's
 worker with the exact selected profile: `gpt-5.6-sol`/`medium` for final
 summaries with an admitted 2048-token post-execution output budget and policy
 version `v8`, and `gpt-5.6-luna`/`low` for incremental summaries with an
-admitted 2048-token post-execution output budget and policy version `v4`,
-disabled tools, no interactive flow, and
-stateless-completion semantics. A generic launcher that does not enforce both
+admitted 2048-token post-execution output budget and policy version `v4`.
+Conversation uses `gpt-5.6-luna`/`low`, a 512-token budget, policy
+`meeting-conversation.subscription-runtime.v1`, and schema
+`discord_meeting_conversation_answer_v1`. Every profile has disabled tools, no
+interactive flow, and stateless-completion semantics. A generic launcher that
+does not enforce all three
 exact profiles is not an admitted production installation.
 
 The final purpose admits only `discord_meeting_summary_v4`: title up to 96
@@ -39,14 +43,21 @@ admits only `discord_meeting_incremental_summary_v1`: one short overview,
 at most three topics with one or two points, at most three entries in each key
 list, and one to three evidence turns per item. It is a selective snapshot, not
 a claim of complete meeting history. The schema names and full JSON Schemas are
-purpose-bound and fail closed if swapped.
+purpose-bound and fail closed if swapped. Conversation accepts exactly one
+non-empty `answer` string of at most 2,000 characters.
 
 The budget is checked against measured provider output after completion. It is
 not a provider generation cap and does not guarantee latency; the compact final
 and incremental schemas/prompts reduce response volume, while `low` reasoning
-remains an incremental-only latency optimization.
+is used by both latency-sensitive Luna purposes.
 
-The sidecar invokes the audited bridge with `--provider codex`, `--input`,
+The sidecar prewarms the conversation purpose before accepting traffic and
+keeps one purpose-scoped Subscription Runtime worker alive. It uses the
+app-server pool and clean-thread prewarm; packaged `codex exec` remains the
+runtime's fallback. The audited launcher validates the same exact request
+profile and installation identity.
+
+The fallback bridge uses `--provider codex`, `--input`,
 `--format result-json`, `--timeout-ms`, `--state-root`, `--codex-auth-json`,
 `--provider-instance discord-meeting-summary-v3`, and the selected profile's
 exact `--model`. The child reasoning environment must match that same request

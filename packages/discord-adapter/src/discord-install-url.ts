@@ -12,6 +12,7 @@ export const meetingPlatformInstallPermissions = new PermissionsBitField([
 export const craigGatewayInstallPermissions = new PermissionsBitField([
   PermissionFlagsBits.ViewChannel,
   PermissionFlagsBits.Connect,
+  PermissionFlagsBits.Speak,
 ]).bitfield;
 
 export function createDiscordGuildInstallUrl(input: {

@@ -53,7 +53,10 @@ async function bootstrap(): Promise<void> {
   process.once("SIGTERM", shutdown);
 }
 
-void bootstrap().catch(() => {
-  process.stderr.write("Subscription runtime sidecar failed to start\n");
+void bootstrap().catch((error: unknown) => {
+  const reason = error instanceof Error
+    ? error.message.replaceAll(/[\r\n]+/gu, " ").slice(0, 1_000)
+    : "unknown startup failure";
+  process.stderr.write(`Subscription runtime sidecar failed to start: ${reason}\n`);
   process.exitCode = 1;
 });

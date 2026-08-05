@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import {
   fromGrpcTaskResponse,
   toGrpcTaskRequest,
-} from "../src/subscription-runtime-grpc-transport.js";
+} from "../src/adapters/outbound/subscription-runtime-grpc-transport.js";
 
 const runtimeRequest = buildSubscriptionRuntimeSummaryRequest(
   {
@@ -126,7 +126,7 @@ describe("subscription runtime gRPC transport mapping", () => {
         provider: "AGENT_RUNTIME_PROVIDER_CODEX",
         model: "gpt-5.6-sol",
         reasoningEffort: "medium",
-        runtimeEngine: "subscription-runtime-cli",
+        runtimeEngine: "subscription-runtime-app-server",
         runtimePackageVersion: "0.1.0-main.2",
         launcherSha256: "a".repeat(64),
         selectedOutputKind:
@@ -141,7 +141,9 @@ describe("subscription runtime gRPC transport mapping", () => {
       expect(result.executionAttestation.provider).toBe("codex");
     }
   });
+});
 
+describe("subscription runtime gRPC telemetry mapping", () => {
   it("maps complete real usage and never fabricates absent/default usage", () => {
     const baseResponse = {
       schemaVersion: 1,
@@ -162,7 +164,7 @@ describe("subscription runtime gRPC transport mapping", () => {
         provider: "AGENT_RUNTIME_PROVIDER_CODEX",
         model: "gpt-5.6-luna",
         reasoningEffort: "low",
-        runtimeEngine: "subscription-runtime-cli",
+        runtimeEngine: "subscription-runtime-app-server",
         runtimePackageVersion: "0.1.0-main.2",
         launcherSha256: "a".repeat(64),
         selectedOutputKind: "AGENT_RUNTIME_SELECTED_OUTPUT_KIND_STRUCTURED_OUTPUT",
@@ -360,7 +362,7 @@ function attestationFor(request: typeof incrementalRuntimeRequest) {
     provider: "AGENT_RUNTIME_PROVIDER_CODEX",
     model: "gpt-5.6-luna",
     reasoningEffort: "low",
-    runtimeEngine: "subscription-runtime-cli",
+    runtimeEngine: "subscription-runtime-app-server",
     runtimePackageVersion: "0.1.0-main.2",
     launcherSha256: "a".repeat(64),
     selectedOutputKind: "AGENT_RUNTIME_SELECTED_OUTPUT_KIND_STRUCTURED_OUTPUT",

@@ -1,3 +1,10 @@
+---
+id: ADR-0003
+status: accepted
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0003: Versioned engineering foundation
 
 Status: Accepted
@@ -13,9 +20,15 @@ Oxlint presets without owning product architecture.
 
 ## Decision
 
-Use exact `@agent-teams/engineering-foundation` version `0.5.0` as a development-
-only registry dependency. Enable both `workspace.dependency-declarations` and
-`architecture.source-dependencies` through strict YAML configuration.
+Use exact `@agent-teams/engineering-foundation` version `0.6.0` as a development-
+only registry dependency. Enable `workspace.dependency-declarations`,
+`architecture.source-dependencies`, `documentation.local-references`, and
+`quality.suppression-governance` through strict YAML configuration. The source
+graph uses schema v2 with explicit entrypoints for every boundary, and local
+documentation references use GitHub-compatible anchors under `architecture`,
+`docs`, and `infra`. Suppression governance starts without a grandfather
+allowlist: each future line-scoped exception needs accountable ownership, an
+accepted reason, and a bounded expiry.
 
 Adopt `repository.agent-workflow` with repository-owned changed, fast, and full
 checks so coding tools share one deterministic preflight contract. Keep the full
@@ -39,6 +52,8 @@ the foundation.
 
 - New source under a governed root fails when it is unclassified or imports an
   undeclared edge.
+- Unregistered, broad, stale, expired, or protected-rule suppressions fail the
+  Foundation gate.
 - Changed-file checks accelerate feedback but never replace the complete CI gate.
 - Maintainability budgets become blocking only after the repository passes them
   without permanent exclusions for existing code.

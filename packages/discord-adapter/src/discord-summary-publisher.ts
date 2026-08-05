@@ -1,3 +1,5 @@
+import type { SummaryPublicationEffectLedger } from "@discord-meeting/meeting-core";
+
 import type {
   DiscordProjectionClient,
   DiscordProjectionContainer,
@@ -8,11 +10,16 @@ import type {
   PublishDiscordSummary,
 } from "./discord-projection.js";
 import {
+  decodeDiscordExternalPublicationId,
   discordPublicationModeSchema,
+  encodeDiscordExternalPublicationId,
   publishDiscordSummarySchema,
   toDiscordProjectionBody,
 } from "./discord-projection.js";
-import { shouldReconcileDirectProjectionEditFailure } from "./discord-projection-error-classification.js";
+import {
+  isConfirmedMissingDiscordProjection,
+  shouldReconcileDirectProjectionEditFailure,
+} from "./discord-projection-error-classification.js";
 import { DiscordProjectionConfigurationError } from "./discordjs-projection-client.js";
 import {
   createDiscordThreadName,
@@ -49,6 +56,7 @@ export class DiscordSummaryPublisher {
   constructor(
     private readonly client: DiscordProjectionClient,
     private readonly lock: ProjectionLock,
+    private readonly effectLedger: SummaryPublicationEffectLedger,
     options: DiscordSummaryPublisherOptions = {},
   ) {
     this.publicationMode = discordPublicationModeSchema.parse(
@@ -66,6 +74,7 @@ export class DiscordSummaryPublisher {
     const lockKey = `${input.parentChannelId}:${marker}`;
 
     return this.lock.runExclusive(lockKey, async () => {
+      let allowReplacement = false;
       options.signal?.throwIfAborted();
       if (options.directEditOnly === true && input.currentReference === undefined) {
         throw new DiscordProjectionConfigurationError(
@@ -89,12 +98,13 @@ export class DiscordSummaryPublisher {
           if (!shouldReconcileDirectProjectionEditFailure(error)) {
             throw error;
           }
+          allowReplacement = isConfirmedMissingDiscordProjection(error);
           // The direct reference can be stale, deleted, or have an unknown remote
           // outcome. Reconcile the marker before creating anything new.
         }
       }
 
-      return this.reconcile(input, marker, legacyMarkers);
+      return this.reconcile(input, marker, legacyMarkers, allowReplacement);
     });
   }
 
@@ -102,7 +112,18 @@ export class DiscordSummaryPublisher {
     input: PublishDiscordSummary,
     marker: string,
     legacyMarkers: readonly string[],
+    allowReplacement: boolean,
   ): Promise<DiscordProjectionReference> {
+    const reservation = await this.effectLedger.reserveSummaryPublicationEffect({
+      projectionKey: input.projectionKey,
+      publicationTargetId: input.parentChannelId,
+    });
+    const durableReference = reservation.status === "completed"
+      ? decodeDiscordExternalPublicationId(reservation.externalReceipt)
+      : undefined;
+    if (reservation.status === "completed" && durableReference === undefined) {
+        throw new Error("Durable Discord publication receipt is invalid");
+    }
     const threadName = createDiscordThreadName(input.threadTitle);
     const threadRecoveryName = createDiscordThreadRecoveryName(marker);
     const existing = await this.locateProjection(
@@ -111,6 +132,15 @@ export class DiscordSummaryPublisher {
       legacyMarkers,
       threadRecoveryName,
     );
+    if (
+      existing === undefined
+      && (reservation.status === "pending"
+        || (reservation.status === "completed" && !allowReplacement))
+    ) {
+      throw new Error(
+        "Discord publication has an unresolved durable create reservation",
+      );
+    }
     const acquired: AcquiredProjection = existing === undefined
       ? await this.createOrRecoverContainer(
         input,
@@ -148,6 +178,21 @@ export class DiscordSummaryPublisher {
     }
 
     const reference = toReference(located, message.messageId);
+    const externalReceipt = encodeDiscordExternalPublicationId(reference);
+    if (reservation.status === "completed" && durableReference !== undefined) {
+      await this.effectLedger.replaceSummaryPublicationEffect({
+        expectedExternalReceipt: reservation.externalReceipt,
+        externalReceipt,
+        projectionKey: input.projectionKey,
+        publicationTargetId: input.parentChannelId,
+      });
+    } else {
+      await this.effectLedger.completeSummaryPublicationEffect({
+        externalReceipt,
+        projectionKey: input.projectionKey,
+        publicationTargetId: input.parentChannelId,
+      });
+    }
     if (!message.created) {
       await this.client.editMessage({
         reference,

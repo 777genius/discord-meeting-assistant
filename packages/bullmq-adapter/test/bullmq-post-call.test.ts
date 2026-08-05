@@ -4,7 +4,9 @@ import { describe, expect, it, vi } from "vitest";
 import {
   BullMqPostCallDeadLetterRecorder,
   BullMqPostCallEnqueuer,
+  CompositePostCallDeadLetterRecorder,
   NonRetryablePostCallError,
+  PostCallJobConflictError,
   POST_CALL_DEAD_LETTER_JOB_NAME,
   POST_CALL_JOB_NAME,
   RetryablePostCallError,
@@ -23,7 +25,29 @@ import {
   type PostCallJobPayload,
   type PostCallObservabilityEvent,
   type PostCallQueueClient,
+  type PostCallQueueJob,
 } from "../src/index.js";
+import { ActivePostCallJobs } from "../src/active-post-call-jobs.js";
+
+class CapturingPostCallJob implements PostCallQueueJob {
+  public readonly failedReason: string | undefined;
+
+  public constructor(
+    public readonly data: unknown,
+    public readonly id: string,
+    public readonly name: string = POST_CALL_JOB_NAME,
+    public state = "waiting",
+    public readonly attemptsMade = 0,
+    failedReason?: string,
+  ) {
+    this.failedReason = failedReason;
+  }
+
+  public async getState(): Promise<string> {
+    return this.state;
+  }
+
+}
 
 class CapturingPostCallQueue implements PostCallQueueClient {
   public readonly additions: {
@@ -31,14 +55,28 @@ class CapturingPostCallQueue implements PostCallQueueClient {
     readonly name: typeof POST_CALL_JOB_NAME;
     readonly options: JobsOptions;
   }[] = [];
+  public readonly jobs = new Map<string, CapturingPostCallJob>();
 
   public async add(
     name: typeof POST_CALL_JOB_NAME,
     data: PostCallJobPayload,
     options: JobsOptions,
-  ): Promise<{ readonly id?: string }> {
+  ): Promise<PostCallQueueJob> {
     this.additions.push({ data, name, options });
-    return options.jobId === undefined ? {} : { id: options.jobId };
+    if (typeof options.jobId !== "string") {
+      throw new Error("post-call job id is required");
+    }
+    const existing = this.jobs.get(options.jobId);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const job = new CapturingPostCallJob(data, options.jobId, name);
+    this.jobs.set(options.jobId, job);
+    return job;
+  }
+
+  public async getJob(jobId: string): Promise<PostCallQueueJob | undefined> {
+    return this.jobs.get(jobId);
   }
 }
 
@@ -134,7 +172,10 @@ describe("post-call queue contract", () => {
       schemaVersion: 1,
     });
 
-    expect(receipt.jobId).toBe(postCallJobId("meeting-queue-1"));
+    expect(receipt).toEqual({
+      jobId: postCallJobId("meeting-queue-1"),
+      status: "available",
+    });
     expect(queue.additions).toEqual([
       {
         data: { meetingId: "meeting-queue-1", schemaVersion: 1 },
@@ -143,8 +184,8 @@ describe("post-call queue contract", () => {
           attempts: 3,
           backoff: { delay: 250, type: "exponential" },
           jobId: receipt.jobId,
-          removeOnComplete: false,
-          removeOnFail: false,
+          removeOnComplete: { age: 86_400, count: 10_000 },
+          removeOnFail: { age: 604_800, count: 10_000 },
           sizeLimit: 4_096,
           stackTraceLimit: 5,
         },
@@ -152,7 +193,148 @@ describe("post-call queue contract", () => {
     ]);
     expect(JSON.stringify(events)).not.toContain("meeting-queue-1");
   });
+});
 
+describe("post-call queue reconciliation", () => {
+  it("does not retry a job that completes immediately after a missing-job add", async () => {
+    const jobId = postCallJobId("meeting-queue-1");
+    const getState = vi.fn(async () => {
+      throw new Error("newly added job state must not be inspected");
+    });
+    const job: PostCallQueueJob = {
+      attemptsMade: 0,
+      data: { meetingId: "meeting-queue-1", schemaVersion: 1 },
+      failedReason: undefined,
+      getState,
+      id: jobId,
+      name: POST_CALL_JOB_NAME,
+    };
+    const queue: PostCallQueueClient = {
+      add: async () => job,
+      getJob: async () => {},
+    };
+
+    await expect(
+      new BullMqPostCallEnqueuer(queue).enqueue({
+        meetingId: "meeting-queue-1",
+        schemaVersion: 1,
+      }),
+    ).resolves.toEqual({ jobId, status: "available" });
+
+    expect(getState).not.toHaveBeenCalled();
+  });
+
+  it.each(["waiting", "active", "delayed"])(
+    "leaves an existing %s job in place",
+    async (state) => {
+      const queue = new CapturingPostCallQueue();
+      const jobId = postCallJobId("meeting-queue-1");
+      const job = new CapturingPostCallJob(
+        { meetingId: "meeting-queue-1", schemaVersion: 1 },
+        jobId,
+        POST_CALL_JOB_NAME,
+        state,
+      );
+      queue.jobs.set(jobId, job);
+
+      await expect(
+        new BullMqPostCallEnqueuer(queue).enqueue({
+          meetingId: "meeting-queue-1",
+          schemaVersion: 1,
+        }),
+      ).resolves.toEqual({ jobId, status: "available" });
+
+      expect(queue.additions).toEqual([]);
+    },
+  );
+
+  it("returns a durable completion receipt without rerunning business work", async () => {
+      const queue = new CapturingPostCallQueue();
+      const jobId = postCallJobId("meeting-queue-1");
+      const job = new CapturingPostCallJob(
+        { meetingId: "meeting-queue-1", schemaVersion: 1 },
+        jobId,
+        POST_CALL_JOB_NAME,
+        "completed",
+      );
+      queue.jobs.set(jobId, job);
+
+      await expect(new BullMqPostCallEnqueuer(queue).enqueue({
+        meetingId: "meeting-queue-1",
+        schemaVersion: 1,
+      })).resolves.toEqual({ jobId, status: "completed" });
+
+      expect(queue.additions).toEqual([]);
+  });
+
+  it("reconstructs a controlled terminal failure without retrying it", async () => {
+    const queue = new CapturingPostCallQueue();
+    const jobId = postCallJobId("meeting-queue-1");
+    queue.jobs.set(jobId, new CapturingPostCallJob(
+      { meetingId: "meeting-queue-1", schemaVersion: 1 },
+      jobId,
+      POST_CALL_JOB_NAME,
+      "failed",
+      4,
+      "Post-call job reached its retry limit: UPSTREAM_UNAVAILABLE",
+    ));
+
+    await expect(new BullMqPostCallEnqueuer(queue).enqueue({
+      meetingId: "meeting-queue-1",
+      schemaVersion: 1,
+    })).resolves.toEqual({
+      deadLetter: {
+        attemptsMade: 4,
+        failureCode: "UPSTREAM_UNAVAILABLE",
+        meetingId: "meeting-queue-1",
+        retryable: true,
+        schemaVersion: 1,
+        sourceJobRef: postCallJobReference(jobId),
+      },
+      jobId,
+      status: "failed",
+    });
+  });
+
+  it("rejects a stable id that resolves to conflicting job data", async () => {
+    const queue = new CapturingPostCallQueue();
+    const jobId = postCallJobId("meeting-queue-1");
+    queue.jobs.set(
+      jobId,
+      new CapturingPostCallJob(
+        { meetingId: "different-meeting", schemaVersion: 1 },
+        jobId,
+      ),
+    );
+
+    await expect(
+      new BullMqPostCallEnqueuer(queue).enqueue({
+        meetingId: "meeting-queue-1",
+        schemaVersion: 1,
+      }),
+    ).rejects.toBeInstanceOf(PostCallJobConflictError);
+  });
+
+  it("rejects a stable lookup that returns a different job id", async () => {
+    const queue = new CapturingPostCallQueue();
+    queue.jobs.set(
+      postCallJobId("meeting-queue-1"),
+      new CapturingPostCallJob(
+        { meetingId: "meeting-queue-1", schemaVersion: 1 },
+        postCallJobId("meeting-queue-2"),
+      ),
+    );
+
+    await expect(
+      new BullMqPostCallEnqueuer(queue).enqueue({
+        meetingId: "meeting-queue-1",
+        schemaVersion: 1,
+      }),
+    ).rejects.toBeInstanceOf(PostCallJobConflictError);
+  });
+});
+
+describe("post-call dead-letter durability", () => {
   it("records a strict idempotent dead-letter job without raw errors", async () => {
     const queue = new CapturingDeadLetterQueue();
     const recorder = new BullMqPostCallDeadLetterRecorder(queue);
@@ -174,12 +356,64 @@ describe("post-call queue contract", () => {
       options: {
         attempts: 1,
         jobId: postCallDeadLetterJobId(sourceJobRef),
-        removeOnComplete: false,
-        removeOnFail: false,
+        removeOnComplete: { age: 2_592_000, count: 5_000 },
+        removeOnFail: { age: 2_592_000, count: 5_000 },
       },
     });
   });
 
+  it("retains a Redis DLQ replica failure after recording the database ledger", async () => {
+    const calls: string[] = [];
+    const redisFailure = new Error("redis DLQ unavailable");
+    const recorder = new CompositePostCallDeadLetterRecorder(
+      {
+        record: async () => {
+          calls.push("database");
+        },
+      },
+      {
+        record: async () => {
+          calls.push("redis");
+          throw redisFailure;
+        },
+      },
+    );
+    const active = new ActivePostCallJobs();
+    active.trackTerminalEffect(
+      recorder.record({
+        attemptsMade: 1,
+        failureCode: "UPSTREAM_UNAVAILABLE",
+        meetingId: "meeting-queue-1",
+        retryable: true,
+        schemaVersion: 1,
+        sourceJobRef: postCallJobReference(postCallJobId("meeting-queue-1")),
+      }),
+    );
+
+    await expect(active.waitForIdle()).rejects.toMatchObject({
+      errors: [redisFailure],
+      name: "AggregateError",
+    });
+    expect(() => {
+      active.assertTerminalEffectsSucceeded();
+    }).toThrow(
+      "post-call terminal durability effects failed",
+    );
+    expect(calls).toEqual(["database", "redis"]);
+    await expect(
+      drainActivePostCallJobsAndClose({
+        worker: {
+          cancelActivePostCallJobs: () => {},
+          close: async () => {},
+          pause: async () => {},
+          waitForActivePostCallJobs: () => active.waitForIdle(),
+        },
+      }),
+    ).rejects.toBeInstanceOf(AggregateError);
+  });
+});
+
+describe("post-call queue policy", () => {
   it("rejects retry and concurrency policies outside hard bounds", () => {
     expect(() => resolvePostCallQueuePolicy({ attempts: 9 })).toThrow(
       "attempts must be an integer from 1 to 8",

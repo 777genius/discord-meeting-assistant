@@ -53,3 +53,12 @@ export class CorruptMeetingSnapshotError extends Error {
     this.name = "CorruptMeetingSnapshotError";
   }
 }
+
+export class PostCallDeadLetterConflictError extends Error {
+  public readonly code = "POST_CALL_DEAD_LETTER_CONFLICT";
+
+  public constructor(sourceJobRef: string) {
+    super(`post-call dead-letter ${sourceJobRef} was replayed with different evidence`);
+    this.name = "PostCallDeadLetterConflictError";
+  }
+}

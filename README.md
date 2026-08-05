@@ -18,9 +18,10 @@ authoritative Craig multitrack recording
   -> idempotent Discord publication
 ```
 
-Live voice conversation is deliberately outside V1. Its future boundaries are
-preserved through consumer-owned ports; Pipecat, realtime STT, TTS, and RAG must
-not enter the meeting domain.
+Live voice conversation is an executable stateless vertical slice behind
+consumer-owned `ConversationRuntime` and `VoicePlaybackPort` boundaries. Pipecat,
+realtime STT, TTS providers, and Craig transport do not enter the meeting domain.
+Memory, RAG, and tools remain intentionally out of scope.
 
 ## Repository boundary
 

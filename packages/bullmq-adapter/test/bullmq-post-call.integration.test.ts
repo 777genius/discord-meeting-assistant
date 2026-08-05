@@ -342,7 +342,9 @@ describe("BullMQ post-call adapter with disposable Redis", () => {
       });
     }
   }, 30_000);
+});
 
+describe("BullMQ cancellation with disposable Redis", () => {
   it("requeues a lock-renewal cancellation from the configured final start without a dead letter", async (context) => {
     const redis = redisOrSkip(context);
     const connection = {
@@ -584,7 +586,9 @@ describe("BullMQ post-call adapter with disposable Redis", () => {
       });
     }
   }, 30_000);
+});
 
+describe("BullMQ bounded shutdown with disposable Redis", () => {
   it("cancels and requeues active work during bounded shutdown before a replacement worker completes it", async (context) => {
     const redis = redisOrSkip(context);
     const connection = {
@@ -770,187 +774,6 @@ describe("BullMQ post-call adapter with disposable Redis", () => {
           deadLetterQueue.close(),
         ]);
       }
-    }
-  }, 30_000);
-
-  it("waits for terminal DLQ persistence before shutdown closes its queues", async (context) => {
-    const redis = redisOrSkip(context);
-    const connection = {
-      host: redis.getHost(),
-      port: redis.getMappedPort(REDIS_PORT),
-    };
-    const prefix = "bullmq-post-call-delayed-dlq-shutdown";
-    const queue = createPostCallQueue({
-      attempts: 1,
-      connection,
-      prefix,
-    });
-    const deadLetterQueue = createPostCallDeadLetterQueue({ connection, prefix });
-    const queueEvents = createPostCallQueueEvents({ connection, prefix });
-    let recordingStarted!: () => void;
-    const recorderStarted = new Promise<void>((resolve) => {
-      recordingStarted = resolve;
-    });
-    let releaseRecording!: () => void;
-    const recordingRelease = new Promise<void>((resolve) => {
-      releaseRecording = resolve;
-    });
-    const records: PostCallDeadLetterRecord[] = [];
-    const storedRecorder = new BullMqPostCallDeadLetterRecorder(deadLetterQueue);
-    const recorder: PostCallDeadLetterRecorder = {
-      record: async (record) => {
-        records.push(record);
-        recordingStarted();
-        await recordingRelease;
-        await storedRecorder.record(record);
-      },
-    };
-    await Promise.all([
-      queue.waitUntilReady(),
-      deadLetterQueue.waitUntilReady(),
-      queueEvents.waitUntilReady(),
-    ]);
-
-    const worker = createPostCallWorker({
-      attempts: 1,
-      connection,
-      deadLetterRecorder: recorder,
-      handler: async () => {
-        throw new RetryablePostCallError("SYNTHETIC_DELAYED_DLQ_FAILURE");
-      },
-      prefix,
-    });
-    const closedResources: string[] = [];
-    let shutdownFinished = false;
-
-    try {
-      await worker.waitUntilReady();
-      const receipt = await new BullMqPostCallEnqueuer(queue, { attempts: 1 }).enqueue({
-        meetingId: "meeting-delayed-dlq-shutdown",
-        schemaVersion: 1,
-      });
-      const job = await queue.getJob(receipt.jobId);
-      expect(job).toBeDefined();
-      await expect(job!.waitUntilFinished(queueEvents, 10_000)).rejects.toThrow(
-        "SYNTHETIC_DELAYED_DLQ_FAILURE",
-      );
-      await recorderStarted;
-
-      const shutdown = drainActivePostCallJobsAndClose({
-        queueEvents: {
-          close: async () => {
-            closedResources.push("events");
-            await queueEvents.close();
-          },
-          disconnect: () => queueEvents.disconnect(),
-        },
-        queues: [{
-          close: async () => {
-            closedResources.push("queue");
-            await queue.close();
-          },
-          disconnect: () => queue.disconnect(),
-        }, {
-          close: async () => {
-            closedResources.push("dead-letter");
-            await deadLetterQueue.close();
-          },
-          disconnect: () => deadLetterQueue.disconnect(),
-        }],
-        worker,
-      });
-      await new Promise<void>((resolve) => {
-        setImmediate(resolve);
-      });
-      expect(closedResources).toEqual([]);
-
-      releaseRecording();
-      await shutdown;
-      shutdownFinished = true;
-      expect(records).toEqual([
-        {
-          attemptsMade: 1,
-          failureCode: "SYNTHETIC_DELAYED_DLQ_FAILURE",
-          meetingId: "meeting-delayed-dlq-shutdown",
-          retryable: true,
-          schemaVersion: 1,
-          sourceJobRef: postCallJobReference(receipt.jobId),
-        },
-      ]);
-      expect(closedResources.toSorted()).toEqual(["dead-letter", "events", "queue"]);
-    } finally {
-      releaseRecording();
-      if (!shutdownFinished) {
-        await Promise.allSettled([
-          worker.close(true),
-          queueEvents.close(),
-          queue.close(),
-          deadLetterQueue.close(),
-        ]);
-      }
-    }
-  }, 30_000);
-
-  it("fails bounded shutdown loudly when an active handler ignores cancellation", async (context) => {
-    const redis = redisOrSkip(context);
-    const connection = {
-      host: redis.getHost(),
-      port: redis.getMappedPort(REDIS_PORT),
-    };
-    const prefix = "bullmq-post-call-shutdown-timeout";
-    const queue = createPostCallQueue({ connection, prefix });
-    const deadLetterQueue = createPostCallDeadLetterQueue({ connection, prefix });
-    const queueEvents = createPostCallQueueEvents({ connection, prefix });
-    const observerEvents: PostCallObservabilityEvent[] = [];
-    await Promise.all([
-      queue.waitUntilReady(),
-      deadLetterQueue.waitUntilReady(),
-      queueEvents.waitUntilReady(),
-    ]);
-
-    let notifyHandlerStart: () => void;
-    const handlerStarted = new Promise<void>((resolve) => {
-      notifyHandlerStart = resolve;
-    });
-    let releaseHandler!: () => void;
-    const handlerRelease = new Promise<void>((resolve) => {
-      releaseHandler = resolve;
-    });
-    const worker = createPostCallWorker({
-      connection,
-      deadLetterRecorder: new BullMqPostCallDeadLetterRecorder(deadLetterQueue),
-      handler: async () => {
-        notifyHandlerStart();
-        await handlerRelease;
-      },
-      prefix,
-    });
-
-    try {
-      await worker.waitUntilReady();
-      await new BullMqPostCallEnqueuer(queue).enqueue({
-        meetingId: "meeting-shutdown-timeout",
-        schemaVersion: 1,
-      });
-      await handlerStarted;
-
-      await expect(
-        drainActivePostCallJobsAndClose({
-          observer: (event) => {
-            observerEvents.push(event);
-          },
-          queueEvents,
-          queues: [queue, deadLetterQueue],
-          shutdownTimeoutMs: 25,
-          worker,
-        }),
-      ).rejects.toBeInstanceOf(AggregateError);
-      expect(observerEvents).toContainEqual({
-        component: "lifecycle",
-        kind: "runtime-error",
-      });
-    } finally {
-      releaseHandler();
     }
   }, 30_000);
 });

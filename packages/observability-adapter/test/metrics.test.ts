@@ -7,6 +7,7 @@ describe("PrometheusMetrics", () => {
     const metrics = new PrometheusMetrics();
     metrics.recordIngress("accepted", "accepted");
     metrics.recordIngress("dropped", "over-capacity");
+    metrics.recordDerivedLiveFailure("lifecycle");
     metrics.setQueueState("waiting", 4);
     metrics.recordQueueRetry("timeout");
     metrics.recordDeadLetter("attempts-exhausted");
@@ -18,6 +19,9 @@ describe("PrometheusMetrics", () => {
     const exposition = metrics.render();
     expect(exposition).toContain(
       'discord_meeting_ingress_total{outcome="accepted",reason="accepted"} 1',
+    );
+    expect(exposition).toContain(
+      'discord_meeting_derived_live_failures_total{phase="lifecycle"} 1',
     );
     expect(exposition).toContain(
       'discord_meeting_queue_jobs{state="waiting"} 4',
@@ -70,6 +74,9 @@ describe("PrometheusMetrics", () => {
     expect(() => {
       metrics.recordIngress("accepted", "invalid");
     }).toThrow(/inconsistent/u);
+    expect(() => {
+      metrics.recordDerivedLiveFailure("recording-42" as never);
+    }).toThrow(/bounded label/u);
     expect(() => {
       metrics.observeStage("summary", "succeeded", Number.NaN);
     }).toThrow(/finite non-negative/u);

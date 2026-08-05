@@ -299,7 +299,9 @@ describe("SubscriptionRuntimeSummaryAdapter", () => {
       ok: false,
     });
   });
+});
 
+describe("SubscriptionRuntimeSummaryAdapter evidence validation", () => {
   it("rejects an open question that cites a nonexistent transcript turn", async () => {
     const transport = new FakeTransport((request) =>
       completedResult(request, {
@@ -441,7 +443,9 @@ describe("SubscriptionRuntimeSummaryAdapter", () => {
     );
     expect(transport.requests[1]?.task.prompt).toBe(transport.requests[0]?.task.prompt);
   });
+});
 
+describe("SubscriptionRuntimeSummaryAdapter runtime failures", () => {
   it("fails closed before repair when the runtime protocol is unsupported", async () => {
     const transport = new FakeTransport(() => ({
       failure: {

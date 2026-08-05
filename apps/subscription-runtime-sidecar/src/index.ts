@@ -1,4 +1,5 @@
 export { resolveSidecarSettings, type SidecarSettings } from "./settings.js";
+export { startPreparedSidecar } from "./sidecar-startup.js";
 export {
   SubscriptionRuntimeExecutor,
   buildChildEnvironment,
@@ -9,6 +10,11 @@ export {
   type FileInstallationInspectorOptions,
 } from "./installation-inspector.js";
 export { NodeProcessRunner } from "./node-process-runner.js";
+export {
+  PersistentCodexProcessRunner,
+  type PersistentCodexProcessRunnerOptions,
+  type PersistentCodexProfile,
+} from "./persistent-codex-process-runner.js";
 export {
   createGrpcHandlers,
   startGrpcServer,

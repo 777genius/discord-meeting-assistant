@@ -9,6 +9,19 @@ const MAX_BACKOFF_DELAY_MS = 60_000;
 const MAX_JOB_PAYLOAD_BYTES = 4_096;
 const STACK_TRACE_LINE_LIMIT = 5;
 
+export const POST_CALL_COMPLETED_RETENTION = Object.freeze({
+  age: 24 * 60 * 60,
+  count: 10_000,
+});
+export const POST_CALL_FAILED_RETENTION = Object.freeze({
+  age: 7 * 24 * 60 * 60,
+  count: 10_000,
+});
+export const POST_CALL_DEAD_LETTER_RETENTION = Object.freeze({
+  age: 30 * 24 * 60 * 60,
+  count: 5_000,
+});
+
 export interface PostCallQueuePolicy {
   readonly attempts: number;
   readonly backoffDelayMs: number;
@@ -80,8 +93,8 @@ export function postCallDefaultJobOptions(policy: PostCallQueuePolicy) {
       delay: policy.backoffDelayMs,
       type: "exponential" as const,
     }),
-    removeOnComplete: false as const,
-    removeOnFail: false as const,
+    removeOnComplete: POST_CALL_COMPLETED_RETENTION,
+    removeOnFail: POST_CALL_FAILED_RETENTION,
     sizeLimit: MAX_JOB_PAYLOAD_BYTES,
     stackTraceLimit: STACK_TRACE_LINE_LIMIT,
   });

@@ -12,16 +12,34 @@ services:
     volumes:
       - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/data/postgres:/var/lib/postgresql
       - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/secrets/postgres-password:/run/secrets/postgres-password:ro
-      - ../../infra/postgres/migrations/0001_create_meeting_core.sql:/docker-entrypoint-initdb.d/0001_create_meeting_core.sql:ro
-      - ../../infra/postgres/migrations/0002_create_post_call_outbox.sql:/docker-entrypoint-initdb.d/0002_create_post_call_outbox.sql:ro
-      - ../../infra/postgres/migrations/0003_create_live_meetings.sql:/docker-entrypoint-initdb.d/0003_create_live_meetings.sql:ro
-      - ../../infra/postgres/migrations/0004_create_guild_installations.sql:/docker-entrypoint-initdb.d/0004_create_guild_installations.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U meeting -d meeting"]
       interval: 5s
       timeout: 3s
       retries: 30
       start_period: 10s
+    networks: [meeting-internal]
+    security_opt: [no-new-privileges:true]
+
+  postgres-migrations:
+    build:
+      args:
+        SOURCE_REVISION: ${MEETING_PLATFORM_SOURCE_REVISION:?set immutable source revision}
+      context: ../..
+      dockerfile: apps/meeting-platform/Dockerfile
+    image: discord-meeting/meeting-platform:${MEETING_PLATFORM_SOURCE_REVISION:?set immutable source revision}
+    init: true
+    restart: "no"
+    read_only: true
+    entrypoint:
+      ["/app/apps/meeting-platform/node_modules/.bin/tsx", "/app/packages/postgres-adapter/src/run-migrations.ts"]
+    environment:
+      NODE_ENV: production
+      POSTGRES_URL_FILE: /run/secrets/postgres-url
+    volumes:
+      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/secrets/platform:/run/secrets:ro
+    depends_on:
+      postgres: { condition: service_healthy }
     networks: [meeting-internal]
     security_opt: [no-new-privileges:true]
 
@@ -134,6 +152,57 @@ services:
     pids_limit: 256
     stop_grace_period: 30s
 
+  pipecat-runtime:
+    profiles: [conversation]
+    build:
+      context: ../../apps/pipecat-runtime
+      dockerfile: Dockerfile
+    image: discord-meeting/pipecat-runtime:${MEETING_PLATFORM_SOURCE_REVISION:?set immutable source revision}
+    init: true
+    restart: unless-stopped
+    read_only: true
+    environment:
+      PIPECAT_RUNTIME_BEARER_TOKEN_FILE: /run/platform-secrets/conversation-runtime-token
+      PIPECAT_RUNTIME_BIND_HOST: 0.0.0.0
+      PIPECAT_RUNTIME_BIND_PORT: "50053"
+      PIPECAT_RUNTIME_ELEVENLABS_API_KEY_FILE: /run/pipecat-secrets/elevenlabs-api-key
+      PIPECAT_RUNTIME_ELEVENLABS_MODEL: ${PIPECAT_RUNTIME_ELEVENLABS_MODEL:-eleven_flash_v2_5}
+      PIPECAT_RUNTIME_ELEVENLABS_VOICE_ID: ${PIPECAT_RUNTIME_ELEVENLABS_VOICE_ID:-jqcCZkN6Knx8BJ5TBdYR}
+      PIPECAT_RUNTIME_ENVIRONMENT: production
+      PIPECAT_RUNTIME_OLLAMA_BASE_URL: ${PIPECAT_RUNTIME_OLLAMA_BASE_URL:-http://ollama:11434/v1}
+      PIPECAT_RUNTIME_OLLAMA_MODEL: ${PIPECAT_RUNTIME_OLLAMA_MODEL:-qwen3:8b}
+      PIPECAT_RUNTIME_PIPER_BASE_URL: ${PIPECAT_RUNTIME_PIPER_BASE_URL:-http://piper:5000}
+      PIPECAT_RUNTIME_PIPER_VOICE_ID: ${PIPECAT_RUNTIME_PIPER_VOICE_ID:-ru_RU-irina-medium}
+      PIPECAT_RUNTIME_PROFILE: ${PIPECAT_RUNTIME_PROFILE:-elevenlabs-multilingual}
+      PIPECAT_RUNTIME_PROFILE_ID: ${CONVERSATION_VOICE_PROFILE_ID:-elevenlabs-multilingual}
+      PIPECAT_RUNTIME_SUBSCRIPTION_RUNTIME_ADDRESS: subscription-runtime-sidecar:50052
+      PIPECAT_RUNTIME_SUBSCRIPTION_RUNTIME_SERVICE_TOKEN_FILE: /run/platform-secrets/runtime-service-token
+      PIPECAT_RUNTIME_SUBSCRIPTION_RUNTIME_TIMEOUT_MS: ${PIPECAT_RUNTIME_SUBSCRIPTION_RUNTIME_TIMEOUT_MS:-30000}
+    volumes:
+      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/secrets/platform:/run/platform-secrets:ro
+      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/secrets/pipecat:/run/pipecat-secrets:ro
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=128m,mode=0700,uid=10001,gid=10001
+    cap_drop: [ALL]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import socket; socket.create_connection(('127.0.0.1', 50053), 2).close()",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    networks: [meeting-internal, meeting-egress]
+    security_opt: [no-new-privileges:true]
+    cpus: ${PIPECAT_RUNTIME_CPUS:-2.0}
+    mem_limit: ${PIPECAT_RUNTIME_MEMORY_LIMIT:-2g}
+    pids_limit: 256
+    stop_grace_period: 30s
+
   meeting-platform:
     build:
       args:
@@ -141,11 +210,20 @@ services:
       context: ../..
       dockerfile: apps/meeting-platform/Dockerfile
     image: discord-meeting/meeting-platform:${MEETING_PLATFORM_SOURCE_REVISION:?set immutable source revision}
+    deploy:
+      replicas: 1
     init: true
     restart: unless-stopped
     read_only: true
     environment:
       BIND_ADDRESS: 0.0.0.0
+      CONVERSATION_ENABLED: ${CONVERSATION_ENABLED:-false}
+      CONVERSATION_RUNTIME_ADDRESS: pipecat-runtime:50053
+      CONVERSATION_RUNTIME_TOKEN_FILE: /run/secrets/conversation-runtime-token
+      CONVERSATION_SYSTEM_PROMPT: ${CONVERSATION_SYSTEM_PROMPT:-You are Botik, a concise voice assistant. Answer in the participant's language. When that language uses grammatical gender, refer to yourself using feminine forms. Never claim to remember earlier turns.}
+      CONVERSATION_THINKING_CUE_ROOT: /app/apps/meeting-platform/assets/thinking-cues
+      CONVERSATION_VOICE_ID: ${PIPECAT_RUNTIME_ELEVENLABS_VOICE_ID:-jqcCZkN6Knx8BJ5TBdYR}
+      CONVERSATION_VOICE_PROFILE_ID: ${CONVERSATION_VOICE_PROFILE_ID:-elevenlabs-multilingual}
       CRAIG_BEARER_TOKEN_FILE: /run/secrets/craig-bearer-token
       DISCORD_APPLICATION_ID: ${DISCORD_APPLICATION_ID:-1533224474609057793}
       DISCORD_CRAIG_APPLICATION_ID: ${DISCORD_CRAIG_APPLICATION_ID:-1533224474609057793}
@@ -154,6 +232,7 @@ services:
       DISCORD_PUBLICATION_MODE: ${DISCORD_PUBLICATION_MODE:-message}
       DISCORD_RESULTS_CHANNEL_ID: ${DISCORD_RESULTS_CHANNEL_ID:-}
       DISCORD_TOKEN_FILE: /run/secrets/discord-sut-token
+      LIVE_INGRESS_OWNER_MODE: singleton
       NODE_ENV: production
       PORT: "4310"
       POSTGRES_URL_FILE: /run/secrets/postgres-url
@@ -186,6 +265,7 @@ services:
     cap_drop: [ALL]
     depends_on:
       postgres: { condition: service_healthy }
+      postgres-migrations: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
       object-storage: { condition: service_started }
       subscription-runtime-sidecar: { condition: service_started }

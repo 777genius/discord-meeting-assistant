@@ -1,11 +1,11 @@
-BEGIN;
-
 CREATE TABLE IF NOT EXISTS meeting_core.post_call_outbox (
   meeting_id text PRIMARY KEY
     REFERENCES meeting_core.meetings(meeting_id) ON DELETE CASCADE,
-  schema_version smallint NOT NULL CHECK (schema_version = 1),
+  schema_version smallint NOT NULL,
   created_at timestamptz NOT NULL DEFAULT transaction_timestamp(),
-  dispatched_at timestamptz
+  dispatched_at timestamptz,
+  CONSTRAINT post_call_outbox_schema_version_is_supported
+    CHECK ((schema_version = 1) IS TRUE)
 );
 
 CREATE INDEX IF NOT EXISTS post_call_outbox_pending_idx
@@ -14,5 +14,3 @@ CREATE INDEX IF NOT EXISTS post_call_outbox_pending_idx
 
 COMMENT ON TABLE meeting_core.post_call_outbox IS
   'Transactional handoff from authoritative meeting persistence to the durable BullMQ queue.';
-
-COMMIT;

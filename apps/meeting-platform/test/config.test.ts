@@ -138,6 +138,118 @@ describe("platform configuration", () => {
     expect(defaults.voicetext?.liveMaxConcurrentSessions).toBe(3);
   });
 
+  it("loads provider-neutral live conversation config only from complete secret-backed input", async () => {
+    const config = await loadPlatformConfig(
+      {
+        ...environment,
+        CONVERSATION_ENABLED: "true",
+        CONVERSATION_RUNTIME_ADDRESS: "pipecat-runtime:50053",
+        CONVERSATION_RUNTIME_TOKEN_FILE: "/run/secrets/conversation-runtime",
+        CONVERSATION_THINKING_CUE_ROOT: "/test/thinking-cues",
+        CONVERSATION_VOICE_ID: "test-voice-id",
+        CONVERSATION_VOICE_PROFILE_ID: "deterministic-e2e-ru",
+        TRANSCRIPTION_PROVIDER: "voicetext",
+        VOICETEXT_SERVICE_TOKEN_FILE: "/run/secrets/voicetext",
+        VOICETEXT_WS_URL: "wss://api.voicetext.site/api/v1/transcribe/stream",
+      },
+      async (path) => `value-for:${path}`,
+    );
+
+    expect(config.conversation).toEqual({
+      runtimeAddress: "pipecat-runtime:50053",
+      systemPrompt:
+        "You are Botik, a concise voice assistant. Answer in the participant's language. When that language uses grammatical gender, refer to yourself using feminine forms. Never claim to remember earlier turns.",
+      thinkingCueRoot: "/test/thinking-cues",
+      voiceId: "test-voice-id",
+      voiceProfileId: "deterministic-e2e-ru",
+    });
+    expect(config.secrets.conversationRuntimeToken).toBe(
+      "value-for:/run/secrets/conversation-runtime",
+    );
+  });
+
+  it("defaults an absolute cue root only for enabled conversation", async () => {
+    const config = await loadPlatformConfig(
+      {
+        ...environment,
+        CONVERSATION_ENABLED: "true",
+        CONVERSATION_RUNTIME_ADDRESS: "pipecat-runtime:50053",
+        CONVERSATION_RUNTIME_TOKEN_FILE: "/run/secrets/conversation-runtime",
+        TRANSCRIPTION_PROVIDER: "voicetext",
+        VOICETEXT_SERVICE_TOKEN_FILE: "/run/secrets/voicetext",
+        VOICETEXT_WS_URL: "wss://api.voicetext.site/api/v1/transcribe/stream",
+      },
+      async () => "value",
+    );
+
+    expect(config.conversation?.thinkingCueRoot).toBe(
+      "/app/apps/meeting-platform/assets/thinking-cues",
+    );
+    await expect(
+      loadPlatformConfig(
+        {
+          ...environment,
+          CONVERSATION_ENABLED: "true",
+          CONVERSATION_RUNTIME_ADDRESS: "pipecat-runtime:50053",
+          CONVERSATION_RUNTIME_TOKEN_FILE: "/run/secrets/conversation-runtime",
+          CONVERSATION_THINKING_CUE_ROOT: "relative/cues",
+          TRANSCRIPTION_PROVIDER: "voicetext",
+          VOICETEXT_SERVICE_TOKEN_FILE: "/run/secrets/voicetext",
+          VOICETEXT_WS_URL: "wss://api.voicetext.site/api/v1/transcribe/stream",
+        },
+        async () => "value",
+      ),
+    ).rejects.toThrow();
+  });
+});
+
+describe("platform conversation and provider configuration", () => {
+  it("does not read a conversation secret while conversation is disabled", async () => {
+    const readPaths: string[] = [];
+    const config = await loadPlatformConfig(
+      {
+        ...environment,
+        CONVERSATION_ENABLED: "false",
+        CONVERSATION_RUNTIME_ADDRESS: "pipecat-runtime:50053",
+        CONVERSATION_RUNTIME_TOKEN_FILE: "/run/secrets/not-mounted",
+        CONVERSATION_THINKING_CUE_ROOT: "/unused/thinking-cues",
+        CONVERSATION_VOICE_PROFILE_ID: "local-russian",
+      },
+      async (path) => {
+        readPaths.push(path);
+        return `value-for:${path}`;
+      },
+    );
+
+    expect(config.conversation).toBeUndefined();
+    expect(config.secrets.conversationRuntimeToken).toBeUndefined();
+    expect(readPaths).not.toContain("/run/secrets/not-mounted");
+  });
+
+  it("fails closed on incomplete or production fake conversation profiles", async () => {
+    await expect(
+      loadPlatformConfig(
+        { ...environment, CONVERSATION_ENABLED: "true" },
+        async () => "value",
+      ),
+    ).rejects.toThrow();
+    await expect(
+      loadPlatformConfig(
+        {
+          ...environment,
+          CONVERSATION_ENABLED: "true",
+          CONVERSATION_RUNTIME_ADDRESS: "pipecat-runtime:50053",
+          CONVERSATION_RUNTIME_TOKEN_FILE: "/run/secrets/conversation-runtime",
+          NODE_ENV: "production",
+          TRANSCRIPTION_PROVIDER: "voicetext",
+          VOICETEXT_SERVICE_TOKEN_FILE: "/run/secrets/voicetext",
+          VOICETEXT_WS_URL: "wss://api.voicetext.site/api/v1/transcribe/stream",
+        },
+        async () => "value",
+      ),
+    ).rejects.toThrow("deterministic E2E voice profiles are forbidden in production");
+  });
+
   it("requires secure complete Voicetext configuration", async () => {
     await expect(
       loadPlatformConfig(

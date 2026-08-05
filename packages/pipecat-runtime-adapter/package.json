@@ -1,0 +1,30 @@
+{
+  "name": "@discord-meeting/pipecat-runtime-adapter",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "check": "pnpm run typecheck && pnpm run test",
+    "test": "vitest run",
+    "test:e2e": "vitest run --config e2e/vitest.config.ts",
+    "typecheck": "tsc --project tsconfig.json --noEmit --pretty false"
+  },
+  "dependencies": {
+    "@discord-meeting/conversation-runtime-contracts": "workspace:*",
+    "@discord-meeting/meeting-core": "workspace:*",
+    "@grpc/grpc-js": "catalog:",
+    "@grpc/proto-loader": "catalog:"
+  },
+  "devDependencies": {
+    "@discord-meeting/craig-gateway-contracts": "workspace:*",
+    "@discord-meeting/craig-playback-adapter": "workspace:*",
+    "@types/node": "catalog:",
+    "@types/ws": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "ws": "catalog:"
+  }
+}

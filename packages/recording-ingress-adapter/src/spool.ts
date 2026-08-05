@@ -11,6 +11,8 @@ import {
 } from "node:fs/promises";
 
 import { RecordingIngressError } from "./errors.js";
+import { SpoolOwnerLock } from "./spool-owner-lock.js";
+import { terminalReceiptTokens } from "./spool-terminal-receipts.js";
 
 type RecordingSpoolStatus = "active" | "aborted" | "finalizing";
 
@@ -57,6 +59,12 @@ export type AbortedRecordingState = RecordingSpoolState & {
 };
 
 export interface CompletedRecordingState {
+  /**
+   * Immutable identities of the bytes accepted before finalization. This is
+   * deliberately retained beside the public recording snapshot: the snapshot
+   * alone cannot prove whether a later upload is an exact retry.
+   */
+  readonly authoritativeTracks: readonly StoredAuthoritativeTrack[];
   readonly channelId: string;
   readonly events: readonly StoredLifecycleEvent[];
   readonly finalEventDigest: string;
@@ -72,7 +80,7 @@ export interface CompletedRecordingState {
     }[];
   };
   readonly recordingId: string;
-  readonly schemaVersion: 1;
+  readonly schemaVersion: 2;
 }
 
 let atomicWriteSequence = 0;
@@ -181,12 +189,17 @@ function parseCompletedRecordingState(input: unknown): CompletedRecordingState {
   const record = objectValue(input);
   const recording = objectValue(record.recording);
   if (
-    record.schemaVersion !== 1 ||
+    record.schemaVersion !== 2 ||
     !Array.isArray(record.events) ||
+    !Array.isArray(record.authoritativeTracks) ||
     !Array.isArray(recording.speakerAudio)
   ) {
-    throw new RecordingIngressError("corrupt-spool", "unsupported completion schema");
+    throw new RecordingIngressError(
+      "corrupt-spool",
+      "completion receipt does not contain immutable authoritative track identities",
+    );
   }
+  const authoritativeTracks = record.authoritativeTracks.map(parseStoredAuthoritativeTrack);
   const speakerAudio = recording.speakerAudio.map((value) => {
     const reference = objectValue(value);
     if (!Number.isSafeInteger(reference.timelineOffsetMs) || (reference.timelineOffsetMs as number) < 0) {
@@ -198,7 +211,13 @@ function parseCompletedRecordingState(input: unknown): CompletedRecordingState {
       timelineOffsetMs: reference.timelineOffsetMs as number,
     };
   });
+  const recordingId = stringValue(record.recordingId, "recordingId");
+  if (recording.recordingId !== recordingId) {
+    throw new RecordingIngressError("corrupt-spool", "completion recording identity does not match");
+  }
+  assertCompletedTrackIdentity(authoritativeTracks, speakerAudio);
   return {
+    authoritativeTracks,
     channelId: stringValue(record.channelId, "channelId"),
     events: record.events.map(parseStoredEvent),
     finalEventDigest: stringValue(record.finalEventDigest, "finalEventDigest"),
@@ -209,9 +228,52 @@ function parseCompletedRecordingState(input: unknown): CompletedRecordingState {
       recordingId: stringValue(recording.recordingId, "recording.recordingId"),
       speakerAudio,
     },
-    recordingId: stringValue(record.recordingId, "recordingId"),
-    schemaVersion: 1,
+    recordingId,
+    schemaVersion: 2,
   };
+}
+
+function assertCompletedTrackIdentity(
+  tracks: readonly StoredAuthoritativeTrack[],
+  speakerAudio: readonly {
+    readonly audioLocator: string;
+    readonly speakerId: string;
+    readonly timelineOffsetMs: number;
+  }[],
+): void {
+  if (tracks.length !== speakerAudio.length) {
+    throw new RecordingIngressError(
+      "corrupt-spool",
+      "completion receipt track identity does not match the recording snapshot",
+    );
+  }
+  const referencesBySpeaker = new Map<string, (typeof speakerAudio)[number]>();
+  const uploadIds = new Set<string>();
+  const trackNumbers = new Set<number>();
+  for (const reference of speakerAudio) {
+    if (referencesBySpeaker.has(reference.speakerId)) {
+      throw new RecordingIngressError("corrupt-spool", "completion receipt repeats a speaker");
+    }
+    referencesBySpeaker.set(reference.speakerId, reference);
+  }
+  for (const track of tracks) {
+    if (uploadIds.has(track.uploadId) || trackNumbers.has(track.trackNumber)) {
+      throw new RecordingIngressError("corrupt-spool", "completion receipt repeats a track identity");
+    }
+    uploadIds.add(track.uploadId);
+    trackNumbers.add(track.trackNumber);
+    const reference = referencesBySpeaker.get(track.speakerId);
+    if (
+      reference === undefined ||
+      reference.audioLocator !== track.audioLocator ||
+      reference.timelineOffsetMs !== track.timelineOffsetMs
+    ) {
+      throw new RecordingIngressError(
+        "corrupt-spool",
+        "completion receipt track identity does not match the recording snapshot",
+      );
+    }
+  }
 }
 
 export function spoolToken(namespace: string, identifier: string): string {
@@ -251,6 +313,7 @@ export class DurableSpool {
   public readonly completedRoot: string;
   public readonly root: string;
   #initialization: Promise<void> | undefined;
+  readonly #ownerLock: SpoolOwnerLock;
 
   public constructor(root: string) {
     if (!isAbsolute(root)) {
@@ -263,6 +326,7 @@ export class DurableSpool {
     this.abortedRoot = join(this.root, "aborted-v1");
     this.activeRoot = join(this.root, "active-v1");
     this.completedRoot = join(this.root, "completed-v1");
+    this.#ownerLock = new SpoolOwnerLock(this.root);
   }
 
   async #initialize(): Promise<void> {
@@ -332,21 +396,27 @@ export class DurableSpool {
 
   public async activeRecordingCount(): Promise<number> {
     await this.ready();
-    const [activeEntries, abortedEntries] = await Promise.all([
+    const [activeEntries, abortedTokens, completedTokens] = await Promise.all([
       readdir(this.activeRoot, { withFileTypes: true }),
-      readdir(this.abortedRoot, { withFileTypes: true }),
+      terminalReceiptTokens(this.abortedRoot, parseAbortedRecordingState, (recordingId) => spoolToken("recording-v1", recordingId)),
+      terminalReceiptTokens(this.completedRoot, parseCompletedRecordingState, (recordingId) => spoolToken("recording-v1", recordingId)),
     ]);
-    const abortedTokens = new Set(
-      abortedEntries
-        .filter((entry) => entry.isFile() && /^[a-f\d]{64}\.json$/u.test(entry.name))
-        .map((entry) => entry.name.slice(0, -".json".length)),
-    );
+    const terminalTokens = new Set([...abortedTokens, ...completedTokens]);
     return activeEntries.filter(
       (entry) =>
         entry.isDirectory() &&
         /^[a-f\d]{64}$/u.test(entry.name) &&
-        !abortedTokens.has(entry.name),
+        !terminalTokens.has(entry.name),
     ).length;
+  }
+
+  public async claimExclusiveOwnership(): Promise<void> {
+    await this.ready();
+    await this.#ownerLock.claim();
+  }
+
+  public async releaseExclusiveOwnership(): Promise<void> {
+    await this.#ownerLock.release();
   }
 
   public async readRecording(recordingId: string): Promise<RecordingSpoolState | undefined> {

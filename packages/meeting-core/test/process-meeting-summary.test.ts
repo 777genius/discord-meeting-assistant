@@ -353,7 +353,9 @@ describe("ProcessMeetingSummary", () => {
       status: "succeeded",
     });
   });
+});
 
+describe("ProcessMeetingSummary failure recovery", () => {
   it("rejects invalid summary evidence as terminal and never calls publishing", async () => {
     const meetings = new MemoryMeetingRepository(initialSnapshot());
     const transcriber = new SequenceTranscriber([success(generatedTranscript)]);

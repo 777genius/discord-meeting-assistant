@@ -204,7 +204,9 @@ describe("SpeachesFinalTranscriptionAdapter", () => {
     await expect(pending).resolves.toMatchObject({ ok: true });
     expect(maximumActive).toBe(2);
   });
+});
 
+describe("SpeachesFinalTranscriptionAdapter failures", () => {
   it("cancels in-flight provider work through AbortSignal", async () => {
     const reader = new MemoryArtifactReader({
       "recording://speaker-a": artifact("speaker-a.wav", 0, [1]),

@@ -1,0 +1,57 @@
+[build-system]
+requires = ["hatchling==1.31.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "discord-meeting-pipecat-runtime"
+version = "0.1.0"
+description = "Provider-neutral Pipecat conversation runtime sidecar."
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+  "aiohttp==3.14.3",
+  "grpcio==1.83.0",
+  "nltk==3.10.0",
+  "numpy==2.4.6",
+  "pipecat-ai==1.7.0",
+  "protobuf==6.33.6",
+  "soxr==1.0.0",
+]
+
+[dependency-groups]
+dev = [
+  "grpcio-tools==1.81.0",
+  "import-linter==2.13",
+  "pyright==1.1.411",
+  "pytest==9.1.1",
+  "pytest-asyncio==1.4.0",
+  "ruff==0.16.1",
+]
+
+[project.scripts]
+pipecat-runtime = "pipecat_runtime.entrypoint:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pipecat_runtime"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/pipecat_runtime", "tools", "README.md", "pyproject.toml"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+exclude = [
+  "src/pipecat_runtime/adapters/grpc/generated",
+  "src/pipecat_runtime/adapters/subscription_runtime/generated",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC", "PT", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101"]

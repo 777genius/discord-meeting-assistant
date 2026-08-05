@@ -104,33 +104,80 @@ function sanitizeError(
   return Object.freeze(serialized);
 }
 
+type PrimitiveSanitization =
+  | { readonly handled: false }
+  | { readonly handled: true; readonly value: unknown };
+
+function sanitizePrimitive(value: unknown): PrimitiveSanitization {
+  if (value === null || typeof value === "boolean" || typeof value === "number") {
+    return { handled: true, value };
+  }
+  if (typeof value === "string") {
+    return { handled: true, value: boundedString(value) };
+  }
+  if (typeof value === "bigint") {
+    return { handled: true, value: value.toString() };
+  }
+  if (typeof value === "undefined") {
+    return { handled: true, value: undefined };
+  }
+  if (typeof value === "function" || typeof value === "symbol") {
+    return { handled: true, value: UNAVAILABLE_VALUE };
+  }
+  return { handled: false };
+}
+
+function sanitizeArray(
+  value: readonly unknown[],
+  environment: LogEnvironment,
+  seen: WeakSet<object>,
+  depth: number,
+): readonly unknown[] {
+  const items = value
+    .slice(0, MAX_ARRAY_ITEMS)
+    .map((item) => sanitizeValue(item, environment, seen, depth + 1));
+  if (value.length > MAX_ARRAY_ITEMS) {
+    items.push(TRUNCATED_VALUE);
+  }
+  return Object.freeze(items);
+}
+
+function sanitizeObject(
+  value: object,
+  environment: LogEnvironment,
+  seen: WeakSet<object>,
+  depth: number,
+): Readonly<Record<string, unknown>> {
+  const output: Record<string, unknown> = {};
+  const allKeys = Object.keys(value).toSorted();
+  for (const key of allKeys.slice(0, MAX_OBJECT_KEYS)) {
+    if (isSensitiveKey(key)) {
+      output[key] = REDACTED_VALUE;
+      continue;
+    }
+    try {
+      output[key] = sanitizeValue(Reflect.get(value, key), environment, seen, depth + 1);
+    } catch {
+      output[key] = UNAVAILABLE_VALUE;
+    }
+  }
+  if (allKeys.length > MAX_OBJECT_KEYS) {
+    output.truncated = true;
+  }
+  return Object.freeze(output);
+}
+
 function sanitizeValue(
   value: unknown,
   environment: LogEnvironment,
   seen: WeakSet<object>,
   depth: number,
 ): unknown {
-  if (
-    value === null ||
-    typeof value === "boolean" ||
-    typeof value === "number"
-  ) {
-    return value;
+  const primitive = sanitizePrimitive(value);
+  if (primitive.handled) {
+    return primitive.value;
   }
-
-  if (typeof value === "string") {
-    return boundedString(value);
-  }
-
-  if (typeof value === "bigint") {
-    return value.toString();
-  }
-
-  if (typeof value === "undefined") {
-    return undefined;
-  }
-
-  if (typeof value === "function" || typeof value === "symbol") {
+  if (typeof value !== "object" || value === null) {
     return UNAVAILABLE_VALUE;
   }
 
@@ -156,39 +203,9 @@ function sanitizeValue(
   seen.add(value);
 
   if (Array.isArray(value)) {
-    const items = value
-      .slice(0, MAX_ARRAY_ITEMS)
-      .map((item) => sanitizeValue(item, environment, seen, depth + 1));
-    if (value.length > MAX_ARRAY_ITEMS) {
-      items.push(TRUNCATED_VALUE);
-    }
-    return Object.freeze(items);
+    return sanitizeArray(value, environment, seen, depth);
   }
-
-  const output: Record<string, unknown> = {};
-  const keys = Object.keys(value).toSorted().slice(0, MAX_OBJECT_KEYS);
-  for (const key of keys) {
-    if (isSensitiveKey(key)) {
-      output[key] = REDACTED_VALUE;
-      continue;
-    }
-
-    try {
-      output[key] = sanitizeValue(
-        Reflect.get(value, key),
-        environment,
-        seen,
-        depth + 1,
-      );
-    } catch {
-      output[key] = UNAVAILABLE_VALUE;
-    }
-  }
-  if (Object.keys(value).length > MAX_OBJECT_KEYS) {
-    output.truncated = true;
-  }
-
-  return Object.freeze(output);
+  return sanitizeObject(value, environment, seen, depth);
 }
 
 export type LogEnvironment = "development" | "production" | "test";

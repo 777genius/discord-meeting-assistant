@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { GuildPublicationTargetResolver } from "../src/guild-publication-target-resolver.js";
+import { GuildPublicationTargetResolver } from "../src/application/guild-publication-target-resolver.js";
 
 const request = {
   guildId: "11111111111111111",

@@ -1,8 +1,18 @@
 export {
+  type ProviderConversationAnswer,
+  providerConversationAnswerJsonSchema,
+  providerConversationAnswerSchema,
+} from "./provider-conversation-schema.js";
+export {
   type AttestationExpectation,
   verifySubscriptionRuntimeAttestation,
 } from "./attestation.js";
 export { canonicalJsonSha256 } from "./canonical-json.js";
+export {
+  buildSubscriptionRuntimeConversationRequest,
+  type SubscriptionRuntimeConversationRequest,
+  type SubscriptionRuntimeConversationRequestOptions,
+} from "./conversation-request-mapper.js";
 export {
   RuntimeTaskFailureError,
   SubscriptionRuntimeAdapterError,
@@ -48,14 +58,23 @@ export {
 } from "./subscription-runtime-summary-adapter.js";
 export {
   auditedSubscriptionRuntimePackageVersion,
+  admittedSubscriptionRuntimeExecutionProfiles,
   admittedSummaryExecutionProfiles,
+  conversationAnswerExecutionProfile,
+  conversationAnswerOutputSchemaName,
+  conversationAnswerPolicyVersion,
   finalSummaryExecutionProfile,
   incrementalMeetingSummaryOutputSchemaName,
   incrementalMeetingSummaryPolicyVersion,
   incrementalSummaryExecutionProfile,
   meetingSummaryOutputSchemaName,
   meetingSummaryPolicyVersion,
+  subscriptionRuntimeCliEngine,
   subscriptionRuntimeEngine,
+  subscriptionRuntimeConversationMaxOutputTokens,
+  subscriptionRuntimeConversationModel,
+  subscriptionRuntimeConversationPurpose,
+  subscriptionRuntimeConversationReasoningEffort,
   subscriptionRuntimeIncrementalMaxOutputTokens,
   subscriptionRuntimeIncrementalModel,
   subscriptionRuntimeIncrementalPurpose,
@@ -78,6 +97,7 @@ export {
   type SubscriptionRuntimeFailureCode,
   type SubscriptionRuntimeHealthResult,
   type SubscriptionRuntimeHealthStatus,
+  type SubscriptionRuntimeEngine,
   type SubscriptionRuntimeTaskControls,
   type SubscriptionRuntimeTaskResult,
   type SubscriptionRuntimeTelemetry,

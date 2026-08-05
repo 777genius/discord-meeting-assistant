@@ -1,8 +1,11 @@
 import {
   canonicalJsonSha256,
+  conversationAnswerOutputSchemaName,
+  conversationAnswerPolicyVersion,
   incrementalMeetingSummaryOutputSchemaName,
   meetingSummaryOutputSchemaName,
   meetingSummaryPolicyVersion,
+  providerConversationAnswerJsonSchema,
   providerIncrementalMeetingSummaryJsonSchema,
   providerMeetingSummaryJsonSchema,
 } from "@discord-meeting/subscription-runtime-adapter";
@@ -11,6 +14,7 @@ import { describe, expect, it } from "vitest";
 import { reconstructCanonicalRequest } from "../src/policy.js";
 import {
   canonicalRequest,
+  conversationCanonicalRequest,
   grpcRequest,
   incrementalCanonicalRequest,
   isolatedCwd,
@@ -63,6 +67,39 @@ describe("subscription runtime request policy", () => {
     });
     expect(reconstructed.task.controls.outputSchema).toEqual(
       providerIncrementalMeetingSummaryJsonSchema,
+    );
+  });
+
+  it("reconstructs only the exact conversation Luna low 512-token profile", () => {
+    const reconstructed = reconstructCanonicalRequest(
+      grpcRequest(conversationCanonicalRequest),
+      options,
+    );
+
+    expect(reconstructed).toEqual(conversationCanonicalRequest);
+    expect(canonicalJsonSha256(reconstructed)).toBe(
+      canonicalJsonSha256(conversationCanonicalRequest),
+    );
+    expect(reconstructed.context).toMatchObject({
+      metadata: {
+        locale: "auto",
+        policyVersion: conversationAnswerPolicyVersion,
+        recordingId: "recording-1",
+        turnId: "turn-3",
+      },
+      purpose: "discord_meeting.conversation.answer",
+    });
+    expect(reconstructed.task.controls).toMatchObject({
+      allowedTools: [],
+      disableTools: true,
+      executionProfile: "stateless-completion",
+      maxOutputTokens: 512,
+      model: "gpt-5.6-luna",
+      outputSchemaName: conversationAnswerOutputSchemaName,
+      reasoningEffort: "low",
+    });
+    expect(reconstructed.task.controls.outputSchema).toEqual(
+      providerConversationAnswerJsonSchema,
     );
   });
 
@@ -136,6 +173,34 @@ describe("subscription runtime request policy", () => {
       {
         ...final,
         controlsJson: JSON.stringify(finalControls),
+        outputSchemaJson: JSON.stringify(providerIncrementalMeetingSummaryJsonSchema),
+      },
+      options,
+    )).toThrow("output schema");
+  });
+
+  it("rejects conversation profile and schema swaps before execution", () => {
+    const conversation = grpcRequest(conversationCanonicalRequest);
+    const profileControls = JSON.parse(String(conversation.controlsJson)) as Record<
+      string,
+      unknown
+    >;
+    profileControls.model = "gpt-5.6-sol";
+    expect(() => reconstructCanonicalRequest(
+      { ...conversation, controlsJson: JSON.stringify(profileControls) },
+      options,
+    )).toThrow("profile");
+
+    const schemaControls = JSON.parse(String(conversation.controlsJson)) as Record<
+      string,
+      unknown
+    >;
+    schemaControls.outputSchema = providerIncrementalMeetingSummaryJsonSchema;
+    schemaControls.outputSchemaName = incrementalMeetingSummaryOutputSchemaName;
+    expect(() => reconstructCanonicalRequest(
+      {
+        ...conversation,
+        controlsJson: JSON.stringify(schemaControls),
         outputSchemaJson: JSON.stringify(providerIncrementalMeetingSummaryJsonSchema),
       },
       options,

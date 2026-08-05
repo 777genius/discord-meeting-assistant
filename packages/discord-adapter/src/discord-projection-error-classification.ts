@@ -30,6 +30,11 @@ export function shouldReconcileDirectProjectionEditFailure(error: unknown): bool
   return true;
 }
 
+export function isConfirmedMissingDiscordProjection(error: unknown): boolean {
+  return providerErrorCode(error) === unknownChannel
+    || providerErrorCode(error) === unknownMessage;
+}
+
 function isReconcilableDiscordEntity(error: unknown): boolean {
   if (error instanceof DiscordAPIError) {
     return error.code === unknownChannel ||
@@ -41,6 +46,12 @@ function isReconcilableDiscordEntity(error: unknown): boolean {
   }
   const { code } = error;
   return code === unknownChannel || code === unknownMessage || code === threadArchived;
+}
+
+function providerErrorCode(error: unknown): unknown {
+  return typeof error === "object" && error !== null && "code" in error
+    ? error.code
+    : undefined;
 }
 
 function hasKnownProviderStatus(error: unknown): boolean {

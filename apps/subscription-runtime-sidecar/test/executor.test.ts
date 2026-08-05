@@ -4,6 +4,8 @@ import { join } from "node:path";
 
 import {
   canonicalJsonSha256,
+  subscriptionRuntimeEngine,
+  subscriptionRuntimeConversationMaxOutputTokens,
   subscriptionRuntimeIncrementalMaxOutputTokens,
   subscriptionRuntimeSummaryMaxOutputTokens,
   type JsonObject,
@@ -17,26 +19,29 @@ import {
 } from "../src/subscription-runtime-executor.js";
 import type {
   InstallationIdentity,
+  ProcessRunnerPort,
   ProcessRunRequest,
   ProcessRunResult,
 } from "../src/types.js";
 import {
   canonicalRequest,
+  conversationCanonicalRequest,
+  conversationStructuredOutput,
   incrementalCanonicalRequest,
   isolatedCwd,
   structuredOutput,
 } from "./fixture.js";
 
-describe("SubscriptionRuntimeExecutor", () => {
-  let root: string | undefined;
+let root: string | undefined;
 
-  afterEach(async () => {
-    if (root !== undefined) {
-      await rm(root, { force: true, recursive: true });
-    }
-    root = undefined;
-  });
+afterEach(async () => {
+  if (root !== undefined) {
+    await rm(root, { force: true, recursive: true });
+  }
+  root = undefined;
+});
 
+describe("SubscriptionRuntimeExecutor execution profiles and output", () => {
   it("executes the exact JSON bridge request and attests request/output hashes", async () => {
     root = await mkdtemp(join(tmpdir(), "sidecar-executor-test-"));
     const keyFile = join(root, "local-encryption-key");
@@ -79,6 +84,7 @@ describe("SubscriptionRuntimeExecutor", () => {
       selectedOutputSha256: canonicalJsonSha256(structuredOutput),
       model: "gpt-5.6-sol",
       reasoningEffort: "medium",
+      runtimeEngine: "subscription-runtime-app-server",
       runtimePackageVersion: "0.1.0-main.2",
     });
     expect(capturedRequest).toEqual(canonicalRequest);
@@ -148,6 +154,51 @@ describe("SubscriptionRuntimeExecutor", () => {
     expect(processRequest?.env.AGENT_RUNTIME_REASONING_EFFORT).toBe("low");
   });
 
+  it("selects Luna low and the 512-token answer profile for conversation", async () => {
+    root = await mkdtemp(join(tmpdir(), "sidecar-executor-test-"));
+    const keyFile = join(root, "local-encryption-key");
+    await writeFile(keyFile, "private-test-key\n", { mode: 0o600 });
+    let processRequest: ProcessRunRequest | undefined;
+    const executor = new SubscriptionRuntimeExecutor(
+      options(keyFile, {
+        processRunner: {
+          run: async (request) => {
+            processRequest = request;
+            return completedProcess(
+              {
+                usage: {
+                  cacheWriteInputTokens: 0,
+                  cachedInputTokens: 0,
+                  inputTokens: 100,
+                  outputTokens: 128,
+                  reasoningOutputTokens: 0,
+                  totalTokens: 228,
+                },
+              },
+              conversationStructuredOutput,
+            );
+          },
+        },
+      }),
+    );
+
+    await expect(executor.execute(conversationCanonicalRequest)).resolves
+      .toMatchObject({
+        executionAttestation: {
+          model: "gpt-5.6-luna",
+          purpose: "discord_meeting.conversation.answer",
+          reasoningEffort: "low",
+        },
+        status: "completed",
+        structuredOutput: conversationStructuredOutput,
+      });
+    expect(processRequest?.args).toEqual(expect.arrayContaining([
+      "--model",
+      "gpt-5.6-luna",
+    ]));
+    expect(processRequest?.env.AGENT_RUNTIME_REASONING_EFFORT).toBe("low");
+  });
+
   it("applies the compact schema only to the incremental purpose", async () => {
     root = await mkdtemp(join(tmpdir(), "sidecar-executor-test-"));
     const keyFile = join(root, "local-encryption-key");
@@ -187,9 +238,12 @@ describe("SubscriptionRuntimeExecutor", () => {
       .toMatchObject({
         failure: { code: "provider_output_invalid", retryable: false },
         status: "failed",
-      });
+    });
   });
 
+});
+
+describe("SubscriptionRuntimeExecutor telemetry", () => {
   it("preserves Codex JSONL partial telemetry without fabricating cache-write input", async () => {
     root = await mkdtemp(join(tmpdir(), "sidecar-executor-test-"));
     const keyFile = join(root, "local-encryption-key");
@@ -256,6 +310,11 @@ describe("SubscriptionRuntimeExecutor", () => {
       "incremental summary",
       incrementalCanonicalRequest,
       subscriptionRuntimeIncrementalMaxOutputTokens,
+    ],
+    [
+      "conversation answer",
+      conversationCanonicalRequest,
+      subscriptionRuntimeConversationMaxOutputTokens,
     ],
   ])("rejects a completed %s that exceeds its admitted output budget", async (
     _label,
@@ -389,6 +448,9 @@ describe("SubscriptionRuntimeExecutor", () => {
     });
   });
 
+});
+
+describe("SubscriptionRuntimeExecutor safety and failures", () => {
   it("rejects policy conflicts before inspecting or spawning", async () => {
     root = await mkdtemp(join(tmpdir(), "sidecar-executor-test-"));
     const keyFile = join(root, "key");
@@ -480,6 +542,71 @@ describe("SubscriptionRuntimeExecutor", () => {
     });
   });
 
+  it.each([
+    ["is blank", { answer: " " }],
+    ["exceeds 2,000 characters", { answer: "x".repeat(2_001) }],
+    ["has an unknown field", { ...conversationStructuredOutput, extra: true }],
+  ] as const)("rejects a conversation answer that %s", async (_label, output) => {
+    root = await mkdtemp(join(tmpdir(), "sidecar-executor-test-"));
+    const keyFile = join(root, "key");
+    await writeFile(keyFile, "key", { mode: 0o600 });
+    const executor = new SubscriptionRuntimeExecutor(
+      options(keyFile, {
+        processRunner: {
+          run: async () => completedProcess(
+            {
+              usage: {
+                cacheWriteInputTokens: 0,
+                cachedInputTokens: 0,
+                inputTokens: 100,
+                outputTokens: 20,
+                reasoningOutputTokens: 0,
+                totalTokens: 120,
+              },
+            },
+            output,
+          ),
+        },
+      }),
+    );
+
+    await expect(executor.execute(conversationCanonicalRequest)).resolves
+      .toMatchObject({
+        failure: { code: "provider_output_invalid", retryable: false },
+        status: "failed",
+      });
+  });
+
+  it("propagates cancellation to the process runner and returns task_cancelled", async () => {
+    root = await mkdtemp(join(tmpdir(), "sidecar-executor-test-"));
+    const keyFile = join(root, "key");
+    await writeFile(keyFile, "key", { mode: 0o600 });
+    const controller = new AbortController();
+    let receivedSignal: AbortSignal | undefined;
+    const executor = new SubscriptionRuntimeExecutor(
+      options(keyFile, {
+        processRunner: {
+          run: async (request) => {
+            receivedSignal = request.signal;
+            controller.abort();
+            return {
+              ...completedProcess(undefined, conversationStructuredOutput),
+              cancelled: true,
+            };
+          },
+        },
+      }),
+    );
+
+    await expect(executor.execute(conversationCanonicalRequest, controller.signal))
+      .resolves.toMatchObject({
+        failure: { code: "task_cancelled" },
+        status: "failed",
+      });
+    expect(receivedSignal).toBe(controller.signal);
+    expect(receivedSignal?.aborted).toBe(true);
+  });
+
   it("rejects structured output that does not satisfy the admitted schema", async () => {
     root = await mkdtemp(join(tmpdir(), "sidecar-executor-test-"));
     const keyFile = join(root, "key");
@@ -546,10 +673,19 @@ describe("subscription runtime child environment", () => {
   });
 });
 
+type ExecutorTestOverrides = Omit<
+  Partial<SubscriptionRuntimeExecutorOptions>,
+  "processRunner"
+> & {
+  readonly processRunner?: Pick<ProcessRunnerPort, "run"> &
+    Partial<Pick<ProcessRunnerPort, "runtimeEngine">>;
+};
+
 function options(
   keyFile: string,
-  override: Partial<SubscriptionRuntimeExecutorOptions> = {},
+  override: ExecutorTestOverrides = {},
 ): SubscriptionRuntimeExecutorOptions {
+  const { processRunner, ...otherOverrides } = override;
   return {
     authJsonPath: "/private/auth.json",
     childSourceEnvironment: {},
@@ -561,10 +697,20 @@ function options(
     maxStderrBytes: 1_024,
     maxStdoutBytes: 2 * 1_024 * 1_024,
     maxTaskTimeoutMs: 600_000,
-    processRunner: { run: async () => completedProcess() },
+    processRunner:
+      processRunner === undefined
+        ? {
+            run: async () => completedProcess(),
+            runtimeEngine: subscriptionRuntimeEngine,
+          }
+        : {
+            runtimeEngine:
+              processRunner.runtimeEngine ?? subscriptionRuntimeEngine,
+            run: processRunner.run,
+          },
     readinessInspector: { inspect: async () => {} },
     stateRoot: "/private/state",
-    ...override,
+    ...otherOverrides,
   };
 }
 

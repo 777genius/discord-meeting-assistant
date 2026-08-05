@@ -381,6 +381,9 @@ describe("VoicetextLiveTranscriptionAdapter", () => {
     expect(socket.text.some(({ type }) => type === "finalize")).toBe(true);
   });
 
+});
+
+describe("VoicetextLiveTranscriptionAdapter finalization", () => {
   it("shares one finalization across concurrent callers", async () => {
     const socket = new DelayedAckSocket();
     const session = await adapter(socket).openSession({
@@ -497,6 +500,9 @@ describe("VoicetextLiveTranscriptionAdapter", () => {
     await session.finalize();
   });
 
+});
+
+describe("VoicetextLiveTranscriptionAdapter timeline and termination", () => {
   it("rounds a valid 2.5ms Opus timeline to integer source timestamps", async () => {
     const socket = new FractionalTimelineSocket();
     const events: VoicetextLiveTranscriptEvent[] = [];

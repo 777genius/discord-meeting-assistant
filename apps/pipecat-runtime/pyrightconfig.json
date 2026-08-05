@@ -1,0 +1,15 @@
+{
+  "include": ["src", "tests"],
+  "exclude": [
+    "src/pipecat_runtime/adapters/grpc/generated",
+    "src/pipecat_runtime/adapters/subscription_runtime/generated"
+  ],
+  "pythonVersion": "3.13",
+  "typeCheckingMode": "strict",
+  "reportMissingTypeStubs": false,
+  "reportUnknownMemberType": false,
+  "reportUnknownVariableType": false,
+  "reportUnknownArgumentType": false,
+  "reportUnknownLambdaType": false,
+  "reportUnknownParameterType": false
+}

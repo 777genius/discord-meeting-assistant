@@ -14,6 +14,7 @@ import {
   incrementalMeetingSummaryPolicyVersion,
   meetingSummaryOutputSchemaName,
   meetingSummaryPolicyVersion,
+  subscriptionRuntimeConversationPurpose,
   subscriptionRuntimeIncrementalPurpose,
   subscriptionRuntimePurpose,
 } from "@discord-meeting/subscription-runtime-adapter";
@@ -46,7 +47,7 @@ interface MutableDeploymentPolicy {
   };
 }
 
-const invalidPolicyVersionCases: readonly [
+const invalidPolicyCases: readonly [
   string,
   (policy: MutableDeploymentPolicy) => void,
 ][] = [
@@ -79,6 +80,27 @@ const invalidPolicyVersionCases: readonly [
       incremental.outputSchemaName = meetingSummaryOutputSchemaName;
     }
   }],
+  ["a missing conversation profile", (policy) => {
+    delete policy.purposeProfiles[subscriptionRuntimeConversationPurpose];
+  }],
+  ["a stale conversation version", (policy) => {
+    const conversation = policy.purposeProfiles[subscriptionRuntimeConversationPurpose];
+    if (conversation !== undefined) {
+      conversation.policyVersion = "meeting-conversation.subscription-runtime.v0";
+    }
+  }],
+  ["a swapped conversation output schema", (policy) => {
+    const conversation = policy.purposeProfiles[subscriptionRuntimeConversationPurpose];
+    if (conversation !== undefined) {
+      conversation.outputSchemaName = meetingSummaryOutputSchemaName;
+    }
+  }],
+  ["an unadmitted fourth profile", (policy) => {
+    const conversation = policy.purposeProfiles[subscriptionRuntimeConversationPurpose];
+    if (conversation !== undefined) {
+      policy.purposeProfiles.discord_meeting_other = { ...conversation };
+    }
+  }],
 ];
 
 describe("sidecar deployment policy", () => {
@@ -89,12 +111,12 @@ describe("sidecar deployment policy", () => {
     root = undefined;
   });
 
-  it("admits only the exact final and incremental policy profiles", async () => {
+  it("admits exactly the final, incremental, and conversation policy profiles", async () => {
     await expect(resolveSidecarSettings(await environmentForPolicy(() => {}))).resolves
       .toMatchObject({ bindAddress: "127.0.0.1:50052" });
   });
 
-  it.each(invalidPolicyVersionCases)(
+  it.each(invalidPolicyCases)(
     "fails closed for %s",
     async (_label, mutate) => {
       await expect(resolveSidecarSettings(await environmentForPolicy(mutate))).rejects
@@ -124,11 +146,13 @@ async function environmentForPolicy(
   policy.custody.stateRoot = stateRoot;
   const final = policy.purposeProfiles[subscriptionRuntimePurpose];
   const incremental = policy.purposeProfiles[subscriptionRuntimeIncrementalPurpose];
-  if (final === undefined || incremental === undefined) {
+  const conversation = policy.purposeProfiles[subscriptionRuntimeConversationPurpose];
+  if (final === undefined || incremental === undefined || conversation === undefined) {
     throw new Error("Test deployment policy is missing an admitted profile");
   }
   final.isolatedCwd = isolatedCwd;
   incremental.isolatedCwd = isolatedCwd;
+  conversation.isolatedCwd = isolatedCwd;
   mutate(policy);
 
   await writeFile(policyPath, JSON.stringify(policy));

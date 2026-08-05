@@ -2,6 +2,13 @@ import {
   Meeting,
   type MeetingRepository,
   type MeetingSnapshot,
+  type PostCallDeadLetterAppendResult,
+  type PostCallDeadLetterEvidence,
+  type PostCallDeadLetterLedger,
+  type PostCallDeadLetterRecord,
+  type PostCallOutbox,
+  type PostCallTerminalFailureSettlement,
+  type PostCallWorkItem,
 } from "@discord-meeting/meeting-core";
 import type { Pool, PoolClient } from "pg";
 
@@ -9,6 +16,7 @@ import {
   CorruptMeetingSnapshotError,
   MeetingPersistenceConflictError,
 } from "./errors.js";
+import { PostgresPostCallTerminalSettlement } from "./postgres-post-call-terminal-settlement.js";
 
 interface StoredMeetingRow {
   readonly revision: number;
@@ -23,12 +31,7 @@ interface RevisionRow {
   readonly revision: number;
 }
 
-export interface PendingPostCall {
-  readonly meetingId: string;
-  readonly schemaVersion: 1;
-}
-
-interface PendingPostCallRow {
+interface RecoverablePostCallRow {
   readonly meeting_id: string;
   readonly schema_version: number;
 }
@@ -37,6 +40,19 @@ function requireExpectedRevision(expectedRevision: number): void {
   if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
     throw new RangeError("expectedRevision must be a non-negative safe integer");
   }
+}
+
+function requirePostCallLimit(limit: number): void {
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1_000) {
+    throw new RangeError("post-call outbox limit must be between 1 and 1000");
+  }
+}
+
+function assertPostCallSchemaVersion(value: number): 1 {
+  if (value !== 1) {
+    throw new Error("unsupported post-call schema version");
+  }
+  return 1;
 }
 
 function normalizeSnapshot(snapshot: MeetingSnapshot): MeetingSnapshot {
@@ -79,8 +95,17 @@ function sameRecording(
     });
 }
 
-export class PostgresMeetingRepository implements MeetingRepository {
-  public constructor(private readonly pool: Pool) {}
+export class PostgresMeetingRepository implements
+  MeetingRepository,
+  PostCallDeadLetterLedger,
+  PostCallOutbox,
+  PostCallTerminalFailureSettlement
+{
+  readonly #terminalFailures: PostgresPostCallTerminalSettlement;
+
+  public constructor(private readonly pool: Pool) {
+    this.#terminalFailures = new PostgresPostCallTerminalSettlement(pool);
+  }
 
   public async findById(meetingId: string): Promise<MeetingSnapshot | null> {
     const result = await this.pool.query<StoredMeetingRow>(
@@ -186,41 +211,74 @@ export class PostgresMeetingRepository implements MeetingRepository {
     });
   }
 
-  public async listPendingPostCall(limit = 100): Promise<readonly PendingPostCall[]> {
-    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1_000) {
-      throw new RangeError("post-call outbox limit must be between 1 and 1000");
-    }
-    const result = await this.pool.query<PendingPostCallRow>(
+  public async listRecoverablePostCall(limit = 100): Promise<readonly PostCallWorkItem[]> {
+    requirePostCallLimit(limit);
+    const result = await this.pool.query<RecoverablePostCallRow>(
       `
         SELECT meeting_id, schema_version::float8 AS schema_version
         FROM meeting_core.post_call_outbox
-        WHERE dispatched_at IS NULL
+        WHERE processed_at IS NULL
+          AND dead_lettered_at IS NULL
         ORDER BY created_at, meeting_id
         LIMIT $1
       `,
       [limit],
     );
     return result.rows.map((row) => {
-      if (row.schema_version !== 1) {
-        throw new Error("unsupported post-call outbox schema version");
-      }
-      return Object.freeze({ meetingId: row.meeting_id, schemaVersion: 1 as const });
+      return Object.freeze({
+        meetingId: row.meeting_id,
+        schemaVersion: assertPostCallSchemaVersion(row.schema_version),
+      });
     });
   }
 
-  public async markPostCallDispatched(meetingId: string): Promise<void> {
+  public async markPostCallEnqueued(meetingId: string): Promise<void> {
     const result = await this.pool.query(
       `
         UPDATE meeting_core.post_call_outbox
-        SET dispatched_at = transaction_timestamp()
+        SET last_enqueued_at = transaction_timestamp()
         WHERE meeting_id = $1
-          AND dispatched_at IS NULL
+          AND dead_lettered_at IS NULL
       `,
       [meetingId],
     );
-    if (result.rowCount !== 0 && result.rowCount !== 1) {
+    if (result.rowCount !== 1) {
       throw new Error("unexpected post-call outbox update count");
     }
+  }
+
+  public async markPostCallProcessed(meetingId: string): Promise<void> {
+    const result = await this.pool.query(
+      `
+        UPDATE meeting_core.post_call_outbox
+        SET processed_at = COALESCE(processed_at, transaction_timestamp())
+        WHERE meeting_id = $1
+          AND dead_lettered_at IS NULL
+      `,
+      [meetingId],
+    );
+    if (result.rowCount !== 1) {
+      throw new Error("post-call processing receipt does not reference one outbox item");
+    }
+  }
+
+  public async recordPostCallDeadLetter(
+    record: PostCallDeadLetterRecord,
+  ): Promise<PostCallDeadLetterAppendResult> {
+    return this.#terminalFailures.record(record);
+  }
+
+  public async settlePostCallFailure(
+    record: PostCallDeadLetterRecord,
+  ): Promise<PostCallDeadLetterAppendResult> {
+    return this.#terminalFailures.settle(record);
+  }
+
+  public async listPostCallDeadLetters(
+    limit = 100,
+  ): Promise<readonly PostCallDeadLetterEvidence[]> {
+    requirePostCallLimit(limit);
+    return this.#terminalFailures.list(limit);
   }
 
   private async persist(

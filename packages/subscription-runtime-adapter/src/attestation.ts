@@ -1,15 +1,16 @@
 import { canonicalJsonSha256 } from "./canonical-json.js";
 import { SubscriptionRuntimeAdapterError } from "./errors.js";
 import {
-  subscriptionRuntimeEngine,
   subscriptionRuntimeProfileForPurpose,
   subscriptionRuntimeProvider,
+  type SubscriptionRuntimeEngine,
   type SubscriptionRuntimeAgentTaskRequest,
   type SubscriptionRuntimeTaskResult,
 } from "./subscription-runtime-contract.js";
 
 export interface AttestationExpectation {
   readonly launcherSha256: string;
+  readonly runtimeEngine: SubscriptionRuntimeEngine;
   readonly runtimePackageVersion: string;
 }
 
@@ -28,7 +29,7 @@ export function verifySubscriptionRuntimeAttestation(
     attestation.provider !== subscriptionRuntimeProvider ||
     attestation.model !== profile.model ||
     attestation.reasoningEffort !== profile.reasoningEffort ||
-    attestation.runtimeEngine !== subscriptionRuntimeEngine ||
+    attestation.runtimeEngine !== expectation.runtimeEngine ||
     attestation.runtimePackageVersion !== expectation.runtimePackageVersion ||
     attestation.launcherSha256 !== expectation.launcherSha256 ||
     attestation.selectedOutputKind !== "structured_output" ||

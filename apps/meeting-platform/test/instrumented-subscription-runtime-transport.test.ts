@@ -8,7 +8,7 @@ import {
 import type { Logger } from "@discord-meeting/observability-adapter";
 import { describe, expect, it, vi } from "vitest";
 
-import { InstrumentedSubscriptionRuntimeTransport } from "../src/instrumented-subscription-runtime-transport.js";
+import { InstrumentedSubscriptionRuntimeTransport } from "../src/adapters/outbound/instrumented-subscription-runtime-transport.js";
 
 type CompletedRuntimeTaskResult = Extract<
   SubscriptionRuntimeTaskResult,
@@ -93,7 +93,7 @@ function completedResult(): CompletedRuntimeTaskResult {
       purpose: "discord_meeting.summary.generate",
       reasoningEffort: "medium",
       requestId: "runtime-request-1",
-      runtimeEngine: "subscription-runtime-cli",
+      runtimeEngine: "subscription-runtime-app-server",
       runtimePackageVersion: "0.1.0-main.2",
       schemaVersion: 1,
       selectedOutputKind: "structured_output",
@@ -347,7 +347,9 @@ describe("instrumented subscription runtime transport", () => {
       }),
     );
   });
+});
 
+describe("instrumented subscription runtime safety", () => {
   it("omits invalid revision metadata rather than logging unqueryable values", async () => {
     const logger = observability();
     const result = {
@@ -553,7 +555,7 @@ describe("instrumented subscription runtime transport", () => {
   it("delegates health checks unchanged without clock or log activity", async () => {
     const logger = observability();
     const health = {
-      runtimeEngine: "subscription-runtime-cli",
+      runtimeEngine: "subscription-runtime-app-server",
       runtimeVersion: "0.1.0-main.2",
       status: "serving",
       warningCodes: [],

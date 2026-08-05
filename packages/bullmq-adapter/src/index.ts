@@ -40,6 +40,9 @@ export {
   DEFAULT_POST_CALL_CONCURRENCY,
   MAX_POST_CALL_ATTEMPTS,
   MAX_POST_CALL_CONCURRENCY,
+  POST_CALL_COMPLETED_RETENTION,
+  POST_CALL_DEAD_LETTER_RETENTION,
+  POST_CALL_FAILED_RETENTION,
   postCallDefaultJobOptions,
   resolvePostCallQueuePolicy,
   resolvePostCallWorkerPolicy,
@@ -51,6 +54,8 @@ export {
 export {
   BullMqPostCallDeadLetterRecorder,
   BullMqPostCallEnqueuer,
+  CompositePostCallDeadLetterRecorder,
+  PostCallJobConflictError,
   createPostCallDeadLetterQueue,
   createPostCallQueue,
   type BullMqConnectionFactoryOptions,
@@ -59,7 +64,16 @@ export {
   type PostCallDeadLetterRecorder,
   type PostCallEnqueueReceipt,
   type PostCallQueueClient,
+  type PostCallQueueJob,
 } from "./queue.js";
+export {
+  RedisPolicyReadinessError,
+  assertRedisQueueDurabilityPolicy,
+  createRedisPolicyReadiness,
+  type RedisPolicyClient,
+  type RedisPolicyClientProvider,
+  type RedisPolicyReadiness,
+} from "./redis-policy-readiness.js";
 export {
   createPostCallProcessor,
   createPostCallWorker,

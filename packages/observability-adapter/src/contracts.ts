@@ -17,6 +17,7 @@ export type IngressReason =
   | "over-capacity"
   | "shutting-down"
   | "unknown";
+export type DerivedLiveFailurePhase = "lifecycle" | "prepare-final" | "voice";
 export type QueueState = "active" | "delayed" | "failed" | "paused" | "waiting";
 export type QueueRetryCause =
   | "rate-limit"
@@ -49,22 +50,46 @@ export type ProviderDependency =
   | "summary-provider";
 export type DependencyHealth = "degraded" | "healthy" | "unhealthy";
 
-export interface Metrics {
+export interface ProcessingStageMetrics {
   observeStage(
     stage: ProcessingStage,
     outcome: StageOutcome,
     durationSeconds: number,
   ): void;
+}
+
+export interface DeadLetterMetrics {
   recordDeadLetter(cause: DeadLetterCause): void;
+}
+
+export interface DiscordPublicationMetrics {
   recordDiscordPublication(outcome: DiscordPublicationOutcome): void;
+}
+
+export interface IngressMetrics {
   recordIngress(outcome: IngressOutcome, reason: IngressReason): void;
+  recordDerivedLiveFailure(phase: DerivedLiveFailurePhase): void;
+}
+
+export interface QueueMetrics {
   recordQueueRetry(cause: QueueRetryCause): void;
+  setQueueState(state: QueueState, jobs: number): void;
+}
+
+export interface ProviderHealthMetrics {
   setProviderHealth(
     dependency: ProviderDependency,
     health: DependencyHealth,
   ): void;
-  setQueueState(state: QueueState, jobs: number): void;
 }
+
+export interface Metrics
+  extends DeadLetterMetrics,
+    DiscordPublicationMetrics,
+    IngressMetrics,
+    ProcessingStageMetrics,
+    ProviderHealthMetrics,
+    QueueMetrics {}
 
 export interface HealthProbeResult {
   readonly code?: string;

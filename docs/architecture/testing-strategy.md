@@ -16,6 +16,35 @@ The same behavioral fixtures should run first through in-memory fakes and later
 through concrete adapters. A real provider test never substitutes for a
 deterministic failure test.
 
+Property tests use Foundation's versioned seed-bank and replay contracts. CI
+runs the committed seeds; a failing counterexample can be reproduced by passing
+its normalized `FAST_CHECK_REPLAY` evidence instead of inventing a new random
+seed.
+
+## Providerless conversation E2E
+
+The default conversation suite needs no TTS API key. It uses a deterministic
+streaming LLM and spoken PCM fixture behind real Pipecat processors, then proves
+Node/Python gRPC, Craig WebSocket playback, PCM-to-Opus framing, cancellation,
+late-chunk rejection, and queue bounds. A local Ollama/Piper profile qualifies
+arbitrary Russian and English output separately.
+
+Application tests use a controllable delay and preloaded staged PCM cue registry
+to prove the 1.3-second neutral acknowledgement, the 3.2-second complex-request
+cue, omission for simple prompts and unsupported locales, immediate cue
+interruption, answer replacement, and that only real answer playback starts the
+four-second guard. They also prove exact alias normalization, ordinary-mention
+rejection, and the same-speaker transcript-time wake latch.
+The provider-backed canary uses an isolated Subscription Runtime workspace and
+the development ElevenLabs key; it records cold/warm end-of-turn to first-audio
+latency but is never required by the local or CI gate.
+
+The private Discord observer is opt-in. It uses an official test bot, listens
+only for the configured Craig bot in a private test channel, and retains bounded
+audio evidence: first-packet timing, duration, packet count, PCM checksum,
+and RMS/non-silence. Correlation IDs remain operator-supplied labels, while
+cancellation and semantic transcript accuracy require separate qualification.
+
 ## Summary-first E2E
 
 The critical flow is:
