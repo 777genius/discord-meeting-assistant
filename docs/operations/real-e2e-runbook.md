@@ -129,6 +129,33 @@ five-second projection tick as STT or model latency. The API-equivalent cost is
 an observability estimate only; the subscription runtime does not create an API
 invoice.
 
+### Live Botik conversation acceptance
+
+Conversation rollout remains unqualified until one isolated private-guild run
+proves the complete path with official test bots and synthetic speech:
+
+1. address Botik with each canonical RU/EN alias and the pinned STT variants,
+   including `Ботек`, then repeat one request as `Ботик` followed by a short
+   pause and a separate question turn from the same speaker;
+2. retain observer evidence that the Craig bot produced non-silent answer audio
+   in the configured voice channel, plus end-of-turn to first-answer-audio
+   latency for both a warm simple request and a warm reasoning request;
+3. prove an ordinary mention such as `Вчера Ботик отвечал странно` does not start
+   a conversation turn, and prove a different speaker cannot consume a pending
+   wake latch;
+4. after Craig finalization, retain the dedicated Botik authoritative track and
+   verify that its duration covers only packets accepted by the Discord sender;
+5. verify the final Voicetext transcript contains the expected Botik speaker ID
+   and recognizable answer text, then verify the authoritative summary may cite
+   those Botik turns without treating Botik as a human participant;
+6. verify the derived live transcript does not ingest outbound Botik audio and
+   therefore cannot create a self-response loop.
+
+Passing local, provider, or voice-observer checks alone does not satisfy this
+gate. Record the private guild/channel IDs, recording ID, Botik track checksum,
+transcript ID, summary ID, provider/model profile, and latency measurements in
+the retained non-secret evidence bundle.
+
 ### Long-call telemetry
 
 Meeting Platform writes one structured JSON event for every post-call stage and

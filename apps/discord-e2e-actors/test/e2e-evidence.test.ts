@@ -553,7 +553,9 @@ describe("verifyRetainedE2eEvidence", () => {
       expect.arrayContaining(["TERM_MISSING", "ACTION_SEMANTICS_MISSING"]),
     );
   });
+});
 
+describe("verifyRetainedE2eEvidence failures and reconnect", () => {
   it("still fails required year evidence when STT loses 2026", () => {
     const dateManifest = manifest();
     const speakerAFixture = dateManifest.fixtures[0];
@@ -687,7 +689,9 @@ describe("verifyRetainedE2eEvidence", () => {
 
     expect(codes).toContain("RECONNECT_NOT_DURING_SPEAKER_A");
   });
+});
 
+describe("verifyRetainedE2eEvidence sequential and campaign bounds", () => {
   it("accepts sequential Craig tracks with offset zero and retained initial silence", () => {
     expect(verifyRetainedE2eEvidence(manifest(), sequentialEvidence()).passed).toBe(true);
   });
