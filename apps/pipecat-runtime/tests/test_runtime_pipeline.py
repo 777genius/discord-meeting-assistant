@@ -495,7 +495,7 @@ async def test_evicted_pipeline_closes_without_holding_global_admission_lock() -
         await allow_close.wait()
         await original_close()
 
-    first_pipeline.close = slow_close  # type: ignore[method-assign]
+    first_pipeline.close = slow_close
     third_request = replace(
         first_request,
         meeting_id="meeting-persistent-3",
@@ -562,7 +562,7 @@ async def test_failed_evicted_pipeline_close_does_not_retain_meeting_admission()
     async def failed_close() -> None:
         raise RuntimeError("injected provider close failure")
 
-    first_pipeline.close = failed_close  # type: ignore[method-assign]
+    first_pipeline.close = failed_close
     second_request = replace(
         first_request,
         meeting_id="meeting-after-failed-close",

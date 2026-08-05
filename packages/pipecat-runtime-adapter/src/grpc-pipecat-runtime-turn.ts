@@ -113,11 +113,15 @@ export class GrpcConversationRuntimeTurn implements ConversationRuntimeTurn {
       );
       return;
     }
-    if (this.terminal) {
+    if (this.hasTerminated()) {
       return;
     }
     this.halfClose();
     await this.waitForTerminal();
+  }
+
+  private hasTerminated(): boolean {
+    return this.terminal;
   }
 
   private receive(message: RawMessage): void {
