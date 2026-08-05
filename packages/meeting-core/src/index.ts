@@ -28,6 +28,8 @@ export {
   type ConversationCancellationReason,
   type ConversationDelay,
   type ConversationDelayPort,
+  type ConversationLatencyObservation,
+  type ConversationLatencyObserverPort,
   type ConversationRuntime,
   type ConversationRuntimeEvent,
   type ConversationRuntimeTurn,

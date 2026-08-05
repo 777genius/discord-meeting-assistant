@@ -6,6 +6,7 @@ import type {
 import { requireNonNegativeInteger } from "../domain/errors.js";
 import type {
   ConversationCancellationReason,
+  ConversationLatencyObserverPort,
   ConversationRuntime,
   ConversationRuntimeEvent,
   VoicePlaybackPort,
@@ -27,6 +28,7 @@ import {
 
 export interface ConversationActiveTurnExecutorDependencies {
   readonly cues: ConversationCueOrchestrator;
+  readonly latencyObserver?: ConversationLatencyObserverPort;
   readonly playback: VoicePlaybackPort;
   readonly runtime: ConversationRuntime;
 }
@@ -39,10 +41,12 @@ export interface ConversationActiveTurnExecutorDependencies {
 export class ConversationActiveTurnExecutor {
   private readonly answerPlayback: ConversationAnswerPlayback;
   private readonly cues: ConversationCueOrchestrator;
+  private readonly latencyObserver: ConversationLatencyObserverPort | null;
   private readonly runtime: ConversationRuntime;
 
   public constructor(dependencies: ConversationActiveTurnExecutorDependencies) {
     this.cues = dependencies.cues;
+    this.latencyObserver = dependencies.latencyObserver ?? null;
     this.runtime = dependencies.runtime;
     this.answerPlayback = new ConversationAnswerPlayback({
       finalize: async (state, run) => {
@@ -238,9 +242,31 @@ export class ConversationActiveTurnExecutor {
         await this.requestCancellation(state, run, "runtime-shutdown");
         return;
       case "text-delta":
-      case "latency":
       case "usage":
         return;
+      case "latency":
+        this.observeLatency(run, event);
+        return;
+    }
+  }
+
+  private observeLatency(
+    run: ActiveConversationRun,
+    event: Extract<ConversationRuntimeEvent, { readonly type: "latency" }>,
+  ): void {
+    try {
+      this.latencyObserver?.observeConversationLatency({
+        attemptId: event.attemptId,
+        endTurnToWakeMs: event.endTurnToWakeMs,
+        firstLlmTokenToAudioMs: event.firstLlmTokenToAudioMs,
+        meetingId: run.prepared.request.meetingId,
+        speakerId: run.prepared.request.speakerId,
+        totalToFirstAudioMs: event.totalToFirstAudioMs,
+        turnId: run.prepared.request.turnId,
+        wakeToFirstLlmTokenMs: event.wakeToFirstLlmTokenMs,
+      });
+    } catch {
+      // Observability must never alter conversation delivery or cancellation.
     }
   }
 

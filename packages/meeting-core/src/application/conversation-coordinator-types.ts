@@ -2,6 +2,7 @@ import type { ConversationAlias, ConversationSession, ConversationTurn } from ".
 import type {
   ConversationDelay,
   ConversationDelayPort,
+  ConversationLatencyObserverPort,
   ConversationRuntime,
   ConversationRuntimeTurn,
   ConversationStartRequest,
@@ -69,6 +70,7 @@ export type ConversationInterruptionResult =
 
 export interface ConversationCoordinatorDependencies {
   readonly delay?: ConversationDelayPort;
+  readonly latencyObserver?: ConversationLatencyObserverPort;
   readonly playback: VoicePlaybackPort;
   readonly runtime: ConversationRuntime;
   readonly thinkingCues?: ConversationThinkingCuePort;

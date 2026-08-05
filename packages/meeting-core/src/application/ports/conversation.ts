@@ -86,6 +86,22 @@ export interface ConversationRuntime {
   ): Promise<PortResult<ConversationRuntimeTurn>>;
 }
 
+export interface ConversationLatencyObservation {
+  readonly attemptId: string;
+  readonly endTurnToWakeMs: number;
+  readonly firstLlmTokenToAudioMs: number;
+  readonly meetingId: string;
+  readonly speakerId: string;
+  readonly totalToFirstAudioMs: number;
+  readonly turnId: string;
+  readonly wakeToFirstLlmTokenMs: number;
+}
+
+/** Consumer-owned sink for provider-neutral first-audio latency telemetry. */
+export interface ConversationLatencyObserverPort {
+  observeConversationLatency(observation: ConversationLatencyObservation): void;
+}
+
 export interface VoicePlaybackRequest {
   readonly attemptId: string;
   readonly meetingId: string;

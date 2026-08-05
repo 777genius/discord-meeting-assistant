@@ -26,6 +26,7 @@ import type { PlatformHttpHost } from "../src/http/platform-http-host.js";
 import {
   closeMeetingPlatformResources,
   createConversationCoordinator,
+  createConversationLatencyLogger,
   createVoicetextBatchFinalTranscriptionOptions,
 } from "../src/platform-runtime.js";
 import type { GrpcSubscriptionRuntimeTransport } from "../src/adapters/outbound/subscription-runtime-grpc-transport.js";
@@ -148,6 +149,33 @@ async function* onePlaybackEvent(
 }
 
 describe("meeting platform runtime wiring", () => {
+  it("writes provider-neutral conversation latency to structured logs", () => {
+    const info = vi.fn();
+    const observer = createConversationLatencyLogger({ info });
+
+    observer.observeConversationLatency({
+      attemptId: "attempt-1",
+      endTurnToWakeMs: 250,
+      firstLlmTokenToAudioMs: 120,
+      meetingId: "meeting-1",
+      speakerId: "speaker-1",
+      totalToFirstAudioMs: 1_870,
+      turnId: "turn-1",
+      wakeToFirstLlmTokenMs: 1_500,
+    });
+
+    expect(info).toHaveBeenCalledWith("Live conversation latency observed", {
+      attemptId: "attempt-1",
+      endTurnToWakeMs: 250,
+      firstLlmTokenToAudioMs: 120,
+      meetingId: "meeting-1",
+      speakerId: "speaker-1",
+      totalToFirstAudioMs: 1_870,
+      turnId: "turn-1",
+      wakeToFirstLlmTokenMs: 1_500,
+    });
+  });
+
   it("passes configured per-meeting batch concurrency into the Voicetext composition", () => {
     expect(
       createVoicetextBatchFinalTranscriptionOptions({

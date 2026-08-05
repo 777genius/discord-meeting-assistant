@@ -53,6 +53,9 @@ export class ConversationCoordinator {
     });
     this.activeTurns = new ConversationActiveTurnExecutor({
       cues,
+      ...(dependencies.latencyObserver === undefined
+        ? {}
+        : { latencyObserver: dependencies.latencyObserver }),
       playback: dependencies.playback,
       runtime: dependencies.runtime,
     });
