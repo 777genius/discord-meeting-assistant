@@ -1,0 +1,114 @@
+{
+  "schemaVersion": 1,
+  "packageName": "@discord-meeting/meeting-core",
+  "packageManifest": "packages/meeting-core/package.json",
+  "productionSearchRoots": ["apps", "packages", "infra", "tooling"],
+  "featureSubpaths": [
+    "conversation",
+    "live-meeting",
+    "meeting-intelligence",
+    "meeting-lifecycle",
+    "post-call-workflow",
+    "publishing",
+    "recording",
+    "transcription"
+  ],
+  "consumers": [
+    {
+      "boundary": "adapters.ai",
+      "roots": ["packages/ai-adapters/src"],
+      "allowFeatureSubpaths": ["meeting-intelligence", "recording", "transcription"]
+    },
+    {
+      "boundary": "adapters.craig-playback",
+      "roots": ["packages/craig-playback-adapter/src"],
+      "allowFeatureSubpaths": ["conversation"]
+    },
+    {
+      "boundary": "adapters.discord",
+      "roots": ["packages/discord-adapter/src"],
+      "allowFeatureSubpaths": ["live-meeting", "publishing"]
+    },
+    {
+      "boundary": "adapters.postgres",
+      "roots": ["packages/postgres-adapter/src"],
+      "allowFeatureSubpaths": [
+        "live-meeting",
+        "meeting-lifecycle",
+        "post-call-workflow",
+        "publishing",
+        "transcription"
+      ]
+    },
+    {
+      "boundary": "adapters.pipecat-runtime",
+      "roots": ["packages/pipecat-runtime-adapter/src"],
+      "allowFeatureSubpaths": ["conversation"]
+    },
+    {
+      "boundary": "adapters.recording-ingress",
+      "roots": ["packages/recording-ingress-adapter/src"],
+      "allowFeatureSubpaths": ["recording"]
+    },
+    {
+      "boundary": "adapters.speaches",
+      "roots": ["packages/speaches-adapter/src"],
+      "allowFeatureSubpaths": ["recording", "transcription"]
+    },
+    {
+      "boundary": "adapters.subscription-runtime",
+      "roots": ["packages/subscription-runtime-adapter/src"],
+      "allowFeatureSubpaths": ["live-meeting", "meeting-intelligence", "transcription"]
+    },
+    {
+      "boundary": "adapters.voicetext",
+      "roots": ["packages/voicetext-adapter/src"],
+      "allowFeatureSubpaths": ["recording", "transcription"]
+    },
+    {
+      "boundary": "apps.meeting-platform.application",
+      "roots": ["apps/meeting-platform/src/application"],
+      "allowFeatureSubpaths": [
+        "live-meeting",
+        "meeting-lifecycle",
+        "post-call-workflow",
+        "publishing",
+        "recording",
+        "transcription"
+      ]
+    },
+    {
+      "boundary": "apps.meeting-platform.outbound-adapters",
+      "roots": ["apps/meeting-platform/src/adapters/outbound"],
+      "allowFeatureSubpaths": [
+        "conversation",
+        "meeting-intelligence",
+        "publishing",
+        "transcription"
+      ]
+    },
+    {
+      "boundary": "apps.meeting-platform.live-runtime",
+      "roots": ["apps/meeting-platform/src/live-runtime"],
+      "allowFeatureSubpaths": ["conversation"]
+    },
+    {
+      "boundary": "apps.meeting-platform.composition",
+      "roots": [
+        "apps/meeting-platform/src/composition",
+        "apps/meeting-platform/src/config.ts",
+        "apps/meeting-platform/src/live-meeting-runtime.ts",
+        "apps/meeting-platform/src/main.ts",
+        "apps/meeting-platform/src/platform-runtime.ts"
+      ],
+      "allowFeatureSubpaths": [
+        "conversation",
+        "live-meeting",
+        "meeting-intelligence",
+        "post-call-workflow",
+        "publishing",
+        "transcription"
+      ]
+    }
+  ]
+}

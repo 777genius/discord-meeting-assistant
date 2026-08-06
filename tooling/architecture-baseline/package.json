@@ -9,6 +9,14 @@
     "pnpm": "11.18.0"
   },
   "scripts": {
-    "check": "node src/verify-toolchain.ts && node src/verify-protobuf-evolution.ts"
+    "check": "node src/verify-toolchain.ts && node src/verify-protobuf-evolution.ts && pnpm run check:meeting-core-imports",
+    "check:meeting-core-imports": "tsx src/verify-meeting-core-import-boundaries.ts && pnpm run test",
+    "test": "tsx --test src/*.test.ts"
+  },
+  "dependencies": {
+    "@babel/parser": "catalog:"
+  },
+  "devDependencies": {
+    "tsx": "catalog:"
   }
 }

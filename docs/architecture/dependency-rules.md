@@ -37,6 +37,9 @@ integration events, application models, and domain events are distinct surfaces.
 - Cross-feature imports use only the provider feature's `index.ts` entrypoint.
 - External consumers import an explicit `@discord-meeting/meeting-core/*`
   subpath; the package root is not a public API.
+- Each production consumer boundary has an explicit Meeting Core feature
+  subpath allowlist. Unknown consumers, root imports, and unknown or deep
+  subpaths fail the repository-local architecture gate.
 - Each feature owns its use-case ports, failure vocabulary, and validation
   errors. A universal result or error module is forbidden.
 - Feature dependencies are directional and declared fail-closed in Foundation.
@@ -53,6 +56,13 @@ branch on provider names.
 `@agent-teams/engineering-foundation` owns the closed source graph. Every file
 under a governed root must belong to exactly one opaque boundary and may use only
 declared boundary, package, builtin, and runtime-reference edges.
+
+Foundation 0.6.0 classifies an external Meeting Core subpath as a workspace
+package edge, so it does not retain the target feature boundary. The narrow
+`meeting-core-consumer-subpaths.json` policy and architecture-baseline verifier
+supplement Foundation for that one package. They validate the exact exported
+feature surface and enforce consumer-specific subpaths across static, type,
+dynamic, export-from, and import-equals syntax.
 
 The first production change must extend governed roots beyond current tooling.
 An unclassified source file, unresolved import, cross-package relative import,

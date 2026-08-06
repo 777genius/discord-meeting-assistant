@@ -1,0 +1,22 @@
+import type { ConversationRuntime } from "@discord-meeting/meeting-core/conversation";
+export type { FinalTranscript } from "@discord-meeting/meeting-core/transcription";
+import core = require("@discord-meeting/meeting-core");
+export import Conversation = require /* gap */ (
+  "@discord-meeting/meeting-core/conversation"
+);
+const recording = require("@discord-meeting/meeting-core/recording");
+const interpolated = `${require("@discord-meeting/meeting-core/conversation")}`;
+const escaped = r\u0065quire("@discord-meeting/meeting-core/conversation");
+const optional = require?.("@discord-meeting/meeting-core/conversation");
+const parenthesized = (require)("@discord-meeting/meeting-core/conversation");
+const req = require;
+const aliased = req("@discord-meeting/meeting-core/conversation");
+const nestedTemplate = `${/}/u.test("}") ? require("@discord-meeting/meeting-core/conversation") : ""}`;
+
+export async function loadLifecycle() {
+  return import("@discord-meeting/meeting-core/meeting-lifecycle");
+}
+
+export async function loadDeepFeature() {
+  return import("@discord-meeting/meeting-core/live-meeting/internal");
+}

@@ -632,13 +632,17 @@ boundaries:
     entrypoints: []
     allow:
       boundaries: []
-      packages: []
+      packages:
+        - "@babel/parser"
       builtins:
+        - node:assert/strict
         - node:child_process
         - node:crypto
         - node:fs/promises
         - node:module
         - node:os
         - node:path
+        - node:test
+        - node:url
         - node:util
       runtimeReferences: []

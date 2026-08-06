@@ -1,0 +1,17 @@
+import { LiveMeetingProjection } from "@discord-meeting/meeting-core/live-meeting";
+import type { LiveMeetingSnapshot } from "@discord-meeting/meeting-core/live-meeting";
+export type { SummaryPublicationPort } from "@discord-meeting/meeting-core/publishing";
+import publication = require("@discord-meeting/meeting-core/publishing");
+const published = require("@discord-meeting/meeting-core/publishing");
+
+const fakeImport = 'require("@discord-meeting/meeting-core/conversation")';
+const fakeTemplate = `require("@discord-meeting/meeting-core/conversation")`;
+notrequire("@discord-meeting/meeting-core/conversation");
+πrequire("@discord-meeting/meeting-core/conversation");
+const fakeRegex = /require\("@discord-meeting\/meeting-core\/conversation"\)/u;
+// require("@discord-meeting/meeting-core/conversation")
+/* import fake = require("@discord-meeting/meeting-core/conversation"); */
+
+export async function loadLiveMeeting() {
+  return import("@discord-meeting/meeting-core/live-meeting");
+}
