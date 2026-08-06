@@ -37,6 +37,7 @@ body { margin: 0; min-height: 100vh; color: #f7f7f8; background: radial-gradient
 h1 { margin: 10px 0 8px; font-size: clamp(32px, 7vw, 56px); line-height: 1; letter-spacing: -.045em; }
 .status, .notice { color: #aaaab6; line-height: 1.55; }
 .player { display: flex; align-items: center; gap: 20px; margin-top: 34px; padding: 18px; border: 1px solid #ffffff14; border-radius: 20px; background: #0d0d12; }
+.player[hidden] { display: none; }
 .toggle { width: 58px; height: 58px; flex: 0 0 auto; border: 0; border-radius: 50%; color: #121016; background: #c4b5fd; font-size: 22px; cursor: pointer; transition: transform .15s ease, background .15s ease; }
 .toggle:hover { transform: scale(1.04); background: #ddd6fe; }
 .toggle:focus-visible, input:focus-visible { outline: 3px solid #a78bfa; outline-offset: 3px; }
@@ -61,9 +62,11 @@ export const recordingPlaybackClientScript = String.raw`
   let tracks = [];
   let duration = 0;
   let position = 0;
-  let startedAt = 0;
   let playing = false;
+  let starting = false;
   let lastSyncAt = 0;
+  let gapClock = null;
+  const metadataTimeoutMs = 15000;
 
   const token = window.location.hash.slice(1);
   if (!/^[A-Za-z0-9._-]{40,1024}$/.test(token)) {
@@ -83,7 +86,25 @@ export const recordingPlaybackClientScript = String.raw`
 
   function currentPosition() {
     if (!playing) return position;
-    return Math.min(duration, position + (performance.now() - startedAt) / 1000);
+    const active = activeTracksAt(position);
+    if (active.length > 0) {
+      gapClock = null;
+      return Math.min(duration, Math.min(...active.map((track) =>
+        track.offset + Math.max(0, Math.min(track.audio.currentTime, track.audio.duration))
+      )));
+    }
+    if (gapClock === null) {
+      gapClock = { position, startedAt: performance.now() };
+    }
+    return Math.min(duration, gapClock.position + (performance.now() - gapClock.startedAt) / 1000);
+  }
+
+  function activeTracksAt(master) {
+    return tracks.filter((track) => {
+      if (!track.available) return false;
+      const relative = master - track.offset;
+      return relative >= 0 && relative < track.audio.duration;
+    });
   }
 
   function setStatus(message) {
@@ -91,6 +112,9 @@ export const recordingPlaybackClientScript = String.raw`
   }
 
   function showUnavailable() {
+    playing = false;
+    gapClock = null;
+    tracks.forEach((track) => track.audio.pause());
     setStatus("Запись недоступна");
     playerNode.hidden = true;
   }
@@ -129,7 +153,12 @@ export const recordingPlaybackClientScript = String.raw`
       audio.src = item.url;
       audio.volume = volume;
       tracksNode.append(audio);
-      return { audio, offset: item.timelineOffsetMs / 1000, available: true };
+      return {
+        audio,
+        offset: item.timelineOffsetMs / 1000,
+        available: true,
+        playAttempt: 0,
+      };
     });
     await Promise.all(tracks.map(loadMetadata));
     const available = tracks.filter((track) => track.available);
@@ -153,14 +182,29 @@ export const recordingPlaybackClientScript = String.raw`
   function loadMetadata(track) {
     return new Promise((resolve) => {
       let settled = false;
+      let timeoutId;
+      const loaded = () => finish(true);
+      const failed = () => finish(false);
       const finish = (available) => {
         if (settled) return;
         settled = true;
-        track.available = available && Number.isFinite(track.audio.duration);
+        window.clearTimeout(timeoutId);
+        track.audio.removeEventListener("loadedmetadata", loaded);
+        track.audio.removeEventListener("error", failed);
+        track.available = available
+          && Number.isFinite(track.audio.duration)
+          && track.audio.duration > 0;
+        if (!track.available) {
+          track.audio.pause();
+          track.audio.removeAttribute("src");
+          track.audio.load();
+          track.audio.remove();
+        }
         resolve();
       };
-      track.audio.addEventListener("loadedmetadata", () => finish(true), { once: true });
-      track.audio.addEventListener("error", () => finish(false), { once: true });
+      track.audio.addEventListener("loadedmetadata", loaded, { once: true });
+      track.audio.addEventListener("error", failed, { once: true });
+      timeoutId = window.setTimeout(() => finish(false), metadataTimeoutMs);
       track.audio.load();
     });
   }
@@ -170,7 +214,7 @@ export const recordingPlaybackClientScript = String.raw`
       track.audio.muted = true;
       try {
         await track.audio.play();
-        track.audio.pause();
+        pauseTrack(track);
       } catch {
         track.available = false;
       } finally {
@@ -181,32 +225,47 @@ export const recordingPlaybackClientScript = String.raw`
   }
 
   async function startPlayback() {
-    if (position >= duration) position = 0;
-    await unlockTracks();
-    playing = true;
-    startedAt = performance.now();
-    toggleNode.textContent = "❚❚";
-    toggleNode.setAttribute("aria-label", "Пауза");
-    await syncTracks(true);
-    requestAnimationFrame(tick);
+    if (starting) return;
+    starting = true;
+    try {
+      if (position >= duration) position = 0;
+      await unlockTracks();
+      if (!tracks.some((track) => track.available)) {
+        showUnavailable();
+        return;
+      }
+      if (tracks.some((track) => !track.available)) {
+        noticeNode.textContent = "Часть дорожек недоступна";
+        noticeNode.hidden = false;
+      }
+      playing = true;
+      gapClock = null;
+      toggleNode.textContent = "❚❚";
+      toggleNode.setAttribute("aria-label", "Пауза");
+      syncTracks(position, true);
+      requestAnimationFrame(tick);
+    } finally {
+      starting = false;
+    }
   }
 
   function pausePlayback() {
     position = currentPosition();
     playing = false;
-    tracks.forEach((track) => track.audio.pause());
+    gapClock = null;
+    tracks.forEach(pauseTrack);
     toggleNode.textContent = "▶";
     toggleNode.setAttribute("aria-label", "Воспроизвести");
     renderPosition(position);
   }
 
-  async function syncTracks(shouldPlay) {
-    const master = currentPosition();
-    await Promise.all(tracks.map(async (track) => {
+  function syncTracks(master, shouldPlay) {
+    tracks.forEach((track) => {
+      if (!track.available) return;
       const relative = master - track.offset;
       const active = relative >= 0 && relative < track.audio.duration;
       if (!active) {
-        track.audio.pause();
+        pauseTrack(track);
         if (relative < 0) track.audio.currentTime = 0;
         return;
       }
@@ -214,9 +273,24 @@ export const recordingPlaybackClientScript = String.raw`
         track.audio.currentTime = relative;
       }
       if (shouldPlay && track.audio.paused) {
-        try { await track.audio.play(); } catch { track.available = false; }
+        const playAttempt = ++track.playAttempt;
+        void track.audio.play().catch(() => {
+          if (playAttempt !== track.playAttempt || !playing) return;
+          track.available = false;
+          pauseTrack(track);
+          if (!tracks.some((candidate) => candidate.available)) showUnavailable();
+          else {
+            noticeNode.textContent = "Часть дорожек недоступна";
+            noticeNode.hidden = false;
+          }
+        });
       }
-    }));
+    });
+  }
+
+  function pauseTrack(track) {
+    track.playAttempt += 1;
+    track.audio.pause();
   }
 
   function renderPosition(value) {
@@ -227,15 +301,17 @@ export const recordingPlaybackClientScript = String.raw`
   function tick(now) {
     if (!playing) return;
     const master = currentPosition();
+    position = master;
     renderPosition(master);
     if (master >= duration) {
       position = duration;
       pausePlayback();
       return;
     }
-    if (now - lastSyncAt > 350) {
+    const activeTrackNeedsStart = activeTracksAt(master).some((track) => track.audio.paused);
+    if (activeTrackNeedsStart || now - lastSyncAt > 350) {
       lastSyncAt = now;
-      void syncTracks(true);
+      syncTracks(master, true);
     }
     requestAnimationFrame(tick);
   }
@@ -246,12 +322,17 @@ export const recordingPlaybackClientScript = String.raw`
   });
   seekNode.addEventListener("input", () => {
     position = Number(seekNode.value);
-    startedAt = performance.now();
+    gapClock = null;
     renderPosition(position);
-    void syncTracks(playing);
+    syncTracks(position, playing);
   });
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden && playing) void syncTracks(true);
+    if (!document.hidden && playing) {
+      const master = currentPosition();
+      position = master;
+      renderPosition(master);
+      syncTracks(master, true);
+    }
   });
   void openSession();
 })();
