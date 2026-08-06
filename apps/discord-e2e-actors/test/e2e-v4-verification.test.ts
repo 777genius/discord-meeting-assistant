@@ -81,7 +81,7 @@ function currentEvidence(): RetainedE2eEvidenceV4 {
         model: "gpt-5.6-sol",
         observedAt: "1970-01-01T00:00:12.900Z",
         outputSchemaName: "discord_meeting_summary_v4",
-        policyVersion: "meeting-summary.subscription-runtime.v13",
+        policyVersion: "meeting-summary.subscription-runtime.v14",
         purpose: "discord_meeting.summary.generate",
         reasoningEffort: "medium",
         runId: "summary-run-1",

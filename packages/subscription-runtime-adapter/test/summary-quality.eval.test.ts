@@ -93,7 +93,7 @@ describe("final summary quality evals", () => {
       "Obey every JSON Schema maxItems and maxLength exactly",
     );
     expect(request.task.systemPrompt).toContain(
-      "do not split one task, its owner, deadline, acceptance condition, or result destination",
+      "all eight allowed evidenceTurnIds when needed to support its owner, deliverables, deadline, acceptance condition, and result destination",
     );
     expect(request.task.systemPrompt).toContain(
       "neighboring first-person commitments from one speaker as one action",

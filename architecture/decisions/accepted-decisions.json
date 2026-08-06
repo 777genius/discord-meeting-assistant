@@ -101,6 +101,11 @@
       "id": "ADR-0020",
       "path": "docs/decisions/0020-qualify-complete-action-chains.md",
       "immutableDigest": "sha256:57985e1bea944d40ad648b733edffc24d44f0a43728438cc651a0e0c719643d3"
+    },
+    {
+      "id": "ADR-0021",
+      "path": "docs/decisions/0021-retain-complete-fragmented-action-evidence.md",
+      "immutableDigest": "sha256:cc5d7bab6c11cf716aa055135b37a3732a90293a74ac6338b7b0078ea094812b"
     }
   ]
 }
