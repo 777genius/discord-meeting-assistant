@@ -104,7 +104,6 @@ export function createPlatformCoreResources(input: {
       expectedLauncherSha256: input.config.subscriptionRuntime.launcherSha256,
       expectedRuntimeEngine: subscriptionRuntimeCliEngine,
       maxOutputTokens: subscriptionRuntimeSummaryMaxOutputTokens,
-      outputLanguage: "Natural English; preserve technical terms exactly",
     }),
     rawTranscriber: createFinalTranscriber(input.config, artifactReader),
     recordingIngress: new CraigRecordingIngressAdapter(recordings),

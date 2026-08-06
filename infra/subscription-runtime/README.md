@@ -44,10 +44,10 @@ The immutable sidecar image must:
    every execution;
 2. admit `discord_meeting.summary.generate` only with
    `gpt-5.6-sol`/`medium`, a 2048-token post-execution output budget, and policy version
-   `meeting-summary.subscription-runtime.v8`; admit
+   `meeting-summary.subscription-runtime.v9`; admit
    `discord_meeting.summary.incremental` only with `gpt-5.6-luna`/`low`, a
    2048-token post-execution output budget, and policy version
-   `meeting-summary.incremental.subscription-runtime.v4`; admit
+   `meeting-summary.incremental.subscription-runtime.v5`; admit
    `discord_meeting.conversation.answer` only with `gpt-5.6-luna`/`low`, a
    512-token budget, policy `meeting-conversation.subscription-runtime.v1`,
    and schema `discord_meeting_conversation_answer_v1`. All profiles use stateless

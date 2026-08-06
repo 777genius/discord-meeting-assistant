@@ -6,15 +6,22 @@ import {
 import {
   assertDiscordReference,
   assertExactDiscordProjection,
+  createMeetingDiscordFinalSummaryProjectionKey,
   createMeetingDiscordProjectionKey,
+  findDiscordReference,
   parseDiscordPublication,
   projectionMarker,
   toEvidenceContainer,
 } from "./e2e-discord-projection-inspection.js";
 import type {
+  DiscordPublicationReference,
+} from "./e2e-discord-projection-inspection.js";
+import type {
   CollectEvidenceInput,
   DeploymentEvidenceProbe,
   DiscordEvidenceProbe,
+  DiscordProjectionMessageObservation,
+  DiscordProjectionObservation,
 } from "./e2e-retained-evidence-contracts.js";
 import {
   assertExactDatabaseCounts,
@@ -56,17 +63,18 @@ export async function collectRetainedE2eEvidence(
     snapshot.publication.externalPublicationId,
     snapshot.publicationTargetId,
   );
-  const projectionKey = await createMeetingDiscordProjectionKey(
-    snapshot.meetingId,
-    snapshot.publicationTargetId,
-  );
-  const marker = await projectionMarker(projectionKey);
-  const [s3, beforeDiscord] = await Promise.all([
+  const [s3, locatedBeforeDiscord] = await Promise.all([
     deployment.collectS3(snapshot.recording.manifestLocator, input.recordingId),
-    discord.inspect(snapshot.publicationTargetId, marker),
+    inspectPublishedProjection(
+      discord,
+      snapshot.meetingId,
+      snapshot.publicationTargetId,
+      publication,
+    ),
   ]);
+  const { marker, message: beforeMessage, observation: beforeDiscord } =
+    locatedBeforeDiscord;
   assertS3MatchesSnapshot(s3, snapshot);
-  const beforeMessage = assertDiscordReference(beforeDiscord, publication);
   assertExactDiscordProjection(beforeDiscord, publication, "before replay");
   const actorRun = bindActorRun(unboundActorRun, input.recordingId, s3);
   const replayJob = await deployment.replayPostCall(snapshot.meetingId);
@@ -147,6 +155,33 @@ export async function collectRetainedE2eEvidence(
     summary: snapshot.summary,
     transcript: snapshot.transcript,
   });
+}
+
+interface LocatedDiscordEvidence {
+  readonly marker: string;
+  readonly message: DiscordProjectionMessageObservation;
+  readonly observation: DiscordProjectionObservation;
+}
+
+async function inspectPublishedProjection(
+  discord: DiscordEvidenceProbe,
+  meetingId: string,
+  publicationTargetId: string,
+  publication: DiscordPublicationReference,
+): Promise<LocatedDiscordEvidence> {
+  const projectionKeys = await Promise.all([
+    createMeetingDiscordFinalSummaryProjectionKey(meetingId, publicationTargetId),
+    createMeetingDiscordProjectionKey(meetingId, publicationTargetId),
+  ]);
+  for (const projectionKey of projectionKeys) {
+    const marker = await projectionMarker(projectionKey);
+    const observation = await discord.inspect(publicationTargetId, marker);
+    const message = findDiscordReference(observation, publication);
+    if (message !== undefined) {
+      return { marker, message, observation };
+    }
+  }
+  throw new Error("Discord publication receipt is absent from final and replacement marker scans");
 }
 
 function recordingDuration(s3: { readonly tracks: readonly { readonly durationMs: number; readonly timelineOffsetMs: number }[] }): number {

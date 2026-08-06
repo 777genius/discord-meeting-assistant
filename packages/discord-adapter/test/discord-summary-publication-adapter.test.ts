@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import {
+  createMeetingDiscordFinalSummaryProjectionKey,
   createMeetingDiscordProjectionKey,
   discordProjectionBodySchema,
   DISCORD_TRANSCRIPT_ATTACHMENT_MAX_BYTES,
@@ -99,7 +100,7 @@ class FakeProjector {
 }
 
 describe("DiscordSummaryPublicationAdapter", () => {
-  it("maps the core port request to one deterministic English Discord projection", async () => {
+  it("maps the core port request to one separate deterministic Discord projection by default", async () => {
     const projector = new FakeProjector();
     const adapter: SummaryPublicationPort = new DiscordSummaryPublicationAdapter(projector);
 
@@ -117,57 +118,59 @@ describe("DiscordSummaryPublicationAdapter", () => {
     expect(projector.inputs).toHaveLength(2);
     expect(projector.inputs[0]).toEqual(projector.inputs[1]);
     expect(projector.inputs[0]).toEqual({
-      projectionKey: createMeetingDiscordProjectionKey("meeting-42", "11111111111111111"),
-      legacyProjectionKeys: ["meeting:42:publication:v1"],
+      projectionKey: createMeetingDiscordFinalSummaryProjectionKey(
+        "meeting-42",
+        "11111111111111111",
+      ),
       parentChannelId: "11111111111111111",
       threadTitle: "Итоги встречи",
       markdown: [
         "# Итоги встречи",
         "",
-        "## Overview",
+        "## Кратко",
         "Команда согласовала выпуск и владельцев подготовки.",
         "",
-        "## Key topics",
+        "## Ключевые темы и детали",
         "1. Подготовка релиза",
         "   - Релиз запланирован на пятницу",
         "   - Дашборд готовит speaker-b",
         "   - **00:00-00:01 · speaker-a:** «Релиз в пятницу»",
         "   - **00:00-00:02 · speaker-b:** «Подготовлю дашборд»",
         "",
-        "## Decisions",
+        "## Решения",
         "1. Выпустить ассистента в пятницу",
         "   - **00:00-00:01 · speaker-a:** «Релиз в пятницу»",
         "   - **00:00-00:02 · speaker-b:** «Подготовлю дашборд»",
         "",
-        "## Action items",
+        "## Задачи",
         "1. Подготовить дашборд к четвергу",
-        "   - Owner: speaker-b",
-        "   - Due: к четвергу",
+        "   - Ответственный: speaker-b",
+        "   - Срок: к четвергу",
         "   - **00:00-00:02 · speaker-b:** «Подготовлю дашборд»",
         "2. Проверить точность транскрипции",
-        "   - Owner: unassigned",
-        "   - Due: not specified",
+        "   - Ответственный: не назначен",
+        "   - Срок: не указан",
         "   - **00:03-00:04 · speaker-a:** «Проверить транскрипцию»",
         "",
-        "## Open questions",
+        "## Открытые вопросы",
         "1. Достигнута ли целевая точность?",
         "   - **00:03-00:04 · speaker-a:** «Проверить транскрипцию»",
       ].join("\n"),
       liveCaptionsMarkdown: [
-        "## 🗣️ Meeting transcript",
+        "## 🗣️ Транскрипт встречи",
         "",
         "✓ `00:00-00:01` **speaker-a:** Релиз в пятницу",
         "✓ `00:00-00:02` **speaker-b:** Подготовлю дашборд",
         "✓ `00:03-00:04` **speaker-a:** Проверить транскрипцию",
         "",
-        "_Final transcript based on the meeting recording. Full transcript attached: `meeting-transcript.md`._",
+        "_Финальный транскрипт составлен по записи встречи. Полная версия приложена: `meeting-transcript.md`._",
       ].join("\n"),
       transcriptAttachment: {
         filename: "meeting-transcript.md",
         content: [
-          "# Meeting transcript",
+          "# Транскрипт встречи",
           "",
-          "_Final transcript based on the meeting recording._",
+          "_Финальный транскрипт составлен по записи встречи._",
           "",
           "## `00:00-00:01` · speaker-a",
           "",
@@ -189,7 +192,9 @@ describe("DiscordSummaryPublicationAdapter", () => {
 
   it("passes a settled live receipt as the authoritative final reference", async () => {
     const projector = new FakeProjector();
-    const adapter = new DiscordSummaryPublicationAdapter(projector);
+    const adapter = new DiscordSummaryPublicationAdapter(projector, {
+      finalPublicationMode: "replace-live",
+    });
 
     await adapter.publish({
       ...request,
@@ -202,6 +207,34 @@ describe("DiscordSummaryPublicationAdapter", () => {
       threadId: "22222222222222222",
       messageId: "33333333333333333",
     });
+    expect(projector.inputs[0]?.projectionKey).toBe(
+      createMeetingDiscordProjectionKey("meeting-42", "11111111111111111"),
+    );
+    expect(projector.inputs[0]?.legacyProjectionKeys).toEqual([
+      "meeting:42:publication:v1",
+    ]);
+  });
+});
+
+describe("DiscordSummaryPublicationAdapter rendering", () => {
+  it("ignores the live receipt when the default keeps the final summary separate", async () => {
+    const projector = new FakeProjector();
+    const adapter = new DiscordSummaryPublicationAdapter(projector);
+
+    await adapter.publish({
+      ...request,
+      currentExternalPublicationId:
+        "discord:v1:thread:22222222222222222:message:33333333333333333",
+    });
+
+    expect(projector.inputs[0]?.currentReference).toBeUndefined();
+    expect(projector.inputs[0]?.legacyProjectionKeys).toBeUndefined();
+    expect(projector.inputs[0]?.projectionKey).toBe(
+      createMeetingDiscordFinalSummaryProjectionKey(
+        "meeting-42",
+        "11111111111111111",
+      ),
+    );
   });
 
   it("renders Discord speakers as quiet mentions with human time intervals", async () => {
@@ -383,12 +416,12 @@ describe("DiscordSummaryPublicationAdapter rendering bounds", () => {
     });
 
     const timeline = projector.inputs[0]?.liveCaptionsMarkdown ?? "";
-    expect(timeline).toContain("## 🗣️ Meeting transcript");
+    expect(timeline).toContain("## 🗣️ Транскрипт встречи");
     for (const speakerId of speakers) {
       expect(timeline).toContain(`<@${speakerId}>`);
     }
     expect(timeline).toContain("`00:10-00:15`");
-    expect(timeline).toContain("Full transcript attached: `meeting-transcript.md`.");
+    expect(timeline).toContain("Полная версия приложена: `meeting-transcript.md`.");
   });
 
   it("keeps every final caption in the attachment when the embed is shortened", async () => {
@@ -461,10 +494,10 @@ describe("DiscordSummaryPublicationAdapter rendering bounds", () => {
       },
     });
 
-    expect(projector.inputs[0]?.markdown).toContain("No decisions were recorded.");
-    expect(projector.inputs[0]?.markdown).toContain("No action items were recorded.");
-    expect(projector.inputs[0]?.markdown).toContain("No key topics were identified.");
-    expect(projector.inputs[0]?.markdown).toContain("No open questions were recorded.");
+    expect(projector.inputs[0]?.markdown).toContain("Решения не зафиксированы.");
+    expect(projector.inputs[0]?.markdown).toContain("Задачи не зафиксированы.");
+    expect(projector.inputs[0]?.markdown).toContain("Ключевые темы не выделены.");
+    expect(projector.inputs[0]?.markdown).toContain("Открытые вопросы не зафиксированы.");
   });
 
   it("deterministically bounds oversized summaries to the Discord limit", async () => {
@@ -482,7 +515,7 @@ describe("DiscordSummaryPublicationAdapter rendering bounds", () => {
     expect(result.ok).toBe(true);
     expect(projector.inputs[0]?.markdown.length).toBeLessThanOrEqual(4_000);
     expect(projector.inputs[0]?.markdown).toContain(
-      "Summary was shortened due to Discord's limit.",
+      "Саммари сокращено из-за лимита Discord.",
     );
     expect(projector.inputs[0]?.markdown).not.toContain("summary-42");
   });

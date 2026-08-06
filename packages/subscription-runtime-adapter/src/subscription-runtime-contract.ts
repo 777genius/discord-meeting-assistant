@@ -21,8 +21,8 @@ export const auditedSubscriptionRuntimePackageVersion = "0.1.0-main.27" as const
 export const meetingSummaryOutputSchemaName = "discord_meeting_summary_v4" as const;
 export const incrementalMeetingSummaryOutputSchemaName = "discord_meeting_incremental_summary_v1" as const;
 export const conversationAnswerOutputSchemaName = "discord_meeting_conversation_answer_v1" as const;
-export const meetingSummaryPolicyVersion = "meeting-summary.subscription-runtime.v8" as const;
-export const incrementalMeetingSummaryPolicyVersion = "meeting-summary.incremental.subscription-runtime.v4" as const;
+export const meetingSummaryPolicyVersion = "meeting-summary.subscription-runtime.v9" as const;
+export const incrementalMeetingSummaryPolicyVersion = "meeting-summary.incremental.subscription-runtime.v5" as const;
 export const conversationAnswerPolicyVersion = "meeting-conversation.subscription-runtime.v1" as const;
 
 export type SubscriptionRuntimeOutputSchemaName =

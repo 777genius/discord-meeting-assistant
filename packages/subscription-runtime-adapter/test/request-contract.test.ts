@@ -41,7 +41,7 @@ describe("subscription runtime request contract", () => {
     expect(canonicalJsonSha256(second)).toBe(canonicalJsonSha256(first));
     expect(first.runId).toMatch(/^summary-request-[0-9a-f]{32}$/u);
     expect(first.context.metadata.policyVersion).toBe(
-      "meeting-summary.subscription-runtime.v8",
+      "meeting-summary.subscription-runtime.v9",
     );
     expect(first.task.controls.outputSchemaName).toBe(
       "discord_meeting_summary_v4",
@@ -87,7 +87,7 @@ describe("subscription runtime request contract", () => {
     );
     expect(
       createHash("sha256").update(first.task.systemPrompt).digest("hex"),
-    ).toBe("48fbab59bea4863e43775eae167ecd4a19d044098a2ab4a052e2e9180a541731");
+    ).toBe("89183d5e5a4f7cb76799704a282a151059478dad64dcad9eee62d0bc06dfe762");
   });
 
   it("rejects an oversized transcript before transport", () => {

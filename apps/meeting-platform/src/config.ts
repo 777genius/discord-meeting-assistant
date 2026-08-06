@@ -78,6 +78,9 @@ const environmentSchema = z
     DISCORD_CRAIG_APPLICATION_ID: snowflake,
     DISCORD_LEGACY_GUILD_ID: optionalSnowflake,
     DISCORD_LEGACY_VOICE_CHANNEL_ID: optionalSnowflake,
+    DISCORD_FINAL_PUBLICATION_MODE: z
+      .enum(["separate-message", "replace-live"])
+      .default("separate-message"),
     DISCORD_PUBLICATION_MODE: z.enum(["message", "thread"]).default("message"),
     DISCORD_RESULTS_CHANNEL_ID: optionalSnowflake,
     DISCORD_TOKEN_FILE: absolutePath,
@@ -227,6 +230,8 @@ export interface PlatformConfig {
     readonly voiceId: string;
     readonly voiceProfileId: string;
   };
+  /** Controls whether the authoritative final summary replaces or follows the live draft. */
+  readonly discordFinalPublicationMode: "separate-message" | "replace-live";
   /** New meetings publish directly into the configured results channel by default. */
   readonly discordPublicationMode: "message" | "thread";
   readonly discordApplicationId: string;
@@ -319,6 +324,7 @@ export async function loadPlatformConfig(
           },
         }
       : {}),
+    discordFinalPublicationMode: environment.DISCORD_FINAL_PUBLICATION_MODE,
     discordPublicationMode: environment.DISCORD_PUBLICATION_MODE,
     discordApplicationId: environment.DISCORD_APPLICATION_ID,
     discordCraigApplicationId: environment.DISCORD_CRAIG_APPLICATION_ID,

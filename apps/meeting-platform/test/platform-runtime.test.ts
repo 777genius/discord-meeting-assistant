@@ -185,6 +185,17 @@ describe("meeting platform runtime wiring", () => {
         webSocketUrl: "wss://api.voicetext.site/api/v1/transcribe/stream",
       }),
     ).toMatchObject({
+      keyterms: expect.arrayContaining([
+        "landing page",
+        "landing slug",
+        "QID",
+        "Quanta",
+        "Quanta ID",
+        "Quanta Pages",
+        "referral code",
+        "referral link",
+        "timestamp",
+      ]),
       maxArtifactBytesPerSpeaker: 64 * 1_024 * 1_024,
       maxConcurrency: 6,
       maxSpeakerTracks: 11,

@@ -38,7 +38,7 @@
     "discord_meeting.summary.generate": {
       "provider": "codex",
       "model": "gpt-5.6-sol",
-      "policyVersion": "meeting-summary.subscription-runtime.v8",
+      "policyVersion": "meeting-summary.subscription-runtime.v9",
       "maxOutputTokens": 2048,
       "reasoningEffort": "medium",
       "taskKind": "structured-prompt",
@@ -54,7 +54,7 @@
     "discord_meeting.summary.incremental": {
       "provider": "codex",
       "model": "gpt-5.6-luna",
-      "policyVersion": "meeting-summary.incremental.subscription-runtime.v4",
+      "policyVersion": "meeting-summary.incremental.subscription-runtime.v5",
       "maxOutputTokens": 2048,
       "reasoningEffort": "low",
       "taskKind": "structured-prompt",

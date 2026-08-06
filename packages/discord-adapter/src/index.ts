@@ -1,7 +1,9 @@
 export {
+  createMeetingDiscordFinalSummaryProjectionKey,
   createMeetingDiscordProjectionKey,
   decodeDiscordExternalPublicationId,
   discordPublicationModeSchema,
+  discordFinalPublicationModeSchema,
   discordProjectionReferenceSchema,
   discordProjectionBodySchema,
   DISCORD_EMBED_DESCRIPTION_LIMIT,
@@ -14,6 +16,7 @@ export {
   type DiscordProjectionClient,
   type DiscordProjectionContainer,
   type DiscordProjectionReference,
+  type DiscordFinalPublicationMode,
   type DiscordPublicationMode,
   type LocatedDiscordProjection,
   type ProjectionLock,

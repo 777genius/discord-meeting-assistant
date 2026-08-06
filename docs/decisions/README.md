@@ -21,6 +21,7 @@ _None._
 - [ADR-0013: Provider-neutral meeting source boundary](0013-provider-neutral-meeting-source-boundary.md)
 - [ADR-0014: Streaming warm conversation pipeline](0014-streaming-warm-conversation-pipeline.md)
 - [ADR-0015: Meeting Core feature modules](0015-meeting-core-feature-modules.md)
+- [ADR-0016: Separate final publication and evidence-oriented summaries](0016-separate-final-publication-and-summary-quality.md)
 
 ## Superseded
 

@@ -106,12 +106,13 @@ campaign runs.
 The live slice adds a separate timing and mutation proof. For a call longer than
 five minutes, retain timestamps for the first audio packet, first finalized
 transcript turn, first Discord publication, every incremental-summary generation,
-the meeting end, and the final authoritative replacement. The gate requires:
+the meeting end, and the final authoritative publication. The gate requires:
 
 1. the first Discord publication within two seconds of the first recognized
    non-empty caption unless the external provider is unavailable;
-2. one stable Discord container/message identity across captions, preliminary
-   summaries, retries, and the authoritative post-call summary. The default
+2. one stable live Discord identity across captions, preliminary summaries, and
+   retries. The final summary has one separate stable identity by default;
+   `replace-live` compatibility mode reuses the live identity. The default
    container is the results channel itself; thread mode is explicit opt-in;
 3. captions grouped by the real Discord speaker, with visible relative start
    times, while mutable partials never appear in summary evidence;
@@ -121,8 +122,9 @@ the meeting end, and the final authoritative replacement. The gate requires:
    unavailable states for input, cached input, cache-write input, output,
    reasoning output, and total tokens, plus model, run ID, price card, and an
    exact or bounded API-equivalent USD estimate;
-6. a live-finalization fence before the durable post-call dispatcher can replace
-   the same message, so a late live edit cannot overwrite the authoritative result.
+6. a live-finalization fence before the durable post-call dispatcher can publish
+   the final message, so a late live edit cannot overwrite a replacement-mode
+   result or race the separate authoritative publication.
 
 Record provider, Luna, and Discord latencies independently. Do not report the
 five-second projection tick as STT or model latency. The API-equivalent cost is

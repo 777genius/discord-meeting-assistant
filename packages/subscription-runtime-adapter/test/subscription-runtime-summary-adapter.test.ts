@@ -187,7 +187,7 @@ describe("SubscriptionRuntimeSummaryAdapter", () => {
     });
     expect(captured.task.systemPrompt).toContain("untrusted quoted evidence");
     expect(captured.task.systemPrompt).toContain("exact transcript wording");
-    expect(captured.task.systemPrompt).toContain("natural English");
+    expect(captured.task.systemPrompt).toContain("outputLanguage supplied in the prompt");
     expect(captured.task.systemPrompt).toContain("Merge semantic duplicates");
     expect(captured.task.systemPrompt).toContain("one action for the same task, owner, and deadline");
     expect(captured.task.controls.outputSchema).toMatchObject({
@@ -197,9 +197,11 @@ describe("SubscriptionRuntimeSummaryAdapter", () => {
     expect(JSON.stringify(captured)).not.toMatch(/OPENAI_API_KEY|apiKey|auth\.json/iu);
 
     const prompt = JSON.parse(captured.task.prompt) as {
+      outputLanguage: string;
       outputSchema: { additionalProperties: boolean; type: string };
       transcript: { turns: readonly { turnId: string }[] };
     };
+    expect(prompt.outputLanguage).toBe("English");
     expect(prompt.outputSchema).toEqual(captured.task.controls.outputSchema);
     expect(prompt.transcript.turns.map(({ turnId }) => turnId)).toEqual([
       "turn-a",

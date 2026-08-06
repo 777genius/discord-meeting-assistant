@@ -33,7 +33,7 @@ import {
 
 export interface DiscordSummaryPublisherOptions {
   /**
-   * New meetings default to one mutable message in the results channel.
+   * Each projection defaults to one mutable message in the results channel.
    * Existing thread receipts remain in their original container so a rollout
    * never creates a second visible projection for the same meeting.
    */

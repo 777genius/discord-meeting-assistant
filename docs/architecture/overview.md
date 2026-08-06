@@ -60,9 +60,11 @@ deployments:
   overlap preservation, and provider-independent transcription jobs.
 - Meeting Intelligence owns evidence-backed summary, decisions, action items,
   open questions, and generation versioning.
-- Publishing owns idempotent projection of an accepted summary into one Discord
-  container. New meetings use one direct results-channel message; thread mode is
-  explicit opt-in. It stores an honest versioned external reference.
+- Publishing owns idempotent projection of an accepted summary into a Discord
+  container. New meetings use direct results-channel messages; thread mode is
+  explicit opt-in. The live draft and authoritative final summary have distinct
+  stable identities by default, while replacing the live draft remains an
+  explicit compatibility mode. Publishing stores honest versioned references.
 - Guild Installation & Configuration owns the administrator-approved mapping
   from one Discord guild and voice channel to its results channel. Discord
   commands and PostgreSQL remain adapters around this context.
@@ -98,8 +100,8 @@ model describe the same architecture.
 
 The executable live slice includes derived live STT, addressed conversation,
 incremental summary, and one mutable Discord projection, followed by
-authoritative post-call replacement. Conversation remains stateless and excludes
-memory, RAG, and tools.
+an authoritative post-call summary in a separate idempotent projection by
+default. Conversation remains stateless and excludes memory, RAG, and tools.
 
 Live conversation connects through narrow ports owned by Meeting Core:
 
