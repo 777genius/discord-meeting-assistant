@@ -171,7 +171,7 @@ export class CraigVoicePlaybackSession implements VoicePlaybackSession {
       this.chunkHashes.set(chunk.sequence, hash);
       this.expectedSequence += 1;
       await this.pacePcmDelivery(chunk.bytes.byteLength);
-      if (this.state !== "open") {
+      if (!this.isWritable()) {
         return this.terminalFailure === undefined
           ? failure(
               "CRAIG_PLAYBACK_TERMINAL",
@@ -350,6 +350,10 @@ export class CraigVoicePlaybackSession implements VoicePlaybackSession {
     await new Promise<void>((resolve) => {
       setTimeout(resolve, durationMs);
     });
+  }
+
+  private isWritable(): boolean {
+    return this.state === "open";
   }
 }
 
