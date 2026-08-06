@@ -36,7 +36,7 @@ import type {
 import { GrpcPipecatConversationRuntime } from "@discord-meeting/pipecat-runtime-adapter";
 import {
   SubscriptionRuntimeIncrementalSummaryAdapter,
-  subscriptionRuntimeCliEngine,
+  subscriptionRuntimeEngine,
   subscriptionRuntimeIncrementalMaxOutputTokens,
   type SubscriptionRuntimeTransportPort,
 } from "@discord-meeting/subscription-runtime-adapter";
@@ -262,7 +262,7 @@ function createLiveRuntime(input: {
     input.runtimeTransport,
     {
       expectedLauncherSha256: input.config.subscriptionRuntime.launcherSha256,
-      expectedRuntimeEngine: subscriptionRuntimeCliEngine,
+      expectedRuntimeEngine: subscriptionRuntimeEngine,
       maxOutputTokens: subscriptionRuntimeIncrementalMaxOutputTokens,
       maxRecentContextTurns: 256,
       timeoutMs: 30_000,
