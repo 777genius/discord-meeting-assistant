@@ -269,6 +269,41 @@ async def test_partial_turn_binding_failure_releases_pipeline_admission() -> Non
     await asyncio.wait_for(pipeline.close(), timeout=2)
 
 
+async def test_fatal_pipeline_retirement_reports_an_unstoppable_worker() -> None:
+    """Fatal worker cleanup cannot silently discard a failed forced stop."""
+    settings = deterministic_runtime_settings()
+    request = sample_start_turn()
+    turn = ActivePipelineTurn(
+        request=request,
+        attempt_id="attempt-fatal-retirement",
+        events=ConversationEventStream(
+            request=request,
+            attempt_id="attempt-fatal-retirement",
+            maximum_events=8,
+        ),
+    )
+    pipeline = PersistentConversationPipeline(
+        profile=create_profile(settings.profile),
+        first_turn=turn,
+    )
+    pipeline_state = cast(Any, pipeline)
+    runner = asyncio.create_task(asyncio.Event().wait())
+    pipeline_state._runner_task = runner
+
+    async def failed_forced_stop(*args: object, **kwargs: object) -> bool:
+        del args, kwargs
+        return False
+
+    pipeline_state._force_stop_runner = failed_forced_stop
+    try:
+        with pytest.raises(RuntimeError, match="did not stop during retirement"):
+            await pipeline_state._retire_worker()
+    finally:
+        runner.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await runner
+
+
 async def test_two_sequential_turns_reuse_one_warm_meeting_pipeline() -> None:
     """Normal completion retains the same Pipecat worker and provider processors."""
     profile = _CountingProfile()

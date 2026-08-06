@@ -82,13 +82,19 @@ class PersistentConversationPipeline:
             if turn.pipeline_failure:
                 await self._retire_worker()
             await self._publish_terminal(turn)
-        except Exception:
-            await self._retire_worker()
+        except Exception as execution_error:
+            cleanup_failure: Exception | None = None
+            try:
+                await self._retire_worker()
+            except Exception as error:
+                cleanup_failure = error
             await turn.events.failed(
                 code="pipecat-runtime-failed",
                 safe_message="Conversation runtime failed.",
                 retryable=True,
             )
+            if cleanup_failure is not None:
+                raise cleanup_failure from execution_error
         finally:
             if not turn.events.is_terminal:
                 await turn.events.failed(
@@ -202,7 +208,8 @@ class PersistentConversationPipeline:
             runner_task = self._runner_task
         if runner_task is None or runner_task.done():
             return
-        await self._force_stop_runner(runner_task, reason="pipeline-failed")
+        if not await self._force_stop_runner(runner_task, reason="pipeline-failed"):
+            raise RuntimeError("fatal Pipecat worker did not stop during retirement")
 
     async def _force_stop_runner(
         self,
