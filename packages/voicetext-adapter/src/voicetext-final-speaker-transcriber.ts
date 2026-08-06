@@ -1,4 +1,6 @@
-import type { SpeakerAudioReferenceSnapshot } from "@discord-meeting/meeting-core";
+import {
+  type SpeakerAudioReferenceSnapshot,
+} from "@discord-meeting/meeting-core/recording";
 
 import type { VoicetextPacingScheduler } from "./audio-pacing.js";
 import { VoicetextAdapterError } from "./errors.js";

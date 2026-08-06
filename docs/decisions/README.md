@@ -20,6 +20,7 @@ _None._
 - [ADR-0012: Meeting Platform transport and runtime boundary refactoring](0012-meeting-platform-boundary-refactoring.md)
 - [ADR-0013: Provider-neutral meeting source boundary](0013-provider-neutral-meeting-source-boundary.md)
 - [ADR-0014: Streaming warm conversation pipeline](0014-streaming-warm-conversation-pipeline.md)
+- [ADR-0015: Meeting Core feature modules](0015-meeting-core-feature-modules.md)
 
 ## Superseded
 

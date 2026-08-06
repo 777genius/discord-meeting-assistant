@@ -1,9 +1,15 @@
 import {
   ProcessMeetingSummary,
+} from "@discord-meeting/meeting-core/post-call-workflow";
+import {
   type FinalTranscriptionPort,
+} from "@discord-meeting/meeting-core/transcription";
+import {
   type SummaryGenerationPort,
+} from "@discord-meeting/meeting-core/meeting-intelligence";
+import {
   type SummaryPublicationPort,
-} from "@discord-meeting/meeting-core";
+} from "@discord-meeting/meeting-core/publishing";
 import type { Logger, PrometheusMetrics } from "@discord-meeting/observability-adapter";
 import type { PostgresLiveMeetingRepository, PostgresMeetingRepository } from "@discord-meeting/postgres-adapter";
 

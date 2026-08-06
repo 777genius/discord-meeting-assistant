@@ -2,6 +2,8 @@ import {
   Meeting,
   type MeetingRepository,
   type MeetingSnapshot,
+} from "@discord-meeting/meeting-core/meeting-lifecycle";
+import {
   type PostCallDeadLetterAppendResult,
   type PostCallDeadLetterEvidence,
   type PostCallDeadLetterLedger,
@@ -9,7 +11,7 @@ import {
   type PostCallOutbox,
   type PostCallTerminalFailureSettlement,
   type PostCallWorkItem,
-} from "@discord-meeting/meeting-core";
+} from "@discord-meeting/meeting-core/post-call-workflow";
 import type { Pool, PoolClient } from "pg";
 
 import {

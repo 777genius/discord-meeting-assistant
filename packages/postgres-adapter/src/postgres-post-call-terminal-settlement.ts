@@ -1,8 +1,8 @@
-import type {
-  PostCallDeadLetterAppendResult,
-  PostCallDeadLetterEvidence,
-  PostCallDeadLetterRecord,
-} from "@discord-meeting/meeting-core";
+import {
+  type PostCallDeadLetterAppendResult,
+  type PostCallDeadLetterEvidence,
+  type PostCallDeadLetterRecord,
+} from "@discord-meeting/meeting-core/post-call-workflow";
 import type { Pool, PoolClient } from "pg";
 
 import { PostCallDeadLetterConflictError } from "./errors.js";

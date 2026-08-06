@@ -2,7 +2,7 @@ import {
   LiveMeeting,
   type LiveGenerationTelemetrySnapshot,
   type LiveGenerationUsageSnapshot,
-} from "@discord-meeting/meeting-core";
+} from "@discord-meeting/meeting-core/live-meeting";
 import {
   describe,
   expect,

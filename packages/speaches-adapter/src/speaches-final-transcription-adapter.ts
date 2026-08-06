@@ -1,9 +1,9 @@
-import type {
-  FinalTranscriptionPort,
-  GeneratedTranscript,
-  PortResult,
-  TranscriptTurnSnapshot,
-} from "@discord-meeting/meeting-core";
+import {
+  type FinalTranscriptionPort,
+  type GeneratedTranscript,
+  type TranscriptTurnSnapshot,
+  type FinalTranscriptionResult,
+} from "@discord-meeting/meeting-core/transcription";
 
 import type { BinaryAudioArtifactReader } from "./binary-audio-artifact-reader.js";
 import { SpeachesAdapterError, toSpeachesPortFailure } from "./errors.js";
@@ -50,7 +50,7 @@ export class SpeachesFinalTranscriptionAdapter implements FinalTranscriptionPort
 
   public async transcribe(
     request: CancellableFinalTranscriptionRequest,
-  ): Promise<PortResult<GeneratedTranscript>> {
+  ): Promise<FinalTranscriptionResult<GeneratedTranscript>> {
     try {
       return { ok: true, value: await this.transcribeOrThrow(request) };
     } catch (error: unknown) {

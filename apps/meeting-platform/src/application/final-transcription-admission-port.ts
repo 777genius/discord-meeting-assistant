@@ -1,9 +1,9 @@
-import type {
-  FinalTranscriptionPort,
-  FinalTranscriptionRequest,
-  GeneratedTranscript,
-  PortResult,
-} from "@discord-meeting/meeting-core";
+import {
+  type FinalTranscriptionPort,
+  type FinalTranscriptionRequest,
+  type GeneratedTranscript,
+  type FinalTranscriptionResult,
+} from "@discord-meeting/meeting-core/transcription";
 
 type AdmissionRelease = () => void;
 
@@ -36,7 +36,7 @@ export class InProcessFinalTranscriptionAdmissionPort implements FinalTranscript
 
   public async transcribe(
     request: FinalTranscriptionRequest,
-  ): Promise<PortResult<GeneratedTranscript>> {
+  ): Promise<FinalTranscriptionResult<GeneratedTranscript>> {
     const release = await this.acquire(request.signal);
     try {
       return await this.delegate.transcribe(request);

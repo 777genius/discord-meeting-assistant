@@ -71,6 +71,11 @@
       "id": "ADR-0014",
       "path": "docs/decisions/0014-streaming-warm-conversation-pipeline.md",
       "immutableDigest": "sha256:9908d2e8901fd29531d866bedd2708cd40958dc329c2424c4b995babdc18abe0"
+    },
+    {
+      "id": "ADR-0015",
+      "path": "docs/decisions/0015-meeting-core-feature-modules.md",
+      "immutableDigest": "sha256:117e8fce89ac0fe1dab8a8cfda0d01d0c0259325502e84ededb533178bdb38d4"
     }
   ]
 }

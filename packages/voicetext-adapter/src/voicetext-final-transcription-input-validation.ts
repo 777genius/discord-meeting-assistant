@@ -1,4 +1,6 @@
-import type { FinalTranscriptionRequest } from "@discord-meeting/meeting-core";
+import {
+  type FinalTranscriptionRequest,
+} from "@discord-meeting/meeting-core/transcription";
 
 import { VoicetextAdapterError } from "./errors.js";
 import type { CompleteOggAudioArtifact } from "./ogg-artifact-reader.js";

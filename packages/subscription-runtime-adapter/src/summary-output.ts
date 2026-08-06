@@ -1,7 +1,9 @@
-import type {
-  GeneratedSummary,
-  LiveSummaryDraftSnapshot,
-} from "@discord-meeting/meeting-core";
+import {
+  type GeneratedSummary,
+} from "@discord-meeting/meeting-core/meeting-intelligence";
+import {
+  type LiveSummaryDraftSnapshot,
+} from "@discord-meeting/meeting-core/live-meeting";
 
 import { SubscriptionRuntimeAdapterError } from "./errors.js";
 import type {

@@ -1,22 +1,22 @@
-import type {
-  FinalTranscriptionPort,
-  FinalTranscriptionRequest,
-  GeneratedTranscript,
-  PortResult,
-} from "@discord-meeting/meeting-core";
+import {
+  type FinalTranscriptionPort,
+  type FinalTranscriptionRequest,
+  type GeneratedTranscript,
+  type FinalTranscriptionResult,
+} from "@discord-meeting/meeting-core/transcription";
 import { describe, expect, it, vi } from "vitest";
 
 import { InProcessFinalTranscriptionAdmissionPort } from "../src/application/final-transcription-admission-port.js";
 
-const successfulTranscript: PortResult<GeneratedTranscript> = {
+const successfulTranscript: FinalTranscriptionResult<GeneratedTranscript> = {
   ok: true,
   value: { transcriptId: "transcript-1", turns: [], version: 1 },
 };
 
 describe("InProcessFinalTranscriptionAdmissionPort", () => {
   it("admits one whole final transcription at a time and transfers the slot FIFO", async () => {
-    const first = deferred<PortResult<GeneratedTranscript>>();
-    const second = deferred<PortResult<GeneratedTranscript>>();
+    const first = deferred<FinalTranscriptionResult<GeneratedTranscript>>();
+    const second = deferred<FinalTranscriptionResult<GeneratedTranscript>>();
     const pendingByMeeting = new Map([
       ["meeting-1", first],
       ["meeting-2", second],
@@ -50,7 +50,7 @@ describe("InProcessFinalTranscriptionAdmissionPort", () => {
   });
 
   it("removes a cancelled queued meeting without consuming the next slot", async () => {
-    const first = deferred<PortResult<GeneratedTranscript>>();
+    const first = deferred<FinalTranscriptionResult<GeneratedTranscript>>();
     const delegate = {
       transcribe: vi.fn(async () => await first.promise),
     } satisfies FinalTranscriptionPort;

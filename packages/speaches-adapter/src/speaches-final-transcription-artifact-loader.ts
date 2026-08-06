@@ -1,4 +1,6 @@
-import type { SpeakerAudioReferenceSnapshot } from "@discord-meeting/meeting-core";
+import {
+  type SpeakerAudioReferenceSnapshot,
+} from "@discord-meeting/meeting-core/recording";
 
 import type { BinaryAudioArtifactReader } from "./binary-audio-artifact-reader.js";
 import {

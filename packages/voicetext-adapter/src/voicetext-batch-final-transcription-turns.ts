@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 
-import type { SpeakerAudioReferenceSnapshot } from "@discord-meeting/meeting-core";
+import {
+  type SpeakerAudioReferenceSnapshot,
+} from "@discord-meeting/meeting-core/recording";
 
 import type { ValidatedVoicetextBatchFinalTranscriptionOptions } from "./voicetext-batch-final-transcription-configuration.js";
 import { VoicetextAdapterError } from "./errors.js";

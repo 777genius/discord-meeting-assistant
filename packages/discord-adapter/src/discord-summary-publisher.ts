@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 
-import type { SummaryPublicationEffectLedger } from "@discord-meeting/meeting-core";
+import {
+  type SummaryPublicationEffectLedger,
+} from "@discord-meeting/meeting-core/publishing";
 
 import type {
   DiscordProjectionClient,

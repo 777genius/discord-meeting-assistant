@@ -1,10 +1,12 @@
-import type {
-  GeneratedSummary,
-  PortResult,
-  SummaryGenerationPort,
-  SummaryGenerationRequest,
-  TranscriptTurnSnapshot,
-} from "@discord-meeting/meeting-core";
+import {
+  type GeneratedSummary,
+  type SummaryGenerationPort,
+  type SummaryGenerationRequest,
+  type SummaryGenerationResult,
+} from "@discord-meeting/meeting-core/meeting-intelligence";
+import {
+  type TranscriptTurnSnapshot,
+} from "@discord-meeting/meeting-core/transcription";
 
 import { deterministicAdapterId } from "./deterministic-id.js";
 import { OpenAiAdapterError, toOpenAiPortFailure } from "./errors.js";
@@ -62,7 +64,7 @@ export class OpenAiEvidenceSummaryAdapter implements SummaryGenerationPort {
 
   public async generate(
     request: SummaryGenerationRequest,
-  ): Promise<PortResult<GeneratedSummary>> {
+  ): Promise<SummaryGenerationResult<GeneratedSummary>> {
     try {
       return { ok: true, value: await this.generateOrThrow(request) };
     } catch (error: unknown) {

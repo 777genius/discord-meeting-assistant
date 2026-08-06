@@ -1,15 +1,17 @@
-import type {
-  CommitLiveMeetingSummaryInput,
-  LiveAppendResult,
-  LiveFinalizedTurn,
-  LiveGenerationTelemetrySnapshot,
-  LiveGenerationUsageSnapshot,
-  LiveMeetingRepository,
-  LiveMeetingSnapshot,
-  LiveMeetingSnapshotAndTimeline,
-  LiveMeetingSnapshotAndTimelineReader,
-  TranscriptTurnSnapshot,
-} from "@discord-meeting/meeting-core";
+import {
+  type CommitLiveMeetingSummaryInput,
+  type LiveAppendResult,
+  type LiveFinalizedTurn,
+  type LiveGenerationTelemetrySnapshot,
+  type LiveGenerationUsageSnapshot,
+  type LiveMeetingRepository,
+  type LiveMeetingSnapshot,
+  type LiveMeetingSnapshotAndTimeline,
+  type LiveMeetingSnapshotAndTimelineReader,
+} from "@discord-meeting/meeting-core/live-meeting";
+import {
+  type TranscriptTurnSnapshot,
+} from "@discord-meeting/meeting-core/transcription";
 import type { Pool, PoolClient } from "pg";
 
 import { PostgresLiveMeetingRecords } from "./postgres-live-meeting-records.js";

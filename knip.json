@@ -10,7 +10,7 @@
       "project": ["src/**/*.ts"]
     },
     "packages/meeting-core": {
-      "entry": ["src/index.ts"],
+      "entry": ["src/features/*/index.ts"],
       "project": ["src/**/*.ts", "test/**/*.ts"]
     },
     "packages/bullmq-adapter": {

@@ -1,13 +1,19 @@
 import { GuildConfiguration } from "@discord-meeting/guild-configuration-core";
 import {
   EvidenceBackedSummary,
+} from "@discord-meeting/meeting-core/meeting-intelligence";
+import {
   FinalTranscript,
+  type TranscriptTurnSnapshot,
+} from "@discord-meeting/meeting-core/transcription";
+import {
   Meeting,
+} from "@discord-meeting/meeting-core/meeting-lifecycle";
+import {
   type LiveGenerationTelemetrySnapshot,
   type LiveGenerationUsageSnapshot,
   type LiveSummaryDraftSnapshot,
-  type TranscriptTurnSnapshot,
-} from "@discord-meeting/meeting-core";
+} from "@discord-meeting/meeting-core/live-meeting";
 import { readFile } from "node:fs/promises";
 import { Pool } from "pg";
 import {

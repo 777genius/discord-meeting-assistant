@@ -2,11 +2,11 @@ import {
   type ConversationRuntimeEvent as TransportEvent,
   type ConversationRuntimeStartTurn,
 } from "@discord-meeting/conversation-runtime-contracts";
-import type {
-  ConversationCancellationReason,
-  ConversationRuntimeEvent,
-  ConversationRuntimeTurn,
-} from "@discord-meeting/meeting-core";
+import {
+  type ConversationCancellationReason,
+  type ConversationRuntimeEvent,
+  type ConversationRuntimeTurn,
+} from "@discord-meeting/meeting-core/conversation";
 
 import { AsyncEventBuffer } from "./async-event-buffer.js";
 import {

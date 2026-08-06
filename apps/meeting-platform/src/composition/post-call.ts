@@ -11,11 +11,11 @@ import {
   type PostCallWorker,
   type RedisPolicyReadiness,
 } from "@discord-meeting/bullmq-adapter";
-import type {
-  PostCallOutbox,
-  PostCallTerminalFailureSettlement,
-  ProcessMeetingSummary,
-} from "@discord-meeting/meeting-core";
+import {
+  type PostCallOutbox,
+  type PostCallTerminalFailureSettlement,
+  type ProcessMeetingSummary,
+} from "@discord-meeting/meeting-core/post-call-workflow";
 import type { Logger, PrometheusMetrics } from "@discord-meeting/observability-adapter";
 import type { ConnectionOptions } from "bullmq";
 

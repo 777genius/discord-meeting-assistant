@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
 
-import type { PortResult } from "@discord-meeting/meeting-core";
+import {
+  type ConversationPortResult,
+} from "@discord-meeting/meeting-core/conversation";
 
-export function playbackOpenCancelled(): PortResult<never> {
+export function playbackOpenCancelled(): ConversationPortResult<never> {
   return playbackFailure(
     "CRAIG_PLAYBACK_OPEN_CANCELLED",
     "Craig playback open was cancelled",
@@ -87,7 +89,7 @@ export function terminalState(
   return state === "finished" || state === "failed";
 }
 
-export type FailedPortResult = Extract<PortResult<never>, { ok: false }>;
+export type FailedPortResult = Extract<ConversationPortResult<never>, { ok: false }>;
 
 type PlaybackStartDelivery =
   | { readonly status: "aborted" | "sent" }

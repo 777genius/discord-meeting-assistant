@@ -1,9 +1,9 @@
-import type {
-  LiveCaptionSnapshot,
-  LiveMeetingProjectionPort,
-  LiveMeetingProjectionRequest,
-  PortResult,
-} from "@discord-meeting/meeting-core";
+import {
+  type LiveCaptionSnapshot,
+  type LiveMeetingProjectionPort,
+  type LiveMeetingProjectionRequest,
+  type LiveMeetingPortResult,
+} from "@discord-meeting/meeting-core/live-meeting";
 
 import type {
   DiscordProjectionReference,
@@ -47,7 +47,7 @@ export class DiscordLiveMeetingProjectionAdapter implements LiveMeetingProjectio
 
   public async publish(
     request: LiveMeetingProjectionRequest,
-  ): Promise<PortResult<{ readonly externalPublicationId: string }>> {
+  ): Promise<LiveMeetingPortResult<{ readonly externalPublicationId: string }>> {
     try {
       const referenceHint = currentReference(request.currentExternalPublicationId);
       const reference = await this.publisher.publish(

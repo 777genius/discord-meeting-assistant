@@ -4,7 +4,7 @@ import {
   LiveMeeting,
   RefreshLiveMeeting,
   StartLiveMeeting,
-} from "@discord-meeting/meeting-core";
+} from "@discord-meeting/meeting-core/live-meeting";
 import { afterEach, expect, it, vi } from "vitest";
 
 import { PlatformLiveMeetingRuntime } from "../../src/live-meeting-runtime.js";

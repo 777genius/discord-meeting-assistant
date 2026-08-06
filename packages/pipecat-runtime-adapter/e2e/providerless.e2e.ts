@@ -15,7 +15,7 @@ import {
 import {
   ConversationCoordinator,
   type ConversationRuntimeEvent,
-} from "@discord-meeting/meeting-core";
+} from "@discord-meeting/meeting-core/conversation";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { WebSocket, type RawData } from "ws";
 

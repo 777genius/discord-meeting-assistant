@@ -1,4 +1,6 @@
-import type { FinalTranscriptionRequest } from "@discord-meeting/meeting-core";
+import {
+  type FinalTranscriptionRequest,
+} from "@discord-meeting/meeting-core/transcription";
 
 import type { BinaryAudioArtifact } from "./binary-audio-artifact-reader.js";
 import {

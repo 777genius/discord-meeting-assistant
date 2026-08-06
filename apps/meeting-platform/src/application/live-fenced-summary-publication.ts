@@ -1,8 +1,10 @@
-import type {
-  LiveMeetingSnapshot,
-  SummaryPublicationPort,
-  SummaryPublicationRequest,
-} from "@discord-meeting/meeting-core";
+import {
+  type LiveMeetingSnapshot,
+} from "@discord-meeting/meeting-core/live-meeting";
+import {
+  type SummaryPublicationPort,
+  type SummaryPublicationRequest,
+} from "@discord-meeting/meeting-core/publishing";
 
 interface FinalPublicationBarrier {
   settleBeforeFinalPublication(meetingId: string): Promise<void>;

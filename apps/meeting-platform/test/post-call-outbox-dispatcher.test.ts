@@ -3,7 +3,9 @@ import {
   createPostCallProcessor,
   type PostCallJobLike,
 } from "@discord-meeting/bullmq-adapter";
-import type { ProcessMeetingSummary } from "@discord-meeting/meeting-core";
+import {
+  type ProcessMeetingSummary,
+} from "@discord-meeting/meeting-core/post-call-workflow";
 import type {
   Logger,
   PrometheusMetrics,

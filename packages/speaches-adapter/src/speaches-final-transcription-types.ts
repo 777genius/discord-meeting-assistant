@@ -1,7 +1,9 @@
-import type {
-  FinalTranscriptionRequest,
-  SpeakerAudioReferenceSnapshot,
-} from "@discord-meeting/meeting-core";
+import {
+  type FinalTranscriptionRequest,
+} from "@discord-meeting/meeting-core/transcription";
+import {
+  type SpeakerAudioReferenceSnapshot,
+} from "@discord-meeting/meeting-core/recording";
 
 import type {
   BinaryAudioArtifact,

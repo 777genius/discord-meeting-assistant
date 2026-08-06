@@ -1,0 +1,70 @@
+import {
+  createFastCheckParameters,
+  normalizeDeterministicSeedBank,
+  normalizePropertyReplayEvidence,
+  type PropertyReplayEvidence,
+} from "@agent-teams/engineering-foundation";
+import {
+  array,
+  assert,
+  constantFrom,
+  nat,
+  property,
+  record,
+  uniqueArray,
+} from "fast-check";
+import { describe, expect, it } from "vitest";
+
+import { RecordingArtifact } from "@discord-meeting/meeting-core/recording";
+
+const seedBank = normalizeDeterministicSeedBank({
+  numRuns: 100,
+  propertyId: "meeting.recording-artifact-round-trip",
+  schemaVersion: 1,
+  seeds: [-1_694_203_117, 842_177_031],
+});
+
+const token = array(constantFrom(...Array.from("abcdefghijklmnopqrstuvwxyz0123456789-")), {
+    maxLength: 32,
+    minLength: 1,
+  })
+  .map((characters) => characters.join(""));
+
+const recordingArtifactSnapshot = record({
+  manifestLocator: token.map((value) => `recordings/${value}/manifest.json`),
+  recordingId: token,
+  speakerAudio: uniqueArray(
+    record({
+      audioLocator: token.map((value) => `recordings/tracks/${value}.ogg`),
+      speakerId: token,
+      timelineOffsetMs: nat({ max: Number.MAX_SAFE_INTEGER }),
+    }),
+    { maxLength: 20, selector: ({ audioLocator }) => audioLocator },
+  ),
+});
+
+function requestedReplay(): PropertyReplayEvidence | undefined {
+  const input = process.env["FAST_CHECK_REPLAY"];
+  if (input === undefined) {
+    return undefined;
+  }
+  return normalizePropertyReplayEvidence(JSON.parse(input) as PropertyReplayEvidence);
+}
+
+describe("RecordingArtifact properties", () => {
+  it("round-trips every valid snapshot with deterministic replay evidence", () => {
+    const replay = requestedReplay();
+    const seeds = replay === undefined ? seedBank.seeds : [replay.seed];
+    for (const seed of seeds) {
+      assert(
+        property(recordingArtifactSnapshot, (snapshot) => {
+          const artifact = RecordingArtifact.create(snapshot);
+
+          expect(artifact.toSnapshot()).toEqual(snapshot);
+          expect(RecordingArtifact.create(artifact.toSnapshot()).equals(artifact)).toBe(true);
+        }),
+        createFastCheckParameters(seedBank, seed, replay),
+      );
+    }
+  });
+});

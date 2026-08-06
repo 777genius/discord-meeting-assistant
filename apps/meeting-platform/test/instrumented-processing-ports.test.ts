@@ -1,8 +1,12 @@
-import type {
-  FinalTranscriptionPort,
-  SummaryGenerationPort,
-  SummaryPublicationPort,
-} from "@discord-meeting/meeting-core";
+import {
+  type FinalTranscriptionPort,
+} from "@discord-meeting/meeting-core/transcription";
+import {
+  type SummaryGenerationPort,
+} from "@discord-meeting/meeting-core/meeting-intelligence";
+import {
+  type SummaryPublicationPort,
+} from "@discord-meeting/meeting-core/publishing";
 import type {
   Logger,
   ProcessingStageMetrics,

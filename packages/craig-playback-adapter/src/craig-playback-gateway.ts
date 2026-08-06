@@ -1,11 +1,11 @@
 import type { CraigPlaybackCommand, CraigPlaybackEvent } from "@discord-meeting/craig-gateway-contracts";
-import type {
-  PortResult,
-  VoicePlaybackPort,
-  VoicePlaybackOpenOptions,
-  VoicePlaybackRequest,
-  VoicePlaybackSession,
-} from "@discord-meeting/meeting-core";
+import {
+  type VoicePlaybackPort,
+  type VoicePlaybackOpenOptions,
+  type VoicePlaybackRequest,
+  type VoicePlaybackSession,
+  type ConversationPortResult,
+} from "@discord-meeting/meeting-core/conversation";
 
 import { CraigVoicePlaybackSession } from "./craig-voice-playback-session.js";
 import {
@@ -74,7 +74,7 @@ export class CraigPlaybackGateway implements VoicePlaybackPort {
   public async open(
     request: VoicePlaybackRequest,
     options: VoicePlaybackOpenOptions = {},
-  ): Promise<PortResult<VoicePlaybackSession>> {
+  ): Promise<ConversationPortResult<VoicePlaybackSession>> {
     if (options.signal?.aborted === true) {
       return playbackOpenCancelled();
     }
@@ -116,7 +116,7 @@ class RegisteredTransport {
   public async open(
     request: VoicePlaybackRequest,
     signal?: AbortSignal,
-  ): Promise<PortResult<VoicePlaybackSession>> {
+  ): Promise<ConversationPortResult<VoicePlaybackSession>> {
     if (this.disconnected) {
       return failure(
         "CRAIG_PLAYBACK_DISCONNECTED",

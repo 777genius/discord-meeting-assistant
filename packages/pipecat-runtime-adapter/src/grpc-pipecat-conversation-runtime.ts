@@ -9,8 +9,8 @@ import type {
   ConversationRuntimeTurn,
   ConversationStartOptions,
   ConversationStartRequest,
-  PortResult,
-} from "@discord-meeting/meeting-core";
+  ConversationPortResult,
+} from "@discord-meeting/meeting-core/conversation";
 
 import { parseGrpcConversationRuntimeHealth } from "./grpc-pipecat-protocol.js";
 import { GrpcConversationRuntimeTurn } from "./grpc-pipecat-runtime-turn.js";
@@ -56,7 +56,7 @@ export class GrpcPipecatConversationRuntime implements ConversationRuntime {
   public async startTurn(
     request: ConversationStartRequest,
     options: ConversationStartOptions = {},
-  ): Promise<PortResult<ConversationRuntimeTurn>> {
+  ): Promise<ConversationPortResult<ConversationRuntimeTurn>> {
     if (signalIsAborted(options.signal)) {
       return failure(
         "CONVERSATION_RUNTIME_START_CANCELLED",
@@ -134,7 +134,7 @@ export class GrpcPipecatConversationRuntime implements ConversationRuntime {
 
   private parseStartRequest(
     request: ConversationStartRequest,
-  ): PortResult<ReturnType<typeof parseConversationRuntimeStartTurn>> {
+  ): ConversationPortResult<ReturnType<typeof parseConversationRuntimeStartTurn>> {
     try {
       return {
         ok: true,

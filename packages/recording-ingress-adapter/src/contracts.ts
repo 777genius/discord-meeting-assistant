@@ -1,5 +1,7 @@
 import type { AuthoritativeTrackUploadMetadata } from "@discord-meeting/craig-gateway-contracts";
-import type { RecordingArtifactSnapshot } from "@discord-meeting/meeting-core";
+import {
+  type RecordingArtifactSnapshot,
+} from "@discord-meeting/meeting-core/recording";
 
 export interface RecordingBinaryArtifactWriteRequest {
   readonly body: AsyncIterable<Uint8Array> | Uint8Array;

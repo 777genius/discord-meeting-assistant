@@ -8,7 +8,8 @@ domain <- application <- adapters <- composition
               contracts are boundary-specific
 ```
 
-- Domain imports only its own domain modules.
+- Domain imports only domain-level APIs inside its bounded context; it never
+  imports application or adapter code.
 - Application imports its own domain and ports.
 - Boundary contracts use primitives and contract-owned types.
 - Inbound adapters translate external requests into application input.
@@ -28,6 +29,18 @@ integration events, application models, and domain events are distinct surfaces.
 - One transaction mutates authoritative state in one bounded context.
 - Technical reuse is allowed for stable mechanics; business language is not
   deduplicated across contexts merely because fields look similar.
+
+## Meeting Core feature rules
+
+- A source file belongs to exactly one module under
+  `packages/meeting-core/src/features`.
+- Cross-feature imports use only the provider feature's `index.ts` entrypoint.
+- External consumers import an explicit `@discord-meeting/meeting-core/*`
+  subpath; the package root is not a public API.
+- Each feature owns its use-case ports, failure vocabulary, and validation
+  errors. A universal result or error module is forbidden.
+- Feature dependencies are directional and declared fail-closed in Foundation.
+- Tests mirror feature ownership under `packages/meeting-core/test/features`.
 
 ## External systems
 

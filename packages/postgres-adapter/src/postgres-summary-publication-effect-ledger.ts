@@ -1,7 +1,7 @@
-import type {
-  SummaryPublicationEffectLedger,
-  SummaryPublicationEffectReservation,
-} from "@discord-meeting/meeting-core";
+import {
+  type SummaryPublicationEffectLedger,
+  type SummaryPublicationEffectReservation,
+} from "@discord-meeting/meeting-core/publishing";
 import type { Pool } from "pg";
 
 interface StoredEffectRow {

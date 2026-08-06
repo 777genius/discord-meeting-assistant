@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
 
 import { renderRussianLiveCaptionsMarkdown } from "@discord-meeting/discord-adapter";
-import type { LiveCaptionSnapshot } from "@discord-meeting/meeting-core";
+import {
+  type LiveCaptionSnapshot,
+} from "@discord-meeting/meeting-core/live-meeting";
 
 function calculateDiscordLiveCaptionSignature(
   captions: readonly LiveCaptionSnapshot[],
