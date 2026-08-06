@@ -21,7 +21,13 @@ _None._
 - [ADR-0013: Provider-neutral meeting source boundary](0013-provider-neutral-meeting-source-boundary.md)
 - [ADR-0014: Streaming warm conversation pipeline](0014-streaming-warm-conversation-pipeline.md)
 - [ADR-0015: Meeting Core feature modules](0015-meeting-core-feature-modules.md)
-- [ADR-0016: Possession-based recording playback](0016-possession-based-recording-playback.md)
+- [ADR-0016: Separate final publication and evidence-oriented summaries](0016-separate-final-publication-and-summary-quality.md)
+- [ADR-0017: Preserve summary workflow and action semantics](0017-preserve-summary-workflow-and-action-semantics.md)
+- [ADR-0018: Bound summary output to the provider contract](0018-bound-summary-output-to-provider-contract.md)
+- [ADR-0019: Retain fragmented summary evidence](0019-retain-fragmented-summary-evidence.md)
+- [ADR-0020: Qualify complete action chains](0020-qualify-complete-action-chains.md)
+- [ADR-0021: Retain complete fragmented action evidence](0021-retain-complete-fragmented-action-evidence.md)
+- [ADR-0022: Possession-based recording playback](0022-possession-based-recording-playback.md)
 
 ## Superseded
 

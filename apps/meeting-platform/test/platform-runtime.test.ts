@@ -190,19 +190,21 @@ describe("meeting platform runtime wiring", () => {
       maxSpeakerTracks: 11,
       maxTotalArtifactBytes: 704 * 1_024 * 1_024,
     });
-    for (const keyterm of [
-      "Craig",
+    expect(options.keyterms).toEqual(expect.arrayContaining([
       "BullMQ",
-      "Redis",
+      "Craig",
+      "landing page",
+      "landing slug",
       "PostgreSQL",
+      "QID",
       "Quanta",
       "Quanta ID",
-      "QID",
       "Quanta Pages",
+      "Redis",
+      "referral code",
       "referral link",
-    ]) {
-      expect(options.keyterms).toContain(keyterm);
-    }
+      "timestamp",
+    ]));
   });
 
   it("preloads local thinking cues and wires them through the system delay", async () => {

@@ -81,6 +81,8 @@ const meetingSnapshotSchema = z.object({
 
 export type CollectedMeetingSnapshot = z.infer<typeof meetingSnapshotSchema>;
 
+const actorReadyPreRollMs = 30_000;
+
 export function normalizeDatabase(
   observation: DatabaseObservation,
 ): Omit<DatabaseObservation, "snapshot"> & { readonly snapshot: CollectedMeetingSnapshot } {
@@ -118,8 +120,15 @@ export function bindActorRun(
     throw new Error("Authoritative manifest has an invalid recording window");
   }
   const events = unbound.events.map((event) => {
-    if (event.atEpochMs < startedAt || event.atEpochMs > endedAt + 5_000) {
+    if (event.atEpochMs > endedAt + 5_000) {
       throw new Error("Actor event is outside the authoritative recording window");
+    }
+    if (event.atEpochMs < startedAt) {
+      if (event.type !== "ready" || startedAt - event.atEpochMs > actorReadyPreRollMs) {
+        throw new Error("Actor event is outside the authoritative recording window");
+      }
+      const { atEpochMs: _atEpochMs, ...rest } = event;
+      return { ...rest, atRecordingMs: 0 };
     }
     const { atEpochMs, ...rest } = event;
     return { ...rest, atRecordingMs: atEpochMs - startedAt };

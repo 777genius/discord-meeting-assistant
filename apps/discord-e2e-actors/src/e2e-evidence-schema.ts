@@ -108,6 +108,7 @@ const sourceRevisionSchema = z.string().regex(/^(?:[a-f\d]{40}|[a-f\d]{64})$/u);
 export const deploymentRevisionExpectationSchema = z.object({
   craig: sourceRevisionSchema,
   meetingPlatform: sourceRevisionSchema,
+  subscriptionRuntime: sourceRevisionSchema.optional(),
 }).strict();
 
 const deployedServiceProvenanceSchema = z.object({
@@ -121,12 +122,18 @@ const deployedServiceProvenanceSchema = z.object({
   sourceRevision: sourceRevisionSchema,
 });
 
+const historicalDeploymentProvenanceSchema = z.object({
+  craig: deployedServiceProvenanceSchema,
+  meetingPlatform: deployedServiceProvenanceSchema,
+});
+
+const currentDeploymentProvenanceSchema = historicalDeploymentProvenanceSchema.extend({
+  subscriptionRuntime: deployedServiceProvenanceSchema,
+});
+
 export const retainedE2eEvidenceV2Schema = z.object({
   actorRun: actorRunEvidenceV1Schema,
-  deployment: z.object({
-    craig: deployedServiceProvenanceSchema,
-    meetingPlatform: deployedServiceProvenanceSchema,
-  }),
+  deployment: historicalDeploymentProvenanceSchema,
   fixtureManifestVersion: z.literal(1),
   fixtureSetId: identifierSchema,
   database: z.object({
@@ -290,17 +297,56 @@ export const retainedE2eEvidenceV3Schema = retainedE2eEvidenceV2Schema
     schemaVersion: z.literal(3),
   });
 
+const processingStageObservationSchema = z.object({
+  durationMs: nonNegativeMillisecondsSchema,
+  observedAt: z.iso.datetime(),
+  outcome: z.literal("succeeded"),
+  stage: z.enum(["publication", "summary", "transcription"]),
+}).strict();
+
+const summaryRuntimeExecutionObservationSchema = z.object({
+  durationMs: nonNegativeMillisecondsSchema,
+  model: identifierSchema,
+  observedAt: z.iso.datetime(),
+  outputSchemaName: identifierSchema,
+  policyVersion: identifierSchema,
+  purpose: z.literal("discord_meeting.summary.generate"),
+  reasoningEffort: identifierSchema,
+  runId: identifierSchema,
+  status: z.literal("completed"),
+}).strict();
+
+export const processingEvidenceSchema = z.object({
+  stages: z.array(processingStageObservationSchema).min(3),
+  summaryRuntimeExecutions: z.array(summaryRuntimeExecutionObservationSchema).min(1).max(2),
+}).strict();
+
+/**
+ * v4 binds the summary-producing Subscription Runtime container and retains
+ * non-secret stage/runtime latency observations from the correlated deployment.
+ */
+export const retainedE2eEvidenceV4Schema = retainedE2eEvidenceV3Schema
+  .omit({ deployment: true, schemaVersion: true })
+  .extend({
+    deployment: currentDeploymentProvenanceSchema,
+    processing: processingEvidenceSchema,
+    schemaVersion: z.literal(4),
+  });
+
 export const retainedE2eEvidenceSchema = z.union([
   retainedE2eEvidenceV2Schema,
   retainedE2eEvidenceV3Schema,
+  retainedE2eEvidenceV4Schema,
 ]);
 
 export type FixtureManifestV1 = z.infer<typeof fixtureManifestV1Schema>;
 export type ActorRunEvidenceV1 = z.infer<typeof actorRunEvidenceV1Schema>;
 export type UnboundActorRunEvidenceV1 = z.infer<typeof unboundActorRunEvidenceV1Schema>;
 export type DeployedServiceProvenance = z.infer<typeof deployedServiceProvenanceSchema>;
-export type DeploymentProvenance = z.infer<typeof retainedE2eEvidenceV2Schema>["deployment"];
+export type CurrentDeploymentProvenance = z.infer<typeof currentDeploymentProvenanceSchema>;
 export type DeploymentRevisionExpectation = z.infer<typeof deploymentRevisionExpectationSchema>;
+export type ProcessingEvidence = z.infer<typeof retainedE2eEvidenceV4Schema>["processing"];
 export type RetainedE2eEvidenceV2 = z.infer<typeof retainedE2eEvidenceV2Schema>;
 export type RetainedE2eEvidenceV3 = z.infer<typeof retainedE2eEvidenceV3Schema>;
+export type RetainedE2eEvidenceV4 = z.infer<typeof retainedE2eEvidenceV4Schema>;
 export type RetainedE2eEvidence = z.infer<typeof retainedE2eEvidenceSchema>;

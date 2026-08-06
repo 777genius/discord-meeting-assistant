@@ -40,8 +40,26 @@ describe("platform configuration", () => {
 
     expect(paths).toHaveLength(7);
     expect(config.secrets.discordToken).toBe("value-for:/run/secrets/discord");
+    expect(config.discordFinalPublicationMode).toBe("separate-message");
     expect(config.discordPublicationMode).toBe("message");
     expect(Object.keys(environment)).not.toContain("OPENAI_API_KEY");
+  });
+
+  it("publishes final summaries separately by default and accepts live replacement opt-in", async () => {
+    const separate = await loadPlatformConfig(environment, async () => "value");
+    const replacement = await loadPlatformConfig(
+      { ...environment, DISCORD_FINAL_PUBLICATION_MODE: "replace-live" },
+      async () => "value",
+    );
+
+    expect(separate.discordFinalPublicationMode).toBe("separate-message");
+    expect(replacement.discordFinalPublicationMode).toBe("replace-live");
+    await expect(
+      loadPlatformConfig(
+        { ...environment, DISCORD_FINAL_PUBLICATION_MODE: "append" },
+        async () => "value",
+      ),
+    ).rejects.toThrow();
   });
 
   it("uses direct channel publication by default and accepts explicit legacy threads", async () => {

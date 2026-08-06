@@ -148,9 +148,12 @@ export async function createPlatformDiscordLiveComposition(input: {
     ...(live === undefined ? {} : { live }),
     rawPublisher: new DiscordSummaryPublicationAdapter(
       discordPublisher,
-      input.recordingPlaybackUrl === undefined
-        ? {}
-        : { recordingPlaybackUrl: input.recordingPlaybackUrl },
+      {
+        finalPublicationMode: input.config.discordFinalPublicationMode,
+        ...(input.recordingPlaybackUrl === undefined
+          ? {}
+          : { recordingPlaybackUrl: input.recordingPlaybackUrl }),
+      },
     ),
   };
 }
@@ -245,7 +248,6 @@ function createLiveRuntime(input: {
       expectedRuntimeEngine: subscriptionRuntimeCliEngine,
       maxOutputTokens: subscriptionRuntimeIncrementalMaxOutputTokens,
       maxRecentContextTurns: 256,
-      outputLanguage: "Natural English; preserve technical terms exactly",
       timeoutMs: 30_000,
     },
   );

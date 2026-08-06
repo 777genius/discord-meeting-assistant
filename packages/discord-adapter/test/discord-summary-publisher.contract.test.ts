@@ -492,7 +492,9 @@ describe("DiscordSummaryPublisher finalization contract", () => {
     const client = new FakeDiscordProjectionClient();
     const subject = publisher(client);
     const livePublisher = new DiscordLiveMeetingProjectionAdapter(subject);
-    const finalPublisher = new DiscordSummaryPublicationAdapter(subject);
+    const finalPublisher = new DiscordSummaryPublicationAdapter(subject, {
+      finalPublicationMode: "replace-live",
+    });
     const live = await livePublisher.publish({
       captions: [{
         endMs: 8_000,
@@ -555,7 +557,7 @@ describe("DiscordSummaryPublisher finalization contract", () => {
     expect(client.createMessageCount).toBe(1);
     expect(client.threads[0]?.message?.body.markdown).toContain("Выпуск согласован.");
     expect(client.threads[0]?.message?.body.liveCaptionsMarkdown).toContain(
-      "## 🗣️ Meeting transcript",
+      "## 🗣️ Транскрипт встречи",
     );
     expect(client.threads[0]?.message?.body.liveCaptionsMarkdown).toContain(
       "✓ `00:05-00:08` **speaker-a:** Обсуждаем выпуск.",
@@ -566,7 +568,9 @@ describe("DiscordSummaryPublisher finalization contract", () => {
     const client = new FakeDiscordProjectionClient();
     const subject = publisher(client);
     const livePublisher = new DiscordLiveMeetingProjectionAdapter(subject);
-    const finalPublisher = new DiscordSummaryPublicationAdapter(subject);
+    const finalPublisher = new DiscordSummaryPublicationAdapter(subject, {
+      finalPublicationMode: "replace-live",
+    });
     const liveRequest: LiveMeetingProjectionRequest = {
       captions: [{
         endMs: 8_000,

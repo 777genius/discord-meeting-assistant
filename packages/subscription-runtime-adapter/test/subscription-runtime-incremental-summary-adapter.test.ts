@@ -226,7 +226,8 @@ describe("SubscriptionRuntimeIncrementalSummaryAdapter", () => {
     expect(captured.task.systemPrompt).toContain("Previous summary is editable context");
     expect(captured.task.systemPrompt).toContain("untrusted quoted evidence");
     expect(captured.task.systemPrompt).toContain("overview exactly one short sentence");
-    expect(captured.task.systemPrompt).toContain("natural English");
+    expect(captured.task.systemPrompt).toContain("outputLanguage supplied in the prompt");
+    expect(prompt.outputLanguage).toBe("English");
     expect(captured.task.outputSchemaName).toBe(
       incrementalMeetingSummaryOutputSchemaName,
     );
@@ -234,7 +235,7 @@ describe("SubscriptionRuntimeIncrementalSummaryAdapter", () => {
       "6d9479e46e2f995c44871703664eb1a6965ac6f8cfb1f227d5f6795d003cbd28",
     );
     expect(createHash("sha256").update(captured.task.systemPrompt).digest("hex")).toBe(
-      "95d3a777915af6115cab9586cda80e2d4966b4451dbcdfc1e167b2c6ef0441ac",
+      "0a334d0822207c73d45660ebc2a058f5ff084dd6f9ca64ddf489eec100dc7c19",
     );
     expect(captured.task.systemPrompt).toContain("selective live snapshot");
     expect(captured.task.systemPrompt).toContain("at most three topics");

@@ -409,7 +409,7 @@ describe("Discord publication container modes", () => {
     expect(client.editMessageCount).toBe(1);
   });
 
-  it("keeps live and final publication on one direct message", async () => {
+  it("keeps the live draft and final summary as two idempotent direct messages by default", async () => {
     const client = new InMemoryProjectionClient();
     const subject = publisher(client);
     const live = new DiscordLiveMeetingProjectionAdapter(subject);
@@ -473,23 +473,26 @@ describe("Discord publication container modes", () => {
       currentExternalPublicationId: liveResult.value.externalPublicationId,
     });
 
-    expect(finalResult).toEqual({
-      ok: true,
-      value: { externalPublicationId: liveResult.value.externalPublicationId },
-    });
-    expect(client.channelMessages.size).toBe(1);
+    expect(finalResult.ok).toBe(true);
+    if (!finalResult.ok) {
+      throw new Error("expected final publication to succeed");
+    }
+    expect(finalResult.value.externalPublicationId).not.toBe(
+      liveResult.value.externalPublicationId,
+    );
+    expect(client.channelMessages.size).toBe(2);
     expect(client.threads.size).toBe(0);
     const initialReference = decodeDiscordExternalPublicationId(
-      liveResult.value.externalPublicationId,
+      finalResult.value.externalPublicationId,
     );
     const message = initialReference?.kind === "channel-message"
       ? client.channelMessages.get(initialReference.messageId)
       : undefined;
     expect(message?.body.transcriptAttachment).toEqual({
       content: [
-        "# Meeting transcript",
+        "# Транскрипт встречи",
         "",
-        "_Final transcript based on the meeting recording._",
+        "_Финальный транскрипт составлен по записи встречи._",
         "",
         "## `00:01-00:04` · speaker-a",
         "",
@@ -500,13 +503,11 @@ describe("Discord publication container modes", () => {
 
     const retry = await final.publish({
       ...finalRequest,
-      currentExternalPublicationId: finalResult.ok
-        ? finalResult.value.externalPublicationId
-        : null,
+      currentExternalPublicationId: finalResult.value.externalPublicationId,
     });
     expect(retry).toEqual(finalResult);
-    expect(client.channelMessages.size).toBe(1);
+    expect(client.channelMessages.size).toBe(2);
+    expect(client.createChannelMessageCount).toBe(2);
     expect(client.threads.size).toBe(0);
-    expect(client.editMessageCount).toBeGreaterThanOrEqual(2);
   });
 });

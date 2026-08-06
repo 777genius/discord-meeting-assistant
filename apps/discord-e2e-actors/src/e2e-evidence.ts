@@ -1,6 +1,7 @@
 import { verifyCampaign } from "./e2e-evidence-campaign-verification.js";
 import { verifyDeploymentProvenance } from "./e2e-evidence-deployment-verification.js";
 import { playbackWindowsFrom, verifyActorRun } from "./e2e-evidence-playback-verification.js";
+import { verifyProcessingEvidence } from "./e2e-evidence-processing-verification.js";
 import { verifyFixtures, verifyS3Evidence, verifyStages } from "./e2e-evidence-recording-verification.js";
 import { verificationResult } from "./e2e-evidence-verification-result.js";
 import {
@@ -29,17 +30,20 @@ export {
   retainedE2eEvidenceSchema,
   retainedE2eEvidenceV2Schema,
   retainedE2eEvidenceV3Schema,
+  retainedE2eEvidenceV4Schema,
   unboundActorRunEvidenceV1Schema,
 } from "./e2e-evidence-schema.js";
 export type {
   ActorRunEvidenceV1,
+  CurrentDeploymentProvenance,
   DeployedServiceProvenance,
-  DeploymentProvenance,
   DeploymentRevisionExpectation,
   FixtureManifestV1,
+  ProcessingEvidence,
   RetainedE2eEvidence,
   RetainedE2eEvidenceV2,
   RetainedE2eEvidenceV3,
+  RetainedE2eEvidenceV4,
   UnboundActorRunEvidenceV1,
 } from "./e2e-evidence-schema.js";
 export { sameDeploymentProvenance } from "./e2e-evidence-deployment-verification.js";
@@ -69,6 +73,7 @@ export function verifyRetainedE2eEvidence(
   verifyDeploymentProvenance(evidence, expectedRevisions, fail);
   verifyS3Evidence(evidence, fail);
   verifyStages(evidence, fail);
+  verifyProcessingEvidence(evidence, fail);
   const playbackWindows = playbackWindowsFrom(evidence, fail);
   const context = { evidence, fail, manifest, playbackWindows, scenario };
   verifyActorRun(context);

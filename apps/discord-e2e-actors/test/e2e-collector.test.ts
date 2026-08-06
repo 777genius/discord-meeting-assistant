@@ -7,7 +7,10 @@ import {
   type DiscordEvidenceProbe,
   type S3RecordingEvidence,
 } from "../src/e2e-collector.js";
-import type { DeploymentProvenance } from "../src/e2e-evidence.js";
+import type {
+  CurrentDeploymentProvenance,
+  ProcessingEvidence,
+} from "../src/e2e-evidence.js";
 
 const speakerA = "1533227577286852649";
 const speakerB = "1533228054724346087";
@@ -155,7 +158,7 @@ function s3(): S3RecordingEvidence {
   };
 }
 
-function provenance(): DeploymentProvenance {
+function provenance(): CurrentDeploymentProvenance {
   return {
     craig: {
       composeConfigHash: "3".repeat(64),
@@ -177,6 +180,37 @@ function provenance(): DeploymentProvenance {
       repositoryDigest: null,
       sourceRevision: "a".repeat(40),
     },
+    subscriptionRuntime: {
+      composeConfigHash: "b".repeat(64),
+      composeProject: "discord-meeting-assistant",
+      composeService: "subscription-runtime-sidecar",
+      containerId: "c".repeat(64),
+      containerStartedAt: "1970-01-01T00:15:00.000Z",
+      imageId: `sha256:${"d".repeat(64)}`,
+      repositoryDigest: null,
+      sourceRevision: "e".repeat(40),
+    },
+  };
+}
+
+function processing(): ProcessingEvidence {
+  return {
+    stages: [
+      { durationMs: 2_000, observedAt: "1970-01-01T00:17:01.000Z", outcome: "succeeded", stage: "transcription" },
+      { durationMs: 5_000, observedAt: "1970-01-01T00:17:06.000Z", outcome: "succeeded", stage: "summary" },
+      { durationMs: 500, observedAt: "1970-01-01T00:17:07.000Z", outcome: "succeeded", stage: "publication" },
+    ],
+    summaryRuntimeExecutions: [{
+      durationMs: 4_900,
+      model: "gpt-5.6-sol",
+      observedAt: "1970-01-01T00:17:05.900Z",
+      outputSchemaName: "discord_meeting_summary_v4",
+      policyVersion: "meeting-summary.subscription-runtime.v14",
+      purpose: "discord_meeting.summary.generate",
+      reasoningEffort: "medium",
+      runId: "summary-run-1",
+      status: "completed",
+    }],
   };
 }
 
@@ -195,6 +229,10 @@ describe("collectRetainedE2eEvidence", () => {
         provenanceCall += 1;
         calls.push(`provenance-${provenanceCall}`);
         return provenance();
+      },
+      collectProcessing: async () => {
+        calls.push("processing");
+        return processing();
       },
       collectS3: async () => {
         calls.push("s3");
@@ -239,6 +277,7 @@ describe("collectRetainedE2eEvidence", () => {
       "provenance-1",
       "database-1",
       "s3",
+      "processing",
       "replay",
       "database-2",
       "provenance-2",
@@ -253,6 +292,7 @@ describe("collectRetainedE2eEvidence", () => {
     expect(evidence.publication.matchingThreadCount).toBe(1);
     expect(evidence.recording.s3.sourceChecksumSha256).toBe("f".repeat(64));
     expect(evidence.deployment).toEqual(provenance());
+    expect(evidence.processing).toEqual(processing());
     expect(evidence.publication.embedDescription).toContain("Основание:");
   });
 
@@ -260,6 +300,7 @@ describe("collectRetainedE2eEvidence", () => {
     const deployment: DeploymentEvidenceProbe = {
       collectDatabase: async () => directMessageDatabase(),
       collectProvenance: async () => provenance(),
+      collectProcessing: async () => processing(),
       collectS3: async () => s3(),
       replayPostCall: async () => ({
         afterProcessedOn: 2_000,
@@ -288,7 +329,7 @@ describe("collectRetainedE2eEvidence", () => {
       discord,
     );
 
-    expect(evidence.schemaVersion).toBe(3);
+    expect(evidence.schemaVersion).toBe(4);
     expect(evidence.publication).toMatchObject({
       container: {
         kind: "channel-message",
@@ -317,6 +358,7 @@ describe("collectRetainedE2eEvidence", () => {
           }
           : observed;
       },
+      collectProcessing: async () => processing(),
       collectS3: async () => s3(),
       replayPostCall: async () => ({
         afterProcessedOn: 2_000,

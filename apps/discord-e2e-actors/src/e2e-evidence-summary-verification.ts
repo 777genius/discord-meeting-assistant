@@ -114,21 +114,62 @@ function verifyActionItems(
   evidence: RetainedE2eEvidence,
   fail: VerificationFailureReporter,
 ): void {
+  if (evidence.summary.actionItems.length !== manifest.summaryExpectations.actionItems.length) {
+    fail(
+      "ACTION_COUNT_MISMATCH",
+      `summary has ${evidence.summary.actionItems.length} action items, expected exactly ${manifest.summaryExpectations.actionItems.length}`,
+    );
+  }
+  const matchedIndexes = new Set<number>();
   for (const expected of manifest.summaryExpectations.actionItems) {
-    const match = evidence.summary.actionItems.find((action) =>
+    const matchIndex = evidence.summary.actionItems.findIndex((action, index) =>
+      !matchedIndexes.has(index) &&
       action.ownerSpeakerId === expected.ownerSpeakerId &&
       equivalentMeetingText(action.deadline, expected.deadline) &&
       expected.requiredTerms.every((term) =>
         normalizeTranscriptSemantics(action.text).includes(normalizeTranscriptSemantics(term)),
       ),
     );
-    if (match === undefined) {
+    if (matchIndex < 0) {
       fail(
         "ACTION_SEMANTICS_MISSING",
         `summary has no matching action for owner ${expected.ownerSpeakerId}`,
       );
+      continue;
+    }
+    matchedIndexes.add(matchIndex);
+    verifyActionEvidence(expected, evidence.summary.actionItems[matchIndex]!, evidence, fail);
+  }
+}
+
+function verifyActionEvidence(
+  expected: FixtureManifestV1["summaryExpectations"]["actionItems"][number],
+  action: RetainedE2eEvidence["summary"]["actionItems"][number],
+  evidence: RetainedE2eEvidence,
+  fail: VerificationFailureReporter,
+): void {
+  const turns = action.evidenceTurnIds.flatMap((turnId) => {
+    const turn = evidence.transcript.turns.find((candidate) => candidate.turnId === turnId);
+    return turn === undefined ? [] : [turn];
+  });
+  const evidenceText = turns.map(({ text }) => text).join(" ");
+  for (const term of expected.requiredTerms) {
+    if (!containsSemanticTokens(evidenceText, term)) {
+      fail("ACTION_EVIDENCE_MISSING", `action evidence omits ${term}`);
     }
   }
+  if (expected.deadline !== null && !containsSemanticTokens(evidenceText, expected.deadline)) {
+    fail("ACTION_EVIDENCE_MISSING", "action evidence omits its expected deadline");
+  }
+  if (!turns.some(({ speakerId }) => speakerId === expected.ownerSpeakerId)) {
+    fail("ACTION_OWNER_EVIDENCE_MISSING", `action evidence does not include owner ${expected.ownerSpeakerId}`);
+  }
+}
+
+function containsSemanticTokens(actual: string, expected: string): boolean {
+  const actualTokens = new Set(normalizeTranscriptSemantics(actual).split(/\s+/u));
+  return normalizeTranscriptSemantics(expected).split(/\s+/u)
+    .every((token) => token.length === 0 || actualTokens.has(token));
 }
 
 function verifyTopicTerms(

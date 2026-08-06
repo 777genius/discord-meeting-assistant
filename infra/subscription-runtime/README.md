@@ -44,10 +44,10 @@ The immutable sidecar image must:
    every execution;
 2. admit `discord_meeting.summary.generate` only with
    `gpt-5.6-sol`/`medium`, a 2048-token post-execution output budget, and policy version
-   `meeting-summary.subscription-runtime.v8`; admit
+   `meeting-summary.subscription-runtime.v14`; admit
    `discord_meeting.summary.incremental` only with `gpt-5.6-luna`/`low`, a
    2048-token post-execution output budget, and policy version
-   `meeting-summary.incremental.subscription-runtime.v4`; admit
+   `meeting-summary.incremental.subscription-runtime.v5`; admit
    `discord_meeting.conversation.answer` only with `gpt-5.6-luna`/`low`, a
    512-token budget, policy `meeting-conversation.subscription-runtime.v1`,
    and schema `discord_meeting_conversation_answer_v1`. All profiles use stateless
@@ -55,7 +55,7 @@ The immutable sidecar image must:
    isolated tmpfs working directory, and their exact purpose-bound structured
    schema. Final summaries use `discord_meeting_summary_v4`: title up to 96
    characters, overview up to 320, up to four topics with at most two points,
-   up to five decisions/actions/questions, up to two evidence turns per item,
+   up to five decisions/actions/questions, up to four evidence turns per item,
    and 160-character prose (96 for deadlines). Incremental live
    snapshots use `discord_meeting_incremental_summary_v1`, which permits one
    short overview, at most three topics with one or two points, at most three

@@ -8,7 +8,7 @@
       {
         "ownerSpeakerId": "1533228054724346087",
         "deadline": "до 7 августа 2026 года",
-        "requiredTerms": ["Discord thread"]
+        "requiredTerms": ["Redis queue", "idempotency key", "Discord thread"]
       }
     ],
     "topicTerms": ["Meeting Platform", "Craig recording", "PostgreSQL pipeline"]
@@ -36,11 +36,11 @@
       "actorName": "speaker-b",
       "speakerId": "1533228054724346087",
       "sourcePath": "test/fixtures/speaker-b.ru-en.txt",
-      "sourceSha256": "ce6d53650f73aac8872289ede15a67b6a74535d4620c572bd17a46fd1322df00",
+      "sourceSha256": "d801c2754ee7fff93732425e08cca589b63bb9f5a0699d7c81b8ff7dc1afaf85",
       "audioPath": "test/fixtures/speaker-b.ru-en.ogg",
-      "audioSha256": "f169479293fcf2911c8b3bffc32a187fdae0899b67267fde3171e2d2b8de3d2e",
-      "durationMs": 34996,
-      "sourceText": "Я проверю Redis queue. Я лично проверю idempotency key. Это моя задача. Срок - до седьмого августа две тысячи двадцать шестого года. Результат я оставлю в Discord thread. Повторяю термин - Discord thread. Idempotency key проверю до седьмого августа две тысячи двадцать шестого года. Открытый вопрос - нужен ли Pipecat assistant после первой версии? Повторяю термин - Pipecat assistant.",
+      "audioSha256": "45ee2668fb490ab03a7a453fee23eca286311b9bd5bdca268b604fc80edf2c2f",
+      "durationMs": 48361,
+      "sourceText": "Я проверю Redis queue. Я лично проверю idempotency key. Это моя задача. Срок - до седьмого августа две тысячи двадцать шестого года. Результат я оставлю в Discord thread. Повторяю термин - Discord thread. Idempotency key проверю до седьмого августа две тысячи двадцать шестого года. Повторяю мою задачу - я проверю Redis queue и idempotency key до седьмого августа две тысячи двадцать шестого года. Результат оставлю в Discord thread. Открытый вопрос - нужен ли Pipecat assistant после первой версии? Повторяю термин - Pipecat assistant.",
       "requiredTerms": ["Discord thread", "Redis queue", "idempotency key", "Pipecat assistant", "августа", "2026"]
     }
   ],

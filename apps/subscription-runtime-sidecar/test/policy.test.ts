@@ -57,7 +57,7 @@ describe("subscription runtime request policy", () => {
     expect(reconstructed).toEqual(incrementalCanonicalRequest);
     expect(reconstructed.context.purpose).toBe("discord_meeting.summary.incremental");
     expect(reconstructed.context.metadata.policyVersion).toBe(
-      "meeting-summary.incremental.subscription-runtime.v4",
+      "meeting-summary.incremental.subscription-runtime.v5",
     );
     expect(reconstructed.task.controls).toMatchObject({
       maxOutputTokens: 2_048,

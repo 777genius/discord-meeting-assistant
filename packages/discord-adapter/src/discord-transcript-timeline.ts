@@ -20,6 +20,7 @@ export interface DiscordTranscriptTimelineEntry {
 }
 
 export type DiscordTranscriptTimelineKind = "final" | "live";
+export type DiscordTranscriptLocale = "en" | "ru" | "uk";
 
 const discordTimelineDescriptionLimit = 1_900;
 const maximumTimelineEntryCodeUnits = 320;
@@ -28,40 +29,64 @@ const maximumTimelineEntryGraphemes = 280;
 export const finalTranscriptAttachmentFilename = "meeting-transcript.md";
 
 const liveTimeline = {
+  empty: "No captions recognized yet.",
   footer: "_✓ - finalized; … - being refined. History remains until final reconciliation._",
   heading: "## 🎙️ Meeting captions",
 } as const;
 
-const finalTimeline = {
-  footer: `_Final transcript based on the meeting recording. Full transcript attached: \`${finalTranscriptAttachmentFilename}\`._`,
-  heading: "## 🗣️ Meeting transcript",
+const finalTimelines = {
+  en: {
+    attachmentEmpty: "No transcript turns were recorded.",
+    attachmentHeading: "# Meeting transcript",
+    attachmentIntro: "_Final transcript based on the meeting recording._",
+    empty: "No captions recognized yet.",
+    footer: `_Final transcript based on the meeting recording. Full transcript attached: \`${finalTranscriptAttachmentFilename}\`._`,
+    heading: "## 🗣️ Meeting transcript",
+  },
+  ru: {
+    attachmentEmpty: "Реплики в транскрипте не зафиксированы.",
+    attachmentHeading: "# Транскрипт встречи",
+    attachmentIntro: "_Финальный транскрипт составлен по записи встречи._",
+    empty: "Реплики пока не распознаны.",
+    footer: `_Финальный транскрипт составлен по записи встречи. Полная версия приложена: \`${finalTranscriptAttachmentFilename}\`._`,
+    heading: "## 🗣️ Транскрипт встречи",
+  },
+  uk: {
+    attachmentEmpty: "Репліки в транскрипті не зафіксовані.",
+    attachmentHeading: "# Транскрипт зустрічі",
+    attachmentIntro: "_Фінальний транскрипт складено за записом зустрічі._",
+    empty: "Репліки ще не розпізнані.",
+    footer: `_Фінальний транскрипт складено за записом зустрічі. Повну версію додано: \`${finalTranscriptAttachmentFilename}\`._`,
+    heading: "## 🗣️ Транскрипт зустрічі",
+  },
 } as const;
 
 /**
- * Renders a bounded, chronological transcript timeline for the one mutable
- * Discord message. If the timeline cannot fit, retain the opening and newest
+ * Renders a bounded, chronological transcript timeline for the active Discord
+ * projection. If the timeline cannot fit, retain the opening and newest
  * contiguous history and explain the omission instead of silently replacing
  * the whole view with a placeholder.
  */
 export function renderRussianTranscriptTimelineMarkdown(
   entries: readonly DiscordTranscriptTimelineEntry[],
   kind: DiscordTranscriptTimelineKind,
+  locale: DiscordTranscriptLocale = "en",
 ): string {
-  const frame = kind === "live" ? liveTimeline : finalTimeline;
+  const frame = kind === "live" ? liveTimeline : finalTimelines[locale];
   const orderedEntries = orderedTranscriptEntries(entries);
 
   if (orderedEntries.length === 0) {
     return [
       frame.heading,
       "",
-      "No captions recognized yet.",
+      frame.empty,
       "",
       frame.footer,
     ].join("\n");
   }
 
   const budget = discordTimelineDescriptionLimit - frame.heading.length - frame.footer.length - 4;
-  const body = selectTimelineEntries(orderedEntries, budget, kind);
+  const body = selectTimelineEntries(orderedEntries, budget, kind, locale);
   return [frame.heading, "", ...body, "", frame.footer].join("\n");
 }
 
@@ -72,16 +97,18 @@ export function renderRussianTranscriptTimelineMarkdown(
  */
 export function renderRussianFinalTranscriptAttachmentMarkdown(
   entries: readonly DiscordTranscriptTimelineEntry[],
+  locale: DiscordTranscriptLocale = "en",
 ): string {
   const orderedEntries = orderedTranscriptEntries(entries);
+  const copy = finalTimelines[locale];
   const lines = [
-    "# Meeting transcript",
+    copy.attachmentHeading,
     "",
-    "_Final transcript based on the meeting recording._",
+    copy.attachmentIntro,
   ];
 
   if (orderedEntries.length === 0) {
-    lines.push("", "No transcript turns were recorded.");
+    lines.push("", copy.attachmentEmpty);
     return lines.join("\n");
   }
 
@@ -101,6 +128,7 @@ function selectTimelineEntries(
   entries: readonly DiscordTranscriptTimelineEntry[],
   budget: number,
   kind: DiscordTranscriptTimelineKind,
+  locale: DiscordTranscriptLocale,
 ): readonly string[] {
   const rendered = new Map<number, string>();
   const renderAt = (index: number): string => {
@@ -131,7 +159,12 @@ function selectTimelineEntries(
   const tail: string[] = [];
   for (let index = entries.length - 1; index >= 1; index -= 1) {
     const omittedCount = index - 1;
-    const candidate = [first, collapsedHistoryNotice(omittedCount, kind), renderAt(index), ...tail];
+    const candidate = [
+      first,
+      collapsedHistoryNotice(omittedCount, kind, locale),
+      renderAt(index),
+      ...tail,
+    ];
     if (candidate.join("\n").length > budget) {
       break;
     }
@@ -140,24 +173,35 @@ function selectTimelineEntries(
 
   if (tail.length > 0) {
     const omittedCount = entries.length - tail.length - 1;
-    return [first, collapsedHistoryNotice(omittedCount, kind), ...tail];
+    return [first, collapsedHistoryNotice(omittedCount, kind, locale), ...tail];
   }
 
   const firstBudget = Math.max(
     1,
-    budget - collapsedHistoryNotice(entries.length - 1, kind).length - 1,
+    budget - collapsedHistoryNotice(entries.length - 1, kind, locale).length - 1,
   );
   return [
     truncateTimelineLine(first, firstBudget),
-    collapsedHistoryNotice(entries.length - 1, kind),
+    collapsedHistoryNotice(entries.length - 1, kind, locale),
   ];
 }
 
 function collapsedHistoryNotice(
   omittedCount: number,
   kind: DiscordTranscriptTimelineKind,
+  locale: DiscordTranscriptLocale,
 ): string {
   if (kind === "final") {
+    if (locale === "ru") {
+      return omittedCount <= 0
+        ? `_… Полный транскрипт приложен: \`${finalTranscriptAttachmentFilename}\`._`
+        : `_… Ещё ${omittedCount} реплик доступны в приложенном полном транскрипте._`;
+    }
+    if (locale === "uk") {
+      return omittedCount <= 0
+        ? `_… Повний транскрипт додано: \`${finalTranscriptAttachmentFilename}\`._`
+        : `_… Ще ${omittedCount} реплік доступні в доданому повному транскрипті._`;
+    }
     return omittedCount <= 0
       ? `_… Full transcript attached: \`${finalTranscriptAttachmentFilename}\`._`
       : `_… ${omittedCount} captions are available in the attached full transcript._`;

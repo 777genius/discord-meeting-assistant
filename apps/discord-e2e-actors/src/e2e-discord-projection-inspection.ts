@@ -54,9 +54,7 @@ export function assertDiscordReference(
   observation: DiscordProjectionObservation,
   reference: DiscordPublicationReference,
 ): DiscordProjectionMessageObservation {
-  const message = observation.matchingMessages.find((candidate) =>
-    candidate.messageId === reference.messageId && sameDiscordContainer(candidate.container, reference)
-  );
+  const message = findDiscordReference(observation, reference);
   const expectedThreadId = reference.kind === "thread" ? reference.threadId : undefined;
   if (
     message === undefined ||
@@ -65,6 +63,16 @@ export function assertDiscordReference(
     throw new Error("Discord publication receipt is absent from the marker scan");
   }
   return message;
+}
+
+export function findDiscordReference(
+  observation: DiscordProjectionObservation,
+  reference: DiscordPublicationReference,
+): DiscordProjectionMessageObservation | undefined {
+  return observation.matchingMessages.find((candidate) =>
+    candidate.messageId === reference.messageId &&
+    sameDiscordContainer(candidate.container, reference)
+  );
 }
 
 export function assertExactDiscordProjection(
@@ -114,6 +122,22 @@ export async function createMeetingDiscordProjectionKey(
     new TextEncoder().encode(canonical),
   );
   return `meeting-discord-projection:v2:${Buffer.from(digest).toString("hex")}`;
+}
+
+export async function createMeetingDiscordFinalSummaryProjectionKey(
+  meetingId: string,
+  targetChannelId: string,
+): Promise<string> {
+  const canonical = JSON.stringify([
+    "meeting-discord-final-summary:v1",
+    meetingId,
+    targetChannelId,
+  ]);
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(canonical),
+  );
+  return `meeting-discord-final-summary:v1:${Buffer.from(digest).toString("hex")}`;
 }
 
 function sameDiscordContainer(

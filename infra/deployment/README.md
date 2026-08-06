@@ -33,11 +33,13 @@ the legacy embedded arrays, so an old binary cannot silently restore them.
 Horizontal live ingress remains prohibited independently of this migration
 fence.
 
-`DISCORD_PUBLICATION_MODE=message` is the default: each meeting owns one mutable
-SUT-authored message directly in the configured results channel. Set
+`DISCORD_PUBLICATION_MODE=message` is the default Discord container: publications
+are direct SUT-authored messages in the configured results channel. Set
 `DISCORD_PUBLICATION_MODE=thread` only to retain the opt-in thread presentation;
 the thread title is human-facing and never includes the internal idempotency
-digest.
+digest. `DISCORD_FINAL_PUBLICATION_MODE=separate-message` keeps the live draft and
+publishes one separate idempotent final summary by default. Set it to
+`replace-live` only for the previous single-message behavior.
 
 ## Redis queue durability
 

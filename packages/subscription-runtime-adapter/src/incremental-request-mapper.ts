@@ -14,6 +14,7 @@ import {
 } from "./provider-summary-schema.js";
 import {
   compareTranscriptTurns,
+  resolveSummaryOutputLanguage,
   validateTranscriptTurn,
 } from "./request-mapper.js";
 import { stableSubscriptionRuntimeId } from "./stable-id.js";
@@ -36,7 +37,7 @@ const incrementalSummarySystemPrompt = [
   "Use only exact knownTurnIds and knownSpeakerIds; every topic, decision, action item, and open question needs direct finalized-turn evidence.",
   "This is a selective live snapshot, never a complete meeting record. Never claim completeness. On overflow, prefer explicit commitments and blockers, then newest directly supported evidence, then the lowest evidence turn ID.",
   "The schema allows at most three topics with one or two points each, and at most three decisions, action items, and open questions each. Every item has one to three exact evidenceTurnIds. Owners and deadlines must be explicit and exact, otherwise null.",
-  "Write concise natural English: overview exactly one short sentence, title and prose contain no technical identifiers, and every item should be short.",
+  "Write concise natural prose in the outputLanguage supplied in the prompt: overview exactly one short sentence, never expose transcript turn IDs or runtime metadata, and keep every item short.",
   "Omit unsupported claims and return the full revised JSON matching the compact live schema, not a patch.",
 ].join(" ");
 
@@ -60,12 +61,19 @@ export function buildSubscriptionRuntimeIncrementalSummaryRequest(
       `maxOutputTokens must match the admitted incremental profile value ${subscriptionRuntimeIncrementalMaxOutputTokens}`,
     );
   }
+  const languageEvidence = [
+    ...request.recentContextTurns,
+    ...request.newTurns,
+  ].toSorted(compareTranscriptTurns);
   const prompt = JSON.stringify({
     knownSpeakerIds: [...request.knownSpeakerIds].toSorted(),
     knownTurnIds: [...request.knownTurnIds],
     meetingId: request.meetingId,
     newFinalizedTurns: request.newTurns.toSorted(compareTranscriptTurns).map(mapTurn),
-    outputLanguage: options.outputLanguage ?? null,
+    outputLanguage: resolveSummaryOutputLanguage(
+      languageEvidence,
+      options.outputLanguage,
+    ),
     outputSchema: providerIncrementalMeetingSummaryJsonSchema,
     previousSummary: request.previousSummary,
     recentContextTurns: request.recentContextTurns
