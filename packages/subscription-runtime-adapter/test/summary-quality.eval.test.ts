@@ -65,6 +65,26 @@ describe("final summary quality evals", () => {
     expect(request.task.systemPrompt).toContain("outputLanguage supplied in the prompt");
   });
 
+  it("preserves distinct action outputs and complete named technical workflows", () => {
+    const request = requestFor([
+      "Meeting Platform принимает Craig recording и запускает PostgreSQL pipeline.",
+      "Проверь idempotency key и оставь результат в Discord thread до пятницы.",
+    ]);
+
+    expect(request.task.systemPrompt).toContain(
+      "matching owner and deadline alone never make two tasks duplicates",
+    );
+    expect(request.task.systemPrompt).toContain(
+      "every distinct deliverable, result destination or reporting channel",
+    );
+    expect(request.task.systemPrompt).toContain(
+      "keep its material components and their relationship or order together",
+    );
+    expect(request.task.systemPrompt).toContain(
+      "do not reduce the workflow to only one stage",
+    );
+  });
+
   it("selects English for an English transcript and falls back for balanced language", () => {
     const englishPrompt = JSON.parse(
       requestFor(["Keep old links working and use a readable landing slug."]).task.prompt,

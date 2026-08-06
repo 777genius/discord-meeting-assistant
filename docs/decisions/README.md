@@ -22,6 +22,7 @@ _None._
 - [ADR-0014: Streaming warm conversation pipeline](0014-streaming-warm-conversation-pipeline.md)
 - [ADR-0015: Meeting Core feature modules](0015-meeting-core-feature-modules.md)
 - [ADR-0016: Separate final publication and evidence-oriented summaries](0016-separate-final-publication-and-summary-quality.md)
+- [ADR-0017: Preserve summary workflow and action semantics](0017-preserve-summary-workflow-and-action-semantics.md)
 
 ## Superseded
 

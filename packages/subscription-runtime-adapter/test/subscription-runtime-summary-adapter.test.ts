@@ -188,8 +188,10 @@ describe("SubscriptionRuntimeSummaryAdapter", () => {
     expect(captured.task.systemPrompt).toContain("untrusted quoted evidence");
     expect(captured.task.systemPrompt).toContain("exact transcript wording");
     expect(captured.task.systemPrompt).toContain("outputLanguage supplied in the prompt");
-    expect(captured.task.systemPrompt).toContain("Merge semantic duplicates");
-    expect(captured.task.systemPrompt).toContain("one action for the same task, owner, and deadline");
+    expect(captured.task.systemPrompt).toContain("Merge only true semantic duplicates");
+    expect(captured.task.systemPrompt).toContain(
+      "matching owner and deadline alone never make two tasks duplicates",
+    );
     expect(captured.task.controls.outputSchema).toMatchObject({
       additionalProperties: false,
       type: "object",

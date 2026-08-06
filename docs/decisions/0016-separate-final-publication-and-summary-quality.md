@@ -29,10 +29,9 @@ transcript duplicate.
 - The live finalization fence remains mandatory before either final-publication
   behavior.
 - Final summary policy v9 and incremental policy v5 write in the dominant
-  transcript language unless an explicit override is supplied. English is
-  selected from dominant Latin script. Russian and Ukrainian are distinguished
-  by exclusive letters and bounded lexical markers; ambiguous Cyrillic or
-  other-language transcripts instruct the model to use the transcript's dominant
+  transcript language unless an explicit override is supplied. Russian and
+  English are selected deterministically for their dominant scripts; ambiguous
+  or other-language transcripts instruct the model to infer their dominant
   natural language.
 - The existing v4 summary schema remains stable. Material parameters,
   compatibility behavior, privacy constraints, identifiers, limits, and

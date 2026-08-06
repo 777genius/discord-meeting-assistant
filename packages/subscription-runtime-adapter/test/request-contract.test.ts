@@ -41,7 +41,7 @@ describe("subscription runtime request contract", () => {
     expect(canonicalJsonSha256(second)).toBe(canonicalJsonSha256(first));
     expect(first.runId).toMatch(/^summary-request-[0-9a-f]{32}$/u);
     expect(first.context.metadata.policyVersion).toBe(
-      "meeting-summary.subscription-runtime.v9",
+      "meeting-summary.subscription-runtime.v10",
     );
     expect(first.task.controls.outputSchemaName).toBe(
       "discord_meeting_summary_v4",
@@ -80,14 +80,14 @@ describe("subscription runtime request contract", () => {
       },
     });
     expect(first.task.systemPrompt).toContain("one strongest evidenceTurnId");
-    expect(first.task.systemPrompt).toContain("Merge semantic duplicates");
+    expect(first.task.systemPrompt).toContain("Merge only true semantic duplicates");
     expect(first.task.systemPrompt).toContain("full transcript remains authoritative");
     expect(canonicalJsonSha256(first.task.controls.outputSchema)).toBe(
       "a9822807c85eae1a5fc542bad4b40b62adea5539eb3a4eef8078ac47d3a1c8ee",
     );
     expect(
       createHash("sha256").update(first.task.systemPrompt).digest("hex"),
-    ).toBe("89183d5e5a4f7cb76799704a282a151059478dad64dcad9eee62d0bc06dfe762");
+    ).toBe("37c3e9758587506e280c0dfe7bdfea379a8f9a1f34d5e223a6b14bee463cb646");
   });
 
   it("rejects an oversized transcript before transport", () => {
