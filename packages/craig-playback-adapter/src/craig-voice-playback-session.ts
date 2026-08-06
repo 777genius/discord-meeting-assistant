@@ -46,11 +46,13 @@ export class CraigVoicePlaybackSession implements VoicePlaybackSession {
   private cancelPromise: Promise<PortResult<"cancelled" | "reused">> | undefined;
   private expectedSequence = 0;
   private finishPromise: Promise<PortResult<"finished" | "reused">> | undefined;
+  private pacingRemainder = 0;
   private resolveFinish:
     | ((result: PortResult<"finished" | "reused">) => void)
     | undefined;
   private state: "starting" | "open" | "finishing" | "cancelling" | "finished" | "failed" =
     "starting";
+  private terminalFailure: StageFailure | undefined;
 
   private readonly nowMilliseconds: () => number;
   private readonly onTerminal: () => void;
@@ -168,7 +170,16 @@ export class CraigVoicePlaybackSession implements VoicePlaybackSession {
       });
       this.chunkHashes.set(chunk.sequence, hash);
       this.expectedSequence += 1;
-      await pacePcmDelivery(chunk.bytes.byteLength);
+      await this.pacePcmDelivery(chunk.bytes.byteLength);
+      if (this.state !== "open") {
+        return this.terminalFailure === undefined
+          ? failure(
+              "CRAIG_PLAYBACK_TERMINAL",
+              "Craig playback terminated while pacing accepted audio",
+              false,
+            )
+          : { ok: false, failure: this.terminalFailure };
+      }
       return { ok: true, value: "accepted" };
     } catch (error) {
       return transportFailure(error);
@@ -312,6 +323,7 @@ export class CraigVoicePlaybackSession implements VoicePlaybackSession {
       return;
     }
     this.state = "failed";
+    this.terminalFailure = stageFailure;
     this.eventBuffer.push({
       type: "failed",
       attemptId: this.request.attemptId,
@@ -327,16 +339,18 @@ export class CraigVoicePlaybackSession implements VoicePlaybackSession {
     this.resolveTerminalReceipt();
     this.onTerminal();
   }
-}
 
-async function pacePcmDelivery(byteLength: number): Promise<void> {
-  const durationMs = Math.ceil((byteLength * 1_000) / pcmBytesPerSecond);
-  if (durationMs <= 0) {
-    return;
+  private async pacePcmDelivery(byteLength: number): Promise<void> {
+    const durationNumerator = this.pacingRemainder + byteLength * 1_000;
+    const durationMs = Math.floor(durationNumerator / pcmBytesPerSecond);
+    this.pacingRemainder = durationNumerator % pcmBytesPerSecond;
+    if (durationMs <= 0) {
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, durationMs);
+    });
   }
-  await new Promise<void>((resolve) => {
-    setTimeout(resolve, durationMs);
-  });
 }
 
 interface CraigVoicePlaybackSessionOptions {
