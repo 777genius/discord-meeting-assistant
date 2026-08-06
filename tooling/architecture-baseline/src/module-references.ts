@@ -1,4 +1,5 @@
 import { parse } from "@babel/parser";
+import traverse, { type Binding, type NodePath, type Scope } from "@babel/traverse";
 
 export interface ModuleReference {
   readonly specifier: string;
@@ -6,12 +7,23 @@ export interface ModuleReference {
   readonly column: number;
 }
 
-interface AstNode {
-  readonly type: string;
-  readonly loc?: {
-    readonly start: { readonly line: number; readonly column: number };
-  } | null;
-  readonly [key: string]: unknown;
+interface StaticSpecifier {
+  readonly path: NodePath;
+  readonly value: string;
+}
+
+function isNodePath(value: unknown): value is NodePath {
+  const node = (value as { readonly node?: unknown } | null)?.node;
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof node === "object" &&
+    node !== null &&
+    "type" in node &&
+    typeof (node as { readonly type?: unknown }).type === "string" &&
+    "get" in value &&
+    typeof (value as { readonly get?: unknown }).get === "function"
+  );
 }
 
 const transparentExpressionTypes = new Set([
@@ -25,39 +37,27 @@ const transparentExpressionTypes = new Set([
   "TypeCastExpression",
 ]);
 
-function isAstNode(value: unknown): value is AstNode {
-  return typeof value === "object" && value !== null && "type" in value &&
-    typeof (value as { readonly type?: unknown }).type === "string";
+function childPath(path: NodePath, key: string): NodePath | undefined {
+  const child: unknown = path.get(key);
+  return isNodePath(child) ? child : undefined;
 }
 
-function walkAst(value: unknown, visit: (node: AstNode) => void): void {
-  if (Array.isArray(value)) {
-    for (const entry of value) {
-      walkAst(entry, visit);
-    }
-    return;
-  }
-  if (!isAstNode(value)) {
-    return;
-  }
-  visit(value);
-  for (const child of Object.values(value)) {
-    if (isAstNode(child) || Array.isArray(child)) {
-      walkAst(child, visit);
-    }
-  }
+function childPaths(path: NodePath, key: string): readonly NodePath[] {
+  const children: unknown = path.get(key);
+  return Array.isArray(children)
+    ? children.filter(isNodePath)
+    : [];
 }
 
-function unwrapExpression(value: unknown): AstNode | undefined {
-  let current = isAstNode(value) ? value : undefined;
+function unwrapPath(path: NodePath | undefined): NodePath | undefined {
+  let current = path;
   while (current !== undefined) {
-    if (transparentExpressionTypes.has(current.type)) {
-      current = isAstNode(current.expression) ? current.expression : undefined;
+    if (transparentExpressionTypes.has(current.node.type)) {
+      current = childPath(current, "expression");
       continue;
     }
-    if (current.type === "SequenceExpression" && Array.isArray(current.expressions)) {
-      const finalExpression: unknown = (current.expressions as unknown[]).at(-1);
-      current = isAstNode(finalExpression) ? finalExpression : undefined;
+    if (current.node.type === "SequenceExpression") {
+      current = childPaths(current, "expressions").at(-1);
       continue;
     }
     return current;
@@ -65,112 +65,179 @@ function unwrapExpression(value: unknown): AstNode | undefined {
   return undefined;
 }
 
-function identifierName(value: unknown): string | undefined {
-  const node = unwrapExpression(value);
-  return node?.type === "Identifier" && typeof node.name === "string"
-    ? node.name
-    : undefined;
+function identifierName(path: NodePath | undefined): string | undefined {
+  const current = unwrapPath(path);
+  return current?.isIdentifier() === true ? current.node.name : undefined;
 }
 
-function resolvesToRequire(value: unknown, aliases: ReadonlySet<string>): boolean {
-  const name = identifierName(value);
-  return name !== undefined && aliases.has(name);
+function memberPropertyName(path: NodePath): string | undefined {
+  const member = unwrapPath(path);
+  if (
+    member === undefined ||
+    (member.node.type !== "MemberExpression" &&
+      member.node.type !== "OptionalMemberExpression")
+  ) {
+    return undefined;
+  }
+  const property = childPath(member, "property");
+  if (member.node.computed) {
+    return staticSpecifier(property)?.value;
+  }
+  return identifierName(property);
 }
 
-function aliasCandidate(node: AstNode): {
-  readonly name: string;
-  readonly value: unknown;
-} | undefined {
-  if (node.type === "VariableDeclarator") {
-    const name = identifierName(node.id);
-    return name === undefined ? undefined : { name, value: node.init };
-  }
-  if (node.type === "AssignmentExpression" && node.operator === "=") {
-    const name = identifierName(node.left);
-    return name === undefined ? undefined : { name, value: node.right };
-  }
-  return undefined;
+function bindingInitializer(binding: Binding): NodePath | undefined {
+  const parent = binding.path.parentPath;
+  const declaration = binding.path.isVariableDeclarator()
+    ? binding.path
+    : parent.isVariableDeclarator()
+      ? parent
+      : undefined;
+  return declaration === undefined ? undefined : childPath(declaration, "init");
 }
 
-function collectRequireAliases(root: AstNode): ReadonlySet<string> {
-  const aliases = new Set(["require"]);
-  let changed = true;
-  while (changed) {
-    changed = false;
-    walkAst(root, (node) => {
-      const candidate = aliasCandidate(node);
-      if (
-        candidate !== undefined &&
-        !aliases.has(candidate.name) &&
-        resolvesToRequire(candidate.value, aliases)
-      ) {
-        aliases.add(candidate.name);
-        changed = true;
-      }
-    });
-  }
-  return aliases;
-}
-
-function isRequireCall(node: AstNode, aliases: ReadonlySet<string>): boolean {
-  if (resolvesToRequire(node.callee, aliases)) {
-    return true;
-  }
-  const callee = unwrapExpression(node.callee);
-  if (callee?.type !== "MemberExpression" && callee?.type !== "OptionalMemberExpression") {
-    return false;
-  }
-  const propertyName = identifierName(callee.property);
-  return (
-    (resolvesToRequire(callee.object, aliases) && propertyName === "resolve") ||
-    (identifierName(callee.object) === "module" && propertyName === "require")
+function bindingIsUnchangedBeforeUse(binding: Binding, usePath: NodePath): boolean {
+  const useStart = usePath.node.start ?? Number.POSITIVE_INFINITY;
+  const useExecutionScope = executionScope(usePath);
+  return binding.constantViolations.every(
+    (violation) =>
+      !isSameOrAncestorScope(executionScope(violation), useExecutionScope) ||
+      (violation.node.start ?? Number.NEGATIVE_INFINITY) >= useStart,
   );
 }
 
-function stringLiteral(value: unknown): AstNode | undefined {
-  const node = unwrapExpression(value);
-  return node?.type === "StringLiteral" && typeof node.value === "string"
-    ? node
-    : undefined;
+function executionScope(path: NodePath): Scope {
+  return path.scope.getFunctionParent() ?? path.scope.getProgramParent();
 }
 
-function callArgument(node: AstNode): AstNode | undefined {
-  if (!Array.isArray(node.arguments)) {
+function isSameOrAncestorScope(candidate: Scope, scope: Scope): boolean {
+  let current: Scope | null = scope;
+  while (current !== null) {
+    if (current === candidate) {
+      return true;
+    }
+    current = current.parent ?? null;
+  }
+  return false;
+}
+
+function isUnboundIdentifier(path: NodePath, name: string): boolean {
+  return identifierName(path) === name && path.scope.getBinding(name) === undefined;
+}
+
+function isRequireFunction(
+  path: NodePath | undefined,
+  usePath: NodePath,
+  visitedBindings = new Set<Binding>(),
+): boolean {
+  const current = unwrapPath(path);
+  if (current === undefined) {
+    return false;
+  }
+  const name = identifierName(current);
+  if (name !== undefined) {
+    const binding = current.scope.getBinding(name);
+    if (binding === undefined) {
+      return name === "require";
+    }
+    if (
+      visitedBindings.has(binding) ||
+      !bindingIsUnchangedBeforeUse(binding, usePath)
+    ) {
+      return false;
+    }
+    const nextVisited = new Set(visitedBindings).add(binding);
+    const initializer = bindingInitializer(binding);
+    return isRequireFunction(initializer, initializer ?? usePath, nextVisited);
+  }
+
+  if (
+    current.node.type === "MemberExpression" ||
+    current.node.type === "OptionalMemberExpression"
+  ) {
+    const object = childPath(current, "object");
+    return (
+      memberPropertyName(current) === "require" &&
+      object !== undefined &&
+      isUnboundIdentifier(object, "module")
+    );
+  }
+
+  if (current.node.type === "CallExpression") {
+    const callee = unwrapPath(childPath(current, "callee"));
+    if (
+      callee !== undefined &&
+      memberPropertyName(callee) === "bind"
+    ) {
+      return isRequireFunction(childPath(callee, "object"), usePath, visitedBindings);
+    }
+  }
+  return false;
+}
+
+function staticSpecifier(path: NodePath | undefined): StaticSpecifier | undefined {
+  const current = unwrapPath(path);
+  if (current?.isStringLiteral() === true) {
+    return { path: current, value: current.node.value };
+  }
+  if (current?.isTemplateLiteral() !== true || current.node.expressions.length > 0) {
     return undefined;
   }
-  return stringLiteral(node.arguments[0]);
+  const cooked = current.node.quasis[0]?.value.cooked;
+  return typeof cooked === "string" ? { path: current, value: cooked } : undefined;
 }
 
-function referencedLiteral(
-  node: AstNode,
-  requireAliases: ReadonlySet<string>,
-): AstNode | undefined {
-  if (
-    node.type === "ImportDeclaration" ||
-    node.type === "ExportAllDeclaration" ||
-    node.type === "ExportNamedDeclaration"
-  ) {
-    return stringLiteral(node.source);
+function callSpecifier(path: NodePath): StaticSpecifier | undefined {
+  const callee = unwrapPath(childPath(path, "callee"));
+  const callArguments = childPaths(path, "arguments");
+  if (callee?.node.type === "Import") {
+    return staticSpecifier(callArguments[0]);
   }
-  if (node.type === "ImportExpression" || node.type === "TSImportType") {
-    return stringLiteral(node.source ?? node.argument);
-  }
-  if (node.type === "TSExternalModuleReference") {
-    return stringLiteral(node.expression);
+  if (isRequireFunction(callee, path)) {
+    return staticSpecifier(callArguments[0]);
   }
   if (
-    (node.type === "CallExpression" || node.type === "OptionalCallExpression") &&
-    (isRequireCall(node, requireAliases) || identifierName(node.callee) === "import")
+    callee === undefined ||
+    (callee.node.type !== "MemberExpression" &&
+      callee.node.type !== "OptionalMemberExpression")
   ) {
-    return callArgument(node);
+    return undefined;
+  }
+  const object = childPath(callee, "object");
+  const propertyName = memberPropertyName(callee);
+  if (propertyName === "resolve" && isRequireFunction(object, path)) {
+    return staticSpecifier(callArguments[0]);
+  }
+  if (propertyName === "call" && isRequireFunction(object, path)) {
+    return staticSpecifier(callArguments[1]);
   }
   return undefined;
 }
 
-function toModuleReference(node: AstNode): ModuleReference {
-  const location = node.loc?.start;
+function declarationSpecifier(path: NodePath): StaticSpecifier | undefined {
+  if (
+    path.node.type === "ImportDeclaration" ||
+    path.node.type === "ExportAllDeclaration" ||
+    path.node.type === "ExportNamedDeclaration"
+  ) {
+    return staticSpecifier(childPath(path, "source"));
+  }
+  if (path.node.type === "ImportExpression") {
+    return staticSpecifier(childPath(path, "source"));
+  }
+  if (path.node.type === "TSImportType") {
+    return staticSpecifier(childPath(path, "argument"));
+  }
+  if (path.node.type === "TSExternalModuleReference") {
+    return staticSpecifier(childPath(path, "expression"));
+  }
+  return undefined;
+}
+
+function toModuleReference(specifier: StaticSpecifier): ModuleReference {
+  const location = specifier.path.node.loc?.start;
   return {
-    specifier: node.value as string,
+    specifier: specifier.value,
     line: location?.line ?? 1,
     column: (location?.column ?? 0) + 1,
   };
@@ -186,14 +253,19 @@ export function collectModuleReferences(
     plugins: ["typescript", "jsx"],
     sourceFilename: filePath,
     sourceType: "unambiguous",
-  }) as unknown as AstNode;
-  const requireAliases = collectRequireAliases(ast);
+  });
   const references: ModuleReference[] = [];
-  walkAst(ast, (node) => {
-    const literal = referencedLiteral(node, requireAliases);
-    if (literal !== undefined) {
-      references.push(toModuleReference(literal));
-    }
+  traverse(ast, {
+    enter(path: NodePath) {
+      const specifier =
+        declarationSpecifier(path) ??
+        (path.node.type === "CallExpression" || path.node.type === "OptionalCallExpression"
+          ? callSpecifier(path)
+          : undefined);
+      if (specifier !== undefined) {
+        references.push(toModuleReference(specifier));
+      }
+    },
   });
   return references;
 }

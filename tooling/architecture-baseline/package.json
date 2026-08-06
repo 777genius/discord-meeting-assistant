@@ -14,7 +14,8 @@
     "test": "tsx --test src/*.test.ts"
   },
   "dependencies": {
-    "@babel/parser": "catalog:"
+    "@babel/parser": "catalog:",
+    "@babel/traverse": "catalog:"
   },
   "devDependencies": {
     "tsx": "catalog:"

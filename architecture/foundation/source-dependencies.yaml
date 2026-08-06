@@ -634,6 +634,7 @@ boundaries:
       boundaries: []
       packages:
         - "@babel/parser"
+        - "@babel/traverse"
       builtins:
         - node:assert/strict
         - node:child_process

@@ -170,7 +170,7 @@ void test("rejects forbidden, root, deep, and unclassified Meeting Core imports"
         "adapters.discord may not import Meeting Core feature conversation",
       ),
     ).length,
-    10,
+    18,
   );
 });
 

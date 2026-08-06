@@ -12,6 +12,23 @@ const parenthesized = (require)("@discord-meeting/meeting-core/conversation");
 const req = require;
 const aliased = req("@discord-meeting/meeting-core/conversation");
 const nestedTemplate = `${/}/u.test("}") ? require("@discord-meeting/meeting-core/conversation") : ""}`;
+const templateRequired = require(`@discord-meeting/meeting-core/conversation`);
+const templateImported = import(`@discord-meeting/meeting-core/conversation`);
+const moduleRequired = module["require"]("@discord-meeting/meeting-core/conversation");
+const moduleRequireAlias = module.require;
+const moduleAliasRequired = moduleRequireAlias("@discord-meeting/meeting-core/conversation");
+const boundRequire = require.bind(null);
+const boundRequired = boundRequire("@discord-meeting/meeting-core/conversation");
+const calledRequire = require.call(null, "@discord-meeting/meeting-core/conversation");
+let mutableRequire = require;
+const capturedRequire = mutableRequire;
+mutableRequire = localLoader;
+const capturedRequired = capturedRequire("@discord-meeting/meeting-core/conversation");
+let nestedMutationRequire = require;
+function mutateRequire() {
+  nestedMutationRequire = localLoader;
+}
+const nestedMutationRequired = nestedMutationRequire("@discord-meeting/meeting-core/conversation");
 
 export async function loadLifecycle() {
   return import("@discord-meeting/meeting-core/meeting-lifecycle");

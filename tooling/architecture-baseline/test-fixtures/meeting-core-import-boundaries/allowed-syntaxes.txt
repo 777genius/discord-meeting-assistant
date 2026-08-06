@@ -9,6 +9,25 @@ const fakeTemplate = `require("@discord-meeting/meeting-core/conversation")`;
 notrequire("@discord-meeting/meeting-core/conversation");
 πrequire("@discord-meeting/meeting-core/conversation");
 const fakeRegex = /require\("@discord-meeting\/meeting-core\/conversation"\)/u;
+function localRequire(require) {
+  return require("@discord-meeting/meeting-core/conversation");
+}
+const shadowedAlias = require;
+function localAlias(shadowedAlias) {
+  return shadowedAlias("@discord-meeting/meeting-core/conversation");
+}
+let reassignedAlias = require;
+reassignedAlias = () => undefined;
+reassignedAlias("@discord-meeting/meeting-core/conversation");
+let parentReassignedAlias = require;
+parentReassignedAlias = () => undefined;
+function nestedAliasUse() {
+  return parentReassignedAlias("@discord-meeting/meeting-core/conversation");
+}
+nestedAliasUse();
+let iifeReassignedAlias = require;
+iifeReassignedAlias = () => undefined;
+(() => iifeReassignedAlias("@discord-meeting/meeting-core/conversation"))();
 // require("@discord-meeting/meeting-core/conversation")
 /* import fake = require("@discord-meeting/meeting-core/conversation"); */
 
