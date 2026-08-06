@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildSubscriptionRuntimeSummaryRequest,
   canonicalJsonSha256,
+  providerMeetingSummarySchema,
 } from "../src/index.js";
 
 describe("subscription runtime request contract", () => {
@@ -41,7 +42,7 @@ describe("subscription runtime request contract", () => {
     expect(canonicalJsonSha256(second)).toBe(canonicalJsonSha256(first));
     expect(first.runId).toMatch(/^summary-request-[0-9a-f]{32}$/u);
     expect(first.context.metadata.policyVersion).toBe(
-      "meeting-summary.subscription-runtime.v11",
+      "meeting-summary.subscription-runtime.v12",
     );
     expect(first.task.controls.outputSchemaName).toBe(
       "discord_meeting_summary_v4",
@@ -58,7 +59,7 @@ describe("subscription runtime request contract", () => {
               deadline: {
                 anyOf: [{ maxLength: 96 }, { type: "null" }],
               },
-              evidenceTurnIds: { maxItems: 2 },
+              evidenceTurnIds: { maxItems: 4 },
               text: { maxLength: 160 },
             },
           },
@@ -71,7 +72,7 @@ describe("subscription runtime request contract", () => {
         topics: {
           items: {
             properties: {
-              evidenceTurnIds: { maxItems: 2 },
+              evidenceTurnIds: { maxItems: 4 },
               points: { maxItems: 2 },
             },
           },
@@ -83,11 +84,11 @@ describe("subscription runtime request contract", () => {
     expect(first.task.systemPrompt).toContain("Merge only true semantic duplicates");
     expect(first.task.systemPrompt).toContain("full transcript remains authoritative");
     expect(canonicalJsonSha256(first.task.controls.outputSchema)).toBe(
-      "a9822807c85eae1a5fc542bad4b40b62adea5539eb3a4eef8078ac47d3a1c8ee",
+      "5cc1f594a0c70de3a4eb6bccbd4b21c00af2db7b682e040227c4c1532fe37c40",
     );
     expect(
       createHash("sha256").update(first.task.systemPrompt).digest("hex"),
-    ).toBe("6e5e8287280e1c49be09139d2369b157b32e5b82f2de5e6b0413d2f6570f1e9f");
+    ).toBe("57406a6379f7b22d2ee45c0dde860357838b337f750e5d8860f1df26db1c1e17");
   });
 
   it("rejects an oversized transcript before transport", () => {
@@ -119,5 +120,30 @@ describe("subscription runtime request contract", () => {
         },
       ),
     ).toThrow("Transcript exceeds the configured summary prompt limit");
+  });
+
+  it("admits enough bounded evidence for one fragmented semantic item", () => {
+    const summary = {
+      actionItems: [{
+        deadline: "до пятницы",
+        evidenceTurnIds: ["turn-1", "turn-2", "turn-3", "turn-4"],
+        ownerSpeakerId: "speaker-1",
+        text: "Проверить очередь и оставить результат в Discord thread",
+      }],
+      decisions: [],
+      openQuestions: [],
+      overview: "Обсудили проверку очереди.",
+      title: "Проверка очереди",
+      topics: [],
+    };
+
+    expect(providerMeetingSummarySchema.safeParse(summary).success).toBe(true);
+    expect(providerMeetingSummarySchema.safeParse({
+      ...summary,
+      actionItems: [{
+        ...summary.actionItems[0],
+        evidenceTurnIds: ["turn-1", "turn-2", "turn-3", "turn-4", "turn-5"],
+      }],
+    }).success).toBe(false);
   });
 });

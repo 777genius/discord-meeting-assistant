@@ -91,6 +91,11 @@
       "id": "ADR-0018",
       "path": "docs/decisions/0018-bound-summary-output-to-provider-contract.md",
       "immutableDigest": "sha256:4882a5a6633a328a14f9feb1316757943326cdfe7be64ddb9c7e59aa31d67880"
+    },
+    {
+      "id": "ADR-0019",
+      "path": "docs/decisions/0019-retain-fragmented-summary-evidence.md",
+      "immutableDigest": "sha256:bfc3cb6e2b311b43cf739d24d712dbd9199c5d0da99f93e3cd6b7ef6b8055632"
     }
   ]
 }

@@ -87,7 +87,7 @@ describe("final summary quality evals", () => {
       "Obey every JSON Schema maxItems and maxLength exactly",
     );
     expect(request.task.systemPrompt).toContain(
-      "use separate allowed topic points when a workflow needs additional evidence",
+      "do not split one task, its owner, deadline, acceptance condition, or result destination",
     );
   });
 
