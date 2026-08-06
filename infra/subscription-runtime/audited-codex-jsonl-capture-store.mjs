@@ -47,11 +47,14 @@ export function isPinnedCodexTaskInvocation(argv, model, reasoningEffort) {
   const schemaFlagIndexes = argv.flatMap((value, index) =>
     value === "--output-schema" ? [index] : []
   );
-  if (schemaFlagIndexes.length !== 1) {
+  if (schemaFlagIndexes.length > 1) {
     return false;
   }
-  const schemaPath = argv[schemaFlagIndexes[0] + 1];
-  if (!isPinnedOutputSchemaPath(schemaPath)) {
+  const schemaFlagIndex = schemaFlagIndexes[0];
+  const schemaPath = schemaFlagIndex === undefined
+    ? undefined
+    : argv[schemaFlagIndex + 1];
+  if (schemaPath !== undefined && !isPinnedOutputSchemaPath(schemaPath)) {
     return false;
   }
   const expected = pinnedCodexTaskArgv(model, reasoningEffort, schemaPath);

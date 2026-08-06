@@ -24,6 +24,7 @@ export {
   codexExecJsonlCompatibilityAgentMessage,
   codexExecJsonlUsage,
   codexJsonlTelemetry,
+  isPinnedCodexTaskInvocation,
   parseBridgeResultJson,
   readCapturedCodexUsage,
 };
