@@ -369,7 +369,7 @@ describe("Discord recording playback link", () => {
     await expect(adapter.publish(request)).resolves.toMatchObject({ ok: true });
 
     expect(projector.inputs[0]?.markdown).toMatch(
-      /## Recording\n\[Listen to the recording\]\(https:\/\/recordings\.example\.com\/recordings\/playback#signed-meeting-42\)$/u,
+      /## Запись\n\[Прослушать запись\]\(https:\/\/recordings\.example\.com\/recordings\/playback#signed-meeting-42\)$/u,
     );
   });
 });
@@ -389,8 +389,8 @@ describe("DiscordSummaryPublicationAdapter rendering bounds", () => {
 
     const markdown = projector.inputs[0]?.markdown ?? "";
     expect(markdown.length).toBeLessThanOrEqual(4_000);
-    expect(markdown).toContain("Summary was shortened");
-    expect(markdown.endsWith(`[Listen to the recording](${recordingUrl})`)).toBe(true);
+    expect(markdown).toContain("Саммари сокращено из-за лимита Discord");
+    expect(markdown.endsWith(`[Прослушать запись](${recordingUrl})`)).toBe(true);
   });
 
   it("keeps the authoritative, speaker-attributed timeline beside the final summary", async () => {
@@ -516,7 +516,7 @@ describe("DiscordSummaryPublicationAdapter rendering bounds", () => {
     expect(result.ok).toBe(true);
     expect(projector.inputs[0]?.markdown.length).toBeLessThanOrEqual(4_000);
     expect(projector.inputs[0]?.markdown).toContain(
-      "Summary was shortened due to Discord's limit.",
+      "Саммари сокращено из-за лимита Discord.",
     );
     expect(projector.inputs[0]?.markdown).not.toContain("summary-42");
   });

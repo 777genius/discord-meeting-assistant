@@ -118,6 +118,11 @@ interface TrackFixture {
   readonly timelineOffsetMs: number;
 }
 
+interface PageHarnessOptions {
+  readonly fragment?: string;
+  readonly manifestStatuses?: readonly ("processing" | "ready" | "unavailable")[];
+}
+
 interface PageHarness {
   readonly audios: readonly FakeAudio[];
   readonly current: FakeElement;
@@ -130,13 +135,18 @@ interface PageHarness {
   animationFrameRequestCount(): number;
   restoreVisibility(): void;
   runAnimationFrame(): void;
+  sessionRequestCount(): number;
 }
 
+// The call-time wrapper lets vi.useFakeTimers() control timers scheduled in the VM.
 function setWindowTimeout(callback: () => void, milliseconds: number) {
   return setTimeout(callback, milliseconds);
 }
 
-function createPageHarness(trackFixtures: readonly TrackFixture[]): PageHarness {
+function createPageHarness(
+  trackFixtures: readonly TrackFixture[],
+  options: PageHarnessOptions = {},
+): PageHarness {
   const status = new FakeElement();
   const player = new FakeElement();
   player.hidden = true;
@@ -182,19 +192,35 @@ function createPageHarness(trackFixtures: readonly TrackFixture[]): PageHarness 
   };
   const window = {
     clearTimeout,
-    location: { hash: `#${"a".repeat(48)}` },
+    location: {
+      hash: options.fragment === undefined
+        ? `#${"a".repeat(48)}`
+        : options.fragment.length === 0
+          ? ""
+          : `#${options.fragment}`,
+    },
     setTimeout: setWindowTimeout,
   };
-  const fetch = vi.fn(async () => ({
-    json: async () => ({
-      status: "ready",
-      tracks: trackFixtures.map((fixture, index) => ({
-        timelineOffsetMs: fixture.timelineOffsetMs,
-        url: `/recordings/s/test/tracks/${index}`,
-      })),
-    }),
-    ok: true,
-  }));
+  const manifestStatuses = options.manifestStatuses ?? ["ready"];
+  let manifestIndex = 0;
+  const fetch = vi.fn(async () => {
+    const manifestStatus = manifestStatuses[
+      Math.min(manifestIndex, manifestStatuses.length - 1)
+    ] ?? "ready";
+    manifestIndex += 1;
+    return {
+      json: async () => ({
+        status: manifestStatus,
+        tracks: manifestStatus === "ready"
+          ? trackFixtures.map((fixture, index) => ({
+              timelineOffsetMs: fixture.timelineOffsetMs,
+              url: `/recordings/s/test/tracks/${index}`,
+            }))
+          : [],
+      }),
+      ok: true,
+    };
+  });
 
   runInNewContext(recordingPlaybackClientScript, {
     document,
@@ -229,6 +255,7 @@ function createPageHarness(trackFixtures: readonly TrackFixture[]): PageHarness 
       animationFrame = undefined;
       callback?.(clock);
     },
+    sessionRequestCount: () => fetch.mock.calls.length,
   };
 }
 
@@ -245,6 +272,39 @@ afterEach(() => {
 describe("recording playback browser page", () => {
   it("keeps the hidden player out of layout", () => {
     expect(recordingPlaybackStyle).toContain(".player[hidden] { display: none; }");
+  });
+
+  it.each([
+    { fragment: "", label: "missing" },
+    { fragment: "too-short", label: "malformed" },
+  ])("rejects a $label fragment before opening a session", async ({ fragment }) => {
+    const page = createPageHarness([], { fragment });
+    await flushAsync();
+
+    expect(page.status.textContent).toBe("Запись недоступна");
+    expect(page.player.hidden).toBe(true);
+    expect(page.sessionRequestCount()).toBe(0);
+  });
+
+  it("polls a processing recording and exposes it when ready", async () => {
+    vi.useFakeTimers();
+    const audio = new FakeAudio("loaded", 12);
+    const page = createPageHarness(
+      [{ audio, timelineOffsetMs: 0 }],
+      { manifestStatuses: ["processing", "ready"] },
+    );
+    await flushAsync();
+
+    expect(page.status.textContent).toBe("Запись обрабатывается");
+    expect(page.sessionRequestCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(page.sessionRequestCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await flushAsync();
+
+    expect(page.sessionRequestCount()).toBe(2);
+    expect(page.status.textContent).toBe("Готово к прослушиванию");
+    expect(page.player.hidden).toBe(false);
   });
 
   it("times out a stalled metadata request and exposes the available tracks", async () => {

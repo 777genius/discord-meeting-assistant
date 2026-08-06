@@ -33,7 +33,7 @@ interface DiscordSummaryProjector {
 }
 
 const discordMarkdownLimit = 4_000;
-const truncationNotice = "_Summary was shortened due to Discord's limit._";
+const truncationNotice = "_Саммари сокращено из-за лимита Discord._";
 const maximumEvidenceQuoteGraphemes = 180;
 
 type PublicationResult = SummaryPublicationResult<
@@ -151,7 +151,7 @@ export function renderRussianSummaryMarkdown(
   ];
   const footerLines = recordingPlaybackUrl === undefined
     ? []
-    : ["## Recording", `[Listen to the recording](${recordingPlaybackUrl})`];
+    : ["## Запись", `[Прослушать запись](${recordingPlaybackUrl})`];
   return boundedMarkdown(bodyLines, footerLines);
 }
 

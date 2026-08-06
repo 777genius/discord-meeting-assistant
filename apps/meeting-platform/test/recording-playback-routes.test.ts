@@ -16,7 +16,10 @@ afterEach(async () => {
   await Promise.all(hosts.splice(0).map(async (host) => host.close()));
 });
 
-function createContext(status: "processing" | "ready" | "unavailable" = "ready") {
+function createContext(
+  status: "processing" | "ready" | "unavailable" = "ready",
+  secureCookies = false,
+) {
   const access = new HmacRecordingPlaybackAccess({
     publicBaseUrl: "http://recordings.example.test",
     secret,
@@ -40,7 +43,10 @@ function createContext(status: "processing" | "ready" | "unavailable" = "ready")
       const contentLength = resolved === undefined ? 10 : resolved.end - resolved.start + 1;
       return {
         body: (async function* () {
-          yield Uint8Array.from({ length: contentLength }, (_, index) => index);
+          yield Uint8Array.from(
+            { length: contentLength },
+            (_, index) => (resolved?.start ?? 0) + index,
+          );
         })(),
         contentLength,
         contentType: "audio/ogg",
@@ -56,7 +62,7 @@ function createContext(status: "processing" | "ready" | "unavailable" = "ready")
     routePlugins: [createRecordingPlaybackRoutesPlugin({
       access,
       playback: new GetRecordingPlayback(catalog, audio),
-      secureCookies: false,
+      secureCookies,
     })],
   });
   hosts.push(host);
@@ -109,6 +115,7 @@ describe("recording playback HTTP routes", () => {
     expect(response.statusCode).toBe(200);
     expect(response.headers["set-cookie"]).toContain("HttpOnly");
     expect(response.headers["set-cookie"]).toContain("SameSite=Strict");
+    expect(response.headers["set-cookie"]).not.toContain("Secure");
     const body = response.json<{
       readonly schemaVersion: number;
       readonly sessionId: string;
@@ -125,6 +132,13 @@ describe("recording playback HTTP routes", () => {
     expect(body.tracks[0]?.timelineOffsetMs).toBe(725);
     expect(body.tracks[0]?.url).toContain("/tracks/0");
     expect(response.body).not.toContain("s3://");
+  });
+
+  it("marks the production playback cookie as secure", async () => {
+    const response = await openSession(createContext("ready", true));
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["set-cookie"]).toContain("Secure");
   });
 
   it("streams partial audio with seek headers only for the scoped session", async () => {
@@ -147,13 +161,33 @@ describe("recording playback HTTP routes", () => {
       method: "GET",
       url: body.tracks[0].url,
     });
+    const suffix = await context.host.inject({
+      headers: { cookie, range: "bytes=-4" },
+      method: "GET",
+      url: body.tracks[0].url,
+    });
+    const head = await context.host.inject({
+      headers: { cookie },
+      method: "HEAD",
+      url: body.tracks[0].url,
+    });
 
     expect(forbidden.statusCode).toBe(404);
     expect(response.statusCode).toBe(206);
     expect(response.headers["accept-ranges"]).toBe("bytes");
     expect(response.headers["content-range"]).toBe("bytes 2-5/10");
     expect(response.headers["content-length"]).toBe("4");
-    expect(response.rawPayload).toEqual(Buffer.from([0, 1, 2, 3]));
+    expect(response.rawPayload).toEqual(Buffer.from([2, 3, 4, 5]));
+    expect(suffix.statusCode).toBe(206);
+    expect(suffix.headers["content-range"]).toBe("bytes 6-9/10");
+    expect(suffix.headers["content-length"]).toBe("4");
+    expect(suffix.rawPayload).toEqual(Buffer.from([6, 7, 8, 9]));
+    expect(head.statusCode).toBe(200);
+    expect(head.headers["accept-ranges"]).toBe("bytes");
+    expect(head.headers["content-length"]).toBe("10");
+    expect(head.headers["content-type"]).toContain("audio/ogg");
+    expect(head.headers.etag).toBe('"etag-1"');
+    expect(head.body).toBe("");
   });
 
   it("returns processing without track URLs and rejects multi-range requests", async () => {

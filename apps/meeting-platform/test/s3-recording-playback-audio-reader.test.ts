@@ -64,7 +64,11 @@ describe("S3RecordingPlaybackAudioReader", () => {
   it("resolves suffix ranges and rejects positions after the object", async () => {
     const send = vi.fn(async (command: unknown) => {
       if (command instanceof HeadObjectCommand) {
-        return { ContentLength: 10, ContentType: "application/ogg" };
+        return {
+          ContentLength: 10,
+          ContentType: "application/ogg",
+          ETag: '"etag-1"',
+        };
       }
       return {
         Body: (async function* () { yield Uint8Array.of(8, 9); })(),
@@ -78,17 +82,52 @@ describe("S3RecordingPlaybackAudioReader", () => {
         name: RecordingPlaybackRangeNotSatisfiableError.name,
         sizeBytes: 10,
       }));
+    expect(send).toHaveBeenCalledTimes(1);
     const suffix = await reader.read({ locator, range: { suffixLength: 2 } });
     expect(suffix.range).toEqual({ end: 9, start: 8 });
+    const get = send.mock.calls[2]?.[0];
+    expect(get).toBeInstanceOf(GetObjectCommand);
+    expect((get as GetObjectCommand).input).toMatchObject({
+      IfMatch: '"etag-1"',
+      Range: "bytes=8-9",
+    });
+    expect(await collect(suffix.body)).toEqual([8, 9]);
   });
 
-  it("fails closed for non-audio or empty objects", async () => {
-    const reader = readerWith(vi.fn(async () => ({
-      ContentLength: 0,
-      ContentType: "text/plain",
-    })));
+  it.each([
+    {
+      descriptor: { ContentLength: 0, ContentType: "audio/ogg", ETag: '"etag-1"' },
+      reason: "empty",
+    },
+    {
+      descriptor: { ContentLength: 10, ContentType: "text/plain", ETag: '"etag-1"' },
+      reason: "non-audio",
+    },
+    {
+      descriptor: { ContentLength: 10, ContentType: "audio/ogg" },
+      reason: "missing an ETag",
+    },
+  ])("fails closed for an object that is $reason", async ({ descriptor }) => {
+    const send = vi.fn(async () => descriptor);
+    const reader = readerWith(send);
 
     await expect(reader.describe({ locator }))
       .rejects.toBeInstanceOf(RecordingPlaybackAudioUnavailableError);
+    expect(send).toHaveBeenCalledOnce();
+  });
+
+  it("does not issue GetObject when the descriptor has no ETag", async () => {
+    const send = vi.fn(async (command: unknown) => {
+      if (command instanceof HeadObjectCommand) {
+        return { ContentLength: 10, ContentType: "audio/ogg" };
+      }
+      throw new Error("GetObject must not be called without an ETag");
+    });
+    const reader = readerWith(send);
+
+    await expect(reader.read({ locator }))
+      .rejects.toBeInstanceOf(RecordingPlaybackAudioUnavailableError);
+    expect(send).toHaveBeenCalledOnce();
+    expect(send.mock.calls[0]?.[0]).toBeInstanceOf(HeadObjectCommand);
   });
 });

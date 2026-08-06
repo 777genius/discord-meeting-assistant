@@ -32,6 +32,7 @@ export class RecordingPlaybackAudioUnavailableError extends Error {
 }
 
 interface ObjectDescriptor extends RecordingPlaybackAudioDescriptor {
+  readonly eTag: string;
   readonly locator: { readonly bucket: string; readonly key: string };
 }
 
@@ -72,7 +73,7 @@ export class S3RecordingPlaybackAudioReader implements RecordingPlaybackAudioRea
       const output = await this.#client.send(
         new GetObjectCommand({
           Bucket: descriptor.locator.bucket,
-          ...(descriptor.eTag === undefined ? {} : { IfMatch: descriptor.eTag }),
+          IfMatch: descriptor.eTag,
           Key: descriptor.locator.key,
           ...(range === undefined
             ? {}
@@ -96,7 +97,7 @@ export class S3RecordingPlaybackAudioReader implements RecordingPlaybackAudioRea
         body: toByteChunks(output),
         contentLength,
         contentType: descriptor.contentType,
-        ...(descriptor.eTag === undefined ? {} : { eTag: descriptor.eTag }),
+        eTag: descriptor.eTag,
         ...(range === undefined ? {} : { range }),
         sizeBytes: descriptor.sizeBytes,
       };
@@ -135,18 +136,21 @@ function describeObject(
 ): ObjectDescriptor {
   const sizeBytes = output.ContentLength;
   const contentType = output.ContentType;
+  const eTag = output.ETag;
   if (
     sizeBytes === undefined ||
     !Number.isSafeInteger(sizeBytes) ||
     sizeBytes <= 0 ||
     contentType === undefined ||
-    !["application/ogg", "audio/ogg"].includes(contentType)
+    !["application/ogg", "audio/ogg"].includes(contentType) ||
+    eTag === undefined ||
+    eTag.trim().length === 0
   ) {
     throw new RecordingPlaybackAudioUnavailableError();
   }
   return {
     contentType,
-    ...(output.ETag === undefined ? {} : { eTag: output.ETag }),
+    eTag,
     locator,
     sizeBytes,
   };
@@ -157,7 +161,7 @@ function toPublicDescriptor(
 ): RecordingPlaybackAudioDescriptor {
   return {
     contentType: descriptor.contentType,
-    ...(descriptor.eTag === undefined ? {} : { eTag: descriptor.eTag }),
+    eTag: descriptor.eTag,
     sizeBytes: descriptor.sizeBytes,
   };
 }

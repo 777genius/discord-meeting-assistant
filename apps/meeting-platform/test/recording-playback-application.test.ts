@@ -75,6 +75,10 @@ describe("GetRecordingPlayback", () => {
 
     await expect(playback.describeTrack({ meetingId: "meeting-1", trackIndex: 9 }))
       .rejects.toBeInstanceOf(RecordingPlaybackTrackNotFoundError);
+    await expect(playback.describeTrack({ meetingId: "meeting-1", trackIndex: -1 }))
+      .rejects.toBeInstanceOf(RecordingPlaybackTrackNotFoundError);
+    await expect(playback.describeTrack({ meetingId: "meeting-1", trackIndex: 1.5 }))
+      .rejects.toBeInstanceOf(RecordingPlaybackTrackNotFoundError);
     expect(audio.describeTrack).not.toHaveBeenCalled();
   });
 });

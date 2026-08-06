@@ -33,6 +33,11 @@ describe("HmacRecordingPlaybackAccess", () => {
     expect(access.verify(`${token.slice(0, -1)}x`)).toBeNull();
     expect(access.verify("v1.invalid.invalid")).toBeNull();
     expect(access.verify("x".repeat(1_025))).toBeNull();
+    const rotated = new HmacRecordingPlaybackAccess({
+      publicBaseUrl: "https://recordings.example.com",
+      secret: `${secret}-rotated`,
+    });
+    expect(rotated.verify(token)).toBeNull();
   });
 
   it("rejects weak secrets and public URLs with hidden path state", () => {

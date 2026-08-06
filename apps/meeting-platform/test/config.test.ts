@@ -126,6 +126,10 @@ describe("platform configuration", () => {
     }, async () => "value")).rejects.toThrow("configured together");
     await expect(loadPlatformConfig({
       ...environment,
+      RECORDING_PLAYBACK_SIGNING_SECRET_FILE: "/run/secrets/recording-playback",
+    }, async () => "value")).rejects.toThrow("configured together");
+    await expect(loadPlatformConfig({
+      ...environment,
       NODE_ENV: "production",
       RECORDING_PLAYBACK_PUBLIC_BASE_URL: "http://recordings.example.com",
       RECORDING_PLAYBACK_SIGNING_SECRET_FILE: "/run/secrets/recording-playback",
