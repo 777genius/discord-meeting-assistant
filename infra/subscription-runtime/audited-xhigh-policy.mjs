@@ -45,7 +45,12 @@ const childEnvironmentNames = Object.freeze([
   "CODEX_HOME",
 ]);
 
-export function pinnedCodexTaskArgv(model, reasoningEffort) {
+/**
+ * Mirrors the immutable packaged-exec argv contract in
+ * @vioxen/subscription-runtime 0.1.0-main.27. The schema path is generated per
+ * request, while every other argument remains fail-closed.
+ */
+export function pinnedCodexTaskArgv(model, reasoningEffort, outputSchemaPath) {
   return Object.freeze([
     "exec",
     "--json",
@@ -55,6 +60,8 @@ export function pinnedCodexTaskArgv(model, reasoningEffort) {
     "read-only",
     "--config",
     'approval_policy="never"',
+    "--config",
+    'cli_auth_credentials_store="file"',
     "--config",
     `model_reasoning_effort="${reasoningEffort}"`,
     "--config",
@@ -73,6 +80,14 @@ export function pinnedCodexTaskArgv(model, reasoningEffort) {
     "features.shell_snapshot=false",
     "--config",
     "features.skill_mcp_dependency_install=false",
+    "--config",
+    "sandbox_workspace_write.network_access=true",
+    "--config",
+    "features.network_proxy.enabled=true",
+    "--config",
+    'features.network_proxy.domains={ "api.openai.com" = "allow" }',
+    "--output-schema",
+    outputSchemaPath,
     "--ephemeral",
     "--ignore-user-config",
     "--ignore-rules",

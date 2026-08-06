@@ -548,6 +548,11 @@ function completedBridgeResult() {
 }
 
 function pinnedTaskArgv(model, reasoningEffort) {
+  const outputSchemaPath = join(
+    "/tmp",
+    "subscription-runtime-codex-schema-test",
+    "schema.json",
+  );
   return [
     "exec",
     "--json",
@@ -557,6 +562,8 @@ function pinnedTaskArgv(model, reasoningEffort) {
     "read-only",
     "--config",
     'approval_policy="never"',
+    "--config",
+    'cli_auth_credentials_store="file"',
     "--config",
     `model_reasoning_effort="${reasoningEffort}"`,
     "--config",
@@ -575,6 +582,14 @@ function pinnedTaskArgv(model, reasoningEffort) {
     "features.shell_snapshot=false",
     "--config",
     "features.skill_mcp_dependency_install=false",
+    "--config",
+    "sandbox_workspace_write.network_access=true",
+    "--config",
+    "features.network_proxy.enabled=true",
+    "--config",
+    'features.network_proxy.domains={ "api.openai.com" = "allow" }',
+    "--output-schema",
+    outputSchemaPath,
     "--ephemeral",
     "--ignore-user-config",
     "--ignore-rules",

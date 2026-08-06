@@ -21,7 +21,7 @@ SUBSCRIPTION_RUNTIME_EXPECTED_LAUNCHER_SHA256=<lowercase audited launcher bundle
 ```
 
 The package manifest must be exactly `@vioxen/subscription-runtime` version
-`0.1.0-main.27`. The launcher entrypoint and its two audited sibling modules are
+`0.1.0-main.27`. The launcher entrypoint and its five audited sibling modules are
 inspected by realpath and one canonical bundle SHA-256 before and after every
 task. Changing any executable part changes the admitted digest. The launcher
 must call that version's
