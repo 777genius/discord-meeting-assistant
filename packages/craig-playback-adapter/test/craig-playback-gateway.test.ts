@@ -202,6 +202,91 @@ describe("CraigPlaybackGateway", () => {
     });
   });
 
+  it("paces accepted PCM at playback speed before admitting the next chunk", async () => {
+    vi.useFakeTimers();
+    try {
+      const gateway = new CraigPlaybackGateway();
+      const transport = new FakeTransport();
+      gateway.register(transport);
+      const opened = await gateway.open(request);
+      if (!opened.ok) {
+        throw new Error("playback did not open");
+      }
+
+      let settled = false;
+      const writing = opened.value.write(chunk(0, new Uint8Array(19_200))).then(
+        (result) => {
+          settled = true;
+          return result;
+        },
+      );
+      await vi.advanceTimersByTimeAsync(199);
+      expect(settled).toBe(false);
+      expect(transport.commands.filter(({ type }) => type === "audio-chunk")).toHaveLength(1);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(writing).resolves.toEqual({ ok: true, value: "accepted" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("preserves fractional playback time across small PCM chunks", async () => {
+    vi.useFakeTimers();
+    try {
+      const gateway = new CraigPlaybackGateway();
+      const transport = new FakeTransport();
+      gateway.register(transport);
+      const opened = await gateway.open(request);
+      if (!opened.ok) {
+        throw new Error("playback did not open");
+      }
+
+      for (let sequence = 0; sequence < 47; sequence += 1) {
+        await expect(opened.value.write(chunk(sequence, Uint8Array.of(1, 0)))).resolves
+          .toEqual({ ok: true, value: "accepted" });
+      }
+      let settled = false;
+      const writing = opened.value.write(chunk(47, Uint8Array.of(1, 0))).then(
+        (result) => {
+          settled = true;
+          return result;
+        },
+      );
+      await Promise.resolve();
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(writing).resolves.toEqual({ ok: true, value: "accepted" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not accept a paced write after the transport fails", async () => {
+    vi.useFakeTimers();
+    try {
+      const gateway = new CraigPlaybackGateway();
+      const transport = new FakeTransport();
+      gateway.register(transport);
+      const opened = await gateway.open(request);
+      if (!opened.ok) {
+        throw new Error("playback did not open");
+      }
+
+      const writing = opened.value.write(chunk(0, new Uint8Array(19_200)));
+      transport.disconnect("paced write disconnected");
+      await vi.advanceTimersByTimeAsync(200);
+
+      await expect(writing).resolves.toMatchObject({
+        failure: { code: "CRAIG_PLAYBACK_DISCONNECTED" },
+        ok: false,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("uses local receipt timing for Craig events and waits for finish acknowledgement", async () => {
     let nowMs = 4_000;
     const gateway = new CraigPlaybackGateway(() => nowMs);

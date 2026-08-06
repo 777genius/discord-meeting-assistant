@@ -32,6 +32,7 @@ import {
 
 const maximumBufferedAudioBytes = 192_000;
 const maximumRememberedChunkSequences = 100_000;
+const pcmBytesPerSecond = craigPlaybackSampleRateHz * craigPlaybackChannels * 2;
 
 export class CraigVoicePlaybackSession implements VoicePlaybackSession {
   public readonly events: AsyncIterable<VoicePlaybackEvent>;
@@ -45,11 +46,13 @@ export class CraigVoicePlaybackSession implements VoicePlaybackSession {
   private cancelPromise: Promise<PortResult<"cancelled" | "reused">> | undefined;
   private expectedSequence = 0;
   private finishPromise: Promise<PortResult<"finished" | "reused">> | undefined;
+  private pacingRemainder = 0;
   private resolveFinish:
     | ((result: PortResult<"finished" | "reused">) => void)
     | undefined;
   private state: "starting" | "open" | "finishing" | "cancelling" | "finished" | "failed" =
     "starting";
+  private terminalFailure: StageFailure | undefined;
 
   private readonly nowMilliseconds: () => number;
   private readonly onTerminal: () => void;
@@ -167,6 +170,16 @@ export class CraigVoicePlaybackSession implements VoicePlaybackSession {
       });
       this.chunkHashes.set(chunk.sequence, hash);
       this.expectedSequence += 1;
+      await this.pacePcmDelivery(chunk.bytes.byteLength);
+      if (!this.isWritable()) {
+        return this.terminalFailure === undefined
+          ? failure(
+              "CRAIG_PLAYBACK_TERMINAL",
+              "Craig playback terminated while pacing accepted audio",
+              false,
+            )
+          : { ok: false, failure: this.terminalFailure };
+      }
       return { ok: true, value: "accepted" };
     } catch (error) {
       return transportFailure(error);
@@ -310,6 +323,7 @@ export class CraigVoicePlaybackSession implements VoicePlaybackSession {
       return;
     }
     this.state = "failed";
+    this.terminalFailure = stageFailure;
     this.eventBuffer.push({
       type: "failed",
       attemptId: this.request.attemptId,
@@ -324,6 +338,22 @@ export class CraigVoicePlaybackSession implements VoicePlaybackSession {
     this.eventBuffer.close();
     this.resolveTerminalReceipt();
     this.onTerminal();
+  }
+
+  private async pacePcmDelivery(byteLength: number): Promise<void> {
+    const durationNumerator = this.pacingRemainder + byteLength * 1_000;
+    const durationMs = Math.floor(durationNumerator / pcmBytesPerSecond);
+    this.pacingRemainder = durationNumerator % pcmBytesPerSecond;
+    if (durationMs <= 0) {
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, durationMs);
+    });
+  }
+
+  private isWritable(): boolean {
+    return this.state === "open";
   }
 }
 
