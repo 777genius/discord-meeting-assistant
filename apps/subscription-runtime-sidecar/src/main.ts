@@ -2,13 +2,14 @@ import { readFile } from "node:fs/promises";
 
 import {
   conversationAnswerExecutionProfile,
+  finalSummaryExecutionProfile,
   providerConversationAnswerJsonSchema,
+  providerMeetingSummaryJsonSchema,
 } from "@discord-meeting/subscription-runtime-adapter";
 
 import { providerInstanceId } from "./constants.js";
 import { startGrpcServer } from "./grpc-server.js";
 import { FileInstallationInspector } from "./installation-inspector.js";
-import { NodeProcessRunner } from "./node-process-runner.js";
 import { PersistentCodexProcessRunner } from "./persistent-codex-process-runner.js";
 import { FileRuntimeReadinessInspector } from "./runtime-readiness.js";
 import { resolveSidecarSettings } from "./settings.js";
@@ -20,7 +21,7 @@ import {
 
 async function bootstrap(): Promise<void> {
   const settings = await resolveSidecarSettings(process.env);
-  const conversationRunner = new PersistentCodexProcessRunner({
+  const persistentRunner = new PersistentCodexProcessRunner({
     authJsonPath: settings.authJsonPath,
     launcherPath: settings.launcherPath,
     packageManifestPath: settings.packageManifestPath,
@@ -28,10 +29,18 @@ async function bootstrap(): Promise<void> {
     stateRoot: settings.stateRoot,
     workspacePath: settings.isolatedCwd,
   });
+  const localEncryptionKey = (
+    await readFile(settings.localEncryptionKeyFile, "utf8")
+  ).trim();
   const conversationEnvironment = buildChildEnvironment(
     process.env,
-    (await readFile(settings.localEncryptionKeyFile, "utf8")).trim(),
+    localEncryptionKey,
     conversationAnswerExecutionProfile.reasoningEffort,
+  );
+  const finalSummaryEnvironment = buildChildEnvironment(
+    process.env,
+    localEncryptionKey,
+    finalSummaryExecutionProfile.reasoningEffort,
   );
   const executor = new SubscriptionRuntimeExecutor({
     authJsonPath: settings.authJsonPath,
@@ -48,9 +57,9 @@ async function bootstrap(): Promise<void> {
     maxStderrBytes: settings.maxStderrBytes,
     maxStdoutBytes: settings.maxStdoutBytes,
     maxTaskTimeoutMs: settings.maxTaskTimeoutMs,
-    conversationProcessRunner: conversationRunner,
-    conversationStreamingProcessRunner: conversationRunner,
-    processRunner: new NodeProcessRunner(),
+    conversationProcessRunner: persistentRunner,
+    conversationStreamingProcessRunner: persistentRunner,
+    processRunner: persistentRunner,
     readinessInspector: new FileRuntimeReadinessInspector({
       authJsonPath: settings.authJsonPath,
       isolatedCwd: settings.isolatedCwd,
@@ -60,14 +69,25 @@ async function bootstrap(): Promise<void> {
     stateRoot: settings.stateRoot,
   });
   const server = await startPreparedSidecar({
-    disposePreparedRuntime: async () => conversationRunner.dispose(),
-    prepareRuntime: async () => conversationRunner.prewarm(
-      {
-        execution: conversationAnswerExecutionProfile,
-        outputSchema: providerConversationAnswerJsonSchema,
-      },
-      conversationEnvironment,
-    ),
+    disposePreparedRuntime: async () => persistentRunner.dispose(),
+    prepareRuntime: async () => {
+      await Promise.all([
+        persistentRunner.prewarm(
+          {
+            execution: conversationAnswerExecutionProfile,
+            outputSchema: providerConversationAnswerJsonSchema,
+          },
+          conversationEnvironment,
+        ),
+        persistentRunner.prewarm(
+          {
+            execution: finalSummaryExecutionProfile,
+            outputSchema: providerMeetingSummaryJsonSchema,
+          },
+          finalSummaryEnvironment,
+        ),
+      ]);
+    },
     startServer: async () => startGrpcServer({
       bindAddress: settings.bindAddress,
       executor,
@@ -89,11 +109,11 @@ async function bootstrap(): Promise<void> {
     }
     shuttingDown = true;
     server.tryShutdown(() => {
-      void conversationRunner.dispose();
+      void persistentRunner.dispose();
     });
     setTimeout(() => {
       server.forceShutdown();
-      void conversationRunner.dispose();
+      void persistentRunner.dispose();
     }, 5_000).unref();
   };
   process.once("SIGINT", shutdown);

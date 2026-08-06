@@ -25,6 +25,7 @@ import {
   validateAttestationExpectation,
   validateSummaryRequestOptions,
 } from "./summary-adapter-options.js";
+import { consolidateCoveredUnassignedActions } from "./summary-action-consolidation.js";
 import {
   mapFinalProviderSummary,
   validateProviderSummaryEvidence,
@@ -161,7 +162,11 @@ export class SubscriptionRuntimeSummaryAdapter
       new Set(request.transcript.turns.map(({ turnId }) => turnId)),
       new Set(request.transcript.turns.map(({ speakerId }) => speakerId)),
     );
-    return mapFinalProviderSummary(parsed.data, request.idempotencyKey);
+    const consolidated = consolidateCoveredUnassignedActions(
+      parsed.data,
+      request.transcript.turns,
+    );
+    return mapFinalProviderSummary(consolidated, request.idempotencyKey);
   }
 }
 

@@ -193,7 +193,7 @@ export class PersistentCodexProcessRunner implements StreamingProcessRunnerPort 
         return persistentCodexCancelledResult();
       }
       const reason = persistentCodexSafeErrorChain(error);
-      process.stderr.write(`Subscription runtime conversation worker failed: ${reason}\n`);
+      process.stderr.write(`Subscription runtime persistent worker failed: ${reason}\n`);
       const stdout = JSON.stringify({
         protocolVersion: 1,
         status: "failed",
