@@ -1,4 +1,7 @@
-import type { DeploymentProvenance } from "./e2e-evidence.js";
+import type {
+  CurrentDeploymentProvenance,
+  ProcessingEvidence,
+} from "./e2e-evidence-schema.js";
 
 export interface DatabaseObservation {
   readonly matchingMeetingCount: number;
@@ -36,7 +39,8 @@ export interface ReplayJobEvidence {
 
 export interface DeploymentEvidenceProbe {
   collectDatabase(recordingId: string): Promise<DatabaseObservation>;
-  collectProvenance(): Promise<DeploymentProvenance>;
+  collectProcessing(meetingId: string, recordingStartedAt: string): Promise<ProcessingEvidence>;
+  collectProvenance(): Promise<CurrentDeploymentProvenance>;
   collectS3(manifestLocator: string, recordingId: string): Promise<S3RecordingEvidence>;
   replayPostCall(meetingId: string): Promise<ReplayJobEvidence>;
 }

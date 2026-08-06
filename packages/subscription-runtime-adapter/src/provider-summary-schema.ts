@@ -4,7 +4,8 @@ const shortTextSchema = z.string().trim().min(1).max(160);
 const titleSchema = z.string().trim().min(1).max(96);
 const overviewSchema = z.string().trim().min(1).max(320);
 const evidenceTurnIdSchema = z.string().trim().min(1).max(128);
-const evidenceTurnIdsSchema = z.array(evidenceTurnIdSchema).min(1).max(2);
+const evidenceTurnIdsSchema = z.array(evidenceTurnIdSchema).min(1).max(4);
+const actionEvidenceTurnIdsSchema = z.array(evidenceTurnIdSchema).min(1).max(8);
 
 export const providerMeetingSummarySchema = z
   .object({
@@ -12,7 +13,7 @@ export const providerMeetingSummarySchema = z
       z
         .object({
           deadline: z.string().trim().min(1).max(96).nullable(),
-          evidenceTurnIds: evidenceTurnIdsSchema,
+          evidenceTurnIds: actionEvidenceTurnIdsSchema,
           ownerSpeakerId: z.string().trim().min(1).max(128).nullable(),
           text: shortTextSchema,
         })
@@ -66,7 +67,7 @@ export const providerMeetingSummaryJsonSchema = {
           },
           evidenceTurnIds: {
             items: { maxLength: 128, minLength: 1, type: "string" },
-            maxItems: 2,
+            maxItems: 8,
             minItems: 1,
             type: "array",
           },
@@ -90,7 +91,7 @@ export const providerMeetingSummaryJsonSchema = {
         properties: {
           evidenceTurnIds: {
             items: { maxLength: 128, minLength: 1, type: "string" },
-            maxItems: 2,
+            maxItems: 4,
             minItems: 1,
             type: "array",
           },
@@ -107,7 +108,7 @@ export const providerMeetingSummaryJsonSchema = {
         properties: {
           evidenceTurnIds: {
             items: { maxLength: 128, minLength: 1, type: "string" },
-            maxItems: 2,
+            maxItems: 4,
             minItems: 1,
             type: "array",
           },
@@ -127,7 +128,7 @@ export const providerMeetingSummaryJsonSchema = {
         properties: {
           evidenceTurnIds: {
             items: { maxLength: 128, minLength: 1, type: "string" },
-            maxItems: 2,
+            maxItems: 4,
             minItems: 1,
             type: "array",
           },

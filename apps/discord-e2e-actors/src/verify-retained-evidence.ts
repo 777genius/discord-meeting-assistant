@@ -22,6 +22,7 @@ async function main(): Promise<void> {
   const expectedRevisions = deploymentRevisionExpectationSchema.parse({
     craig: process.env.DISCORD_E2E_EXPECTED_CRAIG_SOURCE_REVISION,
     meetingPlatform: process.env.DISCORD_E2E_EXPECTED_MEETING_PLATFORM_SOURCE_REVISION,
+    subscriptionRuntime: process.env.DISCORD_E2E_EXPECTED_SUBSCRIPTION_RUNTIME_SOURCE_REVISION,
   });
   const verification = verifyRetainedE2eEvidence(manifest, evidence, expectedRevisions);
   process.stdout.write(`${JSON.stringify(verification, undefined, 2)}\n`);

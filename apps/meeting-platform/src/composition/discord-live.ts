@@ -64,12 +64,21 @@ const meetingVocabulary = [
   "Discord thread",
   "idempotency key",
   "live Pipecat assistant",
+  "landing page",
+  "landing slug",
   "Meeting Platform",
   "Pipecat",
   "PostgreSQL",
   "PostgreSQL pipeline",
+  "QID",
+  "Quanta",
+  "Quanta ID",
+  "Quanta Pages",
   "Redis",
   "Redis queue",
+  "referral code",
+  "referral link",
+  "timestamp",
 ] as const;
 
 export interface PlatformDiscordLiveComposition {
@@ -160,7 +169,9 @@ export async function createPlatformDiscordLiveComposition(input: {
     guildSetupHandler,
     installUrls,
     ...(live === undefined ? {} : { live }),
-    rawPublisher: new DiscordSummaryPublicationAdapter(discordPublisher),
+    rawPublisher: new DiscordSummaryPublicationAdapter(discordPublisher, {
+      finalPublicationMode: input.config.discordFinalPublicationMode,
+    }),
   };
 }
 
@@ -254,7 +265,6 @@ function createLiveRuntime(input: {
       expectedRuntimeEngine: subscriptionRuntimeCliEngine,
       maxOutputTokens: subscriptionRuntimeIncrementalMaxOutputTokens,
       maxRecentContextTurns: 256,
-      outputLanguage: "Natural English; preserve technical terms exactly",
       timeoutMs: 30_000,
     },
   );

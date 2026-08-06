@@ -20,6 +20,7 @@ const environmentSchema = z.object({
   DISCORD_E2E_EVIDENCE_OUTPUT: absolutePath,
   DISCORD_E2E_EXPECTED_CRAIG_SOURCE_REVISION: z.string().min(1),
   DISCORD_E2E_EXPECTED_MEETING_PLATFORM_SOURCE_REVISION: z.string().min(1),
+  DISCORD_E2E_EXPECTED_SUBSCRIPTION_RUNTIME_SOURCE_REVISION: z.string().min(1),
   DISCORD_E2E_FIXTURE_MANIFEST: z.string().min(1).default("test/fixtures/manifest.v1.json"),
   DISCORD_E2E_KEYCHAIN_SERVICE: z.string().min(1).default("discord-voice-bot-e2e"),
   DISCORD_E2E_RECORDING_ID: correlationId,
@@ -70,6 +71,7 @@ async function main(): Promise<void> {
     const expectedRevisions = deploymentRevisionExpectationSchema.parse({
       craig: config.DISCORD_E2E_EXPECTED_CRAIG_SOURCE_REVISION,
       meetingPlatform: config.DISCORD_E2E_EXPECTED_MEETING_PLATFORM_SOURCE_REVISION,
+      subscriptionRuntime: config.DISCORD_E2E_EXPECTED_SUBSCRIPTION_RUNTIME_SOURCE_REVISION,
     });
     const verification = verifyRetainedE2eEvidence(manifest, evidence, expectedRevisions);
     if (!verification.passed) {

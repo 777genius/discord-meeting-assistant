@@ -20,7 +20,7 @@ import {
 
 async function bootstrap(): Promise<void> {
   const settings = await resolveSidecarSettings(process.env);
-  const conversationRunner = new PersistentCodexProcessRunner({
+  const persistentRunner = new PersistentCodexProcessRunner({
     authJsonPath: settings.authJsonPath,
     launcherPath: settings.launcherPath,
     packageManifestPath: settings.packageManifestPath,
@@ -28,9 +28,12 @@ async function bootstrap(): Promise<void> {
     stateRoot: settings.stateRoot,
     workspacePath: settings.isolatedCwd,
   });
+  const localEncryptionKey = (
+    await readFile(settings.localEncryptionKeyFile, "utf8")
+  ).trim();
   const conversationEnvironment = buildChildEnvironment(
     process.env,
-    (await readFile(settings.localEncryptionKeyFile, "utf8")).trim(),
+    localEncryptionKey,
     conversationAnswerExecutionProfile.reasoningEffort,
   );
   const executor = new SubscriptionRuntimeExecutor({
@@ -48,8 +51,8 @@ async function bootstrap(): Promise<void> {
     maxStderrBytes: settings.maxStderrBytes,
     maxStdoutBytes: settings.maxStdoutBytes,
     maxTaskTimeoutMs: settings.maxTaskTimeoutMs,
-    conversationProcessRunner: conversationRunner,
-    conversationStreamingProcessRunner: conversationRunner,
+    conversationProcessRunner: persistentRunner,
+    conversationStreamingProcessRunner: persistentRunner,
     processRunner: new NodeProcessRunner(),
     readinessInspector: new FileRuntimeReadinessInspector({
       authJsonPath: settings.authJsonPath,
@@ -60,14 +63,16 @@ async function bootstrap(): Promise<void> {
     stateRoot: settings.stateRoot,
   });
   const server = await startPreparedSidecar({
-    disposePreparedRuntime: async () => conversationRunner.dispose(),
-    prepareRuntime: async () => conversationRunner.prewarm(
-      {
-        execution: conversationAnswerExecutionProfile,
-        outputSchema: providerConversationAnswerJsonSchema,
-      },
-      conversationEnvironment,
-    ),
+    disposePreparedRuntime: async () => persistentRunner.dispose(),
+    prepareRuntime: async () => {
+      await persistentRunner.prewarm(
+        {
+          execution: conversationAnswerExecutionProfile,
+          outputSchema: providerConversationAnswerJsonSchema,
+        },
+        conversationEnvironment,
+      );
+    },
     startServer: async () => startGrpcServer({
       bindAddress: settings.bindAddress,
       executor,
@@ -89,11 +94,11 @@ async function bootstrap(): Promise<void> {
     }
     shuttingDown = true;
     server.tryShutdown(() => {
-      void conversationRunner.dispose();
+      void persistentRunner.dispose();
     });
     setTimeout(() => {
       server.forceShutdown();
-      void conversationRunner.dispose();
+      void persistentRunner.dispose();
     }, 5_000).unref();
   };
   process.once("SIGINT", shutdown);

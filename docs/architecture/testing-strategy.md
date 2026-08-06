@@ -66,9 +66,11 @@ The critical flow is:
    and after five minutes the preliminary summary joins the same projection
    with measured or explicitly bounded runtime token/cost telemetry;
 8. final transcription preserves Discord speaker identity and timestamps;
-9. summary topics, action owner/deadline, and evidence turn references are validated;
-10. publishing replaces the live draft in exactly the same Discord
-    container/message while retaining a bounded authoritative transcript timeline;
+9. summary language follows the dominant transcript language, material acceptance
+   details remain compact topic points, and action/evidence references are validated;
+10. publishing creates one separate idempotent final message by default while
+    retaining the live draft; compatibility mode replaces the live draft in the
+    same Discord container/message. Both retain a bounded authoritative timeline;
 11. a save/enqueue crash is recovered from the PostgreSQL outbox;
 12. rerunning each stage produces no duplicate business effect.
 

@@ -5,6 +5,7 @@ const safeProject = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,62}$/u);
 const safeService = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,62}$/u);
 const absolutePath = z.string().startsWith("/").refine((value) => !value.includes("\0"));
 export const correlationId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u);
+export const recordingStartedAtSchema = z.iso.datetime();
 const dockerContainerId = z.string().regex(/^[a-f\d]{64}$/u);
 const dockerImageId = z.string().regex(/^sha256:[a-f\d]{64}$/u);
 const repositoryDigest = z.string().regex(/^[^\s@]+@sha256:[a-f\d]{64}$/u);

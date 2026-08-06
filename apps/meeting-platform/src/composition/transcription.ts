@@ -28,12 +28,21 @@ const meetingVocabulary = [
   "Discord thread",
   "idempotency key",
   "live Pipecat assistant",
+  "landing page",
+  "landing slug",
   "Meeting Platform",
   "Pipecat",
   "PostgreSQL",
   "PostgreSQL pipeline",
+  "QID",
+  "Quanta",
+  "Quanta ID",
+  "Quanta Pages",
   "Redis",
   "Redis queue",
+  "referral code",
+  "referral link",
+  "timestamp",
 ] as const;
 
 export function createVoicetextBatchFinalTranscriptionOptions(

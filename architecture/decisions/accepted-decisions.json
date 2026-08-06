@@ -76,6 +76,36 @@
       "id": "ADR-0015",
       "path": "docs/decisions/0015-meeting-core-feature-modules.md",
       "immutableDigest": "sha256:117e8fce89ac0fe1dab8a8cfda0d01d0c0259325502e84ededb533178bdb38d4"
+    },
+    {
+      "id": "ADR-0016",
+      "path": "docs/decisions/0016-separate-final-publication-and-summary-quality.md",
+      "immutableDigest": "sha256:c27c8537413626b772613a2bc473a297e3973960b08e13d50a9cb8eb03c71afd"
+    },
+    {
+      "id": "ADR-0017",
+      "path": "docs/decisions/0017-preserve-summary-workflow-and-action-semantics.md",
+      "immutableDigest": "sha256:38d9b18add6b90b0ad8053305928b72e8175b7e718189f609b4db9bab1ac9e03"
+    },
+    {
+      "id": "ADR-0018",
+      "path": "docs/decisions/0018-bound-summary-output-to-provider-contract.md",
+      "immutableDigest": "sha256:4882a5a6633a328a14f9feb1316757943326cdfe7be64ddb9c7e59aa31d67880"
+    },
+    {
+      "id": "ADR-0019",
+      "path": "docs/decisions/0019-retain-fragmented-summary-evidence.md",
+      "immutableDigest": "sha256:bfc3cb6e2b311b43cf739d24d712dbd9199c5d0da99f93e3cd6b7ef6b8055632"
+    },
+    {
+      "id": "ADR-0020",
+      "path": "docs/decisions/0020-qualify-complete-action-chains.md",
+      "immutableDigest": "sha256:57985e1bea944d40ad648b733edffc24d44f0a43728438cc651a0e0c719643d3"
+    },
+    {
+      "id": "ADR-0021",
+      "path": "docs/decisions/0021-retain-complete-fragmented-action-evidence.md",
+      "immutableDigest": "sha256:cc5d7bab6c11cf716aa055135b37a3732a90293a74ac6338b7b0078ea094812b"
     }
   ]
 }

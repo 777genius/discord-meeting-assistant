@@ -5,9 +5,10 @@ import type {
   S3RecordingEvidence,
 } from "./e2e-collector.js";
 import type {
+  CurrentDeploymentProvenance,
   DeployedServiceProvenance,
-  DeploymentProvenance,
 } from "./e2e-evidence.js";
+import { parseProcessingEvidenceLogs } from "./e2e-processing-log-parser.js";
 import {
   parseLastJsonLine,
   runDockerComposeProbe,
@@ -28,6 +29,7 @@ import {
   parseDockerContainerId,
   parseSshDeploymentProbeOptions,
   replayOutputSchema,
+  recordingStartedAtSchema,
   s3OutputSchema,
   type SshDeploymentProbeOptions,
   type SshDeploymentProbeSettings,
@@ -58,15 +60,29 @@ export class SshDeploymentEvidenceProbe implements DeploymentEvidenceProbe {
     return databaseOutputSchema.parse(parseLastJsonLine(output));
   }
 
-  public async collectProvenance(): Promise<DeploymentProvenance> {
-    const [craig, meetingPlatform] = await Promise.all([
+  public async collectProcessing(meetingId: string, recordingStartedAt: string) {
+    const validatedMeetingId = correlationId.parse(meetingId);
+    const containerId = await this.#findContainerId(this.#options.projectName, "meeting-platform");
+    const output = await runRemoteProbe(this.#options, [
+      "docker",
+      "logs",
+      "--since",
+      recordingStartedAtSchema.parse(recordingStartedAt),
+      containerId,
+    ]);
+    return parseProcessingEvidenceLogs(output, validatedMeetingId);
+  }
+
+  public async collectProvenance(): Promise<CurrentDeploymentProvenance> {
+    const [craig, meetingPlatform, subscriptionRuntime] = await Promise.all([
       this.#collectServiceProvenance(
         this.#options.craigProjectName,
         this.#options.craigServiceName,
       ),
       this.#collectServiceProvenance(this.#options.projectName, "meeting-platform"),
+      this.#collectServiceProvenance(this.#options.projectName, "subscription-runtime-sidecar"),
     ]);
-    return { craig, meetingPlatform };
+    return { craig, meetingPlatform, subscriptionRuntime };
   }
 
   public async collectS3(
@@ -99,22 +115,7 @@ export class SshDeploymentEvidenceProbe implements DeploymentEvidenceProbe {
     projectName: string,
     serviceName: string,
   ): Promise<DeployedServiceProvenance> {
-    const containerIds = (await runRemoteProbe(this.#options, [
-      "docker",
-      "ps",
-      "--no-trunc",
-      "--quiet",
-      "--filter",
-      `label=com.docker.compose.project=${projectName}`,
-      "--filter",
-      `label=com.docker.compose.service=${serviceName}`,
-    ])).trim().split("\n").filter((value) => value.length > 0);
-    if (containerIds.length !== 1) {
-      throw new Error(
-        `expected one running ${projectName}/${serviceName} container, found ${containerIds.length}`,
-      );
-    }
-    const containerId = parseDockerContainerId(containerIds[0]);
+    const containerId = await this.#findContainerId(projectName, serviceName);
     const container = containerProvenanceOutputSchema.parse(parseLastJsonLine(
       await runRemoteProbe(this.#options, [
         "docker",
@@ -145,6 +146,25 @@ export class SshDeploymentEvidenceProbe implements DeploymentEvidenceProbe {
       repositoryDigest: (image.repositoryDigests ?? []).toSorted()[0] ?? null,
       sourceRevision: image.sourceRevision,
     };
+  }
+
+  async #findContainerId(projectName: string, serviceName: string): Promise<string> {
+    const containerIds = (await runRemoteProbe(this.#options, [
+      "docker",
+      "ps",
+      "--no-trunc",
+      "--quiet",
+      "--filter",
+      `label=com.docker.compose.project=${projectName}`,
+      "--filter",
+      `label=com.docker.compose.service=${serviceName}`,
+    ])).trim().split("\n").filter((value) => value.length > 0);
+    if (containerIds.length !== 1) {
+      throw new Error(
+        `expected one running ${projectName}/${serviceName} container, found ${containerIds.length}`,
+      );
+    }
+    return parseDockerContainerId(containerIds[0]);
   }
 
   async #dockerExec(

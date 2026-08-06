@@ -9,8 +9,13 @@ const discordTranscriptAttachmentMaximumBytes = 8 * 1_024 * 1_024;
 const projectionKeySchema = z.string().trim().min(1).max(128);
 const legacyProjectionKeySchema = z.string().trim().min(1).max(4_096);
 const meetingProjectionKeyVersion = "meeting-discord-projection:v2";
+const meetingFinalSummaryProjectionKeyVersion = "meeting-discord-final-summary:v1";
 
 export const discordPublicationModeSchema = z.enum(["message", "thread"]);
+export const discordFinalPublicationModeSchema = z.enum([
+  "separate-message",
+  "replace-live",
+]);
 
 const transcriptAttachmentSchema = z.object({
   content: z
@@ -77,6 +82,9 @@ export type DiscordProjectionReference = z.infer<typeof discordProjectionReferen
 export type DiscordProjectionBody = z.infer<typeof discordProjectionBodySchema>;
 export type PublishDiscordSummary = z.infer<typeof publishDiscordSummarySchema>;
 export type DiscordPublicationMode = z.infer<typeof discordPublicationModeSchema>;
+export type DiscordFinalPublicationMode = z.infer<
+  typeof discordFinalPublicationModeSchema
+>;
 
 export type DiscordProjectionContainer =
   | Pick<Extract<DiscordProjectionReference, { readonly kind: "thread" }>, "kind" | "threadId">
@@ -106,6 +114,24 @@ export function createMeetingDiscordProjectionKey(
     .update(JSON.stringify([meetingProjectionKeyVersion, meetingId, targetChannelId]), "utf8")
     .digest("hex");
   return `${meetingProjectionKeyVersion}:${digest}`;
+}
+
+/** Stable identity for the authoritative final summary kept beside the live projection. */
+export function createMeetingDiscordFinalSummaryProjectionKey(
+  meetingId: string,
+  targetChannelId: string,
+): string {
+  const digest = createHash("sha256")
+    .update(
+      JSON.stringify([
+        meetingFinalSummaryProjectionKeyVersion,
+        meetingId,
+        targetChannelId,
+      ]),
+      "utf8",
+    )
+    .digest("hex");
+  return `${meetingFinalSummaryProjectionKeyVersion}:${digest}`;
 }
 
 export function toDiscordProjectionBody(

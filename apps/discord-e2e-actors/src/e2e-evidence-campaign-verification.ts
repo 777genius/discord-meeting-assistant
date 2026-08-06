@@ -1,4 +1,4 @@
-import { sameServiceProvenance } from "./e2e-evidence-deployment-verification.js";
+import { sameDeploymentProvenance } from "./e2e-evidence-deployment-verification.js";
 import { publicationContainerIdentity } from "./e2e-evidence-publication.js";
 import type {
   FixtureManifestV1,
@@ -98,13 +98,15 @@ function verifyCampaignDeploymentProvenance(
     return;
   }
   for (const run of runs.slice(1)) {
-    for (const component of ["craig", "meetingPlatform"] as const) {
-      if (!sameServiceProvenance(baseline.deployment[component], run.deployment[component])) {
-        fail(
-          "CAMPAIGN_DEPLOYMENT_CHANGED",
-          `${component} immutable deployment provenance changed between campaign runs`,
-        );
-      }
+    if (run.schemaVersion !== baseline.schemaVersion) {
+      fail("CAMPAIGN_SCHEMA_CHANGED", "retained evidence schema changed between campaign runs");
+      continue;
+    }
+    if (!sameDeploymentProvenance(baseline.deployment, run.deployment)) {
+      fail(
+        "CAMPAIGN_DEPLOYMENT_CHANGED",
+        "immutable deployment provenance changed between campaign runs",
+      );
     }
   }
 }

@@ -71,7 +71,7 @@ function manifest(): FixtureManifestV1 {
       actionItems: [{
         deadline: null,
         ownerSpeakerId: speakerBId,
-        requiredTerms: ["очередь"],
+        requiredTerms: ["Redis queue", "idempotency key"],
       }],
       decisionTerms: ["Craig"],
       topicTerms: ["Meeting Platform"],
@@ -262,7 +262,7 @@ function overlapEvidence(): RetainedE2eEvidenceV2 {
           deadline: null,
           evidenceTurnIds: ["turn-b"],
           ownerSpeakerId: speakerBId,
-          text: "Проверить очередь",
+          text: "Проверить Redis queue и idempotency key",
         },
       ],
       decisions: [{
@@ -550,7 +550,7 @@ describe("verifyRetainedE2eEvidence", () => {
     dateManifest.summaryExpectations.actionItems = [{
       deadline: "до 7 августа 2026 года",
       ownerSpeakerId: speakerBId,
-      requiredTerms: ["очередь"],
+      requiredTerms: ["Redis queue", "idempotency key"],
     }];
 
     const evidence = overlapEvidence();
@@ -574,6 +574,7 @@ describe("verifyRetainedE2eEvidence", () => {
       expect.arrayContaining(["TERM_MISSING", "ACTION_SEMANTICS_MISSING"]),
     );
   });
+
 });
 
 describe("verifyRetainedE2eEvidence failures and reconnect", () => {

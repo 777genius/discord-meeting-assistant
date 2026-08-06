@@ -6,60 +6,90 @@ import {
 } from "@discord-meeting/meeting-core/publishing";
 
 import type {
+  DiscordFinalPublicationMode,
   DiscordProjectionReference,
   PublishDiscordSummary,
 } from "./discord-projection.js";
 import {
+  createMeetingDiscordFinalSummaryProjectionKey,
   createMeetingDiscordProjectionKey,
   decodeDiscordExternalPublicationId,
   encodeDiscordExternalPublicationId,
 } from "./discord-projection.js";
 import {
-  escapeDiscordMarkdown,
   formatDiscordSpeaker,
   formatDiscordTimestamp,
   truncateDiscordCodeUnits,
   truncateDiscordGraphemesByCodeUnits,
 } from "./discord-markdown-formatting.js";
+import {
+  contextualDiscordEvidenceTurnIds,
+  renderDiscordEvidenceQuote,
+} from "./discord-evidence-rendering.js";
 import { toDiscordPublicationFailure } from "./discord-publication-errors.js";
 import {
+  type DiscordTranscriptLocale,
   finalTranscriptAttachmentFilename,
   renderRussianFinalTranscriptAttachmentMarkdown,
   renderRussianTranscriptTimelineMarkdown,
 } from "./discord-transcript-timeline.js";
+import {
+  dominantTranscriptLocale,
+  finalSummaryCopy,
+} from "./discord-summary-locale.js";
 
 interface DiscordSummaryProjector {
   publish(input: PublishDiscordSummary): Promise<DiscordProjectionReference>;
 }
 
 const discordMarkdownLimit = 4_000;
-const truncationNotice = "_Summary was shortened due to Discord's limit._";
-const maximumEvidenceQuoteGraphemes = 180;
 
 type PublicationResult = SummaryPublicationResult<
   Pick<PublicationReceiptSnapshot, "externalPublicationId">
 >;
 
 export class DiscordSummaryPublicationAdapter implements SummaryPublicationPort {
-  public constructor(private readonly publisher: DiscordSummaryProjector) {}
+  private readonly finalPublicationMode: DiscordFinalPublicationMode;
+
+  public constructor(
+    private readonly publisher: DiscordSummaryProjector,
+    options: { readonly finalPublicationMode?: DiscordFinalPublicationMode } = {},
+  ) {
+    this.finalPublicationMode = options.finalPublicationMode ?? "separate-message";
+  }
 
   public async publish(request: SummaryPublicationRequest): Promise<PublicationResult> {
     try {
-      const referenceHint = currentReference(request.currentExternalPublicationId);
+      const locale = dominantTranscriptLocale(request.transcript.turns);
+      const replacesLiveProjection = this.finalPublicationMode === "replace-live";
+      const referenceHint = replacesLiveProjection
+        ? currentReference(request.currentExternalPublicationId)
+        : undefined;
       const reference = await this.publisher.publish({
-        projectionKey: createMeetingDiscordProjectionKey(
-          request.meetingId,
-          request.publicationTargetId,
-        ),
-        legacyProjectionKeys: [request.idempotencyKey],
+        projectionKey: replacesLiveProjection
+          ? createMeetingDiscordProjectionKey(
+              request.meetingId,
+              request.publicationTargetId,
+            )
+          : createMeetingDiscordFinalSummaryProjectionKey(
+              request.meetingId,
+              request.publicationTargetId,
+            ),
+        ...(replacesLiveProjection
+          ? { legacyProjectionKeys: [request.idempotencyKey] }
+          : {}),
         parentChannelId: request.publicationTargetId,
         threadTitle: discordThreadTitle(request.summary.title),
         markdown: renderRussianSummaryMarkdown(request),
         liveCaptionsMarkdown: renderRussianFinalTranscriptTimelineMarkdown(
           request.transcript.turns,
+          locale,
         ),
         transcriptAttachment: {
-          content: renderRussianFinalTranscriptAttachmentMarkdown(request.transcript.turns),
+          content: renderRussianFinalTranscriptAttachmentMarkdown(
+            request.transcript.turns,
+            locale,
+          ),
           filename: finalTranscriptAttachmentFilename,
         },
         ...(referenceHint === undefined ? {} : { currentReference: referenceHint }),
@@ -86,59 +116,81 @@ export function renderRussianSummaryMarkdown(
   request: Pick<SummaryPublicationRequest, "meetingId" | "summary" | "transcript">,
 ): string {
   const { summary } = request;
+  const locale = dominantTranscriptLocale(request.transcript.turns);
+  const copy = finalSummaryCopy[locale];
   const evidence = new Map(request.transcript.turns.map((turn) => [turn.turnId, turn]));
   const bodyLines = [
     `# ${normalizeInline(summary.title)}`,
     "",
-    "## Overview",
+    copy.overview,
     summary.overview.trim(),
     "",
-    "## Key topics",
+    copy.keyTopics,
     ...numberedOrEmpty(
       topicsInTimelineOrder(summary.topics, evidence).map((topic) => [
         topic.title.trim(),
         ...topic.points.map((point) => point.trim()),
-        ...evidenceLines(topic.evidenceTurnIds, evidence),
+        ...evidenceLines(
+          topic.evidenceTurnIds,
+          evidence,
+          [topic.title, ...topic.points].join(" "),
+          copy.sourceUtteranceUnavailable,
+        ),
       ]),
-      "No key topics were identified.",
+      copy.noTopics,
     ),
     "",
-    "## Decisions",
+    copy.decisions,
     ...numberedOrEmpty(
       entriesInTimelineOrder(summary.decisions, evidence).map((decision) => [
         decision.text.trim(),
-        ...evidenceLines(decision.evidenceTurnIds, evidence),
+        ...evidenceLines(
+          decision.evidenceTurnIds,
+          evidence,
+          decision.text,
+          copy.sourceUtteranceUnavailable,
+        ),
       ]),
-      "No decisions were recorded.",
+      copy.noDecisions,
     ),
     "",
-    "## Action items",
+    copy.actionItems,
     ...numberedOrEmpty(
       entriesInTimelineOrder(summary.actionItems, evidence).map((actionItem) => [
         actionItem.text.trim(),
-        `Owner: ${
+        `${copy.owner}: ${
           actionItem.ownerSpeakerId === null
-            ? "unassigned"
+            ? copy.unassigned
             : formatDiscordSpeaker(actionItem.ownerSpeakerId)
         }`,
-        `Due: ${
-          actionItem.deadline === null ? "not specified" : actionItem.deadline.trim()
+        `${copy.due}: ${
+          actionItem.deadline === null ? copy.notSpecified : actionItem.deadline.trim()
         }`,
-        ...evidenceLines(actionItem.evidenceTurnIds, evidence),
+        ...evidenceLines(
+          actionItem.evidenceTurnIds,
+          evidence,
+          [actionItem.text, actionItem.deadline ?? ""].join(" "),
+          copy.sourceUtteranceUnavailable,
+        ),
       ]),
-      "No action items were recorded.",
+      copy.noActionItems,
     ),
     "",
-    "## Open questions",
+    copy.openQuestions,
     ...numberedOrEmpty(
       entriesInTimelineOrder(summary.openQuestions, evidence).map((question) => [
         question.text.trim(),
-        ...evidenceLines(question.evidenceTurnIds, evidence),
+        ...evidenceLines(
+          question.evidenceTurnIds,
+          evidence,
+          question.text,
+          copy.sourceUtteranceUnavailable,
+        ),
       ]),
-      "No open questions were recorded.",
+      copy.noOpenQuestions,
     ),
   ];
-  return boundedMarkdown(bodyLines);
+  return boundedMarkdown(bodyLines, copy.truncationNotice);
 }
 
 /**
@@ -147,11 +199,12 @@ export function renderRussianSummaryMarkdown(
  */
 export function renderRussianFinalTranscriptTimelineMarkdown(
   turns: SummaryPublicationRequest["transcript"]["turns"],
+  locale: DiscordTranscriptLocale = dominantTranscriptLocale(turns),
 ): string {
-  return renderRussianTranscriptTimelineMarkdown(turns, "final");
+  return renderRussianTranscriptTimelineMarkdown(turns, "final", locale);
 }
 
-function boundedMarkdown(bodyLines: readonly string[]): string {
+function boundedMarkdown(bodyLines: readonly string[], truncationNotice: string): string {
   const body = bodyLines.join("\n").trimEnd();
   if (body.length <= discordMarkdownLimit) {
     return body;
@@ -196,8 +249,11 @@ function evidenceLines(
     string,
     SummaryPublicationRequest["transcript"]["turns"][number]
   >,
+  claimText: string,
+  sourceUtteranceUnavailable: string,
 ): readonly string[] {
-  return evidenceTurnIds
+  const resolvedTurnIds = contextualDiscordEvidenceTurnIds(evidenceTurnIds, evidence);
+  return resolvedTurnIds
     .map((turnId, originalIndex) => ({
       originalIndex,
       startMs: evidence.get(turnId)?.startMs ?? null,
@@ -210,10 +266,10 @@ function evidenceLines(
     .map(({ turnId }) => {
       const turn = evidence.get(turnId);
       if (turn === undefined) {
-        return "The source utterance is unavailable.";
+        return sourceUtteranceUnavailable;
       }
       const interval = `${formatDiscordTimestamp(turn.startMs)}-${formatDiscordTimestamp(turn.endMs)}`;
-      return `**${interval} · ${formatDiscordSpeaker(turn.speakerId)}:** «${evidenceQuote(turn.text)}»`;
+      return `**${interval} · ${formatDiscordSpeaker(turn.speakerId)}:** «${renderDiscordEvidenceQuote(turn.text, claimText)}»`;
     });
 }
 
@@ -288,16 +344,6 @@ function compareNullableStartMs(left: number | null, right: number | null): numb
   return left - right;
 }
 
-function evidenceQuote(value: string): string {
-  const normalized = escapeDiscordMarkdown(value.trim().replaceAll(/\s+/gu, " "));
-  const graphemes = Array.from(
-    new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(normalized),
-    (segment) => segment.segment,
-  );
-  return graphemes.length <= maximumEvidenceQuoteGraphemes
-    ? normalized
-    : `${graphemes.slice(0, maximumEvidenceQuoteGraphemes - 1).join("")}…`;
-}
 
 function normalizeInline(value: string): string {
   return value.trim().replaceAll(/\s+/gu, " ");
