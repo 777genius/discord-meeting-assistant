@@ -1,4 +1,6 @@
-import type { SummaryGenerationRequest } from "@discord-meeting/meeting-core";
+import {
+  type SummaryGenerationRequest,
+} from "@discord-meeting/meeting-core/meeting-intelligence";
 import { describe, expect, it } from "vitest";
 
 import {

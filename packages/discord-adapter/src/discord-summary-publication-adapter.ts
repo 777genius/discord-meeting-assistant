@@ -1,9 +1,9 @@
-import type {
-  PortResult,
-  PublicationReceiptSnapshot,
-  SummaryPublicationPort,
-  SummaryPublicationRequest,
-} from "@discord-meeting/meeting-core";
+import {
+  type PublicationReceiptSnapshot,
+  type SummaryPublicationPort,
+  type SummaryPublicationRequest,
+  type SummaryPublicationResult,
+} from "@discord-meeting/meeting-core/publishing";
 
 import type {
   DiscordProjectionReference,
@@ -36,7 +36,7 @@ const discordMarkdownLimit = 4_000;
 const truncationNotice = "_Summary was shortened due to Discord's limit._";
 const maximumEvidenceQuoteGraphemes = 180;
 
-type PublicationResult = PortResult<
+type PublicationResult = SummaryPublicationResult<
   Pick<PublicationReceiptSnapshot, "externalPublicationId">
 >;
 

@@ -1,10 +1,12 @@
-import type {
-  FinalTranscriptionPort,
-  GeneratedTranscript,
-  PortResult,
-  SpeakerAudioReferenceSnapshot,
-  TranscriptTurnSnapshot,
-} from "@discord-meeting/meeting-core";
+import {
+  type FinalTranscriptionPort,
+  type GeneratedTranscript,
+  type TranscriptTurnSnapshot,
+  type FinalTranscriptionResult,
+} from "@discord-meeting/meeting-core/transcription";
+import {
+  type SpeakerAudioReferenceSnapshot,
+} from "@discord-meeting/meeting-core/recording";
 
 import {
   systemVoicetextPacingScheduler,
@@ -72,7 +74,7 @@ export class VoicetextFinalTranscriptionAdapter implements FinalTranscriptionPor
 
   public async transcribe(
     request: CancellableVoicetextTranscriptionRequest,
-  ): Promise<PortResult<GeneratedTranscript>> {
+  ): Promise<FinalTranscriptionResult<GeneratedTranscript>> {
     try {
       return { ok: true, value: await this.transcribeOrThrow(request) };
     } catch (error: unknown) {

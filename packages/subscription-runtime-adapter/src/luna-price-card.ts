@@ -1,7 +1,7 @@
-import type {
-  LiveGenerationTelemetrySnapshot,
-  LiveGenerationUsageSnapshot,
-} from "@discord-meeting/meeting-core";
+import {
+  type LiveGenerationTelemetrySnapshot,
+  type LiveGenerationUsageSnapshot,
+} from "@discord-meeting/meeting-core/live-meeting";
 
 import { SubscriptionRuntimeAdapterError } from "./errors.js";
 import {

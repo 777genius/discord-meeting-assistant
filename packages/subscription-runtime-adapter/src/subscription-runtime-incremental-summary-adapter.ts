@@ -1,11 +1,11 @@
-import type {
-  GeneratedIncrementalSummary,
-  IncrementalSummaryGenerationPort,
-  IncrementalSummaryGenerationResult,
-  IncrementalSummaryGenerationRequest,
-  LiveGenerationTelemetrySnapshot,
-  LiveGenerationUsageSnapshot,
-} from "@discord-meeting/meeting-core";
+import {
+  type GeneratedIncrementalSummary,
+  type IncrementalSummaryGenerationPort,
+  type IncrementalSummaryGenerationResult,
+  type IncrementalSummaryGenerationRequest,
+  type LiveGenerationTelemetrySnapshot,
+  type LiveGenerationUsageSnapshot,
+} from "@discord-meeting/meeting-core/live-meeting";
 
 import {
   type AttestationExpectation,

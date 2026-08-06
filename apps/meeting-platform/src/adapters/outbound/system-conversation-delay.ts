@@ -1,7 +1,7 @@
-import type {
-  ConversationDelay,
-  ConversationDelayPort,
-} from "@discord-meeting/meeting-core";
+import {
+  type ConversationDelay,
+  type ConversationDelayPort,
+} from "@discord-meeting/meeting-core/conversation";
 
 /** Node timer implementation kept outside Meeting Core's deterministic policy. */
 export class SystemConversationDelay implements ConversationDelayPort {

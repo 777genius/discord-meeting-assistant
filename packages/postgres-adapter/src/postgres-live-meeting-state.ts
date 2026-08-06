@@ -1,4 +1,6 @@
-import type { LiveMeetingSnapshot } from "@discord-meeting/meeting-core";
+import {
+  type LiveMeetingSnapshot,
+} from "@discord-meeting/meeting-core/live-meeting";
 import type { Pool, PoolClient } from "pg";
 
 import {

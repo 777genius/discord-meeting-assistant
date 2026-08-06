@@ -1,7 +1,9 @@
 import { S3Client } from "@aws-sdk/client-s3";
 import type { ConnectionOptions } from "bullmq";
 import { ResolveGuildMeetingTarget } from "@discord-meeting/guild-configuration-core";
-import type { FinalTranscriptionPort } from "@discord-meeting/meeting-core";
+import {
+  type FinalTranscriptionPort,
+} from "@discord-meeting/meeting-core/transcription";
 import {
   createS3BinaryArtifactReader,
   createS3BinaryArtifactWriter,

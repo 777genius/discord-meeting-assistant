@@ -20,6 +20,10 @@ changedChecks:
     script: architecture:source
     extensions: [.js, .mjs, .cjs, .ts, .tsx]
     passPaths: false
+  - id: meeting-core-import-boundaries
+    script: architecture:meeting-core-imports
+    extensions: [.json, .js, .jsx, .mjs, .cjs, .ts, .tsx, .mts, .cts]
+    passPaths: false
   - id: documentation-local-references
     script: architecture:documentation
     extensions: [.md]

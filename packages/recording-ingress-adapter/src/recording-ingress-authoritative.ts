@@ -2,7 +2,9 @@ import type {
   AuthoritativeTrackUploadMetadata,
   CraigLifecycleEvent,
 } from "@discord-meeting/craig-gateway-contracts";
-import type { RecordingArtifactSnapshot } from "@discord-meeting/meeting-core";
+import {
+  type RecordingArtifactSnapshot,
+} from "@discord-meeting/meeting-core/recording";
 
 import type {
   AuthoritativeTrackIngressResult,

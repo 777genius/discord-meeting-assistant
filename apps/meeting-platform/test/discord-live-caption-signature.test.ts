@@ -4,7 +4,9 @@ import { renderRussianLiveCaptionsMarkdown } from "@discord-meeting/discord-adap
 import { expect, it } from "vitest";
 
 import { discordLiveCaptionSignature } from "../src/composition/discord-live-caption-signature.js";
-import type { LiveCaptionSnapshot } from "@discord-meeting/meeting-core";
+import {
+  type LiveCaptionSnapshot,
+} from "@discord-meeting/meeting-core/live-meeting";
 
 it("hashes the exact Markdown rendered for Discord live captions", () => {
   const captions: readonly LiveCaptionSnapshot[] = [

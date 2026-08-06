@@ -1,0 +1,39 @@
+import type { ConversationRuntime } from "@discord-meeting/meeting-core/conversation";
+export type { FinalTranscript } from "@discord-meeting/meeting-core/transcription";
+import core = require("@discord-meeting/meeting-core");
+export import Conversation = require /* gap */ (
+  "@discord-meeting/meeting-core/conversation"
+);
+const recording = require("@discord-meeting/meeting-core/recording");
+const interpolated = `${require("@discord-meeting/meeting-core/conversation")}`;
+const escaped = r\u0065quire("@discord-meeting/meeting-core/conversation");
+const optional = require?.("@discord-meeting/meeting-core/conversation");
+const parenthesized = (require)("@discord-meeting/meeting-core/conversation");
+const req = require;
+const aliased = req("@discord-meeting/meeting-core/conversation");
+const nestedTemplate = `${/}/u.test("}") ? require("@discord-meeting/meeting-core/conversation") : ""}`;
+const templateRequired = require(`@discord-meeting/meeting-core/conversation`);
+const templateImported = import(`@discord-meeting/meeting-core/conversation`);
+const moduleRequired = module["require"]("@discord-meeting/meeting-core/conversation");
+const moduleRequireAlias = module.require;
+const moduleAliasRequired = moduleRequireAlias("@discord-meeting/meeting-core/conversation");
+const boundRequire = require.bind(null);
+const boundRequired = boundRequire("@discord-meeting/meeting-core/conversation");
+const calledRequire = require.call(null, "@discord-meeting/meeting-core/conversation");
+let mutableRequire = require;
+const capturedRequire = mutableRequire;
+mutableRequire = localLoader;
+const capturedRequired = capturedRequire("@discord-meeting/meeting-core/conversation");
+let nestedMutationRequire = require;
+function mutateRequire() {
+  nestedMutationRequire = localLoader;
+}
+const nestedMutationRequired = nestedMutationRequire("@discord-meeting/meeting-core/conversation");
+
+export async function loadLifecycle() {
+  return import("@discord-meeting/meeting-core/meeting-lifecycle");
+}
+
+export async function loadDeepFeature() {
+  return import("@discord-meeting/meeting-core/live-meeting/internal");
+}

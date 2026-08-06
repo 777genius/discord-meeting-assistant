@@ -1,5 +1,5 @@
 import {
-  DomainInvariantError,
+  LiveMeetingInvariantError,
   normalizeLiveGenerationTelemetry,
   normalizeLiveGenerationUsage,
   type CommitLiveMeetingSummaryInput,
@@ -7,8 +7,10 @@ import {
   type LiveFinalizedTurn,
   type LiveGenerationTelemetrySnapshot,
   type LiveGenerationUsageSnapshot,
+} from "@discord-meeting/meeting-core/live-meeting";
+import {
   type TranscriptTurnSnapshot,
-} from "@discord-meeting/meeting-core";
+} from "@discord-meeting/meeting-core/transcription";
 import type { Pool, PoolClient } from "pg";
 
 import { normalizeLiveTurn, restoreStoredLiveTurn } from "./postgres-live-meeting-codec.js";
@@ -60,7 +62,7 @@ export class PostgresLiveMeetingRecords {
       const existing = await this.findTurnReplay(client, meetingId, normalized);
       if (existing !== null) {
         if (!existing) {
-          throw new DomainInvariantError(
+          throw new LiveMeetingInvariantError(
             "CONFLICTING_COMPLETION",
             "live turn identity was reused with different content",
           );
@@ -69,7 +71,7 @@ export class PostgresLiveMeetingRecords {
         return "reused";
       }
       if (lifecycle.status !== "active") {
-        throw new DomainInvariantError(
+        throw new LiveMeetingInvariantError(
           "INVALID_LIFECYCLE_STATE",
           "cannot append a live turn after the meeting ended",
         );
@@ -232,14 +234,14 @@ export class PostgresLiveMeetingRecords {
   ): Promise<void> {
     const ids = [...new Set(input.newlySummarizedTurnIds)];
     if (ids.length !== input.newlySummarizedTurnIds.length) {
-      throw new DomainInvariantError("DUPLICATE_IDENTIFIER", "summary coverage turn IDs must be unique");
+      throw new LiveMeetingInvariantError("DUPLICATE_IDENTIFIER", "summary coverage turn IDs must be unique");
     }
     if (ids.length === 0) {
       return;
     }
     const summaryRevision = input.snapshot.draftSummary?.revision;
     if (summaryRevision === undefined) {
-      throw new DomainInvariantError("INVALID_SNAPSHOT", "summary coverage requires a summary draft");
+      throw new LiveMeetingInvariantError("INVALID_SNAPSHOT", "summary coverage requires a summary draft");
     }
     const present = await client.query<CountRow>(
       `
@@ -251,7 +253,7 @@ export class PostgresLiveMeetingRecords {
       [input.snapshot.meetingId, ids],
     );
     if (present.rows[0]?.count !== ids.length) {
-      throw new DomainInvariantError("INVALID_EVIDENCE_REFERENCE", "summary coverage turn is missing");
+      throw new LiveMeetingInvariantError("INVALID_EVIDENCE_REFERENCE", "summary coverage turn is missing");
     }
     await client.query(
       `
@@ -304,7 +306,7 @@ export class PostgresLiveMeetingRecords {
     if (replay.payload_matches) {
       return "reused";
     }
-    throw new DomainInvariantError(
+    throw new LiveMeetingInvariantError(
       "CONFLICTING_COMPLETION",
       "generation run was replayed with different values",
     );

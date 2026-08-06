@@ -1,7 +1,9 @@
-import type {
-  SummaryGenerationRequest,
-  TranscriptTurnSnapshot,
-} from "@discord-meeting/meeting-core";
+import {
+  type SummaryGenerationRequest,
+} from "@discord-meeting/meeting-core/meeting-intelligence";
+import {
+  type TranscriptTurnSnapshot,
+} from "@discord-meeting/meeting-core/transcription";
 
 import { SubscriptionRuntimeAdapterError } from "./errors.js";
 import { providerMeetingSummaryJsonSchema } from "./provider-summary-schema.js";

@@ -1,7 +1,7 @@
 import {
   Meeting,
   type MeetingSnapshot,
-} from "@discord-meeting/meeting-core";
+} from "@discord-meeting/meeting-core/meeting-lifecycle";
 
 import type {
   AuthoritativeSpeakerTrackUpload,

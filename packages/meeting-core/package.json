@@ -4,7 +4,14 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    "./conversation": "./src/features/conversation/index.ts",
+    "./live-meeting": "./src/features/live-meeting/index.ts",
+    "./meeting-intelligence": "./src/features/meeting-intelligence/index.ts",
+    "./meeting-lifecycle": "./src/features/meeting-lifecycle/index.ts",
+    "./post-call-workflow": "./src/features/post-call-workflow/index.ts",
+    "./publishing": "./src/features/publishing/index.ts",
+    "./recording": "./src/features/recording/index.ts",
+    "./transcription": "./src/features/transcription/index.ts"
   },
   "scripts": {
     "check": "pnpm run typecheck && pnpm run test",

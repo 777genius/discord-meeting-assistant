@@ -1,15 +1,18 @@
-import type {
-  FinalTranscriptionPort,
-  FinalTranscriptionRequest,
-  GeneratedSummary,
-  GeneratedTranscript,
-  PortResult,
-  PublicationReceiptSnapshot,
-  SummaryGenerationPort,
-  SummaryGenerationRequest,
-  SummaryPublicationPort,
-  SummaryPublicationRequest,
-} from "@discord-meeting/meeting-core";
+import {
+  type FinalTranscriptionPort,
+  type FinalTranscriptionRequest,
+  type GeneratedTranscript,
+} from "@discord-meeting/meeting-core/transcription";
+import {
+  type GeneratedSummary,
+  type SummaryGenerationPort,
+  type SummaryGenerationRequest,
+} from "@discord-meeting/meeting-core/meeting-intelligence";
+import {
+  type PublicationReceiptSnapshot,
+  type SummaryPublicationPort,
+  type SummaryPublicationRequest,
+} from "@discord-meeting/meeting-core/publishing";
 import type {
   Logger,
   ProcessingStageMetrics,
@@ -18,6 +21,16 @@ import type {
 } from "@discord-meeting/observability-adapter";
 
 type PublicationResult = Pick<PublicationReceiptSnapshot, "externalPublicationId">;
+type ProcessingPortResult<Value> =
+  | { readonly ok: true; readonly value: Value }
+  | {
+      readonly failure: {
+        readonly code: string;
+        readonly message: string;
+        readonly retryable: boolean;
+      };
+      readonly ok: false;
+    };
 type MonotonicClock = () => number;
 type StageLogDetails = Readonly<Record<string, unknown>>;
 type EvidenceDetails = Readonly<{
@@ -41,12 +54,12 @@ class ProcessingStageTimer {
   public async measure<Value>(
     stage: ProcessingStage,
     meetingId: string,
-    operation: () => Promise<PortResult<Value>>,
+    operation: () => Promise<ProcessingPortResult<Value>>,
     detailsForResult: (
-      result: PortResult<Value>,
+      result: ProcessingPortResult<Value>,
       durationMilliseconds: number,
     ) => StageLogDetails,
-  ): Promise<PortResult<Value>> {
+  ): Promise<ProcessingPortResult<Value>> {
     const startedAt = this.nowMilliseconds();
     try {
       const result = await operation();
@@ -108,7 +121,7 @@ export class InstrumentedFinalTranscriptionPort implements FinalTranscriptionPor
 
   public transcribe(
     request: FinalTranscriptionRequest,
-  ): Promise<PortResult<GeneratedTranscript>> {
+  ): Promise<ProcessingPortResult<GeneratedTranscript>> {
     return this.timer.measure(
       "transcription",
       request.meetingId,
@@ -133,7 +146,7 @@ export class InstrumentedSummaryGenerationPort implements SummaryGenerationPort 
 
   public generate(
     request: SummaryGenerationRequest,
-  ): Promise<PortResult<GeneratedSummary>> {
+  ): Promise<ProcessingPortResult<GeneratedSummary>> {
     return this.timer.measure(
       "summary",
       request.meetingId,
@@ -157,7 +170,7 @@ export class InstrumentedSummaryPublicationPort implements SummaryPublicationPor
 
   public publish(
     request: SummaryPublicationRequest,
-  ): Promise<PortResult<PublicationResult>> {
+  ): Promise<ProcessingPortResult<PublicationResult>> {
     return this.timer.measure(
       "publication",
       request.meetingId,
@@ -169,7 +182,7 @@ export class InstrumentedSummaryPublicationPort implements SummaryPublicationPor
 
 function transcriptionDetails(
   request: FinalTranscriptionRequest,
-  result: PortResult<GeneratedTranscript>,
+  result: ProcessingPortResult<GeneratedTranscript>,
   durationMilliseconds: number,
 ): StageLogDetails {
   const requestDetails = {
@@ -189,7 +202,7 @@ function transcriptionDetails(
 
 function summaryDetails(
   request: SummaryGenerationRequest,
-  result: PortResult<GeneratedSummary>,
+  result: ProcessingPortResult<GeneratedSummary>,
 ): StageLogDetails {
   const evidence = evidenceDetails(request.transcript);
   if (!result.ok) {
@@ -205,7 +218,7 @@ function summaryDetails(
   };
 }
 
-function failureDetails<Value>(result: PortResult<Value>): StageLogDetails {
+function failureDetails<Value>(result: ProcessingPortResult<Value>): StageLogDetails {
   if (result.ok) {
     return {};
   }

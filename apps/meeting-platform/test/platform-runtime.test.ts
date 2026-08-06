@@ -4,18 +4,18 @@ import { join } from "node:path";
 
 import type { S3Client } from "@aws-sdk/client-s3";
 import type { PostCallWorker } from "@discord-meeting/bullmq-adapter";
-import type {
-  ConversationAudioChunk,
-  ConversationRuntime,
-  ConversationRuntimeEvent,
-  ConversationRuntimeTurn,
-  ConversationStartRequest,
-  PortResult,
-  VoicePlaybackEvent,
-  VoicePlaybackPort,
-  VoicePlaybackRequest,
-  VoicePlaybackSession,
-} from "@discord-meeting/meeting-core";
+import {
+  type ConversationAudioChunk,
+  type ConversationRuntime,
+  type ConversationRuntimeEvent,
+  type ConversationRuntimeTurn,
+  type ConversationStartRequest,
+  type VoicePlaybackEvent,
+  type VoicePlaybackPort,
+  type VoicePlaybackRequest,
+  type VoicePlaybackSession,
+  type ConversationPortResult,
+} from "@discord-meeting/meeting-core/conversation";
 import type { Logger } from "@discord-meeting/observability-adapter";
 import type { Client } from "discord.js";
 import type { Pool } from "pg";
@@ -38,7 +38,7 @@ class PendingConversationRuntime implements ConversationRuntime {
 
   public startTurn(
     _request: ConversationStartRequest,
-  ): Promise<PortResult<ConversationRuntimeTurn>> {
+  ): Promise<ConversationPortResult<ConversationRuntimeTurn>> {
     const eventsClosed = new Promise<void>((resolve) => {
       this.closeEvents = resolve;
     });
@@ -67,7 +67,7 @@ class RecordingCuePlayback implements VoicePlaybackPort {
 
   public async open(
     request: VoicePlaybackRequest,
-  ): Promise<PortResult<VoicePlaybackSession>> {
+  ): Promise<ConversationPortResult<VoicePlaybackSession>> {
     this.requests.push(structuredClone(request));
     let resolveTerminal!: (event: VoicePlaybackEvent) => void;
     const terminal = new Promise<VoicePlaybackEvent>((resolve) => {

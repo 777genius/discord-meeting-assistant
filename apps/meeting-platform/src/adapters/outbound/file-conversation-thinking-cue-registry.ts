@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
 import { lstat, readFile } from "node:fs/promises";
 
-import type {
-  ConversationThinkingCue,
-  ConversationThinkingCuePort,
-  ConversationThinkingCueRequest,
-  PortResult,
-} from "@discord-meeting/meeting-core";
+import {
+  type ConversationThinkingCue,
+  type ConversationThinkingCuePort,
+  type ConversationThinkingCueRequest,
+  type ConversationPortResult,
+} from "@discord-meeting/meeting-core/conversation";
 
 const manifestFileName = "manifest.json";
 const manifestMaximumBytes = 64 * 1_024;
@@ -102,7 +102,7 @@ export class FileConversationThinkingCueRegistry
 
   public async select(
     request: ConversationThinkingCueRequest,
-  ): Promise<PortResult<ConversationThinkingCue | null>> {
+  ): Promise<ConversationPortResult<ConversationThinkingCue | null>> {
     if (request.voiceProfileId !== this.voiceProfileId) {
       return { ok: true, value: null };
     }

@@ -1,19 +1,21 @@
-import type {
-  CommitLiveMeetingSummaryInput,
-  FinalizedConversationTurnInput,
-  GeneratedIncrementalSummary,
-  IncrementalSummaryGenerationPort,
-  IncrementalSummaryGenerationRequest,
-  LiveFinalizedTurn,
-  LiveGenerationTelemetrySnapshot,
-  LiveGenerationUsageSnapshot,
-  LiveMeetingProjectionPort,
-  LiveMeetingProjectionRequest,
-  LiveMeetingRepository,
-  LiveMeetingSnapshot,
-  PortResult,
-  StageFailure,
-} from "@discord-meeting/meeting-core";
+import {
+  type CommitLiveMeetingSummaryInput,
+  type GeneratedIncrementalSummary,
+  type IncrementalSummaryGenerationPort,
+  type IncrementalSummaryGenerationRequest,
+  type LiveFinalizedTurn,
+  type LiveGenerationTelemetrySnapshot,
+  type LiveGenerationUsageSnapshot,
+  type LiveMeetingProjectionPort,
+  type LiveMeetingProjectionRequest,
+  type LiveMeetingRepository,
+  type LiveMeetingSnapshot,
+  type LiveMeetingPortResult,
+  type LiveMeetingFailure,
+} from "@discord-meeting/meeting-core/live-meeting";
+import {
+  type FinalizedConversationTurnInput,
+} from "@discord-meeting/meeting-core/conversation";
 import type { Logger } from "@discord-meeting/observability-adapter";
 import type {
   OpenVoicetextLiveSessionRequest,
@@ -169,7 +171,7 @@ export class SummaryStub implements IncrementalSummaryGenerationPort {
 
   public generate(
     request: IncrementalSummaryGenerationRequest,
-  ): Promise<PortResult<GeneratedIncrementalSummary>> {
+  ): Promise<LiveMeetingPortResult<GeneratedIncrementalSummary>> {
     this.requests.push(structuredClone(request));
     const evidenceTurnId = request.knownTurnIds[0]!;
     return Promise.resolve({
@@ -204,12 +206,12 @@ export class SummaryStub implements IncrementalSummaryGenerationPort {
 export class DeferredSummaryStub implements IncrementalSummaryGenerationPort {
   public readonly requests: IncrementalSummaryGenerationRequest[] = [];
   private readonly resolvers: Array<
-    (result: PortResult<GeneratedIncrementalSummary>) => void
+    (result: LiveMeetingPortResult<GeneratedIncrementalSummary>) => void
   > = [];
 
   public generate(
     request: IncrementalSummaryGenerationRequest,
-  ): Promise<PortResult<GeneratedIncrementalSummary>> {
+  ): Promise<LiveMeetingPortResult<GeneratedIncrementalSummary>> {
     this.requests.push(structuredClone(request));
     return new Promise((resolve) => {
       this.resolvers.push(resolve);
@@ -257,7 +259,7 @@ export class FailingSummaryStub implements IncrementalSummaryGenerationPort {
 
   public generate(
     request: IncrementalSummaryGenerationRequest,
-  ): Promise<PortResult<GeneratedIncrementalSummary>> {
+  ): Promise<LiveMeetingPortResult<GeneratedIncrementalSummary>> {
     this.requests.push(structuredClone(request));
     return Promise.resolve({
       failure: {
@@ -275,7 +277,7 @@ export class PermanentFailingSummaryStub implements IncrementalSummaryGeneration
 
   public generate(
     request: IncrementalSummaryGenerationRequest,
-  ): Promise<PortResult<GeneratedIncrementalSummary>> {
+  ): Promise<LiveMeetingPortResult<GeneratedIncrementalSummary>> {
     this.requests.push(structuredClone(request));
     return Promise.resolve({
       failure: {
@@ -294,7 +296,7 @@ export class ProjectionStub implements LiveMeetingProjectionPort {
 
   public publish(
     request: LiveMeetingProjectionRequest,
-  ): Promise<PortResult<{ readonly externalPublicationId: string }>> {
+  ): Promise<LiveMeetingPortResult<{ readonly externalPublicationId: string }>> {
     this.requests.push(structuredClone(request));
     return Promise.resolve({
       ok: true,
@@ -306,11 +308,11 @@ export class ProjectionStub implements LiveMeetingProjectionPort {
 export class FailingProjectionStub implements LiveMeetingProjectionPort {
   public readonly requests: LiveMeetingProjectionRequest[] = [];
 
-  public constructor(private readonly failure: StageFailure) {}
+  public constructor(private readonly failure: LiveMeetingFailure) {}
 
   public publish(
     request: LiveMeetingProjectionRequest,
-  ): Promise<PortResult<{ readonly externalPublicationId: string }>> {
+  ): Promise<LiveMeetingPortResult<{ readonly externalPublicationId: string }>> {
     this.requests.push(structuredClone(request));
     return Promise.resolve({ failure: this.failure, ok: false });
   }
@@ -321,7 +323,7 @@ export class FinalizingFailingProjectionStub implements LiveMeetingProjectionPor
 
   public publish(
     request: LiveMeetingProjectionRequest,
-  ): Promise<PortResult<{ readonly externalPublicationId: string }>> {
+  ): Promise<LiveMeetingPortResult<{ readonly externalPublicationId: string }>> {
     this.requests.push(structuredClone(request));
     if (request.phase === "finalizing") {
       return Promise.resolve({
@@ -348,7 +350,7 @@ export class TimedProjectionStub implements LiveMeetingProjectionPort {
 
   public publish(
     request: LiveMeetingProjectionRequest,
-  ): Promise<PortResult<{ readonly externalPublicationId: string }>> {
+  ): Promise<LiveMeetingPortResult<{ readonly externalPublicationId: string }>> {
     this.calls.push({
       meetingId: request.meetingId,
       publishedAtMs: Date.now(),
@@ -663,7 +665,7 @@ export class DeferredProjectionStub implements LiveMeetingProjectionPort {
 
   public publish(
     request: LiveMeetingProjectionRequest,
-  ): Promise<PortResult<{ readonly externalPublicationId: string }>> {
+  ): Promise<LiveMeetingPortResult<{ readonly externalPublicationId: string }>> {
     this.requests.push(structuredClone(request));
     if (this.released) {
       return Promise.resolve({

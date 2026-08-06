@@ -1,11 +1,13 @@
-import type {
-  FinalTranscriptionPort,
-  FinalTranscriptionRequest,
-  GeneratedTranscript,
-  PortResult,
-  SpeakerAudioReferenceSnapshot,
-  TranscriptTurnSnapshot,
-} from "@discord-meeting/meeting-core";
+import {
+  type FinalTranscriptionPort,
+  type FinalTranscriptionRequest,
+  type GeneratedTranscript,
+  type TranscriptTurnSnapshot,
+  type FinalTranscriptionResult,
+} from "@discord-meeting/meeting-core/transcription";
+import {
+  type SpeakerAudioReferenceSnapshot,
+} from "@discord-meeting/meeting-core/recording";
 
 import type { AudioContent, AudioContentReader } from "./audio-content-reader.js";
 import { deterministicAdapterId } from "./deterministic-id.js";
@@ -59,7 +61,7 @@ export class OpenAiFinalTranscriptionAdapter implements FinalTranscriptionPort {
 
   public async transcribe(
     request: FinalTranscriptionRequest,
-  ): Promise<PortResult<GeneratedTranscript>> {
+  ): Promise<FinalTranscriptionResult<GeneratedTranscript>> {
     try {
       return { ok: true, value: await this.transcribeOrThrow(request) };
     } catch (error: unknown) {

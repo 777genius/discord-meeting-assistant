@@ -1,9 +1,9 @@
-import type {
-  FinalTranscriptionPort,
-  GeneratedTranscript,
-  PortResult,
-  TranscriptTurnSnapshot,
-} from "@discord-meeting/meeting-core";
+import {
+  type FinalTranscriptionPort,
+  type GeneratedTranscript,
+  type TranscriptTurnSnapshot,
+  type FinalTranscriptionResult,
+} from "@discord-meeting/meeting-core/transcription";
 
 import {
   validateVoicetextBatchFinalTranscriptionOptions,
@@ -58,7 +58,7 @@ export class VoicetextBatchFinalTranscriptionAdapter implements FinalTranscripti
 
   public async transcribe(
     request: CancellableVoicetextBatchTranscriptionRequest,
-  ): Promise<PortResult<GeneratedTranscript>> {
+  ): Promise<FinalTranscriptionResult<GeneratedTranscript>> {
     try {
       return { ok: true, value: await this.transcribeOrThrow(request) };
     } catch (error: unknown) {

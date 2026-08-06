@@ -71,6 +71,29 @@ These names guide the first model. A separate workspace package is created only
 when a real slice and ownership boundary exist. Deployment separation is not a
 DDD requirement.
 
+## Meeting Core feature modules
+
+Meeting Core is one bounded-context package with eight enforced feature
+modules:
+
+```text
+packages/meeting-core/src/features/
+  recording/
+  transcription/
+  meeting-intelligence/
+  publishing/
+  meeting-lifecycle/
+  post-call-workflow/
+  live-meeting/
+  conversation/
+```
+
+Each module exposes one curated entrypoint and creates only the domain,
+application, and port directories it actually needs. External consumers use an
+explicit package subpath. Foundation denies undeclared feature dependencies and
+cross-feature deep imports, so the physical layout and executable dependency
+model describe the same architecture.
+
 ## Live conversation vertical slice
 
 The executable live slice includes derived live STT, addressed conversation,

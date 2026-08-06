@@ -1,4 +1,6 @@
-import type { RecordingArtifactSnapshot } from "@discord-meeting/meeting-core";
+import {
+  type RecordingArtifactSnapshot,
+} from "@discord-meeting/meeting-core/recording";
 
 /**
  * Consumer-owned commands accepted by the Meeting Platform application edge.

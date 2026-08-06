@@ -1,4 +1,6 @@
-import type { StageFailure } from "@discord-meeting/meeting-core";
+import {
+  type FinalTranscriptionFailure,
+} from "@discord-meeting/meeting-core/transcription";
 
 export type VoicetextAdapterErrorCode =
   | "artifact_read_failed"
@@ -58,7 +60,7 @@ export class VoicetextTransportError extends Error {
   }
 }
 
-export function toVoicetextPortFailure(error: unknown): StageFailure {
+export function toVoicetextPortFailure(error: unknown): FinalTranscriptionFailure {
   if (error instanceof VoicetextAdapterError) {
     return {
       code: `VOICETEXT_TRANSCRIPTION_${error.code.toUpperCase()}`,

@@ -1,8 +1,10 @@
-import type {
-  IncrementalSummaryGenerationRequest,
-  LiveSummaryDraftSnapshot,
-  TranscriptTurnSnapshot,
-} from "@discord-meeting/meeting-core";
+import {
+  type IncrementalSummaryGenerationRequest,
+  type LiveSummaryDraftSnapshot,
+} from "@discord-meeting/meeting-core/live-meeting";
+import {
+  type TranscriptTurnSnapshot,
+} from "@discord-meeting/meeting-core/transcription";
 
 import { SubscriptionRuntimeAdapterError } from "./errors.js";
 import {

@@ -1,4 +1,6 @@
-import { detectAddressedConversation } from "@discord-meeting/meeting-core";
+import {
+  detectAddressedConversation,
+} from "@discord-meeting/meeting-core/conversation";
 
 const russianLetter = /[а-яё]/giu;
 const englishLetter = /[a-z]/giu;

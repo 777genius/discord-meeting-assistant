@@ -1,7 +1,7 @@
-import type {
-  SummaryPublicationPort,
-  SummaryPublicationRequest,
-} from "@discord-meeting/meeting-core";
+import {
+  type SummaryPublicationPort,
+  type SummaryPublicationRequest,
+} from "@discord-meeting/meeting-core/publishing";
 import { describe, expect, it, vi } from "vitest";
 
 import { LiveFencedSummaryPublicationPort } from "../src/application/live-fenced-summary-publication.js";

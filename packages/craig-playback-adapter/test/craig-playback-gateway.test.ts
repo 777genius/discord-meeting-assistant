@@ -4,7 +4,9 @@ import type {
   CraigPlaybackCommand,
   CraigPlaybackEvent,
 } from "@discord-meeting/craig-gateway-contracts";
-import type { ConversationAudioChunk } from "@discord-meeting/meeting-core";
+import {
+  type ConversationAudioChunk,
+} from "@discord-meeting/meeting-core/conversation";
 
 import {
   CraigPlaybackGateway,

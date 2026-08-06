@@ -1,8 +1,10 @@
-import type {
-  SummaryPublicationEffectLedger,
-  LiveMeetingProjectionRequest,
-  SummaryPublicationRequest,
-} from "@discord-meeting/meeting-core";
+import {
+  type SummaryPublicationEffectLedger,
+  type SummaryPublicationRequest,
+} from "@discord-meeting/meeting-core/publishing";
+import {
+  type LiveMeetingProjectionRequest,
+} from "@discord-meeting/meeting-core/live-meeting";
 import { describe, expect, it } from "vitest";
 
 import {

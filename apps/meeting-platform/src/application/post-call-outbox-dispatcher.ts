@@ -1,8 +1,8 @@
-import type {
-  PostCallDeadLetterRecord,
-  PostCallOutbox,
-  PostCallWorkItem,
-} from "@discord-meeting/meeting-core";
+import {
+  type PostCallDeadLetterRecord,
+  type PostCallOutbox,
+  type PostCallWorkItem,
+} from "@discord-meeting/meeting-core/post-call-workflow";
 
 type PostCallOutboxPort = Pick<
   PostCallOutbox,

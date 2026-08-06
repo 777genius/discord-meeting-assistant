@@ -1,6 +1,10 @@
-import type { StageFailure } from "@discord-meeting/meeting-core";
-
 import type { SubscriptionRuntimeFailure } from "./subscription-runtime-contract.js";
+
+export interface SubscriptionRuntimePortFailure {
+  readonly code: string;
+  readonly message: string;
+  readonly retryable: boolean;
+}
 
 export type SubscriptionRuntimeAdapterErrorCode =
   | "invalid_attestation"
@@ -37,7 +41,7 @@ export class SubscriptionRuntimeTransportError extends Error {
   }
 }
 
-export function toSubscriptionRuntimePortFailure(error: unknown): StageFailure {
+export function toSubscriptionRuntimePortFailure(error: unknown): SubscriptionRuntimePortFailure {
   if (error instanceof SubscriptionRuntimeAdapterError) {
     return {
       code: `SUBSCRIPTION_RUNTIME_SUMMARY_${error.code.toUpperCase()}`,
@@ -72,7 +76,7 @@ export class RuntimeTaskFailureError extends Error {
   }
 }
 
-function mapRuntimeFailure(failure: SubscriptionRuntimeFailure): StageFailure {
+function mapRuntimeFailure(failure: SubscriptionRuntimeFailure): SubscriptionRuntimePortFailure {
   const retryableByCode = new Set<SubscriptionRuntimeFailure["code"]>([
     "backend_unavailable",
     "needs_reconnect",

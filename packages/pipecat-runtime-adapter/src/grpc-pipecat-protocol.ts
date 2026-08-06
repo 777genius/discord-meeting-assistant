@@ -6,10 +6,10 @@ import {
   type ConversationRuntimeHealth,
   type ConversationRuntimeStartTurn,
 } from "@discord-meeting/conversation-runtime-contracts";
-import type {
-  ConversationCancellationReason,
-  ConversationRuntimeEvent,
-} from "@discord-meeting/meeting-core";
+import {
+  type ConversationCancellationReason,
+  type ConversationRuntimeEvent,
+} from "@discord-meeting/meeting-core/conversation";
 
 import type { RawMessage } from "./grpc-pipecat-types.js";
 

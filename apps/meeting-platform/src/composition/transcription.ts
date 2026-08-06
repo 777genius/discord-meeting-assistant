@@ -1,6 +1,6 @@
 import {
   type FinalTranscriptionPort,
-} from "@discord-meeting/meeting-core";
+} from "@discord-meeting/meeting-core/transcription";
 import { createS3BinaryArtifactReader } from "@discord-meeting/object-storage-adapter";
 import {
   FetchSpeachesTranscriptionClient,

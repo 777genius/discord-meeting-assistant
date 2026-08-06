@@ -1,9 +1,9 @@
-import type {
-  GeneratedSummary,
-  PortResult,
-  SummaryGenerationPort,
-  SummaryGenerationRequest,
-} from "@discord-meeting/meeting-core";
+import {
+  type GeneratedSummary,
+  type SummaryGenerationPort,
+  type SummaryGenerationRequest,
+  type SummaryGenerationResult,
+} from "@discord-meeting/meeting-core/meeting-intelligence";
 
 import {
   type AttestationExpectation,
@@ -63,7 +63,7 @@ export class SubscriptionRuntimeSummaryAdapter
 
   public async generate(
     request: SummaryGenerationRequest,
-  ): Promise<PortResult<GeneratedSummary>> {
+  ): Promise<SummaryGenerationResult<GeneratedSummary>> {
     try {
       return { ok: true, value: await this.generateOrThrow(request) };
     } catch (error: unknown) {

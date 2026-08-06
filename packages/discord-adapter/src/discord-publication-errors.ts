@@ -1,4 +1,3 @@
-import type { StageFailure } from "@discord-meeting/meeting-core";
 import { ZodError } from "zod";
 
 import {
@@ -6,7 +5,13 @@ import {
   DiscordProjectionConflictError,
 } from "./discordjs-projection-client.js";
 
-export function toDiscordPublicationFailure(error: unknown): StageFailure {
+export interface DiscordPublicationFailure {
+  readonly code: string;
+  readonly message: string;
+  readonly retryable: boolean;
+}
+
+export function toDiscordPublicationFailure(error: unknown): DiscordPublicationFailure {
   if (error instanceof DiscordProjectionConflictError) {
     return {
       code: "DISCORD_PUBLICATION_CONFLICT",

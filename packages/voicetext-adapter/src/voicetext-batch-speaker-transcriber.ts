@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 
-import type { SpeakerAudioReferenceSnapshot } from "@discord-meeting/meeting-core";
+import {
+  type SpeakerAudioReferenceSnapshot,
+} from "@discord-meeting/meeting-core/recording";
 
 import {
   validateVoicetextBatchArtifact,

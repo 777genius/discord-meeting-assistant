@@ -1,4 +1,6 @@
-import type { LiveMeetingProjectionRequest } from "@discord-meeting/meeting-core";
+import {
+  type LiveMeetingProjectionRequest,
+} from "@discord-meeting/meeting-core/live-meeting";
 import { describe, expect, it } from "vitest";
 
 import {

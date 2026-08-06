@@ -1,10 +1,12 @@
 import {
   LiveMeeting,
-  TranscriptTurn,
   type LiveFinalizedTurn,
   type LiveMeetingSnapshot,
+} from "@discord-meeting/meeting-core/live-meeting";
+import {
+  TranscriptTurn,
   type TranscriptTurnSnapshot,
-} from "@discord-meeting/meeting-core";
+} from "@discord-meeting/meeting-core/transcription";
 
 import { CorruptMeetingSnapshotError } from "./errors.js";
 

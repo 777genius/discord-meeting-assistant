@@ -1,4 +1,6 @@
-import type { MeetingSnapshot } from "@discord-meeting/meeting-core";
+import {
+  type MeetingSnapshot,
+} from "@discord-meeting/meeting-core/meeting-lifecycle";
 import type {
   IngressMetrics,
   Logger,

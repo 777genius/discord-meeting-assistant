@@ -1,5 +1,7 @@
 import { GuildConfiguration } from "@discord-meeting/guild-configuration-core";
-import { type MeetingSnapshot } from "@discord-meeting/meeting-core";
+import {
+  type MeetingSnapshot,
+} from "@discord-meeting/meeting-core/meeting-lifecycle";
 import {
   describe,
   expect,

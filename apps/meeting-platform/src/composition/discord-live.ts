@@ -14,16 +14,20 @@ import { ConfigureGuild } from "@discord-meeting/guild-configuration-core";
 import { CraigPlaybackGateway } from "@discord-meeting/craig-playback-adapter";
 import {
   AppendLiveTranscriptTurn,
-  ConversationCoordinator,
   FinishLiveMeeting,
   RefreshLiveMeeting,
   StartLiveMeeting,
-  type ConversationRuntime,
+} from "@discord-meeting/meeting-core/live-meeting";
+import {
+  ConversationCoordinator,
   type ConversationLatencyObserverPort,
+  type ConversationRuntime,
+  type VoicePlaybackPort,
+} from "@discord-meeting/meeting-core/conversation";
+import {
   type SummaryPublicationPort,
   type SummaryPublicationEffectLedger,
-  type VoicePlaybackPort,
-} from "@discord-meeting/meeting-core";
+} from "@discord-meeting/meeting-core/publishing";
 import type { Logger } from "@discord-meeting/observability-adapter";
 import type {
   PostgresGuildConfigurationRepository,

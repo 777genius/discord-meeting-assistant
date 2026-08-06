@@ -35,10 +35,98 @@ boundaries:
       packages: []
       builtins: []
       runtimeReferences: []
-  - id: core.meeting
+  - id: core.meeting.recording
     roots:
-      - packages/meeting-core/src
-    entrypoints: []
+      - packages/meeting-core/src/features/recording
+    entrypoints:
+      - packages/meeting-core/src/features/recording/index.ts
+    allow:
+      boundaries: []
+      packages: []
+      builtins: []
+      runtimeReferences: []
+  - id: core.meeting.transcription
+    roots:
+      - packages/meeting-core/src/features/transcription
+    entrypoints:
+      - packages/meeting-core/src/features/transcription/index.ts
+    allow:
+      boundaries:
+        - core.meeting.recording
+      packages: []
+      builtins: []
+      runtimeReferences: []
+  - id: core.meeting.intelligence
+    roots:
+      - packages/meeting-core/src/features/meeting-intelligence
+    entrypoints:
+      - packages/meeting-core/src/features/meeting-intelligence/index.ts
+    allow:
+      boundaries:
+        - core.meeting.recording
+        - core.meeting.transcription
+      packages: []
+      builtins: []
+      runtimeReferences: []
+  - id: core.meeting.publishing
+    roots:
+      - packages/meeting-core/src/features/publishing
+    entrypoints:
+      - packages/meeting-core/src/features/publishing/index.ts
+    allow:
+      boundaries:
+        - core.meeting.intelligence
+        - core.meeting.transcription
+      packages: []
+      builtins: []
+      runtimeReferences: []
+  - id: core.meeting.lifecycle
+    roots:
+      - packages/meeting-core/src/features/meeting-lifecycle
+    entrypoints:
+      - packages/meeting-core/src/features/meeting-lifecycle/index.ts
+    allow:
+      boundaries:
+        - core.meeting.intelligence
+        - core.meeting.publishing
+        - core.meeting.recording
+        - core.meeting.transcription
+      packages: []
+      builtins: []
+      runtimeReferences: []
+  - id: core.meeting.post-call-workflow
+    roots:
+      - packages/meeting-core/src/features/post-call-workflow
+    entrypoints:
+      - packages/meeting-core/src/features/post-call-workflow/index.ts
+    allow:
+      boundaries:
+        - core.meeting.intelligence
+        - core.meeting.lifecycle
+        - core.meeting.publishing
+        - core.meeting.transcription
+      packages: []
+      builtins: []
+      runtimeReferences: []
+  - id: core.meeting.live-meeting
+    roots:
+      - packages/meeting-core/src/features/live-meeting
+    entrypoints:
+      - packages/meeting-core/src/features/live-meeting/index.ts
+    allow:
+      boundaries:
+        - core.meeting.intelligence
+        - core.meeting.lifecycle
+        - core.meeting.publishing
+        - core.meeting.transcription
+      packages: []
+      builtins: []
+      runtimeReferences: []
+  - id: core.meeting.conversation
+    roots:
+      - packages/meeting-core/src/features/conversation
+    entrypoints:
+      - packages/meeting-core/src/features/conversation/index.ts
     allow:
       boundaries: []
       packages: []
@@ -70,7 +158,9 @@ boundaries:
     entrypoints: []
     allow:
       boundaries:
-        - core.meeting
+        - core.meeting.intelligence
+        - core.meeting.recording
+        - core.meeting.transcription
       packages:
         - "@discord-meeting/meeting-core"
         - openai
@@ -84,7 +174,7 @@ boundaries:
     allow:
       boundaries:
         - contracts.craig-gateway
-        - core.meeting
+        - core.meeting.conversation
       packages:
         - "@discord-meeting/craig-gateway-contracts"
         - "@discord-meeting/meeting-core"
@@ -113,7 +203,8 @@ boundaries:
     allow:
       boundaries:
         - core.guild-configuration
-        - core.meeting
+        - core.meeting.live-meeting
+        - core.meeting.publishing
       packages:
         - "@discord-meeting/guild-configuration-core"
         - "@discord-meeting/meeting-core"
@@ -130,7 +221,11 @@ boundaries:
     allow:
       boundaries:
         - core.guild-configuration
-        - core.meeting
+        - core.meeting.lifecycle
+        - core.meeting.live-meeting
+        - core.meeting.post-call-workflow
+        - core.meeting.publishing
+        - core.meeting.transcription
       packages:
         - "@discord-meeting/guild-configuration-core"
         - "@discord-meeting/meeting-core"
@@ -146,7 +241,7 @@ boundaries:
     allow:
       boundaries:
         - contracts.conversation-runtime
-        - core.meeting
+        - core.meeting.conversation
       packages:
         - "@discord-meeting/conversation-runtime-contracts"
         - "@discord-meeting/meeting-core"
@@ -162,7 +257,7 @@ boundaries:
     allow:
       boundaries:
         - contracts.craig-gateway
-        - core.meeting
+        - core.meeting.recording
       packages:
         - "@discord-meeting/craig-gateway-contracts"
         - "@discord-meeting/meeting-core"
@@ -202,7 +297,8 @@ boundaries:
     entrypoints: []
     allow:
       boundaries:
-        - core.meeting
+        - core.meeting.recording
+        - core.meeting.transcription
       packages:
         - "@discord-meeting/meeting-core"
       builtins: []
@@ -213,7 +309,9 @@ boundaries:
     entrypoints: []
     allow:
       boundaries:
-        - core.meeting
+        - core.meeting.intelligence
+        - core.meeting.live-meeting
+        - core.meeting.transcription
       packages:
         - "@discord-meeting/meeting-core"
         - zod
@@ -226,7 +324,8 @@ boundaries:
     entrypoints: []
     allow:
       boundaries:
-        - core.meeting
+        - core.meeting.recording
+        - core.meeting.transcription
       packages:
         - "@discord-meeting/meeting-core"
         - ws
@@ -277,7 +376,12 @@ boundaries:
       - apps/meeting-platform/src/application/recording-ingress.ts
     allow:
       boundaries:
-        - core.meeting
+        - core.meeting.lifecycle
+        - core.meeting.live-meeting
+        - core.meeting.post-call-workflow
+        - core.meeting.publishing
+        - core.meeting.recording
+        - core.meeting.transcription
       packages:
         - "@discord-meeting/meeting-core"
       builtins: []
@@ -303,7 +407,10 @@ boundaries:
         - adapters.voicetext
         - apps.meeting-platform.application
         - contracts.craig-gateway
-        - core.meeting
+        - core.meeting.conversation
+        - core.meeting.intelligence
+        - core.meeting.publishing
+        - core.meeting.transcription
       packages:
         - "@discord-meeting/craig-gateway-contracts"
         - "@discord-meeting/meeting-core"
@@ -372,7 +479,7 @@ boundaries:
       - apps/meeting-platform/src/live-runtime/platform-live-meeting-runtime.ts
     allow:
       boundaries:
-        - core.meeting
+        - core.meeting.conversation
       packages:
         - "@discord-meeting/meeting-core"
       builtins:
@@ -421,7 +528,12 @@ boundaries:
         - apps.meeting-platform.outbound-adapters
         - contracts.craig-gateway
         - core.guild-configuration
-        - core.meeting
+        - core.meeting.conversation
+        - core.meeting.intelligence
+        - core.meeting.live-meeting
+        - core.meeting.post-call-workflow
+        - core.meeting.publishing
+        - core.meeting.transcription
       packages:
         - "@aws-sdk/client-s3"
         - "@discord-meeting/bullmq-adapter"
@@ -520,13 +632,18 @@ boundaries:
     entrypoints: []
     allow:
       boundaries: []
-      packages: []
+      packages:
+        - "@babel/parser"
+        - "@babel/traverse"
       builtins:
+        - node:assert/strict
         - node:child_process
         - node:crypto
         - node:fs/promises
         - node:module
         - node:os
         - node:path
+        - node:test
+        - node:url
         - node:util
       runtimeReferences: []

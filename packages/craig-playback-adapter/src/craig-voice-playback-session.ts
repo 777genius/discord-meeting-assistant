@@ -6,15 +6,15 @@ import {
   type CraigPlaybackCommand,
   type CraigPlaybackEvent,
 } from "@discord-meeting/craig-gateway-contracts";
-import type {
-  ConversationAudioChunk,
-  ConversationCancellationReason,
-  PortResult,
-  StageFailure,
-  VoicePlaybackEvent,
-  VoicePlaybackRequest,
-  VoicePlaybackSession,
-} from "@discord-meeting/meeting-core";
+import {
+  type ConversationAudioChunk,
+  type ConversationCancellationReason,
+  type VoicePlaybackEvent,
+  type VoicePlaybackRequest,
+  type VoicePlaybackSession,
+  type ConversationPortResult,
+  type ConversationFailure,
+} from "@discord-meeting/meeting-core/conversation";
 
 import { AsyncEventBuffer } from "./async-event-buffer.js";
 import type { CraigPlaybackTransport } from "./craig-playback-gateway.js";
@@ -43,16 +43,16 @@ export class CraigVoicePlaybackSession implements VoicePlaybackSession {
   private readonly terminalReceipt = new Promise<void>((resolve) => {
     this.resolveTerminalReceipt = resolve;
   });
-  private cancelPromise: Promise<PortResult<"cancelled" | "reused">> | undefined;
+  private cancelPromise: Promise<ConversationPortResult<"cancelled" | "reused">> | undefined;
   private expectedSequence = 0;
-  private finishPromise: Promise<PortResult<"finished" | "reused">> | undefined;
+  private finishPromise: Promise<ConversationPortResult<"finished" | "reused">> | undefined;
   private pacingRemainder = 0;
   private resolveFinish:
-    | ((result: PortResult<"finished" | "reused">) => void)
+    | ((result: ConversationPortResult<"finished" | "reused">) => void)
     | undefined;
   private state: "starting" | "open" | "finishing" | "cancelling" | "finished" | "failed" =
     "starting";
-  private terminalFailure: StageFailure | undefined;
+  private terminalFailure: ConversationFailure | undefined;
 
   private readonly nowMilliseconds: () => number;
   private readonly onTerminal: () => void;
@@ -78,7 +78,7 @@ export class CraigVoicePlaybackSession implements VoicePlaybackSession {
     );
   }
 
-  public async start(signal?: AbortSignal): Promise<PortResult<VoicePlaybackSession>> {
+  public async start(signal?: AbortSignal): Promise<ConversationPortResult<VoicePlaybackSession>> {
     if (isSignalAborted(signal)) {
       this.state = "failed";
       this.complete();
@@ -113,7 +113,7 @@ export class CraigVoicePlaybackSession implements VoicePlaybackSession {
 
   public async write(
     chunk: ConversationAudioChunk,
-  ): Promise<PortResult<"accepted" | "reused">> {
+  ): Promise<ConversationPortResult<"accepted" | "reused">> {
     const identityFailure = this.validateChunkIdentity(chunk);
     if (identityFailure !== undefined) {
       return { ok: false, failure: identityFailure };
@@ -186,7 +186,7 @@ export class CraigVoicePlaybackSession implements VoicePlaybackSession {
     }
   }
 
-  public finish(): Promise<PortResult<"finished" | "reused">> {
+  public finish(): Promise<ConversationPortResult<"finished" | "reused">> {
     if (this.state === "finished") {
       return Promise.resolve({ ok: true, value: "reused" });
     }
@@ -217,7 +217,7 @@ export class CraigVoicePlaybackSession implements VoicePlaybackSession {
 
   public cancel(
     reason: ConversationCancellationReason,
-  ): Promise<PortResult<"cancelled" | "reused">> {
+  ): Promise<ConversationPortResult<"cancelled" | "reused">> {
     if (this.state === "finished" || this.state === "failed") {
       return Promise.resolve({ ok: true, value: "reused" });
     }
@@ -289,7 +289,7 @@ export class CraigVoicePlaybackSession implements VoicePlaybackSession {
     });
   }
 
-  private validateChunkIdentity(chunk: ConversationAudioChunk): StageFailure | undefined {
+  private validateChunkIdentity(chunk: ConversationAudioChunk): ConversationFailure | undefined {
     if (
       chunk.turnId !== this.request.turnId ||
       chunk.attemptId !== this.request.attemptId
@@ -318,7 +318,7 @@ export class CraigVoicePlaybackSession implements VoicePlaybackSession {
     return this.transport.send(parseCraigPlaybackCommand(command));
   }
 
-  private fail(stageFailure: StageFailure): void {
+  private fail(stageFailure: ConversationFailure): void {
     if (isTerminal(this.state)) {
       return;
     }
