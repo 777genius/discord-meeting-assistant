@@ -65,8 +65,18 @@ describe("subscription runtime request contract", () => {
           },
           maxItems: 5,
         },
-        decisions: { maxItems: 5 },
-        openQuestions: { maxItems: 5 },
+        decisions: {
+          items: {
+            properties: { evidenceTurnIds: { maxItems: 4 } },
+          },
+          maxItems: 5,
+        },
+        openQuestions: {
+          items: {
+            properties: { evidenceTurnIds: { maxItems: 4 } },
+          },
+          maxItems: 5,
+        },
         overview: { maxLength: 320 },
         title: { maxLength: 96 },
         topics: {
@@ -124,26 +134,58 @@ describe("subscription runtime request contract", () => {
 
   it("admits enough bounded evidence for one fragmented semantic item", () => {
     const summary = {
-      actionItems: [{
-        deadline: "до пятницы",
-        evidenceTurnIds: ["turn-1", "turn-2", "turn-3", "turn-4"],
-        ownerSpeakerId: "speaker-1",
-        text: "Проверить очередь и оставить результат в Discord thread",
-      }],
+      actionItems: [],
       decisions: [],
       openQuestions: [],
       overview: "Обсудили проверку очереди.",
       title: "Проверка очереди",
       topics: [],
     };
+    const fourEvidence = ["turn-1", "turn-2", "turn-3", "turn-4"];
+    const fiveEvidence = [...fourEvidence, "turn-5"];
+    const cases = [
+      {
+        createItem: (evidenceTurnIds: string[]) => ({
+          deadline: "до пятницы",
+          evidenceTurnIds,
+          ownerSpeakerId: "speaker-1",
+          text: "Проверить очередь и оставить результат в Discord thread",
+        }),
+        field: "actionItems",
+      },
+      {
+        createItem: (evidenceTurnIds: string[]) => ({
+          evidenceTurnIds,
+          text: "Выпустить версию",
+        }),
+        field: "decisions",
+      },
+      {
+        createItem: (evidenceTurnIds: string[]) => ({
+          evidenceTurnIds,
+          text: "Нужен ли повторный запуск?",
+        }),
+        field: "openQuestions",
+      },
+      {
+        createItem: (evidenceTurnIds: string[]) => ({
+          evidenceTurnIds,
+          points: ["Craig recording запускает PostgreSQL pipeline"],
+          title: "Обработка записи",
+        }),
+        field: "topics",
+      },
+    ] as const;
 
-    expect(providerMeetingSummarySchema.safeParse(summary).success).toBe(true);
-    expect(providerMeetingSummarySchema.safeParse({
-      ...summary,
-      actionItems: [{
-        ...summary.actionItems[0],
-        evidenceTurnIds: ["turn-1", "turn-2", "turn-3", "turn-4", "turn-5"],
-      }],
-    }).success).toBe(false);
+    for (const testCase of cases) {
+      expect(providerMeetingSummarySchema.safeParse({
+        ...summary,
+        [testCase.field]: [testCase.createItem(fourEvidence)],
+      }).success).toBe(true);
+      expect(providerMeetingSummarySchema.safeParse({
+        ...summary,
+        [testCase.field]: [testCase.createItem(fiveEvidence)],
+      }).success).toBe(false);
+    }
   });
 });

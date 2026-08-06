@@ -55,7 +55,7 @@ The immutable sidecar image must:
    isolated tmpfs working directory, and their exact purpose-bound structured
    schema. Final summaries use `discord_meeting_summary_v4`: title up to 96
    characters, overview up to 320, up to four topics with at most two points,
-   up to five decisions/actions/questions, up to two evidence turns per item,
+   up to five decisions/actions/questions, up to four evidence turns per item,
    and 160-character prose (96 for deadlines). Incremental live
    snapshots use `discord_meeting_incremental_summary_v1`, which permits one
    short overview, at most three topics with one or two points, at most three
