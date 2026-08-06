@@ -56,10 +56,10 @@ describe("synthetic actor fixtures", () => {
         sourceSha256: "5aa51fdfca1325cf5b78a35927f1a256989dffc5adcf50cd6d8e5c02b0493a44",
       },
       {
-        audioSha256: "f169479293fcf2911c8b3bffc32a187fdae0899b67267fde3171e2d2b8de3d2e",
-        durationMs: 34_996,
+        audioSha256: "45ee2668fb490ab03a7a453fee23eca286311b9bd5bdca268b604fc80edf2c2f",
+        durationMs: 48_361,
         fixtureId: "speaker-b",
-        sourceSha256: "ce6d53650f73aac8872289ede15a67b6a74535d4620c572bd17a46fd1322df00",
+        sourceSha256: "d801c2754ee7fff93732425e08cca589b63bb9f5a0699d7c81b8ff7dc1afaf85",
       },
     ]);
   });
