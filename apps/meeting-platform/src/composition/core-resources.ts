@@ -18,7 +18,7 @@ import {
 import { DurableCraigRecordingIngress } from "@discord-meeting/recording-ingress-adapter";
 import {
   SubscriptionRuntimeSummaryAdapter,
-  subscriptionRuntimeEngine,
+  subscriptionRuntimeCliEngine,
   subscriptionRuntimeSummaryMaxOutputTokens,
 } from "@discord-meeting/subscription-runtime-adapter";
 import { Pool } from "pg";
@@ -102,7 +102,7 @@ export function createPlatformCoreResources(input: {
     rawRuntimeTransport,
     rawSummarizer: new SubscriptionRuntimeSummaryAdapter(runtimeTransport, {
       expectedLauncherSha256: input.config.subscriptionRuntime.launcherSha256,
-      expectedRuntimeEngine: subscriptionRuntimeEngine,
+      expectedRuntimeEngine: subscriptionRuntimeCliEngine,
       maxOutputTokens: subscriptionRuntimeSummaryMaxOutputTokens,
     }),
     rawTranscriber: createFinalTranscriber(input.config, artifactReader),

@@ -2,14 +2,13 @@ import { readFile } from "node:fs/promises";
 
 import {
   conversationAnswerExecutionProfile,
-  finalSummaryExecutionProfile,
   providerConversationAnswerJsonSchema,
-  providerMeetingSummaryJsonSchema,
 } from "@discord-meeting/subscription-runtime-adapter";
 
 import { providerInstanceId } from "./constants.js";
 import { startGrpcServer } from "./grpc-server.js";
 import { FileInstallationInspector } from "./installation-inspector.js";
+import { NodeProcessRunner } from "./node-process-runner.js";
 import { PersistentCodexProcessRunner } from "./persistent-codex-process-runner.js";
 import { FileRuntimeReadinessInspector } from "./runtime-readiness.js";
 import { resolveSidecarSettings } from "./settings.js";
@@ -37,11 +36,6 @@ async function bootstrap(): Promise<void> {
     localEncryptionKey,
     conversationAnswerExecutionProfile.reasoningEffort,
   );
-  const finalSummaryEnvironment = buildChildEnvironment(
-    process.env,
-    localEncryptionKey,
-    finalSummaryExecutionProfile.reasoningEffort,
-  );
   const executor = new SubscriptionRuntimeExecutor({
     authJsonPath: settings.authJsonPath,
     childSourceEnvironment: process.env,
@@ -59,7 +53,7 @@ async function bootstrap(): Promise<void> {
     maxTaskTimeoutMs: settings.maxTaskTimeoutMs,
     conversationProcessRunner: persistentRunner,
     conversationStreamingProcessRunner: persistentRunner,
-    processRunner: persistentRunner,
+    processRunner: new NodeProcessRunner(),
     readinessInspector: new FileRuntimeReadinessInspector({
       authJsonPath: settings.authJsonPath,
       isolatedCwd: settings.isolatedCwd,
@@ -71,22 +65,13 @@ async function bootstrap(): Promise<void> {
   const server = await startPreparedSidecar({
     disposePreparedRuntime: async () => persistentRunner.dispose(),
     prepareRuntime: async () => {
-      await Promise.all([
-        persistentRunner.prewarm(
-          {
-            execution: conversationAnswerExecutionProfile,
-            outputSchema: providerConversationAnswerJsonSchema,
-          },
-          conversationEnvironment,
-        ),
-        persistentRunner.prewarm(
-          {
-            execution: finalSummaryExecutionProfile,
-            outputSchema: providerMeetingSummaryJsonSchema,
-          },
-          finalSummaryEnvironment,
-        ),
-      ]);
+      await persistentRunner.prewarm(
+        {
+          execution: conversationAnswerExecutionProfile,
+          outputSchema: providerConversationAnswerJsonSchema,
+        },
+        conversationEnvironment,
+      );
     },
     startServer: async () => startGrpcServer({
       bindAddress: settings.bindAddress,

@@ -53,12 +53,13 @@ not a provider generation cap and does not guarantee latency; the compact final
 and incremental schemas/prompts reduce response volume, while `low` reasoning
 is used by both latency-sensitive Luna purposes.
 
-The sidecar prewarms the conversation and final-summary purposes before accepting
-traffic and keeps purpose-scoped Subscription Runtime workers alive. Incremental
-summary receives the same persistent runner on first use. The runner uses the
-app-server pool and clean-thread prewarm; packaged `codex exec` remains the
-runtime's fallback. The audited launcher validates the same exact request profile
-and installation identity.
+The sidecar prewarms the conversation purpose before accepting traffic and keeps
+that purpose-scoped Subscription Runtime worker alive. It uses the app-server
+pool and clean-thread prewarm. Final and incremental summaries use the audited
+launcher bridge because the pinned app-server path does not guarantee measured
+generation telemetry; summary generation remains fail-closed without it. The
+audited launcher validates the same exact request profile and installation
+identity.
 
 Conversation additionally exposes an authenticated server-streaming RPC. It
 forwards only bounded redacted text deltas and one terminal result from that
