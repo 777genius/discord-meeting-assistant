@@ -149,16 +149,15 @@ async function* onePlaybackEvent(
 }
 
 describe("meeting platform runtime wiring", () => {
-  it("writes provider-neutral conversation latency to structured logs", () => {
+  it("writes provider-neutral conversation latency to structured logs", async () => {
     const info = vi.fn();
     const observer = createConversationLatencyLogger({ info });
 
-    observer.observeConversationLatency({
+    await observer.observeConversationLatency({
       attemptId: "attempt-1",
       endTurnToWakeMs: 250,
       firstLlmTokenToAudioMs: 120,
       meetingId: "meeting-1",
-      speakerId: "speaker-1",
       totalToFirstAudioMs: 1_870,
       turnId: "turn-1",
       wakeToFirstLlmTokenMs: 1_500,
@@ -169,7 +168,6 @@ describe("meeting platform runtime wiring", () => {
       endTurnToWakeMs: 250,
       firstLlmTokenToAudioMs: 120,
       meetingId: "meeting-1",
-      speakerId: "speaker-1",
       totalToFirstAudioMs: 1_870,
       turnId: "turn-1",
       wakeToFirstLlmTokenMs: 1_500,

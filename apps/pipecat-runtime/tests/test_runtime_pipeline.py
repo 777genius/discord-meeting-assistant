@@ -22,13 +22,16 @@ from pipecat.frames.frames import (
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
+from pipecat_runtime.adapters.pipecat.events import ConversationEventStream
 from pipecat_runtime.adapters.pipecat.frames import ConversationTurnFrame
+from pipecat_runtime.adapters.pipecat.persistent_pipeline import PersistentConversationPipeline
 from pipecat_runtime.adapters.pipecat.processors import (
     ConversationTextCaptureProcessor,
     DeterministicFailurePoint,
     DeterministicPipelineOptions,
 )
 from pipecat_runtime.adapters.pipecat.runtime import PipecatConversationRuntime
+from pipecat_runtime.adapters.pipecat.turn_lifecycle import ActivePipelineTurn
 from pipecat_runtime.adapters.providers.profiles import create_profile
 from pipecat_runtime.application.conversation_events import (
     AudioChunk,
@@ -192,14 +195,88 @@ class _InterruptibleProfile:
         return self.processor, ConversationTextCaptureProcessor()
 
 
+async def test_pipeline_close_reloads_a_runner_started_during_active_cancellation() -> None:
+    """Shutdown cannot miss a worker that appears after its first state snapshot."""
+    settings = deterministic_runtime_settings()
+    request = sample_start_turn()
+    turn = ActivePipelineTurn(
+        request=request,
+        attempt_id="attempt-close-race",
+        events=ConversationEventStream(
+            request=request,
+            attempt_id="attempt-close-race",
+            maximum_events=8,
+        ),
+    )
+    pipeline = PersistentConversationPipeline(
+        profile=create_profile(settings.profile),
+        first_turn=turn,
+    )
+    pipeline_state = cast(Any, pipeline)
+    await pipeline.reserve(turn)
+
+    async def start_runner_during_cancel(
+        turn: ActivePipelineTurn,
+        reason: CancellationReason,
+    ) -> bool:
+        pipeline_state._ensure_runner_started()
+        turn.request_cancellation(reason)
+        turn.finished.set()
+        return True
+
+    pipeline_state.cancel = start_runner_during_cancel
+    await asyncio.wait_for(pipeline.close(), timeout=15)
+
+    assert pipeline_state._runner_task is not None
+    assert pipeline_state._runner_task.done()
+
+
+async def test_partial_turn_binding_failure_releases_pipeline_admission() -> None:
+    """A failed second bind cannot leave the meeting pipeline permanently busy."""
+    settings = deterministic_runtime_settings()
+    request = sample_start_turn()
+    turn = ActivePipelineTurn(
+        request=request,
+        attempt_id="attempt-bind-failure",
+        events=ConversationEventStream(
+            request=request,
+            attempt_id="attempt-bind-failure",
+            maximum_events=8,
+        ),
+    )
+    stale_turn = ActivePipelineTurn(
+        request=replace(request, turn_id="stale-turn", idempotency_key="stale-turn"),
+        attempt_id="attempt-stale",
+        events=ConversationEventStream(
+            request=request,
+            attempt_id="attempt-stale",
+            maximum_events=8,
+        ),
+    )
+    pipeline = PersistentConversationPipeline(
+        profile=create_profile(settings.profile),
+        first_turn=turn,
+    )
+    pipeline_state = cast(Any, pipeline)
+    await pipeline.reserve(turn)
+    pipeline_state._output.bind(stale_turn)
+
+    await asyncio.wait_for(pipeline.execute(turn), timeout=2)
+    pipeline_state._output.release(stale_turn)
+
+    assert pipeline.is_active is False
+    assert pipeline_state._signal._active is None
+    await asyncio.wait_for(pipeline.close(), timeout=2)
+
+
 async def test_two_sequential_turns_reuse_one_warm_meeting_pipeline() -> None:
     """Normal completion retains the same Pipecat worker and provider processors."""
     profile = _CountingProfile()
     runtime = PipecatConversationRuntime(profile=profile)
     first_request = sample_start_turn(voice_profile_id=profile.profile_id)
     first = await runtime.start(first_request)
-    first_events = await _collect(first.events())
-    await first.wait()
+    first_events = await asyncio.wait_for(_collect(first.events()), timeout=2)
+    await asyncio.wait_for(first.wait(), timeout=2)
 
     second_request = replace(
         first_request,
@@ -207,9 +284,9 @@ async def test_two_sequential_turns_reuse_one_warm_meeting_pipeline() -> None:
         idempotency_key="idempotency-persistent-2",
     )
     second = await runtime.start(second_request)
-    second_events = await _collect(second.events())
-    await second.wait()
-    await runtime.close()
+    second_events = await asyncio.wait_for(_collect(second.events()), timeout=2)
+    await asyncio.wait_for(second.wait(), timeout=2)
+    await asyncio.wait_for(runtime.close(), timeout=15)
 
     assert isinstance(first_events[-1], Completed)
     assert isinstance(second_events[-1], Completed)
@@ -234,8 +311,8 @@ async def test_interruption_preserves_the_warm_pipeline_for_the_queued_turn() ->
             reason=CancellationReason.BARGE_IN,
         )
     )
-    first_remaining = await _collect(first_events)
-    await first.wait()
+    first_remaining = await asyncio.wait_for(_collect(first_events), timeout=2)
+    await asyncio.wait_for(first.wait(), timeout=2)
 
     second_request = replace(
         first_request,
@@ -243,9 +320,9 @@ async def test_interruption_preserves_the_warm_pipeline_for_the_queued_turn() ->
         idempotency_key="idempotency-after-interruption",
     )
     second = await runtime.start(second_request)
-    second_events = await _collect(second.events())
-    await second.wait()
-    await runtime.close()
+    second_events = await asyncio.wait_for(_collect(second.events()), timeout=2)
+    await asyncio.wait_for(second.wait(), timeout=2)
+    await asyncio.wait_for(runtime.close(), timeout=15)
 
     assert changed is True
     assert isinstance(first_remaining[-1], Cancelled)

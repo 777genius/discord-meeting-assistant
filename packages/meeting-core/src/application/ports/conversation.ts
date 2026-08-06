@@ -91,7 +91,6 @@ export interface ConversationLatencyObservation {
   readonly endTurnToWakeMs: number;
   readonly firstLlmTokenToAudioMs: number;
   readonly meetingId: string;
-  readonly speakerId: string;
   readonly totalToFirstAudioMs: number;
   readonly turnId: string;
   readonly wakeToFirstLlmTokenMs: number;
@@ -99,7 +98,9 @@ export interface ConversationLatencyObservation {
 
 /** Consumer-owned sink for provider-neutral first-audio latency telemetry. */
 export interface ConversationLatencyObserverPort {
-  observeConversationLatency(observation: ConversationLatencyObservation): void;
+  observeConversationLatency(
+    observation: ConversationLatencyObservation,
+  ): void | Promise<void>;
 }
 
 export interface VoicePlaybackRequest {

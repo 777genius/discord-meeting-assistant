@@ -255,16 +255,20 @@ export class ConversationActiveTurnExecutor {
     event: Extract<ConversationRuntimeEvent, { readonly type: "latency" }>,
   ): void {
     try {
-      this.latencyObserver?.observeConversationLatency({
+      const observation = this.latencyObserver?.observeConversationLatency({
         attemptId: event.attemptId,
         endTurnToWakeMs: event.endTurnToWakeMs,
         firstLlmTokenToAudioMs: event.firstLlmTokenToAudioMs,
         meetingId: run.prepared.request.meetingId,
-        speakerId: run.prepared.request.speakerId,
         totalToFirstAudioMs: event.totalToFirstAudioMs,
         turnId: run.prepared.request.turnId,
         wakeToFirstLlmTokenMs: event.wakeToFirstLlmTokenMs,
       });
+      if (observation !== undefined) {
+        void Promise.resolve(observation).catch(() => {
+          // Observability must never alter conversation delivery or cancellation.
+        });
+      }
     } catch {
       // Observability must never alter conversation delivery or cancellation.
     }

@@ -20,6 +20,8 @@ from pipecat_runtime.adapters.pipecat.turn_lifecycle import (
 from pipecat_runtime.adapters.providers.profiles import ConversationPipelineProfile
 from pipecat_runtime.application.models import PCM_S16LE_SAMPLE_RATE_HZ, CancellationReason
 
+_RUNNER_STOP_TIMEOUT_SECONDS = 6
+
 
 class PersistentConversationPipeline:
     """Keep provider connections warm while admitting at most one turn at a time."""
@@ -59,15 +61,18 @@ class PersistentConversationPipeline:
 
     async def execute(self, turn: ActivePipelineTurn) -> None:
         """Run one reserved turn and leave a healthy worker connected for the next one."""
-        if self._active is not turn:
-            raise RuntimeError("conversation turn was not reserved by this pipeline")
-        self._signal.bind(turn)
-        self._output.bind(turn)
         try:
-            if turn.cancellation_requested.is_set():
-                turn.finished.set()
-            else:
-                self._ensure_runner_started()
+            if self._active is not turn:
+                raise RuntimeError("conversation turn was not reserved by this pipeline")
+            self._signal.bind(turn)
+            self._output.bind(turn)
+            async with self._state_lock:
+                should_queue = not self._closed and not turn.cancellation_requested.is_set()
+                if should_queue:
+                    self._ensure_runner_started()
+                else:
+                    turn.finished.set()
+            if should_queue:
                 await self._worker.queue_frame(ConversationTurnFrame(turn.request))
             await turn.finished.wait()
             if self._runner_task is not None and not self._runner_task.done():
@@ -116,20 +121,37 @@ class PersistentConversationPipeline:
                 return
             self._closed = True
             active = self._active
-            runner_task = self._runner_task
+        forced_cleanup = False
         if active is not None:
             await self.cancel(active, CancellationReason.RUNTIME_SHUTDOWN)
             try:
                 await asyncio.wait_for(active.finished.wait(), timeout=5)
             except TimeoutError:
-                await self._worker.cancel(reason="runtime-shutdown")
+                active.finished.set()
+                forced_cleanup = True
+        async with self._state_lock:
+            runner_task = self._runner_task
         if runner_task is not None and not runner_task.done():
-            await self._worker.queue_frame(EndFrame(reason="runtime-shutdown"))
-            try:
-                await asyncio.wait_for(runner_task, timeout=5)
-            except TimeoutError:
-                await self._worker.cancel(reason="runtime-shutdown-timeout")
-                await runner_task
+            if forced_cleanup:
+                stopped = await self._force_stop_runner(
+                    runner_task,
+                    reason="runtime-shutdown-active-timeout",
+                )
+            else:
+                try:
+                    await asyncio.wait_for(
+                        self._worker.queue_frame(EndFrame(reason="runtime-shutdown")),
+                        timeout=5,
+                    )
+                    await asyncio.wait_for(asyncio.shield(runner_task), timeout=5)
+                    stopped = True
+                except Exception:
+                    stopped = await self._force_stop_runner(
+                        runner_task,
+                        reason="runtime-shutdown-timeout",
+                    )
+            if not stopped:
+                raise RuntimeError("persistent Pipecat worker did not stop during shutdown")
 
     async def abort(self) -> None:
         """Bound forced cleanup after graceful provider closure fails."""
@@ -143,16 +165,7 @@ class PersistentConversationPipeline:
             active.finished.set()
         if runner_task is None or runner_task.done():
             return
-        try:
-            await self._worker.cancel(reason="runtime-forced-shutdown")
-        except Exception:
-            runner_task.cancel()
-        _, pending = await asyncio.wait({runner_task}, timeout=6)
-        if pending:
-            runner_task.cancel()
-            _, pending = await asyncio.wait({runner_task}, timeout=6)
-        if pending:
-            runner_task.cancel()
+        if not await self._force_stop_runner(runner_task, reason="runtime-forced-shutdown"):
             raise RuntimeError("persistent Pipecat worker did not stop after forced cleanup")
 
     def _create_worker(self, first_turn: ActivePipelineTurn) -> PipelineWorker:
@@ -184,12 +197,41 @@ class PersistentConversationPipeline:
         )
 
     async def _retire_worker(self) -> None:
-        self._retired = True
-        runner_task = self._runner_task
+        async with self._state_lock:
+            self._retired = True
+            runner_task = self._runner_task
         if runner_task is None or runner_task.done():
             return
-        await self._worker.cancel(reason="pipeline-failed")
-        await runner_task
+        await self._force_stop_runner(runner_task, reason="pipeline-failed")
+
+    async def _force_stop_runner(
+        self,
+        runner_task: asyncio.Task[None],
+        *,
+        reason: str,
+    ) -> bool:
+        """Bound provider cleanup even when the worker ignores graceful cancellation."""
+        try:
+            await asyncio.wait_for(
+                self._worker.cancel(reason=reason),
+                timeout=_RUNNER_STOP_TIMEOUT_SECONDS,
+            )
+        except Exception:
+            runner_task.cancel()
+        _, pending = await asyncio.wait(
+            {runner_task},
+            timeout=_RUNNER_STOP_TIMEOUT_SECONDS,
+        )
+        if pending:
+            runner_task.cancel()
+            _, pending = await asyncio.wait(
+                {runner_task},
+                timeout=_RUNNER_STOP_TIMEOUT_SECONDS,
+            )
+        if pending:
+            runner_task.cancel()
+            return False
+        return True
 
     @staticmethod
     async def _publish_terminal(turn: ActivePipelineTurn) -> None:

@@ -28,7 +28,9 @@ describe("ConversationCoordinator latency telemetry", () => {
     ]);
     const coordinator = new ConversationCoordinator({
       latencyObserver: {
-        observeConversationLatency: (observation) => observations.push(observation),
+        observeConversationLatency: (observation) => {
+          observations.push(observation);
+        },
       },
       playback: new RecordingPlayback(),
       runtime,
@@ -45,7 +47,6 @@ describe("ConversationCoordinator latency telemetry", () => {
         endTurnToWakeMs: 250,
         firstLlmTokenToAudioMs: 120,
         meetingId: "meeting-1",
-        speakerId: "speaker-1",
         totalToFirstAudioMs: 1_870,
         turnId: "turn-1",
         wakeToFirstLlmTokenMs: 1_500,
@@ -82,5 +83,36 @@ describe("ConversationCoordinator latency telemetry", () => {
       coordinator.handleFinalizedTurn(input("turn-1", 0)),
     ).resolves.toMatchObject({ status: "active" });
     await expect(coordinator.whenIdle("meeting-1")).resolves.toBeUndefined();
+  });
+
+  it("isolates an asynchronous observability rejection from conversation completion", async () => {
+    const runtime = new ScriptedRuntime([
+      closedStream([
+        { attemptId: "attempt-1", type: "accepted" },
+        {
+          attemptId: "attempt-1",
+          endTurnToWakeMs: 10,
+          firstLlmTokenToAudioMs: 30,
+          totalToFirstAudioMs: 60,
+          type: "latency",
+          wakeToFirstLlmTokenMs: 20,
+        },
+        { attemptId: "attempt-1", type: "completed" },
+      ]),
+    ]);
+    const coordinator = new ConversationCoordinator({
+      latencyObserver: {
+        observeConversationLatency: () =>
+          Promise.reject(new Error("async metrics sink unavailable")),
+      },
+      playback: new RecordingPlayback(),
+      runtime,
+    });
+
+    await expect(
+      coordinator.handleFinalizedTurn(input("turn-1", 0)),
+    ).resolves.toMatchObject({ status: "active" });
+    await expect(coordinator.whenIdle("meeting-1")).resolves.toBeUndefined();
+    await Promise.resolve();
   });
 });

@@ -47,7 +47,10 @@ import type { PlatformStartupCleanup } from "./startup-cleanup.js";
 import { classifyPlatformError } from "./observability.js";
 import { discordLiveCaptionSignature } from "./discord-live-caption-signature.js";
 
-const unixNowMilliseconds = (): number => Date.now();
+// Keep wall-clock-shaped timestamps compatible with STT while preventing clock
+// adjustments from corrupting playback deadlines and the four-second guard.
+const monotonicUnixNowMilliseconds = (): number =>
+  Math.floor(performance.timeOrigin + performance.now());
 
 const meetingVocabulary = [
   "BullMQ",
@@ -117,7 +120,7 @@ export async function createPlatformDiscordLiveComposition(input: {
     input.publicationEffects,
     { publicationMode: input.config.discordPublicationMode },
   );
-  const craigPlaybackGateway = new CraigPlaybackGateway(unixNowMilliseconds);
+  const craigPlaybackGateway = new CraigPlaybackGateway(monotonicUnixNowMilliseconds);
   input.cleanup.defer("Craig playback gateway", () => {
     craigPlaybackGateway.close();
   });
@@ -262,7 +265,7 @@ function createLiveRuntime(input: {
           conversation: {
             coordinator: input.conversationCoordinator,
             locale: "auto",
-            nowMilliseconds: unixNowMilliseconds,
+            nowMilliseconds: monotonicUnixNowMilliseconds,
             systemPrompt: input.config.conversation.systemPrompt,
             voiceProfileId: input.config.conversation.voiceProfileId,
           },
