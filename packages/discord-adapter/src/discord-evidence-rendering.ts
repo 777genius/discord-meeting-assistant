@@ -83,7 +83,7 @@ function isContextDependentReply(value: string): boolean {
   if (words.length > 6) {
     return false;
   }
-  return /^(?:ну\s+)?(?:да|ага|угу|ок(?:ей)?|хорошо|соглас(?:ен|на|ны)|я\s+думаю\s+можем|думаю\s+можем|можем|давайте|сделаем|yes|yeah|yep|ok(?:ay)?|agreed|sounds\s+good|we\s+can|let'?s\s+do\s+it)(?=$|[\s,.;:!?])/iu.test(
+  return /^(?:ну\s+)?(?:да|ага|угу|ок(?:ей)?|хорошо|соглас(?:ен|на|ны)|я\s+думаю\s+можем|думаю\s+можем|можем|давайте|сделаем|так|авжеж|добре|домовились|можемо|yes|yeah|yep|ok(?:ay)?|agreed|sounds\s+good|we\s+can|let'?s\s+do\s+it)(?=$|[\s,.;:!?])/iu.test(
     value.trim(),
   );
 }

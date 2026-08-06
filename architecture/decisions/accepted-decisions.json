@@ -80,7 +80,7 @@
     {
       "id": "ADR-0016",
       "path": "docs/decisions/0016-separate-final-publication-and-summary-quality.md",
-      "immutableDigest": "sha256:c27c8537413626b772613a2bc473a297e3973960b08e13d50a9cb8eb03c71afd"
+      "immutableDigest": "sha256:e038e75a117ac7f2221798f1a148a28fbf8c9e721ca19453143a13a256b9ea2a"
     }
   ]
 }

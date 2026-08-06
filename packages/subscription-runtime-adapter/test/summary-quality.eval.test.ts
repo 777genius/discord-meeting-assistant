@@ -45,6 +45,15 @@ describe("final summary quality evals", () => {
     );
   });
 
+  it("selects Ukrainian from lexical markers without exclusive letters", () => {
+    const request = requestFor(["Будь ласка, додай код та залиш посилання."]);
+    const prompt = JSON.parse(request.task.prompt) as { outputLanguage: string };
+
+    expect(prompt.outputLanguage).toBe(
+      "Natural Ukrainian; preserve technical terms exactly",
+    );
+  });
+
   it("keeps material acceptance details and contextual evidence in the admitted policy", () => {
     const request = requestFor(["Предлагаю оставить старые ссылки.", "Да, можем."]);
 

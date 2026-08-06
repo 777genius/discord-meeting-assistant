@@ -54,6 +54,7 @@ const finalSummaryCopy = {
     openQuestions: "## Open questions",
     overview: "## Overview",
     owner: "Owner",
+    sourceUtteranceUnavailable: "The source utterance is unavailable.",
     truncationNotice: "_Summary was shortened due to Discord's limit._",
     unassigned: "unassigned",
   },
@@ -70,6 +71,7 @@ const finalSummaryCopy = {
     openQuestions: "## Открытые вопросы",
     overview: "## Кратко",
     owner: "Ответственный",
+    sourceUtteranceUnavailable: "Исходная реплика недоступна.",
     truncationNotice: "_Саммари сокращено из-за лимита Discord._",
     unassigned: "не назначен",
   },
@@ -86,6 +88,7 @@ const finalSummaryCopy = {
     openQuestions: "## Відкриті питання",
     overview: "## Коротко",
     owner: "Відповідальний",
+    sourceUtteranceUnavailable: "Початкова репліка недоступна.",
     truncationNotice: "_Самарі скорочено через ліміт Discord._",
     unassigned: "не призначений",
   },
@@ -181,6 +184,7 @@ export function renderRussianSummaryMarkdown(
           topic.evidenceTurnIds,
           evidence,
           [topic.title, ...topic.points].join(" "),
+          copy.sourceUtteranceUnavailable,
         ),
       ]),
       copy.noTopics,
@@ -190,7 +194,12 @@ export function renderRussianSummaryMarkdown(
     ...numberedOrEmpty(
       entriesInTimelineOrder(summary.decisions, evidence).map((decision) => [
         decision.text.trim(),
-        ...evidenceLines(decision.evidenceTurnIds, evidence, decision.text),
+        ...evidenceLines(
+          decision.evidenceTurnIds,
+          evidence,
+          decision.text,
+          copy.sourceUtteranceUnavailable,
+        ),
       ]),
       copy.noDecisions,
     ),
@@ -211,6 +220,7 @@ export function renderRussianSummaryMarkdown(
           actionItem.evidenceTurnIds,
           evidence,
           [actionItem.text, actionItem.deadline ?? ""].join(" "),
+          copy.sourceUtteranceUnavailable,
         ),
       ]),
       copy.noActionItems,
@@ -220,7 +230,12 @@ export function renderRussianSummaryMarkdown(
     ...numberedOrEmpty(
       entriesInTimelineOrder(summary.openQuestions, evidence).map((question) => [
         question.text.trim(),
-        ...evidenceLines(question.evidenceTurnIds, evidence, question.text),
+        ...evidenceLines(
+          question.evidenceTurnIds,
+          evidence,
+          question.text,
+          copy.sourceUtteranceUnavailable,
+        ),
       ]),
       copy.noOpenQuestions,
     ),
@@ -255,13 +270,39 @@ function dominantTranscriptLocale(
   turns: SummaryPublicationRequest["transcript"]["turns"],
 ): DiscordTranscriptLocale {
   const transcriptText = turns.map((turn) => turn.text).join(" ");
-  if ((transcriptText.match(/[іїєґ]/giu) ?? []).length > 0) {
-    return "uk";
-  }
   const cyrillic = (transcriptText.match(/\p{Script=Cyrillic}/gu) ?? []).length;
   const latin = (transcriptText.match(/\p{Script=Latin}/gu) ?? []).length;
-  return cyrillic > latin ? "ru" : "en";
+  if (cyrillic <= latin) {
+    return "en";
+  }
+  const ukrainianExclusive = (transcriptText.match(/[іїєґ]/giu) ?? []).length;
+  const russianExclusive = (transcriptText.match(/[ыэъё]/giu) ?? []).length;
+  if (ukrainianExclusive > 0 && russianExclusive === 0) {
+    return "uk";
+  }
+  if (russianExclusive > 0 && ukrainianExclusive === 0) {
+    return "ru";
+  }
+  const words = transcriptText.toLocaleLowerCase().match(/\p{L}+/gu) ?? [];
+  const ukrainianScore = ukrainianExclusive * 3 + words.filter(
+    (word) => ukrainianLocaleMarkers.has(word),
+  ).length;
+  const russianScore = russianExclusive * 3 + words.filter(
+    (word) => russianLocaleMarkers.has(word),
+  ).length;
+  return ukrainianScore > russianScore ? "uk" : "ru";
 }
+
+const ukrainianLocaleMarkers = new Set([
+  "будь", "добре", "додай", "додати", "завдання", "залишити", "користувач",
+  "ласка", "можемо", "можна", "налаштувати", "питання", "посилання", "також",
+  "треба", "це", "цей", "ця", "якщо", "зробити",
+]);
+const russianLocaleMarkers = new Set([
+  "добавить", "добавь", "задача", "если", "можем", "можно", "настроить",
+  "нужно", "оставить", "пожалуйста", "пользователь", "решение", "сделать",
+  "ссылка", "также", "хорошо", "эта", "это", "этот",
+]);
 
 function truncateAtStableBoundary(value: string, maximumLength: number): string {
   if (value.length <= maximumLength) {
@@ -297,6 +338,7 @@ function evidenceLines(
     SummaryPublicationRequest["transcript"]["turns"][number]
   >,
   claimText: string,
+  sourceUtteranceUnavailable: string,
 ): readonly string[] {
   const resolvedTurnIds = contextualDiscordEvidenceTurnIds(evidenceTurnIds, evidence);
   return resolvedTurnIds
@@ -312,7 +354,7 @@ function evidenceLines(
     .map(({ turnId }) => {
       const turn = evidence.get(turnId);
       if (turn === undefined) {
-        return "The source utterance is unavailable.";
+        return sourceUtteranceUnavailable;
       }
       const interval = `${formatDiscordTimestamp(turn.startMs)}-${formatDiscordTimestamp(turn.endMs)}`;
       return `**${interval} · ${formatDiscordSpeaker(turn.speakerId)}:** «${renderDiscordEvidenceQuote(turn.text, claimText)}»`;

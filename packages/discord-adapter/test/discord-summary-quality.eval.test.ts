@@ -92,6 +92,35 @@ describe("Discord summary quality evals", () => {
     expect(markdown.indexOf("Предлагаю")).toBeLessThan(markdown.indexOf("Да, думаю"));
   });
 
+  it("adds nearby proposal context for a Ukrainian short assent", () => {
+    const markdown = renderRussianSummaryMarkdown(requestWith(
+      [
+        {
+          endMs: 8_000,
+          speakerId: "speaker-a",
+          startMs: 1_000,
+          text: "Будь ласка, залиш старі посилання робочими.",
+          turnId: "turn-proposal",
+        },
+        {
+          endMs: 10_000,
+          speakerId: "speaker-b",
+          startMs: 9_000,
+          text: "Добре, можемо.",
+          turnId: "turn-assent",
+        },
+      ],
+      {
+        evidenceTurnIds: ["turn-assent"],
+        points: ["Старі посилання залишаються робочими"],
+        title: "Сумісність",
+      },
+    ));
+
+    expect(markdown).toContain("Будь ласка, залиш старі посилання робочими.");
+    expect(markdown).toContain("Добре, можемо.");
+  });
+
   it("renders presentation labels in the dominant transcript language", () => {
     const russian = renderRussianSummaryMarkdown(requestWith(
       [{
@@ -142,5 +171,26 @@ describe("Discord summary quality evals", () => {
     expect(russian).toContain("## Ключевые темы и детали");
     expect(english).toContain("## Overview");
     expect(english).toContain("## Key topics and details");
+  });
+
+  it("renders Ukrainian labels and missing evidence without exclusive letters", () => {
+    const markdown = renderRussianSummaryMarkdown(requestWith(
+      [{
+        endMs: 2_000,
+        speakerId: "speaker-a",
+        startMs: 1_000,
+        text: "Будь ласка, додай код та залиш посилання.",
+        turnId: "turn-uk",
+      }],
+      {
+        evidenceTurnIds: ["turn-missing"],
+        points: ["Код треба додати"],
+        title: "Завдання",
+      },
+    ));
+
+    expect(markdown).toContain("## Коротко");
+    expect(markdown).toContain("Початкова репліка недоступна.");
+    expect(markdown).not.toContain("The source utterance is unavailable.");
   });
 });

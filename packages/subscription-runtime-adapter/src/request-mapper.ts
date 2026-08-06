@@ -149,15 +149,55 @@ export function resolveSummaryOutputLanguage(
   const cyrillicLetters = text.match(/\p{Script=Cyrillic}/gu)?.length ?? 0;
   const latinLetters = text.match(/\p{Script=Latin}/gu)?.length ?? 0;
   if (cyrillicLetters > latinLetters * 1.2) {
-    if (/[іїєґ]/iu.test(text)) {
+    const cyrillicLocale = resolveCyrillicTranscriptLocale(text);
+    if (cyrillicLocale === "uk") {
       return "Natural Ukrainian; preserve technical terms exactly";
     }
-    return "Natural Russian; preserve technical terms exactly";
+    if (cyrillicLocale === "ru") {
+      return "Natural Russian; preserve technical terms exactly";
+    }
+    return "Natural Russian when the transcript is Russian; otherwise use its dominant Cyrillic-script language. Preserve technical terms exactly";
   }
   if (latinLetters > cyrillicLetters * 1.2) {
     return "Natural English when the transcript is English; otherwise use its dominant Latin-script language. Preserve technical terms exactly";
   }
   return "The dominant natural language of the transcript; preserve technical terms exactly";
+}
+
+const ukrainianLexicalMarkers = new Set([
+  "будь", "добре", "додай", "додати", "завдання", "залишити", "користувач",
+  "ласка", "можемо", "можна", "налаштувати", "питання", "посилання", "також",
+  "треба", "це", "цей", "ця", "якщо", "зробити",
+]);
+const russianLexicalMarkers = new Set([
+  "добавить", "добавь", "задача", "если", "можем", "можно", "настроить",
+  "нужно", "оставить", "пожалуйста", "пользователь", "решение", "сделать",
+  "ссылка", "также", "хорошо", "эта", "это", "этот",
+]);
+
+function resolveCyrillicTranscriptLocale(text: string): "ru" | "uk" | undefined {
+  const ukrainianExclusiveLetters = text.match(/[іїєґ]/giu)?.length ?? 0;
+  const russianExclusiveLetters = text.match(/[ыэъё]/giu)?.length ?? 0;
+  if (ukrainianExclusiveLetters > 0 && russianExclusiveLetters === 0) {
+    return "uk";
+  }
+  if (russianExclusiveLetters > 0 && ukrainianExclusiveLetters === 0) {
+    return "ru";
+  }
+  const words = text.toLocaleLowerCase().match(/\p{L}+/gu) ?? [];
+  const ukrainianScore = ukrainianExclusiveLetters * 3 + words.filter(
+    (word) => ukrainianLexicalMarkers.has(word),
+  ).length;
+  const russianScore = russianExclusiveLetters * 3 + words.filter(
+    (word) => russianLexicalMarkers.has(word),
+  ).length;
+  if (ukrainianScore > russianScore) {
+    return "uk";
+  }
+  if (russianScore > ukrainianScore) {
+    return "ru";
+  }
+  return undefined;
 }
 
 function validateSummaryGenerationRequest(request: SummaryGenerationRequest): void {
