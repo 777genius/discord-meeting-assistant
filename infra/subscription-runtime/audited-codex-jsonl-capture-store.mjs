@@ -7,7 +7,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
 import {
   isAdmittedCodexExecution,
@@ -41,11 +41,37 @@ export function captureConfiguration(value) {
 }
 
 export function isPinnedCodexTaskInvocation(argv, model, reasoningEffort) {
-  const expected = pinnedCodexTaskArgv(model, reasoningEffort);
+  if (!Array.isArray(argv)) {
+    return false;
+  }
+  const schemaFlagIndexes = argv.flatMap((value, index) =>
+    value === "--output-schema" ? [index] : []
+  );
+  if (schemaFlagIndexes.length !== 1) {
+    return false;
+  }
+  const schemaPath = argv[schemaFlagIndexes[0] + 1];
+  if (!isPinnedOutputSchemaPath(schemaPath)) {
+    return false;
+  }
+  const expected = pinnedCodexTaskArgv(model, reasoningEffort, schemaPath);
   return (
-    Array.isArray(argv) &&
     argv.length === expected.length &&
     argv.every((value, index) => value === expected[index])
+  );
+}
+
+function isPinnedOutputSchemaPath(value) {
+  if (typeof value !== "string" || !isAbsolute(value) || resolve(value) !== value) {
+    return false;
+  }
+  const schemaRoot = dirname(value);
+  return (
+    basename(value) === "schema.json" &&
+    dirname(schemaRoot) === "/tmp" &&
+    /^subscription-runtime-codex-schema-[A-Za-z0-9_-]+$/u.test(
+      basename(schemaRoot),
+    )
   );
 }
 

@@ -19,6 +19,9 @@ const manifestSchema = z
 
 const auditedLauncherModuleNames = [
   "audited-codex-jsonl-capture.mjs",
+  "audited-codex-jsonl-bridge-output.mjs",
+  "audited-codex-jsonl-events.mjs",
+  "audited-codex-jsonl-capture-store.mjs",
   "audited-xhigh-policy.mjs",
 ] as const;
 
