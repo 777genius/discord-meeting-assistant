@@ -175,32 +175,32 @@ describe("meeting platform runtime wiring", () => {
   });
 
   it("passes configured per-meeting batch concurrency into the Voicetext composition", () => {
-    expect(
-      createVoicetextBatchFinalTranscriptionOptions({
-        batchMaxArtifactBytes: 64 * 1_024 * 1_024,
-        batchMaxConcurrency: 6,
-        batchMaxConcurrentMeetings: 1,
-        liveMaxConcurrentSessions: 10,
-        livePacketBackpressureTimeoutMs: 2_000,
-        webSocketUrl: "wss://api.voicetext.site/api/v1/transcribe/stream",
-      }),
-    ).toMatchObject({
-      keyterms: expect.arrayContaining([
-        "landing page",
-        "landing slug",
-        "QID",
-        "Quanta",
-        "Quanta ID",
-        "Quanta Pages",
-        "referral code",
-        "referral link",
-        "timestamp",
-      ]),
+    const options = createVoicetextBatchFinalTranscriptionOptions({
+      batchMaxArtifactBytes: 64 * 1_024 * 1_024,
+      batchMaxConcurrency: 6,
+      batchMaxConcurrentMeetings: 1,
+      liveMaxConcurrentSessions: 10,
+      livePacketBackpressureTimeoutMs: 2_000,
+      webSocketUrl: "wss://api.voicetext.site/api/v1/transcribe/stream",
+    });
+
+    expect(options).toMatchObject({
       maxArtifactBytesPerSpeaker: 64 * 1_024 * 1_024,
       maxConcurrency: 6,
       maxSpeakerTracks: 11,
       maxTotalArtifactBytes: 704 * 1_024 * 1_024,
     });
+    expect(options.keyterms).toEqual(expect.arrayContaining([
+      "landing page",
+      "landing slug",
+      "QID",
+      "Quanta",
+      "Quanta ID",
+      "Quanta Pages",
+      "referral code",
+      "referral link",
+      "timestamp",
+    ]));
   });
 
   it("preloads local thinking cues and wires them through the system delay", async () => {

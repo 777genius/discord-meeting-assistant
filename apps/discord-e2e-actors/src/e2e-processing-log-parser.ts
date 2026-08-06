@@ -6,7 +6,7 @@ import {
 } from "./e2e-evidence-schema.js";
 
 const stageLogSchema = z.object({
-  durationMilliseconds: z.number().finite().nonnegative(),
+  durationMilliseconds: z.number().nonnegative(),
   meetingId: z.string(),
   message: z.literal("Meeting processing stage completed"),
   outcome: z.literal("succeeded"),
@@ -15,7 +15,7 @@ const stageLogSchema = z.object({
 }).loose();
 
 const runtimeLogSchema = z.object({
-  durationMs: z.number().finite().nonnegative(),
+  durationMs: z.number().nonnegative(),
   meetingId: z.string(),
   message: z.literal("Subscription runtime task completed"),
   model: z.string().trim().min(1),

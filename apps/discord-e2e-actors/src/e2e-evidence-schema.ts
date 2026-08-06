@@ -343,7 +343,6 @@ export type FixtureManifestV1 = z.infer<typeof fixtureManifestV1Schema>;
 export type ActorRunEvidenceV1 = z.infer<typeof actorRunEvidenceV1Schema>;
 export type UnboundActorRunEvidenceV1 = z.infer<typeof unboundActorRunEvidenceV1Schema>;
 export type DeployedServiceProvenance = z.infer<typeof deployedServiceProvenanceSchema>;
-export type DeploymentProvenance = z.infer<typeof historicalDeploymentProvenanceSchema>;
 export type CurrentDeploymentProvenance = z.infer<typeof currentDeploymentProvenanceSchema>;
 export type DeploymentRevisionExpectation = z.infer<typeof deploymentRevisionExpectationSchema>;
 export type ProcessingEvidence = z.infer<typeof retainedE2eEvidenceV4Schema>["processing"];

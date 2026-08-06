@@ -76,7 +76,7 @@ function verifyDistinctServices(
   }
 }
 
-export function sameServiceProvenance(
+function sameServiceProvenance(
   left: DeployedServiceProvenance,
   right: DeployedServiceProvenance,
 ): boolean {

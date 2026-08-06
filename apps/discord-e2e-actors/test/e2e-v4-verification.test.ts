@@ -7,7 +7,6 @@ import {
 import { verifyProcessingEvidence } from "../src/e2e-evidence-processing-verification.js";
 import type {
   DeploymentRevisionExpectation,
-  RetainedE2eEvidence,
   RetainedE2eEvidenceV4,
 } from "../src/e2e-evidence.js";
 import type { VerificationFailure } from "../src/e2e-evidence-verification-types.js";
@@ -57,8 +56,8 @@ function verifyCurrentEvidence(
 ): VerificationFailure[] {
   const failures: VerificationFailure[] = [];
   const fail = (code: string, message: string) => failures.push({ code, message });
-  verifyDeploymentProvenance(evidence as RetainedE2eEvidence, revisions, fail);
-  verifyProcessingEvidence(evidence as RetainedE2eEvidence, fail);
+  verifyDeploymentProvenance(evidence, revisions, fail);
+  verifyProcessingEvidence(evidence, fail);
   return failures;
 }
 
