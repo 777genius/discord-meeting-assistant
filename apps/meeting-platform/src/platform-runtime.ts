@@ -7,6 +7,7 @@ export {
 } from "./composition/platform-shutdown.js";
 export {
   createConversationCoordinator,
+  createConversationLatencyLogger,
 } from "./composition/discord-live.js";
 export {
   createVoicetextBatchFinalTranscriptionOptions,

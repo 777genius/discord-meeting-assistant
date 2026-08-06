@@ -39,6 +39,11 @@ class AgentRuntimeServiceStub:
                 request_serializer=agent__runtime__pb2.AgentRuntimeTaskRequest.SerializeToString,
                 response_deserializer=agent__runtime__pb2.AgentRuntimeTaskResponse.FromString,
                 _registered_method=True)
+        self.StreamAgentTask = channel.unary_stream(
+                '/social_monitor.agent_runtime.v1.AgentRuntimeService/StreamAgentTask',
+                request_serializer=agent__runtime__pb2.AgentRuntimeTaskStreamRequest.SerializeToString,
+                response_deserializer=agent__runtime__pb2.AgentRuntimeTaskEvent.FromString,
+                _registered_method=True)
         self.CheckHealth = channel.unary_unary(
                 '/social_monitor.agent_runtime.v1.AgentRuntimeService/CheckHealth',
                 request_serializer=agent__runtime__pb2.AgentRuntimeHealthRequest.SerializeToString,
@@ -50,6 +55,12 @@ class AgentRuntimeServiceServicer:
     """Missing associated documentation comment in .proto file."""
 
     def RunAgentTask(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def StreamAgentTask(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -68,6 +79,11 @@ def add_AgentRuntimeServiceServicer_to_server(servicer, server):
                     servicer.RunAgentTask,
                     request_deserializer=agent__runtime__pb2.AgentRuntimeTaskRequest.FromString,
                     response_serializer=agent__runtime__pb2.AgentRuntimeTaskResponse.SerializeToString,
+            ),
+            'StreamAgentTask': grpc.unary_stream_rpc_method_handler(
+                    servicer.StreamAgentTask,
+                    request_deserializer=agent__runtime__pb2.AgentRuntimeTaskStreamRequest.FromString,
+                    response_serializer=agent__runtime__pb2.AgentRuntimeTaskEvent.SerializeToString,
             ),
             'CheckHealth': grpc.unary_unary_rpc_method_handler(
                     servicer.CheckHealth,
@@ -102,6 +118,33 @@ class AgentRuntimeService:
             '/social_monitor.agent_runtime.v1.AgentRuntimeService/RunAgentTask',
             agent__runtime__pb2.AgentRuntimeTaskRequest.SerializeToString,
             agent__runtime__pb2.AgentRuntimeTaskResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def StreamAgentTask(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/social_monitor.agent_runtime.v1.AgentRuntimeService/StreamAgentTask',
+            agent__runtime__pb2.AgentRuntimeTaskStreamRequest.SerializeToString,
+            agent__runtime__pb2.AgentRuntimeTaskEvent.FromString,
             options,
             channel_credentials,
             insecure,

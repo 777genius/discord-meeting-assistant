@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -13,16 +12,20 @@ if TYPE_CHECKING:
     from pipecat.transcriptions.language import Language
 
 from pipecat_runtime.adapters.pipecat.processors import (
+    ConversationTextCaptureProcessor,
     DeterministicLLMProcessor,
     DeterministicPipelineOptions,
     FixtureSpeechTTSProcessor,
 )
 from pipecat_runtime.adapters.pipecat.text_generation import (
-    SubscriptionRuntimeTextGenerationProcessor,
+    StreamingSubscriptionRuntimeTextGenerationProcessor,
 )
 from pipecat_runtime.adapters.providers.piper_http import PiperHttpTTSProcessor
 from pipecat_runtime.application.models import StartTurn
-from pipecat_runtime.application.ports import ConversationTextGenerationPort
+from pipecat_runtime.application.ports import (
+    CancellationSignal,
+    StreamingConversationTextGenerationPort,
+)
 from pipecat_runtime.assets.deterministic_speech import deterministic_russian_speech_pcm
 
 
@@ -65,7 +68,7 @@ class ConversationPipelineProfile(Protocol):
     def create_processors(
         self,
         request: StartTurn,
-        cancellation_requested: asyncio.Event,
+        cancellation_requested: CancellationSignal,
     ) -> Sequence[FrameProcessor]:
         """Build providers lazily for one isolated stateless request."""
         ...
@@ -97,7 +100,7 @@ class RuntimeProfileSettings:
 def create_profile(
     settings: RuntimeProfileSettings,
     *,
-    text_generator: ConversationTextGenerationPort | None = None,
+    text_generator: StreamingConversationTextGenerationPort | None = None,
 ) -> ConversationPipelineProfile:
     """Select a concrete adapter bundle while preventing fake providers in production."""
     match settings.profile_name:
@@ -143,7 +146,7 @@ class DeterministicE2EProfile:
     def create_processors(
         self,
         request: StartTurn,
-        cancellation_requested: asyncio.Event,
+        cancellation_requested: CancellationSignal,
     ) -> Sequence[FrameProcessor]:
         """Build providerless processors without external network or model side effects."""
         del request
@@ -152,6 +155,7 @@ class DeterministicE2EProfile:
                 options=self.options,
                 cancellation_requested=cancellation_requested,
             ),
+            ConversationTextCaptureProcessor(),
             FixtureSpeechTTSProcessor(
                 options=self.options,
                 fixture_pcm=deterministic_russian_speech_pcm(),
@@ -173,7 +177,7 @@ class LocalRussianProfile:
     def create_processors(
         self,
         request: StartTurn,
-        cancellation_requested: asyncio.Event,
+        cancellation_requested: CancellationSignal,
     ) -> Sequence[FrameProcessor]:
         """Construct Pipecat providers but never start them until a real turn executes."""
         del request
@@ -188,6 +192,7 @@ class LocalRussianProfile:
         return (
             PromptToContextProcessor(),
             llm,
+            ConversationTextCaptureProcessor(),
             PiperHttpTTSProcessor(
                 base_url=self.piper_base_url,
                 voice_id=self.piper_voice_id,
@@ -204,12 +209,12 @@ class ElevenLabsMultilingualProfile:
     api_key: str
     model: ElevenLabsTTSModel
     voice_id: str
-    text_generator: ConversationTextGenerationPort
+    text_generator: StreamingConversationTextGenerationPort
 
     def create_processors(
         self,
         request: StartTurn,
-        cancellation_requested: asyncio.Event,
+        cancellation_requested: CancellationSignal,
     ) -> Sequence[FrameProcessor]:
         """Create one stateless text-to-speech pipeline without opening a provider socket."""
         from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
@@ -218,7 +223,7 @@ class ElevenLabsMultilingualProfile:
         tts = ElevenLabsTTSService(
             api_key=self.api_key,
             sample_rate=48_000,
-            auto_mode=False,
+            auto_mode=True,
             text_aggregation_mode=TextAggregationMode.TOKEN,
             settings=ElevenLabsTTSService.Settings(
                 model=self.model.value,
@@ -227,10 +232,11 @@ class ElevenLabsMultilingualProfile:
             ),
         )
         return (
-            SubscriptionRuntimeTextGenerationProcessor(
+            StreamingSubscriptionRuntimeTextGenerationProcessor(
                 text_generator=self.text_generator,
                 cancellation_requested=cancellation_requested,
             ),
+            ConversationTextCaptureProcessor(),
             tts,
         )
 

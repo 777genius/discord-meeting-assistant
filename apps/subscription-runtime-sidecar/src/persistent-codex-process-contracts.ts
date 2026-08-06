@@ -26,6 +26,10 @@ interface RuntimeWorker {
     readonly prompt: string;
     readonly runId: string;
     readonly systemPrompt: string;
+  }, options?: {
+    readonly abortSignal?: AbortSignal;
+    readonly onProviderTaskStarted?: () => Promise<void> | void;
+    readonly onProviderTextDelta?: (text: string) => void;
   }): Promise<RuntimeWorkerResult>;
   seedCodexAuthJsonFile(path: string): Promise<void>;
   start(): Promise<void>;

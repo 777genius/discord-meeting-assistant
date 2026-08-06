@@ -98,6 +98,31 @@ describe("PersistentCodexProcessRunner", () => {
     });
   });
 
+  it("forwards provider lifecycle and text deltas from the warm worker", async () => {
+    const fixture = await createFixture();
+    fixture.state.run = async (input, options) => {
+      await options?.onProviderTaskStarted?.();
+      options?.onProviderTextDelta?.('{"answer":"');
+      options?.onProviderTextDelta?.('Привет"}');
+      return successfulWorkerResult(input);
+    };
+    const events: string[] = [];
+
+    const result = await fixture.runner.runStreaming(
+      await requestFor(fixture, "conversation-stream", conversationCanonicalRequest),
+      {
+        onProviderTaskStarted: () => {
+          events.push("started");
+        },
+        onProviderTextDelta: (text) => events.push(text),
+      },
+    );
+
+    expect(events).toEqual(["started", '{"answer":"', 'Привет"}']);
+    expect(JSON.parse(result.stdout)).toMatchObject({ status: "completed" });
+    expect(fixture.state.workers).toHaveLength(1);
+  });
+
   it("creates distinct prewarmed workers for distinct purpose profiles", async () => {
     const fixture = await createFixture();
 
@@ -232,10 +257,19 @@ interface FakeWorkerResult {
   }[];
 }
 
+interface FakeWorkerRunOptions {
+  readonly abortSignal?: AbortSignal;
+  readonly onProviderTaskStarted?: () => Promise<void> | void;
+  readonly onProviderTextDelta?: (text: string) => void;
+}
+
 interface FakeWorkerState {
   readonly modulePaths: string[];
   readonly workers: FakeWorker[];
-  run: (input: FakeWorkerInput) => Promise<FakeWorkerResult>;
+  run: (
+    input: FakeWorkerInput,
+    options?: FakeWorkerRunOptions,
+  ) => Promise<FakeWorkerResult>;
 }
 
 class FakeWorker {
@@ -260,9 +294,12 @@ class FakeWorker {
     this.prewarmCalls += 1;
   }
 
-  public async run(input: FakeWorkerInput): Promise<FakeWorkerResult> {
+  public async run(
+    input: FakeWorkerInput,
+    options?: FakeWorkerRunOptions,
+  ): Promise<FakeWorkerResult> {
     this.runInputs.push(input);
-    return await this.state.run(input);
+    return await this.state.run(input, options);
   }
 
   public async seedCodexAuthJsonFile(path: string): Promise<void> {

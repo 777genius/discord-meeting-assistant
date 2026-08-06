@@ -5,6 +5,7 @@ import {
   Server,
   ServerCredentials,
   status,
+  type handleServerStreamingCall,
   type handleUnaryCall,
   type Metadata,
   type ServiceDefinition,
@@ -37,10 +38,15 @@ import {
   reconstructCanonicalRequest,
   type RequestPolicyOptions,
 } from "./policy.js";
-import type { SidecarExecutorPort } from "./types.js";
+import type {
+  SidecarExecutorPort,
+  SidecarStreamingExecutorPort,
+} from "./types.js";
+import { createGrpcTaskStreamHandler } from "./grpc-task-stream.js";
 
 type RawMessage = Record<string, unknown>;
 type UnaryHandler = handleUnaryCall<RawMessage, RawMessage>;
+type StreamingHandler = handleServerStreamingCall<RawMessage, RawMessage>;
 
 export interface GrpcHandlerOptions extends RequestPolicyOptions {
   readonly serviceToken: string;
@@ -49,13 +55,20 @@ export interface GrpcHandlerOptions extends RequestPolicyOptions {
 interface AgentRuntimeGrpcHandlers extends UntypedServiceImplementation {
   readonly checkHealth: UnaryHandler;
   readonly runAgentTask: UnaryHandler;
+  readonly streamAgentTask: StreamingHandler;
 }
 
 export function createGrpcHandlers(
   executor: SidecarExecutorPort,
   options: GrpcHandlerOptions,
+  streamingExecutor?: SidecarStreamingExecutorPort,
 ): AgentRuntimeGrpcHandlers {
   return {
+    streamAgentTask: createGrpcTaskStreamHandler({
+      options,
+      toGrpcTaskResponse,
+      ...(streamingExecutor === undefined ? {} : { streamingExecutor }),
+    }),
     runAgentTask(call, callback): void {
       if (!isAuthorized(call.metadata, options.serviceToken)) {
         callback(grpcError(status.UNAUTHENTICATED, "Unauthorized"));
@@ -105,6 +118,7 @@ export async function startGrpcServer(input: {
   readonly executor: SidecarExecutorPort;
   readonly options: GrpcHandlerOptions;
   readonly protoPath: string;
+  readonly streamingExecutor?: SidecarStreamingExecutorPort;
 }): Promise<Server> {
   const definition = loadSync(input.protoPath, {
     defaults: true,
@@ -116,7 +130,10 @@ export async function startGrpcServer(input: {
   const root = loadPackageDefinition(definition) as Record<string, unknown>;
   const service = readServiceDefinition(root);
   const server = new Server();
-  server.addService(service, createGrpcHandlers(input.executor, input.options));
+  server.addService(
+    service,
+    createGrpcHandlers(input.executor, input.options, input.streamingExecutor),
+  );
   await new Promise<void>((resolve, reject) => {
     server.bindAsync(
       input.bindAddress,

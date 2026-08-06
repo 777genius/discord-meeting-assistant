@@ -16,6 +16,7 @@ from pipecat_runtime.adapters.grpc.codec import (
 )
 from pipecat_runtime.adapters.grpc.generated import conversation_runtime_pb2 as contract
 from pipecat_runtime.adapters.grpc.generated import conversation_runtime_pb2_grpc
+from pipecat_runtime.application.conversation_events import is_terminal_event
 from pipecat_runtime.application.models import (
     CancellationReason,
     CancelTurn,
@@ -86,6 +87,7 @@ class ConversationRuntimeGrpcServicer(
             name=f"conversation-cancellations-{session.attempt_id}",
         )
         try:
+            terminal_event = None
             async for event in session.events():
                 input_error = _completed_input_error(receiver_task)
                 if input_error is not None:
@@ -94,7 +96,13 @@ class ConversationRuntimeGrpcServicer(
                         "invalid conversation request",
                     )
                     return
+                if is_terminal_event(event):
+                    terminal_event = event
+                    break
                 yield event_to_message(event)
+            if terminal_event is not None:
+                await session.wait()
+                yield event_to_message(terminal_event)
         finally:
             session.abandon_events()
             await _cancel_active_session(session, start_turn)

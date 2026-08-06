@@ -6,6 +6,7 @@ governedRoots:
   - infra/subscription-runtime
   - apps/discord-e2e-actors/src
   - apps/meeting-platform/src
+  - apps/pipecat-runtime/src
   - apps/subscription-runtime-sidecar/src
   - packages/ai-adapters/src
   - packages/bullmq-adapter/src
@@ -255,6 +256,15 @@ boundaries:
         - node:crypto
         - node:fs/promises
         - node:path
+      runtimeReferences: []
+  - id: apps.pipecat-runtime
+    roots:
+      - apps/pipecat-runtime/src
+    entrypoints: []
+    allow:
+      boundaries: []
+      packages: []
+      builtins: []
       runtimeReferences: []
   - id: apps.meeting-platform.application
     roots:

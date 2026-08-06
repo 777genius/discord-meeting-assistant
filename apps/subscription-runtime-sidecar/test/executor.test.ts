@@ -85,7 +85,7 @@ describe("SubscriptionRuntimeExecutor execution profiles and output", () => {
       model: "gpt-5.6-sol",
       reasoningEffort: "medium",
       runtimeEngine: "subscription-runtime-app-server",
-      runtimePackageVersion: "0.1.0-main.2",
+      runtimePackageVersion: "0.1.0-main.27",
     });
     expect(capturedRequest).toEqual(canonicalRequest);
     expect(inspections).toBe(2);
@@ -747,7 +747,7 @@ function installation(): InstallationIdentity {
     launcherSha256: "a".repeat(64),
     packageManifestRealpath: "/audited/package/package.json",
     packageRootRealpath: "/audited/package",
-    runtimePackageVersion: "0.1.0-main.2",
+    runtimePackageVersion: "0.1.0-main.27",
   };
 }
 

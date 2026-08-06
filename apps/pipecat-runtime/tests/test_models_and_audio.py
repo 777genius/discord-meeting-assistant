@@ -9,11 +9,8 @@ from pipecat_runtime.adapters.pipecat.audio import (
     normalize_pcm_s16le,
     split_pcm_chunks,
 )
-from pipecat_runtime.application.models import (
-    MAXIMUM_PCM_CHUNK_BYTES,
-    AudioChunk,
-    RuntimeInputError,
-)
+from pipecat_runtime.application.conversation_events import AudioChunk
+from pipecat_runtime.application.models import MAXIMUM_PCM_CHUNK_BYTES, RuntimeInputError
 
 
 def test_audio_chunk_rejects_odd_or_oversized_payloads() -> None:

@@ -4,6 +4,7 @@ import {
   type ConversationRuntimeHealth,
 } from "@discord-meeting/conversation-runtime-contracts";
 import type {
+  ConversationCancellationReason,
   ConversationRuntime,
   ConversationRuntimeTurn,
   ConversationStartOptions,
@@ -13,12 +14,7 @@ import type {
 
 import { parseGrpcConversationRuntimeHealth } from "./grpc-pipecat-protocol.js";
 import { GrpcConversationRuntimeTurn } from "./grpc-pipecat-runtime-turn.js";
-import {
-  failure,
-  isAbortRequested,
-  rejectWhenAborted,
-  safeErrorMessage,
-} from "./grpc-pipecat-runtime-support.js";
+import { failure, safeErrorMessage } from "./grpc-pipecat-runtime-support.js";
 import {
   createAuthorizationMetadata,
   createGrpcConversationDuplexCallFactory,
@@ -28,6 +24,8 @@ import type {
   ConversationDuplexCallFactory,
   GrpcPipecatConversationRuntimeOptions,
 } from "./grpc-pipecat-types.js";
+
+const defaultCancellationTimeoutMs = 5_000;
 
 export type {
   ConversationDuplexCall,
@@ -41,12 +39,16 @@ export type {
  */
 export class GrpcPipecatConversationRuntime implements ConversationRuntime {
   private readonly callFactory: ConversationDuplexCallFactory;
+  private readonly cancellationTimeoutMs: number;
   private readonly metadata: ReturnType<typeof createAuthorizationMetadata>;
 
   public constructor(options: GrpcPipecatConversationRuntimeOptions) {
     if (options.serviceToken.trim().length < 16) {
       throw new Error("Pipecat runtime service token is too short");
     }
+    this.cancellationTimeoutMs = parseCancellationTimeout(
+      options.cancellationTimeoutMs ?? defaultCancellationTimeoutMs,
+    );
     this.callFactory = options.callFactory ?? createGrpcConversationDuplexCallFactory(options);
     this.metadata = createAuthorizationMetadata(options.serviceToken);
   }
@@ -55,7 +57,7 @@ export class GrpcPipecatConversationRuntime implements ConversationRuntime {
     request: ConversationStartRequest,
     options: ConversationStartOptions = {},
   ): Promise<PortResult<ConversationRuntimeTurn>> {
-    if (options.signal?.aborted === true) {
+    if (signalIsAborted(options.signal)) {
       return failure(
         "CONVERSATION_RUNTIME_START_CANCELLED",
         "Conversation runtime start was cancelled",
@@ -78,12 +80,22 @@ export class GrpcPipecatConversationRuntime implements ConversationRuntime {
       );
     }
 
-    const turn = new GrpcConversationRuntimeTurn(call, transportRequest.value.turnId);
+    const turn = new GrpcConversationRuntimeTurn(
+      call,
+      transportRequest.value.turnId,
+      this.cancellationTimeoutMs,
+    );
+    let abortRequested = signalIsAborted(options.signal);
+    const recordAbort = () => {
+      abortRequested = true;
+    };
+    options.signal?.addEventListener("abort", recordAbort, { once: true });
     try {
-      await rejectWhenAborted(turn.start(transportRequest.value), options.signal);
+      await turn.start(transportRequest.value);
     } catch (error) {
+      options.signal?.removeEventListener("abort", recordAbort);
       turn.abortBeforeStart();
-      if (isAbortRequested(options.signal)) {
+      if (abortRequested || signalIsAborted(options.signal)) {
         return failure(
           "CONVERSATION_RUNTIME_START_CANCELLED",
           "Conversation runtime start was cancelled",
@@ -96,6 +108,16 @@ export class GrpcPipecatConversationRuntime implements ConversationRuntime {
         true,
       );
     }
+    if (abortRequested || signalIsAborted(options.signal)) {
+      await turn.cancel(cancellationReasonFromSignal(options.signal));
+      options.signal?.removeEventListener("abort", recordAbort);
+      return failure(
+        "CONVERSATION_RUNTIME_START_CANCELLED",
+        "Conversation runtime start was cancelled",
+        true,
+      );
+    }
+    options.signal?.removeEventListener("abort", recordAbort);
     return { ok: true, value: turn };
   }
 
@@ -129,4 +151,31 @@ export class GrpcPipecatConversationRuntime implements ConversationRuntime {
       );
     }
   }
+}
+
+function parseCancellationTimeout(value: number): number {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error("Pipecat runtime cancellation timeout must be a positive integer");
+  }
+  return value;
+}
+
+function cancellationReasonFromSignal(
+  signal: AbortSignal | undefined,
+): ConversationCancellationReason {
+  const reason: unknown = signal?.reason;
+  switch (reason) {
+    case "barge-in":
+    case "meeting-ended":
+    case "playback-failed":
+    case "runtime-shutdown":
+    case "superseded":
+      return reason;
+    default:
+      return "runtime-shutdown";
+  }
+}
+
+function signalIsAborted(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true;
 }

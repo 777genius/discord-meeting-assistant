@@ -39,7 +39,7 @@ regular, non-symlink files with mode `0400`.
 
 The immutable sidecar image must:
 
-1. pin `@vioxen/subscription-runtime` to `0.1.0-main.2` and verify both the
+1. pin `@vioxen/subscription-runtime` to `0.1.0-main.27` and verify both the
    package version and admitted audited-launcher bundle SHA-256 before every execution;
 2. admit `discord_meeting.summary.generate` only with
    `gpt-5.6-sol`/`medium`, a 2048-token post-execution output budget, and policy version

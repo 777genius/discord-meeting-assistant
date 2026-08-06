@@ -10,6 +10,7 @@ export interface ConversationBridgeDependencies {
   readonly configuration: LiveConversationConfiguration;
   readonly logger: LiveRuntimeLogger;
   readonly meetingId: string;
+  readonly meetingStartedAtMs: number;
 }
 
 /** Serializes derived conversation observations for one active meeting. */
@@ -81,11 +82,12 @@ export class ConversationBridge {
       if (isMeetingFinishing()) {
         return;
       }
+      const wakeDetectedAtUnixMs = this.nowMilliseconds();
       const outcome = await this.dependencies.configuration.coordinator
         .handleFinalizedTurn({
           locale: this.dependencies.configuration.locale,
           meetingId: this.dependencies.meetingId,
-          nowMs: this.nowMilliseconds(),
+          nowMs: wakeDetectedAtUnixMs,
           recordingId: this.dependencies.meetingId,
           speakerId: event.speakerId,
           systemPrompt: this.dependencies.configuration.systemPrompt,
@@ -94,10 +96,12 @@ export class ConversationBridge {
             this.dependencies.configuration.locale,
             event.text,
           ),
+          turnEndedAtUnixMs: this.dependencies.meetingStartedAtMs + event.endMs,
           transcriptEndMs: event.endMs,
           transcriptStartMs: event.startMs,
           turnId,
           voiceProfileId: this.dependencies.configuration.voiceProfileId,
+          wakeDetectedAtUnixMs,
         });
       this.dependencies.logger.info("Live conversation turn observed", {
         meetingId: this.dependencies.meetingId,

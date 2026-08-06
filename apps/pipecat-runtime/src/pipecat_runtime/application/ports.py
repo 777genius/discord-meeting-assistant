@@ -5,12 +5,13 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Awaitable
 from typing import Protocol
 
+from pipecat_runtime.application.conversation_events import ConversationEvent
 from pipecat_runtime.application.models import (
     CancelTurn,
-    ConversationEvent,
     StartTurn,
     TextGenerationRequest,
     TextGenerationResult,
+    TextGenerationStreamEvent,
 )
 
 
@@ -58,6 +59,10 @@ class ConversationRuntime(Protocol):
         """Start one runtime session after validating the selected voice profile."""
         ...
 
+    async def close(self) -> None:
+        """Close persistent provider resources during composition shutdown."""
+        ...
+
 
 class ConversationTextGenerationPort(Protocol):
     """Generate one stateless answer without exposing a provider or transport."""
@@ -69,4 +74,17 @@ class ConversationTextGenerationPort(Protocol):
         cancellation_requested: CancellationSignal,
     ) -> TextGenerationResult:
         """Return a validated answer, safe failure, or caller-driven cancellation."""
+        ...
+
+
+class StreamingConversationTextGenerationPort(Protocol):
+    """Stream one stateless answer while validating its final structured result."""
+
+    def stream(
+        self,
+        request: TextGenerationRequest,
+        *,
+        cancellation_requested: CancellationSignal,
+    ) -> AsyncIterator[TextGenerationStreamEvent]:
+        """Yield ordered lifecycle, answer delta, and one terminal event."""
         ...

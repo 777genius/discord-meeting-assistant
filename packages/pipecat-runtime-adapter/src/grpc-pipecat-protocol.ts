@@ -32,6 +32,8 @@ export function createGrpcConversationStartMessage(
       turnId: request.turnId,
       speakerId: request.speakerId,
       idempotencyKey: request.idempotencyKey,
+      turnEndedAtUnixMs: request.latency?.turnEndedAtUnixMs ?? 0,
+      wakeDetectedAtUnixMs: request.latency?.wakeDetectedAtUnixMs ?? 0,
       systemPrompt: request.systemPrompt,
       prompt: request.prompt,
       locale: request.locale,
@@ -120,6 +122,26 @@ export function decodeGrpcConversationRuntimeEvent(message: RawMessage): Transpo
       totalTokens: integerValue(value.totalTokens, "usage.totalTokens"),
     });
   }
+  if (payload === "latency") {
+    const value = recordValue(message.latency, "latency");
+    return parseConversationRuntimeEvent({
+      ...base,
+      type: "latency",
+      endTurnToWakeMs: integerValue(value.endTurnToWakeMs, "latency.endTurnToWakeMs"),
+      wakeToFirstLlmTokenMs: integerValue(
+        value.wakeToFirstLlmTokenMs,
+        "latency.wakeToFirstLlmTokenMs",
+      ),
+      firstLlmTokenToAudioMs: integerValue(
+        value.firstLlmTokenToAudioMs,
+        "latency.firstLlmTokenToAudioMs",
+      ),
+      totalToFirstAudioMs: integerValue(
+        value.totalToFirstAudioMs,
+        "latency.totalToFirstAudioMs",
+      ),
+    });
+  }
   if (payload === "completed") {
     return parseConversationRuntimeEvent({ ...base, type: "completed" });
   }
@@ -189,6 +211,16 @@ export function toCoreConversationRuntimeEvent(
       inputTokens: event.inputTokens,
       outputTokens: event.outputTokens,
       totalTokens: event.totalTokens,
+    };
+  }
+  if (event.type === "latency") {
+    return {
+      type: "latency",
+      attemptId: event.attemptId,
+      endTurnToWakeMs: event.endTurnToWakeMs,
+      wakeToFirstLlmTokenMs: event.wakeToFirstLlmTokenMs,
+      firstLlmTokenToAudioMs: event.firstLlmTokenToAudioMs,
+      totalToFirstAudioMs: event.totalToFirstAudioMs,
     };
   }
   if (event.type === "cancelled") {

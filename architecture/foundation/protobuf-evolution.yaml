@@ -10,8 +10,8 @@
     "publicContractVersion": "0.1.0",
     "bufVersion": "1.72.0",
     "bufConfigDigest": "sha256:635a7cab1e684b9f2a8aa00960cfa441a32ce6cf011f646c2af54f70d6a19845",
-    "descriptorImageDigest": "sha256:a3ef4cf9c6bc1af8a43729874c0b557ae7afd0bcbe23553befc63c4f9df12988",
-    "releasedDescriptorImageDigest": "sha256:a3ef4cf9c6bc1af8a43729874c0b557ae7afd0bcbe23553befc63c4f9df12988",
+    "descriptorImageDigest": "sha256:fbd8f7dbd25cb83f1d074a2cc5e4f9284a9e4d970ca5467f2c2a72c79ee75d5d",
+    "releasedDescriptorImageDigest": "sha256:fbd8f7dbd25cb83f1d074a2cc5e4f9284a9e4d970ca5467f2c2a72c79ee75d5d",
     "generatorVersions": [],
     "generationDrift": {
       "expectedGeneratedOutputDigest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -19,7 +19,7 @@
     },
     "breaking": {
       "status": "compatible",
-      "fingerprint": "sha256:d7b4b02be03d1e5a9c4a0ea63d759fcf9a1c5e7cc2aab10bd4da6c9ef34794ac"
+      "fingerprint": "sha256:81f4b82393f8c48dc9f731b6a88a5df67caf59ff1414403117c74a696098127c"
     }
   }
 }

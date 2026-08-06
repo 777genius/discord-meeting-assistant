@@ -52,12 +52,29 @@ describe("conversation runtime contracts", () => {
         turnId: "turn-1",
         speakerId: "speaker-1",
         idempotencyKey: "conversation:meeting-1:turn-1",
+        latency: {
+          turnEndedAtUnixMs: 1_700_000_000_000,
+          wakeDetectedAtUnixMs: 1_700_000_000_125,
+        },
         systemPrompt: "Answer briefly in the participant's language.",
         prompt: "Расскажи короткий факт.",
         locale: "ru",
         voiceProfileId: "deterministic-e2e-ru",
       }),
     ).toMatchObject({ turnId: "turn-1", locale: "ru" });
+  });
+
+  it("accepts exact additive first-audio latency telemetry", () => {
+    expect(
+      parseConversationRuntimeEvent({
+        ...baseEvent,
+        type: "latency",
+        endTurnToWakeMs: 125,
+        wakeToFirstLlmTokenMs: 2_400,
+        firstLlmTokenToAudioMs: 350,
+        totalToFirstAudioMs: 2_875,
+      }),
+    ).toMatchObject({ type: "latency", totalToFirstAudioMs: 2_875 });
   });
 
   it("accepts bounded mono 48 kHz PCM", () => {

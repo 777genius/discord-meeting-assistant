@@ -206,9 +206,11 @@ export class ConversationWakeLatchAdmission {
     prompt: string,
     turn: PreparedConversation["turn"],
   ): PreparedConversation {
+    const latency = conversationLatencyContext(input);
     return {
       request: {
         idempotencyKey: conversationIdempotencyKey(input),
+        ...(latency === undefined ? {} : { latency }),
         locale: input.locale,
         meetingId: input.meetingId,
         prompt,
@@ -235,4 +237,23 @@ export class ConversationWakeLatchAdmission {
     }
     state.wakeTurnReceipts.set(receipt.turnId, receipt);
   }
+}
+
+function conversationLatencyContext(
+  input: FinalizedConversationTurnInput,
+): PreparedConversation["request"]["latency"] {
+  const turnEndedAtUnixMs = input.turnEndedAtUnixMs;
+  const wakeDetectedAtUnixMs = input.wakeDetectedAtUnixMs;
+  if (turnEndedAtUnixMs === undefined || wakeDetectedAtUnixMs === undefined) {
+    return undefined;
+  }
+  if (
+    !Number.isSafeInteger(turnEndedAtUnixMs) ||
+    !Number.isSafeInteger(wakeDetectedAtUnixMs) ||
+    turnEndedAtUnixMs < 0 ||
+    wakeDetectedAtUnixMs < turnEndedAtUnixMs
+  ) {
+    return undefined;
+  }
+  return Object.freeze({ turnEndedAtUnixMs, wakeDetectedAtUnixMs });
 }

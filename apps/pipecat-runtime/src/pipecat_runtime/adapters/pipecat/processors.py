@@ -3,34 +3,31 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass
 from enum import StrEnum
 
 from pipecat.frames.frames import (
-    BotStartedSpeakingFrame,
-    BotStoppedSpeakingFrame,
     ErrorFrame,
     Frame,
     LLMFullResponseEndFrame,
     LLMFullResponseStartFrame,
     LLMTextFrame,
     TTSAudioRawFrame,
-    TTSStartedFrame,
-    TTSStoppedFrame,
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 from pipecat_runtime.adapters.pipecat.audio import normalize_pcm_s16le, split_pcm_chunks
-from pipecat_runtime.adapters.pipecat.events import ConversationEventStream
 from pipecat_runtime.adapters.pipecat.frames import (
+    ConversationTextFrame,
     ConversationTurnFrame,
-    TextGenerationFailureFrame,
+    TextGenerationFirstTokenFrame,
 )
 from pipecat_runtime.application.models import (
     PCM_S16LE_CHANNELS,
     PCM_S16LE_SAMPLE_RATE_HZ,
-    TextGenerationFailed,
 )
+from pipecat_runtime.application.ports import CancellationSignal
 
 
 class DeterministicFailurePoint(StrEnum):
@@ -71,7 +68,7 @@ class DeterministicLLMProcessor(FrameProcessor):
         self,
         *,
         options: DeterministicPipelineOptions,
-        cancellation_requested: asyncio.Event,
+        cancellation_requested: CancellationSignal,
     ) -> None:
         super().__init__()
         self._options = options
@@ -92,12 +89,19 @@ class DeterministicLLMProcessor(FrameProcessor):
             )
             return
         await self.push_frame(LLMFullResponseStartFrame(), direction)
-        for text in self._options.response_chunks:
+        for index, text in enumerate(self._options.response_chunks):
             if await _wait_or_cancel(
                 self._options.text_delay_seconds,
                 self._cancellation_requested,
             ):
                 return
+            if index == 0:
+                await self.push_frame(
+                    TextGenerationFirstTokenFrame(
+                        observed_at_unix_ms=time.time_ns() // 1_000_000
+                    ),
+                    direction,
+                )
             await self.push_frame(LLMTextFrame(text=text), direction)
         if not self._cancellation_requested.is_set():
             await self.push_frame(LLMFullResponseEndFrame(), direction)
@@ -111,7 +115,7 @@ class FixtureSpeechTTSProcessor(FrameProcessor):
         *,
         options: DeterministicPipelineOptions,
         fixture_pcm: bytes,
-        cancellation_requested: asyncio.Event,
+        cancellation_requested: CancellationSignal,
     ) -> None:
         super().__init__()
         self._options = options
@@ -136,7 +140,6 @@ class FixtureSpeechTTSProcessor(FrameProcessor):
             await self.push_frame(frame, direction)
             return
         if isinstance(frame, LLMTextFrame):
-            await self.push_frame(frame, direction)
             await self._emit_next_fixture_chunk(direction)
             return
         if isinstance(frame, LLMFullResponseEndFrame):
@@ -199,66 +202,17 @@ class PCMNormalizationProcessor(FrameProcessor):
             )
 
 
-class TextEventProcessor(FrameProcessor):
-    """Expose LLM text before provider TTS consumes or rewrites it."""
-
-    def __init__(self, *, events: ConversationEventStream) -> None:
-        super().__init__()
-        self._events = events
+class ConversationTextCaptureProcessor(FrameProcessor):
+    """Copy LLM text into a frame that every downstream TTS must preserve."""
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
         if isinstance(frame, LLMTextFrame) and direction is FrameDirection.DOWNSTREAM:
-            await self._events.text(frame.text)
+            await self.push_frame(ConversationTextFrame(text=frame.text), direction)
         await self.push_frame(frame, direction)
 
 
-class AudioEventProcessor(FrameProcessor):
-    """Expose normalized Pipecat audio and retain only a safe pipeline failure outcome."""
-
-    def __init__(self, *, events: ConversationEventStream) -> None:
-        super().__init__()
-        self._events = events
-        self._active_tts_contexts: set[str | None] = set()
-        self._speaking_tts_contexts: set[str | None] = set()
-        self.failure_detected = False
-        self.text_generation_failure: TextGenerationFailed | None = None
-
-    async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
-        await super().process_frame(frame, direction)
-        if direction is FrameDirection.DOWNSTREAM:
-            if isinstance(frame, TTSStartedFrame):
-                self._active_tts_contexts.add(frame.context_id)
-            elif isinstance(frame, TTSAudioRawFrame):
-                await self._events.audio(frame.audio)
-                if (
-                    frame.context_id in self._active_tts_contexts
-                    and frame.context_id not in self._speaking_tts_contexts
-                ):
-                    should_announce_start = not self._speaking_tts_contexts
-                    self._speaking_tts_contexts.add(frame.context_id)
-                    if should_announce_start:
-                        await self.push_frame(
-                            BotStartedSpeakingFrame(),
-                            FrameDirection.UPSTREAM,
-                        )
-            elif isinstance(frame, TTSStoppedFrame):
-                was_speaking = frame.context_id in self._speaking_tts_contexts
-                self._active_tts_contexts.discard(frame.context_id)
-                self._speaking_tts_contexts.discard(frame.context_id)
-                if was_speaking and not self._speaking_tts_contexts:
-                    await self.push_frame(
-                        BotStoppedSpeakingFrame(),
-                        FrameDirection.UPSTREAM,
-                    )
-            elif isinstance(frame, TextGenerationFailureFrame):
-                self.text_generation_failure = frame.failure
-            elif isinstance(frame, ErrorFrame):
-                self.failure_detected = True
-        await self.push_frame(frame, direction)
-
-
-async def _wait_or_cancel(delay_seconds: float, cancellation_requested: asyncio.Event) -> bool:
+async def _wait_or_cancel(delay_seconds: float, cancellation_requested: CancellationSignal) -> bool:
     """Return promptly when an external cancellation interrupts deterministic timing."""
     if cancellation_requested.is_set():
         return True

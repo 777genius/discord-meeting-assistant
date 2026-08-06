@@ -40,7 +40,7 @@ it("starts conversation only after durable final-turn append and isolates its fa
     conversation: {
       coordinator,
       locale: "auto",
-      nowMilliseconds: () => performance.now(),
+      nowMilliseconds: () => Date.now(),
       systemPrompt: "Answer briefly.",
       voiceProfileId: "deterministic-e2e-ru",
     },
@@ -58,6 +58,7 @@ it("starts conversation only after durable final-turn append and isolates its fa
   firstBatch.packets[0] = { ...firstBatch.packets[0]!, relativeTimeMs: 0 };
 
   await runtime.acceptLifecycle(started());
+  await vi.advanceTimersByTimeAsync(1_250);
   await runtime.acceptVoiceBatch(firstBatch);
   await vi.waitFor(() => {
     expect(coordinator.calls).toHaveLength(1);
@@ -66,6 +67,13 @@ it("starts conversation only after durable final-turn append and isolates its fa
   expect(coordinator.persistedBeforeCall).toEqual([true]);
   expect(coordinator.calls[0]?.locale).toBe("auto");
   expect(coordinator.calls[0]?.thinkingCueLocale).toBe("ru");
+  const observedConversation = coordinator.calls[0];
+  expect(observedConversation?.turnEndedAtUnixMs).toBe(
+    Date.parse("2026-08-02T10:00:01.000Z"),
+  );
+  expect(observedConversation?.wakeDetectedAtUnixMs).toBeGreaterThanOrEqual(
+    observedConversation?.turnEndedAtUnixMs ?? Number.POSITIVE_INFINITY,
+  );
   expect(meetings.finalizedTurns).toHaveLength(1);
   expect(coordinator.speechEvents).toEqual(["started", "ended"]);
   await vi.advanceTimersByTimeAsync(5_000);

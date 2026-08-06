@@ -3,7 +3,7 @@
   "protocolVersion": 1,
   "runtime": {
     "packageName": "@vioxen/subscription-runtime",
-    "packageVersion": "0.1.0-main.2",
+    "packageVersion": "0.1.0-main.27",
     "launcherSha256Source": "SUBSCRIPTION_RUNTIME_EXPECTED_LAUNCHER_SHA256"
   },
   "transport": {

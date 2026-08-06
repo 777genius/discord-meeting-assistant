@@ -46,3 +46,11 @@ Subscription Runtime address/token/deadline settings. `auto` locale leaves
 language selection to the multilingual model; explicit supported locales use
 Pipecat's language registry with a base-language fallback. Provider types and
 credentials never cross the gRPC contract.
+
+Production conversation turns use a server-streaming text port. Deltas are
+decoded from the exact structured `answer`, buffered into speech phrases, and
+sent to TTS before the final response completes. A bounded pipeline keyed by
+meeting, voice profile, and locale keeps Pipecat and ElevenLabs connected across
+sequential turns. Interruption cancels only the active context; shutdown,
+eviction, or fatal failure closes the worker. The final attestation must exactly
+match all provisional text before the turn can complete.

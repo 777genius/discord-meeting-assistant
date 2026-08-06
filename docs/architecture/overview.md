@@ -89,6 +89,12 @@ Subscription Runtime adapter. Production uses a purpose-scoped warm
 is selected in Pipecat composition and can be replaced without changing Meeting
 Core.
 
+The conversation path streams validated answer deltas into complete speech
+phrases. One meeting-scoped Pipecat pipeline and ElevenLabs WebSocket stay warm
+across sequential turns; interruption resets only the active TTS context.
+Terminal structured-output attestation still validates the provisional stream,
+and summary generation remains on its unary runtime contract.
+
 After 1.3 seconds of model latency, Meeting Core may play one pre-generated
 neutral acknowledgement. A deterministic prompt policy may schedule a later
 locale-aware deliberation cue for a complex request; simple requests never use

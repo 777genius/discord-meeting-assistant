@@ -19,6 +19,7 @@ import {
   RefreshLiveMeeting,
   StartLiveMeeting,
   type ConversationRuntime,
+  type ConversationLatencyObserverPort,
   type SummaryPublicationPort,
   type SummaryPublicationEffectLedger,
   type VoicePlaybackPort,
@@ -46,7 +47,10 @@ import type { PlatformStartupCleanup } from "./startup-cleanup.js";
 import { classifyPlatformError } from "./observability.js";
 import { discordLiveCaptionSignature } from "./discord-live-caption-signature.js";
 
-const monotonicNowMilliseconds = (): number => performance.now();
+// Keep wall-clock-shaped timestamps compatible with STT while preventing clock
+// adjustments from corrupting playback deadlines and the four-second guard.
+const monotonicUnixNowMilliseconds = (): number =>
+  Math.floor(performance.timeOrigin + performance.now());
 
 const meetingVocabulary = [
   "BullMQ",
@@ -116,7 +120,7 @@ export async function createPlatformDiscordLiveComposition(input: {
     input.publicationEffects,
     { publicationMode: input.config.discordPublicationMode },
   );
-  const craigPlaybackGateway = new CraigPlaybackGateway(monotonicNowMilliseconds);
+  const craigPlaybackGateway = new CraigPlaybackGateway(monotonicUnixNowMilliseconds);
   input.cleanup.defer("Craig playback gateway", () => {
     craigPlaybackGateway.close();
   });
@@ -130,6 +134,7 @@ export async function createPlatformDiscordLiveComposition(input: {
     ? undefined
     : await createConversationCoordinator({
         config: input.config,
+        latencyObserver: createConversationLatencyLogger(input.logger),
         playback: craigPlaybackGateway,
         runtime: conversationRuntime,
       });
@@ -155,9 +160,21 @@ export async function createPlatformDiscordLiveComposition(input: {
   };
 }
 
+/** Adapts provider-neutral latency observations to platform structured logs. */
+export function createConversationLatencyLogger(
+  logger: Pick<Logger, "info">,
+): ConversationLatencyObserverPort {
+  return {
+    observeConversationLatency: (observation) => {
+      logger.info("Live conversation latency observed", { ...observation });
+    },
+  };
+}
+
 /** Preloads required local cue assets before live conversation accepts work. */
 export async function createConversationCoordinator(input: {
   readonly config: Pick<PlatformConfig, "conversation">;
+  readonly latencyObserver?: ConversationLatencyObserverPort;
   readonly playback: VoicePlaybackPort;
   readonly runtime: ConversationRuntime;
 }): Promise<ConversationCoordinator | undefined> {
@@ -171,6 +188,9 @@ export async function createConversationCoordinator(input: {
   );
   return new ConversationCoordinator({
     delay: new SystemConversationDelay(),
+    ...(input.latencyObserver === undefined
+      ? {}
+      : { latencyObserver: input.latencyObserver }),
     playback: input.playback,
     runtime: input.runtime,
     thinkingCues,
@@ -245,7 +265,7 @@ function createLiveRuntime(input: {
           conversation: {
             coordinator: input.conversationCoordinator,
             locale: "auto",
-            nowMilliseconds: monotonicNowMilliseconds,
+            nowMilliseconds: monotonicUnixNowMilliseconds,
             systemPrompt: input.config.conversation.systemPrompt,
             voiceProfileId: input.config.conversation.voiceProfileId,
           },

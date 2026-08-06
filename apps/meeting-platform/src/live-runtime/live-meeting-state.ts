@@ -73,6 +73,7 @@ export function createActiveLiveMeeting(input: CreateActiveLiveMeetingInput): Ac
         configuration: input.dependencies.conversation,
         logger: input.dependencies.logger,
         meetingId,
+        meetingStartedAtMs: input.startedAtMs,
       });
   const transcription = new SpeakerTranscriptionSessions({
     clock: input.clock,

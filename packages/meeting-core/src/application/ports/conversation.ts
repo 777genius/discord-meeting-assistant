@@ -10,6 +10,10 @@ export type ConversationCancellationReason =
 
 export interface ConversationStartRequest {
   readonly idempotencyKey: string;
+  readonly latency?: {
+    readonly turnEndedAtUnixMs: number;
+    readonly wakeDetectedAtUnixMs: number;
+  };
   readonly locale: string;
   readonly meetingId: string;
   readonly prompt: string;
@@ -49,6 +53,14 @@ export type ConversationRuntimeEvent =
       readonly totalTokens: number;
       readonly type: "usage";
     }
+  | {
+      readonly attemptId: string;
+      readonly endTurnToWakeMs: number;
+      readonly firstLlmTokenToAudioMs: number;
+      readonly totalToFirstAudioMs: number;
+      readonly type: "latency";
+      readonly wakeToFirstLlmTokenMs: number;
+    }
   | { readonly attemptId: string; readonly type: "completed" }
   | {
       readonly attemptId: string;
@@ -72,6 +84,23 @@ export interface ConversationRuntime {
     request: ConversationStartRequest,
     options?: ConversationStartOptions,
   ): Promise<PortResult<ConversationRuntimeTurn>>;
+}
+
+export interface ConversationLatencyObservation {
+  readonly attemptId: string;
+  readonly endTurnToWakeMs: number;
+  readonly firstLlmTokenToAudioMs: number;
+  readonly meetingId: string;
+  readonly totalToFirstAudioMs: number;
+  readonly turnId: string;
+  readonly wakeToFirstLlmTokenMs: number;
+}
+
+/** Consumer-owned sink for provider-neutral first-audio latency telemetry. */
+export interface ConversationLatencyObserverPort {
+  observeConversationLatency(
+    observation: ConversationLatencyObservation,
+  ): void | Promise<void>;
 }
 
 export interface VoicePlaybackRequest {
