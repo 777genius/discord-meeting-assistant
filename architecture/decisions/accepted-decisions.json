@@ -86,6 +86,11 @@
       "id": "ADR-0017",
       "path": "docs/decisions/0017-preserve-summary-workflow-and-action-semantics.md",
       "immutableDigest": "sha256:38d9b18add6b90b0ad8053305928b72e8175b7e718189f609b4db9bab1ac9e03"
+    },
+    {
+      "id": "ADR-0018",
+      "path": "docs/decisions/0018-bound-summary-output-to-provider-contract.md",
+      "immutableDigest": "sha256:4882a5a6633a328a14f9feb1316757943326cdfe7be64ddb9c7e59aa31d67880"
     }
   ]
 }

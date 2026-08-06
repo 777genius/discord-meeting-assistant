@@ -38,7 +38,7 @@
     "discord_meeting.summary.generate": {
       "provider": "codex",
       "model": "gpt-5.6-sol",
-      "policyVersion": "meeting-summary.subscription-runtime.v10",
+      "policyVersion": "meeting-summary.subscription-runtime.v11",
       "maxOutputTokens": 2048,
       "reasoningEffort": "medium",
       "taskKind": "structured-prompt",

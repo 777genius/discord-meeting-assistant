@@ -83,6 +83,12 @@ describe("final summary quality evals", () => {
     expect(request.task.systemPrompt).toContain(
       "do not reduce the workflow to only one stage",
     );
+    expect(request.task.systemPrompt).toContain(
+      "Obey every JSON Schema maxItems and maxLength exactly",
+    );
+    expect(request.task.systemPrompt).toContain(
+      "use separate allowed topic points when a workflow needs additional evidence",
+    );
   });
 
   it("selects English for an English transcript and falls back for balanced language", () => {
