@@ -202,6 +202,35 @@ describe("CraigPlaybackGateway", () => {
     });
   });
 
+  it("paces accepted PCM at playback speed before admitting the next chunk", async () => {
+    vi.useFakeTimers();
+    try {
+      const gateway = new CraigPlaybackGateway();
+      const transport = new FakeTransport();
+      gateway.register(transport);
+      const opened = await gateway.open(request);
+      if (!opened.ok) {
+        throw new Error("playback did not open");
+      }
+
+      let settled = false;
+      const writing = opened.value.write(chunk(0, new Uint8Array(19_200))).then(
+        (result) => {
+          settled = true;
+          return result;
+        },
+      );
+      await vi.advanceTimersByTimeAsync(199);
+      expect(settled).toBe(false);
+      expect(transport.commands.filter(({ type }) => type === "audio-chunk")).toHaveLength(1);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(writing).resolves.toEqual({ ok: true, value: "accepted" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("uses local receipt timing for Craig events and waits for finish acknowledgement", async () => {
     let nowMs = 4_000;
     const gateway = new CraigPlaybackGateway(() => nowMs);

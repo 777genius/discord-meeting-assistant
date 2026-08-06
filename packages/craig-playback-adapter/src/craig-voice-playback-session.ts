@@ -32,6 +32,7 @@ import {
 
 const maximumBufferedAudioBytes = 192_000;
 const maximumRememberedChunkSequences = 100_000;
+const pcmBytesPerSecond = craigPlaybackSampleRateHz * craigPlaybackChannels * 2;
 
 export class CraigVoicePlaybackSession implements VoicePlaybackSession {
   public readonly events: AsyncIterable<VoicePlaybackEvent>;
@@ -167,6 +168,7 @@ export class CraigVoicePlaybackSession implements VoicePlaybackSession {
       });
       this.chunkHashes.set(chunk.sequence, hash);
       this.expectedSequence += 1;
+      await pacePcmDelivery(chunk.bytes.byteLength);
       return { ok: true, value: "accepted" };
     } catch (error) {
       return transportFailure(error);
@@ -325,6 +327,16 @@ export class CraigVoicePlaybackSession implements VoicePlaybackSession {
     this.resolveTerminalReceipt();
     this.onTerminal();
   }
+}
+
+async function pacePcmDelivery(byteLength: number): Promise<void> {
+  const durationMs = Math.ceil((byteLength * 1_000) / pcmBytesPerSecond);
+  if (durationMs <= 0) {
+    return;
+  }
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, durationMs);
+  });
 }
 
 interface CraigVoicePlaybackSessionOptions {
