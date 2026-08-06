@@ -66,10 +66,16 @@ describe("final summary quality evals", () => {
   });
 
   it("preserves distinct action outputs and complete named technical workflows", () => {
-    const request = requestFor([
+    const transcriptTexts = [
       "Meeting Platform принимает Craig recording и запускает PostgreSQL pipeline.",
       "Проверь idempotency key и оставь результат в Discord thread до пятницы.",
-    ]);
+    ] as const;
+    const request = requestFor(transcriptTexts);
+    const prompt = JSON.parse(request.task.prompt) as {
+      transcript: { turns: Array<{ text: string }> };
+    };
+
+    expect(prompt.transcript.turns.map(({ text }) => text)).toEqual(transcriptTexts);
 
     expect(request.task.systemPrompt).toContain(
       "matching owner and deadline alone never make two tasks duplicates",
