@@ -81,7 +81,7 @@ describe("subscription runtime gRPC transport mapping", () => {
     });
     expect(request.metadata).toMatchObject({
       model: "gpt-5.6-sol",
-      policyVersion: "meeting-summary.subscription-runtime.v9",
+      policyVersion: "meeting-summary.subscription-runtime.v10",
       reasoningEffort: "medium",
     });
     expect(JSON.stringify(request)).not.toContain("OPENAI_API_KEY");
