@@ -22,6 +22,7 @@ export {
 export { DiscordSummaryPublisher } from "./discord-summary-publisher.js";
 export {
   DiscordSummaryPublicationAdapter,
+  type DiscordSummaryPublicationAdapterOptions,
   renderRussianFinalTranscriptTimelineMarkdown,
   renderRussianSummaryMarkdown,
 } from "./discord-summary-publication-adapter.js";

@@ -97,6 +97,41 @@ describe("platform configuration", () => {
     ).rejects.toThrow();
   });
 
+  it("loads recording playback only from a complete secret-backed HTTPS configuration", async () => {
+    const paths: string[] = [];
+    const config = await loadPlatformConfig(
+      {
+        ...environment,
+        NODE_ENV: "production",
+        RECORDING_PLAYBACK_PUBLIC_BASE_URL: "https://recordings.example.com",
+        RECORDING_PLAYBACK_SIGNING_SECRET_FILE: "/run/secrets/recording-playback",
+      },
+      async (path) => {
+        paths.push(path);
+        return `value-for:${path}`;
+      },
+    );
+
+    expect(config.recordingPlayback).toEqual({
+      publicBaseUrl: "https://recordings.example.com",
+    });
+    expect(config.secrets.recordingPlaybackSigningSecret).toBe(
+      "value-for:/run/secrets/recording-playback",
+    );
+    expect(paths).toContain("/run/secrets/recording-playback");
+
+    await expect(loadPlatformConfig({
+      ...environment,
+      RECORDING_PLAYBACK_PUBLIC_BASE_URL: "https://recordings.example.com",
+    }, async () => "value")).rejects.toThrow("configured together");
+    await expect(loadPlatformConfig({
+      ...environment,
+      NODE_ENV: "production",
+      RECORDING_PLAYBACK_PUBLIC_BASE_URL: "http://recordings.example.com",
+      RECORDING_PLAYBACK_SIGNING_SECRET_FILE: "/run/secrets/recording-playback",
+    }, async () => "value")).rejects.toThrow("requires HTTPS");
+  });
+
   it("loads a Voicetext machine bearer only from a secret file", async () => {
     const config = await loadPlatformConfig(
       {

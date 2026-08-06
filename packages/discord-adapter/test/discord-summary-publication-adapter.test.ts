@@ -358,7 +358,41 @@ describe("DiscordSummaryPublicationAdapter", () => {
   });
 });
 
+describe("Discord recording playback link", () => {
+  it("appends a stable recording link without coupling publication to audio", async () => {
+    const projector = new FakeProjector();
+    const adapter = new DiscordSummaryPublicationAdapter(projector, {
+      recordingPlaybackUrl: (meetingId) =>
+        `https://recordings.example.com/recordings/playback#signed-${meetingId}`,
+    });
+
+    await expect(adapter.publish(request)).resolves.toMatchObject({ ok: true });
+
+    expect(projector.inputs[0]?.markdown).toMatch(
+      /## Recording\n\[Listen to the recording\]\(https:\/\/recordings\.example\.com\/recordings\/playback#signed-meeting-42\)$/u,
+    );
+  });
+});
+
 describe("DiscordSummaryPublicationAdapter rendering bounds", () => {
+  it("preserves the recording footer when a long summary is shortened", async () => {
+    const projector = new FakeProjector();
+    const recordingUrl = "https://recordings.example.com/recordings/playback#signed-token";
+    const adapter = new DiscordSummaryPublicationAdapter(projector, {
+      recordingPlaybackUrl: () => recordingUrl,
+    });
+
+    await adapter.publish({
+      ...request,
+      summary: { ...request.summary, overview: "Очень длинный обзор. ".repeat(500) },
+    });
+
+    const markdown = projector.inputs[0]?.markdown ?? "";
+    expect(markdown.length).toBeLessThanOrEqual(4_000);
+    expect(markdown).toContain("Summary was shortened");
+    expect(markdown.endsWith(`[Listen to the recording](${recordingUrl})`)).toBe(true);
+  });
+
   it("keeps the authoritative, speaker-attributed timeline beside the final summary", async () => {
     const projector = new FakeProjector();
     const adapter = new DiscordSummaryPublicationAdapter(projector);

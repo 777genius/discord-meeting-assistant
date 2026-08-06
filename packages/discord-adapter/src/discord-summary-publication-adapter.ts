@@ -40,8 +40,15 @@ type PublicationResult = SummaryPublicationResult<
   Pick<PublicationReceiptSnapshot, "externalPublicationId">
 >;
 
+export interface DiscordSummaryPublicationAdapterOptions {
+  readonly recordingPlaybackUrl?: (meetingId: string) => string;
+}
+
 export class DiscordSummaryPublicationAdapter implements SummaryPublicationPort {
-  public constructor(private readonly publisher: DiscordSummaryProjector) {}
+  public constructor(
+    private readonly publisher: DiscordSummaryProjector,
+    private readonly options: DiscordSummaryPublicationAdapterOptions = {},
+  ) {}
 
   public async publish(request: SummaryPublicationRequest): Promise<PublicationResult> {
     try {
@@ -54,7 +61,10 @@ export class DiscordSummaryPublicationAdapter implements SummaryPublicationPort 
         legacyProjectionKeys: [request.idempotencyKey],
         parentChannelId: request.publicationTargetId,
         threadTitle: discordThreadTitle(request.summary.title),
-        markdown: renderRussianSummaryMarkdown(request),
+        markdown: renderRussianSummaryMarkdown(
+          request,
+          this.options.recordingPlaybackUrl?.(request.meetingId),
+        ),
         liveCaptionsMarkdown: renderRussianFinalTranscriptTimelineMarkdown(
           request.transcript.turns,
         ),
@@ -84,6 +94,7 @@ function currentReference(
 
 export function renderRussianSummaryMarkdown(
   request: Pick<SummaryPublicationRequest, "meetingId" | "summary" | "transcript">,
+  recordingPlaybackUrl?: string,
 ): string {
   const { summary } = request;
   const evidence = new Map(request.transcript.turns.map((turn) => [turn.turnId, turn]));
@@ -138,7 +149,10 @@ export function renderRussianSummaryMarkdown(
       "No open questions were recorded.",
     ),
   ];
-  return boundedMarkdown(bodyLines);
+  const footerLines = recordingPlaybackUrl === undefined
+    ? []
+    : ["## Recording", `[Listen to the recording](${recordingPlaybackUrl})`];
+  return boundedMarkdown(bodyLines, footerLines);
 }
 
 /**
@@ -151,16 +165,20 @@ export function renderRussianFinalTranscriptTimelineMarkdown(
   return renderRussianTranscriptTimelineMarkdown(turns, "final");
 }
 
-function boundedMarkdown(bodyLines: readonly string[]): string {
+function boundedMarkdown(
+  bodyLines: readonly string[],
+  footerLines: readonly string[] = [],
+): string {
   const body = bodyLines.join("\n").trimEnd();
-  if (body.length <= discordMarkdownLimit) {
-    return body;
+  const footer = footerLines.length === 0 ? "" : `\n\n${footerLines.join("\n")}`;
+  if (body.length + footer.length <= discordMarkdownLimit) {
+    return `${body}${footer}`;
   }
 
   const suffix = `\n\n${truncationNotice}`;
-  const bodyBudget = discordMarkdownLimit - suffix.length;
+  const bodyBudget = discordMarkdownLimit - suffix.length - footer.length;
   const shortenedBody = truncateAtStableBoundary(body, bodyBudget);
-  return `${shortenedBody}${suffix}`;
+  return `${shortenedBody}${suffix}${footer}`;
 }
 
 function truncateAtStableBoundary(value: string, maximumLength: number): string {

@@ -426,6 +426,35 @@ boundaries:
         - node:fs/promises
         - node:url
       runtimeReferences: []
+  - id: apps.meeting-platform.recording-playback-application
+    roots:
+      - apps/meeting-platform/src/recording-playback/application
+    entrypoints:
+      - apps/meeting-platform/src/recording-playback/application/recording-playback.ts
+    allow:
+      boundaries: []
+      packages: []
+      builtins: []
+      runtimeReferences: []
+  - id: apps.meeting-platform.recording-playback-adapters
+    roots:
+      - apps/meeting-platform/src/recording-playback/adapters
+    entrypoints:
+      - apps/meeting-platform/src/recording-playback/adapters/index.ts
+    allow:
+      boundaries:
+        - adapters.object-storage
+        - apps.meeting-platform.recording-playback-application
+        - core.meeting.lifecycle
+      packages:
+        - "@aws-sdk/client-s3"
+        - "@discord-meeting/meeting-core"
+        - "@discord-meeting/object-storage-adapter"
+        - fastify
+      builtins:
+        - node:crypto
+        - node:stream
+      runtimeReferences: []
   - id: apps.meeting-platform.craig-ingress
     roots:
       - apps/meeting-platform/src/adapters/inbound/craig
@@ -500,6 +529,7 @@ boundaries:
   - id: apps.meeting-platform.composition
     roots:
       - apps/meeting-platform/src/composition
+      - apps/meeting-platform/src/config
       - apps/meeting-platform/src/config.ts
       - apps/meeting-platform/src/live-meeting-runtime.ts
       - apps/meeting-platform/src/main.ts
@@ -526,6 +556,8 @@ boundaries:
         - apps.meeting-platform.live-runtime
         - apps.meeting-platform.operations-http
         - apps.meeting-platform.outbound-adapters
+        - apps.meeting-platform.recording-playback-adapters
+        - apps.meeting-platform.recording-playback-application
         - contracts.craig-gateway
         - core.guild-configuration
         - core.meeting.conversation

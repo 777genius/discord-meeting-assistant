@@ -50,27 +50,12 @@ import { PlatformLiveMeetingRuntime } from "../live-meeting-runtime.js";
 import type { PlatformStartupCleanup } from "./startup-cleanup.js";
 import { classifyPlatformError } from "./observability.js";
 import { discordLiveCaptionSignature } from "./discord-live-caption-signature.js";
+import { meetingVocabulary } from "./meeting-vocabulary.js";
 
 // Keep wall-clock-shaped timestamps compatible with STT while preventing clock
 // adjustments from corrupting playback deadlines and the four-second guard.
 const monotonicUnixNowMilliseconds = (): number =>
   Math.floor(performance.timeOrigin + performance.now());
-
-const meetingVocabulary = [
-  "BullMQ",
-  "Craig",
-  "Craig recording",
-  "Discord",
-  "Discord thread",
-  "idempotency key",
-  "live Pipecat assistant",
-  "Meeting Platform",
-  "Pipecat",
-  "PostgreSQL",
-  "PostgreSQL pipeline",
-  "Redis",
-  "Redis queue",
-] as const;
 
 export interface PlatformDiscordLiveComposition {
   readonly conversationRuntime?: GrpcPipecatConversationRuntime;
@@ -92,6 +77,7 @@ export async function createPlatformDiscordLiveComposition(input: {
   readonly logger: Logger;
   readonly meetings: PostgresLiveMeetingRepository;
   readonly publicationEffects: SummaryPublicationEffectLedger;
+  readonly recordingPlaybackUrl?: (meetingId: string) => string;
   readonly runtimeTransport: SubscriptionRuntimeTransportPort;
 }): Promise<PlatformDiscordLiveComposition> {
   const discord = new Client({ intents: [GatewayIntentBits.Guilds] });
@@ -160,7 +146,12 @@ export async function createPlatformDiscordLiveComposition(input: {
     guildSetupHandler,
     installUrls,
     ...(live === undefined ? {} : { live }),
-    rawPublisher: new DiscordSummaryPublicationAdapter(discordPublisher),
+    rawPublisher: new DiscordSummaryPublicationAdapter(
+      discordPublisher,
+      input.recordingPlaybackUrl === undefined
+        ? {}
+        : { recordingPlaybackUrl: input.recordingPlaybackUrl },
+    ),
   };
 }
 

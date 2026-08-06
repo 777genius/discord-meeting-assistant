@@ -19,6 +19,7 @@ import {
 import {
   createPlatformPostCallComposition,
 } from "./post-call.js";
+import { createPlatformRecordingPlaybackComposition } from "./recording-playback.js";
 import { createProcessingRuntime } from "./processing.js";
 import {
   closeMeetingPlatformResources,
@@ -49,6 +50,11 @@ export async function startMeetingPlatform(
   const metrics = new PrometheusMetrics();
   try {
     const core = createPlatformCoreResources({ cleanup, config, logger, metrics });
+    const recordingPlayback = createPlatformRecordingPlaybackComposition({
+      config,
+      meetings: core.meetings,
+      s3: core.s3,
+    });
     const discordLive = await createPlatformDiscordLiveComposition({
       cleanup,
       config,
@@ -56,6 +62,9 @@ export async function startMeetingPlatform(
       logger,
       meetings: core.liveMeetings,
       publicationEffects: core.publicationEffects,
+      ...(recordingPlayback.recordingPlaybackUrl === undefined
+        ? {}
+        : { recordingPlaybackUrl: recordingPlayback.recordingPlaybackUrl }),
       runtimeTransport: core.runtimeTransport,
     });
     const processMeeting = createProcessingRuntime({
@@ -114,6 +123,9 @@ export async function startMeetingPlatform(
       ingress,
       installUrls: discordLive.installUrls,
       logger,
+      ...(recordingPlayback.routes === undefined
+        ? {}
+        : { recordingPlaybackRoutes: recordingPlayback.routes }),
     });
     await startPlatformServices({
       config,

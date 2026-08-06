@@ -76,6 +76,11 @@
       "id": "ADR-0015",
       "path": "docs/decisions/0015-meeting-core-feature-modules.md",
       "immutableDigest": "sha256:117e8fce89ac0fe1dab8a8cfda0d01d0c0259325502e84ededb533178bdb38d4"
+    },
+    {
+      "id": "ADR-0016",
+      "path": "docs/decisions/0016-possession-based-recording-playback.md",
+      "immutableDigest": "sha256:348e32c84fd33ebc897c857f8847d340ee10c3213dc8af16606d113c5d71eaa7"
     }
   ]
 }

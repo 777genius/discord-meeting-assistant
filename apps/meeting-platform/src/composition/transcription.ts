@@ -16,25 +16,10 @@ import {
 import type { PlatformConfig } from "../config.js";
 import { S3CompleteOggArtifactReader, S3OggAudioArtifactReader } from "../adapters/outbound/s3-ogg-audio-artifact-reader.js";
 import { InProcessFinalTranscriptionAdmissionPort } from "../application/final-transcription-admission-port.js";
+import { meetingVocabulary } from "./meeting-vocabulary.js";
 
 // Ten human tracks plus the authoritative Botik playback track.
 const maximumFinalSpeakerTracks = 11;
-
-const meetingVocabulary = [
-  "BullMQ",
-  "Craig",
-  "Craig recording",
-  "Discord",
-  "Discord thread",
-  "idempotency key",
-  "live Pipecat assistant",
-  "Meeting Platform",
-  "Pipecat",
-  "PostgreSQL",
-  "PostgreSQL pipeline",
-  "Redis",
-  "Redis queue",
-] as const;
 
 export function createVoicetextBatchFinalTranscriptionOptions(
   config: NonNullable<PlatformConfig["voicetext"]>,

@@ -21,6 +21,7 @@ import {
   type PlatformHealthPort,
 } from "../operations-http/operations-routes.js";
 import type { PlatformStartupCleanup } from "./startup-cleanup.js";
+import type { PlatformRecordingPlaybackComposition } from "./recording-playback.js";
 import { classifyPlatformError } from "./observability.js";
 
 export interface PlatformHttpComposition {
@@ -37,6 +38,9 @@ export function createPlatformHttpComposition(input: {
   readonly ingress: CraigIngressPort;
   readonly installUrls: { readonly craig: string; readonly meetingPlatform: string };
   readonly logger: Logger;
+  readonly recordingPlaybackRoutes?: NonNullable<
+    PlatformRecordingPlaybackComposition["routes"]
+  >;
 }): PlatformHttpComposition {
   const server = createFastifyPlatformHttpHost({
     bindAddress: input.config.bindAddress,
@@ -53,6 +57,9 @@ export function createPlatformHttpComposition(input: {
         health: input.health,
       }),
       createDiscordInstallRoutesPlugin({ installUrls: input.installUrls }),
+      ...(input.recordingPlaybackRoutes === undefined
+        ? []
+        : [input.recordingPlaybackRoutes]),
       createCraigInboundRoutesPlugin({
         bearerToken: input.config.secrets.craigBearerToken,
         configuration: input.configuration,
