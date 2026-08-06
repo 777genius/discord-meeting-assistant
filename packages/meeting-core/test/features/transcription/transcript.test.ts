@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { FinalTranscript } from "@discord-meeting/meeting-core/transcription";
+import {
+  FinalTranscript,
+  TranscriptionInvariantError,
+} from "@discord-meeting/meeting-core/transcription";
 
 const transcriptSnapshot = {
   recordingId: "recording-1",
@@ -35,5 +38,14 @@ describe("Final transcript", () => {
     ]);
     expect(transcript.overlappingPairs()).toHaveLength(1);
     expect(transcript.toSnapshot()).toEqual(transcriptSnapshot);
+  });
+
+  it("owns validation failures for recording-owned speaker identifiers", () => {
+    expect(() =>
+      FinalTranscript.create({
+        ...transcriptSnapshot,
+        turns: [{ ...transcriptSnapshot.turns[0], speakerId: "   " }],
+      }),
+    ).toThrow(TranscriptionInvariantError);
   });
 });

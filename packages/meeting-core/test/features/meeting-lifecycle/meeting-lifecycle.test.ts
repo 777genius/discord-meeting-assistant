@@ -203,4 +203,21 @@ describe("Meeting lifecycle", () => {
     expect(restored.publicationIdempotencyKey()).toBe(first.publicationIdempotencyKey());
     expect(first.publicationIdempotencyKey()).toContain("meeting-summary-publication:v1");
   });
+
+  it("owns validation failures for publishing-owned receipt identifiers", () => {
+    const meeting = recordedMeeting();
+    const transcript = FinalTranscript.create(transcriptSnapshot);
+    meeting.beginTranscription();
+    meeting.completeTranscription(transcript);
+    meeting.beginSummary();
+    meeting.completeSummary(EvidenceBackedSummary.create(summarySnapshot, transcript));
+    meeting.beginPublication();
+
+    expect(() =>
+      meeting.completePublication({
+        externalPublicationId: "   ",
+        idempotencyKey: meeting.publicationIdempotencyKey(),
+      }),
+    ).toThrow(MeetingLifecycleInvariantError);
+  });
 });

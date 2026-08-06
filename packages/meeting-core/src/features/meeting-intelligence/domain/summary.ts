@@ -3,13 +3,32 @@ import {
   requireNonEmpty,
   requirePositiveInteger,
 } from "./errors.js";
-import { createSpeakerId, type SpeakerId } from "../../recording/index.js";
+import {
+  createSpeakerId,
+  RecordingInvariantError,
+  type SpeakerId,
+} from "../../recording/index.js";
 import {
   createTranscriptId,
+  TranscriptionInvariantError,
   type TranscriptId,
   type FinalTranscript,
 } from "../../transcription/index.js";
 import { createSummaryId, type SummaryId } from "./identifiers.js";
+
+function translateForeignIdentifier<Value>(create: () => Value): Value {
+  try {
+    return create();
+  } catch (error) {
+    if (
+      error instanceof RecordingInvariantError ||
+      error instanceof TranscriptionInvariantError
+    ) {
+      throw new DomainInvariantError(error.code, error.message);
+    }
+    throw error;
+  }
+}
 
 export interface SummaryDecisionSnapshot {
   readonly decisionId: string;
@@ -163,7 +182,9 @@ export class EvidenceBackedSummary {
 
   private constructor(snapshot: SummaryCreationSnapshot, transcript: FinalTranscript) {
     this.summaryId = createSummaryId(snapshot.summaryId);
-    this.transcriptId = createTranscriptId(snapshot.transcriptId);
+    this.transcriptId = translateForeignIdentifier(() =>
+      createTranscriptId(snapshot.transcriptId),
+    );
     if (this.transcriptId !== transcript.transcriptId) {
       throw new DomainInvariantError(
         "INVALID_EVIDENCE_REFERENCE",
@@ -198,10 +219,13 @@ export class EvidenceBackedSummary {
     }
 
     const actionItems = snapshot.actionItems.map((actionItem) => {
+      const ownerSpeakerIdInput = actionItem.ownerSpeakerId;
       const ownerSpeakerId =
-        actionItem.ownerSpeakerId === null
+        ownerSpeakerIdInput === null
           ? null
-          : createSpeakerId(actionItem.ownerSpeakerId);
+          : translateForeignIdentifier(() =>
+              createSpeakerId(ownerSpeakerIdInput),
+            );
       if (ownerSpeakerId !== null && !transcript.hasSpeaker(ownerSpeakerId)) {
         throw new DomainInvariantError(
           "INVALID_OWNER_REFERENCE",

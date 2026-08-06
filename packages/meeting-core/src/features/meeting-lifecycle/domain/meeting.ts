@@ -4,7 +4,9 @@ import {
   requireNonNegativeInteger,
 } from "./errors.js";
 import {
+  createMeetingExternalPublicationId,
   createMeetingId,
+  createMeetingPublicationTargetId,
   type MeetingId,
 } from "./identifiers.js";
 import {
@@ -16,8 +18,6 @@ import {
   type EvidenceBackedSummarySnapshot,
 } from "../../meeting-intelligence/index.js";
 import {
-  createExternalPublicationId,
-  createPublicationTargetId,
   type PublicationReceipt,
   type PublicationReceiptSnapshot,
   type PublicationTargetId,
@@ -80,7 +80,9 @@ export class Meeting {
 
   private constructor(snapshot: MeetingSnapshot) {
     this.meetingId = createMeetingId(snapshot.meetingId);
-    this.publicationTargetId = createPublicationTargetId(snapshot.publicationTargetId);
+    this.publicationTargetId = createMeetingPublicationTargetId(
+      snapshot.publicationTargetId,
+    );
     this.recording = RecordingArtifact.create(snapshot.recording);
     this.currentRevision = requireNonNegativeInteger(snapshot.revision, "meeting.revision");
     this.stages = {
@@ -103,7 +105,7 @@ export class Meeting {
       snapshot.publication === null
         ? null
         : Object.freeze({
-            externalPublicationId: createExternalPublicationId(
+            externalPublicationId: createMeetingExternalPublicationId(
               snapshot.publication.externalPublicationId,
             ),
             idempotencyKey: requireNonEmpty(
@@ -255,7 +257,9 @@ export class Meeting {
 
   public completePublication(receipt: PublicationReceiptSnapshot): boolean {
     const normalized = Object.freeze({
-      externalPublicationId: createExternalPublicationId(receipt.externalPublicationId),
+      externalPublicationId: createMeetingExternalPublicationId(
+        receipt.externalPublicationId,
+      ),
       idempotencyKey: requireNonEmpty(receipt.idempotencyKey, "publication.idempotencyKey"),
     });
     if (normalized.idempotencyKey !== this.publicationIdempotencyKey()) {

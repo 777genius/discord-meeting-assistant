@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { EvidenceBackedSummary } from "@discord-meeting/meeting-core/meeting-intelligence";
+import {
+  EvidenceBackedSummary,
+  MeetingIntelligenceInvariantError,
+} from "@discord-meeting/meeting-core/meeting-intelligence";
 import { FinalTranscript } from "@discord-meeting/meeting-core/transcription";
 
 const transcript = FinalTranscript.create({
@@ -157,6 +160,23 @@ describe("Evidence-backed summary", () => {
         transcript,
       ),
     ).toThrow(/deadline must not be empty/u);
+  });
+
+  it("owns validation failures for recording-owned action item owners", () => {
+    expect(() =>
+      EvidenceBackedSummary.create(
+        {
+          ...summarySnapshot,
+          actionItems: [
+            {
+              ...summarySnapshot.actionItems[0],
+              ownerSpeakerId: "   ",
+            },
+          ],
+        },
+        transcript,
+      ),
+    ).toThrow(MeetingIntelligenceInvariantError);
   });
 
   it("requires every open question to have a unique id and real evidence", () => {

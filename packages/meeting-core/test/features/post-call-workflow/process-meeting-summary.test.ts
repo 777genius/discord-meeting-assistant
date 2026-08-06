@@ -371,6 +371,112 @@ describe("ProcessMeetingSummary", () => {
   });
 });
 
+describe("ProcessMeetingSummary invalid provider output", () => {
+  it("persists blank transcript speakers as a terminal transcription failure", async () => {
+    const meetings = new MemoryMeetingRepository(initialSnapshot());
+    const transcriber = new SequenceTranscriber([
+      success({
+        ...generatedTranscript,
+        turns: [{ ...generatedTranscript.turns[0]!, speakerId: "   " }],
+      }),
+    ]);
+    const summarizer = new SequenceSummarizer([]);
+    const publisher = new SequencePublisher([]);
+    const useCase = new ProcessMeetingSummary({
+      meetings,
+      publisher,
+      summarizer,
+      transcriber,
+    });
+
+    const expectedFailure = {
+      failure: { code: "INVALID_TRANSCRIPTION_OUTPUT", retryable: false },
+      stage: "transcription",
+      status: "failed",
+    } as const;
+    await expect(useCase.execute("meeting-1")).resolves.toMatchObject(expectedFailure);
+    await expect(useCase.execute("meeting-1")).resolves.toMatchObject(expectedFailure);
+
+    expect(meetings.snapshot.transcriptionStage).toMatchObject({
+      failure: { code: "INVALID_TRANSCRIPTION_OUTPUT", retryable: false },
+      status: "failed",
+    });
+    expect(transcriber.requests).toHaveLength(1);
+    expect(summarizer.requests).toHaveLength(0);
+    expect(publisher.requests).toHaveLength(0);
+    expect(meetings.snapshot.recording).toEqual(recording);
+  });
+
+  it("persists blank summary owners as a terminal summary failure", async () => {
+    const meetings = new MemoryMeetingRepository(initialSnapshot());
+    const transcriber = new SequenceTranscriber([success(generatedTranscript)]);
+    const summarizer = new SequenceSummarizer([
+      success({
+        ...generatedSummary,
+        actionItems: [
+          { ...generatedSummary.actionItems[0]!, ownerSpeakerId: "   " },
+        ],
+      }),
+    ]);
+    const publisher = new SequencePublisher([]);
+    const useCase = new ProcessMeetingSummary({
+      meetings,
+      publisher,
+      summarizer,
+      transcriber,
+    });
+
+    const expectedFailure = {
+      failure: { code: "INVALID_SUMMARY_OUTPUT", retryable: false },
+      stage: "summary",
+      status: "failed",
+    } as const;
+    await expect(useCase.execute("meeting-1")).resolves.toMatchObject(expectedFailure);
+    await expect(useCase.execute("meeting-1")).resolves.toMatchObject(expectedFailure);
+
+    expect(meetings.snapshot.summaryStage).toMatchObject({
+      failure: { code: "INVALID_SUMMARY_OUTPUT", retryable: false },
+      status: "failed",
+    });
+    expect(transcriber.requests).toHaveLength(1);
+    expect(summarizer.requests).toHaveLength(1);
+    expect(publisher.requests).toHaveLength(0);
+    expect(meetings.snapshot.recording).toEqual(recording);
+  });
+
+  it("persists blank publication ids as a terminal publication failure", async () => {
+    const meetings = new MemoryMeetingRepository(initialSnapshot());
+    const transcriber = new SequenceTranscriber([success(generatedTranscript)]);
+    const summarizer = new SequenceSummarizer([success(generatedSummary)]);
+    const publisher = new SequencePublisher([
+      success({ externalPublicationId: "   " }),
+    ]);
+    const useCase = new ProcessMeetingSummary({
+      meetings,
+      publisher,
+      summarizer,
+      transcriber,
+    });
+
+    const expectedFailure = {
+      failure: { code: "INVALID_PUBLICATION_OUTPUT", retryable: false },
+      stage: "publication",
+      status: "failed",
+    } as const;
+    await expect(useCase.execute("meeting-1")).resolves.toMatchObject(expectedFailure);
+    await expect(useCase.execute("meeting-1")).resolves.toMatchObject(expectedFailure);
+
+    expect(meetings.snapshot.publicationStage).toMatchObject({
+      failure: { code: "INVALID_PUBLICATION_OUTPUT", retryable: false },
+      status: "failed",
+    });
+    expect(transcriber.requests).toHaveLength(1);
+    expect(summarizer.requests).toHaveLength(1);
+    expect(publisher.requests).toHaveLength(1);
+    expect(meetings.snapshot.recording).toEqual(recording);
+  });
+});
+
 describe("ProcessMeetingSummary failure recovery", () => {
   it("rejects invalid summary evidence as terminal and never calls publishing", async () => {
     const meetings = new MemoryMeetingRepository(initialSnapshot());

@@ -7,6 +7,7 @@ import {
 import {
   createRecordingId,
   createSpeakerId,
+  RecordingInvariantError,
   type RecordingId,
   type SpeakerId,
 } from "../../recording/index.js";
@@ -16,6 +17,17 @@ import {
   type TranscriptId,
   type TranscriptTurnId,
 } from "./identifiers.js";
+
+function translateRecordingIdentifier<Value>(create: () => Value): Value {
+  try {
+    return create();
+  } catch (error) {
+    if (error instanceof RecordingInvariantError) {
+      throw new DomainInvariantError(error.code, error.message);
+    }
+    throw error;
+  }
+}
 
 export interface TranscriptTurnSnapshot {
   readonly endMs: number;
@@ -41,7 +53,9 @@ export class TranscriptTurn {
 
   private constructor(snapshot: TranscriptTurnSnapshot) {
     this.turnId = createTranscriptTurnId(snapshot.turnId);
-    this.speakerId = createSpeakerId(snapshot.speakerId);
+    this.speakerId = translateRecordingIdentifier(() =>
+      createSpeakerId(snapshot.speakerId),
+    );
     this.startMs = requireNonNegativeInteger(snapshot.startMs, "transcriptTurn.startMs");
     this.endMs = requireNonNegativeInteger(snapshot.endMs, "transcriptTurn.endMs");
     if (this.endMs <= this.startMs) {
@@ -92,7 +106,9 @@ export class FinalTranscript {
 
   private constructor(snapshot: FinalTranscriptSnapshot) {
     this.transcriptId = createTranscriptId(snapshot.transcriptId);
-    this.recordingId = createRecordingId(snapshot.recordingId);
+    this.recordingId = translateRecordingIdentifier(() =>
+      createRecordingId(snapshot.recordingId),
+    );
     this.version = requirePositiveInteger(snapshot.version, "transcript.version");
 
     const turns = snapshot.turns.map((turn) => TranscriptTurn.create(turn));
@@ -115,7 +131,9 @@ export class FinalTranscript {
   }
 
   public hasSpeaker(speakerId: string): boolean {
-    const expected = createSpeakerId(speakerId);
+    const expected = translateRecordingIdentifier(() =>
+      createSpeakerId(speakerId),
+    );
     return this.turns.some((turn) => turn.speakerId === expected);
   }
 

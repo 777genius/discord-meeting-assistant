@@ -52,7 +52,7 @@ export class CraigVoicePlaybackSession implements VoicePlaybackSession {
     | undefined;
   private state: "starting" | "open" | "finishing" | "cancelling" | "finished" | "failed" =
     "starting";
-  private terminalFailure: StageFailure | undefined;
+  private terminalFailure: ConversationFailure | undefined;
 
   private readonly nowMilliseconds: () => number;
   private readonly onTerminal: () => void;
