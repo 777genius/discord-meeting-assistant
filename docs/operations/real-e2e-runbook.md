@@ -93,15 +93,17 @@ Discord run is a separate external gate and must exercise at least:
 Each run must retain non-secret evidence: meeting and recording IDs, stage
 transitions, audio duration, speaker IDs, transcript WER/CER and terminology
 checks, overlap assertions, evidence-reference validation, and the final Discord
-container/message IDs. Retained evidence schema v3 records whether the visible
+container/message IDs. Retained evidence schema v4 records whether the visible
 projection is a direct parent-channel message or a thread message. It continues
-to read historical v2 thread evidence and also records the exact Craig and
-Meeting Platform container IDs/start times, immutable image IDs, optional
-repository digests, image-bound source revisions, and Compose config hashes. The
+to read historical v2/v3 evidence and also records the exact Craig, Meeting
+Platform, and Subscription Runtime container IDs/start times, immutable image
+IDs, optional repository digests, image-bound source revisions, Compose config
+hashes, and correlated stage/model latency observations. The
 acceptance result is invalid if any decision or action item references a missing
 transcript turn, if a retry creates a duplicate meeting, summary, container, or
-message, or if deployment provenance changes during collection or between
-campaign runs.
+message, if a required action deliverable is absent or unsupported by its cited
+turns, or if deployment provenance changes during collection or between campaign
+runs.
 
 The live slice adds a separate timing and mutation proof. For a call longer than
 five minutes, retain timestamps for the first audio packet, first finalized
@@ -240,13 +242,14 @@ ARG SOURCE_REVISION
 LABEL org.opencontainers.image.revision="${SOURCE_REVISION}"
 ```
 
-Meeting Platform receives this through `MEETING_PLATFORM_SOURCE_REVISION` in
-the deployment environment. Apply the same `SOURCE_REVISION` label to the
+Meeting Platform and Subscription Runtime receive their revisions through the
+deployment environment. Apply the same `SOURCE_REVISION` label to the
 isolated Craig gateway image in its own deployment Dockerfile. A copied host
 source tree does not need `.git`; the revision is captured before copying and is
-made immutable by the built image ID plus OCI label. Verify both labels with
+made immutable by the built image ID plus OCI label. Verify all three labels with
 `docker image inspect` before the first call. Do not restart or redeploy Craig or
-Meeting Platform between actor start and retained evidence collection.
+Meeting Platform, or Subscription Runtime between actor start and retained
+evidence collection.
 
 Use the versioned Russian/English ground truth at
 `apps/discord-e2e-actors/test/fixtures/manifest.v1.json`. Generate its audio with
@@ -271,9 +274,9 @@ result. Run the campaign verifier with the standard pnpm separator:
 ```sh
 pnpm --filter @discord-meeting/discord-e2e-actors run verify:campaign -- \
   apps/discord-e2e-actors/test/fixtures/manifest.v1.json \
-  /absolute/evidence/sequential.evidence.v3.json \
-  /absolute/evidence/overlap.evidence.v3.json \
-  /absolute/evidence/reconnect.evidence.v3.json
+  /absolute/evidence/sequential.evidence.v4.json \
+  /absolute/evidence/overlap.evidence.v4.json \
+  /absolute/evidence/reconnect.evidence.v4.json
 ```
 
 The verifier rejects cross-meeting identity reuse, mixed deployments, raw

@@ -1,7 +1,7 @@
 import {
-  retainedE2eEvidenceV3Schema,
+  retainedE2eEvidenceV4Schema,
   sameDeploymentProvenance,
-  type RetainedE2eEvidenceV3,
+  type RetainedE2eEvidenceV4,
 } from "./e2e-evidence.js";
 import {
   assertDiscordReference,
@@ -47,7 +47,7 @@ export async function collectRetainedE2eEvidence(
   input: CollectEvidenceInput,
   deployment: DeploymentEvidenceProbe,
   discord: DiscordEvidenceProbe,
-): Promise<RetainedE2eEvidenceV3> {
+): Promise<RetainedE2eEvidenceV4> {
   const unboundActorRun = parseUnboundActorRun(input.actorRun);
   if (unboundActorRun.runId !== input.runId) {
     throw new Error("Actor evidence does not match the requested run correlation");
@@ -77,6 +77,7 @@ export async function collectRetainedE2eEvidence(
   assertS3MatchesSnapshot(s3, snapshot);
   assertExactDiscordProjection(beforeDiscord, publication, "before replay");
   const actorRun = bindActorRun(unboundActorRun, input.recordingId, s3);
+  const processing = await deployment.collectProcessing(snapshot.meetingId, s3.startedAt);
   const replayJob = await deployment.replayPostCall(snapshot.meetingId);
   if (replayJob.afterProcessedOn <= replayJob.beforeProcessedOn) {
     throw new Error("Replay job did not complete a later real processing attempt");
@@ -98,7 +99,7 @@ export async function collectRetainedE2eEvidence(
   }
   const recordingDurationMs = recordingDuration(s3);
   assertExactDiscordProjection(afterDiscord, replayPublication, "after replay");
-  return retainedE2eEvidenceV3Schema.parse({
+  return retainedE2eEvidenceV4Schema.parse({
     actorRun,
     deployment: provenanceBefore,
     database: {
@@ -118,6 +119,7 @@ export async function collectRetainedE2eEvidence(
       matchingThreadCount: beforeDiscord.matchingThreadIds.length,
       messageId: publication.messageId,
     },
+    processing,
     recording: {
       durationMs: recordingDurationMs,
       endedAt: s3.endedAt,
@@ -146,7 +148,7 @@ export async function collectRetainedE2eEvidence(
       summaryId: replaySnapshot.summary.summaryId,
       transcriptId: replaySnapshot.transcript.transcriptId,
     },
-    schemaVersion: 3,
+    schemaVersion: 4,
     stages: [
       { ...snapshot.transcriptionStage, stage: "transcription" },
       { ...snapshot.summaryStage, stage: "summary" },

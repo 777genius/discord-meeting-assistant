@@ -166,7 +166,7 @@ describe("instrumented subscription runtime transport", () => {
         meetingId: "meeting-1",
         model: "gpt-5.6-sol",
         outputSchemaName: "discord_meeting_summary_v4",
-        policyVersion: "meeting-summary.subscription-runtime.v12",
+        policyVersion: "meeting-summary.subscription-runtime.v13",
         providerCost: {
           availability: "bounded",
           maximumUsd: 0.004,

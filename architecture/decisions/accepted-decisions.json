@@ -96,6 +96,11 @@
       "id": "ADR-0019",
       "path": "docs/decisions/0019-retain-fragmented-summary-evidence.md",
       "immutableDigest": "sha256:bfc3cb6e2b311b43cf739d24d712dbd9199c5d0da99f93e3cd6b7ef6b8055632"
+    },
+    {
+      "id": "ADR-0020",
+      "path": "docs/decisions/0020-qualify-complete-action-chains.md",
+      "immutableDigest": "sha256:57985e1bea944d40ad648b733edffc24d44f0a43728438cc651a0e0c719643d3"
     }
   ]
 }

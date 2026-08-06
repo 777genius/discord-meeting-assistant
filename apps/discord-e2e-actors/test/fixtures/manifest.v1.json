@@ -8,7 +8,7 @@
       {
         "ownerSpeakerId": "1533228054724346087",
         "deadline": "до 7 августа 2026 года",
-        "requiredTerms": ["Discord thread"]
+        "requiredTerms": ["Redis queue", "idempotency key", "Discord thread"]
       }
     ],
     "topicTerms": ["Meeting Platform", "Craig recording", "PostgreSQL pipeline"]

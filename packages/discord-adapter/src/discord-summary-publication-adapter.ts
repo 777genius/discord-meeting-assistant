@@ -33,66 +33,16 @@ import {
   renderRussianFinalTranscriptAttachmentMarkdown,
   renderRussianTranscriptTimelineMarkdown,
 } from "./discord-transcript-timeline.js";
+import {
+  dominantTranscriptLocale,
+  finalSummaryCopy,
+} from "./discord-summary-locale.js";
 
 interface DiscordSummaryProjector {
   publish(input: PublishDiscordSummary): Promise<DiscordProjectionReference>;
 }
 
 const discordMarkdownLimit = 4_000;
-
-const finalSummaryCopy = {
-  en: {
-    actionItems: "## Action items",
-    decisions: "## Decisions",
-    due: "Due",
-    keyTopics: "## Key topics and details",
-    noActionItems: "No action items were recorded.",
-    noDecisions: "No decisions were recorded.",
-    noOpenQuestions: "No open questions were recorded.",
-    noTopics: "No key topics were identified.",
-    notSpecified: "not specified",
-    openQuestions: "## Open questions",
-    overview: "## Overview",
-    owner: "Owner",
-    sourceUtteranceUnavailable: "The source utterance is unavailable.",
-    truncationNotice: "_Summary was shortened due to Discord's limit._",
-    unassigned: "unassigned",
-  },
-  ru: {
-    actionItems: "## Задачи",
-    decisions: "## Решения",
-    due: "Срок",
-    keyTopics: "## Ключевые темы и детали",
-    noActionItems: "Задачи не зафиксированы.",
-    noDecisions: "Решения не зафиксированы.",
-    noOpenQuestions: "Открытые вопросы не зафиксированы.",
-    noTopics: "Ключевые темы не выделены.",
-    notSpecified: "не указан",
-    openQuestions: "## Открытые вопросы",
-    overview: "## Кратко",
-    owner: "Ответственный",
-    sourceUtteranceUnavailable: "Исходная реплика недоступна.",
-    truncationNotice: "_Саммари сокращено из-за лимита Discord._",
-    unassigned: "не назначен",
-  },
-  uk: {
-    actionItems: "## Завдання",
-    decisions: "## Рішення",
-    due: "Термін",
-    keyTopics: "## Ключові теми та деталі",
-    noActionItems: "Завдання не зафіксовані.",
-    noDecisions: "Рішення не зафіксовані.",
-    noOpenQuestions: "Відкриті питання не зафіксовані.",
-    noTopics: "Ключові теми не виділені.",
-    notSpecified: "не вказаний",
-    openQuestions: "## Відкриті питання",
-    overview: "## Коротко",
-    owner: "Відповідальний",
-    sourceUtteranceUnavailable: "Початкова репліка недоступна.",
-    truncationNotice: "_Самарі скорочено через ліміт Discord._",
-    unassigned: "не призначений",
-  },
-} as const;
 
 type PublicationResult = SummaryPublicationResult<
   Pick<PublicationReceiptSnapshot, "externalPublicationId">
@@ -265,44 +215,6 @@ function boundedMarkdown(bodyLines: readonly string[], truncationNotice: string)
   const shortenedBody = truncateAtStableBoundary(body, bodyBudget);
   return `${shortenedBody}${suffix}`;
 }
-
-function dominantTranscriptLocale(
-  turns: SummaryPublicationRequest["transcript"]["turns"],
-): DiscordTranscriptLocale {
-  const transcriptText = turns.map((turn) => turn.text).join(" ");
-  const cyrillic = (transcriptText.match(/\p{Script=Cyrillic}/gu) ?? []).length;
-  const latin = (transcriptText.match(/\p{Script=Latin}/gu) ?? []).length;
-  if (cyrillic <= latin) {
-    return "en";
-  }
-  const ukrainianExclusive = (transcriptText.match(/[іїєґ]/giu) ?? []).length;
-  const russianExclusive = (transcriptText.match(/[ыэъё]/giu) ?? []).length;
-  if (ukrainianExclusive > 0 && russianExclusive === 0) {
-    return "uk";
-  }
-  if (russianExclusive > 0 && ukrainianExclusive === 0) {
-    return "ru";
-  }
-  const words = transcriptText.toLocaleLowerCase().match(/\p{L}+/gu) ?? [];
-  const ukrainianScore = ukrainianExclusive * 3 + words.filter(
-    (word) => ukrainianLocaleMarkers.has(word),
-  ).length;
-  const russianScore = russianExclusive * 3 + words.filter(
-    (word) => russianLocaleMarkers.has(word),
-  ).length;
-  return ukrainianScore > russianScore ? "uk" : "ru";
-}
-
-const ukrainianLocaleMarkers = new Set([
-  "будь", "добре", "додай", "додати", "завдання", "залишити", "користувач",
-  "ласка", "можемо", "можна", "налаштувати", "питання", "посилання", "також",
-  "треба", "це", "цей", "ця", "якщо", "зробити",
-]);
-const russianLocaleMarkers = new Set([
-  "добавить", "добавь", "задача", "если", "можем", "можно", "настроить",
-  "нужно", "оставить", "пожалуйста", "пользователь", "решение", "сделать",
-  "ссылка", "также", "хорошо", "эта", "это", "этот",
-]);
 
 function truncateAtStableBoundary(value: string, maximumLength: number): string {
   if (value.length <= maximumLength) {

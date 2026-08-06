@@ -95,6 +95,12 @@ describe("final summary quality evals", () => {
     expect(request.task.systemPrompt).toContain(
       "do not split one task, its owner, deadline, acceptance condition, or result destination",
     );
+    expect(request.task.systemPrompt).toContain(
+      "neighboring first-person commitments from one speaker as one action",
+    );
+    expect(request.task.systemPrompt).toContain(
+      "instead of emitting a second partial or unassigned action",
+    );
   });
 
   it("selects English for an English transcript and falls back for balanced language", () => {

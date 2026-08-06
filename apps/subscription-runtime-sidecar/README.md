@@ -28,7 +28,7 @@ must call that version's
 `subscription-runtime-run-agent-task` JSON bridge while constructing the Codex
 worker with the exact selected profile: `gpt-5.6-sol`/`medium` for final
 summaries with an admitted 2048-token post-execution output budget and policy
-version `v12`, and `gpt-5.6-luna`/`low` for incremental summaries with an
+version `v13`, and `gpt-5.6-luna`/`low` for incremental summaries with an
 admitted 2048-token post-execution output budget and policy version `v5`.
 Conversation uses `gpt-5.6-luna`/`low`, a 512-token budget, policy
 `meeting-conversation.subscription-runtime.v1`, and schema
