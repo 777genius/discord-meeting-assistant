@@ -25,6 +25,7 @@ export {
   codexExecJsonlCompatibilityAgentMessage,
   codexExecJsonlUsage,
   codexJsonlTelemetry,
+  isPinnedCodexTaskInvocation,
   parseBridgeResultJson,
   runCodexJsonlCapture,
 } from "./audited-codex-jsonl-capture.mjs";

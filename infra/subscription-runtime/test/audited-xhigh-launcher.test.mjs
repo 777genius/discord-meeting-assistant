@@ -21,6 +21,7 @@ import {
   codexExecJsonlCompatibilityAgentMessage,
   codexExecJsonlUsage,
   codexJsonlTelemetry,
+  isPinnedCodexTaskInvocation,
   main,
   parseBridgeResultJson,
 } from "../audited-xhigh-launcher.mjs";
@@ -245,6 +246,44 @@ test("admits only the immutable final, incremental, and conversation profiles", 
   );
 });
 
+test("admits only the two exact packaged-exec schema argv forms", () => {
+  const withoutSchema = pinnedTaskArgv("gpt-5.6-sol", "medium", false);
+  const withSchema = pinnedTaskArgv("gpt-5.6-sol", "medium", true);
+  const schemaFlagIndex = withSchema.indexOf("--output-schema");
+  const relativeSchema = [...withSchema];
+  relativeSchema[schemaFlagIndex + 1] = "relative/schema.json";
+
+  assert.equal(
+    isPinnedCodexTaskInvocation(withoutSchema, "gpt-5.6-sol", "medium"),
+    true,
+  );
+  assert.equal(
+    isPinnedCodexTaskInvocation(withSchema, "gpt-5.6-sol", "medium"),
+    true,
+  );
+  assert.equal(
+    isPinnedCodexTaskInvocation(
+      relativeSchema,
+      "gpt-5.6-sol",
+      "medium",
+    ),
+    false,
+  );
+  assert.equal(
+    isPinnedCodexTaskInvocation(
+      [
+        ...withSchema.slice(0, -1),
+        "--output-schema",
+        "/tmp/subscription-runtime-codex-schema-extra/schema.json",
+        "-",
+      ],
+      "gpt-5.6-sol",
+      "medium",
+    ),
+    false,
+  );
+});
+
 test("generated capture wrapper survives the runtime-pruned environment", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "subscription-runtime-launcher-test-"));
   t.after(async () => rm(root, { force: true, recursive: true }));
@@ -382,7 +421,7 @@ test("generated capture wrapper survives the runtime-pruned environment", async 
         await assert.rejects(readFile(usagePath(), "utf8"), { code: "ENOENT" });
         const captured = await runExecutable(
           workerOptions.codexBinaryPath,
-          pinnedTaskArgv("gpt-5.6-luna", "low"),
+          pinnedTaskArgv("gpt-5.6-luna", "low", false),
           prunedEnvironment,
         );
         assert.equal(captured.exitCode, 0);
@@ -391,7 +430,7 @@ test("generated capture wrapper survives the runtime-pruned environment", async 
         const events = captured.stdout.trim().split("\n").map(JSON.parse);
         assert.deepEqual(events[0], {
           type: "stub.invoked",
-          argv: pinnedTaskArgv("gpt-5.6-luna", "low"),
+          argv: pinnedTaskArgv("gpt-5.6-luna", "low", false),
         });
         assert.deepEqual(events[1], {
           type: "item.completed",
@@ -547,7 +586,7 @@ function completedBridgeResult() {
   };
 }
 
-function pinnedTaskArgv(model, reasoningEffort) {
+function pinnedTaskArgv(model, reasoningEffort, includeOutputSchema = true) {
   const outputSchemaPath = join(
     "/tmp",
     "subscription-runtime-codex-schema-test",
@@ -588,8 +627,7 @@ function pinnedTaskArgv(model, reasoningEffort) {
     "features.network_proxy.enabled=true",
     "--config",
     'features.network_proxy.domains={ "api.openai.com" = "allow" }',
-    "--output-schema",
-    outputSchemaPath,
+    ...(includeOutputSchema ? ["--output-schema", outputSchemaPath] : []),
     "--ephemeral",
     "--ignore-user-config",
     "--ignore-rules",
