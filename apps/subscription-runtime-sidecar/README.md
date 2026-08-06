@@ -28,8 +28,8 @@ must call that version's
 `subscription-runtime-run-agent-task` JSON bridge while constructing the Codex
 worker with the exact selected profile: `gpt-5.6-sol`/`medium` for final
 summaries with an admitted 2048-token post-execution output budget and policy
-version `v8`, and `gpt-5.6-luna`/`low` for incremental summaries with an
-admitted 2048-token post-execution output budget and policy version `v4`.
+version `v12`, and `gpt-5.6-luna`/`low` for incremental summaries with an
+admitted 2048-token post-execution output budget and policy version `v5`.
 Conversation uses `gpt-5.6-luna`/`low`, a 512-token budget, policy
 `meeting-conversation.subscription-runtime.v1`, and schema
 `discord_meeting_conversation_answer_v1`. Every profile has disabled tools, no
@@ -39,7 +39,7 @@ exact profiles is not an admitted production installation.
 
 The final purpose admits only `discord_meeting_summary_v4`: title up to 96
 characters, overview up to 320, at most four topics with one or two points, at
-most five decisions/actions/questions, one or two evidence turns per item, and
+most five decisions/actions/questions, one to four evidence turns per item, and
 160-character prose (96 for deadlines). The live purpose
 admits only `discord_meeting_incremental_summary_v1`: one short overview,
 at most three topics with one or two points, at most three entries in each key
