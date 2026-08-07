@@ -1,4 +1,4 @@
-export const voicetextBatchContractVersion = "3";
+export const voicetextBatchContractVersion = "2";
 export const voicetextBatchLanguage = "multi";
 export const voicetextBatchModel = "nova-3";
 export const voicetextBatchProvider = "deepgram";

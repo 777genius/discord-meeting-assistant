@@ -43,17 +43,17 @@ describe("Voicetext batch readable segment mapping", () => {
       value: {
         readableSegments: [{
           endMs: 11_000,
-          segmentId: "readable-segment:v3:7:job-key:1:1:1:1",
+          segmentId: "readable-segment:v2:7:job-key:1:1:1:1",
           sourceTurnIds: [
-            "turn:v3:7:job-key:1:1:1:1",
-            "turn:v3:7:job-key:1:1:1:2",
+            "turn:v2:7:job-key:1:1:1:1",
+            "turn:v2:7:job-key:1:1:1:2",
           ],
           speakerId: "discord-user-a",
           startMs: 10_000,
           text: "Готовим релиз.",
         }],
-        turns: [{ turnId: "turn:v3:7:job-key:1:1:1:1" }, {
-          turnId: "turn:v3:7:job-key:1:1:1:2",
+        turns: [{ turnId: "turn:v2:7:job-key:1:1:1:1" }, {
+          turnId: "turn:v2:7:job-key:1:1:1:2",
         }],
       },
     });

@@ -23,7 +23,7 @@ import { describe, expect, it } from "vitest";
 const jobId = "00000000-0000-4000-8000-000000000001";
 
 describe("provider-neutral transcript segments E2E", () => {
-  it("persists v3 segments, renders a compact timeline, and keeps raw evidence", async () => {
+  it("persists enriched v2 segments, renders a compact timeline, and keeps raw evidence", async () => {
     let submittedContractVersion: unknown = null;
     const client = new FetchVoicetextBatchClient({
       endpoint: "https://api.voicetext.test/api/v1/transcribe/batch",
@@ -35,7 +35,7 @@ describe("provider-neutral transcript segments E2E", () => {
         throw new Error("expected batch multipart body");
       }
       submittedContractVersion = body.get("contract_version");
-      return Response.json(completedBatchV3Response());
+      return Response.json(completedBatchV2Response());
     });
     const reader: CompleteOggArtifactReader = {
       read: async () => ({ bytes: validOgg(), complete: true, container: "ogg" }),
@@ -55,7 +55,7 @@ describe("provider-neutral transcript segments E2E", () => {
       status: "published",
     });
 
-    expect(submittedContractVersion).toBe("3");
+    expect(submittedContractVersion).toBe("2");
     expect(meetings.snapshot.transcript).toMatchObject({
       readableSegments: [{
         endMs: 2_800,
@@ -96,7 +96,7 @@ describe("provider-neutral transcript segments E2E", () => {
         throw new Error("expected speaker Ogg upload");
       }
       const marker = new Uint8Array(await file.arrayBuffer())[5];
-      return Response.json(singleTurnBatchV3Response(marker === 1));
+      return Response.json(singleTurnBatchV2Response(marker === 1));
     });
     const reader: CompleteOggArtifactReader = {
       read: async (audioLocator) => ({
@@ -235,7 +235,7 @@ function initialTwoSpeakerMeeting(): MeetingSnapshot {
   }).toSnapshot();
 }
 
-function completedBatchV3Response(): Readonly<Record<string, unknown>> {
+function completedBatchV2Response(): Readonly<Record<string, unknown>> {
   return {
     job_id: jobId,
     result: {
@@ -260,7 +260,7 @@ function completedBatchV3Response(): Readonly<Record<string, unknown>> {
   };
 }
 
-function singleTurnBatchV3Response(
+function singleTurnBatchV2Response(
   includeReadableSegment: boolean,
 ): Readonly<Record<string, unknown>> {
   const firstSpeaker = includeReadableSegment;

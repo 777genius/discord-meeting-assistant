@@ -104,13 +104,13 @@ describe("VoicetextBatchFinalTranscriptionAdapter", () => {
       ok: true,
       value: {
         readableSegments: [],
-        transcriptId: "transcript:v3:7:job-key",
+        transcriptId: "transcript:v2:7:job-key",
         turns: [{
           endMs: 10_750,
           speakerId: "discord-user-a",
           startMs: 10_250,
           text: "готовим релиз",
-          turnId: "turn:v3:7:job-key:1:1:1:1",
+          turnId: "turn:v2:7:job-key:1:1:1:1",
         }],
         version: 2,
       },
@@ -260,21 +260,21 @@ describe("VoicetextBatchFinalTranscriptionAdapter", () => {
       ok: true,
       value: {
         readableSegments: [],
-        transcriptId: "transcript:v3:7:job-key",
+        transcriptId: "transcript:v2:7:job-key",
         turns: [
           {
             endMs: 2_000,
             speakerId: "discord-user-a",
             startMs: 1_000,
             text: "первый трек",
-            turnId: "turn:v3:7:job-key:1:1:1:1",
+            turnId: "turn:v2:7:job-key:1:1:1:1",
           },
           {
             endMs: 2_000,
             speakerId: "discord-user-b",
             startMs: 1_500,
             text: "второй трек",
-            turnId: "turn:v3:7:job-key:1:2:1:1",
+            turnId: "turn:v2:7:job-key:1:2:1:1",
           },
         ],
         version: 2,
@@ -440,21 +440,21 @@ describe("VoicetextBatchFinalTranscriptionAdapter capacity and timing", () => {
       ok: true,
       value: {
         readableSegments: [],
-        transcriptId: "transcript:v3:7:job-key",
+        transcriptId: "transcript:v2:7:job-key",
         turns: [
           {
             endMs: 15_760,
             speakerId: "discord-user-a",
             startMs: 15_000,
             text: "первая реплика",
-            turnId: "turn:v3:7:job-key:1:1:1:1",
+            turnId: "turn:v2:7:job-key:1:1:1:1",
           },
           {
             endMs: 16_000,
             speakerId: "discord-user-a",
             startMs: 15_760,
             text: "вторая реплика",
-            turnId: "turn:v3:7:job-key:1:1:1:2",
+            turnId: "turn:v2:7:job-key:1:1:1:2",
           },
         ],
         version: 2,
@@ -481,21 +481,21 @@ describe("VoicetextBatchFinalTranscriptionAdapter capacity and timing", () => {
       ok: true,
       value: {
         readableSegments: [],
-        transcriptId: "transcript:v3:7:job-key",
+        transcriptId: "transcript:v2:7:job-key",
         turns: [
           {
             endMs: 302_600,
             speakerId: "discord-user-a",
             startMs: 300_000,
             text: "проверяем очередь Redis",
-            turnId: "turn:v3:7:job-key:1:1:1:1",
+            turnId: "turn:v2:7:job-key:1:1:1:1",
           },
           {
             endMs: 304_925,
             speakerId: "discord-user-a",
             startMs: 302_600,
             text: "проверяем idempotency key",
-            turnId: "turn:v3:7:job-key:1:1:1:2",
+            turnId: "turn:v2:7:job-key:1:1:1:2",
           },
         ],
         version: 2,

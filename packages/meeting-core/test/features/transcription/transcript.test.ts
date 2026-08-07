@@ -54,6 +54,15 @@ const transcriptSnapshot = {
   version: 1,
 } as const;
 
+const [firstReadableSegment, secondReadableSegment, thirdReadableSegment] =
+  transcriptSnapshot.readableSegments;
+
+function withInvalidFirstReadableSegment(
+  segment: TranscriptReadableSegmentSnapshot,
+): readonly TranscriptReadableSegmentSnapshot[] {
+  return [segment, secondReadableSegment, thirdReadableSegment];
+}
+
 describe("Final transcript", () => {
   it("preserves speaker-attributed overlapping turns without merging them", () => {
     const transcript = FinalTranscript.create(transcriptSnapshot);
@@ -108,61 +117,68 @@ describe("Final transcript", () => {
   it.each<readonly [string, readonly TranscriptReadableSegmentSnapshot[]]>([
     [
       "duplicate segment IDs",
-      [transcriptSnapshot.readableSegments[0], transcriptSnapshot.readableSegments[0]],
+      [
+        firstReadableSegment,
+        { ...secondReadableSegment, segmentId: firstReadableSegment.segmentId },
+        thirdReadableSegment,
+      ],
     ],
     [
       "blank segment IDs",
-      [{ ...transcriptSnapshot.readableSegments[0], segmentId: "   " }],
+      withInvalidFirstReadableSegment({ ...firstReadableSegment, segmentId: "   " }),
     ],
     [
       "blank segment speakers",
-      [{ ...transcriptSnapshot.readableSegments[0], speakerId: "   " }],
+      withInvalidFirstReadableSegment({ ...firstReadableSegment, speakerId: "   " }),
     ],
     [
       "blank segment text",
-      [{ ...transcriptSnapshot.readableSegments[0], text: "   " }],
+      withInvalidFirstReadableSegment({ ...firstReadableSegment, text: "   " }),
     ],
     [
       "empty source turn references",
-      [{ ...transcriptSnapshot.readableSegments[0], sourceTurnIds: [] }],
+      withInvalidFirstReadableSegment({ ...firstReadableSegment, sourceTurnIds: [] }),
     ],
     [
       "blank source turn IDs",
-      [{ ...transcriptSnapshot.readableSegments[0], sourceTurnIds: ["   "] }],
+      withInvalidFirstReadableSegment({ ...firstReadableSegment, sourceTurnIds: ["   "] }),
     ],
     [
       "duplicate source turn IDs",
-      [{
-        ...transcriptSnapshot.readableSegments[0],
+      withInvalidFirstReadableSegment({
+        ...firstReadableSegment,
         sourceTurnIds: ["turn-1", "turn-1"],
-      }],
+      }),
     ],
     [
       "duplicate normalized source turn IDs",
-      [{
-        ...transcriptSnapshot.readableSegments[0],
+      withInvalidFirstReadableSegment({
+        ...firstReadableSegment,
         sourceTurnIds: ["turn-1", "\t turn-1 "],
-      }],
+      }),
     ],
     [
       "non-positive intervals",
-      [{ ...transcriptSnapshot.readableSegments[0], endMs: 0 }],
+      withInvalidFirstReadableSegment({ ...firstReadableSegment, endMs: 0 }),
     ],
     [
       "unknown source turns",
-      [{ ...transcriptSnapshot.readableSegments[0], sourceTurnIds: ["turn-missing"] }],
+      withInvalidFirstReadableSegment({
+        ...firstReadableSegment,
+        sourceTurnIds: ["turn-missing"],
+      }),
     ],
     [
       "source turns from another speaker",
-      [{ ...transcriptSnapshot.readableSegments[0], sourceTurnIds: ["turn-2"] }],
+      withInvalidFirstReadableSegment({ ...firstReadableSegment, sourceTurnIds: ["turn-2"] }),
     ],
     [
       "intervals outside the source turn envelope",
-      [{ ...transcriptSnapshot.readableSegments[0], endMs: 1_501 }],
+      withInvalidFirstReadableSegment({ ...firstReadableSegment, endMs: 1_501 }),
     ],
     [
       "partial turn coverage",
-      [transcriptSnapshot.readableSegments[0], transcriptSnapshot.readableSegments[1]],
+      [firstReadableSegment, secondReadableSegment],
     ],
   ])("atomically discards %s", (_case, readableSegments) => {
     expect(

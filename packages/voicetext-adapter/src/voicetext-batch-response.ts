@@ -13,6 +13,7 @@ import { VoicetextAdapterError } from "./errors.js";
 const maximumResponseBytes = 2 * 1_024 * 1_024;
 const maximumRetryAfterMilliseconds = 3_600_000;
 const maximumReadableSegments = 10_000;
+const maximumReadableUtteranceReferences = 100_000;
 const maximumUtterances = 10_000;
 const maximumTranscriptCharacters = 1_000_000;
 
@@ -148,6 +149,7 @@ function parseOptionalReadableSegments(
       throw invalidVoicetextBatchResponse();
     }
     let totalCharacters = 0;
+    let totalSourceUtteranceReferences = 0;
     return segmentValues.map((segmentValue) => {
       const segment = parseReadableSegment(
         segmentValue,
@@ -155,7 +157,11 @@ function parseOptionalReadableSegments(
         utteranceCount,
       );
       totalCharacters += segment.transcript.length;
-      if (totalCharacters > maximumTranscriptCharacters) {
+      totalSourceUtteranceReferences += segment.sourceUtteranceIndices.length;
+      if (
+        totalCharacters > maximumTranscriptCharacters ||
+        totalSourceUtteranceReferences > maximumReadableUtteranceReferences
+      ) {
         throw invalidVoicetextBatchResponse();
       }
       return segment;

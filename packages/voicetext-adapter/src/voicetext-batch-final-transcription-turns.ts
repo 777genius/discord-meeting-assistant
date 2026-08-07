@@ -7,7 +7,7 @@ import type { ValidatedVoicetextBatchFinalTranscriptionOptions } from "./voicete
 import { VoicetextAdapterError } from "./errors.js";
 import type { VoicetextBatchTranscriptionResult } from "./voicetext-batch-client.js";
 
-const voicetextBatchIdentityVersion = "v3";
+const voicetextBatchIdentityVersion = "v2";
 
 export interface VoicetextBatchProviderTurn {
   readonly endMs: number;
@@ -236,7 +236,7 @@ export function stableVoicetextBatchIdempotencyKey(
 ): string {
   return createHash("sha256")
     .update([
-      "voicetext-batch-v3",
+      "voicetext-batch-v2",
       encodeVoicetextBatchIdentityPart(requestIdempotencyKey),
       encodeVoicetextBatchIdentityPart(recordingId),
       encodeVoicetextBatchIdentityPart(speakerId),

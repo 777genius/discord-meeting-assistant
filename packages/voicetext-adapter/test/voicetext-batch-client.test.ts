@@ -11,7 +11,7 @@ const idempotencyKey = "a".repeat(64);
 const jobId = "00000000-0000-4000-8000-000000000001";
 
 describe("FetchVoicetextBatchClient", () => {
-  it("sends the exact authenticated batch-v3 multipart contract and parses final segments", async () => {
+  it("sends the backward-compatible batch-v2 contract and parses optional final segments", async () => {
     let capturedInput: string | URL | Request | undefined;
     let capturedInit: RequestInit | undefined;
     const fetchImplementation: VoicetextBatchFetch = async (input, init) => {
@@ -59,7 +59,7 @@ describe("FetchVoicetextBatchClient", () => {
       "keyterms",
       "file",
     ]);
-    expect(form.get("contract_version")).toBe("3");
+    expect(form.get("contract_version")).toBe("2");
     expect(form.get("provider")).toBe("deepgram");
     expect(form.get("model")).toBe("nova-3");
     expect(form.get("language")).toBe("multi");
@@ -195,7 +195,49 @@ describe("FetchVoicetextBatchClient failure policy", () => {
       },
     });
   });
+});
 
+describe("FetchVoicetextBatchClient readable-segment bounds", () => {
+  it("bounds cumulative readable-segment source references", async () => {
+    const sourceUtteranceIndices = Array.from({ length: 10_000 }, (_, index) => index);
+    const payload = completedPayload();
+    const result = payload.result as Readonly<Record<string, unknown>>;
+    const client = new FetchVoicetextBatchClient({
+      endpoint: "https://api.voicetext.test/api/v1/transcribe/batch",
+      token: "machine-service-token-for-test",
+    }, async () => Response.json({
+      ...payload,
+      result: {
+        ...result,
+        readable_segments: Array.from({ length: 11 }, () => ({
+          end: 1,
+          source_utterance_indices: sourceUtteranceIndices,
+          start: 0,
+          transcript: "text",
+        })),
+        utterances: Array.from({ length: 10_000 }, () => ({
+          end: 1,
+          start: 0,
+          transcript: "text",
+        })),
+      },
+    }));
+
+    const response = await client.submit({
+      audio: validOgg(),
+      idempotencyKey,
+      keyterms: [],
+      signal: new AbortController().signal,
+    });
+
+    expect(response).toMatchObject({
+      kind: "completed",
+      result: { readableSegments: [] },
+    });
+  });
+});
+
+describe("FetchVoicetextBatchClient failure policy", () => {
   it("fails closed when a poll response belongs to another batch job", async () => {
     const client = new FetchVoicetextBatchClient({
       endpoint: "https://api.voicetext.test/api/v1/transcribe/batch",
