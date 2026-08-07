@@ -24,7 +24,12 @@ function translateForeignIdentifier<Value>(create: () => Value): Value {
       error instanceof RecordingInvariantError ||
       error instanceof TranscriptionInvariantError
     ) {
-      throw new DomainInvariantError(error.code, error.message);
+      throw new DomainInvariantError(
+        error.code === "INVALID_REFERENCE"
+          ? "INVALID_EVIDENCE_REFERENCE"
+          : error.code,
+        error.message,
+      );
     }
     throw error;
   }

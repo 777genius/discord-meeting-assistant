@@ -32,6 +32,7 @@ import {
   finalTranscriptAttachmentFilename,
   renderRussianFinalTranscriptAttachmentMarkdown,
   renderRussianTranscriptTimelineMarkdown,
+  type DiscordTranscriptTimelineEntry,
 } from "./discord-transcript-timeline.js";
 import {
   dominantTranscriptLocale,
@@ -90,7 +91,7 @@ export class DiscordSummaryPublicationAdapter implements SummaryPublicationPort 
           this.options.recordingPlaybackUrl?.(request.meetingId),
         ),
         liveCaptionsMarkdown: renderRussianFinalTranscriptTimelineMarkdown(
-          request.transcript.turns,
+          finalTranscriptTimelineEntries(request.transcript),
           locale,
         ),
         transcriptAttachment: {
@@ -210,10 +211,34 @@ export function renderRussianSummaryMarkdown(
  * never from the best-effort live packet stream.
  */
 export function renderRussianFinalTranscriptTimelineMarkdown(
-  turns: SummaryPublicationRequest["transcript"]["turns"],
-  locale: DiscordTranscriptLocale = dominantTranscriptLocale(turns),
+  entries: readonly DiscordTranscriptTimelineEntry[],
+  locale: DiscordTranscriptLocale = dominantTranscriptLocale(entries),
 ): string {
-  return renderRussianTranscriptTimelineMarkdown(turns, "final", locale);
+  return renderRussianTranscriptTimelineMarkdown(entries, "final", locale);
+}
+
+type TranscriptReadableSegmentSnapshot = NonNullable<
+  SummaryPublicationRequest["transcript"]["readableSegments"]
+>[number];
+
+function finalTranscriptTimelineEntries(
+  transcript: SummaryPublicationRequest["transcript"],
+): readonly DiscordTranscriptTimelineEntry[] {
+  const readableSegments = transcript.readableSegments ?? [];
+  return readableSegments.length > 0
+    ? readableSegments.map(toDiscordTranscriptTimelineEntry)
+    : transcript.turns;
+}
+
+function toDiscordTranscriptTimelineEntry(
+  segment: TranscriptReadableSegmentSnapshot,
+): DiscordTranscriptTimelineEntry {
+  return {
+    endMs: segment.endMs,
+    speakerId: segment.speakerId,
+    startMs: segment.startMs,
+    text: segment.text,
+  };
 }
 
 function boundedMarkdown(

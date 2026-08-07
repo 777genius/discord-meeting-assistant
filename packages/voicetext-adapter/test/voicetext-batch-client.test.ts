@@ -11,7 +11,7 @@ const idempotencyKey = "a".repeat(64);
 const jobId = "00000000-0000-4000-8000-000000000001";
 
 describe("FetchVoicetextBatchClient", () => {
-  it("sends the exact authenticated batch-v2 multipart contract and parses final segments", async () => {
+  it("sends the backward-compatible batch-v2 contract and parses optional final segments", async () => {
     let capturedInput: string | URL | Request | undefined;
     let capturedInit: RequestInit | undefined;
     const fetchImplementation: VoicetextBatchFetch = async (input, init) => {
@@ -74,6 +74,12 @@ describe("FetchVoicetextBatchClient", () => {
       kind: "completed",
       result: {
         durationSeconds: 1.25,
+        readableSegments: [{
+          endSeconds: 1.25,
+          sourceUtteranceIndices: [0],
+          startSeconds: 0.25,
+          transcript: "Готовим релиз.",
+        }],
         utterances: [{
           confidence: 0.97,
           endSeconds: 1.25,
@@ -125,6 +131,108 @@ describe("FetchVoicetextBatchClient", () => {
       method: "GET",
       redirect: "error",
       signal,
+    });
+  });
+});
+
+describe("FetchVoicetextBatchClient failure policy", () => {
+  it("normalizes an absent readable_segments field to an empty list", async () => {
+    const client = new FetchVoicetextBatchClient({
+      endpoint: "https://api.voicetext.test/api/v1/transcribe/batch",
+      token: "machine-service-token-for-test",
+    }, async () => Response.json(completedPayload(false)));
+
+    const result = await client.submit({
+      audio: validOgg(),
+      idempotencyKey,
+      keyterms: [],
+      signal: new AbortController().signal,
+    });
+
+    expect(result.kind).toBe("completed");
+    if (result.kind === "completed") {
+      expect(result.result.readableSegments).toEqual([]);
+    }
+  });
+
+  it.each([
+    ["not an array", null],
+    ["empty source indices", [{ end: 1, source_utterance_indices: [], start: 0, transcript: "text" }]],
+    ["unknown source index", [{ end: 1, source_utterance_indices: [1], start: 0, transcript: "text" }]],
+    ["duplicate source indices", [{ end: 1, source_utterance_indices: [0, 0], start: 0, transcript: "text" }]],
+    ["timing beyond duration", [{ end: 2, source_utterance_indices: [0], start: 0, transcript: "text" }]],
+    ["empty transcript", [{ end: 1, source_utterance_indices: [0], start: 0, transcript: "   " }]],
+    ["excessive count", Array.from({ length: 10_001 }, () => ({
+      end: 1,
+      source_utterance_indices: [0],
+      start: 0,
+      transcript: "text",
+    }))],
+    ["excessive characters", [{
+      end: 1,
+      source_utterance_indices: [0],
+      start: 0,
+      transcript: "x".repeat(1_000_001),
+    }]],
+  ])("preserves raw utterances when readable_segments has %s", async (_label, readableSegments) => {
+    const client = new FetchVoicetextBatchClient({
+      endpoint: "https://api.voicetext.test/api/v1/transcribe/batch",
+      token: "machine-service-token-for-test",
+    }, async () => Response.json(completedPayload(readableSegments)));
+
+    const result = await client.submit({
+      audio: validOgg(),
+      idempotencyKey,
+      keyterms: [],
+      signal: new AbortController().signal,
+    });
+
+    expect(result).toMatchObject({
+      kind: "completed",
+      result: {
+        readableSegments: [],
+        utterances: [{ transcript: "готовим релиз" }],
+      },
+    });
+  });
+});
+
+describe("FetchVoicetextBatchClient readable-segment bounds", () => {
+  it("bounds cumulative readable-segment source references", async () => {
+    const sourceUtteranceIndices = Array.from({ length: 10_000 }, (_, index) => index);
+    const payload = completedPayload();
+    const result = payload.result as Readonly<Record<string, unknown>>;
+    const client = new FetchVoicetextBatchClient({
+      endpoint: "https://api.voicetext.test/api/v1/transcribe/batch",
+      token: "machine-service-token-for-test",
+    }, async () => Response.json({
+      ...payload,
+      result: {
+        ...result,
+        readable_segments: Array.from({ length: 11 }, () => ({
+          end: 1,
+          source_utterance_indices: sourceUtteranceIndices,
+          start: 0,
+          transcript: "text",
+        })),
+        utterances: Array.from({ length: 10_000 }, () => ({
+          end: 1,
+          start: 0,
+          transcript: "text",
+        })),
+      },
+    }));
+
+    const response = await client.submit({
+      audio: validOgg(),
+      idempotencyKey,
+      keyterms: [],
+      signal: new AbortController().signal,
+    });
+
+    expect(response).toMatchObject({
+      kind: "completed",
+      result: { readableSegments: [] },
     });
   });
 });
@@ -315,7 +423,14 @@ describe("FetchVoicetextBatchClient failure policy", () => {
   });
 });
 
-function completedPayload(): Readonly<Record<string, unknown>> {
+function completedPayload(
+  readableSegments: unknown = [{
+    end: 1.25,
+    source_utterance_indices: [0],
+    start: 0.25,
+    transcript: "Готовим релиз.",
+  }],
+): Readonly<Record<string, unknown>> {
   return {
     job_id: jobId,
     result: {
@@ -324,6 +439,7 @@ function completedPayload(): Readonly<Record<string, unknown>> {
       model: "nova-3",
       provider: "deepgram",
       text: "готовим релиз",
+      ...(readableSegments === false ? {} : { readable_segments: readableSegments }),
       utterances: [{
         confidence: 0.97,
         end: 1.25,

@@ -36,7 +36,10 @@ export const finalSummaryCopy = {
 } as const;
 
 export function dominantTranscriptLocale(
-  turns: SummaryPublicationRequest["transcript"]["turns"],
+  turns: readonly Pick<
+    SummaryPublicationRequest["transcript"]["turns"][number],
+    "text"
+  >[],
 ): DiscordTranscriptLocale {
   const transcriptText = turns.map((turn) => turn.text).join(" ");
   const cyrillic = (transcriptText.match(/\p{Script=Cyrillic}/gu) ?? []).length;

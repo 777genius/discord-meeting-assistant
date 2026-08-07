@@ -10,8 +10,16 @@ export interface VoicetextBatchUtterance {
   readonly transcript: string;
 }
 
+export interface VoicetextBatchReadableSegment {
+  readonly endSeconds: number;
+  readonly sourceUtteranceIndices: readonly number[];
+  readonly startSeconds: number;
+  readonly transcript: string;
+}
+
 export interface VoicetextBatchTranscriptionResult {
   readonly durationSeconds: number;
+  readonly readableSegments: readonly VoicetextBatchReadableSegment[];
   readonly utterances: readonly VoicetextBatchUtterance[];
 }
 

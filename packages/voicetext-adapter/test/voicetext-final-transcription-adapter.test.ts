@@ -172,6 +172,7 @@ describe("VoicetextFinalTranscriptionAdapter", () => {
     expect(first).toEqual({
       ok: true,
       value: {
+        readableSegments: [],
         transcriptId: "transcript:v1:7:job-key",
         turns: [
           {

@@ -109,8 +109,18 @@
     },
     {
       "id": "ADR-0022",
-      "path": "docs/decisions/0022-possession-based-recording-playback.md",
-      "immutableDigest": "sha256:f6a2a5205626079d33f135113f784b1105bc966d0b33f3a3f82832381eab8f4a"
+      "path": "docs/decisions/0022-provider-neutral-readable-transcript-segments.md",
+      "immutableDigest": "sha256:afcb2f381cc3661179f80a255656f5501e44757537d44f8c9125b5b003df101e"
+    },
+    {
+      "id": "ADR-0023",
+      "path": "docs/decisions/0023-backward-compatible-readable-segments.md",
+      "immutableDigest": "sha256:40392e24d05823337654e50a7d866d0dcf8cbe6d4e44f42825fc5d95e9e72823"
+    },
+    {
+      "id": "ADR-0024",
+      "path": "docs/decisions/0024-possession-based-recording-playback.md",
+      "immutableDigest": "sha256:2913189e9651d2ff3fabce7b994e33a8b91924d51fce6d195e7bdf7e9196e9d8"
     }
   ]
 }

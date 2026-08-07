@@ -1,11 +1,11 @@
 ---
-id: ADR-0022
+id: ADR-0024
 status: accepted
 supersedes: []
 superseded_by: []
 ---
 
-# ADR-0022: Possession-based recording playback
+# ADR-0024: Possession-based recording playback
 
 ## Status
 

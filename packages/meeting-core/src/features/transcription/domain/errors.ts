@@ -1,7 +1,8 @@
 export type TranscriptionDomainErrorCode =
   | "DUPLICATE_IDENTIFIER"
   | "EMPTY_VALUE"
-  | "INVALID_NUMBER";
+  | "INVALID_NUMBER"
+  | "INVALID_REFERENCE";
 
 export class DomainInvariantError extends Error {
   public constructor(

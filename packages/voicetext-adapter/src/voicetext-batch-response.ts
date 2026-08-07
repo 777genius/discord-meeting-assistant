@@ -1,4 +1,5 @@
 import type {
+  VoicetextBatchReadableSegment,
   VoicetextBatchTaskResult,
   VoicetextBatchUtterance,
 } from "./voicetext-batch-contract.js";
@@ -11,6 +12,8 @@ import { VoicetextAdapterError } from "./errors.js";
 
 const maximumResponseBytes = 2 * 1_024 * 1_024;
 const maximumRetryAfterMilliseconds = 3_600_000;
+const maximumReadableSegments = 10_000;
+const maximumReadableUtteranceReferences = 100_000;
 const maximumUtterances = 10_000;
 const maximumTranscriptCharacters = 1_000_000;
 
@@ -116,13 +119,100 @@ function parseFinal(value: unknown): VoicetextBatchTaskResult {
   if (utteranceValues.length > maximumUtterances) {
     throw invalidVoicetextBatchResponse();
   }
+  const utterances = utteranceValues.map(parseUtterance);
   return {
     jobId: validateVoicetextBatchJobId(response.job_id),
     kind: "completed",
     result: {
       durationSeconds,
-      utterances: utteranceValues.map(parseUtterance),
+      readableSegments: parseOptionalReadableSegments(
+        result.readable_segments,
+        durationSeconds,
+        utterances.length,
+      ),
+      utterances,
     },
+  };
+}
+
+function parseOptionalReadableSegments(
+  value: unknown,
+  durationSeconds: number,
+  utteranceCount: number,
+): readonly VoicetextBatchReadableSegment[] {
+  if (value === undefined) {
+    return [];
+  }
+  try {
+    const segmentValues = array(value, "batch readable segments");
+    if (segmentValues.length > maximumReadableSegments) {
+      throw invalidVoicetextBatchResponse();
+    }
+    let totalCharacters = 0;
+    let totalSourceUtteranceReferences = 0;
+    return segmentValues.map((segmentValue) => {
+      const segment = parseReadableSegment(
+        segmentValue,
+        durationSeconds,
+        utteranceCount,
+      );
+      totalCharacters += segment.transcript.length;
+      totalSourceUtteranceReferences += segment.sourceUtteranceIndices.length;
+      if (
+        totalCharacters > maximumTranscriptCharacters ||
+        totalSourceUtteranceReferences > maximumReadableUtteranceReferences
+      ) {
+        throw invalidVoicetextBatchResponse();
+      }
+      return segment;
+    });
+  } catch (error: unknown) {
+    if (error instanceof VoicetextAdapterError) {
+      return [];
+    }
+    throw error;
+  }
+}
+
+function parseReadableSegment(
+  value: unknown,
+  durationSeconds: number,
+  utteranceCount: number,
+): VoicetextBatchReadableSegment {
+  const segment = record(value, "batch readable segment");
+  const startSeconds = nonNegativeFiniteNumber(segment.start);
+  const endSeconds = nonNegativeFiniteNumber(segment.end);
+  const sourceUtteranceIndices = array(
+    segment.source_utterance_indices,
+    "batch readable segment source utterance indices",
+  );
+  if (
+    endSeconds <= startSeconds ||
+    endSeconds > durationSeconds ||
+    !isBoundedNonEmptyString(segment.transcript, maximumTranscriptCharacters) ||
+    sourceUtteranceIndices.length === 0 ||
+    sourceUtteranceIndices.length > maximumUtterances
+  ) {
+    throw invalidVoicetextBatchResponse();
+  }
+  let previousIndex = -1;
+  const normalizedIndices = sourceUtteranceIndices.map((sourceIndex) => {
+    if (
+      typeof sourceIndex !== "number" ||
+      !Number.isSafeInteger(sourceIndex) ||
+      sourceIndex <= previousIndex ||
+      sourceIndex >= utteranceCount
+    ) {
+      throw invalidVoicetextBatchResponse();
+    }
+    previousIndex = sourceIndex;
+    return sourceIndex;
+  });
+  return {
+    endSeconds,
+    sourceUtteranceIndices: normalizedIndices,
+    startSeconds,
+    transcript: segment.transcript,
   };
 }
 
@@ -265,6 +355,10 @@ function array(value: unknown, label: string): readonly unknown[] {
 
 function isBoundedString(value: unknown, maximumLength: number): value is string {
   return typeof value === "string" && value.length <= maximumLength;
+}
+
+function isBoundedNonEmptyString(value: unknown, maximumLength: number): value is string {
+  return isBoundedString(value, maximumLength) && value.trim().length > 0;
 }
 
 function isRetryableStatus(status: number): boolean {

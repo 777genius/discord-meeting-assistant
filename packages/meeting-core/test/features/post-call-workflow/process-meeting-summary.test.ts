@@ -52,6 +52,24 @@ const recording = {
 } as const;
 
 const generatedTranscript: GeneratedTranscript = {
+  readableSegments: [
+    {
+      endMs: 1_500,
+      segmentId: "segment-1",
+      sourceTurnIds: ["turn-1"],
+      speakerId: "speaker-a",
+      startMs: 0,
+      text: "Ship on Friday.",
+    },
+    {
+      endMs: 2_100,
+      segmentId: "segment-2",
+      sourceTurnIds: ["turn-2"],
+      speakerId: "speaker-b",
+      startMs: 900,
+      text: "I will prepare the release checklist.",
+    },
+  ],
   transcriptId: "transcript-1",
   turns: [
     {
@@ -257,6 +275,19 @@ describe("ProcessMeetingSummary", () => {
     );
     expect(publisher.requests).toHaveLength(1);
     expect(meetings.snapshot.recording).toEqual(recording);
+    expect(meetings.snapshot.transcript?.readableSegments).toEqual(
+      generatedTranscript.readableSegments,
+    );
+    expect(summarizer.requests[0]?.transcript.readableSegments).toEqual(
+      generatedTranscript.readableSegments,
+    );
+    expect(publisher.requests[0]?.transcript.readableSegments).toEqual(
+      generatedTranscript.readableSegments,
+    );
+    expect(publisher.requests[0]?.transcript.turns).toEqual(generatedTranscript.turns);
+    expect(publisher.requests[0]?.summary.decisions[0]?.evidenceTurnIds).toEqual([
+      "turn-1",
+    ]);
   });
 
   it("preserves recording and transcript when summary fails, then retries only summary", async () => {
