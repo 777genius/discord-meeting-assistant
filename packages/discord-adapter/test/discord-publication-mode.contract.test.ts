@@ -450,6 +450,7 @@ describe("Discord publication container modes", () => {
         version: 1,
       },
       transcript: {
+        readableSegments: [],
         recordingId: "recording-mode-42",
         transcriptId: "transcript-mode-42",
         turns: [{
