@@ -82,6 +82,36 @@ describe("Voicetext batch readable segment mapping", () => {
       },
     });
   });
+
+  it("keeps sentence metadata aligned when an overlapping turn start is normalized", async () => {
+    const adapter = adapterFor({
+      durationSeconds: 1,
+      readableSegments: [
+        { endSeconds: 0.501, sourceUtteranceIndices: [0], startSeconds: 0, transcript: "Готовим." },
+        { endSeconds: 1, sourceUtteranceIndices: [1], startSeconds: 0.5, transcript: "Релиз." },
+      ],
+      utterances: [
+        { endSeconds: 0.501, startSeconds: 0, transcript: "готовим" },
+        { endSeconds: 1, startSeconds: 0.5, transcript: "релиз" },
+      ],
+    });
+
+    const result = await adapter.transcribe(requestFixture());
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        readableSegments: [
+          { endMs: 10_501, startMs: 10_000, text: "Готовим." },
+          { endMs: 11_000, startMs: 10_501, text: "Релиз." },
+        ],
+        turns: [
+          { endMs: 10_501, startMs: 10_000, text: "готовим" },
+          { endMs: 11_000, startMs: 10_501, text: "релиз" },
+        ],
+      },
+    });
+  });
 });
 
 function adapterFor(result: VoicetextBatchTranscriptionResult) {

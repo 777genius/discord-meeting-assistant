@@ -190,17 +190,38 @@ function mapVoicetextBatchProviderReadableSegmentsOrThrow(
       }
       return sourceTurn;
     });
+    const sourceUtterances = segment.sourceUtteranceIndices.map((sourceIndex) => {
+      const sourceUtterance = input.result.utterances[sourceIndex];
+      if (sourceUtterance === undefined) {
+        throw invalidReadableSegments("Voicetext batch readable segment references no utterance");
+      }
+      return sourceUtterance;
+    });
+    const providerEnvelopeStartMs = Math.min(...sourceUtterances.map((utterance) =>
+      floorVoicetextBatchMilliseconds(utterance.startSeconds)
+    ));
+    const providerEnvelopeEndMs = Math.max(...sourceUtterances.map((utterance) =>
+      ceilingVoicetextBatchMilliseconds(utterance.endSeconds)
+    ));
+    if (startMs < providerEnvelopeStartMs || endMs > providerEnvelopeEndMs) {
+      throw invalidReadableSegments("Voicetext batch readable segment exceeds its source utterance envelope");
+    }
     const envelopeStartMs = Math.min(...sourceTurns.map((turn) =>
       turn.startMs - input.reference.timelineOffsetMs
     ));
     const envelopeEndMs = Math.max(...sourceTurns.map((turn) =>
       turn.endMs - input.reference.timelineOffsetMs
     ));
-    if (startMs < envelopeStartMs || endMs > envelopeEndMs) {
+    const normalizedStartMs = Math.max(startMs, envelopeStartMs);
+    const normalizedEndMs = Math.min(endMs, envelopeEndMs);
+    if (normalizedEndMs <= normalizedStartMs) {
       throw invalidReadableSegments("Voicetext batch readable segment exceeds its source turn envelope");
     }
     return {
-      endMs: addVoicetextBatchSafeIntegers(input.reference.timelineOffsetMs, endMs),
+      endMs: addVoicetextBatchSafeIntegers(
+        input.reference.timelineOffsetMs,
+        normalizedEndMs,
+      ),
       segmentId: stableVoicetextBatchId(
         "readable-segment",
         input.idempotencyKey,
@@ -209,7 +230,10 @@ function mapVoicetextBatchProviderReadableSegmentsOrThrow(
       ),
       sourceTurnIds: sourceTurns.map(({ stableTurnId }) => stableTurnId),
       speakerId: input.reference.speakerId,
-      startMs: addVoicetextBatchSafeIntegers(input.reference.timelineOffsetMs, startMs),
+      startMs: addVoicetextBatchSafeIntegers(
+        input.reference.timelineOffsetMs,
+        normalizedStartMs,
+      ),
       text,
     };
   });
