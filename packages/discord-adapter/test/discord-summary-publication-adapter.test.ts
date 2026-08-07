@@ -405,6 +405,28 @@ describe("Discord recording playback link", () => {
       /## Запись\n\[Прослушать запись\]\(https:\/\/recordings\.example\.com\/recordings\/playback#signed-meeting-42\)$/u,
     );
   });
+
+  it.each([
+    {
+      footer: "## Recording\n[Listen to the recording]",
+      text: "We agreed to release the dashboard on Friday.",
+    },
+    {
+      footer: "## Запис\n[Прослухати запис]",
+      text: "Це запис зустрічі, його треба прослухати.",
+    },
+  ])("localizes the recording footer from the transcript", ({ footer, text }) => {
+    const recordingUrl = "https://recordings.example.com/recordings/playback#token";
+    const markdown = renderRussianSummaryMarkdown({
+      ...request,
+      transcript: {
+        ...request.transcript,
+        turns: [{ ...request.transcript.turns[0]!, text }],
+      },
+    }, recordingUrl);
+
+    expect(markdown).toContain(`${footer}(${recordingUrl})`);
+  });
 });
 
 describe("DiscordSummaryPublicationAdapter rendering bounds", () => {
@@ -424,6 +446,24 @@ describe("DiscordSummaryPublicationAdapter rendering bounds", () => {
     expect(markdown.length).toBeLessThanOrEqual(4_000);
     expect(markdown).toContain("Саммари сокращено из-за лимита Discord");
     expect(markdown.endsWith(`[Прослушать запись](${recordingUrl})`)).toBe(true);
+  });
+
+  it("omits a recording footer that cannot fit within the Discord limit", async () => {
+    const projector = new FakeProjector();
+    const recordingUrl = `https://recordings.example.com/#${"x".repeat(4_000)}`;
+    const adapter = new DiscordSummaryPublicationAdapter(projector, {
+      recordingPlaybackUrl: () => recordingUrl,
+    });
+
+    await adapter.publish({
+      ...request,
+      summary: { ...request.summary, overview: "Очень длинный обзор. ".repeat(500) },
+    });
+
+    const markdown = projector.inputs[0]?.markdown ?? "";
+    expect(markdown.length).toBeLessThanOrEqual(4_000);
+    expect(markdown).toContain("Саммари сокращено из-за лимита Discord");
+    expect(markdown).not.toContain(recordingUrl);
   });
 
   it("keeps the authoritative, speaker-attributed timeline beside the final summary", async () => {

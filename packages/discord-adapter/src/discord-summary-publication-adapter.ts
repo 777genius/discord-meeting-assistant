@@ -201,7 +201,7 @@ export function renderRussianSummaryMarkdown(
   ];
   const footerLines = recordingPlaybackUrl === undefined
     ? []
-    : ["## Запись", `[Прослушать запись](${recordingPlaybackUrl})`];
+    : [copy.recordingHeading, `[${copy.recordingLink}](${recordingPlaybackUrl})`];
   return boundedMarkdown(bodyLines, copy.truncationNotice, footerLines);
 }
 
@@ -228,9 +228,12 @@ function boundedMarkdown(
   }
 
   const suffix = `\n\n${truncationNotice}`;
-  const bodyBudget = discordMarkdownLimit - suffix.length - footer.length;
+  const boundedFooter = suffix.length + footer.length <= discordMarkdownLimit
+    ? footer
+    : "";
+  const bodyBudget = discordMarkdownLimit - suffix.length - boundedFooter.length;
   const shortenedBody = truncateAtStableBoundary(body, bodyBudget);
-  return `${shortenedBody}${suffix}${footer}`;
+  return `${shortenedBody}${suffix}${boundedFooter}`;
 }
 
 function truncateAtStableBoundary(value: string, maximumLength: number): string {
