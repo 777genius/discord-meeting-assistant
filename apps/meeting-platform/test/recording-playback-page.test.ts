@@ -134,6 +134,7 @@ interface PageHarness {
   advanceClock(milliseconds: number): void;
   animationFrameRequestCount(): number;
   restoreVisibility(): void;
+  replacedUrls(): readonly string[];
   runAnimationFrame(): void;
   sessionRequestCount(): number;
 }
@@ -190,14 +191,22 @@ function createPageHarness(
     },
     querySelector: (selector: string) => elements.get(selector),
   };
+  const replacedUrls: string[] = [];
   const window = {
     clearTimeout,
+    history: {
+      replaceState: (_state: unknown, _unused: string, url: string) => {
+        replacedUrls.push(url);
+      },
+    },
     location: {
       hash: options.fragment === undefined
         ? `#${"a".repeat(48)}`
         : options.fragment.length === 0
           ? ""
           : `#${options.fragment}`,
+      pathname: "/recordings/playback",
+      search: "",
     },
     setTimeout: setWindowTimeout,
   };
@@ -250,6 +259,7 @@ function createPageHarness(
       document.hidden = false;
       documentListeners.get("visibilitychange")?.();
     },
+    replacedUrls: () => replacedUrls,
     runAnimationFrame: () => {
       const callback = animationFrame;
       animationFrame = undefined;
@@ -284,6 +294,18 @@ describe("recording playback browser page", () => {
     expect(page.status.textContent).toBe("Запись недоступна");
     expect(page.player.hidden).toBe(true);
     expect(page.sessionRequestCount()).toBe(0);
+    expect(page.replacedUrls()).toEqual([]);
+  });
+
+  it("removes a valid fragment from browser history before opening a session", async () => {
+    const page = createPageHarness([], {
+      fragment: "a".repeat(48),
+      manifestStatuses: ["unavailable"],
+    });
+    await flushAsync();
+
+    expect(page.sessionRequestCount()).toBe(1);
+    expect(page.replacedUrls()).toEqual(["/recordings/playback"]);
   });
 
   it("polls a processing recording and exposes it when ready", async () => {

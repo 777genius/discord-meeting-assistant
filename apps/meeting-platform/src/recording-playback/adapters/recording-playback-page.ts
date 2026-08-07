@@ -73,6 +73,11 @@ export const recordingPlaybackClientScript = String.raw`
     showUnavailable();
     return;
   }
+  window.history.replaceState(
+    null,
+    "",
+    window.location.pathname + window.location.search,
+  );
 
   function formatTime(seconds) {
     const safe = Math.max(0, Math.floor(Number.isFinite(seconds) ? seconds : 0));
