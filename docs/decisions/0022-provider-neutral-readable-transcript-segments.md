@@ -1,8 +1,8 @@
 ---
 id: ADR-0022
-status: accepted
+status: superseded
 supersedes: []
-superseded_by: []
+superseded_by: [ADR-0023]
 ---
 
 # ADR-0022: Provider-neutral readable transcript segments

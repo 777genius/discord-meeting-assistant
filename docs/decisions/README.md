@@ -27,8 +27,8 @@ _None._
 - [ADR-0019: Retain fragmented summary evidence](0019-retain-fragmented-summary-evidence.md)
 - [ADR-0020: Qualify complete action chains](0020-qualify-complete-action-chains.md)
 - [ADR-0021: Retain complete fragmented action evidence](0021-retain-complete-fragmented-action-evidence.md)
-- [ADR-0022: Provider-neutral readable transcript segments](0022-provider-neutral-readable-transcript-segments.md)
+- [ADR-0023: Backward-compatible readable segments in batch v2](0023-backward-compatible-readable-segments.md)
 
 ## Superseded
 
-_None._
+- [ADR-0022: Provider-neutral readable transcript segments](0022-provider-neutral-readable-transcript-segments.md)
