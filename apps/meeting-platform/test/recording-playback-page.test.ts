@@ -19,6 +19,12 @@ class FakeElement {
   max = "";
   textContent = "";
   value = "";
+  readonly style = {
+    properties: new Map<string, string>(),
+    setProperty: (name: string, value: string) => {
+      this.style.properties.set(name, value);
+    },
+  };
 
   addEventListener(type: string, listener: Listener): void {
     const listeners = this.listeners.get(type) ?? new Set<Listener>();
@@ -294,6 +300,15 @@ describe("recording playback browser page", () => {
     expect(recordingPlaybackStyle).toContain(".player[hidden] { display: none; }");
   });
 
+  it("renders an English interface with a large custom seek control", () => {
+    expect(recordingPlaybackPageHtml).toContain('<html lang="en">');
+    expect(recordingPlaybackPageHtml).toContain("Meeting recording");
+    expect(recordingPlaybackPageHtml).toContain('aria-label="Recording position"');
+    expect(recordingPlaybackStyle).toContain('input[type="range"]::-webkit-slider-thumb');
+    expect(recordingPlaybackStyle).toContain('input[type="range"]::-moz-range-thumb');
+    expect(recordingPlaybackStyle).toContain("height: 48px;");
+  });
+
   it.each([
     { fragment: "", label: "missing" },
     { fragment: "too-short", label: "malformed" },
@@ -301,7 +316,7 @@ describe("recording playback browser page", () => {
     const page = createPageHarness([], { fragment });
     await flushAsync();
 
-    expect(page.status.textContent).toBe("Запись недоступна");
+    expect(page.status.textContent).toBe("Recording unavailable");
     expect(page.player.hidden).toBe(true);
     expect(page.sessionRequestCount()).toBe(0);
     expect(page.replacedUrls()).toEqual([]);
@@ -327,7 +342,7 @@ describe("recording playback browser page", () => {
     );
     await flushAsync();
 
-    expect(page.status.textContent).toBe("Запись обрабатывается");
+    expect(page.status.textContent).toBe("Recording is being processed");
     expect(page.sessionRequestCount()).toBe(1);
     await vi.advanceTimersByTimeAsync(4_999);
     expect(page.sessionRequestCount()).toBe(1);
@@ -335,7 +350,7 @@ describe("recording playback browser page", () => {
     await flushAsync();
 
     expect(page.sessionRequestCount()).toBe(2);
-    expect(page.status.textContent).toBe("Готово к прослушиванию");
+    expect(page.status.textContent).toBe("Ready to play");
     expect(page.player.hidden).toBe(false);
   });
 
@@ -354,9 +369,9 @@ describe("recording playback browser page", () => {
     await flushAsync();
 
     expect(page.player.hidden).toBe(false);
-    expect(page.status.textContent).toBe("Готово к прослушиванию");
+    expect(page.status.textContent).toBe("Ready to play");
     expect(page.notice.hidden).toBe(false);
-    expect(page.notice.textContent).toBe("Часть дорожек недоступна");
+    expect(page.notice.textContent).toBe("Some tracks are unavailable");
     expect(stalled.removed).toBe(true);
     expect(stalled.src).toBe("");
     expect(stalled.listeners.get("loadedmetadata")?.size ?? 0).toBe(0);
@@ -371,7 +386,7 @@ describe("recording playback browser page", () => {
     await vi.advanceTimersByTimeAsync(15_000);
     await flushAsync();
 
-    expect(page.status.textContent).toBe("Запись недоступна");
+    expect(page.status.textContent).toBe("Recording unavailable");
     expect(page.player.hidden).toBe(true);
     expect(stalled.removed).toBe(true);
   });
@@ -409,6 +424,7 @@ describe("recording playback browser page", () => {
     await flushAsync();
 
     expect(page.seek.value).toBe("0");
+    expect(page.seek.style.properties.get("--seek-progress")).toBe("0%");
     expect(page.current.textContent).toBe("0:00");
     expect(ahead.currentTime).toBe(0);
   });
@@ -445,6 +461,7 @@ describe("recording playback browser page", () => {
     page.restoreVisibility();
 
     expect(page.seek.value).toBe("3");
+    expect(page.seek.style.properties.get("--seek-progress")).toBe("15%");
     expect(audio.currentTime).toBe(3);
   });
 
@@ -460,7 +477,7 @@ describe("recording playback browser page", () => {
     await flushAsync();
 
     expect(page.player.hidden).toBe(false);
-    expect(page.notice.textContent).toBe("Часть дорожек недоступна");
+    expect(page.notice.textContent).toBe("Some tracks are unavailable");
     expect(rejected.paused).toBe(true);
 
     healthy.currentTime = 1;
@@ -486,7 +503,7 @@ describe("recording playback browser page", () => {
     await flushAsync();
 
     expect(page.notice.hidden).toBe(true);
-    expect(page.status.textContent).toBe("Готово к прослушиванию");
+    expect(page.status.textContent).toBe("Ready to play");
 
     page.toggle.emit("click");
     await flushAsync();

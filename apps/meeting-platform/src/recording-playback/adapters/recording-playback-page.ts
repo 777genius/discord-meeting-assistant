@@ -14,9 +14,63 @@ h1 { margin: 10px 0 8px; font-size: clamp(32px, 7vw, 56px); line-height: 1; lett
 .toggle { width: 58px; height: 58px; flex: 0 0 auto; border: 0; border-radius: 50%; color: #121016; background: #c4b5fd; font-size: 22px; cursor: pointer; transition: transform .15s ease, background .15s ease; }
 .toggle:hover { transform: scale(1.04); background: #ddd6fe; }
 .toggle:focus-visible, input:focus-visible { outline: 3px solid #a78bfa; outline-offset: 3px; }
-.timeline { width: 100%; min-width: 0; }
-input[type="range"] { width: 100%; accent-color: #a78bfa; cursor: pointer; }
-.times { display: flex; justify-content: space-between; margin-top: 8px; color: #8d8d99; font-variant-numeric: tabular-nums; font-size: 13px; }
+.timeline { width: 100%; min-width: 0; display: grid; gap: 2px; }
+input[type="range"] {
+  --seek-progress: 0%;
+  width: 100%;
+  height: 48px;
+  margin: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  cursor: pointer;
+  touch-action: none;
+}
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 12px;
+  border: 1px solid #ffffff24;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #8b5cf6 0, #c4b5fd var(--seek-progress), #302d39 var(--seek-progress), #302d39 100%);
+  box-shadow: inset 0 1px 2px #0009, 0 0 24px #8b5cf638;
+}
+input[type="range"]::-webkit-slider-thumb {
+  width: 30px;
+  height: 30px;
+  margin-top: -10px;
+  border: 4px solid #17131f;
+  border-radius: 50%;
+  appearance: none;
+  -webkit-appearance: none;
+  background: linear-gradient(135deg, #ffffff, #a78bfa 72%);
+  box-shadow: 0 0 0 2px #c4b5fd, 0 8px 24px #8b5cf680;
+  transition: transform .15s ease, box-shadow .15s ease;
+}
+input[type="range"]::-moz-range-track {
+  height: 12px;
+  border: 1px solid #ffffff24;
+  border-radius: 999px;
+  background: #302d39;
+  box-shadow: inset 0 1px 2px #0009, 0 0 24px #8b5cf638;
+}
+input[type="range"]::-moz-range-progress {
+  height: 12px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #8b5cf6, #c4b5fd);
+}
+input[type="range"]::-moz-range-thumb {
+  width: 22px;
+  height: 22px;
+  border: 4px solid #17131f;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #ffffff, #a78bfa 72%);
+  box-shadow: 0 0 0 2px #c4b5fd, 0 8px 24px #8b5cf680;
+  transition: transform .15s ease, box-shadow .15s ease;
+}
+input[type="range"]:hover::-webkit-slider-thumb,
+input[type="range"]:focus-visible::-webkit-slider-thumb { transform: scale(1.12); box-shadow: 0 0 0 4px #a78bfa40, 0 10px 30px #8b5cf6a0; }
+input[type="range"]:hover::-moz-range-thumb,
+input[type="range"]:focus-visible::-moz-range-thumb { transform: scale(1.12); box-shadow: 0 0 0 4px #a78bfa40, 0 10px 30px #8b5cf6a0; }
+.times { display: flex; justify-content: space-between; color: #aaaab6; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 650; letter-spacing: .025em; }
 .notice { margin: 18px 2px 0; color: #d8b4fe; }
 @media (max-width: 520px) { .card { border-radius: 22px; } .player { gap: 14px; padding: 14px; } .toggle { width: 50px; height: 50px; } }
 `;
@@ -93,7 +147,7 @@ export const recordingPlaybackClientScript = String.raw`
     playing = false;
     gapClock = null;
     tracks.forEach((track) => track.audio.pause());
-    setStatus("Запись недоступна");
+    setStatus("Recording unavailable");
     playerNode.hidden = true;
   }
 
@@ -109,7 +163,7 @@ export const recordingPlaybackClientScript = String.raw`
       }
       const manifest = await response.json();
       if (manifest.status === "processing") {
-        setStatus("Запись обрабатывается");
+        setStatus("Recording is being processed");
         window.setTimeout(openSession, 5000);
         return;
       }
@@ -149,9 +203,9 @@ export const recordingPlaybackClientScript = String.raw`
     seekNode.max = String(duration);
     durationNode.textContent = formatTime(duration);
     playerNode.hidden = false;
-    setStatus("Готово к прослушиванию");
+    setStatus("Ready to play");
     if (tracks.length < manifestTracks.length) {
-      noticeNode.textContent = "Часть дорожек недоступна";
+      noticeNode.textContent = "Some tracks are unavailable";
       noticeNode.hidden = false;
     }
     renderPosition(0);
@@ -213,13 +267,13 @@ export const recordingPlaybackClientScript = String.raw`
         return;
       }
       if (tracks.some((track) => !track.available)) {
-        noticeNode.textContent = "Часть дорожек недоступна";
+        noticeNode.textContent = "Some tracks are unavailable";
         noticeNode.hidden = false;
       }
       playing = true;
       gapClock = null;
       toggleNode.textContent = "❚❚";
-      toggleNode.setAttribute("aria-label", "Пауза");
+      toggleNode.setAttribute("aria-label", "Pause");
       syncTracks(position, true);
       requestAnimationFrame(tick);
     } finally {
@@ -233,7 +287,7 @@ export const recordingPlaybackClientScript = String.raw`
     gapClock = null;
     tracks.forEach(pauseTrack);
     toggleNode.textContent = "▶";
-    toggleNode.setAttribute("aria-label", "Воспроизвести");
+    toggleNode.setAttribute("aria-label", "Play");
     renderPosition(position);
   }
 
@@ -258,7 +312,7 @@ export const recordingPlaybackClientScript = String.raw`
           pauseTrack(track);
           if (!tracks.some((candidate) => candidate.available)) showUnavailable();
           else {
-            noticeNode.textContent = "Часть дорожек недоступна";
+            noticeNode.textContent = "Some tracks are unavailable";
             noticeNode.hidden = false;
           }
         });
@@ -273,6 +327,11 @@ export const recordingPlaybackClientScript = String.raw`
 
   function renderPosition(value) {
     seekNode.value = String(value);
+    const maximum = Number(seekNode.max);
+    const progress = maximum > 0
+      ? Math.min(100, Math.max(0, value / maximum * 100))
+      : 0;
+    seekNode.style.setProperty("--seek-progress", progress + "%");
     currentNode.textContent = formatTime(value);
   }
 
@@ -323,23 +382,23 @@ const recordingPlaybackAssetVersion = createHash("sha256")
   .slice(0, 12);
 
 export const recordingPlaybackPageHtml = `<!doctype html>
-<html lang="ru">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Запись встречи</title>
+  <title>Meeting recording</title>
   <link rel="stylesheet" href="/recordings/player.css?v=${recordingPlaybackAssetVersion}">
 </head>
 <body>
   <main class="shell">
     <section class="card" aria-labelledby="title">
       <div class="eyebrow">QUANTA MEETING</div>
-      <h1 id="title">Запись встречи</h1>
-      <p id="status" class="status" role="status">Проверяем доступ...</p>
+      <h1 id="title">Meeting recording</h1>
+      <p id="status" class="status" role="status">Checking access...</p>
       <div id="player" class="player" hidden>
-        <button id="toggle" class="toggle" type="button" aria-label="Воспроизвести">▶</button>
+        <button id="toggle" class="toggle" type="button" aria-label="Play">▶</button>
         <div class="timeline">
-          <input id="seek" type="range" min="0" max="1" value="0" step="0.01" aria-label="Позиция записи">
+          <input id="seek" type="range" min="0" max="1" value="0" step="0.01" aria-label="Recording position">
           <div class="times"><span id="current">0:00</span><span id="duration">0:00</span></div>
         </div>
       </div>

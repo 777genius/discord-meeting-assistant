@@ -98,7 +98,7 @@ describe("recording playback HTTP routes", () => {
     expect(response.statusCode).toBe(200);
     expect(response.headers["cache-control"]).toBe("private, no-store");
     expect(response.headers["content-security-policy"]).toContain("media-src 'self'");
-    expect(response.body).toContain("Запись встречи");
+    expect(response.body).toContain("Meeting recording");
     expect(response.body).not.toContain(context.token);
   });
 
