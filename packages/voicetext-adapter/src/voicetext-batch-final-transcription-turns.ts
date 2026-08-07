@@ -12,7 +12,7 @@ const voicetextBatchIdentityVersion = "v2";
 export interface VoicetextBatchProviderTurn {
   readonly endMs: number;
   readonly speakerId: string;
-  readonly sourceUtteranceIndex: number;
+  readonly sourceUtteranceIndices: readonly number[];
   readonly stableTurnId: string;
   readonly startMs: number;
   readonly text: string;
@@ -39,31 +39,36 @@ export function mapVoicetextBatchProviderTurns(
   let previousEndSeconds = -1;
   let totalCharacters = 0;
   const turns: VoicetextBatchProviderTurn[] = [];
-  for (const [utteranceIndex, utterance] of input.result.utterances.entries()) {
-    if (utteranceIndex >= input.options.maxSegmentsPerSpeaker) {
-      throw new VoicetextAdapterError(
-        "limit_exceeded",
-        "Voicetext batch returned too many final segments",
-        false,
-      );
+  if (input.result.utterances.length > input.options.maxSegmentsPerSpeaker) {
+    throw new VoicetextAdapterError(
+      "limit_exceeded",
+      "Voicetext batch returned too many final segments",
+      false,
+    );
+  }
+  const utterances = input.result.utterances
+    .map((utterance, sourceUtteranceIndex) => ({ sourceUtteranceIndex, utterance }))
+    .toSorted((left, right) =>
+      left.utterance.startSeconds - right.utterance.startSeconds ||
+      left.utterance.endSeconds - right.utterance.endSeconds ||
+      left.sourceUtteranceIndex - right.sourceUtteranceIndex
+  );
+  for (const { sourceUtteranceIndex, utterance } of utterances) {
+    const text = utterance.transcript.trim();
+    if (text.length === 0) {
+      // Empty provider hypotheses carry no transcript evidence. They must not
+      // advance or invalidate the accepted timeline, even when their tentative
+      // timing envelope is degenerate.
+      continue;
     }
     const rawStartSeconds = utterance.startSeconds;
     const rawEndSeconds = utterance.endSeconds;
     const roundedStartMs = floorVoicetextBatchMilliseconds(rawStartSeconds);
-    const relativeStartMs = Math.max(roundedStartMs, previousEndMs);
     const relativeEndMs = ceilingVoicetextBatchMilliseconds(rawEndSeconds);
-    if (
-      rawEndSeconds <= rawStartSeconds ||
-      exceedsVoicetextBatchSegmentOverlapLimit(
-        previousEndSeconds,
-        rawStartSeconds,
-        input.options.maxSegmentOverlapMs,
-      ) ||
-      relativeEndMs <= relativeStartMs
-    ) {
+    if (rawEndSeconds <= rawStartSeconds || relativeEndMs <= roundedStartMs) {
       throw new VoicetextAdapterError(
         "invalid_provider_response",
-        "Voicetext batch final segments are overlapping or zero-length",
+        "Voicetext batch final segment is zero-length",
         false,
       );
     }
@@ -77,18 +82,60 @@ export function mapVoicetextBatchProviderTurns(
         false,
       );
     }
-    previousEndMs = relativeEndMs;
-    previousEndSeconds = rawEndSeconds;
-    const text = utterance.transcript.trim();
-    if (text.length === 0) {
-      continue;
-    }
     if (text.length > input.options.maxTranscriptCharsPerSegment) {
       throw new VoicetextAdapterError(
         "limit_exceeded",
         "Voicetext batch final segment exceeded its configured character limit",
         false,
       );
+    }
+    if (exceedsVoicetextBatchSegmentOverlapLimit(
+      previousEndSeconds,
+      rawStartSeconds,
+      input.options.maxSegmentOverlapMs,
+    )) {
+      throw new VoicetextAdapterError(
+        "invalid_provider_response",
+        "Voicetext batch final segment overlap exceeds the configured safety bound",
+        false,
+      );
+    }
+    const relativeStartMs = Math.max(roundedStartMs, previousEndMs);
+    if (relativeEndMs <= relativeStartMs) {
+      const previousTurn = turns.at(-1);
+      if (previousTurn === undefined) {
+        throw new VoicetextAdapterError(
+          "invalid_provider_response",
+          "Voicetext batch final segment cannot be placed on the speaker timeline",
+          false,
+        );
+      }
+      const mergedText = mergeContainedVoicetextBatchText(previousTurn.text, text);
+      if (mergedText.length > input.options.maxTranscriptCharsPerSegment) {
+        throw new VoicetextAdapterError(
+          "limit_exceeded",
+          "Voicetext batch normalized final segment exceeded its configured character limit",
+          false,
+        );
+      }
+      totalCharacters = addVoicetextBatchSafeIntegers(
+        totalCharacters,
+        mergedText.length - previousTurn.text.length,
+      );
+      if (totalCharacters > input.options.maxTranscriptCharsPerSpeaker) {
+        throw new VoicetextAdapterError(
+          "limit_exceeded",
+          "Voicetext batch transcript exceeded its configured character limit",
+          false,
+        );
+      }
+      turns[turns.length - 1] = {
+        ...previousTurn,
+        sourceUtteranceIndices: [...previousTurn.sourceUtteranceIndices, sourceUtteranceIndex],
+        text: mergedText,
+      };
+      previousEndSeconds = Math.max(previousEndSeconds, rawEndSeconds);
+      continue;
     }
     totalCharacters = addVoicetextBatchSafeIntegers(totalCharacters, text.length);
     if (totalCharacters > input.options.maxTranscriptCharsPerSpeaker) {
@@ -104,12 +151,12 @@ export function mapVoicetextBatchProviderTurns(
         relativeEndMs,
       ),
       speakerId: input.reference.speakerId,
-      sourceUtteranceIndex: utteranceIndex,
+      sourceUtteranceIndices: [sourceUtteranceIndex],
       stableTurnId: stableVoicetextBatchId(
         "turn",
         input.idempotencyKey,
         String(input.speakerIndex + 1),
-        String(utteranceIndex + 1),
+        String(sourceUtteranceIndex + 1),
       ),
       startMs: addVoicetextBatchSafeIntegers(
         input.reference.timelineOffsetMs,
@@ -117,8 +164,32 @@ export function mapVoicetextBatchProviderTurns(
       ),
       text,
     });
+    previousEndMs = relativeEndMs;
+    previousEndSeconds = rawEndSeconds;
   }
   return turns;
+}
+
+function mergeContainedVoicetextBatchText(previous: string, current: string): string {
+  const previousWords = previous.split(/\s+/u);
+  const currentWords = current.split(/\s+/u);
+  const normalizedPrevious = ` ${previousWords.join(" ").toLocaleLowerCase()} `;
+  const normalizedCurrent = ` ${currentWords.join(" ").toLocaleLowerCase()} `;
+  if (normalizedPrevious.includes(normalizedCurrent)) {
+    return previous;
+  }
+  if (normalizedCurrent.includes(normalizedPrevious)) {
+    return current;
+  }
+  const maximumSharedWords = Math.min(previousWords.length, currentWords.length);
+  for (let sharedWords = maximumSharedWords; sharedWords > 0; sharedWords -= 1) {
+    const previousSuffix = previousWords.slice(-sharedWords).join(" ").toLocaleLowerCase();
+    const currentPrefix = currentWords.slice(0, sharedWords).join(" ").toLocaleLowerCase();
+    if (previousSuffix === currentPrefix) {
+      return [...previousWords, ...currentWords.slice(sharedWords)].join(" ");
+    }
+  }
+  return `${previous} ${current}`;
 }
 
 export function mapVoicetextBatchProviderReadableSegments(
@@ -141,7 +212,9 @@ function mapVoicetextBatchProviderReadableSegmentsOrThrow(
 ): readonly TranscriptReadableSegmentSnapshot[] {
   const audioDurationMs = ceilingVoicetextBatchMilliseconds(input.result.durationSeconds);
   const turnsByUtteranceIndex = new Map(
-    turns.map((turn) => [turn.sourceUtteranceIndex, turn]),
+    turns.flatMap((turn) =>
+      turn.sourceUtteranceIndices.map((sourceIndex) => [sourceIndex, turn] as const)
+    ),
   );
   let previousEndSeconds = -1;
   let totalCharacters = 0;
@@ -190,6 +263,9 @@ function mapVoicetextBatchProviderReadableSegmentsOrThrow(
       }
       return sourceTurn;
     });
+    const uniqueSourceTurns = [...new Map(
+      sourceTurns.map((turn) => [turn.stableTurnId, turn]),
+    ).values()];
     const sourceUtterances = segment.sourceUtteranceIndices.map((sourceIndex) => {
       const sourceUtterance = input.result.utterances[sourceIndex];
       if (sourceUtterance === undefined) {
@@ -206,10 +282,10 @@ function mapVoicetextBatchProviderReadableSegmentsOrThrow(
     if (startMs < providerEnvelopeStartMs || endMs > providerEnvelopeEndMs) {
       throw invalidReadableSegments("Voicetext batch readable segment exceeds its source utterance envelope");
     }
-    const envelopeStartMs = Math.min(...sourceTurns.map((turn) =>
+    const envelopeStartMs = Math.min(...uniqueSourceTurns.map((turn) =>
       turn.startMs - input.reference.timelineOffsetMs
     ));
-    const envelopeEndMs = Math.max(...sourceTurns.map((turn) =>
+    const envelopeEndMs = Math.max(...uniqueSourceTurns.map((turn) =>
       turn.endMs - input.reference.timelineOffsetMs
     ));
     const normalizedStartMs = Math.max(startMs, envelopeStartMs);
@@ -228,7 +304,7 @@ function mapVoicetextBatchProviderReadableSegmentsOrThrow(
         String(input.speakerIndex + 1),
         String(segmentIndex + 1),
       ),
-      sourceTurnIds: sourceTurns.map(({ stableTurnId }) => stableTurnId),
+      sourceTurnIds: uniqueSourceTurns.map(({ stableTurnId }) => stableTurnId),
       speakerId: input.reference.speakerId,
       startMs: addVoicetextBatchSafeIntegers(
         input.reference.timelineOffsetMs,
