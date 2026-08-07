@@ -1,0 +1,187 @@
+import { describe, expect, it } from "vitest";
+
+import type {
+  LiveConversationConfiguration,
+  LiveRuntimeLogger,
+} from "../src/live-runtime/contracts.js";
+import { ParticipantGreetingBridge } from "../src/live-runtime/participant-greeting-bridge.js";
+
+const russianParticipantId = "1533224474609057795";
+const englishParticipantId = "2533224474609057795";
+const unknownParticipantId = "3533224474609057795";
+
+class GreetingCoordinatorProbe {
+  public readonly calls: Array<{
+    readonly locale: string;
+    readonly meetingId: string;
+    readonly nowMs: number;
+    readonly prompt: string;
+    readonly recordingId: string;
+    readonly speakerId: string;
+    readonly systemPrompt: string;
+    readonly turnId: string;
+    readonly voiceProfileId: string;
+  }> = [];
+  public idleCalls = 0;
+
+  public advanceMeeting(): void {}
+
+  public closeMeeting(): Promise<void> {
+    return Promise.resolve();
+  }
+
+  public handleFinalizedTurn(): Promise<{ readonly status: "ignored" }> {
+    return Promise.resolve({ status: "ignored" });
+  }
+
+  public handleProactiveTurn(input: (typeof this.calls)[number]) {
+    this.calls.push(structuredClone(input));
+    return Promise.resolve({ status: "active" as const });
+  }
+
+  public speechActivity(): Promise<{ readonly status: "ignored" }> {
+    return Promise.resolve({ status: "ignored" });
+  }
+
+  public speechEnded(): Promise<{ readonly status: "ignored" }> {
+    return Promise.resolve({ status: "ignored" });
+  }
+
+  public speechStarted(): Promise<{ readonly status: "ignored" }> {
+    return Promise.resolve({ status: "ignored" });
+  }
+
+  public whenIdle(): Promise<void> {
+    this.idleCalls += 1;
+    return Promise.resolve();
+  }
+}
+
+const logger: LiveRuntimeLogger = {
+  debug: () => {},
+  error: () => {},
+  info: () => {},
+  warn: () => {},
+};
+
+function fixture(playbackReady = false): {
+  readonly bridge: ParticipantGreetingBridge;
+  readonly coordinator: GreetingCoordinatorProbe;
+  setPlaybackReady(value: boolean): void;
+} {
+  let ready = playbackReady;
+  const coordinator = new GreetingCoordinatorProbe();
+  const configuration: LiveConversationConfiguration = {
+    coordinator,
+    greetings: {
+      isPlaybackReady: () => ready,
+      profiles: {
+        [englishParticipantId]: {
+          displayName: "Alex Smith",
+          greetingLocale: "en",
+          spokenName: "Alex",
+        },
+        [russianParticipantId]: {
+          displayName: "Александр Смирнов",
+          greetingLocale: "ru",
+          spokenName: "Саша",
+        },
+      },
+    },
+    locale: "auto",
+    nowMilliseconds: () => 321,
+    systemPrompt: "Answer briefly.",
+    voiceProfileId: "voice-profile",
+  };
+  return {
+    bridge: new ParticipantGreetingBridge({
+      configuration,
+      isMeetingFinishing: () => false,
+      logger,
+      meetingId: "recording-1",
+    }),
+    coordinator,
+    setPlaybackReady(value) {
+      ready = value;
+    },
+  };
+}
+
+describe("ParticipantGreetingBridge", () => {
+  it("waits for playback, skips unknown participants and speaks exact localized names", async () => {
+    const context = fixture();
+
+    context.bridge.participantsPresent([
+      russianParticipantId,
+      unknownParticipantId,
+      englishParticipantId,
+    ]);
+    await context.bridge.settle();
+    expect(context.coordinator.calls).toEqual([]);
+
+    context.setPlaybackReady(true);
+    context.bridge.advance();
+    await context.bridge.settle();
+
+    expect(context.coordinator.calls).toHaveLength(2);
+    expect(context.coordinator.calls.map(({ locale, prompt, speakerId }) => ({
+      locale,
+      prompt,
+      speakerId,
+    }))).toEqual([
+      {
+        locale: "ru",
+        prompt: "Привет, Саша!",
+        speakerId: russianParticipantId,
+      },
+      {
+        locale: "en",
+        prompt: "Hi, Alex!",
+        speakerId: englishParticipantId,
+      },
+    ]);
+    expect(context.coordinator.calls[0]?.systemPrompt).toContain(
+      "Speak exactly the greeting provided",
+    );
+    expect(context.coordinator.idleCalls).toBe(4);
+  });
+
+  it("greets a participant only once after reconnecting in the same meeting", async () => {
+    const context = fixture(true);
+
+    context.bridge.participantJoined(russianParticipantId);
+    await context.bridge.settle();
+    context.bridge.participantLeft(russianParticipantId);
+    context.bridge.participantJoined(russianParticipantId);
+    await context.bridge.settle();
+
+    expect(context.coordinator.calls).toHaveLength(1);
+  });
+
+  it("does not greet someone who left before playback became ready", async () => {
+    const context = fixture();
+
+    context.bridge.participantJoined(englishParticipantId);
+    context.bridge.participantLeft(englishParticipantId);
+    context.setPlaybackReady(true);
+    context.bridge.advance();
+    await context.bridge.settle();
+    expect(context.coordinator.calls).toEqual([]);
+
+    context.bridge.participantJoined(englishParticipantId);
+    await context.bridge.settle();
+    expect(context.coordinator.calls).toHaveLength(1);
+  });
+
+  it("drops queued greetings when the meeting closes", async () => {
+    const context = fixture();
+
+    context.bridge.participantJoined(russianParticipantId);
+    context.bridge.close();
+    context.setPlaybackReady(true);
+    context.bridge.advance();
+    await context.bridge.settle();
+
+    expect(context.coordinator.calls).toEqual([]);
+  });
+});

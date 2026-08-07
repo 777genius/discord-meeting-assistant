@@ -10,6 +10,7 @@ import type {
   FinalizedConversationTurnInput,
   MeetingConversationState,
   PreparedConversation,
+  ProactiveConversationTurnInput,
 } from "./conversation-coordinator-types.js";
 
 interface TranscriptTimeline {
@@ -31,6 +32,17 @@ function identityPart(value: string): string {
 function conversationIdempotencyKey(input: FinalizedConversationTurnInput): string {
   return [
     "live-conversation:v1",
+    input.meetingId,
+    input.recordingId,
+    input.turnId,
+  ].map(identityPart).join("|");
+}
+
+function proactiveConversationIdempotencyKey(
+  input: ProactiveConversationTurnInput,
+): string {
+  return [
+    "proactive-conversation:v1",
     input.meetingId,
     input.recordingId,
     input.turnId,
@@ -158,7 +170,61 @@ export class ConversationWakeLatchAdmission {
       speakerId: input.speakerId,
       turnId: input.turnId,
     });
-    const admission = state.session.admit(turn, state.lastObservedAtMs);
+    return this.admitPrepared(state, {
+      request: {
+        idempotencyKey: conversationIdempotencyKey(input),
+        locale: input.locale,
+        meetingId: input.meetingId,
+        prompt,
+        recordingId: input.recordingId,
+        speakerId: input.speakerId,
+        systemPrompt: input.systemPrompt,
+        turnId: input.turnId,
+        voiceProfileId: input.voiceProfileId,
+      },
+      thinkingCueLocale: input.thinkingCueLocale,
+      thinkingCuesEnabled: true,
+      turn,
+    });
+  }
+
+  public admitProactive(
+    state: MeetingConversationState,
+    input: ProactiveConversationTurnInput,
+  ): ConversationPromptAdmission {
+    const prompt = input.prompt.normalize("NFKC").trim();
+    const turn = createConversationTurn({
+      meetingId: input.meetingId,
+      prompt,
+      speakerId: input.speakerId,
+      turnId: input.turnId,
+    });
+    return this.admitPrepared(state, {
+      request: {
+        idempotencyKey: proactiveConversationIdempotencyKey(input),
+        locale: input.locale,
+        meetingId: input.meetingId,
+        prompt,
+        recordingId: input.recordingId,
+        speakerId: input.speakerId,
+        systemPrompt: input.systemPrompt,
+        turnId: input.turnId,
+        voiceProfileId: input.voiceProfileId,
+      },
+      thinkingCueLocale: input.locale,
+      thinkingCuesEnabled: false,
+      turn,
+    });
+  }
+
+  private admitPrepared(
+    state: MeetingConversationState,
+    prepared: PreparedConversation,
+  ): ConversationPromptAdmission {
+    const admission = state.session.admit(
+      prepared.turn,
+      state.lastObservedAtMs,
+    );
 
     if (admission.status === "reused") {
       return {
@@ -177,24 +243,24 @@ export class ConversationWakeLatchAdmission {
       };
     }
 
-    state.pending.set(turn.turnId, this.prepare(input, prompt, turn));
+    state.pending.set(prepared.turn.turnId, prepared);
     if (admission.status === "active") {
       return {
         result: Object.freeze({
-          prompt,
+          prompt: prepared.turn.prompt,
           status: "active" as const,
-          turnId: turn.turnId,
+          turnId: prepared.turn.turnId,
           usedFallbackPrompt: false,
         }),
-        turnToStart: turn.turnId,
+        turnToStart: prepared.turn.turnId,
       };
     }
     return {
       result: Object.freeze({
         expiresAtMs: admission.expiresAtMs,
-        prompt,
+        prompt: prepared.turn.prompt,
         status: "queued" as const,
-        turnId: turn.turnId,
+        turnId: prepared.turn.turnId,
         usedFallbackPrompt: false,
       }),
       turnToStart: null,

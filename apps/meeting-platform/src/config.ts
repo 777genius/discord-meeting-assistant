@@ -57,6 +57,81 @@ const runtimeAddress = z
   .regex(/^(?:[a-zA-Z0-9][a-zA-Z0-9.-]*|\[[0-9a-fA-F:]+\]):\d{1,5}$/u);
 const profileIdentifier = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/u);
 const voiceIdentifier = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/u);
+const participantName = z
+  .string()
+  .trim()
+  .min(1)
+  .max(100)
+  .refine((value) =>
+    Array.from(value).every((character) => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      return !(
+        codePoint <= 31 ||
+        (codePoint >= 127 && codePoint <= 159) ||
+        codePoint === 8_232 ||
+        codePoint === 8_233
+      );
+    }),
+  )
+  .transform((value) => value.normalize("NFC"));
+const participantGreetingProfileSchema = z
+  .object({
+    displayName: participantName,
+    greetingLocale: z.enum(["ru", "en"]),
+    spokenName: participantName,
+  })
+  .strict();
+const participantGreetingProfilesSchema = z.record(
+  snowflake,
+  participantGreetingProfileSchema,
+);
+
+export interface ParticipantGreetingProfile {
+  readonly displayName: string;
+  readonly greetingLocale: "ru" | "en";
+  readonly spokenName: string;
+}
+
+export type ParticipantGreetingProfiles = Readonly<
+  Record<string, ParticipantGreetingProfile>
+>;
+
+function parseParticipantGreetingProfiles(
+  rawValue: string | undefined,
+  context: z.RefinementCtx,
+): ParticipantGreetingProfiles {
+  if (rawValue === undefined || rawValue.trim() === "") {
+    return Object.freeze({});
+  }
+
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(rawValue) as unknown;
+  } catch {
+    context.addIssue({
+      code: "custom",
+      message: "participant greeting profiles must be valid JSON",
+    });
+    return z.NEVER;
+  }
+
+  const result = participantGreetingProfilesSchema.safeParse(decoded);
+  if (!result.success || Object.keys(result.data).length > 500) {
+    context.addIssue({
+      code: "custom",
+      message: "participant greeting profiles are invalid",
+    });
+    return z.NEVER;
+  }
+
+  const entries = Object.entries(result.data)
+    .toSorted(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+    .map(
+      ([participantId, profile]) =>
+        [participantId, Object.freeze(profile)] as const,
+    );
+  return Object.freeze(Object.fromEntries(entries));
+}
 
 const environmentSchema = z
   .object({
@@ -93,6 +168,11 @@ const environmentSchema = z
     NODE_ENV: z
       .enum(["development", "production", "test"])
       .default("production"),
+    PARTICIPANT_GREETING_PROFILES_JSON: z
+      .string()
+      .max(64_000)
+      .optional()
+      .transform(parseParticipantGreetingProfiles),
     PORT: z.coerce.number().int().min(1).max(65_535).default(4_310),
     POSTGRES_URL_FILE: absolutePath,
     RECORDING_SPOOL_ROOT: absolutePath,
@@ -149,6 +229,17 @@ const environmentSchema = z
     VOICETEXT_WS_URL: secureWebSocketUrl.optional(),
   })
   .superRefine((environment, context) => {
+    if (
+      Object.keys(environment.PARTICIPANT_GREETING_PROFILES_JSON).length > 0 &&
+      !environment.CONVERSATION_ENABLED
+    ) {
+      context.addIssue({
+        code: "custom",
+        message:
+          "participant greeting profiles require live conversation to be enabled",
+        path: ["PARTICIPANT_GREETING_PROFILES_JSON"],
+      });
+    }
     if (environment.CONVERSATION_ENABLED) {
       if (environment.TRANSCRIPTION_PROVIDER !== "voicetext") {
         context.addIssue({
@@ -250,6 +341,7 @@ export interface PlatformConfig {
     readonly voiceChannelId: string;
   };
   readonly nodeEnvironment: "development" | "production" | "test";
+  readonly participantGreetingProfiles: ParticipantGreetingProfiles;
   readonly liveIngressOwnerMode: "singleton";
   readonly port: number;
   readonly recordingSpoolRoot: string;
@@ -354,6 +446,7 @@ export async function loadPlatformConfig(
         }),
     liveIngressOwnerMode: environment.LIVE_INGRESS_OWNER_MODE,
     nodeEnvironment: environment.NODE_ENV,
+    participantGreetingProfiles: environment.PARTICIPANT_GREETING_PROFILES_JSON,
     port: environment.PORT,
     recordingSpoolRoot: environment.RECORDING_SPOOL_ROOT,
     ...(recordingPlayback.config === undefined

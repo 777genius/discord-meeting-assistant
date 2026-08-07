@@ -93,7 +93,9 @@ export class ConversationActiveTurnExecutor {
       runtimeTurn: null,
     };
     state.active = run;
-    this.cues.schedule(state, run);
+    if (prepared.thinkingCuesEnabled) {
+      this.cues.schedule(state, run);
+    }
 
     let started: Awaited<ReturnType<ConversationRuntime["startTurn"]>>;
     const startAbortController = new AbortController();

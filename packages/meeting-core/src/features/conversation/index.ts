@@ -27,6 +27,7 @@ export {
   type ConversationCoordinatorResult,
   type ConversationInterruptionResult,
   type FinalizedConversationTurnInput,
+  type ProactiveConversationTurnInput,
 } from "./application/conversation.js";
 export type {
   ConversationAudioChunk,

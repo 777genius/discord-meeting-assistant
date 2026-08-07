@@ -15,6 +15,7 @@ import {
 } from "@discord-meeting/meeting-core/live-meeting";
 import {
   type FinalizedConversationTurnInput,
+  type ProactiveConversationTurnInput,
 } from "@discord-meeting/meeting-core/conversation";
 import type { Logger } from "@discord-meeting/observability-adapter";
 import type {
@@ -442,6 +443,7 @@ export class ConversationCoordinatorProbe {
   public readonly calls: FinalizedConversationTurnInput[] = [];
   public readonly closeCalls: string[] = [];
   public readonly persistedBeforeCall: boolean[] = [];
+  public readonly proactiveCalls: ProactiveConversationTurnInput[] = [];
   public readonly speechEvents: string[] = [];
   public readonly speechObservations: Array<{
     meetingId: string;
@@ -485,6 +487,11 @@ export class ConversationCoordinatorProbe {
     return Promise.resolve({ status: "ignored" as const });
   }
 
+  public handleProactiveTurn(input: ProactiveConversationTurnInput) {
+    this.proactiveCalls.push(structuredClone(input));
+    return Promise.resolve({ status: "ignored" as const });
+  }
+
   public releaseBlockedHandle(): void {
     this.releaseHandle?.();
     this.releaseHandle = undefined;
@@ -515,6 +522,10 @@ export class ConversationCoordinatorProbe {
     this.speechEvents.push("started");
     this.speechObservations.push({ meetingId, nowMs, type: "started" });
     return Promise.resolve({ status: "ignored" });
+  }
+
+  public whenIdle(): Promise<void> {
+    return Promise.resolve();
   }
 }
 
@@ -697,9 +708,13 @@ export const logger: Logger = {
   warn: () => {},
 };
 
-export function started(recordingId = "recording-live-1"): LiveMeetingStartedEvent {
+export function started(
+  recordingId = "recording-live-1",
+  participantIds: readonly string[] = [],
+): LiveMeetingStartedEvent {
   return {
     occurredAt: "2026-08-02T10:00:00.000Z",
+    participantIds,
     publicationTarget: {
       resolve: async () => "1533228891827736657",
     },

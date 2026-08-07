@@ -39,8 +39,14 @@ interface DeferredLivePublicationTarget {
 }
 
 export interface LiveMeetingStartedEvent extends LiveMeetingEventBase {
+  readonly participantIds: readonly string[];
   readonly publicationTarget: DeferredLivePublicationTarget;
   readonly type: "meeting.started";
+}
+
+export interface LiveMeetingParticipantEvent extends LiveMeetingEventBase {
+  readonly participantId: string;
+  readonly type: "participant.joined" | "participant.left";
 }
 
 interface LiveMeetingStoppedEvent extends LiveMeetingEventBase {
@@ -51,14 +57,13 @@ interface LiveMeetingIgnoredEvent extends LiveMeetingEventBase {
   readonly type:
     | "meeting.connection_lost"
     | "meeting.connection_recovered"
-    | "participant.joined"
-    | "participant.left"
     | "recording.artifact_ready"
     | "recording.authoritative_ready";
 }
 
 export type LiveMeetingLifecycleEvent =
   | LiveMeetingIgnoredEvent
+  | LiveMeetingParticipantEvent
   | LiveMeetingStartedEvent
   | LiveMeetingStoppedEvent;
 
@@ -256,19 +261,47 @@ interface LiveConversationTurnInput {
   readonly wakeDetectedAtUnixMs: number;
 }
 
+interface LiveProactiveConversationTurnInput {
+  readonly locale: string;
+  readonly meetingId: string;
+  readonly nowMs: number;
+  readonly prompt: string;
+  readonly recordingId: string;
+  readonly speakerId: string;
+  readonly systemPrompt: string;
+  readonly turnId: string;
+  readonly voiceProfileId: string;
+}
+
 interface LiveConversationCoordinator {
   advanceMeeting(meetingId: string, nowMs: number): void;
   closeMeeting(meetingId: string, nowMs: number): Promise<void>;
   handleFinalizedTurn(
     input: LiveConversationTurnInput,
   ): Promise<LiveConversationOutcome>;
+  handleProactiveTurn(
+    input: LiveProactiveConversationTurnInput,
+  ): Promise<LiveConversationOutcome>;
   speechActivity(meetingId: string, nowMs: number): Promise<unknown>;
   speechEnded(meetingId: string, nowMs: number): Promise<unknown>;
   speechStarted(meetingId: string, nowMs: number): Promise<unknown>;
+  whenIdle(meetingId: string): Promise<void>;
+}
+
+export interface LiveParticipantGreetingProfile {
+  readonly displayName: string;
+  readonly greetingLocale: "en" | "ru";
+  readonly spokenName: string;
+}
+
+export interface LiveParticipantGreetingConfiguration {
+  readonly isPlaybackReady: (recordingId: string) => boolean;
+  readonly profiles: Readonly<Record<string, LiveParticipantGreetingProfile>>;
 }
 
 export interface LiveConversationConfiguration {
   readonly coordinator: LiveConversationCoordinator;
+  readonly greetings?: LiveParticipantGreetingConfiguration;
   readonly locale: string;
   readonly nowMilliseconds: () => number;
   readonly systemPrompt: string;

@@ -5,6 +5,7 @@ import {
 } from "./live-packet-flow-control.js";
 import type {
   LiveMeetingLifecycleEvent,
+  LiveMeetingParticipantEvent,
   LiveMeetingRuntimeDependencies,
   LiveMeetingStartedEvent,
   LiveRuntimeClock,
@@ -90,6 +91,13 @@ export class PlatformLiveMeetingRuntime {
     }
     if (event.type === "meeting.started") {
       await this.recordingOperations.enqueue(event.recordingId, () => this.start(event));
+      return;
+    }
+    if (event.type === "participant.joined" || event.type === "participant.left") {
+      await this.recordingOperations.enqueue(event.recordingId, () => {
+        this.acceptParticipant(event);
+        return Promise.resolve();
+      });
       return;
     }
     if (event.type === "meeting.ended" || event.type === "meeting.aborted") {
@@ -230,6 +238,18 @@ export class PlatformLiveMeetingRuntime {
     });
   }
 
+  private acceptParticipant(event: LiveMeetingParticipantEvent): void {
+    const state = this.meetings.get(event.recordingId);
+    if (state === undefined || state.finishing) {
+      return;
+    }
+    if (event.type === "participant.joined") {
+      state.greetings?.participantJoined(event.participantId);
+      return;
+    }
+    state.greetings?.participantLeft(event.participantId);
+  }
+
   private acceptTranscript(
     state: ActiveLiveMeeting,
     event: LiveTranscriptionEvent,
@@ -277,6 +297,7 @@ export class PlatformLiveMeetingRuntime {
     const nowMs = this.clock.nowMilliseconds();
     for (const state of this.meetings.values()) {
       state.conversation?.scheduleSpeechObservation(() => state.finishing);
+      state.greetings?.advance();
       this.scheduleDueRefresh(state, nowMs);
     }
   }

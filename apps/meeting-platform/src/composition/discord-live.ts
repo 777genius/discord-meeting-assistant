@@ -132,6 +132,7 @@ export async function createPlatformDiscordLiveComposition(input: {
     config: input.config,
     ...(conversationCoordinator === undefined ? {} : { conversationCoordinator }),
     discordPublisher,
+    isPlaybackReady: (recordingId) => craigPlaybackGateway.hasSession(recordingId),
     logger: input.logger,
     meetings: input.meetings,
     runtimeTransport: input.runtimeTransport,
@@ -234,6 +235,7 @@ function createLiveRuntime(input: {
   readonly config: PlatformConfig;
   readonly conversationCoordinator?: ConversationCoordinator;
   readonly discordPublisher: DiscordSummaryPublisher;
+  readonly isPlaybackReady: (recordingId: string) => boolean;
   readonly logger: Logger;
   readonly meetings: PostgresLiveMeetingRepository;
   readonly runtimeTransport: SubscriptionRuntimeTransportPort;
@@ -261,6 +263,14 @@ function createLiveRuntime(input: {
       : {
           conversation: {
             coordinator: input.conversationCoordinator,
+            ...(Object.keys(input.config.participantGreetingProfiles).length === 0
+              ? {}
+              : {
+                  greetings: {
+                    isPlaybackReady: input.isPlaybackReady,
+                    profiles: input.config.participantGreetingProfiles,
+                  },
+                }),
             locale: "auto",
             nowMilliseconds: monotonicUnixNowMilliseconds,
             systemPrompt: input.config.conversation.systemPrompt,

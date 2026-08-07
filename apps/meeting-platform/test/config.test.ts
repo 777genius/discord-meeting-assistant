@@ -62,6 +62,142 @@ describe("platform configuration", () => {
     ).rejects.toThrow();
   });
 
+describe("participant greeting profile configuration", () => {
+  it("loads canonical immutable participant greeting profiles keyed by Discord ID", async () => {
+    const config = await loadPlatformConfig(
+      {
+        ...environment,
+        CONVERSATION_ENABLED: "true",
+        CONVERSATION_RUNTIME_ADDRESS: "pipecat-runtime:50053",
+        CONVERSATION_RUNTIME_TOKEN_FILE: "/run/secrets/conversation-runtime",
+        PARTICIPANT_GREETING_PROFILES_JSON: JSON.stringify({
+          "2533224474609057795": {
+            displayName: "  Елена  ",
+            greetingLocale: "ru",
+            spokenName: "Лена",
+          },
+          "1533224474609057795": {
+            displayName: "Alex",
+            greetingLocale: "en",
+            spokenName: "Alexander",
+          },
+        }),
+        TRANSCRIPTION_PROVIDER: "voicetext",
+        VOICETEXT_SERVICE_TOKEN_FILE: "/run/secrets/voicetext",
+        VOICETEXT_WS_URL: "wss://api.voicetext.site/api/v1/transcribe/stream",
+      },
+      async () => "value",
+    );
+
+    expect(Object.keys(config.participantGreetingProfiles)).toEqual([
+      "1533224474609057795",
+      "2533224474609057795",
+    ]);
+    expect(config.participantGreetingProfiles["2533224474609057795"]).toEqual({
+      displayName: "Елена",
+      greetingLocale: "ru",
+      spokenName: "Лена",
+    });
+    expect(Object.isFrozen(config.participantGreetingProfiles)).toBe(true);
+    expect(
+      Object.isFrozen(
+        config.participantGreetingProfiles["1533224474609057795"],
+      ),
+    ).toBe(true);
+  });
+
+  it("uses no participant greeting profiles when the optional JSON is missing or empty", async () => {
+    const missing = await loadPlatformConfig(environment, async () => "value");
+    const empty = await loadPlatformConfig(
+      { ...environment, PARTICIPANT_GREETING_PROFILES_JSON: "  " },
+      async () => "value",
+    );
+
+    expect(missing.participantGreetingProfiles).toEqual({});
+    expect(empty.participantGreetingProfiles).toEqual({});
+  });
+
+  it("rejects configured greeting profiles while live conversation is disabled", async () => {
+    await expect(
+      loadPlatformConfig(
+        {
+          ...environment,
+          PARTICIPANT_GREETING_PROFILES_JSON: JSON.stringify({
+            "1533224474609057795": {
+              displayName: "Alex",
+              greetingLocale: "en",
+              spokenName: "Alexander",
+            },
+          }),
+        },
+        async () => "value",
+      ),
+    ).rejects.toThrow(
+      "participant greeting profiles require live conversation to be enabled",
+    );
+  });
+
+  it.each([
+    ["malformed JSON", '{"private-person-name"'],
+    [
+      "invalid Discord ID",
+      JSON.stringify({
+        "not-a-discord-id": {
+          displayName: "Private Person",
+          greetingLocale: "en",
+          spokenName: "Private",
+        },
+      }),
+    ],
+    [
+      "empty name",
+      JSON.stringify({
+        "1533224474609057795": {
+          displayName: " ",
+          greetingLocale: "en",
+          spokenName: "Private",
+        },
+      }),
+    ],
+    [
+      "unsupported locale",
+      JSON.stringify({
+        "1533224474609057795": {
+          displayName: "Private Person",
+          greetingLocale: "de",
+          spokenName: "Private",
+        },
+      }),
+    ],
+    [
+      "unknown profile field",
+      JSON.stringify({
+        "1533224474609057795": {
+          displayName: "Private Person",
+          greetingLocale: "en",
+          nickname: "must-not-be-accepted",
+          spokenName: "Private",
+        },
+      }),
+    ],
+  ])("rejects %s without exposing profile contents", async (_case, profiles) => {
+    let failure: unknown;
+    try {
+      await loadPlatformConfig(
+        { ...environment, PARTICIPANT_GREETING_PROFILES_JSON: profiles },
+        async () => "value",
+      );
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(Error);
+    expect(String(failure)).not.toMatch(
+      /Private|not-a-discord-id|private-person-name|must-not-be-accepted/iu,
+    );
+  });
+});
+
   it("uses direct channel publication by default and accepts explicit legacy threads", async () => {
     const direct = await loadPlatformConfig(environment, async () => "value");
     const thread = await loadPlatformConfig(

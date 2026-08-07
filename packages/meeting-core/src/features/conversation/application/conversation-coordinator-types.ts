@@ -29,6 +29,19 @@ export interface FinalizedConversationTurnInput {
   readonly wakeDetectedAtUnixMs?: number;
 }
 
+/** A provider-neutral system-initiated utterance that is not transcript evidence. */
+export interface ProactiveConversationTurnInput {
+  readonly locale: string;
+  readonly meetingId: string;
+  readonly nowMs: number;
+  readonly prompt: string;
+  readonly recordingId: string;
+  readonly speakerId: string;
+  readonly systemPrompt: string;
+  readonly turnId: string;
+  readonly voiceProfileId: string;
+}
+
 export type ConversationCoordinatorResult =
   | { readonly status: "ignored" }
   | {
@@ -79,6 +92,7 @@ export interface ConversationCoordinatorDependencies {
 export interface PreparedConversation {
   readonly request: ConversationStartRequest;
   readonly thinkingCueLocale: string;
+  readonly thinkingCuesEnabled: boolean;
   readonly turn: ConversationTurn;
 }
 

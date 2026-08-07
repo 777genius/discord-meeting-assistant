@@ -14,6 +14,7 @@ import type {
 } from "./live-packet-flow-control.js";
 import { LiveProjectionScheduler } from "./live-projection-scheduler.js";
 import { defaultLivePacketInspector } from "./opus-packet-inspector.js";
+import { ParticipantGreetingBridge } from "./participant-greeting-bridge.js";
 import { LiveSummaryScheduler } from "./live-summary-scheduler.js";
 import { SpeakerTranscriptionSessions } from "./speaker-transcription-sessions.js";
 
@@ -23,6 +24,7 @@ export interface ActiveLiveMeeting {
   finalizationStarted: boolean;
   finishPromise: Promise<void> | null;
   finishing: boolean;
+  readonly greetings: ParticipantGreetingBridge | undefined;
   readonly meetingId: string;
   readonly projection: LiveProjectionScheduler;
   refreshQueued: boolean;
@@ -75,6 +77,14 @@ export function createActiveLiveMeeting(input: CreateActiveLiveMeetingInput): Ac
         meetingId,
         meetingStartedAtMs: input.startedAtMs,
       });
+  const greetings = input.dependencies.conversation?.greetings === undefined
+    ? undefined
+    : new ParticipantGreetingBridge({
+        configuration: input.dependencies.conversation,
+        isMeetingFinishing: () => state.finishing,
+        logger: input.dependencies.logger,
+        meetingId,
+      });
   const transcription = new SpeakerTranscriptionSessions({
     clock: input.clock,
     isMeetingFinishing: () => state.finishing,
@@ -99,6 +109,7 @@ export function createActiveLiveMeeting(input: CreateActiveLiveMeetingInput): Ac
     finalizationStarted: false,
     finishPromise: null,
     finishing: false,
+    greetings,
     meetingId,
     projection,
     refreshQueued: false,
@@ -108,5 +119,6 @@ export function createActiveLiveMeeting(input: CreateActiveLiveMeetingInput): Ac
     transcription,
     transcriptionFenceClosed: false,
   };
+  greetings?.participantsPresent(input.event.participantIds);
   return state;
 }
