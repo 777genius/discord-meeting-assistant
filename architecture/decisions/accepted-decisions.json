@@ -120,7 +120,7 @@
     {
       "id": "ADR-0024",
       "path": "docs/decisions/0024-possession-based-recording-playback.md",
-      "immutableDigest": "sha256:2913189e9651d2ff3fabce7b994e33a8b91924d51fce6d195e7bdf7e9196e9d8"
+      "immutableDigest": "sha256:75ea6e88f4c7cd93c7608d0a0bfd8c92e812f93612d5380fa8e5b7c1ba7f11d9"
     }
   ]
 }
