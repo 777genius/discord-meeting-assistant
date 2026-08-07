@@ -9,6 +9,7 @@ export {
   FinalTranscript,
   TranscriptTurn,
   type FinalTranscriptSnapshot,
+  type TranscriptReadableSegmentSnapshot,
   type TranscriptTurnSnapshot,
 } from "./domain/transcript.js";
 export type {

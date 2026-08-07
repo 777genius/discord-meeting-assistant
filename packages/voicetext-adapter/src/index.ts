@@ -33,6 +33,7 @@ export {
   type VoicetextBatchClient,
   type VoicetextBatchFetch,
   type VoicetextBatchPollRequest,
+  type VoicetextBatchReadableSegment,
   type VoicetextBatchSubmitRequest,
   type VoicetextBatchTaskResult,
   type VoicetextBatchTranscriptionResult,

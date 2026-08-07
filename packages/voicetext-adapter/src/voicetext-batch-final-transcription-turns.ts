@@ -1,19 +1,26 @@
 import { createHash } from "node:crypto";
 
-import {
-  type SpeakerAudioReferenceSnapshot,
-} from "@discord-meeting/meeting-core/recording";
+import type { TranscriptReadableSegmentSnapshot } from "@discord-meeting/meeting-core/transcription";
+import type { SpeakerAudioReferenceSnapshot } from "@discord-meeting/meeting-core/recording";
 
 import type { ValidatedVoicetextBatchFinalTranscriptionOptions } from "./voicetext-batch-final-transcription-configuration.js";
 import { VoicetextAdapterError } from "./errors.js";
 import type { VoicetextBatchTranscriptionResult } from "./voicetext-batch-client.js";
 
+const voicetextBatchIdentityVersion = "v3";
+
 export interface VoicetextBatchProviderTurn {
   readonly endMs: number;
   readonly speakerId: string;
+  readonly sourceUtteranceIndex: number;
   readonly stableTurnId: string;
   readonly startMs: number;
   readonly text: string;
+}
+
+export interface VoicetextBatchProviderSpeakerTranscript {
+  readonly readableSegments: readonly TranscriptReadableSegmentSnapshot[];
+  readonly turns: readonly VoicetextBatchProviderTurn[];
 }
 
 export interface VoicetextBatchTurnMappingInput {
@@ -97,6 +104,7 @@ export function mapVoicetextBatchProviderTurns(
         relativeEndMs,
       ),
       speakerId: input.reference.speakerId,
+      sourceUtteranceIndex: utteranceIndex,
       stableTurnId: stableVoicetextBatchId(
         "turn",
         input.idempotencyKey,
@@ -113,6 +121,114 @@ export function mapVoicetextBatchProviderTurns(
   return turns;
 }
 
+export function mapVoicetextBatchProviderReadableSegments(
+  input: VoicetextBatchTurnMappingInput,
+  turns: readonly VoicetextBatchProviderTurn[],
+): readonly TranscriptReadableSegmentSnapshot[] {
+  try {
+    return mapVoicetextBatchProviderReadableSegmentsOrThrow(input, turns);
+  } catch (error: unknown) {
+    if (error instanceof VoicetextAdapterError) {
+      return [];
+    }
+    throw error;
+  }
+}
+
+function mapVoicetextBatchProviderReadableSegmentsOrThrow(
+  input: VoicetextBatchTurnMappingInput,
+  turns: readonly VoicetextBatchProviderTurn[],
+): readonly TranscriptReadableSegmentSnapshot[] {
+  const audioDurationMs = ceilingVoicetextBatchMilliseconds(input.result.durationSeconds);
+  const turnsByUtteranceIndex = new Map(
+    turns.map((turn) => [turn.sourceUtteranceIndex, turn]),
+  );
+  let previousEndSeconds = -1;
+  let totalCharacters = 0;
+  return input.result.readableSegments.map((segment, segmentIndex) => {
+    if (segmentIndex >= input.options.maxSegmentsPerSpeaker) {
+      throw invalidReadableSegments("Voicetext batch returned too many readable segments");
+    }
+    const startMs = floorVoicetextBatchMilliseconds(segment.startSeconds);
+    const endMs = ceilingVoicetextBatchMilliseconds(segment.endSeconds);
+    if (
+      segment.endSeconds <= segment.startSeconds ||
+      endMs <= startMs ||
+      exceedsVoicetextBatchSegmentOverlapLimit(
+        previousEndSeconds,
+        segment.startSeconds,
+        input.options.maxSegmentOverlapMs,
+      ) ||
+      endMs > addVoicetextBatchSafeIntegers(
+        audioDurationMs,
+        input.options.maxSegmentOverrunMs,
+      )
+    ) {
+      throw invalidReadableSegments("Voicetext batch readable segment timing is invalid");
+    }
+    previousEndSeconds = segment.endSeconds;
+    const text = segment.transcript.trim();
+    if (text.length === 0 || text.length > input.options.maxTranscriptCharsPerSegment) {
+      throw invalidReadableSegments("Voicetext batch readable segment text is invalid");
+    }
+    totalCharacters = addVoicetextBatchSafeIntegers(totalCharacters, text.length);
+    if (totalCharacters > input.options.maxTranscriptCharsPerSpeaker) {
+      throw invalidReadableSegments("Voicetext batch readable segments exceeded their character limit");
+    }
+    if (segment.sourceUtteranceIndices.length === 0) {
+      throw invalidReadableSegments("Voicetext batch readable segment has no source utterances");
+    }
+    let previousSourceIndex = -1;
+    const sourceTurns = segment.sourceUtteranceIndices.map((sourceIndex) => {
+      if (!Number.isSafeInteger(sourceIndex) || sourceIndex <= previousSourceIndex) {
+        throw invalidReadableSegments("Voicetext batch readable segment source indices are invalid");
+      }
+      previousSourceIndex = sourceIndex;
+      const sourceTurn = turnsByUtteranceIndex.get(sourceIndex);
+      if (sourceTurn === undefined) {
+        throw invalidReadableSegments("Voicetext batch readable segment references no raw turn");
+      }
+      return sourceTurn;
+    });
+    const envelopeStartMs = Math.min(...sourceTurns.map((turn) =>
+      turn.startMs - input.reference.timelineOffsetMs
+    ));
+    const envelopeEndMs = Math.max(...sourceTurns.map((turn) =>
+      turn.endMs - input.reference.timelineOffsetMs
+    ));
+    if (startMs < envelopeStartMs || endMs > envelopeEndMs) {
+      throw invalidReadableSegments("Voicetext batch readable segment exceeds its source turn envelope");
+    }
+    return {
+      endMs: addVoicetextBatchSafeIntegers(input.reference.timelineOffsetMs, endMs),
+      segmentId: stableVoicetextBatchId(
+        "readable-segment",
+        input.idempotencyKey,
+        String(input.speakerIndex + 1),
+        String(segmentIndex + 1),
+      ),
+      sourceTurnIds: sourceTurns.map(({ stableTurnId }) => stableTurnId),
+      speakerId: input.reference.speakerId,
+      startMs: addVoicetextBatchSafeIntegers(input.reference.timelineOffsetMs, startMs),
+      text,
+    };
+  });
+}
+
+export function compareVoicetextBatchReadableSegments(
+  left: TranscriptReadableSegmentSnapshot,
+  right: TranscriptReadableSegmentSnapshot,
+): number {
+  return left.startMs - right.startMs ||
+    left.endMs - right.endMs ||
+    left.speakerId.localeCompare(right.speakerId) ||
+    left.segmentId.localeCompare(right.segmentId);
+}
+
+function invalidReadableSegments(message: string): VoicetextAdapterError {
+  return new VoicetextAdapterError("invalid_provider_response", message, false);
+}
+
 export function stableVoicetextBatchIdempotencyKey(
   requestIdempotencyKey: string,
   recordingId: string,
@@ -120,7 +236,7 @@ export function stableVoicetextBatchIdempotencyKey(
 ): string {
   return createHash("sha256")
     .update([
-      "voicetext-batch-v2",
+      "voicetext-batch-v3",
       encodeVoicetextBatchIdentityPart(requestIdempotencyKey),
       encodeVoicetextBatchIdentityPart(recordingId),
       encodeVoicetextBatchIdentityPart(speakerId),
@@ -135,7 +251,7 @@ export function stableVoicetextBatchId(
 ): string {
   return [
     kind,
-    "v2",
+    voicetextBatchIdentityVersion,
     encodeVoicetextBatchIdentityPart(idempotencyKey),
     ...parts.map(encodeVoicetextBatchIdentityPart),
   ].join(":");

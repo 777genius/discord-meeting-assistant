@@ -13,6 +13,7 @@ import {
 } from "./voicetext-batch-response.js";
 
 export type {
+  VoicetextBatchReadableSegment,
   VoicetextBatchTaskResult,
   VoicetextBatchTranscriptionResult,
   VoicetextBatchUtterance,
@@ -32,7 +33,7 @@ export interface VoicetextBatchPollRequest {
   readonly signal: AbortSignal;
 }
 
-/** HTTP boundary for the authenticated Deepgram batch-v2 service contract. */
+/** HTTP boundary for the authenticated Deepgram batch-v3 service contract. */
 export interface VoicetextBatchClient {
   poll(request: VoicetextBatchPollRequest): Promise<VoicetextBatchTaskResult>;
 
@@ -131,7 +132,7 @@ export class FetchVoicetextBatchClient implements VoicetextBatchClient {
   }
 }
 
-/** Converts the configured live WSS origin to its same-origin batch-v2 URL. */
+/** Converts the configured live WSS origin to its same-origin batch-v3 URL. */
 export function batchEndpointFromWebSocketUrl(webSocketUrl: string): string {
   let endpoint: URL;
   try {
@@ -190,7 +191,7 @@ function validateBatchEndpoint(value: string): URL {
   ) {
     throw new VoicetextAdapterError(
       "invalid_input",
-      "Voicetext batch endpoint must be a credential-free batch-v2 HTTP(S) URL",
+      "Voicetext batch endpoint must be a credential-free batch-v3 HTTP(S) URL",
       false,
     );
   }

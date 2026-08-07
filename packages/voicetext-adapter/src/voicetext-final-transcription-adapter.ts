@@ -141,6 +141,7 @@ export class VoicetextFinalTranscriptionAdapter implements FinalTranscriptionPor
       );
     }
     return {
+      readableSegments: [],
       transcriptId: stableVoicetextFinalId("transcript", idempotencyKey),
       turns: orderedTurns.map((turn): TranscriptTurnSnapshot => ({
         endMs: turn.endMs,
