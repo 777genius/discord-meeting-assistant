@@ -167,6 +167,7 @@ export class ProcessMeetingSummary {
     try {
       throwIfAborted(signal);
       const transcript = FinalTranscript.create({
+        readableSegments: result.value.readableSegments ?? [],
         recordingId: meeting.recording.recordingId,
         transcriptId: result.value.transcriptId,
         turns: result.value.turns,

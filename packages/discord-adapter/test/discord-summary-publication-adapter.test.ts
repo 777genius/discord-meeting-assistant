@@ -24,6 +24,7 @@ const request: SummaryPublicationRequest = {
   meetingId: "meeting-42",
   publicationTargetId: "11111111111111111",
   transcript: {
+    readableSegments: [],
     recordingId: "recording-42",
     transcriptId: "transcript-42",
     turns: [
@@ -98,6 +99,70 @@ class FakeProjector {
     return this.outcome;
   }
 }
+
+describe("DiscordSummaryPublicationAdapter transcript projection", () => {
+  it("uses compact readable segments only for the final Discord timeline", async () => {
+    const projector = new FakeProjector();
+    const adapter = new DiscordSummaryPublicationAdapter(projector);
+
+    await adapter.publish({
+      ...request,
+      transcript: {
+        ...request.transcript,
+        readableSegments: [
+          {
+            endMs: 1_250,
+            segmentId: "segment-1",
+            speakerId: "speaker-a",
+            startMs: 0,
+            text: "Релиз в пятницу.",
+            sourceTurnIds: ["turn-1"],
+          },
+          {
+            endMs: 2_800,
+            segmentId: "segment-2",
+            speakerId: "speaker-b",
+            startMs: 900,
+            text: "Подготовлю дашборд.",
+            sourceTurnIds: ["turn-2"],
+          },
+          {
+            endMs: 4_200,
+            segmentId: "segment-3",
+            speakerId: "speaker-a",
+            startMs: 3_000,
+            text: "Проверить транскрипцию.",
+            sourceTurnIds: ["turn-3"],
+          },
+        ],
+      },
+    });
+
+    const timeline = projector.inputs[0]?.liveCaptionsMarkdown ?? "";
+    const attachment = projector.inputs[0]?.transcriptAttachment?.content ?? "";
+    expect(timeline).toContain(
+      "✓ `00:00-00:01` **speaker-a:** Релиз в пятницу.",
+    );
+    expect(timeline).toContain("**speaker-b:** Подготовлю дашборд.");
+    expect(attachment).toContain("## `00:00-00:01` · speaker-a");
+    expect(attachment).toContain("## `00:00-00:02` · speaker-b");
+    expect(attachment).toContain("Подготовлю дашборд");
+  });
+
+  it("keeps the raw-turn final timeline when readable segments are empty", async () => {
+    const projector = new FakeProjector();
+    const adapter = new DiscordSummaryPublicationAdapter(projector);
+
+    await adapter.publish({
+      ...request,
+      transcript: { ...request.transcript, readableSegments: [] },
+    });
+
+    expect(projector.inputs[0]?.liveCaptionsMarkdown).toContain(
+      "✓ `00:00-00:02` **speaker-b:** Подготовлю дашборд",
+    );
+  });
+});
 
 describe("DiscordSummaryPublicationAdapter", () => {
   it("maps the core port request to one separate deterministic Discord projection by default", async () => {

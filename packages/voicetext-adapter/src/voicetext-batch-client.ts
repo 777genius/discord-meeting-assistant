@@ -13,6 +13,7 @@ import {
 } from "./voicetext-batch-response.js";
 
 export type {
+  VoicetextBatchReadableSegment,
   VoicetextBatchTaskResult,
   VoicetextBatchTranscriptionResult,
   VoicetextBatchUtterance,

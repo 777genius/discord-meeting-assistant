@@ -103,6 +103,7 @@ describe("VoicetextBatchFinalTranscriptionAdapter", () => {
     expect(result).toEqual({
       ok: true,
       value: {
+        readableSegments: [],
         transcriptId: "transcript:v2:7:job-key",
         turns: [{
           endMs: 10_750,
@@ -111,7 +112,7 @@ describe("VoicetextBatchFinalTranscriptionAdapter", () => {
           text: "готовим релиз",
           turnId: "turn:v2:7:job-key:1:1:1:1",
         }],
-        version: 1,
+        version: 2,
       },
     });
     expect(client.submissions).toHaveLength(2);
@@ -258,6 +259,7 @@ describe("VoicetextBatchFinalTranscriptionAdapter", () => {
     await expect(processing).resolves.toEqual({
       ok: true,
       value: {
+        readableSegments: [],
         transcriptId: "transcript:v2:7:job-key",
         turns: [
           {
@@ -275,7 +277,60 @@ describe("VoicetextBatchFinalTranscriptionAdapter", () => {
             turnId: "turn:v2:7:job-key:1:2:1:1",
           },
         ],
-        version: 1,
+        version: 2,
+      },
+    });
+  });
+
+  it("atomically drops a partial multi-speaker readable projection", async () => {
+    const client = new ScriptedBatchClient(async (request) =>
+      request.audio[5] === 1
+        ? completed({
+            durationSeconds: 1,
+            readableSegments: [{
+              endSeconds: 1,
+              sourceUtteranceIndices: [0],
+              startSeconds: 0,
+              transcript: "первый трек",
+            }],
+            utterances: [{ endSeconds: 1, startSeconds: 0, transcript: "первый трек" }],
+          })
+        : completed({
+            durationSeconds: 1,
+            utterances: [{ endSeconds: 1, startSeconds: 0, transcript: "второй трек" }],
+          })
+    );
+    const adapter = new VoicetextBatchFinalTranscriptionAdapter(
+      client,
+      new MemoryOggReader({
+        "s3://recording/speaker-a.ogg": validOgg(1),
+        "s3://recording/speaker-b.ogg": validOgg(2),
+      }),
+      {},
+      new TestPollingScheduler(),
+    );
+
+    const result = await adapter.transcribe(requestFixture([
+      {
+        audioLocator: "s3://recording/speaker-a.ogg",
+        speakerId: "discord-user-a",
+        timelineOffsetMs: 0,
+      },
+      {
+        audioLocator: "s3://recording/speaker-b.ogg",
+        speakerId: "discord-user-b",
+        timelineOffsetMs: 1_000,
+      },
+    ]));
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        readableSegments: [],
+        turns: [
+          { speakerId: "discord-user-a", text: "первый трек" },
+          { speakerId: "discord-user-b", text: "второй трек" },
+        ],
       },
     });
   });
@@ -384,6 +439,7 @@ describe("VoicetextBatchFinalTranscriptionAdapter capacity and timing", () => {
     await expect(adapter.transcribe(requestFixture())).resolves.toEqual({
       ok: true,
       value: {
+        readableSegments: [],
         transcriptId: "transcript:v2:7:job-key",
         turns: [
           {
@@ -401,7 +457,7 @@ describe("VoicetextBatchFinalTranscriptionAdapter capacity and timing", () => {
             turnId: "turn:v2:7:job-key:1:1:1:2",
           },
         ],
-        version: 1,
+        version: 2,
       },
     });
   });
@@ -424,6 +480,7 @@ describe("VoicetextBatchFinalTranscriptionAdapter capacity and timing", () => {
     await expect(adapter.transcribe(requestFixture())).resolves.toEqual({
       ok: true,
       value: {
+        readableSegments: [],
         transcriptId: "transcript:v2:7:job-key",
         turns: [
           {
@@ -441,7 +498,7 @@ describe("VoicetextBatchFinalTranscriptionAdapter capacity and timing", () => {
             turnId: "turn:v2:7:job-key:1:1:1:2",
           },
         ],
-        version: 1,
+        version: 2,
       },
     });
   });
@@ -748,13 +805,27 @@ function pending(nextAction: "poll" | "retry", retryAfterMs: number): VoicetextB
 
 function completed(result: {
   readonly durationSeconds: number;
+  readonly readableSegments?: readonly {
+    readonly endSeconds: number;
+    readonly sourceUtteranceIndices: readonly number[];
+    readonly startSeconds: number;
+    readonly transcript: string;
+  }[];
   readonly utterances: readonly {
     readonly endSeconds: number;
     readonly startSeconds: number;
     readonly transcript: string;
   }[];
 }): VoicetextBatchTaskResult {
-  return { jobId, kind: "completed", result };
+  return {
+    jobId,
+    kind: "completed",
+    result: {
+      durationSeconds: result.durationSeconds,
+      readableSegments: result.readableSegments ?? [],
+      utterances: result.utterances,
+    },
+  };
 }
 
 function validOgg(marker: number, byteLength = 27): Uint8Array {

@@ -20,9 +20,10 @@ import type {
 } from "./voicetext-batch-client.js";
 import {
   addVoicetextBatchSafeIntegers,
+  mapVoicetextBatchProviderReadableSegments,
   mapVoicetextBatchProviderTurns,
   stableVoicetextBatchIdempotencyKey,
-  type VoicetextBatchProviderTurn,
+  type VoicetextBatchProviderSpeakerTranscript,
 } from "./voicetext-batch-final-transcription-turns.js";
 
 const maximumRetryAfterMilliseconds = 3_600_000;
@@ -83,7 +84,7 @@ export class VoicetextBatchSpeakerTranscriber {
 
   public async transcribe(
     input: VoicetextBatchSpeakerTranscriptionInput,
-  ): Promise<readonly VoicetextBatchProviderTurn[]> {
+  ): Promise<VoicetextBatchProviderSpeakerTranscript> {
     const idempotencyKey = stableVoicetextBatchIdempotencyKey(
       input.request.idempotencyKey,
       input.request.recording.recordingId,
@@ -146,13 +147,21 @@ export class VoicetextBatchSpeakerTranscriber {
         continue;
       }
       if (result.kind === "completed") {
-        return mapVoicetextBatchProviderTurns({
+        const mappingInput = {
           idempotencyKey: input.request.idempotencyKey,
           options: this.options,
           reference: input.reference,
           result: result.result,
           speakerIndex: input.speakerIndex,
-        });
+        };
+        const turns = mapVoicetextBatchProviderTurns(mappingInput);
+        return {
+          readableSegments: mapVoicetextBatchProviderReadableSegments(
+            mappingInput,
+            turns,
+          ),
+          turns,
+        };
       }
       if (result.kind === "failed") {
         throw new VoicetextAdapterError(

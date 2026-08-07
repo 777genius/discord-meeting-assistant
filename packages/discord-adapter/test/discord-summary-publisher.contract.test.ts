@@ -496,13 +496,22 @@ describe("DiscordSummaryPublisher finalization contract", () => {
       finalPublicationMode: "replace-live",
     });
     const live = await livePublisher.publish({
-      captions: [{
-        endMs: 8_000,
-        isFinal: false,
-        speakerId: "speaker-a",
-        startMs: 5_000,
-        text: "Обсуждаем выпуск.",
-      }],
+      captions: [
+        {
+          endMs: 6_500,
+          isFinal: true,
+          speakerId: "speaker-a",
+          startMs: 5_000,
+          text: "Обсуждаем",
+        },
+        {
+          endMs: 8_000,
+          isFinal: false,
+          speakerId: "speaker-a",
+          startMs: 6_500,
+          text: "выпуск.",
+        },
+      ],
       currentExternalPublicationId: null,
       elapsedMs: 8_000,
       idempotencyKey: "meeting-live-projection:v1|meeting-42",
@@ -518,6 +527,9 @@ describe("DiscordSummaryPublisher finalization contract", () => {
     if (!live.ok) {
       throw new Error("expected the live publication to succeed");
     }
+    const liveTimeline = client.threads[0]?.message?.body.liveCaptionsMarkdown ?? "";
+    expect(liveTimeline).toContain("✓ `00:05-00:06` **speaker-a:** Обсуждаем");
+    expect(liveTimeline).toContain("… `00:06-00:08` **speaker-a:** выпуск.");
 
     const final = await finalPublisher.publish({
       idempotencyKey: "meeting-summary-publication:v1|meeting-42",
@@ -535,15 +547,32 @@ describe("DiscordSummaryPublisher finalization contract", () => {
         version: 1,
       },
       transcript: {
-        recordingId: "recording-42",
-        transcriptId: "transcript-42",
-        turns: [{
+        readableSegments: [{
           endMs: 8_000,
+          segmentId: "segment-1",
           speakerId: "speaker-a",
           startMs: 5_000,
           text: "Обсуждаем выпуск.",
-          turnId: "turn-1",
+          sourceTurnIds: ["turn-1", "turn-2"],
         }],
+        recordingId: "recording-42",
+        transcriptId: "transcript-42",
+        turns: [
+          {
+            endMs: 6_500,
+            speakerId: "speaker-a",
+            startMs: 5_000,
+            text: "Обсуждаем",
+            turnId: "turn-1",
+          },
+          {
+            endMs: 8_000,
+            speakerId: "speaker-a",
+            startMs: 6_500,
+            text: "выпуск.",
+            turnId: "turn-2",
+          },
+        ],
         version: 1,
       },
       currentExternalPublicationId: live.value.externalPublicationId,
@@ -561,6 +590,15 @@ describe("DiscordSummaryPublisher finalization contract", () => {
     );
     expect(client.threads[0]?.message?.body.liveCaptionsMarkdown).toContain(
       "✓ `00:05-00:08` **speaker-a:** Обсуждаем выпуск.",
+    );
+    expect(client.threads[0]?.message?.body.liveCaptionsMarkdown).not.toContain(
+      "✓ `00:05-00:06` **speaker-a:** Обсуждаем",
+    );
+    expect(client.threads[0]?.message?.body.transcriptAttachment?.content).toContain(
+      "## `00:05-00:06` · speaker-a",
+    );
+    expect(client.threads[0]?.message?.body.transcriptAttachment?.content).toContain(
+      "## `00:06-00:08` · speaker-a",
     );
   });
 
@@ -606,6 +644,7 @@ describe("DiscordSummaryPublisher finalization contract", () => {
         version: 1,
       },
       transcript: {
+        readableSegments: [],
         recordingId: "recording-42",
         transcriptId: "transcript-42",
         turns: [],

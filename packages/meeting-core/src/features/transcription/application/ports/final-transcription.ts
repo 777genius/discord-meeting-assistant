@@ -1,5 +1,8 @@
 import type { RecordingArtifactSnapshot } from "../../../recording/index.js";
-import type { TranscriptTurnSnapshot } from "../../domain/transcript.js";
+import type {
+  TranscriptReadableSegmentSnapshot,
+  TranscriptTurnSnapshot,
+} from "../../domain/transcript.js";
 
 export interface FinalTranscriptionFailure {
   readonly code: string;
@@ -20,6 +23,8 @@ export interface FinalTranscriptionRequest {
 }
 
 export interface GeneratedTranscript {
+  /** Optional provider-neutral readability projection; raw turns remain authoritative. */
+  readonly readableSegments?: readonly TranscriptReadableSegmentSnapshot[];
   readonly transcriptId: string;
   readonly turns: readonly TranscriptTurnSnapshot[];
   readonly version: number;

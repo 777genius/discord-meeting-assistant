@@ -37,7 +37,18 @@ export interface TranscriptTurnSnapshot {
   readonly turnId: string;
 }
 
+export interface TranscriptReadableSegmentSnapshot {
+  readonly segmentId: string;
+  readonly speakerId: string;
+  readonly startMs: number;
+  readonly endMs: number;
+  readonly text: string;
+  readonly sourceTurnIds: readonly string[];
+}
+
 export interface FinalTranscriptSnapshot {
+  /** Optional only while reading legacy persisted snapshots; new snapshots always emit it. */
+  readonly readableSegments?: readonly TranscriptReadableSegmentSnapshot[];
   readonly recordingId: string;
   readonly transcriptId: string;
   readonly turns: readonly TranscriptTurnSnapshot[];
@@ -101,6 +112,7 @@ export class FinalTranscript {
   public readonly recordingId: RecordingId;
   public readonly version: number;
   public readonly turns: readonly TranscriptTurn[];
+  public readonly readableSegments: readonly TranscriptReadableSegmentSnapshot[];
 
   private readonly turnsById: ReadonlyMap<TranscriptTurnId, TranscriptTurn>;
 
@@ -120,6 +132,8 @@ export class FinalTranscript {
       );
     }
     this.turns = Object.freeze(turns);
+
+    this.readableSegments = this.normalizeReadableSegments(snapshot.readableSegments);
   }
 
   public static create(snapshot: FinalTranscriptSnapshot): FinalTranscript {
@@ -157,6 +171,7 @@ export class FinalTranscript {
 
   public toSnapshot(): FinalTranscriptSnapshot {
     return {
+      readableSegments: this.readableSegments,
       recordingId: this.recordingId,
       transcriptId: this.transcriptId,
       turns: this.turns.map((turn) => turn.toSnapshot()),
@@ -169,11 +184,138 @@ export class FinalTranscript {
       this.transcriptId === other.transcriptId &&
       this.recordingId === other.recordingId &&
       this.version === other.version &&
+      this.readableSegments.length === other.readableSegments.length &&
+      this.readableSegments.every((segment, index) => {
+        const candidate = other.readableSegments[index];
+        return (
+          candidate !== undefined &&
+          segment.segmentId === candidate.segmentId &&
+          segment.speakerId === candidate.speakerId &&
+          segment.startMs === candidate.startMs &&
+          segment.endMs === candidate.endMs &&
+          segment.text === candidate.text &&
+          segment.sourceTurnIds.length === candidate.sourceTurnIds.length &&
+          segment.sourceTurnIds.every(
+            (sourceTurnId, sourceIndex) =>
+              sourceTurnId === candidate.sourceTurnIds[sourceIndex],
+          )
+        );
+      }) &&
       this.turns.length === other.turns.length &&
       this.turns.every((turn, index) => {
         const candidate = other.turns[index];
         return candidate !== undefined && turn.equals(candidate);
       })
     );
+  }
+
+  private validateReadableSegment(
+    snapshot: TranscriptReadableSegmentSnapshot,
+  ): TranscriptReadableSegmentSnapshot {
+    const segmentId = requireNonEmpty(snapshot.segmentId, "readableSegment.segmentId");
+    const speakerId = translateRecordingIdentifier(() =>
+      createSpeakerId(snapshot.speakerId),
+    );
+    const startMs = requireNonNegativeInteger(
+      snapshot.startMs,
+      "readableSegment.startMs",
+    );
+    const endMs = requireNonNegativeInteger(snapshot.endMs, "readableSegment.endMs");
+    if (endMs <= startMs) {
+      throw new DomainInvariantError(
+        "INVALID_NUMBER",
+        "readableSegment.endMs must be greater than startMs",
+      );
+    }
+    const text = requireNonEmpty(snapshot.text, "readableSegment.text");
+    if (snapshot.sourceTurnIds.length === 0) {
+      throw new DomainInvariantError(
+        "EMPTY_VALUE",
+        "readableSegment.sourceTurnIds must not be empty",
+      );
+    }
+    const normalizedSourceTurnIds = snapshot.sourceTurnIds.map((sourceTurnId, index) =>
+      createTranscriptTurnId(
+        requireNonEmpty(sourceTurnId, `readableSegment.sourceTurnIds[${index}]`),
+      )
+    );
+    if (new Set(normalizedSourceTurnIds).size !== normalizedSourceTurnIds.length) {
+      throw new DomainInvariantError(
+        "DUPLICATE_IDENTIFIER",
+        "readableSegment.sourceTurnIds must be unique",
+      );
+    }
+
+    const sourceTurns = normalizedSourceTurnIds.map((normalizedId) => {
+      const turn = this.turnsById.get(normalizedId);
+      if (turn === undefined) {
+        throw new DomainInvariantError(
+          "INVALID_REFERENCE",
+          `readable segment references unknown transcript turn ${normalizedId}`,
+        );
+      }
+      if (turn.speakerId !== speakerId) {
+        throw new DomainInvariantError(
+          "INVALID_REFERENCE",
+          "readable segment source turns must all have the segment speaker",
+        );
+      }
+      return turn;
+    });
+    const envelopeStartMs = Math.min(...sourceTurns.map((turn) => turn.startMs));
+    const envelopeEndMs = Math.max(...sourceTurns.map((turn) => turn.endMs));
+    if (startMs < envelopeStartMs || endMs > envelopeEndMs) {
+      throw new DomainInvariantError(
+        "INVALID_NUMBER",
+        "readable segment interval must be contained within its source turn envelope",
+      );
+    }
+
+    return Object.freeze({
+      endMs,
+      segmentId,
+      sourceTurnIds: Object.freeze(
+        sourceTurns.map((sourceTurn) => sourceTurn.turnId),
+      ),
+      speakerId,
+      startMs,
+      text,
+    });
+  }
+
+  private normalizeReadableSegments(
+    snapshots: readonly TranscriptReadableSegmentSnapshot[] | undefined,
+  ): readonly TranscriptReadableSegmentSnapshot[] {
+    if (snapshots === undefined) {
+      return Object.freeze([]);
+    }
+    try {
+      const readableSegments = snapshots.map((segment) =>
+        this.validateReadableSegment(segment),
+      );
+      const segmentIds = new Set(readableSegments.map((segment) => segment.segmentId));
+      if (segmentIds.size !== readableSegments.length) {
+        throw new DomainInvariantError(
+          "DUPLICATE_IDENTIFIER",
+          "transcript readable segment IDs must be unique",
+        );
+      }
+      const coveredTurnIds = new Set(
+        readableSegments.flatMap(({ sourceTurnIds }) => sourceTurnIds),
+      );
+      if (
+        readableSegments.length > 0 &&
+        this.turns.some((turn) => !coveredTurnIds.has(turn.turnId))
+      ) {
+        throw new DomainInvariantError(
+          "INVALID_REFERENCE",
+          "transcript readable segments must cover every authoritative turn",
+        );
+      }
+      return Object.freeze(readableSegments);
+    } catch {
+      // Readability is derived and cannot invalidate authoritative raw turns.
+      return Object.freeze([]);
+    }
   }
 }

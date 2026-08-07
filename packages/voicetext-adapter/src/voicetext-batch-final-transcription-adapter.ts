@@ -1,6 +1,7 @@
 import {
   type FinalTranscriptionPort,
   type GeneratedTranscript,
+  type TranscriptReadableSegmentSnapshot,
   type TranscriptTurnSnapshot,
   type FinalTranscriptionResult,
 } from "@discord-meeting/meeting-core/transcription";
@@ -16,6 +17,7 @@ import { VoicetextAdapterError, toVoicetextPortFailure } from "./errors.js";
 import type { CompleteOggArtifactReader } from "./ogg-artifact-reader.js";
 import type { VoicetextBatchClient } from "./voicetext-batch-client.js";
 import {
+  compareVoicetextBatchReadableSegments,
   compareVoicetextBatchTurns,
   stableVoicetextBatchId,
   type VoicetextBatchProviderTurn,
@@ -34,7 +36,11 @@ export type {
 export type { VoicetextBatchPollingScheduler } from "./voicetext-batch-speaker-transcriber.js";
 
 type SpeakerOutcome =
-  | { readonly ok: true; readonly turns: readonly VoicetextBatchProviderTurn[] }
+  | {
+      readonly ok: true;
+      readonly readableSegments: readonly TranscriptReadableSegmentSnapshot[];
+      readonly turns: readonly VoicetextBatchProviderTurn[];
+    }
   | { readonly error: unknown; readonly ok: false };
 
 export class VoicetextBatchFinalTranscriptionAdapter implements FinalTranscriptionPort {
@@ -95,15 +101,17 @@ export class VoicetextBatchFinalTranscriptionAdapter implements FinalTranscripti
       workSignal,
       async (reference, speakerIndex): Promise<SpeakerOutcome> => {
         try {
-          return {
-            ok: true,
-            turns: await this.speakerTranscriber.transcribe({
+          const transcript = await this.speakerTranscriber.transcribe({
               artifactFingerprints,
               externalSignal: workSignal,
               reference,
               request,
               speakerIndex,
-            }),
+            });
+          return {
+            ok: true,
+            readableSegments: transcript.readableSegments,
+            turns: transcript.turns,
           };
         } catch (error: unknown) {
           if (firstFailure === undefined) {
@@ -127,7 +135,15 @@ export class VoicetextBatchFinalTranscriptionAdapter implements FinalTranscripti
         false,
       );
     }
+    const candidateReadableSegments = outcomes.flatMap((outcome) =>
+      outcome?.ok === true ? outcome.readableSegments : []
+    ).toSorted(compareVoicetextBatchReadableSegments);
+    const readableSegments = hasCompleteReadableSegmentProjection(
+      candidateReadableSegments,
+      turns,
+    ) ? candidateReadableSegments : [];
     return {
+      readableSegments,
       transcriptId: stableVoicetextBatchId("transcript", request.idempotencyKey),
       turns: turns.map((turn): TranscriptTurnSnapshot => ({
         endMs: turn.endMs,
@@ -136,9 +152,25 @@ export class VoicetextBatchFinalTranscriptionAdapter implements FinalTranscripti
         text: turn.text,
         turnId: turn.stableTurnId,
       })),
-      version: 1,
+      version: 2,
     };
   }
+}
+
+function hasCompleteReadableSegmentProjection(
+  segments: readonly TranscriptReadableSegmentSnapshot[],
+  turns: readonly VoicetextBatchProviderTurn[],
+): boolean {
+  if (segments.length === 0 || turns.length === 0) {
+    return false;
+  }
+  if (new Set(segments.map(({ segmentId }) => segmentId)).size !== segments.length) {
+    return false;
+  }
+  const rawTurnIds = new Set(turns.map(({ stableTurnId }) => stableTurnId));
+  const coveredTurnIds = new Set(segments.flatMap(({ sourceTurnIds }) => sourceTurnIds));
+  return coveredTurnIds.size === rawTurnIds.size &&
+    [...rawTurnIds].every((turnId) => coveredTurnIds.has(turnId));
 }
 
 async function mapVoicetextBatchWithConcurrency<Input, Output>(
