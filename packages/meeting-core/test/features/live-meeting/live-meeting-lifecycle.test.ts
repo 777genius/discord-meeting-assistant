@@ -47,6 +47,19 @@ it("reconciles a terminal CAS conflict before releasing the durable finish", asy
   expect(meetings.snapshot).toMatchObject({ endedAtMs: 1_000, status: "ended" });
 });
 
+it("reuses the persisted terminal timestamp when finish is replayed later", async () => {
+  const meetings = new CountingSaveRepository();
+  await start(meetings, "meeting-finish-replay");
+  const finish = new FinishLiveMeeting(meetings);
+
+  await expect(finish.execute("meeting-finish-replay", 1_000)).resolves.toBe("ended");
+  const saveCallsAfterFirstFinish = meetings.saveCalls;
+  await expect(finish.execute("meeting-finish-replay", 2_000)).resolves.toBe("reused");
+
+  expect(meetings.saveCalls).toBe(saveCallsAfterFirstFinish);
+  expect(meetings.snapshot).toMatchObject({ endedAtMs: 1_000, status: "ended" });
+});
+
 it("fails after the bounded terminal CAS reconciliation budget", async () => {
   const meetings = new ConflictThenFinishRepository(Number.POSITIVE_INFINITY);
   await start(meetings, "meeting-finish-conflict");
@@ -80,6 +93,18 @@ class ConflictOnceStartRepository extends MemoryLiveMeetingRepository {
       this.conflicts += 1;
       throw persistenceConflict();
     }
+    await super.save(snapshot, expectedRevision);
+  }
+}
+
+class CountingSaveRepository extends MemoryLiveMeetingRepository {
+  public saveCalls = 0;
+
+  public override async save(
+    snapshot: LiveMeetingSnapshot,
+    expectedRevision: number | null,
+  ): Promise<void> {
+    this.saveCalls += 1;
     await super.save(snapshot, expectedRevision);
   }
 }

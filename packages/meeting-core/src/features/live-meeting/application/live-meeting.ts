@@ -99,6 +99,9 @@ export class FinishLiveMeeting {
         return "not-found";
       }
       const meeting = LiveMeeting.restore(snapshot);
+      if (meeting.status === "ended") {
+        return "reused";
+      }
       const expectedRevision = meeting.revision;
       if (!meeting.end(endedAtMs)) {
         return "reused";
