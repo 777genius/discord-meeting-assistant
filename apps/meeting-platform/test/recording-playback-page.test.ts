@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   recordingPlaybackClientScript,
+  recordingPlaybackPageHtml,
   recordingPlaybackStyle,
 } from "../src/recording-playback/adapters/recording-playback-page.js";
 
@@ -280,6 +281,15 @@ afterEach(() => {
 });
 
 describe("recording playback browser page", () => {
+  it("uses the same content version for both browser assets", () => {
+    const versions = [...recordingPlaybackPageHtml.matchAll(
+      /\/recordings\/player\.(?:css|js)\?v=([0-9a-f]{12})/gu,
+    )].map((match) => match[1]);
+
+    expect(versions).toHaveLength(2);
+    expect(new Set(versions).size).toBe(1);
+  });
+
   it("keeps the hidden player out of layout", () => {
     expect(recordingPlaybackStyle).toContain(".player[hidden] { display: none; }");
   });

@@ -1,31 +1,4 @@
-export const recordingPlaybackPageHtml = `<!doctype html>
-<html lang="ru">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Запись встречи</title>
-  <link rel="stylesheet" href="/recordings/player.css">
-</head>
-<body>
-  <main class="shell">
-    <section class="card" aria-labelledby="title">
-      <div class="eyebrow">QUANTA MEETING</div>
-      <h1 id="title">Запись встречи</h1>
-      <p id="status" class="status" role="status">Проверяем доступ...</p>
-      <div id="player" class="player" hidden>
-        <button id="toggle" class="toggle" type="button" aria-label="Воспроизвести">▶</button>
-        <div class="timeline">
-          <input id="seek" type="range" min="0" max="1" value="0" step="0.01" aria-label="Позиция записи">
-          <div class="times"><span id="current">0:00</span><span id="duration">0:00</span></div>
-        </div>
-      </div>
-      <p id="notice" class="notice" hidden></p>
-      <div id="tracks" hidden></div>
-    </section>
-  </main>
-  <script src="/recordings/player.js" defer></script>
-</body>
-</html>`;
+import { createHash } from "node:crypto";
 
 export const recordingPlaybackStyle = `
 :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
@@ -342,3 +315,38 @@ export const recordingPlaybackClientScript = String.raw`
   void openSession();
 })();
 `;
+
+const recordingPlaybackAssetVersion = createHash("sha256")
+  .update(recordingPlaybackStyle)
+  .update(recordingPlaybackClientScript)
+  .digest("hex")
+  .slice(0, 12);
+
+export const recordingPlaybackPageHtml = `<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Запись встречи</title>
+  <link rel="stylesheet" href="/recordings/player.css?v=${recordingPlaybackAssetVersion}">
+</head>
+<body>
+  <main class="shell">
+    <section class="card" aria-labelledby="title">
+      <div class="eyebrow">QUANTA MEETING</div>
+      <h1 id="title">Запись встречи</h1>
+      <p id="status" class="status" role="status">Проверяем доступ...</p>
+      <div id="player" class="player" hidden>
+        <button id="toggle" class="toggle" type="button" aria-label="Воспроизвести">▶</button>
+        <div class="timeline">
+          <input id="seek" type="range" min="0" max="1" value="0" step="0.01" aria-label="Позиция записи">
+          <div class="times"><span id="current">0:00</span><span id="duration">0:00</span></div>
+        </div>
+      </div>
+      <p id="notice" class="notice" hidden></p>
+      <div id="tracks" hidden></div>
+    </section>
+  </main>
+  <script src="/recordings/player.js?v=${recordingPlaybackAssetVersion}" defer></script>
+</body>
+</html>`;
