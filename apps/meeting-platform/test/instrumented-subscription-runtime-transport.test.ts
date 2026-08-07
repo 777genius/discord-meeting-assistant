@@ -47,7 +47,7 @@ function finalRequest(): SubscriptionRuntimeAgentTaskRequest {
     },
     {
       isolatedCwd: "/runtime/workspace",
-      maxOutputTokens: 2_048,
+      maxOutputTokens: 8_192,
       maxPromptBytes: 1_048_576,
       timeoutMs: 600_000,
     },
@@ -162,11 +162,11 @@ describe("instrumented subscription runtime transport", () => {
       "Subscription runtime task completed",
       {
         durationMs: 250,
-        maxOutputUnits: 2_048,
+        maxOutputUnits: 8_192,
         meetingId: "meeting-1",
         model: "gpt-5.6-sol",
         outputSchemaName: "discord_meeting_summary_v4",
-        policyVersion: "meeting-summary.subscription-runtime.v14",
+        policyVersion: "meeting-summary.subscription-runtime.v15",
         providerCost: {
           availability: "bounded",
           maximumUsd: 0.004,

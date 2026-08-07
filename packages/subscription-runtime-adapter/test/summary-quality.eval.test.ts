@@ -4,7 +4,7 @@ import { buildSubscriptionRuntimeSummaryRequest } from "../src/index.js";
 
 const options = {
   isolatedCwd: "/runtime/workspace",
-  maxOutputTokens: 2_048,
+  maxOutputTokens: 8_192,
   maxPromptBytes: 1_024 * 1_024,
   timeoutMs: 600_000,
 } as const;

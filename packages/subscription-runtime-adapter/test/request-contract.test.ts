@@ -30,7 +30,7 @@ describe("subscription runtime request contract", () => {
     } as const;
     const options = {
       isolatedCwd: "/runtime/workspace",
-      maxOutputTokens: 2_048,
+      maxOutputTokens: 8_192,
       maxPromptBytes: 1_024 * 1_024,
       timeoutMs: 600_000,
     } as const;
@@ -42,13 +42,13 @@ describe("subscription runtime request contract", () => {
     expect(canonicalJsonSha256(second)).toBe(canonicalJsonSha256(first));
     expect(first.runId).toMatch(/^summary-request-[0-9a-f]{32}$/u);
     expect(first.context.metadata.policyVersion).toBe(
-      "meeting-summary.subscription-runtime.v14",
+      "meeting-summary.subscription-runtime.v15",
     );
     expect(first.task.controls.outputSchemaName).toBe(
       "discord_meeting_summary_v4",
     );
     expect(first.task.outputSchemaName).toBe("discord_meeting_summary_v4");
-    expect(first.task.controls.maxOutputTokens).toBe(2_048);
+    expect(first.task.controls.maxOutputTokens).toBe(8_192);
     expect(first.task.controls.model).toBe("gpt-5.6-sol");
     expect(first.task.controls.reasoningEffort).toBe("medium");
     expect(first.task.controls.outputSchema).toMatchObject({
@@ -124,7 +124,7 @@ describe("subscription runtime request contract", () => {
         },
         {
           isolatedCwd: "/runtime/workspace",
-          maxOutputTokens: 2_048,
+          maxOutputTokens: 8_192,
           maxPromptBytes: 1_024,
           timeoutMs: 600_000,
         },

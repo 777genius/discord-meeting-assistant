@@ -35,7 +35,7 @@ describe("subscription runtime request policy", () => {
       canonicalJsonSha256(canonicalRequest),
     );
     expect(reconstructed.task.controls).toMatchObject({
-      maxOutputTokens: 2_048,
+      maxOutputTokens: 8_192,
       model: "gpt-5.6-sol",
       outputSchemaName: meetingSummaryOutputSchemaName,
       reasoningEffort: "medium",

@@ -43,8 +43,8 @@ The immutable sidecar image must:
    package version and the complete admitted audited-launcher bundle SHA-256 before
    every execution;
 2. admit `discord_meeting.summary.generate` only with
-   `gpt-5.6-sol`/`medium`, a 2048-token post-execution output budget, and policy version
-   `meeting-summary.subscription-runtime.v14`; admit
+   `gpt-5.6-sol`/`medium`, an 8192-token post-execution output budget, and policy version
+   `meeting-summary.subscription-runtime.v15`; admit
    `discord_meeting.summary.incremental` only with `gpt-5.6-luna`/`low`, a
    2048-token post-execution output budget, and policy version
    `meeting-summary.incremental.subscription-runtime.v5`; admit

@@ -149,10 +149,10 @@ test("admits only the immutable final, incremental, and conversation profiles", 
       reasoningEffort: finalProfile.reasoningEffort,
     },
     {
-      maxOutputTokens: 2_048,
+      maxOutputTokens: 8_192,
       model: "gpt-5.6-sol",
       outputSchemaName: "discord_meeting_summary_v4",
-      policyVersion: "meeting-summary.subscription-runtime.v14",
+      policyVersion: "meeting-summary.subscription-runtime.v15",
       purpose: "discord_meeting.summary.generate",
       reasoningEffort: "medium",
     },
@@ -529,10 +529,10 @@ function conversationRequest() {
 
 function finalRequest() {
   return summaryRequest({
-    maxOutputTokens: 2_048,
+    maxOutputTokens: 8_192,
     model: "gpt-5.6-sol",
     outputSchemaName: "discord_meeting_summary_v4",
-    policyVersion: "meeting-summary.subscription-runtime.v14",
+    policyVersion: "meeting-summary.subscription-runtime.v15",
     purpose: "discord_meeting.summary.generate",
     reasoningEffort: "medium",
   });

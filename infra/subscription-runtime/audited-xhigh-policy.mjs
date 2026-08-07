@@ -15,11 +15,11 @@ const profiles = Object.freeze({
     responseFormat: "json",
   }),
   "discord_meeting.summary.generate": Object.freeze({
-    maxOutputTokens: 2_048,
+    maxOutputTokens: 8_192,
     model: subscriptionRuntimeFinalCodexModel,
     outputKind: "structured_output",
     outputSchemaName: "discord_meeting_summary_v4",
-    policyVersion: "meeting-summary.subscription-runtime.v14",
+    policyVersion: "meeting-summary.subscription-runtime.v15",
     provider: "codex",
     purpose: "discord_meeting.summary.generate",
     reasoningEffort: "medium",
