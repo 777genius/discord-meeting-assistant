@@ -92,6 +92,13 @@ The page presents one synchronized player over the authoritative speaker
 tracks. Audio is delivered with byte ranges, so seeking and long meetings do not
 depend on Discord file limits or require downloading the complete recording.
 
+When the host HTTPS proxy belongs to another Compose project, start the narrow
+recording edge with `compose.recording-edge.yaml`. Set `PUBLIC_EDGE_NETWORK` to
+the proxy's Docker network and, if necessary, override
+`MEETING_INTERNAL_NETWORK`. The edge joins both networks but forwards only
+`/recordings/*`; every other path returns `404`. Point the host HTTPS virtual
+host at `recording-edge:8080` and keep TLS termination at that host proxy.
+
 ## Live conversation profile
 
 Live conversation is disabled by default. To enable the provider-neutral path,

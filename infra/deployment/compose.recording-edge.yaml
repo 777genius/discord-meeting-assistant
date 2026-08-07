@@ -1,0 +1,30 @@
+name: discord-meeting-recording-edge
+
+services:
+  recording-edge:
+    image: caddy:2.11.4-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
+    init: true
+    restart: unless-stopped
+    read_only: true
+    user: "10001:10001"
+    command:
+      ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+    volumes:
+      - ./recording-edge.Caddyfile:/etc/caddy/Caddyfile:ro
+    tmpfs:
+      - /config:rw,noexec,nosuid,nodev,size=8m,mode=0700,uid=10001,gid=10001
+      - /data:rw,noexec,nosuid,nodev,size=8m,mode=0700,uid=10001,gid=10001
+      - /tmp:rw,noexec,nosuid,nodev,size=8m,mode=0700,uid=10001,gid=10001
+    cap_drop: [ALL]
+    networks: [meeting-internal, public-edge]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    mem_limit: 128m
+
+networks:
+  meeting-internal:
+    external: true
+    name: ${MEETING_INTERNAL_NETWORK:-discord-meeting-prod-internal}
+  public-edge:
+    external: true
+    name: ${PUBLIC_EDGE_NETWORK:?set the network used by the host HTTPS proxy}
