@@ -193,8 +193,13 @@ describe("meeting platform runtime wiring", () => {
     expect(options.keyterms).toEqual(expect.arrayContaining([
       "BullMQ",
       "Craig",
+      "Dima",
+      "Iliya",
       "landing page",
       "landing slug",
+      "Marina",
+      "Mark",
+      "Nazar",
       "PostgreSQL",
       "QID",
       "Quanta",
@@ -204,6 +209,7 @@ describe("meeting platform runtime wiring", () => {
       "referral code",
       "referral link",
       "timestamp",
+      "Vlad",
     ]));
   });
 
