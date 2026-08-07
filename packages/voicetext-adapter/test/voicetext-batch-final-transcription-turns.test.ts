@@ -46,6 +46,22 @@ describe("Voicetext batch final turn normalization", () => {
     }]);
   });
 
+  it("merges a fully contained refinement beyond the partial-overlap bound", () => {
+    const turns = mapVoicetextBatchProviderTurns(input([
+      { endSeconds: 12, startSeconds: 0, transcript: "coarse hypothesis" },
+      { endSeconds: 2, startSeconds: 1, transcript: "detailed refinement" },
+    ], 0));
+
+    expect(turns).toEqual([{
+      endMs: 22_000,
+      speakerId: "discord-user-a",
+      sourceUtteranceIndices: [0, 1],
+      stableTurnId: "turn:v2:7:job-key:1:1:1:1",
+      startMs: 10_000,
+      text: "coarse hypothesis detailed refinement",
+    }]);
+  });
+
   it("ignores an empty degenerate hypothesis without advancing the timeline", () => {
     const turns = mapVoicetextBatchProviderTurns(input([
       { endSeconds: 8, startSeconds: 5, transcript: "первая реплика" },
