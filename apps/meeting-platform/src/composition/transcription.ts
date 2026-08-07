@@ -28,6 +28,10 @@ export function createVoicetextBatchFinalTranscriptionOptions(
     keyterms: meetingVocabulary,
     maxArtifactBytesPerSpeaker: config.batchMaxArtifactBytes,
     maxConcurrency: config.batchMaxConcurrency,
+    // Nova-3 may emit bounded overlapping utterance hypotheses on long tracks.
+    // The adapter deterministically trims or merges them before they cross the
+    // provider boundary; larger overlaps still fail closed.
+    maxSegmentOverlapMs: 10_000,
     // Reserve the worst-case capacity before any provider upload. The bounded
     // worker pool retains at most maxConcurrency complete artifacts at once.
     maxTotalArtifactBytes:

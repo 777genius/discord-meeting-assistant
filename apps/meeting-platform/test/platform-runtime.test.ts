@@ -187,6 +187,7 @@ describe("meeting platform runtime wiring", () => {
     expect(options).toMatchObject({
       maxArtifactBytesPerSpeaker: 64 * 1_024 * 1_024,
       maxConcurrency: 6,
+      maxSegmentOverlapMs: 10_000,
       maxSpeakerTracks: 11,
       maxTotalArtifactBytes: 704 * 1_024 * 1_024,
     });

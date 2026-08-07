@@ -521,32 +521,7 @@ describe("VoicetextBatchFinalTranscriptionAdapter capacity and timing", () => {
     await expect(adapter.transcribe(requestFixture())).resolves.toEqual({
       failure: {
         code: "VOICETEXT_TRANSCRIPTION_INVALID_PROVIDER_RESPONSE",
-        message: "Voicetext batch final segments are overlapping or zero-length",
-        retryable: false,
-      },
-      ok: false,
-    });
-  });
-
-  it("rejects a fully contained provider segment with no forward progress after clamping", async () => {
-    const client = new ScriptedBatchClient(async () => completed({
-      durationSeconds: 12,
-      utterances: [
-        { endSeconds: 10, startSeconds: 5, transcript: "первая реплика" },
-        { endSeconds: 9.5, startSeconds: 8.5, transcript: "вложенная реплика" },
-      ],
-    }));
-    const adapter = new VoicetextBatchFinalTranscriptionAdapter(
-      client,
-      new MemoryOggReader({ "s3://recording/speaker-a.ogg": validOgg(1) }),
-      {},
-      new TestPollingScheduler(),
-    );
-
-    await expect(adapter.transcribe(requestFixture())).resolves.toEqual({
-      failure: {
-        code: "VOICETEXT_TRANSCRIPTION_INVALID_PROVIDER_RESPONSE",
-        message: "Voicetext batch final segments are overlapping or zero-length",
+        message: "Voicetext batch final segment overlap exceeds the configured safety bound",
         retryable: false,
       },
       ok: false,
