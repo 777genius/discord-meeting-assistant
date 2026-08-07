@@ -3,8 +3,8 @@ name: discord-meeting-recording-edge
 services:
   recording-edge:
     build:
-      context: ../..
-      dockerfile: infra/deployment/recording-edge.Dockerfile
+      context: .
+      dockerfile: recording-edge.Dockerfile
     image: discord-meeting/recording-edge:2.11.4-1
     init: true
     restart: unless-stopped
