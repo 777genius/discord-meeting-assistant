@@ -2,13 +2,15 @@ name: discord-meeting-recording-edge
 
 services:
   recording-edge:
-    image: caddy:2.11.4-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
+    build:
+      context: ../..
+      dockerfile: infra/deployment/recording-edge.Dockerfile
+    image: discord-meeting/recording-edge:2.11.4-1
     init: true
     restart: unless-stopped
     read_only: true
-    user: "10001:10001"
     command:
-      ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+      ["run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
     volumes:
       - ./recording-edge.Caddyfile:/etc/caddy/Caddyfile:ro
     tmpfs:
