@@ -9,7 +9,7 @@ export const subscriptionRuntimeConversationModel = "gpt-5.6-luna" as const;
 export const subscriptionRuntimeReasoningEffort = "medium" as const;
 export const subscriptionRuntimeIncrementalReasoningEffort = "low" as const;
 export const subscriptionRuntimeConversationReasoningEffort = "low" as const;
-export const subscriptionRuntimeSummaryMaxOutputTokens = 2_048 as const;
+export const subscriptionRuntimeSummaryMaxOutputTokens = 8_192 as const;
 export const subscriptionRuntimeIncrementalMaxOutputTokens = 2_048 as const;
 export const subscriptionRuntimeConversationMaxOutputTokens = 512 as const;
 export const subscriptionRuntimeEngine = "subscription-runtime-app-server" as const;
@@ -21,7 +21,7 @@ export const auditedSubscriptionRuntimePackageVersion = "0.1.0-main.27" as const
 export const meetingSummaryOutputSchemaName = "discord_meeting_summary_v4" as const;
 export const incrementalMeetingSummaryOutputSchemaName = "discord_meeting_incremental_summary_v1" as const;
 export const conversationAnswerOutputSchemaName = "discord_meeting_conversation_answer_v1" as const;
-export const meetingSummaryPolicyVersion = "meeting-summary.subscription-runtime.v14" as const;
+export const meetingSummaryPolicyVersion = "meeting-summary.subscription-runtime.v15" as const;
 export const incrementalMeetingSummaryPolicyVersion = "meeting-summary.incremental.subscription-runtime.v5" as const;
 export const conversationAnswerPolicyVersion = "meeting-conversation.subscription-runtime.v1" as const;
 
@@ -33,6 +33,7 @@ export type SubscriptionRuntimeOutputSchemaName =
 export interface SubscriptionRuntimeExecutionProfile {
   readonly maxOutputTokens:
     | typeof subscriptionRuntimeConversationMaxOutputTokens
+    | typeof subscriptionRuntimeIncrementalMaxOutputTokens
     | typeof subscriptionRuntimeSummaryMaxOutputTokens;
   readonly model:
     | typeof subscriptionRuntimeIncrementalModel

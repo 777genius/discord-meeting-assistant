@@ -29,7 +29,7 @@ export const canonicalRequest = buildSubscriptionRuntimeSummaryRequest(
   },
   {
     isolatedCwd,
-    maxOutputTokens: 2_048,
+    maxOutputTokens: 8_192,
     maxPromptBytes: 2 * 1_024 * 1_024,
     timeoutMs: 10_000,
   },

@@ -10,7 +10,7 @@ const maximumStageDurationMs = {
 const expectedSummaryRuntime = {
   model: "gpt-5.6-sol",
   outputSchemaName: "discord_meeting_summary_v4",
-  policyVersion: "meeting-summary.subscription-runtime.v14",
+  policyVersion: "meeting-summary.subscription-runtime.v15",
   reasoningEffort: "medium",
 } as const;
 

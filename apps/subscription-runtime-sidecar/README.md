@@ -27,8 +27,8 @@ task. Changing any executable part changes the admitted digest. The launcher
 must call that version's
 `subscription-runtime-run-agent-task` JSON bridge while constructing the Codex
 worker with the exact selected profile: `gpt-5.6-sol`/`medium` for final
-summaries with an admitted 2048-token post-execution output budget and policy
-version `v14`, and `gpt-5.6-luna`/`low` for incremental summaries with an
+summaries with an admitted 8192-token post-execution output budget and policy
+version `v15`, and `gpt-5.6-luna`/`low` for incremental summaries with an
 admitted 2048-token post-execution output budget and policy version `v5`.
 Conversation uses `gpt-5.6-luna`/`low`, a 512-token budget, policy
 `meeting-conversation.subscription-runtime.v1`, and schema
