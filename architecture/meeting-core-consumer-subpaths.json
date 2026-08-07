@@ -93,9 +93,15 @@
       "allowFeatureSubpaths": ["conversation"]
     },
     {
+      "boundary": "apps.meeting-platform.recording-playback-adapters",
+      "roots": ["apps/meeting-platform/src/recording-playback/adapters"],
+      "allowFeatureSubpaths": ["meeting-lifecycle"]
+    },
+    {
       "boundary": "apps.meeting-platform.composition",
       "roots": [
         "apps/meeting-platform/src/composition",
+        "apps/meeting-platform/src/config",
         "apps/meeting-platform/src/config.ts",
         "apps/meeting-platform/src/live-meeting-runtime.ts",
         "apps/meeting-platform/src/main.ts",

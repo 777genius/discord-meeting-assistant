@@ -49,12 +49,17 @@ type PublicationResult = SummaryPublicationResult<
   Pick<PublicationReceiptSnapshot, "externalPublicationId">
 >;
 
+export interface DiscordSummaryPublicationAdapterOptions {
+  readonly finalPublicationMode?: DiscordFinalPublicationMode;
+  readonly recordingPlaybackUrl?: (meetingId: string) => string;
+}
+
 export class DiscordSummaryPublicationAdapter implements SummaryPublicationPort {
   private readonly finalPublicationMode: DiscordFinalPublicationMode;
 
   public constructor(
     private readonly publisher: DiscordSummaryProjector,
-    options: { readonly finalPublicationMode?: DiscordFinalPublicationMode } = {},
+    private readonly options: DiscordSummaryPublicationAdapterOptions = {},
   ) {
     this.finalPublicationMode = options.finalPublicationMode ?? "separate-message";
   }
@@ -81,7 +86,10 @@ export class DiscordSummaryPublicationAdapter implements SummaryPublicationPort 
           : {}),
         parentChannelId: request.publicationTargetId,
         threadTitle: discordThreadTitle(request.summary.title),
-        markdown: renderRussianSummaryMarkdown(request),
+        markdown: renderRussianSummaryMarkdown(
+          request,
+          this.options.recordingPlaybackUrl?.(request.meetingId),
+        ),
         liveCaptionsMarkdown: renderRussianFinalTranscriptTimelineMarkdown(
           finalTranscriptTimelineEntries(request.transcript),
           locale,
@@ -115,6 +123,7 @@ function currentReference(
 
 export function renderRussianSummaryMarkdown(
   request: Pick<SummaryPublicationRequest, "meetingId" | "summary" | "transcript">,
+  recordingPlaybackUrl?: string,
 ): string {
   const { summary } = request;
   const locale = dominantTranscriptLocale(request.transcript.turns);
@@ -191,7 +200,10 @@ export function renderRussianSummaryMarkdown(
       copy.noOpenQuestions,
     ),
   ];
-  return boundedMarkdown(bodyLines, copy.truncationNotice);
+  const footerLines = recordingPlaybackUrl === undefined
+    ? []
+    : [copy.recordingHeading, `[${copy.recordingLink}](${recordingPlaybackUrl})`];
+  return boundedMarkdown(bodyLines, copy.truncationNotice, footerLines);
 }
 
 /**
@@ -229,16 +241,24 @@ function toDiscordTranscriptTimelineEntry(
   };
 }
 
-function boundedMarkdown(bodyLines: readonly string[], truncationNotice: string): string {
+function boundedMarkdown(
+  bodyLines: readonly string[],
+  truncationNotice: string,
+  footerLines: readonly string[] = [],
+): string {
   const body = bodyLines.join("\n").trimEnd();
-  if (body.length <= discordMarkdownLimit) {
-    return body;
+  const footer = footerLines.length === 0 ? "" : `\n\n${footerLines.join("\n")}`;
+  if (body.length + footer.length <= discordMarkdownLimit) {
+    return `${body}${footer}`;
   }
 
   const suffix = `\n\n${truncationNotice}`;
-  const bodyBudget = discordMarkdownLimit - suffix.length;
+  const boundedFooter = suffix.length + footer.length <= discordMarkdownLimit
+    ? footer
+    : "";
+  const bodyBudget = discordMarkdownLimit - suffix.length - boundedFooter.length;
   const shortenedBody = truncateAtStableBoundary(body, bodyBudget);
-  return `${shortenedBody}${suffix}`;
+  return `${shortenedBody}${suffix}${boundedFooter}`;
 }
 
 function truncateAtStableBoundary(value: string, maximumLength: number): string {

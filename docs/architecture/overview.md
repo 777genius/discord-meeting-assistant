@@ -65,6 +65,9 @@ deployments:
   explicit opt-in. The live draft and authoritative final summary have distinct
   stable identities by default, while replacing the live draft remains an
   explicit compatibility mode. Publishing stores honest versioned references.
+- Recording Playback owns possession-based access to the authoritative private
+  speaker tracks. Its public page presents one synchronized player, while
+  byte-range delivery and access tokens remain outside Meeting Core.
 - Guild Installation & Configuration owns the administrator-approved mapping
   from one Discord guild and voice channel to its results channel. Discord
   commands and PostgreSQL remain adapters around this context.

@@ -1,6 +1,11 @@
-import { lstat, readFile } from "node:fs/promises";
-
 import { z } from "zod";
+
+import {
+  loadRecordingPlaybackConfig,
+  recordingPlaybackEnvironmentShape,
+  validateRecordingPlaybackEnvironment,
+} from "./config/recording-playback-config.js";
+import { readSecretFile } from "./config/secret-file-reader.js";
 
 const snowflake = z.string().regex(/^\d{17,20}$/u);
 const optionalSnowflake = z.preprocess(
@@ -92,6 +97,7 @@ const environmentSchema = z
     POSTGRES_URL_FILE: absolutePath,
     RECORDING_SPOOL_ROOT: absolutePath,
     REDIS_URL_FILE: absolutePath,
+    ...recordingPlaybackEnvironmentShape,
     S3_ACCESS_KEY_ID_FILE: absolutePath,
     S3_BUCKET: z.string().regex(/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/u),
     S3_ENDPOINT: httpUrl,
@@ -189,6 +195,7 @@ const environmentSchema = z
         path: ["DISCORD_LEGACY_GUILD_ID"],
       });
     }
+    validateRecordingPlaybackEnvironment(environment, context);
     if (environment.TRANSCRIPTION_PROVIDER !== "voicetext") {
       return;
     }
@@ -215,6 +222,7 @@ interface PlatformSecrets {
   readonly discordToken: string;
   readonly postgresUrl: string;
   readonly redisUrl: string;
+  readonly recordingPlaybackSigningSecret?: string;
   readonly s3AccessKeyId: string;
   readonly s3SecretAccessKey: string;
   readonly subscriptionRuntimeToken: string;
@@ -245,6 +253,9 @@ export interface PlatformConfig {
   readonly liveIngressOwnerMode: "singleton";
   readonly port: number;
   readonly recordingSpoolRoot: string;
+  readonly recordingPlayback?: {
+    readonly publicBaseUrl: string;
+  };
   readonly s3: {
     readonly bucket: string;
     readonly endpoint: string;
@@ -291,6 +302,7 @@ export async function loadPlatformConfig(
     s3SecretAccessKey,
     subscriptionRuntimeToken,
     voicetextServiceToken,
+    recordingPlayback,
   ] = await Promise.all([
     readSecret(environment.CRAIG_BEARER_TOKEN_FILE),
     !environment.CONVERSATION_ENABLED ||
@@ -306,6 +318,7 @@ export async function loadPlatformConfig(
     environment.VOICETEXT_SERVICE_TOKEN_FILE === undefined
       ? Promise.resolve()
       : readSecret(environment.VOICETEXT_SERVICE_TOKEN_FILE),
+    loadRecordingPlaybackConfig(environment, readSecret),
   ]);
 
   return Object.freeze({
@@ -343,6 +356,9 @@ export async function loadPlatformConfig(
     nodeEnvironment: environment.NODE_ENV,
     port: environment.PORT,
     recordingSpoolRoot: environment.RECORDING_SPOOL_ROOT,
+    ...(recordingPlayback.config === undefined
+      ? {}
+      : { recordingPlayback: recordingPlayback.config }),
     s3: {
       bucket: environment.S3_BUCKET,
       endpoint: environment.S3_ENDPOINT,
@@ -357,6 +373,9 @@ export async function loadPlatformConfig(
       discordToken,
       postgresUrl,
       redisUrl,
+      ...(recordingPlayback.signingSecret === undefined
+        ? {}
+        : { recordingPlaybackSigningSecret: recordingPlayback.signingSecret }),
       s3AccessKeyId,
       s3SecretAccessKey,
       subscriptionRuntimeToken,
@@ -388,20 +407,4 @@ export async function loadPlatformConfig(
           },
         }),
   });
-}
-
-async function readSecretFile(path: string): Promise<string> {
-  const descriptor = await lstat(path);
-  if (
-    !descriptor.isFile() ||
-    descriptor.isSymbolicLink() ||
-    descriptor.size > 65_536
-  ) {
-    throw new Error("Secret path must be a small regular non-symlink file");
-  }
-  const value = (await readFile(path, "utf8")).trim();
-  if (value.length === 0 || value.includes("\0")) {
-    throw new Error("Secret file must contain a non-empty text value");
-  }
-  return value;
 }

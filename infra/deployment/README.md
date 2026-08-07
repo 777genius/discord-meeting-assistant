@@ -65,11 +65,39 @@ application ID does not match the bot token.
 
 The application log includes the direct official Discord install URL, which can
 be linked from any product page without exposing Meeting Platform's private HTTP
-listener. If a reverse proxy is added, expose only `/discord/install` and, for a
-distinct Craig identity, `/discord/install/craig`; do not publish the Craig
-ingress listener itself. Craig reaches the authenticated
+listener. If recording playback is disabled, expose only `/discord/install` and,
+for a distinct Craig identity, `/discord/install/craig`. When playback is
+enabled, the proxy may additionally expose `/recordings/`; preserve `Range`,
+`Content-Range`, `Accept-Ranges`, `Cookie` and `Set-Cookie` headers. Never expose
+`/v1/`, `/metrics`, `/readyz`, or the Craig ingress listener. Craig reaches the authenticated
 `GET /v1/craig/configuration` snapshot only on the internal network using the
 existing Craig bearer; do not expose that route publicly.
+
+## Recording playback
+
+Create a random signing secret with at least 32 bytes, store it as a regular
+mode `0400` file under `${DEPLOY_ROOT}/secrets/platform`, and configure both:
+
+```text
+RECORDING_PLAYBACK_PUBLIC_BASE_URL=https://recordings.example.com
+RECORDING_PLAYBACK_SIGNING_SECRET_FILE=/run/secrets/recording-playback-signing-secret
+```
+
+The public URL must be an HTTPS origin without a path. The secret part of each
+Discord link stays in the URL fragment and is exchanged for a scoped HttpOnly
+cookie, so reverse-proxy access logs do not receive it. The object-storage
+bucket remains private. Rotating the signing secret revokes existing links.
+
+The page presents one synchronized player over the authoritative speaker
+tracks. Audio is delivered with byte ranges, so seeking and long meetings do not
+depend on Discord file limits or require downloading the complete recording.
+
+When the host HTTPS proxy belongs to another Compose project, start the narrow
+recording edge with `compose.recording-edge.yaml`. Set `PUBLIC_EDGE_NETWORK` to
+the proxy's Docker network and, if necessary, override
+`MEETING_INTERNAL_NETWORK`. The edge joins both networks but forwards only
+`/recordings/*`; every other path returns `404`. Point the host HTTPS virtual
+host at `recording-edge:8080` and keep TLS termination at that host proxy.
 
 ## Live conversation profile
 

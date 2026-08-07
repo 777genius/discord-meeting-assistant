@@ -191,12 +191,16 @@ describe("meeting platform runtime wiring", () => {
       maxTotalArtifactBytes: 704 * 1_024 * 1_024,
     });
     expect(options.keyterms).toEqual(expect.arrayContaining([
+      "BullMQ",
+      "Craig",
       "landing page",
       "landing slug",
+      "PostgreSQL",
       "QID",
       "Quanta",
       "Quanta ID",
       "Quanta Pages",
+      "Redis",
       "referral code",
       "referral link",
       "timestamp",
