@@ -89,19 +89,11 @@ export function mapVoicetextBatchProviderTurns(
         false,
       );
     }
-    if (exceedsVoicetextBatchSegmentOverlapLimit(
-      previousEndSeconds,
-      rawStartSeconds,
-      input.options.maxSegmentOverlapMs,
-    )) {
-      throw new VoicetextAdapterError(
-        "invalid_provider_response",
-        "Voicetext batch final segment overlap exceeds the configured safety bound",
-        false,
-      );
-    }
     const relativeStartMs = Math.max(roundedStartMs, previousEndMs);
     if (relativeEndMs <= relativeStartMs) {
+      // A fully contained refinement cannot extend the normalized timeline.
+      // Merge its text and provenance before applying the safety bound that
+      // protects only partially overlapping segments that would extend it.
       const previousTurn = turns.at(-1);
       if (previousTurn === undefined) {
         throw new VoicetextAdapterError(
@@ -136,6 +128,17 @@ export function mapVoicetextBatchProviderTurns(
       };
       previousEndSeconds = Math.max(previousEndSeconds, rawEndSeconds);
       continue;
+    }
+    if (exceedsVoicetextBatchSegmentOverlapLimit(
+      previousEndSeconds,
+      rawStartSeconds,
+      input.options.maxSegmentOverlapMs,
+    )) {
+      throw new VoicetextAdapterError(
+        "invalid_provider_response",
+        "Voicetext batch final segment overlap exceeds the configured safety bound",
+        false,
+      );
     }
     totalCharacters = addVoicetextBatchSafeIntegers(totalCharacters, text.length);
     if (totalCharacters > input.options.maxTranscriptCharsPerSpeaker) {
