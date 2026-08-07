@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import { validateVoicetextBatchFinalTranscriptionOptions } from "../src/voicetext-batch-final-transcription-configuration.js";
-import { mapVoicetextBatchProviderTurns } from "../src/voicetext-batch-final-transcription-turns.js";
+import {
+  mapVoicetextBatchProviderReadableSegments,
+  mapVoicetextBatchProviderTurns,
+} from "../src/voicetext-batch-final-transcription-turns.js";
 
 const input = (
   utterances: readonly {
@@ -36,7 +39,7 @@ describe("Voicetext batch final turn normalization", () => {
     expect(turns).toEqual([{
       endMs: 20_000,
       speakerId: "discord-user-a",
-      sourceUtteranceIndex: 0,
+      sourceUtteranceIndices: [0, 1],
       stableTurnId: "turn:v2:7:job-key:1:1:1:1",
       startMs: 15_000,
       text: "первая реплика вложенная реплика",
@@ -66,5 +69,40 @@ describe("Voicetext batch final turn normalization", () => {
       { startMs: 17_000, text: "первая реплика", stableTurnId: "turn:v2:7:job-key:1:1:1:2" },
       { startMs: 19_000, text: "вторая реплика", stableTurnId: "turn:v2:7:job-key:1:1:1:1" },
     ]);
+  });
+
+  it("retains contained utterance provenance for readable segments", () => {
+    const mappingInput = input([
+      { endSeconds: 10, startSeconds: 5, transcript: "first phrase" },
+      { endSeconds: 9.5, startSeconds: 8.5, transcript: "contained phrase" },
+    ]);
+    const withReadableSegment = {
+      ...mappingInput,
+      result: {
+        ...mappingInput.result,
+        readableSegments: [{
+          endSeconds: 9.5,
+          sourceUtteranceIndices: [1],
+          startSeconds: 8.5,
+          transcript: "contained phrase",
+        }],
+      },
+    };
+    const turns = mapVoicetextBatchProviderTurns(withReadableSegment);
+
+    expect(mapVoicetextBatchProviderReadableSegments(withReadableSegment, turns))
+      .toMatchObject([{
+        sourceTurnIds: [turns[0]?.stableTurnId],
+        text: "contained phrase",
+      }]);
+  });
+
+  it("does not discard substring-only contained text", () => {
+    const turns = mapVoicetextBatchProviderTurns(input([
+      { endSeconds: 10, startSeconds: 5, transcript: "theater" },
+      { endSeconds: 9.5, startSeconds: 8.5, transcript: "he" },
+    ]));
+
+    expect(turns).toMatchObject([{ text: "theater he" }]);
   });
 });

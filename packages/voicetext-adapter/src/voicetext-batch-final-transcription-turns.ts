@@ -12,7 +12,7 @@ const voicetextBatchIdentityVersion = "v2";
 export interface VoicetextBatchProviderTurn {
   readonly endMs: number;
   readonly speakerId: string;
-  readonly sourceUtteranceIndex: number;
+  readonly sourceUtteranceIndices: readonly number[];
   readonly stableTurnId: string;
   readonly startMs: number;
   readonly text: string;
@@ -129,7 +129,11 @@ export function mapVoicetextBatchProviderTurns(
           false,
         );
       }
-      turns[turns.length - 1] = { ...previousTurn, text: mergedText };
+      turns[turns.length - 1] = {
+        ...previousTurn,
+        sourceUtteranceIndices: [...previousTurn.sourceUtteranceIndices, sourceUtteranceIndex],
+        text: mergedText,
+      };
       previousEndSeconds = Math.max(previousEndSeconds, rawEndSeconds);
       continue;
     }
@@ -147,7 +151,7 @@ export function mapVoicetextBatchProviderTurns(
         relativeEndMs,
       ),
       speakerId: input.reference.speakerId,
-      sourceUtteranceIndex,
+      sourceUtteranceIndices: [sourceUtteranceIndex],
       stableTurnId: stableVoicetextBatchId(
         "turn",
         input.idempotencyKey,
@@ -167,14 +171,16 @@ export function mapVoicetextBatchProviderTurns(
 }
 
 function mergeContainedVoicetextBatchText(previous: string, current: string): string {
-  if (previous === current || previous.includes(current)) {
-    return previous;
-  }
-  if (current.includes(previous)) {
-    return current;
-  }
   const previousWords = previous.split(/\s+/u);
   const currentWords = current.split(/\s+/u);
+  const normalizedPrevious = ` ${previousWords.join(" ").toLocaleLowerCase()} `;
+  const normalizedCurrent = ` ${currentWords.join(" ").toLocaleLowerCase()} `;
+  if (normalizedPrevious.includes(normalizedCurrent)) {
+    return previous;
+  }
+  if (normalizedCurrent.includes(normalizedPrevious)) {
+    return current;
+  }
   const maximumSharedWords = Math.min(previousWords.length, currentWords.length);
   for (let sharedWords = maximumSharedWords; sharedWords > 0; sharedWords -= 1) {
     const previousSuffix = previousWords.slice(-sharedWords).join(" ").toLocaleLowerCase();
@@ -206,7 +212,9 @@ function mapVoicetextBatchProviderReadableSegmentsOrThrow(
 ): readonly TranscriptReadableSegmentSnapshot[] {
   const audioDurationMs = ceilingVoicetextBatchMilliseconds(input.result.durationSeconds);
   const turnsByUtteranceIndex = new Map(
-    turns.map((turn) => [turn.sourceUtteranceIndex, turn]),
+    turns.flatMap((turn) =>
+      turn.sourceUtteranceIndices.map((sourceIndex) => [sourceIndex, turn] as const)
+    ),
   );
   let previousEndSeconds = -1;
   let totalCharacters = 0;
@@ -255,6 +263,9 @@ function mapVoicetextBatchProviderReadableSegmentsOrThrow(
       }
       return sourceTurn;
     });
+    const uniqueSourceTurns = [...new Map(
+      sourceTurns.map((turn) => [turn.stableTurnId, turn]),
+    ).values()];
     const sourceUtterances = segment.sourceUtteranceIndices.map((sourceIndex) => {
       const sourceUtterance = input.result.utterances[sourceIndex];
       if (sourceUtterance === undefined) {
@@ -271,10 +282,10 @@ function mapVoicetextBatchProviderReadableSegmentsOrThrow(
     if (startMs < providerEnvelopeStartMs || endMs > providerEnvelopeEndMs) {
       throw invalidReadableSegments("Voicetext batch readable segment exceeds its source utterance envelope");
     }
-    const envelopeStartMs = Math.min(...sourceTurns.map((turn) =>
+    const envelopeStartMs = Math.min(...uniqueSourceTurns.map((turn) =>
       turn.startMs - input.reference.timelineOffsetMs
     ));
-    const envelopeEndMs = Math.max(...sourceTurns.map((turn) =>
+    const envelopeEndMs = Math.max(...uniqueSourceTurns.map((turn) =>
       turn.endMs - input.reference.timelineOffsetMs
     ));
     const normalizedStartMs = Math.max(startMs, envelopeStartMs);
@@ -293,7 +304,7 @@ function mapVoicetextBatchProviderReadableSegmentsOrThrow(
         String(input.speakerIndex + 1),
         String(segmentIndex + 1),
       ),
-      sourceTurnIds: sourceTurns.map(({ stableTurnId }) => stableTurnId),
+      sourceTurnIds: uniqueSourceTurns.map(({ stableTurnId }) => stableTurnId),
       speakerId: input.reference.speakerId,
       startMs: addVoicetextBatchSafeIntegers(
         input.reference.timelineOffsetMs,
