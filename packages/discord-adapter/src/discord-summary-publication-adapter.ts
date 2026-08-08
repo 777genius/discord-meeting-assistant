@@ -24,8 +24,10 @@ import {
 import { toDiscordPublicationFailure } from "./discord-publication-errors.js";
 import {
   type DiscordTranscriptLocale,
+  type DiscordTranscriptTimelineEntry,
   finalTranscriptAttachmentFilename,
   renderRussianFinalTranscriptAttachmentMarkdown,
+  renderRussianTranscriptTimelineMarkdown,
 } from "./discord-transcript-timeline.js";
 import {
   dominantTranscriptLocale,
@@ -85,6 +87,11 @@ export class DiscordSummaryPublicationAdapter implements SummaryPublicationPort 
         markdown: renderRussianSummaryMarkdown(
           request,
           recordingPlaybackUrl,
+        ),
+        liveCaptionsMarkdown: renderRussianTranscriptTimelineMarkdown(
+          finalTranscriptTimelineEntries(request.transcript),
+          "final",
+          locale,
         ),
         ...(replacesLiveProjection
           ? {}
@@ -154,6 +161,30 @@ export class DiscordSummaryPublicationAdapter implements SummaryPublicationPort 
       // already durable and remains the authoritative visible result.
     }
   }
+}
+
+type TranscriptReadableSegmentSnapshot = NonNullable<
+  SummaryPublicationRequest["transcript"]["readableSegments"]
+>[number];
+
+function finalTranscriptTimelineEntries(
+  transcript: SummaryPublicationRequest["transcript"],
+): readonly DiscordTranscriptTimelineEntry[] {
+  const readableSegments = transcript.readableSegments ?? [];
+  return readableSegments.length > 0
+    ? readableSegments.map(toDiscordTranscriptTimelineEntry)
+    : transcript.turns;
+}
+
+function toDiscordTranscriptTimelineEntry(
+  segment: TranscriptReadableSegmentSnapshot,
+): DiscordTranscriptTimelineEntry {
+  return {
+    endMs: segment.endMs,
+    speakerId: segment.speakerId,
+    startMs: segment.startMs,
+    text: segment.text,
+  };
 }
 
 function sameDiscordProjectionReference(

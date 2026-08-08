@@ -63,9 +63,9 @@ const finalTimelines = {
 
 /**
  * Renders a bounded, chronological transcript timeline for the active Discord
- * projection. If the timeline cannot fit, retain the opening and newest
- * contiguous history and explain the omission instead of silently replacing
- * the whole view with a placeholder.
+ * projection. If the live timeline cannot fit, retain the opening and newest
+ * contiguous history. A bounded final timeline keeps only the newest history
+ * because the complete authoritative transcript is attached to the message.
  */
 export function renderRussianTranscriptTimelineMarkdown(
   entries: readonly DiscordTranscriptTimelineEntry[],
@@ -155,6 +155,10 @@ function selectTimelineEntries(
     return complete;
   }
 
+  if (kind === "final") {
+    return selectFinalTimelineTail(entries, budget, locale, renderAt);
+  }
+
   const first = renderAt(0);
   const tail: string[] = [];
   for (let index = entries.length - 1; index >= 1; index -= 1) {
@@ -183,6 +187,31 @@ function selectTimelineEntries(
   return [
     truncateTimelineLine(first, firstBudget),
     collapsedHistoryNotice(entries.length - 1, kind, locale),
+  ];
+}
+
+function selectFinalTimelineTail(
+  entries: readonly DiscordTranscriptTimelineEntry[],
+  budget: number,
+  locale: DiscordTranscriptLocale,
+  renderAt: (index: number) => string,
+): readonly string[] {
+  const tail: string[] = [];
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const candidate = [
+      collapsedHistoryNotice(index, "final", locale),
+      renderAt(index),
+      ...tail,
+    ];
+    if (candidate.join("\n").length > budget) {
+      break;
+    }
+    tail.unshift(renderAt(index));
+  }
+
+  return [
+    collapsedHistoryNotice(entries.length - tail.length, "final", locale),
+    ...tail,
   ];
 }
 
