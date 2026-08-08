@@ -35,6 +35,7 @@ interface RevisionRow {
 
 interface RecoverablePostCallRow {
   readonly meeting_id: string;
+  readonly recovery_generation: number;
   readonly schema_version: number;
 }
 
@@ -55,6 +56,13 @@ function assertPostCallSchemaVersion(value: number): 1 {
     throw new Error("unsupported post-call schema version");
   }
   return 1;
+}
+
+function assertRecoveryGeneration(value: number): number {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error("invalid post-call recovery generation");
+  }
+  return value;
 }
 
 function normalizeSnapshot(snapshot: MeetingSnapshot): MeetingSnapshot {
@@ -217,11 +225,13 @@ export class PostgresMeetingRepository implements
     requirePostCallLimit(limit);
     const result = await this.pool.query<RecoverablePostCallRow>(
       `
-        SELECT meeting_id, schema_version::float8 AS schema_version
+        SELECT meeting_id, schema_version::float8 AS schema_version,
+               recovery_generation::float8 AS recovery_generation
         FROM meeting_core.post_call_outbox
         WHERE processed_at IS NULL
           AND dead_lettered_at IS NULL
-        ORDER BY created_at, meeting_id
+          AND (recovery_after IS NULL OR recovery_after <= transaction_timestamp())
+        ORDER BY COALESCE(recovery_after, created_at), meeting_id
         LIMIT $1
       `,
       [limit],
@@ -229,6 +239,7 @@ export class PostgresMeetingRepository implements
     return result.rows.map((row) => {
       return Object.freeze({
         meetingId: row.meeting_id,
+        recoveryGeneration: assertRecoveryGeneration(row.recovery_generation),
         schemaVersion: assertPostCallSchemaVersion(row.schema_version),
       });
     });

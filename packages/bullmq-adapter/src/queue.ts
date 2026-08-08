@@ -11,6 +11,7 @@ import {
   POST_CALL_QUEUE_NAME,
   type PostCallDeadLetterRecord,
   type PostCallJobPayload,
+  parsePostCallEnqueueRequest,
   parsePostCallDeadLetterRecord,
   parsePostCallFailureCode,
   parsePostCallJobPayload,
@@ -177,8 +178,15 @@ export class BullMqPostCallEnqueuer {
   }
 
   public async enqueue(payload: unknown): Promise<PostCallEnqueueReceipt> {
-    const validatedPayload = parsePostCallJobPayload(payload);
-    const jobId = postCallJobId(validatedPayload.meetingId);
+    const request = parsePostCallEnqueueRequest(payload);
+    const validatedPayload = parsePostCallJobPayload({
+      meetingId: request.meetingId,
+      schemaVersion: request.schemaVersion,
+    });
+    const jobId = postCallJobId(
+      validatedPayload.meetingId,
+      request.recoveryGeneration,
+    );
     const existing = await this.queue.getJob(jobId);
     const receipt =
       existing === undefined

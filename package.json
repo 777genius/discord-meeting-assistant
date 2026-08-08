@@ -17,7 +17,7 @@
     "architecture:meeting-core-imports": "pnpm --filter @discord-meeting/architecture-baseline run check:meeting-core-imports",
     "architecture:protobuf": "node tooling/architecture-baseline/src/verify-protobuf-evolution.ts",
     "architecture:source": "agent-teams-foundation check architecture.source-dependencies",
-    "check": "pnpm run workspace:check && pnpm run python:check && pnpm run conversation:e2e && pnpm run lint && pnpm run typecheck && pnpm run foundation:check && pnpm run architecture:patterns && pnpm run architecture:patterns:test && pnpm run dead-code:check && pnpm run nx:projects",
+    "check": "pnpm run workspace:check && pnpm run post-call:e2e && pnpm run python:check && pnpm run conversation:e2e && pnpm run lint && pnpm run typecheck && pnpm run foundation:check && pnpm run architecture:patterns && pnpm run architecture:patterns:test && pnpm run dead-code:check && pnpm run nx:projects",
     "check:changed": "agent-teams-foundation agent-workflow changed --consumer .",
     "check:fast": "pnpm run lint:fast && pnpm run typecheck && pnpm run foundation:check && pnpm run architecture:patterns && pnpm run architecture:patterns:test && pnpm run nx:projects",
     "conversation:e2e": "pnpm --filter @discord-meeting/pipecat-runtime-adapter run test:e2e",
@@ -36,6 +36,7 @@
     "nx:projects": "NX_NO_CLOUD=true NX_DAEMON=false nx show projects",
     "python:check": "pnpm run python:sync && cd apps/pipecat-runtime && uv run ruff check . && uv run pyright && uv run lint-imports && uv run python tools/check_no_suppressions.py && uv run pytest",
     "python:sync": "cd apps/pipecat-runtime && uv sync --frozen --all-groups",
+    "post-call:e2e": "pnpm --filter @discord-meeting/meeting-platform run test:post-call-recovery-e2e",
     "tooling:check": "pnpm --filter @discord-meeting/architecture-baseline run check",
     "workspace:check": "pnpm --recursive --if-present run check",
     "typecheck": "tsc --project tsconfig.json --noEmit --pretty false"

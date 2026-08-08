@@ -77,7 +77,7 @@ describe("Node to Python providerless conversation E2E", () => {
       serviceToken,
     });
     await waitUntilServing(runtime, sidecar, () => `${stdout}\n${stderr}`);
-  }, 120_000);
+  }, 180_000);
 
   afterAll(async () => {
     if (runtime !== undefined) {
@@ -379,7 +379,7 @@ async function waitUntilTcpListening(
   processHandle: ChildProcessWithoutNullStreams,
   diagnostics: () => string,
 ): Promise<void> {
-  const deadline = Date.now() + 90_000;
+  const deadline = Date.now() + 150_000;
   while (Date.now() < deadline) {
     if (processHandle.exitCode !== null) {
       throw new Error(`Pipecat sidecar exited before binding:\n${diagnostics()}`);

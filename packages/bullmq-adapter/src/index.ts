@@ -3,6 +3,7 @@ export {
   POST_CALL_DEAD_LETTER_QUEUE_NAME,
   POST_CALL_JOB_NAME,
   POST_CALL_QUEUE_NAME,
+  parsePostCallEnqueueRequest,
   parsePostCallDeadLetterRecord,
   parsePostCallJobPayload,
   postCallDeadLetterJobId,
@@ -11,6 +12,7 @@ export {
   postCallJobPayloadSchema,
   postCallJobReference,
   type PostCallDeadLetterRecord,
+  type PostCallEnqueueRequest,
   type PostCallJobPayload,
 } from "./contracts.js";
 export {
@@ -37,6 +39,7 @@ export {
 export {
   DEFAULT_POST_CALL_ATTEMPTS,
   DEFAULT_POST_CALL_BACKOFF_DELAY_MS,
+  DEFAULT_POST_CALL_BACKOFF_JITTER,
   DEFAULT_POST_CALL_CONCURRENCY,
   MAX_POST_CALL_ATTEMPTS,
   MAX_POST_CALL_CONCURRENCY,

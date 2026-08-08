@@ -1,5 +1,6 @@
-export const DEFAULT_POST_CALL_ATTEMPTS = 4;
-export const DEFAULT_POST_CALL_BACKOFF_DELAY_MS = 1_000;
+export const DEFAULT_POST_CALL_ATTEMPTS = 8;
+export const DEFAULT_POST_CALL_BACKOFF_DELAY_MS = 15_000;
+export const DEFAULT_POST_CALL_BACKOFF_JITTER = 0.25;
 export const DEFAULT_POST_CALL_CONCURRENCY = 4;
 export const MAX_POST_CALL_ATTEMPTS = 8;
 export const MAX_POST_CALL_CONCURRENCY = 32;
@@ -25,11 +26,13 @@ export const POST_CALL_DEAD_LETTER_RETENTION = Object.freeze({
 export interface PostCallQueuePolicy {
   readonly attempts: number;
   readonly backoffDelayMs: number;
+  readonly backoffJitter: number;
 }
 
 export interface PostCallQueuePolicyInput {
   readonly attempts?: number;
   readonly backoffDelayMs?: number;
+  readonly backoffJitter?: number;
 }
 
 export interface PostCallWorkerPolicyInput extends PostCallQueuePolicyInput {
@@ -52,6 +55,13 @@ function boundedInteger(
   return value;
 }
 
+function boundedRatio(name: string, value: number): number {
+  if (!Number.isFinite(value) || value < 0 || value > 1) {
+    throw new RangeError(`${name} must be a finite number from 0 to 1`);
+  }
+  return value;
+}
+
 export function resolvePostCallQueuePolicy(
   input: PostCallQueuePolicyInput = {},
 ): PostCallQueuePolicy {
@@ -67,6 +77,10 @@ export function resolvePostCallQueuePolicy(
       input.backoffDelayMs ?? DEFAULT_POST_CALL_BACKOFF_DELAY_MS,
       MIN_BACKOFF_DELAY_MS,
       MAX_BACKOFF_DELAY_MS,
+    ),
+    backoffJitter: boundedRatio(
+      "backoffJitter",
+      input.backoffJitter ?? DEFAULT_POST_CALL_BACKOFF_JITTER,
     ),
   });
 }
@@ -91,6 +105,7 @@ export function postCallDefaultJobOptions(policy: PostCallQueuePolicy) {
     attempts: policy.attempts,
     backoff: Object.freeze({
       delay: policy.backoffDelayMs,
+      jitter: policy.backoffJitter,
       type: "exponential" as const,
     }),
     removeOnComplete: POST_CALL_COMPLETED_RETENTION,

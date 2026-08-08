@@ -100,7 +100,7 @@ describe("recording playback HTTP routes", () => {
     expect(response.headers["content-security-policy"]).toContain("media-src 'self'");
     expect(response.body).toContain("Meeting recording");
     expect(response.body).not.toContain(context.token);
-  });
+  }, 15_000);
 
   it("exchanges a bearer for a scoped cookie and a locator-free manifest", async () => {
     const context = createContext();

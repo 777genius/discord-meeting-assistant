@@ -11,6 +11,7 @@ const migrationFileNames = [
   "0006_persistence_integrity.sql",
   "0007_post_call_terminal_settlement.sql",
   "0008_summary_publication_effect_ledger.sql",
+  "0009_post_call_retryable_recovery.sql",
 ] as const;
 
 const migrationLockKey = "718330091620232601";
