@@ -2,7 +2,7 @@
 
 ## Proposed
 
-_None._
+- [ADR-0026: Host subscription account pool](0026-host-subscription-account-pool.md)
 
 ## Accepted
 

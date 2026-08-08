@@ -12,8 +12,10 @@
     "serviceTokenFile": "/run/subscription-runtime-secrets/service-token"
   },
   "custody": {
-    "mode": "dedicated-preauthenticated-slot",
-    "authJsonPath": "/run/subscription-runtime-auth/auth.json",
+    "mode": "dedicated-preauthenticated-pool",
+    "authPoolManifestPath": "/run/subscription-runtime-auth/pool.json",
+    "minimumAccounts": 1,
+    "maximumAccounts": 8,
     "stateRoot": "/var/lib/subscription-runtime",
     "localEncryptionKeyFile": "/run/subscription-runtime-secrets/local-encryption-key",
     "sharedMutableStateAllowed": false

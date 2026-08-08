@@ -122,7 +122,7 @@ services:
     restart: unless-stopped
     read_only: true
     environment:
-      SUBSCRIPTION_RUNTIME_AUTH_JSON_PATH: /run/subscription-runtime-auth/auth.json
+      SUBSCRIPTION_RUNTIME_AUTH_POOL_MANIFEST_PATH: /run/subscription-runtime-auth/pool.json
       SUBSCRIPTION_RUNTIME_DISABLE_TOOLS: "1"
       SUBSCRIPTION_RUNTIME_EXECUTION_PROFILE: stateless-completion
       SUBSCRIPTION_RUNTIME_EXPECTED_LAUNCHER_SHA256: ${SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256:?set launcher SHA-256}
@@ -141,7 +141,7 @@ services:
       PATH: /app/apps/subscription-runtime-sidecar/node_modules/.bin:/opt/subscription-runtime/node_modules/.bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     volumes:
       - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/runtime/installation:/opt/subscription-runtime:ro
-      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/runtime/auth-current:/run/subscription-runtime-auth:ro
+      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/runtime/auth-pool:/run/subscription-runtime-auth:ro
       - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/runtime/state:/var/lib/subscription-runtime
       - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/secrets/runtime:/run/subscription-runtime-secrets:ro
       - ../../infra/subscription-runtime/sidecar-policy.json:/etc/subscription-runtime/sidecar-policy.json:ro

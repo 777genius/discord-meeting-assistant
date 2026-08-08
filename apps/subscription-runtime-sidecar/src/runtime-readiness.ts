@@ -4,7 +4,7 @@ import { access, lstat, realpath } from "node:fs/promises";
 import type { RuntimeReadinessInspectorPort } from "./types.js";
 
 export interface FileRuntimeReadinessInspectorOptions {
-  readonly authJsonPath: string;
+  readonly authJsonPaths: readonly string[];
   readonly isolatedCwd: string;
   readonly localEncryptionKeyFile: string;
   readonly stateRoot: string;
@@ -19,7 +19,7 @@ export class FileRuntimeReadinessInspector
 
   public async inspect(): Promise<void> {
     for (const path of [
-      this.options.authJsonPath,
+      ...this.options.authJsonPaths,
       this.options.localEncryptionKeyFile,
     ]) {
       const secretStat = await lstat(path);

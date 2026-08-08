@@ -6,7 +6,7 @@ services:
     user: "${SUBSCRIPTION_RUNTIME_UID:-10001}:${SUBSCRIPTION_RUNTIME_GID:-10001}"
     read_only: true
     environment:
-      SUBSCRIPTION_RUNTIME_AUTH_JSON_PATH: /run/subscription-runtime-auth/auth.json
+      SUBSCRIPTION_RUNTIME_AUTH_POOL_MANIFEST_PATH: /run/subscription-runtime-auth/pool.json
       SUBSCRIPTION_RUNTIME_DISABLE_TOOLS: "1"
       SUBSCRIPTION_RUNTIME_EXECUTION_PROFILE: stateless-completion
       SUBSCRIPTION_RUNTIME_EXPECTED_LAUNCHER_SHA256: ${SUBSCRIPTION_RUNTIME_EXPECTED_LAUNCHER_SHA256:?set the admitted launcher SHA-256}
@@ -22,7 +22,7 @@ services:
     expose:
       - "50052"
     volumes:
-      - ${SUBSCRIPTION_RUNTIME_PRIVATE_ROOT:?set a Meeting Assistant private root}/auth-current:/run/subscription-runtime-auth:ro
+      - ${SUBSCRIPTION_RUNTIME_PRIVATE_ROOT:?set a Meeting Assistant private root}/auth-pool:/run/subscription-runtime-auth:ro
       - ${SUBSCRIPTION_RUNTIME_PRIVATE_ROOT:?set a Meeting Assistant private root}/state:/var/lib/subscription-runtime
       - ${SUBSCRIPTION_RUNTIME_PRIVATE_ROOT:?set a Meeting Assistant private root}/secrets:/run/subscription-runtime-secrets:ro
       - ./sidecar-policy.json:/etc/subscription-runtime/sidecar-policy.json:ro

@@ -25,6 +25,7 @@ import {
   persistentCodexTimedOutResult,
 } from "./persistent-codex-run-result.js";
 import { createPersistentCodexWorkerSlot } from "./persistent-codex-worker.js";
+import type { SubscriptionRuntimeAccount } from "./subscription-account-pool.js";
 import type {
   ProviderTaskStreamObserver,
   ProcessRunRequest,
@@ -36,6 +37,11 @@ export type {
   PersistentCodexProcessRunnerOptions,
   PersistentCodexProfile,
 } from "./persistent-codex-process-contracts.js";
+
+export interface AccountPoolPrewarmResult {
+  readonly readyAccounts: number;
+  readonly totalAccounts: number;
+}
 
 /**
  * Keeps the provider-neutral sidecar contract while reusing Subscription
@@ -55,8 +61,29 @@ export class PersistentCodexProcessRunner implements StreamingProcessRunnerPort 
   public async prewarm(
     profile: PersistentCodexProfile,
     environment: Readonly<Record<string, string>>,
+    accountId: string,
   ): Promise<void> {
-    await this.slot(profile, environment);
+    await this.slot(profile, environment, this.accountById(accountId));
+  }
+
+  public async prewarmAccounts(
+    profile: PersistentCodexProfile,
+    environment: Readonly<Record<string, string>>,
+  ): Promise<AccountPoolPrewarmResult> {
+    const results = await Promise.allSettled(
+      this.options.accounts.map(async (account) =>
+        this.slot(profile, environment, account)),
+    );
+    const readyAccounts = results.filter(
+      (result) => result.status === "fulfilled",
+    ).length;
+    if (readyAccounts === 0) {
+      throw new Error("Persistent Codex account pool prewarm failed");
+    }
+    return {
+      readyAccounts,
+      totalAccounts: this.options.accounts.length,
+    };
   }
 
   public async run(request: ProcessRunRequest): Promise<ProcessRunResult> {
@@ -102,6 +129,7 @@ export class PersistentCodexProcessRunner implements StreamingProcessRunnerPort 
     const slot = await this.slot(
       profileForPersistentCodexRequest(canonical),
       request.env,
+      this.accountForRequest(request),
     );
     return await this.runWorker(slot, canonical, request, observer);
   }
@@ -210,15 +238,21 @@ export class PersistentCodexProcessRunner implements StreamingProcessRunnerPort 
   private async slot(
     profile: PersistentCodexProfile,
     environment: Readonly<Record<string, string>>,
+    account: SubscriptionRuntimeAccount,
   ): Promise<PersistentCodexWorkerSlot> {
-    const key = profile.execution.purpose;
+    const key = `${account.id}:${profile.execution.purpose}`;
     const existing = this.slots.get(key);
     if (existing !== undefined) {
       const slot = await existing;
       assertSamePersistentCodexProfile(slot.profile, profile);
       return slot;
     }
-    const pending = createPersistentCodexWorkerSlot(this.options, profile, environment);
+    const pending = createPersistentCodexWorkerSlot(
+      this.options,
+      profile,
+      environment,
+      account,
+    );
     this.slots.set(key, pending);
     try {
       return await pending;
@@ -226,5 +260,44 @@ export class PersistentCodexProcessRunner implements StreamingProcessRunnerPort 
       this.slots.delete(key);
       throw error;
     }
+  }
+
+  private accountForRequest(
+    request: ProcessRunRequest,
+  ): SubscriptionRuntimeAccount {
+    const authJsonPath = persistentCodexArgumentValue(
+      request.args,
+      "--codex-auth-json",
+    );
+    const requestedProviderInstanceId = persistentCodexArgumentValue(
+      request.args,
+      "--provider-instance",
+    );
+    const requestedStateRoot = persistentCodexArgumentValue(
+      request.args,
+      "--state-root",
+    );
+    if (requestedStateRoot !== this.options.stateRoot) {
+      throw new Error("Persistent worker state root conflicts with policy");
+    }
+    const account = this.options.accounts.find(
+      (candidate) =>
+        candidate.authJsonPath === authJsonPath &&
+        candidate.providerInstanceId === requestedProviderInstanceId,
+    );
+    if (account === undefined) {
+      throw new Error("Persistent worker account conflicts with policy");
+    }
+    return account;
+  }
+
+  private accountById(accountId: string): SubscriptionRuntimeAccount {
+    const account = this.options.accounts.find(
+      (candidate) => candidate.id === accountId,
+    );
+    if (account === undefined) {
+      throw new Error("Persistent worker account is not admitted");
+    }
+    return account;
   }
 }

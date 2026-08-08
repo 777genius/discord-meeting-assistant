@@ -3,6 +3,8 @@ import type {
   SubscriptionRuntimeExecutionProfile,
 } from "@discord-meeting/subscription-runtime-adapter";
 
+import type { SubscriptionRuntimeAccount } from "./subscription-account-pool.js";
+
 interface RuntimeWorkerResult {
   readonly outputText: string;
   readonly status?: "completed" | "waiting_for_input";
@@ -58,11 +60,10 @@ export interface PersistentCodexProfile {
 }
 
 export interface PersistentCodexProcessRunnerOptions {
-  readonly authJsonPath: string;
+  readonly accounts: readonly SubscriptionRuntimeAccount[];
   readonly codexBinaryPath?: string;
   readonly launcherPath: string;
   readonly packageManifestPath: string;
-  readonly providerInstanceId: string;
   readonly stateRoot: string;
   readonly workspacePath: string;
   readonly launcherPolicyLoader?: (path: string) => Promise<LauncherPolicyModule>;
@@ -70,6 +71,7 @@ export interface PersistentCodexProcessRunnerOptions {
 }
 
 export interface PersistentCodexWorkerSlot {
+  readonly accountId: string;
   readonly profile: PersistentCodexProfile;
   readonly worker: RuntimeWorker;
 }

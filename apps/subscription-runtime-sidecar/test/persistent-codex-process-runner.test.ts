@@ -51,7 +51,11 @@ describe("PersistentCodexProcessRunner", () => {
   it("creates and prewarms one conversation worker, then reuses it for two requests", async () => {
     const fixture = await createFixture();
 
-    await fixture.runner.prewarm(conversationProfile, fixture.environment);
+    await fixture.runner.prewarm(
+      conversationProfile,
+      fixture.environment,
+      "slot-1",
+    );
     const first = await fixture.runner.run(await requestFor(
       fixture,
       "conversation-first",
@@ -86,7 +90,7 @@ describe("PersistentCodexProcessRunner", () => {
       reasoningEffort: "low",
       sessionCacheSlots: 1,
       sourceEnv: { PATH: "/test/bin" },
-      workerId: "discord-meeting-discord_meeting-conversation-answer",
+      workerId: "discord-meeting-discord_meeting-conversation-answer-slot-1",
     });
     expect(JSON.parse(first.stdout)).toMatchObject({
       outputText: conversationCanonicalRequest.runId,
@@ -96,6 +100,30 @@ describe("PersistentCodexProcessRunner", () => {
       outputText: conversationCanonicalRequest.runId,
       status: "completed",
     });
+  });
+
+  it("starts with a partially healthy account pool and fails closed when none prewarm", async () => {
+    const partiallyHealthy = await createFixture(2);
+    partiallyHealthy.state.prewarm = async (worker) => {
+      if (worker.options.workerId ===
+        "discord-meeting-discord_meeting-conversation-answer-slot-1") {
+        throw new Error("synthetic unavailable account");
+      }
+    };
+
+    await expect(partiallyHealthy.runner.prewarmAccounts(
+      conversationProfile,
+      partiallyHealthy.environment,
+    )).resolves.toEqual({ readyAccounts: 1, totalAccounts: 2 });
+
+    const unavailable = await createFixture(2);
+    unavailable.state.prewarm = async () => {
+      throw new Error("synthetic unavailable account");
+    };
+    await expect(unavailable.runner.prewarmAccounts(
+      conversationProfile,
+      unavailable.environment,
+    )).rejects.toThrow("account pool prewarm failed");
   });
 
   it("forwards provider lifecycle and text deltas from the warm worker", async () => {
@@ -141,8 +169,8 @@ describe("PersistentCodexProcessRunner", () => {
     expect(fixture.state.workers).toHaveLength(2);
     expect(fixture.state.workers.map((worker) => worker.prewarmCalls)).toEqual([1, 1]);
     expect(fixture.state.workers.map((worker) => worker.options.workerId)).toEqual([
-      "discord-meeting-discord_meeting-conversation-answer",
-      "discord-meeting-discord_meeting-summary-generate",
+      "discord-meeting-discord_meeting-conversation-answer-slot-1",
+      "discord-meeting-discord_meeting-summary-generate-slot-1",
     ]);
   });
 
@@ -177,8 +205,16 @@ describe("PersistentCodexProcessRunner", () => {
   it("disposes every prewarmed worker and refuses later requests", async () => {
     const fixture = await createFixture();
 
-    await fixture.runner.prewarm(conversationProfile, fixture.environment);
-    await fixture.runner.prewarm(finalSummaryProfile, fixture.environment);
+    await fixture.runner.prewarm(
+      conversationProfile,
+      fixture.environment,
+      "slot-1",
+    );
+    await fixture.runner.prewarm(
+      finalSummaryProfile,
+      fixture.environment,
+      "slot-1",
+    );
     await fixture.runner.dispose();
     await fixture.runner.dispose();
 
@@ -204,7 +240,11 @@ describe("PersistentCodexProcessRunner", () => {
     ))).rejects.toThrow("Runtime launcher conflicts with persistent runner policy");
     expect(fixture.state.workers).toHaveLength(0);
 
-    await fixture.runner.prewarm(conversationProfile, fixture.environment);
+    await fixture.runner.prewarm(
+      conversationProfile,
+      fixture.environment,
+      "slot-1",
+    );
     const mismatchedProfileRequest = {
       ...conversationCanonicalRequest,
       task: {
@@ -266,6 +306,7 @@ interface FakeWorkerRunOptions {
 interface FakeWorkerState {
   readonly modulePaths: string[];
   readonly workers: FakeWorker[];
+  prewarm: (worker: FakeWorker) => Promise<void>;
   run: (
     input: FakeWorkerInput,
     options?: FakeWorkerRunOptions,
@@ -292,6 +333,7 @@ class FakeWorker {
 
   public async prewarm(): Promise<void> {
     this.prewarmCalls += 1;
+    await this.state.prewarm(this);
   }
 
   public async run(
@@ -311,18 +353,24 @@ class FakeWorker {
   }
 }
 
-async function createFixture(): Promise<Fixture> {
+async function createFixture(accountCount = 1): Promise<Fixture> {
   const testRoot = await mkdtemp(join(tmpdir(), "persistent-codex-runner-test-"));
   root = testRoot;
   const launcherPath = join(testRoot, "launcher.mjs");
   const packageManifestPath = join(testRoot, "package.json");
   const authJsonPath = join(testRoot, "auth.json");
+  const authJsonPaths = Array.from(
+    { length: accountCount },
+    (_, index) => index === 0
+      ? authJsonPath
+      : join(testRoot, `auth-${index + 1}.json`),
+  );
   const stateRoot = join(testRoot, "state");
   const workspacePath = join(testRoot, "workspace");
   await Promise.all([
     mkdir(stateRoot),
     mkdir(workspacePath),
-    writeFile(authJsonPath, "{}"),
+    ...authJsonPaths.map(async (path) => writeFile(path, "{}")),
     writeFile(
       launcherPath,
       "export function admitMeetingSummaryRequest() {}\n",
@@ -332,6 +380,7 @@ async function createFixture(): Promise<Fixture> {
   const state: FakeWorkerState = {
     modulePaths: [],
     workers: [],
+    prewarm: async () => {},
     run: async (input) => successfulWorkerResult(input),
   };
   const environment = {
@@ -340,10 +389,15 @@ async function createFixture(): Promise<Fixture> {
     SUBSCRIPTION_RUNTIME_LOCAL_ENCRYPTION_KEY: "test-encryption-key",
   };
   const runner = new PersistentCodexProcessRunner({
-    authJsonPath,
+    accounts: authJsonPaths.map((path, index) => ({
+      authJsonPath: path,
+      id: `slot-${index + 1}`,
+      providerInstanceId: index === 0
+        ? "discord-meeting-summary-v3"
+        : `discord-meeting-summary-v3-slot-${index + 1}`,
+    })),
     launcherPath,
     packageManifestPath,
-    providerInstanceId: "discord-meeting-summary-v3",
     stateRoot,
     workerModuleLoader: fakeWorkerModuleLoader(state),
     workspacePath,
@@ -387,6 +441,12 @@ async function requestFor(
     args: [
       "--input",
       inputPath,
+      "--codex-auth-json",
+      fixture.authJsonPath,
+      "--provider-instance",
+      "discord-meeting-summary-v3",
+      "--state-root",
+      join(fixture.root, "state"),
       "--model",
       controlText(requestPayload, "model"),
     ],

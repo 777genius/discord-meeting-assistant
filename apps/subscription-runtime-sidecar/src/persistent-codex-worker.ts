@@ -9,11 +9,13 @@ import type {
   RuntimeWorkerModule,
 } from "./persistent-codex-process-contracts.js";
 import { requiredPersistentCodexEnvironment } from "./persistent-codex-request.js";
+import type { SubscriptionRuntimeAccount } from "./subscription-account-pool.js";
 
 export async function createPersistentCodexWorkerSlot(
   options: PersistentCodexProcessRunnerOptions,
   profile: PersistentCodexProfile,
   environment: Readonly<Record<string, string>>,
+  account: SubscriptionRuntimeAccount,
 ): Promise<PersistentCodexWorkerSlot> {
   const encryptionKey = requiredPersistentCodexEnvironment(
     environment,
@@ -37,21 +39,25 @@ export async function createPersistentCodexWorkerSlot(
     outputSchemas: {
       [profile.execution.outputSchemaName]: profile.outputSchema,
     },
-    providerInstanceId: options.providerInstanceId,
+    providerInstanceId: account.providerInstanceId,
     reasoningEffort: profile.execution.reasoningEffort,
     sessionCacheSlots: 1,
     sourceEnv: sourceEnvironment,
     stateRootDir: options.stateRoot,
     taskTimeoutMs: 600_000,
     warmupPrompt: "Return exactly OK.",
-    workerId: `discord-meeting-${profile.execution.purpose.replaceAll(".", "-")}`,
+    workerId: [
+      "discord-meeting",
+      profile.execution.purpose.replaceAll(".", "-"),
+      account.id,
+    ].join("-"),
     workspacePath: options.workspacePath,
   });
   await worker.start();
   try {
-    await worker.seedCodexAuthJsonFile(options.authJsonPath);
+    await worker.seedCodexAuthJsonFile(account.authJsonPath);
     await worker.prewarm();
-    return { profile, worker };
+    return { accountId: account.id, profile, worker };
   } catch (error: unknown) {
     await worker.dispose().catch(() => null);
     throw error;

@@ -53,9 +53,11 @@ not a provider generation cap and does not guarantee latency; the compact final
 and incremental schemas/prompts reduce response volume, while `low` reasoning
 is used by both latency-sensitive Luna purposes.
 
-The sidecar prewarms the conversation purpose before accepting traffic and keeps
-that purpose-scoped Subscription Runtime worker alive. It uses the app-server
-pool and clean-thread prewarm. Final and incremental summaries use the audited
+The sidecar prewarms the conversation purpose for every admitted account slot
+before accepting traffic and keeps those purpose-and-slot-scoped Subscription
+Runtime workers alive. A shared lease pool prevents concurrent use of one
+account, distributes requests round-robin, and fails over before any streamed
+text is emitted. Final and incremental summaries use the audited
 launcher bridge because the pinned app-server path does not guarantee measured
 generation telemetry; summary generation remains fail-closed without it. The
 audited launcher validates the same exact request profile and installation
@@ -69,9 +71,9 @@ text is provisional until that terminal result succeeds.
 
 The fallback bridge uses `--provider codex`, `--input`,
 `--format result-json`, `--timeout-ms`, `--state-root`, `--codex-auth-json`,
-`--provider-instance discord-meeting-summary-v3`, and the selected profile's
-exact `--model`. The child reasoning environment must match that same request
-profile. The auth JSON and state root must belong only to this sidecar. Never
+an opaque slot-specific `--provider-instance`, and the selected profile's exact
+`--model`. The child reasoning environment must match that same request
+profile. Every auth JSON and the state root must belong only to this sidecar. Never
 mount another project's mutable runtime state.
 
 The audited launcher observes the documented `codex exec --json` JSONL

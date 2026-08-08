@@ -1,7 +1,9 @@
 import {
   chmod,
+  mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -36,7 +38,7 @@ interface MutablePurposeProfile {
 
 interface MutableDeploymentPolicy {
   custody: {
-    authJsonPath: string;
+    authPoolManifestPath: string;
     localEncryptionKeyFile: string;
     stateRoot: string;
   };
@@ -112,8 +114,17 @@ describe("sidecar deployment policy", () => {
   });
 
   it("admits exactly the final, incremental, and conversation policy profiles", async () => {
-    await expect(resolveSidecarSettings(await environmentForPolicy(() => {}))).resolves
-      .toMatchObject({ bindAddress: "127.0.0.1:50052" });
+    await expect(resolveSidecarSettings(await environmentForPolicy(() => {}, 2))).resolves
+      .toMatchObject({
+        accounts: [
+          { id: "slot-1", providerInstanceId: "discord-meeting-summary-v3" },
+          {
+            id: "slot-2",
+            providerInstanceId: "discord-meeting-summary-v3-slot-2",
+          },
+        ],
+        bindAddress: "127.0.0.1:50052",
+      });
   });
 
   it.each(invalidPolicyCases)(
@@ -127,9 +138,18 @@ describe("sidecar deployment policy", () => {
 
 async function environmentForPolicy(
   mutate: (policy: MutableDeploymentPolicy) => void,
+  accountCount = 1,
 ): Promise<NodeJS.ProcessEnv> {
-  root = await mkdtemp(join(tmpdir(), "sidecar-settings-test-"));
-  const authJsonPath = join(root, "auth.json");
+  root = await realpath(await mkdtemp(join(tmpdir(), "sidecar-settings-test-")));
+  const authPoolRoot = join(root, "auth-pool");
+  const generation = "a".repeat(32);
+  const authSlotRoots = Array.from({ length: accountCount }, (_, index) => join(
+    authPoolRoot,
+    "generations",
+    generation,
+    `slot-${index + 1}`,
+  ));
+  const authPoolManifestPath = join(authPoolRoot, "pool.json");
   const localEncryptionKeyFile = join(root, "local-encryption-key");
   const serviceTokenFile = join(root, "service-token");
   const stateRoot = join(root, "state");
@@ -141,7 +161,7 @@ async function environmentForPolicy(
 
   policy.transport.bind = "127.0.0.1:50052";
   policy.transport.serviceTokenFile = serviceTokenFile;
-  policy.custody.authJsonPath = authJsonPath;
+  policy.custody.authPoolManifestPath = authPoolManifestPath;
   policy.custody.localEncryptionKeyFile = localEncryptionKeyFile;
   policy.custody.stateRoot = stateRoot;
   const final = policy.purposeProfiles[subscriptionRuntimePurpose];
@@ -155,12 +175,25 @@ async function environmentForPolicy(
   conversation.isolatedCwd = isolatedCwd;
   mutate(policy);
 
+  await Promise.all(authSlotRoots.map(async (slotRoot) => {
+    await mkdir(slotRoot, { recursive: true });
+    await writeFile(join(slotRoot, "auth.json"), "{}", { mode: 0o600 });
+  }));
+  await writeFile(authPoolManifestPath, JSON.stringify({
+    generation,
+    schemaVersion: 1,
+    slots: authSlotRoots.map((_slotRoot, index) => ({
+      authJsonPath:
+        `generations/${generation}/slot-${index + 1}/auth.json`,
+      id: `slot-${index + 1}`,
+    })),
+  }), { mode: 0o600 });
   await writeFile(policyPath, JSON.stringify(policy));
   await writeFile(serviceTokenFile, "sidecar-settings-test-token");
   await chmod(serviceTokenFile, 0o600);
 
   return {
-    SUBSCRIPTION_RUNTIME_AUTH_JSON_PATH: authJsonPath,
+    SUBSCRIPTION_RUNTIME_AUTH_POOL_MANIFEST_PATH: authPoolManifestPath,
     SUBSCRIPTION_RUNTIME_EXPECTED_LAUNCHER_SHA256: "a".repeat(64),
     SUBSCRIPTION_RUNTIME_GRPC_BIND: policy.transport.bind,
     SUBSCRIPTION_RUNTIME_ISOLATED_CWD: isolatedCwd,
