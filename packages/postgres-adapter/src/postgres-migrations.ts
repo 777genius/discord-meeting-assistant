@@ -2,25 +2,38 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type { Pool, PoolClient } from "pg";
 
-const migrationFileNames = [
-  "0001_create_meeting_core.sql",
-  "0002_create_post_call_outbox.sql",
-  "0003_create_live_meetings.sql",
-  "0004_create_guild_installations.sql",
-  "0005_live_meeting_append_only.sql",
-  "0006_persistence_integrity.sql",
-  "0007_post_call_terminal_settlement.sql",
-  "0008_summary_publication_effect_ledger.sql",
+const migrationDefinitions = [
+  { fileName: "0001_create_meeting_core.sql" },
+  { fileName: "0002_create_post_call_outbox.sql" },
+  { fileName: "0003_create_live_meetings.sql" },
+  { fileName: "0004_create_guild_installations.sql" },
+  { fileName: "0005_live_meeting_append_only.sql" },
+  { fileName: "0006_persistence_integrity.sql" },
+  { fileName: "0007_post_call_terminal_settlement.sql" },
+  { fileName: "0008_summary_publication_effect_ledger.sql" },
+  { fileName: "0009_post_call_retryable_recovery.sql" },
+  { fileName: "0010_validate_post_call_retryable_recovery.sql" },
+  {
+    fileName: "0011_create_post_call_recoverable_index.sql",
+    transactional: false,
+  },
+  {
+    fileName: "0012_drop_legacy_post_call_recoverable_index.sql",
+    transactional: false,
+  },
+  { fileName: "0013_rename_post_call_recoverable_index.sql" },
 ] as const;
 
 const migrationLockKey = "718330091620232601";
 
-export const requiredPostgresSchemaVersion = migrationFileNames.length;
+export const requiredPostgresSchemaVersion = migrationDefinitions.length;
 
 export interface PostgresMigration {
   readonly checksumSha256: string;
   readonly fileName: string;
   readonly sql: string;
+  /** False only for one-statement, idempotent operations forbidden in a transaction. */
+  readonly transactional?: boolean;
   readonly version: number;
 }
 
@@ -50,9 +63,13 @@ export class PostgresMigrationRunner {
   public async migrate(): Promise<AppliedPostgresMigrations> {
     const migrations = await this.resolveMigrations();
     const client = await this.pool.connect();
+    let migrationLockAcquired = false;
+    let transactionActive = false;
     try {
+      await client.query("SELECT pg_advisory_lock($1::bigint)", [migrationLockKey]);
+      migrationLockAcquired = true;
       await client.query("BEGIN");
-      await client.query("SELECT pg_advisory_xact_lock($1::bigint)", [migrationLockKey]);
+      transactionActive = true;
       await ensureMigrationLedger(client);
       const ledger = await listMigrationLedger(client);
       assertLedgerIsKnownAndContiguous(ledger, migrations);
@@ -69,7 +86,15 @@ export class PostgresMigrationRunner {
           }
           continue;
         }
-        await client.query(migration.sql);
+        if (migration.transactional === false) {
+          await client.query("COMMIT");
+          transactionActive = false;
+          await client.query(migration.sql);
+          await client.query("BEGIN");
+          transactionActive = true;
+        } else {
+          await client.query(migration.sql);
+        }
         await client.query(
           `
             INSERT INTO meeting_core.schema_migration_ledger
@@ -81,18 +106,23 @@ export class PostgresMigrationRunner {
         appliedVersions.push(migration.version);
       }
       await client.query("COMMIT");
+      transactionActive = false;
       return Object.freeze({
         appliedVersions: Object.freeze(appliedVersions),
         version: migrations.at(-1)?.version ?? 0,
       });
     } catch (error) {
-      await rollback(client);
+      if (transactionActive) {
+        await rollback(client);
+      }
       if (error instanceof PostgresMigrationError) {
         throw error;
       }
       throw new PostgresMigrationError("PostgreSQL migration failed", { cause: error });
     } finally {
-      client.release();
+      const migrationLockReleased = !migrationLockAcquired
+        || await releaseMigrationLock(client);
+      client.release(!migrationLockReleased);
     }
   }
 
@@ -105,12 +135,15 @@ export class PostgresMigrationRunner {
 
 export async function loadPostgresMigrations(): Promise<readonly PostgresMigration[]> {
   const directory = new URL("../../../infra/postgres/migrations/", import.meta.url);
-  const migrations = await Promise.all(migrationFileNames.map(async (fileName, index) => {
-    const sql = await readFile(new URL(fileName, directory), "utf8");
+  const migrations = await Promise.all(migrationDefinitions.map(async (definition, index) => {
+    const sql = await readFile(new URL(definition.fileName, directory), "utf8");
     return Object.freeze({
       checksumSha256: sha256(sql),
-      fileName,
+      fileName: definition.fileName,
       sql,
+      transactional: "transactional" in definition
+        ? definition.transactional
+        : true,
       version: index + 1,
     });
   }));
@@ -217,5 +250,17 @@ async function rollback(client: PoolClient): Promise<void> {
     await client.query("ROLLBACK");
   } catch {
     // Preserve the original migration failure.
+  }
+}
+
+async function releaseMigrationLock(client: PoolClient): Promise<boolean> {
+  try {
+    const result = await client.query<{ readonly unlocked: boolean }>(
+      "SELECT pg_advisory_unlock($1::bigint) AS unlocked",
+      [migrationLockKey],
+    );
+    return result.rows[0]?.unlocked === true;
+  } catch {
+    return false;
   }
 }

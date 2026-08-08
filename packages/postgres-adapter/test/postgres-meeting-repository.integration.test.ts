@@ -163,12 +163,12 @@ describe("PostgresMeetingRepository", () => {
     await repository.recordAndSchedule(snapshot, 0);
     await repository.recordAndSchedule(snapshot, 0);
     expect(await repository.listRecoverablePostCall()).toEqual([
-      { meetingId: snapshot.meetingId, schemaVersion: 1 },
+      { meetingId: snapshot.meetingId, recoveryGeneration: 0, schemaVersion: 1 },
     ]);
 
     await repository.markPostCallEnqueued(snapshot.meetingId);
     expect(await repository.listRecoverablePostCall()).toEqual([
-      { meetingId: snapshot.meetingId, schemaVersion: 1 },
+      { meetingId: snapshot.meetingId, recoveryGeneration: 0, schemaVersion: 1 },
     ]);
     await repository.markPostCallProcessed(snapshot.meetingId);
     expect(await repository.listRecoverablePostCall()).toEqual([]);
@@ -222,7 +222,7 @@ describe("PostgresMeetingRepository", () => {
     expect(new Date(deadLetter.recordedAt).toISOString()).toBe(deadLetter.recordedAt);
   });
 
-  it("atomically settles a terminal failure so reconciliation cannot rerun it", async (context) => {
+  it("atomically settles a non-retryable failure so reconciliation cannot rerun it", async (context) => {
     const database = databaseOrSkip(context);
     const repository = new PostgresMeetingRepository(database);
     const snapshot = recordedMeeting("meeting-terminal-settlement").toSnapshot();
@@ -231,7 +231,7 @@ describe("PostgresMeetingRepository", () => {
       attemptsMade: 4,
       failureCode: "SUMMARY_PROVIDER_FAILED",
       meetingId: snapshot.meetingId,
-      retryable: true,
+      retryable: false,
       schemaVersion: 1 as const,
       sourceJobRef: "b".repeat(64),
     };
@@ -255,7 +255,93 @@ describe("PostgresMeetingRepository", () => {
       terminal: true,
     }]);
   });
+});
 
+describe("Postgres retryable post-call recovery", () => {
+  it("rejects an incomplete durable recovery receipt", async (context) => {
+    const database = databaseOrSkip(context);
+    const repository = new PostgresMeetingRepository(database);
+    const snapshot = recordedMeeting("meeting-invalid-recovery-receipt").toSnapshot();
+    await repository.recordAndSchedule(snapshot, 0);
+
+    await expect(database.query(`
+      UPDATE meeting_core.post_call_outbox
+      SET recovery_generation = 1,
+          recovery_after = transaction_timestamp()
+      WHERE meeting_id = $1
+    `, [snapshot.meetingId])).rejects.toMatchObject({ code: "23514" });
+  });
+
+  it("schedules each exhausted retryable generation exactly once", async (context) => {
+    const database = databaseOrSkip(context);
+    const repository = new PostgresMeetingRepository(database);
+    const snapshot = recordedMeeting("meeting-retryable-recovery").toSnapshot();
+    await repository.recordAndSchedule(snapshot, 0);
+    const firstFailure = {
+      attemptsMade: 8,
+      failureCode: "SUMMARY_PROVIDER_UNAVAILABLE",
+      meetingId: snapshot.meetingId,
+      retryable: true,
+      schemaVersion: 1 as const,
+      sourceJobRef: "c".repeat(64),
+    };
+
+    expect(await repository.settlePostCallFailure(firstFailure)).toBe("recorded");
+    expect(await repository.settlePostCallFailure(firstFailure)).toBe("reused");
+    expect(await repository.listRecoverablePostCall()).toEqual([]);
+
+    const scheduled = await database.query<{
+      readonly delay_seconds: number;
+      readonly recovery_generation: number;
+      readonly recovery_source_job_ref: string;
+    }>(`
+      SELECT recovery_generation::float8 AS recovery_generation,
+             recovery_source_job_ref,
+             EXTRACT(EPOCH FROM (recovery_after - recorded_at))::float8 AS delay_seconds
+      FROM meeting_core.post_call_outbox
+      JOIN meeting_core.post_call_dead_letters
+        ON source_job_ref = recovery_source_job_ref
+      WHERE meeting_core.post_call_outbox.meeting_id = $1
+    `, [snapshot.meetingId]);
+    expect(scheduled.rows).toHaveLength(1);
+    expect(scheduled.rows[0]).toMatchObject({
+      recovery_generation: 1,
+      recovery_source_job_ref: firstFailure.sourceJobRef,
+    });
+    expect(scheduled.rows[0]?.delay_seconds).toBeCloseTo(300, 0);
+
+    await database.query(`
+      UPDATE meeting_core.post_call_outbox
+      SET recovery_after = transaction_timestamp() - interval '1 second'
+      WHERE meeting_id = $1
+    `, [snapshot.meetingId]);
+    expect(await repository.listRecoverablePostCall()).toEqual([{
+      meetingId: snapshot.meetingId,
+      recoveryGeneration: 1,
+      schemaVersion: 1,
+    }]);
+
+    const secondFailure = {
+      ...firstFailure,
+      sourceJobRef: "d".repeat(64),
+    };
+    expect(await repository.settlePostCallFailure(secondFailure)).toBe("recorded");
+    const secondSchedule = await database.query<{
+      readonly delay_seconds: number;
+      readonly recovery_generation: number;
+    }>(`
+      SELECT recovery_generation::float8 AS recovery_generation,
+             EXTRACT(EPOCH FROM (recovery_after - transaction_timestamp()))::float8
+               AS delay_seconds
+      FROM meeting_core.post_call_outbox
+      WHERE meeting_id = $1
+    `, [snapshot.meetingId]);
+    expect(secondSchedule.rows[0]?.recovery_generation).toBe(2);
+    expect(secondSchedule.rows[0]?.delay_seconds).toBeCloseTo(1_800, 0);
+  });
+});
+
+describe("PostgresMeetingRepository persistence", () => {
   it("round-trips the complete JSONB evidence snapshot", async (context) => {
     const database = databaseOrSkip(context);
     const repository = new PostgresMeetingRepository(database);

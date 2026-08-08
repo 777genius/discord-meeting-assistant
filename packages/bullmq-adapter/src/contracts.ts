@@ -24,6 +24,14 @@ export const postCallJobPayloadSchema = z
 
 export type PostCallJobPayload = z.infer<typeof postCallJobPayloadSchema>;
 
+const postCallEnqueueRequestSchema = z.object({
+  meetingId: meetingIdSchema,
+  recoveryGeneration: z.number().int().nonnegative(),
+  schemaVersion: z.literal(1),
+}).strict().readonly();
+
+export type PostCallEnqueueRequest = z.infer<typeof postCallEnqueueRequestSchema>;
+
 const failureCodeSchema = z
   .string()
   .regex(/^[A-Z][A-Z0-9_]{0,63}$/u);
@@ -48,6 +56,17 @@ export function parsePostCallJobPayload(value: unknown): PostCallJobPayload {
   return postCallJobPayloadSchema.parse(value);
 }
 
+export function parsePostCallEnqueueRequest(value: unknown): PostCallEnqueueRequest {
+  const initialRequest = postCallJobPayloadSchema.safeParse(value);
+  if (initialRequest.success) {
+    return Object.freeze({
+      ...initialRequest.data,
+      recoveryGeneration: 0,
+    });
+  }
+  return postCallEnqueueRequestSchema.parse(value);
+}
+
 export function parsePostCallDeadLetterRecord(
   value: unknown,
 ): PostCallDeadLetterRecord {
@@ -66,8 +85,17 @@ function namespacedDigest(namespace: string, value: string): string {
     .digest("hex");
 }
 
-export function postCallJobId(meetingId: string): string {
+export function postCallJobId(meetingId: string, recoveryGeneration = 0): string {
   const validatedMeetingId = meetingIdSchema.parse(meetingId);
+  const validatedGeneration = z.number().int().nonnegative().parse(
+    recoveryGeneration,
+  );
+  if (validatedGeneration > 0) {
+    return `post-call-v1-${namespacedDigest(
+      "post-call-recovery-job-v1",
+      `${validatedGeneration}\0${validatedMeetingId}`,
+    )}`;
+  }
   return `post-call-v1-${namespacedDigest("post-call-job-v1", validatedMeetingId)}`;
 }
 

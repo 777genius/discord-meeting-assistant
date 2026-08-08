@@ -24,7 +24,11 @@ describe("PostCallOutboxDispatcher", () => {
   const terminalRecorder = { record: async () => {} };
 
   it("retains a failed durable item and dispatches it after restart", async () => {
-    const pending = [{ meetingId: "meeting-1", schemaVersion: 1 as const }];
+    const pending = [{
+      meetingId: "meeting-1",
+      recoveryGeneration: 0,
+      schemaVersion: 1 as const,
+    }];
     const markPostCallEnqueued = vi.fn(async () => {});
     const markPostCallProcessed = vi.fn(async () => {});
     const outbox = {
@@ -61,6 +65,7 @@ describe("PostCallOutboxDispatcher", () => {
     ).resolves.toEqual({ dispatched: 1, failed: 0 });
     expect(recoveredEnqueue).toHaveBeenCalledWith({
       meetingId: "meeting-1",
+      recoveryGeneration: 0,
       schemaVersion: 1,
     });
     expect(markPostCallEnqueued).toHaveBeenCalledWith("meeting-1");
@@ -97,8 +102,16 @@ describe("PostCallOutboxDispatcher", () => {
 
   it("settles completed and terminal failed jobs without retrying business work", async () => {
     const items = [
-      { meetingId: "meeting-completed", schemaVersion: 1 as const },
-      { meetingId: "meeting-failed", schemaVersion: 1 as const },
+      {
+        meetingId: "meeting-completed",
+        recoveryGeneration: 0,
+        schemaVersion: 1 as const,
+      },
+      {
+        meetingId: "meeting-failed",
+        recoveryGeneration: 0,
+        schemaVersion: 1 as const,
+      },
     ];
     const markPostCallEnqueued = vi.fn(async () => {});
     const markPostCallProcessed = vi.fn(async () => {});

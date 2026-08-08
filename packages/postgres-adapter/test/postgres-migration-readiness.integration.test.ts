@@ -58,6 +58,62 @@ describe("PostgresMigrationRunner and PostgresSchemaReadiness", () => {
     }
   });
 
+  it("runs an idempotent online migration outside a transaction", async (context) => {
+    databaseOrSkip(context);
+    const isolated = await createIsolatedDatabase();
+    const tableSql = `
+      CREATE TABLE meeting_core.online_migration_probe (
+        id integer PRIMARY KEY,
+        ready boolean NOT NULL DEFAULT false
+      );
+    `;
+    const indexSql = `
+      CREATE INDEX CONCURRENTLY IF NOT EXISTS online_migration_probe_ready_idx
+      ON meeting_core.online_migration_probe (id)
+      WHERE ready IS FALSE;
+    `;
+    try {
+      const runner = new PostgresMigrationRunner(isolated.pool, {
+        migrations: [
+          {
+            checksumSha256: sha256(tableSql),
+            fileName: "0001_online_probe.sql",
+            sql: tableSql,
+            version: 1,
+          },
+          {
+            checksumSha256: sha256(indexSql),
+            fileName: "0002_online_probe_index.sql",
+            sql: indexSql,
+            transactional: false,
+            version: 2,
+          },
+        ],
+      });
+
+      await expect(runner.migrate()).resolves.toEqual({
+        appliedVersions: [1, 2],
+        version: 2,
+      });
+      await expect(runner.migrate()).resolves.toEqual({
+        appliedVersions: [],
+        version: 2,
+      });
+      const index = await isolated.pool.query<{
+        readonly indisready: boolean;
+        readonly indisvalid: boolean;
+      }>(`
+        SELECT indisready, indisvalid
+        FROM pg_index
+        WHERE indexrelid =
+          'meeting_core.online_migration_probe_ready_idx'::regclass
+      `);
+      expect(index.rows).toEqual([{ indisready: true, indisvalid: true }]);
+    } finally {
+      await isolated.dispose();
+    }
+  });
+
   it("records the exact migration ledger and accepts a fully validated schema", async (context) => {
     const database = databaseOrSkip(context);
 

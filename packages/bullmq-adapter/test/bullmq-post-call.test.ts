@@ -152,6 +152,13 @@ describe("post-call queue contract", () => {
     const first = postCallJobId("meeting-queue-1");
     expect(first).toBe(postCallJobId("meeting-queue-1"));
     expect(first).not.toBe(postCallJobId("meeting-queue-2"));
+    expect(first).not.toBe(postCallJobId("meeting-queue-1", 1));
+    expect(postCallJobId("meeting-queue-1", 1)).toBe(
+      postCallJobId("meeting-queue-1", 1),
+    );
+    expect(postCallJobId("meeting-queue-1", 1)).not.toBe(
+      postCallJobId("meeting-queue-1", 2),
+    );
     expect(first).not.toContain(":");
     expect(first).toMatch(/^post-call-v1-[a-f0-9]{64}$/u);
   });
@@ -182,7 +189,7 @@ describe("post-call queue contract", () => {
         name: POST_CALL_JOB_NAME,
         options: {
           attempts: 3,
-          backoff: { delay: 250, type: "exponential" },
+          backoff: { delay: 250, jitter: 0.25, type: "exponential" },
           jobId: receipt.jobId,
           removeOnComplete: { age: 86_400, count: 10_000 },
           removeOnFail: { age: 604_800, count: 10_000 },
@@ -192,6 +199,24 @@ describe("post-call queue contract", () => {
       },
     ]);
     expect(JSON.stringify(events)).not.toContain("meeting-queue-1");
+  });
+
+  it("uses a new stable job identity for each durable recovery generation", async () => {
+    const queue = new CapturingPostCallQueue();
+    const receipt = await new BullMqPostCallEnqueuer(queue).enqueue({
+      meetingId: "meeting-queue-1",
+      recoveryGeneration: 2,
+      schemaVersion: 1,
+    });
+
+    expect(receipt).toEqual({
+      jobId: postCallJobId("meeting-queue-1", 2),
+      status: "available",
+    });
+    expect(queue.additions[0]?.data).toEqual({
+      meetingId: "meeting-queue-1",
+      schemaVersion: 1,
+    });
   });
 });
 
@@ -414,12 +439,23 @@ describe("post-call dead-letter durability", () => {
 });
 
 describe("post-call queue policy", () => {
+  it("keeps transient failures retrying for a bounded 24-32 minute window", () => {
+    expect(resolvePostCallQueuePolicy()).toEqual({
+      attempts: 8,
+      backoffDelayMs: 15_000,
+      backoffJitter: 0.25,
+    });
+  });
+
   it("rejects retry and concurrency policies outside hard bounds", () => {
     expect(() => resolvePostCallQueuePolicy({ attempts: 9 })).toThrow(
       "attempts must be an integer from 1 to 8",
     );
     expect(() => resolvePostCallQueuePolicy({ backoffDelayMs: 9 })).toThrow(
       "backoffDelayMs must be an integer from 10 to 60000",
+    );
+    expect(() => resolvePostCallQueuePolicy({ backoffJitter: 1.01 })).toThrow(
+      "backoffJitter must be a finite number from 0 to 1",
     );
     expect(() => resolvePostCallWorkerPolicy({ concurrency: 33 })).toThrow(
       "concurrency must be an integer from 1 to 32",

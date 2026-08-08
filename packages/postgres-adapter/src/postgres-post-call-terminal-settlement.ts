@@ -1,4 +1,5 @@
 import {
+  postCallRecoveryDelayMs,
   type PostCallDeadLetterAppendResult,
   type PostCallDeadLetterEvidence,
   type PostCallDeadLetterRecord,
@@ -20,6 +21,7 @@ interface StoredPostCallDeadLetterRow {
 interface PostCallOutboxTerminalRow {
   readonly dead_letter_source_job_ref: string | null;
   readonly processed_at: Date | null;
+  readonly recovery_generation: number;
 }
 
 function normalizeRecord(
@@ -89,6 +91,8 @@ export class PostgresPostCallTerminalSettlement {
         ? undefined
         : await this.lockOutbox(client, normalized.meetingId);
       if (
+        !normalized.retryable
+        &&
         outbox !== undefined
         && outbox.dead_letter_source_job_ref !== null
         && outbox.dead_letter_source_job_ref !== normalized.sourceJobRef
@@ -97,7 +101,16 @@ export class PostgresPostCallTerminalSettlement {
       }
       const result = await this.append(client, normalized);
       if (outbox !== undefined && outbox.processed_at === null) {
-        await this.settleLockedOutbox(client, normalized);
+        if (normalized.retryable) {
+          if (
+            outbox.dead_letter_source_job_ref === null
+            && result === "recorded"
+          ) {
+            await this.scheduleLockedRecovery(client, outbox, normalized);
+          }
+        } else {
+          await this.settleLockedOutbox(client, normalized);
+        }
       }
       return result;
     });
@@ -196,7 +209,8 @@ export class PostgresPostCallTerminalSettlement {
   ): Promise<PostCallOutboxTerminalRow | undefined> {
     const result = await client.query<PostCallOutboxTerminalRow>(
       `
-        SELECT processed_at, dead_letter_source_job_ref
+        SELECT processed_at, dead_letter_source_job_ref,
+               recovery_generation::float8 AS recovery_generation
         FROM meeting_core.post_call_outbox
         WHERE meeting_id = $1
         FOR UPDATE
@@ -222,6 +236,36 @@ export class PostgresPostCallTerminalSettlement {
     );
     if (settled.rowCount !== 1) {
       throw new Error("post-call terminal settlement lost its locked outbox item");
+    }
+  }
+
+  private async scheduleLockedRecovery(
+    client: PoolClient,
+    outbox: PostCallOutboxTerminalRow,
+    record: PostCallDeadLetterRecord,
+  ): Promise<void> {
+    if (
+      !Number.isSafeInteger(outbox.recovery_generation)
+      || outbox.recovery_generation < 0
+    ) {
+      throw new Error("stored post-call recovery generation is invalid");
+    }
+    const nextGeneration = outbox.recovery_generation + 1;
+    const delayMs = postCallRecoveryDelayMs(nextGeneration);
+    const scheduled = await client.query(
+      `
+        UPDATE meeting_core.post_call_outbox
+        SET recovery_generation = $2,
+            recovery_after = transaction_timestamp() + ($3 * interval '1 millisecond'),
+            recovery_source_job_ref = $4
+        WHERE meeting_id = $1
+          AND processed_at IS NULL
+          AND dead_lettered_at IS NULL
+      `,
+      [record.meetingId, nextGeneration, delayMs, record.sourceJobRef],
+    );
+    if (scheduled.rowCount !== 1) {
+      throw new Error("post-call retryable settlement lost its locked outbox item");
     }
   }
 }

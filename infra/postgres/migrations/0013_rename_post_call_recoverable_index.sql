@@ -1,0 +1,2 @@
+ALTER INDEX meeting_core.post_call_outbox_recoverable_recovery_idx
+  RENAME TO post_call_outbox_recoverable_idx;
