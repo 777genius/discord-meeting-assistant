@@ -29,7 +29,7 @@ must call that version's
 worker with the exact selected profile: `gpt-5.6-sol`/`medium` for final
 summaries with an admitted 8192-token post-execution output budget and policy
 version `v15`, and `gpt-5.6-luna`/`low` for incremental summaries with an
-admitted 2048-token post-execution output budget and policy version `v5`.
+admitted 2048-token post-execution output budget and policy version `v6`.
 Conversation uses `gpt-5.6-luna`/`low`, a 512-token budget, policy
 `meeting-conversation.subscription-runtime.v1`, and schema
 `discord_meeting_conversation_answer_v1`. Every profile has disabled tools, no

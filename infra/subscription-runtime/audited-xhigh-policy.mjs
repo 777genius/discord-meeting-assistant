@@ -30,7 +30,7 @@ const profiles = Object.freeze({
     model: subscriptionRuntimeIncrementalCodexModel,
     outputKind: "structured_output",
     outputSchemaName: "discord_meeting_incremental_summary_v1",
-    policyVersion: "meeting-summary.incremental.subscription-runtime.v5",
+    policyVersion: "meeting-summary.incremental.subscription-runtime.v6",
     provider: "codex",
     purpose: "discord_meeting.summary.incremental",
     reasoningEffort: "low",

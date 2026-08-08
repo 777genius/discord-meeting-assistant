@@ -85,6 +85,15 @@ export const incrementalCanonicalRequest = buildSubscriptionRuntimeIncrementalSu
       title: "Релиз",
       topics: [],
     },
+    previousSummaryEvidenceTurns: [
+      {
+        endMs: 2_000,
+        speakerId: "speaker-1",
+        startMs: 0,
+        text: "Релиз согласован.",
+        turnId: "turn-1",
+      },
+    ],
     recentContextTurns: [],
     revision: 2,
     throughTurnCount: 2,

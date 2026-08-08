@@ -95,7 +95,7 @@ export class DiscordSummaryPublisher {
         try {
           await this.client.editMessage({
             reference: input.currentReference,
-            body: toDiscordProjectionBody(input),
+            body: toDiscordProjectionBody(input, "reconciled"),
             marker,
             ...(options.signal === undefined ? {} : { signal: options.signal }),
           });
@@ -212,7 +212,7 @@ export class DiscordSummaryPublisher {
     if (!message.created) {
       await this.client.editMessage({
         reference,
-        body: toDiscordProjectionBody(input),
+        body: toDiscordProjectionBody(input, "reconciled"),
         marker,
       });
     }

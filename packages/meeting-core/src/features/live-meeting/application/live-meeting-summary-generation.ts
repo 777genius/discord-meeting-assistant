@@ -111,12 +111,20 @@ export class LiveMeetingSummaryGenerationCoordinator {
     const base = generationBaseSnapshot(input.meeting, input.turns);
     const newTurnIds = new Set(input.newTurns.map(({ turnId }) => turnId));
     const previousTurns = input.turns.filter(({ turnId }) => !newTurnIds.has(turnId));
+    const previousSummaryEvidenceIds = collectSummaryEvidenceTurnIds(
+      input.meeting.draftSummary,
+    );
+    const previousSummaryEvidenceTurns = previousTurns.filter(({ turnId }) =>
+      previousSummaryEvidenceIds.has(turnId)
+    );
     const overlapStartMs = Math.max(
       0,
       (input.newTurns[0]?.startMs ?? 0) - this.dependencies.policy.recentContextOverlapMs,
     );
     const recentContextTurns = previousTurns
-      .filter(({ endMs }) => endMs >= overlapStartMs)
+      .filter(({ endMs, turnId }) =>
+        endMs >= overlapStartMs && !previousSummaryEvidenceIds.has(turnId)
+      )
       .slice(-this.dependencies.policy.maximumRecentContextTurns);
     const nextSummaryRevision = (input.meeting.draftSummary?.revision ?? 0) + 1;
     let result;
@@ -128,6 +136,7 @@ export class LiveMeetingSummaryGenerationCoordinator {
         meetingId: input.meeting.meetingId,
         newTurns: input.newTurns,
         previousSummary: input.meeting.draftSummary,
+        previousSummaryEvidenceTurns,
         recentContextTurns,
         revision: nextSummaryRevision,
         throughTurnCount: input.turns.length,
@@ -275,4 +284,18 @@ export class LiveMeetingSummaryGenerationCoordinator {
   private readCurrent(meetingId: string): Promise<CurrentLiveMeeting | null> {
     return this.dependencies.meetings.readSnapshotAndTimeline(meetingId);
   }
+}
+
+function collectSummaryEvidenceTurnIds(
+  summary: LiveSummaryDraftSnapshot | null,
+): ReadonlySet<string> {
+  if (summary === null) {
+    return new Set();
+  }
+  return new Set([
+    ...summary.topics.flatMap(({ evidenceTurnIds }) => evidenceTurnIds),
+    ...summary.decisions.flatMap(({ evidenceTurnIds }) => evidenceTurnIds),
+    ...summary.actionItems.flatMap(({ evidenceTurnIds }) => evidenceTurnIds),
+    ...summary.openQuestions.flatMap(({ evidenceTurnIds }) => evidenceTurnIds),
+  ]);
 }

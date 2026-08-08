@@ -13,6 +13,7 @@ import {
   DiscordProjectionConfigurationError,
   DiscordProjectionConflictError,
   DiscordSummaryPublicationAdapter,
+  renderRussianFullSummaryAttachmentMarkdown,
   renderRussianSummaryMarkdown,
   toDiscordMessagePayload,
   type DiscordProjectionReference,
@@ -100,8 +101,20 @@ class FakeProjector {
   }
 }
 
+class FailingRetirementProjector extends FakeProjector {
+  public override async publish(
+    input: PublishDiscordSummary,
+  ): Promise<DiscordProjectionReference> {
+    const reference = await super.publish(input);
+    if (this.inputs.length === 2) {
+      throw new Error("temporary live retirement failure");
+    }
+    return reference;
+  }
+}
+
 describe("DiscordSummaryPublicationAdapter transcript projection", () => {
-  it("uses compact readable segments only for the final Discord timeline", async () => {
+  it("keeps transcript evidence in the full attachment instead of the summary message", async () => {
     const projector = new FakeProjector();
     const adapter = new DiscordSummaryPublicationAdapter(projector);
 
@@ -138,18 +151,14 @@ describe("DiscordSummaryPublicationAdapter transcript projection", () => {
       },
     });
 
-    const timeline = projector.inputs[0]?.liveCaptionsMarkdown ?? "";
     const attachment = projector.inputs[0]?.transcriptAttachment?.content ?? "";
-    expect(timeline).toContain(
-      "✓ `00:00-00:01` **speaker-a:** Релиз в пятницу.",
-    );
-    expect(timeline).toContain("**speaker-b:** Подготовлю дашборд.");
+    expect(projector.inputs[0]?.liveCaptionsMarkdown).toBeUndefined();
     expect(attachment).toContain("## `00:00-00:01` · speaker-a");
     expect(attachment).toContain("## `00:00-00:02` · speaker-b");
     expect(attachment).toContain("Подготовлю дашборд");
   });
 
-  it("keeps the raw-turn final timeline when readable segments are empty", async () => {
+  it("does not add a transcript embed when readable segments are empty", async () => {
     const projector = new FakeProjector();
     const adapter = new DiscordSummaryPublicationAdapter(projector);
 
@@ -158,9 +167,7 @@ describe("DiscordSummaryPublicationAdapter transcript projection", () => {
       transcript: { ...request.transcript, readableSegments: [] },
     });
 
-    expect(projector.inputs[0]?.liveCaptionsMarkdown).toContain(
-      "✓ `00:00-00:02` **speaker-b:** Подготовлю дашборд",
-    );
+    expect(projector.inputs[0]?.liveCaptionsMarkdown).toBeUndefined();
   });
 });
 
@@ -182,7 +189,7 @@ describe("DiscordSummaryPublicationAdapter", () => {
     expect(second).toEqual(first);
     expect(projector.inputs).toHaveLength(2);
     expect(projector.inputs[0]).toEqual(projector.inputs[1]);
-    expect(projector.inputs[0]).toEqual({
+    expect(projector.inputs[0]).toMatchObject({
       projectionKey: createMeetingDiscordFinalSummaryProjectionKey(
         "meeting-42",
         "11111111111111111",
@@ -199,36 +206,22 @@ describe("DiscordSummaryPublicationAdapter", () => {
         "1. Подготовка релиза",
         "   - Релиз запланирован на пятницу",
         "   - Дашборд готовит speaker-b",
-        "   - **00:00-00:01 · speaker-a:** «Релиз в пятницу»",
-        "   - **00:00-00:02 · speaker-b:** «Подготовлю дашборд»",
         "",
         "## Решения",
         "1. Выпустить ассистента в пятницу",
-        "   - **00:00-00:01 · speaker-a:** «Релиз в пятницу»",
-        "   - **00:00-00:02 · speaker-b:** «Подготовлю дашборд»",
         "",
         "## Задачи",
         "1. Подготовить дашборд к четвергу",
         "   - Ответственный: speaker-b",
         "   - Срок: к четвергу",
-        "   - **00:00-00:02 · speaker-b:** «Подготовлю дашборд»",
         "2. Проверить точность транскрипции",
         "   - Ответственный: не назначен",
         "   - Срок: не указан",
-        "   - **00:03-00:04 · speaker-a:** «Проверить транскрипцию»",
         "",
         "## Открытые вопросы",
         "1. Достигнута ли целевая точность?",
-        "   - **00:03-00:04 · speaker-a:** «Проверить транскрипцию»",
-      ].join("\n"),
-      liveCaptionsMarkdown: [
-        "## 🗣️ Транскрипт встречи",
         "",
-        "✓ `00:00-00:01` **speaker-a:** Релиз в пятницу",
-        "✓ `00:00-00:02` **speaker-b:** Подготовлю дашборд",
-        "✓ `00:03-00:04` **speaker-a:** Проверить транскрипцию",
-        "",
-        "_Финальный транскрипт составлен по записи встречи. Полная версия приложена: `meeting-transcript.md`._",
+        "_Полное саммари с основаниями: `meeting-summary.md`._",
       ].join("\n"),
       transcriptAttachment: {
         filename: "meeting-transcript.md",
@@ -251,7 +244,15 @@ describe("DiscordSummaryPublicationAdapter", () => {
         ].join("\n"),
       },
     });
+    expect(projector.inputs[0]?.reconciledMarkdown).toContain(
+      "Обновлено после завершения финальной обработки.",
+    );
+    expect(projector.inputs[0]?.summaryAttachment?.filename).toBe("meeting-summary.md");
+    expect(projector.inputs[0]?.summaryAttachment?.content).toContain(
+      "**00:00-00:01 · speaker-a:** «Релиз в пятницу»",
+    );
     expect(projector.inputs[0]?.markdown).not.toContain("turn-1");
+    expect(projector.inputs[0]?.markdown).not.toContain("**00:00-00:01");
     expect(projector.inputs[0]?.markdown).not.toContain("summary-42");
   });
 
@@ -300,6 +301,42 @@ describe("DiscordSummaryPublicationAdapter rendering", () => {
         "11111111111111111",
       ),
     );
+    expect(projector.inputs).toHaveLength(2);
+    expect(projector.inputs[1]).toMatchObject({
+      currentReference: {
+        kind: "thread",
+        messageId: "33333333333333333",
+        threadId: "22222222222222222",
+      },
+      projectionKey: createMeetingDiscordProjectionKey(
+        "meeting-42",
+        "11111111111111111",
+      ),
+    });
+    expect(projector.inputs[1]?.markdown).toContain(
+      "Предварительное live-саммари заменено финальным саммари",
+    );
+  });
+
+  it("keeps a transient live-retirement failure retryable after final publication", async () => {
+    const projector = new FailingRetirementProjector();
+    const adapter = new DiscordSummaryPublicationAdapter(projector);
+
+    const result = await adapter.publish({
+      ...request,
+      currentExternalPublicationId:
+        "discord:v1:thread:22222222222222222:message:33333333333333333",
+    });
+
+    expect(result).toEqual({
+      failure: {
+        code: "DISCORD_PUBLICATION_REQUEST_FAILED",
+        message: "Discord publication request failed",
+        retryable: true,
+      },
+      ok: false,
+    });
+    expect(projector.inputs).toHaveLength(2);
   });
 
   it("renders Discord speakers as quiet mentions with human time intervals", async () => {
@@ -334,7 +371,7 @@ describe("DiscordSummaryPublicationAdapter rendering", () => {
     expect(projector.inputs[0]?.markdown).toContain(
       "Owner: <@1533228054724346087>",
     );
-    expect(projector.inputs[0]?.markdown).toContain(
+    expect(projector.inputs[0]?.summaryAttachment?.content).toContain(
       "**00:18-00:25 · <@1533228054724346087>:** «Проверю Discord thread и Redis queue.»",
     );
     expect(projector.inputs[0]?.markdown).not.toContain("Основание:");
@@ -357,7 +394,7 @@ describe("DiscordSummaryPublicationAdapter rendering", () => {
   });
 
   it("orders final topics by their earliest valid evidence timestamp", () => {
-    const markdown = renderRussianSummaryMarkdown({
+    const markdown = renderRussianFullSummaryAttachmentMarkdown({
       ...request,
       transcript: {
         ...request.transcript,
@@ -531,7 +568,7 @@ describe("DiscordSummaryPublicationAdapter rendering bounds", () => {
     expect(markdown).not.toContain(recordingUrl);
   });
 
-  it("keeps the authoritative, speaker-attributed timeline beside the final summary", async () => {
+  it("keeps the final summary clean while preserving every speaker in the attachment", async () => {
     const projector = new FakeProjector();
     const adapter = new DiscordSummaryPublicationAdapter(projector);
     const speakers = [
@@ -554,16 +591,16 @@ describe("DiscordSummaryPublicationAdapter rendering bounds", () => {
       },
     });
 
-    const timeline = projector.inputs[0]?.liveCaptionsMarkdown ?? "";
-    expect(timeline).toContain("## 🗣️ Транскрипт встречи");
+    const attachment = projector.inputs[0]?.transcriptAttachment?.content ?? "";
+    expect(projector.inputs[0]?.liveCaptionsMarkdown).toBeUndefined();
     for (const speakerId of speakers) {
-      expect(timeline).toContain(`<@${speakerId}>`);
+      expect(attachment).toContain(`<@${speakerId}>`);
     }
-    expect(timeline).toContain("`00:10-00:15`");
-    expect(timeline).toContain("Полная версия приложена: `meeting-transcript.md`.");
+    expect(attachment).toContain("`00:10-00:15`");
+    expect(projector.inputs[0]?.markdown).not.toContain("`00:10-00:15`");
   });
 
-  it("keeps every final caption in the attachment when the embed is shortened", async () => {
+  it("keeps every final turn in the attachment without a transcript embed", async () => {
     const projector = new FakeProjector();
     const adapter = new DiscordSummaryPublicationAdapter(projector);
     const turns = Array.from({ length: 45 }, (_, index) => ({
@@ -579,12 +616,9 @@ describe("DiscordSummaryPublicationAdapter rendering bounds", () => {
       transcript: { ...request.transcript, turns: turns.toReversed() },
     });
 
-    const preview = projector.inputs[0]?.liveCaptionsMarkdown ?? "";
     const attachment = projector.inputs[0]?.transcriptAttachment;
     const attachmentContent = attachment?.content ?? "";
-    expect(preview.length).toBeLessThanOrEqual(1_900);
-    expect(preview).not.toContain("captions did not fit.");
-    expect(preview).toContain("available in the attached full transcript.");
+    expect(projector.inputs[0]?.liveCaptionsMarkdown).toBeUndefined();
     expect(attachment?.filename).toBe("meeting-transcript.md");
     expect(attachmentContent).toContain("Caption 0:");
     expect(attachmentContent).toContain("Caption 44:");
@@ -596,9 +630,18 @@ describe("DiscordSummaryPublicationAdapter rendering bounds", () => {
 
     const payload = toDiscordMessagePayload({
       markdown: "# Meeting summary",
+      summaryAttachment: {
+        content: "# Meeting summary\n\nEvidence-backed details.",
+        filename: "meeting-summary.md",
+      },
       transcriptAttachment: attachment!,
     });
-    const file = payload.files?.[0];
+    expect(payload.files?.map(({ name }) => name)).toEqual([
+      "meeting-summary.md",
+      "meeting-transcript.md",
+    ]);
+    expect(payload.attachments).toEqual([]);
+    const file = payload.files?.[1];
     expect(file).toMatchObject({ name: "meeting-transcript.md" });
     if (typeof file !== "object" || !("attachment" in file)) {
       throw new Error("expected a Discord attachment payload");
@@ -613,6 +656,21 @@ describe("DiscordSummaryPublicationAdapter rendering bounds", () => {
       markdown: "# Meeting summary",
       transcriptAttachment: {
         content: "a".repeat(DISCORD_TRANSCRIPT_ATTACHMENT_MAX_BYTES + 1),
+        filename: "meeting-transcript.md",
+      },
+    }).success).toBe(false);
+  });
+
+  it("applies the conservative upload limit to both evidence attachments together", () => {
+    const halfLimit = Math.floor(DISCORD_TRANSCRIPT_ATTACHMENT_MAX_BYTES / 2);
+    expect(discordProjectionBodySchema.safeParse({
+      markdown: "# Meeting summary",
+      summaryAttachment: {
+        content: "a".repeat(halfLimit),
+        filename: "meeting-summary.md",
+      },
+      transcriptAttachment: {
+        content: "b".repeat(halfLimit + 1),
         filename: "meeting-transcript.md",
       },
     }).success).toBe(false);
