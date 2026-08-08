@@ -11,7 +11,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
 import { materializeAccountPool } from "../materialize-account-pool.mjs";
@@ -79,6 +79,18 @@ test("rejects a reservation manifest readable by another user", async () => {
     await assert.rejects(
       materialize(fixture),
       /reservation manifest is unsafe/u,
+    );
+  });
+});
+
+test("rejects a target root that contains the host auth inventory", async () => {
+  await withFixture(async (fixture) => {
+    await assert.rejects(
+      materializeAccountPool({
+        ...fixture,
+        targetRoot: dirname(fixture.authRoot),
+      }),
+      /target root escapes its parent/u,
     );
   });
 });

@@ -72,9 +72,9 @@ async function bootstrap(): Promise<void> {
         },
         conversationEnvironment,
       );
-      if (result.readyAccounts < result.totalAccounts) {
+      for (const failure of result.failures) {
         process.stderr.write(
-          "Subscription runtime started with a partially ready account pool\n",
+          `Subscription runtime ${failure.slotId} prewarm failed: ${failure.code}\n`,
         );
       }
     },

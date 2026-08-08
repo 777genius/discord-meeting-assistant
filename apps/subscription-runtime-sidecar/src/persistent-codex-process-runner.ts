@@ -39,6 +39,10 @@ export type {
 } from "./persistent-codex-process-contracts.js";
 
 export interface AccountPoolPrewarmResult {
+  readonly failures: readonly {
+    readonly code: string;
+    readonly slotId: string;
+  }[];
   readonly readyAccounts: number;
   readonly totalAccounts: number;
 }
@@ -74,13 +78,32 @@ export class PersistentCodexProcessRunner implements StreamingProcessRunnerPort 
       this.options.accounts.map(async (account) =>
         this.slot(profile, environment, account)),
     );
-    const readyAccounts = results.filter(
-      (result) => result.status === "fulfilled",
-    ).length;
+    const failures = results.flatMap((result, index) => {
+      if (result.status === "fulfilled") {
+        return [];
+      }
+      const account = this.options.accounts[index];
+      if (account === undefined) {
+        throw new Error("Persistent Codex account prewarm result is invalid");
+      }
+      const failure = persistentCodexSafeRuntimeFailure(result.reason);
+      return [{
+        code: typeof failure.code === "string"
+          ? failure.code
+          : "backend_unavailable",
+        slotId: account.id,
+      }];
+    });
+    const readyAccounts = this.options.accounts.length - failures.length;
     if (readyAccounts === 0) {
-      throw new Error("Persistent Codex account pool prewarm failed");
+      throw new Error(
+        `Persistent Codex account pool prewarm failed: ${failures.map(
+          (failure) => `${failure.slotId}=${failure.code}`,
+        ).join(",")}`,
+      );
     }
     return {
+      failures,
       readyAccounts,
       totalAccounts: this.options.accounts.length,
     };

@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import {
   chmod,
   mkdir,
@@ -10,6 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
 import { subscriptionRuntimeEngine } from "@discord-meeting/subscription-runtime-adapter";
 import { afterEach, expect, it } from "vitest";
@@ -25,6 +27,13 @@ import { canonicalRequest } from "./fixture.js";
 const sourcePolicyPath = fileURLToPath(
   new URL("../../../infra/subscription-runtime/sidecar-policy.json", import.meta.url),
 );
+const materializerPath = fileURLToPath(
+  new URL(
+    "../../../infra/subscription-runtime/materialize-account-pool.mjs",
+    import.meta.url,
+  ),
+);
+const execFileAsync = promisify(execFile);
 let root: string | undefined;
 
 interface MutablePurposeProfile {
@@ -100,15 +109,16 @@ it("materialized host slots fail over end-to-end without exposing account names"
       "discord-meeting-summary-v3",
       "discord-meeting-summary-v3-slot-2",
     ]);
-  expect(JSON.stringify(runs)).not.toContain("host-account");
+  expect(JSON.stringify(runs)).not.toMatch(/host-account-[ab]/u);
 });
 
 async function createPoolFixture(): Promise<{
   readonly environment: NodeJS.ProcessEnv;
 }> {
   root = await realpath(await mkdtemp(join(tmpdir(), "account-pool-e2e-")));
-  const generation = "b".repeat(32);
-  const authPoolRoot = join(root, "auth-pool");
+  const authSourceRoot = join(root, "host-accounts");
+  const authPoolParent = join(root, "materialized");
+  const authPoolRoot = join(authPoolParent, "auth-pool");
   const stateRoot = join(root, "state");
   const workspace = join(root, "workspace");
   const secretsRoot = join(root, "secrets");
@@ -116,41 +126,54 @@ async function createPoolFixture(): Promise<{
   const encryptionKeyFile = join(secretsRoot, "local-encryption-key");
   const policyPath = join(root, "sidecar-policy.json");
   const poolManifestPath = join(authPoolRoot, "pool.json");
-  const slots = ["slot-1", "slot-2"];
+  const reservationManifestPath = join(root, "reservation.json");
+  const hostAccountNames = ["host-account-a", "host-account-b"];
   await Promise.all([
+    mkdir(authPoolParent),
     mkdir(stateRoot),
     mkdir(workspace),
     mkdir(secretsRoot),
-    ...slots.map((slot) => mkdir(join(
-      authPoolRoot,
-      "generations",
-      generation,
-      slot,
-    ), { recursive: true })),
+    ...hostAccountNames.map((name) =>
+      mkdir(join(authSourceRoot, name), { recursive: true })),
   ]);
   await Promise.all([
-    ...slots.map((slot) => writeFile(join(
-      authPoolRoot,
-      "generations",
-      generation,
-      slot,
-      "auth.json",
-    ), JSON.stringify({ synthetic: slot }), { mode: 0o600 })),
+    ...hostAccountNames.map((name) => writeFile(
+      join(authSourceRoot, name, "auth.json"),
+      JSON.stringify({ syntheticHostAccount: name }),
+      { mode: 0o600 },
+    )),
+    writeFile(reservationManifestPath, JSON.stringify({
+      accounts: hostAccountNames,
+      owner: "discord-meeting-assistant",
+      schemaVersion: 1,
+    }), { mode: 0o600 }),
     writeFile(serviceTokenFile, "synthetic-service-token", { mode: 0o600 }),
     writeFile(encryptionKeyFile, "synthetic-encryption-key", { mode: 0o600 }),
   ]);
-  await writeFile(poolManifestPath, JSON.stringify({
-    generation,
-    schemaVersion: 1,
-    slots: slots.map((id) => ({
-      authJsonPath: `generations/${generation}/${id}/auth.json`,
-      id,
-    })),
-  }), { mode: 0o600 });
   await Promise.all([
-    chmod(poolManifestPath, 0o600),
+    ...hostAccountNames.map((name) =>
+      chmod(join(authSourceRoot, name, "auth.json"), 0o600)),
+    chmod(reservationManifestPath, 0o600),
     chmod(serviceTokenFile, 0o600),
     chmod(encryptionKeyFile, 0o600),
+  ]);
+  const targetUid = process.geteuid?.();
+  const targetGid = process.getegid?.();
+  if (targetUid === undefined || targetGid === undefined) {
+    throw new Error("Account-pool E2E requires POSIX ownership APIs");
+  }
+  await execFileAsync(process.execPath, [
+    materializerPath,
+    "--auth-root",
+    authSourceRoot,
+    "--reservation-manifest",
+    reservationManifestPath,
+    "--target-root",
+    authPoolRoot,
+    "--target-uid",
+    String(targetUid),
+    "--target-gid",
+    String(targetGid),
   ]);
   const policy = JSON.parse(
     await readFile(sourcePolicyPath, "utf8"),
@@ -163,7 +186,7 @@ async function createPoolFixture(): Promise<{
   for (const profile of Object.values(policy.purposeProfiles)) {
     profile.isolatedCwd = workspace;
   }
-  await writeFile(policyPath, JSON.stringify(policy));
+  await writeFile(policyPath, JSON.stringify(policy), { mode: 0o600 });
   return {
     environment: {
       SUBSCRIPTION_RUNTIME_AUTH_POOL_MANIFEST_PATH: poolManifestPath,

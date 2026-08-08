@@ -102,7 +102,7 @@ describe("PersistentCodexProcessRunner", () => {
     });
   });
 
-  it("starts with a partially healthy account pool and fails closed when none prewarm", async () => {
+  it("starts with a partially healthy account pool", async () => {
     const partiallyHealthy = await createFixture(2);
     partiallyHealthy.state.prewarm = async (worker) => {
       if (worker.options.workerId ===
@@ -114,8 +114,14 @@ describe("PersistentCodexProcessRunner", () => {
     await expect(partiallyHealthy.runner.prewarmAccounts(
       conversationProfile,
       partiallyHealthy.environment,
-    )).resolves.toEqual({ readyAccounts: 1, totalAccounts: 2 });
+    )).resolves.toEqual({
+      failures: [{ code: "backend_unavailable", slotId: "slot-1" }],
+      readyAccounts: 1,
+      totalAccounts: 2,
+    });
+  });
 
+  it("fails closed when no account prewarms", async () => {
     const unavailable = await createFixture(2);
     unavailable.state.prewarm = async () => {
       throw new Error("synthetic unavailable account");
@@ -262,6 +268,34 @@ describe("PersistentCodexProcessRunner", () => {
       mismatchedProfileRequest,
     ))).rejects.toThrow("Persistent worker profile changed after prewarm");
     expect(requiredWorker(fixture.state, 0).runInputs).toHaveLength(0);
+  });
+
+  it("rejects state and account arguments outside the admitted pool policy", async () => {
+    const fixture = await createFixture(2);
+    const wrongState = await requestFor(
+      fixture,
+      "wrong-state",
+      conversationCanonicalRequest,
+    );
+
+    await expect(fixture.runner.run({
+      ...wrongState,
+      args: replaceArgument(wrongState.args, "--state-root", "/other/state"),
+    })).rejects.toThrow("Persistent worker state root conflicts with policy");
+
+    const mismatchedAccount = await requestFor(
+      fixture,
+      "mismatched-account",
+      conversationCanonicalRequest,
+    );
+    await expect(fixture.runner.run({
+      ...mismatchedAccount,
+      args: replaceArgument(
+        mismatchedAccount.args,
+        "--provider-instance",
+        "discord-meeting-summary-v3-slot-2",
+      ),
+    })).rejects.toThrow("Persistent worker account conflicts with policy");
   });
 });
 
@@ -465,6 +499,20 @@ async function requestFor(
     timeoutMs: 10_000,
     ...override,
   };
+}
+
+function replaceArgument(
+  args: readonly string[],
+  name: string,
+  value: string,
+): string[] {
+  const updated = [...args];
+  const index = updated.indexOf(name);
+  if (index < 0 || index + 1 >= updated.length) {
+    throw new Error(`Request test fixture is missing ${name}`);
+  }
+  updated[index + 1] = value;
+  return updated;
 }
 
 function controlText(

@@ -46,11 +46,15 @@ export async function resolveSubscriptionAccountPool(
       throw new Error("Subscription account pool slots are not canonical");
     }
     const authJsonPath = resolve(poolRoot, slot.authJsonPath);
+    const authJsonStat = await lstat(authJsonPath);
     if (
       !authJsonPath.startsWith(`${poolRoot}${sep}`) ||
-      (await realpath(authJsonPath)) !== authJsonPath
+      (await realpath(authJsonPath)) !== authJsonPath ||
+      !authJsonStat.isFile() ||
+      authJsonStat.isSymbolicLink() ||
+      (authJsonStat.mode & 0o777) !== 0o400
     ) {
-      throw new Error("Subscription account pool auth path escapes custody root");
+      throw new Error("Subscription account pool auth file is unsafe");
     }
     accounts.push({
       authJsonPath,

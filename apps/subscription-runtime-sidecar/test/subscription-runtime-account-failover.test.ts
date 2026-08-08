@@ -4,7 +4,6 @@ import { join } from "node:path";
 
 import {
   subscriptionRuntimeEngine,
-  type JsonObject,
 } from "@discord-meeting/subscription-runtime-adapter";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -23,8 +22,8 @@ import {
   canonicalRequest,
   conversationCanonicalRequest,
   isolatedCwd,
-  structuredOutput,
 } from "./fixture.js";
+import { completedProcess, installation } from "./executor-test-support.js";
 
 let root: string | undefined;
 
@@ -137,45 +136,6 @@ function argumentValue(request: ProcessRunRequest, name: string): string {
     throw new Error(`missing ${name}`);
   }
   return value;
-}
-
-function installation() {
-  return {
-    executableRealpath: "/audited/runtime-launcher",
-    launcherSha256: "a".repeat(64),
-    packageManifestRealpath: "/audited/package/package.json",
-    packageRootRealpath: "/audited/package",
-    runtimePackageVersion: "0.1.0-main.27",
-  };
-}
-
-function completedProcess(
-  output: JsonObject = structuredOutput,
-): ProcessRunResult {
-  return {
-    exitCode: 0,
-    outputLimitExceeded: false,
-    signal: null,
-    stderr: "",
-    stdout: JSON.stringify({
-      outputText: JSON.stringify(output),
-      protocolVersion: 1,
-      status: "completed",
-      structuredOutput: output,
-      telemetry: {
-        usage: {
-          cacheWriteInputTokens: 0,
-          cachedInputTokens: 0,
-          inputTokens: 100,
-          outputTokens: 20,
-          reasoningOutputTokens: 0,
-          totalTokens: 120,
-        },
-      },
-      warnings: [],
-    }),
-    timedOut: false,
-  };
 }
 
 function failedProcess(code: string): ProcessRunResult {

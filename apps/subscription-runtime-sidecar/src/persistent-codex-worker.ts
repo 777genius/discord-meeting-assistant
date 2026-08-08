@@ -53,8 +53,8 @@ export async function createPersistentCodexWorkerSlot(
     ].join("-"),
     workspacePath: options.workspacePath,
   });
-  await worker.start();
   try {
+    await worker.start();
     await worker.seedCodexAuthJsonFile(account.authJsonPath);
     await worker.prewarm();
     return { accountId: account.id, profile, worker };

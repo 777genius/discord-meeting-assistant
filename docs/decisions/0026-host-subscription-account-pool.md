@@ -24,6 +24,11 @@ files would reintroduce OAuth refresh and session-chain races.
 
 ## Decision
 
+Bounded context: Subscription Runtime infrastructure. The feature owner is the
+Subscription Runtime sidecar composition. Its production paths are
+`apps/subscription-runtime-sidecar` and `infra/subscription-runtime`; both stay
+classified by `architecture/foundation/source-dependencies.yaml`.
+
 The host allocator reserves a deduplicated Meeting Assistant subset from the
 common host account inventory. Every reserved identity is excluded from all
 other project candidate manifests before deployment. A host-only reservation

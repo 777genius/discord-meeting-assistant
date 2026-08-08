@@ -5,6 +5,7 @@ import {
   readFile,
   realpath,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -105,6 +106,25 @@ const invalidPolicyCases: readonly [
   }],
 ];
 
+const unsafeAuthCases: readonly [
+  string,
+  (authPath: string, fixtureRoot: string) => Promise<void>,
+][] = [
+  ["a directory", async (authPath) => {
+    await rm(authPath);
+    await mkdir(authPath);
+  }],
+  ["a symlink", async (authPath, fixtureRoot) => {
+    const target = join(fixtureRoot, "linked-auth.json");
+    await writeFile(target, "{}", { mode: 0o400 });
+    await rm(authPath);
+    await symlink(target, authPath);
+  }],
+  ["a permissive file", async (authPath) => {
+    await chmod(authPath, 0o600);
+  }],
+];
+
 describe("sidecar deployment policy", () => {
   afterEach(async () => {
     if (root !== undefined) {
@@ -134,6 +154,23 @@ describe("sidecar deployment policy", () => {
         .toThrow("Deployment policy conflicts with executable sidecar policy");
     },
   );
+
+  it.each(unsafeAuthCases)("rejects %s as an auth slot", async (_label, mutate) => {
+    const environment = await environmentForPolicy(() => {});
+    const fixtureRoot = requiredFixtureRoot();
+    const authPath = join(
+      fixtureRoot,
+      "auth-pool",
+      "generations",
+      "a".repeat(32),
+      "slot-1",
+      "auth.json",
+    );
+    await mutate(authPath, fixtureRoot);
+
+    await expect(resolveSidecarSettings(environment)).rejects
+      .toThrow("Subscription account pool auth file is unsafe");
+  });
 });
 
 async function environmentForPolicy(
@@ -177,7 +214,7 @@ async function environmentForPolicy(
 
   await Promise.all(authSlotRoots.map(async (slotRoot) => {
     await mkdir(slotRoot, { recursive: true });
-    await writeFile(join(slotRoot, "auth.json"), "{}", { mode: 0o600 });
+    await writeFile(join(slotRoot, "auth.json"), "{}", { mode: 0o400 });
   }));
   await writeFile(authPoolManifestPath, JSON.stringify({
     generation,
@@ -204,4 +241,11 @@ async function environmentForPolicy(
     SUBSCRIPTION_RUNTIME_SERVICE_TOKEN_FILE: serviceTokenFile,
     SUBSCRIPTION_RUNTIME_STATE_ROOT: stateRoot,
   };
+}
+
+function requiredFixtureRoot(): string {
+  if (root === undefined) {
+    throw new Error("Test fixture root is unavailable");
+  }
+  return root;
 }

@@ -34,7 +34,8 @@ export async function materializeAccountPool(options) {
   if (
     !targetRoot.startsWith(`${targetParent}${sep}`) ||
     targetRoot === authRoot ||
-    targetRoot.startsWith(`${authRoot}${sep}`)
+    targetRoot.startsWith(`${authRoot}${sep}`) ||
+    authRoot.startsWith(`${targetRoot}${sep}`)
   ) {
     throw new Error("account-pool-error: target root escapes its parent");
   }
