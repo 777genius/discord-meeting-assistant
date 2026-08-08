@@ -29,19 +29,24 @@ attached as its own artifact.
 - A live summary is a compact cumulative synthesis. Each revision receives the
   previous validated summary, the exact finalized turns cited by that summary,
   every newly unsummarized finalized turn, and a bounded recent context window.
-- Material earlier topics, decisions, actions, and open questions remain unless
-  later evidence explicitly resolves, contradicts, or supersedes them. Related
-  information may be merged to stay within the compact live schema. Recency by
-  itself is not a reason to forget earlier meeting meaning.
+- Every earlier topic, decision, action, and open question has a distinct
+  same-kind successor that retains all of its evidence-turn lineage. Later
+  evidence may revise that successor to record resolution, contradiction, or
+  supersession, but cannot silently delete it. Provider output that drops this
+  lineage is rejected before persistence. Recency by itself is not a reason to
+  forget earlier meeting meaning.
 - The authoritative final Discord embed contains clean summary prose without
   inline quotes. The same publication attaches `meeting-summary.md` with the
   complete evidence rendering and `meeting-transcript.md` with the complete
   authoritative transcript.
-- A retry that reconciles an already-created final message adds the localized
-  note `Updated after final processing`. A fresh publication does not.
+- A retry that reconciles an already-created separate final message adds the
+  localized note `Updated after final processing`. A fresh publication does
+  not. Legacy replace-live presentation always uses the initial body because
+  its shared physical receipt cannot safely distinguish first finalization from
+  replay.
 - In separate-message mode, successful final publication replaces the old live
   projection with a localized superseded notice. A missing/deleted live message
-  is already retired; transient edit failures remain retryable.
+  is already retired; transient edit failures are non-fatal best-effort cleanup.
 
 This decision refines the selective-snapshot policy in ADR-0007 and the retained
 live-draft consequence in ADR-0016. It does not change the separate durable

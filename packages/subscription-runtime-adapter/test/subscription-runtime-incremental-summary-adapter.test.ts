@@ -245,10 +245,13 @@ describe("SubscriptionRuntimeIncrementalSummaryAdapter", () => {
       "6d9479e46e2f995c44871703664eb1a6965ac6f8cfb1f227d5f6795d003cbd28",
     );
     expect(createHash("sha256").update(captured.task.systemPrompt).digest("hex")).toBe(
-      "199f80f6d35ba13cf9dcb1a63629a6566065d47e75f366d1425c06d3cef05952",
+      "c658fdb8f9617dd32b78ee63ffb5ae4502c5971a016e09b97fea7d0bbbabe3f7",
     );
     expect(captured.task.systemPrompt).toContain("compact cumulative live meeting synthesis");
     expect(captured.task.systemPrompt).toContain("Recency alone is never a reason to forget");
+    expect(captured.task.systemPrompt).toContain(
+      "Represent resolution, contradiction, or supersession in that successor",
+    );
     expect(captured.task.systemPrompt).toContain("at most three topics");
     expect(captured.task.systemPrompt).toContain("one or two points");
     expect(captured.task.systemPrompt).toContain(
@@ -331,6 +334,33 @@ describe("SubscriptionRuntimeIncrementalSummaryAdapter", () => {
       failure: { code: "SUBSCRIPTION_RUNTIME_SUMMARY_INVALID_EVIDENCE" },
       ok: false,
       usage: { inputTokens: 100, outputTokens: 20 },
+    });
+  });
+
+  it("rejects a schema-valid new-only revision that drops cumulative evidence lineage", async () => {
+    const transport = new FakeTransport((request) => completed(
+      request,
+      {
+        ...structuredOutput,
+        decisions: [{ evidenceTurnIds: ["turn-3"], text: "Назначить ответственного" }],
+        topics: [{
+          evidenceTurnIds: ["turn-3"],
+          points: ["Релиз готовится к пятнице"],
+          title: "Исполнение",
+        }],
+      },
+      completeUsage,
+    ));
+
+    const result = await createAdapter(transport).generate(requestFixture);
+
+    expect(result).toMatchObject({
+      failure: {
+        code: "SUBSCRIPTION_RUNTIME_SUMMARY_INVALID_EVIDENCE",
+        message: "Incremental summary dropped previous topics evidence lineage",
+        retryable: false,
+      },
+      ok: false,
     });
   });
 

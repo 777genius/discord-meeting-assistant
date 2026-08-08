@@ -279,6 +279,7 @@ describe("DiscordSummaryPublicationAdapter", () => {
     expect(projector.inputs[0]?.legacyProjectionKeys).toEqual([
       "meeting:42:publication:v1",
     ]);
+    expect(projector.inputs[0]?.reconciledMarkdown).toBeUndefined();
   });
 });
 
@@ -290,7 +291,7 @@ describe("DiscordSummaryPublicationAdapter rendering", () => {
     await adapter.publish({
       ...request,
       currentExternalPublicationId:
-        "discord:v1:thread:22222222222222222:message:33333333333333333",
+        "discord:v1:thread:22222222222222222:message:44444444444444444",
     });
 
     expect(projector.inputs[0]?.currentReference).toBeUndefined();
@@ -305,7 +306,7 @@ describe("DiscordSummaryPublicationAdapter rendering", () => {
     expect(projector.inputs[1]).toMatchObject({
       currentReference: {
         kind: "thread",
-        messageId: "33333333333333333",
+        messageId: "44444444444444444",
         threadId: "22222222222222222",
       },
       projectionKey: createMeetingDiscordProjectionKey(
@@ -318,6 +319,23 @@ describe("DiscordSummaryPublicationAdapter rendering", () => {
     );
   });
 
+  it("does not retire a receipt that already identifies the final projection", async () => {
+    const projector = new FakeProjector();
+    const adapter = new DiscordSummaryPublicationAdapter(projector);
+
+    const result = await adapter.publish({
+      ...request,
+      currentExternalPublicationId:
+        "discord:v1:thread:22222222222222222:message:33333333333333333",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(projector.inputs).toHaveLength(1);
+    expect(projector.inputs[0]?.markdown).toContain(
+      "Команда согласовала выпуск и владельцев подготовки.",
+    );
+  });
+
   it("does not let live-retirement failure invalidate final publication", async () => {
     const projector = new FailingRetirementProjector();
     const adapter = new DiscordSummaryPublicationAdapter(projector);
@@ -325,7 +343,7 @@ describe("DiscordSummaryPublicationAdapter rendering", () => {
     const result = await adapter.publish({
       ...request,
       currentExternalPublicationId:
-        "discord:v1:thread:22222222222222222:message:33333333333333333",
+        "discord:v1:thread:22222222222222222:message:44444444444444444",
     });
 
     expect(result).toEqual({

@@ -125,7 +125,7 @@
     {
       "id": "ADR-0025",
       "path": "docs/decisions/0025-cumulative-live-summary-and-layered-discord-evidence.md",
-      "immutableDigest": "sha256:38bce55b97e8580fb9e73f25304ff7d4a1e802188c3dd988b9927402ba6bbcd0"
+      "immutableDigest": "sha256:3b4c5f35b9b555639fd2d16bdab9201f7efecbcb6a72c530683e9c065e7b22a6"
     }
   ]
 }

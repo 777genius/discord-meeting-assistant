@@ -86,11 +86,15 @@ export class DiscordSummaryPublicationAdapter implements SummaryPublicationPort 
           request,
           recordingPlaybackUrl,
         ),
-        reconciledMarkdown: renderRussianSummaryMarkdown(
-          request,
-          recordingPlaybackUrl,
-          finalSummaryCopy[locale].updatedAfterFinalProcessing,
-        ),
+        ...(replacesLiveProjection
+          ? {}
+          : {
+            reconciledMarkdown: renderRussianSummaryMarkdown(
+              request,
+              recordingPlaybackUrl,
+              finalSummaryCopy[locale].updatedAfterFinalProcessing,
+            ),
+          }),
         summaryAttachment: {
           content: renderRussianFullSummaryAttachmentMarkdown(
             request,
@@ -107,7 +111,11 @@ export class DiscordSummaryPublicationAdapter implements SummaryPublicationPort 
         },
         ...(referenceHint === undefined ? {} : { currentReference: referenceHint }),
       });
-      if (!replacesLiveProjection && liveReference !== undefined) {
+      if (
+        !replacesLiveProjection &&
+        liveReference !== undefined &&
+        !sameDiscordProjectionReference(liveReference, reference)
+      ) {
         await this.tryRetireLiveProjection(request, locale, liveReference);
       }
       return {
@@ -146,6 +154,19 @@ export class DiscordSummaryPublicationAdapter implements SummaryPublicationPort 
       // already durable and remains the authoritative visible result.
     }
   }
+}
+
+function sameDiscordProjectionReference(
+  left: DiscordProjectionReference,
+  right: DiscordProjectionReference,
+): boolean {
+  return left.kind === "thread"
+    ? right.kind === "thread" &&
+      left.threadId === right.threadId &&
+      left.messageId === right.messageId
+    : right.kind === "channel-message" &&
+      left.parentChannelId === right.parentChannelId &&
+      left.messageId === right.messageId;
 }
 
 function currentReference(
