@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS meeting_core.post_call_outbox_recoverable_idx;

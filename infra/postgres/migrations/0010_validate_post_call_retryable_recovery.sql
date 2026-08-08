@@ -1,0 +1,8 @@
+ALTER TABLE meeting_core.post_call_outbox
+  VALIDATE CONSTRAINT post_call_outbox_recovery_generation_is_valid;
+
+ALTER TABLE meeting_core.post_call_outbox
+  VALIDATE CONSTRAINT post_call_outbox_recovery_receipt_is_consistent;
+
+ALTER TABLE meeting_core.post_call_outbox
+  VALIDATE CONSTRAINT post_call_outbox_recovery_source_job_ref_fkey;

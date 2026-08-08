@@ -1,6 +1,7 @@
 /** Durable work item whose processing receipt is independent of Redis. */
 export interface PostCallWorkItem {
   readonly meetingId: string;
+  readonly recoveryGeneration: number;
   readonly schemaVersion: 1;
 }
 
@@ -42,7 +43,10 @@ export interface PostCallDeadLetterLedger {
   listPostCallDeadLetters(limit?: number): Promise<readonly PostCallDeadLetterEvidence[]>;
 }
 
-/** Atomically records terminal evidence and removes linked work from recovery. */
+/**
+ * Atomically records an exhausted delivery generation. Non-retryable failures
+ * become terminal; retryable failures schedule the next recovery generation.
+ */
 export interface PostCallTerminalFailureSettlement {
   settlePostCallFailure(
     record: PostCallDeadLetterRecord,
