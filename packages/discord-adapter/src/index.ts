@@ -8,7 +8,7 @@ export {
   discordProjectionBodySchema,
   DISCORD_EMBED_DESCRIPTION_LIMIT,
   DISCORD_EMBED_DESCRIPTIONS_LIMIT,
-  DISCORD_TRANSCRIPT_ATTACHMENT_MAX_BYTES,
+  DISCORD_ATTACHMENT_MAX_BYTES,
   encodeDiscordExternalPublicationId,
   publishDiscordSummarySchema,
   toDiscordProjectionBody,

@@ -21,7 +21,6 @@ import {
   renderRussianFullSummaryAttachmentMarkdown,
   renderRussianSummaryMarkdown,
 } from "./discord-final-summary-rendering.js";
-import { isConfirmedMissingDiscordProjection } from "./discord-projection-error-classification.js";
 import { toDiscordPublicationFailure } from "./discord-publication-errors.js";
 import {
   type DiscordTranscriptLocale,
@@ -109,7 +108,7 @@ export class DiscordSummaryPublicationAdapter implements SummaryPublicationPort 
         ...(referenceHint === undefined ? {} : { currentReference: referenceHint }),
       });
       if (!replacesLiveProjection && liveReference !== undefined) {
-        await this.retireLiveProjection(request, locale, liveReference);
+        await this.tryRetireLiveProjection(request, locale, liveReference);
       }
       return {
         ok: true,
@@ -120,7 +119,8 @@ export class DiscordSummaryPublicationAdapter implements SummaryPublicationPort 
     }
   }
 
-  private async retireLiveProjection(
+  /** A stale live draft must never invalidate an already-published final result. */
+  private async tryRetireLiveProjection(
     request: SummaryPublicationRequest,
     locale: DiscordTranscriptLocale,
     liveReference: DiscordProjectionReference,
@@ -141,10 +141,9 @@ export class DiscordSummaryPublicationAdapter implements SummaryPublicationPort 
         ),
         threadTitle: discordThreadTitle(request.summary.title),
       }, { directEditOnly: true });
-    } catch (error: unknown) {
-      if (!isConfirmedMissingDiscordProjection(error)) {
-        throw error;
-      }
+    } catch {
+      // Retirement is a best-effort presentation cleanup. Final publication is
+      // already durable and remains the authoritative visible result.
     }
   }
 }

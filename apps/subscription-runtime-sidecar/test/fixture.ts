@@ -90,7 +90,7 @@ export const incrementalCanonicalRequest = buildSubscriptionRuntimeIncrementalSu
         endMs: 2_000,
         speakerId: "speaker-1",
         startMs: 0,
-        text: "Релиз согласован.",
+        text: "Решили выпустить релиз в пятницу.",
         turnId: "turn-1",
       },
     ],

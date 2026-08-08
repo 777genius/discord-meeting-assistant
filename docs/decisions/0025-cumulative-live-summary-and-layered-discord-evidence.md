@@ -15,11 +15,14 @@ Accepted on 2026-08-08.
 
 ADR-0007 deliberately made the live summary a selective snapshot. In a long
 meeting that policy could replace material early context with the newest turns,
-even though the finalized live transcript remained durable. The separate final
-publication from ADR-0016 also left the last live draft visible after the final
-summary was published, which made the stale draft easy to mistake for the final
-result. Inline evidence made the Discord summary harder to scan while the full
-evidence-backed result was not attached as its own artifact.
+even though finalized live turns remained available as derived working data.
+The original Craig recording, final transcript, and meeting database are the
+authoritative evidence and resolve conflicts; live transcripts and generated
+summaries are derived. The separate final publication from ADR-0016 also left
+the last live draft visible after the final summary was published, which made
+the stale draft easy to mistake for the final result. Inline evidence made the
+Discord summary harder to scan while the full evidence-backed result was not
+attached as its own artifact.
 
 ## Decision
 
@@ -42,8 +45,9 @@ evidence-backed result was not attached as its own artifact.
 
 This decision refines the selective-snapshot policy in ADR-0007 and the retained
 live-draft consequence in ADR-0016. It does not change the separate durable
-identities of live and final projections or the authority of the final recording,
-transcript, and evidence-backed summary.
+identities of live and final projections. The Craig recording, final transcript,
+and meeting database remain authoritative evidence; the live transcript and
+evidence-backed summaries remain derived artifacts.
 
 ## Consequences
 
@@ -51,5 +55,5 @@ transcript, and evidence-backed summary.
   bounded and provider-neutral.
 - Old live drafts no longer compete visually with the authoritative result.
 - Discord stays readable, while full evidence remains available for audit.
-- If final publication succeeds but live retirement fails transiently, the job
-  retries idempotently and reuses the same final message.
+- Live retirement is best-effort and cannot invalidate a successful final
+  publication. Guaranteed cleanup retries require a separate durable reconciler.

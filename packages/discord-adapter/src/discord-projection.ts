@@ -30,7 +30,14 @@ const transcriptAttachmentSchema = z.object({
 });
 
 const summaryAttachmentSchema = z.object({
-  content: z.string().trim().min(1),
+  content: z
+    .string()
+    .trim()
+    .min(1)
+    .refine(
+      (value) => new TextEncoder().encode(value).byteLength <= discordAttachmentMaximumBytes,
+      `Summary attachment must not exceed ${discordAttachmentMaximumBytes} UTF-8 bytes`,
+    ),
   filename: z.literal("meeting-summary.md"),
 });
 
@@ -107,7 +114,7 @@ export const DISCORD_EMBED_DESCRIPTIONS_LIMIT = discordEmbedDescriptionsLimit;
  * Conservative aggregate floor for standard Discord uploads. A publication
  * outside this bound fails visibly instead of silently omitting evidence.
  */
-export const DISCORD_TRANSCRIPT_ATTACHMENT_MAX_BYTES = discordAttachmentMaximumBytes;
+export const DISCORD_ATTACHMENT_MAX_BYTES = discordAttachmentMaximumBytes;
 
 /**
  * Stable Discord projection identity for both live and final views of one

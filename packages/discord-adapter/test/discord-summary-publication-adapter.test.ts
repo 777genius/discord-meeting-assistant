@@ -9,7 +9,7 @@ import {
   createMeetingDiscordFinalSummaryProjectionKey,
   createMeetingDiscordProjectionKey,
   discordProjectionBodySchema,
-  DISCORD_TRANSCRIPT_ATTACHMENT_MAX_BYTES,
+  DISCORD_ATTACHMENT_MAX_BYTES,
   DiscordProjectionConfigurationError,
   DiscordProjectionConflictError,
   DiscordSummaryPublicationAdapter,
@@ -318,7 +318,7 @@ describe("DiscordSummaryPublicationAdapter rendering", () => {
     );
   });
 
-  it("keeps a transient live-retirement failure retryable after final publication", async () => {
+  it("does not let live-retirement failure invalidate final publication", async () => {
     const projector = new FailingRetirementProjector();
     const adapter = new DiscordSummaryPublicationAdapter(projector);
 
@@ -329,12 +329,11 @@ describe("DiscordSummaryPublicationAdapter rendering", () => {
     });
 
     expect(result).toEqual({
-      failure: {
-        code: "DISCORD_PUBLICATION_REQUEST_FAILED",
-        message: "Discord publication request failed",
-        retryable: true,
+      ok: true,
+      value: {
+        externalPublicationId:
+          "discord:v2:thread:22222222222222222:message:33333333333333333",
       },
-      ok: false,
     });
     expect(projector.inputs).toHaveLength(2);
   });
@@ -655,14 +654,21 @@ describe("DiscordSummaryPublicationAdapter rendering bounds", () => {
     expect(discordProjectionBodySchema.safeParse({
       markdown: "# Meeting summary",
       transcriptAttachment: {
-        content: "a".repeat(DISCORD_TRANSCRIPT_ATTACHMENT_MAX_BYTES + 1),
+        content: "a".repeat(DISCORD_ATTACHMENT_MAX_BYTES + 1),
         filename: "meeting-transcript.md",
+      },
+    }).success).toBe(false);
+    expect(discordProjectionBodySchema.safeParse({
+      markdown: "# Meeting summary",
+      summaryAttachment: {
+        content: "a".repeat(DISCORD_ATTACHMENT_MAX_BYTES + 1),
+        filename: "meeting-summary.md",
       },
     }).success).toBe(false);
   });
 
   it("applies the conservative upload limit to both evidence attachments together", () => {
-    const halfLimit = Math.floor(DISCORD_TRANSCRIPT_ATTACHMENT_MAX_BYTES / 2);
+    const halfLimit = Math.floor(DISCORD_ATTACHMENT_MAX_BYTES / 2);
     expect(discordProjectionBodySchema.safeParse({
       markdown: "# Meeting summary",
       summaryAttachment: {

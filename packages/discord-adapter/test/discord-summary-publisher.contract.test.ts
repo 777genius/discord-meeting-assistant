@@ -544,7 +544,11 @@ describe("DiscordSummaryPublisher finalization contract", () => {
       publicationTargetId: command.parentChannelId,
       summary: {
         actionItems: [],
-        decisions: [],
+        decisions: [{
+          decisionId: "decision-42",
+          evidenceTurnIds: ["turn-1"],
+          text: "Выпустить новую версию.",
+        }],
         openQuestions: [],
         overview: "Выпуск согласован.",
         summaryId: "summary-42",
@@ -595,6 +599,12 @@ describe("DiscordSummaryPublisher finalization contract", () => {
     expect(client.threads[0]?.message?.body.liveCaptionsMarkdown).toBeUndefined();
     expect(client.threads[0]?.message?.body.summaryAttachment).toMatchObject({
       filename: "meeting-summary.md",
+    });
+    expect(client.threads[0]?.message?.body.summaryAttachment?.content).toContain(
+      "**00:05-00:06 · speaker-a:** «Обсуждаем»",
+    );
+    expect(client.threads[0]?.message?.body.transcriptAttachment).toMatchObject({
+      filename: "meeting-transcript.md",
     });
     expect(client.threads[0]?.message?.body.transcriptAttachment?.content).toContain(
       "## `00:05-00:06` · speaker-a",
