@@ -74,7 +74,8 @@ describe("provider-neutral transcript segments E2E", () => {
 
     const publication = projector.inputs[0];
     expect(publication).toBeDefined();
-    expect(publication?.liveCaptionsMarkdown).toBeUndefined();
+    expect(publication?.liveCaptionsMarkdown).toContain("Релиз в пятницу.");
+    expect(publication?.liveCaptionsMarkdown).not.toContain("✓ `00:00-00:01`");
     expect(publication?.transcriptAttachment?.content).toContain("Релиз");
     expect(publication?.transcriptAttachment?.content).toContain("в пятницу");
     expect(publication?.transcriptAttachment?.content.match(/^## `/gmu)).toHaveLength(2);
@@ -118,7 +119,8 @@ describe("provider-neutral transcript segments E2E", () => {
 
     expect(meetings.snapshot.transcript?.readableSegments).toEqual([]);
     expect(projector.inputs[0]).toBeDefined();
-    expect(projector.inputs[0]?.liveCaptionsMarkdown).toBeUndefined();
+    expect(projector.inputs[0]?.liveCaptionsMarkdown).toContain("speaker-a");
+    expect(projector.inputs[0]?.liveCaptionsMarkdown).toContain("speaker-b");
     expect(projector.inputs[0]?.transcriptAttachment?.content).toContain(
       "speaker-a",
     );

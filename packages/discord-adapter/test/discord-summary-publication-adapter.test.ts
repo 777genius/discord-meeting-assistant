@@ -114,7 +114,7 @@ class FailingRetirementProjector extends FakeProjector {
 }
 
 describe("DiscordSummaryPublicationAdapter transcript projection", () => {
-  it("keeps transcript evidence in the full attachment instead of the summary message", async () => {
+  it("uses readable segments for the final preview and raw turns for the full attachment", async () => {
     const projector = new FakeProjector();
     const adapter = new DiscordSummaryPublicationAdapter(projector);
 
@@ -152,13 +152,14 @@ describe("DiscordSummaryPublicationAdapter transcript projection", () => {
     });
 
     const attachment = projector.inputs[0]?.transcriptAttachment?.content ?? "";
-    expect(projector.inputs[0]?.liveCaptionsMarkdown).toBeUndefined();
+    expect(projector.inputs[0]?.liveCaptionsMarkdown).toContain("Релиз в пятницу.");
+    expect(projector.inputs[0]?.liveCaptionsMarkdown).toContain("Подготовлю дашборд.");
     expect(attachment).toContain("## `00:00-00:01` · speaker-a");
     expect(attachment).toContain("## `00:00-00:02` · speaker-b");
     expect(attachment).toContain("Подготовлю дашборд");
   });
 
-  it("does not add a transcript embed when readable segments are empty", async () => {
+  it("falls back to raw turns in the final preview when readable segments are empty", async () => {
     const projector = new FakeProjector();
     const adapter = new DiscordSummaryPublicationAdapter(projector);
 
@@ -167,7 +168,8 @@ describe("DiscordSummaryPublicationAdapter transcript projection", () => {
       transcript: { ...request.transcript, readableSegments: [] },
     });
 
-    expect(projector.inputs[0]?.liveCaptionsMarkdown).toBeUndefined();
+    expect(projector.inputs[0]?.liveCaptionsMarkdown).toContain("Релиз в пятницу");
+    expect(projector.inputs[0]?.liveCaptionsMarkdown).toContain("Подготовлю дашборд");
   });
 });
 
@@ -609,7 +611,9 @@ describe("DiscordSummaryPublicationAdapter rendering bounds", () => {
     });
 
     const attachment = projector.inputs[0]?.transcriptAttachment?.content ?? "";
-    expect(projector.inputs[0]?.liveCaptionsMarkdown).toBeUndefined();
+    expect(projector.inputs[0]?.liveCaptionsMarkdown).toContain(
+      "<@1533227577286852649>",
+    );
     for (const speakerId of speakers) {
       expect(attachment).toContain(`<@${speakerId}>`);
     }
@@ -617,7 +621,7 @@ describe("DiscordSummaryPublicationAdapter rendering bounds", () => {
     expect(projector.inputs[0]?.markdown).not.toContain("`00:10-00:15`");
   });
 
-  it("keeps every final turn in the attachment without a transcript embed", async () => {
+  it("keeps every final turn in the attachment and only the newest turns in a bounded preview", async () => {
     const projector = new FakeProjector();
     const adapter = new DiscordSummaryPublicationAdapter(projector);
     const turns = Array.from({ length: 45 }, (_, index) => ({
@@ -635,7 +639,10 @@ describe("DiscordSummaryPublicationAdapter rendering bounds", () => {
 
     const attachment = projector.inputs[0]?.transcriptAttachment;
     const attachmentContent = attachment?.content ?? "";
-    expect(projector.inputs[0]?.liveCaptionsMarkdown).toBeUndefined();
+    const preview = projector.inputs[0]?.liveCaptionsMarkdown ?? "";
+    expect(preview).toContain("captions are available in the attached full transcript");
+    expect(preview).not.toContain("Caption 0:");
+    expect(preview).toContain("Caption 44:");
     expect(attachment?.filename).toBe("meeting-transcript.md");
     expect(attachmentContent).toContain("Caption 0:");
     expect(attachmentContent).toContain("Caption 44:");
@@ -667,7 +674,9 @@ describe("DiscordSummaryPublicationAdapter rendering bounds", () => {
     expect(Buffer.isBuffer(payloadAttachment.attachment)).toBe(true);
     expect(payloadAttachment.attachment.toString("utf8")).toBe(attachmentContent);
   });
+});
 
+describe("DiscordSummaryPublicationAdapter validation bounds", () => {
   it("rejects an attachment above the conservative Discord upload limit without truncating it", () => {
     expect(discordProjectionBodySchema.safeParse({
       markdown: "# Meeting summary",
