@@ -1,7 +1,10 @@
 import type { SummaryPublicationRequest } from "@discord-meeting/meeting-core/publishing";
 import { describe, expect, it } from "vitest";
 
-import { renderRussianSummaryMarkdown } from "../src/index.js";
+import {
+  renderRussianFullSummaryAttachmentMarkdown,
+  renderRussianSummaryMarkdown,
+} from "../src/index.js";
 
 function requestWith(
   turns: SummaryPublicationRequest["transcript"]["turns"],
@@ -38,7 +41,7 @@ describe("Discord summary quality evals", () => {
       "Ключевое требование: старые ссылки продолжают работать, реферальный параметр code передается явно, публичный Quanta ID запрещен, а landing slug остается человекочитаемым.",
       "После этого команда перешла к другой теме и обсудила оформление презентации.",
     ].join(" ");
-    const markdown = renderRussianSummaryMarkdown(requestWith(
+    const markdown = renderRussianFullSummaryAttachmentMarkdown(requestWith(
       [{
         endMs: 20_000,
         speakerId: "speaker-a",
@@ -63,7 +66,7 @@ describe("Discord summary quality evals", () => {
   });
 
   it("adds nearby proposal context when the only cited evidence is a short assent", () => {
-    const markdown = renderRussianSummaryMarkdown(requestWith(
+    const markdown = renderRussianFullSummaryAttachmentMarkdown(requestWith(
       [
         {
           endMs: 8_000,
@@ -93,7 +96,7 @@ describe("Discord summary quality evals", () => {
   });
 
   it("adds nearby proposal context for a Ukrainian short assent", () => {
-    const markdown = renderRussianSummaryMarkdown(requestWith(
+    const markdown = renderRussianFullSummaryAttachmentMarkdown(requestWith(
       [
         {
           endMs: 8_000,
@@ -174,7 +177,7 @@ describe("Discord summary quality evals", () => {
   });
 
   it("renders Ukrainian labels and missing evidence without exclusive letters", () => {
-    const markdown = renderRussianSummaryMarkdown(requestWith(
+    const markdown = renderRussianFullSummaryAttachmentMarkdown(requestWith(
       [{
         endMs: 2_000,
         speakerId: "speaker-a",

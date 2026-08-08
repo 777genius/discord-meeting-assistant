@@ -33,6 +33,7 @@ import {
 } from "./summary-adapter-options.js";
 import {
   mapIncrementalProviderSummary,
+  validateIncrementalSummaryRetention,
   validateProviderSummaryEvidence,
 } from "./summary-output.js";
 import type { SubscriptionRuntimeTransportPort } from "./subscription-runtime-contract.js";
@@ -155,6 +156,7 @@ export class SubscriptionRuntimeIncrementalSummaryAdapter
       new Set(request.knownTurnIds),
       new Set(request.knownSpeakerIds),
     );
+    validateIncrementalSummaryRetention(parsed.data, request.previousSummary);
     return {
       summary: mapIncrementalProviderSummary(
         parsed.data,

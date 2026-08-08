@@ -121,6 +121,11 @@
       "id": "ADR-0024",
       "path": "docs/decisions/0024-possession-based-recording-playback.md",
       "immutableDigest": "sha256:75ea6e88f4c7cd93c7608d0a0bfd8c92e812f93612d5380fa8e5b7c1ba7f11d9"
+    },
+    {
+      "id": "ADR-0025",
+      "path": "docs/decisions/0025-cumulative-live-summary-and-layered-discord-evidence.md",
+      "immutableDigest": "sha256:3b4c5f35b9b555639fd2d16bdab9201f7efecbcb6a72c530683e9c065e7b22a6"
     }
   ]
 }

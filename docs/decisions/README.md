@@ -29,6 +29,7 @@ _None._
 - [ADR-0021: Retain complete fragmented action evidence](0021-retain-complete-fragmented-action-evidence.md)
 - [ADR-0023: Backward-compatible readable segments in batch v2](0023-backward-compatible-readable-segments.md)
 - [ADR-0024: Possession-based recording playback](0024-possession-based-recording-playback.md)
+- [ADR-0025: Cumulative live summary and layered Discord evidence](0025-cumulative-live-summary-and-layered-discord-evidence.md)
 
 ## Superseded
 

@@ -301,6 +301,7 @@ import {
     expect(summarizer.requests[1]).toMatchObject({
       newTurns: [{ turnId: "turn-2" }],
       previousSummary: { revision: 1 },
+      previousSummaryEvidenceTurns: [{ turnId: "turn-1" }],
       revision: 2,
       throughTurnCount: 2,
     });

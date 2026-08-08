@@ -5,7 +5,7 @@ import { z } from "zod";
 const snowflakeSchema = z.string().regex(/^\d{17,20}$/u, "Expected a Discord snowflake");
 const discordEmbedDescriptionLimit = 4_096;
 const discordEmbedDescriptionsLimit = 6_000;
-const discordTranscriptAttachmentMaximumBytes = 8 * 1_024 * 1_024;
+const discordAttachmentMaximumBytes = 8 * 1_024 * 1_024;
 const projectionKeySchema = z.string().trim().min(1).max(128);
 const legacyProjectionKeySchema = z.string().trim().min(1).max(4_096);
 const meetingProjectionKeyVersion = "meeting-discord-projection:v2";
@@ -23,10 +23,22 @@ const transcriptAttachmentSchema = z.object({
     .trim()
     .min(1)
     .refine(
-      (value) => new TextEncoder().encode(value).byteLength <= discordTranscriptAttachmentMaximumBytes,
-      `Transcript attachment must not exceed ${discordTranscriptAttachmentMaximumBytes} UTF-8 bytes`,
+      (value) => new TextEncoder().encode(value).byteLength <= discordAttachmentMaximumBytes,
+      `Transcript attachment must not exceed ${discordAttachmentMaximumBytes} UTF-8 bytes`,
     ),
   filename: z.literal("meeting-transcript.md"),
+});
+
+const summaryAttachmentSchema = z.object({
+  content: z
+    .string()
+    .trim()
+    .min(1)
+    .refine(
+      (value) => new TextEncoder().encode(value).byteLength <= discordAttachmentMaximumBytes,
+      `Summary attachment must not exceed ${discordAttachmentMaximumBytes} UTF-8 bytes`,
+    ),
+  filename: z.literal("meeting-summary.md"),
 });
 
 const discordThreadProjectionReferenceSchema = z.object({
@@ -59,24 +71,27 @@ export const discordProjectionBodySchema = z.object({
     .min(1)
     .max(discordEmbedDescriptionLimit)
     .optional(),
+  summaryAttachment: summaryAttachmentSchema.optional(),
   transcriptAttachment: transcriptAttachmentSchema.optional(),
-}).superRefine(validateDiscordEmbedDescriptions);
+}).superRefine(validateDiscordEmbedDescriptions).superRefine(validateDiscordAttachments);
 
 export const publishDiscordSummarySchema = z.object({
   projectionKey: projectionKeySchema,
   parentChannelId: snowflakeSchema,
   threadTitle: z.string().trim().min(1).max(80),
   markdown: z.string().trim().min(1).max(discordEmbedDescriptionLimit),
+  reconciledMarkdown: z.string().trim().min(1).max(discordEmbedDescriptionLimit).optional(),
   liveCaptionsMarkdown: z
     .string()
     .trim()
     .min(1)
     .max(discordEmbedDescriptionLimit)
     .optional(),
+  summaryAttachment: summaryAttachmentSchema.optional(),
   transcriptAttachment: transcriptAttachmentSchema.optional(),
   legacyProjectionKeys: z.array(legacyProjectionKeySchema).max(4).optional(),
   currentReference: discordProjectionReferenceSchema.optional(),
-}).superRefine(validateDiscordEmbedDescriptions);
+}).superRefine(validateDiscordEmbedDescriptions).superRefine(validateDiscordAttachments);
 
 export type DiscordProjectionReference = z.infer<typeof discordProjectionReferenceSchema>;
 export type DiscordProjectionBody = z.infer<typeof discordProjectionBodySchema>;
@@ -96,10 +111,10 @@ export type DiscordProjectionContainer =
 export const DISCORD_EMBED_DESCRIPTION_LIMIT = discordEmbedDescriptionLimit;
 export const DISCORD_EMBED_DESCRIPTIONS_LIMIT = discordEmbedDescriptionsLimit;
 /**
- * Conservative floor for standard Discord uploads. A publication outside this
- * bound fails visibly instead of silently omitting evidence from the transcript.
+ * Conservative aggregate floor for standard Discord uploads. A publication
+ * outside this bound fails visibly instead of silently omitting evidence.
  */
-export const DISCORD_TRANSCRIPT_ATTACHMENT_MAX_BYTES = discordTranscriptAttachmentMaximumBytes;
+export const DISCORD_ATTACHMENT_MAX_BYTES = discordAttachmentMaximumBytes;
 
 /**
  * Stable Discord projection identity for both live and final views of one
@@ -137,14 +152,24 @@ export function createMeetingDiscordFinalSummaryProjectionKey(
 export function toDiscordProjectionBody(
   input: Pick<
     PublishDiscordSummary,
-    "markdown" | "liveCaptionsMarkdown" | "transcriptAttachment"
+    | "markdown"
+    | "reconciledMarkdown"
+    | "liveCaptionsMarkdown"
+    | "summaryAttachment"
+    | "transcriptAttachment"
   >,
+  phase: "initial" | "reconciled" = "initial",
 ): DiscordProjectionBody {
   return {
-    markdown: input.markdown,
+    markdown: phase === "reconciled"
+      ? input.reconciledMarkdown ?? input.markdown
+      : input.markdown,
     ...(input.liveCaptionsMarkdown === undefined
       ? {}
       : { liveCaptionsMarkdown: input.liveCaptionsMarkdown }),
+    ...(input.summaryAttachment === undefined
+      ? {}
+      : { summaryAttachment: input.summaryAttachment }),
     ...(input.transcriptAttachment === undefined
       ? {}
       : { transcriptAttachment: input.transcriptAttachment }),
@@ -251,7 +276,11 @@ export interface ProjectionLock {
 }
 
 function validateDiscordEmbedDescriptions(
-  body: { readonly markdown: string; readonly liveCaptionsMarkdown?: string | undefined },
+  body: {
+    readonly markdown: string;
+    readonly reconciledMarkdown?: string | undefined;
+    readonly liveCaptionsMarkdown?: string | undefined;
+  },
   context: z.RefinementCtx,
 ): void {
   const descriptionsLength = body.markdown.length + (body.liveCaptionsMarkdown?.length ?? 0);
@@ -260,6 +289,42 @@ function validateDiscordEmbedDescriptions(
       code: "custom",
       message: "Discord embed descriptions exceed the aggregate message limit",
       path: ["liveCaptionsMarkdown"],
+    });
+  }
+  const reconciledDescriptionsLength =
+    (body.reconciledMarkdown?.length ?? 0) + (body.liveCaptionsMarkdown?.length ?? 0);
+  if (
+    body.reconciledMarkdown !== undefined &&
+    reconciledDescriptionsLength > discordEmbedDescriptionsLimit
+  ) {
+    context.addIssue({
+      code: "custom",
+      message: "Reconciled Discord embed descriptions exceed the aggregate message limit",
+      path: ["reconciledMarkdown"],
+    });
+  }
+}
+
+function validateDiscordAttachments(
+  body: {
+    readonly summaryAttachment?: { readonly content: string } | undefined;
+    readonly transcriptAttachment?: { readonly content: string } | undefined;
+  },
+  context: z.RefinementCtx,
+): void {
+  const encoder = new TextEncoder();
+  const totalBytes =
+    (body.summaryAttachment === undefined
+      ? 0
+      : encoder.encode(body.summaryAttachment.content).byteLength) +
+    (body.transcriptAttachment === undefined
+      ? 0
+      : encoder.encode(body.transcriptAttachment.content).byteLength);
+  if (totalBytes > discordAttachmentMaximumBytes) {
+    context.addIssue({
+      code: "custom",
+      message: "Discord attachments exceed the conservative aggregate upload limit",
+      path: ["summaryAttachment"],
     });
   }
 }

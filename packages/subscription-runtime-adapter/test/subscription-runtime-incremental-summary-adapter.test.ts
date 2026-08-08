@@ -72,6 +72,15 @@ const requestFixture: IncrementalSummaryGenerationRequest = {
       },
     ],
   },
+  previousSummaryEvidenceTurns: [
+    {
+      endMs: 2_000,
+      speakerId: "speaker-a",
+      startMs: 0,
+      text: "Релиз согласован.",
+      turnId: "turn-1",
+    },
+  ],
   recentContextTurns: [
     {
       endMs: 4_000,
@@ -218,12 +227,13 @@ describe("SubscriptionRuntimeIncrementalSummaryAdapter", () => {
       knownTurnIds: ["turn-1", "turn-2", "turn-3"],
       newFinalizedTurns: [{ turnId: "turn-3" }],
       previousSummary: { revision: 1 },
+      previousSummaryEvidenceTurns: [{ turnId: "turn-1" }],
       recentContextTurns: [{ turnId: "turn-2" }],
       revision: 2,
       throughTurnCount: 3,
       outputSchema: providerIncrementalMeetingSummaryJsonSchema,
     });
-    expect(captured.task.systemPrompt).toContain("Previous summary is editable context");
+    expect(captured.task.systemPrompt).toContain("Previous summary is validated cumulative memory");
     expect(captured.task.systemPrompt).toContain("untrusted quoted evidence");
     expect(captured.task.systemPrompt).toContain("overview exactly one short sentence");
     expect(captured.task.systemPrompt).toContain("outputLanguage supplied in the prompt");
@@ -235,9 +245,13 @@ describe("SubscriptionRuntimeIncrementalSummaryAdapter", () => {
       "6d9479e46e2f995c44871703664eb1a6965ac6f8cfb1f227d5f6795d003cbd28",
     );
     expect(createHash("sha256").update(captured.task.systemPrompt).digest("hex")).toBe(
-      "0a334d0822207c73d45660ebc2a058f5ff084dd6f9ca64ddf489eec100dc7c19",
+      "c658fdb8f9617dd32b78ee63ffb5ae4502c5971a016e09b97fea7d0bbbabe3f7",
     );
-    expect(captured.task.systemPrompt).toContain("selective live snapshot");
+    expect(captured.task.systemPrompt).toContain("compact cumulative live meeting synthesis");
+    expect(captured.task.systemPrompt).toContain("Recency alone is never a reason to forget");
+    expect(captured.task.systemPrompt).toContain(
+      "Represent resolution, contradiction, or supersession in that successor",
+    );
     expect(captured.task.systemPrompt).toContain("at most three topics");
     expect(captured.task.systemPrompt).toContain("one or two points");
     expect(captured.task.systemPrompt).toContain(
@@ -249,9 +263,30 @@ describe("SubscriptionRuntimeIncrementalSummaryAdapter", () => {
     expect(captured.task.systemPrompt).toContain(
       "Never claim completeness",
     );
-    expect(captured.task.systemPrompt).not.toContain(
-      "Keep every explicitly evidenced decision",
-    );
+    expect(captured.task.systemPrompt).toContain("preserve explicit commitments and blockers");
+  });
+
+  it("fails closed when the previous cumulative summary evidence text is missing", async () => {
+    const transport = new FakeTransport((request) => completed(
+      request,
+      structuredOutput,
+      completeUsage,
+    ));
+
+    const result = await createAdapter(transport).generate({
+      ...requestFixture,
+      previousSummaryEvidenceTurns: [],
+    });
+
+    expect(result).toMatchObject({
+      failure: {
+        code: "SUBSCRIPTION_RUNTIME_SUMMARY_INVALID_INPUT",
+        message: "Previous summary evidence turns must exactly match its evidenceTurnIds",
+        retryable: false,
+      },
+      ok: false,
+    });
+    expect(transport.request).toBeUndefined();
   });
 
   it("rejects an attested profile mismatch", async () => {
@@ -299,6 +334,33 @@ describe("SubscriptionRuntimeIncrementalSummaryAdapter", () => {
       failure: { code: "SUBSCRIPTION_RUNTIME_SUMMARY_INVALID_EVIDENCE" },
       ok: false,
       usage: { inputTokens: 100, outputTokens: 20 },
+    });
+  });
+
+  it("rejects a schema-valid new-only revision that drops cumulative evidence lineage", async () => {
+    const transport = new FakeTransport((request) => completed(
+      request,
+      {
+        ...structuredOutput,
+        decisions: [{ evidenceTurnIds: ["turn-3"], text: "Назначить ответственного" }],
+        topics: [{
+          evidenceTurnIds: ["turn-3"],
+          points: ["Релиз готовится к пятнице"],
+          title: "Исполнение",
+        }],
+      },
+      completeUsage,
+    ));
+
+    const result = await createAdapter(transport).generate(requestFixture);
+
+    expect(result).toMatchObject({
+      failure: {
+        code: "SUBSCRIPTION_RUNTIME_SUMMARY_INVALID_EVIDENCE",
+        message: "Incremental summary dropped previous topics evidence lineage",
+        retryable: false,
+      },
+      ok: false,
     });
   });
 

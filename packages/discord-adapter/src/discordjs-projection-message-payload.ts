@@ -19,15 +19,26 @@ export function toDiscordMessagePayload(rawBody: DiscordProjectionBody, marker?:
         ? []
         : [{ description: body.liveCaptionsMarkdown }]),
     ],
-    // discord.js sends only the supplied file IDs on edit, replacing an older
-    // transcript attachment rather than accumulating retry duplicates.
-    ...(body.transcriptAttachment === undefined
+    // Explicitly clear old attachment IDs before uploading this deterministic
+    // set, so retries replace both files instead of accumulating duplicates.
+    ...(body.summaryAttachment === undefined && body.transcriptAttachment === undefined
       ? {}
       : {
-        files: [{
-          attachment: Buffer.from(body.transcriptAttachment.content, "utf8"),
-          name: body.transcriptAttachment.filename,
-        }],
+        attachments: [],
+        files: [
+          ...(body.summaryAttachment === undefined
+            ? []
+            : [{
+              attachment: Buffer.from(body.summaryAttachment.content, "utf8"),
+              name: body.summaryAttachment.filename,
+            }]),
+          ...(body.transcriptAttachment === undefined
+            ? []
+            : [{
+              attachment: Buffer.from(body.transcriptAttachment.content, "utf8"),
+              name: body.transcriptAttachment.filename,
+            }]),
+        ],
       }),
   };
 }

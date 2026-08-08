@@ -54,7 +54,7 @@
     "discord_meeting.summary.incremental": {
       "provider": "codex",
       "model": "gpt-5.6-luna",
-      "policyVersion": "meeting-summary.incremental.subscription-runtime.v5",
+      "policyVersion": "meeting-summary.incremental.subscription-runtime.v6",
       "maxOutputTokens": 2048,
       "reasoningEffort": "low",
       "taskKind": "structured-prompt",

@@ -510,5 +510,12 @@ describe("Discord publication container modes", () => {
     expect(client.channelMessages.size).toBe(2);
     expect(client.createChannelMessageCount).toBe(2);
     expect(client.threads.size).toBe(0);
+    const retriedMessage = initialReference?.kind === "channel-message"
+      ? client.channelMessages.get(initialReference.messageId)
+      : undefined;
+    expect(retriedMessage?.body.markdown).toContain("Выпуск согласован.");
+    expect(retriedMessage?.body.markdown).not.toContain(
+      "Предварительное live-саммари заменено финальным саммари",
+    );
   });
 });

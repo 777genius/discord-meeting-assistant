@@ -73,10 +73,8 @@ describe("provider-neutral transcript segments E2E", () => {
     expect(summarizer.request?.transcript.turns).toHaveLength(2);
 
     const publication = projector.inputs[0];
-    expect(publication?.liveCaptionsMarkdown).toContain(
-      "**speaker-a:** Релиз в пятницу.",
-    );
-    expect(publication?.liveCaptionsMarkdown?.match(/\*\*speaker-a:\*\*/gu)).toHaveLength(1);
+    expect(publication).toBeDefined();
+    expect(publication?.liveCaptionsMarkdown).toBeUndefined();
     expect(publication?.transcriptAttachment?.content).toContain("Релиз");
     expect(publication?.transcriptAttachment?.content).toContain("в пятницу");
     expect(publication?.transcriptAttachment?.content.match(/^## `/gmu)).toHaveLength(2);
@@ -119,11 +117,13 @@ describe("provider-neutral transcript segments E2E", () => {
     });
 
     expect(meetings.snapshot.transcript?.readableSegments).toEqual([]);
-    expect(projector.inputs[0]?.liveCaptionsMarkdown).toContain(
-      "**speaker-a:** первый трек",
+    expect(projector.inputs[0]).toBeDefined();
+    expect(projector.inputs[0]?.liveCaptionsMarkdown).toBeUndefined();
+    expect(projector.inputs[0]?.transcriptAttachment?.content).toContain(
+      "speaker-a",
     );
-    expect(projector.inputs[0]?.liveCaptionsMarkdown).toContain(
-      "**speaker-b:** второй трек",
+    expect(projector.inputs[0]?.transcriptAttachment?.content).toContain(
+      "speaker-b",
     );
   });
 });

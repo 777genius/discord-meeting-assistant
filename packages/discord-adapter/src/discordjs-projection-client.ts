@@ -102,9 +102,12 @@ export class DiscordJsProjectionClient implements DiscordProjectionClient {
   }): Promise<void> {
     if (input.signal !== undefined) {
       input.signal.throwIfAborted();
-      if (input.body.transcriptAttachment !== undefined) {
+      if (
+        input.body.summaryAttachment !== undefined ||
+        input.body.transcriptAttachment !== undefined
+      ) {
         throw new DiscordProjectionConfigurationError(
-          "Abortable Discord projection edits cannot include transcript attachments",
+          "Abortable Discord projection edits cannot include attachments",
         );
       }
       const channelId = input.reference.kind === "thread"

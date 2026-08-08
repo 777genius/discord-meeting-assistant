@@ -51,6 +51,92 @@ export function validateProviderSummaryEvidence(
   }
 }
 
+/**
+ * A cumulative live revision must keep one same-kind successor for every
+ * previous structured item. The successor may revise the prose or add newer
+ * evidence, but it cannot discard the evidence lineage that made the earlier
+ * item durable cumulative memory.
+ */
+export function validateIncrementalSummaryRetention(
+  summary: ProviderIncrementalMeetingSummary,
+  previousSummary: LiveSummaryDraftSnapshot | null,
+): void {
+  if (previousSummary === null) {
+    return;
+  }
+  requireInjectiveEvidenceLineage(
+    previousSummary.topics,
+    summary.topics,
+    "topics",
+  );
+  requireInjectiveEvidenceLineage(
+    previousSummary.decisions,
+    summary.decisions,
+    "decisions",
+  );
+  requireInjectiveEvidenceLineage(
+    previousSummary.actionItems,
+    summary.actionItems,
+    "action items",
+  );
+  requireInjectiveEvidenceLineage(
+    previousSummary.openQuestions,
+    summary.openQuestions,
+    "open questions",
+  );
+}
+
+interface EvidenceLineageItem {
+  readonly evidenceTurnIds: readonly string[];
+}
+
+function requireInjectiveEvidenceLineage(
+  previousItems: readonly EvidenceLineageItem[],
+  nextItems: readonly EvidenceLineageItem[],
+  field: string,
+): void {
+  if (
+    previousItems.length > nextItems.length ||
+    !hasInjectiveEvidenceLineage(previousItems, nextItems, 0, new Set())
+  ) {
+    throw new SubscriptionRuntimeAdapterError(
+      "invalid_evidence",
+      `Incremental summary dropped previous ${field} evidence lineage`,
+    );
+  }
+}
+
+function hasInjectiveEvidenceLineage(
+  previousItems: readonly EvidenceLineageItem[],
+  nextItems: readonly EvidenceLineageItem[],
+  previousIndex: number,
+  usedNextIndexes: ReadonlySet<number>,
+): boolean {
+  if (previousIndex === previousItems.length) {
+    return true;
+  }
+  const previousEvidence = previousItems[previousIndex]?.evidenceTurnIds ?? [];
+  for (const [nextIndex, nextItem] of nextItems.entries()) {
+    if (
+      usedNextIndexes.has(nextIndex) ||
+      previousEvidence.some((turnId) => !nextItem.evidenceTurnIds.includes(turnId))
+    ) {
+      continue;
+    }
+    if (
+      hasInjectiveEvidenceLineage(
+        previousItems,
+        nextItems,
+        previousIndex + 1,
+        new Set([...usedNextIndexes, nextIndex]),
+      )
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function mapFinalProviderSummary(
   summary: ProviderMeetingSummary,
   idempotencyKey: string,

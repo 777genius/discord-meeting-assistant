@@ -126,6 +126,8 @@ export interface IncrementalSummaryGenerationRequest {
   readonly meetingId: string;
   readonly newTurns: readonly TranscriptTurnSnapshot[];
   readonly previousSummary: LiveSummaryDraftSnapshot | null;
+  /** Exact finalized evidence retained by `previousSummary`. */
+  readonly previousSummaryEvidenceTurns: readonly TranscriptTurnSnapshot[];
   readonly recentContextTurns: readonly TranscriptTurnSnapshot[];
   readonly revision: number;
   readonly throughTurnCount: number;

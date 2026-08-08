@@ -229,10 +229,14 @@ describe("DiscordSummaryPublisher contract", () => {
   it("does not edit a message immediately after a known-fresh create", async () => {
     const client = new FakeDiscordProjectionClient();
 
-    await publisher(client).publish(command);
+    await publisher(client).publish({
+      ...command,
+      reconciledMarkdown: "## Summary\n\nUpdated after final processing.",
+    });
 
     expect(client.createMessageCount).toBe(1);
     expect(client.editMessageCount).toBe(0);
+    expect(client.threads[0]?.message?.body.markdown).toContain("Initial summary");
   });
 
   it("creates one projection and updates that projection on rerun", async () => {
@@ -243,6 +247,7 @@ describe("DiscordSummaryPublisher contract", () => {
     const second = await subject.publish({
       ...command,
       markdown: "## Summary\n\nCorrected summary.",
+      reconciledMarkdown: "## Summary\n\nUpdated after final processing.",
       currentReference: first,
     });
 
@@ -252,7 +257,9 @@ describe("DiscordSummaryPublisher contract", () => {
     expect(client.createMessageCount).toBe(1);
     expect(client.threads[0]?.name).toBe("Meeting summary");
     expect(client.threads[0]?.name).not.toContain("код");
-    expect(client.threads[0]?.message?.body.markdown).toContain("Corrected summary");
+    expect(client.threads[0]?.message?.body.markdown).toContain(
+      "Updated after final processing",
+    );
   });
 
   it("reconciles a thread create whose remote outcome was unknown", async () => {
@@ -488,7 +495,7 @@ describe("DiscordSummaryPublisher recovery contract", () => {
 });
 
 describe("DiscordSummaryPublisher finalization contract", () => {
-  it("keeps an authoritative transcript timeline when finalizing the same message", async () => {
+  it("replaces the live timeline with a clean final summary and two evidence files", async () => {
     const client = new FakeDiscordProjectionClient();
     const subject = publisher(client);
     const livePublisher = new DiscordLiveMeetingProjectionAdapter(subject);
@@ -537,7 +544,11 @@ describe("DiscordSummaryPublisher finalization contract", () => {
       publicationTargetId: command.parentChannelId,
       summary: {
         actionItems: [],
-        decisions: [],
+        decisions: [{
+          decisionId: "decision-42",
+          evidenceTurnIds: ["turn-1"],
+          text: "Выпустить новую версию.",
+        }],
         openQuestions: [],
         overview: "Выпуск согласован.",
         summaryId: "summary-42",
@@ -585,15 +596,19 @@ describe("DiscordSummaryPublisher finalization contract", () => {
     expect(client.threads).toHaveLength(1);
     expect(client.createMessageCount).toBe(1);
     expect(client.threads[0]?.message?.body.markdown).toContain("Выпуск согласован.");
-    expect(client.threads[0]?.message?.body.liveCaptionsMarkdown).toContain(
-      "## 🗣️ Транскрипт встречи",
+    expect(client.threads[0]?.message?.body.markdown).not.toContain(
+      "Обновлено после завершения финальной обработки.",
     );
-    expect(client.threads[0]?.message?.body.liveCaptionsMarkdown).toContain(
-      "✓ `00:05-00:08` **speaker-a:** Обсуждаем выпуск.",
+    expect(client.threads[0]?.message?.body.liveCaptionsMarkdown).toBeUndefined();
+    expect(client.threads[0]?.message?.body.summaryAttachment).toMatchObject({
+      filename: "meeting-summary.md",
+    });
+    expect(client.threads[0]?.message?.body.summaryAttachment?.content).toContain(
+      "**00:05-00:06 · speaker-a:** «Обсуждаем»",
     );
-    expect(client.threads[0]?.message?.body.liveCaptionsMarkdown).not.toContain(
-      "✓ `00:05-00:06` **speaker-a:** Обсуждаем",
-    );
+    expect(client.threads[0]?.message?.body.transcriptAttachment).toMatchObject({
+      filename: "meeting-transcript.md",
+    });
     expect(client.threads[0]?.message?.body.transcriptAttachment?.content).toContain(
       "## `00:05-00:06` · speaker-a",
     );

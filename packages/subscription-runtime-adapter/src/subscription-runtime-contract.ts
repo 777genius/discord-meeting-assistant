@@ -22,7 +22,7 @@ export const meetingSummaryOutputSchemaName = "discord_meeting_summary_v4" as co
 export const incrementalMeetingSummaryOutputSchemaName = "discord_meeting_incremental_summary_v1" as const;
 export const conversationAnswerOutputSchemaName = "discord_meeting_conversation_answer_v1" as const;
 export const meetingSummaryPolicyVersion = "meeting-summary.subscription-runtime.v15" as const;
-export const incrementalMeetingSummaryPolicyVersion = "meeting-summary.incremental.subscription-runtime.v5" as const;
+export const incrementalMeetingSummaryPolicyVersion = "meeting-summary.incremental.subscription-runtime.v6" as const;
 export const conversationAnswerPolicyVersion = "meeting-conversation.subscription-runtime.v1" as const;
 
 export type SubscriptionRuntimeOutputSchemaName =
