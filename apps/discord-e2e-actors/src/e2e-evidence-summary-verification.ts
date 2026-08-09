@@ -5,6 +5,7 @@ import type {
 import {
   expectedPublicationThreadCount,
   publicationContainerIdentity,
+  sameDiscordAttachments,
 } from "./e2e-evidence-publication.js";
 import {
   equivalentMeetingText,
@@ -85,8 +86,21 @@ export function verifyReplayIdentity(
     fail("REPLAY_NOT_EXECUTED", "BullMQ job has no later completed processing timestamp");
   }
   verifyReplayIds(evidence, fail);
+  verifyReplayAttachments(evidence, fail);
   verifyBusinessEffectCounts(evidence, fail);
   verifyPublicationThreadCounts(evidence, fail);
+}
+
+function verifyReplayAttachments(
+  evidence: RetainedE2eEvidence,
+  fail: VerificationFailureReporter,
+): void {
+  if (evidence.schemaVersion !== 6) {
+    return;
+  }
+  if (!sameDiscordAttachments(evidence.publication.attachments, evidence.replay.attachments)) {
+    fail("REPLAY_ATTACHMENT_CHANGED", "Discord evidence attachments changed after replay");
+  }
 }
 
 function evidenceItems(evidence: RetainedE2eEvidence) {

@@ -4,6 +4,7 @@ import {
   retainedE2eEvidenceV3Schema,
   retainedE2eEvidenceV4Schema,
   retainedE2eEvidenceV5Schema,
+  retainedE2eEvidenceV6Schema,
   verifyE2eCampaign as verifyE2eCampaignAgainstExpectedRevision,
   verifyRetainedE2eEvidence as verifyRetainedE2eEvidenceAgainstExpectedRevision,
   type DeploymentRevisionExpectation,
@@ -12,6 +13,7 @@ import {
   type RetainedE2eEvidenceV3,
   type RetainedE2eEvidenceV4,
   type RetainedE2eEvidenceV5,
+  type RetainedE2eEvidenceV6,
 } from "../src/e2e-evidence.js";
 
 export const speakerAId = "1533227577286852649";
@@ -485,6 +487,20 @@ export function retainedV5Evidence(): RetainedE2eEvidenceV5 {
       ),
     },
     schemaVersion: 5,
+  });
+}
+
+export function retainedV6Evidence(): RetainedE2eEvidenceV6 {
+  const source = retainedV5Evidence();
+  const attachments = [
+    { filename: "meeting-summary.md", sizeBytes: 2_048 },
+    { filename: "meeting-transcript.md", sizeBytes: 4_096 },
+  ];
+  return retainedE2eEvidenceV6Schema.parse({
+    ...source,
+    publication: { ...source.publication, attachments },
+    replay: { ...source.replay, attachments },
+    schemaVersion: 6,
   });
 }
 

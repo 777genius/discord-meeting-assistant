@@ -16,6 +16,7 @@ import {
   reidentify,
   retainedV4Evidence,
   retainedV5Evidence,
+  retainedV6Evidence,
   sequentialEvidence,
   speakerAId,
   speakerBId,
@@ -107,13 +108,57 @@ describe("verifyRetainedE2eEvidence", () => {
     ).passed).toBe(true);
   });
 
-  it("accepts the v5 clean summary while preserving action-owner UX", () => {
+  it("keeps historical v5 clean-summary evidence readable", () => {
     const evidence = retainedV5Evidence();
+    expect(retainedE2eEvidenceSchema.parse(evidence).schemaVersion).toBe(5);
+    expect(verifyRetainedE2eEvidenceAgainstExpectedRevision(
+      manifest(),
+      evidence,
+      currentExpectedRevisions,
+    ).passed).toBe(true);
+  });
+
+  it("accepts the v6 layered summary with both evidence attachments", () => {
+    const evidence = retainedV6Evidence();
     evidence.publication.embedDescription = [
       "## Итоги встречи",
       "Команда согласовала релиз и проверку очереди.",
       `Ответственный: <@${speakerBId}>`,
     ].join("\n");
+
+    expect(verifyRetainedE2eEvidenceAgainstExpectedRevision(
+      manifest(),
+      evidence,
+      currentExpectedRevisions,
+    ).passed).toBe(true);
+  });
+
+  it("rejects v6 evidence when a layered attachment is absent", () => {
+    const evidence = retainedV6Evidence();
+
+    expect(retainedE2eEvidenceSchema.safeParse({
+      ...evidence,
+      publication: {
+        ...evidence.publication,
+        attachments: evidence.publication.attachments.slice(0, 1),
+      },
+    }).success).toBe(false);
+  });
+
+  it("rejects a changed layered attachment after replay", () => {
+    const evidence = retainedV6Evidence();
+    evidence.replay.attachments[0]!.sizeBytes += 1;
+
+    expect(verifyRetainedE2eEvidenceAgainstExpectedRevision(
+      manifest(),
+      evidence,
+      currentExpectedRevisions,
+    ).failures.map(({ code }) => code)).toContain("REPLAY_ATTACHMENT_CHANGED");
+  });
+
+  it("treats Discord attachment ordering as non-semantic", () => {
+    const evidence = retainedV6Evidence();
+    evidence.replay.attachments.reverse();
 
     expect(verifyRetainedE2eEvidenceAgainstExpectedRevision(
       manifest(),
