@@ -74,15 +74,23 @@ export class SshDeploymentEvidenceProbe implements DeploymentEvidenceProbe {
   }
 
   public async collectProvenance(): Promise<CurrentDeploymentProvenance> {
-    const [craig, meetingPlatform, subscriptionRuntime] = await Promise.all([
+    const [craig, meetingPlatform, pipecat, subscriptionRuntime] = await Promise.all([
       this.#collectServiceProvenance(
         this.#options.craigProjectName,
         this.#options.craigServiceName,
       ),
       this.#collectServiceProvenance(this.#options.projectName, "meeting-platform"),
+      this.#options.includePipecatProvenance
+        ? this.#collectServiceProvenance(this.#options.projectName, "pipecat-runtime")
+        : undefined,
       this.#collectServiceProvenance(this.#options.projectName, "subscription-runtime-sidecar"),
     ]);
-    return { craig, meetingPlatform, subscriptionRuntime };
+    return {
+      craig,
+      meetingPlatform,
+      subscriptionRuntime,
+      ...(pipecat === undefined ? {} : { pipecat }),
+    };
   }
 
   public async collectS3(

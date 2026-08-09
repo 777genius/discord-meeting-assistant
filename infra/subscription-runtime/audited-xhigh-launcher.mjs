@@ -2,7 +2,7 @@
 
 import { accessSync, constants, realpathSync } from "node:fs";
 import { readFile, realpath } from "node:fs/promises";
-import { delimiter, isAbsolute, join } from "node:path";
+import { delimiter, dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -123,7 +123,8 @@ async function runtimeDependencies(overrides) {
     "worker-codex",
   ].join("/");
   const runnerModuleSpecifier = [
-    "/opt/subscription-runtime/node_modules",
+    dirname(fileURLToPath(import.meta.url)),
+    "node_modules",
     "@vioxen/subscription-runtime/dist/worker-local/agent-task-runner-cli.js",
   ].join("/");
   const FileBackendCodexWorker = overrides.FileBackendCodexWorker ?? (

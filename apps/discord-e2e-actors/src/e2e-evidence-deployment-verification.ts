@@ -11,12 +11,24 @@ export function verifyDeploymentProvenance(
   fail: VerificationFailureReporter,
 ): void {
   const { craig, meetingPlatform } = evidence.deployment;
+  const pipecat = evidence.schemaVersion === 5
+    ? evidence.deployment.pipecat
+    : undefined;
+  if (expectedRevisions.pipecat !== undefined && pipecat === undefined) {
+    fail(
+      "DEPLOYMENT_COMPONENT_MISSING",
+      "pipecat provenance is required by the release-candidate expectation",
+    );
+  }
   const components = [
     ["craig", craig],
     ["meetingPlatform", meetingPlatform],
-    ...(evidence.schemaVersion === 4
+    ...(evidence.schemaVersion === 4 || evidence.schemaVersion === 5
       ? [["subscriptionRuntime", evidence.deployment.subscriptionRuntime] as const]
       : []),
+    ...(pipecat === undefined
+      ? []
+      : [["pipecat", pipecat] as const]),
   ] as const;
   verifyDistinctServices(components, fail);
   const recordingStartedAt = Date.parse(evidence.recording.startedAt);
@@ -52,11 +64,24 @@ export function sameDeploymentProvenance(
   ) {
     return false;
   }
-  const leftRuntime = "subscriptionRuntime" in left ? left.subscriptionRuntime : undefined;
-  const rightRuntime = "subscriptionRuntime" in right ? right.subscriptionRuntime : undefined;
-  return leftRuntime === undefined || rightRuntime === undefined
-    ? leftRuntime === rightRuntime
-    : sameServiceProvenance(leftRuntime, rightRuntime);
+  return sameOptionalService(left, right, "subscriptionRuntime") &&
+    sameOptionalService(left, right, "pipecat");
+}
+
+function sameOptionalService(
+  left: RetainedE2eEvidence["deployment"],
+  right: RetainedE2eEvidence["deployment"],
+  component: "pipecat" | "subscriptionRuntime",
+): boolean {
+  const leftService = component === "pipecat"
+    ? ("pipecat" in left ? left.pipecat : undefined)
+    : ("subscriptionRuntime" in left ? left.subscriptionRuntime : undefined);
+  const rightService = component === "pipecat"
+    ? ("pipecat" in right ? right.pipecat : undefined)
+    : ("subscriptionRuntime" in right ? right.subscriptionRuntime : undefined);
+  return leftService === undefined || rightService === undefined
+    ? leftService === rightService
+    : sameServiceProvenance(leftService, rightService);
 }
 
 function verifyDistinctServices(

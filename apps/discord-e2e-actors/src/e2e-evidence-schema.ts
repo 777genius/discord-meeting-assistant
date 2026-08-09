@@ -108,6 +108,7 @@ const sourceRevisionSchema = z.string().regex(/^(?:[a-f\d]{40}|[a-f\d]{64})$/u);
 export const deploymentRevisionExpectationSchema = z.object({
   craig: sourceRevisionSchema,
   meetingPlatform: sourceRevisionSchema,
+  pipecat: sourceRevisionSchema.optional(),
   subscriptionRuntime: sourceRevisionSchema.optional(),
 }).strict();
 
@@ -127,8 +128,12 @@ const historicalDeploymentProvenanceSchema = z.object({
   meetingPlatform: deployedServiceProvenanceSchema,
 });
 
-const currentDeploymentProvenanceSchema = historicalDeploymentProvenanceSchema.extend({
+const runtimeDeploymentProvenanceSchema = historicalDeploymentProvenanceSchema.extend({
   subscriptionRuntime: deployedServiceProvenanceSchema,
+});
+
+const currentDeploymentProvenanceSchema = runtimeDeploymentProvenanceSchema.extend({
+  pipecat: deployedServiceProvenanceSchema.optional(),
 });
 
 export const retainedE2eEvidenceV2Schema = z.object({
@@ -328,15 +333,24 @@ export const processingEvidenceSchema = z.object({
 export const retainedE2eEvidenceV4Schema = retainedE2eEvidenceV3Schema
   .omit({ deployment: true, schemaVersion: true })
   .extend({
-    deployment: currentDeploymentProvenanceSchema,
+    deployment: runtimeDeploymentProvenanceSchema,
     processing: processingEvidenceSchema,
     schemaVersion: z.literal(4),
+  });
+
+/** v5 also binds the Pipecat image that serves the live conversation path. */
+export const retainedE2eEvidenceV5Schema = retainedE2eEvidenceV4Schema
+  .omit({ deployment: true, schemaVersion: true })
+  .extend({
+    deployment: currentDeploymentProvenanceSchema,
+    schemaVersion: z.literal(5),
   });
 
 export const retainedE2eEvidenceSchema = z.union([
   retainedE2eEvidenceV2Schema,
   retainedE2eEvidenceV3Schema,
   retainedE2eEvidenceV4Schema,
+  retainedE2eEvidenceV5Schema,
 ]);
 
 export type FixtureManifestV1 = z.infer<typeof fixtureManifestV1Schema>;
@@ -349,4 +363,5 @@ export type ProcessingEvidence = z.infer<typeof retainedE2eEvidenceV4Schema>["pr
 export type RetainedE2eEvidenceV2 = z.infer<typeof retainedE2eEvidenceV2Schema>;
 export type RetainedE2eEvidenceV3 = z.infer<typeof retainedE2eEvidenceV3Schema>;
 export type RetainedE2eEvidenceV4 = z.infer<typeof retainedE2eEvidenceV4Schema>;
+export type RetainedE2eEvidenceV5 = z.infer<typeof retainedE2eEvidenceV5Schema>;
 export type RetainedE2eEvidence = z.infer<typeof retainedE2eEvidenceSchema>;

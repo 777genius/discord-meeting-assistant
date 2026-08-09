@@ -20,6 +20,7 @@ const environmentSchema = z.object({
   DISCORD_E2E_EVIDENCE_OUTPUT: absolutePath,
   DISCORD_E2E_EXPECTED_CRAIG_SOURCE_REVISION: z.string().min(1),
   DISCORD_E2E_EXPECTED_MEETING_PLATFORM_SOURCE_REVISION: z.string().min(1),
+  DISCORD_E2E_EXPECTED_PIPECAT_SOURCE_REVISION: z.string().min(1).optional(),
   DISCORD_E2E_EXPECTED_SUBSCRIPTION_RUNTIME_SOURCE_REVISION: z.string().min(1),
   DISCORD_E2E_FIXTURE_MANIFEST: z.string().min(1).default("test/fixtures/manifest.v1.json"),
   DISCORD_E2E_KEYCHAIN_SERVICE: z.string().min(1).default("discord-voice-bot-e2e"),
@@ -57,6 +58,8 @@ async function main(): Promise<void> {
     craigServiceName: config.DISCORD_E2E_REMOTE_CRAIG_SERVICE,
     envFile: config.DISCORD_E2E_REMOTE_ENV_FILE,
     host: config.DISCORD_E2E_REMOTE_HOST,
+    includePipecatProvenance:
+      config.DISCORD_E2E_EXPECTED_PIPECAT_SOURCE_REVISION !== undefined,
     projectName: config.DISCORD_E2E_REMOTE_PROJECT,
     sourceRoot: config.DISCORD_E2E_REMOTE_SOURCE_ROOT,
   });
@@ -71,6 +74,7 @@ async function main(): Promise<void> {
     const expectedRevisions = deploymentRevisionExpectationSchema.parse({
       craig: config.DISCORD_E2E_EXPECTED_CRAIG_SOURCE_REVISION,
       meetingPlatform: config.DISCORD_E2E_EXPECTED_MEETING_PLATFORM_SOURCE_REVISION,
+      pipecat: config.DISCORD_E2E_EXPECTED_PIPECAT_SOURCE_REVISION,
       subscriptionRuntime: config.DISCORD_E2E_EXPECTED_SUBSCRIPTION_RUNTIME_SOURCE_REVISION,
     });
     const verification = verifyRetainedE2eEvidence(manifest, evidence, expectedRevisions);

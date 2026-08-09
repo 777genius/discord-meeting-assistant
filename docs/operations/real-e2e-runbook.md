@@ -242,14 +242,15 @@ ARG SOURCE_REVISION
 LABEL org.opencontainers.image.revision="${SOURCE_REVISION}"
 ```
 
-Meeting Platform and Subscription Runtime receive their revisions through the
-deployment environment. Apply the same `SOURCE_REVISION` label to the
+Meeting Platform, Subscription Runtime, and profiled Pipecat receive their
+revisions through the deployment environment. Apply the same `SOURCE_REVISION` label to the
 isolated Craig gateway image in its own deployment Dockerfile. A copied host
 source tree does not need `.git`; the revision is captured before copying and is
-made immutable by the built image ID plus OCI label. Verify all three labels with
-`docker image inspect` before the first call. Do not restart or redeploy Craig or
-Meeting Platform, or Subscription Runtime between actor start and retained
-evidence collection.
+made immutable by the built image ID plus OCI label. Verify the three required
+labels, and Pipecat when the `conversation` profile is under test, with
+`docker image inspect` before the first call. Do not restart or redeploy Craig,
+Meeting Platform, Subscription Runtime, or selected Pipecat between actor start
+and retained evidence collection.
 
 Use the versioned Russian/English ground truth at
 `apps/discord-e2e-actors/test/fixtures/manifest.v1.json`. Generate its audio with
@@ -274,9 +275,9 @@ result. Run the campaign verifier with the standard pnpm separator:
 ```sh
 pnpm --filter @discord-meeting/discord-e2e-actors run verify:campaign -- \
   apps/discord-e2e-actors/test/fixtures/manifest.v1.json \
-  /absolute/evidence/sequential.evidence.v4.json \
-  /absolute/evidence/overlap.evidence.v4.json \
-  /absolute/evidence/reconnect.evidence.v4.json
+  /absolute/evidence/sequential.evidence.v5.json \
+  /absolute/evidence/overlap.evidence.v5.json \
+  /absolute/evidence/reconnect.evidence.v5.json
 ```
 
 The verifier rejects cross-meeting identity reuse, mixed deployments, raw

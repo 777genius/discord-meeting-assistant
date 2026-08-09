@@ -129,7 +129,7 @@ services:
       SUBSCRIPTION_RUNTIME_EXPECTED_PACKAGE_VERSION: 0.1.0-main.27
       SUBSCRIPTION_RUNTIME_GRPC_BIND: 0.0.0.0:50052
       SUBSCRIPTION_RUNTIME_ISOLATED_CWD: /run/discord-meeting-subscription-runtime/workspace
-      SUBSCRIPTION_RUNTIME_LAUNCHER_PATH: /opt/subscription-runtime/launcher.mjs
+      SUBSCRIPTION_RUNTIME_LAUNCHER_PATH: /opt/subscription-runtime/audited-xhigh-launcher.mjs
       SUBSCRIPTION_RUNTIME_LOCAL_ENCRYPTION_KEY_FILE: /run/subscription-runtime-secrets/local-encryption-key
       SUBSCRIPTION_RUNTIME_PACKAGE_MANIFEST_PATH: /opt/subscription-runtime/node_modules/@vioxen/subscription-runtime/package.json
       SUBSCRIPTION_RUNTIME_PROTO_PATH: /app/apps/meeting-platform/proto/agent_runtime.proto
@@ -140,7 +140,7 @@ services:
       SUBSCRIPTION_RUNTIME_STATE_ROOT: /var/lib/subscription-runtime
       PATH: /app/apps/subscription-runtime-sidecar/node_modules/.bin:/opt/subscription-runtime/node_modules/.bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     volumes:
-      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/runtime/installation:/opt/subscription-runtime:ro
+      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/runtime/installation/node_modules:/opt/subscription-runtime/node_modules:ro
       - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/runtime/auth-pool:/run/subscription-runtime-auth:ro
       - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/runtime/state:/var/lib/subscription-runtime
       - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/secrets/runtime:/run/subscription-runtime-secrets:ro
@@ -157,6 +157,8 @@ services:
   pipecat-runtime:
     profiles: [conversation]
     build:
+      args:
+        SOURCE_REVISION: ${MEETING_PLATFORM_SOURCE_REVISION:?set immutable source revision}
       context: ../../apps/pipecat-runtime
       dockerfile: Dockerfile
     image: discord-meeting/pipecat-runtime:${MEETING_PLATFORM_SOURCE_REVISION:?set immutable source revision}

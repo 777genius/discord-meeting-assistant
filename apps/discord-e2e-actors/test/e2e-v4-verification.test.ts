@@ -7,25 +7,27 @@ import {
 import { verifyProcessingEvidence } from "../src/e2e-evidence-processing-verification.js";
 import type {
   DeploymentRevisionExpectation,
-  RetainedE2eEvidenceV4,
+  RetainedE2eEvidenceV5,
 } from "../src/e2e-evidence.js";
 import type { VerificationFailure } from "../src/e2e-evidence-verification-types.js";
 
 const expectedRevisions: DeploymentRevisionExpectation = {
   craig: "6".repeat(40),
   meetingPlatform: "b".repeat(40),
+  pipecat: "7".repeat(40),
   subscriptionRuntime: "e".repeat(40),
 };
 
-describe("retained E2E evidence v4 verification", () => {
-  it("binds all three deployments and accepts the qualified runtime profile and latency", () => {
+describe("retained E2E evidence v5 verification", () => {
+  it("binds all four deployments and accepts the qualified runtime profile and latency", () => {
     const failures = verifyCurrentEvidence(currentEvidence(), expectedRevisions);
     expect(failures).toEqual([]);
   });
 
-  it("rejects sidecar drift, excessive summary latency, and a different model profile", () => {
+  it("rejects runtime drift, excessive summary latency, and a different model profile", () => {
     const evidence = currentEvidence();
     evidence.deployment.subscriptionRuntime.sourceRevision = "f".repeat(40);
+    evidence.deployment.pipecat!.sourceRevision = "0".repeat(40);
     evidence.processing.stages.find(({ stage: stageName }) => stageName === "summary")!.durationMs = 60_001;
     evidence.processing.summaryRuntimeExecutions[0]!.model = "unexpected-model";
 
@@ -37,10 +39,10 @@ describe("retained E2E evidence v4 verification", () => {
       ]));
   });
 
-  it("rejects a missing sidecar release expectation and detects sidecar campaign drift", () => {
+  it("rejects missing runtime expectations and detects Pipecat campaign drift", () => {
     const baseline = currentEvidence();
     const changed = currentEvidence();
-    changed.deployment.subscriptionRuntime.imageId = `sha256:${"f".repeat(64)}`;
+    changed.deployment.pipecat!.imageId = `sha256:${"f".repeat(64)}`;
 
     expect(verifyCurrentEvidence(baseline, {
       craig: expectedRevisions.craig,
@@ -48,10 +50,24 @@ describe("retained E2E evidence v4 verification", () => {
     }).map(({ code }) => code)).toContain("DEPLOYMENT_REVISION_EXPECTATION_MISSING");
     expect(sameDeploymentProvenance(baseline.deployment, changed.deployment)).toBe(false);
   });
+
+  it("supports summary-only evidence and requires Pipecat only when expected", () => {
+    const evidence = currentEvidence();
+    delete evidence.deployment.pipecat;
+    const summaryOnlyRevisions = {
+      craig: expectedRevisions.craig,
+      meetingPlatform: expectedRevisions.meetingPlatform,
+      subscriptionRuntime: expectedRevisions.subscriptionRuntime,
+    };
+
+    expect(verifyCurrentEvidence(evidence, summaryOnlyRevisions)).toEqual([]);
+    expect(verifyCurrentEvidence(evidence, expectedRevisions).map(({ code }) => code))
+      .toContain("DEPLOYMENT_COMPONENT_MISSING");
+  });
 });
 
 function verifyCurrentEvidence(
-  evidence: RetainedE2eEvidenceV4,
+  evidence: RetainedE2eEvidenceV5,
   revisions: DeploymentRevisionExpectation,
 ): VerificationFailure[] {
   const failures: VerificationFailure[] = [];
@@ -61,12 +77,13 @@ function verifyCurrentEvidence(
   return failures;
 }
 
-function currentEvidence(): RetainedE2eEvidenceV4 {
+function currentEvidence(): RetainedE2eEvidenceV5 {
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     deployment: {
       craig: service("craig-e2e", "bot", "4", "5", "6"),
       meetingPlatform: service("meeting-e2e", "meeting-platform", "8", "9", "b"),
+      pipecat: service("meeting-e2e", "pipecat-runtime", "1", "2", "7"),
       subscriptionRuntime: service("meeting-e2e", "subscription-runtime-sidecar", "c", "d", "e"),
     },
     processing: {
@@ -88,7 +105,7 @@ function currentEvidence(): RetainedE2eEvidenceV4 {
       }],
     },
     recording: { startedAt: "1970-01-01T00:00:00.000Z" },
-  } as RetainedE2eEvidenceV4;
+  } as RetainedE2eEvidenceV5;
 }
 
 function service(

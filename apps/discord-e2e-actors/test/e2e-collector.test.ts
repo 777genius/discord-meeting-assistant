@@ -180,6 +180,16 @@ function provenance(): CurrentDeploymentProvenance {
       repositoryDigest: null,
       sourceRevision: "a".repeat(40),
     },
+    pipecat: {
+      composeConfigHash: "1".repeat(64),
+      composeProject: "discord-meeting-assistant",
+      composeService: "pipecat-runtime",
+      containerId: "2".repeat(64),
+      containerStartedAt: "1970-01-01T00:15:00.000Z",
+      imageId: `sha256:${"3".repeat(64)}`,
+      repositoryDigest: null,
+      sourceRevision: "4".repeat(40),
+    },
     subscriptionRuntime: {
       composeConfigHash: "b".repeat(64),
       composeProject: "discord-meeting-assistant",
@@ -191,6 +201,11 @@ function provenance(): CurrentDeploymentProvenance {
       sourceRevision: "e".repeat(40),
     },
   };
+}
+
+function summaryOnlyProvenance(): CurrentDeploymentProvenance {
+  const { craig, meetingPlatform, subscriptionRuntime } = provenance();
+  return { craig, meetingPlatform, subscriptionRuntime };
 }
 
 function processing(): ProcessingEvidence {
@@ -299,7 +314,7 @@ describe("collectRetainedE2eEvidence", () => {
   it("collects a direct parent-channel publication without inventing a thread", async () => {
     const deployment: DeploymentEvidenceProbe = {
       collectDatabase: async () => directMessageDatabase(),
-      collectProvenance: async () => provenance(),
+      collectProvenance: async () => summaryOnlyProvenance(),
       collectProcessing: async () => processing(),
       collectS3: async () => s3(),
       replayPostCall: async () => ({
@@ -329,7 +344,8 @@ describe("collectRetainedE2eEvidence", () => {
       discord,
     );
 
-    expect(evidence.schemaVersion).toBe(4);
+    expect(evidence.schemaVersion).toBe(5);
+    expect(evidence.deployment.pipecat).toBeUndefined();
     expect(evidence.publication).toMatchObject({
       container: {
         kind: "channel-message",
