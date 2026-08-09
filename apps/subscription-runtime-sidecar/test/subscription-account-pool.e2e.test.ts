@@ -171,7 +171,7 @@ it("does not queue concurrent synthetic tasks in the materialized account pool",
       }
     },
   ));
-  let barrierFailure: unknown;
+  let barrierFailure: Error | undefined;
   try {
     await started.promise;
     expect(selectedAccounts.filter(
@@ -181,7 +181,9 @@ it("does not queue concurrent synthetic tasks in the materialized account pool",
       (account) => account === "discord-meeting-summary-v3-slot-2",
     )).toHaveLength(concurrentTaskCount / 2);
   } catch (error: unknown) {
-    barrierFailure = error;
+    barrierFailure = error instanceof Error
+      ? error
+      : new Error("Concurrent admission barrier failed", { cause: error });
   } finally {
     release.resolve();
   }
