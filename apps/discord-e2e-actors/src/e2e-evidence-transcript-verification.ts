@@ -15,6 +15,10 @@ export function verifyTranscript(context: TranscriptVerificationContext): void {
 function verifyTranscriptSpeakers(context: TranscriptVerificationContext): void {
   const { evidence, fail, manifest } = context;
   const expectedSpeakers = new Set(manifest.fixtures.map(({ speakerId }) => speakerId));
+  const allowedSpeakers = new Set([
+    ...expectedSpeakers,
+    ...manifest.allowedBotSpeakerIds,
+  ]);
   const recordedSpeakers = new Set(evidence.recording.speakerIds);
   const transcriptSpeakers = new Set(evidence.transcript.turns.map(({ speakerId }) => speakerId));
   for (const speakerId of expectedSpeakers) {
@@ -23,7 +27,7 @@ function verifyTranscriptSpeakers(context: TranscriptVerificationContext): void 
     }
   }
   for (const speakerId of new Set([...recordedSpeakers, ...transcriptSpeakers])) {
-    if (!expectedSpeakers.has(speakerId)) {
+    if (!allowedSpeakers.has(speakerId)) {
       fail("UNEXPECTED_SPEAKER", `unexpected speaker ${speakerId} appears in retained evidence`);
     }
   }
@@ -128,8 +132,12 @@ function verifyTranscriptTiming(
 
 function verifyTranscriptOverlap(context: TranscriptVerificationContext): void {
   const { evidence, fail, scenario } = context;
-  const hasOverlap = evidence.transcript.turns.some((left, leftIndex) =>
-    evidence.transcript.turns.some((right, rightIndex) =>
+  const fixtureSpeakerIds = new Set(context.manifest.fixtures.map(({ speakerId }) => speakerId));
+  const fixtureTurns = evidence.transcript.turns.filter(({ speakerId }) =>
+    fixtureSpeakerIds.has(speakerId)
+  );
+  const hasOverlap = fixtureTurns.some((left, leftIndex) =>
+    fixtureTurns.some((right, rightIndex) =>
       leftIndex < rightIndex &&
       left.speakerId !== right.speakerId &&
       left.startMs < right.endMs &&

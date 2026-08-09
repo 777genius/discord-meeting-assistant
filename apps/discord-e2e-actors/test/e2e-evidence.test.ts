@@ -7,6 +7,7 @@ import {
   verifyRetainedE2eEvidence as verifyRetainedE2eEvidenceAgainstExpectedRevision,
 } from "../src/e2e-evidence.js";
 import {
+  currentExpectedRevisions,
   directMessageEvidence,
   expectedRevisions,
   manifest,
@@ -14,6 +15,7 @@ import {
   reconnectEvidence,
   reidentify,
   retainedV4Evidence,
+  retainedV5Evidence,
   sequentialEvidence,
   speakerAId,
   speakerBId,
@@ -24,6 +26,14 @@ import {
 describe("verifyRetainedE2eEvidence", () => {
   it("defaults a fixture speech start offset to playback start for existing manifests", () => {
     expect(manifest().fixtures.map(({ speechStartOffsetMs }) => speechStartOffsetMs)).toEqual([0, 0]);
+    expect(manifest().allowedBotSpeakerIds).toEqual([]);
+  });
+
+  it("rejects duplicate allowed bot speaker IDs in a fixture manifest", () => {
+    expect(fixtureManifestV1Schema.safeParse({
+      ...manifest(),
+      allowedBotSpeakerIds: ["bot-1", "bot-1"],
+    }).success).toBe(false);
   });
 
   it.each([
@@ -57,6 +67,35 @@ describe("verifyRetainedE2eEvidence", () => {
     });
   });
 
+  it("allows pinned bot tracks without letting them satisfy human overlap", () => {
+    const botSpeakerId = "1534231284467896512";
+    const fixtureManifest = manifest();
+    fixtureManifest.allowedBotSpeakerIds = [botSpeakerId];
+    const evidence = sequentialEvidence();
+    evidence.recording.speakerIds.push(botSpeakerId);
+    evidence.recording.s3.tracks.push({
+      checksumSha256: "4".repeat(64),
+      durationMs: evidence.recording.durationMs,
+      locator: "s3://bucket/meeting-1/botik.ogg",
+      sizeBytes: 1_000,
+      speakerId: botSpeakerId,
+      timelineOffsetMs: 0,
+    });
+    evidence.transcript.turns.push({
+      endMs: 7_000,
+      speakerId: botSpeakerId,
+      startMs: 6_500,
+      text: "Synthetic Botik greeting",
+      turnId: "turn-botik",
+    });
+
+    expect(verifyRetainedE2eEvidence(fixtureManifest, evidence).passed).toBe(true);
+
+    fixtureManifest.allowedBotSpeakerIds = [];
+    expect(verifyRetainedE2eEvidence(fixtureManifest, evidence).failures.map(({ code }) => code))
+      .toContain("UNEXPECTED_SPEAKER");
+  });
+
   it("keeps a complete retained v4 proof readable and verifiable", () => {
     const evidence = retainedV4Evidence();
 
@@ -66,6 +105,40 @@ describe("verifyRetainedE2eEvidence", () => {
       evidence,
       { ...expectedRevisions, subscriptionRuntime: "e".repeat(40) },
     ).passed).toBe(true);
+  });
+
+  it("accepts the v5 clean summary while preserving action-owner UX", () => {
+    const evidence = retainedV5Evidence();
+    evidence.publication.embedDescription = [
+      "## Итоги встречи",
+      "Команда согласовала релиз и проверку очереди.",
+      `Ответственный: <@${speakerBId}>`,
+    ].join("\n");
+
+    expect(verifyRetainedE2eEvidenceAgainstExpectedRevision(
+      manifest(),
+      evidence,
+      currentExpectedRevisions,
+    ).passed).toBe(true);
+  });
+
+  it("keeps historical v4 inline evidence requirements", () => {
+    const evidence = retainedV4Evidence();
+    evidence.publication.embedDescription = [
+      "## Итоги встречи",
+      `Ответственный: <@${speakerBId}>`,
+    ].join("\n");
+
+    const codes = verifyRetainedE2eEvidenceAgainstExpectedRevision(
+      manifest(),
+      evidence,
+      { ...expectedRevisions, subscriptionRuntime: "e".repeat(40) },
+    ).failures.map(({ code }) => code);
+
+    expect(codes).toEqual(expect.arrayContaining([
+      "DISCORD_EVIDENCE_INTERVAL_MISSING",
+      "DISCORD_SPEAKER_MENTION_MISSING",
+    ]));
   });
 
   it("accepts a v3 direct-message receipt without inventing a thread", () => {
