@@ -239,18 +239,18 @@ async function executeWithAccountFailover(
     "backend_unavailable",
   );
   while (attemptedAccountIds.size < input.options.accountPool.accounts.length) {
-    const lease = await input.options.accountPool.acquire(
+    const account = input.options.accountPool.select(
       attemptedAccountIds,
       input.signal,
     );
-    if (lease === undefined) {
+    if (account === undefined) {
       return lastResult;
     }
-    attemptedAccountIds.add(lease.account.id);
+    attemptedAccountIds.add(account.id);
     try {
       const execution = await executeAccountAttempt(
         input,
-        lease.account,
+        account,
         inputPath,
         encryptionKey,
         streamState,
@@ -260,8 +260,6 @@ async function executeWithAccountFailover(
       lastResult = signalAborted(input.signal)
         ? failedResult("task_cancelled")
         : failedResult("backend_unavailable");
-    } finally {
-      lease.release();
     }
     if (!shouldFailOver(lastResult, streamState, input.signal)) {
       return lastResult;

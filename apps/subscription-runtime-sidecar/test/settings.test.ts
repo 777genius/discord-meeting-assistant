@@ -38,10 +38,6 @@ interface MutablePurposeProfile {
 }
 
 interface MutableDeploymentPolicy {
-  concurrency: {
-    maximumConcurrentTasksPerAccount: number;
-    maximumQueuedTasks: number;
-  };
   custody: {
     authPoolManifestPath: string;
     localEncryptionKeyFile: string;
@@ -108,9 +104,6 @@ const invalidPolicyCases: readonly [
       policy.purposeProfiles.discord_meeting_other = { ...conversation };
     }
   }],
-  ["an unsupported per-account concurrency", (policy) => {
-    policy.concurrency.maximumConcurrentTasksPerAccount = 5;
-  }],
 ];
 
 const unsafeAuthCases: readonly [
@@ -151,8 +144,6 @@ describe("sidecar deployment policy", () => {
           },
         ],
         bindAddress: "127.0.0.1:50052",
-        maximumConcurrentTasksPerAccount: 4,
-        maximumQueuedTasks: 256,
       });
   });
 

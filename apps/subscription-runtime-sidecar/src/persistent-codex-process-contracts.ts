@@ -58,30 +58,12 @@ export interface RuntimeWorkerModule {
   readonly FileBackendCodexWorker: RuntimeWorkerConstructor;
 }
 
-interface RuntimeWorkerPool {
+export interface RuntimeWorkerGroup {
   dispose(): Promise<void>;
   run(
     input: RuntimeWorkerJob,
     options?: RuntimeWorkerRunOptions,
   ): Promise<RuntimeWorkerResult>;
-  start(): Promise<void>;
-}
-
-interface RuntimeWorkerPoolConstructor {
-  new (options: {
-    readonly maxQueueSize: number;
-    readonly poolId: string;
-    readonly prewarmOnStart: boolean;
-    readonly slots: number;
-    readonly workerFactory: (input: {
-      readonly slotIndex: number;
-      readonly workerId: string;
-    }) => RuntimeWorker;
-  }): RuntimeWorkerPool;
-}
-
-export interface RuntimeWorkerPoolModule {
-  readonly BoundedSubscriptionWorkerPool: RuntimeWorkerPoolConstructor;
 }
 
 export interface LauncherPolicyModule {
@@ -105,15 +87,12 @@ export interface PersistentCodexProcessRunnerOptions {
   readonly packageManifestPath: string;
   readonly stateRoot: string;
   readonly workspacePath: string;
-  readonly maximumConcurrentTasksPerAccount: number;
-  readonly maximumQueuedTasks: number;
   readonly launcherPolicyLoader?: (path: string) => Promise<LauncherPolicyModule>;
-  readonly workerPoolModuleLoader?: (path: string) => Promise<RuntimeWorkerPoolModule>;
   readonly workerModuleLoader?: (path: string) => Promise<RuntimeWorkerModule>;
 }
 
-export interface PersistentCodexWorkerPool {
+export interface PersistentCodexWorkerGroup {
   readonly accountId: string;
   readonly profile: PersistentCodexProfile;
-  readonly pool: RuntimeWorkerPool;
+  readonly group: RuntimeWorkerGroup;
 }

@@ -53,20 +53,18 @@ not a provider generation cap and does not guarantee latency; the compact final
 and incremental schemas/prompts reduce response volume, while `low` reasoning
 is used by both latency-sensitive Luna purposes.
 
-The sidecar attempts to prewarm four conversation worker slots for every
+The sidecar attempts to prewarm one retained conversation worker for every
 admitted account before accepting traffic. Startup proceeds once at least one
-account pool is healthy. An unhealthy account remains configured; selecting it
-later creates and prewarms a fresh pool, so transient startup failure does not
-remove it from later failover or recovery. The sidecar keeps healthy
-purpose-and-account-scoped Subscription Runtime pools alive. The audited native
-`BoundedSubscriptionWorkerPool` owns
-worker lifecycle, bounded concurrency, queueing, cancellation, health, and
-capacity inside each account. A thin sidecar admission pool shares four account
-permits across all purposes, distributes requests round-robin, bounds the global
-waiting queue to 256 requests, and fails over before any streamed text is
-emitted. Every native slot owns a separate `FileBackendCodexWorker`; the runtime's
-file-backed refresh lease and session-generation compare-and-swap protect their
-shared account state. Final and incremental summaries use the audited
+account is healthy. An unhealthy account remains configured; selecting it later
+creates and prewarms a fresh worker group, so transient startup failure does not
+remove it from later failover or recovery. Account selection is round-robin and
+has no task-count limit or waiting queue. A busy retained worker causes an
+additional native `FileBackendCodexWorker` to be created immediately for that
+request and disposed afterward. A retained worker that throws is disposed; a
+later request creates and prewarms its replacement. The runtime's app-server and packaged exec
+fallback, file-backed refresh lease, session cache, and session-generation
+compare-and-swap remain authoritative for every worker. Failover is allowed only
+before any streamed text is emitted. Final and incremental summaries use the audited
 launcher bridge because the pinned app-server path does not guarantee measured
 generation telemetry; summary generation remains fail-closed without it. The
 audited launcher validates the same exact request profile and installation

@@ -19,85 +19,57 @@ const accounts: readonly SubscriptionRuntimeAccount[] = [
 ];
 
 describe("SubscriptionAccountPool", () => {
-  it("leases accounts round-robin up to their configured concurrency", async () => {
-    const pool = new SubscriptionAccountPool(accounts, 1);
+  it("selects accounts round-robin without waiting for earlier tasks", async () => {
+    const pool = new SubscriptionAccountPool(accounts);
 
-    const first = await pool.acquire();
-    const second = await pool.acquire();
-    const queued = pool.acquire();
+    const selected = Array.from(
+      { length: 6 },
+      () => pool.select(),
+    );
 
-    expect(first?.account.id).toBe("slot-1");
-    expect(second?.account.id).toBe("slot-2");
-    let queuedSettled = false;
-    void queued.then(() => {
-      queuedSettled = true;
-      return queuedSettled;
-    });
-    await Promise.resolve();
-    expect(queuedSettled).toBe(false);
-
-    first?.release();
-    const third = await queued;
-    expect(third?.account.id).toBe("slot-1");
-    second?.release();
-    third?.release();
+    expect(selected.map((account) => account?.id)).toEqual([
+      "slot-1",
+      "slot-2",
+      "slot-1",
+      "slot-2",
+      "slot-1",
+      "slot-2",
+    ]);
   });
 
-  it("runs several tasks concurrently on one account and queues only overflow", async () => {
-    const pool = new SubscriptionAccountPool([accounts[0]!], 3);
+  it("does not impose a task-count limit on one account", async () => {
+    const pool = new SubscriptionAccountPool([accounts[0]!]);
 
-    const active = await Promise.all([
-      pool.acquire(),
-      pool.acquire(),
-      pool.acquire(),
-    ]);
-    const overflow = pool.acquire();
-    let overflowSettled = false;
-    void overflow.then(() => {
-      overflowSettled = true;
-      return overflowSettled;
-    });
-    await Promise.resolve();
-    expect(active.map((lease) => lease?.account.id)).toEqual([
-      "slot-1",
-      "slot-1",
-      "slot-1",
-    ]);
-    expect(overflowSettled).toBe(false);
+    const selected = Array.from(
+      { length: 1_024 },
+      () => pool.select(),
+    );
 
-    active[1]?.release();
-    const admitted = await overflow;
-    expect(admitted?.account.id).toBe("slot-1");
-    active[0]?.release();
-    active[2]?.release();
-    admitted?.release();
+    expect(selected).toHaveLength(1_024);
+    expect(selected.every((account) => account?.id === "slot-1")).toBe(true);
   });
 
   it("skips accounts already attempted by one failover request", async () => {
     const pool = new SubscriptionAccountPool(accounts);
-    const first = await pool.acquire();
-    first?.release();
+    const first = pool.select();
 
-    const second = await pool.acquire(new Set(["slot-1"]));
+    const second = pool.select(new Set(["slot-1"]));
 
-    expect(second?.account.id).toBe("slot-2");
-    second?.release();
-    await expect(pool.acquire(new Set(accounts.map((account) => account.id))))
-      .resolves.toBeUndefined();
+    expect(first?.id).toBe("slot-1");
+    expect(second?.id).toBe("slot-2");
+    expect(pool.select(new Set(accounts.map((account) => account.id))))
+      .toBeUndefined();
   });
 
-  it("removes an aborted waiter without consuming the released account", async () => {
-    const pool = new SubscriptionAccountPool([accounts[0]!], 1);
-    const active = await pool.acquire();
+  it("rejects a request that was cancelled before account selection", async () => {
+    const pool = new SubscriptionAccountPool([accounts[0]!]);
     const controller = new AbortController();
-    const waiting = pool.acquire(new Set(), controller.signal);
-
     controller.abort();
-    await expect(waiting).rejects.toThrow("acquisition was aborted");
-    active?.release();
 
-    const next = await pool.acquire();
-    expect(next?.account.id).toBe("slot-1");
-    next?.release();
+    expect(() => pool.select(new Set(), controller.signal))
+      .toThrow("selection was aborted");
+
+    const next = pool.select();
+    expect(next?.id).toBe("slot-1");
   });
 });

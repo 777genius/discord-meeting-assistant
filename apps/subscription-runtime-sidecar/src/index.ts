@@ -14,7 +14,6 @@ export {
   SubscriptionAccountPool,
   subscriptionProviderInstanceId,
   type SubscriptionRuntimeAccount,
-  type SubscriptionRuntimeAccountLease,
 } from "./subscription-account-pool.js";
 export {
   PersistentCodexProcessRunner,

@@ -5,7 +5,7 @@ import { subscriptionRuntimeEngine } from "@discord-meeting/subscription-runtime
 import type {
   PersistentCodexProcessRunnerOptions,
   PersistentCodexProfile,
-  PersistentCodexWorkerPool,
+  PersistentCodexWorkerGroup,
 } from "./persistent-codex-process-contracts.js";
 import {
   persistentCodexArgumentValue,
@@ -24,7 +24,7 @@ import {
   persistentCodexSignalAborted,
   persistentCodexTimedOutResult,
 } from "./persistent-codex-run-result.js";
-import { createPersistentCodexWorkerPool } from "./persistent-codex-worker.js";
+import { createPersistentCodexWorkerGroup } from "./persistent-codex-worker.js";
 import type { SubscriptionRuntimeAccount } from "./subscription-account-pool.js";
 import type {
   ProviderTaskStreamObserver,
@@ -55,7 +55,7 @@ export interface AccountPoolPrewarmResult {
 export class PersistentCodexProcessRunner implements StreamingProcessRunnerPort {
   public readonly runtimeEngine = subscriptionRuntimeEngine;
 
-  private readonly pools = new Map<string, Promise<PersistentCodexWorkerPool>>();
+  private readonly groups = new Map<string, Promise<PersistentCodexWorkerGroup>>();
   private disposed = false;
 
   public constructor(
@@ -67,7 +67,7 @@ export class PersistentCodexProcessRunner implements StreamingProcessRunnerPort 
     environment: Readonly<Record<string, string>>,
     accountId: string,
   ): Promise<void> {
-    await this.pool(profile, environment, this.accountById(accountId));
+    await this.group(profile, environment, this.accountById(accountId));
   }
 
   public async prewarmAccounts(
@@ -76,7 +76,7 @@ export class PersistentCodexProcessRunner implements StreamingProcessRunnerPort 
   ): Promise<AccountPoolPrewarmResult> {
     const results = await Promise.allSettled(
       this.options.accounts.map(async (account) =>
-        this.pool(profile, environment, account)),
+        this.group(profile, environment, account)),
     );
     const failures = results.flatMap((result, index) => {
       if (result.status === "fulfilled") {
@@ -149,12 +149,12 @@ export class PersistentCodexProcessRunner implements StreamingProcessRunnerPort 
       ),
       request: canonical,
     });
-    const pool = await this.pool(
+    const group = await this.group(
       profileForPersistentCodexRequest(canonical),
       request.env,
       this.accountForRequest(request),
     );
-    return await this.runWorker(pool, canonical, request, observer);
+    return await this.runWorker(group, canonical, request, observer);
   }
 
   public async dispose(): Promise<void> {
@@ -162,17 +162,17 @@ export class PersistentCodexProcessRunner implements StreamingProcessRunnerPort 
       return;
     }
     this.disposed = true;
-    const pools = await Promise.allSettled(this.pools.values());
+    const groups = await Promise.allSettled(this.groups.values());
     await Promise.allSettled(
-      pools.flatMap((pool) =>
-        pool.status === "fulfilled" ? [pool.value.pool.dispose()] : [],
+      groups.flatMap((group) =>
+        group.status === "fulfilled" ? [group.value.group.dispose()] : [],
       ),
     );
-    this.pools.clear();
+    this.groups.clear();
   }
 
   private async runWorker(
-    workerPool: PersistentCodexWorkerPool,
+    workerGroup: PersistentCodexWorkerGroup,
     canonical: ReturnType<typeof parsePersistentCodexRequest>,
     request: ProcessRunRequest,
     observer?: ProviderTaskStreamObserver,
@@ -189,7 +189,7 @@ export class PersistentCodexProcessRunner implements StreamingProcessRunnerPort 
     }, request.timeoutMs);
     timeout.unref();
     try {
-      const result = await workerPool.pool.run(
+      const result = await workerGroup.group.run(
         {
           abortSignal: cancellation.signal,
           controls: canonical.task.controls,
@@ -200,7 +200,7 @@ export class PersistentCodexProcessRunner implements StreamingProcessRunnerPort 
           runId: canonical.runId,
           systemPrompt: structuredPersistentCodexOutputSystemPrompt(
             canonical.task.systemPrompt,
-            workerPool.profile,
+            workerGroup.profile,
           ),
         },
         {
@@ -258,29 +258,29 @@ export class PersistentCodexProcessRunner implements StreamingProcessRunnerPort 
     }
   }
 
-  private async pool(
+  private async group(
     profile: PersistentCodexProfile,
     environment: Readonly<Record<string, string>>,
     account: SubscriptionRuntimeAccount,
-  ): Promise<PersistentCodexWorkerPool> {
+  ): Promise<PersistentCodexWorkerGroup> {
     const key = `${account.id}:${profile.execution.purpose}`;
-    const existing = this.pools.get(key);
+    const existing = this.groups.get(key);
     if (existing !== undefined) {
-      const pool = await existing;
-      assertSamePersistentCodexProfile(pool.profile, profile);
-      return pool;
+      const group = await existing;
+      assertSamePersistentCodexProfile(group.profile, profile);
+      return group;
     }
-    const pending = createPersistentCodexWorkerPool(
+    const pending = createPersistentCodexWorkerGroup(
       this.options,
       profile,
       environment,
       account,
     );
-    this.pools.set(key, pending);
+    this.groups.set(key, pending);
     try {
       return await pending;
     } catch (error: unknown) {
-      this.pools.delete(key);
+      this.groups.delete(key);
       throw error;
     }
   }

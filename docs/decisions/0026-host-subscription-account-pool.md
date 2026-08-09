@@ -36,22 +36,23 @@ manifest atomically materializes the subset into an immutable, project-private
 generation containing sequential opaque slots. Account names and source paths
 never enter Compose, application configuration, logs, health, or attestations.
 
-The sidecar owns one process-local admission pool across final summary,
-incremental summary, and conversation purposes. It admits up to four concurrent
-requests per account, selects available account capacity round-robin, and tries
-every account at most once for `quota_limited`, `needs_reconnect`,
-`provider_session_invalid`, or `backend_unavailable`. Timeout, cancellation,
-policy, schema, and attestation failures do not trigger an immediate account
-retry. The global waiting queue is bounded to 256 requests.
+The sidecar owns one process-local account selector across final summary,
+incremental summary, and conversation purposes. It applies no task-count
+admission limit and keeps no waiting queue: every request selects an account
+round-robin immediately. A failed attempt tries every account at most once for
+`quota_limited`, `needs_reconnect`, `provider_session_invalid`, or
+`backend_unavailable`. Timeout, cancellation, policy, schema, and attestation
+failures do not trigger an immediate account retry.
 
-The sidecar does not implement Codex worker concurrency itself. Every persistent
-conversation account delegates its four execution slots, queueing, cancellation,
-health, capacity, and worker lifecycle to Subscription Runtime's audited
-`BoundedSubscriptionWorkerPool`. Each native pool slot owns a distinct
-`FileBackendCodexWorker` and app-server process while sharing the account's
-project-private provider instance. Subscription Runtime's file-backed refresh
-lease and session generation compare-and-swap remain authoritative for shared
-OAuth/session state. Final and incremental purposes keep using the audited CLI
+Every persistent conversation account retains one prewarmed
+`FileBackendCodexWorker`. If that worker is busy, each overlapping request gets
+another native worker immediately; overflow workers are disposed after their
+request. A retained worker that throws is disposed and lazily replaced with a
+new prewarmed worker. There is deliberately no sidecar task-count cap. The native bounded
+pool is not used because bounded slots and queueing contradict this admission
+policy. Subscription Runtime still owns each worker's app-server and packaged
+exec fallback, session cache, file-backed refresh lease, and session-generation
+compare-and-swap. Final and incremental purposes keep using the audited CLI
 bridge and the same runtime refresh/session safeguards.
 
 Streaming conversation may fail over only before the first non-empty text delta
@@ -69,8 +70,11 @@ Subscription Runtime Gateway.
 ## Consequences
 
 - Healthy reserved capacity is used automatically without exposing identities.
-- Summary and conversation work can use one account concurrently without
-  bypassing Subscription Runtime's refresh lease and generation safeguards.
+- Summary and conversation work can use one account concurrently without an
+  application task-count limit or bypassing Subscription Runtime's refresh
+  lease and generation safeguards.
+- Host resources and provider quotas remain natural failure boundaries; the
+  sidecar does not convert either into a fixed concurrency setting.
 - Publishing a new pool manifest never mutates auth files watched by a running
   sidecar; old immutable generations can be pruned during stopped maintenance.
 - Social Monitor and Meeting Assistant share a host inventory and allocator,

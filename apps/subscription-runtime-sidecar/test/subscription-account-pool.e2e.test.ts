@@ -42,10 +42,6 @@ interface MutablePurposeProfile {
 }
 
 interface MutableDeploymentPolicy {
-  concurrency: {
-    maximumConcurrentTasksPerAccount: number;
-    maximumQueuedTasks: number;
-  };
   custody: {
     authPoolManifestPath: string;
     localEncryptionKeyFile: string;
@@ -76,11 +72,7 @@ it("materialized host slots fail over end-to-end without exposing account names"
   });
   const runs: string[][] = [];
   const executor = new SubscriptionRuntimeExecutor({
-    accountPool: new SubscriptionAccountPool(
-      settings.accounts,
-      settings.maximumConcurrentTasksPerAccount,
-      settings.maximumQueuedTasks,
-    ),
+    accountPool: new SubscriptionAccountPool(settings.accounts),
     childSourceEnvironment: {},
     installationInspector: { inspect: async () => installation() },
     isolatedCwd: settings.isolatedCwd,
@@ -120,18 +112,15 @@ it("materialized host slots fail over end-to-end without exposing account names"
   expect(JSON.stringify(runs)).not.toMatch(/host-account-[ab]/u);
 });
 
-it("admits four concurrent synthetic tasks on every materialized account", async () => {
+it("does not queue concurrent synthetic tasks in the materialized account pool", async () => {
   const fixture = await createPoolFixture();
   const settings = await resolveSidecarSettings(fixture.environment);
   const started = deferred<void>();
   const release = deferred<void>();
   const selectedAccounts: string[] = [];
+  const concurrentTaskCount = 32;
   const executor = new SubscriptionRuntimeExecutor({
-    accountPool: new SubscriptionAccountPool(
-      settings.accounts,
-      settings.maximumConcurrentTasksPerAccount,
-      settings.maximumQueuedTasks,
-    ),
+    accountPool: new SubscriptionAccountPool(settings.accounts),
     childSourceEnvironment: {},
     installationInspector: { inspect: async () => installation() },
     isolatedCwd: settings.isolatedCwd,
@@ -145,7 +134,7 @@ it("admits four concurrent synthetic tasks on every materialized account", async
       runtimeEngine: subscriptionRuntimeEngine,
       run: async (request) => {
         selectedAccounts.push(argumentValue(request.args, "--provider-instance"));
-        if (selectedAccounts.length === 8) {
+        if (selectedAccounts.length === concurrentTaskCount) {
           started.resolve();
         }
         await release.promise;
@@ -161,7 +150,7 @@ it("admits four concurrent synthetic tasks on every materialized account", async
     stateRoot: settings.stateRoot,
   });
 
-  const executions = Promise.all(Array.from({ length: 8 }, async () =>
+  const executions = Promise.all(Array.from({ length: concurrentTaskCount }, async () =>
     await executor.execute({
       ...canonicalRequest,
       cwd: settings.isolatedCwd,
@@ -170,13 +159,13 @@ it("admits four concurrent synthetic tasks on every materialized account", async
 
   expect(selectedAccounts.filter(
     (account) => account === "discord-meeting-summary-v3",
-  )).toHaveLength(4);
+  )).toHaveLength(concurrentTaskCount / 2);
   expect(selectedAccounts.filter(
     (account) => account === "discord-meeting-summary-v3-slot-2",
-  )).toHaveLength(4);
+  )).toHaveLength(concurrentTaskCount / 2);
   release.resolve();
   const results = await executions;
-  expect(results).toHaveLength(8);
+  expect(results).toHaveLength(concurrentTaskCount);
   expect(results.every((result) => result.status === "completed")).toBe(true);
 });
 

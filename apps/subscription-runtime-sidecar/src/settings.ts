@@ -29,10 +29,6 @@ import {
 } from "./constants.js";
 import type { SubscriptionRuntimeAccount } from "./subscription-account-pool.js";
 import {
-  maximumAccountPoolQueueSize,
-  maximumConcurrentTasksPerAccount,
-} from "./subscription-account-pool.js";
-import {
   maximumAccountPoolSize,
   resolveSubscriptionAccountPool,
 } from "./subscription-account-manifest.js";
@@ -59,12 +55,6 @@ const deploymentPolicySchema = z
       stateRoot: z.string().min(1),
       localEncryptionKeyFile: z.string().min(1),
       sharedMutableStateAllowed: z.literal(false),
-    }),
-    concurrency: z.object({
-      maximumConcurrentTasksPerAccount: z.literal(
-        maximumConcurrentTasksPerAccount,
-      ),
-      maximumQueuedTasks: z.literal(maximumAccountPoolQueueSize),
     }),
     purposeProfiles: z.record(
       z.string(),
@@ -125,8 +115,6 @@ export interface SidecarSettings {
   readonly maxStderrBytes: number;
   readonly maxStdoutBytes: number;
   readonly maxTaskTimeoutMs: number;
-  readonly maximumConcurrentTasksPerAccount: number;
-  readonly maximumQueuedTasks: number;
   readonly packageManifestPath: string;
   readonly protoPath: string;
   readonly serviceToken: string;
@@ -193,8 +181,6 @@ export async function resolveSidecarSettings(
       1_000,
       3_600_000,
     ),
-    maximumConcurrentTasksPerAccount,
-    maximumQueuedTasks: maximumAccountPoolQueueSize,
     packageManifestPath: requiredAbsolutePath(
       env.SUBSCRIPTION_RUNTIME_PACKAGE_MANIFEST_PATH,
       "SUBSCRIPTION_RUNTIME_PACKAGE_MANIFEST_PATH",

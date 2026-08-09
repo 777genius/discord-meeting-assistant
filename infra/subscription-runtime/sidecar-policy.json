@@ -20,10 +20,6 @@
     "localEncryptionKeyFile": "/run/subscription-runtime-secrets/local-encryption-key",
     "sharedMutableStateAllowed": false
   },
-  "concurrency": {
-    "maximumConcurrentTasksPerAccount": 4,
-    "maximumQueuedTasks": 256
-  },
   "purposeProfiles": {
     "discord_meeting.conversation.answer": {
       "provider": "codex",
