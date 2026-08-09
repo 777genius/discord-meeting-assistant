@@ -28,6 +28,8 @@ const maximumVoicetextLiveMaxConcurrentSessions = 10;
 const maximumVoicetextLivePacketBackpressureTimeoutMs = 30_000;
 const defaultConversationThinkingCueRoot =
   "/app/apps/meeting-platform/assets/thinking-cues";
+const defaultConversationFarewellCueRoot =
+  "/app/apps/meeting-platform/assets/farewell-cues";
 const absolutePath = z
   .string()
   .startsWith("/")
@@ -140,6 +142,7 @@ const environmentSchema = z
       .enum(["true", "false"])
       .default("false")
       .transform((value) => value === "true"),
+    CONVERSATION_FAREWELL_CUE_ROOT: absolutePath.optional(),
     CONVERSATION_RUNTIME_ADDRESS: runtimeAddress.optional(),
     CONVERSATION_RUNTIME_TOKEN_FILE: absolutePath.optional(),
     CONVERSATION_THINKING_CUE_ROOT: absolutePath.optional(),
@@ -323,6 +326,7 @@ interface PlatformSecrets {
 export interface PlatformConfig {
   readonly bindAddress: string;
   readonly conversation?: {
+    readonly farewellCueRoot: string;
     readonly runtimeAddress: string;
     readonly systemPrompt: string;
     readonly thinkingCueRoot: string;
@@ -419,6 +423,9 @@ export async function loadPlatformConfig(
     environment.CONVERSATION_RUNTIME_ADDRESS !== undefined
       ? {
           conversation: {
+            farewellCueRoot:
+              environment.CONVERSATION_FAREWELL_CUE_ROOT ??
+              defaultConversationFarewellCueRoot,
             runtimeAddress: environment.CONVERSATION_RUNTIME_ADDRESS,
             systemPrompt: environment.CONVERSATION_SYSTEM_PROMPT,
             thinkingCueRoot:

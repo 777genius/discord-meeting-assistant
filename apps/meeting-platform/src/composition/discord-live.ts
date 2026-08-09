@@ -43,7 +43,9 @@ import {
 import { VoicetextLiveTranscriptionAdapter } from "@discord-meeting/voicetext-adapter";
 import { Client, GatewayIntentBits } from "discord.js";
 
+import { FileConversationFarewellCueRegistry } from "../adapters/outbound/file-conversation-farewell-cue-registry.js";
 import { FileConversationThinkingCueRegistry } from "../adapters/outbound/file-conversation-thinking-cue-registry.js";
+import { SubscriptionRuntimeFarewellClassifier } from "../adapters/outbound/subscription-runtime-farewell-classifier.js";
 import { SystemConversationDelay } from "../adapters/outbound/system-conversation-delay.js";
 import type { PlatformConfig } from "../config.js";
 import { PlatformLiveMeetingRuntime } from "../live-meeting-runtime.js";
@@ -128,10 +130,19 @@ export async function createPlatformDiscordLiveComposition(input: {
         playback: craigPlaybackGateway,
         runtime: conversationRuntime,
       });
+  const conversationConfig = input.config.conversation;
+  const farewellCues = conversationCoordinator === undefined || conversationConfig === undefined
+    ? undefined
+    : await FileConversationFarewellCueRegistry.load(
+        conversationConfig.farewellCueRoot,
+        conversationConfig.voiceProfileId,
+        conversationConfig.voiceId,
+      );
   const live = createLiveRuntime({
     config: input.config,
     ...(conversationCoordinator === undefined ? {} : { conversationCoordinator }),
     discordPublisher,
+    ...(farewellCues === undefined ? {} : { farewellCues }),
     isPlaybackReady: (recordingId) => craigPlaybackGateway.hasSession(recordingId),
     logger: input.logger,
     meetings: input.meetings,
@@ -235,6 +246,7 @@ function createLiveRuntime(input: {
   readonly config: PlatformConfig;
   readonly conversationCoordinator?: ConversationCoordinator;
   readonly discordPublisher: DiscordSummaryPublisher;
+  readonly farewellCues?: FileConversationFarewellCueRegistry;
   readonly isPlaybackReady: (recordingId: string) => boolean;
   readonly logger: Logger;
   readonly meetings: PostgresLiveMeetingRepository;
@@ -263,6 +275,24 @@ function createLiveRuntime(input: {
       : {
           conversation: {
             coordinator: input.conversationCoordinator,
+            ...(input.farewellCues === undefined
+              ? {}
+              : {
+                  farewells: {
+                    classifier: new SubscriptionRuntimeFarewellClassifier(
+                      input.runtimeTransport,
+                      input.config.subscriptionRuntime.launcherSha256,
+                    ),
+                    cues: input.farewellCues,
+                    participantNames: Object.freeze(Object.fromEntries(
+                      Object.entries(input.config.participantGreetingProfiles)
+                        .map(([participantId, profile]) => [
+                          participantId,
+                          profile.displayName,
+                        ]),
+                    )),
+                  },
+                }),
             ...(Object.keys(input.config.participantGreetingProfiles).length === 0
               ? {}
               : {

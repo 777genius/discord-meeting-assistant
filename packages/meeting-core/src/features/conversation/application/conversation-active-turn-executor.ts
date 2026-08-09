@@ -96,6 +96,10 @@ export class ConversationActiveTurnExecutor {
     if (prepared.thinkingCuesEnabled) {
       this.cues.schedule(state, run);
     }
+    if (prepared.cue !== undefined) {
+      await this.startPreparedCue(state, run);
+      return;
+    }
 
     let started: Awaited<ReturnType<ConversationRuntime["startTurn"]>>;
     const startAbortController = new AbortController();
@@ -126,6 +130,42 @@ export class ConversationActiveTurnExecutor {
 
     run.runtimeTurn = started.value;
     trackConversationTask(state, this.consumeRuntime(state, run));
+  }
+
+  private async startPreparedCue(
+    state: MeetingConversationState,
+    run: ActiveConversationRun,
+  ): Promise<void> {
+    const cue = run.prepared.cue;
+    if (cue === undefined || !isCurrentConversationRun(state, run)) {
+      return;
+    }
+    run.attemptId = cue.playbackAttemptId;
+    run.answerAudioStarted = true;
+    await this.answerPlayback.open(state, run);
+    if (!isCurrentConversationRun(state, run) || run.playback === null) {
+      return;
+    }
+    for (const [sequence, bytes] of cue.pcmChunks.entries()) {
+      if (!isCurrentConversationRun(state, run) || run.playback === null) {
+        return;
+      }
+      await this.answerPlayback.write(state, run, {
+        attemptId: cue.playbackAttemptId,
+        bytes,
+        channels: 1,
+        format: "pcm_s16le",
+        sampleRateHz: 48_000,
+        sequence,
+        turnId: run.prepared.turn.turnId,
+      });
+    }
+    if (!isCurrentConversationRun(state, run) || run.playback === null) {
+      return;
+    }
+    run.runtimeCompleted = true;
+    await this.answerPlayback.finish(state, run);
+    await this.maybeFinalizeAfterRuntime(state, run);
   }
 
   public async observeSpeech(

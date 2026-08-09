@@ -11,6 +11,7 @@ import type {
   ConversationInterruptionResult,
   FinalizedConversationTurnInput,
   MeetingConversationState,
+  PreparedConversationCueInput,
   ProactiveConversationTurnInput,
 } from "./conversation-coordinator-types.js";
 import {
@@ -26,6 +27,7 @@ export type {
   ConversationCoordinatorResult,
   ConversationInterruptionResult,
   FinalizedConversationTurnInput,
+  PreparedConversationCueInput,
   ProactiveConversationTurnInput,
 } from "./conversation-coordinator-types.js";
 
@@ -99,6 +101,33 @@ export class ConversationCoordinator {
         state,
         this.activeTurns.start(state, admission.turnToStart),
       );
+    }
+    return admission.result;
+  }
+
+  public async playPreparedCue(
+    input: PreparedConversationCueInput,
+  ): Promise<ConversationCoordinatorResult> {
+    const state = this.stateFor(input.meetingId);
+    if (state.closing) {
+      return Object.freeze({ status: "ignored" as const });
+    }
+    advanceConversationState(state, input.nowMs);
+    this.wakeLatches.clear(state);
+    state.pending.clear();
+    const cancellation = state.session.close(
+      "superseded",
+      state.lastObservedAtMs,
+    );
+    const admission = this.wakeLatches.admitPreparedCue(state, input);
+    if (admission.turnToStart !== null) {
+      trackConversationTask(
+        state,
+        this.activeTurns.start(state, admission.turnToStart),
+      );
+    }
+    if (cancellation.status === "requested") {
+      await this.activeTurns.enactCancellation(state, cancellation);
     }
     return admission.result;
   }

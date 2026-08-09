@@ -221,6 +221,7 @@ describe("meeting platform runtime wiring", () => {
     const coordinator = await createConversationCoordinator({
       config: {
         conversation: {
+          farewellCueRoot: "/test/farewell-cues",
           runtimeAddress: "pipecat-runtime:50053",
           systemPrompt: "Answer briefly.",
           thinkingCueRoot: await thinkingCueRoot(),

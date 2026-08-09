@@ -244,9 +244,11 @@ export class PlatformLiveMeetingRuntime {
       return;
     }
     if (event.type === "participant.joined") {
+      state.farewell?.participantJoined(event.participantId);
       state.greetings?.participantJoined(event.participantId);
       return;
     }
+    state.farewell?.participantLeft(event.participantId);
     state.greetings?.participantLeft(event.participantId);
   }
 
@@ -261,6 +263,7 @@ export class PlatformLiveMeetingRuntime {
       });
       return;
     }
+    const farewellRevision = state.farewell?.observeSpeech(event);
     state.conversation?.observeSpeech(event, state.finishing);
     const turnId = event.isFinal ? stableLiveTranscriptTurnId(event) : undefined;
     state.projection.acceptTranscript(event, turnId, state.finishing);
@@ -285,6 +288,9 @@ export class PlatformLiveMeetingRuntime {
       if (result === "not-found") {
         throw new Error("Live meeting disappeared before transcript append");
       }
+      if (farewellRevision !== undefined) {
+        state.farewell?.observeFinalizedTurn(event, turnId, farewellRevision);
+      }
       await state.conversation?.observeFinalizedTurn(
         event,
         turnId,
@@ -297,6 +303,7 @@ export class PlatformLiveMeetingRuntime {
     const nowMs = this.clock.nowMilliseconds();
     for (const state of this.meetings.values()) {
       state.conversation?.scheduleSpeechObservation(() => state.finishing);
+      state.farewell?.advance();
       state.greetings?.advance();
       this.scheduleDueRefresh(state, nowMs);
     }

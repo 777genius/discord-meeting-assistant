@@ -15,6 +15,7 @@ import {
 } from "@discord-meeting/meeting-core/live-meeting";
 import {
   type FinalizedConversationTurnInput,
+  type PreparedConversationCueInput,
   type ProactiveConversationTurnInput,
 } from "@discord-meeting/meeting-core/conversation";
 import type { Logger } from "@discord-meeting/observability-adapter";
@@ -443,6 +444,7 @@ export class ConversationCoordinatorProbe {
   public readonly calls: FinalizedConversationTurnInput[] = [];
   public readonly closeCalls: string[] = [];
   public readonly persistedBeforeCall: boolean[] = [];
+  public readonly preparedCueCalls: PreparedConversationCueInput[] = [];
   public readonly proactiveCalls: ProactiveConversationTurnInput[] = [];
   public readonly speechEvents: string[] = [];
   public readonly speechObservations: Array<{
@@ -490,6 +492,11 @@ export class ConversationCoordinatorProbe {
   public handleProactiveTurn(input: ProactiveConversationTurnInput) {
     this.proactiveCalls.push(structuredClone(input));
     return Promise.resolve({ status: "ignored" as const });
+  }
+
+  public playPreparedCue(input: PreparedConversationCueInput) {
+    this.preparedCueCalls.push(structuredClone(input));
+    return Promise.resolve({ status: "active" as const });
   }
 
   public releaseBlockedHandle(): void {

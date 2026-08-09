@@ -1,3 +1,11 @@
+import type {
+  ConversationFarewellClassificationInput,
+  ConversationFarewellClassifier,
+  ConversationFarewellCue,
+  ConversationFarewellCueRegistry,
+  ConversationFarewellTurn,
+} from "@discord-meeting/meeting-core/conversation";
+
 /**
  * Consumer-owned vocabulary for the derived live-meeting runtime. Inbound and
  * outbound adapters map their provider DTOs to these small shapes at the
@@ -273,6 +281,19 @@ interface LiveProactiveConversationTurnInput {
   readonly voiceProfileId: string;
 }
 
+interface LivePreparedConversationCueInput {
+  readonly cueId: string;
+  readonly locale: string;
+  readonly meetingId: string;
+  readonly nowMs: number;
+  readonly pcmChunks: readonly Uint8Array[];
+  readonly playbackAttemptId: string;
+  readonly recordingId: string;
+  readonly speakerId: string;
+  readonly turnId: string;
+  readonly voiceProfileId: string;
+}
+
 interface LiveConversationCoordinator {
   advanceMeeting(meetingId: string, nowMs: number): void;
   closeMeeting(meetingId: string, nowMs: number): Promise<void>;
@@ -281,6 +302,9 @@ interface LiveConversationCoordinator {
   ): Promise<LiveConversationOutcome>;
   handleProactiveTurn(
     input: LiveProactiveConversationTurnInput,
+  ): Promise<LiveConversationOutcome>;
+  playPreparedCue(
+    input: LivePreparedConversationCueInput,
   ): Promise<LiveConversationOutcome>;
   speechActivity(meetingId: string, nowMs: number): Promise<unknown>;
   speechEnded(meetingId: string, nowMs: number): Promise<unknown>;
@@ -299,8 +323,21 @@ export interface LiveParticipantGreetingConfiguration {
   readonly profiles: Readonly<Record<string, LiveParticipantGreetingProfile>>;
 }
 
+export type LiveFarewellTurn = ConversationFarewellTurn;
+export type LiveFarewellClassificationInput = ConversationFarewellClassificationInput;
+export type LiveFarewellClassifier = ConversationFarewellClassifier;
+export type LiveFarewellCue = ConversationFarewellCue;
+export type LiveFarewellCueRegistry = ConversationFarewellCueRegistry;
+
+export interface LiveFarewellConfiguration {
+  readonly classifier?: LiveFarewellClassifier;
+  readonly cues: LiveFarewellCueRegistry;
+  readonly participantNames: Readonly<Record<string, string>>;
+}
+
 export interface LiveConversationConfiguration {
   readonly coordinator: LiveConversationCoordinator;
+  readonly farewells?: LiveFarewellConfiguration;
   readonly greetings?: LiveParticipantGreetingConfiguration;
   readonly locale: string;
   readonly nowMilliseconds: () => number;

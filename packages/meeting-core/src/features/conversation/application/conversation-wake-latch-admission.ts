@@ -10,6 +10,7 @@ import type {
   FinalizedConversationTurnInput,
   MeetingConversationState,
   PreparedConversation,
+  PreparedConversationCueInput,
   ProactiveConversationTurnInput,
 } from "./conversation-coordinator-types.js";
 
@@ -43,6 +44,17 @@ function proactiveConversationIdempotencyKey(
 ): string {
   return [
     "proactive-conversation:v1",
+    input.meetingId,
+    input.recordingId,
+    input.turnId,
+  ].map(identityPart).join("|");
+}
+
+function preparedCueIdempotencyKey(
+  input: PreparedConversationCueInput,
+): string {
+  return [
+    "prepared-conversation-cue:v1",
     input.meetingId,
     input.recordingId,
     input.turnId,
@@ -208,6 +220,54 @@ export class ConversationWakeLatchAdmission {
         recordingId: input.recordingId,
         speakerId: input.speakerId,
         systemPrompt: input.systemPrompt,
+        turnId: input.turnId,
+        voiceProfileId: input.voiceProfileId,
+      },
+      thinkingCueLocale: input.locale,
+      thinkingCuesEnabled: false,
+      turn,
+    });
+  }
+
+  public admitPreparedCue(
+    state: MeetingConversationState,
+    input: PreparedConversationCueInput,
+  ): ConversationPromptAdmission {
+    const turn = createConversationTurn({
+      meetingId: input.meetingId,
+      prompt: input.cueId,
+      speakerId: input.speakerId,
+      turnId: input.turnId,
+    });
+    if (input.pcmChunks.length === 0) {
+      throw new DomainInvariantError(
+        "INVALID_LIFECYCLE_STATE",
+        "prepared conversation cue must contain PCM",
+      );
+    }
+    const pcmChunks = input.pcmChunks.map((chunk) => {
+      if (chunk.byteLength === 0 || chunk.byteLength % 2 !== 0) {
+        throw new DomainInvariantError(
+          "INVALID_LIFECYCLE_STATE",
+          "prepared conversation cue must contain sample-aligned PCM",
+        );
+      }
+      return chunk.slice();
+    });
+    return this.admitPrepared(state, {
+      cue: {
+        cueId: input.cueId,
+        pcmChunks: Object.freeze(pcmChunks),
+        playbackAttemptId: input.playbackAttemptId,
+      },
+      request: {
+        idempotencyKey: preparedCueIdempotencyKey(input),
+        locale: input.locale,
+        meetingId: input.meetingId,
+        prompt: input.cueId,
+        recordingId: input.recordingId,
+        speakerId: input.speakerId,
+        systemPrompt: "Play the pre-generated audio cue.",
         turnId: input.turnId,
         voiceProfileId: input.voiceProfileId,
       },

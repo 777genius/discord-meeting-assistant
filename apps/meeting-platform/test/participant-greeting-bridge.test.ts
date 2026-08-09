@@ -39,6 +39,10 @@ class GreetingCoordinatorProbe {
     return Promise.resolve({ status: "active" as const });
   }
 
+  public playPreparedCue(): Promise<{ readonly status: "ignored" }> {
+    return Promise.resolve({ status: "ignored" });
+  }
+
   public speechActivity(): Promise<{ readonly status: "ignored" }> {
     return Promise.resolve({ status: "ignored" });
   }

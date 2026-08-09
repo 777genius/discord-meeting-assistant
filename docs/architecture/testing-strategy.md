@@ -42,6 +42,11 @@ the development ElevenLabs key; it records end-to-wake, wake-to-first-delta,
 delta-to-first-PCM, and total first-audio latency for consecutive warm turns,
 but is never required by the local or CI gate.
 
+The providerless suite also drives Russian and English proactive greetings
+through real gRPC, Pipecat, and Craig WebSocket playback. Prepared Russian and
+English farewell assets bypass LLM/TTS, traverse the same Craig playback
+transport, and must arrive byte-for-byte with their pinned PCM checksums.
+
 The private Discord observer is opt-in. It uses an official test bot, listens
 only for the configured Craig bot in a private test channel, and retains bounded
 audio evidence: first-packet timing, duration, packet count, PCM checksum,

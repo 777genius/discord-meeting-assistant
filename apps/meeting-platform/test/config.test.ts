@@ -349,6 +349,7 @@ describe("participant greeting profile configuration", () => {
     );
 
     expect(config.conversation).toEqual({
+      farewellCueRoot: "/app/apps/meeting-platform/assets/farewell-cues",
       runtimeAddress: "pipecat-runtime:50053",
       systemPrompt:
         "You are Botik, a concise voice assistant. Answer in the participant's language. When that language uses grammatical gender, refer to yourself using feminine forms. Never claim to remember earlier turns.",

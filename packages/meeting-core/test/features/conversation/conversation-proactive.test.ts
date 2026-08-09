@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 
-import { ConversationCoordinator } from "../src/application/conversation.js";
+import { ConversationCoordinator } from "@discord-meeting/meeting-core/conversation";
 import {
   ControlledDelayPort,
   FixedThinkingCues,

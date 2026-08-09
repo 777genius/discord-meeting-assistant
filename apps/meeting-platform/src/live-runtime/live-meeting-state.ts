@@ -1,5 +1,6 @@
 import { canonicalLiveCaptionSignature } from "./caption-signature.js";
 import { ConversationBridge } from "./conversation-bridge.js";
+import { FarewellBridge } from "./farewell-bridge.js";
 import type {
   LiveMeetingRuntimeDependencies,
   LiveMeetingStartedEvent,
@@ -24,6 +25,7 @@ export interface ActiveLiveMeeting {
   finalizationStarted: boolean;
   finishPromise: Promise<void> | null;
   finishing: boolean;
+  readonly farewell: FarewellBridge | undefined;
   readonly greetings: ParticipantGreetingBridge | undefined;
   readonly meetingId: string;
   readonly projection: LiveProjectionScheduler;
@@ -85,6 +87,14 @@ export function createActiveLiveMeeting(input: CreateActiveLiveMeetingInput): Ac
         logger: input.dependencies.logger,
         meetingId,
       });
+  const farewell = input.dependencies.conversation?.farewells === undefined
+    ? undefined
+    : new FarewellBridge({
+        configuration: input.dependencies.conversation,
+        isMeetingFinishing: () => state.finishing,
+        logger: input.dependencies.logger,
+        meetingId,
+      });
   const transcription = new SpeakerTranscriptionSessions({
     clock: input.clock,
     isMeetingFinishing: () => state.finishing,
@@ -109,6 +119,7 @@ export function createActiveLiveMeeting(input: CreateActiveLiveMeetingInput): Ac
     finalizationStarted: false,
     finishPromise: null,
     finishing: false,
+    farewell,
     greetings,
     meetingId,
     projection,
@@ -119,6 +130,7 @@ export function createActiveLiveMeeting(input: CreateActiveLiveMeetingInput): Ac
     transcription,
     transcriptionFenceClosed: false,
   };
+  farewell?.participantsPresent(input.event.participantIds);
   greetings?.participantsPresent(input.event.participantIds);
   return state;
 }
