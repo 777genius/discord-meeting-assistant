@@ -53,9 +53,13 @@ not a provider generation cap and does not guarantee latency; the compact final
 and incremental schemas/prompts reduce response volume, while `low` reasoning
 is used by both latency-sensitive Luna purposes.
 
-The sidecar prewarms four conversation worker slots for every admitted account
-before accepting traffic and keeps those purpose-and-account-scoped Subscription
-Runtime pools alive. The audited native `BoundedSubscriptionWorkerPool` owns
+The sidecar attempts to prewarm four conversation worker slots for every
+admitted account before accepting traffic. Startup proceeds once at least one
+account pool is healthy. An unhealthy account remains configured; selecting it
+later creates and prewarms a fresh pool, so transient startup failure does not
+remove it from later failover or recovery. The sidecar keeps healthy
+purpose-and-account-scoped Subscription Runtime pools alive. The audited native
+`BoundedSubscriptionWorkerPool` owns
 worker lifecycle, bounded concurrency, queueing, cancellation, health, and
 capacity inside each account. A thin sidecar admission pool shares four account
 permits across all purposes, distributes requests round-robin, bounds the global
