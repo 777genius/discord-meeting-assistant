@@ -268,8 +268,8 @@ actor file to `collect:e2e`. The collector fail-closed binds them using the
 authoritative manifest `startedAt`/`endedAt`, speaker tracks, checksums and timing.
 
 The collector obtains both Postgres observations, S3 bytes, Discord marker counts,
-visible embed text, and the names and byte sizes of both layered evidence
-attachments, plus the completed-job replay and deployment provenance directly
+visible embed text, and the names and byte sizes of both attachments containing
+layered evidence, plus the completed-job replay and deployment provenance directly
 from Docker. It accepts hidden v3 embed markers and legacy thread markers during
 rollout. A direct-message receipt must retain exactly one matching message and
 zero matching threads; a thread receipt must retain exactly one of each. Current
@@ -291,8 +291,8 @@ The verifier rejects cross-meeting identity reuse, mixed deployments, raw
 internal IDs in Discord text, missing action-owner mentions, and missing or
 invalid authoritative evidence references. Historical v2-v4 evidence still
 verifies inline intervals and speaker mentions; v5 remains readable as the first
-clean-summary format. Current v6 additionally proves the two layered evidence
-attachments from ADR-0025 and their replay stability. A successful provider call
+clean-summary format. Current v6 additionally proves the two attachments containing
+layered evidence from ADR-0025 and their replay stability. A successful provider call
 without a passing campaign result is not accepted.
 
 Synthetic fixtures may be generated for deterministic speech. They must contain
