@@ -62,16 +62,18 @@ export function verifyDiscordSummaryUx(
   if (containsInternalIdentifier(description, evidence.summary.summaryId)) {
     fail("DISCORD_INTERNAL_ID_VISIBLE", "Discord summary exposes an internal identifier");
   }
-  if (evidence.schemaVersion === 3 && description.includes("Основание:")) {
+  if (evidence.schemaVersion >= 3 && description.includes("Основание:")) {
     fail("DISCORD_LEGACY_EVIDENCE_LABEL_VISIBLE", "Discord summary exposes the legacy evidence label");
   }
   if (evidence.schemaVersion === 2 && !description.includes("Основание:")) {
     fail("DISCORD_EVIDENCE_LABEL_MISSING", "Discord summary has no human-readable evidence label");
   }
-  if (!/\b\d{2}:\d{2}-\d{2}:\d{2}\b/u.test(description)) {
-    fail("DISCORD_EVIDENCE_INTERVAL_MISSING", "Discord summary has no MM:SS-MM:SS evidence interval");
+  if (evidence.schemaVersion < 5) {
+    if (!/\b\d{2}:\d{2}-\d{2}:\d{2}\b/u.test(description)) {
+      fail("DISCORD_EVIDENCE_INTERVAL_MISSING", "Discord summary has no MM:SS-MM:SS evidence interval");
+    }
+    verifySpeakerMentions(manifest, description, fail);
   }
-  verifySpeakerMentions(manifest, description, fail);
   verifyActionOwnerMentions(manifest, description, fail);
 }
 

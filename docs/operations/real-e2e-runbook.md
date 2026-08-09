@@ -10,9 +10,10 @@ projects.
 | Guild `Meeting Assistant E2E` | `1533228590643155034` |
 | Voice channel `e2e-meeting` | `1533228823045214398` |
 | Results channel `e2e-results` | `1533228891827736657` |
-| Application `Meeting E2E SUT` | `1533224474609057793` |
+| Application `Meeting E2E SUT` (approved Voice Bot) | `1533224474609057793` |
 | Application `Meeting E2E Speaker A` | `1533227577286852649` |
 | Application `Meeting E2E Speaker B` | `1533228054724346087` |
+| Botik test playback bot | `1534231284467896512` |
 
 Bot tokens are stored only in the local macOS Keychain service
 `discord-voice-bot-e2e`, under accounts `sut`, `speaker-a`, and `speaker-b`.
@@ -256,6 +257,9 @@ Use the versioned Russian/English ground truth at
 `apps/discord-e2e-actors/test/fixtures/manifest.v1.json`. Generate its audio with
 the actor package `fixtures:generate` script. The committed manifest pins the
 resulting Ogg SHA-256 and duration; actor startup fails on any mismatch.
+It also pins the official Botik and Voice Bot speaker IDs that may add proactive
+greeting tracks. They remain outside fixture WER/CER and human overlap checks;
+any other speaker still fails the retained-evidence gate.
 
 Choose a unique `DISCORD_E2E_RUN_ID` and actor evidence path before each call.
 Do not guess Craig's future random recording ID. Actor evidence uses absolute
@@ -281,9 +285,11 @@ pnpm --filter @discord-meeting/discord-e2e-actors run verify:campaign -- \
 ```
 
 The verifier rejects cross-meeting identity reuse, mixed deployments, raw
-internal IDs in Discord text, missing human evidence intervals, and missing
-speaker/action-owner mentions. A successful provider call without a passing
-campaign result is not accepted.
+internal IDs in Discord text, missing action-owner mentions, and missing or
+invalid authoritative evidence references. Historical evidence versions still
+verify their inline intervals and speaker mentions; v5 verifies the clean
+layered summary presentation from ADR-0025. A successful provider call without
+a passing campaign result is not accepted.
 
 Synthetic fixtures may be generated for deterministic speech. They must contain
 only invented test content, identify the expected Discord speaker explicitly in

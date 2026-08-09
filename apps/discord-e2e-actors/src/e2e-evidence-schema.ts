@@ -38,6 +38,10 @@ const scenarioSchema = z.object({
 });
 
 export const fixtureManifestV1Schema = z.object({
+  allowedBotSpeakerIds: z.array(identifierSchema).refine(
+    (speakerIds) => new Set(speakerIds).size === speakerIds.length,
+    "Allowed bot speaker IDs must be unique",
+  ).default([]),
   fixtureSetId: identifierSchema,
   fixtures: z.array(fixtureSchema).min(2),
   locale: identifierSchema,
