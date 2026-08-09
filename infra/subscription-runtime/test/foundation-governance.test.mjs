@@ -111,6 +111,10 @@ test("Pipecat image receives and validates the immutable source revision", async
   assert.match(dockerfile, /ARG SOURCE_REVISION/u);
   assert.match(
     dockerfile,
+    /grep -Eq '\^\(\[0-9a-f\]\{40\}\|\[0-9a-f\]\{64\}\)\$'/u,
+  );
+  assert.match(
+    dockerfile,
     /LABEL org\.opencontainers\.image\.revision="\$\{SOURCE_REVISION\}"/u,
   );
 });

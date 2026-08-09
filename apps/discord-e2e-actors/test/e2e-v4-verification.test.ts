@@ -10,22 +10,19 @@ import type {
   RetainedE2eEvidenceV5,
 } from "../src/e2e-evidence.js";
 import type { VerificationFailure } from "../src/e2e-evidence-verification-types.js";
-
-const expectedRevisions: DeploymentRevisionExpectation = {
-  craig: "6".repeat(40),
-  meetingPlatform: "b".repeat(40),
-  pipecat: "7".repeat(40),
-  subscriptionRuntime: "e".repeat(40),
-};
+import {
+  currentExpectedRevisions as expectedRevisions,
+  retainedV5Evidence,
+} from "./e2e-evidence-fixtures.js";
 
 describe("retained E2E evidence v5 verification", () => {
   it("binds all four deployments and accepts the qualified runtime profile and latency", () => {
-    const failures = verifyCurrentEvidence(currentEvidence(), expectedRevisions);
+    const failures = verifyCurrentEvidence(retainedV5Evidence(), expectedRevisions);
     expect(failures).toEqual([]);
   });
 
   it("rejects runtime drift, excessive summary latency, and a different model profile", () => {
-    const evidence = currentEvidence();
+    const evidence = retainedV5Evidence();
     evidence.deployment.subscriptionRuntime.sourceRevision = "f".repeat(40);
     evidence.deployment.pipecat!.sourceRevision = "0".repeat(40);
     evidence.processing.stages.find(({ stage: stageName }) => stageName === "summary")!.durationMs = 60_001;
@@ -40,8 +37,8 @@ describe("retained E2E evidence v5 verification", () => {
   });
 
   it("rejects missing runtime expectations and detects Pipecat campaign drift", () => {
-    const baseline = currentEvidence();
-    const changed = currentEvidence();
+    const baseline = retainedV5Evidence();
+    const changed = retainedV5Evidence();
     changed.deployment.pipecat!.imageId = `sha256:${"f".repeat(64)}`;
 
     expect(verifyCurrentEvidence(baseline, {
@@ -52,7 +49,7 @@ describe("retained E2E evidence v5 verification", () => {
   });
 
   it("supports summary-only evidence and requires Pipecat only when expected", () => {
-    const evidence = currentEvidence();
+    const evidence = retainedV5Evidence();
     delete evidence.deployment.pipecat;
     const summaryOnlyRevisions = {
       craig: expectedRevisions.craig,
@@ -75,63 +72,4 @@ function verifyCurrentEvidence(
   verifyDeploymentProvenance(evidence, revisions, fail);
   verifyProcessingEvidence(evidence, fail);
   return failures;
-}
-
-function currentEvidence(): RetainedE2eEvidenceV5 {
-  return {
-    schemaVersion: 5,
-    deployment: {
-      craig: service("craig-e2e", "bot", "4", "5", "6"),
-      meetingPlatform: service("meeting-e2e", "meeting-platform", "8", "9", "b"),
-      pipecat: service("meeting-e2e", "pipecat-runtime", "1", "2", "7"),
-      subscriptionRuntime: service("meeting-e2e", "subscription-runtime-sidecar", "c", "d", "e"),
-    },
-    processing: {
-      stages: [
-        stage("transcription", 2_000),
-        stage("summary", 5_000),
-        stage("publication", 500),
-      ],
-      summaryRuntimeExecutions: [{
-        durationMs: 4_900,
-        model: "gpt-5.6-sol",
-        observedAt: "1970-01-01T00:00:12.900Z",
-        outputSchemaName: "discord_meeting_summary_v4",
-        policyVersion: "meeting-summary.subscription-runtime.v15",
-        purpose: "discord_meeting.summary.generate",
-        reasoningEffort: "medium",
-        runId: "summary-run-1",
-        status: "completed",
-      }],
-    },
-    recording: { startedAt: "1970-01-01T00:00:00.000Z" },
-  } as RetainedE2eEvidenceV5;
-}
-
-function service(
-  composeProject: string,
-  composeService: string,
-  containerDigit: string,
-  imageDigit: string,
-  revisionDigit: string,
-) {
-  return {
-    composeConfigHash: "3".repeat(64),
-    composeProject,
-    composeService,
-    containerId: containerDigit.repeat(64),
-    containerStartedAt: "1969-12-31T23:00:00.000Z",
-    imageId: `sha256:${imageDigit.repeat(64)}`,
-    repositoryDigest: null,
-    sourceRevision: revisionDigit.repeat(40),
-  };
-}
-
-function stage(stageName: "publication" | "summary" | "transcription", durationMs: number) {
-  return {
-    durationMs,
-    observedAt: "1970-01-01T00:00:13.000Z",
-    outcome: "succeeded" as const,
-    stage: stageName,
-  };
 }

@@ -3,6 +3,7 @@ import {
   retainedE2eEvidenceV2Schema,
   retainedE2eEvidenceV3Schema,
   retainedE2eEvidenceV4Schema,
+  retainedE2eEvidenceV5Schema,
   verifyE2eCampaign as verifyE2eCampaignAgainstExpectedRevision,
   verifyRetainedE2eEvidence as verifyRetainedE2eEvidenceAgainstExpectedRevision,
   type DeploymentRevisionExpectation,
@@ -10,6 +11,7 @@ import {
   type RetainedE2eEvidenceV2,
   type RetainedE2eEvidenceV3,
   type RetainedE2eEvidenceV4,
+  type RetainedE2eEvidenceV5,
 } from "../src/e2e-evidence.js";
 
 export const speakerAId = "1533227577286852649";
@@ -18,6 +20,11 @@ const speakerAText = "Спикер A обсуждает Meeting Platform и Crai
 const speakerBText = "Спикер B проверит Redis queue и idempotency key";
 export const expectedRevisions: DeploymentRevisionExpectation =
   { craig: "6".repeat(40), meetingPlatform: "b".repeat(40) };
+export const currentExpectedRevisions: DeploymentRevisionExpectation = {
+  ...expectedRevisions,
+  pipecat: "7".repeat(40),
+  subscriptionRuntime: "e".repeat(40),
+};
 
 export function verifyRetainedE2eEvidence(
   fixtureManifest: FixtureManifestV1,
@@ -461,4 +468,41 @@ export function retainedV4Evidence(): RetainedE2eEvidenceV4 {
     },
     schemaVersion: 4,
   });
+}
+
+export function retainedV5Evidence(): RetainedE2eEvidenceV5 {
+  const source = retainedV4Evidence();
+  return retainedE2eEvidenceV5Schema.parse({
+    ...source,
+    deployment: {
+      ...source.deployment,
+      pipecat: deployedService(
+        "discord-meeting-assistant",
+        "pipecat-runtime",
+        "1",
+        "2",
+        "7",
+      ),
+    },
+    schemaVersion: 5,
+  });
+}
+
+function deployedService(
+  composeProject: string,
+  composeService: string,
+  containerDigit: string,
+  imageDigit: string,
+  revisionDigit: string,
+) {
+  return {
+    composeConfigHash: "3".repeat(64),
+    composeProject,
+    composeService,
+    containerId: containerDigit.repeat(64),
+    containerStartedAt: "1969-12-31T23:00:00.000Z",
+    imageId: `sha256:${imageDigit.repeat(64)}`,
+    repositoryDigest: null,
+    sourceRevision: revisionDigit.repeat(40),
+  };
 }
