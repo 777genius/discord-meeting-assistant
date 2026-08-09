@@ -5,8 +5,6 @@ import {
   type SubscriptionRuntimeExecutionProfile,
 } from "@discord-meeting/subscription-runtime-adapter";
 
-import { providerInstanceId } from "./constants.js";
-
 const allowedChildEnvironmentKeys = new Set([
   "HOME",
   "HTTPS_PROXY",
@@ -27,6 +25,7 @@ const allowedChildEnvironmentKeys = new Set([
 
 export interface SubscriptionRuntimeCliOptions {
   readonly authJsonPath: string;
+  readonly providerInstanceId: string;
   readonly stateRoot: string;
 }
 
@@ -73,7 +72,7 @@ export function buildCliArgs(
     "--codex-auth-json",
     options.authJsonPath,
     "--provider-instance",
-    providerInstanceId,
+    options.providerInstanceId,
     "--model",
     profile.model,
   ];

@@ -5,7 +5,6 @@ import {
   providerConversationAnswerJsonSchema,
 } from "@discord-meeting/subscription-runtime-adapter";
 
-import { providerInstanceId } from "./constants.js";
 import { startGrpcServer } from "./grpc-server.js";
 import { FileInstallationInspector } from "./installation-inspector.js";
 import { NodeProcessRunner } from "./node-process-runner.js";
@@ -13,6 +12,7 @@ import { PersistentCodexProcessRunner } from "./persistent-codex-process-runner.
 import { FileRuntimeReadinessInspector } from "./runtime-readiness.js";
 import { resolveSidecarSettings } from "./settings.js";
 import { startPreparedSidecar } from "./sidecar-startup.js";
+import { SubscriptionAccountPool } from "./subscription-account-pool.js";
 import {
   buildChildEnvironment,
   SubscriptionRuntimeExecutor,
@@ -20,11 +20,11 @@ import {
 
 async function bootstrap(): Promise<void> {
   const settings = await resolveSidecarSettings(process.env);
+  const accountPool = new SubscriptionAccountPool(settings.accounts);
   const persistentRunner = new PersistentCodexProcessRunner({
-    authJsonPath: settings.authJsonPath,
+    accounts: settings.accounts,
     launcherPath: settings.launcherPath,
     packageManifestPath: settings.packageManifestPath,
-    providerInstanceId,
     stateRoot: settings.stateRoot,
     workspacePath: settings.isolatedCwd,
   });
@@ -37,7 +37,7 @@ async function bootstrap(): Promise<void> {
     conversationAnswerExecutionProfile.reasoningEffort,
   );
   const executor = new SubscriptionRuntimeExecutor({
-    authJsonPath: settings.authJsonPath,
+    accountPool,
     childSourceEnvironment: process.env,
     installationInspector: new FileInstallationInspector({
       expectedLauncherSha256: settings.expectedLauncherSha256,
@@ -55,7 +55,7 @@ async function bootstrap(): Promise<void> {
     conversationStreamingProcessRunner: persistentRunner,
     processRunner: new NodeProcessRunner(),
     readinessInspector: new FileRuntimeReadinessInspector({
-      authJsonPath: settings.authJsonPath,
+      authJsonPaths: settings.accounts.map((account) => account.authJsonPath),
       isolatedCwd: settings.isolatedCwd,
       localEncryptionKeyFile: settings.localEncryptionKeyFile,
       stateRoot: settings.stateRoot,
@@ -65,13 +65,18 @@ async function bootstrap(): Promise<void> {
   const server = await startPreparedSidecar({
     disposePreparedRuntime: async () => persistentRunner.dispose(),
     prepareRuntime: async () => {
-      await persistentRunner.prewarm(
+      const result = await persistentRunner.prewarmAccounts(
         {
           execution: conversationAnswerExecutionProfile,
           outputSchema: providerConversationAnswerJsonSchema,
         },
         conversationEnvironment,
       );
+      for (const failure of result.failures) {
+        process.stderr.write(
+          `Subscription runtime ${failure.slotId} prewarm failed: ${failure.code}\n`,
+        );
+      }
     },
     startServer: async () => startGrpcServer({
       bindAddress: settings.bindAddress,

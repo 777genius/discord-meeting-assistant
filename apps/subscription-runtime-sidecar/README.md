@@ -53,9 +53,18 @@ not a provider generation cap and does not guarantee latency; the compact final
 and incremental schemas/prompts reduce response volume, while `low` reasoning
 is used by both latency-sensitive Luna purposes.
 
-The sidecar prewarms the conversation purpose before accepting traffic and keeps
-that purpose-scoped Subscription Runtime worker alive. It uses the app-server
-pool and clean-thread prewarm. Final and incremental summaries use the audited
+The sidecar attempts to prewarm one retained conversation worker for every
+admitted account before accepting traffic. Startup proceeds once at least one
+account is healthy. An unhealthy account remains configured; selecting it later
+creates and prewarms a fresh worker group, so transient startup failure does not
+remove it from later failover or recovery. Account selection is round-robin and
+has no task-count limit or waiting queue. A busy retained worker causes an
+additional native `FileBackendCodexWorker` to be created immediately for that
+request and disposed afterward. A retained worker that throws is disposed; a
+later request creates and prewarms its replacement. The runtime's app-server and packaged exec
+fallback, file-backed refresh lease, session cache, and session-generation
+compare-and-swap remain authoritative for every worker. Failover is allowed only
+before any streamed text is emitted. Final and incremental summaries use the audited
 launcher bridge because the pinned app-server path does not guarantee measured
 generation telemetry; summary generation remains fail-closed without it. The
 audited launcher validates the same exact request profile and installation
@@ -69,9 +78,9 @@ text is provisional until that terminal result succeeds.
 
 The fallback bridge uses `--provider codex`, `--input`,
 `--format result-json`, `--timeout-ms`, `--state-root`, `--codex-auth-json`,
-`--provider-instance discord-meeting-summary-v3`, and the selected profile's
-exact `--model`. The child reasoning environment must match that same request
-profile. The auth JSON and state root must belong only to this sidecar. Never
+an opaque slot-specific `--provider-instance`, and the selected profile's exact
+`--model`. The child reasoning environment must match that same request
+profile. Every auth JSON and the state root must belong only to this sidecar. Never
 mount another project's mutable runtime state.
 
 The audited launcher observes the documented `codex exec --json` JSONL

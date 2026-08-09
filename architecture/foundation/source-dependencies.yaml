@@ -627,13 +627,16 @@ boundaries:
       - infra/subscription-runtime/audited-codex-jsonl-events.mjs
       - infra/subscription-runtime/audited-xhigh-launcher.mjs
       - infra/subscription-runtime/audited-xhigh-policy.mjs
+      - infra/subscription-runtime/materialize-account-pool.mjs
     entrypoints:
       - infra/subscription-runtime/audited-xhigh-launcher.mjs
+      - infra/subscription-runtime/materialize-account-pool.mjs
     allow:
       boundaries: []
       packages: []
       builtins:
         - node:child_process
+        - node:crypto
         - node:fs
         - node:fs/promises
         - node:path

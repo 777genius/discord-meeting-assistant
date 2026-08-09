@@ -3,7 +3,9 @@ import type {
   SubscriptionRuntimeExecutionProfile,
 } from "@discord-meeting/subscription-runtime-adapter";
 
-interface RuntimeWorkerResult {
+import type { SubscriptionRuntimeAccount } from "./subscription-account-pool.js";
+
+export interface RuntimeWorkerResult {
   readonly outputText: string;
   readonly status?: "completed" | "waiting_for_input";
   readonly structuredOutput?: unknown;
@@ -14,33 +16,54 @@ interface RuntimeWorkerResult {
   }[];
 }
 
-interface RuntimeWorker {
+export interface RuntimeWorkerJob {
+  readonly abortSignal: AbortSignal;
+  readonly controls: JsonObject;
+  readonly kind: "structured-prompt";
+  readonly metadata: Readonly<Record<string, string>>;
+  readonly outputSchemaName: string;
+  readonly prompt: string;
+  readonly runId: string;
+  readonly systemPrompt: string;
+}
+
+export interface RuntimeWorkerRunOptions {
+  readonly abortSignal?: AbortSignal;
+  readonly onProviderTaskStarted?: () => Promise<void> | void;
+  readonly onProviderTextDelta?: (text: string) => void;
+}
+
+export interface RuntimeWorker {
+  readonly state: string;
+  readonly workerId: string;
   dispose(): Promise<void>;
+  health(): Promise<unknown>;
   prewarm(): Promise<unknown>;
-  run(input: {
-    readonly abortSignal: AbortSignal;
-    readonly controls: JsonObject;
-    readonly kind: "structured-prompt";
-    readonly metadata: Readonly<Record<string, string>>;
-    readonly outputSchemaName: string;
-    readonly prompt: string;
-    readonly runId: string;
-    readonly systemPrompt: string;
-  }, options?: {
-    readonly abortSignal?: AbortSignal;
-    readonly onProviderTaskStarted?: () => Promise<void> | void;
-    readonly onProviderTextDelta?: (text: string) => void;
-  }): Promise<RuntimeWorkerResult>;
-  seedCodexAuthJsonFile(path: string): Promise<void>;
+  run(
+    input: RuntimeWorkerJob,
+    options?: RuntimeWorkerRunOptions,
+  ): Promise<RuntimeWorkerResult>;
   start(): Promise<void>;
 }
 
+interface RuntimeCodexWorker extends RuntimeWorker {
+  seedCodexAuthJsonFile(path: string): Promise<void>;
+}
+
 interface RuntimeWorkerConstructor {
-  new (options: Readonly<Record<string, unknown>>): RuntimeWorker;
+  new (options: Readonly<Record<string, unknown>>): RuntimeCodexWorker;
 }
 
 export interface RuntimeWorkerModule {
   readonly FileBackendCodexWorker: RuntimeWorkerConstructor;
+}
+
+export interface RuntimeWorkerGroup {
+  dispose(): Promise<void>;
+  run(
+    input: RuntimeWorkerJob,
+    options?: RuntimeWorkerRunOptions,
+  ): Promise<RuntimeWorkerResult>;
 }
 
 export interface LauncherPolicyModule {
@@ -58,18 +81,18 @@ export interface PersistentCodexProfile {
 }
 
 export interface PersistentCodexProcessRunnerOptions {
-  readonly authJsonPath: string;
+  readonly accounts: readonly SubscriptionRuntimeAccount[];
   readonly codexBinaryPath?: string;
   readonly launcherPath: string;
   readonly packageManifestPath: string;
-  readonly providerInstanceId: string;
   readonly stateRoot: string;
   readonly workspacePath: string;
   readonly launcherPolicyLoader?: (path: string) => Promise<LauncherPolicyModule>;
   readonly workerModuleLoader?: (path: string) => Promise<RuntimeWorkerModule>;
 }
 
-export interface PersistentCodexWorkerSlot {
+export interface PersistentCodexWorkerGroup {
+  readonly accountId: string;
   readonly profile: PersistentCodexProfile;
-  readonly worker: RuntimeWorker;
+  readonly group: RuntimeWorkerGroup;
 }

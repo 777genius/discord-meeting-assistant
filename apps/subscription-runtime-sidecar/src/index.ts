@@ -11,6 +11,11 @@ export {
 } from "./installation-inspector.js";
 export { NodeProcessRunner } from "./node-process-runner.js";
 export {
+  SubscriptionAccountPool,
+  subscriptionProviderInstanceId,
+  type SubscriptionRuntimeAccount,
+} from "./subscription-account-pool.js";
+export {
   PersistentCodexProcessRunner,
   type PersistentCodexProcessRunnerOptions,
   type PersistentCodexProfile,

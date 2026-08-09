@@ -9,7 +9,7 @@ import {
   providerMeetingSummaryJsonSchema,
   type JsonObject,
 } from "@discord-meeting/subscription-runtime-adapter";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   PersistentCodexProcessRunner,
@@ -35,6 +35,7 @@ let runners: PersistentCodexProcessRunner[] = [];
 
 describe("PersistentCodexProcessRunner", () => {
   afterEach(async () => {
+    vi.restoreAllMocks();
     await Promise.all(runners.map((runner) => runner.dispose()));
     runners = [];
     if (root !== undefined) {
@@ -43,15 +44,16 @@ describe("PersistentCodexProcessRunner", () => {
     root = undefined;
   });
 
-  it("identifies the warm app-server execution engine", async () => {
-    const fixture = await createFixture();
-    expect(fixture.runner.runtimeEngine).toBe("subscription-runtime-app-server");
-  });
+  it("identifies the warm app-server execution engine", identifiesRuntimeEngine);
 
   it("creates and prewarms one conversation worker, then reuses it for two requests", async () => {
     const fixture = await createFixture();
 
-    await fixture.runner.prewarm(conversationProfile, fixture.environment);
+    await fixture.runner.prewarm(
+      conversationProfile,
+      fixture.environment,
+      "slot-1",
+    );
     const first = await fixture.runner.run(await requestFor(
       fixture,
       "conversation-first",
@@ -86,7 +88,8 @@ describe("PersistentCodexProcessRunner", () => {
       reasoningEffort: "low",
       sessionCacheSlots: 1,
       sourceEnv: { PATH: "/test/bin" },
-      workerId: "discord-meeting-discord_meeting-conversation-answer",
+      workerId:
+        "discord-meeting-discord_meeting-conversation-answer-slot-1:worker-1",
     });
     expect(JSON.parse(first.stdout)).toMatchObject({
       outputText: conversationCanonicalRequest.runId,
@@ -97,6 +100,43 @@ describe("PersistentCodexProcessRunner", () => {
       status: "completed",
     });
   });
+
+  it(
+    "runs concurrent work on one account without a task-count limit",
+    runsConcurrentWorkWithoutLimit,
+  );
+
+  it("starts with a partially healthy account pool", async () => {
+    const partiallyHealthy = await createFixture(2);
+    partiallyHealthy.state.prewarm = async (worker) => {
+      if (worker.options.workerId ===
+        "discord-meeting-discord_meeting-conversation-answer-slot-1:worker-1") {
+        throw new Error("synthetic unavailable account");
+      }
+    };
+
+    await expect(partiallyHealthy.runner.prewarmAccounts(
+      conversationProfile,
+      partiallyHealthy.environment,
+    )).resolves.toEqual({
+      failures: [{ code: "backend_unavailable", slotId: "slot-1" }],
+      readyAccounts: 1,
+      totalAccounts: 2,
+    });
+  });
+
+  it("fails closed when no account prewarms", async () => {
+    const unavailable = await createFixture(2);
+    unavailable.state.prewarm = async () => {
+      throw new Error("synthetic unavailable account");
+    };
+    await expect(unavailable.runner.prewarmAccounts(
+      conversationProfile,
+      unavailable.environment,
+    )).rejects.toThrow("account pool prewarm failed");
+  });
+
+  it("disposes a worker when auth seeding fails", disposesWorkerOnSeedFailure);
 
   it("forwards provider lifecycle and text deltas from the warm worker", async () => {
     const fixture = await createFixture();
@@ -123,6 +163,13 @@ describe("PersistentCodexProcessRunner", () => {
     expect(fixture.state.workers).toHaveLength(1);
   });
 
+  it(
+    "preserves a nested quota failure for account failover",
+    preservesNestedQuotaFailure,
+  );
+
+  it("replaces a retained worker after a run failure", replacesFailedWorker);
+
   it("creates distinct prewarmed workers for distinct purpose profiles", async () => {
     const fixture = await createFixture();
 
@@ -141,8 +188,8 @@ describe("PersistentCodexProcessRunner", () => {
     expect(fixture.state.workers).toHaveLength(2);
     expect(fixture.state.workers.map((worker) => worker.prewarmCalls)).toEqual([1, 1]);
     expect(fixture.state.workers.map((worker) => worker.options.workerId)).toEqual([
-      "discord-meeting-discord_meeting-conversation-answer",
-      "discord-meeting-discord_meeting-summary-generate",
+      "discord-meeting-discord_meeting-conversation-answer-slot-1:worker-1",
+      "discord-meeting-discord_meeting-summary-generate-slot-1:worker-1",
     ]);
   });
 
@@ -177,8 +224,16 @@ describe("PersistentCodexProcessRunner", () => {
   it("disposes every prewarmed worker and refuses later requests", async () => {
     const fixture = await createFixture();
 
-    await fixture.runner.prewarm(conversationProfile, fixture.environment);
-    await fixture.runner.prewarm(finalSummaryProfile, fixture.environment);
+    await fixture.runner.prewarm(
+      conversationProfile,
+      fixture.environment,
+      "slot-1",
+    );
+    await fixture.runner.prewarm(
+      finalSummaryProfile,
+      fixture.environment,
+      "slot-1",
+    );
     await fixture.runner.dispose();
     await fixture.runner.dispose();
 
@@ -204,7 +259,11 @@ describe("PersistentCodexProcessRunner", () => {
     ))).rejects.toThrow("Runtime launcher conflicts with persistent runner policy");
     expect(fixture.state.workers).toHaveLength(0);
 
-    await fixture.runner.prewarm(conversationProfile, fixture.environment);
+    await fixture.runner.prewarm(
+      conversationProfile,
+      fixture.environment,
+      "slot-1",
+    );
     const mismatchedProfileRequest = {
       ...conversationCanonicalRequest,
       task: {
@@ -223,7 +282,146 @@ describe("PersistentCodexProcessRunner", () => {
     ))).rejects.toThrow("Persistent worker profile changed after prewarm");
     expect(requiredWorker(fixture.state, 0).runInputs).toHaveLength(0);
   });
+
+  it("rejects state and account arguments outside the admitted pool policy", async () => {
+    const fixture = await createFixture(2);
+    const wrongState = await requestFor(
+      fixture,
+      "wrong-state",
+      conversationCanonicalRequest,
+    );
+
+    await expect(fixture.runner.run({
+      ...wrongState,
+      args: replaceArgument(wrongState.args, "--state-root", "/other/state"),
+    })).rejects.toThrow("Persistent worker state root conflicts with policy");
+
+    const mismatchedAccount = await requestFor(
+      fixture,
+      "mismatched-account",
+      conversationCanonicalRequest,
+    );
+    await expect(fixture.runner.run({
+      ...mismatchedAccount,
+      args: replaceArgument(
+        mismatchedAccount.args,
+        "--provider-instance",
+        "discord-meeting-summary-v3-slot-2",
+      ),
+    })).rejects.toThrow("Persistent worker account conflicts with policy");
+  });
 });
+
+async function identifiesRuntimeEngine(): Promise<void> {
+  const fixture = await createFixture();
+  expect(fixture.runner.runtimeEngine).toBe("subscription-runtime-app-server");
+}
+
+async function disposesWorkerOnSeedFailure(): Promise<void> {
+  const fixture = await createFixture();
+  fixture.state.seed = async () => {
+    throw new Error("synthetic auth seed failure");
+  };
+
+  await expect(fixture.runner.prewarm(
+    conversationProfile,
+    fixture.environment,
+    "slot-1",
+  )).rejects.toThrow("synthetic auth seed failure");
+
+  expect(fixture.state.workers).toHaveLength(1);
+  expect(requiredWorker(fixture.state, 0).disposeCalls).toBe(1);
+}
+
+async function replacesFailedWorker(): Promise<void> {
+  const fixture = await createFixture();
+  vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+  let attempts = 0;
+  fixture.state.run = async (input) => {
+    attempts += 1;
+    if (attempts === 1) {
+      throw new Error("synthetic worker failure");
+    }
+    return successfulWorkerResult(input);
+  };
+
+  const failed = await fixture.runner.run(await requestFor(
+    fixture,
+    "failed-retained-worker",
+    conversationCanonicalRequest,
+  ));
+  const recovered = await fixture.runner.run(await requestFor(
+    fixture,
+    "replacement-retained-worker",
+    conversationCanonicalRequest,
+  ));
+
+  expect(JSON.parse(failed.stdout)).toMatchObject({ status: "failed" });
+  expect(JSON.parse(recovered.stdout)).toMatchObject({ status: "completed" });
+  expect(fixture.state.workers).toHaveLength(2);
+  expect(fixture.state.workers.map((worker) => worker.prewarmCalls)).toEqual([1, 1]);
+  expect(fixture.state.workers.map((worker) => worker.disposeCalls)).toEqual([1, 0]);
+}
+
+async function runsConcurrentWorkWithoutLimit(): Promise<void> {
+  const fixture = await createFixture();
+  const allStarted = deferred<void>();
+  const release = deferred<void>();
+  const taskCount = 16;
+  let started = 0;
+  fixture.state.run = async (input) => {
+    started += 1;
+    if (started === taskCount) {
+      allStarted.resolve();
+    }
+    await release.promise;
+    return successfulWorkerResult(input);
+  };
+
+  const requests = await Promise.all(Array.from(
+    { length: taskCount },
+    async (_, index) => await requestFor(
+      fixture,
+      `parallel-${index + 1}`,
+      conversationCanonicalRequest,
+    ),
+  ));
+  const executions = Promise.all(requests.map(async (request) =>
+    await fixture.runner.run(request)));
+  await allStarted.promise;
+
+  expect(fixture.state.workers).toHaveLength(taskCount);
+  expect(fixture.state.workers.map((worker) => worker.runInputs.length))
+    .toEqual(Array.from({ length: taskCount }, () => 1));
+  expect(fixture.state.workers.map((worker) => worker.prewarmCalls))
+    .toEqual([1, ...Array.from({ length: taskCount - 1 }, () => 0)]);
+
+  release.resolve();
+  await executions;
+  expect(fixture.state.workers.map((worker) => worker.disposeCalls))
+    .toEqual([0, ...Array.from({ length: taskCount - 1 }, () => 1)]);
+}
+
+async function preservesNestedQuotaFailure(): Promise<void> {
+  const fixture = await createFixture();
+  vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+  fixture.state.run = async () => {
+    throw new Error("Worker invocation failed", {
+      cause: new Error("Codex usage limit exhausted"),
+    });
+  };
+
+  const result = await fixture.runner.run(await requestFor(
+    fixture,
+    "conversation-quota",
+    conversationCanonicalRequest,
+  ));
+
+  expect(JSON.parse(result.stdout)).toMatchObject({
+    failure: { code: "quota_limited", retryable: true },
+    status: "failed",
+  });
+}
 
 interface Fixture {
   readonly authJsonPath: string;
@@ -266,10 +464,13 @@ interface FakeWorkerRunOptions {
 interface FakeWorkerState {
   readonly modulePaths: string[];
   readonly workers: FakeWorker[];
+  prewarm: (worker: FakeWorker) => Promise<void>;
   run: (
     input: FakeWorkerInput,
     options?: FakeWorkerRunOptions,
   ) => Promise<FakeWorkerResult>;
+  seed: (worker: FakeWorker, path: string) => Promise<void>;
+  start: (worker: FakeWorker) => Promise<void>;
 }
 
 class FakeWorker {
@@ -281,9 +482,17 @@ class FakeWorker {
 
   public constructor(
     public readonly options: Readonly<Record<string, unknown>>,
-    private readonly state: FakeWorkerState,
+    private readonly fakeState: FakeWorkerState,
   ) {
-    state.workers.push(this);
+    fakeState.workers.push(this);
+  }
+
+  public get state(): string {
+    return "ready";
+  }
+
+  public get workerId(): string {
+    return String(this.options.workerId);
   }
 
   public async dispose(): Promise<void> {
@@ -292,6 +501,11 @@ class FakeWorker {
 
   public async prewarm(): Promise<void> {
     this.prewarmCalls += 1;
+    await this.fakeState.prewarm(this);
+  }
+
+  public async health(): Promise<unknown> {
+    return { status: "healthy" };
   }
 
   public async run(
@@ -299,30 +513,38 @@ class FakeWorker {
     options?: FakeWorkerRunOptions,
   ): Promise<FakeWorkerResult> {
     this.runInputs.push(input);
-    return await this.state.run(input, options);
+    return await this.fakeState.run(input, options);
   }
 
   public async seedCodexAuthJsonFile(path: string): Promise<void> {
     this.seededAuthPaths.push(path);
+    await this.fakeState.seed(this, path);
   }
 
   public async start(): Promise<void> {
     this.startCalls += 1;
+    await this.fakeState.start(this);
   }
 }
 
-async function createFixture(): Promise<Fixture> {
+async function createFixture(accountCount = 1): Promise<Fixture> {
   const testRoot = await mkdtemp(join(tmpdir(), "persistent-codex-runner-test-"));
   root = testRoot;
   const launcherPath = join(testRoot, "launcher.mjs");
   const packageManifestPath = join(testRoot, "package.json");
   const authJsonPath = join(testRoot, "auth.json");
+  const authJsonPaths = Array.from(
+    { length: accountCount },
+    (_, index) => index === 0
+      ? authJsonPath
+      : join(testRoot, `auth-${index + 1}.json`),
+  );
   const stateRoot = join(testRoot, "state");
   const workspacePath = join(testRoot, "workspace");
   await Promise.all([
     mkdir(stateRoot),
     mkdir(workspacePath),
-    writeFile(authJsonPath, "{}"),
+    ...authJsonPaths.map(async (path) => writeFile(path, "{}")),
     writeFile(
       launcherPath,
       "export function admitMeetingSummaryRequest() {}\n",
@@ -332,7 +554,10 @@ async function createFixture(): Promise<Fixture> {
   const state: FakeWorkerState = {
     modulePaths: [],
     workers: [],
+    prewarm: async () => {},
     run: async (input) => successfulWorkerResult(input),
+    seed: async () => {},
+    start: async () => {},
   };
   const environment = {
     AGENT_RUNTIME_REASONING_EFFORT: "low",
@@ -340,10 +565,15 @@ async function createFixture(): Promise<Fixture> {
     SUBSCRIPTION_RUNTIME_LOCAL_ENCRYPTION_KEY: "test-encryption-key",
   };
   const runner = new PersistentCodexProcessRunner({
-    authJsonPath,
+    accounts: authJsonPaths.map((path, index) => ({
+      authJsonPath: path,
+      id: `slot-${index + 1}`,
+      providerInstanceId: index === 0
+        ? "discord-meeting-summary-v3"
+        : `discord-meeting-summary-v3-slot-${index + 1}`,
+    })),
     launcherPath,
     packageManifestPath,
-    providerInstanceId: "discord-meeting-summary-v3",
     stateRoot,
     workerModuleLoader: fakeWorkerModuleLoader(state),
     workspacePath,
@@ -387,6 +617,12 @@ async function requestFor(
     args: [
       "--input",
       inputPath,
+      "--codex-auth-json",
+      fixture.authJsonPath,
+      "--provider-instance",
+      "discord-meeting-summary-v3",
+      "--state-root",
+      join(fixture.root, "state"),
       "--model",
       controlText(requestPayload, "model"),
     ],
@@ -405,6 +641,20 @@ async function requestFor(
     timeoutMs: 10_000,
     ...override,
   };
+}
+
+function replaceArgument(
+  args: readonly string[],
+  name: string,
+  value: string,
+): string[] {
+  const updated = [...args];
+  const index = updated.indexOf(name);
+  if (index < 0 || index + 1 >= updated.length) {
+    throw new Error(`Request test fixture is missing ${name}`);
+  }
+  updated[index + 1] = value;
+  return updated;
 }
 
 function controlText(

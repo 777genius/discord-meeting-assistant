@@ -76,7 +76,7 @@ export function persistentCodexSignalAborted(signal: AbortSignal | undefined): b
 }
 
 function persistentCodexRuntimeFailureCode(error: unknown): string {
-  const text = error instanceof Error ? `${error.name} ${error.message}` : "";
+  const text = persistentCodexSafeErrorChain(error);
   if (/quota|usage.?limit/iu.test(text)) {
     return "quota_limited";
   }

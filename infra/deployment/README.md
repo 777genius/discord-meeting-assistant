@@ -11,13 +11,21 @@ until record-ID routing, durable leases with fencing tokens, distributed
 projection locks, and takeover/recovery tests are implemented. Stateless HTTP
 endpoints may later be split into an independently scalable deployment.
 
-All files below `${DEPLOY_ROOT}/secrets` and the copied subscription auth slot
+All files below `${DEPLOY_ROOT}/secrets` and the copied subscription auth pool
 must be regular, non-symlink files with mode `0400`, owned by the UID that reads
 them. Platform and subscription-runtime files and their mounted directories use
 UID `10001`; `redis.conf` uses UID `999`; `s3-config.json` uses UID `1000`.
 Root-owned bootstrap files are limited to services whose entrypoints read them
 before dropping privileges. Persistent service data stays on the large host
 volume rather than the root filesystem.
+
+The sidecar pool manifest is `${DEPLOY_ROOT}/runtime/auth-pool/pool.json`.
+It contains only sequential opaque slots (`slot-1` through `slot-8`) and paths
+inside one immutable opaque generation. Swapping `pool.json` publishes a whole
+generation atomically, so a running sidecar never imports a different account
+into an existing slot. Account names and the host inventory path stay outside
+Compose and the application. Reserved accounts must be removed from every
+other project's candidate manifest before the new sidecar starts.
 
 PostgreSQL migrations are owned by the one-shot `postgres-migrations` service,
 not by PostgreSQL init hooks. It acquires an advisory lock, applies every

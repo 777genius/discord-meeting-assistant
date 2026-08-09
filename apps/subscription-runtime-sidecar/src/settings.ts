@@ -1,7 +1,6 @@
 import { lstat, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-
 import {
   auditedSubscriptionRuntimePackageVersion,
   conversationAnswerOutputSchemaName,
@@ -23,17 +22,19 @@ import {
   subscriptionRuntimeReasoningEffort,
   subscriptionRuntimeSummaryMaxOutputTokens,
 } from "@discord-meeting/subscription-runtime-adapter";
-
 import {
   applicationName,
   providerInstanceId,
   runtimePackageName,
 } from "./constants.js";
-
+import type { SubscriptionRuntimeAccount } from "./subscription-account-pool.js";
+import {
+  maximumAccountPoolSize,
+  resolveSubscriptionAccountPool,
+} from "./subscription-account-manifest.js";
 const defaultProtoPath = fileURLToPath(
   new URL("../../meeting-platform/proto/agent_runtime.proto", import.meta.url),
 );
-
 const deploymentPolicySchema = z
   .object({
     schemaVersion: z.literal(1),
@@ -48,7 +49,9 @@ const deploymentPolicySchema = z
       serviceTokenFile: z.string().min(1),
     }),
     custody: z.object({
-      authJsonPath: z.string().min(1),
+      authPoolManifestPath: z.string().min(1),
+      maximumAccounts: z.literal(maximumAccountPoolSize),
+      minimumAccounts: z.literal(1),
       stateRoot: z.string().min(1),
       localEncryptionKeyFile: z.string().min(1),
       sharedMutableStateAllowed: z.literal(false),
@@ -100,7 +103,8 @@ const deploymentPolicySchema = z
   .loose();
 
 export interface SidecarSettings {
-  readonly authJsonPath: string;
+  readonly accounts: readonly SubscriptionRuntimeAccount[];
+  readonly authPoolManifestPath: string;
   readonly bindAddress: string;
   readonly expectedLauncherSha256: string;
   readonly isolatedCwd: string;
@@ -121,11 +125,13 @@ export async function resolveSidecarSettings(
   env: NodeJS.ProcessEnv,
 ): Promise<SidecarSettings> {
   assertFrozenEnvironment(env);
+  const authPoolManifestPath = requiredAbsolutePath(
+    env.SUBSCRIPTION_RUNTIME_AUTH_POOL_MANIFEST_PATH,
+    "SUBSCRIPTION_RUNTIME_AUTH_POOL_MANIFEST_PATH",
+  );
   const settings: SidecarSettings = {
-    authJsonPath: requiredAbsolutePath(
-      env.SUBSCRIPTION_RUNTIME_AUTH_JSON_PATH,
-      "SUBSCRIPTION_RUNTIME_AUTH_JSON_PATH",
-    ),
+    accounts: await resolveSubscriptionAccountPool(authPoolManifestPath),
+    authPoolManifestPath,
     bindAddress: requiredText(
       env.SUBSCRIPTION_RUNTIME_GRPC_BIND,
       "SUBSCRIPTION_RUNTIME_GRPC_BIND",
@@ -205,7 +211,6 @@ export async function resolveSidecarSettings(
   );
   return settings;
 }
-
 async function assertDeploymentPolicy(
   policyPath: string,
   env: NodeJS.ProcessEnv,
@@ -297,7 +302,7 @@ function assertDeploymentWiring(
   if (
     policy.transport.bind !== settings.bindAddress ||
     policy.transport.serviceTokenFile !== env.SUBSCRIPTION_RUNTIME_SERVICE_TOKEN_FILE ||
-    policy.custody.authJsonPath !== settings.authJsonPath ||
+    policy.custody.authPoolManifestPath !== settings.authPoolManifestPath ||
     policy.custody.stateRoot !== settings.stateRoot ||
     policy.custody.localEncryptionKeyFile !== settings.localEncryptionKeyFile ||
     profiles.final.isolatedCwd !== settings.isolatedCwd ||

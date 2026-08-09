@@ -1,8 +1,8 @@
 # Subscription runtime sidecar
 
-This deployment boundary supplies meeting-summary generation through a Codex
-subscription account. It does not use an OpenAI SDK, API key, or separate API
-billing account.
+This deployment boundary supplies meeting-summary generation through a private
+pool of Codex subscription accounts. It does not use an OpenAI SDK, API key, or
+separate API billing account.
 
 ## Ownership boundary
 
@@ -13,13 +13,15 @@ session materialization, refresh, encrypted state, leases, capacity signals,
 and account recovery. Application and domain code never read credentials or
 runtime volumes.
 
-The host allocator must reserve a dedicated pre-authenticated slot from the
-existing account inventory, exclude that reservation from other project
-candidates, and atomically materialize only that slot at:
+The host allocator must reserve a dedicated subset from the existing host
+account inventory, exclude those accounts from other project candidates, and
+atomically materialize only opaque slots at:
 
 ```text
 ${SUBSCRIPTION_RUNTIME_PRIVATE_ROOT}/
-  auth-current/auth.json
+  auth-pool/pool.json
+  auth-pool/generations/<opaque-generation>/slot-1/auth.json
+  auth-pool/generations/<opaque-generation>/slot-2/auth.json
   secrets/local-encryption-key
   secrets/service-token
   state/
@@ -29,6 +31,36 @@ Credential values, account names, and source inventory paths do not belong in
 Compose, repository files, logs, task requests, health responses, or
 attestations. Directly mounting `social-monitor/auth-current`, its runtime state,
 or any other mutable project directory is forbidden.
+
+Keep the host-only reservation manifest outside the repository:
+
+```json
+{
+  "schemaVersion": 1,
+  "owner": "discord-meeting-assistant",
+  "accounts": ["<reserved-host-account>", "<reserved-host-account>"]
+}
+```
+
+After the common host allocator has excluded those accounts from Social
+Monitor, materialize an immutable sidecar generation with:
+
+```text
+node infra/subscription-runtime/materialize-account-pool.mjs \
+  --auth-root <host-account-inventory> \
+  --reservation-manifest <host-only-reservation.json> \
+  --target-root ${SUBSCRIPTION_RUNTIME_PRIVATE_ROOT}/auth-pool \
+  --target-uid 10001 \
+  --target-gid 10001
+```
+
+The command never prints account names. It publishes `pool.json` only after all
+private auth copies are complete; older generations remain valid for a running
+sidecar and can be pruned during a later stopped maintenance window.
+Keep existing reservation entries in stable order so an opaque slot never
+changes identity while its provider state exists. Append-only pool expansion is
+safe. Reordering, removing, or replacing an entry requires stopped maintenance
+and removal of that slot's provider state before the sidecar restarts.
 
 `local-encryption-key` is a standard or URL-safe base64 encoding of exactly 32
 random bytes (for example, `openssl rand -base64 32`), not hexadecimal text.
@@ -81,9 +113,14 @@ It is not a provider generation cap and does not guarantee latency; the compact
 final and incremental schemas/prompts reduce response volume, while `low`
 reasoning is used by both latency-sensitive Luna purposes.
 
-The sidecar keeps purpose-scoped workers alive and prewarms the conversation
-app-server/clean-thread path before opening its gRPC listener. Every turn stays
-stateless, and packaged exec remains the fallback. The audited launcher wraps
+The sidecar selects an opaque account round-robin per request and tries another
+account for quota, reconnect, invalid-session, or backend failures. It applies
+no task-count limit and keeps no waiting queue. Persistent conversation
+execution retains one prewarmed `FileBackendCodexWorker` per account; overlapping
+requests create additional native workers immediately and dispose them after
+completion. Failed retained workers are disposed and prewarmed again on the
+next request. Every turn stays stateless, and Subscription Runtime continues to
+own app-server execution, session/cache safety, and packaged exec fallback. The audited launcher wraps
 only the admitted `codexBinaryPath` on that fallback and observes
 `codex exec --json` JSONL `turn.completed` events. It keeps the private runtime
 worker responsible for auth custody and disabled-tool policy. Codex supplies
@@ -129,7 +166,7 @@ Before real Discord E2E, verify without printing secrets:
 - the private root is outside every other project's directory;
 - auth and secret files are regular, non-symlink files with least-privilege
   ownership and modes;
-- the reserved slot is excluded from all other project allocators;
+- every reserved pool account is excluded from all other project allocators;
 - Compose publishes no host port and joins only `discord-meeting-internal`;
 - health reports the exact package version and audited launcher bundle digest;
 - a deterministic contract request passes before any real provider request;

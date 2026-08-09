@@ -24,6 +24,10 @@ import {
   buildChildEnvironment,
   buildCliArgs,
 } from "./subscription-runtime-process-request.js";
+import {
+  SubscriptionAccountPool,
+  type SubscriptionRuntimeAccount,
+} from "./subscription-account-pool.js";
 import type {
   InstallationInspectorPort,
   InstallationIdentity,
@@ -39,7 +43,7 @@ import type {
 export { buildChildEnvironment } from "./subscription-runtime-process-request.js";
 
 export interface SubscriptionRuntimeExecutorOptions extends RequestPolicyOptions {
-  readonly authJsonPath: string;
+  readonly accountPool: SubscriptionAccountPool;
   readonly childSourceEnvironment: NodeJS.ProcessEnv;
   readonly conversationProcessRunner?: ProcessRunnerPort;
   readonly conversationStreamingProcessRunner?: StreamingProcessRunnerPort;
@@ -71,6 +75,18 @@ interface AdmittedExecutionInput {
 interface CompletedExecutionInput extends AdmittedExecutionInput {
   readonly execution: ProcessRunResult;
 }
+
+interface StreamAttemptState {
+  providerStarted: boolean;
+  textEmitted: boolean;
+}
+
+const failoverFailureCodes = new Set([
+  "backend_unavailable",
+  "needs_reconnect",
+  "provider_session_invalid",
+  "quota_limited",
+]);
 
 export class SubscriptionRuntimeExecutor
   implements SidecarExecutorPort, SidecarStreamingExecutorPort {
@@ -199,33 +215,131 @@ async function executeAdmittedRequest(
     if (encryptionKey.length === 0) {
       return failedResult("backend_unavailable");
     }
-    const processRequest = {
-      args: buildCliArgs(input.request, inputPath, input.options, input.plan.profile),
-      command: input.admittedInstallation.executableRealpath,
-      cwd: input.options.isolatedCwd,
-      env: buildChildEnvironment(
-        input.options.childSourceEnvironment,
-        encryptionKey,
-        input.plan.profile.reasoningEffort,
-      ),
-      killGraceMs: input.options.killGraceMs,
-      maxStderrBytes: input.options.maxStderrBytes,
-      maxStdoutBytes: input.options.maxStdoutBytes,
-      ...(input.signal === undefined ? {} : { signal: input.signal }),
-      timeoutMs: input.request.timeoutMs,
-    };
-    const execution = input.streamObserver === undefined
-      ? await input.plan.processRunner.run(processRequest)
-      : await input.plan.streamingProcessRunner!.runStreaming(
-          processRequest,
-          input.streamObserver,
-        );
-    return completeAdmittedExecution({ ...input, execution });
+    return await executeWithAccountFailover(input, inputPath, encryptionKey);
   } catch {
-    return failedResult("backend_unavailable");
+    return signalAborted(input.signal)
+      ? failedResult("task_cancelled")
+      : failedResult("backend_unavailable");
   } finally {
     await rm(tempRoot, { force: true, recursive: true });
   }
+}
+
+async function executeWithAccountFailover(
+  input: AdmittedExecutionInput,
+  inputPath: string,
+  encryptionKey: string,
+): Promise<SubscriptionRuntimeTaskResult> {
+  const attemptedAccountIds = new Set<string>();
+  const streamState: StreamAttemptState = {
+    providerStarted: false,
+    textEmitted: false,
+  };
+  let lastResult: SubscriptionRuntimeTaskResult = failedResult(
+    "backend_unavailable",
+  );
+  while (attemptedAccountIds.size < input.options.accountPool.accounts.length) {
+    const account = input.options.accountPool.select(
+      attemptedAccountIds,
+      input.signal,
+    );
+    if (account === undefined) {
+      return lastResult;
+    }
+    attemptedAccountIds.add(account.id);
+    try {
+      const execution = await executeAccountAttempt(
+        input,
+        account,
+        inputPath,
+        encryptionKey,
+        streamState,
+      );
+      lastResult = await completeAdmittedExecution({ ...input, execution });
+    } catch {
+      lastResult = signalAborted(input.signal)
+        ? failedResult("task_cancelled")
+        : failedResult("backend_unavailable");
+    }
+    if (!shouldFailOver(lastResult, streamState, input.signal)) {
+      return lastResult;
+    }
+  }
+  return lastResult;
+}
+
+async function executeAccountAttempt(
+  input: AdmittedExecutionInput,
+  account: SubscriptionRuntimeAccount,
+  inputPath: string,
+  encryptionKey: string,
+  streamState: StreamAttemptState,
+): Promise<ProcessRunResult> {
+  const processRequest = {
+    args: buildCliArgs(
+      input.request,
+      inputPath,
+      {
+        authJsonPath: account.authJsonPath,
+        providerInstanceId: account.providerInstanceId,
+        stateRoot: input.options.stateRoot,
+      },
+      input.plan.profile,
+    ),
+    command: input.admittedInstallation.executableRealpath,
+    cwd: input.options.isolatedCwd,
+    env: buildChildEnvironment(
+      input.options.childSourceEnvironment,
+      encryptionKey,
+      input.plan.profile.reasoningEffort,
+    ),
+    killGraceMs: input.options.killGraceMs,
+    maxStderrBytes: input.options.maxStderrBytes,
+    maxStdoutBytes: input.options.maxStdoutBytes,
+    ...(input.signal === undefined ? {} : { signal: input.signal }),
+    timeoutMs: input.request.timeoutMs,
+  };
+  if (input.streamObserver === undefined) {
+    return await input.plan.processRunner.run(processRequest);
+  }
+  return await input.plan.streamingProcessRunner!.runStreaming(
+    processRequest,
+    failoverStreamObserver(input.streamObserver, streamState),
+  );
+}
+
+function failoverStreamObserver(
+  observer: ProviderTaskStreamObserver,
+  state: StreamAttemptState,
+): ProviderTaskStreamObserver {
+  return {
+    onProviderTaskStarted: async () => {
+      if (state.providerStarted) {
+        return;
+      }
+      state.providerStarted = true;
+      await observer.onProviderTaskStarted();
+    },
+    onProviderTextDelta: (text) => {
+      if (text.length > 0) {
+        state.textEmitted = true;
+      }
+      observer.onProviderTextDelta(text);
+    },
+  };
+}
+
+function shouldFailOver(
+  result: SubscriptionRuntimeTaskResult,
+  streamState: StreamAttemptState,
+  signal: AbortSignal | undefined,
+): boolean {
+  return (
+    !signalAborted(signal) &&
+    !streamState.textEmitted &&
+    result.status === "failed" &&
+    failoverFailureCodes.has(result.failure.code)
+  );
 }
 
 async function writePrivateInput(

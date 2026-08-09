@@ -5,7 +5,7 @@ import { subscriptionRuntimeEngine } from "@discord-meeting/subscription-runtime
 import type {
   PersistentCodexProcessRunnerOptions,
   PersistentCodexProfile,
-  PersistentCodexWorkerSlot,
+  PersistentCodexWorkerGroup,
 } from "./persistent-codex-process-contracts.js";
 import {
   persistentCodexArgumentValue,
@@ -24,7 +24,8 @@ import {
   persistentCodexSignalAborted,
   persistentCodexTimedOutResult,
 } from "./persistent-codex-run-result.js";
-import { createPersistentCodexWorkerSlot } from "./persistent-codex-worker.js";
+import { createPersistentCodexWorkerGroup } from "./persistent-codex-worker.js";
+import type { SubscriptionRuntimeAccount } from "./subscription-account-pool.js";
 import type {
   ProviderTaskStreamObserver,
   ProcessRunRequest,
@@ -37,6 +38,15 @@ export type {
   PersistentCodexProfile,
 } from "./persistent-codex-process-contracts.js";
 
+export interface AccountPoolPrewarmResult {
+  readonly failures: readonly {
+    readonly code: string;
+    readonly slotId: string;
+  }[];
+  readonly readyAccounts: number;
+  readonly totalAccounts: number;
+}
+
 /**
  * Keeps the provider-neutral sidecar contract while reusing Subscription
  * Runtime's app-server worker and clean-thread prewarm between requests.
@@ -45,7 +55,7 @@ export type {
 export class PersistentCodexProcessRunner implements StreamingProcessRunnerPort {
   public readonly runtimeEngine = subscriptionRuntimeEngine;
 
-  private readonly slots = new Map<string, Promise<PersistentCodexWorkerSlot>>();
+  private readonly groups = new Map<string, Promise<PersistentCodexWorkerGroup>>();
   private disposed = false;
 
   public constructor(
@@ -55,8 +65,48 @@ export class PersistentCodexProcessRunner implements StreamingProcessRunnerPort 
   public async prewarm(
     profile: PersistentCodexProfile,
     environment: Readonly<Record<string, string>>,
+    accountId: string,
   ): Promise<void> {
-    await this.slot(profile, environment);
+    await this.group(profile, environment, this.accountById(accountId));
+  }
+
+  public async prewarmAccounts(
+    profile: PersistentCodexProfile,
+    environment: Readonly<Record<string, string>>,
+  ): Promise<AccountPoolPrewarmResult> {
+    const results = await Promise.allSettled(
+      this.options.accounts.map(async (account) =>
+        this.group(profile, environment, account)),
+    );
+    const failures = results.flatMap((result, index) => {
+      if (result.status === "fulfilled") {
+        return [];
+      }
+      const account = this.options.accounts[index];
+      if (account === undefined) {
+        throw new Error("Persistent Codex account prewarm result is invalid");
+      }
+      const failure = persistentCodexSafeRuntimeFailure(result.reason);
+      return [{
+        code: typeof failure.code === "string"
+          ? failure.code
+          : "backend_unavailable",
+        slotId: account.id,
+      }];
+    });
+    const readyAccounts = this.options.accounts.length - failures.length;
+    if (readyAccounts === 0) {
+      throw new Error(
+        `Persistent Codex account pool prewarm failed: ${failures.map(
+          (failure) => `${failure.slotId}=${failure.code}`,
+        ).join(",")}`,
+      );
+    }
+    return {
+      failures,
+      readyAccounts,
+      totalAccounts: this.options.accounts.length,
+    };
   }
 
   public async run(request: ProcessRunRequest): Promise<ProcessRunResult> {
@@ -99,11 +149,12 @@ export class PersistentCodexProcessRunner implements StreamingProcessRunnerPort 
       ),
       request: canonical,
     });
-    const slot = await this.slot(
+    const group = await this.group(
       profileForPersistentCodexRequest(canonical),
       request.env,
+      this.accountForRequest(request),
     );
-    return await this.runWorker(slot, canonical, request, observer);
+    return await this.runWorker(group, canonical, request, observer);
   }
 
   public async dispose(): Promise<void> {
@@ -111,17 +162,17 @@ export class PersistentCodexProcessRunner implements StreamingProcessRunnerPort 
       return;
     }
     this.disposed = true;
-    const slots = await Promise.allSettled(this.slots.values());
+    const groups = await Promise.allSettled(this.groups.values());
     await Promise.allSettled(
-      slots.flatMap((slot) =>
-        slot.status === "fulfilled" ? [slot.value.worker.dispose()] : [],
+      groups.flatMap((group) =>
+        group.status === "fulfilled" ? [group.value.group.dispose()] : [],
       ),
     );
-    this.slots.clear();
+    this.groups.clear();
   }
 
   private async runWorker(
-    slot: PersistentCodexWorkerSlot,
+    workerGroup: PersistentCodexWorkerGroup,
     canonical: ReturnType<typeof parsePersistentCodexRequest>,
     request: ProcessRunRequest,
     observer?: ProviderTaskStreamObserver,
@@ -138,7 +189,7 @@ export class PersistentCodexProcessRunner implements StreamingProcessRunnerPort 
     }, request.timeoutMs);
     timeout.unref();
     try {
-      const result = await slot.worker.run(
+      const result = await workerGroup.group.run(
         {
           abortSignal: cancellation.signal,
           controls: canonical.task.controls,
@@ -149,7 +200,7 @@ export class PersistentCodexProcessRunner implements StreamingProcessRunnerPort 
           runId: canonical.runId,
           systemPrompt: structuredPersistentCodexOutputSystemPrompt(
             canonical.task.systemPrompt,
-            slot.profile,
+            workerGroup.profile,
           ),
         },
         {
@@ -207,24 +258,69 @@ export class PersistentCodexProcessRunner implements StreamingProcessRunnerPort 
     }
   }
 
-  private async slot(
+  private async group(
     profile: PersistentCodexProfile,
     environment: Readonly<Record<string, string>>,
-  ): Promise<PersistentCodexWorkerSlot> {
-    const key = profile.execution.purpose;
-    const existing = this.slots.get(key);
+    account: SubscriptionRuntimeAccount,
+  ): Promise<PersistentCodexWorkerGroup> {
+    const key = `${account.id}:${profile.execution.purpose}`;
+    const existing = this.groups.get(key);
     if (existing !== undefined) {
-      const slot = await existing;
-      assertSamePersistentCodexProfile(slot.profile, profile);
-      return slot;
+      const group = await existing;
+      assertSamePersistentCodexProfile(group.profile, profile);
+      return group;
     }
-    const pending = createPersistentCodexWorkerSlot(this.options, profile, environment);
-    this.slots.set(key, pending);
+    const pending = createPersistentCodexWorkerGroup(
+      this.options,
+      profile,
+      environment,
+      account,
+    );
+    this.groups.set(key, pending);
     try {
       return await pending;
     } catch (error: unknown) {
-      this.slots.delete(key);
+      this.groups.delete(key);
       throw error;
     }
+  }
+
+  private accountForRequest(
+    request: ProcessRunRequest,
+  ): SubscriptionRuntimeAccount {
+    const authJsonPath = persistentCodexArgumentValue(
+      request.args,
+      "--codex-auth-json",
+    );
+    const requestedProviderInstanceId = persistentCodexArgumentValue(
+      request.args,
+      "--provider-instance",
+    );
+    const requestedStateRoot = persistentCodexArgumentValue(
+      request.args,
+      "--state-root",
+    );
+    if (requestedStateRoot !== this.options.stateRoot) {
+      throw new Error("Persistent worker state root conflicts with policy");
+    }
+    const account = this.options.accounts.find(
+      (candidate) =>
+        candidate.authJsonPath === authJsonPath &&
+        candidate.providerInstanceId === requestedProviderInstanceId,
+    );
+    if (account === undefined) {
+      throw new Error("Persistent worker account conflicts with policy");
+    }
+    return account;
+  }
+
+  private accountById(accountId: string): SubscriptionRuntimeAccount {
+    const account = this.options.accounts.find(
+      (candidate) => candidate.id === accountId,
+    );
+    if (account === undefined) {
+      throw new Error("Persistent worker account is not admitted");
+    }
+    return account;
   }
 }
