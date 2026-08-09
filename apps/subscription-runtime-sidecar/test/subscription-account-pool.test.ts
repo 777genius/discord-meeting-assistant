@@ -19,8 +19,8 @@ const accounts: readonly SubscriptionRuntimeAccount[] = [
 ];
 
 describe("SubscriptionAccountPool", () => {
-  it("leases accounts round-robin and never leases one slot concurrently", async () => {
-    const pool = new SubscriptionAccountPool(accounts);
+  it("leases accounts round-robin up to their configured concurrency", async () => {
+    const pool = new SubscriptionAccountPool(accounts, 1);
 
     const first = await pool.acquire();
     const second = await pool.acquire();
@@ -43,6 +43,36 @@ describe("SubscriptionAccountPool", () => {
     third?.release();
   });
 
+  it("runs several tasks concurrently on one account and queues only overflow", async () => {
+    const pool = new SubscriptionAccountPool([accounts[0]!], 3);
+
+    const active = await Promise.all([
+      pool.acquire(),
+      pool.acquire(),
+      pool.acquire(),
+    ]);
+    const overflow = pool.acquire();
+    let overflowSettled = false;
+    void overflow.then(() => {
+      overflowSettled = true;
+      return overflowSettled;
+    });
+    await Promise.resolve();
+    expect(active.map((lease) => lease?.account.id)).toEqual([
+      "slot-1",
+      "slot-1",
+      "slot-1",
+    ]);
+    expect(overflowSettled).toBe(false);
+
+    active[1]?.release();
+    const admitted = await overflow;
+    expect(admitted?.account.id).toBe("slot-1");
+    active[0]?.release();
+    active[2]?.release();
+    admitted?.release();
+  });
+
   it("skips accounts already attempted by one failover request", async () => {
     const pool = new SubscriptionAccountPool(accounts);
     const first = await pool.acquire();
@@ -57,7 +87,7 @@ describe("SubscriptionAccountPool", () => {
   });
 
   it("removes an aborted waiter without consuming the released account", async () => {
-    const pool = new SubscriptionAccountPool([accounts[0]!]);
+    const pool = new SubscriptionAccountPool([accounts[0]!], 1);
     const active = await pool.acquire();
     const controller = new AbortController();
     const waiting = pool.acquire(new Set(), controller.signal);

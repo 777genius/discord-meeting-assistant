@@ -5,7 +5,7 @@ import { subscriptionRuntimeEngine } from "@discord-meeting/subscription-runtime
 import type {
   PersistentCodexProcessRunnerOptions,
   PersistentCodexProfile,
-  PersistentCodexWorkerSlot,
+  PersistentCodexWorkerPool,
 } from "./persistent-codex-process-contracts.js";
 import {
   persistentCodexArgumentValue,
@@ -24,7 +24,7 @@ import {
   persistentCodexSignalAborted,
   persistentCodexTimedOutResult,
 } from "./persistent-codex-run-result.js";
-import { createPersistentCodexWorkerSlot } from "./persistent-codex-worker.js";
+import { createPersistentCodexWorkerPool } from "./persistent-codex-worker.js";
 import type { SubscriptionRuntimeAccount } from "./subscription-account-pool.js";
 import type {
   ProviderTaskStreamObserver,
@@ -55,7 +55,7 @@ export interface AccountPoolPrewarmResult {
 export class PersistentCodexProcessRunner implements StreamingProcessRunnerPort {
   public readonly runtimeEngine = subscriptionRuntimeEngine;
 
-  private readonly slots = new Map<string, Promise<PersistentCodexWorkerSlot>>();
+  private readonly pools = new Map<string, Promise<PersistentCodexWorkerPool>>();
   private disposed = false;
 
   public constructor(
@@ -67,7 +67,7 @@ export class PersistentCodexProcessRunner implements StreamingProcessRunnerPort 
     environment: Readonly<Record<string, string>>,
     accountId: string,
   ): Promise<void> {
-    await this.slot(profile, environment, this.accountById(accountId));
+    await this.pool(profile, environment, this.accountById(accountId));
   }
 
   public async prewarmAccounts(
@@ -76,7 +76,7 @@ export class PersistentCodexProcessRunner implements StreamingProcessRunnerPort 
   ): Promise<AccountPoolPrewarmResult> {
     const results = await Promise.allSettled(
       this.options.accounts.map(async (account) =>
-        this.slot(profile, environment, account)),
+        this.pool(profile, environment, account)),
     );
     const failures = results.flatMap((result, index) => {
       if (result.status === "fulfilled") {
@@ -149,12 +149,12 @@ export class PersistentCodexProcessRunner implements StreamingProcessRunnerPort 
       ),
       request: canonical,
     });
-    const slot = await this.slot(
+    const pool = await this.pool(
       profileForPersistentCodexRequest(canonical),
       request.env,
       this.accountForRequest(request),
     );
-    return await this.runWorker(slot, canonical, request, observer);
+    return await this.runWorker(pool, canonical, request, observer);
   }
 
   public async dispose(): Promise<void> {
@@ -162,17 +162,17 @@ export class PersistentCodexProcessRunner implements StreamingProcessRunnerPort 
       return;
     }
     this.disposed = true;
-    const slots = await Promise.allSettled(this.slots.values());
+    const pools = await Promise.allSettled(this.pools.values());
     await Promise.allSettled(
-      slots.flatMap((slot) =>
-        slot.status === "fulfilled" ? [slot.value.worker.dispose()] : [],
+      pools.flatMap((pool) =>
+        pool.status === "fulfilled" ? [pool.value.pool.dispose()] : [],
       ),
     );
-    this.slots.clear();
+    this.pools.clear();
   }
 
   private async runWorker(
-    slot: PersistentCodexWorkerSlot,
+    workerPool: PersistentCodexWorkerPool,
     canonical: ReturnType<typeof parsePersistentCodexRequest>,
     request: ProcessRunRequest,
     observer?: ProviderTaskStreamObserver,
@@ -189,7 +189,7 @@ export class PersistentCodexProcessRunner implements StreamingProcessRunnerPort 
     }, request.timeoutMs);
     timeout.unref();
     try {
-      const result = await slot.worker.run(
+      const result = await workerPool.pool.run(
         {
           abortSignal: cancellation.signal,
           controls: canonical.task.controls,
@@ -200,7 +200,7 @@ export class PersistentCodexProcessRunner implements StreamingProcessRunnerPort 
           runId: canonical.runId,
           systemPrompt: structuredPersistentCodexOutputSystemPrompt(
             canonical.task.systemPrompt,
-            slot.profile,
+            workerPool.profile,
           ),
         },
         {
@@ -258,29 +258,29 @@ export class PersistentCodexProcessRunner implements StreamingProcessRunnerPort 
     }
   }
 
-  private async slot(
+  private async pool(
     profile: PersistentCodexProfile,
     environment: Readonly<Record<string, string>>,
     account: SubscriptionRuntimeAccount,
-  ): Promise<PersistentCodexWorkerSlot> {
+  ): Promise<PersistentCodexWorkerPool> {
     const key = `${account.id}:${profile.execution.purpose}`;
-    const existing = this.slots.get(key);
+    const existing = this.pools.get(key);
     if (existing !== undefined) {
-      const slot = await existing;
-      assertSamePersistentCodexProfile(slot.profile, profile);
-      return slot;
+      const pool = await existing;
+      assertSamePersistentCodexProfile(pool.profile, profile);
+      return pool;
     }
-    const pending = createPersistentCodexWorkerSlot(
+    const pending = createPersistentCodexWorkerPool(
       this.options,
       profile,
       environment,
       account,
     );
-    this.slots.set(key, pending);
+    this.pools.set(key, pending);
     try {
       return await pending;
     } catch (error: unknown) {
-      this.slots.delete(key);
+      this.pools.delete(key);
       throw error;
     }
   }

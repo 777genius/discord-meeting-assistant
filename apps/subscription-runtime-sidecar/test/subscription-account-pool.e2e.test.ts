@@ -42,6 +42,10 @@ interface MutablePurposeProfile {
 }
 
 interface MutableDeploymentPolicy {
+  concurrency: {
+    maximumConcurrentTasksPerAccount: number;
+    maximumQueuedTasks: number;
+  };
   custody: {
     authPoolManifestPath: string;
     localEncryptionKeyFile: string;
@@ -72,7 +76,11 @@ it("materialized host slots fail over end-to-end without exposing account names"
   });
   const runs: string[][] = [];
   const executor = new SubscriptionRuntimeExecutor({
-    accountPool: new SubscriptionAccountPool(settings.accounts),
+    accountPool: new SubscriptionAccountPool(
+      settings.accounts,
+      settings.maximumConcurrentTasksPerAccount,
+      settings.maximumQueuedTasks,
+    ),
     childSourceEnvironment: {},
     installationInspector: { inspect: async () => installation() },
     isolatedCwd: settings.isolatedCwd,
@@ -110,6 +118,66 @@ it("materialized host slots fail over end-to-end without exposing account names"
       "discord-meeting-summary-v3-slot-2",
     ]);
   expect(JSON.stringify(runs)).not.toMatch(/host-account-[ab]/u);
+});
+
+it("admits four concurrent synthetic tasks on every materialized account", async () => {
+  const fixture = await createPoolFixture();
+  const settings = await resolveSidecarSettings(fixture.environment);
+  const started = deferred<void>();
+  const release = deferred<void>();
+  const selectedAccounts: string[] = [];
+  const executor = new SubscriptionRuntimeExecutor({
+    accountPool: new SubscriptionAccountPool(
+      settings.accounts,
+      settings.maximumConcurrentTasksPerAccount,
+      settings.maximumQueuedTasks,
+    ),
+    childSourceEnvironment: {},
+    installationInspector: { inspect: async () => installation() },
+    isolatedCwd: settings.isolatedCwd,
+    killGraceMs: settings.killGraceMs,
+    localEncryptionKeyFile: settings.localEncryptionKeyFile,
+    maxPromptBytes: settings.maxPromptBytes,
+    maxStderrBytes: settings.maxStderrBytes,
+    maxStdoutBytes: settings.maxStdoutBytes,
+    maxTaskTimeoutMs: settings.maxTaskTimeoutMs,
+    processRunner: {
+      runtimeEngine: subscriptionRuntimeEngine,
+      run: async (request) => {
+        selectedAccounts.push(argumentValue(request.args, "--provider-instance"));
+        if (selectedAccounts.length === 8) {
+          started.resolve();
+        }
+        await release.promise;
+        return completedProcess();
+      },
+    },
+    readinessInspector: new FileRuntimeReadinessInspector({
+      authJsonPaths: settings.accounts.map((account) => account.authJsonPath),
+      isolatedCwd: settings.isolatedCwd,
+      localEncryptionKeyFile: settings.localEncryptionKeyFile,
+      stateRoot: settings.stateRoot,
+    }),
+    stateRoot: settings.stateRoot,
+  });
+
+  const executions = Promise.all(Array.from({ length: 8 }, async () =>
+    await executor.execute({
+      ...canonicalRequest,
+      cwd: settings.isolatedCwd,
+    })));
+  await started.promise;
+
+  expect(selectedAccounts.filter(
+    (account) => account === "discord-meeting-summary-v3",
+  )).toHaveLength(4);
+  expect(selectedAccounts.filter(
+    (account) => account === "discord-meeting-summary-v3-slot-2",
+  )).toHaveLength(4);
+  release.resolve();
+  const results = await executions;
+  expect(results).toHaveLength(8);
+  expect(results.every((result) => result.status === "completed")).toBe(true);
 });
 
 async function createPoolFixture(): Promise<{
@@ -220,6 +288,20 @@ function quotaLimitedProcess(): ProcessRunResult {
       warnings: [],
     }),
     timedOut: false,
+  };
+}
+
+function deferred<T>(): {
+  readonly promise: Promise<T>;
+  resolve(value: T): void;
+} {
+  let resolvePromise: ((value: T) => void) | undefined;
+  const promise = new Promise<T>((resolve) => {
+    resolvePromise = resolve;
+  });
+  return {
+    promise,
+    resolve: (value) => resolvePromise?.(value),
   };
 }
 

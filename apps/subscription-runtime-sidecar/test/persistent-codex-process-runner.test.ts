@@ -9,13 +9,14 @@ import {
   providerMeetingSummaryJsonSchema,
   type JsonObject,
 } from "@discord-meeting/subscription-runtime-adapter";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   PersistentCodexProcessRunner,
   type PersistentCodexProcessRunnerOptions,
   type PersistentCodexProfile,
 } from "../src/persistent-codex-process-runner.js";
+import type { RuntimeWorker } from "../src/persistent-codex-process-contracts.js";
 import type { ProcessRunRequest } from "../src/types.js";
 import {
   canonicalRequest,
@@ -35,6 +36,7 @@ let runners: PersistentCodexProcessRunner[] = [];
 
 describe("PersistentCodexProcessRunner", () => {
   afterEach(async () => {
+    vi.restoreAllMocks();
     await Promise.all(runners.map((runner) => runner.dispose()));
     runners = [];
     if (root !== undefined) {
@@ -43,10 +45,7 @@ describe("PersistentCodexProcessRunner", () => {
     root = undefined;
   });
 
-  it("identifies the warm app-server execution engine", async () => {
-    const fixture = await createFixture();
-    expect(fixture.runner.runtimeEngine).toBe("subscription-runtime-app-server");
-  });
+  it("identifies the warm app-server execution engine", identifiesRuntimeEngine);
 
   it("creates and prewarms one conversation worker, then reuses it for two requests", async () => {
     const fixture = await createFixture();
@@ -68,6 +67,9 @@ describe("PersistentCodexProcessRunner", () => {
     ));
 
     expect(fixture.state.modulePaths).toHaveLength(1);
+    expect(fixture.state.poolModulePaths[0]).toMatch(
+      /\/dist\/worker-core\/index\.js$/u,
+    );
     expect(fixture.state.workers).toHaveLength(1);
     const worker = requiredWorker(fixture.state, 0);
     expect(worker.startCalls).toBe(1);
@@ -90,7 +92,8 @@ describe("PersistentCodexProcessRunner", () => {
       reasoningEffort: "low",
       sessionCacheSlots: 1,
       sourceEnv: { PATH: "/test/bin" },
-      workerId: "discord-meeting-discord_meeting-conversation-answer-slot-1",
+      workerId:
+        "discord-meeting-discord_meeting-conversation-answer-slot-1:slot-1",
     });
     expect(JSON.parse(first.stdout)).toMatchObject({
       outputText: conversationCanonicalRequest.runId,
@@ -102,11 +105,16 @@ describe("PersistentCodexProcessRunner", () => {
     });
   });
 
+  it(
+    "delegates concurrent work for one account to native bounded worker slots",
+    delegatesConcurrentWorkToNativePool,
+  );
+
   it("starts with a partially healthy account pool", async () => {
     const partiallyHealthy = await createFixture(2);
     partiallyHealthy.state.prewarm = async (worker) => {
       if (worker.options.workerId ===
-        "discord-meeting-discord_meeting-conversation-answer-slot-1") {
+        "discord-meeting-discord_meeting-conversation-answer-slot-1:slot-1") {
         throw new Error("synthetic unavailable account");
       }
     };
@@ -157,6 +165,11 @@ describe("PersistentCodexProcessRunner", () => {
     expect(fixture.state.workers).toHaveLength(1);
   });
 
+  it(
+    "preserves a nested quota failure for account failover",
+    preservesNestedQuotaFailure,
+  );
+
   it("creates distinct prewarmed workers for distinct purpose profiles", async () => {
     const fixture = await createFixture();
 
@@ -175,8 +188,8 @@ describe("PersistentCodexProcessRunner", () => {
     expect(fixture.state.workers).toHaveLength(2);
     expect(fixture.state.workers.map((worker) => worker.prewarmCalls)).toEqual([1, 1]);
     expect(fixture.state.workers.map((worker) => worker.options.workerId)).toEqual([
-      "discord-meeting-discord_meeting-conversation-answer-slot-1",
-      "discord-meeting-discord_meeting-summary-generate-slot-1",
+      "discord-meeting-discord_meeting-conversation-answer-slot-1:slot-1",
+      "discord-meeting-discord_meeting-summary-generate-slot-1:slot-1",
     ]);
   });
 
@@ -299,6 +312,78 @@ describe("PersistentCodexProcessRunner", () => {
   });
 });
 
+async function identifiesRuntimeEngine(): Promise<void> {
+  const fixture = await createFixture();
+  expect(fixture.runner.runtimeEngine).toBe("subscription-runtime-app-server");
+}
+
+async function delegatesConcurrentWorkToNativePool(): Promise<void> {
+  const fixture = await createFixture(1, 3);
+  const allStarted = deferred<void>();
+  const release = deferred<void>();
+  let started = 0;
+  fixture.state.run = async (input) => {
+    started += 1;
+    if (started === 3) {
+      allStarted.resolve();
+    }
+    await release.promise;
+    return successfulWorkerResult(input);
+  };
+
+  const executions = Promise.all([
+    fixture.runner.run(await requestFor(
+      fixture,
+      "parallel-1",
+      conversationCanonicalRequest,
+    )),
+    fixture.runner.run(await requestFor(
+      fixture,
+      "parallel-2",
+      conversationCanonicalRequest,
+    )),
+    fixture.runner.run(await requestFor(
+      fixture,
+      "parallel-3",
+      conversationCanonicalRequest,
+    )),
+  ]);
+  await allStarted.promise;
+
+  expect(fixture.state.poolOptions).toEqual([
+    expect.objectContaining({
+      poolId: "discord-meeting-discord_meeting-conversation-answer-slot-1",
+      prewarmOnStart: true,
+      slots: 3,
+    }),
+  ]);
+  expect(fixture.state.workers).toHaveLength(3);
+  expect(fixture.state.workers.map((worker) => worker.runInputs.length))
+    .toEqual([1, 1, 1]);
+
+  release.resolve();
+  await executions;
+}
+
+async function preservesNestedQuotaFailure(): Promise<void> {
+  const fixture = await createFixture();
+  vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+  fixture.state.run = async () => {
+    throw new Error("Codex usage limit exhausted");
+  };
+
+  const result = await fixture.runner.run(await requestFor(
+    fixture,
+    "conversation-quota",
+    conversationCanonicalRequest,
+  ));
+
+  expect(JSON.parse(result.stdout)).toMatchObject({
+    failure: { code: "quota_limited", retryable: true },
+    status: "failed",
+  });
+}
+
 interface Fixture {
   readonly authJsonPath: string;
   readonly environment: Readonly<Record<string, string>>;
@@ -339,6 +424,8 @@ interface FakeWorkerRunOptions {
 
 interface FakeWorkerState {
   readonly modulePaths: string[];
+  readonly poolModulePaths: string[];
+  readonly poolOptions: FakeWorkerPoolOptions[];
   readonly workers: FakeWorker[];
   prewarm: (worker: FakeWorker) => Promise<void>;
   run: (
@@ -356,9 +443,17 @@ class FakeWorker {
 
   public constructor(
     public readonly options: Readonly<Record<string, unknown>>,
-    private readonly state: FakeWorkerState,
+    private readonly fakeState: FakeWorkerState,
   ) {
-    state.workers.push(this);
+    fakeState.workers.push(this);
+  }
+
+  public get state(): string {
+    return "ready";
+  }
+
+  public get workerId(): string {
+    return String(this.options.workerId);
   }
 
   public async dispose(): Promise<void> {
@@ -367,7 +462,11 @@ class FakeWorker {
 
   public async prewarm(): Promise<void> {
     this.prewarmCalls += 1;
-    await this.state.prewarm(this);
+    await this.fakeState.prewarm(this);
+  }
+
+  public async health(): Promise<unknown> {
+    return { status: "healthy" };
   }
 
   public async run(
@@ -375,7 +474,7 @@ class FakeWorker {
     options?: FakeWorkerRunOptions,
   ): Promise<FakeWorkerResult> {
     this.runInputs.push(input);
-    return await this.state.run(input, options);
+    return await this.fakeState.run(input, options);
   }
 
   public async seedCodexAuthJsonFile(path: string): Promise<void> {
@@ -387,7 +486,70 @@ class FakeWorker {
   }
 }
 
-async function createFixture(accountCount = 1): Promise<Fixture> {
+interface FakeWorkerPoolOptions {
+  readonly maxQueueSize: number;
+  readonly poolId: string;
+  readonly prewarmOnStart: boolean;
+  readonly slots: number;
+  readonly workerFactory: (input: {
+    readonly slotIndex: number;
+    readonly workerId: string;
+  }) => RuntimeWorker;
+}
+
+class FakeWorkerPool {
+  private readonly busy: boolean[];
+  private readonly workers: RuntimeWorker[];
+
+  public constructor(private readonly options: FakeWorkerPoolOptions) {
+    this.workers = Array.from({ length: options.slots }, (_, slotIndex) =>
+      options.workerFactory({
+        slotIndex,
+        workerId: `${options.poolId}:slot-${slotIndex + 1}`,
+      }));
+    this.busy = this.workers.map(() => false);
+  }
+
+  public async start(): Promise<void> {
+    for (const worker of this.workers) {
+      await worker.start();
+    }
+    if (this.options.prewarmOnStart) {
+      await Promise.all(this.workers.map(async (worker) => worker.prewarm()));
+    }
+  }
+
+  public async run(
+    input: FakeWorkerInput,
+    options?: FakeWorkerRunOptions,
+  ): Promise<FakeWorkerResult> {
+    const slotIndex = this.busy.findIndex((busy) => !busy);
+    if (slotIndex < 0) {
+      throw new Error("Synthetic worker pool has no available slot");
+    }
+    const worker = this.workers[slotIndex];
+    if (worker === undefined) {
+      throw new Error("Synthetic worker pool slot is invalid");
+    }
+    this.busy[slotIndex] = true;
+    try {
+      return await worker.run(input, options);
+    } catch (error: unknown) {
+      throw new Error("Worker pool slot failed to run a task", { cause: error });
+    } finally {
+      this.busy[slotIndex] = false;
+    }
+  }
+
+  public async dispose(): Promise<void> {
+    await Promise.all(this.workers.map(async (worker) => worker.dispose()));
+  }
+}
+
+async function createFixture(
+  accountCount = 1,
+  maximumConcurrentTasksPerAccount = 1,
+): Promise<Fixture> {
   const testRoot = await mkdtemp(join(tmpdir(), "persistent-codex-runner-test-"));
   root = testRoot;
   const launcherPath = join(testRoot, "launcher.mjs");
@@ -413,6 +575,8 @@ async function createFixture(accountCount = 1): Promise<Fixture> {
   ]);
   const state: FakeWorkerState = {
     modulePaths: [],
+    poolModulePaths: [],
+    poolOptions: [],
     workers: [],
     prewarm: async () => {},
     run: async (input) => successfulWorkerResult(input),
@@ -433,6 +597,9 @@ async function createFixture(accountCount = 1): Promise<Fixture> {
     launcherPath,
     packageManifestPath,
     stateRoot,
+    maximumConcurrentTasksPerAccount,
+    maximumQueuedTasks: 256,
+    workerPoolModuleLoader: fakeWorkerPoolModuleLoader(state),
     workerModuleLoader: fakeWorkerModuleLoader(state),
     workspacePath,
   });
@@ -445,6 +612,22 @@ async function createFixture(accountCount = 1): Promise<Fixture> {
     runner,
     state,
     workspacePath,
+  };
+}
+
+function fakeWorkerPoolModuleLoader(
+  state: FakeWorkerState,
+): NonNullable<PersistentCodexProcessRunnerOptions["workerPoolModuleLoader"]> {
+  return async (modulePath) => {
+    state.poolModulePaths.push(modulePath);
+    return {
+      BoundedSubscriptionWorkerPool: class extends FakeWorkerPool {
+        public constructor(options: FakeWorkerPoolOptions) {
+          state.poolOptions.push(options);
+          super(options);
+        }
+      },
+    };
   };
 }
 

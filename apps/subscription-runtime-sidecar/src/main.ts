@@ -20,13 +20,20 @@ import {
 
 async function bootstrap(): Promise<void> {
   const settings = await resolveSidecarSettings(process.env);
-  const accountPool = new SubscriptionAccountPool(settings.accounts);
+  const accountPool = new SubscriptionAccountPool(
+    settings.accounts,
+    settings.maximumConcurrentTasksPerAccount,
+    settings.maximumQueuedTasks,
+  );
   const persistentRunner = new PersistentCodexProcessRunner({
     accounts: settings.accounts,
     launcherPath: settings.launcherPath,
     packageManifestPath: settings.packageManifestPath,
     stateRoot: settings.stateRoot,
     workspacePath: settings.isolatedCwd,
+    maximumConcurrentTasksPerAccount:
+      settings.maximumConcurrentTasksPerAccount,
+    maximumQueuedTasks: settings.maximumQueuedTasks,
   });
   const localEncryptionKey = (
     await readFile(settings.localEncryptionKeyFile, "utf8")

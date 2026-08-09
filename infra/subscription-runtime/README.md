@@ -113,12 +113,14 @@ It is not a provider generation cap and does not guarantee latency; the compact
 final and incremental schemas/prompts reduce response volume, while `low`
 reasoning is used by both latency-sensitive Luna purposes.
 
-The sidecar leases one opaque account slot per request, distributes work
-round-robin, and tries another slot for quota, reconnect, invalid-session, or
-backend failures. A slot cannot serve summary and conversation work
-concurrently. The sidecar keeps purpose-and-slot-scoped workers alive and
-prewarms every conversation app-server/clean-thread path before opening its
-gRPC listener. Every turn stays stateless, and packaged exec remains the fallback. The audited launcher wraps
+The sidecar leases one of four permits on an opaque account per request,
+distributes work round-robin, and tries another account for quota, reconnect,
+invalid-session, or backend failures. Summary and conversation work share the
+same four-per-account admission bound. Persistent conversation execution uses
+Subscription Runtime's native `BoundedSubscriptionWorkerPool`, with one
+`FileBackendCodexWorker` per native slot, and prewarms every account pool before
+opening the gRPC listener. The global waiting queue is capped at 256 requests.
+Every turn stays stateless, and packaged exec remains the fallback. The audited launcher wraps
 only the admitted `codexBinaryPath` on that fallback and observes
 `codex exec --json` JSONL `turn.completed` events. It keeps the private runtime
 worker responsible for auth custody and disabled-tool policy. Codex supplies

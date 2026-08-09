@@ -53,11 +53,16 @@ not a provider generation cap and does not guarantee latency; the compact final
 and incremental schemas/prompts reduce response volume, while `low` reasoning
 is used by both latency-sensitive Luna purposes.
 
-The sidecar prewarms the conversation purpose for every admitted account slot
-before accepting traffic and keeps those purpose-and-slot-scoped Subscription
-Runtime workers alive. A shared lease pool prevents concurrent use of one
-account, distributes requests round-robin, and fails over before any streamed
-text is emitted. Final and incremental summaries use the audited
+The sidecar prewarms four conversation worker slots for every admitted account
+before accepting traffic and keeps those purpose-and-account-scoped Subscription
+Runtime pools alive. The audited native `BoundedSubscriptionWorkerPool` owns
+worker lifecycle, bounded concurrency, queueing, cancellation, health, and
+capacity inside each account. A thin sidecar admission pool shares four account
+permits across all purposes, distributes requests round-robin, bounds the global
+waiting queue to 256 requests, and fails over before any streamed text is
+emitted. Every native slot owns a separate `FileBackendCodexWorker`; the runtime's
+file-backed refresh lease and session-generation compare-and-swap protect their
+shared account state. Final and incremental summaries use the audited
 launcher bridge because the pinned app-server path does not guarantee measured
 generation telemetry; summary generation remains fail-closed without it. The
 audited launcher validates the same exact request profile and installation

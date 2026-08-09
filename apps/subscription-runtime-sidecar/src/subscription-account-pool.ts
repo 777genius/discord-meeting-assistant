@@ -21,10 +21,11 @@ interface PendingLease {
 
 interface AccountSlot {
   readonly account: SubscriptionRuntimeAccount;
-  busy: boolean;
+  activeLeases: number;
 }
 
-const defaultMaximumQueueSize = 256;
+export const maximumConcurrentTasksPerAccount = 4;
+export const maximumAccountPoolQueueSize = 256;
 
 export class SubscriptionAccountPool {
   private readonly slots: AccountSlot[];
@@ -33,15 +34,22 @@ export class SubscriptionAccountPool {
 
   public constructor(
     accounts: readonly SubscriptionRuntimeAccount[],
-    private readonly maximumQueueSize = defaultMaximumQueueSize,
+    private readonly maximumConcurrentTasks = maximumConcurrentTasksPerAccount,
+    private readonly maximumQueueSize = maximumAccountPoolQueueSize,
   ) {
     if (accounts.length === 0) {
       throw new Error("Subscription account pool must contain an account");
     }
+    if (
+      !Number.isInteger(maximumConcurrentTasks) ||
+      maximumConcurrentTasks < 1
+    ) {
+      throw new Error("Subscription account pool concurrency is invalid");
+    }
     if (!Number.isInteger(maximumQueueSize) || maximumQueueSize < 1) {
       throw new Error("Subscription account pool queue size is invalid");
     }
-    this.slots = accounts.map((account) => ({ account, busy: false }));
+    this.slots = accounts.map((account) => ({ account, activeLeases: 0 }));
   }
 
   public get accounts(): readonly SubscriptionRuntimeAccount[] {
@@ -91,12 +99,12 @@ export class SubscriptionAccountPool {
       const slot = this.slots[index];
       if (
         slot === undefined ||
-        slot.busy ||
+        slot.activeLeases >= this.maximumConcurrentTasks ||
         excludedAccountIds.has(slot.account.id)
       ) {
         continue;
       }
-      slot.busy = true;
+      slot.activeLeases += 1;
       this.cursor = (index + 1) % this.slots.length;
       let released = false;
       return {
@@ -106,7 +114,7 @@ export class SubscriptionAccountPool {
             return;
           }
           released = true;
-          slot.busy = false;
+          slot.activeLeases -= 1;
           this.drainQueue();
         },
       };

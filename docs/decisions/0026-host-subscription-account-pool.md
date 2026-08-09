@@ -36,12 +36,23 @@ manifest atomically materializes the subset into an immutable, project-private
 generation containing sequential opaque slots. Account names and source paths
 never enter Compose, application configuration, logs, health, or attestations.
 
-The sidecar owns one process-local lease pool across final summary, incremental
-summary, and conversation purposes. It admits at most one concurrent request
-per account, selects free slots round-robin, and tries every slot at most once
-for `quota_limited`, `needs_reconnect`, `provider_session_invalid`, or
-`backend_unavailable`. Timeout, cancellation, policy, schema, and attestation
-failures do not trigger an immediate account retry.
+The sidecar owns one process-local admission pool across final summary,
+incremental summary, and conversation purposes. It admits up to four concurrent
+requests per account, selects available account capacity round-robin, and tries
+every account at most once for `quota_limited`, `needs_reconnect`,
+`provider_session_invalid`, or `backend_unavailable`. Timeout, cancellation,
+policy, schema, and attestation failures do not trigger an immediate account
+retry. The global waiting queue is bounded to 256 requests.
+
+The sidecar does not implement Codex worker concurrency itself. Every persistent
+conversation account delegates its four execution slots, queueing, cancellation,
+health, capacity, and worker lifecycle to Subscription Runtime's audited
+`BoundedSubscriptionWorkerPool`. Each native pool slot owns a distinct
+`FileBackendCodexWorker` and app-server process while sharing the account's
+project-private provider instance. Subscription Runtime's file-backed refresh
+lease and session generation compare-and-swap remain authoritative for shared
+OAuth/session state. Final and incremental purposes keep using the audited CLI
+bridge and the same runtime refresh/session safeguards.
 
 Streaming conversation may fail over only before the first non-empty text delta
 is delivered. After text is visible to the caller, the attempt is terminal so
@@ -58,7 +69,8 @@ Subscription Runtime Gateway.
 ## Consequences
 
 - Healthy reserved capacity is used automatically without exposing identities.
-- Summary and conversation work cannot race one account's refresh chain.
+- Summary and conversation work can use one account concurrently without
+  bypassing Subscription Runtime's refresh lease and generation safeguards.
 - Publishing a new pool manifest never mutates auth files watched by a running
   sidecar; old immutable generations can be pruned during stopped maintenance.
 - Social Monitor and Meeting Assistant share a host inventory and allocator,
