@@ -14,6 +14,10 @@ import type {
 
 const speakerA = "1533227577286852649";
 const speakerB = "1533228054724346087";
+const layeredAttachments = [
+  { filename: "meeting-summary.md", sizeBytes: 2_048 },
+  { filename: "meeting-transcript.md", sizeBytes: 4_096 },
+] as const;
 
 function actorRun() {
   return {
@@ -266,15 +270,16 @@ describe("collectRetainedE2eEvidence", () => {
     const discord: DiscordEvidenceProbe = {
       inspect: async () => ({
         matchingMessages: [{
+          attachments: layeredAttachments,
           container: {
             kind: "thread",
             parentChannelId: "1533228891827736657",
             threadId: "thread-1",
           },
           embedDescription: [
+            "## Итоги встречи",
+            "Команда согласовала релиз и проверку очереди.",
             "Ответственный: <@1533228054724346087>",
-            "Основание: **00:00-00:16 · <@1533227577286852649>:** «Meeting Platform»",
-            "Основание: **00:00-00:13 · <@1533228054724346087>:** «Discord thread»",
           ].join("\n"),
           messageId: "message-1",
         }],
@@ -305,10 +310,11 @@ describe("collectRetainedE2eEvidence", () => {
     });
     expect(evidence.replay.replayJob.afterProcessedOn).toBe(2_000);
     expect(evidence.publication.matchingThreadCount).toBe(1);
+    expect(evidence.publication.attachments).toEqual(layeredAttachments);
     expect(evidence.recording.s3.sourceChecksumSha256).toBe("f".repeat(64));
     expect(evidence.deployment).toEqual(provenance());
     expect(evidence.processing).toEqual(processing());
-    expect(evidence.publication.embedDescription).toContain("Основание:");
+    expect(evidence.publication.embedDescription).not.toContain("Основание:");
   });
 
   it("collects a direct parent-channel publication without inventing a thread", async () => {
@@ -327,11 +333,16 @@ describe("collectRetainedE2eEvidence", () => {
     const discord: DiscordEvidenceProbe = {
       inspect: async () => ({
         matchingMessages: [{
+          attachments: layeredAttachments,
           container: {
             kind: "channel-message",
             parentChannelId: "1533228891827736657",
           },
-          embedDescription: "**00:00-00:16 · <@1533227577286852649>:** «Meeting Platform»",
+          embedDescription: [
+            "## Итоги встречи",
+            "Команда согласовала релиз и проверку очереди.",
+            "Ответственный: <@1533228054724346087>",
+          ].join("\n"),
           messageId: "message-1",
         }],
         matchingThreadIds: [],
@@ -344,7 +355,7 @@ describe("collectRetainedE2eEvidence", () => {
       discord,
     );
 
-    expect(evidence.schemaVersion).toBe(5);
+    expect(evidence.schemaVersion).toBe(6);
     expect(evidence.deployment.pipecat).toBeUndefined();
     expect(evidence.publication).toMatchObject({
       container: {
@@ -386,6 +397,7 @@ describe("collectRetainedE2eEvidence", () => {
     const discord: DiscordEvidenceProbe = {
       inspect: async () => ({
         matchingMessages: [{
+          attachments: layeredAttachments,
           container: {
             kind: "thread",
             parentChannelId: "1533228891827736657",
@@ -403,6 +415,50 @@ describe("collectRetainedE2eEvidence", () => {
       deployment,
       discord,
     )).rejects.toThrow("provenance changed");
+  });
+
+  it("rejects attachment metadata drift after idempotent replay", async () => {
+    const deployment: DeploymentEvidenceProbe = {
+      collectDatabase: async () => directMessageDatabase(),
+      collectProvenance: async () => summaryOnlyProvenance(),
+      collectProcessing: async () => processing(),
+      collectS3: async () => s3(),
+      replayPostCall: async () => ({
+        afterProcessedOn: 2_000,
+        beforeProcessedOn: 1_000,
+        jobId: "post-call-v1-job",
+        state: "completed",
+      }),
+    };
+    let inspection = 0;
+    const discord: DiscordEvidenceProbe = {
+      inspect: async () => {
+        inspection += 1;
+        return {
+          matchingMessages: [{
+            attachments: inspection === 1
+              ? layeredAttachments
+              : [
+                  layeredAttachments[0],
+                  { ...layeredAttachments[1], sizeBytes: 4_097 },
+                ],
+            container: {
+              kind: "channel-message",
+              parentChannelId: "1533228891827736657",
+            },
+            embedDescription: "Stable layered summary",
+            messageId: "message-1",
+          }],
+          matchingThreadIds: [],
+        };
+      },
+    };
+
+    await expect(collectRetainedE2eEvidence(
+      { actorRun: actorRun(), recordingId: "recording-1", runId: "run-1" },
+      deployment,
+      discord,
+    )).rejects.toThrow("attachments changed");
   });
 
   it("rejects an actor file from another explicit run before external reads", async () => {

@@ -11,7 +11,7 @@ export function verifyDeploymentProvenance(
   fail: VerificationFailureReporter,
 ): void {
   const { craig, meetingPlatform } = evidence.deployment;
-  const pipecat = evidence.schemaVersion === 5
+  const pipecat = "pipecat" in evidence.deployment
     ? evidence.deployment.pipecat
     : undefined;
   if (expectedRevisions.pipecat !== undefined && pipecat === undefined) {
@@ -23,7 +23,7 @@ export function verifyDeploymentProvenance(
   const components = [
     ["craig", craig],
     ["meetingPlatform", meetingPlatform],
-    ...(evidence.schemaVersion === 4 || evidence.schemaVersion === 5
+    ...("subscriptionRuntime" in evidence.deployment
       ? [["subscriptionRuntime", evidence.deployment.subscriptionRuntime] as const]
       : []),
     ...(pipecat === undefined

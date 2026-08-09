@@ -117,7 +117,14 @@ async function findMatchingMessages(
       oldestMessageId = message.id;
       const embedDescription = projectionDescription(message, marker, allowLegacyFooter);
       if (message.author.id === sutUserId && embedDescription !== undefined) {
-        matches.push({ container, embedDescription, messageId: message.id });
+        matches.push({
+          attachments: [...message.attachments.values()]
+            .map(({ name, size }) => ({ filename: name, sizeBytes: size }))
+            .toSorted((left, right) => left.filename.localeCompare(right.filename)),
+          container,
+          embedDescription,
+          messageId: message.id,
+        });
       }
     }
     before = page.size === 100 ? oldestMessageId : undefined;

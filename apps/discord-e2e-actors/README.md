@@ -118,7 +118,8 @@ at `0`, and use a short post-hold to observe the final live edits.
 After the call finishes, run the collector with the explicit Craig recording ID.
 It reads the actual Postgres snapshot/counts over the isolated SSH deployment,
 downloads and hashes the authoritative S3 manifest and every speaker track,
-counts Discord projection markers and retains the visible embed description,
+counts Discord projection markers and retains the visible embed description plus
+the names and byte sizes of both layered evidence attachments,
 captures immutable Craig, Meeting Platform, and Subscription Runtime deployment
 provenance plus correlated stage/model latency observations. When
 `DISCORD_E2E_EXPECTED_PIPECAT_SOURCE_REVISION` is set, it also requires and
@@ -131,7 +132,7 @@ verifier pass:
 DISCORD_E2E_RUN_ID=campaign-2026-08-02-overlap \
 DISCORD_E2E_RECORDING_ID=<craig-recording-id> \
 DISCORD_E2E_ACTOR_RUN_INPUT=/absolute/evidence/overlap.actor-run.json \
-DISCORD_E2E_EVIDENCE_OUTPUT=/absolute/evidence/overlap.evidence.v5.json \
+DISCORD_E2E_EVIDENCE_OUTPUT=/absolute/evidence/overlap.evidence.v6.json \
 pnpm --filter @discord-meeting/discord-e2e-actors collect:e2e
 ```
 
@@ -158,7 +159,7 @@ An individual evidence file can be checked again deterministically:
 
 ```sh
 pnpm --filter @discord-meeting/discord-e2e-actors run verify:e2e \
-  /absolute/path/to/manifest.v1.json /absolute/path/to/retained-evidence.v5.json
+  /absolute/path/to/manifest.v1.json /absolute/path/to/retained-evidence.v6.json
 ```
 
 The command exits non-zero for WER/CER or terminology failure, wrong speakers or
@@ -172,7 +173,7 @@ must all be isolated between runs:
 ```sh
 pnpm --filter @discord-meeting/discord-e2e-actors run verify:campaign -- \
   test/fixtures/manifest.v1.json \
-  /absolute/evidence/sequential.evidence.v5.json \
-  /absolute/evidence/overlap.evidence.v5.json \
-  /absolute/evidence/reconnect.evidence.v5.json
+  /absolute/evidence/sequential.evidence.v6.json \
+  /absolute/evidence/overlap.evidence.v6.json \
+  /absolute/evidence/reconnect.evidence.v6.json
 ```

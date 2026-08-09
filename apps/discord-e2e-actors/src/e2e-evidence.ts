@@ -32,6 +32,7 @@ export {
   retainedE2eEvidenceV3Schema,
   retainedE2eEvidenceV4Schema,
   retainedE2eEvidenceV5Schema,
+  retainedE2eEvidenceV6Schema,
   unboundActorRunEvidenceV1Schema,
 } from "./e2e-evidence-schema.js";
 export type {
@@ -46,6 +47,7 @@ export type {
   RetainedE2eEvidenceV3,
   RetainedE2eEvidenceV4,
   RetainedE2eEvidenceV5,
+  RetainedE2eEvidenceV6,
   UnboundActorRunEvidenceV1,
 } from "./e2e-evidence-schema.js";
 export { sameDeploymentProvenance } from "./e2e-evidence-deployment-verification.js";

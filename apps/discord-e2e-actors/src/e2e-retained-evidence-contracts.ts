@@ -54,7 +54,13 @@ export type DiscordProjectionContainerObservation =
   | { readonly kind: "channel-message"; readonly parentChannelId: string }
   | { readonly kind: "thread"; readonly parentChannelId: string; readonly threadId: string };
 
+interface DiscordProjectionAttachmentObservation {
+  readonly filename: string;
+  readonly sizeBytes: number;
+}
+
 export interface DiscordProjectionMessageObservation {
+  readonly attachments: readonly DiscordProjectionAttachmentObservation[];
   readonly container: DiscordProjectionContainerObservation;
   readonly embedDescription: string;
   readonly messageId: string;

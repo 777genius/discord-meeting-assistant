@@ -273,6 +273,23 @@ const publicationEvidenceV3Schema = z.object({
   messageId: identifierSchema,
 });
 
+const discordAttachmentEvidenceSchema = z.object({
+  filename: identifierSchema,
+  sizeBytes: z.number().int().positive(),
+}).strict();
+
+const layeredDiscordAttachmentsSchema = z.array(discordAttachmentEvidenceSchema).length(2)
+  .refine(
+    (attachments) => new Set(attachments.map(({ filename }) => filename)).size === attachments.length,
+    "Discord attachment filenames must be unique",
+  )
+  .refine(
+    (attachments) =>
+      attachments.some(({ filename }) => filename === "meeting-summary.md") &&
+      attachments.some(({ filename }) => filename === "meeting-transcript.md"),
+    "Layered Discord evidence requires meeting-summary.md and meeting-transcript.md",
+  );
+
 const replayEvidenceV3Schema = z.object({
   container: publicationContainerV3Schema,
   matchingMeetingCount: identifierCountSchema,
@@ -350,11 +367,25 @@ export const retainedE2eEvidenceV5Schema = retainedE2eEvidenceV4Schema
     schemaVersion: z.literal(5),
   });
 
+/** v6 proves both layered evidence attachments and their idempotent replay metadata. */
+export const retainedE2eEvidenceV6Schema = retainedE2eEvidenceV5Schema
+  .omit({ publication: true, replay: true, schemaVersion: true })
+  .extend({
+    publication: publicationEvidenceV3Schema.extend({
+      attachments: layeredDiscordAttachmentsSchema,
+    }),
+    replay: replayEvidenceV3Schema.extend({
+      attachments: layeredDiscordAttachmentsSchema,
+    }),
+    schemaVersion: z.literal(6),
+  });
+
 export const retainedE2eEvidenceSchema = z.union([
   retainedE2eEvidenceV2Schema,
   retainedE2eEvidenceV3Schema,
   retainedE2eEvidenceV4Schema,
   retainedE2eEvidenceV5Schema,
+  retainedE2eEvidenceV6Schema,
 ]);
 
 export type FixtureManifestV1 = z.infer<typeof fixtureManifestV1Schema>;
@@ -368,4 +399,5 @@ export type RetainedE2eEvidenceV2 = z.infer<typeof retainedE2eEvidenceV2Schema>;
 export type RetainedE2eEvidenceV3 = z.infer<typeof retainedE2eEvidenceV3Schema>;
 export type RetainedE2eEvidenceV4 = z.infer<typeof retainedE2eEvidenceV4Schema>;
 export type RetainedE2eEvidenceV5 = z.infer<typeof retainedE2eEvidenceV5Schema>;
+export type RetainedE2eEvidenceV6 = z.infer<typeof retainedE2eEvidenceV6Schema>;
 export type RetainedE2eEvidence = z.infer<typeof retainedE2eEvidenceSchema>;

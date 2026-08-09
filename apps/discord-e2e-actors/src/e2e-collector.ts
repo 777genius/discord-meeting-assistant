@@ -1,7 +1,7 @@
 import {
-  retainedE2eEvidenceV5Schema,
+  retainedE2eEvidenceV6Schema,
   sameDeploymentProvenance,
-  type RetainedE2eEvidenceV5,
+  type RetainedE2eEvidenceV6,
 } from "./e2e-evidence.js";
 import {
   assertDiscordReference,
@@ -16,6 +16,7 @@ import {
 import type {
   DiscordPublicationReference,
 } from "./e2e-discord-projection-inspection.js";
+import { sameDiscordAttachments } from "./e2e-evidence-publication.js";
 import type {
   CollectEvidenceInput,
   DeploymentEvidenceProbe,
@@ -47,7 +48,7 @@ export async function collectRetainedE2eEvidence(
   input: CollectEvidenceInput,
   deployment: DeploymentEvidenceProbe,
   discord: DiscordEvidenceProbe,
-): Promise<RetainedE2eEvidenceV5> {
+): Promise<RetainedE2eEvidenceV6> {
   const unboundActorRun = parseUnboundActorRun(input.actorRun);
   if (unboundActorRun.runId !== input.runId) {
     throw new Error("Actor evidence does not match the requested run correlation");
@@ -97,9 +98,12 @@ export async function collectRetainedE2eEvidence(
   if (afterMessage.embedDescription !== beforeMessage.embedDescription) {
     throw new Error("Discord projection visible text changed after idempotent replay");
   }
+  if (!sameDiscordAttachments(afterMessage.attachments, beforeMessage.attachments)) {
+    throw new Error("Discord projection attachments changed after idempotent replay");
+  }
   const recordingDurationMs = recordingDuration(s3);
   assertExactDiscordProjection(afterDiscord, replayPublication, "after replay");
-  return retainedE2eEvidenceV5Schema.parse({
+  return retainedE2eEvidenceV6Schema.parse({
     actorRun,
     deployment: provenanceBefore,
     database: {
@@ -113,6 +117,7 @@ export async function collectRetainedE2eEvidence(
     fixtures: actorRun.fixtures.map((fixture) => ({ ...fixture, codec: "opus" })),
     meetingId: snapshot.meetingId,
     publication: {
+      attachments: beforeMessage.attachments,
       container: toEvidenceContainer(publication),
       embedDescription: beforeMessage.embedDescription,
       matchingMessageCount: beforeDiscord.matchingMessages.length,
@@ -134,6 +139,7 @@ export async function collectRetainedE2eEvidence(
       startedAt: s3.startedAt,
     },
     replay: {
+      attachments: afterMessage.attachments,
       container: toEvidenceContainer(replayPublication),
       matchingMeetingCount: after.matchingMeetingCount,
       matchingMessageCount: afterDiscord.matchingMessages.length,
@@ -148,7 +154,7 @@ export async function collectRetainedE2eEvidence(
       summaryId: replaySnapshot.summary.summaryId,
       transcriptId: replaySnapshot.transcript.transcriptId,
     },
-    schemaVersion: 5,
+    schemaVersion: 6,
     stages: [
       { ...snapshot.transcriptionStage, stage: "transcription" },
       { ...snapshot.summaryStage, stage: "summary" },
