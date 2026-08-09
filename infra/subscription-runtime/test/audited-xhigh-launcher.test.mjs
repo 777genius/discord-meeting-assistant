@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import {
+  copyFile,
   lstat,
   mkdir,
   mkdtemp,
@@ -14,6 +15,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   admitMeetingSummaryRequest,
@@ -25,6 +27,9 @@ import {
   main,
   parseBridgeResultJson,
 } from "../audited-xhigh-launcher.mjs";
+
+const repositoryRuntimeRoot = dirname(fileURLToPath(import.meta.url));
+const runtimeSourceRoot = join(repositoryRuntimeRoot, "..");
 
 test("extracts the documented Codex turn.completed JSONL usage", () => {
   const ignored = codexExecJsonlUsage(
@@ -503,6 +508,84 @@ test("rejects malformed or multiple bridge result JSON payloads", () => {
     ),
     undefined,
   );
+});
+
+test("resolves the image-owned launcher against the adjacent mounted runtime package", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "subscription-runtime-layout-test-"));
+  t.after(async () => rm(root, { force: true, recursive: true }));
+  const runtimeRoot = join(root, "opt/subscription-runtime");
+  const packageRoot = join(
+    runtimeRoot,
+    "node_modules/@vioxen/subscription-runtime",
+  );
+  const runnerRoot = join(packageRoot, "dist/worker-local");
+  const requestPath = join(root, "request.json");
+  const codexStubPath = join(root, "codex-stub");
+  await mkdir(runnerRoot, { recursive: true });
+  await Promise.all([
+    ...[
+      "audited-codex-jsonl-bridge-output.mjs",
+      "audited-codex-jsonl-capture-store.mjs",
+      "audited-codex-jsonl-capture.mjs",
+      "audited-codex-jsonl-events.mjs",
+      "audited-xhigh-launcher.mjs",
+      "audited-xhigh-policy.mjs",
+    ].map((name) => copyFile(
+      join(runtimeSourceRoot, name),
+      join(runtimeRoot, name),
+    )),
+    writeFile(codexStubPath, "#!/bin/sh\nexit 0\n", { mode: 0o700 }),
+    writeFile(requestPath, JSON.stringify(incrementalRequest())),
+    writeFile(join(packageRoot, "package.json"), JSON.stringify({
+      exports: { "./worker-codex": "./worker-codex.mjs" },
+      name: "@vioxen/subscription-runtime",
+      type: "module",
+      version: "0.1.0-main.27",
+    })),
+    writeFile(join(packageRoot, "worker-codex.mjs"), [
+      "export class FileBackendCodexWorker {",
+      "  constructor(options) {",
+      "    if (options.executionEngine !== 'packaged-exec') throw new Error('wrong engine');",
+      "  }",
+      "}",
+    ].join("\n")),
+    writeFile(join(runnerRoot, "agent-task-runner-cli.js"), [
+      "export async function runSubscriptionAgentTaskCli(_argv, _unused, createWorker) {",
+      `  createWorker(${JSON.stringify({
+        codexBinaryPath: codexStubPath,
+        cwd: root,
+        encryptionKey: "test-key",
+        env: { PATH: process.env.PATH },
+        model: "gpt-5.6-luna",
+        provider: "codex",
+        providerInstanceId: "layout-test",
+        stateRootDir: root,
+        timeoutMs: 1_000,
+      })});`,
+      `  process.stdout.write(${JSON.stringify(JSON.stringify(completedBridgeResult()))});`,
+      "  return 0;",
+      "}",
+    ].join("\n")),
+  ]);
+  const result = await runExecutable(
+    process.execPath,
+    [
+      join(runtimeRoot, "audited-xhigh-launcher.mjs"),
+      "--provider",
+      "codex",
+      "--input",
+      requestPath,
+      "--state-root",
+      root,
+      "--model",
+      "gpt-5.6-luna",
+    ],
+    { ...process.env, AGENT_RUNTIME_REASONING_EFFORT: "low" },
+  );
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.stderr, "");
+  assert.deepEqual(JSON.parse(result.stdout), completedBridgeResult());
 });
 
 function incrementalRequest() {

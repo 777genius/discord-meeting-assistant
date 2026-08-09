@@ -120,7 +120,9 @@ It reads the actual Postgres snapshot/counts over the isolated SSH deployment,
 downloads and hashes the authoritative S3 manifest and every speaker track,
 counts Discord projection markers and retains the visible embed description,
 captures immutable Craig, Meeting Platform, and Subscription Runtime deployment
-provenance plus correlated stage/model latency observations, replays the
+provenance plus correlated stage/model latency observations. When
+`DISCORD_E2E_EXPECTED_PIPECAT_SOURCE_REVISION` is set, it also requires and
+captures the profiled Pipecat service. It replays the
 completed BullMQ job, then repeats the Postgres, Discord, and provenance probes.
 It writes nothing unless correlation, stable provenance, and the single-run
 verifier pass:
@@ -129,22 +131,26 @@ verifier pass:
 DISCORD_E2E_RUN_ID=campaign-2026-08-02-overlap \
 DISCORD_E2E_RECORDING_ID=<craig-recording-id> \
 DISCORD_E2E_ACTOR_RUN_INPUT=/absolute/evidence/overlap.actor-run.json \
-DISCORD_E2E_EVIDENCE_OUTPUT=/absolute/evidence/overlap.evidence.v4.json \
+DISCORD_E2E_EVIDENCE_OUTPUT=/absolute/evidence/overlap.evidence.v5.json \
 pnpm --filter @discord-meeting/discord-e2e-actors collect:e2e
 ```
 
 Collection and both verification commands require immutable candidate inputs
-`DISCORD_E2E_EXPECTED_CRAIG_SOURCE_REVISION` and
+`DISCORD_E2E_EXPECTED_CRAIG_SOURCE_REVISION`,
 `DISCORD_E2E_EXPECTED_MEETING_PLATFORM_SOURCE_REVISION`, and
 `DISCORD_E2E_EXPECTED_SUBSCRIPTION_RUNTIME_SOURCE_REVISION`. Set them from the
 release candidate commits, never from an existing evidence file.
+Set optional `DISCORD_E2E_EXPECTED_PIPECAT_SOURCE_REVISION` only when the
+deployment was started with Compose profile `conversation`; once set, missing or
+stale Pipecat provenance fails collection and verification.
 
 The collector performs a real post-call replay. Run it only against the isolated
 official-bot test deployment. Infrastructure paths/host/project have safe
 environment overrides for another disposable deployment. Craig defaults to
 Compose project `craig-meeting-e2e`, service `bot`; override them with
 `DISCORD_E2E_REMOTE_CRAIG_PROJECT` and `DISCORD_E2E_REMOTE_CRAIG_SERVICE`.
-All three running images must carry a lowercase 40- or 64-character
+All three required running images, plus Pipecat when selected, must carry a
+lowercase 40- or 64-character
 `org.opencontainers.image.revision` OCI label. Do not restart those services
 between the call and collection.
 
@@ -152,7 +158,7 @@ An individual evidence file can be checked again deterministically:
 
 ```sh
 pnpm --filter @discord-meeting/discord-e2e-actors run verify:e2e \
-  /absolute/path/to/manifest.v1.json /absolute/path/to/retained-evidence.v4.json
+  /absolute/path/to/manifest.v1.json /absolute/path/to/retained-evidence.v5.json
 ```
 
 The command exits non-zero for WER/CER or terminology failure, wrong speakers or
@@ -166,7 +172,7 @@ must all be isolated between runs:
 ```sh
 pnpm --filter @discord-meeting/discord-e2e-actors run verify:campaign -- \
   test/fixtures/manifest.v1.json \
-  /absolute/evidence/sequential.evidence.v4.json \
-  /absolute/evidence/overlap.evidence.v4.json \
-  /absolute/evidence/reconnect.evidence.v4.json
+  /absolute/evidence/sequential.evidence.v5.json \
+  /absolute/evidence/overlap.evidence.v5.json \
+  /absolute/evidence/reconnect.evidence.v5.json
 ```

@@ -63,6 +63,62 @@ test("Pipecat receives only its two required Meeting Platform secrets", async ()
   );
 });
 
+test("deploys the audited launcher with the sidecar image", async () => {
+  const [compose, dockerfile] = await Promise.all([
+    readFile(join(repositoryRoot, "infra/deployment/compose.yaml"), "utf8"),
+    readFile(
+      join(repositoryRoot, "apps/subscription-runtime-sidecar/Dockerfile"),
+      "utf8",
+    ),
+  ]);
+  const sidecar = compose
+    .split("  subscription-runtime-sidecar:\n", 2)[1]
+    ?.split("  pipecat-runtime:\n", 1)[0];
+
+  assert.ok(sidecar);
+  assert.match(
+    dockerfile,
+    /COPY --chown=10001:10001 infra\/subscription-runtime\/audited-\*\.mjs \/opt\/subscription-runtime\//u,
+  );
+  assert.match(
+    sidecar,
+    /SUBSCRIPTION_RUNTIME_LAUNCHER_PATH: \/opt\/subscription-runtime\/audited-xhigh-launcher\.mjs/u,
+  );
+  assert.doesNotMatch(
+    sidecar,
+    /runtime\/installation:\/opt\/subscription-runtime:ro/u,
+  );
+  assert.match(
+    sidecar,
+    /runtime\/installation\/node_modules:\/opt\/subscription-runtime\/node_modules:ro/u,
+  );
+});
+
+test("Pipecat image receives and validates the immutable source revision", async () => {
+  const [compose, dockerfile] = await Promise.all([
+    readFile(join(repositoryRoot, "infra/deployment/compose.yaml"), "utf8"),
+    readFile(join(repositoryRoot, "apps/pipecat-runtime/Dockerfile"), "utf8"),
+  ]);
+  const pipecat = compose
+    .split("  pipecat-runtime:\n", 2)[1]
+    ?.split("  meeting-platform:\n", 1)[0];
+
+  assert.ok(pipecat);
+  assert.match(
+    pipecat,
+    /SOURCE_REVISION: \$\{MEETING_PLATFORM_SOURCE_REVISION:\?set immutable source revision\}/u,
+  );
+  assert.match(dockerfile, /ARG SOURCE_REVISION/u);
+  assert.match(
+    dockerfile,
+    /grep -Eq '\^\(\[0-9a-f\]\{40\}\|\[0-9a-f\]\{64\}\)\$'/u,
+  );
+  assert.match(
+    dockerfile,
+    /LABEL org\.opencontainers\.image\.revision="\$\{SOURCE_REVISION\}"/u,
+  );
+});
+
 test("Foundation rejects a forbidden launcher import", async () => {
   await withFixture(async (fixture) => {
     await writeSourceFixture(fixture, 'import "node:fs";\n');

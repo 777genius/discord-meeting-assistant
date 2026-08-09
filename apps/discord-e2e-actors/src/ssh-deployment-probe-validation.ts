@@ -65,6 +65,7 @@ export interface SshDeploymentProbeOptions {
   readonly craigServiceName: string;
   readonly envFile: string;
   readonly host: string;
+  readonly includePipecatProvenance?: boolean;
   readonly projectName: string;
   readonly sourceRoot: string;
   readonly timeoutMs?: number;
@@ -81,6 +82,7 @@ export function parseSshDeploymentProbeOptions(
     craigServiceName: safeService.parse(options.craigServiceName),
     envFile: absolutePath.parse(options.envFile),
     host: safeHost.parse(options.host),
+    includePipecatProvenance: options.includePipecatProvenance ?? false,
     projectName: safeProject.parse(options.projectName),
     sourceRoot: absolutePath.parse(options.sourceRoot),
     timeoutMs: options.timeoutMs ?? 300_000,

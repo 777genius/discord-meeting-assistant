@@ -16,6 +16,7 @@ async function main(): Promise<void> {
   const expectedRevisions = deploymentRevisionExpectationSchema.parse({
     craig: process.env.DISCORD_E2E_EXPECTED_CRAIG_SOURCE_REVISION,
     meetingPlatform: process.env.DISCORD_E2E_EXPECTED_MEETING_PLATFORM_SOURCE_REVISION,
+    pipecat: process.env.DISCORD_E2E_EXPECTED_PIPECAT_SOURCE_REVISION,
     subscriptionRuntime: process.env.DISCORD_E2E_EXPECTED_SUBSCRIPTION_RUNTIME_SOURCE_REVISION,
   });
   const verification = verifyE2eCampaign(manifest, runs, expectedRevisions);

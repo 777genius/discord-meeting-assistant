@@ -25,8 +25,15 @@ COPY --from=dependencies /app/apps/subscription-runtime-sidecar/node_modules ./a
 COPY --from=dependencies /app/packages/subscription-runtime-adapter/node_modules ./packages/subscription-runtime-adapter/node_modules
 COPY apps/subscription-runtime-sidecar ./apps/subscription-runtime-sidecar
 COPY apps/meeting-platform/proto/agent_runtime.proto ./apps/meeting-platform/proto/agent_runtime.proto
+COPY --chown=10001:10001 infra/subscription-runtime/audited-*.mjs /opt/subscription-runtime/
 COPY packages/subscription-runtime-adapter ./packages/subscription-runtime-adapter
 COPY packages/meeting-core ./packages/meeting-core
 COPY tsconfig.json ./tsconfig.json
+RUN chmod 0555 /opt/subscription-runtime/audited-xhigh-launcher.mjs \
+    && chmod 0444 /opt/subscription-runtime/audited-codex-jsonl-bridge-output.mjs \
+      /opt/subscription-runtime/audited-codex-jsonl-capture-store.mjs \
+      /opt/subscription-runtime/audited-codex-jsonl-capture.mjs \
+      /opt/subscription-runtime/audited-codex-jsonl-events.mjs \
+      /opt/subscription-runtime/audited-xhigh-policy.mjs
 USER 10001:10001
 ENTRYPOINT ["/app/apps/subscription-runtime-sidecar/node_modules/.bin/tsx", "/app/apps/subscription-runtime-sidecar/src/main.ts"]

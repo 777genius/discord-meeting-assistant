@@ -1,7 +1,7 @@
 import {
-  retainedE2eEvidenceV4Schema,
+  retainedE2eEvidenceV5Schema,
   sameDeploymentProvenance,
-  type RetainedE2eEvidenceV4,
+  type RetainedE2eEvidenceV5,
 } from "./e2e-evidence.js";
 import {
   assertDiscordReference,
@@ -47,7 +47,7 @@ export async function collectRetainedE2eEvidence(
   input: CollectEvidenceInput,
   deployment: DeploymentEvidenceProbe,
   discord: DiscordEvidenceProbe,
-): Promise<RetainedE2eEvidenceV4> {
+): Promise<RetainedE2eEvidenceV5> {
   const unboundActorRun = parseUnboundActorRun(input.actorRun);
   if (unboundActorRun.runId !== input.runId) {
     throw new Error("Actor evidence does not match the requested run correlation");
@@ -99,7 +99,7 @@ export async function collectRetainedE2eEvidence(
   }
   const recordingDurationMs = recordingDuration(s3);
   assertExactDiscordProjection(afterDiscord, replayPublication, "after replay");
-  return retainedE2eEvidenceV4Schema.parse({
+  return retainedE2eEvidenceV5Schema.parse({
     actorRun,
     deployment: provenanceBefore,
     database: {
@@ -148,7 +148,7 @@ export async function collectRetainedE2eEvidence(
       summaryId: replaySnapshot.summary.summaryId,
       transcriptId: replaySnapshot.transcript.transcriptId,
     },
-    schemaVersion: 4,
+    schemaVersion: 5,
     stages: [
       { ...snapshot.transcriptionStage, stage: "transcription" },
       { ...snapshot.summaryStage, stage: "summary" },

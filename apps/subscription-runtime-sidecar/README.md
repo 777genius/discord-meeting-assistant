@@ -10,15 +10,22 @@ stderr.
 ## Runtime artifact boundary
 
 The repository and base Dockerfile intentionally do not contain the private
-`@vioxen/subscription-runtime` tarball, Codex auth, or a deployment launcher.
-Deployment must extend the image or mount an audited, immutable installation and
-set:
+`@vioxen/subscription-runtime` tarball or Codex auth. The immutable image ships
+the audited launcher modules, while deployment mounts only the exact runtime
+package tree beside them and sets:
 
 ```text
-SUBSCRIPTION_RUNTIME_LAUNCHER_PATH=/opt/subscription-runtime/launcher.mjs
-SUBSCRIPTION_RUNTIME_PACKAGE_MANIFEST_PATH=/opt/subscription-runtime/package/package.json
+SUBSCRIPTION_RUNTIME_LAUNCHER_PATH=/opt/subscription-runtime/audited-xhigh-launcher.mjs
+SUBSCRIPTION_RUNTIME_PACKAGE_MANIFEST_PATH=/opt/subscription-runtime/node_modules/@vioxen/subscription-runtime/package.json
 SUBSCRIPTION_RUNTIME_EXPECTED_LAUNCHER_SHA256=<lowercase audited launcher bundle sha256>
 ```
+
+Roll back the sidecar image, Compose file, mount layout, and admitted launcher
+digest as one release unit. During the one-time cutover, an older image requires
+its older full-installation mount and launcher path; do not start it with the new
+`node_modules`-only mount. Reusing launcher files from a persistent host
+directory with a new image is forbidden because it can pair a new request policy
+with stale admission code.
 
 The package manifest must be exactly `@vioxen/subscription-runtime` version
 `0.1.0-main.27`. The launcher entrypoint and its five audited sibling modules are

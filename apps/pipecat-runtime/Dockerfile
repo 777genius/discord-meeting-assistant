@@ -19,6 +19,11 @@ RUN uv sync --frozen --no-dev --no-editable
 
 FROM python:3.13.14-slim-bookworm@sha256:9d7f287598e1a5a978c015ee176d8216435aaf335ed69ac3c38dd1bbb10e8d64 AS runtime
 
+ARG SOURCE_REVISION
+LABEL org.opencontainers.image.revision="${SOURCE_REVISION}"
+RUN printf '%s' "${SOURCE_REVISION}" \
+    | grep -Eq '^([0-9a-f]{40}|[0-9a-f]{64})$'
+
 RUN groupadd --system --gid 10001 pipecat \
     && useradd --system --uid 10001 --gid pipecat --home-dir /nonexistent --shell /usr/sbin/nologin pipecat
 
