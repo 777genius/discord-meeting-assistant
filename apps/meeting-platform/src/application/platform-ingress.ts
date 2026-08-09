@@ -222,16 +222,20 @@ export class PlatformRecordingIngress {
       occurredAt: event.occurredAt,
       recordingId: event.recordingId,
     };
-    if (event.type !== "meeting.started") {
-      return { ...common, type: event.type };
+    if (event.type === "meeting.started") {
+      return {
+        ...common,
+        participantIds: [...event.participantIds],
+        publicationTarget: {
+          resolve: () => this.resolvePublicationTarget(event.source),
+        },
+        type: event.type,
+      };
     }
-    return {
-      ...common,
-      publicationTarget: {
-        resolve: () => this.resolvePublicationTarget(event.source),
-      },
-      type: event.type,
-    };
+    if (event.type === "participant.joined" || event.type === "participant.left") {
+      return { ...common, participantId: event.participantId, type: event.type };
+    }
+    return { ...common, type: event.type };
   }
 
   private async resolvePublicationTarget(

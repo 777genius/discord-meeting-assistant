@@ -22,12 +22,27 @@ export {
   type ConversationTurnInput,
 } from "./domain/conversation.js";
 export {
+  MeetingFarewellPolicy,
+  type FarewellLocale,
+  type FarewellPolicyDecision,
+  type FarewellTurnObservation,
+} from "./domain/farewell-policy.js";
+export {
   ConversationCoordinator,
   type ConversationCoordinatorDependencies,
   type ConversationCoordinatorResult,
   type ConversationInterruptionResult,
   type FinalizedConversationTurnInput,
+  type PreparedConversationCueInput,
+  type ProactiveConversationTurnInput,
 } from "./application/conversation.js";
+export type {
+  ConversationFarewellClassificationInput,
+  ConversationFarewellClassifier,
+  ConversationFarewellCue,
+  ConversationFarewellCueRegistry,
+  ConversationFarewellTurn,
+} from "./application/conversation-farewell-ports.js";
 export type {
   ConversationAudioChunk,
   ConversationCancellationReason,

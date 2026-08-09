@@ -5,7 +5,13 @@ import {
   recordingPlaybackEnvironmentShape,
   validateRecordingPlaybackEnvironment,
 } from "./config/recording-playback-config.js";
+import {
+  participantGreetingProfilesEnvironmentSchema,
+} from "./config/participant-greeting-profiles.js";
+import type { PlatformConfig } from "./config/platform-config.js";
 import { readSecretFile } from "./config/secret-file-reader.js";
+
+export type { PlatformConfig } from "./config/platform-config.js";
 
 const snowflake = z.string().regex(/^\d{17,20}$/u);
 const optionalSnowflake = z.preprocess(
@@ -28,6 +34,8 @@ const maximumVoicetextLiveMaxConcurrentSessions = 10;
 const maximumVoicetextLivePacketBackpressureTimeoutMs = 30_000;
 const defaultConversationThinkingCueRoot =
   "/app/apps/meeting-platform/assets/thinking-cues";
+const defaultConversationFarewellCueRoot =
+  "/app/apps/meeting-platform/assets/farewell-cues";
 const absolutePath = z
   .string()
   .startsWith("/")
@@ -57,7 +65,6 @@ const runtimeAddress = z
   .regex(/^(?:[a-zA-Z0-9][a-zA-Z0-9.-]*|\[[0-9a-fA-F:]+\]):\d{1,5}$/u);
 const profileIdentifier = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/u);
 const voiceIdentifier = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/u);
-
 const environmentSchema = z
   .object({
     BIND_ADDRESS: z.union([z.ipv4(), z.ipv6()]).default("0.0.0.0"),
@@ -65,6 +72,7 @@ const environmentSchema = z
       .enum(["true", "false"])
       .default("false")
       .transform((value) => value === "true"),
+    CONVERSATION_FAREWELL_CUE_ROOT: absolutePath.optional(),
     CONVERSATION_RUNTIME_ADDRESS: runtimeAddress.optional(),
     CONVERSATION_RUNTIME_TOKEN_FILE: absolutePath.optional(),
     CONVERSATION_THINKING_CUE_ROOT: absolutePath.optional(),
@@ -93,6 +101,8 @@ const environmentSchema = z
     NODE_ENV: z
       .enum(["development", "production", "test"])
       .default("production"),
+    PARTICIPANT_GREETING_PROFILES_JSON:
+      participantGreetingProfilesEnvironmentSchema,
     PORT: z.coerce.number().int().min(1).max(65_535).default(4_310),
     POSTGRES_URL_FILE: absolutePath,
     RECORDING_SPOOL_ROOT: absolutePath,
@@ -149,6 +159,17 @@ const environmentSchema = z
     VOICETEXT_WS_URL: secureWebSocketUrl.optional(),
   })
   .superRefine((environment, context) => {
+    if (
+      Object.keys(environment.PARTICIPANT_GREETING_PROFILES_JSON).length > 0 &&
+      !environment.CONVERSATION_ENABLED
+    ) {
+      context.addIssue({
+        code: "custom",
+        message:
+          "participant greeting profiles require live conversation to be enabled",
+        path: ["PARTICIPANT_GREETING_PROFILES_JSON"],
+      });
+    }
     if (environment.CONVERSATION_ENABLED) {
       if (environment.TRANSCRIPTION_PROVIDER !== "voicetext") {
         context.addIssue({
@@ -216,69 +237,6 @@ const environmentSchema = z
     }
   });
 
-interface PlatformSecrets {
-  readonly conversationRuntimeToken?: string;
-  readonly craigBearerToken: string;
-  readonly discordToken: string;
-  readonly postgresUrl: string;
-  readonly redisUrl: string;
-  readonly recordingPlaybackSigningSecret?: string;
-  readonly s3AccessKeyId: string;
-  readonly s3SecretAccessKey: string;
-  readonly subscriptionRuntimeToken: string;
-  readonly voicetextServiceToken?: string;
-}
-
-export interface PlatformConfig {
-  readonly bindAddress: string;
-  readonly conversation?: {
-    readonly runtimeAddress: string;
-    readonly systemPrompt: string;
-    readonly thinkingCueRoot: string;
-    readonly voiceId: string;
-    readonly voiceProfileId: string;
-  };
-  /** Controls whether the authoritative final summary replaces or follows the live draft. */
-  readonly discordFinalPublicationMode: "separate-message" | "replace-live";
-  /** New meetings publish directly into the configured results channel by default. */
-  readonly discordPublicationMode: "message" | "thread";
-  readonly discordApplicationId: string;
-  readonly discordCraigApplicationId: string;
-  readonly discordLegacyRoute?: {
-    readonly guildId: string;
-    readonly publicationTargetId: string;
-    readonly voiceChannelId: string;
-  };
-  readonly nodeEnvironment: "development" | "production" | "test";
-  readonly liveIngressOwnerMode: "singleton";
-  readonly port: number;
-  readonly recordingSpoolRoot: string;
-  readonly recordingPlayback?: {
-    readonly publicBaseUrl: string;
-  };
-  readonly s3: {
-    readonly bucket: string;
-    readonly endpoint: string;
-    readonly prefix: string;
-    readonly region: string;
-  };
-  readonly secrets: PlatformSecrets;
-  readonly speaches: { readonly baseUrl: string; readonly model: string };
-  readonly transcriptionProvider: "speaches" | "voicetext";
-  readonly subscriptionRuntime: {
-    readonly address: string;
-    readonly launcherSha256: string;
-  };
-  readonly voicetext?: {
-    readonly batchMaxArtifactBytes: number;
-    readonly batchMaxConcurrency: number;
-    readonly batchMaxConcurrentMeetings: number;
-    readonly liveMaxConcurrentSessions: number;
-    readonly livePacketBackpressureTimeoutMs: number;
-    readonly webSocketUrl: string;
-  };
-}
-
 export type SecretFileReader = (path: string) => Promise<string>;
 
 export async function loadPlatformConfig(
@@ -327,6 +285,9 @@ export async function loadPlatformConfig(
     environment.CONVERSATION_RUNTIME_ADDRESS !== undefined
       ? {
           conversation: {
+            farewellCueRoot:
+              environment.CONVERSATION_FAREWELL_CUE_ROOT ??
+              defaultConversationFarewellCueRoot,
             runtimeAddress: environment.CONVERSATION_RUNTIME_ADDRESS,
             systemPrompt: environment.CONVERSATION_SYSTEM_PROMPT,
             thinkingCueRoot:
@@ -354,6 +315,7 @@ export async function loadPlatformConfig(
         }),
     liveIngressOwnerMode: environment.LIVE_INGRESS_OWNER_MODE,
     nodeEnvironment: environment.NODE_ENV,
+    participantGreetingProfiles: environment.PARTICIPANT_GREETING_PROFILES_JSON,
     port: environment.PORT,
     recordingSpoolRoot: environment.RECORDING_SPOOL_ROOT,
     ...(recordingPlayback.config === undefined

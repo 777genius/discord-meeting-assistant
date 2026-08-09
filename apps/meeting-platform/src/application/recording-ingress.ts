@@ -110,6 +110,7 @@ interface DeferredPublicationTarget {
 export type DerivedLiveLifecycleEvent =
   | {
       readonly occurredAt: string;
+      readonly participantIds: readonly string[];
       readonly publicationTarget: DeferredPublicationTarget;
       readonly recordingId: string;
       readonly type: "meeting.started";
@@ -121,12 +122,16 @@ export type DerivedLiveLifecycleEvent =
     }
   | {
       readonly occurredAt: string;
+      readonly participantId: string;
+      readonly recordingId: string;
+      readonly type: "participant.joined" | "participant.left";
+    }
+  | {
+      readonly occurredAt: string;
       readonly recordingId: string;
       readonly type:
         | "meeting.connection_lost"
         | "meeting.connection_recovered"
-        | "participant.joined"
-        | "participant.left"
         | "recording.artifact_ready"
         | "recording.authoritative_ready";
     };

@@ -29,6 +29,33 @@ export interface FinalizedConversationTurnInput {
   readonly wakeDetectedAtUnixMs?: number;
 }
 
+/** A provider-neutral system-initiated utterance that is not transcript evidence. */
+export interface ProactiveConversationTurnInput {
+  readonly locale: string;
+  readonly meetingId: string;
+  readonly nowMs: number;
+  readonly prompt: string;
+  readonly recordingId: string;
+  readonly speakerId: string;
+  readonly systemPrompt: string;
+  readonly turnId: string;
+  readonly voiceProfileId: string;
+}
+
+/** Pre-generated 48 kHz mono PCM played without an LLM or TTS round-trip. */
+export interface PreparedConversationCueInput {
+  readonly cueId: string;
+  readonly locale: string;
+  readonly meetingId: string;
+  readonly nowMs: number;
+  readonly pcmChunks: readonly Uint8Array[];
+  readonly playbackAttemptId: string;
+  readonly recordingId: string;
+  readonly speakerId: string;
+  readonly turnId: string;
+  readonly voiceProfileId: string;
+}
+
 export type ConversationCoordinatorResult =
   | { readonly status: "ignored" }
   | {
@@ -77,8 +104,14 @@ export interface ConversationCoordinatorDependencies {
 }
 
 export interface PreparedConversation {
+  readonly cue?: {
+    readonly cueId: string;
+    readonly pcmChunks: readonly Uint8Array[];
+    readonly playbackAttemptId: string;
+  };
   readonly request: ConversationStartRequest;
   readonly thinkingCueLocale: string;
+  readonly thinkingCuesEnabled: boolean;
   readonly turn: ConversationTurn;
 }
 

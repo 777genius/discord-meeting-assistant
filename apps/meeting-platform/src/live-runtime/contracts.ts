@@ -1,3 +1,10 @@
+import type {
+  ConversationFarewellClassificationInput,
+  ConversationFarewellClassifier,
+  ConversationFarewellCueRegistry,
+  ConversationFarewellTurn,
+} from "@discord-meeting/meeting-core/conversation";
+
 /**
  * Consumer-owned vocabulary for the derived live-meeting runtime. Inbound and
  * outbound adapters map their provider DTOs to these small shapes at the
@@ -39,8 +46,14 @@ interface DeferredLivePublicationTarget {
 }
 
 export interface LiveMeetingStartedEvent extends LiveMeetingEventBase {
+  readonly participantIds: readonly string[];
   readonly publicationTarget: DeferredLivePublicationTarget;
   readonly type: "meeting.started";
+}
+
+export interface LiveMeetingParticipantEvent extends LiveMeetingEventBase {
+  readonly participantId: string;
+  readonly type: "participant.joined" | "participant.left";
 }
 
 interface LiveMeetingStoppedEvent extends LiveMeetingEventBase {
@@ -51,14 +64,13 @@ interface LiveMeetingIgnoredEvent extends LiveMeetingEventBase {
   readonly type:
     | "meeting.connection_lost"
     | "meeting.connection_recovered"
-    | "participant.joined"
-    | "participant.left"
     | "recording.artifact_ready"
     | "recording.authoritative_ready";
 }
 
 export type LiveMeetingLifecycleEvent =
   | LiveMeetingIgnoredEvent
+  | LiveMeetingParticipantEvent
   | LiveMeetingStartedEvent
   | LiveMeetingStoppedEvent;
 
@@ -256,19 +268,73 @@ interface LiveConversationTurnInput {
   readonly wakeDetectedAtUnixMs: number;
 }
 
+interface LiveProactiveConversationTurnInput {
+  readonly locale: string;
+  readonly meetingId: string;
+  readonly nowMs: number;
+  readonly prompt: string;
+  readonly recordingId: string;
+  readonly speakerId: string;
+  readonly systemPrompt: string;
+  readonly turnId: string;
+  readonly voiceProfileId: string;
+}
+
+interface LivePreparedConversationCueInput {
+  readonly cueId: string;
+  readonly locale: string;
+  readonly meetingId: string;
+  readonly nowMs: number;
+  readonly pcmChunks: readonly Uint8Array[];
+  readonly playbackAttemptId: string;
+  readonly recordingId: string;
+  readonly speakerId: string;
+  readonly turnId: string;
+  readonly voiceProfileId: string;
+}
+
 interface LiveConversationCoordinator {
   advanceMeeting(meetingId: string, nowMs: number): void;
   closeMeeting(meetingId: string, nowMs: number): Promise<void>;
   handleFinalizedTurn(
     input: LiveConversationTurnInput,
   ): Promise<LiveConversationOutcome>;
+  handleProactiveTurn(
+    input: LiveProactiveConversationTurnInput,
+  ): Promise<LiveConversationOutcome>;
+  playPreparedCue(
+    input: LivePreparedConversationCueInput,
+  ): Promise<LiveConversationOutcome>;
   speechActivity(meetingId: string, nowMs: number): Promise<unknown>;
   speechEnded(meetingId: string, nowMs: number): Promise<unknown>;
   speechStarted(meetingId: string, nowMs: number): Promise<unknown>;
+  whenIdle(meetingId: string): Promise<void>;
+}
+
+export interface LiveParticipantGreetingProfile {
+  readonly displayName: string;
+  readonly greetingLocale: "en" | "ru";
+  readonly spokenName: string;
+}
+
+interface LiveParticipantGreetingConfiguration {
+  readonly isPlaybackReady: (recordingId: string) => boolean;
+  readonly profiles: Readonly<Record<string, LiveParticipantGreetingProfile>>;
+}
+
+export type LiveFarewellTurn = ConversationFarewellTurn;
+export type LiveFarewellClassificationInput = ConversationFarewellClassificationInput;
+
+interface LiveFarewellConfiguration {
+  readonly classifier?: ConversationFarewellClassifier;
+  readonly cues: ConversationFarewellCueRegistry;
+  readonly participantNames: Readonly<Record<string, string>>;
 }
 
 export interface LiveConversationConfiguration {
   readonly coordinator: LiveConversationCoordinator;
+  readonly farewells?: LiveFarewellConfiguration;
+  readonly greetings?: LiveParticipantGreetingConfiguration;
   readonly locale: string;
   readonly nowMilliseconds: () => number;
   readonly systemPrompt: string;

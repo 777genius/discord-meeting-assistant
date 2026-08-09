@@ -10,6 +10,8 @@ import type {
   FinalizedConversationTurnInput,
   MeetingConversationState,
   PreparedConversation,
+  PreparedConversationCueInput,
+  ProactiveConversationTurnInput,
 } from "./conversation-coordinator-types.js";
 
 interface TranscriptTimeline {
@@ -31,6 +33,28 @@ function identityPart(value: string): string {
 function conversationIdempotencyKey(input: FinalizedConversationTurnInput): string {
   return [
     "live-conversation:v1",
+    input.meetingId,
+    input.recordingId,
+    input.turnId,
+  ].map(identityPart).join("|");
+}
+
+function proactiveConversationIdempotencyKey(
+  input: ProactiveConversationTurnInput,
+): string {
+  return [
+    "proactive-conversation:v1",
+    input.meetingId,
+    input.recordingId,
+    input.turnId,
+  ].map(identityPart).join("|");
+}
+
+function preparedCueIdempotencyKey(
+  input: PreparedConversationCueInput,
+): string {
+  return [
+    "prepared-conversation-cue:v1",
     input.meetingId,
     input.recordingId,
     input.turnId,
@@ -158,7 +182,109 @@ export class ConversationWakeLatchAdmission {
       speakerId: input.speakerId,
       turnId: input.turnId,
     });
-    const admission = state.session.admit(turn, state.lastObservedAtMs);
+    return this.admitPrepared(state, {
+      request: {
+        idempotencyKey: conversationIdempotencyKey(input),
+        locale: input.locale,
+        meetingId: input.meetingId,
+        prompt,
+        recordingId: input.recordingId,
+        speakerId: input.speakerId,
+        systemPrompt: input.systemPrompt,
+        turnId: input.turnId,
+        voiceProfileId: input.voiceProfileId,
+      },
+      thinkingCueLocale: input.thinkingCueLocale,
+      thinkingCuesEnabled: true,
+      turn,
+    });
+  }
+
+  public admitProactive(
+    state: MeetingConversationState,
+    input: ProactiveConversationTurnInput,
+  ): ConversationPromptAdmission {
+    const prompt = input.prompt.normalize("NFKC").trim();
+    const turn = createConversationTurn({
+      meetingId: input.meetingId,
+      prompt,
+      speakerId: input.speakerId,
+      turnId: input.turnId,
+    });
+    return this.admitPrepared(state, {
+      request: {
+        idempotencyKey: proactiveConversationIdempotencyKey(input),
+        locale: input.locale,
+        meetingId: input.meetingId,
+        prompt,
+        recordingId: input.recordingId,
+        speakerId: input.speakerId,
+        systemPrompt: input.systemPrompt,
+        turnId: input.turnId,
+        voiceProfileId: input.voiceProfileId,
+      },
+      thinkingCueLocale: input.locale,
+      thinkingCuesEnabled: false,
+      turn,
+    });
+  }
+
+  public admitPreparedCue(
+    state: MeetingConversationState,
+    input: PreparedConversationCueInput,
+  ): ConversationPromptAdmission {
+    const turn = createConversationTurn({
+      meetingId: input.meetingId,
+      prompt: input.cueId,
+      speakerId: input.speakerId,
+      turnId: input.turnId,
+    });
+    if (input.pcmChunks.length === 0) {
+      throw new DomainInvariantError(
+        "INVALID_LIFECYCLE_STATE",
+        "prepared conversation cue must contain PCM",
+      );
+    }
+    const pcmChunks = input.pcmChunks.map((chunk) => {
+      if (chunk.byteLength === 0 || chunk.byteLength % 2 !== 0) {
+        throw new DomainInvariantError(
+          "INVALID_LIFECYCLE_STATE",
+          "prepared conversation cue must contain sample-aligned PCM",
+        );
+      }
+      return chunk.slice();
+    });
+    return this.admitPrepared(state, {
+      cue: {
+        cueId: input.cueId,
+        pcmChunks: Object.freeze(pcmChunks),
+        playbackAttemptId: input.playbackAttemptId,
+      },
+      request: {
+        idempotencyKey: preparedCueIdempotencyKey(input),
+        locale: input.locale,
+        meetingId: input.meetingId,
+        prompt: input.cueId,
+        recordingId: input.recordingId,
+        speakerId: input.speakerId,
+        systemPrompt: "Play the pre-generated audio cue.",
+        turnId: input.turnId,
+        voiceProfileId: input.voiceProfileId,
+      },
+      thinkingCueLocale: input.locale,
+      thinkingCuesEnabled: false,
+      turn,
+    });
+  }
+
+  private admitPrepared(
+    state: MeetingConversationState,
+    prepared: PreparedConversation,
+  ): ConversationPromptAdmission {
+    const admission = state.session.admit(
+      prepared.turn,
+      state.lastObservedAtMs,
+    );
 
     if (admission.status === "reused") {
       return {
@@ -177,24 +303,24 @@ export class ConversationWakeLatchAdmission {
       };
     }
 
-    state.pending.set(turn.turnId, this.prepare(input, prompt, turn));
+    state.pending.set(prepared.turn.turnId, prepared);
     if (admission.status === "active") {
       return {
         result: Object.freeze({
-          prompt,
+          prompt: prepared.turn.prompt,
           status: "active" as const,
-          turnId: turn.turnId,
+          turnId: prepared.turn.turnId,
           usedFallbackPrompt: false,
         }),
-        turnToStart: turn.turnId,
+        turnToStart: prepared.turn.turnId,
       };
     }
     return {
       result: Object.freeze({
         expiresAtMs: admission.expiresAtMs,
-        prompt,
+        prompt: prepared.turn.prompt,
         status: "queued" as const,
-        turnId: turn.turnId,
+        turnId: prepared.turn.turnId,
         usedFallbackPrompt: false,
       }),
       turnToStart: null,
@@ -221,6 +347,7 @@ export class ConversationWakeLatchAdmission {
         voiceProfileId: input.voiceProfileId,
       },
       thinkingCueLocale: input.thinkingCueLocale,
+      thinkingCuesEnabled: true,
       turn,
     };
   }

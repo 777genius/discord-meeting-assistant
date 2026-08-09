@@ -1,5 +1,6 @@
 import { canonicalLiveCaptionSignature } from "./caption-signature.js";
 import { ConversationBridge } from "./conversation-bridge.js";
+import { FarewellBridge } from "./farewell-bridge.js";
 import type {
   LiveMeetingRuntimeDependencies,
   LiveMeetingStartedEvent,
@@ -14,6 +15,7 @@ import type {
 } from "./live-packet-flow-control.js";
 import { LiveProjectionScheduler } from "./live-projection-scheduler.js";
 import { defaultLivePacketInspector } from "./opus-packet-inspector.js";
+import { ParticipantGreetingBridge } from "./participant-greeting-bridge.js";
 import { LiveSummaryScheduler } from "./live-summary-scheduler.js";
 import { SpeakerTranscriptionSessions } from "./speaker-transcription-sessions.js";
 
@@ -23,6 +25,8 @@ export interface ActiveLiveMeeting {
   finalizationStarted: boolean;
   finishPromise: Promise<void> | null;
   finishing: boolean;
+  readonly farewell: FarewellBridge | undefined;
+  readonly greetings: ParticipantGreetingBridge | undefined;
   readonly meetingId: string;
   readonly projection: LiveProjectionScheduler;
   refreshQueued: boolean;
@@ -75,6 +79,22 @@ export function createActiveLiveMeeting(input: CreateActiveLiveMeetingInput): Ac
         meetingId,
         meetingStartedAtMs: input.startedAtMs,
       });
+  const greetings = input.dependencies.conversation?.greetings === undefined
+    ? undefined
+    : new ParticipantGreetingBridge({
+        configuration: input.dependencies.conversation,
+        isMeetingFinishing: () => state.finishing,
+        logger: input.dependencies.logger,
+        meetingId,
+      });
+  const farewell = input.dependencies.conversation?.farewells === undefined
+    ? undefined
+    : new FarewellBridge({
+        configuration: input.dependencies.conversation,
+        isMeetingFinishing: () => state.finishing,
+        logger: input.dependencies.logger,
+        meetingId,
+      });
   const transcription = new SpeakerTranscriptionSessions({
     clock: input.clock,
     isMeetingFinishing: () => state.finishing,
@@ -99,6 +119,8 @@ export function createActiveLiveMeeting(input: CreateActiveLiveMeetingInput): Ac
     finalizationStarted: false,
     finishPromise: null,
     finishing: false,
+    farewell,
+    greetings,
     meetingId,
     projection,
     refreshQueued: false,
@@ -108,5 +130,7 @@ export function createActiveLiveMeeting(input: CreateActiveLiveMeetingInput): Ac
     transcription,
     transcriptionFenceClosed: false,
   };
+  farewell?.participantsPresent(input.event.participantIds);
+  greetings?.participantsPresent(input.event.participantIds);
   return state;
 }

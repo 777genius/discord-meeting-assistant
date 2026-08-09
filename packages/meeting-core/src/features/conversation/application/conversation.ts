@@ -11,6 +11,8 @@ import type {
   ConversationInterruptionResult,
   FinalizedConversationTurnInput,
   MeetingConversationState,
+  PreparedConversationCueInput,
+  ProactiveConversationTurnInput,
 } from "./conversation-coordinator-types.js";
 import {
   advanceConversationState,
@@ -25,6 +27,8 @@ export type {
   ConversationCoordinatorResult,
   ConversationInterruptionResult,
   FinalizedConversationTurnInput,
+  PreparedConversationCueInput,
+  ProactiveConversationTurnInput,
 } from "./conversation-coordinator-types.js";
 
 type SpeechObservation = (
@@ -80,6 +84,52 @@ export class ConversationCoordinator {
 
     this.wakeLatches.clearForSpeaker(state, input.speakerId);
     return this.admitPrompt(state, input, addressed.prompt);
+  }
+
+  public async handleProactiveTurn(
+    input: ProactiveConversationTurnInput,
+  ): Promise<ConversationCoordinatorResult> {
+    const state = this.stateFor(input.meetingId);
+    if (state.closing) {
+      return Object.freeze({ status: "ignored" as const });
+    }
+    advanceConversationState(state, input.nowMs);
+    this.wakeLatches.clearForSpeaker(state, input.speakerId);
+    const admission = this.wakeLatches.admitProactive(state, input);
+    if (admission.turnToStart !== null) {
+      trackConversationTask(
+        state,
+        this.activeTurns.start(state, admission.turnToStart),
+      );
+    }
+    return admission.result;
+  }
+
+  public async playPreparedCue(
+    input: PreparedConversationCueInput,
+  ): Promise<ConversationCoordinatorResult> {
+    const state = this.stateFor(input.meetingId);
+    if (state.closing) {
+      return Object.freeze({ status: "ignored" as const });
+    }
+    advanceConversationState(state, input.nowMs);
+    this.wakeLatches.clear(state);
+    state.pending.clear();
+    const cancellation = state.session.close(
+      "superseded",
+      state.lastObservedAtMs,
+    );
+    const admission = this.wakeLatches.admitPreparedCue(state, input);
+    if (admission.turnToStart !== null) {
+      trackConversationTask(
+        state,
+        this.activeTurns.start(state, admission.turnToStart),
+      );
+    }
+    if (cancellation.status === "requested") {
+      await this.activeTurns.enactCancellation(state, cancellation);
+    }
+    return admission.result;
   }
 
   public async speechStarted(

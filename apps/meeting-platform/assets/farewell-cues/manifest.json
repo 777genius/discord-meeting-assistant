@@ -1,0 +1,20 @@
+{
+  "audio": {
+    "channels": 1,
+    "format": "pcm_s16le",
+    "sampleRateHz": 48000
+  },
+  "en": {
+    "cueId": "farewell-en-v1",
+    "pcmFile": "farewell-en-v1.pcm",
+    "sha256": "d17222aeadbd1ecf51f7d41e98f8c713792a47caa241df4309315d342f973eaf"
+  },
+  "ru": {
+    "cueId": "farewell-ru-v1",
+    "pcmFile": "farewell-ru-v1.pcm",
+    "sha256": "a89c50a5179f87aa9127402ec0d7c6494cb50f68fdaa868068f82243a162227f"
+  },
+  "version": 1,
+  "voiceId": "jqcCZkN6Knx8BJ5TBdYR",
+  "voiceProfileId": "elevenlabs-multilingual"
+}

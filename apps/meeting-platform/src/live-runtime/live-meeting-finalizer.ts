@@ -87,6 +87,8 @@ export class LiveMeetingFinalizer {
     if (!state.finalizationStarted) {
       state.finalizationStarted = true;
       state.finishing = true;
+      state.farewell?.close();
+      state.greetings?.close();
       state.conversation?.close();
       state.transcription.beginFinish();
       this.dependencies.enqueueDomain(state, async () => {
@@ -123,6 +125,8 @@ export class LiveMeetingFinalizer {
     await state.transcription.finish();
     state.transcriptionFenceClosed = true;
     await state.summary.settle();
+    await state.farewell?.settle();
+    await state.greetings?.settle();
     await state.conversation?.settle();
     await state.domainChain;
     const result = await this.dependencies.runtime.finishMeeting.execute(
