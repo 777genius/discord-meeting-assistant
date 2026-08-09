@@ -10,7 +10,7 @@ projects.
 | Guild `Meeting Assistant E2E` | `1533228590643155034` |
 | Voice channel `e2e-meeting` | `1533228823045214398` |
 | Results channel `e2e-results` | `1533228891827736657` |
-| Application `Meeting E2E SUT` | `1533224474609057793` |
+| Application `Meeting E2E SUT` (approved Voice Bot) | `1533224474609057793` |
 | Application `Meeting E2E Speaker A` | `1533227577286852649` |
 | Application `Meeting E2E Speaker B` | `1533228054724346087` |
 | Botik test playback bot | `1534231284467896512` |
