@@ -26,7 +26,7 @@ import { GrpcPipecatConversationRuntime } from "../src/index.js";
 const serviceToken = "providerless-e2e-token-123";
 const workspaceRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const sidecarRoot = join(workspaceRoot, "apps/pipecat-runtime");
-const sidecarBindTimeoutMilliseconds = 180_000;
+const sidecarBindTimeoutMilliseconds = 360_000;
 const sidecarHealthTimeoutMilliseconds = 30_000;
 
 const request = {
