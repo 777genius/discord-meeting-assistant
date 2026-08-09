@@ -47,7 +47,6 @@ it("plays one prepared farewell only after its final turn is durable", async () 
     },
     finishMeeting: new FinishLiveMeeting(meetings),
     logger,
-    publicationTargetId: "1533228891827736657",
     refreshMeeting: new RefreshLiveMeeting({
       meetings,
       projector: new ProjectionStub(),
@@ -61,7 +60,9 @@ it("plays one prepared farewell only after its final turn is durable", async () 
   const firstBatch = packets();
   firstBatch.packets[0] = { ...firstBatch.packets[0]!, relativeTimeMs: 0 };
   await runtime.acceptVoiceBatch(firstBatch);
-  await vi.waitFor(() => expect(transcriber.requests).toHaveLength(1));
+  await vi.waitFor(() => {
+    expect(transcriber.requests).toHaveLength(1);
+  });
   const request = transcriber.requests[0];
   if (request === undefined) {
     throw new Error("controlled transcription session did not open");
@@ -75,9 +76,13 @@ it("plays one prepared farewell only after its final turn is durable", async () 
     text: "Всем пока!",
   });
   expect(coordinator.preparedCueCalls).toEqual([]);
-  await vi.waitFor(() => expect(meetings.finalizedTurns).toHaveLength(1));
+  await vi.waitFor(() => {
+    expect(meetings.finalizedTurns).toHaveLength(1);
+  });
   await vi.advanceTimersByTimeAsync(200);
-  await vi.waitFor(() => expect(coordinator.preparedCueCalls).toHaveLength(1));
+  await vi.waitFor(() => {
+    expect(coordinator.preparedCueCalls).toHaveLength(1);
+  });
 
   expect(coordinator.preparedCueCalls[0]).toMatchObject({
     cueId: "farewell-ru-v1",

@@ -120,8 +120,8 @@ export class MeetingFarewellPolicy {
 }
 
 function containsFarewellCandidate(text: string): boolean {
-  return /\b(?:bye|farewell|goodbye|good night|see you|see ya|catch you|talk to you|take care|have a good|wrap|call it a day|done for today|that'?s it)\b/u.test(text) ||
-    /(?:пока|до встречи|до свидания|до связи|до завтра|увидимся|услышимся|созвонимся|всего доброго|хорошего (?:дня|вечера|выходных)|спокойной ночи|прощ|заканч|заверша|на сегодня|на этом все)/u.test(text);
+  return /\b(?:bye|farewell|goodbye|good night|see you|see ya|catch you|talk to you|take care|have a good|wrap|end (?:the )?(?:call|meeting)|call it a day|done for today|that'?s (?:all|it))\b/u.test(text) ||
+    /(?:пока|до встречи|до свидания|до связи|до завтра|увидимся|услышимся|созвонимся|всего доброго|хорошего (?:дня|вечера|выходных)|спокойной ночи|прощ|законч|заканч|заверша|на сегодня|на этом все)/u.test(text);
 }
 
 function farewellLocale(text: string): FarewellLocale {
@@ -135,12 +135,11 @@ function isExplicitGroupFarewell(text: string, locale: "en" | "ru"): boolean {
   if (locale === "ru") {
     return /^(?:(?:ну|ладно|хорошо|все),?\s+)*(?:всем\s+(?:пока|до встречи|до свидания|до связи|до завтра|всего доброго|хорошего (?:дня|вечера|выходных))|(?:пока|до встречи|до свидания|до связи|до завтра|всего доброго)\s+(?:всем|коллеги|ребята))(?:\s+(?:завтра|на следующей неделе))?[.!]*$/u.test(text) ||
       /^(?:(?:ну|ладно|хорошо|все),?\s+)*(?:спасибо|благодарю)\s+(?:всех|всем).{0,40}(?:пока|до встречи|до завтра)(?:\s+(?:завтра|на следующей неделе))?[.!]*$/u.test(text) ||
-      /^(?:(?:ну|ладно|хорошо|все),?\s+)*(?:на сегодня|на этом)\s+(?:все|закончили|заканчиваем|завершаем)[.!]*$/u.test(text) ||
-      /^(?:(?:ну|ладно|хорошо|все),?\s+)*давайте\s+на\s+этом\s+(?:закончим|завершим)(?:\s+(?:встречу|созвон|звонок|на сегодня))?[.!]*$/u.test(text);
+      /^(?:(?:ну|ладно|хорошо|все),?\s+)*давайте\s+(?:на\s+этом\s+)?(?:закончим|завершим)\s+(?:встречу|созвон|звонок)[.!]*$/u.test(text);
   }
   return /^(?:(?:okay|well|alright|so),?\s+)*(?:(?:bye|goodbye|farewell|see you|take care)\s+(?:everyone|everybody|all|team)|(?:good night|have a good (?:day|evening|weekend))\s+(?:everyone|everybody|all|team))(?:\s+(?:tomorrow|next week))?[.!]*$/u.test(text) ||
     /^(?:(?:okay|well|alright|so),?\s+)*(?:thanks?|thank you)\s+(?:everyone|everybody|all|team).{0,40}(?:bye|goodbye|see you)(?:\s+(?:tomorrow|next week))?[.!]*$/u.test(text) ||
-    /^(?:(?:okay|well|alright|so),?\s+)*(?:(?:that is|that's) all for today|we(?:'re| are) done for today|let(?:'s| us) (?:wrap(?: up)?(?: here| for today| the (?:call|meeting)(?: here)?)|call it a day))[.!]*$/u.test(text);
+    /^(?:(?:okay|well|alright|so),?\s+)*let(?:'s| us)\s+(?:wrap(?: up)?|end)\s+the\s+(?:call|meeting)(?:\s+here)?[.!]*$/u.test(text);
 }
 
 function isFarewellOnly(text: string, locale: "en" | "ru"): boolean {

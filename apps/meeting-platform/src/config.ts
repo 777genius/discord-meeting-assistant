@@ -5,7 +5,13 @@ import {
   recordingPlaybackEnvironmentShape,
   validateRecordingPlaybackEnvironment,
 } from "./config/recording-playback-config.js";
+import {
+  participantGreetingProfilesEnvironmentSchema,
+} from "./config/participant-greeting-profiles.js";
+import type { PlatformConfig } from "./config/platform-config.js";
 import { readSecretFile } from "./config/secret-file-reader.js";
+
+export type { PlatformConfig } from "./config/platform-config.js";
 
 const snowflake = z.string().regex(/^\d{17,20}$/u);
 const optionalSnowflake = z.preprocess(
@@ -59,82 +65,6 @@ const runtimeAddress = z
   .regex(/^(?:[a-zA-Z0-9][a-zA-Z0-9.-]*|\[[0-9a-fA-F:]+\]):\d{1,5}$/u);
 const profileIdentifier = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/u);
 const voiceIdentifier = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/u);
-const participantName = z
-  .string()
-  .trim()
-  .min(1)
-  .max(100)
-  .refine((value) =>
-    Array.from(value).every((character) => {
-      const codePoint = character.codePointAt(0) ?? 0;
-      return !(
-        codePoint <= 31 ||
-        (codePoint >= 127 && codePoint <= 159) ||
-        codePoint === 8_232 ||
-        codePoint === 8_233
-      );
-    }),
-  )
-  .transform((value) => value.normalize("NFC"));
-const participantGreetingProfileSchema = z
-  .object({
-    displayName: participantName,
-    greetingLocale: z.enum(["ru", "en"]),
-    spokenName: participantName,
-  })
-  .strict();
-const participantGreetingProfilesSchema = z.record(
-  snowflake,
-  participantGreetingProfileSchema,
-);
-
-export interface ParticipantGreetingProfile {
-  readonly displayName: string;
-  readonly greetingLocale: "ru" | "en";
-  readonly spokenName: string;
-}
-
-export type ParticipantGreetingProfiles = Readonly<
-  Record<string, ParticipantGreetingProfile>
->;
-
-function parseParticipantGreetingProfiles(
-  rawValue: string | undefined,
-  context: z.RefinementCtx,
-): ParticipantGreetingProfiles {
-  if (rawValue === undefined || rawValue.trim() === "") {
-    return Object.freeze({});
-  }
-
-  let decoded: unknown;
-  try {
-    decoded = JSON.parse(rawValue) as unknown;
-  } catch {
-    context.addIssue({
-      code: "custom",
-      message: "participant greeting profiles must be valid JSON",
-    });
-    return z.NEVER;
-  }
-
-  const result = participantGreetingProfilesSchema.safeParse(decoded);
-  if (!result.success || Object.keys(result.data).length > 500) {
-    context.addIssue({
-      code: "custom",
-      message: "participant greeting profiles are invalid",
-    });
-    return z.NEVER;
-  }
-
-  const entries = Object.entries(result.data)
-    .toSorted(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
-    .map(
-      ([participantId, profile]) =>
-        [participantId, Object.freeze(profile)] as const,
-    );
-  return Object.freeze(Object.fromEntries(entries));
-}
-
 const environmentSchema = z
   .object({
     BIND_ADDRESS: z.union([z.ipv4(), z.ipv6()]).default("0.0.0.0"),
@@ -171,11 +101,8 @@ const environmentSchema = z
     NODE_ENV: z
       .enum(["development", "production", "test"])
       .default("production"),
-    PARTICIPANT_GREETING_PROFILES_JSON: z
-      .string()
-      .max(64_000)
-      .optional()
-      .transform(parseParticipantGreetingProfiles),
+    PARTICIPANT_GREETING_PROFILES_JSON:
+      participantGreetingProfilesEnvironmentSchema,
     PORT: z.coerce.number().int().min(1).max(65_535).default(4_310),
     POSTGRES_URL_FILE: absolutePath,
     RECORDING_SPOOL_ROOT: absolutePath,
@@ -309,71 +236,6 @@ const environmentSchema = z
       });
     }
   });
-
-interface PlatformSecrets {
-  readonly conversationRuntimeToken?: string;
-  readonly craigBearerToken: string;
-  readonly discordToken: string;
-  readonly postgresUrl: string;
-  readonly redisUrl: string;
-  readonly recordingPlaybackSigningSecret?: string;
-  readonly s3AccessKeyId: string;
-  readonly s3SecretAccessKey: string;
-  readonly subscriptionRuntimeToken: string;
-  readonly voicetextServiceToken?: string;
-}
-
-export interface PlatformConfig {
-  readonly bindAddress: string;
-  readonly conversation?: {
-    readonly farewellCueRoot: string;
-    readonly runtimeAddress: string;
-    readonly systemPrompt: string;
-    readonly thinkingCueRoot: string;
-    readonly voiceId: string;
-    readonly voiceProfileId: string;
-  };
-  /** Controls whether the authoritative final summary replaces or follows the live draft. */
-  readonly discordFinalPublicationMode: "separate-message" | "replace-live";
-  /** New meetings publish directly into the configured results channel by default. */
-  readonly discordPublicationMode: "message" | "thread";
-  readonly discordApplicationId: string;
-  readonly discordCraigApplicationId: string;
-  readonly discordLegacyRoute?: {
-    readonly guildId: string;
-    readonly publicationTargetId: string;
-    readonly voiceChannelId: string;
-  };
-  readonly nodeEnvironment: "development" | "production" | "test";
-  readonly participantGreetingProfiles: ParticipantGreetingProfiles;
-  readonly liveIngressOwnerMode: "singleton";
-  readonly port: number;
-  readonly recordingSpoolRoot: string;
-  readonly recordingPlayback?: {
-    readonly publicBaseUrl: string;
-  };
-  readonly s3: {
-    readonly bucket: string;
-    readonly endpoint: string;
-    readonly prefix: string;
-    readonly region: string;
-  };
-  readonly secrets: PlatformSecrets;
-  readonly speaches: { readonly baseUrl: string; readonly model: string };
-  readonly transcriptionProvider: "speaches" | "voicetext";
-  readonly subscriptionRuntime: {
-    readonly address: string;
-    readonly launcherSha256: string;
-  };
-  readonly voicetext?: {
-    readonly batchMaxArtifactBytes: number;
-    readonly batchMaxConcurrency: number;
-    readonly batchMaxConcurrentMeetings: number;
-    readonly liveMaxConcurrentSessions: number;
-    readonly livePacketBackpressureTimeoutMs: number;
-    readonly webSocketUrl: string;
-  };
-}
 
 export type SecretFileReader = (path: string) => Promise<string>;
 

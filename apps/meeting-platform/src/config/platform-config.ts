@@ -1,0 +1,66 @@
+import type { ParticipantGreetingProfiles } from "./participant-greeting-profiles.js";
+
+interface PlatformSecrets {
+  readonly conversationRuntimeToken?: string;
+  readonly craigBearerToken: string;
+  readonly discordToken: string;
+  readonly postgresUrl: string;
+  readonly recordingPlaybackSigningSecret?: string;
+  readonly redisUrl: string;
+  readonly s3AccessKeyId: string;
+  readonly s3SecretAccessKey: string;
+  readonly subscriptionRuntimeToken: string;
+  readonly voicetextServiceToken?: string;
+}
+
+export interface PlatformConfig {
+  readonly bindAddress: string;
+  readonly conversation?: {
+    readonly farewellCueRoot: string;
+    readonly runtimeAddress: string;
+    readonly systemPrompt: string;
+    readonly thinkingCueRoot: string;
+    readonly voiceId: string;
+    readonly voiceProfileId: string;
+  };
+  /** Controls whether the authoritative final summary replaces or follows the live draft. */
+  readonly discordFinalPublicationMode: "separate-message" | "replace-live";
+  /** New meetings publish directly into the configured results channel by default. */
+  readonly discordPublicationMode: "message" | "thread";
+  readonly discordApplicationId: string;
+  readonly discordCraigApplicationId: string;
+  readonly discordLegacyRoute?: {
+    readonly guildId: string;
+    readonly publicationTargetId: string;
+    readonly voiceChannelId: string;
+  };
+  readonly liveIngressOwnerMode: "singleton";
+  readonly nodeEnvironment: "development" | "production" | "test";
+  readonly participantGreetingProfiles: ParticipantGreetingProfiles;
+  readonly port: number;
+  readonly recordingPlayback?: {
+    readonly publicBaseUrl: string;
+  };
+  readonly recordingSpoolRoot: string;
+  readonly s3: {
+    readonly bucket: string;
+    readonly endpoint: string;
+    readonly prefix: string;
+    readonly region: string;
+  };
+  readonly secrets: PlatformSecrets;
+  readonly speaches: { readonly baseUrl: string; readonly model: string };
+  readonly subscriptionRuntime: {
+    readonly address: string;
+    readonly launcherSha256: string;
+  };
+  readonly transcriptionProvider: "speaches" | "voicetext";
+  readonly voicetext?: {
+    readonly batchMaxArtifactBytes: number;
+    readonly batchMaxConcurrency: number;
+    readonly batchMaxConcurrentMeetings: number;
+    readonly liveMaxConcurrentSessions: number;
+    readonly livePacketBackpressureTimeoutMs: number;
+    readonly webSocketUrl: string;
+  };
+}

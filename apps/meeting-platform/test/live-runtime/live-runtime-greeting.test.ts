@@ -51,7 +51,6 @@ it("routes initial joins and reconnects through one meeting-local greeting", asy
     },
     finishMeeting: new FinishLiveMeeting(meetings),
     logger,
-    publicationTargetId: "1533228891827736657",
     refreshMeeting: new RefreshLiveMeeting({
       meetings,
       projector: new ProjectionStub(),

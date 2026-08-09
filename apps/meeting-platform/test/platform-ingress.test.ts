@@ -219,20 +219,23 @@ describe("Platform recording ingress", () => {
     expect(saved[0]?.publicationTargetId).toBe("77777777777777777");
   });
 
-  it("defers publication lookup until the live start enters its ordering boundary", async () => {
+  it("defers publication lookup and preserves participant identity at the live boundary", async () => {
     const resolve = vi.fn(async () => "77777777777777777");
     const acceptLifecycle = vi.fn(async (event: DerivedLiveLifecycleEvent) => {
-      expect(resolve).not.toHaveBeenCalled();
       if (event.type === "meeting.started") {
+        expect(resolve).not.toHaveBeenCalled();
+        expect(event.participantIds).toEqual(["1533227577286852649"]);
         await expect(event.publicationTarget.resolve()).resolves.toBe(
           "77777777777777777",
         );
+      } else if (event.type === "participant.joined") {
+        expect(event.participantId).toBe("1533228054724346087");
       }
     });
     const started: RecordingLifecycleCommand = {
       eventId: "recording-1:start",
       occurredAt: "2026-08-02T00:00:00.000Z",
-      participantIds: [],
+      participantIds: ["1533227577286852649"],
       recordingId: "recording-1",
       schemaVersion: 1,
       source: meetingEnded.source,
@@ -268,8 +271,15 @@ describe("Platform recording ingress", () => {
     });
 
     await ingress.ingestLifecycle(started);
+    await ingress.ingestLifecycle({
+      ...started,
+      eventId: "recording-1:join:2",
+      participantId: "1533228054724346087",
+      type: "participant.joined",
+    });
 
     expect(resolve).toHaveBeenCalledWith(started.source);
+    expect(acceptLifecycle).toHaveBeenCalledTimes(2);
     expect(acceptLifecycle).toHaveBeenCalledWith(expect.objectContaining({
       occurredAt: started.occurredAt,
       recordingId: started.recordingId,

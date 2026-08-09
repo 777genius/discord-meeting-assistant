@@ -23,6 +23,7 @@ class GreetingCoordinatorProbe {
     readonly voiceProfileId: string;
   }> = [];
   public idleCalls = 0;
+  public readonly outcomes: Array<{ readonly status: string }> = [];
 
   public advanceMeeting(): void {}
 
@@ -36,7 +37,7 @@ class GreetingCoordinatorProbe {
 
   public handleProactiveTurn(input: (typeof this.calls)[number]) {
     this.calls.push(structuredClone(input));
-    return Promise.resolve({ status: "active" as const });
+    return Promise.resolve(this.outcomes.shift() ?? { status: "active" as const });
   }
 
   public playPreparedCue(): Promise<{ readonly status: "ignored" }> {
@@ -160,6 +161,31 @@ describe("ParticipantGreetingBridge", () => {
     await context.bridge.settle();
 
     expect(context.coordinator.calls).toHaveLength(1);
+  });
+
+  it("retries a provably unadmitted busy greeting without risking a duplicate", async () => {
+    const context = fixture(true);
+    context.coordinator.outcomes.push({ status: "busy" }, { status: "active" });
+
+    context.bridge.participantJoined(russianParticipantId);
+    await context.bridge.settle();
+    context.bridge.advance();
+    await context.bridge.settle();
+
+    expect(context.coordinator.calls).toHaveLength(2);
+    expect(context.coordinator.calls.map(({ prompt }) => prompt)).toEqual([
+      "Привет, Саша!",
+      "Привет, Саша!",
+    ]);
+    expect(context.coordinator.calls.map(({ turnId }) => turnId)).toEqual([
+      `participant-greeting:${russianParticipantId}`,
+      `participant-greeting:${russianParticipantId}:retry-1`,
+    ]);
+
+    context.bridge.participantLeft(russianParticipantId);
+    context.bridge.participantJoined(russianParticipantId);
+    await context.bridge.settle();
+    expect(context.coordinator.calls).toHaveLength(2);
   });
 
   it("does not greet someone who left before playback became ready", async () => {

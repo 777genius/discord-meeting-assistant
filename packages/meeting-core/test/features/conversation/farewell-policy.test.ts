@@ -21,10 +21,11 @@ describe("MeetingFarewellPolicy fast path", () => {
   it.each([
     ["Всем пока!", "ru"],
     ["Спасибо всем, до встречи завтра", "ru"],
-    ["На сегодня всё.", "ru"],
+    ["Давайте на этом закончим встречу.", "ru"],
     ["Bye everyone!", "en"],
     ["Thanks everyone, see you tomorrow", "en"],
     ["Let's wrap the meeting here", "en"],
+    ["Let's end the call", "en"],
     ["Good night everyone!", "en"],
     ["Ну всё, до завтра всем!", "ru"],
     ["Всем хорошего вечера!", "ru"],
@@ -99,6 +100,18 @@ describe("MeetingFarewellPolicy false-positive fence", () => {
       status: "review",
     });
     expect(observe(new MeetingFarewellPolicy(), "Пока база грузится, продолжим обсуждение")).toMatchObject({
+      status: "review",
+    });
+  });
+
+  it.each([
+    "На сегодня всё",
+    "Давайте на этом закончим",
+    "That's all for today",
+    "We're done for today",
+    "Let's call it a day",
+  ])("uses semantic context for a generic speaker or topic ending: %s", (text) => {
+    expect(observe(new MeetingFarewellPolicy(), text)).toMatchObject({
       status: "review",
     });
   });

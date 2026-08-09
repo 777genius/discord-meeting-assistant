@@ -61,6 +61,7 @@ describe("platform configuration", () => {
       ),
     ).rejects.toThrow();
   });
+});
 
 describe("participant greeting profile configuration", () => {
   it("loads canonical immutable participant greeting profiles keyed by Discord ID", async () => {
@@ -198,6 +199,7 @@ describe("participant greeting profile configuration", () => {
   });
 });
 
+describe("platform configuration routing and conversation", () => {
   it("uses direct channel publication by default and accepts explicit legacy threads", async () => {
     const direct = await loadPlatformConfig(environment, async () => "value");
     const thread = await loadPlatformConfig(

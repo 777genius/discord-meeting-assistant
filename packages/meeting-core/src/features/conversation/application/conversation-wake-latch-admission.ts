@@ -347,6 +347,7 @@ export class ConversationWakeLatchAdmission {
         voiceProfileId: input.voiceProfileId,
       },
       thinkingCueLocale: input.thinkingCueLocale,
+      thinkingCuesEnabled: true,
       turn,
     };
   }

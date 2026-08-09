@@ -9,6 +9,7 @@ const exactGreetingSystemPrompt = [
   "Do not add, remove, translate, explain, or quote anything.",
   "Return only the greeting itself.",
 ].join(" ");
+const maximumBusyRetries = 3;
 
 interface ParticipantGreetingBridgeDependencies {
   readonly configuration: LiveConversationConfiguration;
@@ -24,6 +25,7 @@ export class ParticipantGreetingBridge {
   private readonly greetedParticipantIds = new Set<string>();
   private readonly pendingParticipantIds = new Set<string>();
   private readonly presentParticipantIds = new Set<string>();
+  private readonly retryCounts = new Map<string, number>();
 
   public constructor(
     private readonly dependencies: ParticipantGreetingBridgeDependencies,
@@ -120,11 +122,7 @@ export class ParticipantGreetingBridge {
       await this.dependencies.configuration.coordinator.whenIdle(
         this.dependencies.meetingId,
       );
-      if (
-        this.closed ||
-        this.dependencies.isMeetingFinishing() ||
-        !this.presentParticipantIds.has(participantId)
-      ) {
+      if (this.shouldStopGreeting(participantId)) {
         continue;
       }
       if (!greetings.isPlaybackReady(this.dependencies.meetingId)) {
@@ -133,9 +131,23 @@ export class ParticipantGreetingBridge {
       }
 
       // Reserve before the external runtime/playback effect. A failed attempt is
-      // intentionally not repeated during this meeting.
+      // intentionally not repeated during this meeting. `busy` is the sole safe
+      // retry because it proves that no external effect was admitted.
       this.greetedParticipantIds.add(participantId);
-      await this.speak(participantId, profile);
+      const outcome = await this.speak(participantId, profile);
+      if (outcome === "busy") {
+        const retryCount = (this.retryCounts.get(participantId) ?? 0) + 1;
+        this.retryCounts.set(participantId, retryCount);
+        this.greetedParticipantIds.delete(participantId);
+        if (
+          retryCount <= maximumBusyRetries &&
+          this.presentParticipantIds.has(participantId)
+        ) {
+          this.pendingParticipantIds.add(participantId);
+        }
+        return;
+      }
+      this.retryCounts.delete(participantId);
       await this.dependencies.configuration.coordinator.whenIdle(
         this.dependencies.meetingId,
       );
@@ -145,10 +157,14 @@ export class ParticipantGreetingBridge {
   private async speak(
     participantId: string,
     profile: LiveParticipantGreetingProfile,
-  ): Promise<void> {
+  ): Promise<string> {
     const prompt = profile.greetingLocale === "ru"
       ? `Привет, ${profile.spokenName}!`
       : `Hi, ${profile.spokenName}!`;
+    const retryCount = this.retryCounts.get(participantId) ?? 0;
+    const turnId = retryCount === 0
+      ? `participant-greeting:${participantId}`
+      : `participant-greeting:${participantId}:retry-${retryCount}`;
     try {
       const outcome = await this.dependencies.configuration.coordinator
         .handleProactiveTurn({
@@ -159,7 +175,7 @@ export class ParticipantGreetingBridge {
           recordingId: this.dependencies.meetingId,
           speakerId: participantId,
           systemPrompt: exactGreetingSystemPrompt,
-          turnId: `participant-greeting:${participantId}`,
+          turnId,
           voiceProfileId: this.dependencies.configuration.voiceProfileId,
         });
       this.dependencies.logger.info("Participant greeting admitted", {
@@ -167,12 +183,14 @@ export class ParticipantGreetingBridge {
         outcome: outcome.status,
         participantId,
       });
+      return outcome.status;
     } catch (error) {
       this.dependencies.logger.warn("Participant greeting failed", {
         errorName: error instanceof Error ? error.name : "UnknownError",
         meetingId: this.dependencies.meetingId,
         participantId,
       });
+      return "failed";
     }
   }
 
@@ -180,6 +198,13 @@ export class ParticipantGreetingBridge {
     participantId: string,
   ): LiveParticipantGreetingProfile | undefined {
     return this.dependencies.configuration.greetings?.profiles[participantId];
+  }
+
+  /** Re-reads mutable meeting state after asynchronous coordinator settlement. */
+  private shouldStopGreeting(participantId: string): boolean {
+    return this.closed ||
+      this.dependencies.isMeetingFinishing() ||
+      !this.presentParticipantIds.has(participantId);
   }
 
   private nowMilliseconds(): number {

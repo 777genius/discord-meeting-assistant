@@ -1,7 +1,6 @@
 import type {
   ConversationFarewellClassificationInput,
   ConversationFarewellClassifier,
-  ConversationFarewellCue,
   ConversationFarewellCueRegistry,
   ConversationFarewellTurn,
 } from "@discord-meeting/meeting-core/conversation";
@@ -318,20 +317,17 @@ export interface LiveParticipantGreetingProfile {
   readonly spokenName: string;
 }
 
-export interface LiveParticipantGreetingConfiguration {
+interface LiveParticipantGreetingConfiguration {
   readonly isPlaybackReady: (recordingId: string) => boolean;
   readonly profiles: Readonly<Record<string, LiveParticipantGreetingProfile>>;
 }
 
 export type LiveFarewellTurn = ConversationFarewellTurn;
 export type LiveFarewellClassificationInput = ConversationFarewellClassificationInput;
-export type LiveFarewellClassifier = ConversationFarewellClassifier;
-export type LiveFarewellCue = ConversationFarewellCue;
-export type LiveFarewellCueRegistry = ConversationFarewellCueRegistry;
 
-export interface LiveFarewellConfiguration {
-  readonly classifier?: LiveFarewellClassifier;
-  readonly cues: LiveFarewellCueRegistry;
+interface LiveFarewellConfiguration {
+  readonly classifier?: ConversationFarewellClassifier;
+  readonly cues: ConversationFarewellCueRegistry;
   readonly participantNames: Readonly<Record<string, string>>;
 }
 

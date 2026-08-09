@@ -147,7 +147,7 @@ export class ConversationActiveTurnExecutor {
       return;
     }
     for (const [sequence, bytes] of cue.pcmChunks.entries()) {
-      if (!isCurrentConversationRun(state, run) || run.playback === null) {
+      if (!isCurrentConversationRun(state, run)) {
         return;
       }
       await this.answerPlayback.write(state, run, {
@@ -160,7 +160,7 @@ export class ConversationActiveTurnExecutor {
         turnId: run.prepared.turn.turnId,
       });
     }
-    if (!isCurrentConversationRun(state, run) || run.playback === null) {
+    if (!isCurrentConversationRun(state, run)) {
       return;
     }
     run.runtimeCompleted = true;
