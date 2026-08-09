@@ -165,9 +165,6 @@ class ElasticRuntimeWorkerGroup implements RuntimeWorkerGroup {
         }
       }
     }
-    if (this.retainedWorker === undefined) {
-      return undefined;
-    }
     this.retainedBusy = true;
     return this.retainedWorker;
   }
