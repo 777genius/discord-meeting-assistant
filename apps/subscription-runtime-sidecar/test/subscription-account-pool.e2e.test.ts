@@ -115,6 +115,7 @@ it("materialized host slots fail over end-to-end without exposing account names"
 it("does not queue concurrent synthetic tasks in the materialized account pool", async () => {
   const fixture = await createPoolFixture();
   const settings = await resolveSidecarSettings(fixture.environment);
+  expect(settings.accounts).toHaveLength(2);
   const started = deferred<void>();
   const release = deferred<void>();
   const selectedAccounts: string[] = [];
@@ -150,21 +151,44 @@ it("does not queue concurrent synthetic tasks in the materialized account pool",
     stateRoot: settings.stateRoot,
   });
 
-  const executions = Promise.all(Array.from({ length: concurrentTaskCount }, async () =>
-    await executor.execute({
-      ...canonicalRequest,
-      cwd: settings.isolatedCwd,
-    })));
-  await started.promise;
-
-  expect(selectedAccounts.filter(
-    (account) => account === "discord-meeting-summary-v3",
-  )).toHaveLength(concurrentTaskCount / 2);
-  expect(selectedAccounts.filter(
-    (account) => account === "discord-meeting-summary-v3-slot-2",
-  )).toHaveLength(concurrentTaskCount / 2);
-  release.resolve();
+  const executions = Promise.all(Array.from(
+    { length: concurrentTaskCount },
+    async () => {
+      try {
+        const result = await executor.execute({
+          ...canonicalRequest,
+          cwd: settings.isolatedCwd,
+        });
+        if (result.status !== "completed") {
+          started.reject(new Error(
+            `Concurrent execution did not complete: ${result.status}`,
+          ));
+        }
+        return result;
+      } catch (error: unknown) {
+        started.reject(error);
+        throw error;
+      }
+    },
+  ));
+  let barrierFailure: unknown;
+  try {
+    await started.promise;
+    expect(selectedAccounts.filter(
+      (account) => account === "discord-meeting-summary-v3",
+    )).toHaveLength(concurrentTaskCount / 2);
+    expect(selectedAccounts.filter(
+      (account) => account === "discord-meeting-summary-v3-slot-2",
+    )).toHaveLength(concurrentTaskCount / 2);
+  } catch (error: unknown) {
+    barrierFailure = error;
+  } finally {
+    release.resolve();
+  }
   const results = await executions;
+  if (barrierFailure !== undefined) {
+    throw barrierFailure;
+  }
   expect(results).toHaveLength(concurrentTaskCount);
   expect(results.every((result) => result.status === "completed")).toBe(true);
 });
@@ -282,14 +306,18 @@ function quotaLimitedProcess(): ProcessRunResult {
 
 function deferred<T>(): {
   readonly promise: Promise<T>;
+  reject(reason?: unknown): void;
   resolve(value: T): void;
 } {
+  let rejectPromise: ((reason?: unknown) => void) | undefined;
   let resolvePromise: ((value: T) => void) | undefined;
-  const promise = new Promise<T>((resolve) => {
+  const promise = new Promise<T>((resolve, reject) => {
+    rejectPromise = reject;
     resolvePromise = resolve;
   });
   return {
     promise,
+    reject: (reason) => rejectPromise?.(reason),
     resolve: (value) => resolvePromise?.(value),
   };
 }
