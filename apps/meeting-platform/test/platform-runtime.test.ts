@@ -384,9 +384,13 @@ describe("meeting platform shutdown", () => {
   it("bounds shutdown when an in-flight outbox reconciliation never settles", async () => {
     const calls: string[] = [];
     const never = new Promise<void>(() => {});
+    let releaseRecordings!: () => void;
+    const recordingsGate = new Promise<void>((resolve) => {
+      releaseRecordings = resolve;
+    });
     const startedAt = performance.now();
 
-    await expect(closeMeetingPlatformResources({
+    const closing = closeMeetingPlatformResources({
       discord: { destroy: () => { calls.push("discord:destroy"); } } as unknown as Client,
       logger: { flush: async () => { calls.push("logger:flush"); } } as unknown as Logger,
       outboxDispatcher: { whenIdle: async () => never },
@@ -396,9 +400,7 @@ describe("meeting platform shutdown", () => {
       recordings: {
         close: async () => {
           calls.push("recordings:close");
-          await new Promise<void>((resolve) => {
-            setTimeout(resolve, 5);
-          });
+          await recordingsGate;
           calls.push("recordings:released");
         },
       },
@@ -412,7 +414,13 @@ describe("meeting platform shutdown", () => {
         pause: async () => { calls.push("worker:pause"); },
         waitForActivePostCallJobs: async () => { calls.push("worker:wait"); },
       } as unknown as PostCallWorker,
-    })).rejects.toBeInstanceOf(AggregateError);
+    });
+
+    await vi.waitFor(() => {
+      expect(calls).toContain("recordings:close");
+    });
+    releaseRecordings();
+    await expect(closing).rejects.toBeInstanceOf(AggregateError);
 
     expect(performance.now() - startedAt).toBeLessThan(1_000);
     expect(calls).toEqual(expect.arrayContaining([
