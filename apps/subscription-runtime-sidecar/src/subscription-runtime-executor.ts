@@ -231,6 +231,10 @@ async function executeWithAccountFailover(
   encryptionKey: string,
 ): Promise<SubscriptionRuntimeTaskResult> {
   const attemptedAccountIds = new Set<string>();
+  const singleAccount = input.options.accountPool.accounts.length === 1
+    ? input.options.accountPool.accounts[0]
+    : undefined;
+  let singleAccountRetryUsed = false;
   const streamState: StreamAttemptState = {
     providerStarted: false,
     textEmitted: false,
@@ -238,13 +242,22 @@ async function executeWithAccountFailover(
   let lastResult: SubscriptionRuntimeTaskResult = failedResult(
     "backend_unavailable",
   );
-  while (attemptedAccountIds.size < input.options.accountPool.accounts.length) {
-    const account = input.options.accountPool.select(
+  for (;;) {
+    let account = input.options.accountPool.select(
       attemptedAccountIds,
       input.signal,
     );
     if (account === undefined) {
-      return lastResult;
+      if (
+        singleAccount === undefined ||
+        input.streamObserver === undefined ||
+        singleAccountRetryUsed ||
+        !shouldRetrySingleAccount(lastResult, streamState, input.signal)
+      ) {
+        return lastResult;
+      }
+      singleAccountRetryUsed = true;
+      account = singleAccount;
     }
     attemptedAccountIds.add(account.id);
     try {
@@ -265,7 +278,6 @@ async function executeWithAccountFailover(
       return lastResult;
     }
   }
-  return lastResult;
 }
 
 async function executeAccountAttempt(
@@ -339,6 +351,19 @@ function shouldFailOver(
     !streamState.textEmitted &&
     result.status === "failed" &&
     failoverFailureCodes.has(result.failure.code)
+  );
+}
+
+function shouldRetrySingleAccount(
+  result: SubscriptionRuntimeTaskResult,
+  streamState: StreamAttemptState,
+  signal: AbortSignal | undefined,
+): boolean {
+  return (
+    !signalAborted(signal) &&
+    !streamState.textEmitted &&
+    result.status === "failed" &&
+    result.failure.code === "backend_unavailable"
   );
 }
 

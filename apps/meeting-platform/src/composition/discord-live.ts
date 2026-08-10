@@ -297,6 +297,7 @@ function createLiveRuntime(input: {
               defaultLocale: input.config.participantGreetingDefaultLocale,
               excludedParticipantIds: Object.freeze([
                 input.config.discordApplicationId,
+                input.config.discordBotikApplicationId,
                 input.config.discordCraigApplicationId,
               ]),
               isPlaybackReady: input.isPlaybackReady,

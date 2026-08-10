@@ -21,9 +21,14 @@ import type {
 import {
   canonicalRequest,
   conversationCanonicalRequest,
+  conversationStructuredOutput,
   isolatedCwd,
 } from "./fixture.js";
-import { completedProcess, installation } from "./executor-test-support.js";
+import {
+  completedProcess,
+  completedProcessWithoutTelemetry,
+  installation,
+} from "./executor-test-support.js";
 
 let root: string | undefined;
 
@@ -86,6 +91,50 @@ describe("subscription runtime account failover", () => {
     });
     expect(runs).toBe(1);
     expect(deltas).toEqual(['{"answer":"partial']);
+  });
+
+  it("retries one hosted account once when infrastructure fails before text", async () => {
+    let runs = 0;
+    let providerStarts = 0;
+    const streamingRunner: StreamingProcessRunnerPort = {
+      ...runner(async () => {
+        throw new Error("unary runner was not expected");
+      }),
+      runStreaming: async (_request, observer) => {
+        runs += 1;
+        await observer.onProviderTaskStarted();
+        if (runs === 1) {
+          return failedProcess("backend_unavailable");
+        }
+        observer.onProviderTextDelta('{"answer":"Слышу.');
+        observer.onProviderTextDelta('"}');
+        return completedProcessWithoutTelemetry(conversationStructuredOutput);
+      },
+    };
+    const executor = await createExecutor({
+      accountPool: new SubscriptionAccountPool([{
+        authJsonPath: "/private/slot-1/auth.json",
+        id: "slot-1",
+        providerInstanceId: "discord-meeting-summary-v3",
+      }]),
+      conversationProcessRunner: streamingRunner,
+      conversationStreamingProcessRunner: streamingRunner,
+    });
+    const deltas: string[] = [];
+
+    await expect(executor.executeStreaming(
+      conversationCanonicalRequest,
+      {
+        onProviderTaskStarted: () => { providerStarts += 1; },
+        onProviderTextDelta: (text) => deltas.push(text),
+      },
+    )).resolves.toMatchObject({
+      status: "completed",
+      structuredOutput: conversationStructuredOutput,
+    });
+    expect(runs).toBe(2);
+    expect(providerStarts).toBe(1);
+    expect(deltas).toEqual(['{"answer":"Слышу.', '"}']);
   });
 });
 

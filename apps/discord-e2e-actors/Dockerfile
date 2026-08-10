@@ -13,9 +13,13 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY --chown=10001:10001 . .
-RUN pnpm install --frozen-lockfile \
+RUN apt-get update \
+  && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends g++ make python3 \
+  && pnpm install --frozen-lockfile \
   && pnpm --filter @discord-meeting/discord-e2e-actors build \
-  && pnpm store prune
+  && pnpm store prune \
+  && apt-get purge --yes --auto-remove g++ make python3 \
+  && rm -rf /var/lib/apt/lists/*
 
 USER 10001:10001
 WORKDIR /app/apps/discord-e2e-actors

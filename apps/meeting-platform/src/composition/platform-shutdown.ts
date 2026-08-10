@@ -97,10 +97,18 @@ export async function closeMeetingPlatformResources(
     () => input.craigPlayback?.gateway.close(),
   );
   collectSynchronousCloseFailure(failures, () => input.guildSetupHandler?.close());
+  const httpShutdown = startOperation(() => input.server.close());
+  // Begin rejecting new ingress as soon as HTTP admission starts closing. The
+  // recording runtime drains already-admitted work before removing its marker.
+  // Starting this now lets the fsync complete even if post-call shutdown later
+  // consumes the shared deadline.
+  const recordingSpoolShutdown = observeRejection(
+    startOperation(() => input.recordings.close()),
+  );
   failures.push(...await collectFailures([
     awaitBounded(
       "platform HTTP host",
-      startOperation(() => input.server.close()),
+      httpShutdown,
       remainingShutdownMilliseconds(deadlineAtMilliseconds),
     ),
   ]));
@@ -126,7 +134,7 @@ export async function closeMeetingPlatformResources(
     ),
     awaitBounded(
       "recording ingress spool",
-      startOperation(() => input.recordings.close()),
+      recordingSpoolShutdown,
       remainingShutdownMilliseconds(deadlineAtMilliseconds),
     ),
   ]));

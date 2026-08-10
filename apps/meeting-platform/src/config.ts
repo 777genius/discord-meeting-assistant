@@ -88,6 +88,7 @@ const environmentSchema = z
     CONVERSATION_VOICE_PROFILE_ID: profileIdentifier.default("deterministic-e2e-ru"),
     CRAIG_BEARER_TOKEN_FILE: absolutePath,
     DISCORD_APPLICATION_ID: snowflake,
+    DISCORD_BOTIK_APPLICATION_ID: optionalSnowflake,
     DISCORD_CRAIG_APPLICATION_ID: snowflake,
     DISCORD_LEGACY_GUILD_ID: optionalSnowflake,
     DISCORD_LEGACY_VOICE_CHANNEL_ID: optionalSnowflake,
@@ -302,6 +303,9 @@ export async function loadPlatformConfig(
     discordFinalPublicationMode: environment.DISCORD_FINAL_PUBLICATION_MODE,
     discordPublicationMode: environment.DISCORD_PUBLICATION_MODE,
     discordApplicationId: environment.DISCORD_APPLICATION_ID,
+    discordBotikApplicationId:
+      environment.DISCORD_BOTIK_APPLICATION_ID ??
+      environment.DISCORD_CRAIG_APPLICATION_ID,
     discordCraigApplicationId: environment.DISCORD_CRAIG_APPLICATION_ID,
     ...(environment.DISCORD_LEGACY_GUILD_ID === undefined ||
     environment.DISCORD_LEGACY_VOICE_CHANNEL_ID === undefined ||

@@ -357,10 +357,10 @@ describe("meeting platform shutdown", () => {
         "worker:cancel",
         "outbox:idle",
         "server:close",
+        "recordings:close",
       ]);
     });
     expect(calls).not.toContain("live:close");
-    expect(calls).not.toContain("recordings:close");
     resumePause();
     await closing;
 
@@ -393,7 +393,15 @@ describe("meeting platform shutdown", () => {
       pool: { end: async () => { calls.push("pool:end"); } } as unknown as Pool,
       queue: { close: async () => { calls.push("queue:close"); } },
       queueEvents: { close: async () => { calls.push("events:close"); } },
-      recordings: { close: async () => { calls.push("recordings:close"); } },
+      recordings: {
+        close: async () => {
+          calls.push("recordings:close");
+          await new Promise<void>((resolve) => {
+            setTimeout(resolve, 5);
+          });
+          calls.push("recordings:released");
+        },
+      },
       runtimeTransport: { close: () => { calls.push("runtime:close"); } } as unknown as GrpcSubscriptionRuntimeTransport,
       s3: { destroy: () => { calls.push("s3:destroy"); } } as unknown as S3Client,
       server: { close: async () => { calls.push("server:close"); }, start: async () => {} },
@@ -411,6 +419,7 @@ describe("meeting platform shutdown", () => {
       "discord:destroy",
       "pool:end",
       "recordings:close",
+      "recordings:released",
       "runtime:close",
       "server:close",
       "worker:cancel",
