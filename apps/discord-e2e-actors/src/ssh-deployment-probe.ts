@@ -8,7 +8,10 @@ import type {
   CurrentDeploymentProvenance,
   DeployedServiceProvenance,
 } from "./e2e-evidence.js";
-import { parseProcessingEvidenceLogs } from "./e2e-processing-log-parser.js";
+import {
+  parseConversationLifecycleEvidenceLogs,
+  parseProcessingEvidenceLogs,
+} from "./e2e-processing-log-parser.js";
 import {
   parseLastJsonLine,
   runDockerComposeProbe,
@@ -71,6 +74,19 @@ export class SshDeploymentEvidenceProbe implements DeploymentEvidenceProbe {
       containerId,
     ]);
     return parseProcessingEvidenceLogs(output, validatedMeetingId);
+  }
+
+  public async collectConversationLifecycle(meetingId: string, recordingStartedAt: string) {
+    const validatedMeetingId = correlationId.parse(meetingId);
+    const containerId = await this.#findContainerId(this.#options.projectName, "meeting-platform");
+    const output = await runRemoteProbe(this.#options, [
+      "docker",
+      "logs",
+      "--since",
+      recordingStartedAtSchema.parse(recordingStartedAt),
+      containerId,
+    ]);
+    return parseConversationLifecycleEvidenceLogs(output, validatedMeetingId);
   }
 
   public async collectProvenance(): Promise<CurrentDeploymentProvenance> {

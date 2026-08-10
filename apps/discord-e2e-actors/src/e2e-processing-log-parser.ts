@@ -2,6 +2,8 @@ import { z } from "zod";
 
 import {
   processingEvidenceSchema,
+  conversationLifecycleEvidenceSchema,
+  type ConversationLifecycleEvidence,
   type ProcessingEvidence,
 } from "./e2e-evidence-schema.js";
 
@@ -26,6 +28,27 @@ const runtimeLogSchema = z.object({
   runId: z.string().trim().min(1),
   status: z.literal("completed"),
   time: z.iso.datetime(),
+}).loose();
+
+const greetingPlaybackLogSchema = z.object({
+  greetingLocale: z.enum(["en", "ru"]),
+  meetingId: z.string(),
+  message: z.literal("Participant greeting playback settled"),
+  participantId: z.string().trim().min(1),
+  participantNameStatus: z.enum(["known", "unknown"]),
+  time: z.iso.datetime(),
+  turnId: z.string().trim().min(1),
+}).loose();
+
+const farewellPlaybackLogSchema = z.object({
+  evidenceTurnIds: z.array(z.string().trim().min(1)).min(1),
+  locale: z.enum(["en", "ru"]),
+  meetingId: z.string(),
+  message: z.literal("Meeting farewell playback settled"),
+  playbackAttemptId: z.string().trim().min(1),
+  reason: z.string().trim().min(1),
+  time: z.iso.datetime(),
+  turnId: z.literal("meeting-farewell:v1"),
 }).loose();
 
 export function parseProcessingEvidenceLogs(output: string, meetingId: string): ProcessingEvidence {
@@ -62,6 +85,44 @@ export function parseProcessingEvidenceLogs(output: string, meetingId: string): 
     }
   }
   return processingEvidenceSchema.parse({ stages, summaryRuntimeExecutions });
+}
+
+export function parseConversationLifecycleEvidenceLogs(
+  output: string,
+  meetingId: string,
+): ConversationLifecycleEvidence {
+  const events: ConversationLifecycleEvidence["events"][number][] = [];
+  for (const line of output.split("\n")) {
+    const event = parseJsonLine(line);
+    if (event === undefined || event.meetingId !== meetingId) {
+      continue;
+    }
+    const greeting = greetingPlaybackLogSchema.safeParse(event);
+    if (greeting.success) {
+      events.push({
+        greetingLocale: greeting.data.greetingLocale,
+        observedAt: greeting.data.time,
+        participantId: greeting.data.participantId,
+        participantNameStatus: greeting.data.participantNameStatus,
+        turnId: greeting.data.turnId,
+        type: "greeting",
+      });
+      continue;
+    }
+    const farewell = farewellPlaybackLogSchema.safeParse(event);
+    if (farewell.success) {
+      events.push({
+        evidenceTurnIds: farewell.data.evidenceTurnIds,
+        locale: farewell.data.locale,
+        observedAt: farewell.data.time,
+        playbackAttemptId: farewell.data.playbackAttemptId,
+        reason: farewell.data.reason,
+        turnId: farewell.data.turnId,
+        type: "farewell",
+      });
+    }
+  }
+  return conversationLifecycleEvidenceSchema.parse({ events });
 }
 
 function parseJsonLine(line: string): Record<string, unknown> | undefined {

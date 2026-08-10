@@ -142,7 +142,7 @@ proves the complete path with official test bots and synthetic speech:
 1. address Botik with each canonical RU/EN alias and the pinned STT variants,
    including `Ботек`, then repeat one request as `Ботик` followed by a short
    pause and a separate question turn from the same speaker;
-2. retain observer evidence that the Craig bot produced non-silent answer audio
+2. retain observer evidence that the configured Botik playback bot produced non-silent answer audio
    in the configured voice channel, plus end-of-turn to first-answer-audio
    latency for both a warm simple request and a warm reasoning request;
 3. prove an ordinary mention such as `Вчера Ботик отвечал странно` does not start
@@ -160,6 +160,44 @@ Passing local, provider, or voice-observer checks alone does not satisfy this
 gate. Record the private guild/channel IDs, recording ID, Botik track checksum,
 transcript ID, summary ID, provider/model profile, and latency measurements in
 the retained non-secret evidence bundle.
+
+### Greeting, reconnect, and farewell retained proof
+
+The remaining lifecycle gate uses the same conversation voice observer and
+retained evidence collector; it is not a separate framework. During one
+private-guild reconnect run, retain create-only captures for a named Russian
+greeting, a named English greeting, a default-locale unknown-participant
+greeting, the prepared farewell, and one addressed Botik answer. Set
+`DISCORD_E2E_CONVERSATION_VOICE_PURPOSE` to `greeting`, `farewell`, or
+`addressed-answer` for each capture and use the runtime turn ID shown by the
+correlated structured event.
+
+Reconnect one already-greeted official actor before the meeting ends. Do not
+induce another first join. After finalization, pass all five observer files and
+the pinned Botik speaker ID to the normal collector:
+
+```sh
+DISCORD_E2E_BOTIK_SPEAKER_ID=1534231284467896512 \
+DISCORD_E2E_CONVERSATION_VOICE_INPUTS='["/absolute/evidence/greeting-ru.json","/absolute/evidence/greeting-en.json","/absolute/evidence/greeting-unknown.json","/absolute/evidence/farewell.json","/absolute/evidence/addressed-answer.json"]' \
+DISCORD_E2E_EVIDENCE_OUTPUT=/absolute/evidence/reconnect.evidence.v7.json \
+pnpm --filter @discord-meeting/discord-e2e-actors collect:e2e
+
+pnpm --filter @discord-meeting/discord-e2e-actors run verify:e2e -- \
+  apps/discord-e2e-actors/test/fixtures/manifest.v1.json \
+  /absolute/evidence/reconnect.evidence.v7.json
+```
+
+The gate derives locale and known/unknown status from privacy-safe runtime
+metadata and combines it with audible captures. It requires both locales, an
+unknown participant, unique participant greeting identity, and exactly one
+settled prepared farewell. Observer timestamps must
+fall inside the same authoritative recording. The addressed capture must
+overlap exactly one final transcript turn on the pinned Botik track. Any stale
+file, duplicate attempt, mixed observer/Botik application, wrong run/recording,
+wrong Botik speaker, or duplicate lifecycle identity fails closed. Keep the
+existing deterministic greeting/playback and farewell-policy suites green: they
+prove exact named/nameless phrases and the continuation, quoted-speech,
+third-person, and false-positive cases without writing names or prompts to logs.
 
 ### Long-call telemetry
 

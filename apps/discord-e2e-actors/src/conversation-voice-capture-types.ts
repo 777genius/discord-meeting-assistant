@@ -101,6 +101,7 @@ export interface ConversationVoiceEvidenceInput {
   readonly maxPcmBytes: number;
   readonly observerApplicationId: string;
   readonly privateTestGuildConfirmed: true;
+  readonly purpose: "addressed-answer" | "farewell" | "greeting";
   readonly recordingId: string;
   readonly runId: string;
   readonly turnId: string;
@@ -134,6 +135,7 @@ export interface ConversationVoiceEvidence {
   readonly correlation: {
     readonly attemptId: string;
     readonly provenance: "operator-supplied";
+    readonly purpose: "addressed-answer" | "farewell" | "greeting";
     readonly recordingId: string;
     readonly verification: "not-run";
     readonly turnId: string;
@@ -147,7 +149,7 @@ export interface ConversationVoiceEvidence {
     readonly voiceChannelId: string;
   };
   readonly runId: string;
-  readonly schemaVersion: 2;
+  readonly schemaVersion: 3;
   readonly source: {
     readonly codec: "opus";
     readonly craigBotId: string;

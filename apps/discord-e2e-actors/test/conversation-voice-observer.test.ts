@@ -146,7 +146,7 @@ describe("conversation voice evidence publication", () => {
         provenance: "operator-supplied",
         verification: "not-run",
       },
-      schemaVersion: 2,
+      schemaVersion: 3,
       transcriptVerification: { status: "not-run" },
     });
   });
@@ -192,6 +192,7 @@ function evidenceFixture() {
     maxPcmBytes: 11_520,
     observerApplicationId: "22222222222222222",
     privateTestGuildConfirmed: true,
+    purpose: "addressed-answer",
     recordingId: "recording-1",
     runId: "run-1",
     turnId: "turn-1",

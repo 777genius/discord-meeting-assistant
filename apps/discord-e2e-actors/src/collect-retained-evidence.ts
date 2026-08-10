@@ -6,6 +6,7 @@ import { z } from "zod";
 import { DiscordJsEvidenceProbe } from "./discord-evidence-probe.js";
 import { collectRetainedE2eEvidence } from "./e2e-collector.js";
 import {
+  conversationVoiceEvidenceV3Schema,
   deploymentRevisionExpectationSchema,
   fixtureManifestV1Schema,
   verifyRetainedE2eEvidence,
@@ -17,6 +18,18 @@ const absolutePath = z.string().refine(isAbsolute);
 const correlationId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u);
 const environmentSchema = z.object({
   DISCORD_E2E_ACTOR_RUN_INPUT: absolutePath,
+  DISCORD_E2E_BOTIK_SPEAKER_ID: correlationId.optional(),
+  DISCORD_E2E_CONVERSATION_VOICE_INPUTS: z.string().transform((value, context) => {
+    try {
+      return z.array(absolutePath).min(5).parse(JSON.parse(value) as unknown);
+    } catch {
+      context.addIssue({
+        code: "custom",
+        message: "Expected a JSON array of at least five absolute voice evidence paths",
+      });
+      return z.NEVER;
+    }
+  }).optional(),
   DISCORD_E2E_EVIDENCE_OUTPUT: absolutePath,
   DISCORD_E2E_EXPECTED_CRAIG_SOURCE_REVISION: z.string().min(1),
   DISCORD_E2E_EXPECTED_MEETING_PLATFORM_SOURCE_REVISION: z.string().min(1),
@@ -40,17 +53,29 @@ const environmentSchema = z.object({
   ),
   DISCORD_E2E_RUN_ID: correlationId,
   DISCORD_E2E_SUT_ACCOUNT: z.string().min(1).default("sut"),
+}).superRefine((value, context) => {
+  if ((value.DISCORD_E2E_BOTIK_SPEAKER_ID === undefined) !==
+    (value.DISCORD_E2E_CONVERSATION_VOICE_INPUTS === undefined)) {
+    context.addIssue({
+      code: "custom",
+      message: "Botik speaker ID and conversation voice inputs must be supplied together",
+      path: ["DISCORD_E2E_CONVERSATION_VOICE_INPUTS"],
+    });
+  }
 });
 
 async function main(): Promise<void> {
   const config = environmentSchema.parse(process.env);
-  const [actorRun, manifest, token] = await Promise.all([
+  const [actorRun, manifest, token, conversationVoice] = await Promise.all([
     readJson(config.DISCORD_E2E_ACTOR_RUN_INPUT),
     readJson(config.DISCORD_E2E_FIXTURE_MANIFEST).then((value) =>
       fixtureManifestV1Schema.parse(value)
     ),
     new MacOsKeychainSecretReader(config.DISCORD_E2E_KEYCHAIN_SERVICE)
       .read(config.DISCORD_E2E_SUT_ACCOUNT),
+    Promise.all((config.DISCORD_E2E_CONVERSATION_VOICE_INPUTS ?? []).map((path) =>
+      readJson(path).then((value) => conversationVoiceEvidenceV3Schema.parse(value))
+    )),
   ]);
   const deployment = new SshDeploymentEvidenceProbe({
     composeFile: config.DISCORD_E2E_REMOTE_COMPOSE_FILE,
@@ -68,6 +93,14 @@ async function main(): Promise<void> {
     await discord.connect(token);
     const evidence = await collectRetainedE2eEvidence({
       actorRun,
+      ...(config.DISCORD_E2E_BOTIK_SPEAKER_ID === undefined
+        ? {}
+        : {
+            conversation: {
+              botSpeakerId: config.DISCORD_E2E_BOTIK_SPEAKER_ID,
+              voice: conversationVoice,
+            },
+          }),
       recordingId: config.DISCORD_E2E_RECORDING_ID,
       runId: config.DISCORD_E2E_RUN_ID,
     }, deployment, discord);

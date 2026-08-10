@@ -113,6 +113,7 @@ async function main(): Promise<void> {
       maxPcmBytes: config.maxPcmBytes,
       observerApplicationId: config.observerApplicationId,
       privateTestGuildConfirmed: config.privateTestGuildConfirmed,
+      purpose: config.purpose,
       recordingId: config.recordingId,
       runId: config.runId,
       turnId: config.turnId,

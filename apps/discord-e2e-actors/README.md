@@ -29,6 +29,7 @@ DISCORD_E2E_CONVERSATION_VOICE_RUN_ID=... \
 DISCORD_E2E_CONVERSATION_VOICE_RECORDING_ID=... \
 DISCORD_E2E_CONVERSATION_VOICE_TURN_ID=... \
 DISCORD_E2E_CONVERSATION_VOICE_ATTEMPT_ID=... \
+DISCORD_E2E_CONVERSATION_VOICE_PURPOSE=addressed-answer \
 DISCORD_E2E_CONVERSATION_VOICE_EXPECTED_DURATION_MS=5000 \
 DISCORD_E2E_CONVERSATION_VOICE_OUTPUT=/absolute/evidence/conversation-voice.json \
 pnpm --filter @discord-meeting/discord-e2e-actors observe:conversation
@@ -40,12 +41,14 @@ file with packet/timing data, PCM SHA-256, RMS and non-silence metrics. It never
 stores bot tokens, PCM, Opus packets, or transcript text. It fails for no audio,
 timeout, silence, an unexpected sender, or an existing output path.
 
-This is transport evidence only: it does not run STT, does not verify a
-transcript, cannot establish the authoritative Craig recording, and cannot
-prove wire-level packet completeness because Discord's receiver exposes decoded
-Opus payloads rather than RTP sequence metadata. The configured recording,
-turn, and attempt IDs are retained only as operator-supplied labels; this
-observer does not independently verify their correlation or cancellation.
+Each capture declares `greeting`, `farewell`, or `addressed-answer` purpose.
+Alone it remains transport evidence: it does not run STT, establish the
+authoritative Craig recording, or independently verify its operator-supplied
+correlation. Current v7 retained evidence closes that correlation by checking
+the capture interval against the authoritative recording, matching lifecycle
+turns to settled runtime markers plus audible captures, and matching the
+addressed-answer interval to exactly one Botik turn in the final transcript.
+For v7, the configured source bot must be the same pinned Botik identity.
 
 Generate the Russian fixtures with embedded English technical terms before the
 first external run. The command uses macOS `say` (voice `Milena` by default),
@@ -135,6 +138,27 @@ DISCORD_E2E_ACTOR_RUN_INPUT=/absolute/evidence/overlap.actor-run.json \
 DISCORD_E2E_EVIDENCE_OUTPUT=/absolute/evidence/overlap.evidence.v6.json \
 pnpm --filter @discord-meeting/discord-e2e-actors collect:e2e
 ```
+
+For the opt-in greeting/farewell/Botik campaign, start a create-only observer
+capture immediately before each of the three greeting playbacks, the prepared
+farewell, and the addressed answer. Then collect v7 by adding the pinned Botik
+speaker ID and the JSON array of those five files:
+
+```sh
+DISCORD_E2E_BOTIK_SPEAKER_ID=1534231284467896512 \
+DISCORD_E2E_CONVERSATION_VOICE_INPUTS='["/absolute/evidence/greeting-ru.json","/absolute/evidence/greeting-en.json","/absolute/evidence/greeting-unknown.json","/absolute/evidence/farewell.json","/absolute/evidence/addressed-answer.json"]' \
+DISCORD_E2E_EVIDENCE_OUTPUT=/absolute/evidence/reconnect.evidence.v7.json \
+pnpm --filter @discord-meeting/discord-e2e-actors collect:e2e
+```
+
+The v7 verifier requires audible RU and EN greetings, an unknown-participant
+greeting without logging its prompt or name, one greeting per participant despite reconnect,
+exactly one completed prepared farewell, one audible capture per lifecycle
+turn, and one audible addressed answer overlapping one final Botik transcript
+turn. It rejects stale intervals, duplicate attempts/participants, mixed
+observer or Botik identities, wrong run/recording, and a missing/wrong Botik
+speaker track. Deterministic bridge and providerless playback tests separately
+prove the exact named and nameless phrase construction without retaining PII in logs.
 
 Collection and both verification commands require immutable candidate inputs
 `DISCORD_E2E_EXPECTED_CRAIG_SOURCE_REVISION`,

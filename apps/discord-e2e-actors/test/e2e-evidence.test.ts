@@ -17,6 +17,7 @@ import {
   retainedV4Evidence,
   retainedV5Evidence,
   retainedV6Evidence,
+  retainedV7Evidence,
   sequentialEvidence,
   speakerAId,
   speakerBId,
@@ -132,6 +133,78 @@ describe("verifyRetainedE2eEvidence", () => {
       currentExpectedRevisions,
     ).passed).toBe(true);
   });
+
+});
+
+describe("retained conversation evidence v7", () => {
+  it("verifies lifecycle audio, once-only semantics and retained Botik answer", () => {
+    const evidence = retainedV7Evidence();
+    const result = verifyRetainedE2eEvidenceAgainstExpectedRevision(
+      { ...manifest(), allowedBotSpeakerIds: [evidence.conversation.botSpeakerId] },
+      evidence,
+      currentExpectedRevisions,
+    );
+    expect(result.failures).toEqual([]);
+  });
+
+  it("rejects stale, duplicate and misbound v7 conversation evidence", () => {
+    const evidence = retainedV7Evidence();
+    evidence.conversation.lifecycle.events.push({
+      ...evidence.conversation.lifecycle.events[0]!,
+    });
+    evidence.conversation.voice[0]!.runId = "stale-run";
+    evidence.conversation.voice[0]!.capture.firstPacketAt.epochMilliseconds = 20_000;
+    evidence.conversation.voice[0]!.capture.endedAt.epochMilliseconds = 20_500;
+    evidence.conversation.voice[1]!.observer.applicationId = "1534999999999999999";
+    evidence.conversation.voice[2]!.correlation.recordingId = "wrong-recording";
+    evidence.conversation.voice[4]!.correlation.attemptId =
+      evidence.conversation.voice[3]!.correlation.attemptId;
+    evidence.conversation.botSpeakerId = "wrong-bot-speaker";
+    const codes = verifyRetainedE2eEvidenceAgainstExpectedRevision(
+      { ...manifest(), allowedBotSpeakerIds: ["1534231284467896512"] },
+      evidence,
+      currentExpectedRevisions,
+    ).failures.map(({ code }) => code);
+    expect(codes).toEqual(expect.arrayContaining([
+      "DUPLICATE_GREETING",
+      "VOICE_CORRELATION_MISMATCH",
+      "VOICE_IDENTITY_MISMATCH",
+      "STALE_VOICE_CAPTURE",
+      "DUPLICATE_VOICE_ATTEMPT",
+      "BOT_RECORDING_TRACK_MISSING",
+      "BOT_SPEAKER_NOT_PINNED",
+      "ANSWER_TRANSCRIPT_MISMATCH",
+    ]));
+  });
+
+  it("binds the first greeting to the reconnect actor and audible Botik source", () => {
+    const evidence = retainedV7Evidence();
+    const reconnectGreeting = evidence.conversation.lifecycle.events.find(
+      (event) => event.type === "greeting" && event.participantId === speakerBId,
+    );
+    if (reconnectGreeting === undefined) {
+      throw new Error("reconnect greeting fixture is missing");
+    }
+    reconnectGreeting.observedAt = "1970-01-01T00:00:01.300Z";
+    evidence.conversation.lifecycle.events[0]!.observedAt = "1970-01-01T00:00:07.000Z";
+    evidence.conversation.voice[1]!.source.craigBotId = "1534999999999999998";
+    evidence.conversation.voice[2]!.observer.voiceChannelId = "1534999999999999997";
+
+    const codes = verifyRetainedE2eEvidenceAgainstExpectedRevision(
+      { ...manifest(), allowedBotSpeakerIds: [evidence.conversation.botSpeakerId] },
+      evidence,
+      currentExpectedRevisions,
+    ).failures.map(({ code }) => code);
+
+    expect(codes).toEqual(expect.arrayContaining([
+      "LIFECYCLE_AUDIO_MISMATCH",
+      "RECONNECT_GREETING_ORDER_INVALID",
+      "VOICE_IDENTITY_MISMATCH",
+    ]));
+  });
+});
+
+describe("verifyRetainedE2eEvidence continued", () => {
 
   it("rejects v6 evidence when a layered attachment is absent", () => {
     const evidence = retainedV6Evidence();

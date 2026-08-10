@@ -5,6 +5,7 @@ import {
   retainedE2eEvidenceV4Schema,
   retainedE2eEvidenceV5Schema,
   retainedE2eEvidenceV6Schema,
+  retainedE2eEvidenceV7Schema,
   verifyE2eCampaign as verifyE2eCampaignAgainstExpectedRevision,
   verifyRetainedE2eEvidence as verifyRetainedE2eEvidenceAgainstExpectedRevision,
   type DeploymentRevisionExpectation,
@@ -14,6 +15,7 @@ import {
   type RetainedE2eEvidenceV4,
   type RetainedE2eEvidenceV5,
   type RetainedE2eEvidenceV6,
+  type RetainedE2eEvidenceV7,
 } from "../src/e2e-evidence.js";
 
 export const speakerAId = "1533227577286852649";
@@ -502,6 +504,86 @@ export function retainedV6Evidence(): RetainedE2eEvidenceV6 {
     replay: { ...source.replay, attachments },
     schemaVersion: 6,
   });
+}
+
+export function retainedV7Evidence(): RetainedE2eEvidenceV7 {
+  const source = retainedV6Evidence();
+  source.actorRun.scenario = "reconnect";
+  source.actorRun.events = [
+    { actorName: "speaker-a", atRecordingMs: 0, type: "ready" },
+    { actorName: "speaker-b", atRecordingMs: 0, type: "ready" },
+    { actorName: "speaker-a", atRecordingMs: 100, fixtureId: "speaker-a", type: "playback-start" },
+    { actorName: "speaker-b", atRecordingMs: 750, type: "disconnected" },
+    { actorName: "speaker-b", atRecordingMs: 800, type: "ready" },
+    { actorName: "speaker-b", atRecordingMs: 850, fixtureId: "speaker-b", type: "playback-start" },
+    { actorName: "speaker-a", atRecordingMs: 7_100, fixtureId: "speaker-a", type: "playback-end" },
+    { actorName: "speaker-b", atRecordingMs: 7_850, fixtureId: "speaker-b", type: "playback-end" },
+  ];
+  const botSpeakerId = "1534231284467896512";
+  source.recording.speakerIds.push(botSpeakerId);
+  source.recording.s3.tracks.push({
+    checksumSha256: "4".repeat(64), durationMs: source.recording.durationMs,
+    locator: "s3://bucket/meeting-1/botik.ogg", sizeBytes: 2_000,
+    speakerId: botSpeakerId, timelineOffsetMs: 0,
+  });
+  source.transcript.turns.push({
+    endMs: 7_200, speakerId: botSpeakerId, startMs: 6_200,
+    text: "Synthetic addressed answer", turnId: "botik-answer-1",
+  });
+  const events = [
+    { greetingLocale: "ru", observedAt: "1970-01-01T00:00:01.500Z", participantId: speakerAId, participantNameStatus: "known", turnId: `participant-greeting:${speakerAId}`, type: "greeting" as const },
+    { greetingLocale: "en", observedAt: "1970-01-01T00:00:00.700Z", participantId: speakerBId, participantNameStatus: "known", turnId: `participant-greeting:${speakerBId}`, type: "greeting" as const },
+    { greetingLocale: "ru", observedAt: "1970-01-01T00:00:03.500Z", participantId: "3533228054724346087", participantNameStatus: "unknown", turnId: "participant-greeting:3533228054724346087", type: "greeting" as const },
+    { evidenceTurnIds: ["turn-a"], locale: "ru", observedAt: "1970-01-01T00:00:05.500Z", playbackAttemptId: "farewell-attempt-1", reason: "explicit-group", turnId: "meeting-farewell:v1" as const, type: "farewell" as const },
+  ];
+  return retainedE2eEvidenceV7Schema.parse({
+    ...source,
+    conversation: {
+      botSpeakerId,
+      lifecycle: { events },
+      voice: [
+        voiceObservation("greeting", `participant-greeting:${speakerAId}`, "greeting-ru", 1_000),
+        voiceObservation("greeting", `participant-greeting:${speakerBId}`, "greeting-en", 200),
+        voiceObservation("greeting", "participant-greeting:3533228054724346087", "greeting-unknown", 3_000),
+        voiceObservation("farewell", "meeting-farewell:v1", "farewell", 5_000),
+        voiceObservation("addressed-answer", "human-question-1", "answer", 6_100),
+      ],
+    },
+    schemaVersion: 7,
+  });
+}
+
+function voiceObservation(
+  purpose: "addressed-answer" | "farewell" | "greeting",
+  turnId: string,
+  attemptId: string,
+  startMs: number,
+) {
+  return {
+    capture: {
+      acceptedDurationMilliseconds: 500, acceptedPacketCount: 25,
+      cancellation: { status: "not-observed" as const }, endedAt: captureTimestamp(startMs + 500),
+      expectedDuration: { maximumMilliseconds: 600, minimumMilliseconds: 500 },
+      firstPacketAt: captureTimestamp(startMs), ignoredDuplicatePacketCount: 0, ignoredLatePacketCount: 0,
+      limits: { captureTimeoutMilliseconds: 2_000, maxCaptureDurationMilliseconds: 60_000, maxPcmBytes: 11_520_000 },
+      pcm: {
+        byteLength: 96_000, channels: 2 as const, encoding: "s16le" as const,
+        nonSilence: { sampleCount: 48_000, sampleCountAboveThreshold: 4_800, sampleRatioAboveThreshold: 0.1, thresholdSample: 256 },
+        rms: 512, sampleRateHertz: 48_000 as const, sha256: "a".repeat(64),
+      },
+      startedAt: captureTimestamp(startMs - 100), termination: "expected-duration-reached" as const,
+    },
+    correlation: { attemptId, provenance: "operator-supplied" as const, purpose, recordingId: "meeting-1", verification: "not-run" as const, turnId },
+    kind: "conversation-voice-observer-evidence" as const,
+    observer: { applicationId: "1534222222222222222", authenticatedBotId: "1534222222222222222", guildId: "1533228590643155034", privateTestGuildConfirmed: true as const, voiceChannelId: "1533228823045214398" },
+    runId: "run-overlap-1", schemaVersion: 3 as const,
+    source: { codec: "opus" as const, craigBotId: "1534231284467896512", decodedPcm: { channels: 2 as const, encoding: "s16le" as const, sampleRateHertz: 48_000 as const }, receiver: "@discordjs/voice" as const },
+    transcriptVerification: { status: "not-run" as const },
+  };
+}
+
+function captureTimestamp(epochMilliseconds: number) {
+  return { epochMilliseconds, monotonicMilliseconds: epochMilliseconds };
 }
 
 function deployedService(

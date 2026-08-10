@@ -153,9 +153,6 @@ export class ParticipantGreetingBridge {
         return;
       }
       this.retryCounts.delete(participantId);
-      await this.dependencies.configuration.coordinator.whenIdle(
-        this.dependencies.meetingId,
-      );
     }
   }
 
@@ -180,11 +177,18 @@ export class ParticipantGreetingBridge {
           turnId,
           voiceProfileId: this.dependencies.configuration.voiceProfileId,
         });
-      this.dependencies.logger.info("Participant greeting admitted", {
-        meetingId: this.dependencies.meetingId,
-        outcome: outcome.status,
-        participantId,
-      });
+      if (outcome.status === "active") {
+        await this.dependencies.configuration.coordinator.whenIdle(
+          this.dependencies.meetingId,
+        );
+        this.dependencies.logger.info("Participant greeting playback settled", {
+          greetingLocale: greeting.locale,
+          meetingId: this.dependencies.meetingId,
+          participantId,
+          participantNameStatus: this.profile(participantId) === undefined ? "unknown" : "known",
+          turnId,
+        });
+      }
       return outcome.status;
     } catch (error) {
       this.dependencies.logger.warn("Participant greeting failed", {
