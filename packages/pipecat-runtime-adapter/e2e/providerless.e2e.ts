@@ -304,22 +304,40 @@ describe("Providerless greeting and farewell playback E2E", () => {
   it.each([
     {
       locale: "ru",
-      participantId: "speaker-greeting-ru",
+      participantId: "1533224474609057795",
       prompt: "Привет, Саша!",
+      recordingId: "grNamedRu001",
+      scenario: "named-ru",
     },
     {
       locale: "en",
-      participantId: "speaker-greeting-en",
+      participantId: "2533224474609057795",
       prompt: "Hi, Alex!",
+      recordingId: "grNamedEn001",
+      scenario: "named-en",
     },
-  ])("bridges a $locale proactive greeting through Pipecat and real Craig playback", async ({
+    {
+      locale: "ru",
+      participantId: "3533224474609057795",
+      prompt: "Привет!",
+      recordingId: "grAnonRu0001",
+      scenario: "anonymous-ru",
+    },
+    {
+      locale: "en",
+      participantId: "4533224474609057795",
+      prompt: "Hi!",
+      recordingId: "grAnonEn0001",
+      scenario: "anonymous-en",
+    },
+  ])("bridges a $scenario proactive greeting through Pipecat and real Craig playback", async ({
     locale,
     participantId,
     prompt,
+    recordingId,
   }) => {
     const activeRuntime = requireRuntime(runtime);
-    const recordingId = `recording-greeting-${locale}`;
-    const meetingId = `meeting-greeting-${locale}`;
+    const meetingId = recordingId;
     const turnId = `participant-greeting:${participantId}`;
     const harness = await openPlaybackHarness(recordingId);
     const coordinator = new ConversationCoordinator({
@@ -348,9 +366,32 @@ describe("Providerless greeting and farewell playback E2E", () => {
         status: "active",
       });
       await coordinator.whenIdle(meetingId);
-      await waitForCondition(() =>
-        harness.commands.some((command) => command.type === "playback-finish"),
-      );
+      try {
+        await waitForCondition(() =>
+          harness.commands.some((command) => command.type === "playback-finish"),
+        );
+      } catch (error) {
+        throw new Error(
+          [
+            `Greeting playback did not finish; commands=${JSON.stringify(
+              harness.commands.map((command) =>
+                command.type === "audio-chunk"
+                  ? {
+                      attemptId: command.attemptId,
+                      pcmBase64Length: command.pcmBase64.length,
+                      recordingId: command.recordingId,
+                      sequence: command.sequence,
+                      turnId: command.turnId,
+                      type: command.type,
+                    }
+                  : command
+              ),
+            )}`,
+            `sidecar=${`${stdout}\n${stderr}`.slice(-4_000)}`,
+          ].join("\n"),
+          { cause: error },
+        );
+      }
 
       expect(harness.commands[0]).toMatchObject({
         recordingId,

@@ -9,6 +9,7 @@ import { ParticipantGreetingBridge } from "../src/live-runtime/participant-greet
 const russianParticipantId = "1533224474609057795";
 const englishParticipantId = "2533224474609057795";
 const unknownParticipantId = "3533224474609057795";
+const excludedParticipantId = "4533224474609057795";
 
 class GreetingCoordinatorProbe {
   public readonly calls: Array<{
@@ -69,7 +70,10 @@ const logger: LiveRuntimeLogger = {
   warn: () => {},
 };
 
-function fixture(playbackReady = false): {
+function fixture(
+  playbackReady = false,
+  defaultLocale: "en" | "ru" = "ru",
+): {
   readonly bridge: ParticipantGreetingBridge;
   readonly coordinator: GreetingCoordinatorProbe;
   setPlaybackReady(value: boolean): void;
@@ -79,6 +83,8 @@ function fixture(playbackReady = false): {
   const configuration: LiveConversationConfiguration = {
     coordinator,
     greetings: {
+      defaultLocale,
+      excludedParticipantIds: [excludedParticipantId],
       isPlaybackReady: () => ready,
       profiles: {
         [englishParticipantId]: {
@@ -113,12 +119,13 @@ function fixture(playbackReady = false): {
 }
 
 describe("ParticipantGreetingBridge", () => {
-  it("waits for playback, skips unknown participants and speaks exact localized names", async () => {
+  it("waits for playback and speaks named or default-locale greetings", async () => {
     const context = fixture();
 
     context.bridge.participantsPresent([
       russianParticipantId,
       unknownParticipantId,
+      excludedParticipantId,
       englishParticipantId,
     ]);
     await context.bridge.settle();
@@ -128,7 +135,7 @@ describe("ParticipantGreetingBridge", () => {
     context.bridge.advance();
     await context.bridge.settle();
 
-    expect(context.coordinator.calls).toHaveLength(2);
+    expect(context.coordinator.calls).toHaveLength(3);
     expect(context.coordinator.calls.map(({ locale, prompt, speakerId }) => ({
       locale,
       prompt,
@@ -140,6 +147,11 @@ describe("ParticipantGreetingBridge", () => {
         speakerId: russianParticipantId,
       },
       {
+        locale: "ru",
+        prompt: "Привет!",
+        speakerId: unknownParticipantId,
+      },
+      {
         locale: "en",
         prompt: "Hi, Alex!",
         speakerId: englishParticipantId,
@@ -148,16 +160,35 @@ describe("ParticipantGreetingBridge", () => {
     expect(context.coordinator.calls[0]?.systemPrompt).toContain(
       "Speak exactly the greeting provided",
     );
-    expect(context.coordinator.idleCalls).toBe(4);
+    expect(context.coordinator.idleCalls).toBe(6);
   });
 
-  it("greets a participant only once after reconnecting in the same meeting", async () => {
+  it("uses the configured English fallback without inventing a name", async () => {
+    const context = fixture(true, "en");
+
+    context.bridge.participantJoined(unknownParticipantId);
+    await context.bridge.settle();
+
+    expect(context.coordinator.calls).toHaveLength(1);
+    expect(context.coordinator.calls[0]).toMatchObject({
+      locale: "en",
+      prompt: "Hi!",
+      speakerId: unknownParticipantId,
+    });
+  });
+
+  it.each([
+    { participantId: russianParticipantId, profile: "named" },
+    { participantId: unknownParticipantId, profile: "anonymous" },
+  ])("greets a $profile participant only once after reconnecting", async ({
+    participantId,
+  }) => {
     const context = fixture(true);
 
-    context.bridge.participantJoined(russianParticipantId);
+    context.bridge.participantJoined(participantId);
     await context.bridge.settle();
-    context.bridge.participantLeft(russianParticipantId);
-    context.bridge.participantJoined(russianParticipantId);
+    context.bridge.participantLeft(participantId);
+    context.bridge.participantJoined(participantId);
     await context.bridge.settle();
 
     expect(context.coordinator.calls).toHaveLength(1);

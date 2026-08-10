@@ -36,6 +36,7 @@ export interface PlatformConfig {
   };
   readonly liveIngressOwnerMode: "singleton";
   readonly nodeEnvironment: "development" | "production" | "test";
+  readonly participantGreetingDefaultLocale: "en" | "ru";
   readonly participantGreetingProfiles: ParticipantGreetingProfiles;
   readonly port: number;
   readonly recordingPlayback?: {

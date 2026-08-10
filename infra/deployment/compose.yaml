@@ -241,6 +241,7 @@ services:
       DISCORD_TOKEN_FILE: /run/secrets/discord-sut-token
       LIVE_INGRESS_OWNER_MODE: singleton
       NODE_ENV: production
+      PARTICIPANT_GREETING_DEFAULT_LOCALE: ${PARTICIPANT_GREETING_DEFAULT_LOCALE:-ru}
       PARTICIPANT_GREETING_PROFILES_JSON: ${PARTICIPANT_GREETING_PROFILES_JSON:-}
       PORT: "4310"
       POSTGRES_URL_FILE: /run/secrets/postgres-url
