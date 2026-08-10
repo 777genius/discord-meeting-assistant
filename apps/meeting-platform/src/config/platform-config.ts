@@ -28,6 +28,8 @@ export interface PlatformConfig {
   /** New meetings publish directly into the configured results channel by default. */
   readonly discordPublicationMode: "message" | "thread";
   readonly discordApplicationId: string;
+  /** Discord identity used for outbound Botik voice playback. */
+  readonly discordBotikApplicationId: string;
   readonly discordCraigApplicationId: string;
   readonly discordLegacyRoute?: {
     readonly guildId: string;

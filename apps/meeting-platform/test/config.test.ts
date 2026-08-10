@@ -6,6 +6,7 @@ const environment = {
   BIND_ADDRESS: "127.0.0.1",
   CRAIG_BEARER_TOKEN_FILE: "/run/secrets/craig",
   DISCORD_APPLICATION_ID: "1533224474609057793",
+  DISCORD_BOTIK_APPLICATION_ID: "1533224474609057798",
   DISCORD_CRAIG_APPLICATION_ID: "1533224474609057794",
   DISCORD_LEGACY_GUILD_ID: "1533224474609057795",
   DISCORD_LEGACY_VOICE_CHANNEL_ID: "1533224474609057796",
@@ -42,7 +43,20 @@ describe("platform configuration", () => {
     expect(config.secrets.discordToken).toBe("value-for:/run/secrets/discord");
     expect(config.discordFinalPublicationMode).toBe("separate-message");
     expect(config.discordPublicationMode).toBe("message");
+    expect(config.discordBotikApplicationId).toBe("1533224474609057798");
     expect(Object.keys(environment)).not.toContain("OPENAI_API_KEY");
+  });
+
+  it("falls back to the Craig identity when playback uses the same Discord bot", async () => {
+    const legacyEnvironment = {
+      ...environment,
+      DISCORD_BOTIK_APPLICATION_ID: undefined,
+    };
+    const config = await loadPlatformConfig(legacyEnvironment, async () => "value");
+
+    expect(config.discordBotikApplicationId).toBe(
+      legacyEnvironment.DISCORD_CRAIG_APPLICATION_ID,
+    );
   });
 
   it("publishes final summaries separately by default and accepts live replacement opt-in", async () => {
