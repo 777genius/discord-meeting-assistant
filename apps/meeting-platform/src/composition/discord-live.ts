@@ -293,14 +293,15 @@ function createLiveRuntime(input: {
                     )),
                   },
                 }),
-            ...(Object.keys(input.config.participantGreetingProfiles).length === 0
-              ? {}
-              : {
-                  greetings: {
-                    isPlaybackReady: input.isPlaybackReady,
-                    profiles: input.config.participantGreetingProfiles,
-                  },
-                }),
+            greetings: {
+              defaultLocale: input.config.participantGreetingDefaultLocale,
+              excludedParticipantIds: Object.freeze([
+                input.config.discordApplicationId,
+                input.config.discordCraigApplicationId,
+              ]),
+              isPlaybackReady: input.isPlaybackReady,
+              profiles: input.config.participantGreetingProfiles,
+            },
             locale: "auto",
             nowMilliseconds: monotonicUnixNowMilliseconds,
             systemPrompt: input.config.conversation.systemPrompt,

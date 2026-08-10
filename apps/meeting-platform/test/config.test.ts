@@ -64,6 +64,23 @@ describe("platform configuration", () => {
 });
 
 describe("participant greeting profile configuration", () => {
+  it("defaults anonymous greetings to Russian and accepts English override", async () => {
+    const defaultConfig = await loadPlatformConfig(environment, async () => "value");
+    const englishConfig = await loadPlatformConfig(
+      { ...environment, PARTICIPANT_GREETING_DEFAULT_LOCALE: "en" },
+      async () => "value",
+    );
+
+    expect(defaultConfig.participantGreetingDefaultLocale).toBe("ru");
+    expect(englishConfig.participantGreetingDefaultLocale).toBe("en");
+    await expect(
+      loadPlatformConfig(
+        { ...environment, PARTICIPANT_GREETING_DEFAULT_LOCALE: "de" },
+        async () => "value",
+      ),
+    ).rejects.toThrow();
+  });
+
   it("loads canonical immutable participant greeting profiles keyed by Discord ID", async () => {
     const config = await loadPlatformConfig(
       {

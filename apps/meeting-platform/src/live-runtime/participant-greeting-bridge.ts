@@ -11,6 +11,11 @@ const exactGreetingSystemPrompt = [
 ].join(" ");
 const maximumBusyRetries = 3;
 
+interface ResolvedParticipantGreeting {
+  readonly locale: "en" | "ru";
+  readonly prompt: string;
+}
+
 interface ParticipantGreetingBridgeDependencies {
   readonly configuration: LiveConversationConfiguration;
   readonly isMeetingFinishing: () => boolean;
@@ -18,7 +23,7 @@ interface ParticipantGreetingBridgeDependencies {
   readonly meetingId: string;
 }
 
-/** Meeting-local, bounded queue for one proactive greeting per known participant. */
+/** Meeting-local, bounded queue for one proactive greeting per participant. */
 export class ParticipantGreetingBridge {
   private closed = false;
   private drainPromise: Promise<void> | null = null;
@@ -43,7 +48,7 @@ export class ParticipantGreetingBridge {
     }
     this.presentParticipantIds.add(participantId);
     if (
-      this.profile(participantId) !== undefined &&
+      this.greeting(participantId) !== undefined &&
       !this.greetedParticipantIds.has(participantId)
     ) {
       this.pendingParticipantIds.add(participantId);
@@ -110,9 +115,9 @@ export class ParticipantGreetingBridge {
         return;
       }
       this.pendingParticipantIds.delete(participantId);
-      const profile = this.profile(participantId);
+      const greeting = this.greeting(participantId);
       if (
-        profile === undefined ||
+        greeting === undefined ||
         !this.presentParticipantIds.has(participantId) ||
         this.greetedParticipantIds.has(participantId)
       ) {
@@ -134,7 +139,7 @@ export class ParticipantGreetingBridge {
       // intentionally not repeated during this meeting. `busy` is the sole safe
       // retry because it proves that no external effect was admitted.
       this.greetedParticipantIds.add(participantId);
-      const outcome = await this.speak(participantId, profile);
+      const outcome = await this.speak(participantId, greeting);
       if (outcome === "busy") {
         const retryCount = (this.retryCounts.get(participantId) ?? 0) + 1;
         this.retryCounts.set(participantId, retryCount);
@@ -156,11 +161,8 @@ export class ParticipantGreetingBridge {
 
   private async speak(
     participantId: string,
-    profile: LiveParticipantGreetingProfile,
+    greeting: ResolvedParticipantGreeting,
   ): Promise<string> {
-    const prompt = profile.greetingLocale === "ru"
-      ? `Привет, ${profile.spokenName}!`
-      : `Hi, ${profile.spokenName}!`;
     const retryCount = this.retryCounts.get(participantId) ?? 0;
     const turnId = retryCount === 0
       ? `participant-greeting:${participantId}`
@@ -168,10 +170,10 @@ export class ParticipantGreetingBridge {
     try {
       const outcome = await this.dependencies.configuration.coordinator
         .handleProactiveTurn({
-          locale: profile.greetingLocale,
+          locale: greeting.locale,
           meetingId: this.dependencies.meetingId,
           nowMs: this.nowMilliseconds(),
-          prompt,
+          prompt: greeting.prompt,
           recordingId: this.dependencies.meetingId,
           speakerId: participantId,
           systemPrompt: exactGreetingSystemPrompt,
@@ -198,6 +200,27 @@ export class ParticipantGreetingBridge {
     participantId: string,
   ): LiveParticipantGreetingProfile | undefined {
     return this.dependencies.configuration.greetings?.profiles[participantId];
+  }
+
+  private greeting(
+    participantId: string,
+  ): ResolvedParticipantGreeting | undefined {
+    const greetings = this.dependencies.configuration.greetings;
+    if (
+      greetings === undefined ||
+      greetings.excludedParticipantIds.includes(participantId)
+    ) {
+      return undefined;
+    }
+    const profile = this.profile(participantId);
+    if (profile === undefined) {
+      return greetings.defaultLocale === "ru"
+        ? { locale: "ru", prompt: "Привет!" }
+        : { locale: "en", prompt: "Hi!" };
+    }
+    return profile.greetingLocale === "ru"
+      ? { locale: "ru", prompt: `Привет, ${profile.spokenName}!` }
+      : { locale: "en", prompt: `Hi, ${profile.spokenName}!` };
   }
 
   /** Re-reads mutable meeting state after asynchronous coordinator settlement. */

@@ -101,6 +101,7 @@ const environmentSchema = z
     NODE_ENV: z
       .enum(["development", "production", "test"])
       .default("production"),
+    PARTICIPANT_GREETING_DEFAULT_LOCALE: z.enum(["ru", "en"]).default("ru"),
     PARTICIPANT_GREETING_PROFILES_JSON:
       participantGreetingProfilesEnvironmentSchema,
     PORT: z.coerce.number().int().min(1).max(65_535).default(4_310),
@@ -315,6 +316,8 @@ export async function loadPlatformConfig(
         }),
     liveIngressOwnerMode: environment.LIVE_INGRESS_OWNER_MODE,
     nodeEnvironment: environment.NODE_ENV,
+    participantGreetingDefaultLocale:
+      environment.PARTICIPANT_GREETING_DEFAULT_LOCALE,
     participantGreetingProfiles: environment.PARTICIPANT_GREETING_PROFILES_JSON,
     port: environment.PORT,
     recordingSpoolRoot: environment.RECORDING_SPOOL_ROOT,

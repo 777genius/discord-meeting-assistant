@@ -318,6 +318,8 @@ export interface LiveParticipantGreetingProfile {
 }
 
 interface LiveParticipantGreetingConfiguration {
+  readonly defaultLocale: "en" | "ru";
+  readonly excludedParticipantIds: readonly string[];
   readonly isPlaybackReady: (recordingId: string) => boolean;
   readonly profiles: Readonly<Record<string, LiveParticipantGreetingProfile>>;
 }
