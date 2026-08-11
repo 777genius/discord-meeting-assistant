@@ -24,6 +24,7 @@ class GreetingCoordinatorProbe {
     readonly voiceProfileId: string;
   }> = [];
   public idleCalls = 0;
+  public onPlaybackSettlement: ((turnId: string) => void) | undefined;
   public readonly outcomes: Array<{ readonly status: "active" | "busy" }> = [];
   public readonly playbackSettlements: Array<"played" | "unplayed" | "partial" | "unknown"> = [];
 
@@ -63,8 +64,9 @@ class GreetingCoordinatorProbe {
     return Promise.resolve();
   }
 
-  public async whenTurnPlaybackSettled() {
+  public async whenTurnPlaybackSettled(_meetingId: string, turnId: string) {
     await this.whenIdle();
+    this.onPlaybackSettlement?.(turnId);
     return this.playbackSettlements.shift() ?? "played";
   }
 }
@@ -315,6 +317,32 @@ describe("ParticipantGreetingBridge", () => {
 
     expect(context.coordinator.calls).toHaveLength(4);
     expect(infoCalls).toEqual([]);
+    expect(warnCalls).toEqual(["Participant greeting retries exhausted"]);
+  });
+
+  it("continues greeting pending participants after one exhausts its retries", async () => {
+    const warnCalls: string[] = [];
+    const context = fixture(true, "ru", {
+      ...logger,
+      warn: (message) => warnCalls.push(message),
+    });
+    context.coordinator.playbackSettlements.push("unplayed", "unplayed", "unplayed", "unplayed");
+    context.coordinator.onPlaybackSettlement = (turnId) => {
+      if (turnId === `participant-greeting:${russianParticipantId}:retry-3`) {
+        context.bridge.participantJoined(englishParticipantId);
+      }
+    };
+
+    context.bridge.participantJoined(russianParticipantId);
+    await context.bridge.settle();
+
+    expect(context.coordinator.calls.map(({ speakerId }) => speakerId)).toEqual([
+      russianParticipantId,
+      russianParticipantId,
+      russianParticipantId,
+      russianParticipantId,
+      englishParticipantId,
+    ]);
     expect(warnCalls).toEqual(["Participant greeting retries exhausted"]);
   });
 

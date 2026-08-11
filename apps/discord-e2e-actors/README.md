@@ -106,8 +106,10 @@ For an ordered campaign, `DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSO
 may contain up to 15 additional `{ attemptId, outputPath, purpose, turnId }`
 objects. The observer validates every create-only output and correlation before
 joining, keeps one voice connection for the full sequence, and waits for the
-configured source to become silent between captures. This prevents Discord
-reconnect timing from binding a later utterance to an earlier expected turn.
+configured source to remain silent for 300 milliseconds between captures. That
+wait is bounded by `DISCORD_E2E_CONVERSATION_VOICE_READY_TIMEOUT_MS`, not by the
+short capture timeout. This prevents Discord reconnect timing from binding a
+later utterance to an earlier expected turn.
 
 Each capture declares `greeting`, `farewell`, or `addressed-answer` purpose.
 Alone it remains transport evidence: it does not run STT, establish the

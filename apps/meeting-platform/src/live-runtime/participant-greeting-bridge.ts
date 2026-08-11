@@ -166,7 +166,7 @@ export class ParticipantGreetingBridge {
           meetingId: this.dependencies.meetingId,
           participantId,
         });
-        return;
+        continue;
       }
       this.retryCounts.delete(participantId);
     }

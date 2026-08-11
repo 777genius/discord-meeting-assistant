@@ -236,6 +236,7 @@ describe("conversation voice stream capture", () => {
     await expect(firstCapture).resolves.toMatchObject({ acceptedPacketCount: 2 });
     expect(stream.destroyed).toBe(false);
     expect(stream.isPaused()).toBe(true);
+    expectStreamCaptureListenersRemoved(stream);
 
     stream.write(Uint8Array.of(3));
 
@@ -254,7 +255,22 @@ describe("conversation voice stream capture", () => {
     await expect(secondCapture).resolves.toMatchObject({ acceptedPacketCount: 2 });
     expect(stream.destroyed).toBe(false);
     expect(stream.isPaused()).toBe(true);
+    expectStreamCaptureListenersRemoved(stream);
     stream.destroy();
+  });
+
+  it("rejects an already destroyed receiver without starting timers", async () => {
+    const stream = new PassThrough();
+    stream.destroy();
+
+    await expect(captureConversationVoiceFromOpenStream({
+      captureTimeoutMilliseconds: 1_000,
+      clock: { now: () => startedAt },
+      controller: controllerFixture(new Map()),
+      firstPacketTimeoutMilliseconds: 1_000,
+      stream,
+    })).rejects.toMatchObject({ code: "no-audio" });
+    expectStreamCaptureListenersRemoved(stream);
   });
 
   it("rejects an already ended receiver without waiting for a timeout", async () => {

@@ -115,6 +115,23 @@ describe("loadConversationVoiceObserverConfig", () => {
         outputPath: requiredEnvironment.DISCORD_E2E_CONVERSATION_VOICE_OUTPUT,
       }]),
     })).toThrow("output paths must be unique");
+    expect(() => loadConversationVoiceObserverConfig({
+      ...requiredEnvironment,
+      DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON: JSON.stringify(
+        Array.from({ length: 16 }, (_unused, index) => ({
+          ...additionalCaptures[0],
+          attemptId: `attempt-extra-${index}`,
+          outputPath: `/tmp/conversation-voice-observer-extra-${index}.json`,
+        })),
+      ),
+    })).toThrow();
+    expect(() => loadConversationVoiceObserverConfig({
+      ...requiredEnvironment,
+      DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON: JSON.stringify([{
+        ...additionalCaptures[0],
+        outputPath: "conversation-voice-observer-2.json",
+      }]),
+    })).toThrow();
   });
 
   it("fails closed for non-private targets, missing correlations, and unsafe output paths", () => {

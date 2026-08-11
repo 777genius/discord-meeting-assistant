@@ -243,8 +243,11 @@ async function waitForConfiguredCraigAudioSilence(
           clearTimeout(silence);
         }
         silence = setTimeout(succeed, audioSilenceMilliseconds);
-      } catch {
-        fail(new Error("Configured Craig audio stream could not be decoded while waiting for silence"));
+      } catch (error: unknown) {
+        fail(new Error(
+          "Configured Craig audio stream could not be decoded while waiting for silence",
+          { cause: error },
+        ));
       }
     };
     const onEnd = (): void => {
