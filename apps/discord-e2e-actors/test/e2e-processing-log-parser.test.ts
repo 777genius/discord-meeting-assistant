@@ -45,9 +45,10 @@ describe("parseProcessingEvidenceLogs", () => {
 describe("parseConversationLifecycleEvidenceLogs", () => {
   it("retains only completed lifecycle effects for one meeting", () => {
     const greeting = {
-      greetingLocale: "ru", meetingId: "meeting-1",
+      greetingLocale: "ru", greetingText: "Привет, Саша!", meetingId: "meeting-1",
       message: "Participant greeting playback settled", participantId: "participant-1",
-      participantNameStatus: "unknown", time: "2026-08-06T19:18:37.000Z",
+      participantName: "Саша", participantNameStatus: "unknown",
+      time: "2026-08-06T19:18:37.000Z",
       turnId: "participant-greeting:participant-1",
     };
     const farewell = {
@@ -66,6 +67,7 @@ describe("parseConversationLifecycleEvidenceLogs", () => {
     const events = parseConversationLifecycleEvidenceLogs(output, "meeting-1").events;
     expect(events).toHaveLength(4);
     expect(events[0]).not.toHaveProperty("greetingText");
+    expect(events[0]).not.toHaveProperty("participantName");
   });
 });
 

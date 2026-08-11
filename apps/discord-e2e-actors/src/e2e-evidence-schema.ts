@@ -47,6 +47,11 @@ export const fixtureManifestV1Schema = z.object({
     (speakerIds) => new Set(speakerIds).size === speakerIds.length,
     "Allowed bot speaker IDs must be unique",
   ).default([]),
+  conversationVoiceExpectation: z.object({
+    guildId: identifierSchema,
+    observerApplicationId: identifierSchema,
+    voiceChannelId: identifierSchema,
+  }).strict().optional(),
   fixtureSetId: identifierSchema,
   fixtures: z.array(fixtureSchema).min(2),
   locale: identifierSchema,

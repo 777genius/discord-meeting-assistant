@@ -202,6 +202,28 @@ describe("retained conversation evidence v7", () => {
       "VOICE_IDENTITY_MISMATCH",
     ]));
   });
+
+  it.each([
+    ["applicationId", "1534999999999999996"],
+    ["guildId", "1534999999999999995"],
+    ["voiceChannelId", "1534999999999999994"],
+  ] as const)("rejects a consistently wrong observer %s", (field, value) => {
+    const evidence = retainedV7Evidence();
+    for (const observation of evidence.conversation.voice) {
+      observation.observer[field] = value;
+      if (field === "applicationId") {
+        observation.observer.authenticatedBotId = value;
+      }
+    }
+
+    const codes = verifyRetainedE2eEvidenceAgainstExpectedRevision(
+      { ...manifest(), allowedBotSpeakerIds: [evidence.conversation.botSpeakerId] },
+      evidence,
+      currentExpectedRevisions,
+    ).failures.map(({ code }) => code);
+
+    expect(codes).toContain("VOICE_IDENTITY_MISMATCH");
+  });
 });
 
 describe("verifyRetainedE2eEvidence continued", () => {

@@ -13,10 +13,12 @@ projects.
 | Application `Meeting E2E SUT` (approved Voice Bot) | `1533224474609057793` |
 | Application `Meeting E2E Speaker A` | `1533227577286852649` |
 | Application `Meeting E2E Speaker B` | `1533228054724346087` |
+| Application `Meeting E2E Speaker C` (conversation observer) | `1533867700575670282` |
 | Botik test playback bot | `1534231284467896512` |
 
 Bot tokens are stored only in the local macOS Keychain service
-`discord-voice-bot-e2e`, under accounts `sut`, `speaker-a`, and `speaker-b`.
+`discord-voice-bot-e2e`, under accounts `sut`, `speaker-a`, `speaker-b`, and
+`speaker-c`.
 They must not be copied into repository files, process arguments, logs, images,
 or committed environment files.
 
@@ -171,6 +173,13 @@ greeting, the prepared farewell, and one addressed Botik answer. Set
 `DISCORD_E2E_CONVERSATION_VOICE_PURPOSE` to `greeting`, `farewell`, or
 `addressed-answer` for each capture and use the runtime turn ID shown by the
 correlated structured event.
+
+The committed fixture manifest pins Speaker C (`1533867700575670282`) as the
+observer, the private guild, and the voice channel. Set the observer account to
+`speaker-c`; a capture set from any other consistent environment still fails.
+Set `DISCORD_E2E_SPEAKER_B_CONNECT_DELAY_MS=5000` for this campaign so the same
+observer can finish the Russian greeting capture and reconnect before Speaker B
+causes the English greeting. Leave it at the default `0` for ordinary runs.
 
 Reconnect one already-greeted official actor before the meeting ends. Do not
 induce another first join. After finalization, pass all five observer files and

@@ -35,7 +35,7 @@ export function verifyConversationEvidence(
     recordingEndMs,
     fail,
   );
-  verifyVoiceCaptureIdentity(evidence, recordingStartMs, recordingEndMs, fail);
+  verifyVoiceCaptureIdentity(manifest, evidence, recordingStartMs, recordingEndMs, fail);
   verifyLifecycleAudioBindings(manifest, evidence, fail);
   verifyAddressedAnswer(evidence, recordingStartMs, fail);
 }
@@ -114,6 +114,7 @@ function verifyReconnectGreeting(
 }
 
 function verifyVoiceCaptureIdentity(
+  manifest: FixtureManifestV1,
   evidence: RetainedE2eEvidenceV7,
   recordingStartMs: number,
   recordingEndMs: number,
@@ -134,6 +135,13 @@ function verifyVoiceCaptureIdentity(
   ) {
     fail("VOICE_IDENTITY_MISMATCH", "voice captures use different Discord identities or channels");
   }
+  verifyVoiceCaptureExpectation(
+    manifest,
+    observerApplications,
+    observerGuilds,
+    observerVoiceChannels,
+    fail,
+  );
   for (const observation of voice) {
     if (observation.runId !== evidence.actorRun.runId ||
       observation.correlation.recordingId !== evidence.recording.recordingId) {
@@ -154,6 +162,27 @@ function verifyVoiceCaptureIdentity(
     ) {
       fail("STALE_VOICE_CAPTURE", "voice capture is outside the authoritative recording interval");
     }
+  }
+}
+
+function verifyVoiceCaptureExpectation(
+  manifest: FixtureManifestV1,
+  observerApplications: ReadonlySet<string>,
+  observerGuilds: ReadonlySet<string>,
+  observerVoiceChannels: ReadonlySet<string>,
+  fail: VerificationFailureReporter,
+): void {
+  const expectation = manifest.conversationVoiceExpectation;
+  if (expectation === undefined) {
+    fail("VOICE_EXPECTATION_MISSING", "fixture manifest does not pin the observer, guild, and voice channel");
+    return;
+  }
+  if (
+    !observerApplications.has(expectation.observerApplicationId) ||
+    !observerGuilds.has(expectation.guildId) ||
+    !observerVoiceChannels.has(expectation.voiceChannelId)
+  ) {
+    fail("VOICE_IDENTITY_MISMATCH", "voice capture does not match the fixture manifest environment");
   }
 }
 

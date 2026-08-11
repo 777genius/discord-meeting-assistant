@@ -40,6 +40,9 @@ than 60 seconds / 11,520,000 bytes), then atomically writes a new JSON evidence
 file with packet/timing data, PCM SHA-256, RMS and non-silence metrics. It never
 stores bot tokens, PCM, Opus packets, or transcript text. It fails for no audio,
 timeout, silence, an unexpected sender, or an existing output path.
+It joins the pinned private channel before waiting for the configured playback
+bot, allowing the observer to be present before a first-join greeting becomes
+playback-ready.
 
 Each capture declares `greeting`, `farewell`, or `addressed-answer` purpose.
 Alone it remains transport evidence: it does not run STT, establish the
@@ -95,7 +98,9 @@ events and is bound to one explicit recording only by the collector after the
 authoritative Craig manifest exists.
 
 Optional environment settings override the Keychain service/account names,
-fixture paths, scenario, speaker B delay, and readiness/playback timeouts. The
+fixture paths, scenario, speaker B connection/playback delays, and
+readiness/playback timeouts. `DISCORD_E2E_SPEAKER_B_CONNECT_DELAY_MS` defaults
+to `0` and may be set only for a bounded private-guild observer campaign. The
 scenario is selected with `DISCORD_E2E_SCENARIO=overlap|sequential|reconnect` and
 defaults to `overlap`. For `sequential`, the delay is the silent gap after speaker
 A completes. For `reconnect`, the delay selects when speaker B disconnects while

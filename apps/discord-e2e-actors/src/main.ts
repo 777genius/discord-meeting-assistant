@@ -38,6 +38,12 @@ async function main(): Promise<void> {
       if (token === undefined) {
         throw new Error(`Missing Keychain credential for ${speaker.name}`);
       }
+      if (index === 1 && config.speakerBConnectDelayMilliseconds > 0) {
+        process.stdout.write(
+          `Discord E2E delaying speaker-b connection for ${config.speakerBConnectDelayMilliseconds}ms.\n`,
+        );
+        await systemScenarioClock.wait(config.speakerBConnectDelayMilliseconds);
+      }
       process.stdout.write(`Discord E2E connecting ${speaker.name}.\n`);
       actors.push(await connectDiscordVoiceActor({
         name: speaker.name,

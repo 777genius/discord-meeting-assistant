@@ -22,8 +22,25 @@ describe("loadActorConfig", () => {
       { name: "speaker-b", account: "speaker-b", fixturePath: "test/fixtures/speaker-b.ru-en.ogg" },
     ]);
     expect(config.speakerBDelayMilliseconds).toBe(750);
+    expect(config.speakerBConnectDelayMilliseconds).toBe(0);
     expect(config.prePlaybackHoldMilliseconds).toBe(0);
     expect(config.postPlaybackHoldMilliseconds).toBe(0);
+  });
+
+  it("bounds the opt-in Speaker B first-connect delay", () => {
+    const environment = {
+      DISCORD_E2E_GUILD_ID: "11111111111111111",
+      DISCORD_E2E_VOICE_CHANNEL_ID: "22222222222222222",
+      ...requiredCorrelation,
+    };
+    expect(loadActorConfig({
+      ...environment,
+      DISCORD_E2E_SPEAKER_B_CONNECT_DELAY_MS: "5000",
+    }).speakerBConnectDelayMilliseconds).toBe(5_000);
+    expect(() => loadActorConfig({
+      ...environment,
+      DISCORD_E2E_SPEAKER_B_CONNECT_DELAY_MS: "60001",
+    })).toThrow();
   });
 
   it.each([

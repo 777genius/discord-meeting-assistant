@@ -49,6 +49,11 @@ export function verifyE2eCampaign(
 
 export function manifest(): FixtureManifestV1 {
   return fixtureManifestV1Schema.parse({
+    conversationVoiceExpectation: {
+      guildId: "1533228590643155034",
+      observerApplicationId: "1533867700575670282",
+      voiceChannelId: "1533228823045214398",
+    },
     fixtureSetId: "fixture-v1",
     fixtures: [
       {
@@ -575,7 +580,7 @@ function voiceObservation(
     },
     correlation: { attemptId, provenance: "operator-supplied" as const, purpose, recordingId: "meeting-1", verification: "not-run" as const, turnId },
     kind: "conversation-voice-observer-evidence" as const,
-    observer: { applicationId: "1534222222222222222", authenticatedBotId: "1534222222222222222", guildId: "1533228590643155034", privateTestGuildConfirmed: true as const, voiceChannelId: "1533228823045214398" },
+    observer: { applicationId: "1533867700575670282", authenticatedBotId: "1533867700575670282", guildId: "1533228590643155034", privateTestGuildConfirmed: true as const, voiceChannelId: "1533228823045214398" },
     runId: "run-overlap-1", schemaVersion: 3 as const,
     source: { codec: "opus" as const, craigBotId: "1534231284467896512", decodedPcm: { channels: 2 as const, encoding: "s16le" as const, sampleRateHertz: 48_000 as const }, receiver: "@discordjs/voice" as const },
     transcriptVerification: { status: "not-run" as const },

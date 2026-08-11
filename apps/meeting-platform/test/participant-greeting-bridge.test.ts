@@ -189,9 +189,26 @@ describe("ParticipantGreetingBridge", () => {
         infoCalls.push({ fields, message });
       },
     });
+    let markIdleEntered: (() => void) | undefined;
+    const idleEntered = new Promise<void>((resolve) => {
+      markIdleEntered = resolve;
+    });
+    let releaseIdle: (() => void) | undefined;
+    const idleGate = new Promise<void>((resolve) => {
+      releaseIdle = resolve;
+    });
+    context.coordinator.whenIdle = () => {
+      context.coordinator.idleCalls += 1;
+      markIdleEntered?.();
+      return idleGate;
+    };
 
     context.bridge.participantJoined(russianParticipantId);
-    await context.bridge.settle();
+    const settlement = context.bridge.settle();
+    await idleEntered;
+    expect(infoCalls).toEqual([]);
+    releaseIdle?.();
+    await settlement;
 
     expect(infoCalls).toEqual([{
       fields: {
