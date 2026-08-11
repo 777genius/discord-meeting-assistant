@@ -81,6 +81,7 @@ DISCORD_E2E_CONVERSATION_VOICE_TURN_ID=... \
 DISCORD_E2E_CONVERSATION_VOICE_ATTEMPT_ID=... \
 DISCORD_E2E_CONVERSATION_VOICE_PURPOSE=addressed-answer \
 DISCORD_E2E_CONVERSATION_VOICE_READY_TIMEOUT_MS=120000 \
+DISCORD_E2E_CONVERSATION_VOICE_CAPTURE_TIMEOUT_MS=6000 \
 DISCORD_E2E_CONVERSATION_VOICE_EXPECTED_DURATION_MS=5000 \
 DISCORD_E2E_CONVERSATION_VOICE_OUTPUT=/absolute/evidence/conversation-voice.json \
 pnpm --filter @discord-meeting/discord-e2e-actors observe:conversation
@@ -97,6 +98,9 @@ playback-ready.
 Use `DISCORD_E2E_CONVERSATION_VOICE_READY_TIMEOUT_MS` for a cold playback bot;
 it bounds both playback-bot readiness and the wait for its first audio packet.
 The separate, bounded audio capture window starts only with that first packet.
+When omitted, readiness falls back to the capture timeout, which defaults to
+60 seconds. Real campaigns should set both explicitly so a long readiness wait
+cannot widen the retained audio window.
 
 For an ordered campaign, `DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON`
 may contain up to 15 additional `{ attemptId, outputPath, purpose, turnId }`
