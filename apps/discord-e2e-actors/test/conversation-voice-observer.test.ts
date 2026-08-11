@@ -169,8 +169,10 @@ describe("conversation voice stream capture", () => {
         [2, pcmPacket(-1_024)],
       ])),
       firstPacketTimeoutMilliseconds: 1_000,
+      isPacketAudible: (opusPacket) => opusPacket[0] !== 0,
       stream,
     });
+    stream.write(Uint8Array.of(0));
     stream.write(Uint8Array.of(1));
     stream.write(Uint8Array.of(2));
 

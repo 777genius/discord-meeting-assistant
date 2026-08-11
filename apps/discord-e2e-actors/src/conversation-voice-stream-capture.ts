@@ -16,6 +16,7 @@ export function captureConversationVoiceFromOpenStream(input: {
   readonly clock: ConversationVoiceCaptureClock;
   readonly controller: ConversationVoiceCaptureController;
   readonly firstPacketTimeoutMilliseconds: number;
+  readonly isPacketAudible?: (packet: Uint8Array) => boolean;
   readonly stream: Readable;
 }): Promise<ConversationVoiceCaptureSummary> {
   if (input.stream.destroyed) {
@@ -63,6 +64,9 @@ export function captureConversationVoiceFromOpenStream(input: {
       try {
         if (!(chunk instanceof Uint8Array)) {
           throw new Error("Conversation voice receiver emitted a non-binary packet");
+        }
+        if (sequence === 0 && input.isPacketAudible !== undefined && !input.isPacketAudible(chunk)) {
+          return;
         }
         const timing = input.clock.now();
         if (sequence === 0) {
