@@ -534,6 +534,10 @@ export class ConversationCoordinatorProbe {
   public whenIdle(): Promise<void> {
     return Promise.resolve();
   }
+
+  public whenTurnPlaybackSettled() {
+    return Promise.resolve("played" as const);
+  }
 }
 
 export class BlockedFinalizeLiveTranscriberStub {

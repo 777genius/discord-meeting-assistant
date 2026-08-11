@@ -35,11 +35,11 @@ describe("loadActorConfig", () => {
     };
     expect(loadActorConfig({
       ...environment,
-      DISCORD_E2E_SPEAKER_B_CONNECT_DELAY_MS: "5000",
-    }).speakerBConnectDelayMilliseconds).toBe(5_000);
+      DISCORD_E2E_SPEAKER_B_CONNECT_DELAY_MS: "120000",
+    }).speakerBConnectDelayMilliseconds).toBe(120_000);
     expect(() => loadActorConfig({
       ...environment,
-      DISCORD_E2E_SPEAKER_B_CONNECT_DELAY_MS: "60001",
+      DISCORD_E2E_SPEAKER_B_CONNECT_DELAY_MS: "120001",
     })).toThrow();
   });
 

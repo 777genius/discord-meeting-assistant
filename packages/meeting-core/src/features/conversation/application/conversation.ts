@@ -9,6 +9,7 @@ import type {
   ConversationCoordinatorDependencies,
   ConversationCoordinatorResult,
   ConversationInterruptionResult,
+  ConversationTurnPlaybackSettlement,
   FinalizedConversationTurnInput,
   MeetingConversationState,
   PreparedConversationCueInput,
@@ -26,6 +27,7 @@ export type {
   ConversationCoordinatorDependencies,
   ConversationCoordinatorResult,
   ConversationInterruptionResult,
+  ConversationTurnPlaybackSettlement,
   FinalizedConversationTurnInput,
   PreparedConversationCueInput,
   ProactiveConversationTurnInput,
@@ -210,6 +212,34 @@ export class ConversationCoordinator {
     }
 
     await waitForConversationTasks(state);
+  }
+
+  /** Waits for this turn's work and reports whether audio really reached playback. */
+  public async whenTurnPlaybackSettled(
+    meetingId: string,
+    turnId: string,
+  ): Promise<ConversationTurnPlaybackSettlement> {
+    const state = this.meetings.get(meetingId);
+    if (state === undefined) {
+      return "unknown";
+    }
+    for (;;) {
+      const settlement = state.playbackSettlements.get(turnId);
+      if (settlement !== undefined) {
+        return settlement;
+      }
+      const tasks = [...state.tasks];
+      if (tasks.length === 0) {
+        return "unknown";
+      }
+      await Promise.race(tasks.map(async (task) => {
+        try {
+          await task;
+        } catch {
+          // The settlement lookup remains the source of truth after task failure.
+        }
+      }));
+    }
   }
 
   private async handleLatchedPrompt(

@@ -98,20 +98,20 @@ const structuredOutput: JsonObject = {
   actionItems: [
     {
       deadline: "к пятнице",
-      evidenceTurnIds: ["turn-3"],
+      evidenceTurnIds: ["e3"],
       ownerSpeakerId: "speaker-b",
       text: "Подготовить релиз",
     },
   ],
   decisions: [
-    { evidenceTurnIds: ["turn-1"], text: "Выпустить релиз" },
+    { evidenceTurnIds: ["e1"], text: "Выпустить релиз" },
   ],
   openQuestions: [],
   overview: "Команда согласовала релиз и ответственного.",
   title: "Релиз",
   topics: [
     {
-      evidenceTurnIds: ["turn-1", "turn-3"],
+      evidenceTurnIds: ["e1", "e3"],
       points: ["Релиз готовится к пятнице"],
       title: "План",
     },
@@ -223,16 +223,22 @@ describe("SubscriptionRuntimeIncrementalSummaryAdapter", () => {
     });
     const prompt = JSON.parse(captured.task.prompt) as Record<string, unknown>;
     expect(prompt).toMatchObject({
+      citableTurnIds: ["e1", "e2", "e3"],
       knownSpeakerIds: ["speaker-a", "speaker-b"],
-      knownTurnIds: ["turn-1", "turn-2", "turn-3"],
-      newFinalizedTurns: [{ turnId: "turn-3" }],
-      previousSummary: { revision: 1 },
-      previousSummaryEvidenceTurns: [{ turnId: "turn-1" }],
-      recentContextTurns: [{ turnId: "turn-2" }],
+      newFinalizedTurns: [{ turnId: "e3" }],
+      previousSummary: {
+        decisions: [{ evidenceTurnIds: ["e1"] }],
+        revision: 1,
+      },
+      previousSummaryEvidenceTurns: [{ turnId: "e1" }],
+      recentContextTurns: [{ turnId: "e2" }],
       revision: 2,
       throughTurnCount: 3,
       outputSchema: providerIncrementalMeetingSummaryJsonSchema,
     });
+    expect(prompt).not.toHaveProperty("knownTurnIds");
+    expect(captured.task.prompt).not.toContain("turn-1");
+    expect(captured.task.prompt).not.toContain("decisionId");
     expect(captured.task.systemPrompt).toContain("Previous summary is validated cumulative memory");
     expect(captured.task.systemPrompt).toContain("untrusted quoted evidence");
     expect(captured.task.systemPrompt).toContain("overview exactly one short sentence");
@@ -245,7 +251,7 @@ describe("SubscriptionRuntimeIncrementalSummaryAdapter", () => {
       "6d9479e46e2f995c44871703664eb1a6965ac6f8cfb1f227d5f6795d003cbd28",
     );
     expect(createHash("sha256").update(captured.task.systemPrompt).digest("hex")).toBe(
-      "c658fdb8f9617dd32b78ee63ffb5ae4502c5971a016e09b97fea7d0bbbabe3f7",
+      "dd1fdfd114b0a4f8c77fd07d9bc8b2fea5214f3043fd851dbdd5ea95804e9919",
     );
     expect(captured.task.systemPrompt).toContain("compact cumulative live meeting synthesis");
     expect(captured.task.systemPrompt).toContain("Recency alone is never a reason to forget");
@@ -342,9 +348,9 @@ describe("SubscriptionRuntimeIncrementalSummaryAdapter", () => {
       request,
       {
         ...structuredOutput,
-        decisions: [{ evidenceTurnIds: ["turn-3"], text: "Назначить ответственного" }],
+        decisions: [{ evidenceTurnIds: ["e3"], text: "Назначить ответственного" }],
         topics: [{
-          evidenceTurnIds: ["turn-3"],
+          evidenceTurnIds: ["e3"],
           points: ["Релиз готовится к пятнице"],
           title: "Исполнение",
         }],
@@ -382,6 +388,69 @@ describe("SubscriptionRuntimeIncrementalSummaryAdapter", () => {
         failure: { code: "SUBSCRIPTION_RUNTIME_SUMMARY_INVALID_PROVIDER_RESPONSE" },
         ok: false,
       });
+  });
+});
+
+describe("incremental evidence aliases", () => {
+  it("keeps uncited canonical turn IDs out of the provider prompt", async () => {
+    const canonicalIds = [
+      "live-turn:v1:000000000000000000000000",
+      "live-turn:v1:111111111111111111111111",
+      "live-turn:v1:222222222222222222222222",
+      "live-turn:v1:333333333333333333333333",
+    ];
+    const previousSummary = requestFixture.previousSummary;
+    if (previousSummary === null) {
+      throw new Error("Expected the revision-two fixture to have a previous summary");
+    }
+    const aliasedRequest: IncrementalSummaryGenerationRequest = {
+      ...requestFixture,
+      knownTurnIds: canonicalIds,
+      newTurns: [{ ...requestFixture.newTurns[0]!, turnId: canonicalIds[3]! }],
+      previousSummary: {
+        ...previousSummary,
+        decisions: previousSummary.decisions.map((item) => ({
+          ...item,
+          evidenceTurnIds: [canonicalIds[1]!],
+        })),
+        topics: previousSummary.topics.map((item) => ({
+          ...item,
+          evidenceTurnIds: [canonicalIds[1]!],
+        })),
+      },
+      previousSummaryEvidenceTurns: [{
+        ...requestFixture.previousSummaryEvidenceTurns[0]!,
+        turnId: canonicalIds[1]!,
+      }],
+      recentContextTurns: [{
+        ...requestFixture.recentContextTurns[0]!,
+        turnId: canonicalIds[2]!,
+      }],
+      throughTurnCount: canonicalIds.length,
+    };
+    const transport = new FakeTransport((request) => completed(
+      request,
+      structuredOutput,
+      completeUsage,
+    ));
+
+    const result = await createAdapter(transport).generate(aliasedRequest);
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        summary: {
+          actionItems: [{ evidenceTurnIds: [canonicalIds[3]] }],
+          decisions: [{ evidenceTurnIds: [canonicalIds[1]] }],
+        },
+      },
+    });
+    const providerPrompt = transport.request?.task.prompt ?? "";
+    expect(providerPrompt).not.toContain("live-turn:v1:");
+    expect(JSON.parse(providerPrompt)).toMatchObject({
+      citableTurnIds: ["e1", "e2", "e3"],
+      newFinalizedTurns: [{ turnId: "e3" }],
+    });
   });
 });
 

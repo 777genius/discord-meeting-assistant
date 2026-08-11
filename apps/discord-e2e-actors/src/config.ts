@@ -15,7 +15,7 @@ const actorEnvironmentSchema = z.object({
   DISCORD_E2E_SECRET_DIRECTORY: z.string().refine(isAbsolute).optional(),
   DISCORD_E2E_SPEAKER_A_ACCOUNT: z.string().min(1).default("speaker-a"),
   DISCORD_E2E_SPEAKER_B_ACCOUNT: z.string().min(1).default("speaker-b"),
-  DISCORD_E2E_SPEAKER_B_CONNECT_DELAY_MS: z.coerce.number().int().min(0).max(60_000).default(0),
+  DISCORD_E2E_SPEAKER_B_CONNECT_DELAY_MS: z.coerce.number().int().min(0).max(120_000).default(0),
   DISCORD_E2E_SPEAKER_B_DELAY_MS: z.coerce.number().int().min(0).max(60_000).default(750),
   DISCORD_E2E_READY_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(120_000).default(30_000),
   DISCORD_E2E_PLAYBACK_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(600_000).default(120_000),

@@ -481,7 +481,7 @@ it("backs off retryable incremental generation failures instead of retrying ever
   await runtime.close();
 });
 
-it("permanently fences a non-retryable generation failure until its evidence base changes", async () => {
+it("fences non-retryable generation failures and backs off a changed evidence base", async () => {
   vi.useFakeTimers();
   vi.setSystemTime("2026-08-02T10:00:00.000Z");
   const meetings = new MemoryLiveMeetingRepository();
@@ -506,19 +506,21 @@ it("permanently fences a non-retryable generation failure until its evidence bas
   await vi.advanceTimersByTimeAsync(300_000);
   expect(summarizer.requests).toHaveLength(1);
 
-  await vi.advanceTimersByTimeAsync(60_000);
+  await vi.advanceTimersByTimeAsync(5_000);
   expect(summarizer.requests).toHaveLength(1);
 
   const laterBatch = packets();
   laterBatch.packets[0] = {
     ...laterBatch.packets[0]!,
-    relativeTimeMs: 360_000,
+    relativeTimeMs: 305_000,
     sequenceNumber: 2,
     mediaTimestamp: 1_920,
   };
   void runtime.acceptVoiceBatch(laterBatch);
   await vi.advanceTimersByTimeAsync(5_000);
 
+  expect(summarizer.requests).toHaveLength(1);
+  await vi.advanceTimersByTimeAsync(20_000);
   expect(summarizer.requests).toHaveLength(2);
   await runtime.close();
 });

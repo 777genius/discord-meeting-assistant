@@ -2,10 +2,12 @@ import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { PassThrough } from "node:stream";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createConversationVoiceEvidence } from "../src/conversation-voice-evidence.js";
+import { captureConversationVoiceFromOpenStream } from "../src/conversation-voice-stream-capture.js";
 import {
   ConversationVoiceCaptureController,
   ConversationVoiceCaptureError,
@@ -21,6 +23,7 @@ const startedAt = {
 const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
+  vi.useRealTimers();
   await Promise.all(temporaryDirectories.splice(0).map(async (path) => rm(path, {
     force: true,
     recursive: true,
@@ -64,6 +67,27 @@ describe("ConversationVoiceCaptureController", () => {
       sampleRatioAboveThreshold: 1,
       thresholdSample: 256,
     });
+  });
+
+  it("starts the bounded capture window at first audio after an arbitrary readiness wait", () => {
+    const controller = controllerFixture(new Map([
+      [1, pcmPacket(1_024)],
+      [2, pcmPacket(-1_024)],
+    ]));
+    const firstAudioAt = timestamp(10_000);
+
+    controller.start(firstAudioAt);
+    controller.acceptPacket({
+      opusPacket: Uint8Array.of(1),
+      sequence: 1,
+      timing: firstAudioAt,
+    });
+    controller.acceptPacket(packet(2, 10_020, 2));
+    const capture = controller.complete(timestamp(10_025));
+
+    expect(capture.startedAt).toEqual(firstAudioAt);
+    expect(capture.firstPacketAt).toEqual(firstAudioAt);
+    expect(capture.acceptedDurationMilliseconds).toBe(40);
   });
 
   it("fails no-audio and incomplete-duration timeouts without synthesizing evidence", () => {
@@ -126,6 +150,171 @@ describe("ConversationVoiceCaptureController", () => {
     expectCaptureError(() => controller.complete(timestamp(25)), "silent-pcm");
   });
 });
+
+describe("conversation voice stream capture", () => {
+  it("fails readiness timeout and removes every stream listener", async () => {
+    vi.useFakeTimers();
+    const stream = new PassThrough();
+    const capture = captureConversationVoiceFromOpenStream({
+      captureTimeoutMilliseconds: 1_000,
+      clock: { now: () => startedAt },
+      controller: controllerFixture(new Map()),
+      firstPacketTimeoutMilliseconds: 1_000,
+      stream,
+    });
+    const rejected = expect(capture).rejects.toMatchObject({ code: "no-audio" });
+
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    await rejected;
+    expectStreamCaptureListenersRemoved(stream);
+    stream.destroy();
+  });
+
+  it("fails an incomplete first-packet capture and removes every stream listener", async () => {
+    vi.useFakeTimers();
+    const stream = new PassThrough();
+    const capture = captureConversationVoiceFromOpenStream({
+      captureTimeoutMilliseconds: 1_000,
+      clock: { now: () => startedAt },
+      controller: controllerFixture(new Map([[1, pcmPacket(1_024)]])),
+      firstPacketTimeoutMilliseconds: 5_000,
+      stream,
+    });
+    const rejected = expect(capture).rejects.toMatchObject({ code: "capture-timeout" });
+    stream.write(Uint8Array.of(1));
+
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    await rejected;
+    expectStreamCaptureListenersRemoved(stream);
+    stream.destroy();
+  });
+
+  it("fails when the receiver ends before audio and removes every stream listener", async () => {
+    const stream = new PassThrough();
+    const capture = captureConversationVoiceFromOpenStream({
+      captureTimeoutMilliseconds: 1_000,
+      clock: { now: () => startedAt },
+      controller: controllerFixture(new Map()),
+      firstPacketTimeoutMilliseconds: 1_000,
+      stream,
+    });
+    const rejected = expect(capture).rejects.toMatchObject({ code: "no-audio" });
+
+    stream.end();
+
+    await rejected;
+    expectStreamCaptureListenersRemoved(stream);
+  });
+
+  it("captures consecutive utterances through one open subscription", async () => {
+    const stream = new PassThrough();
+    let elapsedMilliseconds = 0;
+    const clock = {
+      now: () => {
+        elapsedMilliseconds += 20;
+        return timestamp(elapsedMilliseconds);
+      },
+    };
+
+    const firstCapture = captureConversationVoiceFromOpenStream({
+      captureTimeoutMilliseconds: 1_000,
+      clock,
+      controller: controllerFixture(new Map([
+        [1, pcmPacket(1_024)],
+        [2, pcmPacket(-1_024)],
+      ])),
+      firstPacketTimeoutMilliseconds: 1_000,
+      isPacketAudible: (opusPacket) => opusPacket[0] !== 0,
+      stream,
+    });
+    stream.write(Uint8Array.of(0));
+    stream.write(Uint8Array.of(1));
+    stream.write(Uint8Array.of(2));
+
+    await expect(firstCapture).resolves.toMatchObject({ acceptedPacketCount: 2 });
+    expect(stream.destroyed).toBe(false);
+    expect(stream.isPaused()).toBe(true);
+    expectStreamCaptureListenersRemoved(stream);
+
+    stream.write(Uint8Array.of(3));
+
+    const secondCapture = captureConversationVoiceFromOpenStream({
+      captureTimeoutMilliseconds: 1_000,
+      clock,
+      controller: controllerFixture(new Map([
+        [3, pcmPacket(2_048)],
+        [4, pcmPacket(-2_048)],
+      ])),
+      firstPacketTimeoutMilliseconds: 1_000,
+      stream,
+    });
+    stream.write(Uint8Array.of(4));
+
+    await expect(secondCapture).resolves.toMatchObject({ acceptedPacketCount: 2 });
+    expect(stream.destroyed).toBe(false);
+    expect(stream.isPaused()).toBe(true);
+    expectStreamCaptureListenersRemoved(stream);
+    stream.destroy();
+  });
+
+  it("rejects an already destroyed receiver without starting timers", async () => {
+    const stream = new PassThrough();
+    stream.destroy();
+
+    await expect(captureConversationVoiceFromOpenStream({
+      captureTimeoutMilliseconds: 1_000,
+      clock: { now: () => startedAt },
+      controller: controllerFixture(new Map()),
+      firstPacketTimeoutMilliseconds: 1_000,
+      stream,
+    })).rejects.toMatchObject({ code: "no-audio" });
+    expectStreamCaptureListenersRemoved(stream);
+  });
+
+  it("rejects an already ended receiver without waiting for a timeout", async () => {
+    const stream = new PassThrough();
+    stream.resume();
+    const ended = new Promise<void>((resolve) => {
+      stream.once("end", resolve);
+    });
+    stream.end();
+    await ended;
+
+    await expect(captureConversationVoiceFromOpenStream({
+      captureTimeoutMilliseconds: 1_000,
+      clock: { now: () => startedAt },
+      controller: controllerFixture(new Map()),
+      firstPacketTimeoutMilliseconds: 1_000,
+      stream,
+    })).rejects.toMatchObject({ code: "no-audio" });
+  });
+
+  it("retains the receiver error as the capture failure cause", async () => {
+    const stream = new PassThrough();
+    const sourceError = new Error("synthetic receiver failure");
+    const capture = captureConversationVoiceFromOpenStream({
+      captureTimeoutMilliseconds: 1_000,
+      clock: { now: () => startedAt },
+      controller: controllerFixture(new Map()),
+      firstPacketTimeoutMilliseconds: 1_000,
+      stream,
+    });
+
+    stream.emit("error", sourceError);
+
+    await expect(capture).rejects.toMatchObject({ cause: sourceError });
+    expectStreamCaptureListenersRemoved(stream);
+    stream.destroy();
+  });
+});
+
+function expectStreamCaptureListenersRemoved(stream: PassThrough): void {
+  expect(stream.listenerCount("data")).toBe(0);
+  expect(stream.listenerCount("end")).toBe(0);
+  expect(stream.listenerCount("error")).toBe(0);
+}
 
 describe("conversation voice evidence publication", () => {
   it("atomically creates a new evidence file and refuses to replace it", async () => {

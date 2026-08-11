@@ -100,7 +100,7 @@ describe("subscription runtime gRPC transport mapping", () => {
     });
     expect(request.metadata).toMatchObject({
       model: "gpt-5.6-luna",
-      policyVersion: "meeting-summary.incremental.subscription-runtime.v6",
+      policyVersion: "meeting-summary.incremental.subscription-runtime.v7",
       reasoningEffort: "low",
       summaryRevision: "1",
       throughTurnCount: "1",

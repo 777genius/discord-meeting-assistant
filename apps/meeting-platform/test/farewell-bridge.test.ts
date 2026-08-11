@@ -9,6 +9,8 @@ import { FarewellBridge } from "../src/live-runtime/farewell-bridge.js";
 
 class CoordinatorProbe {
   public readonly cueCalls: unknown[] = [];
+  public playOutcome: "active" | "queued" = "active";
+  public playbackSettlement: "played" | "unplayed" | "partial" | "unknown" = "played";
 
   public advanceMeeting(): void {}
   public closeMeeting(): Promise<void> { return Promise.resolve(); }
@@ -16,12 +18,13 @@ class CoordinatorProbe {
   public handleProactiveTurn() { return Promise.resolve({ status: "ignored" as const }); }
   public playPreparedCue(input: unknown) {
     this.cueCalls.push(structuredClone(input));
-    return Promise.resolve({ status: "active" as const });
+    return Promise.resolve({ status: this.playOutcome });
   }
   public speechActivity() { return Promise.resolve({ status: "ignored" as const }); }
   public speechEnded() { return Promise.resolve({ status: "ignored" as const }); }
   public speechStarted() { return Promise.resolve({ status: "ignored" as const }); }
   public whenIdle(): Promise<void> { return Promise.resolve(); }
+  public whenTurnPlaybackSettled() { return Promise.resolve(this.playbackSettlement); }
 }
 
 const logger: LiveRuntimeLogger = {
@@ -31,7 +34,10 @@ const logger: LiveRuntimeLogger = {
   warn: () => {},
 };
 
-function fixture(classify?: (input: LiveFarewellClassificationInput) => Promise<"en" | "reject" | "ru">) {
+function fixture(
+  classify?: (input: LiveFarewellClassificationInput) => Promise<"en" | "reject" | "ru">,
+  runtimeLogger: LiveRuntimeLogger = logger,
+) {
   let nowMs = 1_000;
   const coordinator = new CoordinatorProbe();
   const configuration: LiveConversationConfiguration = {
@@ -55,7 +61,7 @@ function fixture(classify?: (input: LiveFarewellClassificationInput) => Promise<
   const bridge = new FarewellBridge({
     configuration,
     isMeetingFinishing: () => false,
-    logger,
+    logger: runtimeLogger,
     meetingId: "recording-1",
   });
   bridge.participantsPresent(["speaker-1", "speaker-2", "speaker-3"]);
@@ -96,6 +102,45 @@ describe("FarewellBridge", () => {
       locale: "ru",
       turnId: "meeting-farewell:v1",
     });
+  });
+
+  it.each(["unplayed", "partial", "unknown"] as const)(
+    "does not publish false settled evidence for a %s farewell",
+    async (settlement) => {
+      const infoCalls: string[] = [];
+      const context = fixture(undefined, {
+        ...logger,
+        info: (message) => infoCalls.push(message),
+      });
+      context.coordinator.playbackSettlement = settlement;
+      const event = finalEvent("Всем пока!");
+      const revision = context.bridge.observeSpeech(event);
+      context.bridge.observeFinalizedTurn(event, "turn-1", revision);
+      context.setNowMs(1_100);
+      context.bridge.advance();
+      await context.bridge.settle();
+
+      expect(context.coordinator.cueCalls).toHaveLength(1);
+      expect(infoCalls).toEqual([]);
+    },
+  );
+
+  it("retains settled evidence when a farewell is initially queued", async () => {
+    const infoCalls: string[] = [];
+    const context = fixture(undefined, {
+      ...logger,
+      info: (message) => infoCalls.push(message),
+    });
+    context.coordinator.playOutcome = "queued";
+    const event = finalEvent("Всем пока!");
+    const revision = context.bridge.observeSpeech(event);
+    context.bridge.observeFinalizedTurn(event, "turn-1", revision);
+    context.setNowMs(1_100);
+    context.bridge.advance();
+    await context.bridge.settle();
+
+    expect(context.coordinator.cueCalls).toHaveLength(1);
+    expect(infoCalls).toEqual(["Meeting farewell playback settled"]);
   });
 
   it("cancels a fast-path decision when any newer speech arrives", async () => {

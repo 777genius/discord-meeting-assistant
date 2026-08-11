@@ -355,6 +355,7 @@ boundaries:
         - node:crypto
         - node:fs/promises
         - node:path
+        - node:stream
       runtimeReferences: []
   - id: apps.pipecat-runtime
     roots:

@@ -80,8 +80,6 @@ export class LiveSummaryScheduler {
     ) {
       return;
     }
-    this.failureCount = 0;
-    this.retryAtMs = 0;
     this.permanentGenerationBase = null;
     this.dependencies.logger.info(
       "Incremental meeting summary fence cleared for new evidence",
@@ -169,8 +167,7 @@ export class LiveSummaryScheduler {
       this.deferFailure(errorCode, true);
       return;
     }
-    this.failureCount = 0;
-    this.retryAtMs = Number.POSITIVE_INFINITY;
+    this.deferFailure(errorCode, false);
     this.permanentGenerationBase = generationBase;
     this.dependencies.logger.info("Incremental meeting summary permanently fenced", {
       errorCode,

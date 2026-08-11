@@ -95,6 +95,13 @@ export type ConversationInterruptionResult =
   | { readonly status: "cancel-requested"; readonly turnId: string }
   | { readonly status: "ignored" };
 
+/** Terminal delivery evidence for one admitted conversation turn. */
+export type ConversationTurnPlaybackSettlement =
+  | "played"
+  | "unplayed"
+  | "partial"
+  | "unknown";
+
 export interface ConversationCoordinatorDependencies {
   readonly delay?: ConversationDelayPort;
   readonly latencyObserver?: ConversationLatencyObserverPort;
@@ -128,6 +135,8 @@ export interface ConversationPlaybackFence {
 
 export interface ActiveConversationRun {
   answerAudioStarted: boolean;
+  answerAudioWriteAttempted: boolean;
+  answerAudioWritten: boolean;
   attemptId: string | null;
   cancellationInFlight: boolean;
   readonly cueDelays: Set<ConversationDelay>;
@@ -158,6 +167,7 @@ export interface MeetingConversationState {
   readonly pending: Map<string, PreparedConversation>;
   playbackFence: ConversationPlaybackFence | null;
   playbackOpenBarrier: Promise<void>;
+  readonly playbackSettlements: Map<string, ConversationTurnPlaybackSettlement>;
   readonly session: ConversationSession;
   readonly tasks: Set<Promise<void>>;
   readonly wakeLatches: Map<string, ConversationWakeLatch>;

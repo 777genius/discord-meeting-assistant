@@ -29,19 +29,23 @@ describe("loadSupplementalVoicePlaybackConfig", () => {
     const config = loadSupplementalVoicePlaybackConfig({
       ...baseEnvironment,
       DISCORD_E2E_SUPPLEMENTAL_POST_HOLD_MS: "60000",
-      DISCORD_E2E_SUPPLEMENTAL_PRE_HOLD_MS: "1234",
+      DISCORD_E2E_SUPPLEMENTAL_PRE_HOLD_MS: "120000",
     });
 
     expect(config).toMatchObject({
       keychainAccount: "speaker-d",
       postHoldMilliseconds: 60_000,
-      preHoldMilliseconds: 1_234,
+      preHoldMilliseconds: 120_000,
       privateTestGuildConfirmed: true,
       runId: "retained-campaign-speaker-d-1",
     });
     expect(() => loadSupplementalVoicePlaybackConfig({
       ...baseEnvironment,
       DISCORD_E2E_SUPPLEMENTAL_POST_HOLD_MS: "60001",
+    })).toThrow();
+    expect(() => loadSupplementalVoicePlaybackConfig({
+      ...baseEnvironment,
+      DISCORD_E2E_SUPPLEMENTAL_PRE_HOLD_MS: "120001",
     })).toThrow();
     expect(() => loadSupplementalVoicePlaybackConfig({
       ...baseEnvironment,

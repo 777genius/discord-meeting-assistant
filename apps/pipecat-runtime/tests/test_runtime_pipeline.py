@@ -106,6 +106,38 @@ class _FramedSpeechProfile:
         return self._probe, _FramedSpeechProcessor()
 
 
+class _EmptyTtsProcessor(FrameProcessor):
+    async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+        await super().process_frame(frame, direction)
+        if isinstance(frame, ConversationTurnFrame) and direction is FrameDirection.DOWNSTREAM:
+            await self.push_frame(LLMFullResponseStartFrame(), direction)
+            await self.push_frame(TTSStartedFrame(context_id="empty-context"), direction)
+            await self.push_frame(TTSStoppedFrame(context_id="empty-context"), direction)
+            await self.push_frame(LLMFullResponseEndFrame(), direction)
+        await self.push_frame(frame, direction)
+
+
+class _EmptyThenSpeechProfile:
+    profile_id = "empty-then-speech"
+
+    def __init__(self) -> None:
+        self.create_count = 0
+
+    def create_processors(
+        self,
+        request: StartTurn,
+        cancellation_requested: CancellationSignal,
+    ) -> Sequence[FrameProcessor]:
+        del request, cancellation_requested
+        self.create_count += 1
+        processor = (
+            _EmptyTtsProcessor()
+            if self.create_count == 1
+            else _FramedSpeechProcessor()
+        )
+        return (processor,)
+
+
 class _CountingTurnProcessor(FrameProcessor):
     def __init__(self) -> None:
         super().__init__()
@@ -115,8 +147,20 @@ class _CountingTurnProcessor(FrameProcessor):
         await super().process_frame(frame, direction)
         if isinstance(frame, ConversationTurnFrame) and direction is FrameDirection.DOWNSTREAM:
             self.turn_ids.append(frame.request.turn_id)
+            context_id = f"counting-{len(self.turn_ids)}"
             await self.push_frame(LLMFullResponseStartFrame(), direction)
             await self.push_frame(LLMTextFrame(text=f"Ответ {len(self.turn_ids)}."), direction)
+            await self.push_frame(TTSStartedFrame(context_id=context_id), direction)
+            await self.push_frame(
+                TTSAudioRawFrame(
+                    audio=b"\x01\x00" * 960,
+                    sample_rate=48_000,
+                    num_channels=1,
+                    context_id=context_id,
+                ),
+                direction,
+            )
+            await self.push_frame(TTSStoppedFrame(context_id=context_id), direction)
             await self.push_frame(LLMFullResponseEndFrame(), direction)
         await self.push_frame(frame, direction)
 
@@ -174,6 +218,17 @@ class _InterruptibleTurnProcessor(FrameProcessor):
             return
         await self.push_frame(LLMFullResponseStartFrame(), direction)
         await self.push_frame(LLMTextFrame(text="После interruption pipeline жива."), direction)
+        await self.push_frame(TTSStartedFrame(context_id="interruptible-2"), direction)
+        await self.push_frame(
+            TTSAudioRawFrame(
+                audio=b"\x01\x00" * 960,
+                sample_rate=48_000,
+                num_channels=1,
+                context_id="interruptible-2",
+            ),
+            direction,
+        )
+        await self.push_frame(TTSStoppedFrame(context_id="interruptible-2"), direction)
         await self.push_frame(LLMFullResponseEndFrame(), direction)
 
 
@@ -327,6 +382,30 @@ async def test_two_sequential_turns_reuse_one_warm_meeting_pipeline() -> None:
     assert isinstance(second_events[-1], Completed)
     assert profile.create_count == 1
     assert profile.processor.turn_ids == [first_request.turn_id, second_request.turn_id]
+
+
+async def test_empty_tts_audio_fails_and_retires_the_persistent_pipeline() -> None:
+    """A provider context with no audio cannot poison a greeting retry."""
+    profile = _EmptyThenSpeechProfile()
+    runtime = PipecatConversationRuntime(profile=profile)
+    first_request = sample_start_turn(voice_profile_id=profile.profile_id)
+    first = await runtime.start(first_request)
+    first_events = await asyncio.wait_for(_collect(first.events()), timeout=15)
+    await asyncio.wait_for(first.wait(), timeout=15)
+
+    second = await runtime.start(replace(
+        first_request,
+        turn_id="turn-after-empty-tts",
+        idempotency_key="idempotency-after-empty-tts",
+    ))
+    second_events = await asyncio.wait_for(_collect(second.events()), timeout=2)
+    await asyncio.wait_for(second.wait(), timeout=2)
+    await asyncio.wait_for(runtime.close(), timeout=15)
+
+    assert isinstance(first_events[-1], Failed)
+    assert first_events[-1].code == "pipecat-pipeline-failed"
+    assert isinstance(second_events[-1], Completed)
+    assert profile.create_count == 2
 
 
 async def test_interruption_preserves_the_warm_pipeline_for_the_queued_turn() -> None:

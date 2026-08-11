@@ -42,6 +42,7 @@ class ActivePipelineTurn:
     text_generation_failure: TextGenerationFailed | None = None
     first_llm_token_at_unix_ms: int | None = None
     latency_emitted: bool = False
+    tts_audio_frame_count: int = 0
 
     def request_cancellation(self, reason: CancellationReason) -> bool:
         """Record only the first cancellation reason for this exact attempt."""
@@ -132,6 +133,7 @@ class PersistentTurnOutputProcessor(FrameProcessor):
         turn: ActivePipelineTurn,
         frame: TTSAudioRawFrame,
     ) -> None:
+        turn.tts_audio_frame_count += 1
         first_audio_at_unix_ms = time.time_ns() // 1_000_000
         await turn.events.audio(frame.audio)
         await self._emit_latency(turn, first_audio_at_unix_ms)

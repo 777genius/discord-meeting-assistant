@@ -24,7 +24,9 @@ class GreetingCoordinatorProbe {
     readonly voiceProfileId: string;
   }> = [];
   public idleCalls = 0;
-  public readonly outcomes: Array<{ readonly status: string }> = [];
+  public onPlaybackSettlement: ((turnId: string) => void) | undefined;
+  public readonly outcomes: Array<{ readonly status: "active" | "busy" }> = [];
+  public readonly playbackSettlements: Array<"played" | "unplayed" | "partial" | "unknown"> = [];
 
   public advanceMeeting(): void {}
 
@@ -60,6 +62,12 @@ class GreetingCoordinatorProbe {
   public whenIdle(): Promise<void> {
     this.idleCalls += 1;
     return Promise.resolve();
+  }
+
+  public async whenTurnPlaybackSettled(_meetingId: string, turnId: string) {
+    await this.whenIdle();
+    this.onPlaybackSettlement?.(turnId);
+    return this.playbackSettlements.shift() ?? "played";
   }
 }
 
@@ -247,8 +255,6 @@ describe("ParticipantGreetingBridge", () => {
 
     context.bridge.participantJoined(russianParticipantId);
     await context.bridge.settle();
-    context.bridge.advance();
-    await context.bridge.settle();
 
     expect(context.coordinator.calls).toHaveLength(2);
     expect(context.coordinator.calls.map(({ prompt }) => prompt)).toEqual([
@@ -265,6 +271,101 @@ describe("ParticipantGreetingBridge", () => {
     await context.bridge.settle();
     expect(context.coordinator.calls).toHaveLength(2);
   });
+
+  it("retries a greeting only when the admitted turn produced no playback audio", async () => {
+    const infoCalls: Array<Readonly<Record<string, unknown>> | undefined> = [];
+    const context = fixture(true, "ru", {
+      ...logger,
+      info: (_message, fields) => infoCalls.push(fields),
+    });
+    context.coordinator.playbackSettlements.push("unplayed", "played");
+
+    context.bridge.participantJoined(russianParticipantId);
+    await context.bridge.settle();
+
+    expect(context.coordinator.calls.map(({ turnId }) => turnId)).toEqual([
+      `participant-greeting:${russianParticipantId}`,
+      `participant-greeting:${russianParticipantId}:retry-1`,
+    ]);
+    expect(infoCalls).toEqual([
+      expect.objectContaining({
+        turnId: `participant-greeting:${russianParticipantId}:retry-1`,
+      }),
+    ]);
+  });
+
+  it("stops after bounded empty-audio retries without publishing false evidence", async () => {
+    const infoCalls: string[] = [];
+    const warnCalls: string[] = [];
+    const context = fixture(true, "ru", {
+      ...logger,
+      info: (message) => infoCalls.push(message),
+      warn: (message) => warnCalls.push(message),
+    });
+    context.coordinator.playbackSettlements.push(
+      "unplayed",
+      "unplayed",
+      "unplayed",
+      "unplayed",
+    );
+
+    context.bridge.participantJoined(russianParticipantId);
+    await context.bridge.settle();
+    context.bridge.participantLeft(russianParticipantId);
+    context.bridge.participantJoined(russianParticipantId);
+    await context.bridge.settle();
+
+    expect(context.coordinator.calls).toHaveLength(4);
+    expect(infoCalls).toEqual([]);
+    expect(warnCalls).toEqual(["Participant greeting retries exhausted"]);
+  });
+
+  it("continues greeting pending participants after one exhausts its retries", async () => {
+    const warnCalls: string[] = [];
+    const context = fixture(true, "ru", {
+      ...logger,
+      warn: (message) => warnCalls.push(message),
+    });
+    context.coordinator.playbackSettlements.push("unplayed", "unplayed", "unplayed", "unplayed");
+    context.coordinator.onPlaybackSettlement = (turnId) => {
+      if (turnId === `participant-greeting:${russianParticipantId}:retry-3`) {
+        context.bridge.participantJoined(englishParticipantId);
+      }
+    };
+
+    context.bridge.participantJoined(russianParticipantId);
+    await context.bridge.settle();
+
+    expect(context.coordinator.calls.map(({ speakerId }) => speakerId)).toEqual([
+      russianParticipantId,
+      russianParticipantId,
+      russianParticipantId,
+      russianParticipantId,
+      englishParticipantId,
+    ]);
+    expect(warnCalls).toEqual(["Participant greeting retries exhausted"]);
+  });
+
+  it.each(["partial", "unknown"] as const)(
+    "does not retry or publish false evidence for a %s greeting",
+    async (settlement) => {
+      const infoCalls: string[] = [];
+      const context = fixture(true, "ru", {
+        ...logger,
+        info: (message) => infoCalls.push(message),
+      });
+      context.coordinator.playbackSettlements.push(settlement);
+
+      context.bridge.participantJoined(russianParticipantId);
+      await context.bridge.settle();
+      context.bridge.participantLeft(russianParticipantId);
+      context.bridge.participantJoined(russianParticipantId);
+      await context.bridge.settle();
+
+      expect(context.coordinator.calls).toHaveLength(1);
+      expect(infoCalls).toEqual([]);
+    },
+  );
 
   it("does not greet someone who left before playback became ready", async () => {
     const context = fixture();

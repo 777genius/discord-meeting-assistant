@@ -341,7 +341,7 @@ describe("instrumented subscription runtime transport", () => {
         durationMs: 40,
         model: "gpt-5.6-luna",
         outputSchemaName: "discord_meeting_incremental_summary_v1",
-        policyVersion: "meeting-summary.incremental.subscription-runtime.v6",
+        policyVersion: "meeting-summary.incremental.subscription-runtime.v7",
         status: "waiting_for_input",
         summaryRevision: 1,
         throughTurnCount: 1,

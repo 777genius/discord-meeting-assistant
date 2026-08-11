@@ -122,11 +122,16 @@ export class ConversationAnswerPlayback {
     state: MeetingConversationState,
     run: ActiveConversationRun,
     chunk: ConversationAudioChunk,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const playback = run.playback;
-    if (playback === null || await this.operationFailed(() => playback.write(chunk))) {
-      await this.dependencies.requestCancellation(state, run, "playback-failed");
+    if (playback === null) {
+      return false;
     }
+    if (await this.operationFailed(() => playback.write(chunk))) {
+      await this.dependencies.requestCancellation(state, run, "playback-failed");
+      return false;
+    }
+    return true;
   }
 
   public async finish(

@@ -20,6 +20,7 @@ const requiredEnvironment = {
 describe("loadConversationVoiceObserverConfig", () => {
   it("requires explicit private-test correlation and uses only safe secret coordinates", () => {
     expect(loadConversationVoiceObserverConfig(requiredEnvironment)).toEqual({
+      additionalCaptures: [],
       attemptId: "attempt-2026-08-04-01",
       captureTimeoutMilliseconds: 60_000,
       craigBotId: "1533224474609057793",
@@ -33,6 +34,7 @@ describe("loadConversationVoiceObserverConfig", () => {
       outputPath: "/tmp/conversation-voice-observer.json",
       privateTestGuildConfirmed: true,
       purpose: "addressed-answer",
+      readyTimeoutMilliseconds: 60_000,
       recordingId: "recording-2026-08-04-01",
       runId: "conversation-run-2026-08-04",
       secretDirectory: undefined,
@@ -66,6 +68,72 @@ describe("loadConversationVoiceObserverConfig", () => {
     expect(loadConversationVoiceObserverConfig(beforeRecordingId).recordingId).toBeNull();
   });
 
+  it("allows a long playback readiness wait without widening the audio capture window", () => {
+    const config = loadConversationVoiceObserverConfig({
+      ...requiredEnvironment,
+      DISCORD_E2E_CONVERSATION_VOICE_CAPTURE_TIMEOUT_MS: "2000",
+      DISCORD_E2E_CONVERSATION_VOICE_READY_TIMEOUT_MS: "120000",
+    });
+
+    expect(config.captureTimeoutMilliseconds).toBe(2_000);
+    expect(config.readyTimeoutMilliseconds).toBe(120_000);
+    expect(loadConversationVoiceObserverConfig({
+      ...requiredEnvironment,
+      DISCORD_E2E_CONVERSATION_VOICE_READY_TIMEOUT_MS: "1000",
+    }).readyTimeoutMilliseconds).toBe(1_000);
+  });
+
+  it("accepts a create-only capture sequence and rejects ambiguous correlations", () => {
+    const additionalCaptures = [
+      {
+        attemptId: "attempt-2026-08-04-02",
+        outputPath: "/tmp/conversation-voice-observer-2.json",
+        purpose: "farewell",
+        turnId: "meeting-farewell:v1",
+      },
+    ];
+    expect(loadConversationVoiceObserverConfig({
+      ...requiredEnvironment,
+      DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON:
+        JSON.stringify(additionalCaptures),
+    }).additionalCaptures).toEqual(additionalCaptures);
+    expect(() => loadConversationVoiceObserverConfig({
+      ...requiredEnvironment,
+      DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON: "not-json",
+    })).toThrow();
+    expect(() => loadConversationVoiceObserverConfig({
+      ...requiredEnvironment,
+      DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON: JSON.stringify([{
+        ...additionalCaptures[0],
+        attemptId: requiredEnvironment.DISCORD_E2E_CONVERSATION_VOICE_ATTEMPT_ID,
+      }]),
+    })).toThrow("attempt IDs must be unique");
+    expect(() => loadConversationVoiceObserverConfig({
+      ...requiredEnvironment,
+      DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON: JSON.stringify([{
+        ...additionalCaptures[0],
+        outputPath: requiredEnvironment.DISCORD_E2E_CONVERSATION_VOICE_OUTPUT,
+      }]),
+    })).toThrow("output paths must be unique");
+    expect(() => loadConversationVoiceObserverConfig({
+      ...requiredEnvironment,
+      DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON: JSON.stringify(
+        Array.from({ length: 16 }, (_unused, index) => ({
+          ...additionalCaptures[0],
+          attemptId: `attempt-extra-${index}`,
+          outputPath: `/tmp/conversation-voice-observer-extra-${index}.json`,
+        })),
+      ),
+    })).toThrow();
+    expect(() => loadConversationVoiceObserverConfig({
+      ...requiredEnvironment,
+      DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON: JSON.stringify([{
+        ...additionalCaptures[0],
+        outputPath: "conversation-voice-observer-2.json",
+      }]),
+    })).toThrow();
+  });
+
   it("fails closed for non-private targets, missing correlations, and unsafe output paths", () => {
     expect(() => loadConversationVoiceObserverConfig({
       ...requiredEnvironment,
@@ -90,6 +158,14 @@ describe("loadConversationVoiceObserverConfig", () => {
     expect(() => loadConversationVoiceObserverConfig({
       ...requiredEnvironment,
       DISCORD_E2E_CONVERSATION_VOICE_CAPTURE_TIMEOUT_MS: "999",
+    })).toThrow();
+    expect(() => loadConversationVoiceObserverConfig({
+      ...requiredEnvironment,
+      DISCORD_E2E_CONVERSATION_VOICE_READY_TIMEOUT_MS: "999",
+    })).toThrow();
+    expect(() => loadConversationVoiceObserverConfig({
+      ...requiredEnvironment,
+      DISCORD_E2E_CONVERSATION_VOICE_READY_TIMEOUT_MS: "120001",
     })).toThrow();
     expect(() => loadConversationVoiceObserverConfig({
       ...requiredEnvironment,

@@ -3,6 +3,7 @@ import {
   VoiceConnectionStatus,
   entersState,
   joinVoiceChannel,
+  type AudioReceiveStream,
   type VoiceConnection,
 } from "@discordjs/voice";
 import {
@@ -16,6 +17,7 @@ import {
 
 import { loadConversationVoiceObserverConfig } from "./conversation-voice-observer-config.js";
 import { createConversationVoiceEvidence } from "./conversation-voice-evidence.js";
+import { captureConversationVoiceFromOpenStream } from "./conversation-voice-stream-capture.js";
 import {
   ConversationVoiceCaptureController,
   ConversationVoiceCaptureError,
@@ -23,17 +25,11 @@ import {
   PCM_S16LE_SAMPLE_RATE_HERTZ,
   assertConversationVoiceEvidencePathIsNew,
   writeNewConversationVoiceEvidenceAtomically,
-  type ConversationVoiceCaptureSummary,
-  type ConversationVoiceCaptureTimestamp,
   type ConversationVoiceOpusDecoder,
 } from "./conversation-voice-observer.js";
 import { FileSecretReader, MacOsKeychainSecretReader } from "./keychain.js";
 
-interface ConversationVoiceCaptureClock {
-  now(): ConversationVoiceCaptureTimestamp;
-}
-
-const systemClock: ConversationVoiceCaptureClock = {
+const systemClock = {
   now: () => ({
     epochMilliseconds: Date.now(),
     monotonicMilliseconds: Number(process.hrtime.bigint() / 1_000_000n),
@@ -47,9 +43,49 @@ class ConversationVoiceObserverError extends Error {
   }
 }
 
+interface ConversationVoiceAudibilityDecoder extends ConversationVoiceOpusDecoder {
+  isPacketAudible(opusPacket: Uint8Array): boolean;
+}
+
+class ProbedConversationVoiceOpusDecoder implements ConversationVoiceAudibilityDecoder {
+  readonly #delegate: ConversationVoiceOpusDecoder;
+  #probe: { readonly opusPacket: Uint8Array; readonly pcm: Uint8Array } | undefined;
+
+  public constructor(delegate: ConversationVoiceOpusDecoder) {
+    this.#delegate = delegate;
+  }
+
+  public decode(opusPacket: Uint8Array): Uint8Array {
+    const probe = this.#probe;
+    if (probe !== undefined && probe.opusPacket === opusPacket) {
+      this.#probe = undefined;
+      return probe.pcm;
+    }
+    this.#probe = undefined;
+    return this.#delegate.decode(opusPacket);
+  }
+
+  public isPacketAudible(opusPacket: Uint8Array): boolean {
+    const pcm = this.#delegate.decode(opusPacket);
+    this.#probe = { opusPacket, pcm };
+    return decodedPcmIsAudible(pcm);
+  }
+}
+
 async function main(): Promise<void> {
   const config = loadConversationVoiceObserverConfig(process.env);
-  await assertConversationVoiceEvidencePathIsNew(config.outputPath);
+  const captures = [
+    {
+      attemptId: config.attemptId,
+      outputPath: config.outputPath,
+      purpose: config.purpose,
+      turnId: config.turnId,
+    },
+    ...config.additionalCaptures,
+  ] as const;
+  await Promise.all(captures.map(({ outputPath }) =>
+    assertConversationVoiceEvidencePathIsNew(outputPath)
+  ));
   const decoder = await createDiscordJsOpusDecoder();
 
   const secretReader = config.secretDirectory === undefined
@@ -60,6 +96,7 @@ async function main(): Promise<void> {
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates],
   });
   let connection: VoiceConnection | undefined;
+  let sourceStream: AudioReceiveStream | undefined;
   try {
     await client.login(token);
     const authenticatedBotId = requiredAuthenticatedBotId(client);
@@ -77,59 +114,176 @@ async function main(): Promise<void> {
       selfDeaf: false,
       selfMute: true,
     });
-    await entersState(connection, VoiceConnectionStatus.Ready, config.captureTimeoutMilliseconds);
+    await entersState(connection, VoiceConnectionStatus.Ready, config.readyTimeoutMilliseconds);
     await assertConfiguredCraigBotIsInVoiceChannel(
       client,
       guild,
       config.craigBotId,
       channel.id,
-      config.captureTimeoutMilliseconds,
+      config.readyTimeoutMilliseconds,
     );
-    const capture = await captureConfiguredCraigVoice({
-      connection,
-      controller: new ConversationVoiceCaptureController({
+    sourceStream = connection.receiver.subscribe(config.craigBotId, {
+      end: { behavior: EndBehaviorType.Manual },
+    });
+    sourceStream.on("error", ignoreStreamError);
+    for (const [index, plannedCapture] of captures.entries()) {
+      const capture = await captureConversationVoiceFromOpenStream({
         captureTimeoutMilliseconds: config.captureTimeoutMilliseconds,
+        clock: systemClock,
+        controller: new ConversationVoiceCaptureController({
+          captureTimeoutMilliseconds: config.captureTimeoutMilliseconds,
+          expectedDuration: {
+            maximumMilliseconds:
+              config.expectedDurationMilliseconds + config.expectedDurationToleranceMilliseconds,
+            minimumMilliseconds: config.expectedDurationMilliseconds,
+          },
+          maxPcmBytes: config.maxPcmBytes,
+        }, decoder),
+        firstPacketTimeoutMilliseconds: config.readyTimeoutMilliseconds,
+        isPacketAudible: (packet) => decoder.isPacketAudible(packet),
+        stream: sourceStream,
+      });
+      const evidence = createConversationVoiceEvidence({
+        attemptId: plannedCapture.attemptId,
+        authenticatedBotId,
+        capture,
+        captureTimeoutMilliseconds: config.captureTimeoutMilliseconds,
+        craigBotId: config.craigBotId,
         expectedDuration: {
-          maximumMilliseconds: config.expectedDurationMilliseconds + config.expectedDurationToleranceMilliseconds,
+          maximumMilliseconds:
+            config.expectedDurationMilliseconds + config.expectedDurationToleranceMilliseconds,
           minimumMilliseconds: config.expectedDurationMilliseconds,
         },
+        guildId: config.guildId,
         maxPcmBytes: config.maxPcmBytes,
-      }, decoder),
-      craigBotId: config.craigBotId,
-      timeoutMilliseconds: config.captureTimeoutMilliseconds,
-    });
-    const evidence = createConversationVoiceEvidence({
-      attemptId: config.attemptId,
-      authenticatedBotId,
-      capture,
-      captureTimeoutMilliseconds: config.captureTimeoutMilliseconds,
-      craigBotId: config.craigBotId,
-      expectedDuration: {
-        maximumMilliseconds: config.expectedDurationMilliseconds + config.expectedDurationToleranceMilliseconds,
-        minimumMilliseconds: config.expectedDurationMilliseconds,
-      },
-      guildId: config.guildId,
-      maxPcmBytes: config.maxPcmBytes,
-      observerApplicationId: config.observerApplicationId,
-      privateTestGuildConfirmed: config.privateTestGuildConfirmed,
-      purpose: config.purpose,
-      recordingId: config.recordingId,
-      runId: config.runId,
-      turnId: config.turnId,
-      voiceChannelId: config.voiceChannelId,
-    });
-    await writeNewConversationVoiceEvidenceAtomically(config.outputPath, evidence);
-    process.stdout.write(`${JSON.stringify({
-      acceptedDurationMilliseconds: capture.acceptedDurationMilliseconds,
-      acceptedPacketCount: capture.acceptedPacketCount,
-      outputPath: config.outputPath,
-      runId: config.runId,
-      status: "captured",
-    })}\n`);
+        observerApplicationId: config.observerApplicationId,
+        privateTestGuildConfirmed: config.privateTestGuildConfirmed,
+        purpose: plannedCapture.purpose,
+        recordingId: config.recordingId,
+        runId: config.runId,
+        turnId: plannedCapture.turnId,
+        voiceChannelId: config.voiceChannelId,
+      });
+      await writeNewConversationVoiceEvidenceAtomically(plannedCapture.outputPath, evidence);
+      process.stdout.write(`${JSON.stringify({
+        acceptedDurationMilliseconds: capture.acceptedDurationMilliseconds,
+        acceptedPacketCount: capture.acceptedPacketCount,
+        outputPath: plannedCapture.outputPath,
+        runId: config.runId,
+        status: "captured",
+      })}\n`);
+      if (index < captures.length - 1) {
+        await waitForConfiguredCraigAudioSilence(
+          decoder,
+          sourceStream,
+          config.readyTimeoutMilliseconds,
+        );
+      }
+    }
   } finally {
+    sourceStream?.destroy();
     connection?.destroy();
     await client.destroy();
+    sourceStream?.off("error", ignoreStreamError);
   }
+}
+
+function ignoreStreamError(): void {}
+
+async function waitForConfiguredCraigAudioSilence(
+  decoder: ConversationVoiceAudibilityDecoder,
+  stream: AudioReceiveStream,
+  timeoutMilliseconds: number,
+): Promise<void> {
+  const audioSilenceMilliseconds = 300;
+  if (stream.destroyed || stream.readableEnded) {
+    throw new Error("Configured Craig audio stream closed before the capture sequence completed");
+  }
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    let silence: ReturnType<typeof setTimeout> | undefined;
+    const cleanup = (): void => {
+      if (deadline !== undefined) {
+        clearTimeout(deadline);
+      }
+      if (silence !== undefined) {
+        clearTimeout(silence);
+      }
+      stream.pause();
+      stream.off("data", onData);
+      stream.off("end", onEnd);
+      stream.off("error", onError);
+    };
+    const succeed = (): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      resolve();
+    };
+    const fail = (error: Error): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    const onData = (chunk: unknown): void => {
+      try {
+        if (!(chunk instanceof Uint8Array)) {
+          throw new Error("Configured Craig audio stream emitted a non-binary packet");
+        }
+        if (!decoder.isPacketAudible(chunk)) {
+          return;
+        }
+        if (silence !== undefined) {
+          clearTimeout(silence);
+        }
+        silence = setTimeout(succeed, audioSilenceMilliseconds);
+      } catch (error: unknown) {
+        fail(new Error(
+          "Configured Craig audio stream could not be decoded while waiting for silence",
+          { cause: error },
+        ));
+      }
+    };
+    const onEnd = (): void => {
+      fail(new Error("Configured Craig audio stream ended before the capture sequence completed"));
+    };
+    const onError = (error: unknown): void => {
+      fail(new Error(
+        "Configured Craig audio stream failed before the capture sequence completed",
+        { cause: error },
+      ));
+    };
+    stream.pause();
+    stream.once("end", onEnd);
+    stream.once("error", onError);
+    stream.on("data", onData);
+    deadline = setTimeout(() => {
+      fail(new Error("Configured Craig audio did not become silent before timeout"));
+    }, timeoutMilliseconds);
+    silence = setTimeout(succeed, audioSilenceMilliseconds);
+    stream.resume();
+  });
+}
+
+function decodedPcmIsAudible(pcm: Uint8Array): boolean {
+  if (pcm.byteLength === 0 || pcm.byteLength % 2 !== 0) {
+    throw new Error("Configured Craig audio decoder returned invalid PCM");
+  }
+  const data = new DataView(pcm.buffer, pcm.byteOffset, pcm.byteLength);
+  let sampleCount = 0;
+  let sampleSquareSum = 0;
+  for (let offset = 0; offset < pcm.byteLength; offset += 2) {
+    const sample = data.getInt16(offset, true);
+    sampleCount += 1;
+    sampleSquareSum += sample * sample;
+  }
+  return Math.sqrt(sampleSquareSum / sampleCount) / 32_768 >= 0.01;
 }
 
 function requiredAuthenticatedBotId(client: Client): string {
@@ -176,91 +330,14 @@ async function assertConfiguredCraigBotIsInVoiceChannel(
   });
 }
 
-async function captureConfiguredCraigVoice(input: {
-  readonly connection: VoiceConnection;
-  readonly controller: ConversationVoiceCaptureController;
-  readonly craigBotId: string;
-  readonly timeoutMilliseconds: number;
-  readonly clock?: ConversationVoiceCaptureClock;
-}): Promise<ConversationVoiceCaptureSummary> {
-  const clock = input.clock ?? systemClock;
-  input.controller.start(clock.now());
-  const stream = input.connection.receiver.subscribe(input.craigBotId, {
-    end: { behavior: EndBehaviorType.Manual },
-  });
-  return new Promise<ConversationVoiceCaptureSummary>((resolve, reject) => {
-    let sequence = 0;
-    let settled = false;
-    const timeout = setTimeout(() => {
-      try {
-        succeed(input.controller.complete(clock.now()));
-      } catch (error) {
-        fail(error);
-      }
-    }, input.timeoutMilliseconds);
-    const cleanup = (): void => {
-      clearTimeout(timeout);
-      stream.off("data", onData);
-      stream.off("end", onEnd);
-      stream.off("error", onError);
-    };
-    const succeed = (capture: ConversationVoiceCaptureSummary): void => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      cleanup();
-      stream.destroy();
-      resolve(capture);
-    };
-    const fail = (error: unknown): void => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      cleanup();
-      stream.destroy();
-      reject(error);
-    };
-    const onData = (opusPacket: Uint8Array): void => {
-      try {
-        const result = input.controller.acceptPacket({
-          opusPacket,
-          sequence: sequence + 1,
-          timing: clock.now(),
-        });
-        sequence += 1;
-        if (result.kind === "accepted" && result.captureComplete) {
-          succeed(input.controller.complete(clock.now()));
-        }
-      } catch (error) {
-        fail(error);
-      }
-    };
-    const onEnd = (): void => {
-      try {
-        succeed(input.controller.complete(clock.now()));
-      } catch (error) {
-        fail(error);
-      }
-    };
-    const onError = (): void => {
-      fail(new Error("Conversation voice receiver stream failed"));
-    };
-    stream.on("data", onData);
-    stream.once("end", onEnd);
-    stream.once("error", onError);
-  });
-}
-
-async function createDiscordJsOpusDecoder(): Promise<ConversationVoiceOpusDecoder> {
+async function createDiscordJsOpusDecoder(): Promise<ConversationVoiceAudibilityDecoder> {
   try {
     const opus = (await import("@discordjs/opus")).default;
     const decoder = new opus.OpusEncoder(
       PCM_S16LE_SAMPLE_RATE_HERTZ,
       PCM_S16LE_CHANNELS,
     );
-    return Object.freeze({
+    return new ProbedConversationVoiceOpusDecoder({
       decode: (opusPacket: Uint8Array) => decoder.decode(Buffer.from(opusPacket)),
     });
   } catch {

@@ -58,6 +58,7 @@ import { meetingVocabulary } from "./meeting-vocabulary.js";
 // adjustments from corrupting playback deadlines and the four-second guard.
 const monotonicUnixNowMilliseconds = (): number =>
   Math.floor(performance.timeOrigin + performance.now());
+const incrementalSummaryTimeoutMs = 120_000;
 
 export interface PlatformDiscordLiveComposition {
   readonly conversationRuntime?: GrpcPipecatConversationRuntime;
@@ -262,7 +263,7 @@ function createLiveRuntime(input: {
       expectedRuntimeEngine: subscriptionRuntimeCliEngine,
       maxOutputTokens: subscriptionRuntimeIncrementalMaxOutputTokens,
       maxRecentContextTurns: 256,
-      timeoutMs: 30_000,
+      timeoutMs: incrementalSummaryTimeoutMs,
     },
   );
   const projector = new DiscordLiveMeetingProjectionAdapter(input.discordPublisher);

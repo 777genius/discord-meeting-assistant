@@ -9,7 +9,19 @@ const exactGreetingSystemPrompt = [
   "Do not add, remove, translate, explain, or quote anything.",
   "Return only the greeting itself.",
 ].join(" ");
-const maximumBusyRetries = 3;
+const maximumSafeRetries = 3;
+
+type GreetingAttemptOutcome =
+  | "played"
+  | "unplayed"
+  | "partial"
+  | "unknown"
+  | "busy"
+  | "awaiting-prompt"
+  | "ignored"
+  | "queued"
+  | "reused"
+  | "failed";
 
 interface ResolvedParticipantGreeting {
   readonly locale: "en" | "ru";
@@ -135,22 +147,26 @@ export class ParticipantGreetingBridge {
         return;
       }
 
-      // Reserve before the external runtime/playback effect. A failed attempt is
-      // intentionally not repeated during this meeting. `busy` is the sole safe
-      // retry because it proves that no external effect was admitted.
+      // Reserve before the external runtime/playback effect. Retry only when
+      // admission was busy or the settled turn accepted no audio at all.
       this.greetedParticipantIds.add(participantId);
       const outcome = await this.speak(participantId, greeting);
-      if (outcome === "busy") {
+      if (outcome === "busy" || outcome === "unplayed") {
         const retryCount = (this.retryCounts.get(participantId) ?? 0) + 1;
         this.retryCounts.set(participantId, retryCount);
-        this.greetedParticipantIds.delete(participantId);
         if (
-          retryCount <= maximumBusyRetries &&
+          retryCount <= maximumSafeRetries &&
           this.presentParticipantIds.has(participantId)
         ) {
+          this.greetedParticipantIds.delete(participantId);
           this.pendingParticipantIds.add(participantId);
+          continue;
         }
-        return;
+        this.dependencies.logger.warn("Participant greeting retries exhausted", {
+          meetingId: this.dependencies.meetingId,
+          participantId,
+        });
+        continue;
       }
       this.retryCounts.delete(participantId);
     }
@@ -159,7 +175,7 @@ export class ParticipantGreetingBridge {
   private async speak(
     participantId: string,
     greeting: ResolvedParticipantGreeting,
-  ): Promise<string> {
+  ): Promise<GreetingAttemptOutcome> {
     const retryCount = this.retryCounts.get(participantId) ?? 0;
     const turnId = retryCount === 0
       ? `participant-greeting:${participantId}`
@@ -176,18 +192,23 @@ export class ParticipantGreetingBridge {
           systemPrompt: exactGreetingSystemPrompt,
           turnId,
           voiceProfileId: this.dependencies.configuration.voiceProfileId,
-        });
-      if (outcome.status === "active") {
-        await this.dependencies.configuration.coordinator.whenIdle(
-          this.dependencies.meetingId,
-        );
-        this.dependencies.logger.info("Participant greeting playback settled", {
-          greetingLocale: greeting.locale,
-          meetingId: this.dependencies.meetingId,
-          participantId,
-          participantNameStatus: this.profile(participantId) === undefined ? "unknown" : "known",
-          turnId,
-        });
+      });
+      if (outcome.status === "active" || outcome.status === "queued") {
+        const settlement = await this.dependencies.configuration.coordinator
+          .whenTurnPlaybackSettled(
+            this.dependencies.meetingId,
+            turnId,
+          );
+        if (settlement === "played") {
+          this.dependencies.logger.info("Participant greeting playback settled", {
+            greetingLocale: greeting.locale,
+            meetingId: this.dependencies.meetingId,
+            participantId,
+            participantNameStatus: this.profile(participantId) === undefined ? "unknown" : "known",
+            turnId,
+          });
+        }
+        return settlement;
       }
       return outcome.status;
     } catch (error) {

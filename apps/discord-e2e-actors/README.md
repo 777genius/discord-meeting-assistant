@@ -52,8 +52,8 @@ pnpm --filter @discord-meeting/discord-e2e-actors play:supplemental
 The CLI refuses token environment variables, an absent private-guild
 acknowledgement, malformed or unpinned targets, a non-bot or mismatched
 application identity, changed/non-Ogg audio, a fixture longer than 60 seconds,
-timeouts shorter than the fixture, and holds/timeouts outside their finite
-bounds. It writes create-only non-secret evidence after playback reaches
+timeouts shorter than the fixture, a pre-hold above 120 seconds, and a post-hold
+above 60 seconds. It writes create-only non-secret evidence after playback reaches
 `Playing` and then `Idle`; it never replaces an existing evidence file.
 
 ## Providerless conversation voice observer
@@ -80,6 +80,8 @@ DISCORD_E2E_CONVERSATION_VOICE_RUN_ID=... \
 DISCORD_E2E_CONVERSATION_VOICE_TURN_ID=... \
 DISCORD_E2E_CONVERSATION_VOICE_ATTEMPT_ID=... \
 DISCORD_E2E_CONVERSATION_VOICE_PURPOSE=addressed-answer \
+DISCORD_E2E_CONVERSATION_VOICE_READY_TIMEOUT_MS=120000 \
+DISCORD_E2E_CONVERSATION_VOICE_CAPTURE_TIMEOUT_MS=6000 \
 DISCORD_E2E_CONVERSATION_VOICE_EXPECTED_DURATION_MS=5000 \
 DISCORD_E2E_CONVERSATION_VOICE_OUTPUT=/absolute/evidence/conversation-voice.json \
 pnpm --filter @discord-meeting/discord-e2e-actors observe:conversation
@@ -93,6 +95,21 @@ timeout, silence, an unexpected sender, or an existing output path.
 It joins the pinned private channel before waiting for the configured playback
 bot, allowing the observer to be present before a first-join greeting becomes
 playback-ready.
+Use `DISCORD_E2E_CONVERSATION_VOICE_READY_TIMEOUT_MS` for a cold playback bot;
+it bounds both playback-bot readiness and the wait for its first audio packet.
+The separate, bounded audio capture window starts only with that first packet.
+When omitted, readiness falls back to the capture timeout, which defaults to
+60 seconds. Real campaigns should set both explicitly so a long readiness wait
+cannot widen the retained audio window.
+
+For an ordered campaign, `DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON`
+may contain up to 15 additional `{ attemptId, outputPath, purpose, turnId }`
+objects. The observer validates every create-only output and correlation before
+joining, keeps one voice connection for the full sequence, and waits for the
+configured source to remain silent for 300 milliseconds between captures. That
+wait is bounded by `DISCORD_E2E_CONVERSATION_VOICE_READY_TIMEOUT_MS`, not by the
+short capture timeout. This prevents Discord reconnect timing from binding a
+later utterance to an earlier expected turn.
 
 Each capture declares `greeting`, `farewell`, or `addressed-answer` purpose.
 Alone it remains transport evidence: it does not run STT, establish the
@@ -155,8 +172,9 @@ authoritative Craig manifest exists.
 Optional environment settings override the Keychain service/account names,
 fixture paths, scenario, speaker B connection/playback delays, and
 readiness/playback timeouts. `DISCORD_E2E_SPEAKER_B_CONNECT_DELAY_MS` defaults
-to `0` and may be set only for a bounded private-guild observer campaign. The
-scenario is selected with `DISCORD_E2E_SCENARIO=overlap|sequential|reconnect` and
+to `0`, accepts up to `120000`, and may be set only for a bounded private-guild
+observer campaign. The scenario is selected with
+`DISCORD_E2E_SCENARIO=overlap|sequential|reconnect` and
 defaults to `overlap`. For `sequential`, the delay is the silent gap after speaker
 A completes. For `reconnect`, the delay selects when speaker B disconnects while
 speaker A continues; speaker B then waits for a new ready voice connection and

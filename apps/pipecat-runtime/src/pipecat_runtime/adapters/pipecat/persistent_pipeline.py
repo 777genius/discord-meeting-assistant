@@ -79,6 +79,12 @@ class PersistentConversationPipeline:
                 drained = await self._worker.flush_pipeline(timeout=5)
                 if not drained:
                     turn.pipeline_failure = True
+            if (
+                turn.cancellation_reason is None
+                and turn.text_generation_failure is None
+                and turn.tts_audio_frame_count == 0
+            ):
+                turn.pipeline_failure = True
             if turn.pipeline_failure:
                 await self._retire_worker()
             await self._publish_terminal(turn)

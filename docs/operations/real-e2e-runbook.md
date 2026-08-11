@@ -187,6 +187,19 @@ selected recording. A conflicting non-null recording ID fails closed, and the
 v7 verifier still requires every capture timestamp to fall inside that
 recording's authoritative interval.
 
+For a cold Botik connection, set
+`DISCORD_E2E_CONVERSATION_VOICE_READY_TIMEOUT_MS=120000` and
+`DISCORD_E2E_CONVERSATION_VOICE_CAPTURE_TIMEOUT_MS=6000` for the pinned
+five-second campaign. The capture timeout must remain short enough to retain
+exactly one playback. The readiness
+timeout also covers a Botik already present in voice but not yet speaking; the
+short capture window starts with the first audio packet.
+
+To retain the ordered capture set with one observer connection, pass the
+remaining `{ attemptId, outputPath, purpose, turnId }` records through
+`DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON`. The record shape and
+limits are documented in `apps/discord-e2e-actors/README.md`.
+
 Reconnect one already-greeted official actor before the meeting ends. Do not
 induce another first join. After finalization, pass all six observer files and
 the pinned Botik speaker ID to the normal collector:
