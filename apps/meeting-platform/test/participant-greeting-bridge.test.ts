@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
 
+import {
+  ConversationCoordinator,
+  type ConversationRuntime,
+  type ConversationRuntimeEvent,
+  type VoicePlaybackPort,
+} from "@discord-meeting/meeting-core/conversation";
+
 import type {
   LiveConversationConfiguration,
   LiveRuntimeLogger,
@@ -363,6 +370,65 @@ describe("ParticipantGreetingBridge", () => {
     expect(warnCalls).toEqual(["Participant greeting retries exhausted"]);
   });
 
+  it("bounds retries after the real coordinator settles failed zero-audio turns as unplayed", async () => {
+    const runtimeTurnIds: string[] = [];
+    const runtime: ConversationRuntime = {
+      startTurn: async (request) => {
+        runtimeTurnIds.push(request.turnId);
+        return {
+          ok: true,
+          value: {
+            cancel: () => Promise.resolve(),
+            events: failedWithoutAudioEvents(`attempt-${runtimeTurnIds.length}`),
+          },
+        };
+      },
+    };
+    const playback: VoicePlaybackPort = {
+      open: () => Promise.reject(new Error("zero-audio turns must not open playback")),
+    };
+    const coordinator = new ConversationCoordinator({ playback, runtime });
+    const warnCalls: string[] = [];
+    const bridge = new ParticipantGreetingBridge({
+      configuration: {
+        coordinator,
+        greetings: {
+          defaultLocale: "ru",
+          excludedParticipantIds: [],
+          isPlaybackReady: () => true,
+          profiles: {
+            [russianParticipantId]: {
+              displayName: "Александр Смирнов",
+              greetingLocale: "ru",
+              spokenName: "Саша",
+            },
+          },
+        },
+        locale: "auto",
+        nowMilliseconds: () => 321,
+        systemPrompt: "Answer briefly.",
+        voiceProfileId: "voice-profile",
+      },
+      isMeetingFinishing: () => false,
+      logger: { ...logger, warn: (message) => warnCalls.push(message) },
+      meetingId: "recording-1",
+    });
+
+    bridge.participantJoined(russianParticipantId);
+    await bridge.settle();
+    bridge.participantLeft(russianParticipantId);
+    bridge.participantJoined(russianParticipantId);
+    await bridge.settle();
+
+    expect(runtimeTurnIds).toEqual([
+      `participant-greeting:${russianParticipantId}`,
+      `participant-greeting:${russianParticipantId}:retry-1`,
+      `participant-greeting:${russianParticipantId}:retry-2`,
+      `participant-greeting:${russianParticipantId}:retry-3`,
+    ]);
+    expect(warnCalls).toEqual(["Participant greeting retries exhausted"]);
+  });
+
   it.each(["partial", "unknown"] as const)(
     "does not retry or publish false evidence for a %s greeting",
     async (settlement) => {
@@ -476,3 +542,18 @@ it("uses the configured English fallback without inventing a name", async () => 
     speakerId: unknownParticipantId,
   });
 });
+
+async function* failedWithoutAudioEvents(
+  attemptId: string,
+): AsyncGenerator<ConversationRuntimeEvent> {
+  yield { attemptId, type: "accepted" };
+  yield {
+    attemptId,
+    failure: {
+      code: "pipecat-pipeline-failed",
+      message: "synthesis completed without audio",
+      retryable: true,
+    },
+    type: "failed",
+  };
+}

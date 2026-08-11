@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   conversationLifecycleEvidenceSchema,
   conversationVoiceEvidenceV3Schema,
+  supplementalPlaybackEvidenceV1Schema,
 } from "./conversation-retained-evidence-schema.js";
 
 const identifierSchema = z.string().trim().min(1);
@@ -52,6 +53,22 @@ export const fixtureManifestV1Schema = z.object({
     observerApplicationId: identifierSchema,
     voiceChannelId: identifierSchema,
   }).strict().optional(),
+  greetingLocaleTerms: z.object({ en: z.array(identifierSchema).min(1), ru: z.array(identifierSchema).min(1) }).strict().optional(),
+  supplementalVoiceExpectation: z.object({
+    answerNonce: identifierSchema,
+    applicationId: identifierSchema,
+    durationMs: z.number().int().positive().max(60_000),
+    farewellLocale: z.enum(["en", "ru"]),
+    fixtureSha256: sha256Schema,
+    requiredFarewellTerms: z.array(identifierSchema).min(1),
+    requiredQuestionTerms: z.array(identifierSchema).min(1),
+  }).strict().refine(
+    ({ answerNonce, requiredQuestionTerms }) => requiredQuestionTerms.includes(answerNonce),
+    {
+      message: "The deterministic answer nonce must also be pinned in the question terms",
+      path: ["requiredQuestionTerms"],
+    },
+  ).optional(),
   fixtureSetId: identifierSchema,
   fixtures: z.array(fixtureSchema).min(2),
   locale: identifierSchema,
@@ -402,6 +419,16 @@ export const retainedE2eEvidenceV7Schema = retainedE2eEvidenceV6Schema
     schemaVersion: z.literal(7),
   });
 
+/** v8 also binds the pinned Speaker D question/farewell playback and semantic transcript proof. */
+export const retainedE2eEvidenceV8Schema = retainedE2eEvidenceV7Schema
+  .omit({ conversation: true, schemaVersion: true })
+  .extend({
+    conversation: retainedE2eEvidenceV7Schema.shape.conversation.extend({
+      supplementalPlayback: supplementalPlaybackEvidenceV1Schema,
+    }),
+    schemaVersion: z.literal(8),
+  });
+
 export const retainedE2eEvidenceSchema = z.union([
   retainedE2eEvidenceV2Schema,
   retainedE2eEvidenceV3Schema,
@@ -409,15 +436,9 @@ export const retainedE2eEvidenceSchema = z.union([
   retainedE2eEvidenceV5Schema,
   retainedE2eEvidenceV6Schema,
   retainedE2eEvidenceV7Schema,
+  retainedE2eEvidenceV8Schema,
 ]);
 
-export type FixtureManifestV1 = z.infer<typeof fixtureManifestV1Schema>;
-export type ActorRunEvidenceV1 = z.infer<typeof actorRunEvidenceV1Schema>;
-export type UnboundActorRunEvidenceV1 = z.infer<typeof unboundActorRunEvidenceV1Schema>;
-export type DeployedServiceProvenance = z.infer<typeof deployedServiceProvenanceSchema>;
-export type CurrentDeploymentProvenance = z.infer<typeof currentDeploymentProvenanceSchema>;
-export type DeploymentRevisionExpectation = z.infer<typeof deploymentRevisionExpectationSchema>;
-export type ProcessingEvidence = z.infer<typeof retainedE2eEvidenceV4Schema>["processing"];
 export {
   conversationLifecycleEvidenceSchema,
   conversationVoiceEvidenceV3Schema,
@@ -425,10 +446,4 @@ export {
 export type {
   ConversationLifecycleEvidence,
 } from "./conversation-retained-evidence-schema.js";
-export type RetainedE2eEvidenceV2 = z.infer<typeof retainedE2eEvidenceV2Schema>;
-export type RetainedE2eEvidenceV3 = z.infer<typeof retainedE2eEvidenceV3Schema>;
-export type RetainedE2eEvidenceV4 = z.infer<typeof retainedE2eEvidenceV4Schema>;
-export type RetainedE2eEvidenceV5 = z.infer<typeof retainedE2eEvidenceV5Schema>;
-export type RetainedE2eEvidenceV6 = z.infer<typeof retainedE2eEvidenceV6Schema>;
-export type RetainedE2eEvidenceV7 = z.infer<typeof retainedE2eEvidenceV7Schema>;
-export type RetainedE2eEvidence = z.infer<typeof retainedE2eEvidenceSchema>;
+export type * from "./e2e-evidence-types.js";

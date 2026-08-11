@@ -18,11 +18,7 @@ export function verifyProcessingEvidence(
   evidence: RetainedE2eEvidence,
   fail: VerificationFailureReporter,
 ): void {
-  if (
-    evidence.schemaVersion !== 4 &&
-    evidence.schemaVersion !== 5 &&
-    evidence.schemaVersion !== 6
-  ) {
+  if (!("processing" in evidence)) {
     return;
   }
   for (const stage of ["transcription", "summary", "publication"] as const) {

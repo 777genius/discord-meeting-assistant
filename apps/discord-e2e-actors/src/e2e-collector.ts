@@ -1,10 +1,10 @@
 import {
   conversationVoiceEvidenceV3Schema,
   retainedE2eEvidenceV6Schema,
-  retainedE2eEvidenceV7Schema,
+  retainedE2eEvidenceV8Schema,
   sameDeploymentProvenance,
   type RetainedE2eEvidenceV6,
-  type RetainedE2eEvidenceV7,
+  type RetainedE2eEvidenceV8,
 } from "./e2e-evidence.js";
 import {
   assertDiscordReference,
@@ -51,7 +51,7 @@ export async function collectRetainedE2eEvidence(
   input: CollectEvidenceInput,
   deployment: DeploymentEvidenceProbe,
   discord: DiscordEvidenceProbe,
-): Promise<RetainedE2eEvidenceV6 | RetainedE2eEvidenceV7> {
+): Promise<RetainedE2eEvidenceV6 | RetainedE2eEvidenceV8> {
   const unboundActorRun = parseUnboundActorRun(input.actorRun);
   if (unboundActorRun.runId !== input.runId) {
     throw new Error("Actor evidence does not match the requested run correlation");
@@ -173,16 +173,17 @@ export async function collectRetainedE2eEvidence(
     throw new Error("Deployment probe cannot collect conversation lifecycle evidence");
   }
   const lifecycle = await deployment.collectConversationLifecycle(snapshot.meetingId, s3.startedAt);
-  return retainedE2eEvidenceV7Schema.parse({
+  return retainedE2eEvidenceV8Schema.parse({
     ...baseEvidence,
     conversation: {
       botSpeakerId: input.conversation.botSpeakerId,
       lifecycle,
+      supplementalPlayback: input.conversation.supplementalPlayback,
       voice: input.conversation.voice.map((observation) =>
         bindConversationVoiceRecording(observation, input.recordingId)
       ),
     },
-    schemaVersion: 7,
+    schemaVersion: 8,
   });
 }
 

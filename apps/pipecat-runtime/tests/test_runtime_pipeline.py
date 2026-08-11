@@ -35,6 +35,7 @@ from pipecat_runtime.adapters.pipecat.turn_lifecycle import ActivePipelineTurn
 from pipecat_runtime.adapters.providers.profiles import create_profile
 from pipecat_runtime.application.conversation_events import (
     AudioChunk,
+    AudioEnd,
     AudioStart,
     Cancelled,
     Completed,
@@ -113,6 +114,15 @@ class _EmptyTtsProcessor(FrameProcessor):
         if isinstance(frame, ConversationTurnFrame) and direction is FrameDirection.DOWNSTREAM:
             await self.push_frame(LLMFullResponseStartFrame(), direction)
             await self.push_frame(TTSStartedFrame(context_id="empty-context"), direction)
+            await self.push_frame(
+                TTSAudioRawFrame(
+                    audio=b"",
+                    sample_rate=48_000,
+                    num_channels=1,
+                    context_id="empty-context",
+                ),
+                direction,
+            )
             await self.push_frame(TTSStoppedFrame(context_id="empty-context"), direction)
             await self.push_frame(LLMFullResponseEndFrame(), direction)
         await self.push_frame(frame, direction)
@@ -405,6 +415,7 @@ async def test_empty_tts_audio_fails_and_retires_the_persistent_pipeline() -> No
 
     assert isinstance(first_events[-1], Failed)
     assert first_events[-1].code == "pipecat-pipeline-failed"
+    assert not any(isinstance(event, (AudioStart, AudioChunk, AudioEnd)) for event in first_events)
     assert isinstance(second_events[-1], Completed)
     assert profile.create_count == 2
 

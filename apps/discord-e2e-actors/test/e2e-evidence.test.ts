@@ -18,6 +18,7 @@ import {
   retainedV5Evidence,
   retainedV6Evidence,
   retainedV7Evidence,
+  retainedV8Evidence,
   sequentialEvidence,
   speakerAId,
   speakerBId,
@@ -28,13 +29,28 @@ import {
 describe("verifyRetainedE2eEvidence", () => {
   it("defaults a fixture speech start offset to playback start for existing manifests", () => {
     expect(manifest().fixtures.map(({ speechStartOffsetMs }) => speechStartOffsetMs)).toEqual([0, 0]);
-    expect(manifest().allowedBotSpeakerIds).toEqual([]);
   });
 
   it("rejects duplicate allowed bot speaker IDs in a fixture manifest", () => {
     expect(fixtureManifestV1Schema.safeParse({
       ...manifest(),
       allowedBotSpeakerIds: ["bot-1", "bot-1"],
+    }).success).toBe(false);
+  });
+
+  it("rejects a supplemental answer nonce that is not pinned in the question", () => {
+    const candidate = manifest();
+    const supplemental = candidate.supplementalVoiceExpectation;
+    if (supplemental === undefined) {
+      throw new Error("supplemental voice expectation fixture is missing");
+    }
+
+    expect(fixtureManifestV1Schema.safeParse({
+      ...candidate,
+      supplementalVoiceExpectation: {
+        ...supplemental,
+        requiredQuestionTerms: ["ботик"],
+      },
     }).success).toBe(false);
   });
 
@@ -136,19 +152,229 @@ describe("verifyRetainedE2eEvidence", () => {
 
 });
 
-describe("retained conversation evidence v7", () => {
-  it("verifies lifecycle audio, once-only semantics and retained Botik answer", () => {
+describe("retained conversation evidence v7/v8", () => {
+  it("continues accepting retained v7 evidence without supplemental fields", () => {
     const evidence = retainedV7Evidence();
     const result = verifyRetainedE2eEvidenceAgainstExpectedRevision(
-      { ...manifest(), allowedBotSpeakerIds: [evidence.conversation.botSpeakerId] },
+      manifest(),
+      evidence,
+      currentExpectedRevisions,
+    );
+
+    expect(result.failures).toEqual([]);
+  });
+
+  it("preserves the historical v7 greeting acceptance contract", () => {
+    const evidence = retainedV7Evidence();
+    for (const event of evidence.conversation.lifecycle.events) {
+      if (event.type === "greeting") {
+        event.participantNameStatus = "unknown";
+      }
+    }
+
+    const result = verifyRetainedE2eEvidenceAgainstExpectedRevision(
+      manifest(),
+      evidence,
+      currentExpectedRevisions,
+    );
+
+    expect(result.failures).toEqual([]);
+  });
+
+  it("verifies lifecycle audio, once-only semantics and retained Botik answer", () => {
+    const evidence = retainedV8Evidence();
+    const result = verifyRetainedE2eEvidenceAgainstExpectedRevision(
+      manifest(),
       evidence,
       currentExpectedRevisions,
     );
     expect(result.failures).toEqual([]);
   });
 
-  it("rejects stale, duplicate and misbound v7 conversation evidence", () => {
-    const evidence = retainedV7Evidence();
+  it("accepts a bounded successful greeting retry with its exact audible capture", () => {
+    const evidence = retainedV8Evidence();
+    const greeting = evidence.conversation.lifecycle.events.find(
+      (event) => event.type === "greeting" && event.participantId === speakerAId,
+    );
+    if (greeting === undefined) {
+      throw new Error("speaker-a greeting fixture is missing");
+    }
+    const originalTurnId = greeting.turnId;
+    const retryTurnId = `${originalTurnId}:retry-1`;
+    greeting.turnId = retryTurnId;
+    const baseCapture = evidence.conversation.voice.find(
+      ({ correlation }) => correlation.turnId === originalTurnId,
+    );
+    if (baseCapture === undefined) {
+      throw new Error("speaker-a greeting voice fixture is missing");
+    }
+
+    const result = verifyRetainedE2eEvidenceAgainstExpectedRevision(
+      manifest(),
+      evidence,
+      currentExpectedRevisions,
+    );
+
+    expect(result.failures).toEqual([]);
+  });
+
+  it("rejects a greeting retry outside the bounded runtime policy", () => {
+    const evidence = retainedV8Evidence();
+    const greeting = evidence.conversation.lifecycle.events.find(
+      (event) => event.type === "greeting" && event.participantId === speakerAId,
+    );
+    if (greeting === undefined) {
+      throw new Error("speaker-a greeting fixture is missing");
+    }
+    const originalTurnId = greeting.turnId;
+    const retryTurnId = `${originalTurnId}:retry-4`;
+    greeting.turnId = retryTurnId;
+    const baseCapture = evidence.conversation.voice.find(
+      ({ correlation }) => correlation.turnId === originalTurnId,
+    );
+    if (baseCapture === undefined) {
+      throw new Error("speaker-a greeting voice fixture is missing");
+    }
+
+    const codes = verifyRetainedE2eEvidenceAgainstExpectedRevision(
+      manifest(),
+      evidence,
+      currentExpectedRevisions,
+    ).failures.map(({ code }) => code);
+
+    expect(codes).toContain("GREETING_TURN_MISMATCH");
+  });
+
+  it("requires named greetings in both languages", () => {
+    const evidence = retainedV8Evidence();
+    for (const event of evidence.conversation.lifecycle.events) {
+      if (event.type === "greeting") {
+        event.participantNameStatus = "unknown";
+      }
+    }
+
+    const codes = verifyRetainedE2eEvidenceAgainstExpectedRevision(
+      manifest(),
+      evidence,
+      currentExpectedRevisions,
+    ).failures.map(({ code }) => code);
+
+    expect(codes).toContain("NAMED_GREETING_LOCALE_MISSING");
+  });
+
+  it("requires each audible greeting to match its declared language", () => {
+    const evidence = retainedV8Evidence();
+    const englishGreeting = evidence.transcript.turns.find(
+      ({ turnId }) => turnId === "botik-greeting-en",
+    );
+    if (englishGreeting === undefined) {
+      throw new Error("English Botik greeting fixture is missing");
+    }
+    englishGreeting.text = "Добрый день";
+
+    const codes = verifyRetainedE2eEvidenceAgainstExpectedRevision(
+      manifest(),
+      evidence,
+      currentExpectedRevisions,
+    ).failures.map(({ code }) => code);
+
+    expect(codes).toContain("GREETING_AUDIO_SEMANTICS_MISSING");
+  });
+
+  it("rejects audible lifecycle captures without one settled event", () => {
+    const evidence = retainedV8Evidence();
+    const extraCapture = structuredClone(evidence.conversation.voice[0]!);
+    extraCapture.correlation.attemptId = "orphan-greeting-attempt";
+    extraCapture.correlation.turnId = "participant-greeting:orphan-participant";
+    evidence.conversation.voice.push(extraCapture);
+
+    const codes = verifyRetainedE2eEvidenceAgainstExpectedRevision(
+      manifest(),
+      evidence,
+      currentExpectedRevisions,
+    ).failures.map(({ code }) => code);
+
+    expect(codes).toContain("ORPHAN_LIFECYCLE_AUDIO");
+  });
+
+});
+
+describe("retained conversation V8 supplemental semantics", () => {
+
+  it("rejects misbound or semantically unproven supplemental Botik evidence", () => {
+    const evidence = retainedV8Evidence();
+    evidence.conversation.supplementalPlayback.actor.authenticatedApplicationId =
+      "1534999999999999999";
+    const botikTurn = evidence.transcript.turns.find(
+      ({ speakerId }) => speakerId === evidence.conversation.botSpeakerId,
+    );
+    if (botikTurn === undefined) {
+      throw new Error("Botik answer fixture is missing");
+    }
+    botikTurn.text = "Нерелевантный ответ";
+    const answer = evidence.conversation.voice.find(
+      ({ correlation }) => correlation.purpose === "addressed-answer",
+    );
+    if (answer === undefined) {
+      throw new Error("addressed answer capture fixture is missing");
+    }
+    answer.capture.firstPacketAt.epochMilliseconds = 5_100;
+    answer.capture.endedAt.epochMilliseconds = 5_300;
+
+    const codes = verifyRetainedE2eEvidenceAgainstExpectedRevision(
+      manifest(),
+      evidence,
+      currentExpectedRevisions,
+    ).failures.map(({ code }) => code);
+
+    expect(codes).toEqual(expect.arrayContaining([
+      "SUPPLEMENTAL_IDENTITY_MISMATCH",
+      "SUPPLEMENTAL_ANSWER_INTERVAL_INVALID",
+      "SUPPLEMENTAL_ANSWER_SEMANTICS_MISSING",
+    ]));
+  });
+
+  it("rejects a Botik farewell that starts before Speaker D finishes", () => {
+    const evidence = retainedV8Evidence();
+    const farewell = evidence.conversation.voice.find(
+      ({ correlation }) => correlation.purpose === "farewell",
+    );
+    if (farewell === undefined) {
+      throw new Error("farewell capture fixture is missing");
+    }
+    farewell.capture.startedAt.epochMilliseconds = 4_900;
+    farewell.capture.firstPacketAt.epochMilliseconds = 5_000;
+
+    const codes = verifyRetainedE2eEvidenceAgainstExpectedRevision(
+      manifest(),
+      evidence,
+      currentExpectedRevisions,
+    ).failures.map(({ code }) => code);
+
+    expect(codes).toContain("SUPPLEMENTAL_FAREWELL_EVIDENCE_MISMATCH");
+  });
+
+  it("requires Botik to answer the group farewell in its pinned language", () => {
+    const evidence = retainedV8Evidence();
+    const farewell = evidence.conversation.lifecycle.events.find(
+      (event) => event.type === "farewell",
+    );
+    if (farewell === undefined) {
+      throw new Error("farewell lifecycle fixture is missing");
+    }
+    farewell.locale = "en";
+
+    const codes = verifyRetainedE2eEvidenceAgainstExpectedRevision(
+      manifest(),
+      evidence,
+      currentExpectedRevisions,
+    ).failures.map(({ code }) => code);
+
+    expect(codes).toContain("SUPPLEMENTAL_FAREWELL_LOCALE_MISMATCH");
+  });
+
+  it("rejects stale, duplicate and misbound v8 conversation evidence", () => {
+    const evidence = retainedV8Evidence();
     evidence.conversation.lifecycle.events.push({
       ...evidence.conversation.lifecycle.events[0]!,
     });
@@ -178,7 +404,7 @@ describe("retained conversation evidence v7", () => {
   });
 
   it("binds the first greeting to the reconnect actor and audible Botik source", () => {
-    const evidence = retainedV7Evidence();
+    const evidence = retainedV8Evidence();
     const reconnectGreeting = evidence.conversation.lifecycle.events.find(
       (event) => event.type === "greeting" && event.participantId === speakerBId,
     );
@@ -191,7 +417,7 @@ describe("retained conversation evidence v7", () => {
     evidence.conversation.voice[2]!.observer.voiceChannelId = "1534999999999999997";
 
     const codes = verifyRetainedE2eEvidenceAgainstExpectedRevision(
-      { ...manifest(), allowedBotSpeakerIds: [evidence.conversation.botSpeakerId] },
+      manifest(),
       evidence,
       currentExpectedRevisions,
     ).failures.map(({ code }) => code);
@@ -208,7 +434,7 @@ describe("retained conversation evidence v7", () => {
     ["guildId", "1534999999999999995"],
     ["voiceChannelId", "1534999999999999994"],
   ] as const)("rejects a consistently wrong observer %s", (field, value) => {
-    const evidence = retainedV7Evidence();
+    const evidence = retainedV8Evidence();
     for (const observation of evidence.conversation.voice) {
       observation.observer[field] = value;
       if (field === "applicationId") {
@@ -217,7 +443,7 @@ describe("retained conversation evidence v7", () => {
     }
 
     const codes = verifyRetainedE2eEvidenceAgainstExpectedRevision(
-      { ...manifest(), allowedBotSpeakerIds: [evidence.conversation.botSpeakerId] },
+      manifest(),
       evidence,
       currentExpectedRevisions,
     ).failures.map(({ code }) => code);
@@ -249,6 +475,29 @@ describe("verifyRetainedE2eEvidence continued", () => {
       evidence,
       currentExpectedRevisions,
     ).failures.map(({ code }) => code)).toContain("REPLAY_ATTACHMENT_CHANGED");
+  });
+
+  it("keeps inherited processing and attachment gates active for v8", () => {
+    const evidence = retainedV8Evidence();
+    evidence.replay.attachments[0]!.sizeBytes += 1;
+    const transcription = evidence.processing.stages.find(
+      ({ stage }) => stage === "transcription",
+    );
+    if (transcription === undefined) {
+      throw new Error("transcription processing fixture is missing");
+    }
+    transcription.durationMs = 30_001;
+
+    const codes = verifyRetainedE2eEvidenceAgainstExpectedRevision(
+      manifest(),
+      evidence,
+      currentExpectedRevisions,
+    ).failures.map(({ code }) => code);
+
+    expect(codes).toEqual(expect.arrayContaining([
+      "REPLAY_ATTACHMENT_CHANGED",
+      "STAGE_LATENCY_EXCEEDED",
+    ]));
   });
 
   it("treats Discord attachment ordering as non-semantic", () => {

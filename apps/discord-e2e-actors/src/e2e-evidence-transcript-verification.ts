@@ -1,15 +1,10 @@
-import {
-  characterErrorRate,
-  normalizeTranscriptSemantics,
-  wordErrorRate,
-} from "./e2e-evidence-text-metrics.js";
+import { verifyAddressedAnswer } from "./e2e-evidence-addressed-answer-verification.js";
+import { verifyGreetingAudioSemantics } from "./e2e-evidence-greeting-semantics-verification.js";
+import { verifySupplementalPlayback } from "./e2e-evidence-supplemental-verification.js";
+import { characterErrorRate, normalizeTranscriptSemantics, wordErrorRate } from "./e2e-evidence-text-metrics.js";
+import type { FixtureManifestV1, RetainedE2eEvidence } from "./e2e-evidence-schema.js";
 import type {
-  FixtureManifestV1,
-  RetainedE2eEvidence,
-} from "./e2e-evidence-schema.js";
-import type {
-  TranscriptVerificationContext,
-  VerificationFailureReporter,
+  TranscriptVerificationContext, VerificationFailureReporter,
 } from "./e2e-evidence-verification-types.js";
 
 export function verifyConversationEvidence(
@@ -17,7 +12,7 @@ export function verifyConversationEvidence(
   evidence: RetainedE2eEvidence,
   fail: VerificationFailureReporter,
 ): void {
-  if (evidence.schemaVersion !== 7) {
+  if (evidence.schemaVersion !== 7 && evidence.schemaVersion !== 8) {
     return;
   }
   const recordingStartMs = Date.parse(evidence.recording.startedAt);
@@ -26,7 +21,10 @@ export function verifyConversationEvidence(
     fail("BOT_SPEAKER_NOT_PINNED", "Botik speaker is not pinned by the fixture manifest");
   }
   if (evidence.actorRun.scenario !== "reconnect") {
-    fail("LIFECYCLE_RECONNECT_NOT_PROVEN", "v7 lifecycle evidence must come from a reconnect run");
+    fail(
+      "LIFECYCLE_RECONNECT_NOT_PROVEN",
+      "v7/v8 lifecycle evidence must come from a reconnect run",
+    );
   }
   verifyGreetingAndFarewellLifecycle(
     manifest,
@@ -37,14 +35,22 @@ export function verifyConversationEvidence(
   );
   verifyVoiceCaptureIdentity(manifest, evidence, recordingStartMs, recordingEndMs, fail);
   verifyLifecycleAudioBindings(manifest, evidence, fail);
+  if (evidence.schemaVersion === 8) {
+    verifyGreetingAudioSemantics(manifest, evidence, recordingStartMs, fail);
+    verifySupplementalPlayback(manifest, evidence, recordingStartMs, recordingEndMs, fail);
+  }
   verifyAddressedAnswer(evidence, recordingStartMs, fail);
 }
 
-type RetainedE2eEvidenceV7 = Extract<RetainedE2eEvidence, { schemaVersion: 7 }>;
+type RetainedConversationEvidence = Extract<
+  RetainedE2eEvidence,
+  { schemaVersion: 7 | 8 }
+>;
+const maximumVerifiedGreetingRetry = 3;
 
 function verifyGreetingAndFarewellLifecycle(
   manifest: FixtureManifestV1,
-  evidence: RetainedE2eEvidenceV7,
+  evidence: RetainedConversationEvidence,
   recordingStartMs: number,
   recordingEndMs: number,
   fail: VerificationFailureReporter,
@@ -59,11 +65,21 @@ function verifyGreetingAndFarewellLifecycle(
     !greetings.some(({ greetingLocale }) => greetingLocale === "en")) {
     fail("GREETING_LOCALE_MISSING", "completed greeting proof must include Russian and English");
   }
+  if (evidence.schemaVersion === 8 &&
+    (!greetings.some(({ greetingLocale, participantNameStatus }) =>
+      greetingLocale === "ru" && participantNameStatus === "known") ||
+      !greetings.some(({ greetingLocale, participantNameStatus }) =>
+        greetingLocale === "en" && participantNameStatus === "known"))) {
+    fail(
+      "NAMED_GREETING_LOCALE_MISSING",
+      "completed greeting proof must include named Russian and English participants",
+    );
+  }
   if (!greetings.some(({ participantNameStatus }) => participantNameStatus === "unknown")) {
     fail("UNKNOWN_GREETING_MISSING", "completed greeting proof has no unknown participant");
   }
   for (const greeting of greetings) {
-    if (greeting.turnId !== `participant-greeting:${greeting.participantId}`) {
+    if (!isVerifiedGreetingTurnId(greeting.turnId, greeting.participantId)) {
       fail("GREETING_TURN_MISMATCH", `greeting turn is not bound to ${greeting.participantId}`);
     }
   }
@@ -79,11 +95,24 @@ function verifyGreetingAndFarewellLifecycle(
   }
 }
 
+function isVerifiedGreetingTurnId(turnId: string, participantId: string): boolean {
+  const initialTurnId = `participant-greeting:${participantId}`;
+  if (turnId === initialTurnId) {
+    return true;
+  }
+  for (let retry = 1; retry <= maximumVerifiedGreetingRetry; retry += 1) {
+    if (turnId === `${initialTurnId}:retry-${retry}`) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function verifyReconnectGreeting(
   manifest: FixtureManifestV1,
-  evidence: RetainedE2eEvidenceV7,
+  evidence: RetainedConversationEvidence,
   greetings: readonly Extract<
-    RetainedE2eEvidenceV7["conversation"]["lifecycle"]["events"][number],
+    RetainedConversationEvidence["conversation"]["lifecycle"]["events"][number],
     { type: "greeting" }
   >[],
   recordingStartMs: number,
@@ -115,7 +144,7 @@ function verifyReconnectGreeting(
 
 function verifyVoiceCaptureIdentity(
   manifest: FixtureManifestV1,
-  evidence: RetainedE2eEvidenceV7,
+  evidence: RetainedConversationEvidence,
   recordingStartMs: number,
   recordingEndMs: number,
   fail: VerificationFailureReporter,
@@ -188,13 +217,13 @@ function verifyVoiceCaptureExpectation(
 
 function verifyLifecycleAudioBindings(
   manifest: FixtureManifestV1,
-  evidence: RetainedE2eEvidenceV7,
+  evidence: RetainedConversationEvidence,
   fail: VerificationFailureReporter,
 ): void {
   const { lifecycle, voice } = evidence.conversation;
   for (const event of lifecycle.events) {
     const matches = voice.filter(({ correlation }) =>
-      correlation.purpose === event.type && correlation.turnId === event.turnId
+      correlation.purpose === event.type && isLifecycleTurnBinding(event, correlation.turnId)
     );
     if (matches.length !== 1) {
       fail("LIFECYCLE_AUDIO_MISMATCH", `expected one audible capture for ${event.turnId}`);
@@ -210,31 +239,35 @@ function verifyLifecycleAudioBindings(
       fail("LIFECYCLE_AUDIO_MISMATCH", `audible capture is not time-bound to ${event.turnId}`);
     }
   }
-}
-
-function verifyAddressedAnswer(
-  evidence: RetainedE2eEvidenceV7,
-  recordingStartMs: number,
-  fail: VerificationFailureReporter,
-): void {
-  const { voice, botSpeakerId } = evidence.conversation;
-  const answerCaptures = voice.filter(({ correlation }) => correlation.purpose === "addressed-answer");
-  if (answerCaptures.length !== 1) {
-    fail("ANSWER_AUDIO_COUNT_MISMATCH", "expected exactly one audible addressed answer capture");
-  }
-  if (!evidence.recording.speakerIds.includes(botSpeakerId)) {
-    fail("BOT_RECORDING_TRACK_MISSING", "Botik speaker is absent from the authoritative recording");
-  }
-  for (const answer of answerCaptures) {
-    const answerStartMs = answer.capture.firstPacketAt.epochMilliseconds - recordingStartMs;
-    const answerEndMs = answer.capture.endedAt.epochMilliseconds - recordingStartMs;
-    const transcriptMatches = evidence.transcript.turns.filter((turn) =>
-      turn.speakerId === botSpeakerId && turn.startMs < answerEndMs && answerStartMs < turn.endMs
-    );
-    if (transcriptMatches.length !== 1) {
-      fail("ANSWER_TRANSCRIPT_MISMATCH", "audible addressed answer is not retained as one Botik transcript turn");
+  if (evidence.schemaVersion === 8) {
+    for (const observation of voice) {
+      if (observation.correlation.purpose === "addressed-answer") {
+        continue;
+      }
+      const matches = lifecycle.events.filter((event) =>
+        event.type === observation.correlation.purpose &&
+        isLifecycleTurnBinding(event, observation.correlation.turnId)
+      );
+      if (matches.length !== 1) {
+        fail(
+          "ORPHAN_LIFECYCLE_AUDIO",
+          `audible capture has no unique settled lifecycle event for ${observation.correlation.turnId}`,
+        );
+      }
     }
   }
+}
+
+function isLifecycleTurnBinding(
+  event: RetainedConversationEvidence["conversation"]["lifecycle"]["events"][number],
+  capturedTurnId: string,
+): boolean {
+  if (capturedTurnId === event.turnId) {
+    return true;
+  }
+  return event.type === "greeting" &&
+    isVerifiedGreetingTurnId(event.turnId, event.participantId) &&
+    capturedTurnId === `participant-greeting:${event.participantId}`;
 }
 
 export function verifyTranscript(context: TranscriptVerificationContext): void {

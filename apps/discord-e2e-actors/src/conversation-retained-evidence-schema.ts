@@ -79,6 +79,36 @@ export const conversationVoiceEvidenceV3Schema = z.object({
   transcriptVerification: z.object({ status: z.literal("not-run") }).strict(),
 }).strict();
 
+export const supplementalPlaybackEvidenceV1Schema = z.object({
+  actor: z.object({
+    applicationId: identifierSchema,
+    authenticatedApplicationId: identifierSchema,
+    name: z.literal("speaker-d"),
+  }).strict(),
+  fixture: z.object({
+    durationMs: z.number().int().positive().max(60_000),
+    path: identifierSchema,
+    purpose: z.literal("speaker-d-botik-question-and-later-group-farewell"),
+    sha256: sha256Schema,
+  }).strict(),
+  playback: z.object({
+    endedAtEpochMs: z.number().int().positive(),
+    postHoldMilliseconds: z.number().int().nonnegative(),
+    preHoldMilliseconds: z.number().int().nonnegative(),
+    startedAtEpochMs: z.number().int().positive(),
+  }).strict(),
+  privateTestGuildConfirmed: z.literal(true),
+  runId: identifierSchema,
+  schemaVersion: z.literal(1),
+  target: z.object({
+    guildId: identifierSchema,
+    voiceChannelId: identifierSchema,
+  }).strict(),
+}).strict().refine(
+  ({ playback }) => playback.startedAtEpochMs < playback.endedAtEpochMs,
+  { message: "Supplemental playback must end after it starts", path: ["playback"] },
+);
+
 const greetingPlaybackObservationSchema = z.object({
   greetingLocale: z.enum(["en", "ru"]),
   observedAt: z.iso.datetime(),

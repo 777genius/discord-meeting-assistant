@@ -6,6 +6,7 @@ import {
   retainedE2eEvidenceV5Schema,
   retainedE2eEvidenceV6Schema,
   retainedE2eEvidenceV7Schema,
+  retainedE2eEvidenceV8Schema,
   verifyE2eCampaign as verifyE2eCampaignAgainstExpectedRevision,
   verifyRetainedE2eEvidence as verifyRetainedE2eEvidenceAgainstExpectedRevision,
   type DeploymentRevisionExpectation,
@@ -16,10 +17,12 @@ import {
   type RetainedE2eEvidenceV5,
   type RetainedE2eEvidenceV6,
   type RetainedE2eEvidenceV7,
+  type RetainedE2eEvidenceV8,
 } from "../src/e2e-evidence.js";
 
 export const speakerAId = "1533227577286852649";
 export const speakerBId = "1533228054724346087";
+export const speakerDId = "1533873978417086474";
 const speakerAText = "Спикер A обсуждает Meeting Platform и Craig recording";
 const speakerBText = "Спикер B проверит Redis queue и idempotency key";
 export const expectedRevisions: DeploymentRevisionExpectation =
@@ -49,10 +52,21 @@ export function verifyE2eCampaign(
 
 export function manifest(): FixtureManifestV1 {
   return fixtureManifestV1Schema.parse({
+    allowedBotSpeakerIds: ["1534231284467896512", speakerDId],
     conversationVoiceExpectation: {
       guildId: "1533228590643155034",
       observerApplicationId: "1533867700575670282",
       voiceChannelId: "1533228823045214398",
+    },
+    greetingLocaleTerms: { en: ["hi", "hello", "хай"], ru: ["привет", "здравствуй"] },
+    supplementalVoiceExpectation: {
+      answerNonce: "кобальт",
+      applicationId: speakerDId,
+      durationMs: 6_000,
+      farewellLocale: "ru",
+      fixtureSha256: "9".repeat(64),
+      requiredFarewellTerms: ["всем", "пока"],
+      requiredQuestionTerms: ["ботик", "кобальт"],
     },
     fixtureSetId: "fixture-v1",
     fixtures: [
@@ -511,7 +525,7 @@ export function retainedV6Evidence(): RetainedE2eEvidenceV6 {
   });
 }
 
-export function retainedV7Evidence(): RetainedE2eEvidenceV7 {
+export function retainedV8Evidence(): RetainedE2eEvidenceV8 {
   const source = retainedV6Evidence();
   source.actorRun.scenario = "reconnect";
   source.actorRun.events = [
@@ -525,34 +539,99 @@ export function retainedV7Evidence(): RetainedE2eEvidenceV7 {
     { actorName: "speaker-b", atRecordingMs: 7_850, fixtureId: "speaker-b", type: "playback-end" },
   ];
   const botSpeakerId = "1534231284467896512";
-  source.recording.speakerIds.push(botSpeakerId);
+  source.recording.speakerIds.push(botSpeakerId, speakerDId);
   source.recording.s3.tracks.push({
     checksumSha256: "4".repeat(64), durationMs: source.recording.durationMs,
     locator: "s3://bucket/meeting-1/botik.ogg", sizeBytes: 2_000,
     speakerId: botSpeakerId, timelineOffsetMs: 0,
+  }, {
+    checksumSha256: "5".repeat(64), durationMs: 6_000,
+    locator: "s3://bucket/meeting-1/speaker-d.ogg", sizeBytes: 3_000,
+    speakerId: speakerDId, timelineOffsetMs: 500,
   });
-  source.transcript.turns.push({
-    endMs: 7_200, speakerId: botSpeakerId, startMs: 6_200,
-    text: "Synthetic addressed answer", turnId: "botik-answer-1",
-  });
+  source.transcript.turns.push(
+    {
+      endMs: 650, speakerId: botSpeakerId, startMs: 250,
+      text: "Hi, Alex!", turnId: "botik-greeting-en",
+    },
+    {
+      endMs: 1_450, speakerId: botSpeakerId, startMs: 1_050,
+      text: "Привет, Саша!", turnId: "botik-greeting-ru",
+    },
+    {
+      endMs: 1_800, speakerId: speakerDId, startMs: 1_000,
+      text: "Ботик, ответь одним словом: кобальт.", turnId: "speaker-d-question",
+    },
+    {
+      endMs: 2_450, speakerId: botSpeakerId, startMs: 2_050,
+      text: "Привет!", turnId: "botik-greeting-unknown",
+    },
+    {
+      endMs: 3_400, speakerId: botSpeakerId, startMs: 3_100,
+      text: "Кобальт.", turnId: "botik-answer-1",
+    },
+    {
+      endMs: 5_400, speakerId: speakerDId, startMs: 5_000,
+      text: "Всем пока.", turnId: "speaker-d-farewell",
+    },
+  );
   const events = [
     { greetingLocale: "ru", observedAt: "1970-01-01T00:00:01.500Z", participantId: speakerAId, participantNameStatus: "known", turnId: `participant-greeting:${speakerAId}`, type: "greeting" as const },
     { greetingLocale: "en", observedAt: "1970-01-01T00:00:00.700Z", participantId: speakerBId, participantNameStatus: "known", turnId: `participant-greeting:${speakerBId}`, type: "greeting" as const },
-    { greetingLocale: "ru", observedAt: "1970-01-01T00:00:03.500Z", participantId: "3533228054724346087", participantNameStatus: "unknown", turnId: "participant-greeting:3533228054724346087", type: "greeting" as const },
-    { evidenceTurnIds: ["turn-a"], locale: "ru", observedAt: "1970-01-01T00:00:05.500Z", playbackAttemptId: "farewell-attempt-1", reason: "explicit-group", turnId: "meeting-farewell:v1" as const, type: "farewell" as const },
+    { greetingLocale: "ru", observedAt: "1970-01-01T00:00:02.500Z", participantId: "3533228054724346087", participantNameStatus: "unknown", turnId: "participant-greeting:3533228054724346087", type: "greeting" as const },
+    { evidenceTurnIds: ["speaker-d-farewell"], locale: "ru", observedAt: "1970-01-01T00:00:05.500Z", playbackAttemptId: "farewell-attempt-1", reason: "explicit-group", turnId: "meeting-farewell:v1" as const, type: "farewell" as const },
   ];
-  return retainedE2eEvidenceV7Schema.parse({
+  return retainedE2eEvidenceV8Schema.parse({
     ...source,
     conversation: {
       botSpeakerId,
       lifecycle: { events },
+      supplementalPlayback: {
+        actor: {
+          applicationId: speakerDId,
+          authenticatedApplicationId: speakerDId,
+          name: "speaker-d",
+        },
+        fixture: {
+          durationMs: 6_000,
+          path: "/fixtures/supplemental-question-farewell.ru.ogg",
+          purpose: "speaker-d-botik-question-and-later-group-farewell",
+          sha256: "9".repeat(64),
+        },
+        playback: {
+          endedAtEpochMs: 6_500,
+          postHoldMilliseconds: 1_000,
+          preHoldMilliseconds: 500,
+          startedAtEpochMs: 500,
+        },
+        privateTestGuildConfirmed: true,
+        runId: source.actorRun.runId,
+        schemaVersion: 1,
+        target: {
+          guildId: "1533228590643155034",
+          voiceChannelId: "1533228823045214398",
+        },
+      },
       voice: [
         voiceObservation("greeting", `participant-greeting:${speakerAId}`, "greeting-ru", 1_000),
         voiceObservation("greeting", `participant-greeting:${speakerBId}`, "greeting-en", 200),
-        voiceObservation("greeting", "participant-greeting:3533228054724346087", "greeting-unknown", 3_000),
-        voiceObservation("farewell", "meeting-farewell:v1", "farewell", 5_000),
-        voiceObservation("addressed-answer", "human-question-1", "answer", 6_100),
+        voiceObservation("greeting", "participant-greeting:3533228054724346087", "greeting-unknown", 2_000),
+        voiceObservation("farewell", "meeting-farewell:v1", "farewell", 5_500),
+        voiceObservation("addressed-answer", "human-question-1", "answer", 3_000),
       ],
+    },
+    schemaVersion: 8,
+  });
+}
+
+export function retainedV7Evidence(): RetainedE2eEvidenceV7 {
+  const source = retainedV8Evidence();
+  return retainedE2eEvidenceV7Schema.parse({
+    ...source,
+    conversation: {
+      botSpeakerId: source.conversation.botSpeakerId,
+      lifecycle: source.conversation.lifecycle,
+      voice: source.conversation.voice,
     },
     schemaVersion: 7,
   });

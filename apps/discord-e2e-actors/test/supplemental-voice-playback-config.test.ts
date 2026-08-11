@@ -83,9 +83,9 @@ describe("loadVerifiedSupplementalVoiceManifest", () => {
     await expect(loadVerifiedSupplementalVoiceManifest(manifestPath, 60_000)).resolves.toMatchObject({
       applicationId: "1533873978417086474",
       fixture: {
-        durationMs: 23_768,
+        durationMs: 24_226,
         path: resolve("test/fixtures/supplemental-question-farewell.ru.ogg"),
-        sha256: "9741f8e03bc6417354908bdfb4a771297f0ab5ee31fecc213dd352c8779343b1",
+        sha256: "fa4d4db0e725944e65cacef8dff12172b2fac2456f2cd5ded33eddc86328c608",
       },
       guildId: "1533228590643155034",
       voiceChannelId: "1533228823045214398",

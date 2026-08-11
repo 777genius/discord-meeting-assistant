@@ -60,7 +60,7 @@ describe("parseConversationLifecycleEvidenceLogs", () => {
     const output = [
       JSON.stringify({ ...greeting, meetingId: "other" }),
       JSON.stringify(greeting),
-      JSON.stringify({ ...greeting, participantId: "participant-2", turnId: "participant-greeting:participant-2", greetingLocale: "en" }),
+      JSON.stringify({ ...greeting, participantId: "participant-2", turnId: "participant-greeting:participant-2:retry-1", greetingLocale: "en" }),
       JSON.stringify({ ...greeting, participantId: "participant-3", turnId: "participant-greeting:participant-3" }),
       JSON.stringify(farewell),
     ].join("\n");
@@ -68,6 +68,10 @@ describe("parseConversationLifecycleEvidenceLogs", () => {
     expect(events).toHaveLength(4);
     expect(events[0]).not.toHaveProperty("greetingText");
     expect(events[0]).not.toHaveProperty("participantName");
+    expect(events[1]).toMatchObject({
+      participantId: "participant-2",
+      turnId: "participant-greeting:participant-2:retry-1",
+    });
   });
 });
 

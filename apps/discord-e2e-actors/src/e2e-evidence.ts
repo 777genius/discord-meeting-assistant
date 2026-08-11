@@ -38,8 +38,10 @@ export {
   retainedE2eEvidenceV5Schema,
   retainedE2eEvidenceV6Schema,
   retainedE2eEvidenceV7Schema,
+  retainedE2eEvidenceV8Schema,
   unboundActorRunEvidenceV1Schema,
 } from "./e2e-evidence-schema.js";
+export { supplementalPlaybackEvidenceV1Schema } from "./conversation-retained-evidence-schema.js";
 export type {
   ActorRunEvidenceV1,
   CurrentDeploymentProvenance,
@@ -54,6 +56,7 @@ export type {
   RetainedE2eEvidenceV5,
   RetainedE2eEvidenceV6,
   RetainedE2eEvidenceV7,
+  RetainedE2eEvidenceV8,
   UnboundActorRunEvidenceV1,
 } from "./e2e-evidence-schema.js";
 export { sameDeploymentProvenance } from "./e2e-evidence-deployment-verification.js";

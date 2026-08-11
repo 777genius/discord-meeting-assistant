@@ -82,7 +82,7 @@ class PersistentConversationPipeline:
             if (
                 turn.cancellation_reason is None
                 and turn.text_generation_failure is None
-                and turn.tts_audio_frame_count == 0
+                and turn.tts_audio_byte_count == 0
             ):
                 turn.pipeline_failure = True
             if turn.pipeline_failure:

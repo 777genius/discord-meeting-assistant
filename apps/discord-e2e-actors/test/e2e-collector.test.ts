@@ -12,7 +12,7 @@ import type {
   CurrentDeploymentProvenance,
   ProcessingEvidence,
 } from "../src/e2e-evidence.js";
-import { retainedV7Evidence } from "./e2e-evidence-fixtures.js";
+import { retainedV7Evidence, retainedV8Evidence } from "./e2e-evidence-fixtures.js";
 
 const speakerA = "1533227577286852649";
 const speakerB = "1533228054724346087";
@@ -379,6 +379,122 @@ describe("collectRetainedE2eEvidence", () => {
       matchingThreadCount: 0,
     });
     expect(evidence.replay.container).toEqual(evidence.publication.container);
+  });
+
+  it("collects lifecycle, voice and supplemental playback as retained v8 evidence", async () => {
+    const conversationFixture = retainedV8Evidence().conversation;
+    const deployment: DeploymentEvidenceProbe = {
+      collectConversationLifecycle: async () => conversationFixture.lifecycle,
+      collectDatabase: async () => database(),
+      collectProvenance: async () => provenance(),
+      collectProcessing: async () => processing(),
+      collectS3: async () => s3(),
+      replayPostCall: async () => ({
+        afterProcessedOn: 2_000,
+        beforeProcessedOn: 1_000,
+        jobId: "post-call-v1-job",
+        state: "completed",
+      }),
+    };
+    const discord: DiscordEvidenceProbe = {
+      inspect: async () => ({
+        matchingMessages: [{
+          attachments: layeredAttachments,
+          container: {
+            kind: "thread",
+            parentChannelId: "1533228891827736657",
+            threadId: "thread-1",
+          },
+          embedDescription: "Stable retained V8 projection",
+          messageId: "message-1",
+        }],
+        matchingThreadIds: ["thread-1"],
+      }),
+    };
+    const voice = conversationFixture.voice.map((observation) => ({
+      ...structuredClone(observation),
+      correlation: {
+        ...observation.correlation,
+        recordingId: null,
+      },
+      runId: "run-1",
+    }));
+    const supplementalPlayback = {
+      ...structuredClone(conversationFixture.supplementalPlayback),
+      runId: "run-1",
+    };
+
+    const evidence = await collectRetainedE2eEvidence({
+      actorRun: actorRun(),
+      conversation: {
+        botSpeakerId: conversationFixture.botSpeakerId,
+        supplementalPlayback,
+        voice,
+      },
+      recordingId: "recording-1",
+      runId: "run-1",
+    }, deployment, discord);
+
+    expect(evidence.schemaVersion).toBe(8);
+    if (evidence.schemaVersion !== 8) {
+      throw new Error("expected retained V8 evidence");
+    }
+    expect(evidence.conversation.supplementalPlayback).toEqual(supplementalPlayback);
+    expect(evidence.conversation.voice).toHaveLength(5);
+    expect(evidence.conversation.voice.every(
+      ({ correlation }) => correlation.recordingId === "recording-1",
+    )).toBe(true);
+  });
+
+  it("fails closed when a retained v8 collection has no lifecycle probe", async () => {
+    const conversationFixture = retainedV8Evidence().conversation;
+    const deployment: DeploymentEvidenceProbe = {
+      collectDatabase: async () => database(),
+      collectProvenance: async () => provenance(),
+      collectProcessing: async () => processing(),
+      collectS3: async () => s3(),
+      replayPostCall: async () => ({
+        afterProcessedOn: 2_000,
+        beforeProcessedOn: 1_000,
+        jobId: "post-call-v1-job",
+        state: "completed",
+      }),
+    };
+    const discord: DiscordEvidenceProbe = {
+      inspect: async () => ({
+        matchingMessages: [{
+          attachments: layeredAttachments,
+          container: {
+            kind: "thread",
+            parentChannelId: "1533228891827736657",
+            threadId: "thread-1",
+          },
+          embedDescription: "Stable retained V8 projection",
+          messageId: "message-1",
+        }],
+        matchingThreadIds: ["thread-1"],
+      }),
+    };
+
+    await expect(collectRetainedE2eEvidence({
+      actorRun: actorRun(),
+      conversation: {
+        botSpeakerId: conversationFixture.botSpeakerId,
+        supplementalPlayback: {
+          ...structuredClone(conversationFixture.supplementalPlayback),
+          runId: "run-1",
+        },
+        voice: conversationFixture.voice.map((observation) => ({
+          ...structuredClone(observation),
+          correlation: { ...observation.correlation, recordingId: null },
+          runId: "run-1",
+        })),
+      },
+      recordingId: "recording-1",
+      runId: "run-1",
+    }, deployment, discord)).rejects.toThrow(
+      "cannot collect conversation lifecycle evidence",
+    );
   });
 
   it("rejects a deployment change while evidence is collected", async () => {
