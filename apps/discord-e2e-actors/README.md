@@ -26,7 +26,6 @@ DISCORD_E2E_CONVERSATION_VOICE_VOICE_CHANNEL_ID=... \
 DISCORD_E2E_CONVERSATION_VOICE_OBSERVER_APPLICATION_ID=... \
 DISCORD_E2E_CONVERSATION_VOICE_CRAIG_BOT_ID=... \
 DISCORD_E2E_CONVERSATION_VOICE_RUN_ID=... \
-DISCORD_E2E_CONVERSATION_VOICE_RECORDING_ID=... \
 DISCORD_E2E_CONVERSATION_VOICE_TURN_ID=... \
 DISCORD_E2E_CONVERSATION_VOICE_ATTEMPT_ID=... \
 DISCORD_E2E_CONVERSATION_VOICE_PURPOSE=addressed-answer \
@@ -47,7 +46,12 @@ playback-ready.
 Each capture declares `greeting`, `farewell`, or `addressed-answer` purpose.
 Alone it remains transport evidence: it does not run STT, establish the
 authoritative Craig recording, or independently verify its operator-supplied
-correlation. Current v7 retained evidence closes that correlation by checking
+correlation. A first-join capture may omit
+`DISCORD_E2E_CONVERSATION_VOICE_RECORDING_ID` before Craig exposes its random
+recording ID; the create-only raw file then retains `null`. The collector binds
+that capture exactly once to the explicitly selected authoritative recording
+and rejects a conflicting non-null ID. Current v7 retained evidence closes that
+correlation by checking
 the capture interval against the authoritative recording, matching lifecycle
 turns to settled runtime markers plus audible captures, and matching the
 addressed-answer interval to exactly one Botik turn in the final transcript.

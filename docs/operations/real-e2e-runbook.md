@@ -180,6 +180,12 @@ observer, the private guild, and the voice channel. Set the observer account to
 Set `DISCORD_E2E_SPEAKER_B_CONNECT_DELAY_MS=5000` for this campaign so the same
 observer can finish the Russian greeting capture and reconnect before Speaker B
 causes the English greeting. Leave it at the default `0` for ordinary runs.
+The first greeting may occur before Craig exposes its random recording ID. In
+that case omit `DISCORD_E2E_CONVERSATION_VOICE_RECORDING_ID`; the raw capture
+retains `null`, and the collector binds it exactly once to the explicitly
+selected recording. A conflicting non-null recording ID fails closed, and the
+v7 verifier still requires every capture timestamp to fall inside that
+recording's authoritative interval.
 
 Reconnect one already-greeted official actor before the meeting ends. Do not
 induce another first join. After finalization, pass all five observer files and

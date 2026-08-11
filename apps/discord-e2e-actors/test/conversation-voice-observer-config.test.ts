@@ -57,13 +57,20 @@ describe("loadConversationVoiceObserverConfig", () => {
     })).toThrow("does not accept bot tokens");
   });
 
+  it("allows a first-join capture to remain unbound until retained collection", () => {
+    const {
+      DISCORD_E2E_CONVERSATION_VOICE_RECORDING_ID: _,
+      ...beforeRecordingId
+    } = requiredEnvironment;
+
+    expect(loadConversationVoiceObserverConfig(beforeRecordingId).recordingId).toBeNull();
+  });
+
   it("fails closed for non-private targets, missing correlations, and unsafe output paths", () => {
     expect(() => loadConversationVoiceObserverConfig({
       ...requiredEnvironment,
       DISCORD_E2E_CONVERSATION_VOICE_PRIVATE_TEST_GUILD: "yes",
     })).toThrow();
-    const { DISCORD_E2E_CONVERSATION_VOICE_RECORDING_ID: _, ...withoutRecording } = requiredEnvironment;
-    expect(() => loadConversationVoiceObserverConfig(withoutRecording)).toThrow();
     expect(() => loadConversationVoiceObserverConfig({
       ...requiredEnvironment,
       DISCORD_E2E_CONVERSATION_VOICE_OUTPUT: "conversation-voice-observer.json",

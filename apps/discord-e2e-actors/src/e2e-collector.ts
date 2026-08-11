@@ -1,4 +1,5 @@
 import {
+  conversationVoiceEvidenceV3Schema,
   retainedE2eEvidenceV6Schema,
   retainedE2eEvidenceV7Schema,
   sameDeploymentProvenance,
@@ -177,9 +178,28 @@ export async function collectRetainedE2eEvidence(
     conversation: {
       botSpeakerId: input.conversation.botSpeakerId,
       lifecycle,
-      voice: input.conversation.voice,
+      voice: input.conversation.voice.map((observation) =>
+        bindConversationVoiceRecording(observation, input.recordingId)
+      ),
     },
     schemaVersion: 7,
+  });
+}
+
+export function bindConversationVoiceRecording(
+  observation: unknown,
+  recordingId: string,
+) {
+  const parsed = conversationVoiceEvidenceV3Schema.parse(observation);
+  if (
+    parsed.correlation.recordingId !== null &&
+    parsed.correlation.recordingId !== recordingId
+  ) {
+    throw new Error("Conversation voice evidence is bound to a different recording");
+  }
+  return conversationVoiceEvidenceV3Schema.parse({
+    ...parsed,
+    correlation: { ...parsed.correlation, recordingId },
   });
 }
 

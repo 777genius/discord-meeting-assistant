@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  bindConversationVoiceRecording,
   collectRetainedE2eEvidence,
   type DatabaseObservation,
   type DeploymentEvidenceProbe,
@@ -11,6 +12,7 @@ import type {
   CurrentDeploymentProvenance,
   ProcessingEvidence,
 } from "../src/e2e-evidence.js";
+import { retainedV7Evidence } from "./e2e-evidence-fixtures.js";
 
 const speakerA = "1533227577286852649";
 const speakerB = "1533228054724346087";
@@ -234,6 +236,17 @@ function processing(): ProcessingEvidence {
 }
 
 describe("collectRetainedE2eEvidence", () => {
+  it("binds an early voice capture exactly once to the selected recording", () => {
+    const observation = retainedV7Evidence().conversation.voice[0]!;
+    observation.correlation.recordingId = null;
+
+    expect(bindConversationVoiceRecording(observation, "meeting-1").correlation.recordingId)
+      .toBe("meeting-1");
+    observation.correlation.recordingId = "different-meeting";
+    expect(() => bindConversationVoiceRecording(observation, "meeting-1"))
+      .toThrow("different recording");
+  });
+
   it("collects before state, verifies S3/Discord, performs replay, then collects after state", async () => {
     const calls: string[] = [];
     let databaseCall = 0;

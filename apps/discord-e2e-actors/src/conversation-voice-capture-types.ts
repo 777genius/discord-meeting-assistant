@@ -102,7 +102,7 @@ export interface ConversationVoiceEvidenceInput {
   readonly observerApplicationId: string;
   readonly privateTestGuildConfirmed: true;
   readonly purpose: "addressed-answer" | "farewell" | "greeting";
-  readonly recordingId: string;
+  readonly recordingId: string | null;
   readonly runId: string;
   readonly turnId: string;
   readonly voiceChannelId: string;
@@ -136,7 +136,7 @@ export interface ConversationVoiceEvidence {
     readonly attemptId: string;
     readonly provenance: "operator-supplied";
     readonly purpose: "addressed-answer" | "farewell" | "greeting";
-    readonly recordingId: string;
+    readonly recordingId: string | null;
     readonly verification: "not-run";
     readonly turnId: string;
   };

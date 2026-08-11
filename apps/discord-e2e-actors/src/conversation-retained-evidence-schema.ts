@@ -52,7 +52,7 @@ export const conversationVoiceEvidenceV3Schema = z.object({
     attemptId: identifierSchema,
     provenance: z.literal("operator-supplied"),
     purpose: conversationVoicePurposeSchema,
-    recordingId: identifierSchema,
+    recordingId: identifierSchema.nullable(),
     verification: z.literal("not-run"),
     turnId: identifierSchema,
   }).strict(),
