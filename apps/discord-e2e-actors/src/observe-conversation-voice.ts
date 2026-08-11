@@ -49,7 +49,18 @@ class ConversationVoiceObserverError extends Error {
 
 async function main(): Promise<void> {
   const config = loadConversationVoiceObserverConfig(process.env);
-  await assertConversationVoiceEvidencePathIsNew(config.outputPath);
+  const captures = [
+    {
+      attemptId: config.attemptId,
+      outputPath: config.outputPath,
+      purpose: config.purpose,
+      turnId: config.turnId,
+    },
+    ...config.additionalCaptures,
+  ] as const;
+  await Promise.all(captures.map(({ outputPath }) =>
+    assertConversationVoiceEvidencePathIsNew(outputPath)
+  ));
   const decoder = await createDiscordJsOpusDecoder();
 
   const secretReader = config.secretDirectory === undefined
@@ -85,52 +96,107 @@ async function main(): Promise<void> {
       channel.id,
       config.readyTimeoutMilliseconds,
     );
-    const capture = await captureConfiguredCraigVoice({
-      captureTimeoutMilliseconds: config.captureTimeoutMilliseconds,
-      connection,
-      controller: new ConversationVoiceCaptureController({
+    for (const [index, plannedCapture] of captures.entries()) {
+      const capture = await captureConfiguredCraigVoice({
         captureTimeoutMilliseconds: config.captureTimeoutMilliseconds,
+        connection,
+        controller: new ConversationVoiceCaptureController({
+          captureTimeoutMilliseconds: config.captureTimeoutMilliseconds,
+          expectedDuration: {
+            maximumMilliseconds:
+              config.expectedDurationMilliseconds + config.expectedDurationToleranceMilliseconds,
+            minimumMilliseconds: config.expectedDurationMilliseconds,
+          },
+          maxPcmBytes: config.maxPcmBytes,
+        }, decoder),
+        craigBotId: config.craigBotId,
+        firstPacketTimeoutMilliseconds: config.readyTimeoutMilliseconds,
+      });
+      const evidence = createConversationVoiceEvidence({
+        attemptId: plannedCapture.attemptId,
+        authenticatedBotId,
+        capture,
+        captureTimeoutMilliseconds: config.captureTimeoutMilliseconds,
+        craigBotId: config.craigBotId,
         expectedDuration: {
-          maximumMilliseconds: config.expectedDurationMilliseconds + config.expectedDurationToleranceMilliseconds,
+          maximumMilliseconds:
+            config.expectedDurationMilliseconds + config.expectedDurationToleranceMilliseconds,
           minimumMilliseconds: config.expectedDurationMilliseconds,
         },
+        guildId: config.guildId,
         maxPcmBytes: config.maxPcmBytes,
-      }, decoder),
-      craigBotId: config.craigBotId,
-      firstPacketTimeoutMilliseconds: config.readyTimeoutMilliseconds,
-    });
-    const evidence = createConversationVoiceEvidence({
-      attemptId: config.attemptId,
-      authenticatedBotId,
-      capture,
-      captureTimeoutMilliseconds: config.captureTimeoutMilliseconds,
-      craigBotId: config.craigBotId,
-      expectedDuration: {
-        maximumMilliseconds: config.expectedDurationMilliseconds + config.expectedDurationToleranceMilliseconds,
-        minimumMilliseconds: config.expectedDurationMilliseconds,
-      },
-      guildId: config.guildId,
-      maxPcmBytes: config.maxPcmBytes,
-      observerApplicationId: config.observerApplicationId,
-      privateTestGuildConfirmed: config.privateTestGuildConfirmed,
-      purpose: config.purpose,
-      recordingId: config.recordingId,
-      runId: config.runId,
-      turnId: config.turnId,
-      voiceChannelId: config.voiceChannelId,
-    });
-    await writeNewConversationVoiceEvidenceAtomically(config.outputPath, evidence);
-    process.stdout.write(`${JSON.stringify({
-      acceptedDurationMilliseconds: capture.acceptedDurationMilliseconds,
-      acceptedPacketCount: capture.acceptedPacketCount,
-      outputPath: config.outputPath,
-      runId: config.runId,
-      status: "captured",
-    })}\n`);
+        observerApplicationId: config.observerApplicationId,
+        privateTestGuildConfirmed: config.privateTestGuildConfirmed,
+        purpose: plannedCapture.purpose,
+        recordingId: config.recordingId,
+        runId: config.runId,
+        turnId: plannedCapture.turnId,
+        voiceChannelId: config.voiceChannelId,
+      });
+      await writeNewConversationVoiceEvidenceAtomically(plannedCapture.outputPath, evidence);
+      process.stdout.write(`${JSON.stringify({
+        acceptedDurationMilliseconds: capture.acceptedDurationMilliseconds,
+        acceptedPacketCount: capture.acceptedPacketCount,
+        outputPath: plannedCapture.outputPath,
+        runId: config.runId,
+        status: "captured",
+      })}\n`);
+      if (index < captures.length - 1) {
+        await waitForConfiguredCraigSilence(
+          connection,
+          config.craigBotId,
+          config.readyTimeoutMilliseconds,
+        );
+      }
+    }
   } finally {
     connection?.destroy();
     await client.destroy();
   }
+}
+
+async function waitForConfiguredCraigSilence(
+  connection: VoiceConnection,
+  craigBotId: string,
+  timeoutMilliseconds: number,
+): Promise<void> {
+  const speaking = connection.receiver.speaking;
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const cleanup = (): void => {
+      if (timeout !== undefined) {
+        clearTimeout(timeout);
+      }
+      speaking.off("end", onEnd);
+    };
+    const succeed = (): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      resolve();
+    };
+    const onEnd = (userId: string): void => {
+      if (userId === craigBotId) {
+        succeed();
+      }
+    };
+    speaking.on("end", onEnd);
+    if (!speaking.users.has(craigBotId)) {
+      succeed();
+      return;
+    }
+    timeout = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      reject(new Error("Configured Craig audio did not become silent before timeout"));
+    }, timeoutMilliseconds);
+  });
 }
 
 function requiredAuthenticatedBotId(client: Client): string {

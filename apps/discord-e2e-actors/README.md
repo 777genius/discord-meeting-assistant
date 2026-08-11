@@ -52,8 +52,8 @@ pnpm --filter @discord-meeting/discord-e2e-actors play:supplemental
 The CLI refuses token environment variables, an absent private-guild
 acknowledgement, malformed or unpinned targets, a non-bot or mismatched
 application identity, changed/non-Ogg audio, a fixture longer than 60 seconds,
-timeouts shorter than the fixture, and holds/timeouts outside their finite
-bounds. It writes create-only non-secret evidence after playback reaches
+timeouts shorter than the fixture, a pre-hold above 120 seconds, and a post-hold
+above 60 seconds. It writes create-only non-secret evidence after playback reaches
 `Playing` and then `Idle`; it never replaces an existing evidence file.
 
 ## Providerless conversation voice observer
@@ -97,6 +97,13 @@ playback-ready.
 Use `DISCORD_E2E_CONVERSATION_VOICE_READY_TIMEOUT_MS` for a cold playback bot;
 it bounds both playback-bot readiness and the wait for its first audio packet.
 The separate, bounded audio capture window starts only with that first packet.
+
+For an ordered campaign, `DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON`
+may contain up to 15 additional `{ attemptId, outputPath, purpose, turnId }`
+objects. The observer validates every create-only output and correlation before
+joining, keeps one voice connection for the full sequence, and waits for the
+configured source to become silent between captures. This prevents Discord
+reconnect timing from binding a later utterance to an earlier expected turn.
 
 Each capture declares `greeting`, `farewell`, or `addressed-answer` purpose.
 Alone it remains transport evidence: it does not run STT, establish the

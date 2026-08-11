@@ -16,9 +16,24 @@ const absoluteOutputPathSchema = z.string()
   .refine((value) => isAbsolute(value) && value !== "/", "Expected an absolute output file path");
 const absoluteDirectorySchema = z.string().min(1).refine(isAbsolute, "Expected an absolute directory path");
 const maximumReadyTimeoutMilliseconds = 120_000;
+const additionalCaptureSchema = z.object({
+  attemptId: correlationIdSchema,
+  outputPath: absoluteOutputPathSchema,
+  purpose: z.enum(["addressed-answer", "farewell", "greeting"]),
+  turnId: correlationIdSchema,
+}).strict();
+const additionalCapturesJsonSchema = z.string().max(32_768).transform((value, context) => {
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    context.addIssue({ code: "custom", message: "Expected valid JSON capture sequence" });
+    return z.NEVER;
+  }
+}).pipe(z.array(additionalCaptureSchema).max(15));
 
 const environmentSchema = z.object({
   DISCORD_E2E_CONVERSATION_VOICE_ATTEMPT_ID: correlationIdSchema,
+  DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON: additionalCapturesJsonSchema.optional(),
   DISCORD_E2E_CONVERSATION_VOICE_CAPTURE_TIMEOUT_MS: z.coerce.number()
     .int()
     .min(1_000)
@@ -94,9 +109,38 @@ const environmentSchema = z.object({
       path: ["DISCORD_E2E_CONVERSATION_VOICE_CRAIG_BOT_ID"],
     });
   }
+  const captureKeys = [
+    {
+      attemptId: value.DISCORD_E2E_CONVERSATION_VOICE_ATTEMPT_ID,
+      outputPath: value.DISCORD_E2E_CONVERSATION_VOICE_OUTPUT,
+    },
+    ...(value.DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON ?? []),
+  ];
+  if (new Set(captureKeys.map(({ attemptId }) => attemptId)).size !== captureKeys.length) {
+    context.addIssue({
+      code: "custom",
+      message: "Conversation voice capture attempt IDs must be unique",
+      path: ["DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON"],
+    });
+  }
+  if (new Set(captureKeys.map(({ outputPath }) => outputPath)).size !== captureKeys.length) {
+    context.addIssue({
+      code: "custom",
+      message: "Conversation voice capture output paths must be unique",
+      path: ["DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON"],
+    });
+  }
 });
 
+export interface ConversationVoiceObserverCapture {
+  readonly attemptId: string;
+  readonly outputPath: string;
+  readonly purpose: "addressed-answer" | "farewell" | "greeting";
+  readonly turnId: string;
+}
+
 export interface ConversationVoiceObserverConfig {
+  readonly additionalCaptures: readonly ConversationVoiceObserverCapture[];
   readonly attemptId: string;
   readonly captureTimeoutMilliseconds: number;
   readonly craigBotId: string;
@@ -128,6 +172,10 @@ export function loadConversationVoiceObserverConfig(
   }
   const parsed = environmentSchema.parse(environment);
   return Object.freeze({
+    additionalCaptures: Object.freeze(
+      (parsed.DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON ?? [])
+        .map((capture) => Object.freeze({ ...capture })),
+    ),
     attemptId: parsed.DISCORD_E2E_CONVERSATION_VOICE_ATTEMPT_ID,
     captureTimeoutMilliseconds: parsed.DISCORD_E2E_CONVERSATION_VOICE_CAPTURE_TIMEOUT_MS,
     craigBotId: parsed.DISCORD_E2E_CONVERSATION_VOICE_CRAIG_BOT_ID,

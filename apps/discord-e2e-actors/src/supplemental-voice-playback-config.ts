@@ -27,7 +27,7 @@ const environmentSchema = z.object({
   DISCORD_E2E_SUPPLEMENTAL_POST_HOLD_MS: z.coerce.number().int()
     .min(0).max(60_000).default(5_000),
   DISCORD_E2E_SUPPLEMENTAL_PRE_HOLD_MS: z.coerce.number().int()
-    .min(0).max(60_000).default(0),
+    .min(0).max(120_000).default(0),
   DISCORD_E2E_SUPPLEMENTAL_PRIVATE_TEST_GUILD: z.literal("private-test-guild"),
   DISCORD_E2E_SUPPLEMENTAL_READY_TIMEOUT_MS: z.coerce.number().int()
     .min(1_000).max(120_000).default(30_000),

@@ -20,6 +20,7 @@ const requiredEnvironment = {
 describe("loadConversationVoiceObserverConfig", () => {
   it("requires explicit private-test correlation and uses only safe secret coordinates", () => {
     expect(loadConversationVoiceObserverConfig(requiredEnvironment)).toEqual({
+      additionalCaptures: [],
       attemptId: "attempt-2026-08-04-01",
       captureTimeoutMilliseconds: 60_000,
       craigBotId: "1533224474609057793",
@@ -80,6 +81,40 @@ describe("loadConversationVoiceObserverConfig", () => {
       ...requiredEnvironment,
       DISCORD_E2E_CONVERSATION_VOICE_READY_TIMEOUT_MS: "1000",
     }).readyTimeoutMilliseconds).toBe(1_000);
+  });
+
+  it("accepts a create-only capture sequence and rejects ambiguous correlations", () => {
+    const additionalCaptures = [
+      {
+        attemptId: "attempt-2026-08-04-02",
+        outputPath: "/tmp/conversation-voice-observer-2.json",
+        purpose: "farewell",
+        turnId: "meeting-farewell:v1",
+      },
+    ];
+    expect(loadConversationVoiceObserverConfig({
+      ...requiredEnvironment,
+      DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON:
+        JSON.stringify(additionalCaptures),
+    }).additionalCaptures).toEqual(additionalCaptures);
+    expect(() => loadConversationVoiceObserverConfig({
+      ...requiredEnvironment,
+      DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON: "not-json",
+    })).toThrow();
+    expect(() => loadConversationVoiceObserverConfig({
+      ...requiredEnvironment,
+      DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON: JSON.stringify([{
+        ...additionalCaptures[0],
+        attemptId: requiredEnvironment.DISCORD_E2E_CONVERSATION_VOICE_ATTEMPT_ID,
+      }]),
+    })).toThrow("attempt IDs must be unique");
+    expect(() => loadConversationVoiceObserverConfig({
+      ...requiredEnvironment,
+      DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON: JSON.stringify([{
+        ...additionalCaptures[0],
+        outputPath: requiredEnvironment.DISCORD_E2E_CONVERSATION_VOICE_OUTPUT,
+      }]),
+    })).toThrow("output paths must be unique");
   });
 
   it("fails closed for non-private targets, missing correlations, and unsafe output paths", () => {
