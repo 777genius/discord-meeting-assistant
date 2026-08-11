@@ -143,7 +143,8 @@ async function main(): Promise<void> {
         status: "captured",
       })}\n`);
       if (index < captures.length - 1) {
-        await waitForConfiguredCraigPacketSilence(
+        await waitForConfiguredCraigAudioSilence(
+          decoder,
           sourceStream,
           config.readyTimeoutMilliseconds,
         );
@@ -159,11 +160,12 @@ async function main(): Promise<void> {
 
 function ignoreStreamError(): void {}
 
-async function waitForConfiguredCraigPacketSilence(
+async function waitForConfiguredCraigAudioSilence(
+  decoder: ConversationVoiceOpusDecoder,
   stream: AudioReceiveStream,
   timeoutMilliseconds: number,
 ): Promise<void> {
-  const packetSilenceMilliseconds = 300;
+  const audioSilenceMilliseconds = 300;
   if (stream.destroyed) {
     throw new Error("Configured Craig audio stream closed before the capture sequence completed");
   }
@@ -198,11 +200,21 @@ async function waitForConfiguredCraigPacketSilence(
       cleanup();
       reject(error);
     };
-    const onData = (): void => {
-      if (silence !== undefined) {
-        clearTimeout(silence);
+    const onData = (chunk: unknown): void => {
+      try {
+        if (!(chunk instanceof Uint8Array)) {
+          throw new Error("Configured Craig audio stream emitted a non-binary packet");
+        }
+        if (!decodedPcmHasNonSilence(decoder.decode(chunk))) {
+          return;
+        }
+        if (silence !== undefined) {
+          clearTimeout(silence);
+        }
+        silence = setTimeout(succeed, audioSilenceMilliseconds);
+      } catch {
+        fail(new Error("Configured Craig audio stream could not be decoded while waiting for silence"));
       }
-      silence = setTimeout(succeed, packetSilenceMilliseconds);
     };
     const onEnd = (): void => {
       fail(new Error("Configured Craig audio stream ended before the capture sequence completed"));
@@ -216,8 +228,21 @@ async function waitForConfiguredCraigPacketSilence(
     deadline = setTimeout(() => {
       fail(new Error("Configured Craig audio did not become silent before timeout"));
     }, timeoutMilliseconds);
-    silence = setTimeout(succeed, packetSilenceMilliseconds);
+    silence = setTimeout(succeed, audioSilenceMilliseconds);
   });
+}
+
+function decodedPcmHasNonSilence(pcm: Uint8Array): boolean {
+  if (pcm.byteLength === 0 || pcm.byteLength % 2 !== 0) {
+    throw new Error("Configured Craig audio decoder returned invalid PCM");
+  }
+  const data = new DataView(pcm.buffer, pcm.byteOffset, pcm.byteLength);
+  for (let offset = 0; offset < pcm.byteLength; offset += 2) {
+    if (Math.abs(data.getInt16(offset, true)) >= 256) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function requiredAuthenticatedBotId(client: Client): string {
