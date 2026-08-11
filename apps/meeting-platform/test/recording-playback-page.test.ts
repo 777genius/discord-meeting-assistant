@@ -128,6 +128,7 @@ interface TrackFixture {
 interface PageHarnessOptions {
   readonly fragment?: string;
   readonly manifestStatuses?: readonly ("processing" | "ready" | "unavailable")[];
+  readonly manifestTrackCount?: number;
   readonly requestModes?: readonly ("normal" | "stalled")[];
   readonly responseStatuses?: readonly number[];
 }
@@ -246,7 +247,10 @@ function createPageHarness(
       json: async () => ({
         status: manifestStatus,
         tracks: manifestStatus === "ready"
-          ? trackFixtures.map((fixture, index) => ({
+          ? trackFixtures.slice(
+              0,
+              options.manifestTrackCount ?? trackFixtures.length,
+            ).map((fixture, index) => ({
               timelineOffsetMs: fixture.timelineOffsetMs,
               url: `/recordings/s/test/tracks/${index}`,
             }))
@@ -342,7 +346,7 @@ describe("recording playback browser page", () => {
     expect(page.replacedUrls()).toEqual([]);
   });
 
-  it("removes a valid fragment from browser history before opening a session", async () => {
+  it("retains a valid fragment while the recording is still unavailable", async () => {
     vi.useFakeTimers();
     const page = createPageHarness([], {
       fragment: "a".repeat(48),
@@ -351,7 +355,7 @@ describe("recording playback browser page", () => {
     await flushAsync();
 
     expect(page.sessionRequestCount()).toBe(1);
-    expect(page.replacedUrls()).toEqual(["/recordings/playback"]);
+    expect(page.replacedUrls()).toEqual([]);
   });
 
   it("recovers when a newly published recording is briefly unavailable", async () => {
@@ -371,6 +375,7 @@ describe("recording playback browser page", () => {
     expect(page.sessionRequestCount()).toBe(2);
     expect(page.status.textContent).toBe("Ready to play");
     expect(page.player.hidden).toBe(false);
+    expect(page.replacedUrls()).toEqual(["/recordings/playback"]);
   });
 });
 
@@ -475,17 +480,50 @@ describe("recording playback media behavior", () => {
     expect(stalled.listeners.get("error")?.size ?? 0).toBe(0);
   });
 
+  it("retries once when every track metadata request fails", async () => {
+    vi.useFakeTimers();
+    const failed = new FakeAudio("error", Number.NaN);
+    const recovered = new FakeAudio("loaded", 12);
+    const page = createPageHarness([
+      { audio: failed, timelineOffsetMs: 0 },
+      { audio: recovered, timelineOffsetMs: 0 },
+    ], { manifestTrackCount: 1 });
+
+    await flushAsync();
+    expect(page.status.textContent).toBe("Checking recording tracks again...");
+    expect(page.player.hidden).toBe(true);
+    expect(page.replacedUrls()).toEqual([]);
+    expect(failed.removed).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    await flushAsync();
+    expect(page.sessionRequestCount()).toBe(2);
+    expect(page.status.textContent).toBe("Ready to play");
+    expect(page.player.hidden).toBe(false);
+    expect(page.replacedUrls()).toEqual(["/recordings/playback"]);
+  });
+
   it("shows unavailable when every metadata request times out", async () => {
     vi.useFakeTimers();
-    const stalled = new FakeAudio("stalled", Number.NaN);
-    const page = createPageHarness([{ audio: stalled, timelineOffsetMs: 0 }]);
+    const firstStalled = new FakeAudio("stalled", Number.NaN);
+    const secondStalled = new FakeAudio("stalled", Number.NaN);
+    const page = createPageHarness([
+      { audio: firstStalled, timelineOffsetMs: 0 },
+      { audio: secondStalled, timelineOffsetMs: 0 },
+    ], { manifestTrackCount: 1 });
 
+    await vi.advanceTimersByTimeAsync(15_000);
+    await flushAsync();
+    expect(page.status.textContent).toBe("Checking recording tracks again...");
+
+    await vi.advanceTimersByTimeAsync(5_000);
     await vi.advanceTimersByTimeAsync(15_000);
     await flushAsync();
 
     expect(page.status.textContent).toBe("Recording unavailable");
     expect(page.player.hidden).toBe(true);
-    expect(stalled.removed).toBe(true);
+    expect(firstStalled.removed).toBe(true);
+    expect(secondStalled.removed).toBe(true);
   });
 
   it("removes an errored media element immediately", async () => {

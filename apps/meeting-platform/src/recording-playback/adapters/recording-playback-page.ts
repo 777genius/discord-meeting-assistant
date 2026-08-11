@@ -89,7 +89,7 @@ export const recordingPlaybackClientScript = String.raw`
   let playing = false;
   let starting = false;
   let lastSyncAt = 0;
-  let gapClock = null, manifestAttempts = 0;
+  let gapClock = null, manifestAttempts = 0, metadataRetryUsed = false;
   const metadataTimeoutMs = 15000;
   const manifestRequestTimeoutMs = 5000, manifestRetryDelayMs = 5000, maximumManifestAttempts = 24;
 
@@ -98,12 +98,6 @@ export const recordingPlaybackClientScript = String.raw`
     showUnavailable();
     return;
   }
-  window.history.replaceState(
-    null,
-    "",
-    window.location.pathname + window.location.search,
-  );
-
   function formatTime(seconds) {
     const safe = Math.max(0, Math.floor(Number.isFinite(seconds) ? seconds : 0));
     const hours = Math.floor(safe / 3600);
@@ -181,7 +175,20 @@ export const recordingPlaybackClientScript = String.raw`
         if (pendingMessage !== null) { retryManifest(pendingMessage); return; }
         if (manifest.status !== "ready" || manifest.tracks.length === 0)
           { showUnavailable(); return; }
-        await prepareTracks(manifest.tracks);
+        const tracksReady = await prepareTracks(manifest.tracks);
+        if (!tracksReady) {
+          if (metadataRetryUsed) showUnavailable();
+          else {
+            metadataRetryUsed = true;
+            retryManifest("Checking recording tracks again...");
+          }
+          return;
+        }
+        window.history.replaceState(
+          null,
+          "",
+          window.location.pathname + window.location.search,
+        );
       } finally { window.clearTimeout(timeoutId); }
     } catch {
       retryManifest("Checking recording again...");
@@ -206,8 +213,7 @@ export const recordingPlaybackClientScript = String.raw`
     await Promise.all(tracks.map(loadMetadata));
     const available = tracks.filter((track) => track.available);
     if (available.length === 0) {
-      showUnavailable();
-      return;
+      return false;
     }
     tracks = available;
     duration = Math.max(...tracks.map((track) => track.offset + track.audio.duration));
@@ -220,6 +226,7 @@ export const recordingPlaybackClientScript = String.raw`
       noticeNode.hidden = false;
     }
     renderPosition(0);
+    return true;
   }
 
   function loadMetadata(track) {
