@@ -132,7 +132,7 @@ const environmentSchema = z.object({
   }
 });
 
-export interface ConversationVoiceObserverCapture {
+interface ConversationVoiceObserverCapture {
   readonly attemptId: string;
   readonly outputPath: string;
   readonly purpose: "addressed-answer" | "farewell" | "greeting";
