@@ -50,6 +50,14 @@ const farewellPlaybackLogSchema = z.object({
   time: z.iso.datetime(),
   turnId: z.literal("meeting-farewell:v1"),
 }).loose();
+const addressedAnswerLogSchema = z.object({
+  meetingId: z.string(),
+  message: z.literal("Live conversation turn observed"),
+  outcome: z.enum(["active", "queued"]),
+  speakerId: z.string().trim().min(1),
+  time: z.iso.datetime(),
+  turnId: z.string().trim().min(1),
+}).loose();
 
 export function parseProcessingEvidenceLogs(output: string, meetingId: string): ProcessingEvidence {
   const stages: ProcessingEvidence["stages"][number][] = [];
@@ -95,6 +103,17 @@ export function parseConversationLifecycleEvidenceLogs(
   for (const line of output.split("\n")) {
     const event = parseJsonLine(line);
     if (event === undefined || event.meetingId !== meetingId) {
+      continue;
+    }
+    const addressed = addressedAnswerLogSchema.safeParse(event);
+    if (addressed.success) {
+      events.push({
+        observedAt: addressed.data.time,
+        outcome: addressed.data.outcome,
+        participantId: addressed.data.speakerId,
+        turnId: addressed.data.turnId,
+        type: "addressed-answer",
+      });
       continue;
     }
     const greeting = greetingPlaybackLogSchema.safeParse(event);

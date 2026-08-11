@@ -1,73 +1,22 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute } from "node:path";
-
-import { z } from "zod";
+import { dirname } from "node:path";
 
 import { DiscordJsEvidenceProbe } from "./discord-evidence-probe.js";
 import { collectRetainedE2eEvidence } from "./e2e-collector.js";
+import { collectorEnvironmentSchema } from "./e2e-collector-environment.js";
 import {
   conversationVoiceEvidenceV3Schema,
   deploymentRevisionExpectationSchema,
   fixtureManifestV1Schema,
+  supplementalPlaybackEvidenceV1Schema,
   verifyRetainedE2eEvidence,
 } from "./e2e-evidence.js";
 import { FileSecretReader, MacOsKeychainSecretReader } from "./keychain.js";
 import { SshDeploymentEvidenceProbe } from "./ssh-deployment-probe.js";
 
-const absolutePath = z.string().refine(isAbsolute);
-const correlationId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u);
-const environmentSchema = z.object({
-  DISCORD_E2E_ACTOR_RUN_INPUT: absolutePath,
-  DISCORD_E2E_BOTIK_SPEAKER_ID: correlationId.optional(),
-  DISCORD_E2E_CONVERSATION_VOICE_INPUTS: z.string().transform((value, context) => {
-    try {
-      return z.array(absolutePath).min(5).parse(JSON.parse(value) as unknown);
-    } catch {
-      context.addIssue({
-        code: "custom",
-        message: "Expected a JSON array of at least five absolute voice evidence paths",
-      });
-      return z.NEVER;
-    }
-  }).optional(),
-  DISCORD_E2E_EVIDENCE_OUTPUT: absolutePath,
-  DISCORD_E2E_EXPECTED_CRAIG_SOURCE_REVISION: z.string().min(1),
-  DISCORD_E2E_EXPECTED_MEETING_PLATFORM_SOURCE_REVISION: z.string().min(1),
-  DISCORD_E2E_EXPECTED_PIPECAT_SOURCE_REVISION: z.string().min(1).optional(),
-  DISCORD_E2E_EXPECTED_SUBSCRIPTION_RUNTIME_SOURCE_REVISION: z.string().min(1),
-  DISCORD_E2E_FIXTURE_MANIFEST: z.string().min(1).default("test/fixtures/manifest.v1.json"),
-  DISCORD_E2E_KEYCHAIN_SERVICE: z.string().min(1).default("discord-voice-bot-e2e"),
-  DISCORD_E2E_RECORDING_ID: correlationId,
-  DISCORD_E2E_REMOTE_CRAIG_PROJECT: z.string().min(1).default("craig-meeting-e2e"),
-  DISCORD_E2E_REMOTE_CRAIG_SERVICE: z.string().min(1).default("bot"),
-  DISCORD_E2E_REMOTE_COMPOSE_FILE: absolutePath.default(
-    "/mnt/volume_ams3_1784742570542/discord-meeting-assistant/source/infra/deployment/compose.yaml",
-  ),
-  DISCORD_E2E_REMOTE_ENV_FILE: absolutePath.default(
-    "/mnt/volume_ams3_1784742570542/discord-meeting-assistant/source.env",
-  ),
-  DISCORD_E2E_REMOTE_HOST: z.string().min(1).default("codex-workers-eu-01"),
-  DISCORD_E2E_REMOTE_PROJECT: z.string().min(1).default("discord-meeting-assistant"),
-  DISCORD_E2E_REMOTE_SOURCE_ROOT: absolutePath.default(
-    "/mnt/volume_ams3_1784742570542/discord-meeting-assistant/source",
-  ),
-  DISCORD_E2E_RUN_ID: correlationId,
-  DISCORD_E2E_SECRET_DIRECTORY: absolutePath.optional(),
-  DISCORD_E2E_SUT_ACCOUNT: z.string().min(1).default("sut"),
-}).superRefine((value, context) => {
-  if ((value.DISCORD_E2E_BOTIK_SPEAKER_ID === undefined) !==
-    (value.DISCORD_E2E_CONVERSATION_VOICE_INPUTS === undefined)) {
-    context.addIssue({
-      code: "custom",
-      message: "Botik speaker ID and conversation voice inputs must be supplied together",
-      path: ["DISCORD_E2E_CONVERSATION_VOICE_INPUTS"],
-    });
-  }
-});
-
 async function main(): Promise<void> {
-  const config = environmentSchema.parse(process.env);
-  const [actorRun, manifest, token, conversationVoice] = await Promise.all([
+  const config = collectorEnvironmentSchema.parse(process.env);
+  const [actorRun, manifest, token, conversationVoice, supplementalPlayback] = await Promise.all([
     readJson(config.DISCORD_E2E_ACTOR_RUN_INPUT),
     readJson(config.DISCORD_E2E_FIXTURE_MANIFEST).then((value) =>
       fixtureManifestV1Schema.parse(value)
@@ -79,6 +28,7 @@ async function main(): Promise<void> {
     Promise.all((config.DISCORD_E2E_CONVERSATION_VOICE_INPUTS ?? []).map((path) =>
       readJson(path).then((value) => conversationVoiceEvidenceV3Schema.parse(value))
     )),
+    readSupplementalPlayback(config.DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_INPUT),
   ]);
   const deployment = new SshDeploymentEvidenceProbe({
     composeFile: config.DISCORD_E2E_REMOTE_COMPOSE_FILE,
@@ -92,18 +42,21 @@ async function main(): Promise<void> {
     sourceRoot: config.DISCORD_E2E_REMOTE_SOURCE_ROOT,
   });
   const discord = new DiscordJsEvidenceProbe();
+  const conversation = config.DISCORD_E2E_BOTIK_SPEAKER_ID === undefined
+    ? undefined
+    : {
+        botSpeakerId: config.DISCORD_E2E_BOTIK_SPEAKER_ID,
+        supplementalPlayback: requireDefined(
+          supplementalPlayback,
+          "supplemental playback evidence",
+        ),
+        voice: conversationVoice,
+      };
   try {
     await discord.connect(token);
     const evidence = await collectRetainedE2eEvidence({
       actorRun,
-      ...(config.DISCORD_E2E_BOTIK_SPEAKER_ID === undefined
-        ? {}
-        : {
-            conversation: {
-              botSpeakerId: config.DISCORD_E2E_BOTIK_SPEAKER_ID,
-              voice: conversationVoice,
-            },
-          }),
+      ...(conversation === undefined ? {} : { conversation }),
       recordingId: config.DISCORD_E2E_RECORDING_ID,
       runId: config.DISCORD_E2E_RUN_ID,
     }, deployment, discord);
@@ -130,8 +83,22 @@ async function main(): Promise<void> {
   }
 }
 
+function requireDefined<T>(value: T | undefined, label: string): T {
+  if (value === undefined) {
+    throw new Error(`Missing ${label} after environment validation`);
+  }
+  return value;
+}
+
 async function readJson(path: string): Promise<unknown> {
   return JSON.parse(await readFile(path, "utf8")) as unknown;
+}
+
+async function readSupplementalPlayback(path: string | undefined) {
+  if (path === undefined) {
+    return;
+  }
+  return supplementalPlaybackEvidenceV1Schema.parse(await readJson(path));
 }
 
 async function atomicWriteJson(path: string, value: unknown): Promise<void> {

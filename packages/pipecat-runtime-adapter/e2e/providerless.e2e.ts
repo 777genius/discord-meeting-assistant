@@ -268,6 +268,8 @@ describe("Node to Python providerless conversation E2E", () => {
         prompt: "скажи, что ты слушаешь.",
       });
       await coordinator.whenIdle("meeting-e2e");
+      await expect(coordinator.whenTurnPlaybackSettled("meeting-e2e", "turn-e2e"))
+        .resolves.toBe("played");
       await waitForCondition(() =>
         commands.some((command) => command.type === "playback-finish"),
       );
@@ -368,6 +370,8 @@ describe("Providerless greeting and farewell playback E2E", () => {
         status: "active",
       });
       await coordinator.whenIdle(meetingId);
+      await expect(coordinator.whenTurnPlaybackSettled(meetingId, turnId))
+        .resolves.toBe("played");
       try {
         await waitForCondition(() =>
           harness.commands.some((command) => command.type === "playback-finish"),
@@ -456,6 +460,8 @@ describe("Providerless greeting and farewell playback E2E", () => {
           voiceProfileId: "elevenlabs-multilingual",
         })).resolves.toMatchObject({ status: "active" });
         await coordinator.whenIdle(meetingId);
+        await expect(coordinator.whenTurnPlaybackSettled(meetingId, turnId))
+          .resolves.toBe("played");
         await waitForCondition(() =>
           harness.commands.some((command) => command.type === "playback-finish"),
         );

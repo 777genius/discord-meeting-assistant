@@ -215,6 +215,36 @@ it("reports a proactive turn as unplayed when synthesis completes without audio"
   )).resolves.toBe("unplayed");
 });
 
+it("reports a failed runtime turn without audio as safely unplayed", async () => {
+  const runtime = new ScriptedRuntime([
+    closedStream([
+      { attemptId: "attempt-empty-failure", type: "accepted" },
+      {
+        attemptId: "attempt-empty-failure",
+        failure: {
+          code: "pipecat-pipeline-failed",
+          message: "synthesis completed without audio",
+          retryable: true,
+        },
+        type: "failed",
+      },
+    ]),
+  ]);
+  const coordinator = new ConversationCoordinator({
+    playback: new RecordingPlayback(),
+    runtime,
+  });
+
+  await expect(coordinator.handleProactiveTurn(
+    proactiveTurn("participant-greeting:42", 0),
+  )).resolves.toMatchObject({ status: "active" });
+
+  await expect(coordinator.whenTurnPlaybackSettled(
+    "meeting-1",
+    "participant-greeting:42",
+  )).resolves.toBe("unplayed");
+});
+
 it("does not lose a turn settlement when meeting close races its waiter", async () => {
   const runtime = new ScriptedRuntime([
     closedStream([

@@ -184,7 +184,7 @@ The first greeting may occur before Craig exposes its random recording ID. In
 that case omit `DISCORD_E2E_CONVERSATION_VOICE_RECORDING_ID`; the raw capture
 retains `null`, and the collector binds it exactly once to the explicitly
 selected recording. A conflicting non-null recording ID fails closed, and the
-v7 verifier still requires every capture timestamp to fall inside that
+v7/v8 verifier still requires every capture timestamp to fall inside that
 recording's authoritative interval.
 
 For a cold Botik connection, set
@@ -207,18 +207,20 @@ the pinned Botik speaker ID to the normal collector:
 ```sh
 DISCORD_E2E_BOTIK_SPEAKER_ID=1534231284467896512 \
 DISCORD_E2E_CONVERSATION_VOICE_INPUTS='["/absolute/evidence/greeting-observer.json","/absolute/evidence/greeting-ru.json","/absolute/evidence/greeting-en.json","/absolute/evidence/greeting-speaker-d.json","/absolute/evidence/addressed-answer.json","/absolute/evidence/farewell.json"]' \
-DISCORD_E2E_EVIDENCE_OUTPUT=/absolute/evidence/reconnect.evidence.v7.json \
+DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_INPUT=/absolute/evidence/speaker-d.playback.json \
+DISCORD_E2E_EVIDENCE_OUTPUT=/absolute/evidence/reconnect.evidence.v8.json \
 DISCORD_E2E_SECRET_DIRECTORY=/run/secrets/discord-e2e \
 pnpm --filter @discord-meeting/discord-e2e-actors collect:e2e
 
 pnpm --filter @discord-meeting/discord-e2e-actors run verify:e2e -- \
   apps/discord-e2e-actors/test/fixtures/manifest.v1.json \
-  /absolute/evidence/reconnect.evidence.v7.json
+  /absolute/evidence/reconnect.evidence.v8.json
 ```
 
 The gate derives locale and known/unknown status from privacy-safe runtime
-metadata and combines it with audible captures. It requires both locales, an
-unknown participant, unique participant greeting identity, and exactly one
+metadata and combines it with audible captures plus the Botik transcript interval. It requires both locales, an
+unknown participant, named participants in both languages, unique participant
+greeting identity, and exactly one correctly localized
 settled prepared farewell. Observer timestamps must
 fall inside the same authoritative recording. The addressed capture must
 overlap exactly one final transcript turn on the pinned Botik track. Any stale
@@ -227,6 +229,17 @@ wrong Botik speaker, or duplicate lifecycle identity fails closed. Keep the
 existing deterministic greeting/playback and farewell-policy suites green: they
 prove exact named/nameless phrases and the continuation, quoted-speech,
 third-person, and false-positive cases without writing names or prompts to logs.
+The supplemental evidence must match the pinned Speaker D application, fixture
+hash, duration, guild, channel, and run. Its final transcript must contain the
+question and farewell markers in order, with the audible Botik answer and its
+deterministic nonce between them. The nonce is pinned in both the Speaker D
+question terms and Botik answer expectation, so an unrelated acknowledgement
+cannot satisfy the gate.
+If an admitted greeting produces zero audio, the successful bounded retry uses
+`participant-greeting:<participant-id>:retry-1..3`; v8 accepts only that range
+and still requires exactly one time-matched audible capture for that participant.
+The observer may retain the base turn ID because it starts before the successful
+attempt number is known.
 
 For the retained campaign only, add the test-only `play:supplemental` CLI as a
 separate Speaker D input. Its single pinned Ogg Opus fixture must first ask Botik

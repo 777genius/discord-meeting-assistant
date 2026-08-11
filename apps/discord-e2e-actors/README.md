@@ -27,8 +27,8 @@ campaign. Relative fixture paths are resolved from the manifest directory:
   "applicationId": "1533873978417086474",
   "fixture": {
     "path": "supplemental-question-farewell.ru.ogg",
-    "sha256": "9741f8e03bc6417354908bdfb4a771297f0ab5ee31fecc213dd352c8779343b1",
-    "durationMs": 23768,
+    "sha256": "fa4d4db0e725944e65cacef8dff12172b2fac2456f2cd5ded33eddc86328c608",
+    "durationMs": 24226,
     "purpose": "speaker-d-botik-question-and-later-group-farewell"
   }
 }
@@ -118,12 +118,12 @@ correlation. A first-join capture may omit
 `DISCORD_E2E_CONVERSATION_VOICE_RECORDING_ID` before Craig exposes its random
 recording ID; the create-only raw file then retains `null`. The collector binds
 that capture exactly once to the explicitly selected authoritative recording
-and rejects a conflicting non-null ID. Current v7 retained evidence closes that
+and rejects a conflicting non-null ID. Current v7/v8 retained evidence closes that
 correlation by checking
 the capture interval against the authoritative recording, matching lifecycle
 turns to settled runtime markers plus audible captures, and matching the
 addressed-answer interval to exactly one Botik turn in the final transcript.
-For v7, the configured source bot must be the same pinned Botik identity.
+For v7/v8, the configured source bot must be the same pinned Botik identity.
 
 Generate the Russian fixtures with embedded English technical terms before the
 first external run. The command uses macOS `say` (voice `Milena` by default),
@@ -206,6 +206,7 @@ provenance plus correlated stage/model latency observations. When
 `DISCORD_E2E_EXPECTED_PIPECAT_SOURCE_REVISION` is set, it also requires and
 captures the profiled Pipecat service. It replays the
 completed BullMQ job, then repeats the Postgres, Discord, and provenance probes.
+The retained v8 conversation group makes that exact Pipecat revision mandatory.
 It writes nothing unless correlation, stable provenance, and the single-run
 verifier pass:
 
@@ -218,26 +219,35 @@ pnpm --filter @discord-meeting/discord-e2e-actors collect:e2e
 ```
 
 For the opt-in greeting/farewell/Botik campaign, start a create-only observer
-capture immediately before each of the three greeting playbacks, the prepared
-farewell, and the addressed answer. Then collect v7 by adding the pinned Botik
-speaker ID and the JSON array of those five files:
+capture immediately before each of the four greeting playbacks, the prepared
+farewell, and the addressed answer. Then collect v8 by adding the pinned Botik
+speaker ID and the JSON array of those six files:
 
 ```sh
 DISCORD_E2E_BOTIK_SPEAKER_ID=1534231284467896512 \
-DISCORD_E2E_CONVERSATION_VOICE_INPUTS='["/absolute/evidence/greeting-ru.json","/absolute/evidence/greeting-en.json","/absolute/evidence/greeting-unknown.json","/absolute/evidence/farewell.json","/absolute/evidence/addressed-answer.json"]' \
-DISCORD_E2E_EVIDENCE_OUTPUT=/absolute/evidence/reconnect.evidence.v7.json \
+DISCORD_E2E_CONVERSATION_VOICE_INPUTS='["/absolute/evidence/greeting-observer.json","/absolute/evidence/greeting-ru.json","/absolute/evidence/greeting-en.json","/absolute/evidence/greeting-speaker-d.json","/absolute/evidence/farewell.json","/absolute/evidence/addressed-answer.json"]' \
+DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_INPUT=/absolute/evidence/speaker-d.playback.json \
+DISCORD_E2E_EVIDENCE_OUTPUT=/absolute/evidence/reconnect.evidence.v8.json \
 DISCORD_E2E_SECRET_DIRECTORY=/run/secrets/discord-e2e \
 pnpm --filter @discord-meeting/discord-e2e-actors collect:e2e
 ```
 
-The v7 verifier requires audible RU and EN greetings, an unknown-participant
-greeting without logging its prompt or name, one greeting per participant despite reconnect,
-exactly one completed prepared farewell, one audible capture per lifecycle
+The v8 verifier requires audible RU and EN greetings for the exact pinned actor
+identities whose Botik transcript interval contains a pinned greeting term,
+separate default-locale greetings for the pinned unknown observer and Speaker D
+without logging a prompt or name, one greeting per participant despite reconnect,
+exactly one completed prepared farewell in the pinned language, one audible capture per lifecycle
 turn, and one audible addressed answer overlapping one final Botik transcript
-turn. It rejects stale intervals, duplicate attempts/participants, mixed
+turn. The pinned Speaker D playback must contribute the expected question and
+farewell transcript terms, including its deterministic answer nonce. The Botik
+answer is required between those turns and must repeat that same nonce. It
+rejects stale intervals, duplicate attempts/participants, mixed
 observer or Botik identities, wrong run/recording, and a missing/wrong Botik
 speaker track. Deterministic bridge and providerless playback tests separately
 prove the exact named and nameless phrase construction without retaining PII in logs.
+For a zero-audio first attempt, the observer keeps the participant's base turn
+ID while the settled event may use only `:retry-1` through `:retry-3`; timestamp
+binding must still prove exactly one audible successful greeting.
 
 For a fully hosted campaign, use the same external secret directory for the
 actor harness, voice observer, and collector. It contains files named by the

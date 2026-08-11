@@ -95,7 +95,7 @@ function verifyReplayAttachments(
   evidence: RetainedE2eEvidence,
   fail: VerificationFailureReporter,
 ): void {
-  if (evidence.schemaVersion !== 6) {
+  if (!("attachments" in evidence.publication) || !("attachments" in evidence.replay)) {
     return;
   }
   if (!sameDiscordAttachments(evidence.publication.attachments, evidence.replay.attachments)) {

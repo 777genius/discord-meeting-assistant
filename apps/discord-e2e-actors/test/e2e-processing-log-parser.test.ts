@@ -57,17 +57,32 @@ describe("parseConversationLifecycleEvidenceLogs", () => {
       reason: "explicit-group", time: "2026-08-06T19:19:37.000Z",
       turnId: "meeting-farewell:v1",
     };
+    const addressed = {
+      meetingId: "meeting-1", message: "Live conversation turn observed",
+      outcome: "active", speakerId: "participant-4",
+      time: "2026-08-06T19:18:47.000Z", turnId: "human-question-1",
+    };
     const output = [
       JSON.stringify({ ...greeting, meetingId: "other" }),
       JSON.stringify(greeting),
-      JSON.stringify({ ...greeting, participantId: "participant-2", turnId: "participant-greeting:participant-2", greetingLocale: "en" }),
+      JSON.stringify({ ...greeting, participantId: "participant-2", turnId: "participant-greeting:participant-2:retry-1", greetingLocale: "en" }),
       JSON.stringify({ ...greeting, participantId: "participant-3", turnId: "participant-greeting:participant-3" }),
+      JSON.stringify(addressed),
       JSON.stringify(farewell),
     ].join("\n");
     const events = parseConversationLifecycleEvidenceLogs(output, "meeting-1").events;
-    expect(events).toHaveLength(4);
+    expect(events).toHaveLength(5);
     expect(events[0]).not.toHaveProperty("greetingText");
     expect(events[0]).not.toHaveProperty("participantName");
+    expect(events[1]).toMatchObject({
+      participantId: "participant-2",
+      turnId: "participant-greeting:participant-2:retry-1",
+    });
+    expect(events[3]).toMatchObject({
+      participantId: "participant-4",
+      turnId: "human-question-1",
+      type: "addressed-answer",
+    });
   });
 });
 

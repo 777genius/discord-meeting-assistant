@@ -1,32 +1,48 @@
-import {
-  characterErrorRate,
-  normalizeTranscriptSemantics,
-  wordErrorRate,
-} from "./e2e-evidence-text-metrics.js";
+import { verifyAddressedAnswer } from "./e2e-evidence-addressed-answer-verification.js";
+import { verifyGreetingAudioSemantics } from "./e2e-evidence-greeting-semantics-verification.js";
+import { verifySupplementalPlayback } from "./e2e-evidence-supplemental-verification.js";
+import { authoritativeTrackCoverage } from "./e2e-evidence-track-verification.js";
 import type {
+  DeploymentRevisionExpectation,
   FixtureManifestV1,
   RetainedE2eEvidence,
 } from "./e2e-evidence-schema.js";
-import type {
-  TranscriptVerificationContext,
-  VerificationFailureReporter,
-} from "./e2e-evidence-verification-types.js";
+import type { VerificationFailureReporter } from "./e2e-evidence-verification-types.js";
 
 export function verifyConversationEvidence(
   manifest: FixtureManifestV1,
   evidence: RetainedE2eEvidence,
+  expectedRevisions: DeploymentRevisionExpectation,
   fail: VerificationFailureReporter,
 ): void {
-  if (evidence.schemaVersion !== 7) {
+  if (evidence.schemaVersion !== 7 && evidence.schemaVersion !== 8) {
     return;
   }
   const recordingStartMs = Date.parse(evidence.recording.startedAt);
   const recordingEndMs = Date.parse(evidence.recording.endedAt);
-  if (!manifest.allowedBotSpeakerIds.includes(evidence.conversation.botSpeakerId)) {
-    fail("BOT_SPEAKER_NOT_PINNED", "Botik speaker is not pinned by the fixture manifest");
+  const voiceExpectation = manifest.conversationVoiceExpectation;
+  if (
+    evidence.schemaVersion === 8
+      ? voiceExpectation === undefined ||
+        evidence.conversation.botSpeakerId !== voiceExpectation.botSpeakerId
+      : !manifest.allowedBotSpeakerIds.includes(evidence.conversation.botSpeakerId)
+  ) {
+    fail("BOT_SPEAKER_NOT_PINNED", "Botik speaker does not match the exact manifest identity");
+  }
+  if (
+    evidence.schemaVersion === 8 &&
+    (expectedRevisions.pipecat === undefined || evidence.deployment.pipecat === undefined)
+  ) {
+    fail(
+      "PIPECAT_PROVENANCE_MISSING",
+      "v8 conversation proof requires exact Pipecat revision and deployment provenance",
+    );
   }
   if (evidence.actorRun.scenario !== "reconnect") {
-    fail("LIFECYCLE_RECONNECT_NOT_PROVEN", "v7 lifecycle evidence must come from a reconnect run");
+    fail(
+      "LIFECYCLE_RECONNECT_NOT_PROVEN",
+      "v7/v8 lifecycle evidence must come from a reconnect run",
+    );
   }
   verifyGreetingAndFarewellLifecycle(
     manifest,
@@ -37,14 +53,23 @@ export function verifyConversationEvidence(
   );
   verifyVoiceCaptureIdentity(manifest, evidence, recordingStartMs, recordingEndMs, fail);
   verifyLifecycleAudioBindings(manifest, evidence, fail);
+  if (evidence.schemaVersion === 8) {
+    verifyBotTrackCoverage(manifest, evidence, recordingStartMs, fail);
+    verifyGreetingAudioSemantics(manifest, evidence, recordingStartMs, fail);
+    verifySupplementalPlayback(manifest, evidence, recordingStartMs, recordingEndMs, fail);
+  }
   verifyAddressedAnswer(evidence, recordingStartMs, fail);
 }
 
-type RetainedE2eEvidenceV7 = Extract<RetainedE2eEvidence, { schemaVersion: 7 }>;
+type RetainedConversationEvidence = Extract<
+  RetainedE2eEvidence,
+  { schemaVersion: 7 | 8 }
+>;
+const maximumVerifiedGreetingRetry = 3;
 
 function verifyGreetingAndFarewellLifecycle(
   manifest: FixtureManifestV1,
-  evidence: RetainedE2eEvidenceV7,
+  evidence: RetainedConversationEvidence,
   recordingStartMs: number,
   recordingEndMs: number,
   fail: VerificationFailureReporter,
@@ -59,11 +84,25 @@ function verifyGreetingAndFarewellLifecycle(
     !greetings.some(({ greetingLocale }) => greetingLocale === "en")) {
     fail("GREETING_LOCALE_MISSING", "completed greeting proof must include Russian and English");
   }
+  if (evidence.schemaVersion === 8 &&
+    (!greetings.some(({ greetingLocale, participantNameStatus }) =>
+      greetingLocale === "ru" && participantNameStatus === "known") ||
+      !greetings.some(({ greetingLocale, participantNameStatus }) =>
+        greetingLocale === "en" && participantNameStatus === "known"))) {
+    fail(
+      "NAMED_GREETING_LOCALE_MISSING",
+      "completed greeting proof must include named Russian and English participants",
+    );
+  }
   if (!greetings.some(({ participantNameStatus }) => participantNameStatus === "unknown")) {
     fail("UNKNOWN_GREETING_MISSING", "completed greeting proof has no unknown participant");
   }
   for (const greeting of greetings) {
-    if (greeting.turnId !== `participant-greeting:${greeting.participantId}`) {
+    if (!isVerifiedGreetingTurnId(
+      greeting.turnId,
+      greeting.participantId,
+      evidence.schemaVersion === 8,
+    )) {
       fail("GREETING_TURN_MISMATCH", `greeting turn is not bound to ${greeting.participantId}`);
     }
   }
@@ -79,11 +118,31 @@ function verifyGreetingAndFarewellLifecycle(
   }
 }
 
+function isVerifiedGreetingTurnId(
+  turnId: string,
+  participantId: string,
+  allowRetries: boolean,
+): boolean {
+  const initialTurnId = `participant-greeting:${participantId}`;
+  if (turnId === initialTurnId) {
+    return true;
+  }
+  if (!allowRetries) {
+    return false;
+  }
+  for (let retry = 1; retry <= maximumVerifiedGreetingRetry; retry += 1) {
+    if (turnId === `${initialTurnId}:retry-${retry}`) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function verifyReconnectGreeting(
   manifest: FixtureManifestV1,
-  evidence: RetainedE2eEvidenceV7,
+  evidence: RetainedConversationEvidence,
   greetings: readonly Extract<
-    RetainedE2eEvidenceV7["conversation"]["lifecycle"]["events"][number],
+    RetainedConversationEvidence["conversation"]["lifecycle"]["events"][number],
     { type: "greeting" }
   >[],
   recordingStartMs: number,
@@ -115,7 +174,7 @@ function verifyReconnectGreeting(
 
 function verifyVoiceCaptureIdentity(
   manifest: FixtureManifestV1,
-  evidence: RetainedE2eEvidenceV7,
+  evidence: RetainedConversationEvidence,
   recordingStartMs: number,
   recordingEndMs: number,
   fail: VerificationFailureReporter,
@@ -186,15 +245,52 @@ function verifyVoiceCaptureExpectation(
   }
 }
 
+function verifyBotTrackCoverage(
+  manifest: FixtureManifestV1,
+  evidence: RetainedConversationEvidence,
+  recordingStartMs: number,
+  fail: VerificationFailureReporter,
+): void {
+  const intervals = [
+    ...evidence.conversation.voice.map(({ capture }) => ({
+      endMs: capture.endedAt.epochMilliseconds - recordingStartMs,
+      startMs: capture.firstPacketAt.epochMilliseconds - recordingStartMs,
+    })),
+    ...evidence.transcript.turns.filter(
+      ({ speakerId }) => speakerId === evidence.conversation.botSpeakerId,
+    ),
+  ];
+  const issue = authoritativeTrackCoverage(
+    evidence,
+    evidence.conversation.botSpeakerId,
+    intervals,
+    manifest.thresholds.timestampToleranceMs,
+  );
+  if (issue === "track-missing") {
+    fail("BOT_RECORDING_TRACK_MISSING", "Botik must have exactly one authoritative S3 track");
+    return;
+  }
+  if (issue === "interval-outside-track") {
+    fail(
+      "BOT_TRACK_INTERVAL_MISMATCH",
+      "Botik captures and transcript turns must fit its authoritative S3 track",
+    );
+  }
+}
+
 function verifyLifecycleAudioBindings(
   manifest: FixtureManifestV1,
-  evidence: RetainedE2eEvidenceV7,
+  evidence: RetainedConversationEvidence,
   fail: VerificationFailureReporter,
 ): void {
   const { lifecycle, voice } = evidence.conversation;
   for (const event of lifecycle.events) {
     const matches = voice.filter(({ correlation }) =>
-      correlation.purpose === event.type && correlation.turnId === event.turnId
+      correlation.purpose === event.type && isLifecycleTurnBinding(
+        event,
+        correlation.turnId,
+        evidence.schemaVersion,
+      )
     );
     if (matches.length !== 1) {
       fail("LIFECYCLE_AUDIO_MISMATCH", `expected one audible capture for ${event.turnId}`);
@@ -202,181 +298,40 @@ function verifyLifecycleAudioBindings(
     }
     const capture = matches[0]!;
     const observedAt = Date.parse(event.observedAt);
-    if (
-      observedAt < capture.capture.firstPacketAt.epochMilliseconds ||
-      observedAt > capture.capture.endedAt.epochMilliseconds +
-        manifest.thresholds.timestampToleranceMs
-    ) {
+    const timingMismatch = event.type === "addressed-answer"
+      ? observedAt > capture.capture.firstPacketAt.epochMilliseconds
+      : observedAt < capture.capture.firstPacketAt.epochMilliseconds ||
+        observedAt > capture.capture.endedAt.epochMilliseconds +
+          manifest.thresholds.timestampToleranceMs;
+    if (timingMismatch) {
       fail("LIFECYCLE_AUDIO_MISMATCH", `audible capture is not time-bound to ${event.turnId}`);
     }
   }
-}
-
-function verifyAddressedAnswer(
-  evidence: RetainedE2eEvidenceV7,
-  recordingStartMs: number,
-  fail: VerificationFailureReporter,
-): void {
-  const { voice, botSpeakerId } = evidence.conversation;
-  const answerCaptures = voice.filter(({ correlation }) => correlation.purpose === "addressed-answer");
-  if (answerCaptures.length !== 1) {
-    fail("ANSWER_AUDIO_COUNT_MISMATCH", "expected exactly one audible addressed answer capture");
-  }
-  if (!evidence.recording.speakerIds.includes(botSpeakerId)) {
-    fail("BOT_RECORDING_TRACK_MISSING", "Botik speaker is absent from the authoritative recording");
-  }
-  for (const answer of answerCaptures) {
-    const answerStartMs = answer.capture.firstPacketAt.epochMilliseconds - recordingStartMs;
-    const answerEndMs = answer.capture.endedAt.epochMilliseconds - recordingStartMs;
-    const transcriptMatches = evidence.transcript.turns.filter((turn) =>
-      turn.speakerId === botSpeakerId && turn.startMs < answerEndMs && answerStartMs < turn.endMs
-    );
-    if (transcriptMatches.length !== 1) {
-      fail("ANSWER_TRANSCRIPT_MISMATCH", "audible addressed answer is not retained as one Botik transcript turn");
+  if (evidence.schemaVersion === 8) {
+    for (const observation of voice) {
+      const matches = lifecycle.events.filter((event) =>
+        event.type === observation.correlation.purpose &&
+        isLifecycleTurnBinding(event, observation.correlation.turnId, evidence.schemaVersion)
+      );
+      if (matches.length !== 1) {
+        fail(
+          "ORPHAN_LIFECYCLE_AUDIO",
+          `audible capture has no unique settled lifecycle event for ${observation.correlation.turnId}`,
+        );
+      }
     }
   }
 }
 
-export function verifyTranscript(context: TranscriptVerificationContext): void {
-  verifyTranscriptSpeakers(context);
-  verifyTranscriptTurns(context);
-  verifyFixtureTranscripts(context);
-  verifyTranscriptOverlap(context);
-}
-
-function verifyTranscriptSpeakers(context: TranscriptVerificationContext): void {
-  const { evidence, fail, manifest } = context;
-  const expectedSpeakers = new Set(manifest.fixtures.map(({ speakerId }) => speakerId));
-  const allowedSpeakers = new Set([
-    ...expectedSpeakers,
-    ...manifest.allowedBotSpeakerIds,
-  ]);
-  const recordedSpeakers = new Set(evidence.recording.speakerIds);
-  const transcriptSpeakers = new Set(evidence.transcript.turns.map(({ speakerId }) => speakerId));
-  for (const speakerId of expectedSpeakers) {
-    if (!recordedSpeakers.has(speakerId) || !transcriptSpeakers.has(speakerId)) {
-      fail("SPEAKER_MISSING", `speaker ${speakerId} is absent from recording or transcript evidence`);
-    }
+function isLifecycleTurnBinding(
+  event: RetainedConversationEvidence["conversation"]["lifecycle"]["events"][number],
+  capturedTurnId: string,
+  schemaVersion: 7 | 8,
+): boolean {
+  if (capturedTurnId === event.turnId) {
+    return true;
   }
-  for (const speakerId of new Set([...recordedSpeakers, ...transcriptSpeakers])) {
-    if (!allowedSpeakers.has(speakerId)) {
-      fail("UNEXPECTED_SPEAKER", `unexpected speaker ${speakerId} appears in retained evidence`);
-    }
-  }
-}
-
-function verifyTranscriptTurns(context: TranscriptVerificationContext): void {
-  const { evidence, fail } = context;
-  for (const turn of evidence.transcript.turns) {
-    if (turn.endMs <= turn.startMs) {
-      fail("INVALID_TURN_TIME", `turn ${turn.turnId} must end after it starts`);
-    }
-  }
-  const turnIds = evidence.transcript.turns.map(({ turnId }) => turnId);
-  if (new Set(turnIds).size !== turnIds.length) {
-    fail("DUPLICATE_TURN", "transcript turn IDs must be unique");
-  }
-}
-
-function verifyFixtureTranscripts(context: TranscriptVerificationContext): void {
-  const { evidence, fail, manifest, metrics, scenario } = context;
-  for (const fixture of manifest.fixtures) {
-    const turns = evidence.transcript.turns
-      .filter(({ speakerId }) => speakerId === fixture.speakerId)
-      .toSorted((left, right) => left.startMs - right.startMs);
-    const expectedCount = scenario.playbackCountByFixture[fixture.fixtureId] ?? 0;
-    const expectedText = Array.from({ length: expectedCount }, () => fixture.sourceText).join(" ");
-    const actualText = turns.map(({ text }) => text).join(" ");
-    const wordRate = wordErrorRate(expectedText, actualText);
-    const characterRate = characterErrorRate(expectedText, actualText);
-    metrics.push({
-      characterErrorRate: characterRate,
-      speakerId: fixture.speakerId,
-      wordErrorRate: wordRate,
-    });
-    verifyErrorRates(fixture.fixtureId, wordRate, characterRate, manifest, fail);
-    verifyRequiredTerms(fixture.fixtureId, fixture.requiredTerms, actualText, fail);
-    verifyTranscriptTiming(context, fixture.fixtureId, turns);
-  }
-}
-
-function verifyErrorRates(
-  fixtureId: string,
-  wordRate: number,
-  characterRate: number,
-  context: TranscriptVerificationContext["manifest"],
-  fail: TranscriptVerificationContext["fail"],
-): void {
-  if (wordRate > context.thresholds.maxWordErrorRate) {
-    fail("WER_EXCEEDED", `${fixtureId} WER ${wordRate.toFixed(3)} exceeds threshold`);
-  }
-  if (characterRate > context.thresholds.maxCharacterErrorRate) {
-    fail("CER_EXCEEDED", `${fixtureId} CER ${characterRate.toFixed(3)} exceeds threshold`);
-  }
-}
-
-function verifyRequiredTerms(
-  fixtureId: string,
-  terms: readonly string[],
-  actualText: string,
-  fail: TranscriptVerificationContext["fail"],
-): void {
-  const normalizedActual = normalizeTranscriptSemantics(actualText);
-  for (const term of terms) {
-    if (!normalizedActual.includes(normalizeTranscriptSemantics(term))) {
-      fail("TERM_MISSING", `${fixtureId} transcript is missing required term ${term}`);
-    }
-  }
-}
-
-function verifyTranscriptTiming(
-  context: TranscriptVerificationContext,
-  fixtureId: string,
-  turns: readonly TranscriptVerificationContext["evidence"]["transcript"]["turns"][number][],
-): void {
-  const fixture = context.manifest.fixtures.find((candidate) => candidate.fixtureId === fixtureId);
-  if (fixture === undefined) {
-    return;
-  }
-  const fixtureWindows = context.playbackWindows
-    .filter((window) => window.fixtureId === fixtureId)
-    .toSorted((left, right) => left.startMs - right.startMs);
-  const firstWindow = fixtureWindows[0];
-  const lastWindow = fixtureWindows.at(-1);
-  const firstTurn = turns[0];
-  const lastTurn = turns.at(-1);
-  if (
-    firstTurn !== undefined &&
-    firstWindow !== undefined &&
-    Math.abs(firstTurn.startMs - (firstWindow.startMs + fixture.speechStartOffsetMs)) >
-      context.manifest.thresholds.timestampToleranceMs
-  ) {
-    context.fail("START_TIMESTAMP_MISMATCH", `${fixtureId} transcript start is outside tolerance`);
-  }
-  if (
-    lastTurn !== undefined &&
-    lastWindow !== undefined &&
-    Math.abs(lastTurn.endMs - lastWindow.endMs) > context.manifest.thresholds.timestampToleranceMs
-  ) {
-    context.fail("END_TIMESTAMP_MISMATCH", `${fixtureId} transcript end is outside tolerance`);
-  }
-}
-
-function verifyTranscriptOverlap(context: TranscriptVerificationContext): void {
-  const { evidence, fail, scenario } = context;
-  const fixtureSpeakerIds = new Set(context.manifest.fixtures.map(({ speakerId }) => speakerId));
-  const fixtureTurns = evidence.transcript.turns.filter(({ speakerId }) =>
-    fixtureSpeakerIds.has(speakerId)
-  );
-  const hasOverlap = fixtureTurns.some((left, leftIndex) =>
-    fixtureTurns.some((right, rightIndex) =>
-      leftIndex < rightIndex &&
-      left.speakerId !== right.speakerId &&
-      left.startMs < right.endMs &&
-      right.startMs < left.endMs,
-    ),
-  );
-  if (hasOverlap !== scenario.expectOverlap) {
-    fail("OVERLAP_MISMATCH", `scenario expected overlap=${String(scenario.expectOverlap)}`);
-  }
+  return schemaVersion === 8 && event.type === "greeting" &&
+    isVerifiedGreetingTurnId(event.turnId, event.participantId, true) &&
+    capturedTurnId === `participant-greeting:${event.participantId}`;
 }

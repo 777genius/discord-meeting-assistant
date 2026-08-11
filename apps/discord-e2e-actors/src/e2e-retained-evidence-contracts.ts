@@ -79,6 +79,7 @@ export interface CollectEvidenceInput {
   readonly actorRun: unknown;
   readonly conversation?: {
     readonly botSpeakerId: string;
+    readonly supplementalPlayback: unknown;
     readonly voice: readonly unknown[];
   };
   readonly recordingId: string;
