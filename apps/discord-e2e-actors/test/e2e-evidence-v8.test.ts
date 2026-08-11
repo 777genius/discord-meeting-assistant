@@ -1,12 +1,18 @@
 import { describe, expect, it } from "vitest";
 
-import { verifyRetainedE2eEvidence } from "../src/e2e-evidence.js";
+import {
+  verifyRetainedE2eEvidence,
+  type RetainedE2eEvidenceV8,
+} from "../src/e2e-evidence.js";
 import {
   currentExpectedRevisions,
   manifest,
   retainedV8Evidence,
   speakerBId,
 } from "./e2e-evidence-fixtures.js";
+
+type LifecycleEvent = RetainedE2eEvidenceV8["conversation"]["lifecycle"]["events"][number];
+type GreetingEvent = Extract<LifecycleEvent, { type: "greeting" }>;
 
 describe("retained conversation V8 supplemental semantics", () => {
   it("requires the pinned unknown observer greeting", () => {
@@ -32,9 +38,10 @@ describe("retained conversation V8 supplemental semantics", () => {
   it("requires the reconnect actor to use its pinned named English greeting", () => {
     const evidence = retainedV8Evidence();
     const greeting = evidence.conversation.lifecycle.events.find(
-      (event) => event.type === "greeting" && event.participantId === speakerBId,
+      (event): event is GreetingEvent =>
+        event.type === "greeting" && event.participantId === speakerBId,
     );
-    if (greeting === undefined || greeting.type !== "greeting") {
+    if (greeting === undefined) {
       throw new Error("reconnect greeting fixture is missing");
     }
     greeting.greetingLocale = "ru";

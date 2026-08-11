@@ -84,7 +84,7 @@ describe("retained conversation V8 provenance and correlation", () => {
     const farewell = evidence.conversation.lifecycle.events.find(
       (event) => event.type === "farewell",
     );
-    if (farewell === undefined || farewell.type !== "farewell") {
+    if (farewell === undefined) {
       throw new Error("farewell lifecycle fixture is missing");
     }
     farewell.reason = "last-participant";

@@ -40,7 +40,7 @@ describe("retained conversation V7 compatibility", () => {
     const greeting = evidence.conversation.lifecycle.events.find(
       (event) => event.type === "greeting" && event.participantId === speakerAId,
     );
-    if (greeting === undefined || greeting.type !== "greeting") {
+    if (greeting === undefined) {
       throw new Error("Speaker A greeting fixture is missing");
     }
     greeting.turnId = `participant-greeting:${speakerAId}:retry-1`;
