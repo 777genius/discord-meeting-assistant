@@ -162,10 +162,11 @@ describe("conversation voice stream capture", () => {
       firstPacketTimeoutMilliseconds: 1_000,
       stream,
     });
+    const rejected = expect(capture).rejects.toMatchObject({ code: "no-audio" });
 
     await vi.advanceTimersByTimeAsync(1_000);
 
-    await expect(capture).rejects.toMatchObject({ code: "no-audio" });
+    await rejected;
     expectStreamCaptureListenersRemoved(stream);
     stream.destroy();
   });
@@ -180,11 +181,12 @@ describe("conversation voice stream capture", () => {
       firstPacketTimeoutMilliseconds: 5_000,
       stream,
     });
+    const rejected = expect(capture).rejects.toMatchObject({ code: "capture-timeout" });
     stream.write(Uint8Array.of(1));
 
     await vi.advanceTimersByTimeAsync(1_000);
 
-    await expect(capture).rejects.toMatchObject({ code: "capture-timeout" });
+    await rejected;
     expectStreamCaptureListenersRemoved(stream);
     stream.destroy();
   });
@@ -198,10 +200,11 @@ describe("conversation voice stream capture", () => {
       firstPacketTimeoutMilliseconds: 1_000,
       stream,
     });
+    const rejected = expect(capture).rejects.toMatchObject({ code: "no-audio" });
 
     stream.end();
 
-    await expect(capture).rejects.toMatchObject({ code: "no-audio" });
+    await rejected;
     expectStreamCaptureListenersRemoved(stream);
   });
 
