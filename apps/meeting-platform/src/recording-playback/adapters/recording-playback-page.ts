@@ -89,10 +89,9 @@ export const recordingPlaybackClientScript = String.raw`
   let playing = false;
   let starting = false;
   let lastSyncAt = 0;
-  let gapClock = null;
+  let gapClock = null, manifestAttempts = 0;
   const metadataTimeoutMs = 15000;
-  const manifestRetryDelayMs = 5000, maximumManifestAttempts = 24;
-  let manifestAttempts = 0;
+  const manifestRequestTimeoutMs = 5000, manifestRetryDelayMs = 5000, maximumManifestAttempts = 24;
 
   const token = window.location.hash.slice(1);
   if (!/^[A-Za-z0-9._-]{40,1024}$/.test(token)) {
@@ -162,27 +161,28 @@ export const recordingPlaybackClientScript = String.raw`
   async function openSession() {
     manifestAttempts += 1;
     try {
-      const response = await fetch("/recordings/session", {
-        method: "POST",
-        headers: { authorization: "Bearer " + token },
-      });
-      if (!response.ok) {
-        showUnavailable();
-        return;
-      }
-      const manifest = await response.json();
-      const pendingMessage = manifest.status === "processing"
-        ? "Recording is being processed"
-        : manifest.status === "unavailable" ? "Recording is not ready yet" : null;
-      if (pendingMessage !== null) {
-        retryManifest(pendingMessage);
-        return;
-      }
-      if (manifest.status !== "ready" || manifest.tracks.length === 0) {
-        showUnavailable();
-        return;
-      }
-      await prepareTracks(manifest.tracks);
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), manifestRequestTimeoutMs);
+      try {
+        const response = await fetch("/recordings/session", {
+          method: "POST", headers: { authorization: "Bearer " + token },
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          if (response.status === 429 || response.status >= 500)
+            retryManifest("Checking recording again...");
+          else showUnavailable();
+          return;
+        }
+        const manifest = await response.json();
+        const pendingMessage = manifest.status === "processing"
+          ? "Recording is being processed"
+          : manifest.status === "unavailable" ? "Recording is not ready yet" : null;
+        if (pendingMessage !== null) { retryManifest(pendingMessage); return; }
+        if (manifest.status !== "ready" || manifest.tracks.length === 0)
+          { showUnavailable(); return; }
+        await prepareTracks(manifest.tracks);
+      } finally { window.clearTimeout(timeoutId); }
     } catch {
       retryManifest("Checking recording again...");
     }

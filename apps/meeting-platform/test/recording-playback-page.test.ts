@@ -128,6 +128,8 @@ interface TrackFixture {
 interface PageHarnessOptions {
   readonly fragment?: string;
   readonly manifestStatuses?: readonly ("processing" | "ready" | "unavailable")[];
+  readonly requestModes?: readonly ("normal" | "stalled")[];
+  readonly responseStatuses?: readonly number[];
 }
 
 interface PageHarness {
@@ -219,11 +221,25 @@ function createPageHarness(
   };
   const manifestStatuses = options.manifestStatuses ?? ["ready"];
   let manifestIndex = 0;
-  const fetch = vi.fn(async () => {
+  const fetch = vi.fn(async (_url: string, request?: { readonly signal?: AbortSignal }) => {
+    const requestIndex = manifestIndex;
     const manifestStatus = manifestStatuses[
       Math.min(manifestIndex, manifestStatuses.length - 1)
     ] ?? "ready";
     manifestIndex += 1;
+    const requestMode = options.requestModes?.[
+      Math.min(requestIndex, (options.requestModes?.length ?? 1) - 1)
+    ] ?? "normal";
+    if (requestMode === "stalled") {
+      await new Promise((_resolve, reject) => {
+        request?.signal?.addEventListener("abort", () => {
+          reject(new Error("request aborted"));
+        }, { once: true });
+      });
+    }
+    const responseStatus = options.responseStatuses?.[
+      Math.min(requestIndex, (options.responseStatuses?.length ?? 1) - 1)
+    ] ?? 200;
     return {
       json: async () => ({
         status: manifestStatus,
@@ -234,11 +250,13 @@ function createPageHarness(
             }))
           : [],
       }),
-      ok: true,
+      ok: responseStatus >= 200 && responseStatus < 300,
+      status: responseStatus,
     };
   });
 
   runInNewContext(recordingPlaybackClientScript, {
+    AbortController,
     document,
     fetch,
     performance: { now: () => clock },
@@ -352,7 +370,50 @@ describe("recording playback browser page", () => {
     expect(page.status.textContent).toBe("Ready to play");
     expect(page.player.hidden).toBe(false);
   });
+});
 
+describe("recording playback manifest recovery", () => {
+  it("recovers after a bounded manifest request times out", async () => {
+    vi.useFakeTimers();
+    const audio = new FakeAudio("loaded", 12);
+    const page = createPageHarness(
+      [{ audio, timelineOffsetMs: 0 }],
+      { requestModes: ["stalled", "normal"] },
+    );
+    await flushAsync();
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    await flushAsync();
+    expect(page.status.textContent).toBe("Checking recording again...");
+    expect(page.sessionRequestCount()).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    await flushAsync();
+    expect(page.sessionRequestCount()).toBe(2);
+    expect(page.status.textContent).toBe("Ready to play");
+  });
+
+  it("retries transient HTTP failures but keeps permanent HTTP failures terminal", async () => {
+    vi.useFakeTimers();
+    const recovered = createPageHarness(
+      [{ audio: new FakeAudio("loaded", 12), timelineOffsetMs: 0 }],
+      { responseStatuses: [503, 200] },
+    );
+    await flushAsync();
+    expect(recovered.status.textContent).toBe("Checking recording again...");
+    await vi.advanceTimersByTimeAsync(5_000);
+    await flushAsync();
+    expect(recovered.status.textContent).toBe("Ready to play");
+
+    const rejected = createPageHarness([], { responseStatuses: [401] });
+    await flushAsync();
+    expect(rejected.status.textContent).toBe("Recording unavailable");
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(rejected.sessionRequestCount()).toBe(1);
+  });
+});
+
+describe("recording playback media behavior", () => {
   it("bounds unavailable-manifest retries instead of polling forever", async () => {
     vi.useFakeTimers();
     const page = createPageHarness([], { manifestStatuses: ["unavailable"] });
