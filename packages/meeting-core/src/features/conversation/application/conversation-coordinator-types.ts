@@ -31,7 +31,11 @@ export interface FinalizedConversationTurnInput {
 
 /** A provider-neutral system-initiated utterance that is not transcript evidence. */
 export interface ProactiveConversationTurnInput {
+  /** Short system speech may opt out of human-speech interruption. */
+  readonly interruptible?: boolean;
   readonly locale: string;
+  /** Exact text to synthesize without model generation. */
+  readonly literalSpeech?: string;
   readonly meetingId: string;
   readonly nowMs: number;
   readonly prompt: string;
@@ -45,11 +49,15 @@ export interface ProactiveConversationTurnInput {
 /** Pre-generated 48 kHz mono PCM played without an LLM or TTS round-trip. */
 export interface PreparedConversationCueInput {
   readonly cueId: string;
+  /** Short prepared speech may opt out of human-speech interruption. */
+  readonly interruptible?: boolean;
   readonly locale: string;
   readonly meetingId: string;
   readonly nowMs: number;
   readonly pcmChunks: readonly Uint8Array[];
   readonly playbackAttemptId: string;
+  /** Farewells may preempt; join greetings queue behind an answer race. */
+  readonly preemptive?: boolean;
   readonly recordingId: string;
   readonly speakerId: string;
   readonly turnId: string;
@@ -116,6 +124,8 @@ export interface PreparedConversation {
     readonly pcmChunks: readonly Uint8Array[];
     readonly playbackAttemptId: string;
   };
+  readonly interruptible: boolean;
+  readonly preemptive: boolean;
   readonly request: ConversationStartRequest;
   readonly thinkingCueLocale: string;
   readonly thinkingCuesEnabled: boolean;
@@ -161,6 +171,7 @@ export interface ActiveConversationRun {
 
 export interface MeetingConversationState {
   active: ActiveConversationRun | null;
+  readonly admissionFingerprints: Map<string, string>;
   closing: boolean;
   lastObservedAtMs: number;
   readonly latestWakeAtBySpeaker: Map<string, number>;

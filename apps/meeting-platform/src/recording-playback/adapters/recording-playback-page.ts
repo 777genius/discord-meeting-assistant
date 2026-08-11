@@ -17,13 +17,10 @@ h1 { margin: 10px 0 8px; font-size: clamp(32px, 7vw, 56px); line-height: 1; lett
 .timeline { width: 100%; min-width: 0; display: grid; gap: 2px; }
 input[type="range"] {
   --seek-progress: 0%;
-  width: 100%;
-  height: 48px;
-  margin: 0;
+  width: 100%; height: 48px; margin: 0;
   appearance: none;
   -webkit-appearance: none;
-  background: transparent;
-  cursor: pointer;
+  background: transparent; cursor: pointer;
   touch-action: none;
 }
 input[type="range"]::-webkit-slider-runnable-track {
@@ -92,20 +89,15 @@ export const recordingPlaybackClientScript = String.raw`
   let playing = false;
   let starting = false;
   let lastSyncAt = 0;
-  let gapClock = null;
+  let gapClock = null, manifestAttempts = 0, metadataRetryUsed = false;
   const metadataTimeoutMs = 15000;
+  const manifestRequestTimeoutMs = 5000, manifestRetryDelayMs = 5000, maximumManifestAttempts = 24;
 
   const token = window.location.hash.slice(1);
   if (!/^[A-Za-z0-9._-]{40,1024}$/.test(token)) {
     showUnavailable();
     return;
   }
-  window.history.replaceState(
-    null,
-    "",
-    window.location.pathname + window.location.search,
-  );
-
   function formatTime(seconds) {
     const safe = Math.max(0, Math.floor(Number.isFinite(seconds) ? seconds : 0));
     const hours = Math.floor(safe / 3600);
@@ -151,29 +143,49 @@ export const recordingPlaybackClientScript = String.raw`
     playerNode.hidden = true;
   }
 
+  function retryManifest(message) {
+    if (manifestAttempts < maximumManifestAttempts) {
+      setStatus(message);
+      window.setTimeout(openSession, manifestRetryDelayMs);
+      return;
+    }
+    showUnavailable();
+  }
+
   async function openSession() {
+    manifestAttempts += 1;
     try {
-      const response = await fetch("/recordings/session", {
-        method: "POST",
-        headers: { authorization: "Bearer " + token },
-      });
-      if (!response.ok) {
-        showUnavailable();
-        return;
-      }
-      const manifest = await response.json();
-      if (manifest.status === "processing") {
-        setStatus("Recording is being processed");
-        window.setTimeout(openSession, 5000);
-        return;
-      }
-      if (manifest.status !== "ready" || manifest.tracks.length === 0) {
-        showUnavailable();
-        return;
-      }
-      await prepareTracks(manifest.tracks);
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), manifestRequestTimeoutMs);
+      try {
+        const response = await fetch("/recordings/session", {
+          method: "POST", headers: { authorization: "Bearer " + token },
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          if (response.status === 429 || response.status >= 500)
+            retryManifest("Checking recording again...");
+          else showUnavailable();
+          return;
+        }
+        const manifest = await response.json();
+        const pendingMessage = manifest.status === "processing"
+          ? "Recording is being processed"
+          : manifest.status === "unavailable" ? "Recording is not ready yet" : null;
+        if (pendingMessage !== null) { retryManifest(pendingMessage); return; }
+        if (manifest.status !== "ready" || manifest.tracks.length === 0)
+          { showUnavailable(); return; }
+        const tracksReady = await prepareTracks(manifest.tracks);
+        if (!tracksReady) {
+          if (metadataRetryUsed) { showUnavailable(); return; }
+          metadataRetryUsed = true;
+          retryManifest("Checking recording tracks again...");
+          return;
+        }
+        window.history.replaceState(null, "", window.location.pathname + window.location.search);
+      } finally { window.clearTimeout(timeoutId); }
     } catch {
-      showUnavailable();
+      retryManifest("Checking recording again...");
     }
   }
 
@@ -194,10 +206,7 @@ export const recordingPlaybackClientScript = String.raw`
     });
     await Promise.all(tracks.map(loadMetadata));
     const available = tracks.filter((track) => track.available);
-    if (available.length === 0) {
-      showUnavailable();
-      return;
-    }
+    if (available.length === 0) return false;
     tracks = available;
     duration = Math.max(...tracks.map((track) => track.offset + track.audio.duration));
     seekNode.max = String(duration);
@@ -209,6 +218,7 @@ export const recordingPlaybackClientScript = String.raw`
       noticeNode.hidden = false;
     }
     renderPosition(0);
+    return true;
   }
 
   function loadMetadata(track) {

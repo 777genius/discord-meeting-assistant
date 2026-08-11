@@ -33,6 +33,33 @@ from pipecat_runtime.application.ports import (
 from pipecat_runtime.application.text_chunking import SpeechPhraseChunker
 
 
+class LiteralSpeechProcessor(FrameProcessor):
+    """Route trusted exact speech to TTS without invoking text generation."""
+
+    def __init__(self, *, cancellation_requested: CancellationSignal) -> None:
+        super().__init__()
+        self._cancellation_requested = cancellation_requested
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+        await super().process_frame(frame, direction)
+        if (
+            not isinstance(frame, ConversationTurnFrame)
+            or direction is not FrameDirection.DOWNSTREAM
+            or frame.request.literal_speech is None
+        ):
+            await self.push_frame(frame, direction)
+            return
+        if self._cancellation_requested.is_set():
+            return
+        await self.push_frame(
+            TextGenerationFirstTokenFrame(observed_at_unix_ms=time.time_ns() // 1_000_000),
+            direction,
+        )
+        await self.push_frame(LLMFullResponseStartFrame(), direction)
+        await self.push_frame(LLMTextFrame(text=frame.request.literal_speech), direction)
+        await self.push_frame(LLMFullResponseEndFrame(), direction)
+
+
 class SubscriptionRuntimeTextGenerationProcessor(FrameProcessor):
     """Convert one completed port response into the standard Pipecat LLM frame flow."""
 

@@ -383,6 +383,7 @@ describe("platform configuration routing and conversation", () => {
 
     expect(config.conversation).toEqual({
       farewellCueRoot: "/app/apps/meeting-platform/assets/farewell-cues",
+      greetingCueRoot: "/app/apps/meeting-platform/assets/greeting-cues",
       runtimeAddress: "pipecat-runtime:50053",
       systemPrompt:
         "You are Botik, a concise voice assistant. Answer in the participant's language. When that language uses grammatical gender, refer to yourself using feminine forms. Never claim to remember earlier turns.",
@@ -411,6 +412,9 @@ describe("platform configuration routing and conversation", () => {
 
     expect(config.conversation?.thinkingCueRoot).toBe(
       "/app/apps/meeting-platform/assets/thinking-cues",
+    );
+    expect(config.conversation?.greetingCueRoot).toBe(
+      "/app/apps/meeting-platform/assets/greeting-cues",
     );
     await expect(
       loadPlatformConfig(

@@ -36,6 +36,9 @@ export function createGrpcConversationStartMessage(
       wakeDetectedAtUnixMs: request.latency?.wakeDetectedAtUnixMs ?? 0,
       systemPrompt: request.systemPrompt,
       prompt: request.prompt,
+      ...(request.literalSpeech === undefined
+        ? {}
+        : { literalSpeech: request.literalSpeech }),
       locale: request.locale,
       voiceProfileId: request.voiceProfileId,
     },

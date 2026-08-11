@@ -22,6 +22,8 @@ export interface ConversationStartRequest {
     readonly wakeDetectedAtUnixMs: number;
   };
   readonly locale: string;
+  /** Exact text to synthesize without model generation. */
+  readonly literalSpeech?: string;
   readonly meetingId: string;
   readonly prompt: string;
   readonly recordingId: string;

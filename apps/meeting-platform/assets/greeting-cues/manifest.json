@@ -1,0 +1,89 @@
+{
+  "audio": {
+    "channels": 1,
+    "format": "pcm_s16le",
+    "sampleRateHz": 48000
+  },
+  "cues": [
+    {
+      "cueId": "greeting-ru-vitaliy-v1",
+      "locale": "ru",
+      "pcmFile": "greeting-ru-vitaliy-v1.pcm",
+      "sha256": "70c2524a5a18258089875fb94c1ffc47a39f3c265910ea186a37917de81eda4c",
+      "text": "Привет, Виталий!"
+    },
+    {
+      "cueId": "greeting-ru-nazar-v1",
+      "locale": "ru",
+      "pcmFile": "greeting-ru-nazar-v1.pcm",
+      "sha256": "bc514d261988a46fe6aceb0090ab7df9c2e60541bb4045a7797740bfb2a31728",
+      "text": "Привет, Назар!"
+    },
+    {
+      "cueId": "greeting-ru-vlad-v1",
+      "locale": "ru",
+      "pcmFile": "greeting-ru-vlad-v1.pcm",
+      "sha256": "96c5f559c99ea8f2a29753bfb9a47fae6b5e7e2d45ec4161908e303e158c1699",
+      "text": "Привет, Влад!"
+    },
+    {
+      "cueId": "greeting-ru-maria-v1",
+      "locale": "ru",
+      "pcmFile": "greeting-ru-maria-v1.pcm",
+      "sha256": "1159ba0c7aeeca20d1079d2d201e5fad1fd2cfc3bbc8df554747cdff68db42cd",
+      "text": "Привет, Мария!"
+    },
+    {
+      "cueId": "greeting-ru-dima-v1",
+      "locale": "ru",
+      "pcmFile": "greeting-ru-dima-v1.pcm",
+      "sha256": "d52734ed1ad7c58119914b5f6ebbb277e42bcc40d1eef999f4c10d675740a2c8",
+      "text": "Привет, Дима!"
+    },
+    {
+      "cueId": "greeting-ru-iliya-v1",
+      "locale": "ru",
+      "pcmFile": "greeting-ru-iliya-v1.pcm",
+      "sha256": "98562e371414ec2e2c8250f81cb1491d5760a45c51fb1eda5af9dfb865d03079",
+      "text": "Привет, Илия!"
+    },
+    {
+      "cueId": "greeting-ru-mark-v1",
+      "locale": "ru",
+      "pcmFile": "greeting-ru-mark-v1.pcm",
+      "sha256": "dcd0fb408740fcce69383e68be049d674a3ab39271dd6dc69b074ed67689796d",
+      "text": "Привет, Марк!"
+    },
+    {
+      "cueId": "greeting-ru-generic-v1",
+      "locale": "ru",
+      "pcmFile": "greeting-ru-generic-v1.pcm",
+      "sha256": "97e0137d61b0955f453c9f3ed0a30d22987f692953ed5baf86eb27e2e4ce7739",
+      "text": "Привет!"
+    },
+    {
+      "cueId": "greeting-en-generic-v1",
+      "locale": "en",
+      "pcmFile": "greeting-en-generic-v1.pcm",
+      "sha256": "a742bf552f248f32777eb080535bf89f891c073624e2939d50af1a7628001bf5",
+      "text": "Hi!"
+    },
+    {
+      "cueId": "greeting-ru-test-a-v1",
+      "locale": "ru",
+      "pcmFile": "greeting-ru-test-a-v1.pcm",
+      "sha256": "cd7a8a3b71b65642c62c53311aca608b0642912abfc3cdef7a66c4d9aaecaf5b",
+      "text": "Привет, Тест А!"
+    },
+    {
+      "cueId": "greeting-en-test-b-v1",
+      "locale": "en",
+      "pcmFile": "greeting-en-test-b-v1.pcm",
+      "sha256": "d8f107e1f01c864f74fdc4a6c0bf22205f6b1fa646dd496daea89e33d0a69deb",
+      "text": "Hi, Test B!"
+    }
+  ],
+  "version": 1,
+  "voiceId": "jqcCZkN6Knx8BJ5TBdYR",
+  "voiceProfileId": "elevenlabs-multilingual"
+}

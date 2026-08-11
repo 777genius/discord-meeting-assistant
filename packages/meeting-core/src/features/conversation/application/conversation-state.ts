@@ -14,6 +14,7 @@ export function createMeetingConversationState(
 ): MeetingConversationState {
   return {
     active: null,
+    admissionFingerprints: new Map(),
     closing: false,
     lastObservedAtMs: 0,
     latestWakeAtBySpeaker: new Map(),

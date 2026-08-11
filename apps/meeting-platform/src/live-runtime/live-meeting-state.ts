@@ -50,6 +50,7 @@ export interface CreateActiveLiveMeetingInput {
   readonly sessionAdmission: LiveSessionAdmission;
   readonly speakerIdleFinalizeMs: number;
   readonly startedAtMs: number;
+  readonly suppressInitialParticipantGreetings: boolean;
   readonly timer: LiveRuntimeTimer;
 }
 
@@ -131,6 +132,10 @@ export function createActiveLiveMeeting(input: CreateActiveLiveMeetingInput): Ac
     transcriptionFenceClosed: false,
   };
   farewell?.participantsPresent(input.event.participantIds);
-  greetings?.participantsPresent(input.event.participantIds);
+  if (input.suppressInitialParticipantGreetings) {
+    greetings?.participantsRestored(input.event.participantIds);
+  } else {
+    greetings?.participantsPresent(input.event.participantIds);
+  }
   return state;
 }

@@ -222,6 +222,7 @@ describe("meeting platform runtime wiring", () => {
       config: {
         conversation: {
           farewellCueRoot: "/test/farewell-cues",
+          greetingCueRoot: "/test/greeting-cues",
           runtimeAddress: "pipecat-runtime:50053",
           systemPrompt: "Answer briefly.",
           thinkingCueRoot: await thinkingCueRoot(),

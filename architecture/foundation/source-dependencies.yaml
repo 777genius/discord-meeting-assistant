@@ -395,6 +395,7 @@ boundaries:
       - apps/meeting-platform/src/adapters/outbound/discord-publication-target-resolver.ts
       - apps/meeting-platform/src/adapters/outbound/file-conversation-farewell-cue-registry.ts
       - apps/meeting-platform/src/adapters/outbound/file-conversation-thinking-cue-registry.ts
+      - apps/meeting-platform/src/adapters/outbound/file-participant-greeting-cue-registry.ts
       - apps/meeting-platform/src/adapters/outbound/instrumented-processing-ports.ts
       - apps/meeting-platform/src/adapters/outbound/instrumented-subscription-runtime-transport.ts
       - apps/meeting-platform/src/adapters/outbound/s3-ogg-audio-artifact-reader.ts

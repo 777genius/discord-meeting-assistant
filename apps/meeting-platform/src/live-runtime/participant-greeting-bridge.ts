@@ -42,6 +42,7 @@ export class ParticipantGreetingBridge {
   private readonly greetedParticipantIds = new Set<string>();
   private readonly pendingParticipantIds = new Set<string>();
   private readonly presentParticipantIds = new Set<string>();
+  private readonly queuedAtMillisecondsByParticipantId = new Map<string, number>();
   private readonly retryCounts = new Map<string, number>();
 
   public constructor(
@@ -54,6 +55,14 @@ export class ParticipantGreetingBridge {
     }
   }
 
+  /** Suppresses replay when an active meeting is restored after a process restart. */
+  public participantsRestored(participantIds: readonly string[]): void {
+    for (const participantId of participantIds) {
+      this.presentParticipantIds.add(participantId);
+      this.greetedParticipantIds.add(participantId);
+    }
+  }
+
   public participantJoined(participantId: string): void {
     if (this.closed) {
       return;
@@ -63,6 +72,12 @@ export class ParticipantGreetingBridge {
       this.greeting(participantId) !== undefined &&
       !this.greetedParticipantIds.has(participantId)
     ) {
+      if (!this.pendingParticipantIds.has(participantId)) {
+        this.queuedAtMillisecondsByParticipantId.set(
+          participantId,
+          this.nowMilliseconds(),
+        );
+      }
       this.pendingParticipantIds.add(participantId);
     }
     this.advance();
@@ -71,6 +86,7 @@ export class ParticipantGreetingBridge {
   public participantLeft(participantId: string): void {
     this.presentParticipantIds.delete(participantId);
     this.pendingParticipantIds.delete(participantId);
+    this.queuedAtMillisecondsByParticipantId.delete(participantId);
   }
 
   public advance(): void {
@@ -106,6 +122,7 @@ export class ParticipantGreetingBridge {
     this.closed = true;
     this.pendingParticipantIds.clear();
     this.presentParticipantIds.clear();
+    this.queuedAtMillisecondsByParticipantId.clear();
   }
 
   public async settle(): Promise<void> {
@@ -166,9 +183,11 @@ export class ParticipantGreetingBridge {
           meetingId: this.dependencies.meetingId,
           participantId,
         });
+        this.queuedAtMillisecondsByParticipantId.delete(participantId);
         continue;
       }
       this.retryCounts.delete(participantId);
+      this.queuedAtMillisecondsByParticipantId.delete(participantId);
     }
   }
 
@@ -181,18 +200,41 @@ export class ParticipantGreetingBridge {
       ? `participant-greeting:${participantId}`
       : `participant-greeting:${participantId}:retry-${retryCount}`;
     try {
-      const outcome = await this.dependencies.configuration.coordinator
-        .handleProactiveTurn({
-          locale: greeting.locale,
-          meetingId: this.dependencies.meetingId,
-          nowMs: this.nowMilliseconds(),
-          prompt: greeting.prompt,
-          recordingId: this.dependencies.meetingId,
-          speakerId: participantId,
-          systemPrompt: exactGreetingSystemPrompt,
-          turnId,
-          voiceProfileId: this.dependencies.configuration.voiceProfileId,
-      });
+      const preparedCue = this.dependencies.configuration.greetings?.cues?.select({
+        locale: greeting.locale,
+        meetingId: this.dependencies.meetingId,
+        participantId,
+        speech: greeting.prompt,
+        voiceProfileId: this.dependencies.configuration.voiceProfileId,
+      }) ?? null;
+      const outcome = preparedCue === null
+        ? await this.dependencies.configuration.coordinator.handleProactiveTurn({
+            interruptible: false,
+            locale: greeting.locale,
+            literalSpeech: greeting.prompt,
+            meetingId: this.dependencies.meetingId,
+            nowMs: this.nowMilliseconds(),
+            prompt: greeting.prompt,
+            recordingId: this.dependencies.meetingId,
+            speakerId: participantId,
+            systemPrompt: exactGreetingSystemPrompt,
+            turnId,
+            voiceProfileId: this.dependencies.configuration.voiceProfileId,
+          })
+        : await this.dependencies.configuration.coordinator.playPreparedCue({
+            cueId: preparedCue.cueId,
+            interruptible: false,
+            locale: greeting.locale,
+            meetingId: this.dependencies.meetingId,
+            nowMs: this.nowMilliseconds(),
+            pcmChunks: preparedCue.pcmChunks,
+            playbackAttemptId: preparedCue.playbackAttemptId,
+            preemptive: false,
+            recordingId: this.dependencies.meetingId,
+            speakerId: participantId,
+            turnId,
+            voiceProfileId: this.dependencies.configuration.voiceProfileId,
+          });
       if (outcome.status === "active" || outcome.status === "queued") {
         const settlement = await this.dependencies.configuration.coordinator
           .whenTurnPlaybackSettled(
@@ -205,6 +247,10 @@ export class ParticipantGreetingBridge {
             meetingId: this.dependencies.meetingId,
             participantId,
             participantNameStatus: this.profile(participantId) === undefined ? "unknown" : "known",
+            playbackMode: preparedCue === null ? "tts-fallback" : "prepared-cue",
+            observedJoinToPlaybackSettledMs: this.observedGreetingLatencyMilliseconds(
+              participantId,
+            ),
             turnId,
           });
         }
@@ -261,5 +307,12 @@ export class ParticipantGreetingBridge {
       throw new Error("Greeting observation clock must be a non-negative integer");
     }
     return value;
+  }
+
+  private observedGreetingLatencyMilliseconds(participantId: string): number {
+    const queuedAtMs = this.queuedAtMillisecondsByParticipantId.get(participantId);
+    return queuedAtMs === undefined
+      ? 0
+      : Math.max(0, this.nowMilliseconds() - queuedAtMs);
   }
 }

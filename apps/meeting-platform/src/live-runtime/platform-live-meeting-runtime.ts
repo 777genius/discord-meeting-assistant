@@ -204,6 +204,7 @@ export class PlatformLiveMeetingRuntime {
       sessionAdmission: this.sessionAdmission,
       speakerIdleFinalizeMs: this.speakerIdleFinalizeMs,
       startedAtMs,
+      suppressInitialParticipantGreetings: result.status === "reused",
       timer: this.timer,
     });
     state.projection.restoreFinalCaptions(result.finalizedTurns);

@@ -240,13 +240,19 @@ describe("GrpcPipecatConversationRuntime", () => {
       serviceToken: "test-service-token-1234",
       callFactory: factory,
     });
-    const result = await runtime.startTurn(request);
+    const result = await runtime.startTurn({
+      ...request,
+      literalSpeech: "Привет, Саша!",
+    });
     expect(result.ok).toBe(true);
     if (!result.ok) {
       return;
     }
     const call = factory.calls[0]!;
     const events = collect(result.value.events);
+    expect(call.writes[0]).toMatchObject({
+      startTurn: { literalSpeech: "Привет, Саша!" },
+    });
 
     call.data(serverMessage("accepted", 0));
     call.data(serverMessage("textDelta", 1, { text: "Факт" }));

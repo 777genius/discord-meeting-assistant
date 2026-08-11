@@ -45,6 +45,7 @@ import { Client, GatewayIntentBits } from "discord.js";
 
 import { FileConversationFarewellCueRegistry } from "../adapters/outbound/file-conversation-farewell-cue-registry.js";
 import { FileConversationThinkingCueRegistry } from "../adapters/outbound/file-conversation-thinking-cue-registry.js";
+import { FileParticipantGreetingCueRegistry } from "../adapters/outbound/file-participant-greeting-cue-registry.js";
 import { SubscriptionRuntimeFarewellClassifier } from "../adapters/outbound/subscription-runtime-farewell-classifier.js";
 import { SystemConversationDelay } from "../adapters/outbound/system-conversation-delay.js";
 import type { PlatformConfig } from "../config.js";
@@ -139,11 +140,19 @@ export async function createPlatformDiscordLiveComposition(input: {
         conversationConfig.voiceProfileId,
         conversationConfig.voiceId,
       );
+  const greetingCues = conversationCoordinator === undefined || conversationConfig === undefined
+    ? undefined
+    : await FileParticipantGreetingCueRegistry.load(
+        conversationConfig.greetingCueRoot,
+        conversationConfig.voiceProfileId,
+        conversationConfig.voiceId,
+      );
   const live = createLiveRuntime({
     config: input.config,
     ...(conversationCoordinator === undefined ? {} : { conversationCoordinator }),
     discordPublisher,
     ...(farewellCues === undefined ? {} : { farewellCues }),
+    ...(greetingCues === undefined ? {} : { greetingCues }),
     isPlaybackReady: (recordingId) => craigPlaybackGateway.hasSession(recordingId),
     logger: input.logger,
     meetings: input.meetings,
@@ -248,6 +257,7 @@ function createLiveRuntime(input: {
   readonly conversationCoordinator?: ConversationCoordinator;
   readonly discordPublisher: DiscordSummaryPublisher;
   readonly farewellCues?: FileConversationFarewellCueRegistry;
+  readonly greetingCues?: FileParticipantGreetingCueRegistry;
   readonly isPlaybackReady: (recordingId: string) => boolean;
   readonly logger: Logger;
   readonly meetings: PostgresLiveMeetingRepository;
@@ -295,6 +305,9 @@ function createLiveRuntime(input: {
                   },
                 }),
             greetings: {
+              ...(input.greetingCues === undefined
+                ? {}
+                : { cues: input.greetingCues }),
               defaultLocale: input.config.participantGreetingDefaultLocale,
               excludedParticipantIds: Object.freeze([
                 input.config.discordApplicationId,

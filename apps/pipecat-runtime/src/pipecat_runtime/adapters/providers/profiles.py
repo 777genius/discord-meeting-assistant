@@ -18,6 +18,7 @@ from pipecat_runtime.adapters.pipecat.processors import (
     FixtureSpeechTTSProcessor,
 )
 from pipecat_runtime.adapters.pipecat.text_generation import (
+    LiteralSpeechProcessor,
     StreamingSubscriptionRuntimeTextGenerationProcessor,
 )
 from pipecat_runtime.adapters.providers.piper_http import PiperHttpTTSProcessor
@@ -151,6 +152,7 @@ class DeterministicE2EProfile:
         """Build providerless processors without external network or model side effects."""
         del request
         return (
+            LiteralSpeechProcessor(cancellation_requested=cancellation_requested),
             DeterministicLLMProcessor(
                 options=self.options,
                 cancellation_requested=cancellation_requested,
@@ -190,6 +192,7 @@ class LocalRussianProfile:
             settings=OLLamaLLMService.Settings(model=self.ollama_model),
         )
         return (
+            LiteralSpeechProcessor(cancellation_requested=cancellation_requested),
             PromptToContextProcessor(),
             llm,
             ConversationTextCaptureProcessor(),
@@ -232,6 +235,7 @@ class ElevenLabsMultilingualProfile:
             ),
         )
         return (
+            LiteralSpeechProcessor(cancellation_requested=cancellation_requested),
             StreamingSubscriptionRuntimeTextGenerationProcessor(
                 text_generator=self.text_generator,
                 cancellation_requested=cancellation_requested,

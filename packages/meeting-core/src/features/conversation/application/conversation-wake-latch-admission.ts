@@ -13,6 +13,10 @@ import type {
   PreparedConversationCueInput,
   ProactiveConversationTurnInput,
 } from "./conversation-coordinator-types.js";
+import {
+  normalizedLiteralSpeech,
+  preparedConversationFingerprint,
+} from "./conversation-admission-fingerprint.js";
 
 interface TranscriptTimeline {
   readonly endMs: number;
@@ -183,6 +187,8 @@ export class ConversationWakeLatchAdmission {
       turnId: input.turnId,
     });
     return this.admitPrepared(state, {
+      interruptible: true,
+      preemptive: false,
       request: {
         idempotencyKey: conversationIdempotencyKey(input),
         locale: input.locale,
@@ -212,9 +218,14 @@ export class ConversationWakeLatchAdmission {
       turnId: input.turnId,
     });
     return this.admitPrepared(state, {
+      interruptible: input.interruptible ?? true,
+      preemptive: false,
       request: {
         idempotencyKey: proactiveConversationIdempotencyKey(input),
         locale: input.locale,
+        ...(input.literalSpeech === undefined
+          ? {}
+          : { literalSpeech: normalizedLiteralSpeech(input.literalSpeech) }),
         meetingId: input.meetingId,
         prompt,
         recordingId: input.recordingId,
@@ -260,6 +271,8 @@ export class ConversationWakeLatchAdmission {
         pcmChunks: Object.freeze(pcmChunks),
         playbackAttemptId: input.playbackAttemptId,
       },
+      interruptible: input.interruptible ?? true,
+      preemptive: input.preemptive ?? true,
       request: {
         idempotencyKey: preparedCueIdempotencyKey(input),
         locale: input.locale,
@@ -281,10 +294,19 @@ export class ConversationWakeLatchAdmission {
     state: MeetingConversationState,
     prepared: PreparedConversation,
   ): ConversationPromptAdmission {
+    const fingerprint = preparedConversationFingerprint(prepared);
+    const priorFingerprint = state.admissionFingerprints.get(prepared.turn.turnId);
+    if (priorFingerprint !== undefined && priorFingerprint !== fingerprint) {
+      throw new DomainInvariantError(
+        "DUPLICATE_IDENTIFIER",
+        "conversation turn replay conflicts with its original request",
+      );
+    }
     const admission = state.session.admit(
       prepared.turn,
       state.lastObservedAtMs,
     );
+    state.admissionFingerprints.set(prepared.turn.turnId, fingerprint);
 
     if (admission.status === "reused") {
       return {
@@ -334,6 +356,8 @@ export class ConversationWakeLatchAdmission {
   ): PreparedConversation {
     const latency = conversationLatencyContext(input);
     return {
+      interruptible: true,
+      preemptive: false,
       request: {
         idempotencyKey: conversationIdempotencyKey(input),
         ...(latency === undefined ? {} : { latency }),

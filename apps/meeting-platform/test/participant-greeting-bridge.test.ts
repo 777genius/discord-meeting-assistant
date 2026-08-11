@@ -13,7 +13,9 @@ const excludedParticipantId = "4533224474609057795";
 
 class GreetingCoordinatorProbe {
   public readonly calls: Array<{
+    readonly interruptible?: boolean;
     readonly locale: string;
+    readonly literalSpeech?: string;
     readonly meetingId: string;
     readonly nowMs: number;
     readonly prompt: string;
@@ -24,6 +26,7 @@ class GreetingCoordinatorProbe {
     readonly voiceProfileId: string;
   }> = [];
   public idleCalls = 0;
+  public readonly preparedCalls: unknown[] = [];
   public onPlaybackSettlement: ((turnId: string) => void) | undefined;
   public readonly outcomes: Array<{ readonly status: "active" | "busy" }> = [];
   public readonly playbackSettlements: Array<"played" | "unplayed" | "partial" | "unknown"> = [];
@@ -43,8 +46,9 @@ class GreetingCoordinatorProbe {
     return Promise.resolve(this.outcomes.shift() ?? { status: "active" as const });
   }
 
-  public playPreparedCue(): Promise<{ readonly status: "ignored" }> {
-    return Promise.resolve({ status: "ignored" });
+  public playPreparedCue(input: unknown): Promise<{ readonly status: "active" }> {
+    this.preparedCalls.push(structuredClone(input));
+    return Promise.resolve({ status: "active" });
   }
 
   public speechActivity(): Promise<{ readonly status: "ignored" }> {
@@ -82,6 +86,12 @@ function fixture(
   playbackReady = false,
   defaultLocale: "en" | "ru" = "ru",
   runtimeLogger: LiveRuntimeLogger = logger,
+  nowMilliseconds: () => number = () => 321,
+  cueSelector?: () => {
+    readonly cueId: string;
+    readonly pcmChunks: readonly Uint8Array[];
+    readonly playbackAttemptId: string;
+  } | null,
 ): {
   readonly bridge: ParticipantGreetingBridge;
   readonly coordinator: GreetingCoordinatorProbe;
@@ -92,6 +102,9 @@ function fixture(
   const configuration: LiveConversationConfiguration = {
     coordinator,
     greetings: {
+      ...(cueSelector === undefined
+        ? {}
+        : { cues: { select: cueSelector } }),
       defaultLocale,
       excludedParticipantIds: [excludedParticipantId],
       isPlaybackReady: () => ready,
@@ -109,7 +122,7 @@ function fixture(
       },
     },
     locale: "auto",
-    nowMilliseconds: () => 321,
+    nowMilliseconds,
     systemPrompt: "Answer briefly.",
     voiceProfileId: "voice-profile",
   };
@@ -145,23 +158,37 @@ describe("ParticipantGreetingBridge", () => {
     await context.bridge.settle();
 
     expect(context.coordinator.calls).toHaveLength(3);
-    expect(context.coordinator.calls.map(({ locale, prompt, speakerId }) => ({
+    expect(context.coordinator.calls.map(({
+      interruptible,
       locale,
+      literalSpeech,
+      prompt,
+      speakerId,
+    }) => ({
+      interruptible,
+      locale,
+      literalSpeech,
       prompt,
       speakerId,
     }))).toEqual([
       {
+        interruptible: false,
         locale: "ru",
+        literalSpeech: "Привет, Саша!",
         prompt: "Привет, Саша!",
         speakerId: russianParticipantId,
       },
       {
+        interruptible: false,
         locale: "ru",
+        literalSpeech: "Привет!",
         prompt: "Привет!",
         speakerId: unknownParticipantId,
       },
       {
+        interruptible: false,
         locale: "en",
+        literalSpeech: "Hi, Alex!",
         prompt: "Hi, Alex!",
         speakerId: englishParticipantId,
       },
@@ -172,31 +199,18 @@ describe("ParticipantGreetingBridge", () => {
     expect(context.coordinator.idleCalls).toBe(6);
   });
 
-  it("uses the configured English fallback without inventing a name", async () => {
-    const context = fixture(true, "en");
-
-    context.bridge.participantJoined(unknownParticipantId);
-    await context.bridge.settle();
-
-    expect(context.coordinator.calls).toHaveLength(1);
-    expect(context.coordinator.calls[0]).toMatchObject({
-      locale: "en",
-      prompt: "Hi!",
-      speakerId: unknownParticipantId,
-    });
-  });
-
   it("logs only privacy-safe greeting completion metadata", async () => {
     const infoCalls: Array<{
       readonly fields: Readonly<Record<string, unknown>> | undefined;
       readonly message: string;
     }> = [];
+    let nowMs = 321;
     const context = fixture(true, "ru", {
       ...logger,
       info: (message, fields) => {
         infoCalls.push({ fields, message });
       },
-    });
+    }, () => nowMs);
     let markIdleEntered: (() => void) | undefined;
     const idleEntered = new Promise<void>((resolve) => {
       markIdleEntered = resolve;
@@ -215,6 +229,7 @@ describe("ParticipantGreetingBridge", () => {
     const settlement = context.bridge.settle();
     await idleEntered;
     expect(infoCalls).toEqual([]);
+    nowMs = 654;
     releaseIdle?.();
     await settlement;
 
@@ -224,6 +239,8 @@ describe("ParticipantGreetingBridge", () => {
         meetingId: "recording-1",
         participantId: russianParticipantId,
         participantNameStatus: "known",
+        observedJoinToPlaybackSettledMs: 333,
+        playbackMode: "tts-fallback",
         turnId: `participant-greeting:${russianParticipantId}`,
       },
       message: "Participant greeting playback settled",
@@ -392,5 +409,70 @@ describe("ParticipantGreetingBridge", () => {
     await context.bridge.settle();
 
     expect(context.coordinator.calls).toEqual([]);
+  });
+});
+
+it("suppresses restored participants even when they reconnect", async () => {
+  const context = fixture(true);
+
+  context.bridge.participantsRestored([
+    russianParticipantId,
+    unknownParticipantId,
+  ]);
+  context.bridge.participantLeft(russianParticipantId);
+  context.bridge.participantJoined(russianParticipantId);
+  context.bridge.participantJoined(englishParticipantId);
+  await context.bridge.settle();
+
+  expect(context.coordinator.calls.map(({ speakerId }) => speakerId)).toEqual([
+    englishParticipantId,
+  ]);
+});
+
+it("plays a matching prepared greeting without invoking the TTS runtime", async () => {
+  const pcmChunks = [Uint8Array.of(1, 2), Uint8Array.of(3, 4)];
+  const context = fixture(
+    true,
+    "ru",
+    logger,
+    () => 321,
+    () => ({
+      cueId: "greeting-ru-sasha-v1",
+      pcmChunks,
+      playbackAttemptId: "greeting-attempt-1",
+    }),
+  );
+
+  context.bridge.participantJoined(russianParticipantId);
+  await context.bridge.settle();
+
+  expect(context.coordinator.calls).toEqual([]);
+  expect(context.coordinator.preparedCalls).toEqual([{
+    cueId: "greeting-ru-sasha-v1",
+    interruptible: false,
+    locale: "ru",
+    meetingId: "recording-1",
+    nowMs: 321,
+    pcmChunks,
+    playbackAttemptId: "greeting-attempt-1",
+    preemptive: false,
+    recordingId: "recording-1",
+    speakerId: russianParticipantId,
+    turnId: `participant-greeting:${russianParticipantId}`,
+    voiceProfileId: "voice-profile",
+  }]);
+});
+
+it("uses the configured English fallback without inventing a name", async () => {
+  const context = fixture(true, "en");
+
+  context.bridge.participantJoined(unknownParticipantId);
+  await context.bridge.settle();
+
+  expect(context.coordinator.calls).toHaveLength(1);
+  expect(context.coordinator.calls[0]).toMatchObject({
+    locale: "en",
+    prompt: "Hi!",
+    speakerId: unknownParticipantId,
   });
 });
