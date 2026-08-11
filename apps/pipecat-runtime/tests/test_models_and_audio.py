@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from pipecat_runtime.adapters.grpc.codec import start_turn_from_message
 from pipecat_runtime.adapters.pipecat.audio import (
     AudioNormalizationError,
     normalize_pcm_s16le,
@@ -11,6 +12,15 @@ from pipecat_runtime.adapters.pipecat.audio import (
 )
 from pipecat_runtime.application.conversation_events import AudioChunk
 from pipecat_runtime.application.models import MAXIMUM_PCM_CHUNK_BYTES, RuntimeInputError
+from tests.support import start_message
+
+
+def test_grpc_codec_preserves_optional_literal_speech() -> None:
+    """The additive wire field reaches the provider-neutral request exactly."""
+    message = start_message()
+    message.start_turn.literal_speech = "Привет, Дима!"
+
+    assert start_turn_from_message(message).literal_speech == "Привет, Дима!"
 
 
 def test_audio_chunk_rejects_odd_or_oversized_payloads() -> None:

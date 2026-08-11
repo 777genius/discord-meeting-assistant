@@ -13,7 +13,9 @@ const excludedParticipantId = "4533224474609057795";
 
 class GreetingCoordinatorProbe {
   public readonly calls: Array<{
+    readonly interruptible?: boolean;
     readonly locale: string;
+    readonly literalSpeech?: string;
     readonly meetingId: string;
     readonly nowMs: number;
     readonly prompt: string;
@@ -145,23 +147,37 @@ describe("ParticipantGreetingBridge", () => {
     await context.bridge.settle();
 
     expect(context.coordinator.calls).toHaveLength(3);
-    expect(context.coordinator.calls.map(({ locale, prompt, speakerId }) => ({
+    expect(context.coordinator.calls.map(({
+      interruptible,
       locale,
+      literalSpeech,
+      prompt,
+      speakerId,
+    }) => ({
+      interruptible,
+      locale,
+      literalSpeech,
       prompt,
       speakerId,
     }))).toEqual([
       {
+        interruptible: false,
         locale: "ru",
+        literalSpeech: "Привет, Саша!",
         prompt: "Привет, Саша!",
         speakerId: russianParticipantId,
       },
       {
+        interruptible: false,
         locale: "ru",
+        literalSpeech: "Привет!",
         prompt: "Привет!",
         speakerId: unknownParticipantId,
       },
       {
+        interruptible: false,
         locale: "en",
+        literalSpeech: "Hi, Alex!",
         prompt: "Hi, Alex!",
         speakerId: englishParticipantId,
       },
@@ -224,6 +240,7 @@ describe("ParticipantGreetingBridge", () => {
         meetingId: "recording-1",
         participantId: russianParticipantId,
         participantNameStatus: "known",
+        observedJoinToPlaybackSettledMs: 0,
         turnId: `participant-greeting:${russianParticipantId}`,
       },
       message: "Participant greeting playback settled",

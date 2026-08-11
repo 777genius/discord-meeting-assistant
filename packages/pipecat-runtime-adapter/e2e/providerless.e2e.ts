@@ -348,7 +348,9 @@ describe("Providerless greeting and farewell playback E2E", () => {
 
     try {
       await expect(coordinator.handleProactiveTurn({
+        interruptible: false,
         locale,
+        literalSpeech: prompt,
         meetingId,
         nowMs: 1,
         prompt,

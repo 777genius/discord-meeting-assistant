@@ -4,7 +4,7 @@
   "publicContractVersion": "0.1.0",
   "bufVersion": "1.72.0",
   "bufConfigDigest": "sha256:635a7cab1e684b9f2a8aa00960cfa441a32ce6cf011f646c2af54f70d6a19845",
-  "descriptorImageDigest": "sha256:fbd8f7dbd25cb83f1d074a2cc5e4f9284a9e4d970ca5467f2c2a72c79ee75d5d",
+  "descriptorImageDigest": "sha256:674a83130b7bed608ffa2445bce3b0dfeb0d8003d5342b5cb980a39618f24bed",
   "generatorVersions": [],
   "generatedOutputDigest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 }

@@ -183,6 +183,9 @@ export class ConversationActiveTurnExecutor {
       "conversation.observedAtMs",
     );
     const processedAtMs = advanceConversationState(state, observedAtMs);
+    if (state.active?.prepared.interruptible === false) {
+      return Object.freeze({ status: "ignored" as const });
+    }
     const cancellation = observe(state.session, processedAtMs);
     if (cancellation.status === "ignored") {
       return Object.freeze({ status: "ignored" as const });

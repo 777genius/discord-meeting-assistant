@@ -31,7 +31,11 @@ export interface FinalizedConversationTurnInput {
 
 /** A provider-neutral system-initiated utterance that is not transcript evidence. */
 export interface ProactiveConversationTurnInput {
+  /** Short system speech may opt out of human-speech interruption. */
+  readonly interruptible?: boolean;
   readonly locale: string;
+  /** Exact text to synthesize without model generation. */
+  readonly literalSpeech?: string;
   readonly meetingId: string;
   readonly nowMs: number;
   readonly prompt: string;
@@ -116,6 +120,7 @@ export interface PreparedConversation {
     readonly pcmChunks: readonly Uint8Array[];
     readonly playbackAttemptId: string;
   };
+  readonly interruptible: boolean;
   readonly request: ConversationStartRequest;
   readonly thinkingCueLocale: string;
   readonly thinkingCuesEnabled: boolean;

@@ -58,10 +58,15 @@ describe("conversation runtime contracts", () => {
         },
         systemPrompt: "Answer briefly in the participant's language.",
         prompt: "Расскажи короткий факт.",
+        literalSpeech: "Привет, Саша!",
         locale: "ru",
         voiceProfileId: "deterministic-e2e-ru",
       }),
-    ).toMatchObject({ turnId: "turn-1", locale: "ru" });
+    ).toMatchObject({
+      turnId: "turn-1",
+      locale: "ru",
+      literalSpeech: "Привет, Саша!",
+    });
   });
 
   it("accepts exact additive first-audio latency telemetry", () => {

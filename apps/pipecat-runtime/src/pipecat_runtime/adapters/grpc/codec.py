@@ -56,6 +56,7 @@ def start_turn_from_message(message: contract.ConversationRuntimeClientMessage) 
         prompt=payload.prompt,
         locale=payload.locale,
         voice_profile_id=payload.voice_profile_id,
+        literal_speech=payload.literal_speech if payload.HasField("literal_speech") else None,
         turn_ended_at_unix_ms=payload.turn_ended_at_unix_ms or None,
         wake_detected_at_unix_ms=payload.wake_detected_at_unix_ms or None,
         schema_version=message.schema_version,

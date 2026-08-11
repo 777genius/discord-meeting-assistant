@@ -40,7 +40,7 @@ class ConversationRuntimeClientMessage(_message.Message):
     def __init__(self, schema_version: _Optional[int] = ..., start_turn: _Optional[_Union[ConversationStartTurn, _Mapping]] = ..., cancel_turn: _Optional[_Union[ConversationCancelTurn, _Mapping]] = ...) -> None: ...
 
 class ConversationStartTurn(_message.Message):
-    __slots__ = ("meeting_id", "recording_id", "turn_id", "speaker_id", "idempotency_key", "system_prompt", "prompt", "locale", "voice_profile_id", "turn_ended_at_unix_ms", "wake_detected_at_unix_ms")
+    __slots__ = ("meeting_id", "recording_id", "turn_id", "speaker_id", "idempotency_key", "system_prompt", "prompt", "locale", "voice_profile_id", "turn_ended_at_unix_ms", "wake_detected_at_unix_ms", "literal_speech")
     MEETING_ID_FIELD_NUMBER: _ClassVar[int]
     RECORDING_ID_FIELD_NUMBER: _ClassVar[int]
     TURN_ID_FIELD_NUMBER: _ClassVar[int]
@@ -52,6 +52,7 @@ class ConversationStartTurn(_message.Message):
     VOICE_PROFILE_ID_FIELD_NUMBER: _ClassVar[int]
     TURN_ENDED_AT_UNIX_MS_FIELD_NUMBER: _ClassVar[int]
     WAKE_DETECTED_AT_UNIX_MS_FIELD_NUMBER: _ClassVar[int]
+    LITERAL_SPEECH_FIELD_NUMBER: _ClassVar[int]
     meeting_id: str
     recording_id: str
     turn_id: str
@@ -63,7 +64,8 @@ class ConversationStartTurn(_message.Message):
     voice_profile_id: str
     turn_ended_at_unix_ms: int
     wake_detected_at_unix_ms: int
-    def __init__(self, meeting_id: _Optional[str] = ..., recording_id: _Optional[str] = ..., turn_id: _Optional[str] = ..., speaker_id: _Optional[str] = ..., idempotency_key: _Optional[str] = ..., system_prompt: _Optional[str] = ..., prompt: _Optional[str] = ..., locale: _Optional[str] = ..., voice_profile_id: _Optional[str] = ..., turn_ended_at_unix_ms: _Optional[int] = ..., wake_detected_at_unix_ms: _Optional[int] = ...) -> None: ...
+    literal_speech: str
+    def __init__(self, meeting_id: _Optional[str] = ..., recording_id: _Optional[str] = ..., turn_id: _Optional[str] = ..., speaker_id: _Optional[str] = ..., idempotency_key: _Optional[str] = ..., system_prompt: _Optional[str] = ..., prompt: _Optional[str] = ..., locale: _Optional[str] = ..., voice_profile_id: _Optional[str] = ..., turn_ended_at_unix_ms: _Optional[int] = ..., wake_detected_at_unix_ms: _Optional[int] = ..., literal_speech: _Optional[str] = ...) -> None: ...
 
 class ConversationCancelTurn(_message.Message):
     __slots__ = ("turn_id", "attempt_id", "reason")

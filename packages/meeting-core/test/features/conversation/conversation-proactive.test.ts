@@ -54,7 +54,9 @@ it("streams a proactive greeting without thinking cues", async () => {
   });
 
   await expect(coordinator.handleProactiveTurn({
+    interruptible: false,
     locale: "ru",
+    literalSpeech: "Привет, Саша!",
     meetingId: "meeting-1",
     nowMs: 0,
     prompt: "Привет, Саша!",
@@ -81,6 +83,7 @@ it("streams a proactive greeting without thinking cues", async () => {
       idempotencyKey:
         "25:proactive-conversation:v1|9:meeting-1|11:recording-1|23:participant-greeting:42",
       locale: "ru",
+      literalSpeech: "Привет, Саша!",
       meetingId: "meeting-1",
       prompt: "Привет, Саша!",
       recordingId: "recording-1",
@@ -98,6 +101,45 @@ it("streams a proactive greeting without thinking cues", async () => {
       turnId: "participant-greeting:42",
     },
   ]);
+});
+
+it("does not let participant speech cancel a short non-interruptible greeting", async () => {
+  const stream = new EventStream<ConversationRuntimeEvent>();
+  const runtime = new ScriptedRuntime([stream]);
+  const coordinator = new ConversationCoordinator({
+    playback: new RecordingPlayback(),
+    runtime,
+  });
+
+  await expect(coordinator.handleProactiveTurn({
+    ...proactiveTurn("participant-greeting:42", 0),
+    interruptible: false,
+    literalSpeech: "Привет!",
+  })).resolves.toMatchObject({ status: "active" });
+  await expect(coordinator.speechStarted("meeting-1", 1)).resolves.toEqual({
+    status: "ignored",
+  });
+  await expect(coordinator.speechActivity("meeting-1", 500)).resolves.toEqual({
+    status: "ignored",
+  });
+
+  stream.push({ attemptId: "attempt-greeting", type: "accepted" });
+  stream.push({
+    attemptId: "attempt-greeting",
+    channels: 1,
+    format: "pcm_s16le",
+    sampleRateHz: 48_000,
+    type: "audio-start",
+  });
+  stream.push(audioChunk("attempt-greeting", "participant-greeting:42", 0));
+  stream.push({ attemptId: "attempt-greeting", type: "audio-end" });
+  stream.push({ attemptId: "attempt-greeting", type: "completed" });
+  stream.close();
+
+  await expect(coordinator.whenTurnPlaybackSettled(
+    "meeting-1",
+    "participant-greeting:42",
+  )).resolves.toBe("played");
 });
 
 it("reports a proactive turn as unplayed when synthesis completes without audio", async () => {

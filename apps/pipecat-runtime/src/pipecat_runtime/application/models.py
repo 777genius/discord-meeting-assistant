@@ -67,6 +67,7 @@ class StartTurn:
     prompt: str
     locale: str
     voice_profile_id: str
+    literal_speech: str | None = None
     turn_ended_at_unix_ms: int | None = None
     wake_detected_at_unix_ms: int | None = None
     schema_version: int = field(default=PROTOCOL_VERSION, kw_only=True)
@@ -102,6 +103,16 @@ class StartTurn:
             "locale",
             _bounded_text(self.locale, field_name="locale", maximum=35, minimum=2),
         )
+        if self.literal_speech is not None:
+            object.__setattr__(
+                self,
+                "literal_speech",
+                _bounded_text(
+                    self.literal_speech,
+                    field_name="literal_speech",
+                    maximum=2_000,
+                ),
+            )
         turn_ended_at_unix_ms = self.turn_ended_at_unix_ms
         wake_detected_at_unix_ms = self.wake_detected_at_unix_ms
         if (turn_ended_at_unix_ms is None) != (wake_detected_at_unix_ms is None):

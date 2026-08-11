@@ -183,6 +183,7 @@ export class ConversationWakeLatchAdmission {
       turnId: input.turnId,
     });
     return this.admitPrepared(state, {
+      interruptible: true,
       request: {
         idempotencyKey: conversationIdempotencyKey(input),
         locale: input.locale,
@@ -212,9 +213,13 @@ export class ConversationWakeLatchAdmission {
       turnId: input.turnId,
     });
     return this.admitPrepared(state, {
+      interruptible: input.interruptible ?? true,
       request: {
         idempotencyKey: proactiveConversationIdempotencyKey(input),
         locale: input.locale,
+        ...(input.literalSpeech === undefined
+          ? {}
+          : { literalSpeech: input.literalSpeech.normalize("NFKC").trim() }),
         meetingId: input.meetingId,
         prompt,
         recordingId: input.recordingId,
@@ -260,6 +265,7 @@ export class ConversationWakeLatchAdmission {
         pcmChunks: Object.freeze(pcmChunks),
         playbackAttemptId: input.playbackAttemptId,
       },
+      interruptible: true,
       request: {
         idempotencyKey: preparedCueIdempotencyKey(input),
         locale: input.locale,
@@ -334,6 +340,7 @@ export class ConversationWakeLatchAdmission {
   ): PreparedConversation {
     const latency = conversationLatencyContext(input);
     return {
+      interruptible: true,
       request: {
         idempotencyKey: conversationIdempotencyKey(input),
         ...(latency === undefined ? {} : { latency }),

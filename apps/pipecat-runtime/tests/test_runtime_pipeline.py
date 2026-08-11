@@ -41,6 +41,7 @@ from pipecat_runtime.application.conversation_events import (
     ConversationEvent,
     Failed,
     Latency,
+    TextDelta,
 )
 from pipecat_runtime.application.models import (
     MAXIMUM_PCM_CHUNK_BYTES,
@@ -468,6 +469,27 @@ async def test_deterministic_pipeline_streams_ordered_normalized_pcm() -> None:
     assert audio_chunks
     assert all(len(event.pcm) <= MAXIMUM_PCM_CHUNK_BYTES for event in audio_chunks)
     assert all(len(event.pcm) % 2 == 0 for event in audio_chunks)
+
+
+async def test_literal_speech_bypasses_text_generation_and_reaches_tts_exactly() -> None:
+    """Trusted proactive copy reaches speech without waiting for or changing through an LLM."""
+    settings = deterministic_runtime_settings(
+        DeterministicPipelineOptions(response_chunks=("This must never be generated.",))
+    )
+    runtime = PipecatConversationRuntime(profile=create_profile(settings.profile))
+    session = await runtime.start(
+        replace(sample_start_turn(), literal_speech="Привет, Дима!")
+    )
+
+    events = await asyncio.wait_for(_collect(session.events()), timeout=2)
+    await asyncio.wait_for(session.wait(), timeout=2)
+    await asyncio.wait_for(runtime.close(), timeout=2)
+
+    assert [event.text for event in events if isinstance(event, TextDelta)] == [
+        "Привет, Дима!"
+    ]
+    assert any(isinstance(event, AudioChunk) for event in events)
+    assert isinstance(events[-1], Completed)
 
 
 async def test_pipeline_reports_exact_first_audio_latency_stages() -> None:

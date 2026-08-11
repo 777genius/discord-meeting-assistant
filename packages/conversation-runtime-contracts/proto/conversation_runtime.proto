@@ -43,6 +43,7 @@ message ConversationStartTurn {
   string voice_profile_id = 9;
   uint64 turn_ended_at_unix_ms = 10;
   uint64 wake_detected_at_unix_ms = 11;
+  optional string literal_speech = 12;
 }
 
 message ConversationCancelTurn {

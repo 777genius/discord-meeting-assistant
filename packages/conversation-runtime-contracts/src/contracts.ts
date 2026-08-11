@@ -9,6 +9,7 @@ const identifierSchema = z.string().trim().min(1).max(128);
 const localeSchema = z.string().trim().min(2).max(35);
 const systemPromptSchema = z.string().trim().min(1).max(16_000);
 const promptSchema = z.string().trim().min(1).max(8_000);
+const literalSpeechSchema = z.string().trim().min(1).max(2_000);
 const sequenceSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const unixMillisecondsSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 
@@ -45,6 +46,7 @@ export const conversationRuntimeStartTurnSchema = z
       .optional(),
     systemPrompt: systemPromptSchema,
     prompt: promptSchema,
+    literalSpeech: literalSpeechSchema.optional(),
     locale: localeSchema,
     voiceProfileId: identifierSchema,
   })

@@ -275,7 +275,9 @@ interface LiveConversationTurnInput {
 }
 
 interface LiveProactiveConversationTurnInput {
+  readonly interruptible?: boolean;
   readonly locale: string;
+  readonly literalSpeech?: string;
   readonly meetingId: string;
   readonly nowMs: number;
   readonly prompt: string;
