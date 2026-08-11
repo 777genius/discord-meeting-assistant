@@ -76,6 +76,10 @@ describe("loadConversationVoiceObserverConfig", () => {
 
     expect(config.captureTimeoutMilliseconds).toBe(2_000);
     expect(config.readyTimeoutMilliseconds).toBe(120_000);
+    expect(loadConversationVoiceObserverConfig({
+      ...requiredEnvironment,
+      DISCORD_E2E_CONVERSATION_VOICE_READY_TIMEOUT_MS: "1000",
+    }).readyTimeoutMilliseconds).toBe(1_000);
   });
 
   it("fails closed for non-private targets, missing correlations, and unsafe output paths", () => {
@@ -102,6 +106,10 @@ describe("loadConversationVoiceObserverConfig", () => {
     expect(() => loadConversationVoiceObserverConfig({
       ...requiredEnvironment,
       DISCORD_E2E_CONVERSATION_VOICE_CAPTURE_TIMEOUT_MS: "999",
+    })).toThrow();
+    expect(() => loadConversationVoiceObserverConfig({
+      ...requiredEnvironment,
+      DISCORD_E2E_CONVERSATION_VOICE_READY_TIMEOUT_MS: "999",
     })).toThrow();
     expect(() => loadConversationVoiceObserverConfig({
       ...requiredEnvironment,
