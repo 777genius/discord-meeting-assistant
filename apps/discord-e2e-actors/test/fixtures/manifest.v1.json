@@ -7,8 +7,10 @@
     "1533873978417086474"
   ],
   "conversationVoiceExpectation": {
+    "botSpeakerId": "1534231284467896512",
     "guildId": "1533228590643155034",
     "observerApplicationId": "1533867700575670282",
+    "observerGreetingLocale": "ru",
     "voiceChannelId": "1533228823045214398"
   },
   "greetingLocaleTerms": {
@@ -52,6 +54,8 @@
       "audioPath": "test/fixtures/speaker-a.ru-en.ogg",
       "audioSha256": "8e29a933ef95eaf1f149b150ff123f90a3276847fcd4941ccb6c55b24561b9d8",
       "durationMs": 26235,
+      "greetingLocale": "ru",
+      "greetingNameStatus": "known",
       "sourceText": "Meeting Platform сохраняет Craig recording. Затем запускает PostgreSQL pipeline. Решение - выпустить версию в пятницу. Повторяю решение - выпуск версии в пятницу. До седьмого августа две тысячи двадцать шестого года спикер Б проверит Discord thread. Повторяю - Discord thread будет проверен в две тысячи двадцать шестом году.",
       "requiredTerms": ["Meeting Platform", "Craig recording", "PostgreSQL pipeline", "Discord thread", "пятницу"]
     },
@@ -64,6 +68,8 @@
       "audioPath": "test/fixtures/speaker-b.ru-en.ogg",
       "audioSha256": "45ee2668fb490ab03a7a453fee23eca286311b9bd5bdca268b604fc80edf2c2f",
       "durationMs": 48361,
+      "greetingLocale": "en",
+      "greetingNameStatus": "known",
       "sourceText": "Я проверю Redis queue. Я лично проверю idempotency key. Это моя задача. Срок - до седьмого августа две тысячи двадцать шестого года. Результат я оставлю в Discord thread. Повторяю термин - Discord thread. Idempotency key проверю до седьмого августа две тысячи двадцать шестого года. Повторяю мою задачу - я проверю Redis queue и idempotency key до седьмого августа две тысячи двадцать шестого года. Результат оставлю в Discord thread. Открытый вопрос - нужен ли Pipecat assistant после первой версии? Повторяю термин - Pipecat assistant.",
       "requiredTerms": ["Discord thread", "Redis queue", "idempotency key", "Pipecat assistant", "августа", "2026"]
     }

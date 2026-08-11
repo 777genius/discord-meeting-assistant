@@ -21,6 +21,7 @@ const fixtureSchema = z.object({
   audioSha256: sha256Schema,
   durationMs: z.number().int().positive(),
   fixtureId: identifierSchema,
+  greetingLocale: z.enum(["en", "ru"]).optional(), greetingNameStatus: z.enum(["known", "unknown"]).optional(),
   requiredTerms: z.array(identifierSchema).min(1),
   speechStartOffsetMs: nonNegativeSafeIntegerSchema.default(0),
   sourcePath: identifierSchema,
@@ -46,8 +47,8 @@ export const fixtureManifestV1Schema = z.object({
     "Allowed bot speaker IDs must be unique",
   ).default([]),
   conversationVoiceExpectation: z.object({
-    guildId: identifierSchema,
-    observerApplicationId: identifierSchema,
+    botSpeakerId: identifierSchema.optional(), guildId: identifierSchema,
+    observerApplicationId: identifierSchema, observerGreetingLocale: z.enum(["en", "ru"]).optional(),
     voiceChannelId: identifierSchema,
   }).strict().optional(),
   greetingLocaleTerms: z.object({ en: z.array(identifierSchema).min(1), ru: z.array(identifierSchema).min(1) }).strict().optional(),
@@ -56,8 +57,7 @@ export const fixtureManifestV1Schema = z.object({
     applicationId: identifierSchema,
     durationMs: z.number().int().positive().max(60_000),
     farewellLocale: z.enum(["en", "ru"]),
-    fixtureSha256: sha256Schema,
-    greetingLocale: z.enum(["en", "ru"]),
+    fixtureSha256: sha256Schema, greetingLocale: z.enum(["en", "ru"]),
     requiredFarewellTerms: z.array(identifierSchema).min(1),
     requiredQuestionTerms: z.array(identifierSchema).min(1),
   }).strict().refine(

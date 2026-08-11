@@ -1,4 +1,5 @@
 import { normalizeTranscriptSemantics } from "./e2e-evidence-text-metrics.js";
+import { authoritativeTrackCoverage } from "./e2e-evidence-track-verification.js";
 import type {
   FixtureManifestV1,
   RetainedE2eEvidenceV8,
@@ -16,12 +17,21 @@ interface SupplementalAnswerWindow {
   readonly playbackStartMs: number;
   readonly questionEndMs: number;
   readonly recordingStartMs: number;
+  readonly speakerId: string;
 }
 
 interface SupplementalFarewellExpectation {
   readonly humanFarewellEndMs: number;
+  readonly humanFarewellTurnIds: readonly string[];
   readonly locale: "en" | "ru";
   readonly recordingStartMs: number;
+}
+
+interface SupplementalTrackExpectation {
+  readonly playbackEndMs: number;
+  readonly playbackStartMs: number;
+  readonly speakerId: string;
+  readonly speakerTurns: readonly { readonly endMs: number; readonly startMs: number }[];
 }
 
 export function verifySupplementalPlayback(
@@ -77,10 +87,31 @@ export function verifySupplementalPlayback(
   }
   verifySupplementalGreeting(evidence, expectation, fail);
 
-  const speakerTurns = evidence.transcript.turns.filter((turn) =>
-    turn.speakerId === expectation.applicationId &&
+  const allSpeakerTurns = evidence.transcript.turns.filter(
+    (turn) => turn.speakerId === expectation.applicationId,
+  );
+  const speakerTurns = allSpeakerTurns.filter((turn) =>
     turn.startMs < playbackEndMs && playbackStartMs < turn.endMs
   );
+  const turnBoundaryToleranceMs = Math.min(
+    manifest.thresholds.timestampToleranceMs,
+    maximumTurnBoundaryToleranceMs,
+  );
+  if (allSpeakerTurns.some((turn) =>
+    turn.startMs < playbackStartMs - turnBoundaryToleranceMs ||
+    turn.endMs > playbackEndMs + turnBoundaryToleranceMs
+  )) {
+    fail(
+      "SUPPLEMENTAL_TURN_INTERVAL_INVALID",
+      "every Speaker D transcript turn must come from the pinned playback interval",
+    );
+  }
+  verifySupplementalTrackCoverage(manifest, evidence, {
+    playbackEndMs,
+    playbackStartMs,
+    speakerId: expectation.applicationId,
+    speakerTurns: allSpeakerTurns,
+  }, fail);
   const normalizedSpeakerText = normalizeTranscriptSemantics(
     speakerTurns.map(({ text }) => text).join(" "),
   );
@@ -117,6 +148,7 @@ export function verifySupplementalPlayback(
     evidence,
     {
       humanFarewellEndMs: farewellEndMs,
+      humanFarewellTurnIds: farewellTurns.map(({ turnId }) => turnId),
       locale: expectation.farewellLocale,
       recordingStartMs,
     },
@@ -131,6 +163,7 @@ export function verifySupplementalPlayback(
       playbackStartMs,
       questionEndMs,
       recordingStartMs,
+      speakerId: expectation.applicationId,
     },
     fail,
   );
@@ -188,6 +221,17 @@ function verifyFarewellTiming(
       "settled Botik farewell locale does not match the pinned Speaker D farewell",
     );
   }
+  const expectedTurnIds = new Set(expectation.humanFarewellTurnIds);
+  if (
+    farewellEvent.reason !== "explicit-group" ||
+    farewellEvent.evidenceTurnIds.length === 0 ||
+    farewellEvent.evidenceTurnIds.some((turnId) => !expectedTurnIds.has(turnId))
+  ) {
+    fail(
+      "SUPPLEMENTAL_FAREWELL_CORRELATION_MISMATCH",
+      "settled farewell must be the explicit group response bound to Speaker D turns",
+    );
+  }
   const toleranceMs = manifest.thresholds.timestampToleranceMs;
   const turnBoundaryToleranceMs = Math.min(toleranceMs, maximumTurnBoundaryToleranceMs);
   const observedAtMs = Date.parse(farewellEvent.observedAt) - expectation.recordingStartMs;
@@ -219,12 +263,34 @@ function verifyAddressedAnswerSemantics(
     return;
   }
   const answer = answerCaptures[0]!;
+  const answerEvents = evidence.conversation.lifecycle.events.filter(
+    (event): event is Extract<typeof event, { type: "addressed-answer" }> =>
+      event.type === "addressed-answer",
+  );
+  const answerEvent = answerEvents[0];
+  if (
+    answerEvents.length !== 1 ||
+    answerEvent === undefined ||
+    answerEvent.participantId !== window.speakerId ||
+    answerEvent.turnId !== answer.correlation.turnId
+  ) {
+    fail(
+      "SUPPLEMENTAL_ANSWER_TURN_MISMATCH",
+      "addressed answer capture must reference Speaker D's admitted live turn",
+    );
+  }
   const answerStartMs =
     answer.capture.firstPacketAt.epochMilliseconds - window.recordingStartMs;
   const answerEndMs = answer.capture.endedAt.epochMilliseconds - window.recordingStartMs;
+  const answerObservedAtMs = answerEvent === undefined
+    ? -1
+    : Date.parse(answerEvent.observedAt) - window.recordingStartMs;
+  const turnBoundaryToleranceMs = maximumTurnBoundaryToleranceMs;
   if (
     answerStartMs < window.playbackStartMs || answerEndMs > window.playbackEndMs ||
-    answerStartMs < window.questionEndMs || answerEndMs > window.farewellStartMs
+    answerStartMs < window.questionEndMs || answerEndMs > window.farewellStartMs ||
+    answerObservedAtMs < window.questionEndMs - turnBoundaryToleranceMs ||
+    answerObservedAtMs > answerStartMs
   ) {
     fail(
       "SUPPLEMENTAL_ANSWER_INTERVAL_INVALID",
@@ -243,6 +309,34 @@ function verifyAddressedAnswerSemantics(
     "SUPPLEMENTAL_ANSWER_SEMANTICS_MISSING",
     fail,
   );
+}
+
+function verifySupplementalTrackCoverage(
+  manifest: FixtureManifestV1,
+  evidence: RetainedE2eEvidenceV8,
+  expectation: SupplementalTrackExpectation,
+  fail: VerificationFailureReporter,
+): void {
+  const issue = authoritativeTrackCoverage(
+    evidence,
+    expectation.speakerId,
+    [{ endMs: expectation.playbackEndMs, startMs: expectation.playbackStartMs },
+      ...expectation.speakerTurns],
+    manifest.thresholds.timestampToleranceMs,
+  );
+  if (issue === "track-missing") {
+    fail(
+      "SUPPLEMENTAL_SPEAKER_MISSING",
+      "supplemental Speaker D must have exactly one authoritative S3 track",
+    );
+    return;
+  }
+  if (issue === "interval-outside-track") {
+    fail(
+      "SUPPLEMENTAL_TRACK_INTERVAL_MISMATCH",
+      "Speaker D playback and transcript turns must fit its authoritative S3 track",
+    );
+  }
 }
 
 function turnsContainingAnyTerms<T extends { readonly text: string }>(

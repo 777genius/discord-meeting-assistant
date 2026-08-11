@@ -206,6 +206,7 @@ provenance plus correlated stage/model latency observations. When
 `DISCORD_E2E_EXPECTED_PIPECAT_SOURCE_REVISION` is set, it also requires and
 captures the profiled Pipecat service. It replays the
 completed BullMQ job, then repeats the Postgres, Discord, and provenance probes.
+The retained v8 conversation group makes that exact Pipecat revision mandatory.
 It writes nothing unless correlation, stable provenance, and the single-run
 verifier pass:
 
@@ -231,9 +232,10 @@ DISCORD_E2E_SECRET_DIRECTORY=/run/secrets/discord-e2e \
 pnpm --filter @discord-meeting/discord-e2e-actors collect:e2e
 ```
 
-The v8 verifier requires audible RU and EN greetings whose Botik transcript
-interval contains a pinned greeting term, an unknown-participant
-greeting without logging its prompt or name, one greeting per participant despite reconnect,
+The v8 verifier requires audible RU and EN greetings for the exact pinned actor
+identities whose Botik transcript interval contains a pinned greeting term,
+separate default-locale greetings for the pinned unknown observer and Speaker D
+without logging a prompt or name, one greeting per participant despite reconnect,
 exactly one completed prepared farewell in the pinned language, one audible capture per lifecycle
 turn, and one audible addressed answer overlapping one final Botik transcript
 turn. The pinned Speaker D playback must contribute the expected question and

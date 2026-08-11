@@ -126,9 +126,17 @@ const farewellPlaybackObservationSchema = z.object({
   turnId: z.literal("meeting-farewell:v1"),
   type: z.literal("farewell"),
 }).strict();
+const addressedAnswerObservationSchema = z.object({
+  observedAt: z.iso.datetime(),
+  outcome: z.enum(["active", "queued"]),
+  participantId: identifierSchema,
+  turnId: identifierSchema,
+  type: z.literal("addressed-answer"),
+}).strict();
 
 export const conversationLifecycleEvidenceSchema = z.object({
   events: z.array(z.discriminatedUnion("type", [
+    addressedAnswerObservationSchema,
     greetingPlaybackObservationSchema,
     farewellPlaybackObservationSchema,
   ])).min(4),

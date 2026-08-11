@@ -9,6 +9,45 @@ import {
 } from "./e2e-evidence-fixtures.js";
 
 describe("retained conversation V8 supplemental semantics", () => {
+  it("requires the pinned unknown observer greeting", () => {
+    const fixtureManifest = manifest();
+    const observerId = fixtureManifest.conversationVoiceExpectation?.observerApplicationId;
+    if (observerId === undefined) {
+      throw new Error("conversation observer expectation fixture is missing");
+    }
+    const evidence = retainedV8Evidence();
+    evidence.conversation.lifecycle.events = evidence.conversation.lifecycle.events.filter(
+      (event) => event.type !== "greeting" || event.participantId !== observerId,
+    );
+
+    const codes = verifyRetainedE2eEvidence(
+      fixtureManifest,
+      evidence,
+      currentExpectedRevisions,
+    ).failures.map(({ code }) => code);
+
+    expect(codes).toContain("PINNED_GREETING_MISMATCH");
+  });
+
+  it("requires the reconnect actor to use its pinned named English greeting", () => {
+    const evidence = retainedV8Evidence();
+    const greeting = evidence.conversation.lifecycle.events.find(
+      (event) => event.type === "greeting" && event.participantId === speakerBId,
+    );
+    if (greeting === undefined || greeting.type !== "greeting") {
+      throw new Error("reconnect greeting fixture is missing");
+    }
+    greeting.greetingLocale = "ru";
+
+    const codes = verifyRetainedE2eEvidence(
+      manifest(),
+      evidence,
+      currentExpectedRevisions,
+    ).failures.map(({ code }) => code);
+
+    expect(codes).toContain("PINNED_GREETING_MISMATCH");
+  });
+
   it("requires the supplemental Speaker D default-locale greeting", () => {
     const fixtureManifest = manifest();
     const supplemental = fixtureManifest.supplementalVoiceExpectation;

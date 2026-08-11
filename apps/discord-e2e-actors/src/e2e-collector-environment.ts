@@ -58,4 +58,14 @@ export const collectorEnvironmentSchema = z.object({
       path: ["DISCORD_E2E_CONVERSATION_VOICE_INPUTS"],
     });
   }
+  if (
+    conversationInputs.every((input) => input !== undefined) &&
+    value.DISCORD_E2E_EXPECTED_PIPECAT_SOURCE_REVISION === undefined
+  ) {
+    context.addIssue({
+      code: "custom",
+      message: "Retained conversation proof requires an exact Pipecat source revision",
+      path: ["DISCORD_E2E_EXPECTED_PIPECAT_SOURCE_REVISION"],
+    });
+  }
 });

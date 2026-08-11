@@ -23,6 +23,7 @@ import {
 export const speakerAId = "1533227577286852649";
 export const speakerBId = "1533228054724346087";
 const speakerDId = "1533873978417086474";
+const observerId = "1533867700575670282";
 const speakerAText = "Спикер A обсуждает Meeting Platform и Craig recording";
 const speakerBText = "Спикер B проверит Redis queue и idempotency key";
 export const expectedRevisions: DeploymentRevisionExpectation =
@@ -54,8 +55,10 @@ export function manifest(): FixtureManifestV1 {
   return fixtureManifestV1Schema.parse({
     allowedBotSpeakerIds: ["1534231284467896512", speakerDId],
     conversationVoiceExpectation: {
+      botSpeakerId: "1534231284467896512",
       guildId: "1533228590643155034",
-      observerApplicationId: "1533867700575670282",
+      observerApplicationId: observerId,
+      observerGreetingLocale: "ru",
       voiceChannelId: "1533228823045214398",
     },
     greetingLocaleTerms: { en: ["hi", "hello", "хай"], ru: ["привет", "здравствуй"] },
@@ -77,6 +80,8 @@ export function manifest(): FixtureManifestV1 {
         audioSha256: "c".repeat(64),
         durationMs: 7_000,
         fixtureId: "speaker-a",
+        greetingLocale: "ru",
+        greetingNameStatus: "known",
         requiredTerms: ["Meeting Platform", "Craig recording"],
         sourcePath: "speaker-a.txt",
         sourceSha256: "a".repeat(64),
@@ -89,6 +94,8 @@ export function manifest(): FixtureManifestV1 {
         audioSha256: "d".repeat(64),
         durationMs: 7_000,
         fixtureId: "speaker-b",
+        greetingLocale: "en",
+        greetingNameStatus: "known",
         requiredTerms: ["Redis queue", "idempotency key"],
         sourcePath: "speaker-b.txt",
         sourceSha256: "b".repeat(64),
@@ -583,8 +590,9 @@ export function retainedV8Evidence(): RetainedE2eEvidenceV8 {
   const events = [
     { greetingLocale: "ru", observedAt: "1970-01-01T00:00:01.500Z", participantId: speakerAId, participantNameStatus: "known", turnId: `participant-greeting:${speakerAId}`, type: "greeting" as const },
     { greetingLocale: "en", observedAt: "1970-01-01T00:00:00.700Z", participantId: speakerBId, participantNameStatus: "known", turnId: `participant-greeting:${speakerBId}`, type: "greeting" as const },
-    { greetingLocale: "ru", observedAt: "1970-01-01T00:00:02.500Z", participantId: "3533228054724346087", participantNameStatus: "unknown", turnId: "participant-greeting:3533228054724346087", type: "greeting" as const },
+    { greetingLocale: "ru", observedAt: "1970-01-01T00:00:02.500Z", participantId: observerId, participantNameStatus: "unknown", turnId: `participant-greeting:${observerId}`, type: "greeting" as const },
     { greetingLocale: "ru", observedAt: "1970-01-01T00:00:03.200Z", participantId: speakerDId, participantNameStatus: "unknown", turnId: `participant-greeting:${speakerDId}`, type: "greeting" as const },
+    { observedAt: "1970-01-01T00:00:03.800Z", outcome: "active", participantId: speakerDId, turnId: "human-question-1", type: "addressed-answer" as const },
     { evidenceTurnIds: ["speaker-d-farewell"], locale: "ru", observedAt: "1970-01-01T00:00:07.000Z", playbackAttemptId: "farewell-attempt-1", reason: "explicit-group", turnId: "meeting-farewell:v1" as const, type: "farewell" as const },
   ];
   return retainedE2eEvidenceV8Schema.parse({
@@ -621,7 +629,7 @@ export function retainedV8Evidence(): RetainedE2eEvidenceV8 {
       voice: [
         voiceObservation("greeting", `participant-greeting:${speakerAId}`, "greeting-ru", 1_000),
         voiceObservation("greeting", `participant-greeting:${speakerBId}`, "greeting-en", 200),
-        voiceObservation("greeting", "participant-greeting:3533228054724346087", "greeting-unknown", 2_000),
+        voiceObservation("greeting", `participant-greeting:${observerId}`, "greeting-unknown", 2_000),
         voiceObservation("farewell", "meeting-farewell:v1", "farewell", 6_600),
         voiceObservation("addressed-answer", "human-question-1", "answer", 4_100),
         voiceObservation("greeting", `participant-greeting:${speakerDId}`, "greeting-speaker-d", 2_700),
@@ -666,7 +674,7 @@ function voiceObservation(
     },
     correlation: { attemptId, provenance: "operator-supplied" as const, purpose, recordingId: "meeting-1", verification: "not-run" as const, turnId },
     kind: "conversation-voice-observer-evidence" as const,
-    observer: { applicationId: "1533867700575670282", authenticatedBotId: "1533867700575670282", guildId: "1533228590643155034", privateTestGuildConfirmed: true as const, voiceChannelId: "1533228823045214398" },
+    observer: { applicationId: observerId, authenticatedBotId: observerId, guildId: "1533228590643155034", privateTestGuildConfirmed: true as const, voiceChannelId: "1533228823045214398" },
     runId: "run-overlap-1", schemaVersion: 3 as const,
     source: { codec: "opus" as const, craigBotId: "1534231284467896512", decodedPcm: { channels: 2 as const, encoding: "s16le" as const, sampleRateHertz: 48_000 as const }, receiver: "@discordjs/voice" as const },
     transcriptVerification: { status: "not-run" as const },

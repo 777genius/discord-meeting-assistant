@@ -11,9 +11,9 @@ import {
   verifySummarySemantics,
 } from "./e2e-evidence-summary-verification.js";
 import {
-  verifyConversationEvidence,
   verifyTranscript,
-} from "./e2e-evidence-transcript-verification.js";
+} from "./e2e-evidence-transcript-content-verification.js";
+import { verifyConversationEvidence } from "./e2e-evidence-transcript-verification.js";
 import type {
   FixtureManifestV1,
   DeploymentRevisionExpectation,
@@ -91,7 +91,7 @@ export function verifyRetainedE2eEvidence(
   const context = { evidence, fail, manifest, playbackWindows, scenario };
   verifyActorRun(context);
   verifyTranscript({ ...context, metrics });
-  verifyConversationEvidence(manifest, evidence, fail);
+  verifyConversationEvidence(manifest, evidence, expectedRevisions, fail);
   verifyEvidenceReferences(manifest, evidence, fail);
   verifySummarySemantics(manifest, evidence, fail);
   verifyDiscordSummaryUx(manifest, evidence, fail);

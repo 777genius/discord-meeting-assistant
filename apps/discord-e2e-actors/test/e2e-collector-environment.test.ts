@@ -23,6 +23,9 @@ const conversationEnvironment = {
   ]),
   DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_INPUT: "/evidence/speaker-d.json",
 };
+const pipecatEnvironment = {
+  DISCORD_E2E_EXPECTED_PIPECAT_SOURCE_REVISION: "d".repeat(40),
+};
 
 describe("collectorEnvironmentSchema", () => {
   it("accepts a post-call campaign without conversation evidence", () => {
@@ -33,6 +36,7 @@ describe("collectorEnvironmentSchema", () => {
     const result = collectorEnvironmentSchema.safeParse({
       ...requiredEnvironment,
       ...conversationEnvironment,
+      ...pipecatEnvironment,
     });
 
     expect(result.success).toBe(true);
@@ -47,14 +51,26 @@ describe("collectorEnvironmentSchema", () => {
     );
 
     expect(partialGroups.every((partial) =>
-      !collectorEnvironmentSchema.safeParse({ ...requiredEnvironment, ...partial }).success
+      !collectorEnvironmentSchema.safeParse({
+        ...requiredEnvironment,
+        ...pipecatEnvironment,
+        ...partial,
+      }).success
     )).toBe(true);
+  });
+
+  it("rejects retained V8 conversation input without exact Pipecat revision", () => {
+    expect(collectorEnvironmentSchema.safeParse({
+      ...requiredEnvironment,
+      ...conversationEnvironment,
+    }).success).toBe(false);
   });
 
   it("rejects a complete input group with fewer than six voice captures", () => {
     const result = collectorEnvironmentSchema.safeParse({
       ...requiredEnvironment,
       ...conversationEnvironment,
+      ...pipecatEnvironment,
       DISCORD_E2E_CONVERSATION_VOICE_INPUTS: JSON.stringify([
         "/evidence/greeting-ru.json",
         "/evidence/greeting-en.json",
