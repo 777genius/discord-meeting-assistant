@@ -10,6 +10,7 @@
     "fixtures:generate": "./scripts/generate-ru-en-fixtures.sh",
     "observe:conversation": "pnpm run build && node dist/observe-conversation-voice.js",
     "observe:live": "pnpm run build && node dist/observe-live-discord.js",
+    "play:supplemental": "pnpm run build && node dist/play-supplemental-voice.js",
     "start": "pnpm run build && node dist/main.js",
     "test": "vitest run",
     "typecheck": "tsc --project tsconfig.json --noEmit --pretty false",

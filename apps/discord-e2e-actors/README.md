@@ -5,6 +5,57 @@ voice channel and plays synthetic Ogg Opus fixtures with controlled overlap,
 strictly sequential playback, or one speaker reconnecting during the same recording.
 It never accepts bot tokens directly through environment variables.
 
+## Supplemental Speaker D playback
+
+`play:supplemental` is a one-off addition to the retained private-guild campaign.
+It connects one official Speaker D test bot and plays one pre-qualified Ogg Opus
+fixture exactly once. That fixture contains two ordered synthetic turns: Speaker
+D first asks Botik a question and later makes one explicit group farewell. This
+supplements conversation/farewell coverage; Speaker A and Speaker B remain the
+only human WER/CER corpus and overlap inputs.
+
+The committed `test/fixtures/supplemental-voice-playback.v1.json` pins the
+already-qualified fixture. Do not generate or substitute audio during the
+campaign. Relative fixture paths are resolved from the manifest directory:
+
+```json
+{
+  "schemaVersion": 1,
+  "privateTestGuildAcknowledgement": "private-test-guild",
+  "guildId": "1533228590643155034",
+  "voiceChannelId": "1533228823045214398",
+  "applicationId": "1533873978417086474",
+  "fixture": {
+    "path": "supplemental-question-farewell.ru.ogg",
+    "sha256": "9741f8e03bc6417354908bdfb4a771297f0ab5ee31fecc213dd352c8779343b1",
+    "durationMs": 23768,
+    "purpose": "speaker-d-botik-question-and-later-group-farewell"
+  }
+}
+```
+
+Store its token in Keychain service `discord-voice-bot-e2e`, account
+`speaker-d`, or in a private `speaker-d` file accepted by the existing
+file-secret reader. Then run with explicit private-target acknowledgement and
+bounded holds:
+
+```sh
+DISCORD_E2E_SUPPLEMENTAL_PRIVATE_TEST_GUILD=private-test-guild \
+DISCORD_E2E_SUPPLEMENTAL_MANIFEST=/app/apps/discord-e2e-actors/test/fixtures/supplemental-voice-playback.v1.json \
+DISCORD_E2E_SUPPLEMENTAL_EVIDENCE_OUTPUT=/absolute/evidence/speaker-d.playback.json \
+DISCORD_E2E_SUPPLEMENTAL_RUN_ID=campaign-2026-08-11-reconnect \
+DISCORD_E2E_SUPPLEMENTAL_PRE_HOLD_MS=10000 \
+DISCORD_E2E_SUPPLEMENTAL_POST_HOLD_MS=10000 \
+pnpm --filter @discord-meeting/discord-e2e-actors play:supplemental
+```
+
+The CLI refuses token environment variables, an absent private-guild
+acknowledgement, malformed or unpinned targets, a non-bot or mismatched
+application identity, changed/non-Ogg audio, a fixture longer than 60 seconds,
+timeouts shorter than the fixture, and holds/timeouts outside their finite
+bounds. It writes create-only non-secret evidence after playback reaches
+`Playing` and then `Idle`; it never replaces an existing evidence file.
+
 ## Providerless conversation voice observer
 
 `observe:conversation` is a separate Stage 7 diagnostic for a private,

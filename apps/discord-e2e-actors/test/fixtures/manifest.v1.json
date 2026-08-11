@@ -1,7 +1,11 @@
 {
   "schemaVersion": 1,
   "fixtureSetId": "discord-meeting-ru-en-v6",
-  "allowedBotSpeakerIds": ["1534231284467896512", "1533224474609057793"],
+  "allowedBotSpeakerIds": [
+    "1534231284467896512",
+    "1533224474609057793",
+    "1533873978417086474"
+  ],
   "conversationVoiceExpectation": {
     "guildId": "1533228590643155034",
     "observerApplicationId": "1533867700575670282",

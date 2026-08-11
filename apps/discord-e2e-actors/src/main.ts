@@ -45,7 +45,14 @@ async function main(): Promise<void> {
         await systemScenarioClock.wait(config.speakerBConnectDelayMilliseconds);
       }
       process.stdout.write(`Discord E2E connecting ${speaker.name}.\n`);
+      const expectedApplicationId = verifiedFixtureSet.manifest.fixtures.find(
+        ({ actorName }) => actorName === speaker.name,
+      )?.speakerId;
+      if (expectedApplicationId === undefined) {
+        throw new Error(`Missing pinned Discord application ID for ${speaker.name}`);
+      }
       actors.push(await connectDiscordVoiceActor({
+        expectedApplicationId,
         name: speaker.name,
         token,
         guildId: config.guildId,
