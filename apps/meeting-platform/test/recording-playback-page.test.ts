@@ -323,6 +323,7 @@ describe("recording playback browser page", () => {
   });
 
   it("removes a valid fragment from browser history before opening a session", async () => {
+    vi.useFakeTimers();
     const page = createPageHarness([], {
       fragment: "a".repeat(48),
       manifestStatuses: ["unavailable"],
@@ -331,6 +332,39 @@ describe("recording playback browser page", () => {
 
     expect(page.sessionRequestCount()).toBe(1);
     expect(page.replacedUrls()).toEqual(["/recordings/playback"]);
+  });
+
+  it("recovers when a newly published recording is briefly unavailable", async () => {
+    vi.useFakeTimers();
+    const audio = new FakeAudio("loaded", 12);
+    const page = createPageHarness(
+      [{ audio, timelineOffsetMs: 0 }],
+      { manifestStatuses: ["unavailable", "ready"] },
+    );
+    await flushAsync();
+
+    expect(page.status.textContent).toBe("Recording is not ready yet");
+    expect(page.sessionRequestCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await flushAsync();
+
+    expect(page.sessionRequestCount()).toBe(2);
+    expect(page.status.textContent).toBe("Ready to play");
+    expect(page.player.hidden).toBe(false);
+  });
+
+  it("bounds unavailable-manifest retries instead of polling forever", async () => {
+    vi.useFakeTimers();
+    const page = createPageHarness([], { manifestStatuses: ["unavailable"] });
+    await flushAsync();
+
+    await vi.advanceTimersByTimeAsync(23 * 5_000);
+    await flushAsync();
+    expect(page.sessionRequestCount()).toBe(24);
+    expect(page.status.textContent).toBe("Recording unavailable");
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(page.sessionRequestCount()).toBe(24);
   });
 
   it("polls a processing recording and exposes it when ready", async () => {

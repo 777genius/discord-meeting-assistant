@@ -17,13 +17,10 @@ h1 { margin: 10px 0 8px; font-size: clamp(32px, 7vw, 56px); line-height: 1; lett
 .timeline { width: 100%; min-width: 0; display: grid; gap: 2px; }
 input[type="range"] {
   --seek-progress: 0%;
-  width: 100%;
-  height: 48px;
-  margin: 0;
+  width: 100%; height: 48px; margin: 0;
   appearance: none;
   -webkit-appearance: none;
-  background: transparent;
-  cursor: pointer;
+  background: transparent; cursor: pointer;
   touch-action: none;
 }
 input[type="range"]::-webkit-slider-runnable-track {
@@ -94,6 +91,8 @@ export const recordingPlaybackClientScript = String.raw`
   let lastSyncAt = 0;
   let gapClock = null;
   const metadataTimeoutMs = 15000;
+  const manifestRetryDelayMs = 5000, maximumManifestAttempts = 24;
+  let manifestAttempts = 0;
 
   const token = window.location.hash.slice(1);
   if (!/^[A-Za-z0-9._-]{40,1024}$/.test(token)) {
@@ -151,7 +150,17 @@ export const recordingPlaybackClientScript = String.raw`
     playerNode.hidden = true;
   }
 
+  function retryManifest(message) {
+    if (manifestAttempts < maximumManifestAttempts) {
+      setStatus(message);
+      window.setTimeout(openSession, manifestRetryDelayMs);
+      return;
+    }
+    showUnavailable();
+  }
+
   async function openSession() {
+    manifestAttempts += 1;
     try {
       const response = await fetch("/recordings/session", {
         method: "POST",
@@ -162,9 +171,11 @@ export const recordingPlaybackClientScript = String.raw`
         return;
       }
       const manifest = await response.json();
-      if (manifest.status === "processing") {
-        setStatus("Recording is being processed");
-        window.setTimeout(openSession, 5000);
+      const pendingMessage = manifest.status === "processing"
+        ? "Recording is being processed"
+        : manifest.status === "unavailable" ? "Recording is not ready yet" : null;
+      if (pendingMessage !== null) {
+        retryManifest(pendingMessage);
         return;
       }
       if (manifest.status !== "ready" || manifest.tracks.length === 0) {
@@ -173,7 +184,7 @@ export const recordingPlaybackClientScript = String.raw`
       }
       await prepareTracks(manifest.tracks);
     } catch {
-      showUnavailable();
+      retryManifest("Checking recording again...");
     }
   }
 
