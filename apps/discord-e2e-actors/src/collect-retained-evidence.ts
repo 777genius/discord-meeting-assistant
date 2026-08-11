@@ -11,7 +11,7 @@ import {
   fixtureManifestV1Schema,
   verifyRetainedE2eEvidence,
 } from "./e2e-evidence.js";
-import { MacOsKeychainSecretReader } from "./keychain.js";
+import { FileSecretReader, MacOsKeychainSecretReader } from "./keychain.js";
 import { SshDeploymentEvidenceProbe } from "./ssh-deployment-probe.js";
 
 const absolutePath = z.string().refine(isAbsolute);
@@ -52,6 +52,7 @@ const environmentSchema = z.object({
     "/mnt/volume_ams3_1784742570542/discord-meeting-assistant/source",
   ),
   DISCORD_E2E_RUN_ID: correlationId,
+  DISCORD_E2E_SECRET_DIRECTORY: absolutePath.optional(),
   DISCORD_E2E_SUT_ACCOUNT: z.string().min(1).default("sut"),
 }).superRefine((value, context) => {
   if ((value.DISCORD_E2E_BOTIK_SPEAKER_ID === undefined) !==
@@ -71,7 +72,9 @@ async function main(): Promise<void> {
     readJson(config.DISCORD_E2E_FIXTURE_MANIFEST).then((value) =>
       fixtureManifestV1Schema.parse(value)
     ),
-    new MacOsKeychainSecretReader(config.DISCORD_E2E_KEYCHAIN_SERVICE)
+    (config.DISCORD_E2E_SECRET_DIRECTORY === undefined
+      ? new MacOsKeychainSecretReader(config.DISCORD_E2E_KEYCHAIN_SERVICE)
+      : new FileSecretReader(config.DISCORD_E2E_SECRET_DIRECTORY))
       .read(config.DISCORD_E2E_SUT_ACCOUNT),
     Promise.all((config.DISCORD_E2E_CONVERSATION_VOICE_INPUTS ?? []).map((path) =>
       readJson(path).then((value) => conversationVoiceEvidenceV3Schema.parse(value))

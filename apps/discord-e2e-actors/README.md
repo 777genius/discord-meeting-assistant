@@ -148,6 +148,7 @@ speaker ID and the JSON array of those five files:
 DISCORD_E2E_BOTIK_SPEAKER_ID=1534231284467896512 \
 DISCORD_E2E_CONVERSATION_VOICE_INPUTS='["/absolute/evidence/greeting-ru.json","/absolute/evidence/greeting-en.json","/absolute/evidence/greeting-unknown.json","/absolute/evidence/farewell.json","/absolute/evidence/addressed-answer.json"]' \
 DISCORD_E2E_EVIDENCE_OUTPUT=/absolute/evidence/reconnect.evidence.v7.json \
+DISCORD_E2E_SECRET_DIRECTORY=/run/secrets/discord-e2e \
 pnpm --filter @discord-meeting/discord-e2e-actors collect:e2e
 ```
 
@@ -159,6 +160,12 @@ turn. It rejects stale intervals, duplicate attempts/participants, mixed
 observer or Botik identities, wrong run/recording, and a missing/wrong Botik
 speaker track. Deterministic bridge and providerless playback tests separately
 prove the exact named and nameless phrase construction without retaining PII in logs.
+
+For a fully hosted campaign, use the same external secret directory for the
+actor harness, voice observer, and collector. It contains files named by the
+configured accounts (`sut`, `speaker-a`, `speaker-b`, and
+`conversation-observer`) and never token values in environment variables or
+process arguments.
 
 Collection and both verification commands require immutable candidate inputs
 `DISCORD_E2E_EXPECTED_CRAIG_SOURCE_REVISION`,

@@ -180,6 +180,7 @@ the pinned Botik speaker ID to the normal collector:
 DISCORD_E2E_BOTIK_SPEAKER_ID=1534231284467896512 \
 DISCORD_E2E_CONVERSATION_VOICE_INPUTS='["/absolute/evidence/greeting-ru.json","/absolute/evidence/greeting-en.json","/absolute/evidence/greeting-unknown.json","/absolute/evidence/farewell.json","/absolute/evidence/addressed-answer.json"]' \
 DISCORD_E2E_EVIDENCE_OUTPUT=/absolute/evidence/reconnect.evidence.v7.json \
+DISCORD_E2E_SECRET_DIRECTORY=/run/secrets/discord-e2e \
 pnpm --filter @discord-meeting/discord-e2e-actors collect:e2e
 
 pnpm --filter @discord-meeting/discord-e2e-actors run verify:e2e -- \
