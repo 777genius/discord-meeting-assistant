@@ -20,6 +20,7 @@ import {
   buildSubscriptionRuntimeIncrementalSummaryRequest,
   type SubscriptionRuntimeIncrementalSummaryRequestOptions,
 } from "./incremental-request-mapper.js";
+import { createIncrementalEvidenceAliases } from "./incremental-evidence-aliases.js";
 import {
   mapLunaGenerationTelemetry,
   mapLunaGenerationUsage,
@@ -151,15 +152,17 @@ export class SubscriptionRuntimeIncrementalSummaryAdapter
         "Subscription runtime returned an invalid meeting summary",
       );
     }
+    const canonicalSummary = createIncrementalEvidenceAliases(request)
+      .restoreSummary(parsed.data);
     validateProviderSummaryEvidence(
-      parsed.data,
+      canonicalSummary,
       new Set(request.knownTurnIds),
       new Set(request.knownSpeakerIds),
     );
-    validateIncrementalSummaryRetention(parsed.data, request.previousSummary);
+    validateIncrementalSummaryRetention(canonicalSummary, request.previousSummary);
     return {
       summary: mapIncrementalProviderSummary(
-        parsed.data,
+        canonicalSummary,
         request.idempotencyKey,
         request.revision,
       ),
