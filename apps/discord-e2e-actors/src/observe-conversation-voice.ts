@@ -3,6 +3,7 @@ import {
   VoiceConnectionStatus,
   entersState,
   joinVoiceChannel,
+  type AudioReceiveStream,
   type VoiceConnection,
 } from "@discordjs/voice";
 import {
@@ -16,6 +17,7 @@ import {
 
 import { loadConversationVoiceObserverConfig } from "./conversation-voice-observer-config.js";
 import { createConversationVoiceEvidence } from "./conversation-voice-evidence.js";
+import { captureConversationVoiceFromOpenStream } from "./conversation-voice-stream-capture.js";
 import {
   ConversationVoiceCaptureController,
   ConversationVoiceCaptureError,
@@ -23,17 +25,11 @@ import {
   PCM_S16LE_SAMPLE_RATE_HERTZ,
   assertConversationVoiceEvidencePathIsNew,
   writeNewConversationVoiceEvidenceAtomically,
-  type ConversationVoiceCaptureSummary,
-  type ConversationVoiceCaptureTimestamp,
   type ConversationVoiceOpusDecoder,
 } from "./conversation-voice-observer.js";
 import { FileSecretReader, MacOsKeychainSecretReader } from "./keychain.js";
 
-interface ConversationVoiceCaptureClock {
-  now(): ConversationVoiceCaptureTimestamp;
-}
-
-const systemClock: ConversationVoiceCaptureClock = {
+const systemClock = {
   now: () => ({
     epochMilliseconds: Date.now(),
     monotonicMilliseconds: Number(process.hrtime.bigint() / 1_000_000n),
@@ -71,6 +67,7 @@ async function main(): Promise<void> {
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates],
   });
   let connection: VoiceConnection | undefined;
+  let sourceStream: AudioReceiveStream | undefined;
   try {
     await client.login(token);
     const authenticatedBotId = requiredAuthenticatedBotId(client);
@@ -96,10 +93,14 @@ async function main(): Promise<void> {
       channel.id,
       config.readyTimeoutMilliseconds,
     );
+    sourceStream = connection.receiver.subscribe(config.craigBotId, {
+      end: { behavior: EndBehaviorType.Manual },
+    });
+    sourceStream.on("error", ignoreStreamError);
     for (const [index, plannedCapture] of captures.entries()) {
-      const capture = await captureConfiguredCraigVoice({
+      const capture = await captureConversationVoiceFromOpenStream({
         captureTimeoutMilliseconds: config.captureTimeoutMilliseconds,
-        connection,
+        clock: systemClock,
         controller: new ConversationVoiceCaptureController({
           captureTimeoutMilliseconds: config.captureTimeoutMilliseconds,
           expectedDuration: {
@@ -109,8 +110,8 @@ async function main(): Promise<void> {
           },
           maxPcmBytes: config.maxPcmBytes,
         }, decoder),
-        craigBotId: config.craigBotId,
         firstPacketTimeoutMilliseconds: config.readyTimeoutMilliseconds,
+        stream: sourceStream,
       });
       const evidence = createConversationVoiceEvidence({
         attemptId: plannedCapture.attemptId,
@@ -150,10 +151,14 @@ async function main(): Promise<void> {
       }
     }
   } finally {
+    sourceStream?.off("error", ignoreStreamError);
+    sourceStream?.destroy();
     connection?.destroy();
     await client.destroy();
   }
 }
+
+function ignoreStreamError(): void {}
 
 async function waitForConfiguredCraigSilence(
   connection: VoiceConnection,
@@ -240,109 +245,6 @@ async function assertConfiguredCraigBotIsInVoiceChannel(
       client.off("voiceStateUpdate", onVoiceStateUpdate);
     };
     client.on("voiceStateUpdate", onVoiceStateUpdate);
-  });
-}
-
-async function captureConfiguredCraigVoice(input: {
-  readonly captureTimeoutMilliseconds: number;
-  readonly connection: VoiceConnection;
-  readonly controller: ConversationVoiceCaptureController;
-  readonly craigBotId: string;
-  readonly firstPacketTimeoutMilliseconds: number;
-  readonly clock?: ConversationVoiceCaptureClock;
-}): Promise<ConversationVoiceCaptureSummary> {
-  const clock = input.clock ?? systemClock;
-  const stream = input.connection.receiver.subscribe(input.craigBotId, {
-    end: { behavior: EndBehaviorType.Manual },
-  });
-  return new Promise<ConversationVoiceCaptureSummary>((resolve, reject) => {
-    let captureTimeout: ReturnType<typeof setTimeout> | undefined;
-    let sequence = 0;
-    let settled = false;
-    const firstPacketTimeout = setTimeout(() => {
-      fail(new ConversationVoiceCaptureError(
-        "no-audio",
-        "Conversation voice capture received no Craig audio before the readiness timeout",
-      ));
-    }, input.firstPacketTimeoutMilliseconds);
-    const cleanup = (): void => {
-      clearTimeout(firstPacketTimeout);
-      if (captureTimeout !== undefined) {
-        clearTimeout(captureTimeout);
-      }
-      stream.off("data", onData);
-      stream.off("end", onEnd);
-      stream.off("error", onError);
-    };
-    const succeed = (capture: ConversationVoiceCaptureSummary): void => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      cleanup();
-      stream.once("close", () => {
-        resolve(capture);
-      });
-      stream.destroy();
-    };
-    const fail = (error: unknown): void => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      cleanup();
-      stream.once("close", () => {
-        reject(error);
-      });
-      stream.destroy();
-    };
-    const onData = (opusPacket: Uint8Array): void => {
-      try {
-        const timing = clock.now();
-        if (sequence === 0) {
-          clearTimeout(firstPacketTimeout);
-          input.controller.start(timing);
-          captureTimeout = setTimeout(() => {
-            try {
-              succeed(input.controller.complete(clock.now()));
-            } catch (error) {
-              fail(error);
-            }
-          }, input.captureTimeoutMilliseconds);
-        }
-        const result = input.controller.acceptPacket({
-          opusPacket,
-          sequence: sequence + 1,
-          timing,
-        });
-        sequence += 1;
-        if (result.kind === "accepted" && result.captureComplete) {
-          succeed(input.controller.complete(clock.now()));
-        }
-      } catch (error) {
-        fail(error);
-      }
-    };
-    const onEnd = (): void => {
-      if (sequence === 0) {
-        fail(new ConversationVoiceCaptureError(
-          "no-audio",
-          "Conversation voice receiver ended before the first Craig audio packet",
-        ));
-        return;
-      }
-      try {
-        succeed(input.controller.complete(clock.now()));
-      } catch (error) {
-        fail(error);
-      }
-    };
-    const onError = (): void => {
-      fail(new Error("Conversation voice receiver stream failed"));
-    };
-    stream.on("data", onData);
-    stream.once("end", onEnd);
-    stream.once("error", onError);
   });
 }
 

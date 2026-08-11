@@ -2,10 +2,12 @@ import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { PassThrough } from "node:stream";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createConversationVoiceEvidence } from "../src/conversation-voice-evidence.js";
+import { captureConversationVoiceFromOpenStream } from "../src/conversation-voice-stream-capture.js";
 import {
   ConversationVoiceCaptureController,
   ConversationVoiceCaptureError,
@@ -145,6 +147,52 @@ describe("ConversationVoiceCaptureController", () => {
     controller.acceptPacket(packet(1, 20, 1));
 
     expectCaptureError(() => controller.complete(timestamp(25)), "silent-pcm");
+  });
+});
+
+describe("conversation voice stream capture", () => {
+  it("captures consecutive utterances through one open subscription", async () => {
+    const stream = new PassThrough();
+    let elapsedMilliseconds = 0;
+    const clock = {
+      now: () => {
+        elapsedMilliseconds += 20;
+        return timestamp(elapsedMilliseconds);
+      },
+    };
+
+    const firstCapture = captureConversationVoiceFromOpenStream({
+      captureTimeoutMilliseconds: 1_000,
+      clock,
+      controller: controllerFixture(new Map([
+        [1, pcmPacket(1_024)],
+        [2, pcmPacket(-1_024)],
+      ])),
+      firstPacketTimeoutMilliseconds: 1_000,
+      stream,
+    });
+    stream.write(Uint8Array.of(1));
+    stream.write(Uint8Array.of(2));
+
+    await expect(firstCapture).resolves.toMatchObject({ acceptedPacketCount: 2 });
+    expect(stream.destroyed).toBe(false);
+
+    const secondCapture = captureConversationVoiceFromOpenStream({
+      captureTimeoutMilliseconds: 1_000,
+      clock,
+      controller: controllerFixture(new Map([
+        [3, pcmPacket(2_048)],
+        [4, pcmPacket(-2_048)],
+      ])),
+      firstPacketTimeoutMilliseconds: 1_000,
+      stream,
+    });
+    stream.write(Uint8Array.of(3));
+    stream.write(Uint8Array.of(4));
+
+    await expect(secondCapture).resolves.toMatchObject({ acceptedPacketCount: 2 });
+    expect(stream.destroyed).toBe(false);
+    stream.destroy();
   });
 });
 
