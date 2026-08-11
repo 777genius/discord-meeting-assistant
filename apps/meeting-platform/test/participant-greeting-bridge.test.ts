@@ -266,6 +266,23 @@ describe("ParticipantGreetingBridge", () => {
     expect(context.coordinator.calls).toHaveLength(1);
   });
 
+  it("suppresses restored participants even when they reconnect", async () => {
+    const context = fixture(true);
+
+    context.bridge.participantsRestored([
+      russianParticipantId,
+      unknownParticipantId,
+    ]);
+    context.bridge.participantLeft(russianParticipantId);
+    context.bridge.participantJoined(russianParticipantId);
+    context.bridge.participantJoined(englishParticipantId);
+    await context.bridge.settle();
+
+    expect(context.coordinator.calls.map(({ speakerId }) => speakerId)).toEqual([
+      englishParticipantId,
+    ]);
+  });
+
   it("retries a provably unadmitted busy greeting without risking a duplicate", async () => {
     const context = fixture(true);
     context.coordinator.outcomes.push({ status: "busy" }, { status: "active" });

@@ -55,6 +55,14 @@ export class ParticipantGreetingBridge {
     }
   }
 
+  /** Suppresses replay when an active meeting is restored after a process restart. */
+  public participantsRestored(participantIds: readonly string[]): void {
+    for (const participantId of participantIds) {
+      this.presentParticipantIds.add(participantId);
+      this.greetedParticipantIds.add(participantId);
+    }
+  }
+
   public participantJoined(participantId: string): void {
     if (this.closed) {
       return;
