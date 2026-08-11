@@ -186,6 +186,9 @@ retains `null`, and the collector binds it exactly once to the explicitly
 selected recording. A conflicting non-null recording ID fails closed, and the
 v7 verifier still requires every capture timestamp to fall inside that
 recording's authoritative interval.
+For a cold Botik connection, set
+`DISCORD_E2E_CONVERSATION_VOICE_READY_TIMEOUT_MS=120000` while keeping the
+capture timeout short enough to retain exactly one playback.
 
 Reconnect one already-greeted official actor before the meeting ends. Do not
 induce another first join. After finalization, pass all six observer files and

@@ -77,13 +77,13 @@ async function main(): Promise<void> {
       selfDeaf: false,
       selfMute: true,
     });
-    await entersState(connection, VoiceConnectionStatus.Ready, config.captureTimeoutMilliseconds);
+    await entersState(connection, VoiceConnectionStatus.Ready, config.readyTimeoutMilliseconds);
     await assertConfiguredCraigBotIsInVoiceChannel(
       client,
       guild,
       config.craigBotId,
       channel.id,
-      config.captureTimeoutMilliseconds,
+      config.readyTimeoutMilliseconds,
     );
     const capture = await captureConfiguredCraigVoice({
       connection,

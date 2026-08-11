@@ -15,6 +15,7 @@ const absoluteOutputPathSchema = z.string()
   .min(1)
   .refine((value) => isAbsolute(value) && value !== "/", "Expected an absolute output file path");
 const absoluteDirectorySchema = z.string().min(1).refine(isAbsolute, "Expected an absolute directory path");
+const maximumReadyTimeoutMilliseconds = 120_000;
 
 const environmentSchema = z.object({
   DISCORD_E2E_CONVERSATION_VOICE_ATTEMPT_ID: correlationIdSchema,
@@ -49,6 +50,11 @@ const environmentSchema = z.object({
   DISCORD_E2E_CONVERSATION_VOICE_OUTPUT: absoluteOutputPathSchema,
   DISCORD_E2E_CONVERSATION_VOICE_PRIVATE_TEST_GUILD: z.literal("private-test-guild"),
   DISCORD_E2E_CONVERSATION_VOICE_PURPOSE: z.enum(["addressed-answer", "farewell", "greeting"]),
+  DISCORD_E2E_CONVERSATION_VOICE_READY_TIMEOUT_MS: z.coerce.number()
+    .int()
+    .min(1_000)
+    .max(maximumReadyTimeoutMilliseconds)
+    .optional(),
   DISCORD_E2E_CONVERSATION_VOICE_RECORDING_ID: correlationIdSchema.optional(),
   DISCORD_E2E_CONVERSATION_VOICE_RUN_ID: correlationIdSchema,
   DISCORD_E2E_CONVERSATION_VOICE_SECRET_DIRECTORY: absoluteDirectorySchema.optional(),
@@ -104,6 +110,7 @@ export interface ConversationVoiceObserverConfig {
   readonly outputPath: string;
   readonly privateTestGuildConfirmed: true;
   readonly purpose: "addressed-answer" | "farewell" | "greeting";
+  readonly readyTimeoutMilliseconds: number;
   readonly recordingId: string | null;
   readonly runId: string;
   readonly secretDirectory: string | undefined;
@@ -135,6 +142,9 @@ export function loadConversationVoiceObserverConfig(
     outputPath: parsed.DISCORD_E2E_CONVERSATION_VOICE_OUTPUT,
     privateTestGuildConfirmed: true,
     purpose: parsed.DISCORD_E2E_CONVERSATION_VOICE_PURPOSE,
+    readyTimeoutMilliseconds:
+      parsed.DISCORD_E2E_CONVERSATION_VOICE_READY_TIMEOUT_MS ??
+      parsed.DISCORD_E2E_CONVERSATION_VOICE_CAPTURE_TIMEOUT_MS,
     recordingId: parsed.DISCORD_E2E_CONVERSATION_VOICE_RECORDING_ID ?? null,
     runId: parsed.DISCORD_E2E_CONVERSATION_VOICE_RUN_ID,
     secretDirectory: parsed.DISCORD_E2E_CONVERSATION_VOICE_SECRET_DIRECTORY,

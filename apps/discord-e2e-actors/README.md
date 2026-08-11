@@ -80,6 +80,7 @@ DISCORD_E2E_CONVERSATION_VOICE_RUN_ID=... \
 DISCORD_E2E_CONVERSATION_VOICE_TURN_ID=... \
 DISCORD_E2E_CONVERSATION_VOICE_ATTEMPT_ID=... \
 DISCORD_E2E_CONVERSATION_VOICE_PURPOSE=addressed-answer \
+DISCORD_E2E_CONVERSATION_VOICE_READY_TIMEOUT_MS=120000 \
 DISCORD_E2E_CONVERSATION_VOICE_EXPECTED_DURATION_MS=5000 \
 DISCORD_E2E_CONVERSATION_VOICE_OUTPUT=/absolute/evidence/conversation-voice.json \
 pnpm --filter @discord-meeting/discord-e2e-actors observe:conversation
@@ -93,6 +94,8 @@ timeout, silence, an unexpected sender, or an existing output path.
 It joins the pinned private channel before waiting for the configured playback
 bot, allowing the observer to be present before a first-join greeting becomes
 playback-ready.
+Use `DISCORD_E2E_CONVERSATION_VOICE_READY_TIMEOUT_MS` for a cold playback bot;
+it does not widen the separate, bounded audio capture window.
 
 Each capture declares `greeting`, `farewell`, or `addressed-answer` purpose.
 Alone it remains transport evidence: it does not run STT, establish the
