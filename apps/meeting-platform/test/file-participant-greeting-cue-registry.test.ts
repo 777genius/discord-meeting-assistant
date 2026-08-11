@@ -1,8 +1,20 @@
+import { createHash } from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { FileParticipantGreetingCueRegistry } from "../src/adapters/outbound/file-participant-greeting-cue-registry.js";
+
+const temporaryRoots: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(temporaryRoots.splice(0).map((root) =>
+    rm(root, { force: true, recursive: true })
+  ));
+});
 
 describe("FileParticipantGreetingCueRegistry", () => {
   it("preloads checksum-pinned named and anonymous production greetings", async () => {
@@ -75,5 +87,44 @@ describe("FileParticipantGreetingCueRegistry", () => {
     expect(registry.select(input)?.playbackAttemptId).not.toBe(
       registry.select({ ...input, participantId: "participant-2" })?.playbackAttemptId,
     );
+  });
+
+  it("rejects duplicate cue IDs even when speech is distinct", async () => {
+    const root = await mkdtemp(join(tmpdir(), "greeting-cue-registry-"));
+    temporaryRoots.push(root);
+    const bytes = Buffer.from([1, 2]);
+    const digest = createHash("sha256").update(bytes).digest("hex");
+    await Promise.all([
+      writeFile(join(root, "first.pcm"), bytes),
+      writeFile(join(root, "second.pcm"), bytes),
+      writeFile(join(root, "manifest.json"), JSON.stringify({
+        audio: { channels: 1, format: "pcm_s16le", sampleRateHz: 48_000 },
+        cues: [
+          {
+            cueId: "duplicate-cue-v1",
+            locale: "ru",
+            pcmFile: "first.pcm",
+            sha256: digest,
+            text: "Привет!",
+          },
+          {
+            cueId: "duplicate-cue-v1",
+            locale: "en",
+            pcmFile: "second.pcm",
+            sha256: digest,
+            text: "Hi!",
+          },
+        ],
+        version: 1,
+        voiceId: "test-voice",
+        voiceProfileId: "test-profile",
+      })),
+    ]);
+
+    await expect(FileParticipantGreetingCueRegistry.load(
+      root,
+      "test-profile",
+      "test-voice",
+    )).rejects.toThrow("duplicate cue IDs");
   });
 });

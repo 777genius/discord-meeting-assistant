@@ -61,6 +61,9 @@ export class FileParticipantGreetingCueRegistry {
     if (new Set(entries.map(([key]) => key)).size !== entries.length) {
       throw new Error("Greeting cue manifest contains duplicate speech");
     }
+    if (new Set(entries.map(([, cue]) => cue.cueId)).size !== entries.length) {
+      throw new Error("Greeting cue manifest contains duplicate cue IDs");
+    }
     return new FileParticipantGreetingCueRegistry(
       new Map(entries),
       manifest.voiceProfileId,
