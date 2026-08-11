@@ -95,7 +95,8 @@ It joins the pinned private channel before waiting for the configured playback
 bot, allowing the observer to be present before a first-join greeting becomes
 playback-ready.
 Use `DISCORD_E2E_CONVERSATION_VOICE_READY_TIMEOUT_MS` for a cold playback bot;
-it does not widen the separate, bounded audio capture window.
+it bounds both playback-bot readiness and the wait for its first audio packet.
+The separate, bounded audio capture window starts only with that first packet.
 
 Each capture declares `greeting`, `farewell`, or `addressed-answer` purpose.
 Alone it remains transport evidence: it does not run STT, establish the

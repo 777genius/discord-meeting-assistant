@@ -188,7 +188,9 @@ v7 verifier still requires every capture timestamp to fall inside that
 recording's authoritative interval.
 For a cold Botik connection, set
 `DISCORD_E2E_CONVERSATION_VOICE_READY_TIMEOUT_MS=120000` while keeping the
-capture timeout short enough to retain exactly one playback.
+capture timeout short enough to retain exactly one playback. The readiness
+timeout also covers a Botik already present in voice but not yet speaking; the
+short capture window starts with the first audio packet.
 
 Reconnect one already-greeted official actor before the meeting ends. Do not
 induce another first join. After finalization, pass all six observer files and

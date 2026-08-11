@@ -66,6 +66,27 @@ describe("ConversationVoiceCaptureController", () => {
     });
   });
 
+  it("starts the bounded capture window at first audio after an arbitrary readiness wait", () => {
+    const controller = controllerFixture(new Map([
+      [1, pcmPacket(1_024)],
+      [2, pcmPacket(-1_024)],
+    ]));
+    const firstAudioAt = timestamp(10_000);
+
+    controller.start(firstAudioAt);
+    controller.acceptPacket({
+      opusPacket: Uint8Array.of(1),
+      sequence: 1,
+      timing: firstAudioAt,
+    });
+    controller.acceptPacket(packet(2, 10_020, 2));
+    const capture = controller.complete(timestamp(10_025));
+
+    expect(capture.startedAt).toEqual(firstAudioAt);
+    expect(capture.firstPacketAt).toEqual(firstAudioAt);
+    expect(capture.acceptedDurationMilliseconds).toBe(40);
+  });
+
   it("fails no-audio and incomplete-duration timeouts without synthesizing evidence", () => {
     const noAudio = controllerFixture(new Map());
     noAudio.start(startedAt);
