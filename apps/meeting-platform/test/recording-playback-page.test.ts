@@ -220,6 +220,8 @@ function createPageHarness(
     setTimeout: setWindowTimeout,
   };
   const manifestStatuses = options.manifestStatuses ?? ["ready"];
+  const requestModes = options.requestModes ?? ["normal"];
+  const responseStatuses = options.responseStatuses ?? [200];
   let manifestIndex = 0;
   const fetch = vi.fn(async (_url: string, request?: { readonly signal?: AbortSignal }) => {
     const requestIndex = manifestIndex;
@@ -227,8 +229,8 @@ function createPageHarness(
       Math.min(manifestIndex, manifestStatuses.length - 1)
     ] ?? "ready";
     manifestIndex += 1;
-    const requestMode = options.requestModes?.[
-      Math.min(requestIndex, (options.requestModes?.length ?? 1) - 1)
+    const requestMode = requestModes[
+      Math.min(requestIndex, requestModes.length - 1)
     ] ?? "normal";
     if (requestMode === "stalled") {
       await new Promise((_resolve, reject) => {
@@ -237,8 +239,8 @@ function createPageHarness(
         }, { once: true });
       });
     }
-    const responseStatus = options.responseStatuses?.[
-      Math.min(requestIndex, (options.responseStatuses?.length ?? 1) - 1)
+    const responseStatus = responseStatuses[
+      Math.min(requestIndex, responseStatuses.length - 1)
     ] ?? 200;
     return {
       json: async () => ({
