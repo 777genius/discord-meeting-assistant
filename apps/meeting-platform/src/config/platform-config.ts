@@ -17,6 +17,7 @@ export interface PlatformConfig {
   readonly bindAddress: string;
   readonly conversation?: {
     readonly farewellCueRoot: string;
+    readonly greetingCueRoot: string;
     readonly runtimeAddress: string;
     readonly systemPrompt: string;
     readonly thinkingCueRoot: string;

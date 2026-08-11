@@ -192,20 +192,41 @@ export class ParticipantGreetingBridge {
       ? `participant-greeting:${participantId}`
       : `participant-greeting:${participantId}:retry-${retryCount}`;
     try {
-      const outcome = await this.dependencies.configuration.coordinator
-        .handleProactiveTurn({
-          interruptible: false,
-          locale: greeting.locale,
-          literalSpeech: greeting.prompt,
-          meetingId: this.dependencies.meetingId,
-          nowMs: this.nowMilliseconds(),
-          prompt: greeting.prompt,
-          recordingId: this.dependencies.meetingId,
-          speakerId: participantId,
-          systemPrompt: exactGreetingSystemPrompt,
-          turnId,
-          voiceProfileId: this.dependencies.configuration.voiceProfileId,
-      });
+      const preparedCue = this.dependencies.configuration.greetings?.cues?.select({
+        locale: greeting.locale,
+        meetingId: this.dependencies.meetingId,
+        participantId,
+        speech: greeting.prompt,
+        voiceProfileId: this.dependencies.configuration.voiceProfileId,
+      }) ?? null;
+      const outcome = preparedCue === null
+        ? await this.dependencies.configuration.coordinator.handleProactiveTurn({
+            interruptible: false,
+            locale: greeting.locale,
+            literalSpeech: greeting.prompt,
+            meetingId: this.dependencies.meetingId,
+            nowMs: this.nowMilliseconds(),
+            prompt: greeting.prompt,
+            recordingId: this.dependencies.meetingId,
+            speakerId: participantId,
+            systemPrompt: exactGreetingSystemPrompt,
+            turnId,
+            voiceProfileId: this.dependencies.configuration.voiceProfileId,
+          })
+        : await this.dependencies.configuration.coordinator.playPreparedCue({
+            cueId: preparedCue.cueId,
+            interruptible: false,
+            locale: greeting.locale,
+            meetingId: this.dependencies.meetingId,
+            nowMs: this.nowMilliseconds(),
+            pcmChunks: preparedCue.pcmChunks,
+            playbackAttemptId: preparedCue.playbackAttemptId,
+            preemptive: false,
+            recordingId: this.dependencies.meetingId,
+            speakerId: participantId,
+            turnId,
+            voiceProfileId: this.dependencies.configuration.voiceProfileId,
+          });
       if (outcome.status === "active" || outcome.status === "queued") {
         const settlement = await this.dependencies.configuration.coordinator
           .whenTurnPlaybackSettled(
@@ -218,6 +239,7 @@ export class ParticipantGreetingBridge {
             meetingId: this.dependencies.meetingId,
             participantId,
             participantNameStatus: this.profile(participantId) === undefined ? "unknown" : "known",
+            playbackMode: preparedCue === null ? "tts-fallback" : "prepared-cue",
             observedJoinToPlaybackSettledMs: this.observedGreetingLatencyMilliseconds(
               participantId,
             ),

@@ -49,11 +49,15 @@ export interface ProactiveConversationTurnInput {
 /** Pre-generated 48 kHz mono PCM played without an LLM or TTS round-trip. */
 export interface PreparedConversationCueInput {
   readonly cueId: string;
+  /** Short prepared speech may opt out of human-speech interruption. */
+  readonly interruptible?: boolean;
   readonly locale: string;
   readonly meetingId: string;
   readonly nowMs: number;
   readonly pcmChunks: readonly Uint8Array[];
   readonly playbackAttemptId: string;
+  /** Farewells may preempt; join greetings queue behind an answer race. */
+  readonly preemptive?: boolean;
   readonly recordingId: string;
   readonly speakerId: string;
   readonly turnId: string;
@@ -121,6 +125,7 @@ export interface PreparedConversation {
     readonly playbackAttemptId: string;
   };
   readonly interruptible: boolean;
+  readonly preemptive: boolean;
   readonly request: ConversationStartRequest;
   readonly thinkingCueLocale: string;
   readonly thinkingCuesEnabled: boolean;
@@ -166,6 +171,7 @@ export interface ActiveConversationRun {
 
 export interface MeetingConversationState {
   active: ActiveConversationRun | null;
+  readonly admissionFingerprints: Map<string, string>;
   closing: boolean;
   lastObservedAtMs: number;
   readonly latestWakeAtBySpeaker: Map<string, number>;

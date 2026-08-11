@@ -69,6 +69,30 @@ describe("conversation runtime contracts", () => {
     });
   });
 
+  it("enforces literal speech omission and text boundaries", () => {
+    const valid = {
+      protocolVersion: 1,
+      meetingId: "meeting-1",
+      recordingId: "recording-1",
+      turnId: "turn-1",
+      speakerId: "speaker-1",
+      idempotencyKey: "conversation:meeting-1:turn-1",
+      systemPrompt: "Repeat exactly.",
+      prompt: "Привет!",
+      locale: "ru",
+      voiceProfileId: "default",
+    };
+    expect(parseConversationRuntimeStartTurn(valid).literalSpeech).toBeUndefined();
+    expect(() => parseConversationRuntimeStartTurn({
+      ...valid,
+      literalSpeech: "   ",
+    })).toThrow();
+    expect(() => parseConversationRuntimeStartTurn({
+      ...valid,
+      literalSpeech: "a".repeat(2_001),
+    })).toThrow();
+  });
+
   it("accepts exact additive first-audio latency telemetry", () => {
     expect(
       parseConversationRuntimeEvent({

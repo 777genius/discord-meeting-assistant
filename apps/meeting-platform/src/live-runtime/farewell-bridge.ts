@@ -246,6 +246,7 @@ export class FarewellBridge {
           nowMs: this.nowMilliseconds(),
           pcmChunks: cue.pcmChunks,
           playbackAttemptId: cue.playbackAttemptId,
+          preemptive: true,
           recordingId: this.dependencies.meetingId,
           speakerId: "farewell-system",
           turnId: "meeting-farewell:v1",

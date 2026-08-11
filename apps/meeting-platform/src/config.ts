@@ -36,6 +36,12 @@ const defaultConversationThinkingCueRoot =
   "/app/apps/meeting-platform/assets/thinking-cues";
 const defaultConversationFarewellCueRoot =
   "/app/apps/meeting-platform/assets/farewell-cues";
+const defaultConversationGreetingCueRoot =
+  "/app/apps/meeting-platform/assets/greeting-cues";
+
+function conversationCueRoot(configured: string | undefined, fallback: string): string {
+  return configured ?? fallback;
+}
 const absolutePath = z
   .string()
   .startsWith("/")
@@ -73,6 +79,7 @@ const environmentSchema = z
       .default("false")
       .transform((value) => value === "true"),
     CONVERSATION_FAREWELL_CUE_ROOT: absolutePath.optional(),
+    CONVERSATION_GREETING_CUE_ROOT: absolutePath.optional(),
     CONVERSATION_RUNTIME_ADDRESS: runtimeAddress.optional(),
     CONVERSATION_RUNTIME_TOKEN_FILE: absolutePath.optional(),
     CONVERSATION_THINKING_CUE_ROOT: absolutePath.optional(),
@@ -288,13 +295,22 @@ export async function loadPlatformConfig(
       ? {
           conversation: {
             farewellCueRoot:
-              environment.CONVERSATION_FAREWELL_CUE_ROOT ??
-              defaultConversationFarewellCueRoot,
+              conversationCueRoot(
+                environment.CONVERSATION_FAREWELL_CUE_ROOT,
+                defaultConversationFarewellCueRoot,
+              ),
+            greetingCueRoot:
+              conversationCueRoot(
+                environment.CONVERSATION_GREETING_CUE_ROOT,
+                defaultConversationGreetingCueRoot,
+              ),
             runtimeAddress: environment.CONVERSATION_RUNTIME_ADDRESS,
             systemPrompt: environment.CONVERSATION_SYSTEM_PROMPT,
             thinkingCueRoot:
-              environment.CONVERSATION_THINKING_CUE_ROOT ??
-              defaultConversationThinkingCueRoot,
+              conversationCueRoot(
+                environment.CONVERSATION_THINKING_CUE_ROOT,
+                defaultConversationThinkingCueRoot,
+              ),
             voiceId: environment.CONVERSATION_VOICE_ID,
             voiceProfileId: environment.CONVERSATION_VOICE_PROFILE_ID,
           },

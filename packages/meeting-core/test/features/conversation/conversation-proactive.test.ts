@@ -142,6 +142,48 @@ it("does not let participant speech cancel a short non-interruptible greeting", 
   )).resolves.toBe("played");
 });
 
+it.each([
+  {
+    change: "literal speech",
+    replay: { interruptible: false, literalSpeech: "Привет, Маша!" },
+  },
+  {
+    change: "interruption policy",
+    replay: { interruptible: true, literalSpeech: "Привет, Саша!" },
+  },
+])("rejects a same-turn replay with changed $change", async ({ replay }) => {
+  const stream = new EventStream<ConversationRuntimeEvent>();
+  const coordinator = new ConversationCoordinator({
+    playback: new RecordingPlayback(),
+    runtime: new ScriptedRuntime([stream]),
+  });
+  const first = {
+    ...proactiveTurn("participant-greeting:42", 0),
+    interruptible: false,
+    literalSpeech: "Привет, Саша!",
+  };
+
+  await coordinator.handleProactiveTurn(first);
+  await expect(coordinator.handleProactiveTurn({
+    ...first,
+    ...replay,
+    nowMs: 1,
+  })).rejects.toThrow("replay conflicts");
+  await coordinator.closeMeeting("meeting-1", 2);
+});
+
+it("rejects literal speech that canonicalizes to empty", async () => {
+  const coordinator = new ConversationCoordinator({
+    playback: new RecordingPlayback(),
+    runtime: new ScriptedRuntime([]),
+  });
+
+  await expect(coordinator.handleProactiveTurn({
+    ...proactiveTurn("participant-greeting:42", 0),
+    literalSpeech: " \n\t ",
+  })).rejects.toThrow("literalSpeech must not be empty");
+});
+
 it("reports a proactive turn as unplayed when synthesis completes without audio", async () => {
   const runtime = new ScriptedRuntime([
     closedStream([

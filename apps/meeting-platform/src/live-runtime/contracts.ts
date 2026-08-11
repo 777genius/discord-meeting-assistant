@@ -290,11 +290,13 @@ interface LiveProactiveConversationTurnInput {
 
 interface LivePreparedConversationCueInput {
   readonly cueId: string;
+  readonly interruptible?: boolean;
   readonly locale: string;
   readonly meetingId: string;
   readonly nowMs: number;
   readonly pcmChunks: readonly Uint8Array[];
   readonly playbackAttemptId: string;
+  readonly preemptive?: boolean;
   readonly recordingId: string;
   readonly speakerId: string;
   readonly turnId: string;
@@ -330,6 +332,19 @@ export interface LiveParticipantGreetingProfile {
 }
 
 interface LiveParticipantGreetingConfiguration {
+  readonly cues?: {
+    select(input: {
+      readonly locale: "en" | "ru";
+      readonly meetingId: string;
+      readonly participantId: string;
+      readonly speech: string;
+      readonly voiceProfileId: string;
+    }): {
+      readonly cueId: string;
+      readonly pcmChunks: readonly Uint8Array[];
+      readonly playbackAttemptId: string;
+    } | null;
+  };
   readonly defaultLocale: "en" | "ru";
   readonly excludedParticipantIds: readonly string[];
   readonly isPlaybackReady: (recordingId: string) => boolean;
