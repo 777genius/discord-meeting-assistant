@@ -22,7 +22,7 @@ import {
 
 export const speakerAId = "1533227577286852649";
 export const speakerBId = "1533228054724346087";
-export const speakerDId = "1533873978417086474";
+const speakerDId = "1533873978417086474";
 const speakerAText = "Спикер A обсуждает Meeting Platform и Craig recording";
 const speakerBText = "Спикер B проверит Redis queue и idempotency key";
 export const expectedRevisions: DeploymentRevisionExpectation =
