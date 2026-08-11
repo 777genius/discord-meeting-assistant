@@ -143,9 +143,8 @@ async function main(): Promise<void> {
         status: "captured",
       })}\n`);
       if (index < captures.length - 1) {
-        await waitForConfiguredCraigSilence(
-          connection,
-          config.craigBotId,
+        await waitForConfiguredCraigPacketSilence(
+          sourceStream,
           config.readyTimeoutMilliseconds,
         );
       }
@@ -160,20 +159,28 @@ async function main(): Promise<void> {
 
 function ignoreStreamError(): void {}
 
-async function waitForConfiguredCraigSilence(
-  connection: VoiceConnection,
-  craigBotId: string,
+async function waitForConfiguredCraigPacketSilence(
+  stream: AudioReceiveStream,
   timeoutMilliseconds: number,
 ): Promise<void> {
-  const speaking = connection.receiver.speaking;
+  const packetSilenceMilliseconds = 300;
+  if (stream.destroyed) {
+    throw new Error("Configured Craig audio stream closed before the capture sequence completed");
+  }
   await new Promise<void>((resolve, reject) => {
     let settled = false;
-    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    let silence: ReturnType<typeof setTimeout> | undefined;
     const cleanup = (): void => {
-      if (timeout !== undefined) {
-        clearTimeout(timeout);
+      if (deadline !== undefined) {
+        clearTimeout(deadline);
       }
-      speaking.off("end", onEnd);
+      if (silence !== undefined) {
+        clearTimeout(silence);
+      }
+      stream.off("data", onData);
+      stream.off("end", onEnd);
+      stream.off("error", onError);
     };
     const succeed = (): void => {
       if (settled) {
@@ -183,24 +190,33 @@ async function waitForConfiguredCraigSilence(
       cleanup();
       resolve();
     };
-    const onEnd = (userId: string): void => {
-      if (userId === craigBotId) {
-        succeed();
-      }
-    };
-    speaking.on("end", onEnd);
-    if (!speaking.users.has(craigBotId)) {
-      succeed();
-      return;
-    }
-    timeout = setTimeout(() => {
+    const fail = (error: Error): void => {
       if (settled) {
         return;
       }
       settled = true;
       cleanup();
-      reject(new Error("Configured Craig audio did not become silent before timeout"));
+      reject(error);
+    };
+    const onData = (): void => {
+      if (silence !== undefined) {
+        clearTimeout(silence);
+      }
+      silence = setTimeout(succeed, packetSilenceMilliseconds);
+    };
+    const onEnd = (): void => {
+      fail(new Error("Configured Craig audio stream ended before the capture sequence completed"));
+    };
+    const onError = (): void => {
+      fail(new Error("Configured Craig audio stream failed before the capture sequence completed"));
+    };
+    stream.on("data", onData);
+    stream.once("end", onEnd);
+    stream.once("error", onError);
+    deadline = setTimeout(() => {
+      fail(new Error("Configured Craig audio did not become silent before timeout"));
     }, timeoutMilliseconds);
+    silence = setTimeout(succeed, packetSilenceMilliseconds);
   });
 }
 
