@@ -21,6 +21,7 @@
     "durationMs": 24226,
     "farewellLocale": "ru",
     "fixtureSha256": "fa4d4db0e725944e65cacef8dff12172b2fac2456f2cd5ded33eddc86328c608",
+    "greetingLocale": "ru",
     "requiredFarewellTerms": ["всем", "пока"],
     "requiredQuestionTerms": ["ботик", "кобальт"]
   },

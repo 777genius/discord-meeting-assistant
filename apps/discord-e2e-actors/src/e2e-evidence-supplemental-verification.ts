@@ -75,6 +75,7 @@ export function verifySupplementalPlayback(
       "supplemental Speaker D is absent from the authoritative recording",
     );
   }
+  verifySupplementalGreeting(evidence, expectation, fail);
 
   const speakerTurns = evidence.transcript.turns.filter((turn) =>
     turn.speakerId === expectation.applicationId &&
@@ -96,10 +97,7 @@ export function verifySupplementalPlayback(
     fail,
   );
 
-  const questionTurns = turnsContainingAnyTerms(
-    speakerTurns,
-    expectation.requiredQuestionTerms,
-  );
+  const questionTurns = turnsContainingAnyTerms(speakerTurns, [expectation.answerNonce]);
   const farewellTurns = turnsContainingAnyTerms(
     speakerTurns,
     expectation.requiredFarewellTerms,
@@ -136,6 +134,29 @@ export function verifySupplementalPlayback(
     },
     fail,
   );
+}
+
+function verifySupplementalGreeting(
+  evidence: RetainedE2eEvidenceV8,
+  expectation: NonNullable<FixtureManifestV1["supplementalVoiceExpectation"]>,
+  fail: VerificationFailureReporter,
+): void {
+  const greetings = evidence.conversation.lifecycle.events.filter(
+    (event): event is Extract<typeof event, { type: "greeting" }> =>
+      event.type === "greeting" && event.participantId === expectation.applicationId,
+  );
+  const greeting = greetings[0];
+  if (
+    greetings.length !== 1 ||
+    greeting === undefined ||
+    greeting.greetingLocale !== expectation.greetingLocale ||
+    greeting.participantNameStatus !== "unknown"
+  ) {
+    fail(
+      "SUPPLEMENTAL_GREETING_MISMATCH",
+      "supplemental Speaker D must have one audible default-locale greeting",
+    );
+  }
 }
 
 function verifyFarewellTiming(

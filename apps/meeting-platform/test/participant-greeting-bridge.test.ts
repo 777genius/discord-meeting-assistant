@@ -369,7 +369,9 @@ describe("ParticipantGreetingBridge", () => {
     ]);
     expect(warnCalls).toEqual(["Participant greeting retries exhausted"]);
   });
+});
 
+describe("ParticipantGreetingBridge retries and lifecycle", () => {
   it("bounds retries after the real coordinator settles failed zero-audio turns as unplayed", async () => {
     const runtimeTurnIds: string[] = [];
     const runtime: ConversationRuntime = {

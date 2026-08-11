@@ -10,11 +10,11 @@ export const collectorEnvironmentSchema = z.object({
   DISCORD_E2E_BOTIK_SPEAKER_ID: correlationId.optional(),
   DISCORD_E2E_CONVERSATION_VOICE_INPUTS: z.string().transform((value, context) => {
     try {
-      return z.array(absolutePath).min(5).parse(JSON.parse(value) as unknown);
+      return z.array(absolutePath).min(6).parse(JSON.parse(value) as unknown);
     } catch {
       context.addIssue({
         code: "custom",
-        message: "Expected a JSON array of at least five absolute voice evidence paths",
+        message: "Expected a JSON array of at least six absolute voice evidence paths",
       });
       return z.NEVER;
     }

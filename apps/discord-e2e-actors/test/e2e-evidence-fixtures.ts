@@ -62,9 +62,10 @@ export function manifest(): FixtureManifestV1 {
     supplementalVoiceExpectation: {
       answerNonce: "кобальт",
       applicationId: speakerDId,
-      durationMs: 6_000,
+      durationMs: 4_000,
       farewellLocale: "ru",
       fixtureSha256: "9".repeat(64),
+      greetingLocale: "ru",
       requiredFarewellTerms: ["всем", "пока"],
       requiredQuestionTerms: ["ботик", "кобальт"],
     },
@@ -545,9 +546,9 @@ export function retainedV8Evidence(): RetainedE2eEvidenceV8 {
     locator: "s3://bucket/meeting-1/botik.ogg", sizeBytes: 2_000,
     speakerId: botSpeakerId, timelineOffsetMs: 0,
   }, {
-    checksumSha256: "5".repeat(64), durationMs: 6_000,
+    checksumSha256: "5".repeat(64), durationMs: 4_000,
     locator: "s3://bucket/meeting-1/speaker-d.ogg", sizeBytes: 3_000,
-    speakerId: speakerDId, timelineOffsetMs: 500,
+    speakerId: speakerDId, timelineOffsetMs: 3_200,
   });
   source.transcript.turns.push(
     {
@@ -559,7 +560,7 @@ export function retainedV8Evidence(): RetainedE2eEvidenceV8 {
       text: "Привет, Саша!", turnId: "botik-greeting-ru",
     },
     {
-      endMs: 1_800, speakerId: speakerDId, startMs: 1_000,
+      endMs: 3_600, speakerId: speakerDId, startMs: 3_300,
       text: "Ботик, ответь одним словом: кобальт.", turnId: "speaker-d-question",
     },
     {
@@ -567,11 +568,15 @@ export function retainedV8Evidence(): RetainedE2eEvidenceV8 {
       text: "Привет!", turnId: "botik-greeting-unknown",
     },
     {
-      endMs: 3_400, speakerId: botSpeakerId, startMs: 3_100,
+      endMs: 3_150, speakerId: botSpeakerId, startMs: 2_750,
+      text: "Привет!", turnId: "botik-greeting-speaker-d",
+    },
+    {
+      endMs: 4_500, speakerId: botSpeakerId, startMs: 4_200,
       text: "Кобальт.", turnId: "botik-answer-1",
     },
     {
-      endMs: 5_400, speakerId: speakerDId, startMs: 5_000,
+      endMs: 6_500, speakerId: speakerDId, startMs: 6_200,
       text: "Всем пока.", turnId: "speaker-d-farewell",
     },
   );
@@ -579,7 +584,8 @@ export function retainedV8Evidence(): RetainedE2eEvidenceV8 {
     { greetingLocale: "ru", observedAt: "1970-01-01T00:00:01.500Z", participantId: speakerAId, participantNameStatus: "known", turnId: `participant-greeting:${speakerAId}`, type: "greeting" as const },
     { greetingLocale: "en", observedAt: "1970-01-01T00:00:00.700Z", participantId: speakerBId, participantNameStatus: "known", turnId: `participant-greeting:${speakerBId}`, type: "greeting" as const },
     { greetingLocale: "ru", observedAt: "1970-01-01T00:00:02.500Z", participantId: "3533228054724346087", participantNameStatus: "unknown", turnId: "participant-greeting:3533228054724346087", type: "greeting" as const },
-    { evidenceTurnIds: ["speaker-d-farewell"], locale: "ru", observedAt: "1970-01-01T00:00:05.500Z", playbackAttemptId: "farewell-attempt-1", reason: "explicit-group", turnId: "meeting-farewell:v1" as const, type: "farewell" as const },
+    { greetingLocale: "ru", observedAt: "1970-01-01T00:00:03.200Z", participantId: speakerDId, participantNameStatus: "unknown", turnId: `participant-greeting:${speakerDId}`, type: "greeting" as const },
+    { evidenceTurnIds: ["speaker-d-farewell"], locale: "ru", observedAt: "1970-01-01T00:00:07.000Z", playbackAttemptId: "farewell-attempt-1", reason: "explicit-group", turnId: "meeting-farewell:v1" as const, type: "farewell" as const },
   ];
   return retainedE2eEvidenceV8Schema.parse({
     ...source,
@@ -593,16 +599,16 @@ export function retainedV8Evidence(): RetainedE2eEvidenceV8 {
           name: "speaker-d",
         },
         fixture: {
-          durationMs: 6_000,
+          durationMs: 4_000,
           path: "/fixtures/supplemental-question-farewell.ru.ogg",
           purpose: "speaker-d-botik-question-and-later-group-farewell",
           sha256: "9".repeat(64),
         },
         playback: {
-          endedAtEpochMs: 6_500,
+          endedAtEpochMs: 7_200,
           postHoldMilliseconds: 1_000,
           preHoldMilliseconds: 500,
-          startedAtEpochMs: 500,
+          startedAtEpochMs: 3_200,
         },
         privateTestGuildConfirmed: true,
         runId: source.actorRun.runId,
@@ -616,8 +622,9 @@ export function retainedV8Evidence(): RetainedE2eEvidenceV8 {
         voiceObservation("greeting", `participant-greeting:${speakerAId}`, "greeting-ru", 1_000),
         voiceObservation("greeting", `participant-greeting:${speakerBId}`, "greeting-en", 200),
         voiceObservation("greeting", "participant-greeting:3533228054724346087", "greeting-unknown", 2_000),
-        voiceObservation("farewell", "meeting-farewell:v1", "farewell", 5_500),
-        voiceObservation("addressed-answer", "human-question-1", "answer", 3_000),
+        voiceObservation("farewell", "meeting-farewell:v1", "farewell", 6_600),
+        voiceObservation("addressed-answer", "human-question-1", "answer", 4_100),
+        voiceObservation("greeting", `participant-greeting:${speakerDId}`, "greeting-speaker-d", 2_700),
       ],
     },
     schemaVersion: 8,

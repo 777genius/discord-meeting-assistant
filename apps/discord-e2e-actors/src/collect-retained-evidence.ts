@@ -28,11 +28,7 @@ async function main(): Promise<void> {
     Promise.all((config.DISCORD_E2E_CONVERSATION_VOICE_INPUTS ?? []).map((path) =>
       readJson(path).then((value) => conversationVoiceEvidenceV3Schema.parse(value))
     )),
-    config.DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_INPUT === undefined
-      ? Promise.resolve(undefined)
-      : readJson(config.DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_INPUT).then((value) =>
-          supplementalPlaybackEvidenceV1Schema.parse(value)
-        ),
+    readSupplementalPlayback(config.DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_INPUT),
   ]);
   const deployment = new SshDeploymentEvidenceProbe({
     composeFile: config.DISCORD_E2E_REMOTE_COMPOSE_FILE,
@@ -96,6 +92,13 @@ function requireDefined<T>(value: T | undefined, label: string): T {
 
 async function readJson(path: string): Promise<unknown> {
   return JSON.parse(await readFile(path, "utf8")) as unknown;
+}
+
+async function readSupplementalPlayback(path: string | undefined) {
+  if (path === undefined) {
+    return;
+  }
+  return supplementalPlaybackEvidenceV1Schema.parse(await readJson(path));
 }
 
 async function atomicWriteJson(path: string, value: unknown): Promise<void> {

@@ -440,12 +440,14 @@ describe("collectRetainedE2eEvidence", () => {
       throw new Error("expected retained V8 evidence");
     }
     expect(evidence.conversation.supplementalPlayback).toEqual(supplementalPlayback);
-    expect(evidence.conversation.voice).toHaveLength(5);
+    expect(evidence.conversation.voice).toHaveLength(6);
     expect(evidence.conversation.voice.every(
       ({ correlation }) => correlation.recordingId === "recording-1",
     )).toBe(true);
   });
+});
 
+describe("collectRetainedE2eEvidence failure handling", () => {
   it("fails closed when a retained v8 collection has no lifecycle probe", async () => {
     const conversationFixture = retainedV8Evidence().conversation;
     const deployment: DeploymentEvidenceProbe = {

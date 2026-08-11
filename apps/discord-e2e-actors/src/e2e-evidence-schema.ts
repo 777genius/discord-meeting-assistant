@@ -29,10 +29,7 @@ const fixtureSchema = z.object({
   speakerId: identifierSchema,
 }).refine(
   ({ durationMs, speechStartOffsetMs }) => speechStartOffsetMs < durationMs,
-  {
-    message: "speechStartOffsetMs must be less than durationMs",
-    path: ["speechStartOffsetMs"],
-  },
+  { message: "speechStartOffsetMs must be less than durationMs", path: ["speechStartOffsetMs"] },
 );
 
 const scenarioSchema = z.object({
@@ -60,14 +57,12 @@ export const fixtureManifestV1Schema = z.object({
     durationMs: z.number().int().positive().max(60_000),
     farewellLocale: z.enum(["en", "ru"]),
     fixtureSha256: sha256Schema,
+    greetingLocale: z.enum(["en", "ru"]),
     requiredFarewellTerms: z.array(identifierSchema).min(1),
     requiredQuestionTerms: z.array(identifierSchema).min(1),
   }).strict().refine(
     ({ answerNonce, requiredQuestionTerms }) => requiredQuestionTerms.includes(answerNonce),
-    {
-      message: "The deterministic answer nonce must also be pinned in the question terms",
-      path: ["requiredQuestionTerms"],
-    },
+    { message: "The deterministic answer nonce must also be pinned in the question terms", path: ["requiredQuestionTerms"] },
   ).optional(),
   fixtureSetId: identifierSchema,
   fixtures: z.array(fixtureSchema).min(2),
@@ -425,6 +420,7 @@ export const retainedE2eEvidenceV8Schema = retainedE2eEvidenceV7Schema
   .extend({
     conversation: retainedE2eEvidenceV7Schema.shape.conversation.extend({
       supplementalPlayback: supplementalPlaybackEvidenceV1Schema,
+      voice: z.array(conversationVoiceEvidenceV3Schema).min(6),
     }),
     schemaVersion: z.literal(8),
   });

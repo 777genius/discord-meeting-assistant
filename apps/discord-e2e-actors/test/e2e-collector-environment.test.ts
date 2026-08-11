@@ -17,6 +17,7 @@ const conversationEnvironment = {
     "/evidence/greeting-ru.json",
     "/evidence/greeting-en.json",
     "/evidence/greeting-unknown.json",
+    "/evidence/greeting-speaker-d.json",
     "/evidence/farewell.json",
     "/evidence/answer.json",
   ]),
@@ -39,8 +40,10 @@ describe("collectorEnvironmentSchema", () => {
 
   it("rejects every partial retained V8 conversation input group", () => {
     const entries = Object.entries(conversationEnvironment);
-    const partialGroups = Array.from({ length: 6 }, (_, mask) =>
-      Object.fromEntries(entries.filter((_, index) => ((mask + 1) & (1 << index)) !== 0))
+    const partialGroups = Array.from({ length: 6 }, (_unused, mask) =>
+      Object.fromEntries(entries.filter(
+        (_entry, index) => ((mask + 1) & (1 << index)) !== 0,
+      ))
     );
 
     expect(partialGroups.every((partial) =>
@@ -48,13 +51,14 @@ describe("collectorEnvironmentSchema", () => {
     )).toBe(true);
   });
 
-  it("rejects a complete input group with fewer than five voice captures", () => {
+  it("rejects a complete input group with fewer than six voice captures", () => {
     const result = collectorEnvironmentSchema.safeParse({
       ...requiredEnvironment,
       ...conversationEnvironment,
       DISCORD_E2E_CONVERSATION_VOICE_INPUTS: JSON.stringify([
         "/evidence/greeting-ru.json",
         "/evidence/greeting-en.json",
+        "/evidence/greeting-unknown.json",
         "/evidence/farewell.json",
         "/evidence/answer.json",
       ]),
