@@ -403,6 +403,7 @@ async def test_empty_tts_audio_fails_and_retires_the_persistent_pipeline() -> No
     await asyncio.wait_for(runtime.close(), timeout=15)
 
     assert isinstance(first_events[-1], Failed)
+    assert first_events[-1].code == "pipecat-pipeline-failed"
     assert isinstance(second_events[-1], Completed)
     assert profile.create_count == 2
 

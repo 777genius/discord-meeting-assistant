@@ -181,10 +181,10 @@ async function main(): Promise<void> {
       }
     }
   } finally {
-    sourceStream?.off("error", ignoreStreamError);
     sourceStream?.destroy();
     connection?.destroy();
     await client.destroy();
+    sourceStream?.off("error", ignoreStreamError);
   }
 }
 
@@ -196,7 +196,7 @@ async function waitForConfiguredCraigAudioSilence(
   timeoutMilliseconds: number,
 ): Promise<void> {
   const audioSilenceMilliseconds = 300;
-  if (stream.destroyed) {
+  if (stream.destroyed || stream.readableEnded) {
     throw new Error("Configured Craig audio stream closed before the capture sequence completed");
   }
   await new Promise<void>((resolve, reject) => {
@@ -210,6 +210,7 @@ async function waitForConfiguredCraigAudioSilence(
       if (silence !== undefined) {
         clearTimeout(silence);
       }
+      stream.pause();
       stream.off("data", onData);
       stream.off("end", onEnd);
       stream.off("error", onError);
@@ -249,16 +250,21 @@ async function waitForConfiguredCraigAudioSilence(
     const onEnd = (): void => {
       fail(new Error("Configured Craig audio stream ended before the capture sequence completed"));
     };
-    const onError = (): void => {
-      fail(new Error("Configured Craig audio stream failed before the capture sequence completed"));
+    const onError = (error: unknown): void => {
+      fail(new Error(
+        "Configured Craig audio stream failed before the capture sequence completed",
+        { cause: error },
+      ));
     };
-    stream.on("data", onData);
+    stream.pause();
     stream.once("end", onEnd);
     stream.once("error", onError);
+    stream.on("data", onData);
     deadline = setTimeout(() => {
       fail(new Error("Configured Craig audio did not become silent before timeout"));
     }, timeoutMilliseconds);
     silence = setTimeout(succeed, audioSilenceMilliseconds);
+    stream.resume();
   });
 }
 

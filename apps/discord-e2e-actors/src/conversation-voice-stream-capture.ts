@@ -19,7 +19,7 @@ export function captureConversationVoiceFromOpenStream(input: {
   readonly isPacketAudible?: (packet: Uint8Array) => boolean;
   readonly stream: Readable;
 }): Promise<ConversationVoiceCaptureSummary> {
-  if (input.stream.destroyed) {
+  if (input.stream.destroyed || input.stream.readableEnded) {
     return Promise.reject(new ConversationVoiceCaptureError(
       "no-audio",
       "Conversation voice receiver stream is not open",
@@ -40,6 +40,7 @@ export function captureConversationVoiceFromOpenStream(input: {
       if (captureTimeout !== undefined) {
         clearTimeout(captureTimeout);
       }
+      input.stream.pause();
       input.stream.off("data", onData);
       input.stream.off("end", onEnd);
       input.stream.off("error", onError);
@@ -107,11 +108,13 @@ export function captureConversationVoiceFromOpenStream(input: {
         fail(error);
       }
     };
-    const onError = (): void => {
-      fail(new Error("Conversation voice receiver stream failed"));
+    const onError = (error: unknown): void => {
+      fail(new Error("Conversation voice receiver stream failed", { cause: error }));
     };
-    input.stream.on("data", onData);
+    input.stream.pause();
     input.stream.once("end", onEnd);
     input.stream.once("error", onError);
+    input.stream.on("data", onData);
+    input.stream.resume();
   });
 }
