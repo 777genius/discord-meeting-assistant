@@ -177,18 +177,12 @@ export const recordingPlaybackClientScript = String.raw`
           { showUnavailable(); return; }
         const tracksReady = await prepareTracks(manifest.tracks);
         if (!tracksReady) {
-          if (metadataRetryUsed) showUnavailable();
-          else {
-            metadataRetryUsed = true;
-            retryManifest("Checking recording tracks again...");
-          }
+          if (metadataRetryUsed) { showUnavailable(); return; }
+          metadataRetryUsed = true;
+          retryManifest("Checking recording tracks again...");
           return;
         }
-        window.history.replaceState(
-          null,
-          "",
-          window.location.pathname + window.location.search,
-        );
+        window.history.replaceState(null, "", window.location.pathname + window.location.search);
       } finally { window.clearTimeout(timeoutId); }
     } catch {
       retryManifest("Checking recording again...");
@@ -212,9 +206,7 @@ export const recordingPlaybackClientScript = String.raw`
     });
     await Promise.all(tracks.map(loadMetadata));
     const available = tracks.filter((track) => track.available);
-    if (available.length === 0) {
-      return false;
-    }
+    if (available.length === 0) return false;
     tracks = available;
     duration = Math.max(...tracks.map((track) => track.offset + track.audio.duration));
     seekNode.max = String(duration);
