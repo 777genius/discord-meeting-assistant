@@ -3,8 +3,11 @@ import { requireNonNegativeInteger } from "../domain/errors.js";
 import type {
   ActiveConversationRun,
   ConversationPlaybackFence,
+  ConversationTurnPlaybackSettlement,
   MeetingConversationState,
 } from "./conversation-coordinator-types.js";
+
+const maximumRememberedPlaybackSettlements = 1_024;
 
 export function createMeetingConversationState(
   meetingId: string,
@@ -17,11 +20,26 @@ export function createMeetingConversationState(
     pending: new Map(),
     playbackFence: null,
     playbackOpenBarrier: Promise.resolve(),
+    playbackSettlements: new Map(),
     session: new ConversationSession(meetingId),
     tasks: new Set(),
     wakeLatches: new Map(),
     wakeTurnReceipts: new Map(),
   };
+}
+
+export function rememberConversationPlaybackSettlement(
+  state: MeetingConversationState,
+  turnId: string,
+  settlement: ConversationTurnPlaybackSettlement,
+): void {
+  if (state.playbackSettlements.size >= maximumRememberedPlaybackSettlements) {
+    const oldestTurnId = state.playbackSettlements.keys().next().value;
+    if (oldestTurnId !== undefined) {
+      state.playbackSettlements.delete(oldestTurnId);
+    }
+  }
+  state.playbackSettlements.set(turnId, settlement);
 }
 
 export function advanceConversationState(
@@ -34,6 +52,7 @@ export function advanceConversationState(
   state.lastObservedAtMs = processedAtMs;
   if (expired !== null) {
     state.pending.delete(expired.turnId);
+    rememberConversationPlaybackSettlement(state, expired.turnId, "unplayed");
   }
   return processedAtMs;
 }

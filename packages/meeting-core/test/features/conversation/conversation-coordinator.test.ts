@@ -784,6 +784,8 @@ describe("ConversationCoordinator cancellation and recovery", () => {
     });
     expect(playback.sessions[0]?.cancelReasons).toEqual(["playback-failed"]);
     expect(runtime.requests.map((request) => request.turnId)).toEqual(["turn-1", "turn-2"]);
+    await expect(coordinator.whenTurnPlaybackSettled("meeting-1", "turn-1"))
+      .resolves.toBe("partial");
   });
 
   it("cancels active transports and discards queued work when the meeting ends", async () => {
@@ -805,6 +807,11 @@ describe("ConversationCoordinator cancellation and recovery", () => {
     await vi.waitFor(() => {
       expect(playback.sessions).toHaveLength(1);
     });
+    first.push(audioChunk("attempt-1", "turn-1", 0));
+    await vi.waitFor(() => {
+      expect(playback.sessions[0]?.chunks).toHaveLength(1);
+    });
+    const settlement = coordinator.whenTurnPlaybackSettled("meeting-1", "turn-1");
     await coordinator.closeMeeting("meeting-1", 101);
 
     expect(runtime.cancellations).toEqual([
@@ -812,5 +819,6 @@ describe("ConversationCoordinator cancellation and recovery", () => {
     ]);
     expect(playback.sessions[0]?.cancelReasons).toEqual(["meeting-ended"]);
     expect(runtime.requests.map((request) => request.turnId)).toEqual(["turn-1"]);
+    await expect(settlement).resolves.toBe("partial");
   });
 });

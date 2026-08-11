@@ -23,6 +23,7 @@ import {
   ignoreConversationFailure,
   isCurrentConversationRun,
   matchesConversationAttempt,
+  rememberConversationPlaybackSettlement,
   trackConversationTask,
 } from "./conversation-state.js";
 
@@ -71,6 +72,8 @@ export class ConversationActiveTurnExecutor {
 
     const run: ActiveConversationRun = {
       answerAudioStarted: false,
+      answerAudioWriteAttempted: false,
+      answerAudioWritten: false,
       attemptId: null,
       cancellationInFlight: false,
       cueDelays: new Set(),
@@ -150,7 +153,8 @@ export class ConversationActiveTurnExecutor {
       if (!isCurrentConversationRun(state, run)) {
         return;
       }
-      await this.answerPlayback.write(state, run, {
+      run.answerAudioWriteAttempted = true;
+      const written = await this.answerPlayback.write(state, run, {
         attemptId: cue.playbackAttemptId,
         bytes,
         channels: 1,
@@ -159,6 +163,7 @@ export class ConversationActiveTurnExecutor {
         sequence,
         turnId: run.prepared.turn.turnId,
       });
+      run.answerAudioWritten ||= written;
     }
     if (!isCurrentConversationRun(state, run)) {
       return;
@@ -266,7 +271,9 @@ export class ConversationActiveTurnExecutor {
         return;
       case "audio-chunk":
         if (event.turnId === run.prepared.turn.turnId) {
-          await this.answerPlayback.write(state, run, event);
+          run.answerAudioWriteAttempted = true;
+          const written = await this.answerPlayback.write(state, run, event);
+          run.answerAudioWritten ||= written;
         }
         return;
       case "audio-end":
@@ -357,6 +364,19 @@ export class ConversationActiveTurnExecutor {
     run.finalized = true;
     state.active = null;
     state.pending.delete(run.prepared.turn.turnId);
+    const played = run.runtimeCompleted &&
+      run.playbackFinished &&
+      run.answerAudioWritten &&
+      !run.cancellationInFlight;
+    rememberConversationPlaybackSettlement(
+      state,
+      run.prepared.turn.turnId,
+      played
+        ? "played"
+        : run.answerAudioWriteAttempted
+          ? "partial"
+          : "unplayed",
+    );
     const completion = state.session.completeActive(
       run.prepared.turn.turnId,
       state.lastObservedAtMs,

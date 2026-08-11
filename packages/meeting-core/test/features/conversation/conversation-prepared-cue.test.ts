@@ -35,6 +35,10 @@ it("preempts an active answer and plays pre-generated PCM without another runtim
     turnId: "meeting-farewell",
   });
   await coordinator.whenIdle("meeting-1");
+  await expect(coordinator.whenTurnPlaybackSettled(
+    "meeting-1",
+    "meeting-farewell",
+  )).resolves.toBe("played");
 
   expect(runtime.requests).toHaveLength(1);
   expect(runtime.cancellations).toEqual([

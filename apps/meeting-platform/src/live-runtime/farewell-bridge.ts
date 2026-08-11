@@ -251,18 +251,22 @@ export class FarewellBridge {
           turnId: "meeting-farewell:v1",
           voiceProfileId: this.dependencies.configuration.voiceProfileId,
         });
-      if (outcome.status === "active") {
-        await this.dependencies.configuration.coordinator.whenIdle(
-          this.dependencies.meetingId,
-        );
-        this.dependencies.logger.info("Meeting farewell playback settled", {
-          evidenceTurnIds,
-          locale,
-          meetingId: this.dependencies.meetingId,
-          playbackAttemptId: cue.playbackAttemptId,
-          reason,
-          turnId: "meeting-farewell:v1",
-        });
+      if (outcome.status === "active" || outcome.status === "queued") {
+        const settlement = await this.dependencies.configuration.coordinator
+          .whenTurnPlaybackSettled(
+            this.dependencies.meetingId,
+            "meeting-farewell:v1",
+          );
+        if (settlement === "played") {
+          this.dependencies.logger.info("Meeting farewell playback settled", {
+            evidenceTurnIds,
+            locale,
+            meetingId: this.dependencies.meetingId,
+            playbackAttemptId: cue.playbackAttemptId,
+            reason,
+            turnId: "meeting-farewell:v1",
+          });
+        }
       }
     } catch (error) {
       this.dependencies.logger.warn("Meeting farewell failed", {

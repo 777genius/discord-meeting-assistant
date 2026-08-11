@@ -248,7 +248,13 @@ export interface LiveMeetingRefresher {
 }
 
 interface LiveConversationOutcome {
-  readonly status: string;
+  readonly status:
+    | "ignored"
+    | "awaiting-prompt"
+    | "active"
+    | "queued"
+    | "busy"
+    | "reused";
 }
 
 interface LiveConversationTurnInput {
@@ -309,6 +315,10 @@ interface LiveConversationCoordinator {
   speechEnded(meetingId: string, nowMs: number): Promise<unknown>;
   speechStarted(meetingId: string, nowMs: number): Promise<unknown>;
   whenIdle(meetingId: string): Promise<void>;
+  whenTurnPlaybackSettled(
+    meetingId: string,
+    turnId: string,
+  ): Promise<"played" | "unplayed" | "partial" | "unknown">;
 }
 
 export interface LiveParticipantGreetingProfile {

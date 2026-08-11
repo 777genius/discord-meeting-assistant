@@ -32,6 +32,7 @@ export {
   type ConversationCoordinatorDependencies,
   type ConversationCoordinatorResult,
   type ConversationInterruptionResult,
+  type ConversationTurnPlaybackSettlement,
   type FinalizedConversationTurnInput,
   type PreparedConversationCueInput,
   type ProactiveConversationTurnInput,
