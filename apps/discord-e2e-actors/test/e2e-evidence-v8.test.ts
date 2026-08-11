@@ -80,7 +80,7 @@ describe("retained conversation V8 supplemental semantics", () => {
     evidence.conversation.supplementalPlayback.actor.authenticatedApplicationId =
       "1534999999999999999";
     const botikTurn = evidence.transcript.turns.find(
-      ({ speakerId }) => speakerId === evidence.conversation.botSpeakerId,
+      ({ turnId }) => turnId === "botik-answer-1",
     );
     if (botikTurn === undefined) {
       throw new Error("Botik answer fixture is missing");
@@ -108,7 +108,51 @@ describe("retained conversation V8 supplemental semantics", () => {
       "SUPPLEMENTAL_ANSWER_SEMANTICS_MISSING",
     ]));
   });
+});
 
+describe("retained conversation V8 boundary policies", () => {
+  it("honors a tighter manifest tolerance for the addressed turn boundary", () => {
+    const fixtureManifest = manifest();
+    fixtureManifest.thresholds.timestampToleranceMs = 100;
+    const evidence = retainedV8Evidence();
+    const answerEvent = evidence.conversation.lifecycle.events.find(
+      (event) => event.type === "addressed-answer",
+    );
+    if (answerEvent === undefined) {
+      throw new Error("addressed answer lifecycle fixture is missing");
+    }
+    answerEvent.observedAt = "1970-01-01T00:00:03.450Z";
+
+    const codes = verifyRetainedE2eEvidence(
+      fixtureManifest,
+      evidence,
+      currentExpectedRevisions,
+    ).failures.map(({ code }) => code);
+
+    expect(codes).toContain("SUPPLEMENTAL_ANSWER_INTERVAL_INVALID");
+  });
+
+  it("does not treat a farewell-term prefix as a whole farewell word", () => {
+    const evidence = retainedV8Evidence();
+    const farewellTurn = evidence.transcript.turns.find(
+      ({ turnId }) => turnId === "speaker-d-farewell",
+    );
+    if (farewellTurn === undefined) {
+      throw new Error("Speaker D farewell fixture is missing");
+    }
+    farewellTurn.text = "Всем покажи.";
+
+    const codes = verifyRetainedE2eEvidence(
+      manifest(),
+      evidence,
+      currentExpectedRevisions,
+    ).failures.map(({ code }) => code);
+
+    expect(codes).toContain("SUPPLEMENTAL_FAREWELL_MISSING");
+  });
+});
+
+describe("retained conversation V8 response semantics", () => {
   it("rejects a Botik farewell that starts before Speaker D finishes", () => {
     const evidence = retainedV8Evidence();
     const farewell = evidence.conversation.voice.find(

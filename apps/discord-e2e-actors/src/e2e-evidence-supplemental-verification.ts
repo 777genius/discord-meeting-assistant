@@ -155,6 +155,7 @@ export function verifySupplementalPlayback(
     fail,
   );
   verifyAddressedAnswerSemantics(
+    manifest,
     evidence,
     {
       answerNonce: expectation.answerNonce,
@@ -252,6 +253,7 @@ function verifyFarewellTiming(
 }
 
 function verifyAddressedAnswerSemantics(
+  manifest: FixtureManifestV1,
   evidence: RetainedE2eEvidenceV8,
   window: SupplementalAnswerWindow,
   fail: VerificationFailureReporter,
@@ -285,7 +287,10 @@ function verifyAddressedAnswerSemantics(
   const answerObservedAtMs = answerEvent === undefined
     ? -1
     : Date.parse(answerEvent.observedAt) - window.recordingStartMs;
-  const turnBoundaryToleranceMs = maximumTurnBoundaryToleranceMs;
+  const turnBoundaryToleranceMs = Math.min(
+    manifest.thresholds.timestampToleranceMs,
+    maximumTurnBoundaryToleranceMs,
+  );
   if (
     answerStartMs < window.playbackStartMs || answerEndMs > window.playbackEndMs ||
     answerStartMs < window.questionEndMs || answerEndMs > window.farewellStartMs ||
@@ -346,7 +351,7 @@ function turnsContainingAnyTerms<T extends { readonly text: string }>(
   const normalizedTerms = terms.map((term) => normalizeTranscriptSemantics(term));
   return turns.filter(({ text }) => {
     const normalized = normalizeTranscriptSemantics(text);
-    return normalizedTerms.some((term) => normalized.includes(term));
+    return normalizedTerms.some((term) => containsWholeTerm(normalized, term));
   });
 }
 
@@ -357,9 +362,13 @@ function verifyRequiredTerms(
   fail: VerificationFailureReporter,
 ): void {
   const missing = requiredTerms.filter((term) =>
-    !normalizedText.includes(normalizeTranscriptSemantics(term))
+    !containsWholeTerm(normalizedText, normalizeTranscriptSemantics(term))
   );
   if (missing.length > 0) {
     fail(failureCode, `retained transcript is missing terms: ${missing.join(", ")}`);
   }
+}
+
+function containsWholeTerm(normalizedText: string, normalizedTerm: string): boolean {
+  return ` ${normalizedText} `.includes(` ${normalizedTerm} `);
 }
