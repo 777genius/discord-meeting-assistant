@@ -13,10 +13,12 @@ projects.
 | Application `Meeting E2E SUT` (approved Voice Bot) | `1533224474609057793` |
 | Application `Meeting E2E Speaker A` | `1533227577286852649` |
 | Application `Meeting E2E Speaker B` | `1533228054724346087` |
+| Application `Meeting E2E Speaker C` (conversation observer) | `1533867700575670282` |
 | Botik test playback bot | `1534231284467896512` |
 
 Bot tokens are stored only in the local macOS Keychain service
-`discord-voice-bot-e2e`, under accounts `sut`, `speaker-a`, and `speaker-b`.
+`discord-voice-bot-e2e`, under accounts `sut`, `speaker-a`, `speaker-b`, and
+`speaker-c`.
 They must not be copied into repository files, process arguments, logs, images,
 or committed environment files.
 
@@ -142,7 +144,7 @@ proves the complete path with official test bots and synthetic speech:
 1. address Botik with each canonical RU/EN alias and the pinned STT variants,
    including `Ботек`, then repeat one request as `Ботик` followed by a short
    pause and a separate question turn from the same speaker;
-2. retain observer evidence that the Craig bot produced non-silent answer audio
+2. retain observer evidence that the configured Botik playback bot produced non-silent answer audio
    in the configured voice channel, plus end-of-turn to first-answer-audio
    latency for both a warm simple request and a warm reasoning request;
 3. prove an ordinary mention such as `Вчера Ботик отвечал странно` does not start
@@ -160,6 +162,79 @@ Passing local, provider, or voice-observer checks alone does not satisfy this
 gate. Record the private guild/channel IDs, recording ID, Botik track checksum,
 transcript ID, summary ID, provider/model profile, and latency measurements in
 the retained non-secret evidence bundle.
+
+### Greeting, reconnect, and farewell retained proof
+
+The remaining lifecycle gate uses the same conversation voice observer and
+retained evidence collector; it is not a separate framework. During one
+private-guild reconnect run, retain create-only captures for a named Russian
+greeting, a named English greeting, default-locale greetings for the unknown
+observer and Speaker D, the prepared farewell, and one addressed Botik answer. Set
+`DISCORD_E2E_CONVERSATION_VOICE_PURPOSE` to `greeting`, `farewell`, or
+`addressed-answer` for each capture and use the runtime turn ID shown by the
+correlated structured event.
+
+The committed fixture manifest pins Speaker C (`1533867700575670282`) as the
+observer, the private guild, and the voice channel. Set the observer account to
+`speaker-c`; a capture set from any other consistent environment still fails.
+Set `DISCORD_E2E_SPEAKER_B_CONNECT_DELAY_MS=10000` for this campaign so the same
+observer can finish the Russian greeting capture and reconnect before Speaker B
+causes the English greeting. Leave it at the default `0` for ordinary runs.
+The first greeting may occur before Craig exposes its random recording ID. In
+that case omit `DISCORD_E2E_CONVERSATION_VOICE_RECORDING_ID`; the raw capture
+retains `null`, and the collector binds it exactly once to the explicitly
+selected recording. A conflicting non-null recording ID fails closed, and the
+v7 verifier still requires every capture timestamp to fall inside that
+recording's authoritative interval.
+
+Reconnect one already-greeted official actor before the meeting ends. Do not
+induce another first join. After finalization, pass all six observer files and
+the pinned Botik speaker ID to the normal collector:
+
+```sh
+DISCORD_E2E_BOTIK_SPEAKER_ID=1534231284467896512 \
+DISCORD_E2E_CONVERSATION_VOICE_INPUTS='["/absolute/evidence/greeting-observer.json","/absolute/evidence/greeting-ru.json","/absolute/evidence/greeting-en.json","/absolute/evidence/greeting-speaker-d.json","/absolute/evidence/addressed-answer.json","/absolute/evidence/farewell.json"]' \
+DISCORD_E2E_EVIDENCE_OUTPUT=/absolute/evidence/reconnect.evidence.v7.json \
+DISCORD_E2E_SECRET_DIRECTORY=/run/secrets/discord-e2e \
+pnpm --filter @discord-meeting/discord-e2e-actors collect:e2e
+
+pnpm --filter @discord-meeting/discord-e2e-actors run verify:e2e -- \
+  apps/discord-e2e-actors/test/fixtures/manifest.v1.json \
+  /absolute/evidence/reconnect.evidence.v7.json
+```
+
+The gate derives locale and known/unknown status from privacy-safe runtime
+metadata and combines it with audible captures. It requires both locales, an
+unknown participant, unique participant greeting identity, and exactly one
+settled prepared farewell. Observer timestamps must
+fall inside the same authoritative recording. The addressed capture must
+overlap exactly one final transcript turn on the pinned Botik track. Any stale
+file, duplicate attempt, mixed observer/Botik application, wrong run/recording,
+wrong Botik speaker, or duplicate lifecycle identity fails closed. Keep the
+existing deterministic greeting/playback and farewell-policy suites green: they
+prove exact named/nameless phrases and the continuation, quoted-speech,
+third-person, and false-positive cases without writing names or prompts to logs.
+
+For the retained campaign only, add the test-only `play:supplemental` CLI as a
+separate Speaker D input. Its single pinned Ogg Opus fixture must first ask Botik
+one synthetic question and, later in the same file, make one explicit group
+farewell, with a qualified silent gap between those turns for Botik's answer.
+Start it only after Speakers A/B and the required observers are ready; use the
+same campaign run ID and bounded pre/post holds for coordination. Speaker D and
+Botik are supplemental transcript evidence.
+They must not be added to the Speaker A/B human WER/CER corpus or used to satisfy
+the required A/B overlap.
+
+The manifest supplied to that CLI pins the private guild, voice channel,
+official Speaker D application ID, semantic fixture purpose, exact Ogg SHA-256,
+and duration. Retain the manifest and the CLI's create-only playback evidence
+beside the campaign evidence. The required acknowledgement is
+`DISCORD_E2E_SUPPLEMENTAL_PRIVATE_TEST_GUILD=private-test-guild`; the token stays
+in the existing Keychain/file-secret boundary under `speaker-d`. The complete
+manifest shape, command, limits, and failure behavior are documented in
+`apps/discord-e2e-actors/README.md`. This supplemental playback adds Speaker D's
+own greeting capture; it does not replace any lifecycle capture or the authoritative Craig/transcript
+checks above.
 
 ### Long-call telemetry
 

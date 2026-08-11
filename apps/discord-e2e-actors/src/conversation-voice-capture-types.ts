@@ -101,7 +101,8 @@ export interface ConversationVoiceEvidenceInput {
   readonly maxPcmBytes: number;
   readonly observerApplicationId: string;
   readonly privateTestGuildConfirmed: true;
-  readonly recordingId: string;
+  readonly purpose: "addressed-answer" | "farewell" | "greeting";
+  readonly recordingId: string | null;
   readonly runId: string;
   readonly turnId: string;
   readonly voiceChannelId: string;
@@ -134,7 +135,8 @@ export interface ConversationVoiceEvidence {
   readonly correlation: {
     readonly attemptId: string;
     readonly provenance: "operator-supplied";
-    readonly recordingId: string;
+    readonly purpose: "addressed-answer" | "farewell" | "greeting";
+    readonly recordingId: string | null;
     readonly verification: "not-run";
     readonly turnId: string;
   };
@@ -147,7 +149,7 @@ export interface ConversationVoiceEvidence {
     readonly voiceChannelId: string;
   };
   readonly runId: string;
-  readonly schemaVersion: 2;
+  readonly schemaVersion: 3;
   readonly source: {
     readonly codec: "opus";
     readonly craigBotId: string;

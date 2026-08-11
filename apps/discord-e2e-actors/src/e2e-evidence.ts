@@ -10,7 +10,10 @@ import {
   verifyReplayIdentity,
   verifySummarySemantics,
 } from "./e2e-evidence-summary-verification.js";
-import { verifyTranscript } from "./e2e-evidence-transcript-verification.js";
+import {
+  verifyConversationEvidence,
+  verifyTranscript,
+} from "./e2e-evidence-transcript-verification.js";
 import type {
   FixtureManifestV1,
   DeploymentRevisionExpectation,
@@ -25,6 +28,7 @@ import type {
 
 export {
   actorRunEvidenceV1Schema,
+  conversationVoiceEvidenceV3Schema,
   deploymentRevisionExpectationSchema,
   fixtureManifestV1Schema,
   retainedE2eEvidenceSchema,
@@ -33,6 +37,7 @@ export {
   retainedE2eEvidenceV4Schema,
   retainedE2eEvidenceV5Schema,
   retainedE2eEvidenceV6Schema,
+  retainedE2eEvidenceV7Schema,
   unboundActorRunEvidenceV1Schema,
 } from "./e2e-evidence-schema.js";
 export type {
@@ -48,6 +53,7 @@ export type {
   RetainedE2eEvidenceV4,
   RetainedE2eEvidenceV5,
   RetainedE2eEvidenceV6,
+  RetainedE2eEvidenceV7,
   UnboundActorRunEvidenceV1,
 } from "./e2e-evidence-schema.js";
 export { sameDeploymentProvenance } from "./e2e-evidence-deployment-verification.js";
@@ -82,6 +88,7 @@ export function verifyRetainedE2eEvidence(
   const context = { evidence, fail, manifest, playbackWindows, scenario };
   verifyActorRun(context);
   verifyTranscript({ ...context, metrics });
+  verifyConversationEvidence(manifest, evidence, fail);
   verifyEvidenceReferences(manifest, evidence, fail);
   verifySummarySemantics(manifest, evidence, fail);
   verifyDiscordSummaryUx(manifest, evidence, fail);

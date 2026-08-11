@@ -251,13 +251,19 @@ export class FarewellBridge {
           turnId: "meeting-farewell:v1",
           voiceProfileId: this.dependencies.configuration.voiceProfileId,
         });
-      this.dependencies.logger.info("Meeting farewell admitted", {
-        evidenceTurnIds,
-        locale,
-        meetingId: this.dependencies.meetingId,
-        outcome: outcome.status,
-        reason,
-      });
+      if (outcome.status === "active") {
+        await this.dependencies.configuration.coordinator.whenIdle(
+          this.dependencies.meetingId,
+        );
+        this.dependencies.logger.info("Meeting farewell playback settled", {
+          evidenceTurnIds,
+          locale,
+          meetingId: this.dependencies.meetingId,
+          playbackAttemptId: cue.playbackAttemptId,
+          reason,
+          turnId: "meeting-farewell:v1",
+        });
+      }
     } catch (error) {
       this.dependencies.logger.warn("Meeting farewell failed", {
         errorName: error instanceof Error ? error.name : "UnknownError",

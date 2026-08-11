@@ -1,5 +1,10 @@
 import { z } from "zod";
 
+import {
+  conversationLifecycleEvidenceSchema,
+  conversationVoiceEvidenceV3Schema,
+} from "./conversation-retained-evidence-schema.js";
+
 const identifierSchema = z.string().trim().min(1);
 const sha256Schema = z.string().regex(/^[a-f\d]{64}$/u);
 const nonNegativeMillisecondsSchema = z.number().int().nonnegative();
@@ -42,6 +47,11 @@ export const fixtureManifestV1Schema = z.object({
     (speakerIds) => new Set(speakerIds).size === speakerIds.length,
     "Allowed bot speaker IDs must be unique",
   ).default([]),
+  conversationVoiceExpectation: z.object({
+    guildId: identifierSchema,
+    observerApplicationId: identifierSchema,
+    voiceChannelId: identifierSchema,
+  }).strict().optional(),
   fixtureSetId: identifierSchema,
   fixtures: z.array(fixtureSchema).min(2),
   locale: identifierSchema,
@@ -380,12 +390,25 @@ export const retainedE2eEvidenceV6Schema = retainedE2eEvidenceV5Schema
     schemaVersion: z.literal(6),
   });
 
+/** v7 binds audible lifecycle/answer captures to settled runtime effects and the final transcript. */
+export const retainedE2eEvidenceV7Schema = retainedE2eEvidenceV6Schema
+  .omit({ schemaVersion: true })
+  .extend({
+    conversation: z.object({
+      botSpeakerId: identifierSchema,
+      lifecycle: conversationLifecycleEvidenceSchema,
+      voice: z.array(conversationVoiceEvidenceV3Schema).min(5),
+    }).strict(),
+    schemaVersion: z.literal(7),
+  });
+
 export const retainedE2eEvidenceSchema = z.union([
   retainedE2eEvidenceV2Schema,
   retainedE2eEvidenceV3Schema,
   retainedE2eEvidenceV4Schema,
   retainedE2eEvidenceV5Schema,
   retainedE2eEvidenceV6Schema,
+  retainedE2eEvidenceV7Schema,
 ]);
 
 export type FixtureManifestV1 = z.infer<typeof fixtureManifestV1Schema>;
@@ -395,9 +418,17 @@ export type DeployedServiceProvenance = z.infer<typeof deployedServiceProvenance
 export type CurrentDeploymentProvenance = z.infer<typeof currentDeploymentProvenanceSchema>;
 export type DeploymentRevisionExpectation = z.infer<typeof deploymentRevisionExpectationSchema>;
 export type ProcessingEvidence = z.infer<typeof retainedE2eEvidenceV4Schema>["processing"];
+export {
+  conversationLifecycleEvidenceSchema,
+  conversationVoiceEvidenceV3Schema,
+} from "./conversation-retained-evidence-schema.js";
+export type {
+  ConversationLifecycleEvidence,
+} from "./conversation-retained-evidence-schema.js";
 export type RetainedE2eEvidenceV2 = z.infer<typeof retainedE2eEvidenceV2Schema>;
 export type RetainedE2eEvidenceV3 = z.infer<typeof retainedE2eEvidenceV3Schema>;
 export type RetainedE2eEvidenceV4 = z.infer<typeof retainedE2eEvidenceV4Schema>;
 export type RetainedE2eEvidenceV5 = z.infer<typeof retainedE2eEvidenceV5Schema>;
 export type RetainedE2eEvidenceV6 = z.infer<typeof retainedE2eEvidenceV6Schema>;
+export type RetainedE2eEvidenceV7 = z.infer<typeof retainedE2eEvidenceV7Schema>;
 export type RetainedE2eEvidence = z.infer<typeof retainedE2eEvidenceSchema>;

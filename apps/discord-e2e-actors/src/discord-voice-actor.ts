@@ -33,9 +33,11 @@ export interface DiscordVoiceActorInput {
   readonly fixturePath: string;
   readonly readyTimeoutMilliseconds: number;
   readonly playbackTimeoutMilliseconds: number;
+  readonly expectedApplicationId?: string;
 }
 
 export interface RecorderAwareVoiceActor extends ReconnectableVoiceActor {
+  readonly authenticatedApplicationId: string;
   waitForVoiceMember(memberId: string, timeoutMilliseconds: number): Promise<void>;
 }
 
@@ -45,14 +47,17 @@ interface ConnectedDiscordVoiceActorOptions {
   readonly fixturePath: string;
   readonly guild: Guild;
   readonly initialConnection: VoiceConnection;
+  readonly authenticatedApplicationId: string;
   readonly playbackTimeoutMilliseconds: number;
   readonly voiceChannelId: string;
 }
 
 class ConnectedDiscordVoiceActor implements RecorderAwareVoiceActor {
+  public readonly authenticatedApplicationId: string;
   private connection: VoiceConnection | undefined;
 
   constructor(private readonly options: ConnectedDiscordVoiceActorOptions) {
+    this.authenticatedApplicationId = options.authenticatedApplicationId;
     this.connection = options.initialConnection;
   }
 
@@ -132,6 +137,10 @@ export async function connectDiscordVoiceActor(
 
   try {
     await client.login(input.token);
+    const authenticatedApplicationId = assertExpectedOfficialBotApplication(
+      client.user,
+      input.expectedApplicationId,
+    );
     const guild = await client.guilds.fetch(input.guildId);
     const channel = await guild.channels.fetch(input.voiceChannelId);
     assertConnectableVoiceChannel(channel);
@@ -162,6 +171,7 @@ export async function connectDiscordVoiceActor(
     return new ConnectedDiscordVoiceActor({
       client,
       connect,
+      authenticatedApplicationId,
       fixturePath: input.fixturePath,
       guild,
       initialConnection: connection,
@@ -173,6 +183,19 @@ export async function connectDiscordVoiceActor(
     await client.destroy();
     throw error;
   }
+}
+
+export function assertExpectedOfficialBotApplication(
+  authenticatedUser: { readonly bot: boolean; readonly id: string } | null,
+  expectedApplicationId?: string,
+): string {
+  if (authenticatedUser === null || !authenticatedUser.bot) {
+    throw new Error("Discord voice actor must authenticate as an official bot application");
+  }
+  if (expectedApplicationId !== undefined && authenticatedUser.id !== expectedApplicationId) {
+    throw new Error("Discord voice actor application ID does not match its authenticated bot");
+  }
+  return authenticatedUser.id;
 }
 
 function assertConnectableVoiceChannel(

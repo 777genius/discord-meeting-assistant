@@ -5,6 +5,57 @@ voice channel and plays synthetic Ogg Opus fixtures with controlled overlap,
 strictly sequential playback, or one speaker reconnecting during the same recording.
 It never accepts bot tokens directly through environment variables.
 
+## Supplemental Speaker D playback
+
+`play:supplemental` is a one-off addition to the retained private-guild campaign.
+It connects one official Speaker D test bot and plays one pre-qualified Ogg Opus
+fixture exactly once. That fixture contains two ordered synthetic turns: Speaker
+D first asks Botik a question and later makes one explicit group farewell. This
+supplements conversation/farewell coverage; Speaker A and Speaker B remain the
+only human WER/CER corpus and overlap inputs.
+
+The committed `test/fixtures/supplemental-voice-playback.v1.json` pins the
+already-qualified fixture. Do not generate or substitute audio during the
+campaign. Relative fixture paths are resolved from the manifest directory:
+
+```json
+{
+  "schemaVersion": 1,
+  "privateTestGuildAcknowledgement": "private-test-guild",
+  "guildId": "1533228590643155034",
+  "voiceChannelId": "1533228823045214398",
+  "applicationId": "1533873978417086474",
+  "fixture": {
+    "path": "supplemental-question-farewell.ru.ogg",
+    "sha256": "9741f8e03bc6417354908bdfb4a771297f0ab5ee31fecc213dd352c8779343b1",
+    "durationMs": 23768,
+    "purpose": "speaker-d-botik-question-and-later-group-farewell"
+  }
+}
+```
+
+Store its token in Keychain service `discord-voice-bot-e2e`, account
+`speaker-d`, or in a private `speaker-d` file accepted by the existing
+file-secret reader. Then run with explicit private-target acknowledgement and
+bounded holds:
+
+```sh
+DISCORD_E2E_SUPPLEMENTAL_PRIVATE_TEST_GUILD=private-test-guild \
+DISCORD_E2E_SUPPLEMENTAL_MANIFEST=/app/apps/discord-e2e-actors/test/fixtures/supplemental-voice-playback.v1.json \
+DISCORD_E2E_SUPPLEMENTAL_EVIDENCE_OUTPUT=/absolute/evidence/speaker-d.playback.json \
+DISCORD_E2E_SUPPLEMENTAL_RUN_ID=campaign-2026-08-11-reconnect \
+DISCORD_E2E_SUPPLEMENTAL_PRE_HOLD_MS=10000 \
+DISCORD_E2E_SUPPLEMENTAL_POST_HOLD_MS=10000 \
+pnpm --filter @discord-meeting/discord-e2e-actors play:supplemental
+```
+
+The CLI refuses token environment variables, an absent private-guild
+acknowledgement, malformed or unpinned targets, a non-bot or mismatched
+application identity, changed/non-Ogg audio, a fixture longer than 60 seconds,
+timeouts shorter than the fixture, and holds/timeouts outside their finite
+bounds. It writes create-only non-secret evidence after playback reaches
+`Playing` and then `Idle`; it never replaces an existing evidence file.
+
 ## Providerless conversation voice observer
 
 `observe:conversation` is a separate Stage 7 diagnostic for a private,
@@ -26,9 +77,9 @@ DISCORD_E2E_CONVERSATION_VOICE_VOICE_CHANNEL_ID=... \
 DISCORD_E2E_CONVERSATION_VOICE_OBSERVER_APPLICATION_ID=... \
 DISCORD_E2E_CONVERSATION_VOICE_CRAIG_BOT_ID=... \
 DISCORD_E2E_CONVERSATION_VOICE_RUN_ID=... \
-DISCORD_E2E_CONVERSATION_VOICE_RECORDING_ID=... \
 DISCORD_E2E_CONVERSATION_VOICE_TURN_ID=... \
 DISCORD_E2E_CONVERSATION_VOICE_ATTEMPT_ID=... \
+DISCORD_E2E_CONVERSATION_VOICE_PURPOSE=addressed-answer \
 DISCORD_E2E_CONVERSATION_VOICE_EXPECTED_DURATION_MS=5000 \
 DISCORD_E2E_CONVERSATION_VOICE_OUTPUT=/absolute/evidence/conversation-voice.json \
 pnpm --filter @discord-meeting/discord-e2e-actors observe:conversation
@@ -39,13 +90,23 @@ than 60 seconds / 11,520,000 bytes), then atomically writes a new JSON evidence
 file with packet/timing data, PCM SHA-256, RMS and non-silence metrics. It never
 stores bot tokens, PCM, Opus packets, or transcript text. It fails for no audio,
 timeout, silence, an unexpected sender, or an existing output path.
+It joins the pinned private channel before waiting for the configured playback
+bot, allowing the observer to be present before a first-join greeting becomes
+playback-ready.
 
-This is transport evidence only: it does not run STT, does not verify a
-transcript, cannot establish the authoritative Craig recording, and cannot
-prove wire-level packet completeness because Discord's receiver exposes decoded
-Opus payloads rather than RTP sequence metadata. The configured recording,
-turn, and attempt IDs are retained only as operator-supplied labels; this
-observer does not independently verify their correlation or cancellation.
+Each capture declares `greeting`, `farewell`, or `addressed-answer` purpose.
+Alone it remains transport evidence: it does not run STT, establish the
+authoritative Craig recording, or independently verify its operator-supplied
+correlation. A first-join capture may omit
+`DISCORD_E2E_CONVERSATION_VOICE_RECORDING_ID` before Craig exposes its random
+recording ID; the create-only raw file then retains `null`. The collector binds
+that capture exactly once to the explicitly selected authoritative recording
+and rejects a conflicting non-null ID. Current v7 retained evidence closes that
+correlation by checking
+the capture interval against the authoritative recording, matching lifecycle
+turns to settled runtime markers plus audible captures, and matching the
+addressed-answer interval to exactly one Botik turn in the final transcript.
+For v7, the configured source bot must be the same pinned Botik identity.
 
 Generate the Russian fixtures with embedded English technical terms before the
 first external run. The command uses macOS `say` (voice `Milena` by default),
@@ -92,7 +153,9 @@ events and is bound to one explicit recording only by the collector after the
 authoritative Craig manifest exists.
 
 Optional environment settings override the Keychain service/account names,
-fixture paths, scenario, speaker B delay, and readiness/playback timeouts. The
+fixture paths, scenario, speaker B connection/playback delays, and
+readiness/playback timeouts. `DISCORD_E2E_SPEAKER_B_CONNECT_DELAY_MS` defaults
+to `0` and may be set only for a bounded private-guild observer campaign. The
 scenario is selected with `DISCORD_E2E_SCENARIO=overlap|sequential|reconnect` and
 defaults to `overlap`. For `sequential`, the delay is the silent gap after speaker
 A completes. For `reconnect`, the delay selects when speaker B disconnects while
@@ -135,6 +198,34 @@ DISCORD_E2E_ACTOR_RUN_INPUT=/absolute/evidence/overlap.actor-run.json \
 DISCORD_E2E_EVIDENCE_OUTPUT=/absolute/evidence/overlap.evidence.v6.json \
 pnpm --filter @discord-meeting/discord-e2e-actors collect:e2e
 ```
+
+For the opt-in greeting/farewell/Botik campaign, start a create-only observer
+capture immediately before each of the three greeting playbacks, the prepared
+farewell, and the addressed answer. Then collect v7 by adding the pinned Botik
+speaker ID and the JSON array of those five files:
+
+```sh
+DISCORD_E2E_BOTIK_SPEAKER_ID=1534231284467896512 \
+DISCORD_E2E_CONVERSATION_VOICE_INPUTS='["/absolute/evidence/greeting-ru.json","/absolute/evidence/greeting-en.json","/absolute/evidence/greeting-unknown.json","/absolute/evidence/farewell.json","/absolute/evidence/addressed-answer.json"]' \
+DISCORD_E2E_EVIDENCE_OUTPUT=/absolute/evidence/reconnect.evidence.v7.json \
+DISCORD_E2E_SECRET_DIRECTORY=/run/secrets/discord-e2e \
+pnpm --filter @discord-meeting/discord-e2e-actors collect:e2e
+```
+
+The v7 verifier requires audible RU and EN greetings, an unknown-participant
+greeting without logging its prompt or name, one greeting per participant despite reconnect,
+exactly one completed prepared farewell, one audible capture per lifecycle
+turn, and one audible addressed answer overlapping one final Botik transcript
+turn. It rejects stale intervals, duplicate attempts/participants, mixed
+observer or Botik identities, wrong run/recording, and a missing/wrong Botik
+speaker track. Deterministic bridge and providerless playback tests separately
+prove the exact named and nameless phrase construction without retaining PII in logs.
+
+For a fully hosted campaign, use the same external secret directory for the
+actor harness, voice observer, and collector. It contains files named by the
+configured accounts (`sut`, `speaker-a`, `speaker-b`, and
+`conversation-observer`) and never token values in environment variables or
+process arguments.
 
 Collection and both verification commands require immutable candidate inputs
 `DISCORD_E2E_EXPECTED_CRAIG_SOURCE_REVISION`,

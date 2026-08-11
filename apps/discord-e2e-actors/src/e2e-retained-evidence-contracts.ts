@@ -1,4 +1,5 @@
 import type {
+  ConversationLifecycleEvidence,
   CurrentDeploymentProvenance,
   ProcessingEvidence,
 } from "./e2e-evidence-schema.js";
@@ -38,6 +39,10 @@ export interface ReplayJobEvidence {
 }
 
 export interface DeploymentEvidenceProbe {
+  collectConversationLifecycle?(
+    meetingId: string,
+    recordingStartedAt: string,
+  ): Promise<ConversationLifecycleEvidence>;
   collectDatabase(recordingId: string): Promise<DatabaseObservation>;
   collectProcessing(meetingId: string, recordingStartedAt: string): Promise<ProcessingEvidence>;
   collectProvenance(): Promise<CurrentDeploymentProvenance>;
@@ -72,6 +77,10 @@ export interface DiscordEvidenceProbe {
 
 export interface CollectEvidenceInput {
   readonly actorRun: unknown;
+  readonly conversation?: {
+    readonly botSpeakerId: string;
+    readonly voice: readonly unknown[];
+  };
   readonly recordingId: string;
   readonly runId: string;
 }

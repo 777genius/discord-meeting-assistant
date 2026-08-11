@@ -48,7 +48,8 @@ const environmentSchema = z.object({
   DISCORD_E2E_CONVERSATION_VOICE_OBSERVER_APPLICATION_ID: snowflakeSchema,
   DISCORD_E2E_CONVERSATION_VOICE_OUTPUT: absoluteOutputPathSchema,
   DISCORD_E2E_CONVERSATION_VOICE_PRIVATE_TEST_GUILD: z.literal("private-test-guild"),
-  DISCORD_E2E_CONVERSATION_VOICE_RECORDING_ID: correlationIdSchema,
+  DISCORD_E2E_CONVERSATION_VOICE_PURPOSE: z.enum(["addressed-answer", "farewell", "greeting"]),
+  DISCORD_E2E_CONVERSATION_VOICE_RECORDING_ID: correlationIdSchema.optional(),
   DISCORD_E2E_CONVERSATION_VOICE_RUN_ID: correlationIdSchema,
   DISCORD_E2E_CONVERSATION_VOICE_SECRET_DIRECTORY: absoluteDirectorySchema.optional(),
   DISCORD_E2E_CONVERSATION_VOICE_TURN_ID: correlationIdSchema,
@@ -102,7 +103,8 @@ export interface ConversationVoiceObserverConfig {
   readonly observerApplicationId: string;
   readonly outputPath: string;
   readonly privateTestGuildConfirmed: true;
-  readonly recordingId: string;
+  readonly purpose: "addressed-answer" | "farewell" | "greeting";
+  readonly recordingId: string | null;
   readonly runId: string;
   readonly secretDirectory: string | undefined;
   readonly turnId: string;
@@ -132,7 +134,8 @@ export function loadConversationVoiceObserverConfig(
     observerApplicationId: parsed.DISCORD_E2E_CONVERSATION_VOICE_OBSERVER_APPLICATION_ID,
     outputPath: parsed.DISCORD_E2E_CONVERSATION_VOICE_OUTPUT,
     privateTestGuildConfirmed: true,
-    recordingId: parsed.DISCORD_E2E_CONVERSATION_VOICE_RECORDING_ID,
+    purpose: parsed.DISCORD_E2E_CONVERSATION_VOICE_PURPOSE,
+    recordingId: parsed.DISCORD_E2E_CONVERSATION_VOICE_RECORDING_ID ?? null,
     runId: parsed.DISCORD_E2E_CONVERSATION_VOICE_RUN_ID,
     secretDirectory: parsed.DISCORD_E2E_CONVERSATION_VOICE_SECRET_DIRECTORY,
     turnId: parsed.DISCORD_E2E_CONVERSATION_VOICE_TURN_ID,

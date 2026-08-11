@@ -69,14 +69,6 @@ async function main(): Promise<void> {
     const guild = await client.guilds.fetch(config.guildId);
     const channel = await guild.channels.fetch(config.voiceChannelId);
     assertConnectableVoiceChannel(channel);
-    await assertConfiguredCraigBotIsInVoiceChannel(
-      client,
-      guild,
-      config.craigBotId,
-      channel.id,
-      config.captureTimeoutMilliseconds,
-    );
-
     connection = joinVoiceChannel({
       adapterCreator: guild.voiceAdapterCreator,
       channelId: channel.id,
@@ -86,6 +78,13 @@ async function main(): Promise<void> {
       selfMute: true,
     });
     await entersState(connection, VoiceConnectionStatus.Ready, config.captureTimeoutMilliseconds);
+    await assertConfiguredCraigBotIsInVoiceChannel(
+      client,
+      guild,
+      config.craigBotId,
+      channel.id,
+      config.captureTimeoutMilliseconds,
+    );
     const capture = await captureConfiguredCraigVoice({
       connection,
       controller: new ConversationVoiceCaptureController({
@@ -113,6 +112,7 @@ async function main(): Promise<void> {
       maxPcmBytes: config.maxPcmBytes,
       observerApplicationId: config.observerApplicationId,
       privateTestGuildConfirmed: config.privateTestGuildConfirmed,
+      purpose: config.purpose,
       recordingId: config.recordingId,
       runId: config.runId,
       turnId: config.turnId,

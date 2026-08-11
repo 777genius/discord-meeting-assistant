@@ -32,6 +32,7 @@ export function createConversationVoiceEvidence(
     correlation: Object.freeze({
       attemptId: input.attemptId,
       provenance: "operator-supplied" as const,
+      purpose: input.purpose,
       recordingId: input.recordingId,
       verification: "not-run" as const,
       turnId: input.turnId,
@@ -45,7 +46,7 @@ export function createConversationVoiceEvidence(
       voiceChannelId: input.voiceChannelId,
     }),
     runId: input.runId,
-    schemaVersion: 2 as const,
+    schemaVersion: 3 as const,
     source: Object.freeze({
       codec: "opus" as const,
       craigBotId: input.craigBotId,

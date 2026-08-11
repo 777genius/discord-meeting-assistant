@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { parseProcessingEvidenceLogs } from "../src/e2e-processing-log-parser.js";
+import {
+  parseConversationLifecycleEvidenceLogs,
+  parseProcessingEvidenceLogs,
+} from "../src/e2e-processing-log-parser.js";
 
 describe("parseProcessingEvidenceLogs", () => {
   it("retains only correlated successful stages and completed final-summary executions", () => {
@@ -36,6 +39,35 @@ describe("parseProcessingEvidenceLogs", () => {
   it("fails closed when required observations are absent", () => {
     expect(() => parseProcessingEvidenceLogs(stage("meeting-1", "summary", 10), "meeting-1"))
       .toThrow();
+  });
+});
+
+describe("parseConversationLifecycleEvidenceLogs", () => {
+  it("retains only completed lifecycle effects for one meeting", () => {
+    const greeting = {
+      greetingLocale: "ru", greetingText: "Привет, Саша!", meetingId: "meeting-1",
+      message: "Participant greeting playback settled", participantId: "participant-1",
+      participantName: "Саша", participantNameStatus: "unknown",
+      time: "2026-08-06T19:18:37.000Z",
+      turnId: "participant-greeting:participant-1",
+    };
+    const farewell = {
+      evidenceTurnIds: ["turn-1"], locale: "ru", meetingId: "meeting-1",
+      message: "Meeting farewell playback settled", playbackAttemptId: "farewell-1",
+      reason: "explicit-group", time: "2026-08-06T19:19:37.000Z",
+      turnId: "meeting-farewell:v1",
+    };
+    const output = [
+      JSON.stringify({ ...greeting, meetingId: "other" }),
+      JSON.stringify(greeting),
+      JSON.stringify({ ...greeting, participantId: "participant-2", turnId: "participant-greeting:participant-2", greetingLocale: "en" }),
+      JSON.stringify({ ...greeting, participantId: "participant-3", turnId: "participant-greeting:participant-3" }),
+      JSON.stringify(farewell),
+    ].join("\n");
+    const events = parseConversationLifecycleEvidenceLogs(output, "meeting-1").events;
+    expect(events).toHaveLength(4);
+    expect(events[0]).not.toHaveProperty("greetingText");
+    expect(events[0]).not.toHaveProperty("participantName");
   });
 });
 

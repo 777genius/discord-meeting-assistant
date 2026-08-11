@@ -1,0 +1,107 @@
+import { z } from "zod";
+
+const identifierSchema = z.string().trim().min(1);
+const sha256Schema = z.string().regex(/^[a-f\d]{64}$/u);
+const identifierCountSchema = z.number().int().nonnegative();
+const conversationVoicePurposeSchema = z.enum([
+  "addressed-answer",
+  "farewell",
+  "greeting",
+]);
+const captureTimestampSchema = z.object({
+  epochMilliseconds: z.number().int().positive(),
+  monotonicMilliseconds: z.number().nonnegative(),
+}).strict();
+
+export const conversationVoiceEvidenceV3Schema = z.object({
+  capture: z.object({
+    acceptedDurationMilliseconds: z.number().int().positive(),
+    acceptedPacketCount: z.number().int().positive(),
+    cancellation: z.object({ status: z.literal("not-observed") }).strict(),
+    endedAt: captureTimestampSchema,
+    expectedDuration: z.object({
+      maximumMilliseconds: z.number().int().positive(),
+      minimumMilliseconds: z.number().int().positive(),
+    }).strict(),
+    firstPacketAt: captureTimestampSchema,
+    ignoredDuplicatePacketCount: identifierCountSchema,
+    ignoredLatePacketCount: identifierCountSchema,
+    limits: z.object({
+      captureTimeoutMilliseconds: z.number().int().positive(),
+      maxCaptureDurationMilliseconds: z.number().int().positive(),
+      maxPcmBytes: z.number().int().positive(),
+    }).strict(),
+    pcm: z.object({
+      byteLength: z.number().int().positive(),
+      channels: z.literal(2),
+      encoding: z.literal("s16le"),
+      nonSilence: z.object({
+        sampleCount: z.number().int().positive(),
+        sampleCountAboveThreshold: z.number().int().positive(),
+        sampleRatioAboveThreshold: z.number().positive().max(1),
+        thresholdSample: z.number().int().positive(),
+      }).strict(),
+      rms: z.number().positive(),
+      sampleRateHertz: z.literal(48_000),
+      sha256: sha256Schema,
+    }).strict(),
+    startedAt: captureTimestampSchema,
+    termination: z.literal("expected-duration-reached"),
+  }).strict(),
+  correlation: z.object({
+    attemptId: identifierSchema,
+    provenance: z.literal("operator-supplied"),
+    purpose: conversationVoicePurposeSchema,
+    recordingId: identifierSchema.nullable(),
+    verification: z.literal("not-run"),
+    turnId: identifierSchema,
+  }).strict(),
+  kind: z.literal("conversation-voice-observer-evidence"),
+  observer: z.object({
+    applicationId: identifierSchema,
+    authenticatedBotId: identifierSchema,
+    guildId: identifierSchema,
+    privateTestGuildConfirmed: z.literal(true),
+    voiceChannelId: identifierSchema,
+  }).strict(),
+  runId: identifierSchema,
+  schemaVersion: z.literal(3),
+  source: z.object({
+    codec: z.literal("opus"),
+    craigBotId: identifierSchema,
+    decodedPcm: z.object({
+      channels: z.literal(2),
+      encoding: z.literal("s16le"),
+      sampleRateHertz: z.literal(48_000),
+    }).strict(),
+    receiver: z.literal("@discordjs/voice"),
+  }).strict(),
+  transcriptVerification: z.object({ status: z.literal("not-run") }).strict(),
+}).strict();
+
+const greetingPlaybackObservationSchema = z.object({
+  greetingLocale: z.enum(["en", "ru"]),
+  observedAt: z.iso.datetime(),
+  participantId: identifierSchema,
+  participantNameStatus: z.enum(["known", "unknown"]),
+  turnId: identifierSchema,
+  type: z.literal("greeting"),
+}).strict();
+const farewellPlaybackObservationSchema = z.object({
+  evidenceTurnIds: z.array(identifierSchema).min(1),
+  locale: z.enum(["en", "ru"]),
+  observedAt: z.iso.datetime(),
+  playbackAttemptId: identifierSchema,
+  reason: identifierSchema,
+  turnId: z.literal("meeting-farewell:v1"),
+  type: z.literal("farewell"),
+}).strict();
+
+export const conversationLifecycleEvidenceSchema = z.object({
+  events: z.array(z.discriminatedUnion("type", [
+    greetingPlaybackObservationSchema,
+    farewellPlaybackObservationSchema,
+  ])).min(4),
+}).strict();
+
+export type ConversationLifecycleEvidence = z.infer<typeof conversationLifecycleEvidenceSchema>;

@@ -1,7 +1,10 @@
 import {
+  conversationVoiceEvidenceV3Schema,
   retainedE2eEvidenceV6Schema,
+  retainedE2eEvidenceV7Schema,
   sameDeploymentProvenance,
   type RetainedE2eEvidenceV6,
+  type RetainedE2eEvidenceV7,
 } from "./e2e-evidence.js";
 import {
   assertDiscordReference,
@@ -48,7 +51,7 @@ export async function collectRetainedE2eEvidence(
   input: CollectEvidenceInput,
   deployment: DeploymentEvidenceProbe,
   discord: DiscordEvidenceProbe,
-): Promise<RetainedE2eEvidenceV6> {
+): Promise<RetainedE2eEvidenceV6 | RetainedE2eEvidenceV7> {
   const unboundActorRun = parseUnboundActorRun(input.actorRun);
   if (unboundActorRun.runId !== input.runId) {
     throw new Error("Actor evidence does not match the requested run correlation");
@@ -103,7 +106,7 @@ export async function collectRetainedE2eEvidence(
   }
   const recordingDurationMs = recordingDuration(s3);
   assertExactDiscordProjection(afterDiscord, replayPublication, "after replay");
-  return retainedE2eEvidenceV6Schema.parse({
+  const baseEvidence = retainedE2eEvidenceV6Schema.parse({
     actorRun,
     deployment: provenanceBefore,
     database: {
@@ -162,6 +165,41 @@ export async function collectRetainedE2eEvidence(
     ],
     summary: snapshot.summary,
     transcript: snapshot.transcript,
+  });
+  if (input.conversation === undefined) {
+    return baseEvidence;
+  }
+  if (deployment.collectConversationLifecycle === undefined) {
+    throw new Error("Deployment probe cannot collect conversation lifecycle evidence");
+  }
+  const lifecycle = await deployment.collectConversationLifecycle(snapshot.meetingId, s3.startedAt);
+  return retainedE2eEvidenceV7Schema.parse({
+    ...baseEvidence,
+    conversation: {
+      botSpeakerId: input.conversation.botSpeakerId,
+      lifecycle,
+      voice: input.conversation.voice.map((observation) =>
+        bindConversationVoiceRecording(observation, input.recordingId)
+      ),
+    },
+    schemaVersion: 7,
+  });
+}
+
+export function bindConversationVoiceRecording(
+  observation: unknown,
+  recordingId: string,
+) {
+  const parsed = conversationVoiceEvidenceV3Schema.parse(observation);
+  if (
+    parsed.correlation.recordingId !== null &&
+    parsed.correlation.recordingId !== recordingId
+  ) {
+    throw new Error("Conversation voice evidence is bound to a different recording");
+  }
+  return conversationVoiceEvidenceV3Schema.parse({
+    ...parsed,
+    correlation: { ...parsed.correlation, recordingId },
   });
 }
 

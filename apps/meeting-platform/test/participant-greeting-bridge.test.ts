@@ -73,6 +73,7 @@ const logger: LiveRuntimeLogger = {
 function fixture(
   playbackReady = false,
   defaultLocale: "en" | "ru" = "ru",
+  runtimeLogger: LiveRuntimeLogger = logger,
 ): {
   readonly bridge: ParticipantGreetingBridge;
   readonly coordinator: GreetingCoordinatorProbe;
@@ -108,7 +109,7 @@ function fixture(
     bridge: new ParticipantGreetingBridge({
       configuration,
       isMeetingFinishing: () => false,
-      logger,
+      logger: runtimeLogger,
       meetingId: "recording-1",
     }),
     coordinator,
@@ -175,6 +176,52 @@ describe("ParticipantGreetingBridge", () => {
       prompt: "Hi!",
       speakerId: unknownParticipantId,
     });
+  });
+
+  it("logs only privacy-safe greeting completion metadata", async () => {
+    const infoCalls: Array<{
+      readonly fields: Readonly<Record<string, unknown>> | undefined;
+      readonly message: string;
+    }> = [];
+    const context = fixture(true, "ru", {
+      ...logger,
+      info: (message, fields) => {
+        infoCalls.push({ fields, message });
+      },
+    });
+    let markIdleEntered: (() => void) | undefined;
+    const idleEntered = new Promise<void>((resolve) => {
+      markIdleEntered = resolve;
+    });
+    let releaseIdle: (() => void) | undefined;
+    const idleGate = new Promise<void>((resolve) => {
+      releaseIdle = resolve;
+    });
+    context.coordinator.whenIdle = () => {
+      context.coordinator.idleCalls += 1;
+      markIdleEntered?.();
+      return idleGate;
+    };
+
+    context.bridge.participantJoined(russianParticipantId);
+    const settlement = context.bridge.settle();
+    await idleEntered;
+    expect(infoCalls).toEqual([]);
+    releaseIdle?.();
+    await settlement;
+
+    expect(infoCalls).toEqual([{
+      fields: {
+        greetingLocale: "ru",
+        meetingId: "recording-1",
+        participantId: russianParticipantId,
+        participantNameStatus: "known",
+        turnId: `participant-greeting:${russianParticipantId}`,
+      },
+      message: "Participant greeting playback settled",
+    }]);
+    expect(JSON.stringify(infoCalls)).not.toContain("Саша");
+    expect(JSON.stringify(infoCalls)).not.toContain("Привет");
   });
 
   it.each([

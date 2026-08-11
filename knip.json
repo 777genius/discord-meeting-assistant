@@ -68,6 +68,7 @@
         "src/collect-retained-evidence.ts",
         "src/observe-conversation-voice.ts",
         "src/observe-live-discord.ts",
+        "src/play-supplemental-voice.ts",
         "src/verify-campaign.ts",
         "src/verify-retained-evidence.ts"
       ],

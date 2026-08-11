@@ -10,6 +10,7 @@ const requiredEnvironment = {
   DISCORD_E2E_CONVERSATION_VOICE_OBSERVER_APPLICATION_ID: "22222222222222222",
   DISCORD_E2E_CONVERSATION_VOICE_OUTPUT: "/tmp/conversation-voice-observer.json",
   DISCORD_E2E_CONVERSATION_VOICE_PRIVATE_TEST_GUILD: "private-test-guild",
+  DISCORD_E2E_CONVERSATION_VOICE_PURPOSE: "addressed-answer",
   DISCORD_E2E_CONVERSATION_VOICE_RECORDING_ID: "recording-2026-08-04-01",
   DISCORD_E2E_CONVERSATION_VOICE_RUN_ID: "conversation-run-2026-08-04",
   DISCORD_E2E_CONVERSATION_VOICE_TURN_ID: "turn-2026-08-04-01",
@@ -31,6 +32,7 @@ describe("loadConversationVoiceObserverConfig", () => {
       observerApplicationId: "22222222222222222",
       outputPath: "/tmp/conversation-voice-observer.json",
       privateTestGuildConfirmed: true,
+      purpose: "addressed-answer",
       recordingId: "recording-2026-08-04-01",
       runId: "conversation-run-2026-08-04",
       secretDirectory: undefined,
@@ -55,13 +57,20 @@ describe("loadConversationVoiceObserverConfig", () => {
     })).toThrow("does not accept bot tokens");
   });
 
+  it("allows a first-join capture to remain unbound until retained collection", () => {
+    const {
+      DISCORD_E2E_CONVERSATION_VOICE_RECORDING_ID: _,
+      ...beforeRecordingId
+    } = requiredEnvironment;
+
+    expect(loadConversationVoiceObserverConfig(beforeRecordingId).recordingId).toBeNull();
+  });
+
   it("fails closed for non-private targets, missing correlations, and unsafe output paths", () => {
     expect(() => loadConversationVoiceObserverConfig({
       ...requiredEnvironment,
       DISCORD_E2E_CONVERSATION_VOICE_PRIVATE_TEST_GUILD: "yes",
     })).toThrow();
-    const { DISCORD_E2E_CONVERSATION_VOICE_RECORDING_ID: _, ...withoutRecording } = requiredEnvironment;
-    expect(() => loadConversationVoiceObserverConfig(withoutRecording)).toThrow();
     expect(() => loadConversationVoiceObserverConfig({
       ...requiredEnvironment,
       DISCORD_E2E_CONVERSATION_VOICE_OUTPUT: "conversation-voice-observer.json",
