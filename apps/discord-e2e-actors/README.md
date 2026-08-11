@@ -159,8 +159,9 @@ authoritative Craig manifest exists.
 Optional environment settings override the Keychain service/account names,
 fixture paths, scenario, speaker B connection/playback delays, and
 readiness/playback timeouts. `DISCORD_E2E_SPEAKER_B_CONNECT_DELAY_MS` defaults
-to `0` and may be set only for a bounded private-guild observer campaign. The
-scenario is selected with `DISCORD_E2E_SCENARIO=overlap|sequential|reconnect` and
+to `0`, accepts up to `120000`, and may be set only for a bounded private-guild
+observer campaign. The scenario is selected with
+`DISCORD_E2E_SCENARIO=overlap|sequential|reconnect` and
 defaults to `overlap`. For `sequential`, the delay is the silent gap after speaker
 A completes. For `reconnect`, the delay selects when speaker B disconnects while
 speaker A continues; speaker B then waits for a new ready voice connection and
