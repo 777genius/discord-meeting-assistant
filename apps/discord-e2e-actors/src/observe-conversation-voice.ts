@@ -280,8 +280,8 @@ async function captureConfiguredCraigVoice(input: {
       }
       settled = true;
       cleanup();
+      stream.once("close", () => resolve(capture));
       stream.destroy();
-      resolve(capture);
     };
     const fail = (error: unknown): void => {
       if (settled) {
@@ -289,8 +289,8 @@ async function captureConfiguredCraigVoice(input: {
       }
       settled = true;
       cleanup();
+      stream.once("close", () => reject(error));
       stream.destroy();
-      reject(error);
     };
     const onData = (opusPacket: Uint8Array): void => {
       try {
