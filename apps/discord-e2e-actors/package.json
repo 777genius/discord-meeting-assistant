@@ -8,6 +8,7 @@
     "capacity:e2e": "pnpm run build && node dist/capacity-main.js",
     "collect:e2e": "pnpm run build && node dist/collect-retained-evidence.js",
     "collect:hosted-service-levels": "pnpm run build && node dist/collect-hosted-service-levels.js",
+    "collect:hosted-service-level-sources": "pnpm run build && node dist/collect-hosted-service-level-sources.js",
     "collect:recording-ready": "pnpm run build && node dist/collect-recording-ready-receipt.js",
     "collect:hosted-provenance": "pnpm run build && node dist/collect-hosted-campaign-provenance.js",
     "fixtures:generate": "./scripts/generate-ru-en-fixtures.sh",
@@ -25,6 +26,7 @@
   },
   "dependencies": {
     "@discord-meeting/conversation-runtime-contracts": "workspace:*",
+    "@discord-meeting/discord-adapter": "workspace:*",
     "@discordjs/opus": "catalog:",
     "@discordjs/voice": "catalog:",
     "discord.js": "catalog:",
