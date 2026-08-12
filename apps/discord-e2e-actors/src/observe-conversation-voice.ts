@@ -15,23 +15,29 @@ import {
   type VoiceChannel,
 } from "discord.js";
 
-import { loadConversationVoiceObserverConfig } from "./conversation-voice-observer-config.js";
+import {
+  loadConversationVoiceObserverConfig,
+  type ConversationVoiceObserverCapture,
+} from "./conversation-voice-observer-config.js";
 import { createConversationVoiceEvidence } from "./conversation-voice-evidence.js";
 import { captureConversationVoiceFromOpenStream } from "./conversation-voice-stream-capture.js";
-import { waitForConversationVoiceTurnIdWhileGuardingAudio } from
+import {
+  createDiscordJsOpusDecoder,
+  type ConversationVoiceAudibilityDecoder,
+} from "./conversation-voice-audibility-decoder.js";
+import { waitForConversationVoiceCorrelationWhileGuardingAudio } from
   "./conversation-voice-turn-correlation-wait.js";
 import {
-  assertConversationVoiceTurnIdFileIsNew,
-  waitForNewConversationVoiceTurnIdFile,
+  assertConversationAnswerHandshakeRootIsNew,
+  publishConversationAnswerObserverReady,
+  waitForConversationAnswerPlaybackIntent,
+  type ConversationAnswerPlaybackIntent,
 } from "./conversation-voice-turn-id-source.js";
 import {
   ConversationVoiceCaptureController,
   ConversationVoiceCaptureError,
-  PCM_S16LE_CHANNELS,
-  PCM_S16LE_SAMPLE_RATE_HERTZ,
   assertConversationVoiceEvidencePathIsNew,
   writeNewConversationVoiceEvidenceAtomically,
-  type ConversationVoiceOpusDecoder,
 } from "./conversation-voice-observer.js";
 import { FileSecretReader, MacOsKeychainSecretReader } from "./keychain.js";
 
@@ -49,39 +55,14 @@ class ConversationVoiceObserverError extends Error {
   }
 }
 
-interface ConversationVoiceAudibilityDecoder extends ConversationVoiceOpusDecoder {
-  isPacketAudible(opusPacket: Uint8Array): boolean;
-}
-
-class ProbedConversationVoiceOpusDecoder implements ConversationVoiceAudibilityDecoder {
-  readonly #delegate: ConversationVoiceOpusDecoder;
-  #probe: { readonly opusPacket: Uint8Array; readonly pcm: Uint8Array } | undefined;
-
-  public constructor(delegate: ConversationVoiceOpusDecoder) {
-    this.#delegate = delegate;
-  }
-
-  public decode(opusPacket: Uint8Array): Uint8Array {
-    const probe = this.#probe;
-    if (probe !== undefined && probe.opusPacket === opusPacket) {
-      this.#probe = undefined;
-      return probe.pcm;
-    }
-    this.#probe = undefined;
-    return this.#delegate.decode(opusPacket);
-  }
-
-  public isPacketAudible(opusPacket: Uint8Array): boolean {
-    const pcm = this.#delegate.decode(opusPacket);
-    this.#probe = { opusPacket, pcm };
-    return decodedPcmIsAudible(pcm);
-  }
-}
-
 async function main(): Promise<void> {
   const config = loadConversationVoiceObserverConfig(process.env);
   const captures = [
-    {
+    config.purpose === "addressed-answer" ? {
+      outputPath: config.outputPath,
+      playbackHandshakeRoot: config.playbackHandshakeRoot!,
+      purpose: config.purpose,
+    } : {
       attemptId: config.attemptId,
       outputPath: config.outputPath,
       purpose: config.purpose,
@@ -89,13 +70,13 @@ async function main(): Promise<void> {
     },
     ...config.additionalCaptures,
   ] as const;
-  const turnIdFiles = config.additionalCaptures.flatMap((capture) =>
-    capture.turnIdFile === undefined ? [] : [capture.turnIdFile]
-  );
+  const handshakeRoots = config.additionalCaptures.flatMap((capture) =>
+    capture.purpose === "addressed-answer" ? [capture.playbackHandshakeRoot] : []
+  ).concat(config.playbackHandshakeRoot === undefined ? [] : [config.playbackHandshakeRoot]);
   await Promise.all(captures.map(({ outputPath }) =>
     assertConversationVoiceEvidencePathIsNew(outputPath)
   ));
-  await Promise.all(turnIdFiles.map(assertConversationVoiceTurnIdFileIsNew));
+  await Promise.all(handshakeRoots.map(assertConversationAnswerHandshakeRootIsNew));
   const decoder = await createDiscordJsOpusDecoder();
 
   const secretReader = config.secretDirectory === undefined
@@ -125,8 +106,8 @@ async function main(): Promise<void> {
       selfMute: true,
     });
     await entersState(connection, VoiceConnectionStatus.Ready, config.readyTimeoutMilliseconds);
-    const turnIdFileNotBeforeEpochMilliseconds = Date.now();
-    await Promise.all(turnIdFiles.map(assertConversationVoiceTurnIdFileIsNew));
+    const handshakeNotBeforeEpochMilliseconds = Date.now();
+    await Promise.all(handshakeRoots.map(assertConversationAnswerHandshakeRootIsNew));
     await assertConfiguredCraigBotIsInVoiceChannel(
       client,
       guild,
@@ -138,18 +119,55 @@ async function main(): Promise<void> {
       end: { behavior: EndBehaviorType.Manual },
     });
     sourceStream.on("error", ignoreStreamError);
-    for (const [index, plannedCapture] of captures.entries()) {
-      const turnId = plannedCapture.turnId ??
-        await waitForConversationVoiceTurnIdWhileGuardingAudio({
+    await capturePlannedConversationVoice({
+      authenticatedBotId,
+      captures,
+      config,
+      decoder,
+      handshakeNotBeforeEpochMilliseconds,
+      sourceStream,
+    });
+  } finally {
+    sourceStream?.destroy();
+    connection?.destroy();
+    await client.destroy();
+    sourceStream?.off("error", ignoreStreamError);
+  }
+}
+
+async function capturePlannedConversationVoice(input: {
+  readonly authenticatedBotId: string;
+  readonly captures: readonly ConversationVoiceObserverCapture[];
+  readonly config: ReturnType<typeof loadConversationVoiceObserverConfig>;
+  readonly decoder: ConversationVoiceAudibilityDecoder;
+  readonly handshakeNotBeforeEpochMilliseconds: number;
+  readonly sourceStream: AudioReceiveStream;
+}): Promise<void> {
+  const { authenticatedBotId, captures, config, decoder,
+    handshakeNotBeforeEpochMilliseconds, sourceStream } = input;
+  for (const [index, plannedCapture] of captures.entries()) {
+      const playbackIntent: ConversationAnswerPlaybackIntent | undefined =
+        plannedCapture.purpose === "addressed-answer"
+          ? await waitForConversationVoiceCorrelationWhileGuardingAudio({
           isPacketAudible: (packet) => decoder.isPacketAudible(packet),
-          resolveTurnId: async (signal) => waitForNewConversationVoiceTurnIdFile({
-            notBeforeEpochMilliseconds: turnIdFileNotBeforeEpochMilliseconds,
-            path: plannedCapture.turnIdFile,
+          resolveCorrelation: async (signal) => waitForConversationAnswerPlaybackIntent({
+            meetingId: config.meetingId,
+            notBeforeEpochMilliseconds: handshakeNotBeforeEpochMilliseconds,
+            root: plannedCapture.playbackHandshakeRoot,
+            runId: config.runId,
             signal,
             timeoutMilliseconds: config.readyTimeoutMilliseconds,
           }),
           stream: sourceStream,
-        });
+        })
+          : undefined;
+      const turnId = playbackIntent?.turnId ??
+        ("turnId" in plannedCapture ? plannedCapture.turnId : undefined);
+      const attemptId = playbackIntent?.playbackAttemptId ??
+        ("attemptId" in plannedCapture ? plannedCapture.attemptId : undefined);
+      if (turnId === undefined || attemptId === undefined) {
+        throw new Error("Conversation voice capture is missing its correlated identifiers");
+      }
       const capture = await captureConversationVoiceFromOpenStream({
         captureTimeoutMilliseconds: config.captureTimeoutMilliseconds,
         clock: systemClock,
@@ -164,10 +182,30 @@ async function main(): Promise<void> {
         }, decoder),
         firstPacketTimeoutMilliseconds: config.readyTimeoutMilliseconds,
         isPacketAudible: (packet) => decoder.isPacketAudible(packet),
+        ...(playbackIntent === undefined
+          ? {}
+          : {
+              publishReady: async () => {
+                if (!("playbackHandshakeRoot" in plannedCapture)) {
+                  throw new Error("Addressed answer capture is missing its handshake root");
+                }
+                await publishConversationAnswerObserverReady({
+                  intent: playbackIntent,
+                  root: plannedCapture.playbackHandshakeRoot,
+                });
+              },
+            }),
         stream: sourceStream,
       });
+      const playbackReceipt = playbackIntent === undefined
+        ? undefined
+        : {
+            meetingId: playbackIntent.meetingId,
+            playbackAttemptId: playbackIntent.playbackAttemptId,
+            turnId: playbackIntent.turnId,
+          };
       const evidence = createConversationVoiceEvidence({
-        attemptId: plannedCapture.attemptId,
+        attemptId,
         authenticatedBotId,
         capture,
         captureTimeoutMilliseconds: config.captureTimeoutMilliseconds,
@@ -182,6 +220,7 @@ async function main(): Promise<void> {
         observerApplicationId: config.observerApplicationId,
         privateTestGuildConfirmed: config.privateTestGuildConfirmed,
         purpose: plannedCapture.purpose,
+        ...(playbackReceipt === undefined ? {} : { playbackReceipt }),
         recordingId: config.recordingId,
         runId: config.runId,
         turnId,
@@ -203,12 +242,6 @@ async function main(): Promise<void> {
         );
       }
     }
-  } finally {
-    sourceStream?.destroy();
-    connection?.destroy();
-    await client.destroy();
-    sourceStream?.off("error", ignoreStreamError);
-  }
 }
 
 function ignoreStreamError(): void {}
@@ -294,21 +327,6 @@ async function waitForConfiguredCraigAudioSilence(
   });
 }
 
-function decodedPcmIsAudible(pcm: Uint8Array): boolean {
-  if (pcm.byteLength === 0 || pcm.byteLength % 2 !== 0) {
-    throw new Error("Configured Craig audio decoder returned invalid PCM");
-  }
-  const data = new DataView(pcm.buffer, pcm.byteOffset, pcm.byteLength);
-  let sampleCount = 0;
-  let sampleSquareSum = 0;
-  for (let offset = 0; offset < pcm.byteLength; offset += 2) {
-    const sample = data.getInt16(offset, true);
-    sampleCount += 1;
-    sampleSquareSum += sample * sample;
-  }
-  return Math.sqrt(sampleSquareSum / sampleCount) / 32_768 >= 0.01;
-}
-
 function requiredAuthenticatedBotId(client: Client): string {
   const authenticatedUser = client.user;
   if (authenticatedUser === null) {
@@ -351,23 +369,6 @@ async function assertConfiguredCraigBotIsInVoiceChannel(
     };
     client.on("voiceStateUpdate", onVoiceStateUpdate);
   });
-}
-
-async function createDiscordJsOpusDecoder(): Promise<ConversationVoiceAudibilityDecoder> {
-  try {
-    const opus = (await import("@discordjs/opus")).default;
-    const decoder = new opus.OpusEncoder(
-      PCM_S16LE_SAMPLE_RATE_HERTZ,
-      PCM_S16LE_CHANNELS,
-    );
-    return new ProbedConversationVoiceOpusDecoder({
-      decode: (opusPacket: Uint8Array) => decoder.decode(Buffer.from(opusPacket)),
-    });
-  } catch {
-    throw new ConversationVoiceObserverError(
-      "Conversation voice observer could not load the native @discordjs/opus 0.10.0 decoder",
-    );
-  }
 }
 
 function assertConnectableVoiceChannel(

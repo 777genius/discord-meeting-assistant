@@ -10,6 +10,7 @@ import type {
   ConversationThinkingCue,
   ConversationThinkingCuePort,
   ConversationThinkingCueStage,
+  ConversationPlaybackObserverPort,
   VoicePlaybackPort,
 } from "./ports/conversation.js";
 import type {
@@ -25,6 +26,7 @@ import { ConversationCuePlayback } from "./conversation-cue-playback.js";
 export interface ConversationCueOrchestratorDependencies {
   readonly delay: ConversationDelayPort | null;
   readonly playback: VoicePlaybackPort;
+  readonly playbackObserver?: ConversationPlaybackObserverPort;
   readonly thinkingCues: ConversationThinkingCuePort | null;
 }
 
@@ -45,6 +47,9 @@ export class ConversationCueOrchestrator {
         }
       },
       playback: dependencies.playback,
+      ...(dependencies.playbackObserver === undefined
+        ? {}
+        : { playbackObserver: dependencies.playbackObserver }),
     });
   }
 

@@ -23,6 +23,11 @@ export interface PlatformConfig {
     readonly thinkingCueRoot: string;
     readonly voiceId: string;
     readonly voiceProfileId: string;
+    readonly playbackReadiness?: {
+      readonly root: string;
+      readonly runId: string;
+      readonly timeoutMilliseconds: number;
+    };
   };
   /** Controls whether the authoritative final summary replaces or follows the live draft. */
   readonly discordFinalPublicationMode: "separate-message" | "replace-live";

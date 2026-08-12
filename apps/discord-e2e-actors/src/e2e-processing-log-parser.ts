@@ -58,6 +58,29 @@ const addressedAnswerLogSchema = z.object({
   time: z.iso.datetime(),
   turnId: z.string().trim().min(1),
 }).loose();
+const playbackReceiptLogBaseSchema = z.object({
+  meetingId: z.string(),
+  playbackAttemptId: z.string().trim().min(1),
+  playbackKind: z.enum(["answer", "prepared-cue", "thinking-cue"]),
+  time: z.iso.datetime(),
+  turnId: z.string().trim().min(1),
+});
+const playbackStartedLogSchema = playbackReceiptLogBaseSchema.extend({
+  message: z.literal("Conversation playback started"),
+  playbackStartedAtEpochMs: z.number().int().positive(),
+  playbackStartedAtMonotonicMs: z.number().nonnegative(),
+}).loose();
+const playbackFinishedLogSchema = playbackReceiptLogBaseSchema.extend({
+  message: z.literal("Conversation playback finished"),
+  playbackFinishedAtEpochMs: z.number().int().positive(),
+  playbackFinishedAtMonotonicMs: z.number().nonnegative(),
+}).loose();
+const playbackSettledLogSchema = playbackReceiptLogBaseSchema.extend({
+  message: z.literal("Conversation playback settled"),
+  playbackSettledAtEpochMs: z.number().int().positive(),
+  playbackSettledAtMonotonicMs: z.number().nonnegative(),
+  settlement: z.enum(["played", "unplayed", "partial", "unknown"]),
+}).loose();
 
 export function parseProcessingEvidenceLogs(output: string, meetingId: string): ProcessingEvidence {
   const stages: ProcessingEvidence["stages"][number][] = [];
@@ -100,9 +123,53 @@ export function parseConversationLifecycleEvidenceLogs(
   meetingId: string,
 ): ConversationLifecycleEvidence {
   const events: ConversationLifecycleEvidence["events"][number][] = [];
+  const playbackReceipts: ConversationLifecycleEvidence["playbackReceipts"][number][] = [];
   for (const line of output.split("\n")) {
     const event = parseJsonLine(line);
     if (event === undefined || event.meetingId !== meetingId) {
+      continue;
+    }
+    const playbackStarted = playbackStartedLogSchema.safeParse(event);
+    if (playbackStarted.success) {
+      playbackReceipts.push({
+        observedAt: playbackStarted.data.time,
+        playbackAttemptId: playbackStarted.data.playbackAttemptId,
+        playbackKind: playbackStarted.data.playbackKind,
+        playbackStartedAtEpochMs: playbackStarted.data.playbackStartedAtEpochMs,
+        playbackStartedAtMonotonicMs:
+          playbackStarted.data.playbackStartedAtMonotonicMs,
+        status: "started",
+        turnId: playbackStarted.data.turnId,
+      });
+      continue;
+    }
+    const playbackFinished = playbackFinishedLogSchema.safeParse(event);
+    if (playbackFinished.success) {
+      playbackReceipts.push({
+        observedAt: playbackFinished.data.time,
+        playbackAttemptId: playbackFinished.data.playbackAttemptId,
+        playbackFinishedAtEpochMs: playbackFinished.data.playbackFinishedAtEpochMs,
+        playbackFinishedAtMonotonicMs:
+          playbackFinished.data.playbackFinishedAtMonotonicMs,
+        playbackKind: playbackFinished.data.playbackKind,
+        status: "finished",
+        turnId: playbackFinished.data.turnId,
+      });
+      continue;
+    }
+    const playbackSettled = playbackSettledLogSchema.safeParse(event);
+    if (playbackSettled.success) {
+      playbackReceipts.push({
+        observedAt: playbackSettled.data.time,
+        playbackAttemptId: playbackSettled.data.playbackAttemptId,
+        playbackKind: playbackSettled.data.playbackKind,
+        playbackSettledAtEpochMs: playbackSettled.data.playbackSettledAtEpochMs,
+        playbackSettledAtMonotonicMs:
+          playbackSettled.data.playbackSettledAtMonotonicMs,
+        settlement: playbackSettled.data.settlement,
+        status: "settled",
+        turnId: playbackSettled.data.turnId,
+      });
       continue;
     }
     const addressed = addressedAnswerLogSchema.safeParse(event);
@@ -141,7 +208,7 @@ export function parseConversationLifecycleEvidenceLogs(
       });
     }
   }
-  return conversationLifecycleEvidenceSchema.parse({ events });
+  return conversationLifecycleEvidenceSchema.parse({ events, playbackReceipts });
 }
 
 function parseJsonLine(line: string): Record<string, unknown> | undefined {

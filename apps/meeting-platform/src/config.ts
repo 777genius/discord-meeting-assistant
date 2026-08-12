@@ -10,6 +10,7 @@ import {
 } from "./config/participant-greeting-profiles.js";
 import type { PlatformConfig } from "./config/platform-config.js";
 import { readSecretFile } from "./config/secret-file-reader.js";
+import { assemblePlatformConfig } from "./config/platform-config-assembly.js";
 
 export type { PlatformConfig } from "./config/platform-config.js";
 
@@ -32,20 +33,23 @@ const maximumVoicetextBatchMaxConcurrency = 10;
 const maximumVoicetextBatchMaxConcurrentMeetings = 2;
 const maximumVoicetextLiveMaxConcurrentSessions = 10;
 const maximumVoicetextLivePacketBackpressureTimeoutMs = 30_000;
-const defaultConversationThinkingCueRoot =
-  "/app/apps/meeting-platform/assets/thinking-cues";
-const defaultConversationFarewellCueRoot =
-  "/app/apps/meeting-platform/assets/farewell-cues";
-const defaultConversationGreetingCueRoot =
-  "/app/apps/meeting-platform/assets/greeting-cues";
-
-function conversationCueRoot(configured: string | undefined, fallback: string): string {
-  return configured ?? fallback;
-}
 const absolutePath = z
   .string()
   .startsWith("/")
   .refine((value) => !value.includes("\0"));
+const profileIdentifier = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/u);
+const optionalAbsolutePath = z.preprocess(
+  (value) => value === "" ? undefined : value,
+  absolutePath.optional(),
+);
+const optionalProfileIdentifier = z.preprocess(
+  (value) => value === "" ? undefined : value,
+  profileIdentifier.optional(),
+);
+const optionalReadinessTimeout = z.preprocess(
+  (value) => value === "" ? undefined : value,
+  z.coerce.number().int().min(1_000).max(120_000).optional(),
+);
 const httpUrl = z.url().refine((value) => {
   const url = new URL(value);
   return (
@@ -69,7 +73,6 @@ const secureWebSocketUrl = z.url().refine((value) => {
 const runtimeAddress = z
   .string()
   .regex(/^(?:[a-zA-Z0-9][a-zA-Z0-9.-]*|\[[0-9a-fA-F:]+\]):\d{1,5}$/u);
-const profileIdentifier = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/u);
 const voiceIdentifier = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/u);
 const environmentSchema = z
   .object({
@@ -79,6 +82,9 @@ const environmentSchema = z
       .default("false")
       .transform((value) => value === "true"),
     CONVERSATION_FAREWELL_CUE_ROOT: absolutePath.optional(),
+    CONVERSATION_E2E_PLAYBACK_READINESS_ROOT: optionalAbsolutePath,
+    CONVERSATION_E2E_PLAYBACK_READINESS_RUN_ID: optionalProfileIdentifier,
+    CONVERSATION_E2E_PLAYBACK_READINESS_TIMEOUT_MS: optionalReadinessTimeout,
     CONVERSATION_GREETING_CUE_ROOT: absolutePath.optional(),
     CONVERSATION_RUNTIME_ADDRESS: runtimeAddress.optional(),
     CONVERSATION_RUNTIME_TOKEN_FILE: absolutePath.optional(),
@@ -105,6 +111,8 @@ const environmentSchema = z
     DISCORD_PUBLICATION_MODE: z.enum(["message", "thread"]).default("message"),
     DISCORD_RESULTS_CHANNEL_ID: optionalSnowflake,
     DISCORD_TOKEN_FILE: absolutePath,
+    E2E_TEST_ONLY_LABEL: z.enum(["true", "false"]).default("false")
+      .transform((value) => value === "true"),
     LIVE_INGRESS_OWNER_MODE: z.literal("singleton").default("singleton"),
     NODE_ENV: z
       .enum(["development", "production", "test"])
@@ -168,6 +176,34 @@ const environmentSchema = z
     VOICETEXT_WS_URL: secureWebSocketUrl.optional(),
   })
   .superRefine((environment, context) => {
+    const playbackReadinessParts = [
+      environment.CONVERSATION_E2E_PLAYBACK_READINESS_ROOT,
+      environment.CONVERSATION_E2E_PLAYBACK_READINESS_RUN_ID,
+      environment.CONVERSATION_E2E_PLAYBACK_READINESS_TIMEOUT_MS,
+    ];
+    const configuredPlaybackReadinessParts = playbackReadinessParts
+      .filter((value) => value !== undefined).length;
+    if (configuredPlaybackReadinessParts !== 0 && configuredPlaybackReadinessParts !== 3) {
+      context.addIssue({
+        code: "custom",
+        message: "conversation E2E playback readiness root, run ID and timeout must be configured together",
+        path: ["CONVERSATION_E2E_PLAYBACK_READINESS_ROOT"],
+      });
+    }
+    if (configuredPlaybackReadinessParts > 0 && !environment.E2E_TEST_ONLY_LABEL) {
+      context.addIssue({
+        code: "custom",
+        message: "conversation playback readiness is permitted only in an explicitly test-only deployment",
+        path: ["E2E_TEST_ONLY_LABEL"],
+      });
+    }
+    if (configuredPlaybackReadinessParts > 0 && !environment.CONVERSATION_ENABLED) {
+      context.addIssue({
+        code: "custom",
+        message: "conversation playback readiness requires live conversation to be enabled",
+        path: ["CONVERSATION_ENABLED"],
+      });
+    }
     if (
       Object.keys(environment.PARTICIPANT_GREETING_PROFILES_JSON).length > 0 &&
       !environment.CONVERSATION_ENABLED
@@ -246,6 +282,8 @@ const environmentSchema = z
     }
   });
 
+export type ParsedPlatformEnvironment = z.infer<typeof environmentSchema>;
+
 export type SecretFileReader = (path: string) => Promise<string>;
 
 export async function loadPlatformConfig(
@@ -288,108 +326,16 @@ export async function loadPlatformConfig(
     loadRecordingPlaybackConfig(environment, readSecret),
   ]);
 
-  return Object.freeze({
-    bindAddress: environment.BIND_ADDRESS,
-    ...(environment.CONVERSATION_ENABLED &&
-    environment.CONVERSATION_RUNTIME_ADDRESS !== undefined
-      ? {
-          conversation: {
-            farewellCueRoot:
-              conversationCueRoot(
-                environment.CONVERSATION_FAREWELL_CUE_ROOT,
-                defaultConversationFarewellCueRoot,
-              ),
-            greetingCueRoot:
-              conversationCueRoot(
-                environment.CONVERSATION_GREETING_CUE_ROOT,
-                defaultConversationGreetingCueRoot,
-              ),
-            runtimeAddress: environment.CONVERSATION_RUNTIME_ADDRESS,
-            systemPrompt: environment.CONVERSATION_SYSTEM_PROMPT,
-            thinkingCueRoot:
-              conversationCueRoot(
-                environment.CONVERSATION_THINKING_CUE_ROOT,
-                defaultConversationThinkingCueRoot,
-              ),
-            voiceId: environment.CONVERSATION_VOICE_ID,
-            voiceProfileId: environment.CONVERSATION_VOICE_PROFILE_ID,
-          },
-        }
-      : {}),
-    discordFinalPublicationMode: environment.DISCORD_FINAL_PUBLICATION_MODE,
-    discordPublicationMode: environment.DISCORD_PUBLICATION_MODE,
-    discordApplicationId: environment.DISCORD_APPLICATION_ID,
-    discordBotikApplicationId:
-      environment.DISCORD_BOTIK_APPLICATION_ID ??
-      environment.DISCORD_CRAIG_APPLICATION_ID,
-    discordCraigApplicationId: environment.DISCORD_CRAIG_APPLICATION_ID,
-    ...(environment.DISCORD_LEGACY_GUILD_ID === undefined ||
-    environment.DISCORD_LEGACY_VOICE_CHANNEL_ID === undefined ||
-    environment.DISCORD_RESULTS_CHANNEL_ID === undefined
-      ? {}
-      : {
-          discordLegacyRoute: {
-            guildId: environment.DISCORD_LEGACY_GUILD_ID,
-            publicationTargetId: environment.DISCORD_RESULTS_CHANNEL_ID,
-            voiceChannelId: environment.DISCORD_LEGACY_VOICE_CHANNEL_ID,
-          },
-        }),
-    liveIngressOwnerMode: environment.LIVE_INGRESS_OWNER_MODE,
-    nodeEnvironment: environment.NODE_ENV,
-    participantGreetingDefaultLocale:
-      environment.PARTICIPANT_GREETING_DEFAULT_LOCALE,
-    participantGreetingProfiles: environment.PARTICIPANT_GREETING_PROFILES_JSON,
-    port: environment.PORT,
-    recordingSpoolRoot: environment.RECORDING_SPOOL_ROOT,
-    ...(recordingPlayback.config === undefined
-      ? {}
-      : { recordingPlayback: recordingPlayback.config }),
-    s3: {
-      bucket: environment.S3_BUCKET,
-      endpoint: environment.S3_ENDPOINT,
-      prefix: environment.S3_PREFIX,
-      region: environment.S3_REGION,
-    },
-    secrets: Object.freeze({
-      craigBearerToken,
-      ...(conversationRuntimeToken === undefined
-        ? {}
-        : { conversationRuntimeToken }),
-      discordToken,
-      postgresUrl,
-      redisUrl,
-      ...(recordingPlayback.signingSecret === undefined
-        ? {}
-        : { recordingPlaybackSigningSecret: recordingPlayback.signingSecret }),
-      s3AccessKeyId,
-      s3SecretAccessKey,
-      subscriptionRuntimeToken,
-      ...(voicetextServiceToken === undefined ? {} : { voicetextServiceToken }),
-    }),
-    speaches: {
-      baseUrl: environment.SPEACHES_BASE_URL,
-      model: environment.SPEACHES_MODEL,
-    },
-    subscriptionRuntime: {
-      address: environment.SUBSCRIPTION_RUNTIME_ADDRESS,
-      launcherSha256: environment.SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256,
-    },
-    transcriptionProvider: environment.TRANSCRIPTION_PROVIDER,
-    ...(environment.VOICETEXT_WS_URL === undefined
-      ? {}
-      : {
-          voicetext: {
-            batchMaxArtifactBytes:
-              environment.VOICETEXT_BATCH_MAX_ARTIFACT_BYTES,
-            batchMaxConcurrency: environment.VOICETEXT_BATCH_MAX_CONCURRENCY,
-            batchMaxConcurrentMeetings:
-              environment.VOICETEXT_BATCH_MAX_CONCURRENT_MEETINGS,
-            liveMaxConcurrentSessions:
-              environment.VOICETEXT_LIVE_MAX_CONCURRENT_SESSIONS,
-            livePacketBackpressureTimeoutMs:
-              environment.VOICETEXT_LIVE_PACKET_BACKPRESSURE_TIMEOUT_MS,
-            webSocketUrl: environment.VOICETEXT_WS_URL,
-          },
-        }),
+  return assemblePlatformConfig(environment, {
+    craigBearerToken,
+    ...(conversationRuntimeToken === undefined ? {} : { conversationRuntimeToken }),
+    discordToken,
+    postgresUrl,
+    redisUrl,
+    recordingPlayback,
+    s3AccessKeyId,
+    s3SecretAccessKey,
+    subscriptionRuntimeToken,
+    ...(voicetextServiceToken === undefined ? {} : { voicetextServiceToken }),
   });
 }

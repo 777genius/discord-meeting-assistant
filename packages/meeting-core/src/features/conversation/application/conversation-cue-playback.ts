@@ -1,5 +1,7 @@
 import type {
   ConversationCancellationReason,
+  ConversationPlaybackObservation,
+  ConversationPlaybackObserverPort,
   ConversationThinkingCue,
   ConversationThinkingCueStage,
   VoicePlaybackPort,
@@ -27,6 +29,7 @@ interface ConversationCuePlaybackDependencies {
     run: ActiveConversationRun,
   ) => Promise<void>;
   readonly playback: VoicePlaybackPort;
+  readonly playbackObserver?: ConversationPlaybackObserverPort;
 }
 
 /** Owns opening, streaming and terminal-receipt tracking for one cue playback. */
@@ -193,6 +196,7 @@ export class ConversationCuePlayback {
     expectedAttemptId: string,
   ): Promise<void> {
     let terminalReceiptReceived = false;
+    let startedReceiptReceived = false;
     try {
       for await (const event of playback.events) {
         if (event.attemptId !== expectedAttemptId) {
@@ -211,6 +215,14 @@ export class ConversationCuePlayback {
           if (!isCurrentConversationRun(state, run)) {
             continue;
           }
+          this.observePlayback({
+            finishedAtMs: event.finishedAtMs,
+            meetingId: run.prepared.request.meetingId,
+            playbackAttemptId: event.attemptId,
+            playbackKind: "thinking-cue",
+            status: "finished",
+            turnId: run.prepared.request.turnId,
+          });
           advanceConversationState(state, event.finishedAtMs);
           await this.dependencies.onFinished(state, run);
           continue;
@@ -233,6 +245,18 @@ export class ConversationCuePlayback {
         if (!isCurrentConversationRun(state, run) || run.cuePlayback !== playback) {
           continue;
         }
+        if (startedReceiptReceived) {
+          continue;
+        }
+        startedReceiptReceived = true;
+        this.observePlayback({
+          meetingId: run.prepared.request.meetingId,
+          playbackAttemptId: event.attemptId,
+          playbackKind: "thinking-cue",
+          startedAtMs: event.startedAtMs,
+          status: "started",
+          turnId: run.prepared.request.turnId,
+        });
         const processedAtMs = advanceConversationState(state, event.startedAtMs);
         state.session.thinkingCueStarted(
           run.prepared.turn.turnId,
@@ -249,6 +273,20 @@ export class ConversationCuePlayback {
         run.playbackTerminalReceiptMissing = true;
         markConversationPlaybackTerminalMissing(state, fence);
       }
+    }
+  }
+
+  private observePlayback(observation: ConversationPlaybackObservation): void {
+    try {
+      const result = this.dependencies.playbackObserver
+        ?.observeConversationPlayback(observation);
+      if (result !== undefined) {
+        void Promise.resolve(result).catch(() => {
+          // Observability must never alter conversation delivery or cancellation.
+        });
+      }
+    } catch {
+      // Observability must never alter conversation delivery or cancellation.
     }
   }
 }

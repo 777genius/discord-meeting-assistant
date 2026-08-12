@@ -32,6 +32,40 @@ const environment = {
 } as const;
 
 describe("platform configuration", () => {
+  it("enables playback readiness only for a complete explicit test-only deployment", async () => {
+    const conversationEnvironment = {
+      ...environment,
+      CONVERSATION_ENABLED: "true",
+      CONVERSATION_RUNTIME_ADDRESS: "pipecat-runtime:50053",
+      CONVERSATION_RUNTIME_TOKEN_FILE: "/run/secrets/conversation-runtime",
+      CONVERSATION_VOICE_PROFILE_ID: "qualified-test-voice",
+      TRANSCRIPTION_PROVIDER: "voicetext",
+      VOICETEXT_SERVICE_TOKEN_FILE: "/run/secrets/voicetext",
+      VOICETEXT_WS_URL: "wss://api.voicetext.site/api/v1/transcribe/stream",
+    } as const;
+    const configured = await loadPlatformConfig({
+      ...conversationEnvironment,
+      CONVERSATION_E2E_PLAYBACK_READINESS_ROOT: "/var/lib/e2e/answer-run",
+      CONVERSATION_E2E_PLAYBACK_READINESS_RUN_ID: "run-1",
+      CONVERSATION_E2E_PLAYBACK_READINESS_TIMEOUT_MS: "30000",
+      E2E_TEST_ONLY_LABEL: "true",
+    }, async () => "value");
+    expect(configured.conversation?.playbackReadiness).toEqual({
+      root: "/var/lib/e2e/answer-run", runId: "run-1", timeoutMilliseconds: 30_000,
+    });
+    await expect(loadPlatformConfig({
+      ...conversationEnvironment,
+      CONVERSATION_E2E_PLAYBACK_READINESS_ROOT: "/var/lib/e2e/answer-run",
+      CONVERSATION_E2E_PLAYBACK_READINESS_RUN_ID: "run-1",
+      CONVERSATION_E2E_PLAYBACK_READINESS_TIMEOUT_MS: "30000",
+    }, async () => "value")).rejects.toThrow("explicitly test-only");
+    await expect(loadPlatformConfig({
+      ...conversationEnvironment,
+      CONVERSATION_E2E_PLAYBACK_READINESS_ROOT: "/var/lib/e2e/answer-run",
+      E2E_TEST_ONLY_LABEL: "true",
+    }, async () => "value")).rejects.toThrow("configured together");
+  });
+
   it("loads every secret through the file reader and never requires an API key", async () => {
     const paths: string[] = [];
     const config = await loadPlatformConfig(environment, async (path) => {

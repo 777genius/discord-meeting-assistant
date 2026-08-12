@@ -3,6 +3,9 @@ import type {
   ConversationDelay,
   ConversationDelayPort,
   ConversationLatencyObserverPort,
+  ConversationPlaybackObserverPort,
+  ConversationPlaybackReadinessPort,
+  ConversationPlaybackSettlement,
   ConversationRuntime,
   ConversationRuntimeTurn,
   ConversationStartRequest,
@@ -104,15 +107,13 @@ export type ConversationInterruptionResult =
   | { readonly status: "ignored" };
 
 /** Terminal delivery evidence for one admitted conversation turn. */
-export type ConversationTurnPlaybackSettlement =
-  | "played"
-  | "unplayed"
-  | "partial"
-  | "unknown";
+export type ConversationTurnPlaybackSettlement = ConversationPlaybackSettlement;
 
 export interface ConversationCoordinatorDependencies {
   readonly delay?: ConversationDelayPort;
   readonly latencyObserver?: ConversationLatencyObserverPort;
+  readonly playbackObserver?: ConversationPlaybackObserverPort;
+  readonly playbackReadiness?: ConversationPlaybackReadinessPort;
   readonly playback: VoicePlaybackPort;
   readonly runtime: ConversationRuntime;
   readonly thinkingCues?: ConversationThinkingCuePort;

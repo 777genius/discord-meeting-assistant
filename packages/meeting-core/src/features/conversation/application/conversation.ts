@@ -55,6 +55,9 @@ export class ConversationCoordinator {
     const cues = new ConversationCueOrchestrator({
       delay: dependencies.delay ?? null,
       playback: dependencies.playback,
+      ...(dependencies.playbackObserver === undefined
+        ? {}
+        : { playbackObserver: dependencies.playbackObserver }),
       thinkingCues: dependencies.thinkingCues ?? null,
     });
     this.activeTurns = new ConversationActiveTurnExecutor({
@@ -62,7 +65,13 @@ export class ConversationCoordinator {
       ...(dependencies.latencyObserver === undefined
         ? {}
         : { latencyObserver: dependencies.latencyObserver }),
+      ...(dependencies.playbackObserver === undefined
+        ? {}
+        : { playbackObserver: dependencies.playbackObserver }),
       playback: dependencies.playback,
+      ...(dependencies.playbackReadiness === undefined
+        ? {}
+        : { playbackReadiness: dependencies.playbackReadiness }),
       runtime: dependencies.runtime,
     });
   }

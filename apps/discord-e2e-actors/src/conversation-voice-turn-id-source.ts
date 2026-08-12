@@ -1,111 +1,125 @@
-import { randomUUID } from "node:crypto";
-import { constants, link, lstat, open, unlink } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, normalize } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import { constants, link, lstat, open, readdir, unlink } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 
-const maximumTurnIdBytes = 257;
+import {
+  conversationAnswerObserverReadySchema,
+  conversationAnswerPlaybackIntentSchema,
+  serializeConversationAnswerPlaybackReadinessEnvelope,
+  type ConversationAnswerPlaybackIntent,
+} from "@discord-meeting/conversation-runtime-contracts";
+
+const maximumReceiptBytes = 1_536;
 const pollIntervalMilliseconds = 25;
-const correlationIdPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u;
+export {
+  type ConversationAnswerPlaybackIntent,
+} from "@discord-meeting/conversation-runtime-contracts";
 
-export async function assertConversationVoiceTurnIdFileIsNew(path: string): Promise<void> {
-  try {
-    await lstat(path);
-  } catch (error: unknown) {
-    if (isMissingFileError(error)) {
-      return;
-    }
-    throw error;
-  }
-  throw new Error("Conversation voice turn ID file must not exist before the observer starts");
-}
-
-export async function waitForNewConversationVoiceTurnIdFile(input: {
+export async function waitForConversationAnswerPlaybackIntent(input: {
+  readonly meetingId: string;
   readonly notBeforeEpochMilliseconds: number;
-  readonly path: string;
+  readonly root: string;
+  readonly runId: string;
   readonly signal?: AbortSignal;
   readonly timeoutMilliseconds: number;
-}): Promise<string> {
-  const deadlineEpochMilliseconds = Date.now() + input.timeoutMilliseconds;
+}): Promise<ConversationAnswerPlaybackIntent> {
+  const deadline = Date.now() + input.timeoutMilliseconds;
   for (;;) {
     assertNotAborted(input.signal);
-    try {
-      const turnId = await readConversationVoiceTurnIdFile(
-        {
-          notBeforeEpochMilliseconds: input.notBeforeEpochMilliseconds,
-          path: input.path,
-        },
-      );
-      assertNotAborted(input.signal);
-      return turnId;
-    } catch (error: unknown) {
-      if (!isMissingFileError(error)) {
-        throw error;
+    const entries = await safeDirectoryEntries(input.root);
+    for (const name of entries) {
+      if (!/^[a-f\d]{64}\.intent\.json$/u.test(name)) {
+        continue;
+      }
+      const path = join(input.root, name);
+      try {
+        const intent = await readIntent(path, input.notBeforeEpochMilliseconds);
+        if (intent.runId !== input.runId || intent.meetingId !== input.meetingId) {
+          throw new Error("Conversation answer playback intent has the wrong run or meeting");
+        }
+        if (name !== `${receiptStem(intent)}.intent.json`) {
+          throw new Error("Conversation answer playback intent filename digest is invalid");
+        }
+        return intent;
+      } catch (error: unknown) {
+        if (!isMissingFileError(error)) {
+          throw error;
+        }
       }
     }
-    const remainingMilliseconds = deadlineEpochMilliseconds - Date.now();
-    if (remainingMilliseconds <= 0) {
-      throw new Error("Conversation voice turn ID file was not created before timeout");
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      throw new Error("Conversation answer playback intent was not created before timeout");
     }
-    await delay(Math.min(pollIntervalMilliseconds, remainingMilliseconds), input.signal);
+    await abortableDelay(Math.min(pollIntervalMilliseconds, remaining), input.signal);
   }
 }
 
-export async function readConversationVoiceTurnIdFile(input: {
-  readonly afterPathInspection?: () => Promise<void>;
-  readonly notBeforeEpochMilliseconds: number;
-  readonly path: string;
-}): Promise<string> {
-  const pathStats = await lstat(input.path);
-  assertSafeTurnIdFile(pathStats, input.notBeforeEpochMilliseconds);
-  await input.afterPathInspection?.();
+export async function publishConversationAnswerObserverReady(input: {
+  readonly intent: ConversationAnswerPlaybackIntent;
+  readonly root: string;
+}): Promise<void> {
+  await assertSafeHandshakeRoot(input.root);
+  const intent = conversationAnswerPlaybackIntentSchema.parse(input.intent);
+  const ready = conversationAnswerObserverReadySchema.parse({
+    ...intent,
+    type: "observer-ready",
+  });
+  await publishCreateOnlyJson(
+    join(input.root, `${receiptStem(intent)}.ready.json`),
+    ready,
+  );
+}
+
+export async function assertConversationAnswerHandshakeRootIsNew(root: string): Promise<void> {
+  const entries = await safeDirectoryEntries(root);
+  if (entries.some((name) => /^(?:[a-f\d]{64})\.(?:intent|ready)\.json$/u.test(name))) {
+    throw new Error("Conversation answer handshake root contains stale receipts");
+  }
+}
+
+async function readIntent(
+  path: string,
+  notBeforeEpochMilliseconds: number,
+): Promise<ConversationAnswerPlaybackIntent> {
+  const pathStats = await lstat(path);
+  assertSafeReceiptFile(pathStats, notBeforeEpochMilliseconds);
   const handle = await open(
-    input.path,
+    path,
     constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
   );
   try {
     const beforeRead = await handle.stat();
-    assertSafeTurnIdFile(beforeRead, input.notBeforeEpochMilliseconds);
+    assertSafeReceiptFile(beforeRead, notBeforeEpochMilliseconds);
     if (beforeRead.dev !== pathStats.dev || beforeRead.ino !== pathStats.ino) {
-      throw new Error("Conversation voice turn ID file changed before it could be read");
+      throw new Error("Conversation answer playback intent changed before read");
     }
-    const bytes = new Uint8Array(maximumTurnIdBytes + 1);
+    const bytes = new Uint8Array(maximumReceiptBytes + 1);
     const { bytesRead } = await handle.read(bytes, 0, bytes.byteLength, 0);
     const afterRead = await handle.stat();
     if (
-      afterRead.dev !== beforeRead.dev ||
-      afterRead.ino !== beforeRead.ino ||
-      afterRead.size !== beforeRead.size ||
-      afterRead.mtimeMs !== beforeRead.mtimeMs
+      afterRead.dev !== beforeRead.dev || afterRead.ino !== beforeRead.ino ||
+      afterRead.size !== beforeRead.size || afterRead.mtimeMs !== beforeRead.mtimeMs ||
+      bytesRead !== beforeRead.size
     ) {
-      throw new Error("Conversation voice turn ID file changed while it was being read");
+      throw new Error("Conversation answer playback intent changed while reading");
     }
-    if (bytesRead !== beforeRead.size) {
-      throw new Error("Conversation voice turn ID file could not be read completely");
-    }
-    const decoded = new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, bytesRead));
-    const turnId = decoded.endsWith("\n") ? decoded.slice(0, -1) : decoded;
-    if (!correlationIdPattern.test(turnId)) {
-      throw new Error("Conversation voice turn ID file contains an invalid correlation ID");
-    }
-    return turnId;
+    const decoded = new TextDecoder("utf-8", { fatal: true })
+      .decode(bytes.subarray(0, bytesRead));
+    return conversationAnswerPlaybackIntentSchema.parse(JSON.parse(decoded) as unknown);
   } finally {
     await handle.close();
   }
 }
 
-export async function publishNewConversationVoiceTurnIdFile(input: {
-  readonly path: string;
-  readonly turnId: string;
-}): Promise<void> {
-  const finalPath = normalize(input.path);
-  if (!isAbsolute(finalPath) || finalPath === "/") {
-    throw new Error("Conversation voice turn ID output must be an absolute file path");
-  }
-  if (!correlationIdPattern.test(input.turnId)) {
-    throw new Error("Conversation voice turn ID output contains an invalid correlation ID");
+async function publishCreateOnlyJson(path: string, value: unknown): Promise<void> {
+  const encoded = JSON.stringify(value);
+  if (Buffer.byteLength(encoded, "utf8") > maximumReceiptBytes) {
+    throw new Error("Conversation answer observer-ready receipt is too large");
   }
   const temporaryPath = join(
-    dirname(finalPath),
-    `.${basename(finalPath)}.${process.pid}.${randomUUID()}.tmp`,
+    dirname(path),
+    `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`,
   );
   const handle = await open(
     temporaryPath,
@@ -114,11 +128,11 @@ export async function publishNewConversationVoiceTurnIdFile(input: {
   );
   let handleOpen = true;
   try {
-    await handle.writeFile(input.turnId, { encoding: "utf8" });
+    await handle.writeFile(encoded, "utf8");
     await handle.sync();
     await handle.close();
     handleOpen = false;
-    await link(temporaryPath, finalPath);
+    await link(temporaryPath, path);
   } finally {
     if (handleOpen) {
       await handle.close();
@@ -131,18 +145,46 @@ export async function publishNewConversationVoiceTurnIdFile(input: {
   }
 }
 
-function assertSafeTurnIdFile(
+function receiptStem(intent: ConversationAnswerPlaybackIntent): string {
+  return createHash("sha256")
+    .update(serializeConversationAnswerPlaybackReadinessEnvelope(intent))
+    .digest("hex");
+}
+
+function assertSafeReceiptFile(
   stats: Awaited<ReturnType<typeof lstat>>,
   notBeforeEpochMilliseconds: number,
 ): void {
   if (!stats.isFile()) {
-    throw new Error("Conversation voice turn ID source must be a regular file");
+    throw new Error("Conversation answer playback intent must be a regular file");
   }
-  if (stats.size <= 0 || stats.size > maximumTurnIdBytes) {
-    throw new Error("Conversation voice turn ID file has an invalid size");
+  if (stats.size <= 0 || stats.size > maximumReceiptBytes) {
+    throw new Error("Conversation answer playback intent has an invalid size");
   }
   if (stats.mtimeMs < notBeforeEpochMilliseconds) {
-    throw new Error("Conversation voice turn ID file is stale");
+    throw new Error("Conversation answer playback intent is stale");
+  }
+}
+
+async function safeDirectoryEntries(root: string): Promise<readonly string[]> {
+  try {
+    await assertSafeHandshakeRoot(root);
+    return await readdir(root);
+  } catch (error: unknown) {
+    if (isMissingFileError(error)) {
+      return [];
+    }
+    throw error;
+  }
+}
+
+async function assertSafeHandshakeRoot(root: string): Promise<void> {
+  const stats = await lstat(root);
+  if (!stats.isDirectory()) {
+    throw new Error("Conversation answer handshake root must be a real directory");
+  }
+  if ((stats.mode & 0o077) !== 0) {
+    throw new Error("Conversation answer handshake root permissions are too broad");
   }
 }
 
@@ -152,31 +194,20 @@ function isMissingFileError(error: unknown): boolean {
 
 function assertNotAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted === true) {
-    throw new Error("Conversation voice turn ID file wait was cancelled");
+    throw new Error("Conversation answer playback intent wait was cancelled");
   }
 }
 
-async function delay(milliseconds: number, signal: AbortSignal | undefined): Promise<void> {
+async function abortableDelay(milliseconds: number, signal: AbortSignal | undefined): Promise<void> {
   await new Promise<void>((resolve, reject) => {
-    let timeout: ReturnType<typeof setTimeout> | undefined;
-    const cleanup = (): void => {
-      if (timeout !== undefined) {
-        clearTimeout(timeout);
-      }
-      signal?.removeEventListener("abort", onAbort);
-    };
     const onAbort = (): void => {
-      cleanup();
-      reject(new Error("Conversation voice turn ID file wait was cancelled"));
+      clearTimeout(timeout);
+      reject(new Error("Conversation answer playback intent wait was cancelled"));
     };
-    if (signal?.aborted === true) {
-      onAbort();
-      return;
-    }
-    signal?.addEventListener("abort", onAbort, { once: true });
-    timeout = setTimeout(() => {
-      cleanup();
+    const timeout = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
       resolve();
     }, milliseconds);
+    signal?.addEventListener("abort", onAbort, { once: true });
   });
 }

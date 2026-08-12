@@ -21,6 +21,7 @@ import {
 import {
   ConversationCoordinator,
   type ConversationLatencyObserverPort,
+  type ConversationPlaybackObserverPort,
   type ConversationRuntime,
   type VoicePlaybackPort,
 } from "@discord-meeting/meeting-core/conversation";
@@ -44,6 +45,7 @@ import { VoicetextLiveTranscriptionAdapter } from "@discord-meeting/voicetext-ad
 import { Client, GatewayIntentBits } from "discord.js";
 
 import { FileConversationFarewellCueRegistry } from "../adapters/outbound/file-conversation-farewell-cue-registry.js";
+import { FileConversationPlaybackReadiness } from "../adapters/outbound/file-conversation-playback-readiness.js";
 import { FileConversationThinkingCueRegistry } from "../adapters/outbound/file-conversation-thinking-cue-registry.js";
 import { FileParticipantGreetingCueRegistry } from "../adapters/outbound/file-participant-greeting-cue-registry.js";
 import { SubscriptionRuntimeFarewellClassifier } from "../adapters/outbound/subscription-runtime-farewell-classifier.js";
@@ -54,6 +56,14 @@ import type { PlatformStartupCleanup } from "./startup-cleanup.js";
 import { classifyPlatformError } from "./observability.js";
 import { discordLiveCaptionSignature } from "./discord-live-caption-signature.js";
 import { meetingVocabulary } from "./meeting-vocabulary.js";
+export {
+  createConversationLatencyLogger,
+  createConversationPlaybackLogger,
+} from "./conversation-loggers.js";
+import {
+  createConversationLatencyLogger,
+  createConversationPlaybackLogger,
+} from "./conversation-loggers.js";
 
 // Keep wall-clock-shaped timestamps compatible with STT while preventing clock
 // adjustments from corrupting playback deadlines and the four-second guard.
@@ -130,6 +140,14 @@ export async function createPlatformDiscordLiveComposition(input: {
         config: input.config,
         latencyObserver: createConversationLatencyLogger(input.logger),
         playback: craigPlaybackGateway,
+        ...(input.config.conversation?.playbackReadiness === undefined
+          ? {}
+          : {
+              playbackReadiness: new FileConversationPlaybackReadiness(
+                input.config.conversation.playbackReadiness,
+              ),
+            }),
+        playbackObserver: createConversationPlaybackLogger(input.logger),
         runtime: conversationRuntime,
       });
   const conversationConfig = input.config.conversation;
@@ -180,22 +198,14 @@ export async function createPlatformDiscordLiveComposition(input: {
   };
 }
 
-/** Adapts provider-neutral latency observations to platform structured logs. */
-export function createConversationLatencyLogger(
-  logger: Pick<Logger, "info">,
-): ConversationLatencyObserverPort {
-  return {
-    observeConversationLatency: (observation) => {
-      logger.info("Live conversation latency observed", { ...observation });
-    },
-  };
-}
-
 /** Preloads required local cue assets before live conversation accepts work. */
 export async function createConversationCoordinator(input: {
   readonly config: Pick<PlatformConfig, "conversation">;
   readonly latencyObserver?: ConversationLatencyObserverPort;
   readonly playback: VoicePlaybackPort;
+  readonly playbackReadiness?: import("@discord-meeting/meeting-core/conversation")
+    .ConversationPlaybackReadinessPort;
+  readonly playbackObserver?: ConversationPlaybackObserverPort;
   readonly runtime: ConversationRuntime;
 }): Promise<ConversationCoordinator | undefined> {
   if (input.config.conversation === undefined) {
@@ -212,6 +222,12 @@ export async function createConversationCoordinator(input: {
       ? {}
       : { latencyObserver: input.latencyObserver }),
     playback: input.playback,
+    ...(input.playbackReadiness === undefined
+      ? {}
+      : { playbackReadiness: input.playbackReadiness }),
+    ...(input.playbackObserver === undefined
+      ? {}
+      : { playbackObserver: input.playbackObserver }),
     runtime: input.runtime,
     thinkingCues,
   });

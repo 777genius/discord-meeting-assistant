@@ -102,6 +102,11 @@ export interface ConversationVoiceEvidenceInput {
   readonly observerApplicationId: string;
   readonly privateTestGuildConfirmed: true;
   readonly purpose: "addressed-answer" | "farewell" | "greeting";
+  readonly playbackReceipt?: {
+    readonly meetingId: string;
+    readonly playbackAttemptId: string;
+    readonly turnId: string;
+  };
   readonly recordingId: string | null;
   readonly runId: string;
   readonly turnId: string;
@@ -136,6 +141,15 @@ export interface ConversationVoiceEvidence {
     readonly attemptId: string;
     readonly provenance: "operator-supplied";
     readonly purpose: "addressed-answer" | "farewell" | "greeting";
+    readonly recordingId: string | null;
+    readonly verification: "not-run";
+    readonly turnId: string;
+  } | {
+    readonly attemptId: string;
+    readonly meetingId: string;
+    readonly playbackKind: "answer";
+    readonly provenance: "playback-readiness-handshake";
+    readonly purpose: "addressed-answer";
     readonly recordingId: string | null;
     readonly verification: "not-run";
     readonly turnId: string;

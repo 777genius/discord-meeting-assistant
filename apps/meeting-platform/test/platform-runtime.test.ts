@@ -27,6 +27,7 @@ import {
   closeMeetingPlatformResources,
   createConversationCoordinator,
   createConversationLatencyLogger,
+  createConversationPlaybackLogger,
   createVoicetextBatchFinalTranscriptionOptions,
 } from "../src/platform-runtime.js";
 import type { GrpcSubscriptionRuntimeTransport } from "../src/adapters/outbound/subscription-runtime-grpc-transport.js";
@@ -171,6 +172,63 @@ describe("meeting platform runtime wiring", () => {
       totalToFirstAudioMs: 1_870,
       turnId: "turn-1",
       wakeToFirstLlmTokenMs: 1_500,
+    });
+  });
+
+  it("writes answer playback receipts with epoch and monotonic timestamps", async () => {
+    const info = vi.fn();
+    const observer = createConversationPlaybackLogger({ info }, 1_000);
+
+    await observer.observeConversationPlayback({
+      meetingId: "meeting-1",
+      playbackAttemptId: "answer-attempt-1",
+      playbackKind: "answer",
+      startedAtMs: 1_250,
+      status: "started",
+      turnId: "turn-1",
+    });
+    await observer.observeConversationPlayback({
+      finishedAtMs: 1_750,
+      meetingId: "meeting-1",
+      playbackAttemptId: "answer-attempt-1",
+      playbackKind: "answer",
+      status: "finished",
+      turnId: "turn-1",
+    });
+    await observer.observeConversationPlayback({
+      meetingId: "meeting-1",
+      playbackAttemptId: "answer-attempt-1",
+      playbackKind: "answer",
+      settledAtMs: 1_750,
+      settlement: "played",
+      status: "settled",
+      turnId: "turn-1",
+    });
+
+    expect(info).toHaveBeenNthCalledWith(1, "Conversation playback started", {
+      meetingId: "meeting-1",
+      playbackAttemptId: "answer-attempt-1",
+      playbackKind: "answer",
+      playbackStartedAtEpochMs: 1_250,
+      playbackStartedAtMonotonicMs: 250,
+      turnId: "turn-1",
+    });
+    expect(info).toHaveBeenNthCalledWith(2, "Conversation playback finished", {
+      meetingId: "meeting-1",
+      playbackAttemptId: "answer-attempt-1",
+      playbackFinishedAtEpochMs: 1_750,
+      playbackFinishedAtMonotonicMs: 750,
+      playbackKind: "answer",
+      turnId: "turn-1",
+    });
+    expect(info).toHaveBeenNthCalledWith(3, "Conversation playback settled", {
+      meetingId: "meeting-1",
+      playbackAttemptId: "answer-attempt-1",
+      playbackKind: "answer",
+      playbackSettledAtEpochMs: 1_750,
+      playbackSettledAtMonotonicMs: 750,
+      settlement: "played",
+      turnId: "turn-1",
     });
   });
 

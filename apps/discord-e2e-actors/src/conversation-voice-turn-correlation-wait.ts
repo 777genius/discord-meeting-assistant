@@ -1,16 +1,16 @@
 import type { Readable } from "node:stream";
 
-export function waitForConversationVoiceTurnIdWhileGuardingAudio(input: {
+export function waitForConversationVoiceCorrelationWhileGuardingAudio<Value>(input: {
   readonly isPacketAudible: (packet: Uint8Array) => boolean;
-  readonly resolveTurnId: (signal: AbortSignal) => Promise<string>;
+  readonly resolveCorrelation: (signal: AbortSignal) => Promise<Value>;
   readonly stream: Readable;
-}): Promise<string> {
+}): Promise<Value> {
   if (input.stream.destroyed || input.stream.readableEnded) {
     return Promise.reject(new Error(
       "Configured Craig audio stream closed before runtime turn correlation",
     ));
   }
-  return new Promise<string>((resolve, reject) => {
+  return new Promise<Value>((resolve, reject) => {
     const cancellation = new AbortController();
     let settled = false;
     const cleanup = (): void => {
@@ -19,13 +19,13 @@ export function waitForConversationVoiceTurnIdWhileGuardingAudio(input: {
       input.stream.off("end", onEnd);
       input.stream.off("error", onError);
     };
-    const succeed = (turnId: string): void => {
+    const succeed = (correlation: Value): void => {
       if (settled) {
         return;
       }
       settled = true;
       cleanup();
-      resolve(turnId);
+      resolve(correlation);
     };
     const fail = (error: unknown): void => {
       if (settled) {
@@ -65,7 +65,7 @@ export function waitForConversationVoiceTurnIdWhileGuardingAudio(input: {
     input.stream.on("data", onData);
     input.stream.resume();
     void Promise.resolve()
-      .then(() => input.resolveTurnId(cancellation.signal))
+      .then(() => input.resolveCorrelation(cancellation.signal))
       .then(succeed, fail);
   });
 }

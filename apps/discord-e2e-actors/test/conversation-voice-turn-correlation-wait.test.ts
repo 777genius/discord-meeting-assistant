@@ -6,16 +6,16 @@ import { ConversationVoiceCaptureController } from
   "../src/conversation-voice-capture-controller.js";
 import { captureConversationVoiceFromOpenStream } from
   "../src/conversation-voice-stream-capture.js";
-import { waitForConversationVoiceTurnIdWhileGuardingAudio } from
+import { waitForConversationVoiceCorrelationWhileGuardingAudio } from
   "../src/conversation-voice-turn-correlation-wait.js";
 
 describe("conversation voice runtime turn correlation wait", () => {
   it("discards silence while flowing, then pauses and cleans up before resolving", async () => {
     const stream = new PassThrough();
     const deferred = turnIdDeferred();
-    const waiting = waitForConversationVoiceTurnIdWhileGuardingAudio({
+    const waiting = waitForConversationVoiceCorrelationWhileGuardingAudio({
       isPacketAudible: (packet) => packet[0] !== 0,
-      resolveTurnId: deferred.resolveTurnId,
+      resolveCorrelation: deferred.resolveTurnId,
       stream,
     });
 
@@ -31,9 +31,9 @@ describe("conversation voice runtime turn correlation wait", () => {
   it("aborts correlation and cleans up on audible pre-correlation audio", async () => {
     const stream = new PassThrough();
     const deferred = turnIdDeferred();
-    const waiting = waitForConversationVoiceTurnIdWhileGuardingAudio({
+    const waiting = waitForConversationVoiceCorrelationWhileGuardingAudio({
       isPacketAudible: (packet) => packet[0] !== 0,
-      resolveTurnId: deferred.resolveTurnId,
+      resolveCorrelation: deferred.resolveTurnId,
       stream,
     });
 
@@ -49,9 +49,9 @@ describe("conversation voice runtime turn correlation wait", () => {
   it("hands a paused clean stream to capture and accepts only post-correlation audio", async () => {
     const stream = new PassThrough();
     const deferred = turnIdDeferred();
-    const waiting = waitForConversationVoiceTurnIdWhileGuardingAudio({
+    const waiting = waitForConversationVoiceCorrelationWhileGuardingAudio({
       isPacketAudible: (packet) => packet[0] !== 0,
-      resolveTurnId: deferred.resolveTurnId,
+      resolveCorrelation: deferred.resolveTurnId,
       stream,
     });
     stream.write(Uint8Array.of(0));
@@ -90,9 +90,9 @@ describe("conversation voice runtime turn correlation wait", () => {
 
   it("cleans up when the correlation resolver throws synchronously", async () => {
     const stream = new PassThrough();
-    const waiting = waitForConversationVoiceTurnIdWhileGuardingAudio({
+    const waiting = waitForConversationVoiceCorrelationWhileGuardingAudio({
       isPacketAudible: () => false,
-      resolveTurnId: () => {
+      resolveCorrelation: () => {
         throw new Error("synthetic resolver failure");
       },
       stream,
@@ -108,9 +108,9 @@ describe("conversation voice runtime turn correlation wait", () => {
     const stream = new PassThrough();
     stream.destroy();
 
-    await expect(waitForConversationVoiceTurnIdWhileGuardingAudio({
+    await expect(waitForConversationVoiceCorrelationWhileGuardingAudio({
       isPacketAudible: () => false,
-      resolveTurnId: async () => "human-question-closed",
+      resolveCorrelation: async () => "human-question-closed",
       stream,
     })).rejects.toThrow("closed before runtime turn correlation");
     expectCorrelationWaitListenersRemoved(stream);
@@ -157,9 +157,9 @@ async function expectGuardFailure(
 ): Promise<void> {
   const stream = new PassThrough();
   const deferred = turnIdDeferred();
-  const waiting = waitForConversationVoiceTurnIdWhileGuardingAudio({
+  const waiting = waitForConversationVoiceCorrelationWhileGuardingAudio({
     isPacketAudible: () => false,
-    resolveTurnId: deferred.resolveTurnId,
+    resolveCorrelation: deferred.resolveTurnId,
     stream,
   });
   emitFailure(stream);

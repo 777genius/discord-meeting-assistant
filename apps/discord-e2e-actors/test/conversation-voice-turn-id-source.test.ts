@@ -1,198 +1,130 @@
-import { execFile } from "node:child_process";
-import {
-  mkdtemp,
-  mkdir,
-  readFile,
-  readdir,
-  rename,
-  symlink,
-  utimes,
-  writeFile,
-} from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { chmod, link, mkdir, mkdtemp, readFile, rm, symlink, unlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import {
+  serializeConversationAnswerPlaybackReadinessEnvelope,
+  type ConversationAnswerPlaybackIntent,
+} from "@discord-meeting/conversation-runtime-contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
-  assertConversationVoiceTurnIdFileIsNew,
-  publishNewConversationVoiceTurnIdFile,
-  readConversationVoiceTurnIdFile,
-  waitForNewConversationVoiceTurnIdFile,
+  assertConversationAnswerHandshakeRootIsNew,
+  publishConversationAnswerObserverReady,
+  waitForConversationAnswerPlaybackIntent,
 } from "../src/conversation-voice-turn-id-source.js";
 
-describe("conversation voice turn ID source", () => {
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-  it("accepts an absent create-only path and rejects a pre-existing source", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "conversation-turn-id-"));
-    const path = join(directory, "turn-id.txt");
-    await expect(assertConversationVoiceTurnIdFileIsNew(path)).resolves.toBeUndefined();
-    await writeFile(path, "turn-1", { flag: "wx" });
-    await expect(assertConversationVoiceTurnIdFileIsNew(path)).rejects.toThrow("must not exist");
+const roots: string[] = [];
+const intent: ConversationAnswerPlaybackIntent = {
+  capturePlan: "addressed-answer", kind: "answer", meetingId: "meeting-1",
+  playbackAttemptId: "answer-attempt-1", protocolVersion: 1, runId: "run-1",
+  turnId: "human-question-17", type: "playback-intent",
+};
+
+afterEach(async () => Promise.all(roots.splice(0).map((root) =>
+  rm(root, { force: true, recursive: true }))));
+
+describe("conversation answer playback readiness source", () => {
+  it("waits for an exact fresh intent and publishes a create-only ready receipt", async () => {
+    const root = await temporaryRoot();
+    await assertConversationAnswerHandshakeRootIsNew(root);
+    const waiting = waitForConversationAnswerPlaybackIntent({
+      meetingId: intent.meetingId, notBeforeEpochMilliseconds: Date.now(), root,
+      runId: intent.runId, timeoutMilliseconds: 1_000,
+    });
+    await publishIntent(root);
+    const resolved = await waiting;
+    expect(resolved).toEqual(intent);
+    await publishConversationAnswerObserverReady({ intent: resolved, root });
+    expect(JSON.parse(await readFile(join(root, `${stem()}.ready.json`), "utf8")))
+      .toEqual({ ...intent, type: "observer-ready" });
+    await expect(publishConversationAnswerObserverReady({ intent: resolved, root }))
+      .rejects.toMatchObject({ code: "EEXIST" });
   });
 
-  it("waits for a new valid creation and returns exactly one correlation ID", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "conversation-turn-id-"));
-    const path = join(directory, "turn-id.txt");
-    const notBeforeEpochMilliseconds = Date.now();
-    const resolved = waitForNewConversationVoiceTurnIdFile({
-      notBeforeEpochMilliseconds,
-      path,
-      timeoutMilliseconds: 1_000,
+  it("rejects stale roots and wrong run bindings", async () => {
+    const root = await temporaryRoot();
+    await writeFile(join(root, `${stem()}.intent.json`), JSON.stringify(intent), { flag: "wx" });
+    await expect(assertConversationAnswerHandshakeRootIsNew(root)).rejects.toThrow("stale");
+    await expect(waitForConversationAnswerPlaybackIntent({
+      meetingId: intent.meetingId, notBeforeEpochMilliseconds: 0, root,
+      runId: "other-run", timeoutMilliseconds: 100,
+    })).rejects.toThrow("wrong run or meeting");
+  });
+
+  it("rejects a symlink handshake root and overly broad root permissions", async () => {
+    const parent = await temporaryRoot();
+    const target = join(parent, "target");
+    const linkedRoot = join(parent, "linked-root");
+    await mkdir(target, { mode: 0o700 });
+    await symlink(target, linkedRoot);
+    await expect(assertConversationAnswerHandshakeRootIsNew(linkedRoot))
+      .rejects.toThrow("real directory");
+
+    await chmod(target, 0o755);
+    await expect(assertConversationAnswerHandshakeRootIsNew(target))
+      .rejects.toThrow("permissions");
+  });
+
+  it("rejects stale, symlink and non-regular playback intents", async () => {
+    for (const receiptKind of ["stale", "symlink", "directory"] as const) {
+      const root = await temporaryRoot();
+      const path = join(root, `${stem()}.intent.json`);
+      if (receiptKind === "stale") {
+        await writeFile(path, JSON.stringify(intent), { flag: "wx" });
+        await utimes(path, new Date(0), new Date(0));
+      } else if (receiptKind === "symlink") {
+        const target = join(root, "intent-target.json");
+        await writeFile(target, JSON.stringify(intent));
+        await symlink(target, path);
+      } else {
+        await mkdir(path);
+      }
+      await expect(waitForConversationAnswerPlaybackIntent({
+        meetingId: intent.meetingId, notBeforeEpochMilliseconds: Date.now(), root,
+        runId: intent.runId, timeoutMilliseconds: 100,
+      })).rejects.toThrow(receiptKind === "stale" ? "stale" : "regular file");
+    }
+  });
+
+  it("clears its polling timer when intent waiting is cancelled", async () => {
+    const root = await temporaryRoot();
+    const controller = new AbortController();
+    const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
+    const waiting = waitForConversationAnswerPlaybackIntent({
+      meetingId: intent.meetingId, notBeforeEpochMilliseconds: Date.now(), root,
+      runId: intent.runId, signal: controller.signal, timeoutMilliseconds: 1_000,
     });
     await new Promise<void>((resolve) => {
-      setTimeout(resolve, 30);
+      setTimeout(resolve, 5);
     });
-    await writeFile(path, "human-question-17\n", { flag: "wx" });
-    await expect(resolved).resolves.toBe("human-question-17");
-  });
+    controller.abort();
 
-  it("rejects stale, symlink, non-regular, oversized, and invalid sources", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "conversation-turn-id-"));
-    const stalePath = join(directory, "stale.txt");
-    await writeFile(stalePath, "turn-stale", { flag: "wx" });
-    const notBeforeEpochMilliseconds = Date.now();
-    await utimes(stalePath, new Date(0), new Date(0));
-    await expect(resolveTurnId(stalePath, notBeforeEpochMilliseconds)).rejects.toThrow("stale");
-
-    const targetPath = join(directory, "target.txt");
-    const symlinkPath = join(directory, "symlink.txt");
-    await writeFile(targetPath, "turn-target", { flag: "wx" });
-    await symlink(targetPath, symlinkPath);
-    await expect(resolveTurnId(symlinkPath, 0)).rejects.toThrow("regular file");
-
-    const directoryPath = join(directory, "nested");
-    await mkdir(directoryPath);
-    await expect(resolveTurnId(directoryPath, 0)).rejects.toThrow("regular file");
-
-    const oversizedPath = join(directory, "oversized.txt");
-    await writeFile(oversizedPath, "x".repeat(258), { flag: "wx" });
-    await expect(resolveTurnId(oversizedPath, 0)).rejects.toThrow("invalid size");
-
-    const invalidPath = join(directory, "invalid.txt");
-    await writeFile(invalidPath, "two ids\nturn-2", { flag: "wx" });
-    await expect(resolveTurnId(invalidPath, 0)).rejects.toThrow("invalid correlation ID");
-
-    const invalidUtf8Path = join(directory, "invalid-utf8.txt");
-    await writeFile(invalidUtf8Path, new Uint8Array([0xff]), { flag: "wx" });
-    await expect(resolveTurnId(invalidUtf8Path, 0)).rejects.toThrow("encoded data was not valid");
-  });
-
-  it("fails within the bounded wait when the source is never created", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "conversation-turn-id-"));
-    await expect(waitForNewConversationVoiceTurnIdFile({
-      notBeforeEpochMilliseconds: Date.now(),
-      path: join(directory, "missing.txt"),
-      timeoutMilliseconds: 30,
-    })).rejects.toThrow("before timeout");
-  });
-
-  it("cancels a missing-file poll without leaving its timer alive", async () => {
-    vi.useFakeTimers();
-    const directory = await mkdtemp(join(tmpdir(), "conversation-turn-id-"));
-    const cancellation = new AbortController();
-    const waiting = waitForNewConversationVoiceTurnIdFile({
-      notBeforeEpochMilliseconds: Date.now(),
-      path: join(directory, "missing.txt"),
-      signal: cancellation.signal,
-      timeoutMilliseconds: 1_000,
-    });
-    await vi.advanceTimersByTimeAsync(0);
-
-    cancellation.abort();
-
-    await expect(waiting).rejects.toThrow("was cancelled");
-    expect(vi.getTimerCount()).toBe(0);
-  });
-
-  it("does not block if a checked regular path is replaced by a FIFO before open", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "conversation-turn-id-"));
-    const path = join(directory, "turn-id.txt");
-    const originalPath = join(directory, "turn-id.original.txt");
-    const fifoPath = join(directory, "turn-id.fifo");
-    await writeFile(path, "turn-original", { flag: "wx" });
-    await createFifo(fifoPath);
-
-    await expect(readConversationVoiceTurnIdFile({
-      afterPathInspection: async () => {
-        await rename(path, originalPath);
-        await rename(fifoPath, path);
-      },
-      notBeforeEpochMilliseconds: 0,
-      path,
-    })).rejects.toThrow("regular file");
-  });
-
-  it("publishes a fully written create-only file and never replaces a collision", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "conversation-turn-id-"));
-    const path = join(directory, "turn-id.txt");
-    const publication = publishNewConversationVoiceTurnIdFile({
-      path,
-      turnId: "human-question-23",
-    });
-    const visibleContents = observeFirstVisibleContents(path);
-
-    await expect(publication).resolves.toBeUndefined();
-    await expect(visibleContents).resolves.toBe("human-question-23");
-    expect(await readdir(directory)).toEqual(["turn-id.txt"]);
-
-    await expect(publishNewConversationVoiceTurnIdFile({
-      path,
-      turnId: "replacement-turn",
-    })).rejects.toMatchObject({ code: "EEXIST" });
-    expect(await readFile(path, "utf8")).toBe("human-question-23");
-    expect(await readdir(directory)).toEqual(["turn-id.txt"]);
-  });
-
-  it("publishes live turn IDs without rebuilding during the handoff", async () => {
-    const packageJson = JSON.parse(await readFile(
-      new URL("../package.json", import.meta.url),
-      "utf8",
-    )) as { readonly scripts?: Record<string, string> };
-
-    expect(packageJson.scripts?.["publish:conversation-turn-id"])
-      .toBe("node dist/publish-conversation-voice-turn-id.js");
+    await expect(waiting).rejects.toThrow("cancelled");
+    expect(clearTimeoutSpy).toHaveBeenCalled();
+    clearTimeoutSpy.mockRestore();
   });
 });
 
-async function resolveTurnId(path: string, notBeforeEpochMilliseconds: number): Promise<string> {
-  return waitForNewConversationVoiceTurnIdFile({
-    notBeforeEpochMilliseconds,
-    path,
-    timeoutMilliseconds: 100,
-  });
+function stem(): string {
+  return createHash("sha256")
+    .update(serializeConversationAnswerPlaybackReadinessEnvelope(intent)).digest("hex");
 }
 
-async function createFifo(path: string): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    execFile("mkfifo", [path], (error) => {
-      if (error === null) {
-        resolve();
-        return;
-      }
-      reject(error);
-    });
-  });
+async function temporaryRoot(): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), "answer-readiness-"));
+  roots.push(root);
+  return root;
 }
 
-async function observeFirstVisibleContents(path: string): Promise<string> {
-  const startedAtNanoseconds = process.hrtime.bigint();
-  const timeoutNanoseconds = 5_000_000_000n;
-  for (;;) {
-    try {
-      return await readFile(path, "utf8");
-    } catch (error: unknown) {
-      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
-        throw error;
-      }
-    }
-    if (process.hrtime.bigint() - startedAtNanoseconds > timeoutNanoseconds) {
-      throw new Error("Conversation voice turn ID file never became visible before timeout");
-    }
-    await new Promise<void>((resolve) => {
-      setImmediate(resolve);
-    });
+async function publishIntent(root: string): Promise<void> {
+  const path = join(root, `${stem()}.intent.json`);
+  const temporaryPath = join(root, `.${stem()}.${randomUUID()}.tmp`);
+  await writeFile(temporaryPath, JSON.stringify(intent), { flag: "wx", mode: 0o600 });
+  try {
+    await link(temporaryPath, path);
+  } finally {
+    await unlink(temporaryPath);
   }
 }

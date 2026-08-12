@@ -17,6 +17,7 @@ export function captureConversationVoiceFromOpenStream(input: {
   readonly controller: ConversationVoiceCaptureController;
   readonly firstPacketTimeoutMilliseconds: number;
   readonly isPacketAudible?: (packet: Uint8Array) => boolean;
+  readonly publishReady?: () => Promise<void>;
   readonly stream: Readable;
 }): Promise<ConversationVoiceCaptureSummary> {
   if (input.stream.destroyed || input.stream.readableEnded) {
@@ -115,6 +116,8 @@ export function captureConversationVoiceFromOpenStream(input: {
     input.stream.once("end", onEnd);
     input.stream.once("error", onError);
     input.stream.on("data", onData);
-    input.stream.resume();
+    void Promise.resolve()
+      .then(async () => input.publishReady?.())
+      .then(() => input.stream.resume(), fail);
   });
 }

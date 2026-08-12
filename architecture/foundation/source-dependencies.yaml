@@ -344,8 +344,10 @@ boundaries:
       - apps/discord-e2e-actors/src
     entrypoints: []
     allow:
-      boundaries: []
+      boundaries:
+        - contracts.conversation-runtime
       packages:
+        - "@discord-meeting/conversation-runtime-contracts"
         - "@discordjs/opus"
         - "@discordjs/voice"
         - discord.js
@@ -393,6 +395,7 @@ boundaries:
     entrypoints:
       - apps/meeting-platform/src/adapters/outbound/craig-recording-ingress-adapter.ts
       - apps/meeting-platform/src/adapters/outbound/discord-publication-target-resolver.ts
+      - apps/meeting-platform/src/adapters/outbound/file-conversation-playback-readiness.ts
       - apps/meeting-platform/src/adapters/outbound/file-conversation-farewell-cue-registry.ts
       - apps/meeting-platform/src/adapters/outbound/file-conversation-thinking-cue-registry.ts
       - apps/meeting-platform/src/adapters/outbound/file-participant-greeting-cue-registry.ts
@@ -411,12 +414,14 @@ boundaries:
         - adapters.voicetext
         - apps.meeting-platform.application
         - contracts.craig-gateway
+        - contracts.conversation-runtime
         - core.meeting.conversation
         - core.meeting.intelligence
         - core.meeting.publishing
         - core.meeting.transcription
       packages:
         - "@discord-meeting/craig-gateway-contracts"
+        - "@discord-meeting/conversation-runtime-contracts"
         - "@discord-meeting/meeting-core"
         - "@discord-meeting/object-storage-adapter"
         - "@discord-meeting/observability-adapter"
@@ -425,9 +430,11 @@ boundaries:
         - "@discord-meeting/voicetext-adapter"
         - "@grpc/grpc-js"
         - "@grpc/proto-loader"
+        - zod
       builtins:
         - node:crypto
         - node:fs/promises
+        - node:path
         - node:url
       runtimeReferences: []
   - id: apps.meeting-platform.recording-playback-application

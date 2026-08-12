@@ -8,6 +8,7 @@ export {
 export {
   createConversationCoordinator,
   createConversationLatencyLogger,
+  createConversationPlaybackLogger,
 } from "./composition/discord-live.js";
 export {
   createVoicetextBatchFinalTranscriptionOptions,

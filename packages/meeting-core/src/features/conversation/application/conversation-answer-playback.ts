@@ -2,6 +2,10 @@ import type { ConversationCancellationReason as DomainConversationCancellationRe
 import type {
   ConversationAudioChunk,
   ConversationCancellationReason,
+  ConversationPlaybackKind,
+  ConversationPlaybackObservation,
+  ConversationPlaybackObserverPort,
+  ConversationPlaybackReadinessPort,
   VoicePlaybackEvent,
   VoicePlaybackPort,
   VoicePlaybackSession,
@@ -31,6 +35,7 @@ type PlaybackTerminalEvent = Extract<
 interface PlaybackConsumption {
   readonly fence: ConversationPlaybackFence;
   readonly playback: VoicePlaybackSession;
+  startedReceiptReceived: boolean;
   terminalReceiptReceived: boolean;
 }
 
@@ -40,6 +45,8 @@ interface ConversationAnswerPlaybackDependencies {
     run: ActiveConversationRun,
   ) => Promise<void>;
   readonly playback: VoicePlaybackPort;
+  readonly playbackObserver?: ConversationPlaybackObserverPort;
+  readonly playbackReadiness?: ConversationPlaybackReadinessPort;
   readonly requestCancellation: (
     state: MeetingConversationState,
     run: ActiveConversationRun,
@@ -67,11 +74,29 @@ export class ConversationAnswerPlayback {
         return;
       }
 
-      const fence = beginConversationPlaybackFence(state);
-      let opened: Awaited<ReturnType<VoicePlaybackPort["open"]>>;
       const openAbortController = new AbortController();
       run.playbackOpenAbortController = openAbortController;
+      const playbackKind = this.playbackKind(run);
+      let opened: Awaited<ReturnType<VoicePlaybackPort["open"]>>;
+      let fence: ConversationPlaybackFence | undefined;
       try {
+        if (playbackKind === "answer" && this.dependencies.playbackReadiness !== undefined) {
+          const ready = await this.dependencies.playbackReadiness
+            .awaitConversationPlaybackReady({
+              meetingId: run.prepared.request.meetingId,
+              playbackAttemptId: run.attemptId,
+              playbackKind,
+              turnId: run.prepared.request.turnId,
+            }, { signal: openAbortController.signal });
+          if (!isReadyResult(ready)) {
+            await this.dependencies.requestCancellation(state, run, "playback-failed");
+            return;
+          }
+        }
+        if (!isCurrentConversationRun(state, run) || openAbortController.signal.aborted) {
+          return;
+        }
+        fence = beginConversationPlaybackFence(state);
         opened = await this.dependencies.playback.open({
           attemptId: run.attemptId,
           meetingId: run.prepared.request.meetingId,
@@ -81,7 +106,9 @@ export class ConversationAnswerPlayback {
           signal: openAbortController.signal,
         });
       } catch {
-        confirmConversationPlaybackTerminal(state, fence);
+        if (fence !== undefined) {
+          confirmConversationPlaybackTerminal(state, fence);
+        }
         await this.dependencies.requestCancellation(state, run, "playback-failed");
         return;
       } finally {
@@ -99,7 +126,7 @@ export class ConversationAnswerPlayback {
       run.playback = opened.value;
       trackConversationTask(
         state,
-        this.consume(state, run, opened.value, fence),
+        this.consume(state, run, opened.value, fence, playbackKind),
       );
       if (shouldDiscardOpenedConversationPlayback(state, run)) {
         this.cancel(run, opened.value, "superseded");
@@ -174,15 +201,17 @@ export class ConversationAnswerPlayback {
     run: ActiveConversationRun,
     playback: VoicePlaybackSession,
     fence: ConversationPlaybackFence,
+    playbackKind: ConversationPlaybackKind,
   ): Promise<void> {
     const consumption: PlaybackConsumption = {
       fence,
       playback,
+      startedReceiptReceived: false,
       terminalReceiptReceived: false,
     };
     try {
       for await (const event of playback.events) {
-        await this.handleEvent(state, run, event, consumption);
+        await this.handleEvent(state, run, event, consumption, playbackKind);
       }
       await this.handleEventsClosed(state, run, consumption);
     } catch {
@@ -197,17 +226,30 @@ export class ConversationAnswerPlayback {
     run: ActiveConversationRun,
     event: VoicePlaybackEvent,
     consumption: PlaybackConsumption,
+    playbackKind: ConversationPlaybackKind,
   ): Promise<void> {
     if (!matchesConversationAttempt(run, event.attemptId)) {
       return;
     }
     if (isPlaybackTerminalEvent(event)) {
-      await this.handleTerminalEvent(state, run, event, consumption);
+      await this.handleTerminalEvent(state, run, event, consumption, playbackKind);
       return;
     }
     if (!isCurrentConversationRun(state, run) || run.cancellationInFlight) {
       return;
     }
+    if (consumption.startedReceiptReceived) {
+      return;
+    }
+    consumption.startedReceiptReceived = true;
+    this.observePlayback({
+      meetingId: run.prepared.request.meetingId,
+      playbackAttemptId: event.attemptId,
+      playbackKind,
+      startedAtMs: event.startedAtMs,
+      status: "started",
+      turnId: run.prepared.request.turnId,
+    });
     const processedAtMs = advanceConversationState(state, event.startedAtMs);
     state.session.playbackStarted(
       run.prepared.turn.turnId,
@@ -221,6 +263,7 @@ export class ConversationAnswerPlayback {
     run: ActiveConversationRun,
     event: PlaybackTerminalEvent,
     consumption: PlaybackConsumption,
+    playbackKind: ConversationPlaybackKind,
   ): Promise<void> {
     if (consumption.terminalReceiptReceived) {
       return;
@@ -240,6 +283,14 @@ export class ConversationAnswerPlayback {
     }
 
     run.playbackFinished = true;
+    this.observePlayback({
+      finishedAtMs: event.finishedAtMs,
+      meetingId: run.prepared.request.meetingId,
+      playbackAttemptId: event.attemptId,
+      playbackKind,
+      status: "finished",
+      turnId: run.prepared.request.turnId,
+    });
     advanceConversationState(state, event.finishedAtMs);
     await this.handleFinished(state, run);
   }
@@ -293,8 +344,32 @@ export class ConversationAnswerPlayback {
       !run.playbackFinishRequested &&
       !run.cancellationInFlight;
   }
+
+  private playbackKind(run: ActiveConversationRun): ConversationPlaybackKind {
+    return run.prepared.cue === undefined ? "answer" : "prepared-cue";
+  }
+
+  private observePlayback(observation: ConversationPlaybackObservation): void {
+    try {
+      const result = this.dependencies.playbackObserver
+        ?.observeConversationPlayback(observation);
+      if (result !== undefined) {
+        void Promise.resolve(result).catch(() => {
+          // Observability must never alter conversation delivery or cancellation.
+        });
+      }
+    } catch {
+      // Observability must never alter conversation delivery or cancellation.
+    }
+  }
 }
 
 function isPlaybackTerminalEvent(event: VoicePlaybackEvent): event is PlaybackTerminalEvent {
   return event.type === "failed" || event.type === "finished";
+}
+
+function isReadyResult(result: unknown): boolean {
+  return typeof result === "object" && result !== null &&
+    "ok" in result && result.ok === true &&
+    "value" in result && result.value === "ready";
 }
