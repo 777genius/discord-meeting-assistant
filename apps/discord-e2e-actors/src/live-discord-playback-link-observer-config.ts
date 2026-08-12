@@ -20,6 +20,10 @@ const commonEnvironment = {
   DISCORD_E2E_PLAYBACK_LINK_KEYCHAIN_SERVICE: z.string().trim().min(1).default("discord-voice-bot-e2e"),
   DISCORD_E2E_PLAYBACK_LINK_OUTPUT: absolutePath,
   DISCORD_E2E_PLAYBACK_LINK_POLL_INTERVAL_MS: z.coerce.number().int().min(2_000).max(5_000),
+  DISCORD_E2E_PLAYBACK_LINK_RECORDING_PLAYBACK_ORIGIN: z.url().refine((value) => {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.origin === value;
+  }, "Expected an exact HTTPS playback origin"),
   DISCORD_E2E_PLAYBACK_LINK_RECORDING_ID: identifier,
   DISCORD_E2E_PLAYBACK_LINK_RESULT_CHANNEL_ID: snowflake,
   DISCORD_E2E_PLAYBACK_LINK_RUN_ID: identifier,
@@ -49,6 +53,7 @@ const hostedEnvironment = z.object({
 export interface LiveDiscordPlaybackLinkObserverConfig extends ObserveLiveDiscordPlaybackLinkInput {
   readonly keychainService: string;
   readonly outputPath: string;
+  readonly recordingPlaybackOrigin: string;
   readonly secretDirectory: string | undefined;
   readonly sutAccount: string;
 }
@@ -99,6 +104,7 @@ function freezeConfig(
     keychainService: parsed.DISCORD_E2E_PLAYBACK_LINK_KEYCHAIN_SERVICE,
     outputPath: parsed.DISCORD_E2E_PLAYBACK_LINK_OUTPUT,
     pollIntervalMs: parsed.DISCORD_E2E_PLAYBACK_LINK_POLL_INTERVAL_MS,
+    recordingPlaybackOrigin: parsed.DISCORD_E2E_PLAYBACK_LINK_RECORDING_PLAYBACK_ORIGIN,
     recordingId: parsed.DISCORD_E2E_PLAYBACK_LINK_RECORDING_ID,
     resultChannelId: parsed.DISCORD_E2E_PLAYBACK_LINK_RESULT_CHANNEL_ID,
     runId: parsed.DISCORD_E2E_PLAYBACK_LINK_RUN_ID,

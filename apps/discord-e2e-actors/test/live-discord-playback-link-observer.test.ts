@@ -3,15 +3,32 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import {
-  observeFirstSeenLiveDiscordPlaybackLink,
+  observeFirstSeenLiveDiscordPlaybackLink as observePlaybackLink,
   type LiveDiscordPlaybackLinkClock,
   type LiveDiscordPollTiming,
+  type ObserveLiveDiscordPlaybackLinkInput,
 } from "../src/live-discord-playback-link-observer.js";
 import type {
   LiveDiscordMessageInput,
   LiveDiscordProjectionMessages,
   LiveDiscordProjectionReader,
 } from "../src/live-discord-observer.js";
+
+function observeFirstSeenLiveDiscordPlaybackLink(
+  observeInput: ObserveLiveDiscordPlaybackLinkInput,
+  reader: LiveDiscordProjectionReader,
+  clock: LiveDiscordPlaybackLinkClock,
+) {
+  return observePlaybackLink(observeInput, reader, clock, {
+    prove: ({ messageId, recordingId, recordingPlaybackUrl }) => Promise.resolve({
+      capabilitySha256: createHash("sha256").update(new URL(recordingPlaybackUrl).hash.slice(1)).digest("hex"),
+      messageId,
+      recordingId,
+      status: "ready" as const,
+      trackCount: 2,
+    }),
+  });
+}
 
 const marker = "meeting-projection:0123456789abcdef0123";
 const sutApplicationId = "22222222222222222";
@@ -74,6 +91,13 @@ describe("first-seen Live Discord playback link observation", () => {
         pathname: "/recordings/playback",
         capabilitySha256: createHash("sha256").update(rawCapability).digest("hex"),
       },
+      readiness: {
+        capabilitySha256: createHash("sha256").update(rawCapability).digest("hex"),
+        messageId: "33333333333333333",
+        recordingId: "recording-42",
+        status: "ready",
+        trackCount: 2,
+      },
     });
     expect(JSON.stringify(proof)).not.toContain(rawCapability);
     expect(Object.isFrozen(proof)).toBe(true);
@@ -104,6 +128,27 @@ describe("first-seen Live Discord playback link observation", () => {
 
     expect(proof.messageId).toBe(oldMessage.id);
     expect(proof.firstSeenPollCompletedAt).toEqual(timing(3_020, 12_020));
+  });
+
+  it("rejects an unchanged pre-arm playback-link candidate", async () => {
+    await expect(observeFirstSeenLiveDiscordPlaybackLink(input, new PollReader([[{
+      container: thread,
+      messages: [message({ createdAtMilliseconds: 500, editedAtMilliseconds: null })],
+    }]]), new FakeClock([
+      timing(1_000, 10_000), timing(1_001, 10_001), timing(11_001, 20_001),
+    ]))).rejects.toThrow("not observed before the deadline");
+  });
+
+  it("does not retain a link when immediate readiness is unavailable", async () => {
+    const rawCapability = "secret";
+    await expect(observePlaybackLink(input, new PollReader([[{
+      container: thread, messages: [message()],
+    }]]), new FakeClock([
+      timing(1_000, 10_000), timing(1_001, 10_001), timing(1_002, 10_002),
+    ]), {
+      prove: () => Promise.reject(new Error("visible but unavailable")),
+    })).rejects.toThrow("visible but unavailable");
+    expect(JSON.stringify(rawCapability)).toBe('"secret"');
   });
 
   it("ignores newer unrelated messages, wrong authors, and non-exact containers", async () => {

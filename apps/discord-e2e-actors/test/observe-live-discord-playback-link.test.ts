@@ -18,7 +18,15 @@ describe("live Discord playback-link observer CLI boundary", () => {
     const config = makeConfig(outputPath);
     const discord = new FakeDiscordReader(config);
 
-    await runLiveDiscordPlaybackLinkObserver(config, { read: async () => "test-token" }, discord);
+    await runLiveDiscordPlaybackLinkObserver(
+      config,
+      { read: async () => "test-token" },
+      discord,
+      { prove: ({ messageId, recordingId }) => Promise.resolve({
+        capabilitySha256: "2bb80d537b1da3e38bd30361aa855686bde0eacd7162fef6a25fe97bf527a25b",
+        messageId, recordingId, status: "ready", trackCount: 1,
+      }) },
+    );
 
     const proof = JSON.parse(await readFile(outputPath, "utf8")) as Record<string, unknown>;
     expect(proof).toMatchObject({
@@ -58,6 +66,7 @@ function makeConfig(outputPath: string): LiveDiscordPlaybackLinkObserverConfig {
     keychainService: "test",
     outputPath,
     pollIntervalMs: 2_000,
+    recordingPlaybackOrigin: "https://recordings.example.com",
     projectionMarkers: ["meeting-projection:0123456789abcdef0123"],
     recordingId: "recording-42",
     resultChannelId: "11111111111111111",

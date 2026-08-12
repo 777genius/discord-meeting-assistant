@@ -98,6 +98,7 @@ export function makePlaybackLinkObserver(context: HostedCampaignChildContext): H
       DISCORD_E2E_PLAYBACK_LINK_DURATION_MS: "600000", DISCORD_E2E_PLAYBACK_LINK_MODE: "hosted",
       DISCORD_E2E_PLAYBACK_LINK_OUTPUT: paths.run(3, "playback-link.json"),
       DISCORD_E2E_PLAYBACK_LINK_POLL_INTERVAL_MS: "2000",
+      DISCORD_E2E_PLAYBACK_LINK_RECORDING_PLAYBACK_ORIGIN: definition.recordingPlaybackOrigin,
       DISCORD_E2E_PLAYBACK_LINK_RESULT_CHANNEL_ID: HOSTED_CAMPAIGN_TARGET.publicationChannelId,
       DISCORD_E2E_PLAYBACK_LINK_RUN_ID: reconnect.runId,
       DISCORD_E2E_PLAYBACK_LINK_SECRET_DIRECTORY: definition.secretDirectory,

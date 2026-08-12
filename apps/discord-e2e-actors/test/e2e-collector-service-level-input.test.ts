@@ -91,6 +91,13 @@ function proof() {
       origin: source.origin,
       pathname: source.pathname,
     },
+    readiness: {
+      capabilitySha256: source.capabilitySha256,
+      messageId: source.messageId,
+      recordingId: source.recordingId,
+      status: "ready" as const,
+      trackCount: 2,
+    },
     messageId: source.messageId,
     observerArmedAt: { epochMilliseconds: 9_300, monotonicMilliseconds: 19_300 },
     pollIntervalMs: 100,

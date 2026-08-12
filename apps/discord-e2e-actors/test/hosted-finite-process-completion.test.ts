@@ -149,6 +149,8 @@ describe("hosted finite process completion", () => {
       firstSeenPollCompletedAt: source.firstSeenPollCompletedAt,
       firstSeenPollStartedAt: source.firstSeenPollStartedAt,
       link: { capabilitySha256: source.capabilitySha256, origin: source.origin, pathname: source.pathname },
+      readiness: { capabilitySha256: source.capabilitySha256, messageId: source.messageId,
+        recordingId, status: "ready", trackCount: 2 },
       messageId: source.messageId,
       observerArmedAt: { epochMilliseconds: 9_400, monotonicMilliseconds: 19_400 },
       pollIntervalMs: 50, projectionMarker: source.projectionMarker,

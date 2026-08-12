@@ -20,6 +20,22 @@ export interface LiveDiscordPlaybackLinkClock {
   wait(milliseconds: number): Promise<void>;
 }
 
+export interface LiveDiscordPlaybackReadinessProof {
+  readonly capabilitySha256: string;
+  readonly messageId: string;
+  readonly recordingId: string;
+  readonly status: "ready";
+  readonly trackCount: number;
+}
+
+export interface LiveDiscordPlaybackReadinessProbe {
+  prove(input: {
+    readonly messageId: string;
+    readonly recordingId: string;
+    readonly recordingPlaybackUrl: string;
+  }): Promise<LiveDiscordPlaybackReadinessProof>;
+}
+
 export interface ObserveLiveDiscordPlaybackLinkInput {
   readonly durationMilliseconds: number;
   readonly meetingId: string;
@@ -63,6 +79,13 @@ export const liveDiscordPlaybackLinkProofSchema = z.object({
     }, "Expected an exact HTTPS origin"),
     pathname: z.literal("/recordings/playback"),
   }).strict(),
+  readiness: z.object({
+    capabilitySha256: z.string().regex(/^[a-f\d]{64}$/u),
+    messageId: identifierSchema,
+    recordingId: identifierSchema,
+    status: z.literal("ready"),
+    trackCount: z.number().int().min(1).max(11),
+  }).strict(),
   messageId: identifierSchema,
   observerArmedAt: pollTimingSchema,
   pollIntervalMs: safeNonnegativeIntegerSchema.refine((value) => value > 0),
@@ -80,6 +103,13 @@ export const liveDiscordPlaybackLinkProofSchema = z.object({
     proof.firstSeenPollCompletedAt.monotonicMilliseconds < proof.firstSeenPollStartedAt.monotonicMilliseconds
   ) {
     context.addIssue({ code: "custom", message: "Live Discord proof timing moved backwards" });
+  }
+  if (
+    proof.readiness.capabilitySha256 !== proof.link.capabilitySha256 ||
+    proof.readiness.messageId !== proof.messageId ||
+    proof.readiness.recordingId !== proof.recordingId
+  ) {
+    context.addIssue({ code: "custom", message: "Playback readiness proof is not bound to the observed link" });
   }
 });
 
@@ -102,6 +132,7 @@ export async function observeFirstSeenLiveDiscordPlaybackLink(
   input: ObserveLiveDiscordPlaybackLinkInput,
   reader: LiveDiscordProjectionReader,
   clock: LiveDiscordPlaybackLinkClock = systemClock,
+  readinessProbe: LiveDiscordPlaybackReadinessProbe,
 ): Promise<LiveDiscordPlaybackLinkProof> {
   validateInput(input);
   const observerArmedAt = validatedTiming(clock.now(), "observer arm");
@@ -118,10 +149,17 @@ export async function observeFirstSeenLiveDiscordPlaybackLink(
     const pollCompletedAt = validatedTiming(clock.now(), "poll completion");
     assertTimingNotBefore(pollCompletedAt, pollStartedAt, "poll completion");
 
-    const candidate = exactMarkerCandidate(input, projectionMessages);
+    const candidate = exactMarkerCandidate(input, projectionMessages, observerArmedAt.epochMilliseconds);
     if (candidate !== undefined) {
-      const link = exactPlaybackLink(candidate.message);
-      if (link !== undefined) {
+      const observed = exactPlaybackLink(candidate.message);
+      if (observed !== undefined) {
+        const { proof: link } = observed;
+        const readiness = await readinessProbe.prove({
+          messageId: candidate.message.id,
+          recordingId: input.recordingId,
+          recordingPlaybackUrl: observed.rawUrl,
+        });
+        assertReadinessBinding(readiness, input.recordingId, candidate.message.id, link.capabilitySha256);
         return Object.freeze({
           schemaVersion: 1 as const,
           runId: requiredText(input.runId, "run ID"),
@@ -136,6 +174,7 @@ export async function observeFirstSeenLiveDiscordPlaybackLink(
           firstSeenPollCompletedAt: pollCompletedAt,
           pollIntervalMs: input.pollIntervalMs,
           link,
+          readiness: Object.freeze({ ...readiness }),
         });
       }
     }
@@ -151,6 +190,7 @@ export async function observeFirstSeenLiveDiscordPlaybackLink(
 function exactMarkerCandidate(
   input: ObserveLiveDiscordPlaybackLinkInput,
   projectionMessages: readonly LiveDiscordProjectionMessages[],
+  observerArmedAtEpochMilliseconds: number,
 ): { readonly container: LiveDiscordProjectionContainerInput; readonly marker: string; readonly message: LiveDiscordMessageInput } | undefined {
   const candidates = projectionMessages.flatMap(({ container, messages }) => {
     if (!sameContainer(container, input.container)) {
@@ -158,6 +198,7 @@ function exactMarkerCandidate(
     }
     return messages.flatMap((message) => {
       if (message.authorId !== input.sutApplicationId) {return [];}
+      if (!wasCreatedOrEditedAfterArm(message, observerArmedAtEpochMilliseconds)) {return [];}
       const markers = input.projectionMarkers.filter((marker) => messageHasExactMarker(message, marker));
       return markers.map((marker) => ({ container, marker, message }));
     });
@@ -166,6 +207,15 @@ function exactMarkerCandidate(
     throw new Error("Live Discord playback link observation found duplicate exact marker candidates");
   }
   return candidates[0];
+}
+
+function wasCreatedOrEditedAfterArm(
+  message: LiveDiscordMessageInput,
+  observerArmedAtEpochMilliseconds: number,
+): boolean {
+  return message.createdAtMilliseconds >= observerArmedAtEpochMilliseconds ||
+    (message.editedAtMilliseconds !== null &&
+      message.editedAtMilliseconds >= observerArmedAtEpochMilliseconds);
 }
 
 function messageHasExactMarker(message: LiveDiscordMessageInput, marker: string): boolean {
@@ -177,7 +227,7 @@ function messageHasExactMarker(message: LiveDiscordMessageInput, marker: string)
 
 function exactPlaybackLink(
   message: LiveDiscordMessageInput,
-): LiveDiscordPlaybackLinkProof["link"] | undefined {
+): { readonly proof: LiveDiscordPlaybackLinkProof["link"]; readonly rawUrl: string } | undefined {
   const visibleText = [
     message.content,
     ...message.embeds.flatMap((embed) => [
@@ -193,7 +243,9 @@ function exactPlaybackLink(
   return links[0];
 }
 
-function playbackLinksIn(text: string): readonly LiveDiscordPlaybackLinkProof["link"][] {
+function playbackLinksIn(
+  text: string,
+): readonly { readonly proof: LiveDiscordPlaybackLinkProof["link"]; readonly rawUrl: string }[] {
   return [...text.matchAll(markdownLinkPattern)].flatMap((match) => {
     const rawUrl = match[1];
     if (rawUrl === undefined) {
@@ -209,14 +261,32 @@ function playbackLinksIn(text: string): readonly LiveDiscordPlaybackLinkProof["l
         return [];
       }
       return [Object.freeze({
-        origin: url.origin,
-        pathname: url.pathname,
-        capabilitySha256: createHash("sha256").update(capability, "utf8").digest("hex"),
+        proof: Object.freeze({
+          origin: url.origin,
+          pathname: url.pathname,
+          capabilitySha256: createHash("sha256").update(capability, "utf8").digest("hex"),
+        }),
+        rawUrl,
       })];
     } catch {
       return [];
     }
   });
+}
+
+function assertReadinessBinding(
+  proof: LiveDiscordPlaybackReadinessProof,
+  recordingId: string,
+  messageId: string,
+  capabilitySha256: string,
+): void {
+  if (
+    proof.status !== "ready" || proof.trackCount < 1 || proof.trackCount > 11 ||
+    proof.recordingId !== recordingId || proof.messageId !== messageId ||
+    proof.capabilitySha256 !== capabilitySha256
+  ) {
+    throw new Error("Playback readiness proof is not bound to the exact observed recording link");
+  }
 }
 
 function sameContainer(

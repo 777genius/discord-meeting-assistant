@@ -6,8 +6,10 @@ import { FileSecretReader, MacOsKeychainSecretReader } from "./keychain.js";
 import {
   liveDiscordPlaybackLinkProofSchema,
   observeFirstSeenLiveDiscordPlaybackLink,
+  type LiveDiscordPlaybackReadinessProbe,
 } from "./live-discord-playback-link-observer.js";
 import { loadLiveDiscordPlaybackLinkObserverConfig } from "./live-discord-playback-link-observer-config.js";
+import { HttpLiveDiscordPlaybackReadinessProbe } from "./live-discord-playback-readiness-probe.js";
 import type { LiveDiscordProjectionReader } from "./live-discord-observer.js";
 
 interface PlaybackLinkDiscordReader extends LiveDiscordProjectionReader {
@@ -33,6 +35,9 @@ export async function runLiveDiscordPlaybackLinkObserver(
   config: ReturnType<typeof loadLiveDiscordPlaybackLinkObserverConfig>,
   secretReader: PlaybackLinkSecretReader,
   discord: PlaybackLinkDiscordReader,
+  readinessProbe: LiveDiscordPlaybackReadinessProbe = new HttpLiveDiscordPlaybackReadinessProbe({
+    expectedOrigin: config.recordingPlaybackOrigin,
+  }),
 ): Promise<void> {
   try {
     await discord.connect(await secretReader.read(config.sutAccount));
@@ -40,7 +45,12 @@ export async function runLiveDiscordPlaybackLinkObserver(
       throw new Error("Playback-link observer SUT application ID does not match its authenticated bot");
     }
     const proof = liveDiscordPlaybackLinkProofSchema.parse(
-      await observeFirstSeenLiveDiscordPlaybackLink(config, discord),
+      await observeFirstSeenLiveDiscordPlaybackLink(
+        config,
+        discord,
+        undefined,
+        readinessProbe,
+      ),
     );
     await writeCreateOnlyPrivateJson(config.outputPath, proof);
     process.stdout.write(`${JSON.stringify({
