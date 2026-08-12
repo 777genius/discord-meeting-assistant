@@ -283,6 +283,29 @@ describe("retained conversation V8 farewell response semantics", () => {
       "SUPPLEMENTAL_FAREWELL_SEMANTICS_MISSING",
     ]));
   });
+
+  it.each([
+    "Я не говорю пока",
+    "Скажи пока?",
+    "Он сказал: пока",
+    "Do not say goodbye",
+    "Say goodbye?",
+  ])("rejects farewell-like non-prepared text: %s", (text) => {
+    const evidence = retainedV8Evidence();
+    botikFarewell(evidence).text = text;
+
+    expect(failureCodes(evidence)).toContain("SUPPLEMENTAL_FAREWELL_SEMANTICS_MISSING");
+  });
+
+  it("rejects a duplicate multiword farewell split across adjacent Botik turns", () => {
+    const evidence = retainedV8Evidence();
+    evidence.transcript.turns.push(
+      { endMs: 5_200, speakerId: evidence.conversation.botSpeakerId, startMs: 5_000, text: "до", turnId: "split-farewell-1" },
+      { endMs: 5_500, speakerId: evidence.conversation.botSpeakerId, startMs: 5_300, text: "встречи", turnId: "split-farewell-2" },
+    );
+
+    expect(failureCodes(evidence)).toContain("SUPPLEMENTAL_FAREWELL_DUPLICATE");
+  });
 });
 
 describe("retained conversation V8 reconnect response semantics", () => {

@@ -227,6 +227,7 @@ function verifyFarewellTiming(
     );
   }
   const requiredTerms = manifest.farewellLocaleTerms?.[farewellEvent.locale] ?? [];
+  const exactPhrases = manifest.farewellExactPhrases?.[farewellEvent.locale] ?? [];
   const expectedPcmSha256 = manifest.farewellCapturePcmSha256?.[farewellEvent.locale];
   const duplicateTerms = manifest.farewellLocaleTerms === undefined
     ? []
@@ -281,6 +282,7 @@ function verifyFarewellTiming(
     {
       duplicateTerms,
       endMs: captureEndMs,
+      exactPhrases,
       locale: farewellEvent.locale,
       requiredTerms,
       startMs: captureStartMs,

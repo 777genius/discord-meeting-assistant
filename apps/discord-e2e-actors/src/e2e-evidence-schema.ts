@@ -1,5 +1,4 @@
-import { z } from "zod";
-import {
+import { z } from "zod"; import {
   conversationLifecycleEvidenceSchema,
   conversationVoiceEvidenceV3Schema,
   reconnectNoRepeatEvidenceSchema,
@@ -42,6 +41,7 @@ export const fixtureManifestV1Schema = z.object({
     voiceChannelId: identifierSchema,
   }).strict().optional(),
   farewellCapturePcmSha256: z.object({ en: sha256Schema, ru: sha256Schema }).strict().optional(),
+  farewellExactPhrases: z.object({ en: z.array(identifierSchema).min(1), ru: z.array(identifierSchema).min(1) }).strict().optional(),
   farewellLocaleTerms: z.object({ en: z.array(identifierSchema).min(1), ru: z.array(identifierSchema).min(1) }).strict().optional(),
   greetingLocaleTerms: z.object({ en: z.array(identifierSchema).min(1), ru: z.array(identifierSchema).min(1) }).strict().optional(),
   supplementalVoiceExpectation: z.object({

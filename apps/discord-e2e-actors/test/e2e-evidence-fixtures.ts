@@ -56,6 +56,7 @@ export function manifest(): FixtureManifestV1 {
     },
     greetingLocaleTerms: { en: ["hi", "hello", "хай"], ru: ["привет", "здравствуй"] },
     farewellCapturePcmSha256: { en: "e".repeat(64), ru: "a".repeat(64) },
+    farewellExactPhrases: { en: ["Goodbye!"], ru: ["Пока!"] },
     farewellLocaleTerms: { en: ["bye", "goodbye"], ru: ["пока", "до встречи"] },
     supplementalVoiceExpectation: {
       answerNonce: "кобальт",

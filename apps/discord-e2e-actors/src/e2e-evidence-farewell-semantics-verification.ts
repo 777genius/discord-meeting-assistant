@@ -9,6 +9,7 @@ import type {
 interface BotikFarewellExpectation {
   readonly duplicateTerms: readonly string[];
   readonly endMs: number;
+  readonly exactPhrases: readonly string[];
   readonly locale: "en" | "ru";
   readonly requiredTerms: readonly string[];
   readonly startMs: number;
@@ -25,12 +26,11 @@ export function verifyBotikFarewellTranscript(
   const captureTurns = botikTurns.filter((turn) =>
     turn.startMs >= expectation.startMs && turn.endMs <= expectation.endMs
   );
-  const semanticTurns = turnsContainingAnyTerms(botikTurns, expectation.duplicateTerms);
   const capturedFarewell = captureTurns[0];
   const hasCapturedSemanticFarewell = capturedFarewell !== undefined &&
-    containsAnyWholeTerm(capturedFarewell.text, expectation.requiredTerms);
+    matchesExactPhrase(capturedFarewell.text, expectation.exactPhrases);
   if (
-    expectation.requiredTerms.length === 0 ||
+    expectation.requiredTerms.length === 0 || expectation.exactPhrases.length === 0 ||
     captureTurns.length !== 1 ||
     !hasCapturedSemanticFarewell
   ) {
@@ -41,13 +41,40 @@ export function verifyBotikFarewellTranscript(
   }
   if (
     hasCapturedSemanticFarewell &&
-    semanticTurns.some((turn) => turn !== capturedFarewell)
+    containsFarewellOutsideCapture(botikTurns, capturedFarewell, expectation)
   ) {
     fail(
       "SUPPLEMENTAL_FAREWELL_DUPLICATE",
       "a second farewell-shaped Botik turn exists outside the settled farewell capture",
     );
   }
+}
+
+function containsFarewellOutsideCapture(
+  turns: readonly RetainedE2eEvidenceV8["transcript"]["turns"][number][],
+  capturedFarewell: RetainedE2eEvidenceV8["transcript"]["turns"][number],
+  expectation: BotikFarewellExpectation,
+): boolean {
+  const outside = turns.filter((turn) => turn !== capturedFarewell);
+  for (let index = 0; index < outside.length; index += 1) {
+    const current = outside[index]!;
+    const adjacent = outside[index + 1];
+    if (containsAnyWholeTerm(current.text, expectation.duplicateTerms)) {
+      return true;
+    }
+    if (
+      adjacent !== undefined &&
+      containsAnyWholeTerm(`${current.text} ${adjacent.text}`, expectation.duplicateTerms)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function matchesExactPhrase(text: string, phrases: readonly string[]): boolean {
+  const normalized = normalizeTranscriptSemantics(text);
+  return phrases.some((phrase) => normalized === normalizeTranscriptSemantics(phrase));
 }
 
 export function turnsContainingAnyTerms<T extends { readonly text: string }>(
