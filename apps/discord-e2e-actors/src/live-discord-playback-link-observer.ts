@@ -139,7 +139,7 @@ export async function observeFirstSeenLiveDiscordPlaybackLink(
   const deadline = observerArmedAt.monotonicMilliseconds + input.durationMilliseconds;
   assertSafeNonnegativeInteger(deadline, "observation deadline");
 
-  while (true) {
+  for (;;) {
     const pollStartedAt = validatedTiming(clock.now(), "poll start");
     assertTimingNotBefore(pollStartedAt, observerArmedAt, "poll start");
     const projectionMessages = await reader.poll({
@@ -281,7 +281,7 @@ function assertReadinessBinding(
   capabilitySha256: string,
 ): void {
   if (
-    proof.status !== "ready" || proof.trackCount < 1 || proof.trackCount > 11 ||
+    proof.trackCount < 1 || proof.trackCount > 11 ||
     proof.recordingId !== recordingId || proof.messageId !== messageId ||
     proof.capabilitySha256 !== capabilitySha256
   ) {

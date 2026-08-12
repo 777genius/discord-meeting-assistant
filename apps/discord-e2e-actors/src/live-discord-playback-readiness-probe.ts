@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 
 import { playbackManifestSchema } from "./recording-playback-evidence-probe-policy.js";
+import {
+  readRecordingPlaybackBody,
+  recordingPlaybackFailure,
+  requestRecordingPlayback,
+} from "./recording-playback-evidence-http.js";
 import type {
   LiveDiscordPlaybackReadinessProbe,
   LiveDiscordPlaybackReadinessProof,
@@ -30,29 +35,29 @@ export class HttpLiveDiscordPlaybackReadinessProbe implements LiveDiscordPlaybac
   }): Promise<LiveDiscordPlaybackReadinessProof> {
     const link = parsePlaybackLink(input.recordingPlaybackUrl, this.#expectedOrigin);
     const capability = link.hash.slice(1);
-    const response = await this.#fetch(new URL("/recordings/session", link.origin), {
-      headers: { authorization: `Bearer ${capability}` },
-      method: "POST",
-      signal: AbortSignal.timeout(this.#timeoutMilliseconds),
+    const bytes = await requestRecordingPlayback({
+      consume: async (response, signal) => {
+        if (!response.ok) {
+          await response.body?.cancel().catch(() => {});
+          throw recordingPlaybackFailure(
+            `Recording playback readiness probe failed with status ${response.status}`,
+          );
+        }
+        return readRecordingPlaybackBody(response, signal, maximumManifestBytes);
+      },
+      fetch: this.#fetch,
+      init: {
+        headers: { authorization: `Bearer ${capability}` },
+        method: "POST",
+      },
+      timeoutMilliseconds: this.#timeoutMilliseconds,
+      url: new URL("/recordings/session", link.origin),
     });
-    if (!response.ok) {
-      await response.body?.cancel().catch(() => {});
-      throw new Error(`Recording playback readiness probe failed with status ${response.status}`);
-    }
-    const contentLength = Number(response.headers.get("content-length"));
-    if (Number.isFinite(contentLength) && contentLength > maximumManifestBytes) {
-      await response.body?.cancel().catch(() => {});
-      throw new Error("Recording playback readiness manifest exceeds 256 KiB");
-    }
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    if (bytes.byteLength > maximumManifestBytes) {
-      throw new Error("Recording playback readiness manifest exceeds 256 KiB");
-    }
     let raw: unknown;
     try {
       raw = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
     } catch {
-      throw new Error("Recording playback readiness probe returned invalid JSON");
+      throw recordingPlaybackFailure("Recording playback readiness probe returned invalid JSON");
     }
     const manifest = playbackManifestSchema.parse(raw);
     if (
