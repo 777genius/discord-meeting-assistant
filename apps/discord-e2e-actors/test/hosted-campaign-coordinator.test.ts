@@ -353,6 +353,9 @@ describe("hosted campaign coordinator", () => {
     expect(events.at(-1)).toBe("release:campaign-1");
   });
 
+});
+
+describe("hosted campaign coordinator lifecycle", () => {
   it("binds every action and observer dependency to the exact causal run", () => {
     const references = campaignActions(input());
     expect(references.filter(({ action }) => action.kind === "run-verified")).toEqual([
@@ -466,6 +469,10 @@ describe("hosted campaign coordinator", () => {
     ]);
     expect(receipt).toMatchObject({ schemaVersion: 1, campaignId: "campaign-1", teardownComplete: true });
   });
+
+});
+
+describe("hosted campaign coordinator failure handling", () => {
 
   it("honours cancellation before the first child and during barriers", async () => {
     const beforeStart = new AbortController();

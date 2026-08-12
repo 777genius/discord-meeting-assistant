@@ -1,0 +1,190 @@
+import { actionReferenceIdentity, campaignActions } from "./hosted-campaign-execution-graph.js";
+import { stopEveryChild, validateActionEvidence } from "./hosted-campaign-actions.js";
+import { validateHostedCampaign } from "./hosted-campaign-validation.js";
+import type {
+  HostedCampaignActionReference,
+  HostedCampaignBoundedSignal,
+  HostedCampaignChildHandle,
+  HostedCampaignExecutableSpec,
+  HostedCampaignInput,
+  HostedCampaignLeaseHandle,
+  HostedCampaignPassReceipt,
+  HostedCampaignPorts,
+  HostedCampaignStartPoint,
+} from "./hosted-campaign-coordinator.js";
+
+function startPointIdentity(startPoint: HostedCampaignStartPoint): string {
+  return startPoint.kind === "campaign" ? "campaign" : `barrier:${actionReferenceIdentity(startPoint)}`;
+}
+
+function supplementalGatePhase(
+  child: HostedCampaignExecutableSpec,
+  reference: HostedCampaignActionReference,
+): "connection" | "playback" | undefined {
+  return (["connection", "playback"] as const).find((phase) => {
+    const gate = child.supplementalGates?.[phase];
+    return gate !== undefined && actionReferenceIdentity(gate.trigger) === actionReferenceIdentity(reference);
+  });
+}
+
+function actorGatePhase(
+  child: HostedCampaignExecutableSpec,
+  reference: HostedCampaignActionReference,
+): "connection" | "speaker-b" | "playback" | "end" | undefined {
+  if (child.releaseGate !== undefined
+    && actionReferenceIdentity(child.releaseGate) === actionReferenceIdentity(reference)) { return "connection"; }
+  return (["speakerB", "playback", "end"] as const).find((phase) => {
+    const gate = child.actorGates?.[phase];
+    return gate !== undefined && actionReferenceIdentity(gate.trigger) === actionReferenceIdentity(reference);
+  })?.replace("speakerB", "speaker-b") as "speaker-b" | "playback" | "end" | undefined;
+}
+
+function assertActive(bounded: HostedCampaignBoundedSignal): void {
+  if (bounded.signal.aborted) {
+    throw bounded.signal.reason ?? new Error("Hosted campaign cancelled");
+  }
+  if (!Number.isSafeInteger(bounded.deadlineEpochMilliseconds) || bounded.deadlineEpochMilliseconds <= Date.now()) {
+    throw new Error("Hosted campaign deadline has expired");
+  }
+}
+
+function resolveEnvironmentBindings(
+  executable: HostedCampaignExecutableSpec,
+  retainedEvidence: ReadonlyMap<string, unknown>,
+): HostedCampaignExecutableSpec {
+  if (executable.environmentBindings === undefined || executable.environmentBindings.length === 0) {
+    return executable;
+  }
+  const resolved: Record<string, string> = { ...executable.environment };
+  for (const binding of executable.environmentBindings) {
+    const identity = actionReferenceIdentity(binding.valueFrom.actionRef);
+    const evidence = retainedEvidence.get(identity);
+    if (typeof evidence !== "object" || evidence === null) {
+      throw new Error(`Hosted campaign child ${executable.childId} is missing bound evidence ${identity}`);
+    }
+    const value = (evidence as Record<string, unknown>)[binding.valueFrom.field];
+    if (typeof value !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(value)) {
+      throw new Error(`Hosted campaign child ${executable.childId} bound ${binding.valueFrom.field} is invalid`);
+    }
+    resolved[binding.name] = value;
+  }
+  return Object.freeze({ ...executable, environment: Object.freeze(resolved) });
+}
+
+interface CampaignExecutionState {
+  readonly completionFailures: Promise<never>[];
+  readonly completionTasks: Promise<void>[];
+  readonly handles: HostedCampaignChildHandle[];
+  readonly retainedEvidence: Map<string, unknown>;
+  readonly startedChildIds: Set<string>;
+}
+
+async function startChildren(
+  input: HostedCampaignInput,
+  ports: HostedCampaignPorts,
+  bounded: HostedCampaignBoundedSignal,
+  state: CampaignExecutionState,
+  startBefore: HostedCampaignStartPoint,
+): Promise<void> {
+  const identity = startPointIdentity(startBefore);
+  for (const executable of input.children.filter((child) => startPointIdentity(child.startBefore) === identity)) {
+    if (state.startedChildIds.has(executable.childId)) {
+      throw new Error(`Hosted campaign child would start more than once: ${executable.childId}`);
+    }
+    assertActive(bounded);
+    const resolvedExecutable = resolveEnvironmentBindings(executable, state.retainedEvidence);
+    const handle = await ports.startChild(resolvedExecutable, bounded);
+    state.handles.push(handle);
+    if (handle.childId !== executable.childId) {
+      throw new Error("Started child handle does not match its executable spec");
+    }
+    state.startedChildIds.add(executable.childId);
+    if (executable.completion !== undefined) {
+      const completion = ports.awaitChildCompletion(handle, resolvedExecutable, bounded);
+      state.completionTasks.push(completion);
+      state.completionFailures.push(completion.then(
+        async () => new Promise<never>(() => {}),
+        async (error: unknown) => {throw error;},
+      ));
+    }
+  }
+}
+
+async function executeActions(
+  input: HostedCampaignInput,
+  ports: HostedCampaignPorts,
+  bounded: HostedCampaignBoundedSignal,
+  state: CampaignExecutionState,
+  evidence: unknown[],
+): Promise<void> {
+  for (const reference of campaignActions(input)) {
+    const { action } = reference;
+    await startChildren(input, ports, bounded, state, { ...reference, kind: "barrier" });
+    assertActive(bounded);
+    const actionEvidence = await Promise.race([
+      ports.awaitBarrier(action, bounded),
+      ...state.completionFailures,
+    ]);
+    validateActionEvidence(action, actionEvidence, input.thresholds);
+    state.retainedEvidence.set(actionReferenceIdentity(reference), actionEvidence);
+    evidence.push(Object.freeze({ action, evidence: actionEvidence }));
+    for (const executable of input.children) {
+      const phase = actorGatePhase(executable, reference);
+      if (phase !== undefined) { await ports.publishReleaseGate(executable, phase, bounded); }
+    }
+    for (const executable of input.children) {
+      const phase = supplementalGatePhase(executable, reference);
+      if (phase !== undefined) { await ports.publishSupplementalGate(executable, phase, bounded); }
+    }
+  }
+}
+
+async function cleanupCampaign(
+  handles: HostedCampaignChildHandle[],
+  lease: HostedCampaignLeaseHandle | undefined,
+  ports: HostedCampaignPorts,
+  failure: unknown,
+): Promise<void> {
+  const cleanupFailures: unknown[] = [];
+  try { await stopEveryChild(handles, ports); } catch (error) { cleanupFailures.push(error); }
+  if (lease !== undefined) {
+    try { await ports.releaseCampaignLease(lease); } catch (error) { cleanupFailures.push(error); }
+  }
+  if (cleanupFailures.length > 0) {
+    throw new AggregateError(cleanupFailures, failure === undefined
+      ? "Hosted campaign cleanup was incomplete"
+      : "Hosted campaign failed and cleanup was incomplete",
+    failure === undefined ? undefined : { cause: failure });
+  }
+}
+
+export async function runHostedCampaign(
+  input: HostedCampaignInput,
+  ports: HostedCampaignPorts,
+  bounded: HostedCampaignBoundedSignal,
+): Promise<HostedCampaignPassReceipt> {
+  validateHostedCampaign(input);
+  assertActive(bounded);
+  const state: CampaignExecutionState = {
+    completionFailures: [], completionTasks: [], handles: [], retainedEvidence: new Map(), startedChildIds: new Set(),
+  };
+  const evidence: unknown[] = [];
+  let lease: HostedCampaignLeaseHandle | undefined;
+  let failure: unknown;
+  try {
+    const campaignId = input.runs[0]!.campaignId;
+    lease = await ports.acquireCampaignLease(campaignId, bounded);
+    if (lease.campaignId !== campaignId) { throw new Error("Acquired campaign lease does not match the campaign"); }
+    await startChildren(input, ports, bounded, state, { kind: "campaign" });
+    await executeActions(input, ports, bounded, state, evidence);
+    await Promise.all(state.completionTasks);
+  } catch (error) { failure = error; }
+  await cleanupCampaign(state.handles, lease, ports, failure);
+  if (failure !== undefined) {throw failure instanceof Error
+    ? failure : new Error("Hosted campaign failed", { cause: failure });}
+  return Object.freeze({
+    actionEvidence: Object.freeze(evidence), campaignId: input.runs[0]!.campaignId,
+    runIds: [input.runs[0]!.runId, input.runs[1]!.runId, input.runs[2]!.runId] as const,
+    schemaVersion: 1, teardownComplete: true,
+  });
+}
