@@ -25,6 +25,7 @@ describe("loadActorConfig", () => {
     expect(config.speakerBConnectDelayMilliseconds).toBe(0);
     expect(config.prePlaybackHoldMilliseconds).toBe(0);
     expect(config.postPlaybackHoldMilliseconds).toBe(0);
+    expect(config.releaseGate).toBeUndefined();
   });
 
   it("bounds the opt-in Speaker B first-connect delay", () => {
@@ -120,6 +121,42 @@ describe("loadActorConfig", () => {
     expect(() => loadActorConfig({
       DISCORD_E2E_GUILD_ID: "11111111111111111",
       DISCORD_E2E_VOICE_CHANNEL_ID: "22222222222222222",
+    })).toThrow();
+  });
+
+  it("requires the hosted release gate configuration as one pinned bounded group", () => {
+    const environment = {
+      DISCORD_E2E_GUILD_ID: "11111111111111111",
+      DISCORD_E2E_VOICE_CHANNEL_ID: "22222222222222222",
+      ...requiredCorrelation,
+    };
+    expect(loadActorConfig({
+      ...environment,
+      DISCORD_E2E_HOSTED_RELEASE_GATE_PATH: "/private/run-1/release.json",
+      DISCORD_E2E_HOSTED_RELEASE_GATE_CAMPAIGN_ID: "campaign-1",
+      DISCORD_E2E_HOSTED_RELEASE_GATE_TIMEOUT_MS: "45000",
+    }).releaseGate).toEqual({
+      campaignId: "campaign-1",
+      path: "/private/run-1/release.json",
+      runId: "run-test-1",
+      timeoutMilliseconds: 45_000,
+    });
+
+    expect(() => loadActorConfig({
+      ...environment,
+      DISCORD_E2E_HOSTED_RELEASE_GATE_PATH: "/private/run-1/release.json",
+    })).toThrow(/configured together/u);
+    expect(() => loadActorConfig({
+      ...environment,
+      DISCORD_E2E_HOSTED_RELEASE_GATE_PATH: "relative/release.json",
+      DISCORD_E2E_HOSTED_RELEASE_GATE_CAMPAIGN_ID: "campaign-1",
+      DISCORD_E2E_HOSTED_RELEASE_GATE_TIMEOUT_MS: "45000",
+    })).toThrow();
+    expect(() => loadActorConfig({
+      ...environment,
+      DISCORD_E2E_HOSTED_RELEASE_GATE_PATH: "/private/run-1/release.json",
+      DISCORD_E2E_HOSTED_RELEASE_GATE_CAMPAIGN_ID: "campaign-1",
+      DISCORD_E2E_HOSTED_RELEASE_GATE_TIMEOUT_MS: "600001",
     })).toThrow();
   });
 });

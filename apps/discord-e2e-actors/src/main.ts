@@ -1,7 +1,10 @@
-import { mkdir, rename, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { link, mkdir, open, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import { loadActorConfig } from "./config.js";
+import { waitForActorReleaseGate } from "./actor-release-gate.js";
 import {
   connectDiscordVoiceActor,
   type RecorderAwareVoiceActor,
@@ -79,6 +82,16 @@ async function main(): Promise<void> {
       { actorName: "speaker-a", atEpochMs: epochNow(), type: "ready" },
       { actorName: "speaker-b", atEpochMs: epochNow(), type: "ready" },
     ];
+    if (config.releaseGate !== undefined) {
+      process.stdout.write("Discord E2E waiting for hosted coordinator playback release.\n");
+      await waitForActorReleaseGate({
+        campaignId: config.releaseGate.campaignId,
+        path: config.releaseGate.path,
+        runId: config.releaseGate.runId,
+        scenario: config.scenario,
+      }, AbortSignal.timeout(config.releaseGate.timeoutMilliseconds));
+      process.stdout.write("Discord E2E hosted coordinator released synthetic playback.\n");
+    }
     if (config.prePlaybackHoldMilliseconds > 0) {
       process.stdout.write(
         `Discord E2E holding both actors before playback for ${config.prePlaybackHoldMilliseconds}ms.\n`,
@@ -120,12 +133,23 @@ async function main(): Promise<void> {
 
 async function writeActorRun(path: string, actorRun: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  const temporaryPath = `${path}.tmp-${process.pid}`;
-  await writeFile(temporaryPath, `${JSON.stringify(actorRun, undefined, 2)}\n`, {
-    encoding: "utf8",
-    mode: 0o600,
-  });
-  await rename(temporaryPath, path);
+  const temporaryPath = `${path}.partial-${randomUUID()}`;
+  const handle = await open(
+    temporaryPath,
+    constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
+    0o600,
+  );
+  try {
+    try {
+      await handle.writeFile(`${JSON.stringify(actorRun, undefined, 2)}\n`, "utf8");
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await link(temporaryPath, path);
+  } finally {
+    await rm(temporaryPath, { force: true });
+  }
 }
 
 void main().catch((error: unknown) => {

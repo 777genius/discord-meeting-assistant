@@ -25,7 +25,31 @@ const actorEnvironmentSchema = z.object({
   DISCORD_E2E_ACTOR_RUN_OUTPUT: z.string().refine(isAbsolute).default("/tmp/discord-meeting-e2e-actor-run.json"),
   DISCORD_E2E_FIXTURE_MANIFEST: z.string().min(1).default("test/fixtures/manifest.v1.json"),
   DISCORD_E2E_RUN_ID: correlationIdSchema,
+  DISCORD_E2E_HOSTED_RELEASE_GATE_PATH: z.string().refine(isAbsolute).optional(),
+  DISCORD_E2E_HOSTED_RELEASE_GATE_CAMPAIGN_ID: correlationIdSchema.optional(),
+  DISCORD_E2E_HOSTED_RELEASE_GATE_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(600_000).optional(),
+}).superRefine((value, context) => {
+  const releaseGateValues = [
+    value.DISCORD_E2E_HOSTED_RELEASE_GATE_PATH,
+    value.DISCORD_E2E_HOSTED_RELEASE_GATE_CAMPAIGN_ID,
+    value.DISCORD_E2E_HOSTED_RELEASE_GATE_TIMEOUT_MS,
+  ];
+  const configuredValues = releaseGateValues.filter((entry) => entry !== undefined).length;
+  if (configuredValues !== 0 && configuredValues !== releaseGateValues.length) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Hosted release gate path, campaign ID, and timeout must be configured together",
+      path: ["DISCORD_E2E_HOSTED_RELEASE_GATE_PATH"],
+    });
+  }
 });
+
+export interface ActorReleaseGateConfig {
+  readonly campaignId: string;
+  readonly path: string;
+  readonly runId: string;
+  readonly timeoutMilliseconds: number;
+}
 
 export interface ActorConfig {
   readonly guildId: string;
@@ -43,6 +67,7 @@ export interface ActorConfig {
   readonly actorRunOutputPath: string;
   readonly fixtureManifestPath: string;
   readonly runId: string;
+  readonly releaseGate: ActorReleaseGateConfig | undefined;
   readonly speakers: readonly [
     { readonly name: "speaker-a"; readonly account: string; readonly fixturePath: string },
     { readonly name: "speaker-b"; readonly account: string; readonly fixturePath: string },
@@ -67,6 +92,12 @@ export function loadActorConfig(environment: NodeJS.ProcessEnv): ActorConfig {
     actorRunOutputPath: parsed.DISCORD_E2E_ACTOR_RUN_OUTPUT,
     fixtureManifestPath: parsed.DISCORD_E2E_FIXTURE_MANIFEST,
     runId: parsed.DISCORD_E2E_RUN_ID,
+    releaseGate: parsed.DISCORD_E2E_HOSTED_RELEASE_GATE_PATH === undefined ? undefined : {
+      campaignId: parsed.DISCORD_E2E_HOSTED_RELEASE_GATE_CAMPAIGN_ID!,
+      path: parsed.DISCORD_E2E_HOSTED_RELEASE_GATE_PATH,
+      runId: parsed.DISCORD_E2E_RUN_ID,
+      timeoutMilliseconds: parsed.DISCORD_E2E_HOSTED_RELEASE_GATE_TIMEOUT_MS!,
+    },
     speakers: [
       {
         name: "speaker-a",
