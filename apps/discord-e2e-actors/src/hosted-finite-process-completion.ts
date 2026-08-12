@@ -49,8 +49,6 @@ const completionSchemas = {
   }).strict(),
 } as const;
 
-export type HostedFiniteProcessCompletionKind = keyof typeof completionSchemas;
-
 export type HostedFiniteProcessCompletionExpectation =
   | { readonly kind: "actor"; readonly outputPath: string; readonly runId: string; readonly scenario: z.infer<typeof scenario> }
   | { readonly kind: "conversation-observer"; readonly outputPaths: readonly string[]; readonly runId: string }

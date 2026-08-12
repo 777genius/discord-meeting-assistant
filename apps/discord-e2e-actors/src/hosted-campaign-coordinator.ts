@@ -2,7 +2,6 @@ import {
   type HostedFiniteProcessCompletion,
 } from "./hosted-finite-process-contract.js";
 export { HOSTED_CAMPAIGN_TARGET } from "./hosted-campaign-target.js";
-export type { HostedCampaignTarget } from "./hosted-campaign-target.js";
 import type { HostedCampaignTarget } from "./hosted-campaign-target.js";
 export type CampaignScenario = "sequential" | "overlap" | "reconnect";
 export interface HostedCampaignRun {
@@ -48,7 +47,7 @@ export type HostedCampaignBoundEnvironmentName =
   | "DISCORD_E2E_REPLAY_RECORDING_ID"
   | "DISCORD_E2E_SLA_MEETING_ID"
   | "DISCORD_E2E_SLA_RECORDING_ID";
-export interface HostedCampaignEnvironmentBinding {
+interface HostedCampaignEnvironmentBinding {
   readonly name: HostedCampaignBoundEnvironmentName;
   readonly valueFrom: {
     readonly actionRef: HostedCampaignActionReference;
@@ -62,7 +61,7 @@ export type HostedCampaignCompletionAction =
   | { readonly kind: "recording-ready"; readonly ordinal: number; readonly runId: string }
   | { readonly kind: "replay-attestation-ready"; readonly ordinal: number; readonly runId: string }
   | { readonly kind: "supplemental-completed"; readonly ordinal: number; readonly runId: string };
-export type HostedCampaignExecutableArguments =
+type HostedCampaignExecutableArguments =
   | { readonly kind: "environment" }
   | { readonly evidencePath: string; readonly kind: "evidence-verifier"; readonly manifestPath: string; readonly thresholdsPath?: string }
   | { readonly evidencePaths: readonly [string, string, string]; readonly kind: "campaign-verifier"; readonly manifestPath: string; readonly thresholdsPath?: string };

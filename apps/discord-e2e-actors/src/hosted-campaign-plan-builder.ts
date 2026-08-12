@@ -65,7 +65,7 @@ export const hostedCampaignRuntimeBindingsV1Schema = z.object({
 
 export type HostedCampaignRuntimeBindingsV1 = z.infer<typeof hostedCampaignRuntimeBindingsV1Schema>;
 
-export type HostedCampaignRequiredBindingV1 = Readonly<{
+type HostedCampaignRequiredBindingV1 = Readonly<{
   key: `runs.${0 | 1 | 2}.remoteAttestationPath`;
   source: "operator-selected-create-only-attestation-path";
 }>;

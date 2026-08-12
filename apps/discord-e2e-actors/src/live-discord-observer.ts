@@ -1,4 +1,4 @@
-export interface LiveDiscordEmbedInput {
+interface LiveDiscordEmbedInput {
   readonly description: string | null | undefined;
   readonly fields: readonly LiveDiscordEmbedFieldInput[];
   readonly footerText?: string | null | undefined;
@@ -6,7 +6,7 @@ export interface LiveDiscordEmbedInput {
   readonly url?: string | null | undefined;
 }
 
-export interface LiveDiscordEmbedFieldInput {
+interface LiveDiscordEmbedFieldInput {
   readonly inline: boolean | undefined;
   readonly name: string;
   readonly value: string;

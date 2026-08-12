@@ -187,12 +187,6 @@ const planSchema = z.object({
   }).strict(),
 }).strict();
 
-export interface HostedCampaignRunConfig {
-  readonly deadlineEpochMilliseconds: number;
-  readonly input: HostedCampaignInput;
-  readonly receiptPath: string;
-}
-
 function runSchema(ordinal: number, scenario: "overlap" | "reconnect" | "sequential", captures: number) {
   return z.object({
     campaignId: identifier,

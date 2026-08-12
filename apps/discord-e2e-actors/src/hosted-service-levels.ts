@@ -27,7 +27,7 @@ import {
 } from "./hosted-service-level-clock-attestation.js";
 import { HOSTED_CAMPAIGN_TARGET } from "./hosted-campaign-coordinator.js";
 
-export const hostedServiceLevelFailureCodeSchema = z.enum([
+const hostedServiceLevelFailureCodeSchema = z.enum([
   "ANSWER_SOURCE_INVALID", "AUTHORITATIVE_SOURCE_INVALID", "CLOCK_ATTESTATION_MISMATCH",
   "CLOCK_ATTESTATION_MISSING", "IMPOSSIBLE_TIMELINE", "JOIN_SOURCE_AMBIGUOUS",
   "PUBLICATION_SOURCE_MISMATCH", "QUESTION_SOURCE_AMBIGUOUS", "SOURCE_IDENTITY_MISMATCH",

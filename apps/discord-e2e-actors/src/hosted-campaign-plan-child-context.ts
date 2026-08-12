@@ -16,14 +16,14 @@ export type HostedCampaignRuns = readonly [
   FixedHostedCampaignRun<1>, FixedHostedCampaignRun<2>, FixedHostedCampaignRun<3>,
 ];
 
-export interface CampaignPaths {
+interface CampaignPaths {
   readonly artifactRoot: string;
   readonly campaignProof: string;
   readonly provenanceSnapshot: string;
   readonly run: (ordinal: 1 | 2 | 3, leaf: string) => string;
 }
 
-export function safeJoin(root: string, ...parts: readonly string[]): string {
+function safeJoin(root: string, ...parts: readonly string[]): string {
   const normalizedRoot = normalize(root);
   const candidate = normalize(join(normalizedRoot, ...parts));
   const relation = relative(normalizedRoot, candidate);
@@ -40,7 +40,7 @@ export function reference<Action extends HostedCampaignActionReference["action"]
   return { action, ordinal: run.ordinal, runId: run.runId };
 }
 
-export function runVerifiedReference(run: HostedCampaignRun): HostedCampaignActionReference & {
+function runVerifiedReference(run: HostedCampaignRun): HostedCampaignActionReference & {
   readonly action: Extract<HostedCampaignBarrierAction, { readonly kind: "run-verified" }>;
 } {
   return {
@@ -50,7 +50,7 @@ export function runVerifiedReference(run: HostedCampaignRun): HostedCampaignActi
   };
 }
 
-export function provenanceReference(
+function provenanceReference(
   run: HostedCampaignRun,
   phase: "after" | "before",
 ): HostedCampaignActionReference & {

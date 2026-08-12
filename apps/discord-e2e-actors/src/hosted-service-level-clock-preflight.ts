@@ -17,7 +17,7 @@ const safeNonnegativeInteger = z.number().refine(
   "Expected a nonnegative safe integer",
 );
 
-export const hostedServiceLevelClockPreflightV1Schema = z.object({
+const hostedServiceLevelClockPreflightV1Schema = z.object({
   artifactId: sha256,
   clockSkewBoundMs: safeNonnegativeInteger,
   measuredAt: z.iso.datetime(),

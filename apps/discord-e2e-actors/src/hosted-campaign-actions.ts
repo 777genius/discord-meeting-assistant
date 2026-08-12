@@ -1,49 +1,9 @@
 import type {
   HostedCampaignBarrierAction,
   HostedCampaignChildHandle,
-  HostedCampaignInput,
   HostedCampaignPorts,
-  HostedCampaignStartPoint,
   HostedCampaignThresholds,
 } from "./hosted-campaign-coordinator.js";
-
-export function campaignActions(input: HostedCampaignInput): readonly HostedCampaignBarrierAction[] {
-  const [sequential, overlap, reconnect] = input.runs;
-  return [
-    { kind: "provenance-before" },
-    { kind: "run-verified", ordinal: sequential!.ordinal, runId: sequential!.runId },
-    { kind: "run-verified", ordinal: overlap!.ordinal, runId: overlap!.runId },
-    { kind: "observer-subscribed" },
-    ...Array.from({ length: 4 }, (_, index) => ({
-      kind: "capture-retained" as const, ordinal: index + 1,
-    })),
-    { kind: "reconnect-left" },
-    { kind: "reconnect-ready" },
-    { kind: "answer-intent" },
-    { kind: "answer-observer-ready" },
-    { kind: "answer-first-packet" },
-    { kind: "capture-retained", ordinal: 5 },
-    { kind: "capture-retained", ordinal: 6 },
-    { kind: "service-levels-ready" },
-    { kind: "run-verified", ordinal: reconnect!.ordinal, runId: reconnect!.runId },
-    { kind: "provenance-after" },
-    { kind: "campaign-verified" },
-  ];
-}
-
-export function actionIdentity(action: HostedCampaignBarrierAction): string {
-  if (action.kind === "capture-retained") {
-    return `${action.kind}:${action.ordinal}`;
-  }
-  if (action.kind === "run-verified") {
-    return `${action.kind}:${action.ordinal}:${action.runId}`;
-  }
-  return action.kind;
-}
-
-export function startPointIdentity(startPoint: HostedCampaignStartPoint): string {
-  return startPoint.kind === "campaign" ? "campaign" : `barrier:${actionIdentity(startPoint.action)}`;
-}
 
 export async function stopEveryChild(
   handles: readonly HostedCampaignChildHandle[], ports: HostedCampaignPorts,
