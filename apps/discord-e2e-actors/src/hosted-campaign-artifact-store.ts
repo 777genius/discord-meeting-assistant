@@ -58,7 +58,7 @@ export class HostedCampaignArtifactStore {
     bounded: HostedCampaignBoundedSignal,
   ): Promise<HostedCampaignActionEvidence<Action>> {
     const path = join(this.#rootPath, actionFileName(action));
-    while (true) {
+    for (;;) {
       assertActive(bounded);
       try {
         const parsed = await readActionArtifact(path);

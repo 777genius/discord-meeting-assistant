@@ -310,7 +310,8 @@ async function stopEveryChild(
 ): Promise<void> {
   const results = await Promise.allSettled(handles.map(async (handle) => ports.stopChild(handle)));
   const failures = results.filter((result): result is PromiseRejectedResult => result.status === "rejected")
-    .map(({ reason }) => reason);
+    .map(({ reason }) => reason instanceof Error
+      ? reason : new Error("Failed to stop hosted campaign child", { cause: reason }));
   if (failures.length > 0) {
     throw new AggregateError(failures, "Failed to stop every hosted campaign child");
   }
@@ -414,9 +415,8 @@ export async function runHostedCampaign(
       failure === undefined ? undefined : { cause: failure },
     );
   }
-  if (failure !== undefined) {
-    throw failure;
-  }
+  if (failure !== undefined) {throw failure instanceof Error
+    ? failure : new Error("Hosted campaign failed", { cause: failure });}
   return Object.freeze({
     actionEvidence: Object.freeze(evidence),
     campaignId: input.runs[0]!.campaignId,

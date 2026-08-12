@@ -197,7 +197,7 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
     const state: ChildState = { child, childId: spec.childId, closed, exited, stderr: 0, stdout: 0, stdoutChunks: [] };
     this.#children.set(spec.childId, state);
     const limit = this.#options.outputLimitBytes ?? 64 * 1024;
-    child.stdout?.on("data", (data: Buffer) => {
+    child.stdout.on("data", (data: Buffer) => {
       state.stdout += data.byteLength;
       if (state.stdout <= limit) {state.stdoutChunks.push(data);}
       if (state.stdout > limit) {
@@ -205,7 +205,7 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
         child.kill("SIGTERM");
       }
     });
-    child.stderr?.on("data", (data: Buffer) => {
+    child.stderr.on("data", (data: Buffer) => {
       state.stderr += data.byteLength;
       if (state.stderr > limit) {
         state.failure = new Error(`Hosted campaign child ${spec.childId} exceeded stderr limit`);
@@ -266,8 +266,8 @@ async function raceWithBounded<T>(promise: Promise<T>, bounded: HostedCampaignBo
   return new Promise<T>((resolve, reject) => {
     const remaining = bounded.deadlineEpochMilliseconds - Date.now();
     if (remaining <= 0) { reject(new Error("Hosted campaign deadline expired")); return; }
-    const timer = setTimeout(() => reject(new Error("Hosted campaign deadline expired")), remaining);
-    const abort = () => reject(bounded.signal.reason ?? new Error("Hosted campaign cancelled"));
+    const timer = setTimeout(() => { reject(new Error("Hosted campaign deadline expired")); }, remaining);
+    const abort = (): void => { reject(bounded.signal.reason ?? new Error("Hosted campaign cancelled")); };
     bounded.signal.addEventListener("abort", abort, { once: true });
     void promise.then(resolve, reject).finally(() => {
       clearTimeout(timer);
@@ -348,7 +348,7 @@ async function waitForExit(child: ChildProcess, milliseconds: number): Promise<b
         resolve(value);
       }
     };
-    const timer = setTimeout(() => finish(false), milliseconds);
+    const timer = setTimeout(() => { finish(false); }, milliseconds);
     child.once("exit", () => {
       clearTimeout(timer);
       finish(true);

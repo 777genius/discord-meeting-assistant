@@ -84,7 +84,7 @@ const planSchema = z.object({
   ]),
   target: targetSchema,
   thresholds: z.object({
-    answerFirstPacketMilliseconds: z.number().int().safe().positive(),
+    answerFirstPacketMilliseconds: z.number().int().positive(),
   }).strict(),
 }).strict();
 
