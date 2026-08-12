@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { HostedCampaignArtifactStore } from "../src/hosted-campaign-artifact-store.js";
+import { HOSTED_CAMPAIGN_TARGET, type HostedCampaignExecutableSpec } from "../src/hosted-campaign-coordinator.js";
 import { HostedCampaignProcessAdapter } from "../src/hosted-campaign-process-adapter.js";
-import type { HostedCampaignExecutableSpec } from "../src/hosted-campaign-coordinator.js";
 
 async function adapter(source: string, outputLimitBytes?: number) {
   const root = await mkdtemp(join(tmpdir(), "hosted-process-"));
@@ -29,9 +29,15 @@ async function recordingReadyAdapter(source: string) {
   return new HostedCampaignProcessAdapter({ artifactStore: store, distRoot: root, terminationGraceMilliseconds: 50 });
 }
 const bounded = () => ({ deadlineEpochMilliseconds: Date.now() + 1_000, signal: new AbortController().signal });
-const spec = (environment: Readonly<Record<string, string>> = {}) => ({
+const spec = (
+  environment: Readonly<Record<string, string>> = {}, releaseGate?: HostedCampaignExecutableSpec["releaseGate"],
+): HostedCampaignExecutableSpec => ({
   arguments: { kind: "environment" as const }, childId: "actor", entrypoint: "actor" as const,
-  environment, startBefore: { kind: "campaign" as const },
+  environment: {
+    DISCORD_E2E_GUILD_ID: HOSTED_CAMPAIGN_TARGET.guildId,
+    DISCORD_E2E_VOICE_CHANNEL_ID: HOSTED_CAMPAIGN_TARGET.voiceChannelId,
+    ...environment,
+  }, ...(releaseGate === undefined ? {} : { releaseGate }), startBefore: { kind: "campaign" as const },
 });
 const verifierSpec = (ordinal = 1, runId = "run-1"): HostedCampaignExecutableSpec => ({
   arguments: { evidencePath: "/evidence.json", kind: "evidence-verifier", manifestPath: "/manifest.json" },
@@ -76,6 +82,28 @@ describe("hosted campaign process adapter", () => {
     await processAdapter.stopChild(handle);
   });
 
+  it("rejects mismatched pinned coordinates before spawning a child", async () => {
+    const { processAdapter } = await adapter("setInterval(() => {}, 1000)");
+    await expect(processAdapter.startChild(spec({ DISCORD_E2E_GUILD_ID: "999999999999999999" }), bounded()))
+      .rejects.toThrow(/target mismatch.*GUILD_ID/u);
+    await expect(processAdapter.startChild({
+      arguments: { kind: "environment" }, childId: "observer", entrypoint: "live-observer",
+      environment: {
+        DISCORD_E2E_LIVE_RESULT_CHANNEL_ID: "999999999999999999",
+        DISCORD_E2E_LIVE_SUT_APPLICATION_ID: HOSTED_CAMPAIGN_TARGET.sutApplicationId,
+      }, startBefore: { kind: "campaign" },
+    }, bounded())).rejects.toThrow(/target mismatch.*RESULT_CHANNEL_ID/u);
+    await expect(processAdapter.startChild({
+      arguments: { kind: "environment" }, childId: "collector", entrypoint: "collector",
+      environment: {
+        DISCORD_E2E_MUTATION_TARGET: HOSTED_CAMPAIGN_TARGET.mutationTarget,
+        DISCORD_E2E_REMOTE_CRAIG_PROJECT: HOSTED_CAMPAIGN_TARGET.craigProject,
+        DISCORD_E2E_REMOTE_HOST: "wrong-host",
+        DISCORD_E2E_REMOTE_PROJECT: HOSTED_CAMPAIGN_TARGET.project,
+      }, startBefore: { action: { kind: "provenance-before" }, kind: "barrier" },
+    }, bounded())).rejects.toThrow(/target mismatch.*REMOTE_HOST/u);
+  });
+
   it("rejects early nonzero exit", async () => {
     const { processAdapter } = await adapter("process.exit(7)");
     await processAdapter.startChild(spec(), bounded());
@@ -87,19 +115,24 @@ describe("hosted campaign process adapter", () => {
     const { processAdapter } = await adapter("setInterval(() => {}, 1000)");
     const root = await mkdtemp(join(tmpdir(), "hosted-release-"));
     const path = join(root, "gate.json");
+    const releaseGate = { action: { kind: "provenance-before" as const }, path };
     const executable = spec({
       DISCORD_E2E_HOSTED_RELEASE_GATE_CAMPAIGN_ID: "campaign-1",
       DISCORD_E2E_HOSTED_RELEASE_GATE_PATH: path,
       DISCORD_E2E_HOSTED_RELEASE_GATE_TIMEOUT_MS: "1000",
       DISCORD_E2E_RUN_ID: "run-1",
       DISCORD_E2E_SCENARIO: "sequential",
-    });
+    }, releaseGate);
     await processAdapter.publishReleaseGate(executable, bounded());
     expect(JSON.parse(await readFile(path, "utf8"))).toMatchObject({
       campaignId: "campaign-1", runId: "run-1", scenario: "sequential", schemaVersion: 1,
       target: { guildId: "1533228590643155034", mutationTarget: "test-only", voiceChannelId: "1533228823045214398" },
     });
     await expect(processAdapter.publishReleaseGate(executable, bounded())).rejects.toMatchObject({ code: "EEXIST" });
+    await expect(processAdapter.publishReleaseGate({
+      ...executable,
+      releaseGate: { ...releaseGate, path: join(root, "other-gate.json") },
+    }, bounded())).rejects.toThrow(/release gate path mismatch/u);
   });
 
   it("awaits a successful one-shot verifier and publishes its exact typed barrier", async () => {

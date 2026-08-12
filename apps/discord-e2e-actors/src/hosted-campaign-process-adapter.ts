@@ -13,6 +13,7 @@ import type {
   HostedCampaignLeaseHandle,
   HostedCampaignPorts,
 } from "./hosted-campaign-coordinator.js";
+import { HOSTED_CAMPAIGN_TARGET } from "./hosted-campaign-coordinator.js";
 
 const ENTRYPOINTS: Readonly<Record<HostedCampaignEntrypoint, string>> = Object.freeze({
   actor: "main.js",
@@ -114,6 +115,7 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
   releaseCampaignLease(): Promise<void> { return this.#options.artifactStore.releaseLease(); }
   async publishReleaseGate(spec: HostedCampaignExecutableSpec, bounded: HostedCampaignBoundedSignal): Promise<void> {
     assertActive(bounded);
+    assertPinnedTarget(spec);
     const path = spec.environment.DISCORD_E2E_HOSTED_RELEASE_GATE_PATH;
     const campaignId = spec.environment.DISCORD_E2E_HOSTED_RELEASE_GATE_CAMPAIGN_ID;
     const runId = spec.environment.DISCORD_E2E_RUN_ID;
@@ -183,6 +185,7 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
     if (this.#children.has(spec.childId)) {
       throw new Error(`Hosted campaign child already started: ${spec.childId}`);
     }
+    assertPinnedTarget(spec);
     const environment = validateEnvironment(spec.environment);
     const child = spawn(process.execPath, [join(this.#options.distRoot, ENTRYPOINTS[spec.entrypoint]), ...argumentsFor(spec)], {
       env: environment, shell: false, stdio: ["ignore", "pipe", "pipe"],
@@ -271,6 +274,37 @@ async function raceWithBounded<T>(promise: Promise<T>, bounded: HostedCampaignBo
       bounded.signal.removeEventListener("abort", abort);
     });
   });
+}
+
+function assertPinnedTarget(spec: HostedCampaignExecutableSpec): void {
+  const expected = HOSTED_CAMPAIGN_TARGET;
+  if (spec.entrypoint === "actor") {
+    assertEnvironmentCoordinate(spec, "DISCORD_E2E_GUILD_ID", expected.guildId);
+    assertEnvironmentCoordinate(spec, "DISCORD_E2E_VOICE_CHANNEL_ID", expected.voiceChannelId);
+    const declaredReleaseGatePath = spec.environment.DISCORD_E2E_HOSTED_RELEASE_GATE_PATH;
+    if ((declaredReleaseGatePath !== undefined || spec.releaseGate !== undefined)
+      && declaredReleaseGatePath !== spec.releaseGate?.path) {
+      throw new Error(`Hosted campaign actor ${spec.childId} release gate path mismatch`);
+    }
+  }
+  if (spec.entrypoint === "live-observer") {
+    assertEnvironmentCoordinate(spec, "DISCORD_E2E_LIVE_RESULT_CHANNEL_ID", expected.publicationChannelId);
+    assertEnvironmentCoordinate(spec, "DISCORD_E2E_LIVE_SUT_APPLICATION_ID", expected.sutApplicationId);
+  }
+  if (spec.entrypoint === "collector") {
+    assertEnvironmentCoordinate(spec, "DISCORD_E2E_MUTATION_TARGET", expected.mutationTarget);
+    assertEnvironmentCoordinate(spec, "DISCORD_E2E_REMOTE_HOST", expected.host);
+    assertEnvironmentCoordinate(spec, "DISCORD_E2E_REMOTE_PROJECT", expected.project);
+    assertEnvironmentCoordinate(spec, "DISCORD_E2E_REMOTE_CRAIG_PROJECT", expected.craigProject);
+  }
+}
+
+function assertEnvironmentCoordinate(
+  spec: HostedCampaignExecutableSpec, name: string, expected: string,
+): void {
+  if (spec.environment[name] !== expected) {
+    throw new Error(`Hosted campaign child ${spec.childId} target mismatch for ${name}`);
+  }
 }
 
 function argumentsFor(spec: HostedCampaignExecutableSpec): readonly string[] {

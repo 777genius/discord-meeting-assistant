@@ -44,4 +44,28 @@ describe("hosted campaign artifact store", () => {
     await chmod(root, 0o755);
     await expect(store.acquireLease(bounded())).rejects.toThrow(/0700/u);
   });
+
+  it("rejects oversized and unsupported artifact envelopes", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "hosted-artifacts-"));
+    const root = join(parent, "root");
+    const store = new HostedCampaignArtifactStore(root, "campaign-1");
+    await store.initialize();
+    const action = { kind: "provenance-before" as const };
+    const path = join(root, actionFileName(action));
+    await writeFile(path, `${"x".repeat(1024 * 1024)}x`, { mode: 0o600 });
+    await expect(store.awaitAction(action, bounded())).rejects.toThrow(/Unsafe/u);
+  });
+
+  it("stops polling immediately when cancelled", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "hosted-artifacts-"));
+    const store = new HostedCampaignArtifactStore(join(parent, "root"), "campaign-1");
+    await store.initialize();
+    const controller = new AbortController();
+    const waiting = store.awaitAction(
+      { kind: "provenance-before" },
+      { deadlineEpochMilliseconds: Date.now() + 10_000, signal: controller.signal },
+    );
+    controller.abort(new Error("cancelled by test"));
+    await expect(waiting).rejects.toThrow(/cancelled by test/u);
+  });
 });

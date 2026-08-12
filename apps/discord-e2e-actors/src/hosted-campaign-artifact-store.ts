@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { lstat, mkdir, open, readFile, rm } from "node:fs/promises";
+import { lstat, mkdir, open, rm, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 
 import type {
@@ -61,18 +61,16 @@ export class HostedCampaignArtifactStore {
     while (true) {
       assertActive(bounded);
       try {
-        const status = await lstat(path);
-        if (status.isSymbolicLink() || !status.isFile() || (status.mode & 0o777) !== 0o600
-          || status.size > MAX_ARTIFACT_BYTES) {
-          throw new Error(`Unsafe hosted campaign action artifact: ${path}`);
-        }
-        const parsed = JSON.parse(await readFile(path, "utf8")) as ActionArtifact;
+        const parsed = await readActionArtifact(path);
         if (parsed.campaignId !== this.#campaignId || JSON.stringify(parsed.action) !== JSON.stringify(action)
           || typeof parsed.evidence !== "object" || parsed.evidence === null) {
           throw new Error(`Hosted campaign action artifact correlation mismatch: ${path}`);
         }
         return parsed.evidence as HostedCampaignActionEvidence<Action>;
       } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ELOOP") {
+          throw new Error(`Unsafe hosted campaign action artifact: ${path}`, { cause: error });
+        }
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
           throw error;
         }
@@ -103,6 +101,50 @@ export class HostedCampaignArtifactStore {
       evidence,
     });
   }
+}
+
+async function readActionArtifact(path: string): Promise<ActionArtifact> {
+  let handle: FileHandle | undefined;
+  try {
+    handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const before = await handle.stat();
+    assertSafeArtifact(before, path);
+    const contents = await handle.readFile("utf8");
+    const after = await handle.stat();
+    assertSafeArtifact(after, path);
+    if (before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size
+      || before.mtimeMs !== after.mtimeMs || Buffer.byteLength(contents, "utf8") !== before.size) {
+      throw new Error(`Hosted campaign action artifact changed while reading: ${path}`);
+    }
+    const value: unknown = JSON.parse(contents);
+    if (!isActionArtifact(value)) {
+      throw new Error(`Hosted campaign action artifact has an invalid envelope: ${path}`);
+    }
+    return value;
+  } finally {
+    await handle?.close();
+  }
+}
+
+function assertSafeArtifact(status: Awaited<ReturnType<FileHandle["stat"]>> & { readonly mode: number }, path: string): void {
+  if (!status.isFile() || (status.mode & 0o777) !== 0o600 || status.size < 2 || status.size > MAX_ARTIFACT_BYTES) {
+    throw new Error(`Unsafe hosted campaign action artifact: ${path}`);
+  }
+  if (typeof process.getuid === "function" && status.uid !== process.getuid()) {
+    throw new Error(`Hosted campaign action artifact is not owned by the current user: ${path}`);
+  }
+}
+
+function isActionArtifact(value: unknown): value is ActionArtifact {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return Object.keys(record).length === 3
+    && Object.hasOwn(record, "action") && Object.hasOwn(record, "campaignId") && Object.hasOwn(record, "evidence")
+    && typeof record.campaignId === "string"
+    && typeof record.action === "object" && record.action !== null && !Array.isArray(record.action)
+    && typeof record.evidence === "object" && record.evidence !== null && !Array.isArray(record.evidence);
 }
 
 export function actionFileName(action: HostedCampaignBarrierAction): string {
@@ -136,7 +178,19 @@ function assertActive(bounded: HostedCampaignBoundedSignal): void {
 
 async function wait(milliseconds: number, signal: AbortSignal): Promise<void> {
   await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(resolve, milliseconds);
-    signal.addEventListener("abort", () => { clearTimeout(timer); reject(signal.reason); }, { once: true });
+    if (signal.aborted) {
+      reject(signal.reason ?? new Error("Hosted campaign cancelled"));
+      return;
+    }
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+      reject(signal.reason ?? new Error("Hosted campaign cancelled"));
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, milliseconds);
+    signal.addEventListener("abort", onAbort, { once: true });
   });
 }
