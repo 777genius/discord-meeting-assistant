@@ -16,11 +16,15 @@ describe("conversation voice campaign contract", () => {
       observerApplicationId: "1533867700575670282",
       voiceChannelId: "1533228823045214398",
     };
-    expect(() => assertConversationVoiceCampaignTarget(pinnedTarget)).not.toThrow();
-    expect(() => assertConversationVoiceCampaignTarget({
-      ...pinnedTarget,
-      observerApplicationId: "1534999999999999999",
-    })).toThrow("pinned Botik, observer, guild, and voice channel");
+    expect(() => {
+      assertConversationVoiceCampaignTarget(pinnedTarget);
+    }).not.toThrow();
+    expect(() => {
+      assertConversationVoiceCampaignTarget({
+        ...pinnedTarget,
+        observerApplicationId: "1534999999999999999",
+      });
+    }).toThrow("pinned Botik, observer, guild, and voice channel");
   });
 
   it("prints the exact safe six-capture plan", () => {
@@ -43,20 +47,26 @@ describe("conversation voice campaign contract", () => {
   });
 
   it("rejects extra, farewell-before-answer, and greeting-after-answer plans", () => {
-    expect(() => assertConversationVoiceCampaignPlan([
-      ...canonicalPlan(),
-      canonicalPlan()[5]!,
-    ])).toThrow("expected exactly 6 captures");
-    expect(() => assertConversationVoiceCampaignPlan([
-      ...canonicalPlan().slice(0, 4),
-      canonicalPlan()[5]!,
-      canonicalPlan()[4]!,
-    ])).toThrow("capture 5 must be speaker-d-addressed-answer");
-    expect(() => assertConversationVoiceCampaignPlan([
-      ...canonicalPlan().slice(0, 4),
-      canonicalPlan()[4]!,
-      canonicalPlan()[3]!,
-    ])).toThrow("capture 6 must be explicit-group-farewell");
+    expect(() => {
+      assertConversationVoiceCampaignPlan([
+        ...canonicalPlan(),
+        canonicalPlan()[5]!,
+      ]);
+    }).toThrow("expected exactly 6 captures");
+    expect(() => {
+      assertConversationVoiceCampaignPlan([
+        ...canonicalPlan().slice(0, 4),
+        canonicalPlan()[5]!,
+        canonicalPlan()[4]!,
+      ]);
+    }).toThrow("capture 5 must be speaker-d-addressed-answer");
+    expect(() => {
+      assertConversationVoiceCampaignPlan([
+        ...canonicalPlan().slice(0, 4),
+        canonicalPlan()[4]!,
+        canonicalPlan()[3]!,
+      ]);
+    }).toThrow("capture 6 must be explicit-group-farewell");
   });
 
   it("rejects semantic or chronological retained-evidence drift", () => {
