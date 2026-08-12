@@ -1,4 +1,5 @@
 import { constants } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { link, lstat, mkdir, open, unlink, watch } from "node:fs/promises";
 import { basename, dirname } from "node:path";
 
@@ -7,6 +8,7 @@ import { z } from "zod";
 import { HOSTED_CAMPAIGN_TARGET } from "./hosted-campaign-coordinator.js";
 
 const maximumGateBytes = 4 * 1024;
+const maximumArmedReceiptAgeMilliseconds = 120_000;
 const permissionMask = 0o777;
 const identifier = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u);
 const phaseSchema = z.enum(["connection", "playback"]);
@@ -21,8 +23,21 @@ const gateSchema = z.object({
     voiceChannelId: z.literal(HOSTED_CAMPAIGN_TARGET.voiceChannelId),
   }).strict(),
 }).strict();
+const armedReceiptSchema = z.object({
+  armedAtEpochMs: z.number().int().safe().nonnegative(),
+  campaignId: identifier,
+  gatePath: z.string().min(1),
+  phase: phaseSchema,
+  runId: identifier,
+  schemaVersion: z.literal(1),
+  target: z.object({
+    guildId: z.literal(HOSTED_CAMPAIGN_TARGET.guildId),
+    voiceChannelId: z.literal(HOSTED_CAMPAIGN_TARGET.voiceChannelId),
+  }).strict(),
+}).strict();
 
 export interface SupplementalPlaybackGateExpectation {
+  readonly armedPath: string;
   readonly campaignId: string;
   readonly guildId: string;
   readonly path: string;
@@ -63,6 +78,7 @@ export async function waitForSupplementalPlaybackGate(
 ): Promise<void> {
   const waitStartedAtEpochMs = Date.now();
   await assertAbsent(expected.path);
+  await publishArmedReceipt(expected, waitStartedAtEpochMs);
   const changes = watch(dirname(expected.path), { signal });
   try {
     if (await tryRead(expected, waitStartedAtEpochMs)) {return;}
@@ -77,6 +93,113 @@ export async function waitForSupplementalPlaybackGate(
     throw error;
   }
   throw new Error(`Supplemental ${expected.phase} gate watch ended before release`);
+}
+
+async function publishArmedReceipt(
+  expected: SupplementalPlaybackGateExpectation,
+  armedAtEpochMs: number,
+): Promise<void> {
+  await mkdir(dirname(expected.armedPath), { mode: 0o700, recursive: true });
+  const temporaryPath = `${expected.armedPath}.tmp-${randomUUID()}`;
+  const handle = await open(
+    temporaryPath,
+    constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
+    0o600,
+  );
+  try {
+    await handle.writeFile(`${JSON.stringify({
+      armedAtEpochMs,
+      campaignId: expected.campaignId,
+      gatePath: expected.path,
+      phase: expected.phase,
+      runId: expected.runId,
+      schemaVersion: 1,
+      target: { guildId: expected.guildId, voiceChannelId: expected.voiceChannelId },
+    })}\n`, "utf8");
+    await handle.sync();
+    await handle.close();
+    await link(temporaryPath, expected.armedPath);
+  } finally {
+    await handle.close().catch(() => {});
+    await unlink(temporaryPath).catch(() => {});
+  }
+}
+
+export async function waitForSupplementalGateArmed(
+  expected: SupplementalPlaybackGateExpectation,
+  signal: AbortSignal,
+): Promise<void> {
+  for (;;) {
+    if (signal.aborted) {
+      throw new Error(`Timed out or aborted waiting for supplemental ${expected.phase} gate readiness`);
+    }
+    try {
+      await readArmedReceipt(expected);
+      return;
+    } catch (error: unknown) {
+      if (!isNodeError(error, "ENOENT")) {throw error;}
+    }
+    await waitForRetry(signal, expected.phase);
+  }
+}
+
+async function readArmedReceipt(expected: SupplementalPlaybackGateExpectation): Promise<void> {
+  const status = await lstat(expected.armedPath);
+  if (!isPrivateOwnedFile(status)) {
+    throw new Error(`Unsafe supplemental ${expected.phase} armed receipt: ${expected.armedPath}`);
+  }
+  const handle = await open(expected.armedPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const opened = await handle.stat();
+    if (opened.dev !== status.dev || opened.ino !== status.ino || !isPrivateOwnedFile(opened, false)) {
+      throw new Error(`Supplemental ${expected.phase} armed receipt changed while opening`);
+    }
+    const receipt = armedReceiptSchema.parse(JSON.parse(await handle.readFile("utf8")) as unknown);
+    if (receipt.campaignId !== expected.campaignId || receipt.runId !== expected.runId
+      || receipt.phase !== expected.phase || receipt.gatePath !== expected.path
+      || receipt.target.guildId !== expected.guildId
+      || receipt.target.voiceChannelId !== expected.voiceChannelId) {
+      throw new Error(`Supplemental ${expected.phase} armed receipt correlation mismatch`);
+    }
+    const readAtEpochMs = Date.now();
+    if (receipt.armedAtEpochMs > readAtEpochMs
+      || readAtEpochMs - receipt.armedAtEpochMs > maximumArmedReceiptAgeMilliseconds) {
+      throw new Error(`Supplemental ${expected.phase} armed receipt is not fresh`);
+    }
+  } finally {
+    await handle.close();
+  }
+}
+
+function isPrivateOwnedFile(
+  status: {
+    readonly isFile: () => boolean;
+    readonly isSymbolicLink: () => boolean;
+    readonly mode: number;
+    readonly size: number;
+    readonly uid: number;
+  },
+  checkSize = true,
+): boolean {
+  return !status.isSymbolicLink() && status.isFile() && (status.mode & permissionMask) === 0o600
+    && (!checkSize || status.size <= maximumGateBytes)
+    && (typeof process.getuid !== "function" || status.uid === process.getuid());
+}
+
+async function waitForRetry(signal: AbortSignal, phase: "connection" | "playback"): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const finish = (): void => {
+      signal.removeEventListener("abort", abort);
+      resolve();
+    };
+    const timer = setTimeout(finish, 25);
+    const abort = (): void => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", abort);
+      reject(new Error(`Timed out or aborted waiting for supplemental ${phase} gate readiness`));
+    };
+    signal.addEventListener("abort", abort, { once: true });
+  });
 }
 
 export async function writeSupplementalPlaybackGate(

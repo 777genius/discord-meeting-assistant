@@ -10,7 +10,11 @@ import {
   hostedServiceLevelSourceReportV1Schema,
   readPrivateHostedServiceLevelArtifact,
 } from "./hosted-service-level-source-artifact.js";
-import { writeSupplementalPlaybackGate } from "./supplemental-playback-gate.js";
+import {
+  waitForSupplementalGateArmed,
+  writeSupplementalPlaybackGate,
+} from "./supplemental-playback-gate.js";
+import { waitForActorGateArmed } from "./actor-release-gate.js";
 import { verifyHostedFiniteProcessCompletion } from "./hosted-finite-process-completion.js";
 import { recordingReadyReceiptV1Schema } from "./recording-ready-receipt.js";
 import type { HostedFiniteProcessCompletion } from "./hosted-finite-process-contract.js";
@@ -67,6 +71,10 @@ const ALLOWED_ENVIRONMENT = new Set([
   "DISCORD_E2E_EXPECTED_PIPECAT_SOURCE_REVISION", "DISCORD_E2E_EXPECTED_SUBSCRIPTION_RUNTIME_SOURCE_REVISION",
   "DISCORD_E2E_FIXTURE_MANIFEST", "DISCORD_E2E_GUILD_ID", "DISCORD_E2E_KEYCHAIN_SERVICE",
   "DISCORD_E2E_HOSTED_RELEASE_GATE_CAMPAIGN_ID", "DISCORD_E2E_HOSTED_RELEASE_GATE_PATH",
+  "DISCORD_E2E_HOSTED_RELEASE_GATE_ARMED_PATH", "DISCORD_E2E_HOSTED_PLAYBACK_GATE_PATH",
+  "DISCORD_E2E_HOSTED_PLAYBACK_GATE_ARMED_PATH", "DISCORD_E2E_HOSTED_END_GATE_PATH",
+  "DISCORD_E2E_HOSTED_END_GATE_ARMED_PATH",
+  "DISCORD_E2E_HOSTED_SPEAKER_B_GATE_PATH", "DISCORD_E2E_HOSTED_SPEAKER_B_GATE_ARMED_PATH",
   "DISCORD_E2E_HOSTED_RELEASE_GATE_TIMEOUT_MS",
   "DISCORD_E2E_HOSTED_CAMPAIGN_ID",
   "DISCORD_E2E_LIVE_DURATION_MS", "DISCORD_E2E_LIVE_KEYCHAIN_SERVICE", "DISCORD_E2E_LIVE_OUTPUT",
@@ -108,7 +116,9 @@ const ALLOWED_ENVIRONMENT = new Set([
   "DISCORD_E2E_SPEAKER_B_ACCOUNT", "DISCORD_E2E_SPEAKER_B_CONNECT_DELAY_MS", "DISCORD_E2E_SPEAKER_B_DELAY_MS",
   "DISCORD_E2E_SPEAKER_B_FIXTURE", "DISCORD_E2E_SUPPLEMENTAL_EVIDENCE_OUTPUT", "DISCORD_E2E_SUPPLEMENTAL_KEYCHAIN_ACCOUNT",
   "DISCORD_E2E_SUPPLEMENTAL_CAMPAIGN_ID", "DISCORD_E2E_SUPPLEMENTAL_CONNECTION_GATE_PATH",
+  "DISCORD_E2E_SUPPLEMENTAL_CONNECTION_GATE_ARMED_PATH",
   "DISCORD_E2E_SUPPLEMENTAL_GATE_TIMEOUT_MS", "DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_GATE_PATH",
+  "DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_GATE_ARMED_PATH",
   "DISCORD_E2E_SUPPLEMENTAL_KEYCHAIN_SERVICE", "DISCORD_E2E_SUPPLEMENTAL_MANIFEST",
   "DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_INPUT", "DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_TIMEOUT_MS",
   "DISCORD_E2E_SUPPLEMENTAL_POST_HOLD_MS", "DISCORD_E2E_SUPPLEMENTAL_PRE_HOLD_MS",
@@ -190,10 +200,19 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
     return this.#options.artifactStore.acquireLease(bounded);
   }
   releaseCampaignLease(): Promise<void> { return this.#options.artifactStore.releaseLease(); }
-  async publishReleaseGate(spec: HostedCampaignExecutableSpec, bounded: HostedCampaignBoundedSignal): Promise<void> {
+  async publishReleaseGate(
+    spec: HostedCampaignExecutableSpec,
+    phaseOrBounded: "connection" | "speaker-b" | "playback" | "end" | HostedCampaignBoundedSignal,
+    explicitBounded?: HostedCampaignBoundedSignal,
+  ): Promise<void> {
+    const phase = typeof phaseOrBounded === "string" ? phaseOrBounded : "connection";
+    const bounded = typeof phaseOrBounded === "string" ? explicitBounded : phaseOrBounded;
+    if (bounded === undefined) { throw new Error("Hosted actor gate requires a bounded signal"); }
     assertActive(bounded);
     assertPinnedTarget(spec);
-    const path = spec.environment.DISCORD_E2E_HOSTED_RELEASE_GATE_PATH;
+    const staged = phase === "connection" ? spec.releaseGate
+      : phase === "speaker-b" ? spec.actorGates?.speakerB : spec.actorGates?.[phase];
+    const path = staged?.path;
     const campaignId = spec.environment.DISCORD_E2E_HOSTED_RELEASE_GATE_CAMPAIGN_ID;
     const runId = spec.environment.DISCORD_E2E_RUN_ID;
     const scenario = spec.environment.DISCORD_E2E_SCENARIO;
@@ -201,12 +220,14 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
       || !new Set(["sequential", "overlap", "reconnect"]).has(scenario ?? "")) {
       throw new Error(`Hosted campaign actor ${spec.childId} has an incomplete release gate contract`);
     }
-    if (staged?.armedPath !== undefined) {
-      await waitForActorGateArmed({
-        armedPath: staged.armedPath, campaignId, path, phase, runId,
-        scenario: scenario as "overlap" | "reconnect" | "sequential",
-      }, bounded.signal);
+    if (staged?.armedPath === undefined) {
+      throw new Error(`Hosted campaign actor ${spec.childId} has no armed receipt for ${phase}`);
     }
+    await waitForActorGateArmed({
+      armedPath: staged.armedPath, campaignId, path, phase, runId,
+      scenario: scenario as "overlap" | "reconnect" | "sequential",
+    }, bounded.signal);
+    assertActive(bounded);
     await this.#options.artifactStore.writeCreateOnly(path, {
       schemaVersion: 1, campaignId, runId, scenario, phase, releasedAtEpochMs: Date.now(),
       target: { guildId: "1533228590643155034", voiceChannelId: "1533228823045214398", mutationTarget: "test-only" },
@@ -225,8 +246,18 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
     if (gate === undefined || campaignId === undefined || runId === undefined) {
       throw new Error(`Hosted supplemental player ${spec.childId} has an incomplete ${phase} gate`);
     }
+    await waitForSupplementalGateArmed({
+      armedPath: gate.armedPath,
+      campaignId,
+      guildId: HOSTED_CAMPAIGN_TARGET.guildId,
+      path: gate.path,
+      phase,
+      runId,
+      voiceChannelId: HOSTED_CAMPAIGN_TARGET.voiceChannelId,
+    }, boundedSignal(bounded));
+    assertActive(bounded);
     await writeSupplementalPlaybackGate({
-      campaignId, guildId: HOSTED_CAMPAIGN_TARGET.guildId, path: gate.path, phase,
+      armedPath: gate.armedPath, campaignId, guildId: HOSTED_CAMPAIGN_TARGET.guildId, path: gate.path, phase,
       releasedAtEpochMs: Date.now(), runId, schemaVersion: 1,
       voiceChannelId: HOSTED_CAMPAIGN_TARGET.voiceChannelId,
     });
@@ -691,6 +722,11 @@ function assertActive(bounded: HostedCampaignBoundedSignal): void {
   if (Date.now() >= bounded.deadlineEpochMilliseconds) {
     throw new Error("Hosted campaign deadline expired");
   }
+}
+function boundedSignal(bounded: HostedCampaignBoundedSignal): AbortSignal {
+  const remaining = bounded.deadlineEpochMilliseconds - Date.now();
+  if (remaining <= 0) {return AbortSignal.abort(new Error("Hosted campaign deadline expired"));}
+  return AbortSignal.any([bounded.signal, AbortSignal.timeout(remaining)]);
 }
 function signalChildTree(child: ChildProcess, signal: NodeJS.Signals): void {
   if (child.pid === undefined || !isChildTreeAlive(child)) {return;}

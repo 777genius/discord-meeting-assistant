@@ -12,6 +12,7 @@ const runIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u);
 
 const environmentSchema = z.object({
   DISCORD_E2E_SUPPLEMENTAL_CAMPAIGN_ID: runIdSchema,
+  DISCORD_E2E_SUPPLEMENTAL_CONNECTION_GATE_ARMED_PATH: z.string().refine(isAbsolute),
   DISCORD_E2E_SUPPLEMENTAL_CONNECTION_GATE_PATH: z.string().refine(isAbsolute),
   DISCORD_E2E_SUPPLEMENTAL_EVIDENCE_OUTPUT: z.string().refine(
     (value) => isAbsolute(value) && value !== "/",
@@ -31,6 +32,7 @@ const environmentSchema = z.object({
   DISCORD_E2E_SUPPLEMENTAL_GATE_TIMEOUT_MS: z.coerce.number().int()
     .min(1_000).max(120_000),
   DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_GATE_PATH: z.string().refine(isAbsolute),
+  DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_GATE_ARMED_PATH: z.string().refine(isAbsolute),
   DISCORD_E2E_SUPPLEMENTAL_PRIVATE_TEST_GUILD: z.literal("private-test-guild"),
   DISCORD_E2E_SUPPLEMENTAL_READY_TIMEOUT_MS: z.coerce.number().int()
     .min(1_000).max(120_000).default(30_000),
@@ -54,6 +56,7 @@ const supplementalManifestSchema = z.object({
 
 export interface SupplementalVoicePlaybackConfig {
   readonly campaignId: string;
+  readonly connectionGateArmedPath: string;
   readonly connectionGatePath: string;
   readonly evidenceOutputPath: string;
   readonly keychainAccount: string;
@@ -63,6 +66,7 @@ export interface SupplementalVoicePlaybackConfig {
   readonly postHoldMilliseconds: number;
   readonly gateTimeoutMilliseconds: number;
   readonly playbackGatePath: string;
+  readonly playbackGateArmedPath: string;
   readonly privateTestGuildConfirmed: true;
   readonly readyTimeoutMilliseconds: number;
   readonly runId: string;
@@ -95,11 +99,18 @@ export function loadSupplementalVoicePlaybackConfig(
     throw new Error("Supplemental voice playback does not accept bot tokens through environment variables");
   }
   const parsed = environmentSchema.parse(environment);
-  if (parsed.DISCORD_E2E_SUPPLEMENTAL_CONNECTION_GATE_PATH === parsed.DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_GATE_PATH) {
-    throw new Error("Supplemental connection and playback gate paths must be distinct");
+  const gatePaths = new Set([
+    parsed.DISCORD_E2E_SUPPLEMENTAL_CONNECTION_GATE_ARMED_PATH,
+    parsed.DISCORD_E2E_SUPPLEMENTAL_CONNECTION_GATE_PATH,
+    parsed.DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_GATE_ARMED_PATH,
+    parsed.DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_GATE_PATH,
+  ]);
+  if (gatePaths.size !== 4) {
+    throw new Error("Supplemental gate and armed receipt paths must be distinct");
   }
   return Object.freeze({
     campaignId: parsed.DISCORD_E2E_SUPPLEMENTAL_CAMPAIGN_ID,
+    connectionGateArmedPath: parsed.DISCORD_E2E_SUPPLEMENTAL_CONNECTION_GATE_ARMED_PATH,
     connectionGatePath: parsed.DISCORD_E2E_SUPPLEMENTAL_CONNECTION_GATE_PATH,
     evidenceOutputPath: parsed.DISCORD_E2E_SUPPLEMENTAL_EVIDENCE_OUTPUT,
     keychainAccount: parsed.DISCORD_E2E_SUPPLEMENTAL_KEYCHAIN_ACCOUNT,
@@ -109,6 +120,7 @@ export function loadSupplementalVoicePlaybackConfig(
     postHoldMilliseconds: parsed.DISCORD_E2E_SUPPLEMENTAL_POST_HOLD_MS,
     gateTimeoutMilliseconds: parsed.DISCORD_E2E_SUPPLEMENTAL_GATE_TIMEOUT_MS,
     playbackGatePath: parsed.DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_GATE_PATH,
+    playbackGateArmedPath: parsed.DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_GATE_ARMED_PATH,
     privateTestGuildConfirmed: true,
     readyTimeoutMilliseconds: parsed.DISCORD_E2E_SUPPLEMENTAL_READY_TIMEOUT_MS,
     runId: parsed.DISCORD_E2E_SUPPLEMENTAL_RUN_ID,

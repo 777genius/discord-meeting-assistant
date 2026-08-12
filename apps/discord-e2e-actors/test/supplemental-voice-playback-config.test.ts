@@ -11,11 +11,13 @@ import {
 
 const baseEnvironment = {
   DISCORD_E2E_SUPPLEMENTAL_CAMPAIGN_ID: "campaign-1",
+  DISCORD_E2E_SUPPLEMENTAL_CONNECTION_GATE_ARMED_PATH: "/tmp/speaker-d.connection.armed.json",
   DISCORD_E2E_SUPPLEMENTAL_CONNECTION_GATE_PATH: "/tmp/speaker-d.connection.json",
   DISCORD_E2E_SUPPLEMENTAL_EVIDENCE_OUTPUT: "/tmp/speaker-d.evidence.json",
   DISCORD_E2E_SUPPLEMENTAL_MANIFEST: "/tmp/speaker-d.manifest.json",
   DISCORD_E2E_SUPPLEMENTAL_GATE_TIMEOUT_MS: "30000",
   DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_GATE_PATH: "/tmp/speaker-d.playback.json",
+  DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_GATE_ARMED_PATH: "/tmp/speaker-d.playback.armed.json",
   DISCORD_E2E_SUPPLEMENTAL_PRIVATE_TEST_GUILD: "private-test-guild",
   DISCORD_E2E_SUPPLEMENTAL_RUN_ID: "retained-campaign-speaker-d-1",
 } as const;
@@ -52,13 +54,18 @@ describe("loadSupplementalVoicePlaybackConfig", () => {
     })).toThrow();
   });
 
-  it("requires two distinct absolute gate paths and explicit campaign correlation", () => {
+  it("requires four distinct absolute gate/armed paths and explicit campaign correlation", () => {
     expect(() => loadSupplementalVoicePlaybackConfig({
       ...baseEnvironment, DISCORD_E2E_SUPPLEMENTAL_CONNECTION_GATE_PATH: "relative.json",
     })).toThrow();
     expect(() => loadSupplementalVoicePlaybackConfig({
       ...baseEnvironment,
       DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_GATE_PATH: baseEnvironment.DISCORD_E2E_SUPPLEMENTAL_CONNECTION_GATE_PATH,
+    })).toThrow("must be distinct");
+    expect(() => loadSupplementalVoicePlaybackConfig({
+      ...baseEnvironment,
+      DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_GATE_ARMED_PATH:
+        baseEnvironment.DISCORD_E2E_SUPPLEMENTAL_CONNECTION_GATE_ARMED_PATH,
     })).toThrow("must be distinct");
     const withoutCampaign = { ...baseEnvironment } as Record<string, string>;
     delete withoutCampaign.DISCORD_E2E_SUPPLEMENTAL_CAMPAIGN_ID;

@@ -12,6 +12,7 @@ import {
   type HostedCampaignExecutableSpec,
 } from "../src/hosted-campaign-coordinator.js";
 import { HostedCampaignProcessAdapter } from "../src/hosted-campaign-process-adapter.js";
+import { waitForSupplementalPlaybackGate } from "../src/supplemental-playback-gate.js";
 import { serviceLevelsProof } from "./e2e-service-level-fixtures.js";
 import {
   hostedCampaignProcessEventPrefix,
@@ -617,6 +618,45 @@ describe("hosted campaign process adapter", () => {
       ...executable,
       releaseGate: { ...releaseGate, path: join(root, "other-gate.json") },
     }, bounded())).rejects.toThrow(/release gate path mismatch/u);
+  });
+
+  it("publishes a supplemental gate only after its correlated waiter is armed", async () => {
+    const { processAdapter } = await adapter("setInterval(() => {}, 1000)");
+    const root = await mkdtemp(join(tmpdir(), "hosted-supplemental-gate-"));
+    const gatePath = join(root, "connection.json");
+    const armedPath = join(root, "connection.armed.json");
+    const executable: HostedCampaignExecutableSpec = {
+      arguments: { kind: "environment" }, childId: "supplemental", entrypoint: "supplemental-player",
+      environment: {
+        DISCORD_E2E_SUPPLEMENTAL_CAMPAIGN_ID: "campaign-1",
+        DISCORD_E2E_SUPPLEMENTAL_RUN_ID: "run-3",
+      }, produces: [], requires: [], startBefore: { kind: "campaign" }, supplementalGates: {
+        connection: { armedPath, path: gatePath, trigger: {
+          action: { kind: "capture-retained", ordinal: 3 }, ordinal: 3, runId: "run-3",
+        } },
+        playback: { armedPath: join(root, "playback.armed.json"), path: join(root, "playback.json"), trigger: {
+          action: { kind: "capture-retained", ordinal: 4 }, ordinal: 3, runId: "run-3",
+        } },
+      },
+    };
+    const expectation = {
+      armedPath, campaignId: "campaign-1", guildId: HOSTED_CAMPAIGN_TARGET.guildId,
+      path: gatePath, phase: "connection" as const, runId: "run-3",
+      voiceChannelId: HOSTED_CAMPAIGN_TARGET.voiceChannelId,
+    };
+    const waiting = waitForSupplementalPlaybackGate(expectation, AbortSignal.timeout(1_000));
+    await expect(processAdapter.publishSupplementalGate(executable, "connection", bounded()))
+      .resolves.toBeUndefined();
+    await expect(waiting).resolves.toBeUndefined();
+
+    const unarmed = { ...executable, supplementalGates: {
+      ...executable.supplementalGates!, connection: {
+        ...executable.supplementalGates!.connection,
+        armedPath: join(root, "missing.armed.json"), path: join(root, "unarmed.json"),
+      },
+    } };
+    await expect(processAdapter.publishSupplementalGate(unarmed, "connection", bounded()))
+      .rejects.toThrow(/readiness/u);
   });
 
   it("awaits a successful one-shot verifier and publishes its exact typed barrier", async () => {

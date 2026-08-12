@@ -20,14 +20,14 @@ async function main(): Promise<void> {
     config.manifestPath,
     config.playbackTimeoutMilliseconds,
   );
-  const gate = (phase: "connection" | "playback", path: string) => ({
-    campaignId: config.campaignId, guildId: manifest.guildId, path, phase,
+  const gate = (phase: "connection" | "playback", armedPath: string, path: string) => ({
+    armedPath, campaignId: config.campaignId, guildId: manifest.guildId, path, phase,
     runId: config.runId, voiceChannelId: manifest.voiceChannelId,
   });
   let actor: Awaited<ReturnType<typeof connectDiscordVoiceActor>> | undefined;
   try {
     const playback = await runSupplementalPlaybackAfterGates({
-      connectionGate: gate("connection", config.connectionGatePath),
+      connectionGate: gate("connection", config.connectionGateArmedPath, config.connectionGatePath),
       connect: async () => {
         const secretReader = config.secretDirectory === undefined
           ? new MacOsKeychainSecretReader(config.keychainService)
@@ -45,7 +45,7 @@ async function main(): Promise<void> {
       play: async (connection) => runSupplementalVoicePlayback(
         connection, manifest.applicationId, config.postHoldMilliseconds, systemPlaybackClock,
       ),
-      playbackGate: gate("playback", config.playbackGatePath),
+      playbackGate: gate("playback", config.playbackGateArmedPath, config.playbackGatePath),
       timeoutMilliseconds: config.gateTimeoutMilliseconds,
     });
     await writeNewSupplementalEvidence(config.evidenceOutputPath, {
