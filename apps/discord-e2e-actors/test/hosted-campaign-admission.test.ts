@@ -56,6 +56,34 @@ describe("hosted campaign admission", () => {
     expect((await readFile(receiptPath, "utf8")).includes(receipt.receiptSha256)).toBe(true);
   });
 
+  it("requires greeting readiness evidence to bind host/container roots and observer identity", async () => {
+    const setup = await arrange();
+    const observer = setup.plan.children.find(({ childId }) => childId === "conversation-observer")!;
+    const greetingHandshakeRoot = observer.environment
+      .DISCORD_E2E_CONVERSATION_VOICE_GREETING_HANDSHAKE_ROOT!;
+    const path = join(setup.root, "conversation-greeting-readiness.json");
+    await writePrivate(path, JSON.stringify({ capability: "conversation-greeting-readiness" }));
+    const base = {
+      capability: "conversation-greeting-readiness" as const,
+      containerGreetingHandshakeRoot: `/var/lib/discord-meeting/e2e-playback-readiness/${setup.definition.campaignId}/run-3/greeting-handshakes`,
+      greetingHandshakeRoot,
+      hostOwnerUid: 10_001,
+      observerParticipantId: "1533867700575670282" as const,
+      path,
+      platformContainerUid: 10_001 as const,
+      sha256: digest(await readFile(path)),
+    };
+    await expect(inspectHostedCampaignAdmission({
+      bindings: setup.bindings, definition: setup.definition, minimumFreeBytes: 1,
+      plan: setup.plan,
+      remoteEvidence: { capabilities: [{ ...base, containerGreetingHandshakeRoot: "/wrong" }], schemaVersion: 1 },
+    })).rejects.toThrow("exact observer plan binding");
+    await expect(inspectHostedCampaignAdmission({
+      bindings: setup.bindings, definition: setup.definition, minimumFreeBytes: 1,
+      plan: setup.plan, remoteEvidence: { capabilities: [base], schemaVersion: 1 },
+    })).resolves.toMatchObject({ status: "blocked" });
+  });
+
   it("rejects a plan that was not compiled from the exact definition and bindings", async () => {
     const setup = await arrange();
     await expect(inspectHostedCampaignAdmission({

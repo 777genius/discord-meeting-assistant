@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants, type Stats } from "node:fs";
 import { link, open, realpath, rm, statfs, type FileHandle } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, normalize, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 
 import { z } from "zod";
 
@@ -34,8 +34,11 @@ const remoteEvidenceSchema = z.object({
   capabilities: z.array(z.union([
     baseRemoteEvidenceSchema.extend({
       capability: z.literal("conversation-greeting-readiness"),
+      containerGreetingHandshakeRoot: z.string().refine((value) => isSafeAbsolutePath(value)),
       greetingHandshakeRoot: z.string().refine((value) => isSafeAbsolutePath(value)),
+      hostOwnerUid: z.number().int().nonnegative(),
       observerParticipantId: z.literal("1533867700575670282"),
+      platformContainerUid: z.literal(10_001),
     }).strict(),
     baseRemoteEvidenceSchema.refine(
       ({ capability }) => capability !== "conversation-greeting-readiness",
@@ -62,8 +65,11 @@ export type HostedCampaignAdmissionReceiptV1 = Readonly<{
   receiptSha256: string;
   remoteEvidence: readonly Readonly<{
     capability: z.infer<typeof remoteCapabilitySchema>;
+    containerGreetingHandshakeRoot?: string;
     greetingHandshakeRoot?: string;
+    hostOwnerUid?: number;
     observerParticipantId?: string;
+    platformContainerUid?: number;
     path: string;
     sha256: string;
   }>[];
@@ -142,8 +148,15 @@ export async function inspectHostedCampaignAdmission(
   const observer = plan.children.find(({ childId }) => childId === "conversation-observer");
   const plannedGreetingRoot = observer?.environment
     .DISCORD_E2E_CONVERSATION_VOICE_GREETING_HANDSHAKE_ROOT;
+  const expectedContainerGreetingRoot = plannedGreetingRoot === undefined
+    ? undefined
+    : join(
+        "/var/lib/discord-meeting/e2e-playback-readiness",
+        relative(definition.campaignRoot, plannedGreetingRoot),
+      );
   if (greetingEvidence !== undefined && "greetingHandshakeRoot" in greetingEvidence &&
     (greetingEvidence.greetingHandshakeRoot !== plannedGreetingRoot ||
+      greetingEvidence.containerGreetingHandshakeRoot !== expectedContainerGreetingRoot ||
       greetingEvidence.observerParticipantId !== observer?.environment
         .DISCORD_E2E_CONVERSATION_VOICE_OBSERVER_APPLICATION_ID)) {
     throw new Error("Greeting readiness evidence does not match the exact observer plan binding");

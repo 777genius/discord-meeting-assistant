@@ -5,6 +5,7 @@ import {
   compileHostedCampaignDefinitionV1,
 } from "../src/hosted-campaign-plan-builder.js";
 import { parseHostedCampaignPlan } from "../src/hosted-campaign-run-config.js";
+import { validateHostedCampaignOwnedPaths } from "../src/hosted-campaign-plan-paths.js";
 
 const definition = () => ({
   answerFirstPacketMilliseconds: 4_000,
@@ -116,5 +117,59 @@ describe("hosted campaign strict plan builder", () => {
         ? { ...run, remoteAttestationPath: "/tmp/not-reviewed.json" }
         : run),
     })).toThrow();
+  });
+
+  it("rejects escaped, aliased, and undeclared generated campaign paths globally", () => {
+    const plan = buildResolvedHostedCampaignPlanV1(definition(), bindings());
+    const actor = plan.children.find(({ childId }) => childId === "actor-1")!;
+    const ready = plan.children.find(({ childId }) => childId === "recording-ready-1")!;
+    const actorCompletion = actor.completion!;
+    const readyCompletion = ready.completion!;
+    if (!("outputPath" in actorCompletion) || !("outputPath" in readyCompletion)) {
+      throw new Error("Expected finite output paths");
+    }
+    const aliased = {
+      ...plan,
+      children: plan.children.map((child) => child === ready
+        ? { ...child, completion: { ...readyCompletion, outputPath: actorCompletion.outputPath } }
+        : child),
+    };
+    expect(() => validateHostedCampaignOwnedPaths(aliased, definition().campaignRoot))
+      .toThrow(/aliases distinct resources/u);
+
+    const escaped = {
+      ...plan,
+      children: plan.children.map((child) => child === actor
+        ? { ...child, produces: child.produces.map((item, index) => index === 0
+          ? { ...item, outputPath: "/private/e2e/campaigns/other/barrier.json" }
+          : item) }
+        : child),
+    };
+    expect(() => validateHostedCampaignOwnedPaths(escaped, definition().campaignRoot))
+      .toThrow(/escapes/u);
+
+    const undeclared = {
+      ...plan,
+      children: plan.children.map((child) => child === actor
+        ? { ...child, environment: { ...child.environment,
+          DISCORD_E2E_UNKNOWN_INPUT: "/private/e2e/campaigns/campaign-2026-08-12/run-1/unknown.json" } }
+        : child),
+    };
+    expect(() => validateHostedCampaignOwnedPaths(undeclared, definition().campaignRoot))
+      .toThrow(/no owned resource declaration/u);
+  });
+
+  it("classifies external inputs separately and rejects collisions with generated outputs", () => {
+    const externalManifest = "/private/e2e/campaigns/campaign-2026-08-12/operator/manifest.json";
+    expect(() => buildResolvedHostedCampaignPlanV1({
+      ...definition(), fixtureManifestPath: externalManifest,
+    }, bindings())).not.toThrow();
+
+    expect(() => buildResolvedHostedCampaignPlanV1({
+      ...definition(), fixtureManifestPath: "/private/e2e/campaigns/campaign-2026-08-12/run-1/actor.json",
+    }, bindings())).toThrow(/external path aliases/u);
+    expect(() => buildResolvedHostedCampaignPlanV1({
+      ...definition(), fixtureManifestPath: "/private/e2e/fixtures/../fixtures/manifest.json",
+    }, bindings())).toThrow();
   });
 });

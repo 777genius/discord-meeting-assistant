@@ -9,9 +9,11 @@ import {
   validateHostedCampaign,
 } from "./hosted-campaign-coordinator.js";
 import { makeHostedCampaignChildren } from "./hosted-campaign-plan-children.js";
+import { validateHostedCampaignOwnedPaths } from "./hosted-campaign-plan-paths.js";
 
 const identifier = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u);
-const absolutePath = z.string().refine((value) => isAbsolute(value) && normalize(value) !== "/");
+const absolutePath = z.string().refine((value) =>
+  isAbsolute(value) && normalize(value) === value && normalize(value) !== "/");
 const sourceRevision = z.string().regex(/^(?:[a-f\d]{40}|[a-f\d]{64})$/u);
 const httpsOrigin = z.url().refine((value) => {
   const parsed = new URL(value);
@@ -116,6 +118,13 @@ export function buildResolvedHostedCampaignPlanV1(
     target: HOSTED_CAMPAIGN_TARGET,
     thresholds: Object.freeze({ answerFirstPacketMilliseconds: definition.answerFirstPacketMilliseconds }),
   });
+  validateHostedCampaignOwnedPaths(plan, definition.campaignRoot, [
+    definition.clockPreflightPath, definition.fixtureManifestPath,
+    definition.remote.composeFile, definition.remote.environmentFile, definition.remote.sourceRoot,
+    definition.secretDirectory, definition.speakerFixtures.a, definition.speakerFixtures.b,
+    definition.serviceLevelThresholdsPath, definition.supplementalManifestPath,
+    ...bindings.runs.map(({ remoteAttestationPath }) => remoteAttestationPath),
+  ]);
   validateHostedCampaign(plan);
   return plan;
 }
