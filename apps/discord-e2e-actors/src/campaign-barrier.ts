@@ -1,4 +1,5 @@
 import { constants, promises as fs } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
 const ROOT_MODE = 0o700;
@@ -31,16 +32,22 @@ export async function writeCreateOnlyBarrier(
   }
   await assertDirectory(rootPath);
   const barrierPath = join(rootPath, name);
+  const temporaryPath = join(rootPath, `${name}.partial-${randomUUID()}`);
   const handle = await fs.open(
-    barrierPath,
+    temporaryPath,
     constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
     BARRIER_MODE,
   );
   try {
-    await handle.writeFile(contents, { encoding: "utf8" });
-    await handle.sync();
+    try {
+      await handle.writeFile(contents, { encoding: "utf8" });
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await fs.link(temporaryPath, barrierPath);
   } finally {
-    await handle.close();
+    await fs.rm(temporaryPath, { force: true });
   }
   const status = await fs.lstat(barrierPath);
   if (status.isSymbolicLink() || !status.isFile()) {

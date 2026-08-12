@@ -4,7 +4,11 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { HOSTED_CAMPAIGN_TARGET, type HostedCampaignChildHandle } from "../src/hosted-campaign-coordinator.js";
+import {
+  HOSTED_CAMPAIGN_TARGET,
+  type HostedCampaignChildHandle,
+  type HostedCampaignLeaseHandle,
+} from "../src/hosted-campaign-coordinator.js";
 import { parseHostedCampaignArguments, parseHostedCampaignPlan } from "../src/hosted-campaign-run-config.js";
 import {
   readPrivateHostedCampaignPlan,
@@ -17,6 +21,7 @@ const plan = () => ({
     DISCORD_E2E_OUTPUT: "/private/evidence/observer.json",
   } }],
   target: HOSTED_CAMPAIGN_TARGET,
+  thresholds: { answerFirstPacketMilliseconds: 4_000 },
   runs: [
     { ordinal: 1, scenario: "sequential", campaignId: "campaign-1", runId: "run-1", retainedCaptureCount: 0 },
     { ordinal: 2, scenario: "overlap", campaignId: "campaign-1", runId: "run-2", retainedCaptureCount: 0 },
@@ -37,6 +42,10 @@ describe("run-hosted-campaign CLI", () => {
     expect(parseHostedCampaignPlan(plan()).children[0]?.entrypoint).toBe("live-observer");
     expect(() => parseHostedCampaignPlan({ ...plan(), children: [{ ...plan().children[0], command: "sh" }] }))
       .toThrow();
+    expect(() => parseHostedCampaignPlan({ ...plan(), thresholds: undefined })).toThrow();
+    expect(() => parseHostedCampaignPlan({
+      ...plan(), thresholds: { answerFirstPacketMilliseconds: Number.MAX_SAFE_INTEGER + 1 },
+    })).toThrow();
   });
 
   it("reads only an owned regular 0600 plan and writes a create-only 0600 receipt", async () => {
@@ -62,8 +71,10 @@ describe("run-hosted-campaign CLI", () => {
       readPlan: async () => plan(),
       writeReceipt: async () => { written = true; },
       ports: {
+        acquireCampaignLease: async (campaignId: string) => ({ campaignId }) as HostedCampaignLeaseHandle,
         startChild: async ({ childId }: { childId: string }) => ({ childId }) as HostedCampaignChildHandle,
         awaitBarrier: async () => { throw new Error("barrier failed"); },
+        releaseCampaignLease: async () => {},
         stopChild: async () => {},
       },
     };

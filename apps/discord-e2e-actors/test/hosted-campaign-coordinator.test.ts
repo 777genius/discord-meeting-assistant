@@ -7,6 +7,7 @@ import {
   type HostedCampaignBarrierAction,
   type HostedCampaignChildHandle,
   type HostedCampaignInput,
+  type HostedCampaignLeaseHandle,
   type HostedCampaignPorts,
 } from "../src/hosted-campaign-coordinator.js";
 
@@ -14,6 +15,7 @@ function input(): HostedCampaignInput {
   return {
     children: [child("observer"), child("speaker-a"), child("speaker-b")],
     target: HOSTED_CAMPAIGN_TARGET,
+    thresholds: { answerFirstPacketMilliseconds: 4_000 },
     runs: [
       { ordinal: 1, scenario: "sequential", campaignId: "campaign-1", runId: "run-1", retainedCaptureCount: 0 },
       { ordinal: 2, scenario: "overlap", campaignId: "campaign-1", runId: "run-2", retainedCaptureCount: 0 },
@@ -38,7 +40,7 @@ function evidence<Action extends HostedCampaignBarrierAction>(action: Action): H
           : action.kind === "reconnect-left" || action.kind === "reconnect-ready"
             ? { observedAtEpochMilliseconds: 1, participantId: HOSTED_CAMPAIGN_TARGET.speakerBApplicationId }
             : action.kind === "run-verified"
-              ? { runIds: ["run-1", "run-2", "run-3"] }
+              ? { ordinal: action.ordinal, runId: action.runId, verified: true }
               : action.kind === "campaign-verified"
                 ? { campaignId: "campaign-1" }
                 : { digestSha256: "a".repeat(64) };
@@ -47,6 +49,10 @@ function evidence<Action extends HostedCampaignBarrierAction>(action: Action): H
 
 function ports(events: string[]): HostedCampaignPorts {
   return {
+    acquireCampaignLease: async (campaignId) => {
+      events.push(`lease:${campaignId}`);
+      return { campaignId } as HostedCampaignLeaseHandle;
+    },
     startChild: async (spec) => {
       events.push(`start:${spec.childId}`);
       return { childId: spec.childId } as HostedCampaignChildHandle;
@@ -55,6 +61,7 @@ function ports(events: string[]): HostedCampaignPorts {
       events.push(`barrier:${action.kind}`);
       return evidence(action);
     },
+    releaseCampaignLease: async (handle) => { events.push(`release:${handle.campaignId}`); },
     stopChild: async (handle) => { events.push(`stop:${handle.childId}`); },
   };
 }
@@ -74,9 +81,54 @@ describe("hosted campaign coordinator", () => {
     const receipt = await runHostedCampaign(input(), ports(events), bounded());
     const firstStop = events.findIndex((event) => event.startsWith("stop:"));
 
-    expect(events.slice(0, 3)).toEqual(["start:observer", "start:speaker-a", "start:speaker-b"]);
-    expect(events.slice(3, firstStop)).toHaveLength(16);
-    expect(events.slice(firstStop)).toEqual(["stop:observer", "stop:speaker-a", "stop:speaker-b"]);
+    expect(events.slice(0, 4)).toEqual([
+      "lease:campaign-1", "start:observer", "start:speaker-a", "start:speaker-b",
+    ]);
+    expect(events.slice(4, firstStop)).toEqual([
+      "barrier:provenance-before",
+      "barrier:observer-subscribed",
+      "barrier:run-verified",
+      "barrier:run-verified",
+      "barrier:capture-retained",
+      "barrier:capture-retained",
+      "barrier:capture-retained",
+      "barrier:capture-retained",
+      "barrier:reconnect-left",
+      "barrier:reconnect-ready",
+      "barrier:answer-intent",
+      "barrier:answer-observer-ready",
+      "barrier:answer-first-packet",
+      "barrier:capture-retained",
+      "barrier:capture-retained",
+      "barrier:run-verified",
+      "barrier:provenance-after",
+      "barrier:campaign-verified",
+    ]);
+    expect(events.slice(firstStop)).toEqual([
+      "stop:observer", "stop:speaker-a", "stop:speaker-b", "release:campaign-1",
+    ]);
+    expect(receipt.actionEvidence.map((entry) => (entry as {
+      readonly action: HostedCampaignBarrierAction;
+    }).action)).toEqual([
+      { kind: "provenance-before" },
+      { kind: "observer-subscribed" },
+      { kind: "run-verified", ordinal: 1, runId: "run-1" },
+      { kind: "run-verified", ordinal: 2, runId: "run-2" },
+      { kind: "capture-retained", ordinal: 1 },
+      { kind: "capture-retained", ordinal: 2 },
+      { kind: "capture-retained", ordinal: 3 },
+      { kind: "capture-retained", ordinal: 4 },
+      { kind: "reconnect-left" },
+      { kind: "reconnect-ready" },
+      { kind: "answer-intent" },
+      { kind: "answer-observer-ready" },
+      { kind: "answer-first-packet" },
+      { kind: "capture-retained", ordinal: 5 },
+      { kind: "capture-retained", ordinal: 6 },
+      { kind: "run-verified", ordinal: 3, runId: "run-3" },
+      { kind: "provenance-after" },
+      { kind: "campaign-verified" },
+    ]);
     expect(receipt).toMatchObject({ schemaVersion: 1, campaignId: "campaign-1", teardownComplete: true });
   });
 
@@ -114,5 +166,48 @@ describe("hosted campaign coordinator", () => {
 
     await expect(runHostedCampaign(input(), fakePorts, bounded())).rejects.toThrow(/SLA failed/u);
     expect(fakePorts.stopChild).toHaveBeenCalledTimes(3);
+  });
+
+  it("uses the closed-plan answer threshold and verifies each run separately", async () => {
+    const actions: HostedCampaignBarrierAction[] = [];
+    const fakePorts = ports([]);
+    fakePorts.awaitBarrier = async (action) => {
+      actions.push(action);
+      if (action.kind === "answer-first-packet") {
+        return {
+          answerLatencyMilliseconds: 4_001,
+          observedAtEpochMilliseconds: 2,
+          turnId: "turn-1",
+        } as HostedCampaignActionEvidence<typeof action>;
+      }
+      return evidence(action);
+    };
+    const configured = { ...input(), thresholds: { answerFirstPacketMilliseconds: 4_001 } };
+
+    await expect(runHostedCampaign(configured, fakePorts, bounded())).resolves.toMatchObject({
+      runIds: ["run-1", "run-2", "run-3"],
+    });
+    expect(actions.filter((action) => action.kind === "run-verified")).toEqual([
+      { kind: "run-verified", ordinal: 1, runId: "run-1" },
+      { kind: "run-verified", ordinal: 2, runId: "run-2" },
+      { kind: "run-verified", ordinal: 3, runId: "run-3" },
+    ]);
+  });
+
+  it("stops a mismatched returned handle and releases the exclusive lease", async () => {
+    const events: string[] = [];
+    const fakePorts = ports(events);
+    fakePorts.startChild = async () => ({ childId: "unexpected" }) as HostedCampaignChildHandle;
+
+    await expect(runHostedCampaign(input(), fakePorts, bounded())).rejects.toThrow(/does not match/u);
+    expect(events).toContain("stop:unexpected");
+    expect(events.at(-1)).toBe("release:campaign-1");
+  });
+
+  it("rejects an invalid answer threshold before acquiring the lease", async () => {
+    const events: string[] = [];
+    const invalid = { ...input(), thresholds: { answerFirstPacketMilliseconds: Number.NaN } };
+    await expect(runHostedCampaign(invalid, ports(events), bounded())).rejects.toThrow(/safe integer/u);
+    expect(events).toEqual([]);
   });
 });

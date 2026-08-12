@@ -1,4 +1,4 @@
-import { chmod, lstat, mkdtemp, mkdir, symlink } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, mkdir, readdir, readFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -19,6 +19,8 @@ describe("campaign barriers", () => {
 
     expect((await lstat(root)).mode & 0o777).toBe(0o700);
     expect((await lstat(barrier)).mode & 0o777).toBe(0o600);
+    expect(await readFile(barrier, "utf8")).toBe("ready\n");
+    expect(await readdir(root)).toEqual(["observer-ready"]);
     await expect(writeCreateOnlyBarrier(root, "observer-ready", "again\n")).rejects.toThrow();
   });
 

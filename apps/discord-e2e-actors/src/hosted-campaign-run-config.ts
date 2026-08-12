@@ -32,6 +32,9 @@ const planSchema = z.object({
     runSchema(3, "reconnect", 6),
   ]),
   target: targetSchema,
+  thresholds: z.object({
+    answerFirstPacketMilliseconds: z.number().int().safe().positive(),
+  }).strict(),
 }).strict();
 
 export interface HostedCampaignRunConfig {

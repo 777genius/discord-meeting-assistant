@@ -27,6 +27,10 @@ export interface HostedCampaignRun {
   readonly scenario: CampaignScenario;
 }
 
+export interface HostedCampaignThresholds {
+  readonly answerFirstPacketMilliseconds: number;
+}
+
 export type HostedCampaignEntrypoint =
   | "actor"
   | "campaign-verifier"
@@ -49,6 +53,12 @@ export interface HostedCampaignChildHandle {
   readonly [childHandleBrand]: true;
 }
 
+declare const campaignLeaseHandleBrand: unique symbol;
+export interface HostedCampaignLeaseHandle {
+  readonly campaignId: string;
+  readonly [campaignLeaseHandleBrand]: true;
+}
+
 export type HostedCampaignBarrierAction =
   | { readonly kind: "provenance-before" }
   | { readonly kind: "observer-subscribed" }
@@ -58,7 +68,7 @@ export type HostedCampaignBarrierAction =
   | { readonly kind: "answer-intent" }
   | { readonly kind: "answer-observer-ready" }
   | { readonly kind: "answer-first-packet" }
-  | { readonly kind: "run-verified" }
+  | { readonly kind: "run-verified"; readonly ordinal: number; readonly runId: string }
   | { readonly kind: "provenance-after" }
   | { readonly kind: "campaign-verified" };
 
@@ -78,7 +88,9 @@ export type HostedCampaignActionEvidence<Action extends HostedCampaignBarrierAct
               readonly answerLatencyMilliseconds: number;
             }
             : Action["kind"] extends "answer-intent" | "answer-observer-ready" ? TurnEvidence
-              : Action["kind"] extends "run-verified" ? { readonly runIds: readonly string[] }
+              : Action["kind"] extends "run-verified" ? {
+                  readonly ordinal: number; readonly runId: string; readonly verified: true;
+                }
                 : { readonly campaignId: string };
 
 export interface HostedCampaignBoundedSignal {
@@ -87,6 +99,10 @@ export interface HostedCampaignBoundedSignal {
 }
 
 export interface HostedCampaignPorts {
+  acquireCampaignLease(
+    campaignId: string,
+    bounded: HostedCampaignBoundedSignal,
+  ): Promise<HostedCampaignLeaseHandle>;
   awaitBarrier<Action extends HostedCampaignBarrierAction>(
     action: Action,
     bounded: HostedCampaignBoundedSignal,
@@ -95,6 +111,7 @@ export interface HostedCampaignPorts {
     executable: HostedCampaignExecutableSpec,
     bounded: HostedCampaignBoundedSignal,
   ): Promise<HostedCampaignChildHandle>;
+  releaseCampaignLease(handle: HostedCampaignLeaseHandle): Promise<void>;
   stopChild(handle: HostedCampaignChildHandle): Promise<void>;
 }
 
@@ -102,6 +119,7 @@ export interface HostedCampaignInput {
   readonly children: readonly HostedCampaignExecutableSpec[];
   readonly runs: readonly HostedCampaignRun[];
   readonly target: HostedCampaignTarget;
+  readonly thresholds: HostedCampaignThresholds;
 }
 
 export interface HostedCampaignPassReceipt {
@@ -112,14 +130,28 @@ export interface HostedCampaignPassReceipt {
   readonly teardownComplete: true;
 }
 
-const ACTIONS: readonly HostedCampaignBarrierAction[] = [
-  { kind: "provenance-before" },
-  { kind: "observer-subscribed" },
-  ...Array.from({ length: 6 }, (_, index) => ({ kind: "capture-retained" as const, ordinal: index + 1 })),
-  { kind: "reconnect-left" }, { kind: "reconnect-ready" }, { kind: "answer-intent" },
-  { kind: "answer-observer-ready" }, { kind: "answer-first-packet" }, { kind: "run-verified" },
-  { kind: "provenance-after" }, { kind: "campaign-verified" },
-];
+function campaignActions(input: HostedCampaignInput): readonly HostedCampaignBarrierAction[] {
+  const [sequential, overlap, reconnect] = input.runs;
+  return [
+    { kind: "provenance-before" },
+    { kind: "observer-subscribed" },
+    { kind: "run-verified", ordinal: sequential!.ordinal, runId: sequential!.runId },
+    { kind: "run-verified", ordinal: overlap!.ordinal, runId: overlap!.runId },
+    ...Array.from({ length: 4 }, (_, index) => ({
+      kind: "capture-retained" as const, ordinal: index + 1,
+    })),
+    { kind: "reconnect-left" },
+    { kind: "reconnect-ready" },
+    { kind: "answer-intent" },
+    { kind: "answer-observer-ready" },
+    { kind: "answer-first-packet" },
+    { kind: "capture-retained", ordinal: 5 },
+    { kind: "capture-retained", ordinal: 6 },
+    { kind: "run-verified", ordinal: reconnect!.ordinal, runId: reconnect!.runId },
+    { kind: "provenance-after" },
+    { kind: "campaign-verified" },
+  ];
+}
 
 function assertExactTarget(target: HostedCampaignTarget): void {
   for (const [key, expected] of Object.entries(HOSTED_CAMPAIGN_TARGET)) {
@@ -158,6 +190,10 @@ export function validateHostedCampaign(input: HostedCampaignInput): void {
   if (input.children.length === 0) {
     throw new Error("Hosted campaign requires executable children");
   }
+  if (!Number.isSafeInteger(input.thresholds.answerFirstPacketMilliseconds)
+    || input.thresholds.answerFirstPacketMilliseconds < 1) {
+    throw new Error("Hosted campaign answer first-packet threshold must be a positive safe integer");
+  }
   const childIds = new Set<string>();
   for (const child of input.children) {
     if (!/^[a-z][a-z0-9-]{0,63}$/u.test(child.childId) || childIds.has(child.childId)) {
@@ -187,7 +223,11 @@ async function stopEveryChild(
   }
 }
 
-function validateEvidence(action: HostedCampaignBarrierAction, evidence: unknown): void {
+function validateEvidence(
+  action: HostedCampaignBarrierAction,
+  evidence: unknown,
+  thresholds: HostedCampaignThresholds,
+): void {
   if (typeof evidence !== "object" || evidence === null) {
     throw new Error(`Missing ${action.kind} evidence`);
   }
@@ -197,9 +237,14 @@ function validateEvidence(action: HostedCampaignBarrierAction, evidence: unknown
   }
   if (action.kind === "answer-first-packet") {
     const latency = value.answerLatencyMilliseconds;
-    if (typeof latency !== "number" || latency < 0 || latency > 4_000) {
+    if (!Number.isSafeInteger(latency) || (latency as number) < 0
+      || (latency as number) > thresholds.answerFirstPacketMilliseconds) {
       throw new Error(`Answer first-packet SLA failed: ${String(latency)}ms`);
     }
+  }
+  if (action.kind === "run-verified" && (value.verified !== true
+    || value.ordinal !== action.ordinal || value.runId !== action.runId)) {
+    throw new Error(`Run ${action.ordinal} verification evidence is invalid`);
   }
 }
 
@@ -212,41 +257,62 @@ export async function runHostedCampaign(
   assertActive(bounded);
   const handles: HostedCampaignChildHandle[] = [];
   const evidence: unknown[] = [];
-  let stopped = false;
+  let lease: HostedCampaignLeaseHandle | undefined;
+  let failure: unknown;
   try {
+    const campaignId = input.runs[0]!.campaignId;
+    lease = await ports.acquireCampaignLease(campaignId, bounded);
+    if (lease.campaignId !== campaignId) {
+      throw new Error("Acquired campaign lease does not match the campaign");
+    }
     for (const executable of input.children) {
       assertActive(bounded);
       const handle = await ports.startChild(executable, bounded);
+      handles.push(handle);
       if (handle.childId !== executable.childId) {
         throw new Error("Started child handle does not match its executable spec");
       }
-      handles.push(handle);
     }
-    for (const action of ACTIONS) {
+    for (const action of campaignActions(input)) {
       assertActive(bounded);
       const actionEvidence = await ports.awaitBarrier(action, bounded);
-      validateEvidence(action, actionEvidence);
+      validateEvidence(action, actionEvidence, input.thresholds);
       evidence.push(Object.freeze({ action, evidence: actionEvidence }));
     }
-    await stopEveryChild(handles, ports);
-    stopped = true;
-    return Object.freeze({
-      actionEvidence: Object.freeze(evidence),
-      campaignId: input.runs[0]!.campaignId,
-      runIds: [input.runs[0]!.runId, input.runs[1]!.runId, input.runs[2]!.runId] as const,
-      schemaVersion: 1,
-      teardownComplete: true,
-    });
   } catch (error) {
-    if (!stopped) {
-      try { await stopEveryChild(handles, ports); }
-      catch (cleanupError) {
-        throw new AggregateError(
-          [error, cleanupError],
-          "Hosted campaign failed and cleanup was incomplete",
-        );
-      }
-    }
-    throw error;
+    failure = error;
   }
+
+  const cleanupFailures: unknown[] = [];
+  try {
+    await stopEveryChild(handles, ports);
+  } catch (error) {
+    cleanupFailures.push(error);
+  }
+  if (lease !== undefined) {
+    try {
+      await ports.releaseCampaignLease(lease);
+    } catch (error) {
+      cleanupFailures.push(error);
+    }
+  }
+  if (cleanupFailures.length > 0) {
+    throw new AggregateError(
+      cleanupFailures,
+      failure === undefined
+        ? "Hosted campaign cleanup was incomplete"
+        : "Hosted campaign failed and cleanup was incomplete",
+      failure === undefined ? undefined : { cause: failure },
+    );
+  }
+  if (failure !== undefined) {
+    throw failure;
+  }
+  return Object.freeze({
+    actionEvidence: Object.freeze(evidence),
+    campaignId: input.runs[0]!.campaignId,
+    runIds: [input.runs[0]!.runId, input.runs[1]!.runId, input.runs[2]!.runId] as const,
+    schemaVersion: 1,
+    teardownComplete: true,
+  });
 }
