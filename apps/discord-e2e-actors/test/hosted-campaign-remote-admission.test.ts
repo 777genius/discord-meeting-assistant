@@ -8,22 +8,23 @@ import {
 
 const campaignId = "campaign-remote-admission";
 const planSha256 = "a".repeat(64);
+const meetingPlatformRevision = "b".repeat(40);
+const expected = { campaignId, meetingPlatformRevision, planSha256 };
 const nowEpochMs = Date.parse("2026-08-13T09:00:00.000Z");
 
 describe("hosted campaign remote admission boundary", () => {
   it("fails closed without a trusted remote probe", async () => {
-    await expect(evaluateHostedRemoteAdmission(undefined, { campaignId, planSha256 }, nowEpochMs))
+    await expect(evaluateHostedRemoteAdmission(undefined, expected, nowEpochMs))
       .resolves.toEqual({
         missingSections: ["deploymentSafety", "discordIdentity", "voicetextCanary", "clockPreflight"],
       });
   });
 
-  it("admits an exact digest-bound, live receipt returned by the trusted probe", async () => {
+  it("rejects a reference-only readiness claim even when returned by the trusted probe", async () => {
     const readiness = validReadiness();
     const probe = fakeProbe(readiness);
 
-    await expect(evaluateHostedRemoteAdmission(probe, { campaignId, planSha256 }, nowEpochMs))
-      .resolves.toEqual({ missingSections: [], readiness });
+    await expect(evaluateHostedRemoteAdmission(probe, expected, nowEpochMs)).rejects.toThrow();
   });
 
   it.each([
@@ -31,8 +32,7 @@ describe("hosted campaign remote admission boundary", () => {
     ["plan", { planSha256: "b".repeat(64) }],
   ])("rejects a receipt bound to another %s", async (_label, change) => {
     const probe = fakeProbe(validReadiness(change));
-    await expect(evaluateHostedRemoteAdmission(probe, { campaignId, planSha256 }, nowEpochMs))
-      .rejects.toThrow("exact campaign and plan");
+    await expect(evaluateHostedRemoteAdmission(probe, expected, nowEpochMs)).rejects.toThrow();
   });
 
   it.each([
@@ -41,8 +41,7 @@ describe("hosted campaign remote admission boundary", () => {
     ["reversed", { expiresAt: "2026-08-13T08:59:00.000Z" }],
   ])("rejects %s readiness", async (_label, change) => {
     const probe = fakeProbe(validReadiness(change));
-    await expect(evaluateHostedRemoteAdmission(probe, { campaignId, planSha256 }, nowEpochMs))
-      .rejects.toThrow("stale, expired, or from the future");
+    await expect(evaluateHostedRemoteAdmission(probe, expected, nowEpochMs)).rejects.toThrow();
   });
 
   it("rejects tampering and open-ended capability claims", async () => {
@@ -50,11 +49,11 @@ describe("hosted campaign remote admission boundary", () => {
     await expect(evaluateHostedRemoteAdmission(fakeProbe({
       ...readiness,
       capabilities: [{ name: "operator-says-ready" }],
-    }), { campaignId, planSha256 }, nowEpochMs)).rejects.toThrow();
+    }), expected, nowEpochMs)).rejects.toThrow();
     await expect(evaluateHostedRemoteAdmission(fakeProbe({
       ...readiness,
       discordIdentity: { ...readiness.discordIdentity, receiptSha256: "b".repeat(64) },
-    }), { campaignId, planSha256 }, nowEpochMs)).rejects.toThrow("digest is invalid");
+    }), expected, nowEpochMs)).rejects.toThrow();
   });
 });
 

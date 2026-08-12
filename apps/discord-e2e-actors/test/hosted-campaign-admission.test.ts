@@ -60,7 +60,7 @@ describe("hosted campaign admission", () => {
     expect((await readFile(receiptPath, "utf8")).includes(receipt.receiptSha256)).toBe(true);
   });
 
-  it("admits only readiness returned by the injected trusted remote probe", async () => {
+  it("does not admit a reference-only readiness returned by a probe", async () => {
     const setup = await arrange();
     const planSha256 = canonicalDigest(setup.plan);
     const readiness = createHostedRemoteReadinessV1({
@@ -72,12 +72,10 @@ describe("hosted campaign admission", () => {
       expiresAt: "2026-08-13T09:05:00.000Z", kind: "hosted-remote-readiness",
       persistence: "create-only", planSha256, probedAt: "2026-08-13T08:59:00.000Z", schemaVersion: 1,
     });
-    const receipt = await inspectHostedCampaignAdmission({
+    await expect(inspectHostedCampaignAdmission({
       bindings: setup.bindings, definition: setup.definition, minimumFreeBytes: 1,
       plan: setup.plan, remoteAdmissionProbe: { inspect: async () => readiness },
-    }, () => Date.parse("2026-08-13T09:00:00.000Z"));
-    expect(receipt).toMatchObject({ missingCapabilities: [], remoteReadiness: readiness, status: "admitted" });
-    expect(verifyHostedCampaignAdmissionReceipt(receipt)).toEqual(receipt);
+    }, () => Date.parse("2026-08-13T09:00:00.000Z"))).rejects.toThrow();
   });
 
   it("requires greeting readiness evidence to bind host/container roots and observer identity", async () => {

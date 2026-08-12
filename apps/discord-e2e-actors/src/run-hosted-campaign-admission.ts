@@ -4,6 +4,7 @@ import {
   inspectHostedCampaignAdmission,
   writeCreateOnlyAdmissionReceipt,
 } from "./hosted-campaign-admission.js";
+import type { HostedCampaignRemoteAdmissionProbe } from "./hosted-campaign-remote-admission.js";
 
 export interface HostedAdmissionArguments {
   readonly bindingsPath: string;
@@ -38,24 +39,43 @@ export function parseHostedAdmissionArguments(arguments_: readonly string[]): Ho
   return { bindingsPath, definitionPath, minimumFreeBytes, planPath, receiptPath, ...(remoteEvidencePath === undefined ? {} : { remoteEvidencePath }) };
 }
 
-async function main(): Promise<void> {
-  const config = parseHostedAdmissionArguments(process.argv.slice(2));
-  const definition = JSON.parse(await readFile(config.definitionPath, "utf8")) as unknown;
-  const bindings = JSON.parse(await readFile(config.bindingsPath, "utf8")) as unknown;
-  const plan = JSON.parse(await readFile(config.planPath, "utf8")) as unknown;
+export interface HostedAdmissionCliDependencies {
+  readonly now: () => number;
+  readonly readJson: (path: string) => Promise<unknown>;
+  readonly remoteAdmissionProbe?: HostedCampaignRemoteAdmissionProbe;
+  readonly writeReceipt: typeof writeCreateOnlyAdmissionReceipt;
+}
+
+export async function runHostedCampaignAdmissionCli(
+  arguments_: readonly string[],
+  dependencies: HostedAdmissionCliDependencies,
+): Promise<void> {
+  const config = parseHostedAdmissionArguments(arguments_);
+  const definition = await dependencies.readJson(config.definitionPath);
+  const bindings = await dependencies.readJson(config.bindingsPath);
+  const plan = await dependencies.readJson(config.planPath);
   const remoteEvidence = config.remoteEvidencePath === undefined ? undefined
-    : JSON.parse(await readFile(config.remoteEvidencePath, "utf8")) as unknown;
+    : await dependencies.readJson(config.remoteEvidencePath);
   const receipt = await inspectHostedCampaignAdmission({
-    bindings, definition, minimumFreeBytes: config.minimumFreeBytes, plan, remoteEvidence,
-  });
-  await writeCreateOnlyAdmissionReceipt(config.receiptPath, receipt);
+    bindings, definition, minimumFreeBytes: config.minimumFreeBytes, plan,
+    ...(dependencies.remoteAdmissionProbe === undefined ? {} : {
+      remoteAdmissionProbe: dependencies.remoteAdmissionProbe,
+    }), remoteEvidence,
+  }, dependencies.now);
+  await dependencies.writeReceipt(config.receiptPath, receipt);
   if (receipt.status !== "admitted") {
     throw new Error(`Hosted campaign admission blocked: ${receipt.missingCapabilities.join(",")}`);
   }
 }
 
+async function readJson(path: string): Promise<unknown> {
+  return JSON.parse(await readFile(path, "utf8")) as unknown;
+}
+
 if (process.argv[1]?.replaceAll("\\", "/").endsWith("/run-hosted-campaign-admission.js") === true) {
-  void main().catch((error: unknown) => {
+  void runHostedCampaignAdmissionCli(process.argv.slice(2), {
+    now: Date.now, readJson, writeReceipt: writeCreateOnlyAdmissionReceipt,
+  }).catch((error: unknown) => {
     process.stderr.write(`Hosted campaign admission failed: ${error instanceof Error ? error.message : "unknown error"}\n`);
     process.exitCode = 1;
   });

@@ -276,7 +276,11 @@ async function evaluateRemote(
 ) {
   return evaluateHostedRemoteAdmission(
     request.remoteAdmissionProbe,
-    { campaignId, planSha256: digestCanonical(plan) },
+    {
+      campaignId, meetingPlatformRevision: hostedCampaignDefinitionV1Schema.parse(request.definition)
+        .revisions.meetingPlatform,
+      planSha256: digestCanonical(plan),
+    },
     nowEpochMs,
   );
 }
