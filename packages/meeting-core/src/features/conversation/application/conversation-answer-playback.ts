@@ -88,12 +88,12 @@ export class ConversationAnswerPlayback {
               playbackKind,
               turnId: run.prepared.request.turnId,
             }, { signal: openAbortController.signal });
-          if (!ready.ok || ready.value !== "ready") {
+          if (!isReadyResult(ready)) {
             await this.dependencies.requestCancellation(state, run, "playback-failed");
             return;
           }
         }
-        if (!isCurrentConversationRun(state, run) || run.cancellationInFlight) {
+        if (!isCurrentConversationRun(state, run) || openAbortController.signal.aborted) {
           return;
         }
         fence = beginConversationPlaybackFence(state);
@@ -118,7 +118,7 @@ export class ConversationAnswerPlayback {
       }
 
       if (!opened.ok) {
-        confirmConversationPlaybackTerminal(state, fence!);
+        confirmConversationPlaybackTerminal(state, fence);
         await this.dependencies.requestCancellation(state, run, "playback-failed");
         return;
       }
@@ -126,7 +126,7 @@ export class ConversationAnswerPlayback {
       run.playback = opened.value;
       trackConversationTask(
         state,
-        this.consume(state, run, opened.value, fence!, playbackKind),
+        this.consume(state, run, opened.value, fence, playbackKind),
       );
       if (shouldDiscardOpenedConversationPlayback(state, run)) {
         this.cancel(run, opened.value, "superseded");
@@ -366,4 +366,10 @@ export class ConversationAnswerPlayback {
 
 function isPlaybackTerminalEvent(event: VoicePlaybackEvent): event is PlaybackTerminalEvent {
   return event.type === "failed" || event.type === "finished";
+}
+
+function isReadyResult(result: unknown): boolean {
+  return typeof result === "object" && result !== null &&
+    "ok" in result && result.ok === true &&
+    "value" in result && result.value === "ready";
 }

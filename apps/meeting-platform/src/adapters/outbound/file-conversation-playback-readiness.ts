@@ -221,8 +221,7 @@ function sameEnvelope(
   actual: ReturnType<typeof conversationAnswerObserverReadySchema.parse>,
   expected: ConversationAnswerPlaybackReadinessEnvelope,
 ): boolean {
-  return actual.kind === expected.kind &&
-    actual.meetingId === expected.meetingId &&
+  return actual.meetingId === expected.meetingId &&
     actual.playbackAttemptId === expected.playbackAttemptId &&
     actual.runId === expected.runId &&
     actual.turnId === expected.turnId;

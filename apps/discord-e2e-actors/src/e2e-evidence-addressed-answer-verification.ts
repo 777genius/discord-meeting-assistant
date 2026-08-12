@@ -73,8 +73,7 @@ function verifyAddressedAnswerPlayback(
   }
   if (
     answer.correlation.provenance !== "playback-readiness-handshake" ||
-    answer.correlation.meetingId !== evidence.meetingId ||
-    answer.correlation.playbackKind !== "answer"
+    answer.correlation.meetingId !== evidence.meetingId
   ) {
     fail(
       "ANSWER_PLAYBACK_RECEIPT_MISMATCH",

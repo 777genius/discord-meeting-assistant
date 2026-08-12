@@ -89,13 +89,12 @@ describe("FileConversationPlaybackReadiness", () => {
       timeoutMilliseconds: 30,
     });
 
-    await expect(readiness.awaitConversationPlaybackReady(request)).resolves.toMatchObject({
-      failure: {
-        code: "PLAYBACK_READINESS_FAILED",
-        message: expect.stringContaining("before timeout"),
-      },
-      ok: false,
-    });
+    const result = await readiness.awaitConversationPlaybackReady(request);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.failure.code).toBe("PLAYBACK_READINESS_FAILED");
+      expect(result.failure.message).toContain("before timeout");
+    }
   });
 
   it("rejects a readiness root that is a symlink", async () => {
@@ -108,9 +107,11 @@ describe("FileConversationPlaybackReadiness", () => {
       root, runId: envelope.runId, timeoutMilliseconds: 30,
     });
 
-    await expect(readiness.awaitConversationPlaybackReady(request)).resolves.toMatchObject({
-      failure: { message: expect.stringContaining("real directory") }, ok: false,
-    });
+    const result = await readiness.awaitConversationPlaybackReady(request);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.failure.message).toContain("real directory");
+    }
   });
 
   it("rejects a readiness root with group or world access", async () => {
@@ -120,9 +121,11 @@ describe("FileConversationPlaybackReadiness", () => {
       root, runId: envelope.runId, timeoutMilliseconds: 30,
     });
 
-    await expect(readiness.awaitConversationPlaybackReady(request)).resolves.toMatchObject({
-      failure: { message: expect.stringContaining("permissions") }, ok: false,
-    });
+    const result = await readiness.awaitConversationPlaybackReady(request);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.failure.message).toContain("permissions");
+    }
   });
 
   it("rejects stale and non-regular observer-ready receipts", async () => {
@@ -177,9 +180,11 @@ describe("FileConversationPlaybackReadiness", () => {
     await waitForJson(intentPath(root));
     controller.abort();
 
-    await expect(waiting).resolves.toMatchObject({
-      failure: { message: expect.stringContaining("cancelled") }, ok: false,
-    });
+    const result = await waiting;
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.failure.message).toContain("cancelled");
+    }
     expect(clearTimeoutSpy).toHaveBeenCalled();
     clearTimeoutSpy.mockRestore();
   });

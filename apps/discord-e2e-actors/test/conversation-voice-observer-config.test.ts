@@ -150,6 +150,19 @@ describe("loadConversationVoiceObserverConfig", () => {
     })).toThrow("handshake roots must be unique");
     expect(() => loadConversationVoiceObserverConfig({
       ...requiredEnvironment,
+      DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON: JSON.stringify([{
+        ...dynamicCapture,
+        playbackHandshakeRoot:
+          requiredEnvironment.DISCORD_E2E_CONVERSATION_VOICE_PLAYBACK_HANDSHAKE_ROOT,
+      }]),
+    })).toThrow("handshake roots must be unique");
+    expect(() => loadConversationVoiceObserverConfig({
+      ...requiredEnvironment,
+      DISCORD_E2E_CONVERSATION_VOICE_OUTPUT:
+        requiredEnvironment.DISCORD_E2E_CONVERSATION_VOICE_PLAYBACK_HANDSHAKE_ROOT,
+    })).toThrow("distinct from evidence output paths");
+    expect(() => loadConversationVoiceObserverConfig({
+      ...requiredEnvironment,
       DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON: JSON.stringify([
         dynamicCapture,
         {

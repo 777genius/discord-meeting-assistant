@@ -158,11 +158,15 @@ const environmentSchema = z.object({
       path: ["DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON"],
     });
   }
-  const playbackHandshakeRoots =
-    (value.DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON ?? [])
+  const playbackHandshakeRoots = [
+    ...(value.DISCORD_E2E_CONVERSATION_VOICE_PLAYBACK_HANDSHAKE_ROOT === undefined
+      ? []
+      : [value.DISCORD_E2E_CONVERSATION_VOICE_PLAYBACK_HANDSHAKE_ROOT]),
+    ...(value.DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON ?? [])
       .flatMap((capture) =>
         capture.purpose === "addressed-answer" ? [capture.playbackHandshakeRoot] : []
-      );
+      ),
+  ];
   if (new Set(playbackHandshakeRoots).size !== playbackHandshakeRoots.length) {
     context.addIssue({
       code: "custom",
