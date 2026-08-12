@@ -181,7 +181,6 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
       throw new Error(`Hosted campaign child ${handle.childId} failed (${String(exit.code ?? exit.signal)})`);
     }
     const completion = spec.completion;
-    const output = parseJsonOutput(state.stdoutChunks, handle.childId);
     if (!("action" in completion)) {
       await verifyHostedFiniteProcessCompletion(
         Buffer.concat(state.stdoutChunks).toString("utf8"),
@@ -189,6 +188,7 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
       );
       return;
     }
+    const output = parseJsonOutput(state.stdoutChunks, handle.childId);
     if (completion.kind === "provenance-probe") {
       const parsed = hostedCampaignProvenanceCompletionV1Schema.parse(output);
       if (parsed.campaignId !== completion.campaignId || parsed.phase !== completion.phase
