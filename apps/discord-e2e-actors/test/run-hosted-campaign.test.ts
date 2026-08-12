@@ -73,11 +73,13 @@ describe("run-hosted-campaign CLI", () => {
   });
 
   it("requires exactly three arguments and absolute plan/receipt paths", () => {
-    expect(parseHostedCampaignArguments(["/plan.json", "/receipt.json", "1000"])).toEqual({
+    expect(parseHostedCampaignArguments(["/plan.json", "/receipt.json", "1000", "/admission.json", "/definition.json", "/bindings.json"])).toEqual({
+      admissionPath: "/admission.json", bindingsPath: "/bindings.json", definitionPath: "/definition.json",
       planPath: "/plan.json", receiptPath: "/receipt.json", timeoutMilliseconds: 1_000,
     });
     expect(() => parseHostedCampaignArguments(["/plan.json", "/receipt.json"])).toThrow(/Usage/u);
-    expect(() => parseHostedCampaignArguments(["plan.json", "/receipt.json", "1000"])).toThrow(/absolute/u);
+    expect(() => parseHostedCampaignArguments(["plan.json", "/receipt.json", "1000", "/admission.json", "/definition.json", "/bindings.json"]))
+      .toThrow(/absolute/u);
   });
 
   it("strictly validates the closed executable plan", () => {
@@ -175,11 +177,12 @@ describe("run-hosted-campaign CLI", () => {
   it("writes no receipt when a barrier fails", async () => {
     let written = false;
     const dependencies = {
+      assertAdmission: () => { throw new Error("invalid admission"); },
       assertReceiptAbsent: async () => {},
       now: () => Date.now(),
       readPlan: async () => plan(),
       writeReceipt: async () => { written = true; },
-      ports: {
+      createPorts: async () => ({
         acquireCampaignLease: async (campaignId: string) => ({ campaignId }) as HostedCampaignLeaseHandle,
         awaitChildCompletion: async () => {},
         publishReleaseGate: async () => {},
@@ -188,27 +191,74 @@ describe("run-hosted-campaign CLI", () => {
         awaitBarrier: async () => { throw new Error("barrier failed"); },
         releaseCampaignLease: async () => {},
         stopChild: async () => {},
-      },
+      }),
+      readAdmission: async () => ({}),
+      readBindings: async () => ({}), readDefinition: async () => ({}),
     };
     await expect(runHostedCampaignCli(
-      ["/plan.json", "/receipt.json", "1000"], dependencies, new AbortController().signal,
-    )).rejects.toThrow("barrier failed");
+      ["/plan.json", "/receipt.json", "1000", "/admission.json", "/definition.json", "/bindings.json"], dependencies, new AbortController().signal,
+    )).rejects.toThrow("invalid admission");
     expect(written).toBe(false);
+  });
+
+  it("validates admission before creating ports or acquiring a lease", async () => {
+    const effects: string[] = [];
+    await expect(runHostedCampaignCli(
+      ["/plan.json", "/receipt.json", "1000", "/admission.json", "/definition.json", "/bindings.json"],
+      {
+        assertAdmission: () => { effects.push("admission"); throw new Error("mismatch"); },
+        assertReceiptAbsent: async () => {},
+        createPorts: async () => { effects.push("factory"); throw new Error("unreachable"); },
+        now: Date.now,
+        readAdmission: async () => ({}), readBindings: async () => ({}),
+        readDefinition: async () => ({}), readPlan: async () => plan(),
+        writeReceipt: async () => { effects.push("write"); },
+      }, new AbortController().signal,
+    )).rejects.toThrow("mismatch");
+    expect(effects).toEqual(["admission"]);
+  });
+
+  it("creates ports only after an admitted invocation and reaches lease acquisition", async () => {
+    const effects: string[] = [];
+    await expect(runHostedCampaignCli(
+      ["/plan.json", "/receipt.json", "1000", "/admission.json", "/definition.json", "/bindings.json"],
+      {
+        assertAdmission: () => { effects.push("admission"); return {} as never; },
+        assertReceiptAbsent: async () => {},
+        createPorts: async () => {
+          effects.push("factory");
+          return {
+            acquireCampaignLease: async () => { effects.push("acquire"); throw new Error("stop-after-lease"); },
+            awaitBarrier: async () => { throw new Error("unreachable"); }, awaitChildCompletion: async () => {}, publishReleaseGate: async () => {},
+            publishSupplementalGate: async () => {}, releaseCampaignLease: async () => {},
+            startChild: async () => ({ childId: "x" }) as HostedCampaignChildHandle, stopChild: async () => {},
+          };
+        },
+        now: Date.now,
+        readAdmission: async () => ({}), readBindings: async () => ({}),
+        readDefinition: async () => ({}), readPlan: async () => plan(), writeReceipt: async () => {},
+      }, new AbortController().signal,
+    )).rejects.toThrow("stop-after-lease");
+    expect(effects).toEqual(["admission", "factory", "acquire"]);
   });
 
   it("rejects an existing receipt before reading the plan or acquiring the campaign", async () => {
     const effects: string[] = [];
-    await expect(runHostedCampaignCli(["/plan.json", "/receipt.json", "1000"], {
+    await expect(runHostedCampaignCli(["/plan.json", "/receipt.json", "1000", "/admission.json", "/definition.json", "/bindings.json"], {
+      assertAdmission: () => { effects.push("admission"); return {} as never; },
       assertReceiptAbsent: async () => { throw new Error("receipt collision"); },
       now: () => { effects.push("clock"); return Date.now(); },
       readPlan: async () => { effects.push("read-plan"); return plan(); },
       writeReceipt: async () => { effects.push("write-receipt"); },
-      ports: {
+      createPorts: async () => ({
         acquireCampaignLease: async () => { effects.push("acquire"); return { campaignId: "campaign-1" } as HostedCampaignLeaseHandle; },
         awaitChildCompletion: async () => {}, publishReleaseGate: async () => {},
         publishSupplementalGate: async () => {}, startChild: async () => { effects.push("start"); return { childId: "x" } as HostedCampaignChildHandle; },
         awaitBarrier: async () => { throw new Error("unreachable"); }, releaseCampaignLease: async () => {}, stopChild: async () => {},
-      },
+      }),
+      readAdmission: async () => { effects.push("read-admission"); return {}; },
+      readBindings: async () => { effects.push("read-bindings"); return {}; },
+      readDefinition: async () => { effects.push("read-definition"); return {}; },
     }, new AbortController().signal)).rejects.toThrow("receipt collision");
     expect(effects).toEqual([]);
   });

@@ -15,6 +15,7 @@ import {
   parseHostedCampaignPlan,
 } from "./hosted-campaign-run-config.js";
 import { HostedCampaignArtifactStore } from "./hosted-campaign-artifact-store.js";
+import { assertAdmissionMatchesInvocation } from "./hosted-campaign-admission.js";
 import {
   HostedCampaignProcessAdapter,
   type HostedCampaignTrustedRuntimeEnvironment,
@@ -22,9 +23,13 @@ import {
 } from "./hosted-campaign-process-adapter.js";
 
 export interface HostedCampaignCliDependencies {
+  readonly assertAdmission: typeof assertAdmissionMatchesInvocation;
   readonly assertReceiptAbsent: (path: string) => Promise<void>;
+  readonly createPorts: (input: ReturnType<typeof parseHostedCampaignPlan>) => Promise<HostedCampaignPorts>;
   readonly now: () => number;
-  readonly ports: HostedCampaignPorts;
+  readonly readAdmission: (path: string) => Promise<unknown>;
+  readonly readBindings: (path: string) => Promise<unknown>;
+  readonly readDefinition: (path: string) => Promise<unknown>;
   readonly readPlan: (path: string) => Promise<unknown>;
   readonly writeReceipt: (path: string, receipt: HostedCampaignPassReceipt) => Promise<void>;
 }
@@ -48,11 +53,21 @@ export async function runHostedCampaignCli(
   await dependencies.assertReceiptAbsent(config.receiptPath);
   const input = parseHostedCampaignPlan(await dependencies.readPlan(config.planPath));
   assertExecutableEnvironmentPaths(input.children);
-  const deadlineEpochMilliseconds = dependencies.now() + config.timeoutMilliseconds;
+  const nowEpochMs = dependencies.now();
+  const [admission, definition, bindings] = await Promise.all([
+    dependencies.readAdmission(config.admissionPath),
+    dependencies.readDefinition(config.definitionPath),
+    dependencies.readBindings(config.bindingsPath),
+  ]);
+  dependencies.assertAdmission({
+    bindings, definition, maximumAgeMs: 15 * 60_000, nowEpochMs, plan: input, receipt: admission,
+  });
+  const deadlineEpochMilliseconds = nowEpochMs + config.timeoutMilliseconds;
   if (!Number.isSafeInteger(deadlineEpochMilliseconds)) {
     throw new Error("Hosted campaign deadline is unsafe");
   }
-  const receipt = await runHostedCampaign(input, dependencies.ports, { deadlineEpochMilliseconds, signal });
+  const ports = await dependencies.createPorts(input);
+  const receipt = await runHostedCampaign(input, ports, { deadlineEpochMilliseconds, signal });
   await dependencies.writeReceipt(config.receiptPath, receipt);
   return receipt;
 }
@@ -189,20 +204,24 @@ async function main(): Promise<void> {
   try {
     const config = parseHostedCampaignArguments(process.argv.slice(2));
     await assertHostedCampaignReceiptAbsent(config.receiptPath);
-    const plan = parseHostedCampaignPlan(await readPrivateHostedCampaignPlan(config.planPath));
-    const campaignId = plan.runs[0]!.campaignId;
-    const artifactRoot = resolveHostedCampaignBarrierRoot(plan);
-    const store = new HostedCampaignArtifactStore(artifactRoot, campaignId);
-    await store.initializeFreshCampaignLayout();
-    const adapter = new HostedCampaignProcessAdapter({
-      artifactStore: store,
-      distRoot: dirname(fileURLToPath(import.meta.url)),
-      trustedRuntimeEnvironment: loadHostedCampaignTrustedRuntimeEnvironment(process.env),
-    });
     await runHostedCampaignCli(process.argv.slice(2), {
       assertReceiptAbsent: assertHostedCampaignReceiptAbsent,
+      assertAdmission: assertAdmissionMatchesInvocation,
+      createPorts: async (plan) => {
+        const campaignId = plan.runs[0]!.campaignId;
+        const artifactRoot = resolveHostedCampaignBarrierRoot(plan);
+        const store = new HostedCampaignArtifactStore(artifactRoot, campaignId);
+        await store.initializeFreshCampaignLayout();
+        return new HostedCampaignProcessAdapter({
+          artifactStore: store,
+          distRoot: dirname(fileURLToPath(import.meta.url)),
+          trustedRuntimeEnvironment: loadHostedCampaignTrustedRuntimeEnvironment(process.env),
+        });
+      },
       now: Date.now,
-      ports: adapter,
+      readAdmission: readPrivateHostedCampaignPlan,
+      readBindings: readPrivateHostedCampaignPlan,
+      readDefinition: readPrivateHostedCampaignPlan,
       readPlan: readPrivateHostedCampaignPlan,
       writeReceipt: writeCreateOnlyHostedCampaignReceipt,
     }, controller.signal);

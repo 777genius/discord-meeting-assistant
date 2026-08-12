@@ -216,22 +216,29 @@ export function parseHostedCampaignPlan(value: unknown): HostedCampaignInput {
 }
 
 export function parseHostedCampaignArguments(arguments_: readonly string[]): {
+  readonly admissionPath: string;
+  readonly bindingsPath: string;
+  readonly definitionPath: string;
   readonly planPath: string;
   readonly receiptPath: string;
   readonly timeoutMilliseconds: number;
 } {
-  if (arguments_.length !== 3) {
-    throw new Error("Usage: run-hosted-campaign <plan.json> <receipt.json> <timeout-ms>");
+  if (arguments_.length !== 6) {
+    throw new Error("Usage: run-hosted-campaign <plan.json> <receipt.json> <timeout-ms> <admission.json> <definition.json> <bindings.json>");
   }
-  const [planPath, receiptPath, timeoutText] = arguments_ as [string, string, string];
-  if (!isAbsolute(planPath) || !isAbsolute(receiptPath)) {
-    throw new Error("Hosted campaign plan and receipt paths must be absolute");
+  const [planPath, receiptPath, timeoutText, admissionPath, definitionPath, bindingsPath] = arguments_;
+  if (planPath === undefined || receiptPath === undefined || timeoutText === undefined
+    || admissionPath === undefined || definitionPath === undefined || bindingsPath === undefined) {
+    throw new Error("Hosted campaign argument parsing invariant failed");
+  }
+  if (![planPath, receiptPath, admissionPath, definitionPath, bindingsPath].every(isAbsolute)) {
+    throw new Error("Hosted campaign plan, receipt, admission, definition, and bindings paths must be absolute");
   }
   const timeoutMilliseconds = Number(timeoutText);
   if (!Number.isSafeInteger(timeoutMilliseconds) || timeoutMilliseconds < 1 || timeoutMilliseconds > 86_400_000) {
     throw new Error("Hosted campaign timeout must be an integer from 1 to 86400000ms");
   }
-  return { planPath, receiptPath, timeoutMilliseconds };
+  return { admissionPath, bindingsPath, definitionPath, planPath, receiptPath, timeoutMilliseconds };
 }
 
 export function assertExecutableEnvironmentPaths(children: readonly HostedCampaignExecutableSpec[]): void {

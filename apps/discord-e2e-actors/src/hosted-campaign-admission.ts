@@ -7,41 +7,66 @@ import { z } from "zod";
 
 import { fixtureManifestV1Schema } from "./e2e-evidence-schema.js";
 import { serviceLevelThresholdsSchema } from "./e2e-service-levels.js";
-import { hostedCampaignDefinitionV1Schema } from "./hosted-campaign-plan-builder.js";
+import {
+  buildResolvedHostedCampaignPlanV1,
+  hostedCampaignDefinitionV1Schema,
+  hostedCampaignRuntimeBindingsV1Schema,
+} from "./hosted-campaign-plan-builder.js";
+import { parseHostedCampaignPlan } from "./hosted-campaign-run-config.js";
 import { FileSecretReader } from "./keychain.js";
 import { loadVerifiedSupplementalVoiceManifest } from "./supplemental-voice-playback-config.js";
 
 const sha256Schema = z.string().regex(/^[a-f\d]{64}$/u);
 const remoteCapabilitySchema = z.enum([
   "clock-preflight",
+  "conversation-greeting-readiness",
   "craig-test-identity",
   "remote-test-isolation",
   "revision-qualified-containers",
   "voicetext-semantic-canary",
 ]);
-const remoteEvidenceSchema = z.object({
-  capabilities: z.array(z.object({
+const baseRemoteEvidenceSchema = z.object({
     capability: remoteCapabilitySchema,
     path: z.string().refine((value) => isSafeAbsolutePath(value)),
     sha256: sha256Schema,
-  }).strict()).max(5),
+  });
+const remoteEvidenceSchema = z.object({
+  capabilities: z.array(z.union([
+    baseRemoteEvidenceSchema.extend({
+      capability: z.literal("conversation-greeting-readiness"),
+      greetingHandshakeRoot: z.string().refine((value) => isSafeAbsolutePath(value)),
+      observerParticipantId: z.literal("1533867700575670282"),
+    }).strict(),
+    baseRemoteEvidenceSchema.refine(
+      ({ capability }) => capability !== "conversation-greeting-readiness",
+    ),
+  ])).max(6),
   schemaVersion: z.literal(1),
 }).strict();
 
 const requiredRemoteCapabilities = remoteCapabilitySchema.options;
-const secretAccounts = ["sut", "speaker-a", "speaker-b", "speaker-c", "speaker-d"] as const;
+const secretAccounts = ["sut", "speaker-a", "speaker-b", "conversation-observer", "speaker-d"] as const;
 const maximumInputBytes = 16 * 1024 * 1024;
 
 export type HostedCampaignAdmissionReceiptV1 = Readonly<{
   artifactRoot: string;
+  bindingsSha256: string;
   campaignId: string;
+  definitionSha256: string;
   fixtureDigests: Readonly<Record<string, string>>;
   generatedAt: string;
   kind: "hosted-campaign-admission";
   minimumFreeBytes: number;
   missingCapabilities: readonly z.infer<typeof remoteCapabilitySchema>[];
+  planSha256: string;
   receiptSha256: string;
-  remoteEvidence: readonly Readonly<{ capability: z.infer<typeof remoteCapabilitySchema>; path: string; sha256: string }>[];
+  remoteEvidence: readonly Readonly<{
+    capability: z.infer<typeof remoteCapabilitySchema>;
+    greetingHandshakeRoot?: string;
+    observerParticipantId?: string;
+    path: string;
+    sha256: string;
+  }>[];
   revisions: Readonly<Record<"craig" | "meetingPlatform" | "pipecat" | "subscriptionRuntime", string>>;
   schemaVersion: 1;
   secretAccountsValidated: typeof secretAccounts;
@@ -49,8 +74,10 @@ export type HostedCampaignAdmissionReceiptV1 = Readonly<{
 }>;
 
 export interface HostedCampaignAdmissionRequest {
+  readonly bindings: unknown;
   readonly definition: unknown;
   readonly minimumFreeBytes: number;
+  readonly plan: unknown;
   readonly remoteEvidence?: unknown;
 }
 
@@ -59,6 +86,12 @@ export async function inspectHostedCampaignAdmission(
   now: () => number = Date.now,
 ): Promise<HostedCampaignAdmissionReceiptV1> {
   const definition = hostedCampaignDefinitionV1Schema.parse(request.definition);
+  const bindings = hostedCampaignRuntimeBindingsV1Schema.parse(request.bindings);
+  const plan = parseHostedCampaignPlan(request.plan);
+  const compiledPlan = buildResolvedHostedCampaignPlanV1(definition, bindings);
+  if (digestCanonical(plan) !== digestCanonical(compiledPlan)) {
+    throw new Error("Hosted admission plan does not match the definition and bindings");
+  }
   if (!Number.isSafeInteger(request.minimumFreeBytes) || request.minimumFreeBytes < 1) {
     throw new Error("Hosted admission minimum free bytes must be a positive safe integer");
   }
@@ -104,16 +137,31 @@ export async function inspectHostedCampaignAdmission(
     ...evidence,
     sha256: await assertDigest(evidence.path, evidence.sha256),
   })));
-  const missingCapabilities = requiredRemoteCapabilities.filter((capability) =>
-    !capabilityNames.includes(capability));
+  const greetingEvidence = remoteEvidence.find((evidence) =>
+    "greetingHandshakeRoot" in evidence);
+  const observer = plan.children.find(({ childId }) => childId === "conversation-observer");
+  const plannedGreetingRoot = observer?.environment
+    .DISCORD_E2E_CONVERSATION_VOICE_GREETING_HANDSHAKE_ROOT;
+  if (greetingEvidence !== undefined && "greetingHandshakeRoot" in greetingEvidence &&
+    (greetingEvidence.greetingHandshakeRoot !== plannedGreetingRoot ||
+      greetingEvidence.observerParticipantId !== observer?.environment
+        .DISCORD_E2E_CONVERSATION_VOICE_OBSERVER_APPLICATION_ID)) {
+    throw new Error("Greeting readiness evidence does not match the exact observer plan binding");
+  }
+  // These files are retained declarations only. They are not trusted probe receipts.
+  // Keep admission blocked until each capability has a typed, independently verified schema.
+  const missingCapabilities = requiredRemoteCapabilities;
   const content = {
     artifactRoot,
+    bindingsSha256: digestCanonical(bindings),
     campaignId: definition.campaignId,
+    definitionSha256: digestCanonical(definition),
     fixtureDigests: Object.freeze(fixtureDigests),
     generatedAt: new Date(now()).toISOString(),
     kind: "hosted-campaign-admission" as const,
     minimumFreeBytes: request.minimumFreeBytes,
     missingCapabilities: Object.freeze(missingCapabilities),
+    planSha256: digestCanonical(plan),
     remoteEvidence: Object.freeze(remoteEvidence),
     revisions: Object.freeze({ ...definition.revisions }),
     schemaVersion: 1 as const,
@@ -126,10 +174,11 @@ export async function inspectHostedCampaignAdmission(
 export function verifyHostedCampaignAdmissionReceipt(value: unknown): HostedCampaignAdmissionReceiptV1 {
   const receiptSchema = z.object({
     artifactRoot: z.string().refine(isSafeAbsolutePath), campaignId: z.string().min(1),
+    bindingsSha256: sha256Schema, definitionSha256: sha256Schema,
     fixtureDigests: z.record(z.string(), sha256Schema), generatedAt: z.iso.datetime(),
     kind: z.literal("hosted-campaign-admission"), minimumFreeBytes: z.number().int().safe().positive(),
-    missingCapabilities: z.array(remoteCapabilitySchema), receiptSha256: sha256Schema,
-    remoteEvidence: z.array(z.object({ capability: remoteCapabilitySchema, path: z.string().refine(isSafeAbsolutePath), sha256: sha256Schema }).strict()),
+    missingCapabilities: z.array(remoteCapabilitySchema), planSha256: sha256Schema, receiptSha256: sha256Schema,
+    remoteEvidence: remoteEvidenceSchema.shape.capabilities,
     revisions: z.object({ craig: z.string(), meetingPlatform: z.string(), pipecat: z.string(), subscriptionRuntime: z.string() }).strict(),
     schemaVersion: z.literal(1), secretAccountsValidated: z.array(z.enum(secretAccounts)).length(secretAccounts.length),
     status: z.enum(["admitted", "blocked"]),
@@ -150,6 +199,42 @@ export function verifyHostedCampaignAdmissionReceipt(value: unknown): HostedCamp
     ...receipt,
     secretAccountsValidated: secretAccounts,
   });
+}
+
+export interface HostedCampaignAdmissionInvocation {
+  readonly bindings: unknown;
+  readonly definition: unknown;
+  readonly maximumAgeMs: number;
+  readonly nowEpochMs: number;
+  readonly plan: unknown;
+  readonly receipt: unknown;
+}
+
+export function assertAdmissionMatchesInvocation(
+  invocation: HostedCampaignAdmissionInvocation,
+): HostedCampaignAdmissionReceiptV1 {
+  const receipt = verifyHostedCampaignAdmissionReceipt(invocation.receipt);
+  const definition = hostedCampaignDefinitionV1Schema.parse(invocation.definition);
+  const bindings = hostedCampaignRuntimeBindingsV1Schema.parse(invocation.bindings);
+  const plan = parseHostedCampaignPlan(invocation.plan);
+  const generatedAt = Date.parse(receipt.generatedAt);
+  if (receipt.status !== "admitted" || receipt.missingCapabilities.length !== 0) {
+    throw new Error("Hosted campaign admission is not admitted");
+  }
+  if (!Number.isSafeInteger(invocation.nowEpochMs) || !Number.isSafeInteger(invocation.maximumAgeMs)
+    || invocation.maximumAgeMs < 1 || generatedAt > invocation.nowEpochMs
+    || invocation.nowEpochMs - generatedAt > invocation.maximumAgeMs) {
+    throw new Error("Hosted campaign admission is stale or from the future");
+  }
+  const campaignId = plan.runs[0]?.campaignId;
+  const artifactRoot = resolve(definition.campaignRoot, definition.campaignId);
+  if (receipt.campaignId !== campaignId || receipt.campaignId !== definition.campaignId
+    || receipt.artifactRoot !== artifactRoot || receipt.definitionSha256 !== digestCanonical(definition)
+    || receipt.bindingsSha256 !== digestCanonical(bindings) || receipt.planSha256 !== digestCanonical(plan)
+    || JSON.stringify(receipt.revisions) !== JSON.stringify(definition.revisions)) {
+    throw new Error("Hosted campaign admission does not match this invocation");
+  }
+  return receipt;
 }
 
 export async function writeCreateOnlyAdmissionReceipt(

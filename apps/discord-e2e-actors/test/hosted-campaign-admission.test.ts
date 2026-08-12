@@ -14,9 +14,9 @@ import {
 import { parseHostedAdmissionArguments } from "../src/run-hosted-campaign-admission.js";
 
 const fixtureRoot = new URL("./fixtures/", import.meta.url);
-const accounts = ["sut", "speaker-a", "speaker-b", "speaker-c", "speaker-d"] as const;
+const accounts = ["sut", "speaker-a", "speaker-b", "conversation-observer", "speaker-d"] as const;
 const capabilities = [
-  "clock-preflight", "craig-test-identity", "remote-test-isolation",
+  "clock-preflight", "conversation-greeting-readiness", "craig-test-identity", "remote-test-isolation",
   "revision-qualified-containers", "voicetext-semantic-canary",
 ] as const;
 
@@ -24,7 +24,7 @@ describe("hosted campaign admission", () => {
   it("validates local inputs but remains blocked when remote claims have no evidence", async () => {
     const setup = await arrange();
     const receipt = await inspectHostedCampaignAdmission({
-      definition: setup.definition, minimumFreeBytes: 1,
+      bindings: setup.bindings, definition: setup.definition, minimumFreeBytes: 1, plan: setup.plan,
     }, () => 1_786_579_200_000);
 
     expect(receipt.status).toBe("blocked");
@@ -34,20 +34,21 @@ describe("hosted campaign admission", () => {
     expect(JSON.stringify(receipt)).not.toContain("x".repeat(50));
   });
 
-  it("admits only when every digest-bound remote capability is present", async () => {
+  it("does not mistake arbitrary digest-bound files for trusted remote evidence", async () => {
     const setup = await arrange();
-    const evidence = await Promise.all(capabilities.map(async (capability) => {
+    const evidence = await Promise.all(capabilities.filter((capability) => capability !== "conversation-greeting-readiness").map(async (capability) => {
       const path = join(setup.root, `${capability}.json`);
       await writePrivate(path, JSON.stringify({ capability, testOnly: true }));
       return { capability, path, sha256: digest(await readFile(path)) };
     }));
     const receipt = await inspectHostedCampaignAdmission({
-      definition: setup.definition,
+      bindings: setup.bindings, definition: setup.definition,
       minimumFreeBytes: 1,
+      plan: setup.plan,
       remoteEvidence: { capabilities: evidence, schemaVersion: 1 },
     });
-    expect(receipt.status).toBe("admitted");
-    expect(receipt.missingCapabilities).toEqual([]);
+    expect(receipt.status).toBe("blocked");
+    expect(receipt.missingCapabilities).toEqual(capabilities);
 
     const receiptPath = join(setup.root, "admission.json");
     await writeCreateOnlyAdmissionReceipt(receiptPath, receipt);
@@ -55,19 +56,29 @@ describe("hosted campaign admission", () => {
     expect((await readFile(receiptPath, "utf8")).includes(receipt.receiptSha256)).toBe(true);
   });
 
+  it("rejects a plan that was not compiled from the exact definition and bindings", async () => {
+    const setup = await arrange();
+    await expect(inspectHostedCampaignAdmission({
+      bindings: setup.bindings,
+      definition: setup.definition,
+      minimumFreeBytes: 1,
+      plan: { ...setup.plan, thresholds: { answerFirstPacketMilliseconds: 4_001 } },
+    })).rejects.toThrow("does not match the definition and bindings");
+  });
+
   it("rejects fixture tampering, unsafe secret files, and receipt tampering", async () => {
     const fixtureSetup = await arrange();
     await writeFile(fixtureSetup.definition.speakerFixtures.a, "tampered", { mode: 0o600 });
-    await expect(inspectHostedCampaignAdmission({ definition: fixtureSetup.definition, minimumFreeBytes: 1 }))
+    await expect(inspectHostedCampaignAdmission({ bindings: fixtureSetup.bindings, definition: fixtureSetup.definition, minimumFreeBytes: 1, plan: fixtureSetup.plan }))
       .rejects.toThrow("digest mismatch");
 
     const secretSetup = await arrange();
-    await chmod(join(secretSetup.definition.secretDirectory, "speaker-c"), 0o644);
-    await expect(inspectHostedCampaignAdmission({ definition: secretSetup.definition, minimumFreeBytes: 1 }))
+    await chmod(join(secretSetup.definition.secretDirectory, "conversation-observer"), 0o644);
+    await expect(inspectHostedCampaignAdmission({ bindings: secretSetup.bindings, definition: secretSetup.definition, minimumFreeBytes: 1, plan: secretSetup.plan }))
       .rejects.toThrow("Missing or unsafe");
 
     const validSetup = await arrange();
-    const receipt = await inspectHostedCampaignAdmission({ definition: validSetup.definition, minimumFreeBytes: 1 });
+    const receipt = await inspectHostedCampaignAdmission({ bindings: validSetup.bindings, definition: validSetup.definition, minimumFreeBytes: 1, plan: validSetup.plan });
     expect(() => verifyHostedCampaignAdmissionReceipt({ ...receipt, campaignId: "changed" }))
       .toThrow("digest is invalid");
   });
@@ -75,8 +86,8 @@ describe("hosted campaign admission", () => {
   it("parses a closed command surface", () => {
     expect(parseHostedAdmissionArguments([
       "--definition", "/private/definition.json", "--receipt", "/private/receipt.json",
-      "--minimum-free-bytes", "1048576",
-    ])).toEqual({ definitionPath: "/private/definition.json", minimumFreeBytes: 1_048_576, receiptPath: "/private/receipt.json" });
+      "--bindings", "/private/bindings.json", "--plan", "/private/plan.json", "--minimum-free-bytes", "1048576",
+    ])).toEqual({ bindingsPath: "/private/bindings.json", definitionPath: "/private/definition.json", minimumFreeBytes: 1_048_576, planPath: "/private/plan.json", receiptPath: "/private/receipt.json" });
     expect(() => parseHostedAdmissionArguments(["--definition", "/a", "--definition", "/b"]))
       .toThrow("Usage");
   });
@@ -127,7 +138,10 @@ async function arrange() {
     speakerFixtures: { a: join(fixtures, manifest.fixtures[0]!.audioPath), b: join(fixtures, manifest.fixtures[1]!.audioPath) },
     serviceLevelThresholdsPath: thresholdsPath, supplementalManifestPath,
   } as const;
-  return { definition, root };
+  const bindings = { runs: [1, 2, 3].map((ordinal) => ({ remoteAttestationPath: `/tmp/discord-e2e-attestations/run-${ordinal}.json` })), schemaVersion: 1 } as const;
+  const { buildResolvedHostedCampaignPlanV1 } = await import("../src/hosted-campaign-plan-builder.js");
+  const plan = buildResolvedHostedCampaignPlanV1(definition, bindings);
+  return { bindings, definition, plan, root };
 }
 
 async function writePrivate(path: string, contents: string | Buffer): Promise<void> {
