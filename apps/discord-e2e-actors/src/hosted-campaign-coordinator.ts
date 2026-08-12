@@ -112,6 +112,7 @@ export interface HostedCampaignExecutableSpec {
   readonly arguments: HostedCampaignExecutableArguments;
   readonly childId: string;
   readonly completion?: HostedCampaignExecutableCompletion;
+  readonly completionAfter?: HostedCampaignActionReference;
   readonly entrypoint: HostedCampaignEntrypoint;
   readonly environment: Readonly<Record<string, string>>;
   readonly environmentBindings?: readonly HostedCampaignEnvironmentBinding[];
@@ -172,6 +173,9 @@ export type HostedCampaignActionEvidence<Action extends HostedCampaignBarrierAct
                 readonly outputPath: string;
                 readonly recordingId: string;
                 readonly runId: string;
+              }
+            : Action["kind"] extends "service-level-sources-ready" ? {
+                readonly outputPath: string; readonly runId: string; readonly sourcesReady: true;
               }
             : Action["kind"] extends "answer-intent" | "answer-observer-ready" ? TurnEvidence
               : Action["kind"] extends "run-verified" ? {
@@ -311,11 +315,16 @@ function validateExecutable(
   }
   const oneShot = child.completion !== undefined;
   if (oneShot && child.startBefore.kind === "campaign"
-    && !(child.completion !== undefined && isFiniteCompletion(child.completion) && child.releaseGate !== undefined)) {
+    && !(child.completion !== undefined && isFiniteCompletion(child.completion)
+      && (child.releaseGate !== undefined || child.completionAfter !== undefined))) {
     throw new Error(`One-shot child ${child.childId} must start only after its inputs exist`);
   }
   if (child.completion !== undefined) {
     validateCompletion(child, child.completion, input, campaignId, completionActions);
+  }
+  if (child.completionAfter !== undefined &&
+    (child.completion === undefined || !isFiniteCompletion(child.completion))) {
+    throw new Error(`Hosted campaign child ${child.childId} may schedule completion only for a finite process`);
   }
   if (child.releaseGate !== undefined && child.entrypoint !== "actor") {
     throw new Error(`Only an actor child may declare a hosted release gate`);

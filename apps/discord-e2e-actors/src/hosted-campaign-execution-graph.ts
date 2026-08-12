@@ -32,6 +32,7 @@ export function campaignActions(input: HostedCampaignInput): readonly HostedCamp
     scoped(reconnect!, { kind: "campaign-verified" }),
   ];
   const completions = new Map<string, HostedCampaignActionReference[]>();
+  const completionIds = new Set<string>();
   for (const child of input.children) {
     if (child.completion === undefined || !("action" in child.completion)
       || !isFiniteCompletionAction(child.completion.action)) {continue;}
@@ -42,9 +43,46 @@ export function campaignActions(input: HostedCampaignInput): readonly HostedCamp
     const key = actionReferenceIdentity(trigger);
     const reference = { action: child.completion.action, ordinal: child.completion.action.ordinal,
       runId: child.completion.action.runId };
+    const completionId = actionReferenceIdentity(reference);
+    if (completionIds.has(completionId)) {
+      throw new Error(`Hosted campaign completion action ${completionId} has multiple schedules`);
+    }
+    completionIds.add(completionId);
     completions.set(key, [...(completions.get(key) ?? []), reference]);
   }
-  return base.flatMap((reference) => [reference, ...(completions.get(actionReferenceIdentity(reference)) ?? [])]);
+  const baseIds = new Set(base.map(actionReferenceIdentity));
+  for (const [triggerId] of completions) {
+    if (!baseIds.has(triggerId) && !completionIds.has(triggerId)) {
+      throw new Error(`Hosted campaign completion trigger references unknown action ${triggerId}`);
+    }
+  }
+  for (const completionId of completionIds) {
+    if (baseIds.has(completionId)) {
+      throw new Error(`Hosted campaign completion action duplicates base action ${completionId}`);
+    }
+  }
+  const expanded: HostedCampaignActionReference[] = [];
+  const emitted = new Set<string>();
+  const visiting = new Set<string>();
+  const emit = (reference: HostedCampaignActionReference): void => {
+    const identity = actionReferenceIdentity(reference);
+    if (visiting.has(identity)) {
+      throw new Error(`Hosted campaign completion schedule contains a cycle at ${identity}`);
+    }
+    if (emitted.has(identity)) {
+      throw new Error(`Hosted campaign completion action is scheduled more than once: ${identity}`);
+    }
+    visiting.add(identity);
+    emitted.add(identity);
+    expanded.push(reference);
+    for (const completion of completions.get(identity) ?? []) {emit(completion);}
+    visiting.delete(identity);
+  };
+  for (const reference of base) {emit(reference);}
+  if (emitted.size !== base.length + completionIds.size) {
+    throw new Error("Hosted campaign completion schedule contains an unreachable cycle");
+  }
+  return expanded;
 }
 
 function isFiniteCompletionAction(action: HostedCampaignBarrierAction): action is Extract<

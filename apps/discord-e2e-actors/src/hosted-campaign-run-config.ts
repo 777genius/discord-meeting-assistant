@@ -117,6 +117,7 @@ const executableSchema = z.object({
   arguments: argumentsSchema,
   childId: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/u),
   completion: completionSchema.optional(),
+  completionAfter: actionReferenceSchema.optional(),
   entrypoint: z.enum([
     "actor", "campaign-verifier", "collector", "conversation-observer", "evidence-verifier",
     "live-observer", "playback-link-observer", "provenance-probe", "recording-ready", "service-levels",
@@ -130,6 +131,7 @@ const executableSchema = z.object({
     action: z.discriminatedUnion("kind", [
       z.object({ kind: z.literal("provenance-before") }).strict(),
       z.object({ kind: z.literal("observer-subscribed") }).strict(),
+      runVerifiedActionSchema,
     ]),
     ordinal: z.number().int().min(1).max(3),
     path: z.string().refine(isAbsolute),
