@@ -20,6 +20,7 @@ import {
   type HostedCampaignAdmissionInvocation,
   type HostedCampaignAdmissionReceiptV1,
 } from "./hosted-campaign-admission.js";
+import type { HostedDeploymentRevalidationBaselineV1 } from "./hosted-campaign-remote-admission.js";
 import {
   HostedCampaignProcessAdapter,
   type HostedCampaignTrustedRuntimeEnvironment,
@@ -43,6 +44,7 @@ export interface HostedCampaignCliDependencies {
 
 export interface HostedCampaignTrustedRevalidationInvocation
   extends HostedCampaignAdmissionInvocation {
+  readonly deploymentBaseline: HostedDeploymentRevalidationBaselineV1;
   readonly receipt: HostedCampaignAdmissionReceiptV1;
   readonly signal: AbortSignal;
 }
@@ -82,9 +84,11 @@ export async function runHostedCampaignCli(
   }
   await dependencies.revalidateTrustedAdmission({
     ...invocation,
+    deploymentBaseline: verifiedAdmission.remoteReadiness!.deploymentSafety.revalidationBaseline,
     receipt: verifiedAdmission,
     signal,
   });
+  dependencies.assertAdmission({ ...invocation, nowEpochMs: dependencies.now() });
   const ports = await dependencies.createPorts(input);
   const receipt = await runHostedCampaign(input, ports, { deadlineEpochMilliseconds, signal });
   await dependencies.writeReceipt(config.receiptPath, receipt);

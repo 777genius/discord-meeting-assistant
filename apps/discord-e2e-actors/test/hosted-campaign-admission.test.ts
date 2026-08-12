@@ -66,7 +66,14 @@ describe("hosted campaign admission", () => {
     const readiness = createHostedRemoteReadinessV1({
       campaignId: setup.definition.campaignId,
       clockPreflight: { kind: "hosted-clock-preflight-receipt", proofId: "1".repeat(64), schemaVersion: 2 },
-      deploymentSafety: reference("hosted-deployment-safety", "2"),
+      deploymentSafety: {
+        ...reference("hosted-deployment-safety", "2"),
+        revalidationBaseline: {
+          campaignId: setup.definition.campaignId, deploymentFingerprint: "5".repeat(64),
+          expectationSha256: "6".repeat(64),
+          kind: "hosted-deployment-revalidation-baseline", schemaVersion: 1,
+        },
+      },
       discordIdentity: reference("hosted-discord-identity-receipt", "3"),
       voicetextCanary: reference("hosted-voicetext-semantic-canary-receipt", "4"),
       expiresAt: "2026-08-13T09:05:00.000Z", kind: "hosted-remote-readiness",

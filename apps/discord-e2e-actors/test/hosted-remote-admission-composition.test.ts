@@ -77,12 +77,20 @@ describe("hosted remote admission composition", () => {
     const expectation = deploymentExpectation();
     const collect = vi.fn(async () => deploymentReceipt(expectation));
     const revalidate = createHostedDeploymentSafetyRevalidator({ collect });
-    await expect(revalidate(deploymentReceipt(expectation))).resolves.toBeUndefined();
+    const admitted = deploymentReceipt(expectation);
+    const baseline = JSON.parse(JSON.stringify({
+      campaignId: admitted.campaignId,
+      deploymentFingerprint: admitted.deploymentFingerprint,
+      expectationSha256: admitted.expectationSha256,
+      kind: "hosted-deployment-revalidation-baseline",
+      schemaVersion: 1,
+    })) as Parameters<typeof revalidate>[0];
+    await expect(revalidate(baseline)).resolves.toBeUndefined();
     expect(collect).toHaveBeenCalledOnce();
 
     const controller = new AbortController();
     controller.abort(new Error("cancelled"));
-    await expect(revalidate(deploymentReceipt(expectation), controller.signal)).rejects.toThrow("cancelled");
+    await expect(revalidate(baseline, controller.signal)).rejects.toThrow("cancelled");
     expect(collect).toHaveBeenCalledOnce();
   });
 });

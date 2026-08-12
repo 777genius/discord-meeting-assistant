@@ -28,8 +28,15 @@ const maximumReadinessAgeMs = 60_000;
 const maximumReceiptTtlMs = 60_000;
 const maximumFutureSkewMs = 2_000;
 
+export const hostedDeploymentRevalidationBaselineV1Schema = z.object({
+  campaignId: z.string().min(1), deploymentFingerprint: sha256Schema,
+  expectationSha256: sha256Schema, kind: z.literal("hosted-deployment-revalidation-baseline"),
+  schemaVersion: z.literal(1),
+}).strict();
 const deploymentSafetyReferenceSchema = z.object({
-  kind: z.literal("hosted-deployment-safety"), receiptSha256: sha256Schema, schemaVersion: z.literal(1),
+  kind: z.literal("hosted-deployment-safety"),
+  revalidationBaseline: hostedDeploymentRevalidationBaselineV1Schema,
+  receiptSha256: sha256Schema, schemaVersion: z.literal(1),
 }).strict();
 const discordIdentityReferenceSchema = z.object({
   kind: z.literal("hosted-discord-identity-receipt"), receiptSha256: sha256Schema, schemaVersion: z.literal(1),
@@ -51,6 +58,9 @@ export const hostedRemoteReadinessV1Schema = z.object({
 }).strict();
 
 export type HostedRemoteReadinessV1 = Readonly<z.infer<typeof hostedRemoteReadinessV1Schema>>;
+export type HostedDeploymentRevalidationBaselineV1 = Readonly<
+  z.infer<typeof hostedDeploymentRevalidationBaselineV1Schema>
+>;
 
 export type HostedCampaignRemoteAdmissionProbeRequest = Readonly<{
   campaignId: string;
@@ -103,7 +113,16 @@ export async function evaluateHostedRemoteAdmission(
   const content = {
     campaignId: expected.campaignId,
     clockPreflight: { kind: clock.kind, proofId: clock.proofId, schemaVersion: clock.schemaVersion },
-    deploymentSafety: reference(deployment), discordIdentity: reference(identity),
+    deploymentSafety: {
+      ...reference(deployment),
+      revalidationBaseline: {
+        campaignId: deployment.campaignId,
+        deploymentFingerprint: deployment.deploymentFingerprint,
+        expectationSha256: deployment.expectationSha256,
+        kind: "hosted-deployment-revalidation-baseline" as const,
+        schemaVersion: 1 as const,
+      },
+    }, discordIdentity: reference(identity),
     expiresAt: new Date(Math.min(clock.validUntilEpochMs, identity.expiresAtEpochMs, canary.expiresAtEpochMs)).toISOString(),
     kind: "hosted-remote-readiness" as const, persistence: "create-only" as const,
     planSha256: expected.planSha256, probedAt: new Date(Math.max(...timestamps)).toISOString(),

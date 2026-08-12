@@ -50,6 +50,14 @@ const plan = () => {
   });
 };
 
+const admittedReceipt = () => ({
+  remoteReadiness: { deploymentSafety: { revalidationBaseline: {
+    campaignId: "campaign-1", deploymentFingerprint: "1".repeat(64),
+    expectationSha256: "2".repeat(64), kind: "hosted-deployment-revalidation-baseline",
+    schemaVersion: 1,
+  } } },
+}) as never;
+
 describe("run-hosted-campaign CLI", () => {
   it("selects only the closed trusted runtime environment", () => {
     expect(loadHostedCampaignTrustedRuntimeEnvironment({
@@ -213,12 +221,13 @@ describe("run-hosted-campaign CLI", () => {
     expect(effects).toEqual(["admission"]);
   });
 
-  it("creates ports only after an admitted invocation and reaches lease acquisition", async () => {
+  it("preserves the deployment baseline across separate-CLI JSON and reaches createPorts when unchanged", async () => {
     const effects: string[] = [];
+    const serializedAdmission = JSON.stringify(admittedReceipt());
     await expect(runHostedCampaignCli(
       ["/plan.json", "/receipt.json", "1000", "/admission.json", "/definition.json", "/bindings.json"],
       {
-        assertAdmission: () => { effects.push("admission"); return {} as never; },
+        assertAdmission: () => { effects.push("admission"); return JSON.parse(serializedAdmission) as never; },
         assertReceiptAbsent: async () => {},
         createPorts: async () => {
           effects.push("factory");
@@ -232,10 +241,13 @@ describe("run-hosted-campaign CLI", () => {
         now: Date.now,
         readAdmission: async () => ({}), readBindings: async () => ({}),
         readDefinition: async () => ({}), readPlan: async () => plan(), writeReceipt: async () => {},
-        revalidateTrustedAdmission: async () => { effects.push("revalidate"); },
+        revalidateTrustedAdmission: async ({ deploymentBaseline }) => {
+          effects.push("revalidate");
+          expect(deploymentBaseline.deploymentFingerprint).toBe("1".repeat(64));
+        },
       }, new AbortController().signal,
     )).rejects.toThrow("stop-after-lease");
-    expect(effects).toEqual(["admission", "revalidate", "factory", "acquire"]);
+    expect(effects).toEqual(["admission", "revalidate", "admission", "factory", "acquire"]);
   });
 
   it("fails closed before ports and leases when trusted pre-spawn revalidation fails", async () => {
@@ -243,20 +255,46 @@ describe("run-hosted-campaign CLI", () => {
     await expect(runHostedCampaignCli(
       ["/plan.json", "/receipt.json", "1000", "/admission.json", "/definition.json", "/bindings.json"],
       {
-        assertAdmission: () => { effects.push("admission"); return {} as never; },
+        assertAdmission: () => { effects.push("admission"); return admittedReceipt(); },
         assertReceiptAbsent: async () => {},
         createPorts: async () => { effects.push("factory"); throw new Error("unreachable"); },
         now: () => 123,
         readAdmission: async () => ({}), readBindings: async () => ({}),
         readDefinition: async () => ({}), readPlan: async () => plan(),
-        revalidateTrustedAdmission: async ({ nowEpochMs, signal }) => {
+        revalidateTrustedAdmission: async ({ deploymentBaseline, nowEpochMs, signal }) => {
           effects.push(`revalidate:${nowEpochMs}:${String(signal.aborted)}`);
-          throw new Error("trusted deployment changed");
+          const freshDeploymentFingerprint = "9".repeat(64);
+          if (deploymentBaseline.deploymentFingerprint !== freshDeploymentFingerprint) {
+            throw new Error("trusted deployment changed");
+          }
         },
         writeReceipt: async () => { effects.push("write"); },
       }, new AbortController().signal,
     )).rejects.toThrow("trusted deployment changed");
     expect(effects).toEqual(["admission", "revalidate:123:false"]);
+  });
+
+  it("rechecks readiness expiry after revalidation and before creating ports", async () => {
+    const effects: string[] = [];
+    let nowEpochMs = 100;
+    await expect(runHostedCampaignCli(
+      ["/plan.json", "/receipt.json", "1000", "/admission.json", "/definition.json", "/bindings.json"],
+      {
+        assertAdmission: ({ nowEpochMs: checkedAt }) => {
+          effects.push(`admission:${checkedAt}`);
+          if (checkedAt >= 200) { throw new Error("remote readiness expired"); }
+          return admittedReceipt();
+        },
+        assertReceiptAbsent: async () => {},
+        createPorts: async () => { effects.push("factory"); throw new Error("unreachable"); },
+        now: () => nowEpochMs,
+        readAdmission: async () => ({}), readBindings: async () => ({}),
+        readDefinition: async () => ({}), readPlan: async () => plan(),
+        revalidateTrustedAdmission: async () => { effects.push("revalidate"); nowEpochMs = 200; },
+        writeReceipt: async () => { effects.push("write"); },
+      }, new AbortController().signal,
+    )).rejects.toThrow("remote readiness expired");
+    expect(effects).toEqual(["admission:100", "revalidate", "admission:200"]);
   });
 
   it("rejects an existing receipt before reading the plan or acquiring the campaign", async () => {

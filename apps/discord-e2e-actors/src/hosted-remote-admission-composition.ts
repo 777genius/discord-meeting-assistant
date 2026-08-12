@@ -8,6 +8,7 @@ import {
   hostedDeploymentSafetyExpectationV1Schema,
   type HostedDeploymentSafetyExpectationV1,
   type HostedDeploymentSafetyReceiptV1,
+  verifyHostedDeploymentSafetyReceiptV1,
 } from "./hosted-deployment-safety-receipt.js";
 import {
   produceHostedDiscordIdentityReceiptV1,
@@ -21,7 +22,9 @@ import {
 import type {
   HostedCampaignRemoteAdmissionProbe,
   HostedCampaignRemoteAdmissionProbeRequest,
+  HostedDeploymentRevalidationBaselineV1,
 } from "./hosted-campaign-remote-admission.js";
+import { hostedDeploymentRevalidationBaselineV1Schema } from "./hosted-campaign-remote-admission.js";
 import { HOSTED_CAMPAIGN_TARGET } from "./hosted-campaign-target.js";
 import type { HostedClockPreflightProbe } from "./collect-hosted-clock-preflight.js";
 
@@ -34,12 +37,18 @@ export interface HostedDeploymentSafetyReceiptProducer {
 
 export function createHostedDeploymentSafetyRevalidator(
   producer: HostedDeploymentSafetyReceiptProducer,
-): (admittedReceipt: unknown, signal?: AbortSignal) => Promise<void> {
-  return async (admittedReceipt, signal) => {
+): (baseline: HostedDeploymentRevalidationBaselineV1, signal?: AbortSignal) => Promise<void> {
+  return async (baselineValue, signal) => {
     assertNotAborted(signal);
+    const baseline = hostedDeploymentRevalidationBaselineV1Schema.parse(baselineValue);
     const freshReceipt = await producer.collect();
     assertNotAborted(signal);
-    assertHostedDeploymentSafetyRevalidatedV1(admittedReceipt, freshReceipt);
+    const fresh = verifyHostedDeploymentSafetyReceiptV1(freshReceipt);
+    if (baseline.campaignId !== fresh.campaignId
+      || baseline.expectationSha256 !== fresh.expectationSha256
+      || baseline.deploymentFingerprint !== fresh.deploymentFingerprint) {
+      throw new Error("Hosted deployment changed after safety admission");
+    }
   };
 }
 

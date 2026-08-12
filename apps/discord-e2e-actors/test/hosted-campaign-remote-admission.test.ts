@@ -65,7 +65,10 @@ function validReadiness(change: Readonly<Record<string, unknown>> = {}) {
   return createHostedRemoteReadinessV1({
     campaignId,
     clockPreflight: { kind: "hosted-clock-preflight-receipt", proofId: "1".repeat(64), schemaVersion: 2 },
-    deploymentSafety: reference("hosted-deployment-safety", "2"),
+    deploymentSafety: {
+      ...reference("hosted-deployment-safety", "2"),
+      revalidationBaseline: deploymentBaseline(),
+    },
     discordIdentity: reference("hosted-discord-identity-receipt", "3"),
     expiresAt: "2026-08-13T09:05:00.000Z",
     kind: "hosted-remote-readiness",
@@ -76,6 +79,11 @@ function validReadiness(change: Readonly<Record<string, unknown>> = {}) {
     voicetextCanary: reference("hosted-voicetext-semantic-canary-receipt", "4"),
     ...change,
   });
+}
+
+function deploymentBaseline() {
+  return { campaignId, deploymentFingerprint: "5".repeat(64), expectationSha256: "6".repeat(64),
+    kind: "hosted-deployment-revalidation-baseline" as const, schemaVersion: 1 as const };
 }
 
 function reference<const Kind extends "hosted-deployment-safety" | "hosted-discord-identity-receipt" |
