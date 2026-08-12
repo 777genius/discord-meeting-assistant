@@ -64,6 +64,20 @@ describe("retained E2E campaign lifecycle gate", () => {
     expect(verifyCurrentCampaign(currentCampaign()).failures).toEqual([]);
   });
 
+  it("rejects v5 sequential and overlap runs even with a valid v8 reconnect run", () => {
+    const runs = [
+      reidentify(retainedV5Evidence(sequentialEvidence()), "sequential-v5"),
+      reidentify(retainedV5Evidence(overlapEvidence()), "overlap-v5"),
+      reidentify(retainedV8Evidence(), "reconnect-v8"),
+    ];
+
+    const result = verifyCurrentCampaign(runs);
+
+    expect(result.failures.filter(({ code }) => code === "SCENARIO_SCHEMA_TOO_OLD"))
+      .toHaveLength(2);
+    expect(Object.values(result.runResults).every(({ passed }) => passed)).toBe(true);
+  });
+
   it("still rejects shared state across mixed-schema campaign runs", () => {
     const runs = currentCampaign();
     const overlap = runs[1]!;

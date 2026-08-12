@@ -20,6 +20,12 @@ export interface CampaignVerificationOptions {
   ) => E2eVerificationResult;
 }
 
+const campaignSchemaPolicy = {
+  overlap: { minimumSchemaVersion: 6 },
+  reconnect: { exactSchemaVersion: 8 },
+  sequential: { minimumSchemaVersion: 6 },
+} as const;
+
 export function verifyCampaign(
   { manifest, runs, verifyRun }: CampaignVerificationOptions,
 ): CampaignVerificationResult {
@@ -40,6 +46,7 @@ export function verifyCampaign(
     }
   }
   verifyRequiredScenarios(runs, fail);
+  verifyPostCallScenarioSchemaMinima(runs, fail);
   verifyLifecycleV8(runs, fail);
   verifyCampaignIsolation(runs, fail);
   verifyCampaignDeploymentProvenance(runs, fail);
@@ -55,12 +62,33 @@ function verifyLifecycleV8(
   fail: VerificationFailureReporter,
 ): void {
   if (!runs.some((run) =>
-    run.schemaVersion === 8 && run.actorRun.scenario === "reconnect"
+    run.schemaVersion === campaignSchemaPolicy.reconnect.exactSchemaVersion &&
+    run.actorRun.scenario === "reconnect"
   )) {
     fail(
       "LIFECYCLE_V8_NOT_PROVEN",
       "campaign requires retained evidence v8 from a reconnect run",
     );
+  }
+}
+
+function verifyPostCallScenarioSchemaMinima(
+  runs: readonly RetainedE2eEvidence[],
+  fail: VerificationFailureReporter,
+): void {
+  for (const scenario of ["sequential", "overlap"] as const) {
+    const scenarioRuns = runs.filter(({ actorRun }) => actorRun.scenario === scenario);
+    if (
+      scenarioRuns.length > 0 &&
+      !scenarioRuns.some(({ schemaVersion }) =>
+        schemaVersion >= campaignSchemaPolicy[scenario].minimumSchemaVersion
+      )
+    ) {
+      fail(
+        "SCENARIO_SCHEMA_TOO_OLD",
+        `${scenario} campaign proof requires retained evidence schema v${campaignSchemaPolicy[scenario].minimumSchemaVersion} or newer`,
+      );
+    }
   }
 }
 
