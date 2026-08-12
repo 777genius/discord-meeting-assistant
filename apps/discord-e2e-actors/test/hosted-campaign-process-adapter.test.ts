@@ -6,6 +6,10 @@ import { describe, expect, it } from "vitest";
 import { HostedCampaignArtifactStore } from "../src/hosted-campaign-artifact-store.js";
 import { HOSTED_CAMPAIGN_TARGET, type HostedCampaignExecutableSpec } from "../src/hosted-campaign-coordinator.js";
 import { HostedCampaignProcessAdapter } from "../src/hosted-campaign-process-adapter.js";
+import {
+  hostedCampaignProcessEventPrefix,
+  serializeHostedCampaignProcessEvent,
+} from "../src/hosted-campaign-process-event.js";
 
 async function adapter(source: string, outputLimitBytes?: number) {
   const root = await mkdtemp(join(tmpdir(), "hosted-process-"));
@@ -78,6 +82,68 @@ const campaignResult = (runIds: readonly string[]) => JSON.stringify({
 });
 
 describe("hosted campaign process adapter", () => {
+  it("ingests exact prefixed fragmented events while allowing ordinary stdout", async () => {
+    const outputPath = "/tmp/capture-1.json";
+    const event = serializeHostedCampaignProcessEvent({
+      campaignId: "campaign-1",
+      event: {
+        action: { kind: "capture-retained", ordinal: 1 },
+        evidence: { ordinal: 1, outputPath, retained: true },
+      },
+      kind: "hosted-campaign-barrier", runId: "run-3", schemaVersion: 1,
+    });
+    const source = `process.stdout.write("ordinary log\\n");` +
+      `process.stdout.write(${JSON.stringify(event.slice(0, 17))});` +
+      `setTimeout(() => process.stdout.write(${JSON.stringify(event.slice(17))}), 5);` +
+      `setInterval(() => {}, 1000);`;
+    const { processAdapter } = await adapter(source);
+    const executable = spec({
+      DISCORD_E2E_HOSTED_RELEASE_GATE_CAMPAIGN_ID: "campaign-1",
+      DISCORD_E2E_RUN_ID: "run-3",
+    });
+    const handle = await processAdapter.startChild(executable, bounded());
+    await expect(processAdapter.awaitBarrier({ kind: "capture-retained", ordinal: 1 }, bounded()))
+      .resolves.toEqual({ ordinal: 1, outputPath, retained: true });
+    await processAdapter.stopChild(handle);
+  });
+
+  it("fails closed on malformed, mismatched, or duplicate prefixed events", async () => {
+    const valid = serializeHostedCampaignProcessEvent({
+      campaignId: "campaign-1",
+      event: {
+        action: { kind: "observer-subscribed" },
+        evidence: { authenticatedObserverBotId: HOSTED_CAMPAIGN_TARGET.observerApplicationId },
+      },
+      kind: "hosted-campaign-barrier", runId: "run-3", schemaVersion: 1,
+    });
+    const sources = [
+      `${JSON.stringify(hostedCampaignProcessEventPrefix)} + "{bad-json}\\n"`,
+      JSON.stringify(valid.replace('"runId":"run-3"', '"runId":"wrong"')),
+      JSON.stringify(valid + valid),
+    ];
+    for (const expression of sources) {
+      const { processAdapter } = await adapter(
+        `process.stdout.write(${expression}); setInterval(() => {}, 1000);`,
+      );
+      await processAdapter.startChild(spec({
+        DISCORD_E2E_HOSTED_RELEASE_GATE_CAMPAIGN_ID: "campaign-1",
+        DISCORD_E2E_RUN_ID: "run-3",
+      }), bounded()).catch(() => {});
+      await expect(processAdapter.awaitBarrier({ kind: "provenance-before" }, bounded()))
+        .rejects.toThrow(/invalid prefixed event/u);
+    }
+  });
+
+  it("keeps one-shot completion JSON distinct from the process event protocol", async () => {
+    const { processAdapter } = await adapter(
+      'process.stdout.write(JSON.stringify({failures:[],metrics:[],passed:true}));',
+    );
+    const executable = verifierSpec();
+    const handle = await processAdapter.startChild(executable, bounded());
+    await expect(processAdapter.awaitChildCompletion(handle, executable, bounded()))
+      .resolves.toBeUndefined();
+  });
+
   it("uses a fresh allowlisted environment and rejects dangerous inheritance", async () => {
     const { processAdapter } = await adapter("setInterval(() => {}, 1000)");
     await expect(processAdapter.startChild(spec({ PATH: "/bin" }), bounded())).rejects.toThrow(/PATH/u);

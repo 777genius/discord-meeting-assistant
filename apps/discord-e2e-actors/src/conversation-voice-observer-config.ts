@@ -83,6 +83,7 @@ const environmentSchema = z.object({
     .max(5_000)
     .default(500),
   DISCORD_E2E_CONVERSATION_VOICE_GUILD_ID: snowflakeSchema,
+  DISCORD_E2E_HOSTED_CAMPAIGN_ID: correlationIdSchema.optional(),
   DISCORD_E2E_CONVERSATION_VOICE_KEYCHAIN_SERVICE: z.string()
     .trim()
     .min(1)
@@ -112,6 +113,13 @@ const environmentSchema = z.object({
   DISCORD_E2E_CONVERSATION_VOICE_VOICE_CHANNEL_ID: snowflakeSchema,
 }).superRefine((value, context) => {
   const isCampaign = (value.DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON?.length ?? 0) > 0;
+  if (isCampaign !== (value.DISCORD_E2E_HOSTED_CAMPAIGN_ID !== undefined)) {
+    context.addIssue({
+      code: "custom",
+      message: "A campaign observer requires exactly one hosted campaign ID",
+      path: ["DISCORD_E2E_HOSTED_CAMPAIGN_ID"],
+    });
+  }
   if (isCampaign !== (value.DISCORD_E2E_CONVERSATION_VOICE_CAMPAIGN_PROOF_OUTPUT !== undefined)) {
     context.addIssue({
       code: "custom",
@@ -257,6 +265,7 @@ export interface ConversationVoiceObserverConfig {
   readonly expectedDurationMilliseconds: number;
   readonly expectedDurationToleranceMilliseconds: number;
   readonly guildId: string;
+  readonly hostedCampaignId?: string;
   readonly keychainService: string;
   readonly maxPcmBytes: number;
   readonly meetingId: string;
@@ -314,6 +323,9 @@ export function loadConversationVoiceObserverConfig(
     expectedDurationToleranceMilliseconds:
       parsed.DISCORD_E2E_CONVERSATION_VOICE_EXPECTED_DURATION_TOLERANCE_MS,
     guildId: parsed.DISCORD_E2E_CONVERSATION_VOICE_GUILD_ID,
+    ...(parsed.DISCORD_E2E_HOSTED_CAMPAIGN_ID === undefined
+      ? {}
+      : { hostedCampaignId: parsed.DISCORD_E2E_HOSTED_CAMPAIGN_ID }),
     keychainService: parsed.DISCORD_E2E_CONVERSATION_VOICE_KEYCHAIN_SERVICE,
     maxPcmBytes: parsed.DISCORD_E2E_CONVERSATION_VOICE_MAX_PCM_BYTES,
     meetingId: parsed.DISCORD_E2E_CONVERSATION_VOICE_MEETING_ID,

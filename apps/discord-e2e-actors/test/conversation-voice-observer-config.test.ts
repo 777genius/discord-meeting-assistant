@@ -150,6 +150,7 @@ describe("loadConversationVoiceObserverConfig", () => {
       DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON:
         JSON.stringify(campaignCaptures),
       DISCORD_E2E_CONVERSATION_VOICE_CAMPAIGN_PROOF_OUTPUT: "/tmp/campaign-proof.json",
+      DISCORD_E2E_HOSTED_CAMPAIGN_ID: "campaign-1",
     }).additionalCaptures).toEqual(campaignCaptures);
     expect(() => loadConversationVoiceObserverConfig({
       ...requiredEnvironment,

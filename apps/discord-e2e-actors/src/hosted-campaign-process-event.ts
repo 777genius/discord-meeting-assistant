@@ -24,27 +24,36 @@ const captureRetainedSchema = z.object({
   ({ action, evidence }) => action.ordinal === evidence.ordinal,
   "Capture action and evidence ordinals must match",
 );
-const reconnectSchema = z.object({
-  action: z.object({ kind: z.enum(["reconnect-left", "reconnect-ready"]) }).strict(),
-  evidence: z.object({
-    observedAtEpochMilliseconds: epochMillisecondsSchema,
-    participantId: snowflakeSchema,
-  }).strict(),
+const reconnectEvidenceSchema = z.object({
+  observedAtEpochMilliseconds: epochMillisecondsSchema,
+  participantId: snowflakeSchema,
 }).strict();
-const answerSchema = z.object({
-  action: z.object({ kind: z.enum(["answer-intent", "answer-observer-ready"]) }).strict(),
-  evidence: z.object({
-    observedAtEpochMilliseconds: epochMillisecondsSchema,
-    turnId: identifierSchema,
-  }).strict(),
+const reconnectLeftSchema = z.object({
+  action: z.object({ kind: z.literal("reconnect-left") }).strict(),
+  evidence: reconnectEvidenceSchema,
+}).strict();
+const reconnectReadySchema = z.object({
+  action: z.object({ kind: z.literal("reconnect-ready") }).strict(),
+  evidence: reconnectEvidenceSchema,
+}).strict();
+const turnEvidenceSchema = z.object({
+  observedAtEpochMilliseconds: epochMillisecondsSchema,
+  turnId: identifierSchema,
+}).strict();
+const answerIntentSchema = z.object({
+  action: z.object({ kind: z.literal("answer-intent") }).strict(),
+  evidence: turnEvidenceSchema,
+}).strict();
+const answerObserverReadySchema = z.object({
+  action: z.object({ kind: z.literal("answer-observer-ready") }).strict(),
+  evidence: turnEvidenceSchema,
 }).strict();
 
 export const hostedCampaignProcessEventV1Schema = z.object({
+  campaignId: identifierSchema,
   event: z.union([
-    observerSubscribedSchema,
-    captureRetainedSchema,
-    reconnectSchema,
-    answerSchema,
+    observerSubscribedSchema, captureRetainedSchema, reconnectLeftSchema,
+    reconnectReadySchema, answerIntentSchema, answerObserverReadySchema,
   ]),
   kind: z.literal("hosted-campaign-barrier"),
   runId: identifierSchema,
@@ -55,8 +64,12 @@ export type HostedCampaignProcessEventV1 = z.infer<
   typeof hostedCampaignProcessEventV1Schema
 >;
 
+export const hostedCampaignProcessEventPrefix = "HOSTED_CAMPAIGN_EVENT_V1 " as const;
+
 export function serializeHostedCampaignProcessEvent(
   event: HostedCampaignProcessEventV1,
 ): string {
-  return `${JSON.stringify(hostedCampaignProcessEventV1Schema.parse(event))}\n`;
+  return `${hostedCampaignProcessEventPrefix}${JSON.stringify(
+    hostedCampaignProcessEventV1Schema.parse(event),
+  )}\n`;
 }

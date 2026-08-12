@@ -14,6 +14,11 @@ import type {
   HostedCampaignPorts,
 } from "./hosted-campaign-coordinator.js";
 import { HOSTED_CAMPAIGN_TARGET } from "./hosted-campaign-coordinator.js";
+import { hostedCampaignProcessEventPrefix } from "./hosted-campaign-process-event.js";
+import { ingestHostedCampaignProcessEventLine } from
+  "./hosted-campaign-process-event-ingestion.js";
+import { expectedHostedCampaignEventCorrelation } from
+  "./hosted-campaign-process-event-correlation.js";
 
 const ENTRYPOINTS: Readonly<Record<HostedCampaignEntrypoint, string>> = Object.freeze({
   actor: "main.js",
@@ -47,6 +52,7 @@ const ALLOWED_ENVIRONMENT = new Set([
   "DISCORD_E2E_FIXTURE_MANIFEST", "DISCORD_E2E_GUILD_ID", "DISCORD_E2E_KEYCHAIN_SERVICE",
   "DISCORD_E2E_HOSTED_RELEASE_GATE_CAMPAIGN_ID", "DISCORD_E2E_HOSTED_RELEASE_GATE_PATH",
   "DISCORD_E2E_HOSTED_RELEASE_GATE_TIMEOUT_MS",
+  "DISCORD_E2E_HOSTED_CAMPAIGN_ID",
   "DISCORD_E2E_LIVE_DURATION_MS", "DISCORD_E2E_LIVE_KEYCHAIN_SERVICE", "DISCORD_E2E_LIVE_OUTPUT",
   "DISCORD_E2E_LIVE_POLL_INTERVAL_MS", "DISCORD_E2E_LIVE_RESULT_CHANNEL_ID", "DISCORD_E2E_LIVE_RUN_ID",
   "DISCORD_E2E_LIVE_SECRET_DIRECTORY", "DISCORD_E2E_LIVE_SUT_ACCOUNT", "DISCORD_E2E_LIVE_SUT_APPLICATION_ID",
@@ -81,6 +87,9 @@ interface ChildState {
   readonly closed: Promise<void>;
   readonly exited: Promise<ChildExit>;
   readonly stdoutChunks: Buffer[];
+  readonly eventLines: string[];
+  readonly publishedEvents: Set<string>;
+  stdoutRemainder: string;
   failure?: Error;
   stderr: number;
   stdout: number;
@@ -141,6 +150,10 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
     const artifact = this.#options.artifactStore.awaitAction(action, bounded);
     const failures = [...this.#children.values()].map(async ({ exited, childId }) => {
       const exit = await exited;
+      const state = this.#children.get(childId);
+      if (state?.failure !== undefined) {
+        throw state.failure;
+      }
       throw new Error(`Hosted campaign child ${childId} exited early (${String(exit.code ?? exit.signal)})`);
     });
     return Promise.race([artifact, ...failures]);
@@ -201,7 +214,10 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
     const exited = new Promise<ChildExit>((resolve) => { reportExit = resolve; });
     let reportClosed!: () => void;
     const closed = new Promise<void>((resolve) => { reportClosed = resolve; });
-    const state: ChildState = { child, childId: spec.childId, closed, exited, stderr: 0, stdout: 0, stdoutChunks: [] };
+    const state: ChildState = {
+      child, childId: spec.childId, closed, eventLines: [], exited,
+      publishedEvents: new Set(), stderr: 0, stdout: 0, stdoutChunks: [], stdoutRemainder: "",
+    };
     this.#children.set(spec.childId, state);
     const limit = this.#options.outputLimitBytes ?? 64 * 1024;
     child.stdout.on("data", (data: Buffer) => {
@@ -210,6 +226,10 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
       if (state.stdout > limit) {
         state.failure = new Error(`Hosted campaign child ${spec.childId} exceeded stdout limit`);
         child.kill("SIGTERM");
+        return;
+      }
+      if (spec.completion === undefined) {
+        this.#ingestEventOutput(state, spec, data);
       }
     });
     child.stderr.on("data", (data: Buffer) => {
@@ -236,6 +256,36 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
       throw state.failure;
     }
     return { childId: spec.childId } as HostedCampaignChildHandle;
+  }
+  #ingestEventOutput(state: ChildState, spec: HostedCampaignExecutableSpec, data: Buffer): void {
+    if (state.failure !== undefined) {return;}
+    state.stdoutRemainder += data.toString("utf8");
+    const lines = state.stdoutRemainder.split("\n");
+    state.stdoutRemainder = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.startsWith(hostedCampaignProcessEventPrefix)) {continue;}
+      try {
+        const expected = expectedHostedCampaignEventCorrelation(spec);
+        state.eventLines.push(line);
+        void ingestHostedCampaignProcessEventLine({
+          campaignId: expected.campaignId, line, publishedEvents: state.publishedEvents,
+          runId: expected.runId, store: this.#options.artifactStore,
+        })
+          .catch((error: unknown) => {
+            state.failure = new Error(
+              `Hosted campaign child ${spec.childId} produced invalid prefixed event`,
+              { cause: error },
+            );
+            state.child.kill("SIGTERM");
+          });
+      } catch (error: unknown) {
+        state.failure = new Error(`Hosted campaign child ${spec.childId} produced invalid prefixed event`, {
+          cause: error,
+        });
+        state.child.kill("SIGTERM");
+        return;
+      }
+    }
   }
   async stopChild(handle: HostedCampaignChildHandle): Promise<void> {
     const state = this.#children.get(handle.childId);

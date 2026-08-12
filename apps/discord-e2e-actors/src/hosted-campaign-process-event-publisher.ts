@@ -6,6 +6,7 @@ import { serializeHostedCampaignProcessEvent } from "./hosted-campaign-process-e
 
 interface HostedCampaignEventContext {
   readonly additionalCaptures: readonly unknown[];
+  readonly hostedCampaignId?: string;
   readonly runId: string;
 }
 interface HostedReconnectEventContext {
@@ -22,7 +23,7 @@ export function publishObserverSubscribed(
   write: EventWriter = stdoutWriter,
 ): void {
   if (config.additionalCaptures.length === 0) {return;}
-  writeHostedEvent(config.runId, {
+  writeHostedEvent(requiredCampaignId(config.hostedCampaignId), config.runId, {
     action: { kind: "observer-subscribed" }, evidence: { authenticatedObserverBotId },
   }, write);
 }
@@ -34,7 +35,7 @@ export function publishAnswerIntent(
   write: EventWriter = stdoutWriter,
 ): void {
   if (config.additionalCaptures.length === 0 || intent === undefined || intentObservedAt === undefined) {return;}
-  writeHostedEvent(config.runId, {
+  writeHostedEvent(requiredCampaignId(config.hostedCampaignId), config.runId, {
     action: { kind: "answer-intent" },
     evidence: { observedAtEpochMilliseconds: Date.parse(intentObservedAt), turnId: intent.turnId },
   }, write);
@@ -47,7 +48,7 @@ export function publishAnswerObserverReady(
 ): void {
   if (config.additionalCaptures.length === 0) {return;}
   const receipt = proof.observerReadyReceipt;
-  writeHostedEvent(config.runId, {
+  writeHostedEvent(requiredCampaignId(config.hostedCampaignId), config.runId, {
     action: { kind: "answer-observer-ready" },
     evidence: {
       observedAtEpochMilliseconds: Date.parse(receipt.readyPublishedAt), turnId: receipt.turnId,
@@ -62,7 +63,7 @@ export function publishCaptureRetained(
   write: EventWriter = stdoutWriter,
 ): void {
   if (config.additionalCaptures.length === 0) {return;}
-  writeHostedEvent(config.runId, {
+  writeHostedEvent(requiredCampaignId(config.hostedCampaignId), config.runId, {
     action: { kind: "capture-retained", ordinal },
     evidence: { ordinal, outputPath, retained: true },
   }, write);
@@ -93,11 +94,19 @@ export function publishReconnectTransition(
 }
 
 function writeHostedEvent(
+  campaignId: string,
   runId: string,
   event: Parameters<typeof serializeHostedCampaignProcessEvent>[0]["event"],
   write: EventWriter,
 ): void {
   write(serializeHostedCampaignProcessEvent({
-    event, kind: "hosted-campaign-barrier", runId, schemaVersion: 1,
+    campaignId, event, kind: "hosted-campaign-barrier", runId, schemaVersion: 1,
   }));
+}
+
+function requiredCampaignId(value: string | undefined): string {
+  if (value === undefined) {
+    throw new Error("Hosted campaign observer event is missing its campaign ID");
+  }
+  return value;
 }
