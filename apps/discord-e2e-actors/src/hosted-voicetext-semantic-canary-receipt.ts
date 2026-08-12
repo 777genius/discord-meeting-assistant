@@ -10,6 +10,7 @@ const endpointSchema = z.object({
   origin: z.url().refine((value) => new URL(value).origin === value),
   path: z.string().regex(/^\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*$/u),
 }).strict();
+const maximumAllowedTimelineDeltaMs = 60_000;
 
 export const voicetextSemanticCanaryReceiptV1Schema = z.object({
   batch: z.object({
@@ -41,14 +42,10 @@ export const voicetextSemanticCanaryReceiptV1Schema = z.object({
   }).strict(),
   quality: z.object({
     characterErrorRate: z.number().min(0).max(1),
-    maximumCharacterErrorRate: z.number().min(0).max(1),
-    maximumTimelineDeltaMs: z.number().int().nonnegative(),
     observedMaximumTimelineDeltaMs: z.number().int().nonnegative(),
-    requiredTermCount: z.number().int().nonnegative(),
     requiredTermMatches: z.number().int().nonnegative(),
     requiredTermsExpectationSha256: sha256Schema,
     wordErrorRate: z.number().min(0).max(1),
-    maximumWordErrorRate: z.number().min(0).max(1),
   }).strict(),
   receiptSha256: sha256Schema,
   schemaVersion: z.literal(1),
@@ -65,8 +62,13 @@ export type VoicetextSemanticCanaryReceiptV1 = z.infer<typeof voicetextSemanticC
 export interface VoicetextSemanticCanaryExpectationV1 {
   readonly binding: VoicetextSemanticCanaryReceiptV1["binding"];
   readonly endpoint: VoicetextSemanticCanaryReceiptV1["endpoint"];
+  readonly maximumCharacterErrorRate: number;
   readonly maximumAgeMs: number;
+  readonly maximumTimelineDeltaMs: number;
+  readonly maximumWordErrorRate: number;
   readonly nowEpochMs: number;
+  readonly requiredTermCount: number;
+  readonly requiredTermsExpectationSha256: string;
 }
 
 export function digestVoicetextSemanticCanaryReceiptContentV1(
@@ -90,7 +92,7 @@ export function evaluateVoicetextSemanticCanaryReceiptV1(
     throw new Error("Voicetext semantic canary does not match its campaign binding");
   }
   assertBatchIdempotency(receipt);
-  assertSemanticThresholds(receipt);
+  assertSemanticThresholds(receipt, expected);
   return Object.freeze(receipt);
 }
 
@@ -121,15 +123,31 @@ function assertBatchIdempotency(receipt: VoicetextSemanticCanaryReceiptV1): void
   }
 }
 
-function assertSemanticThresholds(receipt: VoicetextSemanticCanaryReceiptV1): void {
+function assertSemanticThresholds(
+  receipt: VoicetextSemanticCanaryReceiptV1,
+  expected: VoicetextSemanticCanaryExpectationV1,
+): void {
   const { live, quality } = receipt;
+  if (!isRate(expected.maximumWordErrorRate)
+    || !isRate(expected.maximumCharacterErrorRate)
+    || !Number.isSafeInteger(expected.maximumTimelineDeltaMs) || expected.maximumTimelineDeltaMs < 0
+    || expected.maximumTimelineDeltaMs > maximumAllowedTimelineDeltaMs
+    || !Number.isSafeInteger(expected.requiredTermCount) || expected.requiredTermCount < 1
+    || !sha256Schema.safeParse(expected.requiredTermsExpectationSha256).success) {
+    throw new Error("Voicetext semantic canary expectation is invalid");
+  }
   if (live.audioAcknowledgements.received !== live.audioAcknowledgements.expected
-    || quality.wordErrorRate > quality.maximumWordErrorRate
-    || quality.characterErrorRate > quality.maximumCharacterErrorRate
-    || quality.observedMaximumTimelineDeltaMs > quality.maximumTimelineDeltaMs
-    || quality.requiredTermMatches !== quality.requiredTermCount) {
+    || quality.wordErrorRate > expected.maximumWordErrorRate
+    || quality.characterErrorRate > expected.maximumCharacterErrorRate
+    || quality.observedMaximumTimelineDeltaMs > expected.maximumTimelineDeltaMs
+    || quality.requiredTermsExpectationSha256 !== expected.requiredTermsExpectationSha256
+    || quality.requiredTermMatches !== expected.requiredTermCount) {
     throw new Error("Voicetext semantic canary did not satisfy its protocol or quality thresholds");
   }
+}
+
+function isRate(value: number): boolean {
+  return Number.isFinite(value) && value >= 0 && value < 1;
 }
 
 function digestCanonical(value: unknown): string {

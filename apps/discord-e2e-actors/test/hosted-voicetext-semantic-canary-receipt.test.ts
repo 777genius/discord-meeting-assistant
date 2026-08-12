@@ -15,7 +15,11 @@ const endpoint = {
   batch: { origin: "https://voicetext.test", path: "/v2/listen" },
   live: { origin: "wss://voicetext.test", path: "/v1/listen" },
 } as const;
-const expectation = { binding, endpoint, maximumAgeMs: 60_000, nowEpochMs: 110_000 };
+const expectation = {
+  binding, endpoint, maximumAgeMs: 60_000, maximumCharacterErrorRate: 0.15,
+  maximumTimelineDeltaMs: 250, maximumWordErrorRate: 0.2, nowEpochMs: 110_000,
+  requiredTermCount: 2, requiredTermsExpectationSha256: "5".repeat(64),
+};
 
 describe("hosted Voicetext semantic canary receipt", () => {
   it("accepts immutable batch/live evidence without retaining transcript or token text", () => {
@@ -32,10 +36,48 @@ describe("hosted Voicetext semantic canary receipt", () => {
     ["WER threshold failure", (value: VoicetextSemanticCanaryReceiptV1) => signed({ ...withoutDigest(value), quality: { ...value.quality, wordErrorRate: 0.21 } })],
     ["missing required term", (value: VoicetextSemanticCanaryReceiptV1) => signed({ ...withoutDigest(value), quality: { ...value.quality, requiredTermMatches: 1 } })],
     ["timeline threshold failure", (value: VoicetextSemanticCanaryReceiptV1) => signed({ ...withoutDigest(value), quality: { ...value.quality, observedMaximumTimelineDeltaMs: 251 } })],
+    ["required-terms expectation mismatch", (value: VoicetextSemanticCanaryReceiptV1) => signed({ ...withoutDigest(value), quality: { ...value.quality, requiredTermsExpectationSha256: "6".repeat(64) } })],
     ["missing live ACK", (value: VoicetextSemanticCanaryReceiptV1) => signed({ ...withoutDigest(value), live: { ...value.live, audioAcknowledgements: { expected: 2, received: 1 } } })],
     ["expired receipt", (value: VoicetextSemanticCanaryReceiptV1) => signed({ ...withoutDigest(value), expiresAtEpochMs: 110_000 })],
   ])("rejects %s", (_label, mutate) => {
     expect(() => evaluateVoicetextSemanticCanaryReceiptV1(mutate(receipt()), expectation)).toThrow();
+  });
+
+  it.each([
+    ["maximum WER", { maximumWordErrorRate: 1 }],
+    ["maximum CER", { maximumCharacterErrorRate: 1 }],
+    ["maximum timeline delta", { maximumTimelineDeltaMs: 86_400_000 }],
+  ])("does not let a receipt select its %s", (_label, receiptPolicy) => {
+    const base = receipt();
+    const selfAuthorizing = signed({
+      ...withoutDigest(base),
+      quality: { ...base.quality, ...receiptPolicy },
+    });
+    expect(() => evaluateVoicetextSemanticCanaryReceiptV1(selfAuthorizing, expectation)).toThrow();
+  });
+
+  it.each([
+    ["maximum WER of one", { maximumWordErrorRate: 1 }],
+    ["maximum CER of one", { maximumCharacterErrorRate: 1 }],
+    ["an unbounded timeline delta", { maximumTimelineDeltaMs: 86_400_000 }],
+    ["zero required terms", { requiredTermCount: 0 }],
+  ])("rejects a pinned expectation with %s", (_label, expectationPolicy) => {
+    expect(() => evaluateVoicetextSemanticCanaryReceiptV1(
+      receipt(), { ...expectation, ...expectationPolicy },
+    )).toThrow(/expectation is invalid/u);
+  });
+
+  it("rejects fixture, endpoint, and deployment-provenance expectation mismatches", () => {
+    const mismatches = [
+      { ...expectation, binding: { ...binding, fixtureSha256: "f".repeat(64) } },
+      { ...expectation, endpoint: { ...endpoint, live: { ...endpoint.live, path: "/v2/listen" } } },
+      { ...expectation, binding: { ...binding, sourceRevision: "f".repeat(40) } },
+    ];
+    for (const mismatch of mismatches) {
+      expect(() => evaluateVoicetextSemanticCanaryReceiptV1(receipt(), mismatch)).toThrow(
+        /does not match its campaign binding/u,
+      );
+    }
   });
 
   it("rejects absent protocol completion, empty evidence, or non-private token metadata", () => {
@@ -67,8 +109,7 @@ function receipt(): VoicetextSemanticCanaryReceiptV1 {
       finalizeComplete: true, protocolReady: true,
     },
     quality: {
-      characterErrorRate: 0.05, maximumCharacterErrorRate: 0.15, maximumTimelineDeltaMs: 250,
-      maximumWordErrorRate: 0.2, observedMaximumTimelineDeltaMs: 100, requiredTermCount: 2,
+      characterErrorRate: 0.05, observedMaximumTimelineDeltaMs: 100,
       requiredTermMatches: 2, requiredTermsExpectationSha256: "5".repeat(64), wordErrorRate: 0.1,
     },
     schemaVersion: 1,
