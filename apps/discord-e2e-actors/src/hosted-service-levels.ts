@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
   conversationVoiceEvidenceV3Schema,
@@ -18,13 +17,11 @@ import { parseConversationLifecycleEvidenceLogs } from "./e2e-processing-log-par
 import { assertExactDatabaseCounts, alignS3TracksToSnapshot, normalizeDatabase } from
   "./e2e-retained-evidence-snapshot.js";
 import type { S3RecordingEvidence } from "./e2e-retained-evidence-contracts.js";
-import { e2eServiceLevelsV1Schema, type E2eServiceLevelsV1 } from "./e2e-service-levels.js";
+import type { E2eServiceLevelsV1 } from "./e2e-service-levels.js";
+import type { E2eServiceLevelsV2 } from "./e2e-service-levels-v2.js";
 import { databaseOutputSchema, s3OutputSchema } from "./ssh-deployment-probe-validation.js";
-import {
-  clockEvidenceDigest,
-  hostedServiceLevelClockAttestationsV1Schema,
-  type HostedServiceLevelClockAttestationsV1,
-} from "./hosted-service-level-clock-attestation.js";
+import { clockEvidenceDigest } from "./hosted-service-level-clock-attestation.js";
+import { composeHostedServiceLevels } from "./hosted-service-level-clock-composition.js";
 import { HOSTED_CAMPAIGN_TARGET } from "./hosted-campaign-coordinator.js";
 
 const hostedServiceLevelFailureCodeSchema = z.enum([
@@ -91,53 +88,21 @@ interface PreparedSources {
 
 export async function deriveHostedServiceLevels(
   raw: HostedServiceLevelSourceInput,
-): Promise<E2eServiceLevelsV1> {
+): Promise<E2eServiceLevelsV1 | E2eServiceLevelsV2> {
   const sources = await prepareSources(raw);
   if (raw.clockAttestations === undefined) {
     fail("CLOCK_ATTESTATION_MISSING", "Run-bound hosted clock attestations are required");
   }
-  let attestations: HostedServiceLevelClockAttestationsV1;
   try {
-    attestations = hostedServiceLevelClockAttestationsV1Schema.parse(raw.clockAttestations);
+    return composeHostedServiceLevels({
+      attestations: raw.clockAttestations, measurements: sources.measurements,
+      meetingId: sources.meetingId, recordingId: sources.recordingId, runId: sources.runId,
+    });
   } catch (error) {
-    fail("CLOCK_ATTESTATION_MISMATCH", "Hosted clock attestation artifact is invalid", error);
-  }
-  if (attestations.runId !== sources.runId || attestations.meetingId !== sources.meetingId ||
-    attestations.recordingId !== sources.recordingId) {
-    fail("CLOCK_ATTESTATION_MISMATCH", "Hosted clock attestations do not match the run and recording");
-  }
-  const measurements = sources.measurements.map((source) => {
-    const attestation = attestations.measurements.find(
-      ({ serviceLevelId }) => serviceLevelId === source.serviceLevelId,
+    throw new HostedServiceLevelDerivationError(
+      "CLOCK_ATTESTATION_MISMATCH", "Hosted clock attestation artifact is invalid", { cause: error },
     );
-    if (attestation === undefined ||
-      attestation.startEvidenceSha256 !== source.startEvidenceSha256 ||
-      attestation.endEvidenceSha256 !== source.endEvidenceSha256) {
-      fail("CLOCK_ATTESTATION_MISMATCH", `${source.serviceLevelId} clocks are not bound to its exact source artifacts`);
-    }
-    const upperBoundMs = source.endAtEpochMs - source.startAtEpochMs + attestation.clockSkewBoundMs;
-    if (!Number.isSafeInteger(upperBoundMs) || upperBoundMs < 0) {
-      fail("IMPOSSIBLE_TIMELINE", `${source.serviceLevelId} has an impossible attested timeline`);
-    }
-    return {
-      clockSkewAttestation: {
-        attestationId: attestation.attestationId,
-        clockSkewBoundMs: attestation.clockSkewBoundMs,
-        endClockId: attestation.endClockId,
-        endEvidenceSha256: attestation.endEvidenceSha256,
-        method: attestation.method,
-        schemaVersion: 1 as const,
-        startClockId: attestation.startClockId,
-        startEvidenceSha256: attestation.startEvidenceSha256,
-      },
-      end: { atEpochMs: source.endAtEpochMs, clockId: attestation.endClockId, source: source.endSource },
-      measurementId: measurementId(source),
-      serviceLevelId: source.serviceLevelId,
-      start: { atEpochMs: source.startAtEpochMs, clockId: attestation.startClockId, source: source.startSource },
-      upperBoundMs,
-    };
-  });
-  return e2eServiceLevelsV1Schema.parse({ measurements, schemaVersion: 1 });
+  }
 }
 
 export async function hostedServiceLevelClockBindingRequest(
@@ -377,13 +342,6 @@ function prepareMeasurement(input: {
   }
   return { endAtEpochMs, endEvidenceSha256: clockEvidenceDigest(endSource), endSource,
     serviceLevelId, startAtEpochMs, startEvidenceSha256: clockEvidenceDigest(startSource), startSource };
-}
-
-function measurementId(source: PreparedMeasurement): string {
-  const digest = createHash("sha256").update(JSON.stringify([
-    source.serviceLevelId, source.startSource, source.endSource,
-  ])).digest("hex").slice(0, 32);
-  return `hosted-sla:${source.serviceLevelId}:${digest}`;
 }
 
 function exact<T>(values: readonly T[], code: HostedServiceLevelFailureCode, label: string): T {

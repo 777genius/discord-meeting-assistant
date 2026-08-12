@@ -4,7 +4,8 @@ export interface ServiceLevelClockAttestationContent {
   readonly clockSkewBoundMs: number;
   readonly endClockId: string;
   readonly endEvidenceSha256: string;
-  readonly method: "host-clock-skew-preflight-v1";
+  readonly method: "host-clock-skew-preflight-v1" | "ssh-bracketed-clock-v2";
+  readonly runClockProofId?: string;
   readonly serviceLevelId: string;
   readonly startClockId: string;
   readonly startEvidenceSha256: string;

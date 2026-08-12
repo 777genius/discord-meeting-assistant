@@ -39,6 +39,31 @@ const clockAttestationSchema = z.object({
   }
 });
 
+const clockAttestationV2Schema = z.object({
+  attestationId: sha256,
+  clockSkewBoundMs: safeNonnegativeInteger,
+  endClockId: identifier,
+  endEvidenceSha256: sha256,
+  method: z.literal("ssh-bracketed-clock-v2"),
+  runClockProofId: sha256,
+  serviceLevelId: z.enum(serviceLevelIds),
+  startClockId: identifier,
+  startEvidenceSha256: sha256,
+}).strict().superRefine((attestation, context) => {
+  if (attestation.attestationId !== clockAttestationId({
+    clockSkewBoundMs: attestation.clockSkewBoundMs,
+    endClockId: attestation.endClockId,
+    endEvidenceSha256: attestation.endEvidenceSha256,
+    method: attestation.method,
+    runClockProofId: attestation.runClockProofId,
+    serviceLevelId: attestation.serviceLevelId,
+    startClockId: attestation.startClockId,
+    startEvidenceSha256: attestation.startEvidenceSha256,
+  })) {
+    context.addIssue({ code: "custom", message: "Clock V2 attestation content digest is invalid" });
+  }
+});
+
 export const hostedServiceLevelClockAttestationsV1Schema = z.object({
   host: z.literal(HOSTED_CAMPAIGN_TARGET.host),
   kind: z.literal("hosted-service-level-clock-attestations"),
@@ -59,8 +84,33 @@ export type HostedServiceLevelClockAttestationsV1 = z.infer<
   typeof hostedServiceLevelClockAttestationsV1Schema
 >;
 
+export const hostedServiceLevelClockAttestationsV2Schema = z.object({
+  host: z.literal(HOSTED_CAMPAIGN_TARGET.host),
+  kind: z.literal("hosted-service-level-clock-attestations"),
+  measurements: z.array(clockAttestationV2Schema).length(serviceLevelIds.length),
+  meetingId: identifier,
+  recordingId: identifier,
+  runClockProofId: sha256,
+  runId: identifier,
+  schemaVersion: z.literal(2),
+}).strict().superRefine(({ measurements, runClockProofId }, context) => {
+  const ids = measurements.map(({ serviceLevelId }) => serviceLevelId);
+  if (new Set(ids).size !== serviceLevelIds.length || serviceLevelIds.some((id) => !ids.includes(id))) {
+    context.addIssue({ code: "custom", message: "Clock V2 attestations must cover each service level exactly once" });
+  }
+  if (measurements.some((measurement) => measurement.runClockProofId !== runClockProofId)) {
+    context.addIssue({ code: "custom", message: "Clock V2 attestations do not share the run proof" });
+  }
+});
+
+export type HostedServiceLevelClockAttestationsV2 = z.infer<
+  typeof hostedServiceLevelClockAttestationsV2Schema
+>;
+
 type ClockAttestation = HostedServiceLevelClockAttestationsV1["measurements"][number];
-type ClockAttestationContent = Omit<ClockAttestation, "attestationId">;
+type ClockAttestationV2 = HostedServiceLevelClockAttestationsV2["measurements"][number];
+type ClockAttestationContent = Omit<ClockAttestation, "attestationId"> |
+  Omit<ClockAttestationV2, "attestationId">;
 
 export function clockEvidenceDigest(value: unknown): string {
   return serviceLevelEvidenceDigest(value);

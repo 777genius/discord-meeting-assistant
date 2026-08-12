@@ -2,8 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import {
   attestHostedServiceLevelClocks,
+  attestHostedServiceLevelClocksV2,
   clockPreflightArtifactId,
 } from "../src/hosted-service-level-clock-preflight.js";
+import {
+  bindHostedClockRunV2,
+  deriveHostedClockPreflightReceiptV2,
+} from "../src/hosted-clock-proof-v2.js";
 import type { HostedServiceLevelClockBindingRequest } from
   "../src/hosted-service-levels.js";
 
@@ -63,7 +68,43 @@ describe("hosted service-level external clock preflight", () => {
     expect(() => attestHostedServiceLevelClocks(preflight({ validUntilEpochMs: 1_499 }), request))
       .toThrow("does not cover");
   });
+
+  it("produces V2 SLA attestations only from a run-bound V2 clock proof", () => {
+    const admission = deriveHostedClockPreflightReceiptV2(clockExchange(1_000, 1_000_000_000n));
+    const runClock = bindHostedClockRunV2({
+      admission,
+      completion: clockExchange(11_000, 11_000_000_000n),
+      meetingId: request.meetingId,
+      recordingId: request.recordingId,
+      runId: request.runId,
+    });
+
+    const result = attestHostedServiceLevelClocksV2(runClock, request);
+    expect(result).toMatchObject({ runClockProofId: runClock.proofId, schemaVersion: 2 });
+    expect(result.measurements.every((measurement) =>
+      measurement.method === "ssh-bracketed-clock-v2" &&
+      measurement.runClockProofId === runClock.proofId)).toBe(true);
+    expect(() => attestHostedServiceLevelClocksV2(preflight(), request)).toThrow();
+  });
 });
+
+function clockExchange(epoch: number, monotonic: bigint) {
+  return {
+    observer: {
+      after: { bootId: "observer-boot", epochMs: epoch + 10, monotonicNs: String(monotonic + 10_000_000n) },
+      before: { bootId: "observer-boot", epochMs: epoch, monotonicNs: String(monotonic) },
+    },
+    observerClockId: "host-observer-clock",
+    source: {
+      after: { bootId: "source-boot", epochMs: epoch + 8, monotonicNs: String(monotonic + 8_000_000n) },
+      before: { bootId: "source-boot", epochMs: epoch + 5, monotonicNs: String(monotonic + 5_000_000n) },
+      sample: { bootId: "source-boot", epochMs: epoch + 7, monotonicNs: String(monotonic + 7_000_000n) },
+    },
+    sourceClockId: "meeting-source-clock",
+    target: { environment: "private-test-guild" as const, host: "codex-workers-eu-01" as const,
+      project: "discord-meeting-assistant" as const },
+  };
+}
 
 function preflight(overrides: Partial<PreflightContent> = {}) {
   const content: PreflightContent = {

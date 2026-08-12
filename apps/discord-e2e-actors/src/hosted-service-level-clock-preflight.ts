@@ -5,8 +5,14 @@ import { z } from "zod";
 import {
   clockAttestationId,
   hostedServiceLevelClockAttestationsV1Schema,
+  hostedServiceLevelClockAttestationsV2Schema,
   type HostedServiceLevelClockAttestationsV1,
+  type HostedServiceLevelClockAttestationsV2,
 } from "./hosted-service-level-clock-attestation.js";
+import {
+  hostedClockRunBindingV2Schema,
+  hostedClockRunSkewBoundMs,
+} from "./hosted-clock-proof-v2.js";
 import type { HostedServiceLevelClockBindingRequest } from "./hosted-service-levels.js";
 import { HOSTED_CAMPAIGN_TARGET } from "./hosted-campaign-coordinator.js";
 
@@ -105,6 +111,41 @@ export function attestHostedServiceLevelClocks(
     recordingId: request.recordingId,
     runId: request.runId,
     schemaVersion: 1,
+  });
+}
+
+export function attestHostedServiceLevelClocksV2(
+  runBindingValue: unknown,
+  request: HostedServiceLevelClockBindingRequest,
+): HostedServiceLevelClockAttestationsV2 {
+  const binding = hostedClockRunBindingV2Schema.parse(runBindingValue);
+  if (binding.runId !== request.runId || binding.meetingId !== request.meetingId ||
+    binding.recordingId !== request.recordingId) {
+    throw new Error("Clock V2 run proof does not match the hosted SLA run and recording");
+  }
+  const clockSkewBoundMs = hostedClockRunSkewBoundMs(binding);
+  const measurements = request.measurements.map((measurement) => {
+    const content = {
+      clockSkewBoundMs,
+      endClockId: binding.admission.raw.observerClockId,
+      endEvidenceSha256: measurement.endEvidenceSha256,
+      method: "ssh-bracketed-clock-v2" as const,
+      runClockProofId: binding.proofId,
+      serviceLevelId: measurement.serviceLevelId,
+      startClockId: binding.admission.raw.sourceClockId,
+      startEvidenceSha256: measurement.startEvidenceSha256,
+    };
+    return { ...content, attestationId: clockAttestationId(content) };
+  });
+  return hostedServiceLevelClockAttestationsV2Schema.parse({
+    host: binding.admission.raw.target.host,
+    kind: "hosted-service-level-clock-attestations",
+    measurements,
+    meetingId: request.meetingId,
+    recordingId: request.recordingId,
+    runClockProofId: binding.proofId,
+    runId: request.runId,
+    schemaVersion: 2,
   });
 }
 
