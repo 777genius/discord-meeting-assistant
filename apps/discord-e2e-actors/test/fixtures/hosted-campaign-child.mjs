@@ -2,11 +2,17 @@ import { constants } from "node:fs";
 import { open, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 
+/** @typedef {{ action?: unknown, outputPath?: unknown, sourcePath?: unknown }} ChildCommand */
+
 const [rootPath, childId, behavior = "ack"] = process.argv.slice(2);
 if (rootPath === undefined || childId === undefined) {
   throw new Error("sandbox fixture requires a root path and child ID");
 }
 
+/**
+ * @param {string} path
+ * @param {string} contents
+ */
 async function writeCreateOnly(path, contents) {
   const handle = await open(
     path,
@@ -23,8 +29,9 @@ async function writeCreateOnly(path, contents) {
 
 await writeCreateOnly(join(rootPath, `ready-${childId}`), `${childId}\n`);
 
+/** @type {Set<string>} */
 const handled = new Set();
-while (true) {
+for (;;) {
   const names = (await readdir(rootPath))
     .filter((name) => name.endsWith(`-${childId}-command`))
     .toSorted();
@@ -40,8 +47,14 @@ while (true) {
       continue;
     }
 
-    const command = JSON.parse(await readFile(join(rootPath, name), "utf8"));
-    if (command.sourcePath !== undefined && command.outputPath !== undefined) {
+    /** @type {unknown} */
+    const parsedCommand = JSON.parse(await readFile(join(rootPath, name), "utf8"));
+    if (typeof parsedCommand !== "object" || parsedCommand === null) {
+      throw new Error(`invalid command fixture: ${name}`);
+    }
+    /** @type {ChildCommand} */
+    const command = parsedCommand;
+    if (typeof command.sourcePath === "string" && typeof command.outputPath === "string") {
       await writeCreateOnly(command.outputPath, await readFile(command.sourcePath, "utf8"));
     }
     await writeCreateOnly(
