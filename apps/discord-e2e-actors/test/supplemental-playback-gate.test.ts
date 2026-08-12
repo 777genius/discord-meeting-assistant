@@ -71,19 +71,21 @@ describe("supplemental playback two-phase gate", () => {
   it("fails closed on mismatched, public, stale, or duplicate armed receipts", async () => {
     const mismatch = await context();
     const mismatchWaiting = waitForSupplementalPlaybackGate(mismatch.gate, AbortSignal.timeout(1_000));
+    const mismatchWaitFailure = expect(mismatchWaiting).rejects.toThrow(/aborted/u);
     await expect(waitForSupplementalGateArmed(
       { ...mismatch.gate, campaignId: "other" }, AbortSignal.timeout(1_000),
     )).rejects.toThrow(/correlation mismatch/u);
-    await expect(mismatchWaiting).rejects.toThrow(/aborted/u);
+    await mismatchWaitFailure;
 
     const publicReceipt = await context("playback");
     const publicWaiting = waitForSupplementalPlaybackGate(publicReceipt.gate, AbortSignal.timeout(1_000));
+    const publicWaitFailure = expect(publicWaiting).rejects.toThrow(/aborted/u);
     await expect(waitForSupplementalGateArmed(publicReceipt.gate, AbortSignal.timeout(1_000)))
       .resolves.toBeUndefined();
     await chmod(publicReceipt.gate.armedPath, 0o644);
     await expect(waitForSupplementalGateArmed(publicReceipt.gate, AbortSignal.timeout(100)))
       .rejects.toThrow(/Unsafe/u);
-    await expect(publicWaiting).rejects.toThrow(/aborted/u);
+    await publicWaitFailure;
 
     const staleReceipt = await context();
     await writeFile(staleReceipt.gate.armedPath, JSON.stringify({
@@ -100,26 +102,31 @@ describe("supplemental playback two-phase gate", () => {
 
     const duplicate = await context();
     const first = waitForSupplementalPlaybackGate(duplicate.gate, AbortSignal.timeout(1_000));
+    const firstWaitFailure = expect(first).rejects.toThrow(/aborted/u);
     await expect(waitForSupplementalGateArmed(duplicate.gate, AbortSignal.timeout(1_000)))
       .resolves.toBeUndefined();
     await expect(waitForSupplementalPlaybackGate(duplicate.gate, AbortSignal.timeout(100)))
       .rejects.toMatchObject({ code: "EEXIST" });
-    await expect(first).rejects.toThrow(/aborted/u);
+    await firstWaitFailure;
   });
 
   it("fails closed for stale, mismatched, duplicate, or symlink gates", async () => {
     const stale = await context();
     const staleWaiting = waitForSupplementalPlaybackGate(stale.gate, AbortSignal.timeout(1_000));
-    await new Promise((resolve) => { setTimeout(resolve, 10); });
+    const staleFailure = expect(staleWaiting).rejects.toThrow(/not fresh/u);
+    await expect(waitForSupplementalGateArmed(stale.gate, AbortSignal.timeout(1_000)))
+      .resolves.toBeUndefined();
     await writeSupplementalPlaybackGate({ ...stale.gate, releasedAtEpochMs: Date.now() - 1_000 });
-    await expect(staleWaiting).rejects.toThrow(/not fresh/u);
+    await staleFailure;
     await expect(writeSupplementalPlaybackGate(stale.gate)).rejects.toMatchObject({ code: "EEXIST" });
 
     const mismatch = await context("playback");
     const waiting = waitForSupplementalPlaybackGate(mismatch.gate, AbortSignal.timeout(1_000));
-    await new Promise((resolve) => { setTimeout(resolve, 10); });
+    const mismatchFailure = expect(waiting).rejects.toThrow(/correlation mismatch/u);
+    await expect(waitForSupplementalGateArmed(mismatch.gate, AbortSignal.timeout(1_000)))
+      .resolves.toBeUndefined();
     await writeSupplementalPlaybackGate({ ...mismatch.gate, campaignId: "other", releasedAtEpochMs: Date.now() });
-    await expect(waiting).rejects.toThrow(/correlation mismatch/u);
+    await mismatchFailure;
 
     const unsafe = await context();
     const target = join(unsafe.root, "target.json");
