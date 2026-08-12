@@ -11,8 +11,10 @@ import {
   conversationVoiceCampaignProofV1Schema,
   conversationVoiceEvidenceV3Schema,
   deploymentRevisionExpectationSchema,
+  e2eServiceLevelsV1Schema,
   fixtureManifestV1Schema,
   supplementalPlaybackEvidenceV1Schema,
+  serviceLevelThresholdsSchema,
   unboundActorRunEvidenceV1Schema,
   verifyRetainedE2eEvidence,
 } from "./e2e-evidence.js";
@@ -25,7 +27,7 @@ import { EvidenceProbeInterruptedError } from "./ssh-deployment-probe-commands.j
 
 async function main(): Promise<void> {
   const config = collectorEnvironmentSchema.parse(process.env);
-  const [actorRun, manifest, conversationVoice, supplementalPlayback, campaignProof] = await Promise.all([
+  const [actorRun, manifest, conversationVoice, supplementalPlayback, campaignProof, serviceLevels, serviceLevelThresholds] = await Promise.all([
     readJson(config.DISCORD_E2E_ACTOR_RUN_INPUT),
     readJson(config.DISCORD_E2E_FIXTURE_MANIFEST).then((value) =>
       fixtureManifestV1Schema.parse(value)
@@ -35,6 +37,8 @@ async function main(): Promise<void> {
     )),
     readSupplementalPlayback(config.DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_INPUT),
     readCampaignProof(config.DISCORD_E2E_CONVERSATION_CAMPAIGN_PROOF_INPUT),
+    readOptionalJson(config.DISCORD_E2E_SERVICE_LEVELS_INPUT, e2eServiceLevelsV1Schema),
+    readOptionalJson(config.DISCORD_E2E_SERVICE_LEVEL_THRESHOLDS_INPUT, serviceLevelThresholdsSchema),
   ]);
   const deployment = new SshDeploymentEvidenceProbe({
     attestationFile: config.DISCORD_E2E_REMOTE_ATTESTATION_FILE,
@@ -62,6 +66,7 @@ async function main(): Promise<void> {
         botSpeakerId: config.DISCORD_E2E_BOTIK_SPEAKER_ID,
         campaignProof: requireDefined(campaignProof, "conversation campaign proof"),
         reconnectParticipantId: reconnectParticipantId(manifest),
+        serviceLevels: requireDefined(serviceLevels, "service-level evidence"),
         supplementalPlayback: requireDefined(
           supplementalPlayback,
           "supplemental playback evidence",
@@ -99,7 +104,12 @@ async function main(): Promise<void> {
       pipecat: config.DISCORD_E2E_EXPECTED_PIPECAT_SOURCE_REVISION,
       subscriptionRuntime: config.DISCORD_E2E_EXPECTED_SUBSCRIPTION_RUNTIME_SOURCE_REVISION,
     });
-    const verification = verifyRetainedE2eEvidence(manifest, evidence, expectedRevisions);
+    const verification = verifyRetainedE2eEvidence(
+      manifest,
+      evidence,
+      expectedRevisions,
+      serviceLevelThresholds,
+    );
     if (!verification.passed) {
       throw new Error(`collected evidence failed: ${JSON.stringify(verification.failures)}`);
     }
@@ -153,6 +163,13 @@ async function readCampaignProof(path: string | undefined): Promise<unknown | un
     return undefined;
   }
   return conversationVoiceCampaignProofV1Schema.parse(await readJson(path));
+}
+
+async function readOptionalJson<T>(
+  path: string | undefined,
+  schema: { parse(value: unknown): T },
+): Promise<T | undefined> {
+  return path === undefined ? undefined : schema.parse(await readJson(path));
 }
 
 async function atomicWriteJson(path: string, value: unknown): Promise<void> {

@@ -34,6 +34,8 @@ const conversationEnvironment = {
     "/evidence/answer.json",
     "/evidence/farewell.json",
   ]),
+  DISCORD_E2E_SERVICE_LEVELS_INPUT: "/evidence/service-levels.json",
+  DISCORD_E2E_SERVICE_LEVEL_THRESHOLDS_INPUT: "/evidence/service-level-thresholds.json",
   DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_INPUT: "/evidence/speaker-d.json",
 };
 const pipecatEnvironment = {
@@ -85,10 +87,8 @@ describe("collectorEnvironmentSchema", () => {
 
   it("rejects every partial retained V8 conversation input group", () => {
     const entries = Object.entries(conversationEnvironment);
-    const partialGroups = Array.from({ length: 6 }, (_unused, mask) =>
-      Object.fromEntries(entries.filter(
-        (_entry, index) => ((mask + 1) & (1 << index)) !== 0,
-      ))
+    const partialGroups = entries.map((_, omittedIndex) =>
+      Object.fromEntries(entries.filter((_entry, index) => index !== omittedIndex))
     );
 
     expect(partialGroups.every((partial) =>

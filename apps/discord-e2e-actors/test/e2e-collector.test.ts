@@ -16,6 +16,7 @@ import type { RecordingPlaybackEvidenceProbe } from "../src/recording-playback-e
 import { retainedV7Evidence, retainedV8Evidence } from "./e2e-evidence-fixtures.js";
 import { conversationVoiceCampaignPlanDigest } from
   "../src/conversation-voice-campaign-proof.js";
+import { serviceLevelsProof } from "./e2e-service-level-fixtures.js";
 
 const campaignProof = {
   observerReadyReceipt: {
@@ -526,6 +527,7 @@ describe("collectRetainedE2eEvidence", () => {
         botSpeakerId: conversationFixture.botSpeakerId,
         campaignProof: campaignProofFor(conversationFixture),
         reconnectParticipantId: speakerB,
+        serviceLevels: serviceLevelsProof(),
         supplementalPlayback,
         voice,
       },
@@ -540,6 +542,7 @@ describe("collectRetainedE2eEvidence", () => {
       conversationFixture.reconnectNoRepeat.lifecycleReceipts,
     );
     expect(evidence.conversation.voice).toHaveLength(6);
+    expect(evidence.serviceLevels).toEqual(serviceLevelsProof());
     expect(evidence.conversation.voice.every(
       ({ correlation }) => correlation.recordingId === "recording-1",
     )).toBe(true);
@@ -632,6 +635,7 @@ describe("failures", () => {
         botSpeakerId: conversationFixture.botSpeakerId,
         campaignProof: campaignProofFor(conversationFixture),
         reconnectParticipantId: speakerB,
+        serviceLevels: serviceLevelsProof(),
         supplementalPlayback: {
           ...structuredClone(conversationFixture.supplementalPlayback),
           runId: "run-1",

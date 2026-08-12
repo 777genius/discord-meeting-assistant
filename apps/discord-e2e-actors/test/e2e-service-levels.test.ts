@@ -3,15 +3,13 @@ import { describe, expect, it } from "vitest";
 import {
   e2eServiceLevelsV1Schema,
   type E2eServiceLevelsV1,
-  type ServiceLevelThresholds,
   verifyE2eServiceLevels,
 } from "../src/e2e-service-levels.js";
+import {
+  exactServiceLevelThresholds as thresholds,
+  serviceLevelsProof as proofAtThresholds,
+} from "./e2e-service-level-fixtures.js";
 
-const thresholds: ServiceLevelThresholds = {
-  "join-to-greeting-first-packet": 100,
-  "question-end-to-answer-first-packet": 200,
-  "recording-end-to-discord-first-seen": 300,
-};
 
 describe("E2E service-level proof", () => {
   it("accepts exact threshold N and rejects N + 1", () => {
@@ -71,34 +69,6 @@ describe("E2E service-level proof", () => {
     expect(failureCodes(impossible)).toEqual(["SLA_IMPOSSIBLE_TIMELINE"]);
   });
 });
-
-function proofAtThresholds(): E2eServiceLevelsV1 {
-  return e2eServiceLevelsV1Schema.parse({
-    measurements: Object.entries(thresholds).map(([serviceLevelId, threshold], index) => ({
-      clockSkewAttestation: {
-        attestationId: `attestation-${index}`,
-        clockSkewBoundMs: 5,
-        endClockId: "observer-clock",
-        schemaVersion: 1,
-        startClockId: "source-clock",
-      },
-      end: {
-        atEpochMs: 10_000 + threshold - 5,
-        clockId: "observer-clock",
-        eventId: `end-${index}`,
-      },
-      measurementId: `measurement-${index}`,
-      serviceLevelId,
-      start: {
-        atEpochMs: 10_000,
-        clockId: "source-clock",
-        eventId: `start-${index}`,
-      },
-      upperBoundMs: threshold,
-    })),
-    schemaVersion: 1,
-  });
-}
 
 function failureCodes(proof: E2eServiceLevelsV1): string[] {
   const codes: string[] = [];

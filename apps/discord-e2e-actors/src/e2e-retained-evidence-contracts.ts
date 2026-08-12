@@ -3,6 +3,7 @@ import type {
   CurrentDeploymentProvenance,
   ProcessingEvidence,
 } from "./e2e-evidence-schema.js";
+import type { E2eServiceLevelsV1 } from "./e2e-service-levels.js";
 import type { RecordingPlaybackEvidenceProbe } from "./recording-playback-evidence-probe.js";
 
 export interface DatabaseObservation {
@@ -96,6 +97,7 @@ export interface CollectEvidenceInput {
     readonly botSpeakerId: string;
     readonly campaignProof: unknown;
     readonly reconnectParticipantId: string;
+    readonly serviceLevels: E2eServiceLevelsV1;
     readonly supplementalPlayback: unknown;
     readonly voice: readonly unknown[];
   };

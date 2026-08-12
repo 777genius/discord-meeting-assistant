@@ -195,6 +195,7 @@ export async function collectRetainedE2eEvidence(
         bindConversationVoiceRecording(observation, input.recordingId)
       ),
     },
+    serviceLevels: input.conversation.serviceLevels,
     schemaVersion: 9,
   });
 }
