@@ -83,7 +83,7 @@ const completionSchema = z.discriminatedUnion("kind", [
   z.object({ action: z.object({ kind: z.literal("conversation-observer-completed"), ordinal: z.number().int().min(1).max(3), runId: identifier }).strict(),
     kind: z.literal("conversation-observer"), outputPaths: z.array(z.string().refine(isAbsolute)).min(1).max(6), runId: identifier }).strict(),
   z.object({ action: z.object({ kind: z.literal("playback-link-seen"), ordinal: z.number().int().min(1).max(3), runId: identifier }).strict(),
-    kind: z.literal("playback-link-observer"), outputPath: z.string().refine(isAbsolute), recordingId: identifier,
+    kind: z.literal("playback-link-observer"), outputPath: z.string().refine(isAbsolute), recordingId: identifier.optional(),
     runId: identifier }).strict(),
   z.object({ action: z.object({ kind: z.literal("recording-ready"), ordinal: z.number().int().min(1).max(3), runId: identifier }).strict(),
     kind: z.literal("recording-ready"), outputPath: z.string().refine(isAbsolute), runId: identifier }).strict(),
@@ -91,8 +91,8 @@ const completionSchema = z.discriminatedUnion("kind", [
     kind: z.literal("supplemental-player"), outputPath: z.string().refine(isAbsolute), runId: identifier }).strict(),
   z.object({
     action: z.object({ kind: z.literal("service-levels-ready") }).strict(),
-    campaignId: identifier, kind: z.literal("service-levels"), meetingId: identifier,
-    outputPath: z.string().refine(isAbsolute), recordingId: identifier,
+    campaignId: identifier, kind: z.literal("service-levels"), meetingId: identifier.optional(),
+    outputPath: z.string().refine(isAbsolute), recordingId: identifier.optional(),
     reportPath: z.string().refine(isAbsolute), runId: identifier,
   }).strict(),
   z.object({

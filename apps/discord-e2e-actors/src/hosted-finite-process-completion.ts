@@ -46,7 +46,7 @@ export type HostedFiniteProcessCompletionKind = keyof typeof completionSchemas;
 export type HostedFiniteProcessCompletionExpectation =
   | { readonly kind: "actor"; readonly outputPath: string; readonly runId: string; readonly scenario: z.infer<typeof scenario> }
   | { readonly kind: "conversation-observer"; readonly outputPaths: readonly string[]; readonly runId: string }
-  | { readonly kind: "playback-link-observer"; readonly outputPath: string; readonly recordingId: string; readonly runId: string }
+  | { readonly kind: "playback-link-observer"; readonly outputPath: string; readonly recordingId?: string; readonly runId: string }
   | { readonly kind: "recording-ready"; readonly outputPath: string; readonly runId: string }
   | { readonly kind: "supplemental-player"; readonly outputPath: string; readonly runId: string };
 
@@ -80,11 +80,13 @@ export async function verifyHostedFiniteProcessCompletion(
   if (expected.kind === "playback-link-observer") {
     const completion = completionSchemas["playback-link-observer"].parse(output);
     assertEqual(completion.outputPath, expected.outputPath, "playback-link output path");
-    assertEqual(completion.recordingId, expected.recordingId, "playback-link recording ID");
+    if (expected.recordingId !== undefined) {
+      assertEqual(completion.recordingId, expected.recordingId, "playback-link recording ID");
+    }
     assertEqual(completion.runId, expected.runId, "playback-link run ID");
     const artifact = liveDiscordPlaybackLinkProofSchema.parse(await readJson(expected.outputPath));
     assertEqual(artifact.messageId, completion.messageId, "playback-link message ID");
-    assertEqual(artifact.recordingId, expected.recordingId, "playback-link artifact recording ID");
+    assertEqual(artifact.recordingId, completion.recordingId, "playback-link artifact recording ID");
     assertEqual(artifact.runId, expected.runId, "playback-link artifact run ID");
     return artifact;
   }

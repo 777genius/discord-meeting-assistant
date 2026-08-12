@@ -17,10 +17,12 @@ const completionSchema = z.object({
 export async function verifyHostedServiceLevelCompletion(
   output: unknown,
   expected: Extract<HostedCampaignExecutableCompletion, { readonly kind: "service-levels" }>,
-): Promise<void> {
+): Promise<{ readonly meetingId: string; readonly recordingId: string }> {
   const parsed = completionSchema.parse(output);
-  if (parsed.campaignId !== expected.campaignId || parsed.meetingId !== expected.meetingId
-    || parsed.outputPath !== expected.outputPath || parsed.recordingId !== expected.recordingId
+  const meetingId = expected.meetingId ?? parsed.meetingId;
+  const recordingId = expected.recordingId ?? parsed.recordingId;
+  if (parsed.campaignId !== expected.campaignId || parsed.meetingId !== meetingId
+    || parsed.outputPath !== expected.outputPath || parsed.recordingId !== recordingId
     || parsed.reportPath !== expected.reportPath || parsed.runId !== expected.runId) {
     throw new Error("Hosted campaign service-levels output correlation mismatch");
   }
@@ -34,17 +36,18 @@ export async function verifyHostedServiceLevelCompletion(
     throw new Error("Hosted campaign service-levels report correlation mismatch");
   }
   if (!serviceLevels.measurements.every((measurement) =>
-    measurement.start.source.meetingId === expected.meetingId
-    && measurement.end.source.meetingId === expected.meetingId
+    measurement.start.source.meetingId === meetingId
+    && measurement.end.source.meetingId === meetingId
     && measurement.start.source.runId === expected.runId
     && measurement.end.source.runId === expected.runId
   ) || !serviceLevels.measurements.some((measurement) =>
-    "recordingId" in measurement.start.source && measurement.start.source.recordingId === expected.recordingId
+    "recordingId" in measurement.start.source && measurement.start.source.recordingId === recordingId
   ) || !serviceLevels.measurements.some((measurement) =>
-    "recordingId" in measurement.end.source && measurement.end.source.recordingId === expected.recordingId
+    "recordingId" in measurement.end.source && measurement.end.source.recordingId === recordingId
   )) {
     throw new Error("Hosted campaign service-levels artifact correlation mismatch");
   }
+  return { meetingId, recordingId };
 }
 
 async function readJson(path: string): Promise<unknown> {

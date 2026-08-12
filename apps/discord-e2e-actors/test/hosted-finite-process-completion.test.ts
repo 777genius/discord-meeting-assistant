@@ -110,5 +110,10 @@ describe("hosted finite process completion", () => {
       outputPath: proofPath, recordingId, runId, status: "captured",
     }), { kind: "playback-link-observer", outputPath: proofPath, recordingId, runId }))
       .resolves.toMatchObject({ messageId: proof.messageId, recordingId, runId });
+    await expect(verifyHostedFiniteProcessCompletion(JSON.stringify({
+      kind: "playback-link-observer-completion", messageId: proof.messageId,
+      outputPath: proofPath, recordingId, runId, status: "captured",
+    }), { kind: "playback-link-observer", outputPath: proofPath, runId }))
+      .resolves.toMatchObject({ recordingId });
   });
 });

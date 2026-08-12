@@ -41,9 +41,10 @@ async function recordingReadyAdapter(source: string) {
   await writeFile(join(root, "collect-recording-ready-receipt.js"), source, { mode: 0o600 });
   const store = new HostedCampaignArtifactStore(join(root, "artifacts"), "campaign-1");
   await store.initialize();
-  return new HostedCampaignProcessAdapter({
-    artifactStore: store, distRoot: root, terminationGraceMilliseconds: 50, trustedRuntimeEnvironment,
-  });
+  return { processAdapter: new HostedCampaignProcessAdapter({
+    artifactStore: store, distRoot: root, terminationGraceMilliseconds: 50,
+    trustedRuntimeEnvironment,
+  }), store };
 }
 async function finiteAdapter(entrypoint: string, source: string) {
   const root = await mkdtemp(join(tmpdir(), "hosted-finite-process-"));
@@ -168,6 +169,7 @@ function serviceLevelsSpec(outputPath: string, reportPath: string): HostedCampai
   };
 }
 
+/* oxlint-disable max-lines-per-function */
 describe("hosted campaign process adapter", () => {
   it("ingests exact prefixed fragmented events while allowing ordinary stdout", async () => {
     const outputPath = "/tmp/capture-1.json";
@@ -502,7 +504,7 @@ describe("hosted campaign process adapter", () => {
   });
 
   it("maps the recording-ready entrypoint and passes only its required output coordinate", async () => {
-    const processAdapter = await recordingReadyAdapter("setInterval(() => {}, 1000)");
+    const { processAdapter } = await recordingReadyAdapter("setInterval(() => {}, 1000)");
     const handle = await processAdapter.startChild({
       ...spec({
         DISCORD_E2E_EXPECTED_PIPECAT_SOURCE_REVISION: "d".repeat(40),
@@ -512,6 +514,36 @@ describe("hosted campaign process adapter", () => {
       entrypoint: "recording-ready",
     }, bounded());
     await processAdapter.stopChild(handle);
+  });
+
+  it("publishes recording identity coordinates only from a verified ready artifact", async () => {
+    const root = await mkdtemp(join(tmpdir(), "recording-ready-artifact-"));
+    const outputPath = join(root, "ready.json");
+    const receipt = {
+      authoritativeSource: { eventDigestSha256: "a".repeat(64), eventId: "event-1",
+        kind: "meeting-platform-completion-receipt-v2", occurredAt: "2026-08-12T10:00:00.000Z" },
+      meetingId: "recording-1", observedAt: "2026-08-12T10:00:01.000Z",
+      pinnedTestTarget: { guildId: HOSTED_CAMPAIGN_TARGET.guildId, provenanceDigestSha256: "b".repeat(64),
+        voiceChannelId: HOSTED_CAMPAIGN_TARGET.voiceChannelId },
+      recordingId: "recording-1", runId: "run-1", schemaVersion: 1,
+    };
+    await writeFile(outputPath, JSON.stringify(receipt), { mode: 0o600 });
+    const stdout = JSON.stringify({ kind: "recording-ready-completion", outputPath,
+      recordingId: "recording-1", runId: "run-1", status: "ready" });
+    const { processAdapter, store } = await recordingReadyAdapter(`process.stdout.write(${JSON.stringify(stdout)});`);
+    const action = { kind: "recording-ready" as const, ordinal: 1, runId: "run-1" };
+    const executable: HostedCampaignExecutableSpec = {
+      arguments: { kind: "environment" }, childId: "recording-ready", completion: {
+        action, kind: "recording-ready", outputPath, runId: "run-1",
+      }, entrypoint: "recording-ready", environment: {
+        DISCORD_E2E_READY_RECEIPT_OUTPUT: outputPath, DISCORD_E2E_RUN_ID: "run-1",
+      }, produces: [], requires: [], startBefore: { kind: "campaign" },
+    };
+    const handle = await processAdapter.startChild(executable, bounded());
+    await processAdapter.awaitChildCompletion(handle, executable, bounded());
+    await expect(store.awaitAction(action, bounded())).resolves.toMatchObject({
+      meetingId: "recording-1", recordingId: "recording-1",
+    });
   });
 
   it("accepts a finite actor exit only after its stdout and retained artifact correlate", async () => {

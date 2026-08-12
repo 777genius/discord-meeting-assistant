@@ -78,9 +78,9 @@ export type HostedCampaignExecutableCompletion =
       readonly action: Extract<HostedCampaignBarrierAction, { readonly kind: "service-levels-ready" }>;
       readonly campaignId: string;
       readonly kind: "service-levels";
-      readonly meetingId: string;
+      readonly meetingId?: string;
       readonly outputPath: string;
-      readonly recordingId: string;
+      readonly recordingId?: string;
       readonly reportPath: string;
       readonly runId: string;
     }
@@ -384,14 +384,25 @@ function validateServiceLevelsCompletion(
     || child.startBefore.kind !== "barrier"
     || child.startBefore.runId !== completion.runId
     || environment.DISCORD_E2E_SLA_CAMPAIGN_ID !== completion.campaignId
-    || environment.DISCORD_E2E_SLA_MEETING_ID !== completion.meetingId
+    || !matchesStaticOrBinding(child, "DISCORD_E2E_SLA_MEETING_ID", "meetingId", completion.meetingId)
     || environment.DISCORD_E2E_SLA_OUTPUT !== completion.outputPath
-    || environment.DISCORD_E2E_SLA_RECORDING_ID !== completion.recordingId
+    || !matchesStaticOrBinding(child, "DISCORD_E2E_SLA_RECORDING_ID", "recordingId", completion.recordingId)
     || environment.DISCORD_E2E_SLA_REPORT_OUTPUT !== completion.reportPath
     || environment.DISCORD_E2E_SLA_RUN_ID !== completion.runId;
   if (invalid) {
     throw new Error(`Hosted campaign service-level producer ${child.childId} completion is not bound to the campaign`);
   }
+}
+function matchesStaticOrBinding(
+  child: HostedCampaignExecutableSpec,
+  name: HostedCampaignBoundEnvironmentName,
+  field: "meetingId" | "recordingId",
+  declared: string | undefined,
+): boolean {
+  return declared === undefined
+    ? child.environmentBindings?.some((binding) => binding.name === name
+      && binding.valueFrom.field === field && binding.valueFrom.actionRef.action.kind === "recording-ready") === true
+    : child.environment[name] === declared;
 }
 
 function isFiniteCompletion(

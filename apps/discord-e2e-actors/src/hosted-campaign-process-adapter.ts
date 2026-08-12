@@ -1,10 +1,13 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { delimiter, isAbsolute, join } from "node:path";
 
+/* oxlint-disable max-lines */
+
 import { z } from "zod";
 
 import { HostedCampaignArtifactStore } from "./hosted-campaign-artifact-store.js";
 import { verifyHostedFiniteProcessCompletion } from "./hosted-finite-process-completion.js";
+import { recordingReadyReceiptV1Schema } from "./recording-ready-receipt.js";
 import type { HostedFiniteProcessCompletion } from "./hosted-finite-process-contract.js";
 import type {
   HostedCampaignBarrierAction,
@@ -212,12 +215,15 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
     const completion = spec.completion;
     if (isFiniteCompletion(completion)) {
       const finiteCompletion = completion;
-      await verifyHostedFiniteProcessCompletion(
+      const verifiedArtifact = await verifyHostedFiniteProcessCompletion(
         Buffer.concat(state.stdoutChunks).toString("utf8"),
         finiteCompletion,
       );
+      const coordinates = finiteCompletion.kind === "recording-ready"
+        ? recordingIdentityCoordinates(verifiedArtifact) : {};
       await this.#options.artifactStore.publishAction(finiteCompletion.action, {
         completed: true, ordinal: finiteCompletion.action.ordinal, runId: finiteCompletion.action.runId,
+        ...coordinates,
       });
       return;
     }
@@ -245,10 +251,10 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
       return;
     }
     if (completion.kind === "service-levels") {
-      await verifyHostedServiceLevelCompletion(output, completion);
+      const identity = await verifyHostedServiceLevelCompletion(output, completion);
       await this.#options.artifactStore.publishAction(completion.action, {
         measurementCount: 3, outputPath: completion.outputPath,
-        recordingId: completion.recordingId, runId: completion.runId,
+        recordingId: identity.recordingId, runId: completion.runId,
       });
       return;
     }
@@ -386,6 +392,11 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
       throw childFailure;
     }
   }
+}
+
+function recordingIdentityCoordinates(value: unknown): { readonly meetingId: string; readonly recordingId: string } {
+  const { meetingId, recordingId } = recordingReadyReceiptV1Schema.parse(value);
+  return { meetingId, recordingId };
 }
 
 function isFiniteCompletion(
