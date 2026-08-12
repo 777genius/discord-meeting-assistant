@@ -11,6 +11,8 @@ const secretAccountSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/u);
 const runIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u);
 
 const environmentSchema = z.object({
+  DISCORD_E2E_SUPPLEMENTAL_CAMPAIGN_ID: runIdSchema,
+  DISCORD_E2E_SUPPLEMENTAL_CONNECTION_GATE_PATH: z.string().refine(isAbsolute),
   DISCORD_E2E_SUPPLEMENTAL_EVIDENCE_OUTPUT: z.string().refine(
     (value) => isAbsolute(value) && value !== "/",
     "Expected an absolute evidence output path",
@@ -26,8 +28,9 @@ const environmentSchema = z.object({
     .min(1_000).max(120_000).default(60_000),
   DISCORD_E2E_SUPPLEMENTAL_POST_HOLD_MS: z.coerce.number().int()
     .min(0).max(60_000).default(5_000),
-  DISCORD_E2E_SUPPLEMENTAL_PRE_HOLD_MS: z.coerce.number().int()
-    .min(0).max(120_000).default(0),
+  DISCORD_E2E_SUPPLEMENTAL_GATE_TIMEOUT_MS: z.coerce.number().int()
+    .min(1_000).max(120_000),
+  DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_GATE_PATH: z.string().refine(isAbsolute),
   DISCORD_E2E_SUPPLEMENTAL_PRIVATE_TEST_GUILD: z.literal("private-test-guild"),
   DISCORD_E2E_SUPPLEMENTAL_READY_TIMEOUT_MS: z.coerce.number().int()
     .min(1_000).max(120_000).default(30_000),
@@ -50,13 +53,16 @@ const supplementalManifestSchema = z.object({
 }).strict();
 
 export interface SupplementalVoicePlaybackConfig {
+  readonly campaignId: string;
+  readonly connectionGatePath: string;
   readonly evidenceOutputPath: string;
   readonly keychainAccount: string;
   readonly keychainService: string;
   readonly manifestPath: string;
   readonly playbackTimeoutMilliseconds: number;
   readonly postHoldMilliseconds: number;
-  readonly preHoldMilliseconds: number;
+  readonly gateTimeoutMilliseconds: number;
+  readonly playbackGatePath: string;
   readonly privateTestGuildConfirmed: true;
   readonly readyTimeoutMilliseconds: number;
   readonly runId: string;
@@ -80,20 +86,29 @@ export interface VerifiedSupplementalVoiceManifest {
 export function loadSupplementalVoicePlaybackConfig(
   environment: NodeJS.ProcessEnv,
 ): SupplementalVoicePlaybackConfig {
+  if (environment.DISCORD_E2E_SUPPLEMENTAL_PRE_HOLD_MS !== undefined) {
+    throw new Error("Supplemental pre-hold synchronization is forbidden; use the two-phase gates");
+  }
   if (Object.keys(environment).some((key) =>
     key.startsWith("DISCORD_E2E_SUPPLEMENTAL_") && key.includes("TOKEN")
   )) {
     throw new Error("Supplemental voice playback does not accept bot tokens through environment variables");
   }
   const parsed = environmentSchema.parse(environment);
+  if (parsed.DISCORD_E2E_SUPPLEMENTAL_CONNECTION_GATE_PATH === parsed.DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_GATE_PATH) {
+    throw new Error("Supplemental connection and playback gate paths must be distinct");
+  }
   return Object.freeze({
+    campaignId: parsed.DISCORD_E2E_SUPPLEMENTAL_CAMPAIGN_ID,
+    connectionGatePath: parsed.DISCORD_E2E_SUPPLEMENTAL_CONNECTION_GATE_PATH,
     evidenceOutputPath: parsed.DISCORD_E2E_SUPPLEMENTAL_EVIDENCE_OUTPUT,
     keychainAccount: parsed.DISCORD_E2E_SUPPLEMENTAL_KEYCHAIN_ACCOUNT,
     keychainService: parsed.DISCORD_E2E_SUPPLEMENTAL_KEYCHAIN_SERVICE,
     manifestPath: parsed.DISCORD_E2E_SUPPLEMENTAL_MANIFEST,
     playbackTimeoutMilliseconds: parsed.DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_TIMEOUT_MS,
     postHoldMilliseconds: parsed.DISCORD_E2E_SUPPLEMENTAL_POST_HOLD_MS,
-    preHoldMilliseconds: parsed.DISCORD_E2E_SUPPLEMENTAL_PRE_HOLD_MS,
+    gateTimeoutMilliseconds: parsed.DISCORD_E2E_SUPPLEMENTAL_GATE_TIMEOUT_MS,
+    playbackGatePath: parsed.DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_GATE_PATH,
     privateTestGuildConfirmed: true,
     readyTimeoutMilliseconds: parsed.DISCORD_E2E_SUPPLEMENTAL_READY_TIMEOUT_MS,
     runId: parsed.DISCORD_E2E_SUPPLEMENTAL_RUN_ID,

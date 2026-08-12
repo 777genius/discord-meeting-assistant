@@ -6,6 +6,7 @@ import { connectDiscordVoiceActor } from "./discord-voice-actor.js";
 import { FileSecretReader, MacOsKeychainSecretReader } from "./keychain.js";
 import { systemScenarioClock } from "./run-actor-scenario.js";
 import { runSupplementalVoicePlayback, type SupplementalPlaybackClock } from "./supplemental-voice-playback.js";
+import { runSupplementalPlaybackAfterGates } from "./supplemental-playback-gate.js";
 
 const systemPlaybackClock: SupplementalPlaybackClock = {
   nowEpochMilliseconds: () => Date.now(),
@@ -19,28 +20,34 @@ async function main(): Promise<void> {
     config.manifestPath,
     config.playbackTimeoutMilliseconds,
   );
-  const secretReader = config.secretDirectory === undefined
-    ? new MacOsKeychainSecretReader(config.keychainService)
-    : new FileSecretReader(config.secretDirectory);
-  const token = await secretReader.read(config.keychainAccount);
-  const actor = await connectDiscordVoiceActor({
-    expectedApplicationId: manifest.applicationId,
-    fixturePath: manifest.fixture.path,
-    guildId: manifest.guildId,
-    name: "supplemental-speaker-d",
-    playbackTimeoutMilliseconds: config.playbackTimeoutMilliseconds,
-    readyTimeoutMilliseconds: config.readyTimeoutMilliseconds,
-    token,
-    voiceChannelId: manifest.voiceChannelId,
+  const gate = (phase: "connection" | "playback", path: string) => ({
+    campaignId: config.campaignId, guildId: manifest.guildId, path, phase,
+    runId: config.runId, voiceChannelId: manifest.voiceChannelId,
   });
+  let actor: Awaited<ReturnType<typeof connectDiscordVoiceActor>> | undefined;
   try {
-    const playback = await runSupplementalVoicePlayback(
-      actor,
-      manifest.applicationId,
-      config.preHoldMilliseconds,
-      config.postHoldMilliseconds,
-      systemPlaybackClock,
-    );
+    const playback = await runSupplementalPlaybackAfterGates({
+      connectionGate: gate("connection", config.connectionGatePath),
+      connect: async () => {
+        const secretReader = config.secretDirectory === undefined
+          ? new MacOsKeychainSecretReader(config.keychainService)
+          : new FileSecretReader(config.secretDirectory);
+        const token = await secretReader.read(config.keychainAccount);
+        actor = await connectDiscordVoiceActor({
+          expectedApplicationId: manifest.applicationId, fixturePath: manifest.fixture.path,
+          guildId: manifest.guildId, name: "supplemental-speaker-d",
+          playbackTimeoutMilliseconds: config.playbackTimeoutMilliseconds,
+          readyTimeoutMilliseconds: config.readyTimeoutMilliseconds, token,
+          voiceChannelId: manifest.voiceChannelId,
+        });
+        return actor;
+      },
+      play: async (connection) => runSupplementalVoicePlayback(
+        connection, manifest.applicationId, config.postHoldMilliseconds, systemPlaybackClock,
+      ),
+      playbackGate: gate("playback", config.playbackGatePath),
+      timeoutMilliseconds: config.gateTimeoutMilliseconds,
+    });
     await writeNewSupplementalEvidence(config.evidenceOutputPath, {
       actor: {
         applicationId: manifest.applicationId,
@@ -67,7 +74,7 @@ async function main(): Promise<void> {
       status: "completed",
     })}\n`);
   } finally {
-    await actor.close();
+    await actor?.close();
   }
 }
 
