@@ -121,11 +121,19 @@ later utterance to an earlier expected turn.
 
 The two-phase addressed-answer handoff is automatic. Meeting Platform publishes
 a create-only intent with the exact run, meeting, turn, and playback-attempt IDs.
-The already-subscribed observer rejects stale receipts and publishes a matching
-create-only ready receipt. Only then may playback start. Any earlier audible
-packet aborts the campaign. Mount one host test-evidence directory into Meeting
-Platform at `/var/lib/discord-meeting/e2e-playback-readiness` and expose that same
-host directory to the observer. Never reuse a per-run subdirectory.
+In strict campaign mode the observer may omit the pre-call
+`DISCORD_E2E_CONVERSATION_VOICE_MEETING_ID`; it derives the meeting ID from the
+single fresh, schema-validated, run-bound, content-addressed intent in the clean
+handshake root. Standalone observation still requires an explicit meeting ID.
+The shared-volume receipt is not a cryptographic signature: trust comes from a
+private current-user-owned directory, private current-user-owned regular files,
+create-only publication, and exact digest/schema/run validation. The
+already-subscribed observer rejects stale, mismatched, or ambiguous receipts and
+publishes a matching create-only ready receipt, retaining the resolved meeting
+ID and intent digest in campaign proof. Only then may playback start. Any earlier
+audible packet aborts the campaign. Mount one host test-evidence directory into
+Meeting Platform at `/var/lib/discord-meeting/e2e-playback-readiness` and expose
+that same host directory to the observer. Never reuse a per-run subdirectory.
 
 Each capture declares `greeting`, `farewell`, or `addressed-answer` purpose.
 Alone it remains transport evidence: it does not run STT, establish the

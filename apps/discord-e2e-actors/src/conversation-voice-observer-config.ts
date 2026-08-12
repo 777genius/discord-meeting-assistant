@@ -94,7 +94,7 @@ const environmentSchema = z.object({
     .max(MAXIMUM_CONVERSATION_VOICE_PCM_BYTES)
     .refine((value) => value % 4 === 0, "Expected a complete PCM frame bound")
     .default(MAXIMUM_CONVERSATION_VOICE_PCM_BYTES),
-  DISCORD_E2E_CONVERSATION_VOICE_MEETING_ID: correlationIdSchema,
+  DISCORD_E2E_CONVERSATION_VOICE_MEETING_ID: correlationIdSchema.optional(),
   DISCORD_E2E_CONVERSATION_VOICE_OBSERVER_ACCOUNT: secretAccountSchema.default("conversation-observer"),
   DISCORD_E2E_CONVERSATION_VOICE_OBSERVER_APPLICATION_ID: snowflakeSchema,
   DISCORD_E2E_CONVERSATION_VOICE_OUTPUT: absoluteOutputPathSchema,
@@ -127,6 +127,14 @@ const environmentSchema = z.object({
       path: ["DISCORD_E2E_CONVERSATION_VOICE_CAMPAIGN_PROOF_OUTPUT"],
     });
   }
+  if (!isCampaign && value.DISCORD_E2E_CONVERSATION_VOICE_MEETING_ID === undefined) {
+    context.addIssue({
+      code: "custom",
+      message: "A standalone conversation voice observer requires an explicit meeting ID",
+      path: ["DISCORD_E2E_CONVERSATION_VOICE_MEETING_ID"],
+    });
+  }
+}).superRefine((value, context) => {
   if ((value.DISCORD_E2E_CONVERSATION_VOICE_PURPOSE === "addressed-answer") !==
     (value.DISCORD_E2E_CONVERSATION_VOICE_PLAYBACK_HANDSHAKE_ROOT !== undefined)) {
     context.addIssue({
@@ -268,7 +276,7 @@ export interface ConversationVoiceObserverConfig {
   readonly hostedCampaignId?: string;
   readonly keychainService: string;
   readonly maxPcmBytes: number;
-  readonly meetingId: string;
+  readonly meetingId?: string;
   readonly observerAccount: string;
   readonly observerApplicationId: string;
   readonly outputPath: string;
@@ -328,7 +336,9 @@ export function loadConversationVoiceObserverConfig(
       : { hostedCampaignId: parsed.DISCORD_E2E_HOSTED_CAMPAIGN_ID }),
     keychainService: parsed.DISCORD_E2E_CONVERSATION_VOICE_KEYCHAIN_SERVICE,
     maxPcmBytes: parsed.DISCORD_E2E_CONVERSATION_VOICE_MAX_PCM_BYTES,
-    meetingId: parsed.DISCORD_E2E_CONVERSATION_VOICE_MEETING_ID,
+    ...(parsed.DISCORD_E2E_CONVERSATION_VOICE_MEETING_ID === undefined
+      ? {}
+      : { meetingId: parsed.DISCORD_E2E_CONVERSATION_VOICE_MEETING_ID }),
     observerAccount: parsed.DISCORD_E2E_CONVERSATION_VOICE_OBSERVER_ACCOUNT,
     observerApplicationId: parsed.DISCORD_E2E_CONVERSATION_VOICE_OBSERVER_APPLICATION_ID,
     outputPath: parsed.DISCORD_E2E_CONVERSATION_VOICE_OUTPUT,

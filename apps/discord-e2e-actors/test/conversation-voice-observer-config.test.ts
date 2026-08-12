@@ -72,6 +72,69 @@ describe("loadConversationVoiceObserverConfig", () => {
     expect(loadConversationVoiceObserverConfig(beforeRecordingId).recordingId).toBeNull();
   });
 
+  it("derives a strict campaign meeting ID later but requires it in standalone mode", () => {
+    const campaignCaptures = [
+      {
+        attemptId: "attempt-2",
+        expectedDuration: { maximumMilliseconds: 2_500, minimumMilliseconds: 2_000 },
+        outputPath: "/tmp/capture-2.json",
+        purpose: "greeting",
+        turnId: "participant-greeting:1533227577286852649",
+      },
+      {
+        attemptId: "attempt-3",
+        expectedDuration: { maximumMilliseconds: 3_500, minimumMilliseconds: 3_000 },
+        outputPath: "/tmp/capture-3.json",
+        purpose: "greeting",
+        turnId: "participant-greeting:1533228054724346087",
+      },
+      {
+        attemptId: "attempt-4",
+        expectedDuration: { maximumMilliseconds: 4_500, minimumMilliseconds: 4_000 },
+        outputPath: "/tmp/capture-4.json",
+        purpose: "greeting",
+        turnId: "participant-greeting:1533873978417086474",
+      },
+      {
+        expectedDuration: { maximumMilliseconds: 3_500, minimumMilliseconds: 3_000 },
+        outputPath: "/tmp/capture-5.json",
+        playbackHandshakeRoot: "/tmp/conversation-answer-handshake-5",
+        purpose: "addressed-answer",
+      },
+      {
+        attemptId: "attempt-6",
+        expectedDuration: { maximumMilliseconds: 6_500, minimumMilliseconds: 6_000 },
+        outputPath: "/tmp/capture-6.json",
+        purpose: "farewell",
+        turnId: "meeting-farewell:v1",
+      },
+    ];
+    const campaignEnvironment = {
+      ...requiredEnvironment,
+      DISCORD_E2E_CONVERSATION_VOICE_ATTEMPT_ID: "attempt-1",
+      DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON: JSON.stringify(campaignCaptures),
+      DISCORD_E2E_CONVERSATION_VOICE_CAMPAIGN_PROOF_OUTPUT: "/tmp/campaign-proof.json",
+      DISCORD_E2E_CONVERSATION_VOICE_CRAIG_BOT_ID: "1534231284467896512",
+      DISCORD_E2E_CONVERSATION_VOICE_EXPECTED_DURATION_MS: "1000",
+      DISCORD_E2E_CONVERSATION_VOICE_GUILD_ID: "1533228590643155034",
+      DISCORD_E2E_CONVERSATION_VOICE_MEETING_ID: undefined,
+      DISCORD_E2E_CONVERSATION_VOICE_OBSERVER_APPLICATION_ID: "1533867700575670282",
+      DISCORD_E2E_CONVERSATION_VOICE_OUTPUT: "/tmp/capture-1.json",
+      DISCORD_E2E_CONVERSATION_VOICE_PLAYBACK_HANDSHAKE_ROOT: undefined,
+      DISCORD_E2E_CONVERSATION_VOICE_PURPOSE: "greeting",
+      DISCORD_E2E_CONVERSATION_VOICE_TURN_ID:
+        "participant-greeting:1533867700575670282",
+      DISCORD_E2E_CONVERSATION_VOICE_VOICE_CHANNEL_ID: "1533228823045214398",
+      DISCORD_E2E_HOSTED_CAMPAIGN_ID: "campaign-1",
+    };
+
+    expect(loadConversationVoiceObserverConfig(campaignEnvironment).meetingId).toBeUndefined();
+    expect(() => loadConversationVoiceObserverConfig({
+      ...requiredEnvironment,
+      DISCORD_E2E_CONVERSATION_VOICE_MEETING_ID: undefined,
+    })).toThrow("standalone conversation voice observer requires an explicit meeting ID");
+  });
+
   it("allows a long playback readiness wait without widening the audio capture window", () => {
     const config = loadConversationVoiceObserverConfig({
       ...requiredEnvironment,

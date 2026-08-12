@@ -17,7 +17,7 @@ export {
 } from "@discord-meeting/conversation-runtime-contracts";
 
 export async function waitForConversationAnswerPlaybackIntent(input: {
-  readonly meetingId: string;
+  readonly meetingId?: string;
   readonly notBeforeEpochMilliseconds: number;
   readonly root: string;
   readonly runId: string;
@@ -28,6 +28,7 @@ export async function waitForConversationAnswerPlaybackIntent(input: {
   for (;;) {
     assertNotAborted(input.signal);
     const entries = await safeDirectoryEntries(input.root);
+    const matchingIntents: ConversationAnswerPlaybackIntent[] = [];
     for (const name of entries) {
       if (!/^[a-f\d]{64}\.intent\.json$/u.test(name)) {
         continue;
@@ -35,18 +36,26 @@ export async function waitForConversationAnswerPlaybackIntent(input: {
       const path = join(input.root, name);
       try {
         const intent = await readIntent(path, input.notBeforeEpochMilliseconds);
-        if (intent.runId !== input.runId || intent.meetingId !== input.meetingId) {
+        if (intent.runId !== input.runId ||
+          input.meetingId !== undefined && intent.meetingId !== input.meetingId) {
           throw new Error("Conversation answer playback intent has the wrong run or meeting");
         }
         if (name !== `${receiptStem(intent)}.intent.json`) {
           throw new Error("Conversation answer playback intent filename digest is invalid");
         }
-        return intent;
+        matchingIntents.push(intent);
       } catch (error: unknown) {
         if (!isMissingFileError(error)) {
           throw error;
         }
       }
+    }
+    if (matchingIntents.length > 1) {
+      throw new Error("Conversation answer playback intent is ambiguous for this run");
+    }
+    const [intent] = matchingIntents;
+    if (intent !== undefined) {
+      return intent;
     }
     const remaining = deadline - Date.now();
     if (remaining <= 0) {
@@ -173,6 +182,12 @@ function assertSafeReceiptFile(
   if (stats.size <= 0 || stats.size > maximumReceiptBytes) {
     throw new Error("Conversation answer playback intent has an invalid size");
   }
+  if ((Number(stats.mode) & 0o777) !== 0o600) {
+    throw new Error("Conversation answer playback intent must be a private mode-0600 file");
+  }
+  if (typeof process.getuid === "function" && stats.uid !== process.getuid()) {
+    throw new Error("Conversation answer playback intent must be owned by the current user");
+  }
   if (stats.mtimeMs < notBeforeEpochMilliseconds) {
     throw new Error("Conversation answer playback intent is stale");
   }
@@ -195,8 +210,11 @@ async function assertSafeHandshakeRoot(root: string): Promise<void> {
   if (!stats.isDirectory()) {
     throw new Error("Conversation answer handshake root must be a real directory");
   }
-  if ((stats.mode & 0o077) !== 0) {
+  if ((Number(stats.mode) & 0o077) !== 0) {
     throw new Error("Conversation answer handshake root permissions are too broad");
+  }
+  if (typeof process.getuid === "function" && stats.uid !== process.getuid()) {
+    throw new Error("Conversation answer handshake root must be owned by the current user");
   }
 }
 

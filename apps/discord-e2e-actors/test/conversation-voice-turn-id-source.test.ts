@@ -63,12 +63,84 @@ describe("conversation answer playback readiness source", () => {
 
   it("rejects stale roots and wrong run bindings", async () => {
     const root = await temporaryRoot();
-    await writeFile(join(root, `${stem()}.intent.json`), JSON.stringify(intent), { flag: "wx" });
+    await writeFile(join(root, `${stem()}.intent.json`), JSON.stringify(intent), {
+      flag: "wx", mode: 0o600,
+    });
     await expect(assertConversationAnswerHandshakeRootIsNew(root)).rejects.toThrow("stale");
     await expect(waitForConversationAnswerPlaybackIntent({
       meetingId: intent.meetingId, notBeforeEpochMilliseconds: 0, root,
       runId: "other-run", timeoutMilliseconds: 100,
     })).rejects.toThrow("wrong run or meeting");
+  });
+
+  it("derives the meeting ID from one fresh content-addressed run intent", async () => {
+    const root = await temporaryRoot();
+    const waiting = waitForConversationAnswerPlaybackIntent({
+      notBeforeEpochMilliseconds: Date.now(), root,
+      runId: intent.runId, timeoutMilliseconds: 1_000,
+    });
+    await publishIntent(root);
+
+    const resolved = await waiting;
+    expect(resolved).toEqual(intent);
+    const retainedReadyProof = await publishConversationAnswerObserverReady({
+      ...readyInput, intent: resolved, root,
+    });
+    expect(retainedReadyProof).toMatchObject({
+      intentDigestSha256: stem(), meetingId: intent.meetingId, runId: intent.runId,
+    });
+  });
+
+  it("rejects ambiguous and mismatched intents when deriving the meeting ID", async () => {
+    const ambiguousRoot = await temporaryRoot();
+    const secondIntent = {
+      ...intent,
+      meetingId: "meeting-2",
+      playbackAttemptId: "answer-attempt-2",
+      turnId: "human-question-18",
+    };
+    await publishIntent(ambiguousRoot, intent);
+    await publishIntent(ambiguousRoot, secondIntent);
+    await expect(waitForConversationAnswerPlaybackIntent({
+      notBeforeEpochMilliseconds: 0, root: ambiguousRoot,
+      runId: intent.runId, timeoutMilliseconds: 100,
+    })).rejects.toThrow("ambiguous");
+
+    const mismatchedRoot = await temporaryRoot();
+    await publishIntent(mismatchedRoot, { ...intent, runId: "other-run" });
+    await expect(waitForConversationAnswerPlaybackIntent({
+      notBeforeEpochMilliseconds: 0, root: mismatchedRoot,
+      runId: intent.runId, timeoutMilliseconds: 100,
+    })).rejects.toThrow("wrong run or meeting");
+  });
+
+  it("rejects an intent whose filename does not bind its validated envelope", async () => {
+    const root = await temporaryRoot();
+    const wrongDigest = "f".repeat(64);
+    await writeFile(
+      join(root, `${wrongDigest}.intent.json`),
+      JSON.stringify(intent),
+      { flag: "wx", mode: 0o600 },
+    );
+
+    await expect(waitForConversationAnswerPlaybackIntent({
+      notBeforeEpochMilliseconds: 0, root,
+      runId: intent.runId, timeoutMilliseconds: 100,
+    })).rejects.toThrow("filename digest is invalid");
+  });
+
+  it("rejects malformed content instead of deriving a meeting identity from it", async () => {
+    const root = await temporaryRoot();
+    await writeFile(
+      join(root, `${"e".repeat(64)}.intent.json`),
+      JSON.stringify({ ...intent, meetingId: "not a valid meeting id!" }),
+      { flag: "wx", mode: 0o600 },
+    );
+
+    await expect(waitForConversationAnswerPlaybackIntent({
+      notBeforeEpochMilliseconds: 0, root,
+      runId: intent.runId, timeoutMilliseconds: 100,
+    })).rejects.toThrow();
   });
 
   it("rejects a symlink handshake root and overly broad root permissions", async () => {
@@ -90,7 +162,7 @@ describe("conversation answer playback readiness source", () => {
       const root = await temporaryRoot();
       const path = join(root, `${stem()}.intent.json`);
       if (receiptKind === "stale") {
-        await writeFile(path, JSON.stringify(intent), { flag: "wx" });
+        await writeFile(path, JSON.stringify(intent), { flag: "wx", mode: 0o600 });
         await utimes(path, new Date(0), new Date(0));
       } else if (receiptKind === "symlink") {
         const target = join(root, "intent-target.json");
@@ -104,6 +176,17 @@ describe("conversation answer playback readiness source", () => {
         runId: intent.runId, timeoutMilliseconds: 100,
       })).rejects.toThrow(receiptKind === "stale" ? "stale" : "regular file");
     }
+  });
+
+  it("rejects a playback intent file that is not private", async () => {
+    const root = await temporaryRoot();
+    const path = join(root, `${stem()}.intent.json`);
+    await writeFile(path, JSON.stringify(intent), { flag: "wx", mode: 0o644 });
+
+    await expect(waitForConversationAnswerPlaybackIntent({
+      meetingId: intent.meetingId, notBeforeEpochMilliseconds: 0, root,
+      runId: intent.runId, timeoutMilliseconds: 100,
+    })).rejects.toThrow("mode-0600");
   });
 
   it("clears its polling timer when intent waiting is cancelled", async () => {
@@ -149,10 +232,15 @@ async function temporaryRoot(): Promise<string> {
   return root;
 }
 
-async function publishIntent(root: string): Promise<void> {
-  const path = join(root, `${stem()}.intent.json`);
-  const temporaryPath = join(root, `.${stem()}.${randomUUID()}.tmp`);
-  await writeFile(temporaryPath, JSON.stringify(intent), { flag: "wx", mode: 0o600 });
+async function publishIntent(
+  root: string,
+  value: ConversationAnswerPlaybackIntent = intent,
+): Promise<void> {
+  const digest = createHash("sha256")
+    .update(serializeConversationAnswerPlaybackReadinessEnvelope(value)).digest("hex");
+  const path = join(root, `${digest}.intent.json`);
+  const temporaryPath = join(root, `.${digest}.${randomUUID()}.tmp`);
+  await writeFile(temporaryPath, JSON.stringify(value), { flag: "wx", mode: 0o600 });
   try {
     await link(temporaryPath, path);
   } finally {

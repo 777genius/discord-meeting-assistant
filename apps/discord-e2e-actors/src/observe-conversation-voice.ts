@@ -5,14 +5,10 @@ import {
   type VoiceConnection,
 } from "@discordjs/voice";
 import {
-  ChannelType, Client, GatewayIntentBits,
-  type Guild,
-  type GuildBasedChannel,
-  type VoiceChannel,
+  ChannelType, Client, GatewayIntentBits, type Guild, type GuildBasedChannel, type VoiceChannel,
 } from "discord.js";
-import {
-  loadConversationVoiceObserverConfig, type ConversationVoiceObserverCapture,
-} from "./conversation-voice-observer-config.js";
+import { loadConversationVoiceObserverConfig, type ConversationVoiceObserverCapture } from
+  "./conversation-voice-observer-config.js";
 import { conversationVoiceCampaignPreflight } from
   "./conversation-voice-campaign-contract.js";
 import {
@@ -168,7 +164,7 @@ async function capturePlannedConversationVoice(input: {
           ? await waitForConversationVoiceCorrelationWhileGuardingAudio({
           isPacketAudible: (packet) => decoder.isPacketAudible(packet),
           resolveCorrelation: async (signal) => waitForConversationAnswerPlaybackIntent({
-            meetingId: config.meetingId,
+            ...(config.meetingId === undefined ? {} : { meetingId: config.meetingId }),
             notBeforeEpochMilliseconds: handshakeNotBeforeEpochMilliseconds,
             root: plannedCapture.playbackHandshakeRoot,
             runId: config.runId,

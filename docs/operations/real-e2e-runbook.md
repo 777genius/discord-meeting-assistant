@@ -229,9 +229,15 @@ Use a literal `turnId` and `attemptId` for greeting and farewell captures. The
 addressed-answer capture instead uses an absolute fresh
 `playbackHandshakeRoot`. Meeting Platform creates an intent containing the exact
 run, meeting, admitted turn, and playback-attempt IDs. The already-subscribed
-observer rejects stale or mismatched intent, creates the matching ready receipt,
-and only then may answer playback begin. Any earlier audible packet aborts the
-campaign. Mount one host test-evidence directory into Meeting Platform at
+observer may omit its pre-call meeting ID in strict campaign mode and derive it
+from the single fresh, schema-validated, run-bound, content-addressed intent in
+the clean handshake root. Standalone observation still requires an explicit
+meeting ID. This shared-volume receipt is not cryptographically signed: the root
+and receipt must be private and owned by the current user, publication is
+create-only, and the observer rejects stale, mismatched, or ambiguous intents.
+It creates the matching ready receipt and retains the resolved meeting identity
+and digest in campaign proof before answer playback may begin. Any earlier
+audible packet aborts the campaign. Mount one host test-evidence directory into Meeting Platform at
 `/var/lib/discord-meeting/e2e-playback-readiness`, expose the same host directory
 to the observer, and never reuse a per-run subdirectory. Meeting Platform
 requires all `CONVERSATION_E2E_PLAYBACK_READINESS_*` settings together and
