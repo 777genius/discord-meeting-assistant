@@ -24,10 +24,13 @@ export interface ReplayAttestationPublisherConfig {
 }
 
 export interface ReplayAttestationPublisherResult {
+  readonly containerId: string;
   readonly fixtureSetId: string;
+  readonly imageId: string;
   readonly recordingId: string;
   readonly remoteAttestationPath: string;
   readonly runId: string;
+  readonly sourceRevision: string;
 }
 
 export type ReplayAttestationRemoteRunner = (
@@ -47,7 +50,14 @@ labels="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.pr
   echo "refusing non-test replay target" >&2
   exit 42
 }
-node --input-type=module -e "$3" "$4" "$5"
+image_id="$(docker inspect --format '{{.Image}}' "$container_id")"
+source_revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image_id")"
+current_container_ids="$(docker compose --env-file "$1" -f "$2" -p discord-meeting-assistant ps -q meeting-platform)"
+[ "$current_container_ids" = "$container_id" ] || {
+  echo "meeting-platform container changed during attestation" >&2
+  exit 43
+}
+node --input-type=module -e "$3" "$4" "$5" "$container_id" "$image_id" "$source_revision"
 `;
 
 const createOnlyNodeProgram = String.raw`
@@ -55,7 +65,7 @@ import { constants } from "node:fs";
 import { chmod, lstat, mkdir, open } from "node:fs/promises";
 import { dirname } from "node:path";
 
-const [path, encoded] = process.argv.slice(1);
+const [path, encoded, containerId, imageId, sourceRevision] = process.argv.slice(1);
 const root = "/tmp/discord-e2e-attestations";
 if (dirname(path) !== root || !/^\/tmp\/discord-e2e-attestations\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.json$/u.test(path)) {
   throw new Error("replay attestation path is outside the private test root");
@@ -66,9 +76,14 @@ if (!rootStats.isDirectory() || rootStats.isSymbolicLink() || rootStats.uid !== 
   throw new Error("replay attestation root is unsafe");
 }
 await chmod(root, 0o700);
+if (!/^[a-f\d]{64}$/u.test(containerId) || !/^sha256:[a-f\d]{64}$/u.test(imageId) || !/^(?:[a-f\d]{40}|[a-f\d]{64})$/u.test(sourceRevision)) {
+  throw new Error("running replay target has invalid immutable provenance");
+}
+const base = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
+const marker = { ...base, containerId, imageId, schemaVersion: 2, sourceRevision };
 const handle = await open(path, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600);
 try {
-  await handle.writeFile(Buffer.from(encoded, "base64url"));
+  await handle.writeFile(Buffer.from(JSON.stringify(marker) + "\n", "utf8"));
   await handle.sync();
 } finally {
   await handle.close();
@@ -77,7 +92,7 @@ const stats = await lstat(path);
 if (!stats.isFile() || stats.isSymbolicLink() || stats.uid !== process.getuid() || (stats.mode & 0o777) !== 0o600) {
   throw new Error("created replay attestation is unsafe");
 }
-console.log(JSON.stringify({ path, status: "created" }));
+console.log(JSON.stringify({ containerId, imageId, path, sourceRevision, status: "created" }));
 `;
 
 export async function publishReplayAttestation(
@@ -88,14 +103,13 @@ export async function publishReplayAttestation(
   const manifest = fixtureManifestV1Schema.parse(JSON.parse(
     await readFile(validated.fixtureManifestPath, "utf8"),
   ) as unknown);
-  const marker = {
+  const markerBase = {
     fixtureSetId: manifest.fixtureSetId,
     purpose: "bullmq-post-call-replay" as const,
     recordingId: validated.recordingId,
     runId: validated.runId,
-    schemaVersion: 1 as const,
   };
-  const encoded = Buffer.from(`${JSON.stringify(marker)}\n`, "utf8").toString("base64url");
+  const encoded = Buffer.from(`${JSON.stringify(markerBase)}\n`, "utf8").toString("base64url");
   const stdout = await runner(validated, remoteCreateScript, [
     validated.envFile,
     validated.composeFile,
@@ -105,14 +119,20 @@ export async function publishReplayAttestation(
   ]);
   const line = stdout.trimEnd().split("\n").at(-1);
   const receipt = z.object({
-    path: z.literal(validated.remoteAttestationPath), status: z.literal("created"),
+    containerId: z.string().regex(/^[a-f\d]{64}$/u),
+    imageId: z.string().regex(/^sha256:[a-f\d]{64}$/u),
+    path: z.literal(validated.remoteAttestationPath),
+    sourceRevision: z.string().regex(/^(?:[a-f\d]{40}|[a-f\d]{64})$/u),
+    status: z.literal("created"),
   }).strict().parse(JSON.parse(line ?? "null") as unknown);
-  void receipt;
   return {
-    fixtureSetId: marker.fixtureSetId,
-    recordingId: marker.recordingId,
+    containerId: receipt.containerId,
+    fixtureSetId: markerBase.fixtureSetId,
+    imageId: receipt.imageId,
+    recordingId: markerBase.recordingId,
     remoteAttestationPath: validated.remoteAttestationPath,
-    runId: marker.runId,
+    runId: markerBase.runId,
+    sourceRevision: receipt.sourceRevision,
   };
 }
 

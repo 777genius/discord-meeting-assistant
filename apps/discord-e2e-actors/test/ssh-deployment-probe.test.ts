@@ -18,6 +18,7 @@ import {
   replayReadinessScript,
 } from "../src/ssh-deployment-probe-scripts.js";
 import {
+  assertReplayTargetAttestation,
   parseSshDeploymentProbeOptions,
 } from "../src/ssh-deployment-probe-validation.js";
 
@@ -30,6 +31,8 @@ vi.mock("node:child_process", () => ({
 }));
 
 const containerId = "a".repeat(64);
+const imageId = `sha256:${"d".repeat(64)}`;
+const sourceRevision = "f".repeat(40);
 const target: ReplayTargetAttestation = {
   fixtureSetId: "fixture-v1",
   recordingId: "recording-1",
@@ -63,12 +66,19 @@ function probe(commands: SshDeploymentProbeCommands): SshDeploymentEvidenceProbe
   }, commands);
 }
 
-function marker(overrides: Partial<ReplayTargetAttestation> = {}): string {
+function marker(overrides: Partial<ReplayTargetAttestation> & {
+  readonly containerId?: string;
+  readonly imageId?: string;
+  readonly sourceRevision?: string;
+} = {}): string {
   return JSON.stringify({
+    containerId,
     ...target,
+    imageId,
     ...overrides,
     purpose: "bullmq-post-call-replay",
-    schemaVersion: 1,
+    schemaVersion: 2,
+    sourceRevision: overrides.sourceRevision ?? sourceRevision,
   });
 }
 
@@ -133,10 +143,28 @@ function fakeCommands(input: {
       }
       if (args[0] === "docker" && args[1] === "inspect") {
         expect(args.at(-1)).toBe(currentContainerId);
+        if (args.some((argument) => argument.includes("containerStartedAt"))) {
+          return JSON.stringify({
+            composeConfigHash: "c".repeat(64),
+            composeProject: "discord-meeting-assistant",
+            composeService: "meeting-platform",
+            containerId: currentContainerId,
+            containerStartedAt: "2026-08-12T09:00:00.000Z",
+            imageId,
+          });
+        }
         return JSON.stringify({
           composeProject: "discord-meeting-assistant",
           composeService: "meeting-platform",
           testOnly: input.label ?? "true",
+        });
+      }
+      if (args[0] === "docker" && args[1] === "image") {
+        expect(args.at(-1)).toBe(imageId);
+        return JSON.stringify({
+          imageId,
+          repositoryDigests: [`registry.test/image@sha256:${"e".repeat(64)}`],
+          sourceRevision,
         });
       }
       if (args[0] === "docker" && args[1] === "exec") {
@@ -338,6 +366,42 @@ describe("SshDeploymentEvidenceProbe replay target safety", () => {
     expect(mutations).toEqual([]);
   });
 
+  it.each([
+    ["containerId", { containerId: "b".repeat(64) }],
+    ["imageId", { imageId: `sha256:${"9".repeat(64)}` }],
+    ["sourceRevision", { sourceRevision: "8".repeat(40) }],
+  ] as const)("rejects marker with stale %s before mutation", async (_name, mismatch) => {
+    const mutations: string[] = [];
+    const deployment = probe(fakeCommands({ marker: marker(mismatch), mutations }));
+
+    await expect(deployment.replayPostCall(target)).rejects.toThrow("container provenance");
+    expect(mutations).toEqual([]);
+  });
+
+  it("rejects legacy marker v1 for campaign replay", async () => {
+    const mutations: string[] = [];
+    const legacy = JSON.stringify({
+      ...target, purpose: "bullmq-post-call-replay", schemaVersion: 1,
+    });
+
+    await expect(probe(fakeCommands({ marker: legacy, mutations })).replayPostCall(target))
+      .rejects.toThrow("Legacy replay marker v1");
+    expect(mutations).toEqual([]);
+  });
+
+  it("allows a legacy marker only for an explicit historical read", () => {
+    const legacy = {
+      ...target, purpose: "bullmq-post-call-replay", schemaVersion: 1,
+    } as const;
+
+    expect(() => assertReplayTargetAttestation({
+      composeProject: "discord-meeting-assistant",
+      composeService: "meeting-platform",
+      testOnly: "true",
+    }, legacy, target, { containerId, imageId, sourceRevision }, "historical-read"))
+      .not.toThrow();
+  });
+
   it("consumes an exact attestation before permitting a fake replay", async () => {
     const mutations: string[] = [];
     const deployment = probe(fakeCommands({ mutations }));
@@ -358,7 +422,7 @@ describe("SshDeploymentEvidenceProbe replay target safety", () => {
     }));
 
     await expect(deployment.replayPostCall(target)).rejects.toThrow(
-      "container changed",
+      /container (?:changed|provenance)/u,
     );
     expect(mutations).toEqual([]);
   });

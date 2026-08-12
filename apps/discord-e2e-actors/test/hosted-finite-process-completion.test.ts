@@ -22,9 +22,10 @@ describe("hosted finite process completion", () => {
     const fixtureManifestPath = join(root, "manifest.json");
     await writeFile(fixtureManifestPath, await readFile(new URL("./fixtures/manifest.v1.json", import.meta.url)));
     await expect(verifyHostedFiniteProcessCompletion(JSON.stringify({
-      fixtureSetId: "discord-meeting-ru-en-v6", kind: "replay-attestation-publisher-completion",
+      containerId: "a".repeat(64), fixtureSetId: "discord-meeting-ru-en-v6",
+      imageId: `sha256:${"b".repeat(64)}`, kind: "replay-attestation-publisher-completion",
       recordingId: "recording-1", remoteAttestationPath: "/tmp/discord-e2e-attestations/run-1.json",
-      runId: "run-1", status: "ready",
+      runId: "run-1", sourceRevision: "c".repeat(40), status: "ready",
     }), {
       fixtureManifestPath, kind: "replay-attestation-publisher", recordingId: "recording-1",
       remoteAttestationPath: "/tmp/discord-e2e-attestations/run-1.json", runId: "run-1",

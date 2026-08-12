@@ -41,13 +41,30 @@ export function assertReplayTargetContainer(value: unknown): void {
   replayTargetContainerOutputSchema.parse(value);
 }
 
-const replayTargetMarkerOutputSchema = z.object({
+const replayTargetMarkerV1OutputSchema = z.object({
   fixtureSetId: correlationId,
   purpose: z.literal("bullmq-post-call-replay"),
   recordingId: correlationId,
   runId: correlationId,
   schemaVersion: z.literal(1),
 }).strict();
+
+const replayTargetMarkerV2OutputSchema = z.object({
+  containerId: dockerContainerId,
+  fixtureSetId: correlationId,
+  imageId: dockerImageId,
+  purpose: z.literal("bullmq-post-call-replay"),
+  recordingId: correlationId,
+  runId: correlationId,
+  schemaVersion: z.literal(2),
+  sourceRevision,
+}).strict();
+
+export interface ReplayTargetRuntimeIdentity {
+  readonly containerId: string;
+  readonly imageId: string;
+  readonly sourceRevision: string;
+}
 
 export const databaseOutputSchema = z.object({
   matchingMeetingCount: z.number().int().nonnegative(),
@@ -135,14 +152,30 @@ export function assertReplayTargetAttestation(
   containerValue: unknown,
   markerValue: unknown,
   expected: ReplayTargetAttestation,
+  runtimeIdentity: ReplayTargetRuntimeIdentity,
+  use: "campaign-acceptance" | "historical-read" = "campaign-acceptance",
 ): void {
   assertReplayTargetContainer(containerValue);
-  const marker = replayTargetMarkerOutputSchema.parse(markerValue);
+  const markerVersion = z.object({ schemaVersion: z.union([z.literal(1), z.literal(2)]) })
+    .passthrough().parse(markerValue).schemaVersion;
+  const marker = markerVersion === 1
+    ? replayTargetMarkerV1OutputSchema.parse(markerValue)
+    : replayTargetMarkerV2OutputSchema.parse(markerValue);
+  if (marker.schemaVersion === 1 && use !== "historical-read") {
+    throw new Error("Legacy replay marker v1 cannot authorize campaign replay");
+  }
   if (
     marker.fixtureSetId !== expected.fixtureSetId ||
     marker.recordingId !== expected.recordingId ||
     marker.runId !== expected.runId
   ) {
     throw new Error("Remote replay marker does not match the requested fixture, run, and recording");
+  }
+  if (marker.schemaVersion === 2 && (
+    marker.containerId !== runtimeIdentity.containerId ||
+    marker.imageId !== runtimeIdentity.imageId ||
+    marker.sourceRevision !== runtimeIdentity.sourceRevision
+  )) {
+    throw new Error("Remote replay marker does not match the running container provenance");
   }
 }

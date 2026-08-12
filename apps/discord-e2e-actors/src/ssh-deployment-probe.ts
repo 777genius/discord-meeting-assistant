@@ -337,17 +337,14 @@ export class SshDeploymentEvidenceProbe implements DeploymentEvidenceProbe {
     readonly markerDocument: string;
   }> {
     const attestationFile = this.#replayAttestationFile();
-    const containerId = await this.#findContainerId(
-      this.#options.projectName,
-      "meeting-platform",
-    );
+    const provenance = await this.#collectServiceProvenance(this.#options.projectName, "meeting-platform");
     const [containerOutput, markerDocument] = await Promise.all([
       this.#commands.runRemote(this.#options, [
         "docker",
         "inspect",
         "--format",
         replayTargetContainerFormat,
-        containerId,
+        provenance.containerId,
       ]),
       this.#commands.runRemote(this.#options, [
         "sh",
@@ -361,8 +358,20 @@ export class SshDeploymentEvidenceProbe implements DeploymentEvidenceProbe {
       parseLastJsonLine(containerOutput),
       parseMarkerDocument(markerDocument),
       attestation,
+      {
+        containerId: provenance.containerId,
+        imageId: provenance.imageId,
+        sourceRevision: provenance.sourceRevision,
+      },
     );
-    return { containerId, markerDocument };
+    const confirmedContainerId = await this.#findContainerId(
+      this.#options.projectName,
+      "meeting-platform",
+    );
+    if (confirmedContainerId !== provenance.containerId) {
+      throw new Error("Replay target container changed during immutable provenance inspection");
+    }
+    return { containerId: provenance.containerId, markerDocument };
   }
 
   async #consumeReplayMarker(markerDocument: string): Promise<void> {

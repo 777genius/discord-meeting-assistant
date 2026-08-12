@@ -36,9 +36,10 @@ const completionSchemas = {
     recordingId: identifier, runId: identifier, status: z.literal("ready"),
   }).strict(),
   "replay-attestation-publisher": z.object({
-    fixtureSetId: identifier, kind: z.literal("replay-attestation-publisher-completion"),
+    containerId: z.string().regex(/^[a-f\d]{64}$/u), fixtureSetId: identifier,
+    imageId: z.string().regex(/^sha256:[a-f\d]{64}$/u), kind: z.literal("replay-attestation-publisher-completion"),
     recordingId: identifier, remoteAttestationPath: outputPath, runId: identifier,
-    status: z.literal("ready"),
+    sourceRevision: z.string().regex(/^(?:[a-f\d]{40}|[a-f\d]{64})$/u), status: z.literal("ready"),
   }).strict(),
   "supplemental-player": z.object({
     kind: z.literal("supplemental-player-completion"), outputPath,
