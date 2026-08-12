@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import type {
+  LiveDiscordPlaybackLinkClock,
   LiveDiscordPlaybackReadinessProbe,
   LiveDiscordPlaybackReadinessProof,
   LiveDiscordPollTiming,
@@ -18,6 +19,8 @@ export interface SanitizedPlaybackCandidate {
   readonly firstSeenPollStartedAt: LiveDiscordPollTiming;
   readonly messageId: string;
   readonly readiness: LiveDiscordPlaybackReadinessProof;
+  readonly readinessCompletedAt: LiveDiscordPollTiming;
+  readonly readinessStartedAt: LiveDiscordPollTiming;
   readonly snapshotSha256: string;
 }
 
@@ -30,6 +33,7 @@ export async function retainFirstSeenCandidates(context: {
   readonly pollStartedAt: LiveDiscordPollTiming;
   readonly projectionMessages: readonly LiveDiscordProjectionMessages[];
   readonly readinessProbe: LiveDiscordPlaybackReadinessProbe;
+  readonly clock: LiveDiscordPlaybackLinkClock;
   readonly retained: Map<string, SanitizedPlaybackCandidate>;
   readonly exactPlaybackLink: (message: LiveDiscordMessageInput) => {
     readonly proof: { readonly capabilitySha256: string };
@@ -62,16 +66,36 @@ export async function retainFirstSeenCandidates(context: {
     if (context.retained.size >= maximumUnboundPlaybackCandidates) {
       throw new Error("Live Discord playback-link candidate retention limit was exceeded");
     }
+    const readinessStartedAt = validatedTiming(context.clock.now(), "readiness start");
+    assertTimingNotBefore(readinessStartedAt, context.pollCompletedAt, "readiness start");
     const readiness = await context.readinessProbe.prove({
       messageId: current.message.id, recordingPlaybackUrl: current.link.rawUrl,
     });
+    const readinessCompletedAt = validatedTiming(context.clock.now(), "readiness completion");
+    assertTimingNotBefore(readinessCompletedAt, readinessStartedAt, "readiness completion");
     assertReadiness(readiness, current.message.id, current.link.proof.capabilitySha256);
     context.retained.set(current.message.id, Object.freeze({
       capabilitySha256: current.link.proof.capabilitySha256,
       firstSeenPollCompletedAt: context.pollCompletedAt,
       firstSeenPollStartedAt: context.pollStartedAt,
-      messageId: current.message.id, readiness: Object.freeze({ ...readiness }), snapshotSha256,
+      messageId: current.message.id, readiness: Object.freeze({ ...readiness }), readinessCompletedAt,
+      readinessStartedAt, snapshotSha256,
     }));
+  }
+}
+
+function validatedTiming(timing: LiveDiscordPollTiming, label: string): LiveDiscordPollTiming {
+  if (!Number.isSafeInteger(timing.epochMilliseconds) || timing.epochMilliseconds < 0 ||
+    !Number.isSafeInteger(timing.monotonicMilliseconds) || timing.monotonicMilliseconds < 0) {
+    throw new Error(`Live Discord ${label} must be a safe nonnegative timing`);
+  }
+  return Object.freeze({ ...timing });
+}
+
+function assertTimingNotBefore(actual: LiveDiscordPollTiming, earlier: LiveDiscordPollTiming, label: string): void {
+  if (actual.epochMilliseconds < earlier.epochMilliseconds ||
+    actual.monotonicMilliseconds < earlier.monotonicMilliseconds) {
+    throw new Error(`Live Discord ${label} timing moved backwards`);
   }
 }
 

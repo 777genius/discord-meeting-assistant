@@ -73,12 +73,15 @@ playback checks, and service-level source artifacts before the campaign verifier
 can pass.
 
 The playback-link observer is armed before reconnect publication can occur. At
-the first visible possession link it immediately runs the hardened readiness
+the first visible possession link it immediately starts the hardened readiness
 probe and retains only bounded sanitized digests, message/container identity,
-and the poll bracket. The later create-only recording-ready receipt binds that
-candidate to the exact meeting marker and recording without retrying readiness
-or replacing the true first-seen timing; a missing, changed, ambiguous, stale,
-or initially unavailable candidate fails closed.
+the first-observed poll bracket, and the separate readiness request bracket.
+This honestly proves first-observed-then-ready, not atomic readiness at the
+instant of publication. The later create-only recording-ready receipt binds
+that candidate to the exact meeting marker and recording without replacing its
+first-seen timing; a missing, changed, ambiguous, stale, or failed candidate
+fails closed. A stronger ready-at-first-visibility claim requires an atomic
+publication-ready receipt and is outside this observer contract.
 
 Local coordinator, graph, process-lifecycle, and evidence tests do not authorize
 an external run. Admission recomputes the exact plan and fails closed before the

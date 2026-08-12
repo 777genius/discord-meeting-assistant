@@ -83,8 +83,8 @@ describe("first-seen Live Discord playback link observation", () => {
       messageId: "33333333333333333",
       container: thread,
       observerArmedAt: timing(1_000, 10_000),
-      firstSeenPollStartedAt: timing(3_010, 12_010),
-      firstSeenPollCompletedAt: timing(3_020, 12_020),
+      firstSeenPollStartedAt: timing(3_020, 12_020),
+      firstSeenPollCompletedAt: timing(3_021, 12_021),
       pollIntervalMs: 2_000,
       link: {
         origin: "https://recordings.example.com",
@@ -100,8 +100,10 @@ describe("first-seen Live Discord playback link observation", () => {
       },
       timingProvenance: {
         candidateSnapshotSha256: proof.timingProvenance.candidateSnapshotSha256,
-        kind: "prepublication-armed-first-seen",
-        recordingIdentityBoundAt: timing(3_020, 12_020),
+        kind: "first-observed-then-ready",
+        readinessStartedAt: timing(3_022, 12_022),
+        readinessCompletedAt: timing(3_023, 12_023),
+        recordingIdentityBoundAt: timing(3_024, 12_024),
       },
     });
     expect(proof.timingProvenance.candidateSnapshotSha256).toMatch(/^[a-f\d]{64}$/u);
@@ -133,7 +135,7 @@ describe("first-seen Live Discord playback link observation", () => {
     ]));
 
     expect(proof.messageId).toBe(oldMessage.id);
-    expect(proof.firstSeenPollCompletedAt).toEqual(timing(3_020, 12_020));
+    expect(proof.firstSeenPollCompletedAt).toEqual(timing(3_021, 12_021));
   });
 
   it("rejects an unchanged pre-arm playback-link candidate", async () => {
@@ -173,6 +175,21 @@ describe("first-seen Live Discord playback link observation", () => {
       },
     }, { read: () => new Promise<undefined>((resolve) => {resolve(void 0);}) })).rejects.toThrow("not ready at first visibility");
     expect(attempts).toBe(1);
+  });
+
+  it("labels a delayed readiness response as first-observed-then-ready", async () => {
+    const proof = await observeFirstSeenLiveDiscordPlaybackLink(input, new PollReader([[{
+      container: thread, messages: [message()],
+    }]]), new FakeClock([
+      timing(1_000, 10_000), timing(1_010, 10_010), timing(1_020, 10_020),
+      timing(1_021, 10_021), timing(1_900, 10_900), timing(1_901, 10_901),
+    ]));
+    expect(proof.timingProvenance).toMatchObject({
+      kind: "first-observed-then-ready",
+      readinessCompletedAt: timing(1_900, 10_900),
+      readinessStartedAt: timing(1_021, 10_021),
+    });
+    expect(JSON.stringify(proof)).not.toContain("ready-at-first-visibility");
   });
 
   it("fails closed when late recording identity does not match first-sight readiness", async () => {
@@ -319,14 +336,14 @@ class PollReader implements LiveDiscordProjectionReader {
 }
 
 class FakeClock implements LiveDiscordPlaybackLinkClock {
+  private last: LiveDiscordPollTiming = timing(0, 0);
   public constructor(private readonly timings: LiveDiscordPollTiming[]) {}
 
   public now(): LiveDiscordPollTiming {
-    const next = this.timings.shift();
-    if (next === undefined) {
-      throw new Error("Fake clock exhausted");
-    }
-    return next;
+    this.last = this.timings.shift() ?? timing(
+      this.last.epochMilliseconds + 1, this.last.monotonicMilliseconds + 1,
+    );
+    return this.last;
   }
 
   public wait(): Promise<void> {

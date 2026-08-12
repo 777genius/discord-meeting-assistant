@@ -157,7 +157,11 @@ describe("hosted finite process completion", () => {
       recordingId, resultChannelId: source.resultChannelId, runId,
       schemaVersion: 1, sutApplicationId: "1533224474609057793",
       timingProvenance: { candidateSnapshotSha256: "7".repeat(64),
-        kind: "prepublication-armed-first-seen", recordingIdentityBoundAt: {
+        kind: "first-observed-then-ready", readinessCompletedAt: {
+          epochMilliseconds: 9_540, monotonicMilliseconds: 19_540,
+        }, readinessStartedAt: {
+          epochMilliseconds: 9_520, monotonicMilliseconds: 19_520,
+        }, recordingIdentityBoundAt: {
           epochMilliseconds: 9_550, monotonicMilliseconds: 19_550,
         } },
     };

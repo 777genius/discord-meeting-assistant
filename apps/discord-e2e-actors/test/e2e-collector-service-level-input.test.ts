@@ -109,7 +109,9 @@ function proof() {
     sutApplicationId: "sut-application-1",
     timingProvenance: {
       candidateSnapshotSha256: "7".repeat(64),
-      kind: "prepublication-armed-first-seen" as const,
+      kind: "first-observed-then-ready" as const,
+      readinessCompletedAt: { epochMilliseconds: 9_540, monotonicMilliseconds: 19_540 },
+      readinessStartedAt: { epochMilliseconds: 9_520, monotonicMilliseconds: 19_520 },
       recordingIdentityBoundAt: { epochMilliseconds: 9_550, monotonicMilliseconds: 19_550 },
     },
   };

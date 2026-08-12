@@ -105,7 +105,9 @@ export const liveDiscordPlaybackLinkProofSchema = z.object({
   projectionMarker: identifierSchema,
   timingProvenance: z.object({
     candidateSnapshotSha256: z.string().regex(/^[a-f\d]{64}$/u),
-    kind: z.literal("prepublication-armed-first-seen"),
+    kind: z.literal("first-observed-then-ready"),
+    readinessCompletedAt: pollTimingSchema,
+    readinessStartedAt: pollTimingSchema,
     recordingIdentityBoundAt: pollTimingSchema,
   }).strict(),
   recordingId: identifierSchema,
@@ -121,6 +123,16 @@ export const liveDiscordPlaybackLinkProofSchema = z.object({
     proof.firstSeenPollCompletedAt.monotonicMilliseconds < proof.firstSeenPollStartedAt.monotonicMilliseconds
   ) {
     context.addIssue({ code: "custom", message: "Live Discord proof timing moved backwards" });
+  }
+  if (
+    proof.timingProvenance.readinessStartedAt.epochMilliseconds < proof.firstSeenPollCompletedAt.epochMilliseconds ||
+    proof.timingProvenance.readinessStartedAt.monotonicMilliseconds < proof.firstSeenPollCompletedAt.monotonicMilliseconds ||
+    proof.timingProvenance.readinessCompletedAt.epochMilliseconds < proof.timingProvenance.readinessStartedAt.epochMilliseconds ||
+    proof.timingProvenance.readinessCompletedAt.monotonicMilliseconds < proof.timingProvenance.readinessStartedAt.monotonicMilliseconds ||
+    proof.timingProvenance.recordingIdentityBoundAt.epochMilliseconds < proof.timingProvenance.readinessCompletedAt.epochMilliseconds ||
+    proof.timingProvenance.recordingIdentityBoundAt.monotonicMilliseconds < proof.timingProvenance.readinessCompletedAt.monotonicMilliseconds
+  ) {
+    context.addIssue({ code: "custom", message: "Playback readiness provenance timing moved backwards" });
   }
   if (
     proof.readiness.capabilitySha256 !== proof.link.capabilitySha256 ||
@@ -169,11 +181,12 @@ export async function observeFirstSeenLiveDiscordPlaybackLink(
     const pollCompletedAt = validatedTiming(clock.now(), "poll completion");
     assertTimingNotBefore(pollCompletedAt, pollStartedAt, "poll completion");
 
-    await retainFirstSeenCandidates({ exactPlaybackLink, input, observerArmedAt, pollCompletedAt,
+    await retainFirstSeenCandidates({ clock, exactPlaybackLink, input, observerArmedAt, pollCompletedAt,
       pollStartedAt, projectionMessages, readinessProbe, retained: candidates, sameContainer });
     const identity = await identitySource.read();
     if (identity !== undefined) {
-      const recordingIdentityBoundAt = pollCompletedAt;
+      const recordingIdentityBoundAt = validatedTiming(clock.now(), "recording identity binding");
+      assertTimingNotBefore(recordingIdentityBoundAt, pollCompletedAt, "recording identity binding");
       const bound = exactBoundCandidate(input, identity, projectionMessages, candidates);
       if (bound !== undefined) {
         const { candidate, current, marker } = bound;
@@ -202,7 +215,9 @@ export async function observeFirstSeenLiveDiscordPlaybackLink(
           readiness: Object.freeze({ ...readiness }),
           timingProvenance: Object.freeze({
             candidateSnapshotSha256: candidate.snapshotSha256,
-            kind: "prepublication-armed-first-seen" as const,
+            kind: "first-observed-then-ready" as const,
+            readinessCompletedAt: candidate.readinessCompletedAt,
+            readinessStartedAt: candidate.readinessStartedAt,
             recordingIdentityBoundAt,
           }),
         });
