@@ -91,18 +91,31 @@ describe("conversation answer playback readiness source", () => {
   it("clears its polling timer when intent waiting is cancelled", async () => {
     const root = await temporaryRoot();
     const controller = new AbortController();
+    const nativeSetTimeout = globalThis.setTimeout;
+    let confirmPollingTimer: (() => void) | undefined;
+    const pollingTimerScheduled = new Promise<void>((resolve) => {
+      confirmPollingTimer = resolve;
+    });
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout").mockImplementation(
+      (handler, timeout) => {
+        const timer = nativeSetTimeout(handler, timeout);
+        if (timeout === 25) {
+          confirmPollingTimer?.();
+        }
+        return timer;
+      },
+    );
     const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
     const waiting = waitForConversationAnswerPlaybackIntent({
       meetingId: intent.meetingId, notBeforeEpochMilliseconds: Date.now(), root,
       runId: intent.runId, signal: controller.signal, timeoutMilliseconds: 1_000,
     });
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 5);
-    });
+    await pollingTimerScheduled;
     controller.abort();
 
     await expect(waiting).rejects.toThrow("cancelled");
     expect(clearTimeoutSpy).toHaveBeenCalled();
+    setTimeoutSpy.mockRestore();
     clearTimeoutSpy.mockRestore();
   });
 });
