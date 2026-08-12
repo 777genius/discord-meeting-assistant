@@ -67,6 +67,23 @@ describe("FileSecretReader", () => {
     await expect(new FileSecretReader(directory).read("speaker-a")).resolves.toBe(validToken);
   });
 
+  it("returns a stable private-file generation without deriving it from secret bytes", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "discord-e2e-secrets-"));
+    temporaryDirectories.push(directory);
+    await writeFile(join(directory, "speaker-a"), `${validToken}\n`, { mode: 0o600 });
+    const reader = new FileSecretReader(directory);
+
+    const first = await reader.readPrivateFile("speaker-a");
+    const second = await reader.readPrivateFile("speaker-a");
+    expect(first).toMatchObject({
+      account: "speaker-a", mode: 0o600, ownerUid: process.getuid?.(),
+      path: join(directory, "speaker-a"), secret: validToken,
+    });
+    expect(first.generationId).toBe(second.generationId);
+    expect(first.generationId).toMatch(/^file-[a-f\d]{64}$/u);
+    expect(first.generationId).not.toContain(validToken);
+  });
+
   it("rejects traversal, malformed tokens, and group-readable files", async () => {
     const directory = await mkdtemp(join(tmpdir(), "discord-e2e-secrets-"));
     temporaryDirectories.push(directory);

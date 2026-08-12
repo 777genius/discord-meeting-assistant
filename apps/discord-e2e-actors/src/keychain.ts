@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import type { Stats } from "node:fs";
 import { lstat, open } from "node:fs/promises";
@@ -8,8 +9,17 @@ import { z } from "zod";
 
 const discordBotTokenSchema = z.string().trim().min(50).regex(/^\S+$/u);
 
-interface SecretReader {
+export interface SecretReader {
   read(account: string): Promise<string>;
+}
+
+export interface PrivateFileSecret {
+  readonly account: string;
+  readonly generationId: string;
+  readonly mode: 0o600;
+  readonly ownerUid: number;
+  readonly path: string;
+  readonly secret: string;
 }
 
 type KeychainCommand = (arguments_: readonly string[]) => string;
@@ -65,10 +75,15 @@ export class FileSecretReader implements SecretReader {
   }
 
   public async read(account: string): Promise<string> {
+    return (await this.readPrivateFile(account)).secret;
+  }
+
+  public async readPrivateFile(account: string): Promise<PrivateFileSecret> {
     if (!/^[a-z0-9][a-z0-9-]{0,63}$/u.test(account)) {
       throw new Error("Invalid Discord bot secret account name");
     }
     let contents: string;
+    let retainedMetadata: Stats | undefined;
     try {
       const currentUserId = process.getuid?.();
       if (currentUserId === undefined) {
@@ -88,6 +103,7 @@ export class FileSecretReader implements SecretReader {
         try {
           const metadata = await secret.stat();
           assertSafeSecretFile(metadata, currentUserId);
+          retainedMetadata = metadata;
 
           const currentDirectoryMetadata = await lstat(this.#directory);
           if (
@@ -116,8 +132,23 @@ export class FileSecretReader implements SecretReader {
     if (!parsed.success) {
       throw new Error(`Invalid Discord bot token file for account ${account}`);
     }
-    return parsed.data;
+    if (retainedMetadata === undefined) {
+      throw new Error(`Missing Discord bot token metadata for account ${account}`);
+    }
+    return Object.freeze({
+      account,
+      generationId: secretGenerationId(retainedMetadata),
+      mode: 0o600,
+      ownerUid: retainedMetadata.uid,
+      path: join(this.#directory, account),
+      secret: parsed.data,
+    });
   }
+}
+
+function secretGenerationId(metadata: Stats): string {
+  const source = [metadata.dev, metadata.ino, metadata.size, metadata.ctimeMs].join(":");
+  return `file-${createHash("sha256").update(source).digest("hex")}`;
 }
 
 function secretDirectoryOpenFlags(): number {
