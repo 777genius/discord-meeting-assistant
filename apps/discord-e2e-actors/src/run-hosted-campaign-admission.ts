@@ -39,14 +39,19 @@ export function parseHostedAdmissionArguments(arguments_: readonly string[]): Ho
   return { bindingsPath, definitionPath, minimumFreeBytes, planPath, receiptPath, ...(remoteEvidencePath === undefined ? {} : { remoteEvidencePath }) };
 }
 
-interface HostedAdmissionCliDependencies {
+export interface HostedAdmissionCliDependencies {
+  readonly createRemoteAdmissionProbe?: (input: Readonly<{
+    bindings: unknown;
+    definition: unknown;
+    plan: unknown;
+  }>) => HostedCampaignRemoteAdmissionProbe;
   readonly now: () => number;
   readonly readJson: (path: string) => Promise<unknown>;
   readonly remoteAdmissionProbe?: HostedCampaignRemoteAdmissionProbe;
   readonly writeReceipt: typeof writeCreateOnlyAdmissionReceipt;
 }
 
-async function runHostedCampaignAdmissionCli(
+export async function runHostedCampaignAdmissionCli(
   arguments_: readonly string[],
   dependencies: HostedAdmissionCliDependencies,
 ): Promise<void> {
@@ -56,10 +61,12 @@ async function runHostedCampaignAdmissionCli(
   const plan = await dependencies.readJson(config.planPath);
   const remoteEvidence = config.remoteEvidencePath === undefined ? undefined
     : await dependencies.readJson(config.remoteEvidencePath);
+  const remoteAdmissionProbe = dependencies.remoteAdmissionProbe
+    ?? dependencies.createRemoteAdmissionProbe?.({ bindings, definition, plan });
   const receipt = await inspectHostedCampaignAdmission({
     bindings, definition, minimumFreeBytes: config.minimumFreeBytes, plan,
-    ...(dependencies.remoteAdmissionProbe === undefined ? {} : {
-      remoteAdmissionProbe: dependencies.remoteAdmissionProbe,
+    ...(remoteAdmissionProbe === undefined ? {} : {
+      remoteAdmissionProbe,
     }), remoteEvidence,
   }, dependencies.now);
   await dependencies.writeReceipt(config.receiptPath, receipt);
