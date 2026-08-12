@@ -57,6 +57,13 @@ describe("hosted bracketed clock V2 proof", () => {
     }).success).toBe(false);
   });
 
+  it("rejects a bracket whose network round trip exceeds the short preflight bound", () => {
+    expect(() => deriveHostedClockPreflightReceiptV2(exchange({
+      observerAfterEpochMs: 7_000,
+      observerAfterMonotonicNs: "7000000000",
+    }))).toThrow("round trip exceeds");
+  });
+
   it("binds admission to a later post-call run, meeting and recording proof", () => {
     const admission = deriveHostedClockPreflightReceiptV2(exchange());
     const binding = bindHostedClockRunV2({

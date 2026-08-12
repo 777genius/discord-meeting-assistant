@@ -112,6 +112,14 @@ export class SshHostedServiceLevelRawProbe {
   }
 
   async collectClockCompletion(): Promise<HostedClockExchangeV2> {
+    return this.#collectClockExchange();
+  }
+
+  async collectClockPreflight(): Promise<HostedClockExchangeV2> {
+    return this.#collectClockExchange();
+  }
+
+  async #collectClockExchange(): Promise<HostedClockExchangeV2> {
     const before = await this.#clockObserver.sample();
     const output = await this.#commands.runCompose(this.#settings, "meeting-platform", [
       "node", "--input-type=commonjs", "-e", sourceClockBracketScript,

@@ -5,6 +5,7 @@ import { HOSTED_CAMPAIGN_TARGET } from "./hosted-campaign-coordinator.js";
 
 const HOSTED_CLOCK_METHOD_V2 = "ssh-bracketed-clock-v2" as const;
 const admissionValidityMs = 60_000;
+const maximumRoundTripTimeMs = 5_000;
 const wallClockResolutionMs = 2;
 const identifier = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u);
 const sha256 = z.string().regex(/^[a-f\d]{64}$/u);
@@ -52,6 +53,9 @@ export const hostedClockPreflightReceiptV2Schema = z.object({
   validUntilEpochMs: safeNonnegativeInteger,
 }).strict().superRefine((receipt, context) => {
   addDerivationIssues(receipt, deriveExchange(receipt.raw), context);
+  if (receipt.roundTripTimeMs > maximumRoundTripTimeMs) {
+    context.addIssue({ code: "custom", message: "Clock preflight round trip exceeds the qualification bound" });
+  }
   if (receipt.qualifiedAtEpochMs !== receipt.raw.observer.after.epochMs ||
     receipt.validFromEpochMs !== receipt.raw.observer.before.epochMs ||
     receipt.validUntilEpochMs !== receipt.qualifiedAtEpochMs + admissionValidityMs) {
