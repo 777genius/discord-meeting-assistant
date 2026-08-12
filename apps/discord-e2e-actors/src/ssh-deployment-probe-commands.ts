@@ -110,7 +110,9 @@ function runProcess(
       killTimer = setTimeout(() => {
         child.kill("SIGKILL");
         hardStopTimer = setTimeout(() => {
-          finish(() => reject(new Error("evidence probe process did not exit after SIGKILL")));
+          finish(() => {
+            reject(new Error("evidence probe process did not exit after SIGKILL"));
+          });
         }, 5_000);
       }, 5_000);
     };
@@ -134,18 +136,26 @@ function runProcess(
       }
     });
     child.once("error", (error) => {
-      finish(() => reject(error));
+      finish(() => {
+        reject(error);
+      });
     });
     child.once("close", (code) => {
       if (terminationError !== undefined) {
-        finish(() => reject(terminationError));
+        finish(() => {
+          reject(terminationError);
+        });
         return;
       }
       if (code !== 0) {
-        finish(() => reject(new Error(`evidence probe failed with exit code ${String(code)}`)));
+        finish(() => {
+          reject(new Error(`evidence probe failed with exit code ${String(code)}`));
+        });
         return;
       }
-      finish(() => resolve(Buffer.concat(stdout).toString("utf8")));
+      finish(() => {
+        resolve(Buffer.concat(stdout).toString("utf8"));
+      });
     });
   });
 }

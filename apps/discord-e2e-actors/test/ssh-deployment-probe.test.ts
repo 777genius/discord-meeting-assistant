@@ -116,7 +116,7 @@ function fakeCommands(input: {
           testOnly: input.label ?? "true",
         });
       }
-      if (args[0] === "sh" && args[2]?.includes("rm --")) {
+      if (args[0] === "sh" && args[2]?.includes("rm --") === true) {
         if (input.consumeError !== undefined) {
           throw input.consumeError;
         }
