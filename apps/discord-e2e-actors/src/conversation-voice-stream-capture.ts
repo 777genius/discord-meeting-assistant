@@ -28,6 +28,7 @@ export function captureConversationVoiceFromOpenStream(input: {
   }
   return new Promise<ConversationVoiceCaptureSummary>((resolve, reject) => {
     let captureTimeout: ReturnType<typeof setTimeout> | undefined;
+    let readyPublished = input.publishReady === undefined;
     let sequence = 0;
     let settled = false;
     const firstPacketTimeout = setTimeout(() => {
@@ -66,6 +67,14 @@ export function captureConversationVoiceFromOpenStream(input: {
       try {
         if (!(chunk instanceof Uint8Array)) {
           throw new Error("Conversation voice receiver emitted a non-binary packet");
+        }
+        if (!readyPublished) {
+          if (input.isPacketAudible?.(chunk) ?? true) {
+            throw new Error(
+              "Configured Craig emitted audible audio before observer readiness was published",
+            );
+          }
+          return;
         }
         if (sequence === 0 && input.isPacketAudible !== undefined && !input.isPacketAudible(chunk)) {
           return;
@@ -116,8 +125,9 @@ export function captureConversationVoiceFromOpenStream(input: {
     input.stream.once("end", onEnd);
     input.stream.once("error", onError);
     input.stream.on("data", onData);
+    input.stream.resume();
     void Promise.resolve()
       .then(async () => input.publishReady?.())
-      .then(() => input.stream.resume(), fail);
+      .then(() => (readyPublished = true), fail);
   });
 }
