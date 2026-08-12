@@ -124,7 +124,6 @@ const SSH_RUNTIME_ENTRYPOINTS: ReadonlySet<HostedCampaignEntrypoint> = new Set([
   "replay-attestation-publisher",
   "service-level-sources",
 ]);
-const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/u;
 
 interface ChildState {
   readonly child: ChildProcess;
@@ -257,24 +256,11 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
     }
     const completion = spec.completion;
     if (completion.kind === "service-level-sources") {
-      await verifyServiceLevelSourceCompletion(Buffer.concat(state.stdoutChunks).toString("utf8"), completion);
-      await this.#options.artifactStore.publishAction(completion.action, {
-        outputPath: completion.reportPath, runId: completion.runId, sourcesReady: true,
-      });
+      await publishServiceLevelSourceCompletion(state.stdoutChunks, completion, this.#options.artifactStore);
       return;
     }
     if (isFiniteCompletion(completion)) {
-      const finiteCompletion = completion;
-      const verifiedArtifact = await verifyHostedFiniteProcessCompletion(
-        Buffer.concat(state.stdoutChunks).toString("utf8"),
-        finiteCompletion,
-      );
-      const coordinates = finiteCompletion.kind === "recording-ready"
-        ? recordingIdentityCoordinates(verifiedArtifact) : {};
-      await this.#options.artifactStore.publishAction(finiteCompletion.action, {
-        completed: true, ordinal: finiteCompletion.action.ordinal, runId: finiteCompletion.action.runId,
-        ...coordinates,
-      });
+      await publishFiniteCompletion(state.stdoutChunks, completion, this.#options.artifactStore);
       return;
     }
     const output = parseJsonOutput(state.stdoutChunks, handle.childId);
@@ -394,11 +380,11 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
       try {
         const expected = expectedHostedCampaignEventCorrelation(spec);
         state.eventLines.push(line);
-        state.eventIngestion = state.eventIngestion.then(() => ingestHostedCampaignProcessEventLine({
+        state.eventIngestion = appendEventIngestion(state.eventIngestion, {
           campaignId: expected.campaignId, line, publishedEvents: state.publishedEvents,
           declaredProductions: spec.produces,
           runId: expected.runId, store: this.#options.artifactStore,
-        }).then(() => undefined))
+        })
           .catch((error: unknown) => {
             state.failure = new Error(
               `Hosted campaign child ${spec.childId} produced invalid prefixed event`,
@@ -442,9 +428,42 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
   }
 }
 
+async function appendEventIngestion(
+  previous: Promise<void>,
+  input: Parameters<typeof ingestHostedCampaignProcessEventLine>[0],
+): Promise<void> {
+  await previous;
+  await ingestHostedCampaignProcessEventLine(input);
+}
+
 function recordingIdentityCoordinates(value: unknown): { readonly meetingId: string; readonly recordingId: string } {
   const { meetingId, recordingId } = recordingReadyReceiptV1Schema.parse(value);
   return { meetingId, recordingId };
+}
+
+async function publishServiceLevelSourceCompletion(
+  chunks: readonly Buffer[],
+  completion: Extract<NonNullable<HostedCampaignExecutableSpec["completion"]>, { readonly kind: "service-level-sources" }>,
+  artifactStore: HostedCampaignArtifactStore,
+): Promise<void> {
+  const stdout = Buffer.concat(chunks).toString("utf8");
+  await verifyServiceLevelSourceCompletion(stdout, completion);
+  await artifactStore.publishAction(completion.action, {
+    outputPath: completion.reportPath, runId: completion.runId, sourcesReady: true,
+  });
+}
+
+async function publishFiniteCompletion(
+  chunks: readonly Buffer[], completion: HostedFiniteProcessCompletion,
+  artifactStore: HostedCampaignArtifactStore,
+): Promise<void> {
+  const stdout = Buffer.concat(chunks).toString("utf8");
+  const verifiedArtifact = await verifyHostedFiniteProcessCompletion(stdout, completion);
+  const coordinates = completion.kind === "recording-ready"
+    ? recordingIdentityCoordinates(verifiedArtifact) : {};
+  await artifactStore.publishAction(completion.action, {
+    completed: true, ordinal: completion.action.ordinal, runId: completion.action.runId, ...coordinates,
+  });
 }
 
 async function verifyServiceLevelSourceCompletion(
@@ -616,10 +635,16 @@ function validateTrustedAbsolutePath(name: "HOME" | "SSH_AUTH_SOCK", value: unkn
 
 function validateTrustedValue(name: string, value: unknown, maximumLength: number): string {
   if (typeof value !== "string" || value.length === 0 || value.length > maximumLength
-    || CONTROL_CHARACTER.test(value)) {
+    || containsControlCharacter(value)) {
     throw new Error(`Hosted campaign trusted runtime environment ${name} is unsafe`);
   }
   return value;
+}
+function containsControlCharacter(value: string): boolean {
+  return [...value].some((character) => {
+    const codePoint = character.codePointAt(0);
+    return codePoint !== undefined && (codePoint <= 31 || codePoint === 127);
+  });
 }
 function assertActive(bounded: HostedCampaignBoundedSignal): void {
   if (bounded.signal.aborted) {

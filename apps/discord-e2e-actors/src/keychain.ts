@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { constants } from "node:fs";
+import type { Stats } from "node:fs";
 import { lstat, open } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
@@ -74,25 +75,11 @@ export class FileSecretReader implements SecretReader {
         throw new Error("file secret ownership is unsupported on this platform");
       }
       const pathMetadata = await lstat(this.#directory);
-      if (pathMetadata.isSymbolicLink()) {
-        throw new Error("secret directory must not be a symbolic link");
-      }
-
-      const directory = await open(
-        this.#directory,
-        constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
-      );
+      if (pathMetadata.isSymbolicLink()) {throw new Error("secret directory must not be a symbolic link");}
+      const directory = await open(this.#directory, secretDirectoryOpenFlags());
       try {
         const directoryMetadata = await directory.stat();
-        if (
-          !directoryMetadata.isDirectory()
-          || directoryMetadata.uid !== currentUserId
-          || (directoryMetadata.mode & 0o077) !== 0
-          || directoryMetadata.dev !== pathMetadata.dev
-          || directoryMetadata.ino !== pathMetadata.ino
-        ) {
-          throw new Error("unsafe secret directory");
-        }
+        assertSafeSecretDirectory(directoryMetadata, pathMetadata, currentUserId);
 
         const secretPath = process.platform === "linux"
           ? join("/proc/self/fd", String(directory.fd), account)
@@ -100,15 +87,7 @@ export class FileSecretReader implements SecretReader {
         const secret = await open(secretPath, constants.O_RDONLY | constants.O_NOFOLLOW);
         try {
           const metadata = await secret.stat();
-          if (
-            !metadata.isFile()
-            || metadata.uid !== currentUserId
-            || metadata.size < 50
-            || metadata.size > 4_096
-            || (metadata.mode & 0o077) !== 0
-          ) {
-            throw new Error("unsafe secret file");
-          }
+          assertSafeSecretFile(metadata, currentUserId);
 
           const currentDirectoryMetadata = await lstat(this.#directory);
           if (
@@ -138,5 +117,30 @@ export class FileSecretReader implements SecretReader {
       throw new Error(`Invalid Discord bot token file for account ${account}`);
     }
     return parsed.data;
+  }
+}
+
+function secretDirectoryOpenFlags(): number {
+  return constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW;
+}
+
+function assertSafeSecretDirectory(
+  metadata: Stats,
+  pathMetadata: Stats,
+  currentUserId: number,
+): void {
+  if (!metadata.isDirectory() || metadata.uid !== currentUserId || (metadata.mode & 0o077) !== 0
+    || metadata.dev !== pathMetadata.dev || metadata.ino !== pathMetadata.ino) {
+    throw new Error("unsafe secret directory");
+  }
+}
+
+function assertSafeSecretFile(
+  metadata: Stats,
+  currentUserId: number,
+): void {
+  if (!metadata.isFile() || metadata.uid !== currentUserId || metadata.size < 50
+    || metadata.size > 4_096 || (metadata.mode & 0o077) !== 0) {
+    throw new Error("unsafe secret file");
   }
 }
