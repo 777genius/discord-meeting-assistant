@@ -242,6 +242,15 @@ DISCORD_E2E_RUN_ID=campaign-2026-08-02-overlap \
 DISCORD_E2E_RECORDING_ID=<craig-recording-id> \
 DISCORD_E2E_ACTOR_RUN_INPUT=/absolute/evidence/overlap.actor-run.json \
 DISCORD_E2E_EVIDENCE_OUTPUT=/absolute/evidence/overlap.evidence.v6.json \
+DISCORD_E2E_MUTATION_TARGET=test-only \
+DISCORD_E2E_REMOTE_HOST=e2e-test-host \
+DISCORD_E2E_REMOTE_SOURCE_ROOT=/srv/discord-meeting/source \
+DISCORD_E2E_REMOTE_COMPOSE_FILE=/srv/discord-meeting/source/infra/deployment/compose.yaml \
+DISCORD_E2E_REMOTE_ENV_FILE=/srv/discord-meeting/source.env \
+DISCORD_E2E_REMOTE_PROJECT=discord-meeting-assistant \
+DISCORD_E2E_REMOTE_CRAIG_PROJECT=craig-meeting-e2e \
+DISCORD_E2E_REMOTE_CRAIG_SERVICE=bot \
+DISCORD_E2E_REMOTE_ATTESTATION_FILE=/tmp/discord-e2e-attestations/campaign-2026-08-02-overlap.json \
 pnpm --filter @discord-meeting/discord-e2e-actors collect:e2e
 ```
 
@@ -292,10 +301,37 @@ deployment was started with Compose profile `conversation`; once set, missing or
 stale Pipecat provenance fails collection and verification.
 
 The collector performs a real post-call replay. Run it only against the isolated
-official-bot test deployment. Infrastructure paths/host/project have safe
-environment overrides for another disposable deployment. Craig defaults to
-Compose project `craig-meeting-e2e`, service `bot`; override them with
-`DISCORD_E2E_REMOTE_CRAIG_PROJECT` and `DISCORD_E2E_REMOTE_CRAIG_SERVICE`.
+official-bot test deployment. It has no remote host, path, service, or project
+defaults. Set every `DISCORD_E2E_REMOTE_*` coordinate explicitly, set
+`DISCORD_E2E_MUTATION_TARGET=test-only`, and use only Compose projects
+`discord-meeting-assistant` and `craig-meeting-e2e` (Craig service `bot`). The
+running `meeting-platform` container must carry label `e2e.test-only=true`.
+
+Immediately before collection, create a mode `0600`, non-symlink, operator-owned
+one-shot marker inside the same owner's non-symlink mode `0700` directory at
+`/tmp/discord-e2e-attestations/<run-id>.json` on the remote
+test host. Pass that absolute path as `DISCORD_E2E_REMOTE_ATTESTATION_FILE`. The
+marker contains no secret and must match the selected fixture set, actor run,
+and Craig recording exactly:
+
+```json
+{
+  "schemaVersion": 1,
+  "purpose": "bullmq-post-call-replay",
+  "fixtureSetId": "discord-meeting-ru-en-v6",
+  "runId": "campaign-2026-08-02-overlap",
+  "recordingId": "explicit-craig-recording-id"
+}
+```
+
+The collector performs a read-only target preflight before reading credentials
+or Discord, then repeats the label/marker check against the exact container and
+confirms the completed BullMQ job. It checksum-validates and removes the
+one-shot marker immediately before retry. A failed preflight leaves the marker
+for diagnosis; once consumed, any failure requires a newly reviewed marker.
+An interruption after marker consumption has an ambiguous replay outcome: check
+the job's latest `processedOn` before reviewing and issuing a fresh marker.
+Remote probe failures never print stderr, marker contents, or secret values.
 All three required running images, plus Pipecat when selected, must carry a
 lowercase 40- or 64-character
 `org.opencontainers.image.revision` OCI label. Do not restart those services

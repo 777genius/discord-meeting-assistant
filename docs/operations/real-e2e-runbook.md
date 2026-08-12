@@ -392,6 +392,30 @@ wall-clock timestamps. After Craig finalizes, pass the explicit recording ID and
 actor file to `collect:e2e`. The collector fail-closed binds them using the
 authoritative manifest `startedAt`/`endedAt`, speaker tracks, checksums and timing.
 
+Before a collector replay, explicitly attest the disposable target. The remote
+Compose environment must set `E2E_TEST_ONLY_LABEL=true`, producing
+`e2e.test-only=true` on the `discord-meeting-assistant/meeting-platform`
+container. Create a non-symlink mode `0700` directory owned by the SSH operator,
+then one regular, non-symlink mode `0600` marker at
+`/tmp/discord-e2e-attestations/<run-id>.json` with the same owner. It contains schema version `1`,
+purpose `bullmq-post-call-replay`, and the exact manifest `fixtureSetId`, actor
+`runId`, and finalized Craig `recordingId`. Do not place credentials in it.
+
+Set `DISCORD_E2E_MUTATION_TARGET=test-only` and every remote coordinate
+explicitly: `DISCORD_E2E_REMOTE_HOST`, `DISCORD_E2E_REMOTE_SOURCE_ROOT`,
+`DISCORD_E2E_REMOTE_COMPOSE_FILE`, `DISCORD_E2E_REMOTE_ENV_FILE`,
+`DISCORD_E2E_REMOTE_PROJECT=discord-meeting-assistant`,
+`DISCORD_E2E_REMOTE_CRAIG_PROJECT=craig-meeting-e2e`,
+`DISCORD_E2E_REMOTE_CRAIG_SERVICE=bot`, and
+`DISCORD_E2E_REMOTE_ATTESTATION_FILE`. There are no mutating remote defaults.
+The collector validates target label and marker before loading a Discord token,
+rechecks immediately before replay, validates the completed job, then removes
+the one-shot marker before calling BullMQ retry. If any preflight fails, it does
+not mutate or remove the marker. After marker consumption, create a fresh marker
+only after reviewing the failed run and checking the completed job's latest
+`processedOn`; an interruption in that window has an ambiguous replay outcome.
+Cleanup of SSH children, queue clients, and Discord is bounded and automatic.
+
 The collector obtains both Postgres observations, S3 bytes, Discord marker counts,
 visible embed text, and the names and byte sizes of both attachments containing
 layered evidence, plus the completed-job replay and deployment provenance directly

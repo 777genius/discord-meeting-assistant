@@ -215,6 +215,8 @@ services:
       context: ../..
       dockerfile: apps/meeting-platform/Dockerfile
     image: discord-meeting/meeting-platform:${MEETING_PLATFORM_SOURCE_REVISION:?set immutable source revision}
+    labels:
+      e2e.test-only: "${E2E_TEST_ONLY_LABEL:-false}"
     deploy:
       replicas: 1
     init: true

@@ -2,35 +2,37 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import { DiscordJsEvidenceProbe } from "./discord-evidence-probe.js";
-import { collectRetainedE2eEvidence } from "./e2e-collector.js";
+import {
+  collectRetainedE2eEvidence,
+  createReplayTargetAttestation,
+} from "./e2e-collector.js";
 import { collectorEnvironmentSchema } from "./e2e-collector-environment.js";
 import {
   conversationVoiceEvidenceV3Schema,
   deploymentRevisionExpectationSchema,
   fixtureManifestV1Schema,
   supplementalPlaybackEvidenceV1Schema,
+  unboundActorRunEvidenceV1Schema,
   verifyRetainedE2eEvidence,
 } from "./e2e-evidence.js";
 import { FileSecretReader, MacOsKeychainSecretReader } from "./keychain.js";
 import { SshDeploymentEvidenceProbe } from "./ssh-deployment-probe.js";
+import { EvidenceProbeInterruptedError } from "./ssh-deployment-probe-commands.js";
 
 async function main(): Promise<void> {
   const config = collectorEnvironmentSchema.parse(process.env);
-  const [actorRun, manifest, token, conversationVoice, supplementalPlayback] = await Promise.all([
+  const [actorRun, manifest, conversationVoice, supplementalPlayback] = await Promise.all([
     readJson(config.DISCORD_E2E_ACTOR_RUN_INPUT),
     readJson(config.DISCORD_E2E_FIXTURE_MANIFEST).then((value) =>
       fixtureManifestV1Schema.parse(value)
     ),
-    (config.DISCORD_E2E_SECRET_DIRECTORY === undefined
-      ? new MacOsKeychainSecretReader(config.DISCORD_E2E_KEYCHAIN_SERVICE)
-      : new FileSecretReader(config.DISCORD_E2E_SECRET_DIRECTORY))
-      .read(config.DISCORD_E2E_SUT_ACCOUNT),
     Promise.all((config.DISCORD_E2E_CONVERSATION_VOICE_INPUTS ?? []).map((path) =>
       readJson(path).then((value) => conversationVoiceEvidenceV3Schema.parse(value))
     )),
     readSupplementalPlayback(config.DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_INPUT),
   ]);
   const deployment = new SshDeploymentEvidenceProbe({
+    attestationFile: config.DISCORD_E2E_REMOTE_ATTESTATION_FILE,
     composeFile: config.DISCORD_E2E_REMOTE_COMPOSE_FILE,
     craigProjectName: config.DISCORD_E2E_REMOTE_CRAIG_PROJECT,
     craigServiceName: config.DISCORD_E2E_REMOTE_CRAIG_SERVICE,
@@ -38,9 +40,20 @@ async function main(): Promise<void> {
     host: config.DISCORD_E2E_REMOTE_HOST,
     includePipecatProvenance:
       config.DISCORD_E2E_EXPECTED_PIPECAT_SOURCE_REVISION !== undefined,
+    mutationTarget: config.DISCORD_E2E_MUTATION_TARGET,
     projectName: config.DISCORD_E2E_REMOTE_PROJECT,
     sourceRoot: config.DISCORD_E2E_REMOTE_SOURCE_ROOT,
   });
+  const replayTarget = createReplayTargetAttestation({
+    fixtureSetId: manifest.fixtureSetId,
+    recordingId: config.DISCORD_E2E_RECORDING_ID,
+    runId: config.DISCORD_E2E_RUN_ID,
+  }, unboundActorRunEvidenceV1Schema.parse(actorRun));
+  await deployment.assertReplayTargetSafe(replayTarget);
+  const token = await (config.DISCORD_E2E_SECRET_DIRECTORY === undefined
+    ? new MacOsKeychainSecretReader(config.DISCORD_E2E_KEYCHAIN_SERVICE)
+    : new FileSecretReader(config.DISCORD_E2E_SECRET_DIRECTORY))
+    .read(config.DISCORD_E2E_SUT_ACCOUNT);
   const discord = new DiscordJsEvidenceProbe();
   const conversation = config.DISCORD_E2E_BOTIK_SPEAKER_ID === undefined
     ? undefined
@@ -57,6 +70,7 @@ async function main(): Promise<void> {
     const evidence = await collectRetainedE2eEvidence({
       actorRun,
       ...(conversation === undefined ? {} : { conversation }),
+      fixtureSetId: manifest.fixtureSetId,
       recordingId: config.DISCORD_E2E_RECORDING_ID,
       runId: config.DISCORD_E2E_RUN_ID,
     }, deployment, discord);
@@ -114,5 +128,5 @@ async function atomicWriteJson(path: string, value: unknown): Promise<void> {
 void main().catch((error: unknown) => {
   const message = error instanceof Error ? error.message : "Unknown E2E collector failure";
   process.stderr.write(`Discord E2E evidence collection failed: ${message}\n`);
-  process.exitCode = 1;
+  process.exitCode = error instanceof EvidenceProbeInterruptedError ? error.exitCode : 1;
 });

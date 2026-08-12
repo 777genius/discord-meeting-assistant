@@ -26,6 +26,7 @@ import type {
   DiscordEvidenceProbe,
   DiscordProjectionMessageObservation,
   DiscordProjectionObservation,
+  ReplayTargetAttestation,
 } from "./e2e-retained-evidence-contracts.js";
 import {
   assertExactDatabaseCounts,
@@ -53,9 +54,8 @@ export async function collectRetainedE2eEvidence(
   discord: DiscordEvidenceProbe,
 ): Promise<RetainedE2eEvidenceV6 | RetainedE2eEvidenceV8> {
   const unboundActorRun = parseUnboundActorRun(input.actorRun);
-  if (unboundActorRun.runId !== input.runId) {
-    throw new Error("Actor evidence does not match the requested run correlation");
-  }
+  const replayTarget = createReplayTargetAttestation(input, unboundActorRun);
+  await deployment.assertReplayTargetSafe(replayTarget);
   const provenanceBefore = await deployment.collectProvenance();
   const before = normalizeDatabase(await deployment.collectDatabase(input.recordingId));
   assertExactDatabaseCounts(before, "before replay");
@@ -82,7 +82,7 @@ export async function collectRetainedE2eEvidence(
   assertExactDiscordProjection(beforeDiscord, publication, "before replay");
   const actorRun = bindActorRun(unboundActorRun, input.recordingId, s3);
   const processing = await deployment.collectProcessing(snapshot.meetingId, s3.startedAt);
-  const replayJob = await deployment.replayPostCall(snapshot.meetingId);
+  const replayJob = await deployment.replayPostCall(replayTarget);
   if (replayJob.afterProcessedOn <= replayJob.beforeProcessedOn) {
     throw new Error("Replay job did not complete a later real processing attempt");
   }
@@ -185,6 +185,23 @@ export async function collectRetainedE2eEvidence(
     },
     schemaVersion: 8,
   });
+}
+
+export function createReplayTargetAttestation(
+  input: Pick<CollectEvidenceInput, "fixtureSetId" | "recordingId" | "runId">,
+  actorRun: ReturnType<typeof parseUnboundActorRun>,
+): ReplayTargetAttestation {
+  if (actorRun.runId !== input.runId) {
+    throw new Error("Actor evidence does not match the requested run correlation");
+  }
+  if (actorRun.fixtureSetId !== input.fixtureSetId) {
+    throw new Error("Actor evidence does not match the requested fixture set");
+  }
+  return {
+    fixtureSetId: input.fixtureSetId,
+    recordingId: input.recordingId,
+    runId: input.runId,
+  };
 }
 
 export function bindConversationVoiceRecording(
