@@ -49,7 +49,7 @@ export async function collectHostedClockPreflight(
   );
 }
 
-const environmentSchema = z.object({
+const environmentSchema = z.looseObject({
   DISCORD_E2E_CLOCK_PREFLIGHT_OUTPUT: absolutePath,
   DISCORD_E2E_MUTATION_TARGET: z.literal(HOSTED_CAMPAIGN_TARGET.mutationTarget),
   DISCORD_E2E_REMOTE_COMPOSE_FILE: absolutePath,
@@ -59,7 +59,7 @@ const environmentSchema = z.object({
   DISCORD_E2E_REMOTE_HOST: z.literal(HOSTED_CAMPAIGN_TARGET.host),
   DISCORD_E2E_REMOTE_PROJECT: z.literal(HOSTED_CAMPAIGN_TARGET.project),
   DISCORD_E2E_REMOTE_SOURCE_ROOT: absolutePath,
-}).passthrough();
+});
 
 export function loadHostedClockPreflightProducerConfig(
   environment: NodeJS.ProcessEnv,

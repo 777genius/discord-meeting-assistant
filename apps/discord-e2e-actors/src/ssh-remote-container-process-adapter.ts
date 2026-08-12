@@ -140,8 +140,8 @@ function assertRequestBounds(request: Parameters<BoundedRemoteContainerProcessPo
   containerIdSchema.parse(request.binding.containerId);
   sourceRevisionSchema.parse(request.binding.sourceRevision);
   z.string().regex(/^[a-f\d]{64}$/u).parse(request.binding.imageDigestSha256);
-  z.number().int().positive().safe().parse(request.maximumOutputBytes);
-  z.number().int().positive().safe().parse(request.timeoutMs);
+  z.number().int().positive().parse(request.maximumOutputBytes);
+  z.number().int().positive().parse(request.timeoutMs);
   z.array(z.string().min(1).refine((value) => !value.includes("\0"))).min(1).parse(request.args);
 }
 
@@ -188,8 +188,8 @@ export function runBoundedSshCommand(
       }
       target.push(chunk);
     };
-    child.stdout.on("data", (chunk: Buffer) => retain(stdout, chunk));
-    child.stderr.on("data", (chunk: Buffer) => retain(stderr, chunk));
+    child.stdout.on("data", (chunk: Buffer) => { retain(stdout, chunk); });
+    child.stderr.on("data", (chunk: Buffer) => { retain(stderr, chunk); });
     child.once("error", (error) => {
       if (settled) {return;}
       settled = true;

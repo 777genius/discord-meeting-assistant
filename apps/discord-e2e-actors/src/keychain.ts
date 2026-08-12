@@ -132,9 +132,6 @@ export class FileSecretReader implements SecretReader {
     if (!parsed.success) {
       throw new Error(`Invalid Discord bot token file for account ${account}`);
     }
-    if (retainedMetadata === undefined) {
-      throw new Error(`Missing Discord bot token metadata for account ${account}`);
-    }
     return Object.freeze({
       account,
       generationId: secretGenerationId(retainedMetadata),

@@ -85,7 +85,7 @@ export class BoundedContainerProcessAdapter implements BoundedContainerProcessPo
     try {
       await spawned;
       const exit = await closed;
-      if (terminating) { await termination; }
+      await termination;
       return {
         ...exit,
         stderr: Buffer.concat(stderr).toString("utf8"),
