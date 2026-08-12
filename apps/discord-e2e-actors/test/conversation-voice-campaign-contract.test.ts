@@ -162,22 +162,23 @@ describe("conversation voice campaign contract", () => {
       schemaVersion: 1,
     });
 
-    expect(conversationVoiceCampaignProofIssue(proof, "campaign-1")).toBeUndefined();
+    const voice = campaignProofVoice(plan);
+    expect(conversationVoiceCampaignProofIssue(proof, "campaign-1", voice)).toBeUndefined();
     expect(conversationVoiceCampaignProofIssue({
       ...proof,
       observerReadyReceipt: { ...proof.observerReadyReceipt, runId: "other-run" },
-    }, "campaign-1")).toContain("retained actor run");
+    }, "campaign-1", voice)).toContain("retained actor run");
     expect(conversationVoiceCampaignProofIssue({
       ...proof,
       planDigestSha256: "0".repeat(64),
-    }, "campaign-1")).toContain("computed plan digest");
+    }, "campaign-1", voice)).toContain("computed plan digest");
     expect(conversationVoiceCampaignProofIssue({
       ...proof,
       observerReadyReceipt: {
         ...proof.observerReadyReceipt,
         target: { ...proof.observerReadyReceipt.target, voiceChannelId: "wrong-channel" },
       },
-    }, "campaign-1")).toContain("pinned private-test target");
+    }, "campaign-1", voice)).toContain("pinned private-test target");
   });
 });
 
@@ -195,6 +196,17 @@ function campaignProofPlan() {
     kind: "conversation-voice-campaign-preflight" as const,
     status: "validated" as const,
   };
+}
+
+function campaignProofVoice(plan: ReturnType<typeof campaignProofPlan>) {
+  return plan.captures.map((capture) => ({
+    capture: { expectedDuration: capture.expectedDuration },
+    correlation: {
+      attemptId: capture.resolvedAttemptId,
+      purpose: capture.purpose,
+      turnId: capture.resolvedTurnId,
+    },
+  }));
 }
 
 function canonicalPlan() {

@@ -66,6 +66,40 @@ describe("retained conversation V9 campaign proof verification", () => {
     expect(failureCodes(evidence)).toContain("VOICE_CAMPAIGN_PROOF_INVALID");
   });
 
+  it.each([
+    ["attempt ID", (evidence: RetainedE2eEvidenceV9) => {
+      evidence.conversation.campaignProof.plan.captures[2]!.resolvedAttemptId = "other-attempt";
+    }],
+    ["turn ID", (evidence: RetainedE2eEvidenceV9) => {
+      evidence.conversation.campaignProof.plan.captures[4]!.resolvedTurnId = "other-turn";
+    }],
+    ["purpose", (evidence: RetainedE2eEvidenceV9) => {
+      evidence.conversation.campaignProof.plan.captures[2]!.purpose = "farewell";
+    }],
+    ["minimum expected duration", (evidence: RetainedE2eEvidenceV9) => {
+      evidence.conversation.campaignProof.plan.captures[3]!.expectedDuration.minimumMilliseconds += 1;
+    }],
+    ["maximum expected duration", (evidence: RetainedE2eEvidenceV9) => {
+      evidence.conversation.campaignProof.plan.captures[3]!.expectedDuration.maximumMilliseconds += 1;
+    }],
+    ["ordinal", (evidence: RetainedE2eEvidenceV9) => {
+      evidence.conversation.campaignProof.plan.captures[1]!.ordinal = 6;
+    }],
+    ["role", (evidence: RetainedE2eEvidenceV9) => {
+      evidence.conversation.campaignProof.plan.captures[1]!.role = "observer-unknown";
+    }],
+    ["capture order", (evidence: RetainedE2eEvidenceV9) => {
+      const captures = evidence.conversation.campaignProof.plan.captures;
+      [captures[0], captures[1]] = [captures[1]!, captures[0]!];
+    }],
+  ] as const)("rejects a re-digested plan with a mutated %s", (_field, mutate) => {
+    const evidence = v9Evidence();
+    mutate(evidence);
+    redigestCampaignProof(evidence);
+
+    expect(failureCodes(evidence)).toContain("VOICE_CAMPAIGN_PROOF_INVALID");
+  });
+
   it("keeps historical V8 readable, valid, and untouched by the V9 gate", () => {
     const evidence = retainedV8Evidence();
     const beforeVerification = structuredClone(evidence);
@@ -138,6 +172,13 @@ function verify(evidence: RetainedE2eEvidenceV9) {
     currentExpectedRevisions,
     exactServiceLevelThresholds,
   );
+}
+
+function redigestCampaignProof(evidence: RetainedE2eEvidenceV9): void {
+  const proof = evidence.conversation.campaignProof;
+  const digest = conversationVoiceCampaignPlanDigest(proof.plan);
+  proof.planDigestSha256 = digest;
+  proof.observerReadyReceipt.planDigestSha256 = digest;
 }
 
 function failureCodes(evidence: RetainedE2eEvidenceV9): readonly string[] {

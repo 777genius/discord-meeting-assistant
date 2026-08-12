@@ -72,6 +72,7 @@ function canonicalJson(value: unknown): string {
 export function conversationVoiceCampaignProofIssue(
   proof: Readonly<ConversationVoiceCampaignProofV1>,
   runId: string,
+  voice: readonly RetainedVoiceCapture[],
 ): string | undefined {
   const digest = conversationVoiceCampaignPlanDigest(proof.plan);
   if (proof.planDigestSha256 !== digest || proof.observerReadyReceipt.planDigestSha256 !== digest) {
@@ -89,7 +90,25 @@ export function conversationVoiceCampaignProofIssue(
   if (proof.observerReadyReceipt.authenticatedObserverBotId !== target.observerApplicationId) {
     return "observer-ready receipt must bind the authenticated observer bot";
   }
-  return campaignPlanIssue(proof.plan);
+  const planIssue = campaignPlanIssue(proof.plan);
+  if (planIssue !== undefined) {
+    return planIssue;
+  }
+  return campaignCaptureBindingIssue(proof.plan, voice);
+}
+
+interface RetainedVoiceCapture {
+  readonly capture: {
+    readonly expectedDuration: {
+      readonly maximumMilliseconds: number;
+      readonly minimumMilliseconds: number;
+    };
+  };
+  readonly correlation: {
+    readonly attemptId: string;
+    readonly purpose: "addressed-answer" | "farewell" | "greeting";
+    readonly turnId: string;
+  };
 }
 
 function campaignPlanIssue(plan: ConversationVoiceCampaignProofV1["plan"]): string | undefined {
@@ -103,6 +122,30 @@ function campaignPlanIssue(plan: ConversationVoiceCampaignProofV1["plan"]): stri
     if (capture.expectedDuration.minimumMilliseconds >
       capture.expectedDuration.maximumMilliseconds) {
       return `retained plan capture ${index + 1} has an invalid duration range`;
+    }
+  }
+  return undefined;
+}
+
+function campaignCaptureBindingIssue(
+  plan: ConversationVoiceCampaignProofV1["plan"],
+  voice: readonly RetainedVoiceCapture[],
+): string | undefined {
+  if (voice.length !== plan.captures.length) {
+    return "retained plan must positionally bind every conversation voice capture";
+  }
+  for (const [index, plannedCapture] of plan.captures.entries()) {
+    const retainedCapture = voice[index]!;
+    if (
+      plannedCapture.resolvedAttemptId !== retainedCapture.correlation.attemptId ||
+      plannedCapture.resolvedTurnId !== retainedCapture.correlation.turnId ||
+      plannedCapture.purpose !== retainedCapture.correlation.purpose ||
+      plannedCapture.expectedDuration.minimumMilliseconds !==
+        retainedCapture.capture.expectedDuration.minimumMilliseconds ||
+      plannedCapture.expectedDuration.maximumMilliseconds !==
+        retainedCapture.capture.expectedDuration.maximumMilliseconds
+    ) {
+      return `retained plan capture ${index + 1} must positionally bind its conversation voice capture`;
     }
   }
   return undefined;

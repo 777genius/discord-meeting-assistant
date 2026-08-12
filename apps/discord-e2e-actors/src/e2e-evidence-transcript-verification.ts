@@ -91,6 +91,7 @@ function verifyCampaignProof(evidence: Extract<RetainedE2eEvidence, { schemaVers
   const issue = conversationVoiceCampaignProofIssue(
     evidence.conversation.campaignProof,
     evidence.actorRun.runId,
+    evidence.conversation.voice,
   );
   if (issue !== undefined) {
     fail("VOICE_CAMPAIGN_PROOF_INVALID", issue);
