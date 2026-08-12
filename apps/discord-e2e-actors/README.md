@@ -187,8 +187,9 @@ UTF-8 source and Ogg SHA-256 hashes, Ogg duration, expected Discord speaker IDs,
 required Russian/English terminology, scenario timing, and overlap behavior.
 The harness refuses to connect if a configured fixture differs from the manifest.
 
-Before a coordinated real-provider run, store both tokens in macOS Keychain
-under service `discord-voice-bot-e2e`, accounts `speaker-a` and `speaker-b`.
+Before a coordinated real-provider run, store the five official private-test bot
+tokens in macOS Keychain under service `discord-voice-bot-e2e`, accounts `sut`,
+`speaker-a`, `speaker-b`, `conversation-observer`, and `speaker-d`.
 Provide only the private test guild and voice channel IDs:
 
 ```sh
@@ -200,9 +201,11 @@ pnpm --filter @discord-meeting/discord-e2e-actors start
 ```
 
 For an isolated Linux test host, build the package Dockerfile and mount a private
-read-only directory containing `speaker-a` and `speaker-b` files. Set
-`DISCORD_E2E_SECRET_DIRECTORY` to the mount path; every file must be regular,
-owned by the container user, and have no group/other permission bits. Delete the
+read-only directory containing `sut`, `speaker-a`, `speaker-b`,
+`conversation-observer`, and `speaker-d` files. Set
+`DISCORD_E2E_SECRET_DIRECTORY` to the mount path. The directory and every token
+file must be owned by the container user, have no group/other permission bits,
+and must not be symbolic links; token entries must be regular files. Delete the
 host copies immediately after the campaign.
 
 `runId` is chosen before the call. Craig's random `recordingId` is deliberately
@@ -329,9 +332,9 @@ binding must still prove exactly one audible successful greeting.
 
 For a fully hosted campaign, use the same external secret directory for the
 actor harness, voice observer, and collector. It contains files named by the
-configured accounts (`sut`, `speaker-a`, `speaker-b`, and
-`conversation-observer`) and never token values in environment variables or
-process arguments.
+configured accounts (`sut`, `speaker-a`, `speaker-b`, `conversation-observer`,
+and `speaker-d`) and never token values in environment variables or process
+arguments.
 
 Collection and both verification commands require immutable candidate inputs
 `DISCORD_E2E_EXPECTED_CRAIG_SOURCE_REVISION`,
