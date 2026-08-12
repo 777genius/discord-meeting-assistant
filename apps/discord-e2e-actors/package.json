@@ -7,6 +7,7 @@
     "build": "tsc --project tsconfig.build.json --pretty false",
     "capacity:e2e": "pnpm run build && node dist/capacity-main.js",
     "collect:e2e": "pnpm run build && node dist/collect-retained-evidence.js",
+    "collect:hosted-service-levels": "pnpm run build && node dist/collect-hosted-service-levels.js",
     "collect:recording-ready": "pnpm run build && node dist/collect-recording-ready-receipt.js",
     "collect:hosted-provenance": "pnpm run build && node dist/collect-hosted-campaign-provenance.js",
     "fixtures:generate": "./scripts/generate-ru-en-fixtures.sh",
