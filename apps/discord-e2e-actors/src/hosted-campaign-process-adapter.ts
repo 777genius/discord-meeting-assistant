@@ -63,7 +63,14 @@ const ALLOWED_ENVIRONMENT = new Set([
   "DISCORD_E2E_VOICE_CHANNEL_ID",
 ]);
 
-interface ChildState { readonly child: ChildProcess; readonly childId: string; stderr: number; stdout: number }
+interface ChildState {
+  readonly child: ChildProcess;
+  readonly childId: string;
+  readonly exited: Promise<Error>;
+  failure?: Error;
+  stderr: number;
+  stdout: number;
+}
 export interface HostedCampaignProcessAdapterOptions {
   readonly artifactStore: HostedCampaignArtifactStore;
   readonly distRoot: string;
@@ -97,8 +104,11 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
       target: { guildId: "1533228590643155034", voiceChannelId: "1533228823045214398", mutationTarget: "test-only" },
     });
   }
-  awaitBarrier<Action extends HostedCampaignBarrierAction>(action: Action, bounded: HostedCampaignBoundedSignal) {
-    return this.#options.artifactStore.awaitAction(action, bounded);
+  async awaitBarrier<Action extends HostedCampaignBarrierAction>(action: Action, bounded: HostedCampaignBoundedSignal) {
+    this.#assertChildrenHealthy();
+    const artifact = this.#options.artifactStore.awaitAction(action, bounded);
+    const failures = [...this.#children.values()].map(async ({ exited }) => { throw await exited; });
+    return Promise.race([artifact, ...failures]);
   }
   async startChild(spec: HostedCampaignExecutableSpec, bounded: HostedCampaignBoundedSignal): Promise<HostedCampaignChildHandle> {
     assertActive(bounded);
@@ -107,18 +117,40 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
     const child = spawn(process.execPath, [join(this.#options.distRoot, ENTRYPOINTS[spec.entrypoint]), ...argumentsFor(spec)], {
       env: environment, shell: false, stdio: ["ignore", "pipe", "pipe"],
     });
-    const state: ChildState = { child, childId: spec.childId, stderr: 0, stdout: 0 };
+    let reportExit!: (failure: Error) => void;
+    const exited = new Promise<Error>((resolve) => { reportExit = resolve; });
+    const state: ChildState = { child, childId: spec.childId, exited, stderr: 0, stdout: 0 };
     this.#children.set(spec.childId, state);
     const limit = this.#options.outputLimitBytes ?? 64 * 1024;
-    child.stdout?.on("data", (data: Buffer) => { state.stdout += data.byteLength; if (state.stdout > limit) child.kill("SIGTERM"); });
-    child.stderr?.on("data", (data: Buffer) => { state.stderr += data.byteLength; if (state.stderr > limit) child.kill("SIGTERM"); });
+    child.stdout?.on("data", (data: Buffer) => {
+      state.stdout += data.byteLength;
+      if (state.stdout > limit) {
+        state.failure = new Error(`Hosted campaign child ${spec.childId} exceeded stdout limit`);
+        child.kill("SIGTERM");
+      }
+    });
+    child.stderr?.on("data", (data: Buffer) => {
+      state.stderr += data.byteLength;
+      if (state.stderr > limit) {
+        state.failure = new Error(`Hosted campaign child ${spec.childId} exceeded stderr limit`);
+        child.kill("SIGTERM");
+      }
+    });
     await new Promise<void>((resolve, reject) => {
       child.once("spawn", resolve);
       child.once("error", reject);
-      child.once("exit", (code, signal) => reject(new Error(
-        `Hosted campaign child ${spec.childId} exited early (${String(code ?? signal)})`,
-      )));
     });
+    child.once("exit", (code, signal) => {
+      state.failure ??= new Error(
+        `Hosted campaign child ${spec.childId} exited early (${String(code ?? signal)})`,
+      );
+      reportExit(state.failure);
+    });
+    await new Promise<void>((resolve) => { setImmediate(resolve); });
+    if (state.failure !== undefined) {
+      this.#children.delete(spec.childId);
+      throw state.failure;
+    }
     return { childId: spec.childId } as HostedCampaignChildHandle;
   }
   async stopChild(handle: HostedCampaignChildHandle): Promise<void> {
@@ -132,6 +164,10 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
       state.child.kill("SIGKILL");
       await waitForExit(state.child, this.#options.terminationGraceMilliseconds ?? 2_000);
     }
+  }
+  #assertChildrenHealthy(): void {
+    const failure = [...this.#children.values()].find(({ failure }) => failure !== undefined)?.failure;
+    if (failure !== undefined) throw failure;
   }
 }
 
