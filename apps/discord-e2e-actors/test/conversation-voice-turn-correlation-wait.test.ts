@@ -104,6 +104,18 @@ describe("conversation voice runtime turn correlation wait", () => {
     stream.destroy();
   });
 
+  it("rejects a stream that is already closed before correlation starts", async () => {
+    const stream = new PassThrough();
+    stream.destroy();
+
+    await expect(waitForConversationVoiceTurnIdWhileGuardingAudio({
+      isPacketAudible: () => false,
+      resolveTurnId: async () => "human-question-closed",
+      stream,
+    })).rejects.toThrow("closed before runtime turn correlation");
+    expectCorrelationWaitListenersRemoved(stream);
+  });
+
   it("fails closed and cleans up for end, error, and non-binary stream events", async () => {
     await expectGuardFailure((stream) => stream.end(), "ended before runtime turn correlation");
     await expectGuardFailure(

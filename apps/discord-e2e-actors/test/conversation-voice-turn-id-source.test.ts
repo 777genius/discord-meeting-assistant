@@ -178,6 +178,8 @@ async function createFifo(path: string): Promise<void> {
 }
 
 async function observeFirstVisibleContents(path: string): Promise<string> {
+  const startedAtNanoseconds = process.hrtime.bigint();
+  const timeoutNanoseconds = 5_000_000_000n;
   for (;;) {
     try {
       return await readFile(path, "utf8");
@@ -185,6 +187,9 @@ async function observeFirstVisibleContents(path: string): Promise<string> {
       if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
         throw error;
       }
+    }
+    if (process.hrtime.bigint() - startedAtNanoseconds > timeoutNanoseconds) {
+      throw new Error("Conversation voice turn ID file never became visible before timeout");
     }
     await new Promise<void>((resolve) => {
       setImmediate(resolve);
