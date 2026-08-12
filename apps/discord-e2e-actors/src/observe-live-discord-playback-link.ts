@@ -44,6 +44,7 @@ export async function runLiveDiscordPlaybackLinkObserver(
     );
     await writeCreateOnlyPrivateJson(config.outputPath, proof);
     process.stdout.write(`${JSON.stringify({
+      kind: "playback-link-observer-completion",
       messageId: proof.messageId,
       outputPath: config.outputPath,
       recordingId: proof.recordingId,

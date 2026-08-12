@@ -1,20 +1,15 @@
 import {
   EndBehaviorType,
-  VoiceConnectionStatus,
-  entersState,
-  joinVoiceChannel,
+  VoiceConnectionStatus, entersState, joinVoiceChannel,
   type AudioReceiveStream,
   type VoiceConnection,
 } from "@discordjs/voice";
 import {
-  ChannelType,
-  Client,
-  GatewayIntentBits,
+  ChannelType, Client, GatewayIntentBits,
   type Guild,
   type GuildBasedChannel,
   type VoiceChannel,
 } from "discord.js";
-
 import {
   loadConversationVoiceObserverConfig, type ConversationVoiceObserverCapture,
 } from "./conversation-voice-observer-config.js";
@@ -45,6 +40,8 @@ import {
   publishAnswerIntent, publishAnswerObserverReady,
   publishCaptureRetained, publishObserverSubscribed,
 } from "./hosted-campaign-process-event-publisher.js";
+import { publishConversationObserverCompletion } from
+  "./hosted-finite-process-completion-publisher.js";
 
 const systemClock = { now: () => ({
   epochMilliseconds: Date.now(),
@@ -146,6 +143,7 @@ async function main(): Promise<void> {
         campaignProof,
       );
     }
+    publishConversationObserverCompletion(config, captures.map(({ outputPath }) => outputPath));
   } finally {
     sourceStream?.destroy();
     connection?.destroy();

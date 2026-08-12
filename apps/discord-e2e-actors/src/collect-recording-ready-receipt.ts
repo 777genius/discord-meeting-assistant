@@ -64,6 +64,7 @@ async function main(): Promise<void> {
   });
   await writeCreateOnlyJson(config.DISCORD_E2E_READY_RECEIPT_OUTPUT, receipt);
   process.stdout.write(`${JSON.stringify({
+    kind: "recording-ready-completion",
     outputPath: config.DISCORD_E2E_READY_RECEIPT_OUTPUT,
     recordingId: receipt.recordingId,
     runId: receipt.runId,

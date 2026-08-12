@@ -60,6 +60,12 @@ async function main(): Promise<void> {
       target: { guildId: manifest.guildId, voiceChannelId: manifest.voiceChannelId },
     });
     process.stdout.write(`Supplemental Speaker D evidence written to ${config.evidenceOutputPath}.\n`);
+    process.stdout.write(`${JSON.stringify({
+      kind: "supplemental-player-completion",
+      outputPath: config.evidenceOutputPath,
+      runId: config.runId,
+      status: "completed",
+    })}\n`);
   } finally {
     await actor.close();
   }

@@ -131,6 +131,13 @@ async function main(): Promise<void> {
     });
     process.stdout.write(`Discord E2E actor evidence written to ${config.actorRunOutputPath}.\n`);
     process.stdout.write("Discord E2E actors completed synthetic playback.\n");
+    process.stdout.write(`${JSON.stringify({
+      kind: "actor-completion",
+      outputPath: config.actorRunOutputPath,
+      runId: config.runId,
+      scenario: config.scenario,
+      status: "completed",
+    })}\n`);
   } finally {
     await closeActors(actors);
   }
