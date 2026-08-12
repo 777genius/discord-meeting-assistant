@@ -12,8 +12,6 @@ import {
 const maximumReceiptBytes = 1_536;
 const pollIntervalMilliseconds = 25;
 export {
-  conversationAnswerObserverReadySchema,
-  conversationAnswerPlaybackIntentSchema,
   type ConversationAnswerPlaybackIntent,
 } from "@discord-meeting/conversation-runtime-contracts";
 
