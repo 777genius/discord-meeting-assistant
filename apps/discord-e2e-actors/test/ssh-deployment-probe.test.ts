@@ -1,8 +1,8 @@
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import type { ChildProcess } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ReplayTargetAttestation } from "../src/e2e-retained-evidence-contracts.js";
 import {
@@ -20,12 +20,33 @@ import {
   parseSshDeploymentProbeOptions,
 } from "../src/ssh-deployment-probe-validation.js";
 
+const { spawnMock } = vi.hoisted(() => ({
+  spawnMock: vi.fn(),
+}));
+
+vi.mock("node:child_process", () => ({
+  spawn: spawnMock,
+}));
+
 const containerId = "a".repeat(64);
 const target: ReplayTargetAttestation = {
   fixtureSetId: "fixture-v1",
   recordingId: "recording-1",
   runId: "run-1",
 };
+
+afterEach(() => {
+  vi.useRealTimers();
+  spawnMock.mockReset();
+});
+
+function fakeChildProcess(): ChildProcess {
+  const child = new EventEmitter() as ChildProcess;
+  child.kill = vi.fn(() => true);
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  return child;
+}
 
 function probe(commands: SshDeploymentProbeCommands): SshDeploymentEvidenceProbe {
   return new SshDeploymentEvidenceProbe({
@@ -160,43 +181,37 @@ describe("SshDeploymentEvidenceProbe replay target safety", () => {
   });
 
   it("waits for SSH child cleanup after a timeout", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "discord-e2e-fake-ssh-"));
-    const executable = join(directory, "ssh");
-    await writeFile(executable, [
-      "#!/usr/bin/env node",
-      "process.on('SIGTERM', () => setTimeout(() => process.exit(0), 100));",
-      "setInterval(() => {}, 1000);",
-      "",
-    ].join("\n"));
-    await chmod(executable, 0o700);
-    const originalPath = process.env.PATH;
-    process.env.PATH = `${directory}:${originalPath ?? ""}`;
-    const startedAt = Date.now();
-    try {
-      const settings = parseSshDeploymentProbeOptions({
-        attestationFile: "/tmp/discord-e2e-attestations/run-1.json",
-        composeFile: "/srv/e2e/compose.yaml",
-        craigProjectName: "craig-meeting-e2e",
-        craigServiceName: "bot",
-        envFile: "/srv/e2e/source.env",
-        host: "fake-e2e-host",
-        mutationTarget: "test-only",
-        projectName: "discord-meeting-assistant",
-        sourceRoot: "/srv/e2e/source",
-        timeoutMs: 250,
-      });
+    vi.useFakeTimers();
+    const child = fakeChildProcess();
+    spawnMock.mockReturnValue(child);
+    const settings = parseSshDeploymentProbeOptions({
+      attestationFile: "/tmp/discord-e2e-attestations/run-1.json",
+      composeFile: "/srv/e2e/compose.yaml",
+      craigProjectName: "craig-meeting-e2e",
+      craigServiceName: "bot",
+      envFile: "/srv/e2e/source.env",
+      host: "fake-e2e-host",
+      mutationTarget: "test-only",
+      projectName: "discord-meeting-assistant",
+      sourceRoot: "/srv/e2e/source",
+      timeoutMs: 250,
+    });
+    let outcome: "pending" | "rejected" | "resolved" = "pending";
 
-      await expect(runRemoteProbe(settings, ["true"]))
-        .rejects.toThrow("timed out after 250ms");
-      expect(Date.now() - startedAt).toBeGreaterThanOrEqual(325);
-    } finally {
-      if (originalPath === undefined) {
-        delete process.env.PATH;
-      } else {
-        process.env.PATH = originalPath;
-      }
-      await rm(directory, { force: true, recursive: true });
-    }
+    const result = runRemoteProbe(settings, ["true"]);
+    void result.then(
+      () => (outcome = "resolved"),
+      () => (outcome = "rejected"),
+    );
+    await vi.advanceTimersByTimeAsync(250);
+
+    expect(child.kill).toHaveBeenCalledExactlyOnceWith("SIGTERM");
+    expect(outcome).toBe("pending");
+
+    child.emit("close", 0, "SIGTERM");
+
+    await expect(result).rejects.toThrow("timed out after 250ms");
+    expect(outcome).toBe("rejected");
   });
 
   it("rejects a non-allowlisted project before invoking a remote command", () => {
