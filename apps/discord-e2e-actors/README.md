@@ -23,6 +23,50 @@ pnpm --filter @discord-meeting/discord-e2e-actors compile:hosted-campaign-plan -
 Never reuse the output path. The runner initializes the fresh campaign artifact
 layout separately; compiling a plan does not create run or barrier artifacts.
 
+## Run the hosted campaign coordinator
+
+The package contains an executable coordinator for the fixed private-test
+campaign. It compiles three isolated runs (`sequential`, `overlap`, then
+`reconnect`) into one validated execution graph and starts each finite child
+only at its declared barrier. The reconnect run orders four proactive greetings,
+one addressed answer, and one prepared farewell without operator sleeps. Armed
+receipts close the observer, actor, and supplemental-player races before their
+release gates are published.
+
+Before the coordinator may create its private artifact layout or start a child,
+the admission CLI recomputes the plan from the exact definition and runtime
+bindings. It also validates the pinned fixture bytes, five file-secret
+files, available disk space, declared candidate revisions, and supplied remote
+evidence digests. Inputs and receipts are private create-only files; a retry
+uses a new campaign ID, artifact root, and output paths.
+
+```sh
+pnpm --filter @discord-meeting/discord-e2e-actors preflight:hosted-campaign -- \
+  --definition /absolute/private/campaign-definition.json \
+  --bindings /absolute/private/runtime-bindings.json \
+  --plan /absolute/private/plans/campaign-plan.json \
+  --receipt /absolute/private/admission.json \
+  --minimum-free-bytes 1073741824 \
+  --remote-evidence /absolute/private/remote-evidence.json
+
+pnpm --filter @discord-meeting/discord-e2e-actors run:hosted-campaign -- \
+  /absolute/private/plans/campaign-plan.json \
+  /absolute/private/campaign-pass.json \
+  86400000 \
+  /absolute/private/admission.json \
+  /absolute/private/campaign-definition.json \
+  /absolute/private/runtime-bindings.json
+```
+
+🚨 The current admission implementation deliberately reports `blocked`. The
+six remote capability files are retained declarations, not trusted typed probe
+receipts, so they cannot authorize Discord or host activity yet. Qualification
+remains blocked until independently verified producers exist for clock
+preflight, greeting-readiness deployment, Craig test identity, remote test
+isolation, revision-qualified containers, and the Voicetext semantic canary.
+Do not bypass this check or present deterministic coordinator tests as a real
+Discord/host pass.
+
 ## Supplemental Speaker D playback
 
 `play:supplemental` is a one-off addition to the retained private-guild campaign.
@@ -160,17 +204,17 @@ correlation. A first-join capture may omit
 `DISCORD_E2E_CONVERSATION_VOICE_RECORDING_ID` before Craig exposes its random
 recording ID; the create-only raw file then retains `null`. The collector binds
 that capture exactly once to the explicitly selected authoritative recording
-and rejects a conflicting non-null ID. Current v7/v8 retained evidence closes that
+and rejects a conflicting non-null ID. Retained evidence v7 and newer closes that
 correlation by checking
 the capture interval against the authoritative recording, matching lifecycle
 turns to settled runtime markers plus audible captures, and matching the
 addressed-answer interval to exactly one Botik turn in the final transcript.
-For the strict v8 campaign, positional correlation considers only lifecycle
-events whose purpose and exact or retry-aware turn identity bind to one of the
-six captures. Other meeting lifecycle events remain in retained evidence but do
-not shift campaign positions; an extra event bound to a campaign capture still
-fails the exact-six gate.
-For v7/v8, the configured source bot must be the same pinned Botik identity.
+For the strict conversation campaign, positional correlation considers only
+lifecycle events whose purpose and exact or retry-aware turn identity bind to
+one of the six captures. Other meeting lifecycle events remain in retained
+evidence but do not shift campaign positions; an extra event bound to a campaign
+capture still fails the exact-six gate.
+For v7 and newer, the configured source bot must be the same pinned Botik identity.
 
 The strict six-capture order is: unknown-observer greeting, named Russian
 greeting, named English greeting, Speaker D greeting, addressed answer, then
@@ -178,11 +222,13 @@ prepared farewell. The primary capture uses the top-level expected-duration
 settings; each of the five additional objects must carry its own
 `expectedDuration` range. Missing, extra, or reordered roles fail before login.
 
-The lifecycle campaign is not runnable or qualifying until a test-only
-coordinator provides deterministic readiness barriers for every actor and
-playback transition. Manual sleeps, including the historical ten-second Speaker
-B delay, are not acceptance evidence. Do not attempt this campaign against a
-production deployment or represent manual coordination as a real-provider gate.
+The executable lifecycle coordinator now provides deterministic barriers for
+actor joins, reconnects, observer subscription and capture, addressed-answer
+readiness, supplemental playback, and teardown. Manual sleeps, including the
+historical ten-second Speaker B delay, are not acceptance evidence. The real
+private-guild campaign is still not qualifying while fail-closed remote
+admission is blocked; never run it against production or represent a local
+coordinator test as a real-provider gate.
 
 Generate the Russian fixtures with embedded English technical terms before the
 first external run. The command uses macOS `say` (voice `Milena` by default),
@@ -311,20 +357,20 @@ pnpm --filter @discord-meeting/discord-e2e-actors collect:e2e
 
 For the opt-in greeting/farewell/Botik campaign, start a create-only observer
 capture immediately before each of the four greeting playbacks, the prepared
-farewell, and the addressed answer. Then collect v8 by adding the pinned Botik
-speaker ID and the JSON array of those six files:
+farewell, and the addressed answer. Current collection emits v9 when the pinned
+Botik speaker ID and the JSON array of those six files are supplied:
 
 ```sh
 DISCORD_E2E_BOTIK_SPEAKER_ID=1534231284467896512 \
 DISCORD_E2E_DISCORD_PLAYBACK_LINK_PROOF_INPUT=/absolute/evidence/playback-link-proof.json \
 DISCORD_E2E_CONVERSATION_VOICE_INPUTS='["/absolute/evidence/greeting-observer.json","/absolute/evidence/greeting-ru.json","/absolute/evidence/greeting-en.json","/absolute/evidence/greeting-speaker-d.json","/absolute/evidence/addressed-answer.json","/absolute/evidence/farewell.json"]' \
 DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_INPUT=/absolute/evidence/speaker-d.playback.json \
-DISCORD_E2E_EVIDENCE_OUTPUT=/absolute/evidence/reconnect.evidence.v8.json \
+DISCORD_E2E_EVIDENCE_OUTPUT=/absolute/evidence/reconnect.evidence.v9.json \
 DISCORD_E2E_SECRET_DIRECTORY=/run/secrets/discord-e2e \
 pnpm --filter @discord-meeting/discord-e2e-actors collect:e2e
 ```
 
-The v8 verifier requires audible RU and EN greetings for the exact pinned actor
+The v9 verifier requires audible RU and EN greetings for the exact pinned actor
 identities whose Botik transcript interval contains a pinned greeting term and,
 for known RU/EN actors, their pinned spoken-name token,
 separate default-locale greetings for the pinned unknown observer and Speaker D
@@ -370,20 +416,25 @@ defaults. Set every `DISCORD_E2E_REMOTE_*` coordinate explicitly, set
 `discord-meeting-assistant` and `craig-meeting-e2e` (Craig service `bot`). The
 running `meeting-platform` container must carry label `e2e.test-only=true`.
 
-Immediately before collection, create a mode `0600`, non-symlink, operator-owned
-one-shot marker inside the same owner's non-symlink mode `0700` directory at
-`/tmp/discord-e2e-attestations/<run-id>.json` on the remote
-test host. Pass that absolute path as `DISCORD_E2E_REMOTE_ATTESTATION_FILE`. The
-marker contains no secret and must match the selected fixture set, actor run,
-and Craig recording exactly:
+The hosted coordinator publishes a mode `0600`, non-symlink, one-shot marker
+immediately before collection inside the same owner's non-symlink mode `0700`
+directory at `/tmp/discord-e2e-attestations/<run-id>.json` on the remote test
+host. Pass that absolute path as `DISCORD_E2E_REMOTE_ATTESTATION_FILE`. The
+marker contains no secret and binds the selected fixture set, actor run, Craig
+recording, running container, image, and source revision exactly. Standalone
+collection must use an equivalently reviewed create-only v2 marker; legacy v1
+is readable only as historical evidence and cannot authorize campaign replay:
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "purpose": "bullmq-post-call-replay",
   "fixtureSetId": "discord-meeting-ru-en-v6",
   "runId": "campaign-2026-08-02-overlap",
-  "recordingId": "explicit-craig-recording-id"
+  "recordingId": "explicit-craig-recording-id",
+  "containerId": "64-lowercase-hex-container-id",
+  "imageId": "sha256:64-lowercase-hex-image-id",
+  "sourceRevision": "40-or-64-lowercase-hex-source-revision"
 }
 ```
 
@@ -412,11 +463,12 @@ timestamps, missing overlap, invalid summary evidence, broken reconnect ordering
 changed replay identities, or any duplicate business effect.
 
 Finally verify the full campaign. At least one passing run for each scenario is
-required, including one retained v8 reconnect run for the lifecycle proof.
-Ordinary sequential and overlap collection remains v6; schema versions may
-differ while immutable deployment provenance must match exactly. Set the
+required, including one retained v8-or-newer reconnect run for the lifecycle
+proof. The hosted coordinator currently emits v9 for reconnect and v6 for
+sequential and overlap; schema versions may differ while immutable deployment
+provenance must match exactly. Set the
 expected Pipecat revision for all three collections so the v6 runs retain the
-same four-component provenance as v8. Meeting,
+same four-component provenance as the reconnect run. Meeting,
 recording, transcript, summary, thread, and message IDs must all be isolated
 between runs:
 
@@ -425,5 +477,5 @@ pnpm --filter @discord-meeting/discord-e2e-actors run verify:campaign -- \
   test/fixtures/manifest.v1.json \
   /absolute/evidence/sequential.evidence.v6.json \
   /absolute/evidence/overlap.evidence.v6.json \
-  /absolute/evidence/reconnect.evidence.v8.json
+  /absolute/evidence/reconnect.evidence.v9.json
 ```

@@ -135,6 +135,13 @@ only owner of the Discord voice connection. The deterministic E2E profile
 replaces only external LLM/TTS calls; it still exercises Pipecat, gRPC, WebSocket,
 PCM-to-Opus playback, cancellation, and bounded queues.
 
+The opt-in private-guild qualification is driven by a test-only hosted campaign
+coordinator. Its compiled execution graph owns finite child processes and
+create-only barriers rather than placing Discord or SSH concerns in Meeting
+Core. Admission is a separate fail-closed boundary: it recomputes the exact plan
+and must prove the private target, deployment identity, fixture integrity,
+secrets, clocks, and provider canary before any external child can start.
+
 ## Reliability invariants
 
 - Original recording success is independent from every AI path.

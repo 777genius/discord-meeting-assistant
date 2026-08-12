@@ -54,6 +54,31 @@ audio evidence: first-packet timing, duration, packet count, PCM checksum,
 and RMS/non-silence. Correlation IDs remain operator-supplied labels, while
 cancellation and semantic transcript accuracy require separate qualification.
 
+## Hosted private-guild campaign
+
+The test-only hosted coordinator executes one compiled three-run graph:
+sequential, overlap, then reconnect. The reconnect phase deterministically
+captures an unknown-participant greeting, named Russian and English greetings,
+the Speaker D greeting, an addressed answer, and one prepared farewell. Armed
+receipts and create-only barriers replace timing sleeps. Finite children are
+waited, stopped on failure or interruption, and must be torn down before the
+single create-only pass receipt is published.
+
+Recording identity enters later children only through the validated
+recording-ready receipt. Each post-call replay uses a create-only v2 marker bound
+to the exact run, recording, running container, image, and source revision.
+Collection retains authoritative Craig/S3 evidence, stable before/after
+deployment provenance, replay results, Discord publication evidence, recording
+playback checks, and service-level source artifacts before the campaign verifier
+can pass.
+
+Local coordinator, graph, process-lifecycle, and evidence tests do not authorize
+an external run. Admission recomputes the exact plan and fails closed before the
+artifact lease or any child starts. At present, real private-guild qualification
+is intentionally blocked until typed independently verified receipts exist for
+clock preflight, greeting-readiness deployment, Craig test identity, remote test
+isolation, revision-qualified containers, and the Voicetext semantic canary.
+
 ## Summary-first E2E
 
 The critical flow is:

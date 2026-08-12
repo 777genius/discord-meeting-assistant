@@ -14,11 +14,12 @@ projects.
 | Application `Meeting E2E Speaker A` | `1533227577286852649` |
 | Application `Meeting E2E Speaker B` | `1533228054724346087` |
 | Application `Meeting E2E Speaker C` (conversation observer) | `1533867700575670282` |
+| Application `Meeting E2E Speaker D` | `1533873978417086474` |
 | Botik test playback bot | `1534231284467896512` |
 
 Bot tokens are stored only in the local macOS Keychain service
-`discord-voice-bot-e2e`, under accounts `sut`, `speaker-a`, `speaker-b`, and
-`speaker-c`.
+`discord-voice-bot-e2e`, under accounts `sut`, `speaker-a`, `speaker-b`,
+`conversation-observer`, and `speaker-d`.
 They must not be copied into repository files, process arguments, logs, images,
 or committed environment files.
 
@@ -178,7 +179,8 @@ correlated structured event.
 
 The committed fixture manifest pins Speaker C (`1533867700575670282`) as the
 observer, the private guild, and the voice channel. Set the observer account to
-`speaker-c`; a capture set from any other consistent environment still fails.
+`conversation-observer`; a capture set from any other consistent environment
+still fails.
 The first greeting may occur before Craig exposes its random recording ID. In
 that case omit `DISCORD_E2E_CONVERSATION_VOICE_RECORDING_ID`; the raw capture
 retains `null`, and the collector binds it exactly once to the explicitly
@@ -194,13 +196,54 @@ exactly one playback. The readiness
 timeout also covers a Botik already present in voice but not yet speaking; the
 short capture window starts with the first audio packet.
 
-🚨 This lifecycle campaign is not runnable or qualifying until a test-only
-coordinator supplies deterministic readiness barriers for actor joins,
-reconnects, observer capture readiness, supplemental playback, and the
-addressed-answer handshake. Manual sleeps or operator timing are not acceptance
-evidence. Do not run this unfinished campaign against production or present it
-as a real-provider qualification. This runbook intentionally documents no
-coordinator command until one exists in the repository.
+The executable test-only coordinator now supplies deterministic readiness
+barriers for actor joins, reconnects, observer captures, supplemental playback,
+and the addressed-answer handshake. Its strict reconnect sequence is four
+greetings, the addressed answer, then the prepared farewell. Manual sleeps or
+operator timing are not acceptance evidence.
+
+🚨 External execution is nevertheless not admitted yet. The current fail-closed
+preflight treats all six supplied remote-capability files as untrusted
+declarations and returns `blocked` until typed, independently verified producers
+exist for clock preflight, greeting-readiness deployment, Craig test identity,
+remote test isolation, revision-qualified containers, and the Voicetext
+semantic canary. Do not bypass admission, run against production, or present
+local coordinator coverage as real-provider qualification.
+
+Prepare private mode-0600 definition and runtime-binding files, then compile the
+exact create-only plan. The three runtime bindings are operator-selected fresh
+paths under `/tmp/discord-e2e-attestations`; the coordinator later publishes v2
+replay markers bound to the selected recording and the running container/image
+provenance.
+
+```sh
+pnpm --filter @discord-meeting/discord-e2e-actors compile:hosted-campaign-plan -- \
+  --definition /absolute/private/campaign-definition.json \
+  --bindings /absolute/private/runtime-bindings.json \
+  --output /absolute/private/plans/campaign-plan.json
+
+pnpm --filter @discord-meeting/discord-e2e-actors preflight:hosted-campaign -- \
+  --definition /absolute/private/campaign-definition.json \
+  --bindings /absolute/private/runtime-bindings.json \
+  --plan /absolute/private/plans/campaign-plan.json \
+  --receipt /absolute/private/admission.json \
+  --minimum-free-bytes 1073741824 \
+  --remote-evidence /absolute/private/remote-evidence.json
+```
+
+Only an `admitted` receipt that exactly matches the plan, definition, bindings,
+candidate revisions, campaign ID and artifact root can unlock the runner. Once
+trusted remote producers exist and preflight succeeds, the bounded command is:
+
+```sh
+pnpm --filter @discord-meeting/discord-e2e-actors run:hosted-campaign -- \
+  /absolute/private/plans/campaign-plan.json \
+  /absolute/private/campaign-pass.json \
+  86400000 \
+  /absolute/private/admission.json \
+  /absolute/private/campaign-definition.json \
+  /absolute/private/runtime-bindings.json
+```
 
 The hosted campaign pass receipt is published only after successful teardown.
 Publication is create-only and atomic: a completed, synced temporary file in the
@@ -268,13 +311,13 @@ the pinned Botik speaker ID to the normal collector:
 DISCORD_E2E_BOTIK_SPEAKER_ID=1534231284467896512 \
 DISCORD_E2E_CONVERSATION_VOICE_INPUTS='["/absolute/evidence/greeting-observer.json","/absolute/evidence/greeting-ru.json","/absolute/evidence/greeting-en.json","/absolute/evidence/greeting-speaker-d.json","/absolute/evidence/addressed-answer.json","/absolute/evidence/farewell.json"]' \
 DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_INPUT=/absolute/evidence/speaker-d.playback.json \
-DISCORD_E2E_EVIDENCE_OUTPUT=/absolute/evidence/reconnect.evidence.v8.json \
+DISCORD_E2E_EVIDENCE_OUTPUT=/absolute/evidence/reconnect.evidence.v9.json \
 DISCORD_E2E_SECRET_DIRECTORY=/run/secrets/discord-e2e \
 pnpm --filter @discord-meeting/discord-e2e-actors collect:e2e
 
 pnpm --filter @discord-meeting/discord-e2e-actors run verify:e2e -- \
   apps/discord-e2e-actors/test/fixtures/manifest.v1.json \
-  /absolute/evidence/reconnect.evidence.v8.json
+  /absolute/evidence/reconnect.evidence.v9.json
 ```
 
 The gate derives locale and known/unknown status from privacy-safe runtime
@@ -296,19 +339,19 @@ deterministic nonce between them. The nonce is pinned in both the Speaker D
 question terms and Botik answer expectation, so an unrelated acknowledgement
 cannot satisfy the gate.
 If an admitted greeting produces zero audio, the successful bounded retry uses
-`participant-greeting:<participant-id>:retry-1..3`; v8 accepts only that range
-and still requires exactly one time-matched audible capture for that participant.
-The observer may retain the base turn ID because it starts before the successful
-attempt number is known.
+`participant-greeting:<participant-id>:retry-1..3`; v8 and newer accept only that
+range and still require exactly one time-matched audible capture for that
+participant. The observer may retain the base turn ID because it starts before
+the successful attempt number is known.
 
 For the retained campaign only, add the test-only `play:supplemental` CLI as a
 separate Speaker D input. Its single pinned Ogg Opus fixture must first ask Botik
 one synthetic question and, later in the same file, make one explicit group
 farewell, with a qualified silent gap between those turns for Botik's answer.
-The future test-only coordinator must start it only after Speakers A/B and the
-required observer barriers are ready, using the same campaign run ID and bounded
-pre/post holds only as fixture behavior, not as synchronization. Speaker D and
-Botik are supplemental transcript evidence.
+The test-only coordinator starts it only after the required observer and actor
+barriers are ready, using the same campaign run ID and armed connection/playback
+gates. Bounded pre/post holds remain fixture behavior, not synchronization.
+Speaker D and Botik are supplemental transcript evidence.
 They must not be added to the Speaker A/B human WER/CER corpus or used to satisfy
 the required A/B overlap.
 
@@ -446,21 +489,23 @@ pnpm --filter @discord-meeting/discord-e2e-actors run verify:campaign -- \
   apps/discord-e2e-actors/test/fixtures/manifest.v1.json \
   /absolute/evidence/sequential.evidence.v6.json \
   /absolute/evidence/overlap.evidence.v6.json \
-  /absolute/evidence/reconnect.evidence.v8.json
+  /absolute/evidence/reconnect.evidence.v9.json
 ```
 
-The campaign must contain at least one retained v8 reconnect run, while ordinary
-sequential and overlap collection remains v6. Mixed schema versions are valid
+The campaign must contain at least one retained v8-or-newer reconnect run; the
+hosted coordinator currently emits v9, while sequential and overlap collection
+remains v6. Mixed schema versions are valid
 only when every run retains identical immutable deployment provenance. Set
 `DISCORD_E2E_EXPECTED_PIPECAT_SOURCE_REVISION` for all three collections so the
-v6 runs retain the same four-component provenance as v8. The
+v6 runs retain the same four-component provenance as the reconnect run. The
 verifier rejects cross-meeting identity reuse, mixed deployments, raw
 internal IDs in Discord text, missing action-owner mentions, and missing or
 invalid authoritative evidence references. Historical v2-v4 evidence still
 verifies inline intervals and speaker mentions; v5 remains readable as the first
-clean-summary format. Current v6 additionally proves the two attachments containing
-layered evidence from ADR-0025 and their replay stability. Historical evidence
-remains individually readable but cannot replace the required v8 reconnect proof.
+clean-summary format. Current v6 additionally proves the two attachments
+containing layered evidence from ADR-0025 and their replay stability. Historical
+evidence remains individually readable but cannot replace the required
+v8-or-newer reconnect proof.
 A successful provider call without a passing campaign result is not accepted.
 
 Synthetic fixtures may be generated for deterministic speech. They must contain
