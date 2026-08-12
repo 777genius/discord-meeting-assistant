@@ -15,6 +15,35 @@ import {
 type LifecycleEvent = RetainedE2eEvidenceV8["conversation"]["lifecycle"]["events"][number];
 type GreetingEvent = Extract<LifecycleEvent, { type: "greeting" }>;
 
+function botikFarewell(evidence: RetainedE2eEvidenceV8) {
+  const turn = evidence.transcript.turns.find(
+    ({ turnId }) => turnId === "botik-farewell-ru",
+  );
+  if (turn === undefined) {
+    throw new Error("Botik farewell fixture is missing");
+  }
+  return turn;
+}
+
+function farewellEvent(evidence: RetainedE2eEvidenceV8) {
+  const event = evidence.conversation.lifecycle.events.find(
+    (candidate): candidate is Extract<LifecycleEvent, { type: "farewell" }> =>
+      candidate.type === "farewell",
+  );
+  if (event === undefined) {
+    throw new Error("farewell lifecycle fixture is missing");
+  }
+  return event;
+}
+
+function failureCodes(evidence: RetainedE2eEvidenceV8, fixtureManifest = manifest()) {
+  return verifyRetainedE2eEvidence(
+    fixtureManifest,
+    evidence,
+    currentExpectedRevisions,
+  ).failures.map(({ code }) => code);
+}
+
 describe("retained conversation V8 supplemental semantics", () => {
   it("requires the pinned unknown observer greeting", () => {
     const fixtureManifest = manifest();
@@ -153,7 +182,92 @@ describe("retained conversation V8 boundary policies", () => {
   });
 });
 
-describe("retained conversation V8 response semantics", () => {
+describe("retained conversation V8 farewell response semantics", () => {
+  it("rejects arbitrary Botik audio and text inside the farewell capture", () => {
+    const evidence = retainedV8Evidence();
+    botikFarewell(evidence).text = "Звук без прощания";
+
+    expect(failureCodes(evidence)).toContain("SUPPLEMENTAL_FAREWELL_SEMANTICS_MISSING");
+  });
+
+  it("rejects a second farewell-shaped Botik turn outside the farewell capture", () => {
+    const evidence = retainedV8Evidence();
+    evidence.transcript.turns.push({
+      endMs: 5_900,
+      speakerId: evidence.conversation.botSpeakerId,
+      startMs: 5_600,
+      text: "Goodbye!",
+      turnId: "botik-farewell-duplicate",
+    });
+
+    expect(failureCodes(evidence)).toContain("SUPPLEMENTAL_FAREWELL_DUPLICATE");
+  });
+
+  it.each([
+    ["ru", "Покажи!"],
+    ["en", "Goodbyeish!"],
+  ] as const)("matches %s farewell terms as whole tokens", (locale, text) => {
+    const fixtureManifest = manifest();
+    const supplemental = fixtureManifest.supplementalVoiceExpectation;
+    const evidence = retainedV8Evidence();
+    if (supplemental === undefined) {
+      throw new Error("farewell fixtures are missing");
+    }
+    supplemental.farewellLocale = locale;
+    farewellEvent(evidence).locale = locale;
+    botikFarewell(evidence).text = text;
+
+    expect(failureCodes(evidence, fixtureManifest))
+      .toContain("SUPPLEMENTAL_FAREWELL_SEMANTICS_MISSING");
+  });
+
+  it("fails closed when the manifest omits Botik farewell semantics", () => {
+    const fixtureManifest = manifest();
+    delete fixtureManifest.farewellLocaleTerms;
+
+    expect(failureCodes(retainedV8Evidence(), fixtureManifest)).toEqual(
+      expect.arrayContaining([
+        "SUPPLEMENTAL_FAREWELL_SEMANTICS_EXPECTATION_MISSING",
+        "SUPPLEMENTAL_FAREWELL_SEMANTICS_MISSING",
+      ]),
+    );
+  });
+
+  it("requires exactly one Botik transcript turn inside the farewell capture", () => {
+    const evidence = retainedV8Evidence();
+    evidence.transcript.turns.push({
+      endMs: 7_000,
+      speakerId: evidence.conversation.botSpeakerId,
+      startMs: 6_800,
+      text: "Фоновый ответ",
+      turnId: "botik-farewell-overlap-extra",
+    });
+
+    expect(failureCodes(evidence)).toContain("SUPPLEMENTAL_FAREWELL_SEMANTICS_MISSING");
+  });
+
+  it("rejects a Botik farewell turn outside the audible farewell interval", () => {
+    const evidence = retainedV8Evidence();
+    const farewellTurn = botikFarewell(evidence);
+    farewellTurn.startMs = 6_000;
+    farewellTurn.endMs = 6_400;
+
+    expect(failureCodes(evidence)).toContain("SUPPLEMENTAL_FAREWELL_SEMANTICS_MISSING");
+  });
+
+  it("rejects a farewell transcript that does not match the settled locale", () => {
+    const evidence = retainedV8Evidence();
+    farewellEvent(evidence).locale = "en";
+    botikFarewell(evidence).text = "Пока!";
+
+    expect(failureCodes(evidence)).toEqual(expect.arrayContaining([
+      "SUPPLEMENTAL_FAREWELL_LOCALE_MISMATCH",
+      "SUPPLEMENTAL_FAREWELL_SEMANTICS_MISSING",
+    ]));
+  });
+});
+
+describe("retained conversation V8 reconnect response semantics", () => {
   it("rejects a second audible greeting after reconnect even without a settled greeting log", () => {
     const evidence = retainedV8Evidence();
     evidence.transcript.turns.push({

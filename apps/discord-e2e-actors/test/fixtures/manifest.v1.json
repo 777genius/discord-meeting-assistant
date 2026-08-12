@@ -17,6 +17,10 @@
     "en": ["hi", "hello", "хай"],
     "ru": ["привет", "здравствуй"]
   },
+  "farewellLocaleTerms": {
+    "en": ["bye", "goodbye", "see you"],
+    "ru": ["пока", "до встречи", "до свидания"]
+  },
   "supplementalVoiceExpectation": {
     "answerNonce": "кобальт",
     "applicationId": "1533873978417086474",

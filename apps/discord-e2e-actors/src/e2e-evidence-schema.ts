@@ -5,8 +5,7 @@ import {
   reconnectNoRepeatEvidenceSchema,
   supplementalPlaybackEvidenceV1Schema,
 } from "./conversation-retained-evidence-schema.js";
-const identifierSchema = z.string().trim().min(1);
-const sha256Schema = z.string().regex(/^[a-f\d]{64}$/u);
+const identifierSchema = z.string().trim().min(1); const sha256Schema = z.string().regex(/^[a-f\d]{64}$/u);
 const nonNegativeMillisecondsSchema = z.number().int().nonnegative();
 const nonNegativeSafeIntegerSchema = z.number().refine(
   (value) => Number.isSafeInteger(value) && value >= 0,
@@ -43,6 +42,7 @@ export const fixtureManifestV1Schema = z.object({
     observerApplicationId: identifierSchema, observerGreetingLocale: z.enum(["en", "ru"]).optional(),
     voiceChannelId: identifierSchema,
   }).strict().optional(),
+  farewellLocaleTerms: z.object({ en: z.array(identifierSchema).min(1), ru: z.array(identifierSchema).min(1) }).strict().optional(),
   greetingLocaleTerms: z.object({ en: z.array(identifierSchema).min(1), ru: z.array(identifierSchema).min(1) }).strict().optional(),
   supplementalVoiceExpectation: z.object({
     answerNonce: identifierSchema,

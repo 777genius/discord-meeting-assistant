@@ -20,6 +20,7 @@ describe("retained conversation V7 compatibility", () => {
     }
     delete voiceExpectation.botSpeakerId;
     delete voiceExpectation.observerGreetingLocale;
+    delete historicalManifest.farewellLocaleTerms;
     delete historicalManifest.greetingLocaleTerms;
     delete historicalManifest.supplementalVoiceExpectation;
     for (const fixture of historicalManifest.fixtures) {

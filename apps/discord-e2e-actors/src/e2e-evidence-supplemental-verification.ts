@@ -1,4 +1,8 @@
 import { normalizeTranscriptSemantics } from "./e2e-evidence-text-metrics.js";
+import {
+  turnsContainingAnyTerms,
+  verifyBotikFarewellTranscript,
+} from "./e2e-evidence-farewell-semantics-verification.js";
 import { authoritativeTrackCoverage } from "./e2e-evidence-track-verification.js";
 import type {
   FixtureManifestV1,
@@ -21,9 +25,9 @@ interface SupplementalAnswerWindow {
 }
 
 interface SupplementalFarewellExpectation {
+  readonly expectedLocale: "en" | "ru";
   readonly humanFarewellEndMs: number;
   readonly humanFarewellTurnIds: readonly string[];
-  readonly locale: "en" | "ru";
   readonly recordingStartMs: number;
 }
 
@@ -149,7 +153,7 @@ export function verifySupplementalPlayback(
     {
       humanFarewellEndMs: farewellEndMs,
       humanFarewellTurnIds: farewellTurns.map(({ turnId }) => turnId),
-      locale: expectation.farewellLocale,
+      expectedLocale: expectation.farewellLocale,
       recordingStartMs,
     },
     fail,
@@ -216,10 +220,20 @@ function verifyFarewellTiming(
     );
     return;
   }
-  if (farewellEvent.locale !== expectation.locale) {
+  if (farewellEvent.locale !== expectation.expectedLocale) {
     fail(
       "SUPPLEMENTAL_FAREWELL_LOCALE_MISMATCH",
       "settled Botik farewell locale does not match the pinned Speaker D farewell",
+    );
+  }
+  const requiredTerms = manifest.farewellLocaleTerms?.[farewellEvent.locale] ?? [];
+  const duplicateTerms = manifest.farewellLocaleTerms === undefined
+    ? []
+    : [...manifest.farewellLocaleTerms.en, ...manifest.farewellLocaleTerms.ru];
+  if (requiredTerms.length === 0) {
+    fail(
+      "SUPPLEMENTAL_FAREWELL_SEMANTICS_EXPECTATION_MISSING",
+      `v8 manifest must pin recognizable ${farewellEvent.locale} Botik farewell terms`,
     );
   }
   const expectedTurnIds = new Set(expectation.humanFarewellTurnIds);
@@ -250,6 +264,17 @@ function verifyFarewellTiming(
       "settled Botik farewell must follow Speaker D and remain inside its audible capture",
     );
   }
+  verifyBotikFarewellTranscript(
+    evidence,
+    {
+      duplicateTerms,
+      endMs: captureEndMs,
+      locale: farewellEvent.locale,
+      requiredTerms,
+      startMs: captureStartMs,
+    },
+    fail,
+  );
 }
 
 function verifyAddressedAnswerSemantics(
@@ -342,17 +367,6 @@ function verifySupplementalTrackCoverage(
       "Speaker D playback and transcript turns must fit its authoritative S3 track",
     );
   }
-}
-
-function turnsContainingAnyTerms<T extends { readonly text: string }>(
-  turns: readonly T[],
-  terms: readonly string[],
-): readonly T[] {
-  const normalizedTerms = terms.map((term) => normalizeTranscriptSemantics(term));
-  return turns.filter(({ text }) => {
-    const normalized = normalizeTranscriptSemantics(text);
-    return normalizedTerms.some((term) => containsWholeTerm(normalized, term));
-  });
 }
 
 function verifyRequiredTerms(
