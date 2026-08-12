@@ -60,7 +60,7 @@ describe("hosted Discord identity producer", () => {
   it("rejects outages, redirects, oversized bodies, malformed JSON, and off-allowlist paths", async () => {
     const outage = new BoundedDiscordBotJsonClient(async () => {throw new Error("network down");});
     await expect(outage.get("/users/@me", token)).rejects.toThrow("network down");
-    await expect(clientReturning(302, {} as never).get("/users/@me", token)).rejects.toThrow("redirects");
+    await expect(clientReturning(302, {}).get("/users/@me", token)).rejects.toThrow("redirects");
     await expect(clientReturning(200, { id: applicationId }, 8).get("/users/@me", token)).rejects.toThrow("exceeds");
     await expect(clientReturning(200, "{invalid").get("/users/@me", token)).rejects.toThrow("invalid JSON");
     await expect(clientReturning(200, {}).get("/users/other", token)).rejects.toThrow("allowlist");

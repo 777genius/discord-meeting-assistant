@@ -113,13 +113,13 @@ export async function produceHostedDiscordIdentityReceiptV1(
   }));
 }
 
-const userSchema = z.object({ bot: z.boolean().optional().default(false), id: z.string().regex(/^\d{17,20}$/u) }).passthrough();
-const guildSchema = z.object({ id: z.string().regex(/^\d{17,20}$/u) }).passthrough();
-const channelSchema = z.object({
+const userSchema = z.looseObject({ bot: z.boolean().optional().default(false), id: z.string().regex(/^\d{17,20}$/u) });
+const guildSchema = z.looseObject({ id: z.string().regex(/^\d{17,20}$/u) });
+const channelSchema = z.looseObject({
   guild_id: z.string().regex(/^\d{17,20}$/u),
   id: z.string().regex(/^\d{17,20}$/u),
   type: z.number().int(),
-}).passthrough();
+});
 
 function assertTargetAccess(
   guildValue: unknown,
@@ -143,8 +143,9 @@ function assertCredentialDescriptor(
   expectation: DiscordRoleIdentityExpectation,
 ): void {
   const expected = expectation.tokenFile;
+  const credentialMode: number = credential.mode;
   if (credential.account !== expected.account || credential.path !== expected.path
-    || credential.ownerUid !== expected.ownerUid || credential.mode !== 0o600) {
+    || credential.ownerUid !== expected.ownerUid || credentialMode !== 0o600) {
     throw new Error("Discord credential file does not match its declared custody");
   }
 }

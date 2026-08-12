@@ -136,7 +136,7 @@ async function readBoundedBody(stream: ReadableStream<Uint8Array> | null): Promi
   const chunks: Uint8Array[] = [];
   let total = 0;
   try {
-    while (true) {
+    for (;;) {
       const { done, value } = await reader.read();
       if (done) {break;}
       total += value.byteLength;
@@ -159,9 +159,9 @@ function assertDiscordIdentity(
   publicationValue: unknown,
   options: ProbeOptions,
 ): void {
-  const user = z.object({ bot: z.literal(true), id: snowflakeSchema }).passthrough().parse(userValue);
-  const guild = z.object({ id: snowflakeSchema }).passthrough().parse(guildValue);
-  const channel = z.object({ guild_id: snowflakeSchema, id: snowflakeSchema, type: z.number().int() }).passthrough();
+  const user = z.looseObject({ bot: z.literal(true), id: snowflakeSchema }).parse(userValue);
+  const guild = z.looseObject({ id: snowflakeSchema }).parse(guildValue);
+  const channel = z.looseObject({ guild_id: snowflakeSchema, id: snowflakeSchema, type: z.number().int() });
   const voice = channel.parse(voiceValue);
   const publication = channel.parse(publicationValue);
   if (user.id !== options.applicationId || guild.id !== options.guildId
