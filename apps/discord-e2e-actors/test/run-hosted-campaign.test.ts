@@ -1,4 +1,4 @@
-import { chmod, lstat, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -133,6 +133,27 @@ describe("run-hosted-campaign CLI", () => {
     expect((await lstat(receiptPath)).mode & 0o777).toBe(0o600);
     expect(JSON.parse(await readFile(receiptPath, "utf8"))).toEqual(receipt);
     await expect(writeCreateOnlyHostedCampaignReceipt(receiptPath, receipt)).rejects.toThrow();
+  });
+
+  it("does not follow a symlink when opening the private campaign plan", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "hosted-campaign-cli-"));
+    const targetPath = join(directory, "target.json");
+    const planPath = join(directory, "plan.json");
+    await writeFile(targetPath, JSON.stringify(plan()), { mode: 0o600 });
+    await symlink(targetPath, planPath);
+
+    await expect(readPrivateHostedCampaignPlan(planPath)).rejects.toMatchObject({ code: "ELOOP" });
+  });
+
+  it("rejects an empty or oversized private campaign plan before parsing", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "hosted-campaign-cli-"));
+    const emptyPath = join(directory, "empty.json");
+    const oversizedPath = join(directory, "oversized.json");
+    await writeFile(emptyPath, "", { mode: 0o600 });
+    await writeFile(oversizedPath, "x".repeat(1024 * 1024 + 1), { mode: 0o600 });
+
+    await expect(readPrivateHostedCampaignPlan(emptyPath)).rejects.toThrow(/at most 1 MiB/u);
+    await expect(readPrivateHostedCampaignPlan(oversizedPath)).rejects.toThrow(/at most 1 MiB/u);
   });
 
   it("writes no receipt when a barrier fails", async () => {
