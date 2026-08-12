@@ -61,6 +61,7 @@ export async function publishConversationAnswerObserverReady(input: {
   readonly intent: ConversationAnswerPlaybackIntent;
   readonly root: string;
 }): Promise<void> {
+  await assertSafeHandshakeRoot(input.root);
   const intent = conversationAnswerPlaybackIntentSchema.parse(input.intent);
   const ready = conversationAnswerObserverReadySchema.parse({
     ...intent,
@@ -169,12 +170,23 @@ function assertSafeReceiptFile(
 
 async function safeDirectoryEntries(root: string): Promise<readonly string[]> {
   try {
+    await assertSafeHandshakeRoot(root);
     return await readdir(root);
   } catch (error: unknown) {
     if (isMissingFileError(error)) {
       return [];
     }
     throw error;
+  }
+}
+
+async function assertSafeHandshakeRoot(root: string): Promise<void> {
+  const stats = await lstat(root);
+  if (!stats.isDirectory()) {
+    throw new Error("Conversation answer handshake root must be a real directory");
+  }
+  if ((stats.mode & 0o077) !== 0) {
+    throw new Error("Conversation answer handshake root permissions are too broad");
   }
 }
 

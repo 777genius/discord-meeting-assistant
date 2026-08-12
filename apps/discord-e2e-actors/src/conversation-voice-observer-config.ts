@@ -180,7 +180,7 @@ const environmentSchema = z.object({
   }
 });
 
-type ConversationVoiceObserverCapture = {
+export type ConversationVoiceObserverCapture = {
   readonly attemptId: string;
   readonly outputPath: string;
   readonly purpose: "farewell" | "greeting";

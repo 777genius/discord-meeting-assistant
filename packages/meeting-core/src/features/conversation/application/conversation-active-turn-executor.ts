@@ -16,6 +16,10 @@ import type {
 } from "./ports/conversation.js";
 import { ConversationAnswerPlayback } from "./conversation-answer-playback.js";
 import { ConversationCueOrchestrator } from "./conversation-cue-orchestrator.js";
+import {
+  observeConversationLatency,
+  observeConversationPlaybackSettlement,
+} from "./conversation-observability.js";
 import type {
   ActiveConversationRun,
   ConversationInterruptionResult,
@@ -228,6 +232,8 @@ export class ConversationActiveTurnExecutor {
     const reason: ConversationCancellationReason = cancellation.reason;
     run.runtimeStartAbortController?.abort(reason);
     run.runtimeStartAbortController = null;
+    run.playbackOpenAbortController?.abort(reason);
+    run.playbackOpenAbortController = null;
     const cancellations: Promise<void>[] = [this.cues.stop(run, reason)];
     if (run.runtimeTurn !== null) {
       cancellations.push(ignoreConversationFailure(() => run.runtimeTurn!.cancel(reason)));
@@ -310,32 +316,8 @@ export class ConversationActiveTurnExecutor {
       case "usage":
         return;
       case "latency":
-        this.observeLatency(run, event);
+        observeConversationLatency(this.latencyObserver, run, event);
         return;
-    }
-  }
-
-  private observeLatency(
-    run: ActiveConversationRun,
-    event: Extract<ConversationRuntimeEvent, { readonly type: "latency" }>,
-  ): void {
-    try {
-      const observation = this.latencyObserver?.observeConversationLatency({
-        attemptId: event.attemptId,
-        endTurnToWakeMs: event.endTurnToWakeMs,
-        firstLlmTokenToAudioMs: event.firstLlmTokenToAudioMs,
-        meetingId: run.prepared.request.meetingId,
-        totalToFirstAudioMs: event.totalToFirstAudioMs,
-        turnId: run.prepared.request.turnId,
-        wakeToFirstLlmTokenMs: event.wakeToFirstLlmTokenMs,
-      });
-      if (observation !== undefined) {
-        void Promise.resolve(observation).catch(() => {
-          // Observability must never alter conversation delivery or cancellation.
-        });
-      }
-    } catch {
-      // Observability must never alter conversation delivery or cancellation.
     }
   }
 
@@ -395,7 +377,12 @@ export class ConversationActiveTurnExecutor {
       settlement,
     );
     if (run.attemptId !== null) {
-      this.observePlaybackSettlement(run, settlement, state.lastObservedAtMs);
+      observeConversationPlaybackSettlement(
+        this.playbackObserver,
+        run,
+        settlement,
+        state.lastObservedAtMs,
+      );
     }
     const completion = state.session.completeActive(
       run.prepared.turn.turnId,
@@ -423,28 +410,4 @@ export class ConversationActiveTurnExecutor {
     })());
   }
 
-  private observePlaybackSettlement(
-    run: ActiveConversationRun,
-    settlement: ConversationPlaybackSettlement,
-    settledAtMs: number,
-  ): void {
-    try {
-      const result = this.playbackObserver?.observeConversationPlayback({
-        meetingId: run.prepared.request.meetingId,
-        playbackAttemptId: run.attemptId!,
-        playbackKind: run.prepared.cue === undefined ? "answer" : "prepared-cue",
-        settledAtMs,
-        settlement,
-        status: "settled",
-        turnId: run.prepared.request.turnId,
-      });
-      if (result !== undefined) {
-        void Promise.resolve(result).catch(() => {
-          // Observability must never alter conversation delivery or cancellation.
-        });
-      }
-    } catch {
-      // Observability must never alter conversation delivery or cancellation.
-    }
-  }
 }

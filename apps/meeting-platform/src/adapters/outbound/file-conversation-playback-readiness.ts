@@ -111,10 +111,28 @@ export class FileConversationPlaybackReadiness implements ConversationPlaybackRe
 }
 
 async function initializeCleanRunRoot(root: string): Promise<void> {
-  await mkdir(root, { recursive: true, mode: 0o700 });
+  try {
+    await assertSafeHandshakeRoot(root);
+  } catch (error: unknown) {
+    if (!isMissingFileError(error)) {
+      throw error;
+    }
+    await mkdir(root, { recursive: true, mode: 0o700 });
+  }
+  await assertSafeHandshakeRoot(root);
   const entries = await readdir(root);
   if (entries.some((name) => /^(?:[a-f\d]{64})\.(?:intent|ready)\.json$/u.test(name))) {
     throw new Error("Playback readiness run root contains stale handshake receipts");
+  }
+}
+
+async function assertSafeHandshakeRoot(root: string): Promise<void> {
+  const stats = await lstat(root);
+  if (!stats.isDirectory()) {
+    throw new Error("Playback readiness root must be a real directory");
+  }
+  if ((stats.mode & 0o077) !== 0) {
+    throw new Error("Playback readiness root permissions are too broad");
   }
 }
 

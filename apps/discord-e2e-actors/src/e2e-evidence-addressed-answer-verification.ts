@@ -116,13 +116,13 @@ function verifyAddressedAnswerPlayback(
       finishedReceipt.playbackFinishedAtEpochMs &&
     finishedReceipt.playbackFinishedAtEpochMs <=
       playedReceipt.playbackSettledAtEpochMs + timestampToleranceMs;
-  const overlapsCapture = startedReceipt.playbackStartedAtEpochMs <=
-      captureEndMs + timestampToleranceMs &&
-    captureStartMs <= finishedReceipt.playbackFinishedAtEpochMs + timestampToleranceMs;
-  if (!ordered || !overlapsCapture) {
+  const captureIsBoundedByPlayback = captureStartMs >=
+      startedReceipt.playbackStartedAtEpochMs - timestampToleranceMs &&
+    captureEndMs <= finishedReceipt.playbackFinishedAtEpochMs + timestampToleranceMs;
+  if (!ordered || !captureIsBoundedByPlayback) {
     fail(
       "ANSWER_PLAYBACK_RECEIPT_MISMATCH",
-      "answer playback receipts are unordered or do not overlap the audible capture interval",
+      "answer playback receipts are unordered or do not bound the audible capture interval",
     );
   }
 }

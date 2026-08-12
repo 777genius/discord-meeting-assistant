@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { serializeConversationAnswerPlaybackReadinessEnvelope } from
   "@discord-meeting/conversation-runtime-contracts";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { FileConversationPlaybackReadiness } from
   "../src/adapters/outbound/file-conversation-playback-readiness.js";
@@ -44,7 +44,7 @@ describe("FileConversationPlaybackReadiness", () => {
     });
 
     const waiting = readiness.awaitConversationPlaybackReady(request);
-    const intent = await waitForJson(intentPath(root)) as Record<string, unknown>;
+    const intent = await waitForJson(intentPath(root));
     expect(intent).toEqual({ ...envelope, type: "playback-intent" });
     await writeFile(
       readyPath(root),
@@ -97,6 +97,92 @@ describe("FileConversationPlaybackReadiness", () => {
       ok: false,
     });
   });
+
+  it("rejects a readiness root that is a symlink", async () => {
+    const parent = await temporaryRoot();
+    const target = join(parent, "target");
+    const root = join(parent, "linked-root");
+    await mkdir(target, { mode: 0o700 });
+    await symlink(target, root);
+    const readiness = new FileConversationPlaybackReadiness({
+      root, runId: envelope.runId, timeoutMilliseconds: 30,
+    });
+
+    await expect(readiness.awaitConversationPlaybackReady(request)).resolves.toMatchObject({
+      failure: { message: expect.stringContaining("real directory") }, ok: false,
+    });
+  });
+
+  it("rejects a readiness root with group or world access", async () => {
+    const root = await temporaryRoot();
+    await chmod(root, 0o755);
+    const readiness = new FileConversationPlaybackReadiness({
+      root, runId: envelope.runId, timeoutMilliseconds: 30,
+    });
+
+    await expect(readiness.awaitConversationPlaybackReady(request)).resolves.toMatchObject({
+      failure: { message: expect.stringContaining("permissions") }, ok: false,
+    });
+  });
+
+  it("rejects stale and non-regular observer-ready receipts", async () => {
+    for (const receiptKind of ["stale", "symlink", "directory"] as const) {
+      const root = await temporaryRoot();
+      const readiness = new FileConversationPlaybackReadiness({
+        root, runId: envelope.runId, timeoutMilliseconds: 1_000,
+      });
+      const waiting = readiness.awaitConversationPlaybackReady(request);
+      await waitForJson(intentPath(root));
+      const path = readyPath(root);
+      if (receiptKind === "stale") {
+        await writeFile(path, JSON.stringify({ ...envelope, type: "observer-ready" }), { flag: "wx" });
+        await utimes(path, new Date(0), new Date(0));
+      } else if (receiptKind === "symlink") {
+        const target = join(root, "ready-target.json");
+        await writeFile(target, JSON.stringify({ ...envelope, type: "observer-ready" }));
+        await symlink(target, path);
+      } else {
+        await mkdir(path);
+      }
+      await expect(waiting).resolves.toMatchObject({
+        failure: { code: "PLAYBACK_READINESS_FAILED" }, ok: false,
+      });
+    }
+  });
+
+  it("fails closed on a create-only intent collision", async () => {
+    const root = await temporaryRoot();
+    const readiness = new FileConversationPlaybackReadiness({
+      root, runId: envelope.runId, timeoutMilliseconds: 1_000,
+    });
+    const first = readiness.awaitConversationPlaybackReady(request);
+    await waitForJson(intentPath(root));
+    await writeFile(readyPath(root), JSON.stringify({ ...envelope, type: "observer-ready" }), { flag: "wx" });
+    await expect(first).resolves.toEqual({ ok: true, value: "ready" });
+    await expect(readiness.awaitConversationPlaybackReady(request)).resolves.toMatchObject({
+      failure: { code: "PLAYBACK_READINESS_FAILED" }, ok: false,
+    });
+  });
+
+  it("clears its polling timer when observer readiness is cancelled", async () => {
+    const root = await temporaryRoot();
+    const readiness = new FileConversationPlaybackReadiness({
+      root, runId: envelope.runId, timeoutMilliseconds: 1_000,
+    });
+    const controller = new AbortController();
+    const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
+    const waiting = readiness.awaitConversationPlaybackReady(request, {
+      signal: controller.signal,
+    });
+    await waitForJson(intentPath(root));
+    controller.abort();
+
+    await expect(waiting).resolves.toMatchObject({
+      failure: { message: expect.stringContaining("cancelled") }, ok: false,
+    });
+    expect(clearTimeoutSpy).toHaveBeenCalled();
+    clearTimeoutSpy.mockRestore();
+  });
 });
 
 function receiptStem(): string {
@@ -131,6 +217,8 @@ async function waitForJson(path: string): Promise<unknown> {
     if (Date.now() >= deadline) {
       throw new Error("Playback intent was not published before timeout");
     }
-    await new Promise<void>((resolve) => setTimeout(resolve, 5));
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 5);
+    });
   }
 }

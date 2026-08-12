@@ -83,6 +83,18 @@ describe("retained addressed-answer playback receipts", () => {
 
     expect(failureCodes(evidence)).toContain("ANSWER_PLAYBACK_RECEIPT_MISMATCH");
   });
+
+  it("rejects audible capture that begins before playback starts", () => {
+    const evidence = evidenceWithAnswerPlaybackReceipts({ startedAtEpochMs: 4_601 });
+
+    expect(failureCodes(evidence)).toContain("ANSWER_PLAYBACK_RECEIPT_MISMATCH");
+  });
+
+  it("rejects audible capture that ends after playback finishes", () => {
+    const evidence = evidenceWithAnswerPlaybackReceipts({ finishedAtEpochMs: 3_900 });
+
+    expect(failureCodes(evidence)).toContain("ANSWER_PLAYBACK_RECEIPT_MISMATCH");
+  });
 });
 
 function evidenceWithAnswerPlaybackReceipts(overrides: {

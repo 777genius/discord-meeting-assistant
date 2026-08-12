@@ -56,6 +56,14 @@ import type { PlatformStartupCleanup } from "./startup-cleanup.js";
 import { classifyPlatformError } from "./observability.js";
 import { discordLiveCaptionSignature } from "./discord-live-caption-signature.js";
 import { meetingVocabulary } from "./meeting-vocabulary.js";
+export {
+  createConversationLatencyLogger,
+  createConversationPlaybackLogger,
+} from "./conversation-loggers.js";
+import {
+  createConversationLatencyLogger,
+  createConversationPlaybackLogger,
+} from "./conversation-loggers.js";
 
 // Keep wall-clock-shaped timestamps compatible with STT while preventing clock
 // adjustments from corrupting playback deadlines and the four-second guard.
@@ -187,60 +195,6 @@ export async function createPlatformDiscordLiveComposition(input: {
           : { recordingPlaybackUrl: input.recordingPlaybackUrl }),
       },
     ),
-  };
-}
-
-/** Adapts provider-neutral latency observations to platform structured logs. */
-export function createConversationLatencyLogger(
-  logger: Pick<Logger, "info">,
-): ConversationLatencyObserverPort {
-  return {
-    observeConversationLatency: (observation) => {
-      logger.info("Live conversation latency observed", { ...observation });
-    },
-  };
-}
-
-/** Adapts provider-neutral playback observations to privacy-safe receipts. */
-export function createConversationPlaybackLogger(
-  logger: Pick<Logger, "info">,
-  timeOriginMilliseconds = performance.timeOrigin,
-): ConversationPlaybackObserverPort {
-  return {
-    observeConversationPlayback: (observation) => {
-      const sharedFields = {
-        meetingId: observation.meetingId,
-        playbackAttemptId: observation.playbackAttemptId,
-        playbackKind: observation.playbackKind,
-        turnId: observation.turnId,
-      };
-      switch (observation.status) {
-        case "started":
-          logger.info("Conversation playback started", {
-            ...sharedFields,
-            playbackStartedAtEpochMs: observation.startedAtMs,
-            playbackStartedAtMonotonicMs:
-              observation.startedAtMs - timeOriginMilliseconds,
-          });
-          return;
-        case "finished":
-          logger.info("Conversation playback finished", {
-            ...sharedFields,
-            playbackFinishedAtEpochMs: observation.finishedAtMs,
-            playbackFinishedAtMonotonicMs:
-              observation.finishedAtMs - timeOriginMilliseconds,
-          });
-          return;
-        case "settled":
-          logger.info("Conversation playback settled", {
-            ...sharedFields,
-            playbackSettledAtEpochMs: observation.settledAtMs,
-            playbackSettledAtMonotonicMs:
-              observation.settledAtMs - timeOriginMilliseconds,
-            settlement: observation.settlement,
-          });
-      }
-    },
   };
 }
 

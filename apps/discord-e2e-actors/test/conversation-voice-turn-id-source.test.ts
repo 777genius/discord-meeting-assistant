@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { chmod, link, mkdir, mkdtemp, readFile, rm, symlink, unlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -7,7 +7,7 @@ import {
   serializeConversationAnswerPlaybackReadinessEnvelope,
   type ConversationAnswerPlaybackIntent,
 } from "@discord-meeting/conversation-runtime-contracts";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   assertConversationAnswerHandshakeRootIsNew,
@@ -33,7 +33,7 @@ describe("conversation answer playback readiness source", () => {
       meetingId: intent.meetingId, notBeforeEpochMilliseconds: Date.now(), root,
       runId: intent.runId, timeoutMilliseconds: 1_000,
     });
-    await writeFile(join(root, `${stem()}.intent.json`), JSON.stringify(intent), { flag: "wx" });
+    await publishIntent(root);
     const resolved = await waiting;
     expect(resolved).toEqual(intent);
     await publishConversationAnswerObserverReady({ intent: resolved, root });
@@ -52,6 +52,59 @@ describe("conversation answer playback readiness source", () => {
       runId: "other-run", timeoutMilliseconds: 100,
     })).rejects.toThrow("wrong run or meeting");
   });
+
+  it("rejects a symlink handshake root and overly broad root permissions", async () => {
+    const parent = await temporaryRoot();
+    const target = join(parent, "target");
+    const linkedRoot = join(parent, "linked-root");
+    await mkdir(target, { mode: 0o700 });
+    await symlink(target, linkedRoot);
+    await expect(assertConversationAnswerHandshakeRootIsNew(linkedRoot))
+      .rejects.toThrow("real directory");
+
+    await chmod(target, 0o755);
+    await expect(assertConversationAnswerHandshakeRootIsNew(target))
+      .rejects.toThrow("permissions");
+  });
+
+  it("rejects stale, symlink and non-regular playback intents", async () => {
+    for (const receiptKind of ["stale", "symlink", "directory"] as const) {
+      const root = await temporaryRoot();
+      const path = join(root, `${stem()}.intent.json`);
+      if (receiptKind === "stale") {
+        await writeFile(path, JSON.stringify(intent), { flag: "wx" });
+        await utimes(path, new Date(0), new Date(0));
+      } else if (receiptKind === "symlink") {
+        const target = join(root, "intent-target.json");
+        await writeFile(target, JSON.stringify(intent));
+        await symlink(target, path);
+      } else {
+        await mkdir(path);
+      }
+      await expect(waitForConversationAnswerPlaybackIntent({
+        meetingId: intent.meetingId, notBeforeEpochMilliseconds: Date.now(), root,
+        runId: intent.runId, timeoutMilliseconds: 100,
+      })).rejects.toThrow(receiptKind === "stale" ? "stale" : "regular file");
+    }
+  });
+
+  it("clears its polling timer when intent waiting is cancelled", async () => {
+    const root = await temporaryRoot();
+    const controller = new AbortController();
+    const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
+    const waiting = waitForConversationAnswerPlaybackIntent({
+      meetingId: intent.meetingId, notBeforeEpochMilliseconds: Date.now(), root,
+      runId: intent.runId, signal: controller.signal, timeoutMilliseconds: 1_000,
+    });
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 5);
+    });
+    controller.abort();
+
+    await expect(waiting).rejects.toThrow("cancelled");
+    expect(clearTimeoutSpy).toHaveBeenCalled();
+    clearTimeoutSpy.mockRestore();
+  });
 });
 
 function stem(): string {
@@ -63,4 +116,15 @@ async function temporaryRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "answer-readiness-"));
   roots.push(root);
   return root;
+}
+
+async function publishIntent(root: string): Promise<void> {
+  const path = join(root, `${stem()}.intent.json`);
+  const temporaryPath = join(root, `.${stem()}.${randomUUID()}.tmp`);
+  await writeFile(temporaryPath, JSON.stringify(intent), { flag: "wx", mode: 0o600 });
+  try {
+    await link(temporaryPath, path);
+  } finally {
+    await unlink(temporaryPath);
+  }
 }
