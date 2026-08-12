@@ -97,10 +97,73 @@ describe("loadConversationVoiceObserverConfig", () => {
       DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON:
         JSON.stringify(additionalCaptures),
     }).additionalCaptures).toEqual(additionalCaptures);
+    const dynamicCapture = {
+      attemptId: "attempt-2026-08-04-03",
+      outputPath: "/tmp/conversation-voice-observer-3.json",
+      purpose: "addressed-answer",
+      turnIdFile: "/tmp/conversation-voice-turn-3.txt",
+    };
+    expect(loadConversationVoiceObserverConfig({
+      ...requiredEnvironment,
+      DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON:
+        JSON.stringify([dynamicCapture]),
+    }).additionalCaptures).toEqual([dynamicCapture]);
     expect(() => loadConversationVoiceObserverConfig({
       ...requiredEnvironment,
       DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON: "not-json",
     })).toThrow();
+    expect(() => loadConversationVoiceObserverConfig({
+      ...requiredEnvironment,
+      DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON: JSON.stringify([{
+        ...additionalCaptures[0],
+        turnIdFile: "/tmp/conversation-voice-turn-2.txt",
+      }]),
+    })).toThrow("exactly one of turnId or turnIdFile");
+    expect(() => loadConversationVoiceObserverConfig({
+      ...requiredEnvironment,
+      DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON: JSON.stringify([{
+        attemptId: "attempt-2026-08-04-02",
+        outputPath: "/tmp/conversation-voice-observer-2.json",
+        purpose: "addressed-answer",
+      }]),
+    })).toThrow("exactly one of turnId or turnIdFile");
+    expect(() => loadConversationVoiceObserverConfig({
+      ...requiredEnvironment,
+      DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON: JSON.stringify([{
+        ...dynamicCapture,
+        turnIdFile: "conversation-voice-turn-3.txt",
+      }]),
+    })).toThrow();
+    expect(() => loadConversationVoiceObserverConfig({
+      ...requiredEnvironment,
+      DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON: JSON.stringify([
+        dynamicCapture,
+        {
+          ...dynamicCapture,
+          attemptId: "attempt-2026-08-04-04",
+          outputPath: "/tmp/conversation-voice-observer-4.json",
+        },
+      ]),
+    })).toThrow("turn ID file paths must be unique");
+    expect(() => loadConversationVoiceObserverConfig({
+      ...requiredEnvironment,
+      DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON: JSON.stringify([
+        dynamicCapture,
+        {
+          ...dynamicCapture,
+          attemptId: "attempt-2026-08-04-04",
+          outputPath: "/tmp/conversation-voice-observer-4.json",
+          turnIdFile: "/tmp/./conversation-voice-turn-3.txt",
+        },
+      ]),
+    })).toThrow("turn ID file paths must be unique");
+    expect(() => loadConversationVoiceObserverConfig({
+      ...requiredEnvironment,
+      DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON: JSON.stringify([{
+        ...dynamicCapture,
+        turnIdFile: requiredEnvironment.DISCORD_E2E_CONVERSATION_VOICE_OUTPUT,
+      }]),
+    })).toThrow("distinct from evidence output paths");
     expect(() => loadConversationVoiceObserverConfig({
       ...requiredEnvironment,
       DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON: JSON.stringify([{

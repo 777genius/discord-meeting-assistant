@@ -1,4 +1,4 @@
-import { isAbsolute } from "node:path";
+import { isAbsolute, normalize } from "node:path";
 
 import { z } from "zod";
 
@@ -13,15 +13,28 @@ const correlationIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}
 const secretAccountSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/u);
 const absoluteOutputPathSchema = z.string()
   .min(1)
-  .refine((value) => isAbsolute(value) && value !== "/", "Expected an absolute output file path");
+  .refine(
+    (value) => isAbsolute(value) && normalize(value) !== "/",
+    "Expected an absolute output file path",
+  )
+  .transform(normalize);
 const absoluteDirectorySchema = z.string().min(1).refine(isAbsolute, "Expected an absolute directory path");
 const maximumReadyTimeoutMilliseconds = 120_000;
 const additionalCaptureSchema = z.object({
   attemptId: correlationIdSchema,
   outputPath: absoluteOutputPathSchema,
   purpose: z.enum(["addressed-answer", "farewell", "greeting"]),
-  turnId: correlationIdSchema,
-}).strict();
+  turnId: correlationIdSchema.optional(),
+  turnIdFile: absoluteOutputPathSchema.optional(),
+}).strict().superRefine((value, context) => {
+  if ((value.turnId === undefined) === (value.turnIdFile === undefined)) {
+    context.addIssue({
+      code: "custom",
+      message: "Expected exactly one of turnId or turnIdFile",
+      path: ["turnId"],
+    });
+  }
+});
 const additionalCapturesJsonSchema = z.string().max(32_768).transform((value, context) => {
   try {
     return JSON.parse(value) as unknown;
@@ -130,14 +143,38 @@ const environmentSchema = z.object({
       path: ["DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON"],
     });
   }
+  const turnIdFiles = (value.DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON ?? [])
+    .flatMap((capture) => capture.turnIdFile === undefined ? [] : [capture.turnIdFile]);
+  if (new Set(turnIdFiles).size !== turnIdFiles.length) {
+    context.addIssue({
+      code: "custom",
+      message: "Conversation voice capture turn ID file paths must be unique",
+      path: ["DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON"],
+    });
+  }
+  const evidenceOutputPaths = new Set(captureKeys.map(({ outputPath }) => outputPath));
+  if (turnIdFiles.some((path) => evidenceOutputPaths.has(path))) {
+    context.addIssue({
+      code: "custom",
+      message: "Conversation voice turn ID files must be distinct from evidence output paths",
+      path: ["DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON"],
+    });
+  }
 });
 
-interface ConversationVoiceObserverCapture {
+type ConversationVoiceObserverCapture = {
   readonly attemptId: string;
   readonly outputPath: string;
   readonly purpose: "addressed-answer" | "farewell" | "greeting";
   readonly turnId: string;
-}
+  readonly turnIdFile?: never;
+} | {
+  readonly attemptId: string;
+  readonly outputPath: string;
+  readonly purpose: "addressed-answer" | "farewell" | "greeting";
+  readonly turnId?: never;
+  readonly turnIdFile: string;
+};
 
 export interface ConversationVoiceObserverConfig {
   readonly additionalCaptures: readonly ConversationVoiceObserverCapture[];
@@ -174,7 +211,20 @@ export function loadConversationVoiceObserverConfig(
   return Object.freeze({
     additionalCaptures: Object.freeze(
       (parsed.DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON ?? [])
-        .map((capture) => Object.freeze({ ...capture })),
+        .map((capture): ConversationVoiceObserverCapture => {
+          const common = {
+            attemptId: capture.attemptId,
+            outputPath: capture.outputPath,
+            purpose: capture.purpose,
+          } as const;
+          if (capture.turnId !== undefined) {
+            return Object.freeze({ ...common, turnId: capture.turnId });
+          }
+          if (capture.turnIdFile !== undefined) {
+            return Object.freeze({ ...common, turnIdFile: capture.turnIdFile });
+          }
+          throw new Error("Expected one conversation voice turn ID source");
+        }),
     ),
     attemptId: parsed.DISCORD_E2E_CONVERSATION_VOICE_ATTEMPT_ID,
     captureTimeoutMilliseconds: parsed.DISCORD_E2E_CONVERSATION_VOICE_CAPTURE_TIMEOUT_MS,
