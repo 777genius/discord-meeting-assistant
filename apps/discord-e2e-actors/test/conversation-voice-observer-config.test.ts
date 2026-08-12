@@ -149,7 +149,9 @@ describe("loadConversationVoiceObserverConfig", () => {
       DISCORD_E2E_CONVERSATION_VOICE_READY_TIMEOUT_MS: "1000",
     }).readyTimeoutMilliseconds).toBe(1_000);
   });
+});
 
+describe("loadConversationVoiceObserverConfig capture sequences", () => {
   it("accepts a create-only capture sequence and rejects ambiguous correlations", () => {
     const additionalCaptures = [
       {
@@ -289,7 +291,9 @@ describe("loadConversationVoiceObserverConfig", () => {
       ),
     })).toThrow();
   });
+});
 
+describe("loadConversationVoiceObserverConfig invalid inputs", () => {
   it("fails closed for non-private targets, missing correlations, and unsafe output paths", () => {
     expect(() => loadConversationVoiceObserverConfig({
       ...requiredEnvironment,
