@@ -142,6 +142,27 @@ describe("retained conversation V8 supplemental semantics", () => {
 });
 
 describe("retained conversation V8 boundary policies", () => {
+  it("ignores unrelated semantic lifecycle events when correlating the six captures", () => {
+    const evidence = retainedV8Evidence();
+    evidence.conversation.lifecycle.events.splice(1, 0, {
+      greetingLocale: "ru",
+      observedAt: "1970-01-01T00:00:00.250Z",
+      participantId: "unrelated-participant",
+      participantNameStatus: "unknown",
+      turnId: "participant-greeting:unrelated-participant",
+      type: "greeting",
+    });
+
+    const codes = verifyRetainedE2eEvidence(
+      manifest(),
+      evidence,
+      currentExpectedRevisions,
+    ).failures.map(({ code }) => code);
+
+    expect(codes).not.toContain("VOICE_CAMPAIGN_LIFECYCLE_INVALID");
+    expect(codes).not.toContain("LIFECYCLE_AUDIO_MISMATCH");
+  });
+
   it("requires the exact semantic and chronological capture campaign", () => {
     const extraEvidence = retainedV8Evidence();
     extraEvidence.conversation.voice.push(

@@ -4,8 +4,10 @@ import {
   assertConversationVoiceCampaignPlan,
   assertConversationVoiceCampaignTarget,
   conversationVoiceCampaignEvidenceIssue,
+  conversationVoiceCampaignLifecycleIssue,
   conversationVoiceCampaignPreflight,
   conversationVoiceCampaignRoles,
+  selectConversationVoiceCampaignLifecycle,
 } from "../src/conversation-voice-campaign-contract.js";
 
 describe("conversation voice campaign contract", () => {
@@ -90,6 +92,48 @@ describe("conversation voice campaign contract", () => {
     expect(conversationVoiceCampaignEvidenceIssue(tooShort))
       .toContain("capture 3 duration must be within its retained minimum and maximum");
   });
+
+  it.each([
+    ["before", 0],
+    ["between", 1],
+    ["after", 6],
+  ] as const)("filters an unrelated lifecycle event %s campaign events", (_position, index) => {
+    const captures = canonicalEvidence();
+    const events = canonicalLifecycleEvents();
+    const unrelated = {
+      greetingLocale: "ru" as const,
+      observedAt: "1970-01-01T00:00:00.250Z",
+      participantId: "unrelated-participant",
+      participantNameStatus: "unknown" as const,
+      turnId: "participant-greeting:unrelated-participant",
+      type: "greeting" as const,
+    };
+    const rawEvents = [...events];
+    rawEvents.splice(index, 0, unrelated);
+
+    expect(selectConversationVoiceCampaignLifecycle(captures, rawEvents)).toEqual({ events });
+    expect(conversationVoiceCampaignLifecycleIssue(captures, rawEvents, 100)).toBeUndefined();
+  });
+
+  it("retains duplicate correlated lifecycle events so the campaign fails closed", () => {
+    const captures = canonicalEvidence();
+    const events = canonicalLifecycleEvents();
+
+    expect(conversationVoiceCampaignLifecycleIssue(
+      captures,
+      [events[0]!, { ...events[0]!, observedAt: "1970-01-01T00:00:00.200Z" }, ...events.slice(1)],
+      100,
+    )).toContain("expected exactly 6 lifecycle events");
+  });
+
+  it("fails closed when one lifecycle event ambiguously matches multiple captures", () => {
+    const captures = canonicalEvidence();
+    captures[1]!.correlation.turnId = captures[0]!.correlation.turnId;
+    const events = canonicalLifecycleEvents();
+
+    expect(conversationVoiceCampaignLifecycleIssue(captures, events, 100))
+      .toContain("ambiguously matches multiple captures");
+  });
 });
 
 function canonicalPlan() {
@@ -117,4 +161,46 @@ function canonicalEvidence() {
       turnId: role.turnId ?? "runtime-answer-turn",
     },
   }));
+}
+
+function canonicalLifecycleEvents() {
+  const identities = {
+    observer: "1533867700575670282",
+    speakerD: "1533873978417086474",
+    speakerEn: "1533228054724346087",
+    speakerRu: "1533227577286852649",
+  };
+  return [
+    greeting(identities.observer, "ru", "unknown", 150),
+    greeting(identities.speakerRu, "ru", "known", 1_150),
+    greeting(identities.speakerEn, "en", "known", 2_150),
+    greeting(identities.speakerD, "ru", "unknown", 3_150),
+    {
+      observedAt: new Date(4_050).toISOString(),
+      participantId: identities.speakerD,
+      turnId: "runtime-answer-turn",
+      type: "addressed-answer" as const,
+    },
+    {
+      observedAt: new Date(5_150).toISOString(),
+      turnId: "meeting-farewell:v1",
+      type: "farewell" as const,
+    },
+  ];
+}
+
+function greeting(
+  participantId: string,
+  greetingLocale: "en" | "ru",
+  participantNameStatus: "known" | "unknown",
+  observedAt: number,
+) {
+  return {
+    greetingLocale,
+    observedAt: new Date(observedAt).toISOString(),
+    participantId,
+    participantNameStatus,
+    turnId: `participant-greeting:${participantId}`,
+    type: "greeting" as const,
+  };
 }

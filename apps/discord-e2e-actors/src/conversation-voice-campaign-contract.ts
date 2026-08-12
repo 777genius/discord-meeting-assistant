@@ -161,30 +161,36 @@ export function conversationVoiceCampaignLifecycleIssue(
   events: readonly LifecycleEvent[],
   toleranceMilliseconds: number,
 ): string | undefined {
-  if (events.length !== conversationVoiceCampaignRoles.length) {
+  const selection = selectConversationVoiceCampaignLifecycle(captures, events);
+  if (selection.issue !== undefined) {
+    return selection.issue;
+  }
+  const campaignEvents = selection.events;
+  if (campaignEvents.length !== conversationVoiceCampaignRoles.length) {
     return `expected exactly ${conversationVoiceCampaignRoles.length} lifecycle events`;
   }
   const expected = conversationVoiceCampaignIdentities;
   const eventMatches = [
-    isGreeting(events[0], expected.observer, "ru", "unknown"),
-    isGreeting(events[1], expected.speakerRu, "ru", "known"),
-    isGreeting(events[2], expected.speakerEn, "en", "known"),
-    isGreeting(events[3], expected.speakerD, "ru", "unknown"),
-    events[4]?.type === "addressed-answer" &&
-      events[4].participantId === expected.speakerD &&
-      events[4].turnId === captures[4]?.correlation.turnId,
-    events[5]?.type === "farewell" && events[5].turnId === "meeting-farewell:v1",
+    isGreeting(campaignEvents[0], expected.observer, "ru", "unknown"),
+    isGreeting(campaignEvents[1], expected.speakerRu, "ru", "known"),
+    isGreeting(campaignEvents[2], expected.speakerEn, "en", "known"),
+    isGreeting(campaignEvents[3], expected.speakerD, "ru", "unknown"),
+    campaignEvents[4]?.type === "addressed-answer" &&
+      campaignEvents[4].participantId === expected.speakerD &&
+      campaignEvents[4].turnId === captures[4]?.correlation.turnId,
+    campaignEvents[5]?.type === "farewell" &&
+      campaignEvents[5].turnId === "meeting-farewell:v1",
   ];
   const mismatchIndex = eventMatches.findIndex((matches) => !matches);
   if (mismatchIndex >= 0) {
     return `lifecycle event ${mismatchIndex + 1} must match ${conversationVoiceCampaignRoles[mismatchIndex]!.role}`;
   }
-  for (const [index, event] of events.entries()) {
+  for (const [index, event] of campaignEvents.entries()) {
     const observedAt = Date.parse(event.observedAt);
     if (!Number.isFinite(observedAt)) {
       return `lifecycle event ${index + 1} has an invalid observedAt`;
     }
-    if (index > 0 && observedAt <= Date.parse(events[index - 1]!.observedAt)) {
+    if (index > 0 && observedAt <= Date.parse(campaignEvents[index - 1]!.observedAt)) {
       return `lifecycle event ${index + 1} must follow lifecycle event ${index}`;
     }
     const capture = captures[index]!;
@@ -199,6 +205,29 @@ export function conversationVoiceCampaignLifecycleIssue(
     }
   }
   return undefined;
+}
+
+export function selectConversationVoiceCampaignLifecycle<Event extends LifecycleEvent>(
+  captures: readonly RetainedCapture[],
+  events: readonly Event[],
+): { readonly events: readonly Event[]; readonly issue?: string } {
+  const selected: Event[] = [];
+  for (const [eventIndex, event] of events.entries()) {
+    const matchingCaptureCount = captures.filter((capture) =>
+      capture.correlation.purpose === event.type &&
+      isLifecycleTurnBinding(event, capture.correlation.turnId)
+    ).length;
+    if (matchingCaptureCount > 1) {
+      return {
+        events: selected,
+        issue: `lifecycle event ${eventIndex + 1} ambiguously matches multiple captures`,
+      };
+    }
+    if (matchingCaptureCount === 1) {
+      selected.push(event);
+    }
+  }
+  return { events: selected };
 }
 
 export function conversationVoiceCampaignPreflight(
@@ -279,4 +308,11 @@ function isAllowedGreetingTurnId(turnId: string, participantId: string): boolean
   const baseTurnId = `participant-greeting:${participantId}`;
   return turnId === baseTurnId ||
     new Set([1, 2, 3].map((retry) => `${baseTurnId}:retry-${retry}`)).has(turnId);
+}
+
+function isLifecycleTurnBinding(event: LifecycleEvent, capturedTurnId: string): boolean {
+  return capturedTurnId === event.turnId || event.type === "greeting" &&
+    event.participantId !== undefined &&
+    isAllowedGreetingTurnId(event.turnId, event.participantId) &&
+    capturedTurnId === `participant-greeting:${event.participantId}`;
 }

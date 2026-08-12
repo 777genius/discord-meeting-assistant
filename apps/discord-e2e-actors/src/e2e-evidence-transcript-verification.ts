@@ -6,6 +6,7 @@ import { authoritativeTrackCoverage } from "./e2e-evidence-track-verification.js
 import {
   conversationVoiceCampaignEvidenceIssue,
   conversationVoiceCampaignLifecycleIssue,
+  selectConversationVoiceCampaignLifecycle,
 } from
   "./conversation-voice-campaign-contract.js";
 import type {
@@ -312,7 +313,10 @@ function verifyLifecycleAudioBindings(
   fail: VerificationFailureReporter,
 ): void {
   const { lifecycle, voice } = evidence.conversation;
-  for (const event of lifecycle.events) {
+  const lifecycleEvents = evidence.schemaVersion === 8
+    ? selectConversationVoiceCampaignLifecycle(voice, lifecycle.events).events
+    : lifecycle.events;
+  for (const event of lifecycleEvents) {
     const matches = voice.filter(({ correlation }) =>
       correlation.purpose === event.type && isLifecycleTurnBinding(
         event,
@@ -337,7 +341,7 @@ function verifyLifecycleAudioBindings(
   }
   if (evidence.schemaVersion === 8) {
     for (const observation of voice) {
-      const matches = lifecycle.events.filter((event) =>
+      const matches = lifecycleEvents.filter((event) =>
         event.type === observation.correlation.purpose &&
         isLifecycleTurnBinding(event, observation.correlation.turnId, evidence.schemaVersion)
       );

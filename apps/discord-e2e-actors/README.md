@@ -136,6 +136,11 @@ correlation by checking
 the capture interval against the authoritative recording, matching lifecycle
 turns to settled runtime markers plus audible captures, and matching the
 addressed-answer interval to exactly one Botik turn in the final transcript.
+For the strict v8 campaign, positional correlation considers only lifecycle
+events whose purpose and exact or retry-aware turn identity bind to one of the
+six captures. Other meeting lifecycle events remain in retained evidence but do
+not shift campaign positions; an extra event bound to a campaign capture still
+fails the exact-six gate.
 For v7/v8, the configured source bot must be the same pinned Botik identity.
 
 Generate the Russian fixtures with embedded English technical terms before the

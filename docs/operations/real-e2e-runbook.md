@@ -169,7 +169,9 @@ The remaining lifecycle gate uses the same conversation voice observer and
 retained evidence collector; it is not a separate framework. During one
 private-guild reconnect run, retain create-only captures for a named Russian
 greeting, a named English greeting, default-locale greetings for the unknown
-observer and Speaker D, the prepared farewell, and one addressed Botik answer. Set
+observer and Speaker D, one addressed Botik answer, and the prepared farewell,
+in that exact observer order. It mirrors the pinned Speaker D fixture: question,
+Botik answer, then explicit group farewell. Set
 `DISCORD_E2E_CONVERSATION_VOICE_PURPOSE` to `greeting`, `farewell`, or
 `addressed-answer` for each capture and use the runtime turn ID shown by the
 correlated structured event.
@@ -198,29 +200,49 @@ short capture window starts with the first audio packet.
 To retain the ordered capture set with one observer connection, pass the
 remaining capture records through
 `DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON`. The record shape and
-limits are documented in `apps/discord-e2e-actors/README.md`.
+limits are documented in `apps/discord-e2e-actors/README.md`. Use the first
+greeting as the literal primary capture, followed by the other three greetings,
+the addressed answer, and the farewell. A non-empty additional capture array is
+strict campaign mode: the CLI rejects a missing, extra, reordered, or misbound
+role before Discord login and prints the validated non-secret JSON capture plan
+before joining voice. Retain that plan beside the campaign evidence.
+The verifier preserves the lifecycle log's source order but filters it to events
+that bind by purpose and turn identity to these six captures before positional
+correlation. Unrelated meeting lifecycle events may remain in the evidence and
+do not consume a campaign position; duplicate or extra events bound to a campaign
+capture fail the exact-six lifecycle gate.
 
-Greeting and farewell captures use literal turn and attempt IDs. Addressed-answer
-captures use an absolute fresh `playbackHandshakeRoot`: Meeting Platform writes
-the exact run/meeting/turn/attempt intent, the already-subscribed observer writes
-a matching ready receipt, and only then answer playback begins. Both processes
-must use the same mounted root and run ID. Meeting Platform requires all three
-`CONVERSATION_E2E_PLAYBACK_READINESS_*` settings together and rejects them unless
-`E2E_TEST_ONLY_LABEL=true`.
+Use a literal `turnId` when the lifecycle correlation is known before startup.
+For the addressed-answer capture, where the admitted live turn ID is produced
+during the call, use an absolute `turnIdFile` instead. The observer first proves
+that path is absent, joins voice, completes the four greeting captures, and
+then waits for the file while staying connected. Build the actor package before
+the campaign. After the live-turn admission log yields the exact ID, publish it
+with the already-built create-only repository helper:
 
-The Compose mount maps `${DEPLOY_ROOT}/data/e2e-playback-readiness` to
-`/var/lib/discord-meeting/e2e-playback-readiness` in Meeting Platform. Point the
-observer at the corresponding host path. Set the platform root to a new per-run
-subdirectory, use the same `runId` on both sides, and remove the directory only
-after retained evidence collection. The adapter rejects stale, symlinked,
-oversized, mutated, mismatched, and late receipts instead of guessing.
+```sh
+pnpm --filter @discord-meeting/discord-e2e-actors \
+  publish:conversation-turn-id -- /absolute/evidence/addressed-answer.turn-id \
+  human-question-17
+```
+
+The helper fsyncs and closes a same-directory `0600` temporary file, hard-links
+the final name without replacement, and removes the temporary name. Do not
+pre-create, overwrite, symlink, or edit the final file in place. While waiting,
+the observer drains silent Craig packets; any audible packet before the observer
+confirms correlation publication aborts the campaign instead of being buffered
+into the next capture.
+Do not place the literal farewell capture before the addressed-answer capture.
+The fixture produces Botik's answer before the group farewell, and the audible
+pre-correlation guard intentionally fails if answer audio arrives before its
+runtime turn ID has been accepted; reversing the captures cannot recover a
+trustworthy correlation afterward.
+The bounded wait uses
+`DISCORD_E2E_CONVERSATION_VOICE_READY_TIMEOUT_MS`; an invalid, stale, oversized,
+or late source aborts the campaign rather than guessing a correlation.
 
 Reconnect one already-greeted official actor before the meeting ends. Do not
-induce another first join. Keep the meeting active long enough after its rejoin
-for the authoritative final transcript to retain one continuous negative
-window. The v8 bundle binds Meeting Platform's privacy-safe `participant.left`
-and `participant.joined` receipts for pinned Speaker B to that window; missing
-or duplicated receipts fail collection. After finalization, pass all six observer files and
+induce another first join. After finalization, pass all six observer files and
 the pinned Botik speaker ID to the normal collector:
 
 ```sh
@@ -244,11 +266,7 @@ settled prepared farewell. Observer timestamps must
 fall inside the same authoritative recording. The addressed capture must
 overlap exactly one final transcript turn on the pinned Botik track. Any stale
 file, duplicate attempt, mixed observer/Botik application, wrong run/recording,
-wrong Botik speaker, duplicate lifecycle identity, or unmatched greeting-shaped
-Botik turn after Speaker B's rejoin fails closed. The exact four greeting roles
-are pinned as Speaker A, Speaker B, observer, and Speaker D. Known RU/EN actors
-also pin a spoken-name token, so a generic greeting cannot replace their named
-cue while still satisfying the locale term. Keep the
+wrong Botik speaker, or duplicate lifecycle identity fails closed. Keep the
 existing deterministic greeting/playback and farewell-policy suites green: they
 prove exact named/nameless phrases and the continuation, quoted-speech,
 third-person, and false-positive cases without writing names or prompts to logs.
@@ -390,30 +408,6 @@ Do not guess Craig's future random recording ID. Actor evidence uses absolute
 wall-clock timestamps. After Craig finalizes, pass the explicit recording ID and
 actor file to `collect:e2e`. The collector fail-closed binds them using the
 authoritative manifest `startedAt`/`endedAt`, speaker tracks, checksums and timing.
-
-Before a collector replay, explicitly attest the disposable target. The remote
-Compose environment must set `E2E_TEST_ONLY_LABEL=true`, producing
-`e2e.test-only=true` on the `discord-meeting-assistant/meeting-platform`
-container. Create a non-symlink mode `0700` directory owned by the SSH operator,
-then one regular, non-symlink mode `0600` marker at
-`/tmp/discord-e2e-attestations/<run-id>.json` with the same owner. It contains schema version `1`,
-purpose `bullmq-post-call-replay`, and the exact manifest `fixtureSetId`, actor
-`runId`, and finalized Craig `recordingId`. Do not place credentials in it.
-
-Set `DISCORD_E2E_MUTATION_TARGET=test-only` and every remote coordinate
-explicitly: `DISCORD_E2E_REMOTE_HOST`, `DISCORD_E2E_REMOTE_SOURCE_ROOT`,
-`DISCORD_E2E_REMOTE_COMPOSE_FILE`, `DISCORD_E2E_REMOTE_ENV_FILE`,
-`DISCORD_E2E_REMOTE_PROJECT=discord-meeting-assistant`,
-`DISCORD_E2E_REMOTE_CRAIG_PROJECT=craig-meeting-e2e`,
-`DISCORD_E2E_REMOTE_CRAIG_SERVICE=bot`, and
-`DISCORD_E2E_REMOTE_ATTESTATION_FILE`. There are no mutating remote defaults.
-The collector validates target label and marker before loading a Discord token,
-rechecks immediately before replay, validates the completed job, then removes
-the one-shot marker before calling BullMQ retry. If any preflight fails, it does
-not mutate or remove the marker. After marker consumption, create a fresh marker
-only after reviewing the failed run and checking the completed job's latest
-`processedOn`; an interruption in that window has an ambiguous replay outcome.
-Cleanup of SSH children, queue clients, and Discord is bounded and automatic.
 
 The collector obtains both Postgres observations, S3 bytes, Discord marker counts,
 visible embed text, and the names and byte sizes of both attachments containing
