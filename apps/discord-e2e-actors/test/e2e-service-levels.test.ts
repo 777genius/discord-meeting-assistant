@@ -62,6 +62,27 @@ describe("E2E service-level proof", () => {
     expect(failureCodes(tampered)).toEqual(["SLA_UPPER_BOUND_TAMPERED"]);
   });
 
+  it("rejects tampered clock content even when the upper bound is recomputed", () => {
+    const changedSkew = proofAtThresholds();
+    changedSkew.measurements[0]!.clockSkewAttestation.clockSkewBoundMs += 1;
+    changedSkew.measurements[0]!.upperBoundMs += 1;
+    expect(failureCodes(changedSkew)).toEqual(["SLA_CLOCK_ATTESTATION_MISMATCH"]);
+
+    const changedId = proofAtThresholds();
+    changedId.measurements[0]!.clockSkewAttestation.attestationId = "f".repeat(64);
+    expect(failureCodes(changedId)).toEqual(["SLA_CLOCK_ATTESTATION_MISMATCH"]);
+  });
+
+  it("rejects source digest tampering independently of source identity checks", () => {
+    const changedStartDigest = proofAtThresholds();
+    changedStartDigest.measurements[0]!.clockSkewAttestation.startEvidenceSha256 = "a".repeat(64);
+    expect(failureCodes(changedStartDigest)).toEqual(["SLA_CLOCK_ATTESTATION_MISMATCH"]);
+
+    const changedEndDigest = proofAtThresholds();
+    changedEndDigest.measurements[1]!.clockSkewAttestation.endEvidenceSha256 = "b".repeat(64);
+    expect(failureCodes(changedEndDigest)).toEqual(["SLA_CLOCK_ATTESTATION_MISMATCH"]);
+  });
+
   it("rejects timestamp tampering before recomputing a bound", () => {
     const tampered = proofAtThresholds();
     tampered.measurements[0]!.end.atEpochMs -= 10;

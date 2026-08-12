@@ -1,8 +1,12 @@
-import { createHash } from "node:crypto";
-
 import { z } from "zod";
 
-import { serviceLevelIds } from "./e2e-service-levels.js";
+import {
+  serviceLevelIds,
+} from "./e2e-service-levels.js";
+import {
+  serviceLevelClockAttestationId,
+  serviceLevelEvidenceDigest,
+} from "./service-level-attestation-integrity.js";
 import { HOSTED_CAMPAIGN_TARGET } from "./hosted-campaign-coordinator.js";
 
 const identifier = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u);
@@ -59,22 +63,11 @@ type ClockAttestation = HostedServiceLevelClockAttestationsV1["measurements"][nu
 type ClockAttestationContent = Omit<ClockAttestation, "attestationId">;
 
 export function clockEvidenceDigest(value: unknown): string {
-  return createHash("sha256").update(canonicalJson(value), "utf8").digest("hex");
+  return serviceLevelEvidenceDigest(value);
 }
 
 export function clockAttestationId(
   value: ClockAttestationContent,
 ): string {
-  return clockEvidenceDigest(value);
-}
-
-function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map(canonicalJson).join(",")}]`;
-  }
-  if (value !== null && typeof value === "object") {
-    return `{${Object.entries(value).toSorted(([left], [right]) => left.localeCompare(right))
-      .map(([key, nested]) => `${JSON.stringify(key)}:${canonicalJson(nested)}`).join(",")}}`;
-  }
-  return JSON.stringify(value);
+  return serviceLevelClockAttestationId(value);
 }

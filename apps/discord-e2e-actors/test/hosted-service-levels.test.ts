@@ -29,6 +29,7 @@ import { projectionMarker } from "../src/e2e-discord-projection-inspection.js";
 import { retainedV8Evidence } from "./e2e-evidence-fixtures.js";
 import {
   clockAttestationId,
+  clockEvidenceDigest,
   hostedServiceLevelClockAttestationsV1Schema,
   type HostedServiceLevelClockAttestationsV1,
 } from "../src/hosted-service-level-clock-attestation.js";
@@ -59,6 +60,18 @@ describe("hosted service-level producer", () => {
     expect(output.measurements[2]?.start.source).toMatchObject({
       kind: "authoritative-recording-end", recordingId: "meeting-1",
     });
+    expect(output.measurements.every(({ clockSkewAttestation, end, serviceLevelId, start }) =>
+      clockSkewAttestation.attestationId === clockAttestationId({
+        clockSkewBoundMs: clockSkewAttestation.clockSkewBoundMs,
+        endClockId: clockSkewAttestation.endClockId,
+        endEvidenceSha256: clockSkewAttestation.endEvidenceSha256,
+        method: clockSkewAttestation.method,
+        serviceLevelId,
+        startClockId: clockSkewAttestation.startClockId,
+        startEvidenceSha256: clockSkewAttestation.startEvidenceSha256,
+      }) && clockSkewAttestation.startEvidenceSha256 === clockEvidenceDigest(start.source) &&
+      clockSkewAttestation.endEvidenceSha256 === clockEvidenceDigest(end.source)
+    )).toBe(true);
     expect((await lstat(fixture.paths.output)).mode & 0o777).toBe(0o600);
     expect(JSON.parse(await readFile(fixture.paths.report, "utf8"))).toMatchObject({
       measurementCount: 3, outputCreated: true, status: "ready",

@@ -1,5 +1,7 @@
 import {
   e2eServiceLevelsV1Schema,
+  serviceLevelClockAttestationId,
+  serviceLevelEvidenceDigest,
   type E2eServiceLevelsV1,
   type ServiceLevelThresholds,
 } from "../src/e2e-service-levels.js";
@@ -13,10 +15,10 @@ export const exactServiceLevelThresholds: ServiceLevelThresholds = {
 const identity = { meetingId: "meeting-1", runId: "run-overlap-1" } as const;
 
 export function serviceLevelsProof(): E2eServiceLevelsV1 {
-  return e2eServiceLevelsV1Schema.parse({
+  const proof = e2eServiceLevelsV1Schema.parse({
     measurements: [
       {
-        clockSkewAttestation: attestation("join", "meeting-clock", "observer-clock", 5),
+        clockSkewAttestation: attestation("meeting-clock", "observer-clock", 5),
         end: {
           atEpochMs: 1_600,
           clockId: "observer-clock",
@@ -46,7 +48,7 @@ export function serviceLevelsProof(): E2eServiceLevelsV1 {
         upperBoundMs: 105,
       },
       {
-        clockSkewAttestation: attestation("answer", "recording-clock", "observer-clock", 5),
+        clockSkewAttestation: attestation("recording-clock", "observer-clock", 5),
         end: {
           atEpochMs: 4_100,
           clockId: "observer-clock",
@@ -75,7 +77,7 @@ export function serviceLevelsProof(): E2eServiceLevelsV1 {
         upperBoundMs: 505,
       },
       {
-        clockSkewAttestation: attestation("link", "recording-clock", "discord-observer-clock", 5),
+        clockSkewAttestation: attestation("recording-clock", "discord-observer-clock", 5),
         end: {
           atEpochMs: 9_500,
           clockId: "discord-observer-clock",
@@ -106,6 +108,21 @@ export function serviceLevelsProof(): E2eServiceLevelsV1 {
     ],
     schemaVersion: 1,
   });
+  for (const measurement of proof.measurements) {
+    const clockProof = measurement.clockSkewAttestation;
+    clockProof.startEvidenceSha256 = serviceLevelEvidenceDigest(measurement.start.source);
+    clockProof.endEvidenceSha256 = serviceLevelEvidenceDigest(measurement.end.source);
+    clockProof.attestationId = serviceLevelClockAttestationId({
+      clockSkewBoundMs: clockProof.clockSkewBoundMs,
+      endClockId: clockProof.endClockId,
+      endEvidenceSha256: clockProof.endEvidenceSha256,
+      method: clockProof.method,
+      serviceLevelId: measurement.serviceLevelId,
+      startClockId: clockProof.startClockId,
+      startEvidenceSha256: clockProof.startEvidenceSha256,
+    });
+  }
+  return proof;
 }
 
 export function serviceLevelSourcesProof() {
@@ -156,6 +173,18 @@ export function serviceLevelEvidenceForIdentity(input: {
       measurement.end.source.messageId = input.messageId;
       measurement.end.source.recordingId = input.meetingId;
     }
+    const clockProof = measurement.clockSkewAttestation;
+    clockProof.startEvidenceSha256 = serviceLevelEvidenceDigest(measurement.start.source);
+    clockProof.endEvidenceSha256 = serviceLevelEvidenceDigest(measurement.end.source);
+    clockProof.attestationId = serviceLevelClockAttestationId({
+      clockSkewBoundMs: clockProof.clockSkewBoundMs,
+      endClockId: clockProof.endClockId,
+      endEvidenceSha256: clockProof.endEvidenceSha256,
+      method: clockProof.method,
+      serviceLevelId: measurement.serviceLevelId,
+      startClockId: clockProof.startClockId,
+      startEvidenceSha256: clockProof.startEvidenceSha256,
+    });
   }
   const serviceLevelSources = serviceLevelSourcesProof();
   serviceLevelSources.discordPlaybackLinkProof.messageId = input.messageId;
@@ -164,12 +193,16 @@ export function serviceLevelEvidenceForIdentity(input: {
   return { serviceLevels, serviceLevelSources };
 }
 
-function attestation(id: string, startClockId: string, endClockId: string, skew: number) {
+function attestation(startClockId: string, endClockId: string, skew: number) {
+  const placeholderSha256 = "0".repeat(64);
   return {
-    attestationId: `attestation-${id}`,
+    attestationId: placeholderSha256,
     clockSkewBoundMs: skew,
     endClockId,
+    endEvidenceSha256: placeholderSha256,
+    method: "host-clock-skew-preflight-v1" as const,
     schemaVersion: 1 as const,
     startClockId,
+    startEvidenceSha256: placeholderSha256,
   };
 }

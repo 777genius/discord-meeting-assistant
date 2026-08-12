@@ -124,8 +124,11 @@ export async function deriveHostedServiceLevels(
         attestationId: attestation.attestationId,
         clockSkewBoundMs: attestation.clockSkewBoundMs,
         endClockId: attestation.endClockId,
+        endEvidenceSha256: attestation.endEvidenceSha256,
+        method: attestation.method,
         schemaVersion: 1 as const,
         startClockId: attestation.startClockId,
+        startEvidenceSha256: attestation.startEvidenceSha256,
       },
       end: { atEpochMs: source.endAtEpochMs, clockId: attestation.endClockId, source: source.endSource },
       measurementId: measurementId(source),
@@ -256,9 +259,9 @@ function prepareJoin(
   } as const;
   const endSource = voiceSource(runId, meetingId, capture, "greeting");
   return prepareMeasurement({
-    endAtEpochMs: capture.capture.firstPacketAt.epochMilliseconds, endEvidence: capture,
+    endAtEpochMs: capture.capture.firstPacketAt.epochMilliseconds,
     endSource, serviceLevelId: "join-to-greeting-first-packet",
-    startAtEpochMs: Date.parse(receipt.occurredAt), startEvidence: receipt, startSource,
+    startAtEpochMs: Date.parse(receipt.occurredAt), startSource,
   });
 }
 
@@ -296,10 +299,9 @@ function prepareAnswer(input: {
   } as const;
   const endSource = voiceSource(runId, meetingId, capture, "addressed-answer");
   return prepareMeasurement({
-    endAtEpochMs: capture.capture.firstPacketAt.epochMilliseconds, endEvidence: capture, endSource,
+    endAtEpochMs: capture.capture.firstPacketAt.epochMilliseconds, endSource,
     serviceLevelId: "question-end-to-answer-first-packet", startAtEpochMs: startAt,
-    startEvidence: { recordingId: s3.recordingId, startedAt: s3.startedAt,
-      transcriptId: snapshot.transcript.transcriptId, turn: question }, startSource,
+    startSource,
   });
 }
 
@@ -332,10 +334,9 @@ async function preparePublication(
     recordingId: proof.recordingId, resultChannelId: proof.resultChannelId, runId,
   } as const;
   return prepareMeasurement({
-    endAtEpochMs: proof.firstSeenPollCompletedAt.epochMilliseconds, endEvidence: proof, endSource,
+    endAtEpochMs: proof.firstSeenPollCompletedAt.epochMilliseconds, endSource,
     serviceLevelId: "recording-end-to-discord-first-seen", startAtEpochMs: Date.parse(s3.endedAt),
-    startEvidence: { endedAt: s3.endedAt, manifestChecksumSha256: s3.manifestChecksumSha256,
-      recordingId: s3.recordingId }, startSource,
+    startSource,
   });
 }
 
@@ -366,19 +367,16 @@ function voiceSource(runId: string, meetingId: string, capture: Voice, purpose: 
 }
 
 function prepareMeasurement(input: {
-  readonly endAtEpochMs: number; readonly endEvidence: unknown;
-  readonly endSource: Record<string, unknown>;
+  readonly endAtEpochMs: number; readonly endSource: Record<string, unknown>;
   readonly serviceLevelId: PreparedMeasurement["serviceLevelId"];
-  readonly startAtEpochMs: number; readonly startEvidence: unknown;
-  readonly startSource: Record<string, unknown>;
+  readonly startAtEpochMs: number; readonly startSource: Record<string, unknown>;
 }): PreparedMeasurement {
-  const { endAtEpochMs, endEvidence, endSource, serviceLevelId,
-    startAtEpochMs, startEvidence, startSource } = input;
+  const { endAtEpochMs, endSource, serviceLevelId, startAtEpochMs, startSource } = input;
   if (!Number.isSafeInteger(startAtEpochMs) || !Number.isSafeInteger(endAtEpochMs)) {
     fail("AUTHORITATIVE_SOURCE_INVALID", `${serviceLevelId} has an invalid source timestamp`);
   }
-  return { endAtEpochMs, endEvidenceSha256: clockEvidenceDigest(endEvidence), endSource,
-    serviceLevelId, startAtEpochMs, startEvidenceSha256: clockEvidenceDigest(startEvidence), startSource };
+  return { endAtEpochMs, endEvidenceSha256: clockEvidenceDigest(endSource), endSource,
+    serviceLevelId, startAtEpochMs, startEvidenceSha256: clockEvidenceDigest(startSource), startSource };
 }
 
 function measurementId(source: PreparedMeasurement): string {

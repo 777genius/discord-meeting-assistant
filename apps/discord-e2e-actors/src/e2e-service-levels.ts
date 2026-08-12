@@ -1,6 +1,10 @@
 import { z } from "zod";
 
 import type { VerificationFailureReporter } from "./e2e-evidence-verification-types.js";
+import {
+  serviceLevelClockAttestationId,
+  serviceLevelEvidenceDigest,
+} from "./service-level-attestation-integrity.js";
 
 export const serviceLevelIds = [
   "join-to-greeting-first-packet",
@@ -34,11 +38,14 @@ const endpointBaseSchema = z.object({
   clockId: identifierSchema,
 }).strict();
 const clockSkewAttestationSchema = z.object({
-  attestationId: identifierSchema,
+  attestationId: sha256Schema,
   clockSkewBoundMs: safeNonNegativeIntegerSchema,
   endClockId: identifierSchema,
+  endEvidenceSha256: sha256Schema,
+  method: z.literal("host-clock-skew-preflight-v1"),
   schemaVersion: z.literal(1),
   startClockId: identifierSchema,
+  startEvidenceSha256: sha256Schema,
 }).strict();
 const measurementBaseShape = {
   clockSkewAttestation: clockSkewAttestationSchema,
@@ -147,6 +154,8 @@ export const serviceLevelThresholdsSchema = z.object({
 export type E2eServiceLevelsV1 = z.infer<typeof e2eServiceLevelsV1Schema>;
 export type ServiceLevelThresholds = z.infer<typeof serviceLevelThresholdsSchema>;
 
+export { serviceLevelClockAttestationId, serviceLevelEvidenceDigest };
+
 export const serviceLevelSourcesV1Schema = z.object({
   discordPlaybackLinkProof: z.object({
     capabilitySha256: sha256Schema, container: publicationContainerSchema,
@@ -217,6 +226,28 @@ export function verifyE2eServiceLevels(
     const { clockSkewAttestation, end, serviceLevelId, start } = measurement;
     if (!sourceIsBound(measurement, evidence)) {
       fail("SLA_SOURCE_MISMATCH", `${serviceLevelId} is not bound to its retained authoritative receipts`);
+      continue;
+    }
+    const expectedStartEvidenceSha256 = serviceLevelEvidenceDigest(start.source);
+    const expectedEndEvidenceSha256 = serviceLevelEvidenceDigest(end.source);
+    if (
+      clockSkewAttestation.startEvidenceSha256 !== expectedStartEvidenceSha256 ||
+      clockSkewAttestation.endEvidenceSha256 !== expectedEndEvidenceSha256
+    ) {
+      fail("SLA_CLOCK_ATTESTATION_MISMATCH", `${serviceLevelId} source digests do not match retained evidence`);
+      continue;
+    }
+    const expectedAttestationId = serviceLevelClockAttestationId({
+      clockSkewBoundMs: clockSkewAttestation.clockSkewBoundMs,
+      endClockId: clockSkewAttestation.endClockId,
+      endEvidenceSha256: clockSkewAttestation.endEvidenceSha256,
+      method: clockSkewAttestation.method,
+      serviceLevelId,
+      startClockId: clockSkewAttestation.startClockId,
+      startEvidenceSha256: clockSkewAttestation.startEvidenceSha256,
+    });
+    if (clockSkewAttestation.attestationId !== expectedAttestationId) {
+      fail("SLA_CLOCK_ATTESTATION_MISMATCH", `${serviceLevelId} attestation ID does not match its content`);
       continue;
     }
     if (
