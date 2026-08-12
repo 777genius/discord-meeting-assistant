@@ -19,6 +19,27 @@ describe("hosted campaign artifact store", () => {
     await store.releaseLease();
   });
 
+  it("creates one fresh campaign layout and refuses every stale retry", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "hosted-artifacts-"));
+    const campaignRoot = join(parent, "campaign-1");
+    const store = new HostedCampaignArtifactStore(join(campaignRoot, "barriers"), "campaign-1");
+    await store.initializeFreshCampaignLayout();
+    expect((await readdir(campaignRoot)).toSorted()).toEqual(["barriers", "run-1", "run-2", "run-3"]);
+    for (const name of ["barriers", "run-1", "run-2", "run-3"]) {
+      expect((await lstat(join(campaignRoot, name))).mode & 0o777).toBe(0o700);
+    }
+
+    const action = { kind: "provenance-before" as const };
+    await store.publishAction(action, { digestSha256: "a".repeat(64) });
+    await store.acquireLease(bounded());
+    await store.releaseLease();
+
+    const retry = new HostedCampaignArtifactStore(join(campaignRoot, "barriers"), "campaign-1");
+    await expect(retry.initializeFreshCampaignLayout()).rejects.toMatchObject({ code: "EEXIST" });
+    expect(JSON.parse(await readFile(join(campaignRoot, "barriers", actionFileName(action)), "utf8")))
+      .toMatchObject({ campaignId: "campaign-1", evidence: { digestSha256: "a".repeat(64) } });
+  });
+
   it("requires exact action and campaign correlation", async () => {
     const parent = await mkdtemp(join(tmpdir(), "hosted-artifacts-"));
     const root = join(parent, "root");

@@ -31,6 +31,22 @@ export class HostedCampaignArtifactStore {
   async initialize(): Promise<void> {
     await mkdir(this.#rootPath, { mode: 0o700 });
     await assertSafeRoot(this.#rootPath);
+    await syncDirectory(dirname(this.#rootPath));
+  }
+
+  async initializeFreshCampaignLayout(): Promise<void> {
+    if (basename(this.#rootPath) !== "barriers") {
+      throw new Error("Hosted campaign barrier root must be named barriers");
+    }
+    const campaignRoot = dirname(this.#rootPath);
+    await mkdir(campaignRoot, { mode: 0o700 });
+    await assertSafeRoot(campaignRoot);
+    await syncDirectory(dirname(campaignRoot));
+    for (const path of [this.#rootPath, ...[1, 2, 3].map((ordinal) => join(campaignRoot, `run-${ordinal}`))]) {
+      await mkdir(path, { mode: 0o700 });
+      await assertSafeRoot(path);
+    }
+    await syncDirectory(campaignRoot);
   }
 
   async acquireLease(bounded: HostedCampaignBoundedSignal): Promise<HostedCampaignLeaseHandle> {

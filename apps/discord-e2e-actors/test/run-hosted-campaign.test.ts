@@ -11,8 +11,10 @@ import {
 import { buildResolvedHostedCampaignPlanV1 } from "../src/hosted-campaign-plan-builder.js";
 import { parseHostedCampaignArguments, parseHostedCampaignPlan } from "../src/hosted-campaign-run-config.js";
 import {
+  assertHostedCampaignReceiptAbsent,
   loadHostedCampaignTrustedRuntimeEnvironment,
   readPrivateHostedCampaignPlan,
+  resolveHostedCampaignBarrierRoot,
   runHostedCampaignCli,
   writeCreateOnlyHostedCampaignReceipt,
 } from "../src/run-hosted-campaign.js";
@@ -133,6 +135,20 @@ describe("run-hosted-campaign CLI", () => {
     expect((await lstat(receiptPath)).mode & 0o777).toBe(0o600);
     expect(JSON.parse(await readFile(receiptPath, "utf8"))).toEqual(receipt);
     await expect(writeCreateOnlyHostedCampaignReceipt(receiptPath, receipt)).rejects.toThrow();
+    await expect(assertHostedCampaignReceiptAbsent(receiptPath)).rejects.toThrow(/new campaign ID/u);
+  });
+
+  it("resolves one exact generated barrier root and rejects split roots", () => {
+    const input = parseHostedCampaignPlan(plan());
+    expect(resolveHostedCampaignBarrierRoot(input)).toBe("/private/evidence/campaigns/campaign-1/barriers");
+    const first = input.children[0]!;
+    const split = parseHostedCampaignPlan({
+      ...input,
+      children: [{ ...first, produces: first.produces.map((item) => ({
+        ...item, outputPath: `/private/evidence/other/barriers/${item.outputPath.split("/").at(-1)}`,
+      })) }, ...input.children.slice(1)],
+    });
+    expect(() => resolveHostedCampaignBarrierRoot(split)).toThrow(/one exact barriers root/u);
   });
 
   it("does not follow a symlink when opening the private campaign plan", async () => {
@@ -159,6 +175,7 @@ describe("run-hosted-campaign CLI", () => {
   it("writes no receipt when a barrier fails", async () => {
     let written = false;
     const dependencies = {
+      assertReceiptAbsent: async () => {},
       now: () => Date.now(),
       readPlan: async () => plan(),
       writeReceipt: async () => { written = true; },
@@ -177,5 +194,22 @@ describe("run-hosted-campaign CLI", () => {
       ["/plan.json", "/receipt.json", "1000"], dependencies, new AbortController().signal,
     )).rejects.toThrow("barrier failed");
     expect(written).toBe(false);
+  });
+
+  it("rejects an existing receipt before reading the plan or acquiring the campaign", async () => {
+    const effects: string[] = [];
+    await expect(runHostedCampaignCli(["/plan.json", "/receipt.json", "1000"], {
+      assertReceiptAbsent: async () => { throw new Error("receipt collision"); },
+      now: () => { effects.push("clock"); return Date.now(); },
+      readPlan: async () => { effects.push("read-plan"); return plan(); },
+      writeReceipt: async () => { effects.push("write-receipt"); },
+      ports: {
+        acquireCampaignLease: async () => { effects.push("acquire"); return { campaignId: "campaign-1" } as HostedCampaignLeaseHandle; },
+        awaitChildCompletion: async () => {}, publishReleaseGate: async () => {},
+        publishSupplementalGate: async () => {}, startChild: async () => { effects.push("start"); return { childId: "x" } as HostedCampaignChildHandle; },
+        awaitBarrier: async () => { throw new Error("unreachable"); }, releaseCampaignLease: async () => {}, stopChild: async () => {},
+      },
+    }, new AbortController().signal)).rejects.toThrow("receipt collision");
+    expect(effects).toEqual([]);
   });
 });

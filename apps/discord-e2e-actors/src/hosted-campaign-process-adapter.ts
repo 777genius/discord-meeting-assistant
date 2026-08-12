@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { delimiter, isAbsolute, join } from "node:path";
 
 /* oxlint-disable max-lines */
@@ -136,6 +136,7 @@ interface ChildState {
   readonly publishedEvents: Set<string>;
   eventIngestion: Promise<void>;
   stopping: boolean;
+  termination?: Promise<void>;
   stdoutRemainder: string;
   failure?: Error;
   stderr: number;
@@ -200,8 +201,14 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
       || !new Set(["sequential", "overlap", "reconnect"]).has(scenario ?? "")) {
       throw new Error(`Hosted campaign actor ${spec.childId} has an incomplete release gate contract`);
     }
+    if (staged?.armedPath !== undefined) {
+      await waitForActorGateArmed({
+        armedPath: staged.armedPath, campaignId, path, phase, runId,
+        scenario: scenario as "overlap" | "reconnect" | "sequential",
+      }, bounded.signal);
+    }
     await this.#options.artifactStore.writeCreateOnly(path, {
-      schemaVersion: 1, campaignId, runId, scenario, releasedAtEpochMs: Date.now(),
+      schemaVersion: 1, campaignId, runId, scenario, phase, releasedAtEpochMs: Date.now(),
       target: { guildId: "1533228590643155034", voiceChannelId: "1533228823045214398", mutationTarget: "test-only" },
     });
   }
@@ -228,14 +235,15 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
     this.#assertChildrenHealthy();
     const artifact = this.#options.artifactStore.awaitAction(action, bounded);
     const failures = [...this.#children.values()].filter(({ completionExpected }) => !completionExpected)
-      .map(async ({ exited, childId }) => {
-      const exit = await exited;
-      const state = this.#children.get(childId);
-      if (state?.failure !== undefined) {
-        throw state.failure;
-      }
-      throw new Error(`Hosted campaign child ${childId} exited early (${String(exit.code ?? exit.signal)})`);
-    });
+      .map(async (state) => {
+        const { exited, childId } = state;
+        const exit = await exited;
+        await this.#settleChildState(state);
+        if (state.failure !== undefined) {
+          throw state.failure;
+        }
+        throw new Error(`Hosted campaign child ${childId} exited early (${String(exit.code ?? exit.signal)})`);
+      });
     return Promise.race([artifact, ...failures]);
   }
   async awaitChildCompletion(
@@ -249,6 +257,7 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
       throw new Error(`Hosted campaign child ${handle.childId} has no pending completion`);
     }
     const exit = await raceWithBounded(state.exited, bounded);
+    await raceWithBounded(this.#terminateChildTree(state), bounded);
     await raceWithBounded(state.closed, bounded);
     await raceWithBounded(state.eventIngestion, bounded);
     this.#children.delete(handle.childId);
@@ -338,7 +347,7 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
       if (state.stdout <= limit) {state.stdoutChunks.push(data);}
       if (state.stdout > limit) {
         state.failure = new Error(`Hosted campaign child ${spec.childId} exceeded stdout limit`);
-        child.kill("SIGTERM");
+        void this.#terminateChildTree(state).catch((error: unknown) => {state.failure ??= asError(error);});
         return;
       }
       this.#ingestEventOutput(state, spec, data);
@@ -347,7 +356,7 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
       state.stderr += data.byteLength;
       if (state.stderr > limit) {
         state.failure = new Error(`Hosted campaign child ${spec.childId} exceeded stderr limit`);
-        child.kill("SIGTERM");
+        void this.#terminateChildTree(state).catch((error: unknown) => {state.failure ??= asError(error);});
       }
     });
     child.once("exit", (code, signal) => {
@@ -362,12 +371,20 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
       }
       reportClosed();
     });
-    await new Promise<void>((resolve, reject) => {
-      child.once("spawn", resolve);
-      child.once("error", reject);
-    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        child.once("spawn", resolve);
+        child.once("error", reject);
+      });
+    } catch (error: unknown) {
+      state.failure ??= asError(error);
+      await this.#settleChildState(state);
+      this.#children.delete(spec.childId);
+      throw state.failure;
+    }
     await new Promise<void>((resolve) => { setImmediate(resolve); });
     if (state.failure !== undefined) {
+      await this.#settleChildState(state);
       this.#children.delete(spec.childId);
       throw state.failure;
     }
@@ -393,13 +410,17 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
               `Hosted campaign child ${spec.childId} produced invalid prefixed event`,
               { cause: error },
             );
-            state.child.kill("SIGTERM");
+            void this.#terminateChildTree(state).catch((terminationError: unknown) => {
+              state.failure ??= asError(terminationError);
+            });
           });
       } catch (error: unknown) {
         state.failure = new Error(`Hosted campaign child ${spec.childId} produced invalid prefixed event`, {
           cause: error,
         });
-        state.child.kill("SIGTERM");
+        void this.#terminateChildTree(state).catch((terminationError: unknown) => {
+          state.failure ??= asError(terminationError);
+        });
         return;
       }
     }
@@ -409,19 +430,29 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
     if (state === undefined) {
       return;
     }
+    await this.#settleChildState(state);
+    this.#children.delete(handle.childId);
+    if (state.failure !== undefined) {throw state.failure;}
+  }
+  async #settleChildState(state: ChildState): Promise<void> {
+    await this.#terminateChildTree(state);
+    await state.closed;
+    await state.eventIngestion;
+  }
+  #terminateChildTree(state: ChildState): Promise<void> {
+    state.termination ??= this.#terminateChildTreeOnce(state);
+    return state.termination;
+  }
+  async #terminateChildTreeOnce(state: ChildState): Promise<void> {
     const grace = this.#options.terminationGraceMilliseconds ?? 2_000;
     state.stopping = true;
     signalChildTree(state.child, "SIGTERM");
     if (!await waitForChildTreeExit(state.child, grace)) {
       signalChildTree(state.child, "SIGKILL");
       if (!await waitForChildTreeExit(state.child, grace)) {
-        throw new Error(`Hosted campaign child ${handle.childId} process group survived SIGKILL`);
+        throw new Error(`Hosted campaign child ${state.childId} process group survived SIGKILL`);
       }
     }
-    await state.closed;
-    await state.eventIngestion;
-    this.#children.delete(handle.childId);
-    if (state.failure !== undefined) {throw state.failure;}
   }
   #assertChildrenHealthy(): void {
     const childFailure = [...this.#children.values()]
@@ -650,6 +681,9 @@ function containsControlCharacter(value: string): boolean {
     return codePoint !== undefined && (codePoint <= 31 || codePoint === 127);
   });
 }
+function asError(value: unknown): Error {
+  return value instanceof Error ? value : new Error(String(value));
+}
 function assertActive(bounded: HostedCampaignBoundedSignal): void {
   if (bounded.signal.aborted) {
     throw bounded.signal.reason ?? new Error("Hosted campaign cancelled");
@@ -685,10 +719,21 @@ function isChildTreeAlive(child: ChildProcess): boolean {
   if (child.pid === undefined) {return false;}
   try {
     process.kill(process.platform === "win32" ? child.pid : -child.pid, 0);
-    return true;
+    return process.platform === "win32" || processGroupHasExecutableMember(child.pid);
   } catch (error: unknown) {
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "ESRCH" || (code === "EPERM" && process.platform === "darwin")) {return false;}
     throw error;
   }
+}
+
+function processGroupHasExecutableMember(processGroupId: number): boolean {
+  const result = spawnSync("ps", ["-axo", "pgid=,stat="], { encoding: "utf8" });
+  if (result.status !== 0 || result.error !== undefined) {
+    return true;
+  }
+  return result.stdout.split("\n").some((line) => {
+    const match = /^\s*(\d+)\s+(\S+)/u.exec(line);
+    return match?.[1] === String(processGroupId) && !match[2]?.startsWith("Z");
+  });
 }

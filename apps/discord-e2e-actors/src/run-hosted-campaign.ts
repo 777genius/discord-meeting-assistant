@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { constants, type Stats } from "node:fs";
-import { link, open, rm, type FileHandle } from "node:fs/promises";
+import { link, lstat, open, rm, type FileHandle } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -22,6 +22,7 @@ import {
 } from "./hosted-campaign-process-adapter.js";
 
 export interface HostedCampaignCliDependencies {
+  readonly assertReceiptAbsent: (path: string) => Promise<void>;
   readonly now: () => number;
   readonly ports: HostedCampaignPorts;
   readonly readPlan: (path: string) => Promise<unknown>;
@@ -44,6 +45,7 @@ export async function runHostedCampaignCli(
   signal: AbortSignal,
 ): Promise<HostedCampaignPassReceipt> {
   const config = parseHostedCampaignArguments(arguments_);
+  await dependencies.assertReceiptAbsent(config.receiptPath);
   const input = parseHostedCampaignPlan(await dependencies.readPlan(config.planPath));
   assertExecutableEnvironmentPaths(input.children);
   const deadlineEpochMilliseconds = dependencies.now() + config.timeoutMilliseconds;
@@ -112,6 +114,34 @@ export async function writeCreateOnlyHostedCampaignReceipt(
   }
 }
 
+export async function assertHostedCampaignReceiptAbsent(path: string): Promise<void> {
+  try {
+    await lstat(path);
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") {
+      return;
+    }
+    throw error;
+  }
+  throw new Error("Hosted campaign receipt already exists; use a new campaign ID and artifact root");
+}
+
+export function resolveHostedCampaignBarrierRoot(
+  plan: ReturnType<typeof parseHostedCampaignPlan>,
+): string {
+  const outputPaths = plan.children.flatMap(({ produces }) => produces.map(({ outputPath }) => outputPath));
+  if (outputPaths.length === 0) {
+    throw new Error("Hosted campaign plan has no action artifact paths");
+  }
+  const barrierRoot = dirname(outputPaths[0]!);
+  const campaignIds = new Set(plan.runs.map(({ campaignId }) => campaignId));
+  if (campaignIds.size !== 1 || basename(dirname(barrierRoot)) !== plan.runs[0]?.campaignId
+    || basename(barrierRoot) !== "barriers" || outputPaths.some((path) => dirname(path) !== barrierRoot)) {
+    throw new Error("Hosted campaign action artifacts must share one exact barriers root");
+  }
+  return barrierRoot;
+}
+
 async function syncDirectory(path: string): Promise<void> {
   let handle: FileHandle | undefined;
   try {
@@ -158,17 +188,19 @@ async function main(): Promise<void> {
   process.once("SIGTERM", forwardSignal);
   try {
     const config = parseHostedCampaignArguments(process.argv.slice(2));
+    await assertHostedCampaignReceiptAbsent(config.receiptPath);
     const plan = parseHostedCampaignPlan(await readPrivateHostedCampaignPlan(config.planPath));
     const campaignId = plan.runs[0]!.campaignId;
-    const artifactRoot = join(dirname(config.receiptPath), `${campaignId}.artifacts`);
+    const artifactRoot = resolveHostedCampaignBarrierRoot(plan);
     const store = new HostedCampaignArtifactStore(artifactRoot, campaignId);
-    await store.initialize();
+    await store.initializeFreshCampaignLayout();
     const adapter = new HostedCampaignProcessAdapter({
       artifactStore: store,
       distRoot: dirname(fileURLToPath(import.meta.url)),
       trustedRuntimeEnvironment: loadHostedCampaignTrustedRuntimeEnvironment(process.env),
     });
     await runHostedCampaignCli(process.argv.slice(2), {
+      assertReceiptAbsent: assertHostedCampaignReceiptAbsent,
       now: Date.now,
       ports: adapter,
       readPlan: readPrivateHostedCampaignPlan,
