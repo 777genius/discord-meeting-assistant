@@ -53,7 +53,12 @@ const collectorSpec = (): HostedCampaignExecutableSpec => ({
     kind: "collector", runId: "run-1",
   },
   entrypoint: "collector", environment: {
-    DISCORD_E2E_EVIDENCE_OUTPUT: "/evidence/run-1.json", DISCORD_E2E_RUN_ID: "run-1",
+    DISCORD_E2E_EVIDENCE_OUTPUT: "/evidence/run-1.json",
+    DISCORD_E2E_MUTATION_TARGET: HOSTED_CAMPAIGN_TARGET.mutationTarget,
+    DISCORD_E2E_REMOTE_CRAIG_PROJECT: HOSTED_CAMPAIGN_TARGET.craigProject,
+    DISCORD_E2E_REMOTE_HOST: HOSTED_CAMPAIGN_TARGET.host,
+    DISCORD_E2E_REMOTE_PROJECT: HOSTED_CAMPAIGN_TARGET.project,
+    DISCORD_E2E_RUN_ID: "run-1",
   }, startBefore: { action: { kind: "run-verified", ordinal: 1, runId: "run-1" }, kind: "barrier" },
 });
 const campaignVerifierSpec = (): HostedCampaignExecutableSpec => ({

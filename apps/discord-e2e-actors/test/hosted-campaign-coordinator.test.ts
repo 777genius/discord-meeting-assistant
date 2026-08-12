@@ -33,9 +33,14 @@ function oneShotChild(
   action: Extract<HostedCampaignBarrierAction, { readonly kind: "capture-retained" | "run-verified" }>,
 ) {
   return {
-    arguments: { evidencePath: "/evidence.json", kind: "evidence-verifier" as const, manifestPath: "/manifest.json" },
+    arguments: action.kind === "run-verified"
+      ? { evidencePath: "/evidence.json", kind: "evidence-verifier" as const, manifestPath: "/manifest.json" }
+      : { kind: "environment" as const },
     childId,
-    entrypoint: "evidence-verifier" as const,
+    ...(action.kind === "run-verified" ? {
+      completion: { action, kind: "evidence-verifier" as const },
+    } : {}),
+    entrypoint: action.kind === "run-verified" ? "evidence-verifier" as const : "supplemental-player" as const,
     environment: {},
     startBefore: { action, kind: "barrier" as const },
   };
@@ -227,7 +232,9 @@ describe("hosted campaign coordinator", () => {
     const runBarriers = events
       .map((event, index) => ({ event, index }))
       .filter(({ event }) => event === "barrier:run-verified");
-    expect(events.indexOf("start:verify-overlap") + 1).toBe(runBarriers[1]?.index);
+    const verifierStart = events.indexOf("start:verify-overlap");
+    expect(events[verifierStart + 1]).toBe("complete:verify-overlap");
+    expect(verifierStart + 2).toBe(runBarriers[1]?.index);
     const captureBarriers = events
       .map((event, index) => ({ event, index }))
       .filter(({ event }) => event === "barrier:capture-retained");
