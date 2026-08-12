@@ -11,24 +11,11 @@ import {
 import type { CurrentDeploymentProvenance, ProcessingEvidence } from "../src/e2e-evidence.js";
 import type { RecordingPlaybackEvidenceProbe } from "../src/recording-playback-evidence-probe.js";
 import { retainedV7Evidence, retainedV8Evidence } from "./e2e-evidence-fixtures.js";
-import { conversationVoiceCampaignPlanDigest } from
+import { conversationVoiceCampaignObserverReadyReceipt, conversationVoiceCampaignPlanDigest } from
   "../src/conversation-voice-campaign-proof.js";
 import { serviceLevelSourcesProof, serviceLevelsProof } from "./e2e-service-level-fixtures.js";
 
 const campaignProof = {
-  observerReadyReceipt: {
-    authenticatedObserverBotId: "1533867700575670282",
-    observedAt: "2026-08-12T10:00:00.000Z",
-    planDigestSha256: "0".repeat(64),
-    runId: "run-1",
-    schemaVersion: 1,
-    target: {
-      craigBotId: "1534231284467896512",
-      guildId: "1533228590643155034",
-      observerApplicationId: "1533867700575670282",
-      voiceChannelId: "1533228823045214398",
-    },
-  },
   plan: { captures: [], kind: "conversation-voice-campaign-preflight", status: "validated" },
   planDigestSha256: "0".repeat(64),
   schemaVersion: 1,
@@ -830,7 +817,19 @@ function campaignProofFor(conversation: ReturnType<typeof retainedV8Evidence>["c
   const planDigestSha256 = conversationVoiceCampaignPlanDigest(plan);
   return {
     ...campaignProof,
-    observerReadyReceipt: { ...campaignProof.observerReadyReceipt, planDigestSha256 },
+    observerReadyReceipt: conversationVoiceCampaignObserverReadyReceipt({
+      authenticatedObserverBotId: "1533867700575670282",
+      meetingId: "meeting-1",
+      plan,
+      readyPublishedAt: "1970-01-01T00:00:00.000Z",
+      runId: "run-1",
+      target: {
+        craigBotId: "1534231284467896512",
+        guildId: "1533228590643155034",
+        observerApplicationId: "1533867700575670282",
+        voiceChannelId: "1533228823045214398",
+      },
+    }),
     plan,
     planDigestSha256,
   };

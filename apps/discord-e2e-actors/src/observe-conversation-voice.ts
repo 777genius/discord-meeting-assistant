@@ -21,6 +21,10 @@ import {
 } from "./conversation-voice-observer-config.js";
 import { conversationVoiceCampaignPreflight } from
   "./conversation-voice-campaign-contract.js";
+import {
+  writeCreateOnlyConversationVoiceCampaignProof,
+  type ConversationVoiceCampaignProofV1,
+} from "./conversation-voice-campaign-proof.js";
 import { createConversationVoiceEvidence } from "./conversation-voice-evidence.js";
 import { captureConversationVoiceFromOpenStream } from "./conversation-voice-stream-capture.js";
 import {
@@ -31,7 +35,6 @@ import { waitForConversationVoiceCorrelationWhileGuardingAudio } from
   "./conversation-voice-turn-correlation-wait.js";
 import {
   assertConversationAnswerHandshakeRootIsNew,
-  publishConversationAnswerObserverReady,
   waitForConversationAnswerPlaybackIntent,
   type ConversationAnswerPlaybackIntent,
 } from "./conversation-voice-turn-id-source.js";
@@ -41,21 +44,13 @@ import {
   assertConversationVoiceEvidencePathIsNew,
   writeNewConversationVoiceEvidenceAtomically,
 } from "./conversation-voice-observer.js";
+import { publishConversationVoiceReadyProof } from "./conversation-voice-ready-proof.js";
 import { FileSecretReader, MacOsKeychainSecretReader } from "./keychain.js";
 
-const systemClock = {
-  now: () => ({
-    epochMilliseconds: Date.now(),
-    monotonicMilliseconds: Number(process.hrtime.bigint() / 1_000_000n),
-  }),
-};
-
-class ConversationVoiceObserverError extends Error {
-  public constructor(message: string) {
-    super(message);
-    this.name = "ConversationVoiceObserverError";
-  }
-}
+const systemClock = { now: () => ({
+  epochMilliseconds: Date.now(),
+  monotonicMilliseconds: Number(process.hrtime.bigint() / 1_000_000n),
+}) };
 
 async function main(): Promise<void> {
   const config = loadConversationVoiceObserverConfig(process.env);
@@ -133,8 +128,8 @@ async function main(): Promise<void> {
     sourceStream = connection.receiver.subscribe(config.craigBotId, {
       end: { behavior: EndBehaviorType.Manual },
     });
-    sourceStream.on("error", ignoreStreamError);
-    await capturePlannedConversationVoice({
+    sourceStream.on("error", () => {});
+    const campaignProof = await capturePlannedConversationVoice({
       authenticatedBotId,
       captures,
       config,
@@ -142,11 +137,19 @@ async function main(): Promise<void> {
       handshakeNotBeforeEpochMilliseconds,
       sourceStream,
     });
+    if (config.campaignProofOutputPath !== undefined) {
+      if (campaignProof === undefined) {
+        throw new Error("Campaign observer completed without an authenticated ready proof");
+      }
+      await writeCreateOnlyConversationVoiceCampaignProof(
+        config.campaignProofOutputPath,
+        campaignProof,
+      );
+    }
   } finally {
     sourceStream?.destroy();
     connection?.destroy();
     await client.destroy();
-    sourceStream?.off("error", ignoreStreamError);
   }
 }
 
@@ -157,9 +160,10 @@ async function capturePlannedConversationVoice(input: {
   readonly decoder: ConversationVoiceAudibilityDecoder;
   readonly handshakeNotBeforeEpochMilliseconds: number;
   readonly sourceStream: AudioReceiveStream;
-}): Promise<void> {
+}): Promise<ConversationVoiceCampaignProofV1 | undefined> {
   const { authenticatedBotId, captures, config, decoder,
     handshakeNotBeforeEpochMilliseconds, sourceStream } = input;
+  let campaignProof: ConversationVoiceCampaignProofV1 | undefined;
   for (const [index, plannedCapture] of captures.entries()) {
       const playbackIntent: ConversationAnswerPlaybackIntent | undefined =
         plannedCapture.purpose === "addressed-answer"
@@ -176,6 +180,7 @@ async function capturePlannedConversationVoice(input: {
           stream: sourceStream,
         })
           : undefined;
+      const intentObservedAt = playbackIntent === undefined ? undefined : new Date().toISOString();
       const turnId = playbackIntent?.turnId ??
         ("turnId" in plannedCapture ? plannedCapture.turnId : undefined);
       const attemptId = playbackIntent?.playbackAttemptId ??
@@ -200,9 +205,18 @@ async function capturePlannedConversationVoice(input: {
                 if (!("playbackHandshakeRoot" in plannedCapture)) {
                   throw new Error("Addressed answer capture is missing its handshake root");
                 }
-                await publishConversationAnswerObserverReady({
+                campaignProof = await publishConversationVoiceReadyProof({
+                  authenticatedObserverBotId: authenticatedBotId,
+                  captures,
                   intent: playbackIntent,
+                  intentObservedAt: intentObservedAt!,
                   root: plannedCapture.playbackHandshakeRoot,
+                  target: {
+                    craigBotId: config.craigBotId,
+                    guildId: config.guildId,
+                    observerApplicationId: config.observerApplicationId,
+                    voiceChannelId: config.voiceChannelId,
+                  },
                 });
               },
             }),
@@ -249,9 +263,8 @@ async function capturePlannedConversationVoice(input: {
         );
       }
     }
+  return campaignProof;
 }
-
-function ignoreStreamError(): void {}
 
 async function waitForConfiguredCraigAudioSilence(
   decoder: ConversationVoiceAudibilityDecoder,
@@ -386,14 +399,9 @@ function assertConnectableVoiceChannel(
   }
 }
 
-function safeErrorMessage(error: unknown): string {
-  if (error instanceof ConversationVoiceCaptureError || error instanceof ConversationVoiceObserverError) {
-    return error.message;
-  }
-  return "Conversation voice observer failed";
-}
-
 void main().catch((error: unknown) => {
-  process.stderr.write(`${safeErrorMessage(error)}\n`);
+  process.stderr.write(`${error instanceof ConversationVoiceCaptureError
+    ? error.message
+    : "Conversation voice observer failed"}\n`);
   process.exitCode = 1;
 });

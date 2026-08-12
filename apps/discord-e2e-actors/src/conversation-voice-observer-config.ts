@@ -71,6 +71,7 @@ const environmentSchema = z.object({
     .min(1_000)
     .max(MAXIMUM_CONVERSATION_VOICE_CAPTURE_DURATION_MILLISECONDS)
     .default(MAXIMUM_CONVERSATION_VOICE_CAPTURE_DURATION_MILLISECONDS),
+  DISCORD_E2E_CONVERSATION_VOICE_CAMPAIGN_PROOF_OUTPUT: absoluteOutputPathSchema.optional(),
   DISCORD_E2E_CONVERSATION_VOICE_CRAIG_BOT_ID: snowflakeSchema,
   DISCORD_E2E_CONVERSATION_VOICE_EXPECTED_DURATION_MS: z.coerce.number()
     .int()
@@ -110,6 +111,14 @@ const environmentSchema = z.object({
   DISCORD_E2E_CONVERSATION_VOICE_TURN_ID: correlationIdSchema,
   DISCORD_E2E_CONVERSATION_VOICE_VOICE_CHANNEL_ID: snowflakeSchema,
 }).superRefine((value, context) => {
+  const isCampaign = (value.DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON?.length ?? 0) > 0;
+  if (isCampaign !== (value.DISCORD_E2E_CONVERSATION_VOICE_CAMPAIGN_PROOF_OUTPUT !== undefined)) {
+    context.addIssue({
+      code: "custom",
+      message: "A campaign observer requires exactly one create-only campaign proof output",
+      path: ["DISCORD_E2E_CONVERSATION_VOICE_CAMPAIGN_PROOF_OUTPUT"],
+    });
+  }
   if ((value.DISCORD_E2E_CONVERSATION_VOICE_PURPOSE === "addressed-answer") !==
     (value.DISCORD_E2E_CONVERSATION_VOICE_PLAYBACK_HANDSHAKE_ROOT !== undefined)) {
     context.addIssue({
@@ -243,6 +252,7 @@ export interface ConversationVoiceObserverConfig {
   readonly additionalCaptures: readonly ConversationVoiceObserverCapture[];
   readonly attemptId: string;
   readonly captureTimeoutMilliseconds: number;
+  readonly campaignProofOutputPath?: string;
   readonly craigBotId: string;
   readonly expectedDurationMilliseconds: number;
   readonly expectedDurationToleranceMilliseconds: number;
@@ -296,6 +306,9 @@ export function loadConversationVoiceObserverConfig(
     ),
     attemptId: parsed.DISCORD_E2E_CONVERSATION_VOICE_ATTEMPT_ID,
     captureTimeoutMilliseconds: parsed.DISCORD_E2E_CONVERSATION_VOICE_CAPTURE_TIMEOUT_MS,
+    ...(parsed.DISCORD_E2E_CONVERSATION_VOICE_CAMPAIGN_PROOF_OUTPUT === undefined
+      ? {}
+      : { campaignProofOutputPath: parsed.DISCORD_E2E_CONVERSATION_VOICE_CAMPAIGN_PROOF_OUTPUT }),
     craigBotId: parsed.DISCORD_E2E_CONVERSATION_VOICE_CRAIG_BOT_ID,
     expectedDurationMilliseconds: parsed.DISCORD_E2E_CONVERSATION_VOICE_EXPECTED_DURATION_MS,
     expectedDurationToleranceMilliseconds:

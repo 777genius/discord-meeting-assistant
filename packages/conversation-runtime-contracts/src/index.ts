@@ -24,6 +24,7 @@ export {
   conversationAnswerPlaybackReadinessEnvelopeSchema,
   conversationPlaybackReadinessProtocolVersion,
   serializeConversationAnswerPlaybackReadinessEnvelope,
+  type ConversationAnswerObserverReady,
   type ConversationAnswerPlaybackIntent,
   type ConversationAnswerPlaybackReadinessEnvelope,
 } from "./playback-readiness-contracts.js";

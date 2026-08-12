@@ -224,7 +224,10 @@ function sameEnvelope(
   return actual.meetingId === expected.meetingId &&
     actual.playbackAttemptId === expected.playbackAttemptId &&
     actual.runId === expected.runId &&
-    actual.turnId === expected.turnId;
+    actual.turnId === expected.turnId &&
+    actual.intentDigestSha256 === safeFileStem(expected) &&
+    actual.authenticatedObserverBotId === actual.target.observerApplicationId &&
+    Date.parse(actual.intentObservedAt) <= Date.parse(actual.readyPublishedAt);
 }
 
 function failure(

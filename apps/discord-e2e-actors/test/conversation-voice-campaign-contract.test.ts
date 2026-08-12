@@ -10,6 +10,7 @@ import {
   selectConversationVoiceCampaignLifecycle,
 } from "../src/conversation-voice-campaign-contract.js";
 import {
+  conversationVoiceCampaignObserverReadyReceipt,
   conversationVoiceCampaignPlanDigest,
   conversationVoiceCampaignProofIssue,
   conversationVoiceCampaignProofV1Schema,
@@ -144,19 +145,19 @@ describe("conversation voice campaign contract", () => {
     const plan = campaignProofPlan();
     const planDigestSha256 = conversationVoiceCampaignPlanDigest(plan);
     const proof = conversationVoiceCampaignProofV1Schema.parse({
-      observerReadyReceipt: {
+      observerReadyReceipt: conversationVoiceCampaignObserverReadyReceipt({
         authenticatedObserverBotId: "1533867700575670282",
-        observedAt: "2026-08-12T10:00:00.000Z",
-        planDigestSha256,
+        meetingId: "meeting-1",
+        plan,
+        readyPublishedAt: "2026-08-12T10:00:00.000Z",
         runId: "campaign-1",
-        schemaVersion: 1,
         target: {
           craigBotId: "1534231284467896512",
           guildId: "1533228590643155034",
           observerApplicationId: "1533867700575670282",
           voiceChannelId: "1533228823045214398",
         },
-      },
+      }),
       plan,
       planDigestSha256,
       schemaVersion: 1,
@@ -179,6 +180,17 @@ describe("conversation voice campaign contract", () => {
         target: { ...proof.observerReadyReceipt.target, voiceChannelId: "wrong-channel" },
       },
     }, "campaign-1", voice)).toContain("pinned private-test target");
+    expect(conversationVoiceCampaignProofIssue({
+      ...proof,
+      observerReadyReceipt: { ...proof.observerReadyReceipt, intentDigestSha256: "0".repeat(64) },
+    }, "campaign-1", voice)).toContain("content-addressed playback intent");
+    expect(conversationVoiceCampaignProofIssue({
+      ...proof,
+      observerReadyReceipt: {
+        ...proof.observerReadyReceipt,
+        readyPublishedAt: "2026-08-12T10:00:02.000Z",
+      },
+    }, "campaign-1", voice)).toContain("before addressed-answer audio");
   });
 });
 
@@ -200,7 +212,10 @@ function campaignProofPlan() {
 
 function campaignProofVoice(plan: ReturnType<typeof campaignProofPlan>) {
   return plan.captures.map((capture) => ({
-    capture: { expectedDuration: capture.expectedDuration },
+    capture: {
+      expectedDuration: capture.expectedDuration,
+      firstPacketAt: { epochMilliseconds: Date.parse("2026-08-12T10:00:01.000Z") },
+    },
     correlation: {
       attemptId: capture.resolvedAttemptId,
       purpose: capture.purpose,

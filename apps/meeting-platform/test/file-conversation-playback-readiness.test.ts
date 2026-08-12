@@ -27,6 +27,21 @@ const envelope = {
   runId: "run-1",
   turnId: request.turnId,
 };
+const readyReceipt = {
+  ...envelope,
+  authenticatedObserverBotId: "1533867700575670282",
+  intentDigestSha256: receiptStem(),
+  intentObservedAt: "2026-08-12T10:00:00.000Z",
+  planDigestSha256: "a".repeat(64),
+  readyPublishedAt: "2026-08-12T10:00:00.001Z",
+  target: {
+    craigBotId: "1534231284467896512",
+    guildId: "1533228590643155034",
+    observerApplicationId: "1533867700575670282",
+    voiceChannelId: "1533228823045214398",
+  },
+  type: "observer-ready" as const,
+};
 
 afterEach(async () => {
   await Promise.all(temporaryRoots.splice(0).map((root) =>
@@ -48,7 +63,7 @@ describe("FileConversationPlaybackReadiness", () => {
     expect(intent).toEqual({ ...envelope, type: "playback-intent" });
     await writeFile(
       readyPath(root),
-      JSON.stringify({ ...envelope, type: "observer-ready" }),
+      JSON.stringify(readyReceipt),
       { flag: "wx", mode: 0o600 },
     );
 
@@ -71,7 +86,7 @@ describe("FileConversationPlaybackReadiness", () => {
     await waitForJson(intentPath(root));
     await writeFile(
       readyPath(root),
-      JSON.stringify({ ...receipt, type: "observer-ready" }),
+      JSON.stringify({ ...readyReceipt, ...receipt, type: "observer-ready" }),
       { flag: "wx", mode: 0o600 },
     );
 
@@ -138,11 +153,11 @@ describe("FileConversationPlaybackReadiness", () => {
       await waitForJson(intentPath(root));
       const path = readyPath(root);
       if (receiptKind === "stale") {
-        await writeFile(path, JSON.stringify({ ...envelope, type: "observer-ready" }), { flag: "wx" });
+        await writeFile(path, JSON.stringify(readyReceipt), { flag: "wx" });
         await utimes(path, new Date(0), new Date(0));
       } else if (receiptKind === "symlink") {
         const target = join(root, "ready-target.json");
-        await writeFile(target, JSON.stringify({ ...envelope, type: "observer-ready" }));
+        await writeFile(target, JSON.stringify(readyReceipt));
         await symlink(target, path);
       } else {
         await mkdir(path);
@@ -160,7 +175,7 @@ describe("FileConversationPlaybackReadiness", () => {
     });
     const first = readiness.awaitConversationPlaybackReady(request);
     await waitForJson(intentPath(root));
-    await writeFile(readyPath(root), JSON.stringify({ ...envelope, type: "observer-ready" }), { flag: "wx" });
+    await writeFile(readyPath(root), JSON.stringify(readyReceipt), { flag: "wx" });
     await expect(first).resolves.toEqual({ ok: true, value: "ready" });
     await expect(readiness.awaitConversationPlaybackReady(request)).resolves.toMatchObject({
       failure: { code: "PLAYBACK_READINESS_FAILED" }, ok: false,

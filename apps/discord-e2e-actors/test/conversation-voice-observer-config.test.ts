@@ -149,6 +149,7 @@ describe("loadConversationVoiceObserverConfig", () => {
       DISCORD_E2E_CONVERSATION_VOICE_VOICE_CHANNEL_ID: "1533228823045214398",
       DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON:
         JSON.stringify(campaignCaptures),
+      DISCORD_E2E_CONVERSATION_VOICE_CAMPAIGN_PROOF_OUTPUT: "/tmp/campaign-proof.json",
     }).additionalCaptures).toEqual(campaignCaptures);
     expect(() => loadConversationVoiceObserverConfig({
       ...requiredEnvironment,

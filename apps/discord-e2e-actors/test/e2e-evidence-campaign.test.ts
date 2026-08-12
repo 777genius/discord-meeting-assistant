@@ -8,7 +8,7 @@ import {
   type RetainedE2eEvidence,
   type RetainedE2eEvidenceV9,
 } from "../src/e2e-evidence.js";
-import { conversationVoiceCampaignPlanDigest } from
+import { conversationVoiceCampaignObserverReadyReceipt, conversationVoiceCampaignPlanDigest } from
   "../src/conversation-voice-campaign-proof.js";
 import {
   currentExpectedRevisions,
@@ -259,19 +259,19 @@ function v9ReconnectEvidence(): RetainedE2eEvidenceV9 {
     conversation: {
       ...source.conversation,
       campaignProof: {
-        observerReadyReceipt: {
+        observerReadyReceipt: conversationVoiceCampaignObserverReadyReceipt({
           authenticatedObserverBotId: "1533867700575670282",
-          observedAt: "2026-08-12T10:00:00.000Z",
-          planDigestSha256,
+          meetingId: "meeting-1",
+          plan,
+          readyPublishedAt: "1970-01-01T00:00:00.000Z",
           runId: source.actorRun.runId,
-          schemaVersion: 1,
           target: {
             craigBotId: "1534231284467896512",
             guildId: "1533228590643155034",
             observerApplicationId: "1533867700575670282",
             voiceChannelId: "1533228823045214398",
           },
-        },
+        }),
         plan,
         planDigestSha256,
         schemaVersion: 1,

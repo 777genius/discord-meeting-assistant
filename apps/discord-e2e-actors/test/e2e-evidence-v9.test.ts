@@ -6,7 +6,7 @@ import {
   type RetainedE2eEvidenceV9,
   verifyRetainedE2eEvidence,
 } from "../src/e2e-evidence.js";
-import { conversationVoiceCampaignPlanDigest } from
+import { conversationVoiceCampaignObserverReadyReceipt, conversationVoiceCampaignPlanDigest } from
   "../src/conversation-voice-campaign-proof.js";
 import {
   currentExpectedRevisions,
@@ -148,14 +148,14 @@ function v9Evidence(): RetainedE2eEvidenceV9 {
     conversation: {
       ...source.conversation,
       campaignProof: {
-        observerReadyReceipt: {
+        observerReadyReceipt: conversationVoiceCampaignObserverReadyReceipt({
           authenticatedObserverBotId: pinnedTarget.observerApplicationId,
-          observedAt: "2026-08-12T10:00:00.000Z",
-          planDigestSha256,
+          meetingId: "meeting-1",
+          plan,
+          readyPublishedAt: "1970-01-01T00:00:00.000Z",
           runId: source.actorRun.runId,
-          schemaVersion: 1,
           target: pinnedTarget,
-        },
+        }),
         plan,
         planDigestSha256,
         schemaVersion: 1,

@@ -6,6 +6,7 @@ import {
   conversationAnswerObserverReadySchema,
   conversationAnswerPlaybackIntentSchema,
   serializeConversationAnswerPlaybackReadinessEnvelope,
+  type ConversationAnswerObserverReady,
   type ConversationAnswerPlaybackIntent,
 } from "@discord-meeting/conversation-runtime-contracts";
 
@@ -56,19 +57,30 @@ export async function waitForConversationAnswerPlaybackIntent(input: {
 }
 
 export async function publishConversationAnswerObserverReady(input: {
+  readonly authenticatedObserverBotId: string;
   readonly intent: ConversationAnswerPlaybackIntent;
+  readonly intentObservedAt: string;
+  readonly planDigestSha256: string;
   readonly root: string;
-}): Promise<void> {
+  readonly target: ConversationAnswerObserverReady["target"];
+}): Promise<ConversationAnswerObserverReady> {
   await assertSafeHandshakeRoot(input.root);
   const intent = conversationAnswerPlaybackIntentSchema.parse(input.intent);
   const ready = conversationAnswerObserverReadySchema.parse({
     ...intent,
+    authenticatedObserverBotId: input.authenticatedObserverBotId,
+    intentDigestSha256: receiptStem(intent),
+    intentObservedAt: input.intentObservedAt,
+    planDigestSha256: input.planDigestSha256,
+    readyPublishedAt: new Date().toISOString(),
+    target: input.target,
     type: "observer-ready",
   });
   await publishCreateOnlyJson(
     join(input.root, `${receiptStem(intent)}.ready.json`),
     ready,
   );
+  return ready;
 }
 
 export async function assertConversationAnswerHandshakeRootIsNew(root: string): Promise<void> {

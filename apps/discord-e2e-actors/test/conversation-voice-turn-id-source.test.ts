@@ -21,6 +21,17 @@ const intent: ConversationAnswerPlaybackIntent = {
   playbackAttemptId: "answer-attempt-1", protocolVersion: 1, runId: "run-1",
   turnId: "human-question-17", type: "playback-intent",
 };
+const readyInput = {
+  authenticatedObserverBotId: "1533867700575670282",
+  intentObservedAt: "2026-08-12T10:00:00.000Z",
+  planDigestSha256: "a".repeat(64),
+  target: {
+    craigBotId: "1534231284467896512",
+    guildId: "1533228590643155034",
+    observerApplicationId: "1533867700575670282",
+    voiceChannelId: "1533228823045214398",
+  },
+} as const;
 
 afterEach(async () => Promise.all(roots.splice(0).map((root) =>
   rm(root, { force: true, recursive: true }))));
@@ -36,10 +47,17 @@ describe("conversation answer playback readiness source", () => {
     await publishIntent(root);
     const resolved = await waiting;
     expect(resolved).toEqual(intent);
-    await publishConversationAnswerObserverReady({ intent: resolved, root });
+    const receipt = await publishConversationAnswerObserverReady({ ...readyInput, intent: resolved, root });
     expect(JSON.parse(await readFile(join(root, `${stem()}.ready.json`), "utf8")))
-      .toEqual({ ...intent, type: "observer-ready" });
-    await expect(publishConversationAnswerObserverReady({ intent: resolved, root }))
+      .toEqual(receipt);
+    expect(receipt).toMatchObject({
+      ...intent,
+      authenticatedObserverBotId: readyInput.authenticatedObserverBotId,
+      intentDigestSha256: stem(),
+      planDigestSha256: readyInput.planDigestSha256,
+      type: "observer-ready",
+    });
+    await expect(publishConversationAnswerObserverReady({ ...readyInput, intent: resolved, root }))
       .rejects.toMatchObject({ code: "EEXIST" });
   });
 
