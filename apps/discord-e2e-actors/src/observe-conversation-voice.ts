@@ -107,6 +107,12 @@ async function main(): Promise<void> {
       selfDeaf: false,
       selfMute: true,
     });
+    // The observer's own join can trigger immediate greeting playback. Subscribe synchronously
+    // after constructing the connection so no await boundary can lose those first packets.
+    sourceStream = connection.receiver.subscribe(config.craigBotId, { end: {
+      behavior: EndBehaviorType.Manual,
+    } });
+    sourceStream.on("error", () => {});
     await entersState(connection, VoiceConnectionStatus.Ready, config.readyTimeoutMilliseconds);
     const handshakeNotBeforeEpochMilliseconds = Date.now();
     await Promise.all(handshakeRoots.map(assertConversationAnswerHandshakeRootIsNew));
@@ -117,10 +123,6 @@ async function main(): Promise<void> {
       channel.id,
       config.readyTimeoutMilliseconds,
     );
-    sourceStream = connection.receiver.subscribe(config.craigBotId, { end: {
-      behavior: EndBehaviorType.Manual,
-    } });
-    sourceStream.on("error", () => {});
     publishObserverSubscribed(config, authenticatedBotId);
     const campaignProof = await capturePlannedConversationVoice({
       authenticatedBotId,
