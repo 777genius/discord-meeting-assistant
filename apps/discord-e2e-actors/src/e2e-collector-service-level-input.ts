@@ -101,7 +101,12 @@ export function serviceLevelSourcesFromLiveProof(
   return { discordPlaybackLinkProof, participantLifecycleReceipts: [], schemaVersion: 1 };
 }
 
-function assertSafeProofFile(status: Awaited<ReturnType<typeof lstat>>): void {
+function assertSafeProofFile(status: {
+  readonly mode: number;
+  readonly uid: number;
+  isFile(): boolean;
+  isSymbolicLink(): boolean;
+}): void {
   if (status.isSymbolicLink() || !status.isFile() || (status.mode & 0o777) !== 0o600) {
     throw new Error("Live Discord playback link proof must be a regular owned mode-0600 file");
   }

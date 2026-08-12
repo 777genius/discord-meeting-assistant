@@ -34,10 +34,10 @@ describe("collector Live Discord playback link proof input", () => {
     const result = serviceLevelSourcesFromLiveProof(proof(), serviceLevelsProof(), {
       playbackOrigin: "https://recordings.example.test",
       recordingId: "meeting-1",
-      runId: "run-1",
+      runId: "run-overlap-1",
     });
 
-    expect(result.discordPlaybackLinkProof.firstSeenPollCompletedAt.epochMilliseconds).toBe(9_505);
+    expect(result.discordPlaybackLinkProof.firstSeenPollCompletedAt.epochMilliseconds).toBe(9_500);
     expect(result.participantLifecycleReceipts).toEqual([]);
   });
 
@@ -61,7 +61,7 @@ describe("collector Live Discord playback link proof input", () => {
     expect(() => serviceLevelSourcesFromLiveProof(proof(), serviceLevels, {
       playbackOrigin: "https://recordings.example.test",
       recordingId: "meeting-1",
-      runId: "run-1",
+      runId: "run-overlap-1",
     })).toThrow("end timestamp does not match");
   });
 });
@@ -74,11 +74,16 @@ function proof() {
     throw new Error("recording link measurement required");
   }
   const source = measurement.end.source;
+  const container = source.container.kind === "channel-message"
+    ? source.container
+    : {
+        id: source.container.threadId,
+        kind: "thread" as const,
+        name: "Meeting results",
+        parentId: source.container.parentChannelId,
+      };
   return {
-    container: {
-      id: source.container.threadId!, kind: "thread" as const,
-      name: "Meeting results", parentId: source.container.parentChannelId,
-    },
+    container,
     firstSeenPollCompletedAt: source.firstSeenPollCompletedAt,
     firstSeenPollStartedAt: source.firstSeenPollStartedAt,
     link: {
@@ -87,7 +92,7 @@ function proof() {
       pathname: source.pathname,
     },
     messageId: source.messageId,
-    observerArmedAt: { epochMilliseconds: 9_300, monotonicMilliseconds: 49_300 },
+    observerArmedAt: { epochMilliseconds: 9_300, monotonicMilliseconds: 19_300 },
     pollIntervalMs: 100,
     projectionMarker: source.projectionMarker,
     recordingId: source.recordingId,
