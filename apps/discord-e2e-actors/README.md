@@ -106,9 +106,12 @@ cannot widen the retained audio window.
 
 For an ordered campaign, `DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON`
 may contain up to 15 additional capture objects. Greeting and farewell objects
-contain `attemptId`, `outputPath`, `purpose`, and literal `turnId`. An
-`addressed-answer` object contains `outputPath`, `purpose`, and an absolute fresh
-`playbackHandshakeRoot`. The observer
+contain `attemptId`, `expectedDuration`, `outputPath`, `purpose`, and literal
+`turnId`. An `addressed-answer` object contains `expectedDuration`, `outputPath`,
+`purpose`, and an absolute fresh `playbackHandshakeRoot`. Every
+`expectedDuration` declares integer `minimumMilliseconds` and
+`maximumMilliseconds`; the minimum cannot exceed the maximum, and the configured
+capture timeout and PCM byte ceiling must cover the declared range. The observer
 validates every create-only output and correlation before
 joining, keeps one voice connection for the full sequence, and waits for the
 configured source to remain silent for 300 milliseconds between captures. That
@@ -142,6 +145,18 @@ six captures. Other meeting lifecycle events remain in retained evidence but do
 not shift campaign positions; an extra event bound to a campaign capture still
 fails the exact-six gate.
 For v7/v8, the configured source bot must be the same pinned Botik identity.
+
+The strict six-capture order is: unknown-observer greeting, named Russian
+greeting, named English greeting, Speaker D greeting, addressed answer, then
+prepared farewell. The primary capture uses the top-level expected-duration
+settings; each of the five additional objects must carry its own
+`expectedDuration` range. Missing, extra, or reordered roles fail before login.
+
+The lifecycle campaign is not runnable or qualifying until a test-only
+coordinator provides deterministic readiness barriers for every actor and
+playback transition. Manual sleeps, including the historical ten-second Speaker
+B delay, are not acceptance evidence. Do not attempt this campaign against a
+production deployment or represent manual coordination as a real-provider gate.
 
 Generate the Russian fixtures with embedded English technical terms before the
 first external run. The command uses macOS `say` (voice `Milena` by default),
@@ -264,7 +279,7 @@ speaker ID and the JSON array of those six files:
 
 ```sh
 DISCORD_E2E_BOTIK_SPEAKER_ID=1534231284467896512 \
-DISCORD_E2E_CONVERSATION_VOICE_INPUTS='["/absolute/evidence/greeting-observer.json","/absolute/evidence/greeting-ru.json","/absolute/evidence/greeting-en.json","/absolute/evidence/greeting-speaker-d.json","/absolute/evidence/farewell.json","/absolute/evidence/addressed-answer.json"]' \
+DISCORD_E2E_CONVERSATION_VOICE_INPUTS='["/absolute/evidence/greeting-observer.json","/absolute/evidence/greeting-ru.json","/absolute/evidence/greeting-en.json","/absolute/evidence/greeting-speaker-d.json","/absolute/evidence/addressed-answer.json","/absolute/evidence/farewell.json"]' \
 DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_INPUT=/absolute/evidence/speaker-d.playback.json \
 DISCORD_E2E_EVIDENCE_OUTPUT=/absolute/evidence/reconnect.evidence.v8.json \
 DISCORD_E2E_SECRET_DIRECTORY=/run/secrets/discord-e2e \

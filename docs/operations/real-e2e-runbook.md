@@ -179,9 +179,6 @@ correlated structured event.
 The committed fixture manifest pins Speaker C (`1533867700575670282`) as the
 observer, the private guild, and the voice channel. Set the observer account to
 `speaker-c`; a capture set from any other consistent environment still fails.
-Set `DISCORD_E2E_SPEAKER_B_CONNECT_DELAY_MS=10000` for this campaign so the same
-observer can finish the Russian greeting capture and reconnect before Speaker B
-causes the English greeting. Leave it at the default `0` for ordinary runs.
 The first greeting may occur before Craig exposes its random recording ID. In
 that case omit `DISCORD_E2E_CONVERSATION_VOICE_RECORDING_ID`; the raw capture
 retains `null`, and the collector binds it exactly once to the explicitly
@@ -197,6 +194,14 @@ exactly one playback. The readiness
 timeout also covers a Botik already present in voice but not yet speaking; the
 short capture window starts with the first audio packet.
 
+🚨 This lifecycle campaign is not runnable or qualifying until a test-only
+coordinator supplies deterministic readiness barriers for actor joins,
+reconnects, observer capture readiness, supplemental playback, and the
+addressed-answer handshake. Manual sleeps or operator timing are not acceptance
+evidence. Do not run this unfinished campaign against production or present it
+as a real-provider qualification. This runbook intentionally documents no
+coordinator command until one exists in the repository.
+
 To retain the ordered capture set with one observer connection, pass the
 remaining capture records through
 `DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON`. The record shape and
@@ -206,40 +211,39 @@ the addressed answer, and the farewell. A non-empty additional capture array is
 strict campaign mode: the CLI rejects a missing, extra, reordered, or misbound
 role before Discord login and prints the validated non-secret JSON capture plan
 before joining voice. Retain that plan beside the campaign evidence.
+The exact six positions are unknown-observer greeting, named Russian greeting,
+named English greeting, Speaker D greeting, addressed answer, and prepared
+farewell. The primary capture uses
+`DISCORD_E2E_CONVERSATION_VOICE_EXPECTED_DURATION_MS` plus its top-level
+tolerance. Every additional capture object must include
+`expectedDuration.minimumMilliseconds` and
+`expectedDuration.maximumMilliseconds`; the minimum must not exceed the maximum,
+and the capture timeout and PCM byte ceiling must cover every declared range.
 The verifier preserves the lifecycle log's source order but filters it to events
 that bind by purpose and turn identity to these six captures before positional
 correlation. Unrelated meeting lifecycle events may remain in the evidence and
 do not consume a campaign position; duplicate or extra events bound to a campaign
 capture fail the exact-six lifecycle gate.
 
-Use a literal `turnId` when the lifecycle correlation is known before startup.
-For the addressed-answer capture, where the admitted live turn ID is produced
-during the call, use an absolute `turnIdFile` instead. The observer first proves
-that path is absent, joins voice, completes the four greeting captures, and
-then waits for the file while staying connected. Build the actor package before
-the campaign. After the live-turn admission log yields the exact ID, publish it
-with the already-built create-only repository helper:
-
-```sh
-pnpm --filter @discord-meeting/discord-e2e-actors \
-  publish:conversation-turn-id -- /absolute/evidence/addressed-answer.turn-id \
-  human-question-17
-```
-
-The helper fsyncs and closes a same-directory `0600` temporary file, hard-links
-the final name without replacement, and removes the temporary name. Do not
-pre-create, overwrite, symlink, or edit the final file in place. While waiting,
-the observer drains silent Craig packets; any audible packet before the observer
-confirms correlation publication aborts the campaign instead of being buffered
-into the next capture.
+Use a literal `turnId` and `attemptId` for greeting and farewell captures. The
+addressed-answer capture instead uses an absolute fresh
+`playbackHandshakeRoot`. Meeting Platform creates an intent containing the exact
+run, meeting, admitted turn, and playback-attempt IDs. The already-subscribed
+observer rejects stale or mismatched intent, creates the matching ready receipt,
+and only then may answer playback begin. Any earlier audible packet aborts the
+campaign. Mount one host test-evidence directory into Meeting Platform at
+`/var/lib/discord-meeting/e2e-playback-readiness`, expose the same host directory
+to the observer, and never reuse a per-run subdirectory. Meeting Platform
+requires all `CONVERSATION_E2E_PLAYBACK_READINESS_*` settings together and
+rejects them unless `E2E_TEST_ONLY_LABEL=true`.
 Do not place the literal farewell capture before the addressed-answer capture.
 The fixture produces Botik's answer before the group farewell, and the audible
-pre-correlation guard intentionally fails if answer audio arrives before its
-runtime turn ID has been accepted; reversing the captures cannot recover a
+pre-readiness guard intentionally fails if answer audio arrives before the
+matching receipt is accepted; reversing the captures cannot recover a
 trustworthy correlation afterward.
 The bounded wait uses
 `DISCORD_E2E_CONVERSATION_VOICE_READY_TIMEOUT_MS`; an invalid, stale, oversized,
-or late source aborts the campaign rather than guessing a correlation.
+or late handshake aborts the campaign rather than guessing a correlation.
 
 Reconnect one already-greeted official actor before the meeting ends. Do not
 induce another first join. After finalization, pass all six observer files and
@@ -286,8 +290,9 @@ For the retained campaign only, add the test-only `play:supplemental` CLI as a
 separate Speaker D input. Its single pinned Ogg Opus fixture must first ask Botik
 one synthetic question and, later in the same file, make one explicit group
 farewell, with a qualified silent gap between those turns for Botik's answer.
-Start it only after Speakers A/B and the required observers are ready; use the
-same campaign run ID and bounded pre/post holds for coordination. Speaker D and
+The future test-only coordinator must start it only after Speakers A/B and the
+required observer barriers are ready, using the same campaign run ID and bounded
+pre/post holds only as fixture behavior, not as synchronization. Speaker D and
 Botik are supplemental transcript evidence.
 They must not be added to the Speaker A/B human WER/CER corpus or used to satisfy
 the required A/B overlap.
