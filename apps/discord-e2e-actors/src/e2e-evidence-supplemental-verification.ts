@@ -227,6 +227,7 @@ function verifyFarewellTiming(
     );
   }
   const requiredTerms = manifest.farewellLocaleTerms?.[farewellEvent.locale] ?? [];
+  const expectedPcmSha256 = manifest.farewellCapturePcmSha256?.[farewellEvent.locale];
   const duplicateTerms = manifest.farewellLocaleTerms === undefined
     ? []
     : [...manifest.farewellLocaleTerms.en, ...manifest.farewellLocaleTerms.ru];
@@ -234,6 +235,17 @@ function verifyFarewellTiming(
     fail(
       "SUPPLEMENTAL_FAREWELL_SEMANTICS_EXPECTATION_MISSING",
       `v8 manifest must pin recognizable ${farewellEvent.locale} Botik farewell terms`,
+    );
+  }
+  if (expectedPcmSha256 === undefined) {
+    fail(
+      "SUPPLEMENTAL_FAREWELL_PCM_EXPECTATION_MISSING",
+      `v8 manifest must pin the ${farewellEvent.locale} farewell capture PCM digest`,
+    );
+  } else if (farewellCaptures[0]!.capture.pcm.sha256 !== expectedPcmSha256) {
+    fail(
+      "SUPPLEMENTAL_FAREWELL_PCM_MISMATCH",
+      "audible farewell PCM does not match the pinned prepared cue capture",
     );
   }
   const expectedTurnIds = new Set(expectation.humanFarewellTurnIds);

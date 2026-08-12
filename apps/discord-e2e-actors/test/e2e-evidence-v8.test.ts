@@ -183,11 +183,17 @@ describe("retained conversation V8 boundary policies", () => {
 });
 
 describe("retained conversation V8 farewell response semantics", () => {
-  it("rejects arbitrary Botik audio and text inside the farewell capture", () => {
+  it("rejects arbitrary Botik audio even when the transcript remains semantic", () => {
     const evidence = retainedV8Evidence();
-    botikFarewell(evidence).text = "Звук без прощания";
+    const farewellCapture = evidence.conversation.voice.find(
+      ({ correlation }) => correlation.purpose === "farewell",
+    );
+    if (farewellCapture === undefined) {
+      throw new Error("farewell capture fixture is missing");
+    }
+    farewellCapture.capture.pcm.sha256 = "b".repeat(64);
 
-    expect(failureCodes(evidence)).toContain("SUPPLEMENTAL_FAREWELL_SEMANTICS_MISSING");
+    expect(failureCodes(evidence)).toContain("SUPPLEMENTAL_FAREWELL_PCM_MISMATCH");
   });
 
   it("rejects a second farewell-shaped Botik turn outside the farewell capture", () => {
@@ -251,6 +257,18 @@ describe("retained conversation V8 farewell response semantics", () => {
     const farewellTurn = botikFarewell(evidence);
     farewellTurn.startMs = 6_000;
     farewellTurn.endMs = 6_400;
+
+    expect(failureCodes(evidence)).toContain("SUPPLEMENTAL_FAREWELL_SEMANTICS_MISSING");
+  });
+
+  it.each([
+    ["starts before", 6_500, 6_900],
+    ["ends after", 6_700, 7_300],
+  ] as const)("rejects a farewell turn that %s the capture", (_label, startMs, endMs) => {
+    const evidence = retainedV8Evidence();
+    const farewellTurn = botikFarewell(evidence);
+    farewellTurn.startMs = startMs;
+    farewellTurn.endMs = endMs;
 
     expect(failureCodes(evidence)).toContain("SUPPLEMENTAL_FAREWELL_SEMANTICS_MISSING");
   });

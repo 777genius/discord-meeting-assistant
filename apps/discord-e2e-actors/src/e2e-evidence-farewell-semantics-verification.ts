@@ -23,7 +23,7 @@ export function verifyBotikFarewellTranscript(
     ({ speakerId }) => speakerId === evidence.conversation.botSpeakerId,
   );
   const captureTurns = botikTurns.filter((turn) =>
-    turn.startMs < expectation.endMs && expectation.startMs < turn.endMs
+    turn.startMs >= expectation.startMs && turn.endMs <= expectation.endMs
   );
   const semanticTurns = turnsContainingAnyTerms(botikTurns, expectation.duplicateTerms);
   const capturedFarewell = captureTurns[0];

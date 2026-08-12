@@ -21,6 +21,10 @@
     "en": ["bye", "goodbye", "see you"],
     "ru": ["пока", "до встречи", "до свидания"]
   },
+  "farewellCapturePcmSha256": {
+    "en": "d17222aeadbd1ecf51f7d41e98f8c713792a47caa241df4309315d342f973eaf",
+    "ru": "a89c50a5179f87aa9127402ec0d7c6494cb50f68fdaa868068f82243a162227f"
+  },
   "supplementalVoiceExpectation": {
     "answerNonce": "кобальт",
     "applicationId": "1533873978417086474",
