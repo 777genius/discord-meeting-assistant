@@ -181,6 +181,53 @@ describe("hosted campaign process adapter", () => {
     await processAdapter.stopChild(handle);
   });
 
+  it("drains queued process events before teardown completes", async () => {
+    const events = [1, 2, 3].map((ordinal) => serializeHostedCampaignProcessEvent({
+      campaignId: "campaign-1",
+      event: {
+        action: { kind: "capture-retained", ordinal },
+        evidence: { ordinal, outputPath: `/tmp/capture-${String(ordinal)}.json`, retained: true },
+      },
+      kind: "hosted-campaign-barrier", runId: "run-3", schemaVersion: 1,
+    })).join("");
+    const { processAdapter } = await adapter(
+      `process.stdout.write(${JSON.stringify(events)}); setInterval(() => {}, 1000);`,
+    );
+    const executable = spec({
+      DISCORD_E2E_HOSTED_RELEASE_GATE_CAMPAIGN_ID: "campaign-1",
+      DISCORD_E2E_RUN_ID: "run-3",
+    });
+    const handle = await processAdapter.startChild(executable, bounded());
+    await expect(processAdapter.awaitBarrier({ kind: "capture-retained", ordinal: 3 }, bounded()))
+      .resolves.toEqual({ ordinal: 3, outputPath: "/tmp/capture-3.json", retained: true });
+    await processAdapter.stopChild(handle);
+    for (const ordinal of [1, 2, 3] as const) {
+      await expect(processAdapter.awaitBarrier({ kind: "capture-retained", ordinal }, bounded()))
+        .resolves.toEqual({ ordinal, outputPath: `/tmp/capture-${String(ordinal)}.json`, retained: true });
+    }
+  });
+
+  it("terminates the entire detached process group before returning", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hosted-process-tree-"));
+    const markerPath = join(root, "grandchild-term.txt");
+    const source = `
+      const { spawn } = require("node:child_process");
+      const child = spawn(process.execPath, ["-e", ${JSON.stringify(
+        'require("node:fs").writeFileSync(process.argv[1], "ready"); process.on("SIGTERM", () => { require("node:fs").writeFileSync(process.argv[1], "term"); process.exit(0); }); setInterval(() => {}, 1000);',
+      )}, ${JSON.stringify(markerPath)}], { stdio: "ignore" });
+      process.on("SIGTERM", () => {});
+      setInterval(() => {}, 1000);
+    `;
+    const { processAdapter } = await adapter(source);
+    const handle = await processAdapter.startChild(spec(), bounded());
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      try {if (await readFile(markerPath, "utf8") === "ready") {break;}} catch {}
+      await new Promise((resolve) => {setTimeout(resolve, 10);});
+    }
+    await processAdapter.stopChild(handle);
+    await expect(readFile(markerPath, "utf8")).resolves.toBe("term");
+  });
+
   it("fails closed on malformed, mismatched, or duplicate prefixed events", async () => {
     const valid = serializeHostedCampaignProcessEvent({
       campaignId: "campaign-1",

@@ -106,6 +106,8 @@ interface ChildState {
   readonly stdoutChunks: Buffer[];
   readonly eventLines: string[];
   readonly publishedEvents: Set<string>;
+  eventIngestion: Promise<void>;
+  stopping: boolean;
   stdoutRemainder: string;
   failure?: Error;
   stderr: number;
@@ -256,15 +258,15 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
     assertPinnedTarget(spec);
     const environment = validateEnvironment(spec.environment);
     const child = spawn(process.execPath, [join(this.#options.distRoot, ENTRYPOINTS[spec.entrypoint]), ...argumentsFor(spec)], {
-      env: environment, shell: false, stdio: ["ignore", "pipe", "pipe"],
+      detached: process.platform !== "win32", env: environment, shell: false, stdio: ["ignore", "pipe", "pipe"],
     });
     let reportExit!: (exit: ChildExit) => void;
     const exited = new Promise<ChildExit>((resolve) => { reportExit = resolve; });
     let reportClosed!: () => void;
     const closed = new Promise<void>((resolve) => { reportClosed = resolve; });
     const state: ChildState = {
-      child, childId: spec.childId, closed, eventLines: [], exited,
-      publishedEvents: new Set(), stderr: 0, stdout: 0, stdoutChunks: [], stdoutRemainder: "",
+      child, childId: spec.childId, closed, eventIngestion: Promise.resolve(), eventLines: [], exited,
+      publishedEvents: new Set(), stderr: 0, stdout: 0, stdoutChunks: [], stdoutRemainder: "", stopping: false,
     };
     this.#children.set(spec.childId, state);
     const limit = this.#options.outputLimitBytes ?? 64 * 1024;
@@ -288,12 +290,17 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
       }
     });
     child.once("exit", (code, signal) => {
-      if (spec.completion === undefined) {
+      if (spec.completion === undefined && !state.stopping) {
         state.failure ??= new Error(`Hosted campaign child ${spec.childId} exited early (${String(code ?? signal)})`);
       }
       reportExit({ code, signal });
     });
-    child.once("close", reportClosed);
+    child.once("close", () => {
+      if (spec.completion === undefined && state.stdoutRemainder.startsWith(hostedCampaignProcessEventPrefix)) {
+        state.failure ??= new Error(`Hosted campaign child ${spec.childId} produced a truncated prefixed event`);
+      }
+      reportClosed();
+    });
     await new Promise<void>((resolve, reject) => {
       child.once("spawn", resolve);
       child.once("error", reject);
@@ -315,10 +322,10 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
       try {
         const expected = expectedHostedCampaignEventCorrelation(spec);
         state.eventLines.push(line);
-        void ingestHostedCampaignProcessEventLine({
+        state.eventIngestion = state.eventIngestion.then(() => ingestHostedCampaignProcessEventLine({
           campaignId: expected.campaignId, line, publishedEvents: state.publishedEvents,
           runId: expected.runId, store: this.#options.artifactStore,
-        })
+        }).then(() => undefined))
           .catch((error: unknown) => {
             state.failure = new Error(
               `Hosted campaign child ${spec.childId} produced invalid prefixed event`,
@@ -340,16 +347,19 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
     if (state === undefined) {
       return;
     }
+    const grace = this.#options.terminationGraceMilliseconds ?? 2_000;
+    state.stopping = true;
+    signalChildTree(state.child, "SIGTERM");
+    if (!await waitForChildTreeExit(state.child, grace)) {
+      signalChildTree(state.child, "SIGKILL");
+      if (!await waitForChildTreeExit(state.child, grace)) {
+        throw new Error(`Hosted campaign child ${handle.childId} process group survived SIGKILL`);
+      }
+    }
+    await state.closed;
+    await state.eventIngestion;
     this.#children.delete(handle.childId);
-    if (state.child.exitCode !== null || state.child.signalCode !== null) {
-      return;
-    }
-    state.child.kill("SIGTERM");
-    const exited = await waitForExit(state.child, this.#options.terminationGraceMilliseconds ?? 2_000);
-    if (!exited) {
-      state.child.kill("SIGKILL");
-      await waitForExit(state.child, this.#options.terminationGraceMilliseconds ?? 2_000);
-    }
+    if (state.failure !== undefined) {throw state.failure;}
   }
   #assertChildrenHealthy(): void {
     const childFailure = [...this.#children.values()].find(({ failure }) => failure !== undefined)?.failure;
@@ -448,22 +458,37 @@ function assertActive(bounded: HostedCampaignBoundedSignal): void {
     throw new Error("Hosted campaign deadline expired");
   }
 }
-async function waitForExit(child: ChildProcess, milliseconds: number): Promise<boolean> {
-  if (child.exitCode !== null || child.signalCode !== null) {
-    return true;
+function signalChildTree(child: ChildProcess, signal: NodeJS.Signals): void {
+  if (child.pid === undefined || !isChildTreeAlive(child)) {return;}
+  try {
+    if (process.platform === "win32") {
+      child.kill(signal);
+    } else {
+      process.kill(-child.pid, signal);
+    }
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") {throw error;}
   }
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (value: boolean): void => {
-      if (!settled) {
-        settled = true;
-        resolve(value);
-      }
-    };
-    const timer = setTimeout(() => { finish(false); }, milliseconds);
-    child.once("exit", () => {
-      clearTimeout(timer);
-      finish(true);
-    });
-  });
+}
+
+async function waitForChildTreeExit(child: ChildProcess, milliseconds: number): Promise<boolean> {
+  if (!isChildTreeAlive(child)) {return true;}
+  const deadline = Date.now() + milliseconds;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => {setTimeout(resolve, Math.min(10, Math.max(1, deadline - Date.now())));});
+    if (!isChildTreeAlive(child)) {return true;}
+  }
+  return !isChildTreeAlive(child);
+}
+
+function isChildTreeAlive(child: ChildProcess): boolean {
+  if (child.pid === undefined) {return false;}
+  try {
+    process.kill(process.platform === "win32" ? child.pid : -child.pid, 0);
+    return true;
+  } catch (error: unknown) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ESRCH" || (code === "EPERM" && process.platform === "darwin")) {return false;}
+    throw error;
+  }
 }
