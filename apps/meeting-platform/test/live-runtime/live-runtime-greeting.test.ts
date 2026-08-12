@@ -84,13 +84,13 @@ it("routes initial joins and reconnects through one meeting-local greeting", asy
   });
   expect(coordinator.proactiveCalls[0]).toMatchObject({
     locale: "ru",
-    prompt: "Привет, Саша!",
-    speakerId: "1533228054724346087",
+    prompt: "Привет!",
+    speakerId: "3533228054724346087",
   });
   expect(coordinator.proactiveCalls[1]).toMatchObject({
     locale: "ru",
-    prompt: "Привет!",
-    speakerId: "3533228054724346087",
+    prompt: "Привет, Саша!",
+    speakerId: "1533228054724346087",
   });
 
   await runtime.acceptLifecycle({
