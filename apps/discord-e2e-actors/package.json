@@ -11,6 +11,7 @@
     "fixtures:generate": "./scripts/generate-ru-en-fixtures.sh",
     "observe:conversation": "pnpm run build && node dist/observe-conversation-voice.js",
     "observe:live": "pnpm run build && node dist/observe-live-discord.js",
+    "observe:playback-link": "pnpm run build && node dist/observe-live-discord-playback-link.js",
     "play:supplemental": "pnpm run build && node dist/play-supplemental-voice.js",
     "run:hosted-campaign": "pnpm run build && node dist/run-hosted-campaign.js",
     "start": "pnpm run build && node dist/main.js",
