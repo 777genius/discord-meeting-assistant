@@ -64,6 +64,13 @@ export const recordingReadyReceiptV1Schema = z.object({
 
 export type RecordingReadyReceiptV1 = z.infer<typeof recordingReadyReceiptV1Schema>;
 
+export class RecordingReadyNotObservedError extends Error {
+  public constructor() {
+    super("Expected exactly one authoritative completion receipt, found 0");
+    this.name = "RecordingReadyNotObservedError";
+  }
+}
+
 export function deriveRecordingReadyReceipt(input: {
   readonly actorRun: unknown;
   readonly completionReceipts: readonly unknown[];
@@ -81,6 +88,9 @@ export function deriveRecordingReadyReceipt(input: {
     )
     .filter((receipt) => actorRunFitsWindow(actorRun.events, receipt));
   if (candidates.length !== 1) {
+    if (candidates.length === 0) {
+      throw new RecordingReadyNotObservedError();
+    }
     throw new Error(`Expected exactly one authoritative completion receipt, found ${candidates.length}`);
   }
   const completion = candidates[0]!;

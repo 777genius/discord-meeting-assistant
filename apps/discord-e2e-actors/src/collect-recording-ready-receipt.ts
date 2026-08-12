@@ -4,7 +4,7 @@ import { dirname, isAbsolute } from "node:path";
 import { z } from "zod";
 
 import { deploymentRevisionExpectationSchema } from "./e2e-evidence.js";
-import { deriveRecordingReadyReceipt } from "./recording-ready-receipt.js";
+import { waitForStableRecordingReadyReceipt } from "./recording-ready-poller.js";
 import { SshDeploymentEvidenceProbe } from "./ssh-deployment-probe.js";
 import { EvidenceProbeInterruptedError } from "./ssh-deployment-probe-commands.js";
 
@@ -18,6 +18,8 @@ const environmentSchema = z.object({
   DISCORD_E2E_EXPECTED_SUBSCRIPTION_RUNTIME_SOURCE_REVISION: sourceRevision,
   DISCORD_E2E_MUTATION_TARGET: z.literal("test-only"),
   DISCORD_E2E_READY_RECEIPT_OUTPUT: absolutePath,
+  DISCORD_E2E_READY_RECEIPT_POLL_INTERVAL_MS: z.coerce.number().int().positive().max(60_000),
+  DISCORD_E2E_READY_RECEIPT_TIMEOUT_MS: z.coerce.number().int().positive().max(900_000),
   DISCORD_E2E_REMOTE_ATTESTATION_FILE: z.string().regex(
     /^\/tmp\/discord-e2e-attestations\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.json$/u,
   ),
@@ -46,22 +48,31 @@ async function main(): Promise<void> {
     projectName: config.DISCORD_E2E_REMOTE_PROJECT,
     sourceRoot: config.DISCORD_E2E_REMOTE_SOURCE_ROOT,
   });
-  const [completionReceipts, provenance] = await Promise.all([
-    deployment.collectRecordingCompletionReceipts(),
-    deployment.collectProvenance(),
-  ]);
-  const receipt = deriveRecordingReadyReceipt({
+  const provenance = await deployment.collectProvenance();
+  const controller = new AbortController();
+  const stop = (): void => controller.abort(new Error("Recording-ready collection interrupted"));
+  process.once("SIGINT", stop);
+  process.once("SIGTERM", stop);
+  const receipt = await waitForStableRecordingReadyReceipt({
     actorRun,
-    completionReceipts,
+    clock: { nowEpochMs: () => Date.now() },
+    delay: { wait: waitWithAbort },
     expectedRevisions: deploymentRevisionExpectationSchema.parse({
       craig: config.DISCORD_E2E_EXPECTED_CRAIG_SOURCE_REVISION,
       meetingPlatform: config.DISCORD_E2E_EXPECTED_MEETING_PLATFORM_SOURCE_REVISION,
       pipecat: config.DISCORD_E2E_EXPECTED_PIPECAT_SOURCE_REVISION,
       subscriptionRuntime: config.DISCORD_E2E_EXPECTED_SUBSCRIPTION_RUNTIME_SOURCE_REVISION,
     }),
-    observedAt: new Date().toISOString(),
+    policy: {
+      pollIntervalMs: config.DISCORD_E2E_READY_RECEIPT_POLL_INTERVAL_MS,
+      timeoutMs: config.DISCORD_E2E_READY_RECEIPT_TIMEOUT_MS,
+    },
+    probe: deployment,
     provenance,
+    signal: controller.signal,
   });
+  process.off("SIGINT", stop);
+  process.off("SIGTERM", stop);
   await writeCreateOnlyJson(config.DISCORD_E2E_READY_RECEIPT_OUTPUT, receipt);
   process.stdout.write(`${JSON.stringify({
     kind: "recording-ready-completion",
@@ -70,6 +81,27 @@ async function main(): Promise<void> {
     runId: receipt.runId,
     status: "ready",
   })}\n`);
+}
+
+async function waitWithAbort(delayMs: number, signal: AbortSignal): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const finish = (): void => {
+      signal.removeEventListener("abort", abort);
+      resolve();
+    };
+    const timeout = setTimeout(finish, delayMs);
+    const abort = (): void => {
+      clearTimeout(timeout);
+      signal.removeEventListener("abort", abort);
+      reject(signal.reason);
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    void Promise.resolve().then(() => {
+      if (signal.aborted) {
+        abort();
+      }
+    });
+  });
 }
 
 async function assertOutputMissing(path: string): Promise<void> {
