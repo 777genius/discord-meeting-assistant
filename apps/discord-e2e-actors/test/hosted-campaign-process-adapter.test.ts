@@ -186,12 +186,11 @@ describe("hosted campaign process adapter", () => {
       `setTimeout(() => process.stdout.write(${JSON.stringify(event.slice(17))}), 5);` +
       `setInterval(() => {}, 1000);`;
     const { processAdapter } = await adapter(source);
-    const executable = spec({
+    const executable = { ...spec({
       DISCORD_E2E_HOSTED_RELEASE_GATE_CAMPAIGN_ID: "campaign-1",
       DISCORD_E2E_RUN_ID: "run-3",
-    });
-    executable.produces = [{ action: { kind: "capture-retained", ordinal: 1 },
-      ordinal: 3, outputPath: "/evidence/capture-1.json", runId: "run-3" }];
+    }), produces: [{ action: { kind: "capture-retained" as const, ordinal: 1 },
+      ordinal: 3, outputPath: "/evidence/capture-1.json", runId: "run-3" }] };
     const handle = await processAdapter.startChild(executable, bounded());
     await expect(processAdapter.awaitBarrier({ kind: "capture-retained", ordinal: 1 }, bounded()))
       .resolves.toEqual({ ordinal: 1, outputPath, retained: true });
@@ -210,14 +209,13 @@ describe("hosted campaign process adapter", () => {
     const { processAdapter } = await adapter(
       `process.stdout.write(${JSON.stringify(events)}); setInterval(() => {}, 1000);`,
     );
-    const executable = spec({
+    const executable = { ...spec({
       DISCORD_E2E_HOSTED_RELEASE_GATE_CAMPAIGN_ID: "campaign-1",
       DISCORD_E2E_RUN_ID: "run-3",
-    });
-    executable.produces = [1, 2, 3].map((ordinal) => ({
+    }), produces: [1, 2, 3].map((ordinal) => ({
       action: { kind: "capture-retained" as const, ordinal }, ordinal: 3,
       outputPath: `/evidence/capture-${String(ordinal)}.json`, runId: "run-3",
-    }));
+    })) };
     const handle = await processAdapter.startChild(executable, bounded());
     await expect(processAdapter.awaitBarrier({ kind: "capture-retained", ordinal: 3 }, bounded()))
       .resolves.toEqual({ ordinal: 3, outputPath: "/tmp/capture-3.json", retained: true });
