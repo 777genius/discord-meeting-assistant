@@ -3,6 +3,10 @@ import type {
   LiveParticipantGreetingProfile,
   LiveRuntimeLogger,
 } from "./contracts.js";
+import {
+  ParticipantGreetingQueue,
+  type ParticipantGreetingPriority,
+} from "./participant-greeting-queue.js";
 
 const exactGreetingSystemPrompt = [
   "Speak exactly the greeting provided by the user.",
@@ -40,7 +44,7 @@ export class ParticipantGreetingBridge {
   private closed = false;
   private drainPromise: Promise<void> | null = null;
   private readonly greetedParticipantIds = new Set<string>();
-  private readonly pendingParticipantIds = new Set<string>();
+  private readonly pendingGreetings = new ParticipantGreetingQueue();
   private readonly presentParticipantIds = new Set<string>();
   private readonly queuedAtMillisecondsByParticipantId = new Map<string, number>();
   private readonly retryCounts = new Map<string, number>();
@@ -51,8 +55,19 @@ export class ParticipantGreetingBridge {
 
   public participantsPresent(participantIds: readonly string[]): void {
     for (const participantId of participantIds) {
-      this.participantJoined(participantId);
+      if (this.closed) {
+        return;
+      }
+      this.presentParticipantIds.add(participantId);
+      const greeting = this.greeting(participantId);
+      if (greeting !== undefined && !this.greetedParticipantIds.has(participantId)) {
+        this.enqueue(
+          participantId,
+          this.profile(participantId) === undefined ? "high" : "initial",
+        );
+      }
     }
+    this.tryAdvance();
   }
 
   /** Suppresses replay when an active meeting is restored after a process restart. */
@@ -72,31 +87,30 @@ export class ParticipantGreetingBridge {
       this.greeting(participantId) !== undefined &&
       !this.greetedParticipantIds.has(participantId)
     ) {
-      if (!this.pendingParticipantIds.has(participantId)) {
-        this.queuedAtMillisecondsByParticipantId.set(
-          participantId,
-          this.nowMilliseconds(),
-        );
-      }
-      this.pendingParticipantIds.add(participantId);
+      this.enqueue(participantId, "high");
     }
-    this.advance();
+    this.tryAdvance();
   }
 
   public participantLeft(participantId: string): void {
     this.presentParticipantIds.delete(participantId);
-    this.pendingParticipantIds.delete(participantId);
+    this.pendingGreetings.delete(participantId);
     this.queuedAtMillisecondsByParticipantId.delete(participantId);
   }
 
   public advance(): void {
+    this.pendingGreetings.releaseDeferredRetries();
+    this.tryAdvance();
+  }
+
+  private tryAdvance(): void {
     const greetings = this.dependencies.configuration.greetings;
     if (
       greetings === undefined ||
       this.closed ||
       this.dependencies.isMeetingFinishing() ||
       this.drainPromise !== null ||
-      this.pendingParticipantIds.size === 0 ||
+      !this.pendingGreetings.hasReady() ||
       !greetings.isPlaybackReady(this.dependencies.meetingId)
     ) {
       return;
@@ -120,7 +134,7 @@ export class ParticipantGreetingBridge {
 
   public close(): void {
     this.closed = true;
-    this.pendingParticipantIds.clear();
+    this.pendingGreetings.clear();
     this.presentParticipantIds.clear();
     this.queuedAtMillisecondsByParticipantId.clear();
   }
@@ -139,11 +153,11 @@ export class ParticipantGreetingBridge {
       if (!greetings.isPlaybackReady(this.dependencies.meetingId)) {
         return;
       }
-      const participantId = this.pendingParticipantIds.values().next().value;
-      if (participantId === undefined) {
+      const pending = this.pendingGreetings.takeNext();
+      if (pending === undefined) {
         return;
       }
-      this.pendingParticipantIds.delete(participantId);
+      const { participantId } = pending;
       const greeting = this.greeting(participantId);
       if (
         greeting === undefined ||
@@ -160,7 +174,7 @@ export class ParticipantGreetingBridge {
         continue;
       }
       if (!greetings.isPlaybackReady(this.dependencies.meetingId)) {
-        this.pendingParticipantIds.add(participantId);
+        this.enqueue(participantId, pending.priority);
         return;
       }
 
@@ -176,8 +190,8 @@ export class ParticipantGreetingBridge {
           this.presentParticipantIds.has(participantId)
         ) {
           this.greetedParticipantIds.delete(participantId);
-          this.pendingParticipantIds.add(participantId);
-          continue;
+          this.pendingGreetings.deferRetry(participantId, pending.priority);
+          return;
         }
         this.dependencies.logger.warn("Participant greeting retries exhausted", {
           meetingId: this.dependencies.meetingId,
@@ -189,6 +203,19 @@ export class ParticipantGreetingBridge {
       this.retryCounts.delete(participantId);
       this.queuedAtMillisecondsByParticipantId.delete(participantId);
     }
+  }
+
+  private enqueue(
+    participantId: string,
+    priority: ParticipantGreetingPriority,
+  ): void {
+    if (!this.queuedAtMillisecondsByParticipantId.has(participantId)) {
+      this.queuedAtMillisecondsByParticipantId.set(
+        participantId,
+        this.nowMilliseconds(),
+      );
+    }
+    this.pendingGreetings.enqueue(participantId, priority);
   }
 
   private async speak(

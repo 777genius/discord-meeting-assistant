@@ -17,6 +17,8 @@ const russianParticipantId = "1533224474609057795";
 const englishParticipantId = "2533224474609057795";
 const unknownParticipantId = "3533224474609057795";
 const excludedParticipantId = "4533224474609057795";
+const secondUnknownParticipantId = "5533224474609057795";
+const secondKnownParticipantId = "6533224474609057795";
 
 class GreetingCoordinatorProbe {
   public readonly calls: Array<{
@@ -126,6 +128,11 @@ function fixture(
           greetingLocale: "ru",
           spokenName: "Саша",
         },
+        [secondKnownParticipantId]: {
+          displayName: "Maria Jones",
+          greetingLocale: "en",
+          spokenName: "Maria",
+        },
       },
     },
     locale: "auto",
@@ -181,16 +188,16 @@ describe("ParticipantGreetingBridge", () => {
       {
         interruptible: false,
         locale: "ru",
-        literalSpeech: "Привет, Саша!",
-        prompt: "Привет, Саша!",
-        speakerId: russianParticipantId,
+        literalSpeech: "Привет!",
+        prompt: "Привет!",
+        speakerId: unknownParticipantId,
       },
       {
         interruptible: false,
         locale: "ru",
-        literalSpeech: "Привет!",
-        prompt: "Привет!",
-        speakerId: unknownParticipantId,
+        literalSpeech: "Привет, Саша!",
+        prompt: "Привет, Саша!",
+        speakerId: russianParticipantId,
       },
       {
         interruptible: false,
@@ -204,6 +211,83 @@ describe("ParticipantGreetingBridge", () => {
       "Speak exactly the greeting provided",
     );
     expect(context.coordinator.idleCalls).toBe(6);
+  });
+
+  it("preserves FIFO order within initial and high-priority lanes", async () => {
+    const context = fixture(true);
+
+    context.bridge.participantsPresent([
+      russianParticipantId,
+      unknownParticipantId,
+      englishParticipantId,
+      secondUnknownParticipantId,
+    ]);
+    await context.bridge.settle();
+
+    expect(context.coordinator.calls.map(({ speakerId }) => speakerId)).toEqual([
+      unknownParticipantId,
+      secondUnknownParticipantId,
+      russianParticipantId,
+      englishParticipantId,
+    ]);
+  });
+
+  it("admits a live join before remaining initial greetings after current playback", async () => {
+    const context = fixture(true);
+    context.coordinator.onPlaybackSettlement = (turnId) => {
+      if (turnId === `participant-greeting:${russianParticipantId}`) {
+        context.bridge.participantJoined(englishParticipantId);
+      }
+    };
+
+    context.bridge.participantsPresent([
+      russianParticipantId,
+      secondKnownParticipantId,
+    ]);
+    await context.bridge.settle();
+
+    expect(context.coordinator.calls.map(({ speakerId }) => speakerId)).toEqual([
+      russianParticipantId,
+      englishParticipantId,
+      secondKnownParticipantId,
+    ]);
+  });
+
+  it("admits one initial greeting after three consecutive live high-priority joins", async () => {
+    const context = fixture(true);
+    const liveParticipantIds = [
+      "live-unknown-1",
+      "live-unknown-2",
+      "live-unknown-3",
+      "live-unknown-4",
+      "live-unknown-5",
+    ];
+    context.coordinator.onPlaybackSettlement = (turnId) => {
+      const completedLiveIndex = liveParticipantIds.findIndex(
+        (participantId) => turnId === `participant-greeting:${participantId}`,
+      );
+      if (turnId === `participant-greeting:${russianParticipantId}`) {
+        context.bridge.participantJoined(liveParticipantIds[0] ?? "");
+      } else if (completedLiveIndex >= 0) {
+        const nextParticipantId = liveParticipantIds[completedLiveIndex + 1];
+        if (nextParticipantId !== undefined) {
+          context.bridge.participantJoined(nextParticipantId);
+        }
+      }
+    };
+
+    context.bridge.participantsPresent([
+      russianParticipantId,
+      englishParticipantId,
+    ]);
+    await context.bridge.settle();
+
+    expect(context.coordinator.calls.map(({ speakerId }) => speakerId)).toEqual([
+      russianParticipantId,
+      ...liveParticipantIds.slice(0, 3),
+      englishParticipantId,
+      ...liveParticipantIds.slice(3),
+    ]);
   });
 
   it("logs only privacy-safe greeting completion metadata", async () => {
@@ -272,12 +356,22 @@ describe("ParticipantGreetingBridge", () => {
 
     expect(context.coordinator.calls).toHaveLength(1);
   });
+});
 
+describe("ParticipantGreetingBridge retry admission", () => {
   it("retries a provably unadmitted busy greeting without risking a duplicate", async () => {
     const context = fixture(true);
     context.coordinator.outcomes.push({ status: "busy" }, { status: "active" });
 
     context.bridge.participantJoined(russianParticipantId);
+    await context.bridge.settle();
+
+    expect(context.coordinator.calls).toHaveLength(1);
+    context.bridge.participantJoined(russianParticipantId);
+    await context.bridge.settle();
+    expect(context.coordinator.calls).toHaveLength(1);
+
+    context.bridge.advance();
     await context.bridge.settle();
 
     expect(context.coordinator.calls).toHaveLength(2);
@@ -296,6 +390,31 @@ describe("ParticipantGreetingBridge", () => {
     expect(context.coordinator.calls).toHaveLength(2);
   });
 
+  it("preserves an initial retry lane when a high-priority join waits for the tick", async () => {
+    const context = fixture(true);
+    context.coordinator.outcomes.push({ status: "busy" });
+
+    context.bridge.participantsPresent([
+      russianParticipantId,
+      englishParticipantId,
+    ]);
+    await context.bridge.settle();
+    context.setPlaybackReady(false);
+    context.bridge.participantJoined(unknownParticipantId);
+    await context.bridge.settle();
+
+    context.setPlaybackReady(true);
+    context.bridge.advance();
+    await context.bridge.settle();
+
+    expect(context.coordinator.calls.map(({ speakerId }) => speakerId)).toEqual([
+      russianParticipantId,
+      unknownParticipantId,
+      englishParticipantId,
+      russianParticipantId,
+    ]);
+  });
+
   it("retries a greeting only when the admitted turn produced no playback audio", async () => {
     const infoCalls: Array<Readonly<Record<string, unknown>> | undefined> = [];
     const context = fixture(true, "ru", {
@@ -305,6 +424,10 @@ describe("ParticipantGreetingBridge", () => {
     context.coordinator.playbackSettlements.push("unplayed", "played");
 
     context.bridge.participantJoined(russianParticipantId);
+    await context.bridge.settle();
+
+    expect(context.coordinator.calls).toHaveLength(1);
+    context.bridge.advance();
     await context.bridge.settle();
 
     expect(context.coordinator.calls.map(({ turnId }) => turnId)).toEqual([
@@ -335,9 +458,11 @@ describe("ParticipantGreetingBridge", () => {
 
     context.bridge.participantJoined(russianParticipantId);
     await context.bridge.settle();
+    await advanceAndSettle(context.bridge, 3);
     context.bridge.participantLeft(russianParticipantId);
     context.bridge.participantJoined(russianParticipantId);
     await context.bridge.settle();
+    await advanceAndSettle(context.bridge, 3);
 
     expect(context.coordinator.calls).toHaveLength(4);
     expect(infoCalls).toEqual([]);
@@ -359,6 +484,7 @@ describe("ParticipantGreetingBridge", () => {
 
     context.bridge.participantJoined(russianParticipantId);
     await context.bridge.settle();
+    await advanceAndSettle(context.bridge, 3);
 
     expect(context.coordinator.calls.map(({ speakerId }) => speakerId)).toEqual([
       russianParticipantId,
@@ -418,6 +544,7 @@ describe("ParticipantGreetingBridge retries and lifecycle", () => {
 
     bridge.participantJoined(russianParticipantId);
     await bridge.settle();
+    await advanceAndSettle(bridge, 3);
     bridge.participantLeft(russianParticipantId);
     bridge.participantJoined(russianParticipantId);
     await bridge.settle();
@@ -449,6 +576,54 @@ describe("ParticipantGreetingBridge retries and lifecycle", () => {
 
       expect(context.coordinator.calls).toHaveLength(1);
       expect(infoCalls).toEqual([]);
+    },
+  );
+
+  it("treats a thrown greeting failure as at-most-once", async () => {
+    const context = fixture(true);
+    context.coordinator.handleProactiveTurn = (input) => {
+      context.coordinator.calls.push(structuredClone(input));
+      return Promise.reject(new Error("synthetic runtime failure"));
+    };
+
+    context.bridge.participantJoined(russianParticipantId);
+    await context.bridge.settle();
+    context.bridge.participantLeft(russianParticipantId);
+    context.bridge.participantJoined(russianParticipantId);
+    await context.bridge.settle();
+    context.bridge.advance();
+    await context.bridge.settle();
+
+    expect(context.coordinator.calls).toHaveLength(1);
+  });
+
+  it.each(["left", "close"] as const)(
+    "clears initial and deferred greetings on participant %s",
+    async (operation) => {
+      const initial = fixture(false);
+      initial.bridge.participantsPresent([russianParticipantId]);
+      if (operation === "left") {
+        initial.bridge.participantLeft(russianParticipantId);
+      } else {
+        initial.bridge.close();
+      }
+      initial.setPlaybackReady(true);
+      initial.bridge.advance();
+      await initial.bridge.settle();
+      expect(initial.coordinator.calls).toEqual([]);
+
+      const deferred = fixture(true);
+      deferred.coordinator.outcomes.push({ status: "busy" });
+      deferred.bridge.participantJoined(russianParticipantId);
+      await deferred.bridge.settle();
+      if (operation === "left") {
+        deferred.bridge.participantLeft(russianParticipantId);
+      } else {
+        deferred.bridge.close();
+      }
+      deferred.bridge.advance();
+      await deferred.bridge.settle();
+      expect(deferred.coordinator.calls).toHaveLength(1);
     },
   );
 
@@ -558,4 +733,14 @@ async function* failedWithoutAudioEvents(
     },
     type: "failed",
   };
+}
+
+async function advanceAndSettle(
+  bridge: ParticipantGreetingBridge,
+  tickCount: number,
+): Promise<void> {
+  for (let tick = 0; tick < tickCount; tick += 1) {
+    bridge.advance();
+    await bridge.settle();
+  }
 }
