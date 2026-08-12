@@ -4,6 +4,7 @@ import { isAbsolute, join } from "node:path";
 import { z } from "zod";
 
 import { HostedCampaignArtifactStore } from "./hosted-campaign-artifact-store.js";
+import { verifyHostedFiniteProcessCompletion } from "./hosted-finite-process-completion.js";
 import type {
   HostedCampaignBarrierAction,
   HostedCampaignBoundedSignal,
@@ -179,8 +180,15 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
     if (exit.code !== 0 || exit.signal !== null) {
       throw new Error(`Hosted campaign child ${handle.childId} failed (${String(exit.code ?? exit.signal)})`);
     }
-    const output = parseJsonOutput(state.stdoutChunks, handle.childId);
     const completion = spec.completion;
+    const output = parseJsonOutput(state.stdoutChunks, handle.childId);
+    if (!("action" in completion)) {
+      await verifyHostedFiniteProcessCompletion(
+        Buffer.concat(state.stdoutChunks).toString("utf8"),
+        completion,
+      );
+      return;
+    }
     if (completion.kind === "provenance-probe") {
       const parsed = hostedCampaignProvenanceCompletionV1Schema.parse(output);
       if (parsed.campaignId !== completion.campaignId || parsed.phase !== completion.phase

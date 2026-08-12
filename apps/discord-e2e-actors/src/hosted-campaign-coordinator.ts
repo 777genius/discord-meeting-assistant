@@ -1,5 +1,9 @@
 import { actionIdentity, actionReferenceIdentity, campaignActions, validateExecutionGraph } from "./hosted-campaign-execution-graph.js";
 import { stopEveryChild, validateActionEvidence } from "./hosted-campaign-actions.js";
+import {
+  type HostedFiniteProcessCompletion,
+  validateHostedFiniteProcessContract,
+} from "./hosted-finite-process-contract.js";
 
 export const HOSTED_CAMPAIGN_TARGET = {
   environment: "private-test-guild", mutationTarget: "test-only", deploymentScope: "private-test-deployment",
@@ -48,6 +52,7 @@ export type HostedCampaignExecutableArguments =
   | { readonly evidencePath: string; readonly kind: "evidence-verifier"; readonly manifestPath: string; readonly thresholdsPath?: string }
   | { readonly evidencePaths: readonly [string, string, string]; readonly kind: "campaign-verifier"; readonly manifestPath: string; readonly thresholdsPath?: string };
 export type HostedCampaignExecutableCompletion =
+  | HostedFiniteProcessCompletion
   | {
       readonly action: Extract<HostedCampaignBarrierAction, { readonly kind: "provenance-before" | "provenance-after" }>;
       readonly campaignId: string;
@@ -241,13 +246,9 @@ function validateExecutable(
       throw new Error(`Hosted campaign child ${child.childId} has an unknown start point`);
     }
   }
-  const oneShot = child.entrypoint === "collector" || child.entrypoint === "provenance-probe"
-    || child.entrypoint.endsWith("verifier");
+  const oneShot = child.completion !== undefined;
   if (oneShot && child.startBefore.kind === "campaign") {
     throw new Error(`One-shot child ${child.childId} must start only after its inputs exist`);
-  }
-  if (oneShot !== (child.completion !== undefined)) {
-    throw new Error(`Hosted campaign child ${child.childId} has an invalid completion contract`);
   }
   if (child.completion !== undefined) {
     validateCompletion(child, child.completion, input, campaignId, completionActions);
@@ -267,7 +268,14 @@ function validateCompletion(
   campaignId: string | undefined,
   completionActions: Set<string>,
 ): void {
-  if (completion.kind !== child.entrypoint || child.startBefore.kind !== "barrier"
+  if (completion.kind !== child.entrypoint) {
+    throw new Error(`Hosted campaign child ${child.childId} completion does not match its entrypoint and start point`);
+  }
+  if (!("action" in completion)) {
+    validateHostedFiniteProcessContract(child, completion);
+    return;
+  }
+  if (child.startBefore.kind !== "barrier"
     || actionIdentity(child.startBefore.action) !== actionIdentity(completion.action)) {
     throw new Error(`Hosted campaign child ${child.childId} completion does not match its entrypoint and start point`);
   }

@@ -1,0 +1,38 @@
+import type {
+  CampaignScenario,
+  HostedCampaignExecutableSpec,
+} from "./hosted-campaign-coordinator.js";
+
+export type HostedFiniteProcessCompletion =
+  | { readonly kind: "actor"; readonly outputPath: string; readonly runId: string; readonly scenario: CampaignScenario }
+  | { readonly kind: "conversation-observer"; readonly outputPaths: readonly string[]; readonly runId: string }
+  | { readonly kind: "playback-link-observer"; readonly outputPath: string; readonly recordingId: string; readonly runId: string }
+  | { readonly kind: "recording-ready"; readonly outputPath: string; readonly runId: string }
+  | { readonly kind: "supplemental-player"; readonly outputPath: string; readonly runId: string };
+
+export function validateHostedFiniteProcessContract(
+  child: HostedCampaignExecutableSpec,
+  completion: HostedFiniteProcessCompletion,
+): void {
+  const environment = child.environment;
+  const expected = completion.kind === "actor"
+    ? [environment.DISCORD_E2E_ACTOR_RUN_OUTPUT, environment.DISCORD_E2E_RUN_ID, environment.DISCORD_E2E_SCENARIO]
+    : completion.kind === "conversation-observer"
+      ? [environment.DISCORD_E2E_CONVERSATION_VOICE_RUN_ID]
+      : completion.kind === "playback-link-observer"
+        ? [environment.DISCORD_E2E_PLAYBACK_LINK_OUTPUT, environment.DISCORD_E2E_PLAYBACK_LINK_RUN_ID,
+          environment.DISCORD_E2E_PLAYBACK_LINK_RECORDING_ID]
+        : completion.kind === "recording-ready"
+          ? [environment.DISCORD_E2E_READY_RECEIPT_OUTPUT]
+          : [environment.DISCORD_E2E_SUPPLEMENTAL_EVIDENCE_OUTPUT, environment.DISCORD_E2E_SUPPLEMENTAL_RUN_ID];
+  const declared = completion.kind === "actor"
+    ? [completion.outputPath, completion.runId, completion.scenario]
+    : completion.kind === "conversation-observer"
+      ? [completion.runId]
+      : completion.kind === "playback-link-observer"
+        ? [completion.outputPath, completion.runId, completion.recordingId]
+        : [completion.outputPath, completion.runId];
+  if (JSON.stringify(expected) !== JSON.stringify(declared)) {
+    throw new Error(`Hosted finite child ${child.childId} completion is not bound to its environment`);
+  }
+}

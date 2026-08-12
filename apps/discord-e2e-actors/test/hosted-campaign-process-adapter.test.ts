@@ -33,6 +33,14 @@ async function recordingReadyAdapter(source: string) {
   await store.initialize();
   return new HostedCampaignProcessAdapter({ artifactStore: store, distRoot: root, terminationGraceMilliseconds: 50 });
 }
+async function finiteAdapter(entrypoint: string, source: string) {
+  const root = await mkdtemp(join(tmpdir(), "hosted-finite-process-"));
+  await chmod(root, 0o700);
+  await writeFile(join(root, entrypoint), source, { mode: 0o600 });
+  const store = new HostedCampaignArtifactStore(join(root, "artifacts"), "campaign-1");
+  await store.initialize();
+  return new HostedCampaignProcessAdapter({ artifactStore: store, distRoot: root, terminationGraceMilliseconds: 50 });
+}
 const bounded = () => ({ deadlineEpochMilliseconds: Date.now() + 1_000, signal: new AbortController().signal });
 const spec = (
   environment: Readonly<Record<string, string>> = {}, releaseGate?: HostedCampaignExecutableSpec["releaseGate"],
@@ -81,6 +89,13 @@ const campaignResult = (runIds: readonly string[]) => JSON.stringify({
   failures: [], passed: true,
   runResults: Object.fromEntries(runIds.map((runId) => [runId, { failures: [], metrics: [], passed: true }])),
 });
+function completionAction(specification: HostedCampaignExecutableSpec) {
+  const completion = specification.completion;
+  if (completion === undefined || !("action" in completion)) {
+    throw new Error("Expected an action-producing completion");
+  }
+  return completion.action;
+}
 const provenanceSpec = (phase: "after" | "before"): HostedCampaignExecutableSpec => ({
   arguments: { kind: "environment" }, childId: `provenance-${phase}`,
   completion: {
@@ -245,10 +260,10 @@ describe("hosted campaign process adapter", () => {
     const executable = verifierSpec();
     const handle = await processAdapter.startChild(executable, bounded());
     await processAdapter.awaitChildCompletion(handle, executable, bounded());
-    await expect(store.awaitAction(executable.completion!.action, bounded())).resolves.toEqual({
+    await expect(store.awaitAction(completionAction(executable), bounded())).resolves.toEqual({
       ordinal: 1, runId: "run-1", verified: true,
     });
-    await expect(processAdapter.awaitBarrier(executable.completion!.action, bounded())).resolves.toEqual({
+    await expect(processAdapter.awaitBarrier(completionAction(executable), bounded())).resolves.toEqual({
       ordinal: 1, runId: "run-1", verified: true,
     });
   });
@@ -358,7 +373,7 @@ describe("hosted campaign process adapter", () => {
     const handle = await processAdapter.startChild(executable, bounded());
     let visible = false;
     const waiting = (async () => {
-      await store.awaitAction(executable.completion!.action, bounded());
+      await store.awaitAction(completionAction(executable), bounded());
       visible = true;
     })();
     await new Promise((resolve) => { setTimeout(resolve, 10); });
@@ -379,5 +394,48 @@ describe("hosted campaign process adapter", () => {
       entrypoint: "recording-ready",
     }, bounded());
     await processAdapter.stopChild(handle);
+  });
+
+  it("accepts a finite actor exit only after its stdout and retained artifact correlate", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hosted-finite-artifact-"));
+    const outputPath = join(root, "actor.json");
+    const actorRun = {
+      events: [{ actorName: "speaker-a", atEpochMs: 1_000, type: "ready" }],
+      fixtureSetId: "fixtures-v1",
+      fixtures: [
+        { audioSha256: "1".repeat(64), durationMs: 100, fixtureId: "a", sourceSha256: "2".repeat(64) },
+        { audioSha256: "3".repeat(64), durationMs: 100, fixtureId: "b", sourceSha256: "4".repeat(64) },
+      ],
+      recordingId: null, runId: "run-1", scenario: "sequential",
+      schemaVersion: 1, timelineOrigin: "unix-epoch",
+    };
+    await writeFile(outputPath, JSON.stringify(actorRun), { mode: 0o600 });
+    const output = JSON.stringify({
+      kind: "actor-completion", outputPath, runId: "run-1",
+      scenario: "sequential", status: "completed",
+    });
+    const processAdapter = await finiteAdapter("main.js", `process.stdout.write(${JSON.stringify(`log\n${output}\n`)});`);
+    const executable: HostedCampaignExecutableSpec = {
+      ...spec({ DISCORD_E2E_ACTOR_RUN_OUTPUT: outputPath, DISCORD_E2E_RUN_ID: "run-1", DISCORD_E2E_SCENARIO: "sequential" }),
+      completion: { kind: "actor", outputPath, runId: "run-1", scenario: "sequential" },
+    };
+    const handle = await processAdapter.startChild(executable, bounded());
+    await expect(processAdapter.awaitChildCompletion(handle, executable, bounded())).resolves.toBeUndefined();
+  });
+
+  it("rejects a finite successful exit when its artifact is missing or stdout is malformed", async () => {
+    const outputPath = join(await mkdtemp(join(tmpdir(), "hosted-missing-artifact-")), "actor.json");
+    const executable: HostedCampaignExecutableSpec = {
+      ...spec({ DISCORD_E2E_ACTOR_RUN_OUTPUT: outputPath, DISCORD_E2E_RUN_ID: "run-1", DISCORD_E2E_SCENARIO: "sequential" }),
+      completion: { kind: "actor", outputPath, runId: "run-1", scenario: "sequential" },
+    };
+    const completion = JSON.stringify({
+      kind: "actor-completion", outputPath, runId: "run-1", scenario: "sequential", status: "completed",
+    });
+    for (const source of ['process.stdout.write("not-json\\n")', `process.stdout.write(${JSON.stringify(`${completion}\n`)});`]) {
+      const processAdapter = await finiteAdapter("main.js", source);
+      const handle = await processAdapter.startChild(executable, bounded());
+      await expect(processAdapter.awaitChildCompletion(handle, executable, bounded())).rejects.toThrow();
+    }
   });
 });
