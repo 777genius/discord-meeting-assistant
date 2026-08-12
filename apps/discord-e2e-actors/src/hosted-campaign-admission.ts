@@ -189,7 +189,7 @@ export function verifyHostedCampaignAdmissionReceipt(value: unknown): HostedCamp
     artifactRoot: z.string().refine(isSafeAbsolutePath), campaignId: z.string().min(1),
     bindingsSha256: sha256Schema, definitionSha256: sha256Schema,
     fixtureDigests: z.record(z.string(), sha256Schema), generatedAt: z.iso.datetime(),
-    kind: z.literal("hosted-campaign-admission"), minimumFreeBytes: z.number().int().safe().positive(),
+    kind: z.literal("hosted-campaign-admission"), minimumFreeBytes: z.number().int().positive(),
     missingCapabilities: z.array(remoteCapabilitySchema), planSha256: sha256Schema, receiptSha256: sha256Schema,
     remoteEvidence: remoteEvidenceSchema.shape.capabilities,
     revisions: z.object({ craig: z.string(), meetingPlatform: z.string(), pipecat: z.string(), subscriptionRuntime: z.string() }).strict(),
@@ -318,7 +318,7 @@ function assertPrivateFile(status: Stats): void {
 
 async function assertFreeDiskSpace(path: string, requiredBytes: number): Promise<void> {
   let candidate = resolve(path);
-  while (true) {
+  for (;;) {
     try {
       const resolved = await realpath(candidate);
       const space = await statfs(resolved);

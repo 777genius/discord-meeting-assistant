@@ -21,7 +21,7 @@ const httpsOrigin = z.url().refine((value) => {
 });
 
 export const hostedCampaignDefinitionV1Schema = z.object({
-  answerFirstPacketMilliseconds: z.number().int().safe().positive(),
+  answerFirstPacketMilliseconds: z.number().int().positive(),
   campaignId: identifier,
   campaignRoot: absolutePath,
   clockPreflightPath: absolutePath,

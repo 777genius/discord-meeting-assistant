@@ -177,7 +177,7 @@ function validateEnvironmentBindings(
     if (binding.valueFrom.actionRef.action.kind !== "recording-ready") {
       throw new Error(`Hosted campaign child ${child.childId} environment binding source must be recording-ready`);
     }
-    if (!BOUND_FIELDS.get(binding.valueFrom.field)?.has(binding.name)) {
+    if (BOUND_FIELDS.get(binding.valueFrom.field)?.has(binding.name) !== true) {
       throw new Error(`Hosted campaign child ${child.childId} environment binding field/name pair is not allowed`);
     }
     if (names.has(binding.name) || Object.hasOwn(child.environment, binding.name)) {

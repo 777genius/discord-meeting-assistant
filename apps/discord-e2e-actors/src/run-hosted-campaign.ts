@@ -88,7 +88,9 @@ export async function readPrivateHostedCampaignPlan(path: string): Promise<unkno
     }
     return JSON.parse(contents) as unknown;
   } finally {
-    await handle?.close();
+    if (handle !== undefined) {
+      await handle.close();
+    }
   }
 }
 
@@ -160,7 +162,7 @@ export function resolveHostedCampaignBarrierRoot(
 async function syncDirectory(path: string): Promise<void> {
   let handle: FileHandle | undefined;
   try {
-    handle = await open(path, constants.O_RDONLY | (constants.O_DIRECTORY ?? 0));
+    handle = await open(path, constants.O_RDONLY | constants.O_DIRECTORY);
     await handle.sync();
   } catch (error) {
     const code = errorCode(error);
@@ -197,8 +199,9 @@ export function loadHostedCampaignTrustedRuntimeEnvironment(
 
 async function main(): Promise<void> {
   const controller = new AbortController();
-  const forwardSignal = (signal: "SIGINT" | "SIGTERM") =>
+  const forwardSignal = (signal: "SIGINT" | "SIGTERM"): void => {
     controller.abort(new HostedCampaignInterruptedError(signal));
+  };
   process.once("SIGINT", forwardSignal);
   process.once("SIGTERM", forwardSignal);
   try {

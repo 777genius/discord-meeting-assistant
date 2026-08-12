@@ -4,7 +4,7 @@ import { z } from "zod";
 
 const identifierSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u);
 const snowflakeSchema = z.string().regex(/^\d{17,20}$/u);
-const epochMillisecondsSchema = z.number().int().safe().positive();
+const epochMillisecondsSchema = z.number().int().positive();
 
 const observerSubscribedSchema = z.object({
   action: z.object({ kind: z.literal("observer-subscribed") }).strict(),
@@ -55,7 +55,7 @@ const answerObserverReadySchema = z.object({
 const answerFirstPacketSchema = z.object({
   action: z.object({ kind: z.literal("answer-first-packet") }).strict(),
   evidence: turnEvidenceSchema.extend({
-    answerLatencyMilliseconds: z.number().int().safe().nonnegative(),
+    answerLatencyMilliseconds: z.number().int().nonnegative(),
   }).strict(),
 }).strict();
 

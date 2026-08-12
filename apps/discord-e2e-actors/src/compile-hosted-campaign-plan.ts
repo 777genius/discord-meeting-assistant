@@ -55,7 +55,9 @@ export async function readStablePrivateJson(path: string): Promise<unknown> {
       throw new Error("Private campaign compiler input is not valid JSON");
     }
   } finally {
-    await handle?.close();
+    if (handle !== undefined) {
+      await handle.close();
+    }
   }
 }
 
@@ -124,7 +126,7 @@ function sameFileSnapshot(before: Stats, after: Stats): boolean {
 async function syncDirectory(path: string): Promise<void> {
   let handle: FileHandle | undefined;
   try {
-    handle = await open(path, constants.O_RDONLY | (constants.O_DIRECTORY ?? 0));
+    handle = await open(path, constants.O_RDONLY | constants.O_DIRECTORY);
     await handle.sync();
   } catch (error) {
     const code = errorCode(error);

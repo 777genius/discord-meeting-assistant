@@ -31,8 +31,7 @@ export async function verifyHostedServiceLevelCompletion(
   ]);
   const serviceLevels = e2eServiceLevelsV1Schema.parse(serviceLevelsInput);
   const report = hostedServiceLevelsReportV1Schema.parse(reportInput);
-  if (report.status !== "ready" || report.runId !== expected.runId
-    || report.outputCreated !== true || report.measurementCount !== 3) {
+  if (report.runId !== expected.runId) {
     throw new Error("Hosted campaign service-levels report correlation mismatch");
   }
   if (!serviceLevels.measurements.every((measurement) =>

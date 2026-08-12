@@ -35,7 +35,7 @@ const argumentsSchema = z.discriminatedUnion("kind", [
 const barrierActionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("provenance-before") }).strict(),
   z.object({ kind: z.literal("observer-subscribed") }).strict(),
-  z.object({ kind: z.literal("capture-retained"), ordinal: z.number().int().safe().positive() }).strict(),
+  z.object({ kind: z.literal("capture-retained"), ordinal: z.number().int().positive() }).strict(),
   z.object({ kind: z.literal("reconnect-left") }).strict(),
   z.object({ kind: z.literal("reconnect-ready") }).strict(),
   z.object({ kind: z.literal("actor-scenario-playback-completed") }).strict(),
@@ -44,7 +44,7 @@ const barrierActionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("answer-first-packet") }).strict(),
   z.object({ kind: z.literal("service-levels-ready") }).strict(),
   z.object({ kind: z.literal("service-level-sources-ready") }).strict(),
-  z.object({ kind: z.literal("run-verified"), ordinal: z.number().int().safe().positive(), runId: identifier }).strict(),
+  z.object({ kind: z.literal("run-verified"), ordinal: z.number().int().positive(), runId: identifier }).strict(),
   z.object({ kind: z.literal("provenance-after") }).strict(),
   z.object({ kind: z.literal("campaign-verified") }).strict(),
   z.object({ kind: z.literal("actor-completed"), ordinal: z.number().int().min(1).max(3), runId: identifier }).strict(),

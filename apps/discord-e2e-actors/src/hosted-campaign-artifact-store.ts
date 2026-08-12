@@ -150,7 +150,9 @@ async function readActionArtifact(path: string): Promise<ActionArtifact> {
     }
     return value;
   } finally {
-    await handle?.close();
+    if (handle !== undefined) {
+      await handle.close();
+    }
   }
 }
 
@@ -198,7 +200,7 @@ async function assertSafeRoot(path: string): Promise<void> {
 async function syncDirectory(path: string): Promise<void> {
   let handle: FileHandle | undefined;
   try {
-    handle = await open(path, constants.O_RDONLY | (constants.O_DIRECTORY ?? 0));
+    handle = await open(path, constants.O_RDONLY | constants.O_DIRECTORY);
     await handle.sync();
   } catch (error) {
     const code = errorCode(error);
