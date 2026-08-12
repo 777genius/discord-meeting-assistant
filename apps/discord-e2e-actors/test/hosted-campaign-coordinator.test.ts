@@ -25,7 +25,7 @@ function input(): HostedCampaignInput {
 }
 
 function child(childId: string) {
-  return { arguments: [], childId, entrypoint: "actor" as const, environment: {} };
+  return { arguments: { kind: "environment" as const }, childId, entrypoint: "actor" as const, environment: {}, startBefore: "campaign" as const };
 }
 
 function evidence<Action extends HostedCampaignBarrierAction>(action: Action): HostedCampaignActionEvidence<Action> {
@@ -53,6 +53,7 @@ function ports(events: string[]): HostedCampaignPorts {
       events.push(`lease:${campaignId}`);
       return { campaignId } as HostedCampaignLeaseHandle;
     },
+    publishReleaseGate: async (spec) => { events.push(`release-gate:${spec.childId}`); },
     startChild: async (spec) => {
       events.push(`start:${spec.childId}`);
       return { childId: spec.childId } as HostedCampaignChildHandle;

@@ -10,14 +10,38 @@ import {
 
 const identifier = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u);
 const environment = z.record(z.string(), z.string());
+const argumentsSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("environment") }).strict(),
+  z.object({
+    evidencePath: z.string().refine(isAbsolute), kind: z.literal("evidence-verifier"),
+    manifestPath: z.string().refine(isAbsolute), thresholdsPath: z.string().refine(isAbsolute).optional(),
+  }).strict(),
+  z.object({
+    evidencePaths: z.tuple([z.string().refine(isAbsolute), z.string().refine(isAbsolute), z.string().refine(isAbsolute)]),
+    kind: z.literal("campaign-verifier"), manifestPath: z.string().refine(isAbsolute),
+    thresholdsPath: z.string().refine(isAbsolute).optional(),
+  }).strict(),
+]);
 const executableSchema = z.object({
-  arguments: z.array(z.string()),
+  arguments: argumentsSchema,
   childId: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/u),
   entrypoint: z.enum([
     "actor", "campaign-verifier", "collector", "conversation-observer", "evidence-verifier",
     "live-observer", "supplemental-player",
   ]),
   environment,
+  releaseGate: z.object({
+    action: z.discriminatedUnion("kind", [
+      z.object({ kind: z.literal("provenance-before") }).strict(),
+      z.object({ kind: z.literal("observer-subscribed") }).strict(),
+    ]),
+    path: z.string().refine(isAbsolute),
+  }).strict().optional(),
+  startBefore: z.enum([
+    "campaign", "provenance-before", "observer-subscribed", "capture-retained",
+    "reconnect-left", "reconnect-ready", "answer-intent", "answer-observer-ready",
+    "answer-first-packet", "run-verified", "provenance-after", "campaign-verified",
+  ]),
 }).strict();
 
 const targetSchema = z.object(

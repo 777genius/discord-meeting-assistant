@@ -1,5 +1,7 @@
 import { constants } from "node:fs";
 import { lstat, open, readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   runHostedCampaign,
@@ -11,6 +13,8 @@ import {
   parseHostedCampaignArguments,
   parseHostedCampaignPlan,
 } from "./hosted-campaign-run-config.js";
+import { HostedCampaignArtifactStore } from "./hosted-campaign-artifact-store.js";
+import { HostedCampaignProcessAdapter } from "./hosted-campaign-process-adapter.js";
 
 export interface HostedCampaignCliDependencies {
   readonly now: () => number;
@@ -38,7 +42,8 @@ export async function runHostedCampaignCli(
 
 export async function readPrivateHostedCampaignPlan(path: string): Promise<unknown> {
   const status = await lstat(path);
-  if (status.isSymbolicLink() || !status.isFile() || (status.mode & 0o777) !== 0o600) {
+  if (status.isSymbolicLink() || !status.isFile() || (status.mode & 0o777) !== 0o600
+    || status.size > 1024 * 1024) {
     throw new Error("Hosted campaign plan must be a regular owned mode-0600 file");
   }
   if (typeof process.getuid === "function" && status.uid !== process.getuid()) {
@@ -65,9 +70,31 @@ export async function writeCreateOnlyHostedCampaignReceipt(
 }
 
 async function main(): Promise<void> {
-  throw new Error(
-    "Hosted campaign process adapter is not wired; the typed coordinator cannot yet map the full real action order",
-  );
+  const controller = new AbortController();
+  const forwardSignal = (signal: NodeJS.Signals) => controller.abort(new Error(`Received ${signal}`));
+  process.once("SIGINT", forwardSignal);
+  process.once("SIGTERM", forwardSignal);
+  try {
+    const config = parseHostedCampaignArguments(process.argv.slice(2));
+    const plan = parseHostedCampaignPlan(await readPrivateHostedCampaignPlan(config.planPath));
+    const campaignId = plan.runs[0]!.campaignId;
+    const artifactRoot = join(dirname(config.receiptPath), `${campaignId}.artifacts`);
+    const store = new HostedCampaignArtifactStore(artifactRoot, campaignId);
+    await store.initialize();
+    const adapter = new HostedCampaignProcessAdapter({
+      artifactStore: store,
+      distRoot: dirname(fileURLToPath(import.meta.url)),
+    });
+    await runHostedCampaignCli(process.argv.slice(2), {
+      now: Date.now,
+      ports: adapter,
+      readPlan: readPrivateHostedCampaignPlan,
+      writeReceipt: writeCreateOnlyHostedCampaignReceipt,
+    }, controller.signal);
+  } finally {
+    process.off("SIGINT", forwardSignal);
+    process.off("SIGTERM", forwardSignal);
+  }
 }
 
 if (process.argv[1]?.replaceAll("\\", "/").endsWith("/run-hosted-campaign.js") === true) {

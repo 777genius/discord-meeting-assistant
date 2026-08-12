@@ -17,9 +17,9 @@ import {
 } from "../src/run-hosted-campaign.js";
 
 const plan = () => ({
-  children: [{ arguments: [], childId: "observer", entrypoint: "live-observer", environment: {
+  children: [{ arguments: { kind: "environment" }, childId: "observer", entrypoint: "live-observer", environment: {
     DISCORD_E2E_OUTPUT: "/private/evidence/observer.json",
-  } }],
+  }, startBefore: "campaign" }],
   target: HOSTED_CAMPAIGN_TARGET,
   thresholds: { answerFirstPacketMilliseconds: 4_000 },
   runs: [
@@ -72,6 +72,7 @@ describe("run-hosted-campaign CLI", () => {
       writeReceipt: async () => { written = true; },
       ports: {
         acquireCampaignLease: async (campaignId: string) => ({ campaignId }) as HostedCampaignLeaseHandle,
+        publishReleaseGate: async () => {},
         startChild: async ({ childId }: { childId: string }) => ({ childId }) as HostedCampaignChildHandle,
         awaitBarrier: async () => { throw new Error("barrier failed"); },
         releaseCampaignLease: async () => {},

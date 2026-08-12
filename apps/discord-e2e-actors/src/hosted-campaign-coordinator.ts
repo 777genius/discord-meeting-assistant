@@ -40,11 +40,23 @@ export type HostedCampaignEntrypoint =
   | "supplemental-player"
   | "evidence-verifier";
 
+export type HostedCampaignStartPoint = "campaign" | HostedCampaignBarrierAction["kind"];
+
+export type HostedCampaignExecutableArguments =
+  | { readonly kind: "environment" }
+  | { readonly evidencePath: string; readonly kind: "evidence-verifier"; readonly manifestPath: string; readonly thresholdsPath?: string }
+  | { readonly evidencePaths: readonly [string, string, string]; readonly kind: "campaign-verifier"; readonly manifestPath: string; readonly thresholdsPath?: string };
+
 export interface HostedCampaignExecutableSpec {
-  readonly arguments: readonly string[];
+  readonly arguments: HostedCampaignExecutableArguments;
   readonly childId: string;
   readonly entrypoint: HostedCampaignEntrypoint;
   readonly environment: Readonly<Record<string, string>>;
+  readonly startBefore: HostedCampaignStartPoint;
+  readonly releaseGate?: {
+    readonly action: HostedCampaignBarrierAction;
+    readonly path: string;
+  };
 }
 
 declare const childHandleBrand: unique symbol;
@@ -111,6 +123,10 @@ export interface HostedCampaignPorts {
     executable: HostedCampaignExecutableSpec,
     bounded: HostedCampaignBoundedSignal,
   ): Promise<HostedCampaignChildHandle>;
+  publishReleaseGate(
+    executable: HostedCampaignExecutableSpec,
+    bounded: HostedCampaignBoundedSignal,
+  ): Promise<void>;
   releaseCampaignLease(handle: HostedCampaignLeaseHandle): Promise<void>;
   stopChild(handle: HostedCampaignChildHandle): Promise<void>;
 }
@@ -200,6 +216,20 @@ export function validateHostedCampaign(input: HostedCampaignInput): void {
       throw new Error(`Invalid or duplicate hosted campaign childId: ${child.childId}`);
     }
     childIds.add(child.childId);
+    if ((child.entrypoint === "campaign-verifier") !== (child.arguments.kind === "campaign-verifier")
+      || (child.entrypoint === "evidence-verifier") !== (child.arguments.kind === "evidence-verifier")) {
+      throw new Error(`Hosted campaign child ${child.childId} has arguments for the wrong entrypoint`);
+    }
+    if (child.startBefore !== "campaign" && !campaignActions(input).some(({ kind }) => kind === child.startBefore)) {
+      throw new Error(`Hosted campaign child ${child.childId} has an unknown start point`);
+    }
+    if ((child.entrypoint === "collector" || child.entrypoint.endsWith("verifier"))
+      && child.startBefore === "campaign") {
+      throw new Error(`One-shot child ${child.childId} must start only after its inputs exist`);
+    }
+    if (child.releaseGate !== undefined && child.entrypoint !== "actor") {
+      throw new Error(`Only an actor child may declare a hosted release gate`);
+    }
   }
 }
 
@@ -265,19 +295,29 @@ export async function runHostedCampaign(
     if (lease.campaignId !== campaignId) {
       throw new Error("Acquired campaign lease does not match the campaign");
     }
-    for (const executable of input.children) {
-      assertActive(bounded);
-      const handle = await ports.startChild(executable, bounded);
-      handles.push(handle);
-      if (handle.childId !== executable.childId) {
-        throw new Error("Started child handle does not match its executable spec");
+    const startChildren = async (startBefore: HostedCampaignStartPoint): Promise<void> => {
+      for (const executable of input.children.filter((child) => child.startBefore === startBefore)) {
+        assertActive(bounded);
+        const handle = await ports.startChild(executable, bounded);
+        handles.push(handle);
+        if (handle.childId !== executable.childId) {
+          throw new Error("Started child handle does not match its executable spec");
+        }
       }
-    }
+    };
+    await startChildren("campaign");
     for (const action of campaignActions(input)) {
+      await startChildren(action.kind);
       assertActive(bounded);
       const actionEvidence = await ports.awaitBarrier(action, bounded);
       validateEvidence(action, actionEvidence, input.thresholds);
       evidence.push(Object.freeze({ action, evidence: actionEvidence }));
+      for (const executable of input.children.filter((child) =>
+        child.releaseGate !== undefined
+        && JSON.stringify(child.releaseGate.action) === JSON.stringify(action)
+      )) {
+        await ports.publishReleaseGate(executable, bounded);
+      }
     }
   } catch (error) {
     failure = error;
