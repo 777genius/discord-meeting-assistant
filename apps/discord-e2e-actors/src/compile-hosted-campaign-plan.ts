@@ -61,7 +61,7 @@ export async function readStablePrivateJson(path: string): Promise<unknown> {
   }
 }
 
-export async function writeCreateOnlyPrivatePlan(path: string, value: unknown): Promise<void> {
+async function writeCreateOnlyPrivatePlan(path: string, value: unknown): Promise<void> {
   const parentPath = dirname(path);
   await mkdir(parentPath, { mode: 0o700, recursive: true });
   assertPrivateOutputDirectory(await lstat(parentPath));

@@ -27,7 +27,7 @@ const privateInputPathsSchema = z.object({
   voice: z.array(absolutePath).length(6),
 }).strict();
 
-export const collectHostedServiceLevelsConfigSchema = z.object({
+const collectHostedServiceLevelsConfigSchema = z.object({
   campaignId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u),
   meetingId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u),
   outputPath: absolutePath,
@@ -89,7 +89,7 @@ export const hostedServiceLevelsReportV1Schema = z.discriminatedUnion("status", 
 
 export class HostedServiceLevelsBlockedError extends Error {}
 
-export function loadCollectHostedServiceLevelsConfig(
+function loadCollectHostedServiceLevelsConfig(
   environment: NodeJS.ProcessEnv,
 ): CollectHostedServiceLevelsConfig {
   const value = environmentSchema.parse(environment);
@@ -277,7 +277,7 @@ async function readPrivateInput(path: string): Promise<string> {
   }
 }
 
-export async function writeCreateOnlyPrivateJson(path: string, value: unknown): Promise<void> {
+async function writeCreateOnlyPrivateJson(path: string, value: unknown): Promise<void> {
   const directory = dirname(path);
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const directoryStatus = await lstat(directory);

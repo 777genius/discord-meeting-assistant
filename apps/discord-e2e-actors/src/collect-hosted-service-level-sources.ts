@@ -87,12 +87,6 @@ export async function collectHostedServiceLevelSources(
   }
 }
 
-export function createSshHostedServiceLevelRawProbe(
-  configValue: HostedServiceLevelSourceConfig,
-): HostedServiceLevelRawProbe {
-  return makeSshProbe(hostedServiceLevelSourceConfigSchema.parse(configValue));
-}
-
 function requireClockPreflightPath(path: string | undefined): string {
   if (path === undefined) {
     throw new Error("Clock preflight path remained absent after blocked report publication");

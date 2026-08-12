@@ -50,12 +50,9 @@ export { supplementalPlaybackEvidenceV1Schema } from "./conversation-retained-ev
 export { conversationVoiceCampaignProofV1Schema } from "./conversation-voice-campaign-proof.js";
 export {
   e2eServiceLevelsV1Schema,
-  serviceLevelIds,
-  serviceLevelMeasurementV1Schema,
   serviceLevelThresholdsSchema,
-  verifyE2eServiceLevels,
 } from "./e2e-service-levels.js";
-export type { E2eServiceLevelsV1, ServiceLevelThresholds } from "./e2e-service-levels.js";
+export type { ServiceLevelThresholds } from "./e2e-service-levels.js";
 export type {
   ActorRunEvidenceV1,
   CurrentDeploymentProvenance,

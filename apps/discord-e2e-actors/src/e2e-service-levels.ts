@@ -126,7 +126,7 @@ const recordingPublicationMeasurementSchema = z.object({
   }).strict(),
 }).strict();
 
-export const serviceLevelMeasurementV1Schema = z.discriminatedUnion("serviceLevelId", [
+const serviceLevelMeasurementV1Schema = z.discriminatedUnion("serviceLevelId", [
   joinMeasurementSchema,
   answerMeasurementSchema,
   recordingPublicationMeasurementSchema,

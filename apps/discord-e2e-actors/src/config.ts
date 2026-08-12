@@ -66,7 +66,7 @@ const actorEnvironmentSchema = z.object({
   }
 });
 
-export interface ActorReleaseGateConfig {
+interface ActorReleaseGateConfig {
   readonly armedPath: string;
   readonly campaignId: string;
   readonly path: string;
@@ -74,7 +74,7 @@ export interface ActorReleaseGateConfig {
   readonly timeoutMilliseconds: number;
 }
 
-export interface ActorStagedGateConfig {
+interface ActorStagedGateConfig {
   readonly armedPath: string;
   readonly path: string;
 }
