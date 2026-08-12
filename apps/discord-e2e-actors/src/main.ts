@@ -17,6 +17,7 @@ import {
   systemScenarioClock,
   type ActorScenarioEvent,
 } from "./run-actor-scenario.js";
+import { serializeHostedCampaignProcessEvent } from "./hosted-campaign-process-event.js";
 
 const recorderVoiceSettleMilliseconds = 5_000;
 
@@ -101,10 +102,29 @@ async function main(): Promise<void> {
       kind: config.scenario,
       speakerBDelayMilliseconds: config.speakerBDelayMilliseconds,
     }, systemScenarioClock, (event) => {
+      const observedAtEpochMilliseconds = epochNow();
       events.push({
         ...event,
-        atEpochMs: epochNow(),
+        atEpochMs: observedAtEpochMilliseconds,
       });
+      if (config.releaseGate !== undefined && config.scenario === "reconnect" &&
+        event.actorName === "speaker-b" &&
+        (event.type === "disconnected" || event.type === "ready")) {
+        process.stdout.write(serializeHostedCampaignProcessEvent({
+          event: {
+            action: {
+              kind: event.type === "disconnected" ? "reconnect-left" : "reconnect-ready",
+            },
+            evidence: {
+              observedAtEpochMilliseconds,
+              participantId: speakerB.authenticatedApplicationId,
+            },
+          },
+          kind: "hosted-campaign-barrier",
+          runId: config.runId,
+          schemaVersion: 1,
+        }));
+      }
     });
     if (config.postPlaybackHoldMilliseconds > 0) {
       process.stdout.write(

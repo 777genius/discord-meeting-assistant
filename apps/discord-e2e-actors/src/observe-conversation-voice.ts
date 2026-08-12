@@ -16,36 +16,35 @@ import {
 } from "discord.js";
 
 import {
-  loadConversationVoiceObserverConfig,
-  type ConversationVoiceObserverCapture,
+  loadConversationVoiceObserverConfig, type ConversationVoiceObserverCapture,
 } from "./conversation-voice-observer-config.js";
 import { conversationVoiceCampaignPreflight } from
   "./conversation-voice-campaign-contract.js";
 import {
-  writeCreateOnlyConversationVoiceCampaignProof,
-  type ConversationVoiceCampaignProofV1,
+  writeCreateOnlyConversationVoiceCampaignProof, type ConversationVoiceCampaignProofV1,
 } from "./conversation-voice-campaign-proof.js";
 import { createConversationVoiceEvidence } from "./conversation-voice-evidence.js";
 import { captureConversationVoiceFromOpenStream } from "./conversation-voice-stream-capture.js";
 import {
-  createDiscordJsOpusDecoder,
-  type ConversationVoiceAudibilityDecoder,
+  createDiscordJsOpusDecoder, type ConversationVoiceAudibilityDecoder,
 } from "./conversation-voice-audibility-decoder.js";
 import { waitForConversationVoiceCorrelationWhileGuardingAudio } from
   "./conversation-voice-turn-correlation-wait.js";
 import {
-  assertConversationAnswerHandshakeRootIsNew,
-  waitForConversationAnswerPlaybackIntent,
+  assertConversationAnswerHandshakeRootIsNew, waitForConversationAnswerPlaybackIntent,
   type ConversationAnswerPlaybackIntent,
 } from "./conversation-voice-turn-id-source.js";
 import {
-  ConversationVoiceCaptureController,
-  ConversationVoiceCaptureError,
+  ConversationVoiceCaptureController, ConversationVoiceCaptureError,
   assertConversationVoiceEvidencePathIsNew,
   writeNewConversationVoiceEvidenceAtomically,
 } from "./conversation-voice-observer.js";
 import { publishConversationVoiceReadyProof } from "./conversation-voice-ready-proof.js";
 import { FileSecretReader, MacOsKeychainSecretReader } from "./keychain.js";
+import {
+  publishAnswerIntent, publishAnswerObserverReady,
+  publishCaptureRetained, publishObserverSubscribed,
+} from "./hosted-campaign-process-event-publisher.js";
 
 const systemClock = { now: () => ({
   epochMilliseconds: Date.now(),
@@ -125,10 +124,11 @@ async function main(): Promise<void> {
       channel.id,
       config.readyTimeoutMilliseconds,
     );
-    sourceStream = connection.receiver.subscribe(config.craigBotId, {
-      end: { behavior: EndBehaviorType.Manual },
-    });
+    sourceStream = connection.receiver.subscribe(config.craigBotId, { end: {
+      behavior: EndBehaviorType.Manual,
+    } });
     sourceStream.on("error", () => {});
+    publishObserverSubscribed(config, authenticatedBotId);
     const campaignProof = await capturePlannedConversationVoice({
       authenticatedBotId,
       captures,
@@ -181,10 +181,11 @@ async function capturePlannedConversationVoice(input: {
         })
           : undefined;
       const intentObservedAt = playbackIntent === undefined ? undefined : new Date().toISOString();
-      const turnId = playbackIntent?.turnId ??
-        ("turnId" in plannedCapture ? plannedCapture.turnId : undefined);
-      const attemptId = playbackIntent?.playbackAttemptId ??
-        ("attemptId" in plannedCapture ? plannedCapture.attemptId : undefined);
+      publishAnswerIntent(config, playbackIntent, intentObservedAt);
+      const turnId = playbackIntent?.turnId ?? ("turnId" in plannedCapture
+        ? plannedCapture.turnId : undefined);
+      const attemptId = playbackIntent?.playbackAttemptId ?? ("attemptId" in plannedCapture
+        ? plannedCapture.attemptId : undefined);
       if (turnId === undefined || attemptId === undefined) {
         throw new Error("Conversation voice capture is missing its correlated identifiers");
       }
@@ -218,6 +219,7 @@ async function capturePlannedConversationVoice(input: {
                     voiceChannelId: config.voiceChannelId,
                   },
                 });
+                publishAnswerObserverReady(config, campaignProof);
               },
             }),
         stream: sourceStream,
@@ -248,6 +250,7 @@ async function capturePlannedConversationVoice(input: {
         voiceChannelId: config.voiceChannelId,
       });
       await writeNewConversationVoiceEvidenceAtomically(plannedCapture.outputPath, evidence);
+      publishCaptureRetained(config, index + 1, plannedCapture.outputPath);
       process.stdout.write(`${JSON.stringify({
         acceptedDurationMilliseconds: capture.acceptedDurationMilliseconds,
         acceptedPacketCount: capture.acceptedPacketCount,
