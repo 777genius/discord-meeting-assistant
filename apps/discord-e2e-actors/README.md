@@ -103,13 +103,40 @@ When omitted, readiness falls back to the capture timeout, which defaults to
 cannot widen the retained audio window.
 
 For an ordered campaign, `DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON`
-may contain up to 15 additional `{ attemptId, outputPath, purpose, turnId }`
-objects. The observer validates every create-only output and correlation before
+may contain up to 15 additional capture objects. Each object must contain
+`attemptId`, `outputPath`, and `purpose`, plus exactly one of a literal `turnId`
+or an absolute `turnIdFile`. Direct primary capture remains literal. The observer
+validates every create-only output and correlation before
 joining, keeps one voice connection for the full sequence, and waits for the
 configured source to remain silent for 300 milliseconds between captures. That
 wait is bounded by `DISCORD_E2E_CONVERSATION_VOICE_READY_TIMEOUT_MS`, not by the
 short capture timeout. This prevents Discord reconnect timing from binding a
 later utterance to an earlier expected turn.
+
+`turnIdFile` is the bounded handoff for a correlation ID that is known only
+after the observer has joined voice. The path must not exist when the observer
+starts. When that ordered capture is reached, the already-connected observer
+waits up to `DISCORD_E2E_CONVERSATION_VOICE_READY_TIMEOUT_MS` for a producer to
+publish a new regular file at that exact path. The file may contain
+one valid correlation ID with an optional final LF and nothing else. Symlinks,
+directories, stale files, invalid UTF-8/IDs, and files over 257
+bytes fail closed. Build the actor package before the campaign, then use the
+prebuilt repository helper during the live handoff so no TypeScript build delays
+publication. The helper writes and fsyncs a `0600` temporary file in the same
+directory, closes it, then hard-links the final create-only path and removes the
+temporary name:
+
+```sh
+pnpm --filter @discord-meeting/discord-e2e-actors \
+  publish:conversation-turn-id -- /absolute/evidence/addressed-answer.turn-id \
+  human-question-17
+```
+
+The hard-link publication fails with `EEXIST` instead of overwriting an existing
+correlation. While waiting, the observer keeps the Craig stream flowing and
+discards silence; any audible packet before the observer confirms publication
+aborts the campaign so buffered audio cannot be attached to the new ID. The
+resolved ID is copied into the immutable evidence before the audio capture begins.
 
 Each capture declares `greeting`, `farewell`, or `addressed-answer` purpose.
 Alone it remains transport evidence: it does not run STT, establish the

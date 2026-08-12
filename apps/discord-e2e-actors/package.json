@@ -11,6 +11,7 @@
     "observe:conversation": "pnpm run build && node dist/observe-conversation-voice.js",
     "observe:live": "pnpm run build && node dist/observe-live-discord.js",
     "play:supplemental": "pnpm run build && node dist/play-supplemental-voice.js",
+    "publish:conversation-turn-id": "node dist/publish-conversation-voice-turn-id.js",
     "start": "pnpm run build && node dist/main.js",
     "test": "vitest run",
     "typecheck": "tsc --project tsconfig.json --noEmit --pretty false",

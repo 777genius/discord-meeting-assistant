@@ -196,9 +196,33 @@ timeout also covers a Botik already present in voice but not yet speaking; the
 short capture window starts with the first audio packet.
 
 To retain the ordered capture set with one observer connection, pass the
-remaining `{ attemptId, outputPath, purpose, turnId }` records through
+remaining capture records through
 `DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON`. The record shape and
 limits are documented in `apps/discord-e2e-actors/README.md`.
+
+Use a literal `turnId` when the lifecycle correlation is known before startup.
+For the addressed-answer capture, where the admitted live turn ID is produced
+during the call, use an absolute `turnIdFile` instead. The observer first proves
+that path is absent, joins voice, completes the earlier ordered captures, and
+then waits for the file while staying connected. Build the actor package before
+the campaign. After the live-turn admission log yields the exact ID, publish it
+with the already-built create-only repository helper:
+
+```sh
+pnpm --filter @discord-meeting/discord-e2e-actors \
+  publish:conversation-turn-id -- /absolute/evidence/addressed-answer.turn-id \
+  human-question-17
+```
+
+The helper fsyncs and closes a same-directory `0600` temporary file, hard-links
+the final name without replacement, and removes the temporary name. Do not
+pre-create, overwrite, symlink, or edit the final file in place. While waiting,
+the observer drains silent Craig packets; any audible packet before the observer
+confirms correlation publication aborts the campaign instead of being buffered
+into the next capture.
+The bounded wait uses
+`DISCORD_E2E_CONVERSATION_VOICE_READY_TIMEOUT_MS`; an invalid, stale, oversized,
+or late source aborts the campaign rather than guessing a correlation.
 
 Reconnect one already-greeted official actor before the meeting ends. Do not
 induce another first join. After finalization, pass all six observer files and

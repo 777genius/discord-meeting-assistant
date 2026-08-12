@@ -18,6 +18,12 @@ import {
 import { loadConversationVoiceObserverConfig } from "./conversation-voice-observer-config.js";
 import { createConversationVoiceEvidence } from "./conversation-voice-evidence.js";
 import { captureConversationVoiceFromOpenStream } from "./conversation-voice-stream-capture.js";
+import { waitForConversationVoiceTurnIdWhileGuardingAudio } from
+  "./conversation-voice-turn-correlation-wait.js";
+import {
+  assertConversationVoiceTurnIdFileIsNew,
+  waitForNewConversationVoiceTurnIdFile,
+} from "./conversation-voice-turn-id-source.js";
 import {
   ConversationVoiceCaptureController,
   ConversationVoiceCaptureError,
@@ -83,9 +89,13 @@ async function main(): Promise<void> {
     },
     ...config.additionalCaptures,
   ] as const;
+  const turnIdFiles = config.additionalCaptures.flatMap((capture) =>
+    capture.turnIdFile === undefined ? [] : [capture.turnIdFile]
+  );
   await Promise.all(captures.map(({ outputPath }) =>
     assertConversationVoiceEvidencePathIsNew(outputPath)
   ));
+  await Promise.all(turnIdFiles.map(assertConversationVoiceTurnIdFileIsNew));
   const decoder = await createDiscordJsOpusDecoder();
 
   const secretReader = config.secretDirectory === undefined
@@ -115,6 +125,8 @@ async function main(): Promise<void> {
       selfMute: true,
     });
     await entersState(connection, VoiceConnectionStatus.Ready, config.readyTimeoutMilliseconds);
+    const turnIdFileNotBeforeEpochMilliseconds = Date.now();
+    await Promise.all(turnIdFiles.map(assertConversationVoiceTurnIdFileIsNew));
     await assertConfiguredCraigBotIsInVoiceChannel(
       client,
       guild,
@@ -127,6 +139,17 @@ async function main(): Promise<void> {
     });
     sourceStream.on("error", ignoreStreamError);
     for (const [index, plannedCapture] of captures.entries()) {
+      const turnId = plannedCapture.turnId ??
+        await waitForConversationVoiceTurnIdWhileGuardingAudio({
+          isPacketAudible: (packet) => decoder.isPacketAudible(packet),
+          resolveTurnId: async (signal) => waitForNewConversationVoiceTurnIdFile({
+            notBeforeEpochMilliseconds: turnIdFileNotBeforeEpochMilliseconds,
+            path: plannedCapture.turnIdFile,
+            signal,
+            timeoutMilliseconds: config.readyTimeoutMilliseconds,
+          }),
+          stream: sourceStream,
+        });
       const capture = await captureConversationVoiceFromOpenStream({
         captureTimeoutMilliseconds: config.captureTimeoutMilliseconds,
         clock: systemClock,
@@ -161,7 +184,7 @@ async function main(): Promise<void> {
         purpose: plannedCapture.purpose,
         recordingId: config.recordingId,
         runId: config.runId,
-        turnId: plannedCapture.turnId,
+        turnId,
         voiceChannelId: config.voiceChannelId,
       });
       await writeNewConversationVoiceEvidenceAtomically(plannedCapture.outputPath, evidence);
