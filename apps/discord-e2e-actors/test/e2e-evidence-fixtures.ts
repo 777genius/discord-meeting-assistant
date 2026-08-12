@@ -595,13 +595,37 @@ export function retainedV8Evidence(): RetainedReconnectE2eEvidenceV8 {
   source.actorRun.events = [
     { actorName: "speaker-a", atRecordingMs: 0, type: "ready" },
     { actorName: "speaker-b", atRecordingMs: 0, type: "ready" },
-    { actorName: "speaker-a", atRecordingMs: 100, fixtureId: "speaker-a", type: "playback-start" },
-    { actorName: "speaker-b", atRecordingMs: 750, type: "disconnected" },
-    { actorName: "speaker-b", atRecordingMs: 800, type: "ready" },
-    { actorName: "speaker-b", atRecordingMs: 850, fixtureId: "speaker-b", type: "playback-start" },
-    { actorName: "speaker-a", atRecordingMs: 7_100, fixtureId: "speaker-a", type: "playback-end" },
-    { actorName: "speaker-b", atRecordingMs: 7_850, fixtureId: "speaker-b", type: "playback-end" },
+    { actorName: "speaker-a", atRecordingMs: 1_600, fixtureId: "speaker-a", type: "playback-start" },
+    { actorName: "speaker-b", atRecordingMs: 2_100, type: "disconnected" },
+    { actorName: "speaker-b", atRecordingMs: 2_200, type: "ready" },
+    { actorName: "speaker-b", atRecordingMs: 2_300, fixtureId: "speaker-b", type: "playback-start" },
+    { actorName: "speaker-a", atRecordingMs: 8_600, fixtureId: "speaker-a", type: "playback-end" },
+    { actorName: "speaker-b", atRecordingMs: 9_300, fixtureId: "speaker-b", type: "playback-end" },
   ];
+  source.recording.durationMs = 9_300;
+  source.recording.endedAt = "1970-01-01T00:00:09.300Z";
+  const speakerATrack = source.recording.s3.tracks.find(
+    ({ speakerId }) => speakerId === speakerAId,
+  );
+  const speakerBTrack = source.recording.s3.tracks.find(
+    ({ speakerId }) => speakerId === speakerBId,
+  );
+  const speakerATurn = source.transcript.turns.find(({ turnId }) => turnId === "turn-a");
+  const speakerBTurn = source.transcript.turns.find(({ turnId }) => turnId === "turn-b");
+  if (
+    speakerATrack === undefined || speakerBTrack === undefined ||
+    speakerATurn === undefined || speakerBTurn === undefined
+  ) {
+    throw new Error("reconnect speaker fixtures are required");
+  }
+  speakerATrack.durationMs = 9_300;
+  speakerATrack.timelineOffsetMs = 1_600;
+  speakerBTrack.durationMs = 9_300;
+  speakerBTrack.timelineOffsetMs = 2_300;
+  speakerATurn.startMs = 1_600;
+  speakerATurn.endMs = 8_600;
+  speakerBTurn.startMs = 2_300;
+  speakerBTurn.endMs = 9_300;
   const botSpeakerId = "1534231284467896512";
   source.recording.speakerIds.push(botSpeakerId, speakerDId);
   source.recording.s3.tracks.push({
@@ -622,7 +646,7 @@ export function retainedV8Evidence(): RetainedReconnectE2eEvidenceV8 {
   }));
   source.transcript.turns.push(
     {
-      endMs: 650, speakerId: botSpeakerId, startMs: 250,
+      endMs: 2_050, speakerId: botSpeakerId, startMs: 1_700,
       text: "Hi, Test B!", turnId: "botik-greeting-en",
     },
     {
@@ -634,7 +658,7 @@ export function retainedV8Evidence(): RetainedReconnectE2eEvidenceV8 {
       text: "Ботик, ответь одним словом: кобальт.", turnId: "speaker-d-question",
     },
     {
-      endMs: 2_450, speakerId: botSpeakerId, startMs: 2_050,
+      endMs: 650, speakerId: botSpeakerId, startMs: 250,
       text: "Привет!", turnId: "botik-greeting-unknown",
     },
     {
@@ -655,10 +679,10 @@ export function retainedV8Evidence(): RetainedReconnectE2eEvidenceV8 {
     },
   );
   const events = [
-    { greetingLocale: "ru", observedAt: "1970-01-01T00:00:01.500Z", participantId: speakerAId, participantNameStatus: "known", turnId: `participant-greeting:${speakerAId}`, type: "greeting" as const },
-    { greetingLocale: "en", observedAt: "1970-01-01T00:00:00.700Z", participantId: speakerBId, participantNameStatus: "known", turnId: `participant-greeting:${speakerBId}`, type: "greeting" as const },
-    { greetingLocale: "ru", observedAt: "1970-01-01T00:00:02.500Z", participantId: observerId, participantNameStatus: "unknown", turnId: `participant-greeting:${observerId}`, type: "greeting" as const },
-    { greetingLocale: "ru", observedAt: "1970-01-01T00:00:03.200Z", participantId: speakerDId, participantNameStatus: "unknown", turnId: `participant-greeting:${speakerDId}`, type: "greeting" as const },
+    { greetingLocale: "ru", observedAt: "1970-01-01T00:00:00.250Z", participantId: observerId, participantNameStatus: "unknown", turnId: `participant-greeting:${observerId}`, type: "greeting" as const },
+    { greetingLocale: "ru", observedAt: "1970-01-01T00:00:00.950Z", participantId: speakerAId, participantNameStatus: "known", turnId: `participant-greeting:${speakerAId}`, type: "greeting" as const },
+    { greetingLocale: "en", observedAt: "1970-01-01T00:00:01.650Z", participantId: speakerBId, participantNameStatus: "known", turnId: `participant-greeting:${speakerBId}`, type: "greeting" as const },
+    { greetingLocale: "ru", observedAt: "1970-01-01T00:00:02.750Z", participantId: speakerDId, participantNameStatus: "unknown", turnId: `participant-greeting:${speakerDId}`, type: "greeting" as const },
     { observedAt: "1970-01-01T00:00:03.800Z", outcome: "active", participantId: speakerDId, turnId: "human-question-1", type: "addressed-answer" as const },
     { evidenceTurnIds: ["speaker-d-farewell"], locale: "ru", observedAt: "1970-01-01T00:00:07.000Z", playbackAttemptId: "farewell-attempt-1", reason: "explicit-group", turnId: "meeting-farewell:v1" as const, type: "farewell" as const },
   ];
@@ -676,13 +700,13 @@ export function retainedV8Evidence(): RetainedReconnectE2eEvidenceV8 {
       },
       reconnectNoRepeat: {
         lifecycleReceipts: [
-          { eventType: "participant.left", observedAt: "1970-01-01T00:00:00.750Z", occurredAt: "1970-01-01T00:00:00.750Z", participantId: speakerBId, type: "participant-lifecycle" },
-          { eventType: "participant.joined", observedAt: "1970-01-01T00:00:00.800Z", occurredAt: "1970-01-01T00:00:00.800Z", participantId: speakerBId, type: "participant-lifecycle" },
+          { eventType: "participant.left", observedAt: "1970-01-01T00:00:02.100Z", occurredAt: "1970-01-01T00:00:02.100Z", participantId: speakerBId, type: "participant-lifecycle" },
+          { eventType: "participant.joined", observedAt: "1970-01-01T00:00:02.200Z", occurredAt: "1970-01-01T00:00:02.200Z", participantId: speakerBId, type: "participant-lifecycle" },
         ],
         negativeWindow: {
           endedAt: source.recording.endedAt,
           source: "sut-rejoin-to-authoritative-recording-end",
-          startedAt: "1970-01-01T00:00:00.800Z",
+          startedAt: "1970-01-01T00:00:02.200Z",
         },
         participantId: speakerBId,
       },
@@ -713,12 +737,12 @@ export function retainedV8Evidence(): RetainedReconnectE2eEvidenceV8 {
         },
       },
       voice: [
-        voiceObservation("greeting", `participant-greeting:${speakerAId}`, "greeting-ru", 1_000),
-        voiceObservation("greeting", `participant-greeting:${speakerBId}`, "greeting-en", 200),
-        voiceObservation("greeting", `participant-greeting:${observerId}`, "greeting-unknown", 2_000),
-        voiceObservation("farewell", "meeting-farewell:v1", "farewell", 6_600),
-        voiceObservation("addressed-answer", "human-question-1", "answer", 4_100),
+        voiceObservation("greeting", `participant-greeting:${observerId}`, "greeting-unknown", 200),
+        voiceObservation("greeting", `participant-greeting:${speakerAId}`, "greeting-ru", 900),
+        voiceObservation("greeting", `participant-greeting:${speakerBId}`, "greeting-en", 1_600),
         voiceObservation("greeting", `participant-greeting:${speakerDId}`, "greeting-speaker-d", 2_700),
+        voiceObservation("addressed-answer", "human-question-1", "answer", 4_100),
+        voiceObservation("farewell", "meeting-farewell:v1", "farewell", 6_600),
       ],
     },
     schemaVersion: 8,

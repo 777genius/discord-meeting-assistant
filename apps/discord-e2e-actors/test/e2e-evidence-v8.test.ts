@@ -410,9 +410,9 @@ describe("retained conversation V8 reconnect response semantics", () => {
   it("rejects a second audible greeting after reconnect even without a settled greeting log", () => {
     const evidence = retainedV8Evidence();
     evidence.transcript.turns.push({
-      endMs: 2_000,
+      endMs: 2_700,
       speakerId: evidence.conversation.botSpeakerId,
-      startMs: 1_700,
+      startMs: 2_400,
       text: "Hi, Test B!",
       turnId: "unlogged-reconnect-greeting",
     });
@@ -435,11 +435,11 @@ describe("retained conversation V8 reconnect response semantics", () => {
     if (otherGreeting === undefined) {
       throw new Error("other participant greeting capture fixture is missing");
     }
-    const startMs = otherGreeting.capture.firstPacketAt.epochMilliseconds;
+    const startMs = 2_400;
     evidence.transcript.turns.push({
-      endMs: startMs - 1_000 + 300,
+      endMs: startMs + 300,
       speakerId: evidence.conversation.botSpeakerId,
-      startMs: startMs - 1_000,
+      startMs,
       text: "Hi, Test B!",
       turnId: "reconnect-greeting-over-other-capture",
     });
@@ -537,7 +537,7 @@ describe("retained conversation V8 reconnect response semantics", () => {
     if (rejoined === undefined) {
       throw new Error("SUT rejoin receipt fixture is missing");
     }
-    rejoined.occurredAt = "1970-01-01T00:00:02.000Z";
+    rejoined.occurredAt = "1970-01-01T00:00:03.000Z";
 
     const codes = verifyRetainedE2eEvidence(
       manifest(),
@@ -644,7 +644,7 @@ describe("retained conversation V8 reconnect response semantics", () => {
     if (reconnectGreeting === undefined) {
       throw new Error("reconnect greeting fixture is missing");
     }
-    reconnectGreeting.observedAt = "1970-01-01T00:00:01.300Z";
+    reconnectGreeting.observedAt = "1970-01-01T00:00:02.200Z";
     evidence.conversation.lifecycle.events[0]!.observedAt = "1970-01-01T00:00:07.000Z";
     evidence.conversation.voice[1]!.source.craigBotId = "1534999999999999998";
     evidence.conversation.voice[2]!.observer.voiceChannelId = "1534999999999999997";
