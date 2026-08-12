@@ -18,11 +18,13 @@ import {
 import { loadConversationVoiceObserverConfig } from "./conversation-voice-observer-config.js";
 import { createConversationVoiceEvidence } from "./conversation-voice-evidence.js";
 import { captureConversationVoiceFromOpenStream } from "./conversation-voice-stream-capture.js";
-import { waitForConversationVoiceTurnIdWhileGuardingAudio } from
+import { waitForConversationVoiceCorrelationWhileGuardingAudio } from
   "./conversation-voice-turn-correlation-wait.js";
 import {
-  assertConversationVoiceTurnIdFileIsNew,
-  waitForNewConversationVoiceTurnIdFile,
+  assertConversationAnswerHandshakeRootIsNew,
+  publishConversationAnswerObserverReady,
+  waitForConversationAnswerPlaybackIntent,
+  type ConversationAnswerPlaybackIntent,
 } from "./conversation-voice-turn-id-source.js";
 import {
   ConversationVoiceCaptureController,
@@ -89,13 +91,13 @@ async function main(): Promise<void> {
     },
     ...config.additionalCaptures,
   ] as const;
-  const turnIdFiles = config.additionalCaptures.flatMap((capture) =>
-    capture.turnIdFile === undefined ? [] : [capture.turnIdFile]
+  const handshakeRoots = config.additionalCaptures.flatMap((capture) =>
+    capture.purpose === "addressed-answer" ? [capture.playbackHandshakeRoot] : []
   );
   await Promise.all(captures.map(({ outputPath }) =>
     assertConversationVoiceEvidencePathIsNew(outputPath)
   ));
-  await Promise.all(turnIdFiles.map(assertConversationVoiceTurnIdFileIsNew));
+  await Promise.all(handshakeRoots.map(assertConversationAnswerHandshakeRootIsNew));
   const decoder = await createDiscordJsOpusDecoder();
 
   const secretReader = config.secretDirectory === undefined
@@ -125,8 +127,8 @@ async function main(): Promise<void> {
       selfMute: true,
     });
     await entersState(connection, VoiceConnectionStatus.Ready, config.readyTimeoutMilliseconds);
-    const turnIdFileNotBeforeEpochMilliseconds = Date.now();
-    await Promise.all(turnIdFiles.map(assertConversationVoiceTurnIdFileIsNew));
+    const handshakeNotBeforeEpochMilliseconds = Date.now();
+    await Promise.all(handshakeRoots.map(assertConversationAnswerHandshakeRootIsNew));
     await assertConfiguredCraigBotIsInVoiceChannel(
       client,
       guild,
@@ -139,17 +141,23 @@ async function main(): Promise<void> {
     });
     sourceStream.on("error", ignoreStreamError);
     for (const [index, plannedCapture] of captures.entries()) {
-      const turnId = plannedCapture.turnId ??
-        await waitForConversationVoiceTurnIdWhileGuardingAudio({
+      const playbackIntent: ConversationAnswerPlaybackIntent | undefined =
+        plannedCapture.purpose === "addressed-answer"
+          ? await waitForConversationVoiceCorrelationWhileGuardingAudio({
           isPacketAudible: (packet) => decoder.isPacketAudible(packet),
-          resolveTurnId: async (signal) => waitForNewConversationVoiceTurnIdFile({
-            notBeforeEpochMilliseconds: turnIdFileNotBeforeEpochMilliseconds,
-            path: plannedCapture.turnIdFile,
+          resolveCorrelation: async (signal) => waitForConversationAnswerPlaybackIntent({
+            meetingId: config.meetingId,
+            notBeforeEpochMilliseconds: handshakeNotBeforeEpochMilliseconds,
+            root: plannedCapture.playbackHandshakeRoot,
+            runId: config.runId,
             signal,
             timeoutMilliseconds: config.readyTimeoutMilliseconds,
           }),
           stream: sourceStream,
-        });
+        })
+          : undefined;
+      const turnId = playbackIntent?.turnId ?? plannedCapture.turnId;
+      const attemptId = playbackIntent?.playbackAttemptId ?? plannedCapture.attemptId;
       const capture = await captureConversationVoiceFromOpenStream({
         captureTimeoutMilliseconds: config.captureTimeoutMilliseconds,
         clock: systemClock,
@@ -164,10 +172,26 @@ async function main(): Promise<void> {
         }, decoder),
         firstPacketTimeoutMilliseconds: config.readyTimeoutMilliseconds,
         isPacketAudible: (packet) => decoder.isPacketAudible(packet),
+        ...(playbackIntent === undefined
+          ? {}
+          : {
+              publishReady: async () => publishConversationAnswerObserverReady({
+                intent: playbackIntent,
+                root: plannedCapture.playbackHandshakeRoot,
+              }),
+            }),
         stream: sourceStream,
       });
+      const playbackReceipt = playbackIntent === undefined
+        ? undefined
+        : {
+            meetingId: playbackIntent.meetingId,
+            playbackAttemptId: playbackIntent.playbackAttemptId,
+            startedAt: capture.firstPacketAt,
+            turnId: playbackIntent.turnId,
+          };
       const evidence = createConversationVoiceEvidence({
-        attemptId: plannedCapture.attemptId,
+        attemptId,
         authenticatedBotId,
         capture,
         captureTimeoutMilliseconds: config.captureTimeoutMilliseconds,
@@ -182,6 +206,7 @@ async function main(): Promise<void> {
         observerApplicationId: config.observerApplicationId,
         privateTestGuildConfirmed: config.privateTestGuildConfirmed,
         purpose: plannedCapture.purpose,
+        ...(playbackReceipt === undefined ? {} : { playbackReceipt }),
         recordingId: config.recordingId,
         runId: config.runId,
         turnId,

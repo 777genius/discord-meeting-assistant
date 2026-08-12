@@ -13,6 +13,26 @@ const captureTimestampSchema = z.object({
   monotonicMilliseconds: z.number().nonnegative(),
 }).strict();
 
+const operatorSuppliedVoiceCorrelationSchema = z.object({
+  attemptId: identifierSchema,
+  provenance: z.literal("operator-supplied"),
+  purpose: conversationVoicePurposeSchema,
+  recordingId: identifierSchema.nullable(),
+  verification: z.literal("not-run"),
+  turnId: identifierSchema,
+}).strict();
+const playbackReceiptVoiceCorrelationSchema = z.object({
+  attemptId: identifierSchema,
+  meetingId: identifierSchema,
+  playbackKind: z.literal("answer"),
+  playbackStartedAt: captureTimestampSchema,
+  provenance: z.literal("playback-started-receipt"),
+  purpose: z.literal("addressed-answer"),
+  recordingId: identifierSchema.nullable(),
+  verification: z.literal("not-run"),
+  turnId: identifierSchema,
+}).strict();
+
 export const conversationVoiceEvidenceV3Schema = z.object({
   capture: z.object({
     acceptedDurationMilliseconds: z.number().int().positive(),
@@ -48,14 +68,10 @@ export const conversationVoiceEvidenceV3Schema = z.object({
     startedAt: captureTimestampSchema,
     termination: z.literal("expected-duration-reached"),
   }).strict(),
-  correlation: z.object({
-    attemptId: identifierSchema,
-    provenance: z.literal("operator-supplied"),
-    purpose: conversationVoicePurposeSchema,
-    recordingId: identifierSchema.nullable(),
-    verification: z.literal("not-run"),
-    turnId: identifierSchema,
-  }).strict(),
+  correlation: z.discriminatedUnion("provenance", [
+    operatorSuppliedVoiceCorrelationSchema,
+    playbackReceiptVoiceCorrelationSchema,
+  ]),
   kind: z.literal("conversation-voice-observer-evidence"),
   observer: z.object({
     applicationId: identifierSchema,
@@ -134,12 +150,38 @@ const addressedAnswerObservationSchema = z.object({
   type: z.literal("addressed-answer"),
 }).strict();
 
+const conversationPlaybackReceiptBaseSchema = z.object({
+  observedAt: z.iso.datetime(),
+  playbackAttemptId: identifierSchema,
+  playbackKind: z.enum(["answer", "prepared-cue", "thinking-cue"]),
+  turnId: identifierSchema,
+});
+const conversationPlaybackReceiptSchema = z.discriminatedUnion("status", [
+  conversationPlaybackReceiptBaseSchema.extend({
+    playbackStartedAtEpochMs: z.number().int().positive(),
+    playbackStartedAtMonotonicMs: z.number().nonnegative(),
+    status: z.literal("started"),
+  }).strict(),
+  conversationPlaybackReceiptBaseSchema.extend({
+    playbackFinishedAtEpochMs: z.number().int().positive(),
+    playbackFinishedAtMonotonicMs: z.number().nonnegative(),
+    status: z.literal("finished"),
+  }).strict(),
+  conversationPlaybackReceiptBaseSchema.extend({
+    playbackSettledAtEpochMs: z.number().int().positive(),
+    playbackSettledAtMonotonicMs: z.number().nonnegative(),
+    settlement: z.enum(["played", "unplayed", "partial", "unknown"]),
+    status: z.literal("settled"),
+  }).strict(),
+]);
+
 export const conversationLifecycleEvidenceSchema = z.object({
   events: z.array(z.discriminatedUnion("type", [
     addressedAnswerObservationSchema,
     greetingPlaybackObservationSchema,
     farewellPlaybackObservationSchema,
   ])).min(4),
+  playbackReceipts: z.array(conversationPlaybackReceiptSchema).default([]),
 }).strict();
 
 export type ConversationLifecycleEvidence = z.infer<typeof conversationLifecycleEvidenceSchema>;

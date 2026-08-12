@@ -112,6 +112,63 @@ export interface ConversationLatencyObserverPort {
   ): void | Promise<void>;
 }
 
+export type ConversationPlaybackKind = "answer" | "prepared-cue" | "thinking-cue";
+
+export type ConversationPlaybackSettlement =
+  | "played"
+  | "unplayed"
+  | "partial"
+  | "unknown";
+
+export type ConversationPlaybackObservation =
+  | {
+      readonly meetingId: string;
+      readonly playbackAttemptId: string;
+      readonly playbackKind: ConversationPlaybackKind;
+      readonly startedAtMs: number;
+      readonly status: "started";
+      readonly turnId: string;
+    }
+  | {
+      readonly finishedAtMs: number;
+      readonly meetingId: string;
+      readonly playbackAttemptId: string;
+      readonly playbackKind: ConversationPlaybackKind;
+      readonly status: "finished";
+      readonly turnId: string;
+    }
+  | {
+      readonly meetingId: string;
+      readonly playbackAttemptId: string;
+      readonly playbackKind: ConversationPlaybackKind;
+      readonly settledAtMs: number;
+      readonly settlement: ConversationPlaybackSettlement;
+      readonly status: "settled";
+      readonly turnId: string;
+    };
+
+/** Consumer-owned sink for privacy-safe, provider-neutral playback receipts. */
+export interface ConversationPlaybackObserverPort {
+  observeConversationPlayback(
+    observation: ConversationPlaybackObservation,
+  ): void | Promise<void>;
+}
+
+export interface ConversationPlaybackReadinessRequest {
+  readonly meetingId: string;
+  readonly playbackAttemptId: string;
+  readonly playbackKind: ConversationPlaybackKind;
+  readonly turnId: string;
+}
+
+/** Optional two-phase gate used when an external observer must be ready first. */
+export interface ConversationPlaybackReadinessPort {
+  awaitConversationPlaybackReady(
+    request: ConversationPlaybackReadinessRequest,
+    options?: { readonly signal?: AbortSignal },
+  ): Promise<ConversationPortResult<"ready">>;
+}
+
 export interface VoicePlaybackRequest {
   readonly attemptId: string;
   readonly meetingId: string;

@@ -84,6 +84,77 @@ describe("parseConversationLifecycleEvidenceLogs", () => {
       type: "addressed-answer",
     });
   });
+
+  it("retains structured answer playback receipts for the correlated meeting", () => {
+    const shared = {
+      meetingId: "meeting-1",
+      playbackAttemptId: "answer-attempt-1",
+      playbackKind: "answer",
+      time: "2026-08-06T19:18:47.000Z",
+      turnId: "human-question-1",
+    };
+    const output = [
+      ...Array.from({ length: 4 }, (_, index) => JSON.stringify({
+        greetingLocale: index === 0 ? "en" : "ru",
+        meetingId: "meeting-1",
+        message: "Participant greeting playback settled",
+        participantId: `participant-${String(index + 1)}`,
+        participantNameStatus: index < 2 ? "known" : "unknown",
+        time: "2026-08-06T19:18:37.000Z",
+        turnId: `participant-greeting:participant-${String(index + 1)}`,
+      })),
+      JSON.stringify({
+        ...shared,
+        message: "Conversation playback started",
+        playbackStartedAtEpochMs: 1_754_509_527_000,
+        playbackStartedAtMonotonicMs: 4_000,
+      }),
+      JSON.stringify({
+        ...shared,
+        message: "Conversation playback finished",
+        playbackFinishedAtEpochMs: 1_754_509_527_700,
+        playbackFinishedAtMonotonicMs: 4_700,
+      }),
+      JSON.stringify({
+        ...shared,
+        message: "Conversation playback settled",
+        playbackSettledAtEpochMs: 1_754_509_527_800,
+        playbackSettledAtMonotonicMs: 4_800,
+        settlement: "played",
+      }),
+      JSON.stringify({
+        ...shared,
+        meetingId: "other-meeting",
+        message: "Conversation playback settled",
+        playbackSettledAtEpochMs: 1_754_509_527_800,
+        playbackSettledAtMonotonicMs: 4_800,
+        settlement: "played",
+      }),
+    ].join("\n");
+
+    expect(parseConversationLifecycleEvidenceLogs(output, "meeting-1").playbackReceipts)
+      .toEqual([
+        expect.objectContaining({
+          playbackAttemptId: "answer-attempt-1",
+          playbackKind: "answer",
+          status: "started",
+          turnId: "human-question-1",
+        }),
+        expect.objectContaining({
+          playbackAttemptId: "answer-attempt-1",
+          playbackKind: "answer",
+          status: "finished",
+          turnId: "human-question-1",
+        }),
+        expect.objectContaining({
+          playbackAttemptId: "answer-attempt-1",
+          playbackKind: "answer",
+          settlement: "played",
+          status: "settled",
+          turnId: "human-question-1",
+        }),
+      ]);
+  });
 });
 
 function stage(meetingId: string, stageName: string, durationMilliseconds: number): string {

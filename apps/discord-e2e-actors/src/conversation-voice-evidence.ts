@@ -9,6 +9,13 @@ import {
 export function createConversationVoiceEvidence(
   input: ConversationVoiceEvidenceInput,
 ): ConversationVoiceEvidence {
+  if ((input.purpose === "addressed-answer") !== (input.playbackReceipt !== undefined)) {
+    throw new Error("Addressed answer evidence requires an answer playback-started receipt");
+  }
+  if (input.playbackReceipt !== undefined &&
+    input.attemptId !== input.playbackReceipt.playbackAttemptId) {
+    throw new Error("Addressed answer attempt ID must come from its playback-started receipt");
+  }
   return Object.freeze({
     capture: Object.freeze({
       acceptedDurationMilliseconds: input.capture.acceptedDurationMilliseconds,
@@ -29,14 +36,26 @@ export function createConversationVoiceEvidence(
       startedAt: input.capture.startedAt,
       termination: "expected-duration-reached" as const,
     }),
-    correlation: Object.freeze({
-      attemptId: input.attemptId,
-      provenance: "operator-supplied" as const,
-      purpose: input.purpose,
-      recordingId: input.recordingId,
-      verification: "not-run" as const,
-      turnId: input.turnId,
-    }),
+    correlation: input.playbackReceipt === undefined
+      ? Object.freeze({
+          attemptId: input.attemptId,
+          provenance: "operator-supplied" as const,
+          purpose: input.purpose,
+          recordingId: input.recordingId,
+          verification: "not-run" as const,
+          turnId: input.turnId,
+        })
+      : Object.freeze({
+          attemptId: input.playbackReceipt.playbackAttemptId,
+          meetingId: input.playbackReceipt.meetingId,
+          playbackKind: "answer" as const,
+          playbackStartedAt: Object.freeze({ ...input.playbackReceipt.startedAt }),
+          provenance: "playback-started-receipt" as const,
+          purpose: "addressed-answer" as const,
+          recordingId: input.recordingId,
+          verification: "not-run" as const,
+          turnId: input.playbackReceipt.turnId,
+        }),
     kind: "conversation-voice-observer-evidence" as const,
     observer: Object.freeze({
       applicationId: input.observerApplicationId,

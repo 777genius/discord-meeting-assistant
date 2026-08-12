@@ -13,6 +13,7 @@ type RetainedConversationEvidence = Extract<
 export function verifyAddressedAnswer(
   evidence: RetainedConversationEvidence,
   recordingStartMs: number,
+  timestampToleranceMs: number,
   fail: VerificationFailureReporter,
 ): void {
   const { voice, botSpeakerId } = evidence.conversation;
@@ -26,6 +27,14 @@ export function verifyAddressedAnswer(
     fail("BOT_RECORDING_TRACK_MISSING", "Botik speaker is absent from the authoritative recording");
   }
   for (const answer of answerCaptures) {
+    if (evidence.schemaVersion === 8) {
+      verifyAddressedAnswerPlayback(
+        evidence,
+        answer,
+        timestampToleranceMs,
+        fail,
+      );
+    }
     const answerStartMs = answer.capture.firstPacketAt.epochMilliseconds - recordingStartMs;
     const answerEndMs = answer.capture.endedAt.epochMilliseconds - recordingStartMs;
     const transcriptMatches = evidence.transcript.turns.filter((turn) =>
@@ -37,5 +46,83 @@ export function verifyAddressedAnswer(
         "audible addressed answer is not retained as one Botik transcript turn",
       );
     }
+  }
+}
+
+function verifyAddressedAnswerPlayback(
+  evidence: Extract<RetainedConversationEvidence, { schemaVersion: 8 }>,
+  answer: RetainedConversationEvidence["conversation"]["voice"][number],
+  timestampToleranceMs: number,
+  fail: VerificationFailureReporter,
+): void {
+  const activeAdmissions = evidence.conversation.lifecycle.events.filter((event) =>
+    event.type === "addressed-answer" &&
+    event.turnId === answer.correlation.turnId &&
+    event.outcome === "active"
+  );
+  const queuedAdmissions = evidence.conversation.lifecycle.events.filter((event) =>
+    event.type === "addressed-answer" &&
+    event.turnId === answer.correlation.turnId &&
+    event.outcome === "queued"
+  );
+  if (activeAdmissions.length !== 1 || queuedAdmissions.length !== 0) {
+    fail(
+      "ANSWER_ADMISSION_MISMATCH",
+      "addressed answer requires one active, non-queued admission",
+    );
+  }
+  if (
+    answer.correlation.provenance !== "playback-started-receipt" ||
+    answer.correlation.meetingId !== evidence.meetingId ||
+    answer.correlation.playbackKind !== "answer"
+  ) {
+    fail(
+      "ANSWER_PLAYBACK_RECEIPT_MISMATCH",
+      "addressed answer correlation must come from its exact answer playback-started receipt",
+    );
+    return;
+  }
+
+  const receipts = evidence.conversation.lifecycle.playbackReceipts.filter((receipt) =>
+    receipt.turnId === answer.correlation.turnId &&
+    receipt.playbackAttemptId === answer.correlation.attemptId &&
+    receipt.playbackKind === "answer"
+  );
+  const started = receipts.filter((receipt) => receipt.status === "started");
+  const finished = receipts.filter((receipt) => receipt.status === "finished");
+  const settled = receipts.filter((receipt) => receipt.status === "settled");
+  if (
+    started.length !== 1 || finished.length !== 1 || settled.length !== 1 ||
+    settled[0]!.settlement !== "played"
+  ) {
+    fail(
+      "ANSWER_PLAYBACK_RECEIPT_MISMATCH",
+      "addressed answer requires unique started, finished, and settled-played receipts",
+    );
+    return;
+  }
+
+  const startedReceipt = started[0]!;
+  const finishedReceipt = finished[0]!;
+  const playedReceipt = settled[0]!;
+  const captureStartMs = answer.capture.firstPacketAt.epochMilliseconds;
+  const captureEndMs = answer.capture.endedAt.epochMilliseconds;
+  const receiptMatchesHandoff =
+    answer.correlation.playbackStartedAt.epochMilliseconds ===
+      startedReceipt.playbackStartedAtEpochMs &&
+    answer.correlation.playbackStartedAt.monotonicMilliseconds ===
+      startedReceipt.playbackStartedAtMonotonicMs;
+  const ordered = startedReceipt.playbackStartedAtEpochMs <=
+      finishedReceipt.playbackFinishedAtEpochMs &&
+    finishedReceipt.playbackFinishedAtEpochMs <=
+      playedReceipt.playbackSettledAtEpochMs + timestampToleranceMs;
+  const overlapsCapture = startedReceipt.playbackStartedAtEpochMs <=
+      captureEndMs + timestampToleranceMs &&
+    captureStartMs <= finishedReceipt.playbackFinishedAtEpochMs + timestampToleranceMs;
+  if (!receiptMatchesHandoff || !ordered || !overlapsCapture) {
+    fail(
+      "ANSWER_PLAYBACK_RECEIPT_MISMATCH",
+      "answer playback receipts do not match the handoff or audible capture interval",
+    );
   }
 }

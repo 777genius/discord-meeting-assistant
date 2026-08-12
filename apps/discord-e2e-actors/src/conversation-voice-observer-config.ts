@@ -20,21 +20,21 @@ const absoluteOutputPathSchema = z.string()
   .transform(normalize);
 const absoluteDirectorySchema = z.string().min(1).refine(isAbsolute, "Expected an absolute directory path");
 const maximumReadyTimeoutMilliseconds = 120_000;
-const additionalCaptureSchema = z.object({
+const literalAdditionalCaptureSchema = z.object({
   attemptId: correlationIdSchema,
   outputPath: absoluteOutputPathSchema,
-  purpose: z.enum(["addressed-answer", "farewell", "greeting"]),
-  turnId: correlationIdSchema.optional(),
-  turnIdFile: absoluteOutputPathSchema.optional(),
-}).strict().superRefine((value, context) => {
-  if ((value.turnId === undefined) === (value.turnIdFile === undefined)) {
-    context.addIssue({
-      code: "custom",
-      message: "Expected exactly one of turnId or turnIdFile",
-      path: ["turnId"],
-    });
-  }
-});
+  purpose: z.enum(["farewell", "greeting"]),
+  turnId: correlationIdSchema,
+}).strict();
+const addressedAdditionalCaptureSchema = z.object({
+  outputPath: absoluteOutputPathSchema,
+  playbackReceiptFile: absoluteOutputPathSchema,
+  purpose: z.literal("addressed-answer"),
+}).strict();
+const additionalCaptureSchema = z.discriminatedUnion("purpose", [
+  addressedAdditionalCaptureSchema,
+  literalAdditionalCaptureSchema,
+]);
 const additionalCapturesJsonSchema = z.string().max(32_768).transform((value, context) => {
   try {
     return JSON.parse(value) as unknown;
@@ -73,11 +73,12 @@ const environmentSchema = z.object({
     .max(MAXIMUM_CONVERSATION_VOICE_PCM_BYTES)
     .refine((value) => value % 4 === 0, "Expected a complete PCM frame bound")
     .default(MAXIMUM_CONVERSATION_VOICE_PCM_BYTES),
+  DISCORD_E2E_CONVERSATION_VOICE_MEETING_ID: correlationIdSchema,
   DISCORD_E2E_CONVERSATION_VOICE_OBSERVER_ACCOUNT: secretAccountSchema.default("conversation-observer"),
   DISCORD_E2E_CONVERSATION_VOICE_OBSERVER_APPLICATION_ID: snowflakeSchema,
   DISCORD_E2E_CONVERSATION_VOICE_OUTPUT: absoluteOutputPathSchema,
   DISCORD_E2E_CONVERSATION_VOICE_PRIVATE_TEST_GUILD: z.literal("private-test-guild"),
-  DISCORD_E2E_CONVERSATION_VOICE_PURPOSE: z.enum(["addressed-answer", "farewell", "greeting"]),
+  DISCORD_E2E_CONVERSATION_VOICE_PURPOSE: z.enum(["farewell", "greeting"]),
   DISCORD_E2E_CONVERSATION_VOICE_READY_TIMEOUT_MS: z.coerce.number()
     .int()
     .min(1_000)
@@ -129,7 +130,10 @@ const environmentSchema = z.object({
     },
     ...(value.DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON ?? []),
   ];
-  if (new Set(captureKeys.map(({ attemptId }) => attemptId)).size !== captureKeys.length) {
+  const literalAttemptIds = captureKeys.flatMap((capture) =>
+    "attemptId" in capture ? [capture.attemptId] : []
+  );
+  if (new Set(literalAttemptIds).size !== literalAttemptIds.length) {
     context.addIssue({
       code: "custom",
       message: "Conversation voice capture attempt IDs must be unique",
@@ -143,20 +147,23 @@ const environmentSchema = z.object({
       path: ["DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON"],
     });
   }
-  const turnIdFiles = (value.DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON ?? [])
-    .flatMap((capture) => capture.turnIdFile === undefined ? [] : [capture.turnIdFile]);
-  if (new Set(turnIdFiles).size !== turnIdFiles.length) {
+  const playbackReceiptFiles =
+    (value.DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON ?? [])
+      .flatMap((capture) =>
+        capture.purpose === "addressed-answer" ? [capture.playbackReceiptFile] : []
+      );
+  if (new Set(playbackReceiptFiles).size !== playbackReceiptFiles.length) {
     context.addIssue({
       code: "custom",
-      message: "Conversation voice capture turn ID file paths must be unique",
+      message: "Conversation answer playback receipt file paths must be unique",
       path: ["DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON"],
     });
   }
   const evidenceOutputPaths = new Set(captureKeys.map(({ outputPath }) => outputPath));
-  if (turnIdFiles.some((path) => evidenceOutputPaths.has(path))) {
+  if (playbackReceiptFiles.some((path) => evidenceOutputPaths.has(path))) {
     context.addIssue({
       code: "custom",
-      message: "Conversation voice turn ID files must be distinct from evidence output paths",
+      message: "Conversation playback receipt files must be distinct from evidence output paths",
       path: ["DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON"],
     });
   }
@@ -165,15 +172,12 @@ const environmentSchema = z.object({
 type ConversationVoiceObserverCapture = {
   readonly attemptId: string;
   readonly outputPath: string;
-  readonly purpose: "addressed-answer" | "farewell" | "greeting";
+  readonly purpose: "farewell" | "greeting";
   readonly turnId: string;
-  readonly turnIdFile?: never;
 } | {
-  readonly attemptId: string;
   readonly outputPath: string;
-  readonly purpose: "addressed-answer" | "farewell" | "greeting";
-  readonly turnId?: never;
-  readonly turnIdFile: string;
+  readonly playbackReceiptFile: string;
+  readonly purpose: "addressed-answer";
 };
 
 export interface ConversationVoiceObserverConfig {
@@ -186,11 +190,12 @@ export interface ConversationVoiceObserverConfig {
   readonly guildId: string;
   readonly keychainService: string;
   readonly maxPcmBytes: number;
+  readonly meetingId: string;
   readonly observerAccount: string;
   readonly observerApplicationId: string;
   readonly outputPath: string;
   readonly privateTestGuildConfirmed: true;
-  readonly purpose: "addressed-answer" | "farewell" | "greeting";
+  readonly purpose: "farewell" | "greeting";
   readonly readyTimeoutMilliseconds: number;
   readonly recordingId: string | null;
   readonly runId: string;
@@ -212,18 +217,19 @@ export function loadConversationVoiceObserverConfig(
     additionalCaptures: Object.freeze(
       (parsed.DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON ?? [])
         .map((capture): ConversationVoiceObserverCapture => {
-          const common = {
+          if (capture.purpose === "addressed-answer") {
+            return Object.freeze({
+              outputPath: capture.outputPath,
+              playbackReceiptFile: capture.playbackReceiptFile,
+              purpose: capture.purpose,
+            });
+          }
+          return Object.freeze({
             attemptId: capture.attemptId,
             outputPath: capture.outputPath,
             purpose: capture.purpose,
-          } as const;
-          if (capture.turnId !== undefined) {
-            return Object.freeze({ ...common, turnId: capture.turnId });
-          }
-          if (capture.turnIdFile !== undefined) {
-            return Object.freeze({ ...common, turnIdFile: capture.turnIdFile });
-          }
-          throw new Error("Expected one conversation voice turn ID source");
+            turnId: capture.turnId,
+          });
         }),
     ),
     attemptId: parsed.DISCORD_E2E_CONVERSATION_VOICE_ATTEMPT_ID,
@@ -235,6 +241,7 @@ export function loadConversationVoiceObserverConfig(
     guildId: parsed.DISCORD_E2E_CONVERSATION_VOICE_GUILD_ID,
     keychainService: parsed.DISCORD_E2E_CONVERSATION_VOICE_KEYCHAIN_SERVICE,
     maxPcmBytes: parsed.DISCORD_E2E_CONVERSATION_VOICE_MAX_PCM_BYTES,
+    meetingId: parsed.DISCORD_E2E_CONVERSATION_VOICE_MEETING_ID,
     observerAccount: parsed.DISCORD_E2E_CONVERSATION_VOICE_OBSERVER_ACCOUNT,
     observerApplicationId: parsed.DISCORD_E2E_CONVERSATION_VOICE_OBSERVER_APPLICATION_ID,
     outputPath: parsed.DISCORD_E2E_CONVERSATION_VOICE_OUTPUT,

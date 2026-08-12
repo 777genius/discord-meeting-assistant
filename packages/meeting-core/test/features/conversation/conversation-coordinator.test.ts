@@ -4,7 +4,12 @@ import {
   CONVERSATION_WAKE_LATCH_MS,
   ConversationCoordinator,
 } from "@discord-meeting/meeting-core/conversation";
-import type { ConversationRuntimeEvent } from "@discord-meeting/meeting-core/conversation";
+import type {
+  ConversationPlaybackObservation,
+  ConversationPlaybackReadinessPort,
+  ConversationPlaybackReadinessRequest,
+  ConversationRuntimeEvent,
+} from "@discord-meeting/meeting-core/conversation";
 import {
   AbortablePendingRuntime,
   ControlledDelayPort,
@@ -208,6 +213,92 @@ describe("ConversationCoordinator thinking cues", () => {
 });
 
 describe("ConversationCoordinator cue and answer playback", () => {
+  it("observes a thinking cue and played answer separately for the same turn", async () => {
+    const stream = new EventStream<ConversationRuntimeEvent>();
+    const runtime = new ScriptedRuntime([stream]);
+    const playback = new RecordingPlayback();
+    const delay = new ControlledDelayPort();
+    const observations: ConversationPlaybackObservation[] = [];
+    const coordinator = new ConversationCoordinator({
+      delay,
+      playback,
+      playbackObserver: {
+        observeConversationPlayback: (observation) => {
+          observations.push(structuredClone(observation));
+        },
+      },
+      runtime,
+      thinkingCues: new FixedThinkingCues(),
+    });
+
+    await coordinator.handleFinalizedTurn(input("turn-1", 0));
+    stream.push({ attemptId: "answer-attempt-1", type: "accepted" });
+    delay.delays[0]?.elapse();
+    await vi.waitFor(() => {
+      expect(observations).toEqual([
+        expect.objectContaining({
+          playbackAttemptId: "cue-attempt-turn-1-acknowledgement",
+          playbackKind: "thinking-cue",
+          status: "started",
+          turnId: "turn-1",
+        }),
+        expect.objectContaining({
+          playbackAttemptId: "cue-attempt-turn-1-acknowledgement",
+          playbackKind: "thinking-cue",
+          status: "finished",
+          turnId: "turn-1",
+        }),
+      ]);
+    });
+
+    stream.push({
+      attemptId: "answer-attempt-1",
+      channels: 1,
+      format: "pcm_s16le",
+      sampleRateHz: 48_000,
+      type: "audio-start",
+    });
+    stream.push(audioChunk("answer-attempt-1", "turn-1", 0));
+    stream.push({ attemptId: "answer-attempt-1", type: "audio-end" });
+    stream.push({ attemptId: "answer-attempt-1", type: "completed" });
+    stream.close();
+    await coordinator.whenIdle("meeting-1");
+
+    expect(observations).toEqual([
+      expect.objectContaining({
+        playbackAttemptId: "cue-attempt-turn-1-acknowledgement",
+        playbackKind: "thinking-cue",
+        status: "started",
+        turnId: "turn-1",
+      }),
+      expect.objectContaining({
+        playbackAttemptId: "cue-attempt-turn-1-acknowledgement",
+        playbackKind: "thinking-cue",
+        status: "finished",
+        turnId: "turn-1",
+      }),
+      expect.objectContaining({
+        playbackAttemptId: "answer-attempt-1",
+        playbackKind: "answer",
+        status: "started",
+        turnId: "turn-1",
+      }),
+      expect.objectContaining({
+        playbackAttemptId: "answer-attempt-1",
+        playbackKind: "answer",
+        status: "finished",
+        turnId: "turn-1",
+      }),
+      expect.objectContaining({
+        playbackAttemptId: "answer-attempt-1",
+        playbackKind: "answer",
+        settlement: "played",
+        status: "settled",
+        turnId: "turn-1",
+      }),
+    ]);
+  });
+
   it("cancels the delayed cue when real answer audio starts first", async () => {
     const runtime = new ScriptedRuntime([
       closedStream([
@@ -337,6 +428,214 @@ describe("ConversationCoordinator cue and answer playback", () => {
     first.close();
     second.close();
     await coordinator.whenIdle("meeting-1");
+  });
+});
+
+describe("ConversationCoordinator playback readiness", () => {
+  it("waits for exact answer readiness before opening playback", async () => {
+    const stream = new EventStream<ConversationRuntimeEvent>();
+    const playback = new RecordingPlayback();
+    const readinessRequests: ConversationPlaybackReadinessRequest[] = [];
+    let readinessSignal: AbortSignal | undefined;
+    let resolveReadiness!: (
+      result: Awaited<ReturnType<ConversationPlaybackReadinessPort["awaitConversationPlaybackReady"]>>,
+    ) => void;
+    const readiness = new Promise<
+      Awaited<ReturnType<ConversationPlaybackReadinessPort["awaitConversationPlaybackReady"]>>
+    >((resolve) => {
+      resolveReadiness = resolve;
+    });
+    const playbackReadiness: ConversationPlaybackReadinessPort = {
+      awaitConversationPlaybackReady: (request, options) => {
+        readinessRequests.push(structuredClone(request));
+        readinessSignal = options?.signal;
+        return readiness;
+      },
+    };
+    const coordinator = new ConversationCoordinator({
+      playback,
+      playbackReadiness,
+      runtime: new ScriptedRuntime([stream]),
+    });
+
+    await coordinator.handleFinalizedTurn(input("turn-1", 0));
+    stream.push({ attemptId: "answer-attempt-1", type: "accepted" });
+    stream.push({
+      attemptId: "answer-attempt-1",
+      channels: 1,
+      format: "pcm_s16le",
+      sampleRateHz: 48_000,
+      type: "audio-start",
+    });
+    await vi.waitFor(() => {
+      expect(readinessRequests).toEqual([{
+        meetingId: "meeting-1",
+        playbackAttemptId: "answer-attempt-1",
+        playbackKind: "answer",
+        turnId: "turn-1",
+      }]);
+    });
+    expect(readinessSignal).toBeInstanceOf(AbortSignal);
+    expect(readinessSignal?.aborted).toBe(false);
+    expect(playback.requests).toEqual([]);
+
+    stream.push(audioChunk("answer-attempt-1", "turn-1", 0));
+    stream.push({ attemptId: "answer-attempt-1", type: "audio-end" });
+    stream.push({ attemptId: "answer-attempt-1", type: "completed" });
+    stream.close();
+    await Promise.resolve();
+    expect(playback.requests).toEqual([]);
+
+    resolveReadiness({ ok: true, value: "ready" });
+    await coordinator.whenIdle("meeting-1");
+
+    expect(playback.requests).toEqual([{
+      attemptId: "answer-attempt-1",
+      meetingId: "meeting-1",
+      recordingId: "recording-1",
+      turnId: "turn-1",
+    }]);
+    await expect(
+      coordinator.whenTurnPlaybackSettled("meeting-1", "turn-1"),
+    ).resolves.toBe("played");
+  });
+
+  type ReadinessResult = Awaited<
+    ReturnType<ConversationPlaybackReadinessPort["awaitConversationPlaybackReady"]>
+  >;
+  const blockedReadinessCases: Array<{
+    readonly name: string;
+    readonly wait: () => Promise<ReadinessResult>;
+  }> = [
+    {
+      name: "an unexpected success value",
+      wait: () => Promise.resolve(
+        { ok: true, value: "not-ready" } as unknown as ReadinessResult,
+      ),
+    },
+    {
+      name: "a failure result",
+      wait: () => Promise.resolve({
+        failure: {
+          code: "PLAYBACK_OBSERVER_NOT_READY",
+          message: "observer rejected the playback attempt",
+          retryable: true,
+        },
+        ok: false,
+      }),
+    },
+    {
+      name: "a timeout-like rejection",
+      wait: () => Promise.reject(new Error("playback readiness timed out")),
+    },
+  ];
+
+  it.each(blockedReadinessCases)(
+    "prevents playback and settles unplayed for $name",
+    async ({ wait }) => {
+      const playback = new RecordingPlayback();
+      const runtime = new ScriptedRuntime([
+        closedStream([
+          { attemptId: "answer-attempt-1", type: "accepted" },
+          {
+            attemptId: "answer-attempt-1",
+            channels: 1,
+            format: "pcm_s16le",
+            sampleRateHz: 48_000,
+            type: "audio-start",
+          },
+          audioChunk("answer-attempt-1", "turn-1", 0),
+          { attemptId: "answer-attempt-1", type: "audio-end" },
+          { attemptId: "answer-attempt-1", type: "completed" },
+        ]),
+      ]);
+      const coordinator = new ConversationCoordinator({
+        playback,
+        playbackReadiness: { awaitConversationPlaybackReady: wait },
+        runtime,
+      });
+
+      await coordinator.handleFinalizedTurn(input("turn-1", 0));
+      await coordinator.whenIdle("meeting-1");
+
+      expect(playback.requests).toEqual([]);
+      expect(runtime.cancellations).toEqual([{
+        reason: "playback-failed",
+        turnId: "turn-1",
+      }]);
+      await expect(
+        coordinator.whenTurnPlaybackSettled("meeting-1", "turn-1"),
+      ).resolves.toBe("unplayed");
+    },
+  );
+
+  it("bypasses answer readiness for thinking-cue playback", async () => {
+    const stream = new EventStream<ConversationRuntimeEvent>();
+    const playback = new RecordingPlayback();
+    const delay = new ControlledDelayPort();
+    const awaitConversationPlaybackReady = vi.fn(() =>
+      Promise.reject(new Error("answer readiness must not gate a thinking cue"))
+    );
+    const coordinator = new ConversationCoordinator({
+      delay,
+      playback,
+      playbackReadiness: { awaitConversationPlaybackReady },
+      runtime: new ScriptedRuntime([stream]),
+      thinkingCues: new FixedThinkingCues(),
+    });
+
+    await coordinator.handleFinalizedTurn(input("turn-1", 0));
+    stream.push({ attemptId: "answer-attempt-1", type: "accepted" });
+    delay.delays[0]?.elapse();
+    await vi.waitFor(() => {
+      expect(playback.requests).toEqual([{
+        attemptId: "cue-attempt-turn-1-acknowledgement",
+        meetingId: "meeting-1",
+        recordingId: "recording-1",
+        turnId: "turn-1",
+      }]);
+    });
+    stream.push({ attemptId: "answer-attempt-1", type: "completed" });
+    stream.close();
+    await coordinator.whenIdle("meeting-1");
+
+    expect(awaitConversationPlaybackReady).not.toHaveBeenCalled();
+  });
+
+  it("bypasses answer readiness for prepared-cue playback", async () => {
+    const playback = new RecordingPlayback();
+    const awaitConversationPlaybackReady = vi.fn(() =>
+      Promise.reject(new Error("answer readiness must not gate a prepared cue"))
+    );
+    const coordinator = new ConversationCoordinator({
+      playback,
+      playbackReadiness: { awaitConversationPlaybackReady },
+      runtime: new ScriptedRuntime([]),
+    });
+
+    await coordinator.playPreparedCue({
+      cueId: "farewell-ru-v1",
+      locale: "ru",
+      meetingId: "meeting-1",
+      nowMs: 0,
+      pcmChunks: [Uint8Array.of(1, 2)],
+      playbackAttemptId: "farewell-attempt-1",
+      recordingId: "recording-1",
+      speakerId: "system-farewell",
+      turnId: "meeting-farewell",
+      voiceProfileId: "default",
+    });
+    await expect(
+      coordinator.whenTurnPlaybackSettled("meeting-1", "meeting-farewell"),
+    ).resolves.toBe("played");
+
+    expect(awaitConversationPlaybackReady).not.toHaveBeenCalled();
+    expect(playback.requests).toEqual([{
+      attemptId: "farewell-attempt-1",
+      meetingId: "meeting-1",
+      recordingId: "recording-1",
+      turnId: "meeting-farewell",
+    }]);
   });
 });
 

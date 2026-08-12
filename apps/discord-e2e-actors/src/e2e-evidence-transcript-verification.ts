@@ -58,7 +58,12 @@ export function verifyConversationEvidence(
     verifyGreetingAudioSemantics(manifest, evidence, recordingStartMs, fail);
     verifySupplementalPlayback(manifest, evidence, recordingStartMs, recordingEndMs, fail);
   }
-  verifyAddressedAnswer(evidence, recordingStartMs, fail);
+  verifyAddressedAnswer(
+    evidence,
+    recordingStartMs,
+    manifest.thresholds.timestampToleranceMs,
+    fail,
+  );
 }
 
 type RetainedConversationEvidence = Extract<

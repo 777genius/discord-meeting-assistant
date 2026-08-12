@@ -7,6 +7,9 @@ import { requireNonNegativeInteger } from "../domain/errors.js";
 import type {
   ConversationCancellationReason,
   ConversationLatencyObserverPort,
+  ConversationPlaybackObserverPort,
+  ConversationPlaybackReadinessPort,
+  ConversationPlaybackSettlement,
   ConversationRuntime,
   ConversationRuntimeEvent,
   VoicePlaybackPort,
@@ -31,6 +34,8 @@ export interface ConversationActiveTurnExecutorDependencies {
   readonly cues: ConversationCueOrchestrator;
   readonly latencyObserver?: ConversationLatencyObserverPort;
   readonly playback: VoicePlaybackPort;
+  readonly playbackObserver?: ConversationPlaybackObserverPort;
+  readonly playbackReadiness?: ConversationPlaybackReadinessPort;
   readonly runtime: ConversationRuntime;
 }
 
@@ -43,17 +48,25 @@ export class ConversationActiveTurnExecutor {
   private readonly answerPlayback: ConversationAnswerPlayback;
   private readonly cues: ConversationCueOrchestrator;
   private readonly latencyObserver: ConversationLatencyObserverPort | null;
+  private readonly playbackObserver: ConversationPlaybackObserverPort | null;
   private readonly runtime: ConversationRuntime;
 
   public constructor(dependencies: ConversationActiveTurnExecutorDependencies) {
     this.cues = dependencies.cues;
     this.latencyObserver = dependencies.latencyObserver ?? null;
+    this.playbackObserver = dependencies.playbackObserver ?? null;
     this.runtime = dependencies.runtime;
     this.answerPlayback = new ConversationAnswerPlayback({
       finalize: async (state, run) => {
         await this.finalize(state, run);
       },
       playback: dependencies.playback,
+      ...(dependencies.playbackObserver === undefined
+        ? {}
+        : { playbackObserver: dependencies.playbackObserver }),
+      ...(dependencies.playbackReadiness === undefined
+        ? {}
+        : { playbackReadiness: dependencies.playbackReadiness }),
       requestCancellation: async (state, run, reason) => {
         await this.requestCancellation(state, run, reason);
       },
@@ -371,15 +384,19 @@ export class ConversationActiveTurnExecutor {
       run.playbackFinished &&
       run.answerAudioWritten &&
       !run.cancellationInFlight;
+    const settlement: ConversationPlaybackSettlement = played
+      ? "played"
+      : run.answerAudioWriteAttempted
+        ? "partial"
+        : "unplayed";
     rememberConversationPlaybackSettlement(
       state,
       run.prepared.turn.turnId,
-      played
-        ? "played"
-        : run.answerAudioWriteAttempted
-          ? "partial"
-          : "unplayed",
+      settlement,
     );
+    if (run.attemptId !== null) {
+      this.observePlaybackSettlement(run, settlement, state.lastObservedAtMs);
+    }
     const completion = state.session.completeActive(
       run.prepared.turn.turnId,
       state.lastObservedAtMs,
@@ -404,5 +421,30 @@ export class ConversationActiveTurnExecutor {
       run.playbackTerminalFinalizationScheduled = false;
       await this.finalize(state, run);
     })());
+  }
+
+  private observePlaybackSettlement(
+    run: ActiveConversationRun,
+    settlement: ConversationPlaybackSettlement,
+    settledAtMs: number,
+  ): void {
+    try {
+      const result = this.playbackObserver?.observeConversationPlayback({
+        meetingId: run.prepared.request.meetingId,
+        playbackAttemptId: run.attemptId!,
+        playbackKind: run.prepared.cue === undefined ? "answer" : "prepared-cue",
+        settledAtMs,
+        settlement,
+        status: "settled",
+        turnId: run.prepared.request.turnId,
+      });
+      if (result !== undefined) {
+        void Promise.resolve(result).catch(() => {
+          // Observability must never alter conversation delivery or cancellation.
+        });
+      }
+    } catch {
+      // Observability must never alter conversation delivery or cancellation.
+    }
   }
 }

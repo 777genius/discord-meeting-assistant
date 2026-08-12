@@ -21,6 +21,7 @@ import {
 import {
   ConversationCoordinator,
   type ConversationLatencyObserverPort,
+  type ConversationPlaybackObserverPort,
   type ConversationRuntime,
   type VoicePlaybackPort,
 } from "@discord-meeting/meeting-core/conversation";
@@ -130,6 +131,7 @@ export async function createPlatformDiscordLiveComposition(input: {
         config: input.config,
         latencyObserver: createConversationLatencyLogger(input.logger),
         playback: craigPlaybackGateway,
+        playbackObserver: createConversationPlaybackLogger(input.logger),
         runtime: conversationRuntime,
       });
   const conversationConfig = input.config.conversation;
@@ -191,11 +193,55 @@ export function createConversationLatencyLogger(
   };
 }
 
+/** Adapts provider-neutral playback observations to privacy-safe receipts. */
+export function createConversationPlaybackLogger(
+  logger: Pick<Logger, "info">,
+  timeOriginMilliseconds = performance.timeOrigin,
+): ConversationPlaybackObserverPort {
+  return {
+    observeConversationPlayback: (observation) => {
+      const sharedFields = {
+        meetingId: observation.meetingId,
+        playbackAttemptId: observation.playbackAttemptId,
+        playbackKind: observation.playbackKind,
+        turnId: observation.turnId,
+      };
+      switch (observation.status) {
+        case "started":
+          logger.info("Conversation playback started", {
+            ...sharedFields,
+            playbackStartedAtEpochMs: observation.startedAtMs,
+            playbackStartedAtMonotonicMs:
+              observation.startedAtMs - timeOriginMilliseconds,
+          });
+          return;
+        case "finished":
+          logger.info("Conversation playback finished", {
+            ...sharedFields,
+            playbackFinishedAtEpochMs: observation.finishedAtMs,
+            playbackFinishedAtMonotonicMs:
+              observation.finishedAtMs - timeOriginMilliseconds,
+          });
+          return;
+        case "settled":
+          logger.info("Conversation playback settled", {
+            ...sharedFields,
+            playbackSettledAtEpochMs: observation.settledAtMs,
+            playbackSettledAtMonotonicMs:
+              observation.settledAtMs - timeOriginMilliseconds,
+            settlement: observation.settlement,
+          });
+      }
+    },
+  };
+}
+
 /** Preloads required local cue assets before live conversation accepts work. */
 export async function createConversationCoordinator(input: {
   readonly config: Pick<PlatformConfig, "conversation">;
   readonly latencyObserver?: ConversationLatencyObserverPort;
   readonly playback: VoicePlaybackPort;
+  readonly playbackObserver?: ConversationPlaybackObserverPort;
   readonly runtime: ConversationRuntime;
 }): Promise<ConversationCoordinator | undefined> {
   if (input.config.conversation === undefined) {
@@ -212,6 +258,9 @@ export async function createConversationCoordinator(input: {
       ? {}
       : { latencyObserver: input.latencyObserver }),
     playback: input.playback,
+    ...(input.playbackObserver === undefined
+      ? {}
+      : { playbackObserver: input.playbackObserver }),
     runtime: input.runtime,
     thinkingCues,
   });
