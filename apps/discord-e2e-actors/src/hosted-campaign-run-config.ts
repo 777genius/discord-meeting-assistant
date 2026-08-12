@@ -35,6 +35,14 @@ const barrierActionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("provenance-after") }).strict(),
   z.object({ kind: z.literal("campaign-verified") }).strict(),
 ]);
+const actionReferenceSchema = z.object({
+  action: barrierActionSchema,
+  ordinal: z.number().int().min(1).max(3),
+  runId: identifier,
+}).strict();
+const producedActionSchema = actionReferenceSchema.extend({
+  outputPath: z.string().refine(isAbsolute),
+}).strict();
 const runVerifiedActionSchema = z.object({
   kind: z.literal("run-verified"), ordinal: z.number().int().min(1).max(3), runId: identifier,
 }).strict();
@@ -66,16 +74,20 @@ const executableSchema = z.object({
     "live-observer", "playback-link-observer", "provenance-probe", "recording-ready", "supplemental-player",
   ]),
   environment,
+  produces: z.array(producedActionSchema),
+  requires: z.array(actionReferenceSchema),
   releaseGate: z.object({
     action: z.discriminatedUnion("kind", [
       z.object({ kind: z.literal("provenance-before") }).strict(),
       z.object({ kind: z.literal("observer-subscribed") }).strict(),
     ]),
+    ordinal: z.number().int().min(1).max(3),
     path: z.string().refine(isAbsolute),
+    runId: identifier,
   }).strict().optional(),
   startBefore: z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("campaign") }).strict(),
-    z.object({ action: barrierActionSchema, kind: z.literal("barrier") }).strict(),
+    actionReferenceSchema.extend({ kind: z.literal("barrier") }).strict(),
   ]),
 }).strict();
 

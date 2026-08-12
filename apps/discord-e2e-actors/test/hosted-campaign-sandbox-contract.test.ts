@@ -10,6 +10,7 @@ import {
   runHostedCampaign,
   type HostedCampaignInput,
 } from "../src/hosted-campaign-coordinator.js";
+import { campaignActions } from "../src/hosted-campaign-execution-graph.js";
 import { retainedE2eEvidenceSchema, verifyE2eCampaign } from "../src/e2e-evidence.js";
 import { writeCreateOnlyHostedCampaignReceipt } from "../src/run-hosted-campaign.js";
 import {
@@ -33,19 +34,24 @@ afterEach(async () => {
 });
 
 function input(behavior = "ack"): HostedCampaignInput {
+  const runs = [
+    { campaignId: "campaign-sandbox", ordinal: 1, retainedCaptureCount: 0, runId: "run-sequential", scenario: "sequential" },
+    { campaignId: "campaign-sandbox", ordinal: 2, retainedCaptureCount: 0, runId: "run-overlap", scenario: "overlap" },
+    { campaignId: "campaign-sandbox", ordinal: 3, retainedCaptureCount: 6, runId: "run-reconnect", scenario: "reconnect" },
+  ] as const;
+  const skeleton = { children: [], runs, target: HOSTED_CAMPAIGN_TARGET,
+    thresholds: { answerFirstPacketMilliseconds: 4_000 } };
   return {
+    ...skeleton,
     children: ["observer", "speaker-a", "speaker-b"].map((childId) => ({
       arguments: { kind: "environment" }, childId, entrypoint: "actor" as const,
       environment: childId === "observer" ? { FIXTURE_BEHAVIOR: behavior } : {},
+      produces: childId === "observer" ? campaignActions(skeleton).map((reference, index) => ({
+        ...reference, outputPath: `/sandbox/action-${index}.json`,
+      })) : [],
+      requires: [],
       startBefore: { kind: "campaign" as const },
     })),
-    runs: [
-      { campaignId: "campaign-sandbox", ordinal: 1, retainedCaptureCount: 0, runId: "run-sequential", scenario: "sequential" },
-      { campaignId: "campaign-sandbox", ordinal: 2, retainedCaptureCount: 0, runId: "run-overlap", scenario: "overlap" },
-      { campaignId: "campaign-sandbox", ordinal: 3, retainedCaptureCount: 6, runId: "run-reconnect", scenario: "reconnect" },
-    ],
-    target: HOSTED_CAMPAIGN_TARGET,
-    thresholds: { answerFirstPacketMilliseconds: 4_000 },
   };
 }
 

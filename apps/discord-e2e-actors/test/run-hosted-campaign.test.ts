@@ -9,6 +9,7 @@ import {
   type HostedCampaignChildHandle,
   type HostedCampaignLeaseHandle,
 } from "../src/hosted-campaign-coordinator.js";
+import { campaignActions } from "../src/hosted-campaign-execution-graph.js";
 import { parseHostedCampaignArguments, parseHostedCampaignPlan } from "../src/hosted-campaign-run-config.js";
 import {
   readPrivateHostedCampaignPlan,
@@ -16,18 +17,25 @@ import {
   writeCreateOnlyHostedCampaignReceipt,
 } from "../src/run-hosted-campaign.js";
 
-const plan = () => ({
-  children: [{ arguments: { kind: "environment" }, childId: "observer", entrypoint: "live-observer", environment: {
-    DISCORD_E2E_OUTPUT: "/private/evidence/observer.json",
-  }, startBefore: { kind: "campaign" } }],
-  target: HOSTED_CAMPAIGN_TARGET,
-  thresholds: { answerFirstPacketMilliseconds: 4_000 },
-  runs: [
+const plan = () => {
+  const runs = [
     { ordinal: 1, scenario: "sequential", campaignId: "campaign-1", runId: "run-1", retainedCaptureCount: 0 },
     { ordinal: 2, scenario: "overlap", campaignId: "campaign-1", runId: "run-2", retainedCaptureCount: 0 },
     { ordinal: 3, scenario: "reconnect", campaignId: "campaign-1", runId: "run-3", retainedCaptureCount: 6 },
-  ],
-});
+  ] as const;
+  const skeleton = { children: [], target: HOSTED_CAMPAIGN_TARGET,
+    thresholds: { answerFirstPacketMilliseconds: 4_000 }, runs };
+  return ({
+  children: [{ arguments: { kind: "environment" }, childId: "observer", entrypoint: "live-observer" as const, environment: {
+    DISCORD_E2E_OUTPUT: "/private/evidence/observer.json",
+  }, produces: campaignActions(skeleton).map((reference, index) => ({
+    ...reference, outputPath: `/private/evidence/action-${index}.json`,
+  })), requires: [], startBefore: { kind: "campaign" as const } }],
+  target: HOSTED_CAMPAIGN_TARGET,
+  thresholds: { answerFirstPacketMilliseconds: 4_000 },
+  runs,
+  });
+};
 
 describe("run-hosted-campaign CLI", () => {
   it("requires exactly three arguments and absolute plan/receipt paths", () => {
@@ -53,8 +61,9 @@ describe("run-hosted-campaign CLI", () => {
 
   it("accepts the closed recording-ready entrypoint", () => {
     const input = plan();
-    input.children[0]!.entrypoint = "recording-ready";
-    expect(parseHostedCampaignPlan(input).children[0]?.entrypoint).toBe("recording-ready");
+    expect(parseHostedCampaignPlan({ ...input, children: [{
+      ...input.children[0]!, entrypoint: "recording-ready",
+    }] }).children[0]?.entrypoint).toBe("recording-ready");
   });
 
   it("accepts a provenance producer bound to one campaign snapshot", () => {

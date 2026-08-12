@@ -1,6 +1,5 @@
-import {
-  actionIdentity, campaignActions, startPointIdentity, stopEveryChild, validateActionEvidence,
-} from "./hosted-campaign-actions.js";
+import { actionIdentity, actionReferenceIdentity, campaignActions, validateExecutionGraph } from "./hosted-campaign-execution-graph.js";
+import { stopEveryChild, validateActionEvidence } from "./hosted-campaign-actions.js";
 
 export const HOSTED_CAMPAIGN_TARGET = {
   environment: "private-test-guild", mutationTarget: "test-only", deploymentScope: "private-test-deployment",
@@ -33,9 +32,17 @@ export type HostedCampaignEntrypoint =
   | "recording-ready"
   | "supplemental-player"
   | "evidence-verifier";
+export interface HostedCampaignActionReference {
+  readonly action: HostedCampaignBarrierAction;
+  readonly ordinal: number;
+  readonly runId: string;
+}
 export type HostedCampaignStartPoint =
   | { readonly kind: "campaign" }
-  | { readonly action: HostedCampaignBarrierAction; readonly kind: "barrier" };
+  | HostedCampaignActionReference & { readonly kind: "barrier" };
+export interface HostedCampaignProducedAction extends HostedCampaignActionReference {
+  readonly outputPath: string;
+}
 export type HostedCampaignExecutableArguments =
   | { readonly kind: "environment" }
   | { readonly evidencePath: string; readonly kind: "evidence-verifier"; readonly manifestPath: string; readonly thresholdsPath?: string }
@@ -71,10 +78,14 @@ export interface HostedCampaignExecutableSpec {
   readonly completion?: HostedCampaignExecutableCompletion;
   readonly entrypoint: HostedCampaignEntrypoint;
   readonly environment: Readonly<Record<string, string>>;
+  readonly produces: readonly HostedCampaignProducedAction[];
+  readonly requires: readonly HostedCampaignActionReference[];
   readonly startBefore: HostedCampaignStartPoint;
   readonly releaseGate?: {
     readonly action: HostedCampaignBarrierAction;
+    readonly ordinal: number;
     readonly path: string;
+    readonly runId: string;
   };
 }
 declare const childHandleBrand: unique symbol;
@@ -156,6 +167,11 @@ export interface HostedCampaignPassReceipt {
   readonly runIds: readonly [string, string, string];
   readonly schemaVersion: 1; readonly teardownComplete: true;
 }
+function startPointIdentity(startPoint: HostedCampaignStartPoint): string {
+  return startPoint.kind === "campaign" ? "campaign" : `barrier:${actionReferenceIdentity(startPoint)}`;
+}
+// The coordinator is kept as one readable vertical slice; graph validation is isolated above.
+/* oxlint-disable max-lines */
 function assertExactTarget(target: HostedCampaignTarget): void {
   for (const [key, expected] of Object.entries(HOSTED_CAMPAIGN_TARGET)) {
     if (target[key as keyof HostedCampaignTarget] !== expected) {
@@ -201,7 +217,9 @@ export function validateHostedCampaign(input: HostedCampaignInput): void {
   for (const child of input.children) {
     validateExecutable(child, input, campaignId, childIds, completionActions);
   }
+  validateExecutionGraph(input);
 }
+
 function validateExecutable(
   child: HostedCampaignExecutableSpec,
   input: HostedCampaignInput,
@@ -218,8 +236,8 @@ function validateExecutable(
     throw new Error(`Hosted campaign child ${child.childId} has arguments for the wrong entrypoint`);
   }
   if (child.startBefore.kind === "barrier") {
-    const startActionIdentity = actionIdentity(child.startBefore.action);
-    if (!campaignActions(input).some((action) => actionIdentity(action) === startActionIdentity)) {
+    const startActionIdentity = actionReferenceIdentity(child.startBefore);
+    if (!campaignActions(input).some((reference) => actionReferenceIdentity(reference) === startActionIdentity)) {
       throw new Error(`Hosted campaign child ${child.childId} has an unknown start point`);
     }
   }
@@ -253,7 +271,15 @@ function validateCompletion(
     || actionIdentity(child.startBefore.action) !== actionIdentity(completion.action)) {
     throw new Error(`Hosted campaign child ${child.childId} completion does not match its entrypoint and start point`);
   }
+  const startBefore = child.startBefore;
   const completionActionIdentity = actionIdentity(completion.action);
+  const matchingProduction = child.produces.filter(({ action, ordinal, runId }) =>
+    ordinal === startBefore.ordinal && runId === startBefore.runId
+    && actionIdentity(action) === completionActionIdentity
+  );
+  if (matchingProduction.length !== 1) {
+    throw new Error(`Hosted campaign child ${child.childId} completion must declare exactly one run-scoped production`);
+  }
   if (completionActions.has(completionActionIdentity)) {
     throw new Error(`Hosted campaign action has multiple completion producers: ${completionActionIdentity}`);
   }
@@ -341,15 +367,16 @@ export async function runHostedCampaign(
       }
     };
     await startChildren({ kind: "campaign" });
-    for (const action of campaignActions(input)) {
-      await startChildren({ action, kind: "barrier" });
+    for (const reference of campaignActions(input)) {
+      const { action } = reference;
+      await startChildren({ ...reference, kind: "barrier" });
       assertActive(bounded);
       const actionEvidence = await ports.awaitBarrier(action, bounded);
       validateActionEvidence(action, actionEvidence, input.thresholds);
       evidence.push(Object.freeze({ action, evidence: actionEvidence }));
       for (const executable of input.children.filter((child) =>
         child.releaseGate !== undefined
-        && JSON.stringify(child.releaseGate.action) === JSON.stringify(action)
+        && actionReferenceIdentity(child.releaseGate) === actionReferenceIdentity(reference)
       )) {
         await ports.publishReleaseGate(executable, bounded);
       }

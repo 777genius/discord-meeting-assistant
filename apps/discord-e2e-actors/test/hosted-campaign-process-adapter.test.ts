@@ -42,14 +42,14 @@ const spec = (
     DISCORD_E2E_GUILD_ID: HOSTED_CAMPAIGN_TARGET.guildId,
     DISCORD_E2E_VOICE_CHANNEL_ID: HOSTED_CAMPAIGN_TARGET.voiceChannelId,
     ...environment,
-  }, ...(releaseGate === undefined ? {} : { releaseGate }), startBefore: { kind: "campaign" as const },
+  }, produces: [], requires: [], ...(releaseGate === undefined ? {} : { releaseGate }), startBefore: { kind: "campaign" as const },
 });
 const verifierSpec = (ordinal = 1, runId = "run-1"): HostedCampaignExecutableSpec => ({
   arguments: { evidencePath: "/evidence.json", kind: "evidence-verifier", manifestPath: "/manifest.json" },
   childId: `verifier-${ordinal}`,
   completion: { action: { kind: "run-verified", ordinal, runId }, kind: "evidence-verifier" },
-  entrypoint: "evidence-verifier", environment: {},
-  startBefore: { action: { kind: "run-verified", ordinal, runId }, kind: "barrier" },
+  entrypoint: "evidence-verifier", environment: {}, produces: [], requires: [],
+  startBefore: { action: { kind: "run-verified", ordinal, runId }, kind: "barrier", ordinal, runId },
 });
 const collectorSpec = (): HostedCampaignExecutableSpec => ({
   arguments: { kind: "environment" }, childId: "collector",
@@ -64,7 +64,7 @@ const collectorSpec = (): HostedCampaignExecutableSpec => ({
     DISCORD_E2E_REMOTE_HOST: HOSTED_CAMPAIGN_TARGET.host,
     DISCORD_E2E_REMOTE_PROJECT: HOSTED_CAMPAIGN_TARGET.project,
     DISCORD_E2E_RUN_ID: "run-1",
-  }, startBefore: { action: { kind: "run-verified", ordinal: 1, runId: "run-1" }, kind: "barrier" },
+  }, produces: [], requires: [], startBefore: { action: { kind: "run-verified", ordinal: 1, runId: "run-1" }, kind: "barrier", ordinal: 1, runId: "run-1" },
 });
 const campaignVerifierSpec = (): HostedCampaignExecutableSpec => ({
   arguments: {
@@ -74,8 +74,8 @@ const campaignVerifierSpec = (): HostedCampaignExecutableSpec => ({
   completion: {
     action: { kind: "campaign-verified" }, campaignId: "campaign-1", kind: "campaign-verifier",
     runIds: ["run-1", "run-2", "run-3"],
-  }, entrypoint: "campaign-verifier", environment: {},
-  startBefore: { action: { kind: "campaign-verified" }, kind: "barrier" },
+  }, entrypoint: "campaign-verifier", environment: {}, produces: [], requires: [],
+  startBefore: { action: { kind: "campaign-verified" }, kind: "barrier", ordinal: 3, runId: "run-3" },
 });
 const campaignResult = (runIds: readonly string[]) => JSON.stringify({
   failures: [], passed: true,
@@ -182,7 +182,7 @@ describe("hosted campaign process adapter", () => {
       environment: {
         DISCORD_E2E_LIVE_RESULT_CHANNEL_ID: "999999999999999999",
         DISCORD_E2E_LIVE_SUT_APPLICATION_ID: HOSTED_CAMPAIGN_TARGET.sutApplicationId,
-      }, startBefore: { kind: "campaign" },
+      }, produces: [], requires: [], startBefore: { kind: "campaign" },
     }, bounded())).rejects.toThrow(/target mismatch.*RESULT_CHANNEL_ID/u);
     await expect(processAdapter.startChild({
       arguments: { kind: "environment" }, childId: "collector", entrypoint: "collector",
@@ -191,7 +191,7 @@ describe("hosted campaign process adapter", () => {
         DISCORD_E2E_REMOTE_CRAIG_PROJECT: HOSTED_CAMPAIGN_TARGET.craigProject,
         DISCORD_E2E_REMOTE_HOST: "wrong-host",
         DISCORD_E2E_REMOTE_PROJECT: HOSTED_CAMPAIGN_TARGET.project,
-      }, startBefore: { action: { kind: "provenance-before" }, kind: "barrier" },
+      }, produces: [], requires: [], startBefore: { action: { kind: "provenance-before" }, kind: "barrier", ordinal: 1, runId: "run-1" },
     }, bounded())).rejects.toThrow(/target mismatch.*REMOTE_HOST/u);
   });
 
@@ -206,7 +206,7 @@ describe("hosted campaign process adapter", () => {
     const { processAdapter } = await adapter("setInterval(() => {}, 1000)");
     const root = await mkdtemp(join(tmpdir(), "hosted-release-"));
     const path = join(root, "gate.json");
-    const releaseGate = { action: { kind: "provenance-before" as const }, path };
+    const releaseGate = { action: { kind: "provenance-before" as const }, ordinal: 1, path, runId: "run-1" };
     const executable = spec({
       DISCORD_E2E_HOSTED_RELEASE_GATE_CAMPAIGN_ID: "campaign-1",
       DISCORD_E2E_HOSTED_RELEASE_GATE_PATH: path,

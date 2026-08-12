@@ -10,28 +10,38 @@ import {
   type HostedCampaignLeaseHandle,
   type HostedCampaignPorts,
 } from "../src/hosted-campaign-coordinator.js";
+import { campaignActions } from "../src/hosted-campaign-execution-graph.js";
 
 function input(): HostedCampaignInput {
+  const runs = [
+    { ordinal: 1, scenario: "sequential", campaignId: "campaign-1", runId: "run-1", retainedCaptureCount: 0 },
+    { ordinal: 2, scenario: "overlap", campaignId: "campaign-1", runId: "run-2", retainedCaptureCount: 0 },
+    { ordinal: 3, scenario: "reconnect", campaignId: "campaign-1", runId: "run-3", retainedCaptureCount: 6 },
+  ] as const;
+  const skeleton = { children: [], target: HOSTED_CAMPAIGN_TARGET,
+    thresholds: { answerFirstPacketMilliseconds: 4_000 }, runs };
   return {
-    children: [child("observer"), child("speaker-a"), child("speaker-b")],
+    ...skeleton,
+    children: [child("observer", campaignActions(skeleton).map((reference, index) => ({
+      ...reference, outputPath: `/evidence/action-${index}.json`,
+    }))), child("speaker-a"), child("speaker-b")],
     target: HOSTED_CAMPAIGN_TARGET,
     thresholds: { answerFirstPacketMilliseconds: 4_000 },
-    runs: [
-      { ordinal: 1, scenario: "sequential", campaignId: "campaign-1", runId: "run-1", retainedCaptureCount: 0 },
-      { ordinal: 2, scenario: "overlap", campaignId: "campaign-1", runId: "run-2", retainedCaptureCount: 0 },
-      { ordinal: 3, scenario: "reconnect", campaignId: "campaign-1", runId: "run-3", retainedCaptureCount: 6 },
-    ],
   };
 }
 
-function child(childId: string) {
-  return { arguments: { kind: "environment" as const }, childId, entrypoint: "actor" as const, environment: {}, startBefore: { kind: "campaign" as const } };
+function child(childId: string, produces: HostedCampaignInput["children"][number]["produces"] = []) {
+  return { arguments: { kind: "environment" as const }, childId, entrypoint: "actor" as const, environment: {},
+    produces, requires: [], startBefore: { kind: "campaign" as const } };
 }
 
 function oneShotChild(
   childId: string,
   action: Extract<HostedCampaignBarrierAction, { readonly kind: "capture-retained" | "run-verified" }>,
 ) {
+  const reference = action.kind === "run-verified"
+    ? { action, ordinal: action.ordinal, runId: action.runId }
+    : { action, ordinal: 3, runId: "run-3" };
   return {
     arguments: action.kind === "run-verified"
       ? { evidencePath: "/evidence.json", kind: "evidence-verifier" as const, manifestPath: "/manifest.json" }
@@ -42,7 +52,9 @@ function oneShotChild(
     } : {}),
     entrypoint: action.kind === "run-verified" ? "evidence-verifier" as const : "supplemental-player" as const,
     environment: {},
-    startBefore: { action, kind: "barrier" as const },
+    produces: action.kind === "run-verified" ? [{ ...reference, outputPath: `/evidence/${childId}.json` }] : [],
+    requires: [],
+    startBefore: { ...reference, kind: "barrier" as const },
   };
 }
 
@@ -89,6 +101,53 @@ function ports(events: string[]): HostedCampaignPorts {
 const bounded = () => ({ deadlineEpochMilliseconds: Date.now() + 60_000, signal: new AbortController().signal });
 
 describe("hosted campaign coordinator", () => {
+  it("binds every action and observer dependency to the exact causal run", () => {
+    const references = campaignActions(input());
+    expect(references.filter(({ action }) => action.kind === "run-verified")).toEqual([
+      { action: { kind: "run-verified", ordinal: 1, runId: "run-1" }, ordinal: 1, runId: "run-1" },
+      { action: { kind: "run-verified", ordinal: 2, runId: "run-2" }, ordinal: 2, runId: "run-2" },
+      { action: { kind: "run-verified", ordinal: 3, runId: "run-3" }, ordinal: 3, runId: "run-3" },
+    ]);
+    expect(references.filter(({ action }) => action.kind === "observer-subscribed")).toEqual([
+      { action: { kind: "observer-subscribed" }, ordinal: 1, runId: "run-1" },
+    ]);
+    expect(references.filter(({ action }) => action.kind === "reconnect-ready")).toEqual([
+      { action: { kind: "reconnect-ready" }, ordinal: 3, runId: "run-3" },
+    ]);
+  });
+
+  it("fails closed for missing and duplicate action producers", async () => {
+    const base = input();
+    const observer = base.children[0]!;
+    const missing = { ...base, children: [{ ...observer, produces: observer.produces.slice(1) }, ...base.children.slice(1)] };
+    await expect(runHostedCampaign(missing, ports([]), bounded())).rejects.toThrow(/has no producer/u);
+
+    const duplicate = { ...base, children: [...base.children, child("duplicate", [observer.produces[0]!])] };
+    await expect(runHostedCampaign(duplicate, ports([]), bounded())).rejects.toThrow(/multiple producers/u);
+  });
+
+  it("fails closed for output path collisions and dependency cycles", async () => {
+    const base = input();
+    const observer = base.children[0]!;
+    const collisionProduction = { ...observer.produces[1]!, outputPath: observer.produces[0]!.outputPath };
+    const collision = { ...base, children: [{
+      ...observer, produces: [observer.produces[0]!, collisionProduction, ...observer.produces.slice(2)],
+    }, ...base.children.slice(1)] };
+    await expect(runHostedCampaign(collision, ports([]), bounded())).rejects.toThrow(/path collision/u);
+
+    const first = observer.produces[0]!;
+    const second = observer.produces[1]!;
+    const cyclic = { ...base, children: [
+      { ...observer, produces: observer.produces.slice(2) },
+      { ...child("producer-a", [first]), requires: [second],
+        startBefore: { ...second, kind: "barrier" as const } },
+      { ...child("producer-b", [second]), requires: [first],
+        startBefore: { ...first, kind: "barrier" as const } },
+      ...base.children.slice(1),
+    ] };
+    await expect(runHostedCampaign(cyclic, ports([]), bounded())).rejects.toThrow(/requirement must precede|cycle/u);
+  });
+
   it("preflights the complete plan before starting any child", async () => {
     const events: string[] = [];
     const invalid = { ...input(), target: { ...HOSTED_CAMPAIGN_TARGET, guildId: "wrong" } } as unknown as HostedCampaignInput;
@@ -216,10 +275,14 @@ describe("hosted campaign coordinator", () => {
 
   it("starts repeated-phase children only at their exact action identity and only once", async () => {
     const events: string[] = [];
+    const base = input();
+    const movedIdentity = JSON.stringify({ kind: "run-verified", ordinal: 2, runId: "run-2" });
     const configured: HostedCampaignInput = {
-      ...input(),
+      ...base,
       children: [
-        ...input().children,
+        { ...base.children[0]!, produces: base.children[0]!.produces.filter(({ action }) =>
+          JSON.stringify(action) !== movedIdentity) },
+        ...base.children.slice(1),
         oneShotChild("verify-overlap", { kind: "run-verified", ordinal: 2, runId: "run-2" }),
         oneShotChild("retain-five", { kind: "capture-retained", ordinal: 5 }),
       ],
