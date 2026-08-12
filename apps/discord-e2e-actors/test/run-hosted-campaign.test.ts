@@ -97,6 +97,15 @@ describe("run-hosted-campaign CLI", () => {
       valueFrom: { actionRef: source, field: "recordingId" },
     }] };
     expect(parseHostedCampaignPlan({ ...input, children: [valid] }).children[0]?.environmentBindings).toHaveLength(1);
+    const playbackIdentity = { ...child, environmentBindings: [{
+      name: "DISCORD_E2E_PLAYBACK_LINK_MEETING_ID",
+      valueFrom: { actionRef: source, field: "meetingId" },
+    }, {
+      name: "DISCORD_E2E_PLAYBACK_LINK_RECORDING_ID",
+      valueFrom: { actionRef: source, field: "recordingId" },
+    }] };
+    expect(parseHostedCampaignPlan({ ...input, children: [playbackIdentity] })
+      .children[0]?.environmentBindings).toHaveLength(2);
     expect(() => parseHostedCampaignPlan({ ...input, children: [{ ...child, environmentBindings: [{
       name: "PATH", valueFrom: { actionRef: source, field: "recordingId" },
     }] }] })).toThrow();
