@@ -2,27 +2,20 @@ import { createHash, randomUUID } from "node:crypto";
 import { constants, link, lstat, open, readdir, unlink } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
-import { z } from "zod";
+import {
+  conversationAnswerObserverReadySchema,
+  conversationAnswerPlaybackIntentSchema,
+  serializeConversationAnswerPlaybackReadinessEnvelope,
+  type ConversationAnswerPlaybackIntent,
+} from "@discord-meeting/conversation-runtime-contracts";
 
 const maximumReceiptBytes = 1_536;
 const pollIntervalMilliseconds = 25;
-const identifierSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u);
-const envelopeSchema = z.object({
-  kind: z.literal("answer"),
-  meetingId: identifierSchema,
-  playbackAttemptId: identifierSchema,
-  protocolVersion: z.literal(1),
-  runId: identifierSchema,
-  turnId: identifierSchema,
-}).strict();
-export const conversationAnswerPlaybackIntentSchema = envelopeSchema
-  .extend({ type: z.literal("playback-intent") }).strict();
-export const conversationAnswerObserverReadySchema = envelopeSchema
-  .extend({ type: z.literal("observer-ready") }).strict();
-
-export type ConversationAnswerPlaybackIntent = z.infer<
-  typeof conversationAnswerPlaybackIntentSchema
->;
+export {
+  conversationAnswerObserverReadySchema,
+  conversationAnswerPlaybackIntentSchema,
+  type ConversationAnswerPlaybackIntent,
+} from "@discord-meeting/conversation-runtime-contracts";
 
 export async function waitForConversationAnswerPlaybackIntent(input: {
   readonly meetingId: string;
@@ -153,9 +146,10 @@ async function publishCreateOnlyJson(path: string, value: unknown): Promise<void
   }
 }
 
-function receiptStem(intent: z.infer<typeof envelopeSchema>): string {
-  const envelope = envelopeSchema.parse(intent);
-  return createHash("sha256").update(JSON.stringify(envelope)).digest("hex");
+function receiptStem(intent: ConversationAnswerPlaybackIntent): string {
+  return createHash("sha256")
+    .update(serializeConversationAnswerPlaybackReadinessEnvelope(intent))
+    .digest("hex");
 }
 
 function assertSafeReceiptFile(

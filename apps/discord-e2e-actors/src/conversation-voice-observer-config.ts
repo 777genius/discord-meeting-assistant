@@ -18,7 +18,9 @@ const absoluteOutputPathSchema = z.string()
     "Expected an absolute output file path",
   )
   .transform(normalize);
-const absoluteDirectorySchema = z.string().min(1).refine(isAbsolute, "Expected an absolute directory path");
+const absoluteDirectorySchema = z.string().min(1)
+  .refine(isAbsolute, "Expected an absolute directory path")
+  .transform(normalize);
 const maximumReadyTimeoutMilliseconds = 120_000;
 const literalAdditionalCaptureSchema = z.object({
   attemptId: correlationIdSchema,
@@ -28,7 +30,7 @@ const literalAdditionalCaptureSchema = z.object({
 }).strict();
 const addressedAdditionalCaptureSchema = z.object({
   outputPath: absoluteOutputPathSchema,
-  playbackReceiptFile: absoluteOutputPathSchema,
+  playbackHandshakeRoot: absoluteDirectorySchema,
   purpose: z.literal("addressed-answer"),
 }).strict();
 const additionalCaptureSchema = z.discriminatedUnion("purpose", [
@@ -77,8 +79,9 @@ const environmentSchema = z.object({
   DISCORD_E2E_CONVERSATION_VOICE_OBSERVER_ACCOUNT: secretAccountSchema.default("conversation-observer"),
   DISCORD_E2E_CONVERSATION_VOICE_OBSERVER_APPLICATION_ID: snowflakeSchema,
   DISCORD_E2E_CONVERSATION_VOICE_OUTPUT: absoluteOutputPathSchema,
+  DISCORD_E2E_CONVERSATION_VOICE_PLAYBACK_HANDSHAKE_ROOT: absoluteDirectorySchema.optional(),
   DISCORD_E2E_CONVERSATION_VOICE_PRIVATE_TEST_GUILD: z.literal("private-test-guild"),
-  DISCORD_E2E_CONVERSATION_VOICE_PURPOSE: z.enum(["farewell", "greeting"]),
+  DISCORD_E2E_CONVERSATION_VOICE_PURPOSE: z.enum(["addressed-answer", "farewell", "greeting"]),
   DISCORD_E2E_CONVERSATION_VOICE_READY_TIMEOUT_MS: z.coerce.number()
     .int()
     .min(1_000)
@@ -90,6 +93,14 @@ const environmentSchema = z.object({
   DISCORD_E2E_CONVERSATION_VOICE_TURN_ID: correlationIdSchema,
   DISCORD_E2E_CONVERSATION_VOICE_VOICE_CHANNEL_ID: snowflakeSchema,
 }).superRefine((value, context) => {
+  if ((value.DISCORD_E2E_CONVERSATION_VOICE_PURPOSE === "addressed-answer") !==
+    (value.DISCORD_E2E_CONVERSATION_VOICE_PLAYBACK_HANDSHAKE_ROOT !== undefined)) {
+    context.addIssue({
+      code: "custom",
+      message: "Primary addressed-answer capture requires exactly one playback handshake root",
+      path: ["DISCORD_E2E_CONVERSATION_VOICE_PLAYBACK_HANDSHAKE_ROOT"],
+    });
+  }
   const expectedMaximumDurationMilliseconds = value.DISCORD_E2E_CONVERSATION_VOICE_EXPECTED_DURATION_MS +
     value.DISCORD_E2E_CONVERSATION_VOICE_EXPECTED_DURATION_TOLERANCE_MS;
   if (expectedMaximumDurationMilliseconds > MAXIMUM_CONVERSATION_VOICE_CAPTURE_DURATION_MILLISECONDS) {
@@ -147,23 +158,23 @@ const environmentSchema = z.object({
       path: ["DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON"],
     });
   }
-  const playbackReceiptFiles =
+  const playbackHandshakeRoots =
     (value.DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON ?? [])
       .flatMap((capture) =>
-        capture.purpose === "addressed-answer" ? [capture.playbackReceiptFile] : []
+        capture.purpose === "addressed-answer" ? [capture.playbackHandshakeRoot] : []
       );
-  if (new Set(playbackReceiptFiles).size !== playbackReceiptFiles.length) {
+  if (new Set(playbackHandshakeRoots).size !== playbackHandshakeRoots.length) {
     context.addIssue({
       code: "custom",
-      message: "Conversation answer playback receipt file paths must be unique",
+      message: "Conversation answer playback handshake roots must be unique",
       path: ["DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON"],
     });
   }
   const evidenceOutputPaths = new Set(captureKeys.map(({ outputPath }) => outputPath));
-  if (playbackReceiptFiles.some((path) => evidenceOutputPaths.has(path))) {
+  if (playbackHandshakeRoots.some((path) => evidenceOutputPaths.has(path))) {
     context.addIssue({
       code: "custom",
-      message: "Conversation playback receipt files must be distinct from evidence output paths",
+      message: "Conversation playback handshake roots must be distinct from evidence output paths",
       path: ["DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON"],
     });
   }
@@ -176,7 +187,7 @@ type ConversationVoiceObserverCapture = {
   readonly turnId: string;
 } | {
   readonly outputPath: string;
-  readonly playbackReceiptFile: string;
+  readonly playbackHandshakeRoot: string;
   readonly purpose: "addressed-answer";
 };
 
@@ -195,7 +206,8 @@ export interface ConversationVoiceObserverConfig {
   readonly observerApplicationId: string;
   readonly outputPath: string;
   readonly privateTestGuildConfirmed: true;
-  readonly purpose: "farewell" | "greeting";
+  readonly playbackHandshakeRoot?: string;
+  readonly purpose: "addressed-answer" | "farewell" | "greeting";
   readonly readyTimeoutMilliseconds: number;
   readonly recordingId: string | null;
   readonly runId: string;
@@ -220,7 +232,7 @@ export function loadConversationVoiceObserverConfig(
           if (capture.purpose === "addressed-answer") {
             return Object.freeze({
               outputPath: capture.outputPath,
-              playbackReceiptFile: capture.playbackReceiptFile,
+              playbackHandshakeRoot: capture.playbackHandshakeRoot,
               purpose: capture.purpose,
             });
           }
@@ -245,6 +257,9 @@ export function loadConversationVoiceObserverConfig(
     observerAccount: parsed.DISCORD_E2E_CONVERSATION_VOICE_OBSERVER_ACCOUNT,
     observerApplicationId: parsed.DISCORD_E2E_CONVERSATION_VOICE_OBSERVER_APPLICATION_ID,
     outputPath: parsed.DISCORD_E2E_CONVERSATION_VOICE_OUTPUT,
+    ...(parsed.DISCORD_E2E_CONVERSATION_VOICE_PLAYBACK_HANDSHAKE_ROOT === undefined
+      ? {}
+      : { playbackHandshakeRoot: parsed.DISCORD_E2E_CONVERSATION_VOICE_PLAYBACK_HANDSHAKE_ROOT }),
     privateTestGuildConfirmed: true,
     purpose: parsed.DISCORD_E2E_CONVERSATION_VOICE_PURPOSE,
     readyTimeoutMilliseconds:

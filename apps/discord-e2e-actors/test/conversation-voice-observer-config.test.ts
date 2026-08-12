@@ -7,8 +7,10 @@ const requiredEnvironment = {
   DISCORD_E2E_CONVERSATION_VOICE_CRAIG_BOT_ID: "1533224474609057793",
   DISCORD_E2E_CONVERSATION_VOICE_EXPECTED_DURATION_MS: "1000",
   DISCORD_E2E_CONVERSATION_VOICE_GUILD_ID: "11111111111111111",
+  DISCORD_E2E_CONVERSATION_VOICE_MEETING_ID: "meeting-2026-08-04-01",
   DISCORD_E2E_CONVERSATION_VOICE_OBSERVER_APPLICATION_ID: "22222222222222222",
   DISCORD_E2E_CONVERSATION_VOICE_OUTPUT: "/tmp/conversation-voice-observer.json",
+  DISCORD_E2E_CONVERSATION_VOICE_PLAYBACK_HANDSHAKE_ROOT: "/tmp/conversation-answer-handshake",
   DISCORD_E2E_CONVERSATION_VOICE_PRIVATE_TEST_GUILD: "private-test-guild",
   DISCORD_E2E_CONVERSATION_VOICE_PURPOSE: "addressed-answer",
   DISCORD_E2E_CONVERSATION_VOICE_RECORDING_ID: "recording-2026-08-04-01",
@@ -29,9 +31,11 @@ describe("loadConversationVoiceObserverConfig", () => {
       guildId: "11111111111111111",
       keychainService: "discord-voice-bot-e2e",
       maxPcmBytes: 11_520_000,
+      meetingId: "meeting-2026-08-04-01",
       observerAccount: "conversation-observer",
       observerApplicationId: "22222222222222222",
       outputPath: "/tmp/conversation-voice-observer.json",
+      playbackHandshakeRoot: "/tmp/conversation-answer-handshake",
       privateTestGuildConfirmed: true,
       purpose: "addressed-answer",
       readyTimeoutMilliseconds: 60_000,
@@ -98,10 +102,9 @@ describe("loadConversationVoiceObserverConfig", () => {
         JSON.stringify(additionalCaptures),
     }).additionalCaptures).toEqual(additionalCaptures);
     const dynamicCapture = {
-      attemptId: "attempt-2026-08-04-03",
       outputPath: "/tmp/conversation-voice-observer-3.json",
+      playbackHandshakeRoot: "/tmp/conversation-answer-handshake-3",
       purpose: "addressed-answer",
-      turnIdFile: "/tmp/conversation-voice-turn-3.txt",
     };
     expect(loadConversationVoiceObserverConfig({
       ...requiredEnvironment,
@@ -116,9 +119,9 @@ describe("loadConversationVoiceObserverConfig", () => {
       ...requiredEnvironment,
       DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON: JSON.stringify([{
         ...additionalCaptures[0],
-        turnIdFile: "/tmp/conversation-voice-turn-2.txt",
+        playbackHandshakeRoot: "/tmp/conversation-answer-handshake-2",
       }]),
-    })).toThrow("exactly one of turnId or turnIdFile");
+    })).toThrow();
     expect(() => loadConversationVoiceObserverConfig({
       ...requiredEnvironment,
       DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON: JSON.stringify([{
@@ -126,12 +129,12 @@ describe("loadConversationVoiceObserverConfig", () => {
         outputPath: "/tmp/conversation-voice-observer-2.json",
         purpose: "addressed-answer",
       }]),
-    })).toThrow("exactly one of turnId or turnIdFile");
+    })).toThrow();
     expect(() => loadConversationVoiceObserverConfig({
       ...requiredEnvironment,
       DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON: JSON.stringify([{
         ...dynamicCapture,
-        turnIdFile: "conversation-voice-turn-3.txt",
+        playbackHandshakeRoot: "conversation-answer-handshake-3",
       }]),
     })).toThrow();
     expect(() => loadConversationVoiceObserverConfig({
@@ -140,28 +143,27 @@ describe("loadConversationVoiceObserverConfig", () => {
         dynamicCapture,
         {
           ...dynamicCapture,
-          attemptId: "attempt-2026-08-04-04",
           outputPath: "/tmp/conversation-voice-observer-4.json",
+          playbackHandshakeRoot: "/tmp/conversation-answer-handshake-3",
         },
       ]),
-    })).toThrow("turn ID file paths must be unique");
+    })).toThrow("handshake roots must be unique");
     expect(() => loadConversationVoiceObserverConfig({
       ...requiredEnvironment,
       DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON: JSON.stringify([
         dynamicCapture,
         {
           ...dynamicCapture,
-          attemptId: "attempt-2026-08-04-04",
           outputPath: "/tmp/conversation-voice-observer-4.json",
-          turnIdFile: "/tmp/./conversation-voice-turn-3.txt",
+          playbackHandshakeRoot: "/tmp/parent/../conversation-answer-handshake-3",
         },
       ]),
-    })).toThrow("turn ID file paths must be unique");
+    })).toThrow("handshake roots must be unique");
     expect(() => loadConversationVoiceObserverConfig({
       ...requiredEnvironment,
       DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON: JSON.stringify([{
         ...dynamicCapture,
-        turnIdFile: requiredEnvironment.DISCORD_E2E_CONVERSATION_VOICE_OUTPUT,
+        playbackHandshakeRoot: requiredEnvironment.DISCORD_E2E_CONVERSATION_VOICE_OUTPUT,
       }]),
     })).toThrow("distinct from evidence output paths");
     expect(() => loadConversationVoiceObserverConfig({

@@ -10,11 +10,11 @@ export function createConversationVoiceEvidence(
   input: ConversationVoiceEvidenceInput,
 ): ConversationVoiceEvidence {
   if ((input.purpose === "addressed-answer") !== (input.playbackReceipt !== undefined)) {
-    throw new Error("Addressed answer evidence requires an answer playback-started receipt");
+    throw new Error("Addressed answer evidence requires a playback readiness handshake");
   }
   if (input.playbackReceipt !== undefined &&
     input.attemptId !== input.playbackReceipt.playbackAttemptId) {
-    throw new Error("Addressed answer attempt ID must come from its playback-started receipt");
+    throw new Error("Addressed answer attempt ID must come from its playback readiness handshake");
   }
   return Object.freeze({
     capture: Object.freeze({
@@ -49,8 +49,7 @@ export function createConversationVoiceEvidence(
           attemptId: input.playbackReceipt.playbackAttemptId,
           meetingId: input.playbackReceipt.meetingId,
           playbackKind: "answer" as const,
-          playbackStartedAt: Object.freeze({ ...input.playbackReceipt.startedAt }),
-          provenance: "playback-started-receipt" as const,
+          provenance: "playback-readiness-handshake" as const,
           purpose: "addressed-answer" as const,
           recordingId: input.recordingId,
           verification: "not-run" as const,

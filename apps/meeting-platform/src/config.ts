@@ -46,6 +46,19 @@ const absolutePath = z
   .string()
   .startsWith("/")
   .refine((value) => !value.includes("\0"));
+const profileIdentifier = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/u);
+const optionalAbsolutePath = z.preprocess(
+  (value) => value === "" ? undefined : value,
+  absolutePath.optional(),
+);
+const optionalProfileIdentifier = z.preprocess(
+  (value) => value === "" ? undefined : value,
+  profileIdentifier.optional(),
+);
+const optionalReadinessTimeout = z.preprocess(
+  (value) => value === "" ? undefined : value,
+  z.coerce.number().int().min(1_000).max(120_000).optional(),
+);
 const httpUrl = z.url().refine((value) => {
   const url = new URL(value);
   return (
@@ -69,7 +82,6 @@ const secureWebSocketUrl = z.url().refine((value) => {
 const runtimeAddress = z
   .string()
   .regex(/^(?:[a-zA-Z0-9][a-zA-Z0-9.-]*|\[[0-9a-fA-F:]+\]):\d{1,5}$/u);
-const profileIdentifier = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/u);
 const voiceIdentifier = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/u);
 const environmentSchema = z
   .object({
@@ -79,6 +91,9 @@ const environmentSchema = z
       .default("false")
       .transform((value) => value === "true"),
     CONVERSATION_FAREWELL_CUE_ROOT: absolutePath.optional(),
+    CONVERSATION_E2E_PLAYBACK_READINESS_ROOT: optionalAbsolutePath,
+    CONVERSATION_E2E_PLAYBACK_READINESS_RUN_ID: optionalProfileIdentifier,
+    CONVERSATION_E2E_PLAYBACK_READINESS_TIMEOUT_MS: optionalReadinessTimeout,
     CONVERSATION_GREETING_CUE_ROOT: absolutePath.optional(),
     CONVERSATION_RUNTIME_ADDRESS: runtimeAddress.optional(),
     CONVERSATION_RUNTIME_TOKEN_FILE: absolutePath.optional(),
@@ -105,6 +120,8 @@ const environmentSchema = z
     DISCORD_PUBLICATION_MODE: z.enum(["message", "thread"]).default("message"),
     DISCORD_RESULTS_CHANNEL_ID: optionalSnowflake,
     DISCORD_TOKEN_FILE: absolutePath,
+    E2E_TEST_ONLY_LABEL: z.enum(["true", "false"]).default("false")
+      .transform((value) => value === "true"),
     LIVE_INGRESS_OWNER_MODE: z.literal("singleton").default("singleton"),
     NODE_ENV: z
       .enum(["development", "production", "test"])
@@ -168,6 +185,34 @@ const environmentSchema = z
     VOICETEXT_WS_URL: secureWebSocketUrl.optional(),
   })
   .superRefine((environment, context) => {
+    const playbackReadinessParts = [
+      environment.CONVERSATION_E2E_PLAYBACK_READINESS_ROOT,
+      environment.CONVERSATION_E2E_PLAYBACK_READINESS_RUN_ID,
+      environment.CONVERSATION_E2E_PLAYBACK_READINESS_TIMEOUT_MS,
+    ];
+    const configuredPlaybackReadinessParts = playbackReadinessParts
+      .filter((value) => value !== undefined).length;
+    if (configuredPlaybackReadinessParts !== 0 && configuredPlaybackReadinessParts !== 3) {
+      context.addIssue({
+        code: "custom",
+        message: "conversation E2E playback readiness root, run ID and timeout must be configured together",
+        path: ["CONVERSATION_E2E_PLAYBACK_READINESS_ROOT"],
+      });
+    }
+    if (configuredPlaybackReadinessParts > 0 && !environment.E2E_TEST_ONLY_LABEL) {
+      context.addIssue({
+        code: "custom",
+        message: "conversation playback readiness is permitted only in an explicitly test-only deployment",
+        path: ["E2E_TEST_ONLY_LABEL"],
+      });
+    }
+    if (configuredPlaybackReadinessParts > 0 && !environment.CONVERSATION_ENABLED) {
+      context.addIssue({
+        code: "custom",
+        message: "conversation playback readiness requires live conversation to be enabled",
+        path: ["CONVERSATION_ENABLED"],
+      });
+    }
     if (
       Object.keys(environment.PARTICIPANT_GREETING_PROFILES_JSON).length > 0 &&
       !environment.CONVERSATION_ENABLED
@@ -313,6 +358,18 @@ export async function loadPlatformConfig(
               ),
             voiceId: environment.CONVERSATION_VOICE_ID,
             voiceProfileId: environment.CONVERSATION_VOICE_PROFILE_ID,
+            ...(environment.CONVERSATION_E2E_PLAYBACK_READINESS_ROOT === undefined ||
+            environment.CONVERSATION_E2E_PLAYBACK_READINESS_RUN_ID === undefined ||
+            environment.CONVERSATION_E2E_PLAYBACK_READINESS_TIMEOUT_MS === undefined
+              ? {}
+              : {
+                  playbackReadiness: Object.freeze({
+                    root: environment.CONVERSATION_E2E_PLAYBACK_READINESS_ROOT,
+                    runId: environment.CONVERSATION_E2E_PLAYBACK_READINESS_RUN_ID,
+                    timeoutMilliseconds:
+                      environment.CONVERSATION_E2E_PLAYBACK_READINESS_TIMEOUT_MS,
+                  }),
+                }),
           },
         }
       : {}),

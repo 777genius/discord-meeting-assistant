@@ -19,6 +19,7 @@
     "check": "pnpm run typecheck && pnpm run test"
   },
   "dependencies": {
+    "@discord-meeting/conversation-runtime-contracts": "workspace:*",
     "@discordjs/opus": "catalog:",
     "@discordjs/voice": "catalog:",
     "discord.js": "catalog:",

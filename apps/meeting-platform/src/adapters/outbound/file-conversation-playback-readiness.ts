@@ -1,25 +1,21 @@
 import { createHash, randomUUID } from "node:crypto";
-import { constants, link, mkdir, open, readFile, unlink } from "node:fs/promises";
+import { constants, link, lstat, mkdir, open, readdir, unlink } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
+
+import {
+  conversationAnswerObserverReadySchema,
+  conversationAnswerPlaybackIntentSchema,
+  conversationAnswerPlaybackReadinessEnvelopeSchema,
+  conversationPlaybackReadinessProtocolVersion,
+  serializeConversationAnswerPlaybackReadinessEnvelope,
+  type ConversationAnswerPlaybackReadinessEnvelope,
+} from "@discord-meeting/conversation-runtime-contracts";
 
 import type {
   ConversationPlaybackReadinessPort,
   ConversationPlaybackReadinessRequest,
   ConversationPortResult,
 } from "@discord-meeting/meeting-core/conversation";
-import { z } from "zod";
-
-const identifierSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u);
-const envelopeSchema = z.object({
-  kind: z.literal("answer"),
-  meetingId: identifierSchema,
-  playbackAttemptId: identifierSchema,
-  protocolVersion: z.literal(1),
-  runId: identifierSchema,
-  turnId: identifierSchema,
-}).strict();
-const intentSchema = envelopeSchema.extend({ type: z.literal("playback-intent") }).strict();
-const readySchema = envelopeSchema.extend({ type: z.literal("observer-ready") }).strict();
 const pollIntervalMilliseconds = 25;
 const maximumReceiptBytes = 1_536;
 
@@ -31,7 +27,11 @@ export interface FileConversationPlaybackReadinessOptions {
 
 /** Filesystem adapter for the E2E-only two-phase answer capture protocol. */
 export class FileConversationPlaybackReadiness implements ConversationPlaybackReadinessPort {
-  public constructor(private readonly options: FileConversationPlaybackReadinessOptions) {}
+  readonly #initialized: Promise<void>;
+
+  public constructor(private readonly options: FileConversationPlaybackReadinessOptions) {
+    this.#initialized = initializeCleanRunRoot(options.root);
+  }
 
   public async awaitConversationPlaybackReady(
     request: ConversationPlaybackReadinessRequest,
@@ -40,21 +40,27 @@ export class FileConversationPlaybackReadiness implements ConversationPlaybackRe
     if (request.playbackKind !== "answer") {
       return failure("PLAYBACK_READINESS_KIND_INVALID", "Only answer playback can use E2E readiness");
     }
-    const envelope = envelopeSchema.parse({
+    const envelope = conversationAnswerPlaybackReadinessEnvelopeSchema.parse({
+      capturePlan: "addressed-answer",
       kind: request.playbackKind,
       meetingId: request.meetingId,
       playbackAttemptId: request.playbackAttemptId,
-      protocolVersion: 1,
+      protocolVersion: conversationPlaybackReadinessProtocolVersion,
       runId: this.options.runId,
       turnId: request.turnId,
     });
     try {
-      await mkdir(this.options.root, { recursive: true, mode: 0o700 });
+      await this.#initialized;
+      const intentPublishedNotBeforeEpochMilliseconds = Date.now();
       await publishCreateOnlyJson(this.intentPath(envelope), {
         ...envelope,
         type: "playback-intent",
       });
-      await this.waitForExactReady(envelope, options.signal);
+      await this.waitForExactReady(
+        envelope,
+        intentPublishedNotBeforeEpochMilliseconds,
+        options.signal,
+      );
       return { ok: true, value: "ready" };
     } catch (error: unknown) {
       return failure(
@@ -65,7 +71,8 @@ export class FileConversationPlaybackReadiness implements ConversationPlaybackRe
   }
 
   private async waitForExactReady(
-    expected: z.infer<typeof envelopeSchema>,
+    expected: ConversationAnswerPlaybackReadinessEnvelope,
+    notBeforeEpochMilliseconds: number,
     signal: AbortSignal | undefined,
   ): Promise<void> {
     const readyPath = this.readyPath(expected);
@@ -73,11 +80,10 @@ export class FileConversationPlaybackReadiness implements ConversationPlaybackRe
     for (;;) {
       assertNotAborted(signal);
       try {
-        const bytes = await readFile(readyPath);
-        if (bytes.byteLength <= 0 || bytes.byteLength > maximumReceiptBytes) {
-          throw new Error("Observer-ready receipt has an invalid size");
-        }
-        const ready = readySchema.parse(JSON.parse(bytes.toString("utf8")) as unknown);
+        const bytes = await readStableReceipt(readyPath, notBeforeEpochMilliseconds);
+        const ready = conversationAnswerObserverReadySchema.parse(
+          JSON.parse(new TextDecoder().decode(bytes)) as unknown,
+        );
         if (!sameEnvelope(ready, expected)) {
           throw new Error("Observer-ready receipt does not match the playback intent");
         }
@@ -95,23 +101,73 @@ export class FileConversationPlaybackReadiness implements ConversationPlaybackRe
     }
   }
 
-  private intentPath(envelope: z.infer<typeof envelopeSchema>): string {
+  private intentPath(envelope: ConversationAnswerPlaybackReadinessEnvelope): string {
     return join(this.options.root, `${safeFileStem(envelope)}.intent.json`);
   }
 
-  private readyPath(envelope: z.infer<typeof envelopeSchema>): string {
+  private readyPath(envelope: ConversationAnswerPlaybackReadinessEnvelope): string {
     return join(this.options.root, `${safeFileStem(envelope)}.ready.json`);
   }
 }
 
-function safeFileStem(envelope: z.infer<typeof envelopeSchema>): string {
+async function initializeCleanRunRoot(root: string): Promise<void> {
+  await mkdir(root, { recursive: true, mode: 0o700 });
+  const entries = await readdir(root);
+  if (entries.some((name) => /^(?:[a-f\d]{64})\.(?:intent|ready)\.json$/u.test(name))) {
+    throw new Error("Playback readiness run root contains stale handshake receipts");
+  }
+}
+
+async function readStableReceipt(
+  path: string,
+  notBeforeEpochMilliseconds: number,
+): Promise<Uint8Array> {
+  const pathStats = await lstat(path);
+  assertSafeReadyStats(pathStats, notBeforeEpochMilliseconds);
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const beforeRead = await handle.stat();
+    assertSafeReadyStats(beforeRead, notBeforeEpochMilliseconds);
+    if (beforeRead.dev !== pathStats.dev || beforeRead.ino !== pathStats.ino) {
+      throw new Error("Observer-ready receipt changed before read");
+    }
+    const bytes = new Uint8Array(maximumReceiptBytes + 1);
+    const { bytesRead } = await handle.read(bytes, 0, bytes.byteLength, 0);
+    const afterRead = await handle.stat();
+    if (afterRead.dev !== beforeRead.dev || afterRead.ino !== beforeRead.ino ||
+      afterRead.size !== beforeRead.size || afterRead.mtimeMs !== beforeRead.mtimeMs ||
+      bytesRead !== beforeRead.size) {
+      throw new Error("Observer-ready receipt changed while reading");
+    }
+    return bytes.subarray(0, bytesRead);
+  } finally {
+    await handle.close();
+  }
+}
+
+function assertSafeReadyStats(
+  stats: Awaited<ReturnType<typeof lstat>>,
+  notBeforeEpochMilliseconds: number,
+): void {
+  if (!stats.isFile()) {
+    throw new Error("Observer-ready receipt must be a regular file");
+  }
+  if (stats.size <= 0 || stats.size > maximumReceiptBytes) {
+    throw new Error("Observer-ready receipt has an invalid size");
+  }
+  if (stats.mtimeMs < notBeforeEpochMilliseconds) {
+    throw new Error("Observer-ready receipt predates its playback intent");
+  }
+}
+
+function safeFileStem(envelope: ConversationAnswerPlaybackReadinessEnvelope): string {
   return createHash("sha256")
-    .update(JSON.stringify(envelope))
+    .update(serializeConversationAnswerPlaybackReadinessEnvelope(envelope))
     .digest("hex");
 }
 
 async function publishCreateOnlyJson(path: string, value: unknown): Promise<void> {
-  const encoded = JSON.stringify(intentSchema.parse(value));
+  const encoded = JSON.stringify(conversationAnswerPlaybackIntentSchema.parse(value));
   if (Buffer.byteLength(encoded, "utf8") > maximumReceiptBytes) {
     throw new Error("Playback intent is too large");
   }
@@ -144,8 +200,8 @@ async function publishCreateOnlyJson(path: string, value: unknown): Promise<void
 }
 
 function sameEnvelope(
-  actual: z.infer<typeof readySchema>,
-  expected: z.infer<typeof envelopeSchema>,
+  actual: ReturnType<typeof conversationAnswerObserverReadySchema.parse>,
+  expected: ConversationAnswerPlaybackReadinessEnvelope,
 ): boolean {
   return actual.kind === expected.kind &&
     actual.meetingId === expected.meetingId &&

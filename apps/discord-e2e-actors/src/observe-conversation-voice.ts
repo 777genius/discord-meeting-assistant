@@ -83,7 +83,11 @@ class ProbedConversationVoiceOpusDecoder implements ConversationVoiceAudibilityD
 async function main(): Promise<void> {
   const config = loadConversationVoiceObserverConfig(process.env);
   const captures = [
-    {
+    config.purpose === "addressed-answer" ? {
+      outputPath: config.outputPath,
+      playbackHandshakeRoot: config.playbackHandshakeRoot!,
+      purpose: config.purpose,
+    } : {
       attemptId: config.attemptId,
       outputPath: config.outputPath,
       purpose: config.purpose,
@@ -93,7 +97,7 @@ async function main(): Promise<void> {
   ] as const;
   const handshakeRoots = config.additionalCaptures.flatMap((capture) =>
     capture.purpose === "addressed-answer" ? [capture.playbackHandshakeRoot] : []
-  );
+  ).concat(config.playbackHandshakeRoot === undefined ? [] : [config.playbackHandshakeRoot]);
   await Promise.all(captures.map(({ outputPath }) =>
     assertConversationVoiceEvidencePathIsNew(outputPath)
   ));
@@ -156,8 +160,12 @@ async function main(): Promise<void> {
           stream: sourceStream,
         })
           : undefined;
-      const turnId = playbackIntent?.turnId ?? plannedCapture.turnId;
-      const attemptId = playbackIntent?.playbackAttemptId ?? plannedCapture.attemptId;
+      const turnId = playbackIntent === undefined
+        ? (plannedCapture as Extract<typeof plannedCapture, { purpose: "farewell" | "greeting" }>).turnId
+        : playbackIntent.turnId;
+      const attemptId = playbackIntent === undefined
+        ? (plannedCapture as Extract<typeof plannedCapture, { purpose: "farewell" | "greeting" }>).attemptId
+        : playbackIntent.playbackAttemptId;
       const capture = await captureConversationVoiceFromOpenStream({
         captureTimeoutMilliseconds: config.captureTimeoutMilliseconds,
         clock: systemClock,
@@ -177,7 +185,7 @@ async function main(): Promise<void> {
           : {
               publishReady: async () => publishConversationAnswerObserverReady({
                 intent: playbackIntent,
-                root: plannedCapture.playbackHandshakeRoot,
+                root: (plannedCapture as Extract<typeof plannedCapture, { purpose: "addressed-answer" }>).playbackHandshakeRoot,
               }),
             }),
         stream: sourceStream,
@@ -187,7 +195,6 @@ async function main(): Promise<void> {
         : {
             meetingId: playbackIntent.meetingId,
             playbackAttemptId: playbackIntent.playbackAttemptId,
-            startedAt: capture.firstPacketAt,
             turnId: playbackIntent.turnId,
           };
       const evidence = createConversationVoiceEvidence({

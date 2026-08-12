@@ -105,7 +105,6 @@ export interface ConversationVoiceEvidenceInput {
   readonly playbackReceipt?: {
     readonly meetingId: string;
     readonly playbackAttemptId: string;
-    readonly startedAt: ConversationVoiceCaptureTimestamp;
     readonly turnId: string;
   };
   readonly recordingId: string | null;
@@ -149,8 +148,7 @@ export interface ConversationVoiceEvidence {
     readonly attemptId: string;
     readonly meetingId: string;
     readonly playbackKind: "answer";
-    readonly playbackStartedAt: ConversationVoiceCaptureTimestamp;
-    readonly provenance: "playback-started-receipt";
+    readonly provenance: "playback-readiness-handshake";
     readonly purpose: "addressed-answer";
     readonly recordingId: string | null;
     readonly verification: "not-run";

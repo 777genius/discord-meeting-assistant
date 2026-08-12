@@ -80,6 +80,8 @@ DISCORD_E2E_CONVERSATION_VOICE_RUN_ID=... \
 DISCORD_E2E_CONVERSATION_VOICE_TURN_ID=... \
 DISCORD_E2E_CONVERSATION_VOICE_ATTEMPT_ID=... \
 DISCORD_E2E_CONVERSATION_VOICE_PURPOSE=addressed-answer \
+DISCORD_E2E_CONVERSATION_VOICE_MEETING_ID=... \
+DISCORD_E2E_CONVERSATION_VOICE_PLAYBACK_HANDSHAKE_ROOT=/absolute/evidence/answer-handshake \
 DISCORD_E2E_CONVERSATION_VOICE_READY_TIMEOUT_MS=120000 \
 DISCORD_E2E_CONVERSATION_VOICE_CAPTURE_TIMEOUT_MS=6000 \
 DISCORD_E2E_CONVERSATION_VOICE_EXPECTED_DURATION_MS=5000 \
@@ -103,9 +105,10 @@ When omitted, readiness falls back to the capture timeout, which defaults to
 cannot widen the retained audio window.
 
 For an ordered campaign, `DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON`
-may contain up to 15 additional capture objects. Each object must contain
-`attemptId`, `outputPath`, and `purpose`, plus exactly one of a literal `turnId`
-or an absolute `turnIdFile`. Direct primary capture remains literal. The observer
+may contain up to 15 additional capture objects. Greeting and farewell objects
+contain `attemptId`, `outputPath`, `purpose`, and literal `turnId`. An
+`addressed-answer` object contains `outputPath`, `purpose`, and an absolute fresh
+`playbackHandshakeRoot`. The observer
 validates every create-only output and correlation before
 joining, keeps one voice connection for the full sequence, and waits for the
 configured source to remain silent for 300 milliseconds between captures. That
@@ -113,30 +116,13 @@ wait is bounded by `DISCORD_E2E_CONVERSATION_VOICE_READY_TIMEOUT_MS`, not by the
 short capture timeout. This prevents Discord reconnect timing from binding a
 later utterance to an earlier expected turn.
 
-`turnIdFile` is the bounded handoff for a correlation ID that is known only
-after the observer has joined voice. The path must not exist when the observer
-starts. When that ordered capture is reached, the already-connected observer
-waits up to `DISCORD_E2E_CONVERSATION_VOICE_READY_TIMEOUT_MS` for a producer to
-publish a new regular file at that exact path. The file may contain
-one valid correlation ID with an optional final LF and nothing else. Symlinks,
-directories, stale files, invalid UTF-8/IDs, and files over 257
-bytes fail closed. Build the actor package before the campaign, then use the
-prebuilt repository helper during the live handoff so no TypeScript build delays
-publication. The helper writes and fsyncs a `0600` temporary file in the same
-directory, closes it, then hard-links the final create-only path and removes the
-temporary name:
-
-```sh
-pnpm --filter @discord-meeting/discord-e2e-actors \
-  publish:conversation-turn-id -- /absolute/evidence/addressed-answer.turn-id \
-  human-question-17
-```
-
-The hard-link publication fails with `EEXIST` instead of overwriting an existing
-correlation. While waiting, the observer keeps the Craig stream flowing and
-discards silence; any audible packet before the observer confirms publication
-aborts the campaign so buffered audio cannot be attached to the new ID. The
-resolved ID is copied into the immutable evidence before the audio capture begins.
+The two-phase addressed-answer handoff is automatic. Meeting Platform publishes
+a create-only intent with the exact run, meeting, turn, and playback-attempt IDs.
+The already-subscribed observer rejects stale receipts and publishes a matching
+create-only ready receipt. Only then may playback start. Any earlier audible
+packet aborts the campaign. Mount one host test-evidence directory into Meeting
+Platform at `/var/lib/discord-meeting/e2e-playback-readiness` and expose that same
+host directory to the observer. Never reuse a per-run subdirectory.
 
 Each capture declares `greeting`, `farewell`, or `addressed-answer` purpose.
 Alone it remains transport evidence: it does not run STT, establish the

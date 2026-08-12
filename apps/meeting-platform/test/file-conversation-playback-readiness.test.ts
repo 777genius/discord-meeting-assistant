@@ -3,6 +3,9 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { serializeConversationAnswerPlaybackReadinessEnvelope } from
+  "@discord-meeting/conversation-runtime-contracts";
+
 import { afterEach, describe, expect, it } from "vitest";
 
 import { FileConversationPlaybackReadiness } from
@@ -16,6 +19,7 @@ const request = {
   turnId: "human-question-1",
 };
 const envelope = {
+  capturePlan: "addressed-answer" as const,
   kind: "answer" as const,
   meetingId: request.meetingId,
   playbackAttemptId: request.playbackAttemptId,
@@ -96,7 +100,8 @@ describe("FileConversationPlaybackReadiness", () => {
 });
 
 function receiptStem(): string {
-  return createHash("sha256").update(JSON.stringify(envelope)).digest("hex");
+  return createHash("sha256")
+    .update(serializeConversationAnswerPlaybackReadinessEnvelope(envelope)).digest("hex");
 }
 
 function intentPath(root: string): string {

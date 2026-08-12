@@ -72,13 +72,13 @@ function verifyAddressedAnswerPlayback(
     );
   }
   if (
-    answer.correlation.provenance !== "playback-started-receipt" ||
+    answer.correlation.provenance !== "playback-readiness-handshake" ||
     answer.correlation.meetingId !== evidence.meetingId ||
     answer.correlation.playbackKind !== "answer"
   ) {
     fail(
       "ANSWER_PLAYBACK_RECEIPT_MISMATCH",
-      "addressed answer correlation must come from its exact answer playback-started receipt",
+      "addressed answer correlation must come from its exact playback readiness handshake",
     );
     return;
   }
@@ -88,12 +88,17 @@ function verifyAddressedAnswerPlayback(
     receipt.playbackAttemptId === answer.correlation.attemptId &&
     receipt.playbackKind === "answer"
   );
+  const competingReceipts = evidence.conversation.lifecycle.playbackReceipts.filter((receipt) =>
+    receipt.turnId === answer.correlation.turnId &&
+    receipt.playbackKind === "answer" &&
+    receipt.playbackAttemptId !== answer.correlation.attemptId
+  );
   const started = receipts.filter((receipt) => receipt.status === "started");
   const finished = receipts.filter((receipt) => receipt.status === "finished");
   const settled = receipts.filter((receipt) => receipt.status === "settled");
   if (
     started.length !== 1 || finished.length !== 1 || settled.length !== 1 ||
-    settled[0]!.settlement !== "played"
+    settled[0]!.settlement !== "played" || competingReceipts.length !== 0
   ) {
     fail(
       "ANSWER_PLAYBACK_RECEIPT_MISMATCH",
@@ -107,11 +112,6 @@ function verifyAddressedAnswerPlayback(
   const playedReceipt = settled[0]!;
   const captureStartMs = answer.capture.firstPacketAt.epochMilliseconds;
   const captureEndMs = answer.capture.endedAt.epochMilliseconds;
-  const receiptMatchesHandoff =
-    answer.correlation.playbackStartedAt.epochMilliseconds ===
-      startedReceipt.playbackStartedAtEpochMs &&
-    answer.correlation.playbackStartedAt.monotonicMilliseconds ===
-      startedReceipt.playbackStartedAtMonotonicMs;
   const ordered = startedReceipt.playbackStartedAtEpochMs <=
       finishedReceipt.playbackFinishedAtEpochMs &&
     finishedReceipt.playbackFinishedAtEpochMs <=
@@ -119,10 +119,10 @@ function verifyAddressedAnswerPlayback(
   const overlapsCapture = startedReceipt.playbackStartedAtEpochMs <=
       captureEndMs + timestampToleranceMs &&
     captureStartMs <= finishedReceipt.playbackFinishedAtEpochMs + timestampToleranceMs;
-  if (!receiptMatchesHandoff || !ordered || !overlapsCapture) {
+  if (!ordered || !overlapsCapture) {
     fail(
       "ANSWER_PLAYBACK_RECEIPT_MISMATCH",
-      "answer playback receipts do not match the handoff or audible capture interval",
+      "answer playback receipts are unordered or do not overlap the audible capture interval",
     );
   }
 }

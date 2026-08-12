@@ -14,6 +14,7 @@
     "@aws-sdk/client-s3": "catalog:",
     "@discord-meeting/craig-gateway-contracts": "workspace:*",
     "@discord-meeting/craig-playback-adapter": "workspace:*",
+    "@discord-meeting/conversation-runtime-contracts": "workspace:*",
     "@discord-meeting/bullmq-adapter": "workspace:*",
     "@discord-meeting/discord-adapter": "workspace:*",
     "@discord-meeting/guild-configuration-core": "workspace:*",

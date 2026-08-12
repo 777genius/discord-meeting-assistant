@@ -45,6 +45,7 @@ import { VoicetextLiveTranscriptionAdapter } from "@discord-meeting/voicetext-ad
 import { Client, GatewayIntentBits } from "discord.js";
 
 import { FileConversationFarewellCueRegistry } from "../adapters/outbound/file-conversation-farewell-cue-registry.js";
+import { FileConversationPlaybackReadiness } from "../adapters/outbound/file-conversation-playback-readiness.js";
 import { FileConversationThinkingCueRegistry } from "../adapters/outbound/file-conversation-thinking-cue-registry.js";
 import { FileParticipantGreetingCueRegistry } from "../adapters/outbound/file-participant-greeting-cue-registry.js";
 import { SubscriptionRuntimeFarewellClassifier } from "../adapters/outbound/subscription-runtime-farewell-classifier.js";
@@ -131,6 +132,13 @@ export async function createPlatformDiscordLiveComposition(input: {
         config: input.config,
         latencyObserver: createConversationLatencyLogger(input.logger),
         playback: craigPlaybackGateway,
+        ...(input.config.conversation?.playbackReadiness === undefined
+          ? {}
+          : {
+              playbackReadiness: new FileConversationPlaybackReadiness(
+                input.config.conversation.playbackReadiness,
+              ),
+            }),
         playbackObserver: createConversationPlaybackLogger(input.logger),
         runtime: conversationRuntime,
       });
@@ -241,6 +249,8 @@ export async function createConversationCoordinator(input: {
   readonly config: Pick<PlatformConfig, "conversation">;
   readonly latencyObserver?: ConversationLatencyObserverPort;
   readonly playback: VoicePlaybackPort;
+  readonly playbackReadiness?: import("@discord-meeting/meeting-core/conversation")
+    .ConversationPlaybackReadinessPort;
   readonly playbackObserver?: ConversationPlaybackObserverPort;
   readonly runtime: ConversationRuntime;
 }): Promise<ConversationCoordinator | undefined> {
@@ -258,6 +268,9 @@ export async function createConversationCoordinator(input: {
       ? {}
       : { latencyObserver: input.latencyObserver }),
     playback: input.playback,
+    ...(input.playbackReadiness === undefined
+      ? {}
+      : { playbackReadiness: input.playbackReadiness }),
     ...(input.playbackObserver === undefined
       ? {}
       : { playbackObserver: input.playbackObserver }),

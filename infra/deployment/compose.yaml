@@ -225,6 +225,9 @@ services:
     environment:
       BIND_ADDRESS: 0.0.0.0
       CONVERSATION_ENABLED: ${CONVERSATION_ENABLED:-false}
+      CONVERSATION_E2E_PLAYBACK_READINESS_ROOT: ${CONVERSATION_E2E_PLAYBACK_READINESS_ROOT:-}
+      CONVERSATION_E2E_PLAYBACK_READINESS_RUN_ID: ${CONVERSATION_E2E_PLAYBACK_READINESS_RUN_ID:-}
+      CONVERSATION_E2E_PLAYBACK_READINESS_TIMEOUT_MS: ${CONVERSATION_E2E_PLAYBACK_READINESS_TIMEOUT_MS:-}
       CONVERSATION_FAREWELL_CUE_ROOT: /app/apps/meeting-platform/assets/farewell-cues
       CONVERSATION_GREETING_CUE_ROOT: /app/apps/meeting-platform/assets/greeting-cues
       CONVERSATION_RUNTIME_ADDRESS: pipecat-runtime:50053
@@ -243,6 +246,7 @@ services:
       DISCORD_PUBLICATION_MODE: ${DISCORD_PUBLICATION_MODE:-message}
       DISCORD_RESULTS_CHANNEL_ID: ${DISCORD_RESULTS_CHANNEL_ID:-}
       DISCORD_TOKEN_FILE: /run/secrets/discord-sut-token
+      E2E_TEST_ONLY_LABEL: ${E2E_TEST_ONLY_LABEL:-false}
       LIVE_INGRESS_OWNER_MODE: singleton
       NODE_ENV: production
       PARTICIPANT_GREETING_DEFAULT_LOCALE: ${PARTICIPANT_GREETING_DEFAULT_LOCALE:-ru}
@@ -274,6 +278,7 @@ services:
       VOICETEXT_WS_URL: ${VOICETEXT_WS_URL:-wss://api.voicetext.site/api/v1/transcribe/stream}
     volumes:
       - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/data/spool:/var/lib/discord-meeting/spool
+      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/data/e2e-playback-readiness:/var/lib/discord-meeting/e2e-playback-readiness
       - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/secrets/platform:/run/secrets:ro
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=0700,uid=10001,gid=10001

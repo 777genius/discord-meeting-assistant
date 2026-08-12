@@ -460,7 +460,13 @@ export function reidentify<T extends RetainedE2eEvidence>(source: T, suffix: str
   if ("conversation" in evidence) {
     evidence.conversation.voice = evidence.conversation.voice.map((observation) => ({
       ...observation,
-      correlation: { ...observation.correlation, recordingId: `meeting-${suffix}` },
+      correlation: {
+        ...observation.correlation,
+        ...(observation.correlation.provenance === "playback-readiness-handshake"
+          ? { meetingId: `meeting-${suffix}` }
+          : {}),
+        recordingId: `meeting-${suffix}`,
+      },
       runId: `run-${suffix}`,
     }));
     if ("supplementalPlayback" in evidence.conversation) {
@@ -616,7 +622,14 @@ export function retainedV8Evidence(): RetainedE2eEvidenceV8 {
     ...source,
     conversation: {
       botSpeakerId,
-      lifecycle: { events },
+      lifecycle: {
+        events,
+        playbackReceipts: [
+          { observedAt: "1970-01-01T00:00:04.000Z", playbackAttemptId: "answer", playbackKind: "answer" as const, playbackStartedAtEpochMs: 4_000, playbackStartedAtMonotonicMs: 4_000, status: "started" as const, turnId: "human-question-1" },
+          { observedAt: "1970-01-01T00:00:04.600Z", playbackAttemptId: "answer", playbackFinishedAtEpochMs: 4_600, playbackFinishedAtMonotonicMs: 4_600, playbackKind: "answer" as const, status: "finished" as const, turnId: "human-question-1" },
+          { observedAt: "1970-01-01T00:00:04.700Z", playbackAttemptId: "answer", playbackKind: "answer" as const, playbackSettledAtEpochMs: 4_700, playbackSettledAtMonotonicMs: 4_700, settlement: "played" as const, status: "settled" as const, turnId: "human-question-1" },
+        ],
+      },
       supplementalPlayback: {
         actor: {
           applicationId: speakerDId,
@@ -689,7 +702,9 @@ function voiceObservation(
       },
       startedAt: captureTimestamp(startMs - 100), termination: "expected-duration-reached" as const,
     },
-    correlation: { attemptId, provenance: "operator-supplied" as const, purpose, recordingId: "meeting-1", verification: "not-run" as const, turnId },
+    correlation: purpose === "addressed-answer"
+      ? { attemptId, meetingId: "meeting-1", playbackKind: "answer" as const, provenance: "playback-readiness-handshake" as const, purpose, recordingId: "meeting-1", verification: "not-run" as const, turnId }
+      : { attemptId, provenance: "operator-supplied" as const, purpose, recordingId: "meeting-1", verification: "not-run" as const, turnId },
     kind: "conversation-voice-observer-evidence" as const,
     observer: { applicationId: observerId, authenticatedBotId: observerId, guildId: "1533228590643155034", privateTestGuildConfirmed: true as const, voiceChannelId: "1533228823045214398" },
     runId: "run-overlap-1", schemaVersion: 3 as const,

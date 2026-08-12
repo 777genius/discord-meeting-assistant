@@ -332,7 +332,7 @@ describe("conversation voice evidence publication", () => {
     expect(JSON.parse(original)).toMatchObject({
       capture: { cancellation: { status: "not-observed" } },
       correlation: {
-        provenance: "operator-supplied",
+        provenance: "playback-readiness-handshake",
         verification: "not-run",
       },
       schemaVersion: 3,
@@ -382,6 +382,11 @@ function evidenceFixture() {
     observerApplicationId: "22222222222222222",
     privateTestGuildConfirmed: true,
     purpose: "addressed-answer",
+    playbackReceipt: {
+      meetingId: "meeting-1",
+      playbackAttemptId: "attempt-1",
+      turnId: "turn-1",
+    },
     recordingId: "recording-1",
     runId: "run-1",
     turnId: "turn-1",

@@ -50,6 +50,20 @@ describe("retained addressed-answer playback receipts", () => {
     expect(failureCodes(evidence)).toContain("ANSWER_PLAYBACK_RECEIPT_MISMATCH");
   });
 
+  it("rejects extra answer receipts for the same turn under another attempt", () => {
+    const evidence = evidenceWithAnswerPlaybackReceipts();
+    evidence.conversation.lifecycle.playbackReceipts.push({
+      observedAt: "1970-01-01T00:00:04.100Z",
+      playbackAttemptId: "competing-answer-attempt",
+      playbackKind: "answer",
+      playbackStartedAtEpochMs: 4_100,
+      playbackStartedAtMonotonicMs: 17,
+      status: "started",
+      turnId: "human-question-1",
+    });
+    expect(failureCodes(evidence)).toContain("ANSWER_PLAYBACK_RECEIPT_MISMATCH");
+  });
+
   it.each([
     ["finished", (receipt: PlaybackReceipt) => receipt.status !== "finished"],
     ["played", (receipt: PlaybackReceipt) => receipt.status !== "settled"],
@@ -63,8 +77,8 @@ describe("retained addressed-answer playback receipts", () => {
 
   it("rejects answer receipts whose playback interval does not overlap the capture", () => {
     const evidence = evidenceWithAnswerPlaybackReceipts({
-      finishedAtEpochMs: 3_900,
-      startedAtEpochMs: 3_700,
+      finishedAtEpochMs: 3_200,
+      startedAtEpochMs: 3_000,
     });
 
     expect(failureCodes(evidence)).toContain("ANSWER_PLAYBACK_RECEIPT_MISMATCH");

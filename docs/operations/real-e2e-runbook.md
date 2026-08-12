@@ -200,29 +200,20 @@ remaining capture records through
 `DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON`. The record shape and
 limits are documented in `apps/discord-e2e-actors/README.md`.
 
-Use a literal `turnId` when the lifecycle correlation is known before startup.
-For the addressed-answer capture, where the admitted live turn ID is produced
-during the call, use an absolute `turnIdFile` instead. The observer first proves
-that path is absent, joins voice, completes the earlier ordered captures, and
-then waits for the file while staying connected. Build the actor package before
-the campaign. After the live-turn admission log yields the exact ID, publish it
-with the already-built create-only repository helper:
+Greeting and farewell captures use literal turn and attempt IDs. Addressed-answer
+captures use an absolute fresh `playbackHandshakeRoot`: Meeting Platform writes
+the exact run/meeting/turn/attempt intent, the already-subscribed observer writes
+a matching ready receipt, and only then answer playback begins. Both processes
+must use the same mounted root and run ID. Meeting Platform requires all three
+`CONVERSATION_E2E_PLAYBACK_READINESS_*` settings together and rejects them unless
+`E2E_TEST_ONLY_LABEL=true`.
 
-```sh
-pnpm --filter @discord-meeting/discord-e2e-actors \
-  publish:conversation-turn-id -- /absolute/evidence/addressed-answer.turn-id \
-  human-question-17
-```
-
-The helper fsyncs and closes a same-directory `0600` temporary file, hard-links
-the final name without replacement, and removes the temporary name. Do not
-pre-create, overwrite, symlink, or edit the final file in place. While waiting,
-the observer drains silent Craig packets; any audible packet before the observer
-confirms correlation publication aborts the campaign instead of being buffered
-into the next capture.
-The bounded wait uses
-`DISCORD_E2E_CONVERSATION_VOICE_READY_TIMEOUT_MS`; an invalid, stale, oversized,
-or late source aborts the campaign rather than guessing a correlation.
+The Compose mount maps `${DEPLOY_ROOT}/data/e2e-playback-readiness` to
+`/var/lib/discord-meeting/e2e-playback-readiness` in Meeting Platform. Point the
+observer at the corresponding host path. Set the platform root to a new per-run
+subdirectory, use the same `runId` on both sides, and remove the directory only
+after retained evidence collection. The adapter rejects stale, symlinked,
+oversized, mutated, mismatched, and late receipts instead of guessing.
 
 Reconnect one already-greeted official actor before the meeting ends. Do not
 induce another first join. After finalization, pass all six observer files and

@@ -34,7 +34,20 @@ export type ConversationAnswerPlaybackIntent = z.infer<
 export function serializeConversationAnswerPlaybackReadinessEnvelope(
   input: unknown,
 ): string {
-  const envelope = conversationAnswerPlaybackReadinessEnvelopeSchema.parse(input);
+  const source = z.union([
+    conversationAnswerPlaybackReadinessEnvelopeSchema,
+    conversationAnswerPlaybackIntentSchema,
+    conversationAnswerObserverReadySchema,
+  ]).parse(input);
+  const envelope = conversationAnswerPlaybackReadinessEnvelopeSchema.parse({
+    capturePlan: source.capturePlan,
+    kind: source.kind,
+    meetingId: source.meetingId,
+    playbackAttemptId: source.playbackAttemptId,
+    protocolVersion: source.protocolVersion,
+    runId: source.runId,
+    turnId: source.turnId,
+  });
   return JSON.stringify([
     envelope.protocolVersion,
     envelope.runId,
