@@ -529,6 +529,46 @@ describe("hosted campaign finite process completion", () => {
     await expect(barrier).resolves.toEqual({ordinal: 1, runId: "run-1", verified: true});
   });
 
+  it("finishes bounded teardown after a finite child exits within the caller deadline", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hosted-deadline-teardown-"));
+    const readyPath = join(root, "ready.json");
+    const exitPath = join(root, "exit.json");
+    const source = `
+      const { existsSync, writeFileSync } = require("node:fs");
+      const { spawn } = require("node:child_process");
+      spawn(process.execPath, ["-e", "process.on('SIGTERM',()=>{});setInterval(()=>{},1000)"],
+        { stdio: "ignore" }).unref();
+      process.stdout.write(JSON.stringify({failures:[],metrics:[],passed:true}));
+      writeFileSync(${JSON.stringify(readyPath)}, "ready");
+      const timer = setInterval(() => {
+        if (existsSync(${JSON.stringify(exitPath)})) { clearInterval(timer); process.exit(0); }
+      }, 1);
+    `;
+    const { processAdapter, store } = await adapter(source);
+    const executable = verifierSpec();
+    const handle = await processAdapter.startChild(executable, bounded());
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      try { await readFile(readyPath, "utf8"); break; } catch {
+        if (attempt === 99) { throw new Error("Finite child did not become ready"); }
+        await new Promise((resolve) => {setTimeout(resolve, 5);});
+      }
+    }
+    await writeFile(exitPath, "exit", { mode: 0o600 });
+    // Arm the caller deadline only after the finite parent had enough time to
+    // exit; the deliberately surviving grandchild still needs the adapter's
+    // separate teardown budget.
+    await new Promise((resolve) => {setTimeout(resolve, 20);});
+    const completionDeadline = {
+      deadlineEpochMilliseconds: Date.now() + 15,
+      signal: new AbortController().signal,
+    };
+    await expect(processAdapter.awaitChildCompletion(handle, executable, completionDeadline))
+      .resolves.toBeUndefined();
+    await expect(store.awaitAction(completionAction(executable), bounded())).resolves.toEqual({
+      ordinal: 1, runId: "run-1", verified: true,
+    });
+  });
+
   it("publishes provenance only from an exactly correlated completion", async () => {
     const completion = JSON.stringify({
       campaignId: "campaign-1", digestSha256: "a".repeat(64), phase: "before",
