@@ -156,8 +156,9 @@ export function assertReplayTargetAttestation(
   use: "campaign-acceptance" | "historical-read" = "campaign-acceptance",
 ): void {
   assertReplayTargetContainer(containerValue);
-  const markerVersion = z.object({ schemaVersion: z.union([z.literal(1), z.literal(2)]) })
-    .passthrough().parse(markerValue).schemaVersion;
+  const markerVersion = z.looseObject({
+    schemaVersion: z.union([z.literal(1), z.literal(2)]),
+  }).parse(markerValue).schemaVersion;
   const marker = markerVersion === 1
     ? replayTargetMarkerV1OutputSchema.parse(markerValue)
     : replayTargetMarkerV2OutputSchema.parse(markerValue);

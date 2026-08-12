@@ -190,7 +190,7 @@ async function readSupplementalPlayback(path: string | undefined): Promise<
   return supplementalPlaybackEvidenceV1Schema.parse(await readJson(path));
 }
 
-async function readCampaignProof(path: string | undefined): Promise<unknown | undefined> {
+async function readCampaignProof(path: string | undefined): Promise<unknown> {
   if (path === undefined) {
     return undefined;
   }

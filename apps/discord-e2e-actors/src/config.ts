@@ -45,7 +45,7 @@ const actorEnvironmentSchema = z.object({
   const configuredValues = releaseGateValues.filter((entry) => entry !== undefined).length;
   if (configuredValues !== 0 && configuredValues !== releaseGateValues.length) {
     context.addIssue({
-      code: z.ZodIssueCode.custom,
+      code: "custom",
       message: "Hosted release gate path, campaign ID, and timeout must be configured together",
       path: ["DISCORD_E2E_HOSTED_RELEASE_GATE_PATH"],
     });
@@ -56,13 +56,13 @@ const actorEnvironmentSchema = z.object({
     ["speaker-b", [value.DISCORD_E2E_HOSTED_SPEAKER_B_GATE_PATH, value.DISCORD_E2E_HOSTED_SPEAKER_B_GATE_ARMED_PATH]],
   ] as const) {
     if (pair.filter((entry) => entry !== undefined).length === 1) {
-      context.addIssue({ code: z.ZodIssueCode.custom, message: `Hosted ${name} gate path and armed path must be configured together` });
+      context.addIssue({ code: "custom", message: `Hosted ${name} gate path and armed path must be configured together` });
     }
   }
   const stagedGateCount = [value.DISCORD_E2E_HOSTED_SPEAKER_B_GATE_PATH, value.DISCORD_E2E_HOSTED_PLAYBACK_GATE_PATH, value.DISCORD_E2E_HOSTED_END_GATE_PATH]
     .filter((entry) => entry !== undefined).length;
   if (stagedGateCount !== 0 && (configuredValues !== releaseGateValues.length || stagedGateCount !== 3)) {
-    context.addIssue({ code: z.ZodIssueCode.custom, message: "Hosted connection, playback, and end gates must form one complete lifecycle" });
+    context.addIssue({ code: "custom", message: "Hosted connection, playback, and end gates must form one complete lifecycle" });
   }
 });
 

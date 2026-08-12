@@ -15,7 +15,7 @@ const phaseSchema = z.enum(["connection", "playback"]);
 const gateSchema = z.object({
   campaignId: identifier,
   phase: phaseSchema,
-  releasedAtEpochMs: z.number().int().safe().nonnegative(),
+  releasedAtEpochMs: z.number().int().nonnegative(),
   runId: identifier,
   schemaVersion: z.literal(1),
   target: z.object({
@@ -24,7 +24,7 @@ const gateSchema = z.object({
   }).strict(),
 }).strict();
 const armedReceiptSchema = z.object({
-  armedAtEpochMs: z.number().int().safe().nonnegative(),
+  armedAtEpochMs: z.number().int().nonnegative(),
   campaignId: identifier,
   gatePath: z.string().min(1),
   phase: phaseSchema,

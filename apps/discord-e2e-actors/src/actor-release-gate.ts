@@ -18,7 +18,7 @@ const targetSchema = z.object({
 }).strict();
 const releaseGateSchema = z.object({
   campaignId: identifier,
-  releasedAtEpochMs: z.number().int().safe().nonnegative(),
+  releasedAtEpochMs: z.number().int().nonnegative(),
   runId: identifier,
   scenario: z.enum(["overlap", "sequential", "reconnect"]),
   schemaVersion: z.literal(1),
@@ -26,7 +26,7 @@ const releaseGateSchema = z.object({
   target: targetSchema,
 }).strict();
 const armedReceiptSchema = z.object({
-  armedAtEpochMs: z.number().int().safe().nonnegative(), campaignId: identifier,
+  armedAtEpochMs: z.number().int().nonnegative(), campaignId: identifier,
   phase: z.enum(["connection", "speaker-b", "playback", "end"]), runId: identifier,
   scenario: z.enum(["overlap", "sequential", "reconnect"]), schemaVersion: z.literal(1),
 }).strict();

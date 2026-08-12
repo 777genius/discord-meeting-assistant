@@ -47,7 +47,7 @@ export async function waitForStableRecordingReadyReceipt(input: {
   const deadline = startedAt + input.policy.timeoutMs;
   let previousStableKey: string | undefined;
 
-  while (true) {
+  for (;;) {
     input.signal.throwIfAborted();
     const sampledAt = input.clock.nowEpochMs();
     if (sampledAt > deadline) {

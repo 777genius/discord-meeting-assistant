@@ -22,7 +22,7 @@ const storedEventSchema = z.object({
   type: z.string().min(1),
 }).strict();
 
-export const recordingCompletionReceiptSchema = z.object({
+export const recordingCompletionReceiptSchema = z.looseObject({
   channelId: snowflake,
   events: z.array(storedEventSchema).min(2),
   finalEventDigest: sha256,
@@ -39,7 +39,7 @@ export const recordingCompletionReceiptSchema = z.object({
   }).strict(),
   recordingId: identifier,
   schemaVersion: z.literal(2),
-}).passthrough();
+});
 
 export const recordingReadyReceiptV1Schema = z.object({
   authoritativeSource: z.object({

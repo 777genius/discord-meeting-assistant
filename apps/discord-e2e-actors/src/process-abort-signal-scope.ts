@@ -5,7 +5,9 @@ export async function withProcessAbortSignalScope<T>(
   action: (signal: AbortSignal) => Promise<T>,
 ): Promise<T> {
   const controller = new AbortController();
-  const stop = (): void => controller.abort(new Error(reason));
+  const stop = (): void => {
+    controller.abort(new Error(reason));
+  };
   for (const signal of terminationSignals) {
     process.once(signal, stop);
   }
