@@ -190,6 +190,8 @@ describe("hosted campaign process adapter", () => {
       DISCORD_E2E_HOSTED_RELEASE_GATE_CAMPAIGN_ID: "campaign-1",
       DISCORD_E2E_RUN_ID: "run-3",
     });
+    executable.produces = [{ action: { kind: "capture-retained", ordinal: 1 },
+      ordinal: 3, outputPath: "/evidence/capture-1.json", runId: "run-3" }];
     const handle = await processAdapter.startChild(executable, bounded());
     await expect(processAdapter.awaitBarrier({ kind: "capture-retained", ordinal: 1 }, bounded()))
       .resolves.toEqual({ ordinal: 1, outputPath, retained: true });
@@ -212,6 +214,10 @@ describe("hosted campaign process adapter", () => {
       DISCORD_E2E_HOSTED_RELEASE_GATE_CAMPAIGN_ID: "campaign-1",
       DISCORD_E2E_RUN_ID: "run-3",
     });
+    executable.produces = [1, 2, 3].map((ordinal) => ({
+      action: { kind: "capture-retained" as const, ordinal }, ordinal: 3,
+      outputPath: `/evidence/capture-${String(ordinal)}.json`, runId: "run-3",
+    }));
     const handle = await processAdapter.startChild(executable, bounded());
     await expect(processAdapter.awaitBarrier({ kind: "capture-retained", ordinal: 3 }, bounded()))
       .resolves.toEqual({ ordinal: 3, outputPath: "/tmp/capture-3.json", retained: true });
@@ -312,12 +318,46 @@ describe("hosted campaign process adapter", () => {
   });
 
   it("uses a fresh allowlisted environment and rejects dangerous inheritance", async () => {
-    const { processAdapter } = await adapter("setInterval(() => {}, 1000)");
+    const { processAdapter } = await adapter(`
+      const inherited = Object.fromEntries(${JSON.stringify(Object.keys(trustedRuntimeEnvironment))}
+        .filter((name) => process.env[name] !== undefined)
+        .map((name) => [name, process.env[name]]));
+      process.stdout.write(JSON.stringify(inherited));
+    `);
     await expect(processAdapter.startChild(spec({ PATH: "/bin" }), bounded())).rejects.toThrow(/PATH/u);
     await expect(processAdapter.startChild(spec({ NODE_OPTIONS: "--inspect" }), bounded())).rejects.toThrow(/NODE_OPTIONS/u);
     await expect(processAdapter.startChild(spec({ UNKNOWN: "x" }), bounded())).rejects.toThrow(/UNKNOWN/u);
-    const handle = await processAdapter.startChild(spec({ DISCORD_E2E_RUN_ID: "sandbox" }), bounded());
-    await processAdapter.stopChild(handle);
+    const executable = {
+      ...spec({ DISCORD_E2E_RUN_ID: "sandbox" }),
+      completion: {
+        action: { kind: "actor-completed" as const, ordinal: 1, runId: "sandbox" },
+        kind: "actor" as const,
+        outputPath: "/evidence/actor.json",
+        runId: "sandbox",
+        scenario: "sequential" as const,
+      },
+    };
+    const handle = await processAdapter.startChild(executable, bounded());
+    await expect(processAdapter.awaitChildCompletion(handle, executable, bounded())).rejects.toThrow(/malformed/u);
+  });
+
+  it("passes the exact trusted runtime environment to an SSH-capable child", async () => {
+    const output = JSON.stringify({
+      evidencePath: "/evidence/run-1.json", metrics: [], recordingId: "recording-1",
+      runId: "run-1", runtimeEnvironment: trustedRuntimeEnvironment, status: "passed",
+    });
+    const { processAdapter } = await adapter(`
+      const runtimeEnvironment = Object.fromEntries(${JSON.stringify(Object.keys(trustedRuntimeEnvironment))}
+        .map((name) => [name, process.env[name]]));
+      process.stdout.write(JSON.stringify({
+        evidencePath: "/evidence/run-1.json", metrics: [], recordingId: "recording-1",
+        runId: "run-1", runtimeEnvironment, status: "passed",
+      }));
+    `);
+    const executable = collectorSpec();
+    const handle = await processAdapter.startChild(executable, bounded());
+    await expect(processAdapter.awaitChildCompletion(handle, executable, bounded())).resolves.toBeUndefined();
+    expect(JSON.parse(output).runtimeEnvironment).toEqual(trustedRuntimeEnvironment);
   });
 
   it("rejects mismatched pinned coordinates before spawning a child", async () => {

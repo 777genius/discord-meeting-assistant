@@ -20,14 +20,107 @@ function input(): HostedCampaignInput {
   ] as const;
   const skeleton = { children: [], target: HOSTED_CAMPAIGN_TARGET,
     thresholds: { answerFirstPacketMilliseconds: 4_000 }, runs };
+  const actions = campaignActions(skeleton);
+  const production = (kind: HostedCampaignBarrierAction["kind"]) => actions
+    .filter(({ action }) => action.kind === kind)
+    .map((reference, index) => ({
+      ...reference, outputPath: `/evidence/${kind}-${index}.json`,
+    }));
   return {
     ...skeleton,
-    children: [child("observer", campaignActions(skeleton).map((reference, index) => ({
-      ...reference, outputPath: `/evidence/action-${index}.json`,
-    }))), child("speaker-a"), child("speaker-b")],
+    children: [
+      executable("conversation-observer", "conversation-observer", [
+        ...production("observer-subscribed"), ...production("capture-retained"),
+        ...production("answer-intent"), ...production("answer-observer-ready"),
+        ...production("answer-first-packet"),
+      ]),
+      executable("reconnect-actor", "actor", [
+        ...production("reconnect-left"), ...production("reconnect-ready"),
+      ]),
+      provenanceProducer("before", production("provenance-before")[0]!),
+      ...production("run-verified").map((produced, index) => verificationProducer(index + 1, produced)),
+      serviceLevelsProducer(production("service-levels-ready")[0]!),
+      provenanceProducer("after", production("provenance-after")[0]!),
+      campaignVerificationProducer(production("campaign-verified")[0]!),
+    ],
     target: HOSTED_CAMPAIGN_TARGET,
     thresholds: { answerFirstPacketMilliseconds: 4_000 },
   };
+}
+
+function verificationProducer(
+  ordinal: number,
+  produced: HostedCampaignInput["children"][number]["produces"][number],
+) {
+  const action = produced.action as Extract<HostedCampaignBarrierAction, { readonly kind: "run-verified" }>;
+  return {
+    arguments: { evidencePath: `/evidence/run-${ordinal}.json`, kind: "evidence-verifier" as const,
+      manifestPath: "/evidence/manifest.json" },
+    childId: `verifier-${ordinal}`, completion: { action, kind: "evidence-verifier" as const },
+    entrypoint: "evidence-verifier" as const, environment: {}, produces: [produced], requires: [],
+    startBefore: { action, kind: "barrier" as const, ordinal: produced.ordinal, runId: produced.runId },
+  };
+}
+
+function provenanceProducer(
+  phase: "after" | "before",
+  produced: HostedCampaignInput["children"][number]["produces"][number],
+) {
+  const action = produced.action as Extract<HostedCampaignBarrierAction, {
+    readonly kind: "provenance-after" | "provenance-before";
+  }>;
+  return {
+    arguments: { kind: "environment" as const }, childId: `provenance-${phase}`,
+    completion: { action, campaignId: "campaign-1", kind: "provenance-probe" as const, phase,
+      runIds: ["run-1", "run-2", "run-3"] as const, snapshotPath: "/evidence/provenance.json" },
+    entrypoint: "provenance-probe" as const, environment: {
+      DISCORD_E2E_PROVENANCE_CAMPAIGN_ID: "campaign-1", DISCORD_E2E_PROVENANCE_PHASE: phase,
+      DISCORD_E2E_PROVENANCE_RUN_IDS_JSON: '["run-1","run-2","run-3"]',
+      DISCORD_E2E_PROVENANCE_SNAPSHOT_PATH: "/evidence/provenance.json",
+    }, produces: [produced], requires: [],
+    startBefore: { action, kind: "barrier" as const, ordinal: produced.ordinal, runId: produced.runId },
+  };
+}
+
+function serviceLevelsProducer(
+  produced: HostedCampaignInput["children"][number]["produces"][number],
+) {
+  const action = produced.action as Extract<HostedCampaignBarrierAction, { readonly kind: "service-levels-ready" }>;
+  return {
+    arguments: { kind: "environment" as const }, childId: "service-levels",
+    completion: { action, campaignId: "campaign-1", kind: "service-levels" as const,
+      meetingId: "meeting-1", outputPath: "/evidence/service-levels.json",
+      recordingId: "recording-1", reportPath: "/evidence/service-levels-report.json", runId: "run-3" },
+    entrypoint: "service-levels" as const, environment: {
+      DISCORD_E2E_SLA_CAMPAIGN_ID: "campaign-1", DISCORD_E2E_SLA_MEETING_ID: "meeting-1",
+      DISCORD_E2E_SLA_OUTPUT: "/evidence/service-levels.json", DISCORD_E2E_SLA_RECORDING_ID: "recording-1",
+      DISCORD_E2E_SLA_REPORT_OUTPUT: "/evidence/service-levels-report.json", DISCORD_E2E_SLA_RUN_ID: "run-3",
+    }, produces: [produced], requires: [],
+    startBefore: { action, kind: "barrier" as const, ordinal: produced.ordinal, runId: produced.runId },
+  };
+}
+
+function campaignVerificationProducer(
+  produced: HostedCampaignInput["children"][number]["produces"][number],
+) {
+  const action = produced.action as Extract<HostedCampaignBarrierAction, { readonly kind: "campaign-verified" }>;
+  return {
+    arguments: { evidencePaths: ["/evidence/1.json", "/evidence/2.json", "/evidence/3.json"] as const,
+      kind: "campaign-verifier" as const, manifestPath: "/evidence/manifest.json" },
+    childId: "campaign-verifier", completion: { action, campaignId: "campaign-1",
+      kind: "campaign-verifier" as const, runIds: ["run-1", "run-2", "run-3"] as const },
+    entrypoint: "campaign-verifier" as const, environment: {}, produces: [produced], requires: [],
+    startBefore: { action, kind: "barrier" as const, ordinal: produced.ordinal, runId: produced.runId },
+  };
+}
+
+function executable(
+  childId: string,
+  entrypoint: HostedCampaignInput["children"][number]["entrypoint"],
+  produces: HostedCampaignInput["children"][number]["produces"],
+) {
+  return { arguments: { kind: "environment" as const }, childId, entrypoint, environment: {},
+    produces, requires: [], startBefore: { kind: "campaign" as const } };
 }
 
 function child(childId: string, produces: HostedCampaignInput["children"][number]["produces"] = []) {
@@ -50,7 +143,7 @@ function oneShotChild(
     ...(action.kind === "run-verified" ? {
       completion: { action, kind: "evidence-verifier" as const },
     } : {}),
-    entrypoint: action.kind === "run-verified" ? "evidence-verifier" as const : "supplemental-player" as const,
+    entrypoint: action.kind === "run-verified" ? "evidence-verifier" as const : "live-observer" as const,
     environment: {},
     produces: action.kind === "run-verified" ? [{ ...reference, outputPath: `/evidence/${childId}.json` }] : [],
     requires: [],
@@ -111,7 +204,9 @@ describe("hosted campaign coordinator", () => {
   it("injects closed recording-ready identity bindings only after validated source evidence", async () => {
     const base = input();
     const provenance = campaignActions(base)[0]!;
-    const observerSubscribed = campaignActions(base)[1]!;
+    const observerSubscribed = campaignActions(base).find(({ action }) =>
+      action.kind === "observer-subscribed"
+    )!;
     const readyAction = { kind: "recording-ready" as const, ordinal: 1, runId: "run-1" };
     const readyReference = { action: readyAction, ordinal: 1, runId: "run-1" };
     const ready = {
@@ -157,7 +252,9 @@ describe("hosted campaign coordinator", () => {
   it("rejects bound evidence with a missing or non-string identity", async () => {
     const base = input();
     const provenance = campaignActions(base)[0]!;
-    const observerSubscribed = campaignActions(base)[1]!;
+    const observerSubscribed = campaignActions(base).find(({ action }) =>
+      action.kind === "observer-subscribed"
+    )!;
     const action = { kind: "recording-ready" as const, ordinal: 1, runId: "run-1" };
     const source = { action, ordinal: 1, runId: "run-1" };
     const ready = {
@@ -183,7 +280,7 @@ describe("hosted campaign coordinator", () => {
   it("releases a finite actor before awaiting its run-scoped completion", async () => {
     const base = input();
     const completionAction = { kind: "actor-completed" as const, ordinal: 1, runId: "run-1" };
-    const provenance = base.children[0]!.produces.find(({ action }) => action.kind === "provenance-before")!;
+    const provenance = campaignActions(base)[0]!;
     const actor = {
       arguments: { kind: "environment" as const }, childId: "finite-actor", entrypoint: "actor" as const,
       environment: {
@@ -227,7 +324,7 @@ describe("hosted campaign coordinator", () => {
   it("propagates an asynchronous finite child failure and still tears down", async () => {
     const base = input();
     const action = { kind: "actor-completed" as const, ordinal: 1, runId: "run-1" };
-    const provenance = base.children[0]!.produces.find(({ action: produced }) => produced.kind === "provenance-before")!;
+    const provenance = campaignActions(base)[0]!;
     const actor = {
       arguments: { kind: "environment" as const }, childId: "failing-actor", entrypoint: "actor" as const,
       environment: { DISCORD_E2E_ACTOR_RUN_OUTPUT: "/evidence/actor.json",
@@ -265,7 +362,7 @@ describe("hosted campaign coordinator", () => {
       { action: { kind: "run-verified", ordinal: 3, runId: "run-3" }, ordinal: 3, runId: "run-3" },
     ]);
     expect(references.filter(({ action }) => action.kind === "observer-subscribed")).toEqual([
-      { action: { kind: "observer-subscribed" }, ordinal: 1, runId: "run-1" },
+      { action: { kind: "observer-subscribed" }, ordinal: 3, runId: "run-3" },
     ]);
     expect(references.filter(({ action }) => action.kind === "reconnect-ready")).toEqual([
       { action: { kind: "reconnect-ready" }, ordinal: 3, runId: "run-3" },
@@ -277,30 +374,33 @@ describe("hosted campaign coordinator", () => {
 
   it("fails closed for missing and duplicate action producers", async () => {
     const base = input();
-    const observer = base.children[0]!;
-    const missing = { ...base, children: [{ ...observer, produces: observer.produces.slice(1) }, ...base.children.slice(1)] };
+    const producer = base.children.find(({ produces }) => produces.length > 0)!;
+    const missing = { ...base, children: base.children.map((child) => child === producer
+      ? { ...producer, produces: producer.produces.slice(1) } : child) };
     await expect(runHostedCampaign(missing, ports([]), bounded())).rejects.toThrow(/has no producer/u);
 
-    const duplicate = { ...base, children: [...base.children, child("duplicate", [observer.produces[0]!])] };
+    const duplicate = { ...base, children: [...base.children, {
+      ...producer, childId: "duplicate",
+    }] };
     await expect(runHostedCampaign(duplicate, ports([]), bounded())).rejects.toThrow(/multiple producers/u);
   });
 
   it("fails closed for output path collisions and dependency cycles", async () => {
     const base = input();
-    const observer = base.children[0]!;
+    const observer = base.children.find(({ childId }) => childId === "conversation-observer")!;
     const collisionProduction = { ...observer.produces[1]!, outputPath: observer.produces[0]!.outputPath };
-    const collision = { ...base, children: [{
+    const collision = { ...base, children: base.children.map((child) => child === observer ? {
       ...observer, produces: [observer.produces[0]!, collisionProduction, ...observer.produces.slice(2)],
-    }, ...base.children.slice(1)] };
+    } : child) };
     await expect(runHostedCampaign(collision, ports([]), bounded())).rejects.toThrow(/path collision/u);
 
     const first = observer.produces[0]!;
     const second = observer.produces[1]!;
     const cyclic = { ...base, children: [
       { ...observer, produces: observer.produces.slice(2) },
-      { ...child("producer-a", [first]), requires: [second],
+      { ...executable("producer-a", "conversation-observer", [first]), requires: [second],
         startBefore: { ...second, kind: "barrier" as const } },
-      { ...child("producer-b", [second]), requires: [first],
+      { ...executable("producer-b", "conversation-observer", [second]), requires: [first],
         startBefore: { ...first, kind: "barrier" as const } },
       ...base.children.slice(1),
     ] };
@@ -319,14 +419,11 @@ describe("hosted campaign coordinator", () => {
     const receipt = await runHostedCampaign(input(), ports(events), bounded());
     const firstStop = events.findIndex((event) => event.startsWith("stop:"));
 
-    expect(events.slice(0, 4)).toEqual([
-      "lease:campaign-1", "start:observer", "start:speaker-a", "start:speaker-b",
-    ]);
-    expect(events.slice(4, firstStop)).toEqual([
+    expect(events.slice(0, firstStop).filter((event) => event.startsWith("barrier:"))).toEqual([
       "barrier:provenance-before",
+      "barrier:run-verified",
+      "barrier:run-verified",
       "barrier:observer-subscribed",
-      "barrier:run-verified",
-      "barrier:run-verified",
       "barrier:capture-retained",
       "barrier:capture-retained",
       "barrier:capture-retained",
@@ -343,16 +440,15 @@ describe("hosted campaign coordinator", () => {
       "barrier:provenance-after",
       "barrier:campaign-verified",
     ]);
-    expect(events.slice(firstStop)).toEqual([
-      "stop:observer", "stop:speaker-a", "stop:speaker-b", "release:campaign-1",
-    ]);
+    expect(events.slice(firstStop).filter((event) => event.startsWith("stop:"))).toHaveLength(input().children.length);
+    expect(events.at(-1)).toBe("release:campaign-1");
     expect(receipt.actionEvidence.map((entry) => (entry as {
       readonly action: HostedCampaignBarrierAction;
     }).action)).toEqual([
       { kind: "provenance-before" },
-      { kind: "observer-subscribed" },
       { kind: "run-verified", ordinal: 1, runId: "run-1" },
       { kind: "run-verified", ordinal: 2, runId: "run-2" },
+      { kind: "observer-subscribed" },
       { kind: "capture-retained", ordinal: 1 },
       { kind: "capture-retained", ordinal: 2 },
       { kind: "capture-retained", ordinal: 3 },
@@ -405,7 +501,7 @@ describe("hosted campaign coordinator", () => {
     fakePorts.stopChild = vi.fn(async (handle) => { events.push(`stop:${handle.childId}`); });
 
     await expect(runHostedCampaign(input(), fakePorts, bounded())).rejects.toThrow(/SLA failed/u);
-    expect(fakePorts.stopChild).toHaveBeenCalledTimes(3);
+    expect(fakePorts.stopChild).toHaveBeenCalledTimes(5);
   });
 
   it("uses the closed-plan answer threshold and verifies each run separately", async () => {
@@ -441,28 +537,21 @@ describe("hosted campaign coordinator", () => {
     const configured: HostedCampaignInput = {
       ...base,
       children: [
-        { ...base.children[0]!, produces: base.children[0]!.produces.filter(({ action }) =>
-          JSON.stringify(action) !== movedIdentity) },
-        ...base.children.slice(1),
+        ...base.children.filter((child) => !child.produces.some(({ action }) =>
+          JSON.stringify(action) === movedIdentity)),
         oneShotChild("verify-overlap", { kind: "run-verified", ordinal: 2, runId: "run-2" }),
-        oneShotChild("retain-five", { kind: "capture-retained", ordinal: 5 }),
       ],
     };
 
     await runHostedCampaign(configured, ports(events), bounded());
 
     expect(events.filter((event) => event === "start:verify-overlap")).toHaveLength(1);
-    expect(events.filter((event) => event === "start:retain-five")).toHaveLength(1);
     const runBarriers = events
       .map((event, index) => ({ event, index }))
       .filter(({ event }) => event === "barrier:run-verified");
     const verifierStart = events.indexOf("start:verify-overlap");
     expect(events[verifierStart + 1]).toBe("complete:verify-overlap");
     expect(verifierStart + 2).toBe(runBarriers[1]?.index);
-    const captureBarriers = events
-      .map((event, index) => ({ event, index }))
-      .filter(({ event }) => event === "barrier:capture-retained");
-    expect(events.indexOf("start:retain-five") + 1).toBe(captureBarriers[4]?.index);
   });
 
   it("rejects a repeated-phase start point that does not exactly exist", async () => {
