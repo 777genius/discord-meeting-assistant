@@ -22,18 +22,12 @@ import {
 
 export const speakerAId = "1533227577286852649";
 export const speakerBId = "1533228054724346087";
-const speakerDId = "1533873978417086474";
-const observerId = "1533867700575670282";
+const speakerDId = "1533873978417086474", observerId = "1533867700575670282";
 const speakerAText = "Спикер A обсуждает Meeting Platform и Craig recording";
 const speakerBText = "Спикер B проверит Redis queue и idempotency key";
-export const expectedRevisions: DeploymentRevisionExpectation =
-  { craig: "6".repeat(40), meetingPlatform: "b".repeat(40) };
-export const currentExpectedRevisions: DeploymentRevisionExpectation = {
-  ...expectedRevisions,
-  pipecat: "7".repeat(40),
-  subscriptionRuntime: "e".repeat(40),
-};
-
+export const expectedRevisions: DeploymentRevisionExpectation = { craig: "6".repeat(40), meetingPlatform: "b".repeat(40) };
+export const currentExpectedRevisions: DeploymentRevisionExpectation =
+  { ...expectedRevisions, pipecat: "7".repeat(40), subscriptionRuntime: "e".repeat(40) };
 export function verifyRetainedE2eEvidence(
   fixtureManifest: FixtureManifestV1,
   evidence: RetainedE2eEvidenceV2 | RetainedE2eEvidenceV3,
@@ -44,6 +38,7 @@ export function verifyRetainedE2eEvidence(
     expectedRevisions,
   );
 }
+
 export function manifest(): FixtureManifestV1 {
   return fixtureManifestV1Schema.parse({
     allowedBotSpeakerIds: ["1534231284467896512", speakerDId],
