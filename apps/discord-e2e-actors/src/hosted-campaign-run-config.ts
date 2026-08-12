@@ -55,7 +55,7 @@ const executableSchema = z.object({
   completion: completionSchema.optional(),
   entrypoint: z.enum([
     "actor", "campaign-verifier", "collector", "conversation-observer", "evidence-verifier",
-    "live-observer", "supplemental-player",
+    "live-observer", "recording-ready", "supplemental-player",
   ]),
   environment,
   releaseGate: z.object({

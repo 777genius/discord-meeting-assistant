@@ -24,6 +24,7 @@ export type HostedCampaignEntrypoint =
   | "collector"
   | "conversation-observer"
   | "live-observer"
+  | "recording-ready"
   | "supplemental-player"
   | "evidence-verifier";
 export type HostedCampaignStartPoint =

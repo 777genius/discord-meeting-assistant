@@ -3,13 +3,19 @@ import { dirname, isAbsolute } from "node:path";
 
 import { z } from "zod";
 
+import { deploymentRevisionExpectationSchema } from "./e2e-evidence.js";
 import { deriveRecordingReadyReceipt } from "./recording-ready-receipt.js";
 import { SshDeploymentEvidenceProbe } from "./ssh-deployment-probe.js";
 import { EvidenceProbeInterruptedError } from "./ssh-deployment-probe-commands.js";
 
 const absolutePath = z.string().refine(isAbsolute);
+const sourceRevision = z.string().regex(/^(?:[a-f\d]{40}|[a-f\d]{64})$/u);
 const environmentSchema = z.object({
   DISCORD_E2E_ACTOR_RUN_INPUT: absolutePath,
+  DISCORD_E2E_EXPECTED_CRAIG_SOURCE_REVISION: sourceRevision,
+  DISCORD_E2E_EXPECTED_MEETING_PLATFORM_SOURCE_REVISION: sourceRevision,
+  DISCORD_E2E_EXPECTED_PIPECAT_SOURCE_REVISION: sourceRevision,
+  DISCORD_E2E_EXPECTED_SUBSCRIPTION_RUNTIME_SOURCE_REVISION: sourceRevision,
   DISCORD_E2E_MUTATION_TARGET: z.literal("test-only"),
   DISCORD_E2E_READY_RECEIPT_OUTPUT: absolutePath,
   DISCORD_E2E_REMOTE_ATTESTATION_FILE: z.string().regex(
@@ -35,6 +41,7 @@ async function main(): Promise<void> {
     craigServiceName: config.DISCORD_E2E_REMOTE_CRAIG_SERVICE,
     envFile: config.DISCORD_E2E_REMOTE_ENV_FILE,
     host: config.DISCORD_E2E_REMOTE_HOST,
+    includePipecatProvenance: true,
     mutationTarget: config.DISCORD_E2E_MUTATION_TARGET,
     projectName: config.DISCORD_E2E_REMOTE_PROJECT,
     sourceRoot: config.DISCORD_E2E_REMOTE_SOURCE_ROOT,
@@ -46,6 +53,12 @@ async function main(): Promise<void> {
   const receipt = deriveRecordingReadyReceipt({
     actorRun,
     completionReceipts,
+    expectedRevisions: deploymentRevisionExpectationSchema.parse({
+      craig: config.DISCORD_E2E_EXPECTED_CRAIG_SOURCE_REVISION,
+      meetingPlatform: config.DISCORD_E2E_EXPECTED_MEETING_PLATFORM_SOURCE_REVISION,
+      pipecat: config.DISCORD_E2E_EXPECTED_PIPECAT_SOURCE_REVISION,
+      subscriptionRuntime: config.DISCORD_E2E_EXPECTED_SUBSCRIPTION_RUNTIME_SOURCE_REVISION,
+    }),
     observedAt: new Date().toISOString(),
     provenance,
   });

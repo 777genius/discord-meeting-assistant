@@ -2,8 +2,14 @@ import { createHash } from "node:crypto";
 
 import { z } from "zod";
 
-import { unboundActorRunEvidenceV1Schema } from "./e2e-evidence.js";
-import type { CurrentDeploymentProvenance } from "./e2e-evidence.js";
+import {
+  deploymentRevisionExpectationSchema,
+  unboundActorRunEvidenceV1Schema,
+} from "./e2e-evidence.js";
+import type {
+  CurrentDeploymentProvenance,
+  DeploymentRevisionExpectation,
+} from "./e2e-evidence.js";
 import { HOSTED_CAMPAIGN_TARGET } from "./hosted-campaign-coordinator.js";
 
 const identifier = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u);
@@ -61,10 +67,12 @@ export type RecordingReadyReceiptV1 = z.infer<typeof recordingReadyReceiptV1Sche
 export function deriveRecordingReadyReceipt(input: {
   readonly actorRun: unknown;
   readonly completionReceipts: readonly unknown[];
+  readonly expectedRevisions: DeploymentRevisionExpectation;
   readonly observedAt: string;
   readonly provenance: CurrentDeploymentProvenance;
 }): RecordingReadyReceiptV1 {
   const actorRun = unboundActorRunEvidenceV1Schema.parse(input.actorRun);
+  assertV9DeploymentProvenance(input.provenance, input.expectedRevisions);
   const candidates = input.completionReceipts
     .map((value) => recordingCompletionReceiptSchema.parse(value))
     .filter(({ guildId, channelId }) =>
@@ -102,6 +110,30 @@ export function deriveRecordingReadyReceipt(input: {
     runId: actorRun.runId,
     schemaVersion: 1,
   });
+}
+
+function assertV9DeploymentProvenance(
+  provenance: CurrentDeploymentProvenance,
+  expectedRevisions: DeploymentRevisionExpectation,
+): void {
+  const revisions = deploymentRevisionExpectationSchema.parse(expectedRevisions);
+  if (revisions.pipecat === undefined || revisions.subscriptionRuntime === undefined) {
+    throw new Error("Recording-ready V9 provenance requires all four release-candidate revisions");
+  }
+  if (provenance.pipecat === undefined) {
+    throw new Error("Recording-ready V9 provenance requires the Pipecat component");
+  }
+  const components = [
+    ["craig", provenance.craig, revisions.craig],
+    ["meetingPlatform", provenance.meetingPlatform, revisions.meetingPlatform],
+    ["pipecat", provenance.pipecat, revisions.pipecat],
+    ["subscriptionRuntime", provenance.subscriptionRuntime, revisions.subscriptionRuntime],
+  ] as const;
+  for (const [component, observed, expected] of components) {
+    if (observed.sourceRevision !== expected) {
+      throw new Error(`Recording-ready ${component} provenance does not match the release candidate`);
+    }
+  }
 }
 
 function actorRunFitsWindow(

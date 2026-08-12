@@ -12,6 +12,7 @@ describe("recording-ready receipt", () => {
     const result = deriveRecordingReadyReceipt({
       actorRun: actorRun(),
       completionReceipts: [completion("recording-1")],
+      expectedRevisions: expectedRevisions(),
       observedAt: "2026-08-12T10:01:00.000Z",
       provenance: provenance(),
     });
@@ -28,6 +29,7 @@ describe("recording-ready receipt", () => {
     expect(() => deriveRecordingReadyReceipt({
       actorRun: actorRun(),
       completionReceipts: [completion("recording-1"), completion("recording-2")],
+      expectedRevisions: expectedRevisions(),
       observedAt: "2026-08-12T10:01:00.000Z",
       provenance: provenance(),
     })).toThrow("found 2");
@@ -37,10 +39,29 @@ describe("recording-ready receipt", () => {
     expect(() => deriveRecordingReadyReceipt({
       actorRun: actorRun(),
       completionReceipts: [{ ...completion("recording-1"), channelId: "1533228891827736657" }],
+      expectedRevisions: expectedRevisions(),
       observedAt: "2026-08-12T10:01:00.000Z",
       provenance: provenance(),
     })).toThrow("found 0");
   });
+
+  it("binds readiness to the same four V9 provenance components and revisions", () => {
+    const { pipecat: _pipecat, ...withoutPipecat } = provenance();
+    expect(() => deriveRecordingReadyReceipt({
+      actorRun: actorRun(), completionReceipts: [completion("recording-1")],
+      expectedRevisions: expectedRevisions(), observedAt: "2026-08-12T10:01:00.000Z",
+      provenance: withoutPipecat,
+    })).toThrow(/Pipecat component/u);
+
+    const changedPipecat = provenance();
+    changedPipecat.pipecat.sourceRevision = "f".repeat(40);
+    expect(() => deriveRecordingReadyReceipt({
+      actorRun: actorRun(), completionReceipts: [completion("recording-1")],
+      expectedRevisions: expectedRevisions(), observedAt: "2026-08-12T10:01:00.000Z",
+      provenance: changedPipecat,
+    })).toThrow(/pipecat provenance does not match/u);
+  });
+
 });
 
 function actorRun() {
@@ -90,8 +111,13 @@ function provenance() {
   return {
     craig: service("a"),
     meetingPlatform: service("b"),
+    pipecat: service("d"),
     subscriptionRuntime: service("c"),
   };
+}
+
+function expectedRevisions() {
+  return { craig: "a".repeat(40), meetingPlatform: "b".repeat(40), pipecat: "d".repeat(40), subscriptionRuntime: "c".repeat(40) };
 }
 
 function service(seed: string) {

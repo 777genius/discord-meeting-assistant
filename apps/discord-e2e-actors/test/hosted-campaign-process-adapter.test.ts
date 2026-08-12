@@ -20,6 +20,14 @@ async function adapter(source: string, outputLimitBytes?: number) {
     ...(outputLimitBytes === undefined ? {} : { outputLimitBytes }),
   }), store };
 }
+async function recordingReadyAdapter(source: string) {
+  const root = await mkdtemp(join(tmpdir(), "hosted-recording-ready-process-"));
+  await chmod(root, 0o700);
+  await writeFile(join(root, "collect-recording-ready-receipt.js"), source, { mode: 0o600 });
+  const store = new HostedCampaignArtifactStore(join(root, "artifacts"), "campaign-1");
+  await store.initialize();
+  return new HostedCampaignProcessAdapter({ artifactStore: store, distRoot: root, terminationGraceMilliseconds: 50 });
+}
 const bounded = () => ({ deadlineEpochMilliseconds: Date.now() + 1_000, signal: new AbortController().signal });
 const spec = (environment: Readonly<Record<string, string>> = {}) => ({
   arguments: { kind: "environment" as const }, childId: "actor", entrypoint: "actor" as const,
@@ -29,7 +37,8 @@ const verifierSpec = (ordinal = 1, runId = "run-1"): HostedCampaignExecutableSpe
   arguments: { evidencePath: "/evidence.json", kind: "evidence-verifier", manifestPath: "/manifest.json" },
   childId: `verifier-${ordinal}`,
   completion: { action: { kind: "run-verified", ordinal, runId }, kind: "evidence-verifier" },
-  entrypoint: "evidence-verifier", environment: {}, startBefore: "run-verified",
+  entrypoint: "evidence-verifier", environment: {},
+  startBefore: { action: { kind: "run-verified", ordinal, runId }, kind: "barrier" },
 });
 const collectorSpec = (): HostedCampaignExecutableSpec => ({
   arguments: { kind: "environment" }, childId: "collector",
@@ -39,7 +48,7 @@ const collectorSpec = (): HostedCampaignExecutableSpec => ({
   },
   entrypoint: "collector", environment: {
     DISCORD_E2E_EVIDENCE_OUTPUT: "/evidence/run-1.json", DISCORD_E2E_RUN_ID: "run-1",
-  }, startBefore: "run-verified",
+  }, startBefore: { action: { kind: "run-verified", ordinal: 1, runId: "run-1" }, kind: "barrier" },
 });
 const campaignVerifierSpec = (): HostedCampaignExecutableSpec => ({
   arguments: {
@@ -49,7 +58,8 @@ const campaignVerifierSpec = (): HostedCampaignExecutableSpec => ({
   completion: {
     action: { kind: "campaign-verified" }, campaignId: "campaign-1", kind: "campaign-verifier",
     runIds: ["run-1", "run-2", "run-3"],
-  }, entrypoint: "campaign-verifier", environment: {}, startBefore: "campaign-verified",
+  }, entrypoint: "campaign-verifier", environment: {},
+  startBefore: { action: { kind: "campaign-verified" }, kind: "barrier" },
 });
 const campaignResult = (runIds: readonly string[]) => JSON.stringify({
   failures: [], passed: true,
@@ -200,5 +210,18 @@ describe("hosted campaign process adapter", () => {
     await processAdapter.awaitChildCompletion(handle, executable, bounded());
     await waiting;
     expect(visible).toBe(true);
+  });
+
+  it("maps the recording-ready entrypoint and passes only its required output coordinate", async () => {
+    const processAdapter = await recordingReadyAdapter("setInterval(() => {}, 1000)");
+    const handle = await processAdapter.startChild({
+      ...spec({
+        DISCORD_E2E_EXPECTED_PIPECAT_SOURCE_REVISION: "d".repeat(40),
+        DISCORD_E2E_READY_RECEIPT_OUTPUT: "/evidence/recording-ready.json",
+      }),
+      childId: "recording-ready",
+      entrypoint: "recording-ready",
+    }, bounded());
+    await processAdapter.stopChild(handle);
   });
 });

@@ -51,6 +51,12 @@ describe("run-hosted-campaign CLI", () => {
     })).toThrow();
   });
 
+  it("accepts the closed recording-ready entrypoint", () => {
+    const input = plan();
+    input.children[0]!.entrypoint = "recording-ready";
+    expect(parseHostedCampaignPlan(input).children[0]?.entrypoint).toBe("recording-ready");
+  });
+
   it("reads only an owned regular 0600 plan and writes a create-only 0600 receipt", async () => {
     const directory = await mkdtemp(join(tmpdir(), "hosted-campaign-cli-"));
     const planPath = join(directory, "plan.json");
