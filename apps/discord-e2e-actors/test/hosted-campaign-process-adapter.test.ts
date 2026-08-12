@@ -600,14 +600,22 @@ describe("hosted campaign process adapter", () => {
     const { processAdapter } = await adapter("setInterval(() => {}, 1000)");
     const root = await mkdtemp(join(tmpdir(), "hosted-release-"));
     const path = join(root, "gate.json");
-    const releaseGate = { action: { kind: "provenance-before" as const }, ordinal: 1, path, runId: "run-1" };
+    const armedPath = join(root, "gate.armed.json");
+    const releaseGate = {
+      action: { kind: "provenance-before" as const }, armedPath, ordinal: 1, path, runId: "run-1",
+    };
     const executable = spec({
       DISCORD_E2E_HOSTED_RELEASE_GATE_CAMPAIGN_ID: "campaign-1",
+      DISCORD_E2E_HOSTED_RELEASE_GATE_ARMED_PATH: armedPath,
       DISCORD_E2E_HOSTED_RELEASE_GATE_PATH: path,
       DISCORD_E2E_HOSTED_RELEASE_GATE_TIMEOUT_MS: "1000",
       DISCORD_E2E_RUN_ID: "run-1",
       DISCORD_E2E_SCENARIO: "sequential",
     }, releaseGate);
+    await writeFile(armedPath, `${JSON.stringify({
+      armedAtEpochMs: Date.now(), campaignId: "campaign-1", phase: "connection", runId: "run-1",
+      scenario: "sequential", schemaVersion: 1,
+    })}\n`, { mode: 0o600 });
     await processAdapter.publishReleaseGate(executable, bounded());
     expect(JSON.parse(await readFile(path, "utf8"))).toMatchObject({
       campaignId: "campaign-1", runId: "run-1", scenario: "sequential", schemaVersion: 1,
