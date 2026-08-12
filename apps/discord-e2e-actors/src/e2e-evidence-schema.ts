@@ -152,7 +152,7 @@ const runtimeDeploymentProvenanceSchema = historicalDeploymentProvenanceSchema.e
   subscriptionRuntime: deployedServiceProvenanceSchema,
 });
 
-const currentDeploymentProvenanceSchema = runtimeDeploymentProvenanceSchema.extend({
+export const currentDeploymentProvenanceSchema = runtimeDeploymentProvenanceSchema.extend({
   pipecat: deployedServiceProvenanceSchema.optional(),
 });
 

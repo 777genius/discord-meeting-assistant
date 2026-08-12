@@ -1,3 +1,7 @@
+import {
+  actionIdentity, campaignActions, startPointIdentity, stopEveryChild, validateActionEvidence,
+} from "./hosted-campaign-actions.js";
+
 export const HOSTED_CAMPAIGN_TARGET = {
   environment: "private-test-guild", mutationTarget: "test-only", deploymentScope: "private-test-deployment",
   host: "codex-workers-eu-01", project: "discord-meeting-assistant", craigProject: "craig-meeting-e2e",
@@ -25,6 +29,7 @@ export type HostedCampaignEntrypoint =
   | "conversation-observer"
   | "live-observer"
   | "playback-link-observer"
+  | "provenance-probe"
   | "recording-ready"
   | "supplemental-player"
   | "evidence-verifier";
@@ -36,6 +41,14 @@ export type HostedCampaignExecutableArguments =
   | { readonly evidencePath: string; readonly kind: "evidence-verifier"; readonly manifestPath: string; readonly thresholdsPath?: string }
   | { readonly evidencePaths: readonly [string, string, string]; readonly kind: "campaign-verifier"; readonly manifestPath: string; readonly thresholdsPath?: string };
 export type HostedCampaignExecutableCompletion =
+  | {
+      readonly action: Extract<HostedCampaignBarrierAction, { readonly kind: "provenance-before" | "provenance-after" }>;
+      readonly campaignId: string;
+      readonly kind: "provenance-probe";
+      readonly phase: "after" | "before";
+      readonly runIds: readonly [string, string, string];
+      readonly snapshotPath: string;
+    }
   | {
       readonly action: Extract<HostedCampaignBarrierAction, { readonly kind: "run-verified" }>;
       readonly evidencePath: string;
@@ -143,42 +156,6 @@ export interface HostedCampaignPassReceipt {
   readonly runIds: readonly [string, string, string];
   readonly schemaVersion: 1; readonly teardownComplete: true;
 }
-function campaignActions(input: HostedCampaignInput): readonly HostedCampaignBarrierAction[] {
-  const [sequential, overlap, reconnect] = input.runs;
-  return [
-    { kind: "provenance-before" },
-    { kind: "observer-subscribed" },
-    { kind: "run-verified", ordinal: sequential!.ordinal, runId: sequential!.runId },
-    { kind: "run-verified", ordinal: overlap!.ordinal, runId: overlap!.runId },
-    ...Array.from({ length: 4 }, (_, index) => ({
-      kind: "capture-retained" as const, ordinal: index + 1,
-    })),
-    { kind: "reconnect-left" },
-    { kind: "reconnect-ready" },
-    { kind: "answer-intent" },
-    { kind: "answer-observer-ready" },
-    { kind: "answer-first-packet" },
-    { kind: "capture-retained", ordinal: 5 },
-    { kind: "capture-retained", ordinal: 6 },
-    { kind: "run-verified", ordinal: reconnect!.ordinal, runId: reconnect!.runId },
-    { kind: "provenance-after" },
-    { kind: "campaign-verified" },
-  ];
-}
-
-function actionIdentity(action: HostedCampaignBarrierAction): string {
-  if (action.kind === "capture-retained") {
-    return `${action.kind}:${action.ordinal}`;
-  }
-  if (action.kind === "run-verified") {
-    return `${action.kind}:${action.ordinal}:${action.runId}`;
-  }
-  return action.kind;
-}
-
-function startPointIdentity(startPoint: HostedCampaignStartPoint): string {
-  return startPoint.kind === "campaign" ? "campaign" : `barrier:${actionIdentity(startPoint.action)}`;
-}
 function assertExactTarget(target: HostedCampaignTarget): void {
   for (const [key, expected] of Object.entries(HOSTED_CAMPAIGN_TARGET)) {
     if (target[key as keyof HostedCampaignTarget] !== expected) {
@@ -246,7 +223,8 @@ function validateExecutable(
       throw new Error(`Hosted campaign child ${child.childId} has an unknown start point`);
     }
   }
-  const oneShot = child.entrypoint === "collector" || child.entrypoint.endsWith("verifier");
+  const oneShot = child.entrypoint === "collector" || child.entrypoint === "provenance-probe"
+    || child.entrypoint.endsWith("verifier");
   if (oneShot && child.startBefore.kind === "campaign") {
     throw new Error(`One-shot child ${child.childId} must start only after its inputs exist`);
   }
@@ -293,9 +271,29 @@ function validateCompletion(
     || child.environment.DISCORD_E2E_RUN_ID !== completion.runId)) {
     throw new Error(`Hosted campaign collector ${child.childId} completion is not bound to its output and run`);
   }
+  if (completion.kind === "provenance-probe") {
+    validateProvenanceCompletion(child, completion, input, campaignId);
+  }
   if (completion.kind === "campaign-verifier" && (completion.campaignId !== campaignId
     || JSON.stringify(completion.runIds) !== JSON.stringify(input.runs.map(({ runId }) => runId)))) {
     throw new Error(`Hosted campaign verifier ${child.childId} completion is not bound to the campaign runs`);
+  }
+}
+function validateProvenanceCompletion(
+  child: HostedCampaignExecutableSpec,
+  completion: Extract<HostedCampaignExecutableCompletion, { readonly kind: "provenance-probe" }>,
+  input: HostedCampaignInput,
+  campaignId: string | undefined,
+): void {
+  const invalid = completion.campaignId !== campaignId
+    || completion.phase !== (completion.action.kind === "provenance-before" ? "before" : "after")
+    || JSON.stringify(completion.runIds) !== JSON.stringify(input.runs.map(({ runId }) => runId))
+    || child.environment.DISCORD_E2E_PROVENANCE_CAMPAIGN_ID !== completion.campaignId
+    || child.environment.DISCORD_E2E_PROVENANCE_PHASE !== completion.phase
+    || child.environment.DISCORD_E2E_PROVENANCE_RUN_IDS_JSON !== JSON.stringify(completion.runIds)
+    || child.environment.DISCORD_E2E_PROVENANCE_SNAPSHOT_PATH !== completion.snapshotPath;
+  if (invalid) {
+    throw new Error(`Hosted campaign provenance producer ${child.childId} completion is not bound to the campaign`);
   }
 }
 function assertActive(bounded: HostedCampaignBoundedSignal): void {
@@ -304,41 +302,6 @@ function assertActive(bounded: HostedCampaignBoundedSignal): void {
   }
   if (!Number.isSafeInteger(bounded.deadlineEpochMilliseconds) || bounded.deadlineEpochMilliseconds <= Date.now()) {
     throw new Error("Hosted campaign deadline has expired");
-  }
-}
-async function stopEveryChild(
-  handles: readonly HostedCampaignChildHandle[], ports: HostedCampaignPorts,
-): Promise<void> {
-  const results = await Promise.allSettled(handles.map(async (handle) => ports.stopChild(handle)));
-  const failures = results.filter((result): result is PromiseRejectedResult => result.status === "rejected")
-    .map(({ reason }) => reason instanceof Error
-      ? reason : new Error("Failed to stop hosted campaign child", { cause: reason }));
-  if (failures.length > 0) {
-    throw new AggregateError(failures, "Failed to stop every hosted campaign child");
-  }
-}
-function validateEvidence(
-  action: HostedCampaignBarrierAction,
-  evidence: unknown,
-  thresholds: HostedCampaignThresholds,
-): void {
-  if (typeof evidence !== "object" || evidence === null) {
-    throw new Error(`Missing ${action.kind} evidence`);
-  }
-  const value = evidence as Record<string, unknown>;
-  if (action.kind === "capture-retained" && (value.retained !== true || value.ordinal !== action.ordinal)) {
-    throw new Error(`Capture ${action.ordinal} retained evidence is invalid`);
-  }
-  if (action.kind === "answer-first-packet") {
-    const latency = value.answerLatencyMilliseconds;
-    if (!Number.isSafeInteger(latency) || (latency as number) < 0
-      || (latency as number) > thresholds.answerFirstPacketMilliseconds) {
-      throw new Error(`Answer first-packet SLA failed: ${String(latency)}ms`);
-    }
-  }
-  if (action.kind === "run-verified" && (value.verified !== true
-    || value.ordinal !== action.ordinal || value.runId !== action.runId)) {
-    throw new Error(`Run ${action.ordinal} verification evidence is invalid`);
   }
 }
 export async function runHostedCampaign(
@@ -382,7 +345,7 @@ export async function runHostedCampaign(
       await startChildren({ action, kind: "barrier" });
       assertActive(bounded);
       const actionEvidence = await ports.awaitBarrier(action, bounded);
-      validateEvidence(action, actionEvidence, input.thresholds);
+      validateActionEvidence(action, actionEvidence, input.thresholds);
       evidence.push(Object.freeze({ action, evidence: actionEvidence }));
       for (const executable of input.children.filter((child) =>
         child.releaseGate !== undefined

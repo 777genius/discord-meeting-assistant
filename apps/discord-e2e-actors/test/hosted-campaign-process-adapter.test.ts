@@ -14,7 +14,8 @@ import {
 async function adapter(source: string, outputLimitBytes?: number) {
   const root = await mkdtemp(join(tmpdir(), "hosted-process-"));
   await chmod(root, 0o700);
-  await Promise.all(["main.js", "verify-retained-evidence.js", "verify-campaign.js", "collect-retained-evidence.js"]
+  await Promise.all(["main.js", "verify-retained-evidence.js", "verify-campaign.js", "collect-retained-evidence.js",
+    "collect-hosted-campaign-provenance.js"]
     .map(async (name) => writeFile(join(root, name), source, { mode: 0o600 })));
   const storeRoot = join(root, "artifacts");
   const store = new HostedCampaignArtifactStore(storeRoot, "campaign-1");
@@ -79,6 +80,25 @@ const campaignVerifierSpec = (): HostedCampaignExecutableSpec => ({
 const campaignResult = (runIds: readonly string[]) => JSON.stringify({
   failures: [], passed: true,
   runResults: Object.fromEntries(runIds.map((runId) => [runId, { failures: [], metrics: [], passed: true }])),
+});
+const provenanceSpec = (phase: "after" | "before"): HostedCampaignExecutableSpec => ({
+  arguments: { kind: "environment" }, childId: `provenance-${phase}`,
+  completion: {
+    action: { kind: phase === "before" ? "provenance-before" : "provenance-after" },
+    campaignId: "campaign-1", kind: "provenance-probe", phase,
+    runIds: ["run-1", "run-2", "run-3"], snapshotPath: "/evidence/provenance.json",
+  },
+  entrypoint: "provenance-probe",
+  environment: {
+    DISCORD_E2E_MUTATION_TARGET: HOSTED_CAMPAIGN_TARGET.mutationTarget,
+    DISCORD_E2E_PROVENANCE_CAMPAIGN_ID: "campaign-1", DISCORD_E2E_PROVENANCE_PHASE: phase,
+    DISCORD_E2E_PROVENANCE_RUN_IDS_JSON: '["run-1","run-2","run-3"]',
+    DISCORD_E2E_PROVENANCE_SNAPSHOT_PATH: "/evidence/provenance.json",
+    DISCORD_E2E_REMOTE_CRAIG_PROJECT: HOSTED_CAMPAIGN_TARGET.craigProject,
+    DISCORD_E2E_REMOTE_HOST: HOSTED_CAMPAIGN_TARGET.host,
+    DISCORD_E2E_REMOTE_PROJECT: HOSTED_CAMPAIGN_TARGET.project,
+  },
+  startBefore: { action: { kind: phase === "before" ? "provenance-before" : "provenance-after" }, kind: "barrier" },
 });
 
 describe("hosted campaign process adapter", () => {
@@ -219,6 +239,26 @@ describe("hosted campaign process adapter", () => {
     await expect(processAdapter.awaitBarrier(executable.completion!.action, bounded())).resolves.toEqual({
       ordinal: 1, runId: "run-1", verified: true,
     });
+  });
+
+  it("publishes provenance only from an exactly correlated completion", async () => {
+    const completion = JSON.stringify({
+      campaignId: "campaign-1", digestSha256: "a".repeat(64), phase: "before",
+      runIds: ["run-1", "run-2", "run-3"], schemaVersion: 1, target: HOSTED_CAMPAIGN_TARGET,
+    });
+    const { processAdapter, store } = await adapter(`process.stdout.write(${JSON.stringify(completion)});`);
+    const executable = provenanceSpec("before");
+    const handle = await processAdapter.startChild(executable, bounded());
+    await expect(processAdapter.awaitChildCompletion(handle, executable, bounded())).resolves.toBeUndefined();
+    await expect(store.awaitAction({ kind: "provenance-before" }, bounded())).resolves.toEqual({
+      digestSha256: "a".repeat(64),
+    });
+
+    const mismatched = JSON.stringify({ ...JSON.parse(completion), campaignId: "other" });
+    const bad = await adapter(`process.stdout.write(${JSON.stringify(mismatched)});`);
+    const badHandle = await bad.processAdapter.startChild(executable, bounded());
+    await expect(bad.processAdapter.awaitChildCompletion(badHandle, executable, bounded()))
+      .rejects.toThrow(/correlation mismatch/u);
   });
 
   it("fails closed on malformed or unsuccessful verification output", async () => {

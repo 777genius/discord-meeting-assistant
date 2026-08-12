@@ -112,7 +112,7 @@ export function deriveRecordingReadyReceipt(input: {
   });
 }
 
-function assertV9DeploymentProvenance(
+export function assertV9DeploymentProvenance(
   provenance: CurrentDeploymentProvenance,
   expectedRevisions: DeploymentRevisionExpectation,
 ): void {

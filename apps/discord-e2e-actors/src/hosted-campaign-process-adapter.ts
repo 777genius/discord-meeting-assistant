@@ -19,6 +19,7 @@ import { ingestHostedCampaignProcessEventLine } from
   "./hosted-campaign-process-event-ingestion.js";
 import { expectedHostedCampaignEventCorrelation } from
   "./hosted-campaign-process-event-correlation.js";
+import { hostedCampaignProvenanceCompletionV1Schema } from "./hosted-campaign-provenance.js";
 
 const ENTRYPOINTS: Readonly<Record<HostedCampaignEntrypoint, string>> = Object.freeze({
   actor: "main.js",
@@ -28,6 +29,7 @@ const ENTRYPOINTS: Readonly<Record<HostedCampaignEntrypoint, string>> = Object.f
   "evidence-verifier": "verify-retained-evidence.js",
   "live-observer": "observe-live-discord.js",
   "playback-link-observer": "observe-live-discord-playback-link.js",
+  "provenance-probe": "collect-hosted-campaign-provenance.js",
   "recording-ready": "collect-recording-ready-receipt.js",
   "supplemental-player": "play-supplemental-voice.js",
 });
@@ -64,6 +66,8 @@ const ALLOWED_ENVIRONMENT = new Set([
   "DISCORD_E2E_PLAYBACK_LINK_RUN_ID", "DISCORD_E2E_PLAYBACK_LINK_SECRET_DIRECTORY",
   "DISCORD_E2E_PLAYBACK_LINK_SUT_ACCOUNT", "DISCORD_E2E_PLAYBACK_LINK_SUT_APPLICATION_ID",
   "DISCORD_E2E_PRE_PLAYBACK_HOLD_MS", "DISCORD_E2E_READY_TIMEOUT_MS", "DISCORD_E2E_RECORDER_BOT_ID",
+  "DISCORD_E2E_PROVENANCE_CAMPAIGN_ID", "DISCORD_E2E_PROVENANCE_PHASE", "DISCORD_E2E_PROVENANCE_RUN_IDS_JSON",
+  "DISCORD_E2E_PROVENANCE_SNAPSHOT_PATH",
   "DISCORD_E2E_READY_RECEIPT_INPUT", "DISCORD_E2E_READY_RECEIPT_OUTPUT",
   "DISCORD_E2E_RECORDING_ID", "DISCORD_E2E_RECORDING_PLAYBACK_ORIGIN", "DISCORD_E2E_RECORDING_PLAYBACK_READINESS",
   "DISCORD_E2E_RECORDING_PLAYBACK_TEST_SCOPE", "DISCORD_E2E_REMOTE_ATTESTATION_FILE", "DISCORD_E2E_REMOTE_COMPOSE_FILE",
@@ -177,6 +181,18 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
     }
     const output = parseJsonOutput(state.stdoutChunks, handle.childId);
     const completion = spec.completion;
+    if (completion.kind === "provenance-probe") {
+      const parsed = hostedCampaignProvenanceCompletionV1Schema.parse(output);
+      if (parsed.campaignId !== completion.campaignId || parsed.phase !== completion.phase
+        || JSON.stringify(parsed.runIds) !== JSON.stringify(completion.runIds)
+        || JSON.stringify(parsed.target) !== JSON.stringify(HOSTED_CAMPAIGN_TARGET)) {
+        throw new Error(`Hosted campaign provenance ${handle.childId} output correlation mismatch`);
+      }
+      await this.#options.artifactStore.publishAction(completion.action, {
+        digestSha256: parsed.digestSha256,
+      });
+      return;
+    }
     if (completion.kind === "collector") {
       const parsed = collectorOutputSchema.parse(output);
       if (parsed.evidencePath !== completion.evidencePath || parsed.runId !== completion.runId) {
@@ -348,7 +364,7 @@ function assertPinnedTarget(spec: HostedCampaignExecutableSpec): void {
     assertEnvironmentCoordinate(spec, "DISCORD_E2E_LIVE_RESULT_CHANNEL_ID", expected.publicationChannelId);
     assertEnvironmentCoordinate(spec, "DISCORD_E2E_LIVE_SUT_APPLICATION_ID", expected.sutApplicationId);
   }
-  if (spec.entrypoint === "collector") {
+  if (spec.entrypoint === "collector" || spec.entrypoint === "provenance-probe") {
     assertEnvironmentCoordinate(spec, "DISCORD_E2E_MUTATION_TARGET", expected.mutationTarget);
     assertEnvironmentCoordinate(spec, "DISCORD_E2E_REMOTE_HOST", expected.host);
     assertEnvironmentCoordinate(spec, "DISCORD_E2E_REMOTE_PROJECT", expected.project);

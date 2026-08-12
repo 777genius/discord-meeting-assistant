@@ -57,6 +57,25 @@ describe("run-hosted-campaign CLI", () => {
     expect(parseHostedCampaignPlan(input).children[0]?.entrypoint).toBe("recording-ready");
   });
 
+  it("accepts a provenance producer bound to one campaign snapshot", () => {
+    const input = plan();
+    input.children[0] = {
+      arguments: { kind: "environment" }, childId: "provenance-before", entrypoint: "provenance-probe",
+      environment: {
+        DISCORD_E2E_PROVENANCE_CAMPAIGN_ID: "campaign-1", DISCORD_E2E_PROVENANCE_PHASE: "before",
+        DISCORD_E2E_PROVENANCE_RUN_IDS_JSON: '["run-1","run-2","run-3"]',
+        DISCORD_E2E_PROVENANCE_SNAPSHOT_PATH: "/private/evidence/provenance.json",
+      },
+      completion: {
+        action: { kind: "provenance-before" }, campaignId: "campaign-1", kind: "provenance-probe",
+        phase: "before", runIds: ["run-1", "run-2", "run-3"],
+        snapshotPath: "/private/evidence/provenance.json",
+      },
+      startBefore: { action: { kind: "provenance-before" }, kind: "barrier" },
+    } as never;
+    expect(parseHostedCampaignPlan(input).children[0]?.entrypoint).toBe("provenance-probe");
+  });
+
   it("reads only an owned regular 0600 plan and writes a create-only 0600 receipt", async () => {
     const directory = await mkdtemp(join(tmpdir(), "hosted-campaign-cli-"));
     const planPath = join(directory, "plan.json");

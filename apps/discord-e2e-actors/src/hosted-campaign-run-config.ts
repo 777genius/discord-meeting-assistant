@@ -40,6 +40,14 @@ const runVerifiedActionSchema = z.object({
 }).strict();
 const completionSchema = z.discriminatedUnion("kind", [
   z.object({
+    action: z.discriminatedUnion("kind", [
+      z.object({ kind: z.literal("provenance-before") }).strict(),
+      z.object({ kind: z.literal("provenance-after") }).strict(),
+    ]),
+    campaignId: identifier, kind: z.literal("provenance-probe"), phase: z.enum(["before", "after"]),
+    runIds: z.tuple([identifier, identifier, identifier]), snapshotPath: z.string().refine(isAbsolute),
+  }).strict(),
+  z.object({
     action: runVerifiedActionSchema, evidencePath: z.string().refine(isAbsolute),
     kind: z.literal("collector"), runId: identifier,
   }).strict(),
@@ -55,7 +63,7 @@ const executableSchema = z.object({
   completion: completionSchema.optional(),
   entrypoint: z.enum([
     "actor", "campaign-verifier", "collector", "conversation-observer", "evidence-verifier",
-    "live-observer", "playback-link-observer", "recording-ready", "supplemental-player",
+    "live-observer", "playback-link-observer", "provenance-probe", "recording-ready", "supplemental-player",
   ]),
   environment,
   releaseGate: z.object({

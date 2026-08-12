@@ -31,6 +31,7 @@ import type {
 export {
   actorRunEvidenceV1Schema,
   conversationVoiceEvidenceV3Schema,
+  currentDeploymentProvenanceSchema,
   deploymentRevisionExpectationSchema,
   fixtureManifestV1Schema,
   retainedE2eEvidenceSchema,
