@@ -118,6 +118,10 @@ export interface HostedCampaignExecutableSpec {
   readonly produces: readonly HostedCampaignProducedAction[];
   readonly requires: readonly HostedCampaignActionReference[];
   readonly startBefore: HostedCampaignStartPoint;
+  readonly supplementalGates?: {
+    readonly connection: { readonly path: string; readonly trigger: HostedCampaignActionReference };
+    readonly playback: { readonly path: string; readonly trigger: HostedCampaignActionReference };
+  };
   readonly releaseGate?: {
     readonly action: HostedCampaignBarrierAction;
     readonly ordinal: number;
@@ -204,6 +208,11 @@ export interface HostedCampaignPorts {
     executable: HostedCampaignExecutableSpec,
     bounded: HostedCampaignBoundedSignal,
   ): Promise<void>;
+  publishSupplementalGate(
+    executable: HostedCampaignExecutableSpec,
+    phase: "connection" | "playback",
+    bounded: HostedCampaignBoundedSignal,
+  ): Promise<void>;
   releaseCampaignLease(handle: HostedCampaignLeaseHandle): Promise<void>;
   stopChild(handle: HostedCampaignChildHandle): Promise<void>;
 }
@@ -219,6 +228,15 @@ export interface HostedCampaignPassReceipt {
 }
 function startPointIdentity(startPoint: HostedCampaignStartPoint): string {
   return startPoint.kind === "campaign" ? "campaign" : `barrier:${actionReferenceIdentity(startPoint)}`;
+}
+function supplementalGatePhase(
+  child: HostedCampaignExecutableSpec,
+  reference: HostedCampaignActionReference,
+): "connection" | "playback" | undefined {
+  return (["connection", "playback"] as const).find((phase) => {
+    const gate = child.supplementalGates?.[phase];
+    return gate !== undefined && actionReferenceIdentity(gate.trigger) === actionReferenceIdentity(reference);
+  });
 }
 // The coordinator is kept as one readable vertical slice; graph validation is isolated above.
 /* oxlint-disable max-lines */
@@ -305,6 +323,34 @@ function validateExecutable(
   if (child.releaseGate !== undefined
     && child.environment.DISCORD_E2E_HOSTED_RELEASE_GATE_PATH !== child.releaseGate.path) {
     throw new Error(`Hosted campaign actor ${child.childId} release gate path mismatch`);
+  }
+  validateSupplementalGates(child, input, campaignId);
+}
+
+function validateSupplementalGates(
+  child: HostedCampaignExecutableSpec,
+  input: HostedCampaignInput,
+  campaignId: string | undefined,
+): void {
+  if (child.supplementalGates === undefined) {return;}
+  const reconnect = input.runs.find(({ scenario }) => scenario === "reconnect");
+  const connection = child.supplementalGates.connection;
+  const playback = child.supplementalGates.playback;
+  const environment = child.environment;
+  const timeoutMilliseconds = Number(environment.DISCORD_E2E_SUPPLEMENTAL_GATE_TIMEOUT_MS);
+  const matchesCapture = (reference: HostedCampaignActionReference, ordinal: 3 | 4) =>
+    reconnect !== undefined && reference.ordinal === reconnect.ordinal && reference.runId === reconnect.runId
+    && reference.action.kind === "capture-retained" && reference.action.ordinal === ordinal;
+  if (child.entrypoint !== "supplemental-player" || reconnect === undefined
+    || !matchesCapture(connection.trigger, 3) || !matchesCapture(playback.trigger, 4)
+    || connection.path === playback.path
+    || environment.DISCORD_E2E_SUPPLEMENTAL_CAMPAIGN_ID !== campaignId
+    || environment.DISCORD_E2E_SUPPLEMENTAL_RUN_ID !== reconnect.runId
+    || environment.DISCORD_E2E_SUPPLEMENTAL_CONNECTION_GATE_PATH !== connection.path
+    || environment.DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_GATE_PATH !== playback.path
+    || !Number.isSafeInteger(timeoutMilliseconds) || timeoutMilliseconds < 1_000
+    || timeoutMilliseconds > 120_000) {
+    throw new Error(`Hosted supplemental player ${child.childId} has an invalid two-phase gate contract`);
   }
 }
 function validateCompletion(
@@ -520,6 +566,12 @@ export async function runHostedCampaign(
         && actionReferenceIdentity(child.releaseGate) === actionReferenceIdentity(reference)
       )) {
         await ports.publishReleaseGate(executable, bounded);
+      }
+      for (const executable of input.children) {
+        const phase = supplementalGatePhase(executable, reference);
+        if (phase !== undefined) {
+          await ports.publishSupplementalGate(executable, phase, bounded);
+        }
       }
     }
     await Promise.all(completionTasks);

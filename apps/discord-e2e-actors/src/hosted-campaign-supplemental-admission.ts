@@ -20,19 +20,16 @@ export function validateHostedSupplementalPlaybackAdmission(
       `Hosted supplemental player ${child.childId} must complete in the reconnect run`,
     );
   }
-  const observerReady: HostedCampaignActionReference = {
-    action: { kind: "observer-subscribed" },
-    ordinal: reconnectRun.ordinal,
-    runId: reconnectRun.runId,
-  };
-  const recordingReady: HostedCampaignActionReference = {
-    action: { kind: "recording-ready", ordinal: reconnectRun.ordinal, runId: reconnectRun.runId },
-    ordinal: reconnectRun.ordinal,
-    runId: reconnectRun.runId,
-  };
-  if (!hasReference(child.requires, observerReady) || !hasReference(child.requires, recordingReady)) {
+  const capture = (ordinal: 3 | 4): HostedCampaignActionReference => ({
+    action: { kind: "capture-retained", ordinal }, ordinal: reconnectRun.ordinal, runId: reconnectRun.runId,
+  });
+  const connectionTrigger = capture(3);
+  const playbackTrigger = capture(4);
+  if (child.supplementalGates === undefined
+    || !sameReference(child.supplementalGates.connection.trigger, connectionTrigger)
+    || !sameReference(child.supplementalGates.playback.trigger, playbackTrigger)) {
     throw new Error(
-      `Hosted supplemental player ${child.childId} requires reconnect observer and recording readiness`,
+      `Hosted supplemental player ${child.childId} requires capture 3 connection and capture 4 playback gates`,
     );
   }
   if (child.startBefore.kind !== "barrier"
@@ -42,21 +39,14 @@ export function validateHostedSupplementalPlaybackAdmission(
       `Hosted supplemental player ${child.childId} must start at a reconnect-run barrier`,
     );
   }
-  const observerIndex = referenceIndex(orderedActions, observerReady);
-  const recordingIndex = referenceIndex(orderedActions, recordingReady);
+  const connectionIndex = referenceIndex(orderedActions, connectionTrigger);
+  const playbackIndex = referenceIndex(orderedActions, playbackTrigger);
   const startIndex = referenceIndex(orderedActions, child.startBefore);
-  if (observerIndex === -1 || recordingIndex === -1 || startIndex <= observerIndex || startIndex <= recordingIndex) {
+  if (connectionIndex === -1 || playbackIndex === -1 || startIndex >= connectionIndex) {
     throw new Error(
-      `Hosted supplemental player ${child.childId} must start after observer and recording readiness`,
+      `Hosted supplemental player ${child.childId} must start before reconnect capture 3`,
     );
   }
-}
-
-function hasReference(
-  references: readonly HostedCampaignActionReference[],
-  expected: HostedCampaignActionReference,
-): boolean {
-  return references.some((reference) => sameReference(reference, expected));
 }
 
 function referenceIndex(

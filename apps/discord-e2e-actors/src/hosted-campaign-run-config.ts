@@ -139,6 +139,10 @@ const executableSchema = z.object({
     z.object({ kind: z.literal("campaign") }).strict(),
     actionReferenceSchema.extend({ kind: z.literal("barrier") }).strict(),
   ]),
+  supplementalGates: z.object({
+    connection: z.object({ path: z.string().refine(isAbsolute), trigger: actionReferenceSchema }).strict(),
+    playback: z.object({ path: z.string().refine(isAbsolute), trigger: actionReferenceSchema }).strict(),
+  }).strict().optional(),
 }).strict();
 
 const targetSchema = z.object(

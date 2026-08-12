@@ -155,6 +155,7 @@ describe("run-hosted-campaign CLI", () => {
         acquireCampaignLease: async (campaignId: string) => ({ campaignId }) as HostedCampaignLeaseHandle,
         awaitChildCompletion: async () => {},
         publishReleaseGate: async () => {},
+        publishSupplementalGate: async () => {},
         startChild: async ({ childId }: { childId: string }) => ({ childId }) as HostedCampaignChildHandle,
         awaitBarrier: async () => { throw new Error("barrier failed"); },
         releaseCampaignLease: async () => {},
