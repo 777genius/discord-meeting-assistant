@@ -72,6 +72,7 @@ describe("run-hosted-campaign CLI", () => {
       writeReceipt: async () => { written = true; },
       ports: {
         acquireCampaignLease: async (campaignId: string) => ({ campaignId }) as HostedCampaignLeaseHandle,
+        awaitChildCompletion: async () => {},
         publishReleaseGate: async () => {},
         startChild: async ({ childId }: { childId: string }) => ({ childId }) as HostedCampaignChildHandle,
         awaitBarrier: async () => { throw new Error("barrier failed"); },

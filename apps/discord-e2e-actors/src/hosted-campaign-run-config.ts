@@ -22,9 +22,24 @@ const argumentsSchema = z.discriminatedUnion("kind", [
     thresholdsPath: z.string().refine(isAbsolute).optional(),
   }).strict(),
 ]);
+const runVerifiedActionSchema = z.object({
+  kind: z.literal("run-verified"), ordinal: z.number().int().min(1).max(3), runId: identifier,
+}).strict();
+const completionSchema = z.discriminatedUnion("kind", [
+  z.object({
+    action: runVerifiedActionSchema, evidencePath: z.string().refine(isAbsolute),
+    kind: z.literal("collector"), runId: identifier,
+  }).strict(),
+  z.object({ action: runVerifiedActionSchema, kind: z.literal("evidence-verifier") }).strict(),
+  z.object({
+    action: z.object({ kind: z.literal("campaign-verified") }).strict(), campaignId: identifier,
+    kind: z.literal("campaign-verifier"), runIds: z.tuple([identifier, identifier, identifier]),
+  }).strict(),
+]);
 const executableSchema = z.object({
   arguments: argumentsSchema,
   childId: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/u),
+  completion: completionSchema.optional(),
   entrypoint: z.enum([
     "actor", "campaign-verifier", "collector", "conversation-observer", "evidence-verifier",
     "live-observer", "supplemental-player",

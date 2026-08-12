@@ -75,6 +75,8 @@ export class HostedCampaignSandboxAdapter implements HostedCampaignPorts {
 
   async publishReleaseGate(): Promise<void> {}
 
+  async awaitChildCompletion(): Promise<void> {}
+
   async startChild(
     executable: HostedCampaignExecutableSpec,
     bounded: HostedCampaignBoundedSignal,

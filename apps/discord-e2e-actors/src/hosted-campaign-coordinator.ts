@@ -1,36 +1,23 @@
 export const HOSTED_CAMPAIGN_TARGET = {
-  environment: "private-test-guild",
-  mutationTarget: "test-only",
-  deploymentScope: "private-test-deployment",
-  host: "codex-workers-eu-01",
-  project: "discord-meeting-assistant",
-  craigProject: "craig-meeting-e2e",
-  guildId: "1533228590643155034",
-  voiceChannelId: "1533228823045214398",
-  publicationChannelId: "1533228891827736657",
-  sutApplicationId: "1533224474609057793",
-  speakerAApplicationId: "1533227577286852649",
-  speakerBApplicationId: "1533228054724346087",
-  observerApplicationId: "1533867700575670282",
-  speakerDApplicationId: "1533873978417086474",
+  environment: "private-test-guild", mutationTarget: "test-only", deploymentScope: "private-test-deployment",
+  host: "codex-workers-eu-01", project: "discord-meeting-assistant", craigProject: "craig-meeting-e2e",
+  guildId: "1533228590643155034", voiceChannelId: "1533228823045214398",
+  publicationChannelId: "1533228891827736657", sutApplicationId: "1533224474609057793",
+  speakerAApplicationId: "1533227577286852649", speakerBApplicationId: "1533228054724346087",
+  observerApplicationId: "1533867700575670282", speakerDApplicationId: "1533873978417086474",
   botikApplicationId: "1534231284467896512",
 } as const;
-
 export type HostedCampaignTarget = typeof HOSTED_CAMPAIGN_TARGET;
 export type CampaignScenario = "sequential" | "overlap" | "reconnect";
-
 export interface HostedCampaignRun {
-  readonly campaignId: string;
-  readonly ordinal: number;
+  readonly campaignId: string; readonly ordinal: number;
   readonly retainedCaptureCount: number;
   readonly runId: string;
   readonly scenario: CampaignScenario;
 }
-
 export interface HostedCampaignThresholds {
   readonly answerFirstPacketMilliseconds: number;
 }
-
 export type HostedCampaignEntrypoint =
   | "actor"
   | "campaign-verifier"
@@ -39,17 +26,32 @@ export type HostedCampaignEntrypoint =
   | "live-observer"
   | "supplemental-player"
   | "evidence-verifier";
-
 export type HostedCampaignStartPoint = "campaign" | HostedCampaignBarrierAction["kind"];
-
 export type HostedCampaignExecutableArguments =
   | { readonly kind: "environment" }
   | { readonly evidencePath: string; readonly kind: "evidence-verifier"; readonly manifestPath: string; readonly thresholdsPath?: string }
   | { readonly evidencePaths: readonly [string, string, string]; readonly kind: "campaign-verifier"; readonly manifestPath: string; readonly thresholdsPath?: string };
-
+export type HostedCampaignExecutableCompletion =
+  | {
+      readonly action: Extract<HostedCampaignBarrierAction, { readonly kind: "run-verified" }>;
+      readonly evidencePath: string;
+      readonly kind: "collector";
+      readonly runId: string;
+    }
+  | {
+      readonly action: Extract<HostedCampaignBarrierAction, { readonly kind: "run-verified" }>;
+      readonly kind: "evidence-verifier";
+    }
+  | {
+      readonly action: Extract<HostedCampaignBarrierAction, { readonly kind: "campaign-verified" }>;
+      readonly campaignId: string;
+      readonly kind: "campaign-verifier";
+      readonly runIds: readonly [string, string, string];
+    };
 export interface HostedCampaignExecutableSpec {
   readonly arguments: HostedCampaignExecutableArguments;
   readonly childId: string;
+  readonly completion?: HostedCampaignExecutableCompletion;
   readonly entrypoint: HostedCampaignEntrypoint;
   readonly environment: Readonly<Record<string, string>>;
   readonly startBefore: HostedCampaignStartPoint;
@@ -58,19 +60,16 @@ export interface HostedCampaignExecutableSpec {
     readonly path: string;
   };
 }
-
 declare const childHandleBrand: unique symbol;
 export interface HostedCampaignChildHandle {
   readonly childId: string;
   readonly [childHandleBrand]: true;
 }
-
 declare const campaignLeaseHandleBrand: unique symbol;
 export interface HostedCampaignLeaseHandle {
   readonly campaignId: string;
   readonly [campaignLeaseHandleBrand]: true;
 }
-
 export type HostedCampaignBarrierAction =
   | { readonly kind: "provenance-before" }
   | { readonly kind: "observer-subscribed" }
@@ -83,10 +82,8 @@ export type HostedCampaignBarrierAction =
   | { readonly kind: "run-verified"; readonly ordinal: number; readonly runId: string }
   | { readonly kind: "provenance-after" }
   | { readonly kind: "campaign-verified" };
-
 interface DigestEvidence { readonly digestSha256: string }
 interface TurnEvidence { readonly observedAtEpochMilliseconds: number; readonly turnId: string }
-
 export type HostedCampaignActionEvidence<Action extends HostedCampaignBarrierAction> =
   Action["kind"] extends "provenance-before" | "provenance-after" ? DigestEvidence
     : Action["kind"] extends "observer-subscribed" ? { readonly authenticatedObserverBotId: string }
@@ -104,12 +101,9 @@ export type HostedCampaignActionEvidence<Action extends HostedCampaignBarrierAct
                   readonly ordinal: number; readonly runId: string; readonly verified: true;
                 }
                 : { readonly campaignId: string };
-
 export interface HostedCampaignBoundedSignal {
-  readonly deadlineEpochMilliseconds: number;
-  readonly signal: AbortSignal;
+  readonly deadlineEpochMilliseconds: number; readonly signal: AbortSignal;
 }
-
 export interface HostedCampaignPorts {
   acquireCampaignLease(
     campaignId: string,
@@ -119,6 +113,11 @@ export interface HostedCampaignPorts {
     action: Action,
     bounded: HostedCampaignBoundedSignal,
   ): Promise<HostedCampaignActionEvidence<Action>>;
+  awaitChildCompletion(
+    handle: HostedCampaignChildHandle,
+    executable: HostedCampaignExecutableSpec,
+    bounded: HostedCampaignBoundedSignal,
+  ): Promise<void>;
   startChild(
     executable: HostedCampaignExecutableSpec,
     bounded: HostedCampaignBoundedSignal,
@@ -130,22 +129,16 @@ export interface HostedCampaignPorts {
   releaseCampaignLease(handle: HostedCampaignLeaseHandle): Promise<void>;
   stopChild(handle: HostedCampaignChildHandle): Promise<void>;
 }
-
 export interface HostedCampaignInput {
-  readonly children: readonly HostedCampaignExecutableSpec[];
-  readonly runs: readonly HostedCampaignRun[];
+  readonly children: readonly HostedCampaignExecutableSpec[]; readonly runs: readonly HostedCampaignRun[];
   readonly target: HostedCampaignTarget;
   readonly thresholds: HostedCampaignThresholds;
 }
-
 export interface HostedCampaignPassReceipt {
-  readonly actionEvidence: readonly unknown[];
-  readonly campaignId: string;
+  readonly actionEvidence: readonly unknown[]; readonly campaignId: string;
   readonly runIds: readonly [string, string, string];
-  readonly schemaVersion: 1;
-  readonly teardownComplete: true;
+  readonly schemaVersion: 1; readonly teardownComplete: true;
 }
-
 function campaignActions(input: HostedCampaignInput): readonly HostedCampaignBarrierAction[] {
   const [sequential, overlap, reconnect] = input.runs;
   return [
@@ -168,7 +161,6 @@ function campaignActions(input: HostedCampaignInput): readonly HostedCampaignBar
     { kind: "campaign-verified" },
   ];
 }
-
 function assertExactTarget(target: HostedCampaignTarget): void {
   for (const [key, expected] of Object.entries(HOSTED_CAMPAIGN_TARGET)) {
     if (target[key as keyof HostedCampaignTarget] !== expected) {
@@ -179,7 +171,6 @@ function assertExactTarget(target: HostedCampaignTarget): void {
     throw new Error("Hosted campaign target contains unsupported fields");
   }
 }
-
 export function validateHostedCampaign(input: HostedCampaignInput): void {
   assertExactTarget(input.target);
   if (input.runs.length !== 3) {
@@ -211,28 +202,80 @@ export function validateHostedCampaign(input: HostedCampaignInput): void {
     throw new Error("Hosted campaign answer first-packet threshold must be a positive safe integer");
   }
   const childIds = new Set<string>();
+  const completionActions = new Set<string>();
   for (const child of input.children) {
-    if (!/^[a-z][a-z0-9-]{0,63}$/u.test(child.childId) || childIds.has(child.childId)) {
-      throw new Error(`Invalid or duplicate hosted campaign childId: ${child.childId}`);
-    }
-    childIds.add(child.childId);
-    if ((child.entrypoint === "campaign-verifier") !== (child.arguments.kind === "campaign-verifier")
-      || (child.entrypoint === "evidence-verifier") !== (child.arguments.kind === "evidence-verifier")) {
-      throw new Error(`Hosted campaign child ${child.childId} has arguments for the wrong entrypoint`);
-    }
-    if (child.startBefore !== "campaign" && !campaignActions(input).some(({ kind }) => kind === child.startBefore)) {
-      throw new Error(`Hosted campaign child ${child.childId} has an unknown start point`);
-    }
-    if ((child.entrypoint === "collector" || child.entrypoint.endsWith("verifier"))
-      && child.startBefore === "campaign") {
-      throw new Error(`One-shot child ${child.childId} must start only after its inputs exist`);
-    }
-    if (child.releaseGate !== undefined && child.entrypoint !== "actor") {
-      throw new Error(`Only an actor child may declare a hosted release gate`);
-    }
+    validateExecutable(child, input, campaignId, childIds, completionActions);
   }
 }
-
+function validateExecutable(
+  child: HostedCampaignExecutableSpec,
+  input: HostedCampaignInput,
+  campaignId: string | undefined,
+  childIds: Set<string>,
+  completionActions: Set<string>,
+): void {
+  if (!/^[a-z][a-z0-9-]{0,63}$/u.test(child.childId) || childIds.has(child.childId)) {
+    throw new Error(`Invalid or duplicate hosted campaign childId: ${child.childId}`);
+  }
+  childIds.add(child.childId);
+  if ((child.entrypoint === "campaign-verifier") !== (child.arguments.kind === "campaign-verifier")
+    || (child.entrypoint === "evidence-verifier") !== (child.arguments.kind === "evidence-verifier")) {
+    throw new Error(`Hosted campaign child ${child.childId} has arguments for the wrong entrypoint`);
+  }
+  if (child.startBefore !== "campaign" && !campaignActions(input).some(({ kind }) => kind === child.startBefore)) {
+    throw new Error(`Hosted campaign child ${child.childId} has an unknown start point`);
+  }
+  const oneShot = child.entrypoint === "collector" || child.entrypoint.endsWith("verifier");
+  if (oneShot && child.startBefore === "campaign") {
+    throw new Error(`One-shot child ${child.childId} must start only after its inputs exist`);
+  }
+  if (oneShot !== (child.completion !== undefined)) {
+    throw new Error(`Hosted campaign child ${child.childId} has an invalid completion contract`);
+  }
+  if (child.completion !== undefined) {
+    validateCompletion(child, child.completion, input, campaignId, completionActions);
+  }
+  if (child.releaseGate !== undefined && child.entrypoint !== "actor") {
+    throw new Error(`Only an actor child may declare a hosted release gate`);
+  }
+  if (child.releaseGate !== undefined
+    && child.environment.DISCORD_E2E_HOSTED_RELEASE_GATE_PATH !== child.releaseGate.path) {
+    throw new Error(`Hosted campaign actor ${child.childId} release gate path mismatch`);
+  }
+}
+function validateCompletion(
+  child: HostedCampaignExecutableSpec,
+  completion: HostedCampaignExecutableCompletion,
+  input: HostedCampaignInput,
+  campaignId: string | undefined,
+  completionActions: Set<string>,
+): void {
+  if (completion.kind !== child.entrypoint || child.startBefore !== completion.action.kind) {
+    throw new Error(`Hosted campaign child ${child.childId} completion does not match its entrypoint and start point`);
+  }
+  const actionIdentity = JSON.stringify(completion.action);
+  if (completionActions.has(actionIdentity)) {
+    throw new Error(`Hosted campaign action has multiple completion producers: ${actionIdentity}`);
+  }
+  completionActions.add(actionIdentity);
+  if (completion.action.kind === "run-verified") {
+    const completionAction = completion.action;
+    if (!input.runs.some(({ ordinal, runId }) =>
+      ordinal === completionAction.ordinal && runId === completionAction.runId
+    )) {
+      throw new Error(`Hosted campaign child ${child.childId} completion does not match a campaign run`);
+    }
+  }
+  if (completion.kind === "collector" && (completion.runId !== completion.action.runId
+    || child.environment.DISCORD_E2E_EVIDENCE_OUTPUT !== completion.evidencePath
+    || child.environment.DISCORD_E2E_RUN_ID !== completion.runId)) {
+    throw new Error(`Hosted campaign collector ${child.childId} completion is not bound to its output and run`);
+  }
+  if (completion.kind === "campaign-verifier" && (completion.campaignId !== campaignId
+    || JSON.stringify(completion.runIds) !== JSON.stringify(input.runs.map(({ runId }) => runId)))) {
+    throw new Error(`Hosted campaign verifier ${child.childId} completion is not bound to the campaign runs`);
+  }
+}
 function assertActive(bounded: HostedCampaignBoundedSignal): void {
   if (bounded.signal.aborted) {
     throw bounded.signal.reason ?? new Error("Hosted campaign cancelled");
@@ -241,7 +284,6 @@ function assertActive(bounded: HostedCampaignBoundedSignal): void {
     throw new Error("Hosted campaign deadline has expired");
   }
 }
-
 async function stopEveryChild(
   handles: readonly HostedCampaignChildHandle[], ports: HostedCampaignPorts,
 ): Promise<void> {
@@ -252,7 +294,6 @@ async function stopEveryChild(
     throw new AggregateError(failures, "Failed to stop every hosted campaign child");
   }
 }
-
 function validateEvidence(
   action: HostedCampaignBarrierAction,
   evidence: unknown,
@@ -277,7 +318,6 @@ function validateEvidence(
     throw new Error(`Run ${action.ordinal} verification evidence is invalid`);
   }
 }
-
 export async function runHostedCampaign(
   input: HostedCampaignInput,
   ports: HostedCampaignPorts,
@@ -303,6 +343,9 @@ export async function runHostedCampaign(
         if (handle.childId !== executable.childId) {
           throw new Error("Started child handle does not match its executable spec");
         }
+        if (executable.completion !== undefined) {
+          await ports.awaitChildCompletion(handle, executable, bounded);
+        }
       }
     };
     await startChildren("campaign");
@@ -322,7 +365,6 @@ export async function runHostedCampaign(
   } catch (error) {
     failure = error;
   }
-
   const cleanupFailures: unknown[] = [];
   try {
     await stopEveryChild(handles, ports);

@@ -92,6 +92,17 @@ export class HostedCampaignArtifactStore {
       await handle.close();
     }
   }
+
+  async publishAction<Action extends HostedCampaignBarrierAction>(
+    action: Action,
+    evidence: HostedCampaignActionEvidence<Action>,
+  ): Promise<void> {
+    await this.writeCreateOnly(join(this.#rootPath, actionFileName(action)), {
+      action,
+      campaignId: this.#campaignId,
+      evidence,
+    });
+  }
 }
 
 export function actionFileName(action: HostedCampaignBarrierAction): string {

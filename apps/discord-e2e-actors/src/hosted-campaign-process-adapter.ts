@@ -1,6 +1,8 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { isAbsolute, join } from "node:path";
 
+import { z } from "zod";
+
 import { HostedCampaignArtifactStore } from "./hosted-campaign-artifact-store.js";
 import type {
   HostedCampaignBarrierAction,
@@ -66,11 +68,28 @@ const ALLOWED_ENVIRONMENT = new Set([
 interface ChildState {
   readonly child: ChildProcess;
   readonly childId: string;
-  readonly exited: Promise<Error>;
+  readonly closed: Promise<void>;
+  readonly exited: Promise<ChildExit>;
+  readonly stdoutChunks: Buffer[];
   failure?: Error;
   stderr: number;
   stdout: number;
 }
+interface ChildExit { readonly code: number | null; readonly signal: NodeJS.Signals | null }
+
+const evidenceVerificationOutputSchema = z.object({
+  failures: z.array(z.unknown()), metrics: z.array(z.unknown()), passed: z.literal(true),
+}).strict();
+const campaignVerificationOutputSchema = z.object({
+  failures: z.array(z.unknown()), passed: z.literal(true),
+  runResults: z.record(z.string(), z.object({
+    failures: z.array(z.unknown()), metrics: z.array(z.unknown()), passed: z.literal(true),
+  }).strict()),
+}).strict();
+const collectorOutputSchema = z.object({
+  evidencePath: z.string(), metrics: z.array(z.unknown()), recordingId: z.string(),
+  runId: z.string(), status: z.literal("passed"),
+}).strict();
 export interface HostedCampaignProcessAdapterOptions {
   readonly artifactStore: HostedCampaignArtifactStore;
   readonly distRoot: string;
@@ -109,8 +128,53 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
   async awaitBarrier<Action extends HostedCampaignBarrierAction>(action: Action, bounded: HostedCampaignBoundedSignal) {
     this.#assertChildrenHealthy();
     const artifact = this.#options.artifactStore.awaitAction(action, bounded);
-    const failures = [...this.#children.values()].map(async ({ exited }) => { throw await exited; });
+    const failures = [...this.#children.values()].map(async ({ exited, childId }) => {
+      const exit = await exited;
+      throw new Error(`Hosted campaign child ${childId} exited early (${String(exit.code ?? exit.signal)})`);
+    });
     return Promise.race([artifact, ...failures]);
+  }
+  async awaitChildCompletion(
+    handle: HostedCampaignChildHandle,
+    spec: HostedCampaignExecutableSpec,
+    bounded: HostedCampaignBoundedSignal,
+  ): Promise<void> {
+    assertActive(bounded);
+    const state = this.#children.get(handle.childId);
+    if (state === undefined || spec.completion === undefined) {
+      throw new Error(`Hosted campaign child ${handle.childId} has no pending completion`);
+    }
+    const exit = await raceWithBounded(state.exited, bounded);
+    await raceWithBounded(state.closed, bounded);
+    this.#children.delete(handle.childId);
+    if (state.failure !== undefined) {throw state.failure;}
+    if (exit.code !== 0 || exit.signal !== null) {
+      throw new Error(`Hosted campaign child ${handle.childId} failed (${String(exit.code ?? exit.signal)})`);
+    }
+    const output = parseJsonOutput(state.stdoutChunks, handle.childId);
+    const completion = spec.completion;
+    if (completion.kind === "collector") {
+      const parsed = collectorOutputSchema.parse(output);
+      if (parsed.evidencePath !== completion.evidencePath || parsed.runId !== completion.runId) {
+        throw new Error(`Hosted campaign collector ${handle.childId} output correlation mismatch`);
+      }
+      await this.#options.artifactStore.publishAction(completion.action, {
+        ordinal: completion.action.ordinal, runId: completion.action.runId, verified: true,
+      });
+      return;
+    }
+    if (completion.kind === "evidence-verifier") {
+      evidenceVerificationOutputSchema.parse(output);
+      await this.#options.artifactStore.publishAction(completion.action, {
+        ordinal: completion.action.ordinal, runId: completion.action.runId, verified: true,
+      });
+      return;
+    }
+    const parsed = campaignVerificationOutputSchema.parse(output);
+    if (JSON.stringify(Object.keys(parsed.runResults).toSorted()) !== JSON.stringify(completion.runIds.toSorted())) {
+      throw new Error(`Hosted campaign verifier ${handle.childId} run results mismatch`);
+    }
+    await this.#options.artifactStore.publishAction(completion.action, { campaignId: completion.campaignId });
   }
   async startChild(spec: HostedCampaignExecutableSpec, bounded: HostedCampaignBoundedSignal): Promise<HostedCampaignChildHandle> {
     assertActive(bounded);
@@ -121,13 +185,16 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
     const child = spawn(process.execPath, [join(this.#options.distRoot, ENTRYPOINTS[spec.entrypoint]), ...argumentsFor(spec)], {
       env: environment, shell: false, stdio: ["ignore", "pipe", "pipe"],
     });
-    let reportExit!: (failure: Error) => void;
-    const exited = new Promise<Error>((resolve) => { reportExit = resolve; });
-    const state: ChildState = { child, childId: spec.childId, exited, stderr: 0, stdout: 0 };
+    let reportExit!: (exit: ChildExit) => void;
+    const exited = new Promise<ChildExit>((resolve) => { reportExit = resolve; });
+    let reportClosed!: () => void;
+    const closed = new Promise<void>((resolve) => { reportClosed = resolve; });
+    const state: ChildState = { child, childId: spec.childId, closed, exited, stderr: 0, stdout: 0, stdoutChunks: [] };
     this.#children.set(spec.childId, state);
     const limit = this.#options.outputLimitBytes ?? 64 * 1024;
     child.stdout?.on("data", (data: Buffer) => {
       state.stdout += data.byteLength;
+      if (state.stdout <= limit) {state.stdoutChunks.push(data);}
       if (state.stdout > limit) {
         state.failure = new Error(`Hosted campaign child ${spec.childId} exceeded stdout limit`);
         child.kill("SIGTERM");
@@ -140,15 +207,16 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
         child.kill("SIGTERM");
       }
     });
+    child.once("exit", (code, signal) => {
+      if (spec.completion === undefined) {
+        state.failure ??= new Error(`Hosted campaign child ${spec.childId} exited early (${String(code ?? signal)})`);
+      }
+      reportExit({ code, signal });
+    });
+    child.once("close", reportClosed);
     await new Promise<void>((resolve, reject) => {
       child.once("spawn", resolve);
       child.once("error", reject);
-    });
-    child.once("exit", (code, signal) => {
-      state.failure ??= new Error(
-        `Hosted campaign child ${spec.childId} exited early (${String(code ?? signal)})`,
-      );
-      reportExit(state.failure);
     });
     await new Promise<void>((resolve) => { setImmediate(resolve); });
     if (state.failure !== undefined) {
@@ -179,6 +247,28 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
       throw childFailure;
     }
   }
+}
+
+function parseJsonOutput(chunks: readonly Buffer[], childId: string): unknown {
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+  } catch {
+    throw new Error(`Hosted campaign child ${childId} produced malformed completion output`);
+  }
+}
+
+async function raceWithBounded<T>(promise: Promise<T>, bounded: HostedCampaignBoundedSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const remaining = bounded.deadlineEpochMilliseconds - Date.now();
+    if (remaining <= 0) { reject(new Error("Hosted campaign deadline expired")); return; }
+    const timer = setTimeout(() => reject(new Error("Hosted campaign deadline expired")), remaining);
+    const abort = () => reject(bounded.signal.reason ?? new Error("Hosted campaign cancelled"));
+    bounded.signal.addEventListener("abort", abort, { once: true });
+    void promise.then(resolve, reject).finally(() => {
+      clearTimeout(timer);
+      bounded.signal.removeEventListener("abort", abort);
+    });
+  });
 }
 
 function argumentsFor(spec: HostedCampaignExecutableSpec): readonly string[] {

@@ -54,6 +54,7 @@ function ports(events: string[]): HostedCampaignPorts {
       return { campaignId } as HostedCampaignLeaseHandle;
     },
     publishReleaseGate: async (spec) => { events.push(`release-gate:${spec.childId}`); },
+    awaitChildCompletion: async (_handle, spec) => { events.push(`complete:${spec.childId}`); },
     startChild: async (spec) => {
       events.push(`start:${spec.childId}`);
       return { childId: spec.childId } as HostedCampaignChildHandle;
