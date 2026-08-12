@@ -100,10 +100,10 @@ class SyntheticRemote {
 
   public readonly runRemote = async (_settings: unknown, args: readonly string[]): Promise<string> => {
     this.calls.push([...args]);
-    if (args[0] === "sh" && args[2]?.includes("readlink -e")) {
+    if (args[0] === "sh" && args[2]?.includes("readlink -e") === true) {
       return `${args.at(-1) ?? ""}\n`;
     }
-    if (args[0] === "sh" && args[2]?.includes("resolved=$(readlink")) {
+    if (args[0] === "sh" && args[2]?.includes("resolved=$(readlink") === true) {
       return "false";
     }
     if (args[0] === "docker" && args[1] === "ps") {
@@ -126,10 +126,10 @@ class SyntheticRemote {
     if (args[0] === "docker" && args[1] === "exec") {
       return "10001|10001|false\n";
     }
-    if (args[0] === "sh" && args[2]?.includes("host-nonce")) {
+    if (args[0] === "sh" && args[2]?.includes("host-nonce") === true) {
       return `${args.at(-1) ?? ""}\n`;
     }
-    if (args[0] === "sh" && args[2]?.includes("container-nonce")) {
+    if (args[0] === "sh" && args[2]?.includes("container-nonce") === true) {
       return `${args.at(-1) ?? ""}\n`;
     }
     throw new Error(`unexpected synthetic command: ${args.join(" ")}`);
@@ -165,9 +165,10 @@ describe("concrete SSH deployment safety runner", () => {
     expect(remote.calls.some((args) => args[0] === "docker" && args[1] === "inspect" && args[2] === "--type"))
       .toBe(true);
     const nonceCalls = remote.calls.filter((args) => args[0] === "sh" && args[1] === "-ceu"
-      && args[2]?.includes("nonce"));
+      && args[2]?.includes("nonce") === true);
     expect(nonceCalls).toHaveLength(2);
-    expect(nonceCalls.every((args) => args[2]?.includes("trap cleanup EXIT HUP INT TERM"))).toBe(true);
+    expect(nonceCalls.every((args) =>
+      args[2]?.includes("trap cleanup EXIT HUP INT TERM") === true)).toBe(true);
     expect(nonceCalls.every((args) => args.includes(expectation.greeting.sourcePath + "/.admission-probes"))).toBe(true);
   });
 

@@ -27,7 +27,7 @@ const dockerContainerSchema = z.object({
     Destination: z.string(),
     RW: z.boolean(),
     Source: z.string(),
-  }).passthrough()),
+  }).loose()),
   NetworkSettings: z.object({
     Networks: z.record(z.string(), z.unknown()),
     Ports: z.record(z.string(), z.array(z.object({
@@ -36,13 +36,13 @@ const dockerContainerSchema = z.object({
     })).nullable()),
   }),
   State: z.object({ StartedAt: z.iso.datetime() }),
-}).passthrough();
+}).loose();
 
 const dockerImageSchema = z.object({
   Config: z.object({ Labels: z.record(z.string(), z.string()).nullable() }),
   Id: z.string(),
   RepoDigests: z.array(z.string()).nullable(),
-}).passthrough();
+}).loose();
 
 const sourceRevisionSchema = z.string().regex(/^(?:[a-f\d]{40}|[a-f\d]{64})$/u);
 
