@@ -38,7 +38,7 @@ interface ChildState {
   readonly stdoutChunks: Buffer[]; readonly eventLines: string[]; readonly publishedEvents: Set<string>;
   eventIngestion: Promise<void>;
   stopping: boolean;
-  termination?: Promise<void>;
+  termination: Promise<void> | undefined;
   stdoutRemainder: string;
   failure?: Error;
   stderr: number;
@@ -60,6 +60,9 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
   readonly #options: HostedCampaignProcessAdapterOptions;
   readonly #trustedRuntimeEnvironment: HostedCampaignTrustedRuntimeEnvironment;
   constructor(options: HostedCampaignProcessAdapterOptions) {
+    if (process.platform === "win32") {
+      throw new Error("Hosted campaign process adapter requires POSIX process-group semantics");
+    }
     if (!isAbsolute(options.distRoot)) {
       throw new Error("Hosted campaign dist root must be absolute");
     }
@@ -111,40 +114,43 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
     spec: HostedCampaignExecutableSpec,
     bounded: HostedCampaignBoundedSignal,
   ): Promise<void> {
-    assertActive(bounded);
     const state = this.#children.get(handle.childId);
     if (state === undefined || spec.completion === undefined) {
       throw new Error(`Hosted campaign child ${handle.childId} has no pending completion`);
     }
     let exit: ChildExit;
     try {
+      assertActive(bounded);
       exit = await raceWithBounded(state.exited, bounded);
     } catch (error: unknown) {
-      await this.#terminateChildTree(state);
-      await raceWithTimeout(Promise.all([state.closed, state.eventIngestion]),
-        Math.max(1_000, (this.#options.terminationGraceMilliseconds ?? 2_000) * 3),
-        `Hosted campaign child ${handle.childId} cancellation cleanup timed out`);
-      this.#children.delete(handle.childId);
-      throw error;
+      const primary = asError(error);
+      try {
+        await raceWithTimeout(this.#settleChildState(state), this.#finalizationMilliseconds(),
+          `Hosted campaign child ${handle.childId} cancellation cleanup timed out`);
+        this.#children.delete(handle.childId);
+      } catch (cleanupError: unknown) {
+        attachCleanupFailure(primary, cleanupError);
+      }
+      throw primary;
     }
     // Once the finite child has exited within its deadline, teardown owns its
     // own bounded grace period. Reusing the caller deadline here can reject
     // between exit and publication and strand a valid completion under load.
-    const finalizationMilliseconds = Math.max(
-      1_000,
-      (this.#options.terminationGraceMilliseconds ?? 2_000) * 3,
-    );
-    await raceWithTimeout(this.#finalizeExitedChild(state), finalizationMilliseconds,
+    await raceWithTimeout(this.#finalizeExitedChild(state), this.#finalizationMilliseconds(),
       `Hosted campaign child ${handle.childId} finalization timed out`);
     this.#children.delete(handle.childId);
     if (state.failure !== undefined) {throw state.failure;}
     if (exit.code !== 0 || exit.signal !== null) {
       throw new Error(`Hosted campaign child ${handle.childId} failed (${String(exit.code ?? exit.signal)})`);
     }
-    await raceWithTimeout(publishHostedCampaignCompletion({
+    // Completion publication is the non-cancellable commit point. The local
+    // create-only artifact store owns the operation until it either commits or
+    // rejects; an observation timeout here could report failure and still let
+    // the barrier appear later.
+    await publishHostedCampaignCompletion({
       artifactStore: this.#options.artifactStore, childId: handle.childId,
       completion: spec.completion, stdoutChunks: state.stdoutChunks,
-    }), finalizationMilliseconds, `Hosted campaign child ${handle.childId} completion publication timed out`);
+    });
   }
   async #finalizeExitedChild(state: ChildState): Promise<void> {
     await this.#terminateChildTree(state);
@@ -172,6 +178,7 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
       child, childId: spec.childId, closed, completionExpected: spec.completion !== undefined,
       eventIngestion: Promise.resolve(), eventLines: [], exited,
       publishedEvents: new Set(), stderr: 0, stdout: 0, stdoutChunks: [], stdoutRemainder: "", stopping: false,
+      termination: undefined,
     };
     this.#children.set(spec.childId, state);
     const limit = this.#options.outputLimitBytes ?? 64 * 1024;
@@ -210,16 +217,25 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
         child.once("error", reject);
       });
     } catch (error: unknown) {
-      state.failure ??= asError(error);
-      await this.#settleChildState(state);
-      this.#children.delete(spec.childId);
-      throw state.failure;
+      const primary = state.failure ?? asError(error);
+      try {
+        await this.#settleChildState(state);
+        this.#children.delete(spec.childId);
+      } catch (cleanupError: unknown) {
+        attachCleanupFailure(primary, cleanupError);
+      }
+      throw primary;
     }
     await new Promise<void>((resolve) => { setImmediate(resolve); });
     if (state.failure !== undefined) {
-      await this.#settleChildState(state);
-      this.#children.delete(spec.childId);
-      throw state.failure;
+      const primary = state.failure;
+      try {
+        await this.#settleChildState(state);
+        this.#children.delete(spec.childId);
+      } catch (cleanupError: unknown) {
+        attachCleanupFailure(primary, cleanupError);
+      }
+      throw primary;
     }
     return { childId: spec.childId } as HostedCampaignChildHandle;
   }
@@ -272,9 +288,17 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
     await state.closed;
     await state.eventIngestion;
   }
+  #finalizationMilliseconds(): number {
+    return Math.max(1_000, (this.#options.terminationGraceMilliseconds ?? 2_000) * 3);
+  }
   #terminateChildTree(state: ChildState): Promise<void> {
-    state.termination ??= this.#terminateChildTreeOnce(state);
-    return state.termination;
+    if (state.termination !== undefined) {return state.termination;}
+    const termination = this.#terminateChildTreeOnce(state);
+    state.termination = termination;
+    void termination.catch(() => {
+      if (state.termination === termination) {state.termination = undefined;}
+    });
+    return termination;
   }
   async #terminateChildTreeOnce(state: ChildState): Promise<void> {
     const grace = this.#options.terminationGraceMilliseconds ?? 2_000;
@@ -359,6 +383,14 @@ function assertEnvironmentCoordinate(
 }
 function asError(value: unknown): Error {
   return value instanceof Error ? value : new Error(String(value));
+}
+function attachCleanupFailure(primary: Error, cleanupFailure: unknown): void {
+  const cleanup = asError(cleanupFailure);
+  if (primary.cause === undefined) {
+    primary.cause = cleanup;
+    return;
+  }
+  primary.cause = new AggregateError([primary.cause, cleanup], "Hosted campaign cleanup failures");
 }
 function assertActive(bounded: HostedCampaignBoundedSignal): void {
   if (bounded.signal.aborted) {

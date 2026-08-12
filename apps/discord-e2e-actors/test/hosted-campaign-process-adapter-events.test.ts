@@ -30,7 +30,8 @@ async function adapter(source: string) {
     "verify-campaign.js",
     "verify-retained-evidence.js",
   ].map(async (name) => writeFile(join(root, name), source, { mode: 0o600 })));
-  const store = new HostedCampaignArtifactStore(join(root, "artifacts"), "campaign-1");
+  const artifactRoot = join(root, "artifacts");
+  const store = new HostedCampaignArtifactStore(artifactRoot, "campaign-1");
   await store.initialize();
   return {
     processAdapter: new HostedCampaignProcessAdapter({
@@ -39,6 +40,7 @@ async function adapter(source: string) {
       terminationGraceMilliseconds: 50,
       trustedRuntimeEnvironment,
     }),
+    artifactRoot,
     store,
   };
 }
@@ -256,6 +258,68 @@ describe("hosted campaign process adapter events", () => {
     await expect(readFile(markerPath, "utf8")).resolves.toBe("term");
     await expect(store.awaitAction(completionAction(executable), bounded()))
       .resolves.toMatchObject({ verified: true });
+  });
+
+  it.each([
+    ["already cancelled", () => {
+      const controller = new AbortController();
+      controller.abort(new Error("test cancellation"));
+      return { deadlineEpochMilliseconds: Date.now() + 5_000, signal: controller.signal };
+    }],
+    ["already expired", () => ({
+      deadlineEpochMilliseconds: Date.now() - 1,
+      signal: new AbortController().signal,
+    })],
+  ] as const)("reaps the full tree for an %s completion and permits safe child ID reuse", async (_case, bound) => {
+    const root = await mkdtemp(join(tmpdir(), "hosted-cancelled-process-tree-"));
+    const markerPath = join(root, "grandchild-state.txt");
+    const childSource = [
+      'require("node:fs").writeFileSync(process.argv[1], "ready")',
+      'process.on("SIGTERM", () => { require("node:fs").writeFileSync(process.argv[1], "term"); process.exit(0); })',
+      "setInterval(() => {}, 1000)",
+    ].join(";");
+    const source = `
+      const { spawn } = require("node:child_process");
+      spawn(process.execPath, ["-e", ${JSON.stringify(childSource)}, ${JSON.stringify(markerPath)}],
+        { stdio: "ignore" }).unref();
+      setInterval(() => {}, 1000);
+    `;
+    const { artifactRoot, processAdapter } = await adapter(source);
+    const executable = verifierSpec();
+    const handle = await processAdapter.startChild(executable, bounded());
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      try {
+        if (await readFile(markerPath, "utf8") === "ready") {break;}
+      } catch {}
+      if (attempt === 99) {throw new Error("Grandchild did not become ready");}
+      await new Promise((resolve) => {setTimeout(resolve, 10);});
+    }
+
+    await expect(processAdapter.awaitChildCompletion(handle, executable, bound())).rejects.toThrow();
+    await expect(readFile(markerPath, "utf8")).resolves.toBe("term");
+    await expect(readFile(join(artifactRoot, "run-verified-1-run-1.json"), "utf8"))
+      .rejects.toMatchObject({ code: "ENOENT" });
+
+    const reused = await processAdapter.startChild(executable, bounded());
+    await processAdapter.stopChild(reused);
+  });
+
+  it("does not publish a late completion after verification rejects", async () => {
+    const { artifactRoot, processAdapter } = await adapter('process.stdout.write("not-json");');
+    const executable = verifierSpec();
+    const handle = await processAdapter.startChild(executable, bounded());
+
+    await expect(processAdapter.awaitChildCompletion(handle, executable, bounded())).rejects.toThrow(
+      /malformed completion output/u,
+    );
+    await new Promise((resolve) => {setTimeout(resolve, 25);});
+    await expect(readFile(join(artifactRoot, "run-verified-1-run-1.json"), "utf8"))
+      .rejects.toMatchObject({ code: "ENOENT" });
+
+    const reused = await processAdapter.startChild(executable, bounded());
+    await expect(processAdapter.awaitChildCompletion(reused, executable, bounded())).rejects.toThrow(
+      /malformed completion output/u,
+    );
   });
 
   it("cleans a grandchild after invalid startup output", async () => {
