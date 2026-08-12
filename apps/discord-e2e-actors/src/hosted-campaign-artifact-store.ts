@@ -1,6 +1,7 @@
+import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, mkdir, open, rm, type FileHandle } from "node:fs/promises";
-import { join } from "node:path";
+import { link, lstat, mkdir, open, rm, type FileHandle } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 
 import type {
   HostedCampaignActionEvidence,
@@ -80,14 +81,25 @@ export class HostedCampaignArtifactStore {
   }
 
   async writeCreateOnly(path: string, value: unknown): Promise<void> {
+    const parentPath = dirname(path);
+    await assertSafeRoot(parentPath);
+    const temporaryPath = join(parentPath, `.${basename(path)}.partial-${randomUUID()}`);
     const handle = await open(
-      path, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600,
+      temporaryPath,
+      constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
+      0o600,
     );
     try {
-      await handle.writeFile(`${JSON.stringify(value)}\n`, "utf8");
-      await handle.sync();
+      try {
+        await handle.writeFile(`${JSON.stringify(value)}\n`, "utf8");
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+      await link(temporaryPath, path);
+      await syncDirectory(parentPath);
     } finally {
-      await handle.close();
+      await rm(temporaryPath, { force: true });
     }
   }
 
@@ -165,6 +177,28 @@ async function assertSafeRoot(path: string): Promise<void> {
   if (typeof process.getuid === "function" && status.uid !== process.getuid()) {
     throw new Error("Hosted campaign artifact root must be owned by the current user");
   }
+}
+
+async function syncDirectory(path: string): Promise<void> {
+  let handle: FileHandle | undefined;
+  try {
+    handle = await open(path, constants.O_RDONLY | (constants.O_DIRECTORY ?? 0));
+    await handle.sync();
+  } catch (error) {
+    const code = errorCode(error);
+    if (code !== "EINVAL" && code !== "ENOTSUP" && code !== "EISDIR") {
+      throw error;
+    }
+  } finally {
+    await handle?.close();
+  }
+}
+
+function errorCode(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null || !("code" in error)) {
+    return undefined;
+  }
+  return typeof error.code === "string" ? error.code : undefined;
 }
 
 function assertActive(bounded: HostedCampaignBoundedSignal): void {

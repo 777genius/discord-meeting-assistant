@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, readFile, readdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -68,4 +68,75 @@ describe("hosted campaign artifact store", () => {
     controller.abort(new Error("cancelled by test"));
     await expect(waiting).rejects.toThrow(/cancelled by test/u);
   });
+
+  it("publishes a complete private artifact without leaving a partial file", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "hosted-artifacts-"));
+    const root = join(parent, "root");
+    const store = new HostedCampaignArtifactStore(root, "campaign-1");
+    await store.initialize();
+    const path = join(root, "release-gate.json");
+    const value = { campaignId: "campaign-1", payload: "x".repeat(256 * 1024) };
+    const observedInvalidContents: string[] = [];
+    const observer = (async () => {
+      for (let attempt = 0; attempt < 10_000; attempt += 1) {
+        try {
+          const contents = await readFile(path, "utf8");
+          expect(JSON.parse(contents)).toEqual(value);
+          return;
+        } catch (error) {
+          if (errorCode(error) !== "ENOENT") {
+            observedInvalidContents.push(String(error));
+          }
+        }
+        await new Promise<void>((resolve) => {
+          setImmediate(resolve);
+        });
+      }
+      throw new Error("Artifact was not published before the observer attempt budget expired");
+    })();
+
+    await store.writeCreateOnly(path, value);
+    await observer;
+
+    expect(observedInvalidContents).toEqual([]);
+    expect(JSON.parse(await readFile(path, "utf8"))).toEqual(value);
+    expect((await lstat(path)).mode & 0o777).toBe(0o600);
+    expect((await readdir(root)).filter((name) => name.includes(".partial-"))).toEqual([]);
+  });
+
+  it("fails closed on an existing file or symlink and preserves the collision target", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "hosted-artifacts-"));
+    const root = join(parent, "root");
+    const store = new HostedCampaignArtifactStore(root, "campaign-1");
+    await store.initialize();
+    const path = join(root, "release-gate.json");
+    await store.writeCreateOnly(path, { first: true });
+    await expect(store.writeCreateOnly(path, { second: true })).rejects.toMatchObject({ code: "EEXIST" });
+    expect(JSON.parse(await readFile(path, "utf8"))).toEqual({ first: true });
+
+    const symlinkPath = join(root, "linked-release-gate.json");
+    const targetPath = join(parent, "target.json");
+    await writeFile(targetPath, "untouched\n", { mode: 0o600 });
+    await symlink(targetPath, symlinkPath);
+    await expect(store.writeCreateOnly(symlinkPath, { unsafe: true })).rejects.toMatchObject({ code: "EEXIST" });
+    expect(await readFile(targetPath, "utf8")).toBe("untouched\n");
+    expect((await readdir(root)).filter((name) => name.includes(".partial-"))).toEqual([]);
+  });
+
+  it("refuses to publish through a non-private parent directory", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "hosted-artifacts-"));
+    const root = join(parent, "root");
+    const store = new HostedCampaignArtifactStore(root, "campaign-1");
+    await store.initialize();
+    await chmod(root, 0o755);
+    await expect(store.writeCreateOnly(join(root, "release-gate.json"), { unsafe: true }))
+      .rejects.toThrow(/0700/u);
+  });
 });
+
+function errorCode(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null || !("code" in error)) {
+    return undefined;
+  }
+  return typeof error.code === "string" ? error.code : undefined;
+}
