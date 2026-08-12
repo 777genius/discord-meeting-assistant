@@ -51,12 +51,14 @@ function publishProcessEvent(
       hostedCampaignProcessEventV1Schema.shape.event.options[2].parse(event).evidence);
     case "reconnect-ready": return store.publishAction(event.action,
       hostedCampaignProcessEventV1Schema.shape.event.options[3].parse(event).evidence);
-    case "answer-intent": return store.publishAction(event.action,
+    case "actor-scenario-playback-completed": return store.publishAction(event.action,
       hostedCampaignProcessEventV1Schema.shape.event.options[4].parse(event).evidence);
-    case "answer-observer-ready": return store.publishAction(event.action,
+    case "answer-intent": return store.publishAction(event.action,
       hostedCampaignProcessEventV1Schema.shape.event.options[5].parse(event).evidence);
-    case "answer-first-packet": return store.publishAction(event.action,
+    case "answer-observer-ready": return store.publishAction(event.action,
       hostedCampaignProcessEventV1Schema.shape.event.options[6].parse(event).evidence);
+    case "answer-first-packet": return store.publishAction(event.action,
+      hostedCampaignProcessEventV1Schema.shape.event.options[7].parse(event).evidence);
     default: return Promise.reject(new Error("Unsupported hosted campaign process event"));
   }
 }

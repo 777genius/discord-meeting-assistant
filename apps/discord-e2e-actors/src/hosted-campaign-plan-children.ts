@@ -97,6 +97,7 @@ export function makeHostedCampaignChildren(
     reference(reconnect, { kind: "capture-retained", ordinal: index + 1 }));
   const reconnectLeft = reference(reconnect, { kind: "reconnect-left" });
   const reconnectReady = reference(reconnect, { kind: "reconnect-ready" });
+  const actorPlaybackCompleted = reference(reconnect, { kind: "actor-scenario-playback-completed" });
   const answerIntent = reference(reconnect, { kind: "answer-intent" });
   const answerObserverReady = reference(reconnect, { kind: "answer-observer-ready" });
   const answerFirstPacket = reference(reconnect, { kind: "answer-first-packet" });
@@ -160,6 +161,8 @@ export function makeHostedCampaignChildren(
     const playbackArmedPath = paths.run(run.ordinal, "actor-playback-armed.json");
     const endPath = paths.run(run.ordinal, "actor-end.json");
     const endArmedPath = paths.run(run.ordinal, "actor-end-armed.json");
+    const speakerBPath = paths.run(run.ordinal, "actor-speaker-b.json");
+    const speakerBArmedPath = paths.run(run.ordinal, "actor-speaker-b-armed.json");
     return {
       arguments: { kind: "environment" }, childId: `actor-${run.ordinal}`,
       completion: { action: completed.action, kind: "actor", outputPath: paths.run(run.ordinal, "actor.json"), runId: run.runId, scenario: run.scenario },
@@ -176,6 +179,8 @@ export function makeHostedCampaignChildren(
           DISCORD_E2E_HOSTED_PLAYBACK_GATE_ARMED_PATH: playbackArmedPath,
           DISCORD_E2E_HOSTED_END_GATE_PATH: endPath,
           DISCORD_E2E_HOSTED_END_GATE_ARMED_PATH: endArmedPath,
+          DISCORD_E2E_HOSTED_SPEAKER_B_GATE_PATH: speakerBPath,
+          DISCORD_E2E_HOSTED_SPEAKER_B_GATE_ARMED_PATH: speakerBArmedPath,
         } : {}),
         DISCORD_E2E_PLAYBACK_TIMEOUT_MS: "120000", DISCORD_E2E_READY_TIMEOUT_MS: "120000",
         DISCORD_E2E_RECORDER_BOT_ID: HOSTED_CAMPAIGN_TARGET.sutApplicationId,
@@ -187,10 +192,12 @@ export function makeHostedCampaignChildren(
       }, produces: [
         produced(run, completed.action, barrierPath(`actor-${run.ordinal}-completed`)),
         ...(run.ordinal === 3 ? [produced(run, reconnectLeft.action, barrierPath("reconnect-left")), produced(run, reconnectReady.action, barrierPath("reconnect-ready"))] : []),
+        ...(run.ordinal === 3 ? [produced(run, actorPlaybackCompleted.action, barrierPath("actor-playback-completed"))] : []),
       ], releaseGate: { action: release.action, armedPath: releaseArmedPath, ordinal: release.ordinal, path: releasePath, runId: release.runId },
       ...(run.ordinal === 3 ? { actorGates: {
+        speakerB: { armedPath: speakerBArmedPath, path: speakerBPath, trigger: captures[1]! },
         playback: { armedPath: playbackArmedPath, path: playbackPath, trigger: captures[3]! },
-        end: { armedPath: endArmedPath, path: endPath, trigger: supplementalCompleted },
+        end: { armedPath: endArmedPath, path: endPath, trigger: conversationCompleted },
       } } : {}),
       requires: [], startBefore: { ...release, kind: "barrier" },
     };
@@ -218,18 +225,20 @@ export function makeHostedCampaignChildren(
     completionAfter: conversationCompleted, entrypoint: "supplemental-player", environment: {
       DISCORD_E2E_SUPPLEMENTAL_CAMPAIGN_ID: definition.campaignId,
       DISCORD_E2E_SUPPLEMENTAL_CONNECTION_GATE_PATH: paths.run(3, "supplemental-connect.gate"),
+      DISCORD_E2E_SUPPLEMENTAL_CONNECTION_GATE_ARMED_PATH: paths.run(3, "supplemental-connect.armed.json"),
       DISCORD_E2E_SUPPLEMENTAL_EVIDENCE_OUTPUT: paths.run(3, "supplemental.json"),
       DISCORD_E2E_SUPPLEMENTAL_GATE_TIMEOUT_MS: "120000",
       DISCORD_E2E_SUPPLEMENTAL_MANIFEST: definition.supplementalManifestPath,
       DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_GATE_PATH: paths.run(3, "supplemental-play.gate"),
+      DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_GATE_ARMED_PATH: paths.run(3, "supplemental-play.armed.json"),
       DISCORD_E2E_SUPPLEMENTAL_PRIVATE_TEST_GUILD: "private-test-guild",
       DISCORD_E2E_SUPPLEMENTAL_RUN_ID: reconnect.runId,
       DISCORD_E2E_SUPPLEMENTAL_SECRET_DIRECTORY: definition.secretDirectory,
     }, produces: [produced(reconnect, supplementalCompleted.action, barrierPath("supplemental-completed"))],
     requires: [runVerified[1]!], startBefore: { ...observerSubscribed, kind: "barrier" },
     supplementalGates: {
-      connection: { path: paths.run(3, "supplemental-connect.gate"), trigger: captures[2]! },
-      playback: { path: paths.run(3, "supplemental-play.gate"), trigger: captures[3]! },
+      connection: { armedPath: paths.run(3, "supplemental-connect.armed.json"), path: paths.run(3, "supplemental-connect.gate"), trigger: captures[2]! },
+      playback: { armedPath: paths.run(3, "supplemental-play.armed.json"), path: paths.run(3, "supplemental-play.gate"), trigger: actorPlaybackCompleted },
     },
   };
   const playbackObserver: HostedCampaignExecutableSpec = {
@@ -374,7 +383,7 @@ export function makeHostedCampaignChildren(
     requires: [provenanceAfter], startBefore: { ...campaignVerified, kind: "barrier" },
   };
   return Object.freeze([
-    actor(sequential, provenanceBefore), actor(overlap, runVerified[0]!), actor(reconnect, observerSubscribed, supplementalCompleted),
+    actor(sequential, provenanceBefore), actor(overlap, runVerified[0]!), actor(reconnect, captures[0]!, supplementalCompleted),
     provenance("before", sequential, provenanceBefore), readyCollector(sequential), replayAttestation(sequential),
     collector(sequential, runVerified[0]!, sequentialBinding, [provenanceBefore, recordingReady[0]!, replayAttestationReady[0]!, reference(sequential, { kind: "actor-completed", ordinal: 1, runId: sequential.runId })]),
     readyCollector(overlap), replayAttestation(overlap), collector(overlap, runVerified[1]!, overlapBinding, [runVerified[0]!, recordingReady[1]!, replayAttestationReady[1]!, reference(overlap, { kind: "actor-completed", ordinal: 2, runId: overlap.runId })]),

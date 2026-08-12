@@ -21,12 +21,12 @@ const releaseGateSchema = z.object({
   runId: identifier,
   scenario: z.enum(["overlap", "sequential", "reconnect"]),
   schemaVersion: z.literal(1),
-  phase: z.enum(["connection", "playback", "end"]),
+  phase: z.enum(["connection", "speaker-b", "playback", "end"]),
   target: targetSchema,
 }).strict();
 const armedReceiptSchema = z.object({
   armedAtEpochMs: z.number().int().safe().nonnegative(), campaignId: identifier,
-  phase: z.enum(["connection", "playback", "end"]), runId: identifier,
+  phase: z.enum(["connection", "speaker-b", "playback", "end"]), runId: identifier,
   scenario: z.enum(["overlap", "sequential", "reconnect"]), schemaVersion: z.literal(1),
 }).strict();
 
@@ -36,7 +36,7 @@ export interface ActorReleaseGateExpectation {
   readonly path: string;
   readonly runId: string;
   readonly scenario: "overlap" | "sequential" | "reconnect";
-  readonly phase: "connection" | "playback" | "end";
+  readonly phase: "connection" | "speaker-b" | "playback" | "end";
 }
 
 export interface ActorConnectionAdmission {
@@ -180,7 +180,7 @@ async function tryReadValidGate(
 export async function waitForStagedActorGate(
   input: ActorConnectionAdmission,
   gate: { readonly armedPath: string; readonly path: string },
-  phase: "playback" | "end",
+  phase: "speaker-b" | "playback" | "end",
 ): Promise<void> {
   if (input.releaseGate === undefined) {
     throw new Error(`Hosted ${phase} gate requires the correlated connection gate`);
@@ -221,9 +221,23 @@ export async function waitForActorGateArmed(
       if (status.isSymbolicLink() || !status.isFile() || (status.mode & permissionMask) !== 0o600) {
         throw new Error(`Hosted actor armed receipt must be a private regular file: ${expected.armedPath}`);
       }
+      if (typeof process.getuid === "function" && status.uid !== process.getuid()) {
+        throw new Error(`Hosted actor armed receipt has the wrong owner: ${expected.armedPath}`);
+      }
+      if (status.size < 2 || status.size > maximumGateBytes) {
+        throw new Error(`Hosted actor armed receipt has an invalid size: ${expected.armedPath}`);
+      }
       const handle = await open(expected.armedPath, constants.O_RDONLY | constants.O_NOFOLLOW);
       try {
-        const receipt = armedReceiptSchema.parse(JSON.parse(await handle.readFile("utf8")) as unknown);
+        const opened = await handle.stat();
+        const raw = await handle.readFile("utf8");
+        const after = await handle.stat();
+        if (opened.dev !== status.dev || opened.ino !== status.ino || opened.size !== status.size
+          || opened.mtimeMs !== status.mtimeMs || after.size !== opened.size || after.mtimeMs !== opened.mtimeMs
+          || Buffer.byteLength(raw, "utf8") !== opened.size) {
+          throw new Error(`Hosted actor armed receipt changed while reading: ${expected.armedPath}`);
+        }
+        const receipt = armedReceiptSchema.parse(JSON.parse(raw) as unknown);
         if (receipt.campaignId !== expected.campaignId || receipt.runId !== expected.runId
           || receipt.scenario !== expected.scenario || receipt.phase !== expected.phase) {
           throw new Error("Hosted actor armed receipt correlation does not match the gate");
@@ -233,12 +247,18 @@ export async function waitForActorGateArmed(
     } catch (error: unknown) {
       if (!isNodeError(error, "ENOENT")) { throw error; }
     }
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(resolve, 25);
-      const abort = (): void => { clearTimeout(timer); reject(new Error(`Timed out or aborted waiting for actor ${expected.phase} gate readiness`)); };
-      signal.addEventListener("abort", abort, { once: true });
-    });
+    await waitForRetry(signal, expected.phase);
   }
+}
+
+async function waitForRetry(signal: AbortSignal, phase: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const cleanup = (): void => { clearTimeout(timer); signal.removeEventListener("abort", abort); };
+    const finish = (): void => { cleanup(); resolve(); };
+    const abort = (): void => { cleanup(); reject(new Error(`Timed out or aborted waiting for actor ${phase} gate readiness`)); };
+    const timer = setTimeout(finish, 25);
+    signal.addEventListener("abort", abort, { once: true });
+  });
 }
 
 function isNodeError(error: unknown, code: string): error is NodeJS.ErrnoException {

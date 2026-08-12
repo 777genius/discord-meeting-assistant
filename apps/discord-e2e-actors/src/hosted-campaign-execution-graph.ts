@@ -21,6 +21,8 @@ export function campaignActions(input: HostedCampaignInput): readonly HostedCamp
     })),
     scoped(reconnect!, { kind: "reconnect-left" }),
     scoped(reconnect!, { kind: "reconnect-ready" }),
+    ...(input.children.some(({ produces }) => produces.some(({ action }) => action.kind === "actor-scenario-playback-completed"))
+      ? [scoped(reconnect!, { kind: "actor-scenario-playback-completed" } as const)] : []),
     scoped(reconnect!, { kind: "answer-intent" }),
     scoped(reconnect!, { kind: "answer-observer-ready" }),
     scoped(reconnect!, { kind: "answer-first-packet" }),

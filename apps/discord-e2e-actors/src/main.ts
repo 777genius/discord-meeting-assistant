@@ -17,7 +17,7 @@ import {
   systemScenarioClock,
   type ActorScenarioEvent,
 } from "./run-actor-scenario.js";
-import { publishReconnectTransition } from "./hosted-campaign-process-event-publisher.js";
+import { publishActorScenarioPlaybackCompleted, publishReconnectTransition } from "./hosted-campaign-process-event-publisher.js";
 
 const recorderVoiceSettleMilliseconds = 5_000;
 
@@ -49,7 +49,10 @@ async function main(): Promise<void> {
         if (token === undefined) {
           throw new Error(`Missing Keychain credential for ${speaker.name}`);
         }
-        if (index === 1 && config.speakerBConnectDelayMilliseconds > 0) {
+        if (index === 1 && config.speakerBGate !== undefined) {
+          process.stdout.write("Discord E2E armed and waiting for speaker-b connection release.\n");
+          await waitForStagedActorGate(config, config.speakerBGate, "speaker-b");
+        } else if (index === 1 && config.speakerBConnectDelayMilliseconds > 0) {
           process.stdout.write(
             `Discord E2E delaying speaker-b connection for ${config.speakerBConnectDelayMilliseconds}ms.\n`,
           );
@@ -119,6 +122,7 @@ async function main(): Promise<void> {
         observedAtEpochMilliseconds,
       });
     });
+    publishActorScenarioPlaybackCompleted(config);
     if (config.postPlaybackHoldMilliseconds > 0) {
       process.stdout.write(
         `Discord E2E holding both actors in voice for ${config.postPlaybackHoldMilliseconds}ms.\n`,

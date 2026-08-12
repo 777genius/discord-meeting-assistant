@@ -16,7 +16,7 @@ interface HostedCampaignEntrypointCapability {
 export const HOSTED_CAMPAIGN_ENTRYPOINT_CAPABILITY_MATRIX = Object.freeze({
   actor: {
     completionActionKinds: ["actor-completed"],
-    emittedActionKinds: ["reconnect-left", "reconnect-ready"],
+    emittedActionKinds: ["reconnect-left", "reconnect-ready", "actor-scenario-playback-completed"],
   },
   "campaign-verifier": {
     completionActionKinds: ["campaign-verified"],

@@ -38,6 +38,7 @@ const barrierActionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("capture-retained"), ordinal: z.number().int().safe().positive() }).strict(),
   z.object({ kind: z.literal("reconnect-left") }).strict(),
   z.object({ kind: z.literal("reconnect-ready") }).strict(),
+  z.object({ kind: z.literal("actor-scenario-playback-completed") }).strict(),
   z.object({ kind: z.literal("answer-intent") }).strict(),
   z.object({ kind: z.literal("answer-observer-ready") }).strict(),
   z.object({ kind: z.literal("answer-first-packet") }).strict(),
@@ -130,6 +131,7 @@ const completionSchema = z.discriminatedUnion("kind", [
 ]);
 const executableSchema = z.object({
   actorGates: z.object({
+    speakerB: z.object({ armedPath: z.string().refine(isAbsolute), path: z.string().refine(isAbsolute), trigger: actionReferenceSchema }).strict(),
     playback: z.object({ armedPath: z.string().refine(isAbsolute), path: z.string().refine(isAbsolute), trigger: actionReferenceSchema }).strict(),
     end: z.object({ armedPath: z.string().refine(isAbsolute), path: z.string().refine(isAbsolute), trigger: actionReferenceSchema }).strict(),
   }).strict().optional(),
@@ -151,6 +153,7 @@ const executableSchema = z.object({
     action: z.discriminatedUnion("kind", [
       z.object({ kind: z.literal("provenance-before") }).strict(),
       z.object({ kind: z.literal("observer-subscribed") }).strict(),
+      z.object({ kind: z.literal("capture-retained"), ordinal: z.literal(1) }).strict(),
       runVerifiedActionSchema,
     ]),
     ordinal: z.number().int().min(1).max(3),
@@ -162,8 +165,8 @@ const executableSchema = z.object({
     actionReferenceSchema.extend({ kind: z.literal("barrier") }).strict(),
   ]),
   supplementalGates: z.object({
-    connection: z.object({ path: z.string().refine(isAbsolute), trigger: actionReferenceSchema }).strict(),
-    playback: z.object({ path: z.string().refine(isAbsolute), trigger: actionReferenceSchema }).strict(),
+    connection: z.object({ armedPath: z.string().refine(isAbsolute), path: z.string().refine(isAbsolute), trigger: actionReferenceSchema }).strict(),
+    playback: z.object({ armedPath: z.string().refine(isAbsolute), path: z.string().refine(isAbsolute), trigger: actionReferenceSchema }).strict(),
   }).strict().optional(),
 }).strict();
 

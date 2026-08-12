@@ -31,6 +31,8 @@ const actorEnvironmentSchema = z.object({
   DISCORD_E2E_HOSTED_PLAYBACK_GATE_ARMED_PATH: z.string().refine(isAbsolute).optional(),
   DISCORD_E2E_HOSTED_END_GATE_PATH: z.string().refine(isAbsolute).optional(),
   DISCORD_E2E_HOSTED_END_GATE_ARMED_PATH: z.string().refine(isAbsolute).optional(),
+  DISCORD_E2E_HOSTED_SPEAKER_B_GATE_PATH: z.string().refine(isAbsolute).optional(),
+  DISCORD_E2E_HOSTED_SPEAKER_B_GATE_ARMED_PATH: z.string().refine(isAbsolute).optional(),
   DISCORD_E2E_HOSTED_RELEASE_GATE_CAMPAIGN_ID: correlationIdSchema.optional(),
   DISCORD_E2E_HOSTED_RELEASE_GATE_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(600_000).optional(),
 }).superRefine((value, context) => {
@@ -51,14 +53,15 @@ const actorEnvironmentSchema = z.object({
   for (const [name, pair] of [
     ["playback", [value.DISCORD_E2E_HOSTED_PLAYBACK_GATE_PATH, value.DISCORD_E2E_HOSTED_PLAYBACK_GATE_ARMED_PATH]],
     ["end", [value.DISCORD_E2E_HOSTED_END_GATE_PATH, value.DISCORD_E2E_HOSTED_END_GATE_ARMED_PATH]],
+    ["speaker-b", [value.DISCORD_E2E_HOSTED_SPEAKER_B_GATE_PATH, value.DISCORD_E2E_HOSTED_SPEAKER_B_GATE_ARMED_PATH]],
   ] as const) {
     if (pair.filter((entry) => entry !== undefined).length === 1) {
       context.addIssue({ code: z.ZodIssueCode.custom, message: `Hosted ${name} gate path and armed path must be configured together` });
     }
   }
-  const stagedGateCount = [value.DISCORD_E2E_HOSTED_PLAYBACK_GATE_PATH, value.DISCORD_E2E_HOSTED_END_GATE_PATH]
+  const stagedGateCount = [value.DISCORD_E2E_HOSTED_SPEAKER_B_GATE_PATH, value.DISCORD_E2E_HOSTED_PLAYBACK_GATE_PATH, value.DISCORD_E2E_HOSTED_END_GATE_PATH]
     .filter((entry) => entry !== undefined).length;
-  if (stagedGateCount !== 0 && (configuredValues !== releaseGateValues.length || stagedGateCount !== 2)) {
+  if (stagedGateCount !== 0 && (configuredValues !== releaseGateValues.length || stagedGateCount !== 3)) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "Hosted connection, playback, and end gates must form one complete lifecycle" });
   }
 });
@@ -94,6 +97,7 @@ export interface ActorConfig {
   readonly runId: string;
   readonly releaseGate: ActorReleaseGateConfig | undefined;
   readonly playbackGate: ActorStagedGateConfig | undefined;
+  readonly speakerBGate: ActorStagedGateConfig | undefined;
   readonly endGate: ActorStagedGateConfig | undefined;
   readonly speakers: readonly [
     { readonly name: "speaker-a"; readonly account: string; readonly fixturePath: string },
@@ -129,6 +133,10 @@ export function loadActorConfig(environment: NodeJS.ProcessEnv): ActorConfig {
     playbackGate: parsed.DISCORD_E2E_HOSTED_PLAYBACK_GATE_PATH === undefined ? undefined : {
       armedPath: parsed.DISCORD_E2E_HOSTED_PLAYBACK_GATE_ARMED_PATH!,
       path: parsed.DISCORD_E2E_HOSTED_PLAYBACK_GATE_PATH,
+    },
+    speakerBGate: parsed.DISCORD_E2E_HOSTED_SPEAKER_B_GATE_PATH === undefined ? undefined : {
+      armedPath: parsed.DISCORD_E2E_HOSTED_SPEAKER_B_GATE_ARMED_PATH!,
+      path: parsed.DISCORD_E2E_HOSTED_SPEAKER_B_GATE_PATH,
     },
     endGate: parsed.DISCORD_E2E_HOSTED_END_GATE_PATH === undefined ? undefined : {
       armedPath: parsed.DISCORD_E2E_HOSTED_END_GATE_ARMED_PATH!,

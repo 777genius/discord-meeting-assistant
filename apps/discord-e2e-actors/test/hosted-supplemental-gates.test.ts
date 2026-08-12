@@ -20,15 +20,17 @@ const supplemental = (): HostedCampaignExecutableSpec => ({
   }, entrypoint: "supplemental-player", environment: {
     DISCORD_E2E_SUPPLEMENTAL_CAMPAIGN_ID: "campaign-1",
     DISCORD_E2E_SUPPLEMENTAL_CONNECTION_GATE_PATH: "/gates/connection.json",
+    DISCORD_E2E_SUPPLEMENTAL_CONNECTION_GATE_ARMED_PATH: "/gates/connection.armed.json",
     DISCORD_E2E_SUPPLEMENTAL_GATE_TIMEOUT_MS: "30000",
     DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_GATE_PATH: "/gates/playback.json",
+    DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_GATE_ARMED_PATH: "/gates/playback.armed.json",
     DISCORD_E2E_SUPPLEMENTAL_RUN_ID: "run-3",
   }, produces: [{ action: { kind: "supplemental-completed", ordinal: 3, runId: "run-3" },
     ordinal: 3, outputPath: "/barriers/supplemental.json", runId: "run-3" }], requires: [],
   startBefore: { action: { kind: "capture-retained", ordinal: 1 }, kind: "barrier", ordinal: 3, runId: "run-3" },
   supplementalGates: {
-    connection: { path: "/gates/connection.json", trigger: trigger(3) },
-    playback: { path: "/gates/playback.json", trigger: trigger(4) },
+    connection: { armedPath: "/gates/connection.armed.json", path: "/gates/connection.json", trigger: trigger(3) },
+    playback: { armedPath: "/gates/playback.armed.json", path: "/gates/playback.json", trigger: trigger(4) },
   },
 });
 const input = (child: HostedCampaignExecutableSpec): HostedCampaignInput => ({

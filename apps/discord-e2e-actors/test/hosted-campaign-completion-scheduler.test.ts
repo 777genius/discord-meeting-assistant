@@ -94,17 +94,19 @@ describe("hosted campaign completion scheduler", () => {
       completion: { action: runTwoAction, kind: "actor" as const, outputPath: "/evidence/run-two-actor.json",
         runId: "run-2", scenario: "overlap" as const },
       environment: { ...actor.environment, DISCORD_E2E_ACTOR_RUN_OUTPUT: "/evidence/run-two-actor.json",
+        DISCORD_E2E_HOSTED_RELEASE_GATE_ARMED_PATH: "/evidence/run-two.armed",
         DISCORD_E2E_HOSTED_RELEASE_GATE_PATH: "/evidence/run-two.release", DISCORD_E2E_RUN_ID: "run-2",
         DISCORD_E2E_SCENARIO: "overlap" },
       produces: [{ action: runTwoAction, ordinal: 2, runId: "run-2",
         outputPath: "/evidence/run-two-actor-completed.json" }],
-      releaseGate: { ...runOne, path: "/evidence/run-two.release" },
+      releaseGate: { ...runOne, armedPath: "/evidence/run-two.armed", path: "/evidence/run-two.release" },
     } satisfies HostedCampaignExecutableSpec;
     const raw = skeleton([configured]);
     expect(parseHostedCampaignPlan(raw).children[0]?.releaseGate?.action.kind).toBe("run-verified");
 
     const runTwo = base.find(({ action }) => action.kind === "run-verified" && action.ordinal === 2)!;
     expect(() => validateHostedCampaign(skeleton([{ ...configured, releaseGate: {
+      armedPath: "/evidence/wrong.armed",
       ...runTwo, path: "/evidence/run-two.release",
     } }]))).toThrow(/prior verified run/u);
   });

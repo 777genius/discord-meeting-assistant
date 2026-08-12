@@ -24,12 +24,14 @@ export function validateHostedSupplementalPlaybackAdmission(
     action: { kind: "capture-retained", ordinal }, ordinal: reconnectRun.ordinal, runId: reconnectRun.runId,
   });
   const connectionTrigger = capture(3);
-  const playbackTrigger = capture(4);
+  const playbackTrigger: HostedCampaignActionReference = {
+    action: { kind: "actor-scenario-playback-completed" }, ordinal: reconnectRun.ordinal, runId: reconnectRun.runId,
+  };
   if (child.supplementalGates === undefined
     || !sameReference(child.supplementalGates.connection.trigger, connectionTrigger)
     || !sameReference(child.supplementalGates.playback.trigger, playbackTrigger)) {
     throw new Error(
-      `Hosted supplemental player ${child.childId} requires capture 3 connection and capture 4 playback gates`,
+      `Hosted supplemental player ${child.childId} requires capture 3 connection and completed actor playback gates`,
     );
   }
   if (child.startBefore.kind !== "barrier"

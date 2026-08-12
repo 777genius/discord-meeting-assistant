@@ -117,6 +117,16 @@ export function publishReconnectTransition(
   writeHostedEvent(config.releaseGate.campaignId, config.runId, event, write);
 }
 
+export function publishActorScenarioPlaybackCompleted(
+  config: HostedReconnectEventContext,
+  write: EventWriter = stdoutWriter,
+): void {
+  if (config.releaseGate === undefined || config.scenario !== "reconnect") { return; }
+  writeHostedEvent(config.releaseGate.campaignId, config.runId, {
+    action: { kind: "actor-scenario-playback-completed" }, evidence: { completed: true },
+  }, write);
+}
+
 function writeHostedEvent(
   campaignId: string,
   runId: string,

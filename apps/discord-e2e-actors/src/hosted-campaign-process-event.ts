@@ -36,6 +36,10 @@ const reconnectReadySchema = z.object({
   action: z.object({ kind: z.literal("reconnect-ready") }).strict(),
   evidence: reconnectEvidenceSchema,
 }).strict();
+const actorPlaybackCompletedSchema = z.object({
+  action: z.object({ kind: z.literal("actor-scenario-playback-completed") }).strict(),
+  evidence: z.object({ completed: z.literal(true) }).strict(),
+}).strict();
 const turnEvidenceSchema = z.object({
   observedAtEpochMilliseconds: epochMillisecondsSchema,
   turnId: identifierSchema,
@@ -59,7 +63,7 @@ export const hostedCampaignProcessEventV1Schema = z.object({
   campaignId: identifierSchema,
   event: z.union([
     observerSubscribedSchema, captureRetainedSchema, reconnectLeftSchema,
-    reconnectReadySchema, answerIntentSchema, answerObserverReadySchema,
+    reconnectReadySchema, actorPlaybackCompletedSchema, answerIntentSchema, answerObserverReadySchema,
     answerFirstPacketSchema,
   ]),
   kind: z.literal("hosted-campaign-barrier"),

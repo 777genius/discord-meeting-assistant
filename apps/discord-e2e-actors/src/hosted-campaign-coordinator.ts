@@ -140,10 +140,11 @@ export interface HostedCampaignExecutableSpec {
   readonly requires: readonly HostedCampaignActionReference[];
   readonly startBefore: HostedCampaignStartPoint;
   readonly supplementalGates?: {
-    readonly connection: { readonly path: string; readonly trigger: HostedCampaignActionReference };
-    readonly playback: { readonly path: string; readonly trigger: HostedCampaignActionReference };
+    readonly connection: { readonly armedPath: string; readonly path: string; readonly trigger: HostedCampaignActionReference };
+    readonly playback: { readonly armedPath: string; readonly path: string; readonly trigger: HostedCampaignActionReference };
   };
   readonly actorGates?: {
+    readonly speakerB: { readonly armedPath: string; readonly path: string; readonly trigger: HostedCampaignActionReference };
     readonly playback: { readonly armedPath: string; readonly path: string; readonly trigger: HostedCampaignActionReference };
     readonly end: { readonly armedPath: string; readonly path: string; readonly trigger: HostedCampaignActionReference };
   };
@@ -171,6 +172,7 @@ export type HostedCampaignBarrierAction =
   | { readonly kind: "capture-retained"; readonly ordinal: number }
   | { readonly kind: "reconnect-left" }
   | { readonly kind: "reconnect-ready" }
+  | { readonly kind: "actor-scenario-playback-completed" }
   | { readonly kind: "answer-intent" }
   | { readonly kind: "answer-observer-ready" }
   | { readonly kind: "answer-first-packet" }
@@ -188,9 +190,9 @@ export type HostedCampaignActionEvidence<Action extends HostedCampaignBarrierAct
       : Action["kind"] extends "capture-retained" ? {
           readonly ordinal: number; readonly outputPath: string; readonly retained: true;
         }
-        : Action["kind"] extends "reconnect-left" | "reconnect-ready" ? {
+          : Action["kind"] extends "reconnect-left" | "reconnect-ready" ? {
             readonly participantId: string; readonly observedAtEpochMilliseconds: number;
-          }
+          } : Action["kind"] extends "actor-scenario-playback-completed" ? { readonly completed: true }
           : Action["kind"] extends "answer-first-packet" ? TurnEvidence & {
               readonly answerLatencyMilliseconds: number;
             }
@@ -236,7 +238,7 @@ export interface HostedCampaignPorts {
   ): Promise<HostedCampaignChildHandle>;
   publishReleaseGate(
     executable: HostedCampaignExecutableSpec,
-    phaseOrBounded: "connection" | "playback" | "end" | HostedCampaignBoundedSignal,
+    phaseOrBounded: "connection" | "speaker-b" | "playback" | "end" | HostedCampaignBoundedSignal,
     bounded?: HostedCampaignBoundedSignal,
   ): Promise<void>;
   publishSupplementalGate(
@@ -272,13 +274,13 @@ function supplementalGatePhase(
 function actorGatePhase(
   child: HostedCampaignExecutableSpec,
   reference: HostedCampaignActionReference,
-): "connection" | "playback" | "end" | undefined {
+): "connection" | "speaker-b" | "playback" | "end" | undefined {
   if (child.releaseGate !== undefined
     && actionReferenceIdentity(child.releaseGate) === actionReferenceIdentity(reference)) { return "connection"; }
-  return (["playback", "end"] as const).find((phase) => {
+  return (["speakerB", "playback", "end"] as const).find((phase) => {
     const gate = child.actorGates?.[phase];
     return gate !== undefined && actionReferenceIdentity(gate.trigger) === actionReferenceIdentity(reference);
-  });
+  })?.replace("speakerB", "speaker-b") as "speaker-b" | "playback" | "end" | undefined;
 }
 function assertExactTarget(target: HostedCampaignTarget): void {
   for (const [key, expected] of Object.entries(HOSTED_CAMPAIGN_TARGET)) {
@@ -355,8 +357,9 @@ function validateActorGates(child: HostedCampaignExecutableSpec): void {
     throw new Error("Only the reconnect actor may declare staged actor gates");
   }
   for (const [phase, gate] of Object.entries(child.actorGates)) {
-    if (child.environment[`DISCORD_E2E_HOSTED_${phase.toUpperCase()}_GATE_PATH`] !== gate.path
-      || child.environment[`DISCORD_E2E_HOSTED_${phase.toUpperCase()}_GATE_ARMED_PATH`] !== gate.armedPath) {
+    const environmentPhase = phase === "speakerB" ? "SPEAKER_B" : phase.toUpperCase();
+    if (child.environment[`DISCORD_E2E_HOSTED_${environmentPhase}_GATE_PATH`] !== gate.path
+      || child.environment[`DISCORD_E2E_HOSTED_${environmentPhase}_GATE_ARMED_PATH`] !== gate.armedPath) {
       throw new Error(`Hosted actor ${phase} gate environment mismatch`);
     }
   }
@@ -434,16 +437,21 @@ function validateSupplementalGates(
   const playback = child.supplementalGates.playback;
   const environment = child.environment;
   const timeoutMilliseconds = Number(environment.DISCORD_E2E_SUPPLEMENTAL_GATE_TIMEOUT_MS);
-  const matchesCapture = (reference: HostedCampaignActionReference, ordinal: 3 | 4) =>
+  const matchesCapture = (reference: HostedCampaignActionReference, ordinal: 3) =>
     reconnect !== undefined && reference.ordinal === reconnect.ordinal && reference.runId === reconnect.runId
     && reference.action.kind === "capture-retained" && reference.action.ordinal === ordinal;
   if (child.entrypoint !== "supplemental-player" || reconnect === undefined
-    || !matchesCapture(connection.trigger, 3) || !matchesCapture(playback.trigger, 4)
+    || !matchesCapture(connection.trigger, 3)
+    || playback.trigger.action.kind !== "actor-scenario-playback-completed"
+    || playback.trigger.ordinal !== reconnect.ordinal || playback.trigger.runId !== reconnect.runId
     || connection.path === playback.path
     || environment.DISCORD_E2E_SUPPLEMENTAL_CAMPAIGN_ID !== campaignId
     || environment.DISCORD_E2E_SUPPLEMENTAL_RUN_ID !== reconnect.runId
     || environment.DISCORD_E2E_SUPPLEMENTAL_CONNECTION_GATE_PATH !== connection.path
     || environment.DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_GATE_PATH !== playback.path
+    || environment.DISCORD_E2E_SUPPLEMENTAL_CONNECTION_GATE_ARMED_PATH !== connection.armedPath
+    || environment.DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_GATE_ARMED_PATH !== playback.armedPath
+    || new Set([connection.path, connection.armedPath, playback.path, playback.armedPath]).size !== 4
     || !Number.isSafeInteger(timeoutMilliseconds) || timeoutMilliseconds < 1_000
     || timeoutMilliseconds > 120_000) {
     throw new Error(`Hosted supplemental player ${child.childId} has an invalid two-phase gate contract`);
