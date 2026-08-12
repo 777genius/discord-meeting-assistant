@@ -37,7 +37,7 @@ function input(behavior = "ack"): HostedCampaignInput {
     children: ["observer", "speaker-a", "speaker-b"].map((childId) => ({
       arguments: { kind: "environment" }, childId, entrypoint: "actor" as const,
       environment: childId === "observer" ? { FIXTURE_BEHAVIOR: behavior } : {},
-      startBefore: "campaign" as const,
+      startBefore: { kind: "campaign" as const },
     })),
     runs: [
       { campaignId: "campaign-sandbox", ordinal: 1, retainedCaptureCount: 0, runId: "run-sequential", scenario: "sequential" },

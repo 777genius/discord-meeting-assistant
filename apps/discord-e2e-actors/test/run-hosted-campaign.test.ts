@@ -19,7 +19,7 @@ import {
 const plan = () => ({
   children: [{ arguments: { kind: "environment" }, childId: "observer", entrypoint: "live-observer", environment: {
     DISCORD_E2E_OUTPUT: "/private/evidence/observer.json",
-  }, startBefore: "campaign" }],
+  }, startBefore: { kind: "campaign" } }],
   target: HOSTED_CAMPAIGN_TARGET,
   thresholds: { answerFirstPacketMilliseconds: 4_000 },
   runs: [
@@ -43,6 +43,9 @@ describe("run-hosted-campaign CLI", () => {
     expect(() => parseHostedCampaignPlan({ ...plan(), children: [{ ...plan().children[0], command: "sh" }] }))
       .toThrow();
     expect(() => parseHostedCampaignPlan({ ...plan(), thresholds: undefined })).toThrow();
+    expect(() => parseHostedCampaignPlan({
+      ...plan(), children: [{ ...plan().children[0], startBefore: "run-verified" }],
+    })).toThrow();
     expect(() => parseHostedCampaignPlan({
       ...plan(), thresholds: { answerFirstPacketMilliseconds: Number.MAX_SAFE_INTEGER + 1 },
     })).toThrow();

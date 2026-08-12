@@ -23,7 +23,7 @@ async function adapter(source: string, outputLimitBytes?: number) {
 const bounded = () => ({ deadlineEpochMilliseconds: Date.now() + 1_000, signal: new AbortController().signal });
 const spec = (environment: Readonly<Record<string, string>> = {}) => ({
   arguments: { kind: "environment" as const }, childId: "actor", entrypoint: "actor" as const,
-  environment, startBefore: "campaign" as const,
+  environment, startBefore: { kind: "campaign" as const },
 });
 const verifierSpec = (ordinal = 1, runId = "run-1"): HostedCampaignExecutableSpec => ({
   arguments: { evidencePath: "/evidence.json", kind: "evidence-verifier", manifestPath: "/manifest.json" },

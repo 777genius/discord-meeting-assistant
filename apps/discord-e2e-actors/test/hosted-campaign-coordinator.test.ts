@@ -25,7 +25,20 @@ function input(): HostedCampaignInput {
 }
 
 function child(childId: string) {
-  return { arguments: { kind: "environment" as const }, childId, entrypoint: "actor" as const, environment: {}, startBefore: "campaign" as const };
+  return { arguments: { kind: "environment" as const }, childId, entrypoint: "actor" as const, environment: {}, startBefore: { kind: "campaign" as const } };
+}
+
+function oneShotChild(
+  childId: string,
+  action: Extract<HostedCampaignBarrierAction, { readonly kind: "capture-retained" | "run-verified" }>,
+) {
+  return {
+    arguments: { evidencePath: "/evidence.json", kind: "evidence-verifier" as const, manifestPath: "/manifest.json" },
+    childId,
+    entrypoint: "evidence-verifier" as const,
+    environment: {},
+    startBefore: { action, kind: "barrier" as const },
+  };
 }
 
 function evidence<Action extends HostedCampaignBarrierAction>(action: Action): HostedCampaignActionEvidence<Action> {
@@ -194,6 +207,45 @@ describe("hosted campaign coordinator", () => {
       { kind: "run-verified", ordinal: 2, runId: "run-2" },
       { kind: "run-verified", ordinal: 3, runId: "run-3" },
     ]);
+  });
+
+  it("starts repeated-phase children only at their exact action identity and only once", async () => {
+    const events: string[] = [];
+    const configured: HostedCampaignInput = {
+      ...input(),
+      children: [
+        ...input().children,
+        oneShotChild("verify-overlap", { kind: "run-verified", ordinal: 2, runId: "run-2" }),
+        oneShotChild("retain-five", { kind: "capture-retained", ordinal: 5 }),
+      ],
+    };
+
+    await runHostedCampaign(configured, ports(events), bounded());
+
+    expect(events.filter((event) => event === "start:verify-overlap")).toHaveLength(1);
+    expect(events.filter((event) => event === "start:retain-five")).toHaveLength(1);
+    const runBarriers = events
+      .map((event, index) => ({ event, index }))
+      .filter(({ event }) => event === "barrier:run-verified");
+    expect(events.indexOf("start:verify-overlap") + 1).toBe(runBarriers[1]?.index);
+    const captureBarriers = events
+      .map((event, index) => ({ event, index }))
+      .filter(({ event }) => event === "barrier:capture-retained");
+    expect(events.indexOf("start:retain-five") + 1).toBe(captureBarriers[4]?.index);
+  });
+
+  it("rejects a repeated-phase start point that does not exactly exist", async () => {
+    const events: string[] = [];
+    const invalid: HostedCampaignInput = {
+      ...input(),
+      children: [
+        ...input().children,
+        oneShotChild("wrong-run", { kind: "run-verified", ordinal: 2, runId: "run-1" }),
+      ],
+    };
+
+    await expect(runHostedCampaign(invalid, ports(events), bounded())).rejects.toThrow(/unknown start point/u);
+    expect(events).toEqual([]);
   });
 
   it("stops a mismatched returned handle and releases the exclusive lease", async () => {

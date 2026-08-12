@@ -26,7 +26,9 @@ export type HostedCampaignEntrypoint =
   | "live-observer"
   | "supplemental-player"
   | "evidence-verifier";
-export type HostedCampaignStartPoint = "campaign" | HostedCampaignBarrierAction["kind"];
+export type HostedCampaignStartPoint =
+  | { readonly kind: "campaign" }
+  | { readonly action: HostedCampaignBarrierAction; readonly kind: "barrier" };
 export type HostedCampaignExecutableArguments =
   | { readonly kind: "environment" }
   | { readonly evidencePath: string; readonly kind: "evidence-verifier"; readonly manifestPath: string; readonly thresholdsPath?: string }
@@ -161,6 +163,20 @@ function campaignActions(input: HostedCampaignInput): readonly HostedCampaignBar
     { kind: "campaign-verified" },
   ];
 }
+
+function actionIdentity(action: HostedCampaignBarrierAction): string {
+  if (action.kind === "capture-retained") {
+    return `${action.kind}:${action.ordinal}`;
+  }
+  if (action.kind === "run-verified") {
+    return `${action.kind}:${action.ordinal}:${action.runId}`;
+  }
+  return action.kind;
+}
+
+function startPointIdentity(startPoint: HostedCampaignStartPoint): string {
+  return startPoint.kind === "campaign" ? "campaign" : `barrier:${actionIdentity(startPoint.action)}`;
+}
 function assertExactTarget(target: HostedCampaignTarget): void {
   for (const [key, expected] of Object.entries(HOSTED_CAMPAIGN_TARGET)) {
     if (target[key as keyof HostedCampaignTarget] !== expected) {
@@ -222,11 +238,14 @@ function validateExecutable(
     || (child.entrypoint === "evidence-verifier") !== (child.arguments.kind === "evidence-verifier")) {
     throw new Error(`Hosted campaign child ${child.childId} has arguments for the wrong entrypoint`);
   }
-  if (child.startBefore !== "campaign" && !campaignActions(input).some(({ kind }) => kind === child.startBefore)) {
-    throw new Error(`Hosted campaign child ${child.childId} has an unknown start point`);
+  if (child.startBefore.kind === "barrier") {
+    const startActionIdentity = actionIdentity(child.startBefore.action);
+    if (!campaignActions(input).some((action) => actionIdentity(action) === startActionIdentity)) {
+      throw new Error(`Hosted campaign child ${child.childId} has an unknown start point`);
+    }
   }
   const oneShot = child.entrypoint === "collector" || child.entrypoint.endsWith("verifier");
-  if (oneShot && child.startBefore === "campaign") {
+  if (oneShot && child.startBefore.kind === "campaign") {
     throw new Error(`One-shot child ${child.childId} must start only after its inputs exist`);
   }
   if (oneShot !== (child.completion !== undefined)) {
@@ -250,7 +269,8 @@ function validateCompletion(
   campaignId: string | undefined,
   completionActions: Set<string>,
 ): void {
-  if (completion.kind !== child.entrypoint || child.startBefore !== completion.action.kind) {
+  if (completion.kind !== child.entrypoint || child.startBefore.kind !== "barrier"
+    || actionIdentity(child.startBefore.action) !== actionIdentity(completion.action)) {
     throw new Error(`Hosted campaign child ${child.childId} completion does not match its entrypoint and start point`);
   }
   const actionIdentity = JSON.stringify(completion.action);
@@ -335,22 +355,28 @@ export async function runHostedCampaign(
     if (lease.campaignId !== campaignId) {
       throw new Error("Acquired campaign lease does not match the campaign");
     }
+    const startedChildIds = new Set<string>();
     const startChildren = async (startBefore: HostedCampaignStartPoint): Promise<void> => {
-      for (const executable of input.children.filter((child) => child.startBefore === startBefore)) {
+      const identity = startPointIdentity(startBefore);
+      for (const executable of input.children.filter((child) => startPointIdentity(child.startBefore) === identity)) {
+        if (startedChildIds.has(executable.childId)) {
+          throw new Error(`Hosted campaign child would start more than once: ${executable.childId}`);
+        }
         assertActive(bounded);
         const handle = await ports.startChild(executable, bounded);
         handles.push(handle);
         if (handle.childId !== executable.childId) {
           throw new Error("Started child handle does not match its executable spec");
         }
+        startedChildIds.add(executable.childId);
         if (executable.completion !== undefined) {
           await ports.awaitChildCompletion(handle, executable, bounded);
         }
       }
     };
-    await startChildren("campaign");
+    await startChildren({ kind: "campaign" });
     for (const action of campaignActions(input)) {
-      await startChildren(action.kind);
+      await startChildren({ action, kind: "barrier" });
       assertActive(bounded);
       const actionEvidence = await ports.awaitBarrier(action, bounded);
       validateEvidence(action, actionEvidence, input.thresholds);

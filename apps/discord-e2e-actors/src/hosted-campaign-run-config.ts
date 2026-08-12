@@ -22,6 +22,19 @@ const argumentsSchema = z.discriminatedUnion("kind", [
     thresholdsPath: z.string().refine(isAbsolute).optional(),
   }).strict(),
 ]);
+const barrierActionSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("provenance-before") }).strict(),
+  z.object({ kind: z.literal("observer-subscribed") }).strict(),
+  z.object({ kind: z.literal("capture-retained"), ordinal: z.number().int().safe().positive() }).strict(),
+  z.object({ kind: z.literal("reconnect-left") }).strict(),
+  z.object({ kind: z.literal("reconnect-ready") }).strict(),
+  z.object({ kind: z.literal("answer-intent") }).strict(),
+  z.object({ kind: z.literal("answer-observer-ready") }).strict(),
+  z.object({ kind: z.literal("answer-first-packet") }).strict(),
+  z.object({ kind: z.literal("run-verified"), ordinal: z.number().int().safe().positive(), runId: identifier }).strict(),
+  z.object({ kind: z.literal("provenance-after") }).strict(),
+  z.object({ kind: z.literal("campaign-verified") }).strict(),
+]);
 const runVerifiedActionSchema = z.object({
   kind: z.literal("run-verified"), ordinal: z.number().int().min(1).max(3), runId: identifier,
 }).strict();
@@ -52,10 +65,9 @@ const executableSchema = z.object({
     ]),
     path: z.string().refine(isAbsolute),
   }).strict().optional(),
-  startBefore: z.enum([
-    "campaign", "provenance-before", "observer-subscribed", "capture-retained",
-    "reconnect-left", "reconnect-ready", "answer-intent", "answer-observer-ready",
-    "answer-first-packet", "run-verified", "provenance-after", "campaign-verified",
+  startBefore: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("campaign") }).strict(),
+    z.object({ action: barrierActionSchema, kind: z.literal("barrier") }).strict(),
   ]),
 }).strict();
 
