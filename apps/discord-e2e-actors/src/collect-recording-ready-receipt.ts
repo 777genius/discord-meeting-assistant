@@ -7,6 +7,7 @@ import { deploymentRevisionExpectationSchema } from "./e2e-evidence.js";
 import { waitForStableRecordingReadyReceipt } from "./recording-ready-poller.js";
 import { SshDeploymentEvidenceProbe } from "./ssh-deployment-probe.js";
 import { EvidenceProbeInterruptedError } from "./ssh-deployment-probe-commands.js";
+import { withProcessAbortSignalScope } from "./process-abort-signal-scope.js";
 
 const absolutePath = z.string().refine(isAbsolute);
 const sourceRevision = z.string().regex(/^(?:[a-f\d]{40}|[a-f\d]{64})$/u);
@@ -49,30 +50,27 @@ async function main(): Promise<void> {
     sourceRoot: config.DISCORD_E2E_REMOTE_SOURCE_ROOT,
   });
   const provenance = await deployment.collectProvenance();
-  const controller = new AbortController();
-  const stop = (): void => controller.abort(new Error("Recording-ready collection interrupted"));
-  process.once("SIGINT", stop);
-  process.once("SIGTERM", stop);
-  const receipt = await waitForStableRecordingReadyReceipt({
-    actorRun,
-    clock: { nowEpochMs: () => Date.now() },
-    delay: { wait: waitWithAbort },
-    expectedRevisions: deploymentRevisionExpectationSchema.parse({
-      craig: config.DISCORD_E2E_EXPECTED_CRAIG_SOURCE_REVISION,
-      meetingPlatform: config.DISCORD_E2E_EXPECTED_MEETING_PLATFORM_SOURCE_REVISION,
-      pipecat: config.DISCORD_E2E_EXPECTED_PIPECAT_SOURCE_REVISION,
-      subscriptionRuntime: config.DISCORD_E2E_EXPECTED_SUBSCRIPTION_RUNTIME_SOURCE_REVISION,
+  const receipt = await withProcessAbortSignalScope(
+    "Recording-ready collection interrupted",
+    async (signal) => waitForStableRecordingReadyReceipt({
+      actorRun,
+      clock: { nowEpochMs: () => Date.now() },
+      delay: { wait: waitWithAbort },
+      expectedRevisions: deploymentRevisionExpectationSchema.parse({
+        craig: config.DISCORD_E2E_EXPECTED_CRAIG_SOURCE_REVISION,
+        meetingPlatform: config.DISCORD_E2E_EXPECTED_MEETING_PLATFORM_SOURCE_REVISION,
+        pipecat: config.DISCORD_E2E_EXPECTED_PIPECAT_SOURCE_REVISION,
+        subscriptionRuntime: config.DISCORD_E2E_EXPECTED_SUBSCRIPTION_RUNTIME_SOURCE_REVISION,
+      }),
+      policy: {
+        pollIntervalMs: config.DISCORD_E2E_READY_RECEIPT_POLL_INTERVAL_MS,
+        timeoutMs: config.DISCORD_E2E_READY_RECEIPT_TIMEOUT_MS,
+      },
+      probe: deployment,
+      provenance,
+      signal,
     }),
-    policy: {
-      pollIntervalMs: config.DISCORD_E2E_READY_RECEIPT_POLL_INTERVAL_MS,
-      timeoutMs: config.DISCORD_E2E_READY_RECEIPT_TIMEOUT_MS,
-    },
-    probe: deployment,
-    provenance,
-    signal: controller.signal,
-  });
-  process.off("SIGINT", stop);
-  process.off("SIGTERM", stop);
+  );
   await writeCreateOnlyJson(config.DISCORD_E2E_READY_RECEIPT_OUTPUT, receipt);
   process.stdout.write(`${JSON.stringify({
     kind: "recording-ready-completion",

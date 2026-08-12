@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -20,7 +20,9 @@ describe("hosted finite process completion", () => {
   it("correlates replay attestation completion to the pinned fixture manifest", async () => {
     const root = await mkdtemp(join(tmpdir(), "replay-attestation-completion-"));
     const fixtureManifestPath = join(root, "manifest.json");
-    await writeFile(fixtureManifestPath, await readFile(new URL("./fixtures/manifest.v1.json", import.meta.url)));
+    await writeFile(fixtureManifestPath, await readFile(new URL("./fixtures/manifest.v1.json", import.meta.url)), {
+      mode: 0o600,
+    });
     await expect(verifyHostedFiniteProcessCompletion(JSON.stringify({
       containerId: "a".repeat(64), fixtureSetId: "discord-meeting-ru-en-v6",
       imageId: `sha256:${"b".repeat(64)}`, kind: "replay-attestation-publisher-completion",
@@ -75,6 +77,41 @@ describe("hosted finite process completion", () => {
     await expect(verifyHostedFiniteProcessCompletion(JSON.stringify({
       kind: "supplemental-player-completion", outputPath, runId: "other-run", status: "completed",
     }), expected)).rejects.toThrow(/run ID correlation mismatch/u);
+  });
+
+  it("rejects symlinked and non-private retained artifacts", async () => {
+    const artifact = retainedV8Evidence().conversation.supplementalPlayback;
+    const outputPath = await privateArtifact(artifact);
+    const completion = (path: string) => JSON.stringify({
+      kind: "supplemental-player-completion", outputPath: path,
+      runId: artifact.runId, status: "completed",
+    });
+
+    await chmod(outputPath, 0o644);
+    await expect(verifyHostedFiniteProcessCompletion(completion(outputPath), {
+      kind: "supplemental-player", outputPath, runId: artifact.runId,
+    })).rejects.toThrow(/regular owned mode-0600/u);
+
+    await chmod(outputPath, 0o600);
+    const linkPath = `${outputPath}.link`;
+    await symlink(outputPath, linkPath);
+    await expect(verifyHostedFiniteProcessCompletion(completion(linkPath), {
+      kind: "supplemental-player", outputPath: linkPath, runId: artifact.runId,
+    })).rejects.toThrow(/regular owned mode-0600/u);
+  });
+
+  it("rejects empty and oversized retained artifacts before JSON parsing", async () => {
+    const root = await mkdtemp(join(tmpdir(), "finite-completion-size-"));
+    await chmod(root, 0o700);
+    for (const [label, value] of [["empty", ""], ["oversized", "x".repeat(32 * 1024 * 1024 + 1)]] as const) {
+      const outputPath = join(root, `${label}.json`);
+      await writeFile(outputPath, value, { mode: 0o600 });
+      await expect(verifyHostedFiniteProcessCompletion(JSON.stringify({
+        kind: "supplemental-player-completion", outputPath,
+        runId: "run-overlap-1", status: "completed",
+      }), { kind: "supplemental-player", outputPath, runId: "run-overlap-1" }))
+        .rejects.toThrow(/at most 32 MiB/u);
+    }
   });
 
   it("validates recording-ready and playback-link retained artifacts after stdout correlation", async () => {

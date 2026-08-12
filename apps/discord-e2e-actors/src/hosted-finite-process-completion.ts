@@ -1,4 +1,5 @@
-import { readFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, open, type FileHandle } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 
 import { z } from "zod";
@@ -14,6 +15,7 @@ import { recordingReadyReceiptV1Schema } from "./recording-ready-receipt.js";
 const identifier = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u);
 const outputPath = z.string().refine((value) => isAbsolute(value) && value !== "/");
 const scenario = z.enum(["sequential", "overlap", "reconnect"]);
+const maximumCompletionArtifactBytes = 32 * 1024 * 1024;
 
 const completionSchemas = {
   actor: z.object({
@@ -138,7 +140,42 @@ function parseLastJsonLine(stdout: string): unknown {
 }
 
 async function readJson(path: string): Promise<unknown> {
-  return JSON.parse(await readFile(path, "utf8")) as unknown;
+  const pathStatus = await lstat(path);
+  assertSecureArtifact(pathStatus);
+  let handle: FileHandle | undefined;
+  try {
+    handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const before = await handle.stat();
+    assertSecureArtifact(before);
+    if (before.dev !== pathStatus.dev || before.ino !== pathStatus.ino) {
+      throw new Error("Hosted finite process artifact changed before read");
+    }
+    const bytes = new Uint8Array(before.size + 1);
+    const { bytesRead } = await handle.read(bytes, 0, bytes.byteLength, 0);
+    const after = await handle.stat();
+    if (bytesRead !== before.size || after.dev !== before.dev || after.ino !== before.ino ||
+      after.size !== before.size || after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs) {
+      throw new Error("Hosted finite process artifact changed while reading");
+    }
+    const encoded = new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, bytesRead));
+    return JSON.parse(encoded) as unknown;
+  } finally {
+    await handle?.close();
+  }
+}
+
+function assertSecureArtifact(status: {
+  readonly mode: number;
+  readonly size: number;
+  readonly uid: number;
+  isFile(): boolean;
+  isSymbolicLink(): boolean;
+}): void {
+  const owned = typeof process.getuid !== "function" || status.uid === process.getuid();
+  if (status.isSymbolicLink() || !status.isFile() || !owned || (status.mode & 0o777) !== 0o600 ||
+    status.size < 1 || status.size > maximumCompletionArtifactBytes) {
+    throw new Error("Hosted finite process artifact must be a regular owned mode-0600 file of at most 32 MiB");
+  }
 }
 
 function assertEqual(actual: unknown, expected: unknown, coordinate: string): void {
