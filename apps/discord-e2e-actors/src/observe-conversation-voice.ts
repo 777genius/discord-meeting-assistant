@@ -61,6 +61,11 @@ async function main(): Promise<void> {
   const config = loadConversationVoiceObserverConfig(process.env);
   const captures = [
     config.purpose === "addressed-answer" ? {
+      expectedDuration: {
+        maximumMilliseconds:
+          config.expectedDurationMilliseconds + config.expectedDurationToleranceMilliseconds,
+        minimumMilliseconds: config.expectedDurationMilliseconds,
+      },
       outputPath: config.outputPath,
       playbackHandshakeRoot: config.playbackHandshakeRoot!,
       purpose: config.purpose,

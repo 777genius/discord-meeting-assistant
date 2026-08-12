@@ -9,62 +9,62 @@ export const conversationVoiceCampaignIdentities = Object.freeze({
 });
 
 export interface ConversationVoiceCampaignRole {
+  readonly correlationSource: "handshake" | "literal";
   readonly purpose: "addressed-answer" | "farewell" | "greeting";
   readonly role: string;
   readonly turnId?: string;
-  readonly turnIdSource: "file" | "literal";
 }
 
 export const conversationVoiceCampaignRoles: readonly ConversationVoiceCampaignRole[] = Object.freeze([
   Object.freeze({
+    correlationSource: "literal" as const,
     purpose: "greeting" as const,
     role: "observer-unknown" as const,
     turnId: `participant-greeting:${conversationVoiceCampaignIdentities.observer}`,
-    turnIdSource: "literal" as const,
   }),
   Object.freeze({
+    correlationSource: "literal" as const,
     purpose: "greeting" as const,
     role: "speaker-ru-known" as const,
     turnId: `participant-greeting:${conversationVoiceCampaignIdentities.speakerRu}`,
-    turnIdSource: "literal" as const,
   }),
   Object.freeze({
+    correlationSource: "literal" as const,
     purpose: "greeting" as const,
     role: "speaker-en-known" as const,
     turnId: `participant-greeting:${conversationVoiceCampaignIdentities.speakerEn}`,
-    turnIdSource: "literal" as const,
   }),
   Object.freeze({
+    correlationSource: "literal" as const,
     purpose: "greeting" as const,
     role: "speaker-d-unknown" as const,
     turnId: `participant-greeting:${conversationVoiceCampaignIdentities.speakerD}`,
-    turnIdSource: "literal" as const,
   }),
   Object.freeze({
+    correlationSource: "handshake" as const,
     purpose: "addressed-answer" as const,
     role: "speaker-d-addressed-answer" as const,
-    turnIdSource: "file" as const,
   }),
   Object.freeze({
+    correlationSource: "literal" as const,
     purpose: "farewell" as const,
     role: "explicit-group-farewell" as const,
     turnId: "meeting-farewell:v1",
-    turnIdSource: "literal" as const,
   }),
 ]);
 
 type CapturePurpose = "addressed-answer" | "farewell" | "greeting";
 
 interface PlannedCapture {
-  readonly attemptId: string;
+  readonly attemptId?: string | undefined;
   readonly expectedDuration: {
     readonly maximumMilliseconds: number;
     readonly minimumMilliseconds: number;
   };
   readonly outputPath: string;
+  readonly playbackHandshakeRoot?: string | undefined;
   readonly purpose: CapturePurpose;
   readonly turnId?: string | undefined;
-  readonly turnIdFile?: string | undefined;
 }
 
 interface RetainedCapture {
@@ -234,8 +234,8 @@ export function conversationVoiceCampaignPreflight(
   captures: readonly PlannedCapture[],
 ): {
   readonly captures: readonly {
-    readonly attemptId: string;
-    readonly correlation: { readonly source: "file" | "literal"; readonly value: string };
+    readonly attemptId?: string;
+    readonly correlation: { readonly source: "handshake" | "literal"; readonly value: string };
     readonly expectedDuration: {
       readonly maximumMilliseconds: number;
       readonly minimumMilliseconds: number;
@@ -251,10 +251,10 @@ export function conversationVoiceCampaignPreflight(
   assertConversationVoiceCampaignPlan(captures);
   return {
     captures: captures.map((capture, index) => ({
-      attemptId: capture.attemptId,
-      correlation: capture.turnIdFile === undefined
+      ...(capture.attemptId === undefined ? {} : { attemptId: capture.attemptId }),
+      correlation: capture.playbackHandshakeRoot === undefined
         ? { source: "literal", value: capture.turnId! }
-        : { source: "file", value: capture.turnIdFile },
+        : { source: "handshake", value: capture.playbackHandshakeRoot },
       expectedDuration: capture.expectedDuration,
       ordinal: index + 1,
       outputPath: capture.outputPath,
@@ -277,14 +277,16 @@ function conversationVoiceCampaignPlanIssue(
     if (capture.purpose !== role.purpose) {
       return `capture ${index + 1} must be ${role.role}`;
     }
-    if (role.turnIdSource === "file") {
-      if (capture.turnIdFile === undefined || capture.turnId !== undefined) {
-        return `capture ${index + 1} must use a runtime turnIdFile`;
+    if (role.correlationSource === "handshake") {
+      if (capture.playbackHandshakeRoot === undefined || capture.attemptId !== undefined ||
+        capture.turnId !== undefined) {
+        return `capture ${index + 1} must derive attempt and turn IDs from a playback handshake`;
       }
       continue;
     }
     if (
-      capture.turnId !== role.turnId || capture.turnIdFile !== undefined
+      capture.attemptId === undefined || capture.turnId !== role.turnId ||
+      capture.playbackHandshakeRoot !== undefined
     ) {
       return `capture ${index + 1} must use ${role.role}'s pinned literal turn ID`;
     }

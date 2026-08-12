@@ -34,11 +34,11 @@ describe("conversation voice campaign contract", () => {
 
     expect(conversationVoiceCampaignPreflight(plan)).toEqual({
       captures: conversationVoiceCampaignRoles.map((role, index) => ({
-        attemptId: `attempt-${index + 1}`,
-        correlation: role.turnIdSource === "file"
-          ? { source: "file", value: "/evidence/addressed-answer.turn-id" }
+        ...(role.correlationSource === "handshake" ? {} : { attemptId: `attempt-${index + 1}` }),
+        correlation: role.correlationSource === "handshake"
+          ? { source: "handshake", value: "/evidence/addressed-answer-handshake" }
           : { source: "literal", value: role.turnId },
-        expectedDuration: { maximumMilliseconds: 1_500, minimumMilliseconds: 1_000 },
+        expectedDuration: expectedDuration(index),
         ordinal: index + 1,
         outputPath: `/evidence/capture-${index + 1}.json`,
         purpose: role.purpose,
@@ -138,13 +138,12 @@ describe("conversation voice campaign contract", () => {
 
 function canonicalPlan() {
   return conversationVoiceCampaignRoles.map((role, index) => ({
-    attemptId: `attempt-${index + 1}`,
-    expectedDuration: { maximumMilliseconds: 1_500, minimumMilliseconds: 1_000 },
+    expectedDuration: expectedDuration(index),
     outputPath: `/evidence/capture-${index + 1}.json`,
     purpose: role.purpose,
-    ...(role.turnIdSource === "file"
-      ? { turnIdFile: "/evidence/addressed-answer.turn-id" }
-      : { turnId: role.turnId }),
+    ...(role.correlationSource === "handshake"
+      ? { playbackHandshakeRoot: "/evidence/addressed-answer-handshake" }
+      : { attemptId: `attempt-${index + 1}`, turnId: role.turnId }),
   }));
 }
 
@@ -153,7 +152,7 @@ function canonicalEvidence() {
     capture: {
       acceptedDurationMilliseconds: 1_000,
       endedAt: { epochMilliseconds: index * 1_000 + 500 },
-      expectedDuration: { maximumMilliseconds: 1_500, minimumMilliseconds: 1_000 },
+      expectedDuration: expectedDuration(index),
       firstPacketAt: { epochMilliseconds: index * 1_000 + 100 },
     },
     correlation: {
@@ -161,6 +160,13 @@ function canonicalEvidence() {
       turnId: role.turnId ?? "runtime-answer-turn",
     },
   }));
+}
+
+function expectedDuration(index: number) {
+  return {
+    maximumMilliseconds: 1_500 + index * 100,
+    minimumMilliseconds: 1_000,
+  };
 }
 
 function canonicalLifecycleEvents() {
