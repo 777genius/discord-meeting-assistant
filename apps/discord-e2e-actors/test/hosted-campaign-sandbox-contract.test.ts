@@ -226,9 +226,8 @@ describe("hosted campaign sandbox process contract", () => {
     const receiptPath = join(context.parent, "receipt.json");
     await expect(runAndWriteReceipt(context, input("hang"), receiptPath, 1_000))
       .rejects.toThrow(/deadline expired/u);
-    expect(context.adapter.stoppedChildren.toSorted()).toEqual([
-      "observer", "provenance-before", "speaker-a", "speaker-b", "verifier-1", "verifier-2",
-    ]);
+    expect(context.adapter.stoppedChildren.toSorted()).toEqual(context.adapter.startedChildren.toSorted());
+    expect(context.adapter.activeChildCount).toBe(0);
     await expect(readFile(receiptPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
@@ -236,9 +235,8 @@ describe("hosted campaign sandbox process contract", () => {
     const context = await sandbox("exit");
     await expect(runHostedCampaign(input("exit"), context.adapter, bounded()))
       .rejects.toThrow(/exited before acknowledgement/u);
-    expect(context.adapter.stoppedChildren.toSorted()).toEqual([
-      "observer", "provenance-before", "speaker-a", "speaker-b", "verifier-1", "verifier-2",
-    ]);
+    expect(context.adapter.stoppedChildren.toSorted()).toEqual(context.adapter.startedChildren.toSorted());
+    expect(context.adapter.activeChildCount).toBe(0);
   });
 
   it("rejects a concurrent campaign lease and permits a later clean run", async () => {

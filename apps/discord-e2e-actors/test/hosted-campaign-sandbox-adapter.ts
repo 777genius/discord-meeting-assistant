@@ -35,6 +35,7 @@ const POLL_MILLISECONDS = 5;
 
 export class HostedCampaignSandboxAdapter implements HostedCampaignPorts {
   readonly actionLog: string[] = [];
+  readonly startedChildren: string[] = [];
   readonly stoppedChildren: string[] = [];
   readonly #children = new Map<string, ChildState>();
   readonly #options: SandboxAdapterOptions;
@@ -44,6 +45,8 @@ export class HostedCampaignSandboxAdapter implements HostedCampaignPorts {
   constructor(options: SandboxAdapterOptions) {
     this.#options = options;
   }
+
+  get activeChildCount(): number { return this.#children.size; }
 
   async acquireCampaignLease(
     campaignId: string,
@@ -95,6 +98,7 @@ export class HostedCampaignSandboxAdapter implements HostedCampaignPorts {
     const state: ChildState = { child, exited: false };
     child.once("exit", () => { state.exited = true; });
     this.#children.set(executable.childId, state);
+    this.startedChildren.push(executable.childId);
     try {
       await this.#waitForPath(join(this.#options.rootPath, `ready-${executable.childId}`), state, bounded);
     } catch (error) {

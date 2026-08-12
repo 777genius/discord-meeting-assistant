@@ -764,7 +764,12 @@ function isChildTreeAlive(child: ChildProcess): boolean {
 }
 
 function processGroupHasExecutableMember(processGroupId: number): boolean {
-  const result = spawnSync("ps", ["-axo", "pgid=,stat="], { encoding: "utf8" });
+  if (process.platform !== "darwin" && process.platform !== "linux") {
+    return true;
+  }
+  const result = spawnSync("/bin/ps", ["-axo", "pgid=,stat="], {
+    encoding: "utf8", shell: false, timeout: 1_000,
+  });
   if (result.status !== 0 || result.error !== undefined) {
     return true;
   }
