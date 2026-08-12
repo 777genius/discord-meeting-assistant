@@ -18,6 +18,16 @@ export function verifyReconnectNoRepeat(
   );
   const expectedParticipantId = reconnectFixture[0]?.speakerId;
   const retained = evidence.conversation.reconnectNoRepeat;
+  if (evidence.actorRun.scenario !== "reconnect") {
+    return;
+  }
+  if (retained === undefined) {
+    fail(
+      "RECONNECT_NEGATIVE_PROOF_MISSING",
+      "new reconnect acceptance requires retained SUT lifecycle and negative-window proof",
+    );
+    return;
+  }
   if (reconnectFixture.length !== 1) {
     fail(
       "RECONNECT_RECEIPT_IDENTITY_MISMATCH",
@@ -25,6 +35,73 @@ export function verifyReconnectNoRepeat(
     );
     return;
   }
+  const joinedAtMs = validateReconnectReceiptWindow({
+    evidence, fail, manifest,
+    expectedParticipantId,
+    recordingStartMs,
+    recordingEndMs,
+    retained,
+  });
+  if (joinedAtMs === undefined) {
+    return;
+  }
+  const reconnectGreeting = reconnectFixture[0];
+  const localeTerms = reconnectGreeting?.greetingLocale === undefined
+    ? undefined
+    : manifest.greetingLocaleTerms?.[reconnectGreeting.greetingLocale];
+  const spokenToken = reconnectGreeting?.greetingSpokenToken;
+  if (localeTerms === undefined || spokenToken === undefined) {
+    fail(
+      "RECONNECT_GREETING_EXPECTATION_MISSING",
+      "reconnect negative proof requires a pinned named greeting expectation",
+    );
+    return;
+  }
+  const greetingTerms = localeTerms.map(normalizeTranscriptSemantics);
+  const normalizedSpokenToken = normalizeTranscriptSemantics(spokenToken);
+  const windowStartMs = joinedAtMs - recordingStartMs;
+  const trackCoverage = authoritativeTrackCoverage(
+    evidence,
+    evidence.conversation.botSpeakerId,
+    [{ endMs: recordingEndMs - recordingStartMs, startMs: windowStartMs }],
+    0,
+  );
+  reportNegativeWindowTrackGap(trackCoverage, fail);
+  const repeatedGreeting = evidence.transcript.turns.some((turn) => {
+    if (
+      turn.speakerId !== evidence.conversation.botSpeakerId ||
+      turn.endMs <= windowStartMs ||
+      turn.startMs >= recordingEndMs - recordingStartMs
+    ) {
+      return false;
+    }
+    const paddedText = ` ${normalizeTranscriptSemantics(turn.text)} `;
+    return greetingTerms.some((term) => paddedText.includes(` ${term} `)) &&
+      paddedText.includes(` ${normalizedSpokenToken} `);
+  });
+  if (repeatedGreeting) {
+    fail(
+      "RECONNECT_AUDIBLE_GREETING_REPEATED",
+      "Botik repeated the reconnect participant's pinned named greeting after rejoin",
+    );
+  }
+}
+
+function validateReconnectReceiptWindow(input: {
+  readonly evidence: RetainedE2eEvidenceV8;
+  readonly expectedParticipantId: string | undefined;
+  readonly fail: VerificationFailureReporter;
+  readonly manifest: FixtureManifestV1;
+  readonly recordingEndMs: number;
+  readonly recordingStartMs: number;
+  readonly retained: NonNullable<
+    RetainedE2eEvidenceV8["conversation"]["reconnectNoRepeat"]
+  >;
+}): number | undefined {
+  const {
+    evidence, expectedParticipantId, fail, manifest,
+    recordingEndMs, recordingStartMs, retained,
+  } = input;
   const receipts = retained.participantId === expectedParticipantId
     ? retained.lifecycleReceipts : [];
   const left = receipts.filter(({ eventType }) => eventType === "participant.left");
@@ -82,46 +159,7 @@ export function verifyReconnectNoRepeat(
     );
     return;
   }
-  const localeTerms = manifest.greetingLocaleTerms;
-  if (localeTerms === undefined) {
-    return;
-  }
-  const greetingTerms = [...localeTerms.en, ...localeTerms.ru]
-    .map(normalizeTranscriptSemantics);
-  const greetingCaptures = evidence.conversation.voice.filter(
-    ({ correlation }) => correlation.purpose === "greeting",
-  ).map(({ capture }) => ({
-    endMs: capture.endedAt.epochMilliseconds - recordingStartMs,
-    startMs: capture.firstPacketAt.epochMilliseconds - recordingStartMs,
-  }));
-  const windowStartMs = joinedAtMs - recordingStartMs;
-  const trackCoverage = authoritativeTrackCoverage(
-    evidence,
-    evidence.conversation.botSpeakerId,
-    [{ endMs: recordingEndMs - recordingStartMs, startMs: windowStartMs }],
-    0,
-  );
-  reportNegativeWindowTrackGap(trackCoverage, fail);
-  const repeatedGreeting = evidence.transcript.turns.some((turn) => {
-    if (
-      turn.speakerId !== evidence.conversation.botSpeakerId ||
-      turn.endMs <= windowStartMs ||
-      turn.startMs >= recordingEndMs - recordingStartMs
-    ) {
-      return false;
-    }
-    const paddedText = ` ${normalizeTranscriptSemantics(turn.text)} `;
-    return greetingTerms.some((term) => paddedText.includes(` ${term} `)) &&
-      !greetingCaptures.some(({ endMs, startMs }) =>
-        turn.startMs < endMs && startMs < turn.endMs
-      );
-  });
-  if (repeatedGreeting) {
-    fail(
-      "RECONNECT_AUDIBLE_GREETING_REPEATED",
-      "Botik produced greeting-shaped transcript evidence after the SUT rejoined",
-    );
-  }
+  return joinedAtMs;
 }
 
 function reportNegativeWindowTrackGap(

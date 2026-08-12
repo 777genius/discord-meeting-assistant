@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  retainedE2eEvidenceV8Schema,
   verifyRetainedE2eEvidence,
   type RetainedE2eEvidenceV8,
 } from "../src/e2e-evidence.js";
@@ -170,6 +171,50 @@ describe("retained conversation V8 response semantics", () => {
     ).failures.map(({ code }) => code);
 
     expect(codes).toContain("RECONNECT_AUDIBLE_GREETING_REPEATED");
+  });
+
+  it("does not hide a repeated reconnect greeting behind another participant capture", () => {
+    const evidence = retainedV8Evidence();
+    const otherGreeting = evidence.conversation.voice.find(
+      ({ correlation }) =>
+        correlation.purpose === "greeting" && correlation.turnId.endsWith("1533873978417086474"),
+    );
+    if (otherGreeting === undefined) {
+      throw new Error("other participant greeting capture fixture is missing");
+    }
+    const startMs = otherGreeting.capture.firstPacketAt.epochMilliseconds;
+    evidence.transcript.turns.push({
+      endMs: startMs - 1_000 + 300,
+      speakerId: evidence.conversation.botSpeakerId,
+      startMs: startMs - 1_000,
+      text: "Hi, Test B!",
+      turnId: "reconnect-greeting-over-other-capture",
+    });
+
+    const codes = verifyRetainedE2eEvidence(
+      manifest(),
+      evidence,
+      currentExpectedRevisions,
+    ).failures.map(({ code }) => code);
+
+    expect(codes).toContain("RECONNECT_AUDIBLE_GREETING_REPEATED");
+  });
+
+  it("still parses historical V8 while requiring negative proof for a new reconnect run", () => {
+    const evidence = retainedV8Evidence();
+    const { reconnectNoRepeat: _reconnectNoRepeat, ...legacyConversation } = evidence.conversation;
+
+    const parsed = retainedE2eEvidenceV8Schema.parse({
+      ...evidence,
+      conversation: legacyConversation,
+    });
+    const codes = verifyRetainedE2eEvidence(
+      manifest(),
+      parsed,
+      currentExpectedRevisions,
+    ).failures.map(({ code }) => code);
+
+    expect(codes).toContain("RECONNECT_NEGATIVE_PROOF_MISSING");
   });
 
   it("rejects a generic greeting in place of a pinned known English name", () => {

@@ -12,6 +12,7 @@ import type {
   retainedE2eEvidenceV6Schema,
   retainedE2eEvidenceV7Schema,
   retainedE2eEvidenceV8Schema,
+  retainedReconnectE2eEvidenceV8Schema,
   unboundActorRunEvidenceV1Schema,
 } from "./e2e-evidence-schema.js";
 
@@ -31,4 +32,7 @@ export type RetainedE2eEvidenceV5 = z.infer<typeof retainedE2eEvidenceV5Schema>;
 export type RetainedE2eEvidenceV6 = z.infer<typeof retainedE2eEvidenceV6Schema>;
 export type RetainedE2eEvidenceV7 = z.infer<typeof retainedE2eEvidenceV7Schema>;
 export type RetainedE2eEvidenceV8 = z.infer<typeof retainedE2eEvidenceV8Schema>;
+export type RetainedReconnectE2eEvidenceV8 = z.infer<
+  typeof retainedReconnectE2eEvidenceV8Schema
+>;
 export type RetainedE2eEvidence = z.infer<typeof retainedE2eEvidenceSchema>;

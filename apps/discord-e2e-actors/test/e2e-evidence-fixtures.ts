@@ -6,7 +6,7 @@ import {
   retainedE2eEvidenceV5Schema,
   retainedE2eEvidenceV6Schema,
   retainedE2eEvidenceV7Schema,
-  retainedE2eEvidenceV8Schema,
+  retainedReconnectE2eEvidenceV8Schema,
   verifyRetainedE2eEvidence as verifyRetainedE2eEvidenceAgainstExpectedRevision,
   type DeploymentRevisionExpectation,
   type FixtureManifestV1,
@@ -17,7 +17,7 @@ import {
   type RetainedE2eEvidenceV5,
   type RetainedE2eEvidenceV6,
   type RetainedE2eEvidenceV7,
-  type RetainedE2eEvidenceV8,
+  type RetainedReconnectE2eEvidenceV8,
 } from "../src/e2e-evidence.js";
 
 export const speakerAId = "1533227577286852649";
@@ -558,7 +558,7 @@ export function retainedV6Evidence(
   });
 }
 
-export function retainedV8Evidence(): RetainedE2eEvidenceV8 {
+export function retainedV8Evidence(): RetainedReconnectE2eEvidenceV8 {
   const source = retainedV6Evidence();
   source.actorRun.scenario = "reconnect";
   source.actorRun.events = [
@@ -620,7 +620,7 @@ export function retainedV8Evidence(): RetainedE2eEvidenceV8 {
     { observedAt: "1970-01-01T00:00:03.800Z", outcome: "active", participantId: speakerDId, turnId: "human-question-1", type: "addressed-answer" as const },
     { evidenceTurnIds: ["speaker-d-farewell"], locale: "ru", observedAt: "1970-01-01T00:00:07.000Z", playbackAttemptId: "farewell-attempt-1", reason: "explicit-group", turnId: "meeting-farewell:v1" as const, type: "farewell" as const },
   ];
-  return retainedE2eEvidenceV8Schema.parse({
+  return retainedReconnectE2eEvidenceV8Schema.parse({
     ...source,
     conversation: {
       botSpeakerId,
