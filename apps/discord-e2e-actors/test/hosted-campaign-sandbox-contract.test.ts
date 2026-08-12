@@ -9,6 +9,7 @@ import {
   HOSTED_CAMPAIGN_TARGET,
   runHostedCampaign,
   type HostedCampaignInput,
+  type HostedCampaignBarrierAction,
 } from "../src/hosted-campaign-coordinator.js";
 import { campaignActions } from "../src/hosted-campaign-execution-graph.js";
 import { retainedE2eEvidenceSchema, verifyE2eCampaign } from "../src/e2e-evidence.js";
@@ -41,17 +42,106 @@ function input(behavior = "ack"): HostedCampaignInput {
   ] as const;
   const skeleton = { children: [], runs, target: HOSTED_CAMPAIGN_TARGET,
     thresholds: { answerFirstPacketMilliseconds: 4_000 } };
+  const actions = campaignActions(skeleton);
+  const productions = (kind: HostedCampaignBarrierAction["kind"]) => actions
+    .filter(({ action }) => action.kind === kind)
+    .map((reference, index) => ({
+      ...reference, outputPath: `/sandbox/${reference.action.kind}-${index}.json`,
+    }));
+  const provenanceProducer = (phase: "after" | "before") => {
+    const produced = productions(`provenance-${phase}`)[0]!;
+    const action = produced.action as Extract<HostedCampaignBarrierAction, {
+      readonly kind: "provenance-after" | "provenance-before";
+    }>;
+    const snapshotPath = `/sandbox/provenance-${phase}.json`;
+    return completionChild({
+      arguments: { kind: "environment" }, childId: `provenance-${phase}`,
+      completion: { action, campaignId: "campaign-sandbox", kind: "provenance-probe", phase,
+        runIds: ["run-sequential", "run-overlap", "run-reconnect"], snapshotPath },
+      entrypoint: "provenance-probe",
+      environment: {
+        DISCORD_E2E_PROVENANCE_CAMPAIGN_ID: "campaign-sandbox", DISCORD_E2E_PROVENANCE_PHASE: phase,
+        DISCORD_E2E_PROVENANCE_RUN_IDS_JSON: '["run-sequential","run-overlap","run-reconnect"]',
+        DISCORD_E2E_PROVENANCE_SNAPSHOT_PATH: snapshotPath,
+      },
+      produced,
+    });
+  };
+  const serviceLevels = productions("service-levels-ready")[0]!;
+  const serviceLevelsAction = serviceLevels.action as Extract<HostedCampaignBarrierAction, {
+    readonly kind: "service-levels-ready";
+  }>;
+  const campaignVerified = productions("campaign-verified")[0]!;
+  const campaignVerifiedAction = campaignVerified.action as Extract<HostedCampaignBarrierAction, {
+    readonly kind: "campaign-verified";
+  }>;
   return {
     ...skeleton,
-    children: ["observer", "speaker-a", "speaker-b"].map((childId) => ({
-      arguments: { kind: "environment" }, childId, entrypoint: "actor" as const,
-      environment: childId === "observer" ? { FIXTURE_BEHAVIOR: behavior } : {},
-      produces: childId === "observer" ? campaignActions(skeleton).map((reference, index) => ({
-        ...reference, outputPath: `/sandbox/action-${index}.json`,
-      })) : [],
-      requires: [],
-      startBefore: { kind: "campaign" as const },
-    })),
+    children: [
+      { arguments: { kind: "environment" }, childId: "observer", entrypoint: "conversation-observer" as const,
+        environment: { FIXTURE_BEHAVIOR: behavior }, produces: [
+          ...productions("observer-subscribed"), ...productions("capture-retained"),
+          ...productions("answer-intent"), ...productions("answer-observer-ready"),
+          ...productions("answer-first-packet"),
+        ], requires: [], startBefore: { kind: "campaign" as const } },
+      { arguments: { kind: "environment" }, childId: "speaker-a", entrypoint: "actor" as const,
+        environment: {}, produces: [...productions("reconnect-left"), ...productions("reconnect-ready")], requires: [],
+        startBefore: { kind: "campaign" as const } },
+      { arguments: { kind: "environment" }, childId: "speaker-b", entrypoint: "live-observer" as const,
+        environment: {}, produces: [], requires: [],
+        startBefore: { kind: "campaign" as const } },
+      provenanceProducer("before"),
+      ...productions("run-verified").map((produced) => completionChild({
+        arguments: { evidencePath: `/sandbox/${produced.runId}.json`, kind: "evidence-verifier",
+          manifestPath: "/sandbox/manifest.json" },
+        childId: `verifier-${produced.ordinal}`,
+        completion: { action: produced.action as Extract<HostedCampaignBarrierAction, {
+          readonly kind: "run-verified";
+        }>, kind: "evidence-verifier" },
+        entrypoint: "evidence-verifier", environment: {}, produced,
+      })),
+      completionChild({
+        arguments: { kind: "environment" }, childId: "service-levels",
+        completion: { action: serviceLevelsAction, campaignId: "campaign-sandbox", kind: "service-levels",
+          meetingId: "meeting-sandbox", outputPath: "/sandbox/service-levels.json",
+          recordingId: "recording-sandbox", reportPath: "/sandbox/service-levels-report.json",
+          runId: "run-reconnect" },
+        entrypoint: "service-levels",
+        environment: {
+          DISCORD_E2E_SLA_CAMPAIGN_ID: "campaign-sandbox", DISCORD_E2E_SLA_MEETING_ID: "meeting-sandbox",
+          DISCORD_E2E_SLA_OUTPUT: "/sandbox/service-levels.json",
+          DISCORD_E2E_SLA_RECORDING_ID: "recording-sandbox",
+          DISCORD_E2E_SLA_REPORT_OUTPUT: "/sandbox/service-levels-report.json",
+          DISCORD_E2E_SLA_RUN_ID: "run-reconnect",
+        },
+        produced: serviceLevels,
+      }),
+      provenanceProducer("after"),
+      completionChild({
+        arguments: { evidencePaths: ["/sandbox/1.json", "/sandbox/2.json", "/sandbox/3.json"],
+          kind: "campaign-verifier", manifestPath: "/sandbox/manifest.json" },
+        childId: "campaign-verifier",
+        completion: { action: campaignVerifiedAction, campaignId: "campaign-sandbox",
+          kind: "campaign-verifier", runIds: ["run-sequential", "run-overlap", "run-reconnect"] },
+        entrypoint: "campaign-verifier", environment: {}, produced: campaignVerified,
+      }),
+    ],
+  };
+}
+
+function completionChild({
+  arguments: arguments_, childId, completion, entrypoint, environment, produced,
+}: {
+  readonly arguments: HostedCampaignInput["children"][number]["arguments"];
+  readonly childId: string;
+  readonly completion: NonNullable<HostedCampaignInput["children"][number]["completion"]>;
+  readonly entrypoint: HostedCampaignInput["children"][number]["entrypoint"];
+  readonly environment: Readonly<Record<string, string>>;
+  readonly produced: HostedCampaignInput["children"][number]["produces"][number];
+}): HostedCampaignInput["children"][number] {
+  return {
+    arguments: arguments_, childId, completion, entrypoint, environment, produces: [produced], requires: [],
+    startBefore: { action: produced.action, kind: "barrier", ordinal: produced.ordinal, runId: produced.runId },
   };
 }
 
@@ -116,14 +206,14 @@ describe("hosted campaign sandbox process contract", () => {
     expect(receipt).toMatchObject({ campaignId: "campaign-sandbox", teardownComplete: true });
     expect(context.verificationCount()).toBe(1);
     expect(context.adapter.actionLog).toEqual([
-      "provenance-before", "observer-subscribed",
-      "run-verified:1:run-sequential", "run-verified:2:run-overlap",
+      "provenance-before", "run-verified:1:run-sequential", "run-verified:2:run-overlap",
+      "observer-subscribed",
       "capture-retained:1", "capture-retained:2", "capture-retained:3", "capture-retained:4",
       "reconnect-left", "reconnect-ready", "answer-intent", "answer-observer-ready",
       "answer-first-packet", "capture-retained:5", "capture-retained:6", "service-levels-ready",
       "run-verified:3:run-reconnect", "provenance-after", "campaign-verified",
     ]);
-    expect(context.adapter.stoppedChildren.toSorted()).toEqual(["observer", "speaker-a", "speaker-b"]);
+    expect(context.adapter.stoppedChildren.toSorted()).toEqual(input().children.map(({ childId }) => childId).toSorted());
     for (const { outputPath } of context.runFiles) {
       expect(retainedE2eEvidenceSchema.safeParse(JSON.parse(await readFile(outputPath, "utf8"))).success).toBe(true);
       expect((await lstat(outputPath)).mode & 0o777).toBe(0o600);
@@ -136,7 +226,9 @@ describe("hosted campaign sandbox process contract", () => {
     const receiptPath = join(context.parent, "receipt.json");
     await expect(runAndWriteReceipt(context, input("hang"), receiptPath, 1_000))
       .rejects.toThrow(/deadline expired/u);
-    expect(context.adapter.stoppedChildren.toSorted()).toEqual(["observer", "speaker-a", "speaker-b"]);
+    expect(context.adapter.stoppedChildren.toSorted()).toEqual([
+      "observer", "provenance-before", "speaker-a", "speaker-b", "verifier-1", "verifier-2",
+    ]);
     await expect(readFile(receiptPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
@@ -144,7 +236,9 @@ describe("hosted campaign sandbox process contract", () => {
     const context = await sandbox("exit");
     await expect(runHostedCampaign(input("exit"), context.adapter, bounded()))
       .rejects.toThrow(/exited before acknowledgement/u);
-    expect(context.adapter.stoppedChildren.toSorted()).toEqual(["observer", "speaker-a", "speaker-b"]);
+    expect(context.adapter.stoppedChildren.toSorted()).toEqual([
+      "observer", "provenance-before", "speaker-a", "speaker-b", "verifier-1", "verifier-2",
+    ]);
   });
 
   it("rejects a concurrent campaign lease and permits a later clean run", async () => {

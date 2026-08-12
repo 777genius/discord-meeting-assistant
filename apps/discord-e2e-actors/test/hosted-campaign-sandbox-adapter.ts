@@ -74,6 +74,7 @@ export class HostedCampaignSandboxAdapter implements HostedCampaignPorts {
   }
 
   async publishReleaseGate(): Promise<void> {}
+  async publishSupplementalGate(): Promise<void> {}
 
   async awaitChildCompletion(): Promise<void> {}
 
@@ -157,18 +158,24 @@ export class HostedCampaignSandboxAdapter implements HostedCampaignPorts {
   }
 
   #targetChild(action: HostedCampaignBarrierAction): string {
-    if (action.kind === "observer-subscribed" || action.kind.startsWith("provenance")
-      || action.kind === "campaign-verified" || action.kind === "answer-observer-ready"
-      || action.kind === "answer-first-packet" || action.kind === "service-levels-ready") {
+    if (action.kind === "observer-subscribed" || action.kind === "capture-retained"
+      || action.kind === "answer-intent" || action.kind === "answer-observer-ready"
+      || action.kind === "answer-first-packet") {
       return "observer";
     }
     if (action.kind === "run-verified") {
-      return action.ordinal === 1 ? "speaker-a" : action.ordinal === 2 ? "speaker-b" : "observer";
+      return `verifier-${action.ordinal}`;
     }
-    if (action.kind === "capture-retained") {
-      return action.ordinal % 2 === 1 ? "speaker-a" : "speaker-b";
+    if (action.kind === "provenance-before" || action.kind === "provenance-after") {
+      return action.kind;
     }
-    return "speaker-b";
+    if (action.kind === "service-levels-ready") {
+      return "service-levels";
+    }
+    if (action.kind === "campaign-verified") {
+      return "campaign-verifier";
+    }
+    return "speaker-a";
   }
 
   #actionLabel(action: HostedCampaignBarrierAction): string {
