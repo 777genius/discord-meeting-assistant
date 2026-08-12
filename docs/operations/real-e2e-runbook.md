@@ -202,6 +202,15 @@ evidence. Do not run this unfinished campaign against production or present it
 as a real-provider qualification. This runbook intentionally documents no
 coordinator command until one exists in the repository.
 
+The hosted campaign pass receipt is published only after successful teardown.
+Publication is create-only and atomic: a completed, synced temporary file in the
+receipt directory is linked into its final name without replacing anything, and
+the directory entry is synced before the temporary name is removed. A retry must
+use a fresh campaign ID, fresh private artifact root, and fresh receipt path.
+Never delete, overwrite, or reuse an existing receipt or artifact root to make a
+retry pass. Retain an interrupted run's partial files, lease, and barrier markers
+as abandoned diagnostic evidence, clearly separated from the next campaign.
+
 To retain the ordered capture set with one observer connection, pass the
 remaining capture records through
 `DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON`. The record shape and

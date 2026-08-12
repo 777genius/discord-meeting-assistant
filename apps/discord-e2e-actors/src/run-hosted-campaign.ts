@@ -1,6 +1,7 @@
+import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, open, readFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { link, lstat, open, readFile, rm, type FileHandle } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -70,17 +71,50 @@ export async function writeCreateOnlyHostedCampaignReceipt(
   path: string,
   receipt: HostedCampaignPassReceipt,
 ): Promise<void> {
+  const parentPath = dirname(path);
+  const temporaryPath = join(parentPath, `.${basename(path)}.partial-${randomUUID()}`);
+  const payload = `${JSON.stringify(receipt, undefined, 2)}\n`;
   const handle = await open(
-    path,
+    temporaryPath,
     constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
     0o600,
   );
   try {
-    await handle.writeFile(`${JSON.stringify(receipt, undefined, 2)}\n`, "utf8");
-    await handle.sync();
+    try {
+      await handle.writeFile(payload, "utf8");
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await link(temporaryPath, path);
+    await syncDirectory(parentPath);
   } finally {
-    await handle.close();
+    await handle.close().catch(() => undefined);
+    await rm(temporaryPath, { force: true });
+    await syncDirectory(parentPath);
   }
+}
+
+async function syncDirectory(path: string): Promise<void> {
+  let handle: FileHandle | undefined;
+  try {
+    handle = await open(path, constants.O_RDONLY | (constants.O_DIRECTORY ?? 0));
+    await handle.sync();
+  } catch (error) {
+    const code = errorCode(error);
+    if (code !== "EINVAL" && code !== "ENOTSUP" && code !== "EISDIR") {
+      throw error;
+    }
+  } finally {
+    await handle?.close();
+  }
+}
+
+function errorCode(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null || !("code" in error)) {
+    return undefined;
+  }
+  return typeof error.code === "string" ? error.code : undefined;
 }
 
 export function loadHostedCampaignTrustedRuntimeEnvironment(
