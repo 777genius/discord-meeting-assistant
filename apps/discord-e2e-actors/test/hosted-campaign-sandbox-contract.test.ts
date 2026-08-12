@@ -25,6 +25,8 @@ import { HostedCampaignSandboxAdapter } from "./hosted-campaign-sandbox-adapter.
 
 const fixturePath = join(dirname(fileURLToPath(import.meta.url)), "fixtures", "hosted-campaign-child.mjs");
 const cleanupRoots: string[] = [];
+const SUCCESSFUL_PROCESS_CAMPAIGN_DEADLINE_MILLISECONDS = 10_000;
+const PROCESS_CONTRACT_TEST_TIMEOUT_MILLISECONDS = 15_000;
 
 afterEach(async () => {
   await Promise.all(cleanupRoots.splice(0).map(async (path) => rm(path, { force: true, recursive: true })));
@@ -99,7 +101,11 @@ async function runAndWriteReceipt(
 describe("hosted campaign sandbox process contract", () => {
   it("executes causal scenario actions and verifies three child-retained outputs", async () => {
     const context = await sandbox();
-    const receipt = await runHostedCampaign(input(), context.adapter, bounded());
+    const receipt = await runHostedCampaign(
+      input(),
+      context.adapter,
+      bounded(SUCCESSFUL_PROCESS_CAMPAIGN_DEADLINE_MILLISECONDS),
+    );
 
     expect(receipt).toMatchObject({ campaignId: "campaign-sandbox", teardownComplete: true });
     expect(context.verificationCount()).toBe(1);
@@ -117,7 +123,7 @@ describe("hosted campaign sandbox process contract", () => {
       expect((await lstat(outputPath)).mode & 0o777).toBe(0o600);
     }
     expect((await lstat(context.rootPath)).mode & 0o777).toBe(0o700);
-  });
+  }, PROCESS_CONTRACT_TEST_TIMEOUT_MILLISECONDS);
 
   it("times out a non-acknowledging child, cleans up, and creates no partial receipt", async () => {
     const context = await sandbox("hang");
@@ -145,7 +151,12 @@ describe("hosted campaign sandbox process contract", () => {
     await first.adapter.releaseCampaignLease();
 
     const receiptPath = join(first.parent, "receipt.json");
-    await runAndWriteReceipt(first, input(), receiptPath);
+    await runAndWriteReceipt(
+      first,
+      input(),
+      receiptPath,
+      SUCCESSFUL_PROCESS_CAMPAIGN_DEADLINE_MILLISECONDS,
+    );
     expect(JSON.parse(await readFile(receiptPath, "utf8"))).toMatchObject({ teardownComplete: true });
-  });
+  }, PROCESS_CONTRACT_TEST_TIMEOUT_MILLISECONDS);
 });
