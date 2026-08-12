@@ -134,7 +134,9 @@ it("holds an observer greeting until its exact playback readiness completes", as
     ...proactiveTurn("participant-greeting:42", 0),
     speakerId: "42",
   });
-  await vi.waitFor(() => expect(requests).toHaveLength(1));
+  await vi.waitFor(() => {
+    expect(requests).toHaveLength(1);
+  });
   expect(playback.requests).toEqual([]);
   expect(requests[0]).toMatchObject({
     participantId: "42",
