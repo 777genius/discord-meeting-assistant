@@ -48,6 +48,7 @@ export interface VoicetextCanaryRunnerInputV1 {
   readonly binding: VoicetextSemanticCanaryReceiptV1["binding"];
   readonly endpoint: VoicetextSemanticCanaryReceiptV1["endpoint"];
   readonly fixturePath: string;
+  readonly signal?: AbortSignal;
   readonly timeoutMs: number;
 }
 

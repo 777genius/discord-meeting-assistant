@@ -20,14 +20,17 @@ const input = {
 
 describe("hosted Voicetext canary container runner", () => {
   it("invokes only the pinned internal CLI and passes no token value", async () => {
+    const signal = new AbortController().signal;
     const execute = vi.fn<BoundedContainerProcessPort["execute"]>(async () => ({
       exitCode: 0, signal: null, stderr: "", stdout: "{\"schemaVersion\":1}\n", timedOut: false,
     }));
-    const result = await new HostedVoicetextCanaryContainerRunnerV1({ execute }).run(input);
+    const result = await new HostedVoicetextCanaryContainerRunnerV1({ execute }).run({ ...input, signal });
     expect(result).toEqual({ schemaVersion: 1 });
     const request = execute.mock.calls[0]?.[0];
     expect(request).toBeDefined();
-    expect(request).toMatchObject({ executable: "docker", maximumOutputBytes: 1_048_576, timeoutMs: 20_000 });
+    expect(request).toMatchObject({
+      executable: "docker", maximumOutputBytes: 1_048_576, signal, timeoutMs: 20_000,
+    });
     expect(request?.args).toContain("dist/run-voicetext-semantic-canary.js");
     expect(JSON.stringify(request)).not.toMatch(/token|secret/iu);
   });

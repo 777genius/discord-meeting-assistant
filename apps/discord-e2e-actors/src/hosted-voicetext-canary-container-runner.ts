@@ -19,6 +19,7 @@ export interface BoundedContainerProcessPort {
     args: readonly string[];
     executable: string;
     maximumOutputBytes: number;
+    signal?: AbortSignal;
     timeoutMs: number;
   }>): Promise<BoundedContainerProcessResult>;
 }
@@ -47,6 +48,7 @@ export class HostedVoicetextCanaryContainerRunnerV1 implements VoicetextCanaryRu
       ],
       executable: this.executable,
       maximumOutputBytes,
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
       timeoutMs: input.timeoutMs,
     });
     if (result.timedOut) {throw new Error("Voicetext semantic canary container timed out");}
