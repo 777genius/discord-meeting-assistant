@@ -155,6 +155,11 @@ export function makeHostedCampaignChildren(
   ): HostedCampaignExecutableSpec => {
     const completed = reference(run, { kind: "actor-completed", ordinal: run.ordinal, runId: run.runId });
     const releasePath = paths.run(run.ordinal, "actor-release.json");
+    const releaseArmedPath = paths.run(run.ordinal, "actor-release-armed.json");
+    const playbackPath = paths.run(run.ordinal, "actor-playback.json");
+    const playbackArmedPath = paths.run(run.ordinal, "actor-playback-armed.json");
+    const endPath = paths.run(run.ordinal, "actor-end.json");
+    const endArmedPath = paths.run(run.ordinal, "actor-end-armed.json");
     return {
       arguments: { kind: "environment" }, childId: `actor-${run.ordinal}`,
       completion: { action: completed.action, kind: "actor", outputPath: paths.run(run.ordinal, "actor.json"), runId: run.runId, scenario: run.scenario },
@@ -163,8 +168,15 @@ export function makeHostedCampaignChildren(
         DISCORD_E2E_FIXTURE_MANIFEST: definition.fixtureManifestPath,
         DISCORD_E2E_GUILD_ID: HOSTED_CAMPAIGN_TARGET.guildId,
         DISCORD_E2E_HOSTED_RELEASE_GATE_CAMPAIGN_ID: definition.campaignId,
+        DISCORD_E2E_HOSTED_RELEASE_GATE_ARMED_PATH: releaseArmedPath,
         DISCORD_E2E_HOSTED_RELEASE_GATE_PATH: releasePath,
         DISCORD_E2E_HOSTED_RELEASE_GATE_TIMEOUT_MS: "600000",
+        ...(run.ordinal === 3 ? {
+          DISCORD_E2E_HOSTED_PLAYBACK_GATE_PATH: playbackPath,
+          DISCORD_E2E_HOSTED_PLAYBACK_GATE_ARMED_PATH: playbackArmedPath,
+          DISCORD_E2E_HOSTED_END_GATE_PATH: endPath,
+          DISCORD_E2E_HOSTED_END_GATE_ARMED_PATH: endArmedPath,
+        } : {}),
         DISCORD_E2E_PLAYBACK_TIMEOUT_MS: "120000", DISCORD_E2E_READY_TIMEOUT_MS: "120000",
         DISCORD_E2E_RECORDER_BOT_ID: HOSTED_CAMPAIGN_TARGET.sutApplicationId,
         DISCORD_E2E_RUN_ID: run.runId, DISCORD_E2E_SCENARIO: run.scenario,
@@ -175,8 +187,12 @@ export function makeHostedCampaignChildren(
       }, produces: [
         produced(run, completed.action, barrierPath(`actor-${run.ordinal}-completed`)),
         ...(run.ordinal === 3 ? [produced(run, reconnectLeft.action, barrierPath("reconnect-left")), produced(run, reconnectReady.action, barrierPath("reconnect-ready"))] : []),
-      ], releaseGate: { action: release.action, ordinal: release.ordinal, path: releasePath, runId: release.runId },
-      requires: [], startBefore: { kind: "campaign" },
+      ], releaseGate: { action: release.action, armedPath: releaseArmedPath, ordinal: release.ordinal, path: releasePath, runId: release.runId },
+      ...(run.ordinal === 3 ? { actorGates: {
+        playback: { armedPath: playbackArmedPath, path: playbackPath, trigger: captures[3]! },
+        end: { armedPath: endArmedPath, path: endPath, trigger: supplementalCompleted },
+      } } : {}),
+      requires: [], startBefore: { ...release, kind: "barrier" },
     };
   };
   const readyCollector = (run: FixedHostedCampaignRun<1 | 2 | 3>): HostedCampaignExecutableSpec => {
@@ -358,7 +374,7 @@ export function makeHostedCampaignChildren(
     requires: [provenanceAfter], startBefore: { ...campaignVerified, kind: "barrier" },
   };
   return Object.freeze([
-    actor(sequential, provenanceBefore), actor(overlap, runVerified[0]!), actor(reconnect, runVerified[1]!, supplementalCompleted),
+    actor(sequential, provenanceBefore), actor(overlap, runVerified[0]!), actor(reconnect, observerSubscribed, supplementalCompleted),
     provenance("before", sequential, provenanceBefore), readyCollector(sequential), replayAttestation(sequential),
     collector(sequential, runVerified[0]!, sequentialBinding, [provenanceBefore, recordingReady[0]!, replayAttestationReady[0]!, reference(sequential, { kind: "actor-completed", ordinal: 1, runId: sequential.runId })]),
     readyCollector(overlap), replayAttestation(overlap), collector(overlap, runVerified[1]!, overlapBinding, [runVerified[0]!, recordingReady[1]!, replayAttestationReady[1]!, reference(overlap, { kind: "actor-completed", ordinal: 2, runId: overlap.runId })]),

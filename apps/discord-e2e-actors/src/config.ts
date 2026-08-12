@@ -26,11 +26,17 @@ const actorEnvironmentSchema = z.object({
   DISCORD_E2E_FIXTURE_MANIFEST: z.string().min(1).default("test/fixtures/manifest.v1.json"),
   DISCORD_E2E_RUN_ID: correlationIdSchema,
   DISCORD_E2E_HOSTED_RELEASE_GATE_PATH: z.string().refine(isAbsolute).optional(),
+  DISCORD_E2E_HOSTED_RELEASE_GATE_ARMED_PATH: z.string().refine(isAbsolute).optional(),
+  DISCORD_E2E_HOSTED_PLAYBACK_GATE_PATH: z.string().refine(isAbsolute).optional(),
+  DISCORD_E2E_HOSTED_PLAYBACK_GATE_ARMED_PATH: z.string().refine(isAbsolute).optional(),
+  DISCORD_E2E_HOSTED_END_GATE_PATH: z.string().refine(isAbsolute).optional(),
+  DISCORD_E2E_HOSTED_END_GATE_ARMED_PATH: z.string().refine(isAbsolute).optional(),
   DISCORD_E2E_HOSTED_RELEASE_GATE_CAMPAIGN_ID: correlationIdSchema.optional(),
   DISCORD_E2E_HOSTED_RELEASE_GATE_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(600_000).optional(),
 }).superRefine((value, context) => {
   const releaseGateValues = [
     value.DISCORD_E2E_HOSTED_RELEASE_GATE_PATH,
+    value.DISCORD_E2E_HOSTED_RELEASE_GATE_ARMED_PATH,
     value.DISCORD_E2E_HOSTED_RELEASE_GATE_CAMPAIGN_ID,
     value.DISCORD_E2E_HOSTED_RELEASE_GATE_TIMEOUT_MS,
   ];
@@ -42,13 +48,32 @@ const actorEnvironmentSchema = z.object({
       path: ["DISCORD_E2E_HOSTED_RELEASE_GATE_PATH"],
     });
   }
+  for (const [name, pair] of [
+    ["playback", [value.DISCORD_E2E_HOSTED_PLAYBACK_GATE_PATH, value.DISCORD_E2E_HOSTED_PLAYBACK_GATE_ARMED_PATH]],
+    ["end", [value.DISCORD_E2E_HOSTED_END_GATE_PATH, value.DISCORD_E2E_HOSTED_END_GATE_ARMED_PATH]],
+  ] as const) {
+    if (pair.filter((entry) => entry !== undefined).length === 1) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: `Hosted ${name} gate path and armed path must be configured together` });
+    }
+  }
+  const stagedGateCount = [value.DISCORD_E2E_HOSTED_PLAYBACK_GATE_PATH, value.DISCORD_E2E_HOSTED_END_GATE_PATH]
+    .filter((entry) => entry !== undefined).length;
+  if (stagedGateCount !== 0 && (configuredValues !== releaseGateValues.length || stagedGateCount !== 2)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Hosted connection, playback, and end gates must form one complete lifecycle" });
+  }
 });
 
 export interface ActorReleaseGateConfig {
+  readonly armedPath: string;
   readonly campaignId: string;
   readonly path: string;
   readonly runId: string;
   readonly timeoutMilliseconds: number;
+}
+
+export interface ActorStagedGateConfig {
+  readonly armedPath: string;
+  readonly path: string;
 }
 
 export interface ActorConfig {
@@ -68,6 +93,8 @@ export interface ActorConfig {
   readonly fixtureManifestPath: string;
   readonly runId: string;
   readonly releaseGate: ActorReleaseGateConfig | undefined;
+  readonly playbackGate: ActorStagedGateConfig | undefined;
+  readonly endGate: ActorStagedGateConfig | undefined;
   readonly speakers: readonly [
     { readonly name: "speaker-a"; readonly account: string; readonly fixturePath: string },
     { readonly name: "speaker-b"; readonly account: string; readonly fixturePath: string },
@@ -93,10 +120,19 @@ export function loadActorConfig(environment: NodeJS.ProcessEnv): ActorConfig {
     fixtureManifestPath: parsed.DISCORD_E2E_FIXTURE_MANIFEST,
     runId: parsed.DISCORD_E2E_RUN_ID,
     releaseGate: parsed.DISCORD_E2E_HOSTED_RELEASE_GATE_PATH === undefined ? undefined : {
+      armedPath: parsed.DISCORD_E2E_HOSTED_RELEASE_GATE_ARMED_PATH!,
       campaignId: parsed.DISCORD_E2E_HOSTED_RELEASE_GATE_CAMPAIGN_ID!,
       path: parsed.DISCORD_E2E_HOSTED_RELEASE_GATE_PATH,
       runId: parsed.DISCORD_E2E_RUN_ID,
       timeoutMilliseconds: parsed.DISCORD_E2E_HOSTED_RELEASE_GATE_TIMEOUT_MS!,
+    },
+    playbackGate: parsed.DISCORD_E2E_HOSTED_PLAYBACK_GATE_PATH === undefined ? undefined : {
+      armedPath: parsed.DISCORD_E2E_HOSTED_PLAYBACK_GATE_ARMED_PATH!,
+      path: parsed.DISCORD_E2E_HOSTED_PLAYBACK_GATE_PATH,
+    },
+    endGate: parsed.DISCORD_E2E_HOSTED_END_GATE_PATH === undefined ? undefined : {
+      armedPath: parsed.DISCORD_E2E_HOSTED_END_GATE_ARMED_PATH!,
+      path: parsed.DISCORD_E2E_HOSTED_END_GATE_PATH,
     },
     speakers: [
       {

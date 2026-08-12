@@ -129,6 +129,10 @@ const completionSchema = z.discriminatedUnion("kind", [
   }).strict(),
 ]);
 const executableSchema = z.object({
+  actorGates: z.object({
+    playback: z.object({ armedPath: z.string().refine(isAbsolute), path: z.string().refine(isAbsolute), trigger: actionReferenceSchema }).strict(),
+    end: z.object({ armedPath: z.string().refine(isAbsolute), path: z.string().refine(isAbsolute), trigger: actionReferenceSchema }).strict(),
+  }).strict().optional(),
   arguments: argumentsSchema,
   childId: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/u),
   completion: completionSchema.optional(),
@@ -143,6 +147,7 @@ const executableSchema = z.object({
   produces: z.array(producedActionSchema),
   requires: z.array(actionReferenceSchema),
   releaseGate: z.object({
+    armedPath: z.string().refine(isAbsolute),
     action: z.discriminatedUnion("kind", [
       z.object({ kind: z.literal("provenance-before") }).strict(),
       z.object({ kind: z.literal("observer-subscribed") }).strict(),

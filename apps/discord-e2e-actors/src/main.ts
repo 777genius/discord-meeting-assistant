@@ -4,7 +4,7 @@ import { link, mkdir, open, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import { loadActorConfig } from "./config.js";
-import { connectActorsAfterReleaseGate } from "./actor-release-gate.js";
+import { connectActorsAfterReleaseGate, waitForStagedActorGate } from "./actor-release-gate.js";
 import {
   connectDiscordVoiceActor,
   type RecorderAwareVoiceActor,
@@ -81,7 +81,9 @@ async function main(): Promise<void> {
       throw new Error("Both Discord E2E actors are required");
     }
     await speakerA.waitForVoiceMember(config.recorderBotId, config.readyTimeoutMilliseconds);
-    await systemScenarioClock.wait(recorderVoiceSettleMilliseconds);
+    if (config.playbackGate === undefined) {
+      await systemScenarioClock.wait(recorderVoiceSettleMilliseconds);
+    }
     const epochOriginMs = Date.now();
     const monotonicOrigin = process.hrtime.bigint();
     const epochNow = (): number => epochOriginMs + Number(
@@ -96,6 +98,10 @@ async function main(): Promise<void> {
         `Discord E2E holding both actors before playback for ${config.prePlaybackHoldMilliseconds}ms.\n`,
       );
       await systemScenarioClock.wait(config.prePlaybackHoldMilliseconds);
+    }
+    if (config.playbackGate !== undefined) {
+      process.stdout.write("Discord E2E armed and waiting for hosted playback release.\n");
+      await waitForStagedActorGate(config, config.playbackGate, "playback");
     }
     process.stdout.write(`Discord E2E starting ${config.scenario} synthetic playback.\n`);
     await runActorScenario(speakerA, speakerB, {
@@ -129,6 +135,10 @@ async function main(): Promise<void> {
       schemaVersion: 1,
       timelineOrigin: "unix-epoch",
     });
+    if (config.endGate !== undefined) {
+      process.stdout.write("Discord E2E armed and waiting for hosted end release.\n");
+      await waitForStagedActorGate(config, config.endGate, "end");
+    }
     process.stdout.write(`Discord E2E actor evidence written to ${config.actorRunOutputPath}.\n`);
     process.stdout.write("Discord E2E actors completed synthetic playback.\n");
     process.stdout.write(`${JSON.stringify({

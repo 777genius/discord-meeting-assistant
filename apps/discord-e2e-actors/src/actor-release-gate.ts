@@ -1,5 +1,6 @@
 import { constants } from "node:fs";
-import { lstat, open, watch } from "node:fs/promises";
+import { link, lstat, open, rm, watch } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { basename, dirname } from "node:path";
 
 import { z } from "zod";
@@ -20,19 +21,28 @@ const releaseGateSchema = z.object({
   runId: identifier,
   scenario: z.enum(["overlap", "sequential", "reconnect"]),
   schemaVersion: z.literal(1),
+  phase: z.enum(["connection", "playback", "end"]),
   target: targetSchema,
+}).strict();
+const armedReceiptSchema = z.object({
+  armedAtEpochMs: z.number().int().safe().nonnegative(), campaignId: identifier,
+  phase: z.enum(["connection", "playback", "end"]), runId: identifier,
+  scenario: z.enum(["overlap", "sequential", "reconnect"]), schemaVersion: z.literal(1),
 }).strict();
 
 export interface ActorReleaseGateExpectation {
+  readonly armedPath: string;
   readonly campaignId: string;
   readonly path: string;
   readonly runId: string;
   readonly scenario: "overlap" | "sequential" | "reconnect";
+  readonly phase: "connection" | "playback" | "end";
 }
 
 export interface ActorConnectionAdmission {
   readonly releaseGate: {
     readonly campaignId: string;
+    readonly armedPath: string;
     readonly path: string;
     readonly runId: string;
     readonly timeoutMilliseconds: number;
@@ -52,10 +62,12 @@ export async function connectActorsAfterReleaseGate<T>(
 ): Promise<T> {
   if (admission.releaseGate !== undefined) {
     await waitForRelease({
+      armedPath: admission.releaseGate.armedPath,
       campaignId: admission.releaseGate.campaignId,
       path: admission.releaseGate.path,
       runId: admission.releaseGate.runId,
       scenario: admission.scenario,
+      phase: "connection",
     }, AbortSignal.timeout(admission.releaseGate.timeoutMilliseconds));
   }
   return connect();
@@ -67,6 +79,7 @@ export async function waitForActorReleaseGate(
 ): Promise<void> {
   const waitStartedAtEpochMs = Date.now();
   await assertGateDoesNotExist(expected.path);
+  await publishArmedReceipt(expected, waitStartedAtEpochMs);
   const changes = watch(dirname(expected.path), { signal });
 
   try {
@@ -150,6 +163,7 @@ async function tryReadValidGate(
       gate.campaignId !== expected.campaignId
       || gate.runId !== expected.runId
       || gate.scenario !== expected.scenario
+      || gate.phase !== expected.phase
     ) {
       throw new Error("Hosted actor release gate correlation does not match this actor run");
     }
@@ -160,6 +174,70 @@ async function tryReadValidGate(
     return true;
   } finally {
     await handle.close();
+  }
+}
+
+export async function waitForStagedActorGate(
+  input: ActorConnectionAdmission,
+  gate: { readonly armedPath: string; readonly path: string },
+  phase: "playback" | "end",
+): Promise<void> {
+  if (input.releaseGate === undefined) {
+    throw new Error(`Hosted ${phase} gate requires the correlated connection gate`);
+  }
+  await waitForActorReleaseGate({
+    armedPath: gate.armedPath,
+    campaignId: input.releaseGate.campaignId,
+    path: gate.path,
+    phase,
+    runId: input.releaseGate.runId,
+    scenario: input.scenario,
+  }, AbortSignal.timeout(input.releaseGate.timeoutMilliseconds));
+}
+
+async function publishArmedReceipt(expected: ActorReleaseGateExpectation, armedAtEpochMs: number): Promise<void> {
+  const temporaryPath = `${expected.armedPath}.partial-${randomUUID()}`;
+  const handle = await open(temporaryPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600);
+  try {
+    try {
+      await handle.writeFile(`${JSON.stringify({
+        armedAtEpochMs, campaignId: expected.campaignId, phase: expected.phase,
+        runId: expected.runId, scenario: expected.scenario, schemaVersion: 1,
+      })}\n`, "utf8");
+      await handle.sync();
+    } finally { await handle.close(); }
+    await link(temporaryPath, expected.armedPath);
+  } finally { await rm(temporaryPath, { force: true }); }
+}
+
+export async function waitForActorGateArmed(
+  expected: ActorReleaseGateExpectation,
+  signal: AbortSignal,
+): Promise<void> {
+  for (;;) {
+    if (signal.aborted) { throw new Error(`Timed out or aborted waiting for actor ${expected.phase} gate readiness`); }
+    try {
+      const status = await lstat(expected.armedPath);
+      if (status.isSymbolicLink() || !status.isFile() || (status.mode & permissionMask) !== 0o600) {
+        throw new Error(`Hosted actor armed receipt must be a private regular file: ${expected.armedPath}`);
+      }
+      const handle = await open(expected.armedPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+      try {
+        const receipt = armedReceiptSchema.parse(JSON.parse(await handle.readFile("utf8")) as unknown);
+        if (receipt.campaignId !== expected.campaignId || receipt.runId !== expected.runId
+          || receipt.scenario !== expected.scenario || receipt.phase !== expected.phase) {
+          throw new Error("Hosted actor armed receipt correlation does not match the gate");
+        }
+        return;
+      } finally { await handle.close(); }
+    } catch (error: unknown) {
+      if (!isNodeError(error, "ENOENT")) { throw error; }
+    }
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(resolve, 25);
+      const abort = (): void => { clearTimeout(timer); reject(new Error(`Timed out or aborted waiting for actor ${expected.phase} gate readiness`)); };
+      signal.addEventListener("abort", abort, { once: true });
+    });
   }
 }
 

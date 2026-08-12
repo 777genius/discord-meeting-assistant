@@ -11,10 +11,12 @@ import {
 import { HOSTED_CAMPAIGN_TARGET } from "../src/hosted-campaign-coordinator.js";
 
 const expectation = (path: string) => ({
+  armedPath: `${path}.armed`,
   campaignId: "campaign-1",
   path,
   runId: "run-1",
   scenario: "sequential" as const,
+  phase: "connection" as const,
 });
 
 const gate = (overrides: Record<string, unknown> = {}) => ({
@@ -23,6 +25,7 @@ const gate = (overrides: Record<string, unknown> = {}) => ({
   runId: "run-1",
   scenario: "sequential",
   schemaVersion: 1,
+  phase: "connection",
   target: {
     guildId: HOSTED_CAMPAIGN_TARGET.guildId,
     mutationTarget: HOSTED_CAMPAIGN_TARGET.mutationTarget,
@@ -40,6 +43,7 @@ describe("hosted actor release gate", () => {
     let connectionCount = 0;
     const run = connectActorsAfterReleaseGate({
       releaseGate: {
+        armedPath: "/private/release.armed.json",
         campaignId: "campaign-1",
         path: "/private/release.json",
         runId: "run-1",
@@ -62,6 +66,7 @@ describe("hosted actor release gate", () => {
     let connectionCount = 0;
     const run = connectActorsAfterReleaseGate({
       releaseGate: {
+        armedPath: "/private/release.armed.json",
         campaignId: "campaign-1",
         path: "/private/release.json",
         runId: "run-1",

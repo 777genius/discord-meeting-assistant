@@ -133,9 +133,11 @@ describe("loadActorConfig", () => {
     expect(loadActorConfig({
       ...environment,
       DISCORD_E2E_HOSTED_RELEASE_GATE_PATH: "/private/run-1/release.json",
+      DISCORD_E2E_HOSTED_RELEASE_GATE_ARMED_PATH: "/private/run-1/release-armed.json",
       DISCORD_E2E_HOSTED_RELEASE_GATE_CAMPAIGN_ID: "campaign-1",
       DISCORD_E2E_HOSTED_RELEASE_GATE_TIMEOUT_MS: "45000",
     }).releaseGate).toEqual({
+      armedPath: "/private/run-1/release-armed.json",
       campaignId: "campaign-1",
       path: "/private/run-1/release.json",
       runId: "run-test-1",

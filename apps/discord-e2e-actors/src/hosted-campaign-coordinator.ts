@@ -143,7 +143,12 @@ export interface HostedCampaignExecutableSpec {
     readonly connection: { readonly path: string; readonly trigger: HostedCampaignActionReference };
     readonly playback: { readonly path: string; readonly trigger: HostedCampaignActionReference };
   };
+  readonly actorGates?: {
+    readonly playback: { readonly armedPath: string; readonly path: string; readonly trigger: HostedCampaignActionReference };
+    readonly end: { readonly armedPath: string; readonly path: string; readonly trigger: HostedCampaignActionReference };
+  };
   readonly releaseGate?: {
+    readonly armedPath?: string;
     readonly action: HostedCampaignBarrierAction;
     readonly ordinal: number;
     readonly path: string;
@@ -231,7 +236,8 @@ export interface HostedCampaignPorts {
   ): Promise<HostedCampaignChildHandle>;
   publishReleaseGate(
     executable: HostedCampaignExecutableSpec,
-    bounded: HostedCampaignBoundedSignal,
+    phaseOrBounded: "connection" | "playback" | "end" | HostedCampaignBoundedSignal,
+    bounded?: HostedCampaignBoundedSignal,
   ): Promise<void>;
   publishSupplementalGate(
     executable: HostedCampaignExecutableSpec,
@@ -260,6 +266,17 @@ function supplementalGatePhase(
 ): "connection" | "playback" | undefined {
   return (["connection", "playback"] as const).find((phase) => {
     const gate = child.supplementalGates?.[phase];
+    return gate !== undefined && actionReferenceIdentity(gate.trigger) === actionReferenceIdentity(reference);
+  });
+}
+function actorGatePhase(
+  child: HostedCampaignExecutableSpec,
+  reference: HostedCampaignActionReference,
+): "connection" | "playback" | "end" | undefined {
+  if (child.releaseGate !== undefined
+    && actionReferenceIdentity(child.releaseGate) === actionReferenceIdentity(reference)) { return "connection"; }
+  return (["playback", "end"] as const).find((phase) => {
+    const gate = child.actorGates?.[phase];
     return gate !== undefined && actionReferenceIdentity(gate.trigger) === actionReferenceIdentity(reference);
   });
 }
@@ -327,7 +344,22 @@ function validateExecutable(
   }
   validateCompletionSchedule(child);
   validateReleaseGate(child, input);
+  validateActorGates(child);
   validateSupplementalGates(child, input, campaignId);
+}
+
+function validateActorGates(child: HostedCampaignExecutableSpec): void {
+  if (child.actorGates === undefined) { return; }
+  if (child.entrypoint !== "actor" || child.releaseGate === undefined || child.completion?.kind !== "actor"
+    || child.completion.scenario !== "reconnect") {
+    throw new Error("Only the reconnect actor may declare staged actor gates");
+  }
+  for (const [phase, gate] of Object.entries(child.actorGates)) {
+    if (child.environment[`DISCORD_E2E_HOSTED_${phase.toUpperCase()}_GATE_PATH`] !== gate.path
+      || child.environment[`DISCORD_E2E_HOSTED_${phase.toUpperCase()}_GATE_ARMED_PATH`] !== gate.armedPath) {
+      throw new Error(`Hosted actor ${phase} gate environment mismatch`);
+    }
+  }
 }
 
 function validateChildIdentity(child: HostedCampaignExecutableSpec, childIds: Set<string>): void {
@@ -665,11 +697,9 @@ export async function runHostedCampaign(
       validateActionEvidence(action, actionEvidence, input.thresholds);
       retainedEvidence.set(actionReferenceIdentity(reference), actionEvidence);
       evidence.push(Object.freeze({ action, evidence: actionEvidence }));
-      for (const executable of input.children.filter((child) =>
-        child.releaseGate !== undefined
-        && actionReferenceIdentity(child.releaseGate) === actionReferenceIdentity(reference)
-      )) {
-        await ports.publishReleaseGate(executable, bounded);
+      for (const executable of input.children) {
+        const phase = actorGatePhase(executable, reference);
+        if (phase !== undefined) { await ports.publishReleaseGate(executable, phase, bounded); }
       }
       for (const executable of input.children) {
         const phase = supplementalGatePhase(executable, reference);
