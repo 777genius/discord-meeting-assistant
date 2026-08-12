@@ -11,9 +11,9 @@ export function campaignActions(input: HostedCampaignInput): readonly HostedCamp
   const [sequential, overlap, reconnect] = input.runs;
   return [
     { kind: "provenance-before" },
-    { kind: "observer-subscribed" },
     { kind: "run-verified", ordinal: sequential!.ordinal, runId: sequential!.runId },
     { kind: "run-verified", ordinal: overlap!.ordinal, runId: overlap!.runId },
+    { kind: "observer-subscribed" },
     ...Array.from({ length: 4 }, (_, index) => ({
       kind: "capture-retained" as const, ordinal: index + 1,
     })),

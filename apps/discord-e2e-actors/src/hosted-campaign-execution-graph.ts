@@ -4,14 +4,18 @@ import type {
   HostedCampaignInput,
   HostedCampaignRun,
 } from "./hosted-campaign-coordinator.js";
+import { validateHostedCampaignEntrypointCapabilities } from
+  "./hosted-campaign-entrypoint-capabilities.js";
+import { validateHostedSupplementalPlaybackAdmission } from
+  "./hosted-campaign-supplemental-admission.js";
 
 export function campaignActions(input: HostedCampaignInput): readonly HostedCampaignActionReference[] {
   const [sequential, overlap, reconnect] = input.runs;
   const base = [
     scoped(sequential!, { kind: "provenance-before" }),
-    scoped(sequential!, { kind: "observer-subscribed" }),
     scoped(sequential!, { kind: "run-verified", ordinal: 1, runId: sequential!.runId }),
     scoped(overlap!, { kind: "run-verified", ordinal: 2, runId: overlap!.runId }),
+    scoped(reconnect!, { kind: "observer-subscribed" }),
     ...Array.from({ length: 4 }, (_, index) => scoped(reconnect!, {
       kind: "capture-retained", ordinal: index + 1,
     })),
@@ -72,7 +76,10 @@ export function validateExecutionGraph(input: HostedCampaignInput): void {
   const order = new Map(expected.map((reference, index) => [actionReferenceIdentity(reference), index]));
   const producers = new Map<string, string>();
   const paths = new Map<string, string>();
+  const reconnectRun = input.runs.find(({ scenario }) => scenario === "reconnect");
   for (const child of input.children) {
+    validateHostedCampaignEntrypointCapabilities(child);
+    validateHostedSupplementalPlaybackAdmission(child, reconnectRun, expected);
     for (const produced of child.produces) {
       const identity = assertKnown(produced, expectedIds, child.childId);
       const existing = producers.get(identity);

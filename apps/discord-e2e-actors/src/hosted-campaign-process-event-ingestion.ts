@@ -1,5 +1,8 @@
 import type { HostedCampaignArtifactStore } from "./hosted-campaign-artifact-store.js";
-import type { HostedCampaignBarrierAction } from "./hosted-campaign-coordinator.js";
+import type {
+  HostedCampaignBarrierAction,
+  HostedCampaignProducedAction,
+} from "./hosted-campaign-coordinator.js";
 import {
   hostedCampaignProcessEventPrefix,
   hostedCampaignProcessEventV1Schema,
@@ -9,6 +12,7 @@ export async function ingestHostedCampaignProcessEventLine(input: {
   readonly campaignId: string;
   readonly line: string;
   readonly publishedEvents: Set<string>;
+  readonly declaredProductions: readonly HostedCampaignProducedAction[];
   readonly runId: string;
   readonly store: HostedCampaignArtifactStore;
 }): Promise<boolean> {
@@ -18,6 +22,12 @@ export async function ingestHostedCampaignProcessEventLine(input: {
   ) as unknown);
   if (parsed.campaignId !== input.campaignId || parsed.runId !== input.runId) {
     throw new Error("Hosted campaign event campaign or run correlation mismatch");
+  }
+  const declared = input.declaredProductions.filter((produced) =>
+    produced.runId === parsed.runId && sameAction(produced.action, parsed.event.action)
+  );
+  if (declared.length !== 1) {
+    throw new Error(`Hosted campaign process event ${eventIdentity(parsed.event.action)} is not exactly declared`);
   }
   const identity = eventIdentity(parsed.event.action);
   if (input.publishedEvents.has(identity)) {
@@ -53,4 +63,13 @@ function publishProcessEvent(
 
 function eventIdentity(action: HostedCampaignBarrierAction): string {
   return action.kind === "capture-retained" ? `${action.kind}:${action.ordinal}` : action.kind;
+}
+
+function sameAction(left: HostedCampaignBarrierAction, right: HostedCampaignBarrierAction): boolean {
+  if (left.kind !== right.kind) {return false;}
+  const leftOrdinal = "ordinal" in left ? left.ordinal : undefined;
+  const rightOrdinal = "ordinal" in right ? right.ordinal : undefined;
+  const leftRunId = "runId" in left ? left.runId : undefined;
+  const rightRunId = "runId" in right ? right.runId : undefined;
+  return leftOrdinal === rightOrdinal && leftRunId === rightRunId;
 }
