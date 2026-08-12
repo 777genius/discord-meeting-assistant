@@ -10,7 +10,7 @@ interface HostedCampaignEventContext {
   readonly runId: string;
 }
 interface HostedReconnectEventContext {
-  readonly releaseGate: object | undefined;
+  readonly releaseGate: { readonly campaignId: string } | undefined;
   readonly runId: string;
   readonly scenario: "overlap" | "reconnect" | "sequential";
 }
@@ -84,13 +84,14 @@ export function publishReconnectTransition(
     (input.type !== "disconnected" && input.type !== "ready")) {
     return;
   }
-  writeHostedEvent(config.runId, {
-    action: { kind: input.type === "disconnected" ? "reconnect-left" : "reconnect-ready" },
-    evidence: {
-      observedAtEpochMilliseconds: input.observedAtEpochMilliseconds,
-      participantId: input.authenticatedParticipantId,
-    },
-  }, write);
+  const evidence = {
+    observedAtEpochMilliseconds: input.observedAtEpochMilliseconds,
+    participantId: input.authenticatedParticipantId,
+  };
+  const event = input.type === "disconnected"
+    ? { action: { kind: "reconnect-left" as const }, evidence }
+    : { action: { kind: "reconnect-ready" as const }, evidence };
+  writeHostedEvent(config.releaseGate.campaignId, config.runId, event, write);
 }
 
 function writeHostedEvent(

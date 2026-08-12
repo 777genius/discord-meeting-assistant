@@ -137,7 +137,7 @@ describe("hosted campaign process event", () => {
   it("publishes only real hosted speaker-b reconnect transitions", () => {
     const lines: string[] = [];
     const write = (value: string): void => {lines.push(value);};
-    const config = { releaseGate: {}, runId, scenario: "reconnect" as const };
+    const config = { releaseGate: { campaignId }, runId, scenario: "reconnect" as const };
     for (const type of ["disconnected", "ready"] as const) {
       publishReconnectTransition(config, {
         actorName: "speaker-b",
@@ -153,7 +153,9 @@ describe("hosted campaign process event", () => {
       type: "ready",
     }, write);
 
-    expect(lines.map((line) => hostedCampaignProcessEventV1Schema.parse(JSON.parse(line)).event.action.kind))
+    expect(lines.map((line) => hostedCampaignProcessEventV1Schema.parse(
+      JSON.parse(line.replace(hostedCampaignProcessEventPrefix, "")),
+    ).event.action.kind))
       .toEqual(["reconnect-left", "reconnect-ready"]);
   });
 });
