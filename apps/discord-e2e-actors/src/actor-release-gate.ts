@@ -30,6 +30,37 @@ export interface ActorReleaseGateExpectation {
   readonly scenario: "overlap" | "sequential" | "reconnect";
 }
 
+export interface ActorConnectionAdmission {
+  readonly releaseGate: {
+    readonly campaignId: string;
+    readonly path: string;
+    readonly runId: string;
+    readonly timeoutMilliseconds: number;
+  } | undefined;
+  readonly scenario: "overlap" | "sequential" | "reconnect";
+}
+
+type ReleaseGateWaiter = (
+  expected: ActorReleaseGateExpectation,
+  signal: AbortSignal,
+) => Promise<void>;
+
+export async function connectActorsAfterReleaseGate<T>(
+  admission: ActorConnectionAdmission,
+  connect: () => Promise<T>,
+  waitForRelease: ReleaseGateWaiter = waitForActorReleaseGate,
+): Promise<T> {
+  if (admission.releaseGate !== undefined) {
+    await waitForRelease({
+      campaignId: admission.releaseGate.campaignId,
+      path: admission.releaseGate.path,
+      runId: admission.releaseGate.runId,
+      scenario: admission.scenario,
+    }, AbortSignal.timeout(admission.releaseGate.timeoutMilliseconds));
+  }
+  return connect();
+}
+
 export async function waitForActorReleaseGate(
   expected: ActorReleaseGateExpectation,
   signal: AbortSignal,
@@ -43,7 +74,7 @@ export async function waitForActorReleaseGate(
       return;
     }
     for await (const change of changes) {
-      if (change.filename === null || change.filename.toString() === basename(expected.path)) {
+      if (change.filename === null || change.filename === basename(expected.path)) {
         if (await tryReadValidGate(expected, waitStartedAtEpochMs)) {
           return;
         }

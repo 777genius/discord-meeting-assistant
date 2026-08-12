@@ -4,7 +4,10 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { waitForActorReleaseGate } from "../src/actor-release-gate.js";
+import {
+  connectActorsAfterReleaseGate,
+  waitForActorReleaseGate,
+} from "../src/actor-release-gate.js";
 import { HOSTED_CAMPAIGN_TARGET } from "../src/hosted-campaign-coordinator.js";
 
 const expectation = (path: string) => ({
@@ -29,6 +32,69 @@ const gate = (overrides: Record<string, unknown> = {}) => ({
 });
 
 describe("hosted actor release gate", () => {
+  it("does not connect any actor until the hosted release is accepted", async () => {
+    let release: (() => void) | undefined;
+    const waiting = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let connectionCount = 0;
+    const run = connectActorsAfterReleaseGate({
+      releaseGate: {
+        campaignId: "campaign-1",
+        path: "/private/release.json",
+        runId: "run-1",
+        timeoutMilliseconds: 1_000,
+      },
+      scenario: "sequential",
+    }, async () => {
+      connectionCount += 1;
+      return "connected";
+    }, async () => waiting);
+
+    await Promise.resolve();
+    expect(connectionCount).toBe(0);
+    release?.();
+    await expect(run).resolves.toBe("connected");
+    expect(connectionCount).toBe(1);
+  });
+
+  it("aborts without attempting an actor connection when release fails", async () => {
+    let connectionCount = 0;
+    const run = connectActorsAfterReleaseGate({
+      releaseGate: {
+        campaignId: "campaign-1",
+        path: "/private/release.json",
+        runId: "run-1",
+        timeoutMilliseconds: 1_000,
+      },
+      scenario: "overlap",
+    }, async () => {
+      connectionCount += 1;
+    }, async () => {
+      throw new Error("release rejected");
+    });
+
+    await expect(run).rejects.toThrow("release rejected");
+    expect(connectionCount).toBe(0);
+  });
+
+  it("preserves immediate connections outside hosted campaigns", async () => {
+    let releaseWaitCount = 0;
+    let connectionCount = 0;
+
+    await expect(connectActorsAfterReleaseGate({
+      releaseGate: undefined,
+      scenario: "reconnect",
+    }, async () => {
+      connectionCount += 1;
+      return "connected";
+    }, async () => {
+      releaseWaitCount += 1;
+    })).resolves.toBe("connected");
+    expect(releaseWaitCount).toBe(0);
+    expect(connectionCount).toBe(1);
+  });
+
   it("waits for a newly created private correlated gate", async () => {
     const root = await mkdtemp(join(tmpdir(), "actor-release-gate-"));
     const path = join(root, "release.json");

@@ -4,7 +4,7 @@ import { link, mkdir, open, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import { loadActorConfig } from "./config.js";
-import { waitForActorReleaseGate } from "./actor-release-gate.js";
+import { connectActorsAfterReleaseGate } from "./actor-release-gate.js";
 import {
   connectDiscordVoiceActor,
   type RecorderAwareVoiceActor,
@@ -36,36 +36,44 @@ async function main(): Promise<void> {
 
   const actors: RecorderAwareVoiceActor[] = [];
   try {
-    for (const [index, speaker] of config.speakers.entries()) {
-      const token = tokens[index];
-      if (token === undefined) {
-        throw new Error(`Missing Keychain credential for ${speaker.name}`);
-      }
-      if (index === 1 && config.speakerBConnectDelayMilliseconds > 0) {
-        process.stdout.write(
-          `Discord E2E delaying speaker-b connection for ${config.speakerBConnectDelayMilliseconds}ms.\n`,
-        );
-        await systemScenarioClock.wait(config.speakerBConnectDelayMilliseconds);
-      }
-      process.stdout.write(`Discord E2E connecting ${speaker.name}.\n`);
-      const expectedApplicationId = verifiedFixtureSet.manifest.fixtures.find(
-        ({ actorName }) => actorName === speaker.name,
-      )?.speakerId;
-      if (expectedApplicationId === undefined) {
-        throw new Error(`Missing pinned Discord application ID for ${speaker.name}`);
-      }
-      actors.push(await connectDiscordVoiceActor({
-        expectedApplicationId,
-        name: speaker.name,
-        token,
-        guildId: config.guildId,
-        voiceChannelId: config.voiceChannelId,
-        fixturePath: speaker.fixturePath,
-        readyTimeoutMilliseconds: config.readyTimeoutMilliseconds,
-        playbackTimeoutMilliseconds: config.playbackTimeoutMilliseconds,
-      }));
-      process.stdout.write(`Discord E2E connected ${speaker.name}.\n`);
+    if (config.releaseGate !== undefined) {
+      process.stdout.write("Discord E2E waiting for hosted coordinator connection release.\n");
     }
+    await connectActorsAfterReleaseGate(config, async () => {
+      if (config.releaseGate !== undefined) {
+        process.stdout.write("Discord E2E hosted coordinator released actor connections.\n");
+      }
+      for (const [index, speaker] of config.speakers.entries()) {
+        const token = tokens[index];
+        if (token === undefined) {
+          throw new Error(`Missing Keychain credential for ${speaker.name}`);
+        }
+        if (index === 1 && config.speakerBConnectDelayMilliseconds > 0) {
+          process.stdout.write(
+            `Discord E2E delaying speaker-b connection for ${config.speakerBConnectDelayMilliseconds}ms.\n`,
+          );
+          await systemScenarioClock.wait(config.speakerBConnectDelayMilliseconds);
+        }
+        process.stdout.write(`Discord E2E connecting ${speaker.name}.\n`);
+        const expectedApplicationId = verifiedFixtureSet.manifest.fixtures.find(
+          ({ actorName }) => actorName === speaker.name,
+        )?.speakerId;
+        if (expectedApplicationId === undefined) {
+          throw new Error(`Missing pinned Discord application ID for ${speaker.name}`);
+        }
+        actors.push(await connectDiscordVoiceActor({
+          expectedApplicationId,
+          name: speaker.name,
+          token,
+          guildId: config.guildId,
+          voiceChannelId: config.voiceChannelId,
+          fixturePath: speaker.fixturePath,
+          readyTimeoutMilliseconds: config.readyTimeoutMilliseconds,
+          playbackTimeoutMilliseconds: config.playbackTimeoutMilliseconds,
+        }));
+        process.stdout.write(`Discord E2E connected ${speaker.name}.\n`);
+      }
+    });
 
     const [speakerA, speakerB] = actors;
     if (speakerA === undefined || speakerB === undefined) {
@@ -82,16 +90,6 @@ async function main(): Promise<void> {
       { actorName: "speaker-a", atEpochMs: epochNow(), type: "ready" },
       { actorName: "speaker-b", atEpochMs: epochNow(), type: "ready" },
     ];
-    if (config.releaseGate !== undefined) {
-      process.stdout.write("Discord E2E waiting for hosted coordinator playback release.\n");
-      await waitForActorReleaseGate({
-        campaignId: config.releaseGate.campaignId,
-        path: config.releaseGate.path,
-        runId: config.releaseGate.runId,
-        scenario: config.scenario,
-      }, AbortSignal.timeout(config.releaseGate.timeoutMilliseconds));
-      process.stdout.write("Discord E2E hosted coordinator released synthetic playback.\n");
-    }
     if (config.prePlaybackHoldMilliseconds > 0) {
       process.stdout.write(
         `Discord E2E holding both actors before playback for ${config.prePlaybackHoldMilliseconds}ms.\n`,
