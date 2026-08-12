@@ -23,25 +23,33 @@ const absoluteOutputPathSchema = z.string()
     "Expected an absolute output file path",
   )
   .transform(normalize);
-const absoluteDirectorySchema = z.string().min(1)
-  .refine(isAbsolute, "Expected an absolute directory path")
-  .transform(normalize);
+const absoluteDirectorySchema = z.string().min(1).refine(isAbsolute, "Expected an absolute directory path");
 const maximumReadyTimeoutMilliseconds = 120_000;
-const literalAdditionalCaptureSchema = z.object({
+const additionalCaptureSchema = z.object({
   attemptId: correlationIdSchema,
+  expectedDuration: z.object({
+    maximumMilliseconds: z.number().int().min(20)
+      .max(MAXIMUM_CONVERSATION_VOICE_CAPTURE_DURATION_MILLISECONDS),
+    minimumMilliseconds: z.number().int().min(20)
+      .max(MAXIMUM_CONVERSATION_VOICE_CAPTURE_DURATION_MILLISECONDS),
+  }).strict().refine(
+    ({ maximumMilliseconds, minimumMilliseconds }) =>
+      minimumMilliseconds <= maximumMilliseconds,
+    "Expected duration minimum must not exceed maximum",
+  ),
   outputPath: absoluteOutputPathSchema,
-  purpose: z.enum(["farewell", "greeting"]),
-  turnId: correlationIdSchema,
-}).strict();
-const addressedAdditionalCaptureSchema = z.object({
-  outputPath: absoluteOutputPathSchema,
-  playbackHandshakeRoot: absoluteDirectorySchema,
-  purpose: z.literal("addressed-answer"),
-}).strict();
-const additionalCaptureSchema = z.discriminatedUnion("purpose", [
-  addressedAdditionalCaptureSchema,
-  literalAdditionalCaptureSchema,
-]);
+  purpose: z.enum(["addressed-answer", "farewell", "greeting"]),
+  turnId: correlationIdSchema.optional(),
+  turnIdFile: absoluteOutputPathSchema.optional(),
+}).strict().superRefine((value, context) => {
+  if ((value.turnId === undefined) === (value.turnIdFile === undefined)) {
+    context.addIssue({
+      code: "custom",
+      message: "Expected exactly one of turnId or turnIdFile",
+      path: ["turnId"],
+    });
+  }
+});
 const additionalCapturesJsonSchema = z.string().max(32_768).transform((value, context) => {
   try {
     return JSON.parse(value) as unknown;
@@ -80,11 +88,9 @@ const environmentSchema = z.object({
     .max(MAXIMUM_CONVERSATION_VOICE_PCM_BYTES)
     .refine((value) => value % 4 === 0, "Expected a complete PCM frame bound")
     .default(MAXIMUM_CONVERSATION_VOICE_PCM_BYTES),
-  DISCORD_E2E_CONVERSATION_VOICE_MEETING_ID: correlationIdSchema,
   DISCORD_E2E_CONVERSATION_VOICE_OBSERVER_ACCOUNT: secretAccountSchema.default("conversation-observer"),
   DISCORD_E2E_CONVERSATION_VOICE_OBSERVER_APPLICATION_ID: snowflakeSchema,
   DISCORD_E2E_CONVERSATION_VOICE_OUTPUT: absoluteOutputPathSchema,
-  DISCORD_E2E_CONVERSATION_VOICE_PLAYBACK_HANDSHAKE_ROOT: absoluteDirectorySchema.optional(),
   DISCORD_E2E_CONVERSATION_VOICE_PRIVATE_TEST_GUILD: z.literal("private-test-guild"),
   DISCORD_E2E_CONVERSATION_VOICE_PURPOSE: z.enum(["addressed-answer", "farewell", "greeting"]),
   DISCORD_E2E_CONVERSATION_VOICE_READY_TIMEOUT_MS: z.coerce.number()
@@ -98,14 +104,6 @@ const environmentSchema = z.object({
   DISCORD_E2E_CONVERSATION_VOICE_TURN_ID: correlationIdSchema,
   DISCORD_E2E_CONVERSATION_VOICE_VOICE_CHANNEL_ID: snowflakeSchema,
 }).superRefine((value, context) => {
-  if ((value.DISCORD_E2E_CONVERSATION_VOICE_PURPOSE === "addressed-answer") !==
-    (value.DISCORD_E2E_CONVERSATION_VOICE_PLAYBACK_HANDSHAKE_ROOT !== undefined)) {
-    context.addIssue({
-      code: "custom",
-      message: "Primary addressed-answer capture requires exactly one playback handshake root",
-      path: ["DISCORD_E2E_CONVERSATION_VOICE_PLAYBACK_HANDSHAKE_ROOT"],
-    });
-  }
   const expectedMaximumDurationMilliseconds = value.DISCORD_E2E_CONVERSATION_VOICE_EXPECTED_DURATION_MS +
     value.DISCORD_E2E_CONVERSATION_VOICE_EXPECTED_DURATION_TOLERANCE_MS;
   if (expectedMaximumDurationMilliseconds > MAXIMUM_CONVERSATION_VOICE_CAPTURE_DURATION_MILLISECONDS) {
@@ -131,6 +129,25 @@ const environmentSchema = z.object({
       path: ["DISCORD_E2E_CONVERSATION_VOICE_MAX_PCM_BYTES"],
     });
   }
+  for (const [index, capture] of
+    (value.DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON ?? []).entries()) {
+    if (value.DISCORD_E2E_CONVERSATION_VOICE_CAPTURE_TIMEOUT_MS <
+      capture.expectedDuration.minimumMilliseconds) {
+      context.addIssue({
+        code: "custom",
+        message: "Capture timeout must allow every capture's expected PCM duration",
+        path: ["DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON", index, "expectedDuration"],
+      });
+    }
+    if (value.DISCORD_E2E_CONVERSATION_VOICE_MAX_PCM_BYTES <
+      capture.expectedDuration.maximumMilliseconds * PCM_S16LE_STEREO_BYTES_PER_MILLISECOND) {
+      context.addIssue({
+        code: "custom",
+        message: "PCM byte bound must cover every capture's expected duration range",
+        path: ["DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON", index, "expectedDuration"],
+      });
+    }
+  }
   if (value.DISCORD_E2E_CONVERSATION_VOICE_CRAIG_BOT_ID ===
     value.DISCORD_E2E_CONVERSATION_VOICE_OBSERVER_APPLICATION_ID) {
     context.addIssue({
@@ -146,10 +163,7 @@ const environmentSchema = z.object({
     },
     ...(value.DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON ?? []),
   ];
-  const literalAttemptIds = captureKeys.flatMap((capture) =>
-    "attemptId" in capture ? [capture.attemptId] : []
-  );
-  if (new Set(literalAttemptIds).size !== literalAttemptIds.length) {
+  if (new Set(captureKeys.map(({ attemptId }) => attemptId)).size !== captureKeys.length) {
     context.addIssue({
       code: "custom",
       message: "Conversation voice capture attempt IDs must be unique",
@@ -163,41 +177,45 @@ const environmentSchema = z.object({
       path: ["DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON"],
     });
   }
-  const playbackHandshakeRoots = [
-    ...(value.DISCORD_E2E_CONVERSATION_VOICE_PLAYBACK_HANDSHAKE_ROOT === undefined
-      ? []
-      : [value.DISCORD_E2E_CONVERSATION_VOICE_PLAYBACK_HANDSHAKE_ROOT]),
-    ...(value.DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON ?? [])
-      .flatMap((capture) =>
-        capture.purpose === "addressed-answer" ? [capture.playbackHandshakeRoot] : []
-      ),
-  ];
-  if (new Set(playbackHandshakeRoots).size !== playbackHandshakeRoots.length) {
+  const turnIdFiles = (value.DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON ?? [])
+    .flatMap((capture) => capture.turnIdFile === undefined ? [] : [capture.turnIdFile]);
+  if (new Set(turnIdFiles).size !== turnIdFiles.length) {
     context.addIssue({
       code: "custom",
-      message: "Conversation answer playback handshake roots must be unique",
+      message: "Conversation voice capture turn ID file paths must be unique",
       path: ["DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON"],
     });
   }
   const evidenceOutputPaths = new Set(captureKeys.map(({ outputPath }) => outputPath));
-  if (playbackHandshakeRoots.some((path) => evidenceOutputPaths.has(path))) {
+  if (turnIdFiles.some((path) => evidenceOutputPaths.has(path))) {
     context.addIssue({
       code: "custom",
-      message: "Conversation playback handshake roots must be distinct from evidence output paths",
+      message: "Conversation voice turn ID files must be distinct from evidence output paths",
       path: ["DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON"],
     });
   }
 });
 
-export type ConversationVoiceObserverCapture = {
+type ConversationVoiceObserverCapture = {
   readonly attemptId: string;
+  readonly expectedDuration: {
+    readonly maximumMilliseconds: number;
+    readonly minimumMilliseconds: number;
+  };
   readonly outputPath: string;
-  readonly purpose: "farewell" | "greeting";
+  readonly purpose: "addressed-answer" | "farewell" | "greeting";
   readonly turnId: string;
+  readonly turnIdFile?: never;
 } | {
+  readonly attemptId: string;
+  readonly expectedDuration: {
+    readonly maximumMilliseconds: number;
+    readonly minimumMilliseconds: number;
+  };
   readonly outputPath: string;
-  readonly playbackHandshakeRoot: string;
-  readonly purpose: "addressed-answer";
+  readonly purpose: "addressed-answer" | "farewell" | "greeting";
+  readonly turnId?: never;
+  readonly turnIdFile: string;
 };
 
 export interface ConversationVoiceObserverConfig {
@@ -210,12 +228,10 @@ export interface ConversationVoiceObserverConfig {
   readonly guildId: string;
   readonly keychainService: string;
   readonly maxPcmBytes: number;
-  readonly meetingId: string;
   readonly observerAccount: string;
   readonly observerApplicationId: string;
   readonly outputPath: string;
   readonly privateTestGuildConfirmed: true;
-  readonly playbackHandshakeRoot?: string;
   readonly purpose: "addressed-answer" | "farewell" | "greeting";
   readonly readyTimeoutMilliseconds: number;
   readonly recordingId: string | null;
@@ -238,19 +254,19 @@ export function loadConversationVoiceObserverConfig(
     additionalCaptures: Object.freeze(
       (parsed.DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON ?? [])
         .map((capture): ConversationVoiceObserverCapture => {
-          if (capture.purpose === "addressed-answer") {
-            return Object.freeze({
-              outputPath: capture.outputPath,
-              playbackHandshakeRoot: capture.playbackHandshakeRoot,
-              purpose: capture.purpose,
-            });
-          }
-          return Object.freeze({
+          const common = {
             attemptId: capture.attemptId,
+            expectedDuration: Object.freeze({ ...capture.expectedDuration }),
             outputPath: capture.outputPath,
             purpose: capture.purpose,
-            turnId: capture.turnId,
-          });
+          } as const;
+          if (capture.turnId !== undefined) {
+            return Object.freeze({ ...common, turnId: capture.turnId });
+          }
+          if (capture.turnIdFile !== undefined) {
+            return Object.freeze({ ...common, turnIdFile: capture.turnIdFile });
+          }
+          throw new Error("Expected one conversation voice turn ID source");
         }),
     ),
     attemptId: parsed.DISCORD_E2E_CONVERSATION_VOICE_ATTEMPT_ID,
@@ -262,13 +278,9 @@ export function loadConversationVoiceObserverConfig(
     guildId: parsed.DISCORD_E2E_CONVERSATION_VOICE_GUILD_ID,
     keychainService: parsed.DISCORD_E2E_CONVERSATION_VOICE_KEYCHAIN_SERVICE,
     maxPcmBytes: parsed.DISCORD_E2E_CONVERSATION_VOICE_MAX_PCM_BYTES,
-    meetingId: parsed.DISCORD_E2E_CONVERSATION_VOICE_MEETING_ID,
     observerAccount: parsed.DISCORD_E2E_CONVERSATION_VOICE_OBSERVER_ACCOUNT,
     observerApplicationId: parsed.DISCORD_E2E_CONVERSATION_VOICE_OBSERVER_APPLICATION_ID,
     outputPath: parsed.DISCORD_E2E_CONVERSATION_VOICE_OUTPUT,
-    ...(parsed.DISCORD_E2E_CONVERSATION_VOICE_PLAYBACK_HANDSHAKE_ROOT === undefined
-      ? {}
-      : { playbackHandshakeRoot: parsed.DISCORD_E2E_CONVERSATION_VOICE_PLAYBACK_HANDSHAKE_ROOT }),
     privateTestGuildConfirmed: true,
     purpose: parsed.DISCORD_E2E_CONVERSATION_VOICE_PURPOSE,
     readyTimeoutMilliseconds:
@@ -284,6 +296,11 @@ export function loadConversationVoiceObserverConfig(
     assertConversationVoiceCampaignTarget(config);
     assertConversationVoiceCampaignPlan([{
       attemptId: config.attemptId,
+      expectedDuration: {
+        maximumMilliseconds:
+          config.expectedDurationMilliseconds + config.expectedDurationToleranceMilliseconds,
+        minimumMilliseconds: config.expectedDurationMilliseconds,
+      },
       outputPath: config.outputPath,
       purpose: config.purpose,
       turnId: config.turnId,

@@ -57,6 +57,10 @@ type CapturePurpose = "addressed-answer" | "farewell" | "greeting";
 
 interface PlannedCapture {
   readonly attemptId: string;
+  readonly expectedDuration: {
+    readonly maximumMilliseconds: number;
+    readonly minimumMilliseconds: number;
+  };
   readonly outputPath: string;
   readonly purpose: CapturePurpose;
   readonly turnId?: string | undefined;
@@ -65,7 +69,12 @@ interface PlannedCapture {
 
 interface RetainedCapture {
   readonly capture: {
+    readonly acceptedDurationMilliseconds: number;
     readonly endedAt: { readonly epochMilliseconds: number };
+    readonly expectedDuration: {
+      readonly maximumMilliseconds: number;
+      readonly minimumMilliseconds: number;
+    };
     readonly firstPacketAt: { readonly epochMilliseconds: number };
   };
   readonly correlation: {
@@ -126,6 +135,13 @@ export function conversationVoiceCampaignEvidenceIssue(
     }
     if (role.turnId !== undefined && capture.correlation.turnId !== role.turnId) {
       return `capture ${index + 1} must use ${role.role}'s pinned turn ID`;
+    }
+    const { acceptedDurationMilliseconds, expectedDuration } = capture.capture;
+    if (
+      acceptedDurationMilliseconds < expectedDuration.minimumMilliseconds ||
+      acceptedDurationMilliseconds > expectedDuration.maximumMilliseconds
+    ) {
+      return `capture ${index + 1} duration must be within its retained minimum and maximum`;
     }
     if (index > 0) {
       const previous = captures[index - 1]!;
@@ -191,6 +207,10 @@ export function conversationVoiceCampaignPreflight(
   readonly captures: readonly {
     readonly attemptId: string;
     readonly correlation: { readonly source: "file" | "literal"; readonly value: string };
+    readonly expectedDuration: {
+      readonly maximumMilliseconds: number;
+      readonly minimumMilliseconds: number;
+    };
     readonly ordinal: number;
     readonly outputPath: string;
     readonly purpose: CapturePurpose;
@@ -206,6 +226,7 @@ export function conversationVoiceCampaignPreflight(
       correlation: capture.turnIdFile === undefined
         ? { source: "literal", value: capture.turnId! }
         : { source: "file", value: capture.turnIdFile },
+      expectedDuration: capture.expectedDuration,
       ordinal: index + 1,
       outputPath: capture.outputPath,
       purpose: capture.purpose,

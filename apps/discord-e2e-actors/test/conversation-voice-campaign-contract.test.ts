@@ -36,6 +36,7 @@ describe("conversation voice campaign contract", () => {
         correlation: role.turnIdSource === "file"
           ? { source: "file", value: "/evidence/addressed-answer.turn-id" }
           : { source: "literal", value: role.turnId },
+        expectedDuration: { maximumMilliseconds: 1_500, minimumMilliseconds: 1_000 },
         ordinal: index + 1,
         outputPath: `/evidence/capture-${index + 1}.json`,
         purpose: role.purpose,
@@ -84,12 +85,17 @@ describe("conversation voice campaign contract", () => {
       overlapping[3]!.capture.endedAt.epochMilliseconds;
     expect(conversationVoiceCampaignEvidenceIssue(overlapping))
       .toContain("capture 5 must start after capture 4 ends");
+    const tooShort = structuredClone(evidence);
+    tooShort[2]!.capture.acceptedDurationMilliseconds = 999;
+    expect(conversationVoiceCampaignEvidenceIssue(tooShort))
+      .toContain("capture 3 duration must be within its retained minimum and maximum");
   });
 });
 
 function canonicalPlan() {
   return conversationVoiceCampaignRoles.map((role, index) => ({
     attemptId: `attempt-${index + 1}`,
+    expectedDuration: { maximumMilliseconds: 1_500, minimumMilliseconds: 1_000 },
     outputPath: `/evidence/capture-${index + 1}.json`,
     purpose: role.purpose,
     ...(role.turnIdSource === "file"
@@ -101,7 +107,9 @@ function canonicalPlan() {
 function canonicalEvidence() {
   return conversationVoiceCampaignRoles.map((role, index) => ({
     capture: {
+      acceptedDurationMilliseconds: 1_000,
       endedAt: { epochMilliseconds: index * 1_000 + 500 },
+      expectedDuration: { maximumMilliseconds: 1_500, minimumMilliseconds: 1_000 },
       firstPacketAt: { epochMilliseconds: index * 1_000 + 100 },
     },
     correlation: {

@@ -92,7 +92,26 @@ export const conversationVoiceEvidenceV3Schema = z.object({
     receiver: z.literal("@discordjs/voice"),
   }).strict(),
   transcriptVerification: z.object({ status: z.literal("not-run") }).strict(),
-}).strict();
+}).strict().superRefine(({ capture }, context) => {
+  const { acceptedDurationMilliseconds, expectedDuration } = capture;
+  if (expectedDuration.minimumMilliseconds > expectedDuration.maximumMilliseconds) {
+    context.addIssue({
+      code: "custom",
+      message: "Expected duration minimum must not exceed maximum",
+      path: ["capture", "expectedDuration", "minimumMilliseconds"],
+    });
+  }
+  if (
+    acceptedDurationMilliseconds < expectedDuration.minimumMilliseconds ||
+    acceptedDurationMilliseconds > expectedDuration.maximumMilliseconds
+  ) {
+    context.addIssue({
+      code: "custom",
+      message: "Accepted duration must be within the retained expected duration range",
+      path: ["capture", "acceptedDurationMilliseconds"],
+    });
+  }
+});
 
 export const supplementalPlaybackEvidenceV1Schema = z.object({
   actor: z.object({

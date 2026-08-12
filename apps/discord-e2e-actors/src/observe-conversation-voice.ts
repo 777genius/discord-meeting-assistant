@@ -66,6 +66,11 @@ async function main(): Promise<void> {
       purpose: config.purpose,
     } : {
       attemptId: config.attemptId,
+      expectedDuration: {
+        maximumMilliseconds:
+          config.expectedDurationMilliseconds + config.expectedDurationToleranceMilliseconds,
+        minimumMilliseconds: config.expectedDurationMilliseconds,
+      },
       outputPath: config.outputPath,
       purpose: config.purpose,
       turnId: config.turnId,
@@ -178,11 +183,7 @@ async function capturePlannedConversationVoice(input: {
         clock: systemClock,
         controller: new ConversationVoiceCaptureController({
           captureTimeoutMilliseconds: config.captureTimeoutMilliseconds,
-          expectedDuration: {
-            maximumMilliseconds:
-              config.expectedDurationMilliseconds + config.expectedDurationToleranceMilliseconds,
-            minimumMilliseconds: config.expectedDurationMilliseconds,
-          },
+          expectedDuration: plannedCapture.expectedDuration,
           maxPcmBytes: config.maxPcmBytes,
         }, decoder),
         firstPacketTimeoutMilliseconds: config.readyTimeoutMilliseconds,
@@ -215,11 +216,7 @@ async function capturePlannedConversationVoice(input: {
         capture,
         captureTimeoutMilliseconds: config.captureTimeoutMilliseconds,
         craigBotId: config.craigBotId,
-        expectedDuration: {
-          maximumMilliseconds:
-            config.expectedDurationMilliseconds + config.expectedDurationToleranceMilliseconds,
-          minimumMilliseconds: config.expectedDurationMilliseconds,
-        },
+        expectedDuration: plannedCapture.expectedDuration,
         guildId: config.guildId,
         maxPcmBytes: config.maxPcmBytes,
         observerApplicationId: config.observerApplicationId,
