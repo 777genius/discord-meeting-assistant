@@ -120,10 +120,10 @@ describe("hosted deployment safety receipt", () => {
 
   it.each([
     ["wrong source", (value: ReturnType<typeof snapshot>) => { value.greetingMount.sourcePath = "/srv/e2e/other"; }],
-    ["read-only", (value: ReturnType<typeof snapshot>) => { value.greetingMount.readOnly = true as false; }],
-    ["symlink", (value: ReturnType<typeof snapshot>) => { value.greetingMount.sourceSymbolicLink = true as false; }],
-    ["destination symlink", (value: ReturnType<typeof snapshot>) => { value.greetingMount.destinationSymbolicLink = true as false; }],
-    ["uid remap", (value: ReturnType<typeof snapshot>) => { value.greetingMount.containerUid = 1_000 as 10_001; }],
+    ["read-only", (value: ReturnType<typeof snapshot>) => { Object.assign(value.greetingMount, { readOnly: true }); }],
+    ["symlink", (value: ReturnType<typeof snapshot>) => { Object.assign(value.greetingMount, { sourceSymbolicLink: true }); }],
+    ["destination symlink", (value: ReturnType<typeof snapshot>) => { Object.assign(value.greetingMount, { destinationSymbolicLink: true }); }],
+    ["uid remap", (value: ReturnType<typeof snapshot>) => { Object.assign(value.greetingMount, { containerUid: 1_000 }); }],
   ])("rejects unsafe greeting mount: %s", (_name, mutate) => {
     const before = snapshot();
     mutate(before);

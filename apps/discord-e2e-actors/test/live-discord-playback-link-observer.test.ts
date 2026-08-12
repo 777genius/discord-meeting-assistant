@@ -99,11 +99,12 @@ describe("first-seen Live Discord playback link observation", () => {
         trackCount: 2,
       },
       timingProvenance: {
-        candidateSnapshotSha256: expect.stringMatching(/^[a-f\d]{64}$/u),
+        candidateSnapshotSha256: proof.timingProvenance.candidateSnapshotSha256,
         kind: "prepublication-armed-first-seen",
         recordingIdentityBoundAt: timing(3_020, 12_020),
       },
     });
+    expect(proof.timingProvenance.candidateSnapshotSha256).toMatch(/^[a-f\d]{64}$/u);
     expect(JSON.stringify(proof)).not.toContain(rawCapability);
     expect(Object.isFrozen(proof)).toBe(true);
     expect(reader.pollCount).toBe(2);

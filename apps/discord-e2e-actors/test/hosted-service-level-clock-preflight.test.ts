@@ -81,9 +81,13 @@ describe("hosted service-level external clock preflight", () => {
 
     const result = attestHostedServiceLevelClocksV2(runClock, request);
     expect(result).toMatchObject({ runClockProofId: runClock.proofId, schemaVersion: 2 });
-    expect(result.measurements.every((measurement) =>
-      measurement.method === "ssh-bracketed-clock-v2" &&
-      measurement.runClockProofId === runClock.proofId)).toBe(true);
+    expect(result.measurements).toHaveLength(request.measurements.length);
+    for (const measurement of result.measurements) {
+      expect(measurement).toMatchObject({
+        method: "ssh-bracketed-clock-v2",
+        runClockProofId: runClock.proofId,
+      });
+    }
     expect(() => attestHostedServiceLevelClocksV2(preflight(), request)).toThrow();
   });
 });

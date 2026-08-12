@@ -26,7 +26,7 @@ export function composeHostedServiceLevels(input: {
   readonly recordingId: string;
   readonly runId: string;
 }): E2eServiceLevelsV1 | E2eServiceLevelsV2 {
-  const version = z.object({ schemaVersion: z.union([z.literal(1), z.literal(2)]) }).passthrough()
+  const version = z.looseObject({ schemaVersion: z.union([z.literal(1), z.literal(2)]) })
     .parse(input.attestations).schemaVersion;
   const attestations = version === 2
     ? hostedServiceLevelClockAttestationsV2Schema.parse(input.attestations)
