@@ -274,11 +274,11 @@ function validateCompletion(
     || actionIdentity(child.startBefore.action) !== actionIdentity(completion.action)) {
     throw new Error(`Hosted campaign child ${child.childId} completion does not match its entrypoint and start point`);
   }
-  const actionIdentity = JSON.stringify(completion.action);
-  if (completionActions.has(actionIdentity)) {
-    throw new Error(`Hosted campaign action has multiple completion producers: ${actionIdentity}`);
+  const completionActionIdentity = actionIdentity(completion.action);
+  if (completionActions.has(completionActionIdentity)) {
+    throw new Error(`Hosted campaign action has multiple completion producers: ${completionActionIdentity}`);
   }
-  completionActions.add(actionIdentity);
+  completionActions.add(completionActionIdentity);
   if (completion.action.kind === "run-verified") {
     const completionAction = completion.action;
     if (!input.runs.some(({ ordinal, runId }) =>
