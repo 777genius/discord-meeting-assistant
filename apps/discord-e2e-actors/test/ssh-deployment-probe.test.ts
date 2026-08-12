@@ -165,6 +165,58 @@ function fakeCommands(input: {
 }
 
 describe("SshDeploymentEvidenceProbe replay target safety", () => {
+  it("allows read-only provenance probes without a replay attestation path", async () => {
+    const servicesByContainer = new Map<string, { project: string; service: string }>();
+    let containerSequence = 0;
+    const commands: SshDeploymentProbeCommands = {
+      runCompose: async () => { throw new Error("unexpected Compose probe"); },
+      runContainer: async () => { throw new Error("unexpected container probe"); },
+      runRemote: async (_settings, args) => {
+        if (args[0] === "docker" && args[1] === "ps") {
+          const project = String(args.find((value) => value.startsWith("label=com.docker.compose.project="))?.split("=").at(-1));
+          const service = String(args.find((value) => value.startsWith("label=com.docker.compose.service="))?.split("=").at(-1));
+          const id = `${(containerSequence += 1).toString(16)}`.repeat(64);
+          servicesByContainer.set(id, { project, service });
+          return id;
+        }
+        if (args[0] === "docker" && args[1] === "inspect" && args[2] === "--format") {
+          const identity = servicesByContainer.get(String(args.at(-1)));
+          if (identity === undefined) {
+            throw new Error("unknown test container");
+          }
+          return JSON.stringify({
+            composeConfigHash: "c".repeat(64), composeProject: identity.project,
+            composeService: identity.service, containerId: args.at(-1),
+            containerStartedAt: "2026-08-12T09:00:00.000Z",
+            imageId: `sha256:${"d".repeat(64)}`,
+          });
+        }
+        if (args[0] === "docker" && args[1] === "image") {
+          return JSON.stringify({
+            imageId: `sha256:${"d".repeat(64)}`,
+            repositoryDigests: [`registry.test/image@sha256:${"e".repeat(64)}`],
+            sourceRevision: "f".repeat(40),
+          });
+        }
+        throw new Error(`unexpected remote probe: ${args.join(" ")}`);
+      },
+    };
+    const deployment = new SshDeploymentEvidenceProbe({
+      composeFile: "/srv/e2e/compose.yaml", craigProjectName: "craig-meeting-e2e",
+      craigServiceName: "bot", envFile: "/srv/e2e/source.env", host: "fake-e2e-host",
+      mutationTarget: "test-only", projectName: "discord-meeting-assistant",
+      sourceRoot: "/srv/e2e/source",
+    }, commands);
+
+    await expect(deployment.collectProvenance()).resolves.toMatchObject({
+      craig: { composeProject: "craig-meeting-e2e" },
+      meetingPlatform: { composeProject: "discord-meeting-assistant" },
+    });
+    await expect(deployment.replayPostCall(target)).rejects.toThrow(
+      "Replay target attestation file is required",
+    );
+  });
+
   it("reads completion receipts through the exact running test container", async () => {
     const base = fakeCommands({ mutations: [] });
     const commands: SshDeploymentProbeCommands = {

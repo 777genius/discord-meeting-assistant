@@ -90,7 +90,7 @@ export const replayReadinessOutputSchema = z.object({
 export const completionReceiptsOutputSchema = z.array(z.unknown());
 
 export interface SshDeploymentProbeOptions {
-  readonly attestationFile: string;
+  readonly attestationFile?: string;
   readonly composeFile: string;
   readonly craigProjectName: string;
   readonly craigServiceName: string;
@@ -103,13 +103,17 @@ export interface SshDeploymentProbeOptions {
   readonly timeoutMs?: number;
 }
 
-export type SshDeploymentProbeSettings = Required<SshDeploymentProbeOptions>;
+export interface SshDeploymentProbeSettings extends Omit<Required<SshDeploymentProbeOptions>, "attestationFile"> {
+  readonly attestationFile?: string;
+}
 
 export function parseSshDeploymentProbeOptions(
   options: SshDeploymentProbeOptions,
 ): SshDeploymentProbeSettings {
   return {
-    attestationFile: replayAttestationFile.parse(options.attestationFile),
+    ...(options.attestationFile === undefined
+      ? {}
+      : { attestationFile: replayAttestationFile.parse(options.attestationFile) }),
     composeFile: absolutePath.parse(options.composeFile),
     craigProjectName: z.literal("craig-meeting-e2e").parse(options.craigProjectName),
     craigServiceName: z.literal("bot").parse(options.craigServiceName),

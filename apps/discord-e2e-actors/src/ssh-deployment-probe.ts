@@ -336,6 +336,7 @@ export class SshDeploymentEvidenceProbe implements DeploymentEvidenceProbe {
     readonly containerId: string;
     readonly markerDocument: string;
   }> {
+    const attestationFile = this.#replayAttestationFile();
     const containerId = await this.#findContainerId(
       this.#options.projectName,
       "meeting-platform",
@@ -353,7 +354,7 @@ export class SshDeploymentEvidenceProbe implements DeploymentEvidenceProbe {
         "-c",
         [...attestationFileGuard, 'cat -- "$1"'].join("; "),
         "discord-e2e-attestation",
-        this.#options.attestationFile,
+        attestationFile,
       ]),
     ]);
     assertReplayTargetAttestation(
@@ -365,6 +366,7 @@ export class SshDeploymentEvidenceProbe implements DeploymentEvidenceProbe {
   }
 
   async #consumeReplayMarker(markerDocument: string): Promise<void> {
+    const attestationFile = this.#replayAttestationFile();
     const expectedChecksum = createHash("sha256").update(markerDocument).digest("hex");
     await this.#commands.runRemote(this.#options, [
       "sh",
@@ -377,9 +379,17 @@ export class SshDeploymentEvidenceProbe implements DeploymentEvidenceProbe {
         'rm -- "$1"',
       ].join("; "),
       "discord-e2e-attestation-consume",
-      this.#options.attestationFile,
+      attestationFile,
       expectedChecksum,
     ]);
+  }
+
+  #replayAttestationFile(): string {
+    const attestationFile = this.#options.attestationFile;
+    if (attestationFile === undefined) {
+      throw new Error("Replay target attestation file is required for replay operations");
+    }
+    return attestationFile;
   }
 }
 

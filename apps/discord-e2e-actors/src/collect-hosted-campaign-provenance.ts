@@ -27,9 +27,6 @@ const environmentSchema = z.object({
   DISCORD_E2E_PROVENANCE_PHASE: z.enum(["before", "after"]),
   DISCORD_E2E_PROVENANCE_RUN_IDS_JSON: z.string(),
   DISCORD_E2E_PROVENANCE_SNAPSHOT_PATH: absolutePath,
-  DISCORD_E2E_REMOTE_ATTESTATION_FILE: z.string().regex(
-    /^\/tmp\/discord-e2e-attestations\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.json$/u,
-  ),
   DISCORD_E2E_REMOTE_COMPOSE_FILE: absolutePath,
   DISCORD_E2E_REMOTE_CRAIG_PROJECT: z.literal(HOSTED_CAMPAIGN_TARGET.craigProject),
   DISCORD_E2E_REMOTE_CRAIG_SERVICE: z.literal("bot"),
@@ -50,7 +47,6 @@ async function main(): Promise<void> {
     subscriptionRuntime: config.DISCORD_E2E_EXPECTED_SUBSCRIPTION_RUNTIME_SOURCE_REVISION,
   });
   const collector = new SshDeploymentEvidenceProbe({
-    attestationFile: config.DISCORD_E2E_REMOTE_ATTESTATION_FILE,
     composeFile: config.DISCORD_E2E_REMOTE_COMPOSE_FILE,
     craigProjectName: config.DISCORD_E2E_REMOTE_CRAIG_PROJECT,
     craigServiceName: config.DISCORD_E2E_REMOTE_CRAIG_SERVICE,
