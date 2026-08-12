@@ -29,7 +29,7 @@ export function verifyAddressedAnswer(
   for (const answer of answerCaptures) {
     if (evidence.schemaVersion >= 8) {
       verifyAddressedAnswerPlayback(
-        evidence,
+        evidence as Extract<RetainedConversationEvidence, { schemaVersion: 8 | 9 }>,
         answer,
         timestampToleranceMs,
         fail,

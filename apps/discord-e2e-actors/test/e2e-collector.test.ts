@@ -34,7 +34,7 @@ const campaignProof = {
   plan: { captures: [], kind: "conversation-voice-campaign-preflight", status: "validated" },
   planDigestSha256: "0".repeat(64),
   schemaVersion: 1,
-};
+} as const;
 
 const speakerA = "1533227577286852649";
 const speakerB = "1533228054724346087";
@@ -820,10 +820,10 @@ function campaignProofFor(conversation: ReturnType<typeof retainedV8Evidence>["c
     ordinal: index + 1,
     outputPath: `/evidence/capture-${index + 1}.json`,
     purpose: voice.correlation.purpose,
-    role: ["observer-unknown", "speaker-ru-known", "speaker-en-known", "speaker-d-unknown", "speaker-d-addressed-answer", "explicit-group-farewell"][index],
+    role: ["observer-unknown", "speaker-ru-known", "speaker-en-known", "speaker-d-unknown", "speaker-d-addressed-answer", "explicit-group-farewell"][index]!,
     resolvedTurnId: voice.correlation.turnId,
   }));
-  const plan = { ...campaignProof.plan, captures };
+  const plan = { ...campaignProof.plan, captures } as const;
   const planDigestSha256 = conversationVoiceCampaignPlanDigest(plan);
   return {
     ...campaignProof,

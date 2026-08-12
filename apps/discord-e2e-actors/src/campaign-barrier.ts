@@ -1,5 +1,4 @@
-import { constants } from "node:fs";
-import { lstat, mkdir, open } from "node:fs/promises";
+import { constants, promises as fs } from "node:fs";
 import { join } from "node:path";
 
 const ROOT_MODE = 0o700;
@@ -8,7 +7,7 @@ const PERMISSION_MASK = 0o777;
 const BARRIER_NAME = /^[a-z][a-z0-9-]{0,63}$/u;
 
 async function assertDirectory(path: string): Promise<void> {
-  const status = await lstat(path);
+  const status = await fs.lstat(path);
   if (status.isSymbolicLink() || !status.isDirectory()) {
     throw new Error(`Campaign barrier root is not a real directory: ${path}`);
   }
@@ -18,7 +17,7 @@ async function assertDirectory(path: string): Promise<void> {
 }
 
 export async function createCampaignBarrierRoot(path: string): Promise<void> {
-  await mkdir(path, { mode: ROOT_MODE });
+  await fs.mkdir(path, { mode: ROOT_MODE });
   await assertDirectory(path);
 }
 
@@ -32,7 +31,7 @@ export async function writeCreateOnlyBarrier(
   }
   await assertDirectory(rootPath);
   const barrierPath = join(rootPath, name);
-  const handle = await open(
+  const handle = await fs.open(
     barrierPath,
     constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
     BARRIER_MODE,
@@ -43,7 +42,7 @@ export async function writeCreateOnlyBarrier(
   } finally {
     await handle.close();
   }
-  const status = await lstat(barrierPath);
+  const status = await fs.lstat(barrierPath);
   if (status.isSymbolicLink() || !status.isFile()) {
     throw new Error(`Campaign barrier is not a real file: ${barrierPath}`);
   }
