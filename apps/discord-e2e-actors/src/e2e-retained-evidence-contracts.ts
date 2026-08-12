@@ -38,7 +38,14 @@ export interface ReplayJobEvidence {
   readonly state: "completed";
 }
 
+export interface ReplayTargetAttestation {
+  readonly fixtureSetId: string;
+  readonly recordingId: string;
+  readonly runId: string;
+}
+
 export interface DeploymentEvidenceProbe {
+  assertReplayTargetSafe(attestation: ReplayTargetAttestation): Promise<void>;
   collectConversationLifecycle?(
     meetingId: string,
     recordingStartedAt: string,
@@ -47,7 +54,7 @@ export interface DeploymentEvidenceProbe {
   collectProcessing(meetingId: string, recordingStartedAt: string): Promise<ProcessingEvidence>;
   collectProvenance(): Promise<CurrentDeploymentProvenance>;
   collectS3(manifestLocator: string, recordingId: string): Promise<S3RecordingEvidence>;
-  replayPostCall(meetingId: string): Promise<ReplayJobEvidence>;
+  replayPostCall(attestation: ReplayTargetAttestation): Promise<ReplayJobEvidence>;
 }
 
 export interface DiscordProjectionObservation {
@@ -82,6 +89,7 @@ export interface CollectEvidenceInput {
     readonly supplementalPlayback: unknown;
     readonly voice: readonly unknown[];
   };
+  readonly fixtureSetId: string;
   readonly recordingId: string;
   readonly runId: string;
 }

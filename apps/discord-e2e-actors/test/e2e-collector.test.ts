@@ -270,6 +270,9 @@ describe("collectRetainedE2eEvidence", () => {
         calls.push("s3");
         return s3();
       },
+      assertReplayTargetSafe: async () => {
+        calls.push("replay-target-safe");
+      },
       replayPostCall: async () => {
         calls.push("replay");
         return {
@@ -301,12 +304,13 @@ describe("collectRetainedE2eEvidence", () => {
     };
 
     const evidence = await collectRetainedE2eEvidence(
-      { actorRun: actorRun(), recordingId: "recording-1", runId: "run-1" },
+      { actorRun: actorRun(), fixtureSetId: "discord-meeting-ru-en-v1", recordingId: "recording-1", runId: "run-1" },
       deployment,
       discord,
     );
 
     expect(calls).toEqual([
+      "replay-target-safe",
       "provenance-1",
       "database-1",
       "s3",
@@ -336,6 +340,7 @@ describe("collectRetainedE2eEvidence", () => {
       collectProvenance: async () => summaryOnlyProvenance(),
       collectProcessing: async () => processing(),
       collectS3: async () => s3(),
+      assertReplayTargetSafe: async () => {},
       replayPostCall: async () => ({
         afterProcessedOn: 2_000,
         beforeProcessedOn: 1_000,
@@ -363,7 +368,7 @@ describe("collectRetainedE2eEvidence", () => {
     };
 
     const evidence = await collectRetainedE2eEvidence(
-      { actorRun: actorRun(), recordingId: "recording-1", runId: "run-1" },
+      { actorRun: actorRun(), fixtureSetId: "discord-meeting-ru-en-v1", recordingId: "recording-1", runId: "run-1" },
       deployment,
       discord,
     );
@@ -389,6 +394,7 @@ describe("collectRetainedE2eEvidence", () => {
       collectProvenance: async () => provenance(),
       collectProcessing: async () => processing(),
       collectS3: async () => s3(),
+      assertReplayTargetSafe: async () => {},
       replayPostCall: async () => ({
         afterProcessedOn: 2_000,
         beforeProcessedOn: 1_000,
@@ -431,6 +437,7 @@ describe("collectRetainedE2eEvidence", () => {
         supplementalPlayback,
         voice,
       },
+      fixtureSetId: "discord-meeting-ru-en-v1",
       recordingId: "recording-1",
       runId: "run-1",
     }, deployment, discord);
@@ -455,6 +462,7 @@ describe("collectRetainedE2eEvidence failure handling", () => {
       collectProvenance: async () => provenance(),
       collectProcessing: async () => processing(),
       collectS3: async () => s3(),
+      assertReplayTargetSafe: async () => {},
       replayPostCall: async () => ({
         afterProcessedOn: 2_000,
         beforeProcessedOn: 1_000,
@@ -492,6 +500,7 @@ describe("collectRetainedE2eEvidence failure handling", () => {
           runId: "run-1",
         })),
       },
+      fixtureSetId: "discord-meeting-ru-en-v1",
       recordingId: "recording-1",
       runId: "run-1",
     }, deployment, discord)).rejects.toThrow(
@@ -518,6 +527,7 @@ describe("collectRetainedE2eEvidence failure handling", () => {
       },
       collectProcessing: async () => processing(),
       collectS3: async () => s3(),
+      assertReplayTargetSafe: async () => {},
       replayPostCall: async () => ({
         afterProcessedOn: 2_000,
         beforeProcessedOn: 1_000,
@@ -542,7 +552,7 @@ describe("collectRetainedE2eEvidence failure handling", () => {
     };
 
     await expect(collectRetainedE2eEvidence(
-      { actorRun: actorRun(), recordingId: "recording-1", runId: "run-1" },
+      { actorRun: actorRun(), fixtureSetId: "discord-meeting-ru-en-v1", recordingId: "recording-1", runId: "run-1" },
       deployment,
       discord,
     )).rejects.toThrow("provenance changed");
@@ -554,6 +564,7 @@ describe("collectRetainedE2eEvidence failure handling", () => {
       collectProvenance: async () => summaryOnlyProvenance(),
       collectProcessing: async () => processing(),
       collectS3: async () => s3(),
+      assertReplayTargetSafe: async () => {},
       replayPostCall: async () => ({
         afterProcessedOn: 2_000,
         beforeProcessedOn: 1_000,
@@ -586,7 +597,7 @@ describe("collectRetainedE2eEvidence failure handling", () => {
     };
 
     await expect(collectRetainedE2eEvidence(
-      { actorRun: actorRun(), recordingId: "recording-1", runId: "run-1" },
+      { actorRun: actorRun(), fixtureSetId: "discord-meeting-ru-en-v1", recordingId: "recording-1", runId: "run-1" },
       deployment,
       discord,
     )).rejects.toThrow("attachments changed");
@@ -597,7 +608,7 @@ describe("collectRetainedE2eEvidence failure handling", () => {
     const discord = {} as DiscordEvidenceProbe;
 
     await expect(collectRetainedE2eEvidence(
-      { actorRun: actorRun(), recordingId: "recording-2", runId: "run-2" },
+      { actorRun: actorRun(), fixtureSetId: "discord-meeting-ru-en-v1", recordingId: "recording-2", runId: "run-2" },
       deployment,
       discord,
     )).rejects.toThrow("correlation");

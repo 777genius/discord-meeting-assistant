@@ -2,6 +2,8 @@ export const containerProvenanceFormat = `{"composeConfigHash":{{json (index .Co
 
 export const imageProvenanceFormat = `{"imageId":{{json .Id}},"repositoryDigests":{{json .RepoDigests}},"sourceRevision":{{json (index .Config.Labels "org.opencontainers.image.revision")}}}`;
 
+export const replayTargetContainerFormat = `{"composeProject":{{json (index .Config.Labels "com.docker.compose.project")}},"composeService":{{json (index .Config.Labels "com.docker.compose.service")}},"testOnly":{{json (index .Config.Labels "e2e.test-only")}}}`;
+
 export const postgresEvidenceQuery = `
 WITH target AS (
   SELECT snapshot
@@ -112,12 +114,10 @@ console.log(JSON.stringify({
 await client.destroy();
 `;
 
-export const replayJobScript = String.raw`
-import { Queue, QueueEvents } from "bullmq";
+const replayConnectionScript = String.raw`
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
-const meetingId = process.argv[1];
 const redisUrl = (await readFile(process.env.REDIS_URL_FILE, "utf8")).trim();
 const url = new URL(redisUrl);
 const connection = {
@@ -127,36 +127,64 @@ const connection = {
   ...(url.username ? { username: decodeURIComponent(url.username) } : {}),
   db: Number(url.pathname.slice(1) || 0),
 };
+const meetingId = process.argv[1];
 const digest = createHash("sha256")
   .update("post-call-job-v1", "utf8")
   .update("\0", "utf8")
   .update(meetingId, "utf8")
   .digest("hex");
 const jobId = "post-call-v1-" + digest;
+`;
+
+export const replayReadinessScript = String.raw`
+import { Queue } from "bullmq";
+${replayConnectionScript}
 const queue = new Queue("meeting-post-call-v1", { connection, prefix: "discord-meeting-v1" });
-const events = new QueueEvents("meeting-post-call-v1", { connection, prefix: "discord-meeting-v1" });
-await Promise.all([queue.waitUntilReady(), events.waitUntilReady()]);
-const job = await queue.getJob(jobId);
-if (!job || await job.getState() !== "completed" || !job.processedOn) {
-  throw new Error("completed post-call job is unavailable for replay");
+try {
+  await queue.waitUntilReady();
+  const job = await queue.getJob(jobId);
+  if (!job || await job.getState() !== "completed" || !job.processedOn) {
+    throw new Error("completed post-call job is unavailable for replay");
+  }
+  console.log(JSON.stringify({ beforeProcessedOn: job.processedOn, jobId, state: "completed" }));
+} finally {
+  await queue.close();
 }
-const beforeProcessedOn = job.processedOn;
-await job.retry("completed");
-const deadline = Date.now() + 300000;
-let fresh;
-while (Date.now() < deadline) {
-  fresh = await queue.getJob(jobId);
-  if (fresh && await fresh.getState() === "completed" && (fresh.processedOn || 0) > beforeProcessedOn) break;
-  await new Promise((resolve) => setTimeout(resolve, 500));
+`;
+
+export const replayJobScript = String.raw`
+import { Queue } from "bullmq";
+${replayConnectionScript}
+const expectedBeforeProcessedOn = Number(process.argv[2]);
+const queue = new Queue("meeting-post-call-v1", { connection, prefix: "discord-meeting-v1" });
+try {
+  await queue.waitUntilReady();
+  const job = await queue.getJob(jobId);
+  if (
+    !job ||
+    await job.getState() !== "completed" ||
+    job.processedOn !== expectedBeforeProcessedOn
+  ) {
+    throw new Error("post-call job changed after replay safety preflight");
+  }
+  await job.retry("completed");
+  const deadline = Date.now() + 300000;
+  let fresh;
+  while (Date.now() < deadline) {
+    fresh = await queue.getJob(jobId);
+    if (fresh && await fresh.getState() === "completed" && (fresh.processedOn || 0) > expectedBeforeProcessedOn) break;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  if (!fresh || await fresh.getState() !== "completed" || (fresh.processedOn || 0) <= expectedBeforeProcessedOn) {
+    throw new Error("real replay did not complete before deadline");
+  }
+  console.log(JSON.stringify({
+    afterProcessedOn: fresh.processedOn,
+    beforeProcessedOn: expectedBeforeProcessedOn,
+    jobId,
+    state: "completed",
+  }));
+} finally {
+  await queue.close();
 }
-if (!fresh || await fresh.getState() !== "completed" || (fresh.processedOn || 0) <= beforeProcessedOn) {
-  throw new Error("real replay did not complete before deadline");
-}
-console.log(JSON.stringify({
-  afterProcessedOn: fresh.processedOn,
-  beforeProcessedOn,
-  jobId,
-  state: "completed",
-}));
-await Promise.all([events.close(), queue.close()]);
 `;
