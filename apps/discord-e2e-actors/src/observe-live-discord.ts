@@ -177,7 +177,9 @@ function toMessageInput(message: Message): LiveDiscordMessageInput {
         name: field.name,
         value: field.value,
       })),
+      footerText: embed.footer?.text,
       title: embed.title,
+      url: embed.url,
     })),
     id: message.id,
   };
