@@ -1,4 +1,4 @@
-import { mkdtemp, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -161,5 +161,15 @@ describe("hosted actor release gate", () => {
 
     await expect(waitForActorReleaseGate(expectation(path), AbortSignal.timeout(20)))
       .rejects.toThrow(/Timed out or aborted/u);
+  });
+
+  it("rejects an unsafe actor armed receipt", async () => {
+    const root = await mkdtemp(join(tmpdir(), "actor-armed-security-"));
+    const expected = expectation(join(root, "gate.json"));
+    await writeFile(expected.armedPath, "{}\n", { mode: 0o600 });
+    await chmod(expected.armedPath, 0o644);
+    const { waitForActorGateArmed } = await import("../src/actor-release-gate.js");
+    await expect(waitForActorGateArmed(expected, AbortSignal.timeout(100)))
+      .rejects.toThrow(/private regular file/u);
   });
 });
