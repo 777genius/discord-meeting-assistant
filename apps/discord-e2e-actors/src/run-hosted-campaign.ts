@@ -14,7 +14,11 @@ import {
   parseHostedCampaignPlan,
 } from "./hosted-campaign-run-config.js";
 import { HostedCampaignArtifactStore } from "./hosted-campaign-artifact-store.js";
-import { HostedCampaignProcessAdapter } from "./hosted-campaign-process-adapter.js";
+import {
+  HostedCampaignProcessAdapter,
+  type HostedCampaignTrustedRuntimeEnvironment,
+  validateHostedCampaignTrustedRuntimeEnvironment,
+} from "./hosted-campaign-process-adapter.js";
 
 export interface HostedCampaignCliDependencies {
   readonly now: () => number;
@@ -69,6 +73,24 @@ export async function writeCreateOnlyHostedCampaignReceipt(
   }
 }
 
+export function loadHostedCampaignTrustedRuntimeEnvironment(
+  environment: Readonly<NodeJS.ProcessEnv>,
+): HostedCampaignTrustedRuntimeEnvironment {
+  const optional = <Name extends "LANG" | "LC_ALL" | "SSH_AUTH_SOCK">(
+    name: Name,
+  ): { readonly [Key in Name]: string } | Record<never, never> => {
+    const value = environment[name];
+    return value === undefined ? {} : { [name]: value } as { readonly [Key in Name]: string };
+  };
+  return validateHostedCampaignTrustedRuntimeEnvironment({
+    HOME: environment.HOME ?? "",
+    ...optional("LANG"),
+    ...optional("LC_ALL"),
+    PATH: environment.PATH ?? "",
+    ...optional("SSH_AUTH_SOCK"),
+  });
+}
+
 async function main(): Promise<void> {
   const controller = new AbortController();
   const forwardSignal = (signal: NodeJS.Signals) => controller.abort(new Error(`Received ${signal}`));
@@ -84,6 +106,7 @@ async function main(): Promise<void> {
     const adapter = new HostedCampaignProcessAdapter({
       artifactStore: store,
       distRoot: dirname(fileURLToPath(import.meta.url)),
+      trustedRuntimeEnvironment: loadHostedCampaignTrustedRuntimeEnvironment(process.env),
     });
     await runHostedCampaignCli(process.argv.slice(2), {
       now: Date.now,

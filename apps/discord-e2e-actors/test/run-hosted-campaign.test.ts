@@ -12,6 +12,7 @@ import {
 import { campaignActions } from "../src/hosted-campaign-execution-graph.js";
 import { parseHostedCampaignArguments, parseHostedCampaignPlan } from "../src/hosted-campaign-run-config.js";
 import {
+  loadHostedCampaignTrustedRuntimeEnvironment,
   readPrivateHostedCampaignPlan,
   runHostedCampaignCli,
   writeCreateOnlyHostedCampaignReceipt,
@@ -38,6 +39,27 @@ const plan = () => {
 };
 
 describe("run-hosted-campaign CLI", () => {
+  it("selects only the closed trusted runtime environment", () => {
+    expect(loadHostedCampaignTrustedRuntimeEnvironment({
+      HOME: "/private/tmp/test-home",
+      LANG: "en_US.UTF-8",
+      LC_ALL: "C",
+      PATH: "/usr/bin:/bin",
+      SECRET_SHOULD_NOT_REACH_CHILD: "secret-value",
+      SSH_AUTH_SOCK: "/private/tmp/test-agent.sock",
+    })).toEqual({
+      HOME: "/private/tmp/test-home",
+      LANG: "en_US.UTF-8",
+      LC_ALL: "C",
+      PATH: "/usr/bin:/bin",
+      SSH_AUTH_SOCK: "/private/tmp/test-agent.sock",
+    });
+    expect(loadHostedCampaignTrustedRuntimeEnvironment({
+      HOME: "/private/tmp/test-home",
+      PATH: "/usr/bin:/bin",
+    })).toEqual({ HOME: "/private/tmp/test-home", PATH: "/usr/bin:/bin" });
+  });
+
   it("requires exactly three arguments and absolute plan/receipt paths", () => {
     expect(parseHostedCampaignArguments(["/plan.json", "/receipt.json", "1000"])).toEqual({
       planPath: "/plan.json", receiptPath: "/receipt.json", timeoutMilliseconds: 1_000,

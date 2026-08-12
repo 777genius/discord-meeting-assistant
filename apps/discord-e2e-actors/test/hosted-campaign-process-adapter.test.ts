@@ -12,6 +12,14 @@ import {
   serializeHostedCampaignProcessEvent,
 } from "../src/hosted-campaign-process-event.js";
 
+const trustedRuntimeEnvironment = {
+  HOME: "/private/tmp/hosted-campaign-home",
+  LANG: "en_US.UTF-8",
+  LC_ALL: "C",
+  PATH: "/usr/bin:/bin",
+  SSH_AUTH_SOCK: "/private/tmp/hosted-campaign-ssh-agent.sock",
+} as const;
+
 async function adapter(source: string, outputLimitBytes?: number) {
   const root = await mkdtemp(join(tmpdir(), "hosted-process-"));
   await chmod(root, 0o700);
@@ -23,6 +31,7 @@ async function adapter(source: string, outputLimitBytes?: number) {
   await store.initialize();
   return { processAdapter: new HostedCampaignProcessAdapter({
     artifactStore: store, distRoot: root, terminationGraceMilliseconds: 50,
+    trustedRuntimeEnvironment,
     ...(outputLimitBytes === undefined ? {} : { outputLimitBytes }),
   }), store };
 }
@@ -32,7 +41,9 @@ async function recordingReadyAdapter(source: string) {
   await writeFile(join(root, "collect-recording-ready-receipt.js"), source, { mode: 0o600 });
   const store = new HostedCampaignArtifactStore(join(root, "artifacts"), "campaign-1");
   await store.initialize();
-  return new HostedCampaignProcessAdapter({ artifactStore: store, distRoot: root, terminationGraceMilliseconds: 50 });
+  return new HostedCampaignProcessAdapter({
+    artifactStore: store, distRoot: root, terminationGraceMilliseconds: 50, trustedRuntimeEnvironment,
+  });
 }
 async function finiteAdapter(entrypoint: string, source: string) {
   const root = await mkdtemp(join(tmpdir(), "hosted-finite-process-"));
@@ -40,7 +51,9 @@ async function finiteAdapter(entrypoint: string, source: string) {
   await writeFile(join(root, entrypoint), source, { mode: 0o600 });
   const store = new HostedCampaignArtifactStore(join(root, "artifacts"), "campaign-1");
   await store.initialize();
-  return new HostedCampaignProcessAdapter({ artifactStore: store, distRoot: root, terminationGraceMilliseconds: 50 });
+  return new HostedCampaignProcessAdapter({
+    artifactStore: store, distRoot: root, terminationGraceMilliseconds: 50, trustedRuntimeEnvironment,
+  });
 }
 async function serviceLevelsAdapter(source: string) {
   return finiteAdapter("collect-hosted-service-levels.js", source);

@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { isAbsolute, join } from "node:path";
+import { delimiter, isAbsolute, join } from "node:path";
 
 import { z } from "zod";
 
@@ -97,6 +97,8 @@ const ALLOWED_ENVIRONMENT = new Set([
   "DISCORD_E2E_SUPPLEMENTAL_RUN_ID", "DISCORD_E2E_SUPPLEMENTAL_SECRET_DIRECTORY", "DISCORD_E2E_SUT_ACCOUNT",
   "DISCORD_E2E_VOICE_CHANNEL_ID",
 ]);
+const TRUSTED_RUNTIME_ENVIRONMENT_NAMES = new Set(["HOME", "LANG", "LC_ALL", "PATH", "SSH_AUTH_SOCK"]);
+const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/u;
 
 interface ChildState {
   readonly child: ChildProcess;
@@ -133,16 +135,29 @@ export interface HostedCampaignProcessAdapterOptions {
   readonly distRoot: string;
   readonly outputLimitBytes?: number;
   readonly terminationGraceMilliseconds?: number;
+  readonly trustedRuntimeEnvironment: HostedCampaignTrustedRuntimeEnvironment;
+}
+
+export interface HostedCampaignTrustedRuntimeEnvironment {
+  readonly HOME: string;
+  readonly LANG?: string;
+  readonly LC_ALL?: string;
+  readonly PATH: string;
+  readonly SSH_AUTH_SOCK?: string;
 }
 
 export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
   readonly #children = new Map<string, ChildState>();
   readonly #options: HostedCampaignProcessAdapterOptions;
+  readonly #trustedRuntimeEnvironment: HostedCampaignTrustedRuntimeEnvironment;
   constructor(options: HostedCampaignProcessAdapterOptions) {
     if (!isAbsolute(options.distRoot)) {
       throw new Error("Hosted campaign dist root must be absolute");
     }
     this.#options = options;
+    this.#trustedRuntimeEnvironment = validateHostedCampaignTrustedRuntimeEnvironment(
+      options.trustedRuntimeEnvironment,
+    );
   }
   acquireCampaignLease(_campaignId: string, bounded: HostedCampaignBoundedSignal): Promise<HostedCampaignLeaseHandle> {
     return this.#options.artifactStore.acquireLease(bounded);
@@ -256,7 +271,10 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
       throw new Error(`Hosted campaign child already started: ${spec.childId}`);
     }
     assertPinnedTarget(spec);
-    const environment = validateEnvironment(spec.environment);
+    const environment = {
+      ...this.#trustedRuntimeEnvironment,
+      ...validateEnvironment(spec.environment),
+    };
     const child = spawn(process.execPath, [join(this.#options.distRoot, ENTRYPOINTS[spec.entrypoint]), ...argumentsFor(spec)], {
       detached: process.platform !== "win32", env: environment, shell: false, stdio: ["ignore", "pipe", "pipe"],
     });
@@ -324,6 +342,7 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
         state.eventLines.push(line);
         state.eventIngestion = state.eventIngestion.then(() => ingestHostedCampaignProcessEventLine({
           campaignId: expected.campaignId, line, publishedEvents: state.publishedEvents,
+          declaredProductions: spec.produces,
           runId: expected.runId, store: this.#options.artifactStore,
         }).then(() => undefined))
           .catch((error: unknown) => {
@@ -442,13 +461,68 @@ function argumentsFor(spec: HostedCampaignExecutableSpec): readonly string[] {
 function validateEnvironment(environment: Readonly<Record<string, string>>): NodeJS.ProcessEnv {
   const clean: NodeJS.ProcessEnv = {};
   for (const [name, value] of Object.entries(environment)) {
-    if (name === "PATH" || name === "NODE_OPTIONS" || name.startsWith("LD_") || name.startsWith("DYLD_")
-      || name.includes("TOKEN") || !ALLOWED_ENVIRONMENT.has(name)) {
+    if (TRUSTED_RUNTIME_ENVIRONMENT_NAMES.has(name) || name === "NODE_OPTIONS" || name.startsWith("LD_")
+      || name.startsWith("DYLD_") || name.includes("TOKEN") || !ALLOWED_ENVIRONMENT.has(name)) {
       throw new Error(`Hosted campaign child environment variable is forbidden: ${name}`);
     }
     clean[name] = value;
   }
   return clean;
+}
+
+export function validateHostedCampaignTrustedRuntimeEnvironment(
+  input: unknown,
+): HostedCampaignTrustedRuntimeEnvironment {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    throw new Error("Hosted campaign trusted runtime environment must be configured");
+  }
+  const environment = input as Readonly<Record<string, unknown>>;
+  for (const name of Object.keys(environment)) {
+    if (!TRUSTED_RUNTIME_ENVIRONMENT_NAMES.has(name)) {
+      throw new Error(`Hosted campaign trusted runtime environment variable is forbidden: ${name}`);
+    }
+  }
+  const home = validateTrustedAbsolutePath("HOME", environment.HOME);
+  const path = validateTrustedValue("PATH", environment.PATH, 16 * 1024);
+  if (!path.split(delimiter).every((entry) => entry.length > 0 && isAbsolute(entry))) {
+    throw new Error("Hosted campaign trusted runtime environment PATH must contain only absolute entries");
+  }
+  const optional = <Name extends "LANG" | "LC_ALL" | "SSH_AUTH_SOCK">(
+    name: Name,
+  ): { readonly [Key in Name]: string } | Record<never, never> => {
+    const value = environment[name];
+    if (value === undefined) {
+      return {};
+    }
+    return {
+      [name]: name === "SSH_AUTH_SOCK"
+        ? validateTrustedAbsolutePath(name, value)
+        : validateTrustedValue(name, value, 128),
+    } as { readonly [Key in Name]: string };
+  };
+  return Object.freeze({
+    HOME: home,
+    ...optional("LANG"),
+    ...optional("LC_ALL"),
+    PATH: path,
+    ...optional("SSH_AUTH_SOCK"),
+  });
+}
+
+function validateTrustedAbsolutePath(name: "HOME" | "SSH_AUTH_SOCK", value: unknown): string {
+  const validated = validateTrustedValue(name, value, 4 * 1024);
+  if (!isAbsolute(validated)) {
+    throw new Error(`Hosted campaign trusted runtime environment ${name} must be absolute`);
+  }
+  return validated;
+}
+
+function validateTrustedValue(name: string, value: unknown, maximumLength: number): string {
+  if (typeof value !== "string" || value.length === 0 || value.length > maximumLength
+    || CONTROL_CHARACTER.test(value)) {
+    throw new Error(`Hosted campaign trusted runtime environment ${name} is unsafe`);
+  }
+  return value;
 }
 function assertActive(bounded: HostedCampaignBoundedSignal): void {
   if (bounded.signal.aborted) {

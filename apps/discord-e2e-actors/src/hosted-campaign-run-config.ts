@@ -9,7 +9,17 @@ import {
 } from "./hosted-campaign-coordinator.js";
 
 const identifier = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u);
-const environment = z.record(z.string(), z.string());
+const trustedRuntimeEnvironmentNames = new Set(["HOME", "LANG", "LC_ALL", "PATH", "SSH_AUTH_SOCK"]);
+const environment = z.record(z.string(), z.string()).superRefine((value, context) => {
+  for (const name of Object.keys(value)) {
+    if (trustedRuntimeEnvironmentNames.has(name)) {
+      context.addIssue({
+        code: "custom",
+        message: `Hosted campaign plan cannot declare trusted runtime environment variable: ${name}`,
+      });
+    }
+  }
+});
 const argumentsSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("environment") }).strict(),
   z.object({
