@@ -1,13 +1,9 @@
 import { isAbsolute } from "node:path";
 
 import { z } from "zod";
-import {
-  createMeetingDiscordFinalSummaryProjectionKey,
-  createMeetingDiscordProjectionKey,
-  createProjectionMarker,
-} from "@discord-meeting/discord-adapter";
 
 import type { ObserveLiveDiscordPlaybackLinkInput } from "./live-discord-playback-link-observer.js";
+import { createObservedMeetingProjectionMarkers } from "./live-discord-projection-marker-contract.js";
 
 const snowflake = z.string().regex(/^\d{17,20}$/u, "Expected a Discord snowflake");
 const identifier = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u);
@@ -63,16 +59,13 @@ export function loadLiveDiscordPlaybackLinkObserverConfig(
   const parsed = (input.DISCORD_E2E_PLAYBACK_LINK_MODE === "hosted"
     ? hostedEnvironment : explicitEnvironment).parse(input);
   if (parsed.DISCORD_E2E_PLAYBACK_LINK_MODE === "hosted") {
-    const liveKey = createMeetingDiscordProjectionKey(
-      parsed.DISCORD_E2E_PLAYBACK_LINK_MEETING_ID, parsed.DISCORD_E2E_PLAYBACK_LINK_RESULT_CHANNEL_ID,
-    );
-    const finalKey = createMeetingDiscordFinalSummaryProjectionKey(
-      parsed.DISCORD_E2E_PLAYBACK_LINK_MEETING_ID, parsed.DISCORD_E2E_PLAYBACK_LINK_RESULT_CHANNEL_ID,
-    );
     return freezeConfig(parsed, {
       container: { kind: "channel-message", parentChannelId: parsed.DISCORD_E2E_PLAYBACK_LINK_RESULT_CHANNEL_ID },
       meetingId: parsed.DISCORD_E2E_PLAYBACK_LINK_MEETING_ID,
-      projectionMarkers: [createProjectionMarker(liveKey), createProjectionMarker(finalKey)],
+      projectionMarkers: createObservedMeetingProjectionMarkers(
+        parsed.DISCORD_E2E_PLAYBACK_LINK_MEETING_ID,
+        parsed.DISCORD_E2E_PLAYBACK_LINK_RESULT_CHANNEL_ID,
+      ),
     });
   }
   if (

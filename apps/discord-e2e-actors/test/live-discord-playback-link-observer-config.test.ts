@@ -1,11 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { loadLiveDiscordPlaybackLinkObserverConfig } from "../src/live-discord-playback-link-observer-config.js";
-import {
-  createMeetingDiscordFinalSummaryProjectionKey,
-  createMeetingDiscordProjectionKey,
-  createProjectionMarker,
-} from "@discord-meeting/discord-adapter";
+import { createObservedMeetingProjectionMarkers } from "../src/live-discord-projection-marker-contract.js";
 
 const environment = {
   DISCORD_E2E_PLAYBACK_LINK_DURATION_MS: "60000",
@@ -59,10 +55,9 @@ describe("live Discord playback-link observer config", () => {
       kind: "channel-message", parentChannelId: environment.DISCORD_E2E_PLAYBACK_LINK_RESULT_CHANNEL_ID,
     });
     expect(hosted.meetingId).toBe("meeting-42");
-    expect(hosted.projectionMarkers).toEqual([
-      createProjectionMarker(createMeetingDiscordProjectionKey("meeting-42", environment.DISCORD_E2E_PLAYBACK_LINK_RESULT_CHANNEL_ID)),
-      createProjectionMarker(createMeetingDiscordFinalSummaryProjectionKey("meeting-42", environment.DISCORD_E2E_PLAYBACK_LINK_RESULT_CHANNEL_ID)),
-    ]);
+    expect(hosted.projectionMarkers).toEqual(createObservedMeetingProjectionMarkers(
+      "meeting-42", environment.DISCORD_E2E_PLAYBACK_LINK_RESULT_CHANNEL_ID,
+    ));
   });
 
   it("requires exact meeting and recording identities in hosted mode", () => {

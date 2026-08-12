@@ -29,13 +29,13 @@
   },
   "dependencies": {
     "@discord-meeting/conversation-runtime-contracts": "workspace:*",
-    "@discord-meeting/discord-adapter": "workspace:*",
     "@discordjs/opus": "catalog:",
     "@discordjs/voice": "catalog:",
     "discord.js": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {
+    "@discord-meeting/discord-adapter": "workspace:*",
     "@types/node": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
