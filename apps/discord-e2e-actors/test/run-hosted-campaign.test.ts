@@ -80,7 +80,12 @@ describe("run-hosted-campaign CLI", () => {
         phase: "before", runIds: ["run-1", "run-2", "run-3"],
         snapshotPath: "/private/evidence/provenance.json",
       },
-      startBefore: { action: { kind: "provenance-before" }, kind: "barrier" },
+      produces: [{
+        action: { kind: "provenance-before" }, ordinal: 1,
+        outputPath: "/private/evidence/provenance-before.json", runId: "run-1",
+      }],
+      requires: [],
+      startBefore: { action: { kind: "provenance-before" }, kind: "barrier", ordinal: 1, runId: "run-1" },
     } as never;
     expect(parseHostedCampaignPlan(input).children[0]?.entrypoint).toBe("provenance-probe");
   });

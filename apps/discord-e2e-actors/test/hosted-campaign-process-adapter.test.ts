@@ -98,7 +98,19 @@ const provenanceSpec = (phase: "after" | "before"): HostedCampaignExecutableSpec
     DISCORD_E2E_REMOTE_HOST: HOSTED_CAMPAIGN_TARGET.host,
     DISCORD_E2E_REMOTE_PROJECT: HOSTED_CAMPAIGN_TARGET.project,
   },
-  startBefore: { action: { kind: phase === "before" ? "provenance-before" : "provenance-after" }, kind: "barrier" },
+  produces: [{
+    action: { kind: phase === "before" ? "provenance-before" : "provenance-after" },
+    ordinal: phase === "before" ? 1 : 3,
+    outputPath: `/evidence/provenance-${phase}.json`,
+    runId: phase === "before" ? "run-1" : "run-3",
+  }],
+  requires: [],
+  startBefore: {
+    action: { kind: phase === "before" ? "provenance-before" : "provenance-after" },
+    kind: "barrier",
+    ordinal: phase === "before" ? 1 : 3,
+    runId: phase === "before" ? "run-1" : "run-3",
+  },
 });
 
 describe("hosted campaign process adapter", () => {
