@@ -55,6 +55,24 @@ describe("hosted remote admission composition", () => {
     expect(calls).not.toContain("clock");
   });
 
+  it.each([
+    ["WER/CER", [{ endMs: 1_000, startMs: 0, text: "completely wrong Botik transcript" }]],
+    ["required terms", [{ endMs: 1_000, startMs: 0, text: "hello assistant" }]],
+    ["timeline", [{ endMs: 1_251, startMs: 251, text: "hello Botik" }]],
+  ] as const)("blocks a canary that violates pinned %s thresholds", async (_label, segments) => {
+    const config = composition([]);
+    const probe = createHostedCampaignRemoteAdmissionProbe({
+      ...config,
+      voicetext: {
+        ...config.voicetext,
+        runner: { run: async () => voicetextResult(segments) },
+      },
+    });
+    await expect(evaluateHostedRemoteAdmission(probe, {
+      campaignId, meetingPlatformRevision: revision, planSha256,
+    }, now)).rejects.toThrow("quality thresholds");
+  });
+
   it("rejects an arbitrary request or configuration instead of treating it as authorization", async () => {
     const config = composition([]);
     const probe = createHostedCampaignRemoteAdmissionProbe(config);
@@ -63,6 +81,11 @@ describe("hosted remote admission composition", () => {
     expect(() => createHostedCampaignRemoteAdmissionProbe({
       ...config, planSha256: "8".repeat(64),
     })).toThrow("exact private deployment and plan");
+    expect(() => createHostedCampaignRemoteAdmissionProbe({
+      ...config,
+      voicetext: { ...config.voicetext,
+        fixtureExpectation: { ...config.voicetext.fixtureExpectation, maximumWordErrorRate: 1 } },
+    })).toThrow();
   });
 
   it("blocks without a constructed trusted producer", async () => {
@@ -134,6 +157,11 @@ function composition(calls: string[]): HostedRemoteAdmissionCompositionConfig {
     meetingPlatformRevision: revision,
     planSha256,
     voicetext: {
+      fixtureExpectation: {
+        maximumCharacterErrorRate: 0.15,
+        maximumTimelineDeltaMs: 250,
+        maximumWordErrorRate: 0.2,
+      },
       input: {
         binding: { ...binding, fixtureSha256: "5".repeat(64),
           transcriptExpectationSha256: digestVoicetextCanaryExpectationV1(expectedSegments) },
@@ -215,12 +243,14 @@ function clockExchange() {
     project: HOSTED_CAMPAIGN_TARGET.project } };
 }
 
-function voicetextResult() {
-  const digest = digestVoicetextCanaryExpectationV1(expectedSegments);
+function voicetextResult(
+  segments: readonly { readonly endMs: number; readonly startMs: number; readonly text: string }[] = expectedSegments,
+) {
+  const digest = digestVoicetextCanaryExpectationV1(segments);
   return { batch: { firstSubmission: { jobId: "job", resultId: "result", resultSha256: digest },
-    idempotentReplay: { jobId: "job", resultId: "result", resultSha256: digest }, segments: expectedSegments, utteranceCount: 1 },
+    idempotentReplay: { jobId: "job", resultId: "result", resultSha256: digest }, segments, utteranceCount: 1 },
   live: { audioAcknowledgements: { expected: 1, received: 1 }, finalizeComplete: true, protocolReady: true,
-    segments: expectedSegments }, schemaVersion: 1,
+    segments }, schemaVersion: 1,
   tokenFile: { generationId: "generation-voicetext", mode: 0o600, ownerUid: 10_001,
     path: "/run/secrets/voicetext" } };
 }

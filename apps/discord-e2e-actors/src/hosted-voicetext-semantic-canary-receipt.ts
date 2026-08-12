@@ -87,8 +87,8 @@ export function evaluateVoicetextSemanticCanaryReceiptV1(
     throw new Error("Voicetext semantic canary receipt digest is invalid");
   }
   assertLifetime(receipt, expected);
-  if (JSON.stringify(receipt.binding) !== JSON.stringify(expected.binding)
-    || JSON.stringify(receipt.endpoint) !== JSON.stringify(expected.endpoint)) {
+  if (digestCanonical(receipt.binding) !== digestCanonical(expected.binding)
+    || digestCanonical(receipt.endpoint) !== digestCanonical(expected.endpoint)) {
     throw new Error("Voicetext semantic canary does not match its campaign binding");
   }
   assertBatchIdempotency(receipt);

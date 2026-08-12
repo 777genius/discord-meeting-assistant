@@ -11,6 +11,17 @@ const planSha256 = "a".repeat(64);
 const meetingPlatformRevision = "b".repeat(40);
 const expected = { campaignId, meetingPlatformRevision, planSha256 };
 const nowEpochMs = Date.parse("2026-08-13T09:00:00.000Z");
+const voicetextCanaryExpectation = {
+  binding: {
+    campaignId, containerId: "1", fixtureSha256: "1".repeat(64), host: "host",
+    imageDigestSha256: "2".repeat(64), planSha256, sourceRevision: meetingPlatformRevision,
+    transcriptExpectationSha256: "3".repeat(64),
+  },
+  endpoint: { batch: { origin: "https://voicetext.test", path: "/batch" },
+    live: { origin: "wss://voicetext.test", path: "/live" } },
+  maximumCharacterErrorRate: 0.15, maximumTimelineDeltaMs: 250, maximumWordErrorRate: 0.2,
+  requiredTermCount: 1, requiredTermsExpectationSha256: "4".repeat(64),
+} as const;
 
 describe("hosted campaign remote admission boundary", () => {
   it("fails closed without a trusted remote probe", async () => {
@@ -58,7 +69,7 @@ describe("hosted campaign remote admission boundary", () => {
 });
 
 function fakeProbe(value: unknown): HostedCampaignRemoteAdmissionProbe {
-  return { inspect: async () => value };
+  return { inspect: async () => value, voicetextCanaryExpectation };
 }
 
 function validReadiness(change: Readonly<Record<string, unknown>> = {}) {
@@ -76,7 +87,8 @@ function validReadiness(change: Readonly<Record<string, unknown>> = {}) {
     planSha256,
     probedAt: "2026-08-13T08:59:00.000Z",
     schemaVersion: 1,
-    voicetextCanary: reference("hosted-voicetext-semantic-canary-receipt", "4"),
+    voicetextCanary: { ...reference("hosted-voicetext-semantic-canary-receipt", "4"),
+      admissionExpectationSha256: "7".repeat(64) },
     ...change,
   });
 }

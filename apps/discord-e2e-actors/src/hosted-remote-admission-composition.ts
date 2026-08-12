@@ -15,6 +15,7 @@ import {
   type HostedDiscordIdentityReceiptInput,
 } from "./hosted-discord-identity-producer.js";
 import {
+  digestVoicetextCanaryRequiredTermsV1,
   produceVoicetextSemanticCanaryReceiptV1,
   type ProduceVoicetextCanaryInputV1,
   type VoicetextCanaryRunnerV1,
@@ -73,6 +74,12 @@ export interface HostedRemoteAdmissionCompositionConfig {
   readonly meetingPlatformRevision: string;
   readonly planSha256: string;
   readonly voicetext: {
+    /** Pinned fixture-definition thresholds, constructed by trusted host wiring. */
+    readonly fixtureExpectation: Readonly<{
+      maximumCharacterErrorRate: number;
+      maximumTimelineDeltaMs: number;
+      maximumWordErrorRate: number;
+    }>;
     readonly input: ProduceVoicetextCanaryInputV1;
     readonly runner: VoicetextCanaryRunnerV1;
   };
@@ -83,6 +90,15 @@ export function createHostedCampaignRemoteAdmissionProbe(
 ): HostedCampaignRemoteAdmissionProbe {
   const config = validateComposition(configValue);
   return Object.freeze({
+    voicetextCanaryExpectation: Object.freeze({
+      binding: config.voicetext.input.binding,
+      endpoint: config.voicetext.input.endpoint,
+      ...config.voicetext.fixtureExpectation,
+      requiredTermCount: config.voicetext.input.requiredTerms.length,
+      requiredTermsExpectationSha256: digestVoicetextCanaryRequiredTermsV1(
+        config.voicetext.input.requiredTerms,
+      ),
+    }),
     inspect: async (request: HostedCampaignRemoteAdmissionProbeRequest) => {
       assertRequest(request, config);
 
@@ -123,6 +139,11 @@ function validateComposition(
   const expectation = hostedDeploymentSafetyExpectationV1Schema.parse(value.deployment.expectation);
   const discord = value.discord;
   const voicetext = value.voicetext.input;
+  const fixtureExpectation = z.object({
+    maximumCharacterErrorRate: z.number().min(0).lt(1),
+    maximumTimelineDeltaMs: z.number().int().nonnegative().max(60_000),
+    maximumWordErrorRate: z.number().min(0).lt(1),
+  }).strict().parse(value.voicetext.fixtureExpectation);
   const target = HOSTED_CAMPAIGN_TARGET;
   const expectedTarget = {
     deploymentScope: target.deploymentScope,
@@ -146,11 +167,12 @@ function validateComposition(
     || voicetext.binding.host !== target.host
     || voicetext.binding.containerId !== discord.binding.containerId
     || voicetext.binding.imageDigestSha256 !== discord.binding.imageDigestSha256
-    || meetingService.repositoryDigest.endsWith(`@sha256:${discord.binding.imageDigestSha256}`) === false) {
+    || !meetingService.repositoryDigest.endsWith(`@sha256:${discord.binding.imageDigestSha256}`)) {
     throw new Error("Hosted remote admission composition is not bound to the exact private deployment and plan");
   }
   return Object.freeze({ ...value, campaignId, meetingPlatformRevision, planSha256,
-    deployment: Object.freeze({ ...value.deployment, expectation }) });
+    deployment: Object.freeze({ ...value.deployment, expectation }),
+    voicetext: Object.freeze({ ...value.voicetext, fixtureExpectation }) });
 }
 
 function assertRequest(

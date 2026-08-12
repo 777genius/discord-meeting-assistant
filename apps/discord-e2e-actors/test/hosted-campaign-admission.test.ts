@@ -75,13 +75,25 @@ describe("hosted campaign admission", () => {
         },
       },
       discordIdentity: reference("hosted-discord-identity-receipt", "3"),
-      voicetextCanary: reference("hosted-voicetext-semantic-canary-receipt", "4"),
+      voicetextCanary: { ...reference("hosted-voicetext-semantic-canary-receipt", "4"),
+        admissionExpectationSha256: "5".repeat(64) },
       expiresAt: "2026-08-13T09:05:00.000Z", kind: "hosted-remote-readiness",
       persistence: "create-only", planSha256, probedAt: "2026-08-13T08:59:00.000Z", schemaVersion: 1,
     });
     await expect(inspectHostedCampaignAdmission({
       bindings: setup.bindings, definition: setup.definition, minimumFreeBytes: 1,
-      plan: setup.plan, remoteAdmissionProbe: { inspect: async () => readiness },
+      plan: setup.plan, remoteAdmissionProbe: {
+        inspect: async () => readiness,
+        voicetextCanaryExpectation: {
+          binding: { campaignId: "x", containerId: "x", fixtureSha256: "1".repeat(64), host: "x",
+            imageDigestSha256: "1".repeat(64), planSha256: "1".repeat(64), sourceRevision: "1".repeat(40),
+            transcriptExpectationSha256: "1".repeat(64) },
+          endpoint: { batch: { origin: "https://example.test", path: "/batch" },
+            live: { origin: "wss://example.test", path: "/live" } },
+          maximumCharacterErrorRate: 0.15, maximumTimelineDeltaMs: 250, maximumWordErrorRate: 0.2,
+          requiredTermCount: 1, requiredTermsExpectationSha256: "1".repeat(64),
+        },
+      },
     }, () => Date.parse("2026-08-13T09:00:00.000Z"))).rejects.toThrow();
   });
 

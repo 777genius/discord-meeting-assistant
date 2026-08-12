@@ -59,6 +59,10 @@ export interface ProduceVoicetextCanaryInputV1 extends VoicetextCanaryRunnerInpu
   readonly ttlMs: number;
 }
 
+export function digestVoicetextCanaryRequiredTermsV1(requiredTerms: readonly string[]): string {
+  return digestCanonical(requiredTerms.map(normalizeText));
+}
+
 export async function produceVoicetextSemanticCanaryReceiptV1(
   input: ProduceVoicetextCanaryInputV1,
   runner: VoicetextCanaryRunnerV1,
@@ -99,7 +103,7 @@ export async function produceVoicetextSemanticCanaryReceiptV1(
       characterErrorRate: Math.max(batchQuality.characterErrorRate, liveQuality.characterErrorRate),
       observedMaximumTimelineDeltaMs: Math.max(batchQuality.timelineDeltaMs, liveQuality.timelineDeltaMs),
       requiredTermMatches: Math.min(batchQuality.requiredTermMatches, liveQuality.requiredTermMatches),
-      requiredTermsExpectationSha256: digestCanonical(requiredTerms),
+      requiredTermsExpectationSha256: digestVoicetextCanaryRequiredTermsV1(requiredTerms),
       wordErrorRate: Math.max(batchQuality.wordErrorRate, liveQuality.wordErrorRate),
     },
     schemaVersion: 1,
