@@ -115,8 +115,12 @@ async function assertSafeRoot(path: string): Promise<void> {
 }
 
 function assertActive(bounded: HostedCampaignBoundedSignal): void {
-  if (bounded.signal.aborted) throw bounded.signal.reason ?? new Error("Hosted campaign cancelled");
-  if (Date.now() >= bounded.deadlineEpochMilliseconds) throw new Error("Hosted campaign deadline expired");
+  if (bounded.signal.aborted) {
+    throw bounded.signal.reason ?? new Error("Hosted campaign cancelled");
+  }
+  if (Date.now() >= bounded.deadlineEpochMilliseconds) {
+    throw new Error("Hosted campaign deadline expired");
+  }
 }
 
 async function wait(milliseconds: number, signal: AbortSignal): Promise<void> {

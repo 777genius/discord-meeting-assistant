@@ -82,7 +82,9 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
   readonly #children = new Map<string, ChildState>();
   readonly #options: HostedCampaignProcessAdapterOptions;
   constructor(options: HostedCampaignProcessAdapterOptions) {
-    if (!isAbsolute(options.distRoot)) throw new Error("Hosted campaign dist root must be absolute");
+    if (!isAbsolute(options.distRoot)) {
+      throw new Error("Hosted campaign dist root must be absolute");
+    }
     this.#options = options;
   }
   acquireCampaignLease(_campaignId: string, bounded: HostedCampaignBoundedSignal): Promise<HostedCampaignLeaseHandle> {
@@ -112,7 +114,9 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
   }
   async startChild(spec: HostedCampaignExecutableSpec, bounded: HostedCampaignBoundedSignal): Promise<HostedCampaignChildHandle> {
     assertActive(bounded);
-    if (this.#children.has(spec.childId)) throw new Error(`Hosted campaign child already started: ${spec.childId}`);
+    if (this.#children.has(spec.childId)) {
+      throw new Error(`Hosted campaign child already started: ${spec.childId}`);
+    }
     const environment = validateEnvironment(spec.environment);
     const child = spawn(process.execPath, [join(this.#options.distRoot, ENTRYPOINTS[spec.entrypoint]), ...argumentsFor(spec)], {
       env: environment, shell: false, stdio: ["ignore", "pipe", "pipe"],
@@ -155,9 +159,13 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
   }
   async stopChild(handle: HostedCampaignChildHandle): Promise<void> {
     const state = this.#children.get(handle.childId);
-    if (state === undefined) return;
+    if (state === undefined) {
+      return;
+    }
     this.#children.delete(handle.childId);
-    if (state.child.exitCode !== null || state.child.signalCode !== null) return;
+    if (state.child.exitCode !== null || state.child.signalCode !== null) {
+      return;
+    }
     state.child.kill("SIGTERM");
     const exited = await waitForExit(state.child, this.#options.terminationGraceMilliseconds ?? 2_000);
     if (!exited) {
@@ -166,15 +174,21 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
     }
   }
   #assertChildrenHealthy(): void {
-    const failure = [...this.#children.values()].find(({ failure }) => failure !== undefined)?.failure;
-    if (failure !== undefined) throw failure;
+    const childFailure = [...this.#children.values()].find(({ failure }) => failure !== undefined)?.failure;
+    if (childFailure !== undefined) {
+      throw childFailure;
+    }
   }
 }
 
 function argumentsFor(spec: HostedCampaignExecutableSpec): readonly string[] {
   const args = spec.arguments;
-  if (args.kind === "environment") return [];
-  if (args.kind === "evidence-verifier") return [args.manifestPath, args.evidencePath, ...(args.thresholdsPath === undefined ? [] : [args.thresholdsPath])];
+  if (args.kind === "environment") {
+    return [];
+  }
+  if (args.kind === "evidence-verifier") {
+    return [args.manifestPath, args.evidencePath, ...(args.thresholdsPath === undefined ? [] : [args.thresholdsPath])];
+  }
   return [args.manifestPath, ...args.evidencePaths, ...(args.thresholdsPath === undefined ? [] : ["--service-level-thresholds", args.thresholdsPath])];
 }
 function validateEnvironment(environment: Readonly<Record<string, string>>): NodeJS.ProcessEnv {
@@ -189,13 +203,29 @@ function validateEnvironment(environment: Readonly<Record<string, string>>): Nod
   return clean;
 }
 function assertActive(bounded: HostedCampaignBoundedSignal): void {
-  if (bounded.signal.aborted) throw bounded.signal.reason ?? new Error("Hosted campaign cancelled");
-  if (Date.now() >= bounded.deadlineEpochMilliseconds) throw new Error("Hosted campaign deadline expired");
+  if (bounded.signal.aborted) {
+    throw bounded.signal.reason ?? new Error("Hosted campaign cancelled");
+  }
+  if (Date.now() >= bounded.deadlineEpochMilliseconds) {
+    throw new Error("Hosted campaign deadline expired");
+  }
 }
 async function waitForExit(child: ChildProcess, milliseconds: number): Promise<boolean> {
-  if (child.exitCode !== null || child.signalCode !== null) return true;
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return true;
+  }
   return new Promise((resolve) => {
-    const timer = setTimeout(() => resolve(false), milliseconds);
-    child.once("exit", () => { clearTimeout(timer); resolve(true); });
+    let settled = false;
+    const finish = (value: boolean): void => {
+      if (!settled) {
+        settled = true;
+        resolve(value);
+      }
+    };
+    const timer = setTimeout(() => finish(false), milliseconds);
+    child.once("exit", () => {
+      clearTimeout(timer);
+      finish(true);
+    });
   });
 }
