@@ -241,12 +241,10 @@ export async function runHostedCampaign(
     if (!stopped) {
       try { await stopEveryChild(handles, ports); }
       catch (cleanupError) {
-        const cleanupMessage = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
-        // The campaign error remains the primary cause; cleanup details are retained in the message.
-        // oxlint-disable-next-line preserve-caught-error
-        throw new Error(`Hosted campaign failed and cleanup was incomplete: ${cleanupMessage}`, {
-          cause: error,
-        });
+        throw new AggregateError(
+          [error, cleanupError],
+          "Hosted campaign failed and cleanup was incomplete",
+        );
       }
     }
     throw error;
