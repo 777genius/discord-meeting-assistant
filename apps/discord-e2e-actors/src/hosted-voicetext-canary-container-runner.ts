@@ -1,0 +1,74 @@
+import type {
+  VoicetextCanaryRunnerInputV1,
+  VoicetextCanaryRunnerV1,
+} from "./hosted-voicetext-semantic-canary-producer.js";
+
+const maximumOutputBytes = 1_048_576;
+
+export interface BoundedContainerProcessResult {
+  readonly exitCode: number | null;
+  readonly signal: NodeJS.Signals | null;
+  readonly stderr: string;
+  readonly stdout: string;
+  readonly timedOut: boolean;
+}
+
+/** Outer process boundary. Implementations must enforce the supplied timeout and byte cap. */
+export interface BoundedContainerProcessPort {
+  execute(request: Readonly<{
+    args: readonly string[];
+    executable: string;
+    maximumOutputBytes: number;
+    timeoutMs: number;
+  }>): Promise<BoundedContainerProcessResult>;
+}
+
+export class HostedVoicetextCanaryContainerRunnerV1 implements VoicetextCanaryRunnerV1 {
+  public constructor(
+    private readonly process: BoundedContainerProcessPort,
+    private readonly executable = "docker",
+  ) {}
+
+  public async run(input: VoicetextCanaryRunnerInputV1): Promise<unknown> {
+    const result = await this.process.execute({
+      args: [
+        "exec", "-i", "-w", "/app/apps/meeting-platform", input.binding.containerId,
+        "node", "dist/run-voicetext-semantic-canary.js",
+        "--fixture", input.fixturePath,
+        "--campaign", input.binding.campaignId,
+        "--plan-sha256", input.binding.planSha256,
+        "--source-revision", input.binding.sourceRevision,
+        "--image-digest-sha256", input.binding.imageDigestSha256,
+        "--batch-origin", input.endpoint.batch.origin,
+        "--batch-path", input.endpoint.batch.path,
+        "--live-origin", input.endpoint.live.origin,
+        "--live-path", input.endpoint.live.path,
+        "--json",
+      ],
+      executable: this.executable,
+      maximumOutputBytes,
+      timeoutMs: input.timeoutMs,
+    });
+    if (result.timedOut) {throw new Error("Voicetext semantic canary container timed out");}
+    if (result.signal !== null) {throw new Error(`Voicetext semantic canary container exited on ${result.signal}`);}
+    if (result.exitCode !== 0) {throw new Error(`Voicetext semantic canary container failed with exit code ${String(result.exitCode)}`);}
+    return parseStrictJsonOutput(result.stdout, result.stderr);
+  }
+}
+
+function parseStrictJsonOutput(stdout: string, stderr: string): unknown {
+  if (Buffer.byteLength(stdout) + Buffer.byteLength(stderr) > maximumOutputBytes) {
+    throw new Error("Voicetext semantic canary output exceeded 1 MiB");
+  }
+  const lines = stdout.split("\n");
+  if (lines.at(-1) === "") {lines.pop();}
+  if (lines.length !== 1 || lines[0] === undefined || lines[0].length === 0
+    || lines[0].startsWith("\uFEFF") || stderr.length !== 0) {
+    throw new Error("Voicetext semantic canary returned a non-canonical output envelope");
+  }
+  try {
+    return JSON.parse(lines[0]) as unknown;
+  } catch (error) {
+    throw new Error("Voicetext semantic canary returned invalid JSON", { cause: error });
+  }
+}
