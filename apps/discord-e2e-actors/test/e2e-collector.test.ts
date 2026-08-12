@@ -8,10 +8,7 @@ import {
   type DiscordEvidenceProbe,
   type S3RecordingEvidence,
 } from "../src/e2e-collector.js";
-import type {
-  CurrentDeploymentProvenance,
-  ProcessingEvidence,
-} from "../src/e2e-evidence.js";
+import type { CurrentDeploymentProvenance, ProcessingEvidence } from "../src/e2e-evidence.js";
 import type { RecordingPlaybackEvidenceProbe } from "../src/recording-playback-evidence-probe.js";
 import { retainedV7Evidence, retainedV8Evidence } from "./e2e-evidence-fixtures.js";
 import { conversationVoiceCampaignPlanDigest } from
