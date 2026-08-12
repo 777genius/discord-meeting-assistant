@@ -8,6 +8,7 @@ import {
   publishAnswerIntent,
   publishCaptureRetained,
   publishObserverSubscribed,
+  publishReconnectTransition,
 } from "../src/hosted-campaign-process-event-publisher.js";
 
 const runId = "run-reconnect";
@@ -119,5 +120,28 @@ describe("hosted campaign process event", () => {
     publishObserverSubscribed(config, "1533867700575670282", write);
     publishCaptureRetained(config, 1, "/tmp/capture-1.json", write);
     expect(lines).toEqual([]);
+  });
+
+  it("publishes only real hosted speaker-b reconnect transitions", () => {
+    const lines: string[] = [];
+    const write = (value: string): void => {lines.push(value);};
+    const config = { releaseGate: {}, runId, scenario: "reconnect" as const };
+    for (const type of ["disconnected", "ready"] as const) {
+      publishReconnectTransition(config, {
+        actorName: "speaker-b",
+        authenticatedParticipantId: "1533228054724346087",
+        observedAtEpochMilliseconds: type === "disconnected" ? 1_700_000_000_000 : 1_700_000_000_100,
+        type,
+      }, write);
+    }
+    publishReconnectTransition(config, {
+      actorName: "speaker-a",
+      authenticatedParticipantId: "1533228054724346087",
+      observedAtEpochMilliseconds: 1_700_000_000_200,
+      type: "ready",
+    }, write);
+
+    expect(lines.map((line) => hostedCampaignProcessEventV1Schema.parse(JSON.parse(line)).event.action.kind))
+      .toEqual(["reconnect-left", "reconnect-ready"]);
   });
 });

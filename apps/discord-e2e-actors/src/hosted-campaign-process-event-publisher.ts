@@ -8,6 +8,11 @@ interface HostedCampaignEventContext {
   readonly additionalCaptures: readonly unknown[];
   readonly runId: string;
 }
+interface HostedReconnectEventContext {
+  readonly releaseGate: object | undefined;
+  readonly runId: string;
+  readonly scenario: "overlap" | "reconnect" | "sequential";
+}
 type EventWriter = (value: string) => void;
 const stdoutWriter: EventWriter = (value) => {process.stdout.write(value);};
 
@@ -60,6 +65,30 @@ export function publishCaptureRetained(
   writeHostedEvent(config.runId, {
     action: { kind: "capture-retained", ordinal },
     evidence: { ordinal, outputPath, retained: true },
+  }, write);
+}
+
+export function publishReconnectTransition(
+  config: HostedReconnectEventContext,
+  input: {
+    readonly actorName: "speaker-a" | "speaker-b";
+    readonly authenticatedParticipantId: string;
+    readonly observedAtEpochMilliseconds: number;
+    readonly type: "disconnected" | "playback-end" | "playback-start" | "ready";
+  },
+  write: EventWriter = stdoutWriter,
+): void {
+  if (config.releaseGate === undefined || config.scenario !== "reconnect" ||
+    input.actorName !== "speaker-b" ||
+    (input.type !== "disconnected" && input.type !== "ready")) {
+    return;
+  }
+  writeHostedEvent(config.runId, {
+    action: { kind: input.type === "disconnected" ? "reconnect-left" : "reconnect-ready" },
+    evidence: {
+      observedAtEpochMilliseconds: input.observedAtEpochMilliseconds,
+      participantId: input.authenticatedParticipantId,
+    },
   }, write);
 }
 
