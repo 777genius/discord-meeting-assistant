@@ -132,7 +132,7 @@ const greetingPlaybackObservationSchema = z.object({
   turnId: identifierSchema,
   type: z.literal("greeting"),
 }).strict();
-export const participantLifecycleReceiptSchema = z.object({
+const participantLifecycleReceiptSchema = z.object({
   eventType: z.enum(["participant.joined", "participant.left"]),
   occurredAt: z.iso.datetime(),
   observedAt: z.iso.datetime(),
@@ -215,7 +215,6 @@ export const reconnectNoRepeatEvidenceSchema = z.object({
   },
 );
 
-export type ConversationLifecycleEvidence = z.infer<typeof conversationLifecycleEvidenceSchema>;
 export type CollectedConversationLifecycleEvidence = z.infer<
   typeof collectedConversationLifecycleEvidenceSchema
 >;

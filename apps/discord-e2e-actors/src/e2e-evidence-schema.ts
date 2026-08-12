@@ -434,11 +434,9 @@ export const retainedE2eEvidenceSchema = z.union([
 
 export {
   collectedConversationLifecycleEvidenceSchema,
-  conversationLifecycleEvidenceSchema,
   conversationVoiceEvidenceV3Schema,
 } from "./conversation-retained-evidence-schema.js";
 export type {
   CollectedConversationLifecycleEvidence,
-  ConversationLifecycleEvidence,
 } from "./conversation-retained-evidence-schema.js";
 export type * from "./e2e-evidence-types.js";
