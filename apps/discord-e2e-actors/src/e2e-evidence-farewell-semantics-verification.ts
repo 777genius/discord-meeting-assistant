@@ -15,6 +15,8 @@ interface BotikFarewellExpectation {
   readonly startMs: number;
 }
 
+const maximumSplitTurnGapMs = 500;
+
 export function verifyBotikFarewellTranscript(
   evidence: RetainedE2eEvidenceV8,
   expectation: BotikFarewellExpectation,
@@ -23,15 +25,18 @@ export function verifyBotikFarewellTranscript(
   const botikTurns = evidence.transcript.turns.filter(
     ({ speakerId }) => speakerId === evidence.conversation.botSpeakerId,
   );
-  const captureTurns = botikTurns.filter((turn) =>
-    turn.startMs >= expectation.startMs && turn.endMs <= expectation.endMs
+  const overlappingTurns = botikTurns.filter((turn) =>
+    turn.startMs < expectation.endMs && expectation.startMs < turn.endMs
   );
-  const capturedFarewell = captureTurns[0];
+  const capturedFarewell = overlappingTurns[0];
+  const fullyContained = capturedFarewell !== undefined &&
+    capturedFarewell.startMs >= expectation.startMs &&
+    capturedFarewell.endMs <= expectation.endMs;
   const hasCapturedSemanticFarewell = capturedFarewell !== undefined &&
-    matchesExactPhrase(capturedFarewell.text, expectation.exactPhrases);
+    fullyContained && matchesExactPhrase(capturedFarewell.text, expectation.exactPhrases);
   if (
     expectation.requiredTerms.length === 0 || expectation.exactPhrases.length === 0 ||
-    captureTurns.length !== 1 ||
+    overlappingTurns.length !== 1 ||
     !hasCapturedSemanticFarewell
   ) {
     fail(
@@ -55,7 +60,10 @@ function containsFarewellOutsideCapture(
   capturedFarewell: RetainedE2eEvidenceV8["transcript"]["turns"][number],
   expectation: BotikFarewellExpectation,
 ): boolean {
-  const outside = turns.filter((turn) => turn !== capturedFarewell);
+  const outside = turns.filter((turn) => turn !== capturedFarewell).toSorted(
+    (left, right) => left.startMs - right.startMs ||
+      left.endMs - right.endMs || left.turnId.localeCompare(right.turnId),
+  );
   for (let index = 0; index < outside.length; index += 1) {
     const current = outside[index]!;
     const adjacent = outside[index + 1];
@@ -64,6 +72,8 @@ function containsFarewellOutsideCapture(
     }
     if (
       adjacent !== undefined &&
+      adjacent.startMs >= current.endMs &&
+      adjacent.startMs - current.endMs <= maximumSplitTurnGapMs &&
       containsAnyWholeTerm(`${current.text} ${adjacent.text}`, expectation.duplicateTerms)
     ) {
       return true;

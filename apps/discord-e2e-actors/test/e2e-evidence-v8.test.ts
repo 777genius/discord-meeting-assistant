@@ -252,6 +252,19 @@ describe("retained conversation V8 farewell response semantics", () => {
     expect(failureCodes(evidence)).toContain("SUPPLEMENTAL_FAREWELL_SEMANTICS_MISSING");
   });
 
+  it("rejects an extra Botik turn that only partially overlaps the farewell capture", () => {
+    const evidence = retainedV8Evidence();
+    evidence.transcript.turns.push({
+      endMs: 6_750,
+      speakerId: evidence.conversation.botSpeakerId,
+      startMs: 6_400,
+      text: "Фоновая реплика",
+      turnId: "partial-farewell-overlap",
+    });
+
+    expect(failureCodes(evidence)).toContain("SUPPLEMENTAL_FAREWELL_SEMANTICS_MISSING");
+  });
+
   it("rejects a Botik farewell turn outside the audible farewell interval", () => {
     const evidence = retainedV8Evidence();
     const farewellTurn = botikFarewell(evidence);
@@ -305,6 +318,27 @@ describe("retained conversation V8 farewell response semantics", () => {
     );
 
     expect(failureCodes(evidence)).toContain("SUPPLEMENTAL_FAREWELL_DUPLICATE");
+  });
+
+  it("finds a split duplicate in chronological order despite interleaved transcript storage", () => {
+    const evidence = retainedV8Evidence();
+    evidence.transcript.turns.push(
+      { endMs: 5_200, speakerId: evidence.conversation.botSpeakerId, startMs: 5_000, text: "до", turnId: "split-ordered-1" },
+      { endMs: 2_000, speakerId: "1533873978417086474", startMs: 1_900, text: "interleaved", turnId: "interleaved-human" },
+      { endMs: 5_500, speakerId: evidence.conversation.botSpeakerId, startMs: 5_300, text: "встречи", turnId: "split-ordered-2" },
+    );
+
+    expect(failureCodes(evidence)).toContain("SUPPLEMENTAL_FAREWELL_DUPLICATE");
+  });
+
+  it("does not join distant Botik fragments into a farewell duplicate", () => {
+    const evidence = retainedV8Evidence();
+    evidence.transcript.turns.push(
+      { endMs: 4_000, speakerId: evidence.conversation.botSpeakerId, startMs: 3_900, text: "до", turnId: "distant-1" },
+      { endMs: 5_500, speakerId: evidence.conversation.botSpeakerId, startMs: 5_400, text: "встречи", turnId: "distant-2" },
+    );
+
+    expect(failureCodes(evidence)).not.toContain("SUPPLEMENTAL_FAREWELL_DUPLICATE");
   });
 });
 
