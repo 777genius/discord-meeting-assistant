@@ -409,16 +409,22 @@ pnpm --filter @discord-meeting/discord-e2e-actors run verify:campaign -- \
   apps/discord-e2e-actors/test/fixtures/manifest.v1.json \
   /absolute/evidence/sequential.evidence.v6.json \
   /absolute/evidence/overlap.evidence.v6.json \
-  /absolute/evidence/reconnect.evidence.v6.json
+  /absolute/evidence/reconnect.evidence.v8.json
 ```
 
-The verifier rejects cross-meeting identity reuse, mixed deployments, raw
+The campaign must contain at least one retained v8 reconnect run, while ordinary
+sequential and overlap collection remains v6. Mixed schema versions are valid
+only when every run retains identical immutable deployment provenance. Set
+`DISCORD_E2E_EXPECTED_PIPECAT_SOURCE_REVISION` for all three collections so the
+v6 runs retain the same four-component provenance as v8. The
+verifier rejects cross-meeting identity reuse, mixed deployments, raw
 internal IDs in Discord text, missing action-owner mentions, and missing or
 invalid authoritative evidence references. Historical v2-v4 evidence still
 verifies inline intervals and speaker mentions; v5 remains readable as the first
 clean-summary format. Current v6 additionally proves the two attachments containing
-layered evidence from ADR-0025 and their replay stability. A successful provider call
-without a passing campaign result is not accepted.
+layered evidence from ADR-0025 and their replay stability. Historical evidence
+remains individually readable but cannot replace the required v8 reconnect proof.
+A successful provider call without a passing campaign result is not accepted.
 
 Synthetic fixtures may be generated for deterministic speech. They must contain
 only invented test content, identify the expected Discord speaker explicitly in

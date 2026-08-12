@@ -40,6 +40,7 @@ export function verifyCampaign(
     }
   }
   verifyRequiredScenarios(runs, fail);
+  verifyLifecycleV8(runs, fail);
   verifyCampaignIsolation(runs, fail);
   verifyCampaignDeploymentProvenance(runs, fail);
   return {
@@ -47,6 +48,20 @@ export function verifyCampaign(
     passed: failures.length === 0,
     runResults: Object.freeze(runResults),
   };
+}
+
+function verifyLifecycleV8(
+  runs: readonly RetainedE2eEvidence[],
+  fail: VerificationFailureReporter,
+): void {
+  if (!runs.some((run) =>
+    run.schemaVersion === 8 && run.actorRun.scenario === "reconnect"
+  )) {
+    fail(
+      "LIFECYCLE_V8_NOT_PROVEN",
+      "campaign requires retained evidence v8 from a reconnect run",
+    );
+  }
 }
 
 function verifyRequiredScenarios(
@@ -98,10 +113,6 @@ function verifyCampaignDeploymentProvenance(
     return;
   }
   for (const run of runs.slice(1)) {
-    if (run.schemaVersion !== baseline.schemaVersion) {
-      fail("CAMPAIGN_SCHEMA_CHANGED", "retained evidence schema changed between campaign runs");
-      continue;
-    }
     if (!sameDeploymentProvenance(baseline.deployment, run.deployment)) {
       fail(
         "CAMPAIGN_DEPLOYMENT_CHANGED",
