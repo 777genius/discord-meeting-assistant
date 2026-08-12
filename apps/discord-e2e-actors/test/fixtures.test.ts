@@ -26,6 +26,10 @@ describe("synthetic actor fixtures", () => {
     );
 
     expect(manifest.locale).toBe("ru-RU");
+    expect(manifest.farewellLocaleTerms).toEqual({
+      en: ["bye", "goodbye", "see you"],
+      ru: ["пока", "до встречи", "до свидания"],
+    });
     expect(manifest.scenarios.map(({ kind }) => kind)).toEqual([
       "sequential",
       "overlap",

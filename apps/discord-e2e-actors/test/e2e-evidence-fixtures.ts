@@ -55,6 +55,9 @@ export function manifest(): FixtureManifestV1 {
       voiceChannelId: "1533228823045214398",
     },
     greetingLocaleTerms: { en: ["hi", "hello", "хай"], ru: ["привет", "здравствуй"] },
+    farewellCapturePcmSha256: { en: "e".repeat(64), ru: "a".repeat(64) },
+    farewellExactPhrases: { en: ["Goodbye!"], ru: ["Пока!"] },
+    farewellLocaleTerms: { en: ["bye", "goodbye"], ru: ["пока", "до встречи"] },
     supplementalVoiceExpectation: {
       answerNonce: "кобальт",
       applicationId: speakerDId,
@@ -610,6 +613,10 @@ export function retainedV8Evidence(): RetainedReconnectE2eEvidenceV8 {
     {
       endMs: 6_500, speakerId: speakerDId, startMs: 6_200,
       text: "Всем пока.", turnId: "speaker-d-farewell",
+    },
+    {
+      endMs: 7_100, speakerId: botSpeakerId, startMs: 6_700,
+      text: "Пока!", turnId: "botik-farewell-ru",
     },
   );
   const events = [

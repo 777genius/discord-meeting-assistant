@@ -1,14 +1,11 @@
-import { z } from "zod";
-import {
+import { z } from "zod"; import {
   conversationLifecycleEvidenceSchema,
   conversationVoiceEvidenceV3Schema,
   reconnectNoRepeatEvidenceSchema,
   supplementalPlaybackEvidenceV1Schema,
 } from "./conversation-retained-evidence-schema.js";
-const identifierSchema = z.string().trim().min(1);
-const sha256Schema = z.string().regex(/^[a-f\d]{64}$/u);
-const nonNegativeMillisecondsSchema = z.number().int().nonnegative();
-const nonNegativeSafeIntegerSchema = z.number().refine(
+const identifierSchema = z.string().trim().min(1); const sha256Schema = z.string().regex(/^[a-f\d]{64}$/u);
+const nonNegativeMillisecondsSchema = z.number().int().nonnegative(); const nonNegativeSafeIntegerSchema = z.number().refine(
   (value) => Number.isSafeInteger(value) && value >= 0,
   "Expected a nonnegative safe integer",
 ); const scenarioKindSchema = z.enum(["overlap", "sequential", "reconnect"]);
@@ -43,6 +40,9 @@ export const fixtureManifestV1Schema = z.object({
     observerApplicationId: identifierSchema, observerGreetingLocale: z.enum(["en", "ru"]).optional(),
     voiceChannelId: identifierSchema,
   }).strict().optional(),
+  farewellCapturePcmSha256: z.object({ en: sha256Schema, ru: sha256Schema }).strict().optional(),
+  farewellExactPhrases: z.object({ en: z.array(identifierSchema).min(1), ru: z.array(identifierSchema).min(1) }).strict().optional(),
+  farewellLocaleTerms: z.object({ en: z.array(identifierSchema).min(1), ru: z.array(identifierSchema).min(1) }).strict().optional(),
   greetingLocaleTerms: z.object({ en: z.array(identifierSchema).min(1), ru: z.array(identifierSchema).min(1) }).strict().optional(),
   supplementalVoiceExpectation: z.object({
     answerNonce: identifierSchema,

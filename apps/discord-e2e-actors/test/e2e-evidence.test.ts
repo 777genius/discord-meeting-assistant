@@ -52,6 +52,18 @@ describe("verifyRetainedE2eEvidence", () => {
     }).success).toBe(false);
   });
 
+  it("rejects an empty locale-specific Botik farewell term set", () => {
+    const candidate = manifest();
+
+    expect(fixtureManifestV1Schema.safeParse({
+      ...candidate,
+      farewellLocaleTerms: {
+        ...candidate.farewellLocaleTerms,
+        ru: [],
+      },
+    }).success).toBe(false);
+  });
+
   it.each([
     -1,
     1.5,
