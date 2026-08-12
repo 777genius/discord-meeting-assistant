@@ -9,6 +9,11 @@ import {
 
 export interface SshDeploymentSafetyProbeRunner {
   readonly inspectDeployment: () => Promise<unknown>;
+  readonly inspectMountIsolation: (
+    sourcePath: string,
+    campaignSiblingPath: string,
+    runSiblingPath: string,
+  ) => Promise<unknown>;
   readonly observeHostNonceInContainer: (probeRoot: string, nonce: string) => Promise<string>;
   readonly observeContainerNonceOnHost: (probeRoot: string, nonce: string) => Promise<string>;
 }
@@ -42,7 +47,12 @@ export class SshDeploymentSafetyProbe {
 
   public async collect(): Promise<HostedDeploymentSafetyReceiptV1> {
     const before = await this.#runner.inspectDeployment();
-    const probeRoot = `${this.#options.expectation.campaignRoot}/.admission-probes/${this.#options.expectation.campaignId}`;
+    const mountIsolation = await this.#runner.inspectMountIsolation(
+      this.#options.expectation.greeting.sourcePath,
+      this.#options.expectation.greeting.campaignSiblingPath,
+      this.#options.expectation.greeting.runSiblingPath,
+    );
+    const probeRoot = `${this.#options.expectation.greeting.sourcePath}/.admission-probes`;
     const containerObservedHostNonce = await this.#runner.observeHostNonceInContainer(
       probeRoot,
       this.#options.hostNonce,
@@ -52,8 +62,13 @@ export class SshDeploymentSafetyProbe {
       this.#options.containerNonce,
     );
     const after = await this.#runner.inspectDeployment();
+    const mountIsolationAfter = await this.#runner.inspectMountIsolation(
+      this.#options.expectation.greeting.sourcePath,
+      this.#options.expectation.greeting.campaignSiblingPath,
+      this.#options.expectation.greeting.runSiblingPath,
+    );
     return createHostedDeploymentSafetyReceiptV1({
-      evidence: mergeProbeEvidence(before, after, {
+      evidence: mergeProbeEvidence(before, after, mountIsolation, mountIsolationAfter, {
         containerObservedHostNonce,
         containerWrittenNonce: this.#options.containerNonce,
         hostObservedContainerNonce,
@@ -69,6 +84,8 @@ export class SshDeploymentSafetyProbe {
 function mergeProbeEvidence(
   beforeValue: unknown,
   afterValue: unknown,
+  mountIsolation: unknown,
+  mountIsolationAfter: unknown,
   roundTrip: Readonly<Record<string, string>>,
 ): unknown {
   if (!isRecord(beforeValue) || !isRecord(afterValue)) {
@@ -77,6 +94,8 @@ function mergeProbeEvidence(
   return {
     greetingMountAfter: afterValue.greetingMount,
     greetingMount: beforeValue.greetingMount,
+    mountIsolation,
+    mountIsolationAfter,
     roots: beforeValue.roots,
     rootsAfter: afterValue.roots,
     roundTrip,

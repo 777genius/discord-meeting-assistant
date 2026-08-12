@@ -54,6 +54,15 @@ const greetingMountSchema = z.object({
   sourceSymbolicLink: z.literal(false),
 }).strict();
 
+const mountIsolationSchema = z.object({
+  campaignSiblingAccessible: z.literal(false),
+  campaignSiblingMounted: z.literal(false),
+  campaignSiblingPath: absolutePathSchema,
+  runSiblingAccessible: z.literal(false),
+  runSiblingMounted: z.literal(false),
+  runSiblingPath: absolutePathSchema,
+}).strict();
+
 const roundTripSchema = z.object({
   containerObservedHostNonce: safeIdentifierSchema,
   containerWrittenNonce: safeIdentifierSchema,
@@ -65,6 +74,8 @@ const roundTripSchema = z.object({
 const deploymentSafetyEvidenceSchema = z.object({
   greetingMountAfter: greetingMountSchema,
   greetingMount: greetingMountSchema,
+  mountIsolation: mountIsolationSchema,
+  mountIsolationAfter: mountIsolationSchema,
   roots: z.object({ deploy: rootResolutionSchema, source: rootResolutionSchema }).strict(),
   rootsAfter: z.object({ deploy: rootResolutionSchema, source: rootResolutionSchema }).strict(),
   roundTrip: roundTripSchema,
@@ -78,16 +89,20 @@ export const hostedDeploymentSafetyExpectationV1Schema = z.object({
   campaignRoot: absolutePathSchema,
   deployRoot: absolutePathSchema,
   greeting: z.object({
+    campaignSiblingPath: absolutePathSchema,
     destinationPath: absolutePathSchema,
     environmentRoot: absolutePathSchema,
     observerRoot: absolutePathSchema,
     runRoot: absolutePathSchema,
+    runSiblingPath: absolutePathSchema,
     sourcePath: absolutePathSchema,
   }).strict(),
   services: z.array(z.object({
     component: componentSchema,
     composeProject: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,62}$/u),
     composeService: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,62}$/u),
+    imageId: imageIdSchema,
+    repositoryDigest: repositoryDigestSchema,
     sourceRevision: sourceRevisionSchema,
   }).strict()).length(4),
   sourceRoot: absolutePathSchema,
@@ -131,6 +146,7 @@ export function createHostedDeploymentSafetyReceiptV1(
   assertRoundTrip(evidence, expectation);
   const deploymentFingerprint = digestCanonical({
     greetingMount: evidence.greetingMount,
+    mountIsolation: evidence.mountIsolation,
     roots: evidence.roots,
     services: sortByComponent(evidence.servicesAfter),
   });
@@ -204,6 +220,8 @@ function assertServices(
     const expected = expectedServices.get(actual.component);
     if (expected === undefined || actual.composeProject !== expected.composeProject
       || actual.composeService !== expected.composeService
+      || actual.imageId !== expected.imageId
+      || actual.repositoryDigest !== expected.repositoryDigest
       || actual.sourceRevision !== expected.sourceRevision) {
       throw new Error(`Hosted ${actual.component} service identity does not match the release plan`);
     }
@@ -222,6 +240,9 @@ function assertGreetingMount(
   if (digestCanonical(actual) !== digestCanonical(evidence.greetingMountAfter)) {
     throw new Error("Hosted greeting mount changed while safety evidence was collected");
   }
+  if (digestCanonical(evidence.mountIsolation) !== digestCanonical(evidence.mountIsolationAfter)) {
+    throw new Error("Hosted greeting mount isolation changed while safety evidence was collected");
+  }
   if (actual.sourcePath !== expected.sourcePath
     || actual.destinationPath !== expected.destinationPath
     || actual.environmentRoot !== expected.environmentRoot
@@ -229,11 +250,23 @@ function assertGreetingMount(
     || actual.observerRoot !== expected.observerRoot) {
     throw new Error("Hosted greeting mount does not match the exact campaign bindings");
   }
-  if (!isInside(expectation.campaignRoot, actual.sourcePath)
-    || !isInside(actual.sourcePath, actual.runRoot)
+  const mountNamespace = join(expectation.campaignRoot, ".greeting-mounts");
+  const campaignOwnedRoot = join(mountNamespace, expectation.campaignId);
+  if (!isInside(campaignOwnedRoot, actual.sourcePath)
+    || actual.sourcePath !== actual.runRoot
     || !isInside(actual.runRoot, actual.observerRoot)
     || !isInside(actual.destinationPath, actual.environmentRoot)) {
     throw new Error("Hosted greeting mount roots violate the pinned containment policy");
+  }
+  const isolation = evidence.mountIsolation;
+  if (isolation.campaignSiblingPath !== expectation.greeting.campaignSiblingPath
+    || isolation.runSiblingPath !== expectation.greeting.runSiblingPath
+    || !isInside(mountNamespace, isolation.campaignSiblingPath)
+    || isInside(campaignOwnedRoot, isolation.campaignSiblingPath)
+    || !isInside(campaignOwnedRoot, isolation.runSiblingPath)
+    || isInside(actual.sourcePath, isolation.campaignSiblingPath)
+    || isInside(actual.sourcePath, isolation.runSiblingPath)) {
+    throw new Error("Hosted greeting mount sibling isolation does not match the pinned paths");
   }
 }
 
@@ -241,11 +274,7 @@ function assertRoundTrip(
   evidence: z.infer<typeof deploymentSafetyEvidenceSchema>,
   expectation: HostedDeploymentSafetyExpectationV1,
 ): void {
-  const expectedRoot = join(
-    expectation.campaignRoot,
-    ".admission-probes",
-    expectation.campaignId,
-  );
+  const expectedRoot = join(expectation.greeting.sourcePath, ".admission-probes");
   const proof = evidence.roundTrip;
   if (proof.probeRoot !== expectedRoot
     || proof.containerObservedHostNonce !== proof.hostWrittenNonce

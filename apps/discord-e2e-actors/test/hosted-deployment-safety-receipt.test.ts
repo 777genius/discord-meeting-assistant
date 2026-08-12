@@ -17,17 +17,19 @@ const expectation: HostedDeploymentSafetyExpectationV1 = {
   campaignRoot: "/srv/e2e/campaigns",
   deployRoot: "/srv/e2e",
   greeting: {
-    destinationPath: "/var/lib/discord-meeting/e2e-playback-readiness",
-    environmentRoot: "/var/lib/discord-meeting/e2e-playback-readiness/campaign-1",
-    observerRoot: "/srv/e2e/campaigns/campaign-1/run-3/observer",
-    runRoot: "/srv/e2e/campaigns/campaign-1/run-3",
-    sourcePath: "/srv/e2e/campaigns",
+    campaignSiblingPath: "/srv/e2e/campaigns/.greeting-mounts/campaign-2/run-3",
+    destinationPath: "/var/lib/discord-meeting/e2e-playback-readiness/campaign-1/run-3",
+    environmentRoot: "/var/lib/discord-meeting/e2e-playback-readiness/campaign-1/run-3/greeting-handshakes",
+    observerRoot: "/srv/e2e/campaigns/.greeting-mounts/campaign-1/run-3/greeting-handshakes",
+    runRoot: "/srv/e2e/campaigns/.greeting-mounts/campaign-1/run-3",
+    runSiblingPath: "/srv/e2e/campaigns/.greeting-mounts/campaign-1/run-2",
+    sourcePath: "/srv/e2e/campaigns/.greeting-mounts/campaign-1/run-3",
   },
   services: [
-    { component: "craig", composeProject: "craig-meeting-e2e", composeService: "bot", sourceRevision: revision("a") },
-    { component: "meetingPlatform", composeProject: "discord-meeting-assistant", composeService: "meeting-platform", sourceRevision: revision("b") },
-    { component: "pipecat", composeProject: "discord-meeting-assistant", composeService: "pipecat-runtime", sourceRevision: revision("c") },
-    { component: "subscriptionRuntime", composeProject: "discord-meeting-assistant", composeService: "subscription-runtime-sidecar", sourceRevision: revision("d") },
+    { component: "craig", composeProject: "craig-meeting-e2e", composeService: "bot", imageId: image("1"), repositoryDigest: `registry.test/craig@sha256:${hex("7")}`, sourceRevision: revision("a") },
+    { component: "meetingPlatform", composeProject: "discord-meeting-assistant", composeService: "meeting-platform", imageId: image("2"), repositoryDigest: `registry.test/meetingPlatform@sha256:${hex("7")}`, sourceRevision: revision("b") },
+    { component: "pipecat", composeProject: "discord-meeting-assistant", composeService: "pipecat-runtime", imageId: image("3"), repositoryDigest: `registry.test/pipecat@sha256:${hex("7")}`, sourceRevision: revision("c") },
+    { component: "subscriptionRuntime", composeProject: "discord-meeting-assistant", composeService: "subscription-runtime-sidecar", imageId: image("4"), repositoryDigest: `registry.test/subscriptionRuntime@sha256:${hex("7")}`, sourceRevision: revision("d") },
   ],
   sourceRoot: "/srv/e2e/source",
 };
@@ -70,6 +72,14 @@ function snapshot() {
       sourcePath: expectation.greeting.sourcePath,
       sourceSymbolicLink: false,
     },
+    mountIsolation: {
+      campaignSiblingAccessible: false,
+      campaignSiblingMounted: false,
+      campaignSiblingPath: expectation.greeting.campaignSiblingPath,
+      runSiblingAccessible: false,
+      runSiblingMounted: false,
+      runSiblingPath: expectation.greeting.runSiblingPath,
+    },
     roots: {
       deploy: { kind: "directory", requestedPath: expectation.deployRoot, resolvedPath: expectation.deployRoot, symbolicLink: false },
       source: { kind: "directory", requestedPath: expectation.sourceRoot, resolvedPath: expectation.sourceRoot, symbolicLink: false },
@@ -90,6 +100,8 @@ function receipt(overrides: {
     evidence: {
       greetingMount: before.greetingMount,
       greetingMountAfter: after.greetingMount,
+      mountIsolation: before.mountIsolation,
+      mountIsolationAfter: after.mountIsolation,
       roots: before.roots,
       rootsAfter: after.roots,
       roundTrip: {
@@ -97,7 +109,7 @@ function receipt(overrides: {
         containerWrittenNonce: "container-nonce",
         hostObservedContainerNonce: overrides.hostObservedContainerNonce ?? "container-nonce",
         hostWrittenNonce: "host-nonce",
-        probeRoot: "/srv/e2e/campaigns/.admission-probes/campaign-1",
+        probeRoot: "/srv/e2e/campaigns/.greeting-mounts/campaign-1/run-3/.admission-probes",
       },
       servicesAfter: after.services,
       servicesBefore: before.services,
@@ -118,6 +130,18 @@ describe("hosted deployment safety receipt", () => {
     expect(() => receipt({ after })).toThrow("deployment changed");
   });
 
+  it("rejects an image or repository digest outside the pinned release plan", () => {
+    const wrongImage = snapshot();
+    wrongImage.services[0] = { ...wrongImage.services[0]!, imageId: image("5") };
+    expect(() => receipt({ before: wrongImage })).toThrow("identity does not match");
+    const wrongDigest = snapshot();
+    wrongDigest.services[0] = {
+      ...wrongDigest.services[0]!,
+      repositoryDigest: `registry.test/craig@sha256:${hex("6")}`,
+    };
+    expect(() => receipt({ before: wrongDigest })).toThrow("identity does not match");
+  });
+
   it.each([
     ["wrong source", (value: ReturnType<typeof snapshot>) => { value.greetingMount.sourcePath = "/srv/e2e/other"; }],
     ["read-only", (value: ReturnType<typeof snapshot>) => { Object.assign(value.greetingMount, { readOnly: true }); }],
@@ -136,9 +160,23 @@ describe("hosted deployment safety receipt", () => {
     expect(() => receipt({ after })).toThrow("greeting mount changed");
   });
 
+  it("rejects a broad source mount and access to campaign or run siblings", () => {
+    const broad = snapshot();
+    broad.greetingMount.sourcePath = expectation.campaignRoot;
+    expect(() => receipt({ before: broad })).toThrow("exact campaign bindings");
+
+    const campaignSibling = snapshot();
+    Object.assign(campaignSibling.mountIsolation, { campaignSiblingAccessible: true });
+    expect(() => receipt({ before: campaignSibling })).toThrow();
+
+    const runSibling = snapshot();
+    Object.assign(runSibling.mountIsolation, { runSiblingMounted: true });
+    expect(() => receipt({ before: runSibling })).toThrow();
+  });
+
   it("rejects a published port or network outside the allowlist", () => {
     const withPort = snapshot();
-    withPort.services[0] = { ...withPort.services[0]!, publishedPorts: [443] as never[] };
+    Object.assign(withPort.services[0]!, { publishedPorts: [443] });
     expect(() => receipt({ before: withPort })).toThrow();
     const wrongNetwork = snapshot();
     wrongNetwork.services[0] = { ...wrongNetwork.services[0]!, networks: ["public"] };
@@ -172,6 +210,10 @@ describe("SshDeploymentSafetyProbe synthetic runner", () => {
       hostNonce: "host-nonce",
     }, {
       inspectDeployment: async () => { calls.push("inspect"); return structuredClone(value); },
+      inspectMountIsolation: async (source, campaignSibling, runSibling) => {
+        calls.push(`isolation:${source}:${campaignSibling}:${runSibling}`);
+        return structuredClone(value.mountIsolation);
+      },
       observeContainerNonceOnHost: async (root, nonce) => { calls.push(`container:${root}:${nonce}`); return nonce; },
       observeHostNonceInContainer: async (root, nonce) => { calls.push(`host:${root}:${nonce}`); return nonce; },
     });
@@ -179,9 +221,11 @@ describe("SshDeploymentSafetyProbe synthetic runner", () => {
     await expect(probe.collect()).resolves.toMatchObject({ campaignId: "campaign-1" });
     expect(calls).toEqual([
       "inspect",
-      "host:/srv/e2e/campaigns/.admission-probes/campaign-1:host-nonce",
-      "container:/srv/e2e/campaigns/.admission-probes/campaign-1:container-nonce",
+      "isolation:/srv/e2e/campaigns/.greeting-mounts/campaign-1/run-3:/srv/e2e/campaigns/.greeting-mounts/campaign-2/run-3:/srv/e2e/campaigns/.greeting-mounts/campaign-1/run-2",
+      "host:/srv/e2e/campaigns/.greeting-mounts/campaign-1/run-3/.admission-probes:host-nonce",
+      "container:/srv/e2e/campaigns/.greeting-mounts/campaign-1/run-3/.admission-probes:container-nonce",
       "inspect",
+      "isolation:/srv/e2e/campaigns/.greeting-mounts/campaign-1/run-3:/srv/e2e/campaigns/.greeting-mounts/campaign-2/run-3:/srv/e2e/campaigns/.greeting-mounts/campaign-1/run-2",
     ]);
   });
 });
