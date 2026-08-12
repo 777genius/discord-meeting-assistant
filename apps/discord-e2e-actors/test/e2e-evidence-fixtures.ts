@@ -6,7 +6,7 @@ import {
   retainedE2eEvidenceV5Schema,
   retainedE2eEvidenceV6Schema,
   retainedE2eEvidenceV7Schema,
-  retainedE2eEvidenceV8Schema,
+  retainedReconnectE2eEvidenceV8Schema,
   verifyRetainedE2eEvidence as verifyRetainedE2eEvidenceAgainstExpectedRevision,
   type DeploymentRevisionExpectation,
   type FixtureManifestV1,
@@ -17,7 +17,7 @@ import {
   type RetainedE2eEvidenceV5,
   type RetainedE2eEvidenceV6,
   type RetainedE2eEvidenceV7,
-  type RetainedE2eEvidenceV8,
+  type RetainedReconnectE2eEvidenceV8,
 } from "../src/e2e-evidence.js";
 
 export const speakerAId = "1533227577286852649";
@@ -75,6 +75,7 @@ export function manifest(): FixtureManifestV1 {
         fixtureId: "speaker-a",
         greetingLocale: "ru",
         greetingNameStatus: "known",
+        greetingSpokenToken: "Тест А",
         requiredTerms: ["Meeting Platform", "Craig recording"],
         sourcePath: "speaker-a.txt",
         sourceSha256: "a".repeat(64),
@@ -89,6 +90,7 @@ export function manifest(): FixtureManifestV1 {
         fixtureId: "speaker-b",
         greetingLocale: "en",
         greetingNameStatus: "known",
+        greetingSpokenToken: "Test B",
         requiredTerms: ["Redis queue", "idempotency key"],
         sourcePath: "speaker-b.txt",
         sourceSha256: "b".repeat(64),
@@ -556,7 +558,7 @@ export function retainedV6Evidence(
   });
 }
 
-export function retainedV8Evidence(): RetainedE2eEvidenceV8 {
+export function retainedV8Evidence(): RetainedReconnectE2eEvidenceV8 {
   const source = retainedV6Evidence();
   source.actorRun.scenario = "reconnect";
   source.actorRun.events = [
@@ -583,11 +585,11 @@ export function retainedV8Evidence(): RetainedE2eEvidenceV8 {
   source.transcript.turns.push(
     {
       endMs: 650, speakerId: botSpeakerId, startMs: 250,
-      text: "Hi, Alex!", turnId: "botik-greeting-en",
+      text: "Hi, Test B!", turnId: "botik-greeting-en",
     },
     {
       endMs: 1_450, speakerId: botSpeakerId, startMs: 1_050,
-      text: "Привет, Саша!", turnId: "botik-greeting-ru",
+      text: "Привет, Тест А!", turnId: "botik-greeting-ru",
     },
     {
       endMs: 3_600, speakerId: speakerDId, startMs: 3_300,
@@ -618,7 +620,7 @@ export function retainedV8Evidence(): RetainedE2eEvidenceV8 {
     { observedAt: "1970-01-01T00:00:03.800Z", outcome: "active", participantId: speakerDId, turnId: "human-question-1", type: "addressed-answer" as const },
     { evidenceTurnIds: ["speaker-d-farewell"], locale: "ru", observedAt: "1970-01-01T00:00:07.000Z", playbackAttemptId: "farewell-attempt-1", reason: "explicit-group", turnId: "meeting-farewell:v1" as const, type: "farewell" as const },
   ];
-  return retainedE2eEvidenceV8Schema.parse({
+  return retainedReconnectE2eEvidenceV8Schema.parse({
     ...source,
     conversation: {
       botSpeakerId,
@@ -629,6 +631,18 @@ export function retainedV8Evidence(): RetainedE2eEvidenceV8 {
           { observedAt: "1970-01-01T00:00:04.600Z", playbackAttemptId: "answer", playbackFinishedAtEpochMs: 4_600, playbackFinishedAtMonotonicMs: 4_600, playbackKind: "answer" as const, status: "finished" as const, turnId: "human-question-1" },
           { observedAt: "1970-01-01T00:00:04.700Z", playbackAttemptId: "answer", playbackKind: "answer" as const, playbackSettledAtEpochMs: 4_700, playbackSettledAtMonotonicMs: 4_700, settlement: "played" as const, status: "settled" as const, turnId: "human-question-1" },
         ],
+      },
+      reconnectNoRepeat: {
+        lifecycleReceipts: [
+          { eventType: "participant.left", observedAt: "1970-01-01T00:00:00.750Z", occurredAt: "1970-01-01T00:00:00.750Z", participantId: speakerBId, type: "participant-lifecycle" },
+          { eventType: "participant.joined", observedAt: "1970-01-01T00:00:00.800Z", occurredAt: "1970-01-01T00:00:00.800Z", participantId: speakerBId, type: "participant-lifecycle" },
+        ],
+        negativeWindow: {
+          endedAt: source.recording.endedAt,
+          source: "sut-rejoin-to-authoritative-recording-end",
+          startedAt: "1970-01-01T00:00:00.800Z",
+        },
+        participantId: speakerBId,
       },
       supplementalPlayback: {
         actor: {

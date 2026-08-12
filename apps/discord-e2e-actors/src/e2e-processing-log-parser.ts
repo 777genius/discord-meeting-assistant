@@ -1,9 +1,9 @@
 import { z } from "zod";
 
 import {
+  collectedConversationLifecycleEvidenceSchema,
   processingEvidenceSchema,
-  conversationLifecycleEvidenceSchema,
-  type ConversationLifecycleEvidence,
+  type CollectedConversationLifecycleEvidence,
   type ProcessingEvidence,
 } from "./e2e-evidence-schema.js";
 
@@ -81,6 +81,14 @@ const playbackSettledLogSchema = playbackReceiptLogBaseSchema.extend({
   playbackSettledAtMonotonicMs: z.number().nonnegative(),
   settlement: z.enum(["played", "unplayed", "partial", "unknown"]),
 }).loose();
+const participantLifecycleLogSchema = z.object({
+  eventType: z.enum(["participant.joined", "participant.left"]),
+  meetingId: z.string(),
+  message: z.literal("Live participant lifecycle accepted"),
+  occurredAt: z.iso.datetime(),
+  participantId: z.string().trim().min(1),
+  time: z.iso.datetime(),
+}).loose();
 
 export function parseProcessingEvidenceLogs(output: string, meetingId: string): ProcessingEvidence {
   const stages: ProcessingEvidence["stages"][number][] = [];
@@ -121,12 +129,26 @@ export function parseProcessingEvidenceLogs(output: string, meetingId: string): 
 export function parseConversationLifecycleEvidenceLogs(
   output: string,
   meetingId: string,
-): ConversationLifecycleEvidence {
-  const events: ConversationLifecycleEvidence["events"][number][] = [];
-  const playbackReceipts: ConversationLifecycleEvidence["playbackReceipts"][number][] = [];
+): CollectedConversationLifecycleEvidence {
+  const events: CollectedConversationLifecycleEvidence["events"][number][] = [];
+  const playbackReceipts: CollectedConversationLifecycleEvidence["playbackReceipts"][number][] = [];
+  const participantLifecycleReceipts: CollectedConversationLifecycleEvidence[
+    "participantLifecycleReceipts"
+  ][number][] = [];
   for (const line of output.split("\n")) {
     const event = parseJsonLine(line);
     if (event === undefined || event.meetingId !== meetingId) {
+      continue;
+    }
+    const participantLifecycle = participantLifecycleLogSchema.safeParse(event);
+    if (participantLifecycle.success) {
+      participantLifecycleReceipts.push({
+        eventType: participantLifecycle.data.eventType,
+        observedAt: participantLifecycle.data.time,
+        occurredAt: participantLifecycle.data.occurredAt,
+        participantId: participantLifecycle.data.participantId,
+        type: "participant-lifecycle",
+      });
       continue;
     }
     const playbackStarted = playbackStartedLogSchema.safeParse(event);
@@ -208,7 +230,11 @@ export function parseConversationLifecycleEvidenceLogs(
       });
     }
   }
-  return conversationLifecycleEvidenceSchema.parse({ events, playbackReceipts });
+  return collectedConversationLifecycleEvidenceSchema.parse({
+    events,
+    participantLifecycleReceipts,
+    playbackReceipts,
+  });
 }
 
 function parseJsonLine(line: string): Record<string, unknown> | undefined {

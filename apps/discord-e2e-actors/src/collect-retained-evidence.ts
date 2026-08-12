@@ -59,6 +59,7 @@ async function main(): Promise<void> {
     ? undefined
     : {
         botSpeakerId: config.DISCORD_E2E_BOTIK_SPEAKER_ID,
+        reconnectParticipantId: reconnectParticipantId(manifest),
         supplementalPlayback: requireDefined(
           supplementalPlayback,
           "supplemental playback evidence",
@@ -95,6 +96,18 @@ async function main(): Promise<void> {
   } finally {
     await discord.close();
   }
+}
+
+function reconnectParticipantId(
+  manifest: ReturnType<typeof fixtureManifestV1Schema.parse>,
+): string {
+  const reconnectParticipant = manifest.fixtures.filter(
+    ({ actorName }) => actorName === "speaker-b",
+  );
+  if (reconnectParticipant.length !== 1) {
+    throw new Error("Fixture manifest must pin exactly one reconnect speaker-b");
+  }
+  return reconnectParticipant[0]!.speakerId;
 }
 
 function requireDefined<T>(value: T | undefined, label: string): T {

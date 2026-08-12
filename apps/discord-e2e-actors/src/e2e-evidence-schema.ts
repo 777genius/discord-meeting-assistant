@@ -1,33 +1,25 @@
 import { z } from "zod";
-
 import {
   conversationLifecycleEvidenceSchema,
   conversationVoiceEvidenceV3Schema,
+  reconnectNoRepeatEvidenceSchema,
   supplementalPlaybackEvidenceV1Schema,
 } from "./conversation-retained-evidence-schema.js";
-
 const identifierSchema = z.string().trim().min(1);
 const sha256Schema = z.string().regex(/^[a-f\d]{64}$/u);
 const nonNegativeMillisecondsSchema = z.number().int().nonnegative();
 const nonNegativeSafeIntegerSchema = z.number().refine(
   (value) => Number.isSafeInteger(value) && value >= 0,
   "Expected a nonnegative safe integer",
-);
-const scenarioKindSchema = z.enum(["overlap", "sequential", "reconnect"]);
-
+); const scenarioKindSchema = z.enum(["overlap", "sequential", "reconnect"]);
 const fixtureSchema = z.object({
-  actorName: identifierSchema,
-  audioPath: identifierSchema,
-  audioSha256: sha256Schema,
-  durationMs: z.number().int().positive(),
-  fixtureId: identifierSchema,
+  actorName: identifierSchema, audioPath: identifierSchema,
+  audioSha256: sha256Schema, durationMs: z.number().int().positive(),
+  fixtureId: identifierSchema, speechStartOffsetMs: nonNegativeSafeIntegerSchema.default(0),
   greetingLocale: z.enum(["en", "ru"]).optional(), greetingNameStatus: z.enum(["known", "unknown"]).optional(),
-  requiredTerms: z.array(identifierSchema).min(1),
-  speechStartOffsetMs: nonNegativeSafeIntegerSchema.default(0),
-  sourcePath: identifierSchema,
-  sourceSha256: sha256Schema,
-  sourceText: identifierSchema,
-  speakerId: identifierSchema,
+  greetingSpokenToken: identifierSchema.optional(), requiredTerms: z.array(identifierSchema).min(1),
+  sourcePath: identifierSchema, sourceSha256: sha256Schema,
+  sourceText: identifierSchema, speakerId: identifierSchema,
 }).refine(
   ({ durationMs, speechStartOffsetMs }) => speechStartOffsetMs < durationMs,
   { message: "speechStartOffsetMs must be less than durationMs", path: ["speechStartOffsetMs"] },
@@ -381,15 +373,12 @@ export const retainedE2eEvidenceV4Schema = retainedE2eEvidenceV3Schema
     schemaVersion: z.literal(4),
   });
 
-/** v5 also binds the Pipecat image that serves the live conversation path. */
 export const retainedE2eEvidenceV5Schema = retainedE2eEvidenceV4Schema
   .omit({ deployment: true, schemaVersion: true })
   .extend({
     deployment: currentDeploymentProvenanceSchema,
     schemaVersion: z.literal(5),
   });
-
-/** v6 proves both layered evidence attachments and their idempotent replay metadata. */
 export const retainedE2eEvidenceV6Schema = retainedE2eEvidenceV5Schema
   .omit({ publication: true, replay: true, schemaVersion: true })
   .extend({
@@ -401,8 +390,6 @@ export const retainedE2eEvidenceV6Schema = retainedE2eEvidenceV5Schema
     }),
     schemaVersion: z.literal(6),
   });
-
-/** v7 binds audible lifecycle/answer captures to settled runtime effects and the final transcript. */
 export const retainedE2eEvidenceV7Schema = retainedE2eEvidenceV6Schema
   .omit({ schemaVersion: true })
   .extend({
@@ -413,18 +400,22 @@ export const retainedE2eEvidenceV7Schema = retainedE2eEvidenceV6Schema
     }).strict(),
     schemaVersion: z.literal(7),
   });
-
-/** v8 also binds the pinned Speaker D question/farewell playback and semantic transcript proof. */
 export const retainedE2eEvidenceV8Schema = retainedE2eEvidenceV7Schema
   .omit({ conversation: true, schemaVersion: true })
   .extend({
     conversation: retainedE2eEvidenceV7Schema.shape.conversation.extend({
+      reconnectNoRepeat: reconnectNoRepeatEvidenceSchema.optional(),
       supplementalPlayback: supplementalPlaybackEvidenceV1Schema,
       voice: z.array(conversationVoiceEvidenceV3Schema).min(6),
     }),
     schemaVersion: z.literal(8),
   });
-
+export const retainedReconnectE2eEvidenceV8Schema = retainedE2eEvidenceV8Schema
+  .omit({ conversation: true }).extend({
+    conversation: retainedE2eEvidenceV8Schema.shape.conversation.extend({
+      reconnectNoRepeat: reconnectNoRepeatEvidenceSchema,
+    }),
+  });
 export const retainedE2eEvidenceSchema = z.union([
   retainedE2eEvidenceV2Schema,
   retainedE2eEvidenceV3Schema,
@@ -434,12 +425,9 @@ export const retainedE2eEvidenceSchema = z.union([
   retainedE2eEvidenceV7Schema,
   retainedE2eEvidenceV8Schema,
 ]);
-
 export {
-  conversationLifecycleEvidenceSchema,
+  collectedConversationLifecycleEvidenceSchema,
   conversationVoiceEvidenceV3Schema,
 } from "./conversation-retained-evidence-schema.js";
-export type {
-  ConversationLifecycleEvidence,
-} from "./conversation-retained-evidence-schema.js";
+export type { CollectedConversationLifecycleEvidence } from "./conversation-retained-evidence-schema.js";
 export type * from "./e2e-evidence-types.js";

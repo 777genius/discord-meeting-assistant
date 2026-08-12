@@ -1,5 +1,6 @@
 import { verifyAddressedAnswer } from "./e2e-evidence-addressed-answer-verification.js";
 import { verifyGreetingAudioSemantics } from "./e2e-evidence-greeting-semantics-verification.js";
+import { verifyReconnectNoRepeat } from "./e2e-evidence-reconnect-verification.js";
 import { verifySupplementalPlayback } from "./e2e-evidence-supplemental-verification.js";
 import { authoritativeTrackCoverage } from "./e2e-evidence-track-verification.js";
 import type {
@@ -112,6 +113,9 @@ function verifyGreetingAndFarewellLifecycle(
     }
   }
   verifyReconnectGreeting(manifest, evidence, greetings, recordingStartMs, fail);
+  if (evidence.schemaVersion === 8) {
+    verifyReconnectNoRepeat(manifest, evidence, recordingStartMs, recordingEndMs, fail);
+  }
   if (farewells.length !== 1) {
     fail("FAREWELL_COUNT_MISMATCH", "expected exactly one completed prepared farewell");
   }

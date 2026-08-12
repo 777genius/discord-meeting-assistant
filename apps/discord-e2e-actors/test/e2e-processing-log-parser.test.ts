@@ -43,7 +43,7 @@ describe("parseProcessingEvidenceLogs", () => {
 });
 
 describe("parseConversationLifecycleEvidenceLogs", () => {
-  it("retains only completed lifecycle effects for one meeting", () => {
+  it("separates completed semantic effects from participant lifecycle receipts", () => {
     const greeting = {
       greetingLocale: "ru", greetingText: "Привет, Саша!", meetingId: "meeting-1",
       message: "Participant greeting playback settled", participantId: "participant-1",
@@ -62,15 +62,29 @@ describe("parseConversationLifecycleEvidenceLogs", () => {
       outcome: "active", speakerId: "participant-4",
       time: "2026-08-06T19:18:47.000Z", turnId: "human-question-1",
     };
+    const participantLifecycle = {
+      eventType: "participant.left", meetingId: "meeting-1",
+      message: "Live participant lifecycle accepted",
+      occurredAt: "2026-08-06T19:18:40.000Z", participantId: "participant-2",
+      time: "2026-08-06T19:18:40.010Z",
+    };
     const output = [
       JSON.stringify({ ...greeting, meetingId: "other" }),
       JSON.stringify(greeting),
       JSON.stringify({ ...greeting, participantId: "participant-2", turnId: "participant-greeting:participant-2:retry-1", greetingLocale: "en" }),
       JSON.stringify({ ...greeting, participantId: "participant-3", turnId: "participant-greeting:participant-3" }),
       JSON.stringify(addressed),
+      JSON.stringify(participantLifecycle),
+      JSON.stringify({
+        ...participantLifecycle,
+        eventType: "participant.joined",
+        occurredAt: "2026-08-06T19:18:41.000Z",
+        time: "2026-08-06T19:18:41.010Z",
+      }),
       JSON.stringify(farewell),
     ].join("\n");
-    const events = parseConversationLifecycleEvidenceLogs(output, "meeting-1").events;
+    const parsed = parseConversationLifecycleEvidenceLogs(output, "meeting-1");
+    const events = parsed.events;
     expect(events).toHaveLength(5);
     expect(events[0]).not.toHaveProperty("greetingText");
     expect(events[0]).not.toHaveProperty("participantName");
@@ -83,6 +97,20 @@ describe("parseConversationLifecycleEvidenceLogs", () => {
       turnId: "human-question-1",
       type: "addressed-answer",
     });
+    expect(parsed.participantLifecycleReceipts).toEqual([
+      expect.objectContaining({
+        eventType: "participant.left",
+        occurredAt: "2026-08-06T19:18:40.000Z",
+        participantId: "participant-2",
+        type: "participant-lifecycle",
+      }),
+      expect.objectContaining({
+        eventType: "participant.joined",
+        occurredAt: "2026-08-06T19:18:41.000Z",
+        participantId: "participant-2",
+        type: "participant-lifecycle",
+      }),
+    ]);
   });
 
   it("retains structured answer playback receipts for the correlated meeting", () => {

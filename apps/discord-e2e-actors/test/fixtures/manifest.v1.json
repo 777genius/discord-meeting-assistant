@@ -56,6 +56,7 @@
       "durationMs": 26235,
       "greetingLocale": "ru",
       "greetingNameStatus": "known",
+      "greetingSpokenToken": "Тест А",
       "sourceText": "Meeting Platform сохраняет Craig recording. Затем запускает PostgreSQL pipeline. Решение - выпустить версию в пятницу. Повторяю решение - выпуск версии в пятницу. До седьмого августа две тысячи двадцать шестого года спикер Б проверит Discord thread. Повторяю - Discord thread будет проверен в две тысячи двадцать шестом году.",
       "requiredTerms": ["Meeting Platform", "Craig recording", "PostgreSQL pipeline", "Discord thread", "пятницу"]
     },
@@ -70,6 +71,7 @@
       "durationMs": 48361,
       "greetingLocale": "en",
       "greetingNameStatus": "known",
+      "greetingSpokenToken": "Test B",
       "sourceText": "Я проверю Redis queue. Я лично проверю idempotency key. Это моя задача. Срок - до седьмого августа две тысячи двадцать шестого года. Результат я оставлю в Discord thread. Повторяю термин - Discord thread. Idempotency key проверю до седьмого августа две тысячи двадцать шестого года. Повторяю мою задачу - я проверю Redis queue и idempotency key до седьмого августа две тысячи двадцать шестого года. Результат оставлю в Discord thread. Открытый вопрос - нужен ли Pipecat assistant после первой версии? Повторяю термин - Pipecat assistant.",
       "requiredTerms": ["Discord thread", "Redis queue", "idempotency key", "Pipecat assistant", "августа", "2026"]
     }

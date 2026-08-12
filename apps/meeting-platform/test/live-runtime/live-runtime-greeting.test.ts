@@ -17,12 +17,18 @@ import {
   SummaryStub,
 } from "./live-runtime-fixtures.js";
 
+type LoggedEvent = {
+  readonly fields: Readonly<Record<string, unknown>> | undefined;
+  readonly message: string;
+};
+
 afterEach(() => vi.useRealTimers());
 
 function greetingRuntime(
   meetings: MemoryLiveMeetingRepository,
   coordinator: ConversationCoordinatorProbe,
   isPlaybackReady: () => boolean,
+  info?: (message: string, fields?: Readonly<Record<string, unknown>>) => void,
 ): PlatformLiveMeetingRuntime {
   return new PlatformLiveMeetingRuntime({
     appendTurn: new AppendLiveTranscriptTurn(meetings),
@@ -51,7 +57,7 @@ function greetingRuntime(
       voiceProfileId: "voice-profile",
     },
     finishMeeting: new FinishLiveMeeting(meetings),
-    logger,
+    logger: info === undefined ? logger : { ...logger, info },
     refreshMeeting: new RefreshLiveMeeting({
       meetings,
       projector: new ProjectionStub(),
@@ -153,4 +159,54 @@ it("suppresses initial greeting replay when an active meeting is restored", asyn
 
   await restoredRuntime.close();
   await firstRuntime.close();
+});
+
+it("logs privacy-safe SUT participant lifecycle receipts for reconnect proof", async () => {
+  vi.useFakeTimers();
+  const logged: LoggedEvent[] = [];
+  const meetings = new MemoryLiveMeetingRepository();
+  const runtime = greetingRuntime(
+    meetings,
+    new ConversationCoordinatorProbe(meetings),
+    () => false,
+    (message, fields) => {
+      logged.push({ fields, message });
+    },
+  );
+  await runtime.acceptLifecycle(started("recording-live-1"));
+  for (const [type, occurredAt] of [
+    ["participant.left", "2026-08-02T10:02:00.000Z"],
+    ["participant.joined", "2026-08-02T10:02:01.000Z"],
+  ] as const) {
+    await runtime.acceptLifecycle({
+      occurredAt,
+      participantId: "2533228054724346087",
+      recordingId: "recording-live-1",
+      type,
+    });
+  }
+
+  expect(logged.filter(({ message }) =>
+    message === "Live participant lifecycle accepted"
+  )).toEqual([
+    {
+      fields: {
+        eventType: "participant.left",
+        meetingId: "recording-live-1",
+        occurredAt: "2026-08-02T10:02:00.000Z",
+        participantId: "2533228054724346087",
+      },
+      message: "Live participant lifecycle accepted",
+    },
+    {
+      fields: {
+        eventType: "participant.joined",
+        meetingId: "recording-live-1",
+        occurredAt: "2026-08-02T10:02:01.000Z",
+        participantId: "2533228054724346087",
+      },
+      message: "Live participant lifecycle accepted",
+    },
+  ]);
+  await runtime.close();
 });

@@ -1,10 +1,10 @@
 import {
   conversationVoiceEvidenceV3Schema,
   retainedE2eEvidenceV6Schema,
-  retainedE2eEvidenceV8Schema,
+  retainedReconnectE2eEvidenceV8Schema,
   sameDeploymentProvenance,
   type RetainedE2eEvidenceV6,
-  type RetainedE2eEvidenceV8,
+  type RetainedReconnectE2eEvidenceV8,
 } from "./e2e-evidence.js";
 import {
   assertDiscordReference,
@@ -52,7 +52,7 @@ export async function collectRetainedE2eEvidence(
   input: CollectEvidenceInput,
   deployment: DeploymentEvidenceProbe,
   discord: DiscordEvidenceProbe,
-): Promise<RetainedE2eEvidenceV6 | RetainedE2eEvidenceV8> {
+): Promise<RetainedE2eEvidenceV6 | RetainedReconnectE2eEvidenceV8> {
   const unboundActorRun = parseUnboundActorRun(input.actorRun);
   const replayTarget = createReplayTargetAttestation(input, unboundActorRun);
   await deployment.assertReplayTargetSafe(replayTarget);
@@ -172,12 +172,22 @@ export async function collectRetainedE2eEvidence(
   if (deployment.collectConversationLifecycle === undefined) {
     throw new Error("Deployment probe cannot collect conversation lifecycle evidence");
   }
-  const lifecycle = await deployment.collectConversationLifecycle(snapshot.meetingId, s3.startedAt);
-  return retainedE2eEvidenceV8Schema.parse({
+  const lifecycleEvidence = await deployment.collectConversationLifecycle(
+    snapshot.meetingId,
+    s3.startedAt,
+  );
+  const { participantLifecycleReceipts, ...lifecycle } = lifecycleEvidence;
+  const reconnectNoRepeat = createReconnectNoRepeatEvidence(
+    participantLifecycleReceipts,
+    input.conversation.reconnectParticipantId,
+    s3.endedAt,
+  );
+  return retainedReconnectE2eEvidenceV8Schema.parse({
     ...baseEvidence,
     conversation: {
       botSpeakerId: input.conversation.botSpeakerId,
       lifecycle,
+      reconnectNoRepeat,
       supplementalPlayback: input.conversation.supplementalPlayback,
       voice: input.conversation.voice.map((observation) =>
         bindConversationVoiceRecording(observation, input.recordingId)
@@ -201,6 +211,35 @@ export function createReplayTargetAttestation(
     fixtureSetId: input.fixtureSetId,
     recordingId: input.recordingId,
     runId: input.runId,
+  };
+}
+
+function createReconnectNoRepeatEvidence(
+  receipts: Awaited<
+    ReturnType<NonNullable<DeploymentEvidenceProbe["collectConversationLifecycle"]>>
+  >["participantLifecycleReceipts"],
+  participantId: string,
+  recordingEndedAt: string,
+) {
+  const participantEvents = receipts.filter(
+    (receipt) => receipt.participantId === participantId,
+  );
+  const left = participantEvents.filter(({ eventType }) => eventType === "participant.left");
+  const rejoined = participantEvents.filter(({ eventType, occurredAt }) =>
+    eventType === "participant.joined" &&
+      left.some((receipt) => Date.parse(receipt.occurredAt) < Date.parse(occurredAt))
+  );
+  if (left.length !== 1 || rejoined.length !== 1) {
+    throw new Error("Reconnect proof requires one SUT participant left/rejoined receipt pair");
+  }
+  return {
+    lifecycleReceipts: [left[0]!, rejoined[0]!],
+    negativeWindow: {
+      endedAt: recordingEndedAt,
+      source: "sut-rejoin-to-authoritative-recording-end" as const,
+      startedAt: rejoined[0]!.occurredAt,
+    },
+    participantId,
   };
 }
 

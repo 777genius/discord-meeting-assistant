@@ -132,6 +132,13 @@ const greetingPlaybackObservationSchema = z.object({
   turnId: identifierSchema,
   type: z.literal("greeting"),
 }).strict();
+const participantLifecycleReceiptSchema = z.object({
+  eventType: z.enum(["participant.joined", "participant.left"]),
+  occurredAt: z.iso.datetime(),
+  observedAt: z.iso.datetime(),
+  participantId: identifierSchema,
+  type: z.literal("participant-lifecycle"),
+}).strict();
 const farewellPlaybackObservationSchema = z.object({
   evidenceTurnIds: z.array(identifierSchema).min(1),
   locale: z.enum(["en", "ru"]),
@@ -183,4 +190,31 @@ export const conversationLifecycleEvidenceSchema = z.object({
   playbackReceipts: z.array(conversationPlaybackReceiptSchema).default([]),
 }).strict();
 
-export type ConversationLifecycleEvidence = z.infer<typeof conversationLifecycleEvidenceSchema>;
+export const collectedConversationLifecycleEvidenceSchema =
+  conversationLifecycleEvidenceSchema.extend({
+    participantLifecycleReceipts: z.array(participantLifecycleReceiptSchema),
+  });
+
+export const reconnectNoRepeatEvidenceSchema = z.object({
+  lifecycleReceipts: z.array(participantLifecycleReceiptSchema).length(2),
+  negativeWindow: z.object({
+    endedAt: z.iso.datetime(),
+    source: z.literal("sut-rejoin-to-authoritative-recording-end"),
+    startedAt: z.iso.datetime(),
+  }).strict(),
+  participantId: identifierSchema,
+}).strict().refine(
+  ({ lifecycleReceipts, negativeWindow, participantId }) =>
+    lifecycleReceipts.every((receipt) => receipt.participantId === participantId) &&
+    lifecycleReceipts.filter(({ eventType }) => eventType === "participant.left").length === 1 &&
+    lifecycleReceipts.filter(({ eventType }) => eventType === "participant.joined").length === 1 &&
+    Date.parse(negativeWindow.startedAt) < Date.parse(negativeWindow.endedAt),
+  {
+    message: "Reconnect proof must bind one left/rejoined receipt pair and a later window end",
+    path: ["lifecycleReceipts"],
+  },
+);
+
+export type CollectedConversationLifecycleEvidence = z.infer<
+  typeof collectedConversationLifecycleEvidenceSchema
+>;
