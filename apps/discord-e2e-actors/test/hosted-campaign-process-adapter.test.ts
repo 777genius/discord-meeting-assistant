@@ -33,7 +33,9 @@ describe("hosted campaign process adapter", () => {
 
   it("rejects early nonzero exit", async () => {
     const processAdapter = await adapter("process.exit(7)");
-    await expect(processAdapter.startChild(spec(), bounded())).rejects.toThrow(/exited early/u);
+    await processAdapter.startChild(spec(), bounded());
+    await expect(processAdapter.awaitBarrier({ kind: "provenance-before" }, bounded()))
+      .rejects.toThrow(/exited early/u);
   });
 
   it("publishes an exact create-only actor release gate", async () => {
