@@ -38,7 +38,8 @@ describe("retained conversation V7 compatibility", () => {
   it("keeps the historical exact greeting event and capture turn binding", () => {
     const evidence = retainedV7Evidence();
     const greeting = evidence.conversation.lifecycle.events.find(
-      (event) => event.type === "greeting" && event.participantId === speakerAId,
+      (event): event is Extract<typeof event, { type: "greeting" }> =>
+        event.type === "greeting" && event.participantId === speakerAId,
     );
     if (greeting === undefined) {
       throw new Error("Speaker A greeting fixture is missing");

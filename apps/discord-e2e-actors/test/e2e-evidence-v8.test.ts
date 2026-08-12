@@ -153,6 +153,117 @@ describe("retained conversation V8 boundary policies", () => {
 });
 
 describe("retained conversation V8 response semantics", () => {
+  it("rejects a second audible greeting after reconnect even without a settled greeting log", () => {
+    const evidence = retainedV8Evidence();
+    evidence.transcript.turns.push({
+      endMs: 2_000,
+      speakerId: evidence.conversation.botSpeakerId,
+      startMs: 1_700,
+      text: "Hi, Test B!",
+      turnId: "unlogged-reconnect-greeting",
+    });
+
+    const codes = verifyRetainedE2eEvidence(
+      manifest(),
+      evidence,
+      currentExpectedRevisions,
+    ).failures.map(({ code }) => code);
+
+    expect(codes).toContain("RECONNECT_AUDIBLE_GREETING_REPEATED");
+  });
+
+  it("rejects a generic greeting in place of a pinned known English name", () => {
+    const evidence = retainedV8Evidence();
+    const greetingTurn = evidence.transcript.turns.find(
+      ({ turnId }) => turnId === "botik-greeting-en",
+    );
+    if (greetingTurn === undefined) {
+      throw new Error("English greeting transcript fixture is missing");
+    }
+    greetingTurn.text = "Hi!";
+
+    const codes = verifyRetainedE2eEvidence(
+      manifest(),
+      evidence,
+      currentExpectedRevisions,
+    ).failures.map(({ code }) => code);
+
+    expect(codes).toContain("NAMED_GREETING_AUDIO_SEMANTICS_MISSING");
+  });
+
+  it("rejects a generic greeting in place of a pinned known Russian name", () => {
+    const evidence = retainedV8Evidence();
+    const greetingTurn = evidence.transcript.turns.find(
+      ({ turnId }) => turnId === "botik-greeting-ru",
+    );
+    if (greetingTurn === undefined) {
+      throw new Error("Russian greeting transcript fixture is missing");
+    }
+    greetingTurn.text = "Привет!";
+
+    const codes = verifyRetainedE2eEvidence(
+      manifest(),
+      evidence,
+      currentExpectedRevisions,
+    ).failures.map(({ code }) => code);
+
+    expect(codes).toContain("NAMED_GREETING_AUDIO_SEMANTICS_MISSING");
+  });
+
+  it("rejects reconnect proof without the SUT rejoin lifecycle receipt", () => {
+    const evidence = retainedV8Evidence();
+    evidence.conversation.reconnectNoRepeat.lifecycleReceipts =
+      evidence.conversation.reconnectNoRepeat.lifecycleReceipts.filter(
+        ({ eventType }) => eventType !== "participant.joined",
+      );
+
+    const codes = verifyRetainedE2eEvidence(
+      manifest(),
+      evidence,
+      currentExpectedRevisions,
+    ).failures.map(({ code }) => code);
+
+    expect(codes).toContain("RECONNECT_LIFECYCLE_RECEIPT_MISSING");
+  });
+
+  it("rejects a reconnect receipt that does not match the actor timeline", () => {
+    const evidence = retainedV8Evidence();
+    const rejoined = evidence.conversation.reconnectNoRepeat.lifecycleReceipts.find(
+      ({ eventType }) => eventType === "participant.joined",
+    );
+    if (rejoined === undefined) {
+      throw new Error("SUT rejoin receipt fixture is missing");
+    }
+    rejoined.occurredAt = "1970-01-01T00:00:02.000Z";
+
+    const codes = verifyRetainedE2eEvidence(
+      manifest(),
+      evidence,
+      currentExpectedRevisions,
+    ).failures.map(({ code }) => code);
+
+    expect(codes).toContain("RECONNECT_LIFECYCLE_RECEIPT_MISMATCH");
+  });
+
+  it("rejects a negative window not continuously covered by the Botik track", () => {
+    const evidence = retainedV8Evidence();
+    const botikTrack = evidence.recording.s3.tracks.find(
+      ({ speakerId }) => speakerId === evidence.conversation.botSpeakerId,
+    );
+    if (botikTrack === undefined) {
+      throw new Error("Botik track fixture is missing");
+    }
+    botikTrack.durationMs -= 1_000;
+
+    const codes = verifyRetainedE2eEvidence(
+      manifest(),
+      evidence,
+      currentExpectedRevisions,
+    ).failures.map(({ code }) => code);
+
+    expect(codes).toContain("RECONNECT_NEGATIVE_WINDOW_TRACK_GAP");
+  });
+
   it("rejects a Botik farewell that starts before Speaker D finishes", () => {
     const evidence = retainedV8Evidence();
     const farewell = evidence.conversation.voice.find(

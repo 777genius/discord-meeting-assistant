@@ -21,6 +21,7 @@ export function verifyGreetingAudioSemantics(
     (event) => event.type === "greeting",
   );
   for (const greeting of greetings) {
+    const expectedGreeting = expectedGreetingForParticipant(manifest, greeting.participantId);
     const captures = evidence.conversation.voice.filter(({ correlation }) =>
       correlation.purpose === "greeting" &&
       (correlation.turnId === greeting.turnId ||
@@ -46,6 +47,19 @@ export function verifyGreetingAudioSemantics(
         `audible ${greeting.greetingLocale} greeting is absent from the Botik transcript interval`,
       );
     }
+    if (
+      greeting.participantNameStatus === "known" &&
+      (expectedGreeting?.participantNameStatus !== "known" ||
+        expectedGreeting.spokenToken === undefined ||
+        !paddedTranscript.includes(
+          ` ${normalizeTranscriptSemantics(expectedGreeting.spokenToken)} `,
+        ))
+    ) {
+      fail(
+        "NAMED_GREETING_AUDIO_SEMANTICS_MISSING",
+        `audible ${greeting.greetingLocale} greeting does not contain its pinned spoken token`,
+      );
+    }
   }
 }
 
@@ -53,6 +67,7 @@ interface PinnedGreetingExpectation {
   readonly greetingLocale: "en" | "ru";
   readonly participantId: string;
   readonly participantNameStatus: "known" | "unknown";
+  readonly spokenToken?: string;
 }
 
 function verifyPinnedGreetingParticipants(
@@ -69,17 +84,27 @@ function verifyPinnedGreetingParticipants(
           greetingLocale: fixture.greetingLocale,
           participantId: fixture.speakerId,
           participantNameStatus: fixture.greetingNameStatus,
+          ...(fixture.greetingSpokenToken === undefined
+            ? {}
+            : { spokenToken: fixture.greetingSpokenToken }),
         }]
   );
   if (
     voice === undefined ||
     voice.observerGreetingLocale === undefined ||
     supplemental === undefined ||
-    fixtureExpectations.length !== manifest.fixtures.length
+    manifest.fixtures.length !== 2 ||
+    new Set(manifest.fixtures.map(({ actorName }) => actorName)).size !== 2 ||
+    !manifest.fixtures.some(({ actorName }) => actorName === "speaker-a") ||
+    !manifest.fixtures.some(({ actorName }) => actorName === "speaker-b") ||
+    fixtureExpectations.length !== 2 ||
+    fixtureExpectations.some(({ participantNameStatus, spokenToken }) =>
+      participantNameStatus === "known" && spokenToken === undefined
+    )
   ) {
     fail(
       "PINNED_GREETING_EXPECTATION_MISSING",
-      "v8 manifest must pin every actor and observer greeting identity",
+      "v8 manifest must pin the exact speaker-a, speaker-b, observer and speaker-d greeting roles",
     );
     return;
   }
@@ -114,4 +139,25 @@ function verifyPinnedGreetingParticipants(
       "completed greetings do not match the four pinned actor identities",
     );
   }
+}
+
+function expectedGreetingForParticipant(
+  manifest: FixtureManifestV1,
+  participantId: string,
+): PinnedGreetingExpectation | undefined {
+  const fixture = manifest.fixtures.find(({ speakerId }) => speakerId === participantId);
+  if (
+    fixture?.greetingLocale === undefined ||
+    fixture.greetingNameStatus === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    greetingLocale: fixture.greetingLocale,
+    participantId,
+    participantNameStatus: fixture.greetingNameStatus,
+    ...(fixture.greetingSpokenToken === undefined
+      ? {}
+      : { spokenToken: fixture.greetingSpokenToken }),
+  };
 }

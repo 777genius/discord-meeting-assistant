@@ -247,10 +247,16 @@ export class PlatformLiveMeetingRuntime {
     if (event.type === "participant.joined") {
       state.farewell?.participantJoined(event.participantId);
       state.greetings?.participantJoined(event.participantId);
-      return;
+    } else {
+      state.farewell?.participantLeft(event.participantId);
+      state.greetings?.participantLeft(event.participantId);
     }
-    state.farewell?.participantLeft(event.participantId);
-    state.greetings?.participantLeft(event.participantId);
+    this.dependencies.logger.info("Live participant lifecycle accepted", {
+      eventType: event.type,
+      meetingId: event.recordingId,
+      occurredAt: event.occurredAt,
+      participantId: event.participantId,
+    });
   }
 
   private acceptTranscript(

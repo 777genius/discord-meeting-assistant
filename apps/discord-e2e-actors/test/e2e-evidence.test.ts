@@ -192,7 +192,8 @@ describe("retained conversation evidence v7/v8", () => {
   it("accepts a bounded successful greeting retry with its exact audible capture", () => {
     const evidence = retainedV8Evidence();
     const greeting = evidence.conversation.lifecycle.events.find(
-      (event) => event.type === "greeting" && event.participantId === speakerAId,
+      (event): event is Extract<typeof event, { type: "greeting" }> =>
+        event.type === "greeting" && event.participantId === speakerAId,
     );
     if (greeting === undefined) {
       throw new Error("speaker-a greeting fixture is missing");
@@ -219,7 +220,8 @@ describe("retained conversation evidence v7/v8", () => {
   it("rejects a greeting retry outside the bounded runtime policy", () => {
     const evidence = retainedV8Evidence();
     const greeting = evidence.conversation.lifecycle.events.find(
-      (event) => event.type === "greeting" && event.participantId === speakerAId,
+      (event): event is Extract<typeof event, { type: "greeting" }> =>
+        event.type === "greeting" && event.participantId === speakerAId,
     );
     if (greeting === undefined) {
       throw new Error("speaker-a greeting fixture is missing");

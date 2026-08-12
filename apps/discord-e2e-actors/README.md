@@ -255,7 +255,8 @@ pnpm --filter @discord-meeting/discord-e2e-actors collect:e2e
 ```
 
 The v8 verifier requires audible RU and EN greetings for the exact pinned actor
-identities whose Botik transcript interval contains a pinned greeting term,
+identities whose Botik transcript interval contains a pinned greeting term and,
+for known RU/EN actors, their pinned spoken-name token,
 separate default-locale greetings for the pinned unknown observer and Speaker D
 without logging a prompt or name, one greeting per participant despite reconnect,
 exactly one completed prepared farewell in the pinned language, one audible capture per lifecycle
@@ -267,6 +268,12 @@ rejects stale intervals, duplicate attempts/participants, mixed
 observer or Botik identities, wrong run/recording, and a missing/wrong Botik
 speaker track. Deterministic bridge and providerless playback tests separately
 prove the exact named and nameless phrase construction without retaining PII in logs.
+The reconnect proof keeps semantic greeting/answer/farewell lifecycle events
+unchanged and retains a dedicated privacy-safe SUT `participant.left`/rejoined
+receipt pair. Its negative window starts when the rejoin receipt was observed
+by the SUT, using its source occurrence time, and continuously reaches the
+authoritative recording end. Any unmatched greeting-shaped Botik transcript
+turn in that window fails closed.
 For a zero-audio first attempt, the observer keeps the participant's base turn
 ID while the settled event may use only `:retry-1` through `:retry-3`; timestamp
 binding must still prove exactly one audible successful greeting.

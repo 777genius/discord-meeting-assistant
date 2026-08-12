@@ -389,7 +389,19 @@ describe("collectRetainedE2eEvidence", () => {
   it("collects lifecycle, voice and supplemental playback as retained v8 evidence", async () => {
     const conversationFixture = retainedV8Evidence().conversation;
     const deployment: DeploymentEvidenceProbe = {
-      collectConversationLifecycle: async () => conversationFixture.lifecycle,
+      collectConversationLifecycle: async () => ({
+        ...conversationFixture.lifecycle,
+        participantLifecycleReceipts: [
+          {
+            eventType: "participant.joined",
+            observedAt: "1970-01-01T00:00:00.000Z",
+            occurredAt: "1970-01-01T00:00:00.000Z",
+            participantId: speakerB,
+            type: "participant-lifecycle",
+          },
+          ...conversationFixture.reconnectNoRepeat.lifecycleReceipts,
+        ],
+      }),
       collectDatabase: async () => database(),
       collectProvenance: async () => provenance(),
       collectProcessing: async () => processing(),
@@ -434,6 +446,7 @@ describe("collectRetainedE2eEvidence", () => {
       actorRun: actorRun(),
       conversation: {
         botSpeakerId: conversationFixture.botSpeakerId,
+        reconnectParticipantId: speakerB,
         supplementalPlayback,
         voice,
       },
@@ -447,6 +460,9 @@ describe("collectRetainedE2eEvidence", () => {
       throw new Error("expected retained V8 evidence");
     }
     expect(evidence.conversation.supplementalPlayback).toEqual(supplementalPlayback);
+    expect(evidence.conversation.reconnectNoRepeat.lifecycleReceipts).toEqual(
+      conversationFixture.reconnectNoRepeat.lifecycleReceipts,
+    );
     expect(evidence.conversation.voice).toHaveLength(6);
     expect(evidence.conversation.voice.every(
       ({ correlation }) => correlation.recordingId === "recording-1",
@@ -490,6 +506,7 @@ describe("collectRetainedE2eEvidence failure handling", () => {
       actorRun: actorRun(),
       conversation: {
         botSpeakerId: conversationFixture.botSpeakerId,
+        reconnectParticipantId: speakerB,
         supplementalPlayback: {
           ...structuredClone(conversationFixture.supplementalPlayback),
           runId: "run-1",

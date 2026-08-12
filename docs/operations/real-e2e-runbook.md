@@ -216,7 +216,11 @@ after retained evidence collection. The adapter rejects stale, symlinked,
 oversized, mutated, mismatched, and late receipts instead of guessing.
 
 Reconnect one already-greeted official actor before the meeting ends. Do not
-induce another first join. After finalization, pass all six observer files and
+induce another first join. Keep the meeting active long enough after its rejoin
+for the authoritative final transcript to retain one continuous negative
+window. The v8 bundle binds Meeting Platform's privacy-safe `participant.left`
+and `participant.joined` receipts for pinned Speaker B to that window; missing
+or duplicated receipts fail collection. After finalization, pass all six observer files and
 the pinned Botik speaker ID to the normal collector:
 
 ```sh
@@ -240,7 +244,11 @@ settled prepared farewell. Observer timestamps must
 fall inside the same authoritative recording. The addressed capture must
 overlap exactly one final transcript turn on the pinned Botik track. Any stale
 file, duplicate attempt, mixed observer/Botik application, wrong run/recording,
-wrong Botik speaker, or duplicate lifecycle identity fails closed. Keep the
+wrong Botik speaker, duplicate lifecycle identity, or unmatched greeting-shaped
+Botik turn after Speaker B's rejoin fails closed. The exact four greeting roles
+are pinned as Speaker A, Speaker B, observer, and Speaker D. Known RU/EN actors
+also pin a spoken-name token, so a generic greeting cannot replace their named
+cue while still satisfying the locale term. Keep the
 existing deterministic greeting/playback and farewell-policy suites green: they
 prove exact named/nameless phrases and the continuation, quoted-speech,
 third-person, and false-positive cases without writing names or prompts to logs.
