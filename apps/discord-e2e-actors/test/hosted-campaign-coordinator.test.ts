@@ -474,6 +474,25 @@ describe("hosted campaign coordinator lifecycle", () => {
 
 describe("hosted campaign coordinator failure handling", () => {
 
+  it("retains the campaign lease when any child cannot be proven stopped", async () => {
+    const events: string[] = [];
+    const fakePorts = ports(events);
+    let attemptedStops = 0;
+    fakePorts.stopChild = async (handle) => {
+      attemptedStops += 1;
+      events.push(`stop:${handle.childId}`);
+      if (handle.childId === input().children[0]?.childId) {
+        throw new Error("process tree survived cleanup");
+      }
+    };
+
+    await expect(runHostedCampaign(input(), fakePorts, bounded())).rejects.toThrow(
+      /cleanup was incomplete/u,
+    );
+    expect(attemptedStops).toBe(input().children.length);
+    expect(events).not.toContain("release:campaign-1");
+  });
+
   it("honours cancellation before the first child and during barriers", async () => {
     const beforeStart = new AbortController();
     beforeStart.abort(new Error("cancelled"));

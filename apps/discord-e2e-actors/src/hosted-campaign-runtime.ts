@@ -146,8 +146,15 @@ async function cleanupCampaign(
   failure: unknown,
 ): Promise<void> {
   const cleanupFailures: unknown[] = [];
-  try { await stopEveryChild(handles, ports); } catch (error) { cleanupFailures.push(error); }
-  if (lease !== undefined) {
+  let childrenStopped = false;
+  try {
+    await stopEveryChild(handles, ports);
+    childrenStopped = true;
+  } catch (error) { cleanupFailures.push(error); }
+  // The lease is also the quarantine for an incompletely reaped process tree.
+  // Releasing it after any stop failure could admit a second campaign beside a
+  // surviving child with the same external credentials and artifact scope.
+  if (lease !== undefined && childrenStopped) {
     try { await ports.releaseCampaignLease(lease); } catch (error) { cleanupFailures.push(error); }
   }
   if (cleanupFailures.length > 0) {
