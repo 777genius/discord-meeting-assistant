@@ -4,9 +4,7 @@ import {
   type AudioReceiveStream,
   type VoiceConnection,
 } from "@discordjs/voice";
-import {
-  ChannelType, Client, GatewayIntentBits, type Guild, type GuildBasedChannel, type VoiceChannel,
-} from "discord.js";
+import { Client, GatewayIntentBits } from "discord.js";
 import { loadConversationVoiceObserverConfig, type ConversationVoiceObserverCapture } from
   "./conversation-voice-observer-config.js";
 import { conversationVoiceCampaignPreflight } from
@@ -25,6 +23,12 @@ import {
   assertConversationAnswerHandshakeRootIsNew, waitForConversationAnswerPlaybackIntent,
   type ConversationAnswerPlaybackIntent,
 } from "./conversation-voice-turn-id-source.js";
+import { publishInitialGreetingObserverReady } from "./conversation-greeting-ready.js";
+import {
+  assertConfiguredCraigBotIsInVoiceChannel,
+  assertConnectableVoiceChannel,
+  requiredAuthenticatedBotId,
+} from "./conversation-observer-discord-validation.js";
 import {
   ConversationVoiceCaptureController, ConversationVoiceCaptureError,
   assertConversationVoiceEvidencePathIsNew,
@@ -99,6 +103,7 @@ async function main(): Promise<void> {
     const guild = await client.guilds.fetch(config.guildId);
     const channel = await guild.channels.fetch(config.voiceChannelId);
     assertConnectableVoiceChannel(channel);
+    const greetingIntentNotBeforeEpochMilliseconds = Date.now();
     connection = joinVoiceChannel({
       adapterCreator: guild.voiceAdapterCreator,
       channelId: channel.id,
@@ -124,6 +129,12 @@ async function main(): Promise<void> {
       config.readyTimeoutMilliseconds,
     );
     publishObserverSubscribed(config, authenticatedBotId);
+    await publishInitialGreetingObserverReady({
+      authenticatedBotId,
+      captures,
+      config,
+      handshakeNotBeforeEpochMilliseconds: greetingIntentNotBeforeEpochMilliseconds,
+    });
     const campaignProof = await capturePlannedConversationVoice({
       authenticatedBotId,
       captures,
@@ -349,58 +360,6 @@ async function waitForConfiguredCraigAudioSilence(
     silence = setTimeout(succeed, audioSilenceMilliseconds);
     stream.resume();
   });
-}
-
-function requiredAuthenticatedBotId(client: Client): string {
-  const authenticatedUser = client.user;
-  if (authenticatedUser === null) {
-    throw new Error("Conversation voice observer did not receive an authenticated bot user");
-  }
-  if (!authenticatedUser.bot) {
-    throw new Error("Conversation voice observer must authenticate as an official bot application");
-  }
-  return authenticatedUser.id;
-}
-
-async function assertConfiguredCraigBotIsInVoiceChannel(
-  client: Client,
-  guild: Guild,
-  craigBotId: string,
-  voiceChannelId: string,
-  timeoutMilliseconds: number,
-): Promise<void> {
-  const member = await guild.members.fetch(craigBotId);
-  if (!member.user.bot) {
-    throw new Error("Configured Craig identity is not a Discord bot");
-  }
-  if (guild.voiceStates.cache.get(craigBotId)?.channelId === voiceChannelId) {
-    return;
-  }
-  await new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      cleanup();
-      reject(new Error("Configured Craig bot did not join the private test voice channel before timeout"));
-    }, timeoutMilliseconds);
-    const onVoiceStateUpdate = (): void => {
-      if (guild.voiceStates.cache.get(craigBotId)?.channelId === voiceChannelId) {
-        cleanup();
-        resolve();
-      }
-    };
-    const cleanup = (): void => {
-      clearTimeout(timeout);
-      client.off("voiceStateUpdate", onVoiceStateUpdate);
-    };
-    client.on("voiceStateUpdate", onVoiceStateUpdate);
-  });
-}
-
-function assertConnectableVoiceChannel(
-  channel: GuildBasedChannel | null,
-): asserts channel is VoiceChannel {
-  if (channel === null || channel.type !== ChannelType.GuildVoice) {
-    throw new Error("Configured Discord channel is not a guild voice channel");
-  }
 }
 
 void main().catch((error: unknown) => {

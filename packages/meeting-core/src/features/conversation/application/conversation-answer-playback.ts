@@ -80,10 +80,12 @@ export class ConversationAnswerPlayback {
       let opened: Awaited<ReturnType<VoicePlaybackPort["open"]>>;
       let fence: ConversationPlaybackFence | undefined;
       try {
-        if (playbackKind === "answer" && this.dependencies.playbackReadiness !== undefined) {
-          const ready = await this.dependencies.playbackReadiness
+        const readiness = this.dependencies.playbackReadiness;
+        if (readiness !== undefined && this.requiresPlaybackReadiness(run, playbackKind)) {
+          const ready = await readiness
             .awaitConversationPlaybackReady({
               meetingId: run.prepared.request.meetingId,
+              participantId: run.prepared.request.speakerId,
               playbackAttemptId: run.attemptId,
               playbackKind,
               turnId: run.prepared.request.turnId,
@@ -347,6 +349,14 @@ export class ConversationAnswerPlayback {
 
   private playbackKind(run: ActiveConversationRun): ConversationPlaybackKind {
     return run.prepared.cue === undefined ? "answer" : "prepared-cue";
+  }
+
+  private requiresPlaybackReadiness(
+    run: ActiveConversationRun,
+    playbackKind: ConversationPlaybackKind,
+  ): boolean {
+    return playbackKind === "answer" ||
+      run.prepared.request.turnId.startsWith("participant-greeting:");
   }
 
   private observePlayback(observation: ConversationPlaybackObservation): void {

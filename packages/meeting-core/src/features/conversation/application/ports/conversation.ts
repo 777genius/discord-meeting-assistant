@@ -156,6 +156,7 @@ export interface ConversationPlaybackObserverPort {
 
 export interface ConversationPlaybackReadinessRequest {
   readonly meetingId: string;
+  readonly participantId?: string;
   readonly playbackAttemptId: string;
   readonly playbackKind: ConversationPlaybackKind;
   readonly turnId: string;

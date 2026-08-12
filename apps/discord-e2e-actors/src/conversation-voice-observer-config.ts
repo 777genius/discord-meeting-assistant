@@ -83,6 +83,7 @@ const environmentSchema = z.object({
     .max(5_000)
     .default(500),
   DISCORD_E2E_CONVERSATION_VOICE_GUILD_ID: snowflakeSchema,
+  DISCORD_E2E_CONVERSATION_VOICE_GREETING_HANDSHAKE_ROOT: absoluteDirectorySchema.optional(),
   DISCORD_E2E_HOSTED_CAMPAIGN_ID: correlationIdSchema.optional(),
   DISCORD_E2E_CONVERSATION_VOICE_KEYCHAIN_SERVICE: z.string()
     .trim()
@@ -125,6 +126,13 @@ const environmentSchema = z.object({
       code: "custom",
       message: "A campaign observer requires exactly one create-only campaign proof output",
       path: ["DISCORD_E2E_CONVERSATION_VOICE_CAMPAIGN_PROOF_OUTPUT"],
+    });
+  }
+  if (isCampaign !== (value.DISCORD_E2E_CONVERSATION_VOICE_GREETING_HANDSHAKE_ROOT !== undefined)) {
+    context.addIssue({
+      code: "custom",
+      message: "A campaign observer requires exactly one greeting handshake root",
+      path: ["DISCORD_E2E_CONVERSATION_VOICE_GREETING_HANDSHAKE_ROOT"],
     });
   }
   if (!isCampaign && value.DISCORD_E2E_CONVERSATION_VOICE_MEETING_ID === undefined) {
@@ -273,6 +281,7 @@ export interface ConversationVoiceObserverConfig {
   readonly expectedDurationMilliseconds: number;
   readonly expectedDurationToleranceMilliseconds: number;
   readonly guildId: string;
+  readonly greetingHandshakeRoot?: string;
   readonly hostedCampaignId?: string;
   readonly keychainService: string;
   readonly maxPcmBytes: number;
@@ -331,6 +340,9 @@ export function loadConversationVoiceObserverConfig(
     expectedDurationToleranceMilliseconds:
       parsed.DISCORD_E2E_CONVERSATION_VOICE_EXPECTED_DURATION_TOLERANCE_MS,
     guildId: parsed.DISCORD_E2E_CONVERSATION_VOICE_GUILD_ID,
+    ...(parsed.DISCORD_E2E_CONVERSATION_VOICE_GREETING_HANDSHAKE_ROOT === undefined
+      ? {}
+      : { greetingHandshakeRoot: parsed.DISCORD_E2E_CONVERSATION_VOICE_GREETING_HANDSHAKE_ROOT }),
     ...(parsed.DISCORD_E2E_HOSTED_CAMPAIGN_ID === undefined
       ? {}
       : { hostedCampaignId: parsed.DISCORD_E2E_HOSTED_CAMPAIGN_ID }),

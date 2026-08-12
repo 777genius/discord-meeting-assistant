@@ -4,7 +4,10 @@ import {
   CONVERSATION_QUEUE_TTL_MS,
   ConversationCoordinator,
 } from "@discord-meeting/meeting-core/conversation";
-import type { ConversationRuntimeEvent } from "@discord-meeting/meeting-core/conversation";
+import type {
+  ConversationPlaybackReadinessRequest,
+  ConversationRuntimeEvent,
+} from "@discord-meeting/meeting-core/conversation";
 import {
   ControlledDelayPort,
   EventStream,
@@ -101,6 +104,46 @@ it("streams a proactive greeting without thinking cues", async () => {
       turnId: "participant-greeting:42",
     },
   ]);
+});
+
+it("holds an observer greeting until its exact playback readiness completes", async () => {
+  const runtime = new ScriptedRuntime([closedStream([
+    { attemptId: "attempt-greeting", type: "accepted" },
+    { attemptId: "attempt-greeting", channels: 1, format: "pcm_s16le", sampleRateHz: 48_000, type: "audio-start" },
+    audioChunk("attempt-greeting", "participant-greeting:42", 0),
+    { attemptId: "attempt-greeting", type: "audio-end" },
+    { attemptId: "attempt-greeting", type: "completed" },
+  ])]);
+  const playback = new RecordingPlayback();
+  const requests: ConversationPlaybackReadinessRequest[] = [];
+  let release!: () => void;
+  const ready = new Promise<void>((resolve) => { release = resolve; });
+  const coordinator = new ConversationCoordinator({
+    playback,
+    playbackReadiness: {
+      async awaitConversationPlaybackReady(request) {
+        requests.push(request);
+        await ready;
+        return { ok: true, value: "ready" as const };
+      },
+    },
+    runtime,
+  });
+
+  await coordinator.handleProactiveTurn({
+    ...proactiveTurn("participant-greeting:42", 0),
+    speakerId: "42",
+  });
+  await vi.waitFor(() => expect(requests).toHaveLength(1));
+  expect(playback.requests).toEqual([]);
+  expect(requests[0]).toMatchObject({
+    participantId: "42",
+    playbackKind: "answer",
+    turnId: "participant-greeting:42",
+  });
+  release();
+  await coordinator.whenIdle("meeting-1");
+  expect(playback.requests).toHaveLength(1);
 });
 
 it("does not let participant speech cancel a short non-interruptible greeting", async () => {

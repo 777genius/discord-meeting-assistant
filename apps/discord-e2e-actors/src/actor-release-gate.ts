@@ -1,5 +1,6 @@
 import { constants } from "node:fs";
-import { link, lstat, open, rm, watch } from "node:fs/promises";
+import { link, lstat, open, rm, watch, type FileHandle } from "node:fs/promises";
+import type { Stats } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { basename, dirname } from "node:path";
 
@@ -129,48 +130,17 @@ async function tryReadValidGate(
     }
     throw error;
   }
-  if (pathStatus.isSymbolicLink() || !pathStatus.isFile()) {
-    throw new Error(`Hosted actor release gate must be a regular non-symlink file: ${expected.path}`);
-  }
-  if ((pathStatus.mode & permissionMask) !== 0o600) {
-    throw new Error(`Hosted actor release gate must have mode 0600: ${expected.path}`);
-  }
-  if (typeof process.getuid === "function" && pathStatus.uid !== process.getuid()) {
-    throw new Error(`Hosted actor release gate must be owned by the current user: ${expected.path}`);
-  }
-  if (pathStatus.size > maximumGateBytes) {
-    throw new Error(`Hosted actor release gate exceeds ${maximumGateBytes} bytes: ${expected.path}`);
-  }
+  assertGatePathMetadata(pathStatus, expected.path);
 
   const handle = await open(
     expected.path,
     constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
   );
   try {
-    const openedStatus = await handle.stat();
-    if (openedStatus.dev !== pathStatus.dev || openedStatus.ino !== pathStatus.ino) {
-      throw new Error(`Hosted actor release gate changed while opening: ${expected.path}`);
-    }
-    if (!openedStatus.isFile() || (openedStatus.mode & permissionMask) !== 0o600) {
-      throw new Error(`Hosted actor release gate changed security metadata: ${expected.path}`);
-    }
-    if (typeof process.getuid === "function" && openedStatus.uid !== process.getuid()) {
-      throw new Error(`Hosted actor release gate changed owner while opening: ${expected.path}`);
-    }
-    const raw = await handle.readFile({ encoding: "utf8" });
+    const raw = await readStablePrivateFile(handle, pathStatus, expected.path, "release gate");
     const gate = releaseGateSchema.parse(JSON.parse(raw) as unknown);
-    if (
-      gate.campaignId !== expected.campaignId
-      || gate.runId !== expected.runId
-      || gate.scenario !== expected.scenario
-      || gate.phase !== expected.phase
-    ) {
-      throw new Error("Hosted actor release gate correlation does not match this actor run");
-    }
-    const readAtEpochMs = Date.now();
-    if (gate.releasedAtEpochMs < waitStartedAtEpochMs || gate.releasedAtEpochMs > readAtEpochMs) {
-      throw new Error("Hosted actor release gate is not fresh for this wait");
-    }
+    assertGateCorrelation(gate, expected);
+    assertGateFreshness(gate.releasedAtEpochMs, waitStartedAtEpochMs);
     return true;
   } finally {
     await handle.close();
@@ -218,36 +188,91 @@ export async function waitForActorGateArmed(
     if (signal.aborted) { throw new Error(`Timed out or aborted waiting for actor ${expected.phase} gate readiness`); }
     try {
       const status = await lstat(expected.armedPath);
-      if (status.isSymbolicLink() || !status.isFile() || (status.mode & permissionMask) !== 0o600) {
-        throw new Error(`Hosted actor armed receipt must be a private regular file: ${expected.armedPath}`);
-      }
-      if (typeof process.getuid === "function" && status.uid !== process.getuid()) {
-        throw new Error(`Hosted actor armed receipt has the wrong owner: ${expected.armedPath}`);
-      }
-      if (status.size < 2 || status.size > maximumGateBytes) {
-        throw new Error(`Hosted actor armed receipt has an invalid size: ${expected.armedPath}`);
-      }
+      assertArmedReceiptMetadata(status, expected.armedPath);
       const handle = await open(expected.armedPath, constants.O_RDONLY | constants.O_NOFOLLOW);
       try {
-        const opened = await handle.stat();
-        const raw = await handle.readFile("utf8");
-        const after = await handle.stat();
-        if (opened.dev !== status.dev || opened.ino !== status.ino || opened.size !== status.size
-          || opened.mtimeMs !== status.mtimeMs || after.size !== opened.size || after.mtimeMs !== opened.mtimeMs
-          || Buffer.byteLength(raw, "utf8") !== opened.size) {
-          throw new Error(`Hosted actor armed receipt changed while reading: ${expected.armedPath}`);
-        }
+        const raw = await readStablePrivateFile(handle, status, expected.armedPath, "armed receipt");
         const receipt = armedReceiptSchema.parse(JSON.parse(raw) as unknown);
-        if (receipt.campaignId !== expected.campaignId || receipt.runId !== expected.runId
-          || receipt.scenario !== expected.scenario || receipt.phase !== expected.phase) {
-          throw new Error("Hosted actor armed receipt correlation does not match the gate");
-        }
+        assertArmedReceiptCorrelation(receipt, expected);
         return;
       } finally { await handle.close(); }
     } catch (error: unknown) {
       if (!isNodeError(error, "ENOENT")) { throw error; }
     }
     await waitForRetry(signal, expected.phase);
+  }
+}
+
+function assertGatePathMetadata(status: Stats, path: string): void {
+  if (status.isSymbolicLink() || !status.isFile()) {
+    throw new Error(`Hosted actor release gate must be a regular non-symlink file: ${path}`);
+  }
+  assertPrivateOwner(status, path, "release gate");
+  if (status.size > maximumGateBytes) {
+    throw new Error(`Hosted actor release gate exceeds ${maximumGateBytes} bytes: ${path}`);
+  }
+}
+
+function assertArmedReceiptMetadata(status: Stats, path: string): void {
+  if (status.isSymbolicLink() || !status.isFile() || (status.mode & permissionMask) !== 0o600) {
+    throw new Error(`Hosted actor armed receipt must be a private regular file: ${path}`);
+  }
+  assertPrivateOwner(status, path, "armed receipt");
+  if (status.size < 2 || status.size > maximumGateBytes) {
+    throw new Error(`Hosted actor armed receipt has an invalid size: ${path}`);
+  }
+}
+
+function assertPrivateOwner(status: Stats, path: string, kind: "armed receipt" | "release gate"): void {
+  if ((status.mode & permissionMask) !== 0o600) {
+    throw new Error(`Hosted actor ${kind} must have mode 0600: ${path}`);
+  }
+  if (typeof process.getuid === "function" && status.uid !== process.getuid()) {
+    throw new Error(`Hosted actor ${kind} must be owned by the current user: ${path}`);
+  }
+}
+
+async function readStablePrivateFile(
+  handle: FileHandle, pathStatus: Stats, path: string, kind: "armed receipt" | "release gate",
+): Promise<string> {
+  const opened = await handle.stat();
+  assertSameFile(pathStatus, opened, path, kind);
+  assertPrivateOwner(opened, path, kind);
+  const raw = await handle.readFile("utf8");
+  const after = await handle.stat();
+  if (after.size !== opened.size || after.mtimeMs !== opened.mtimeMs
+    || Buffer.byteLength(raw, "utf8") !== opened.size) {
+    throw new Error(`Hosted actor ${kind} changed while reading: ${path}`);
+  }
+  return raw;
+}
+
+function assertSameFile(pathStatus: Stats, opened: Stats, path: string, kind: string): void {
+  if (opened.dev !== pathStatus.dev || opened.ino !== pathStatus.ino) {
+    throw new Error(`Hosted actor ${kind} changed while opening: ${path}`);
+  }
+  if (!opened.isFile()) { throw new Error(`Hosted actor ${kind} changed security metadata: ${path}`); }
+}
+
+function assertGateCorrelation(gate: z.infer<typeof releaseGateSchema>, expected: ActorReleaseGateExpectation): void {
+  if (gate.campaignId !== expected.campaignId || gate.runId !== expected.runId
+    || gate.scenario !== expected.scenario || gate.phase !== expected.phase) {
+    throw new Error("Hosted actor release gate correlation does not match this actor run");
+  }
+}
+
+function assertGateFreshness(releasedAtEpochMs: number, waitStartedAtEpochMs: number): void {
+  if (releasedAtEpochMs < waitStartedAtEpochMs || releasedAtEpochMs > Date.now()) {
+    throw new Error("Hosted actor release gate is not fresh for this wait");
+  }
+}
+
+function assertArmedReceiptCorrelation(
+  receipt: z.infer<typeof armedReceiptSchema>, expected: ActorReleaseGateExpectation,
+): void {
+  if (receipt.campaignId !== expected.campaignId || receipt.runId !== expected.runId
+    || receipt.scenario !== expected.scenario || receipt.phase !== expected.phase) {
+    throw new Error("Hosted actor armed receipt correlation does not match the gate");
   }
 }
 

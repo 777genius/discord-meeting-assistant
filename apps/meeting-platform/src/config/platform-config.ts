@@ -27,6 +27,8 @@ export interface PlatformConfig {
       readonly root: string;
       readonly runId: string;
       readonly timeoutMilliseconds: number;
+      readonly greetingObserverParticipantId?: string;
+      readonly greetingRoot?: string;
     };
   };
   /** Controls whether the authoritative final summary replaces or follows the live draft. */

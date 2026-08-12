@@ -3,7 +3,8 @@ import { chmod, mkdir, mkdtemp, readFile, rm, symlink, utimes, writeFile } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { serializeConversationAnswerPlaybackReadinessEnvelope } from
+import { serializeConversationAnswerPlaybackReadinessEnvelope,
+  serializeConversationGreetingPlaybackReadinessEnvelope } from
   "@discord-meeting/conversation-runtime-contracts";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -50,6 +51,43 @@ afterEach(async () => {
 });
 
 describe("FileConversationPlaybackReadiness", () => {
+  it("gates only the exact configured observer greeting and bypasses unrelated cues", async () => {
+    const root = await temporaryRoot();
+    const participantId = "1533867700575670282";
+    const greetingRequest = {
+      meetingId: "meeting-1", participantId, playbackAttemptId: "greeting-attempt",
+      playbackKind: "prepared-cue" as const, turnId: `participant-greeting:${participantId}`,
+    };
+    const greetingEnvelope = {
+      capturePlan: "observer-greeting" as const, kind: "greeting" as const,
+      meetingId: "meeting-1", participantId, protocolVersion: 1 as const,
+      runId: "run-1", turnId: greetingRequest.turnId,
+    };
+    const greetingRoot = await temporaryRoot();
+    const readiness = new FileConversationPlaybackReadiness({
+      greetingObserverParticipantId: participantId, greetingRoot, root, runId: "run-1", timeoutMilliseconds: 1_000,
+    });
+    await expect(readiness.awaitConversationPlaybackReady({
+      ...greetingRequest, participantId: "1533873978417086474",
+      turnId: "participant-greeting:1533873978417086474",
+    })).resolves.toEqual({ ok: true, value: "ready" });
+    const stem = createHash("sha256")
+      .update(serializeConversationGreetingPlaybackReadinessEnvelope(greetingEnvelope)).digest("hex");
+    const waiting = readiness.awaitConversationPlaybackReady(greetingRequest);
+    await waitForJson(join(greetingRoot, `${stem}.intent.json`));
+    await writeFile(join(greetingRoot, `${stem}.ready.json`), JSON.stringify({
+      ...greetingEnvelope,
+      authenticatedObserverBotId: participantId,
+      intentDigestSha256: stem,
+      intentObservedAt: "2026-08-12T10:00:00.000Z",
+      readyPublishedAt: "2026-08-12T10:00:00.001Z",
+      target: { craigBotId: "1534231284467896512", guildId: "1533228590643155034",
+        observerApplicationId: participantId, voiceChannelId: "1533228823045214398" },
+      type: "observer-ready",
+    }), { flag: "wx", mode: 0o600 });
+    await expect(waiting).resolves.toEqual({ ok: true, value: "ready" });
+  });
+
   it("publishes a create-only intent and waits for the exact observer-ready receipt", async () => {
     const root = await temporaryRoot();
     const readiness = new FileConversationPlaybackReadiness({
