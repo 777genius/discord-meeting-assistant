@@ -43,8 +43,8 @@ describe("conversation voice collection preflight", () => {
     });
 
     expect(received).toHaveLength(6);
-    expect(received?.every((capture) =>
-      (capture as typeof rawVoice[number]).correlation.recordingId === "meeting-1"
-    )).toBe(true);
+    expect(received?.map((capture) =>
+      (capture as typeof rawVoice[number]).correlation.recordingId
+    )).toEqual(Array.from({ length: 6 }, () => "meeting-1"));
   });
 });
