@@ -27,7 +27,7 @@ describe("hosted campaign entrypoint capability matrix", () => {
   it("classifies every production entrypoint and rejects arbitrary production declarations", () => {
     expect(Object.keys(HOSTED_CAMPAIGN_ENTRYPOINT_CAPABILITY_MATRIX).toSorted()).toEqual([
       "actor", "campaign-verifier", "collector", "conversation-observer", "evidence-verifier",
-      "live-observer", "playback-link-observer", "provenance-probe", "recording-ready",
+      "live-observer", "playback-link-observer", "provenance-probe", "recording-ready", "replay-attestation-publisher",
       "service-level-sources", "service-levels", "supplemental-player",
     ]);
     expect(() => validateHostedCampaignEntrypointCapabilities(

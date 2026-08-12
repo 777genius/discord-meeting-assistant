@@ -31,7 +31,7 @@ async function adapter(source: string, outputLimitBytes?: number) {
     "observe-conversation-voice.js", "verify-retained-evidence.js", "observe-live-discord.js",
     "observe-live-discord-playback-link.js", "collect-hosted-campaign-provenance.js",
     "collect-recording-ready-receipt.js", "collect-hosted-service-level-sources.js",
-    "collect-hosted-service-levels.js", "play-supplemental-voice.js"]
+    "collect-hosted-service-levels.js", "publish-replay-attestation.js", "play-supplemental-voice.js"]
     .map(async (name) => writeFile(join(root, name), source, { mode: 0o600 })));
   const storeRoot = join(root, "artifacts");
   const store = new HostedCampaignArtifactStore(storeRoot, "campaign-1");
@@ -105,6 +105,10 @@ function environmentProbeSpec(
         DISCORD_E2E_REMOTE_CRAIG_PROJECT: HOSTED_CAMPAIGN_TARGET.craigProject,
         DISCORD_E2E_REMOTE_HOST: HOSTED_CAMPAIGN_TARGET.host,
         DISCORD_E2E_REMOTE_PROJECT: HOSTED_CAMPAIGN_TARGET.project,
+      } : {}),
+      ...(entrypoint === "replay-attestation-publisher" ? {
+        DISCORD_E2E_REPLAY_MUTATION_TARGET: HOSTED_CAMPAIGN_TARGET.mutationTarget,
+        DISCORD_E2E_REPLAY_REMOTE_HOST: HOSTED_CAMPAIGN_TARGET.host,
       } : {}),
     },
     produces: [], requires: [], startBefore: { kind: "campaign" },
@@ -446,7 +450,7 @@ describe("hosted campaign process adapter", () => {
     await processAdapter.stopChild(handle);
   });
 
-  it.each(["collector", "provenance-probe", "recording-ready", "service-level-sources"] as const)(
+  it.each(["collector", "provenance-probe", "recording-ready", "replay-attestation-publisher", "service-level-sources"] as const)(
     "passes the exact trusted runtime environment to the %s child",
     async (entrypoint) => {
       const root = await mkdtemp(join(tmpdir(), "hosted-ssh-environment-"));
@@ -467,6 +471,16 @@ describe("hosted campaign process adapter", () => {
       }
     },
   );
+
+  it("rejects a replay attestation publisher outside the pinned hosted target", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hosted-replay-target-"));
+    const { processAdapter } = await adapter("setInterval(() => {}, 1000);");
+    const declared = environmentProbeSpec("replay-attestation-publisher", join(root, "environment.json"));
+    await expect(processAdapter.startChild({
+      ...declared,
+      environment: { ...declared.environment, DISCORD_E2E_REPLAY_REMOTE_HOST: "other-host" },
+    }, bounded())).rejects.toThrow(/target mismatch/u);
+  });
 
   it.each(["actor", "campaign-verifier", "conversation-observer", "evidence-verifier", "live-observer",
     "playback-link-observer", "service-levels", "supplemental-player"] as const)(

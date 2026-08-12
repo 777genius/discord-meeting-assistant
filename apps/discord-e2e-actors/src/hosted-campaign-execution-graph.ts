@@ -90,10 +90,10 @@ export function campaignActions(input: HostedCampaignInput): readonly HostedCamp
 
 function isFiniteCompletionAction(action: HostedCampaignBarrierAction): action is Extract<
   HostedCampaignBarrierAction,
-  { readonly kind: "actor-completed" | "conversation-observer-completed" | "playback-link-seen" | "recording-ready" | "supplemental-completed" }
+  { readonly kind: "actor-completed" | "conversation-observer-completed" | "playback-link-seen" | "recording-ready" | "replay-attestation-ready" | "supplemental-completed" }
 > {
   return new Set(["actor-completed", "conversation-observer-completed", "playback-link-seen",
-    "recording-ready", "supplemental-completed"]).has(action.kind);
+    "recording-ready", "replay-attestation-ready", "supplemental-completed"]).has(action.kind);
 }
 
 function scoped(run: HostedCampaignRun, action: HostedCampaignBarrierAction): HostedCampaignActionReference {

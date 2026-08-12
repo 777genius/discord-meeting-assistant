@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -17,6 +17,19 @@ async function privateArtifact(value: unknown): Promise<string> {
 }
 
 describe("hosted finite process completion", () => {
+  it("correlates replay attestation completion to the pinned fixture manifest", async () => {
+    const root = await mkdtemp(join(tmpdir(), "replay-attestation-completion-"));
+    const fixtureManifestPath = join(root, "manifest.json");
+    await writeFile(fixtureManifestPath, await readFile(new URL("./fixtures/manifest.v1.json", import.meta.url)));
+    await expect(verifyHostedFiniteProcessCompletion(JSON.stringify({
+      fixtureSetId: "discord-meeting-ru-en-v6", kind: "replay-attestation-publisher-completion",
+      recordingId: "recording-1", remoteAttestationPath: "/tmp/discord-e2e-attestations/run-1.json",
+      runId: "run-1", status: "ready",
+    }), {
+      fixtureManifestPath, kind: "replay-attestation-publisher", recordingId: "recording-1",
+      remoteAttestationPath: "/tmp/discord-e2e-attestations/run-1.json", runId: "run-1",
+    })).resolves.toMatchObject({ fixtureSetId: "discord-meeting-ru-en-v6", recordingId: "recording-1" });
+  });
   it("accepts actor completion only when stdout and retained artifact share exact coordinates", async () => {
     const source = retainedV8Evidence().actorRun;
     const artifact = {

@@ -34,6 +34,7 @@ export type HostedCampaignEntrypoint =
   | "playback-link-observer"
   | "provenance-probe"
   | "recording-ready"
+  | "replay-attestation-publisher"
   | "service-level-sources"
   | "service-levels"
   | "supplemental-player"
@@ -55,6 +56,7 @@ export type HostedCampaignBoundEnvironmentName =
   | "DISCORD_E2E_PLAYBACK_LINK_MEETING_ID"
   | "DISCORD_E2E_PLAYBACK_LINK_RECORDING_ID"
   | "DISCORD_E2E_RECORDING_ID"
+  | "DISCORD_E2E_REPLAY_RECORDING_ID"
   | "DISCORD_E2E_SLA_MEETING_ID"
   | "DISCORD_E2E_SLA_RECORDING_ID";
 export interface HostedCampaignEnvironmentBinding {
@@ -69,6 +71,7 @@ export type HostedCampaignCompletionAction =
   | { readonly kind: "conversation-observer-completed"; readonly ordinal: number; readonly runId: string }
   | { readonly kind: "playback-link-seen"; readonly ordinal: number; readonly runId: string }
   | { readonly kind: "recording-ready"; readonly ordinal: number; readonly runId: string }
+  | { readonly kind: "replay-attestation-ready"; readonly ordinal: number; readonly runId: string }
   | { readonly kind: "supplemental-completed"; readonly ordinal: number; readonly runId: string };
 export type HostedCampaignExecutableArguments =
   | { readonly kind: "environment" }
@@ -518,7 +521,7 @@ function isFiniteCompletion(
   completion: HostedCampaignExecutableCompletion,
 ): completion is HostedFiniteProcessCompletion {
   return new Set(["actor", "conversation-observer", "playback-link-observer", "recording-ready",
-    "supplemental-player"]).has(completion.kind);
+    "replay-attestation-publisher", "supplemental-player"]).has(completion.kind);
 }
 function validateProvenanceCompletion(
   child: HostedCampaignExecutableSpec,

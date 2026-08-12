@@ -50,6 +50,7 @@ const barrierActionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("conversation-observer-completed"), ordinal: z.number().int().min(1).max(3), runId: identifier }).strict(),
   z.object({ kind: z.literal("playback-link-seen"), ordinal: z.number().int().min(1).max(3), runId: identifier }).strict(),
   z.object({ kind: z.literal("recording-ready"), ordinal: z.number().int().min(1).max(3), runId: identifier }).strict(),
+  z.object({ kind: z.literal("replay-attestation-ready"), ordinal: z.number().int().min(1).max(3), runId: identifier }).strict(),
   z.object({ kind: z.literal("supplemental-completed"), ordinal: z.number().int().min(1).max(3), runId: identifier }).strict(),
 ]);
 const actionReferenceSchema = z.object({
@@ -67,6 +68,7 @@ const environmentBindingSchema = z.object({
     "DISCORD_E2E_PLAYBACK_LINK_MEETING_ID",
     "DISCORD_E2E_PLAYBACK_LINK_RECORDING_ID",
     "DISCORD_E2E_RECORDING_ID",
+    "DISCORD_E2E_REPLAY_RECORDING_ID",
     "DISCORD_E2E_SLA_MEETING_ID",
     "DISCORD_E2E_SLA_RECORDING_ID",
   ]),
@@ -89,6 +91,9 @@ const completionSchema = z.discriminatedUnion("kind", [
     runId: identifier }).strict(),
   z.object({ action: z.object({ kind: z.literal("recording-ready"), ordinal: z.number().int().min(1).max(3), runId: identifier }).strict(),
     kind: z.literal("recording-ready"), outputPath: z.string().refine(isAbsolute), runId: identifier }).strict(),
+  z.object({ action: z.object({ kind: z.literal("replay-attestation-ready"), ordinal: z.number().int().min(1).max(3), runId: identifier }).strict(),
+    fixtureManifestPath: z.string().refine(isAbsolute), kind: z.literal("replay-attestation-publisher"),
+    recordingId: identifier.optional(), remoteAttestationPath: z.string().refine(isAbsolute), runId: identifier }).strict(),
   z.object({ action: z.object({ kind: z.literal("supplemental-completed"), ordinal: z.number().int().min(1).max(3), runId: identifier }).strict(),
     kind: z.literal("supplemental-player"), outputPath: z.string().refine(isAbsolute), runId: identifier }).strict(),
   z.object({
@@ -130,7 +135,7 @@ const executableSchema = z.object({
   completionAfter: actionReferenceSchema.optional(),
   entrypoint: z.enum([
     "actor", "campaign-verifier", "collector", "conversation-observer", "evidence-verifier",
-    "live-observer", "playback-link-observer", "provenance-probe", "recording-ready", "service-level-sources", "service-levels",
+    "live-observer", "playback-link-observer", "provenance-probe", "recording-ready", "replay-attestation-publisher", "service-level-sources", "service-levels",
     "supplemental-player",
   ]),
   environment,

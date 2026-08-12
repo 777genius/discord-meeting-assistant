@@ -42,6 +42,7 @@ const ENTRYPOINTS: Readonly<Record<HostedCampaignEntrypoint, string>> = Object.f
   "playback-link-observer": "observe-live-discord-playback-link.js",
   "provenance-probe": "collect-hosted-campaign-provenance.js",
   "recording-ready": "collect-recording-ready-receipt.js",
+  "replay-attestation-publisher": "publish-replay-attestation.js",
   "service-level-sources": "collect-hosted-service-level-sources.js",
   "service-levels": "collect-hosted-service-levels.js",
   "supplemental-player": "play-supplemental-voice.js",
@@ -73,6 +74,7 @@ const ALLOWED_ENVIRONMENT = new Set([
   "DISCORD_E2E_LIVE_SECRET_DIRECTORY", "DISCORD_E2E_LIVE_SUT_ACCOUNT", "DISCORD_E2E_LIVE_SUT_APPLICATION_ID",
   "DISCORD_E2E_MUTATION_TARGET", "DISCORD_E2E_PLAYBACK_TIMEOUT_MS", "DISCORD_E2E_POST_PLAYBACK_HOLD_MS",
   "DISCORD_E2E_PLAYBACK_LINK_DURATION_MS", "DISCORD_E2E_PLAYBACK_LINK_KEYCHAIN_SERVICE",
+  "DISCORD_E2E_PLAYBACK_LINK_MODE",
   "DISCORD_E2E_PLAYBACK_LINK_OUTPUT", "DISCORD_E2E_PLAYBACK_LINK_POLL_INTERVAL_MS",
   "DISCORD_E2E_PLAYBACK_LINK_PROJECTION_CONTAINER_JSON", "DISCORD_E2E_PLAYBACK_LINK_PROJECTION_MARKER",
   "DISCORD_E2E_PLAYBACK_LINK_MEETING_ID",
@@ -82,6 +84,10 @@ const ALLOWED_ENVIRONMENT = new Set([
   "DISCORD_E2E_PRE_PLAYBACK_HOLD_MS", "DISCORD_E2E_READY_TIMEOUT_MS", "DISCORD_E2E_RECORDER_BOT_ID",
   "DISCORD_E2E_PROVENANCE_CAMPAIGN_ID", "DISCORD_E2E_PROVENANCE_PHASE", "DISCORD_E2E_PROVENANCE_RUN_IDS_JSON",
   "DISCORD_E2E_PROVENANCE_SNAPSHOT_PATH",
+  "DISCORD_E2E_REPLAY_FIXTURE_MANIFEST", "DISCORD_E2E_REPLAY_MUTATION_TARGET",
+  "DISCORD_E2E_REPLAY_RECORDING_ID", "DISCORD_E2E_REPLAY_REMOTE_ATTESTATION_FILE",
+  "DISCORD_E2E_REPLAY_REMOTE_COMPOSE_FILE", "DISCORD_E2E_REPLAY_REMOTE_ENV_FILE",
+  "DISCORD_E2E_REPLAY_REMOTE_HOST", "DISCORD_E2E_REPLAY_REMOTE_SOURCE_ROOT", "DISCORD_E2E_REPLAY_RUN_ID",
   "DISCORD_E2E_READY_RECEIPT_INPUT", "DISCORD_E2E_READY_RECEIPT_OUTPUT",
   "DISCORD_E2E_READY_RECEIPT_POLL_INTERVAL_MS", "DISCORD_E2E_READY_RECEIPT_TIMEOUT_MS",
   "DISCORD_E2E_RECORDING_ID", "DISCORD_E2E_RECORDING_PLAYBACK_ORIGIN", "DISCORD_E2E_RECORDING_PLAYBACK_READINESS",
@@ -115,6 +121,7 @@ const SSH_RUNTIME_ENTRYPOINTS: ReadonlySet<HostedCampaignEntrypoint> = new Set([
   "collector",
   "provenance-probe",
   "recording-ready",
+  "replay-attestation-publisher",
   "service-level-sources",
 ]);
 const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/u;
@@ -478,7 +485,7 @@ function isFiniteCompletion(
   completion: HostedCampaignExecutableSpec["completion"] & object,
 ): completion is HostedFiniteProcessCompletion {
   return new Set(["actor", "conversation-observer", "playback-link-observer", "recording-ready",
-    "supplemental-player"]).has((completion as { readonly kind: string }).kind);
+    "replay-attestation-publisher", "supplemental-player"]).has((completion as { readonly kind: string }).kind);
 }
 
 function parseJsonOutput(chunks: readonly Buffer[], childId: string): unknown {
@@ -523,6 +530,10 @@ function assertPinnedTarget(spec: HostedCampaignExecutableSpec): void {
     assertEnvironmentCoordinate(spec, "DISCORD_E2E_REMOTE_HOST", expected.host);
     assertEnvironmentCoordinate(spec, "DISCORD_E2E_REMOTE_PROJECT", expected.project);
     assertEnvironmentCoordinate(spec, "DISCORD_E2E_REMOTE_CRAIG_PROJECT", expected.craigProject);
+  }
+  if (spec.entrypoint === "replay-attestation-publisher") {
+    assertEnvironmentCoordinate(spec, "DISCORD_E2E_REPLAY_MUTATION_TARGET", expected.mutationTarget);
+    assertEnvironmentCoordinate(spec, "DISCORD_E2E_REPLAY_REMOTE_HOST", expected.host);
   }
 }
 

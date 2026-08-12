@@ -9,6 +9,7 @@ export type HostedFiniteProcessCompletion =
   | { readonly action: Extract<HostedCampaignCompletionAction, { readonly kind: "conversation-observer-completed" }>; readonly kind: "conversation-observer"; readonly outputPaths: readonly string[]; readonly runId: string }
   | { readonly action: Extract<HostedCampaignCompletionAction, { readonly kind: "playback-link-seen" }>; readonly kind: "playback-link-observer"; readonly outputPath: string; readonly recordingId?: string; readonly runId: string }
   | { readonly action: Extract<HostedCampaignCompletionAction, { readonly kind: "recording-ready" }>; readonly kind: "recording-ready"; readonly outputPath: string; readonly runId: string }
+  | { readonly action: Extract<HostedCampaignCompletionAction, { readonly kind: "replay-attestation-ready" }>; readonly fixtureManifestPath: string; readonly kind: "replay-attestation-publisher"; readonly recordingId?: string; readonly remoteAttestationPath: string; readonly runId: string }
   | { readonly action: Extract<HostedCampaignCompletionAction, { readonly kind: "supplemental-completed" }>; readonly kind: "supplemental-player"; readonly outputPath: string; readonly runId: string };
 
 export function validateHostedFiniteProcessContract(
@@ -23,6 +24,10 @@ export function validateHostedFiniteProcessContract(
     && !hasBinding(child, "DISCORD_E2E_PLAYBACK_LINK_RECORDING_ID", "recordingId")) {
     throw new Error(`Hosted finite child ${child.childId} has no recording identity binding`);
   }
+  if (completion.kind === "replay-attestation-publisher" && completion.recordingId === undefined
+    && !hasBinding(child, "DISCORD_E2E_REPLAY_RECORDING_ID", "recordingId")) {
+    throw new Error(`Hosted finite child ${child.childId} has no recording identity binding`);
+  }
   const expected = completion.kind === "actor"
     ? [environment.DISCORD_E2E_ACTOR_RUN_OUTPUT, environment.DISCORD_E2E_RUN_ID, environment.DISCORD_E2E_SCENARIO]
     : completion.kind === "conversation-observer"
@@ -32,6 +37,9 @@ export function validateHostedFiniteProcessContract(
           environment.DISCORD_E2E_PLAYBACK_LINK_RECORDING_ID]
         : completion.kind === "recording-ready"
           ? [environment.DISCORD_E2E_READY_RECEIPT_OUTPUT, environment.DISCORD_E2E_RUN_ID]
+          : completion.kind === "replay-attestation-publisher"
+            ? [environment.DISCORD_E2E_REPLAY_FIXTURE_MANIFEST, environment.DISCORD_E2E_REPLAY_RECORDING_ID,
+              environment.DISCORD_E2E_REPLAY_REMOTE_ATTESTATION_FILE, environment.DISCORD_E2E_REPLAY_RUN_ID]
           : [environment.DISCORD_E2E_SUPPLEMENTAL_EVIDENCE_OUTPUT, environment.DISCORD_E2E_SUPPLEMENTAL_RUN_ID];
   const declared = completion.kind === "actor"
     ? [completion.outputPath, completion.runId, completion.scenario]
@@ -40,7 +48,10 @@ export function validateHostedFiniteProcessContract(
       : completion.kind === "playback-link-observer"
         ? [completion.outputPath, completion.runId,
           completion.recordingId ?? environment.DISCORD_E2E_PLAYBACK_LINK_RECORDING_ID]
-        : [completion.outputPath, completion.runId];
+        : completion.kind === "replay-attestation-publisher"
+          ? [completion.fixtureManifestPath, completion.recordingId ?? environment.DISCORD_E2E_REPLAY_RECORDING_ID,
+            completion.remoteAttestationPath, completion.runId]
+          : [completion.outputPath, completion.runId];
   if (JSON.stringify(expected) !== JSON.stringify(declared)) {
     throw new Error(`Hosted finite child ${child.childId} completion is not bound to its environment`);
   }

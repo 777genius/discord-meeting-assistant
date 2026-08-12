@@ -7,7 +7,7 @@ import {
   conversationVoiceEvidenceV3Schema,
   supplementalPlaybackEvidenceV1Schema,
 } from "./conversation-retained-evidence-schema.js";
-import { unboundActorRunEvidenceV1Schema } from "./e2e-evidence-schema.js";
+import { fixtureManifestV1Schema, unboundActorRunEvidenceV1Schema } from "./e2e-evidence-schema.js";
 import { liveDiscordPlaybackLinkProofSchema } from "./live-discord-playback-link-observer.js";
 import { recordingReadyReceiptV1Schema } from "./recording-ready-receipt.js";
 
@@ -35,6 +35,11 @@ const completionSchemas = {
     kind: z.literal("recording-ready-completion"), outputPath,
     recordingId: identifier, runId: identifier, status: z.literal("ready"),
   }).strict(),
+  "replay-attestation-publisher": z.object({
+    fixtureSetId: identifier, kind: z.literal("replay-attestation-publisher-completion"),
+    recordingId: identifier, remoteAttestationPath: outputPath, runId: identifier,
+    status: z.literal("ready"),
+  }).strict(),
   "supplemental-player": z.object({
     kind: z.literal("supplemental-player-completion"), outputPath,
     runId: identifier, status: z.literal("completed"),
@@ -48,6 +53,7 @@ export type HostedFiniteProcessCompletionExpectation =
   | { readonly kind: "conversation-observer"; readonly outputPaths: readonly string[]; readonly runId: string }
   | { readonly kind: "playback-link-observer"; readonly outputPath: string; readonly recordingId?: string; readonly runId: string }
   | { readonly kind: "recording-ready"; readonly outputPath: string; readonly runId: string }
+  | { readonly fixtureManifestPath: string; readonly kind: "replay-attestation-publisher"; readonly recordingId?: string; readonly remoteAttestationPath: string; readonly runId: string }
   | { readonly kind: "supplemental-player"; readonly outputPath: string; readonly runId: string };
 
 export async function verifyHostedFiniteProcessCompletion(
@@ -98,6 +104,17 @@ export async function verifyHostedFiniteProcessCompletion(
     assertEqual(artifact.recordingId, completion.recordingId, "recording-ready recording ID");
     assertEqual(artifact.runId, expected.runId, "recording-ready artifact run ID");
     return artifact;
+  }
+  if (expected.kind === "replay-attestation-publisher") {
+    const completion = completionSchemas["replay-attestation-publisher"].parse(output);
+    assertEqual(completion.remoteAttestationPath, expected.remoteAttestationPath, "replay attestation path");
+    assertEqual(completion.runId, expected.runId, "replay attestation run ID");
+    if (expected.recordingId !== undefined) {
+      assertEqual(completion.recordingId, expected.recordingId, "replay attestation recording ID");
+    }
+    const manifest = fixtureManifestV1Schema.parse(await readJson(expected.fixtureManifestPath));
+    assertEqual(completion.fixtureSetId, manifest.fixtureSetId, "replay attestation fixture set ID");
+    return completion;
   }
   const completion = completionSchemas["supplemental-player"].parse(output);
   assertEqual(completion.outputPath, expected.outputPath, "supplemental output path");
