@@ -27,7 +27,7 @@ import {
 } from "./e2e-evidence-fixtures.js";
 import {
   exactServiceLevelThresholds,
-  serviceLevelsProof,
+  serviceLevelEvidenceForIdentity,
 } from "./e2e-service-level-fixtures.js";
 
 describe("retained E2E campaign lifecycle gate", () => {
@@ -247,6 +247,12 @@ function v9ReconnectEvidence(): RetainedE2eEvidenceV9 {
     status: "validated" as const,
   };
   const planDigestSha256 = conversationVoiceCampaignPlanDigest(plan);
+  const { serviceLevels, serviceLevelSources } = serviceLevelEvidenceForIdentity({
+    meetingId: source.meetingId,
+    messageId: source.publication.messageId,
+    runId: source.actorRun.runId,
+    transcriptId: source.transcript.transcriptId,
+  });
 
   return retainedE2eEvidenceV9Schema.parse({
     ...source,
@@ -272,7 +278,8 @@ function v9ReconnectEvidence(): RetainedE2eEvidenceV9 {
       },
     },
     schemaVersion: 9,
-    serviceLevels: serviceLevelsProof(),
+    serviceLevels,
+    serviceLevelSources,
   });
 }
 

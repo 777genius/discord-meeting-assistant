@@ -133,6 +133,37 @@ export function serviceLevelSourcesProof() {
   };
 }
 
+export function serviceLevelEvidenceForIdentity(input: {
+  readonly meetingId: string;
+  readonly messageId: string;
+  readonly runId: string;
+  readonly transcriptId: string;
+}) {
+  const serviceLevels = serviceLevelsProof();
+  for (const measurement of serviceLevels.measurements) {
+    measurement.start.source.meetingId = input.meetingId;
+    measurement.start.source.runId = input.runId;
+    measurement.end.source.meetingId = input.meetingId;
+    measurement.end.source.runId = input.runId;
+    if ("recordingId" in measurement.start.source) {
+      measurement.start.source.recordingId = input.meetingId;
+    }
+    measurement.end.source.recordingId = input.meetingId;
+    if (measurement.serviceLevelId === "question-end-to-answer-first-packet") {
+      measurement.start.source.transcriptId = input.transcriptId;
+    }
+    if (measurement.serviceLevelId === "recording-end-to-discord-first-seen") {
+      measurement.end.source.messageId = input.messageId;
+      measurement.end.source.recordingId = input.meetingId;
+    }
+  }
+  const serviceLevelSources = serviceLevelSourcesProof();
+  serviceLevelSources.discordPlaybackLinkProof.messageId = input.messageId;
+  serviceLevelSources.discordPlaybackLinkProof.recordingId = input.meetingId;
+  serviceLevelSources.discordPlaybackLinkProof.runId = input.runId;
+  return { serviceLevels, serviceLevelSources };
+}
+
 function attestation(id: string, startClockId: string, endClockId: string, skew: number) {
   return {
     attestationId: `attestation-${id}`,
