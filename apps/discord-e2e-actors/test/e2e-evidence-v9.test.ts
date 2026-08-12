@@ -13,6 +13,10 @@ import {
   manifest,
   retainedV8Evidence,
 } from "./e2e-evidence-fixtures.js";
+import {
+  exactServiceLevelThresholds,
+  serviceLevelsProof,
+} from "./e2e-service-level-fixtures.js";
 
 const pinnedTarget = {
   craigBotId: "1534231284467896512",
@@ -123,11 +127,17 @@ function v9Evidence(): RetainedE2eEvidenceV9 {
       },
     },
     schemaVersion: 9,
+    serviceLevels: serviceLevelsProof(),
   });
 }
 
 function verify(evidence: RetainedE2eEvidenceV9) {
-  return verifyRetainedE2eEvidence(manifest(), evidence, currentExpectedRevisions);
+  return verifyRetainedE2eEvidence(
+    manifest(),
+    evidence,
+    currentExpectedRevisions,
+    exactServiceLevelThresholds,
+  );
 }
 
 function failureCodes(evidence: RetainedE2eEvidenceV9): readonly string[] {
