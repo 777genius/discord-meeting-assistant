@@ -84,6 +84,11 @@ export function validateActionEvidence(
     || typeof value.runId !== "string" || value.runId.length === 0)) {
     throw new Error("Hosted service-level evidence is invalid");
   }
+  if (action.kind === "service-level-sources-ready" && (value.sourcesReady !== true
+    || typeof value.outputPath !== "string" || !value.outputPath.startsWith("/")
+    || typeof value.runId !== "string" || value.runId.length === 0)) {
+    throw new Error("Hosted service-level source evidence is invalid");
+  }
   if (action.kind === "run-verified" && (value.verified !== true
     || value.ordinal !== action.ordinal || value.runId !== action.runId)) {
     throw new Error(`Run ${action.ordinal} verification evidence is invalid`);

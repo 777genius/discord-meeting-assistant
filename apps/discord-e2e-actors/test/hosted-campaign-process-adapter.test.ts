@@ -30,7 +30,8 @@ async function adapter(source: string, outputLimitBytes?: number) {
   await Promise.all(["main.js", "verify-campaign.js", "collect-retained-evidence.js",
     "observe-conversation-voice.js", "verify-retained-evidence.js", "observe-live-discord.js",
     "observe-live-discord-playback-link.js", "collect-hosted-campaign-provenance.js",
-    "collect-recording-ready-receipt.js", "collect-hosted-service-levels.js", "play-supplemental-voice.js"]
+    "collect-recording-ready-receipt.js", "collect-hosted-service-level-sources.js",
+    "collect-hosted-service-levels.js", "play-supplemental-voice.js"]
     .map(async (name) => writeFile(join(root, name), source, { mode: 0o600 })));
   const storeRoot = join(root, "artifacts");
   const store = new HostedCampaignArtifactStore(storeRoot, "campaign-1");
@@ -65,6 +66,9 @@ async function finiteAdapter(entrypoint: string, source: string) {
 async function serviceLevelsAdapter(source: string) {
   return finiteAdapter("collect-hosted-service-levels.js", source);
 }
+async function serviceLevelSourcesAdapter(source: string) {
+  return finiteAdapter("collect-hosted-service-level-sources.js", source);
+}
 const bounded = () => ({ deadlineEpochMilliseconds: Date.now() + 1_000, signal: new AbortController().signal });
 async function readJsonEventually(path: string): Promise<unknown> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
@@ -95,7 +99,8 @@ function environmentProbeSpec(
         DISCORD_E2E_LIVE_RESULT_CHANNEL_ID: HOSTED_CAMPAIGN_TARGET.publicationChannelId,
         DISCORD_E2E_LIVE_SUT_APPLICATION_ID: HOSTED_CAMPAIGN_TARGET.sutApplicationId,
       } : {}),
-      ...(entrypoint === "collector" || entrypoint === "provenance-probe" ? {
+      ...(entrypoint === "collector" || entrypoint === "provenance-probe"
+        || entrypoint === "service-level-sources" ? {
         DISCORD_E2E_MUTATION_TARGET: HOSTED_CAMPAIGN_TARGET.mutationTarget,
         DISCORD_E2E_REMOTE_CRAIG_PROJECT: HOSTED_CAMPAIGN_TARGET.craigProject,
         DISCORD_E2E_REMOTE_HOST: HOSTED_CAMPAIGN_TARGET.host,
@@ -211,6 +216,43 @@ function serviceLevelsSpec(outputPath: string, reportPath: string): HostedCampai
     startBefore: {
       action: { kind: "service-levels-ready" }, kind: "barrier", ordinal: 3, runId: "run-overlap-1",
     },
+  };
+}
+
+function serviceLevelSourcesSpec(root: string): HostedCampaignExecutableSpec {
+  const paths = {
+    clock: join(root, "clock.json"), database: join(root, "database.json"),
+    logs: join(root, "meeting-platform.log"), report: join(root, "source-report.json"),
+    s3: join(root, "s3.json"),
+  };
+  return {
+    arguments: { kind: "environment" }, childId: "service-level-sources",
+    completion: {
+      action: { kind: "service-level-sources-ready" }, campaignId: "campaign-1",
+      clockAttestationsPath: paths.clock, databasePath: paths.database,
+      kind: "service-level-sources", meetingId: "meeting-1",
+      meetingPlatformLogsPath: paths.logs, recordingId: "recording-1",
+      reportPath: paths.report, runId: "run-3", s3Path: paths.s3,
+    },
+    entrypoint: "service-level-sources",
+    environment: {
+      DISCORD_E2E_MUTATION_TARGET: HOSTED_CAMPAIGN_TARGET.mutationTarget,
+      DISCORD_E2E_REMOTE_CRAIG_PROJECT: HOSTED_CAMPAIGN_TARGET.craigProject,
+      DISCORD_E2E_REMOTE_HOST: HOSTED_CAMPAIGN_TARGET.host,
+      DISCORD_E2E_REMOTE_PROJECT: HOSTED_CAMPAIGN_TARGET.project,
+      DISCORD_E2E_SLA_CAMPAIGN_ID: "campaign-1",
+      DISCORD_E2E_SLA_CLOCK_ATTESTATIONS_INPUT: paths.clock,
+      DISCORD_E2E_SLA_DATABASE_INPUT: paths.database,
+      DISCORD_E2E_SLA_MEETING_ID: "meeting-1",
+      DISCORD_E2E_SLA_MEETING_PLATFORM_LOG_INPUT: paths.logs,
+      DISCORD_E2E_SLA_RECORDING_ID: "recording-1",
+      DISCORD_E2E_SLA_RUN_ID: "run-3", DISCORD_E2E_SLA_S3_INPUT: paths.s3,
+      DISCORD_E2E_SLA_SOURCE_REPORT_OUTPUT: paths.report,
+    },
+    produces: [{ action: { kind: "service-level-sources-ready" }, ordinal: 3,
+      outputPath: paths.report, runId: "run-3" }], requires: [],
+    startBefore: { action: { kind: "service-level-sources-ready" }, kind: "barrier",
+      ordinal: 3, runId: "run-3" },
   };
 }
 
@@ -352,6 +394,41 @@ describe("hosted campaign process adapter", () => {
     });
   });
 
+  it("publishes raw source readiness only from exact create-only artifacts and identity", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hosted-service-level-sources-completion-"));
+    await chmod(root, 0o700);
+    const executable = serviceLevelSourcesSpec(root);
+    const completion = executable.completion;
+    if (completion?.kind !== "service-level-sources") {throw new Error("Expected source completion");}
+    await Promise.all([
+      writeFile(completion.databasePath, "{}\n", { mode: 0o600 }),
+      writeFile(completion.s3Path, "{}\n", { mode: 0o600 }),
+      writeFile(completion.meetingPlatformLogsPath, "{}\n", { mode: 0o600 }),
+      writeFile(completion.clockAttestationsPath, "{}\n", { mode: 0o600 }),
+    ]);
+    await writeFile(completion.reportPath, JSON.stringify({
+      campaignId: completion.campaignId, meetingId: "meeting-1",
+      outputs: { clockAttestations: completion.clockAttestationsPath,
+        database: completion.databasePath, meetingPlatformLogs: completion.meetingPlatformLogsPath,
+        s3: completion.s3Path }, outputsCreated: true, recordingId: "recording-1",
+      reportPath: completion.reportPath, runId: completion.runId, schemaVersion: 1, status: "ready",
+    }), { mode: 0o600 });
+    const stdout = JSON.stringify({
+      campaignId: completion.campaignId, clockAttestationsPath: completion.clockAttestationsPath,
+      databasePath: completion.databasePath, kind: "hosted-service-level-sources-completion",
+      meetingId: "meeting-1", meetingPlatformLogsPath: completion.meetingPlatformLogsPath,
+      recordingId: "recording-1", reportPath: completion.reportPath, runId: completion.runId,
+      s3Path: completion.s3Path, status: "ready",
+    });
+    const processAdapter = await serviceLevelSourcesAdapter(
+      `process.stdout.write(${JSON.stringify(stdout)});`,
+    );
+    const handle = await processAdapter.startChild(executable, bounded());
+    await expect(processAdapter.awaitChildCompletion(handle, executable, bounded())).resolves.toBeUndefined();
+    await expect(processAdapter.awaitBarrier({ kind: "service-level-sources-ready" }, bounded()))
+      .resolves.toEqual({ outputPath: completion.reportPath, runId: "run-3", sourcesReady: true });
+  });
+
   it("does not publish service-level readiness for a blocked producer", async () => {
     const root = await mkdtemp(join(tmpdir(), "hosted-service-level-blocked-"));
     const executable = serviceLevelsSpec(join(root, "missing.json"), join(root, "report.json"));
@@ -369,7 +446,7 @@ describe("hosted campaign process adapter", () => {
     await processAdapter.stopChild(handle);
   });
 
-  it.each(["collector", "provenance-probe", "recording-ready"] as const)(
+  it.each(["collector", "provenance-probe", "recording-ready", "service-level-sources"] as const)(
     "passes the exact trusted runtime environment to the %s child",
     async (entrypoint) => {
       const root = await mkdtemp(join(tmpdir(), "hosted-ssh-environment-"));
@@ -667,6 +744,50 @@ describe("hosted campaign process adapter", () => {
     };
     const handle = await processAdapter.startChild(executable, bounded());
     await expect(processAdapter.awaitChildCompletion(handle, executable, bounded())).resolves.toBeUndefined();
+  });
+
+  it("ingests a finite actor event before verifying its unprefixed completion trailer", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hosted-finite-event-"));
+    const outputPath = join(root, "actor.json");
+    const actorRun = {
+      events: [{ actorName: "speaker-a", atEpochMs: 1_000, type: "ready" }],
+      fixtureSetId: "fixtures-v1",
+      fixtures: [
+        { audioSha256: "1".repeat(64), durationMs: 100, fixtureId: "a", sourceSha256: "2".repeat(64) },
+        { audioSha256: "3".repeat(64), durationMs: 100, fixtureId: "b", sourceSha256: "4".repeat(64) },
+      ],
+      recordingId: null, runId: "run-3", scenario: "reconnect",
+      schemaVersion: 1, timelineOrigin: "unix-epoch",
+    };
+    await writeFile(outputPath, JSON.stringify(actorRun), { mode: 0o600 });
+    const event = serializeHostedCampaignProcessEvent({
+      campaignId: "campaign-1", event: {
+        action: { kind: "reconnect-ready" }, evidence: {
+          observedAtEpochMilliseconds: 1_000, participantId: "1533224479209885868",
+        },
+      }, kind: "hosted-campaign-barrier", runId: "run-3", schemaVersion: 1,
+    });
+    const completion = JSON.stringify({
+      kind: "actor-completion", outputPath, runId: "run-3",
+      scenario: "reconnect", status: "completed",
+    });
+    const processAdapter = await finiteAdapter(
+      "main.js", `process.stdout.write(${JSON.stringify(`${event}${completion}\n`)});`,
+    );
+    const produced = { action: { kind: "reconnect-ready" as const }, ordinal: 3,
+      outputPath: join(root, "ready.json"), runId: "run-3" };
+    const executable: HostedCampaignExecutableSpec = {
+      ...spec({ DISCORD_E2E_HOSTED_CAMPAIGN_ID: "campaign-1",
+        DISCORD_E2E_RUN_ID: "run-3", DISCORD_E2E_SCENARIO: "reconnect" }),
+      completion: { action: { kind: "actor-completed", ordinal: 3, runId: "run-3" },
+        kind: "actor", outputPath, runId: "run-3", scenario: "reconnect" },
+      produces: [produced],
+    };
+    const handle = await processAdapter.startChild(executable, bounded());
+    await expect(processAdapter.awaitChildCompletion(handle, executable, bounded())).resolves.toBeUndefined();
+    await expect(processAdapter.awaitBarrier({ kind: "reconnect-ready" }, bounded())).resolves.toMatchObject({
+      observedAtEpochMilliseconds: 1_000,
+    });
   });
 
   it("rejects a finite successful exit when its artifact is missing or stdout is malformed", async () => {

@@ -6,6 +6,10 @@ import { delimiter, isAbsolute, join } from "node:path";
 import { z } from "zod";
 
 import { HostedCampaignArtifactStore } from "./hosted-campaign-artifact-store.js";
+import {
+  hostedServiceLevelSourceReportV1Schema,
+  readPrivateHostedServiceLevelArtifact,
+} from "./hosted-service-level-source-artifact.js";
 import { writeSupplementalPlaybackGate } from "./supplemental-playback-gate.js";
 import { verifyHostedFiniteProcessCompletion } from "./hosted-finite-process-completion.js";
 import { recordingReadyReceiptV1Schema } from "./recording-ready-receipt.js";
@@ -38,6 +42,7 @@ const ENTRYPOINTS: Readonly<Record<HostedCampaignEntrypoint, string>> = Object.f
   "playback-link-observer": "observe-live-discord-playback-link.js",
   "provenance-probe": "collect-hosted-campaign-provenance.js",
   "recording-ready": "collect-recording-ready-receipt.js",
+  "service-level-sources": "collect-hosted-service-level-sources.js",
   "service-levels": "collect-hosted-service-levels.js",
   "supplemental-player": "play-supplemental-voice.js",
 });
@@ -70,6 +75,7 @@ const ALLOWED_ENVIRONMENT = new Set([
   "DISCORD_E2E_PLAYBACK_LINK_DURATION_MS", "DISCORD_E2E_PLAYBACK_LINK_KEYCHAIN_SERVICE",
   "DISCORD_E2E_PLAYBACK_LINK_OUTPUT", "DISCORD_E2E_PLAYBACK_LINK_POLL_INTERVAL_MS",
   "DISCORD_E2E_PLAYBACK_LINK_PROJECTION_CONTAINER_JSON", "DISCORD_E2E_PLAYBACK_LINK_PROJECTION_MARKER",
+  "DISCORD_E2E_PLAYBACK_LINK_MEETING_ID",
   "DISCORD_E2E_PLAYBACK_LINK_RECORDING_ID", "DISCORD_E2E_PLAYBACK_LINK_RESULT_CHANNEL_ID",
   "DISCORD_E2E_PLAYBACK_LINK_RUN_ID", "DISCORD_E2E_PLAYBACK_LINK_SECRET_DIRECTORY",
   "DISCORD_E2E_PLAYBACK_LINK_SUT_ACCOUNT", "DISCORD_E2E_PLAYBACK_LINK_SUT_APPLICATION_ID",
@@ -84,11 +90,12 @@ const ALLOWED_ENVIRONMENT = new Set([
   "DISCORD_E2E_REMOTE_HOST", "DISCORD_E2E_REMOTE_PROJECT", "DISCORD_E2E_REMOTE_SOURCE_ROOT", "DISCORD_E2E_RUN_ID",
   "DISCORD_E2E_SCENARIO", "DISCORD_E2E_SECRET_DIRECTORY", "DISCORD_E2E_SERVICE_LEVELS_INPUT",
   "DISCORD_E2E_SLA_CAMPAIGN_ID", "DISCORD_E2E_SLA_CAMPAIGN_PROOF_INPUT",
-  "DISCORD_E2E_SLA_CLOCK_ATTESTATIONS_INPUT", "DISCORD_E2E_SLA_DATABASE_INPUT",
+  "DISCORD_E2E_SLA_CLOCK_ATTESTATIONS_INPUT", "DISCORD_E2E_SLA_CLOCK_PREFLIGHT_INPUT", "DISCORD_E2E_SLA_DATABASE_INPUT",
   "DISCORD_E2E_SLA_FIXTURE_MANIFEST_INPUT", "DISCORD_E2E_SLA_MEETING_ID",
   "DISCORD_E2E_SLA_MEETING_PLATFORM_LOG_INPUT", "DISCORD_E2E_SLA_OUTPUT",
   "DISCORD_E2E_SLA_PLAYBACK_LINK_PROOF_INPUT", "DISCORD_E2E_SLA_READY_RECEIPT_INPUT",
   "DISCORD_E2E_SLA_RECORDING_ID", "DISCORD_E2E_SLA_REPORT_OUTPUT", "DISCORD_E2E_SLA_RUN_ID",
+  "DISCORD_E2E_SLA_SOURCE_REPORT_OUTPUT",
   "DISCORD_E2E_SLA_S3_INPUT", "DISCORD_E2E_SLA_SUPPLEMENTAL_PLAYBACK_INPUT",
   "DISCORD_E2E_SLA_VOICE_INPUTS",
   "DISCORD_E2E_SERVICE_LEVEL_THRESHOLDS_INPUT", "DISCORD_E2E_SPEAKER_A_ACCOUNT", "DISCORD_E2E_SPEAKER_A_FIXTURE",
@@ -108,6 +115,7 @@ const SSH_RUNTIME_ENTRYPOINTS: ReadonlySet<HostedCampaignEntrypoint> = new Set([
   "collector",
   "provenance-probe",
   "recording-ready",
+  "service-level-sources",
 ]);
 const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/u;
 
@@ -234,12 +242,20 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
     }
     const exit = await raceWithBounded(state.exited, bounded);
     await raceWithBounded(state.closed, bounded);
+    await raceWithBounded(state.eventIngestion, bounded);
     this.#children.delete(handle.childId);
     if (state.failure !== undefined) {throw state.failure;}
     if (exit.code !== 0 || exit.signal !== null) {
       throw new Error(`Hosted campaign child ${handle.childId} failed (${String(exit.code ?? exit.signal)})`);
     }
     const completion = spec.completion;
+    if (completion.kind === "service-level-sources") {
+      await verifyServiceLevelSourceCompletion(Buffer.concat(state.stdoutChunks).toString("utf8"), completion);
+      await this.#options.artifactStore.publishAction(completion.action, {
+        outputPath: completion.reportPath, runId: completion.runId, sourcesReady: true,
+      });
+      return;
+    }
     if (isFiniteCompletion(completion)) {
       const finiteCompletion = completion;
       const verifiedArtifact = await verifyHostedFiniteProcessCompletion(
@@ -329,9 +345,7 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
         child.kill("SIGTERM");
         return;
       }
-      if (spec.completion === undefined) {
-        this.#ingestEventOutput(state, spec, data);
-      }
+      this.#ingestEventOutput(state, spec, data);
     });
     child.stderr.on("data", (data: Buffer) => {
       state.stderr += data.byteLength;
@@ -347,7 +361,7 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
       reportExit({ code, signal });
     });
     child.once("close", () => {
-      if (spec.completion === undefined && state.stdoutRemainder.startsWith(hostedCampaignProcessEventPrefix)) {
+      if (state.stdoutRemainder.startsWith(hostedCampaignProcessEventPrefix)) {
         state.failure ??= new Error(`Hosted campaign child ${spec.childId} produced a truncated prefixed event`);
       }
       reportClosed();
@@ -424,6 +438,40 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
 function recordingIdentityCoordinates(value: unknown): { readonly meetingId: string; readonly recordingId: string } {
   const { meetingId, recordingId } = recordingReadyReceiptV1Schema.parse(value);
   return { meetingId, recordingId };
+}
+
+async function verifyServiceLevelSourceCompletion(
+  stdout: string,
+  expected: Extract<NonNullable<HostedCampaignExecutableSpec["completion"]>, { readonly kind: "service-level-sources" }>,
+): Promise<void> {
+  const line = stdout.trimEnd().split("\n").at(-1);
+  if (line === undefined) {throw new Error("Hosted service-level sources produced no completion output");}
+  const schema = z.object({
+    campaignId: z.literal(expected.campaignId), clockAttestationsPath: z.literal(expected.clockAttestationsPath),
+    databasePath: z.literal(expected.databasePath), kind: z.literal("hosted-service-level-sources-completion"),
+    meetingId: z.string(), meetingPlatformLogsPath: z.literal(expected.meetingPlatformLogsPath),
+    recordingId: z.string(), reportPath: z.literal(expected.reportPath), runId: z.literal(expected.runId),
+    s3Path: z.literal(expected.s3Path), status: z.literal("ready"),
+  }).strict();
+  const parsed = schema.parse(JSON.parse(line) as unknown);
+  if ((expected.meetingId !== undefined && parsed.meetingId !== expected.meetingId)
+    || (expected.recordingId !== undefined && parsed.recordingId !== expected.recordingId)) {
+    throw new Error("Hosted service-level source completion identity mismatch");
+  }
+  const report = hostedServiceLevelSourceReportV1Schema.parse(JSON.parse(
+    await readPrivateHostedServiceLevelArtifact(expected.reportPath),
+  ) as unknown);
+  if (report.status !== "ready" || report.campaignId !== expected.campaignId
+    || report.runId !== expected.runId || report.meetingId !== parsed.meetingId
+    || report.recordingId !== parsed.recordingId || report.reportPath !== expected.reportPath
+    || report.outputs.database !== expected.databasePath || report.outputs.s3 !== expected.s3Path
+    || report.outputs.meetingPlatformLogs !== expected.meetingPlatformLogsPath
+    || report.outputs.clockAttestations !== expected.clockAttestationsPath) {
+    throw new Error("Hosted service-level source report is not ready for this run");
+  }
+  await Promise.all([
+    expected.databasePath, expected.s3Path, expected.meetingPlatformLogsPath, expected.clockAttestationsPath,
+  ].map(readPrivateHostedServiceLevelArtifact));
 }
 
 function isFiniteCompletion(

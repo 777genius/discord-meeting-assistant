@@ -28,7 +28,7 @@ describe("hosted campaign entrypoint capability matrix", () => {
     expect(Object.keys(HOSTED_CAMPAIGN_ENTRYPOINT_CAPABILITY_MATRIX).toSorted()).toEqual([
       "actor", "campaign-verifier", "collector", "conversation-observer", "evidence-verifier",
       "live-observer", "playback-link-observer", "provenance-probe", "recording-ready",
-      "service-levels", "supplemental-player",
+      "service-level-sources", "service-levels", "supplemental-player",
     ]);
     expect(() => validateHostedCampaignEntrypointCapabilities(
       child("conversation-observer", [produced("observer-subscribed")]),

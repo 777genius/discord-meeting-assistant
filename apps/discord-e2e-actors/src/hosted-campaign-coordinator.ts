@@ -34,6 +34,7 @@ export type HostedCampaignEntrypoint =
   | "playback-link-observer"
   | "provenance-probe"
   | "recording-ready"
+  | "service-level-sources"
   | "service-levels"
   | "supplemental-player"
   | "evidence-verifier";
@@ -51,6 +52,7 @@ export interface HostedCampaignProducedAction extends HostedCampaignActionRefere
 export type HostedCampaignBoundEnvironmentName =
   | "DISCORD_E2E_CONVERSATION_VOICE_MEETING_ID"
   | "DISCORD_E2E_CONVERSATION_VOICE_RECORDING_ID"
+  | "DISCORD_E2E_PLAYBACK_LINK_MEETING_ID"
   | "DISCORD_E2E_PLAYBACK_LINK_RECORDING_ID"
   | "DISCORD_E2E_RECORDING_ID"
   | "DISCORD_E2E_SLA_MEETING_ID"
@@ -74,6 +76,19 @@ export type HostedCampaignExecutableArguments =
   | { readonly evidencePaths: readonly [string, string, string]; readonly kind: "campaign-verifier"; readonly manifestPath: string; readonly thresholdsPath?: string };
 export type HostedCampaignExecutableCompletion =
   | HostedFiniteProcessCompletion
+  | {
+      readonly action: Extract<HostedCampaignBarrierAction, { readonly kind: "service-level-sources-ready" }>;
+      readonly campaignId: string;
+      readonly clockAttestationsPath: string;
+      readonly databasePath: string;
+      readonly kind: "service-level-sources";
+      readonly meetingId?: string;
+      readonly meetingPlatformLogsPath: string;
+      readonly recordingId?: string;
+      readonly reportPath: string;
+      readonly runId: string;
+      readonly s3Path: string;
+    }
   | {
       readonly action: Extract<HostedCampaignBarrierAction, { readonly kind: "service-levels-ready" }>;
       readonly campaignId: string;
@@ -149,6 +164,7 @@ export type HostedCampaignBarrierAction =
   | { readonly kind: "answer-intent" }
   | { readonly kind: "answer-observer-ready" }
   | { readonly kind: "answer-first-packet" }
+  | { readonly kind: "service-level-sources-ready" }
   | { readonly kind: "service-levels-ready" }
   | { readonly kind: "run-verified"; readonly ordinal: number; readonly runId: string }
   | { readonly kind: "provenance-after" }
@@ -333,6 +349,20 @@ function validateExecutable(
     && child.environment.DISCORD_E2E_HOSTED_RELEASE_GATE_PATH !== child.releaseGate.path) {
     throw new Error(`Hosted campaign actor ${child.childId} release gate path mismatch`);
   }
+  const releaseAction = child.releaseGate?.action;
+  if (releaseAction?.kind === "run-verified") {
+    const gate = child.releaseGate!;
+    const completion = child.completion;
+    if (releaseAction.ordinal !== gate.ordinal || releaseAction.runId !== gate.runId
+      || completion === undefined || completion.kind !== "actor"
+      || completion.action.kind !== "actor-completed"
+      || completion.action.ordinal !== gate.ordinal + 1
+      || !input.runs.some(({ ordinal, runId }) => ordinal === gate.ordinal && runId === gate.runId)
+      || !input.runs.some(({ ordinal, runId }) =>
+        ordinal === completion.action.ordinal && runId === completion.action.runId)) {
+      throw new Error(`Hosted campaign actor ${child.childId} release gate must reference the prior verified run`);
+    }
+  }
   validateSupplementalGates(child, input, campaignId);
 }
 
@@ -423,9 +453,33 @@ function validateCompletion(
   if (completion.kind === "service-levels") {
     validateServiceLevelsCompletion(child, completion, campaignId);
   }
+  if (completion.kind === "service-level-sources") {
+    validateServiceLevelSourcesCompletion(child, completion, campaignId);
+  }
   if (completion.kind === "campaign-verifier" && (completion.campaignId !== campaignId
     || JSON.stringify(completion.runIds) !== JSON.stringify(input.runs.map(({ runId }) => runId)))) {
     throw new Error(`Hosted campaign verifier ${child.childId} completion is not bound to the campaign runs`);
+  }
+}
+function validateServiceLevelSourcesCompletion(
+  child: HostedCampaignExecutableSpec,
+  completion: Extract<HostedCampaignExecutableCompletion, { readonly kind: "service-level-sources" }>,
+  campaignId: string | undefined,
+): void {
+  const environment = child.environment;
+  const invalid = completion.campaignId !== campaignId
+    || completion.action.kind !== "service-level-sources-ready"
+    || environment.DISCORD_E2E_SLA_CAMPAIGN_ID !== completion.campaignId
+    || environment.DISCORD_E2E_SLA_RUN_ID !== completion.runId
+    || !matchesStaticOrBinding(child, "DISCORD_E2E_SLA_MEETING_ID", "meetingId", completion.meetingId)
+    || !matchesStaticOrBinding(child, "DISCORD_E2E_SLA_RECORDING_ID", "recordingId", completion.recordingId)
+    || environment.DISCORD_E2E_SLA_DATABASE_INPUT !== completion.databasePath
+    || environment.DISCORD_E2E_SLA_S3_INPUT !== completion.s3Path
+    || environment.DISCORD_E2E_SLA_MEETING_PLATFORM_LOG_INPUT !== completion.meetingPlatformLogsPath
+    || environment.DISCORD_E2E_SLA_CLOCK_ATTESTATIONS_INPUT !== completion.clockAttestationsPath
+    || environment.DISCORD_E2E_SLA_SOURCE_REPORT_OUTPUT !== completion.reportPath;
+  if (invalid) {
+    throw new Error(`Hosted service-level source producer ${child.childId} is not bound to the campaign`);
   }
 }
 function validateServiceLevelsCompletion(

@@ -11,6 +11,17 @@ import {
   type CollectHostedServiceLevelsConfig,
 } from "../src/collect-hosted-service-levels.js";
 import {
+  collectHostedServiceLevelSources,
+  HostedServiceLevelSourceCaptureBlockedError,
+  type HostedServiceLevelRawProbe,
+} from "../src/collect-hosted-service-level-sources.js";
+import {
+  clockPreflightArtifactId,
+  type HostedServiceLevelClockPreflightV1,
+} from "../src/hosted-service-level-clock-preflight.js";
+import type { HostedServiceLevelSourceConfig } from
+  "../src/hosted-service-level-source-config.js";
+import {
   conversationVoiceCampaignObserverReadyReceipt,
   conversationVoiceCampaignPlanDigest,
 } from "../src/conversation-voice-campaign-proof.js";
@@ -92,6 +103,57 @@ describe("hosted service-level producer", () => {
   });
 });
 
+describe("hosted service-level raw source producer", () => {
+  it("exports exact raw probe results and externally bound clock attestations create-only", async () => {
+    const fixture = await materializeInputs();
+    const sourceConfig = await sourceCaptureConfig(fixture);
+    await writePrivate(sourceConfig.clockPreflightPath!, clockPreflight());
+
+    await collectHostedServiceLevelSources(sourceConfig, rawProbe(fixture));
+
+    expect(JSON.parse(await readFile(sourceConfig.outputs.database, "utf8")))
+      .toEqual(fixture.values.database);
+    expect(JSON.parse(await readFile(sourceConfig.outputs.s3, "utf8")))
+      .toEqual(fixture.values.s3);
+    expect(await readFile(sourceConfig.outputs.meetingPlatformLogs, "utf8"))
+      .toBe(meetingPlatformLogs(retainedV8Evidence()));
+    const clocks = hostedServiceLevelClockAttestationsV1Schema.parse(
+      JSON.parse(await readFile(sourceConfig.outputs.clockAttestations, "utf8")),
+    );
+    expect(clocks.measurements.every(({ clockSkewBoundMs }) => clockSkewBoundMs === 5)).toBe(true);
+    expect(JSON.parse(await readFile(sourceConfig.outputs.report, "utf8")))
+      .toMatchObject({ outputsCreated: true, status: "ready" });
+    expect((await lstat(sourceConfig.outputs.database)).mode & 0o777).toBe(0o600);
+    await expect(collectHostedServiceLevelSources(sourceConfig, rawProbe(fixture)))
+      .rejects.toThrow("already exists");
+  });
+
+  it("publishes only a stable blocked report when external clock preflight is absent", async () => {
+    const fixture = await materializeInputs();
+    const sourceConfig = await sourceCaptureConfig(fixture, false);
+    let calls = 0;
+    const probe: HostedServiceLevelRawProbe = {
+      collectDatabase: async () => { calls += 1; return fixture.values.database; },
+      collectMeetingPlatformLogs: async () => { calls += 1; return "unexpected"; },
+      collectS3: async () => { calls += 1; return fixture.values.s3; },
+    };
+
+    await expect(collectHostedServiceLevelSources(sourceConfig, probe))
+      .rejects.toBeInstanceOf(HostedServiceLevelSourceCaptureBlockedError);
+
+    expect(calls).toBe(0);
+    expect(JSON.parse(await readFile(sourceConfig.outputs.report, "utf8"))).toMatchObject({
+      code: "CLOCK_PREFLIGHT_MISSING",
+      outputsCreated: false,
+      status: "blocked",
+    });
+    await expect(lstat(sourceConfig.outputs.database)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(lstat(sourceConfig.outputs.s3)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(lstat(sourceConfig.outputs.meetingPlatformLogs)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(lstat(sourceConfig.outputs.clockAttestations)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+});
+
 interface MaterializeOptions {
   readonly clockPath?: boolean;
   readonly duplicateQuestion?: boolean;
@@ -153,7 +215,94 @@ async function materializeInputs(options: MaterializeOptions = {}) {
       voice: paths.voice,
     },
   };
-  return { config, paths };
+  return { config, paths, values };
+}
+
+async function sourceCaptureConfig(
+  fixture: Awaited<ReturnType<typeof materializeInputs>>,
+  withClock = true,
+): Promise<HostedServiceLevelSourceConfig> {
+  const root = await mkdtemp(join(tmpdir(), "hosted-sla-source-"));
+  await chmod(root, 0o700);
+  return {
+    campaignId: "campaign-1",
+    ...(withClock ? { clockPreflightPath: join(root, "clock-preflight.json") } : {}),
+    meetingId: "meeting-1",
+    outputs: {
+      clockAttestations: join(root, "clock-attestations.json"),
+      database: join(root, "database.json"),
+      meetingPlatformLogs: join(root, "meeting-platform.log"),
+      report: join(root, "report.json"),
+      s3: join(root, "s3.json"),
+    },
+    recordingId: "meeting-1",
+    remote: {
+      composeFile: "/srv/e2e/compose.yaml",
+      craigProjectName: "craig-meeting-e2e",
+      craigServiceName: "bot",
+      environmentFile: "/srv/e2e/source.env",
+      host: "codex-workers-eu-01",
+      mutationTarget: "test-only",
+      projectName: "discord-meeting-assistant",
+      sourceRoot: "/srv/e2e/source",
+    },
+    runId: "run-overlap-1",
+    sources: {
+      campaignProof: fixture.paths.campaign,
+      fixtureManifest: fixture.paths.manifest,
+      playbackLinkProof: fixture.paths.playback,
+      readyReceipt: fixture.paths.ready,
+      supplementalPlayback: fixture.paths.supplemental,
+      voice: fixture.paths.voice,
+    },
+  };
+}
+
+function rawProbe(
+  fixture: Awaited<ReturnType<typeof materializeInputs>>,
+): HostedServiceLevelRawProbe {
+  return {
+    collectDatabase: async (recordingId) => {
+      expect(recordingId).toBe("meeting-1");
+      return fixture.values.database;
+    },
+    collectMeetingPlatformLogs: async (meetingId, startedAt) => {
+      expect({ meetingId, startedAt }).toEqual({
+        meetingId: "meeting-1",
+        startedAt: fixture.values.s3.startedAt,
+      });
+      return meetingPlatformLogs(retainedV8Evidence());
+    },
+    collectS3: async (manifestLocator, recordingId) => {
+      expect({ manifestLocator, recordingId }).toEqual({
+        manifestLocator: fixture.values.s3.manifestLocator,
+        recordingId: "meeting-1",
+      });
+      return fixture.values.s3;
+    },
+  };
+}
+
+function clockPreflight(): HostedServiceLevelClockPreflightV1 {
+  const content = {
+    clockSkewBoundMs: 5,
+    measuredAt: "1970-01-01T00:00:01.000Z",
+    meetingId: "meeting-1",
+    method: "synthetic-host-clock-bound-v1",
+    observerClockId: "hosted-observer-clock",
+    recordingId: "meeting-1",
+    runId: "run-overlap-1",
+    schemaVersion: 1 as const,
+    sourceClockId: "hosted-source-clock",
+    target: {
+      environment: "private-test-guild" as const,
+      host: "codex-workers-eu-01" as const,
+      project: "discord-meeting-assistant" as const,
+    },
+    validFromEpochMs: 0,
+    validUntilEpochMs: 20_000,
+  };
+  return { ...content, artifactId: clockPreflightArtifactId(content) };
 }
 
 function databaseSnapshot(evidence: ReturnType<typeof retainedV8Evidence>, duplicateQuestion: boolean) {

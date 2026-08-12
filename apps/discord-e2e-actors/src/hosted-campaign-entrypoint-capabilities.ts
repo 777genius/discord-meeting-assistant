@@ -53,6 +53,10 @@ export const HOSTED_CAMPAIGN_ENTRYPOINT_CAPABILITY_MATRIX = Object.freeze({
     completionActionKinds: ["recording-ready"],
     emittedActionKinds: [],
   },
+  "service-level-sources": {
+    completionActionKinds: ["service-level-sources-ready"],
+    emittedActionKinds: [],
+  },
   "service-levels": {
     completionActionKinds: ["service-levels-ready"],
     emittedActionKinds: [],
@@ -92,6 +96,7 @@ const completionKindsAreExact: {
   "playback-link-observer": true,
   "provenance-probe": true,
   "recording-ready": true,
+  "service-level-sources": true,
   "service-levels": true,
   "supplemental-player": true,
 };

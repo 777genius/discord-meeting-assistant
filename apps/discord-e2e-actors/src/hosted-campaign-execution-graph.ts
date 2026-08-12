@@ -26,6 +26,8 @@ export function campaignActions(input: HostedCampaignInput): readonly HostedCamp
     scoped(reconnect!, { kind: "answer-first-packet" }),
     scoped(reconnect!, { kind: "capture-retained", ordinal: 5 }),
     scoped(reconnect!, { kind: "capture-retained", ordinal: 6 }),
+    ...(input.children.some(({ entrypoint }) => entrypoint === "service-level-sources")
+      ? [scoped(reconnect!, { kind: "service-level-sources-ready" } as const)] : []),
     scoped(reconnect!, { kind: "service-levels-ready" }),
     scoped(reconnect!, { kind: "run-verified", ordinal: 3, runId: reconnect!.runId }),
     scoped(reconnect!, { kind: "provenance-after" }),
@@ -36,7 +38,8 @@ export function campaignActions(input: HostedCampaignInput): readonly HostedCamp
   for (const child of input.children) {
     if (child.completion === undefined || !("action" in child.completion)
       || !isFiniteCompletionAction(child.completion.action)) {continue;}
-    const trigger = child.releaseGate ?? (child.startBefore.kind === "barrier" ? child.startBefore : undefined);
+    const trigger = child.completionAfter ?? child.releaseGate
+      ?? (child.startBefore.kind === "barrier" ? child.startBefore : undefined);
     if (trigger === undefined) {
       throw new Error(`Hosted finite child ${child.childId} requires a release gate or barrier start`);
     }
@@ -135,6 +138,14 @@ export function validateExecutionGraph(input: HostedCampaignInput): void {
     }
     validateEnvironmentBindings(child, expectedIds, order);
   }
+  const source = expected.find(({ action }) => action.kind === "service-level-sources-ready");
+  for (const child of input.children.filter(({ entrypoint }) => entrypoint === "service-levels")) {
+    if (source !== undefined && !child.requires.some((required) =>
+      actionReferenceIdentity(required) === actionReferenceIdentity(source)
+    )) {
+      throw new Error(`Hosted service-level producer ${child.childId} must require service-level sources`);
+    }
+  }
   for (const reference of expected) {
     const identity = actionReferenceIdentity(reference);
     if (!producers.has(identity)) {throw new Error(`Hosted campaign action ${identity} has no producer`);}
@@ -144,7 +155,8 @@ export function validateExecutionGraph(input: HostedCampaignInput): void {
 
 const BOUND_FIELDS = new Map<string, ReadonlySet<string>>([
   ["meetingId", new Set([
-    "DISCORD_E2E_CONVERSATION_VOICE_MEETING_ID", "DISCORD_E2E_SLA_MEETING_ID",
+    "DISCORD_E2E_CONVERSATION_VOICE_MEETING_ID", "DISCORD_E2E_PLAYBACK_LINK_MEETING_ID",
+    "DISCORD_E2E_SLA_MEETING_ID",
   ])],
   ["recordingId", new Set([
     "DISCORD_E2E_CONVERSATION_VOICE_RECORDING_ID", "DISCORD_E2E_PLAYBACK_LINK_RECORDING_ID",

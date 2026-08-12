@@ -42,6 +42,7 @@ const barrierActionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("answer-observer-ready") }).strict(),
   z.object({ kind: z.literal("answer-first-packet") }).strict(),
   z.object({ kind: z.literal("service-levels-ready") }).strict(),
+  z.object({ kind: z.literal("service-level-sources-ready") }).strict(),
   z.object({ kind: z.literal("run-verified"), ordinal: z.number().int().safe().positive(), runId: identifier }).strict(),
   z.object({ kind: z.literal("provenance-after") }).strict(),
   z.object({ kind: z.literal("campaign-verified") }).strict(),
@@ -63,6 +64,7 @@ const environmentBindingSchema = z.object({
   name: z.enum([
     "DISCORD_E2E_CONVERSATION_VOICE_MEETING_ID",
     "DISCORD_E2E_CONVERSATION_VOICE_RECORDING_ID",
+    "DISCORD_E2E_PLAYBACK_LINK_MEETING_ID",
     "DISCORD_E2E_PLAYBACK_LINK_RECORDING_ID",
     "DISCORD_E2E_RECORDING_ID",
     "DISCORD_E2E_SLA_MEETING_ID",
@@ -89,6 +91,14 @@ const completionSchema = z.discriminatedUnion("kind", [
     kind: z.literal("recording-ready"), outputPath: z.string().refine(isAbsolute), runId: identifier }).strict(),
   z.object({ action: z.object({ kind: z.literal("supplemental-completed"), ordinal: z.number().int().min(1).max(3), runId: identifier }).strict(),
     kind: z.literal("supplemental-player"), outputPath: z.string().refine(isAbsolute), runId: identifier }).strict(),
+  z.object({
+    action: z.object({ kind: z.literal("service-level-sources-ready") }).strict(),
+    campaignId: identifier, clockAttestationsPath: z.string().refine(isAbsolute),
+    databasePath: z.string().refine(isAbsolute), kind: z.literal("service-level-sources"),
+    meetingId: identifier.optional(), meetingPlatformLogsPath: z.string().refine(isAbsolute),
+    recordingId: identifier.optional(), reportPath: z.string().refine(isAbsolute),
+    runId: identifier, s3Path: z.string().refine(isAbsolute),
+  }).strict(),
   z.object({
     action: z.object({ kind: z.literal("service-levels-ready") }).strict(),
     campaignId: identifier, kind: z.literal("service-levels"), meetingId: identifier.optional(),
@@ -120,7 +130,7 @@ const executableSchema = z.object({
   completionAfter: actionReferenceSchema.optional(),
   entrypoint: z.enum([
     "actor", "campaign-verifier", "collector", "conversation-observer", "evidence-verifier",
-    "live-observer", "playback-link-observer", "provenance-probe", "recording-ready", "service-levels",
+    "live-observer", "playback-link-observer", "provenance-probe", "recording-ready", "service-level-sources", "service-levels",
     "supplemental-player",
   ]),
   environment,
