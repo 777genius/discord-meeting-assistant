@@ -5,6 +5,24 @@ voice channel and plays synthetic Ogg Opus fixtures with controlled overlap,
 strictly sequential playback, or one speaker reconnecting during the same recording.
 It never accepts bot tokens directly through environment variables.
 
+## Compile a hosted campaign plan
+
+Compile the strict definition and its operator-selected runtime bindings before
+starting a campaign. Both inputs must be current-user-owned, single-link regular
+files with mode `0600`. The output path must be absolute and absent; its parent
+is created with mode `0700`, and the complete plan is published create-only with
+mode `0600`. Compilation performs no host, Discord, or secret-store actions.
+
+```sh
+pnpm --filter @discord-meeting/discord-e2e-actors compile:hosted-campaign-plan -- \
+  --definition /absolute/private/campaign-definition.json \
+  --bindings /absolute/private/runtime-bindings.json \
+  --output /absolute/private/plans/campaign-plan.json
+```
+
+Never reuse the output path. The runner initializes the fresh campaign artifact
+layout separately; compiling a plan does not create run or barrier artifacts.
+
 ## Supplemental Speaker D playback
 
 `play:supplemental` is a one-off addition to the retained private-guild campaign.
