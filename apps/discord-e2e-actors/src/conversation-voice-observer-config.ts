@@ -7,6 +7,11 @@ import {
   MAXIMUM_CONVERSATION_VOICE_PCM_BYTES,
   PCM_S16LE_STEREO_BYTES_PER_MILLISECOND,
 } from "./conversation-voice-observer.js";
+import {
+  assertConversationVoiceCampaignPlan,
+  assertConversationVoiceCampaignTarget,
+} from
+  "./conversation-voice-campaign-contract.js";
 
 const snowflakeSchema = z.string().regex(/^\d{17,20}$/u, "Expected a Discord snowflake");
 const correlationIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u);
@@ -229,7 +234,7 @@ export function loadConversationVoiceObserverConfig(
     throw new Error("Conversation voice observer does not accept bot tokens through environment variables");
   }
   const parsed = environmentSchema.parse(environment);
-  return Object.freeze({
+  const config = Object.freeze({
     additionalCaptures: Object.freeze(
       (parsed.DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON ?? [])
         .map((capture): ConversationVoiceObserverCapture => {
@@ -275,4 +280,14 @@ export function loadConversationVoiceObserverConfig(
     turnId: parsed.DISCORD_E2E_CONVERSATION_VOICE_TURN_ID,
     voiceChannelId: parsed.DISCORD_E2E_CONVERSATION_VOICE_VOICE_CHANNEL_ID,
   });
+  if (config.additionalCaptures.length > 0) {
+    assertConversationVoiceCampaignTarget(config);
+    assertConversationVoiceCampaignPlan([{
+      attemptId: config.attemptId,
+      outputPath: config.outputPath,
+      purpose: config.purpose,
+      turnId: config.turnId,
+    }, ...config.additionalCaptures]);
+  }
+  return config;
 }

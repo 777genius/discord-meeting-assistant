@@ -17,6 +17,8 @@ import {
 } from "./e2e-evidence.js";
 import { FileSecretReader, MacOsKeychainSecretReader } from "./keychain.js";
 import { HttpRecordingPlaybackEvidenceProbe } from "./recording-playback-evidence-probe.js";
+import { accessDiscordWithBoundConversation } from
+  "./conversation-voice-collection-preflight.js";
 import { SshDeploymentEvidenceProbe } from "./ssh-deployment-probe.js";
 import { EvidenceProbeInterruptedError } from "./ssh-deployment-probe-commands.js";
 
@@ -51,12 +53,8 @@ async function main(): Promise<void> {
     runId: config.DISCORD_E2E_RUN_ID,
   }, unboundActorRunEvidenceV1Schema.parse(actorRun));
   await deployment.assertReplayTargetSafe(replayTarget);
-  const token = await (config.DISCORD_E2E_SECRET_DIRECTORY === undefined
-    ? new MacOsKeychainSecretReader(config.DISCORD_E2E_KEYCHAIN_SERVICE)
-    : new FileSecretReader(config.DISCORD_E2E_SECRET_DIRECTORY))
-    .read(config.DISCORD_E2E_SUT_ACCOUNT);
   const discord = new DiscordJsEvidenceProbe();
-  const conversation = config.DISCORD_E2E_BOTIK_SPEAKER_ID === undefined
+  const rawConversation = config.DISCORD_E2E_BOTIK_SPEAKER_ID === undefined
     ? undefined
     : {
         botSpeakerId: config.DISCORD_E2E_BOTIK_SPEAKER_ID,
@@ -67,21 +65,31 @@ async function main(): Promise<void> {
         ),
         voice: conversationVoice,
       };
+  const secretReader = config.DISCORD_E2E_SECRET_DIRECTORY === undefined
+    ? new MacOsKeychainSecretReader(config.DISCORD_E2E_KEYCHAIN_SERVICE)
+    : new FileSecretReader(config.DISCORD_E2E_SECRET_DIRECTORY);
   try {
-    await discord.connect(token);
-    const evidence = await collectRetainedE2eEvidence({
-      actorRun,
-      ...(conversation === undefined ? {} : { conversation }),
-      fixtureSetId: manifest.fixtureSetId,
+    const evidence = await accessDiscordWithBoundConversation({
+      connect: (token) => discord.connect(token),
+      rawVoice: rawConversation?.voice,
+      readSecret: () => secretReader.read(config.DISCORD_E2E_SUT_ACCOUNT),
       recordingId: config.DISCORD_E2E_RECORDING_ID,
-      recordingPlayback: new HttpRecordingPlaybackEvidenceProbe({
-        expectedOrigin: config.DISCORD_E2E_RECORDING_PLAYBACK_ORIGIN,
-      }),
-      recordingPlaybackOrigin: config.DISCORD_E2E_RECORDING_PLAYBACK_ORIGIN,
-      recordingPlaybackReadiness: config.DISCORD_E2E_RECORDING_PLAYBACK_READINESS,
-      recordingPlaybackTestScope: config.DISCORD_E2E_RECORDING_PLAYBACK_TEST_SCOPE,
-      runId: config.DISCORD_E2E_RUN_ID,
-    }, deployment, discord);
+      run: (boundVoice) => collectRetainedE2eEvidence({
+        actorRun,
+        ...(rawConversation === undefined || boundVoice === undefined
+          ? {}
+          : { conversation: { ...rawConversation, voice: boundVoice } }),
+        fixtureSetId: manifest.fixtureSetId,
+        recordingId: config.DISCORD_E2E_RECORDING_ID,
+        recordingPlayback: new HttpRecordingPlaybackEvidenceProbe({
+          expectedOrigin: config.DISCORD_E2E_RECORDING_PLAYBACK_ORIGIN,
+        }),
+        recordingPlaybackOrigin: config.DISCORD_E2E_RECORDING_PLAYBACK_ORIGIN,
+        recordingPlaybackReadiness: config.DISCORD_E2E_RECORDING_PLAYBACK_READINESS,
+        recordingPlaybackTestScope: config.DISCORD_E2E_RECORDING_PLAYBACK_TEST_SCOPE,
+        runId: config.DISCORD_E2E_RUN_ID,
+      }, deployment, discord),
+    });
     const expectedRevisions = deploymentRevisionExpectationSchema.parse({
       craig: config.DISCORD_E2E_EXPECTED_CRAIG_SOURCE_REVISION,
       meetingPlatform: config.DISCORD_E2E_EXPECTED_MEETING_PLATFORM_SOURCE_REVISION,

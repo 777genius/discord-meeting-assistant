@@ -19,6 +19,8 @@ import {
   loadConversationVoiceObserverConfig,
   type ConversationVoiceObserverCapture,
 } from "./conversation-voice-observer-config.js";
+import { conversationVoiceCampaignPreflight } from
+  "./conversation-voice-campaign-contract.js";
 import { createConversationVoiceEvidence } from "./conversation-voice-evidence.js";
 import { captureConversationVoiceFromOpenStream } from "./conversation-voice-stream-capture.js";
 import {
@@ -77,6 +79,9 @@ async function main(): Promise<void> {
     assertConversationVoiceEvidencePathIsNew(outputPath)
   ));
   await Promise.all(handshakeRoots.map(assertConversationAnswerHandshakeRootIsNew));
+  if (config.additionalCaptures.length > 0) {
+    process.stdout.write(`${JSON.stringify(conversationVoiceCampaignPreflight(captures))}\n`);
+  }
   const decoder = await createDiscordJsOpusDecoder();
 
   const secretReader = config.secretDirectory === undefined

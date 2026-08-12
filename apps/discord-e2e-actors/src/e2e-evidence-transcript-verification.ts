@@ -3,6 +3,11 @@ import { verifyGreetingAudioSemantics } from "./e2e-evidence-greeting-semantics-
 import { verifyReconnectNoRepeat } from "./e2e-evidence-reconnect-verification.js";
 import { verifySupplementalPlayback } from "./e2e-evidence-supplemental-verification.js";
 import { authoritativeTrackCoverage } from "./e2e-evidence-track-verification.js";
+import {
+  conversationVoiceCampaignEvidenceIssue,
+  conversationVoiceCampaignLifecycleIssue,
+} from
+  "./conversation-voice-campaign-contract.js";
 import type {
   DeploymentRevisionExpectation,
   FixtureManifestV1,
@@ -189,6 +194,20 @@ function verifyVoiceCaptureIdentity(
   fail: VerificationFailureReporter,
 ): void {
   const { voice, botSpeakerId } = evidence.conversation;
+  if (evidence.schemaVersion === 8) {
+    const campaignIssue = conversationVoiceCampaignEvidenceIssue(voice);
+    if (campaignIssue !== undefined) {
+      fail("VOICE_CAMPAIGN_ORDER_INVALID", campaignIssue);
+    }
+    const lifecycleIssue = conversationVoiceCampaignLifecycleIssue(
+      voice,
+      evidence.conversation.lifecycle.events,
+      manifest.thresholds.timestampToleranceMs,
+    );
+    if (lifecycleIssue !== undefined) {
+      fail("VOICE_CAMPAIGN_LIFECYCLE_INVALID", lifecycleIssue);
+    }
+  }
   const attemptIds = voice.map(({ correlation }) => correlation.attemptId);
   if (new Set(attemptIds).size !== attemptIds.length) {
     fail("DUPLICATE_VOICE_ATTEMPT", "conversation voice attempt IDs must be unique");
