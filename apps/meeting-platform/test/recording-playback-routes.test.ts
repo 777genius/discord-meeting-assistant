@@ -117,6 +117,7 @@ describe("recording playback HTTP routes", () => {
     expect(response.headers["set-cookie"]).toContain("SameSite=Strict");
     expect(response.headers["set-cookie"]).not.toContain("Secure");
     const body = response.json<{
+      readonly recordingId: string;
       readonly schemaVersion: number;
       readonly sessionId: string;
       readonly status: string;
@@ -125,6 +126,7 @@ describe("recording playback HTTP routes", () => {
         readonly url: string;
       }[];
     }>();
+    expect(body.recordingId).toBe("meeting-1");
     expect(body.schemaVersion).toBe(1);
     expect(body.sessionId.length).toBeGreaterThan(0);
     expect(body.status).toBe("ready");
@@ -132,6 +134,57 @@ describe("recording playback HTTP routes", () => {
     expect(body.tracks[0]?.timelineOffsetMs).toBe(725);
     expect(body.tracks[0]?.url).toContain("/tracks/0");
     expect(response.body).not.toContain("s3://");
+  });
+
+  it("resumes a stripped-fragment session only with its scoped cookie", async () => {
+    const context = createContext();
+    const opened = await openSession(context);
+    const body = opened.json<{
+      readonly recordingId: string;
+      readonly sessionId: string;
+      readonly tracks: readonly { readonly url: string }[];
+    }>();
+    const cookie = sessionCookie(opened);
+    if (cookie === undefined) {
+      throw new Error("session fixture has no cookie");
+    }
+    const url = `/recordings/s/${body.sessionId}/session`;
+
+    const resumed = await context.host.inject({
+      headers: { cookie, "x-recording-playback-session": "resume" },
+      method: "POST",
+      url,
+    });
+    const withoutIntent = await context.host.inject({
+      headers: { cookie },
+      method: "POST",
+      url,
+    });
+    const wrongSession = await context.host.inject({
+      headers: { cookie, "x-recording-playback-session": "resume" },
+      method: "POST",
+      url: "/recordings/s/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/session",
+    });
+    const withoutCookie = await context.host.inject({
+      headers: { "x-recording-playback-session": "resume" },
+      method: "POST",
+      url,
+    });
+
+    expect(resumed.statusCode).toBe(200);
+    expect(resumed.json()).toMatchObject({
+      recordingId: "meeting-1",
+      sessionId: body.sessionId,
+      status: "ready",
+      tracks: body.tracks,
+    });
+    expect(resumed.headers["cache-control"]).toBe("private, no-store");
+    expect(resumed.headers["set-cookie"]).toBeUndefined();
+    expect(resumed.body).not.toContain(context.token);
+    expect(resumed.body).not.toContain("s3://");
+    expect(withoutIntent.statusCode).toBe(404);
+    expect(wrongSession.statusCode).toBe(404);
+    expect(withoutCookie.statusCode).toBe(404);
   });
 
   it("marks the production playback cookie as secure", async () => {

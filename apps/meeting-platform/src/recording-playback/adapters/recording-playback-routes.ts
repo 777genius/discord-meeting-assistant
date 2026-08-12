@@ -27,6 +27,7 @@ import {
 } from "./s3-recording-playback-audio-reader.js";
 
 const accessCookieName = "recording_playback_access";
+const resumeRequestHeaderName = "x-recording-playback-session";
 const sessionCookieMaximumAgeSeconds = 7 * 24 * 60 * 60;
 
 interface RecordingPlaybackRoutesOptions {
@@ -58,21 +59,22 @@ export function createRecordingPlaybackRoutesPlugin(
       if (verified === null) {
         return sendNotFound(reply);
       }
-      const manifest = await options.playback.manifest(verified.meetingId);
-      setPrivateHeaders(reply);
-      reply.header(
-        "set-cookie",
+      return sendSessionManifest(
+        reply,
+        options.playback,
+        verified,
         createSessionCookie(verified, options.secureCookies),
       );
-      return reply.send({
-        schemaVersion: 1,
-        sessionId: verified.sessionId,
-        status: manifest.status,
-        tracks: manifest.tracks.map((track) => ({
-          timelineOffsetMs: track.timelineOffsetMs,
-          url: `/recordings/s/${verified.sessionId}/tracks/${track.index}`,
-        })),
-      });
+    });
+    app.post("/recordings/s/:sessionId/session", async (request, reply) => {
+      if (request.headers[resumeRequestHeaderName] !== "resume") {
+        return sendNotFound(reply);
+      }
+      const verified = verifySession(request, options.access);
+      if (verified === null) {
+        return sendNotFound(reply);
+      }
+      return sendSessionManifest(reply, options.playback, verified);
     });
     app.head("/recordings/s/:sessionId/tracks/:trackIndex", async (request, reply) => {
       const access = verifySession(request, options.access);
@@ -125,6 +127,29 @@ export function createRecordingPlaybackRoutesPlugin(
     });
     done();
   };
+}
+
+async function sendSessionManifest(
+  reply: FastifyReply,
+  playback: GetRecordingPlayback,
+  access: VerifiedRecordingPlaybackAccess,
+  sessionCookie?: string,
+) {
+  const manifest = await playback.manifest(access.meetingId);
+  setPrivateHeaders(reply);
+  if (sessionCookie !== undefined) {
+    reply.header("set-cookie", sessionCookie);
+  }
+  return reply.send({
+    recordingId: access.meetingId,
+    schemaVersion: 1,
+    sessionId: access.sessionId,
+    status: manifest.status,
+    tracks: manifest.tracks.map((track) => ({
+      timelineOffsetMs: track.timelineOffsetMs,
+      url: `/recordings/s/${access.sessionId}/tracks/${track.index}`,
+    })),
+  });
 }
 
 function parseRangeHeader(

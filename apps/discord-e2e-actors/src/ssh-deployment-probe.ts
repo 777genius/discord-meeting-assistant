@@ -32,6 +32,7 @@ import {
 } from "./ssh-deployment-probe-scripts.js";
 import {
   assertReplayTargetAttestation,
+  assertReplayTargetContainer,
   containerProvenanceOutputSchema,
   correlationId,
   databaseOutputSchema,
@@ -88,6 +89,34 @@ export class SshDeploymentEvidenceProbe implements DeploymentEvidenceProbe {
 
   public async assertReplayTargetSafe(attestation: ReplayTargetAttestation): Promise<void> {
     await this.#inspectReplayTarget(attestation);
+  }
+
+  public async assertRecordingPlaybackTargetSafe(
+    input: {
+      readonly meetingPlatformContainerId: string;
+      readonly origin: string;
+      readonly scope: string;
+    },
+  ): Promise<void> {
+    if (input.scope !== "private-test-deployment") {
+      throw new Error("Recording playback target has an invalid test scope");
+    }
+    const containerId = await this.#findContainerId(
+      this.#options.projectName,
+      "meeting-platform",
+    );
+    if (containerId !== input.meetingPlatformContainerId) {
+      throw new Error("Recording playback target changed after provenance collection");
+    }
+    const container = parseLastJsonLine(await this.#commands.runRemote(this.#options, [
+      "docker",
+      "inspect",
+      "--format",
+      replayTargetContainerFormat,
+      containerId,
+    ]));
+    assertReplayTargetContainer(container);
+    await this.#assertRecordingPlaybackOrigin(containerId, input.origin);
   }
 
   public async collectDatabase(recordingId: string): Promise<DatabaseObservation> {
@@ -258,6 +287,29 @@ export class SshDeploymentEvidenceProbe implements DeploymentEvidenceProbe {
       );
     }
     return parseDockerContainerId(containerIds[0]);
+  }
+
+  async #assertRecordingPlaybackOrigin(containerId: string, expectedOrigin: string): Promise<void> {
+    const output = (await this.#commands.runRemote(this.#options, [
+      "docker",
+      "exec",
+      containerId,
+      "printenv",
+      "RECORDING_PLAYBACK_PUBLIC_BASE_URL",
+    ])).trim();
+    let actualOrigin: string;
+    try {
+      const url = new URL(output);
+      if (url.protocol !== "https:" || url.origin !== output) {
+        throw new Error("not an exact HTTPS origin");
+      }
+      actualOrigin = url.origin;
+    } catch {
+      throw new Error("Test deployment has no valid recording playback HTTPS origin");
+    }
+    if (actualOrigin !== expectedOrigin) {
+      throw new Error("Recording playback origin does not match the attested test deployment");
+    }
   }
 
   async #dockerExec(

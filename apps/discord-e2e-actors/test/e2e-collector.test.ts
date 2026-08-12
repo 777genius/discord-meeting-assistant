@@ -12,6 +12,7 @@ import type {
   CurrentDeploymentProvenance,
   ProcessingEvidence,
 } from "../src/e2e-evidence.js";
+import type { RecordingPlaybackEvidenceProbe } from "../src/recording-playback-evidence-probe.js";
 import { retainedV7Evidence, retainedV8Evidence } from "./e2e-evidence-fixtures.js";
 
 const speakerA = "1533227577286852649";
@@ -20,6 +21,57 @@ const layeredAttachments = [
   { filename: "meeting-summary.md", sizeBytes: 2_048 },
   { filename: "meeting-transcript.md", sizeBytes: 4_096 },
 ] as const;
+const recordingPlaybackUrl =
+  `https://recordings.example.test/recordings/playback#v1.${Buffer.from("recording-1").toString("base64url")}.${"s".repeat(43)}`;
+const unexpectedExternalRead = async (): Promise<never> => {
+  throw new Error("unexpected external read");
+};
+
+function recordingPlayback(calls?: string[]): RecordingPlaybackEvidenceProbe {
+  return {
+    collect: async ({ expectedRecordingId, expectedTracks, recordingPlaybackUrl: observed }) => {
+      calls?.push("recording-playback");
+      expect(observed).toBe(recordingPlaybackUrl);
+      return {
+        capabilitySha256: "3".repeat(64),
+        link: { origin: "https://recordings.example.test", pathname: "/recordings/playback" },
+        manifest: {
+          readinessExpectation: "already-ready",
+          recordingId: expectedRecordingId,
+          statuses: ["ready"],
+        },
+        resume: {
+          manifestStatus: "ready",
+          recordingId: expectedRecordingId,
+          statusCode: 200,
+        },
+        tracks: expectedTracks.map((track, index) => ({
+          checksumSha256: track.checksumSha256,
+          contentLength: track.sizeBytes,
+          contentRange: `bytes 0-${track.sizeBytes - 1}/${track.sizeBytes}`,
+          index,
+          statusCode: 206,
+        })),
+      };
+    },
+  };
+}
+
+function collectionInput(
+  overrides: Partial<Parameters<typeof collectRetainedE2eEvidence>[0]> = {},
+): Parameters<typeof collectRetainedE2eEvidence>[0] {
+  return {
+    actorRun: actorRun(),
+    fixtureSetId: "discord-meeting-ru-en-v1",
+    recordingId: "recording-1",
+    recordingPlayback: recordingPlayback(),
+    recordingPlaybackOrigin: "https://recordings.example.test",
+    recordingPlaybackReadiness: "already-ready",
+    recordingPlaybackTestScope: "private-test-deployment",
+    runId: "run-1",
+    ...overrides,
+  };
+}
 
 function actorRun() {
   return {
@@ -252,6 +304,8 @@ describe("collectRetainedE2eEvidence", () => {
     let databaseCall = 0;
     let provenanceCall = 0;
     const deployment: DeploymentEvidenceProbe = {
+      assertRecordingPlaybackTargetSafe: async () => { calls.push("playback-target-safe"); },
+      assertReplayTargetSafe: async () => { calls.push("replay-target-safe"); },
       collectDatabase: async () => {
         databaseCall += 1;
         calls.push(`database-${databaseCall}`);
@@ -269,9 +323,6 @@ describe("collectRetainedE2eEvidence", () => {
       collectS3: async () => {
         calls.push("s3");
         return s3();
-      },
-      assertReplayTargetSafe: async () => {
-        calls.push("replay-target-safe");
       },
       replayPostCall: async () => {
         calls.push("replay");
@@ -298,13 +349,14 @@ describe("collectRetainedE2eEvidence", () => {
             "Ответственный: <@1533228054724346087>",
           ].join("\n"),
           messageId: "message-1",
+          recordingPlaybackUrl,
         }],
         matchingThreadIds: ["thread-1"],
       }),
     };
 
     const evidence = await collectRetainedE2eEvidence(
-      { actorRun: actorRun(), fixtureSetId: "discord-meeting-ru-en-v1", recordingId: "recording-1", runId: "run-1" },
+      collectionInput({ recordingPlayback: recordingPlayback(calls) }),
       deployment,
       discord,
     );
@@ -314,6 +366,8 @@ describe("collectRetainedE2eEvidence", () => {
       "provenance-1",
       "database-1",
       "s3",
+      "playback-target-safe",
+      "recording-playback",
       "processing",
       "replay",
       "database-2",
@@ -336,11 +390,12 @@ describe("collectRetainedE2eEvidence", () => {
 
   it("collects a direct parent-channel publication without inventing a thread", async () => {
     const deployment: DeploymentEvidenceProbe = {
+      assertRecordingPlaybackTargetSafe: async () => {},
+      assertReplayTargetSafe: async () => {},
       collectDatabase: async () => directMessageDatabase(),
       collectProvenance: async () => summaryOnlyProvenance(),
       collectProcessing: async () => processing(),
       collectS3: async () => s3(),
-      assertReplayTargetSafe: async () => {},
       replayPostCall: async () => ({
         afterProcessedOn: 2_000,
         beforeProcessedOn: 1_000,
@@ -362,13 +417,14 @@ describe("collectRetainedE2eEvidence", () => {
             "Ответственный: <@1533228054724346087>",
           ].join("\n"),
           messageId: "message-1",
+          recordingPlaybackUrl,
         }],
         matchingThreadIds: [],
       }),
     };
 
     const evidence = await collectRetainedE2eEvidence(
-      { actorRun: actorRun(), fixtureSetId: "discord-meeting-ru-en-v1", recordingId: "recording-1", runId: "run-1" },
+      collectionInput(),
       deployment,
       discord,
     );
@@ -389,6 +445,8 @@ describe("collectRetainedE2eEvidence", () => {
   it("collects lifecycle, voice and supplemental playback as retained v8 evidence", async () => {
     const conversationFixture = retainedV8Evidence().conversation;
     const deployment: DeploymentEvidenceProbe = {
+      assertRecordingPlaybackTargetSafe: async () => {},
+      assertReplayTargetSafe: async () => {},
       collectConversationLifecycle: async () => ({
         ...conversationFixture.lifecycle,
         participantLifecycleReceipts: [
@@ -406,7 +464,6 @@ describe("collectRetainedE2eEvidence", () => {
       collectProvenance: async () => provenance(),
       collectProcessing: async () => processing(),
       collectS3: async () => s3(),
-      assertReplayTargetSafe: async () => {},
       replayPostCall: async () => ({
         afterProcessedOn: 2_000,
         beforeProcessedOn: 1_000,
@@ -425,6 +482,7 @@ describe("collectRetainedE2eEvidence", () => {
           },
           embedDescription: "Stable retained V8 projection",
           messageId: "message-1",
+          recordingPlaybackUrl,
         }],
         matchingThreadIds: ["thread-1"],
       }),
@@ -442,18 +500,14 @@ describe("collectRetainedE2eEvidence", () => {
       runId: "run-1",
     };
 
-    const evidence = await collectRetainedE2eEvidence({
-      actorRun: actorRun(),
+    const evidence = await collectRetainedE2eEvidence(collectionInput({
       conversation: {
         botSpeakerId: conversationFixture.botSpeakerId,
         reconnectParticipantId: speakerB,
         supplementalPlayback,
         voice,
       },
-      fixtureSetId: "discord-meeting-ru-en-v1",
-      recordingId: "recording-1",
-      runId: "run-1",
-    }, deployment, discord);
+    }), deployment, discord);
 
     expect(evidence.schemaVersion).toBe(8);
     if (evidence.schemaVersion !== 8) {
@@ -468,17 +522,65 @@ describe("collectRetainedE2eEvidence", () => {
       ({ correlation }) => correlation.recordingId === "recording-1",
     )).toBe(true);
   });
+
 });
 
 describe("collectRetainedE2eEvidence failure handling", () => {
+  it("rejects an unattested playback deployment before sending the capability", async () => {
+    let playbackCalls = 0;
+    const deployment: DeploymentEvidenceProbe = {
+      assertRecordingPlaybackTargetSafe: async () => {
+        throw new Error("playback target is not attested");
+      },
+      assertReplayTargetSafe: async () => {},
+      collectDatabase: async () => database(),
+      collectProcessing: async () => processing(),
+      collectProvenance: async () => provenance(),
+      collectS3: async () => s3(),
+      replayPostCall: async () => ({
+        afterProcessedOn: 2_000,
+        beforeProcessedOn: 1_000,
+        jobId: "post-call-v1-job",
+        state: "completed",
+      }),
+    };
+    const discord: DiscordEvidenceProbe = {
+      inspect: async () => ({
+        matchingMessages: [{
+          attachments: layeredAttachments,
+          container: {
+            kind: "thread",
+            parentChannelId: "1533228891827736657",
+            threadId: "thread-1",
+          },
+          embedDescription: "## Итоги встречи",
+          messageId: "message-1",
+          recordingPlaybackUrl,
+        }],
+        matchingThreadIds: ["thread-1"],
+      }),
+    };
+
+    await expect(collectRetainedE2eEvidence(collectionInput({
+      recordingPlayback: {
+        collect: async () => {
+          playbackCalls += 1;
+          throw new Error("must not send capability");
+        },
+      },
+    }), deployment, discord)).rejects.toThrow("not attested");
+    expect(playbackCalls).toBe(0);
+  });
+
   it("fails closed when a retained v8 collection has no lifecycle probe", async () => {
     const conversationFixture = retainedV8Evidence().conversation;
     const deployment: DeploymentEvidenceProbe = {
+      assertRecordingPlaybackTargetSafe: async () => {},
+      assertReplayTargetSafe: async () => {},
       collectDatabase: async () => database(),
       collectProvenance: async () => provenance(),
       collectProcessing: async () => processing(),
       collectS3: async () => s3(),
-      assertReplayTargetSafe: async () => {},
       replayPostCall: async () => ({
         afterProcessedOn: 2_000,
         beforeProcessedOn: 1_000,
@@ -497,13 +599,13 @@ describe("collectRetainedE2eEvidence failure handling", () => {
           },
           embedDescription: "Stable retained V8 projection",
           messageId: "message-1",
+          recordingPlaybackUrl,
         }],
         matchingThreadIds: ["thread-1"],
       }),
     };
 
-    await expect(collectRetainedE2eEvidence({
-      actorRun: actorRun(),
+    await expect(collectRetainedE2eEvidence(collectionInput({
       conversation: {
         botSpeakerId: conversationFixture.botSpeakerId,
         reconnectParticipantId: speakerB,
@@ -517,10 +619,7 @@ describe("collectRetainedE2eEvidence failure handling", () => {
           runId: "run-1",
         })),
       },
-      fixtureSetId: "discord-meeting-ru-en-v1",
-      recordingId: "recording-1",
-      runId: "run-1",
-    }, deployment, discord)).rejects.toThrow(
+    }), deployment, discord)).rejects.toThrow(
       "cannot collect conversation lifecycle evidence",
     );
   });
@@ -528,6 +627,8 @@ describe("collectRetainedE2eEvidence failure handling", () => {
   it("rejects a deployment change while evidence is collected", async () => {
     let provenanceCall = 0;
     const deployment: DeploymentEvidenceProbe = {
+      assertRecordingPlaybackTargetSafe: async () => {},
+      assertReplayTargetSafe: async () => {},
       collectDatabase: async () => database(),
       collectProvenance: async () => {
         provenanceCall += 1;
@@ -544,7 +645,6 @@ describe("collectRetainedE2eEvidence failure handling", () => {
       },
       collectProcessing: async () => processing(),
       collectS3: async () => s3(),
-      assertReplayTargetSafe: async () => {},
       replayPostCall: async () => ({
         afterProcessedOn: 2_000,
         beforeProcessedOn: 1_000,
@@ -563,13 +663,14 @@ describe("collectRetainedE2eEvidence failure handling", () => {
           },
           embedDescription: "Основание: 00:00-00:01",
           messageId: "message-1",
+          recordingPlaybackUrl,
         }],
         matchingThreadIds: ["thread-1"],
       }),
     };
 
     await expect(collectRetainedE2eEvidence(
-      { actorRun: actorRun(), fixtureSetId: "discord-meeting-ru-en-v1", recordingId: "recording-1", runId: "run-1" },
+      collectionInput(),
       deployment,
       discord,
     )).rejects.toThrow("provenance changed");
@@ -577,11 +678,12 @@ describe("collectRetainedE2eEvidence failure handling", () => {
 
   it("rejects attachment metadata drift after idempotent replay", async () => {
     const deployment: DeploymentEvidenceProbe = {
+      assertRecordingPlaybackTargetSafe: async () => {},
+      assertReplayTargetSafe: async () => {},
       collectDatabase: async () => directMessageDatabase(),
       collectProvenance: async () => summaryOnlyProvenance(),
       collectProcessing: async () => processing(),
       collectS3: async () => s3(),
-      assertReplayTargetSafe: async () => {},
       replayPostCall: async () => ({
         afterProcessedOn: 2_000,
         beforeProcessedOn: 1_000,
@@ -607,6 +709,7 @@ describe("collectRetainedE2eEvidence failure handling", () => {
             },
             embedDescription: "Stable layered summary",
             messageId: "message-1",
+            recordingPlaybackUrl,
           }],
           matchingThreadIds: [],
         };
@@ -614,37 +717,72 @@ describe("collectRetainedE2eEvidence failure handling", () => {
     };
 
     await expect(collectRetainedE2eEvidence(
-      { actorRun: actorRun(), fixtureSetId: "discord-meeting-ru-en-v1", recordingId: "recording-1", runId: "run-1" },
+      collectionInput(),
       deployment,
       discord,
     )).rejects.toThrow("attachments changed");
   });
 
-  it("rejects an actor file from another explicit run before external reads", async () => {
-    const deployment = {} as DeploymentEvidenceProbe;
-    const discord = {} as DiscordEvidenceProbe;
+  it("rejects capability rotation during the same idempotent replay proof", async () => {
+    const deployment: DeploymentEvidenceProbe = {
+      assertRecordingPlaybackTargetSafe: async () => {},
+      assertReplayTargetSafe: async () => {},
+      collectDatabase: async () => directMessageDatabase(),
+      collectProvenance: async () => summaryOnlyProvenance(),
+      collectProcessing: async () => processing(),
+      collectS3: async () => s3(),
+      replayPostCall: async () => ({
+        afterProcessedOn: 2_000,
+        beforeProcessedOn: 1_000,
+        jobId: "post-call-v1-job",
+        state: "completed",
+      }),
+    };
+    let inspection = 0;
+    const discord: DiscordEvidenceProbe = {
+      inspect: async () => {
+        inspection += 1;
+        return {
+          matchingMessages: [{
+            attachments: layeredAttachments,
+            container: {
+              kind: "channel-message",
+              parentChannelId: "1533228891827736657",
+            },
+            embedDescription: "Stable layered summary",
+            messageId: "message-1",
+            recordingPlaybackUrl: inspection === 1
+              ? recordingPlaybackUrl
+              : `${recordingPlaybackUrl.slice(0, -1)}x`,
+          }],
+          matchingThreadIds: [],
+        };
+      },
+    };
 
     await expect(collectRetainedE2eEvidence(
-      { actorRun: actorRun(), fixtureSetId: "discord-meeting-ru-en-v1", recordingId: "recording-2", runId: "run-2" },
+      collectionInput(),
+      deployment,
+      discord,
+    )).rejects.toThrow("capability changed");
+  });
+
+  it("rejects an actor file from another explicit run before external reads", async () => {
+    const deployment: DeploymentEvidenceProbe = {
+      assertRecordingPlaybackTargetSafe: unexpectedExternalRead,
+      assertReplayTargetSafe: unexpectedExternalRead,
+      collectDatabase: unexpectedExternalRead,
+      collectProcessing: unexpectedExternalRead,
+      collectProvenance: unexpectedExternalRead,
+      collectS3: unexpectedExternalRead,
+      replayPostCall: unexpectedExternalRead,
+    };
+    const discord: DiscordEvidenceProbe = { inspect: unexpectedExternalRead };
+
+    await expect(collectRetainedE2eEvidence(
+      collectionInput({ recordingId: "recording-2", runId: "run-2" }),
       deployment,
       discord,
     )).rejects.toThrow("correlation");
-  });
-
-  it("rejects an actor file from another fixture set before replay safety reads", async () => {
-    let safetyReads = 0;
-    const deployment = {
-      assertReplayTargetSafe: async () => {
-        safetyReads += 1;
-      },
-    } as unknown as DeploymentEvidenceProbe;
-    const discord = {} as DiscordEvidenceProbe;
-
-    await expect(collectRetainedE2eEvidence(
-      { actorRun: actorRun(), fixtureSetId: "other-fixture", recordingId: "recording-1", runId: "run-1" },
-      deployment,
-      discord,
-    )).rejects.toThrow("fixture set");
-    expect(safetyReads).toBe(0);
   });
 });

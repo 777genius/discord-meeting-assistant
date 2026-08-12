@@ -31,6 +31,12 @@ export const collectorEnvironmentSchema = z.object({
   DISCORD_E2E_KEYCHAIN_SERVICE: z.string().min(1).default("discord-voice-bot-e2e"),
   DISCORD_E2E_MUTATION_TARGET: z.literal("test-only"),
   DISCORD_E2E_RECORDING_ID: correlationId,
+  DISCORD_E2E_RECORDING_PLAYBACK_READINESS: z.enum(["already-ready", "transition"]),
+  DISCORD_E2E_RECORDING_PLAYBACK_ORIGIN: z.url().refine((value) => {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.origin === value;
+  }),
+  DISCORD_E2E_RECORDING_PLAYBACK_TEST_SCOPE: z.literal("private-test-deployment"),
   DISCORD_E2E_REMOTE_ATTESTATION_FILE: remoteAttestationFile,
   DISCORD_E2E_REMOTE_CRAIG_PROJECT: z.literal("craig-meeting-e2e"),
   DISCORD_E2E_REMOTE_CRAIG_SERVICE: z.literal("bot"),

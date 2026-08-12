@@ -441,6 +441,10 @@ export function reidentify<T extends RetainedE2eEvidence>(source: T, suffix: str
   evidence.actorRun.recordingId = `meeting-${suffix}`;
   evidence.meetingId = `meeting-${suffix}`;
   evidence.recording.recordingId = `meeting-${suffix}`;
+  if ("recordingPlayback" in evidence && evidence.recordingPlayback !== undefined) {
+    evidence.recordingPlayback.manifest.recordingId = `meeting-${suffix}`;
+    evidence.recordingPlayback.resume.recordingId = `meeting-${suffix}`;
+  }
   evidence.recording.s3.manifestLocator = `s3://bucket/meeting-${suffix}/manifest.json`;
   evidence.transcript.transcriptId = `transcript-${suffix}`;
   evidence.summary.summaryId = `summary-${suffix}`;
@@ -563,6 +567,30 @@ export function retainedV6Evidence(
 
 export function retainedV8Evidence(): RetainedReconnectE2eEvidenceV8 {
   const source = retainedV6Evidence();
+  source.recordingPlayback = {
+    capabilitySha256: "6".repeat(64),
+    link: {
+      origin: "https://recordings.example.test",
+      pathname: "/recordings/playback",
+    },
+    manifest: {
+      readinessExpectation: "transition",
+      recordingId: source.recording.recordingId,
+      statuses: ["processing", "ready"],
+    },
+    resume: {
+      manifestStatus: "ready",
+      recordingId: source.recording.recordingId,
+      statusCode: 200,
+    },
+    tracks: source.recording.s3.tracks.map((track, index) => ({
+      checksumSha256: track.checksumSha256,
+      contentLength: track.sizeBytes,
+      contentRange: `bytes 0-${track.sizeBytes - 1}/${track.sizeBytes}`,
+      index,
+      statusCode: 206,
+    })),
+  };
   source.actorRun.scenario = "reconnect";
   source.actorRun.events = [
     { actorName: "speaker-a", atRecordingMs: 0, type: "ready" },
@@ -585,6 +613,13 @@ export function retainedV8Evidence(): RetainedReconnectE2eEvidenceV8 {
     locator: "s3://bucket/meeting-1/speaker-d.ogg", sizeBytes: 3_000,
     speakerId: speakerDId, timelineOffsetMs: 3_200,
   });
+  source.recordingPlayback.tracks = source.recording.s3.tracks.map((track, index) => ({
+    checksumSha256: track.checksumSha256,
+    contentLength: track.sizeBytes,
+    contentRange: `bytes 0-${track.sizeBytes - 1}/${track.sizeBytes}`,
+    index,
+    statusCode: 206,
+  }));
   source.transcript.turns.push(
     {
       endMs: 650, speakerId: botSpeakerId, startMs: 250,
@@ -692,8 +727,9 @@ export function retainedV8Evidence(): RetainedReconnectE2eEvidenceV8 {
 
 export function retainedV7Evidence(): RetainedE2eEvidenceV7 {
   const source = retainedV8Evidence();
+  const { recordingPlayback: _recordingPlayback, ...historicalSource } = source;
   return retainedE2eEvidenceV7Schema.parse({
-    ...source,
+    ...historicalSource,
     conversation: {
       botSpeakerId: source.conversation.botSpeakerId,
       lifecycle: source.conversation.lifecycle,

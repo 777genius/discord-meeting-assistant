@@ -19,6 +19,18 @@ import type {
 const projectionFooter = "Meeting Platform · meeting summary";
 const legacyProjectionFooter = "Meeting Platform · итог встречи";
 const projectionMarkerUrlBase = "https://meeting-platform.invalid/projection/";
+const recordingPlaybackPath = "/recordings/playback";
+const recordingLinkLabels = new Set([
+  "Listen to the recording",
+  "Прослушать запись",
+  "Прослухати запис",
+]);
+const markdownLinkPattern = /\[([^\]\r\n]+)\]\(([^)\r\n]*)\)/gu;
+
+export interface ExtractedRecordingPlaybackLink {
+  readonly embedDescription: string;
+  readonly recordingPlaybackUrl: string;
+}
 
 export class DiscordJsEvidenceProbe implements DiscordEvidenceProbe {
   readonly #client = new Client({ intents: [GatewayIntentBits.Guilds] });
@@ -115,15 +127,16 @@ async function findMatchingMessages(
     let oldestMessageId: string | undefined;
     for (const message of page.values()) {
       oldestMessageId = message.id;
-      const embedDescription = projectionDescription(message, marker, allowLegacyFooter);
-      if (message.author.id === sutUserId && embedDescription !== undefined) {
+      const projection = projectionDescription(message, marker, allowLegacyFooter);
+      if (message.author.id === sutUserId && projection !== undefined) {
         matches.push({
           attachments: [...message.attachments.values()]
             .map(({ name, size }) => ({ filename: name, sizeBytes: size }))
             .toSorted((left, right) => left.filename.localeCompare(right.filename)),
           container,
-          embedDescription,
+          embedDescription: projection.embedDescription,
           messageId: message.id,
+          recordingPlaybackUrl: projection.recordingPlaybackUrl,
         });
       }
     }
@@ -136,13 +149,89 @@ function projectionDescription(
   message: Message,
   marker: string,
   allowLegacyFooter: boolean,
-): string | undefined {
-  return message.embeds.find((embed) => footerHasMarker(
+): ExtractedRecordingPlaybackLink | undefined {
+  const description = message.embeds.find((embed) => footerHasMarker(
     embed.footer?.text,
     embed.url,
     marker,
     allowLegacyFooter,
-  ))?.description ?? undefined;
+  ))?.description;
+  return description === null || description === undefined
+    ? undefined
+    : extractRecordingPlaybackLink(description);
+}
+
+export function extractRecordingPlaybackLink(
+  description: string,
+): ExtractedRecordingPlaybackLink {
+  const links = [...description.matchAll(markdownLinkPattern)];
+  const candidates = links.filter((match) => recordingLinkLabels.has(match[1] ?? ""));
+  if (candidates.length !== 1) {
+    throw new Error("Discord projection must contain exactly one recording playback link");
+  }
+  const candidate = candidates[0];
+  const rawUrl = candidate?.[2];
+  if (candidate?.index === undefined || rawUrl === undefined || rawUrl.length === 0) {
+    throw new Error("Discord recording playback link is malformed");
+  }
+  const playbackUrl = parseRecordingPlaybackUrl(rawUrl);
+  const otherPlaybackLink = links.some((link) =>
+    link !== candidate && (link[2]?.includes(recordingPlaybackPath) ?? false)
+  );
+  if (otherPlaybackLink) {
+    throw new Error("Discord projection must contain exactly one recording playback link");
+  }
+  const sanitizedUrl = `${playbackUrl.origin}${playbackUrl.pathname}`;
+  const sanitizedLink = candidate[0].replace(`(${rawUrl})`, `(${sanitizedUrl})`);
+  const embedDescription = description.slice(0, candidate.index) + sanitizedLink +
+    description.slice(candidate.index + candidate[0].length);
+  const capability = playbackUrl.hash.slice(1);
+  if (embedDescription.includes(capability)) {
+    throw new Error("Discord recording playback capability occurs outside its link target");
+  }
+  return { embedDescription, recordingPlaybackUrl: rawUrl };
+}
+
+function parseRecordingPlaybackUrl(rawUrl: string): URL {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new Error("Discord recording playback link is malformed");
+  }
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.username.length > 0 ||
+    parsed.password.length > 0 ||
+    parsed.pathname !== recordingPlaybackPath ||
+    parsed.search.length > 0 ||
+    !isPlausiblePlaybackCapability(parsed.hash.slice(1))
+  ) {
+    throw new Error("Discord recording playback link is malformed");
+  }
+  return parsed;
+}
+
+function isPlausiblePlaybackCapability(capability: string): boolean {
+  const parts = capability.split(".");
+  const payload = parts[1];
+  const signature = parts[2];
+  if (
+    parts.length !== 3 ||
+    parts[0] !== "v1" ||
+    payload === undefined ||
+    !/^[A-Za-z0-9_-]+$/u.test(payload) ||
+    signature === undefined ||
+    !/^[A-Za-z0-9_-]{43}$/u.test(signature)
+  ) {
+    return false;
+  }
+  const decodedPayload = Buffer.from(payload, "base64url").toString("utf8");
+  return decodedPayload.length > 0 &&
+    decodedPayload.length <= 256 &&
+    !/\p{Cc}/u.test(decodedPayload) &&
+    Buffer.from(decodedPayload, "utf8").toString("base64url") === payload &&
+    Buffer.from(signature, "base64url").toString("base64url") === signature;
 }
 
 export function threadNameHasLegacyMarker(name: string, marker: string): boolean {

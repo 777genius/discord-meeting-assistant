@@ -1,76 +1,8 @@
 import { createHash } from "node:crypto";
 
-export const recordingPlaybackStyle = `
-:root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-* { box-sizing: border-box; }
-body { margin: 0; min-height: 100vh; color: #f7f7f8; background: radial-gradient(circle at 20% 0%, #2a2145 0, transparent 36rem), #0b0b0f; }
-.shell { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
-.card { width: min(720px, 100%); padding: clamp(26px, 5vw, 52px); border: 1px solid #ffffff1c; border-radius: 28px; background: #15151bdb; box-shadow: 0 30px 80px #0008; backdrop-filter: blur(18px); }
-.eyebrow { color: #a78bfa; font-size: 12px; font-weight: 800; letter-spacing: .16em; }
-h1 { margin: 10px 0 8px; font-size: clamp(32px, 7vw, 56px); line-height: 1; letter-spacing: -.045em; }
-.status, .notice { color: #aaaab6; line-height: 1.55; }
-.player { display: flex; align-items: center; gap: 20px; margin-top: 34px; padding: 18px; border: 1px solid #ffffff14; border-radius: 20px; background: #0d0d12; }
-.player[hidden] { display: none; }
-.toggle { width: 58px; height: 58px; flex: 0 0 auto; border: 0; border-radius: 50%; color: #121016; background: #c4b5fd; font-size: 22px; cursor: pointer; transition: transform .15s ease, background .15s ease; }
-.toggle:hover { transform: scale(1.04); background: #ddd6fe; }
-.toggle:focus-visible, input:focus-visible { outline: 3px solid #a78bfa; outline-offset: 3px; }
-.timeline { width: 100%; min-width: 0; display: grid; gap: 2px; }
-input[type="range"] {
-  --seek-progress: 0%;
-  width: 100%; height: 48px; margin: 0;
-  appearance: none;
-  -webkit-appearance: none;
-  background: transparent; cursor: pointer;
-  touch-action: none;
-}
-input[type="range"]::-webkit-slider-runnable-track {
-  height: 12px;
-  border: 1px solid #ffffff24;
-  border-radius: 999px;
-  background: linear-gradient(90deg, #8b5cf6 0, #c4b5fd var(--seek-progress), #302d39 var(--seek-progress), #302d39 100%);
-  box-shadow: inset 0 1px 2px #0009, 0 0 24px #8b5cf638;
-}
-input[type="range"]::-webkit-slider-thumb {
-  width: 30px;
-  height: 30px;
-  margin-top: -10px;
-  border: 4px solid #17131f;
-  border-radius: 50%;
-  appearance: none;
-  -webkit-appearance: none;
-  background: linear-gradient(135deg, #ffffff, #a78bfa 72%);
-  box-shadow: 0 0 0 2px #c4b5fd, 0 8px 24px #8b5cf680;
-  transition: transform .15s ease, box-shadow .15s ease;
-}
-input[type="range"]::-moz-range-track {
-  height: 12px;
-  border: 1px solid #ffffff24;
-  border-radius: 999px;
-  background: #302d39;
-  box-shadow: inset 0 1px 2px #0009, 0 0 24px #8b5cf638;
-}
-input[type="range"]::-moz-range-progress {
-  height: 12px;
-  border-radius: 999px;
-  background: linear-gradient(90deg, #8b5cf6, #c4b5fd);
-}
-input[type="range"]::-moz-range-thumb {
-  width: 22px;
-  height: 22px;
-  border: 4px solid #17131f;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #ffffff, #a78bfa 72%);
-  box-shadow: 0 0 0 2px #c4b5fd, 0 8px 24px #8b5cf680;
-  transition: transform .15s ease, box-shadow .15s ease;
-}
-input[type="range"]:hover::-webkit-slider-thumb,
-input[type="range"]:focus-visible::-webkit-slider-thumb { transform: scale(1.12); box-shadow: 0 0 0 4px #a78bfa40, 0 10px 30px #8b5cf6a0; }
-input[type="range"]:hover::-moz-range-thumb,
-input[type="range"]:focus-visible::-moz-range-thumb { transform: scale(1.12); box-shadow: 0 0 0 4px #a78bfa40, 0 10px 30px #8b5cf6a0; }
-.times { display: flex; justify-content: space-between; color: #aaaab6; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 650; letter-spacing: .025em; }
-.notice { margin: 18px 2px 0; color: #d8b4fe; }
-@media (max-width: 520px) { .card { border-radius: 22px; } .player { gap: 14px; padding: 14px; } .toggle { width: 50px; height: 50px; } }
-`;
+import { recordingPlaybackStyle } from "./recording-playback-style.js";
+
+export { recordingPlaybackStyle } from "./recording-playback-style.js";
 
 export const recordingPlaybackClientScript = String.raw`
 (() => {
@@ -89,15 +21,19 @@ export const recordingPlaybackClientScript = String.raw`
   let playing = false;
   let starting = false;
   let lastSyncAt = 0;
-  let gapClock = null, manifestAttempts = 0, metadataRetryUsed = false;
-  const metadataTimeoutMs = 15000;
-  const manifestRequestTimeoutMs = 5000, manifestRetryDelayMs = 5000, maximumManifestAttempts = 24;
+  let gapClock = null, processingAttempts = 0, transientFailures = 0, metadataAttempts = 0;
+  let activeSessionId = window.history.state?.recordingPlaybackSessionId;
+  const testConfig = window.__recordingPlaybackTestConfig ?? {};
+  const metadataTimeoutMs = testConfig.metadataTimeoutMs ?? 15000;
+  const manifestRequestTimeoutMs = testConfig.manifestRequestTimeoutMs ?? 5000;
+  const manifestRetryDelayMs = testConfig.manifestRetryDelayMs ?? 5000;
+  const maximumProcessingAttempts = testConfig.maximumProcessingAttempts ?? Math.floor(4 * 60 * 60 * 1000 / manifestRetryDelayMs) + 1;
+  const maximumTransientFailures = testConfig.maximumTransientFailures ?? 24;
+  const maximumMetadataAttempts = testConfig.maximumMetadataAttempts ?? 3;
 
-  const token = window.location.hash.slice(1);
-  if (!/^[A-Za-z0-9._-]{40,1024}$/.test(token)) {
-    showUnavailable();
-    return;
-  }
+  function validSessionId(value) { return typeof value === "string" && /^[A-Za-z0-9_-]{32}$/.test(value); }
+  const token = window.location.hash.slice(1), tokenIsValid = /^[A-Za-z0-9._-]{40,1024}$/.test(token);
+  if (!tokenIsValid && !validSessionId(activeSessionId)) { showUnavailable(); return; }
   function formatTime(seconds) {
     const safe = Math.max(0, Math.floor(Number.isFinite(seconds) ? seconds : 0));
     const hours = Math.floor(safe / 3600);
@@ -138,13 +74,14 @@ export const recordingPlaybackClientScript = String.raw`
   function showUnavailable() {
     playing = false;
     gapClock = null;
-    tracks.forEach((track) => track.audio.pause());
+    clearTracks();
     setStatus("Recording unavailable");
     playerNode.hidden = true;
   }
 
-  function retryManifest(message) {
-    if (manifestAttempts < maximumManifestAttempts) {
+  function retryProcessing(message) {
+    processingAttempts += 1;
+    if (processingAttempts < maximumProcessingAttempts) {
       setStatus(message);
       window.setTimeout(openSession, manifestRetryDelayMs);
       return;
@@ -152,44 +89,76 @@ export const recordingPlaybackClientScript = String.raw`
     showUnavailable();
   }
 
+  function retryTransient(message) {
+    transientFailures += 1;
+    if (transientFailures < maximumTransientFailures) {
+      setStatus(message);
+      window.setTimeout(openSession, manifestRetryDelayMs);
+      return;
+    }
+    showUnavailable();
+  }
+
+  function clearTracks() {
+    tracks.forEach((track) => {
+      if (track.errorListener) track.audio.removeEventListener("error", track.errorListener);
+      track.audio.pause();
+      track.audio.removeAttribute("src");
+      track.audio.load();
+      track.audio.remove();
+    });
+    tracks = [];
+  }
+
   async function openSession() {
-    manifestAttempts += 1;
     try {
       const controller = new AbortController();
       const timeoutId = window.setTimeout(() => controller.abort(), manifestRequestTimeoutMs);
       try {
-        const response = await fetch("/recordings/session", {
-          method: "POST", headers: { authorization: "Bearer " + token },
+        const exchangingCapability = !validSessionId(activeSessionId);
+        const sessionUrl = exchangingCapability ? "/recordings/session" : "/recordings/s/" + activeSessionId + "/session";
+        const response = await fetch(sessionUrl, {
+          method: "POST", headers: exchangingCapability ? { authorization: "Bearer " + token }
+            : { "x-recording-playback-session": "resume" },
           signal: controller.signal,
         });
         if (!response.ok) {
           if (response.status === 429 || response.status >= 500)
-            retryManifest("Checking recording again...");
+            retryTransient("Checking recording again...");
           else showUnavailable();
           return;
         }
         const manifest = await response.json();
-        const pendingMessage = manifest.status === "processing"
-          ? "Recording is being processed"
+        const returnedSessionId = manifest.sessionId;
+        if (!validSessionId(returnedSessionId) || (!exchangingCapability && returnedSessionId !== activeSessionId)) { showUnavailable(); return; }
+        if (manifest.status !== "processing" && manifest.status !== "unavailable" && manifest.status !== "ready") { showUnavailable(); return; }
+        transientFailures = 0;
+        if (exchangingCapability) {
+          activeSessionId = returnedSessionId;
+          window.history.replaceState({ recordingPlaybackSessionId: returnedSessionId }, "", window.location.pathname + window.location.search);
+        }
+        const pendingMessage = manifest.status === "processing" ? "Recording is being processed"
           : manifest.status === "unavailable" ? "Recording is not ready yet" : null;
-        if (pendingMessage !== null) { retryManifest(pendingMessage); return; }
+        if (pendingMessage !== null) { retryProcessing(pendingMessage); return; }
         if (manifest.status !== "ready" || manifest.tracks.length === 0)
           { showUnavailable(); return; }
+        processingAttempts = 0;
+        metadataAttempts += 1;
         const tracksReady = await prepareTracks(manifest.tracks);
         if (!tracksReady) {
-          if (metadataRetryUsed) { showUnavailable(); return; }
-          metadataRetryUsed = true;
-          retryManifest("Checking recording tracks again...");
+          if (metadataAttempts >= maximumMetadataAttempts) { showUnavailable(); return; }
+          setStatus("Checking recording tracks again...");
+          window.setTimeout(openSession, manifestRetryDelayMs);
           return;
         }
-        window.history.replaceState(null, "", window.location.pathname + window.location.search);
       } finally { window.clearTimeout(timeoutId); }
     } catch {
-      retryManifest("Checking recording again...");
+      retryTransient("Checking recording again...");
     }
   }
 
   async function prepareTracks(manifestTracks) {
+    clearTracks();
     const volume = Math.min(1, 0.9 / Math.sqrt(manifestTracks.length));
     tracks = manifestTracks.map((item) => {
       const audio = document.createElement("audio");
@@ -201,22 +170,22 @@ export const recordingPlaybackClientScript = String.raw`
         audio,
         offset: item.timelineOffsetMs / 1000,
         available: true,
+        errorListener: null,
         playAttempt: 0,
       };
     });
     await Promise.all(tracks.map(loadMetadata));
     const available = tracks.filter((track) => track.available);
-    if (available.length === 0) return false;
-    tracks = available;
+    if (available.length !== manifestTracks.length) {
+      clearTracks();
+      return false;
+    }
     duration = Math.max(...tracks.map((track) => track.offset + track.audio.duration));
     seekNode.max = String(duration);
     durationNode.textContent = formatTime(duration);
     playerNode.hidden = false;
     setStatus("Ready to play");
-    if (tracks.length < manifestTracks.length) {
-      noticeNode.textContent = "Some tracks are unavailable";
-      noticeNode.hidden = false;
-    }
+    noticeNode.hidden = true;
     renderPosition(0);
     return true;
   }
@@ -236,6 +205,10 @@ export const recordingPlaybackClientScript = String.raw`
         track.available = available
           && Number.isFinite(track.audio.duration)
           && track.audio.duration > 0;
+        if (track.available) {
+          track.errorListener = () => dropTrack(track);
+          track.audio.addEventListener("error", track.errorListener);
+        }
         if (!track.available) {
           track.audio.pause();
           track.audio.removeAttribute("src");
@@ -318,16 +291,26 @@ export const recordingPlaybackClientScript = String.raw`
         const playAttempt = ++track.playAttempt;
         void track.audio.play().catch(() => {
           if (playAttempt !== track.playAttempt || !playing) return;
-          track.available = false;
-          pauseTrack(track);
-          if (!tracks.some((candidate) => candidate.available)) showUnavailable();
-          else {
-            noticeNode.textContent = "Some tracks are unavailable";
-            noticeNode.hidden = false;
-          }
+          dropTrack(track);
         });
       }
     });
+  }
+
+  function dropTrack(track) {
+    if (!track.available) return;
+    track.available = false;
+    if (track.errorListener) track.audio.removeEventListener("error", track.errorListener);
+    track.errorListener = null;
+    pauseTrack(track);
+    track.audio.removeAttribute("src");
+    track.audio.load();
+    track.audio.remove();
+    if (!tracks.some((candidate) => candidate.available)) showUnavailable();
+    else {
+      noticeNode.textContent = "Some tracks are unavailable";
+      noticeNode.hidden = false;
+    }
   }
 
   function pauseTrack(track) {

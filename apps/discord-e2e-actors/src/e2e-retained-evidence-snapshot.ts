@@ -141,10 +141,10 @@ export function bindActorRun(
   });
 }
 
-export function assertS3MatchesSnapshot(
+export function alignS3TracksToSnapshot(
   s3: S3RecordingEvidence,
   snapshot: CollectedMeetingSnapshot,
-): void {
+): S3RecordingEvidence {
   if (
     s3.recordingId !== snapshot.recording.recordingId ||
     s3.manifestLocator !== snapshot.recording.manifestLocator ||
@@ -156,7 +156,14 @@ export function assertS3MatchesSnapshot(
   const snapshotTracks = new Map(
     snapshot.recording.speakerAudio.map((track) => [track.speakerId, track]),
   );
-  for (const track of s3.tracks) {
+  const s3Tracks = new Map(s3.tracks.map((track) => [track.speakerId, track]));
+  if (
+    snapshotTracks.size !== snapshot.recording.speakerAudio.length ||
+    s3Tracks.size !== s3.tracks.length
+  ) {
+    throw new Error("Recording tracks contain duplicate speaker identities");
+  }
+  for (const track of s3Tracks.values()) {
     const expected = snapshotTracks.get(track.speakerId);
     if (
       expected === undefined ||
@@ -167,9 +174,13 @@ export function assertS3MatchesSnapshot(
       throw new Error(`S3 track ${track.speakerId} does not match the Postgres snapshot`);
     }
   }
-  if (s3.tracks.length !== snapshotTracks.size) {
+  if (s3Tracks.size !== snapshotTracks.size) {
     throw new Error("S3 track count does not match the Postgres snapshot");
   }
+  return {
+    ...s3,
+    tracks: snapshot.recording.speakerAudio.map(({ speakerId }) => s3Tracks.get(speakerId)!),
+  };
 }
 
 export function parseUnboundActorRun(value: unknown): UnboundActorRunEvidenceV1 {

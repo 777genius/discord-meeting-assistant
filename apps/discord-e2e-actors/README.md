@@ -214,6 +214,15 @@ It reads the actual Postgres snapshot/counts over the isolated SSH deployment,
 downloads and hashes the authoritative S3 manifest and every speaker track,
 counts Discord projection markers and retains the visible embed description plus
 the names and byte sizes of both layered evidence attachments,
+extracts the published possession link without retaining its fragment, exchanges
+it for a scoped playback session, resumes that session after fragment removal,
+and range-reads every authoritative S3 playback track whose SHA256 must match. Set
+`DISCORD_E2E_RECORDING_PLAYBACK_ORIGIN` to the explicit HTTPS origin,
+`DISCORD_E2E_RECORDING_PLAYBACK_TEST_SCOPE=private-test-deployment`, and choose
+`DISCORD_E2E_RECORDING_PLAYBACK_READINESS=transition` to require an observed
+processing/unavailable-to-ready transition or `already-ready` to gate a known
+already-ready collection. The retained JSON contains only origin/path, digests,
+statuses, Content-Range, byte count, and checksum - never the fragment or cookie.
 captures immutable Craig, Meeting Platform, and Subscription Runtime deployment
 provenance plus correlated stage/model latency observations. When
 `DISCORD_E2E_EXPECTED_PIPECAT_SOURCE_REVISION` is set, it also requires and
@@ -226,6 +235,9 @@ verifier pass:
 ```sh
 DISCORD_E2E_RUN_ID=campaign-2026-08-02-overlap \
 DISCORD_E2E_RECORDING_ID=<craig-recording-id> \
+DISCORD_E2E_RECORDING_PLAYBACK_ORIGIN=https://recordings.test.example \
+DISCORD_E2E_RECORDING_PLAYBACK_TEST_SCOPE=private-test-deployment \
+DISCORD_E2E_RECORDING_PLAYBACK_READINESS=already-ready \
 DISCORD_E2E_ACTOR_RUN_INPUT=/absolute/evidence/overlap.actor-run.json \
 DISCORD_E2E_EVIDENCE_OUTPUT=/absolute/evidence/overlap.evidence.v6.json \
 DISCORD_E2E_MUTATION_TARGET=test-only \

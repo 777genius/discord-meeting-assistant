@@ -56,6 +56,7 @@ function fakeCommands(input: {
   readonly label?: string;
   readonly marker?: string;
   readonly mutations: string[];
+  readonly playbackOrigin?: string;
   readonly replayError?: Error;
 }): SshDeploymentProbeCommands {
   let currentContainerId = containerId;
@@ -115,6 +116,16 @@ function fakeCommands(input: {
           composeService: "meeting-platform",
           testOnly: input.label ?? "true",
         });
+      }
+      if (args[0] === "docker" && args[1] === "exec") {
+        expect(args).toEqual([
+          "docker",
+          "exec",
+          currentContainerId,
+          "printenv",
+          "RECORDING_PLAYBACK_PUBLIC_BASE_URL",
+        ]);
+        return input.playbackOrigin ?? "https://recordings.example.test";
       }
       if (args[0] === "sh" && args[2]?.includes("rm --") === true) {
         if (input.consumeError !== undefined) {
@@ -213,6 +224,23 @@ describe("SshDeploymentEvidenceProbe replay target safety", () => {
     await expect(deployment.replayPostCall(target)).rejects.toThrow();
     expect(mutations).toEqual([]);
   });
+
+  it.each(["", "http://recordings.example.test", "https://other.example.test"])(
+    "rejects playback origin %j outside the attested test deployment",
+    async (playbackOrigin) => {
+      const mutations: string[] = [];
+      const deployment = probe(fakeCommands({ mutations, playbackOrigin }));
+
+      await expect(deployment.assertRecordingPlaybackTargetSafe({
+        meetingPlatformContainerId: containerId,
+        origin: "https://recordings.example.test",
+        scope: "private-test-deployment",
+      })).rejects.toThrow(
+        /recording playback|HTTPS origin/iu,
+      );
+      expect(mutations).toEqual([]);
+    },
+  );
 
   it.each([
     ["fixtureSetId", { fixtureSetId: "other-fixture" }],

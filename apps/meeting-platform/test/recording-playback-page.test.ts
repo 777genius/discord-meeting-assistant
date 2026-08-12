@@ -127,10 +127,19 @@ interface TrackFixture {
 
 interface PageHarnessOptions {
   readonly fragment?: string;
+  readonly historySessionId?: string;
   readonly manifestStatuses?: readonly ("processing" | "ready" | "unavailable")[];
   readonly manifestTrackCount?: number;
   readonly requestModes?: readonly ("normal" | "stalled")[];
+  readonly responseSessionId?: string;
   readonly responseStatuses?: readonly number[];
+  readonly testConfig?: Readonly<{
+    maximumMetadataAttempts?: number;
+    maximumProcessingAttempts?: number;
+    maximumTransientFailures?: number;
+    manifestRetryDelayMs?: number;
+    metadataTimeoutMs?: number;
+  }>;
 }
 
 interface PageHarness {
@@ -145,6 +154,11 @@ interface PageHarness {
   animationFrameRequestCount(): number;
   restoreVisibility(): void;
   replacedUrls(): readonly string[];
+  resumedSessionId(): string | null;
+  sessionRequests(): readonly {
+    readonly headers?: Readonly<Record<string, string>>;
+    readonly url: string;
+  }[];
   runAnimationFrame(): void;
   sessionRequestCount(): number;
 }
@@ -202,10 +216,18 @@ function createPageHarness(
     querySelector: (selector: string) => elements.get(selector),
   };
   const replacedUrls: string[] = [];
+  let historyState: unknown = options.historySessionId === undefined
+    ? null
+    : { recordingPlaybackSessionId: options.historySessionId };
   const window = {
+    __recordingPlaybackTestConfig: options.testConfig,
     clearTimeout,
     history: {
-      replaceState: (_state: unknown, _unused: string, url: string) => {
+      get state(): unknown {
+        return historyState;
+      },
+      replaceState: (state: unknown, _unused: string, url: string) => {
+        historyState = state;
         replacedUrls.push(url);
       },
     },
@@ -224,7 +246,13 @@ function createPageHarness(
   const requestModes = options.requestModes ?? ["normal"];
   const responseStatuses = options.responseStatuses ?? [200];
   let manifestIndex = 0;
-  const fetch = vi.fn(async (_url: string, request?: { readonly signal?: AbortSignal }) => {
+  const fetch = vi.fn(async (
+    _url: string,
+    request?: {
+      readonly headers?: Readonly<Record<string, string>>;
+      readonly signal?: AbortSignal;
+    },
+  ) => {
     const requestIndex = manifestIndex;
     const manifestStatus = manifestStatuses[
       Math.min(manifestIndex, manifestStatuses.length - 1)
@@ -245,6 +273,8 @@ function createPageHarness(
     ] ?? 200;
     return {
       json: async () => ({
+        recordingId: "recording-1",
+        sessionId: options.responseSessionId ?? options.historySessionId ?? "s".repeat(32),
         status: manifestStatus,
         tracks: manifestStatus === "ready"
           ? trackFixtures.slice(
@@ -291,12 +321,27 @@ function createPageHarness(
       documentListeners.get("visibilitychange")?.();
     },
     replacedUrls: () => replacedUrls,
+    resumedSessionId: () => {
+      if (
+        typeof historyState === "object" &&
+        historyState !== null &&
+        "recordingPlaybackSessionId" in historyState
+      ) {
+        const sessionId = historyState.recordingPlaybackSessionId;
+        return typeof sessionId === "string" ? sessionId : null;
+      }
+      return null;
+    },
     runAnimationFrame: () => {
       const callback = animationFrame;
       animationFrame = undefined;
       callback?.(clock);
     },
     sessionRequestCount: () => fetch.mock.calls.length,
+    sessionRequests: () => fetch.mock.calls.map(([url, request]) => ({
+      ...(request?.headers === undefined ? {} : { headers: request.headers }),
+      url,
+    })),
   };
 }
 
@@ -346,7 +391,7 @@ describe("recording playback browser page", () => {
     expect(page.replacedUrls()).toEqual([]);
   });
 
-  it("retains a valid fragment while the recording is still unavailable", async () => {
+  it("strips a valid fragment immediately after an unavailable session exchange", async () => {
     vi.useFakeTimers();
     const page = createPageHarness([], {
       fragment: "a".repeat(48),
@@ -355,7 +400,7 @@ describe("recording playback browser page", () => {
     await flushAsync();
 
     expect(page.sessionRequestCount()).toBe(1);
-    expect(page.replacedUrls()).toEqual([]);
+    expect(page.replacedUrls()).toEqual(["/recordings/playback"]);
   });
 
   it("recovers when a newly published recording is briefly unavailable", async () => {
@@ -376,6 +421,71 @@ describe("recording playback browser page", () => {
     expect(page.status.textContent).toBe("Ready to play");
     expect(page.player.hidden).toBe(false);
     expect(page.replacedUrls()).toEqual(["/recordings/playback"]);
+  });
+
+  it("resumes a reload after the fragment was stripped", async () => {
+    const opened = createPageHarness(
+      [{ audio: new FakeAudio("loaded", 12), timelineOffsetMs: 0 }],
+    );
+    await flushAsync();
+    const sessionId = opened.resumedSessionId();
+    if (sessionId === null) {
+      throw new Error("initial exchange did not persist a resumable session ID");
+    }
+
+    const reloaded = createPageHarness(
+      [{ audio: new FakeAudio("loaded", 12), timelineOffsetMs: 0 }],
+      { fragment: "", historySessionId: sessionId },
+    );
+    await flushAsync();
+
+    expect(opened.replacedUrls()).toEqual(["/recordings/playback"]);
+    expect(reloaded.status.textContent).toBe("Ready to play");
+    expect(reloaded.sessionRequests()).toEqual([{
+      headers: { "x-recording-playback-session": "resume" },
+      url: `/recordings/s/${sessionId}/session`,
+    }]);
+    expect(reloaded.replacedUrls()).toEqual([]);
+  });
+
+  it("resumes polling after a processing-session reload without the fragment", async () => {
+    vi.useFakeTimers();
+    const opened = createPageHarness([], {
+      manifestStatuses: ["processing"],
+      testConfig: { maximumProcessingAttempts: 2 },
+    });
+    await flushAsync();
+    const sessionId = opened.resumedSessionId();
+    if (sessionId === null) {
+      throw new Error("processing exchange did not persist a resumable session ID");
+    }
+
+    const reloaded = createPageHarness(
+      [{ audio: new FakeAudio("loaded", 12), timelineOffsetMs: 0 }],
+      { fragment: "", historySessionId: sessionId, manifestStatuses: ["processing", "ready"] },
+    );
+    await flushAsync();
+    expect(reloaded.status.textContent).toBe("Recording is being processed");
+    expect(reloaded.sessionRequests()[0]).toEqual({
+      headers: { "x-recording-playback-session": "resume" },
+      url: `/recordings/s/${sessionId}/session`,
+    });
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    await flushAsync();
+    expect(reloaded.status.textContent).toBe("Ready to play");
+  });
+
+  it("rejects a resumed manifest bound to another session", async () => {
+    const page = createPageHarness([], {
+      fragment: "",
+      historySessionId: "s".repeat(32),
+      responseSessionId: "x".repeat(32),
+    });
+    await flushAsync();
+
+    expect(page.status.textContent).toBe("Recording unavailable");
+    expect(page.replacedUrls()).toEqual([]);
   });
 });
 
@@ -423,16 +533,19 @@ describe("recording playback manifest recovery", () => {
 describe("recording playback media behavior", () => {
   it("bounds unavailable-manifest retries instead of polling forever", async () => {
     vi.useFakeTimers();
-    const page = createPageHarness([], { manifestStatuses: ["unavailable"] });
+    const page = createPageHarness([], {
+      manifestStatuses: ["unavailable"],
+      testConfig: { maximumProcessingAttempts: 3 },
+    });
     await flushAsync();
 
-    await vi.advanceTimersByTimeAsync(23 * 5_000);
+    await vi.advanceTimersByTimeAsync(2 * 5_000);
     await flushAsync();
-    expect(page.sessionRequestCount()).toBe(24);
+    expect(page.sessionRequestCount()).toBe(3);
     expect(page.status.textContent).toBe("Recording unavailable");
 
     await vi.advanceTimersByTimeAsync(5_000);
-    expect(page.sessionRequestCount()).toBe(24);
+    expect(page.sessionRequestCount()).toBe(3);
   });
 
   it("polls a processing recording and exposes it when ready", async () => {
@@ -456,48 +569,63 @@ describe("recording playback media behavior", () => {
     expect(page.player.hidden).toBe(false);
   });
 
-  it("times out a stalled metadata request and exposes the available tracks", async () => {
+  it("retries the complete media set when one metadata request stalls", async () => {
     vi.useFakeTimers();
     const available = new FakeAudio("loaded", 12);
     const stalled = new FakeAudio("stalled", Number.NaN);
+    const recoveredFirst = new FakeAudio("loaded", 12);
+    const recoveredSecond = new FakeAudio("loaded", 10);
     const page = createPageHarness([
       { audio: available, timelineOffsetMs: 0 },
       { audio: stalled, timelineOffsetMs: 250 },
-    ]);
+      { audio: recoveredFirst, timelineOffsetMs: 0 },
+      { audio: recoveredSecond, timelineOffsetMs: 250 },
+    ], { manifestTrackCount: 2 });
 
     await flushAsync();
     expect(page.player.hidden).toBe(true);
     await vi.advanceTimersByTimeAsync(15_000);
     await flushAsync();
 
-    expect(page.player.hidden).toBe(false);
-    expect(page.status.textContent).toBe("Ready to play");
-    expect(page.notice.hidden).toBe(false);
-    expect(page.notice.textContent).toBe("Some tracks are unavailable");
+    expect(page.player.hidden).toBe(true);
+    expect(page.status.textContent).toBe("Checking recording tracks again...");
+    expect(available.removed).toBe(true);
     expect(stalled.removed).toBe(true);
     expect(stalled.src).toBe("");
     expect(stalled.listeners.get("loadedmetadata")?.size ?? 0).toBe(0);
     expect(stalled.listeners.get("error")?.size ?? 0).toBe(0);
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    await flushAsync();
+    expect(page.player.hidden).toBe(false);
+    expect(page.status.textContent).toBe("Ready to play");
+    expect(page.notice.hidden).toBe(true);
   });
 
-  it("retries once when every track metadata request fails", async () => {
+  it("retries media metadata until a later ready manifest succeeds", async () => {
     vi.useFakeTimers();
-    const failed = new FakeAudio("error", Number.NaN);
+    const firstFailed = new FakeAudio("error", Number.NaN);
+    const secondFailed = new FakeAudio("error", Number.NaN);
     const recovered = new FakeAudio("loaded", 12);
     const page = createPageHarness([
-      { audio: failed, timelineOffsetMs: 0 },
+      { audio: firstFailed, timelineOffsetMs: 0 },
+      { audio: secondFailed, timelineOffsetMs: 0 },
       { audio: recovered, timelineOffsetMs: 0 },
     ], { manifestTrackCount: 1 });
 
     await flushAsync();
     expect(page.status.textContent).toBe("Checking recording tracks again...");
     expect(page.player.hidden).toBe(true);
-    expect(page.replacedUrls()).toEqual([]);
-    expect(failed.removed).toBe(true);
+    expect(page.replacedUrls()).toEqual(["/recordings/playback"]);
+    expect(firstFailed.removed).toBe(true);
 
     await vi.advanceTimersByTimeAsync(5_000);
     await flushAsync();
-    expect(page.sessionRequestCount()).toBe(2);
+    expect(page.status.textContent).toBe("Checking recording tracks again...");
+    expect(secondFailed.removed).toBe(true);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await flushAsync();
+    expect(page.sessionRequestCount()).toBe(3);
     expect(page.status.textContent).toBe("Ready to play");
     expect(page.player.hidden).toBe(false);
     expect(page.replacedUrls()).toEqual(["/recordings/playback"]);
@@ -510,7 +638,7 @@ describe("recording playback media behavior", () => {
     const page = createPageHarness([
       { audio: firstStalled, timelineOffsetMs: 0 },
       { audio: secondStalled, timelineOffsetMs: 0 },
-    ], { manifestTrackCount: 1 });
+    ], { manifestTrackCount: 1, testConfig: { maximumMetadataAttempts: 2 } });
 
     await vi.advanceTimersByTimeAsync(15_000);
     await flushAsync();
@@ -526,7 +654,7 @@ describe("recording playback media behavior", () => {
     expect(secondStalled.removed).toBe(true);
   });
 
-  it("removes an errored media element immediately", async () => {
+  it("does not expose a partial player when one media element errors", async () => {
     const available = new FakeAudio("loaded", 12);
     const errored = new FakeAudio("error", Number.NaN);
     const page = createPageHarness([
@@ -535,8 +663,9 @@ describe("recording playback media behavior", () => {
     ]);
     await flushAsync();
 
-    expect(page.player.hidden).toBe(false);
-    expect(page.notice.hidden).toBe(false);
+    expect(page.player.hidden).toBe(true);
+    expect(page.status.textContent).toBe("Checking recording tracks again...");
+    expect(available.removed).toBe(true);
     expect(errored.removed).toBe(true);
     expect(errored.src).toBe("");
   });
@@ -620,6 +749,39 @@ describe("recording playback media behavior", () => {
     page.runAnimationFrame();
 
     expect(page.seek.value).toBe("1");
+  });
+
+  it("drops a track with a permanent media error after metadata", async () => {
+    const healthy = new FakeAudio("loaded", 20);
+    const broken = new FakeAudio("loaded", 20);
+    const page = createPageHarness([
+      { audio: healthy, timelineOffsetMs: 0 },
+      { audio: broken, timelineOffsetMs: 0 },
+    ]);
+    await flushAsync();
+
+    broken.emit("error");
+    expect(broken.removed).toBe(true);
+    expect(page.player.hidden).toBe(false);
+    expect(page.notice.textContent).toBe("Some tracks are unavailable");
+
+    page.toggle.emit("click");
+    await flushAsync();
+    healthy.currentTime = 1;
+    page.advanceClock(1_000);
+    page.runAnimationFrame();
+    expect(page.seek.value).toBe("1");
+  });
+
+  it("makes a sole track terminal after a permanent media error", async () => {
+    const broken = new FakeAudio("loaded", 20);
+    const page = createPageHarness([{ audio: broken, timelineOffsetMs: 0 }]);
+    await flushAsync();
+
+    broken.emit("error");
+    expect(broken.removed).toBe(true);
+    expect(page.status.textContent).toBe("Recording unavailable");
+    expect(page.player.hidden).toBe(true);
   });
 
   it("does not drop a healthy track when pause interrupts a pending play", async () => {

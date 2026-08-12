@@ -27,10 +27,11 @@ import type {
   DiscordProjectionMessageObservation,
   DiscordProjectionObservation,
   ReplayTargetAttestation,
+  S3RecordingEvidence,
 } from "./e2e-retained-evidence-contracts.js";
 import {
   assertExactDatabaseCounts,
-  assertS3MatchesSnapshot,
+  alignS3TracksToSnapshot,
   bindActorRun,
   normalizeDatabase,
   parseUnboundActorRun,
@@ -64,22 +65,19 @@ export async function collectRetainedE2eEvidence(
     throw new Error("Postgres snapshot is not correlated to the requested recording");
   }
   const publication = parseDiscordPublication(
-    snapshot.publication.externalPublicationId,
-    snapshot.publicationTargetId,
+    snapshot.publication.externalPublicationId, snapshot.publicationTargetId,
   );
-  const [s3, locatedBeforeDiscord] = await Promise.all([
+  const [observedS3, locatedBeforeDiscord] = await Promise.all([
     deployment.collectS3(snapshot.recording.manifestLocator, input.recordingId),
-    inspectPublishedProjection(
-      discord,
-      snapshot.meetingId,
-      snapshot.publicationTargetId,
-      publication,
-    ),
+    inspectPublishedProjection(discord, snapshot.meetingId, snapshot.publicationTargetId, publication),
   ]);
-  const { marker, message: beforeMessage, observation: beforeDiscord } =
-    locatedBeforeDiscord;
-  assertS3MatchesSnapshot(s3, snapshot);
+  const { marker, message: beforeMessage, observation: beforeDiscord } = locatedBeforeDiscord;
+  const s3 = alignS3TracksToSnapshot(observedS3, snapshot);
   assertExactDiscordProjection(beforeDiscord, publication, "before replay");
+  const playbackContext = { deployment, input,
+    meetingPlatformContainerId: provenanceBefore.meetingPlatform.containerId,
+    message: beforeMessage, s3 };
+  const recordingPlayback = await collectSafeRecordingPlaybackEvidence(playbackContext);
   const actorRun = bindActorRun(unboundActorRun, input.recordingId, s3);
   const processing = await deployment.collectProcessing(snapshot.meetingId, s3.startedAt);
   const replayJob = await deployment.replayPostCall(replayTarget);
@@ -94,12 +92,14 @@ export async function collectRetainedE2eEvidence(
   }
   const replaySnapshot = after.snapshot;
   const replayPublication = parseDiscordPublication(
-    replaySnapshot.publication.externalPublicationId,
-    replaySnapshot.publicationTargetId,
+    replaySnapshot.publication.externalPublicationId, replaySnapshot.publicationTargetId,
   );
   const afterMessage = assertDiscordReference(afterDiscord, replayPublication);
   if (afterMessage.embedDescription !== beforeMessage.embedDescription) {
     throw new Error("Discord projection visible text changed after idempotent replay");
+  }
+  if (afterMessage.recordingPlaybackUrl !== beforeMessage.recordingPlaybackUrl) {
+    throw new Error("Discord recording playback capability changed after idempotent replay");
   }
   if (!sameDiscordAttachments(afterMessage.attachments, beforeMessage.attachments)) {
     throw new Error("Discord projection attachments changed after idempotent replay");
@@ -141,6 +141,7 @@ export async function collectRetainedE2eEvidence(
       speakerIds: s3.tracks.map(({ speakerId }) => speakerId),
       startedAt: s3.startedAt,
     },
+    recordingPlayback,
     replay: {
       attachments: afterMessage.attachments,
       container: toEvidenceContainer(replayPublication),
@@ -241,6 +242,39 @@ function createReconnectNoRepeatEvidence(
     },
     participantId,
   };
+}
+
+function collectRecordingPlaybackEvidence(
+  input: CollectEvidenceInput,
+  message: DiscordProjectionMessageObservation,
+  s3: S3RecordingEvidence,
+) {
+  return input.recordingPlayback.collect({
+    expectedRecordingId: input.recordingId,
+    expectedTracks: s3.tracks.map(({ checksumSha256, sizeBytes }) => ({
+      checksumSha256,
+      sizeBytes,
+    })),
+    readinessExpectation: input.recordingPlaybackReadiness,
+    recordingPlaybackUrl: message.recordingPlaybackUrl,
+  });
+}
+
+async function collectSafeRecordingPlaybackEvidence(
+  context: {
+    readonly deployment: DeploymentEvidenceProbe;
+    readonly input: CollectEvidenceInput;
+    readonly meetingPlatformContainerId: string;
+    readonly message: DiscordProjectionMessageObservation;
+    readonly s3: S3RecordingEvidence;
+  },
+) {
+  await context.deployment.assertRecordingPlaybackTargetSafe({
+    meetingPlatformContainerId: context.meetingPlatformContainerId,
+    origin: context.input.recordingPlaybackOrigin,
+    scope: context.input.recordingPlaybackTestScope,
+  });
+  return collectRecordingPlaybackEvidence(context.input, context.message, context.s3);
 }
 
 export function bindConversationVoiceRecording(

@@ -4,6 +4,7 @@ import { z } from "zod"; import {
   reconnectNoRepeatEvidenceSchema,
   supplementalPlaybackEvidenceV1Schema,
 } from "./conversation-retained-evidence-schema.js";
+import { recordingPlaybackEvidenceV1Schema } from "./recording-playback-evidence-schema.js";
 const identifierSchema = z.string().trim().min(1); const sha256Schema = z.string().regex(/^[a-f\d]{64}$/u);
 const nonNegativeMillisecondsSchema = z.number().int().nonnegative(); const nonNegativeSafeIntegerSchema = z.number().refine(
   (value) => Number.isSafeInteger(value) && value >= 0,
@@ -388,6 +389,7 @@ export const retainedE2eEvidenceV6Schema = retainedE2eEvidenceV5Schema
     replay: replayEvidenceV3Schema.extend({
       attachments: layeredDiscordAttachmentsSchema,
     }),
+    recordingPlayback: recordingPlaybackEvidenceV1Schema.optional(),
     schemaVersion: z.literal(6),
   });
 export const retainedE2eEvidenceV7Schema = retainedE2eEvidenceV6Schema
@@ -401,8 +403,7 @@ export const retainedE2eEvidenceV7Schema = retainedE2eEvidenceV6Schema
     schemaVersion: z.literal(7),
   });
 export const retainedE2eEvidenceV8Schema = retainedE2eEvidenceV7Schema
-  .omit({ conversation: true, schemaVersion: true })
-  .extend({
+  .omit({ conversation: true, schemaVersion: true }).extend({
     conversation: retainedE2eEvidenceV7Schema.shape.conversation.extend({
       reconnectNoRepeat: reconnectNoRepeatEvidenceSchema.optional(),
       supplementalPlayback: supplementalPlaybackEvidenceV1Schema,
@@ -411,11 +412,10 @@ export const retainedE2eEvidenceV8Schema = retainedE2eEvidenceV7Schema
     schemaVersion: z.literal(8),
   });
 export const retainedReconnectE2eEvidenceV8Schema = retainedE2eEvidenceV8Schema
-  .omit({ conversation: true }).extend({
-    conversation: retainedE2eEvidenceV8Schema.shape.conversation.extend({
-      reconnectNoRepeat: reconnectNoRepeatEvidenceSchema,
-    }),
-  });
+  .omit({ conversation: true, recordingPlayback: true }).extend({
+    conversation: retainedE2eEvidenceV8Schema.shape.conversation
+      .extend({ reconnectNoRepeat: reconnectNoRepeatEvidenceSchema }),
+    recordingPlayback: recordingPlaybackEvidenceV1Schema });
 export const retainedE2eEvidenceSchema = z.union([
   retainedE2eEvidenceV2Schema,
   retainedE2eEvidenceV3Schema,
