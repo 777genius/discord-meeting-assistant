@@ -129,6 +129,7 @@ interface ChildState {
   readonly child: ChildProcess;
   readonly childId: string;
   readonly closed: Promise<void>;
+  readonly completionExpected: boolean;
   readonly exited: Promise<ChildExit>;
   readonly stdoutChunks: Buffer[];
   readonly eventLines: string[];
@@ -226,7 +227,8 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
   async awaitBarrier<Action extends HostedCampaignBarrierAction>(action: Action, bounded: HostedCampaignBoundedSignal) {
     this.#assertChildrenHealthy();
     const artifact = this.#options.artifactStore.awaitAction(action, bounded);
-    const failures = [...this.#children.values()].map(async ({ exited, childId }) => {
+    const failures = [...this.#children.values()].filter(({ completionExpected }) => !completionExpected)
+      .map(async ({ exited, childId }) => {
       const exit = await exited;
       const state = this.#children.get(childId);
       if (state?.failure !== undefined) {
@@ -325,7 +327,8 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
     let reportClosed!: () => void;
     const closed = new Promise<void>((resolve) => { reportClosed = resolve; });
     const state: ChildState = {
-      child, childId: spec.childId, closed, eventIngestion: Promise.resolve(), eventLines: [], exited,
+      child, childId: spec.childId, closed, completionExpected: spec.completion !== undefined,
+      eventIngestion: Promise.resolve(), eventLines: [], exited,
       publishedEvents: new Set(), stderr: 0, stdout: 0, stdoutChunks: [], stdoutRemainder: "", stopping: false,
     };
     this.#children.set(spec.childId, state);
@@ -421,7 +424,8 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
     if (state.failure !== undefined) {throw state.failure;}
   }
   #assertChildrenHealthy(): void {
-    const childFailure = [...this.#children.values()].find(({ failure }) => failure !== undefined)?.failure;
+    const childFailure = [...this.#children.values()]
+      .find(({ completionExpected, failure }) => !completionExpected && failure !== undefined)?.failure;
     if (childFailure !== undefined) {
       throw childFailure;
     }

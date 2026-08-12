@@ -574,6 +574,18 @@ describe("hosted campaign process adapter", () => {
     });
   });
 
+  it("allows a finite exit to publish its completion while the barrier is already waiting", async () => {
+    const { processAdapter } = await adapter(
+      'process.stdout.write(JSON.stringify({failures:[],metrics:[],passed:true}));',
+    );
+    const executable = verifierSpec();
+    const handle = await processAdapter.startChild(executable, bounded());
+    await new Promise((resolve) => {setTimeout(resolve, 20);});
+    const barrier = processAdapter.awaitBarrier(completionAction(executable), bounded());
+    await processAdapter.awaitChildCompletion(handle, executable, bounded());
+    await expect(barrier).resolves.toEqual({ordinal: 1, runId: "run-1", verified: true});
+  });
+
   it("publishes provenance only from an exactly correlated completion", async () => {
     const completion = JSON.stringify({
       campaignId: "campaign-1", digestSha256: "a".repeat(64), phase: "before",
