@@ -232,8 +232,7 @@ function assertEvidenceBindings(
       deploymentScope: target.deploymentScope, environment: target.environment, guildId: target.guildId,
       mutationTarget: target.mutationTarget, publicationChannelId: target.publicationChannelId,
       voiceChannelId: target.voiceChannelId,
-    }) || evidence.clock.raw.target.host !== target.host
-    || evidence.clock.raw.target.environment !== target.environment || evidence.clock.raw.target.project !== target.project) {
+    })) {
     throw new Error("Hosted remote evidence does not match the exact campaign, plan, target, and deployment");
   }
 }
