@@ -27,7 +27,7 @@ export function validateHostedFiniteProcessContract(
         ? [environment.DISCORD_E2E_PLAYBACK_LINK_OUTPUT, environment.DISCORD_E2E_PLAYBACK_LINK_RUN_ID,
           environment.DISCORD_E2E_PLAYBACK_LINK_RECORDING_ID]
         : completion.kind === "recording-ready"
-          ? [environment.DISCORD_E2E_READY_RECEIPT_OUTPUT]
+          ? [environment.DISCORD_E2E_READY_RECEIPT_OUTPUT, environment.DISCORD_E2E_RUN_ID]
           : [environment.DISCORD_E2E_SUPPLEMENTAL_EVIDENCE_OUTPUT, environment.DISCORD_E2E_SUPPLEMENTAL_RUN_ID];
   const declared = completion.kind === "actor"
     ? [completion.outputPath, completion.runId, completion.scenario]

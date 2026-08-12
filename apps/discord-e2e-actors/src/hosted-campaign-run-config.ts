@@ -49,6 +49,20 @@ const actionReferenceSchema = z.object({
 const producedActionSchema = actionReferenceSchema.extend({
   outputPath: z.string().refine(isAbsolute),
 }).strict();
+const environmentBindingSchema = z.object({
+  name: z.enum([
+    "DISCORD_E2E_CONVERSATION_VOICE_MEETING_ID",
+    "DISCORD_E2E_CONVERSATION_VOICE_RECORDING_ID",
+    "DISCORD_E2E_PLAYBACK_LINK_RECORDING_ID",
+    "DISCORD_E2E_RECORDING_ID",
+    "DISCORD_E2E_SLA_MEETING_ID",
+    "DISCORD_E2E_SLA_RECORDING_ID",
+  ]),
+  valueFrom: z.object({
+    actionRef: actionReferenceSchema,
+    field: z.enum(["meetingId", "recordingId"]),
+  }).strict(),
+}).strict();
 const runVerifiedActionSchema = z.object({
   kind: z.literal("run-verified"), ordinal: z.number().int().min(1).max(3), runId: identifier,
 }).strict();
@@ -99,6 +113,7 @@ const executableSchema = z.object({
     "supplemental-player",
   ]),
   environment,
+  environmentBindings: z.array(environmentBindingSchema).max(2).optional(),
   produces: z.array(producedActionSchema),
   requires: z.array(actionReferenceSchema),
   releaseGate: z.object({

@@ -66,6 +66,23 @@ describe("run-hosted-campaign CLI", () => {
     }] }).children[0]?.entrypoint).toBe("recording-ready");
   });
 
+  it("accepts only closed recording-ready environment bindings", () => {
+    const input = plan();
+    const source = { action: { kind: "recording-ready", ordinal: 1, runId: "run-1" }, ordinal: 1, runId: "run-1" };
+    const child = input.children[0]!;
+    const valid = { ...child, environmentBindings: [{
+      name: "DISCORD_E2E_PLAYBACK_LINK_RECORDING_ID",
+      valueFrom: { actionRef: source, field: "recordingId" },
+    }] };
+    expect(parseHostedCampaignPlan({ ...input, children: [valid] }).children[0]?.environmentBindings).toHaveLength(1);
+    expect(() => parseHostedCampaignPlan({ ...input, children: [{ ...child, environmentBindings: [{
+      name: "PATH", valueFrom: { actionRef: source, field: "recordingId" },
+    }] }] })).toThrow();
+    expect(() => parseHostedCampaignPlan({ ...input, children: [{ ...child, environmentBindings: [{
+      name: "DISCORD_E2E_PLAYBACK_LINK_RECORDING_ID", valueFrom: { actionRef: source, field: "nested.value" },
+    }] }] })).toThrow();
+  });
+
   it("accepts a provenance producer bound to one campaign snapshot", () => {
     const input = plan();
     input.children[0] = {

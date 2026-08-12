@@ -88,12 +88,51 @@ export function validateExecutionGraph(input: HostedCampaignInput): void {
         throw new Error(`Hosted campaign child ${child.childId} requirement must precede its start action`);
       }
     }
+    validateEnvironmentBindings(child, expectedIds, order);
   }
   for (const reference of expected) {
     const identity = actionReferenceIdentity(reference);
     if (!producers.has(identity)) {throw new Error(`Hosted campaign action ${identity} has no producer`);}
   }
   assertAcyclic(input, producers);
+}
+
+const BOUND_FIELDS = new Map<string, ReadonlySet<string>>([
+  ["meetingId", new Set([
+    "DISCORD_E2E_CONVERSATION_VOICE_MEETING_ID", "DISCORD_E2E_SLA_MEETING_ID",
+  ])],
+  ["recordingId", new Set([
+    "DISCORD_E2E_CONVERSATION_VOICE_RECORDING_ID", "DISCORD_E2E_PLAYBACK_LINK_RECORDING_ID",
+    "DISCORD_E2E_RECORDING_ID", "DISCORD_E2E_SLA_RECORDING_ID",
+  ])],
+]);
+
+function validateEnvironmentBindings(
+  child: HostedCampaignInput["children"][number],
+  expected: ReadonlySet<string>,
+  order: ReadonlyMap<string, number>,
+): void {
+  const names = new Set<string>();
+  for (const binding of child.environmentBindings ?? []) {
+    const sourceId = assertKnown(binding.valueFrom.actionRef, expected, child.childId);
+    if (binding.valueFrom.actionRef.action.kind !== "recording-ready") {
+      throw new Error(`Hosted campaign child ${child.childId} environment binding source must be recording-ready`);
+    }
+    if (!BOUND_FIELDS.get(binding.valueFrom.field)?.has(binding.name)) {
+      throw new Error(`Hosted campaign child ${child.childId} environment binding field/name pair is not allowed`);
+    }
+    if (names.has(binding.name) || Object.hasOwn(child.environment, binding.name)) {
+      throw new Error(`Hosted campaign child ${child.childId} environment binding collides at ${binding.name}`);
+    }
+    names.add(binding.name);
+    if (child.startBefore.kind === "campaign"
+      || order.get(sourceId)! >= order.get(actionReferenceIdentity(child.startBefore))!) {
+      throw new Error(`Hosted campaign child ${child.childId} environment binding source must precede its start action`);
+    }
+    if (!child.requires.some((required) => actionReferenceIdentity(required) === sourceId)) {
+      throw new Error(`Hosted campaign child ${child.childId} environment binding source must be an explicit requirement`);
+    }
+  }
 }
 
 function assertKnown(reference: HostedCampaignActionReference, expected: ReadonlySet<string>, childId: string): string {

@@ -48,6 +48,20 @@ export type HostedCampaignStartPoint =
 export interface HostedCampaignProducedAction extends HostedCampaignActionReference {
   readonly outputPath: string;
 }
+export type HostedCampaignBoundEnvironmentName =
+  | "DISCORD_E2E_CONVERSATION_VOICE_MEETING_ID"
+  | "DISCORD_E2E_CONVERSATION_VOICE_RECORDING_ID"
+  | "DISCORD_E2E_PLAYBACK_LINK_RECORDING_ID"
+  | "DISCORD_E2E_RECORDING_ID"
+  | "DISCORD_E2E_SLA_MEETING_ID"
+  | "DISCORD_E2E_SLA_RECORDING_ID";
+export interface HostedCampaignEnvironmentBinding {
+  readonly name: HostedCampaignBoundEnvironmentName;
+  readonly valueFrom: {
+    readonly actionRef: HostedCampaignActionReference;
+    readonly field: "meetingId" | "recordingId";
+  };
+}
 export type HostedCampaignCompletionAction =
   | { readonly kind: "actor-completed"; readonly ordinal: number; readonly runId: string }
   | { readonly kind: "conversation-observer-completed"; readonly ordinal: number; readonly runId: string }
@@ -100,6 +114,7 @@ export interface HostedCampaignExecutableSpec {
   readonly completion?: HostedCampaignExecutableCompletion;
   readonly entrypoint: HostedCampaignEntrypoint;
   readonly environment: Readonly<Record<string, string>>;
+  readonly environmentBindings?: readonly HostedCampaignEnvironmentBinding[];
   readonly produces: readonly HostedCampaignProducedAction[];
   readonly requires: readonly HostedCampaignActionReference[];
   readonly startBefore: HostedCampaignStartPoint;
@@ -160,7 +175,9 @@ export type HostedCampaignActionEvidence<Action extends HostedCampaignBarrierAct
                 }
                 : Action extends HostedCampaignCompletionAction ? {
                     readonly completed: true; readonly ordinal: number; readonly runId: string;
-                  }
+                  } & (Action["kind"] extends "recording-ready" ? {
+                    readonly meetingId: string; readonly recordingId: string;
+                  } : Record<never, never>)
                   : { readonly campaignId: string };
 export interface HostedCampaignBoundedSignal {
   readonly deadlineEpochMilliseconds: number; readonly signal: AbortSignal;
@@ -408,6 +425,28 @@ function assertActive(bounded: HostedCampaignBoundedSignal): void {
     throw new Error("Hosted campaign deadline has expired");
   }
 }
+function resolveEnvironmentBindings(
+  executable: HostedCampaignExecutableSpec,
+  retainedEvidence: ReadonlyMap<string, unknown>,
+): HostedCampaignExecutableSpec {
+  if (executable.environmentBindings === undefined || executable.environmentBindings.length === 0) {
+    return executable;
+  }
+  const resolved: Record<string, string> = { ...executable.environment };
+  for (const binding of executable.environmentBindings) {
+    const identity = actionReferenceIdentity(binding.valueFrom.actionRef);
+    const evidence = retainedEvidence.get(identity);
+    if (typeof evidence !== "object" || evidence === null) {
+      throw new Error(`Hosted campaign child ${executable.childId} is missing bound evidence ${identity}`);
+    }
+    const value = (evidence as Record<string, unknown>)[binding.valueFrom.field];
+    if (typeof value !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(value)) {
+      throw new Error(`Hosted campaign child ${executable.childId} bound ${binding.valueFrom.field} is invalid`);
+    }
+    resolved[binding.name] = value;
+  }
+  return Object.freeze({ ...executable, environment: Object.freeze(resolved) });
+}
 export async function runHostedCampaign(
   input: HostedCampaignInput,
   ports: HostedCampaignPorts,
@@ -419,6 +458,7 @@ export async function runHostedCampaign(
   const completionTasks: Promise<void>[] = [];
   const completionFailures: Promise<never>[] = [];
   const evidence: unknown[] = [];
+  const retainedEvidence = new Map<string, unknown>();
   let lease: HostedCampaignLeaseHandle | undefined;
   let failure: unknown;
   try {
@@ -435,14 +475,15 @@ export async function runHostedCampaign(
           throw new Error(`Hosted campaign child would start more than once: ${executable.childId}`);
         }
         assertActive(bounded);
-        const handle = await ports.startChild(executable, bounded);
+        const resolvedExecutable = resolveEnvironmentBindings(executable, retainedEvidence);
+        const handle = await ports.startChild(resolvedExecutable, bounded);
         handles.push(handle);
         if (handle.childId !== executable.childId) {
           throw new Error("Started child handle does not match its executable spec");
         }
         startedChildIds.add(executable.childId);
         if (executable.completion !== undefined) {
-          const completion = ports.awaitChildCompletion(handle, executable, bounded);
+          const completion = ports.awaitChildCompletion(handle, resolvedExecutable, bounded);
           completionTasks.push(completion);
           completionFailures.push(completion.then(
             async () => new Promise<never>(() => {}),
@@ -461,6 +502,7 @@ export async function runHostedCampaign(
         ...completionFailures,
       ]);
       validateActionEvidence(action, actionEvidence, input.thresholds);
+      retainedEvidence.set(actionReferenceIdentity(reference), actionEvidence);
       evidence.push(Object.freeze({ action, evidence: actionEvidence }));
       for (const executable of input.children.filter((child) =>
         child.releaseGate !== undefined

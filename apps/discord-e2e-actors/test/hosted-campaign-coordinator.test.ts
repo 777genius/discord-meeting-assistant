@@ -73,6 +73,9 @@ function evidence<Action extends HostedCampaignBarrierAction>(action: Action): H
             ? { observedAtEpochMilliseconds: 1, participantId: HOSTED_CAMPAIGN_TARGET.speakerBApplicationId }
             : action.kind === "run-verified"
               ? { ordinal: action.ordinal, runId: action.runId, verified: true }
+              : action.kind === "recording-ready"
+                ? { completed: true, meetingId: "recording-1", ordinal: action.ordinal,
+                  recordingId: "recording-1", runId: action.runId }
               : action.kind === "campaign-verified"
                 ? { campaignId: "campaign-1" }
                 : { digestSha256: "a".repeat(64) };
@@ -102,7 +105,81 @@ function ports(events: string[]): HostedCampaignPorts {
 
 const bounded = () => ({ deadlineEpochMilliseconds: Date.now() + 60_000, signal: new AbortController().signal });
 
+// This suite intentionally exercises the complete coordinator lifecycle with one shared graph fixture.
+/* oxlint-disable max-lines-per-function */
 describe("hosted campaign coordinator", () => {
+  it("injects closed recording-ready identity bindings only after validated source evidence", async () => {
+    const base = input();
+    const provenance = campaignActions(base)[0]!;
+    const observerSubscribed = campaignActions(base)[1]!;
+    const readyAction = { kind: "recording-ready" as const, ordinal: 1, runId: "run-1" };
+    const readyReference = { action: readyAction, ordinal: 1, runId: "run-1" };
+    const ready = {
+      arguments: { kind: "environment" as const }, childId: "recording-ready", entrypoint: "recording-ready" as const,
+      environment: { DISCORD_E2E_READY_RECEIPT_OUTPUT: "/evidence/recording-ready.json",
+        DISCORD_E2E_RUN_ID: "run-1" },
+      completion: { action: readyAction, kind: "recording-ready" as const,
+        outputPath: "/evidence/recording-ready.json", runId: "run-1" },
+      produces: [{ ...readyReference, outputPath: "/evidence/recording-ready-completed.json" }],
+      requires: [], startBefore: { ...provenance, kind: "barrier" as const },
+    };
+    const consumer = {
+      ...child("bound-consumer"),
+      environmentBindings: [{ name: "DISCORD_E2E_PLAYBACK_LINK_RECORDING_ID" as const,
+        valueFrom: { actionRef: readyReference, field: "recordingId" as const } }],
+      requires: [readyReference], startBefore: { ...observerSubscribed, kind: "barrier" as const },
+    };
+    const configured = { ...base, children: [...base.children, ready, consumer] };
+    const observed: string[] = [];
+    const fakePorts = ports([]);
+    fakePorts.startChild = async (spec) => {
+      if (spec.childId === "bound-consumer") {
+        observed.push(spec.environment.DISCORD_E2E_PLAYBACK_LINK_RECORDING_ID ?? "missing");
+      }
+      return { childId: spec.childId } as HostedCampaignChildHandle;
+    };
+    await expect(runHostedCampaign(configured, fakePorts, bounded())).resolves.toBeDefined();
+    expect(observed).toEqual(["recording-1"]);
+  });
+
+  it("rejects wrong-source, wrong-field and out-of-order environment bindings", async () => {
+    const base = input();
+    const first = campaignActions(base)[0]!;
+    const second = campaignActions(base)[1]!;
+    const wrongSource = { ...child("wrong-source"), environmentBindings: [{
+      name: "DISCORD_E2E_PLAYBACK_LINK_RECORDING_ID" as const,
+      valueFrom: { actionRef: first, field: "recordingId" as const },
+    }], requires: [first], startBefore: { ...second, kind: "barrier" as const } };
+    await expect(runHostedCampaign({ ...base, children: [...base.children, wrongSource] }, ports([]), bounded()))
+      .rejects.toThrow(/source must be recording-ready/u);
+  });
+
+  it("rejects bound evidence with a missing or non-string identity", async () => {
+    const base = input();
+    const provenance = campaignActions(base)[0]!;
+    const observerSubscribed = campaignActions(base)[1]!;
+    const action = { kind: "recording-ready" as const, ordinal: 1, runId: "run-1" };
+    const source = { action, ordinal: 1, runId: "run-1" };
+    const ready = {
+      arguments: { kind: "environment" as const }, childId: "recording-ready-bad", entrypoint: "recording-ready" as const,
+      environment: { DISCORD_E2E_READY_RECEIPT_OUTPUT: "/evidence/ready-bad.json", DISCORD_E2E_RUN_ID: "run-1" },
+      completion: { action, kind: "recording-ready" as const, outputPath: "/evidence/ready-bad.json", runId: "run-1" },
+      produces: [{ ...source, outputPath: "/evidence/ready-bad-completed.json" }], requires: [],
+      startBefore: { ...provenance, kind: "barrier" as const },
+    };
+    const consumer = { ...child("bad-bound-consumer"), environmentBindings: [{
+      name: "DISCORD_E2E_PLAYBACK_LINK_RECORDING_ID" as const,
+      valueFrom: { actionRef: source, field: "recordingId" as const },
+    }], requires: [source], startBefore: { ...observerSubscribed, kind: "barrier" as const } };
+    const fakePorts = ports([]);
+    const original = fakePorts.awaitBarrier;
+    fakePorts.awaitBarrier = async (barrier, bound) => barrier.kind === "recording-ready"
+      ? { completed: true, meetingId: "recording-1", ordinal: 1, recordingId: 42, runId: "run-1" } as never
+      : original(barrier, bound);
+    await expect(runHostedCampaign({ ...base, children: [...base.children, ready, consumer] }, fakePorts, bounded()))
+      .rejects.toThrow(/identity evidence is invalid|bound recordingId is invalid/u);
+  });
+
   it("releases a finite actor before awaiting its run-scoped completion", async () => {
     const base = input();
     const completionAction = { kind: "actor-completed" as const, ordinal: 1, runId: "run-1" };
