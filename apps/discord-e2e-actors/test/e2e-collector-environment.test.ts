@@ -26,6 +26,7 @@ const requiredEnvironment = {
 const conversationEnvironment = {
   DISCORD_E2E_BOTIK_SPEAKER_ID: "1534231284467896512",
   DISCORD_E2E_CONVERSATION_CAMPAIGN_PROOF_INPUT: "/evidence/campaign-proof.json",
+  DISCORD_E2E_DISCORD_PLAYBACK_LINK_PROOF_INPUT: "/evidence/playback-link-proof.json",
   DISCORD_E2E_CONVERSATION_VOICE_INPUTS: JSON.stringify([
     "/evidence/greeting-ru.json",
     "/evidence/greeting-en.json",
@@ -86,7 +87,7 @@ describe("collectorEnvironmentSchema", () => {
     }).success).toBe(false);
   });
 
-  it("accepts the complete retained V8 conversation input group", () => {
+  it("accepts the complete retained V9 conversation input group", () => {
     const result = collectorEnvironmentSchema.safeParse({
       ...requiredEnvironment,
       ...conversationEnvironment,
@@ -96,7 +97,7 @@ describe("collectorEnvironmentSchema", () => {
     expect(result.success).toBe(true);
   });
 
-  it("rejects every partial retained V8 conversation input group", () => {
+  it("rejects every partial retained V9 conversation input group", () => {
     const entries = Object.entries(conversationEnvironment);
     const partialGroups = entries.map((_, omittedIndex) =>
       Object.fromEntries(entries.filter((_entry, index) => index !== omittedIndex))
@@ -111,7 +112,7 @@ describe("collectorEnvironmentSchema", () => {
     )).toBe(true);
   });
 
-  it("rejects retained V8 conversation input without exact Pipecat revision", () => {
+  it("rejects retained V9 conversation input without exact Pipecat revision", () => {
     expect(collectorEnvironmentSchema.safeParse({
       ...requiredEnvironment,
       ...conversationEnvironment,

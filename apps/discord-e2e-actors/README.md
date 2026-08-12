@@ -248,7 +248,15 @@ provenance plus correlated stage/model latency observations. When
 `DISCORD_E2E_EXPECTED_PIPECAT_SOURCE_REVISION` is set, it also requires and
 captures the profiled Pipecat service. It replays the
 completed BullMQ job, then repeats the Postgres, Discord, and provenance probes.
-The retained v8 conversation group makes that exact Pipecat revision mandatory.
+The retained v9 conversation group makes that exact Pipecat revision mandatory.
+It also requires `DISCORD_E2E_DISCORD_PLAYBACK_LINK_PROOF_INPUT`, an absolute path
+to the exact-marker Live Discord playback-link observer JSON. The collector
+accepts only a current-user-owned regular mode-0600 file, parses the complete
+observer output strictly, and requires its run, recording, playback origin,
+container, message, capability digest, and first-seen poll timestamps to match
+the service-level measurement before it reads a Discord secret or starts any
+deployment/network probe. Do not create or edit this proof manually: retain the
+JSON returned by `observeFirstSeenLiveDiscordPlaybackLink` for the campaign.
 It writes nothing unless correlation, stable provenance, and the single-run
 verifier pass:
 
@@ -279,6 +287,7 @@ speaker ID and the JSON array of those six files:
 
 ```sh
 DISCORD_E2E_BOTIK_SPEAKER_ID=1534231284467896512 \
+DISCORD_E2E_DISCORD_PLAYBACK_LINK_PROOF_INPUT=/absolute/evidence/playback-link-proof.json \
 DISCORD_E2E_CONVERSATION_VOICE_INPUTS='["/absolute/evidence/greeting-observer.json","/absolute/evidence/greeting-ru.json","/absolute/evidence/greeting-en.json","/absolute/evidence/greeting-speaker-d.json","/absolute/evidence/addressed-answer.json","/absolute/evidence/farewell.json"]' \
 DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_INPUT=/absolute/evidence/speaker-d.playback.json \
 DISCORD_E2E_EVIDENCE_OUTPUT=/absolute/evidence/reconnect.evidence.v8.json \

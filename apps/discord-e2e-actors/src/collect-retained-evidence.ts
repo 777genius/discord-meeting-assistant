@@ -8,6 +8,10 @@ import {
 } from "./e2e-collector.js";
 import { collectorEnvironmentSchema } from "./e2e-collector-environment.js";
 import {
+  readPrivateLiveDiscordPlaybackLinkProof,
+  serviceLevelSourcesFromLiveProof,
+} from "./e2e-collector-service-level-input.js";
+import {
   conversationVoiceCampaignProofV1Schema,
   conversationVoiceEvidenceV3Schema,
   deploymentRevisionExpectationSchema,
@@ -27,7 +31,7 @@ import { EvidenceProbeInterruptedError } from "./ssh-deployment-probe-commands.j
 
 async function main(): Promise<void> {
   const config = collectorEnvironmentSchema.parse(process.env);
-  const [actorRun, manifest, conversationVoice, supplementalPlayback, campaignProof, serviceLevels, serviceLevelThresholds] = await Promise.all([
+  const [actorRun, manifest, conversationVoice, supplementalPlayback, campaignProof, serviceLevels, serviceLevelThresholds, playbackLinkProof] = await Promise.all([
     readJson(config.DISCORD_E2E_ACTOR_RUN_INPUT),
     readJson(config.DISCORD_E2E_FIXTURE_MANIFEST).then((value) =>
       fixtureManifestV1Schema.parse(value)
@@ -39,7 +43,17 @@ async function main(): Promise<void> {
     readCampaignProof(config.DISCORD_E2E_CONVERSATION_CAMPAIGN_PROOF_INPUT),
     readOptionalJson(config.DISCORD_E2E_SERVICE_LEVELS_INPUT, e2eServiceLevelsV1Schema),
     readOptionalJson(config.DISCORD_E2E_SERVICE_LEVEL_THRESHOLDS_INPUT, serviceLevelThresholdsSchema),
+    config.DISCORD_E2E_DISCORD_PLAYBACK_LINK_PROOF_INPUT === undefined
+      ? undefined
+      : readPrivateLiveDiscordPlaybackLinkProof(config.DISCORD_E2E_DISCORD_PLAYBACK_LINK_PROOF_INPUT),
   ]);
+  const serviceLevelSources = playbackLinkProof === undefined || serviceLevels === undefined
+    ? undefined
+    : serviceLevelSourcesFromLiveProof(playbackLinkProof, serviceLevels, {
+        playbackOrigin: config.DISCORD_E2E_RECORDING_PLAYBACK_ORIGIN,
+        recordingId: config.DISCORD_E2E_RECORDING_ID,
+        runId: config.DISCORD_E2E_RUN_ID,
+      });
   const deployment = new SshDeploymentEvidenceProbe({
     attestationFile: config.DISCORD_E2E_REMOTE_ATTESTATION_FILE,
     composeFile: config.DISCORD_E2E_REMOTE_COMPOSE_FILE,
@@ -67,6 +81,7 @@ async function main(): Promise<void> {
         campaignProof: requireDefined(campaignProof, "conversation campaign proof"),
         reconnectParticipantId: reconnectParticipantId(manifest),
         serviceLevels: requireDefined(serviceLevels, "service-level evidence"),
+        serviceLevelSources: requireDefined(serviceLevelSources, "service-level source evidence"),
         supplementalPlayback: requireDefined(
           supplementalPlayback,
           "supplemental playback evidence",

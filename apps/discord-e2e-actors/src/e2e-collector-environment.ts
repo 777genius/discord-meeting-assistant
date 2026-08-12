@@ -13,6 +13,7 @@ export const collectorEnvironmentSchema = z.object({
   DISCORD_E2E_ACTOR_RUN_INPUT: absolutePath,
   DISCORD_E2E_BOTIK_SPEAKER_ID: correlationId.optional(),
   DISCORD_E2E_CONVERSATION_CAMPAIGN_PROOF_INPUT: absolutePath.optional(),
+  DISCORD_E2E_DISCORD_PLAYBACK_LINK_PROOF_INPUT: absolutePath.optional(),
   DISCORD_E2E_CONVERSATION_VOICE_INPUTS: z.string().transform((value, context) => {
     try {
       return z.array(absolutePath).min(6).parse(JSON.parse(value) as unknown);
@@ -57,6 +58,7 @@ export const collectorEnvironmentSchema = z.object({
   const conversationInputs = [
     value.DISCORD_E2E_BOTIK_SPEAKER_ID,
     value.DISCORD_E2E_CONVERSATION_CAMPAIGN_PROOF_INPUT,
+    value.DISCORD_E2E_DISCORD_PLAYBACK_LINK_PROOF_INPUT,
     value.DISCORD_E2E_CONVERSATION_VOICE_INPUTS,
     value.DISCORD_E2E_SERVICE_LEVELS_INPUT,
     value.DISCORD_E2E_SERVICE_LEVEL_THRESHOLDS_INPUT,

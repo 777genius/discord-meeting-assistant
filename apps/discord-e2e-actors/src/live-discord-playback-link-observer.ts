@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 
+import { z } from "zod";
+
 import type {
   LiveDiscordMessageInput,
   LiveDiscordProjectionContainerInput,
@@ -29,25 +31,58 @@ export interface ObserveLiveDiscordPlaybackLinkInput {
   readonly container: NormalizedLiveDiscordProjection["container"];
 }
 
-export interface LiveDiscordPlaybackLinkProof {
-  readonly schemaVersion: 1;
-  readonly runId: string;
-  readonly recordingId: string;
-  readonly projectionMarker: string;
-  readonly sutApplicationId: string;
-  readonly resultChannelId: string;
-  readonly messageId: string;
-  readonly container: NormalizedLiveDiscordProjection["container"];
-  readonly observerArmedAt: LiveDiscordPollTiming;
-  readonly firstSeenPollStartedAt: LiveDiscordPollTiming;
-  readonly firstSeenPollCompletedAt: LiveDiscordPollTiming;
-  readonly pollIntervalMs: number;
-  readonly link: {
-    readonly origin: string;
-    readonly pathname: string;
-    readonly capabilitySha256: string;
-  };
-}
+const identifierSchema = z.string().trim().min(1);
+const safeNonnegativeIntegerSchema = z.number().refine(
+  (value) => Number.isSafeInteger(value) && value >= 0,
+  "Expected a nonnegative safe integer",
+);
+const pollTimingSchema = z.object({
+  epochMilliseconds: safeNonnegativeIntegerSchema,
+  monotonicMilliseconds: safeNonnegativeIntegerSchema,
+}).strict();
+const projectionContainerSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("channel-message"), parentChannelId: identifierSchema }).strict(),
+  z.object({
+    id: identifierSchema,
+    kind: z.literal("thread"),
+    name: identifierSchema,
+    parentId: identifierSchema,
+  }).strict(),
+]);
+
+export const liveDiscordPlaybackLinkProofSchema = z.object({
+  container: projectionContainerSchema,
+  firstSeenPollCompletedAt: pollTimingSchema,
+  firstSeenPollStartedAt: pollTimingSchema,
+  link: z.object({
+    capabilitySha256: z.string().regex(/^[a-f\d]{64}$/u),
+    origin: z.url().refine((value) => {
+      const url = new URL(value);
+      return url.protocol === "https:" && url.origin === value;
+    }, "Expected an exact HTTPS origin"),
+    pathname: z.literal("/recordings/playback"),
+  }).strict(),
+  messageId: identifierSchema,
+  observerArmedAt: pollTimingSchema,
+  pollIntervalMs: safeNonnegativeIntegerSchema.refine((value) => value > 0),
+  projectionMarker: identifierSchema,
+  recordingId: identifierSchema,
+  resultChannelId: identifierSchema,
+  runId: identifierSchema,
+  schemaVersion: z.literal(1),
+  sutApplicationId: identifierSchema,
+}).strict().superRefine((proof, context) => {
+  if (
+    proof.firstSeenPollStartedAt.epochMilliseconds < proof.observerArmedAt.epochMilliseconds ||
+    proof.firstSeenPollStartedAt.monotonicMilliseconds < proof.observerArmedAt.monotonicMilliseconds ||
+    proof.firstSeenPollCompletedAt.epochMilliseconds < proof.firstSeenPollStartedAt.epochMilliseconds ||
+    proof.firstSeenPollCompletedAt.monotonicMilliseconds < proof.firstSeenPollStartedAt.monotonicMilliseconds
+  ) {
+    context.addIssue({ code: "custom", message: "Live Discord proof timing moved backwards" });
+  }
+});
+
+export type LiveDiscordPlaybackLinkProof = z.infer<typeof liveDiscordPlaybackLinkProofSchema>;
 
 const projectionMarkerUrlBase = "https://meeting-platform.invalid/projection/";
 const markdownLinkPattern = /\[[^\]]*\]\((https:\/\/[^\s)]+)\)/gu;
