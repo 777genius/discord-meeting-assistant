@@ -13,7 +13,6 @@ import {
   manifest,
   overlapEvidence,
   reconnectEvidence,
-  reidentify,
   retainedV4Evidence,
   retainedV5Evidence,
   retainedV6Evidence,
@@ -22,7 +21,6 @@ import {
   sequentialEvidence,
   speakerAId,
   speakerBId,
-  verifyE2eCampaign,
   verifyRetainedE2eEvidence,
 } from "./e2e-evidence-fixtures.js";
 
@@ -741,62 +739,4 @@ describe("verifyRetainedE2eEvidence sequential and campaign bounds", () => {
     expect(codes).toContain("DEPLOYMENT_STARTED_AFTER_RECORDING");
   });
 
-  it("requires all scenarios and isolated identities across the campaign", () => {
-    const runs = [
-      reidentify(sequentialEvidence(), "sequential"),
-      reidentify(overlapEvidence(), "overlap"),
-      reidentify(reconnectEvidence(), "reconnect"),
-    ];
-
-    expect(verifyE2eCampaign(manifest(), runs).passed).toBe(true);
-
-    runs[2]!.publication.threadId = runs[1]!.publication.threadId;
-    runs[2]!.replay.threadId = runs[1]!.replay.threadId;
-    const failed = verifyE2eCampaign(manifest(), runs);
-    expect(failed.failures.map(({ code }) => code)).toContain("CAMPAIGN_STATE_LEAK");
-  });
-
-  it("requires identical immutable deployment provenance across campaign runs", () => {
-    const runs = [
-      reidentify(sequentialEvidence(), "sequential"),
-      reidentify(overlapEvidence(), "overlap"),
-      reidentify(reconnectEvidence(), "reconnect"),
-    ];
-    runs[2]!.deployment.meetingPlatform.imageId = `sha256:${"c".repeat(64)}`;
-
-    const codes = verifyE2eCampaign(manifest(), runs).failures.map(({ code }) => code);
-
-    expect(codes).toContain("CAMPAIGN_DEPLOYMENT_CHANGED");
-  });
-
-  it("rejects a consistent campaign retained from an older release candidate", () => {
-    const runs = [
-      reidentify(sequentialEvidence(), "sequential"),
-      reidentify(overlapEvidence(), "overlap"),
-      reidentify(reconnectEvidence(), "reconnect"),
-    ];
-    for (const run of runs) {
-      run.deployment.meetingPlatform.sourceRevision = "d".repeat(40);
-    }
-
-    const failed = verifyE2eCampaign(manifest(), runs);
-    const runFailureCodes = Object.values(failed.runResults)
-      .flatMap(({ failures }) => failures.map(({ code }) => code));
-    expect(runFailureCodes).toContain("DEPLOYMENT_SOURCE_REVISION_MISMATCH");
-  });
-
-  it("allows a v3 direct-message campaign to share its results channel but not a message", () => {
-    const runs = [
-      directMessageEvidence(reidentify(sequentialEvidence(), "direct-sequential")),
-      directMessageEvidence(reidentify(overlapEvidence(), "direct-overlap")),
-      directMessageEvidence(reidentify(reconnectEvidence(), "direct-reconnect")),
-    ];
-
-    expect(verifyE2eCampaign(manifest(), runs).passed).toBe(true);
-
-    runs[2]!.publication.messageId = runs[1]!.publication.messageId;
-    runs[2]!.replay.messageId = runs[1]!.replay.messageId;
-    expect(verifyE2eCampaign(manifest(), runs).failures.map(({ code }) => code))
-      .toContain("CAMPAIGN_STATE_LEAK");
-  });
 });

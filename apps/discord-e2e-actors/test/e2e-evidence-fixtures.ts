@@ -7,10 +7,10 @@ import {
   retainedE2eEvidenceV6Schema,
   retainedE2eEvidenceV7Schema,
   retainedE2eEvidenceV8Schema,
-  verifyE2eCampaign as verifyE2eCampaignAgainstExpectedRevision,
   verifyRetainedE2eEvidence as verifyRetainedE2eEvidenceAgainstExpectedRevision,
   type DeploymentRevisionExpectation,
   type FixtureManifestV1,
+  type RetainedE2eEvidence,
   type RetainedE2eEvidenceV2,
   type RetainedE2eEvidenceV3,
   type RetainedE2eEvidenceV4,
@@ -44,13 +44,6 @@ export function verifyRetainedE2eEvidence(
     expectedRevisions,
   );
 }
-export function verifyE2eCampaign(
-  fixtureManifest: FixtureManifestV1,
-  runs: readonly (RetainedE2eEvidenceV2 | RetainedE2eEvidenceV3)[],
-) {
-  return verifyE2eCampaignAgainstExpectedRevision(fixtureManifest, runs, expectedRevisions);
-}
-
 export function manifest(): FixtureManifestV1 {
   return fixtureManifestV1Schema.parse({
     allowedBotSpeakerIds: ["1534231284467896512", speakerDId],
@@ -437,10 +430,7 @@ export function reconnectEvidence(): RetainedE2eEvidenceV2 {
   return evidence;
 }
 
-export function reidentify(
-  source: RetainedE2eEvidenceV2,
-  suffix: string,
-): RetainedE2eEvidenceV2 {
+export function reidentify<T extends RetainedE2eEvidence>(source: T, suffix: string): T {
   const evidence = structuredClone(source);
   evidence.actorRun.runId = `run-${suffix}`;
   evidence.actorRun.recordingId = `meeting-${suffix}`;
@@ -450,20 +440,43 @@ export function reidentify(
   evidence.transcript.transcriptId = `transcript-${suffix}`;
   evidence.summary.summaryId = `summary-${suffix}`;
   evidence.summary.transcriptId = `transcript-${suffix}`;
-  evidence.publication.threadId = `thread-${suffix}`;
   evidence.publication.messageId = `message-${suffix}`;
+  if ("threadId" in evidence.publication) {
+    evidence.publication.threadId = `thread-${suffix}`;
+  } else if (evidence.publication.container.kind === "thread") {
+    evidence.publication.container.threadId = `thread-${suffix}`;
+  }
   evidence.replay.meetingId = `meeting-${suffix}`;
   evidence.replay.recordingId = `meeting-${suffix}`;
   evidence.replay.transcriptId = `transcript-${suffix}`;
   evidence.replay.summaryId = `summary-${suffix}`;
-  evidence.replay.threadId = `thread-${suffix}`;
   evidence.replay.messageId = `message-${suffix}`;
   evidence.replay.replayJob.jobId = `job-${suffix}`;
+  if ("threadId" in evidence.replay) {
+    evidence.replay.threadId = `thread-${suffix}`;
+  } else if (evidence.replay.container.kind === "thread") {
+    evidence.replay.container.threadId = `thread-${suffix}`;
+  }
+  if ("conversation" in evidence) {
+    evidence.conversation.voice = evidence.conversation.voice.map((observation) => ({
+      ...observation,
+      correlation: { ...observation.correlation, recordingId: `meeting-${suffix}` },
+      runId: `run-${suffix}`,
+    }));
+    if ("supplementalPlayback" in evidence.conversation) {
+      evidence.conversation.supplementalPlayback = {
+        ...evidence.conversation.supplementalPlayback,
+        runId: `run-${suffix}`,
+      };
+    }
+  }
   return evidence;
 }
 
-export function retainedV4Evidence(): RetainedE2eEvidenceV4 {
-  const source = directMessageEvidence(overlapEvidence());
+export function retainedV4Evidence(
+  baseEvidence: RetainedE2eEvidenceV2 = overlapEvidence(),
+): RetainedE2eEvidenceV4 {
+  const source = directMessageEvidence(baseEvidence);
   return retainedE2eEvidenceV4Schema.parse({
     ...source,
     deployment: {
@@ -501,8 +514,10 @@ export function retainedV4Evidence(): RetainedE2eEvidenceV4 {
   });
 }
 
-export function retainedV5Evidence(): RetainedE2eEvidenceV5 {
-  const source = retainedV4Evidence();
+export function retainedV5Evidence(
+  baseEvidence: RetainedE2eEvidenceV2 = overlapEvidence(),
+): RetainedE2eEvidenceV5 {
+  const source = retainedV4Evidence(baseEvidence);
   return retainedE2eEvidenceV5Schema.parse({
     ...source,
     deployment: {
@@ -519,8 +534,10 @@ export function retainedV5Evidence(): RetainedE2eEvidenceV5 {
   });
 }
 
-export function retainedV6Evidence(): RetainedE2eEvidenceV6 {
-  const source = retainedV5Evidence();
+export function retainedV6Evidence(
+  baseEvidence: RetainedE2eEvidenceV2 = overlapEvidence(),
+): RetainedE2eEvidenceV6 {
+  const source = retainedV5Evidence(baseEvidence);
   const attachments = [
     { filename: "meeting-summary.md", sizeBytes: 2_048 },
     { filename: "meeting-transcript.md", sizeBytes: 4_096 },

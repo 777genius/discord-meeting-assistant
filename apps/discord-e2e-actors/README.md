@@ -313,13 +313,18 @@ timestamps, missing overlap, invalid summary evidence, broken reconnect ordering
 changed replay identities, or any duplicate business effect.
 
 Finally verify the full campaign. At least one passing run for each scenario is
-required and meeting, recording, transcript, summary, thread, and message IDs
-must all be isolated between runs:
+required, including one retained v8 reconnect run for the lifecycle proof.
+Ordinary sequential and overlap collection remains v6; schema versions may
+differ while immutable deployment provenance must match exactly. Set the
+expected Pipecat revision for all three collections so the v6 runs retain the
+same four-component provenance as v8. Meeting,
+recording, transcript, summary, thread, and message IDs must all be isolated
+between runs:
 
 ```sh
 pnpm --filter @discord-meeting/discord-e2e-actors run verify:campaign -- \
   test/fixtures/manifest.v1.json \
   /absolute/evidence/sequential.evidence.v6.json \
   /absolute/evidence/overlap.evidence.v6.json \
-  /absolute/evidence/reconnect.evidence.v6.json
+  /absolute/evidence/reconnect.evidence.v8.json
 ```
