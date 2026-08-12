@@ -2,6 +2,16 @@ import { spawn } from "node:child_process";
 
 import type { SshDeploymentProbeSettings } from "./ssh-deployment-probe-validation.js";
 
+export class EvidenceProbeInterruptedError extends Error {
+  public readonly exitCode: number;
+
+  public constructor(public readonly signal: NodeJS.Signals) {
+    super(`evidence probe interrupted by ${signal}`);
+    this.name = "EvidenceProbeInterruptedError";
+    this.exitCode = signal === "SIGINT" ? 130 : 143;
+  }
+}
+
 export async function runDockerComposeProbe(
   options: SshDeploymentProbeSettings,
   service: "meeting-platform" | "postgres",
@@ -85,8 +95,8 @@ function runProcess(
     let terminationError: Error | undefined;
     let killTimer: ReturnType<typeof setTimeout> | undefined;
     let hardStopTimer: ReturnType<typeof setTimeout> | undefined;
-    const stopForSignal = (): void => {
-      terminate(new Error("evidence probe interrupted"));
+    const stopForSignal = (signal: NodeJS.Signals): void => {
+      terminate(new EvidenceProbeInterruptedError(signal));
     };
     const finish = (settle: () => void): void => {
       if (settled) {

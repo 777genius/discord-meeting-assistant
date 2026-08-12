@@ -613,4 +613,21 @@ describe("collectRetainedE2eEvidence failure handling", () => {
       discord,
     )).rejects.toThrow("correlation");
   });
+
+  it("rejects an actor file from another fixture set before replay safety reads", async () => {
+    let safetyReads = 0;
+    const deployment = {
+      assertReplayTargetSafe: async () => {
+        safetyReads += 1;
+      },
+    } as unknown as DeploymentEvidenceProbe;
+    const discord = {} as DiscordEvidenceProbe;
+
+    await expect(collectRetainedE2eEvidence(
+      { actorRun: actorRun(), fixtureSetId: "other-fixture", recordingId: "recording-1", runId: "run-1" },
+      deployment,
+      discord,
+    )).rejects.toThrow("fixture set");
+    expect(safetyReads).toBe(0);
+  });
 });

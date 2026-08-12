@@ -114,7 +114,7 @@ export function parseSshDeploymentProbeOptions(
     mutationTarget: z.literal("test-only").parse(options.mutationTarget),
     projectName: z.literal("discord-meeting-assistant").parse(options.projectName),
     sourceRoot: absolutePath.parse(options.sourceRoot),
-    timeoutMs: options.timeoutMs ?? 330_000,
+    timeoutMs: z.number().int().positive().parse(options.timeoutMs ?? 330_000),
   };
 }
 

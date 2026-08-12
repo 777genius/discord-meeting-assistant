@@ -60,6 +60,20 @@ const defaultCommands: SshDeploymentProbeCommands = {
   runRemote: runRemoteProbe,
 };
 
+const attestationFileGuard = [
+  "set -eu",
+  "directory=${1%/*}",
+  'test -d "$directory"',
+  'test ! -L "$directory"',
+  'test -f "$1"',
+  'test ! -L "$1"',
+  '[ "$(stat -c %u -- "$directory")" = "$(id -u)" ]',
+  '[ "$(stat -c %a -- "$directory")" = 700 ]',
+  '[ "$(stat -c %u -- "$1")" = "$(id -u)" ]',
+  '[ "$(stat -c %a -- "$1")" = 600 ]',
+  '[ "$(stat -c %s -- "$1")" -le 4096 ]',
+] as const;
+
 export class SshDeploymentEvidenceProbe implements DeploymentEvidenceProbe {
   readonly #commands: SshDeploymentProbeCommands;
   readonly #options: SshDeploymentProbeSettings;
@@ -272,20 +286,7 @@ export class SshDeploymentEvidenceProbe implements DeploymentEvidenceProbe {
       this.#commands.runRemote(this.#options, [
         "sh",
         "-c",
-        [
-          "set -eu",
-          'directory=${1%/*}',
-          'test -d "$directory"',
-          'test ! -L "$directory"',
-          'test -f "$1"',
-          'test ! -L "$1"',
-          '[ "$(stat -c %u -- "$directory")" = "$(id -u)" ]',
-          '[ "$(stat -c %a -- "$directory")" = 700 ]',
-          '[ "$(stat -c %u -- "$1")" = "$(id -u)" ]',
-          '[ "$(stat -c %a -- "$1")" = 600 ]',
-          '[ "$(stat -c %s -- "$1")" -le 4096 ]',
-          'cat -- "$1"',
-        ].join("; "),
+        [...attestationFileGuard, 'cat -- "$1"'].join("; "),
         "discord-e2e-attestation",
         this.#options.attestationFile,
       ]),
@@ -304,17 +305,7 @@ export class SshDeploymentEvidenceProbe implements DeploymentEvidenceProbe {
       "sh",
       "-c",
       [
-        "set -eu",
-        'directory=${1%/*}',
-        'test -d "$directory"',
-        'test ! -L "$directory"',
-        'test -f "$1"',
-        'test ! -L "$1"',
-        '[ "$(stat -c %u -- "$directory")" = "$(id -u)" ]',
-        '[ "$(stat -c %a -- "$directory")" = 700 ]',
-        '[ "$(stat -c %u -- "$1")" = "$(id -u)" ]',
-        '[ "$(stat -c %a -- "$1")" = 600 ]',
-        '[ "$(stat -c %s -- "$1")" -le 4096 ]',
+        ...attestationFileGuard,
         'actual=$(sha256sum -- "$1")',
         'actual=${actual%% *}',
         '[ "$actual" = "$2" ]',

@@ -37,11 +37,11 @@ const pipecatEnvironment = {
 };
 
 describe("collectorEnvironmentSchema", () => {
-  it("rejects collector defaults without explicit mutation target coordinates", () => {
+  it.each(Object.keys(requiredEnvironment).filter((name) =>
+    name.startsWith("DISCORD_E2E_REMOTE_") || name === "DISCORD_E2E_MUTATION_TARGET"
+  ))("rejects an omitted explicit target coordinate %s", (name) => {
     const unsafeDefaults = Object.fromEntries(
-      Object.entries(requiredEnvironment).filter(([name]) =>
-        !name.startsWith("DISCORD_E2E_REMOTE_") && name !== "DISCORD_E2E_MUTATION_TARGET"
-      ),
+      Object.entries(requiredEnvironment).filter(([entryName]) => entryName !== name),
     );
 
     expect(collectorEnvironmentSchema.safeParse(unsafeDefaults).success).toBe(false);

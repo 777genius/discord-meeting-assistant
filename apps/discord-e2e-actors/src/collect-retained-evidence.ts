@@ -17,6 +17,7 @@ import {
 } from "./e2e-evidence.js";
 import { FileSecretReader, MacOsKeychainSecretReader } from "./keychain.js";
 import { SshDeploymentEvidenceProbe } from "./ssh-deployment-probe.js";
+import { EvidenceProbeInterruptedError } from "./ssh-deployment-probe-commands.js";
 
 async function main(): Promise<void> {
   const config = collectorEnvironmentSchema.parse(process.env);
@@ -127,5 +128,5 @@ async function atomicWriteJson(path: string, value: unknown): Promise<void> {
 void main().catch((error: unknown) => {
   const message = error instanceof Error ? error.message : "Unknown E2E collector failure";
   process.stderr.write(`Discord E2E evidence collection failed: ${message}\n`);
-  process.exitCode = 1;
+  process.exitCode = error instanceof EvidenceProbeInterruptedError ? error.exitCode : 1;
 });
