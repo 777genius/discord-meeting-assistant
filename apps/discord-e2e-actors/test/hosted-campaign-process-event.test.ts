@@ -6,6 +6,7 @@ import {
   serializeHostedCampaignProcessEvent,
 } from "../src/hosted-campaign-process-event.js";
 import {
+  publishAnswerFirstPacket,
   publishAnswerIntent,
   publishCaptureRetained,
   publishObserverSubscribed,
@@ -114,15 +115,39 @@ describe("hosted campaign process event", () => {
       playbackAttemptId: "attempt-1", protocolVersion: 1, runId,
       turnId: "turn-1", type: "playback-intent",
     }, "2026-08-12T17:00:00.000Z", write);
+    publishAnswerFirstPacket(config, {
+      capturePlan: "addressed-answer", kind: "answer", meetingId: "meeting-1",
+      playbackAttemptId: "attempt-1", protocolVersion: 1, runId,
+      turnId: "turn-1", type: "playback-intent",
+    }, "2026-08-12T17:00:00.000Z", Date.parse("2026-08-12T17:00:00.505Z"), write);
     publishCaptureRetained(config, 5, "/tmp/capture-5.json", write);
 
     const parsed = lines.map((line) => hostedCampaignProcessEventV1Schema.parse(JSON.parse(
       line.slice(hostedCampaignProcessEventPrefix.length),
     )));
     expect(parsed.map(({ event }) => event.action.kind)).toEqual([
-      "observer-subscribed", "answer-intent", "capture-retained",
+      "observer-subscribed", "answer-intent", "answer-first-packet", "capture-retained",
     ]);
+    expect(parsed[2]?.event.evidence).toEqual({
+      answerLatencyMilliseconds: 505,
+      observedAtEpochMilliseconds: Date.parse("2026-08-12T17:00:00.505Z"),
+      turnId: "turn-1",
+    });
     expect(parsed.every((event) => event.runId === runId)).toBe(true);
+  });
+
+  it("rejects an answer first packet that predates its exact intent", () => {
+    expect(() => publishAnswerFirstPacket(
+      { additionalCaptures: [{}], hostedCampaignId: campaignId, runId },
+      {
+        capturePlan: "addressed-answer", kind: "answer", meetingId: "meeting-1",
+        playbackAttemptId: "attempt-1", protocolVersion: 1, runId,
+        turnId: "turn-1", type: "playback-intent",
+      },
+      "2026-08-12T17:00:01.000Z",
+      Date.parse("2026-08-12T17:00:00.999Z"),
+      () => {},
+    )).toThrow(/predates/u);
   });
 
   it("does not publish hosted barriers outside the exact six-capture campaign", () => {

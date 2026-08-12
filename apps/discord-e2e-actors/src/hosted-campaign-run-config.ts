@@ -31,6 +31,7 @@ const barrierActionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("answer-intent") }).strict(),
   z.object({ kind: z.literal("answer-observer-ready") }).strict(),
   z.object({ kind: z.literal("answer-first-packet") }).strict(),
+  z.object({ kind: z.literal("service-levels-ready") }).strict(),
   z.object({ kind: z.literal("run-verified"), ordinal: z.number().int().safe().positive(), runId: identifier }).strict(),
   z.object({ kind: z.literal("provenance-after") }).strict(),
   z.object({ kind: z.literal("campaign-verified") }).strict(),
@@ -47,6 +48,12 @@ const runVerifiedActionSchema = z.object({
   kind: z.literal("run-verified"), ordinal: z.number().int().min(1).max(3), runId: identifier,
 }).strict();
 const completionSchema = z.discriminatedUnion("kind", [
+  z.object({
+    action: z.object({ kind: z.literal("service-levels-ready") }).strict(),
+    campaignId: identifier, kind: z.literal("service-levels"), meetingId: identifier,
+    outputPath: z.string().refine(isAbsolute), recordingId: identifier,
+    reportPath: z.string().refine(isAbsolute), runId: identifier,
+  }).strict(),
   z.object({
     action: z.discriminatedUnion("kind", [
       z.object({ kind: z.literal("provenance-before") }).strict(),
@@ -71,7 +78,8 @@ const executableSchema = z.object({
   completion: completionSchema.optional(),
   entrypoint: z.enum([
     "actor", "campaign-verifier", "collector", "conversation-observer", "evidence-verifier",
-    "live-observer", "playback-link-observer", "provenance-probe", "recording-ready", "supplemental-player",
+    "live-observer", "playback-link-observer", "provenance-probe", "recording-ready", "service-levels",
+    "supplemental-player",
   ]),
   environment,
   produces: z.array(producedActionSchema),

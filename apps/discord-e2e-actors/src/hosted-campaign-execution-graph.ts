@@ -22,6 +22,7 @@ export function campaignActions(input: HostedCampaignInput): readonly HostedCamp
     scoped(reconnect!, { kind: "answer-first-packet" }),
     scoped(reconnect!, { kind: "capture-retained", ordinal: 5 }),
     scoped(reconnect!, { kind: "capture-retained", ordinal: 6 }),
+    scoped(reconnect!, { kind: "service-levels-ready" }),
     scoped(reconnect!, { kind: "run-verified", ordinal: 3, runId: reconnect!.runId }),
     scoped(reconnect!, { kind: "provenance-after" }),
     scoped(reconnect!, { kind: "campaign-verified" }),

@@ -37,7 +37,7 @@ import {
 import { publishConversationVoiceReadyProof } from "./conversation-voice-ready-proof.js";
 import { FileSecretReader, MacOsKeychainSecretReader } from "./keychain.js";
 import {
-  publishAnswerIntent, publishAnswerObserverReady,
+  publishAnswerFirstPacket, publishAnswerIntent, publishAnswerObserverReady,
   publishCaptureRetained, publishObserverSubscribed,
 } from "./hosted-campaign-process-event-publisher.js";
 import { publishConversationObserverCompletion } from
@@ -197,6 +197,11 @@ async function capturePlannedConversationVoice(input: {
         }, decoder),
         firstPacketTimeoutMilliseconds: config.readyTimeoutMilliseconds,
         isPacketAudible: (packet) => decoder.isPacketAudible(packet),
+        ...(playbackIntent === undefined ? {} : {
+          onFirstPacket: (timing: { readonly epochMilliseconds: number }) => {
+            publishAnswerFirstPacket(config, playbackIntent, intentObservedAt, timing.epochMilliseconds);
+          },
+        }),
         ...(playbackIntent === undefined
           ? {}
           : {

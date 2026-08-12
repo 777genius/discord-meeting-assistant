@@ -159,7 +159,7 @@ export class HostedCampaignSandboxAdapter implements HostedCampaignPorts {
   #targetChild(action: HostedCampaignBarrierAction): string {
     if (action.kind === "observer-subscribed" || action.kind.startsWith("provenance")
       || action.kind === "campaign-verified" || action.kind === "answer-observer-ready"
-      || action.kind === "answer-first-packet") {
+      || action.kind === "answer-first-packet" || action.kind === "service-levels-ready") {
       return "observer";
     }
     if (action.kind === "run-verified") {
@@ -206,6 +206,12 @@ export class HostedCampaignSandboxAdapter implements HostedCampaignPorts {
         answerLatencyMilliseconds: 1,
         observedAtEpochMilliseconds: this.#commandOrdinal,
         turnId: "sandbox-turn",
+      };
+    }
+    if (action.kind === "service-levels-ready") {
+      return {
+        measurementCount: 3, outputPath: join(this.#options.rootPath, "service-levels.json"),
+        recordingId: "sandbox-recording", runId: "run-reconnect",
       };
     }
     if (action.kind === "campaign-verified") {

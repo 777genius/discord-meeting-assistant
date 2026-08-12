@@ -48,12 +48,19 @@ const answerObserverReadySchema = z.object({
   action: z.object({ kind: z.literal("answer-observer-ready") }).strict(),
   evidence: turnEvidenceSchema,
 }).strict();
+const answerFirstPacketSchema = z.object({
+  action: z.object({ kind: z.literal("answer-first-packet") }).strict(),
+  evidence: turnEvidenceSchema.extend({
+    answerLatencyMilliseconds: z.number().int().safe().nonnegative(),
+  }).strict(),
+}).strict();
 
 export const hostedCampaignProcessEventV1Schema = z.object({
   campaignId: identifierSchema,
   event: z.union([
     observerSubscribedSchema, captureRetainedSchema, reconnectLeftSchema,
     reconnectReadySchema, answerIntentSchema, answerObserverReadySchema,
+    answerFirstPacketSchema,
   ]),
   kind: z.literal("hosted-campaign-barrier"),
   runId: identifierSchema,

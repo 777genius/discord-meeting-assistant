@@ -56,6 +56,29 @@ export function publishAnswerObserverReady(
   }, write);
 }
 
+export function publishAnswerFirstPacket(
+  config: HostedCampaignEventContext,
+  intent: ConversationAnswerPlaybackIntent | undefined,
+  intentObservedAt: string | undefined,
+  firstPacketAtEpochMilliseconds: number,
+  write: EventWriter = stdoutWriter,
+): void {
+  if (config.additionalCaptures.length === 0 || intent === undefined || intentObservedAt === undefined) {return;}
+  const intentObservedAtEpochMilliseconds = Date.parse(intentObservedAt);
+  const answerLatencyMilliseconds = firstPacketAtEpochMilliseconds - intentObservedAtEpochMilliseconds;
+  if (!Number.isSafeInteger(answerLatencyMilliseconds) || answerLatencyMilliseconds < 0) {
+    throw new Error("Addressed answer first packet predates its exact playback intent");
+  }
+  writeHostedEvent(requiredCampaignId(config.hostedCampaignId), config.runId, {
+    action: { kind: "answer-first-packet" },
+    evidence: {
+      answerLatencyMilliseconds,
+      observedAtEpochMilliseconds: firstPacketAtEpochMilliseconds,
+      turnId: intent.turnId,
+    },
+  }, write);
+}
+
 export function publishCaptureRetained(
   config: HostedCampaignEventContext,
   ordinal: number,

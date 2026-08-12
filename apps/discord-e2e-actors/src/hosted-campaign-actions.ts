@@ -24,6 +24,7 @@ export function campaignActions(input: HostedCampaignInput): readonly HostedCamp
     { kind: "answer-first-packet" },
     { kind: "capture-retained", ordinal: 5 },
     { kind: "capture-retained", ordinal: 6 },
+    { kind: "service-levels-ready" },
     { kind: "run-verified", ordinal: reconnect!.ordinal, runId: reconnect!.runId },
     { kind: "provenance-after" },
     { kind: "campaign-verified" },
@@ -76,6 +77,12 @@ export function validateActionEvidence(
       || (latency as number) > thresholds.answerFirstPacketMilliseconds) {
       throw new Error(`Answer first-packet SLA failed: ${String(latency)}ms`);
     }
+  }
+  if (action.kind === "service-levels-ready" && (value.measurementCount !== 3
+    || typeof value.outputPath !== "string" || !value.outputPath.startsWith("/")
+    || typeof value.recordingId !== "string" || value.recordingId.length === 0
+    || typeof value.runId !== "string" || value.runId.length === 0)) {
+    throw new Error("Hosted service-level evidence is invalid");
   }
   if (action.kind === "run-verified" && (value.verified !== true
     || value.ordinal !== action.ordinal || value.runId !== action.runId)) {

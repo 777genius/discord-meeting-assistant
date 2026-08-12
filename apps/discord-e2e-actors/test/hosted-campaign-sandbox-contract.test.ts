@@ -120,7 +120,7 @@ describe("hosted campaign sandbox process contract", () => {
       "run-verified:1:run-sequential", "run-verified:2:run-overlap",
       "capture-retained:1", "capture-retained:2", "capture-retained:3", "capture-retained:4",
       "reconnect-left", "reconnect-ready", "answer-intent", "answer-observer-ready",
-      "answer-first-packet", "capture-retained:5", "capture-retained:6",
+      "answer-first-packet", "capture-retained:5", "capture-retained:6", "service-levels-ready",
       "run-verified:3:run-reconnect", "provenance-after", "campaign-verified",
     ]);
     expect(context.adapter.stoppedChildren.toSorted()).toEqual(["observer", "speaker-a", "speaker-b"]);

@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { HostedCampaignArtifactStore } from "../src/hosted-campaign-artifact-store.js";
 import { HOSTED_CAMPAIGN_TARGET, type HostedCampaignExecutableSpec } from "../src/hosted-campaign-coordinator.js";
 import { HostedCampaignProcessAdapter } from "../src/hosted-campaign-process-adapter.js";
+import { serviceLevelsProof } from "./e2e-service-level-fixtures.js";
 import {
   hostedCampaignProcessEventPrefix,
   serializeHostedCampaignProcessEvent,
@@ -40,6 +41,9 @@ async function finiteAdapter(entrypoint: string, source: string) {
   const store = new HostedCampaignArtifactStore(join(root, "artifacts"), "campaign-1");
   await store.initialize();
   return new HostedCampaignProcessAdapter({ artifactStore: store, distRoot: root, terminationGraceMilliseconds: 50 });
+}
+async function serviceLevelsAdapter(source: string) {
+  return finiteAdapter("collect-hosted-service-levels.js", source);
 }
 const bounded = () => ({ deadlineEpochMilliseconds: Date.now() + 1_000, signal: new AbortController().signal });
 const spec = (
@@ -127,6 +131,29 @@ const provenanceSpec = (phase: "after" | "before"): HostedCampaignExecutableSpec
     runId: phase === "before" ? "run-1" : "run-3",
   },
 });
+function serviceLevelsSpec(outputPath: string, reportPath: string): HostedCampaignExecutableSpec {
+  return {
+    arguments: { kind: "environment" }, childId: "service-levels",
+    completion: {
+      action: { kind: "service-levels-ready" }, campaignId: "campaign-1", kind: "service-levels",
+      meetingId: "meeting-1", outputPath, recordingId: "meeting-1", reportPath, runId: "run-overlap-1",
+    },
+    entrypoint: "service-levels",
+    environment: {
+      DISCORD_E2E_SLA_CAMPAIGN_ID: "campaign-1", DISCORD_E2E_SLA_MEETING_ID: "meeting-1",
+      DISCORD_E2E_SLA_OUTPUT: outputPath, DISCORD_E2E_SLA_RECORDING_ID: "meeting-1",
+      DISCORD_E2E_SLA_REPORT_OUTPUT: reportPath, DISCORD_E2E_SLA_RUN_ID: "run-overlap-1",
+    },
+    produces: [{
+      action: { kind: "service-levels-ready" }, ordinal: 3,
+      outputPath, runId: "run-overlap-1",
+    }],
+    requires: [],
+    startBefore: {
+      action: { kind: "service-levels-ready" }, kind: "barrier", ordinal: 3, runId: "run-overlap-1",
+    },
+  };
+}
 
 describe("hosted campaign process adapter", () => {
   it("ingests exact prefixed fragmented events while allowing ordinary stdout", async () => {
@@ -189,6 +216,37 @@ describe("hosted campaign process adapter", () => {
     const handle = await processAdapter.startChild(executable, bounded());
     await expect(processAdapter.awaitChildCompletion(handle, executable, bounded()))
       .resolves.toBeUndefined();
+  });
+
+  it("publishes service-level readiness only from an exactly correlated finite completion", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hosted-service-level-completion-"));
+    const outputPath = join(root, "service-levels.json");
+    const reportPath = join(root, "report.json");
+    await writeFile(outputPath, JSON.stringify(serviceLevelsProof()), { mode: 0o600 });
+    await writeFile(reportPath, JSON.stringify({
+      measurementCount: 3, outputCreated: true, runId: "run-overlap-1",
+      schemaVersion: 1, status: "ready",
+    }), { mode: 0o600 });
+    const completion = JSON.stringify({
+      campaignId: "campaign-1", kind: "hosted-service-levels-completion", measurementCount: 3,
+      meetingId: "meeting-1", outputPath, recordingId: "meeting-1", reportPath,
+      runId: "run-overlap-1", status: "ready",
+    });
+    const processAdapter = await serviceLevelsAdapter(`process.stdout.write(${JSON.stringify(completion)});`);
+    const executable = serviceLevelsSpec(outputPath, reportPath);
+    const handle = await processAdapter.startChild(executable, bounded());
+    await expect(processAdapter.awaitChildCompletion(handle, executable, bounded())).resolves.toBeUndefined();
+    await expect(processAdapter.awaitBarrier({ kind: "service-levels-ready" }, bounded())).resolves.toEqual({
+      measurementCount: 3, outputPath, recordingId: "meeting-1", runId: "run-overlap-1",
+    });
+  });
+
+  it("does not publish service-level readiness for a blocked producer", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hosted-service-level-blocked-"));
+    const executable = serviceLevelsSpec(join(root, "missing.json"), join(root, "report.json"));
+    const processAdapter = await serviceLevelsAdapter("process.exit(1);");
+    const handle = await processAdapter.startChild(executable, bounded());
+    await expect(processAdapter.awaitChildCompletion(handle, executable, bounded())).rejects.toThrow(/failed/u);
   });
 
   it("uses a fresh allowlisted environment and rejects dangerous inheritance", async () => {

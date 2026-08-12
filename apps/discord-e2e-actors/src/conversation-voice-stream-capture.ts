@@ -17,6 +17,7 @@ export function captureConversationVoiceFromOpenStream(input: {
   readonly controller: ConversationVoiceCaptureController;
   readonly firstPacketTimeoutMilliseconds: number;
   readonly isPacketAudible?: (packet: Uint8Array) => boolean;
+  readonly onFirstPacket?: (timing: ConversationVoiceCaptureTimestamp) => void;
   readonly publishReady?: () => Promise<void>;
   readonly stream: Readable;
 }): Promise<ConversationVoiceCaptureSummary> {
@@ -96,6 +97,9 @@ export function captureConversationVoiceFromOpenStream(input: {
           sequence: sequence + 1,
           timing,
         });
+        if (sequence === 0 && result.kind === "accepted") {
+          input.onFirstPacket?.(timing);
+        }
         sequence += 1;
         if (result.kind === "accepted" && result.captureComplete) {
           succeed(input.controller.complete(input.clock.now()));

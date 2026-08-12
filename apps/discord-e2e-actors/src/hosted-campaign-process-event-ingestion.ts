@@ -45,6 +45,8 @@ function publishProcessEvent(
       hostedCampaignProcessEventV1Schema.shape.event.options[4].parse(event).evidence);
     case "answer-observer-ready": return store.publishAction(event.action,
       hostedCampaignProcessEventV1Schema.shape.event.options[5].parse(event).evidence);
+    case "answer-first-packet": return store.publishAction(event.action,
+      hostedCampaignProcessEventV1Schema.shape.event.options[6].parse(event).evidence);
     default: return Promise.reject(new Error("Unsupported hosted campaign process event"));
   }
 }

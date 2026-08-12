@@ -141,7 +141,9 @@ async function materializeInputs(options: MaterializeOptions = {}) {
     ...paths.voice.map((path, index) => writePrivate(path, evidence.conversation.voice[index])),
   ]);
   const config: CollectHostedServiceLevelsConfig = {
-    outputPath: paths.output, reportPath: paths.report, runId: evidence.actorRun.runId,
+    campaignId: "campaign-1", meetingId: "meeting-1",
+    outputPath: paths.output, recordingId: "meeting-1",
+    reportPath: paths.report, runId: evidence.actorRun.runId,
     sources: {
       campaignProof: paths.campaign,
       ...(options.clockPath === false ? {} : { clockAttestations: paths.clock }),

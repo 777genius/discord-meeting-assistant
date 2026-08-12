@@ -28,7 +28,10 @@ const privateInputPathsSchema = z.object({
 }).strict();
 
 export const collectHostedServiceLevelsConfigSchema = z.object({
+  campaignId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u),
+  meetingId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u),
   outputPath: absolutePath,
+  recordingId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u),
   reportPath: absolutePath,
   runId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u),
   sources: privateInputPathsSchema,
@@ -41,14 +44,17 @@ export type CollectHostedServiceLevelsConfig = z.infer<
 >;
 
 const environmentSchema = z.object({
+  DISCORD_E2E_SLA_CAMPAIGN_ID: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u),
   DISCORD_E2E_SLA_CAMPAIGN_PROOF_INPUT: absolutePath,
   DISCORD_E2E_SLA_CLOCK_ATTESTATIONS_INPUT: absolutePath.optional(),
   DISCORD_E2E_SLA_DATABASE_INPUT: absolutePath,
   DISCORD_E2E_SLA_FIXTURE_MANIFEST_INPUT: absolutePath,
   DISCORD_E2E_SLA_MEETING_PLATFORM_LOG_INPUT: absolutePath,
+  DISCORD_E2E_SLA_MEETING_ID: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u),
   DISCORD_E2E_SLA_OUTPUT: absolutePath,
   DISCORD_E2E_SLA_PLAYBACK_LINK_PROOF_INPUT: absolutePath,
   DISCORD_E2E_SLA_READY_RECEIPT_INPUT: absolutePath,
+  DISCORD_E2E_SLA_RECORDING_ID: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u),
   DISCORD_E2E_SLA_REPORT_OUTPUT: absolutePath,
   DISCORD_E2E_SLA_RUN_ID: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u),
   DISCORD_E2E_SLA_S3_INPUT: absolutePath,
@@ -88,7 +94,10 @@ export function loadCollectHostedServiceLevelsConfig(
 ): CollectHostedServiceLevelsConfig {
   const value = environmentSchema.parse(environment);
   return collectHostedServiceLevelsConfigSchema.parse({
+    campaignId: value.DISCORD_E2E_SLA_CAMPAIGN_ID,
+    meetingId: value.DISCORD_E2E_SLA_MEETING_ID,
     outputPath: value.DISCORD_E2E_SLA_OUTPUT,
+    recordingId: value.DISCORD_E2E_SLA_RECORDING_ID,
     reportPath: value.DISCORD_E2E_SLA_REPORT_OUTPUT,
     runId: value.DISCORD_E2E_SLA_RUN_ID,
     sources: {
@@ -110,7 +119,7 @@ export function loadCollectHostedServiceLevelsConfig(
 
 export async function collectHostedServiceLevels(
   configInput: CollectHostedServiceLevelsConfig,
-): Promise<void> {
+): Promise<Awaited<ReturnType<typeof deriveHostedServiceLevels>>> {
   const config = collectHostedServiceLevelsConfigSchema.parse(configInput);
   await assertMissing(config.outputPath, "Service-level output");
   await assertMissing(config.reportPath, "Service-level report");
@@ -118,6 +127,7 @@ export async function collectHostedServiceLevels(
   try {
     const sources = await readSourceInputs(config);
     serviceLevels = await deriveHostedServiceLevels(sources);
+    assertServiceLevelIdentity(serviceLevels, config);
   } catch (error) {
     const failure = failureDetails(error);
     await writeCreateOnlyPrivateJson(config.reportPath, hostedServiceLevelsReportV1Schema.parse({
@@ -141,6 +151,31 @@ export async function collectHostedServiceLevels(
     schemaVersion: 1,
     status: "ready",
   }));
+  return serviceLevels;
+}
+
+function assertServiceLevelIdentity(
+  serviceLevels: Awaited<ReturnType<typeof deriveHostedServiceLevels>>,
+  config: CollectHostedServiceLevelsConfig,
+): void {
+  for (const measurement of serviceLevels.measurements) {
+    if (measurement.start.source.runId !== config.runId || measurement.end.source.runId !== config.runId
+      || measurement.start.source.meetingId !== config.meetingId
+      || measurement.end.source.meetingId !== config.meetingId) {
+      throw new HostedServiceLevelDerivationError(
+        "SOURCE_IDENTITY_MISMATCH", "Derived service levels do not match the declared run and meeting",
+      );
+    }
+    const recordingIds = [
+      "recordingId" in measurement.start.source ? measurement.start.source.recordingId : undefined,
+      "recordingId" in measurement.end.source ? measurement.end.source.recordingId : undefined,
+    ].filter((value): value is string => value !== undefined);
+    if (recordingIds.some((recordingId) => recordingId !== config.recordingId)) {
+      throw new HostedServiceLevelDerivationError(
+        "SOURCE_IDENTITY_MISMATCH", "Derived service levels do not match the declared recording",
+      );
+    }
+  }
 }
 
 export async function collectHostedServiceLevelClockBindingRequest(
@@ -314,7 +349,19 @@ function isErrno(error: unknown, code: string): boolean {
 }
 
 async function main(): Promise<void> {
-  await collectHostedServiceLevels(loadCollectHostedServiceLevelsConfig(process.env));
+  const config = loadCollectHostedServiceLevelsConfig(process.env);
+  const serviceLevels = await collectHostedServiceLevels(config);
+  process.stdout.write(`${JSON.stringify({
+    campaignId: config.campaignId,
+    kind: "hosted-service-levels-completion",
+    measurementCount: serviceLevels.measurements.length,
+    meetingId: config.meetingId,
+    outputPath: config.outputPath,
+    recordingId: config.recordingId,
+    reportPath: config.reportPath,
+    runId: config.runId,
+    status: "ready",
+  })}\n`);
 }
 
 const invokedAsEntrypoint = process.argv[1]?.endsWith("collect-hosted-service-levels.js") === true;

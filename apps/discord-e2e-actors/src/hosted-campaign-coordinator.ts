@@ -34,6 +34,7 @@ export type HostedCampaignEntrypoint =
   | "playback-link-observer"
   | "provenance-probe"
   | "recording-ready"
+  | "service-levels"
   | "supplemental-player"
   | "evidence-verifier";
 export interface HostedCampaignActionReference {
@@ -53,6 +54,16 @@ export type HostedCampaignExecutableArguments =
   | { readonly evidencePaths: readonly [string, string, string]; readonly kind: "campaign-verifier"; readonly manifestPath: string; readonly thresholdsPath?: string };
 export type HostedCampaignExecutableCompletion =
   | HostedFiniteProcessCompletion
+  | {
+      readonly action: Extract<HostedCampaignBarrierAction, { readonly kind: "service-levels-ready" }>;
+      readonly campaignId: string;
+      readonly kind: "service-levels";
+      readonly meetingId: string;
+      readonly outputPath: string;
+      readonly recordingId: string;
+      readonly reportPath: string;
+      readonly runId: string;
+    }
   | {
       readonly action: Extract<HostedCampaignBarrierAction, { readonly kind: "provenance-before" | "provenance-after" }>;
       readonly campaignId: string;
@@ -112,6 +123,7 @@ export type HostedCampaignBarrierAction =
   | { readonly kind: "answer-intent" }
   | { readonly kind: "answer-observer-ready" }
   | { readonly kind: "answer-first-packet" }
+  | { readonly kind: "service-levels-ready" }
   | { readonly kind: "run-verified"; readonly ordinal: number; readonly runId: string }
   | { readonly kind: "provenance-after" }
   | { readonly kind: "campaign-verified" };
@@ -129,6 +141,12 @@ export type HostedCampaignActionEvidence<Action extends HostedCampaignBarrierAct
           : Action["kind"] extends "answer-first-packet" ? TurnEvidence & {
               readonly answerLatencyMilliseconds: number;
             }
+            : Action["kind"] extends "service-levels-ready" ? {
+                readonly measurementCount: 3;
+                readonly outputPath: string;
+                readonly recordingId: string;
+                readonly runId: string;
+              }
             : Action["kind"] extends "answer-intent" | "answer-observer-ready" ? TurnEvidence
               : Action["kind"] extends "run-verified" ? {
                   readonly ordinal: number; readonly runId: string; readonly verified: true;
@@ -308,9 +326,32 @@ function validateCompletion(
   if (completion.kind === "provenance-probe") {
     validateProvenanceCompletion(child, completion, input, campaignId);
   }
+  if (completion.kind === "service-levels") {
+    validateServiceLevelsCompletion(child, completion, campaignId);
+  }
   if (completion.kind === "campaign-verifier" && (completion.campaignId !== campaignId
     || JSON.stringify(completion.runIds) !== JSON.stringify(input.runs.map(({ runId }) => runId)))) {
     throw new Error(`Hosted campaign verifier ${child.childId} completion is not bound to the campaign runs`);
+  }
+}
+function validateServiceLevelsCompletion(
+  child: HostedCampaignExecutableSpec,
+  completion: Extract<HostedCampaignExecutableCompletion, { readonly kind: "service-levels" }>,
+  campaignId: string | undefined,
+): void {
+  const environment = child.environment;
+  const invalid = completion.action.kind !== "service-levels-ready"
+    || completion.campaignId !== campaignId
+    || child.startBefore.kind !== "barrier"
+    || child.startBefore.runId !== completion.runId
+    || environment.DISCORD_E2E_SLA_CAMPAIGN_ID !== completion.campaignId
+    || environment.DISCORD_E2E_SLA_MEETING_ID !== completion.meetingId
+    || environment.DISCORD_E2E_SLA_OUTPUT !== completion.outputPath
+    || environment.DISCORD_E2E_SLA_RECORDING_ID !== completion.recordingId
+    || environment.DISCORD_E2E_SLA_REPORT_OUTPUT !== completion.reportPath
+    || environment.DISCORD_E2E_SLA_RUN_ID !== completion.runId;
+  if (invalid) {
+    throw new Error(`Hosted campaign service-level producer ${child.childId} completion is not bound to the campaign`);
   }
 }
 function validateProvenanceCompletion(

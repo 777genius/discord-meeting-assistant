@@ -63,6 +63,8 @@ function evidence<Action extends HostedCampaignBarrierAction>(action: Action): H
     ? { ordinal: action.ordinal, outputPath: `/evidence/${action.ordinal}.json`, retained: true }
     : action.kind === "answer-first-packet"
       ? { answerLatencyMilliseconds: 4_000, observedAtEpochMilliseconds: 2, turnId: "turn-1" }
+      : action.kind === "service-levels-ready"
+        ? { measurementCount: 3, outputPath: "/evidence/service-levels.json", recordingId: "meeting-1", runId: "run-3" }
       : action.kind === "answer-intent" || action.kind === "answer-observer-ready"
         ? { observedAtEpochMilliseconds: 1, turnId: "turn-1" }
         : action.kind === "observer-subscribed"
@@ -113,6 +115,9 @@ describe("hosted campaign coordinator", () => {
     ]);
     expect(references.filter(({ action }) => action.kind === "reconnect-ready")).toEqual([
       { action: { kind: "reconnect-ready" }, ordinal: 3, runId: "run-3" },
+    ]);
+    expect(references.filter(({ action }) => action.kind === "service-levels-ready")).toEqual([
+      { action: { kind: "service-levels-ready" }, ordinal: 3, runId: "run-3" },
     ]);
   });
 
@@ -179,6 +184,7 @@ describe("hosted campaign coordinator", () => {
       "barrier:answer-first-packet",
       "barrier:capture-retained",
       "barrier:capture-retained",
+      "barrier:service-levels-ready",
       "barrier:run-verified",
       "barrier:provenance-after",
       "barrier:campaign-verified",
@@ -204,6 +210,7 @@ describe("hosted campaign coordinator", () => {
       { kind: "answer-first-packet" },
       { kind: "capture-retained", ordinal: 5 },
       { kind: "capture-retained", ordinal: 6 },
+      { kind: "service-levels-ready" },
       { kind: "run-verified", ordinal: 3, runId: "run-3" },
       { kind: "provenance-after" },
       { kind: "campaign-verified" },

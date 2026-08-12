@@ -21,6 +21,7 @@ import { ingestHostedCampaignProcessEventLine } from
 import { expectedHostedCampaignEventCorrelation } from
   "./hosted-campaign-process-event-correlation.js";
 import { hostedCampaignProvenanceCompletionV1Schema } from "./hosted-campaign-provenance.js";
+import { verifyHostedServiceLevelCompletion } from "./hosted-service-level-completion.js";
 
 const ENTRYPOINTS: Readonly<Record<HostedCampaignEntrypoint, string>> = Object.freeze({
   actor: "main.js",
@@ -32,6 +33,7 @@ const ENTRYPOINTS: Readonly<Record<HostedCampaignEntrypoint, string>> = Object.f
   "playback-link-observer": "observe-live-discord-playback-link.js",
   "provenance-probe": "collect-hosted-campaign-provenance.js",
   "recording-ready": "collect-recording-ready-receipt.js",
+  "service-levels": "collect-hosted-service-levels.js",
   "supplemental-player": "play-supplemental-voice.js",
 });
 
@@ -75,6 +77,14 @@ const ALLOWED_ENVIRONMENT = new Set([
   "DISCORD_E2E_REMOTE_CRAIG_PROJECT", "DISCORD_E2E_REMOTE_CRAIG_SERVICE", "DISCORD_E2E_REMOTE_ENV_FILE",
   "DISCORD_E2E_REMOTE_HOST", "DISCORD_E2E_REMOTE_PROJECT", "DISCORD_E2E_REMOTE_SOURCE_ROOT", "DISCORD_E2E_RUN_ID",
   "DISCORD_E2E_SCENARIO", "DISCORD_E2E_SECRET_DIRECTORY", "DISCORD_E2E_SERVICE_LEVELS_INPUT",
+  "DISCORD_E2E_SLA_CAMPAIGN_ID", "DISCORD_E2E_SLA_CAMPAIGN_PROOF_INPUT",
+  "DISCORD_E2E_SLA_CLOCK_ATTESTATIONS_INPUT", "DISCORD_E2E_SLA_DATABASE_INPUT",
+  "DISCORD_E2E_SLA_FIXTURE_MANIFEST_INPUT", "DISCORD_E2E_SLA_MEETING_ID",
+  "DISCORD_E2E_SLA_MEETING_PLATFORM_LOG_INPUT", "DISCORD_E2E_SLA_OUTPUT",
+  "DISCORD_E2E_SLA_PLAYBACK_LINK_PROOF_INPUT", "DISCORD_E2E_SLA_READY_RECEIPT_INPUT",
+  "DISCORD_E2E_SLA_RECORDING_ID", "DISCORD_E2E_SLA_REPORT_OUTPUT", "DISCORD_E2E_SLA_RUN_ID",
+  "DISCORD_E2E_SLA_S3_INPUT", "DISCORD_E2E_SLA_SUPPLEMENTAL_PLAYBACK_INPUT",
+  "DISCORD_E2E_SLA_VOICE_INPUTS",
   "DISCORD_E2E_SERVICE_LEVEL_THRESHOLDS_INPUT", "DISCORD_E2E_SPEAKER_A_ACCOUNT", "DISCORD_E2E_SPEAKER_A_FIXTURE",
   "DISCORD_E2E_SPEAKER_B_ACCOUNT", "DISCORD_E2E_SPEAKER_B_CONNECT_DELAY_MS", "DISCORD_E2E_SPEAKER_B_DELAY_MS",
   "DISCORD_E2E_SPEAKER_B_FIXTURE", "DISCORD_E2E_SUPPLEMENTAL_EVIDENCE_OUTPUT", "DISCORD_E2E_SUPPLEMENTAL_KEYCHAIN_ACCOUNT",
@@ -208,6 +218,14 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
       }
       await this.#options.artifactStore.publishAction(completion.action, {
         ordinal: completion.action.ordinal, runId: completion.action.runId, verified: true,
+      });
+      return;
+    }
+    if (completion.kind === "service-levels") {
+      await verifyHostedServiceLevelCompletion(output, completion);
+      await this.#options.artifactStore.publishAction(completion.action, {
+        measurementCount: 3, outputPath: completion.outputPath,
+        recordingId: completion.recordingId, runId: completion.runId,
       });
       return;
     }
