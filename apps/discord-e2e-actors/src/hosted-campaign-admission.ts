@@ -13,17 +13,21 @@ import {
   hostedCampaignRuntimeBindingsV1Schema,
 } from "./hosted-campaign-plan-builder.js";
 import { parseHostedCampaignPlan } from "./hosted-campaign-run-config.js";
+import {
+  evaluateHostedRemoteAdmission,
+  type HostedCampaignRemoteAdmissionProbe,
+  type HostedRemoteReadinessSection,
+  hostedRemoteReadinessV1Schema,
+  type HostedRemoteReadinessV1,
+  verifyHostedRemoteReadinessV1,
+} from "./hosted-campaign-remote-admission.js";
 import { FileSecretReader } from "./keychain.js";
 import { loadVerifiedSupplementalVoiceManifest } from "./supplemental-voice-playback-config.js";
 
 const sha256Schema = z.string().regex(/^[a-f\d]{64}$/u);
 const remoteCapabilitySchema = z.enum([
-  "clock-preflight",
-  "conversation-greeting-readiness",
-  "craig-test-identity",
-  "remote-test-isolation",
-  "revision-qualified-containers",
-  "voicetext-semantic-canary",
+  "clock-preflight", "conversation-greeting-readiness", "craig-test-identity",
+  "remote-test-isolation", "revision-qualified-containers", "voicetext-semantic-canary",
 ]);
 const baseRemoteEvidenceSchema = z.object({
     capability: remoteCapabilitySchema,
@@ -47,7 +51,6 @@ const remoteEvidenceSchema = z.object({
   schemaVersion: z.literal(1),
 }).strict();
 
-const requiredRemoteCapabilities = remoteCapabilitySchema.options;
 const secretAccounts = ["sut", "speaker-a", "speaker-b", "conversation-observer", "speaker-d"] as const;
 const maximumInputBytes = 16 * 1024 * 1024;
 
@@ -60,7 +63,7 @@ export type HostedCampaignAdmissionReceiptV1 = Readonly<{
   generatedAt: string;
   kind: "hosted-campaign-admission";
   minimumFreeBytes: number;
-  missingCapabilities: readonly z.infer<typeof remoteCapabilitySchema>[];
+  missingCapabilities: readonly HostedRemoteReadinessSection[];
   planSha256: string;
   receiptSha256: string;
   remoteEvidence: readonly Readonly<{
@@ -73,6 +76,7 @@ export type HostedCampaignAdmissionReceiptV1 = Readonly<{
     path: string;
     sha256: string;
   }>[];
+  remoteReadiness?: HostedRemoteReadinessV1 | undefined;
   revisions: Readonly<Record<"craig" | "meetingPlatform" | "pipecat" | "subscriptionRuntime", string>>;
   schemaVersion: 1;
   secretAccountsValidated: typeof secretAccounts;
@@ -84,6 +88,7 @@ export interface HostedCampaignAdmissionRequest {
   readonly definition: unknown;
   readonly minimumFreeBytes: number;
   readonly plan: unknown;
+  readonly remoteAdmissionProbe?: HostedCampaignRemoteAdmissionProbe;
   readonly remoteEvidence?: unknown;
 }
 
@@ -122,10 +127,7 @@ export async function inspectHostedCampaignAdmission(
   }
   const expectedSpeakerPaths = manifest.fixtures.slice(0, 2).map(({ audioPath }) =>
     resolve(dirname(definition.fixtureManifestPath), audioPath));
-  if (resolve(definition.speakerFixtures.a) !== expectedSpeakerPaths[0]
-    || resolve(definition.speakerFixtures.b) !== expectedSpeakerPaths[1]) {
-    throw new Error("Hosted speaker fixture paths do not match the pinned fixture manifest");
-  }
+  assertSpeakerFixturePaths(definition.speakerFixtures, expectedSpeakerPaths);
 
   const secrets = new FileSecretReader(definition.secretDirectory);
   await Promise.all(secretAccounts.map(async (account) => {
@@ -161,9 +163,10 @@ export async function inspectHostedCampaignAdmission(
         .DISCORD_E2E_CONVERSATION_VOICE_OBSERVER_APPLICATION_ID)) {
     throw new Error("Greeting readiness evidence does not match the exact observer plan binding");
   }
-  // These files are retained declarations only. They are not trusted probe receipts.
-  // Keep admission blocked until each capability has a typed, independently verified schema.
-  const missingCapabilities = requiredRemoteCapabilities;
+  // Operator-authored files above are retained declarations only and can never authorize a run.
+  // Only the injected consumer-owned probe is a trust boundary.
+  const remoteAdmission = await evaluateRemote(request, definition.campaignId, plan, now());
+  const missingCapabilities = remoteAdmission.missingSections;
   const content = {
     artifactRoot,
     bindingsSha256: digestCanonical(bindings),
@@ -176,6 +179,7 @@ export async function inspectHostedCampaignAdmission(
     missingCapabilities: Object.freeze(missingCapabilities),
     planSha256: digestCanonical(plan),
     remoteEvidence: Object.freeze(remoteEvidence),
+    ...(remoteAdmission.readiness === undefined ? {} : { remoteReadiness: remoteAdmission.readiness }),
     revisions: Object.freeze({ ...definition.revisions }),
     schemaVersion: 1 as const,
     secretAccountsValidated: secretAccounts,
@@ -190,8 +194,10 @@ export function verifyHostedCampaignAdmissionReceipt(value: unknown): HostedCamp
     bindingsSha256: sha256Schema, definitionSha256: sha256Schema,
     fixtureDigests: z.record(z.string(), sha256Schema), generatedAt: z.iso.datetime(),
     kind: z.literal("hosted-campaign-admission"), minimumFreeBytes: z.number().int().positive(),
-    missingCapabilities: z.array(remoteCapabilitySchema), planSha256: sha256Schema, receiptSha256: sha256Schema,
+    missingCapabilities: z.array(z.enum(["deploymentSafety", "discordIdentity", "voicetextCanary", "clockPreflight"])),
+    planSha256: sha256Schema, receiptSha256: sha256Schema,
     remoteEvidence: remoteEvidenceSchema.shape.capabilities,
+    remoteReadiness: hostedRemoteReadinessV1Schema.optional(),
     revisions: z.object({ craig: z.string(), meetingPlatform: z.string(), pipecat: z.string(), subscriptionRuntime: z.string() }).strict(),
     schemaVersion: z.literal(1), secretAccountsValidated: z.array(z.enum(secretAccounts)).length(secretAccounts.length),
     status: z.enum(["admitted", "blocked"]),
@@ -208,8 +214,19 @@ export function verifyHostedCampaignAdmissionReceipt(value: unknown): HostedCamp
   if (receipt.secretAccountsValidated.some((account, index) => account !== secretAccounts[index])) {
     throw new Error("Hosted campaign admission secret account set is invalid");
   }
+  const uniqueMissing = new Set(receipt.missingCapabilities);
+  if (uniqueMissing.size !== receipt.missingCapabilities.length) {
+    throw new Error("Hosted campaign admission missing readiness sections are invalid");
+  }
+  if (receipt.status === "admitted" && receipt.remoteReadiness === undefined) {
+    throw new Error("Hosted campaign admission has no trusted remote readiness");
+  }
+  if (receipt.remoteReadiness !== undefined) {
+    verifyHostedRemoteReadinessV1(receipt.remoteReadiness);
+  }
   return Object.freeze({
     ...receipt,
+    ...(receipt.remoteReadiness === undefined ? {} : { remoteReadiness: receipt.remoteReadiness }),
     secretAccountsValidated: secretAccounts,
   });
 }
@@ -247,7 +264,42 @@ export function assertAdmissionMatchesInvocation(
     || JSON.stringify(receipt.revisions) !== JSON.stringify(definition.revisions)) {
     throw new Error("Hosted campaign admission does not match this invocation");
   }
+  assertRemoteReadinessMatchesInvocation(receipt, invocation.nowEpochMs);
   return receipt;
+}
+
+async function evaluateRemote(
+  request: HostedCampaignAdmissionRequest,
+  campaignId: string,
+  plan: unknown,
+  nowEpochMs: number,
+) {
+  return evaluateHostedRemoteAdmission(
+    request.remoteAdmissionProbe,
+    { campaignId, planSha256: digestCanonical(plan) },
+    nowEpochMs,
+  );
+}
+
+function assertRemoteReadinessMatchesInvocation(
+  receipt: HostedCampaignAdmissionReceiptV1,
+  nowEpochMs: number,
+): void {
+  const readiness = receipt.remoteReadiness;
+  if (readiness === undefined || readiness.campaignId !== receipt.campaignId
+    || readiness.planSha256 !== receipt.planSha256 || Date.parse(readiness.probedAt) > nowEpochMs
+    || Date.parse(readiness.expiresAt) <= nowEpochMs) {
+    throw new Error("Hosted campaign remote readiness is not live for this invocation");
+  }
+}
+
+function assertSpeakerFixturePaths(
+  fixtures: Readonly<{ a: string; b: string }>,
+  expectedPaths: readonly (string | undefined)[],
+): void {
+  if (resolve(fixtures.a) !== expectedPaths[0] || resolve(fixtures.b) !== expectedPaths[1]) {
+    throw new Error("Hosted speaker fixture paths do not match the pinned fixture manifest");
+  }
 }
 
 export async function writeCreateOnlyAdmissionReceipt(

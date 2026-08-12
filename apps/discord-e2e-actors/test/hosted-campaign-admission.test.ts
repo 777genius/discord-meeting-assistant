@@ -11,13 +11,13 @@ import {
   verifyHostedCampaignAdmissionReceipt,
   writeCreateOnlyAdmissionReceipt,
 } from "../src/hosted-campaign-admission.js";
+import { createHostedRemoteReadinessV1 } from "../src/hosted-campaign-remote-admission.js";
 import { parseHostedAdmissionArguments } from "../src/run-hosted-campaign-admission.js";
 
 const fixtureRoot = new URL("./fixtures/", import.meta.url);
 const accounts = ["sut", "speaker-a", "speaker-b", "conversation-observer", "speaker-d"] as const;
 const capabilities = [
-  "clock-preflight", "conversation-greeting-readiness", "craig-test-identity", "remote-test-isolation",
-  "revision-qualified-containers", "voicetext-semantic-canary",
+  "deploymentSafety", "discordIdentity", "voicetextCanary", "clockPreflight",
 ] as const;
 
 describe("hosted campaign admission", () => {
@@ -36,7 +36,11 @@ describe("hosted campaign admission", () => {
 
   it("does not mistake arbitrary digest-bound files for trusted remote evidence", async () => {
     const setup = await arrange();
-    const evidence = await Promise.all(capabilities.filter((capability) => capability !== "conversation-greeting-readiness").map(async (capability) => {
+    const untrustedCapabilities = [
+      "clock-preflight", "craig-test-identity", "remote-test-isolation",
+      "revision-qualified-containers", "voicetext-semantic-canary",
+    ] as const;
+    const evidence = await Promise.all(untrustedCapabilities.map(async (capability) => {
       const path = join(setup.root, `${capability}.json`);
       await writePrivate(path, JSON.stringify({ capability, testOnly: true }));
       return { capability, path, sha256: digest(await readFile(path)) };
@@ -54,6 +58,26 @@ describe("hosted campaign admission", () => {
     await writeCreateOnlyAdmissionReceipt(receiptPath, receipt);
     await expect(writeCreateOnlyAdmissionReceipt(receiptPath, receipt)).rejects.toMatchObject({ code: "EEXIST" });
     expect((await readFile(receiptPath, "utf8")).includes(receipt.receiptSha256)).toBe(true);
+  });
+
+  it("admits only readiness returned by the injected trusted remote probe", async () => {
+    const setup = await arrange();
+    const planSha256 = canonicalDigest(setup.plan);
+    const readiness = createHostedRemoteReadinessV1({
+      campaignId: setup.definition.campaignId,
+      clockPreflight: { kind: "hosted-clock-preflight-receipt", proofId: "1".repeat(64), schemaVersion: 2 },
+      deploymentSafety: reference("hosted-deployment-safety", "2"),
+      discordIdentity: reference("hosted-discord-identity-receipt", "3"),
+      voicetextCanary: reference("hosted-voicetext-semantic-canary-receipt", "4"),
+      expiresAt: "2026-08-13T09:05:00.000Z", kind: "hosted-remote-readiness",
+      persistence: "create-only", planSha256, probedAt: "2026-08-13T08:59:00.000Z", schemaVersion: 1,
+    });
+    const receipt = await inspectHostedCampaignAdmission({
+      bindings: setup.bindings, definition: setup.definition, minimumFreeBytes: 1,
+      plan: setup.plan, remoteAdmissionProbe: { inspect: async () => readiness },
+    }, () => Date.parse("2026-08-13T09:00:00.000Z"));
+    expect(receipt).toMatchObject({ missingCapabilities: [], remoteReadiness: readiness, status: "admitted" });
+    expect(verifyHostedCampaignAdmissionReceipt(receipt)).toEqual(receipt);
   });
 
   it("requires greeting readiness evidence to bind host/container roots and observer identity", async () => {
@@ -179,6 +203,22 @@ async function writePrivate(path: string, contents: string | Buffer): Promise<vo
 
 function digest(value: Buffer): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function canonicalDigest(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(canonicalize(value))).digest("hex");
+}
+
+function canonicalize(nested: unknown): unknown {
+  if (Array.isArray(nested)) { return nested.map(canonicalize); }
+  if (typeof nested !== "object" || nested === null) { return nested; }
+  return Object.fromEntries(Object.entries(nested).toSorted(([left], [right]) => left.localeCompare(right))
+    .map(([key, entry]) => [key, canonicalize(entry)]));
+}
+
+function reference<const Kind extends "hosted-deployment-safety" | "hosted-discord-identity-receipt" |
+"hosted-voicetext-semantic-canary-receipt">(kind: Kind, digit: string) {
+  return { kind, receiptSha256: digit.repeat(64), schemaVersion: 1 as const };
 }
 
 const fixtureManifestShape = z.object({
