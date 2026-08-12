@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
+/* oxlint-disable max-lines */
+
 import { HostedCampaignArtifactStore } from "../src/hosted-campaign-artifact-store.js";
 import {
   HOSTED_CAMPAIGN_TARGET,
@@ -335,6 +337,64 @@ describe("hosted campaign process adapter", () => {
       await new Promise((resolve) => {setTimeout(resolve, 10);});
     }
     await processAdapter.stopChild(handle);
+    await expect(readFile(markerPath, "utf8")).resolves.toBe("term");
+  });
+
+  it("terminates a surviving grandchild before publishing finite completion", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hosted-finite-process-tree-"));
+    const markerPath = join(root, "grandchild-state.txt");
+    const childSource = [
+      'require("node:fs").writeFileSync(process.argv[1], "ready")',
+      'process.on("SIGTERM", () => { require("node:fs").writeFileSync(process.argv[1], "term"); process.exit(0); })',
+      "setInterval(() => {}, 1000)",
+    ].join(";");
+    const output = JSON.stringify({ failures: [], metrics: [], passed: true });
+    const source = `
+      const { spawn } = require("node:child_process");
+      spawn(process.execPath, ["-e", ${JSON.stringify(childSource)}, ${JSON.stringify(markerPath)}], { stdio: "ignore" }).unref();
+      const timer = setInterval(() => {
+        if (!require("node:fs").existsSync(${JSON.stringify(markerPath)})) return;
+        clearInterval(timer);
+        process.stdout.write(${JSON.stringify(output)});
+      }, 5);
+    `;
+    const { processAdapter, store } = await adapter(source);
+    const executable = verifierSpec();
+    const handle = await processAdapter.startChild(executable, bounded());
+    await expect(processAdapter.awaitChildCompletion(handle, executable, {
+      deadlineEpochMilliseconds: Date.now() + 5_000, signal: new AbortController().signal,
+    })).resolves.toBeUndefined();
+    await expect(readFile(markerPath, "utf8")).resolves.toBe("term");
+    await expect(store.awaitAction(completionAction(executable), bounded())).resolves.toMatchObject({ verified: true });
+  });
+
+  it("cleans a grandchild after invalid startup output", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hosted-invalid-process-tree-"));
+    const markerPath = join(root, "grandchild-state.txt");
+    const childSource = [
+      'require("node:fs").writeFileSync(process.argv[1], "ready")',
+      'process.on("SIGTERM", () => { require("node:fs").writeFileSync(process.argv[1], "term"); process.exit(0); })',
+      "setInterval(() => {}, 1000)",
+    ].join(";");
+    const source = `
+      const { spawn } = require("node:child_process");
+      spawn(process.execPath, ["-e", ${JSON.stringify(childSource)}, ${JSON.stringify(markerPath)}], { stdio: "ignore" }).unref();
+      const timer = setInterval(() => {
+        if (!require("node:fs").existsSync(${JSON.stringify(markerPath)})) return;
+        clearInterval(timer);
+        process.stdout.write(${JSON.stringify(`${hostedCampaignProcessEventPrefix}{bad-json}\n`)});
+      }, 5);
+      setInterval(() => {}, 1000);
+    `;
+    const { processAdapter } = await adapter(source);
+    const executable = spec({
+      DISCORD_E2E_HOSTED_RELEASE_GATE_CAMPAIGN_ID: "campaign-1",
+      DISCORD_E2E_RUN_ID: "run-3",
+    });
+    const handle = await processAdapter.startChild(executable, bounded());
+    await expect(processAdapter.awaitBarrier({ kind: "provenance-before" }, bounded()))
+      .rejects.toThrow(/invalid prefixed event/u);
+    await expect(processAdapter.stopChild(handle)).rejects.toThrow(/invalid prefixed event/u);
     await expect(readFile(markerPath, "utf8")).resolves.toBe("term");
   });
 
