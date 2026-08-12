@@ -75,6 +75,17 @@ describe("collectorEnvironmentSchema", () => {
     expect(collectorEnvironmentSchema.safeParse(requiredEnvironment).success).toBe(true);
   });
 
+  it.each([
+    ["too short", "abc"],
+    ["uppercase", "A".repeat(40)],
+    ["non-hex", "z".repeat(40)],
+  ])("rejects an invalid source revision before collection: %s", (_description, revision) => {
+    expect(collectorEnvironmentSchema.safeParse({
+      ...requiredEnvironment,
+      DISCORD_E2E_EXPECTED_CRAIG_SOURCE_REVISION: revision,
+    }).success).toBe(false);
+  });
+
   it("accepts the complete retained V8 conversation input group", () => {
     const result = collectorEnvironmentSchema.safeParse({
       ...requiredEnvironment,

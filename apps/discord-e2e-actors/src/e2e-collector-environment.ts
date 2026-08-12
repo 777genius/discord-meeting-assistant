@@ -7,6 +7,7 @@ const correlationId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u);
 const remoteAttestationFile = z.string().regex(
   /^\/tmp\/discord-e2e-attestations\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.json$/u,
 );
+const sourceRevision = z.string().regex(/^(?:[a-f\d]{40}|[a-f\d]{64})$/u);
 
 export const collectorEnvironmentSchema = z.object({
   DISCORD_E2E_ACTOR_RUN_INPUT: absolutePath,
@@ -24,10 +25,10 @@ export const collectorEnvironmentSchema = z.object({
     }
   }).optional(),
   DISCORD_E2E_EVIDENCE_OUTPUT: absolutePath,
-  DISCORD_E2E_EXPECTED_CRAIG_SOURCE_REVISION: z.string().min(1),
-  DISCORD_E2E_EXPECTED_MEETING_PLATFORM_SOURCE_REVISION: z.string().min(1),
-  DISCORD_E2E_EXPECTED_PIPECAT_SOURCE_REVISION: z.string().min(1).optional(),
-  DISCORD_E2E_EXPECTED_SUBSCRIPTION_RUNTIME_SOURCE_REVISION: z.string().min(1),
+  DISCORD_E2E_EXPECTED_CRAIG_SOURCE_REVISION: sourceRevision,
+  DISCORD_E2E_EXPECTED_MEETING_PLATFORM_SOURCE_REVISION: sourceRevision,
+  DISCORD_E2E_EXPECTED_PIPECAT_SOURCE_REVISION: sourceRevision.optional(),
+  DISCORD_E2E_EXPECTED_SUBSCRIPTION_RUNTIME_SOURCE_REVISION: sourceRevision,
   DISCORD_E2E_FIXTURE_MANIFEST: z.string().min(1).default("test/fixtures/manifest.v1.json"),
   DISCORD_E2E_KEYCHAIN_SERVICE: z.string().min(1).default("discord-voice-bot-e2e"),
   DISCORD_E2E_MUTATION_TARGET: z.literal("test-only"),
