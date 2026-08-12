@@ -4,7 +4,7 @@ import { z } from "zod"; import {
   reconnectNoRepeatEvidenceSchema,
   supplementalPlaybackEvidenceV1Schema,
 } from "./conversation-retained-evidence-schema.js";
-import { conversationVoiceCampaignProofV1Schema } from "./conversation-voice-campaign-proof.js"; import { e2eServiceLevelsV1Schema } from "./e2e-service-levels.js";
+import { conversationVoiceCampaignProofV1Schema } from "./conversation-voice-campaign-proof.js"; import { e2eServiceLevelsV1Schema, serviceLevelSourcesV1Schema } from "./e2e-service-levels.js";
 import { recordingPlaybackEvidenceV1Schema } from "./recording-playback-evidence-schema.js";
 const identifierSchema = z.string().trim().min(1); const sha256Schema = z.string().regex(/^[a-f\d]{64}$/u);
 const nonNegativeMillisecondsSchema = z.number().int().nonnegative(); const nonNegativeSafeIntegerSchema = z.number().refine(
@@ -419,6 +419,7 @@ export const retainedReconnectE2eEvidenceV8Schema = retainedE2eEvidenceV8Schema
     recordingPlayback: recordingPlaybackEvidenceV1Schema });
 export const retainedE2eEvidenceV9Schema = retainedE2eEvidenceV8Schema.omit({ conversation: true, schemaVersion: true }).extend({
   conversation: retainedE2eEvidenceV8Schema.shape.conversation.extend({ campaignProof: conversationVoiceCampaignProofV1Schema }),
+  serviceLevelSources: serviceLevelSourcesV1Schema,
   serviceLevels: e2eServiceLevelsV1Schema,
   schemaVersion: z.literal(9),
 });

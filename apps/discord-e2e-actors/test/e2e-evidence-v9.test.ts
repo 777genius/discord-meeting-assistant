@@ -15,6 +15,7 @@ import {
 } from "./e2e-evidence-fixtures.js";
 import {
   exactServiceLevelThresholds,
+  serviceLevelSourcesProof,
   serviceLevelsProof,
 } from "./e2e-service-level-fixtures.js";
 
@@ -162,6 +163,7 @@ function v9Evidence(): RetainedE2eEvidenceV9 {
     },
     schemaVersion: 9,
     serviceLevels: serviceLevelsProof(),
+    serviceLevelSources: serviceLevelSourcesProof(),
   });
 }
 

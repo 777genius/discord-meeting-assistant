@@ -7,8 +7,10 @@ import {
 } from "../src/e2e-service-levels.js";
 import {
   exactServiceLevelThresholds as thresholds,
+  serviceLevelSourcesProof,
   serviceLevelsProof as proofAtThresholds,
 } from "./e2e-service-level-fixtures.js";
+import { retainedV8Evidence } from "./e2e-evidence-fixtures.js";
 
 
 describe("E2E service-level proof", () => {
@@ -17,9 +19,13 @@ describe("E2E service-level proof", () => {
     expect(failureCodes(proof)).toEqual([]);
 
     const over = structuredClone(proof);
-    over.measurements[1]!.end.atEpochMs += 1;
-    over.measurements[1]!.upperBoundMs += 1;
-    expect(failureCodes(over)).toEqual(["SLA_THRESHOLD_EXCEEDED"]);
+    const measurement = over.measurements.find(({ serviceLevelId }) =>
+      serviceLevelId === "question-end-to-answer-first-packet"
+    )!;
+    expect(failureCodes(over, {
+      ...thresholds,
+      "question-end-to-answer-first-packet": measurement.upperBoundMs - 1,
+    })).toEqual(["SLA_THRESHOLD_EXCEEDED"]);
   });
 
   it("strictly rejects missing, duplicate, negative, and unknown identifiers", () => {
@@ -56,22 +62,69 @@ describe("E2E service-level proof", () => {
     expect(failureCodes(tampered)).toEqual(["SLA_UPPER_BOUND_TAMPERED"]);
   });
 
-  it("accepts negative observed delta within skew and rejects one beyond it", () => {
-    const withinSkew = proofAtThresholds();
-    const measurement = withinSkew.measurements[0]!;
-    measurement.end.atEpochMs = measurement.start.atEpochMs - 10;
-    measurement.clockSkewAttestation.clockSkewBoundMs = 10;
-    measurement.upperBoundMs = 0;
-    expect(failureCodes(withinSkew)).toEqual([]);
+  it("rejects timestamp tampering before recomputing a bound", () => {
+    const tampered = proofAtThresholds();
+    tampered.measurements[0]!.end.atEpochMs -= 10;
+    tampered.measurements[0]!.upperBoundMs -= 10;
+    expect(failureCodes(tampered)).toEqual(["SLA_SOURCE_MISMATCH"]);
+  });
 
-    const impossible = structuredClone(withinSkew);
-    impossible.measurements[0]!.end.atEpochMs -= 1;
-    expect(failureCodes(impossible)).toEqual(["SLA_IMPOSSIBLE_TIMELINE"]);
+  it.each([
+    ["run", (proof: E2eServiceLevelsV1) => { proof.measurements[0]!.end.source.runId = "other-run"; }],
+    ["meeting", (proof: E2eServiceLevelsV1) => { proof.measurements[1]!.end.source.meetingId = "other-meeting"; }],
+    ["turn", (proof: E2eServiceLevelsV1) => {
+      const measurement = proof.measurements.find(({ serviceLevelId }) =>
+        serviceLevelId === "question-end-to-answer-first-packet"
+      )!;
+      if (measurement.serviceLevelId === "question-end-to-answer-first-packet") {
+        measurement.end.source.turnId = "other-turn";
+      }
+    }],
+    ["attempt", (proof: E2eServiceLevelsV1) => {
+      const measurement = proof.measurements.find(({ serviceLevelId }) =>
+        serviceLevelId === "question-end-to-answer-first-packet"
+      )!;
+      if (measurement.serviceLevelId === "question-end-to-answer-first-packet") {
+        measurement.end.source.attemptId = "other-attempt";
+      }
+    }],
+    ["recording", (proof: E2eServiceLevelsV1) => { proof.measurements[2]!.end.source.recordingId = "other-recording"; }],
+    ["message", (proof: E2eServiceLevelsV1) => {
+      const measurement = proof.measurements.find(({ serviceLevelId }) =>
+        serviceLevelId === "recording-end-to-discord-first-seen"
+      )!;
+      if (measurement.serviceLevelId === "recording-end-to-discord-first-seen") {
+        measurement.end.source.messageId = "other-message";
+      }
+    }],
+  ])("rejects a wrong %s source identity", (_label, mutate) => {
+    const proof = proofAtThresholds();
+    mutate(proof);
+    expect(failureCodes(proof)).toEqual(["SLA_SOURCE_MISMATCH"]);
+  });
+
+  it("fails closed when lifecycle or link receipts are not retained", () => {
+    const proof = proofAtThresholds();
+    const evidence = retainedV8Evidence();
+    const codes: string[] = [];
+    verifyE2eServiceLevels(proof, thresholds, evidence, (code) => codes.push(code));
+    expect(codes).toEqual(["SLA_SOURCE_MISMATCH", "SLA_SOURCE_MISMATCH"]);
+
+    const sources = serviceLevelSourcesProof();
+    sources.participantLifecycleReceipts = [];
+    const withoutJoin: string[] = [];
+    verifyE2eServiceLevels(proof, thresholds, { ...evidence, serviceLevelSources: sources },
+      (code) => withoutJoin.push(code));
+    expect(withoutJoin).toEqual(["SLA_SOURCE_MISMATCH"]);
   });
 });
 
-function failureCodes(proof: E2eServiceLevelsV1): string[] {
+function failureCodes(proof: E2eServiceLevelsV1, suppliedThresholds = thresholds): string[] {
   const codes: string[] = [];
-  verifyE2eServiceLevels(proof, thresholds, (code) => codes.push(code));
+  const evidence = retainedV8Evidence();
+  verifyE2eServiceLevels(proof, suppliedThresholds, {
+    ...evidence,
+    serviceLevelSources: serviceLevelSourcesProof(),
+  }, (code) => codes.push(code));
   return codes;
 }

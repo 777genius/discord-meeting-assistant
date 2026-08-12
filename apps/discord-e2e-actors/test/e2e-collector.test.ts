@@ -16,7 +16,7 @@ import type { RecordingPlaybackEvidenceProbe } from "../src/recording-playback-e
 import { retainedV7Evidence, retainedV8Evidence } from "./e2e-evidence-fixtures.js";
 import { conversationVoiceCampaignPlanDigest } from
   "../src/conversation-voice-campaign-proof.js";
-import { serviceLevelsProof } from "./e2e-service-level-fixtures.js";
+import { serviceLevelSourcesProof, serviceLevelsProof } from "./e2e-service-level-fixtures.js";
 
 const campaignProof = {
   observerReadyReceipt: {
@@ -528,6 +528,7 @@ describe("collectRetainedE2eEvidence", () => {
         campaignProof: campaignProofFor(conversationFixture),
         reconnectParticipantId: speakerB,
         serviceLevels: serviceLevelsProof(),
+        serviceLevelSources: serviceLevelSourcesProof(),
         supplementalPlayback,
         voice,
       },
@@ -636,6 +637,7 @@ describe("failures", () => {
         campaignProof: campaignProofFor(conversationFixture),
         reconnectParticipantId: speakerB,
         serviceLevels: serviceLevelsProof(),
+        serviceLevelSources: serviceLevelSourcesProof(),
         supplementalPlayback: {
           ...structuredClone(conversationFixture.supplementalPlayback),
           runId: "run-1",

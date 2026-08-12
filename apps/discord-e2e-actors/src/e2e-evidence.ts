@@ -117,7 +117,7 @@ export function verifyRetainedE2eEvidence(
     if (serviceLevelThresholds === undefined) {
       fail("SLA_THRESHOLDS_MISSING", "retained evidence v9 requires externally supplied service-level thresholds");
     } else {
-      verifyE2eServiceLevels(evidence.serviceLevels, serviceLevelThresholds, fail);
+      verifyE2eServiceLevels(evidence.serviceLevels, serviceLevelThresholds, evidence, fail);
     }
   }
 

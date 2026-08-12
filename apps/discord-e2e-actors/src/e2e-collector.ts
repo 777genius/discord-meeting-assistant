@@ -179,9 +179,7 @@ export async function collectRetainedE2eEvidence(
   );
   const { participantLifecycleReceipts, ...lifecycle } = lifecycleEvidence;
   const reconnectNoRepeat = createReconnectNoRepeatEvidence(
-    participantLifecycleReceipts,
-    input.conversation.reconnectParticipantId,
-    s3.endedAt,
+    participantLifecycleReceipts, input.conversation.reconnectParticipantId, s3.endedAt,
   );
   return retainedE2eEvidenceV9Schema.parse({
     ...baseEvidence,
@@ -196,8 +194,19 @@ export async function collectRetainedE2eEvidence(
       ),
     },
     serviceLevels: input.conversation.serviceLevels,
+    serviceLevelSources: bindServiceLevelSources(input, participantLifecycleReceipts),
     schemaVersion: 9,
   });
+}
+
+function bindServiceLevelSources(
+  input: CollectEvidenceInput,
+  participantLifecycleReceipts: Awaited<ReturnType<NonNullable<DeploymentEvidenceProbe["collectConversationLifecycle"]>>>["participantLifecycleReceipts"],
+) {
+  if (input.conversation?.serviceLevelSources === undefined) {
+    throw new Error("V9 collection requires authoritative service-level source receipts");
+  }
+  return { ...input.conversation.serviceLevelSources, participantLifecycleReceipts };
 }
 
 export function createReplayTargetAttestation(
