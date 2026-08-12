@@ -68,7 +68,7 @@ describe("hosted Discord identity receipt", () => {
   it("rejects account, scope, path, owner, or generation drift", () => {
     const base = receipt();
     const tokenFile = base.identities.localObserver.tokenFile;
-    const mutations = [
+    const mutations: readonly (typeof tokenFile)[] = [
       { ...tokenFile, account: "sut" },
       { ...tokenFile, scope: "remote-deployment-secret" },
       { ...tokenFile, path: "/run/test-tokens/other" },
