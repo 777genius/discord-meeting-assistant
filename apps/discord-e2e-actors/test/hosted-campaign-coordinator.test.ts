@@ -199,7 +199,6 @@ function ports(events: string[]): HostedCampaignPorts {
 
 const bounded = () => ({ deadlineEpochMilliseconds: Date.now() + 60_000, signal: new AbortController().signal });
 
-/* oxlint-disable eslint/max-lines-per-function -- One suite shares the complete campaign graph fixture. */
 describe("hosted campaign coordinator", () => {
   it("injects closed recording-ready identity bindings only after validated source evidence", async () => {
     const base = input();

@@ -3,8 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-/* oxlint-disable max-lines */
-
 import { HostedCampaignArtifactStore } from "../src/hosted-campaign-artifact-store.js";
 import {
   HOSTED_CAMPAIGN_TARGET,
@@ -263,7 +261,6 @@ function serviceLevelSourcesSpec(root: string): HostedCampaignExecutableSpec {
   };
 }
 
-/* oxlint-disable max-lines-per-function */
 describe("hosted campaign process adapter", () => {
   it("ingests exact prefixed fragmented events while allowing ordinary stdout", async () => {
     const outputPath = "/tmp/capture-1.json";

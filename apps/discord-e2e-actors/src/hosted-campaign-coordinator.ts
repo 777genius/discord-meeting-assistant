@@ -5,8 +5,6 @@ import {
   validateHostedFiniteProcessContract,
 } from "./hosted-finite-process-contract.js";
 
-/* oxlint-disable eslint/max-lines -- Coordinator remains one lifecycle boundary; validators are narrow helpers. */
-
 export const HOSTED_CAMPAIGN_TARGET = {
   environment: "private-test-guild", mutationTarget: "test-only", deploymentScope: "private-test-deployment",
   host: "codex-workers-eu-01", project: "discord-meeting-assistant", craigProject: "craig-meeting-e2e",

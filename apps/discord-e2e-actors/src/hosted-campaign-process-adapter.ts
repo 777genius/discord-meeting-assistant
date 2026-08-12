@@ -1,8 +1,6 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { delimiter, isAbsolute, join } from "node:path";
 
-/* oxlint-disable max-lines */
-
 import { z } from "zod";
 
 import { HostedCampaignArtifactStore } from "./hosted-campaign-artifact-store.js";

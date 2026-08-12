@@ -39,7 +39,6 @@ function produced(run: HostedCampaignRun, action: HostedCampaignActionReference[
   return { ...reference(run, action), outputPath };
 }
 
-/* oxlint-disable max-lines-per-function -- declarative topology, split factories are local and behavior-preserving */
 export function makeHostedCampaignChildren(
   definition: HostedCampaignDefinitionV1,
   bindings: HostedCampaignRuntimeBindingsV1,
