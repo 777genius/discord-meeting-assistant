@@ -1,8 +1,36 @@
 import { z } from "zod";
 
-import { serviceLevelIds, serviceLevelMeasurementV2Schema } from "./e2e-service-levels.js";
+import {
+  answerMeasurementSchema,
+  joinMeasurementSchema,
+  recordingPublicationMeasurementSchema,
+  serviceLevelIds,
+} from "./e2e-service-levels.js";
 
 const sha256 = z.string().regex(/^[a-f\d]{64}$/u);
+const identifier = z.string().trim().min(1);
+const safeNonNegativeInteger = z.number().refine(
+  (value) => Number.isSafeInteger(value) && value >= 0,
+  "Expected a nonnegative safe integer",
+);
+const clockSkewAttestationV2Schema = z.object({
+  attestationId: sha256,
+  clockSkewBoundMs: safeNonNegativeInteger,
+  endClockId: identifier,
+  endEvidenceSha256: sha256,
+  method: z.literal("ssh-bracketed-clock-v2"),
+  runClockProofId: sha256,
+  schemaVersion: z.literal(2),
+  startClockId: identifier,
+  startEvidenceSha256: sha256,
+}).strict();
+const serviceLevelMeasurementV2Schema = z.discriminatedUnion("serviceLevelId", [
+  joinMeasurementSchema.extend({ clockSkewAttestation: clockSkewAttestationV2Schema }).strict(),
+  answerMeasurementSchema.extend({ clockSkewAttestation: clockSkewAttestationV2Schema }).strict(),
+  recordingPublicationMeasurementSchema.extend({
+    clockSkewAttestation: clockSkewAttestationV2Schema,
+  }).strict(),
+]);
 
 export const e2eServiceLevelsV2Schema = z.object({
   measurements: z.array(serviceLevelMeasurementV2Schema).length(serviceLevelIds.length),

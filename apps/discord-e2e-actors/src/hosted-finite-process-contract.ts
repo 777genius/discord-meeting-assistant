@@ -16,45 +16,62 @@ export function validateHostedFiniteProcessContract(
   child: HostedCampaignExecutableSpec,
   completion: HostedFiniteProcessCompletion,
 ): void {
-  const environment = child.environment;
   if (completion.action.runId !== completion.runId) {
     throw new Error(`Hosted finite child ${child.childId} completion action is not bound to its run`);
   }
-  if (completion.kind === "playback-link-observer" && completion.recordingId === undefined
-    && !hasBinding(child, "DISCORD_E2E_PLAYBACK_LINK_RECORDING_ID", "recordingId")
-    && child.environment.DISCORD_E2E_PLAYBACK_LINK_READY_RECEIPT_INPUT === undefined) {
+  if (!hasRequiredRecordingIdentity(child, completion)) {
     throw new Error(`Hosted finite child ${child.childId} has no recording identity binding`);
   }
-  if (completion.kind === "replay-attestation-publisher" && completion.recordingId === undefined
-    && !hasBinding(child, "DISCORD_E2E_REPLAY_RECORDING_ID", "recordingId")) {
-    throw new Error(`Hosted finite child ${child.childId} has no recording identity binding`);
-  }
-  const expected = completion.kind === "actor"
-    ? [environment.DISCORD_E2E_ACTOR_RUN_OUTPUT, environment.DISCORD_E2E_RUN_ID, environment.DISCORD_E2E_SCENARIO]
-    : completion.kind === "conversation-observer"
-      ? [environment.DISCORD_E2E_CONVERSATION_VOICE_RUN_ID]
-      : completion.kind === "playback-link-observer"
-        ? [environment.DISCORD_E2E_PLAYBACK_LINK_OUTPUT, environment.DISCORD_E2E_PLAYBACK_LINK_RUN_ID,
-          environment.DISCORD_E2E_PLAYBACK_LINK_RECORDING_ID]
-        : completion.kind === "recording-ready"
-          ? [environment.DISCORD_E2E_READY_RECEIPT_OUTPUT, environment.DISCORD_E2E_RUN_ID]
-          : completion.kind === "replay-attestation-publisher"
-            ? [environment.DISCORD_E2E_REPLAY_FIXTURE_MANIFEST, environment.DISCORD_E2E_REPLAY_RECORDING_ID,
-              environment.DISCORD_E2E_REPLAY_REMOTE_ATTESTATION_FILE, environment.DISCORD_E2E_REPLAY_RUN_ID]
-          : [environment.DISCORD_E2E_SUPPLEMENTAL_EVIDENCE_OUTPUT, environment.DISCORD_E2E_SUPPLEMENTAL_RUN_ID];
-  const declared = completion.kind === "actor"
-    ? [completion.outputPath, completion.runId, completion.scenario]
-    : completion.kind === "conversation-observer"
-      ? [completion.runId]
-      : completion.kind === "playback-link-observer"
-        ? [completion.outputPath, completion.runId,
-          completion.recordingId ?? environment.DISCORD_E2E_PLAYBACK_LINK_RECORDING_ID]
-        : completion.kind === "replay-attestation-publisher"
-          ? [completion.fixtureManifestPath, completion.recordingId ?? environment.DISCORD_E2E_REPLAY_RECORDING_ID,
-            completion.remoteAttestationPath, completion.runId]
-          : [completion.outputPath, completion.runId];
-  if (JSON.stringify(expected) !== JSON.stringify(declared)) {
+  if (JSON.stringify(expectedEnvironmentValues(child, completion)) !== JSON.stringify(declaredValues(child, completion))) {
     throw new Error(`Hosted finite child ${child.childId} completion is not bound to its environment`);
+  }
+}
+
+function hasRequiredRecordingIdentity(
+  child: HostedCampaignExecutableSpec,
+  completion: HostedFiniteProcessCompletion,
+): boolean {
+  if (completion.kind === "playback-link-observer" && completion.recordingId === undefined) {
+    return hasBinding(child, "DISCORD_E2E_PLAYBACK_LINK_RECORDING_ID", "recordingId")
+      || child.environment.DISCORD_E2E_PLAYBACK_LINK_READY_RECEIPT_INPUT !== undefined;
+  }
+  return completion.kind !== "replay-attestation-publisher" || completion.recordingId !== undefined
+    || hasBinding(child, "DISCORD_E2E_REPLAY_RECORDING_ID", "recordingId");
+}
+
+function expectedEnvironmentValues(
+  child: HostedCampaignExecutableSpec,
+  completion: HostedFiniteProcessCompletion,
+): readonly (string | undefined)[] {
+  const environment = child.environment;
+  switch (completion.kind) {
+    case "actor": return [environment.DISCORD_E2E_ACTOR_RUN_OUTPUT, environment.DISCORD_E2E_RUN_ID, environment.DISCORD_E2E_SCENARIO];
+    case "conversation-observer": return [environment.DISCORD_E2E_CONVERSATION_VOICE_RUN_ID];
+    case "playback-link-observer": return [environment.DISCORD_E2E_PLAYBACK_LINK_OUTPUT,
+      environment.DISCORD_E2E_PLAYBACK_LINK_RUN_ID, environment.DISCORD_E2E_PLAYBACK_LINK_RECORDING_ID];
+    case "recording-ready": return [environment.DISCORD_E2E_READY_RECEIPT_OUTPUT, environment.DISCORD_E2E_RUN_ID];
+    case "replay-attestation-publisher": return [environment.DISCORD_E2E_REPLAY_FIXTURE_MANIFEST,
+      environment.DISCORD_E2E_REPLAY_RECORDING_ID, environment.DISCORD_E2E_REPLAY_REMOTE_ATTESTATION_FILE,
+      environment.DISCORD_E2E_REPLAY_RUN_ID];
+    case "supplemental-player": return [environment.DISCORD_E2E_SUPPLEMENTAL_EVIDENCE_OUTPUT,
+      environment.DISCORD_E2E_SUPPLEMENTAL_RUN_ID];
+  }
+}
+
+function declaredValues(
+  child: HostedCampaignExecutableSpec,
+  completion: HostedFiniteProcessCompletion,
+): readonly (string | undefined)[] {
+  switch (completion.kind) {
+    case "actor": return [completion.outputPath, completion.runId, completion.scenario];
+    case "conversation-observer": return [completion.runId];
+    case "playback-link-observer": return [completion.outputPath, completion.runId,
+      completion.recordingId ?? child.environment.DISCORD_E2E_PLAYBACK_LINK_RECORDING_ID];
+    case "replay-attestation-publisher": return [completion.fixtureManifestPath,
+      completion.recordingId ?? child.environment.DISCORD_E2E_REPLAY_RECORDING_ID,
+      completion.remoteAttestationPath, completion.runId];
+    case "recording-ready":
+    case "supplemental-player": return [completion.outputPath, completion.runId];
   }
 }
 

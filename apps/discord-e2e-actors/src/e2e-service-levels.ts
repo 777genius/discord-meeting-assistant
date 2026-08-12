@@ -47,24 +47,13 @@ const clockSkewAttestationSchema = z.object({
   startClockId: identifierSchema,
   startEvidenceSha256: sha256Schema,
 }).strict();
-const clockSkewAttestationV2Schema = z.object({
-  attestationId: sha256Schema,
-  clockSkewBoundMs: safeNonNegativeIntegerSchema,
-  endClockId: identifierSchema,
-  endEvidenceSha256: sha256Schema,
-  method: z.literal("ssh-bracketed-clock-v2"),
-  runClockProofId: sha256Schema,
-  schemaVersion: z.literal(2),
-  startClockId: identifierSchema,
-  startEvidenceSha256: sha256Schema,
-}).strict();
 const measurementBaseShape = {
   clockSkewAttestation: clockSkewAttestationSchema,
   measurementId: identifierSchema,
   upperBoundMs: safeNonNegativeIntegerSchema,
 };
 
-const joinMeasurementSchema = z.object({
+export const joinMeasurementSchema = z.object({
   ...measurementBaseShape,
   end: endpointBaseSchema.extend({
     source: voiceFirstPacketSourceSchema.extend({ purpose: z.literal("greeting") }).strict(),
@@ -81,7 +70,7 @@ const joinMeasurementSchema = z.object({
   }).strict(),
 }).strict();
 
-const answerMeasurementSchema = z.object({
+export const answerMeasurementSchema = z.object({
   ...measurementBaseShape,
   end: endpointBaseSchema.extend({
     source: voiceFirstPacketSourceSchema.extend({ purpose: z.literal("addressed-answer") }).strict(),
@@ -105,7 +94,7 @@ const publicationContainerSchema = z.discriminatedUnion("kind", [
     threadId: identifierSchema,
   }).strict(),
 ]);
-const recordingPublicationMeasurementSchema = z.object({
+export const recordingPublicationMeasurementSchema = z.object({
   ...measurementBaseShape,
   end: endpointBaseSchema.extend({
     source: sourceIdentitySchema.extend({
@@ -141,14 +130,6 @@ const serviceLevelMeasurementV1Schema = z.discriminatedUnion("serviceLevelId", [
   joinMeasurementSchema,
   answerMeasurementSchema,
   recordingPublicationMeasurementSchema,
-]);
-
-export const serviceLevelMeasurementV2Schema = z.discriminatedUnion("serviceLevelId", [
-  joinMeasurementSchema.extend({ clockSkewAttestation: clockSkewAttestationV2Schema }).strict(),
-  answerMeasurementSchema.extend({ clockSkewAttestation: clockSkewAttestationV2Schema }).strict(),
-  recordingPublicationMeasurementSchema.extend({
-    clockSkewAttestation: clockSkewAttestationV2Schema,
-  }).strict(),
 ]);
 
 export const e2eServiceLevelsV1Schema = z.object({
