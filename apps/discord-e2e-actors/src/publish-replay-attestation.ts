@@ -25,10 +25,11 @@ void publishReplayAttestation({
   remoteAttestationPath: environmentSchema.DISCORD_E2E_REPLAY_REMOTE_ATTESTATION_FILE,
   remoteSourceRoot: environmentSchema.DISCORD_E2E_REPLAY_REMOTE_SOURCE_ROOT,
   runId: environmentSchema.DISCORD_E2E_REPLAY_RUN_ID,
-}).then((result) => {
+}).then((result): void => {
   process.stdout.write(`${JSON.stringify({
     ...result, kind: "replay-attestation-publisher-completion", status: "ready",
   })}\n`);
+  return undefined;
 }).catch((error: unknown) => {
   process.stderr.write(`Replay attestation publication failed: ${error instanceof Error ? error.message : "unknown error"}\n`);
   process.exitCode = 1;

@@ -120,6 +120,8 @@ async function readSourceValues(config: HostedServiceLevelSourceConfig): Promise
   };
 }
 
+const json = (value: unknown): string => `${JSON.stringify(value, undefined, 2)}\n`;
+
 async function publishOutputs(
   config: HostedServiceLevelSourceConfig,
   values: {
@@ -129,7 +131,6 @@ async function publishOutputs(
     readonly s3: unknown;
   },
 ): Promise<void> {
-  const json = (value: unknown): string => `${JSON.stringify(value, undefined, 2)}\n`;
   await writeCreateOnlyPrivateHostedServiceLevelArtifact(
     config.outputs.database,
     json(values.database),
@@ -169,8 +170,12 @@ async function block(
   message: string,
   cause?: unknown,
 ): Promise<never> {
-  const outputEntries = Object.entries(config.outputs).filter(([name]) => name !== "report") as
-    ["clockAttestations" | "database" | "meetingPlatformLogs" | "s3", string][];
+  const outputEntries = [
+    ["clockAttestations", config.outputs.clockAttestations],
+    ["database", config.outputs.database],
+    ["meetingPlatformLogs", config.outputs.meetingPlatformLogs],
+    ["s3", config.outputs.s3],
+  ] as const;
   const outputExists = await Promise.all(outputEntries.map(([, path]) =>
     privateHostedServiceLevelArtifactExists(path)
   ));

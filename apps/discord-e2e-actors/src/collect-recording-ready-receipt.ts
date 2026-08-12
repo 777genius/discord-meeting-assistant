@@ -96,10 +96,11 @@ async function waitWithAbort(delayMs: number, signal: AbortSignal): Promise<void
       reject(signal.reason);
     };
     signal.addEventListener("abort", abort, { once: true });
-    void Promise.resolve().then(() => {
+    void Promise.resolve().then((): void => {
       if (signal.aborted) {
         abort();
       }
+      return undefined;
     });
   });
 }

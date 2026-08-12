@@ -89,7 +89,7 @@ export async function writeCreateOnlyHostedCampaignReceipt(
     await link(temporaryPath, path);
     await syncDirectory(parentPath);
   } finally {
-    await handle.close().catch(() => undefined);
+    await handle.close().catch(() => {});
     await rm(temporaryPath, { force: true });
     await syncDirectory(parentPath);
   }
@@ -120,11 +120,9 @@ function errorCode(error: unknown): string | undefined {
 export function loadHostedCampaignTrustedRuntimeEnvironment(
   environment: Readonly<NodeJS.ProcessEnv>,
 ): HostedCampaignTrustedRuntimeEnvironment {
-  const optional = <Name extends "LANG" | "LC_ALL" | "SSH_AUTH_SOCK">(
-    name: Name,
-  ): { readonly [Key in Name]: string } | Record<never, never> => {
+  const optional = (name: "LANG" | "LC_ALL" | "SSH_AUTH_SOCK"): Record<string, string> => {
     const value = environment[name];
-    return value === undefined ? {} : { [name]: value } as { readonly [Key in Name]: string };
+    return value === undefined ? {} : { [name]: value };
   };
   return validateHostedCampaignTrustedRuntimeEnvironment({
     HOME: environment.HOME ?? "",
