@@ -34,8 +34,10 @@ export class HostedVoicetextCanaryContainerRunnerV1 implements VoicetextCanaryRu
     const result = await this.process.execute({
       args: [
         "exec", "-i", "-w", "/app/apps/meeting-platform", input.binding.containerId,
-        "node", "dist/run-voicetext-semantic-canary.js",
+        "/app/apps/meeting-platform/node_modules/.bin/tsx",
+        "/app/apps/meeting-platform/src/run-voicetext-semantic-canary.ts",
         "--fixture", input.fixturePath,
+        "--fixture-sha256", input.binding.fixtureSha256,
         "--campaign", input.binding.campaignId,
         "--plan-sha256", input.binding.planSha256,
         "--source-revision", input.binding.sourceRevision,

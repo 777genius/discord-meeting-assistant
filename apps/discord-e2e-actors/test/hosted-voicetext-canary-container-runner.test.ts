@@ -31,7 +31,12 @@ describe("hosted Voicetext canary container runner", () => {
     expect(request).toMatchObject({
       executable: "docker", maximumOutputBytes: 1_048_576, signal, timeoutMs: 20_000,
     });
-    expect(request?.args).toContain("dist/run-voicetext-semantic-canary.js");
+    expect(request?.args).toContain("/app/apps/meeting-platform/node_modules/.bin/tsx");
+    expect(request?.args).toContain("/app/apps/meeting-platform/src/run-voicetext-semantic-canary.ts");
+    const fixtureDigestFlag = request?.args.indexOf("--fixture-sha256") ?? -1;
+    expect(fixtureDigestFlag).toBeGreaterThan(-1);
+    expect(request?.args[fixtureDigestFlag + 1]).toBe(input.binding.fixtureSha256);
+    expect(request?.args).not.toContain("dist/run-voicetext-semantic-canary.js");
     expect(JSON.stringify(request)).not.toMatch(/token|secret/iu);
   });
 
