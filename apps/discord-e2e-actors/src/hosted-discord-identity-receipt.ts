@@ -7,10 +7,14 @@ const discordIdSchema = z.string().regex(/^\d{17,20}$/u);
 const sha256Schema = z.string().regex(/^[a-f\d]{64}$/u);
 const sourceRevisionSchema = z.string().regex(/^(?:[a-f\d]{40}|[a-f\d]{64})$/u);
 const privateTokenFileSchema = z.object({
+  account: z.enum([
+    "botik-playback", "conversation-observer", "speaker-a", "speaker-b", "speaker-d", "sut",
+  ]),
   generationId: identifierSchema,
   mode: z.literal(0o600),
   ownerUid: z.number().int().nonnegative(),
   path: z.string().startsWith("/"),
+  scope: z.enum(["local-campaign-secret", "remote-deployment-secret"]),
 }).strict();
 
 const authenticatedApplicationSchema = z.object({
@@ -32,7 +36,6 @@ export const discordIdentityRolesV1Schema = z.object({
   localSpeakerB: authenticatedApplicationSchema,
   localSpeakerD: authenticatedApplicationSchema,
   localSut: authenticatedApplicationSchema,
-  recordingGateway: authenticatedApplicationSchema,
 }).strict().superRefine((roles, context) => {
   const ids = Object.values(roles).map(({ applicationId }) => applicationId);
   if (new Set(ids).size !== ids.length) {
@@ -71,7 +74,7 @@ export type DiscordIdentityReceiptV1 = z.infer<typeof discordIdentityReceiptV1Sc
 
 export interface DiscordIdentityReceiptExpectationV1 {
   readonly binding: DiscordIdentityReceiptV1["binding"];
-  readonly identities: Readonly<Record<keyof DiscordIdentityRolesV1, string>>;
+  readonly identities: DiscordIdentityRolesV1;
   readonly maximumAgeMs: number;
   readonly nowEpochMs: number;
   readonly target: DiscordIdentityReceiptV1["target"];
@@ -97,19 +100,11 @@ export function evaluateDiscordIdentityReceiptV1(
     || JSON.stringify(receipt.target) !== JSON.stringify(expected.target)) {
     throw new Error("Discord identity receipt does not match the campaign binding");
   }
-  for (const role of discordIdentityRoleNames) {
-    const applicationId = expected.identities[role];
-    if (receipt.identities[role].applicationId !== applicationId) {
-      throw new Error(`Discord identity receipt has the wrong ${role} application`);
-    }
+  if (JSON.stringify(receipt.identities) !== JSON.stringify(expected.identities)) {
+    throw new Error("Discord identity receipt does not match exact role credentials");
   }
   return Object.freeze(receipt);
 }
-
-const discordIdentityRoleNames = [
-  "botikPlayback", "localObserver", "localSpeakerA", "localSpeakerB",
-  "localSpeakerD", "localSut", "recordingGateway",
-] as const satisfies readonly (keyof DiscordIdentityRolesV1)[];
 
 function assertValidLifetime(
   receipt: DiscordIdentityReceiptV1,

@@ -14,7 +14,6 @@ const ids = {
   localSpeakerB: "1533228054724346087",
   localSpeakerD: "1533873978417086474",
   localSut: "1533224474609057793",
-  recordingGateway: "1533224474609057794",
 } as const;
 
 const binding = {
@@ -26,10 +25,13 @@ const target = {
   guildId: "1533228590643155034", mutationTarget: "test-only",
   publicationChannelId: "1533228891827736657", voiceChannelId: "1533228823045214398",
 } as const;
-const expectation = { binding, identities: ids, maximumAgeMs: 60_000, nowEpochMs: 110_000, target };
+const expectedIdentities = identities();
+const expectation = {
+  binding, identities: expectedIdentities, maximumAgeMs: 60_000, nowEpochMs: 110_000, target,
+};
 
 describe("hosted Discord identity receipt", () => {
-  it("accepts distinct authenticated test applications bound to one exact deployment", () => {
+  it("accepts exact executable identities and credentials bound to one deployment", () => {
     expect(evaluateDiscordIdentityReceiptV1(receipt(), expectation).identities.localObserver.applicationId)
       .toBe(ids.localObserver);
   });
@@ -38,10 +40,52 @@ describe("hosted Discord identity receipt", () => {
     ["tampered digest", (value: DiscordIdentityReceiptV1) => ({ ...value, receiptSha256: "0".repeat(64) })],
     ["wrong private guild", (value: DiscordIdentityReceiptV1) => signed({ ...withoutDigest(value), target: { ...value.target, guildId: "1533228590643155035" } })],
     ["wrong deployment container", (value: DiscordIdentityReceiptV1) => signed({ ...withoutDigest(value), binding: { ...value.binding, containerId: "other" } })],
-    ["wrong role mapping", (value: DiscordIdentityReceiptV1) => signed({ ...withoutDigest(value), identities: { ...value.identities, localSpeakerA: identity(ids.recordingGateway, "a") } })],
+    ["wrong role mapping", (value: DiscordIdentityReceiptV1) => signed({ ...withoutDigest(value), identities: { ...value.identities, localSpeakerA: identity(ids.localSut, "speaker-a") } })],
     ["expired", (value: DiscordIdentityReceiptV1) => signed({ ...withoutDigest(value), expiresAtEpochMs: 110_000 })],
   ])("rejects %s", (_label, mutate) => {
     expect(() => evaluateDiscordIdentityReceiptV1(mutate(receipt()), expectation)).toThrow();
+  });
+
+  it("rejects signed credential replacement when revalidated immediately before spawn", () => {
+    const admitted = evaluateDiscordIdentityReceiptV1(receipt(), expectation);
+    const replacement = signed({
+      ...withoutDigest(admitted),
+      identities: {
+        ...admitted.identities,
+        localSpeakerB: {
+          ...admitted.identities.localSpeakerB,
+          tokenFile: {
+            ...admitted.identities.localSpeakerB.tokenFile,
+            generationId: "generation-speaker-b-rotated",
+          },
+        },
+      },
+    });
+    expect(() => evaluateDiscordIdentityReceiptV1(replacement, expectation))
+      .toThrow("exact role credentials");
+  });
+
+  it("rejects account, scope, path, owner, or generation drift", () => {
+    const base = receipt();
+    const tokenFile = base.identities.localObserver.tokenFile;
+    const mutations = [
+      { ...tokenFile, account: "sut" },
+      { ...tokenFile, scope: "remote-deployment-secret" },
+      { ...tokenFile, path: "/run/test-tokens/other" },
+      { ...tokenFile, ownerUid: 10_002 },
+      { ...tokenFile, generationId: "generation-other" },
+    ];
+    for (const replacement of mutations) {
+      const candidate = signed({
+        ...withoutDigest(base),
+        identities: {
+          ...base.identities,
+          localObserver: { ...base.identities.localObserver, tokenFile: replacement },
+        },
+      });
+      expect(() => evaluateDiscordIdentityReceiptV1(candidate, expectation))
+        .toThrow("exact role credentials");
+    }
   });
 
   it("rejects a user token, mismatched authenticated user, duplicate role, or loose token file", () => {
@@ -49,12 +93,12 @@ describe("hosted Discord identity receipt", () => {
     const invalidIdentities: unknown[] = [
       { ...base.identities, localObserver: { ...base.identities.localObserver, bot: false } },
       { ...base.identities, localObserver: { ...base.identities.localObserver, authenticatedUserId: ids.localSpeakerA } },
-      { ...base.identities, localObserver: identity(ids.localSpeakerA, "observer") },
+      { ...base.identities, localObserver: identity(ids.localSpeakerA, "conversation-observer") },
       { ...base.identities, localObserver: { ...base.identities.localObserver, tokenFile: { ...base.identities.localObserver.tokenFile, mode: 0o644 } } },
     ];
-    for (const identities of invalidIdentities) {
+    for (const invalidIdentitySet of invalidIdentities) {
       expect(() => evaluateDiscordIdentityReceiptV1(
-        { ...withoutDigest(base), identities },
+        { ...withoutDigest(base), identities: invalidIdentitySet },
         expectation,
       )).toThrow();
     }
@@ -62,26 +106,36 @@ describe("hosted Discord identity receipt", () => {
 });
 
 function receipt(): DiscordIdentityReceiptV1 {
-  const identities: DiscordIdentityRolesV1 = {
-    botikPlayback: identity(ids.botikPlayback, "botik-playback"),
-    localObserver: identity(ids.localObserver, "observer"),
-    localSpeakerA: identity(ids.localSpeakerA, "speaker-a"),
-    localSpeakerB: identity(ids.localSpeakerB, "speaker-b"),
-    localSpeakerD: identity(ids.localSpeakerD, "speaker-d"),
-    localSut: identity(ids.localSut, "sut"),
-    recordingGateway: identity(ids.recordingGateway, "recording-gateway"),
-  };
   return signed({
     binding, capability: "craig-test-identity", expiresAtEpochMs: 150_000,
-    generatedAtEpochMs: 100_000, identities, kind: "hosted-discord-identity-receipt",
+    generatedAtEpochMs: 100_000, identities: identities(), kind: "hosted-discord-identity-receipt",
     schemaVersion: 1, target,
   });
 }
 
-function identity(applicationId: string, role: string): DiscordIdentityRolesV1[keyof DiscordIdentityRolesV1] {
+function identities(): DiscordIdentityRolesV1 {
+  return {
+    botikPlayback: identity(ids.botikPlayback, "botik-playback", "remote-deployment-secret"),
+    localObserver: identity(ids.localObserver, "conversation-observer"),
+    localSpeakerA: identity(ids.localSpeakerA, "speaker-a"),
+    localSpeakerB: identity(ids.localSpeakerB, "speaker-b"),
+    localSpeakerD: identity(ids.localSpeakerD, "speaker-d"),
+    localSut: identity(ids.localSut, "sut"),
+  };
+}
+
+function identity(
+  applicationId: string,
+  account: DiscordIdentityRolesV1[keyof DiscordIdentityRolesV1]["tokenFile"]["account"],
+  scope: DiscordIdentityRolesV1[keyof DiscordIdentityRolesV1]["tokenFile"]["scope"] =
+    "local-campaign-secret",
+): DiscordIdentityRolesV1[keyof DiscordIdentityRolesV1] {
   return {
     applicationId, authenticatedUserId: applicationId, bot: true,
-    tokenFile: { generationId: `generation-${role}`, mode: 0o600, ownerUid: 10_001, path: `/run/test-tokens/${role}` },
+    tokenFile: {
+      account, generationId: `generation-${account}`, mode: 0o600, ownerUid: 10_001,
+      path: `/run/test-tokens/${account}`, scope,
+    },
     verificationSource: "discord-current-application-and-user",
   };
 }
