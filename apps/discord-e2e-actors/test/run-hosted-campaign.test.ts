@@ -187,6 +187,7 @@ describe("run-hosted-campaign CLI", () => {
       }),
       readAdmission: async () => ({}),
       readBindings: async () => ({}), readDefinition: async () => ({}),
+      revalidateTrustedAdmission: async () => {},
     };
     await expect(runHostedCampaignCli(
       ["/plan.json", "/receipt.json", "1000", "/admission.json", "/definition.json", "/bindings.json"], dependencies, new AbortController().signal,
@@ -205,6 +206,7 @@ describe("run-hosted-campaign CLI", () => {
         now: Date.now,
         readAdmission: async () => ({}), readBindings: async () => ({}),
         readDefinition: async () => ({}), readPlan: async () => plan(),
+        revalidateTrustedAdmission: async () => { effects.push("revalidate"); },
         writeReceipt: async () => { effects.push("write"); },
       }, new AbortController().signal,
     )).rejects.toThrow("mismatch");
@@ -230,9 +232,31 @@ describe("run-hosted-campaign CLI", () => {
         now: Date.now,
         readAdmission: async () => ({}), readBindings: async () => ({}),
         readDefinition: async () => ({}), readPlan: async () => plan(), writeReceipt: async () => {},
+        revalidateTrustedAdmission: async () => { effects.push("revalidate"); },
       }, new AbortController().signal,
     )).rejects.toThrow("stop-after-lease");
-    expect(effects).toEqual(["admission", "factory", "acquire"]);
+    expect(effects).toEqual(["admission", "revalidate", "factory", "acquire"]);
+  });
+
+  it("fails closed before ports and leases when trusted pre-spawn revalidation fails", async () => {
+    const effects: string[] = [];
+    await expect(runHostedCampaignCli(
+      ["/plan.json", "/receipt.json", "1000", "/admission.json", "/definition.json", "/bindings.json"],
+      {
+        assertAdmission: () => { effects.push("admission"); return {} as never; },
+        assertReceiptAbsent: async () => {},
+        createPorts: async () => { effects.push("factory"); throw new Error("unreachable"); },
+        now: () => 123,
+        readAdmission: async () => ({}), readBindings: async () => ({}),
+        readDefinition: async () => ({}), readPlan: async () => plan(),
+        revalidateTrustedAdmission: async ({ nowEpochMs, signal }) => {
+          effects.push(`revalidate:${nowEpochMs}:${String(signal.aborted)}`);
+          throw new Error("trusted deployment changed");
+        },
+        writeReceipt: async () => { effects.push("write"); },
+      }, new AbortController().signal,
+    )).rejects.toThrow("trusted deployment changed");
+    expect(effects).toEqual(["admission", "revalidate:123:false"]);
   });
 
   it("rejects an existing receipt before reading the plan or acquiring the campaign", async () => {
@@ -252,6 +276,7 @@ describe("run-hosted-campaign CLI", () => {
       readAdmission: async () => { effects.push("read-admission"); return {}; },
       readBindings: async () => { effects.push("read-bindings"); return {}; },
       readDefinition: async () => { effects.push("read-definition"); return {}; },
+      revalidateTrustedAdmission: async () => { effects.push("revalidate"); },
     }, new AbortController().signal)).rejects.toThrow("receipt collision");
     expect(effects).toEqual([]);
   });

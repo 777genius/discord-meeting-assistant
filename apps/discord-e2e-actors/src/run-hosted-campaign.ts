@@ -15,7 +15,11 @@ import {
   parseHostedCampaignPlan,
 } from "./hosted-campaign-run-config.js";
 import { HostedCampaignArtifactStore } from "./hosted-campaign-artifact-store.js";
-import { assertAdmissionMatchesInvocation } from "./hosted-campaign-admission.js";
+import {
+  assertAdmissionMatchesInvocation,
+  type HostedCampaignAdmissionInvocation,
+  type HostedCampaignAdmissionReceiptV1,
+} from "./hosted-campaign-admission.js";
 import {
   HostedCampaignProcessAdapter,
   type HostedCampaignTrustedRuntimeEnvironment,
@@ -31,7 +35,16 @@ export interface HostedCampaignCliDependencies {
   readonly readBindings: (path: string) => Promise<unknown>;
   readonly readDefinition: (path: string) => Promise<unknown>;
   readonly readPlan: (path: string) => Promise<unknown>;
+  readonly revalidateTrustedAdmission: (
+    invocation: HostedCampaignTrustedRevalidationInvocation,
+  ) => Promise<void>;
   readonly writeReceipt: (path: string, receipt: HostedCampaignPassReceipt) => Promise<void>;
+}
+
+export interface HostedCampaignTrustedRevalidationInvocation
+  extends HostedCampaignAdmissionInvocation {
+  readonly receipt: HostedCampaignAdmissionReceiptV1;
+  readonly signal: AbortSignal;
 }
 
 export class HostedCampaignInterruptedError extends Error {
@@ -59,13 +72,19 @@ export async function runHostedCampaignCli(
     dependencies.readDefinition(config.definitionPath),
     dependencies.readBindings(config.bindingsPath),
   ]);
-  dependencies.assertAdmission({
+  const invocation = {
     bindings, definition, maximumAgeMs: 15 * 60_000, nowEpochMs, plan: input, receipt: admission,
-  });
+  };
+  const verifiedAdmission = dependencies.assertAdmission(invocation);
   const deadlineEpochMilliseconds = nowEpochMs + config.timeoutMilliseconds;
   if (!Number.isSafeInteger(deadlineEpochMilliseconds)) {
     throw new Error("Hosted campaign deadline is unsafe");
   }
+  await dependencies.revalidateTrustedAdmission({
+    ...invocation,
+    receipt: verifiedAdmission,
+    signal,
+  });
   const ports = await dependencies.createPorts(input);
   const receipt = await runHostedCampaign(input, ports, { deadlineEpochMilliseconds, signal });
   await dependencies.writeReceipt(config.receiptPath, receipt);
@@ -226,6 +245,9 @@ async function main(): Promise<void> {
       readBindings: readPrivateHostedCampaignPlan,
       readDefinition: readPrivateHostedCampaignPlan,
       readPlan: readPrivateHostedCampaignPlan,
+      revalidateTrustedAdmission: async () => {
+        throw new Error("Hosted campaign trusted pre-spawn revalidation is not composed");
+      },
       writeReceipt: writeCreateOnlyHostedCampaignReceipt,
     }, controller.signal);
   } finally {
