@@ -6,6 +6,7 @@ import { delimiter, isAbsolute, join } from "node:path";
 import { z } from "zod";
 
 import { HostedCampaignArtifactStore } from "./hosted-campaign-artifact-store.js";
+import { writeSupplementalPlaybackGate } from "./supplemental-playback-gate.js";
 import { verifyHostedFiniteProcessCompletion } from "./hosted-finite-process-completion.js";
 import { recordingReadyReceiptV1Schema } from "./recording-ready-receipt.js";
 import type { HostedFiniteProcessCompletion } from "./hosted-finite-process-contract.js";
@@ -93,6 +94,8 @@ const ALLOWED_ENVIRONMENT = new Set([
   "DISCORD_E2E_SERVICE_LEVEL_THRESHOLDS_INPUT", "DISCORD_E2E_SPEAKER_A_ACCOUNT", "DISCORD_E2E_SPEAKER_A_FIXTURE",
   "DISCORD_E2E_SPEAKER_B_ACCOUNT", "DISCORD_E2E_SPEAKER_B_CONNECT_DELAY_MS", "DISCORD_E2E_SPEAKER_B_DELAY_MS",
   "DISCORD_E2E_SPEAKER_B_FIXTURE", "DISCORD_E2E_SUPPLEMENTAL_EVIDENCE_OUTPUT", "DISCORD_E2E_SUPPLEMENTAL_KEYCHAIN_ACCOUNT",
+  "DISCORD_E2E_SUPPLEMENTAL_CAMPAIGN_ID", "DISCORD_E2E_SUPPLEMENTAL_CONNECTION_GATE_PATH",
+  "DISCORD_E2E_SUPPLEMENTAL_GATE_TIMEOUT_MS", "DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_GATE_PATH",
   "DISCORD_E2E_SUPPLEMENTAL_KEYCHAIN_SERVICE", "DISCORD_E2E_SUPPLEMENTAL_MANIFEST",
   "DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_INPUT", "DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_TIMEOUT_MS",
   "DISCORD_E2E_SUPPLEMENTAL_POST_HOLD_MS", "DISCORD_E2E_SUPPLEMENTAL_PRE_HOLD_MS",
@@ -101,6 +104,11 @@ const ALLOWED_ENVIRONMENT = new Set([
   "DISCORD_E2E_VOICE_CHANNEL_ID",
 ]);
 const TRUSTED_RUNTIME_ENVIRONMENT_NAMES = new Set(["HOME", "LANG", "LC_ALL", "PATH", "SSH_AUTH_SOCK"]);
+const SSH_RUNTIME_ENTRYPOINTS: ReadonlySet<HostedCampaignEntrypoint> = new Set([
+  "collector",
+  "provenance-probe",
+  "recording-ready",
+]);
 const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/u;
 
 interface ChildState {
@@ -180,6 +188,25 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
     await this.#options.artifactStore.writeCreateOnly(path, {
       schemaVersion: 1, campaignId, runId, scenario, releasedAtEpochMs: Date.now(),
       target: { guildId: "1533228590643155034", voiceChannelId: "1533228823045214398", mutationTarget: "test-only" },
+    });
+  }
+  async publishSupplementalGate(
+    spec: HostedCampaignExecutableSpec,
+    phase: "connection" | "playback",
+    bounded: HostedCampaignBoundedSignal,
+  ): Promise<void> {
+    assertActive(bounded);
+    assertPinnedTarget(spec);
+    const gate = spec.supplementalGates?.[phase];
+    const campaignId = spec.environment.DISCORD_E2E_SUPPLEMENTAL_CAMPAIGN_ID;
+    const runId = spec.environment.DISCORD_E2E_SUPPLEMENTAL_RUN_ID;
+    if (gate === undefined || campaignId === undefined || runId === undefined) {
+      throw new Error(`Hosted supplemental player ${spec.childId} has an incomplete ${phase} gate`);
+    }
+    await writeSupplementalPlaybackGate({
+      campaignId, guildId: HOSTED_CAMPAIGN_TARGET.guildId, path: gate.path, phase,
+      releasedAtEpochMs: Date.now(), runId, schemaVersion: 1,
+      voiceChannelId: HOSTED_CAMPAIGN_TARGET.voiceChannelId,
     });
   }
   async awaitBarrier<Action extends HostedCampaignBarrierAction>(action: Action, bounded: HostedCampaignBoundedSignal) {
@@ -278,7 +305,7 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
     }
     assertPinnedTarget(spec);
     const environment = {
-      ...this.#trustedRuntimeEnvironment,
+      ...(SSH_RUNTIME_ENTRYPOINTS.has(spec.entrypoint) ? this.#trustedRuntimeEnvironment : {}),
       ...validateEnvironment(spec.environment),
     };
     const child = spawn(process.execPath, [join(this.#options.distRoot, ENTRYPOINTS[spec.entrypoint]), ...argumentsFor(spec)], {

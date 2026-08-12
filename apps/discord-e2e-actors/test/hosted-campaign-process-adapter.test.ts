@@ -4,7 +4,11 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { HostedCampaignArtifactStore } from "../src/hosted-campaign-artifact-store.js";
-import { HOSTED_CAMPAIGN_TARGET, type HostedCampaignExecutableSpec } from "../src/hosted-campaign-coordinator.js";
+import {
+  HOSTED_CAMPAIGN_TARGET,
+  type HostedCampaignEntrypoint,
+  type HostedCampaignExecutableSpec,
+} from "../src/hosted-campaign-coordinator.js";
 import { HostedCampaignProcessAdapter } from "../src/hosted-campaign-process-adapter.js";
 import { serviceLevelsProof } from "./e2e-service-level-fixtures.js";
 import {
@@ -23,8 +27,10 @@ const trustedRuntimeEnvironment = {
 async function adapter(source: string, outputLimitBytes?: number) {
   const root = await mkdtemp(join(tmpdir(), "hosted-process-"));
   await chmod(root, 0o700);
-  await Promise.all(["main.js", "verify-retained-evidence.js", "verify-campaign.js", "collect-retained-evidence.js",
-    "collect-hosted-campaign-provenance.js"]
+  await Promise.all(["main.js", "verify-campaign.js", "collect-retained-evidence.js",
+    "observe-conversation-voice.js", "verify-retained-evidence.js", "observe-live-discord.js",
+    "observe-live-discord-playback-link.js", "collect-hosted-campaign-provenance.js",
+    "collect-recording-ready-receipt.js", "collect-hosted-service-levels.js", "play-supplemental-voice.js"]
     .map(async (name) => writeFile(join(root, name), source, { mode: 0o600 })));
   const storeRoot = join(root, "artifacts");
   const store = new HostedCampaignArtifactStore(storeRoot, "campaign-1");
@@ -60,6 +66,45 @@ async function serviceLevelsAdapter(source: string) {
   return finiteAdapter("collect-hosted-service-levels.js", source);
 }
 const bounded = () => ({ deadlineEpochMilliseconds: Date.now() + 1_000, signal: new AbortController().signal });
+async function readJsonEventually(path: string): Promise<unknown> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    try {
+      return JSON.parse(await readFile(path, "utf8")) as unknown;
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {throw error;}
+      await new Promise((resolve) => {setTimeout(resolve, 10);});
+    }
+  }
+  throw new Error(`Hosted child did not write environment marker: ${path}`);
+}
+function environmentProbeSpec(
+  entrypoint: HostedCampaignEntrypoint,
+  outputPath: string,
+): HostedCampaignExecutableSpec {
+  return {
+    arguments: { kind: "environment" },
+    childId: `environment-${entrypoint}`,
+    entrypoint,
+    environment: {
+      DISCORD_E2E_EVIDENCE_OUTPUT: outputPath,
+      ...(entrypoint === "actor" ? {
+        DISCORD_E2E_GUILD_ID: HOSTED_CAMPAIGN_TARGET.guildId,
+        DISCORD_E2E_VOICE_CHANNEL_ID: HOSTED_CAMPAIGN_TARGET.voiceChannelId,
+      } : {}),
+      ...(entrypoint === "live-observer" ? {
+        DISCORD_E2E_LIVE_RESULT_CHANNEL_ID: HOSTED_CAMPAIGN_TARGET.publicationChannelId,
+        DISCORD_E2E_LIVE_SUT_APPLICATION_ID: HOSTED_CAMPAIGN_TARGET.sutApplicationId,
+      } : {}),
+      ...(entrypoint === "collector" || entrypoint === "provenance-probe" ? {
+        DISCORD_E2E_MUTATION_TARGET: HOSTED_CAMPAIGN_TARGET.mutationTarget,
+        DISCORD_E2E_REMOTE_CRAIG_PROJECT: HOSTED_CAMPAIGN_TARGET.craigProject,
+        DISCORD_E2E_REMOTE_HOST: HOSTED_CAMPAIGN_TARGET.host,
+        DISCORD_E2E_REMOTE_PROJECT: HOSTED_CAMPAIGN_TARGET.project,
+      } : {}),
+    },
+    produces: [], requires: [], startBefore: { kind: "campaign" },
+  };
+}
 const spec = (
   environment: Readonly<Record<string, string>> = {}, releaseGate?: HostedCampaignExecutableSpec["releaseGate"],
 ): HostedCampaignExecutableSpec => ({
@@ -316,47 +361,59 @@ describe("hosted campaign process adapter", () => {
   });
 
   it("uses a fresh allowlisted environment and rejects dangerous inheritance", async () => {
-    const { processAdapter } = await adapter(`
-      const inherited = Object.fromEntries(${JSON.stringify(Object.keys(trustedRuntimeEnvironment))}
-        .filter((name) => process.env[name] !== undefined)
-        .map((name) => [name, process.env[name]]));
-      process.stdout.write(JSON.stringify(inherited));
-    `);
+    const { processAdapter } = await adapter("setInterval(() => {}, 1000)");
     await expect(processAdapter.startChild(spec({ PATH: "/bin" }), bounded())).rejects.toThrow(/PATH/u);
     await expect(processAdapter.startChild(spec({ NODE_OPTIONS: "--inspect" }), bounded())).rejects.toThrow(/NODE_OPTIONS/u);
     await expect(processAdapter.startChild(spec({ UNKNOWN: "x" }), bounded())).rejects.toThrow(/UNKNOWN/u);
-    const executable = {
-      ...spec({ DISCORD_E2E_RUN_ID: "sandbox" }),
-      completion: {
-        action: { kind: "actor-completed" as const, ordinal: 1, runId: "sandbox" },
-        kind: "actor" as const,
-        outputPath: "/evidence/actor.json",
-        runId: "sandbox",
-        scenario: "sequential" as const,
-      },
-    };
-    const handle = await processAdapter.startChild(executable, bounded());
-    await expect(processAdapter.awaitChildCompletion(handle, executable, bounded())).rejects.toThrow(/malformed/u);
+    const handle = await processAdapter.startChild(spec({ DISCORD_E2E_RUN_ID: "sandbox" }), bounded());
+    await processAdapter.stopChild(handle);
   });
 
-  it("passes the exact trusted runtime environment to an SSH-capable child", async () => {
-    const output = JSON.stringify({
-      evidencePath: "/evidence/run-1.json", metrics: [], recordingId: "recording-1",
-      runId: "run-1", runtimeEnvironment: trustedRuntimeEnvironment, status: "passed",
-    });
-    const { processAdapter } = await adapter(`
-      const runtimeEnvironment = Object.fromEntries(${JSON.stringify(Object.keys(trustedRuntimeEnvironment))}
-        .map((name) => [name, process.env[name]]));
-      process.stdout.write(JSON.stringify({
-        evidencePath: "/evidence/run-1.json", metrics: [], recordingId: "recording-1",
-        runId: "run-1", runtimeEnvironment, status: "passed",
-      }));
-    `);
-    const executable = collectorSpec();
-    const handle = await processAdapter.startChild(executable, bounded());
-    await expect(processAdapter.awaitChildCompletion(handle, executable, bounded())).resolves.toBeUndefined();
-    expect(JSON.parse(output).runtimeEnvironment).toEqual(trustedRuntimeEnvironment);
-  });
+  it.each(["collector", "provenance-probe", "recording-ready"] as const)(
+    "passes the exact trusted runtime environment to the %s child",
+    async (entrypoint) => {
+      const root = await mkdtemp(join(tmpdir(), "hosted-ssh-environment-"));
+      const outputPath = join(root, "environment.json");
+      const { processAdapter } = await adapter(`
+        void import("node:fs").then(({ writeFileSync }) => {
+          const runtimeEnvironment = Object.fromEntries(${JSON.stringify(Object.keys(trustedRuntimeEnvironment))}
+            .map((name) => [name, process.env[name]]));
+          writeFileSync(process.env.DISCORD_E2E_EVIDENCE_OUTPUT, JSON.stringify(runtimeEnvironment));
+          setInterval(() => {}, 1000);
+        });
+      `);
+      const handle = await processAdapter.startChild(environmentProbeSpec(entrypoint, outputPath), bounded());
+      try {
+        await expect(readJsonEventually(outputPath)).resolves.toEqual(trustedRuntimeEnvironment);
+      } finally {
+        await processAdapter.stopChild(handle);
+      }
+    },
+  );
+
+  it.each(["actor", "campaign-verifier", "conversation-observer", "evidence-verifier", "live-observer",
+    "playback-link-observer", "service-levels", "supplemental-player"] as const)(
+    "withholds the trusted SSH runtime environment from the %s child",
+    async (entrypoint) => {
+      const root = await mkdtemp(join(tmpdir(), "hosted-non-ssh-environment-"));
+      const outputPath = join(root, "environment.json");
+      const { processAdapter } = await adapter(`
+        void import("node:fs").then(({ writeFileSync }) => {
+          const runtimeEnvironment = Object.fromEntries(${JSON.stringify(Object.keys(trustedRuntimeEnvironment))}
+            .filter((name) => process.env[name] !== undefined)
+            .map((name) => [name, process.env[name]]));
+          writeFileSync(process.env.DISCORD_E2E_EVIDENCE_OUTPUT, JSON.stringify(runtimeEnvironment));
+          setInterval(() => {}, 1000);
+        });
+      `);
+      const handle = await processAdapter.startChild(environmentProbeSpec(entrypoint, outputPath), bounded());
+      try {
+        await expect(readJsonEventually(outputPath)).resolves.toEqual({});
+      } finally {
+        await processAdapter.stopChild(handle);
+      }
+    },
+  );
 
   it("rejects mismatched pinned coordinates before spawning a child", async () => {
     const { processAdapter } = await adapter("setInterval(() => {}, 1000)");
