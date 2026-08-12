@@ -32,13 +32,13 @@ export const imageProvenanceOutputSchema = z.object({
   sourceRevision,
 });
 
-export const replayTargetContainerOutputSchema = z.object({
+const replayTargetContainerOutputSchema = z.object({
   composeProject: z.literal("discord-meeting-assistant"),
   composeService: z.literal("meeting-platform"),
   testOnly: z.literal("true"),
 });
 
-export const replayTargetMarkerOutputSchema = z.object({
+const replayTargetMarkerOutputSchema = z.object({
   fixtureSetId: correlationId,
   purpose: z.literal("bullmq-post-call-replay"),
   recordingId: correlationId,
