@@ -548,8 +548,12 @@ boundaries:
       - apps/meeting-platform/src/live-meeting-runtime.ts
       - apps/meeting-platform/src/main.ts
       - apps/meeting-platform/src/platform-runtime.ts
+      - apps/meeting-platform/src/run-hosted-discord-identity-probe.ts
+      - apps/meeting-platform/src/run-voicetext-semantic-canary.ts
     entrypoints:
       - apps/meeting-platform/src/main.ts
+      - apps/meeting-platform/src/run-hosted-discord-identity-probe.ts
+      - apps/meeting-platform/src/run-voicetext-semantic-canary.ts
     allow:
       boundaries:
         - adapters.bullmq
@@ -605,6 +609,7 @@ boundaries:
       builtins:
         - node:crypto
         - node:events
+        - node:fs
         - node:fs/promises
         - node:http
         - node:url

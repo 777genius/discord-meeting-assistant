@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "canary:voicetext": "tsx src/run-voicetext-semantic-canary.ts",
     "check": "pnpm run typecheck && pnpm run test",
     "start": "tsx src/main.ts",
     "test": "vitest run --exclude test/post-call-recovery.e2e.test.ts",

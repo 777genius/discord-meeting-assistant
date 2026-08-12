@@ -64,6 +64,15 @@ neither the raw provider key nor a provider-specific core contract.
   upload admission, provider concurrency, fenced leases, bounded retries, and
   provider-status classification. Unknown outcomes are reconciled under the same
   job identity rather than retried as new paid calls.
+- Hosted private-guild admission runs a test-only semantic canary from Meeting
+  Platform composition before external campaign children start. It verifies the
+  pinned Ogg fixture, exercises batch submission plus same-key replay, and drives
+  the existing live adapter through ready, per-packet acknowledgement, and final
+  flush. The canary emits one bounded JSON result; it retains token-file custody
+  metadata but never the bearer. Transcript text is present only in this internal
+  container boundary because the admission producer needs it to calculate the
+  pinned semantic-quality evidence; the retained receipt stores only digests and
+  aggregate quality.
 
 ## Consequences
 
