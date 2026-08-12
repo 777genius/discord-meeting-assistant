@@ -21,7 +21,8 @@ export function validateHostedFiniteProcessContract(
     throw new Error(`Hosted finite child ${child.childId} completion action is not bound to its run`);
   }
   if (completion.kind === "playback-link-observer" && completion.recordingId === undefined
-    && !hasBinding(child, "DISCORD_E2E_PLAYBACK_LINK_RECORDING_ID", "recordingId")) {
+    && !hasBinding(child, "DISCORD_E2E_PLAYBACK_LINK_RECORDING_ID", "recordingId")
+    && child.environment.DISCORD_E2E_PLAYBACK_LINK_READY_RECEIPT_INPUT === undefined) {
     throw new Error(`Hosted finite child ${child.childId} has no recording identity binding`);
   }
   if (completion.kind === "replay-attestation-publisher" && completion.recordingId === undefined

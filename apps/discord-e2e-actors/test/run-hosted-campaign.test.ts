@@ -100,21 +100,14 @@ describe("run-hosted-campaign CLI", () => {
     expect(parseHostedCampaignPlan(input).children.some(({ entrypoint }) => entrypoint === "recording-ready")).toBe(true);
   });
 
-  it("accepts only closed recording-ready environment bindings", () => {
+  it("reads recording identity from the create-only readiness artifact", () => {
     const input = plan();
     const playback = input.children.find(({ childId }) => childId === "playback-link-observer")!;
-    expect(playback.environmentBindings?.map(({ name }) => name)).toEqual([
-      "DISCORD_E2E_PLAYBACK_LINK_MEETING_ID", "DISCORD_E2E_PLAYBACK_LINK_RECORDING_ID",
-    ]);
-    expect(() => parseHostedCampaignPlan({ ...input, children: [{ ...playback, environmentBindings: [{
-      ...playback.environmentBindings![0]!,
-      name: "PATH",
-    }] }] })).toThrow();
-    expect(() => parseHostedCampaignPlan({ ...input, children: [{ ...playback, environmentBindings: [{
-      ...playback.environmentBindings![1]!, valueFrom: {
-        ...playback.environmentBindings![1]!.valueFrom, field: "nested.value",
-      },
-    }] }] })).toThrow();
+    expect(playback.environmentBindings).toBeUndefined();
+    expect(playback.environment.DISCORD_E2E_PLAYBACK_LINK_READY_RECEIPT_INPUT)
+      .toBe("/private/evidence/campaigns/campaign-1/run-3/recording-ready.json");
+    expect(() => parseHostedCampaignPlan({ ...input, children: [{ ...playback,
+      environment: { ...playback.environment, PATH: "/tmp" } }] })).toThrow();
   });
 
   it("accepts a provenance producer bound to one campaign snapshot", () => {

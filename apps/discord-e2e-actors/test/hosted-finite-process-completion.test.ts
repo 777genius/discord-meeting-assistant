@@ -156,6 +156,10 @@ describe("hosted finite process completion", () => {
       pollIntervalMs: 50, projectionMarker: source.projectionMarker,
       recordingId, resultChannelId: source.resultChannelId, runId,
       schemaVersion: 1, sutApplicationId: "1533224474609057793",
+      timingProvenance: { candidateSnapshotSha256: "7".repeat(64),
+        kind: "prepublication-armed-first-seen", recordingIdentityBoundAt: {
+          epochMilliseconds: 9_550, monotonicMilliseconds: 19_550,
+        } },
     };
     const proofPath = await privateArtifact(proof);
     await expect(verifyHostedFiniteProcessCompletion(JSON.stringify({

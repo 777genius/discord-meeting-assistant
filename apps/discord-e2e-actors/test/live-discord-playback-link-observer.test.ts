@@ -23,11 +23,11 @@ function observeFirstSeenLiveDiscordPlaybackLink(
     prove: ({ messageId, recordingId, recordingPlaybackUrl }) => Promise.resolve({
       capabilitySha256: createHash("sha256").update(new URL(recordingPlaybackUrl).hash.slice(1)).digest("hex"),
       messageId,
-      recordingId,
+      recordingId: recordingId ?? "recording-42",
       status: "ready" as const,
       trackCount: 2,
     }),
-  });
+  }, { read: async () => ({ meetingId: "meeting-42", recordingId: "recording-42" }) });
 }
 
 const marker = "meeting-projection:0123456789abcdef0123";
@@ -98,6 +98,11 @@ describe("first-seen Live Discord playback link observation", () => {
         status: "ready",
         trackCount: 2,
       },
+      timingProvenance: {
+        candidateSnapshotSha256: expect.stringMatching(/^[a-f\d]{64}$/u),
+        kind: "prepublication-armed-first-seen",
+        recordingIdentityBoundAt: timing(3_020, 12_020),
+      },
     });
     expect(JSON.stringify(proof)).not.toContain(rawCapability);
     expect(Object.isFrozen(proof)).toBe(true);
@@ -147,8 +152,40 @@ describe("first-seen Live Discord playback link observation", () => {
       timing(1_000, 10_000), timing(1_001, 10_001), timing(1_002, 10_002),
     ]), {
       prove: () => Promise.reject(new Error("visible but unavailable")),
-    })).rejects.toThrow("visible but unavailable");
+    }, { read: () => new Promise<undefined>((resolve) => {resolve(void 0);}) })).rejects.toThrow("visible but unavailable");
     expect(JSON.stringify(rawCapability)).toBe('"secret"');
+  });
+
+  it("never retries a link that was unavailable at true first visibility", async () => {
+    let attempts = 0;
+    await expect(observePlaybackLink(input, new PollReader([[{
+      container: thread, messages: [message()],
+    }], [{ container: thread, messages: [message()] }]]), new FakeClock([
+      timing(1_000, 10_000), timing(1_001, 10_001), timing(1_002, 10_002),
+    ]), {
+      prove: () => {
+        attempts += 1;
+        return attempts === 1
+          ? Promise.reject(new Error("not ready at first visibility"))
+          : Promise.resolve({ capabilitySha256: "0".repeat(64), messageId: "ignored",
+            recordingId: "recording-42", status: "ready", trackCount: 1 });
+      },
+    }, { read: () => new Promise<undefined>((resolve) => {resolve(void 0);}) })).rejects.toThrow("not ready at first visibility");
+    expect(attempts).toBe(1);
+  });
+
+  it("fails closed when late recording identity does not match first-sight readiness", async () => {
+    await expect(observePlaybackLink(input, new PollReader([[{
+      container: thread, messages: [message()],
+    }]]), new FakeClock([
+      timing(1_000, 10_000), timing(1_001, 10_001), timing(1_002, 10_002),
+    ]), {
+      prove: ({ messageId, recordingPlaybackUrl }) => Promise.resolve({
+        capabilitySha256: createHash("sha256").update(new URL(recordingPlaybackUrl).hash.slice(1)).digest("hex"),
+        messageId, recordingId: "other-recording", status: "ready", trackCount: 1,
+      }),
+    }, { read: async () => ({ meetingId: "meeting-42", recordingId: "recording-42" }) }))
+      .rejects.toThrow("exact observed recording link");
   });
 
   it("ignores newer unrelated messages, wrong authors, and non-exact containers", async () => {

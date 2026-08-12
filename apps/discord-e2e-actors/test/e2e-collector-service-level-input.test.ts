@@ -107,6 +107,11 @@ function proof() {
     runId: source.runId,
     schemaVersion: 1 as const,
     sutApplicationId: "sut-application-1",
+    timingProvenance: {
+      candidateSnapshotSha256: "7".repeat(64),
+      kind: "prepublication-armed-first-seen" as const,
+      recordingIdentityBoundAt: { epochMilliseconds: 9_550, monotonicMilliseconds: 19_550 },
+    },
   };
 }
 

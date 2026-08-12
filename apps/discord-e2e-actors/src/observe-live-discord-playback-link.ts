@@ -10,6 +10,7 @@ import {
 } from "./live-discord-playback-link-observer.js";
 import { loadLiveDiscordPlaybackLinkObserverConfig } from "./live-discord-playback-link-observer-config.js";
 import { HttpLiveDiscordPlaybackReadinessProbe } from "./live-discord-playback-readiness-probe.js";
+import { RecordingReadyFileIdentitySource } from "./live-discord-playback-recording-identity-source.js";
 import type { LiveDiscordProjectionReader } from "./live-discord-observer.js";
 
 interface PlaybackLinkDiscordReader extends LiveDiscordProjectionReader {
@@ -50,6 +51,10 @@ export async function runLiveDiscordPlaybackLinkObserver(
         discord,
         undefined,
         readinessProbe,
+        config.recordingIdentity.kind === "static"
+          ? { read: async () => config.recordingIdentity.kind === "static"
+            ? config.recordingIdentity : undefined }
+          : new RecordingReadyFileIdentitySource(config.recordingIdentity.path),
       ),
     );
     await writeCreateOnlyPrivateJson(config.outputPath, proof);

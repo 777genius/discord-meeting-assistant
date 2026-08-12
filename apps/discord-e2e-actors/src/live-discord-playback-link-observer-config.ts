@@ -3,7 +3,6 @@ import { isAbsolute } from "node:path";
 import { z } from "zod";
 
 import type { ObserveLiveDiscordPlaybackLinkInput } from "./live-discord-playback-link-observer.js";
-import { createObservedMeetingProjectionMarkers } from "./live-discord-projection-marker-contract.js";
 
 const snowflake = z.string().regex(/^\d{17,20}$/u, "Expected a Discord snowflake");
 const identifier = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u);
@@ -24,7 +23,6 @@ const commonEnvironment = {
     const url = new URL(value);
     return url.protocol === "https:" && url.origin === value;
   }, "Expected an exact HTTPS playback origin"),
-  DISCORD_E2E_PLAYBACK_LINK_RECORDING_ID: identifier,
   DISCORD_E2E_PLAYBACK_LINK_RESULT_CHANNEL_ID: snowflake,
   DISCORD_E2E_PLAYBACK_LINK_RUN_ID: identifier,
   DISCORD_E2E_PLAYBACK_LINK_SECRET_DIRECTORY: absolutePath.optional(),
@@ -43,17 +41,21 @@ const explicitEnvironment = z.object({
     }
   }),
   DISCORD_E2E_PLAYBACK_LINK_PROJECTION_MARKER: z.string().trim().min(1),
+  DISCORD_E2E_PLAYBACK_LINK_RECORDING_ID: identifier,
 });
 const hostedEnvironment = z.object({
   ...commonEnvironment,
-  DISCORD_E2E_PLAYBACK_LINK_MEETING_ID: identifier,
   DISCORD_E2E_PLAYBACK_LINK_MODE: z.literal("hosted"),
+  DISCORD_E2E_PLAYBACK_LINK_READY_RECEIPT_INPUT: absolutePath,
 });
 
 export interface LiveDiscordPlaybackLinkObserverConfig extends ObserveLiveDiscordPlaybackLinkInput {
   readonly keychainService: string;
   readonly outputPath: string;
   readonly recordingPlaybackOrigin: string;
+  readonly recordingIdentity:
+    | { readonly kind: "recording-ready-receipt"; readonly path: string }
+    | { readonly kind: "static"; readonly meetingId: string; readonly recordingId: string };
   readonly secretDirectory: string | undefined;
   readonly sutAccount: string;
 }
@@ -66,11 +68,10 @@ export function loadLiveDiscordPlaybackLinkObserverConfig(
   if (parsed.DISCORD_E2E_PLAYBACK_LINK_MODE === "hosted") {
     return freezeConfig(parsed, {
       container: { kind: "channel-message", parentChannelId: parsed.DISCORD_E2E_PLAYBACK_LINK_RESULT_CHANNEL_ID },
-      meetingId: parsed.DISCORD_E2E_PLAYBACK_LINK_MEETING_ID,
-      projectionMarkers: createObservedMeetingProjectionMarkers(
-        parsed.DISCORD_E2E_PLAYBACK_LINK_MEETING_ID,
-        parsed.DISCORD_E2E_PLAYBACK_LINK_RESULT_CHANNEL_ID,
-      ),
+      projectionMarkers: [],
+      recordingIdentity: {
+        kind: "recording-ready-receipt", path: parsed.DISCORD_E2E_PLAYBACK_LINK_READY_RECEIPT_INPUT,
+      },
     });
   }
   if (
@@ -89,14 +90,17 @@ export function loadLiveDiscordPlaybackLinkObserverConfig(
   }
   return freezeConfig(parsed, {
     container: parsed.DISCORD_E2E_PLAYBACK_LINK_PROJECTION_CONTAINER_JSON,
-    meetingId: parsed.DISCORD_E2E_PLAYBACK_LINK_RECORDING_ID,
     projectionMarkers: [parsed.DISCORD_E2E_PLAYBACK_LINK_PROJECTION_MARKER],
+    recordingIdentity: {
+      kind: "static", meetingId: parsed.DISCORD_E2E_PLAYBACK_LINK_RECORDING_ID,
+      recordingId: parsed.DISCORD_E2E_PLAYBACK_LINK_RECORDING_ID,
+    },
   });
 }
 
 function freezeConfig(
   parsed: z.infer<typeof explicitEnvironment> | z.infer<typeof hostedEnvironment>,
-  identity: Pick<ObserveLiveDiscordPlaybackLinkInput, "container" | "meetingId" | "projectionMarkers">,
+  identity: Pick<LiveDiscordPlaybackLinkObserverConfig, "container" | "projectionMarkers" | "recordingIdentity">,
 ): LiveDiscordPlaybackLinkObserverConfig {
   return Object.freeze({
     ...identity,
@@ -105,7 +109,6 @@ function freezeConfig(
     outputPath: parsed.DISCORD_E2E_PLAYBACK_LINK_OUTPUT,
     pollIntervalMs: parsed.DISCORD_E2E_PLAYBACK_LINK_POLL_INTERVAL_MS,
     recordingPlaybackOrigin: parsed.DISCORD_E2E_PLAYBACK_LINK_RECORDING_PLAYBACK_ORIGIN,
-    recordingId: parsed.DISCORD_E2E_PLAYBACK_LINK_RECORDING_ID,
     resultChannelId: parsed.DISCORD_E2E_PLAYBACK_LINK_RESULT_CHANNEL_ID,
     runId: parsed.DISCORD_E2E_PLAYBACK_LINK_RUN_ID,
     secretDirectory: parsed.DISCORD_E2E_PLAYBACK_LINK_SECRET_DIRECTORY,

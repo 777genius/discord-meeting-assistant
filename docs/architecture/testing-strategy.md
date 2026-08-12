@@ -72,12 +72,22 @@ deployment provenance, replay results, Discord publication evidence, recording
 playback checks, and service-level source artifacts before the campaign verifier
 can pass.
 
+The playback-link observer is armed before reconnect publication can occur. At
+the first visible possession link it immediately runs the hardened readiness
+probe and retains only bounded sanitized digests, message/container identity,
+and the poll bracket. The later create-only recording-ready receipt binds that
+candidate to the exact meeting marker and recording without retrying readiness
+or replacing the true first-seen timing; a missing, changed, ambiguous, stale,
+or initially unavailable candidate fails closed.
+
 Local coordinator, graph, process-lifecycle, and evidence tests do not authorize
 an external run. Admission recomputes the exact plan and fails closed before the
-artifact lease or any child starts. At present, real private-guild qualification
-is intentionally blocked until typed independently verified receipts exist for
-clock preflight, greeting-readiness deployment, Craig test identity, remote test
-isolation, revision-qualified containers, and the Voicetext semantic canary.
+artifact lease or any child starts. Its consumer-owned remote-probe port returns
+one closed, create-only, expiring receipt bound to the exact campaign and plan.
+That receipt has four explicit sections: deployment safety, Discord identity,
+Voicetext canary, and clock preflight. Operator-authored capability files are
+retained declarations only and cannot authorize a campaign; an absent probe
+always leaves admission blocked.
 
 ## Summary-first E2E
 

@@ -90,7 +90,7 @@ export function makeReplayAttestationPublisher(
 }
 
 export function makePlaybackLinkObserver(context: HostedCampaignChildContext): HostedCampaignExecutableSpec {
-  const { barrierPath, definition, paths, playbackLinkSeen, reconnect, recordingReady } = context;
+  const { barrierPath, definition, observerSubscribed, paths, playbackLinkSeen, reconnect, recordingReady, runVerified } = context;
   return {
     arguments: { kind: "environment" }, childId: "playback-link-observer",
     completion: { action: playbackLinkSeen.action, kind: "playback-link-observer", outputPath: paths.run(3, "playback-link.json"), runId: reconnect.runId },
@@ -99,14 +99,12 @@ export function makePlaybackLinkObserver(context: HostedCampaignChildContext): H
       DISCORD_E2E_PLAYBACK_LINK_OUTPUT: paths.run(3, "playback-link.json"),
       DISCORD_E2E_PLAYBACK_LINK_POLL_INTERVAL_MS: "2000",
       DISCORD_E2E_PLAYBACK_LINK_RECORDING_PLAYBACK_ORIGIN: definition.recordingPlaybackOrigin,
+      DISCORD_E2E_PLAYBACK_LINK_READY_RECEIPT_INPUT: paths.run(3, "recording-ready.json"),
       DISCORD_E2E_PLAYBACK_LINK_RESULT_CHANNEL_ID: HOSTED_CAMPAIGN_TARGET.publicationChannelId,
       DISCORD_E2E_PLAYBACK_LINK_RUN_ID: reconnect.runId,
       DISCORD_E2E_PLAYBACK_LINK_SECRET_DIRECTORY: definition.secretDirectory,
       DISCORD_E2E_PLAYBACK_LINK_SUT_APPLICATION_ID: HOSTED_CAMPAIGN_TARGET.sutApplicationId,
-    }, environmentBindings: [
-      { name: "DISCORD_E2E_PLAYBACK_LINK_MEETING_ID", valueFrom: { actionRef: recordingReady[2]!, field: "meetingId" } },
-      { name: "DISCORD_E2E_PLAYBACK_LINK_RECORDING_ID", valueFrom: { actionRef: recordingReady[2]!, field: "recordingId" } },
-    ], produces: [produced(reconnect, playbackLinkSeen.action, barrierPath("playback-link-seen"))],
-    requires: [recordingReady[2]!], startBefore: { ...playbackLinkSeen, kind: "barrier" },
+    }, produces: [produced(reconnect, playbackLinkSeen.action, barrierPath("playback-link-seen"))],
+    requires: [runVerified[1]!], startBefore: { ...observerSubscribed, kind: "barrier" },
   };
 }

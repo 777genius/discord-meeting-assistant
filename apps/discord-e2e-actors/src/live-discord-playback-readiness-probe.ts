@@ -30,7 +30,7 @@ export class HttpLiveDiscordPlaybackReadinessProbe implements LiveDiscordPlaybac
 
   public async prove(input: {
     readonly messageId: string;
-    readonly recordingId: string;
+    readonly recordingId?: string;
     readonly recordingPlaybackUrl: string;
   }): Promise<LiveDiscordPlaybackReadinessProof> {
     const link = parsePlaybackLink(input.recordingPlaybackUrl, this.#expectedOrigin);
@@ -61,7 +61,7 @@ export class HttpLiveDiscordPlaybackReadinessProbe implements LiveDiscordPlaybac
     }
     const manifest = playbackManifestSchema.parse(raw);
     if (
-      manifest.recordingId !== input.recordingId ||
+      (input.recordingId !== undefined && manifest.recordingId !== input.recordingId) ||
       manifest.status !== "ready" || manifest.tracks.length === 0
     ) {
       throw new Error("Recording playback link was visible before its exact recording was ready");

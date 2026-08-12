@@ -24,14 +24,14 @@ describe("live Discord playback-link observer CLI boundary", () => {
       discord,
       { prove: ({ messageId, recordingId }) => Promise.resolve({
         capabilitySha256: "2bb80d537b1da3e38bd30361aa855686bde0eacd7162fef6a25fe97bf527a25b",
-        messageId, recordingId, status: "ready", trackCount: 1,
+        messageId, recordingId: recordingId ?? "recording-42", status: "ready", trackCount: 1,
       }) },
     );
 
     const proof = JSON.parse(await readFile(outputPath, "utf8")) as Record<string, unknown>;
     expect(proof).toMatchObject({
       messageId: "44444444444444444", projectionMarker: config.projectionMarkers[0],
-      recordingId: config.recordingId, resultChannelId: config.resultChannelId,
+      recordingId: "recording-42", resultChannelId: config.resultChannelId,
       runId: config.runId, sutApplicationId: config.sutApplicationId,
     });
     expect((await lstat(outputPath)).mode & 0o777).toBe(0o600);
@@ -62,13 +62,12 @@ function makeConfig(outputPath: string): LiveDiscordPlaybackLinkObserverConfig {
   return {
     container: { kind: "channel-message", parentChannelId: "11111111111111111" },
     durationMilliseconds: 1_000,
-    meetingId: "recording-42",
     keychainService: "test",
     outputPath,
     pollIntervalMs: 2_000,
     recordingPlaybackOrigin: "https://recordings.example.com",
     projectionMarkers: ["meeting-projection:0123456789abcdef0123"],
-    recordingId: "recording-42",
+    recordingIdentity: { kind: "static", meetingId: "recording-42", recordingId: "recording-42" },
     resultChannelId: "11111111111111111",
     runId: "run-42",
     secretDirectory: "/run/test-secrets",
