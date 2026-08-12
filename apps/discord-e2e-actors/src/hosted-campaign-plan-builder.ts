@@ -67,7 +67,7 @@ export type HostedCampaignRuntimeBindingsV1 = z.infer<typeof hostedCampaignRunti
 
 export type HostedCampaignRequiredBindingV1 = Readonly<{
   key: `runs.${0 | 1 | 2}.remoteAttestationPath`;
-  source: "operator-reviewed-replay-attestation";
+  source: "operator-selected-create-only-attestation-path";
 }>;
 
 export type HostedCampaignPlanCompilationV1 =
@@ -80,9 +80,9 @@ export type HostedCampaignPlanCompilationV1 =
   | Readonly<{ plan: HostedCampaignInput; schemaVersion: 1; status: "ready" }>;
 
 const requiredBindings: readonly HostedCampaignRequiredBindingV1[] = Object.freeze([
-  { key: "runs.0.remoteAttestationPath", source: "operator-reviewed-replay-attestation" },
-  { key: "runs.1.remoteAttestationPath", source: "operator-reviewed-replay-attestation" },
-  { key: "runs.2.remoteAttestationPath", source: "operator-reviewed-replay-attestation" },
+  { key: "runs.0.remoteAttestationPath", source: "operator-selected-create-only-attestation-path" },
+  { key: "runs.1.remoteAttestationPath", source: "operator-selected-create-only-attestation-path" },
+  { key: "runs.2.remoteAttestationPath", source: "operator-selected-create-only-attestation-path" },
 ]);
 
 export function compileHostedCampaignDefinitionV1(
@@ -247,6 +247,9 @@ function makeChildren(
   const conversationCompleted = reference(reconnect, { kind: "conversation-observer-completed", ordinal: 3, runId: reconnect.runId });
   const supplementalCompleted = reference(reconnect, { kind: "supplemental-completed", ordinal: 3, runId: reconnect.runId });
   const recordingReady = runs.map((run) => reference(run, { kind: "recording-ready", ordinal: run.ordinal, runId: run.runId }));
+  const replayAttestationReady = runs.map((run) => reference(run, {
+    kind: "replay-attestation-ready", ordinal: run.ordinal, runId: run.runId,
+  }));
   const playbackLinkSeen = reference(reconnect, { kind: "playback-link-seen", ordinal: 3, runId: reconnect.runId });
   const serviceLevelSourcesReady = reference(reconnect, { kind: "service-level-sources-ready" });
   const serviceLevelsReady = reference(reconnect, { kind: "service-levels-ready" });
@@ -374,6 +377,31 @@ function makeChildren(
     ], produces: [produced(reconnect, playbackLinkSeen.action, barrierPath("playback-link-seen"))],
     requires: [recordingReady[2]!], startBefore: { ...playbackLinkSeen, kind: "barrier" },
   };
+  const replayAttestation = (run: FixedHostedCampaignRun<1 | 2 | 3>): HostedCampaignExecutableSpec => ({
+    arguments: { kind: "environment" }, childId: `replay-attestation-${run.ordinal}`,
+    completion: {
+      action: replayAttestationReady[run.ordinal - 1]!.action,
+      fixtureManifestPath: definition.fixtureManifestPath,
+      kind: "replay-attestation-publisher",
+      remoteAttestationPath: bindings.runs[run.ordinal - 1]!.remoteAttestationPath,
+      runId: run.runId,
+    }, completionAfter: recordingReady[run.ordinal - 1]!, entrypoint: "replay-attestation-publisher",
+    environment: {
+      DISCORD_E2E_REPLAY_FIXTURE_MANIFEST: definition.fixtureManifestPath,
+      DISCORD_E2E_REPLAY_MUTATION_TARGET: HOSTED_CAMPAIGN_TARGET.mutationTarget,
+      DISCORD_E2E_REPLAY_REMOTE_ATTESTATION_FILE: bindings.runs[run.ordinal - 1]!.remoteAttestationPath,
+      DISCORD_E2E_REPLAY_REMOTE_COMPOSE_FILE: definition.remote.composeFile,
+      DISCORD_E2E_REPLAY_REMOTE_ENV_FILE: definition.remote.environmentFile,
+      DISCORD_E2E_REPLAY_REMOTE_HOST: HOSTED_CAMPAIGN_TARGET.host,
+      DISCORD_E2E_REPLAY_REMOTE_SOURCE_ROOT: definition.remote.sourceRoot,
+      DISCORD_E2E_REPLAY_RUN_ID: run.runId,
+    }, environmentBindings: [{
+      name: "DISCORD_E2E_REPLAY_RECORDING_ID",
+      valueFrom: { actionRef: recordingReady[run.ordinal - 1]!, field: "recordingId" },
+    }], produces: [produced(run, replayAttestationReady[run.ordinal - 1]!.action, barrierPath(`replay-attestation-${run.ordinal}-ready`))],
+    requires: [recordingReady[run.ordinal - 1]!],
+    startBefore: { ...replayAttestationReady[run.ordinal - 1]!, kind: "barrier" },
+  });
   const sourcePaths = {
     clock: paths.run(3, "sla-clock.json"), database: paths.run(3, "sla-database.json"),
     logs: paths.run(3, "sla-meeting-platform-logs.json"), report: paths.run(3, "sla-sources-report.json"),
@@ -475,11 +503,11 @@ function makeChildren(
   };
   return Object.freeze([
     actor(sequential, provenanceBefore), actor(overlap, runVerified[0]!), actor(reconnect, runVerified[1]!, supplementalCompleted),
-    provenance("before", sequential, provenanceBefore), readyCollector(sequential),
-    collector(sequential, runVerified[0]!, sequentialBinding, [provenanceBefore, recordingReady[0]!, reference(sequential, { kind: "actor-completed", ordinal: 1, runId: sequential.runId })]),
-    readyCollector(overlap), collector(overlap, runVerified[1]!, overlapBinding, [runVerified[0]!, recordingReady[1]!, reference(overlap, { kind: "actor-completed", ordinal: 2, runId: overlap.runId })]),
-    conversationObserver, supplemental, readyCollector(reconnect), playbackObserver, serviceLevelSources, serviceLevels,
-    collector(reconnect, runVerified[2]!, reconnectBinding, [recordingReady[2]!, playbackLinkSeen, serviceLevelsReady, conversationCompleted, supplementalCompleted]),
+    provenance("before", sequential, provenanceBefore), readyCollector(sequential), replayAttestation(sequential),
+    collector(sequential, runVerified[0]!, sequentialBinding, [provenanceBefore, recordingReady[0]!, replayAttestationReady[0]!, reference(sequential, { kind: "actor-completed", ordinal: 1, runId: sequential.runId })]),
+    readyCollector(overlap), replayAttestation(overlap), collector(overlap, runVerified[1]!, overlapBinding, [runVerified[0]!, recordingReady[1]!, replayAttestationReady[1]!, reference(overlap, { kind: "actor-completed", ordinal: 2, runId: overlap.runId })]),
+    conversationObserver, supplemental, readyCollector(reconnect), replayAttestation(reconnect), playbackObserver, serviceLevelSources, serviceLevels,
+    collector(reconnect, runVerified[2]!, reconnectBinding, [recordingReady[2]!, replayAttestationReady[2]!, playbackLinkSeen, serviceLevelsReady, conversationCompleted, supplementalCompleted]),
     provenance("after", reconnect, provenanceAfter), campaignVerifier,
   ]);
 }

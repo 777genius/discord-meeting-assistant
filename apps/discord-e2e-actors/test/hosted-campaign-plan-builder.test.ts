@@ -44,9 +44,9 @@ describe("hosted campaign strict plan builder", () => {
     expect(result).toEqual({
       blockedReasons: ["DYNAMIC_RUNTIME_BINDINGS_REQUIRED"],
       requiredBindings: [
-        { key: "runs.0.remoteAttestationPath", source: "operator-reviewed-replay-attestation" },
-        { key: "runs.1.remoteAttestationPath", source: "operator-reviewed-replay-attestation" },
-        { key: "runs.2.remoteAttestationPath", source: "operator-reviewed-replay-attestation" },
+        { key: "runs.0.remoteAttestationPath", source: "operator-selected-create-only-attestation-path" },
+        { key: "runs.1.remoteAttestationPath", source: "operator-selected-create-only-attestation-path" },
+        { key: "runs.2.remoteAttestationPath", source: "operator-selected-create-only-attestation-path" },
       ],
       schemaVersion: 1,
       status: "blocked",
@@ -66,9 +66,9 @@ describe("hosted campaign strict plan builder", () => {
     ]);
     expect(parseHostedCampaignPlan(result.plan)).toEqual(result.plan);
     expect(result.plan.children.map(({ childId }) => childId)).toEqual([
-      "actor-1", "actor-2", "actor-3", "provenance-before", "recording-ready-1", "collector-1",
-      "recording-ready-2", "collector-2", "conversation-observer", "supplemental-player",
-      "recording-ready-3", "playback-link-observer", "service-level-sources", "service-levels",
+      "actor-1", "actor-2", "actor-3", "provenance-before", "recording-ready-1", "replay-attestation-1", "collector-1",
+      "recording-ready-2", "replay-attestation-2", "collector-2", "conversation-observer", "supplemental-player",
+      "recording-ready-3", "replay-attestation-3", "playback-link-observer", "service-level-sources", "service-levels",
       "collector-3", "provenance-after", "campaign-verifier",
     ]);
     const observer = result.plan.children.find(({ childId }) => childId === "conversation-observer")!;
