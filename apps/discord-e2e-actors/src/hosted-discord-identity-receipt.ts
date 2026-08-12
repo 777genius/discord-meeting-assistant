@@ -29,7 +29,7 @@ const authenticatedApplicationSchema = z.object({
   }
 });
 
-export const discordIdentityRolesV1Schema = z.object({
+const discordIdentityRolesV1Schema = z.object({
   botikPlayback: authenticatedApplicationSchema,
   localObserver: authenticatedApplicationSchema,
   localSpeakerA: authenticatedApplicationSchema,

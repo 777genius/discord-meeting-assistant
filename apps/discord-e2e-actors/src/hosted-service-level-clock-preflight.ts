@@ -63,7 +63,7 @@ const hostedServiceLevelClockPreflightV1Schema = z.object({
   }
 });
 
-export type HostedServiceLevelClockPreflightV1 = z.infer<
+type HostedServiceLevelClockPreflightV1 = z.infer<
   typeof hostedServiceLevelClockPreflightV1Schema
 >;
 

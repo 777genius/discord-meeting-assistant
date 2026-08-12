@@ -117,7 +117,7 @@ const receiptContentSchema = z.object({
   schemaVersion: z.literal(1),
 }).strict();
 
-export const hostedDeploymentSafetyReceiptV1Schema = receiptContentSchema.extend({
+const hostedDeploymentSafetyReceiptV1Schema = receiptContentSchema.extend({
   receiptSha256: sha256Schema,
 }).strict();
 

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { serviceLevelEvidenceDigest } from "./service-level-attestation-integrity.js";
 import { HOSTED_CAMPAIGN_TARGET } from "./hosted-campaign-coordinator.js";
 
-export const HOSTED_CLOCK_METHOD_V2 = "ssh-bracketed-clock-v2" as const;
+const HOSTED_CLOCK_METHOD_V2 = "ssh-bracketed-clock-v2" as const;
 const admissionValidityMs = 60_000;
 const wallClockResolutionMs = 2;
 const identifier = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u);

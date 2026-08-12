@@ -13,14 +13,10 @@ import {
 import {
   digestDiscordIdentityReceiptContentV1,
   discordIdentityReceiptV1Schema,
-  evaluateDiscordIdentityReceiptV1,
-  type DiscordIdentityReceiptExpectationV1,
   type DiscordIdentityReceiptV1,
 } from "./hosted-discord-identity-receipt.js";
 import {
   digestVoicetextSemanticCanaryReceiptContentV1,
-  evaluateVoicetextSemanticCanaryReceiptV1,
-  type VoicetextSemanticCanaryExpectationV1,
   type VoicetextSemanticCanaryReceiptV1,
   voicetextSemanticCanaryReceiptV1Schema,
 } from "./hosted-voicetext-semantic-canary-receipt.js";
@@ -62,7 +58,7 @@ export type HostedCampaignRemoteAdmissionProbeRequest = Readonly<{
   planSha256: string;
 }>;
 
-export interface HostedRemoteAdmissionEvidenceV1 {
+interface HostedRemoteAdmissionEvidenceV1 {
   readonly clockPreflight: unknown;
   readonly deploymentSafety: unknown;
   readonly discordIdentity: unknown;
@@ -74,60 +70,6 @@ export interface HostedRemoteAdmissionEvidenceV1 {
 /** Consumer-owned application boundary. Concrete SSH/provider concerns stay outside admission. */
 export interface HostedCampaignRemoteAdmissionProbe {
   inspect(request: HostedCampaignRemoteAdmissionProbeRequest): Promise<unknown>;
-}
-
-export interface HostedRemoteAdmissionEvidenceSource {
-  collectClockPreflight(): Promise<unknown>;
-  collectDeploymentSafety(): Promise<unknown>;
-  collectDiscordIdentity(): Promise<unknown>;
-  collectVoicetextCanary(): Promise<unknown>;
-}
-
-export interface TypedHostedRemoteAdmissionProbeOptions {
-  readonly discordIdentityExpectation: Omit<DiscordIdentityReceiptExpectationV1, "nowEpochMs">;
-  readonly expectedDeploymentFingerprint: string;
-  readonly expectedDeploymentSafetyExpectationSha256: string;
-  readonly now: () => number;
-  readonly source: HostedRemoteAdmissionEvidenceSource;
-  readonly voicetextExpectation: Omit<VoicetextSemanticCanaryExpectationV1, "nowEpochMs">;
-}
-
-/**
- * Composition adapter over typed collectors. File paths and remote runners belong to those
- * collectors; this adapter never treats an operator-authored capability document as proof.
- */
-export class TypedHostedRemoteAdmissionProbe implements HostedCampaignRemoteAdmissionProbe {
-  readonly #options: TypedHostedRemoteAdmissionProbeOptions;
-
-  public constructor(options: TypedHostedRemoteAdmissionProbeOptions) {
-    this.#options = options;
-  }
-
-  public async inspect(request: HostedCampaignRemoteAdmissionProbeRequest): Promise<HostedRemoteAdmissionEvidenceV1> {
-    const nowEpochMs = this.#options.now();
-    const [deploymentValue, identityValue, canaryValue, clockValue] = await Promise.all([
-      this.#options.source.collectDeploymentSafety(), this.#options.source.collectDiscordIdentity(),
-      this.#options.source.collectVoicetextCanary(), this.#options.source.collectClockPreflight(),
-    ]);
-    const deployment = verifyHostedDeploymentSafetyReceiptV1(deploymentValue);
-    if (deployment.campaignId !== request.campaignId
-      || deployment.deploymentFingerprint !== this.#options.expectedDeploymentFingerprint
-      || deployment.expectationSha256 !== this.#options.expectedDeploymentSafetyExpectationSha256) {
-      throw new Error("Hosted deployment safety receipt does not match the pinned deployment");
-    }
-    evaluateDiscordIdentityReceiptV1(identityValue, {
-      ...this.#options.discordIdentityExpectation, nowEpochMs,
-    });
-    evaluateVoicetextSemanticCanaryReceiptV1(canaryValue, {
-      ...this.#options.voicetextExpectation, nowEpochMs,
-    });
-    hostedClockPreflightReceiptV2Schema.parse(clockValue);
-    return Object.freeze({
-      clockPreflight: clockValue, deploymentSafety: deploymentValue, discordIdentity: identityValue,
-      kind: "hosted-remote-admission-evidence" as const, schemaVersion: 1 as const,
-      voicetextCanary: canaryValue,
-    });
-  }
 }
 
 export type HostedRemoteAdmissionEvaluation = Readonly<{
