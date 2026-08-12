@@ -244,6 +244,7 @@ boundaries:
         - core.meeting.conversation
       packages:
         - "@discord-meeting/conversation-runtime-contracts"
+        - "@discord-meeting/discord-adapter"
         - "@discord-meeting/meeting-core"
         - "@grpc/grpc-js"
         - "@grpc/proto-loader"

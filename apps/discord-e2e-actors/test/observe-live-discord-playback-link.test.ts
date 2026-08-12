@@ -22,7 +22,7 @@ describe("live Discord playback-link observer CLI boundary", () => {
 
     const proof = JSON.parse(await readFile(outputPath, "utf8")) as Record<string, unknown>;
     expect(proof).toMatchObject({
-      messageId: "44444444444444444", projectionMarker: config.projectionMarker,
+      messageId: "44444444444444444", projectionMarker: config.projectionMarkers[0],
       recordingId: config.recordingId, resultChannelId: config.resultChannelId,
       runId: config.runId, sutApplicationId: config.sutApplicationId,
     });
@@ -54,10 +54,11 @@ function makeConfig(outputPath: string): LiveDiscordPlaybackLinkObserverConfig {
   return {
     container: { kind: "channel-message", parentChannelId: "11111111111111111" },
     durationMilliseconds: 1_000,
+    meetingId: "recording-42",
     keychainService: "test",
     outputPath,
     pollIntervalMs: 2_000,
-    projectionMarker: "meeting-projection:0123456789abcdef0123",
+    projectionMarkers: ["meeting-projection:0123456789abcdef0123"],
     recordingId: "recording-42",
     resultChannelId: "11111111111111111",
     runId: "run-42",
@@ -88,7 +89,7 @@ class FakeDiscordReader {
         createdAtMilliseconds: Date.now(),
         editedAtMilliseconds: null,
         embeds: [{
-          description: null, fields: [], footerText: this.config.projectionMarker, title: null,
+          description: null, fields: [], footerText: this.config.projectionMarkers[0], title: null,
         }],
         id: "44444444444444444",
       }],

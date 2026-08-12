@@ -22,8 +22,9 @@ export interface LiveDiscordPlaybackLinkClock {
 
 export interface ObserveLiveDiscordPlaybackLinkInput {
   readonly durationMilliseconds: number;
+  readonly meetingId: string;
   readonly pollIntervalMs: number;
-  readonly projectionMarker: string;
+  readonly projectionMarkers: readonly [string, ...string[]];
   readonly recordingId: string;
   readonly resultChannelId: string;
   readonly runId: string;
@@ -125,7 +126,7 @@ export async function observeFirstSeenLiveDiscordPlaybackLink(
           schemaVersion: 1 as const,
           runId: requiredText(input.runId, "run ID"),
           recordingId: requiredText(input.recordingId, "recording ID"),
-          projectionMarker: requiredText(input.projectionMarker, "projection marker"),
+          projectionMarker: candidate.marker,
           sutApplicationId: requiredText(input.sutApplicationId, "SUT application ID"),
           resultChannelId: requiredText(input.resultChannelId, "result channel ID"),
           messageId: requiredText(candidate.message.id, "message ID"),
@@ -150,17 +151,16 @@ export async function observeFirstSeenLiveDiscordPlaybackLink(
 function exactMarkerCandidate(
   input: ObserveLiveDiscordPlaybackLinkInput,
   projectionMessages: readonly LiveDiscordProjectionMessages[],
-): { readonly container: LiveDiscordProjectionContainerInput; readonly message: LiveDiscordMessageInput } | undefined {
+): { readonly container: LiveDiscordProjectionContainerInput; readonly marker: string; readonly message: LiveDiscordMessageInput } | undefined {
   const candidates = projectionMessages.flatMap(({ container, messages }) => {
     if (!sameContainer(container, input.container)) {
       return [];
     }
-    return messages
-      .filter((message) =>
-        message.authorId === input.sutApplicationId &&
-        messageHasExactMarker(message, input.projectionMarker)
-      )
-      .map((message) => ({ container, message }));
+    return messages.flatMap((message) => {
+      if (message.authorId !== input.sutApplicationId) {return [];}
+      const markers = input.projectionMarkers.filter((marker) => messageHasExactMarker(message, marker));
+      return markers.map((marker) => ({ container, marker, message }));
+    });
   });
   if (candidates.length > 1) {
     throw new Error("Live Discord playback link observation found duplicate exact marker candidates");
@@ -280,8 +280,13 @@ function requiredText(value: string, label: string): string {
 
 function validateInput(input: ObserveLiveDiscordPlaybackLinkInput): void {
   requiredText(input.runId, "run ID");
+  requiredText(input.meetingId, "meeting ID");
   requiredText(input.recordingId, "recording ID");
-  requiredText(input.projectionMarker, "projection marker");
+  if (input.projectionMarkers.length === 0) {throw new Error("Live Discord projection markers must not be empty");}
+  for (const marker of input.projectionMarkers) {requiredText(marker, "projection marker");}
+  if (new Set(input.projectionMarkers).size !== input.projectionMarkers.length) {
+    throw new Error("Live Discord projection markers must be unique");
+  }
   requiredText(input.sutApplicationId, "SUT application ID");
   requiredText(input.resultChannelId, "result channel ID");
   assertPositiveInteger(input.durationMilliseconds, "duration milliseconds");

@@ -25,8 +25,9 @@ const thread = {
 const input = {
   container: thread,
   durationMilliseconds: 10_000,
+  meetingId: "meeting-42",
   pollIntervalMs: 2_000,
-  projectionMarker: marker,
+  projectionMarkers: [marker],
   recordingId: "recording-42",
   resultChannelId,
   runId: "run-42",
@@ -133,6 +134,37 @@ describe("first-seen Live Discord playback link observation", () => {
     }]]), new FakeClock([
       timing(1_000, 10_000), timing(1_001, 10_001), timing(1_002, 10_002),
     ]))).rejects.toThrow("duplicate exact marker candidates");
+  });
+
+  it("accepts exactly one of canonical live/final markers and rejects ambiguity", async () => {
+    const finalMarker = "meeting-projection:fedcba98765432100123";
+    const hostedInput = { ...input, projectionMarkers: [marker, finalMarker] as const };
+    const finalMessage = message({ embeds: [{
+      description: null, fields: [], footerText: finalMarker, title: null,
+    }] });
+    await expect(observeFirstSeenLiveDiscordPlaybackLink(hostedInput, new PollReader([[{
+      container: thread, messages: [finalMessage],
+    }]]), new FakeClock([
+      timing(1_000, 10_000), timing(1_001, 10_001), timing(1_002, 10_002),
+    ]))).resolves.toMatchObject({ projectionMarker: finalMarker });
+
+    await expect(observeFirstSeenLiveDiscordPlaybackLink(hostedInput, new PollReader([[{
+      container: thread, messages: [message(), { ...finalMessage, id: "final-message" }],
+    }]]), new FakeClock([
+      timing(1_000, 10_000), timing(1_001, 10_001), timing(1_002, 10_002),
+    ]))).rejects.toThrow("duplicate exact marker candidates");
+  });
+
+  it("rejects the right marker in a wrong channel-message container", async () => {
+    const channelInput = {
+      ...input, container: { kind: "channel-message" as const, parentChannelId: resultChannelId },
+    };
+    await expect(observeFirstSeenLiveDiscordPlaybackLink(channelInput, new PollReader([[{
+      container: { kind: "channel-message", parentChannelId: "99999999999999999" },
+      messages: [message()],
+    }]]), new FakeClock([
+      timing(1_000, 10_000), timing(1_001, 10_001), timing(11_001, 20_001),
+    ]))).rejects.toThrow("not observed before the deadline");
   });
 
   it.each([

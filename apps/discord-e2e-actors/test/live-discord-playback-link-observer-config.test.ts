@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { loadLiveDiscordPlaybackLinkObserverConfig } from "../src/live-discord-playback-link-observer-config.js";
+import {
+  createMeetingDiscordFinalSummaryProjectionKey,
+  createMeetingDiscordProjectionKey,
+  createProjectionMarker,
+} from "@discord-meeting/discord-adapter";
 
 const environment = {
   DISCORD_E2E_PLAYBACK_LINK_DURATION_MS: "60000",
@@ -21,7 +26,7 @@ describe("live Discord playback-link observer config", () => {
     expect(loadLiveDiscordPlaybackLinkObserverConfig(environment)).toMatchObject({
       container: { id: "33333333333333333", kind: "thread", parentId: "11111111111111111" },
       outputPath: "/tmp/playback-link-proof.json",
-      projectionMarker: "meeting-projection:0123456789abcdef0123",
+      projectionMarkers: ["meeting-projection:0123456789abcdef0123"],
       recordingId: "recording-42",
       resultChannelId: "11111111111111111",
       runId: "run-42",
@@ -40,6 +45,34 @@ describe("live Discord playback-link observer config", () => {
         kind: "channel-message", parentChannelId: "99999999999999999",
       }),
     })).toThrow("must match the result channel");
+  });
+
+  it("derives canonical live and final channel-message markers in hosted mode", () => {
+    const hosted = loadLiveDiscordPlaybackLinkObserverConfig({
+      ...environment,
+      DISCORD_E2E_PLAYBACK_LINK_MEETING_ID: "meeting-42",
+      DISCORD_E2E_PLAYBACK_LINK_MODE: "hosted",
+      DISCORD_E2E_PLAYBACK_LINK_PROJECTION_CONTAINER_JSON: undefined,
+      DISCORD_E2E_PLAYBACK_LINK_PROJECTION_MARKER: undefined,
+    });
+    expect(hosted.container).toEqual({
+      kind: "channel-message", parentChannelId: environment.DISCORD_E2E_PLAYBACK_LINK_RESULT_CHANNEL_ID,
+    });
+    expect(hosted.meetingId).toBe("meeting-42");
+    expect(hosted.projectionMarkers).toEqual([
+      createProjectionMarker(createMeetingDiscordProjectionKey("meeting-42", environment.DISCORD_E2E_PLAYBACK_LINK_RESULT_CHANNEL_ID)),
+      createProjectionMarker(createMeetingDiscordFinalSummaryProjectionKey("meeting-42", environment.DISCORD_E2E_PLAYBACK_LINK_RESULT_CHANNEL_ID)),
+    ]);
+  });
+
+  it("requires exact meeting and recording identities in hosted mode", () => {
+    expect(() => loadLiveDiscordPlaybackLinkObserverConfig({
+      ...environment, DISCORD_E2E_PLAYBACK_LINK_MODE: "hosted",
+    })).toThrow();
+    expect(() => loadLiveDiscordPlaybackLinkObserverConfig({
+      ...environment, DISCORD_E2E_PLAYBACK_LINK_MEETING_ID: "meeting-42",
+      DISCORD_E2E_PLAYBACK_LINK_MODE: "hosted", DISCORD_E2E_PLAYBACK_LINK_RECORDING_ID: undefined,
+    })).toThrow();
   });
 
   it("requires bounded polling and an absolute non-root private output coordinate", () => {
