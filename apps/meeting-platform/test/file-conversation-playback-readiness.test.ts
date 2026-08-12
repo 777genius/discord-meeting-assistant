@@ -226,20 +226,35 @@ describe("FileConversationPlaybackReadiness", () => {
       root, runId: envelope.runId, timeoutMilliseconds: 1_000,
     });
     const controller = new AbortController();
+    const originalSetTimeout = globalThis.setTimeout;
+    let cancellationScheduled = false;
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout").mockImplementation(
+      (callback, milliseconds, ...arguments_) => {
+        const timeout = originalSetTimeout(callback, milliseconds, ...arguments_);
+        if (milliseconds === 25 && !cancellationScheduled) {
+          cancellationScheduled = true;
+          queueMicrotask(() => {
+            controller.abort();
+          });
+        }
+        return timeout;
+      },
+    );
     const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
-    const waiting = readiness.awaitConversationPlaybackReady(request, {
-      signal: controller.signal,
-    });
-    await waitForJson(intentPath(root));
-    controller.abort();
-
-    const result = await waiting;
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.failure.message).toContain("cancelled");
+    try {
+      const result = await readiness.awaitConversationPlaybackReady(request, {
+        signal: controller.signal,
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.failure.message).toContain("cancelled");
+      }
+      expect(cancellationScheduled).toBe(true);
+      expect(clearTimeoutSpy).toHaveBeenCalled();
+    } finally {
+      clearTimeoutSpy.mockRestore();
+      setTimeoutSpy.mockRestore();
     }
-    expect(clearTimeoutSpy).toHaveBeenCalled();
-    clearTimeoutSpy.mockRestore();
   });
 });
 
