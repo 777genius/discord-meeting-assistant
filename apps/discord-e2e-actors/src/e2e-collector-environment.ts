@@ -33,7 +33,7 @@ export const collectorEnvironmentSchema = z.object({
   DISCORD_E2E_FIXTURE_MANIFEST: z.string().min(1).default("test/fixtures/manifest.v1.json"),
   DISCORD_E2E_KEYCHAIN_SERVICE: z.string().min(1).default("discord-voice-bot-e2e"),
   DISCORD_E2E_MUTATION_TARGET: z.literal("test-only"),
-  DISCORD_E2E_RECORDING_ID: correlationId,
+  DISCORD_E2E_READY_RECEIPT_INPUT: absolutePath,
   DISCORD_E2E_RECORDING_PLAYBACK_READINESS: z.enum(["already-ready", "transition"]),
   DISCORD_E2E_RECORDING_PLAYBACK_ORIGIN: z.url().refine((value) => {
     const url = new URL(value);

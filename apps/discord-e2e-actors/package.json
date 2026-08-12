@@ -7,6 +7,7 @@
     "build": "tsc --project tsconfig.build.json --pretty false",
     "capacity:e2e": "pnpm run build && node dist/capacity-main.js",
     "collect:e2e": "pnpm run build && node dist/collect-retained-evidence.js",
+    "collect:recording-ready": "pnpm run build && node dist/collect-recording-ready-receipt.js",
     "fixtures:generate": "./scripts/generate-ru-en-fixtures.sh",
     "observe:conversation": "pnpm run build && node dist/observe-conversation-voice.js",
     "observe:live": "pnpm run build && node dist/observe-live-discord.js",

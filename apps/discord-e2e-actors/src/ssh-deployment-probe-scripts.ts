@@ -4,6 +4,28 @@ export const imageProvenanceFormat = `{"imageId":{{json .Id}},"repositoryDigests
 
 export const replayTargetContainerFormat = `{"composeProject":{{json (index .Config.Labels "com.docker.compose.project")}},"composeService":{{json (index .Config.Labels "com.docker.compose.service")}},"testOnly":{{json (index .Config.Labels "e2e.test-only")}}}`;
 
+export const completionReceiptsScript = String.raw`
+import { lstat, readdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
+
+const root = join(process.env.RECORDING_SPOOL_ROOT, "completed-v1");
+const rootStats = await lstat(root);
+if (!rootStats.isDirectory() || rootStats.isSymbolicLink()) {
+  throw new Error("recording completion receipt root is unsafe");
+}
+const receipts = [];
+for (const entry of await readdir(root, { withFileTypes: true })) {
+  if (!/^[a-f\d]{64}\.json$/u.test(entry.name)) continue;
+  const path = join(root, entry.name);
+  const stats = await lstat(path);
+  if (!entry.isFile() || !stats.isFile() || stats.isSymbolicLink()) {
+    throw new Error("recording completion receipt path is unsafe");
+  }
+  receipts.push(JSON.parse(await readFile(path, "utf8")));
+}
+console.log(JSON.stringify(receipts));
+`;
+
 export const postgresEvidenceQuery = `
 WITH target AS (
   SELECT snapshot

@@ -28,13 +28,20 @@ import { accessDiscordWithBoundConversation } from
   "./conversation-voice-collection-preflight.js";
 import { SshDeploymentEvidenceProbe } from "./ssh-deployment-probe.js";
 import { EvidenceProbeInterruptedError } from "./ssh-deployment-probe-commands.js";
+import {
+  deploymentProvenanceDigest,
+  recordingReadyReceiptV1Schema,
+} from "./recording-ready-receipt.js";
 
 async function main(): Promise<void> {
   const config = collectorEnvironmentSchema.parse(process.env);
-  const [actorRun, manifest, conversationVoice, supplementalPlayback, campaignProof, serviceLevels, serviceLevelThresholds, playbackLinkProof] = await Promise.all([
+  const [actorRun, manifest, readyReceipt, conversationVoice, supplementalPlayback, campaignProof, serviceLevels, serviceLevelThresholds, playbackLinkProof] = await Promise.all([
     readJson(config.DISCORD_E2E_ACTOR_RUN_INPUT),
     readJson(config.DISCORD_E2E_FIXTURE_MANIFEST).then((value) =>
       fixtureManifestV1Schema.parse(value)
+    ),
+    readJson(config.DISCORD_E2E_READY_RECEIPT_INPUT).then((value) =>
+      recordingReadyReceiptV1Schema.parse(value)
     ),
     Promise.all((config.DISCORD_E2E_CONVERSATION_VOICE_INPUTS ?? []).map((path) =>
       readJson(path).then((value) => conversationVoiceEvidenceV3Schema.parse(value))
@@ -51,7 +58,7 @@ async function main(): Promise<void> {
     ? undefined
     : serviceLevelSourcesFromLiveProof(playbackLinkProof, serviceLevels, {
         playbackOrigin: config.DISCORD_E2E_RECORDING_PLAYBACK_ORIGIN,
-        recordingId: config.DISCORD_E2E_RECORDING_ID,
+        recordingId: readyReceipt.recordingId,
         runId: config.DISCORD_E2E_RUN_ID,
       });
   const deployment = new SshDeploymentEvidenceProbe({
@@ -69,10 +76,13 @@ async function main(): Promise<void> {
   });
   const replayTarget = createReplayTargetAttestation({
     fixtureSetId: manifest.fixtureSetId,
-    recordingId: config.DISCORD_E2E_RECORDING_ID,
+    recordingId: readyReceipt.recordingId,
     runId: config.DISCORD_E2E_RUN_ID,
   }, unboundActorRunEvidenceV1Schema.parse(actorRun));
   await deployment.assertReplayTargetSafe(replayTarget);
+  if (readyReceipt.runId !== config.DISCORD_E2E_RUN_ID) {
+    throw new Error("Recording-ready receipt does not match the requested run correlation");
+  }
   const discord = new DiscordJsEvidenceProbe();
   const rawConversation = config.DISCORD_E2E_BOTIK_SPEAKER_ID === undefined
     ? undefined
@@ -96,14 +106,14 @@ async function main(): Promise<void> {
       connect: (token) => discord.connect(token),
       rawVoice: rawConversation?.voice,
       readSecret: () => secretReader.read(config.DISCORD_E2E_SUT_ACCOUNT),
-      recordingId: config.DISCORD_E2E_RECORDING_ID,
+      recordingId: readyReceipt.recordingId,
       run: (boundVoice) => collectRetainedE2eEvidence({
         actorRun,
         ...(rawConversation === undefined || boundVoice === undefined
           ? {}
           : { conversation: { ...rawConversation, voice: boundVoice } }),
         fixtureSetId: manifest.fixtureSetId,
-        recordingId: config.DISCORD_E2E_RECORDING_ID,
+        recordingId: readyReceipt.recordingId,
         recordingPlayback: new HttpRecordingPlaybackEvidenceProbe({
           expectedOrigin: config.DISCORD_E2E_RECORDING_PLAYBACK_ORIGIN,
         }),
@@ -113,6 +123,13 @@ async function main(): Promise<void> {
         runId: config.DISCORD_E2E_RUN_ID,
       }, deployment, discord),
     });
+    if (
+      evidence.meetingId !== readyReceipt.meetingId ||
+      deploymentProvenanceDigest(evidence.deployment) !==
+        readyReceipt.pinnedTestTarget.provenanceDigestSha256
+    ) {
+      throw new Error("Retained evidence does not match the recording-ready receipt");
+    }
     const expectedRevisions = deploymentRevisionExpectationSchema.parse({
       craig: config.DISCORD_E2E_EXPECTED_CRAIG_SOURCE_REVISION,
       meetingPlatform: config.DISCORD_E2E_EXPECTED_MEETING_PLATFORM_SOURCE_REVISION,

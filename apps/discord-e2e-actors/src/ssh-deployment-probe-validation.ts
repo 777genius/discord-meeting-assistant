@@ -87,6 +87,8 @@ export const replayReadinessOutputSchema = z.object({
   state: z.literal("completed"),
 });
 
+export const completionReceiptsOutputSchema = z.array(z.unknown());
+
 export interface SshDeploymentProbeOptions {
   readonly attestationFile: string;
   readonly composeFile: string;

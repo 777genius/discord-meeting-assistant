@@ -23,6 +23,7 @@ import {
 } from "./ssh-deployment-probe-commands.js";
 import {
   containerProvenanceFormat,
+  completionReceiptsScript,
   imageProvenanceFormat,
   postgresEvidenceQuery,
   replayJobScript,
@@ -34,6 +35,7 @@ import {
   assertReplayTargetAttestation,
   assertReplayTargetContainer,
   containerProvenanceOutputSchema,
+  completionReceiptsOutputSchema,
   correlationId,
   databaseOutputSchema,
   imageProvenanceOutputSchema,
@@ -179,6 +181,17 @@ export class SshDeploymentEvidenceProbe implements DeploymentEvidenceProbe {
       subscriptionRuntime,
       ...(pipecat === undefined ? {} : { pipecat }),
     };
+  }
+
+  public async collectRecordingCompletionReceipts(): Promise<readonly unknown[]> {
+    const containerId = await this.#findContainerId(this.#options.projectName, "meeting-platform");
+    const output = await this.#commands.runContainer(this.#options, containerId, [
+      "node",
+      "--input-type=module",
+      "-e",
+      completionReceiptsScript,
+    ]);
+    return completionReceiptsOutputSchema.parse(parseLastJsonLine(output));
   }
 
   public async collectS3(

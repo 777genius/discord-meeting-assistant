@@ -13,6 +13,7 @@ import {
   runRemoteProbe,
 } from "../src/ssh-deployment-probe-commands.js";
 import {
+  completionReceiptsScript,
   replayJobScript,
   replayReadinessScript,
 } from "../src/ssh-deployment-probe-scripts.js";
@@ -164,6 +165,22 @@ function fakeCommands(input: {
 }
 
 describe("SshDeploymentEvidenceProbe replay target safety", () => {
+  it("reads completion receipts through the exact running test container", async () => {
+    const base = fakeCommands({ mutations: [] });
+    const commands: SshDeploymentProbeCommands = {
+      ...base,
+      runContainer: async (_settings, exactContainerId, args) => {
+      expect(exactContainerId).toBe(containerId);
+      expect(args).toEqual(["node", "--input-type=module", "-e", completionReceiptsScript]);
+      return JSON.stringify([{ recordingId: "recording-1" }]);
+      },
+    };
+
+    await expect(probe(commands).collectRecordingCompletionReceipts()).resolves.toEqual([
+      { recordingId: "recording-1" },
+    ]);
+  });
+
   it("keeps the outer SSH timeout beyond the remote replay deadline", () => {
     const settings = parseSshDeploymentProbeOptions({
       attestationFile: "/tmp/discord-e2e-attestations/run-1.json",
