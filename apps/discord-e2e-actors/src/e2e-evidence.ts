@@ -128,12 +128,13 @@ export function verifyE2eCampaign(
   manifest: FixtureManifestV1,
   runs: readonly RetainedE2eEvidence[],
   expectedRevisions: DeploymentRevisionExpectation,
+  serviceLevelThresholds?: ServiceLevelThresholds,
 ) {
   return verifyCampaign({
     manifest,
     runs,
     verifyRun: (runManifest, evidence) =>
-      verifyRetainedE2eEvidence(runManifest, evidence, expectedRevisions),
+      verifyRetainedE2eEvidence(runManifest, evidence, expectedRevisions, serviceLevelThresholds),
   });
 }
 
