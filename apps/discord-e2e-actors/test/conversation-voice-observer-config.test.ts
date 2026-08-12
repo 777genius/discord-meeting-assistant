@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import { loadConversationVoiceObserverConfig } from "../src/conversation-voice-observer-config.js";
+import { conversationVoiceCampaignIdentities } from
+  "../src/conversation-voice-campaign-contract.js";
 
 const requiredEnvironment = {
   DISCORD_E2E_CONVERSATION_VOICE_ATTEMPT_ID: "attempt-2026-08-04-01",
@@ -84,30 +86,57 @@ describe("loadConversationVoiceObserverConfig", () => {
   });
 
   it("accepts a create-only capture sequence and rejects ambiguous correlations", () => {
+    const dynamicCapture = {
+      attemptId: "attempt-2026-08-04-05",
+      outputPath: "/tmp/conversation-voice-observer-5.json",
+      purpose: "addressed-answer",
+      turnIdFile: "/tmp/conversation-voice-turn-5.txt",
+    };
     const additionalCaptures = [
       {
         attemptId: "attempt-2026-08-04-02",
         outputPath: "/tmp/conversation-voice-observer-2.json",
+        purpose: "greeting",
+        turnId: `participant-greeting:${conversationVoiceCampaignIdentities.speakerRu}`,
+      },
+      {
+        attemptId: "attempt-2026-08-04-03",
+        outputPath: "/tmp/conversation-voice-observer-3.json",
+        purpose: "greeting",
+        turnId: `participant-greeting:${conversationVoiceCampaignIdentities.speakerEn}`,
+      },
+      {
+        attemptId: "attempt-2026-08-04-04",
+        outputPath: "/tmp/conversation-voice-observer-4.json",
+        purpose: "greeting",
+        turnId: `participant-greeting:${conversationVoiceCampaignIdentities.speakerD}`,
+      },
+      dynamicCapture,
+      {
+        attemptId: "attempt-2026-08-04-06",
+        outputPath: "/tmp/conversation-voice-observer-6.json",
         purpose: "farewell",
         turnId: "meeting-farewell:v1",
       },
     ];
-    expect(loadConversationVoiceObserverConfig({
+    const campaignConfig = loadConversationVoiceObserverConfig({
       ...requiredEnvironment,
+      DISCORD_E2E_CONVERSATION_VOICE_CRAIG_BOT_ID: conversationVoiceCampaignIdentities.botik,
       DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON:
         JSON.stringify(additionalCaptures),
-    }).additionalCaptures).toEqual(additionalCaptures);
-    const dynamicCapture = {
-      attemptId: "attempt-2026-08-04-03",
-      outputPath: "/tmp/conversation-voice-observer-3.json",
-      purpose: "addressed-answer",
-      turnIdFile: "/tmp/conversation-voice-turn-3.txt",
-    };
-    expect(loadConversationVoiceObserverConfig({
-      ...requiredEnvironment,
-      DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON:
-        JSON.stringify([dynamicCapture]),
-    }).additionalCaptures).toEqual([dynamicCapture]);
+      DISCORD_E2E_CONVERSATION_VOICE_GUILD_ID: conversationVoiceCampaignIdentities.guild,
+      DISCORD_E2E_CONVERSATION_VOICE_OBSERVER_APPLICATION_ID: conversationVoiceCampaignIdentities.observer,
+      DISCORD_E2E_CONVERSATION_VOICE_PURPOSE: "greeting",
+      DISCORD_E2E_CONVERSATION_VOICE_TURN_ID:
+        `participant-greeting:${conversationVoiceCampaignIdentities.observer}`,
+      DISCORD_E2E_CONVERSATION_VOICE_VOICE_CHANNEL_ID: conversationVoiceCampaignIdentities.voiceChannel,
+    });
+    expect([
+      campaignConfig.purpose,
+      ...campaignConfig.additionalCaptures.map(({ purpose }) => purpose),
+    ]).toEqual([
+      "greeting", "greeting", "greeting", "greeting", "addressed-answer", "farewell",
+    ]);
     expect(() => loadConversationVoiceObserverConfig({
       ...requiredEnvironment,
       DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON: "not-json",
@@ -153,7 +182,7 @@ describe("loadConversationVoiceObserverConfig", () => {
           ...dynamicCapture,
           attemptId: "attempt-2026-08-04-04",
           outputPath: "/tmp/conversation-voice-observer-4.json",
-          turnIdFile: "/tmp/./conversation-voice-turn-3.txt",
+          turnIdFile: "/tmp/./conversation-voice-turn-5.txt",
         },
       ]),
     })).toThrow("turn ID file paths must be unique");

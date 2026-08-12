@@ -19,6 +19,8 @@ import {
   type RetainedE2eEvidenceV7,
   type RetainedE2eEvidenceV8,
 } from "../src/e2e-evidence.js";
+import { conversationVoiceCampaignRoles } from
+  "../src/conversation-voice-campaign-contract.js";
 
 export const speakerAId = "1533227577286852649";
 export const speakerBId = "1533228054724346087";
@@ -26,6 +28,7 @@ const speakerDId = "1533873978417086474";
 const observerId = "1533867700575670282";
 const speakerAText = "Спикер A обсуждает Meeting Platform и Craig recording";
 const speakerBText = "Спикер B проверит Redis queue и idempotency key";
+const campaignCaptureStartMs = Object.freeze([110, 320, 530, 2_700, 4_200, 6_600]);
 export const expectedRevisions: DeploymentRevisionExpectation =
   { craig: "6".repeat(40), meetingPlatform: "b".repeat(40) };
 export const currentExpectedRevisions: DeploymentRevisionExpectation = {
@@ -576,21 +579,19 @@ export function retainedV8Evidence(): RetainedE2eEvidenceV8 {
   });
   source.transcript.turns.push(
     {
-      endMs: 650, speakerId: botSpeakerId, startMs: 250,
-      text: "Hi, Alex!", turnId: "botik-greeting-en",
+      endMs: 180, speakerId: botSpeakerId, startMs: 120,
+      text: "Привет!", turnId: "botik-greeting-unknown",
     },
     {
-      endMs: 1_450, speakerId: botSpeakerId, startMs: 1_050,
+      endMs: 390, speakerId: botSpeakerId, startMs: 330,
       text: "Привет, Саша!", turnId: "botik-greeting-ru",
     },
     {
       endMs: 3_600, speakerId: speakerDId, startMs: 3_300,
       text: "Ботик, ответь одним словом: кобальт.", turnId: "speaker-d-question",
     },
-    {
-      endMs: 2_450, speakerId: botSpeakerId, startMs: 2_050,
-      text: "Привет!", turnId: "botik-greeting-unknown",
-    },
+    { endMs: 600, speakerId: botSpeakerId, startMs: 540,
+      text: "Hi, Alex!", turnId: "botik-greeting-en" },
     {
       endMs: 3_150, speakerId: botSpeakerId, startMs: 2_750,
       text: "Привет!", turnId: "botik-greeting-speaker-d",
@@ -605,10 +606,10 @@ export function retainedV8Evidence(): RetainedE2eEvidenceV8 {
     },
   );
   const events = [
-    { greetingLocale: "ru", observedAt: "1970-01-01T00:00:01.500Z", participantId: speakerAId, participantNameStatus: "known", turnId: `participant-greeting:${speakerAId}`, type: "greeting" as const },
-    { greetingLocale: "en", observedAt: "1970-01-01T00:00:00.700Z", participantId: speakerBId, participantNameStatus: "known", turnId: `participant-greeting:${speakerBId}`, type: "greeting" as const },
-    { greetingLocale: "ru", observedAt: "1970-01-01T00:00:02.500Z", participantId: observerId, participantNameStatus: "unknown", turnId: `participant-greeting:${observerId}`, type: "greeting" as const },
-    { greetingLocale: "ru", observedAt: "1970-01-01T00:00:03.200Z", participantId: speakerDId, participantNameStatus: "unknown", turnId: `participant-greeting:${speakerDId}`, type: "greeting" as const },
+    { greetingLocale: "ru", observedAt: "1970-01-01T00:00:00.150Z", participantId: observerId, participantNameStatus: "unknown", turnId: `participant-greeting:${observerId}`, type: "greeting" as const },
+    { greetingLocale: "ru", observedAt: "1970-01-01T00:00:00.350Z", participantId: speakerAId, participantNameStatus: "known", turnId: `participant-greeting:${speakerAId}`, type: "greeting" as const },
+    { greetingLocale: "en", observedAt: "1970-01-01T00:00:00.550Z", participantId: speakerBId, participantNameStatus: "known", turnId: `participant-greeting:${speakerBId}`, type: "greeting" as const },
+    { greetingLocale: "ru", observedAt: "1970-01-01T00:00:02.750Z", participantId: speakerDId, participantNameStatus: "unknown", turnId: `participant-greeting:${speakerDId}`, type: "greeting" as const },
     { observedAt: "1970-01-01T00:00:03.800Z", outcome: "active", participantId: speakerDId, turnId: "human-question-1", type: "addressed-answer" as const },
     { evidenceTurnIds: ["speaker-d-farewell"], locale: "ru", observedAt: "1970-01-01T00:00:07.000Z", playbackAttemptId: "farewell-attempt-1", reason: "explicit-group", turnId: "meeting-farewell:v1" as const, type: "farewell" as const },
   ];
@@ -643,14 +644,12 @@ export function retainedV8Evidence(): RetainedE2eEvidenceV8 {
           voiceChannelId: "1533228823045214398",
         },
       },
-      voice: [
-        voiceObservation("greeting", `participant-greeting:${speakerAId}`, "greeting-ru", 1_000),
-        voiceObservation("greeting", `participant-greeting:${speakerBId}`, "greeting-en", 200),
-        voiceObservation("greeting", `participant-greeting:${observerId}`, "greeting-unknown", 2_000),
-        voiceObservation("farewell", "meeting-farewell:v1", "farewell", 6_600),
-        voiceObservation("addressed-answer", "human-question-1", "answer", 4_100),
-        voiceObservation("greeting", `participant-greeting:${speakerDId}`, "greeting-speaker-d", 2_700),
-      ],
+      voice: conversationVoiceCampaignRoles.map((role, index) => voiceObservation(
+          role.purpose,
+          role.turnId ?? "human-question-1",
+          role.role,
+          campaignCaptureStartMs[index]!,
+        )),
     },
     schemaVersion: 8,
   });
@@ -675,11 +674,12 @@ function voiceObservation(
   attemptId: string,
   startMs: number,
 ) {
+  const acceptedDurationMilliseconds = 100;
   return {
     capture: {
-      acceptedDurationMilliseconds: 500, acceptedPacketCount: 25,
-      cancellation: { status: "not-observed" as const }, endedAt: captureTimestamp(startMs + 500),
-      expectedDuration: { maximumMilliseconds: 600, minimumMilliseconds: 500 },
+      acceptedDurationMilliseconds, acceptedPacketCount: 5,
+      cancellation: { status: "not-observed" as const }, endedAt: captureTimestamp(startMs + acceptedDurationMilliseconds),
+      expectedDuration: { maximumMilliseconds: 200, minimumMilliseconds: acceptedDurationMilliseconds },
       firstPacketAt: captureTimestamp(startMs), ignoredDuplicatePacketCount: 0, ignoredLatePacketCount: 0,
       limits: { captureTimeoutMilliseconds: 2_000, maxCaptureDurationMilliseconds: 60_000, maxPcmBytes: 11_520_000 },
       pcm: {

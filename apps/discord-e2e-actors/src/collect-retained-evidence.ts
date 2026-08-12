@@ -12,19 +12,17 @@ import {
   verifyRetainedE2eEvidence,
 } from "./e2e-evidence.js";
 import { FileSecretReader, MacOsKeychainSecretReader } from "./keychain.js";
+import { accessDiscordWithBoundConversation } from
+  "./conversation-voice-collection-preflight.js";
 import { SshDeploymentEvidenceProbe } from "./ssh-deployment-probe.js";
 
 async function main(): Promise<void> {
   const config = collectorEnvironmentSchema.parse(process.env);
-  const [actorRun, manifest, token, conversationVoice, supplementalPlayback] = await Promise.all([
+  const [actorRun, manifest, conversationVoice, supplementalPlayback] = await Promise.all([
     readJson(config.DISCORD_E2E_ACTOR_RUN_INPUT),
     readJson(config.DISCORD_E2E_FIXTURE_MANIFEST).then((value) =>
       fixtureManifestV1Schema.parse(value)
     ),
-    (config.DISCORD_E2E_SECRET_DIRECTORY === undefined
-      ? new MacOsKeychainSecretReader(config.DISCORD_E2E_KEYCHAIN_SERVICE)
-      : new FileSecretReader(config.DISCORD_E2E_SECRET_DIRECTORY))
-      .read(config.DISCORD_E2E_SUT_ACCOUNT),
     Promise.all((config.DISCORD_E2E_CONVERSATION_VOICE_INPUTS ?? []).map((path) =>
       readJson(path).then((value) => conversationVoiceEvidenceV3Schema.parse(value))
     )),
@@ -42,7 +40,7 @@ async function main(): Promise<void> {
     sourceRoot: config.DISCORD_E2E_REMOTE_SOURCE_ROOT,
   });
   const discord = new DiscordJsEvidenceProbe();
-  const conversation = config.DISCORD_E2E_BOTIK_SPEAKER_ID === undefined
+  const rawConversation = config.DISCORD_E2E_BOTIK_SPEAKER_ID === undefined
     ? undefined
     : {
         botSpeakerId: config.DISCORD_E2E_BOTIK_SPEAKER_ID,
@@ -52,14 +50,24 @@ async function main(): Promise<void> {
         ),
         voice: conversationVoice,
       };
+  const secretReader = config.DISCORD_E2E_SECRET_DIRECTORY === undefined
+    ? new MacOsKeychainSecretReader(config.DISCORD_E2E_KEYCHAIN_SERVICE)
+    : new FileSecretReader(config.DISCORD_E2E_SECRET_DIRECTORY);
   try {
-    await discord.connect(token);
-    const evidence = await collectRetainedE2eEvidence({
-      actorRun,
-      ...(conversation === undefined ? {} : { conversation }),
+    const evidence = await accessDiscordWithBoundConversation({
+      connect: (token) => discord.connect(token),
+      rawVoice: rawConversation?.voice,
+      readSecret: () => secretReader.read(config.DISCORD_E2E_SUT_ACCOUNT),
       recordingId: config.DISCORD_E2E_RECORDING_ID,
-      runId: config.DISCORD_E2E_RUN_ID,
-    }, deployment, discord);
+      run: (boundVoice) => collectRetainedE2eEvidence({
+        actorRun,
+        ...(rawConversation === undefined || boundVoice === undefined
+          ? {}
+          : { conversation: { ...rawConversation, voice: boundVoice } }),
+        recordingId: config.DISCORD_E2E_RECORDING_ID,
+        runId: config.DISCORD_E2E_RUN_ID,
+      }, deployment, discord),
+    });
     const expectedRevisions = deploymentRevisionExpectationSchema.parse({
       craig: config.DISCORD_E2E_EXPECTED_CRAIG_SOURCE_REVISION,
       meetingPlatform: config.DISCORD_E2E_EXPECTED_MEETING_PLATFORM_SOURCE_REVISION,

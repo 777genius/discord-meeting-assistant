@@ -113,6 +113,20 @@ wait is bounded by `DISCORD_E2E_CONVERSATION_VOICE_READY_TIMEOUT_MS`, not by the
 short capture timeout. This prevents Discord reconnect timing from binding a
 later utterance to an earlier expected turn.
 
+The retained lifecycle campaign uses the first greeting as the direct primary
+capture and preserves this exact order in the additional capture array: the
+other three greetings, `addressed-answer` with a runtime `turnIdFile`, then the
+prepared `farewell` with its literal turn ID. This matches the pinned Speaker D
+fixture: question, Botik answer, explicit group farewell. The last two captures
+are not interchangeable. While the observer waits for the addressed-answer
+correlation file, any audible packet fails the campaign, so the runtime turn ID
+must be accepted before Botik's answer starts and before the later farewell.
+Any non-empty additional-capture array enters strict retained-campaign mode and
+must describe exactly those six pinned semantic roles, with no extra capture.
+Before Discord login or voice join, the CLI validates every role and prints one
+copyable JSON preflight plan containing only attempt IDs, purposes, pinned
+correlation IDs or the `turnIdFile` path, and create-only output paths.
+
 `turnIdFile` is the bounded handoff for a correlation ID that is known only
 after the observer has joined voice. The path must not exist when the observer
 starts. When that ordered capture is reached, the already-connected observer
@@ -245,14 +259,14 @@ DISCORD_E2E_EVIDENCE_OUTPUT=/absolute/evidence/overlap.evidence.v6.json \
 pnpm --filter @discord-meeting/discord-e2e-actors collect:e2e
 ```
 
-For the opt-in greeting/farewell/Botik campaign, start a create-only observer
-capture immediately before each of the four greeting playbacks, the prepared
-farewell, and the addressed answer. Then collect v8 by adding the pinned Botik
-speaker ID and the JSON array of those six files:
+For the opt-in greeting/farewell/Botik campaign, start one create-only observer
+before the first greeting and retain four greetings, the addressed answer, and
+the prepared farewell in that order. Then collect v8 by adding the pinned Botik
+speaker ID and the JSON array of those six files in the same order:
 
 ```sh
 DISCORD_E2E_BOTIK_SPEAKER_ID=1534231284467896512 \
-DISCORD_E2E_CONVERSATION_VOICE_INPUTS='["/absolute/evidence/greeting-observer.json","/absolute/evidence/greeting-ru.json","/absolute/evidence/greeting-en.json","/absolute/evidence/greeting-speaker-d.json","/absolute/evidence/farewell.json","/absolute/evidence/addressed-answer.json"]' \
+DISCORD_E2E_CONVERSATION_VOICE_INPUTS='["/absolute/evidence/greeting-observer.json","/absolute/evidence/greeting-ru.json","/absolute/evidence/greeting-en.json","/absolute/evidence/greeting-speaker-d.json","/absolute/evidence/addressed-answer.json","/absolute/evidence/farewell.json"]' \
 DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_INPUT=/absolute/evidence/speaker-d.playback.json \
 DISCORD_E2E_EVIDENCE_OUTPUT=/absolute/evidence/reconnect.evidence.v8.json \
 DISCORD_E2E_SECRET_DIRECTORY=/run/secrets/discord-e2e \
