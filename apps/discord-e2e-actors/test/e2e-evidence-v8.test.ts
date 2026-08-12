@@ -111,6 +111,48 @@ describe("retained conversation V8 supplemental semantics", () => {
 });
 
 describe("retained conversation V8 boundary policies", () => {
+  it("requires the exact semantic and chronological capture campaign", () => {
+    const extraEvidence = retainedV8Evidence();
+    extraEvidence.conversation.voice.push(
+      structuredClone(extraEvidence.conversation.voice[5]!),
+    );
+    const reorderedEvidence = retainedV8Evidence();
+    [reorderedEvidence.conversation.voice[4], reorderedEvidence.conversation.voice[5]] = [
+      reorderedEvidence.conversation.voice[5]!,
+      reorderedEvidence.conversation.voice[4]!,
+    ];
+    const greetingAfterAnswer = retainedV8Evidence();
+    [greetingAfterAnswer.conversation.voice[3], greetingAfterAnswer.conversation.voice[4]] = [
+      greetingAfterAnswer.conversation.voice[4]!,
+      greetingAfterAnswer.conversation.voice[3]!,
+    ];
+
+    for (const evidence of [extraEvidence, reorderedEvidence, greetingAfterAnswer]) {
+      const codes = verifyRetainedE2eEvidence(
+        manifest(),
+        evidence,
+        currentExpectedRevisions,
+      ).failures.map(({ code }) => code);
+      expect(codes).toContain("VOICE_CAMPAIGN_ORDER_INVALID");
+    }
+  });
+
+  it("rejects lifecycle receipt timestamps swapped over canonical captures", () => {
+    const evidence = retainedV8Evidence();
+    const firstObservedAt = evidence.conversation.lifecycle.events[0]!.observedAt;
+    evidence.conversation.lifecycle.events[0]!.observedAt =
+      evidence.conversation.lifecycle.events[1]!.observedAt;
+    evidence.conversation.lifecycle.events[1]!.observedAt = firstObservedAt;
+
+    const codes = verifyRetainedE2eEvidence(
+      manifest(),
+      evidence,
+      currentExpectedRevisions,
+    ).failures.map(({ code }) => code);
+
+    expect(codes).toContain("VOICE_CAMPAIGN_LIFECYCLE_INVALID");
+  });
+
   it("honors a tighter manifest tolerance for the addressed turn boundary", () => {
     const fixtureManifest = manifest();
     fixtureManifest.thresholds.timestampToleranceMs = 100;

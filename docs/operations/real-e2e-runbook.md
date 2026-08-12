@@ -169,7 +169,9 @@ The remaining lifecycle gate uses the same conversation voice observer and
 retained evidence collector; it is not a separate framework. During one
 private-guild reconnect run, retain create-only captures for a named Russian
 greeting, a named English greeting, default-locale greetings for the unknown
-observer and Speaker D, the prepared farewell, and one addressed Botik answer. Set
+observer and Speaker D, one addressed Botik answer, and the prepared farewell,
+in that exact observer order. It mirrors the pinned Speaker D fixture: question,
+Botik answer, then explicit group farewell. Set
 `DISCORD_E2E_CONVERSATION_VOICE_PURPOSE` to `greeting`, `farewell`, or
 `addressed-answer` for each capture and use the runtime turn ID shown by the
 correlated structured event.
@@ -198,12 +200,17 @@ short capture window starts with the first audio packet.
 To retain the ordered capture set with one observer connection, pass the
 remaining capture records through
 `DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON`. The record shape and
-limits are documented in `apps/discord-e2e-actors/README.md`.
+limits are documented in `apps/discord-e2e-actors/README.md`. Use the first
+greeting as the literal primary capture, followed by the other three greetings,
+the addressed answer, and the farewell. A non-empty additional capture array is
+strict campaign mode: the CLI rejects a missing, extra, reordered, or misbound
+role before Discord login and prints the validated non-secret JSON capture plan
+before joining voice. Retain that plan beside the campaign evidence.
 
 Use a literal `turnId` when the lifecycle correlation is known before startup.
 For the addressed-answer capture, where the admitted live turn ID is produced
 during the call, use an absolute `turnIdFile` instead. The observer first proves
-that path is absent, joins voice, completes the earlier ordered captures, and
+that path is absent, joins voice, completes the four greeting captures, and
 then waits for the file while staying connected. Build the actor package before
 the campaign. After the live-turn admission log yields the exact ID, publish it
 with the already-built create-only repository helper:
@@ -220,6 +227,11 @@ pre-create, overwrite, symlink, or edit the final file in place. While waiting,
 the observer drains silent Craig packets; any audible packet before the observer
 confirms correlation publication aborts the campaign instead of being buffered
 into the next capture.
+Do not place the literal farewell capture before the addressed-answer capture.
+The fixture produces Botik's answer before the group farewell, and the audible
+pre-correlation guard intentionally fails if answer audio arrives before its
+runtime turn ID has been accepted; reversing the captures cannot recover a
+trustworthy correlation afterward.
 The bounded wait uses
 `DISCORD_E2E_CONVERSATION_VOICE_READY_TIMEOUT_MS`; an invalid, stale, oversized,
 or late source aborts the campaign rather than guessing a correlation.

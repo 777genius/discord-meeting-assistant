@@ -18,8 +18,8 @@ const conversationEnvironment = {
     "/evidence/greeting-en.json",
     "/evidence/greeting-unknown.json",
     "/evidence/greeting-speaker-d.json",
-    "/evidence/farewell.json",
     "/evidence/answer.json",
+    "/evidence/farewell.json",
   ]),
   DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_INPUT: "/evidence/speaker-d.json",
 };
