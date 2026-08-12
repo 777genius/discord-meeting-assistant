@@ -64,13 +64,36 @@ export function validateActionEvidence(
     throw new Error(`Missing ${action.kind} evidence`);
   }
   const value = evidence as Record<string, unknown>;
+  validateProvenanceEvidence(action, value);
+  validateCaptureEvidence(action, value);
+  validateAnswerLatencyEvidence(action, value, thresholds);
+  validateServiceLevelEvidence(action, value);
+  validateRunEvidence(action, value);
+  validateFiniteCompletionEvidence(action, value);
+}
+
+function validateProvenanceEvidence(
+  action: HostedCampaignBarrierAction, value: Readonly<Record<string, unknown>>,
+): void {
   if ((action.kind === "provenance-before" || action.kind === "provenance-after")
     && (typeof value.digestSha256 !== "string" || !/^[a-f\d]{64}$/u.test(value.digestSha256))) {
     throw new Error(`${action.kind} digest evidence is invalid`);
   }
+}
+
+function validateCaptureEvidence(
+  action: HostedCampaignBarrierAction, value: Readonly<Record<string, unknown>>,
+): void {
   if (action.kind === "capture-retained" && (value.retained !== true || value.ordinal !== action.ordinal)) {
     throw new Error(`Capture ${action.ordinal} retained evidence is invalid`);
   }
+}
+
+function validateAnswerLatencyEvidence(
+  action: HostedCampaignBarrierAction,
+  value: Readonly<Record<string, unknown>>,
+  thresholds: HostedCampaignThresholds,
+): void {
   if (action.kind === "answer-first-packet") {
     const latency = value.answerLatencyMilliseconds;
     if (!Number.isSafeInteger(latency) || (latency as number) < 0
@@ -78,6 +101,11 @@ export function validateActionEvidence(
       throw new Error(`Answer first-packet SLA failed: ${String(latency)}ms`);
     }
   }
+}
+
+function validateServiceLevelEvidence(
+  action: HostedCampaignBarrierAction, value: Readonly<Record<string, unknown>>,
+): void {
   if (action.kind === "service-levels-ready" && (value.measurementCount !== 3
     || typeof value.outputPath !== "string" || !value.outputPath.startsWith("/")
     || typeof value.recordingId !== "string" || value.recordingId.length === 0
@@ -89,10 +117,20 @@ export function validateActionEvidence(
     || typeof value.runId !== "string" || value.runId.length === 0)) {
     throw new Error("Hosted service-level source evidence is invalid");
   }
+}
+
+function validateRunEvidence(
+  action: HostedCampaignBarrierAction, value: Readonly<Record<string, unknown>>,
+): void {
   if (action.kind === "run-verified" && (value.verified !== true
     || value.ordinal !== action.ordinal || value.runId !== action.runId)) {
     throw new Error(`Run ${action.ordinal} verification evidence is invalid`);
   }
+}
+
+function validateFiniteCompletionEvidence(
+  action: HostedCampaignBarrierAction, value: Readonly<Record<string, unknown>>,
+): void {
   if ((action.kind === "actor-completed" || action.kind === "conversation-observer-completed"
     || action.kind === "playback-link-seen" || action.kind === "recording-ready" || action.kind === "replay-attestation-ready"
     || action.kind === "supplemental-completed")

@@ -5,6 +5,8 @@ import {
   validateHostedFiniteProcessContract,
 } from "./hosted-finite-process-contract.js";
 
+/* oxlint-disable eslint/max-lines -- Coordinator remains one lifecycle boundary; validators are narrow helpers. */
+
 export const HOSTED_CAMPAIGN_TARGET = {
   environment: "private-test-guild", mutationTarget: "test-only", deploymentScope: "private-test-deployment",
   host: "codex-workers-eu-01", project: "discord-meeting-assistant", craigProject: "craig-meeting-e2e",
@@ -261,8 +263,6 @@ function supplementalGatePhase(
     return gate !== undefined && actionReferenceIdentity(gate.trigger) === actionReferenceIdentity(reference);
   });
 }
-// The coordinator is kept as one readable vertical slice; graph validation is isolated above.
-/* oxlint-disable max-lines */
 function assertExactTarget(target: HostedCampaignTarget): void {
   for (const [key, expected] of Object.entries(HOSTED_CAMPAIGN_TARGET)) {
     if (target[key as keyof HostedCampaignTarget] !== expected) {
@@ -318,47 +318,70 @@ function validateExecutable(
   childIds: Set<string>,
   completionActions: Set<string>,
 ): void {
+  validateChildIdentity(child, childIds);
+  validateChildArguments(child);
+  validateChildStartPoint(child, input);
+  validateOneShotStart(child);
+  if (child.completion !== undefined) {
+    validateCompletion(child, child.completion, input, campaignId, completionActions);
+  }
+  validateCompletionSchedule(child);
+  validateReleaseGate(child, input);
+  validateSupplementalGates(child, input, campaignId);
+}
+
+function validateChildIdentity(child: HostedCampaignExecutableSpec, childIds: Set<string>): void {
   if (!/^[a-z][a-z0-9-]{0,63}$/u.test(child.childId) || childIds.has(child.childId)) {
     throw new Error(`Invalid or duplicate hosted campaign childId: ${child.childId}`);
   }
   childIds.add(child.childId);
+}
+
+function validateChildArguments(child: HostedCampaignExecutableSpec): void {
   if ((child.entrypoint === "campaign-verifier") !== (child.arguments.kind === "campaign-verifier")
     || (child.entrypoint === "evidence-verifier") !== (child.arguments.kind === "evidence-verifier")) {
     throw new Error(`Hosted campaign child ${child.childId} has arguments for the wrong entrypoint`);
   }
-  if (child.startBefore.kind === "barrier") {
-    const startActionIdentity = actionReferenceIdentity(child.startBefore);
-    if (!campaignActions(input).some((reference) => actionReferenceIdentity(reference) === startActionIdentity)) {
-      throw new Error(`Hosted campaign child ${child.childId} has an unknown start point`);
-    }
+}
+
+function validateChildStartPoint(child: HostedCampaignExecutableSpec, input: HostedCampaignInput): void {
+  if (child.startBefore.kind !== "barrier") {return;}
+  const startActionIdentity = actionReferenceIdentity(child.startBefore);
+  if (!campaignActions(input).some((reference) => actionReferenceIdentity(reference) === startActionIdentity)) {
+    throw new Error(`Hosted campaign child ${child.childId} has an unknown start point`);
   }
-  const oneShot = child.completion !== undefined;
-  if (oneShot && child.startBefore.kind === "campaign"
-    && !(child.completion !== undefined && isFiniteCompletion(child.completion)
-      && (child.releaseGate !== undefined || child.completionAfter !== undefined))) {
+}
+
+function validateOneShotStart(child: HostedCampaignExecutableSpec): void {
+  const completion = child.completion;
+  const deferredFiniteProcess = completion !== undefined && isFiniteCompletion(completion)
+    && (child.releaseGate !== undefined || child.completionAfter !== undefined);
+  if (completion !== undefined && child.startBefore.kind === "campaign" && !deferredFiniteProcess) {
     throw new Error(`One-shot child ${child.childId} must start only after its inputs exist`);
   }
-  if (child.completion !== undefined) {
-    validateCompletion(child, child.completion, input, campaignId, completionActions);
-  }
+}
+
+function validateCompletionSchedule(child: HostedCampaignExecutableSpec): void {
   if (child.completionAfter !== undefined &&
     (child.completion === undefined || !isFiniteCompletion(child.completion))) {
     throw new Error(`Hosted campaign child ${child.childId} may schedule completion only for a finite process`);
   }
-  if (child.releaseGate !== undefined && child.entrypoint !== "actor") {
-    throw new Error(`Only an actor child may declare a hosted release gate`);
+}
+
+function validateReleaseGate(child: HostedCampaignExecutableSpec, input: HostedCampaignInput): void {
+  if (child.releaseGate === undefined) {return;}
+  if (child.entrypoint !== "actor") {
+    throw new Error("Only an actor child may declare a hosted release gate");
   }
-  if (child.releaseGate !== undefined
-    && child.environment.DISCORD_E2E_HOSTED_RELEASE_GATE_PATH !== child.releaseGate.path) {
+  if (child.environment.DISCORD_E2E_HOSTED_RELEASE_GATE_PATH !== child.releaseGate.path) {
     throw new Error(`Hosted campaign actor ${child.childId} release gate path mismatch`);
   }
-  const releaseAction = child.releaseGate?.action;
-  if (releaseAction?.kind === "run-verified") {
-    const gate = child.releaseGate!;
+  const gate = child.releaseGate;
+  const releaseAction = gate.action;
+  if (releaseAction.kind === "run-verified") {
     const completion = child.completion;
     if (releaseAction.ordinal !== gate.ordinal || releaseAction.runId !== gate.runId
       || completion === undefined || completion.kind !== "actor"
-      || completion.action.kind !== "actor-completed"
       || completion.action.ordinal !== gate.ordinal + 1
       || !input.runs.some(({ ordinal, runId }) => ordinal === gate.ordinal && runId === gate.runId)
       || !input.runs.some(({ ordinal, runId }) =>
@@ -366,7 +389,6 @@ function validateExecutable(
       throw new Error(`Hosted campaign actor ${child.childId} release gate must reference the prior verified run`);
     }
   }
-  validateSupplementalGates(child, input, campaignId);
 }
 
 function validateSupplementalGates(
@@ -406,20 +428,38 @@ function validateCompletion(
     throw new Error(`Hosted campaign child ${child.childId} completion does not match its entrypoint and start point`);
   }
   if (isFiniteCompletion(completion)) {
-    validateHostedFiniteProcessContract(child, completion);
-    const identity = actionIdentity(completion.action);
-    const matchingProduction = child.produces.filter(({ action, ordinal, runId }) =>
-      actionIdentity(action) === identity && ordinal === completion.action.ordinal && runId === completion.action.runId
-    );
-    if (matchingProduction.length !== 1) {
-      throw new Error(`Hosted finite child ${child.childId} must produce its exact completion action`);
-    }
-    if (completionActions.has(identity)) {
-      throw new Error(`Hosted campaign action has multiple completion producers: ${identity}`);
-    }
-    completionActions.add(identity);
+    validateFiniteCompletion(child, completion, completionActions);
     return;
   }
+  validateBarrierCompletion(child, completion, input, campaignId, completionActions);
+}
+
+function validateFiniteCompletion(
+  child: HostedCampaignExecutableSpec,
+  completion: HostedFiniteProcessCompletion,
+  completionActions: Set<string>,
+): void {
+  validateHostedFiniteProcessContract(child, completion);
+  const identity = actionIdentity(completion.action);
+  const matchingProduction = child.produces.filter(({ action, ordinal, runId }) =>
+    actionIdentity(action) === identity && ordinal === completion.action.ordinal && runId === completion.action.runId
+  );
+  if (matchingProduction.length !== 1) {
+    throw new Error(`Hosted finite child ${child.childId} must produce its exact completion action`);
+  }
+  if (completionActions.has(identity)) {
+    throw new Error(`Hosted campaign action has multiple completion producers: ${identity}`);
+  }
+  completionActions.add(identity);
+}
+
+function validateBarrierCompletion(
+  child: HostedCampaignExecutableSpec,
+  completion: Exclude<HostedCampaignExecutableCompletion, HostedFiniteProcessCompletion>,
+  input: HostedCampaignInput,
+  campaignId: string | undefined,
+  completionActions: Set<string>,
+): void {
   if (child.startBefore.kind !== "barrier"
     || actionIdentity(child.startBefore.action) !== actionIdentity(completion.action)) {
     throw new Error(`Hosted campaign child ${child.childId} completion does not match its entrypoint and start point`);
@@ -471,7 +511,6 @@ function validateServiceLevelSourcesCompletion(
 ): void {
   const environment = child.environment;
   const invalid = completion.campaignId !== campaignId
-    || completion.action.kind !== "service-level-sources-ready"
     || environment.DISCORD_E2E_SLA_CAMPAIGN_ID !== completion.campaignId
     || environment.DISCORD_E2E_SLA_RUN_ID !== completion.runId
     || !matchesStaticOrBinding(child, "DISCORD_E2E_SLA_MEETING_ID", "meetingId", completion.meetingId)
@@ -491,8 +530,7 @@ function validateServiceLevelsCompletion(
   campaignId: string | undefined,
 ): void {
   const environment = child.environment;
-  const invalid = completion.action.kind !== "service-levels-ready"
-    || completion.campaignId !== campaignId
+  const invalid = completion.campaignId !== campaignId
     || child.startBefore.kind !== "barrier"
     || child.startBefore.runId !== completion.runId
     || environment.DISCORD_E2E_SLA_CAMPAIGN_ID !== completion.campaignId

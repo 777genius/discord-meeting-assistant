@@ -199,8 +199,7 @@ function ports(events: string[]): HostedCampaignPorts {
 
 const bounded = () => ({ deadlineEpochMilliseconds: Date.now() + 60_000, signal: new AbortController().signal });
 
-// This suite intentionally exercises the complete coordinator lifecycle with one shared graph fixture.
-/* oxlint-disable max-lines-per-function */
+/* oxlint-disable eslint/max-lines-per-function -- One suite shares the complete campaign graph fixture. */
 describe("hosted campaign coordinator", () => {
   it("injects closed recording-ready identity bindings only after validated source evidence", async () => {
     const base = input();
@@ -376,8 +375,8 @@ describe("hosted campaign coordinator", () => {
   it("fails closed for missing and duplicate action producers", async () => {
     const base = input();
     const producer = base.children.find(({ produces }) => produces.length > 0)!;
-    const missing = { ...base, children: base.children.map((child) => child === producer
-      ? { ...producer, produces: producer.produces.slice(1) } : child) };
+    const missing = { ...base, children: base.children.map((candidate) => candidate === producer
+      ? { ...producer, produces: producer.produces.slice(1) } : candidate) };
     await expect(runHostedCampaign(missing, ports([]), bounded())).rejects.toThrow(/has no producer/u);
 
     const duplicate = { ...base, children: [...base.children, {
@@ -390,9 +389,9 @@ describe("hosted campaign coordinator", () => {
     const base = input();
     const observer = base.children.find(({ childId }) => childId === "conversation-observer")!;
     const collisionProduction = { ...observer.produces[1]!, outputPath: observer.produces[0]!.outputPath };
-    const collision = { ...base, children: base.children.map((child) => child === observer ? {
+    const collision = { ...base, children: base.children.map((candidate) => candidate === observer ? {
       ...observer, produces: [observer.produces[0]!, collisionProduction, ...observer.produces.slice(2)],
-    } : child) };
+    } : candidate) };
     await expect(runHostedCampaign(collision, ports([]), bounded())).rejects.toThrow(/path collision/u);
 
     const first = observer.produces[0]!;
@@ -538,7 +537,7 @@ describe("hosted campaign coordinator", () => {
     const configured: HostedCampaignInput = {
       ...base,
       children: [
-        ...base.children.filter((child) => !child.produces.some(({ action }) =>
+        ...base.children.filter((candidate) => !candidate.produces.some(({ action }) =>
           JSON.stringify(action) === movedIdentity)),
         oneShotChild("verify-overlap", { kind: "run-verified", ordinal: 2, runId: "run-2" }),
       ],
