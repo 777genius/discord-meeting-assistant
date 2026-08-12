@@ -2,6 +2,7 @@ import { verifyCampaign } from "./e2e-evidence-campaign-verification.js";
 import { verifyDeploymentProvenance } from "./e2e-evidence-deployment-verification.js";
 import { playbackWindowsFrom, verifyActorRun } from "./e2e-evidence-playback-verification.js";
 import { verifyProcessingEvidence } from "./e2e-evidence-processing-verification.js";
+import { verifyE2eServiceLevels, type ServiceLevelThresholds } from "./e2e-service-levels.js";
 import { verifyRecordingPlaybackEvidence } from "./e2e-evidence-recording-playback-verification.js";
 import { verifyFixtures, verifyS3Evidence, verifyStages } from "./e2e-evidence-recording-verification.js";
 import { verificationResult } from "./e2e-evidence-verification-result.js";
@@ -46,6 +47,14 @@ export {
 } from "./e2e-evidence-schema.js";
 export { supplementalPlaybackEvidenceV1Schema } from "./conversation-retained-evidence-schema.js";
 export { conversationVoiceCampaignProofV1Schema } from "./conversation-voice-campaign-proof.js";
+export {
+  e2eServiceLevelsV1Schema,
+  serviceLevelIds,
+  serviceLevelMeasurementV1Schema,
+  serviceLevelThresholdsSchema,
+  verifyE2eServiceLevels,
+} from "./e2e-service-levels.js";
+export type { E2eServiceLevelsV1, ServiceLevelThresholds } from "./e2e-service-levels.js";
 export type {
   ActorRunEvidenceV1,
   CurrentDeploymentProvenance,
@@ -74,6 +83,7 @@ export function verifyRetainedE2eEvidence(
   manifest: FixtureManifestV1,
   evidence: RetainedE2eEvidence,
   expectedRevisions: DeploymentRevisionExpectation,
+  serviceLevelThresholds?: ServiceLevelThresholds,
 ): E2eVerificationResult {
   const failures: VerificationFailure[] = [];
   const metrics: SpeakerAccuracyMetrics[] = [];
@@ -103,6 +113,13 @@ export function verifyRetainedE2eEvidence(
   verifySummarySemantics(manifest, evidence, fail);
   verifyDiscordSummaryUx(manifest, evidence, fail);
   verifyReplayIdentity(evidence, fail);
+  if (evidence.schemaVersion === 9) {
+    if (serviceLevelThresholds === undefined) {
+      fail("SLA_THRESHOLDS_MISSING", "retained evidence v9 requires externally supplied service-level thresholds");
+    } else {
+      verifyE2eServiceLevels(evidence.serviceLevels, serviceLevelThresholds, fail);
+    }
+  }
 
   return verificationResult(failures, metrics);
 }
