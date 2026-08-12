@@ -70,7 +70,7 @@ describe("hosted service-level external clock preflight", () => {
   });
 
   it("produces V2 SLA attestations only from a run-bound V2 clock proof", () => {
-    const admission = deriveHostedClockPreflightReceiptV2(clockExchange(1_000, 1_000_000_000n));
+    const admission = deriveHostedClockPreflightReceiptV2(clockExchange(900, 900_000_000n));
     const runClock = bindHostedClockRunV2({
       admission,
       completion: clockExchange(11_000, 11_000_000_000n),
@@ -89,6 +89,31 @@ describe("hosted service-level external clock preflight", () => {
       });
     }
     expect(() => attestHostedServiceLevelClocksV2(preflight(), request)).toThrow();
+  });
+
+  it("rejects an admission that expired before the first measured source", () => {
+    const admission = deriveHostedClockPreflightReceiptV2(clockExchange(1_000, 1_000_000_000n));
+    const runClock = bindHostedClockRunV2({
+      admission,
+      completion: clockExchange(70_000, 70_000_000_000n),
+      meetingId: request.meetingId, recordingId: request.recordingId, runId: request.runId,
+    });
+    const lateRequest = { ...request, measurements: request.measurements.map((measurement) => ({
+      ...measurement, endAtEpochMs: measurement.endAtEpochMs + 61_000,
+      startAtEpochMs: measurement.startAtEpochMs + 61_000,
+    })) };
+    expect(() => attestHostedServiceLevelClocksV2(runClock, lateRequest))
+      .toThrow("was not live");
+  });
+
+  it("rejects a completion bracket captured before the final measured source", () => {
+    const admission = deriveHostedClockPreflightReceiptV2(clockExchange(900, 900_000_000n));
+    const runClock = bindHostedClockRunV2({
+      admission, completion: clockExchange(1_490, 1_490_000_000n),
+      meetingId: request.meetingId, recordingId: request.recordingId, runId: request.runId,
+    });
+    expect(() => attestHostedServiceLevelClocksV2(runClock, request))
+      .toThrow("predates the final hosted run evidence");
   });
 });
 

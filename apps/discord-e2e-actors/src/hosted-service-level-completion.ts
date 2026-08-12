@@ -4,7 +4,7 @@ import { isAbsolute } from "node:path";
 import { z } from "zod";
 
 import { hostedServiceLevelsReportV1Schema } from "./collect-hosted-service-levels.js";
-import { e2eServiceLevelsV1Schema } from "./e2e-service-levels.js";
+import { e2eServiceLevelsV2Schema } from "./e2e-service-levels-v2.js";
 import type { HostedCampaignExecutableCompletion } from "./hosted-campaign-coordinator.js";
 
 const completionSchema = z.object({
@@ -29,7 +29,7 @@ export async function verifyHostedServiceLevelCompletion(
   const [serviceLevelsInput, reportInput] = await Promise.all([
     readJson(expected.outputPath), readJson(expected.reportPath),
   ]);
-  const serviceLevels = e2eServiceLevelsV1Schema.parse(serviceLevelsInput);
+  const serviceLevels = e2eServiceLevelsV2Schema.parse(serviceLevelsInput);
   const report = hostedServiceLevelsReportV1Schema.parse(reportInput);
   if (report.runId !== expected.runId) {
     throw new Error("Hosted campaign service-levels report correlation mismatch");

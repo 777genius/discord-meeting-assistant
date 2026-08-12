@@ -123,6 +123,7 @@ export function attestHostedServiceLevelClocksV2(
     binding.recordingId !== request.recordingId) {
     throw new Error("Clock V2 run proof does not match the hosted SLA run and recording");
   }
+  assertClockV2ContainsEvidenceWindow(binding, request);
   const clockSkewBoundMs = hostedClockRunSkewBoundMs(binding);
   const measurements = request.measurements.map((measurement) => {
     const content = {
@@ -147,6 +148,22 @@ export function attestHostedServiceLevelClocksV2(
     runId: request.runId,
     schemaVersion: 2,
   });
+}
+
+function assertClockV2ContainsEvidenceWindow(
+  binding: z.infer<typeof hostedClockRunBindingV2Schema>,
+  request: HostedServiceLevelClockBindingRequest,
+): void {
+  const firstEvidenceAt = Math.min(...request.measurements.map(({ startAtEpochMs }) => startAtEpochMs));
+  const lastEvidenceAt = Math.max(...request.measurements.map(({ endAtEpochMs }) => endAtEpochMs));
+  if (binding.admission.qualifiedAtEpochMs > firstEvidenceAt ||
+    binding.admission.validUntilEpochMs < firstEvidenceAt) {
+    throw new Error("Clock V2 admission was not live when the hosted run evidence started");
+  }
+  if (binding.completion.raw.observer.before.epochMs < lastEvidenceAt ||
+    binding.completion.raw.source.before.epochMs < lastEvidenceAt) {
+    throw new Error("Clock V2 completion bracket predates the final hosted run evidence");
+  }
 }
 
 function canonicalJson(value: unknown): string {

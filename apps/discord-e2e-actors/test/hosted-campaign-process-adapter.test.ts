@@ -273,7 +273,21 @@ describe("hosted campaign process adapter", () => {
     const root = await mkdtemp(join(tmpdir(), "hosted-service-level-completion-"));
     const outputPath = join(root, "service-levels.json");
     const reportPath = join(root, "report.json");
-    await writeFile(outputPath, JSON.stringify(serviceLevelsProof()), { mode: 0o600 });
+    const historical = serviceLevelsProof();
+    const runClockProofId = "9".repeat(64);
+    await writeFile(outputPath, JSON.stringify({
+      measurements: historical.measurements.map((measurement) => ({
+        ...measurement,
+        clockSkewAttestation: {
+          ...measurement.clockSkewAttestation,
+          method: "ssh-bracketed-clock-v2",
+          runClockProofId,
+          schemaVersion: 2,
+        },
+      })),
+      runClockProofId,
+      schemaVersion: 2,
+    }), { mode: 0o600 });
     await writeFile(reportPath, JSON.stringify({
       measurementCount: 3, outputCreated: true, runId: "run-overlap-1",
       schemaVersion: 1, status: "ready",

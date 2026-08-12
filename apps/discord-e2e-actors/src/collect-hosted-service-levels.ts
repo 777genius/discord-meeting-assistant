@@ -127,6 +127,12 @@ export async function collectHostedServiceLevels(
   try {
     const sources = await readSourceInputs(config);
     serviceLevels = await deriveHostedServiceLevels(sources);
+    if (serviceLevels.schemaVersion !== 2) {
+      throw new HostedServiceLevelDerivationError(
+        "CLOCK_ATTESTATION_MISMATCH",
+        "Current hosted qualification requires run-bound clock schema V2",
+      );
+    }
     assertServiceLevelIdentity(serviceLevels, config);
   } catch (error) {
     const failure = failureDetails(error);

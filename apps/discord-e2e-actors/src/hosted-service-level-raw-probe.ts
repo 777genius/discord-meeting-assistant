@@ -1,6 +1,12 @@
 import type { DatabaseObservation, S3RecordingEvidence } from
   "./e2e-retained-evidence-contracts.js";
+import { readFile } from "node:fs/promises";
+
+import { z } from "zod";
+
+import type { HostedClockExchangeV2 } from "./hosted-clock-proof-v2.js";
 import type { HostedServiceLevelSourceConfig } from "./hosted-service-level-source-config.js";
+import { HOSTED_CAMPAIGN_TARGET } from "./hosted-campaign-coordinator.js";
 import {
   parseLastJsonLine,
   runDockerComposeProbe,
@@ -24,18 +30,53 @@ export interface HostedServiceLevelRawProbeCommands {
   readonly runRemote: typeof runRemoteProbe;
 }
 
+export interface HostedClockObserver {
+  sample(): Promise<{ readonly bootId: string; readonly epochMs: number; readonly monotonicNs: string }>;
+}
+
 const defaultCommands: HostedServiceLevelRawProbeCommands = {
   runCompose: runDockerComposeProbe,
   runRemote: runRemoteProbe,
 };
 
+const clockSampleSchema = z.object({
+  bootId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u),
+  epochMs: z.number().int().nonnegative(),
+  monotonicNs: z.string().regex(/^(?:0|[1-9]\d*)$/u),
+}).strict();
+const sourceClockBracketSchema = z.object({
+  after: clockSampleSchema,
+  before: clockSampleSchema,
+  sample: clockSampleSchema,
+}).strict();
+
+const defaultClockObserver: HostedClockObserver = {
+  async sample() {
+    const bootId = (await readFile("/proc/sys/kernel/random/boot_id", "utf8")).trim();
+    return clockSampleSchema.parse({
+      bootId,
+      epochMs: Date.now(),
+      monotonicNs: process.hrtime.bigint().toString(),
+    });
+  },
+};
+
+const sourceClockBracketScript = `
+const fs = require("node:fs");
+const bootId = fs.readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
+const sample = () => ({ bootId, epochMs: Date.now(), monotonicNs: process.hrtime.bigint().toString() });
+process.stdout.write(JSON.stringify({ before: sample(), sample: sample(), after: sample() }) + "\\n");
+`;
+
 export class SshHostedServiceLevelRawProbe {
   readonly #commands: HostedServiceLevelRawProbeCommands;
+  readonly #clockObserver: HostedClockObserver;
   readonly #settings: SshDeploymentProbeSettings;
 
   constructor(
     remote: HostedServiceLevelSourceConfig["remote"],
     commands: HostedServiceLevelRawProbeCommands = defaultCommands,
+    clockObserver: HostedClockObserver = defaultClockObserver,
   ) {
     this.#settings = {
       attestationFile: "/tmp/discord-e2e-attestations/unused-read-only-source-capture.json",
@@ -51,6 +92,7 @@ export class SshHostedServiceLevelRawProbe {
       timeoutMs: 330_000,
     };
     this.#commands = commands;
+    this.#clockObserver = clockObserver;
   }
 
   async collectDatabase(recordingId: string): Promise<DatabaseObservation> {
@@ -67,6 +109,25 @@ export class SshHostedServiceLevelRawProbe {
       postgresEvidenceQuery.replaceAll("__RECORDING_ID__", validatedId),
     ]);
     return databaseOutputSchema.parse(parseLastJsonLine(output));
+  }
+
+  async collectClockCompletion(): Promise<HostedClockExchangeV2> {
+    const before = await this.#clockObserver.sample();
+    const output = await this.#commands.runCompose(this.#settings, "meeting-platform", [
+      "node", "--input-type=commonjs", "-e", sourceClockBracketScript,
+    ]);
+    const after = await this.#clockObserver.sample();
+    return {
+      observer: { after, before },
+      observerClockId: `host:${this.#settings.host}`,
+      source: sourceClockBracketSchema.parse(parseLastJsonLine(output)),
+      sourceClockId: "container:meeting-platform",
+      target: {
+        environment: HOSTED_CAMPAIGN_TARGET.environment,
+        host: HOSTED_CAMPAIGN_TARGET.host,
+        project: HOSTED_CAMPAIGN_TARGET.project,
+      },
+    };
   }
 
   async collectS3(

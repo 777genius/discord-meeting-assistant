@@ -16,8 +16,8 @@ import {
   type HostedServiceLevelRawProbe,
 } from "../src/collect-hosted-service-level-sources.js";
 import {
+  attestHostedServiceLevelClocksV2,
   clockPreflightArtifactId,
-  type HostedServiceLevelClockPreflightV1,
 } from "../src/hosted-service-level-clock-preflight.js";
 import type { HostedServiceLevelSourceConfig } from
   "../src/hosted-service-level-source-config.js";
@@ -31,20 +31,25 @@ import {
   clockAttestationId,
   clockEvidenceDigest,
   hostedServiceLevelClockAttestationsV1Schema,
+  hostedServiceLevelClockAttestationsV2Schema,
   type HostedServiceLevelClockAttestationsV1,
 } from "../src/hosted-service-level-clock-attestation.js";
-import { e2eServiceLevelsV1Schema } from "../src/e2e-service-levels.js";
+import { e2eServiceLevelsV2Schema } from "../src/e2e-service-levels-v2.js";
 import { fixtureManifestV1Schema } from "../src/e2e-evidence.js";
+import {
+  bindHostedClockRunV2,
+  deriveHostedClockPreflightReceiptV2,
+} from "../src/hosted-clock-proof-v2.js";
 
 describe("hosted service-level producer", () => {
   it("derives all three measurements only after exact clock binding and writes private create-only output", async () => {
     const fixture = await materializeInputs();
     const request = await collectHostedServiceLevelClockBindingRequest(fixture.config);
-    await writePrivate(fixture.paths.clock, clockAttestations(request));
+    await writePrivate(fixture.paths.clock, clockAttestationsV2(request));
 
     await collectHostedServiceLevels(fixture.config);
 
-    const output = e2eServiceLevelsV1Schema.parse(
+    const output = e2eServiceLevelsV2Schema.parse(
       JSON.parse(await readFile(fixture.paths.output, "utf8")) as unknown,
     );
     expect(output.measurements.map(({ serviceLevelId }) => serviceLevelId)).toEqual([
@@ -66,6 +71,7 @@ describe("hosted service-level producer", () => {
         endClockId: clockSkewAttestation.endClockId,
         endEvidenceSha256: clockSkewAttestation.endEvidenceSha256,
         method: clockSkewAttestation.method,
+        runClockProofId: clockSkewAttestation.runClockProofId,
         serviceLevelId,
         startClockId: clockSkewAttestation.startClockId,
         startEvidenceSha256: clockSkewAttestation.startEvidenceSha256,
@@ -89,6 +95,16 @@ describe("hosted service-level producer", () => {
     expect(JSON.parse(await readFile(fixture.paths.report, "utf8"))).toMatchObject({
       code: "CLOCK_ATTESTATION_MISSING", outputCreated: false, status: "blocked",
     });
+  });
+
+  it("keeps V1 readable but rejects it as current hosted qualification", async () => {
+    const fixture = await materializeInputs();
+    const request = await collectHostedServiceLevelClockBindingRequest(fixture.config);
+    await writePrivate(fixture.paths.clock, clockAttestations(request));
+
+    await expect(collectHostedServiceLevels(fixture.config))
+      .rejects.toThrow("requires run-bound clock schema V2");
+    await expect(lstat(fixture.paths.output)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("rejects an ambiguous authoritative nonce turn and leaves no SLA output", async () => {
@@ -120,7 +136,7 @@ describe("hosted service-level raw source producer", () => {
   it("exports exact raw probe results and externally bound clock attestations create-only", async () => {
     const fixture = await materializeInputs();
     const sourceConfig = await sourceCaptureConfig(fixture);
-    await writePrivate(sourceConfig.clockPreflightPath!, clockPreflight());
+    await writePrivate(sourceConfig.clockPreflightPath!, clockPreflightV2());
 
     await collectHostedServiceLevelSources(sourceConfig, rawProbe(fixture));
 
@@ -130,10 +146,13 @@ describe("hosted service-level raw source producer", () => {
       .toEqual(fixture.values.s3);
     expect(await readFile(sourceConfig.outputs.meetingPlatformLogs, "utf8"))
       .toBe(meetingPlatformLogs(retainedV8Evidence()));
-    const clocks = hostedServiceLevelClockAttestationsV1Schema.parse(
+    const clocks = hostedServiceLevelClockAttestationsV2Schema.parse(
       JSON.parse(await readFile(sourceConfig.outputs.clockAttestations, "utf8")),
     );
-    expect(clocks.measurements.every(({ clockSkewBoundMs }) => clockSkewBoundMs === 5)).toBe(true);
+    expect(clocks).toMatchObject({ schemaVersion: 2 });
+    expect(clocks.measurements.every(({ runClockProofId }) =>
+      runClockProofId === clocks.runClockProofId
+    )).toBe(true);
     expect(JSON.parse(await readFile(sourceConfig.outputs.report, "utf8")))
       .toMatchObject({ outputsCreated: true, status: "ready" });
     expect((await lstat(sourceConfig.outputs.database)).mode & 0o777).toBe(0o600);
@@ -141,11 +160,23 @@ describe("hosted service-level raw source producer", () => {
       .rejects.toThrow("already exists");
   });
 
+  it("rejects historical V1 preflight from current hosted qualification", async () => {
+    const fixture = await materializeInputs();
+    const sourceConfig = await sourceCaptureConfig(fixture);
+    const request = await collectHostedServiceLevelClockBindingRequest(fixture.config);
+    await writePrivate(sourceConfig.clockPreflightPath!, legacyClockPreflight(request));
+
+    await expect(collectHostedServiceLevelSources(sourceConfig, rawProbe(fixture)))
+      .rejects.toThrow("SOURCE_CAPTURE_FAILED");
+    await expect(lstat(sourceConfig.outputs.clockAttestations)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("publishes only a stable blocked report when external clock preflight is absent", async () => {
     const fixture = await materializeInputs();
     const sourceConfig = await sourceCaptureConfig(fixture, false);
     let calls = 0;
     const probe: HostedServiceLevelRawProbe = {
+      collectClockCompletion: async () => { calls += 1; return clockExchange(11_000); },
       collectDatabase: async () => { calls += 1; return fixture.values.database; },
       collectMeetingPlatformLogs: async () => { calls += 1; return "unexpected"; },
       collectS3: async () => { calls += 1; return fixture.values.s3; },
@@ -275,6 +306,7 @@ function rawProbe(
   fixture: Awaited<ReturnType<typeof materializeInputs>>,
 ): HostedServiceLevelRawProbe {
   return {
+    collectClockCompletion: async () => clockExchange(11_000),
     collectDatabase: async (recordingId) => {
       expect(recordingId).toBe("meeting-1");
       return fixture.values.database;
@@ -296,24 +328,38 @@ function rawProbe(
   };
 }
 
-function clockPreflight(): HostedServiceLevelClockPreflightV1 {
-  const content = {
-    clockSkewBoundMs: 5,
-    measuredAt: "1970-01-01T00:00:01.000Z",
-    meetingId: "meeting-1",
-    method: "synthetic-host-clock-bound-v1",
-    observerClockId: "hosted-observer-clock",
-    recordingId: "meeting-1",
-    runId: "run-overlap-1",
-    schemaVersion: 1 as const,
-    sourceClockId: "hosted-source-clock",
-    target: {
-      environment: "private-test-guild" as const,
-      host: "codex-workers-eu-01" as const,
-      project: "discord-meeting-assistant" as const,
+function clockPreflightV2() {
+  return deriveHostedClockPreflightReceiptV2(clockExchange(1_000));
+}
+
+function clockExchange(epoch: number) {
+  const monotonic = BigInt(epoch) * 1_000_000n;
+  return {
+    observer: {
+      after: { bootId: "observer-boot", epochMs: epoch + 10, monotonicNs: String(monotonic + 10_000_000n) },
+      before: { bootId: "observer-boot", epochMs: epoch, monotonicNs: String(monotonic) },
     },
-    validFromEpochMs: 0,
-    validUntilEpochMs: 20_000,
+    observerClockId: "hosted-observer-clock",
+    source: {
+      after: { bootId: "source-boot", epochMs: epoch + 8, monotonicNs: String(monotonic + 8_000_000n) },
+      before: { bootId: "source-boot", epochMs: epoch + 5, monotonicNs: String(monotonic + 5_000_000n) },
+      sample: { bootId: "source-boot", epochMs: epoch + 7, monotonicNs: String(monotonic + 7_000_000n) },
+    },
+    sourceClockId: "hosted-source-clock",
+    target: { environment: "private-test-guild" as const, host: "codex-workers-eu-01" as const,
+      project: "discord-meeting-assistant" as const },
+  };
+}
+
+function legacyClockPreflight(request: Awaited<ReturnType<typeof collectHostedServiceLevelClockBindingRequest>>) {
+  const content = {
+    clockSkewBoundMs: 5, measuredAt: "1970-01-01T00:00:01.000Z",
+    meetingId: request.meetingId, method: "historical-v1", observerClockId: "hosted-observer-clock",
+    recordingId: request.recordingId, runId: request.runId, schemaVersion: 1 as const,
+    sourceClockId: "hosted-source-clock",
+    target: { environment: "private-test-guild" as const, host: "codex-workers-eu-01" as const,
+      project: "discord-meeting-assistant" as const },
+    validFromEpochMs: 0, validUntilEpochMs: 20_000,
   };
   return { ...content, artifactId: clockPreflightArtifactId(content) };
 }
@@ -445,6 +491,15 @@ function clockAttestations(request: Awaited<ReturnType<typeof collectHostedServi
     meetingId: request.meetingId, recordingId: request.recordingId,
     runId: request.runId, schemaVersion: 1,
   });
+}
+
+function clockAttestationsV2(request: Awaited<ReturnType<typeof collectHostedServiceLevelClockBindingRequest>>) {
+  const admission = clockPreflightV2();
+  const runClock = bindHostedClockRunV2({
+    admission, completion: clockExchange(11_000), meetingId: request.meetingId,
+    recordingId: request.recordingId, runId: request.runId,
+  });
+  return attestHostedServiceLevelClocksV2(runClock, request);
 }
 
 function emptyClockAttestations(): unknown {

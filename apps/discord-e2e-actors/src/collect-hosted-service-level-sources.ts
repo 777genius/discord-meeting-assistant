@@ -10,7 +10,8 @@ import {
   readPrivateHostedServiceLevelArtifact,
   writeCreateOnlyPrivateHostedServiceLevelArtifact,
 } from "./hosted-service-level-source-artifact.js";
-import { attestHostedServiceLevelClocks } from "./hosted-service-level-clock-preflight.js";
+import { attestHostedServiceLevelClocksV2 } from "./hosted-service-level-clock-preflight.js";
+import { bindHostedClockRunV2 } from "./hosted-clock-proof-v2.js";
 import { SshHostedServiceLevelRawProbe } from "./hosted-service-level-raw-probe.js";
 import {
   databaseOutputSchema,
@@ -19,6 +20,7 @@ import {
 import { normalizeDatabase } from "./e2e-retained-evidence-snapshot.js";
 
 export interface HostedServiceLevelRawProbe {
+  collectClockCompletion(): Promise<unknown>;
   collectDatabase(recordingId: string): Promise<unknown>;
   collectMeetingPlatformLogs(meetingId: string, recordingStartedAt: string): Promise<string>;
   collectS3(manifestLocator: string, recordingId: string): Promise<unknown>;
@@ -76,7 +78,15 @@ export async function collectHostedServiceLevelSources(
     ) {
       throw new Error("Hosted SLA sources do not match the declared identity");
     }
-    const clockAttestations = attestHostedServiceLevelClocks(preflight, request);
+    const completion = await probe.collectClockCompletion();
+    const runClock = bindHostedClockRunV2({
+      admission: preflight,
+      completion,
+      meetingId: request.meetingId,
+      recordingId: request.recordingId,
+      runId: request.runId,
+    });
+    const clockAttestations = attestHostedServiceLevelClocksV2(runClock, request);
     await publishOutputs(config, { clockAttestations, database, meetingPlatformLogs, s3 });
   } catch (error) {
     if (error instanceof HostedServiceLevelSourceCaptureBlockedError) {

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   SshHostedServiceLevelRawProbe,
+  type HostedClockObserver,
   type HostedServiceLevelRawProbeCommands,
 } from "../src/hosted-service-level-raw-probe.js";
 import { postgresEvidenceQuery, s3EvidenceScript } from
@@ -12,6 +13,13 @@ const containerId = "a".repeat(64);
 describe("hosted service-level read-only raw probe", () => {
   it("collects database, S3, and only correlated Meeting Platform JSON logs", async () => {
     const calls: string[] = [];
+    let observerSampleIndex = 0;
+    const clockObserver: HostedClockObserver = {
+      sample: async () => ({
+        bootId: "observer-boot", epochMs: 10_000 + observerSampleIndex * 10,
+        monotonicNs: String(10_000_000_000n + BigInt(observerSampleIndex++) * 10_000_000n),
+      }),
+    };
     const commands: HostedServiceLevelRawProbeCommands = {
       runCompose: async (_settings, service, args) => {
         calls.push(`compose:${service}`);
@@ -21,6 +29,13 @@ describe("hosted service-level read-only raw probe", () => {
             "meeting-1",
           ));
           return JSON.stringify(database());
+        }
+        if (args.includes("--input-type=commonjs")) {
+          return JSON.stringify({
+            after: { bootId: "source-boot", epochMs: 10_008, monotonicNs: "10008000000" },
+            before: { bootId: "source-boot", epochMs: 10_005, monotonicNs: "10005000000" },
+            sample: { bootId: "source-boot", epochMs: 10_007, monotonicNs: "10007000000" },
+          });
         }
         expect(args).toEqual([
           "node",
@@ -51,7 +66,7 @@ describe("hosted service-level read-only raw probe", () => {
         ].join("\n");
       },
     };
-    const probe = new SshHostedServiceLevelRawProbe(remote(), commands);
+    const probe = new SshHostedServiceLevelRawProbe(remote(), commands, clockObserver);
 
     await expect(probe.collectDatabase("meeting-1")).resolves.toEqual(database());
     await expect(probe.collectS3("s3://recordings/meeting-1/manifest.json", "meeting-1"))
@@ -60,11 +75,17 @@ describe("hosted service-level read-only raw probe", () => {
       "meeting-1",
       "1970-01-01T00:00:01.000Z",
     )).resolves.toBe(`${JSON.stringify({ meetingId: "meeting-1", message: "keep" })}\n`);
+    await expect(probe.collectClockCompletion()).resolves.toMatchObject({
+      observer: { after: { epochMs: 10_010 }, before: { epochMs: 10_000 } },
+      observerClockId: "host:codex-workers-eu-01",
+      sourceClockId: "container:meeting-platform",
+    });
     expect(calls).toEqual([
       "compose:postgres",
       "compose:meeting-platform",
       "remote:docker:ps",
       "remote:docker:logs",
+      "compose:meeting-platform",
     ]);
   });
 });
