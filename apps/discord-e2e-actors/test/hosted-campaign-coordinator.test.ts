@@ -103,6 +103,83 @@ function ports(events: string[]): HostedCampaignPorts {
 const bounded = () => ({ deadlineEpochMilliseconds: Date.now() + 60_000, signal: new AbortController().signal });
 
 describe("hosted campaign coordinator", () => {
+  it("releases a finite actor before awaiting its run-scoped completion", async () => {
+    const base = input();
+    const completionAction = { kind: "actor-completed" as const, ordinal: 1, runId: "run-1" };
+    const provenance = base.children[0]!.produces.find(({ action }) => action.kind === "provenance-before")!;
+    const actor = {
+      arguments: { kind: "environment" as const }, childId: "finite-actor", entrypoint: "actor" as const,
+      environment: {
+        DISCORD_E2E_ACTOR_RUN_OUTPUT: "/evidence/actor.json",
+        DISCORD_E2E_HOSTED_RELEASE_GATE_PATH: "/evidence/release.json",
+        DISCORD_E2E_RUN_ID: "run-1", DISCORD_E2E_SCENARIO: "sequential",
+      },
+      completion: { action: completionAction, kind: "actor" as const, outputPath: "/evidence/actor.json",
+        runId: "run-1", scenario: "sequential" as const },
+      produces: [{ action: completionAction, ordinal: 1, runId: "run-1", outputPath: "/evidence/actor-completed.json" }],
+      requires: [], startBefore: { kind: "campaign" as const },
+      releaseGate: { action: provenance.action, ordinal: provenance.ordinal, path: "/evidence/release.json",
+        runId: provenance.runId },
+    };
+    const configured = { ...base, children: [...base.children, actor] };
+    const events: string[] = [];
+    let released = false;
+    let completed = false;
+    const fakePorts = ports(events);
+    fakePorts.publishReleaseGate = async () => { released = true; events.push("release-gate:finite-actor"); };
+    fakePorts.awaitChildCompletion = async (_handle, spec) => {
+      if (spec.childId !== "finite-actor") {return;}
+      await vi.waitUntil(() => released);
+      completed = true;
+      events.push("complete:finite-actor");
+    };
+    const originalBarrier = fakePorts.awaitBarrier;
+    fakePorts.awaitBarrier = async (action, bound) => {
+      if (action.kind === "actor-completed") {
+        await vi.waitUntil(() => completed);
+        return { completed: true, ordinal: action.ordinal, runId: action.runId } as HostedCampaignActionEvidence<typeof action>;
+      }
+      return originalBarrier(action, bound);
+    };
+
+    await expect(runHostedCampaign(configured, fakePorts, bounded())).resolves.toMatchObject({ campaignId: "campaign-1" });
+    expect(events.indexOf("release-gate:finite-actor")).toBeLessThan(events.indexOf("complete:finite-actor"));
+    expect(events).toContain("barrier:provenance-before");
+  });
+
+  it("propagates an asynchronous finite child failure and still tears down", async () => {
+    const base = input();
+    const action = { kind: "actor-completed" as const, ordinal: 1, runId: "run-1" };
+    const provenance = base.children[0]!.produces.find(({ action: produced }) => produced.kind === "provenance-before")!;
+    const actor = {
+      arguments: { kind: "environment" as const }, childId: "failing-actor", entrypoint: "actor" as const,
+      environment: { DISCORD_E2E_ACTOR_RUN_OUTPUT: "/evidence/actor.json",
+        DISCORD_E2E_HOSTED_RELEASE_GATE_PATH: "/evidence/release.json", DISCORD_E2E_RUN_ID: "run-1",
+        DISCORD_E2E_SCENARIO: "sequential" },
+      completion: { action, kind: "actor" as const, outputPath: "/evidence/actor.json", runId: "run-1",
+        scenario: "sequential" as const },
+      produces: [{ action, ordinal: 1, runId: "run-1", outputPath: "/evidence/actor-completed.json" }],
+      requires: [], startBefore: { kind: "campaign" as const },
+      releaseGate: { action: provenance.action, ordinal: provenance.ordinal, path: "/evidence/release.json",
+        runId: provenance.runId },
+    };
+    const events: string[] = [];
+    const fakePorts = ports(events);
+    fakePorts.awaitChildCompletion = async (_handle, spec) => {
+      if (spec.childId === "failing-actor") {throw new Error("actor exploded");}
+    };
+    const originalBarrier = fakePorts.awaitBarrier;
+    fakePorts.awaitBarrier = async (barrierAction, bound) => {
+      if (barrierAction.kind === "actor-completed") {return new Promise(() => {});}
+      return originalBarrier(barrierAction, bound);
+    };
+
+    await expect(runHostedCampaign({ ...base, children: [...base.children, actor] }, fakePorts, bounded()))
+      .rejects.toThrow("actor exploded");
+    expect(events.filter((event) => event.startsWith("stop:"))).toHaveLength(4);
+    expect(events.at(-1)).toBe("release:campaign-1");
+  });
+
   it("binds every action and observer dependency to the exact causal run", () => {
     const references = campaignActions(input());
     expect(references.filter(({ action }) => action.kind === "run-verified")).toEqual([

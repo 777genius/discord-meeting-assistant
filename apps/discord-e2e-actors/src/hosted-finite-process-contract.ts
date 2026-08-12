@@ -1,20 +1,24 @@
 import type {
   CampaignScenario,
+  HostedCampaignCompletionAction,
   HostedCampaignExecutableSpec,
 } from "./hosted-campaign-coordinator.js";
 
 export type HostedFiniteProcessCompletion =
-  | { readonly kind: "actor"; readonly outputPath: string; readonly runId: string; readonly scenario: CampaignScenario }
-  | { readonly kind: "conversation-observer"; readonly outputPaths: readonly string[]; readonly runId: string }
-  | { readonly kind: "playback-link-observer"; readonly outputPath: string; readonly recordingId: string; readonly runId: string }
-  | { readonly kind: "recording-ready"; readonly outputPath: string; readonly runId: string }
-  | { readonly kind: "supplemental-player"; readonly outputPath: string; readonly runId: string };
+  | { readonly action: Extract<HostedCampaignCompletionAction, { readonly kind: "actor-completed" }>; readonly kind: "actor"; readonly outputPath: string; readonly runId: string; readonly scenario: CampaignScenario }
+  | { readonly action: Extract<HostedCampaignCompletionAction, { readonly kind: "conversation-observer-completed" }>; readonly kind: "conversation-observer"; readonly outputPaths: readonly string[]; readonly runId: string }
+  | { readonly action: Extract<HostedCampaignCompletionAction, { readonly kind: "playback-link-seen" }>; readonly kind: "playback-link-observer"; readonly outputPath: string; readonly recordingId: string; readonly runId: string }
+  | { readonly action: Extract<HostedCampaignCompletionAction, { readonly kind: "recording-ready" }>; readonly kind: "recording-ready"; readonly outputPath: string; readonly runId: string }
+  | { readonly action: Extract<HostedCampaignCompletionAction, { readonly kind: "supplemental-completed" }>; readonly kind: "supplemental-player"; readonly outputPath: string; readonly runId: string };
 
 export function validateHostedFiniteProcessContract(
   child: HostedCampaignExecutableSpec,
   completion: HostedFiniteProcessCompletion,
 ): void {
   const environment = child.environment;
+  if (completion.action.runId !== completion.runId) {
+    throw new Error(`Hosted finite child ${child.childId} completion action is not bound to its run`);
+  }
   const expected = completion.kind === "actor"
     ? [environment.DISCORD_E2E_ACTOR_RUN_OUTPUT, environment.DISCORD_E2E_RUN_ID, environment.DISCORD_E2E_SCENARIO]
     : completion.kind === "conversation-observer"

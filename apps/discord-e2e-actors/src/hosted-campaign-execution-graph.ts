@@ -7,7 +7,7 @@ import type {
 
 export function campaignActions(input: HostedCampaignInput): readonly HostedCampaignActionReference[] {
   const [sequential, overlap, reconnect] = input.runs;
-  return [
+  const base = [
     scoped(sequential!, { kind: "provenance-before" }),
     scoped(sequential!, { kind: "observer-subscribed" }),
     scoped(sequential!, { kind: "run-verified", ordinal: 1, runId: sequential!.runId }),
@@ -27,6 +27,28 @@ export function campaignActions(input: HostedCampaignInput): readonly HostedCamp
     scoped(reconnect!, { kind: "provenance-after" }),
     scoped(reconnect!, { kind: "campaign-verified" }),
   ];
+  const completions = new Map<string, HostedCampaignActionReference[]>();
+  for (const child of input.children) {
+    if (child.completion === undefined || !("action" in child.completion)
+      || !isFiniteCompletionAction(child.completion.action)) {continue;}
+    const trigger = child.releaseGate ?? (child.startBefore.kind === "barrier" ? child.startBefore : undefined);
+    if (trigger === undefined) {
+      throw new Error(`Hosted finite child ${child.childId} requires a release gate or barrier start`);
+    }
+    const key = actionReferenceIdentity(trigger);
+    const reference = { action: child.completion.action, ordinal: child.completion.action.ordinal,
+      runId: child.completion.action.runId };
+    completions.set(key, [...(completions.get(key) ?? []), reference]);
+  }
+  return base.flatMap((reference) => [reference, ...(completions.get(actionReferenceIdentity(reference)) ?? [])]);
+}
+
+function isFiniteCompletionAction(action: HostedCampaignBarrierAction): action is Extract<
+  HostedCampaignBarrierAction,
+  { readonly kind: "actor-completed" | "conversation-observer-completed" | "playback-link-seen" | "recording-ready" | "supplemental-completed" }
+> {
+  return new Set(["actor-completed", "conversation-observer-completed", "playback-link-seen",
+    "recording-ready", "supplemental-completed"]).has(action.kind);
 }
 
 function scoped(run: HostedCampaignRun, action: HostedCampaignBarrierAction): HostedCampaignActionReference {
@@ -36,6 +58,7 @@ function scoped(run: HostedCampaignRun, action: HostedCampaignBarrierAction): Ho
 export function actionIdentity(action: HostedCampaignBarrierAction): string {
   if (action.kind === "capture-retained") {return `${action.kind}:${action.ordinal}`;}
   if (action.kind === "run-verified") {return `${action.kind}:${action.ordinal}:${action.runId}`;}
+  if (isFiniteCompletionAction(action)) {return `${action.kind}:${action.ordinal}:${action.runId}`;}
   return action.kind;
 }
 

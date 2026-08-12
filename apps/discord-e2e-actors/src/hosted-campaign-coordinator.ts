@@ -48,6 +48,12 @@ export type HostedCampaignStartPoint =
 export interface HostedCampaignProducedAction extends HostedCampaignActionReference {
   readonly outputPath: string;
 }
+export type HostedCampaignCompletionAction =
+  | { readonly kind: "actor-completed"; readonly ordinal: number; readonly runId: string }
+  | { readonly kind: "conversation-observer-completed"; readonly ordinal: number; readonly runId: string }
+  | { readonly kind: "playback-link-seen"; readonly ordinal: number; readonly runId: string }
+  | { readonly kind: "recording-ready"; readonly ordinal: number; readonly runId: string }
+  | { readonly kind: "supplemental-completed"; readonly ordinal: number; readonly runId: string };
 export type HostedCampaignExecutableArguments =
   | { readonly kind: "environment" }
   | { readonly evidencePath: string; readonly kind: "evidence-verifier"; readonly manifestPath: string; readonly thresholdsPath?: string }
@@ -126,7 +132,8 @@ export type HostedCampaignBarrierAction =
   | { readonly kind: "service-levels-ready" }
   | { readonly kind: "run-verified"; readonly ordinal: number; readonly runId: string }
   | { readonly kind: "provenance-after" }
-  | { readonly kind: "campaign-verified" };
+  | { readonly kind: "campaign-verified" }
+  | HostedCampaignCompletionAction;
 interface DigestEvidence { readonly digestSha256: string }
 interface TurnEvidence { readonly observedAtEpochMilliseconds: number; readonly turnId: string }
 export type HostedCampaignActionEvidence<Action extends HostedCampaignBarrierAction> =
@@ -151,7 +158,10 @@ export type HostedCampaignActionEvidence<Action extends HostedCampaignBarrierAct
               : Action["kind"] extends "run-verified" ? {
                   readonly ordinal: number; readonly runId: string; readonly verified: true;
                 }
-                : { readonly campaignId: string };
+                : Action extends HostedCampaignCompletionAction ? {
+                    readonly completed: true; readonly ordinal: number; readonly runId: string;
+                  }
+                  : { readonly campaignId: string };
 export interface HostedCampaignBoundedSignal {
   readonly deadlineEpochMilliseconds: number; readonly signal: AbortSignal;
 }
@@ -265,7 +275,8 @@ function validateExecutable(
     }
   }
   const oneShot = child.completion !== undefined;
-  if (oneShot && child.startBefore.kind === "campaign") {
+  if (oneShot && child.startBefore.kind === "campaign"
+    && !(child.completion !== undefined && isFiniteCompletion(child.completion) && child.releaseGate !== undefined)) {
     throw new Error(`One-shot child ${child.childId} must start only after its inputs exist`);
   }
   if (child.completion !== undefined) {
@@ -289,8 +300,19 @@ function validateCompletion(
   if (completion.kind !== child.entrypoint) {
     throw new Error(`Hosted campaign child ${child.childId} completion does not match its entrypoint and start point`);
   }
-  if (!("action" in completion)) {
+  if (isFiniteCompletion(completion)) {
     validateHostedFiniteProcessContract(child, completion);
+    const identity = actionIdentity(completion.action);
+    const matchingProduction = child.produces.filter(({ action, ordinal, runId }) =>
+      actionIdentity(action) === identity && ordinal === completion.action.ordinal && runId === completion.action.runId
+    );
+    if (matchingProduction.length !== 1) {
+      throw new Error(`Hosted finite child ${child.childId} must produce its exact completion action`);
+    }
+    if (completionActions.has(identity)) {
+      throw new Error(`Hosted campaign action has multiple completion producers: ${identity}`);
+    }
+    completionActions.add(identity);
     return;
   }
   if (child.startBefore.kind !== "barrier"
@@ -354,6 +376,13 @@ function validateServiceLevelsCompletion(
     throw new Error(`Hosted campaign service-level producer ${child.childId} completion is not bound to the campaign`);
   }
 }
+
+function isFiniteCompletion(
+  completion: HostedCampaignExecutableCompletion,
+): completion is HostedFiniteProcessCompletion {
+  return new Set(["actor", "conversation-observer", "playback-link-observer", "recording-ready",
+    "supplemental-player"]).has(completion.kind);
+}
 function validateProvenanceCompletion(
   child: HostedCampaignExecutableSpec,
   completion: Extract<HostedCampaignExecutableCompletion, { readonly kind: "provenance-probe" }>,
@@ -387,6 +416,8 @@ export async function runHostedCampaign(
   validateHostedCampaign(input);
   assertActive(bounded);
   const handles: HostedCampaignChildHandle[] = [];
+  const completionTasks: Promise<void>[] = [];
+  const completionFailures: Promise<never>[] = [];
   const evidence: unknown[] = [];
   let lease: HostedCampaignLeaseHandle | undefined;
   let failure: unknown;
@@ -411,7 +442,12 @@ export async function runHostedCampaign(
         }
         startedChildIds.add(executable.childId);
         if (executable.completion !== undefined) {
-          await ports.awaitChildCompletion(handle, executable, bounded);
+          const completion = ports.awaitChildCompletion(handle, executable, bounded);
+          completionTasks.push(completion);
+          completionFailures.push(completion.then(
+            async () => new Promise<never>(() => {}),
+            async (error: unknown) => {throw error;},
+          ));
         }
       }
     };
@@ -420,7 +456,10 @@ export async function runHostedCampaign(
       const { action } = reference;
       await startChildren({ ...reference, kind: "barrier" });
       assertActive(bounded);
-      const actionEvidence = await ports.awaitBarrier(action, bounded);
+      const actionEvidence = await Promise.race([
+        ports.awaitBarrier(action, bounded),
+        ...completionFailures,
+      ]);
       validateActionEvidence(action, actionEvidence, input.thresholds);
       evidence.push(Object.freeze({ action, evidence: actionEvidence }));
       for (const executable of input.children.filter((child) =>
@@ -430,6 +469,7 @@ export async function runHostedCampaign(
         await ports.publishReleaseGate(executable, bounded);
       }
     }
+    await Promise.all(completionTasks);
   } catch (error) {
     failure = error;
   }

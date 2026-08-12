@@ -149,7 +149,7 @@ function isActionArtifact(value: unknown): value is ActionArtifact {
 
 export function actionFileName(action: HostedCampaignBarrierAction): string {
   const suffix = action.kind === "capture-retained" ? `-${action.ordinal}`
-    : action.kind === "run-verified" ? `-${action.ordinal}-${action.runId}` : "";
+    : "ordinal" in action && "runId" in action ? `-${action.ordinal}-${action.runId}` : "";
   const name = `${action.kind}${suffix}.json`;
   if (!/^[a-z0-9][a-z0-9.-]{0,255}$/u.test(name)) {
     throw new Error("Hosted campaign action produces an unsafe artifact name");

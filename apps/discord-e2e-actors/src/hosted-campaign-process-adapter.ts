@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import { HostedCampaignArtifactStore } from "./hosted-campaign-artifact-store.js";
 import { verifyHostedFiniteProcessCompletion } from "./hosted-finite-process-completion.js";
+import type { HostedFiniteProcessCompletion } from "./hosted-finite-process-contract.js";
 import type {
   HostedCampaignBarrierAction,
   HostedCampaignBoundedSignal,
@@ -191,11 +192,15 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
       throw new Error(`Hosted campaign child ${handle.childId} failed (${String(exit.code ?? exit.signal)})`);
     }
     const completion = spec.completion;
-    if (!("action" in completion)) {
+    if (isFiniteCompletion(completion)) {
+      const finiteCompletion = completion;
       await verifyHostedFiniteProcessCompletion(
         Buffer.concat(state.stdoutChunks).toString("utf8"),
-        completion,
+        finiteCompletion,
       );
+      await this.#options.artifactStore.publishAction(finiteCompletion.action, {
+        completed: true, ordinal: finiteCompletion.action.ordinal, runId: finiteCompletion.action.runId,
+      });
       return;
     }
     const output = parseJsonOutput(state.stdoutChunks, handle.childId);
@@ -351,6 +356,13 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
       throw childFailure;
     }
   }
+}
+
+function isFiniteCompletion(
+  completion: HostedCampaignExecutableSpec["completion"] & object,
+): completion is HostedFiniteProcessCompletion {
+  return new Set(["actor", "conversation-observer", "playback-link-observer", "recording-ready",
+    "supplemental-player"]).has((completion as { readonly kind: string }).kind);
 }
 
 function parseJsonOutput(chunks: readonly Buffer[], childId: string): unknown {

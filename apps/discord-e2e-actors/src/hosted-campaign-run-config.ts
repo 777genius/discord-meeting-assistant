@@ -35,6 +35,11 @@ const barrierActionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("run-verified"), ordinal: z.number().int().safe().positive(), runId: identifier }).strict(),
   z.object({ kind: z.literal("provenance-after") }).strict(),
   z.object({ kind: z.literal("campaign-verified") }).strict(),
+  z.object({ kind: z.literal("actor-completed"), ordinal: z.number().int().min(1).max(3), runId: identifier }).strict(),
+  z.object({ kind: z.literal("conversation-observer-completed"), ordinal: z.number().int().min(1).max(3), runId: identifier }).strict(),
+  z.object({ kind: z.literal("playback-link-seen"), ordinal: z.number().int().min(1).max(3), runId: identifier }).strict(),
+  z.object({ kind: z.literal("recording-ready"), ordinal: z.number().int().min(1).max(3), runId: identifier }).strict(),
+  z.object({ kind: z.literal("supplemental-completed"), ordinal: z.number().int().min(1).max(3), runId: identifier }).strict(),
 ]);
 const actionReferenceSchema = z.object({
   action: barrierActionSchema,
@@ -48,6 +53,18 @@ const runVerifiedActionSchema = z.object({
   kind: z.literal("run-verified"), ordinal: z.number().int().min(1).max(3), runId: identifier,
 }).strict();
 const completionSchema = z.discriminatedUnion("kind", [
+  z.object({ action: z.object({ kind: z.literal("actor-completed"), ordinal: z.number().int().min(1).max(3), runId: identifier }).strict(),
+    kind: z.literal("actor"), outputPath: z.string().refine(isAbsolute), runId: identifier,
+    scenario: z.enum(["sequential", "overlap", "reconnect"]) }).strict(),
+  z.object({ action: z.object({ kind: z.literal("conversation-observer-completed"), ordinal: z.number().int().min(1).max(3), runId: identifier }).strict(),
+    kind: z.literal("conversation-observer"), outputPaths: z.array(z.string().refine(isAbsolute)).min(1).max(6), runId: identifier }).strict(),
+  z.object({ action: z.object({ kind: z.literal("playback-link-seen"), ordinal: z.number().int().min(1).max(3), runId: identifier }).strict(),
+    kind: z.literal("playback-link-observer"), outputPath: z.string().refine(isAbsolute), recordingId: identifier,
+    runId: identifier }).strict(),
+  z.object({ action: z.object({ kind: z.literal("recording-ready"), ordinal: z.number().int().min(1).max(3), runId: identifier }).strict(),
+    kind: z.literal("recording-ready"), outputPath: z.string().refine(isAbsolute), runId: identifier }).strict(),
+  z.object({ action: z.object({ kind: z.literal("supplemental-completed"), ordinal: z.number().int().min(1).max(3), runId: identifier }).strict(),
+    kind: z.literal("supplemental-player"), outputPath: z.string().refine(isAbsolute), runId: identifier }).strict(),
   z.object({
     action: z.object({ kind: z.literal("service-levels-ready") }).strict(),
     campaignId: identifier, kind: z.literal("service-levels"), meetingId: identifier,

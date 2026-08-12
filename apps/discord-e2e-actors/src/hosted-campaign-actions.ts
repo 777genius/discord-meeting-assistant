@@ -88,4 +88,10 @@ export function validateActionEvidence(
     || value.ordinal !== action.ordinal || value.runId !== action.runId)) {
     throw new Error(`Run ${action.ordinal} verification evidence is invalid`);
   }
+  if ((action.kind === "actor-completed" || action.kind === "conversation-observer-completed"
+    || action.kind === "playback-link-seen" || action.kind === "recording-ready"
+    || action.kind === "supplemental-completed")
+    && (value.completed !== true || value.ordinal !== action.ordinal || value.runId !== action.runId)) {
+    throw new Error(`${action.kind} evidence is invalid for run ${action.runId}`);
+  }
 }

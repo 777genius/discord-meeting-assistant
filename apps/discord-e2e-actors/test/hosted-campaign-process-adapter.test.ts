@@ -475,7 +475,8 @@ describe("hosted campaign process adapter", () => {
     const processAdapter = await finiteAdapter("main.js", `process.stdout.write(${JSON.stringify(`log\n${output}\n`)});`);
     const executable: HostedCampaignExecutableSpec = {
       ...spec({ DISCORD_E2E_ACTOR_RUN_OUTPUT: outputPath, DISCORD_E2E_RUN_ID: "run-1", DISCORD_E2E_SCENARIO: "sequential" }),
-      completion: { kind: "actor", outputPath, runId: "run-1", scenario: "sequential" },
+      completion: { action: { kind: "actor-completed", ordinal: 1, runId: "run-1" },
+        kind: "actor", outputPath, runId: "run-1", scenario: "sequential" },
     };
     const handle = await processAdapter.startChild(executable, bounded());
     await expect(processAdapter.awaitChildCompletion(handle, executable, bounded())).resolves.toBeUndefined();
@@ -485,7 +486,8 @@ describe("hosted campaign process adapter", () => {
     const outputPath = join(await mkdtemp(join(tmpdir(), "hosted-missing-artifact-")), "actor.json");
     const executable: HostedCampaignExecutableSpec = {
       ...spec({ DISCORD_E2E_ACTOR_RUN_OUTPUT: outputPath, DISCORD_E2E_RUN_ID: "run-1", DISCORD_E2E_SCENARIO: "sequential" }),
-      completion: { kind: "actor", outputPath, runId: "run-1", scenario: "sequential" },
+      completion: { action: { kind: "actor-completed", ordinal: 1, runId: "run-1" },
+        kind: "actor", outputPath, runId: "run-1", scenario: "sequential" },
     };
     const completion = JSON.stringify({
       kind: "actor-completion", outputPath, runId: "run-1", scenario: "sequential", status: "completed",
