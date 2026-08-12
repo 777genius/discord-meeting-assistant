@@ -268,7 +268,7 @@ describe("hosted campaign coordinator", () => {
       valueFrom: { actionRef: source, field: "recordingId" as const },
     }], requires: [source], startBefore: { ...observerSubscribed, kind: "barrier" as const } };
     const fakePorts = ports([]);
-    const original = fakePorts.awaitBarrier;
+    const original = fakePorts.awaitBarrier.bind(fakePorts);
     fakePorts.awaitBarrier = async (barrier, bound) => barrier.kind === "recording-ready"
       ? { completed: true, meetingId: "recording-1", ordinal: 1, recordingId: 42, runId: "run-1" } as never
       : original(barrier, bound);
@@ -306,7 +306,7 @@ describe("hosted campaign coordinator", () => {
       completed = true;
       events.push("complete:finite-actor");
     };
-    const originalBarrier = fakePorts.awaitBarrier;
+    const originalBarrier = fakePorts.awaitBarrier.bind(fakePorts);
     fakePorts.awaitBarrier = async (action, bound) => {
       if (action.kind === "actor-completed") {
         await vi.waitUntil(() => completed);
@@ -341,7 +341,7 @@ describe("hosted campaign coordinator", () => {
     fakePorts.awaitChildCompletion = async (_handle, spec) => {
       if (spec.childId === "failing-actor") {throw new Error("actor exploded");}
     };
-    const originalBarrier = fakePorts.awaitBarrier;
+    const originalBarrier = fakePorts.awaitBarrier.bind(fakePorts);
     fakePorts.awaitBarrier = async (barrierAction, bound) => {
       if (barrierAction.kind === "actor-completed") {return new Promise(() => {});}
       return originalBarrier(barrierAction, bound);
@@ -505,7 +505,7 @@ describe("hosted campaign coordinator failure handling", () => {
     const controller = new AbortController();
     const events: string[] = [];
     const fakePorts = ports(events);
-    const barrier = fakePorts.awaitBarrier;
+    const barrier = fakePorts.awaitBarrier.bind(fakePorts);
     fakePorts.awaitBarrier = async (action, bound) => {
       const result = await barrier(action, bound);
       controller.abort(new Error("campaign cancelled"));
@@ -523,10 +523,11 @@ describe("hosted campaign coordinator failure handling", () => {
     fakePorts.awaitBarrier = async (action) => action.kind === "answer-first-packet"
       ? { answerLatencyMilliseconds: 4_001, observedAtEpochMilliseconds: 2, turnId: "turn-1" } as HostedCampaignActionEvidence<typeof action>
       : evidence(action);
-    fakePorts.stopChild = vi.fn(async (handle) => { events.push(`stop:${handle.childId}`); });
+    const stopChild = vi.fn(async (handle: HostedCampaignChildHandle) => { events.push(`stop:${handle.childId}`); });
+    fakePorts.stopChild = stopChild;
 
     await expect(runHostedCampaign(input(), fakePorts, bounded())).rejects.toThrow(/SLA failed/u);
-    expect(fakePorts.stopChild).toHaveBeenCalledTimes(5);
+    expect(stopChild).toHaveBeenCalledTimes(5);
   });
 
   it("uses the closed-plan answer threshold and verifies each run separately", async () => {

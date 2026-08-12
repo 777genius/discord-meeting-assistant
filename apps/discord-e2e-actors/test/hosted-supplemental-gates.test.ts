@@ -62,7 +62,7 @@ describe("hosted supplemental two-phase gate contract", () => {
         DISCORD_E2E_SUPPLEMENTAL_GATE_TIMEOUT_MS: "999" } },
     ];
     for (const child of candidates) {
-      expect(() => validateHostedCampaign(input(child))).toThrow(/supplemental|entrypoint/u);
+      expect(() => { validateHostedCampaign(input(child)); }).toThrow(/supplemental|entrypoint/u);
     }
   });
 });

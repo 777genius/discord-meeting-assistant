@@ -137,7 +137,7 @@ describe("hosted campaign process event", () => {
   });
 
   it("rejects an answer first packet that predates its exact intent", () => {
-    expect(() => publishAnswerFirstPacket(
+    expect(() => { publishAnswerFirstPacket(
       { additionalCaptures: [{}], hostedCampaignId: campaignId, runId },
       {
         capturePlan: "addressed-answer", kind: "answer", meetingId: "meeting-1",
@@ -147,7 +147,7 @@ describe("hosted campaign process event", () => {
       "2026-08-12T17:00:01.000Z",
       Date.parse("2026-08-12T17:00:00.999Z"),
       () => {},
-    )).toThrow(/predates/u);
+    ); }).toThrow(/predates/u);
   });
 
   it("does not publish hosted barriers outside the exact six-capture campaign", () => {

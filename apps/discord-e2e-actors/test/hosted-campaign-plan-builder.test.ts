@@ -134,8 +134,9 @@ describe("hosted campaign strict plan builder", () => {
         ? { ...child, completion: { ...readyCompletion, outputPath: actorCompletion.outputPath } }
         : child),
     };
-    expect(() => validateHostedCampaignOwnedPaths(aliased, definition().campaignRoot))
-      .toThrow(/aliases distinct resources/u);
+    expect(() => {
+      validateHostedCampaignOwnedPaths(aliased, definition().campaignRoot);
+    }).toThrow(/aliases distinct resources/u);
 
     const escaped = {
       ...plan,
@@ -145,8 +146,9 @@ describe("hosted campaign strict plan builder", () => {
           : item) }
         : child),
     };
-    expect(() => validateHostedCampaignOwnedPaths(escaped, definition().campaignRoot))
-      .toThrow(/escapes/u);
+    expect(() => {
+      validateHostedCampaignOwnedPaths(escaped, definition().campaignRoot);
+    }).toThrow(/escapes/u);
 
     const undeclared = {
       ...plan,
@@ -155,8 +157,9 @@ describe("hosted campaign strict plan builder", () => {
           DISCORD_E2E_UNKNOWN_INPUT: "/private/e2e/campaigns/campaign-2026-08-12/run-1/unknown.json" } }
         : child),
     };
-    expect(() => validateHostedCampaignOwnedPaths(undeclared, definition().campaignRoot))
-      .toThrow(/no owned resource declaration/u);
+    expect(() => {
+      validateHostedCampaignOwnedPaths(undeclared, definition().campaignRoot);
+    }).toThrow(/no owned resource declaration/u);
   });
 
   it("classifies external inputs separately and rejects collisions with generated outputs", () => {

@@ -182,6 +182,6 @@ function digest(value: Buffer): string {
 }
 
 const fixtureManifestShape = z.object({
-  fixtures: z.array(z.object({ audioPath: z.string(), sourcePath: z.string() }).passthrough()),
-}).passthrough();
-const supplementalShape = z.object({ fixture: z.object({ path: z.string() }).passthrough() }).passthrough();
+  fixtures: z.array(z.object({ audioPath: z.string(), sourcePath: z.string() }).loose()),
+}).loose();
+const supplementalShape = z.object({ fixture: z.object({ path: z.string() }).loose() }).loose();

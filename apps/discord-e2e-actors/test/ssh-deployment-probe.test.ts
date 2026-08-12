@@ -44,9 +44,9 @@ afterEach(() => {
   spawnMock.mockReset();
 });
 
-function fakeChildProcess(): ChildProcess {
+function fakeChildProcess(kill: ChildProcess["kill"] = vi.fn(() => true)): ChildProcess {
   const child = new EventEmitter() as ChildProcess;
-  child.kill = vi.fn(() => true);
+  child.kill = kill;
   child.stdout = new PassThrough();
   child.stderr = new PassThrough();
   return child;
@@ -203,7 +203,7 @@ describe("SshDeploymentEvidenceProbe replay target safety", () => {
         if (args[0] === "docker" && args[1] === "ps") {
           const project = String(args.find((value) => value.startsWith("label=com.docker.compose.project="))?.split("=").at(-1));
           const service = String(args.find((value) => value.startsWith("label=com.docker.compose.service="))?.split("=").at(-1));
-          const id = `${(containerSequence += 1).toString(16)}`.repeat(64);
+          const id = (containerSequence += 1).toString(16).repeat(64);
           servicesByContainer.set(id, { project, service });
           return id;
         }
@@ -279,7 +279,8 @@ describe("SshDeploymentEvidenceProbe replay target safety", () => {
 
   it("waits for SSH child cleanup after a timeout", async () => {
     vi.useFakeTimers();
-    const child = fakeChildProcess();
+    const kill = vi.fn(() => true);
+    const child = fakeChildProcess(kill);
     spawnMock.mockReturnValue(child);
     const settings = parseSshDeploymentProbeOptions({
       attestationFile: "/tmp/discord-e2e-attestations/run-1.json",
@@ -302,7 +303,7 @@ describe("SshDeploymentEvidenceProbe replay target safety", () => {
     );
     await vi.advanceTimersByTimeAsync(250);
 
-    expect(child.kill).toHaveBeenCalledExactlyOnceWith("SIGTERM");
+    expect(kill).toHaveBeenCalledExactlyOnceWith("SIGTERM");
     expect(outcome).toBe("pending");
 
     child.emit("close", 0, "SIGTERM");
@@ -394,12 +395,13 @@ describe("SshDeploymentEvidenceProbe replay target safety", () => {
       ...target, purpose: "bullmq-post-call-replay", schemaVersion: 1,
     } as const;
 
-    expect(() => assertReplayTargetAttestation({
-      composeProject: "discord-meeting-assistant",
-      composeService: "meeting-platform",
-      testOnly: "true",
-    }, legacy, target, { containerId, imageId, sourceRevision }, "historical-read"))
-      .not.toThrow();
+    expect(() => {
+      assertReplayTargetAttestation({
+        composeProject: "discord-meeting-assistant",
+        composeService: "meeting-platform",
+        testOnly: "true",
+      }, legacy, target, { containerId, imageId, sourceRevision }, "historical-read");
+    }).not.toThrow();
   });
 
   it("consumes an exact attestation before permitting a fake replay", async () => {

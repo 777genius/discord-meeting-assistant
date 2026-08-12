@@ -232,7 +232,7 @@ export class HostedCampaignSandboxAdapter implements HostedCampaignPorts {
   }
 
   async #waitForPath(path: string, state: ChildState, bounded: HostedCampaignBoundedSignal): Promise<void> {
-    while (true) {
+    for (;;) {
       this.#assertActive(bounded);
       if (state.exited) {
         throw new Error("Sandbox fixture child exited before acknowledgement");
@@ -256,7 +256,7 @@ export class HostedCampaignSandboxAdapter implements HostedCampaignPorts {
     if (state.exited) {
       return;
     }
-    await new Promise<void>((resolve) => { state.child.once("exit", () => resolve()); });
+    await new Promise<void>((resolve) => { state.child.once("exit", () => { resolve(); }); });
   }
 
   #assertActive(bounded: HostedCampaignBoundedSignal): void {

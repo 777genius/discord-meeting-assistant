@@ -105,10 +105,12 @@ describe("hosted campaign completion scheduler", () => {
     expect(parseHostedCampaignPlan(raw).children[0]?.releaseGate?.action.kind).toBe("run-verified");
 
     const runTwo = base.find(({ action }) => action.kind === "run-verified" && action.ordinal === 2)!;
-    expect(() => validateHostedCampaign(skeleton([{ ...configured, releaseGate: {
-      armedPath: "/evidence/wrong.armed",
-      ...runTwo, path: "/evidence/run-two.release",
-    } }]))).toThrow(/prior verified run/u);
+    expect(() => {
+      validateHostedCampaign(skeleton([{ ...configured, releaseGate: {
+        armedPath: "/evidence/wrong.armed",
+        ...runTwo, path: "/evidence/run-two.release",
+      } }]));
+    }).toThrow(/prior verified run/u);
   });
 
   it("fails closed for missing triggers, cycles and duplicate schedules", () => {

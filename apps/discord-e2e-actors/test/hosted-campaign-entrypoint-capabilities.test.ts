@@ -30,23 +30,31 @@ describe("hosted campaign entrypoint capability matrix", () => {
       "live-observer", "playback-link-observer", "provenance-probe", "recording-ready", "replay-attestation-publisher",
       "service-level-sources", "service-levels", "supplemental-player",
     ]);
-    expect(() => validateHostedCampaignEntrypointCapabilities(
-      child("conversation-observer", [produced("observer-subscribed")]),
-    )).not.toThrow();
+    expect(() => {
+      validateHostedCampaignEntrypointCapabilities(
+        child("conversation-observer", [produced("observer-subscribed")]),
+      );
+    }).not.toThrow();
     for (const entrypoint of Object.keys(HOSTED_CAMPAIGN_ENTRYPOINT_CAPABILITY_MATRIX) as HostedCampaignEntrypoint[]) {
       if (entrypoint === "conversation-observer") {continue;}
-      expect(() => validateHostedCampaignEntrypointCapabilities(
-        child(entrypoint, [produced("observer-subscribed")]),
-      )).toThrow(new RegExp(`entrypoint ${entrypoint} cannot produce observer-subscribed`, "u"));
+      expect(() => {
+        validateHostedCampaignEntrypointCapabilities(
+          child(entrypoint, [produced("observer-subscribed")]),
+        );
+      }).toThrow(new RegExp(`entrypoint ${entrypoint} cannot produce observer-subscribed`, "u"));
     }
   });
 
   it("rejects completion-only actions without their exact completion declaration", () => {
-    expect(() => validateHostedCampaignEntrypointCapabilities(
-      child("campaign-verifier", [produced("campaign-verified")]),
-    )).toThrow(/cannot produce campaign-verified/u);
-    expect(() => validateHostedCampaignEntrypointCapabilities(
-      child("not-production" as HostedCampaignEntrypoint),
-    )).toThrow(/Unsupported hosted campaign entrypoint/u);
+    expect(() => {
+      validateHostedCampaignEntrypointCapabilities(
+        child("campaign-verifier", [produced("campaign-verified")]),
+      );
+    }).toThrow(/cannot produce campaign-verified/u);
+    expect(() => {
+      validateHostedCampaignEntrypointCapabilities(
+        child("not-production" as HostedCampaignEntrypoint),
+      );
+    }).toThrow(/Unsupported hosted campaign entrypoint/u);
   });
 });
