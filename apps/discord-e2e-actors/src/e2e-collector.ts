@@ -1,10 +1,10 @@
 import {
   conversationVoiceEvidenceV3Schema,
   retainedE2eEvidenceV6Schema,
-  retainedReconnectE2eEvidenceV8Schema,
+  retainedE2eEvidenceV9Schema,
   sameDeploymentProvenance,
   type RetainedE2eEvidenceV6,
-  type RetainedReconnectE2eEvidenceV8,
+  type RetainedE2eEvidenceV9,
 } from "./e2e-evidence.js";
 import {
   assertDiscordReference,
@@ -53,7 +53,7 @@ export async function collectRetainedE2eEvidence(
   input: CollectEvidenceInput,
   deployment: DeploymentEvidenceProbe,
   discord: DiscordEvidenceProbe,
-): Promise<RetainedE2eEvidenceV6 | RetainedReconnectE2eEvidenceV8> {
+): Promise<RetainedE2eEvidenceV6 | RetainedE2eEvidenceV9> {
   const unboundActorRun = parseUnboundActorRun(input.actorRun);
   const replayTarget = createReplayTargetAttestation(input, unboundActorRun);
   await deployment.assertReplayTargetSafe(replayTarget);
@@ -183,10 +183,11 @@ export async function collectRetainedE2eEvidence(
     input.conversation.reconnectParticipantId,
     s3.endedAt,
   );
-  return retainedReconnectE2eEvidenceV8Schema.parse({
+  return retainedE2eEvidenceV9Schema.parse({
     ...baseEvidence,
     conversation: {
       botSpeakerId: input.conversation.botSpeakerId,
+      campaignProof: input.conversation.campaignProof,
       lifecycle,
       reconnectNoRepeat,
       supplementalPlayback: input.conversation.supplementalPlayback,
@@ -194,7 +195,7 @@ export async function collectRetainedE2eEvidence(
         bindConversationVoiceRecording(observation, input.recordingId)
       ),
     },
-    schemaVersion: 8,
+    schemaVersion: 9,
   });
 }
 

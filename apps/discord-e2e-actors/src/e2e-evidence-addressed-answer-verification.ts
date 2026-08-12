@@ -7,7 +7,7 @@ import type {
 
 type RetainedConversationEvidence = Extract<
   RetainedE2eEvidence,
-  { schemaVersion: 7 | 8 }
+  { schemaVersion: 7 | 8 | 9 }
 >;
 
 export function verifyAddressedAnswer(
@@ -27,7 +27,7 @@ export function verifyAddressedAnswer(
     fail("BOT_RECORDING_TRACK_MISSING", "Botik speaker is absent from the authoritative recording");
   }
   for (const answer of answerCaptures) {
-    if (evidence.schemaVersion === 8) {
+    if (evidence.schemaVersion >= 8) {
       verifyAddressedAnswerPlayback(
         evidence,
         answer,
@@ -50,7 +50,7 @@ export function verifyAddressedAnswer(
 }
 
 function verifyAddressedAnswerPlayback(
-  evidence: Extract<RetainedConversationEvidence, { schemaVersion: 8 }>,
+  evidence: Extract<RetainedConversationEvidence, { schemaVersion: 8 | 9 }>,
   answer: RetainedConversationEvidence["conversation"]["voice"][number],
   timestampToleranceMs: number,
   fail: VerificationFailureReporter,

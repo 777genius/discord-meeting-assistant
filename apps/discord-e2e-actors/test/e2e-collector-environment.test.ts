@@ -25,6 +25,7 @@ const requiredEnvironment = {
 };
 const conversationEnvironment = {
   DISCORD_E2E_BOTIK_SPEAKER_ID: "1534231284467896512",
+  DISCORD_E2E_CONVERSATION_CAMPAIGN_PROOF_INPUT: "/evidence/campaign-proof.json",
   DISCORD_E2E_CONVERSATION_VOICE_INPUTS: JSON.stringify([
     "/evidence/greeting-ru.json",
     "/evidence/greeting-en.json",

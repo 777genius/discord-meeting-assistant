@@ -11,6 +11,7 @@ const remoteAttestationFile = z.string().regex(
 export const collectorEnvironmentSchema = z.object({
   DISCORD_E2E_ACTOR_RUN_INPUT: absolutePath,
   DISCORD_E2E_BOTIK_SPEAKER_ID: correlationId.optional(),
+  DISCORD_E2E_CONVERSATION_CAMPAIGN_PROOF_INPUT: absolutePath.optional(),
   DISCORD_E2E_CONVERSATION_VOICE_INPUTS: z.string().transform((value, context) => {
     try {
       return z.array(absolutePath).min(6).parse(JSON.parse(value) as unknown);
@@ -52,6 +53,7 @@ export const collectorEnvironmentSchema = z.object({
 }).superRefine((value, context) => {
   const conversationInputs = [
     value.DISCORD_E2E_BOTIK_SPEAKER_ID,
+    value.DISCORD_E2E_CONVERSATION_CAMPAIGN_PROOF_INPUT,
     value.DISCORD_E2E_CONVERSATION_VOICE_INPUTS,
     value.DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_INPUT,
   ];

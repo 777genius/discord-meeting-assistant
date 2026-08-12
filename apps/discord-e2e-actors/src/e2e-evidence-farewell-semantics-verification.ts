@@ -1,6 +1,7 @@
 import { normalizeTranscriptSemantics } from "./e2e-evidence-text-metrics.js";
 import type {
   RetainedE2eEvidenceV8,
+  RetainedE2eEvidenceV9,
 } from "./e2e-evidence-schema.js";
 import type {
   VerificationFailureReporter,
@@ -18,7 +19,7 @@ interface BotikFarewellExpectation {
 const maximumSplitTurnGapMs = 500;
 
 export function verifyBotikFarewellTranscript(
-  evidence: RetainedE2eEvidenceV8,
+  evidence: RetainedE2eEvidenceV8 | RetainedE2eEvidenceV9,
   expectation: BotikFarewellExpectation,
   fail: VerificationFailureReporter,
 ): void {

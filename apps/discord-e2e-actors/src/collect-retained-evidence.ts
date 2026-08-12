@@ -8,6 +8,7 @@ import {
 } from "./e2e-collector.js";
 import { collectorEnvironmentSchema } from "./e2e-collector-environment.js";
 import {
+  conversationVoiceCampaignProofV1Schema,
   conversationVoiceEvidenceV3Schema,
   deploymentRevisionExpectationSchema,
   fixtureManifestV1Schema,
@@ -24,7 +25,7 @@ import { EvidenceProbeInterruptedError } from "./ssh-deployment-probe-commands.j
 
 async function main(): Promise<void> {
   const config = collectorEnvironmentSchema.parse(process.env);
-  const [actorRun, manifest, conversationVoice, supplementalPlayback] = await Promise.all([
+  const [actorRun, manifest, conversationVoice, supplementalPlayback, campaignProof] = await Promise.all([
     readJson(config.DISCORD_E2E_ACTOR_RUN_INPUT),
     readJson(config.DISCORD_E2E_FIXTURE_MANIFEST).then((value) =>
       fixtureManifestV1Schema.parse(value)
@@ -33,6 +34,7 @@ async function main(): Promise<void> {
       readJson(path).then((value) => conversationVoiceEvidenceV3Schema.parse(value))
     )),
     readSupplementalPlayback(config.DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_INPUT),
+    readCampaignProof(config.DISCORD_E2E_CONVERSATION_CAMPAIGN_PROOF_INPUT),
   ]);
   const deployment = new SshDeploymentEvidenceProbe({
     attestationFile: config.DISCORD_E2E_REMOTE_ATTESTATION_FILE,
@@ -58,6 +60,7 @@ async function main(): Promise<void> {
     ? undefined
     : {
         botSpeakerId: config.DISCORD_E2E_BOTIK_SPEAKER_ID,
+        campaignProof: requireDefined(campaignProof, "conversation campaign proof"),
         reconnectParticipantId: reconnectParticipantId(manifest),
         supplementalPlayback: requireDefined(
           supplementalPlayback,
@@ -143,6 +146,13 @@ async function readSupplementalPlayback(path: string | undefined): Promise<
     return undefined;
   }
   return supplementalPlaybackEvidenceV1Schema.parse(await readJson(path));
+}
+
+async function readCampaignProof(path: string | undefined): Promise<unknown | undefined> {
+  if (path === undefined) {
+    return undefined;
+  }
+  return conversationVoiceCampaignProofV1Schema.parse(await readJson(path));
 }
 
 async function atomicWriteJson(path: string, value: unknown): Promise<void> {

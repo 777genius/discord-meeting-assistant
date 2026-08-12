@@ -4,6 +4,7 @@ import { z } from "zod"; import {
   reconnectNoRepeatEvidenceSchema,
   supplementalPlaybackEvidenceV1Schema,
 } from "./conversation-retained-evidence-schema.js";
+import { conversationVoiceCampaignProofV1Schema } from "./conversation-voice-campaign-proof.js";
 import { recordingPlaybackEvidenceV1Schema } from "./recording-playback-evidence-schema.js";
 const identifierSchema = z.string().trim().min(1); const sha256Schema = z.string().regex(/^[a-f\d]{64}$/u);
 const nonNegativeMillisecondsSchema = z.number().int().nonnegative(); const nonNegativeSafeIntegerSchema = z.number().refine(
@@ -416,15 +417,14 @@ export const retainedReconnectE2eEvidenceV8Schema = retainedE2eEvidenceV8Schema
     conversation: retainedE2eEvidenceV8Schema.shape.conversation
       .extend({ reconnectNoRepeat: reconnectNoRepeatEvidenceSchema }),
     recordingPlayback: recordingPlaybackEvidenceV1Schema });
-export const retainedE2eEvidenceSchema = z.union([
-  retainedE2eEvidenceV2Schema,
-  retainedE2eEvidenceV3Schema,
-  retainedE2eEvidenceV4Schema,
-  retainedE2eEvidenceV5Schema,
-  retainedE2eEvidenceV6Schema,
-  retainedE2eEvidenceV7Schema,
-  retainedE2eEvidenceV8Schema,
-]);
+export const retainedE2eEvidenceV9Schema = retainedE2eEvidenceV8Schema.omit({ conversation: true, schemaVersion: true }).extend({
+  conversation: retainedE2eEvidenceV8Schema.shape.conversation.extend({ campaignProof: conversationVoiceCampaignProofV1Schema }),
+  schemaVersion: z.literal(9),
+});
+export const retainedE2eEvidenceSchema = z.union([retainedE2eEvidenceV2Schema,
+  retainedE2eEvidenceV3Schema, retainedE2eEvidenceV4Schema, retainedE2eEvidenceV5Schema,
+  retainedE2eEvidenceV6Schema, retainedE2eEvidenceV7Schema, retainedE2eEvidenceV8Schema,
+  retainedE2eEvidenceV9Schema]);
 export {
   collectedConversationLifecycleEvidenceSchema,
   conversationVoiceEvidenceV3Schema,

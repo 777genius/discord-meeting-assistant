@@ -14,6 +14,27 @@ import type {
 } from "../src/e2e-evidence.js";
 import type { RecordingPlaybackEvidenceProbe } from "../src/recording-playback-evidence-probe.js";
 import { retainedV7Evidence, retainedV8Evidence } from "./e2e-evidence-fixtures.js";
+import { conversationVoiceCampaignPlanDigest } from
+  "../src/conversation-voice-campaign-proof.js";
+
+const campaignProof = {
+  observerReadyReceipt: {
+    authenticatedObserverBotId: "1533867700575670282",
+    observedAt: "2026-08-12T10:00:00.000Z",
+    planDigestSha256: "0".repeat(64),
+    runId: "run-1",
+    schemaVersion: 1,
+    target: {
+      craigBotId: "1534231284467896512",
+      guildId: "1533228590643155034",
+      observerApplicationId: "1533867700575670282",
+      voiceChannelId: "1533228823045214398",
+    },
+  },
+  plan: { captures: [], kind: "conversation-voice-campaign-preflight", status: "validated" },
+  planDigestSha256: "0".repeat(64),
+  schemaVersion: 1,
+};
 
 const speakerA = "1533227577286852649";
 const speakerB = "1533228054724346087";
@@ -503,18 +524,19 @@ describe("collectRetainedE2eEvidence", () => {
     const evidence = await collectRetainedE2eEvidence(collectionInput({
       conversation: {
         botSpeakerId: conversationFixture.botSpeakerId,
+        campaignProof: campaignProofFor(conversationFixture),
         reconnectParticipantId: speakerB,
         supplementalPlayback,
         voice,
       },
     }), deployment, discord);
 
-    expect(evidence.schemaVersion).toBe(8);
-    if (evidence.schemaVersion !== 8) {
-      throw new Error("expected retained V8 evidence");
+    expect(evidence.schemaVersion).toBe(9);
+    if (evidence.schemaVersion !== 9) {
+      throw new Error("expected retained V9 evidence");
     }
     expect(evidence.conversation.supplementalPlayback).toEqual(supplementalPlayback);
-    expect(evidence.conversation.reconnectNoRepeat.lifecycleReceipts).toEqual(
+    expect(evidence.conversation.reconnectNoRepeat?.lifecycleReceipts).toEqual(
       conversationFixture.reconnectNoRepeat.lifecycleReceipts,
     );
     expect(evidence.conversation.voice).toHaveLength(6);
@@ -525,7 +547,7 @@ describe("collectRetainedE2eEvidence", () => {
 
 });
 
-describe("collectRetainedE2eEvidence failure handling", () => {
+describe("failures", () => {
   it("rejects an unattested playback deployment before sending the capability", async () => {
     let playbackCalls = 0;
     const deployment: DeploymentEvidenceProbe = {
@@ -572,7 +594,7 @@ describe("collectRetainedE2eEvidence failure handling", () => {
     expect(playbackCalls).toBe(0);
   });
 
-  it("fails closed when a retained v8 collection has no lifecycle probe", async () => {
+  it("fails closed when a retained v9 collection has no lifecycle probe", async () => {
     const conversationFixture = retainedV8Evidence().conversation;
     const deployment: DeploymentEvidenceProbe = {
       assertRecordingPlaybackTargetSafe: async () => {},
@@ -608,6 +630,7 @@ describe("collectRetainedE2eEvidence failure handling", () => {
     await expect(collectRetainedE2eEvidence(collectionInput({
       conversation: {
         botSpeakerId: conversationFixture.botSpeakerId,
+        campaignProof: campaignProofFor(conversationFixture),
         reconnectParticipantId: speakerB,
         supplementalPlayback: {
           ...structuredClone(conversationFixture.supplementalPlayback),
@@ -767,6 +790,9 @@ describe("collectRetainedE2eEvidence failure handling", () => {
     )).rejects.toThrow("capability changed");
   });
 
+});
+
+describe("actor correlation failures", () => {
   it("rejects an actor file from another explicit run before external reads", async () => {
     const deployment: DeploymentEvidenceProbe = {
       assertRecordingPlaybackTargetSafe: unexpectedExternalRead,
@@ -786,3 +812,23 @@ describe("collectRetainedE2eEvidence failure handling", () => {
     )).rejects.toThrow("correlation");
   });
 });
+
+function campaignProofFor(conversation: ReturnType<typeof retainedV8Evidence>["conversation"]) {
+  const captures = conversation.voice.map((voice, index) => ({
+    resolvedAttemptId: voice.correlation.attemptId,
+    expectedDuration: voice.capture.expectedDuration,
+    ordinal: index + 1,
+    outputPath: `/evidence/capture-${index + 1}.json`,
+    purpose: voice.correlation.purpose,
+    role: ["observer-unknown", "speaker-ru-known", "speaker-en-known", "speaker-d-unknown", "speaker-d-addressed-answer", "explicit-group-farewell"][index],
+    resolvedTurnId: voice.correlation.turnId,
+  }));
+  const plan = { ...campaignProof.plan, captures };
+  const planDigestSha256 = conversationVoiceCampaignPlanDigest(plan);
+  return {
+    ...campaignProof,
+    observerReadyReceipt: { ...campaignProof.observerReadyReceipt, planDigestSha256 },
+    plan,
+    planDigestSha256,
+  };
+}

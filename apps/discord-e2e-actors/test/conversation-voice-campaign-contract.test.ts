@@ -9,6 +9,11 @@ import {
   conversationVoiceCampaignRoles,
   selectConversationVoiceCampaignLifecycle,
 } from "../src/conversation-voice-campaign-contract.js";
+import {
+  conversationVoiceCampaignPlanDigest,
+  conversationVoiceCampaignProofIssue,
+  conversationVoiceCampaignProofV1Schema,
+} from "../src/conversation-voice-campaign-proof.js";
 
 describe("conversation voice campaign contract", () => {
   it("requires the pinned private Discord target", () => {
@@ -134,7 +139,63 @@ describe("conversation voice campaign contract", () => {
     expect(conversationVoiceCampaignLifecycleIssue(captures, events, 100))
       .toContain("ambiguously matches multiple captures");
   });
+
+  it("binds the exact campaign plan, observer target, and actor run", () => {
+    const plan = campaignProofPlan();
+    const planDigestSha256 = conversationVoiceCampaignPlanDigest(plan);
+    const proof = conversationVoiceCampaignProofV1Schema.parse({
+      observerReadyReceipt: {
+        authenticatedObserverBotId: "1533867700575670282",
+        observedAt: "2026-08-12T10:00:00.000Z",
+        planDigestSha256,
+        runId: "campaign-1",
+        schemaVersion: 1,
+        target: {
+          craigBotId: "1534231284467896512",
+          guildId: "1533228590643155034",
+          observerApplicationId: "1533867700575670282",
+          voiceChannelId: "1533228823045214398",
+        },
+      },
+      plan,
+      planDigestSha256,
+      schemaVersion: 1,
+    });
+
+    expect(conversationVoiceCampaignProofIssue(proof, "campaign-1")).toBeUndefined();
+    expect(conversationVoiceCampaignProofIssue({
+      ...proof,
+      observerReadyReceipt: { ...proof.observerReadyReceipt, runId: "other-run" },
+    }, "campaign-1")).toContain("retained actor run");
+    expect(conversationVoiceCampaignProofIssue({
+      ...proof,
+      planDigestSha256: "0".repeat(64),
+    }, "campaign-1")).toContain("computed plan digest");
+    expect(conversationVoiceCampaignProofIssue({
+      ...proof,
+      observerReadyReceipt: {
+        ...proof.observerReadyReceipt,
+        target: { ...proof.observerReadyReceipt.target, voiceChannelId: "wrong-channel" },
+      },
+    }, "campaign-1")).toContain("pinned private-test target");
+  });
 });
+
+function campaignProofPlan() {
+  return {
+    captures: conversationVoiceCampaignRoles.map((role, index) => ({
+      resolvedAttemptId: `attempt-${index + 1}`,
+      expectedDuration: { maximumMilliseconds: 1_500, minimumMilliseconds: 1_000 },
+      ordinal: index + 1,
+      outputPath: `/evidence/capture-${index + 1}.json`,
+      purpose: role.purpose,
+      role: role.role,
+      resolvedTurnId: role.turnId ?? "runtime-addressed-answer-turn",
+    })),
+    kind: "conversation-voice-campaign-preflight" as const,
+    status: "validated" as const,
+  };
+}
 
 function canonicalPlan() {
   return conversationVoiceCampaignRoles.map((role, index) => ({
