@@ -27,6 +27,16 @@ export interface HostedCampaignCliDependencies {
   readonly writeReceipt: (path: string, receipt: HostedCampaignPassReceipt) => Promise<void>;
 }
 
+export class HostedCampaignInterruptedError extends Error {
+  readonly exitCode: 130 | 143;
+
+  constructor(readonly signal: "SIGINT" | "SIGTERM") {
+    super(`Received ${signal}`);
+    this.name = "HostedCampaignInterruptedError";
+    this.exitCode = signal === "SIGINT" ? 130 : 143;
+  }
+}
+
 export async function runHostedCampaignCli(
   arguments_: readonly string[],
   dependencies: HostedCampaignCliDependencies,
@@ -93,7 +103,8 @@ export function loadHostedCampaignTrustedRuntimeEnvironment(
 
 async function main(): Promise<void> {
   const controller = new AbortController();
-  const forwardSignal = (signal: NodeJS.Signals) => controller.abort(new Error(`Received ${signal}`));
+  const forwardSignal = (signal: "SIGINT" | "SIGTERM") =>
+    controller.abort(new HostedCampaignInterruptedError(signal));
   process.once("SIGINT", forwardSignal);
   process.once("SIGTERM", forwardSignal);
   try {
@@ -124,6 +135,6 @@ if (process.argv[1]?.replaceAll("\\", "/").endsWith("/run-hosted-campaign.js") =
   void main().catch((error: unknown) => {
     const message = error instanceof Error ? error.message : "Unknown hosted campaign failure";
     process.stderr.write(`Hosted campaign failed: ${message}\n`);
-    process.exitCode = 1;
+    process.exitCode = error instanceof HostedCampaignInterruptedError ? error.exitCode : 1;
   });
 }
