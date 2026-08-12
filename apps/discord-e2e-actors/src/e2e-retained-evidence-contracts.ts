@@ -3,6 +3,7 @@ import type {
   CurrentDeploymentProvenance,
   ProcessingEvidence,
 } from "./e2e-evidence-schema.js";
+import type { RecordingPlaybackEvidenceProbe } from "./recording-playback-evidence-probe.js";
 
 export interface DatabaseObservation {
   readonly matchingMeetingCount: number;
@@ -45,6 +46,11 @@ export interface ReplayTargetAttestation {
 }
 
 export interface DeploymentEvidenceProbe {
+  assertRecordingPlaybackTargetSafe(input: {
+    readonly meetingPlatformContainerId: string;
+    readonly origin: string;
+    readonly scope: string;
+  }): Promise<void>;
   assertReplayTargetSafe(attestation: ReplayTargetAttestation): Promise<void>;
   collectConversationLifecycle?(
     meetingId: string,
@@ -76,6 +82,8 @@ export interface DiscordProjectionMessageObservation {
   readonly container: DiscordProjectionContainerObservation;
   readonly embedDescription: string;
   readonly messageId: string;
+  /** Capability-bearing transient input. Never retain or log this URL. */
+  readonly recordingPlaybackUrl: string;
 }
 
 export interface DiscordEvidenceProbe {
@@ -92,5 +100,9 @@ export interface CollectEvidenceInput {
   };
   readonly fixtureSetId: string;
   readonly recordingId: string;
+  readonly recordingPlayback: RecordingPlaybackEvidenceProbe;
+  readonly recordingPlaybackOrigin: string;
+  readonly recordingPlaybackReadiness: "already-ready" | "transition";
+  readonly recordingPlaybackTestScope: "private-test-deployment";
   readonly runId: string;
 }

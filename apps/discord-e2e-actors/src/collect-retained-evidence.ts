@@ -16,6 +16,7 @@ import {
   verifyRetainedE2eEvidence,
 } from "./e2e-evidence.js";
 import { FileSecretReader, MacOsKeychainSecretReader } from "./keychain.js";
+import { HttpRecordingPlaybackEvidenceProbe } from "./recording-playback-evidence-probe.js";
 import { SshDeploymentEvidenceProbe } from "./ssh-deployment-probe.js";
 import { EvidenceProbeInterruptedError } from "./ssh-deployment-probe-commands.js";
 
@@ -73,6 +74,12 @@ async function main(): Promise<void> {
       ...(conversation === undefined ? {} : { conversation }),
       fixtureSetId: manifest.fixtureSetId,
       recordingId: config.DISCORD_E2E_RECORDING_ID,
+      recordingPlayback: new HttpRecordingPlaybackEvidenceProbe({
+        expectedOrigin: config.DISCORD_E2E_RECORDING_PLAYBACK_ORIGIN,
+      }),
+      recordingPlaybackOrigin: config.DISCORD_E2E_RECORDING_PLAYBACK_ORIGIN,
+      recordingPlaybackReadiness: config.DISCORD_E2E_RECORDING_PLAYBACK_READINESS,
+      recordingPlaybackTestScope: config.DISCORD_E2E_RECORDING_PLAYBACK_TEST_SCOPE,
       runId: config.DISCORD_E2E_RUN_ID,
     }, deployment, discord);
     const expectedRevisions = deploymentRevisionExpectationSchema.parse({
@@ -121,9 +128,11 @@ async function readJson(path: string): Promise<unknown> {
   return JSON.parse(await readFile(path, "utf8")) as unknown;
 }
 
-async function readSupplementalPlayback(path: string | undefined) {
+async function readSupplementalPlayback(path: string | undefined): Promise<
+  ReturnType<typeof supplementalPlaybackEvidenceV1Schema.parse> | undefined
+> {
   if (path === undefined) {
-    return;
+    return undefined;
   }
   return supplementalPlaybackEvidenceV1Schema.parse(await readJson(path));
 }

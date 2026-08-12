@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   retainedE2eEvidenceV8Schema,
+  retainedReconnectE2eEvidenceV8Schema,
   verifyRetainedE2eEvidence,
   type RetainedE2eEvidenceV8,
 } from "../src/e2e-evidence.js";
@@ -389,12 +390,13 @@ describe("retained conversation V8 reconnect response semantics", () => {
     expect(codes).toContain("RECONNECT_AUDIBLE_GREETING_REPEATED");
   });
 
-  it("still parses historical V8 while requiring negative proof for a new reconnect run", () => {
+  it("still parses historical V8 while requiring current reconnect and playback proof", () => {
     const evidence = retainedV8Evidence();
     const { reconnectNoRepeat: _reconnectNoRepeat, ...legacyConversation } = evidence.conversation;
+    const { recordingPlayback: _recordingPlayback, ...historicalEvidence } = evidence;
 
     const parsed = retainedE2eEvidenceV8Schema.parse({
-      ...evidence,
+      ...historicalEvidence,
       conversation: legacyConversation,
     });
     const codes = verifyRetainedE2eEvidence(
@@ -404,6 +406,10 @@ describe("retained conversation V8 reconnect response semantics", () => {
     ).failures.map(({ code }) => code);
 
     expect(codes).toContain("RECONNECT_NEGATIVE_PROOF_MISSING");
+    expect(retainedReconnectE2eEvidenceV8Schema.safeParse({
+      ...historicalEvidence,
+      conversation: evidence.conversation,
+    }).success).toBe(false);
   });
 
   it("rejects a generic greeting in place of a pinned known English name", () => {

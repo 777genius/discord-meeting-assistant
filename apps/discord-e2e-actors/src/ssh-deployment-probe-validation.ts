@@ -16,7 +16,6 @@ const dockerImageId = z.string().regex(/^sha256:[a-f\d]{64}$/u);
 const repositoryDigest = z.string().regex(/^[^\s@]+@sha256:[a-f\d]{64}$/u);
 const sha256 = z.string().regex(/^[a-f\d]{64}$/u);
 const sourceRevision = z.string().regex(/^(?:[a-f\d]{40}|[a-f\d]{64})$/u);
-
 export const containerProvenanceOutputSchema = z.object({
   composeConfigHash: sha256,
   composeProject: safeProject,
@@ -37,6 +36,10 @@ const replayTargetContainerOutputSchema = z.object({
   composeService: z.literal("meeting-platform"),
   testOnly: z.literal("true"),
 });
+
+export function assertReplayTargetContainer(value: unknown): void {
+  replayTargetContainerOutputSchema.parse(value);
+}
 
 const replayTargetMarkerOutputSchema = z.object({
   fixtureSetId: correlationId,
@@ -127,7 +130,7 @@ export function assertReplayTargetAttestation(
   markerValue: unknown,
   expected: ReplayTargetAttestation,
 ): void {
-  replayTargetContainerOutputSchema.parse(containerValue);
+  assertReplayTargetContainer(containerValue);
   const marker = replayTargetMarkerOutputSchema.parse(markerValue);
   if (
     marker.fixtureSetId !== expected.fixtureSetId ||

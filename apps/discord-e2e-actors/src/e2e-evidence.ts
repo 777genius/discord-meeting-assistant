@@ -2,6 +2,7 @@ import { verifyCampaign } from "./e2e-evidence-campaign-verification.js";
 import { verifyDeploymentProvenance } from "./e2e-evidence-deployment-verification.js";
 import { playbackWindowsFrom, verifyActorRun } from "./e2e-evidence-playback-verification.js";
 import { verifyProcessingEvidence } from "./e2e-evidence-processing-verification.js";
+import { verifyRecordingPlaybackEvidence } from "./e2e-evidence-recording-playback-verification.js";
 import { verifyFixtures, verifyS3Evidence, verifyStages } from "./e2e-evidence-recording-verification.js";
 import { verificationResult } from "./e2e-evidence-verification-result.js";
 import {
@@ -89,6 +90,7 @@ export function verifyRetainedE2eEvidence(
   verifyS3Evidence(evidence, fail);
   verifyStages(evidence, fail);
   verifyProcessingEvidence(evidence, fail);
+  verifyRecordingPlaybackEvidence(evidence, fail);
   const playbackWindows = playbackWindowsFrom(evidence, fail);
   const context = { evidence, fail, manifest, playbackWindows, scenario };
   verifyActorRun(context);
