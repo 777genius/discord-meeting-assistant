@@ -60,9 +60,12 @@ describe("hosted campaign release binding", () => {
     expect(() => createHostedCampaignReleaseConfig(changed, trust, campaign)).toThrow("not allowed");
   });
 
-  it("requires a concrete shared-mount proof before producing executable wiring", () => {
-    expect(() => createHostedCampaignReleaseConfig(release, trust, campaign))
-      .toThrow("concrete shared-mount probe");
+  it("assembles host-side wiring after the exact release matches the trust root", () => {
+    expect(createHostedCampaignReleaseConfig(release, trust, campaign)).toMatchObject({
+      campaignId: campaign.campaignId,
+      meetingPlatformRevision: campaign.meetingPlatformRevision,
+      planSha256: campaign.planSha256,
+    });
   });
 
   it("binds operator declaration to the exact compiled trust root digest", () => {

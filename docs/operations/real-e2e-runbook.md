@@ -316,8 +316,9 @@ exact host path. Never mount the shared campaigns parent. Official test-bot
 tokens remain in the host-side runner secret boundary and are not Platform
 secrets. The base
 production Compose deliberately has no campaign/readiness bind mount. Require
-the three-party root, isolation, freshness and bidirectional nonce proof before
-launch, and never reuse a per-run subdirectory. Meeting Platform
+the host-to-Meeting-Platform root, isolation, freshness and bidirectional nonce
+proof before launch, and never reuse a per-run subdirectory. The host-side
+coordinator is the host principal, not a third mounted container. Meeting Platform
 requires all `CONVERSATION_E2E_PLAYBACK_READINESS_*` settings together and
 rejects them unless `E2E_TEST_ONLY_LABEL=true`.
 Do not place the literal farewell capture before the addressed-answer capture.

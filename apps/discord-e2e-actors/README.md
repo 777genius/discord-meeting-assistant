@@ -200,8 +200,9 @@ Meeting Platform at `/run/e2e-campaign` and read from its exact host path by the
 host-side coordinator. Never point it at the shared campaigns parent. The
 production Compose file has no readiness mount. Official test-bot tokens remain
 host-side runner secrets and are never mounted into Platform.
-The three-party mount probe must prove exact roots, sibling isolation, freshness
-and bidirectional host/Platform/runner nonce visibility before launch. The
+The deployment-safety probe must prove exact roots, sibling isolation, freshness
+and bidirectional host/Platform nonce visibility before launch. The host-side
+coordinator is the host principal; no runner container participates. The
 already-subscribed observer rejects stale, mismatched, or ambiguous receipts and
 publishes a matching create-only ready receipt, retaining the resolved meeting
 ID and intent digest in campaign proof. Only then may playback start. Any earlier

@@ -102,7 +102,6 @@ export function createHostedCampaignReleaseConfig(
   trustRootValue: unknown,
   campaign: HostedCampaignProductionCandidate,
   now: () => number = Date.now,
-  sharedMount?: HostedRemoteAdmissionCompositionConfig["sharedMount"],
 ): HostedRemoteAdmissionCompositionConfig {
   const release = hostedCampaignReleaseBindingV1Schema.parse(candidateValue);
   const trust = hostedCampaignReleaseTrustRootV1Schema.parse(trustRootValue);
@@ -172,9 +171,6 @@ export function createHostedCampaignReleaseConfig(
     imageDigestSha256: digestFromRepository(platform.repositoryDigest),
     planSha256: campaign.planSha256, sourceRevision: platform.sourceRevision,
   };
-  if (sharedMount === undefined) {
-    throw new Error("Compiled release trust binding requires a concrete shared-mount probe");
-  }
   return {
     campaignId: campaign.campaignId,
     clock: Object.assign(new SshHostedServiceLevelRawProbe({
@@ -202,7 +198,6 @@ export function createHostedCampaignReleaseConfig(
     meetingPlatformRevision: campaign.meetingPlatformRevision,
     planSha256: campaign.planSha256,
     remoteContainerProcess: remoteProcess,
-    sharedMount,
     voicetext: {
       fixtureExpectation: { maximumCharacterErrorRate: trust.canary.maximumCharacterErrorRate,
         maximumTimelineDeltaMs: trust.canary.maximumTimelineDeltaMs, maximumWordErrorRate: trust.canary.maximumWordErrorRate },
