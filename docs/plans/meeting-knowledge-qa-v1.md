@@ -253,14 +253,46 @@ add a source-owned transition ADR and versioned facts; it cannot silently mutate
 these fields. During any future R1/F1 to R2/F2 transition, zero eligible current
 projection is safer than a mixed binding.
 
-### Complete bounded grounding
+### Adaptive bounded grounding
 
-All eligible human turns from the bound current transcript are converted to
-question-local opaque evidence IDs and serialized once. Before the provider call,
-the production adapter computes exact request bytes and model-token usage against
-the pinned runtime/model capability. If the complete request does not fit, the
-job returns localized `unsupported_size`; it never uses a prefix or partial
-success.
+A long context window is capacity, not proof of recall. The application builds
+one explicit, persisted `GroundingPlan` before provider work:
+
+```text
+current_complete     # one complete current transcript
+focused_retrieval    # bounded same-room candidates, locally rehydrated
+exhaustive_coverage  # every relevant block visited before synthesis
+```
+
+`current_complete` is the Local Final Reply baseline. All eligible human turns
+from the bound current transcript become question-local opaque evidence IDs and
+are serialized in canonical order. Before the provider call, the production
+adapter computes exact request bytes and model-token usage against the pinned
+runtime/model capability. The direct path is admitted only below a separately
+benchmarked safe-input budget, leaving explicit room for instructions, the
+question, reasoning, structured output, and model-limit drift. If the complete
+request does not fit, it returns localized `unsupported_size`; it never uses a
+prefix, silent truncation, or summary as evidence.
+
+After Infinity serving is qualified, a focused question may add a small
+`priorityEvidenceIds` section before the complete current transcript. Infinity
+only suggests the IDs; every priority turn is locally rehydrated. The complete
+transcript stays present, so a retrieval miss cannot remove current-meeting
+evidence. The priority section is a relevance hint, never separate authority.
+
+`focused_retrieval` is used for historical same-room questions whose complete
+source set cannot fit. It passes only locally rehydrated evidence blocks and
+honestly abstains when retrieval coverage is insufficient.
+
+`exhaustive_coverage` is selected for counts, absence/universal claims,
+exhaustive lists, broad summaries, or questions requiring comparison across
+many meetings. It deterministically partitions the authorized source set into
+turn-aligned evidence blocks, visits every block through a bounded structured
+extract/reduce pass, persists a coverage bitmap and attempt budget, locally
+rehydrates the selected turns, and only then performs final synthesis. No final
+answer is allowed when a block is missing, stale, unauthorized, or unprocessed.
+This is the only path that needs multi-stage checkpoints; it is not a generic
+workflow framework.
 
 The provider returns an exact runtime-validated shape:
 
@@ -269,6 +301,22 @@ status: answered | insufficient_evidence | not_a_question
 locale: ru | en | mixed
 claims: [{ text, evidenceIds[] }]
 ```
+
+Composition adds dedicated Subscription Runtime purposes rather than reusing the
+summary or low-latency conversation profiles:
+
+```text
+discord_meeting.knowledge.answer.v1
+discord_meeting.knowledge.coverage_extract.v1
+```
+
+The initial answer candidate is `gpt-5.6-sol` with medium reasoning, disabled
+tools, stateless execution, and the strict claim schema above. Coverage extraction
+has its own exact evidence-only schema and cannot emit answer prose. Exact model,
+reasoning, input headroom, output budget, runtime package, launcher digest, and
+policy versions are pinned in composition and the retained evidence manifest.
+Changing any of them requires replaying the semantic and two-hour qualification;
+the model's advertised context size alone never authorizes rollout.
 
 Rules:
 
@@ -281,7 +329,9 @@ Rules:
 - the rendered one-message payload is all-or-nothing and never truncated;
 - exact quotes additionally require canonical span/hash validation;
 - corrections/conflicts include the correction and material conflicting turns;
-- universal, absence, count, and exhaustive-list questions abstain in V1.
+- universal, absence, count, broad-summary, and exhaustive-list questions
+  abstain until `exhaustive_coverage` is qualified; afterward they must use that
+  mode and may never silently fall back to focused retrieval.
 
 Citations render stable speaker/time/turn references. Membership, identity,
 scope, and source immutability are deterministic checks. Semantic support and
@@ -311,6 +361,12 @@ initial slice keeps question/prompt/output byte limits, requester/guild rate
 limits, global worker concurrency, provider call/time/token cap, and expiry. It
 does not add a generic quota framework, USD accounting ledger, notice workflow,
 or every possible scope cross-product.
+
+For each `GroundingPlan`, the ledger separately pins direct-input tokens,
+evidence-block size/count, retrieval top-k, neighbor expansion, exhaustive
+extract/reduce calls, total tokens, deadline, and cost. These values are derived
+from retained benchmarks on the exact production model rather than copied from
+the model's maximum context window.
 
 ### Publishing-owned one-attempt effect
 
@@ -390,11 +446,17 @@ Use deterministic opaque topology:
 space  = keyed guild identity
 scope  = keyed room identity
 thread = meeting identity
-document/mutation = transcript version + turn identity + policy version
+document/mutation = transcript version + evidence block identity + policy version
 ```
 
 Infinity content may contain the canonical human turn text needed for retrieval;
 identities exposed to the service are opaque. Local state remains authority.
+Meeting Knowledge creates deterministic, turn-aligned `EvidenceBlock` values
+within a versioned model-token range. A block never changes speaker, timestamp,
+or turn identity, and its local mapping retains exact ordered turn IDs and
+content hashes. The Infinity adapter maps each block to the SDK's qualified
+document/chunk surface; SDK-native chunk text or metadata is never trusted as a
+local citation.
 
 The existing transcript-accept transaction writes one purpose-specific
 `FinalTranscriptAccepted` sync intent. `HistoricalSyncStore` keeps desired
@@ -437,10 +499,22 @@ Before candidate text reaches the generator, Meeting Knowledge:
    budget without removing current-meeting evidence.
 
 The same grounded-answer contract and validator serve Local Final Reply and
-historical memory. Infinity outage, partial backlog, or unqualified response
-falls back to current local evidence; it never uses a partial/stale remote cache
-as authority. Historical-only questions honestly abstain when retrieval is not
-safe or available.
+historical memory. For a bounded current meeting, locally rehydrated Infinity
+hits may only prioritize evidence while the complete transcript stays present.
+For historical queries, focused retrieval uses hybrid lexical/vector candidates,
+bounded query decomposition, deterministic dedupe/neighbor expansion, and a
+reranking policy qualified on the frozen corpus. Infinity outage, partial
+backlog, or an unqualified response falls back to complete current local evidence
+when it fits; it never uses a partial/stale remote cache as authority.
+Historical-only questions honestly abstain when retrieval is not safe or
+available. Exhaustive questions route to `exhaustive_coverage`, never to top-k.
+
+Two-hour admission is initially disabled independently from shorter questions.
+It is enabled only for a pinned profile that passes both the complete-context
+position suite and, once available, the Infinity-priority comparison. If direct
+complete context misses the quality gate, the system waits for qualified
+priority retrieval rather than lowering the gate or silently serving weaker
+answers.
 
 ## Phase 4 - Grounded voice reuse and voice E2E
 
@@ -517,8 +591,16 @@ runbook.
   transport proxy;
 - exact-limit/one-over prompt, response, Discord payload, concurrency, and
   backlog tests; adversarial Unicode and malformed response guards;
-- a realistic bounded two-hour transcript through production composition with
-  restart at every durable boundary;
+- realistic bounded two-hour transcripts through production composition with
+  restart at every durable boundary. The corpus places answer evidence at the
+  start, 10%, 25%, middle, 75%, 90%, and end; adds near-duplicate distractors,
+  distant corrections, contradictions, silence/noise artifacts, overlaps,
+  RU/EN/mixed speech, and multi-hop questions spanning distant sections;
+- comparative two-hour runs for `current_complete`, complete-plus-priority,
+  focused retrieval, and exhaustive coverage. Retain measured token count,
+  latency, cost, peak memory, retrieval recall, citation validity, entailment,
+  supported-answer recall, and abstention rather than merely proving that the
+  request fit the model context;
 - Infinity SDK disposable-endpoint E2E:
   index -> restart/replay -> search -> local rehydrate -> supersede -> delete ->
   verified absence, including cross-room and serving-disabled deletion;
@@ -534,6 +616,13 @@ contradiction, distant evidence, exhaustive questions, and transcript prompt
 injection. Citation identity/eligibility is zero-tolerance deterministic.
 Pre-register claim precision, question recall, abstention recall, partial-answer
 treatment, zero denominators, sampling configuration, and confidence method.
+
+The holdout includes a fully synthetic two-hour meeting family whose gold
+evidence position is stratified across the complete timeline. Retrieval is gated
+separately from generation: `recall@k` measures whether every gold evidence block
+survived search and local rehydration, while claim precision and answer recall
+measure the generator. A green final-answer score cannot hide a retrieval miss,
+and a green retrieval score cannot hide unsupported prose.
 
 Start with roughly 100 answerable and 100 unsupported questions balanced across
 RU/EN with adversarial examples embedded, then derive the final sample size from
@@ -563,9 +652,11 @@ project, or production transcript is a qualification target.
 
 - only exact current-final replies are admitted;
 - unauthorized or stale work reveals no transcript content;
-- complete bounded current human transcript reaches one generator call;
-- invalid/global/unsupported claims abstain; every published claim has valid
-  locally rehydrated citations;
+- complete bounded current human transcript reaches one generator call with
+  measured safe token headroom rather than only a byte limit;
+- invalid/unsupported claims abstain; global/exhaustive claims abstain until the
+  exhaustive path is qualified; every published claim has valid locally
+  rehydrated citations;
 - restart and concurrency converge; after `request_started` no second create is
   authorized; independent observer sees zero or one matching answer;
 - terminal/expired jobs scrub sensitive content; rollback stops new work.
@@ -576,6 +667,9 @@ project, or production transcript is a qualification target.
 - deterministic replay has no duplicate derived object;
 - no cross-room, stale, deleted, unknown, or automation candidate reaches the
   generator;
+- focused retrieval meets its pre-registered gold-evidence recall gate on
+  ordinary and two-hour RU/EN/mixed meetings; exhaustive questions never use
+  top-k as proof of completeness;
 - outage falls back locally; deletion drains with serving disabled;
 - local source remains authoritative at every boundary.
 
@@ -588,6 +682,17 @@ project, or production transcript is a qualification target.
   person-specific negatives;
 - deterministic two-hour and private-guild live manifests bind the same release.
 
+### Two-hour answer quality
+
+- every admitted two-hour request fits the measured safe-input budget or routes
+  to a qualified retrieval/coverage mode; otherwise it returns an honest bounded
+  abstention;
+- facts placed in every timeline stratum, distant corrections, contradictions,
+  and multi-hop evidence pass the pre-registered retrieval and semantic gates;
+- production activation records the exact model/profile/tokenizer, limits,
+  corpus revision, repeated-run distribution, and drift threshold. A single
+  successful example or context-window size is not acceptance evidence.
+
 Every slice runs `pnpm run check:changed` during work, `pnpm run check:fast`
 before handoff, and full `pnpm run check` before PR. Production remains NO-GO for
 that slice until its deterministic and required live evidence is retained.
@@ -597,12 +702,12 @@ that slice until its deterministic and required live evidence is retained.
 | Slice | Approximate changed lines | Risk |
 | --- | ---: | --- |
 | 0. Trusted evidence completion | 350-600 across two repositories | Medium |
-| 1. Local Final Reply | 1,200-1,700 | Medium-high |
+| 1. Local Final Reply | 1,350-1,900 | Medium-high |
 | 2. Infinity SDK qualification + shadow sync | 550-850 | Medium-high |
-| 3. Same-room historical retrieval | 350-600 | High |
+| 3. Same-room retrieval + exhaustive coverage | 500-850 | High |
 | 4. Grounded voice + remaining voice E2E gaps | 400-700 | Medium-high |
 
-Expected total is approximately 2,850-4,450 changed lines including tests,
+Expected total is approximately 3,150-5,100 changed lines including tests,
 migrations, composition, and evidence tooling. The range is deliberately wider
 than the previous false-precision estimate because SDK reconciliation and current
 Publishing persistence must be proven in code.
@@ -613,7 +718,7 @@ Top implementation strategies considered:
 
    🎯 9/10  🛡️ 9/10  🧠 7/10
 
-   Approximately 2,850-4,450 lines. Preserves present ownership, adds only real
+   Approximately 3,150-5,100 lines. Preserves present ownership, adds only real
    capability ports, and allows independent rollback.
 
 2. **Local Reply first, defer Infinity and voice to unrelated plans**
