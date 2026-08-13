@@ -71,7 +71,7 @@ const defaultPublicationTargets = {
 } as const;
 
 describe("Platform recording ingress", () => {
-  it("atomically records and schedules a finalized recording before dispatch", async () => {
+  it("atomically records and schedules a legacy finalized recording before dispatch", async () => {
     const order: string[] = [];
     const saved: MeetingSnapshot[] = [];
     const recordAndSchedule = vi.fn(async (snapshot: MeetingSnapshot) => {
@@ -140,7 +140,7 @@ describe("Platform recording ingress", () => {
       meetingId: "recording-1",
       publicationTargetId: "1533228891827736657",
       revision: 0,
-      source: meetingEnded.source,
+      source: null,
     });
     expect(recordAndSchedule).toHaveBeenCalledWith(saved[0], 0);
     expect(dispatchPending).toHaveBeenCalledOnce();
