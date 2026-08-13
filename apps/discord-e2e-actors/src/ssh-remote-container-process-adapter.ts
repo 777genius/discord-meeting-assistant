@@ -171,11 +171,27 @@ export function runBoundedSshCommand(
     let settled = false;
     let terminating = false;
     let killTimer: ReturnType<typeof setTimeout> | undefined;
+    let hardStopTimer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (settle: () => void): void => {
+      if (settled) {return;}
+      settled = true;
+      clearTimeout(timeout);
+      clearTimeout(killTimer);
+      clearTimeout(hardStopTimer);
+      request.signal?.removeEventListener("abort", abort);
+      settle();
+    };
     const terminate = (): void => {
       if (terminating || settled) {return;}
       terminating = true;
       child.kill("SIGTERM");
-      killTimer = setTimeout(() => child.kill("SIGKILL"), 1_000);
+      killTimer = setTimeout(() => {
+        child.kill("SIGKILL");
+        hardStopTimer = setTimeout(() => {
+          finish(() => reject(new Error("Remote command process did not exit after SIGKILL")));
+        }, 5_000);
+        hardStopTimer.unref();
+      }, 1_000);
       killTimer.unref();
     };
     const timeout = setTimeout(() => {
@@ -198,29 +214,21 @@ export function runBoundedSshCommand(
     child.stdout.on("data", (chunk: Buffer) => { retain(stdout, chunk); });
     child.stderr.on("data", (chunk: Buffer) => { retain(stderr, chunk); });
     child.once("error", (error) => {
-      if (settled) {return;}
-      settled = true;
-      clearTimeout(timeout);
-      clearTimeout(killTimer);
-      request.signal?.removeEventListener("abort", abort);
-      reject(error);
+      finish(() => reject(error));
     });
     child.once("close", (exitCode, signal) => {
-      if (settled) {return;}
-      settled = true;
-      clearTimeout(timeout);
-      clearTimeout(killTimer);
-      request.signal?.removeEventListener("abort", abort);
-      if (exceededOutput) {
-        reject(new Error("Remote command exceeded its output bound"));
-        return;
-      }
-      resolve({
-        exitCode,
-        signal,
-        stderr: Buffer.concat(stderr).toString("utf8"),
-        stdout: Buffer.concat(stdout).toString("utf8"),
-        timedOut,
+      finish(() => {
+        if (exceededOutput) {
+          reject(new Error("Remote command exceeded its output bound"));
+          return;
+        }
+        resolve({
+          exitCode,
+          signal,
+          stderr: Buffer.concat(stderr).toString("utf8"),
+          stdout: Buffer.concat(stdout).toString("utf8"),
+          timedOut,
+        });
       });
     });
   });
