@@ -36,7 +36,11 @@ function requireIdentity(value: string, field: string): string {
       `${field} must be non-empty`,
     );
   }
-  return value;
+  return value.trim();
+}
+
+function compareOpaqueIds(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 /**
@@ -76,7 +80,7 @@ export class MeetingKnowledgeIdentity {
         actorId: requireIdentity(actor.actorId, "actors.actorId"),
         kind: actor.kind,
       };
-    }).toSorted((left, right) => left.actorId.localeCompare(right.actorId));
+    }).toSorted((left, right) => compareOpaqueIds(left.actorId, right.actorId));
     for (let index = 1; index < actors.length; index += 1) {
       const previous = actors[index - 1];
       const current = actors[index];

@@ -476,7 +476,9 @@ Implement together with tests, not as empty scaffolding:
 
 Acceptance:
 
-- no unclassified source/test file or undeclared dependency;
+- no unclassified production source or undeclared dependency, and the exact
+  Meeting Knowledge test path is owned fail-closed by the repository-local
+  architecture baseline;
 - new meetings retain exact source and actors through restart/finalization;
 - Botik/automation/unknown actors cannot support an answer;
 - existing recordings, summaries, greetings, farewells, and publication remain

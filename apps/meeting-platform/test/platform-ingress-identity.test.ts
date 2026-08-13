@@ -89,4 +89,38 @@ describe("Platform recording identity admission", () => {
     expect(saved[0]).toMatchObject({ actors, source });
     expect(saved[0]?.recording.speakerAudio).toHaveLength(2);
   });
+
+  it("uses source for v1 routing without enriching legacy meeting identity", async () => {
+    const saved: MeetingSnapshot[] = [];
+    const event: RecordingLifecycleCommand = {
+      endedAt: "2026-08-02T00:02:00.000Z",
+      eventId: "recording-legacy:authoritative-ready",
+      occurredAt: "2026-08-02T00:02:01.000Z",
+      recordingId: "recording-legacy",
+      schemaVersion: 1,
+      source,
+      sourceFilesChecksumSha256: "a".repeat(64),
+      trackCount: 1,
+      type: "recording.authoritative_ready",
+    };
+    const application = ingress({
+      actors: null,
+      kind: "finalized",
+      recording: {
+        manifestLocator: "s3://meeting/recordings/recording-legacy/manifest.json",
+        recordingId: "recording-legacy",
+        speakerAudio: [{
+          audioLocator: "s3://meeting/recordings/recording-legacy/human.ogg",
+          speakerId: actors[0]!.actorId,
+          timelineOffsetMs: 0,
+        }],
+      },
+      replayed: true,
+      source,
+    }, saved);
+
+    await application.ingestLifecycle(event);
+
+    expect(saved[0]).toMatchObject({ actors: null, source: null });
+  });
 });

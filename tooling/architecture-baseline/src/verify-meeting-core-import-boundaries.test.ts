@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
@@ -10,6 +10,7 @@ const fixtureRoot = resolve(
   import.meta.dirname,
   "../test-fixtures/meeting-core-import-boundaries",
 );
+const workspaceRoot = resolve(import.meta.dirname, "../../..");
 
 const features = [
   "conversation",
@@ -187,5 +188,32 @@ void test("fails closed when the package export surface drifts from policy", asy
 
   assert.ok(
     diagnostics.some((diagnostic) => diagnostic.includes("do not match policy")),
+  );
+});
+
+void test("owns the exact Meeting Knowledge test path fail closed", async () => {
+  const configuration = await readFile(
+    resolve(workspaceRoot, "architecture/foundation/source-dependencies.yaml"),
+    "utf8",
+  );
+  assert.doesNotMatch(
+    configuration,
+    /packages\/meeting-core\/test\/features\/meeting-knowledge/u,
+    "Foundation 0.6.0 must not misclassify development-only tests as runtime source",
+  );
+
+  const testRoot = resolve(
+    workspaceRoot,
+    "packages/meeting-core/test/features/meeting-knowledge",
+  );
+  const entries = await readdir(testRoot, { recursive: true, withFileTypes: true });
+  const sourceFiles = entries
+    .filter((entry) => entry.isFile())
+    .map((entry) => entry.name);
+  assert.ok(sourceFiles.length > 0, "Meeting Knowledge test ownership path is empty");
+  assert.deepEqual(
+    sourceFiles.filter((file) => !file.endsWith(".test.ts")),
+    [],
+    "Meeting Knowledge test ownership path contains unclassified source",
   );
 });

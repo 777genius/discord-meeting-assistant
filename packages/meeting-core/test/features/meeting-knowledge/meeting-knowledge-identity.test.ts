@@ -24,6 +24,20 @@ describe("Meeting Knowledge identity admission", () => {
     expect(identity?.supportsHumanActor("speaker-b")).toBe(false);
   });
 
+  it("matches Lifecycle whitespace normalization and code-unit ordering", () => {
+    const identity = MeetingKnowledgeIdentity.admit({
+      actors: [
+        { actorId: " ä ", kind: "human" },
+        { actorId: " z ", kind: "human" },
+        { actorId: " Z ", kind: "human" },
+      ],
+      source: { roomId: " room-1 ", scopeId: " scope-1 " },
+    });
+
+    expect(identity?.source).toEqual({ roomId: "room-1", scopeId: "scope-1" });
+    expect(identity?.humanActorIds).toEqual(["Z", "z", "ä"]);
+  });
+
   it("denies legacy meetings with absent source or actor identity", () => {
     expect(MeetingKnowledgeIdentity.admit({ actors: [], source: null })).toBeNull();
     expect(MeetingKnowledgeIdentity.admit({ actors: null, source })).toBeNull();

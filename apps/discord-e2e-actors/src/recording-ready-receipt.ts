@@ -22,7 +22,44 @@ const storedEventSchema = z.object({
   type: z.string().min(1),
 }).strict();
 
-const recordingCompletionReceiptSchema = z.looseObject({
+const actorSchema = z.object({
+  actorId: snowflake,
+  kind: z.enum(["human", "automation", "unknown"]),
+}).strict();
+const actorRosterSchema = z.array(actorSchema).superRefine((actors, context) => {
+  const kindsByActor = new Map<string, string>();
+  for (const [index, actor] of actors.entries()) {
+    const existing = kindsByActor.get(actor.actorId);
+    if (existing !== undefined) {
+      context.addIssue({
+        code: "custom",
+        message: existing === actor.kind
+          ? "Actor roster cannot repeat an actor"
+          : "Actor roster contains conflicting actor kinds",
+        path: [index, "actorId"],
+      });
+    }
+    kindsByActor.set(actor.actorId, actor.kind);
+  }
+});
+
+const speakerAudioSchema = z.object({
+  audioLocator: z.string().min(1),
+  speakerId: snowflake,
+  timelineOffsetMs: z.number().int().nonnegative(),
+}).strict();
+
+const authoritativeTrackSchema = z.object({
+  audioLocator: z.string().min(1),
+  checksumSha256: sha256,
+  sizeBytes: z.number().int().positive(),
+  speakerId: snowflake,
+  timelineOffsetMs: z.number().int().nonnegative(),
+  trackNumber: z.number().int().positive(),
+  uploadId: identifier,
+}).strict();
+
+const completionReceiptFields = {
   channelId: snowflake,
   events: z.array(storedEventSchema).min(2),
   finalEventDigest: sha256,
@@ -31,21 +68,71 @@ const recordingCompletionReceiptSchema = z.looseObject({
   recording: z.object({
     manifestLocator: z.string().min(1),
     recordingId: identifier,
-    speakerAudio: z.array(z.object({
-      audioLocator: z.string().min(1),
-      speakerId: snowflake,
-      timelineOffsetMs: z.number().int().nonnegative(),
-    }).strict()).min(1),
+    speakerAudio: z.array(speakerAudioSchema).min(1),
   }).strict(),
   recordingId: identifier,
+} as const;
+
+const recordingCompletionReceiptV2Schema = z.looseObject({
+  ...completionReceiptFields,
   schemaVersion: z.literal(2),
 });
+
+const recordingCompletionReceiptV3Schema = z.looseObject({
+  ...completionReceiptFields,
+  actors: actorRosterSchema.nullable(),
+  authoritativeTracks: z.array(authoritativeTrackSchema).min(1),
+  lifecycleSchemaVersion: z.union([z.literal(1), z.literal(2)]),
+  schemaVersion: z.literal(3),
+}).superRefine((receipt, context) => {
+  if (receipt.lifecycleSchemaVersion === 1 && receipt.actors !== null) {
+    context.addIssue({ code: "custom", message: "V1 lifecycle identity must remain legacy-null", path: ["actors"] });
+  }
+  if (receipt.lifecycleSchemaVersion === 2 && receipt.actors === null) {
+    context.addIssue({ code: "custom", message: "V2 lifecycle receipt requires actors", path: ["actors"] });
+    return;
+  }
+  if (receipt.actors !== null) {
+    const actorIds = new Set(receipt.actors.map((actor) => actor.actorId));
+    for (const [index, track] of receipt.recording.speakerAudio.entries()) {
+      if (!actorIds.has(track.speakerId)) {
+        context.addIssue({
+          code: "custom",
+          message: "Authoritative speaker track requires actor identity",
+          path: ["recording", "speakerAudio", index, "speakerId"],
+        });
+      }
+    }
+  }
+  const tracksBySpeaker = new Map(
+    receipt.authoritativeTracks.map((track) => [track.speakerId, track]),
+  );
+  for (const [index, speaker] of receipt.recording.speakerAudio.entries()) {
+    const track = tracksBySpeaker.get(speaker.speakerId);
+    if (track === undefined || track.audioLocator !== speaker.audioLocator ||
+      track.timelineOffsetMs !== speaker.timelineOffsetMs) {
+      context.addIssue({
+        code: "custom",
+        message: "Authoritative track identity does not match recording snapshot",
+        path: ["recording", "speakerAudio", index],
+      });
+    }
+  }
+});
+
+const recordingCompletionReceiptSchema = z.union([
+  recordingCompletionReceiptV2Schema,
+  recordingCompletionReceiptV3Schema,
+]);
 
 export const recordingReadyReceiptV1Schema = z.object({
   authoritativeSource: z.object({
     eventDigestSha256: sha256,
     eventId: identifier,
-    kind: z.literal("meeting-platform-completion-receipt-v2"),
+    kind: z.enum([
+      "meeting-platform-completion-receipt-v2",
+      "meeting-platform-completion-receipt-v3",
+    ]),
     occurredAt: z.iso.datetime(),
   }).strict(),
   meetingId: identifier,
@@ -106,7 +193,9 @@ export function deriveRecordingReadyReceipt(input: {
     authoritativeSource: {
       eventDigestSha256: finalEvent.digest,
       eventId: finalEvent.eventId,
-      kind: "meeting-platform-completion-receipt-v2",
+      kind: completion.schemaVersion === 2
+        ? "meeting-platform-completion-receipt-v2"
+        : "meeting-platform-completion-receipt-v3",
       occurredAt: finalEvent.occurredAt,
     },
     meetingId: completion.recordingId,

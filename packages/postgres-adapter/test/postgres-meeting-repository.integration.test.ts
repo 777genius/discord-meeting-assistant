@@ -1,5 +1,6 @@
 import { GuildConfiguration } from "@discord-meeting/guild-configuration-core";
 import {
+  Meeting,
   type MeetingSnapshot,
 } from "@discord-meeting/meeting-core/meeting-lifecycle";
 import {
@@ -188,6 +189,32 @@ describe("PostgresMeetingRepository", () => {
     await expect(repository.recordAndSchedule(initial, 0)).resolves.toBeUndefined();
     expect(await repository.findById(initial.meetingId)).toEqual(processed);
     expect(await repository.listRecoverablePostCall()).toEqual([]);
+  });
+
+  it("accepts an old v1 completion replay without enriching a pre-upgrade snapshot", async (context) => {
+    const database = databaseOrSkip(context);
+    const repository = new PostgresMeetingRepository(database);
+    const current = recordedMeeting("meeting-v1-upgrade-replay").toSnapshot();
+    const { actors: _actors, source: _source, ...preUpgradeSnapshot } = current;
+    await database.query(
+      `
+        INSERT INTO meeting_core.meetings (meeting_id, revision, snapshot)
+        VALUES ($1, 0, $2::jsonb)
+      `,
+      [current.meetingId, preUpgradeSnapshot],
+    );
+    const replay = Meeting.recordLegacy({
+      meetingId: current.meetingId,
+      publicationTargetId: current.publicationTargetId,
+      recording: current.recording,
+      source: current.source,
+    }).toSnapshot();
+
+    await expect(repository.recordAndSchedule(replay, 0)).resolves.toBeUndefined();
+    expect(await repository.findById(current.meetingId)).toMatchObject({
+      actors: null,
+      source: null,
+    });
   });
 
   it("rejects finalized-ingress replays with changed source or actor identity", async (context) => {

@@ -23,6 +23,10 @@ import type {
 const DISCORD_SNOWFLAKE = /^\d{17,20}$/u;
 const BASE64 = /^(?:[A-Za-z\d+/]{4})*(?:[A-Za-z\d+/]{2}==|[A-Za-z\d+/]{3}=)?$/u;
 
+function compareOpaqueIds(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 export const DEFAULT_RECORDING_INGRESS_LIMITS: RecordingIngressLimits =
   Object.freeze({
     maxActiveRecordings: 100,
@@ -86,7 +90,7 @@ export function normalizeActorRoster(
   actors: readonly StoredActor[],
 ): readonly StoredActor[] {
   const normalized = actors.map(normalizeActor)
-    .toSorted((left, right) => left.actorId.localeCompare(right.actorId));
+    .toSorted((left, right) => compareOpaqueIds(left.actorId, right.actorId));
   for (let index = 1; index < normalized.length; index += 1) {
     const previous = normalized[index - 1];
     const current = normalized[index];
@@ -124,7 +128,7 @@ export function addActorToRoster(
   const existing = actors.find((candidate) => candidate.actorId === normalizedActor.actorId);
   if (existing === undefined) {
     return [...actors, normalizedActor]
-      .toSorted((left, right) => left.actorId.localeCompare(right.actorId));
+      .toSorted((left, right) => compareOpaqueIds(left.actorId, right.actorId));
   }
   if (existing.kind !== normalizedActor.kind) {
     throw new RecordingIngressError(

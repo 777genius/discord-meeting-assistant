@@ -4,6 +4,10 @@ import { RecordingIngressError } from "./errors.js";
 
 type RecordingSpoolStatus = "active" | "aborted" | "finalizing";
 
+function compareOpaqueIds(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 export interface StoredLifecycleEvent {
   readonly digest: string;
   readonly eventId: string;
@@ -132,7 +136,7 @@ function parseActorRoster(value: unknown): readonly StoredActor[] | null {
     throw new RecordingIngressError("corrupt-spool", "actor roster is not an array");
   }
   const actors = value.map(parseStoredActor)
-    .toSorted((left, right) => left.actorId.localeCompare(right.actorId));
+    .toSorted((left, right) => compareOpaqueIds(left.actorId, right.actorId));
   for (let index = 1; index < actors.length; index += 1) {
     const previous = actors[index - 1];
     const current = actors[index];

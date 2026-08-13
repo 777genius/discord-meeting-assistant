@@ -131,6 +131,11 @@
       "id": "ADR-0027",
       "path": "docs/decisions/0027-durable-meeting-source-and-actor-identity.md",
       "immutableDigest": "sha256:aa17b2f48e3ae1ffc054edd3cc3af5c04def717589547fc8c717815ffd81111a"
+    },
+    {
+      "id": "ADR-0028",
+      "path": "docs/decisions/0028-meeting-knowledge-test-ownership.md",
+      "immutableDigest": "sha256:ca1c4a3608bed39d0e7c5201007233822a628d6e3197694f77b51e624bfa2bf8"
     }
   ]
 }

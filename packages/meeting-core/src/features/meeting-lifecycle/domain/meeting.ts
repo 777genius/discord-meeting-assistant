@@ -112,6 +112,18 @@ export class Meeting {
   }
 
   public static record(input: RecordedMeetingInput): Meeting {
+    if (input.source === null || input.source === undefined) {
+      throw new DomainInvariantError(
+        "INVALID_SNAPSHOT",
+        "new meetings require durable source identity",
+      );
+    }
+    if (input.actors === null || input.actors === undefined) {
+      throw new DomainInvariantError(
+        "INVALID_SNAPSHOT",
+        "new meetings require a durable actor roster",
+      );
+    }
     return new Meeting(initialMeetingSnapshot(input, input.actors));
   }
 
@@ -121,7 +133,7 @@ export class Meeting {
    * intentionally ineligible for knowledge features.
    */
   public static recordLegacy(input: LegacyRecordedMeetingInput): Meeting {
-    return new Meeting(initialMeetingSnapshot(input, null));
+    return new Meeting(initialMeetingSnapshot({ ...input, source: null }, null));
   }
 
   public static restore(snapshot: RestorableMeetingSnapshot): Meeting {

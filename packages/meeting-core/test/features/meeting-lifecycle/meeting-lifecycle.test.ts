@@ -111,6 +111,58 @@ describe("Meeting lifecycle", () => {
     expect(Meeting.restore(snapshot).toSnapshot()).toEqual(snapshot);
   });
 
+  it("normalizes identity whitespace and orders opaque IDs by UTF-16 code units", () => {
+    const snapshot = Meeting.record({
+      actors: [
+        { actorId: " ä ", kind: "human" },
+        { actorId: " z ", kind: "unknown" },
+        { actorId: " Z ", kind: "automation" },
+      ],
+      meetingId: "meeting-opaque-order",
+      publicationTargetId: "results-channel",
+      recording,
+      source: { roomId: " room-1 ", scopeId: " scope-1 " },
+    }).toSnapshot();
+
+    expect(snapshot.source).toEqual({ roomId: "room-1", scopeId: "scope-1" });
+    expect(snapshot.actors).toEqual([
+      { actorId: "Z", kind: "automation" },
+      { actorId: "z", kind: "unknown" },
+      { actorId: "ä", kind: "human" },
+    ]);
+  });
+
+  it("rejects runtime-null identity for new meetings", () => {
+    const valid = {
+      actors: [{ actorId: "speaker-a", kind: "human" }],
+      meetingId: "meeting-runtime-identity",
+      publicationTargetId: "results-channel",
+      recording,
+      source: { roomId: "room-1", scopeId: "scope-1" },
+    } as const;
+
+    expect(() => Meeting.record({ ...valid, source: null } as never))
+      .toThrow(expect.objectContaining({ code: "INVALID_SNAPSHOT" }));
+    expect(() => Meeting.record({ ...valid, actors: null } as never))
+      .toThrow(expect.objectContaining({ code: "INVALID_SNAPSHOT" }));
+    expect(() => Meeting.record({ ...valid, source: undefined } as never))
+      .toThrow(expect.objectContaining({ code: "INVALID_SNAPSHOT" }));
+    expect(() => Meeting.record({ ...valid, actors: undefined } as never))
+      .toThrow(expect.objectContaining({ code: "INVALID_SNAPSHOT" }));
+  });
+
+  it("keeps legacy admission identity null even when routing source is supplied", () => {
+    const snapshot = Meeting.recordLegacy({
+      meetingId: "meeting-legacy-source",
+      publicationTargetId: "results-channel",
+      recording,
+      source: { roomId: "room-1", scopeId: "scope-1" },
+    }).toSnapshot();
+
+    expect(snapshot.source).toBeNull();
+    expect(snapshot.actors).toBeNull();
+  });
+
   it("maps absent legacy identity to explicit nulls without blocking old workflows", () => {
     const { actors: _actors, source: _source, ...legacy } = recordedMeeting().toSnapshot();
     const restored = Meeting.restore(legacy).toSnapshot();

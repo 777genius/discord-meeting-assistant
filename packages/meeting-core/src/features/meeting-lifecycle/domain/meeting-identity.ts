@@ -12,6 +12,10 @@ export interface MeetingActorSnapshot {
   readonly kind: MeetingActorKind;
 }
 
+function compareOpaqueIds(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 export function normalizeSource(
   source: MeetingSourceSnapshot | null | undefined,
 ): MeetingSourceSnapshot | null {
@@ -41,7 +45,7 @@ export function normalizeActors(
       actorId: requireNonEmpty(actor.actorId, "meeting.actors.actorId"),
       kind: actor.kind,
     });
-  }).toSorted((left, right) => left.actorId.localeCompare(right.actorId));
+  }).toSorted((left, right) => compareOpaqueIds(left.actorId, right.actorId));
   for (let index = 1; index < normalized.length; index += 1) {
     const previous = normalized[index - 1];
     const current = normalized[index];

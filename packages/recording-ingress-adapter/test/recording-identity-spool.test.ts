@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -62,6 +62,10 @@ function event(input: Record<string, unknown>): CraigLifecycleEvent {
 }
 
 function track(actorId: string, trackNumber: number) {
+  return trackFor("recording-v2", actorId, trackNumber);
+}
+
+function trackFor(recordingId: string, actorId: string, trackNumber: number) {
   const body = Uint8Array.from([0x4f, 0x67, 0x67, 0x53, trackNumber]);
   return {
     body,
@@ -69,13 +73,13 @@ function track(actorId: string, trackNumber: number) {
       channelId,
       checksumSha256: createHash("sha256").update(body).digest("hex"),
       guildId,
-      recordingId: "recording-v2",
+      recordingId,
       schemaVersion: 1,
       sizeBytes: body.byteLength,
       speakerId: actorId,
       timelineOffsetMs: 0,
       trackNumber,
-      uploadId: `recording-v2:track:${trackNumber}`,
+      uploadId: `${recordingId}:track:${trackNumber}`,
     }),
   };
 }
@@ -186,5 +190,73 @@ describe("recording identity spool", () => {
       trackCount: 1,
       type: "recording.authoritative_ready",
     }))).rejects.toMatchObject({ failure: "conflicting-duplicate" });
+  });
+
+  it("replays a pre-upgrade completed v1 receipt with legacy-null identity", async () => {
+    const root = await spoolRoot();
+    const writer = new MemoryArtifactWriter();
+    const recordingId = "recording-v1-before-identity";
+    const lifecycle = (input: Record<string, unknown>) => parseCraigLifecycleEvent({
+      channelId,
+      guildId,
+      occurredAt: "2026-08-01T10:00:00.000Z",
+      recordingId,
+      schemaVersion: 1,
+      ...input,
+    });
+    const first = new DurableCraigRecordingIngress({
+      artifactLocatorPrefix: "memory://recordings",
+      spoolRoot: root,
+      writer,
+    });
+    await first.ingestLifecycleEvent(lifecycle({
+      eventId: "legacy-started",
+      participantIds: [humanId],
+      type: "meeting.started",
+    }));
+    await first.ingestLifecycleEvent(lifecycle({
+      eventId: "legacy-ended",
+      occurredAt: "2026-08-01T10:05:00.000Z",
+      reason: null,
+      type: "meeting.ended",
+    }));
+    const original = trackFor(recordingId, humanId, 1);
+    await first.ingestAuthoritativeTrack(original.metadata, bytesOnce(original.body));
+    const ready = lifecycle({
+      endedAt: "2026-08-01T10:04:59.000Z",
+      eventId: "legacy-authoritative-ready",
+      occurredAt: "2026-08-01T10:05:01.000Z",
+      sourceFilesChecksumSha256: "b".repeat(64),
+      trackCount: 1,
+      type: "recording.authoritative_ready",
+    });
+    await first.ingestLifecycleEvent(ready);
+    await first.close();
+
+    const [receiptName] = await readdir(join(root, "completed-v1"));
+    const receiptPath = join(root, "completed-v1", receiptName ?? "missing");
+    const current = JSON.parse(await readFile(receiptPath, "utf8")) as Record<string, unknown>;
+    const {
+      actors: _actors,
+      lifecycleSchemaVersion: _lifecycleSchemaVersion,
+      ...preUpgradeReceipt
+    } = current;
+    await writeFile(receiptPath, `${JSON.stringify({
+      ...preUpgradeReceipt,
+      schemaVersion: 2,
+    })}\n`);
+
+    const recovered = new DurableCraigRecordingIngress({
+      artifactLocatorPrefix: "memory://recordings",
+      spoolRoot: root,
+      writer,
+    });
+    await expect(recovered.ingestLifecycleEvent(ready)).resolves.toMatchObject({
+      actors: null,
+      kind: "finalized",
+      replayed: true,
+      source: { roomId: channelId, scopeId: guildId },
+    });
+    await recovered.close();
   });
 });
