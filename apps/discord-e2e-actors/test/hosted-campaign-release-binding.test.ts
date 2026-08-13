@@ -6,6 +6,7 @@ import {
   hostedCampaignReleaseBindingV1Schema,
   hostedCampaignReleaseTrustRootV1Schema,
 } from "../src/hosted-campaign-release-binding.js";
+import { HOSTED_VOICETEXT_CANARY_BINDING_V1 } from "../src/hosted-voicetext-canary-binding.js";
 
 const services = [
   ["craig", "craig-meeting-e2e", "bot", "a"],
@@ -13,13 +14,14 @@ const services = [
   ["pipecat", "discord-meeting-assistant", "pipecat-runtime", "c"],
   ["subscriptionRuntime", "discord-meeting-assistant", "subscription-runtime-sidecar", "d"],
 ] as const;
-const endpoint = { batch: { origin: "https://voicetext.test", path: "/batch" },
-  live: { origin: "wss://voicetext.test", path: "/live" } } as const;
+const pinnedCanary = HOSTED_VOICETEXT_CANARY_BINDING_V1;
+const endpoint = pinnedCanary.endpoint;
 const trust = hostedCampaignReleaseTrustRootV1Schema.parse({
   allowedNetworks: ["discord-meeting-e2e"],
-  canary: { endpoint, fixturePath: "/app/fixtures/canary.ogg", fixtureSha256: "f".repeat(64),
-    maximumCharacterErrorRate: 0.2, maximumTimelineDeltaMs: 3_500, maximumWordErrorRate: 0.35,
-    requiredTerms: ["botik"] },
+  canary: { endpoint, expectedSegments: pinnedCanary.transcriptExpectation.segments,
+    fixturePath: pinnedCanary.fixture.audioPath, fixtureSha256: pinnedCanary.fixture.audioSha256,
+    ...pinnedCanary.fixtureExpectation, requiredTerms: pinnedCanary.requiredTerms,
+    transcriptExpectationSha256: pinnedCanary.transcriptExpectation.sha256 },
   clockMaximumSkewMs: 250, deployRoot: "/srv/e2e", discordReceiptTtlMs: 30_000,
   environmentFile: "/srv/e2e/source.env", host: "codex-workers-eu-01",
   remoteComposeFile: "/srv/e2e/source/compose.yaml", schemaVersion: 1,
@@ -31,8 +33,8 @@ const trust = hostedCampaignReleaseTrustRootV1Schema.parse({
   sourceRoot: "/srv/e2e/source", voicetextReceiptTtlMs: 30_000, voicetextTimeoutMs: 60_000,
 });
 const release = {
-  canary: { endpoint, expectedSegments: [{ endMs: 1_000, startMs: 0, text: "hello botik" }],
-    fixturePath: "/app/fixtures/canary.ogg", fixtureSha256: "f".repeat(64), requiredTerms: ["botik"] },
+  canary: { endpoint, fixturePath: pinnedCanary.fixture.audioPath,
+    fixtureSha256: pinnedCanary.fixture.audioSha256, requiredTerms: pinnedCanary.requiredTerms },
   releaseId: "release-1", schemaVersion: 1,
   services: trust.services.map((entry, index) => ({ ...entry, containerId: String(index + 1).repeat(64) })),
   trustRootSha256: digestHostedCampaignReleaseTrustRootV1(trust),
@@ -60,11 +62,25 @@ describe("hosted campaign release binding", () => {
     expect(() => createHostedCampaignReleaseConfig(changed, trust, campaign)).toThrow("not allowed");
   });
 
+  it("rejects operator-authored expected text instead of deriving its digest", () => {
+    const changed = { ...release, canary: { ...release.canary,
+      expectedSegments: [{ endMs: 1_000, startMs: 0, text: "operator substituted transcript" }] } };
+    expect(() => createHostedCampaignReleaseConfig(changed, trust, campaign)).toThrow();
+  });
+
+  it("rejects a trust root whose transcript differs from the committed canary", () => {
+    expect(() => hostedCampaignReleaseTrustRootV1Schema.parse({ ...trust, canary: { ...trust.canary,
+      expectedSegments: [{ ...trust.canary.expectedSegments[0], text: "altered trusted transcript" }] } }))
+      .toThrow("must match the committed Voicetext canary binding");
+  });
+
   it("assembles host-side wiring after the exact release matches the trust root", () => {
     expect(createHostedCampaignReleaseConfig(release, trust, campaign)).toMatchObject({
       campaignId: campaign.campaignId,
       meetingPlatformRevision: campaign.meetingPlatformRevision,
       planSha256: campaign.planSha256,
+      voicetext: { input: { binding: { transcriptExpectationSha256: pinnedCanary.transcriptExpectation.sha256 },
+        expectedSegments: pinnedCanary.transcriptExpectation.segments } },
     });
   });
 

@@ -8,6 +8,7 @@ import type { HostedRemoteAdmissionCompositionConfig } from "./hosted-remote-adm
 import { HostedRemoteVoicetextCanaryRunnerV1 } from "./hosted-remote-voicetext-canary-runner.js";
 import type { HostedCampaignProductionCandidate } from "./hosted-campaign-production-policy.js";
 import { HOSTED_CAMPAIGN_TARGET } from "./hosted-campaign-target.js";
+import { HOSTED_VOICETEXT_CANARY_BINDING_V1 } from "./hosted-voicetext-canary-binding.js";
 import { SshHostedServiceLevelRawProbe } from "./hosted-service-level-raw-probe.js";
 import { createConcreteSshDeploymentSafetyProbe } from "./ssh-deployment-safety-probe-factory.js";
 import { SshRemoteContainerProcessAdapter } from "./ssh-remote-container-process-adapter.js";
@@ -20,6 +21,9 @@ const imageId = z.string().regex(/^sha256:[a-f\d]{64}$/u);
 const repositoryDigest = z.string().regex(/^[^\s@]+@sha256:[a-f\d]{64}$/u);
 const absolutePath = z.string().startsWith("/").refine((value) => !value.includes("\0") && !value.includes("/../"));
 const serviceComponent = z.enum(["craig", "meetingPlatform", "pipecat", "subscriptionRuntime"]);
+const transcriptSegment = z.object({
+  endMs: z.number().int().nonnegative(), startMs: z.number().int().nonnegative(), text: z.string().min(1),
+}).strict().refine(({ endMs, startMs }) => endMs >= startMs);
 const service = z.object({
   component: serviceComponent,
   composeProject: z.enum([HOSTED_CAMPAIGN_TARGET.project, HOSTED_CAMPAIGN_TARGET.craigProject]),
@@ -36,9 +40,6 @@ export const hostedCampaignReleaseBindingV1Schema = z.object({
       batch: z.object({ origin: z.url(), path: z.string().startsWith("/") }).strict(),
       live: z.object({ origin: z.url(), path: z.string().startsWith("/") }).strict(),
     }).strict(),
-    expectedSegments: z.array(z.object({
-      endMs: z.number().int().nonnegative(), startMs: z.number().int().nonnegative(), text: z.string().min(1),
-    }).strict()).min(1).max(1_024),
     fixturePath: absolutePath,
     fixtureSha256: sha256,
     requiredTerms: z.array(z.string().min(1)).min(1).max(256),
@@ -63,6 +64,8 @@ export const hostedCampaignReleaseTrustRootV1Schema = z.object({
     maximumTimelineDeltaMs: z.number().int().nonnegative().max(60_000),
     maximumWordErrorRate: z.number().min(0).lt(1),
     requiredTerms: z.array(z.string().min(1)).min(1).max(256),
+    transcriptExpectationSha256: sha256,
+    expectedSegments: z.array(transcriptSegment).min(1).max(1_024),
   }).strict(),
   clockMaximumSkewMs: z.number().int().nonnegative().max(60_000),
   deployRoot: absolutePath,
@@ -79,6 +82,9 @@ export const hostedCampaignReleaseTrustRootV1Schema = z.object({
 }).strict().superRefine((value, context) => {
   if (new Set(value.services.map(({ component }) => component)).size !== 4) {
     context.addIssue({ code: "custom", message: "Release trust root must pin each service exactly once" });
+  }
+  if (!matchesPinnedVoicetextCanary(value.canary)) {
+    context.addIssue({ code: "custom", message: "Release trust root must match the committed Voicetext canary binding" });
   }
 });
 
@@ -200,13 +206,27 @@ export function createHostedCampaignReleaseConfig(
       fixtureExpectation: { maximumCharacterErrorRate: trust.canary.maximumCharacterErrorRate,
         maximumTimelineDeltaMs: trust.canary.maximumTimelineDeltaMs, maximumWordErrorRate: trust.canary.maximumWordErrorRate },
       input: { binding: { ...binding, fixtureSha256: release.canary.fixtureSha256,
-        transcriptExpectationSha256: digestCanonical(release.canary.expectedSegments) },
-      endpoint: release.canary.endpoint, expectedSegments: release.canary.expectedSegments,
+        transcriptExpectationSha256: trust.canary.transcriptExpectationSha256 },
+      endpoint: release.canary.endpoint, expectedSegments: trust.canary.expectedSegments,
       fixturePath: release.canary.fixturePath, now, requiredTerms: release.canary.requiredTerms,
       timeoutMs: trust.voicetextTimeoutMs, ttlMs: trust.voicetextReceiptTtlMs },
       runner: new HostedRemoteVoicetextCanaryRunnerV1(remoteProcess),
     },
   };
+}
+
+function matchesPinnedVoicetextCanary(canary: z.infer<typeof hostedCampaignReleaseTrustRootV1Schema>["canary"]): boolean {
+  const pinned = HOSTED_VOICETEXT_CANARY_BINDING_V1;
+  return canary.fixturePath === pinned.fixture.audioPath
+    && canary.fixtureSha256 === pinned.fixture.audioSha256
+    && canary.maximumCharacterErrorRate === pinned.fixtureExpectation.maximumCharacterErrorRate
+    && canary.maximumTimelineDeltaMs === pinned.fixtureExpectation.maximumTimelineDeltaMs
+    && canary.maximumWordErrorRate === pinned.fixtureExpectation.maximumWordErrorRate
+    && canary.transcriptExpectationSha256 === pinned.transcriptExpectation.sha256
+    && JSON.stringify(canonical(canary.endpoint)) === JSON.stringify(canonical(pinned.endpoint))
+    && JSON.stringify(canonical(canary.requiredTerms)) === JSON.stringify(canonical(pinned.requiredTerms))
+    && JSON.stringify(canonical(canary.expectedSegments)) === JSON.stringify(canonical(pinned.transcriptExpectation.segments))
+    && digestCanonical(canary.expectedSegments) === canary.transcriptExpectationSha256;
 }
 
 function assertReleaseMatchesTrustRoot(
