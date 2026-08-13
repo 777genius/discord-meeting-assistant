@@ -53,8 +53,6 @@ export const hostedCampaignReleaseBindingV1Schema = z.object({
   }
 });
 
-export type HostedCampaignReleaseBindingV1 = z.infer<typeof hostedCampaignReleaseBindingV1Schema>;
-
 export const hostedCampaignReleaseTrustRootV1Schema = z.object({
   allowedNetworks: z.array(z.string().regex(/^[a-z0-9][a-z0-9_.-]{0,62}$/u)).min(1),
   canary: z.object({
@@ -211,7 +209,10 @@ export function createHostedCampaignReleaseConfig(
   };
 }
 
-function assertReleaseMatchesTrustRoot(release: HostedCampaignReleaseBindingV1, trust: HostedCampaignReleaseTrustRootV1): void {
+function assertReleaseMatchesTrustRoot(
+  release: z.infer<typeof hostedCampaignReleaseBindingV1Schema>,
+  trust: HostedCampaignReleaseTrustRootV1,
+): void {
   const trusted = new Map(trust.services.map((entry) => [entry.component, entry]));
   for (const { containerId: _containerId, ...identity } of release.services) {
     if (JSON.stringify(canonical(identity)) !== JSON.stringify(canonical(trusted.get(identity.component)))) {

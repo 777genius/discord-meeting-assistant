@@ -54,5 +54,3 @@ export const HOSTED_VOICETEXT_CANARY_BINDING_V1 = Object.freeze({
     sha256: "4a486be40159fb00ce7209a146290b8fd2624328bcb0f93e8dafd4ad6ff73837",
   }),
 } as const);
-
-export type HostedVoicetextCanaryBindingV1 = typeof HOSTED_VOICETEXT_CANARY_BINDING_V1;

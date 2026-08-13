@@ -13,7 +13,7 @@ export const HOSTED_CAMPAIGN_PRODUCTION_POLICY = Object.freeze({
   schemaVersion: 1,
 } as const satisfies HostedCampaignProductionPolicy);
 
-export interface HostedCampaignProductionTrustBinding {
+interface HostedCampaignProductionTrustBinding {
   createConfig(candidate: HostedCampaignProductionCandidate): HostedRemoteAdmissionCompositionConfig;
 }
 
