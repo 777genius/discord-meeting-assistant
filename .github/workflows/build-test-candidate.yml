@@ -1,0 +1,200 @@
+name: Build test candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_revision:
+        description: Exact full commit SHA selected for this workflow run
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: build-test-candidate-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build ${{ matrix.component }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - component: meeting-platform
+            package_suffix: hosted-test-meeting-platform-candidates
+            context: .
+            dockerfile: apps/meeting-platform/Dockerfile
+            lockfile: pnpm-lock.yaml
+          - component: subscription-runtime-sidecar
+            package_suffix: hosted-test-subscription-runtime-sidecar-candidates
+            context: .
+            dockerfile: apps/subscription-runtime-sidecar/Dockerfile
+            lockfile: pnpm-lock.yaml
+          - component: pipecat-runtime
+            package_suffix: hosted-test-pipecat-runtime-candidates
+            context: apps/pipecat-runtime
+            dockerfile: apps/pipecat-runtime/Dockerfile
+            lockfile: apps/pipecat-runtime/uv.lock
+    steps:
+      - name: Validate requested revision
+        shell: bash
+        env:
+          REQUESTED_REVISION: ${{ inputs.source_revision }}
+          WORKFLOW_REVISION: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${WORKFLOW_REVISION}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "github.sha is not a full lowercase commit SHA" >&2
+            exit 1
+          fi
+          if [[ "${REQUESTED_REVISION}" != "${WORKFLOW_REVISION}" ]]; then
+            echo "source_revision must exactly equal github.sha" >&2
+            exit 1
+          fi
+
+      - name: Check out exact revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Derive immutable image name
+        id: image
+        shell: bash
+        env:
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+          REPOSITORY_NAME: ${{ github.event.repository.name }}
+          PACKAGE_SUFFIX: ${{ matrix.package_suffix }}
+          SOURCE_REVISION: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          owner="$(printf '%s' "${REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+          repository="$(printf '%s' "${REPOSITORY_NAME}" | tr '[:upper:]' '[:lower:]')"
+          if [[ ! "${owner}" =~ ^[a-z0-9][a-z0-9._-]*$ ]] ||
+             [[ ! "${repository}" =~ ^[a-z0-9][a-z0-9._-]*$ ]] ||
+             [[ ! "${PACKAGE_SUFFIX}" =~ ^[a-z0-9][a-z0-9._-]*$ ]]; then
+            echo "derived GHCR package name contains unsupported characters" >&2
+            exit 1
+          fi
+          image="ghcr.io/${owner}/${repository}-${PACKAGE_SUFFIX}"
+          if [[ ! "${RUN_ID}" =~ ^[1-9][0-9]*$ ]] || [[ ! "${RUN_ATTEMPT}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "run identity is not a positive integer" >&2
+            exit 1
+          fi
+          tag="sha-${SOURCE_REVISION}-run-${RUN_ID}-attempt-${RUN_ATTEMPT}"
+          echo "name=${image}" >> "${GITHUB_OUTPUT}"
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          echo "reference=${image}:${tag}" >> "${GITHUB_OUTPUT}"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - name: Build and push immutable candidate
+        id: build
+        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.image.outputs.reference }}
+          build-args: |
+            SOURCE_REVISION=${{ github.sha }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.url=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      - name: Write build candidate evidence
+        shell: bash
+        env:
+          COMPONENT: ${{ matrix.component }}
+          CONTEXT_PATH: ${{ matrix.context }}
+          DOCKERFILE_PATH: ${{ matrix.dockerfile }}
+          LOCKFILE_PATH: ${{ matrix.lockfile }}
+          IMAGE_NAME: ${{ steps.image.outputs.name }}
+          IMAGE_TAG: ${{ steps.image.outputs.tag }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          REPOSITORY: ${{ github.repository }}
+          SOURCE_REVISION: ${{ github.sha }}
+          WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          WORKFLOW_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${IMAGE_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "build did not return a valid sha256 image digest" >&2
+            exit 1
+          fi
+          for path in "${DOCKERFILE_PATH}" "${LOCKFILE_PATH}"; do
+            if [[ ! -f "${path}" ]]; then
+              echo "required evidence input is missing: ${path}" >&2
+              exit 1
+            fi
+          done
+          dockerfile_sha256="$(sha256sum "${DOCKERFILE_PATH}" | cut -d ' ' -f 1)"
+          lockfile_sha256="$(sha256sum "${LOCKFILE_PATH}" | cut -d ' ' -f 1)"
+          mkdir -p build-candidate
+          jq -n \
+            --arg component "${COMPONENT}" \
+            --arg repository "${REPOSITORY}" \
+            --arg revision "${SOURCE_REVISION}" \
+            --arg image "${IMAGE_NAME}" \
+            --arg tag "${IMAGE_TAG}" \
+            --arg digest "${IMAGE_DIGEST}" \
+            --arg platform "linux/amd64" \
+            --arg workflowUrl "${WORKFLOW_URL}" \
+            --argjson workflowAttempt "${WORKFLOW_ATTEMPT}" \
+            --arg contextPath "${CONTEXT_PATH}" \
+            --arg dockerfilePath "${DOCKERFILE_PATH}" \
+            --arg dockerfileSha256 "${dockerfile_sha256}" \
+            --arg lockfilePath "${LOCKFILE_PATH}" \
+            --arg lockfileSha256 "${lockfile_sha256}" \
+            '{
+              kind: "hosted-test-build-candidate",
+              schemaVersion: 1,
+              authority: false,
+              component: $component,
+              source: {repository: $repository, revision: $revision},
+              image: {
+                repository: $image,
+                tag: $tag,
+                repositoryDigest: ($image + "@" + $digest),
+                platform: $platform
+              },
+              build: {
+                workflowUrl: $workflowUrl,
+                workflowAttempt: $workflowAttempt,
+                contextPath: $contextPath,
+                dockerfile: {path: $dockerfilePath, sha256: $dockerfileSha256},
+                lockfile: {path: $lockfilePath, sha256: $lockfileSha256}
+              }
+            }' > "build-candidate/${COMPONENT}.json"
+          jq -e \
+            '.kind == "hosted-test-build-candidate" and
+             .schemaVersion == 1 and
+             .authority == false and
+             (.image.repositoryDigest | test("^ghcr\\.io/[a-z0-9._-]+/[a-z0-9._-]+@sha256:[0-9a-f]{64}$")) and
+             (.image | has("digest") | not)' \
+            "build-candidate/${COMPONENT}.json" >/dev/null
+
+      - name: Upload build candidate evidence
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: build-candidate-${{ matrix.component }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build-candidate/${{ matrix.component }}.json
+          if-no-files-found: error
+          retention-days: 30
