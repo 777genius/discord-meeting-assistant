@@ -30,6 +30,11 @@ import {
 import { createHostedCampaignProductionComposition } from "./hosted-campaign-production-composition.js";
 import { createHostedCampaignProductionPolicy } from "./hosted-campaign-production-policy.js";
 import { readStablePrivateJson } from "./compile-hosted-campaign-plan.js";
+import {
+  createHostedCampaignPassReceiptV2,
+  type HostedCampaignPassReceiptV2,
+  type HostedCampaignReleaseReferenceV1,
+} from "./hosted-campaign-pass-receipt.js";
 
 export interface HostedCampaignCliDependencies {
   readonly assertAdmissionAudit: typeof assertAdmissionAuditMatchesInvocation;
@@ -46,7 +51,8 @@ export interface HostedCampaignCliDependencies {
   readonly readBindings: (path: string) => Promise<unknown>;
   readonly readDefinition: (path: string) => Promise<unknown>;
   readonly readPlan: (path: string) => Promise<unknown>;
-  readonly writeReceipt: (path: string, receipt: HostedCampaignPassReceipt) => Promise<void>;
+  readonly releaseReference?: HostedCampaignReleaseReferenceV1;
+  readonly writeReceipt: (path: string, receipt: HostedCampaignPassReceiptV2) => Promise<void>;
   readonly writeClockPreflightProof: typeof writeCreateOnlyClockPreflightProof;
 }
 
@@ -82,7 +88,7 @@ export async function runHostedCampaignCli(
   arguments_: readonly string[],
   dependencies: HostedCampaignCliDependencies,
   signal: AbortSignal,
-): Promise<HostedCampaignPassReceipt> {
+): Promise<HostedCampaignPassReceiptV2> {
   const config = parseHostedCampaignArguments(arguments_);
   await dependencies.assertReceiptAbsent(config.receiptPath);
   const suppliedPlan = parseHostedCampaignPlan(await dependencies.readPlan(config.planPath));
@@ -129,8 +135,19 @@ export async function runHostedCampaignCli(
       });
     },
   });
-  await dependencies.writeReceipt(config.receiptPath, receipt);
-  return receipt;
+  if (dependencies.releaseReference === undefined) {
+    throw new Error("Hosted campaign pass receipt requires an exact release binding reference");
+  }
+  const finalReceipt = createHostedCampaignPassReceiptV2(receipt, {
+    admissionReceiptSha256: verifiedAdmission.receiptSha256,
+    bindingsSha256: verifiedAdmission.bindingsSha256,
+    definitionSha256: verifiedAdmission.definitionSha256,
+    plan: input,
+    release: dependencies.releaseReference,
+    revisions: verifiedAdmission.revisions,
+  });
+  await dependencies.writeReceipt(config.receiptPath, finalReceipt);
+  return finalReceipt;
 }
 
 function resolveClockPreflightPath(plan: ReturnType<typeof parseHostedCampaignPlan>): string {
@@ -150,7 +167,7 @@ export async function readPrivateHostedCampaignPlan(path: string): Promise<unkno
 
 export async function writeCreateOnlyHostedCampaignReceipt(
   path: string,
-  receipt: HostedCampaignPassReceipt,
+  receipt: HostedCampaignPassReceipt | HostedCampaignPassReceiptV2,
 ): Promise<void> {
   const parentPath = dirname(path);
   const temporaryPath = join(parentPath, `.${basename(path)}.partial-${randomUUID()}`);
@@ -294,6 +311,7 @@ async function main(): Promise<void> {
       readBindings: readPrivateHostedCampaignPlan,
       readDefinition: readPrivateHostedCampaignPlan,
       readPlan: readPrivateHostedCampaignPlan,
+      ...(production.releaseReference === undefined ? {} : { releaseReference: production.releaseReference }),
       writeReceipt: writeCreateOnlyHostedCampaignReceipt,
       writeClockPreflightProof: writeCreateOnlyClockPreflightProof,
     }, controller.signal);

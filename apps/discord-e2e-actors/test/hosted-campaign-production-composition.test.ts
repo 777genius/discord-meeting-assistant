@@ -39,6 +39,17 @@ const bindings = {
 const plan = buildResolvedHostedCampaignPlanV1(definition, bindings);
 
 describe("hosted campaign production composition", () => {
+  it("exposes the exact release reference selected by its trusted policy", () => {
+    const releaseReference = {
+      releaseBindingSha256: "1".repeat(64), releaseId: "release-1", trustRootSha256: "2".repeat(64),
+    } as const;
+    const production = createHostedCampaignProductionComposition({
+      kind: "hosted-campaign-production-policy", releaseReference, schemaVersion: 1,
+      trustBinding: { createConfig: () => { throw new Error("probe not requested"); } },
+    });
+    expect(production.releaseReference).toEqual(releaseReference);
+  });
+
   it("fails closed with one typed stable reason when the reviewed release trust binding is absent", () => {
     const production = createHostedCampaignProductionComposition();
     expect(() => production.createInitialAdmissionProbe({ bindings, definition, plan }))

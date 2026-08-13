@@ -13,6 +13,7 @@ import {
   type HostedCampaignProductionCandidate,
   type HostedCampaignProductionPolicy,
 } from "./hosted-campaign-production-policy.js";
+import type { HostedCampaignReleaseReferenceV1 } from "./hosted-campaign-pass-receipt.js";
 
 export type HostedCampaignProductionCompositionFailureReason =
   | "RELEASE_BINDING_REQUIRED"
@@ -30,6 +31,7 @@ export class HostedCampaignProductionCompositionError extends Error {
 }
 
 export interface HostedCampaignProductionComposition {
+  readonly releaseReference?: HostedCampaignReleaseReferenceV1;
   createInitialAdmissionProbe(input: Readonly<{
     bindings: unknown;
     definition: unknown;
@@ -53,6 +55,7 @@ export function createHostedCampaignProductionComposition(
   now: () => number = Date.now,
 ): HostedCampaignProductionComposition {
   const composition: HostedCampaignProductionComposition = {
+    ...(policy.releaseReference === undefined ? {} : { releaseReference: policy.releaseReference }),
     createInitialAdmissionProbe: (input) => createProbe(policy, candidate(input)),
     authorizeFreshAdmission: async (input) => {
       input.signal.throwIfAborted();
