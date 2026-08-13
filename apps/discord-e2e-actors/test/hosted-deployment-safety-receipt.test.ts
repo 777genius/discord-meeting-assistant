@@ -15,6 +15,8 @@ const expectation: HostedDeploymentSafetyExpectationV1 = {
   allowedNetworks: ["discord-meeting-e2e"],
   campaignId: "campaign-1",
   campaignRoot: "/srv/e2e/campaigns",
+  campaignRootOwnerGid: 10_001,
+  campaignRootOwnerUid: 10_001,
   deployRoot: "/srv/e2e",
   greeting: {
     campaignSiblingPath: "/srv/e2e/campaigns-sibling",
@@ -60,6 +62,18 @@ function service(
 
 function snapshot() {
   return {
+    campaignRoot: {
+      campaignEntryKind: "directory" as const,
+      campaignEntrySymbolicLink: false as const,
+      entries: [expectation.campaignId],
+      gid: expectation.campaignRootOwnerGid,
+      linkCount: 3,
+      mode: "0700" as const,
+      requestedPath: expectation.campaignRoot,
+      resolvedPath: expectation.campaignRoot,
+      symbolicLink: false as const,
+      uid: expectation.campaignRootOwnerUid,
+    },
     greetingMount: {
       containerGid: 10_001,
       containerUid: 10_001,
@@ -98,6 +112,8 @@ function receipt(overrides: {
   const after = overrides.after ?? structuredClone(before);
   return createHostedDeploymentSafetyReceiptV1({
     evidence: {
+      campaignRoot: before.campaignRoot,
+      campaignRootAfter: after.campaignRoot,
       greetingMount: before.greetingMount,
       greetingMountAfter: after.greetingMount,
       mountIsolation: before.mountIsolation,
@@ -121,7 +137,7 @@ function receipt(overrides: {
 
 describe("hosted deployment safety receipt", () => {
   it("accepts exact stable test deployment and bidirectional greeting mount evidence", () => {
-    expect(receipt()).toMatchObject({ campaignId: "campaign-1", kind: "hosted-deployment-safety", schemaVersion: 1 });
+    expect(receipt()).toMatchObject({ campaignId: "campaign-1", kind: "hosted-deployment-safety", schemaVersion: 2 });
   });
 
   it("rejects a service restart between snapshots", () => {
@@ -170,6 +186,24 @@ describe("hosted deployment safety receipt", () => {
     const after = snapshot();
     after.greetingMount.environmentRoot = `${after.greetingMount.environmentRoot}-changed`;
     expect(() => receipt({ after })).toThrow("greeting mount changed");
+  });
+
+  it.each([
+    ["another campaign", (value: ReturnType<typeof snapshot>) => { value.campaignRoot.entries.push("campaign-2"); }],
+    ["hidden entry", (value: ReturnType<typeof snapshot>) => { value.campaignRoot.entries.push(".hidden"); }],
+    ["symlink", (value: ReturnType<typeof snapshot>) => { Object.assign(value.campaignRoot, { symbolicLink: true }); }],
+    ["wrong owner", (value: ReturnType<typeof snapshot>) => { Object.assign(value.campaignRoot, { uid: 1_000 }); }],
+    ["wrong mode", (value: ReturnType<typeof snapshot>) => { Object.assign(value.campaignRoot, { mode: "0755" }); }],
+  ])("rejects an unsafe campaign wrapper: %s", (_name, mutate) => {
+    const before = snapshot();
+    mutate(before);
+    expect(() => receipt({ before })).toThrow();
+  });
+
+  it("rejects campaign wrapper mutation between snapshots", () => {
+    const after = snapshot();
+    after.campaignRoot.entries = ["campaign-2"];
+    expect(() => receipt({ after })).toThrow("campaign root changed");
   });
 
   it("accepts only the wrapper source and rejects access outside its campaign namespace", () => {

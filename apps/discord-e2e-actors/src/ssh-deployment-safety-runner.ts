@@ -77,6 +77,21 @@ const symbolicLinkStatScript = [
   "if test -L \"$path\" || test \"$resolved\" != \"$path\"; then printf true; else printf false; fi",
 ].join("\n");
 
+const campaignRootSnapshotScript = [
+  "set -eu",
+  "path=$1",
+  "campaign_id=$2",
+  "test -d \"$path\"",
+  "test ! -L \"$path\"",
+  "resolved=$(readlink -e -- \"$path\")",
+  "test \"$resolved\" = \"$path\"",
+  "entry=$path/$campaign_id",
+  "test -d \"$entry\"",
+  "test ! -L \"$entry\"",
+  "printf '%s|%s|%s|%s|%s\\n' \"$(stat -c %u -- \"$path\")\" \"$(stat -c %g -- \"$path\")\" \"$(stat -c %a -- \"$path\")\" \"$(stat -c %h -- \"$path\")\" \"$resolved\"",
+  "find \"$path\" -mindepth 1 -maxdepth 1 -printf '%f\\n' | LC_ALL=C sort",
+].join("\n");
+
 const hostToContainerNonceScript = [
   "set -eu",
   "container_id=$1",
@@ -128,6 +143,7 @@ export class ConcreteSshDeploymentSafetyProbeRunner implements SshDeploymentSafe
   }
 
   public async inspectDeployment(signal?: AbortSignal): Promise<unknown> {
+    const campaignRoot = await this.#inspectCampaignRoot(signal);
     const roots = {
       deploy: await this.#inspectRoot(this.#expectation.deployRoot, signal),
       source: await this.#inspectRoot(this.#expectation.sourceRoot, signal),
@@ -139,9 +155,34 @@ export class ConcreteSshDeploymentSafetyProbeRunner implements SshDeploymentSafe
       throw new Error("Deployment safety expectation has no Meeting Platform service");
     }
     return {
+      campaignRoot,
       greetingMount: await this.#inspectGreetingMount(meetingPlatform.container, signal),
       roots,
       services: inspected.map(({ snapshot }) => snapshot),
+    };
+  }
+
+  async #inspectCampaignRoot(signal?: AbortSignal): Promise<unknown> {
+    const output = (await this.#commands.runRemote(this.#settings, [
+      "sh", "-ceu", campaignRootSnapshotScript, "deployment-safety-campaign-root",
+      this.#expectation.campaignRoot, this.#expectation.campaignId,
+    ], signal)).trim().split("\n");
+    const metadata = output.shift()?.split("|");
+    if (metadata?.length !== 5) {
+      throw new Error("Hosted campaign root inspection returned invalid metadata");
+    }
+    const [uid, gid, mode, linkCount, resolvedPath] = metadata;
+    return {
+      campaignEntryKind: "directory",
+      campaignEntrySymbolicLink: false,
+      entries: output,
+      gid: Number(gid),
+      linkCount: Number(linkCount),
+      mode: `0${mode}`,
+      requestedPath: this.#expectation.campaignRoot,
+      resolvedPath,
+      symbolicLink: false,
+      uid: Number(uid),
     };
   }
 

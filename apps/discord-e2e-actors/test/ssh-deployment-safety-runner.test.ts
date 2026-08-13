@@ -14,6 +14,8 @@ const expectation: HostedDeploymentSafetyExpectationV1 = {
   allowedNetworks: ["discord-meeting-e2e"],
   campaignId: "campaign-1",
   campaignRoot: "/srv/e2e/campaigns",
+  campaignRootOwnerGid: 10_001,
+  campaignRootOwnerUid: 10_001,
   deployRoot: "/srv/e2e",
   greeting: {
     campaignSiblingPath: "/srv/e2e/campaigns-sibling",
@@ -101,6 +103,9 @@ class SyntheticRemote {
 
   public readonly runRemote = async (_settings: unknown, args: readonly string[]): Promise<string> => {
     this.calls.push([...args]);
+    if (args[0] === "sh" && args[2]?.includes("campaign_id=$2") === true) {
+      return `10001|10001|700|3|${expectation.campaignRoot}\n${expectation.campaignId}\n`;
+    }
     if (args[0] === "sh" && args[2]?.includes("readlink -e") === true) {
       return `${args.at(-1) ?? ""}\n`;
     }
@@ -161,9 +166,11 @@ describe("concrete SSH deployment safety runner", () => {
     await expect(probe.collect()).resolves.toMatchObject({
       campaignId: "campaign-1",
       kind: "hosted-deployment-safety",
-      schemaVersion: 1,
+      schemaVersion: 2,
     });
     expect(remote.calls.some((args) => args[0] === "docker" && args[1] === "inspect" && args[2] === "--type"))
+      .toBe(true);
+    expect(remote.calls.some((args) => args[0] === "sh" && args[2]?.includes("campaign_id=$2") === true))
       .toBe(true);
     const nonceCalls = remote.calls.filter((args) => args[0] === "sh" && args[1] === "-ceu"
       && args[2]?.includes("nonce") === true);

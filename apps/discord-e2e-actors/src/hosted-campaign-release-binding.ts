@@ -56,6 +56,9 @@ export const hostedCampaignReleaseBindingV1Schema = z.object({
 
 export const hostedCampaignReleaseTrustRootV1Schema = z.object({
   allowedNetworks: z.array(z.string().regex(/^[a-z0-9][a-z0-9_.-]{0,62}$/u)).min(1),
+  campaignRoot: absolutePath,
+  campaignRootOwnerGid: z.literal(10_001),
+  campaignRootOwnerUid: z.literal(10_001),
   canary: z.object({
     endpoint: hostedCampaignReleaseBindingV1Schema.shape.canary.shape.endpoint,
     fixturePath: absolutePath,
@@ -73,7 +76,7 @@ export const hostedCampaignReleaseTrustRootV1Schema = z.object({
   environmentFile: absolutePath,
   host: z.literal(HOSTED_CAMPAIGN_TARGET.host),
   remoteComposeFile: absolutePath,
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(2),
   secretDirectory: absolutePath,
   services: z.array(service.omit({ containerId: true })).length(4),
   sourceRoot: absolutePath,
@@ -118,7 +121,8 @@ export function createHostedCampaignReleaseConfig(
     revisions: Record<"craig" | "meetingPlatform" | "pipecat" | "subscriptionRuntime", string>;
     runIds: readonly [string, string, string]; secretDirectory: string;
   };
-  if (definition.remote.composeFile !== trust.remoteComposeFile
+  if (definition.campaignRoot !== trust.campaignRoot
+    || definition.remote.composeFile !== trust.remoteComposeFile
     || definition.remote.environmentFile !== trust.environmentFile
     || definition.remote.sourceRoot !== trust.sourceRoot
     || definition.secretDirectory !== trust.secretDirectory) {
@@ -140,7 +144,9 @@ export function createHostedCampaignReleaseConfig(
   const expectation = {
     allowedNetworks: trust.allowedNetworks,
     campaignId: campaign.campaignId,
-    campaignRoot: definition.campaignRoot,
+    campaignRoot: trust.campaignRoot,
+    campaignRootOwnerGid: trust.campaignRootOwnerGid,
+    campaignRootOwnerUid: trust.campaignRootOwnerUid,
     deployRoot: trust.deployRoot,
     greeting: {
       campaignSiblingPath: `${definition.campaignRoot}-sibling`,

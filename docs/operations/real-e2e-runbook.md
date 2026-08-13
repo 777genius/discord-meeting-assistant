@@ -319,7 +319,10 @@ tokens remain in the host-side runner secret boundary and are not Platform
 secrets. The base
 production Compose deliberately has no campaign/readiness bind mount. Require
 the host-to-Meeting-Platform root, isolation, freshness and bidirectional nonce
-proof before launch, and never reuse a per-run subdirectory. The host-side
+proof before launch. Deployment-safety receipt v2 must additionally show stable
+before/after snapshots of the compiled `campaignRoot`: a real non-symlink
+mode-0700 UID/GID-10001 directory containing only the current campaign-ID
+directory. Never reuse a per-run subdirectory. The host-side
 coordinator is the host principal, not a third mounted container. Meeting Platform
 requires all `CONVERSATION_E2E_PLAYBACK_READINESS_*` settings together and
 rejects them unless `E2E_TEST_ONLY_LABEL=true`.

@@ -36,7 +36,7 @@ export const hostedDeploymentRevalidationBaselineV1Schema = z.object({
 const deploymentSafetyReferenceSchema = z.object({
   kind: z.literal("hosted-deployment-safety"),
   revalidationBaseline: hostedDeploymentRevalidationBaselineV1Schema,
-  receiptSha256: sha256Schema, schemaVersion: z.literal(1),
+  receiptSha256: sha256Schema, schemaVersion: z.literal(2),
 }).strict();
 const discordIdentityReferenceSchema = z.object({
   kind: z.literal("hosted-discord-identity-receipt"), receiptSha256: sha256Schema, schemaVersion: z.literal(1),

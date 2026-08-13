@@ -41,6 +41,19 @@ const rootResolutionSchema = z.object({
   symbolicLink: z.literal(false),
 }).strict();
 
+const campaignRootSnapshotSchema = z.object({
+  campaignEntryKind: z.literal("directory"),
+  campaignEntrySymbolicLink: z.literal(false),
+  entries: z.array(safeIdentifierSchema).length(1),
+  gid: z.number().int().nonnegative(),
+  linkCount: z.number().int().min(2),
+  mode: z.literal("0700"),
+  requestedPath: absolutePathSchema,
+  resolvedPath: absolutePathSchema,
+  symbolicLink: z.literal(false),
+  uid: z.number().int().nonnegative(),
+}).strict();
+
 const greetingMountSchema = z.object({
   containerGid: z.literal(10_001),
   containerUid: z.literal(10_001),
@@ -72,6 +85,8 @@ const roundTripSchema = z.object({
 }).strict();
 
 const deploymentSafetyEvidenceSchema = z.object({
+  campaignRoot: campaignRootSnapshotSchema,
+  campaignRootAfter: campaignRootSnapshotSchema,
   greetingMountAfter: greetingMountSchema,
   greetingMount: greetingMountSchema,
   mountIsolation: mountIsolationSchema,
@@ -87,6 +102,8 @@ export const hostedDeploymentSafetyExpectationV1Schema = z.object({
   allowedNetworks: z.array(z.string().regex(/^[a-z0-9][a-z0-9_.-]{0,62}$/u)).min(1),
   campaignId: safeIdentifierSchema,
   campaignRoot: absolutePathSchema,
+  campaignRootOwnerGid: z.literal(10_001),
+  campaignRootOwnerUid: z.literal(10_001),
   deployRoot: absolutePathSchema,
   greeting: z.object({
     campaignSiblingPath: absolutePathSchema,
@@ -115,7 +132,7 @@ const receiptContentSchema = z.object({
   expectationSha256: sha256Schema,
   generatedAt: z.iso.datetime(),
   kind: z.literal("hosted-deployment-safety"),
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(2),
 }).strict();
 
 const hostedDeploymentSafetyReceiptV1Schema = receiptContentSchema.extend({
@@ -141,11 +158,13 @@ export function createHostedDeploymentSafetyReceiptV1(
   assertUniqueComponents(expectation.services, "expectation");
   assertUniqueComponents(evidence.servicesBefore, "before snapshot");
   assertUniqueComponents(evidence.servicesAfter, "after snapshot");
+  assertCampaignRoot(evidence, expectation);
   assertRoots(evidence, expectation);
   assertServices(evidence, expectation);
   assertGreetingMount(evidence, expectation);
   assertRoundTrip(evidence, expectation);
   const deploymentFingerprint = digestCanonical({
+    campaignRoot: evidence.campaignRoot,
     greetingMount: evidence.greetingMount,
     mountIsolation: evidence.mountIsolation,
     roots: evidence.roots,
@@ -157,9 +176,27 @@ export function createHostedDeploymentSafetyReceiptV1(
     expectationSha256: digestCanonical(expectation),
     generatedAt: input.generatedAt,
     kind: "hosted-deployment-safety",
-    schemaVersion: 1,
+    schemaVersion: 2,
   });
   return Object.freeze({ ...content, receiptSha256: digestCanonical(content) });
+}
+
+function assertCampaignRoot(
+  evidence: z.infer<typeof deploymentSafetyEvidenceSchema>,
+  expectation: HostedDeploymentSafetyExpectationV1,
+): void {
+  if (digestCanonical(evidence.campaignRoot) !== digestCanonical(evidence.campaignRootAfter)) {
+    throw new Error("Hosted campaign root changed while safety evidence was collected");
+  }
+  const root = evidence.campaignRoot;
+  if (root.requestedPath !== expectation.campaignRoot
+    || root.resolvedPath !== expectation.campaignRoot
+    || root.uid !== expectation.campaignRootOwnerUid
+    || root.gid !== expectation.campaignRootOwnerGid
+    || root.linkCount !== 3
+    || root.entries[0] !== expectation.campaignId) {
+    throw new Error("Hosted campaign root is not the exact private single-campaign wrapper");
+  }
 }
 
 export function verifyHostedDeploymentSafetyReceiptV1(

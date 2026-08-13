@@ -242,9 +242,15 @@ function canonicalize(nested: unknown): unknown {
     .map(([key, entry]) => [key, canonicalize(entry)]));
 }
 
-function reference<const Kind extends "hosted-deployment-safety" | "hosted-discord-identity-receipt" |
-"hosted-voicetext-semantic-canary-receipt">(kind: Kind, digit: string) {
-  return { kind, receiptSha256: digit.repeat(64), schemaVersion: 1 as const };
+function reference(kind: "hosted-deployment-safety", digit: string): { kind: "hosted-deployment-safety"; receiptSha256: string; schemaVersion: 2 };
+function reference<Kind extends "hosted-discord-identity-receipt" | "hosted-voicetext-semantic-canary-receipt">(
+  kind: Kind, digit: string,
+): { kind: Kind; receiptSha256: string; schemaVersion: 1 };
+function reference(kind: "hosted-deployment-safety" | "hosted-discord-identity-receipt" |
+"hosted-voicetext-semantic-canary-receipt", digit: string) {
+  return kind === "hosted-deployment-safety"
+    ? { kind, receiptSha256: digit.repeat(64), schemaVersion: 2 as const }
+    : { kind, receiptSha256: digit.repeat(64), schemaVersion: 1 as const };
 }
 
 const fixtureManifestShape = z.object({

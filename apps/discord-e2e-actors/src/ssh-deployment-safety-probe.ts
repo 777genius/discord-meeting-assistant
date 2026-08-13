@@ -102,6 +102,8 @@ function mergeProbeEvidence(
     throw new Error("Deployment safety probe returned an invalid snapshot");
   }
   return {
+    campaignRootAfter: afterValue.campaignRoot,
+    campaignRoot: beforeValue.campaignRoot,
     greetingMountAfter: afterValue.greetingMount,
     greetingMount: beforeValue.greetingMount,
     mountIsolation,

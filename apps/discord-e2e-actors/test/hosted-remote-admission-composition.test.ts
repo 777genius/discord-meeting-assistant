@@ -347,6 +347,7 @@ function deploymentExpectation(): HostedDeploymentSafetyExpectationV1 {
   });
   return {
     allowedNetworks: ["discord-meeting-e2e"], campaignId, campaignRoot: "/srv/e2e/campaigns",
+    campaignRootOwnerGid: 10_001, campaignRootOwnerUid: 10_001,
     deployRoot: "/srv/e2e", sourceRoot: "/srv/e2e/source",
     greeting: {
       campaignSiblingPath: "/srv/e2e/campaigns-sibling",
@@ -378,7 +379,12 @@ function deploymentReceipt(expectation: HostedDeploymentSafetyExpectationV1, gen
     runSiblingMounted: false as const, runSiblingPath: expectation.greeting.runSiblingPath };
   const roots = { deploy: { kind: "directory" as const, requestedPath: expectation.deployRoot, resolvedPath: expectation.deployRoot, symbolicLink: false as const },
     source: { kind: "directory" as const, requestedPath: expectation.sourceRoot, resolvedPath: expectation.sourceRoot, symbolicLink: false as const } };
+  const campaignRoot = { campaignEntryKind: "directory" as const, campaignEntrySymbolicLink: false as const,
+    entries: [expectation.campaignId], gid: expectation.campaignRootOwnerGid, linkCount: 3, mode: "0700" as const,
+    requestedPath: expectation.campaignRoot, resolvedPath: expectation.campaignRoot, symbolicLink: false as const,
+    uid: expectation.campaignRootOwnerUid };
   return createHostedDeploymentSafetyReceiptV1({ expectation, generatedAt: new Date(generatedAt).toISOString(), evidence: {
+    campaignRoot, campaignRootAfter: campaignRoot,
     greetingMount, greetingMountAfter: greetingMount, mountIsolation, mountIsolationAfter: mountIsolation,
     roots, rootsAfter: roots, servicesBefore: services, servicesAfter: services,
     roundTrip: { containerObservedHostNonce: "host-nonce", containerWrittenNonce: "container-nonce",

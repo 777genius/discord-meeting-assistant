@@ -203,7 +203,10 @@ campaigns parent. The
 production Compose file has no readiness mount. Official test-bot tokens remain
 host-side runner secrets and are never mounted into Platform.
 The deployment-safety probe must prove exact roots, sibling isolation, freshness
-and bidirectional host/Platform nonce visibility before launch. The host-side
+and bidirectional host/Platform nonce visibility before launch. Its v2 receipt
+also brackets the exact compiled `campaignRoot` with canonical before/after
+snapshots and requires a non-symlink mode-0700 UID/GID-10001 directory whose
+only entry is the current campaign-ID directory. The host-side
 coordinator is the host principal; no runner container participates. The
 already-subscribed observer rejects stale, mismatched, or ambiguous receipts and
 publishes a matching create-only ready receipt, retaining the resolved meeting

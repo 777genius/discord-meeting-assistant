@@ -18,13 +18,14 @@ const pinnedCanary = HOSTED_VOICETEXT_CANARY_BINDING_V1;
 const endpoint = pinnedCanary.endpoint;
 const trust = hostedCampaignReleaseTrustRootV1Schema.parse({
   allowedNetworks: ["discord-meeting-e2e"],
+  campaignRoot: "/srv/e2e/campaigns", campaignRootOwnerGid: 10_001, campaignRootOwnerUid: 10_001,
   canary: { endpoint, expectedSegments: pinnedCanary.transcriptExpectation.segments,
     fixturePath: pinnedCanary.fixture.audioPath, fixtureSha256: pinnedCanary.fixture.audioSha256,
     ...pinnedCanary.fixtureExpectation, requiredTerms: pinnedCanary.requiredTerms,
     transcriptExpectationSha256: pinnedCanary.transcriptExpectation.sha256 },
   clockMaximumSkewMs: 250, deployRoot: "/srv/e2e", discordReceiptTtlMs: 30_000,
   environmentFile: "/srv/e2e/source.env", host: "codex-workers-eu-01",
-  remoteComposeFile: "/srv/e2e/source/compose.yaml", schemaVersion: 1,
+  remoteComposeFile: "/srv/e2e/source/compose.yaml", schemaVersion: 2,
   secretDirectory: "/run/secrets/discord-e2e",
   services: services.map(([component, composeProject, composeService, digit]) => ({
     component, composeProject, composeService, imageId: `sha256:${digit.repeat(64)}`,
@@ -100,5 +101,11 @@ describe("hosted campaign release binding", () => {
   it("binds operator declaration to the exact compiled trust root digest", () => {
     expect(() => createHostedCampaignReleaseConfig({ ...release, trustRootSha256: "0".repeat(64) }, trust, campaign))
       .toThrow("does not select the compiled trust root");
+  });
+
+  it("rejects an operator-selected campaign wrapper outside the compiled trust root", () => {
+    const changed = { ...campaign, definition: { ...campaign.definition, campaignRoot: "/srv/e2e/other-campaigns" } };
+    expect(() => createHostedCampaignReleaseConfig(release, trust, changed))
+      .toThrow("does not match the compiled release paths");
   });
 });
