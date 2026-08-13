@@ -91,7 +91,7 @@ export async function inspectHostedCampaignLocalAdmission(
   const observer = plan.children.find(({ childId }) => childId === "conversation-observer");
   const plannedGreetingRoot = observer?.environment.DISCORD_E2E_CONVERSATION_VOICE_GREETING_HANDSHAKE_ROOT;
   const expectedContainerGreetingRoot = plannedGreetingRoot === undefined ? undefined : join(
-    "/var/lib/discord-meeting/e2e-playback-readiness",
+    "/run/e2e-campaign",
     relative(definition.campaignRoot, plannedGreetingRoot),
   );
   if (greetingEvidence !== undefined && "greetingHandshakeRoot" in greetingEvidence &&

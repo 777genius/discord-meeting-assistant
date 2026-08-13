@@ -107,7 +107,7 @@ describe("hosted campaign admission", () => {
     await writePrivate(path, JSON.stringify({ capability: "conversation-greeting-readiness" }));
     const base = {
       capability: "conversation-greeting-readiness" as const,
-      containerGreetingHandshakeRoot: `/var/lib/discord-meeting/e2e-playback-readiness/${setup.definition.campaignId}/run-3/greeting-handshakes`,
+      containerGreetingHandshakeRoot: `/run/e2e-campaign/${setup.definition.campaignId}/run-3/greeting-handshakes`,
       greetingHandshakeRoot,
       hostOwnerUid: 10_001,
       observerParticipantId: "1533867700575670282" as const,
@@ -118,7 +118,10 @@ describe("hosted campaign admission", () => {
     await expect(inspectHostedCampaignAdmission({
       bindings: setup.bindings, definition: setup.definition, minimumFreeBytes: 1,
       plan: setup.plan,
-      remoteEvidence: { capabilities: [{ ...base, containerGreetingHandshakeRoot: "/wrong" }], schemaVersion: 1 },
+      remoteEvidence: { capabilities: [{
+        ...base,
+        containerGreetingHandshakeRoot: `/var/lib/discord-meeting/e2e-playback-readiness/${setup.definition.campaignId}/run-3/greeting-handshakes`,
+      }], schemaVersion: 1 },
     })).rejects.toThrow("exact observer plan binding");
     await expect(inspectHostedCampaignAdmission({
       bindings: setup.bindings, definition: setup.definition, minimumFreeBytes: 1,
