@@ -122,7 +122,9 @@ export function verifyHostedCampaignAdmissionReceipt(value: unknown): HostedCamp
     fixtureDigests: z.record(z.string(), sha256Schema), generatedAt: z.iso.datetime(),
     kind: z.literal("hosted-campaign-admission"), minimumFreeBytes: z.number().int().positive(),
     clockPreflightProof: hostedClockPreflightReceiptV2Schema.optional(),
-    missingCapabilities: z.array(z.enum(["deploymentSafety", "discordIdentity", "voicetextCanary", "clockPreflight"])),
+    missingCapabilities: z.array(z.enum([
+      "deploymentSafety", "sharedMount", "discordIdentity", "voicetextCanary", "clockPreflight",
+    ])),
     planSha256: sha256Schema, receiptSha256: sha256Schema,
     remoteEvidence: remoteEvidenceSchema.shape.capabilities,
     remoteReadiness: hostedRemoteReadinessV1Schema.optional(),

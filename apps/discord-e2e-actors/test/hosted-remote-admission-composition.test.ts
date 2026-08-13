@@ -12,6 +12,7 @@ import {
 import { digestVoicetextCanaryExpectationV1 } from "../src/hosted-voicetext-semantic-canary-producer.js";
 import { evaluateHostedRemoteAdmission } from "../src/hosted-campaign-remote-admission.js";
 import { HOSTED_CAMPAIGN_TARGET } from "../src/hosted-campaign-target.js";
+import { createHostedCampaignSharedMountReceiptV1 } from "../src/hosted-campaign-shared-mount.js";
 
 const now = Date.parse("2026-08-13T09:01:00.000Z");
 const campaignId = "campaign-1";
@@ -34,11 +35,11 @@ describe("hosted remote admission composition", () => {
     expect(result.missingSections).toEqual([]);
     expect(result.readiness).toMatchObject({ campaignId, planSha256 });
     expect(calls).toEqual([
-      "deployment", "discord:localObserver", "discord:localSpeakerA",
+      "deployment", "shared-mount:initial", "discord:localObserver", "discord:localSpeakerA",
       "discord:localSpeakerB", "discord:localSpeakerD", "discord:localSut", "discord:remoteCraig", "discord:remotePlatformSut", "voicetext",
       "discord:localObserver", "discord:localSpeakerA",
       "discord:localSpeakerB", "discord:localSpeakerD", "discord:localSut", "discord:remoteCraig", "discord:remotePlatformSut", "clock",
-      "deployment",
+      "deployment", "shared-mount:revalidation",
     ]);
     expect(JSON.stringify(result)).not.toContain(secret);
   });
@@ -73,7 +74,7 @@ describe("hosted remote admission composition", () => {
     const probe = createHostedCampaignRemoteAdmissionProbe(composition([]));
     await expect(evaluateHostedRemoteAdmission(probe, {
       campaignId, meetingPlatformRevision: revision, planSha256,
-    }, () => completionTime)).rejects.toThrow(/stale, expired,.*future/u);
+    }, () => completionTime)).rejects.toThrow(/stale|expired|future/u);
   });
 
   it("rejects an invalid trusted clock result", async () => {
@@ -148,6 +149,25 @@ describe("hosted remote admission composition", () => {
     expect(calls).toEqual(["deployment"]);
   });
 
+  it("gates Discord on the initial mount proof and revalidates it after the canary", async () => {
+    const calls: string[] = [];
+    const config = composition(calls);
+    const probe = createHostedCampaignRemoteAdmissionProbe({
+      ...config,
+      sharedMount: {
+        ...config.sharedMount,
+        initial: { ...config.sharedMount.initial, producer: { collect: async () => {
+          calls.push("shared-mount:initial");
+          throw new Error("mount namespace is not shared");
+        } } },
+      },
+    });
+
+    await expect(probe.inspect({ campaignId, meetingPlatformRevision: revision, planSha256 }))
+      .rejects.toThrow("mount namespace is not shared");
+    expect(calls).toEqual(["deployment", "shared-mount:initial"]);
+  });
+
   it("propagates cancellation to the canary and skips refresh and final deployment", async () => {
     const calls: string[] = [];
     const config = composition(calls);
@@ -207,7 +227,7 @@ describe("hosted remote admission composition", () => {
     await expect(evaluateHostedRemoteAdmission(undefined, {
       campaignId, meetingPlatformRevision: revision, planSha256,
     }, () => now)).resolves.toEqual({
-      missingSections: ["deploymentSafety", "discordIdentity", "voicetextCanary", "clockPreflight"],
+      missingSections: ["deploymentSafety", "sharedMount", "discordIdentity", "voicetextCanary", "clockPreflight"],
     });
   });
 
@@ -262,6 +282,7 @@ function composition(calls: string[], time: () => number = () => now): HostedRem
       expectation,
       producer: { collect: async () => { calls.push("deployment"); return deploymentReceipt(expectation, time()); } },
     },
+    sharedMount: sharedMountConfig(calls, time),
     discord: {
       binding, now: time, roles, ttlMs: 30_000,
       target: { deploymentScope: HOSTED_CAMPAIGN_TARGET.deploymentScope,
@@ -327,6 +348,44 @@ function composition(calls: string[], time: () => number = () => now): HostedRem
       runner: { run: async () => { calls.push("voicetext"); return voicetextResult(); } },
     },
   };
+}
+
+function sharedMountConfig(calls: string[], time: () => number): HostedRemoteAdmissionCompositionConfig["sharedMount"] {
+  const expectation = {
+    campaignId, containerRoot: "/run/e2e-campaign" as const, expectedGid: 10_001 as const,
+    expectedMode: 0o700 as const, expectedUid: 10_001 as const,
+    hostRoot: "/srv/e2e/campaigns", maximumAgeMs: 60_000,
+  };
+  const receipt = (probeId: string) => createHostedCampaignSharedMountReceiptV1({
+    expectation, generatedAtEpochMs: time(), probeId,
+    roots: {
+      host: rootObservation(expectation.hostRoot),
+      meetingPlatform: rootObservation(expectation.containerRoot),
+      runner: rootObservation(expectation.containerRoot),
+    },
+    roundTrip: {
+      hostNonce: "host-nonce-123456", hostObservedPlatformNonce: "platform-nonce-123456",
+      hostObservedRunnerNonce: "runner-nonce-123456", platformNonce: "platform-nonce-123456",
+      platformObservedHostNonce: "host-nonce-123456", platformObservedRunnerNonce: "runner-nonce-123456",
+      runnerNonce: "runner-nonce-123456", runnerObservedHostNonce: "host-nonce-123456",
+      runnerObservedPlatformNonce: "platform-nonce-123456",
+    },
+  });
+  return {
+    expectation,
+    initial: { probeId: "mount-initial-1234", producer: { collect: async () => {
+      calls.push("shared-mount:initial"); return receipt("mount-initial-1234");
+    } } },
+    now: time,
+    revalidation: { probeId: "mount-revalidation-1234", producer: { collect: async () => {
+      calls.push("shared-mount:revalidation"); return receipt("mount-revalidation-1234");
+    } } },
+  };
+}
+
+function rootObservation(path: string) {
+  return { gid: 10_001, mode: 0o700, requestedPath: path, resolvedPath: path,
+    siblingAccessible: false, symbolicLink: false, uid: 10_001 };
 }
 
 function tokenFile(

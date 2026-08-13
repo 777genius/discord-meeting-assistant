@@ -33,12 +33,22 @@ import {
   type BoundedRemoteContainerProcessPort,
 } from "./hosted-remote-discord-identity-probe.js";
 import { HostedRemoteCraigIdentityProbe } from "./hosted-remote-craig-identity-probe.js";
+import {
+  hostedCampaignSharedMountExpectationV1Schema,
+  type HostedCampaignSharedMountExpectationV1,
+  type HostedCampaignSharedMountReceiptV1,
+  verifyHostedCampaignSharedMountReceiptV1,
+} from "./hosted-campaign-shared-mount.js";
 
 const sha256Schema = z.string().regex(/^[a-f\d]{64}$/u);
 const sourceRevisionSchema = z.string().regex(/^(?:[a-f\d]{40}|[a-f\d]{64})$/u);
 
 export interface HostedDeploymentSafetyReceiptProducer {
   collect(signal?: AbortSignal): Promise<HostedDeploymentSafetyReceiptV1>;
+}
+
+export interface HostedCampaignSharedMountReceiptProducer {
+  collect(signal?: AbortSignal): Promise<HostedCampaignSharedMountReceiptV1>;
 }
 
 export function createHostedDeploymentSafetyRevalidator(
@@ -77,6 +87,18 @@ export interface HostedRemoteAdmissionCompositionConfig {
   readonly deployment: {
     readonly expectation: HostedDeploymentSafetyExpectationV1;
     readonly producer: HostedDeploymentSafetyReceiptProducer;
+  };
+  readonly sharedMount: {
+    readonly expectation: HostedCampaignSharedMountExpectationV1;
+    readonly initial: Readonly<{
+      probeId: string;
+      producer: HostedCampaignSharedMountReceiptProducer;
+    }>;
+    readonly now: () => number;
+    readonly revalidation: Readonly<{
+      probeId: string;
+      producer: HostedCampaignSharedMountReceiptProducer;
+    }>;
   };
   readonly discord: Omit<HostedDiscordIdentityReceiptInput, "roles"> & Readonly<{
     roles: Omit<HostedDiscordIdentityReceiptInput["roles"], "botikPlayback" | "remotePlatformSut">;
@@ -118,12 +140,25 @@ export function createHostedCampaignRemoteAdmissionProbe(
         config.voicetext.input.requiredTerms,
       ),
     }),
+    sharedMountExpectation: Object.freeze({
+      expectation: config.sharedMount.expectation,
+      probeId: config.sharedMount.revalidation.probeId,
+    }),
     inspect: async (request: HostedCampaignRemoteAdmissionProbeRequest, signal?: AbortSignal) => {
       assertRequest(request, config);
       assertNotAborted(signal);
 
       // Deployment must be proven before any provider or Discord request is made.
       const deploymentSafety = await config.deployment.producer.collect(signal);
+      assertNotAborted(signal);
+      const initialSharedMount = await config.sharedMount.initial.producer.collect(signal);
+      assertNotAborted(signal);
+      verifyHostedCampaignSharedMountReceiptV1(
+        initialSharedMount,
+        config.sharedMount.expectation,
+        trustedSharedMountNow(config),
+        config.sharedMount.initial.probeId,
+      );
       assertNotAborted(signal);
       await produceHostedDiscordIdentityReceiptV1(createDiscordIdentityInput(config), signal);
       assertNotAborted(signal);
@@ -147,6 +182,13 @@ export function createHostedCampaignRemoteAdmissionProbe(
       const deploymentRevalidation = await config.deployment.producer.collect(signal);
       assertNotAborted(signal);
       assertHostedDeploymentSafetyRevalidatedV1(deploymentSafety, deploymentRevalidation);
+      const sharedMount = verifyHostedCampaignSharedMountReceiptV1(
+        await config.sharedMount.revalidation.producer.collect(signal),
+        config.sharedMount.expectation,
+        trustedSharedMountNow(config),
+        config.sharedMount.revalidation.probeId,
+      );
+      assertNotAborted(signal);
 
       return Object.freeze({
         clockPreflight,
@@ -154,6 +196,7 @@ export function createHostedCampaignRemoteAdmissionProbe(
         discordIdentity,
         kind: "hosted-remote-admission-evidence" as const,
         schemaVersion: 1 as const,
+        sharedMount,
         voicetextCanary,
       });
     },
@@ -211,6 +254,9 @@ function validateComposition(
   const meetingPlatformRevision = sourceRevisionSchema.parse(value.meetingPlatformRevision);
   const planSha256 = sha256Schema.parse(value.planSha256);
   const expectation = hostedDeploymentSafetyExpectationV1Schema.parse(value.deployment.expectation);
+  const sharedMountExpectation = hostedCampaignSharedMountExpectationV1Schema.parse(
+    value.sharedMount.expectation,
+  );
   const clock = Object.freeze({
     ...value.clock,
     maximumClockSkewBoundMs: z.number().int().nonnegative().max(60_000)
@@ -234,6 +280,7 @@ function validateComposition(
   };
   const meetingService = expectation.services.find(({ component }) => component === "meetingPlatform");
   const craigService = expectation.services.find(({ component }) => component === "craig");
+  assertSharedMountBinding(value.sharedMount, sharedMountExpectation, campaignId);
   if (expectation.campaignId !== campaignId
     || meetingService?.sourceRevision !== meetingPlatformRevision
     || discord.binding.campaignId !== campaignId
@@ -254,7 +301,27 @@ function validateComposition(
   }
   return Object.freeze({ ...value, campaignId, clock, meetingPlatformRevision, planSha256,
     deployment: Object.freeze({ ...value.deployment, expectation }),
+    sharedMount: Object.freeze({ ...value.sharedMount, expectation: sharedMountExpectation }),
     voicetext: Object.freeze({ ...value.voicetext, fixtureExpectation }) });
+}
+
+function assertSharedMountBinding(
+  sharedMount: HostedRemoteAdmissionCompositionConfig["sharedMount"],
+  expectation: HostedCampaignSharedMountExpectationV1,
+  campaignId: string,
+): void {
+  if (expectation.campaignId !== campaignId
+    || sharedMount.initial.probeId === sharedMount.revalidation.probeId) {
+    throw new Error("Hosted shared-mount proof is not bound to the exact campaign and fresh probes");
+  }
+}
+
+function trustedSharedMountNow(config: HostedRemoteAdmissionCompositionConfig): number {
+  const value = config.sharedMount.now();
+  if (!Number.isSafeInteger(value)) {
+    throw new Error("Hosted campaign shared mount verification requires a safe time");
+  }
+  return value;
 }
 
 function assertRequest(

@@ -9,7 +9,7 @@ const identifierSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u
 const nonceSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{15,255}$/u);
 const absolutePathSchema = z.string().refine(isSafeAbsolutePath, "Expected a normalized absolute path");
 
-const hostedCampaignSharedMountExpectationV1Schema = z.object({
+export const hostedCampaignSharedMountExpectationV1Schema = z.object({
   campaignId: identifierSchema,
   containerRoot: z.literal(HOSTED_CAMPAIGN_CONTAINER_ROOT),
   hostRoot: absolutePathSchema,
