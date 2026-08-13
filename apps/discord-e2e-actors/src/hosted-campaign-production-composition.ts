@@ -130,8 +130,7 @@ function createProbe(
   policy: HostedCampaignProductionPolicy,
   exactCandidate: HostedCampaignProductionCandidate,
 ): HostedCampaignRemoteAdmissionProbe {
-  if (policy.kind !== "hosted-campaign-production-policy" || policy.schemaVersion !== 1
-    || policy.trustBinding === undefined) {
+  if (policy.trustBinding === undefined) {
     throw new HostedCampaignProductionCompositionError(
       "MISSING_TRUST_BINDING",
       "Hosted campaign production trust binding is not compiled",

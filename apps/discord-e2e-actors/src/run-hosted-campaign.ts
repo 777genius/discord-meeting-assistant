@@ -273,7 +273,7 @@ async function main(): Promise<void> {
     await runHostedCampaignCli(process.argv.slice(2), {
       assertReceiptAbsent: assertHostedCampaignReceiptAbsent,
       assertAdmissionAudit: assertAdmissionAuditMatchesInvocation,
-      authorizeFreshAdmission: production.authorizeFreshAdmission,
+      authorizeFreshAdmission: (request) => production.authorizeFreshAdmission(request),
       createPorts: async (plan) => {
         const campaignId = plan.runs[0]!.campaignId;
         const artifactRoot = resolveHostedCampaignBarrierRoot(plan);

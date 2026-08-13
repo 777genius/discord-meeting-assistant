@@ -88,7 +88,7 @@ if (process.argv[1]?.replaceAll("\\", "/").endsWith("/run-hosted-campaign-admiss
   process.once("SIGTERM", abort);
   const production = createHostedCampaignProductionComposition();
   void runHostedCampaignAdmissionCli(process.argv.slice(2), {
-    createRemoteAdmissionProbe: production.createInitialAdmissionProbe,
+    createRemoteAdmissionProbe: (input) => production.createInitialAdmissionProbe(input),
     now: Date.now, readJson, writeReceipt: writeCreateOnlyAdmissionReceipt,
   }, controller.signal).catch((error: unknown) => {
     process.stderr.write(`Hosted campaign admission failed: ${error instanceof Error ? error.message : "unknown error"}\n`);
