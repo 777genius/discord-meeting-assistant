@@ -41,7 +41,7 @@ describe("conversation answer playback readiness source", () => {
     const root = await temporaryRoot();
     await assertConversationAnswerHandshakeRootIsNew(root);
     const waiting = waitForConversationAnswerPlaybackIntent({
-      meetingId: intent.meetingId, notBeforeEpochMilliseconds: Date.now(), root,
+      meetingId: intent.meetingId, notBeforeEpochMilliseconds: Date.now() - 1_000, root,
       runId: intent.runId, timeoutMilliseconds: 1_000,
     });
     await publishIntent(root);
@@ -76,7 +76,7 @@ describe("conversation answer playback readiness source", () => {
   it("derives the meeting ID from one fresh content-addressed run intent", async () => {
     const root = await temporaryRoot();
     const waiting = waitForConversationAnswerPlaybackIntent({
-      notBeforeEpochMilliseconds: Date.now(), root,
+      notBeforeEpochMilliseconds: Date.now() - 1_000, root,
       runId: intent.runId, timeoutMilliseconds: 1_000,
     });
     await publishIntent(root);
