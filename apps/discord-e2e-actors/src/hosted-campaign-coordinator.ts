@@ -204,7 +204,7 @@ export type HostedCampaignActionEvidence<Action extends HostedCampaignBarrierAct
 export interface HostedCampaignBoundedSignal {
   readonly deadlineEpochMilliseconds: number; readonly signal: AbortSignal;
 }
-export interface HostedCampaignLaunchAuthorization {
+interface HostedCampaignLaunchAuthorization {
   /** Synchronous fence invoked immediately before the first child spawn. */
   assertReadyForFirstChild(): void;
 }

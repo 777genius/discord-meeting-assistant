@@ -2,7 +2,7 @@ export interface DiscordBotJsonClient {
   get(path: string, botToken: string, signal?: AbortSignal): Promise<unknown>;
 }
 
-export interface DiscordFetchResponse {
+interface DiscordFetchResponse {
   readonly body: ReadableStream<Uint8Array> | null;
   readonly headers: Headers;
   readonly status: number;

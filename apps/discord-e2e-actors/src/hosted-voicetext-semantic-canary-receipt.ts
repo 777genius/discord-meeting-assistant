@@ -12,7 +12,7 @@ const endpointSchema = z.object({
 }).strict();
 const maximumAllowedTimelineDeltaMs = 60_000;
 
-export const voicetextSemanticCanaryReceiptV1Schema = z.object({
+const voicetextSemanticCanaryReceiptV1Schema = z.object({
   batch: z.object({
     finalSegments: countAndDigestSchema,
     firstSubmission: z.object({ jobId: identifierSchema, resultId: identifierSchema, resultSha256: sha256Schema }).strict(),

@@ -9,7 +9,7 @@ import { z } from "zod";
 
 const discordBotTokenSchema = z.string().trim().min(50).regex(/^\S+$/u);
 
-export interface SecretReader {
+interface SecretReader {
   read(account: string): Promise<string>;
 }
 

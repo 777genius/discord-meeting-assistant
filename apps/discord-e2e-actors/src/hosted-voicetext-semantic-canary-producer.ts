@@ -14,7 +14,7 @@ const segmentSchema = z.object({
   text: z.string().min(1).max(16_384),
 }).strict().refine(({ endMs, startMs }) => endMs >= startMs);
 
-export const voicetextCanaryInternalResultV1Schema = z.object({
+const voicetextCanaryInternalResultV1Schema = z.object({
   batch: z.object({
     firstSubmission: z.object({
       jobId: z.string().min(1).max(256), resultId: z.string().min(1).max(256), resultSha256: sha256Schema,

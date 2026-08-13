@@ -39,7 +39,7 @@ export function parseHostedAdmissionArguments(arguments_: readonly string[]): Ho
   return { bindingsPath, definitionPath, minimumFreeBytes, planPath, receiptPath, ...(remoteEvidencePath === undefined ? {} : { remoteEvidencePath }) };
 }
 
-export interface HostedAdmissionCliDependencies {
+interface HostedAdmissionCliDependencies {
   readonly createRemoteAdmissionProbe?: (input: Readonly<{
     bindings: unknown;
     definition: unknown;
@@ -51,7 +51,7 @@ export interface HostedAdmissionCliDependencies {
   readonly writeReceipt: typeof writeCreateOnlyAdmissionReceipt;
 }
 
-export async function runHostedCampaignAdmissionCli(
+async function runHostedCampaignAdmissionCli(
   arguments_: readonly string[],
   dependencies: HostedAdmissionCliDependencies,
 ): Promise<void> {

@@ -12,7 +12,7 @@ import { SshHostedServiceLevelRawProbe } from "./hosted-service-level-raw-probe.
 
 const absolutePath = z.string().refine(isAbsolute, "Expected an absolute path");
 
-export const hostedClockPreflightProducerConfigSchema = z.object({
+const hostedClockPreflightProducerConfigSchema = z.object({
   outputPath: absolutePath,
   remote: z.object({
     composeFile: absolutePath,
@@ -62,7 +62,7 @@ const environmentSchema = z.looseObject({
   DISCORD_E2E_REMOTE_SOURCE_ROOT: absolutePath,
 });
 
-export function loadHostedClockPreflightProducerConfig(
+function loadHostedClockPreflightProducerConfig(
   environment: NodeJS.ProcessEnv,
 ): HostedClockPreflightProducerConfig {
   const value = environmentSchema.parse(environment);

@@ -21,7 +21,6 @@ import {
 import {
   evaluateHostedRemoteAdmission,
   type HostedCampaignRemoteAdmissionProbe,
-  type HostedCampaignRemoteAdmissionProbeRequest,
   type HostedRemoteReadinessSection,
   hostedRemoteReadinessV1Schema,
   type HostedRemoteReadinessV1,
@@ -190,86 +189,6 @@ export function assertHostedCampaignPlanMatchesDefinitionAndBindings(
   return parseHostedCampaignPlan(compiledPlan);
 }
 
-export interface HostedCampaignFreshAuthorizationRequest {
-  readonly bindings: unknown;
-  readonly deadlineEpochMs: number;
-  readonly definition: unknown;
-  readonly minimumHeadroomMs: number;
-  readonly now: () => number;
-  readonly plan: unknown;
-  readonly remoteAdmissionProbe: HostedCampaignRemoteAdmissionProbe | undefined;
-  readonly signal: AbortSignal;
-}
-
-export interface HostedCampaignLaunchAuthorization {
-  /** Synchronous final fence. Invoke immediately before the first spawn. */
-  assertReadyForFirstChild(): void;
-  readonly clockPreflightProof: HostedClockPreflightReceiptV2;
-}
-
-export async function authorizeHostedCampaignLaunch(
-  request: HostedCampaignFreshAuthorizationRequest,
-): Promise<HostedCampaignLaunchAuthorization> {
-  if (!Number.isSafeInteger(request.minimumHeadroomMs) || request.minimumHeadroomMs < 5_000) {
-    throw new Error("Hosted campaign launch authorization requires at least 5000ms headroom");
-  }
-  assertFreshAuthorizationActive(request);
-  const definition = hostedCampaignDefinitionV1Schema.parse(request.definition);
-  const plan = assertHostedCampaignPlanMatchesDefinitionAndBindings(
-    definition, request.bindings, request.plan,
-  );
-  const evaluation = await evaluateHostedRemoteAdmission(request.remoteAdmissionProbe === undefined
-    ? undefined
-    : Object.freeze({
-        ...request.remoteAdmissionProbe,
-        inspect: async (expected: HostedCampaignRemoteAdmissionProbeRequest) =>
-          request.remoteAdmissionProbe!.inspect(expected, request.signal),
-      }), {
-    campaignId: definition.campaignId,
-    meetingPlatformRevision: definition.revisions.meetingPlatform,
-    planSha256: digestCanonical(plan),
-  }, request.now);
-  assertFreshAuthorizationActive(request);
-  if (evaluation.missingSections.length !== 0 || evaluation.readiness === undefined
-    || evaluation.clockPreflightProof === undefined) {
-    throw new Error("Hosted campaign fresh remote authorization is incomplete");
-  }
-  const readiness = evaluation.readiness;
-  const authorizedPlanSha256 = digestCanonical(plan);
-  if (readiness.campaignId !== definition.campaignId
-    || readiness.planSha256 !== authorizedPlanSha256
-    || readiness.clockPreflight.proofId !== evaluation.clockPreflightProof.proofId) {
-    throw new Error("Hosted campaign fresh remote authorization is not bound to this launch");
-  }
-  const expiresAtEpochMs = Math.min(
-    Date.parse(readiness.expiresAt), evaluation.clockPreflightProof.validUntilEpochMs,
-  );
-  const assertReadyForFirstChild = (): void => {
-    assertFreshAuthorizationActive(request);
-    const nowEpochMs = request.now();
-    if (!Number.isSafeInteger(nowEpochMs) || !Number.isSafeInteger(expiresAtEpochMs)
-      || expiresAtEpochMs - nowEpochMs < request.minimumHeadroomMs) {
-      throw new Error("Hosted campaign fresh remote authorization lacks launch headroom");
-    }
-  };
-  assertReadyForFirstChild();
-  return Object.freeze({
-    assertReadyForFirstChild,
-    clockPreflightProof: evaluation.clockPreflightProof,
-  });
-}
-
-function assertFreshAuthorizationActive(request: HostedCampaignFreshAuthorizationRequest): void {
-  if (request.signal.aborted) {
-    throw request.signal.reason ?? new Error("Hosted campaign fresh authorization was cancelled");
-  }
-  const nowEpochMs = request.now();
-  if (!Number.isSafeInteger(request.deadlineEpochMs) || !Number.isSafeInteger(nowEpochMs)
-    || request.deadlineEpochMs - nowEpochMs < request.minimumHeadroomMs) {
-    throw new Error("Hosted campaign deadline lacks fresh authorization headroom");
-  }
-}
-
 /**
  * Verifies the persisted receipt as immutable audit evidence only. Launch
  * authority is deliberately excluded: the runner must obtain fresh remote
@@ -278,18 +197,11 @@ function assertFreshAuthorizationActive(request: HostedCampaignFreshAuthorizatio
 export function assertAdmissionAuditMatchesInvocation(
   invocation: HostedCampaignAdmissionInvocation,
 ): HostedCampaignAdmissionReceiptV1 {
-  return assertAdmissionReceiptBindings(invocation, false);
-}
-
-export function assertAdmissionMatchesInvocation(
-  invocation: HostedCampaignAdmissionInvocation,
-): HostedCampaignAdmissionReceiptV1 {
-  return assertAdmissionReceiptBindings(invocation, true);
+  return assertAdmissionReceiptBindings(invocation);
 }
 
 function assertAdmissionReceiptBindings(
   invocation: HostedCampaignAdmissionInvocation,
-  requireLiveReadiness: boolean,
 ): HostedCampaignAdmissionReceiptV1 {
   const receipt = verifyHostedCampaignAdmissionReceipt(invocation.receipt);
   const definition = hostedCampaignDefinitionV1Schema.parse(invocation.definition);
@@ -311,9 +223,6 @@ function assertAdmissionReceiptBindings(
     || receipt.bindingsSha256 !== digestCanonical(bindings) || receipt.planSha256 !== digestCanonical(plan)
     || JSON.stringify(receipt.revisions) !== JSON.stringify(definition.revisions)) {
     throw new Error("Hosted campaign admission does not match this invocation");
-  }
-  if (requireLiveReadiness) {
-    assertRemoteReadinessMatchesInvocation(receipt, invocation.nowEpochMs);
   }
   return receipt;
 }
@@ -344,21 +253,4 @@ function resolveAdmissionTime(
     throw new Error("Hosted campaign admission clock is invalid");
   }
   return generatedAtEpochMs;
-}
-
-function assertRemoteReadinessMatchesInvocation(
-  receipt: HostedCampaignAdmissionReceiptV1,
-  nowEpochMs: number,
-): void {
-  const readiness = receipt.remoteReadiness;
-  if (readiness === undefined || readiness.campaignId !== receipt.campaignId
-    || readiness.planSha256 !== receipt.planSha256 || Date.parse(readiness.probedAt) > nowEpochMs
-    || Date.parse(readiness.expiresAt) <= nowEpochMs) {
-    throw new Error("Hosted campaign remote readiness is not live for this invocation");
-  }
-  if (receipt.clockPreflightProof === undefined
-    || readiness.clockPreflight.proofId !== receipt.clockPreflightProof.proofId
-    || receipt.clockPreflightProof.validUntilEpochMs <= nowEpochMs) {
-    throw new Error("Hosted campaign clock preflight proof is not live for this invocation");
-  }
 }

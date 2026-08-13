@@ -47,7 +47,7 @@ export interface HostedCampaignCliDependencies {
   readonly writeClockPreflightProof: typeof writeCreateOnlyClockPreflightProof;
 }
 
-export interface HostedCampaignFreshAuthorizationInvocation
+interface HostedCampaignFreshAuthorizationInvocation
 {
   readonly bindings: unknown;
   readonly deadlineEpochMs: number;
