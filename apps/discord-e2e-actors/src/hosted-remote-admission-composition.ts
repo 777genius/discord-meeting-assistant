@@ -105,16 +105,20 @@ export function createHostedCampaignRemoteAdmissionProbe(
         config.voicetext.input.requiredTerms,
       ),
     }),
-    inspect: async (request: HostedCampaignRemoteAdmissionProbeRequest) => {
+    inspect: async (request: HostedCampaignRemoteAdmissionProbeRequest, signal?: AbortSignal) => {
       assertRequest(request, config);
+      assertNotAborted(signal);
 
       // Deployment must be proven before any provider or Discord request is made.
       const deploymentSafety = await config.deployment.producer.collect();
+      assertNotAborted(signal);
       await produceHostedDiscordIdentityReceiptV1(config.discord);
+      assertNotAborted(signal);
       const voicetextCanary = await produceVoicetextSemanticCanaryReceiptV1(
-        config.voicetext.input,
+        { ...config.voicetext.input, ...(signal === undefined ? {} : { signal }) },
         config.voicetext.runner,
       );
+      assertNotAborted(signal);
 
       // Refresh short-lived identity and clock evidence after the potentially slow
       // canary. Both are independent and completion-stamped by their producers.
@@ -122,11 +126,13 @@ export function createHostedCampaignRemoteAdmissionProbe(
         produceHostedDiscordIdentityReceiptV1(config.discord),
         config.clock.collectClockPreflight(),
       ]);
+      assertNotAborted(signal);
       const clockPreflight = deriveHostedClockPreflightReceiptV2(clockExchange);
 
-      // Detect a deployment swap during the slower external probes. The second
-      // The final receipt is the admitted baseline, not the stale first sample.
+      // Detect a deployment swap during the slower external probes. The final
+      // receipt is the admitted baseline, not the stale first sample.
       const deploymentRevalidation = await config.deployment.producer.collect();
+      assertNotAborted(signal);
       assertHostedDeploymentSafetyRevalidatedV1(deploymentSafety, deploymentRevalidation);
 
       return Object.freeze({

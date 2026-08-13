@@ -119,6 +119,57 @@ describe("hosted remote admission composition", () => {
     expect(calls).not.toContain("clock");
   });
 
+  it("aborts before the first probe without side effects", async () => {
+    const calls: string[] = [];
+    const probe = createHostedCampaignRemoteAdmissionProbe(composition(calls));
+    const controller = new AbortController();
+    controller.abort(new Error("cancelled before admission"));
+
+    await expect(probe.inspect({ campaignId, meetingPlatformRevision: revision, planSha256 }, controller.signal))
+      .rejects.toThrow("cancelled before admission");
+    expect(calls).toEqual([]);
+  });
+
+  it("does not start Discord after cancellation during the initial deployment probe", async () => {
+    const calls: string[] = [];
+    const config = composition(calls);
+    const controller = new AbortController();
+    const probe = createHostedCampaignRemoteAdmissionProbe({ ...config, deployment: {
+      ...config.deployment,
+      producer: { collect: async () => {
+        calls.push("deployment");
+        controller.abort(new Error("cancelled during deployment"));
+        return deploymentReceipt(deploymentExpectation());
+      } },
+    } });
+
+    await expect(probe.inspect({ campaignId, meetingPlatformRevision: revision, planSha256 }, controller.signal))
+      .rejects.toThrow("cancelled during deployment");
+    expect(calls).toEqual(["deployment"]);
+  });
+
+  it("propagates cancellation to the canary and skips refresh and final deployment", async () => {
+    const calls: string[] = [];
+    const config = composition(calls);
+    const controller = new AbortController();
+    let receivedSignal: AbortSignal | undefined;
+    const probe = createHostedCampaignRemoteAdmissionProbe({ ...config, voicetext: {
+      ...config.voicetext,
+      runner: { run: async (input) => {
+        calls.push("voicetext");
+        receivedSignal = input.signal;
+        controller.abort(new Error("cancelled during canary"));
+        return voicetextResult();
+      } },
+    } });
+
+    await expect(probe.inspect({ campaignId, meetingPlatformRevision: revision, planSha256 }, controller.signal))
+      .rejects.toThrow("cancelled during canary");
+    expect(receivedSignal).toBe(controller.signal);
+    expect(calls).not.toContain("clock");
+    expect(calls.filter((call) => call === "deployment")).toHaveLength(1);
+  });
+
   it.each([
     ["WER/CER", [{ endMs: 1_000, startMs: 0, text: "completely wrong Botik transcript" }]],
     ["required terms", [{ endMs: 1_000, startMs: 0, text: "hello assistant" }]],
