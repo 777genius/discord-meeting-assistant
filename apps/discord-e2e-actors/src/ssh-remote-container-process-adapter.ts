@@ -37,6 +37,7 @@ export interface BoundedRemoteCommandRequest {
   readonly args: readonly string[];
   readonly host: string;
   readonly maximumOutputBytes: number;
+  readonly signal?: AbortSignal;
   readonly timeoutMs: number;
 }
 
@@ -68,6 +69,7 @@ export class SshRemoteContainerProcessAdapter implements BoundedRemoteContainerP
         args,
         host: request.binding.host,
         maximumOutputBytes: remainingOutputBytes,
+        ...(request.signal === undefined ? {} : { signal: request.signal }),
         timeoutMs,
       });
       remainingOutputBytes -= byteLength(result);
@@ -136,6 +138,7 @@ function parseSuccessfulJson(result: BoundedRemoteContainerProcessResult, subjec
 }
 
 function assertRequestBounds(request: Parameters<BoundedRemoteContainerProcessPort["execute"]>[0]): void {
+  request.signal?.throwIfAborted();
   hostSchema.parse(request.binding.host);
   containerIdSchema.parse(request.binding.containerId);
   sourceRevisionSchema.parse(request.binding.sourceRevision);
@@ -153,6 +156,7 @@ export function runBoundedSshCommand(
   request: BoundedRemoteCommandRequest,
 ): Promise<BoundedRemoteContainerProcessResult> {
   const host = hostSchema.parse(request.host);
+  request.signal?.throwIfAborted();
   const command = request.args.map(shellQuote).join(" ");
   return new Promise((resolve, reject) => {
     const child = spawn("ssh", ["-o", "BatchMode=yes", "--", host, command], {
@@ -179,6 +183,9 @@ export function runBoundedSshCommand(
       terminate();
     }, request.timeoutMs);
     timeout.unref();
+    const abort = (): void => {terminate();};
+    request.signal?.addEventListener("abort", abort, { once: true });
+    if (request.signal?.aborted === true) {abort();}
     const retain = (target: Buffer[], chunk: Buffer): void => {
       outputBytes += chunk.byteLength;
       if (outputBytes > request.maximumOutputBytes) {
@@ -195,6 +202,7 @@ export function runBoundedSshCommand(
       settled = true;
       clearTimeout(timeout);
       clearTimeout(killTimer);
+      request.signal?.removeEventListener("abort", abort);
       reject(error);
     });
     child.once("close", (exitCode, signal) => {
@@ -202,6 +210,7 @@ export function runBoundedSshCommand(
       settled = true;
       clearTimeout(timeout);
       clearTimeout(killTimer);
+      request.signal?.removeEventListener("abort", abort);
       if (exceededOutput) {
         reject(new Error("Remote command exceeded its output bound"));
         return;

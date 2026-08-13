@@ -39,6 +39,7 @@ export interface BoundedRemoteContainerProcessPort {
     args: readonly string[];
     binding: HostedRemoteDiscordProbeBinding;
     maximumOutputBytes: number;
+    signal?: AbortSignal;
     timeoutMs: number;
   }>): Promise<BoundedRemoteContainerProcessResult>;
 }

@@ -79,6 +79,16 @@ describe("SSH remote container process adapter", () => {
     expect(calls[2]?.maximumOutputBytes).toBeLessThan(calls[1]?.maximumOutputBytes ?? 0);
   });
 
+  it("forwards cancellation to every remote command", async () => {
+    const signal = new AbortController().signal;
+    const execute = vi.fn<BoundedRemoteCommandPort["execute"]>()
+      .mockResolvedValueOnce(ok(containerJson()))
+      .mockResolvedValueOnce(ok(imageJson()))
+      .mockResolvedValueOnce(ok("done\n"));
+    await new SshRemoteContainerProcessAdapter({ execute }, () => 1_000).execute({ ...request, signal });
+    expect(execute.mock.calls.every(([call]) => call.signal === signal)).toBe(true);
+  });
+
   it.each([
     ["inspection timeout", { timedOut: true }],
     ["inspection stderr", { stderr: "warning" }],
