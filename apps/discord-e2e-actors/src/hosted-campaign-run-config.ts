@@ -215,12 +215,13 @@ export function parseHostedCampaignArguments(arguments_: readonly string[]): {
   readonly definitionPath: string;
   readonly planPath: string;
   readonly receiptPath: string;
+  readonly releaseBindingPath?: string;
   readonly timeoutMilliseconds: number;
 } {
-  if (arguments_.length !== 6) {
-    throw new Error("Usage: run-hosted-campaign <plan.json> <receipt.json> <timeout-ms> <admission.json> <definition.json> <bindings.json>");
+  if (arguments_.length !== 6 && arguments_.length !== 8) {
+    throw new Error("Usage: run-hosted-campaign <plan.json> <receipt.json> <timeout-ms> <admission.json> <definition.json> <bindings.json> [--release-binding <private.json>]");
   }
-  const [planPath, receiptPath, timeoutText, admissionPath, definitionPath, bindingsPath] = arguments_;
+  const [planPath, receiptPath, timeoutText, admissionPath, definitionPath, bindingsPath, releaseFlag, releaseBindingPath] = arguments_;
   if (planPath === undefined || receiptPath === undefined || timeoutText === undefined
     || admissionPath === undefined || definitionPath === undefined || bindingsPath === undefined) {
     throw new Error("Hosted campaign argument parsing invariant failed");
@@ -228,11 +229,16 @@ export function parseHostedCampaignArguments(arguments_: readonly string[]): {
   if (![planPath, receiptPath, admissionPath, definitionPath, bindingsPath].every(isAbsolute)) {
     throw new Error("Hosted campaign plan, receipt, admission, definition, and bindings paths must be absolute");
   }
+  if ((releaseFlag !== undefined || releaseBindingPath !== undefined)
+    && (releaseFlag !== "--release-binding" || releaseBindingPath === undefined || !isAbsolute(releaseBindingPath))) {
+    throw new Error("Hosted campaign release binding must be supplied as --release-binding <absolute-private-json>");
+  }
   const timeoutMilliseconds = Number(timeoutText);
   if (!Number.isSafeInteger(timeoutMilliseconds) || timeoutMilliseconds < 1 || timeoutMilliseconds > 86_400_000) {
     throw new Error("Hosted campaign timeout must be an integer from 1 to 86400000ms");
   }
-  return { admissionPath, bindingsPath, definitionPath, planPath, receiptPath, timeoutMilliseconds };
+  return { admissionPath, bindingsPath, definitionPath, planPath, receiptPath,
+    ...(releaseBindingPath === undefined ? {} : { releaseBindingPath }), timeoutMilliseconds };
 }
 
 export function assertExecutableEnvironmentPaths(children: readonly HostedCampaignExecutableSpec[]): void {

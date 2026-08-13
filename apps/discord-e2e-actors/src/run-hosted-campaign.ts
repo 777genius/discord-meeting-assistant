@@ -28,6 +28,7 @@ import {
   validateHostedCampaignTrustedRuntimeEnvironment,
 } from "./hosted-campaign-process-adapter.js";
 import { createHostedCampaignProductionComposition } from "./hosted-campaign-production-composition.js";
+import { createHostedCampaignProductionPolicy } from "./hosted-campaign-production-policy.js";
 import { readStablePrivateJson } from "./compile-hosted-campaign-plan.js";
 
 export interface HostedCampaignCliDependencies {
@@ -48,6 +49,14 @@ export interface HostedCampaignCliDependencies {
   readonly writeReceipt: (path: string, receipt: HostedCampaignPassReceipt) => Promise<void>;
   readonly writeClockPreflightProof: typeof writeCreateOnlyClockPreflightProof;
 }
+
+type HostedCampaignControlPaths = Readonly<{
+  admissionPath: string;
+  bindingsPath: string;
+  definitionPath: string;
+  planPath: string;
+  releaseBindingPath?: string;
+}>;
 
 interface HostedCampaignFreshAuthorizationInvocation
 {
@@ -195,6 +204,28 @@ export function resolveHostedCampaignBarrierRoot(
   return barrierRoot;
 }
 
+export async function createProductionHostedCampaignPorts(
+  plan: ReturnType<typeof parseHostedCampaignPlan>,
+  controlPaths: HostedCampaignControlPaths,
+  trustedRuntimeEnvironment: HostedCampaignTrustedRuntimeEnvironment,
+): Promise<HostedCampaignPorts> {
+  const campaignId = plan.runs[0]!.campaignId;
+  const artifactRoot = resolveHostedCampaignBarrierRoot(plan);
+  const store = new HostedCampaignArtifactStore(artifactRoot, campaignId);
+  await store.initializeFreshCampaignLayout([
+    controlPaths.admissionPath,
+    controlPaths.bindingsPath,
+    controlPaths.definitionPath,
+    controlPaths.planPath,
+    ...(controlPaths.releaseBindingPath === undefined ? [] : [controlPaths.releaseBindingPath]),
+  ]);
+  return new HostedCampaignProcessAdapter({
+    artifactStore: store,
+    distRoot: dirname(fileURLToPath(import.meta.url)),
+    trustedRuntimeEnvironment,
+  });
+}
+
 async function syncDirectory(path: string): Promise<void> {
   let handle: FileHandle | undefined;
   try {
@@ -243,22 +274,21 @@ async function main(): Promise<void> {
   try {
     const config = parseHostedCampaignArguments(process.argv.slice(2));
     await assertHostedCampaignReceiptAbsent(config.receiptPath);
-    const production = createHostedCampaignProductionComposition();
+    const releaseBinding = config.releaseBindingPath === undefined
+      ? undefined
+      : await readStablePrivateJson(config.releaseBindingPath);
+    const production = createHostedCampaignProductionComposition(
+      createHostedCampaignProductionPolicy(releaseBinding),
+    );
     await runHostedCampaignCli(process.argv.slice(2), {
       assertReceiptAbsent: assertHostedCampaignReceiptAbsent,
       assertAdmissionAudit: assertAdmissionAuditMatchesInvocation,
       authorizeFreshAdmission: (request) => production.authorizeFreshAdmission(request),
-      createPorts: async (plan) => {
-        const campaignId = plan.runs[0]!.campaignId;
-        const artifactRoot = resolveHostedCampaignBarrierRoot(plan);
-        const store = new HostedCampaignArtifactStore(artifactRoot, campaignId);
-        await store.initializeFreshCampaignLayout();
-        return new HostedCampaignProcessAdapter({
-          artifactStore: store,
-          distRoot: dirname(fileURLToPath(import.meta.url)),
-          trustedRuntimeEnvironment: loadHostedCampaignTrustedRuntimeEnvironment(process.env),
-        });
-      },
+      createPorts: async (plan) => createProductionHostedCampaignPorts(
+        plan,
+        config,
+        loadHostedCampaignTrustedRuntimeEnvironment(process.env),
+      ),
       now: Date.now,
       readAdmission: readPrivateHostedCampaignPlan,
       readBindings: readPrivateHostedCampaignPlan,

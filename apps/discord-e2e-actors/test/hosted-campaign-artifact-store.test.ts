@@ -1,4 +1,4 @@
-import { chmod, lstat, mkdtemp, readFile, readdir, symlink, writeFile } from "node:fs/promises";
+import { chmod, link, lstat, mkdir, mkdtemp, readFile, readdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -38,6 +38,51 @@ describe("hosted campaign artifact store", () => {
     await expect(retry.initializeFreshCampaignLayout()).rejects.toMatchObject({ code: "EEXIST" });
     expect(JSON.parse(await readFile(join(campaignRoot, "barriers", actionFileName(action)), "utf8")))
       .toMatchObject({ campaignId: "campaign-1", evidence: { digestSha256: "a".repeat(64) } });
+  });
+
+  it("accepts only the exact pre-created private control surface", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "hosted-artifacts-"));
+    const campaignRoot = join(parent, "campaign-1");
+    const controlRoot = join(campaignRoot, "control");
+    await mkdir(controlRoot, { mode: 0o700, recursive: true });
+    const controlFiles = ["definition.json", "bindings.json", "plan.json", "admission.json"]
+      .map((name) => join(controlRoot, name));
+    await Promise.all(controlFiles.map((path) => writeFile(path, "{}\n", { mode: 0o600 })));
+
+    const store = new HostedCampaignArtifactStore(join(campaignRoot, "barriers"), "campaign-1");
+    await store.initializeFreshCampaignLayout(controlFiles);
+
+    expect((await readdir(campaignRoot)).toSorted())
+      .toEqual(["barriers", "control", "run-1", "run-2", "run-3"]);
+    expect((await readdir(controlRoot)).toSorted())
+      .toEqual(["admission.json", "bindings.json", "definition.json", "plan.json"]);
+  });
+
+  it("rejects undeclared, linked, or non-private pre-created control artifacts", async () => {
+    const extra = await makeLayout("extra");
+    await writeFile(join(extra.controlRoot, "undeclared.json"), "{}\n", { mode: 0o600 });
+    await expect(new HostedCampaignArtifactStore(join(extra.campaignRoot, "barriers"), "campaign-1")
+      .initializeFreshCampaignLayout([extra.declaredPath])).rejects.toThrow(/exactly the declared/u);
+
+    const linked = await makeLayout("hardlink");
+    await link(linked.declaredPath, join(linked.controlRoot, "alias.json"));
+    await expect(new HostedCampaignArtifactStore(join(linked.campaignRoot, "barriers"), "campaign-1")
+      .initializeFreshCampaignLayout([linked.declaredPath, join(linked.controlRoot, "alias.json")]))
+      .rejects.toThrow(/single-link/u);
+
+    const permissive = await makeLayout("mode");
+    await chmod(permissive.declaredPath, 0o644);
+    await expect(new HostedCampaignArtifactStore(join(permissive.campaignRoot, "barriers"), "campaign-1")
+      .initializeFreshCampaignLayout([permissive.declaredPath])).rejects.toThrow(/0600/u);
+
+    const symbolic = await makeLayout("symlink");
+    const targetPath = join(symbolic.controlRoot, "target.json");
+    await writeFile(targetPath, "{}\n", { mode: 0o600 });
+    const symbolicPath = join(symbolic.controlRoot, "definition-link.json");
+    await symlink(targetPath, symbolicPath);
+    await expect(new HostedCampaignArtifactStore(join(symbolic.campaignRoot, "barriers"), "campaign-1")
+      .initializeFreshCampaignLayout([symbolic.declaredPath, targetPath, symbolicPath]))
+      .rejects.toMatchObject({ code: "ELOOP" });
   });
 
   it("requires exact action and campaign correlation", async () => {
@@ -160,4 +205,14 @@ function errorCode(error: unknown): string | undefined {
     return undefined;
   }
   return typeof error.code === "string" ? error.code : undefined;
+}
+
+async function makeLayout(suffix: string) {
+  const parent = await mkdtemp(join(tmpdir(), `hosted-artifacts-${suffix}-`));
+  const campaignRoot = join(parent, "campaign-1");
+  const controlRoot = join(campaignRoot, "control");
+  await mkdir(controlRoot, { mode: 0o700, recursive: true });
+  const declaredPath = join(controlRoot, "definition.json");
+  await writeFile(declaredPath, "{}\n", { mode: 0o600 });
+  return { campaignRoot, controlRoot, declaredPath };
 }

@@ -4,6 +4,7 @@ import {
 import { writeCreateOnlyAdmissionReceipt } from "./hosted-admission-receipt-store.js";
 import type { HostedCampaignRemoteAdmissionProbe } from "./hosted-campaign-remote-admission.js";
 import { createHostedCampaignProductionComposition } from "./hosted-campaign-production-composition.js";
+import { createHostedCampaignProductionPolicy } from "./hosted-campaign-production-policy.js";
 import { readStablePrivateJson } from "./compile-hosted-campaign-plan.js";
 
 export interface HostedAdmissionArguments {
@@ -12,6 +13,7 @@ export interface HostedAdmissionArguments {
   readonly minimumFreeBytes: number;
   readonly planPath: string;
   readonly receiptPath: string;
+  readonly releaseBindingPath?: string;
   readonly remoteEvidencePath?: string;
 }
 
@@ -21,7 +23,7 @@ export function parseHostedAdmissionArguments(arguments_: readonly string[]): Ho
     const flag = arguments_[index];
     const value = arguments_[index + 1];
     if (flag === undefined || value === undefined || !flag.startsWith("--") || values.has(flag)) {
-      throw new Error("Usage: --definition <path> --bindings <path> --plan <path> --receipt <path> --minimum-free-bytes <bytes> [--remote-evidence <path>]");
+      throw new Error("Usage: --definition <path> --bindings <path> --plan <path> --receipt <path> --minimum-free-bytes <bytes> [--remote-evidence <path>] [--release-binding <private.json>]");
     }
     values.set(flag, value);
   }
@@ -30,13 +32,16 @@ export function parseHostedAdmissionArguments(arguments_: readonly string[]): Ho
   const planPath = values.get("--plan");
   const receiptPath = values.get("--receipt");
   const minimumFreeBytes = Number(values.get("--minimum-free-bytes"));
-  const allowed = new Set(["--definition", "--bindings", "--plan", "--receipt", "--minimum-free-bytes", "--remote-evidence"]);
+  const allowed = new Set(["--definition", "--bindings", "--plan", "--receipt", "--minimum-free-bytes", "--remote-evidence", "--release-binding"]);
   if (definitionPath === undefined || bindingsPath === undefined || planPath === undefined || receiptPath === undefined || !Number.isSafeInteger(minimumFreeBytes)
     || minimumFreeBytes < 1 || [...values.keys()].some((key) => !allowed.has(key))) {
     throw new Error("Usage: --definition <path> --bindings <path> --plan <path> --receipt <path> --minimum-free-bytes <bytes> [--remote-evidence <path>]");
   }
   const remoteEvidencePath = values.get("--remote-evidence");
-  return { bindingsPath, definitionPath, minimumFreeBytes, planPath, receiptPath, ...(remoteEvidencePath === undefined ? {} : { remoteEvidencePath }) };
+  const releaseBindingPath = values.get("--release-binding");
+  return { bindingsPath, definitionPath, minimumFreeBytes, planPath, receiptPath,
+    ...(remoteEvidencePath === undefined ? {} : { remoteEvidencePath }),
+    ...(releaseBindingPath === undefined ? {} : { releaseBindingPath }) };
 }
 
 interface HostedAdmissionCliDependencies {
@@ -81,7 +86,13 @@ if (process.argv[1]?.replaceAll("\\", "/").endsWith("/run-hosted-campaign-admiss
   const abort = (): void => { controller.abort(new Error("Hosted campaign admission interrupted")); };
   process.once("SIGINT", abort);
   process.once("SIGTERM", abort);
-  const production = createHostedCampaignProductionComposition();
+  const parsed = parseHostedAdmissionArguments(process.argv.slice(2));
+  const releaseBinding = parsed.releaseBindingPath === undefined
+    ? undefined
+    : await readStablePrivateJson(parsed.releaseBindingPath);
+  const production = createHostedCampaignProductionComposition(
+    createHostedCampaignProductionPolicy(releaseBinding),
+  );
   void runHostedCampaignAdmissionCli(process.argv.slice(2), {
     createRemoteAdmissionProbe: (input) => production.createInitialAdmissionProbe(input),
     now: Date.now, readJson: readStablePrivateJson, writeReceipt: writeCreateOnlyAdmissionReceipt,

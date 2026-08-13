@@ -42,7 +42,7 @@ describe("hosted campaign production composition", () => {
   it("fails closed with one typed stable reason when the reviewed release trust binding is absent", () => {
     const production = createHostedCampaignProductionComposition();
     expect(() => production.createInitialAdmissionProbe({ bindings, definition, plan }))
-      .toThrow("MISSING_TRUST_BINDING");
+      .toThrow("RELEASE_BINDING_REQUIRED");
   });
 
   it("does not accept operator candidate fields as a substitute for the static trust root", () => {

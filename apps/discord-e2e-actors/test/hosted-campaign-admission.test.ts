@@ -160,6 +160,11 @@ describe("hosted campaign admission", () => {
     ])).toEqual({ bindingsPath: "/private/bindings.json", definitionPath: "/private/definition.json", minimumFreeBytes: 1_048_576, planPath: "/private/plan.json", receiptPath: "/private/receipt.json" });
     expect(() => parseHostedAdmissionArguments(["--definition", "/a", "--definition", "/b"]))
       .toThrow("Usage");
+    expect(parseHostedAdmissionArguments([
+      "--definition", "/private/definition.json", "--receipt", "/private/receipt.json",
+      "--bindings", "/private/bindings.json", "--plan", "/private/plan.json",
+      "--minimum-free-bytes", "1048576", "--release-binding", "/private/release.json",
+    ])).toMatchObject({ releaseBindingPath: "/private/release.json" });
   });
 });
 

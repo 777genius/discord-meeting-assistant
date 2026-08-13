@@ -15,7 +15,7 @@ import {
 } from "./hosted-campaign-production-policy.js";
 
 export type HostedCampaignProductionCompositionFailureReason =
-  | "MISSING_TRUST_BINDING"
+  | "RELEASE_BINDING_REQUIRED"
   | "REMOTE_READINESS_INCOMPLETE"
   | "INSUFFICIENT_LAUNCH_HEADROOM";
 
@@ -132,8 +132,8 @@ function createProbe(
 ): HostedCampaignRemoteAdmissionProbe {
   if (policy.trustBinding === undefined) {
     throw new HostedCampaignProductionCompositionError(
-      "MISSING_TRUST_BINDING",
-      "Hosted campaign production trust binding is not compiled",
+      "RELEASE_BINDING_REQUIRED",
+      "Hosted campaign reviewed release binding and compiled trust root are required",
     );
   }
   return createHostedCampaignRemoteAdmissionProbe(policy.trustBinding.createConfig(exactCandidate));

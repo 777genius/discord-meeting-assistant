@@ -1,4 +1,4 @@
-import { chmod, link, lstat, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
+import { chmod, link, lstat, mkdir, mkdtemp, readFile, readdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -9,10 +9,12 @@ import {
   type HostedCampaignLeaseHandle,
 } from "../src/hosted-campaign-coordinator.js";
 import { buildResolvedHostedCampaignPlanV1 } from "../src/hosted-campaign-plan-builder.js";
+import { compileHostedCampaignPlanCli } from "../src/compile-hosted-campaign-plan.js";
 import { deriveHostedClockPreflightReceiptV2 } from "../src/hosted-clock-proof-v2.js";
 import { parseHostedCampaignArguments, parseHostedCampaignPlan } from "../src/hosted-campaign-run-config.js";
 import {
   assertHostedCampaignReceiptAbsent,
+  createProductionHostedCampaignPorts,
   loadHostedCampaignTrustedRuntimeEnvironment,
   readPrivateHostedCampaignPlan,
   resolveHostedCampaignBarrierRoot,
@@ -122,6 +124,15 @@ describe("run-hosted-campaign CLI", () => {
       .toThrow(/absolute/u);
   });
 
+  it("accepts only an absolute private release-binding path in the optional final pair", () => {
+    expect(parseHostedCampaignArguments(["/plan.json", "/receipt.json", "1000", "/admission.json",
+      "/definition.json", "/bindings.json", "--release-binding", "/private/release.json"]))
+      .toMatchObject({ releaseBindingPath: "/private/release.json" });
+    expect(() => parseHostedCampaignArguments(["/plan.json", "/receipt.json", "1000", "/admission.json",
+      "/definition.json", "/bindings.json", "--release-binding", "release.json"]))
+      .toThrow("absolute-private-json");
+  });
+
   it("strictly validates the closed executable plan", () => {
     expect(parseHostedCampaignPlan(plan()).children[0]?.entrypoint).toBe("actor");
     expect(() => parseHostedCampaignPlan({ ...plan(), children: [{ ...plan().children[0], command: "sh" }] }))
@@ -184,6 +195,36 @@ describe("run-hosted-campaign CLI", () => {
       })) }, ...input.children.slice(1)],
     });
     expect(() => resolveHostedCampaignBarrierRoot(split)).toThrow(/one exact barriers root/u);
+  });
+
+  it("initializes the production run root after compile and preflight control files exist", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "hosted-campaign-control-"));
+    const campaignRoot = join(parent, "campaigns");
+    const campaignId = "campaign-1";
+    const controlRoot = join(campaignRoot, campaignId, "control");
+    await mkdir(controlRoot, { mode: 0o700, recursive: true });
+    const definitionPath = join(controlRoot, "definition.json");
+    const bindingsPath = join(controlRoot, "bindings.json");
+    const planPath = join(controlRoot, "plan.json");
+    const admissionPath = join(controlRoot, "admission.json");
+    const releaseBindingPath = join(controlRoot, "release-binding.json");
+    const localDefinition = { ...definition(), campaignRoot };
+    await writeFile(definitionPath, JSON.stringify(localDefinition), { mode: 0o600 });
+    await writeFile(bindingsPath, JSON.stringify(bindings()), { mode: 0o600 });
+    await compileHostedCampaignPlanCli([
+      "--definition", definitionPath, "--bindings", bindingsPath, "--output", planPath,
+    ]);
+    await writeFile(admissionPath, JSON.stringify({ status: "admitted" }), { mode: 0o600 });
+    await writeFile(releaseBindingPath, JSON.stringify({ schemaVersion: 1 }), { mode: 0o600 });
+
+    await createProductionHostedCampaignPorts(
+      parseHostedCampaignPlan(JSON.parse(await readFile(planPath, "utf8")) as unknown),
+      { admissionPath, bindingsPath, definitionPath, planPath, releaseBindingPath },
+      { HOME: parent, PATH: "/usr/bin:/bin" },
+    );
+
+    expect((await readdir(join(campaignRoot, campaignId))).toSorted())
+      .toEqual(["barriers", "control", "run-1", "run-2", "run-3"]);
   });
 
   it("does not follow a symlink when opening the private campaign plan", async () => {
