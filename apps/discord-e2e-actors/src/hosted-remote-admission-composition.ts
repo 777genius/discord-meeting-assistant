@@ -28,6 +28,10 @@ import type {
 import { hostedDeploymentRevalidationBaselineV1Schema } from "./hosted-campaign-remote-admission.js";
 import { HOSTED_CAMPAIGN_TARGET } from "./hosted-campaign-target.js";
 import type { HostedClockPreflightProbe } from "./collect-hosted-clock-preflight.js";
+import {
+  HostedRemoteDiscordIdentityProbe,
+  type BoundedRemoteContainerProcessPort,
+} from "./hosted-remote-discord-identity-probe.js";
 
 const sha256Schema = z.string().regex(/^[a-f\d]{64}$/u);
 const sourceRevisionSchema = z.string().regex(/^(?:[a-f\d]{40}|[a-f\d]{64})$/u);
@@ -73,9 +77,12 @@ export interface HostedRemoteAdmissionCompositionConfig {
     readonly expectation: HostedDeploymentSafetyExpectationV1;
     readonly producer: HostedDeploymentSafetyReceiptProducer;
   };
-  readonly discord: HostedDiscordIdentityReceiptInput;
+  readonly discord: Omit<HostedDiscordIdentityReceiptInput, "roles"> & Readonly<{
+    roles: Omit<HostedDiscordIdentityReceiptInput["roles"], "remotePlatformSut">;
+  }>;
   readonly meetingPlatformRevision: string;
   readonly planSha256: string;
+  readonly remoteContainerProcess: BoundedRemoteContainerProcessPort;
   readonly voicetext: {
     /** Pinned fixture-definition thresholds, constructed by trusted host wiring. */
     readonly fixtureExpectation: Readonly<{
@@ -112,7 +119,7 @@ export function createHostedCampaignRemoteAdmissionProbe(
       // Deployment must be proven before any provider or Discord request is made.
       const deploymentSafety = await config.deployment.producer.collect();
       assertNotAborted(signal);
-      await produceHostedDiscordIdentityReceiptV1(config.discord);
+      await produceHostedDiscordIdentityReceiptV1(createDiscordIdentityInput(config));
       assertNotAborted(signal);
       const voicetextCanary = await produceVoicetextSemanticCanaryReceiptV1(
         { ...config.voicetext.input, ...(signal === undefined ? {} : { signal }) },
@@ -123,7 +130,7 @@ export function createHostedCampaignRemoteAdmissionProbe(
       // Refresh short-lived identity and clock evidence after the potentially slow
       // canary. Both are independent and completion-stamped by their producers.
       const [discordIdentity, clockExchange] = await Promise.all([
-        produceHostedDiscordIdentityReceiptV1(config.discord),
+        produceHostedDiscordIdentityReceiptV1(createDiscordIdentityInput(config)),
         config.clock.collectClockPreflight(),
       ]);
       assertNotAborted(signal);
@@ -145,6 +152,35 @@ export function createHostedCampaignRemoteAdmissionProbe(
       });
     },
   });
+}
+
+function createDiscordIdentityInput(
+  config: HostedRemoteAdmissionCompositionConfig,
+): HostedDiscordIdentityReceiptInput {
+  const binding = config.discord.binding;
+  return {
+    ...config.discord,
+    roles: {
+      ...config.discord.roles,
+      remotePlatformSut: {
+        expectation: {
+          applicationId: HOSTED_CAMPAIGN_TARGET.sutApplicationId,
+          tokenFile: {
+            account: "sut",
+            ownerUid: 10_001,
+            path: "/run/secrets/discord-sut-token",
+            scope: "remote-deployment-secret",
+          },
+        },
+        probe: new HostedRemoteDiscordIdentityProbe(config.remoteContainerProcess, {
+          containerId: binding.containerId,
+          host: binding.host,
+          imageDigestSha256: binding.imageDigestSha256,
+          sourceRevision: binding.sourceRevision,
+        }),
+      },
+    },
+  };
 }
 
 function validateComposition(

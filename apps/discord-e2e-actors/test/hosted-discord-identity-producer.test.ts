@@ -66,15 +66,16 @@ describe("hosted Discord identity producer", () => {
     await expect(clientReturning(200, {}).get("/users/other", token)).rejects.toThrow("allowlist");
   });
 
-  it("combines six injected role probes into one digest-bound receipt", async () => {
+  it("combines seven injected role probes into one digest-bound receipt", async () => {
     const roleIds = [
       "1534231284467896512", "1533867700575670282", "1533227577286852649",
-      "1533228054724346087", "1533873978417086474", "1533224474609057793",
+      "1533228054724346087", "1533873978417086474", "1533224474609057793", "1533224474609057793",
     ] as const;
-    const names = ["botikPlayback", "localObserver", "localSpeakerA", "localSpeakerB", "localSpeakerD", "localSut"] as const;
-    const accounts = ["botik-playback", "conversation-observer", "speaker-a", "speaker-b", "speaker-d", "sut"] as const;
+    const names = ["botikPlayback", "localObserver", "localSpeakerA", "localSpeakerB", "localSpeakerD", "localSut", "remotePlatformSut"] as const;
+    const accounts = ["botik-playback", "conversation-observer", "speaker-a", "speaker-b", "speaker-d", "sut", "sut"] as const;
     const roles = Object.fromEntries(names.map((name, index) => {
-      const expected = expectation(roleIds[index], accounts[index], name === "botikPlayback");
+      const expected = expectation(roleIds[index], accounts[index], name === "botikPlayback" || name === "remotePlatformSut",
+        name === "remotePlatformSut" ? "/run/secrets/discord-sut-token" : undefined);
       const injected: DiscordRoleIdentityProbe = { probe: async () => identity(expected) };
       return [name, { expectation: expected, probe: injected }];
     })) as Parameters<typeof produceHostedDiscordIdentityReceiptV1>[0]["roles"];
@@ -106,8 +107,9 @@ describe("hosted Discord identity producer", () => {
       id: string,
       account: DiscordRoleIdentityExpectation["tokenFile"]["account"],
       remote = false,
+      path?: string,
     ): { expectation: DiscordRoleIdentityExpectation; probe: DiscordRoleIdentityProbe } => {
-      const expected = expectation(id, account, remote);
+      const expected = expectation(id, account, remote, path);
       return { expectation: expected, probe: { probe: async () => {
         currentTime = 170_000;
         return identity(expected);
@@ -120,6 +122,7 @@ describe("hosted Discord identity producer", () => {
       localSpeakerB: delayedRole(roleIds[3], accounts[3]),
       localSpeakerD: delayedRole(roleIds[4], accounts[4]),
       localSut: delayedRole(roleIds[5], accounts[5]),
+      remotePlatformSut: delayedRole(roleIds[5], accounts[5], true, "/run/secrets/discord-sut-token"),
     };
 
     const receipt = await produceHostedDiscordIdentityReceiptV1({
@@ -140,16 +143,17 @@ function expectation(
   id = applicationId,
   account: DiscordRoleIdentityExpectation["tokenFile"]["account"] = "botik-playback",
   remote = false,
+  path = `/run/test-tokens/${account}`,
 ): DiscordRoleIdentityExpectation {
   return { applicationId: id, tokenFile: {
-    account, ownerUid: 10_001, path: `/run/test-tokens/${account}`,
+    account, ownerUid: 10_001, path,
     scope: remote ? "remote-deployment-secret" : "local-campaign-secret",
   } };
 }
 
 function identity(expected: DiscordRoleIdentityExpectation) {
   const tokenFile = expected.tokenFile.scope === "remote-deployment-secret"
-    ? { ...expected.tokenFile, generationId: `generation-${expected.tokenFile.account}`, mode: 0o400 as const }
+    ? { ...expected.tokenFile, generationId: `generation-remote-${expected.tokenFile.account}`, mode: 0o400 as const }
     : { ...expected.tokenFile, generationId: `generation-${expected.tokenFile.account}`, mode: 0o600 as const };
   return {
     applicationId: expected.applicationId, authenticatedUserId: expected.applicationId, bot: true as const,

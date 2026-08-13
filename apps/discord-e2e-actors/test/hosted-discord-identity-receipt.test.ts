@@ -14,6 +14,7 @@ const ids = {
   localSpeakerB: "1533228054724346087",
   localSpeakerD: "1533873978417086474",
   localSut: "1533224474609057793",
+  remotePlatformSut: "1533224474609057793",
 } as const;
 
 const binding = {
@@ -94,6 +95,15 @@ describe("hosted Discord identity receipt", () => {
       { ...base.identities, localObserver: { ...base.identities.localObserver, authenticatedUserId: ids.localSpeakerA } },
       { ...base.identities, localObserver: identity(ids.localSpeakerA, "conversation-observer") },
       { ...base.identities, localObserver: { ...base.identities.localObserver, tokenFile: { ...base.identities.localObserver.tokenFile, mode: 0o644 } } },
+      { ...base.identities, remotePlatformSut: { ...base.identities.remotePlatformSut,
+        applicationId: ids.localSpeakerA, authenticatedUserId: ids.localSpeakerA } },
+      { ...base.identities, remotePlatformSut: { ...base.identities.remotePlatformSut,
+        tokenFile: { ...base.identities.remotePlatformSut.tokenFile,
+          generationId: base.identities.localSut.tokenFile.generationId } } },
+      { ...base.identities, remotePlatformSut: { ...base.identities.remotePlatformSut,
+        tokenFile: { ...base.identities.remotePlatformSut.tokenFile, path: "/run/secrets/other" } } },
+      { ...base.identities, remotePlatformSut: { ...base.identities.remotePlatformSut,
+        tokenFile: { ...base.identities.remotePlatformSut.tokenFile, ownerUid: 10_002 } } },
     ];
     for (const invalidIdentitySet of invalidIdentities) {
       expect(() => evaluateDiscordIdentityReceiptV1(
@@ -120,6 +130,8 @@ function identities(): DiscordIdentityRolesV1 {
     localSpeakerB: identity(ids.localSpeakerB, "speaker-b"),
     localSpeakerD: identity(ids.localSpeakerD, "speaker-d"),
     localSut: identity(ids.localSut, "sut"),
+    remotePlatformSut: identity(ids.remotePlatformSut, "sut", "remote-deployment-secret",
+      "/run/secrets/discord-sut-token"),
   };
 }
 
@@ -128,12 +140,13 @@ function identity(
   account: DiscordIdentityRolesV1[keyof DiscordIdentityRolesV1]["tokenFile"]["account"],
   scope: DiscordIdentityRolesV1[keyof DiscordIdentityRolesV1]["tokenFile"]["scope"] =
     "local-campaign-secret",
+  path = `/run/test-tokens/${account}`,
 ): DiscordIdentityRolesV1[keyof DiscordIdentityRolesV1] {
   const tokenFile = scope === "remote-deployment-secret"
-    ? { account, generationId: `generation-${account}`, mode: 0o400 as const, ownerUid: 10_001,
-        path: `/run/test-tokens/${account}`, scope }
+    ? { account, generationId: `generation-remote-${account}`, mode: 0o400 as const, ownerUid: 10_001,
+        path, scope }
     : { account, generationId: `generation-${account}`, mode: 0o600 as const, ownerUid: 10_001,
-        path: `/run/test-tokens/${account}`, scope };
+        path, scope };
   return {
     applicationId, authenticatedUserId: applicationId, bot: true,
     tokenFile,

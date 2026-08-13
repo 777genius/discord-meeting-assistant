@@ -35,9 +35,9 @@ describe("hosted remote admission composition", () => {
     expect(result.readiness).toMatchObject({ campaignId, planSha256 });
     expect(calls).toEqual([
       "deployment", "discord:botikPlayback", "discord:localObserver", "discord:localSpeakerA",
-      "discord:localSpeakerB", "discord:localSpeakerD", "discord:localSut", "voicetext",
+      "discord:localSpeakerB", "discord:localSpeakerD", "discord:localSut", "discord:remotePlatformSut", "voicetext",
       "discord:botikPlayback", "discord:localObserver", "discord:localSpeakerA",
-      "discord:localSpeakerB", "discord:localSpeakerD", "discord:localSut", "clock",
+      "discord:localSpeakerB", "discord:localSpeakerD", "discord:localSut", "discord:remotePlatformSut", "clock",
       "deployment",
     ]);
     expect(JSON.stringify(result)).not.toContain(secret);
@@ -272,6 +272,35 @@ function composition(calls: string[], time: () => number = () => now): HostedRem
     },
     meetingPlatformRevision: revision,
     planSha256,
+    remoteContainerProcess: { execute: async ({ args, binding: remoteBinding }) => {
+      calls.push("discord:remotePlatformSut");
+      const value = (flag: string): string => {
+        const index = args.indexOf(flag);
+        const result = args[index + 1];
+        if (index < 0 || result === undefined) {throw new Error(`missing ${flag}`);}
+        return result;
+      };
+      return {
+        exitCode: 0,
+        signal: null,
+        stderr: "",
+        stdout: `${JSON.stringify({
+          authenticatedUserId: HOSTED_CAMPAIGN_TARGET.sutApplicationId,
+          binding: { containerId: remoteBinding.containerId,
+            imageDigestSha256: remoteBinding.imageDigestSha256,
+            sourceRevision: remoteBinding.sourceRevision },
+          bot: true,
+          kind: "hosted-remote-discord-identity-probe-result",
+          schemaVersion: 1,
+          target: { guildId: value("--guild-id"),
+            publicationChannelId: value("--publication-channel-id"),
+            voiceChannelId: value("--voice-channel-id") },
+          tokenCustody: { generationId: "generation-remote-sut", mode: 0o400,
+            ownerUid: 10_001, path: "/run/secrets/discord-sut-token" },
+        })}\n`,
+        timedOut: false,
+      };
+    } },
     voicetext: {
       fixtureExpectation: {
         maximumCharacterErrorRate: 0.15,

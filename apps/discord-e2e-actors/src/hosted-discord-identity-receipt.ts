@@ -37,17 +37,40 @@ const authenticatedApplicationSchema = z.object({
   }
 });
 
+const localSutIdentitySchema = authenticatedApplicationSchema.superRefine((identity, context) => {
+  if (identity.tokenFile.account !== "sut" || identity.tokenFile.scope !== "local-campaign-secret") {
+    context.addIssue({ code: "custom", message: "Local SUT identity must use local SUT token custody" });
+  }
+});
+
+const remotePlatformSutIdentitySchema = authenticatedApplicationSchema.superRefine((identity, context) => {
+  if (identity.tokenFile.account !== "sut"
+    || identity.tokenFile.scope !== "remote-deployment-secret"
+    || identity.tokenFile.path !== "/run/secrets/discord-sut-token"
+    || identity.tokenFile.ownerUid !== 10_001) {
+    context.addIssue({ code: "custom", message: "Remote Meeting Platform SUT identity has invalid token custody" });
+  }
+});
+
 const discordIdentityRolesV1Schema = z.object({
   botikPlayback: authenticatedApplicationSchema,
   localObserver: authenticatedApplicationSchema,
   localSpeakerA: authenticatedApplicationSchema,
   localSpeakerB: authenticatedApplicationSchema,
   localSpeakerD: authenticatedApplicationSchema,
-  localSut: authenticatedApplicationSchema,
+  localSut: localSutIdentitySchema,
+  remotePlatformSut: remotePlatformSutIdentitySchema,
 }).strict().superRefine((roles, context) => {
-  const ids = Object.values(roles).map(({ applicationId }) => applicationId);
+  const { remotePlatformSut, ...localRoles } = roles;
+  const ids = Object.values(localRoles).map(({ applicationId }) => applicationId);
   if (new Set(ids).size !== ids.length) {
     context.addIssue({ code: "custom", message: "Discord campaign roles must use distinct applications" });
+  }
+  if (remotePlatformSut.applicationId !== roles.localSut.applicationId) {
+    context.addIssue({ code: "custom", message: "Local and remote Meeting Platform SUT roles must use the same application" });
+  }
+  if (remotePlatformSut.tokenFile.generationId === roles.localSut.tokenFile.generationId) {
+    context.addIssue({ code: "custom", message: "Local and remote Meeting Platform SUT credentials need independent generations" });
   }
 });
 
