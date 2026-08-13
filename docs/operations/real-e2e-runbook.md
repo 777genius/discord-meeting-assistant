@@ -289,13 +289,20 @@ observer may omit its pre-call meeting ID in strict campaign mode and derive it
 from the single fresh, schema-validated, run-bound, content-addressed intent in
 the clean handshake root. Standalone observation still requires an explicit
 meeting ID. This shared-volume receipt is not cryptographically signed: the root
-and receipt must be private and owned by the current user, publication is
+and receipt must be private and owned by the test UID/GID, publication is
 create-only, and the observer rejects stale, mismatched, or ambiguous intents.
 It creates the matching ready receipt and retains the resolved meeting identity
 and digest in campaign proof before answer playback may begin. Any earlier
-audible packet aborts the campaign. Mount one host test-evidence directory into Meeting Platform at
-`/var/lib/discord-meeting/e2e-playback-readiness`, expose the same host directory
-to the observer, and never reuse a per-run subdirectory. Meeting Platform
+audible packet aborts the campaign. Apply the test-only
+`infra/deployment/compose.e2e-campaign.yaml` overlay and set
+`E2E_CAMPAIGN_HOST_ROOT` to a fresh mode-0700 UID/GID-10001 wrapper containing
+exactly one campaign-ID directory. The overlay exposes only that wrapper to
+Meeting Platform and its disposable runner at `/run/e2e-campaign`; never mount
+the shared campaigns parent. Runner tokens use the distinct read-only
+`E2E_RUNNER_SECRET_DIRECTORY` mount and are not Platform secrets. The base
+production Compose deliberately has no campaign/readiness bind mount. Require
+the three-party root, isolation, freshness and bidirectional nonce proof before
+launch, and never reuse a per-run subdirectory. Meeting Platform
 requires all `CONVERSATION_E2E_PLAYBACK_READINESS_*` settings together and
 rejects them unless `E2E_TEST_ONLY_LABEL=true`.
 Do not place the literal farewell capture before the addressed-answer capture.

@@ -189,13 +189,20 @@ single fresh, schema-validated, run-bound, content-addressed intent in the clean
 handshake root. Standalone observation still requires an explicit meeting ID.
 The shared-volume receipt is not a cryptographic signature: trust comes from a
 private current-user-owned directory, private current-user-owned regular files,
-create-only publication, and exact digest/schema/run validation. The
+create-only publication, and exact digest/schema/run validation. For a hosted
+campaign, apply `infra/deployment/compose.e2e-campaign.yaml` only to the isolated
+test deployment. `E2E_CAMPAIGN_HOST_ROOT` is a fresh mode-0700 UID/GID-10001
+wrapper containing exactly one campaign-ID directory; it is mounted into both
+Meeting Platform and the disposable runner at `/run/e2e-campaign`. Never point
+it at the shared campaigns parent. The production Compose file has no readiness
+mount, and the runner receives official test-bot tokens through the separate
+read-only `E2E_RUNNER_SECRET_DIRECTORY` mount, never through Platform secrets.
+The three-party mount probe must prove exact roots, sibling isolation, freshness
+and bidirectional host/Platform/runner nonce visibility before launch. The
 already-subscribed observer rejects stale, mismatched, or ambiguous receipts and
 publishes a matching create-only ready receipt, retaining the resolved meeting
 ID and intent digest in campaign proof. Only then may playback start. Any earlier
-audible packet aborts the campaign. Mount one host test-evidence directory into
-Meeting Platform at `/var/lib/discord-meeting/e2e-playback-readiness` and expose
-that same host directory to the observer. Never reuse a per-run subdirectory.
+audible packet aborts the campaign. Never reuse a per-run subdirectory.
 
 Each capture declares `greeting`, `farewell`, or `addressed-answer` purpose.
 Alone it remains transport evidence: it does not run STT, establish the

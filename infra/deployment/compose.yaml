@@ -280,7 +280,6 @@ services:
       VOICETEXT_WS_URL: ${VOICETEXT_WS_URL:-wss://api.voicetext.site/api/v1/transcribe/stream}
     volumes:
       - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/data/spool:/var/lib/discord-meeting/spool
-      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/data/e2e-playback-readiness:/var/lib/discord-meeting/e2e-playback-readiness
       - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/secrets/platform:/run/secrets:ro
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=0700,uid=10001,gid=10001
