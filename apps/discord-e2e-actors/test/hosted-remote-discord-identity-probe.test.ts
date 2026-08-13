@@ -55,6 +55,16 @@ describe("hosted remote Discord identity probe", () => {
     expect(JSON.stringify(request)).not.toMatch(/token\.[A-Za-z\d]/u);
   });
 
+  it("forwards the caller cancellation signal to the remote container process", async () => {
+    const execute = vi.fn<BoundedRemoteContainerProcessPort["execute"]>(async () => success());
+    const controller = new AbortController();
+
+    await new HostedRemoteDiscordIdentityProbe({ execute }, binding)
+      .probe(expectation, target, controller.signal);
+
+    expect(execute.mock.calls[0]?.[0].signal).toBe(controller.signal);
+  });
+
   it.each([
     ["timeout", { timedOut: true }],
     ["signal", { signal: "SIGTERM" }],

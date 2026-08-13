@@ -57,6 +57,26 @@ describe("hosted Discord identity producer", () => {
     await expect(probe.probe(expectation(), target)).rejects.toThrow("changed during");
   });
 
+  it("aborts all in-flight Discord REST requests with the caller signal", async () => {
+    const controller = new AbortController();
+    const signals: AbortSignal[] = [];
+    const client = new BoundedDiscordBotJsonClient(async (_url, init) => {
+      signals.push(init.signal);
+      return await new Promise((_resolve, reject) => {
+        init.signal.addEventListener("abort", () => {reject(init.signal.reason);}, { once: true });
+      });
+    });
+    const result = new DiscordRestRoleIdentityProbe(secretReader(), client)
+      .probe(expectation(), target, controller.signal);
+
+    await vi.waitFor(() => {expect(signals).toHaveLength(4);});
+    controller.abort(new Error("campaign deadline expired"));
+
+    await expect(result).rejects.toThrow("campaign deadline expired");
+    expect(signals).toHaveLength(4);
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
+  });
+
   it("rejects outages, redirects, oversized bodies, malformed JSON, and off-allowlist paths", async () => {
     const outage = new BoundedDiscordBotJsonClient(async () => {throw new Error("network down");});
     await expect(outage.get("/users/@me", token)).rejects.toThrow("network down");

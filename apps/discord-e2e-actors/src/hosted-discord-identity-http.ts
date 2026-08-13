@@ -1,5 +1,5 @@
 export interface DiscordBotJsonClient {
-  get(path: string, botToken: string): Promise<unknown>;
+  get(path: string, botToken: string, signal?: AbortSignal): Promise<unknown>;
 }
 
 export interface DiscordFetchResponse {
@@ -28,12 +28,16 @@ export class BoundedDiscordBotJsonClient implements DiscordBotJsonClient {
     }
   }
 
-  public async get(path: string, botToken: string): Promise<unknown> {
+  public async get(path: string, botToken: string, signal?: AbortSignal): Promise<unknown> {
     assertSafeDiscordPath(path);
+    const requestSignal = signal === undefined
+      ? AbortSignal.timeout(this.timeoutMs)
+      : AbortSignal.any([signal, AbortSignal.timeout(this.timeoutMs)]);
+    requestSignal.throwIfAborted();
     const response = await this.fetchResponse(`${apiOrigin}${apiPrefix}${path}`, {
       headers: { accept: "application/json", authorization: `Bot ${botToken}` },
       redirect: "manual",
-      signal: AbortSignal.timeout(this.timeoutMs),
+      signal: requestSignal,
     });
     if (response.status >= 300 && response.status < 400) {
       throw new Error("Discord REST redirects are forbidden");
@@ -45,7 +49,7 @@ export class BoundedDiscordBotJsonClient implements DiscordBotJsonClient {
     if (contentType !== "application/json") {
       throw new Error("Discord REST response is not JSON");
     }
-    const body = await readBoundedBody(response.body, this.maximumBodyBytes);
+    const body = await readBoundedBody(response.body, this.maximumBodyBytes, requestSignal);
     try {
       return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body));
     } catch {
@@ -63,20 +67,26 @@ function assertSafeDiscordPath(path: string): void {
 async function readBoundedBody(
   stream: ReadableStream<Uint8Array> | null,
   maximumBodyBytes: number,
+  signal: AbortSignal,
 ): Promise<Uint8Array> {
   if (stream === null) {throw new Error("Discord REST response body is missing");}
   const reader = stream.getReader();
+  const abort = (): void => { void reader.cancel(signal.reason).catch(() => {}); };
+  signal.addEventListener("abort", abort, { once: true });
   const chunks: Uint8Array[] = [];
   let total = 0;
   try {
     for (;;) {
+      signal.throwIfAborted();
       const { done, value } = await reader.read();
+      signal.throwIfAborted();
       if (done) {break;}
       total += value.byteLength;
       if (total > maximumBodyBytes) {throw new Error("Discord REST response body exceeds its limit");}
       chunks.push(value);
     }
   } finally {
+    signal.removeEventListener("abort", abort);
     await reader.cancel().catch(() => null);
   }
   const body = new Uint8Array(total);

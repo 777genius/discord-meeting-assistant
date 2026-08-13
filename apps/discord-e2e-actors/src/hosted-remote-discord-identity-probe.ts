@@ -88,12 +88,14 @@ export class HostedRemoteDiscordIdentityProbe implements DiscordRoleIdentityProb
   public async probe(
     expectation: DiscordRoleIdentityExpectation,
     target: DiscordIdentityProbeTarget,
+    signal?: AbortSignal,
   ): Promise<ReturnType<typeof toIdentity>> {
     assertRemoteExpectation(expectation);
     const result = await this.process.execute({
       args: buildInternalArgs(expectation, target, this.#binding),
       binding: this.#binding,
       maximumOutputBytes,
+      ...(signal === undefined ? {} : { signal }),
       timeoutMs: this.timeoutMs,
     });
     assertSuccessfulProcess(result);

@@ -37,7 +37,7 @@ const sha256Schema = z.string().regex(/^[a-f\d]{64}$/u);
 const sourceRevisionSchema = z.string().regex(/^(?:[a-f\d]{40}|[a-f\d]{64})$/u);
 
 export interface HostedDeploymentSafetyReceiptProducer {
-  collect(): Promise<HostedDeploymentSafetyReceiptV1>;
+  collect(signal?: AbortSignal): Promise<HostedDeploymentSafetyReceiptV1>;
 }
 
 export function createHostedDeploymentSafetyRevalidator(
@@ -46,7 +46,7 @@ export function createHostedDeploymentSafetyRevalidator(
   return async (baselineValue, signal) => {
     assertNotAborted(signal);
     const baseline = hostedDeploymentRevalidationBaselineV1Schema.parse(baselineValue);
-    const freshReceipt = await producer.collect();
+    const freshReceipt = await producer.collect(signal);
     assertNotAborted(signal);
     const fresh = verifyHostedDeploymentSafetyReceiptV1(freshReceipt);
     if (baseline.campaignId !== fresh.campaignId
@@ -117,9 +117,9 @@ export function createHostedCampaignRemoteAdmissionProbe(
       assertNotAborted(signal);
 
       // Deployment must be proven before any provider or Discord request is made.
-      const deploymentSafety = await config.deployment.producer.collect();
+      const deploymentSafety = await config.deployment.producer.collect(signal);
       assertNotAborted(signal);
-      await produceHostedDiscordIdentityReceiptV1(createDiscordIdentityInput(config));
+      await produceHostedDiscordIdentityReceiptV1(createDiscordIdentityInput(config), signal);
       assertNotAborted(signal);
       const voicetextCanary = await produceVoicetextSemanticCanaryReceiptV1(
         { ...config.voicetext.input, ...(signal === undefined ? {} : { signal }) },
@@ -130,15 +130,15 @@ export function createHostedCampaignRemoteAdmissionProbe(
       // Refresh short-lived identity and clock evidence after the potentially slow
       // canary. Both are independent and completion-stamped by their producers.
       const [discordIdentity, clockExchange] = await Promise.all([
-        produceHostedDiscordIdentityReceiptV1(createDiscordIdentityInput(config)),
-        config.clock.collectClockPreflight(),
+        produceHostedDiscordIdentityReceiptV1(createDiscordIdentityInput(config), signal),
+        config.clock.collectClockPreflight(signal),
       ]);
       assertNotAborted(signal);
       const clockPreflight = deriveHostedClockPreflightReceiptV2(clockExchange);
 
       // Detect a deployment swap during the slower external probes. The final
       // receipt is the admitted baseline, not the stale first sample.
-      const deploymentRevalidation = await config.deployment.producer.collect();
+      const deploymentRevalidation = await config.deployment.producer.collect(signal);
       assertNotAborted(signal);
       assertHostedDeploymentSafetyRevalidatedV1(deploymentSafety, deploymentRevalidation);
 

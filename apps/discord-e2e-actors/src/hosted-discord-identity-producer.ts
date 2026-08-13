@@ -27,7 +27,8 @@ export type DiscordRoleIdentityExpectation = {
 };
 
 export interface DiscordRoleIdentityProbe {
-  probe(expectation: DiscordRoleIdentityExpectation, target: DiscordIdentityProbeTarget): Promise<RoleIdentity>;
+  probe(expectation: DiscordRoleIdentityExpectation, target: DiscordIdentityProbeTarget,
+    signal?: AbortSignal): Promise<RoleIdentity>;
 }
 
 export class DiscordRestRoleIdentityProbe implements DiscordRoleIdentityProbe {
@@ -39,17 +40,19 @@ export class DiscordRestRoleIdentityProbe implements DiscordRoleIdentityProbe {
   public async probe(
     expectation: DiscordRoleIdentityExpectation,
     target: DiscordIdentityProbeTarget,
+    signal?: AbortSignal,
   ): Promise<RoleIdentity> {
+    signal?.throwIfAborted();
     if (expectation.tokenFile.scope !== "local-campaign-secret") {
       throw new Error("Local Discord identity probe requires local campaign token custody");
     }
     const before = await this.secrets.readPrivateFile(expectation.tokenFile.account);
     assertCredentialDescriptor(before, expectation);
     const [user, guild, voiceChannel, publicationChannel] = await Promise.all([
-      this.client.get("/users/@me", before.secret),
-      this.client.get(`/guilds/${target.guildId}`, before.secret),
-      this.client.get(`/channels/${target.voiceChannelId}`, before.secret),
-      this.client.get(`/channels/${target.publicationChannelId}`, before.secret),
+      this.client.get("/users/@me", before.secret, signal),
+      this.client.get(`/guilds/${target.guildId}`, before.secret, signal),
+      this.client.get(`/channels/${target.voiceChannelId}`, before.secret, signal),
+      this.client.get(`/channels/${target.publicationChannelId}`, before.secret, signal),
     ]);
     const authenticated = userSchema.parse(user);
     if (!authenticated.bot || authenticated.id !== expectation.applicationId) {
@@ -88,7 +91,9 @@ export interface HostedDiscordIdentityReceiptInput {
 
 export async function produceHostedDiscordIdentityReceiptV1(
   input: HostedDiscordIdentityReceiptInput,
+  signal?: AbortSignal,
 ): Promise<DiscordIdentityReceiptV1> {
+  signal?.throwIfAborted();
   if (!Number.isSafeInteger(input.ttlMs) || input.ttlMs < 1 || input.ttlMs > 60_000) {
     throw new Error("Discord identity receipt TTL must be bounded to 60 seconds");
   }
@@ -99,8 +104,9 @@ export async function produceHostedDiscordIdentityReceiptV1(
   };
   const entries = await Promise.all((Object.keys(input.roles) as RoleName[]).map(async (role) => [
     role,
-    await input.roles[role].probe.probe(input.roles[role].expectation, target),
+    await input.roles[role].probe.probe(input.roles[role].expectation, target, signal),
   ] as const));
+  signal?.throwIfAborted();
   const generatedAtEpochMs = input.now();
   if (!Number.isSafeInteger(generatedAtEpochMs) || generatedAtEpochMs < 0) {
     throw new Error("Discord identity receipt completion time is invalid");
