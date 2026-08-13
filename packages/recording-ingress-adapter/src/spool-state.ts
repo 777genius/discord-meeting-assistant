@@ -16,6 +16,11 @@ export interface StoredSpeaker {
   readonly speakerId: string;
 }
 
+export interface StoredActor {
+  readonly actorId: string;
+  readonly kind: "automation" | "human" | "unknown";
+}
+
 export interface StoredAuthoritativeTrack {
   readonly audioLocator: string;
   readonly checksumSha256: string;
@@ -27,6 +32,7 @@ export interface StoredAuthoritativeTrack {
 }
 
 export interface RecordingSpoolState {
+  readonly actors: readonly StoredActor[] | null;
   readonly authoritativeTracks: readonly StoredAuthoritativeTrack[];
   readonly channelId: string;
   readonly endedAt?: string;
@@ -34,9 +40,10 @@ export interface RecordingSpoolState {
   readonly finalEventDigest?: string;
   readonly finalEventId?: string;
   readonly guildId: string;
+  readonly lifecycleSchemaVersion: 1 | 2;
   readonly pendingAuthoritativeTracks: readonly StoredAuthoritativeTrack[];
   readonly recordingId: string;
-  readonly schemaVersion: 1;
+  readonly schemaVersion: 2;
   readonly speakers: readonly StoredSpeaker[];
   readonly startedAt: string;
   readonly status: RecordingSpoolStatus;
@@ -54,11 +61,13 @@ export interface CompletedRecordingState {
    * alone cannot prove whether a later upload is an exact retry.
    */
   readonly authoritativeTracks: readonly StoredAuthoritativeTrack[];
+  readonly actors: readonly StoredActor[] | null;
   readonly channelId: string;
   readonly events: readonly StoredLifecycleEvent[];
   readonly finalEventDigest: string;
   readonly finalEventId: string;
   readonly guildId: string;
+  readonly lifecycleSchemaVersion: 1 | 2;
   readonly recording: {
     readonly manifestLocator: string;
     readonly recordingId: string;
@@ -69,7 +78,7 @@ export interface CompletedRecordingState {
     }[];
   };
   readonly recordingId: string;
-  readonly schemaVersion: 2;
+  readonly schemaVersion: 3;
 }
 
 function objectValue(value: unknown): Record<string, unknown> {
@@ -102,6 +111,49 @@ function parseStoredSpeaker(value: unknown): StoredSpeaker {
     fileToken: stringValue(record.fileToken, "speakers.fileToken"),
     speakerId: stringValue(record.speakerId, "speakers.speakerId"),
   };
+}
+
+function parseStoredActor(value: unknown): StoredActor {
+  const record = objectValue(value);
+  if (record.kind !== "human" && record.kind !== "automation" && record.kind !== "unknown") {
+    throw new RecordingIngressError("corrupt-spool", "invalid actor kind");
+  }
+  return {
+    actorId: stringValue(record.actorId, "actors.actorId"),
+    kind: record.kind,
+  };
+}
+
+function parseActorRoster(value: unknown): readonly StoredActor[] | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (!Array.isArray(value)) {
+    throw new RecordingIngressError("corrupt-spool", "actor roster is not an array");
+  }
+  const actors = value.map(parseStoredActor)
+    .toSorted((left, right) => left.actorId.localeCompare(right.actorId));
+  for (let index = 1; index < actors.length; index += 1) {
+    const previous = actors[index - 1];
+    const current = actors[index];
+    if (previous !== undefined && current !== undefined && previous.actorId === current.actorId) {
+      throw new RecordingIngressError(
+        "corrupt-spool",
+        previous.kind === current.kind
+          ? "actor roster repeats an actor"
+          : "actor roster contains conflicting actor kinds",
+      );
+    }
+  }
+  return actors;
+}
+
+function lifecycleSchemaVersion(value: unknown, fallback: 1): 1 | 2 {
+  const version = value ?? fallback;
+  if (version !== 1 && version !== 2) {
+    throw new RecordingIngressError("corrupt-spool", "invalid lifecycle schema version");
+  }
+  return version;
 }
 
 function parseStoredAuthoritativeTrack(value: unknown): StoredAuthoritativeTrack {
@@ -137,7 +189,11 @@ function optionalString(value: unknown, field: string): string | undefined {
 
 export function parseRecordingSpoolState(input: unknown): RecordingSpoolState {
   const record = objectValue(input);
-  if (record.schemaVersion !== 1 || !Array.isArray(record.events) || !Array.isArray(record.speakers)) {
+  if (
+    (record.schemaVersion !== 1 && record.schemaVersion !== 2) ||
+    !Array.isArray(record.events) ||
+    !Array.isArray(record.speakers)
+  ) {
     throw new RecordingIngressError("corrupt-spool", "unsupported spool metadata schema");
   }
   if (record.status !== "active" && record.status !== "aborted" && record.status !== "finalizing") {
@@ -146,7 +202,13 @@ export function parseRecordingSpoolState(input: unknown): RecordingSpoolState {
   const endedAt = optionalString(record.endedAt, "endedAt");
   const finalEventDigest = optionalString(record.finalEventDigest, "finalEventDigest");
   const finalEventId = optionalString(record.finalEventId, "finalEventId");
+  const actors = parseActorRoster(record.actors);
+  const protocolVersion = lifecycleSchemaVersion(record.lifecycleSchemaVersion, 1);
+  if (protocolVersion === 2 && actors === null) {
+    throw new RecordingIngressError("corrupt-spool", "v2 lifecycle spool is missing actors");
+  }
   return {
+    actors,
     authoritativeTracks: Array.isArray(record.authoritativeTracks)
       ? record.authoritativeTracks.map(parseStoredAuthoritativeTrack)
       : [],
@@ -156,11 +218,12 @@ export function parseRecordingSpoolState(input: unknown): RecordingSpoolState {
     ...(finalEventDigest === undefined ? {} : { finalEventDigest }),
     ...(finalEventId === undefined ? {} : { finalEventId }),
     guildId: stringValue(record.guildId, "guildId"),
+    lifecycleSchemaVersion: protocolVersion,
     pendingAuthoritativeTracks: Array.isArray(record.pendingAuthoritativeTracks)
       ? record.pendingAuthoritativeTracks.map(parseStoredAuthoritativeTrack)
       : [],
     recordingId: stringValue(record.recordingId, "recordingId"),
-    schemaVersion: 1,
+    schemaVersion: 2,
     speakers: record.speakers.map(parseStoredSpeaker),
     startedAt: stringValue(record.startedAt, "startedAt"),
     status: record.status,
@@ -179,7 +242,7 @@ export function parseCompletedRecordingState(input: unknown): CompletedRecording
   const record = objectValue(input);
   const recording = objectValue(record.recording);
   if (
-    record.schemaVersion !== 2 ||
+    (record.schemaVersion !== 2 && record.schemaVersion !== 3) ||
     !Array.isArray(record.events) ||
     !Array.isArray(record.authoritativeTracks) ||
     !Array.isArray(recording.speakerAudio)
@@ -190,6 +253,11 @@ export function parseCompletedRecordingState(input: unknown): CompletedRecording
     );
   }
   const authoritativeTracks = record.authoritativeTracks.map(parseStoredAuthoritativeTrack);
+  const actors = parseActorRoster(record.actors);
+  const protocolVersion = lifecycleSchemaVersion(record.lifecycleSchemaVersion, 1);
+  if (protocolVersion === 2 && actors === null) {
+    throw new RecordingIngressError("corrupt-spool", "v2 completion receipt is missing actors");
+  }
   const speakerAudio = recording.speakerAudio.map((value) => {
     const reference = objectValue(value);
     if (!Number.isSafeInteger(reference.timelineOffsetMs) || (reference.timelineOffsetMs as number) < 0) {
@@ -206,21 +274,40 @@ export function parseCompletedRecordingState(input: unknown): CompletedRecording
     throw new RecordingIngressError("corrupt-spool", "completion recording identity does not match");
   }
   assertCompletedTrackIdentity(authoritativeTracks, speakerAudio);
+  assertTrackActors(actors, speakerAudio);
   return {
     authoritativeTracks,
+    actors,
     channelId: stringValue(record.channelId, "channelId"),
     events: record.events.map(parseStoredEvent),
     finalEventDigest: stringValue(record.finalEventDigest, "finalEventDigest"),
     finalEventId: stringValue(record.finalEventId, "finalEventId"),
     guildId: stringValue(record.guildId, "guildId"),
+    lifecycleSchemaVersion: protocolVersion,
     recording: {
       manifestLocator: stringValue(recording.manifestLocator, "manifestLocator"),
       recordingId: stringValue(recording.recordingId, "recording.recordingId"),
       speakerAudio,
     },
     recordingId,
-    schemaVersion: 2,
+    schemaVersion: 3,
   };
+}
+
+function assertTrackActors(
+  actors: readonly StoredActor[] | null,
+  speakerAudio: readonly { readonly speakerId: string }[],
+): void {
+  if (actors === null) {
+    return;
+  }
+  const actorIds = new Set(actors.map((actor) => actor.actorId));
+  if (speakerAudio.some((track) => !actorIds.has(track.speakerId))) {
+    throw new RecordingIngressError(
+      "corrupt-spool",
+      "completion receipt has a track without authoritative actor identity",
+    );
+  }
 }
 
 function assertCompletedTrackIdentity(

@@ -185,6 +185,10 @@ export function recordedMeeting(
   manifestLocator = "s3://recordings/meeting-postgres-1/manifest.json",
 ): Meeting {
   return Meeting.record({
+    actors: [
+      { actorId: "speaker-a", kind: "human" },
+      { actorId: "speaker-b", kind: "human" },
+    ],
     meetingId,
     publicationTargetId: "discord-channel-1",
     recording: {
@@ -203,6 +207,7 @@ export function recordedMeeting(
         },
       ],
     },
+    source: { roomId: "room-1", scopeId: "scope-1" },
   });
 }
 

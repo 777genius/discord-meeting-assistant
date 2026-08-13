@@ -329,7 +329,7 @@ describe("authoritative Craig recording finalization", () => {
           uploadId: track.metadata.uploadId,
         },
       ],
-      schemaVersion: 2,
+      schemaVersion: 3,
     });
   });
 

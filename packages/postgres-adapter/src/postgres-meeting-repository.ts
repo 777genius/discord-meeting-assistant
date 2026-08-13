@@ -105,6 +105,29 @@ function sameRecording(
     });
 }
 
+function sameSource(
+  left: MeetingSnapshot["source"],
+  right: MeetingSnapshot["source"],
+): boolean {
+  return left === null || right === null
+    ? left === right
+    : left.roomId === right.roomId && left.scopeId === right.scopeId;
+}
+
+function sameActors(
+  left: MeetingSnapshot["actors"],
+  right: MeetingSnapshot["actors"],
+): boolean {
+  return left === null || right === null
+    ? left === right
+    : left.length === right.length && left.every((actor, index) => {
+        const candidate = right[index];
+        return candidate !== undefined &&
+          actor.actorId === candidate.actorId &&
+          actor.kind === candidate.kind;
+      });
+}
+
 export class PostgresMeetingRepository implements
   MeetingRepository,
   PostCallDeadLetterLedger,
@@ -207,7 +230,9 @@ export class PostgresMeetingRepository implements
     const currentSnapshot = restoreStoredSnapshot(current, snapshot.meetingId);
     if (
       currentSnapshot.publicationTargetId === snapshot.publicationTargetId &&
-      sameRecording(currentSnapshot.recording, snapshot.recording)
+      sameRecording(currentSnapshot.recording, snapshot.recording) &&
+      sameSource(currentSnapshot.source, snapshot.source) &&
+      sameActors(currentSnapshot.actors, snapshot.actors)
     ) {
       return;
     }

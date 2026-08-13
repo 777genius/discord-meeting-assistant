@@ -14,7 +14,11 @@ import {
   RecordingIngressError,
 } from "./errors.js";
 import type { JournalPacket } from "./ogg-opus.js";
-import type { RecordingSpoolState, StoredLifecycleEvent } from "./spool.js";
+import type {
+  RecordingSpoolState,
+  StoredActor,
+  StoredLifecycleEvent,
+} from "./spool.js";
 
 const DISCORD_SNOWFLAKE = /^\d{17,20}$/u;
 const BASE64 = /^(?:[A-Za-z\d+/]{4})*(?:[A-Za-z\d+/]{2}==|[A-Za-z\d+/]{3}=)?$/u;
@@ -66,6 +70,69 @@ export function requireSnowflake(value: unknown, field: string): string {
     throw new RecordingIngressError("invalid-input", `${field} is invalid`);
   }
   return value;
+}
+
+function normalizeActor(actor: StoredActor): StoredActor {
+  if (actor.kind !== "human" && actor.kind !== "automation" && actor.kind !== "unknown") {
+    throw new RecordingIngressError("invalid-input", "actor kind is invalid");
+  }
+  return {
+    actorId: requireSnowflake(actor.actorId, "actor.actorId"),
+    kind: actor.kind,
+  };
+}
+
+export function normalizeActorRoster(
+  actors: readonly StoredActor[],
+): readonly StoredActor[] {
+  const normalized = actors.map(normalizeActor)
+    .toSorted((left, right) => left.actorId.localeCompare(right.actorId));
+  for (let index = 1; index < normalized.length; index += 1) {
+    const previous = normalized[index - 1];
+    const current = normalized[index];
+    if (previous !== undefined && current !== undefined && previous.actorId === current.actorId) {
+      throw new RecordingIngressError(
+        "conflicting-duplicate",
+        previous.kind === current.kind
+          ? "actor roster repeats an actor"
+          : "one actor was assigned conflicting kinds",
+      );
+    }
+  }
+  return normalized;
+}
+
+export function sameActorRoster(
+  left: readonly StoredActor[] | null,
+  right: readonly StoredActor[] | null,
+): boolean {
+  return left === null || right === null
+    ? left === right
+    : left.length === right.length && left.every((actor, index) => {
+        const candidate = right[index];
+        return candidate !== undefined &&
+          actor.actorId === candidate.actorId &&
+          actor.kind === candidate.kind;
+      });
+}
+
+export function addActorToRoster(
+  actors: readonly StoredActor[],
+  actor: StoredActor,
+): readonly StoredActor[] {
+  const normalizedActor = normalizeActor(actor);
+  const existing = actors.find((candidate) => candidate.actorId === normalizedActor.actorId);
+  if (existing === undefined) {
+    return [...actors, normalizedActor]
+      .toSorted((left, right) => left.actorId.localeCompare(right.actorId));
+  }
+  if (existing.kind !== normalizedActor.kind) {
+    throw new RecordingIngressError(
+      "conflicting-duplicate",
+      "one actor was assigned conflicting kinds",
+    );
+  }
+  return actors;
 }
 
 function requireIntegerInRange(
@@ -151,16 +218,22 @@ export function canonicalLifecycleEvent(event: CraigLifecycleEvent): Record<stri
   };
   switch (event.type) {
     case "meeting.started":
-      return {
-        ...common,
-        participantIds: event.participantIds.map((id) => requireSnowflake(id, "participantId")),
-      };
+      return event.schemaVersion === 1
+        ? {
+            ...common,
+            participantIds: event.participantIds.map(
+              (id) => requireSnowflake(id, "participantId"),
+            ),
+          }
+        : { ...common, actors: normalizeActorRoster(event.actors) };
     case "participant.joined":
     case "participant.left":
-      return {
-        ...common,
-        participantId: requireSnowflake(event.participantId, "participantId"),
-      };
+      return event.schemaVersion === 1
+        ? {
+            ...common,
+            participantId: requireSnowflake(event.participantId, "participantId"),
+          }
+        : { ...common, actor: normalizeActor(event.actor) };
     case "meeting.connection_lost":
     case "meeting.connection_recovered":
     case "meeting.ended":
@@ -176,6 +249,9 @@ export function canonicalLifecycleEvent(event: CraigLifecycleEvent): Record<stri
     case "recording.authoritative_ready":
       return {
         ...common,
+        ...(event.schemaVersion === 1
+          ? {}
+          : { actors: normalizeActorRoster(event.actors) }),
         endedAt: requireInstant(event.endedAt, "event.endedAt"),
         sourceFilesChecksumSha256: event.sourceFilesChecksumSha256,
         trackCount: event.trackCount,

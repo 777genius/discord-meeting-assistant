@@ -28,6 +28,7 @@ export {
   type CompletedRecordingState,
   type RecordingSpoolState,
   type StoredAuthoritativeTrack,
+  type StoredActor,
   type StoredLifecycleEvent,
   type StoredSpeaker,
 } from "./spool-state.js";

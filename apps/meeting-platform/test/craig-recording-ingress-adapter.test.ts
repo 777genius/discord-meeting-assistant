@@ -4,6 +4,52 @@ import { CraigRecordingIngressAdapter } from "../src/adapters/outbound/craig-rec
 import { canonicalLiveAudioFormat } from "../src/application/recording-ingress.js";
 
 describe("CraigRecordingIngressAdapter", () => {
+  it("maps provider-neutral v2 actor identity without inferring a human", async () => {
+    const ingestLifecycleEvent = vi.fn(async () => ({
+      kind: "accepted" as const,
+      recordingId: "recording-1",
+      replayed: false,
+    }));
+    const adapter = new CraigRecordingIngressAdapter({
+      ingestAuthoritativeTrack: async () => ({ replayed: false }),
+      ingestLifecycleEvent,
+      ingestPacketBatch: async () => ({
+        acceptedPackets: 0,
+        duplicatePackets: 0,
+        recordingId: "recording-1",
+      }),
+    });
+    const source = {
+      roomId: "1533228823045214398",
+      scopeId: "1533228590643155034",
+    } as const;
+    const actors = [
+      { actorId: "1533227577286852649", kind: "human" as const },
+      { actorId: "1533227577286852650", kind: "automation" as const },
+    ];
+
+    await adapter.ingestLifecycleEvent({
+      actors,
+      eventId: "recording-1:start",
+      occurredAt: "2026-08-02T00:00:00.000Z",
+      recordingId: "recording-1",
+      schemaVersion: 2,
+      source,
+      type: "meeting.started",
+    });
+
+    expect(ingestLifecycleEvent).toHaveBeenCalledWith({
+      actors,
+      channelId: source.roomId,
+      eventId: "recording-1:start",
+      guildId: source.scopeId,
+      occurredAt: "2026-08-02T00:00:00.000Z",
+      recordingId: "recording-1",
+      schemaVersion: 2,
+      type: "meeting.started",
+    });
+  });
+
   it("maps provider-neutral application commands to Craig durability contracts", async () => {
     const ingestAuthoritativeTrack = vi.fn(async () => ({ replayed: false }));
     const ingestLifecycleEvent = vi.fn(async () => ({

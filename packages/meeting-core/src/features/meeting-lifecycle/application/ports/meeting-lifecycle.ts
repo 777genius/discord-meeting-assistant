@@ -1,4 +1,4 @@
-import type { MeetingSnapshot } from "../../domain/meeting.js";
+import type { MeetingSnapshot } from "../../domain/meeting-snapshot.js";
 
 /** Persistence boundary owned by the authoritative meeting lifecycle. */
 export interface MeetingRepository {

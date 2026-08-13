@@ -19,6 +19,8 @@ export {
   type AuthoritativeTrackUploadMetadata,
   type CraigPlaybackCommand,
   type CraigPlaybackEvent,
+  type CraigActor,
+  type CraigActorKind,
   type CraigLifecycleEvent,
   type VoicePacket,
   type VoicePacketBatch,

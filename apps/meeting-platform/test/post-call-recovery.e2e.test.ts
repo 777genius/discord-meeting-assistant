@@ -364,6 +364,7 @@ class CapturingPublisher implements SummaryPublicationPort {
 
 function initialMeeting(): MeetingSnapshot {
   return Meeting.record({
+    actors: [{ actorId: "speaker-a", kind: "human" }],
     meetingId,
     publicationTargetId: "test-results-channel",
     recording: {
@@ -375,5 +376,6 @@ function initialMeeting(): MeetingSnapshot {
         timelineOffsetMs: 0,
       }],
     },
+    source: { roomId: "room-1", scopeId: "scope-1" },
   }).toSnapshot();
 }

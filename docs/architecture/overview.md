@@ -71,6 +71,9 @@ deployments:
 - Guild Installation & Configuration owns the administrator-approved mapping
   from one Discord guild and voice channel to its results channel. Discord
   commands and PostgreSQL remain adapters around this context.
+- Meeting Knowledge owns provider-neutral knowledge admission identity and, in
+  later vertical slices, question-local human evidence and grounded-answer
+  invariants. Phase 1 admits no Discord questions and adds no model runtime.
 
 These names guide the first model. A separate workspace package is created only
 when a real slice and ownership boundary exist. Deployment separation is not a
@@ -78,7 +81,7 @@ DDD requirement.
 
 ## Meeting Core feature modules
 
-Meeting Core is one bounded-context package with eight enforced feature
+Meeting Core is one bounded-context package with nine enforced feature
 modules:
 
 ```text
@@ -86,6 +89,7 @@ packages/meeting-core/src/features/
   recording/
   transcription/
   meeting-intelligence/
+  meeting-knowledge/
   publishing/
   meeting-lifecycle/
   post-call-workflow/
@@ -98,6 +102,15 @@ application, and port directories it actually needs. External consumers use an
 explicit package subpath. Foundation denies undeclared feature dependencies and
 cross-feature deep imports, so the physical layout and executable dependency
 model describe the same architecture.
+
+Meeting Lifecycle snapshots retain an opaque source scope/room pair and an
+explicit `human | automation | unknown` actor roster. New Craig v2 recordings
+carry that identity through the durable spool and authoritative finalization.
+Legacy snapshots restore missing identity as explicit `null`; Craig v1 remains
+operational but cannot establish knowledge eligibility because its participant
+contract does not prove exclusion of every automation actor. Audio-track
+presence never implies a human actor, so Botik's authoritative track remains in
+the recording while Meeting Knowledge excludes it from human admission.
 
 ## Live conversation vertical slice
 

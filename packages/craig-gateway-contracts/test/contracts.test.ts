@@ -43,6 +43,47 @@ describe("Craig gateway contracts", () => {
     expect(event.type).toBe("recording.authoritative_ready");
   });
 
+  it("accepts v2 lifecycle identity with an explicit actor vocabulary", () => {
+    const actors = [
+      { actorId: "1533224474609057795", kind: "human" },
+      { actorId: "1533224474609057796", kind: "automation" },
+      { actorId: "1533224474609057797", kind: "unknown" },
+    ] as const;
+    expect(parseCraigLifecycleEvent({
+      ...baseEvent,
+      actors,
+      schemaVersion: 2,
+      type: "meeting.started",
+    })).toMatchObject({ actors, schemaVersion: 2 });
+    expect(parseCraigLifecycleEvent({
+      ...baseEvent,
+      actors,
+      endedAt: "2026-08-02T20:30:00.000Z",
+      schemaVersion: 2,
+      sourceFilesChecksumSha256: "a".repeat(64),
+      trackCount: 3,
+      type: "recording.authoritative_ready",
+    })).toMatchObject({ actors, schemaVersion: 2 });
+  });
+
+  it("rejects duplicate actors, conflicting kinds, and inferred v2 participants", () => {
+    expect(() => parseCraigLifecycleEvent({
+      ...baseEvent,
+      actors: [
+        { actorId: "1533224474609057795", kind: "human" },
+        { actorId: "1533224474609057795", kind: "automation" },
+      ],
+      schemaVersion: 2,
+      type: "meeting.started",
+    })).toThrow();
+    expect(() => parseCraigLifecycleEvent({
+      ...baseEvent,
+      participantIds: ["1533224474609057795"],
+      schemaVersion: 2,
+      type: "meeting.started",
+    })).toThrow();
+  });
+
   it("validates bounded authoritative track upload metadata", () => {
     expect(
       parseAuthoritativeTrackUploadMetadata({

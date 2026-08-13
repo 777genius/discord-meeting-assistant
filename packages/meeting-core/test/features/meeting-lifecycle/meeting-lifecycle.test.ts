@@ -86,13 +86,64 @@ const summarySnapshot = {
 
 function recordedMeeting(): Meeting {
   return Meeting.record({
+    actors: [
+      { actorId: "speaker-a", kind: "human" },
+      { actorId: "speaker-b", kind: "human" },
+      { actorId: "botik", kind: "automation" },
+    ],
     meetingId: "meeting-1",
     publicationTargetId: "results-channel",
     recording,
+    source: { roomId: "room-1", scopeId: "scope-1" },
   });
 }
 
 describe("Meeting lifecycle", () => {
+  it("retains normalized source and actor identity in every snapshot", () => {
+    const snapshot = recordedMeeting().toSnapshot();
+
+    expect(snapshot.source).toEqual({ roomId: "room-1", scopeId: "scope-1" });
+    expect(snapshot.actors).toEqual([
+      { actorId: "botik", kind: "automation" },
+      { actorId: "speaker-a", kind: "human" },
+      { actorId: "speaker-b", kind: "human" },
+    ]);
+    expect(Meeting.restore(snapshot).toSnapshot()).toEqual(snapshot);
+  });
+
+  it("maps absent legacy identity to explicit nulls without blocking old workflows", () => {
+    const { actors: _actors, source: _source, ...legacy } = recordedMeeting().toSnapshot();
+    const restored = Meeting.restore(legacy).toSnapshot();
+
+    expect(restored.actors).toBeNull();
+    expect(restored.source).toBeNull();
+    expect(restored.transcriptionStage.status).toBe("pending");
+  });
+
+  it("fails closed for duplicate actors and conflicting actor kinds", () => {
+    const base = {
+      meetingId: "meeting-1",
+      publicationTargetId: "results-channel",
+      recording,
+      source: { roomId: "room-1", scopeId: "scope-1" },
+    } as const;
+
+    expect(() => Meeting.record({
+      ...base,
+      actors: [
+        { actorId: "speaker-a", kind: "human" },
+        { actorId: "speaker-a", kind: "automation" },
+      ],
+    })).toThrow(expect.objectContaining({ code: "CONFLICTING_ACTOR_KIND" }));
+    expect(() => Meeting.record({
+      ...base,
+      actors: [
+        { actorId: "speaker-a", kind: "human" },
+        { actorId: "speaker-a", kind: "human" },
+      ],
+    })).toThrow(expect.objectContaining({ code: "DUPLICATE_ACTOR" }));
+  });
+
   it("allows only ordered transitions and treats identical completion as idempotent", () => {
     const meeting = recordedMeeting();
     const transcript = FinalTranscript.create(transcriptSnapshot);

@@ -108,6 +108,16 @@ boundaries:
       packages: []
       builtins: []
       runtimeReferences: []
+  - id: core.meeting.knowledge
+    roots:
+      - packages/meeting-core/src/features/meeting-knowledge
+    entrypoints:
+      - packages/meeting-core/src/features/meeting-knowledge/index.ts
+    allow:
+      boundaries: []
+      packages: []
+      builtins: []
+      runtimeReferences: []
   - id: core.meeting.live-meeting
     roots:
       - packages/meeting-core/src/features/live-meeting

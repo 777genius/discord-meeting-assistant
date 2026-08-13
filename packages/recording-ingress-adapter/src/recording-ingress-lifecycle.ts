@@ -1,12 +1,18 @@
 import type { CraigLifecycleEvent } from "@discord-meeting/craig-gateway-contracts";
 
 import type { LifecycleIngressResult } from "./contracts.js";
-import { finalizeAuthoritative, type AuthoritativeReadyEvent } from "./recording-ingress-authoritative.js";
+import {
+  finalizeAuthoritative,
+  type AuthoritativeReadyEvent,
+} from "./recording-ingress-authoritative-finalization.js";
 import { RecordingIngressError } from "./errors.js";
 import {
   abortIfRequested,
+  addActorToRoster,
   canonicalLifecycleEvent,
   ensureRecordingIdentity,
+  normalizeActorRoster,
+  sameActorRoster,
   sha256,
   storedEvent,
 } from "./recording-ingress-invariants.js";
@@ -40,10 +46,17 @@ async function ingestLockedLifecycleEvent(input: LifecycleIngressInput): Promise
   abortIfRequested(input.signal);
   const completed = await input.runtime.spool.readCompleted(input.event.recordingId);
   if (completed !== undefined) {
+    if (completed.lifecycleSchemaVersion !== input.event.schemaVersion) {
+      throw new RecordingIngressError(
+        "conflicting-duplicate",
+        "recording lifecycle schema version cannot change",
+      );
+    }
     return replayCompleted(input, completed);
   }
   const aborted = await input.runtime.spool.readAborted(input.event.recordingId);
   if (aborted !== undefined) {
+    ensureLifecycleSchemaVersion(aborted, input.event);
     return replayAborted(input, aborted);
   }
   const state = await input.runtime.spool.readRecording(input.event.recordingId);
@@ -51,6 +64,7 @@ async function ingestLockedLifecycleEvent(input: LifecycleIngressInput): Promise
     return startRecording(input);
   }
   ensureRecordingIdentity(state, input.event);
+  ensureLifecycleSchemaVersion(state, input.event);
   if (state.status === "aborted") {
     return replayAborted(input, await input.runtime.spool.archiveAborted(state));
   }
@@ -87,7 +101,7 @@ async function replayCompleted(
   }
   await input.runtime.cleanupAfterSuccess(input.event.recordingId);
   return input.event.type === "recording.authoritative_ready"
-    ? { kind: "finalized", recording: completed.recording, replayed: true }
+    ? finalizedResult(completed, completed.recording, true)
     : { kind: "accepted", recordingId: completed.recordingId, replayed: true };
 }
 
@@ -118,6 +132,7 @@ async function startRecording(input: LifecycleIngressInput): Promise<LifecycleIn
       "meeting.started must be the first lifecycle event",
     );
   }
+  const startedEvent = input.event;
   await input.runtime.reserveActiveRecordingCapacity(async () => {
     if ((await input.runtime.spool.activeRecordingCount()) >= input.runtime.limits.maxActiveRecordings) {
       throw new RecordingIngressError(
@@ -126,15 +141,19 @@ async function startRecording(input: LifecycleIngressInput): Promise<LifecycleIn
       );
     }
     const state: RecordingSpoolState = {
+      actors: startedEvent.schemaVersion === 1
+        ? null
+        : normalizeActorRoster(startedEvent.actors),
       authoritativeTracks: [],
-      channelId: input.event.channelId,
-      events: [storedEvent(input.event, input.digest)],
-      guildId: input.event.guildId,
+      channelId: startedEvent.channelId,
+      events: [storedEvent(startedEvent, input.digest)],
+      guildId: startedEvent.guildId,
+      lifecycleSchemaVersion: startedEvent.schemaVersion,
       pendingAuthoritativeTracks: [],
-      recordingId: input.event.recordingId,
-      schemaVersion: 1,
+      recordingId: startedEvent.recordingId,
+      schemaVersion: 2,
       speakers: [],
-      startedAt: input.event.occurredAt,
+      startedAt: startedEvent.occurredAt,
       status: "active",
     };
     await input.runtime.spool.writeRecording(state);
@@ -155,7 +174,7 @@ async function replayExistingEvent(
   }
   if (input.event.type === "recording.authoritative_ready" && state.status === "finalizing") {
     const recording = await finalizeAuthoritative(input.runtime, state, input.event, input.signal);
-    return { kind: "finalized", recording, replayed: true };
+    return finalizedResult(state, recording, true);
   }
   return { kind: "accepted", recordingId: state.recordingId, replayed: true };
 }
@@ -175,7 +194,7 @@ async function acceptAuthoritativeReady(
   };
   await input.runtime.spool.writeRecording(finalizingState);
   const recording = await finalizeAuthoritative(input.runtime, finalizingState, event, input.signal);
-  return { kind: "finalized", recording, replayed: false };
+  return finalizedResult(finalizingState, recording, false);
 }
 
 function assertAuthoritativeReady(state: RecordingSpoolState, event: AuthoritativeReadyEvent): void {
@@ -206,6 +225,15 @@ function assertAuthoritativeReady(state: RecordingSpoolState, event: Authoritati
       "authoritative-ready cannot finalize an upload with an unresolved write receipt",
     );
   }
+  const finalActors = event.schemaVersion === 1
+    ? null
+    : normalizeActorRoster(event.actors);
+  if (!sameActorRoster(state.actors, finalActors)) {
+    throw new RecordingIngressError(
+      "conflicting-duplicate",
+      "authoritative-ready actor roster does not match the durable lifecycle roster",
+    );
+  }
 }
 
 async function acceptActiveLifecycleEvent(
@@ -224,6 +252,12 @@ async function acceptActiveLifecycleEvent(
       "recording exceeds the lifecycle event replay limit",
     );
   }
+  if (input.event.type === "meeting.started") {
+    throw new RecordingIngressError(
+      "conflicting-duplicate",
+      "meeting.started cannot be rebound with a new event identity",
+    );
+  }
   const events = [...state.events, storedEvent(input.event, input.digest)];
   if (input.event.type === "meeting.aborted") {
     return archiveAborted(input, state, events);
@@ -231,8 +265,40 @@ async function acceptActiveLifecycleEvent(
   if (input.event.type === "meeting.ended") {
     return beginAuthoritativeFinalization(input, state, events);
   }
-  await input.runtime.spool.writeRecording({ ...state, events });
+  const actors = input.event.schemaVersion === 2 &&
+      (input.event.type === "participant.joined" || input.event.type === "participant.left")
+    ? addActorToRoster(state.actors ?? [], input.event.actor)
+    : state.actors;
+  await input.runtime.spool.writeRecording({ ...state, actors, events });
   return { kind: "accepted", recordingId: state.recordingId, replayed: false };
+}
+
+function ensureLifecycleSchemaVersion(
+  state: RecordingSpoolState,
+  event: CraigLifecycleEvent,
+): void {
+  if (state.lifecycleSchemaVersion !== event.schemaVersion) {
+    throw new RecordingIngressError(
+      "conflicting-duplicate",
+      "recording lifecycle schema version cannot change",
+    );
+  }
+}
+
+function finalizedResult(
+  state: Pick<RecordingSpoolState, "actors" | "channelId" | "guildId">,
+  recording: Extract<LifecycleIngressResult, { readonly kind: "finalized" }>["recording"],
+  replayed: boolean,
+): Extract<LifecycleIngressResult, { readonly kind: "finalized" }> {
+  return {
+    actors: state.actors === null
+      ? null
+      : state.actors.map((actor) => ({ actorId: actor.actorId, kind: actor.kind })),
+    kind: "finalized",
+    recording,
+    replayed,
+    source: { roomId: state.channelId, scopeId: state.guildId },
+  };
 }
 
 async function archiveAborted(

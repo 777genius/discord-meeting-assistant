@@ -200,6 +200,7 @@ class CapturingDiscordProjector {
 
 function initialMeeting(): MeetingSnapshot {
   return Meeting.record({
+    actors: [{ actorId: "speaker-a", kind: "human" }],
     meetingId: "meeting-e2e",
     publicationTargetId: "11111111111111111",
     recording: {
@@ -211,12 +212,17 @@ function initialMeeting(): MeetingSnapshot {
         timelineOffsetMs: 0,
       }],
     },
+    source: { roomId: "room-1", scopeId: "scope-1" },
   }).toSnapshot();
 }
 
 function initialTwoSpeakerMeeting(): MeetingSnapshot {
   const snapshot = initialMeeting();
   return Meeting.record({
+    actors: [
+      { actorId: "speaker-a", kind: "human" },
+      { actorId: "speaker-b", kind: "human" },
+    ],
     meetingId: snapshot.meetingId,
     publicationTargetId: snapshot.publicationTargetId,
     recording: {
@@ -234,6 +240,7 @@ function initialTwoSpeakerMeeting(): MeetingSnapshot {
         },
       ],
     },
+    source: snapshot.source!,
   }).toSnapshot();
 }
 

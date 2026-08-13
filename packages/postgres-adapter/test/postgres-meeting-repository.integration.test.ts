@@ -190,6 +190,40 @@ describe("PostgresMeetingRepository", () => {
     expect(await repository.listRecoverablePostCall()).toEqual([]);
   });
 
+  it("rejects finalized-ingress replays with changed source or actor identity", async (context) => {
+    const database = databaseOrSkip(context);
+    const repository = new PostgresMeetingRepository(database);
+    const variants = [
+      {
+        change: (snapshot: MeetingSnapshot): MeetingSnapshot => ({
+          ...snapshot,
+          source: { roomId: "different-room", scopeId: snapshot.source?.scopeId ?? "scope-1" },
+        }),
+        meetingId: "meeting-source-conflict",
+      },
+      {
+        change: (snapshot: MeetingSnapshot): MeetingSnapshot => ({
+          ...snapshot,
+          actors: snapshot.actors?.map((actor, index) => index === 0
+            ? { ...actor, kind: "automation" as const }
+            : actor) ?? null,
+        }),
+        meetingId: "meeting-actor-conflict",
+      },
+    ] as const;
+
+    for (const variant of variants) {
+      const original = recordedMeeting(variant.meetingId).toSnapshot();
+      await repository.recordAndSchedule(original, 0);
+
+      await expect(repository.recordAndSchedule(variant.change(original), 0))
+        .rejects.toMatchObject({
+          code: "MEETING_PERSISTENCE_CONFLICT",
+          conflict: { kind: "meeting-already-exists", meetingId: variant.meetingId },
+        });
+    }
+  });
+
   it("fails closed for an unknown processing receipt and records idempotent dead-letter evidence", async (context) => {
     const database = databaseOrSkip(context);
     const repository = new PostgresMeetingRepository(database);

@@ -11,11 +11,9 @@ import {
 } from "./identifiers.js";
 import {
   RecordingArtifact,
-  type RecordingArtifactSnapshot,
 } from "../../recording/index.js";
 import {
   EvidenceBackedSummary,
-  type EvidenceBackedSummarySnapshot,
 } from "../../meeting-intelligence/index.js";
 import {
   type PublicationReceipt,
@@ -24,7 +22,6 @@ import {
 } from "../../publishing/index.js";
 import {
   FinalTranscript,
-  type FinalTranscriptSnapshot,
 } from "../../transcription/index.js";
 import {
   sameStageFailure,
@@ -34,8 +31,20 @@ import {
   type ProcessingStage,
   type StageFailure,
   type StageState,
-  type StageStateSnapshot,
 } from "./meeting-stage.js";
+import {
+  normalizeActors,
+  normalizeSource,
+  type MeetingActorSnapshot,
+  type MeetingSourceSnapshot,
+} from "./meeting-identity.js";
+import type {
+  LegacyRecordedMeetingInput,
+  MeetingSnapshot,
+  RecordedMeetingInput,
+  RestorableMeetingSnapshot,
+} from "./meeting-snapshot.js";
+import { initialMeetingSnapshot } from "./meeting-snapshot.js";
 
 export type {
   BeginStageDisposition,
@@ -44,33 +53,16 @@ export type {
   StageState,
 } from "./meeting-stage.js";
 
-export interface MeetingSnapshot {
-  readonly meetingId: string;
-  readonly publication: PublicationReceiptSnapshot | null;
-  readonly publicationStage: StageStateSnapshot;
-  readonly publicationTargetId: string;
-  readonly recording: RecordingArtifactSnapshot;
-  readonly revision: number;
-  readonly summary: EvidenceBackedSummarySnapshot | null;
-  readonly summaryStage: StageStateSnapshot;
-  readonly transcript: FinalTranscriptSnapshot | null;
-  readonly transcriptionStage: StageStateSnapshot;
-}
-
-export interface RecordedMeetingInput {
-  readonly meetingId: string;
-  readonly publicationTargetId: string;
-  readonly recording: RecordingArtifactSnapshot;
-}
-
 function identityPart(value: string): string {
   return `${value.length}:${value}`;
 }
 
 export class Meeting {
+  public readonly actors: readonly MeetingActorSnapshot[] | null;
   public readonly meetingId: MeetingId;
   public readonly publicationTargetId: PublicationTargetId;
   public readonly recording: RecordingArtifact;
+  public readonly source: MeetingSourceSnapshot | null;
 
   private currentRevision: number;
   private stages: Record<ProcessingStage, StageState>;
@@ -78,12 +70,14 @@ export class Meeting {
   private acceptedSummary: EvidenceBackedSummary | null;
   private publicationReceipt: PublicationReceipt | null;
 
-  private constructor(snapshot: MeetingSnapshot) {
+  private constructor(snapshot: RestorableMeetingSnapshot) {
+    this.actors = normalizeActors(snapshot.actors);
     this.meetingId = createMeetingId(snapshot.meetingId);
     this.publicationTargetId = createMeetingPublicationTargetId(
       snapshot.publicationTargetId,
     );
     this.recording = RecordingArtifact.create(snapshot.recording);
+    this.source = normalizeSource(snapshot.source);
     this.currentRevision = requireNonNegativeInteger(snapshot.revision, "meeting.revision");
     this.stages = {
       publication: validateStageState(snapshot.publicationStage, "publicationStage"),
@@ -118,21 +112,19 @@ export class Meeting {
   }
 
   public static record(input: RecordedMeetingInput): Meeting {
-    return new Meeting({
-      meetingId: input.meetingId,
-      publication: null,
-      publicationStage: { attempts: 0, status: "pending" },
-      publicationTargetId: input.publicationTargetId,
-      recording: input.recording,
-      revision: 0,
-      summary: null,
-      summaryStage: { attempts: 0, status: "pending" },
-      transcript: null,
-      transcriptionStage: { attempts: 0, status: "pending" },
-    });
+    return new Meeting(initialMeetingSnapshot(input, input.actors));
   }
 
-  public static restore(snapshot: MeetingSnapshot): Meeting {
+  /**
+   * Transitional Craig v1 admission. Its participant contract cannot prove a
+   * complete automation-free actor roster, so the resulting meeting is
+   * intentionally ineligible for knowledge features.
+   */
+  public static recordLegacy(input: LegacyRecordedMeetingInput): Meeting {
+    return new Meeting(initialMeetingSnapshot(input, null));
+  }
+
+  public static restore(snapshot: RestorableMeetingSnapshot): Meeting {
     return new Meeting(snapshot);
   }
 
@@ -295,6 +287,9 @@ export class Meeting {
 
   public toSnapshot(): MeetingSnapshot {
     return {
+      actors: this.actors === null
+        ? null
+        : this.actors.map((actor) => ({ actorId: actor.actorId, kind: actor.kind })),
       meetingId: this.meetingId,
       publication:
         this.publicationReceipt === null
@@ -309,6 +304,9 @@ export class Meeting {
       revision: this.currentRevision,
       summary: this.acceptedSummary?.toSnapshot() ?? null,
       summaryStage: this.stage("summary"),
+      source: this.source === null
+        ? null
+        : { roomId: this.source.roomId, scopeId: this.source.scopeId },
       transcript: this.finalTranscript?.toSnapshot() ?? null,
       transcriptionStage: this.stage("transcription"),
     };

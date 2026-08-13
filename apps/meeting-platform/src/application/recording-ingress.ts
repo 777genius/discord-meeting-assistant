@@ -15,39 +15,86 @@ export interface RecordingSource {
   readonly roomId: string;
 }
 
+export type RecordingActorKind = "automation" | "human" | "unknown";
+
+export interface RecordingActor {
+  readonly actorId: string;
+  readonly kind: RecordingActorKind;
+}
+
 interface RecordingLifecycleEnvelope {
   readonly eventId: string;
   readonly occurredAt: string;
   readonly recordingId: string;
-  readonly schemaVersion: 1;
   readonly source: RecordingSource;
 }
 
 export type RecordingLifecycleCommand =
   | (RecordingLifecycleEnvelope & {
       readonly participantIds: string[];
+      readonly schemaVersion: 1;
       readonly type: "meeting.started";
     })
   | (RecordingLifecycleEnvelope & {
       readonly participantId: string;
+      readonly schemaVersion: 1;
       readonly type: "participant.joined" | "participant.left";
     })
   | (RecordingLifecycleEnvelope & {
       readonly reason: string | null;
+      readonly schemaVersion: 1;
       readonly type: "meeting.connection_lost" | "meeting.connection_recovered";
     })
   | (RecordingLifecycleEnvelope & {
       readonly reason: string | null;
+      readonly schemaVersion: 1;
       readonly type: "meeting.ended" | "meeting.aborted";
     })
   | (RecordingLifecycleEnvelope & {
       readonly endedAt: string;
       readonly multitrackManifestKey: string;
+      readonly schemaVersion: 1;
       readonly type: "recording.artifact_ready";
       readonly usersManifestKey: string;
     })
   | (RecordingLifecycleEnvelope & {
       readonly endedAt: string;
+      readonly schemaVersion: 1;
+      readonly sourceFilesChecksumSha256: string;
+      readonly trackCount: number;
+      readonly type: "recording.authoritative_ready";
+    })
+  | (RecordingLifecycleEnvelope & {
+      readonly actors: readonly RecordingActor[];
+      readonly schemaVersion: 2;
+      readonly type: "meeting.started";
+    })
+  | (RecordingLifecycleEnvelope & {
+      readonly actor: RecordingActor;
+      readonly schemaVersion: 2;
+      readonly type: "participant.joined" | "participant.left";
+    })
+  | (RecordingLifecycleEnvelope & {
+      readonly reason: string | null;
+      readonly schemaVersion: 2;
+      readonly type: "meeting.connection_lost" | "meeting.connection_recovered";
+    })
+  | (RecordingLifecycleEnvelope & {
+      readonly reason: string | null;
+      readonly schemaVersion: 2;
+      readonly type: "meeting.ended" | "meeting.aborted";
+    })
+  | (RecordingLifecycleEnvelope & {
+      readonly endedAt: string;
+      readonly multitrackManifestKey: string;
+      readonly schemaVersion: 2;
+      readonly type: "recording.artifact_ready";
+      readonly usersManifestKey: string;
+    })
+  | (RecordingLifecycleEnvelope & {
+      readonly actors: readonly RecordingActor[];
+      readonly endedAt: string;
+      readonly schemaVersion: 2;
       readonly sourceFilesChecksumSha256: string;
       readonly trackCount: number;
       readonly type: "recording.authoritative_ready";
@@ -164,9 +211,11 @@ export type RecordingLifecycleIngressResult =
       readonly replayed: boolean;
     }
   | {
+      readonly actors: readonly RecordingActor[] | null;
       readonly kind: "finalized";
       readonly recording: RecordingArtifactSnapshot;
       readonly replayed: boolean;
+      readonly source: RecordingSource;
     };
 
 /** Consumer-owned durability port implemented by one recording-source adapter. */
