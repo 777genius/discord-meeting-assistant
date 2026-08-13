@@ -230,6 +230,31 @@ describe("Voicetext semantic canary", () => {
     }
   });
 
+  it("rejects token rotation after provider work and before emitting a passing result", async () => {
+    const fixture = canaryFixture();
+    const readToken = vi.fn<VoicetextSemanticCanaryDependencies["readToken"]>()
+      .mockResolvedValueOnce({ generationId: "generation-1", mode: 0o400, ownerUid: 1,
+        path: "/run/secrets/token", token: "secret-machine-bearer-1" })
+      .mockResolvedValueOnce({ generationId: "generation-2", mode: 0o400, ownerUid: 1,
+        path: "/run/secrets/token", token: "secret-machine-bearer-2" });
+    const finalize = vi.fn(async () => {});
+    const operation = runVoicetextSemanticCanary(
+      canaryArguments(fixture, 20_000), "/run/secrets/token", {
+        createBatchClient: () => ({ poll: async () => completed, submit: async () => completed }),
+        openLiveSession: async ({ onTranscript }) => {
+          onTranscript({ endMs: 40, startMs: 0, text: "привет Botik" }, true);
+          return { finalize, sendPacket: async () => "accepted", terminate: vi.fn() };
+        },
+        readFixture: async () => fixture,
+        readToken,
+        wait: async () => {},
+      },
+    );
+    await expect(operation).rejects.toThrow("token file changed");
+    expect(finalize).toHaveBeenCalledOnce();
+    expect(readToken).toHaveBeenCalledTimes(2);
+  });
+
   it("fails through a silent process envelope so secrets and transcripts cannot reach stderr", () => {
     const packageRoot = resolvePath(dirname(fileURLToPath(import.meta.url)), "..");
     const result = spawnSync(resolvePath(packageRoot, "node_modules/.bin/tsx"), [

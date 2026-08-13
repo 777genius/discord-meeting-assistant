@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { constants } from "node:fs";
 import { open, readFile, stat } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
@@ -169,6 +169,12 @@ export async function runVoicetextSemanticCanary(
   if (liveSegments.length === 0) {
     throw new Error("Voicetext live canary returned no immutable transcript segments");
   }
+  const tokenFileAfter = await waitForVoicetextCanaryOperation(
+    dependencies.readToken(tokenFilePath), deadline.signal,
+  );
+  if (!sameTokenFile(tokenFile, tokenFileAfter)) {
+    throw new Error("Voicetext token file changed during the semantic canary");
+  }
   return {
     batch: {
       firstSubmission: firstIdentity,
@@ -193,6 +199,18 @@ export async function runVoicetextSemanticCanary(
   } finally {
     deadline.dispose();
   }
+}
+
+function sameTokenFile(
+  before: Awaited<ReturnType<VoicetextSemanticCanaryDependencies["readToken"]>>,
+  after: Awaited<ReturnType<VoicetextSemanticCanaryDependencies["readToken"]>>,
+): boolean {
+  const beforeTokenSha256 = createHash("sha256").update(before.token, "utf8").digest();
+  const afterTokenSha256 = createHash("sha256").update(after.token, "utf8").digest();
+  return before.generationId === after.generationId
+    && before.ownerUid === after.ownerUid
+    && before.path === after.path
+    && timingSafeEqual(beforeTokenSha256, afterTokenSha256);
 }
 
 function extractOpusPackets(bytes: Uint8Array): readonly Uint8Array[] {
