@@ -32,6 +32,7 @@ export class HostedCampaignProductionCompositionError extends Error {
 
 export interface HostedCampaignProductionComposition {
   readonly releaseReference?: HostedCampaignReleaseReferenceV1;
+  assertReadyForRun(): HostedCampaignReleaseReferenceV1;
   createInitialAdmissionProbe(input: Readonly<{
     bindings: unknown;
     definition: unknown;
@@ -56,6 +57,10 @@ export function createHostedCampaignProductionComposition(
 ): HostedCampaignProductionComposition {
   const composition: HostedCampaignProductionComposition = {
     ...(policy.releaseReference === undefined ? {} : { releaseReference: policy.releaseReference }),
+    assertReadyForRun: () => {
+      assertProductionTrustBinding(policy);
+      return policy.releaseReference;
+    },
     createInitialAdmissionProbe: (input) => createProbe(policy, candidate(input)),
     authorizeFreshAdmission: async (input) => {
       input.signal.throwIfAborted();
@@ -133,13 +138,21 @@ function createProbe(
   policy: HostedCampaignProductionPolicy,
   exactCandidate: HostedCampaignProductionCandidate,
 ): HostedCampaignRemoteAdmissionProbe {
-  if (policy.trustBinding === undefined) {
+  assertProductionTrustBinding(policy);
+  return createHostedCampaignRemoteAdmissionProbe(policy.trustBinding.createConfig(exactCandidate));
+}
+
+function assertProductionTrustBinding(
+  policy: HostedCampaignProductionPolicy,
+): asserts policy is HostedCampaignProductionPolicy & Required<
+  Pick<HostedCampaignProductionPolicy, "releaseReference" | "trustBinding">
+> {
+  if (policy.trustBinding === undefined || policy.releaseReference === undefined) {
     throw new HostedCampaignProductionCompositionError(
       "RELEASE_BINDING_REQUIRED",
       "Hosted campaign reviewed release binding and compiled trust root are required",
     );
   }
-  return createHostedCampaignRemoteAdmissionProbe(policy.trustBinding.createConfig(exactCandidate));
 }
 
 function assertHeadroom(deadlineEpochMs: number, minimumHeadroomMs: number, nowEpochMs: number): void {

@@ -1,4 +1,4 @@
-import { chmod, link, lstat, mkdir, mkdtemp, readFile, readdir, symlink, writeFile } from "node:fs/promises";
+import { chmod, link, lstat, mkdir, mkdtemp, readFile, readdir, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -19,6 +19,7 @@ import {
   readPrivateHostedCampaignPlan,
   resolveHostedCampaignBarrierRoot,
   runHostedCampaignCli,
+  runProductionHostedCampaignCli,
   writeCreateOnlyHostedCampaignReceipt,
 } from "../src/run-hosted-campaign.js";
 
@@ -225,6 +226,39 @@ describe("run-hosted-campaign CLI", () => {
 
     expect((await readdir(join(campaignRoot, campaignId))).toSorted())
       .toEqual(["barriers", "control", "run-1", "run-2", "run-3"]);
+  });
+
+  it("rejects missing production release trust before creating artifacts, a lease, or children", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "hosted-campaign-no-trust-"));
+    const campaignRoot = join(parent, "campaigns");
+    const controlRoot = join(parent, "control");
+    await mkdir(controlRoot, { mode: 0o700 });
+    const localDefinition = { ...definition(), campaignRoot };
+    const definitionPath = join(controlRoot, "definition.json");
+    const bindingsPath = join(controlRoot, "bindings.json");
+    const planPath = join(controlRoot, "plan.json");
+    const admissionPath = join(controlRoot, "admission.json");
+    const receiptPath = join(parent, "receipt.json");
+    await Promise.all([
+      writeFile(definitionPath, JSON.stringify(localDefinition), { mode: 0o600 }),
+      writeFile(bindingsPath, JSON.stringify(bindings()), { mode: 0o600 }),
+      writeFile(admissionPath, JSON.stringify({ status: "admitted" }), { mode: 0o600 }),
+    ]);
+    await writeFile(
+      planPath,
+      JSON.stringify(buildResolvedHostedCampaignPlanV1(localDefinition, bindings())),
+      { mode: 0o600 },
+    );
+
+    await expect(runProductionHostedCampaignCli([
+      planPath, receiptPath, "10000", admissionPath, definitionPath, bindingsPath,
+    ], { HOME: parent, PATH: "/path-that-must-never-run" }, new AbortController().signal))
+      .rejects.toThrow("RELEASE_BINDING_REQUIRED");
+
+    await expect(stat(campaignRoot)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(receiptPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(join(campaignRoot, "campaign-1", "barriers", "campaign.lease")))
+      .rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("does not follow a symlink when opening the private campaign plan", async () => {

@@ -289,36 +289,45 @@ async function main(): Promise<void> {
   process.once("SIGINT", forwardSignal);
   process.once("SIGTERM", forwardSignal);
   try {
-    const config = parseHostedCampaignArguments(process.argv.slice(2));
-    await assertHostedCampaignReceiptAbsent(config.receiptPath);
-    const releaseBinding = config.releaseBindingPath === undefined
-      ? undefined
-      : await readStablePrivateJson(config.releaseBindingPath);
-    const production = createHostedCampaignProductionComposition(
-      createHostedCampaignProductionPolicy(releaseBinding),
-    );
-    await runHostedCampaignCli(process.argv.slice(2), {
-      assertReceiptAbsent: assertHostedCampaignReceiptAbsent,
-      assertAdmissionAudit: assertAdmissionAuditMatchesInvocation,
-      authorizeFreshAdmission: (request) => production.authorizeFreshAdmission(request),
-      createPorts: async (plan) => createProductionHostedCampaignPorts(
-        plan,
-        config,
-        loadHostedCampaignTrustedRuntimeEnvironment(process.env),
-      ),
-      now: Date.now,
-      readAdmission: readPrivateHostedCampaignPlan,
-      readBindings: readPrivateHostedCampaignPlan,
-      readDefinition: readPrivateHostedCampaignPlan,
-      readPlan: readPrivateHostedCampaignPlan,
-      ...(production.releaseReference === undefined ? {} : { releaseReference: production.releaseReference }),
-      writeReceipt: writeCreateOnlyHostedCampaignReceipt,
-      writeClockPreflightProof: writeCreateOnlyClockPreflightProof,
-    }, controller.signal);
+    await runProductionHostedCampaignCli(process.argv.slice(2), process.env, controller.signal);
   } finally {
     process.off("SIGINT", forwardSignal);
     process.off("SIGTERM", forwardSignal);
   }
+}
+
+export async function runProductionHostedCampaignCli(
+  arguments_: readonly string[],
+  environment: Readonly<NodeJS.ProcessEnv>,
+  signal: AbortSignal,
+): Promise<HostedCampaignPassReceiptV2> {
+  const config = parseHostedCampaignArguments(arguments_);
+  await assertHostedCampaignReceiptAbsent(config.receiptPath);
+  const releaseBinding = config.releaseBindingPath === undefined
+    ? undefined
+    : await readStablePrivateJson(config.releaseBindingPath);
+  const production = createHostedCampaignProductionComposition(
+    createHostedCampaignProductionPolicy(releaseBinding),
+  );
+  const releaseReference = production.assertReadyForRun();
+  return runHostedCampaignCli(arguments_, {
+    assertReceiptAbsent: assertHostedCampaignReceiptAbsent,
+    assertAdmissionAudit: assertAdmissionAuditMatchesInvocation,
+    authorizeFreshAdmission: (request) => production.authorizeFreshAdmission(request),
+    createPorts: async (plan) => createProductionHostedCampaignPorts(
+      plan,
+      config,
+      loadHostedCampaignTrustedRuntimeEnvironment(environment),
+    ),
+    now: Date.now,
+    readAdmission: readPrivateHostedCampaignPlan,
+    readBindings: readPrivateHostedCampaignPlan,
+    readDefinition: readPrivateHostedCampaignPlan,
+    readPlan: readPrivateHostedCampaignPlan,
+    releaseReference,
+    writeReceipt: writeCreateOnlyHostedCampaignReceipt,
+    writeClockPreflightProof: writeCreateOnlyClockPreflightProof,
+  }, signal);
 }
 
 if (process.argv[1]?.replaceAll("\\", "/").endsWith("/run-hosted-campaign.js") === true) {
