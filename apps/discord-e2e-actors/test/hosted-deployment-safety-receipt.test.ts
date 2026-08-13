@@ -65,7 +65,7 @@ function snapshot() {
     campaignRoot: {
       campaignEntryKind: "directory" as const,
       campaignEntrySymbolicLink: false as const,
-      entries: [expectation.campaignId],
+      entriesBase64: [Buffer.from(expectation.campaignId).toString("base64")],
       gid: expectation.campaignRootOwnerGid,
       linkCount: 3,
       mode: "0700" as const,
@@ -189,8 +189,8 @@ describe("hosted deployment safety receipt", () => {
   });
 
   it.each([
-    ["another campaign", (value: ReturnType<typeof snapshot>) => { value.campaignRoot.entries.push("campaign-2"); }],
-    ["hidden entry", (value: ReturnType<typeof snapshot>) => { value.campaignRoot.entries.push(".hidden"); }],
+    ["another campaign", (value: ReturnType<typeof snapshot>) => { value.campaignRoot.entriesBase64.push(Buffer.from("campaign-2").toString("base64")); }],
+    ["hidden entry", (value: ReturnType<typeof snapshot>) => { value.campaignRoot.entriesBase64.push(Buffer.from(".hidden").toString("base64")); }],
     ["symlink", (value: ReturnType<typeof snapshot>) => { Object.assign(value.campaignRoot, { symbolicLink: true }); }],
     ["wrong owner", (value: ReturnType<typeof snapshot>) => { Object.assign(value.campaignRoot, { uid: 1_000 }); }],
     ["wrong mode", (value: ReturnType<typeof snapshot>) => { Object.assign(value.campaignRoot, { mode: "0755" }); }],
@@ -202,7 +202,7 @@ describe("hosted deployment safety receipt", () => {
 
   it("rejects campaign wrapper mutation between snapshots", () => {
     const after = snapshot();
-    after.campaignRoot.entries = ["campaign-2"];
+    after.campaignRoot.entriesBase64 = [Buffer.from("campaign-2").toString("base64")];
     expect(() => receipt({ after })).toThrow("campaign root changed");
   });
 

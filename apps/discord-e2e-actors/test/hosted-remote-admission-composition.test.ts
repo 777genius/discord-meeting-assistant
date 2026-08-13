@@ -380,7 +380,8 @@ function deploymentReceipt(expectation: HostedDeploymentSafetyExpectationV1, gen
   const roots = { deploy: { kind: "directory" as const, requestedPath: expectation.deployRoot, resolvedPath: expectation.deployRoot, symbolicLink: false as const },
     source: { kind: "directory" as const, requestedPath: expectation.sourceRoot, resolvedPath: expectation.sourceRoot, symbolicLink: false as const } };
   const campaignRoot = { campaignEntryKind: "directory" as const, campaignEntrySymbolicLink: false as const,
-    entries: [expectation.campaignId], gid: expectation.campaignRootOwnerGid, linkCount: 3, mode: "0700" as const,
+    entriesBase64: [Buffer.from(expectation.campaignId).toString("base64")],
+    gid: expectation.campaignRootOwnerGid, linkCount: 3, mode: "0700" as const,
     requestedPath: expectation.campaignRoot, resolvedPath: expectation.campaignRoot, symbolicLink: false as const,
     uid: expectation.campaignRootOwnerUid };
   return createHostedDeploymentSafetyReceiptV1({ expectation, generatedAt: new Date(generatedAt).toISOString(), evidence: {

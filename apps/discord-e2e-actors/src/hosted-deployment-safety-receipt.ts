@@ -9,6 +9,7 @@ const imageIdSchema = z.string().regex(/^sha256:[a-f\d]{64}$/u);
 const sourceRevisionSchema = z.string().regex(/^(?:[a-f\d]{40}|[a-f\d]{64})$/u);
 const repositoryDigestSchema = z.string().regex(/^[^\s@]+@sha256:[a-f\d]{64}$/u);
 const safeIdentifierSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u);
+const base64Schema = z.string().regex(/^(?:[A-Za-z\d+/]{4})*(?:[A-Za-z\d+/]{2}==|[A-Za-z\d+/]{3}=)?$/u);
 const absolutePathSchema = z.string().refine(isSafeAbsolutePath, "Expected a normalized absolute path");
 
 const componentSchema = z.enum([
@@ -44,7 +45,7 @@ const rootResolutionSchema = z.object({
 const campaignRootSnapshotSchema = z.object({
   campaignEntryKind: z.literal("directory"),
   campaignEntrySymbolicLink: z.literal(false),
-  entries: z.array(safeIdentifierSchema).length(1),
+  entriesBase64: z.array(base64Schema).length(1),
   gid: z.number().int().nonnegative(),
   linkCount: z.number().int().min(2),
   mode: z.literal("0700"),
@@ -194,7 +195,7 @@ function assertCampaignRoot(
     || root.uid !== expectation.campaignRootOwnerUid
     || root.gid !== expectation.campaignRootOwnerGid
     || root.linkCount !== 3
-    || root.entries[0] !== expectation.campaignId) {
+    || root.entriesBase64[0] !== Buffer.from(expectation.campaignId).toString("base64")) {
     throw new Error("Hosted campaign root is not the exact private single-campaign wrapper");
   }
 }

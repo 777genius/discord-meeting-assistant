@@ -89,7 +89,8 @@ const campaignRootSnapshotScript = [
   "test -d \"$entry\"",
   "test ! -L \"$entry\"",
   "printf '%s|%s|%s|%s|%s\\n' \"$(stat -c %u -- \"$path\")\" \"$(stat -c %g -- \"$path\")\" \"$(stat -c %a -- \"$path\")\" \"$(stat -c %h -- \"$path\")\" \"$resolved\"",
-  "find \"$path\" -mindepth 1 -maxdepth 1 -printf '%f\\n' | LC_ALL=C sort",
+  "find \"$path\" -mindepth 1 -maxdepth 1 -printf '%f\\0' | LC_ALL=C sort -z | base64 -w0",
+  "printf '\\n'",
 ].join("\n");
 
 const hostToContainerNonceScript = [
@@ -163,19 +164,22 @@ export class ConcreteSshDeploymentSafetyProbeRunner implements SshDeploymentSafe
   }
 
   async #inspectCampaignRoot(signal?: AbortSignal): Promise<unknown> {
-    const output = (await this.#commands.runRemote(this.#settings, [
+    const output = await this.#commands.runRemote(this.#settings, [
       "sh", "-ceu", campaignRootSnapshotScript, "deployment-safety-campaign-root",
       this.#expectation.campaignRoot, this.#expectation.campaignId,
-    ], signal)).trim().split("\n");
-    const metadata = output.shift()?.split("|");
-    if (metadata?.length !== 5) {
+    ], signal);
+    const separator = output.indexOf("\n");
+    const metadata = separator < 0 ? [] : output.slice(0, separator).split("|");
+    const encodedEntries = separator < 0 ? "" : output.slice(separator + 1).replace(/\n$/u, "");
+    const entriesBase64 = decodeNullDelimitedBase64(encodedEntries);
+    if (metadata.length !== 5) {
       throw new Error("Hosted campaign root inspection returned invalid metadata");
     }
     const [uid, gid, mode, linkCount, resolvedPath] = metadata;
     return {
       campaignEntryKind: "directory",
       campaignEntrySymbolicLink: false,
-      entries: output,
+      entriesBase64,
       gid: Number(gid),
       linkCount: Number(linkCount),
       mode: `0${mode}`,
@@ -335,6 +339,25 @@ export class ConcreteSshDeploymentSafetyProbeRunner implements SshDeploymentSafe
   async #meetingContainerId(signal?: AbortSignal): Promise<string> {
     return (await this.#inspectContainer(this.#requiredService("meetingPlatform"), signal)).container.Id;
   }
+}
+
+function decodeNullDelimitedBase64(value: string): readonly string[] {
+  if (!/^(?:[A-Za-z\d+/]{4})*(?:[A-Za-z\d+/]{2}==|[A-Za-z\d+/]{3}=)?$/u.test(value)) {
+    throw new Error("Hosted campaign root inspection returned invalid entry framing");
+  }
+  const decoded = Buffer.from(value, "base64");
+  if (decoded.length === 0 || decoded.at(-1) !== 0) {
+    throw new Error("Hosted campaign root inspection returned incomplete entry framing");
+  }
+  const entries: string[] = [];
+  let start = 0;
+  for (let index = 0; index < decoded.length; index += 1) {
+    if (decoded[index] === 0) {
+      entries.push(decoded.subarray(start, index).toString("base64"));
+      start = index + 1;
+    }
+  }
+  return entries;
 }
 
 function environmentValue(environment: readonly string[] | null, name: string): string | undefined {

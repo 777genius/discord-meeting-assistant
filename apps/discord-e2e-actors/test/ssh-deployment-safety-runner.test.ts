@@ -99,12 +99,14 @@ function dockerContainer(service: HostedDeploymentSafetyExpectationV1["services"
 
 class SyntheticRemote {
   public readonly calls: string[][] = [];
+  public campaignEntries: readonly string[] = [expectation.campaignId];
   readonly #containers = new Map(expectation.services.map((service) => [service.imageId, dockerContainer(service)]));
 
   public readonly runRemote = async (_settings: unknown, args: readonly string[]): Promise<string> => {
     this.calls.push([...args]);
     if (args[0] === "sh" && args[2]?.includes("campaign_id=$2") === true) {
-      return `10001|10001|700|3|${expectation.campaignRoot}\n${expectation.campaignId}\n`;
+      const entries = Buffer.from(`${this.campaignEntries.join("\0")}\0`).toString("base64");
+      return `10001|10001|700|3|${expectation.campaignRoot}\n${entries}\n`;
     }
     if (args[0] === "sh" && args[2]?.includes("readlink -e") === true) {
       return `${args.at(-1) ?? ""}\n`;
@@ -193,6 +195,16 @@ describe("concrete SSH deployment safety runner", () => {
       campaignSiblingMounted: false,
       runSiblingAccessible: true,
     });
+  });
+
+  it("rejects a sibling whose newline cannot hide in the encoded entry framing", async () => {
+    const remote = new SyntheticRemote();
+    remote.campaignEntries = [expectation.campaignId, "\n"];
+    const probe = createConcreteSshDeploymentSafetyProbe({
+      containerNonce: "container-nonce", expectation,
+      generatedAt: () => "2026-08-13T09:01:00.000Z", hostNonce: "host-nonce", ssh,
+    }, remote);
+    await expect(probe.collect()).rejects.toThrow();
   });
 
   it("rejects shell-shaped host configuration before any command runs", () => {
