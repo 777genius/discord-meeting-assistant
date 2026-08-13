@@ -1,403 +1,268 @@
-# Meeting Knowledge Q&A V1 - Local Final Reply
+# Meeting Knowledge Delivery Plan
 
-Status: ready for implementation; production rollout is NO-GO until every gate in
-this plan has evidence
+Status: ready for phased implementation; every production capability is disabled
+by default until its own acceptance evidence is bound to the deployed revision
 
 Date: 2026-08-13
 
-## Outcome and scope
+## Outcome
 
-Deliver one coherent vertical slice: an authorized user replies to the one
-Publishing-owned **current final meeting projection** in Discord and receives
-one locally grounded answer from that projection's complete accepted final
-transcript. The final projection is the single final summary message whose
-versioned publication receipt binds the accepted transcript; replies to a live
-draft, caption, playback link, previous answer, stale final message, or any other
-artifact are ignored.
+Deliver four independent vertical slices without coupling Discord, Infinity
+Context, voice transport, or model providers to the Meeting Knowledge domain:
 
-The original Craig recording, accepted final transcript releases, and Meeting
-database are authoritative. The summary, model selections, generated claims,
-indexes, and answers are derived. A factual claim is publishable only when its
-citation is rehydrated to an existing eligible human turn in the immutable
-transcript release admitted for that question.
+1. **Trusted evidence baseline** - a final transcript can prove its source,
+   sealed human roster, producer semantics, and current final Discord projection.
+2. **Local Final Reply** - an authorized participant replies to Botik's current
+   final summary/transcript message and receives one locally grounded answer.
+3. **Same-room historical memory** - accepted human transcript turns are indexed
+   through the official Infinity Context TypeScript SDK; search results are only
+   candidates and are locally rehydrated and reauthorized before generation.
+4. **Grounded voice reuse** - the active conversation asks Meeting Knowledge for
+   a validated answer, then speaks the complete answer through the existing
+   literal-speech path with normal barge-in and meeting-end cancellation.
 
-V1 has no Infinity Context runtime, historical retrieval, live evidence,
-previous-answer memory, or voice grounding. Historical Infinity shadow indexing
-is the next independent, non-activatable slice described at the end of this plan.
+Greetings, farewells, recording, transcription, summary publication, and normal
+conversation stay independent. Failure or rollback of any knowledge slice never
+invalidates the recording, meeting, transcript, summary, or existing voice flow.
 
-### Product behavior
+## Three-pass review synthesis
 
-| Input or outcome | V1 behavior |
-| --- | --- |
-| Reply to an unrelated, wrong, or stale artifact | Ignore without creating a job |
-| Valid target but requester is unauthorized | Return no transcript-derived content; emit a generic denial only when policy permits revealing the target, otherwise ignore |
-| Valid but legacy/ineligible, unsupported size, busy, exhausted, or insufficient evidence | At most one bounded, localized, non-LLM response through the same publication-effect path |
-| Valid supported question | One message containing every accepted claim and its citations |
-| Ambiguous Discord create | Reconcile; never create with a new nonce or payload, and accept zero confirmed delivery rather than risk a duplicate |
+This revision incorporates three independent hosted reviews: DDD/SOLID,
+reliability/security/E2E, and simplicity/DRY.
 
-The guarantee is **at most one Discord answer business effect**, not exactly-once
-delivery. `delivery_unknown` can leave the user with no confirmed answer.
+### Accepted findings
 
-### Size and effort
+- The earlier plan stopped at Local Final Reply while Infinity and voice were
+  non-executable notes. They are now separately deployable phases with owners,
+  ports, kill switches, tests, and acceptance gates.
+- Meeting Lifecycle, Transcription, Intelligence, Publishing, Conversation, and
+  Meeting Knowledge are feature ownership areas inside the existing Meeting Core
+  bounded context today. The plan does not pretend they are already separately
+  persisted bounded contexts.
+- Existing actor-v2 work is a baseline, not completed trust proof. It lacks a
+  durable producer capability/revision and an explicit sealed-roster proof.
+- A non-reversible requester hash cannot support authorization after restart.
+  The adapter therefore keeps a short-lived opaque authorization principal
+  reference and a separate keyed dedupe subject.
+- Local Final Reply does not build a selector/window/checkpoint retrieval system.
+  It sends the complete bounded current transcript in one grounded-answer call
+  or returns `unsupported_size`; it never answers from a prefix.
+- Discord delivery authorizes exactly one create attempt per answer effect. Once
+  request bytes may have crossed the boundary, recovery reconciles and never
+  performs another create.
+- Citation membership is deterministic; semantic entailment is measured. Claims
+  about absence, all items, global counts, or exhaustive lists abstain in V1
+  unless a deterministic reducer exists for that claim class.
+- Infinity is a derived candidate locator. The official TypeScript SDK is the
+  only Infinity integration dependency; no custom HTTP client or Python sidecar
+  is added.
+- Source withdrawal drives durable retraction/deletion of derived Discord and
+  Infinity data. Cleanup continues while serving is disabled.
 
-| Deliverable | Approximate changed lines | Expected time |
-| --- | ---: | ---: |
-| Local Final Reply production slice | 1,700-2,400 | 6-9 working days |
-| Private-guild qualification and retained evidence | 300-500 | 1-2 working days |
+### Rejected extremes
 
-This is about 300-500 fewer production/test lines and 8-12 fewer crash
-permutations than the original 1,900-2,900-line proposal. One evidence boundary,
-one admission binding, a collapsed job state graph, and a Publishing-authoritative
-delivery state remove duplicate machinery. Authorization, fencing, and bounded
-provider processing are retained because they protect correctness.
+- **Rejected:** extracting every existing Meeting feature into a new service or
+  repository before the first answer. It is a high-risk migration unrelated to
+  the smallest useful behavior.
+- **Rejected:** treating the current monolithic Meeting JSON snapshot as a
+  timeless architecture. New durable QuestionJob, AnswerEffect, and Historical
+  Sync records have explicit owners and migrations; any future transcript
+  replacement capability gets its own authority ADR before activation.
+- **Rejected:** a generic repository, unit of work, workflow engine, event bus,
+  outbox, provider gateway, effect envelope, or `shared/common/utils` package.
+- **Rejected:** a huge Cartesian crash × locale × quota × provider matrix. Tests
+  cover every durable transition and security invariant, plus representative
+  cross-products and property-based edge cases.
 
-## Goals
-
-- Admit only an exact reply to the current final meeting projection.
-- Authorize access to the complete transcript, not merely visibility of its
-  summary, and reauthorize immediately before publication-effect reservation.
-- Bind the question immutably to requester, policy, locale, source, meeting,
-  transcript release, transcript binding epoch/hash, and final receipt.
-- Cover every eligible turn of the complete accepted transcript or abstain; no
-  prefix answer or partial-success fallback exists.
-- Treat only positively identified human actors from a sealed v2 roster as
-  evidence. Automation, unknown, legacy, absent, or conflicting identity fails
-  closed.
-- Publish only runtime-validated, bounded claims whose local citations are
-  semantically supported and render as stable speaker/time/turn references.
-- Bound ingress, storage, calls, tokens, provider time, cost, retry, lease,
-  retention, and Discord effects across concurrency and restart.
-- Keep recording, transcription, summary, meeting state, and final publication
-  valid and available when Q&A components fail.
-- Roll out only through an empty-by-default private-guild allowlist.
-
-## Non-goals
-
-- No reply target other than the current final meeting projection.
-- No Infinity dependency, package, table, flag, indexing, backfill, or search in
-  V1.
-- No live-meeting or voice Q&A, previous-answer context, or conversational memory.
-- No `/ask`, placeholder/edit flow, attachment, or multi-message answer.
-- No cross-room, guild-wide, personal, Suggestions, or Facts search.
-- No generic memory service, repository, unit of work, event bus, outbox,
-  universal event/effect envelope, or `shared`/`common`/`utils` package.
-- No new meeting-deletion command or speculative tombstone. Existing retention
-  or withdrawal behavior is consumed through a versioned contract.
-
-## Ownership and dependency direction
+## Architecture and ownership
 
 ### Context map
 
-| Owner / bounded context | Owns for this slice | Does not own |
+| Owner | Authority | Collaboration for this delivery |
 | --- | --- | --- |
-| Craig Voice Gateway | Authoritative original recording, durable recording spool, v2 producer capability and actor observations | Meeting, transcript, authorization, question, or answer policy |
-| Meeting Lifecycle | Meeting/source identity and the monotonically enriched then sealed actor roster | Transcript releases, questions, or Discord effects |
-| Transcription | Immutable accepted final transcript releases, turn identity/timing, current-release status, preservation and withdrawal facts | Retrieval, answer generation, or publication |
-| Guild Installation & Configuration | Versioned meeting-Q&A requester policy and configured Discord scope | Live Discord permission observations or questions |
-| Publishing | Current final projection metadata and receipt; the sole durable answer-delivery effect and reconciliation state | Transcript authority or answer truth |
-| Meeting Knowledge | Immutable question admission, evidence-membership and grounded-answer invariants, bounded generation job, citations, and delivery-status projection | Other contexts' aggregates, repositories, tables, or authority |
+| Craig Voice Gateway | Original recording, actor observations, provider capability | Publishes versioned lifecycle facts through its ACL |
+| Meeting Lifecycle feature | Meeting/source identity and sealed actor roster | Supplies trusted evidence identity |
+| Transcription feature | Accepted final transcript and its canonical turns | Supplies current immutable evidence; publishes purpose-specific accepted/withdrawn facts |
+| Publishing feature | Current final projection and immutable answer effects | Sole Discord answer-delivery and retraction authority |
+| Guild Configuration bounded context | Installed guild/channel mapping | Publishes the enabled scope; configured Q&A roles are deferred |
+| Meeting Knowledge feature | Question admission, evidence eligibility, grounded claims/citations, historical sync intent | Publishes one provider-neutral grounded-answer use case |
+| Conversation feature | Active spoken turn, cancellation, cue and playback policy | Consumes Meeting Knowledge through its own port |
 
-No aggregate or repository spans contexts. Meeting Knowledge builds no persistent
-transcript corpus in V1. It reads independent local projections through opaque
-meeting and transcript identifiers.
+The current implementation remains one Meeting Core bounded context with feature
+modules and one process composition. Cross-feature application collaboration uses
+curated primitive DTOs and narrow ports; it never imports another feature's
+aggregate, repository, adapter, database row, or provider type. Craig and Guild
+Configuration remain separate boundaries with anti-corruption adapters.
 
-### Directional boundaries
+### Dependency direction
 
 ```text
 meeting-knowledge domain
-  <- meeting-knowledge application + consumer-owned ports
-  <- ACL/adapters for Lifecycle, Transcription, Configuration, Publishing,
-     Discord, PostgreSQL, and Subscription Runtime
+  <- meeting-knowledge application and consumer-owned ports
+  <- Discord/PostgreSQL/Subscription Runtime/Infinity ACL adapters
   <- Meeting Platform composition
+
+conversation application
+  -> Conversation-owned GroundedKnowledgeAnswerPort
+  -> ACL to Meeting Knowledge's published application use case
 ```
 
-Synchronous cross-context reads use a Meeting Knowledge-owned port implemented
-by an anti-corruption adapter over the provider context's curated published
-contract. Answer delivery uses a Publishing-owned command contract behind a
-Meeting Knowledge-owned output port. Asynchronous facts are producer-owned,
-versioned, runtime-validated, and idempotently consumed. There are no deep
-imports, shared tables masquerading as repositories, or cross-context domain
-imports.
+Infinity SDK, Discord SDK, PostgreSQL, Craig, Subscription Runtime, Pipecat, TTS,
+environment, time, randomness, and timers never enter domain/application source.
+Every new source file is fail-closed in the architecture dependency model.
 
-The complete V1 application-port set is deliberately small and directional:
+### Capability-specific ports
 
-| Consumer-owned port | Implementing boundary |
-| --- | --- |
-| `MeetingEvidencePort` | ACL over curated Publishing, Lifecycle, and Transcription read contracts |
-| `RequesterAuthorizationPort` | ACL over Configuration policy plus current Discord membership/permission observations |
-| `QuestionJobStore` | Meeting Knowledge PostgreSQL adapter |
-| `EvidenceCandidateSelector` | Subscription Runtime selector adapter |
-| `GroundedClaimGenerator` | Subscription Runtime answer adapter |
-| `AnswerPublicationPort` | ACL over Publishing's versioned answer-effect command |
+Local Final Reply uses only:
 
-Do not add a provider gateway, universal store, or second interface for the same
-operation until an executable slice proves a distinct contract or failure mode.
+- `FinalReplyEvidencePort` - loads an exact current-final authoritative snapshot
+  and later rehydrates historical candidate references.
+- `QuestionAuthorizationPort` - produces fresh, bounded authorization
+  observations from the opaque principal reference.
+- `QuestionAdmissionCommitPort` - conditionally commits dedupe, rate reservation,
+  immutable evidence binding, and job only if expected local authority is still
+  current in one PostgreSQL transaction.
+- `QuestionJobStore` - leases, attempts, terminal outcome, expiry, and scrub.
+- `GroundedAnswerGenerator` - one strict provider-neutral grounded-answer call.
+- `AnswerPublicationPort` - Publishing-owned immutable answer-effect command.
 
-The PostgreSQL adapter may form one repeatable read model from curated
-Publishing, Lifecycle, and Transcription contracts. It is owned by the Meeting
-Knowledge adapter boundary, is read-only with respect to those contexts, and is
-classified as an explicit fail-closed edge. It cannot import their repositories,
-aggregates, internal schema types, or implementation modules.
+Historical memory adds two focused ports:
 
-Craig's ACL means **anti-corruption layer**, not authorization. It translates
-provider artifacts into application-owned recording inputs. Discord inbound and
-outbound adapters translate through application ports. Discord/Craig SDK objects,
-clients, errors, snowflake behavior, Subscription Runtime execution types, and
-future Infinity/Pipecat SDK types stay in adapters and composition.
+- `HistoricalMemoryPort` with `indexFinalMeeting`, `searchRoom`, and
+  `deleteMeeting` capabilities implemented only by the Infinity SDK adapter.
+- `HistoricalSyncStore` for local desired generation, mutation identity, retry,
+  reconciliation, and deletion progress.
 
-Add the real `packages/meeting-core/src/features/meeting-knowledge` module only
-with this vertical slice and owner. Expose only
-`@discord-meeting/meeting-core/meeting-knowledge`. The implementation change must
-also add ADR-0027, update the architecture feature inventory and decision model,
-extend `architecture/foundation/source-dependencies.yaml` fail-closed for every
-new source/test file, and update the consumer-subpath policy. Engineering
-Foundation remains development-only at the exact registry version `0.6.0`.
+Conversation owns `GroundedKnowledgeAnswerPort`; it does not depend on the
+generator, Infinity, Discord, or database ports.
 
-## Versioned contracts and authority
+## Phase 0 - Close the trusted evidence baseline
 
-Each relationship has its own exact, runtime-validated V1/V2 schema with an
-explicit schema version, stable idempotency identity where applicable, bounded
-fields, and unknown-version rejection:
+### Current baseline
 
-- Craig `AuthoritativeReady.v2` carries durable producer capability, normalized
-  source, and the sealed actor roster.
-- Lifecycle publishes a source/actor snapshot contract.
-- Transcription publishes accepted/replaced/withdrawn final-release contracts
-  and a canonical transcript read contract.
-- Configuration publishes requester-policy identity/version; its ACL combines
-  that policy with current Discord authorization observations.
-- Publishing publishes current-final lookup and answer-effect command/receipt
-  contracts.
-- Subscription Runtime implements exact selector and grounded-answer schemas.
+ADR-0027, source/actor persistence, actor-kind conflict checks, architecture
+classification, and the initial Meeting Knowledge identity module already exist.
+They remain regression-gated and are not counted as a working Q&A feature.
 
-Contracts contain primitives and contract-owned values, never aggregates,
-repositories, database rows, provider SDK/runtime types, or a universal event
-envelope. TypeScript types do not replace runtime codecs. Contract tests cover
-valid, invalid, unknown-version, duplicate, and out-of-order delivery.
+### Required delta
 
-Failure or malformed output from indexing, Q&A selection, generation,
-publication, cleanup, or future Infinity processing must never delete, rewrite,
-invalidate, or mark failed the original recording, any accepted transcript
-release, the meeting record, or the original final projection.
-
-## Source, actors, and migration
-
-Meeting Lifecycle persists provider-neutral source identity and actor
-observations from initial recording admission:
+Publish a backward-compatible lifecycle version newer than the existing
+capability-less v2. It contains primitive, runtime-validated fields:
 
 ```text
-MeetingSourceSnapshot { scopeId, roomId }
-MeetingActorSnapshot { actorId, kind: human | automation | unknown }
-ActorRoster { producerCapability, sealedAtAuthoritativeReady, actors[] }
+producerCapabilityId
+producerRevision
+actorSemanticsVersion
+rosterState: sealed
+actors[]
+source { scopeId, roomId }
 ```
 
-Rules:
+Craig durably stores these fields with actor observations before Meeting creation
+can complete. Recording ingress preserves them through restart and completion.
+Lifecycle persists the exact capability and sealed roster. Existing v1,
+unversioned, capability-less v2, unknown future capability, unsealed roster, and
+conflicting observations remain valid for recording/summary but are ineligible
+for knowledge and historical indexing.
 
-- Every unversioned or v1 producer record restores with `actors: null` and is
-  ineligible for Q&A and future historical indexing. No E2E assertion can
-  retroactively prove which producer emitted an individual legacy record.
-- Only `AuthoritativeReady.v2` from a durably identifiable producer revision
-  whose capability declares the v2 semantics is trusted.
-- The recording spool durably retains source, producer capability, and actor
-  observations across restart before Meeting creation can complete.
-- Before `authoritative_ready`, observations may add actors monotonically.
-  Existing actors cannot disappear or change kind. An `actorId` kind conflict,
-  capability conflict, or non-monotonic replay fails closed.
-- At `authoritative_ready`, Lifecycle seals the complete roster. Late mutation is
-  rejected; an exact duplicate is idempotent.
-- Only actors positively classified `human` in the sealed roster can support an
-  answer. `automation`, `unknown`, absent actors, and transcripts with no human
-  evidence produce an honest ineligible response.
-- No inference uses an audio track, snowflake, display/profile name, greeting
-  configuration, or Botik-specific special case.
+Lifecycle is the sole canonicalizer of source and actor observations. Meeting
+Knowledge validates the published sealed-roster contract/version and owns only
+human-evidence eligibility; it does not duplicate normalization rules.
 
-Required migration evidence includes v1/unversioned replay, v2 rolling upgrade
-and downgrade, old/new producer overlap, spool restart, duplicate ready,
-out-of-order ready, late human, late bot, conflicting kind, and seal replay.
-Existing recording, transcription, summary, greeting, farewell, and publication
-flows must remain unchanged for legacy meetings.
+### Gate
 
-## Exact admission, authorization, and immutable binding
+- rolling upgrade/downgrade and old/new producer overlap;
+- spool restart, duplicate/out-of-order ready, late actor, kind/capability
+  conflict, exact sealed replay, and unknown future version;
+- no regression in recording, transcript, summary, greeting, farewell, or
+  publication;
+- cross-repository contract fixtures and digests are generated from one canonical
+  schema and consumed by both repositories.
 
-### Inbound adapter
+## Phase 1 - Local Final Reply
 
-The Discord adapter listens only for create events with `GuildMessages` and the
-approved `MessageContent` intent. It ignores self, bots, webhooks, DMs, empty
-content, edits, and deletes. The empty-by-default allowlist, expected bot
-application, configured results container, current final message reference, and
-bot permissions must all match.
+### Product admission
 
-It passes provider-neutral primitives: a namespaced opaque `QuestionId`, opaque
-reply reference, normalized scope/container identity, bounded question text,
-verified bot-application facts, and a keyed non-reversible requester subject.
-It never queries Meeting Knowledge tables or resolves the meeting twice.
+The Discord input adapter handles only create events that are:
 
-### Requester policy
+- in an allowlisted installed guild/results container;
+- from a human, not Botik, another bot, webhook, DM, or empty message;
+- an exact reply to Publishing's current final summary/transcript projection.
 
-The initial policy is `meeting_qa_requester_policy.v1`:
+Transport validation and self/bot/webhook filtering stay in the adapter. Product
+currentness is resolved exactly once by Meeting Knowledge. Replies to live
+captions, drafts, recording links, prior answers, stale finals, or unrelated
+messages are ignored without a job.
 
-- the requester must be a current guild member;
-- the requester must be either a positively identified participant in the sealed
-  meeting roster or hold an administrator-configured Meeting Q&A role;
-- current `ViewChannel` and `ReadMessageHistory` permission for the final
-  container must be positively observed; and
-- the guild/scope/room and current-final binding must match exactly.
+Question edit cancels and scrubs pre-send work; a new create event is required.
+Question deletion cancels and scrubs pre-send work. Final-projection deletion or
+withdrawal marks it unavailable and cancels pre-send work. Answer deletion never
+causes automatic recreation.
 
-Unknown membership, partial permission data, API failure, missing configuration,
-policy-version mismatch, or identity-mapping ambiguity denies access. Persist the
-policy ID/version, decision hash, decision time, requester subject, and facts'
-expiry with admission. Re-evaluate the same policy against current membership,
-roles, permissions, roster, and binding immediately before effect reservation;
-the publication worker repeats the fail-closed current-permission and binding
-check immediately before its first HTTP create. Revocation, departure,
-replacement, or withdrawal cancels and scrubs a pre-send job/effect.
+### Authorization
 
-Transcript prompts may use only provider deployments whose approved
-retention/training/residency configuration is pinned and attested in composition.
-Missing or drifted attestation disables Q&A admission. Authorized recipients can
-still copy answers; this residual disclosure risk is explicit in rollout docs.
+V1 is participant-only: requester must be positively present as a human in the
+sealed roster and currently able to view the results channel and history. A
+configurable admin/Q&A role is a later Configuration vertical slice.
 
-### One evidence boundary and one binding
+Ingress creates:
 
-Meeting Knowledge owns one `MeetingEvidencePort`:
+- a keyed non-reversible requester subject for dedupe/rate limiting; and
+- a short-lived opaque `authorizationPrincipalRef` that the Discord adapter can
+  resolve after restart. It is never logged and is scrubbed at terminal/expiry.
+
+Fresh authorization is checked:
+
+1. before the first transcript hydration;
+2. before the provider call;
+3. before answer-effect reservation; and
+4. immediately before the send authorization CAS.
+
+Each observation records policy version, source, observed/expiry time, and digest.
+Expired, cache-only, partial, changing, or failed observations deny. The honest
+guarantee is that a revocation positively observed before a checkpoint cancels
+the operation; Discord permission changes cannot be made linearizable with the
+network create.
+
+### Atomic admission and immutable binding
+
+The application first obtains a fresh authorization observation and authoritative
+snapshot. `QuestionAdmissionCommitPort` then uses one local PostgreSQL transaction
+to verify that the expected projection, meeting revision, transcript identity,
+sealed roster, and policy are still current while inserting the immutable job and
+rate reservation.
+
+The binding contains only bounded primitives:
 
 ```text
-resolveCurrentFinal(reference, scope) -> CurrentFinalEvidenceV1
-loadAcceptedTranscript(immutableBinding, requireCurrent) -> AcceptedTranscriptV1
+questionId, questionHash, requesterSubject, authorizationPrincipalRef
+policyVersion, authorizationDigest, expectedLocale
+scopeId, roomId, meetingId, meetingRevision
+transcriptId, transcriptVersion, canonicalEvidenceHash
+finalProjectionReceipt, finalProjectionEpoch, botApplicationIdentity
 ```
 
-Its ACL composes only curated contracts in one repeatable database snapshot.
-Zero or multiple matches fail closed. A narrow unique index resolves the current
-final receipt; there is no polymorphic artifact registry.
+A duplicate with identical fields returns the existing outcome. Any mismatch
+fails closed and never rebinds. Legacy receipts/snapshots without the required
+identity are readable but ineligible.
 
-Admission atomically inserts or validates one immutable binding:
+Current source does not support transcript replacement. V1 therefore binds the
+existing final transcript ID/version, Meeting revision, canonical turn hash, and
+current projection receipt. A future replacement/withdrawal command must first
+add a source-owned transition ADR and versioned facts; it cannot silently mutate
+these fields. During any future R1/F1 to R2/F2 transition, zero eligible current
+projection is safer than a mixed binding.
 
-```text
-questionId, questionHash, requesterSubject
-requesterPolicyId, requesterPolicyVersion, authorizationDecisionHash
-expectedLocale, localePolicyVersion
-scopeId, roomId, meetingId
-transcriptReleaseId, transcriptVersion, transcriptBindingEpoch
-transcriptBindingHash, finalProjectionReceipt, botApplicationIdentity
-```
+### Complete bounded grounding
 
-The binding hash covers the ordered turn IDs, normalized turn-content hashes,
-speaker identities, actor classifications, timestamps, transcript release/version,
-binding epoch, and current final receipt. A conflict in any field never rebinds.
+All eligible human turns from the bound current transcript are converted to
+question-local opaque evidence IDs and serialized once. Before the provider call,
+the production adapter computes exact request bytes and model-token usage against
+the pinned runtime/model capability. If the complete request does not fit, the
+job returns localized `unsupported_size`; it never uses a prefix or partial
+success.
 
-Accepted transcript releases are immutable and preserved for at least the
-24-hour maximum job age plus cleanup grace. Replacement creates a new release
-and epoch; it never rewrites the admitted release. Existing authorized purge or
-withdrawal emits a versioned fact and may remove source evidence only under the
-source owner's policy—it does not originate in Q&A.
-
-Every load checks release ID/version/hash. Before publication-effect reservation,
-`requireCurrent=true` rechecks the entire binding in a fresh snapshot. Replacement,
-withdrawal, missing turns, changed roster, changed final receipt, or deletion
-cancels and scrubs the job. The effect reservation adapter rechecks that local
-binding while mutating only Publishing's effect state. No Q&A failure can mutate
-the source authorities.
-
-## Grounded generation
-
-### Evidence identity and citations
-
-The application derives deterministic question-local opaque `EvidenceId` values
-and holds only `EvidenceId -> turnId`; the immutable source tuple is stored once
-in the admission binding. Models never receive naked turn IDs.
-
-Candidate selection is not evidence. Before generation and again before render,
-the application reloads canonical turns from the admitted release, rejects
-unknown/duplicate/cross-release IDs, and validates human membership. Every
-accepted claim retains a non-text citation binding:
-
-```text
-transcriptReleaseId, transcriptVersion, turnId,
-speakerLabel, startMs, endMs
-```
-
-The rendered citation is stable and comprehensible, for example
-`[Speaker 2, 00:12:34-00:12:49, turn 184]`. Citation bindings contain no
-transcript text and live under the authoritative source-retention policy. An
-authorized source deletion cascades the binding; hashes alone never pretend the
-turn remains auditable.
-
-Rendering is all-or-nothing. It emits every accepted claim exactly once with all
-its citations and only fixed localized non-factual wrapper text. The complete
-rendered payload, reply metadata, and hidden deterministic marker must fit one
-Discord message. Oversize output is rejected and replaced by a fixed bounded
-failure response; no claim, citation, or rendered payload is ever truncated.
-
-### Locale
-
-`answer-locale-policy.v1` deterministically derives `ru`, `en`, or `mixed` from
-the bounded question; an explicit supported answer-language request wins.
-Admission persists the expected locale and policy version. The runtime result
-must match it exactly. Fixed denial, busy, unsupported, abstention, and failure
-responses use the same expected locale without an LLM. Unsupported or ambiguous
-locale fails closed to a configured neutral response.
-
-### Complete transcript coverage
-
-Launch qualification supports at most 5,000 eligible turns and 400,000
-normalized characters, including a realistic two-hour fixture below both
-ceilings. This is an operational launch bound, not a promise that all two-hour
-meetings fit. Larger transcripts settle `unsupported_size`; the system never
-answers from a prefix.
-
-Before any provider call, reject a normalized turn over 12,000 characters as
-`unsupported_turn_size`. This avoids invented fragment evidence. Otherwise:
-
-1. Partition ordered turns into windows of at most 120 turns and 12,000
-   normalized characters.
-2. Every window consumes at least one previously unseen turn. Overlap is
-   `min(8, consumedTurns - 1)`, so `nextStart > currentStart`; assert this strict
-   progress and a finite window count before calling a provider.
-3. Batch at most six windows per selector call and request only candidate
-   `EvidenceId` values.
-4. After each successful batch, persist one compact checkpoint containing the
-   binding/window-plan hash, next batch index, bounded candidate turn IDs,
-   per-batch attempt counts, and cumulative usage reservations. It does not copy
-   the source tuple or transcript text.
-5. Deduplicate, canonically reload, add at most two neighboring human turns on
-   each side, repack to the final budget, and generate structured claims once.
-
-The no-retry expected ceiling is `ceil(windowCount / 6) + 1`. At launch the hard
-worst-case limits, including retries and lost outcomes, are:
-
-- 45 windows, 8 selector batches, 3 attempts per batch, and 3 generation
-  attempts: at most 27 provider calls;
-- 1,500,000 cumulative input tokens and 24,000 cumulative output tokens;
-- 15 minutes cumulative provider wall time and USD 5.00 conservative
-  cost-equivalent per job; and
-- 24 hours from admission to terminal settlement.
-
-All numbers are validated configuration with a pinned policy version. Reserve
-calls, maximum tokens, maximum time, and maximum cost atomically before each
-provider request; charge the conservative maximum when an outcome is lost.
-Usage, batch attempts, and total budgets survive restart. Budget exhaustion is
-terminal, never partial success.
-
-Selector responses are capped at 64 KiB and answer responses at 128 KiB before
-full decoding. A streaming guard rejects excess bytes, nesting deeper than 8,
-more than 2,048 JSON nodes, invalid encoding, or trailing data before the exact
-runtime codec runs. Each request deadline is shorter than its database lease.
-
-### Runtime schemas
-
-Meeting Knowledge owns separate provider-neutral ports because selection and
-grounded answers have different contracts and failure modes:
-
-```text
-discord_meeting.knowledge.select_evidence.v1
-discord_meeting.knowledge.answer.v1
-```
-
-The Subscription Runtime adapter owns prompt mapping, pre-codec guards, strict
-codecs, attestation, and bounded failure mapping. Subscription Runtime is a
-replaceable adapter, never evidence authority.
-
-The answer schema has exact keys only:
+The provider returns an exact runtime-validated shape:
 
 ```text
 status: answered | insufficient_evidence | not_a_question
@@ -405,380 +270,373 @@ locale: ru | en | mixed
 claims: [{ text, evidenceIds[] }]
 ```
 
-`answered` has 1-12 bounded non-empty claims and each claim has 1-8 unique
-admitted evidence IDs. Other statuses have no claims. Unknown keys/types,
-control/bidi characters, mention payloads, duplicate IDs, locale mismatch,
-cross-release IDs, or bounds violations reject the whole output. Model confidence
-and citation membership never substitute for semantic entailment.
+Rules:
 
-## Durable job and publication effect
+- 1-12 bounded claims for `answered`; other statuses contain no claims;
+- every claim cites only admitted human evidence IDs;
+- canonical turns are reloaded before render and the full binding is compared;
+- Discord mentions, links, markdown deception, bidi/control characters, unknown
+  keys, duplicate IDs, invalid encoding, trailing data, or oversize output reject
+  the complete result;
+- the rendered one-message payload is all-or-nothing and never truncated;
+- exact quotes additionally require canonical span/hash validation;
+- corrections/conflicts include the correction and material conflicting turns;
+- universal, absence, count, and exhaustive-list questions abstain in V1.
 
-### Meeting Knowledge job
+Citations render stable speaker/time/turn references. Membership, identity,
+scope, and source immutability are deterministic checks. Semantic support and
+abstention are measured quality gates, never presented as domain certainty.
 
-Use one small application-owned job, not a workflow aggregate:
+Locale is deterministically `ru`, `en`, or `mixed` from the question, with an
+explicit supported language request taking precedence. Fixed responses use the
+same persisted locale policy without an LLM.
 
-```text
-admitted -> running(select | generate) -> ready
-admitted | running | ready -> cancelled | unsupported | exhausted
-ready -> delivered | delivery_unknown | cancelled   # projection of effect only
-```
+### Durable processing
 
-`insufficient_evidence`, `not_a_question`, busy, and denial are bounded answer
-outcomes, not extra workflow states. Technical fields are `claimGeneration`,
-`leaseUntil`, `nextAttemptAt`, stage/batch attempts, cumulative budgets,
-`terminalEpoch`, and bounded failure reason.
-
-Claiming uses database time and one conditional claim operation. Every
-checkpoint and settlement must match state, generation, `leaseUntil >
-database_now()`, and the monotonic terminal epoch. Equality at expiry is expired.
-A provider deadline ends before the lease. Reclaim increments generation. No
-stale generation can checkpoint, settle, reverse terminal state, or resurrect
-scrubbed text.
-
-### Publishing-authoritative fenced effect
-
-Publishing owns the only delivery authority:
+Workers poll and lease the purpose-specific QuestionJob table directly; no queue
+outbox is necessary. Minimal states:
 
 ```text
-reserved -> claimed
-claimed -> send_started | cancelled
-send_started -> delivered | reconciling
-reconciling -> delivered | delivery_unknown
-reserved -> cancelled
-claimed(g) -> claimed(g+1)                 # lease expired before send
-reconciling(g) -> reconciling(g+1)         # reconciliation lease expired
+queued -> running -> ready -> terminal(outcome)
 ```
 
-The deterministic effect ID is derived from the immutable question identity.
-Reservation persists the exact target/reply reference, bot application, answer
-marker version, nonce, exact rendered payload bytes, payload hash, binding epoch/
-hash, authorization policy/decision version, `firstSendStartedAt`, conservative
-`nonceValidUntil`, nullable receipt, claim generation, database-time lease, and
-terminal reason. `firstSendStartedAt` is null until the send-start CAS. A repeated
-reservation must match every immutable byte/field.
+Leases and retries use database time, generation fencing, bounded provider
+deadline, and durable attempt identity. Maximum usage is reserved before the
+call; a lost outcome is conservatively charged. A stale generation cannot store
+an answer or restore scrubbed content.
 
-Effect rules:
+Safety limits are versioned composition policy backed by a limits ledger with
+benchmark/model/tokenizer/pricing source, owner, rationale, and review date. The
+initial slice keeps question/prompt/output byte limits, requester/guild rate
+limits, global worker concurrency, provider call/time/token cap, and expiry. It
+does not add a generic quota framework, USD accounting ledger, notice workflow,
+or every possible scope cross-product.
 
-1. Reauthorization and a current-binding recheck occur immediately before the
-   single idempotent reservation. Failure cancels without an HTTP effect.
-2. Claim/reclaim is single-flight and uses a database-time generation and lease.
-   Only an expired pre-send or reconciliation claim can increment generation. A
-   worker must still own the unexpired fence immediately before transitioning to
-   `send_started`; there is no await or external work between that CAS and
-   beginning the bounded HTTP call. A generation that loses its fence cannot
-   begin HTTP.
-3. The HTTP deadline is shorter than the lease. `send_started` never returns to
-   `reserved`; lease expiry permits only a separately fenced reconciliation
-   claim, not a fresh effect.
-4. Send with `enforceNonce`, disabled allowed mentions, and `repliedUser: false`.
-   Any retry uses the stored identical payload, nonce, marker, and target.
-5. A rejection proven before remote acceptance may retry by policy. After an
-   ambiguous create, the identical request may be retried only after the prior
-   HTTP deadline and while the conservative nonce window is definitely open.
-6. After that window, an exact observed marker may prove delivery; history
-   absence never proves non-creation. Forbidden/incomplete history, deletion,
-   conflict, multiple matches, or no exact match converges terminally to
-   `delivery_unknown`; no later create is authorized.
-7. Marker reconciliation checks author/application, container, reply target,
-   nonce, marker version, and payload hash. Only a confirmed receipt reaches
-   `delivered`.
+### Publishing-owned one-attempt effect
 
-An idempotent convergence worker projects `delivered`, `delivery_unknown`, or
-`cancelled` onto the QuestionJob and scrubs temporary content. The question row
-never independently claims publication success and never mirrors effect claim
-states. A paused stale sender, reconciler, and scrubber cannot produce divergent
-terminal states.
+Publishing owns an immutable effect separate from summary publication:
 
-Qualification uses an independent official test-bot Discord observer to count
-actual matching messages after committed-create/lost-response and restart. A
-database effect count is not delivery evidence.
+```text
+reserved -> claimed -> request_started
+reserved | claimed -> cancelled | rejected_before_request
+request_started -> delivered | outcome_unknown
+outcome_unknown -> delivered | absent_unconfirmed
+```
 
-## Admission, abuse, retention, and privacy
+The effect stores deterministic identity, exact target/reply, inert mentions,
+payload bytes/hash, hidden marker, binding/authorization versions, claim
+generation, request-start time, and nullable receipt.
 
-Admission performs immutable dedupe and quota reservation in one PostgreSQL
-transaction. A duplicate matching binding returns the existing outcome without
-consuming quota; a conflicting duplicate fails closed. Initial limits are:
+Rules:
 
-- question text: 4,000 normalized characters;
-- requester: 3 new jobs per 10 minutes and 20 per UTC day;
-- guild: 10 per 10 minutes and 100 per UTC day;
-- global: 20 per 10 minutes and 200 per UTC day;
-- active jobs: 2 per guild and 4 globally; queued raw question bytes: 2 MiB
-  globally; and
-- provider spend: USD 5.00/job, USD 20.00/guild/day, USD 50.00/global/day,
-  reserved conservatively before work.
+1. Reservation repeats only when every immutable byte and field matches.
+2. A reclaimed pre-request worker must win the current generation before
+   `request_started`; stale generations cannot begin HTTP.
+3. `request_started` authorizes exactly one bounded Discord create attempt with
+   automatic client retries disabled.
+4. After request bytes may have crossed the boundary, no worker is ever allowed
+   to create again. Recovery only looks for the exact author/application,
+   container, reply target, marker, and payload hash.
+5. Missing/incomplete/forbidden history or a deleted message never proves that
+   Discord did not create it. The outcome remains fail-closed and never retries.
 
-Counters use database time, survive restart, and cannot be bypassed by concurrent
-admission. A requester receives at most one quota notice per reason/window; the
-rest are silent, so rejection cannot amplify a flood. Limits and keyed-subject
-rotation have a versioned operational policy.
+A paused sender that resumes after reconciliation can still complete its one
+authorized request, but no second sender can create. Qualification uses an
+independent official test bot to prove an observed remote count of zero or one;
+database rows alone are not delivery evidence.
 
-Raw question, candidate IDs, claims, and payload are scrubbed in the terminal
-transaction for delivered, cancelled, ignored, unsupported, exhausted, and
-insufficient outcomes. A nonterminal job is forcibly settled and scrubbed by 24
-hours. `delivery_unknown` retains its bounded immutable payload for at most 7
-days for reconciliation, then becomes terminal `abandoned_fail_closed` and
-scrubs.
+### Retention and source withdrawal
 
-Operational terminal metadata expires after 30 days. A minimal non-text
-question/effect dedupe key and confirmed receipt remain only until the source
-meeting's retention expires, preventing late event replay without unbounded
-standalone growth. Citation bindings follow transcript retention and cascade on
-authorized source deletion. A fenced sweeper cannot race a worker to restore
-text. Logs, metrics, traces, and labels never contain raw question/evidence/claim
-text, Discord snowflakes, actor/meeting IDs, tokens, or high-cardinality provider
-IDs.
+Raw question, principal reference, evidence text, model output, and payload are
+scrubbed after terminal settlement or bounded expiry. Logs/traces/metrics never
+contain raw text, Discord IDs, meeting IDs, tokens, or provider payloads.
 
-## Ordered implementation and acceptance evidence
+An authorized source withdrawal creates purpose-specific, non-content retraction
+intents. Pre-send work cancels; delivered answer messages are deleted or replaced
+with approved non-sensitive text; Infinity objects are deleted. Minimal identity
+and remote receipts remain until absence/retraction is confirmed. Retraction,
+Infinity deletion, and local cleanup continue when admission, generation, search,
+or new sends are disabled.
 
-### Phase 1 - Decisions, boundaries, and v2 identity
+## Phase 2 - Infinity Context shadow synchronization
 
-Owners: Meeting Lifecycle owner for source/roster; Craig owner for v2 ACL/spool;
-Meeting Knowledge owner for feature boundary; architecture owner for enforcement.
+### SDK gate
 
-1. Accept ADR-0027 and update the overview, dependency model, feature inventory,
-   exports, Foundation classification, and consumer allowlist with the real
-   slice.
-2. Add runtime-validated Craig v2 capability/roster contracts, spool retention,
-   monotonic enrichment/seal, and Lifecycle restore/replay behavior.
-3. Add the Meeting Knowledge feature with domain/application tests and only the
-   source directories used by this slice.
+Use the official `@infinity-context/sdk` TypeScript package from the Infinity
+Context repository. As of the inspected upstream revision `897efd21`, the SDK
+exists but is not published to npm. Before production dependency activation:
 
-Acceptance evidence: architecture gates show no unclassified/deep/provider
-edge; exact Foundation `0.6.0` is development-only; rolling-upgrade/replay tests
-pass; legacy and unknown actors are ineligible; original workflows are unchanged.
+- package it from an exact reviewed commit with tarball/lockfile integrity and
+  provenance, or publish that exact package through the approved registry;
+- prove Node 24 ESM/CJS/type consumer import;
+- qualify its actual ingest/process/search/delete, pagination, idempotency or
+  mutation lookup, abort/deadline, and error behavior against a disposable
+  Infinity endpoint;
+- fail startup if the required capability/version attestation is absent.
 
-### Phase 2 - Admission, authorization, and local answer
+No custom HTTP adapter is a fallback. If deterministic mutation reconciliation or
+verified deletion cannot be implemented through the official SDK, shadow
+activation stays blocked and Local Final Reply remains fully operational.
 
-Owners: Meeting Knowledge owner for policy orchestration/job/domain; Lifecycle,
-Transcription, Configuration, and Publishing owners for their curated contracts;
-Subscription Runtime owner for its two adapters.
+### Derived data topology
 
-1. Implement current-final lookup, requester policy, one immutable binding, and
-   canonical release load/recheck through consumer-owned ports and ACLs.
-2. Implement deterministic windowing, checkpoint/budget fencing, strict runtime
-   schemas, canonical reload, grounded-answer invariants, locale policy, stable
-   citations, and all-or-nothing renderer.
-3. Implement atomic dedupe/quota, terminal settlement, retention, and scrub.
+Index only accepted final turns whose actors are human in the sealed trusted
+roster. Never index summaries, live partials, Botik/automation turns, questions,
+answers, suggestions, or facts inferred by a model.
 
-Acceptance evidence: an admitted binding survives restart but cannot drift;
-replacement/deletion at every checkpoint cancels; every supported window is
-visited; overlong/oversize/malformed/budget cases terminate; every rendered fact
-rehydrates to an eligible turn; no source authority is mutated by failures.
+Use deterministic opaque topology:
 
-### Phase 3 - Fenced Discord delivery
+```text
+space  = keyed guild identity
+scope  = keyed room identity
+thread = meeting identity
+document/mutation = transcript version + turn identity + policy version
+```
 
-Owners: Publishing owner for effect state/reconciliation; Discord adapter owner
-for ingress/egress/observer; Meeting Knowledge owner for the output port and
-delivery projection.
+Infinity content may contain the canonical human turn text needed for retrieval;
+identities exposed to the service are opaque. Local state remains authority.
 
-1. Add listener lifecycle, intents/config validation, exact target filtering,
-   fresh pre-reservation authorization, and current-binding checks.
-2. Implement the complete effect state machine, DB-time leases/generations,
-   identical nonce/payload retry, marker reconciliation, terminal convergence,
-   and scrubbing.
-3. Prove actual remote count with an independent observer.
+The existing transcript-accept transaction writes one purpose-specific
+`FinalTranscriptAccepted` sync intent. `HistoricalSyncStore` keeps desired
+generation and a small mutation state:
 
-Acceptance evidence: duplicates/concurrent workers/restarts yield at most one
-observed Discord message; a stale generation never begins HTTP; ambiguous
-post-window outcomes never create again; mentions are inert; no payload is
-truncated; all terminal effect states converge to one job projection.
+```text
+pending -> in_flight -> applied
+pending | in_flight -> retry_wait -> in_flight
+any nonterminal -> deleting -> deleted
+```
 
-### Phase 4 - Qualification and rollout
+Mutation IDs are deterministic. Lost responses reconcile by the SDK's qualified
+lookup/read behavior; they never retry with a new identity. If the SDK cannot
+prove absence, the record remains unresolved rather than claiming deletion.
+Backlog and attempts are bounded, but authorized deletion never becomes an
+abandoned terminal dead letter.
 
-Owners: Meeting Knowledge owner signs local/semantic evidence; Reliability owner
-signs PostgreSQL crash evidence; Discord test owner signs private-guild evidence;
-product/security owner approves requester and provider-data policies.
+Replacement, when a real source-owned replacement use case exists, advances the
+local desired generation, indexes the new release, and schedules the old release
+for deletion. Both may temporarily exist remotely, but local current-version
+validation makes the old one unusable immediately.
 
-1. Run deterministic domain/application/contract suites and the disposable
-   PostgreSQL crash matrix.
-2. Run the frozen semantic corpus and providerless two-hour fixture.
-3. In an approved private test guild only, use official test bots, test-only
-   channels/identities, and synthetic text/audio. Retain bounded receipts from the
-   independent observer.
-4. Run `pnpm run check:changed`, `pnpm run check:fast`, and the complete
-   `pnpm run check` before PR/rollout.
+Shadow mode has no read traffic. Its gate proves replay, restart, lost response,
+out-of-order generations, partial processing, prolonged outage, deletion while
+serving flags are off, and verified remote absence where the SDK supports it.
 
-Acceptance evidence is a versioned manifest binding source revision, policy and
-codec versions, fixtures, seeds/replays, PostgreSQL crash results, semantic
-scores, observer message counts, effect receipts, and all three repository checks.
-No user account, self-bot, public guild, production channel, real user project,
-or production/user data is a qualification target.
+## Phase 3 - Same-room historical retrieval
 
-## Test and qualification matrix
+`searchRoom` sends only the authorized keyed room scope and a bounded query. The
+adapter returns opaque candidate references, not trusted snippets or evidence.
+Before candidate text reaches the generator, Meeting Knowledge:
 
-### Direction, authority, and contracts
+1. reauthorizes the requester;
+2. rehydrates every candidate from local authoritative state;
+3. verifies guild/room, meeting, transcript/version, human actor, retention, and
+   current desired generation;
+4. rejects stale, deleted, duplicate, missing, cross-room, automation, or unknown
+   candidates;
+5. deterministically caps and orders historical evidence within the provider
+   budget without removing current-meeting evidence.
 
-- domain/application import no provider SDK/runtime, environment, wall clock,
-  randomness, timer, database, queue, or adapter type;
-- curated cross-context ports/ACLs reject unknown contract versions and
-  duplicate/out-of-order conflicts;
-- recording, transcript releases, meeting state, and final projection remain
-  valid after every Q&A/runtime/publication failure;
-- Foundation fail-closed classification and consumer subpath enforcement cover
-  every new source/test file.
+The same grounded-answer contract and validator serve Local Final Reply and
+historical memory. Infinity outage, partial backlog, or unqualified response
+falls back to current local evidence; it never uses a partial/stale remote cache
+as authority. Historical-only questions honestly abstain when retrieval is not
+safe or available.
 
-### Admission, identity, authorization, and locale
+## Phase 4 - Grounded voice reuse and voice E2E
 
-- wrong/stale/current target, zero/multiple match, immutable duplicate conflict,
-  transcript/version/hash/epoch/receipt drift, missing turn, replacement, and
-  withdrawal at every checkpoint and immediately before reservation/send;
-- participant, configured role, nonparticipant, revoked role, departed member,
-  cross-room, permission loss, API failure, policy upgrade, and expired decision;
-- all legacy/v1/v2 rolling and roster enrichment/seal cases named in Phase 1;
-- expected RU/EN/mixed locale, explicit override, mismatch, unsupported input,
-  and localized fixed responses.
+Conversation owns a small `GroundedKnowledgeAnswerPort`. Its adapter calls the
+published Meeting Knowledge answer use case with the active participant, room,
+question, and cancellation signal. Retrieval and generation run inside the
+existing active-turn executor. Barge-in, supersession, disconnect, meeting end,
+or authorization loss aborts every downstream operation.
 
-### Processing and abuse
+V1 buffers and validates the complete grounded answer before TTS. No factual PCM
+is sent before citation/authorization validation. The final plain text goes
+through the existing `literalSpeech` path; Pipecat, Craig playback, queues, cue
+timing, four-second guard, recording-after-send, and self-audio exclusion remain
+unchanged. Claim-by-claim attested streaming is deferred.
 
-- strict window forward progress, one-turn windows, overlap boundaries, maximum
-  window/batch counts, an overlong turn, exact ceiling, and just-over ceiling;
-- timeout, malformed/oversize/deep response and crash before/after every batch
-  call/checkpoint with persisted attempts and conservative lost-outcome charge;
-- total call/token/time/cost exhaustion and provider-retention attestation drift;
-- concurrent dedupe/quota at requester/guild/global scope, spend/byte caps,
-  restart, keyed-subject rotation, quota-notice suppression, and sustained
-  synthetic flood.
+Retained evidence includes playback provenance (`prepared_asset`, `literal_tts`,
+or `model_tts`), asset hash or model/deployment attestation, knowledge/evidence
+epoch, and cancellation reason.
 
-### Claims, rendering, and semantic quality
+### Greeting and farewell regression contract
 
-- unknown/duplicate/cross-release/cross-human evidence IDs; negation,
-  correction, quotation, uncertainty, prompt injection, and conflicting turns;
-- property tests prove each accepted claim/citation appears once, stable
-  speaker/time/turn rendering survives terminal scrub, mentions remain inert,
-  and one-byte-over payload rejects without truncation;
-- a frozen unseen human-labelled corpus contains at least 100 answerable and 100
-  unsupported questions for each of RU, EN, and mixed, plus at least 60 examples
-  in each adversarial category (examples may overlap locale sets);
-- invalid citation, cross-scope admission, and duplicate observed effect counts
-  are zero; one-sided 95% confidence lower bounds meet 0.95 claim-entailment
-  precision, 0.85 supported-question recall, and 0.95 unsupported-question
-  abstention recall for every locale and adversarial slice, not only aggregate;
-- two independent adjudicators resolve disagreements before scores are frozen.
+- First admitted participant join per meeting triggers promptly; reconnect does
+  not repeat it.
+- Known profile: speak the configured real name and preferred locale. If a
+  per-name prepared asset is absent, bounded literal TTS is allowed. If TTS is
+  unavailable, immediately fall back to a prepared anonymous greeting.
+- Unknown profile: greet without a name using deterministic meeting/default
+  locale; never speak a Discord nickname as a real name.
+- Farewell uses finalized current and recent turns to classify true meeting-end
+  intent versus quote, question, negation, conditional speech, or farewell to one
+  person. It fires once per meeting without waiting for a long silence and uses a
+  prepared RU/EN cue selected by the detected intent locale.
+- Greeting, farewell, acknowledgement, and answer each have explicit priority,
+  interruption, reconnect, and meeting-end policy.
 
-An LLM judge may supplement but never replace the committed human labels.
-Recurring provider qualification detects drift.
+Voice qualification includes providerless real gRPC/Pipecat/WebSocket/PCM paths,
+barge-in during retrieval/generation/TTS/playback, no late factual PCM, processing
+to-ready recording-link behavior, release-pinned trust evidence, and a compressed
+deterministic two-hour durability run. Live latency/semantics use separate official
+test bots, a private test guild, synthetic audio, and repeated cold/warm evidence.
 
-### Fencing, crashes, and external effects
+## Rollout and operations
 
-Use separate PostgreSQL processes/connections and inject loss before/after
-admission, quota reservation, every checkpoint/settlement, lease equality and
-expiry, reclaim, terminal scrub, effect reservation/claim/send-start, Discord
-request/response, receipt, reconciliation, convergence, and retention sweep.
+Separate centrally versioned rollout epochs control:
 
-Test a paused stale sender before and after nonce expiry; 403, 429, proven
-pre-accept rejection, committed-create/lost-response, incomplete history,
-deleted message, marker collision, payload mismatch, multiple marker matches, and
-scrubber/reconciler races. Valid recovery reaches only the preceding or succeeding
-durable state and never a mixed binding, skipped window, resurrected text, new
-post-window create, or second independently observed message.
+- local admission;
+- model processing;
+- Discord new sends;
+- Infinity indexing;
+- Infinity search;
+- grounded voice.
 
-## Observability, rollout, and no-go gates
+Every worker checks the current epoch at its corresponding durable transition.
+A security/quality rollback cancels pre-send effects rather than draining answers.
+Reconciliation, retraction, Infinity deletion, and cleanup continue under all
+serving kill switches.
 
-Only low-cardinality reason, state, retry/age, locale, window coverage, budget,
-effect/reconcile, authorization-policy, and scrub metrics are emitted. Alerts
-cover oldest job/effect age, lease churn, budget denial, authorization drift,
-codec rejection, `delivery_unknown`, observer disagreement, and cleanup lag.
+Observability is privacy-safe and low-cardinality: state/reason, age, retry,
+locale, request bytes/tokens, authorization drift, delivery unknown, deletion
+backlog, SDK capability drift, and cleanup lag. Correlation values are opaque and
+TTL-bound. Every alert has an owner, threshold, response deadline, and tested
+runbook.
 
-Rollback is the empty-by-default `MEETING_QA_GUILD_ALLOWLIST`. Disabling it stops
-new admission and pauses unstarted generation. Already-started ambiguous effects
-continue reconciliation, cleanup continues, and pre-send jobs are cancelled or
-drained by policy. Recording, transcription, summary, existing final publishing,
-playback, greetings, farewells, and live conversation remain active.
+## Test and evidence strategy
 
-Production remains NO-GO until all are true:
+### Deterministic proof
 
-- product/security approve `meeting_qa_requester_policy.v1` and provider
-  retention/training/residency attestation;
-- v2 producer capability, sealed roster, immutable transcript release, and
-  current-final receipt survive rolling upgrade/replay;
-- authoritative binding and authorization rechecks cancel every drift/revocation
-  case before external create;
-- two-hour bounds, provider budgets, pre-codec limits, and atomic quotas pass;
-- PostgreSQL crash/fence matrix and independent Discord at-most-one evidence pass;
-- per-locale/adversarial semantic confidence gates pass;
-- architecture, changed, fast, and full repository checks pass; and
-- rollback/drain and terminal retention evidence is retained and signed by the
-  named owners.
+- domain/application/contract tests for every state transition and invariant;
+- disposable PostgreSQL with separate processes/connections for admission,
+  lease/reclaim, one provider call, answer reservation/request start,
+  reconciliation, scrub, sync mutation, supersession, and deletion fault cuts;
+- duplicate Discord events, concurrent workers, restart, stale generation, lost
+  provider outcome, and committed-create/lost-response through a controlled
+  transport proxy;
+- exact-limit/one-over prompt, response, Discord payload, concurrency, and
+  backlog tests; adversarial Unicode and malformed response guards;
+- a realistic bounded two-hour transcript through production composition with
+  restart at every durable boundary;
+- Infinity SDK disposable-endpoint E2E:
+  index -> restart/replay -> search -> local rehydrate -> supersede -> delete ->
+  verified absence, including cross-room and serving-disabled deletion;
+- voice providerless E2E with greeting, farewell, question, grounded answer,
+  barge-in, reconnect, meeting end, recording link processing/ready, and no late
+  audio.
 
-## Decision ledger
+### Semantic proof
 
-| Decision | Disposition and reason |
-| --- | --- |
-| Exact current-final local reply is the only V1 | Fixed; it is the smallest useful product behavior |
-| Explicit context ownership and directional ports/ACLs | Fixed; prevents a distributed Meeting aggregate and provider leakage |
-| One evidence port and one immutable source binding | Fixed and simplified; avoids duplicate queries and copied tuples |
-| Immutable release epoch/hash, preservation, cancellation, and pre-effect recheck | Fixed; prevents mixed-version claims |
-| Versioned requester policy and immediate reauthorization | Fixed; summary visibility alone cannot authorize transcript disclosure |
-| All v1/unversioned actors ineligible; v2 roster enriches monotonically then seals | Fixed; a plain human-ID set was rejected because unknown/conflicting actor observations and migration provenance must fail closed |
-| Collapsed QuestionJob states; Publishing effect is delivery authority | Fixed and simplified; removes two competing publication invariants |
-| Persist compact successful-batch checkpoints | Fixed; rejecting checkpoints was not accepted because bounded two-hour retries otherwise repeat paid work and weaken total-budget/restart evidence |
-| Requester/guild/global quotas and spend bounds | Fixed; concurrency alone does not bound ingress, storage, or provider cost |
-| Stable non-text citation binding and all-or-nothing render | Fixed; terminal scrub cannot make published citations meaningless |
-| Unsupported quality forecasts | Removed; only measured gates remain |
-| Historical Infinity removed entirely | Rejected; product requires it, so it remains only as the explicitly non-activatable next slice below |
-| Live, previous-answer, and voice grounding | Deferred to separate ADRs/plans after V1 qualification; no source or package is added now |
-| New deletion/tombstone model | Deferred; consume existing versioned withdrawal only and add deletion behavior with a real authorized use case |
+Use one frozen human-labelled holdout with answerable and unsupported RU/EN
+questions, mixed language, negation, correction, quotation, uncertainty,
+contradiction, distant evidence, exhaustive questions, and transcript prompt
+injection. Citation identity/eligibility is zero-tolerance deterministic.
+Pre-register claim precision, question recall, abstention recall, partial-answer
+treatment, zero denominators, sampling configuration, and confidence method.
 
-## Next independent slices
+Start with roughly 100 answerable and 100 unsupported questions balanced across
+RU/EN with adversarial examples embedded, then derive the final sample size from
+the approved error budget and measured variance. Report per-locale results; do
+not claim statistically powered per-category guarantees without enough samples.
+An LLM judge may assist but never replaces frozen human labels and adjudication.
 
-### Historical Infinity Context shadow indexing
+### Live evidence
 
-This section constrains a later ADR/plan; it authorizes no V1 code, dependency,
-flag, table, traffic, or activation.
+Live qualification is opt-in and separate from deterministic proof. It uses only
+official test bots, a private test guild/channel, test identities, synthetic
+text/audio, isolated disposable storage, and an independent observer. The
+manifest binds exact source revision, image digest, configuration/rollout epochs,
+bot applications, fixtures, timestamps, provider attestations, and remote
+receipts. No user account, self-bot, public guild, production channel, real user
+project, or production transcript is a qualification target.
 
-- Use only the official immutable `@infinity-context/sdk` TypeScript package,
-  never a custom HTTP client or Python sidecar. Activation waits for npm
-  publication, provenance/tarball pinning, Node 24 consumer smoke, capabilities/
-  version match, bounded abort behavior, and disposable endpoint fixtures.
-- Transcription's application layer writes a narrow producer-owned
-  `FinalTranscriptAccepted.v1` fact to its transactional outbox in the same local
-  transaction that accepts the release. This is purpose-specific, not a generic
-  outbox/event service.
-- The consumer uses deterministic mutation IDs derived from scope, meeting,
-  transcript release, operation, and policy version. Local state records pending,
-  applied, superseding, deleting, reconcile, and terminal/dead-letter outcomes
-  with bounded attempts.
-- Replacement indexes the new accepted release and marks the old release
-  superseded; search results are never evidence and local current-release checks
-  reject stale candidates. Authorized deletion produces deterministic delete
-  mutations for every derived object. Deletion and ambiguous-mutation
-  reconciliation keep draining even when search/write serving flags are off.
-- Lost remote responses reconcile by deterministic mutation identity and an
-  independently qualified absence oracle; they never retry with a new identity.
-  Crash tests cover local commit, remote commit, lost response, supersession,
-  delete, dead letter, reconciliation, and verified absence.
-- Only accepted final human transcript turns are indexed. No summary prose, live
-  partial, automation/Botik output, Suggestions, Facts, question, or generated
-  answer enters Infinity.
-- Infinity is a derived same-room candidate locator. Every candidate is locally
-  rehydrated to exact scope/room/meeting/release/version/turn and current
-  authorization before use. Local authority remains useful when Infinity fails.
+## Acceptance gates by slice
 
-Historical activation is a separate rollout gate after Local Final Reply is
-qualified.
+### Trusted baseline
 
-### Previous-answer and live-text grounding
+- capability/seal provenance survives restart and rolling deployment;
+- capability-less/legacy/unknown producers remain knowledge-ineligible;
+- canonical contract fixtures agree across Craig and Meeting Platform.
 
-- Previous Botik answers are context, never evidence; their original citations
-  are revalidated.
-- Live evidence captures an immutable finalized-turn cutoff, excludes partials
-  and late turns, and is never silently mixed with final evidence.
-- The evidence epoch/cutoff and requester authorization are rechecked before an
-  external effect.
+### Local Final Reply
 
-### Voice grounding
+- only exact current-final replies are admitted;
+- unauthorized or stale work reveals no transcript content;
+- complete bounded current human transcript reaches one generator call;
+- invalid/global/unsupported claims abstain; every published claim has valid
+  locally rehydrated citations;
+- restart and concurrency converge; after `request_started` no second create is
+  authorized; independent observer sees zero or one matching answer;
+- terminal/expired jobs scrub sensitive content; rollback stops new work.
 
-- Reuse Meeting Knowledge's provider-neutral evidence and grounded-claim
-  application contracts, not Discord, Infinity, Pipecat, Subscription Runtime,
-  or database infrastructure types.
-- Retrieval runs in the detached active-turn executor; barge-in, meeting end,
-  and supersession abort it. Evidence uses a versioned structured contract, not
-  `systemPrompt` prose, and cite-before-speak validation occurs before factual
-  audio reaches TTS.
-- Preserve existing cue timing, queues, four-second answer guard, playback, and
-  recording invariants. Qualify only with official bots, a private test guild,
-  test identities, synthetic audio, and bounded retained evidence.
+### Infinity memory
 
-Each next slice gets its own owner, ADR, plan, executable behavior, tests, and
-fail-closed source classification. No speculative package is created in V1.
+- official SDK provenance/capabilities pass;
+- deterministic replay has no duplicate derived object;
+- no cross-room, stale, deleted, unknown, or automation candidate reaches the
+  generator;
+- outage falls back locally; deletion drains with serving disabled;
+- local source remains authoritative at every boundary.
+
+### Grounded voice and existing voice behavior
+
+- no factual speech begins before complete answer validation;
+- barge-in/disconnect/end prevents late PCM;
+- greetings use configured real names or anonymous fallback promptly and once;
+- farewells are prompt, localized, once-only, and reject quote/question/negation/
+  person-specific negatives;
+- deterministic two-hour and private-guild live manifests bind the same release.
+
+Every slice runs `pnpm run check:changed` during work, `pnpm run check:fast`
+before handoff, and full `pnpm run check` before PR. Production remains NO-GO for
+that slice until its deterministic and required live evidence is retained.
+
+## Implementation order, estimates, and decisions
+
+| Slice | Approximate changed lines | Risk |
+| --- | ---: | --- |
+| 0. Trusted evidence completion | 350-600 across two repositories | Medium |
+| 1. Local Final Reply | 1,200-1,700 | Medium-high |
+| 2. Infinity SDK qualification + shadow sync | 550-850 | Medium-high |
+| 3. Same-room historical retrieval | 350-600 | High |
+| 4. Grounded voice + remaining voice E2E gaps | 400-700 | Medium-high |
+
+Expected total is approximately 2,850-4,450 changed lines including tests,
+migrations, composition, and evidence tooling. The range is deliberately wider
+than the previous false-precision estimate because SDK reconciliation and current
+Publishing persistence must be proven in code.
+
+Top implementation strategies considered:
+
+1. **Phased modular-monolith vertical slices - selected**
+
+   🎯 9/10  🛡️ 9/10  🧠 7/10
+
+   Approximately 2,850-4,450 lines. Preserves present ownership, adds only real
+   capability ports, and allows independent rollback.
+
+2. **Local Reply first, defer Infinity and voice to unrelated plans**
+
+   🎯 7/10  🛡️ 8/10  🧠 4/10
+
+   Approximately 1,550-2,300 lines now. Simpler, but fails the agreed end state
+   and invites incompatible retrieval/voice contracts later.
+
+3. **Extract services/aggregates and build a generic memory workflow platform**
+
+   🎯 4/10  🛡️ 6/10  🧠 10/10
+
+   6,000+ lines. It broadens migrations and operational failure modes before a
+   single user question is answered.
+
+## Non-goals
+
+- no arbitrary-message Q&A, DMs, `/ask`, multi-message answer, attachment, or
+  previous-answer memory in this delivery;
+- no cross-room, guild-wide, personal, Suggestions, or Facts search;
+- no configured Q&A roles until a Configuration-owned admin slice exists;
+- no model-generated evidence, summary-as-authority, or live partial as final
+  evidence;
+- no generic workflow/outbox/repository/effect abstraction;
+- no production rollout or real-user data used as test evidence.
