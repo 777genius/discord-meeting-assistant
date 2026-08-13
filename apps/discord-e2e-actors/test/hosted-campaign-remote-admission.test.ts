@@ -25,7 +25,7 @@ const voicetextCanaryExpectation = {
 
 describe("hosted campaign remote admission boundary", () => {
   it("fails closed without a trusted remote probe", async () => {
-    await expect(evaluateHostedRemoteAdmission(undefined, expected, nowEpochMs))
+    await expect(evaluateHostedRemoteAdmission(undefined, expected, () => nowEpochMs))
       .resolves.toEqual({
         missingSections: ["deploymentSafety", "discordIdentity", "voicetextCanary", "clockPreflight"],
       });
@@ -35,7 +35,7 @@ describe("hosted campaign remote admission boundary", () => {
     const readiness = validReadiness();
     const probe = fakeProbe(readiness);
 
-    await expect(evaluateHostedRemoteAdmission(probe, expected, nowEpochMs)).rejects.toThrow();
+    await expect(evaluateHostedRemoteAdmission(probe, expected, () => nowEpochMs)).rejects.toThrow();
   });
 
   it.each([
@@ -43,7 +43,7 @@ describe("hosted campaign remote admission boundary", () => {
     ["plan", { planSha256: "b".repeat(64) }],
   ])("rejects a receipt bound to another %s", async (_label, change) => {
     const probe = fakeProbe(validReadiness(change));
-    await expect(evaluateHostedRemoteAdmission(probe, expected, nowEpochMs)).rejects.toThrow();
+    await expect(evaluateHostedRemoteAdmission(probe, expected, () => nowEpochMs)).rejects.toThrow();
   });
 
   it.each([
@@ -52,7 +52,7 @@ describe("hosted campaign remote admission boundary", () => {
     ["reversed", { expiresAt: "2026-08-13T08:59:00.000Z" }],
   ])("rejects %s readiness", async (_label, change) => {
     const probe = fakeProbe(validReadiness(change));
-    await expect(evaluateHostedRemoteAdmission(probe, expected, nowEpochMs)).rejects.toThrow();
+    await expect(evaluateHostedRemoteAdmission(probe, expected, () => nowEpochMs)).rejects.toThrow();
   });
 
   it("rejects tampering and open-ended capability claims", async () => {
@@ -60,11 +60,11 @@ describe("hosted campaign remote admission boundary", () => {
     await expect(evaluateHostedRemoteAdmission(fakeProbe({
       ...readiness,
       capabilities: [{ name: "operator-says-ready" }],
-    }), expected, nowEpochMs)).rejects.toThrow();
+    }), expected, () => nowEpochMs)).rejects.toThrow();
     await expect(evaluateHostedRemoteAdmission(fakeProbe({
       ...readiness,
       discordIdentity: { ...readiness.discordIdentity, receiptSha256: "b".repeat(64) },
-    }), expected, nowEpochMs)).rejects.toThrow();
+    }), expected, () => nowEpochMs)).rejects.toThrow();
   });
 });
 

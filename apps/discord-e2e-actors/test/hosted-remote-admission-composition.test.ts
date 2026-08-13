@@ -29,7 +29,7 @@ describe("hosted remote admission composition", () => {
     const probe = createHostedCampaignRemoteAdmissionProbe(config);
     const result = await evaluateHostedRemoteAdmission(probe, {
       campaignId, meetingPlatformRevision: revision, planSha256,
-    }, now);
+    }, () => now);
 
     expect(result.missingSections).toEqual([]);
     expect(result.readiness).toMatchObject({ campaignId, planSha256 });
@@ -39,6 +39,42 @@ describe("hosted remote admission composition", () => {
       "deployment",
     ]);
     expect(JSON.stringify(result)).not.toContain(secret);
+  });
+
+  it("samples time after a slow remote probe and admits evidence fresh at completion", async () => {
+    let currentTime = now - 10_000;
+    const produced = createHostedCampaignRemoteAdmissionProbe(composition([]));
+    const probe = {
+      ...produced,
+      inspect: async (request: Parameters<typeof produced.inspect>[0]) => {
+        const evidence = await produced.inspect(request);
+        currentTime += 10_000;
+        return evidence;
+      },
+    };
+
+    const result = await evaluateHostedRemoteAdmission(probe, {
+      campaignId, meetingPlatformRevision: revision, planSha256,
+    }, () => currentTime);
+
+    expect(result.readiness?.probedAt).toBe(new Date(now).toISOString());
+  });
+
+  it.each([
+    ["stale", now + 60_001],
+    ["future", now - 2_001],
+  ])("rejects evidence that is actually %s at probe completion", async (_label, completionTime) => {
+    const probe = createHostedCampaignRemoteAdmissionProbe(composition([]));
+    await expect(evaluateHostedRemoteAdmission(probe, {
+      campaignId, meetingPlatformRevision: revision, planSha256,
+    }, () => completionTime)).rejects.toThrow(/stale, expired,.*future/u);
+  });
+
+  it("rejects an invalid trusted clock result", async () => {
+    const probe = createHostedCampaignRemoteAdmissionProbe(composition([]));
+    await expect(evaluateHostedRemoteAdmission(probe, {
+      campaignId, meetingPlatformRevision: revision, planSha256,
+    }, () => Number.NaN)).rejects.toThrow("safe evaluation time");
   });
 
   it("fails closed when any producer fails and does not continue to admission", async () => {
@@ -51,7 +87,7 @@ describe("hosted remote admission composition", () => {
     const probe = createHostedCampaignRemoteAdmissionProbe(failing);
     await expect(evaluateHostedRemoteAdmission(probe, {
       campaignId, meetingPlatformRevision: revision, planSha256,
-    }, now)).rejects.toThrow("provider failed");
+    }, () => now)).rejects.toThrow("provider failed");
     expect(calls).not.toContain("clock");
   });
 
@@ -70,7 +106,7 @@ describe("hosted remote admission composition", () => {
     });
     await expect(evaluateHostedRemoteAdmission(probe, {
       campaignId, meetingPlatformRevision: revision, planSha256,
-    }, now)).rejects.toThrow("quality thresholds");
+    }, () => now)).rejects.toThrow("quality thresholds");
   });
 
   it("rejects an arbitrary request or configuration instead of treating it as authorization", async () => {
@@ -91,7 +127,7 @@ describe("hosted remote admission composition", () => {
   it("blocks without a constructed trusted producer", async () => {
     await expect(evaluateHostedRemoteAdmission(undefined, {
       campaignId, meetingPlatformRevision: revision, planSha256,
-    }, now)).resolves.toEqual({
+    }, () => now)).resolves.toEqual({
       missingSections: ["deploymentSafety", "discordIdentity", "voicetextCanary", "clockPreflight"],
     });
   });

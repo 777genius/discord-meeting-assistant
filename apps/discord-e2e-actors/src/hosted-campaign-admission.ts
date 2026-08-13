@@ -165,7 +165,8 @@ export async function inspectHostedCampaignAdmission(
   }
   // Operator-authored files above are retained declarations only and can never authorize a run.
   // Only the injected consumer-owned probe is a trust boundary.
-  const remoteAdmission = await evaluateRemote(request, definition.campaignId, plan, now());
+  const remoteAdmission = await evaluateRemote(request, definition.campaignId, plan, now);
+  const generatedAtEpochMs = resolveAdmissionTime(remoteAdmission.readiness, now);
   const missingCapabilities = remoteAdmission.missingSections;
   const content = {
     artifactRoot,
@@ -173,7 +174,7 @@ export async function inspectHostedCampaignAdmission(
     campaignId: definition.campaignId,
     definitionSha256: digestCanonical(definition),
     fixtureDigests: Object.freeze(fixtureDigests),
-    generatedAt: new Date(now()).toISOString(),
+    generatedAt: new Date(generatedAtEpochMs).toISOString(),
     kind: "hosted-campaign-admission" as const,
     minimumFreeBytes: request.minimumFreeBytes,
     missingCapabilities: Object.freeze(missingCapabilities),
@@ -272,7 +273,7 @@ async function evaluateRemote(
   request: HostedCampaignAdmissionRequest,
   campaignId: string,
   plan: unknown,
-  nowEpochMs: number,
+  now: () => number,
 ) {
   return evaluateHostedRemoteAdmission(
     request.remoteAdmissionProbe,
@@ -281,8 +282,19 @@ async function evaluateRemote(
         .revisions.meetingPlatform,
       planSha256: digestCanonical(plan),
     },
-    nowEpochMs,
+    now,
   );
+}
+
+function resolveAdmissionTime(
+  readiness: HostedRemoteReadinessV1 | undefined,
+  now: () => number,
+): number {
+  const generatedAtEpochMs = readiness === undefined ? now() : Date.parse(readiness.probedAt);
+  if (!Number.isSafeInteger(generatedAtEpochMs)) {
+    throw new Error("Hosted campaign admission clock is invalid");
+  }
+  return generatedAtEpochMs;
 }
 
 function assertRemoteReadinessMatchesInvocation(

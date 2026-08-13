@@ -102,13 +102,17 @@ const readinessSections = [
 export async function evaluateHostedRemoteAdmission(
   probe: HostedCampaignRemoteAdmissionProbe | undefined,
   expected: HostedCampaignRemoteAdmissionProbeRequest,
-  nowEpochMs: number,
+  now: () => number,
 ): Promise<HostedRemoteAdmissionEvaluation> {
+  if (typeof now !== "function") {
+    throw new Error("Hosted remote admission requires a trusted clock callback");
+  }
   if (probe === undefined) { return Object.freeze({ missingSections: readinessSections }); }
+  const evidence = parseEvidence(await probe.inspect(expected));
+  const nowEpochMs = now();
   if (!Number.isSafeInteger(nowEpochMs)) {
     throw new Error("Hosted remote admission requires a safe evaluation time");
   }
-  const evidence = parseEvidence(await probe.inspect(expected));
   const deployment = verifyHostedDeploymentSafetyReceiptV1(evidence.deploymentSafety);
   const identity = verifyIdentity(evidence.discordIdentity);
   const canary = evaluateVoicetextSemanticCanaryReceiptV1(evidence.voicetextCanary, {
@@ -118,7 +122,7 @@ export async function evaluateHostedRemoteAdmission(
   });
   const clock = hostedClockPreflightReceiptV2Schema.parse(evidence.clockPreflight);
   assertEvidenceBindings({ canary, clock, deployment, identity }, expected);
-  const timestamps = assertEvidenceLifetimes({ canary, clock, deployment, identity }, nowEpochMs);
+  assertEvidenceLifetimes({ canary, clock, deployment, identity }, nowEpochMs);
   const content = {
     campaignId: expected.campaignId,
     clockPreflight: { kind: clock.kind, proofId: clock.proofId, schemaVersion: clock.schemaVersion },
@@ -134,7 +138,7 @@ export async function evaluateHostedRemoteAdmission(
     }, discordIdentity: reference(identity),
     expiresAt: new Date(Math.min(clock.validUntilEpochMs, identity.expiresAtEpochMs, canary.expiresAtEpochMs)).toISOString(),
     kind: "hosted-remote-readiness" as const, persistence: "create-only" as const,
-    planSha256: expected.planSha256, probedAt: new Date(Math.max(...timestamps)).toISOString(),
+    planSha256: expected.planSha256, probedAt: new Date(nowEpochMs).toISOString(),
     schemaVersion: 1 as const, voicetextCanary: {
       ...reference(canary),
       admissionExpectationSha256: digestCanonical(probe.voicetextCanaryExpectation),
@@ -205,7 +209,7 @@ function assertEvidenceLifetimes(
   evidence: Readonly<{ canary: VoicetextSemanticCanaryReceiptV1; clock: HostedClockPreflightReceiptV2;
     deployment: HostedDeploymentSafetyReceiptV1; identity: DiscordIdentityReceiptV1 }>,
   nowEpochMs: number,
-): readonly number[] {
+): void {
   const deploymentAt = Date.parse(evidence.deployment.generatedAt);
   const generated = [deploymentAt, evidence.identity.generatedAtEpochMs,
     evidence.canary.generatedAtEpochMs, evidence.clock.qualifiedAtEpochMs];
@@ -220,7 +224,6 @@ function assertEvidenceLifetimes(
     || ttls.some((ttl) => ttl < 1 || ttl > maximumReceiptTtlMs)) {
     throw new Error("Hosted remote evidence is stale, expired, too long-lived, or from the future");
   }
-  return generated;
 }
 
 function reference(receipt: HostedDeploymentSafetyReceiptV1 | DiscordIdentityReceiptV1 |
