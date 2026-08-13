@@ -337,7 +337,9 @@ describe("SshDeploymentEvidenceProbe replay target safety", () => {
 
     await expect(result).rejects.toThrow("campaign deadline expired");
   });
+});
 
+describe("SshDeploymentEvidenceProbe replay mutation fences", () => {
   it("rejects a non-allowlisted project before invoking a remote command", () => {
     const mutations: string[] = [];
     const commands = fakeCommands({ mutations });

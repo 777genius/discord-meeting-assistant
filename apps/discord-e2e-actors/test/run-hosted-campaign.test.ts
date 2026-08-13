@@ -255,7 +255,9 @@ describe("run-hosted-campaign CLI", () => {
     )).rejects.toThrow("mismatch");
     expect(effects).toEqual(["admission"]);
   });
+});
 
+describe("run-hosted-campaign launch authorization", () => {
   it("acquires the lease before fresh authorization and releases it without spawning on failure", async () => {
     const effects: string[] = [];
     const serializedAdmission = JSON.stringify(admittedReceipt());
