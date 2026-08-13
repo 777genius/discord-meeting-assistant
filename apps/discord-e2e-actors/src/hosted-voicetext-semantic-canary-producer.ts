@@ -54,7 +54,7 @@ export interface VoicetextCanaryRunnerInputV1 {
 
 export interface ProduceVoicetextCanaryInputV1 extends VoicetextCanaryRunnerInputV1 {
   readonly expectedSegments: readonly z.infer<typeof segmentSchema>[];
-  readonly generatedAtEpochMs: number;
+  readonly now: () => number;
   readonly requiredTerms: readonly string[];
   readonly ttlMs: number;
 }
@@ -80,6 +80,10 @@ export async function produceVoicetextSemanticCanaryReceiptV1(
   if (result.batch.firstSubmission.resultSha256 !== batchDigest) {
     throw new Error("Voicetext batch result digest does not match the immutable transcript result");
   }
+  const generatedAtEpochMs = input.now();
+  if (!Number.isSafeInteger(generatedAtEpochMs) || generatedAtEpochMs < 0) {
+    throw new Error("Voicetext semantic canary completion time is invalid");
+  }
   const content: Omit<VoicetextSemanticCanaryReceiptV1, "receiptSha256"> = {
     batch: {
       finalSegments: { count: result.batch.segments.length, digestSha256: batchDigest },
@@ -90,8 +94,8 @@ export async function produceVoicetextSemanticCanaryReceiptV1(
     binding: input.binding,
     capability: "voicetext-semantic-canary",
     endpoint: input.endpoint,
-    expiresAtEpochMs: input.generatedAtEpochMs + input.ttlMs,
-    generatedAtEpochMs: input.generatedAtEpochMs,
+    expiresAtEpochMs: generatedAtEpochMs + input.ttlMs,
+    generatedAtEpochMs,
     kind: "hosted-voicetext-semantic-canary-receipt",
     live: {
       audioAcknowledgements: result.live.audioAcknowledgements,
@@ -114,8 +118,7 @@ export async function produceVoicetextSemanticCanaryReceiptV1(
 
 function assertInput(input: ProduceVoicetextCanaryInputV1): void {
   if (!input.fixturePath.startsWith("/") || input.fixturePath.length > 4_096
-    || !Number.isSafeInteger(input.generatedAtEpochMs) || input.generatedAtEpochMs < 0
-    || !Number.isSafeInteger(input.ttlMs) || input.ttlMs < 1 || input.ttlMs > 300_000
+    || !Number.isSafeInteger(input.ttlMs) || input.ttlMs < 1 || input.ttlMs > 60_000
     || !Number.isSafeInteger(input.timeoutMs) || input.timeoutMs < 1 || input.timeoutMs > 300_000
     || input.expectedSegments.length < 1 || input.expectedSegments.length > 1_024
     || input.requiredTerms.length < 1 || input.requiredTerms.length > 256) {

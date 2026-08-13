@@ -35,29 +35,35 @@ describe("hosted remote admission composition", () => {
     expect(result.readiness).toMatchObject({ campaignId, planSha256 });
     expect(calls).toEqual([
       "deployment", "discord:botikPlayback", "discord:localObserver", "discord:localSpeakerA",
-      "discord:localSpeakerB", "discord:localSpeakerD", "discord:localSut", "voicetext", "clock",
+      "discord:localSpeakerB", "discord:localSpeakerD", "discord:localSut", "voicetext",
+      "discord:botikPlayback", "discord:localObserver", "discord:localSpeakerA",
+      "discord:localSpeakerB", "discord:localSpeakerD", "discord:localSut", "clock",
       "deployment",
     ]);
     expect(JSON.stringify(result)).not.toContain(secret);
   });
 
   it("samples time after a slow remote probe and admits evidence fresh at completion", async () => {
-    let currentTime = now - 10_000;
-    const produced = createHostedCampaignRemoteAdmissionProbe(composition([]));
-    const probe = {
-      ...produced,
-      inspect: async (request: Parameters<typeof produced.inspect>[0]) => {
-        const evidence = await produced.inspect(request);
-        currentTime += 10_000;
-        return evidence;
-      },
-    };
+    let currentTime = now;
+    const config = composition([], () => currentTime);
+    const probe = createHostedCampaignRemoteAdmissionProbe({ ...config,
+      voicetext: { ...config.voicetext, runner: { run: async () => {
+        currentTime += 70_000;
+        return voicetextResult();
+      } } } });
 
     const result = await evaluateHostedRemoteAdmission(probe, {
       campaignId, meetingPlatformRevision: revision, planSha256,
     }, () => currentTime);
 
-    expect(result.readiness?.probedAt).toBe(new Date(now).toISOString());
+    expect(result.readiness?.probedAt).toBe(new Date(currentTime).toISOString());
+    expect(result.readiness?.expiresAt).toBe(new Date(currentTime + 30_000).toISOString());
+    expect(result.readiness?.deploymentSafety.receiptSha256).toBe(
+      deploymentReceipt(deploymentExpectation(), currentTime).receiptSha256,
+    );
+    expect(result.readiness?.deploymentSafety.revalidationBaseline).toMatchObject({
+      campaignId,
+    });
   });
 
   it.each([
@@ -154,7 +160,7 @@ describe("hosted remote admission composition", () => {
   });
 });
 
-function composition(calls: string[]): HostedRemoteAdmissionCompositionConfig {
+function composition(calls: string[], time: () => number = () => now): HostedRemoteAdmissionCompositionConfig {
   const expectation = deploymentExpectation();
   const ids = {
     botikPlayback: [HOSTED_CAMPAIGN_TARGET.botikApplicationId, tokenFile("botik-playback", true)],
@@ -177,13 +183,13 @@ function composition(calls: string[]): HostedRemoteAdmissionCompositionConfig {
     imageDigestSha256, planSha256, sourceRevision: revision } as const;
   return {
     campaignId,
-    clock: { collectClockPreflight: async () => { calls.push("clock"); return clockExchange(); } },
+    clock: { collectClockPreflight: async () => { calls.push("clock"); return clockExchange(time()); } },
     deployment: {
       expectation,
-      producer: { collect: async () => { calls.push("deployment"); return deploymentReceipt(expectation); } },
+      producer: { collect: async () => { calls.push("deployment"); return deploymentReceipt(expectation, time()); } },
     },
     discord: {
-      binding, expiresAtEpochMs: now + 30_000, generatedAtEpochMs: now, roles,
+      binding, now: time, roles, ttlMs: 30_000,
       target: { deploymentScope: HOSTED_CAMPAIGN_TARGET.deploymentScope,
         environment: HOSTED_CAMPAIGN_TARGET.environment, guildId: HOSTED_CAMPAIGN_TARGET.guildId,
         mutationTarget: HOSTED_CAMPAIGN_TARGET.mutationTarget,
@@ -203,7 +209,7 @@ function composition(calls: string[]): HostedRemoteAdmissionCompositionConfig {
           transcriptExpectationSha256: digestVoicetextCanaryExpectationV1(expectedSegments) },
         endpoint: { batch: { origin: "https://voicetext.test", path: "/v2/listen" },
           live: { origin: "wss://voicetext.test", path: "/v1/listen" } },
-        expectedSegments, fixturePath: "/fixtures/canary.ogg", generatedAtEpochMs: now,
+        expectedSegments, fixturePath: "/fixtures/canary.ogg", now: time,
         requiredTerms: ["Botik"], timeoutMs: 30_000, ttlMs: 30_000,
       },
       runner: { run: async () => { calls.push("voicetext"); return voicetextResult(); } },
@@ -243,7 +249,7 @@ function deploymentExpectation(): HostedDeploymentSafetyExpectationV1 {
   };
 }
 
-function deploymentReceipt(expectation: HostedDeploymentSafetyExpectationV1) {
+function deploymentReceipt(expectation: HostedDeploymentSafetyExpectationV1, generatedAt = now) {
   const services = expectation.services.map((value) => ({
     commandSha256: "9".repeat(64), ...value, composeConfigHash: "8".repeat(64),
     containerId: value.component === "meetingPlatform" ? containerId : value.imageId.slice(7),
@@ -260,7 +266,7 @@ function deploymentReceipt(expectation: HostedDeploymentSafetyExpectationV1) {
     runSiblingMounted: false as const, runSiblingPath: expectation.greeting.runSiblingPath };
   const roots = { deploy: { kind: "directory" as const, requestedPath: expectation.deployRoot, resolvedPath: expectation.deployRoot, symbolicLink: false as const },
     source: { kind: "directory" as const, requestedPath: expectation.sourceRoot, resolvedPath: expectation.sourceRoot, symbolicLink: false as const } };
-  return createHostedDeploymentSafetyReceiptV1({ expectation, generatedAt: new Date(now).toISOString(), evidence: {
+  return createHostedDeploymentSafetyReceiptV1({ expectation, generatedAt: new Date(generatedAt).toISOString(), evidence: {
     greetingMount, greetingMountAfter: greetingMount, mountIsolation, mountIsolationAfter: mountIsolation,
     roots, rootsAfter: roots, servicesBefore: services, servicesAfter: services,
     roundTrip: { containerObservedHostNonce: "host-nonce", containerWrittenNonce: "container-nonce",
@@ -269,12 +275,12 @@ function deploymentReceipt(expectation: HostedDeploymentSafetyExpectationV1) {
   } });
 }
 
-function clockExchange() {
-  return { observer: { before: { bootId: "observer", epochMs: now - 10, monotonicNs: "1000000000" },
-    after: { bootId: "observer", epochMs: now, monotonicNs: "1010000000" } }, observerClockId: "observer-clock",
-  source: { before: { bootId: "source", epochMs: now - 5, monotonicNs: "1005000000" },
-    sample: { bootId: "source", epochMs: now - 3, monotonicNs: "1007000000" },
-    after: { bootId: "source", epochMs: now - 2, monotonicNs: "1008000000" } }, sourceClockId: "source-clock",
+function clockExchange(at = now) {
+  return { observer: { before: { bootId: "observer", epochMs: at - 10, monotonicNs: "1000000000" },
+    after: { bootId: "observer", epochMs: at, monotonicNs: "1010000000" } }, observerClockId: "observer-clock",
+  source: { before: { bootId: "source", epochMs: at - 5, monotonicNs: "1005000000" },
+    sample: { bootId: "source", epochMs: at - 3, monotonicNs: "1007000000" },
+    after: { bootId: "source", epochMs: at - 2, monotonicNs: "1008000000" } }, sourceClockId: "source-clock",
   target: { environment: HOSTED_CAMPAIGN_TARGET.environment, host: HOSTED_CAMPAIGN_TARGET.host,
     project: HOSTED_CAMPAIGN_TARGET.project } };
 }

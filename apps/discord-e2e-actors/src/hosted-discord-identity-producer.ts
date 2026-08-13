@@ -77,20 +77,20 @@ export class DiscordRestRoleIdentityProbe implements DiscordRoleIdentityProbe {
 
 export interface HostedDiscordIdentityReceiptInput {
   readonly binding: DiscordIdentityReceiptV1["binding"];
-  readonly expiresAtEpochMs: number;
-  readonly generatedAtEpochMs: number;
+  readonly now: () => number;
   readonly roles: Readonly<Record<RoleName, {
     readonly expectation: DiscordRoleIdentityExpectation;
     readonly probe: DiscordRoleIdentityProbe;
   }>>;
   readonly target: DiscordIdentityReceiptV1["target"];
+  readonly ttlMs: number;
 }
 
 export async function produceHostedDiscordIdentityReceiptV1(
   input: HostedDiscordIdentityReceiptInput,
 ): Promise<DiscordIdentityReceiptV1> {
-  if (input.expiresAtEpochMs <= input.generatedAtEpochMs) {
-    throw new Error("Discord identity receipt expiry must follow generation");
+  if (!Number.isSafeInteger(input.ttlMs) || input.ttlMs < 1 || input.ttlMs > 60_000) {
+    throw new Error("Discord identity receipt TTL must be bounded to 60 seconds");
   }
   const target = {
     guildId: input.target.guildId,
@@ -101,11 +101,15 @@ export async function produceHostedDiscordIdentityReceiptV1(
     role,
     await input.roles[role].probe.probe(input.roles[role].expectation, target),
   ] as const));
+  const generatedAtEpochMs = input.now();
+  if (!Number.isSafeInteger(generatedAtEpochMs) || generatedAtEpochMs < 0) {
+    throw new Error("Discord identity receipt completion time is invalid");
+  }
   const content: Omit<DiscordIdentityReceiptV1, "receiptSha256"> = {
     binding: input.binding,
     capability: "craig-test-identity",
-    expiresAtEpochMs: input.expiresAtEpochMs,
-    generatedAtEpochMs: input.generatedAtEpochMs,
+    expiresAtEpochMs: generatedAtEpochMs + input.ttlMs,
+    generatedAtEpochMs,
     identities: Object.fromEntries(entries) as DiscordIdentityRolesV1,
     kind: "hosted-discord-identity-receipt",
     schemaVersion: 1,

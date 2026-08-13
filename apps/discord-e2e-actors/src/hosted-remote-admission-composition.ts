@@ -104,23 +104,28 @@ export function createHostedCampaignRemoteAdmissionProbe(
 
       // Deployment must be proven before any provider or Discord request is made.
       const deploymentSafety = await config.deployment.producer.collect();
-      const discordIdentity = await produceHostedDiscordIdentityReceiptV1(config.discord);
+      await produceHostedDiscordIdentityReceiptV1(config.discord);
       const voicetextCanary = await produceVoicetextSemanticCanaryReceiptV1(
         config.voicetext.input,
         config.voicetext.runner,
       );
-      const clockPreflight = deriveHostedClockPreflightReceiptV2(
-        await config.clock.collectClockPreflight(),
-      );
+
+      // Refresh short-lived identity and clock evidence after the potentially slow
+      // canary. Both are independent and completion-stamped by their producers.
+      const [discordIdentity, clockExchange] = await Promise.all([
+        produceHostedDiscordIdentityReceiptV1(config.discord),
+        config.clock.collectClockPreflight(),
+      ]);
+      const clockPreflight = deriveHostedClockPreflightReceiptV2(clockExchange);
 
       // Detect a deployment swap during the slower external probes. The second
-      // receipt is deliberately not admitted as a fifth readiness section.
+      // The final receipt is the admitted baseline, not the stale first sample.
       const deploymentRevalidation = await config.deployment.producer.collect();
       assertHostedDeploymentSafetyRevalidatedV1(deploymentSafety, deploymentRevalidation);
 
       return Object.freeze({
         clockPreflight,
-        deploymentSafety,
+        deploymentSafety: deploymentRevalidation,
         discordIdentity,
         kind: "hosted-remote-admission-evidence" as const,
         schemaVersion: 1 as const,

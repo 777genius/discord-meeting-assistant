@@ -35,6 +35,25 @@ describe("hosted Voicetext semantic canary producer", () => {
     expect(JSON.stringify(receipt)).not.toMatch(/Привет|hello Quanta|secret-token/u);
   });
 
+  it("timestamps the receipt after the slow canary completes", async () => {
+    let currentTime = 100_000;
+    const receipt = await produceVoicetextSemanticCanaryReceiptV1({
+      ...input(), now: () => currentTime,
+    }, { run: async () => {
+      currentTime += 300_000;
+      return result();
+    } });
+
+    expect(receipt.generatedAtEpochMs).toBe(400_000);
+    expect(receipt.expiresAtEpochMs).toBe(460_000);
+  });
+
+  it("rejects a receipt TTL longer than the admission freshness window", async () => {
+    await expect(produceVoicetextSemanticCanaryReceiptV1({
+      ...input(), ttlMs: 60_001,
+    }, { run: async () => result() })).rejects.toThrow("producer input is invalid");
+  });
+
   it.each([
     ["idempotency substitution", (value: VoicetextCanaryInternalResultV1) => ({ ...value, batch: { ...value.batch, idempotentReplay: { ...value.batch.idempotentReplay, resultId: "other" } } })],
     ["immutable result substitution", (value: VoicetextCanaryInternalResultV1) => ({ ...value, batch: { ...value.batch, firstSubmission: { ...value.batch.firstSubmission, resultSha256: "0".repeat(64) }, idempotentReplay: { ...value.batch.idempotentReplay, resultSha256: "0".repeat(64) } } })],
@@ -56,7 +75,7 @@ describe("hosted Voicetext semantic canary producer", () => {
 function input() {
   return {
     binding, endpoint, expectedSegments, fixturePath: "/fixtures/canary.ogg",
-    generatedAtEpochMs: 100_000, requiredTerms: ["Botik", "Quanta"], timeoutMs: 30_000, ttlMs: 60_000,
+    now: () => 100_000, requiredTerms: ["Botik", "Quanta"], timeoutMs: 30_000, ttlMs: 60_000,
   } as const;
 }
 

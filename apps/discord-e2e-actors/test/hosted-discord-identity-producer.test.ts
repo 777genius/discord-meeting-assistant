@@ -87,12 +87,41 @@ describe("hosted Discord identity producer", () => {
       mutationTarget: "test-only", publicationChannelId, voiceChannelId,
     } as const;
     const receipt = await produceHostedDiscordIdentityReceiptV1({
-      binding, expiresAtEpochMs: 150_000, generatedAtEpochMs: 100_000, roles, target: receiptTarget,
+      binding, now: () => 100_000, roles, target: receiptTarget, ttlMs: 50_000,
     });
     expect(evaluateDiscordIdentityReceiptV1(receipt, {
       binding, identities: receipt.identities, maximumAgeMs: 60_000, nowEpochMs: 110_000,
       target: receiptTarget,
     })).toEqual(receipt);
+  });
+
+  it("timestamps the aggregate receipt after all identity probes complete", async () => {
+    let currentTime = 100_000;
+    const roleIds = [
+      "1534231284467896512", "1533867700575670282", "1533227577286852649",
+      "1533228054724346087", "1533873978417086474", "1533224474609057793",
+    ] as const;
+    const names = ["botikPlayback", "localObserver", "localSpeakerA", "localSpeakerB", "localSpeakerD", "localSut"] as const;
+    const accounts = ["botik-playback", "conversation-observer", "speaker-a", "speaker-b", "speaker-d", "sut"] as const;
+    const roles = Object.fromEntries(names.map((name, index) => {
+      const expected = expectation(roleIds[index], accounts[index], name === "botikPlayback");
+      return [name, { expectation: expected, probe: { probe: async () => {
+        currentTime = 170_000;
+        return identity(expected);
+      } } }];
+    })) as Parameters<typeof produceHostedDiscordIdentityReceiptV1>[0]["roles"];
+
+    const receipt = await produceHostedDiscordIdentityReceiptV1({
+      binding: { campaignId: "campaign-1", containerId: "platform-1", host: "test-host",
+        imageDigestSha256: "a".repeat(64), planSha256: "b".repeat(64), sourceRevision: "c".repeat(40) },
+      now: () => currentTime, roles, target: {
+        deploymentScope: "private-test-deployment", environment: "private-test-guild", guildId,
+        mutationTarget: "test-only", publicationChannelId, voiceChannelId,
+      }, ttlMs: 30_000,
+    });
+
+    expect(receipt.generatedAtEpochMs).toBe(170_000);
+    expect(receipt.expiresAtEpochMs).toBe(200_000);
   });
 });
 
