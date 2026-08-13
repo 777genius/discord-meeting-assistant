@@ -5,7 +5,7 @@ export const HOSTED_CAMPAIGN_PRODUCTION_POLICY = Object.freeze({
   schemaVersion: 1,
 } as const satisfies HostedCampaignProductionPolicy);
 
-export interface HostedCampaignProductionTrustBinding {
+interface HostedCampaignProductionTrustBinding {
   createConfig(candidate: HostedCampaignProductionCandidate): HostedRemoteAdmissionCompositionConfig;
 }
 
@@ -22,15 +22,4 @@ export interface HostedCampaignProductionCandidate {
   readonly meetingPlatformRevision: string;
   readonly plan: unknown;
   readonly planSha256: string;
-}
-
-/** Explicit test/build seam. Never populate this policy from environment or campaign JSON. */
-export function createFullyBoundHostedCampaignProductionPolicyForTest(
-  trustBinding: HostedCampaignProductionTrustBinding,
-): HostedCampaignProductionPolicy {
-  return Object.freeze({
-    kind: "hosted-campaign-production-policy",
-    schemaVersion: 1,
-    trustBinding,
-  });
 }

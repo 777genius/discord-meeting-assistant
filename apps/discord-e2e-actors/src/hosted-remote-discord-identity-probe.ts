@@ -21,7 +21,7 @@ export interface HostedRemoteDiscordProbeBinding {
   readonly sourceRevision: string;
 }
 
-export interface TrustedRemoteContainerTarget {
+interface TrustedRemoteContainerTarget {
   readonly composeProject: string;
   readonly composeService: string;
   readonly workingDirectory: string;
