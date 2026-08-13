@@ -16,12 +16,12 @@ import {
 } from "./hosted-campaign-run-config.js";
 import { HostedCampaignArtifactStore } from "./hosted-campaign-artifact-store.js";
 import {
-  assertAdmissionMatchesInvocation,
-  type HostedCampaignAdmissionInvocation,
-  type HostedCampaignAdmissionReceiptV1,
+  assertAdmissionAuditMatchesInvocation,
+  assertHostedCampaignPlanMatchesDefinitionAndBindings,
 } from "./hosted-campaign-admission.js";
-import type { HostedDeploymentRevalidationBaselineV1 } from "./hosted-campaign-remote-admission.js";
 import { hostedClockPreflightReceiptV2Schema } from "./hosted-clock-proof-v2.js";
+import type { HostedClockPreflightReceiptV2 } from "./hosted-clock-proof-v2.js";
+import { writeCreateOnlyClockPreflightProof } from "./hosted-clock-preflight-proof-store.js";
 import {
   HostedCampaignProcessAdapter,
   type HostedCampaignTrustedRuntimeEnvironment,
@@ -29,25 +29,31 @@ import {
 } from "./hosted-campaign-process-adapter.js";
 
 export interface HostedCampaignCliDependencies {
-  readonly assertAdmission: typeof assertAdmissionMatchesInvocation;
+  readonly assertAdmissionAudit: typeof assertAdmissionAuditMatchesInvocation;
   readonly assertReceiptAbsent: (path: string) => Promise<void>;
+  readonly authorizeFreshAdmission: (
+    invocation: HostedCampaignFreshAuthorizationInvocation,
+  ) => Promise<{
+    readonly assertReadyForFirstChild: () => void;
+    readonly clockPreflightProof: HostedClockPreflightReceiptV2;
+  }>;
   readonly createPorts: (input: ReturnType<typeof parseHostedCampaignPlan>) => Promise<HostedCampaignPorts>;
   readonly now: () => number;
   readonly readAdmission: (path: string) => Promise<unknown>;
   readonly readBindings: (path: string) => Promise<unknown>;
   readonly readDefinition: (path: string) => Promise<unknown>;
-  readonly readClockPreflightProof?: (path: string) => Promise<unknown>;
   readonly readPlan: (path: string) => Promise<unknown>;
-  readonly revalidateTrustedAdmission: (
-    invocation: HostedCampaignTrustedRevalidationInvocation,
-  ) => Promise<void>;
   readonly writeReceipt: (path: string, receipt: HostedCampaignPassReceipt) => Promise<void>;
+  readonly writeClockPreflightProof: typeof writeCreateOnlyClockPreflightProof;
 }
 
-export interface HostedCampaignTrustedRevalidationInvocation
-  extends HostedCampaignAdmissionInvocation {
-  readonly deploymentBaseline: HostedDeploymentRevalidationBaselineV1;
-  readonly receipt: HostedCampaignAdmissionReceiptV1;
+export interface HostedCampaignFreshAuthorizationInvocation
+{
+  readonly bindings: unknown;
+  readonly deadlineEpochMs: number;
+  readonly definition: unknown;
+  readonly minimumHeadroomMs: 5_000;
+  readonly plan: unknown;
   readonly signal: AbortSignal;
 }
 
@@ -68,39 +74,50 @@ export async function runHostedCampaignCli(
 ): Promise<HostedCampaignPassReceipt> {
   const config = parseHostedCampaignArguments(arguments_);
   await dependencies.assertReceiptAbsent(config.receiptPath);
-  const input = parseHostedCampaignPlan(await dependencies.readPlan(config.planPath));
-  assertExecutableEnvironmentPaths(input.children);
+  const suppliedPlan = parseHostedCampaignPlan(await dependencies.readPlan(config.planPath));
   const nowEpochMs = dependencies.now();
   const [admission, definition, bindings] = await Promise.all([
     dependencies.readAdmission(config.admissionPath),
     dependencies.readDefinition(config.definitionPath),
     dependencies.readBindings(config.bindingsPath),
   ]);
+  const input = assertHostedCampaignPlanMatchesDefinitionAndBindings(definition, bindings, suppliedPlan);
+  assertExecutableEnvironmentPaths(input.children);
   const invocation = {
     bindings, definition, maximumAgeMs: 15 * 60_000, nowEpochMs, plan: input, receipt: admission,
   };
-  const verifiedAdmission = dependencies.assertAdmission(invocation);
+  const verifiedAdmission = dependencies.assertAdmissionAudit(invocation);
   const clockPreflightPath = resolveClockPreflightPath(input);
-  const clockPreflightProof = hostedClockPreflightReceiptV2Schema.parse(
-    await (dependencies.readClockPreflightProof ?? dependencies.readAdmission)(clockPreflightPath),
-  );
-  if (clockPreflightProof.proofId !== verifiedAdmission.remoteReadiness?.clockPreflight.proofId
-    || clockPreflightProof.proofId !== verifiedAdmission.clockPreflightProof?.proofId) {
-    throw new Error("Hosted campaign clock preflight proof does not match trusted admission");
-  }
   const deadlineEpochMilliseconds = nowEpochMs + config.timeoutMilliseconds;
   if (!Number.isSafeInteger(deadlineEpochMilliseconds)) {
     throw new Error("Hosted campaign deadline is unsafe");
   }
-  await dependencies.revalidateTrustedAdmission({
-    ...invocation,
-    deploymentBaseline: verifiedAdmission.remoteReadiness.deploymentSafety.revalidationBaseline,
-    receipt: verifiedAdmission,
-    signal,
-  });
-  dependencies.assertAdmission({ ...invocation, nowEpochMs: dependencies.now() });
   const ports = await dependencies.createPorts(input);
-  const receipt = await runHostedCampaign(input, ports, { deadlineEpochMilliseconds, signal });
+  const receipt = await runHostedCampaign(input, ports, { deadlineEpochMilliseconds, signal }, {
+    authorizeAfterLease: async () => {
+      const fresh = await dependencies.authorizeFreshAdmission({
+        bindings, deadlineEpochMs: deadlineEpochMilliseconds, definition,
+        minimumHeadroomMs: 5_000, plan: input,
+        signal,
+      });
+      const freshClockProof = hostedClockPreflightReceiptV2Schema.parse(fresh.clockPreflightProof);
+      await dependencies.writeClockPreflightProof(clockPreflightPath, freshClockProof);
+      return Object.freeze({
+        assertReadyForFirstChild: () => {
+          if (deadlineEpochMilliseconds - dependencies.now() < 5_000) {
+            throw new Error("Hosted campaign deadline lacks launch headroom");
+          }
+          fresh.assertReadyForFirstChild();
+          if (freshClockProof.proofId === verifiedAdmission.clockPreflightProof?.proofId) {
+            throw new Error("Hosted campaign launch requires a newly sampled clock preflight proof");
+          }
+          if (deadlineEpochMilliseconds - dependencies.now() < 5_000) {
+            throw new Error("Hosted campaign deadline lacks launch headroom after final authorization fence");
+          }
+        },
+      });
+    },
+  });
   await dependencies.writeReceipt(config.receiptPath, receipt);
   return receipt;
 }
@@ -253,7 +270,10 @@ async function main(): Promise<void> {
     await assertHostedCampaignReceiptAbsent(config.receiptPath);
     await runHostedCampaignCli(process.argv.slice(2), {
       assertReceiptAbsent: assertHostedCampaignReceiptAbsent,
-      assertAdmission: assertAdmissionMatchesInvocation,
+      assertAdmissionAudit: assertAdmissionAuditMatchesInvocation,
+      authorizeFreshAdmission: async () => {
+        throw new Error("Hosted campaign fresh remote launch authorization is not composed");
+      },
       createPorts: async (plan) => {
         const campaignId = plan.runs[0]!.campaignId;
         const artifactRoot = resolveHostedCampaignBarrierRoot(plan);
@@ -267,14 +287,11 @@ async function main(): Promise<void> {
       },
       now: Date.now,
       readAdmission: readPrivateHostedCampaignPlan,
-      readClockPreflightProof: readPrivateHostedCampaignPlan,
       readBindings: readPrivateHostedCampaignPlan,
       readDefinition: readPrivateHostedCampaignPlan,
       readPlan: readPrivateHostedCampaignPlan,
-      revalidateTrustedAdmission: async () => {
-        throw new Error("Hosted campaign trusted pre-spawn revalidation is not composed");
-      },
       writeReceipt: writeCreateOnlyHostedCampaignReceipt,
+      writeClockPreflightProof: writeCreateOnlyClockPreflightProof,
     }, controller.signal);
   } finally {
     process.off("SIGINT", forwardSignal);

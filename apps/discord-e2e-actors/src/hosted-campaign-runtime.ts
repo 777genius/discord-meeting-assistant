@@ -8,6 +8,7 @@ import type {
   HostedCampaignExecutableSpec,
   HostedCampaignInput,
   HostedCampaignLeaseHandle,
+  HostedCampaignRuntimeAuthorization,
   HostedCampaignPassReceipt,
   HostedCampaignPorts,
   HostedCampaignStartPoint,
@@ -77,6 +78,7 @@ interface CampaignExecutionState {
   readonly handles: HostedCampaignChildHandle[];
   readonly retainedEvidence: Map<string, unknown>;
   readonly startedChildIds: Set<string>;
+  firstChildAuthorization?: (() => void) | undefined;
 }
 
 async function startChildren(
@@ -93,6 +95,10 @@ async function startChildren(
     }
     assertActive(bounded);
     const resolvedExecutable = resolveEnvironmentBindings(executable, state.retainedEvidence);
+    if (state.firstChildAuthorization !== undefined) {
+      state.firstChildAuthorization();
+      state.firstChildAuthorization = undefined;
+    }
     const handle = await ports.startChild(resolvedExecutable, bounded);
     state.handles.push(handle);
     if (handle.childId !== executable.childId) {
@@ -169,6 +175,7 @@ export async function runHostedCampaign(
   input: HostedCampaignInput,
   ports: HostedCampaignPorts,
   bounded: HostedCampaignBoundedSignal,
+  authorization?: HostedCampaignRuntimeAuthorization,
 ): Promise<HostedCampaignPassReceipt> {
   validateHostedCampaign(input);
   assertActive(bounded);
@@ -182,6 +189,10 @@ export async function runHostedCampaign(
     const campaignId = input.runs[0]!.campaignId;
     lease = await ports.acquireCampaignLease(campaignId, bounded);
     if (lease.campaignId !== campaignId) { throw new Error("Acquired campaign lease does not match the campaign"); }
+    if (authorization !== undefined) {
+      const launchAuthorization = await authorization.authorizeAfterLease();
+      state.firstChildAuthorization = () => launchAuthorization.assertReadyForFirstChild();
+    }
     await startChildren(input, ports, bounded, state, { kind: "campaign" });
     await executeActions(input, ports, bounded, state, evidence);
     await Promise.all(state.completionTasks);

@@ -204,6 +204,14 @@ export type HostedCampaignActionEvidence<Action extends HostedCampaignBarrierAct
 export interface HostedCampaignBoundedSignal {
   readonly deadlineEpochMilliseconds: number; readonly signal: AbortSignal;
 }
+export interface HostedCampaignLaunchAuthorization {
+  /** Synchronous fence invoked immediately before the first child spawn. */
+  assertReadyForFirstChild(): void;
+}
+export interface HostedCampaignRuntimeAuthorization {
+  /** Invoked only after the exact campaign lease has been acquired. */
+  authorizeAfterLease(): Promise<HostedCampaignLaunchAuthorization>;
+}
 export interface HostedCampaignPorts {
   acquireCampaignLease(
     campaignId: string,

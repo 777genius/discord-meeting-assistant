@@ -4,9 +4,7 @@ import {
   inspectHostedCampaignAdmission,
 } from "./hosted-campaign-admission.js";
 import { writeCreateOnlyAdmissionReceipt } from "./hosted-admission-receipt-store.js";
-import { writeCreateOnlyClockPreflightProof } from "./hosted-clock-preflight-proof-store.js";
 import type { HostedCampaignRemoteAdmissionProbe } from "./hosted-campaign-remote-admission.js";
-import { hostedCampaignDefinitionV1Schema } from "./hosted-campaign-plan-builder.js";
 
 export interface HostedAdmissionArguments {
   readonly bindingsPath: string;
@@ -51,7 +49,6 @@ export interface HostedAdmissionCliDependencies {
   readonly readJson: (path: string) => Promise<unknown>;
   readonly remoteAdmissionProbe?: HostedCampaignRemoteAdmissionProbe;
   readonly writeReceipt: typeof writeCreateOnlyAdmissionReceipt;
-  readonly writeClockPreflightProof?: typeof writeCreateOnlyClockPreflightProof;
 }
 
 export async function runHostedCampaignAdmissionCli(
@@ -72,13 +69,6 @@ export async function runHostedCampaignAdmissionCli(
       remoteAdmissionProbe,
     }), remoteEvidence,
   }, dependencies.now);
-  if (receipt.status === "admitted") {
-    const parsedDefinition = hostedCampaignDefinitionV1Schema.parse(definition);
-    await (dependencies.writeClockPreflightProof ?? writeCreateOnlyClockPreflightProof)(
-      parsedDefinition.clockPreflightPath,
-      receipt.clockPreflightProof!,
-    );
-  }
   await dependencies.writeReceipt(config.receiptPath, receipt);
   if (receipt.status !== "admitted") {
     throw new Error(`Hosted campaign admission blocked: ${receipt.missingCapabilities.join(",")}`);
@@ -91,8 +81,7 @@ async function readJson(path: string): Promise<unknown> {
 
 if (process.argv[1]?.replaceAll("\\", "/").endsWith("/run-hosted-campaign-admission.js") === true) {
   void runHostedCampaignAdmissionCli(process.argv.slice(2), {
-    now: Date.now, readJson, writeClockPreflightProof: writeCreateOnlyClockPreflightProof,
-    writeReceipt: writeCreateOnlyAdmissionReceipt,
+    now: Date.now, readJson, writeReceipt: writeCreateOnlyAdmissionReceipt,
   }).catch((error: unknown) => {
     process.stderr.write(`Hosted campaign admission failed: ${error instanceof Error ? error.message : "unknown error"}\n`);
     process.exitCode = 1;
