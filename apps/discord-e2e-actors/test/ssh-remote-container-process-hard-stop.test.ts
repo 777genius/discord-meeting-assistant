@@ -49,7 +49,6 @@ describe("bounded SSH remote command hard stop", () => {
 });
 
 function fakeChildProcess(kill: ChildProcess["kill"] = vi.fn(() => true)): ChildProcess {
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberately minimal spawn test double
   const child = new EventEmitter() as ChildProcess;
   child.kill = kill;
   child.stdout = new PassThrough();

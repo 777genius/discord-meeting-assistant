@@ -1,5 +1,4 @@
 /* Admission intentionally centralizes local validation and trusted remote receipt binding. */
-/* oxlint-disable max-lines */
 import { createHash } from "node:crypto";
 import { constants, type Stats } from "node:fs";
 import { open, realpath, statfs, type FileHandle } from "node:fs/promises";

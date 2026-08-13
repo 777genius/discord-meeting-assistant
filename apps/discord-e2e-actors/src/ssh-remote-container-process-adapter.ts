@@ -188,7 +188,7 @@ export function runBoundedSshCommand(
       killTimer = setTimeout(() => {
         child.kill("SIGKILL");
         hardStopTimer = setTimeout(() => {
-          finish(() => reject(new Error("Remote command process did not exit after SIGKILL")));
+          finish(() => { reject(new Error("Remote command process did not exit after SIGKILL")); });
         }, 5_000);
         hardStopTimer.unref();
       }, 1_000);
@@ -214,7 +214,7 @@ export function runBoundedSshCommand(
     child.stdout.on("data", (chunk: Buffer) => { retain(stdout, chunk); });
     child.stderr.on("data", (chunk: Buffer) => { retain(stderr, chunk); });
     child.once("error", (error) => {
-      finish(() => reject(error));
+      finish(() => { reject(error); });
     });
     child.once("close", (exitCode, signal) => {
       finish(() => {

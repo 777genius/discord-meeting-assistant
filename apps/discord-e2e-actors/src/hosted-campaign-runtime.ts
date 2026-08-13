@@ -191,7 +191,7 @@ export async function runHostedCampaign(
     if (lease.campaignId !== campaignId) { throw new Error("Acquired campaign lease does not match the campaign"); }
     if (authorization !== undefined) {
       const launchAuthorization = await authorization.authorizeAfterLease();
-      state.firstChildAuthorization = () => launchAuthorization.assertReadyForFirstChild();
+      state.firstChildAuthorization = () => { launchAuthorization.assertReadyForFirstChild(); };
     }
     await startChildren(input, ports, bounded, state, { kind: "campaign" });
     await executeActions(input, ports, bounded, state, evidence);

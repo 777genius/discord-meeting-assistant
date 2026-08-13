@@ -101,8 +101,8 @@ function runProcess(
     let terminationError: Error | undefined;
     let killTimer: ReturnType<typeof setTimeout> | undefined;
     let hardStopTimer: ReturnType<typeof setTimeout> | undefined;
-    const stopForSignal = (signal: NodeJS.Signals): void => {
-      terminate(new EvidenceProbeInterruptedError(signal));
+    const stopForSignal = (caughtSignal: NodeJS.Signals): void => {
+      terminate(new EvidenceProbeInterruptedError(caughtSignal));
     };
     const stopForAbort = (): void => {
       terminate(signal?.reason instanceof Error ? signal.reason : new Error("Evidence probe aborted"));
