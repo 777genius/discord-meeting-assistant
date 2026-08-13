@@ -3,13 +3,13 @@ import { isAbsolute, join, normalize, resolve } from "node:path";
 
 import { z } from "zod";
 
-export const HOSTED_CAMPAIGN_CONTAINER_ROOT = "/run/e2e-campaign" as const;
+const HOSTED_CAMPAIGN_CONTAINER_ROOT = "/run/e2e-campaign" as const;
 
 const identifierSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u);
 const nonceSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{15,255}$/u);
 const absolutePathSchema = z.string().refine(isSafeAbsolutePath, "Expected a normalized absolute path");
 
-export const hostedCampaignSharedMountExpectationV1Schema = z.object({
+const hostedCampaignSharedMountExpectationV1Schema = z.object({
   campaignId: identifierSchema,
   containerRoot: z.literal(HOSTED_CAMPAIGN_CONTAINER_ROOT),
   hostRoot: absolutePathSchema,
@@ -61,7 +61,7 @@ export type HostedCampaignSharedMountExpectationV1 = z.infer<
   typeof hostedCampaignSharedMountExpectationV1Schema
 >;
 export type HostedCampaignSharedMountReceiptV1 = z.infer<typeof receiptSchema>;
-export type HostedCampaignSharedMountRootObservationV1 = z.infer<typeof rootObservationSchema>;
+type HostedCampaignSharedMountRootObservationV1 = z.infer<typeof rootObservationSchema>;
 
 export interface HostedCampaignSharedMountProbePort {
   readonly inspectHostRoot: (path: string, signal?: AbortSignal) => Promise<unknown>;
