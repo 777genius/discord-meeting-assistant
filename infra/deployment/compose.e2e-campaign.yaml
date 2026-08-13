@@ -1,8 +1,18 @@
 name: discord-meeting-assistant
 
-# Test-only overlay. E2E_CAMPAIGN_HOST_ROOT must be a fresh private directory
-# containing exactly one campaign namespace. Never add this mount to compose.yaml.
+# Test-only deployment overlay. It exposes the one-campaign readiness root only
+# to Meeting Platform. Compile, admission preflight, and the bounded coordinator
+# run from the audited host-side checkout; there is intentionally no Compose
+# runner service. Never add this mount to compose.yaml or mount the shared parent.
 services:
+  subscription-runtime-sidecar:
+    labels:
+      e2e.test-only: "true"
+
+  pipecat-runtime:
+    labels:
+      e2e.test-only: "true"
+
   meeting-platform:
     labels:
       e2e.test-only: "true"
@@ -17,36 +27,3 @@ services:
       CONVERSATION_E2E_GREETING_PLAYBACK_READINESS_ROOT: /run/e2e-campaign/${E2E_CAMPAIGN_ID:?set fresh campaign ID}/run-3/greeting-handshakes
     volumes:
       - ${E2E_CAMPAIGN_HOST_ROOT:?set fresh private per-campaign host root}:/run/e2e-campaign
-
-  discord-e2e-campaign-runner:
-    profiles: [e2e-campaign]
-    build:
-      context: ../..
-      dockerfile: apps/discord-e2e-actors/Dockerfile
-    image: discord-meeting/discord-e2e-actors:${E2E_RUNNER_SOURCE_REVISION:?set immutable source revision}
-    init: true
-    restart: "no"
-    read_only: true
-    labels:
-      e2e.test-only: "true"
-      e2e.shared-campaign-root: "acknowledged"
-    entrypoint: ["node", "dist/run-hosted-campaign.js"]
-    command:
-      - /run/e2e-campaign/${E2E_CAMPAIGN_ID:?set fresh campaign ID}/control/plan.json
-      - /run/e2e-campaign/${E2E_CAMPAIGN_ID:?set fresh campaign ID}/campaign-pass.json
-      - ${E2E_CAMPAIGN_TIMEOUT_MS:-14400000}
-      - /run/e2e-campaign/${E2E_CAMPAIGN_ID:?set fresh campaign ID}/control/admission.json
-      - /run/e2e-campaign/${E2E_CAMPAIGN_ID:?set fresh campaign ID}/control/definition.json
-      - /run/e2e-campaign/${E2E_CAMPAIGN_ID:?set fresh campaign ID}/control/bindings.json
-    environment:
-      DISCORD_E2E_CAMPAIGN_SHARED_ROOT_ACKNOWLEDGED: "true"
-    volumes:
-      - ${E2E_CAMPAIGN_HOST_ROOT:?set fresh private per-campaign host root}:/run/e2e-campaign
-      - ${E2E_RUNNER_SECRET_DIRECTORY:?set runner-only test token directory}:/run/e2e-runner-secrets:ro
-    tmpfs:
-      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=0700,uid=10001,gid=10001
-    cap_drop: [ALL]
-    networks: [meeting-internal, meeting-egress]
-    security_opt: [no-new-privileges:true]
-    pids_limit: 256
-    stop_grace_period: 30s

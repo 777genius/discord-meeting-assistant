@@ -206,18 +206,28 @@ and the addressed-answer handshake. Its strict reconnect sequence is four
 greetings, the addressed answer, then the prepared farewell. Manual sleeps or
 operator timing are not acceptance evidence.
 
-🚨 External execution is nevertheless not admitted yet. The current fail-closed
-preflight treats all six supplied remote-capability files as untrusted
-declarations and returns `blocked` until typed, independently verified producers
-exist for clock preflight, greeting-readiness deployment, Craig test identity,
-remote test isolation, revision-qualified containers, and the Voicetext
-semantic canary. Do not bypass admission, run against production, or present
-local coordinator coverage as real-provider qualification.
+🚨 External execution is admitted only by the executable production trust
+binding. The same private reviewed release-binding file is required by preflight
+and the runner; absence fails with `RELEASE_BINDING_REQUIRED`. It must match the
+compiled trust root, pin the candidate source revisions and full immutable Craig
+and Meeting Platform image digests, and configure typed probes for clock,
+deployment, Discord/Craig identity, container provenance, and the Voicetext
+semantic canary. Missing or mutable digest data blocks preflight. Supplied
+remote-capability files remain untrusted diagnostic declarations and never grant
+authority. Do not bypass admission, run against production, or present local
+coordinator coverage as real-provider qualification.
 
-Prepare private mode-0600 definition and runtime-binding files, then compile the
-exact create-only plan. The three runtime bindings are operator-selected fresh
-paths under `/tmp/discord-e2e-attestations`; the coordinator later publishes v2
-replay markers bound to the selected recording and the running container/image
+Use the audited host-side checkout for compile, preflight, and run. Do not run
+the coordinator as a Compose service: its bounded SSH/process probes and local
+official-bot secret boundary are part of the host-side command surface. Prepare
+private mode-0600 definition, runtime-binding, and reviewed release-binding
+files, then compile the exact create-only plan. Discover the test deployment
+through its fully expanded Compose model and pin the exact container identities,
+source revisions, and full repository digests in the release binding. Do not
+substitute tags, shortened digests, historical evidence, or guessed Craig
+network names. The three runtime bindings are operator-selected fresh paths
+under `/tmp/discord-e2e-attestations`; the coordinator later publishes v2 replay
+markers bound to the selected recording and the running container/image
 provenance.
 
 ```sh
@@ -232,12 +242,15 @@ pnpm --filter @discord-meeting/discord-e2e-actors preflight:hosted-campaign -- \
   --plan /absolute/private/plans/campaign-plan.json \
   --receipt /absolute/private/admission.json \
   --minimum-free-bytes 1073741824 \
-  --remote-evidence /absolute/private/remote-evidence.json
+  --remote-evidence /absolute/private/remote-evidence.json \
+  --release-binding /absolute/private/release-binding.json
 ```
 
 Only an `admitted` receipt that exactly matches the plan, definition, bindings,
-candidate revisions, campaign ID and artifact root can unlock the runner. Once
-trusted remote producers exist and preflight succeeds, the bounded command is:
+release binding, candidate revisions, campaign ID and artifact root can unlock
+the host-side runner. Run preflight immediately before the bounded command. The
+coordinator performs a second fresh authorization after acquiring its exclusive
+lease and refuses to start the first child when readiness expired:
 
 ```sh
 pnpm --filter @discord-meeting/discord-e2e-actors run:hosted-campaign -- \
@@ -246,7 +259,8 @@ pnpm --filter @discord-meeting/discord-e2e-actors run:hosted-campaign -- \
   86400000 \
   /absolute/private/admission.json \
   /absolute/private/campaign-definition.json \
-  /absolute/private/runtime-bindings.json
+  /absolute/private/runtime-bindings.json \
+  --release-binding /absolute/private/release-binding.json
 ```
 
 The hosted campaign pass receipt is published only after successful teardown.
@@ -297,9 +311,10 @@ audible packet aborts the campaign. Apply the test-only
 `infra/deployment/compose.e2e-campaign.yaml` overlay and set
 `E2E_CAMPAIGN_HOST_ROOT` to a fresh mode-0700 UID/GID-10001 wrapper containing
 exactly one campaign-ID directory. The overlay exposes only that wrapper to
-Meeting Platform and its disposable runner at `/run/e2e-campaign`; never mount
-the shared campaigns parent. Runner tokens use the distinct read-only
-`E2E_RUNNER_SECRET_DIRECTORY` mount and are not Platform secrets. The base
+Meeting Platform at `/run/e2e-campaign`; the host-side coordinator uses the same
+exact host path. Never mount the shared campaigns parent. Official test-bot
+tokens remain in the host-side runner secret boundary and are not Platform
+secrets. The base
 production Compose deliberately has no campaign/readiness bind mount. Require
 the three-party root, isolation, freshness and bidirectional nonce proof before
 launch, and never reuse a per-run subdirectory. Meeting Platform

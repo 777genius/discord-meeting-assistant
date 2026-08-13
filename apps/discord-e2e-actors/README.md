@@ -33,12 +33,14 @@ one addressed answer, and one prepared farewell without operator sleeps. Armed
 receipts close the observer, actor, and supplemental-player races before their
 release gates are published.
 
-Before the coordinator may create its private artifact layout or start a child,
-the admission CLI recomputes the plan from the exact definition and runtime
-bindings. It also validates the pinned fixture bytes, five file-secret
-files, available disk space, declared candidate revisions, and supplied remote
-evidence digests. Inputs and receipts are private create-only files; a retry
-uses a new campaign ID, artifact root, and output paths.
+Run the campaign commands from the audited host-side checkout, not from a
+Compose runner container. Before the coordinator may create its private
+artifact layout or start a child, the admission CLI recomputes the plan from the
+exact definition and runtime bindings. It also validates the pinned fixture
+bytes, five file-secret files, available disk space, declared candidate
+revisions, and fresh remote probe results. Inputs and receipts are private
+create-only files; a retry uses a new campaign ID, artifact root, and output
+paths.
 
 ```sh
 pnpm --filter @discord-meeting/discord-e2e-actors preflight:hosted-campaign -- \
@@ -47,7 +49,8 @@ pnpm --filter @discord-meeting/discord-e2e-actors preflight:hosted-campaign -- \
   --plan /absolute/private/plans/campaign-plan.json \
   --receipt /absolute/private/admission.json \
   --minimum-free-bytes 1073741824 \
-  --remote-evidence /absolute/private/remote-evidence.json
+  --remote-evidence /absolute/private/remote-evidence.json \
+  --release-binding /absolute/private/release-binding.json
 
 pnpm --filter @discord-meeting/discord-e2e-actors run:hosted-campaign -- \
   /absolute/private/plans/campaign-plan.json \
@@ -55,17 +58,17 @@ pnpm --filter @discord-meeting/discord-e2e-actors run:hosted-campaign -- \
   86400000 \
   /absolute/private/admission.json \
   /absolute/private/campaign-definition.json \
-  /absolute/private/runtime-bindings.json
+  /absolute/private/runtime-bindings.json \
+  --release-binding /absolute/private/release-binding.json
 ```
 
-🚨 The current admission implementation deliberately reports `blocked`. The
-six remote capability files are retained declarations, not trusted typed probe
-receipts, so they cannot authorize Discord or host activity yet. Qualification
-remains blocked until independently verified producers exist for clock
-preflight, greeting-readiness deployment, Craig test identity, remote test
-isolation, revision-qualified containers, and the Voicetext semantic canary.
-Do not bypass this check or present deterministic coordinator tests as a real
-Discord/host pass.
+🚨 Production admission is fail-closed. Both preflight and the runner require
+the same private reviewed release-binding file. It must match the compiled trust
+root and pin the candidate source revisions plus full immutable image digests.
+An absent binding fails with `RELEASE_BINDING_REQUIRED`; mutable/missing digests,
+historical evidence, or an operator-authored `remote-evidence.json` cannot grant
+authority. Do not bypass admission or present deterministic coordinator tests
+as a real Discord/host pass.
 
 ## Supplemental Speaker D playback
 
@@ -192,11 +195,11 @@ private current-user-owned directory, private current-user-owned regular files,
 create-only publication, and exact digest/schema/run validation. For a hosted
 campaign, apply `infra/deployment/compose.e2e-campaign.yaml` only to the isolated
 test deployment. `E2E_CAMPAIGN_HOST_ROOT` is a fresh mode-0700 UID/GID-10001
-wrapper containing exactly one campaign-ID directory; it is mounted into both
-Meeting Platform and the disposable runner at `/run/e2e-campaign`. Never point
-it at the shared campaigns parent. The production Compose file has no readiness
-mount, and the runner receives official test-bot tokens through the separate
-read-only `E2E_RUNNER_SECRET_DIRECTORY` mount, never through Platform secrets.
+wrapper containing exactly one campaign-ID directory; it is mounted into
+Meeting Platform at `/run/e2e-campaign` and read from its exact host path by the
+host-side coordinator. Never point it at the shared campaigns parent. The
+production Compose file has no readiness mount. Official test-bot tokens remain
+host-side runner secrets and are never mounted into Platform.
 The three-party mount probe must prove exact roots, sibling isolation, freshness
 and bidirectional host/Platform/runner nonce visibility before launch. The
 already-subscribed observer rejects stale, mismatched, or ambiguous receipts and
