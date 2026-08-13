@@ -16,7 +16,7 @@ function actorWithPlayback(play: SupplementalPlaybackActor["play"]): Supplementa
 }
 
 describe("runSupplementalVoicePlayback", () => {
-  it("plays the pinned fixture exactly once between bounded holds", async () => {
+  it("plays the pinned fixture exactly once without a pre-hold synchronization delay", async () => {
     const events: string[] = [];
     let now = 1_000;
     let playCount = 0;
@@ -44,18 +44,17 @@ describe("runSupplementalVoicePlayback", () => {
     await expect(runSupplementalVoicePlayback(
       actor,
       "33333333333333333",
-      500,
       750,
       clock,
     )).resolves.toEqual({
       authenticatedApplicationId: "33333333333333333",
-      playbackEndedAtEpochMs: 3_500,
-      playbackStartedAtEpochMs: 1_500,
+      playbackEndedAtEpochMs: 3_000,
+      playbackStartedAtEpochMs: 1_000,
       postHoldMilliseconds: 750,
-      preHoldMilliseconds: 500,
+      preHoldMilliseconds: 0,
     });
     expect(playCount).toBe(1);
-    expect(events).toEqual(["wait:500", "playing", "idle", "wait:750"]);
+    expect(events).toEqual(["playing", "idle", "wait:750"]);
   });
 
   it("fails before holds or playback for a mismatched application ID", async () => {
@@ -80,7 +79,6 @@ describe("runSupplementalVoicePlayback", () => {
       actor,
       "33333333333333333",
       0,
-      0,
       clock,
     )).rejects.toThrow("application ID");
     expect(called).toBe(false);
@@ -94,11 +92,11 @@ describe("runSupplementalVoicePlayback", () => {
 
     await expect(runSupplementalVoicePlayback(actorWithPlayback(async (lifecycle) => {
       lifecycle.onPlaying();
-    }), "33333333333333333", 0, 0, clock)).rejects.toThrow("without reaching idle");
+    }), "33333333333333333", 0, clock)).rejects.toThrow("without reaching idle");
     await expect(runSupplementalVoicePlayback(actorWithPlayback(async (lifecycle) => {
       lifecycle.onPlaying();
       lifecycle.onPlaying();
-    }), "33333333333333333", 0, 0, clock)).rejects.toThrow("more than once");
+    }), "33333333333333333", 0, clock)).rejects.toThrow("more than once");
   });
 });
 

@@ -1,0 +1,29 @@
+name: discord-meeting-assistant
+
+# Test-only deployment overlay. It exposes the one-campaign readiness root only
+# to Meeting Platform. Compile, admission preflight, and the bounded coordinator
+# run from the audited host-side checkout; there is intentionally no Compose
+# runner service. Never add this mount to compose.yaml or mount the shared parent.
+services:
+  subscription-runtime-sidecar:
+    labels:
+      e2e.test-only: "true"
+
+  pipecat-runtime:
+    labels:
+      e2e.test-only: "true"
+
+  meeting-platform:
+    labels:
+      e2e.test-only: "true"
+      e2e.shared-campaign-root: "acknowledged"
+    environment:
+      DISCORD_E2E_CAMPAIGN_SHARED_ROOT_ACKNOWLEDGED: "true"
+      E2E_TEST_ONLY_LABEL: "true"
+      CONVERSATION_E2E_PLAYBACK_READINESS_ROOT: /run/e2e-campaign/${E2E_CAMPAIGN_ID:?set fresh campaign ID}/run-3/answer-handshakes
+      CONVERSATION_E2E_PLAYBACK_READINESS_RUN_ID: ${E2E_RECONNECT_RUN_ID:?set reconnect run ID}
+      CONVERSATION_E2E_PLAYBACK_READINESS_TIMEOUT_MS: ${E2E_PLAYBACK_READINESS_TIMEOUT_MS:-120000}
+      CONVERSATION_E2E_GREETING_OBSERVER_PARTICIPANT_ID: ${E2E_OBSERVER_APPLICATION_ID:?set official observer application ID}
+      CONVERSATION_E2E_GREETING_PLAYBACK_READINESS_ROOT: /run/e2e-campaign/${E2E_CAMPAIGN_ID:?set fresh campaign ID}/run-3/greeting-handshakes
+    volumes:
+      - ${E2E_CAMPAIGN_HOST_ROOT:?set fresh private per-campaign host root}:/run/e2e-campaign

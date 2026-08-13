@@ -467,6 +467,7 @@ describe("ConversationCoordinator playback readiness", () => {
     await vi.waitFor(() => {
       expect(readinessRequests).toEqual([{
         meetingId: "meeting-1",
+        participantId: "speaker-turn-1",
         playbackAttemptId: "answer-attempt-1",
         playbackKind: "answer",
         turnId: "turn-1",

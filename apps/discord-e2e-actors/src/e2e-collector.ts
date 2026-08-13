@@ -1,10 +1,10 @@
 import {
   conversationVoiceEvidenceV3Schema,
   retainedE2eEvidenceV6Schema,
-  retainedReconnectE2eEvidenceV8Schema,
+  retainedE2eEvidenceV9Schema,
   sameDeploymentProvenance,
   type RetainedE2eEvidenceV6,
-  type RetainedReconnectE2eEvidenceV8,
+  type RetainedE2eEvidenceV9,
 } from "./e2e-evidence.js";
 import {
   assertDiscordReference,
@@ -53,7 +53,7 @@ export async function collectRetainedE2eEvidence(
   input: CollectEvidenceInput,
   deployment: DeploymentEvidenceProbe,
   discord: DiscordEvidenceProbe,
-): Promise<RetainedE2eEvidenceV6 | RetainedReconnectE2eEvidenceV8> {
+): Promise<RetainedE2eEvidenceV6 | RetainedE2eEvidenceV9> {
   const unboundActorRun = parseUnboundActorRun(input.actorRun);
   const replayTarget = createReplayTargetAttestation(input, unboundActorRun);
   await deployment.assertReplayTargetSafe(replayTarget);
@@ -179,14 +179,13 @@ export async function collectRetainedE2eEvidence(
   );
   const { participantLifecycleReceipts, ...lifecycle } = lifecycleEvidence;
   const reconnectNoRepeat = createReconnectNoRepeatEvidence(
-    participantLifecycleReceipts,
-    input.conversation.reconnectParticipantId,
-    s3.endedAt,
+    participantLifecycleReceipts, input.conversation.reconnectParticipantId, s3.endedAt,
   );
-  return retainedReconnectE2eEvidenceV8Schema.parse({
+  return retainedE2eEvidenceV9Schema.parse({
     ...baseEvidence,
     conversation: {
       botSpeakerId: input.conversation.botSpeakerId,
+      campaignProof: input.conversation.campaignProof,
       lifecycle,
       reconnectNoRepeat,
       supplementalPlayback: input.conversation.supplementalPlayback,
@@ -194,8 +193,20 @@ export async function collectRetainedE2eEvidence(
         bindConversationVoiceRecording(observation, input.recordingId)
       ),
     },
-    schemaVersion: 8,
+    serviceLevels: input.conversation.serviceLevels,
+    serviceLevelSources: bindServiceLevelSources(input, participantLifecycleReceipts),
+    schemaVersion: 9,
   });
+}
+
+function bindServiceLevelSources(
+  input: CollectEvidenceInput,
+  participantLifecycleReceipts: Awaited<ReturnType<NonNullable<DeploymentEvidenceProbe["collectConversationLifecycle"]>>>["participantLifecycleReceipts"],
+) {
+  if (input.conversation?.serviceLevelSources === undefined) {
+    throw new Error("V9 collection requires authoritative service-level source receipts");
+  }
+  return { ...input.conversation.serviceLevelSources, participantLifecycleReceipts };
 }
 
 export function createReplayTargetAttestation(

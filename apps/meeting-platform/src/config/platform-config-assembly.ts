@@ -37,7 +37,9 @@ export function assemblePlatformConfig(
           voiceId: environment.CONVERSATION_VOICE_ID,
           voiceProfileId: environment.CONVERSATION_VOICE_PROFILE_ID,
           ...(environment.CONVERSATION_E2E_PLAYBACK_READINESS_ROOT === undefined || environment.CONVERSATION_E2E_PLAYBACK_READINESS_RUN_ID === undefined || environment.CONVERSATION_E2E_PLAYBACK_READINESS_TIMEOUT_MS === undefined
-            ? {} : { playbackReadiness: Object.freeze({ root: environment.CONVERSATION_E2E_PLAYBACK_READINESS_ROOT, runId: environment.CONVERSATION_E2E_PLAYBACK_READINESS_RUN_ID, timeoutMilliseconds: environment.CONVERSATION_E2E_PLAYBACK_READINESS_TIMEOUT_MS }) }),
+            ? {} : { playbackReadiness: Object.freeze({ root: environment.CONVERSATION_E2E_PLAYBACK_READINESS_ROOT, runId: environment.CONVERSATION_E2E_PLAYBACK_READINESS_RUN_ID, timeoutMilliseconds: environment.CONVERSATION_E2E_PLAYBACK_READINESS_TIMEOUT_MS,
+              ...(environment.CONVERSATION_E2E_GREETING_OBSERVER_PARTICIPANT_ID === undefined ? {} : { greetingObserverParticipantId: environment.CONVERSATION_E2E_GREETING_OBSERVER_PARTICIPANT_ID }),
+              ...(environment.CONVERSATION_E2E_GREETING_PLAYBACK_READINESS_ROOT === undefined ? {} : { greetingRoot: environment.CONVERSATION_E2E_GREETING_PLAYBACK_READINESS_ROOT }) }) }),
         } } : {}),
     discordFinalPublicationMode: environment.DISCORD_FINAL_PUBLICATION_MODE,
     discordPublicationMode: environment.DISCORD_PUBLICATION_MODE,

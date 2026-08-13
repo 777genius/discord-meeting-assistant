@@ -150,6 +150,9 @@ importers:
         specifier: 'catalog:'
         version: 4.4.3
     devDependencies:
+      '@discord-meeting/discord-adapter':
+        specifier: workspace:*
+        version: link:../../packages/discord-adapter
       '@types/node':
         specifier: 'catalog:'
         version: 24.13.3
@@ -168,15 +171,15 @@ importers:
       '@discord-meeting/bullmq-adapter':
         specifier: workspace:*
         version: link:../../packages/bullmq-adapter
+      '@discord-meeting/conversation-runtime-contracts':
+        specifier: workspace:*
+        version: link:../../packages/conversation-runtime-contracts
       '@discord-meeting/craig-gateway-contracts':
         specifier: workspace:*
         version: link:../../packages/craig-gateway-contracts
       '@discord-meeting/craig-playback-adapter':
         specifier: workspace:*
         version: link:../../packages/craig-playback-adapter
-      '@discord-meeting/conversation-runtime-contracts':
-        specifier: workspace:*
-        version: link:../../packages/conversation-runtime-contracts
       '@discord-meeting/discord-adapter':
         specifier: workspace:*
         version: link:../../packages/discord-adapter

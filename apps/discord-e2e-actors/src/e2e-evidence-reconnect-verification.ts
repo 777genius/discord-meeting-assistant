@@ -3,12 +3,13 @@ import { authoritativeTrackCoverage } from "./e2e-evidence-track-verification.js
 import type {
   FixtureManifestV1,
   RetainedE2eEvidenceV8,
+  RetainedE2eEvidenceV9,
 } from "./e2e-evidence-schema.js";
 import type { VerificationFailureReporter } from "./e2e-evidence-verification-types.js";
 
 export function verifyReconnectNoRepeat(
   manifest: FixtureManifestV1,
-  evidence: RetainedE2eEvidenceV8,
+  evidence: RetainedE2eEvidenceV8 | RetainedE2eEvidenceV9,
   recordingStartMs: number,
   recordingEndMs: number,
   fail: VerificationFailureReporter,
@@ -88,7 +89,7 @@ export function verifyReconnectNoRepeat(
 }
 
 function validateReconnectReceiptWindow(input: {
-  readonly evidence: RetainedE2eEvidenceV8;
+  readonly evidence: RetainedE2eEvidenceV8 | RetainedE2eEvidenceV9;
   readonly expectedParticipantId: string | undefined;
   readonly fail: VerificationFailureReporter;
   readonly manifest: FixtureManifestV1;

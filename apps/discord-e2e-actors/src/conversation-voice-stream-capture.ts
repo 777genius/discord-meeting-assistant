@@ -17,6 +17,7 @@ export function captureConversationVoiceFromOpenStream(input: {
   readonly controller: ConversationVoiceCaptureController;
   readonly firstPacketTimeoutMilliseconds: number;
   readonly isPacketAudible?: (packet: Uint8Array) => boolean;
+  readonly onFirstPacket?: (timing: ConversationVoiceCaptureTimestamp) => void;
   readonly publishReady?: () => Promise<void>;
   readonly stream: Readable;
 }): Promise<ConversationVoiceCaptureSummary> {
@@ -28,6 +29,7 @@ export function captureConversationVoiceFromOpenStream(input: {
   }
   return new Promise<ConversationVoiceCaptureSummary>((resolve, reject) => {
     let captureTimeout: ReturnType<typeof setTimeout> | undefined;
+    let readyPublished = input.publishReady === undefined;
     let sequence = 0;
     let settled = false;
     const firstPacketTimeout = setTimeout(() => {
@@ -67,6 +69,14 @@ export function captureConversationVoiceFromOpenStream(input: {
         if (!(chunk instanceof Uint8Array)) {
           throw new Error("Conversation voice receiver emitted a non-binary packet");
         }
+        if (!readyPublished) {
+          if (input.isPacketAudible?.(chunk) ?? true) {
+            throw new Error(
+              "Configured Craig emitted audible audio before observer readiness was published",
+            );
+          }
+          return;
+        }
         if (sequence === 0 && input.isPacketAudible !== undefined && !input.isPacketAudible(chunk)) {
           return;
         }
@@ -87,6 +97,9 @@ export function captureConversationVoiceFromOpenStream(input: {
           sequence: sequence + 1,
           timing,
         });
+        if (sequence === 0 && result.kind === "accepted") {
+          input.onFirstPacket?.(timing);
+        }
         sequence += 1;
         if (result.kind === "accepted" && result.captureComplete) {
           succeed(input.controller.complete(input.clock.now()));
@@ -116,8 +129,9 @@ export function captureConversationVoiceFromOpenStream(input: {
     input.stream.once("end", onEnd);
     input.stream.once("error", onError);
     input.stream.on("data", onData);
+    input.stream.resume();
     void Promise.resolve()
       .then(async () => input.publishReady?.())
-      .then(() => input.stream.resume(), fail);
+      .then(() => (readyPublished = true), fail);
   });
 }

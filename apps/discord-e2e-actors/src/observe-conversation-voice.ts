@@ -1,69 +1,72 @@
 import {
   EndBehaviorType,
-  VoiceConnectionStatus,
-  entersState,
-  joinVoiceChannel,
+  VoiceConnectionStatus, entersState, joinVoiceChannel,
   type AudioReceiveStream,
   type VoiceConnection,
 } from "@discordjs/voice";
+import { Client, GatewayIntentBits } from "discord.js";
+import { loadConversationVoiceObserverConfig, type ConversationVoiceObserverCapture } from
+  "./conversation-voice-observer-config.js";
+import { conversationVoiceCampaignPreflight } from
+  "./conversation-voice-campaign-contract.js";
 import {
-  ChannelType,
-  Client,
-  GatewayIntentBits,
-  type Guild,
-  type GuildBasedChannel,
-  type VoiceChannel,
-} from "discord.js";
-
-import {
-  loadConversationVoiceObserverConfig,
-  type ConversationVoiceObserverCapture,
-} from "./conversation-voice-observer-config.js";
+  writeCreateOnlyConversationVoiceCampaignProof, type ConversationVoiceCampaignProofV1,
+} from "./conversation-voice-campaign-proof.js";
 import { createConversationVoiceEvidence } from "./conversation-voice-evidence.js";
 import { captureConversationVoiceFromOpenStream } from "./conversation-voice-stream-capture.js";
 import {
-  createDiscordJsOpusDecoder,
-  type ConversationVoiceAudibilityDecoder,
+  createDiscordJsOpusDecoder, type ConversationVoiceAudibilityDecoder,
 } from "./conversation-voice-audibility-decoder.js";
 import { waitForConversationVoiceCorrelationWhileGuardingAudio } from
   "./conversation-voice-turn-correlation-wait.js";
 import {
-  assertConversationAnswerHandshakeRootIsNew,
-  publishConversationAnswerObserverReady,
-  waitForConversationAnswerPlaybackIntent,
+  assertConversationAnswerHandshakeRootIsNew, waitForConversationAnswerPlaybackIntent,
   type ConversationAnswerPlaybackIntent,
 } from "./conversation-voice-turn-id-source.js";
+import { publishInitialGreetingObserverReady } from "./conversation-greeting-ready.js";
 import {
-  ConversationVoiceCaptureController,
-  ConversationVoiceCaptureError,
+  assertConfiguredCraigBotIsInVoiceChannel,
+  assertConnectableVoiceChannel,
+  requiredAuthenticatedBotId,
+} from "./conversation-observer-discord-validation.js";
+import {
+  ConversationVoiceCaptureController, ConversationVoiceCaptureError,
   assertConversationVoiceEvidencePathIsNew,
   writeNewConversationVoiceEvidenceAtomically,
 } from "./conversation-voice-observer.js";
+import { publishConversationVoiceReadyProof } from "./conversation-voice-ready-proof.js";
 import { FileSecretReader, MacOsKeychainSecretReader } from "./keychain.js";
+import {
+  publishAnswerFirstPacket, publishAnswerIntent, publishAnswerObserverReady,
+  publishCaptureRetained, publishObserverSubscribed,
+} from "./hosted-campaign-process-event-publisher.js";
+import { publishConversationObserverCompletion } from
+  "./hosted-finite-process-completion-publisher.js";
 
-const systemClock = {
-  now: () => ({
-    epochMilliseconds: Date.now(),
-    monotonicMilliseconds: Number(process.hrtime.bigint() / 1_000_000n),
-  }),
-};
-
-class ConversationVoiceObserverError extends Error {
-  public constructor(message: string) {
-    super(message);
-    this.name = "ConversationVoiceObserverError";
-  }
-}
+const systemClock = { now: () => ({
+  epochMilliseconds: Date.now(),
+  monotonicMilliseconds: Number(process.hrtime.bigint() / 1_000_000n),
+}) };
 
 async function main(): Promise<void> {
   const config = loadConversationVoiceObserverConfig(process.env);
   const captures = [
     config.purpose === "addressed-answer" ? {
+      expectedDuration: {
+        maximumMilliseconds:
+          config.expectedDurationMilliseconds + config.expectedDurationToleranceMilliseconds,
+        minimumMilliseconds: config.expectedDurationMilliseconds,
+      },
       outputPath: config.outputPath,
       playbackHandshakeRoot: config.playbackHandshakeRoot!,
       purpose: config.purpose,
     } : {
       attemptId: config.attemptId,
+      expectedDuration: {
+        maximumMilliseconds:
+          config.expectedDurationMilliseconds + config.expectedDurationToleranceMilliseconds,
+        minimumMilliseconds: config.expectedDurationMilliseconds,
+      },
       outputPath: config.outputPath,
       purpose: config.purpose,
       turnId: config.turnId,
@@ -77,6 +80,9 @@ async function main(): Promise<void> {
     assertConversationVoiceEvidencePathIsNew(outputPath)
   ));
   await Promise.all(handshakeRoots.map(assertConversationAnswerHandshakeRootIsNew));
+  if (config.additionalCaptures.length > 0) {
+    process.stdout.write(`${JSON.stringify(conversationVoiceCampaignPreflight(captures))}\n`);
+  }
   const decoder = await createDiscordJsOpusDecoder();
 
   const secretReader = config.secretDirectory === undefined
@@ -97,6 +103,7 @@ async function main(): Promise<void> {
     const guild = await client.guilds.fetch(config.guildId);
     const channel = await guild.channels.fetch(config.voiceChannelId);
     assertConnectableVoiceChannel(channel);
+    const greetingIntentNotBeforeEpochMilliseconds = Date.now();
     connection = joinVoiceChannel({
       adapterCreator: guild.voiceAdapterCreator,
       channelId: channel.id,
@@ -105,6 +112,12 @@ async function main(): Promise<void> {
       selfDeaf: false,
       selfMute: true,
     });
+    // The observer's own join can trigger immediate greeting playback. Subscribe synchronously
+    // after constructing the connection so no await boundary can lose those first packets.
+    sourceStream = connection.receiver.subscribe(config.craigBotId, { end: {
+      behavior: EndBehaviorType.Manual,
+    } });
+    sourceStream.on("error", () => {});
     await entersState(connection, VoiceConnectionStatus.Ready, config.readyTimeoutMilliseconds);
     const handshakeNotBeforeEpochMilliseconds = Date.now();
     await Promise.all(handshakeRoots.map(assertConversationAnswerHandshakeRootIsNew));
@@ -115,11 +128,14 @@ async function main(): Promise<void> {
       channel.id,
       config.readyTimeoutMilliseconds,
     );
-    sourceStream = connection.receiver.subscribe(config.craigBotId, {
-      end: { behavior: EndBehaviorType.Manual },
+    publishObserverSubscribed(config, authenticatedBotId);
+    await publishInitialGreetingObserverReady({
+      authenticatedBotId,
+      captures,
+      config,
+      handshakeNotBeforeEpochMilliseconds: greetingIntentNotBeforeEpochMilliseconds,
     });
-    sourceStream.on("error", ignoreStreamError);
-    await capturePlannedConversationVoice({
+    const campaignProof = await capturePlannedConversationVoice({
       authenticatedBotId,
       captures,
       config,
@@ -127,11 +143,20 @@ async function main(): Promise<void> {
       handshakeNotBeforeEpochMilliseconds,
       sourceStream,
     });
+    if (config.campaignProofOutputPath !== undefined) {
+      if (campaignProof === undefined) {
+        throw new Error("Campaign observer completed without an authenticated ready proof");
+      }
+      await writeCreateOnlyConversationVoiceCampaignProof(
+        config.campaignProofOutputPath,
+        campaignProof,
+      );
+    }
+    publishConversationObserverCompletion(config, captures.map(({ outputPath }) => outputPath));
   } finally {
     sourceStream?.destroy();
     connection?.destroy();
     await client.destroy();
-    sourceStream?.off("error", ignoreStreamError);
   }
 }
 
@@ -142,16 +167,17 @@ async function capturePlannedConversationVoice(input: {
   readonly decoder: ConversationVoiceAudibilityDecoder;
   readonly handshakeNotBeforeEpochMilliseconds: number;
   readonly sourceStream: AudioReceiveStream;
-}): Promise<void> {
+}): Promise<ConversationVoiceCampaignProofV1 | undefined> {
   const { authenticatedBotId, captures, config, decoder,
     handshakeNotBeforeEpochMilliseconds, sourceStream } = input;
+  let campaignProof: ConversationVoiceCampaignProofV1 | undefined;
   for (const [index, plannedCapture] of captures.entries()) {
       const playbackIntent: ConversationAnswerPlaybackIntent | undefined =
         plannedCapture.purpose === "addressed-answer"
           ? await waitForConversationVoiceCorrelationWhileGuardingAudio({
           isPacketAudible: (packet) => decoder.isPacketAudible(packet),
           resolveCorrelation: async (signal) => waitForConversationAnswerPlaybackIntent({
-            meetingId: config.meetingId,
+            ...(config.meetingId === undefined ? {} : { meetingId: config.meetingId }),
             notBeforeEpochMilliseconds: handshakeNotBeforeEpochMilliseconds,
             root: plannedCapture.playbackHandshakeRoot,
             runId: config.runId,
@@ -161,10 +187,12 @@ async function capturePlannedConversationVoice(input: {
           stream: sourceStream,
         })
           : undefined;
-      const turnId = playbackIntent?.turnId ??
-        ("turnId" in plannedCapture ? plannedCapture.turnId : undefined);
-      const attemptId = playbackIntent?.playbackAttemptId ??
-        ("attemptId" in plannedCapture ? plannedCapture.attemptId : undefined);
+      const intentObservedAt = playbackIntent === undefined ? undefined : new Date().toISOString();
+      publishAnswerIntent(config, playbackIntent, intentObservedAt);
+      const turnId = playbackIntent?.turnId ?? ("turnId" in plannedCapture
+        ? plannedCapture.turnId : undefined);
+      const attemptId = playbackIntent?.playbackAttemptId ?? ("attemptId" in plannedCapture
+        ? plannedCapture.attemptId : undefined);
       if (turnId === undefined || attemptId === undefined) {
         throw new Error("Conversation voice capture is missing its correlated identifiers");
       }
@@ -173,15 +201,16 @@ async function capturePlannedConversationVoice(input: {
         clock: systemClock,
         controller: new ConversationVoiceCaptureController({
           captureTimeoutMilliseconds: config.captureTimeoutMilliseconds,
-          expectedDuration: {
-            maximumMilliseconds:
-              config.expectedDurationMilliseconds + config.expectedDurationToleranceMilliseconds,
-            minimumMilliseconds: config.expectedDurationMilliseconds,
-          },
+          expectedDuration: plannedCapture.expectedDuration,
           maxPcmBytes: config.maxPcmBytes,
         }, decoder),
         firstPacketTimeoutMilliseconds: config.readyTimeoutMilliseconds,
         isPacketAudible: (packet) => decoder.isPacketAudible(packet),
+        ...(playbackIntent === undefined ? {} : {
+          onFirstPacket: (timing: { readonly epochMilliseconds: number }) => {
+            publishAnswerFirstPacket(config, playbackIntent, intentObservedAt, timing.epochMilliseconds);
+          },
+        }),
         ...(playbackIntent === undefined
           ? {}
           : {
@@ -189,10 +218,20 @@ async function capturePlannedConversationVoice(input: {
                 if (!("playbackHandshakeRoot" in plannedCapture)) {
                   throw new Error("Addressed answer capture is missing its handshake root");
                 }
-                await publishConversationAnswerObserverReady({
+                campaignProof = await publishConversationVoiceReadyProof({
+                  authenticatedObserverBotId: authenticatedBotId,
+                  captures,
                   intent: playbackIntent,
+                  intentObservedAt: intentObservedAt!,
                   root: plannedCapture.playbackHandshakeRoot,
+                  target: {
+                    craigBotId: config.craigBotId,
+                    guildId: config.guildId,
+                    observerApplicationId: config.observerApplicationId,
+                    voiceChannelId: config.voiceChannelId,
+                  },
                 });
+                publishAnswerObserverReady(config, campaignProof);
               },
             }),
         stream: sourceStream,
@@ -210,11 +249,7 @@ async function capturePlannedConversationVoice(input: {
         capture,
         captureTimeoutMilliseconds: config.captureTimeoutMilliseconds,
         craigBotId: config.craigBotId,
-        expectedDuration: {
-          maximumMilliseconds:
-            config.expectedDurationMilliseconds + config.expectedDurationToleranceMilliseconds,
-          minimumMilliseconds: config.expectedDurationMilliseconds,
-        },
+        expectedDuration: plannedCapture.expectedDuration,
         guildId: config.guildId,
         maxPcmBytes: config.maxPcmBytes,
         observerApplicationId: config.observerApplicationId,
@@ -227,6 +262,7 @@ async function capturePlannedConversationVoice(input: {
         voiceChannelId: config.voiceChannelId,
       });
       await writeNewConversationVoiceEvidenceAtomically(plannedCapture.outputPath, evidence);
+      publishCaptureRetained(config, index + 1, plannedCapture.outputPath);
       process.stdout.write(`${JSON.stringify({
         acceptedDurationMilliseconds: capture.acceptedDurationMilliseconds,
         acceptedPacketCount: capture.acceptedPacketCount,
@@ -242,9 +278,8 @@ async function capturePlannedConversationVoice(input: {
         );
       }
     }
+  return campaignProof;
 }
-
-function ignoreStreamError(): void {}
 
 async function waitForConfiguredCraigAudioSilence(
   decoder: ConversationVoiceAudibilityDecoder,
@@ -327,66 +362,9 @@ async function waitForConfiguredCraigAudioSilence(
   });
 }
 
-function requiredAuthenticatedBotId(client: Client): string {
-  const authenticatedUser = client.user;
-  if (authenticatedUser === null) {
-    throw new Error("Conversation voice observer did not receive an authenticated bot user");
-  }
-  if (!authenticatedUser.bot) {
-    throw new Error("Conversation voice observer must authenticate as an official bot application");
-  }
-  return authenticatedUser.id;
-}
-
-async function assertConfiguredCraigBotIsInVoiceChannel(
-  client: Client,
-  guild: Guild,
-  craigBotId: string,
-  voiceChannelId: string,
-  timeoutMilliseconds: number,
-): Promise<void> {
-  const member = await guild.members.fetch(craigBotId);
-  if (!member.user.bot) {
-    throw new Error("Configured Craig identity is not a Discord bot");
-  }
-  if (guild.voiceStates.cache.get(craigBotId)?.channelId === voiceChannelId) {
-    return;
-  }
-  await new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      cleanup();
-      reject(new Error("Configured Craig bot did not join the private test voice channel before timeout"));
-    }, timeoutMilliseconds);
-    const onVoiceStateUpdate = (): void => {
-      if (guild.voiceStates.cache.get(craigBotId)?.channelId === voiceChannelId) {
-        cleanup();
-        resolve();
-      }
-    };
-    const cleanup = (): void => {
-      clearTimeout(timeout);
-      client.off("voiceStateUpdate", onVoiceStateUpdate);
-    };
-    client.on("voiceStateUpdate", onVoiceStateUpdate);
-  });
-}
-
-function assertConnectableVoiceChannel(
-  channel: GuildBasedChannel | null,
-): asserts channel is VoiceChannel {
-  if (channel === null || channel.type !== ChannelType.GuildVoice) {
-    throw new Error("Configured Discord channel is not a guild voice channel");
-  }
-}
-
-function safeErrorMessage(error: unknown): string {
-  if (error instanceof ConversationVoiceCaptureError || error instanceof ConversationVoiceObserverError) {
-    return error.message;
-  }
-  return "Conversation voice observer failed";
-}
-
 void main().catch((error: unknown) => {
-  process.stderr.write(`${safeErrorMessage(error)}\n`);
+  process.stderr.write(`${error instanceof ConversationVoiceCaptureError
+    ? error.message
+    : "Conversation voice observer failed"}\n`);
   process.exitCode = 1;
 });

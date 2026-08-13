@@ -46,11 +46,15 @@ describe("platform configuration", () => {
     const configured = await loadPlatformConfig({
       ...conversationEnvironment,
       CONVERSATION_E2E_PLAYBACK_READINESS_ROOT: "/var/lib/e2e/answer-run",
+      CONVERSATION_E2E_GREETING_OBSERVER_PARTICIPANT_ID: "1533867700575670282",
+      CONVERSATION_E2E_GREETING_PLAYBACK_READINESS_ROOT: "/var/lib/e2e/greeting-run",
       CONVERSATION_E2E_PLAYBACK_READINESS_RUN_ID: "run-1",
       CONVERSATION_E2E_PLAYBACK_READINESS_TIMEOUT_MS: "30000",
       E2E_TEST_ONLY_LABEL: "true",
     }, async () => "value");
     expect(configured.conversation?.playbackReadiness).toEqual({
+      greetingObserverParticipantId: "1533867700575670282",
+      greetingRoot: "/var/lib/e2e/greeting-run",
       root: "/var/lib/e2e/answer-run", runId: "run-1", timeoutMilliseconds: 30_000,
     });
     await expect(loadPlatformConfig({

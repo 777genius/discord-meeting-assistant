@@ -22,7 +22,7 @@ export interface CampaignVerificationOptions {
 
 const campaignSchemaPolicy = {
   overlap: { minimumSchemaVersion: 6 },
-  reconnect: { exactSchemaVersion: 8 },
+  reconnect: { minimumSchemaVersion: 8 },
   sequential: { minimumSchemaVersion: 6 },
 } as const;
 
@@ -62,7 +62,7 @@ function verifyLifecycleV8(
   fail: VerificationFailureReporter,
 ): void {
   if (!runs.some((run) =>
-    run.schemaVersion === campaignSchemaPolicy.reconnect.exactSchemaVersion &&
+    run.schemaVersion >= campaignSchemaPolicy.reconnect.minimumSchemaVersion &&
     run.actorRun.scenario === "reconnect"
   )) {
     fail(

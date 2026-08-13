@@ -7,10 +7,20 @@
     "build": "tsc --project tsconfig.build.json --pretty false",
     "capacity:e2e": "pnpm run build && node dist/capacity-main.js",
     "collect:e2e": "pnpm run build && node dist/collect-retained-evidence.js",
+    "collect:hosted-clock-preflight": "pnpm run build && node dist/collect-hosted-clock-preflight.js",
+    "collect:hosted-service-levels": "pnpm run build && node dist/collect-hosted-service-levels.js",
+    "collect:hosted-service-level-sources": "pnpm run build && node dist/collect-hosted-service-level-sources.js",
+    "collect:recording-ready": "pnpm run build && node dist/collect-recording-ready-receipt.js",
+    "compile:hosted-campaign-plan": "pnpm run build && node dist/compile-hosted-campaign-plan.js",
+    "publish:replay-attestation": "pnpm run build && node dist/publish-replay-attestation.js",
+    "collect:hosted-provenance": "pnpm run build && node dist/collect-hosted-campaign-provenance.js",
     "fixtures:generate": "./scripts/generate-ru-en-fixtures.sh",
     "observe:conversation": "pnpm run build && node dist/observe-conversation-voice.js",
     "observe:live": "pnpm run build && node dist/observe-live-discord.js",
+    "observe:playback-link": "pnpm run build && node dist/observe-live-discord-playback-link.js",
     "play:supplemental": "pnpm run build && node dist/play-supplemental-voice.js",
+    "preflight:hosted-campaign": "pnpm run build && node dist/run-hosted-campaign-admission.js",
+    "run:hosted-campaign": "pnpm run build && node dist/run-hosted-campaign.js",
     "start": "pnpm run build && node dist/main.js",
     "test": "vitest run",
     "typecheck": "tsc --project tsconfig.json --noEmit --pretty false",
@@ -26,6 +36,7 @@
     "zod": "catalog:"
   },
   "devDependencies": {
+    "@discord-meeting/discord-adapter": "workspace:*",
     "@types/node": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

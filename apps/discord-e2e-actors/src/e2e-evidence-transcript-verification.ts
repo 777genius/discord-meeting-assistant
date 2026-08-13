@@ -3,6 +3,13 @@ import { verifyGreetingAudioSemantics } from "./e2e-evidence-greeting-semantics-
 import { verifyReconnectNoRepeat } from "./e2e-evidence-reconnect-verification.js";
 import { verifySupplementalPlayback } from "./e2e-evidence-supplemental-verification.js";
 import { authoritativeTrackCoverage } from "./e2e-evidence-track-verification.js";
+import {
+  conversationVoiceCampaignEvidenceIssue,
+  conversationVoiceCampaignLifecycleIssue,
+  selectConversationVoiceCampaignLifecycle,
+} from
+  "./conversation-voice-campaign-contract.js";
+import { conversationVoiceCampaignProofIssue } from "./conversation-voice-campaign-proof.js";
 import type {
   DeploymentRevisionExpectation,
   FixtureManifestV1,
@@ -16,14 +23,14 @@ export function verifyConversationEvidence(
   expectedRevisions: DeploymentRevisionExpectation,
   fail: VerificationFailureReporter,
 ): void {
-  if (evidence.schemaVersion !== 7 && evidence.schemaVersion !== 8) {
+  if (evidence.schemaVersion !== 7 && evidence.schemaVersion !== 8 && evidence.schemaVersion !== 9) {
     return;
   }
   const recordingStartMs = Date.parse(evidence.recording.startedAt);
   const recordingEndMs = Date.parse(evidence.recording.endedAt);
   const voiceExpectation = manifest.conversationVoiceExpectation;
   if (
-    evidence.schemaVersion === 8
+    evidence.schemaVersion >= 8
       ? voiceExpectation === undefined ||
         evidence.conversation.botSpeakerId !== voiceExpectation.botSpeakerId
       : !manifest.allowedBotSpeakerIds.includes(evidence.conversation.botSpeakerId)
@@ -31,7 +38,7 @@ export function verifyConversationEvidence(
     fail("BOT_SPEAKER_NOT_PINNED", "Botik speaker does not match the exact manifest identity");
   }
   if (
-    evidence.schemaVersion === 8 &&
+    evidence.schemaVersion >= 8 &&
     (expectedRevisions.pipecat === undefined || evidence.deployment.pipecat === undefined)
   ) {
     fail(
@@ -54,10 +61,19 @@ export function verifyConversationEvidence(
   );
   verifyVoiceCaptureIdentity(manifest, evidence, recordingStartMs, recordingEndMs, fail);
   verifyLifecycleAudioBindings(manifest, evidence, fail);
-  if (evidence.schemaVersion === 8) {
-    verifyBotTrackCoverage(manifest, evidence, recordingStartMs, fail);
-    verifyGreetingAudioSemantics(manifest, evidence, recordingStartMs, fail);
-    verifySupplementalPlayback(manifest, evidence, recordingStartMs, recordingEndMs, fail);
+  if (evidence.schemaVersion >= 8) {
+    const currentEvidence = evidence as Extract<
+      RetainedE2eEvidence,
+      { schemaVersion: 8 | 9 }
+    >;
+    verifyCampaignProof(currentEvidence, fail);
+    verifyCurrentConversationEvidence(
+      manifest,
+      currentEvidence,
+      recordingStartMs,
+      recordingEndMs,
+      fail,
+    );
   }
   verifyAddressedAnswer(
     evidence,
@@ -67,9 +83,36 @@ export function verifyConversationEvidence(
   );
 }
 
+function verifyCampaignProof(evidence: Extract<RetainedE2eEvidence, { schemaVersion: 8 | 9 }>,
+  fail: VerificationFailureReporter): void {
+  if (evidence.schemaVersion !== 9) {
+    return;
+  }
+  const issue = conversationVoiceCampaignProofIssue(
+    evidence.conversation.campaignProof,
+    evidence.actorRun.runId,
+    evidence.conversation.voice,
+  );
+  if (issue !== undefined) {
+    fail("VOICE_CAMPAIGN_PROOF_INVALID", issue);
+  }
+}
+
+function verifyCurrentConversationEvidence(
+  manifest: FixtureManifestV1,
+  evidence: Extract<RetainedE2eEvidence, { schemaVersion: 8 | 9 }>,
+  recordingStartMs: number,
+  recordingEndMs: number,
+  fail: VerificationFailureReporter,
+): void {
+  verifyBotTrackCoverage(manifest, evidence, recordingStartMs, fail);
+  verifyGreetingAudioSemantics(manifest, evidence, recordingStartMs, fail);
+  verifySupplementalPlayback(manifest, evidence, recordingStartMs, recordingEndMs, fail);
+}
+
 type RetainedConversationEvidence = Extract<
   RetainedE2eEvidence,
-  { schemaVersion: 7 | 8 }
+  { schemaVersion: 7 | 8 | 9 }
 >;
 const maximumVerifiedGreetingRetry = 3;
 
@@ -90,7 +133,7 @@ function verifyGreetingAndFarewellLifecycle(
     !greetings.some(({ greetingLocale }) => greetingLocale === "en")) {
     fail("GREETING_LOCALE_MISSING", "completed greeting proof must include Russian and English");
   }
-  if (evidence.schemaVersion === 8 &&
+  if (evidence.schemaVersion >= 8 &&
     (!greetings.some(({ greetingLocale, participantNameStatus }) =>
       greetingLocale === "ru" && participantNameStatus === "known") ||
       !greetings.some(({ greetingLocale, participantNameStatus }) =>
@@ -107,14 +150,20 @@ function verifyGreetingAndFarewellLifecycle(
     if (!isVerifiedGreetingTurnId(
       greeting.turnId,
       greeting.participantId,
-      evidence.schemaVersion === 8,
+      evidence.schemaVersion >= 8,
     )) {
       fail("GREETING_TURN_MISMATCH", `greeting turn is not bound to ${greeting.participantId}`);
     }
   }
   verifyReconnectGreeting(manifest, evidence, greetings, recordingStartMs, fail);
-  if (evidence.schemaVersion === 8) {
-    verifyReconnectNoRepeat(manifest, evidence, recordingStartMs, recordingEndMs, fail);
+  if (evidence.schemaVersion >= 8) {
+    verifyReconnectNoRepeat(
+      manifest,
+      evidence as Extract<RetainedE2eEvidence, { schemaVersion: 8 | 9 }>,
+      recordingStartMs,
+      recordingEndMs,
+      fail,
+    );
   }
   if (farewells.length !== 1) {
     fail("FAREWELL_COUNT_MISMATCH", "expected exactly one completed prepared farewell");
@@ -189,6 +238,20 @@ function verifyVoiceCaptureIdentity(
   fail: VerificationFailureReporter,
 ): void {
   const { voice, botSpeakerId } = evidence.conversation;
+  if (evidence.schemaVersion >= 8) {
+    const campaignIssue = conversationVoiceCampaignEvidenceIssue(voice);
+    if (campaignIssue !== undefined) {
+      fail("VOICE_CAMPAIGN_ORDER_INVALID", campaignIssue);
+    }
+    const lifecycleIssue = conversationVoiceCampaignLifecycleIssue(
+      voice,
+      evidence.conversation.lifecycle.events,
+      manifest.thresholds.timestampToleranceMs,
+    );
+    if (lifecycleIssue !== undefined) {
+      fail("VOICE_CAMPAIGN_LIFECYCLE_INVALID", lifecycleIssue);
+    }
+  }
   const attemptIds = voice.map(({ correlation }) => correlation.attemptId);
   if (new Set(attemptIds).size !== attemptIds.length) {
     fail("DUPLICATE_VOICE_ATTEMPT", "conversation voice attempt IDs must be unique");
@@ -293,7 +356,10 @@ function verifyLifecycleAudioBindings(
   fail: VerificationFailureReporter,
 ): void {
   const { lifecycle, voice } = evidence.conversation;
-  for (const event of lifecycle.events) {
+  const lifecycleEvents = evidence.schemaVersion >= 8
+    ? selectConversationVoiceCampaignLifecycle(voice, lifecycle.events).events
+    : lifecycle.events;
+  for (const event of lifecycleEvents) {
     const matches = voice.filter(({ correlation }) =>
       correlation.purpose === event.type && isLifecycleTurnBinding(
         event,
@@ -316,9 +382,9 @@ function verifyLifecycleAudioBindings(
       fail("LIFECYCLE_AUDIO_MISMATCH", `audible capture is not time-bound to ${event.turnId}`);
     }
   }
-  if (evidence.schemaVersion === 8) {
+  if (evidence.schemaVersion >= 8) {
     for (const observation of voice) {
-      const matches = lifecycle.events.filter((event) =>
+      const matches = lifecycleEvents.filter((event) =>
         event.type === observation.correlation.purpose &&
         isLifecycleTurnBinding(event, observation.correlation.turnId, evidence.schemaVersion)
       );
@@ -335,12 +401,12 @@ function verifyLifecycleAudioBindings(
 function isLifecycleTurnBinding(
   event: RetainedConversationEvidence["conversation"]["lifecycle"]["events"][number],
   capturedTurnId: string,
-  schemaVersion: 7 | 8,
+  schemaVersion: 7 | 8 | 9,
 ): boolean {
   if (capturedTurnId === event.turnId) {
     return true;
   }
-  return schemaVersion === 8 && event.type === "greeting" &&
+  return schemaVersion >= 8 && event.type === "greeting" &&
     isVerifiedGreetingTurnId(event.turnId, event.participantId, true) &&
     capturedTurnId === `participant-greeting:${event.participantId}`;
 }

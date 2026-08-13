@@ -6,7 +6,13 @@ import {
   conversationAnswerObserverReadySchema,
   conversationAnswerPlaybackIntentSchema,
   serializeConversationAnswerPlaybackReadinessEnvelope,
+  type ConversationAnswerObserverReady,
   type ConversationAnswerPlaybackIntent,
+  conversationGreetingObserverReadySchema,
+  conversationGreetingPlaybackIntentSchema,
+  serializeConversationGreetingPlaybackReadinessEnvelope,
+  type ConversationGreetingObserverReady,
+  type ConversationGreetingPlaybackIntent,
 } from "@discord-meeting/conversation-runtime-contracts";
 
 const maximumReceiptBytes = 1_536;
@@ -16,7 +22,7 @@ export {
 } from "@discord-meeting/conversation-runtime-contracts";
 
 export async function waitForConversationAnswerPlaybackIntent(input: {
-  readonly meetingId: string;
+  readonly meetingId?: string;
   readonly notBeforeEpochMilliseconds: number;
   readonly root: string;
   readonly runId: string;
@@ -27,6 +33,7 @@ export async function waitForConversationAnswerPlaybackIntent(input: {
   for (;;) {
     assertNotAborted(input.signal);
     const entries = await safeDirectoryEntries(input.root);
+    const matchingIntents: ConversationAnswerPlaybackIntent[] = [];
     for (const name of entries) {
       if (!/^[a-f\d]{64}\.intent\.json$/u.test(name)) {
         continue;
@@ -34,18 +41,26 @@ export async function waitForConversationAnswerPlaybackIntent(input: {
       const path = join(input.root, name);
       try {
         const intent = await readIntent(path, input.notBeforeEpochMilliseconds);
-        if (intent.runId !== input.runId || intent.meetingId !== input.meetingId) {
+        if (intent.runId !== input.runId ||
+          input.meetingId !== undefined && intent.meetingId !== input.meetingId) {
           throw new Error("Conversation answer playback intent has the wrong run or meeting");
         }
         if (name !== `${receiptStem(intent)}.intent.json`) {
           throw new Error("Conversation answer playback intent filename digest is invalid");
         }
-        return intent;
+        matchingIntents.push(intent);
       } catch (error: unknown) {
         if (!isMissingFileError(error)) {
           throw error;
         }
       }
+    }
+    if (matchingIntents.length > 1) {
+      throw new Error("Conversation answer playback intent is ambiguous for this run");
+    }
+    const [intent] = matchingIntents;
+    if (intent !== undefined) {
+      return intent;
     }
     const remaining = deadline - Date.now();
     if (remaining <= 0) {
@@ -56,19 +71,111 @@ export async function waitForConversationAnswerPlaybackIntent(input: {
 }
 
 export async function publishConversationAnswerObserverReady(input: {
+  readonly authenticatedObserverBotId: string;
   readonly intent: ConversationAnswerPlaybackIntent;
+  readonly intentObservedAt: string;
+  readonly planDigestSha256: string;
   readonly root: string;
-}): Promise<void> {
+  readonly target: ConversationAnswerObserverReady["target"];
+}): Promise<ConversationAnswerObserverReady> {
   await assertSafeHandshakeRoot(input.root);
   const intent = conversationAnswerPlaybackIntentSchema.parse(input.intent);
   const ready = conversationAnswerObserverReadySchema.parse({
     ...intent,
+    authenticatedObserverBotId: input.authenticatedObserverBotId,
+    intentDigestSha256: receiptStem(intent),
+    intentObservedAt: input.intentObservedAt,
+    planDigestSha256: input.planDigestSha256,
+    readyPublishedAt: new Date().toISOString(),
+    target: input.target,
     type: "observer-ready",
   });
   await publishCreateOnlyJson(
     join(input.root, `${receiptStem(intent)}.ready.json`),
     ready,
   );
+  return ready;
+}
+
+export async function waitForConversationGreetingPlaybackIntent(input: {
+  readonly meetingId?: string;
+  readonly notBeforeEpochMilliseconds: number;
+  readonly participantId: string;
+  readonly root: string;
+  readonly runId: string;
+  readonly signal?: AbortSignal;
+  readonly timeoutMilliseconds: number;
+}): Promise<ConversationGreetingPlaybackIntent> {
+  const deadline = Date.now() + input.timeoutMilliseconds;
+  for (;;) {
+    assertNotAborted(input.signal);
+    for (const name of await safeDirectoryEntries(input.root)) {
+      if (!/^[a-f\d]{64}\.intent\.json$/u.test(name)) { continue; }
+      try {
+        const intent = await readGreetingIntent(join(input.root, name), input.notBeforeEpochMilliseconds);
+        if (intent.runId !== input.runId || intent.participantId !== input.participantId ||
+          input.meetingId !== undefined && intent.meetingId !== input.meetingId ||
+          name !== `${greetingReceiptStem(intent)}.intent.json`) {
+          continue;
+        }
+        return intent;
+      } catch (error: unknown) {
+        if (!isMissingFileError(error)) { throw error; }
+      }
+    }
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) { throw new Error("Conversation greeting playback intent was not created before timeout"); }
+    await abortableDelay(Math.min(pollIntervalMilliseconds, remaining), input.signal);
+  }
+}
+
+export async function publishConversationGreetingObserverReady(input: {
+  readonly authenticatedObserverBotId: string;
+  readonly intent: ConversationGreetingPlaybackIntent;
+  readonly intentObservedAt: string;
+  readonly root: string;
+  readonly target: ConversationGreetingObserverReady["target"];
+}): Promise<ConversationGreetingObserverReady> {
+  await assertSafeHandshakeRoot(input.root);
+  const intent = conversationGreetingPlaybackIntentSchema.parse(input.intent);
+  const ready = conversationGreetingObserverReadySchema.parse({
+    ...intent,
+    authenticatedObserverBotId: input.authenticatedObserverBotId,
+    intentDigestSha256: greetingReceiptStem(intent),
+    intentObservedAt: input.intentObservedAt,
+    readyPublishedAt: new Date().toISOString(),
+    target: input.target,
+    type: "observer-ready",
+  });
+  await publishCreateOnlyJson(join(input.root, `${greetingReceiptStem(intent)}.ready.json`), ready);
+  return ready;
+}
+
+async function readGreetingIntent(
+  path: string,
+  notBeforeEpochMilliseconds: number,
+): Promise<ConversationGreetingPlaybackIntent> {
+  const pathStats = await lstat(path);
+  assertSafeReceiptFile(pathStats, notBeforeEpochMilliseconds);
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const bytes = new Uint8Array(maximumReceiptBytes + 1);
+    const beforeRead = await handle.stat();
+    const { bytesRead } = await handle.read(bytes, 0, bytes.byteLength, 0);
+    const afterRead = await handle.stat();
+    if (afterRead.dev !== beforeRead.dev || afterRead.ino !== beforeRead.ino ||
+      afterRead.size !== beforeRead.size || bytesRead !== beforeRead.size) {
+      throw new Error("Conversation greeting playback intent changed while reading");
+    }
+    return conversationGreetingPlaybackIntentSchema.parse(
+      JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, bytesRead))) as unknown,
+    );
+  } finally { await handle.close(); }
+}
+
+function greetingReceiptStem(intent: ConversationGreetingPlaybackIntent): string {
+  return createHash("sha256")
+    .update(serializeConversationGreetingPlaybackReadinessEnvelope(intent)).digest("hex");
 }
 
 export async function assertConversationAnswerHandshakeRootIsNew(root: string): Promise<void> {
@@ -161,6 +268,12 @@ function assertSafeReceiptFile(
   if (stats.size <= 0 || stats.size > maximumReceiptBytes) {
     throw new Error("Conversation answer playback intent has an invalid size");
   }
+  if ((Number(stats.mode) & 0o777) !== 0o600) {
+    throw new Error("Conversation answer playback intent must be a private mode-0600 file");
+  }
+  if (typeof process.getuid === "function" && stats.uid !== process.getuid()) {
+    throw new Error("Conversation answer playback intent must be owned by the current user");
+  }
   if (stats.mtimeMs < notBeforeEpochMilliseconds) {
     throw new Error("Conversation answer playback intent is stale");
   }
@@ -185,6 +298,9 @@ async function assertSafeHandshakeRoot(root: string): Promise<void> {
   }
   if ((stats.mode & 0o077) !== 0) {
     throw new Error("Conversation answer handshake root permissions are too broad");
+  }
+  if (typeof process.getuid === "function" && stats.uid !== process.getuid()) {
+    throw new Error("Conversation answer handshake root must be owned by the current user");
   }
 }
 

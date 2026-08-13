@@ -152,6 +152,47 @@ describe("ConversationVoiceCaptureController", () => {
 });
 
 describe("conversation voice stream capture", () => {
+  it("fails closed on audible audio while observer-ready publication is pending", async () => {
+    const stream = new PassThrough();
+    let decodedPackets = 0;
+    let releasePublication: (() => void) | undefined;
+    const publicationPending = new Promise<void>((resolve) => {
+      releasePublication = resolve;
+    });
+    const capture = captureConversationVoiceFromOpenStream({
+      captureTimeoutMilliseconds: 1_000,
+      clock: { now: () => startedAt },
+      controller: new ConversationVoiceCaptureController({
+        captureTimeoutMilliseconds: 1_000,
+        expectedDuration: { minimumMilliseconds: 20, maximumMilliseconds: 20 },
+        maxPcmBytes: 3_840,
+      }, {
+        decode: () => {
+          decodedPackets += 1;
+          return pcmPacket(1_024);
+        },
+      }),
+      firstPacketTimeoutMilliseconds: 1_000,
+      isPacketAudible: () => true,
+      publishReady: () => publicationPending,
+      stream,
+    });
+
+    stream.write(Uint8Array.of(1));
+
+    await expect(capture).rejects.toThrow(
+      "audible audio before observer readiness was published",
+    );
+    expect(decodedPackets).toBe(0);
+    expectStreamCaptureListenersRemoved(stream);
+    releasePublication?.();
+    await Promise.resolve();
+    stream.write(Uint8Array.of(2));
+    expect(decodedPackets).toBe(0);
+    expectStreamCaptureListenersRemoved(stream);
+    stream.destroy();
+  });
+
   it("fails readiness timeout and removes every stream listener", async () => {
     vi.useFakeTimers();
     const stream = new PassThrough();

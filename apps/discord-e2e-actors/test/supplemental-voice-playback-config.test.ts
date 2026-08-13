@@ -10,8 +10,14 @@ import {
 } from "../src/supplemental-voice-playback-config.js";
 
 const baseEnvironment = {
+  DISCORD_E2E_SUPPLEMENTAL_CAMPAIGN_ID: "campaign-1",
+  DISCORD_E2E_SUPPLEMENTAL_CONNECTION_GATE_ARMED_PATH: "/tmp/speaker-d.connection.armed.json",
+  DISCORD_E2E_SUPPLEMENTAL_CONNECTION_GATE_PATH: "/tmp/speaker-d.connection.json",
   DISCORD_E2E_SUPPLEMENTAL_EVIDENCE_OUTPUT: "/tmp/speaker-d.evidence.json",
   DISCORD_E2E_SUPPLEMENTAL_MANIFEST: "/tmp/speaker-d.manifest.json",
+  DISCORD_E2E_SUPPLEMENTAL_GATE_TIMEOUT_MS: "30000",
+  DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_GATE_PATH: "/tmp/speaker-d.playback.json",
+  DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_GATE_ARMED_PATH: "/tmp/speaker-d.playback.armed.json",
   DISCORD_E2E_SUPPLEMENTAL_PRIVATE_TEST_GUILD: "private-test-guild",
   DISCORD_E2E_SUPPLEMENTAL_RUN_ID: "retained-campaign-speaker-d-1",
 } as const;
@@ -25,17 +31,16 @@ afterEach(async () => {
 });
 
 describe("loadSupplementalVoicePlaybackConfig", () => {
-  it("requires an acknowledged private target and bounded pre/post holds", () => {
+  it("requires an acknowledged private target and bounded gate/post timeouts", () => {
     const config = loadSupplementalVoicePlaybackConfig({
       ...baseEnvironment,
       DISCORD_E2E_SUPPLEMENTAL_POST_HOLD_MS: "60000",
-      DISCORD_E2E_SUPPLEMENTAL_PRE_HOLD_MS: "120000",
     });
 
     expect(config).toMatchObject({
       keychainAccount: "speaker-d",
       postHoldMilliseconds: 60_000,
-      preHoldMilliseconds: 120_000,
+      gateTimeoutMilliseconds: 30_000,
       privateTestGuildConfirmed: true,
       runId: "retained-campaign-speaker-d-1",
     });
@@ -45,12 +50,29 @@ describe("loadSupplementalVoicePlaybackConfig", () => {
     })).toThrow();
     expect(() => loadSupplementalVoicePlaybackConfig({
       ...baseEnvironment,
-      DISCORD_E2E_SUPPLEMENTAL_PRE_HOLD_MS: "120001",
+      DISCORD_E2E_SUPPLEMENTAL_PRIVATE_TEST_GUILD: "public-guild",
+    })).toThrow();
+  });
+
+  it("requires four distinct absolute gate/armed paths and explicit campaign correlation", () => {
+    expect(() => loadSupplementalVoicePlaybackConfig({
+      ...baseEnvironment, DISCORD_E2E_SUPPLEMENTAL_CONNECTION_GATE_PATH: "relative.json",
     })).toThrow();
     expect(() => loadSupplementalVoicePlaybackConfig({
       ...baseEnvironment,
-      DISCORD_E2E_SUPPLEMENTAL_PRIVATE_TEST_GUILD: "public-guild",
-    })).toThrow();
+      DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_GATE_PATH: baseEnvironment.DISCORD_E2E_SUPPLEMENTAL_CONNECTION_GATE_PATH,
+    })).toThrow("must be distinct");
+    expect(() => loadSupplementalVoicePlaybackConfig({
+      ...baseEnvironment,
+      DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_GATE_ARMED_PATH:
+        baseEnvironment.DISCORD_E2E_SUPPLEMENTAL_CONNECTION_GATE_ARMED_PATH,
+    })).toThrow("must be distinct");
+    const withoutCampaign = { ...baseEnvironment } as Record<string, string>;
+    delete withoutCampaign.DISCORD_E2E_SUPPLEMENTAL_CAMPAIGN_ID;
+    expect(() => loadSupplementalVoicePlaybackConfig(withoutCampaign)).toThrow();
+    expect(() => loadSupplementalVoicePlaybackConfig({
+      ...baseEnvironment, DISCORD_E2E_SUPPLEMENTAL_PRE_HOLD_MS: "1",
+    })).toThrow("pre-hold synchronization is forbidden");
   });
 
   it("rejects every supplemental token environment variable before parsing", () => {

@@ -45,6 +45,7 @@ export {
 } from "./discord-transcript-timeline.js";
 export { toDiscordPublicationFailure } from "./discord-publication-errors.js";
 export { InProcessProjectionLock } from "./in-process-projection-lock.js";
+export { createProjectionMarker } from "./projection-marker.js";
 export {
   DiscordJsProjectionClient,
   DiscordProjectionConfigurationError,

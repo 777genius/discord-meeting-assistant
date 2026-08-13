@@ -228,6 +228,8 @@ services:
       CONVERSATION_E2E_PLAYBACK_READINESS_ROOT: ${CONVERSATION_E2E_PLAYBACK_READINESS_ROOT:-}
       CONVERSATION_E2E_PLAYBACK_READINESS_RUN_ID: ${CONVERSATION_E2E_PLAYBACK_READINESS_RUN_ID:-}
       CONVERSATION_E2E_PLAYBACK_READINESS_TIMEOUT_MS: ${CONVERSATION_E2E_PLAYBACK_READINESS_TIMEOUT_MS:-}
+      CONVERSATION_E2E_GREETING_OBSERVER_PARTICIPANT_ID: ${CONVERSATION_E2E_GREETING_OBSERVER_PARTICIPANT_ID:-}
+      CONVERSATION_E2E_GREETING_PLAYBACK_READINESS_ROOT: ${CONVERSATION_E2E_GREETING_PLAYBACK_READINESS_ROOT:-}
       CONVERSATION_FAREWELL_CUE_ROOT: /app/apps/meeting-platform/assets/farewell-cues
       CONVERSATION_GREETING_CUE_ROOT: /app/apps/meeting-platform/assets/greeting-cues
       CONVERSATION_RUNTIME_ADDRESS: pipecat-runtime:50053
@@ -278,7 +280,6 @@ services:
       VOICETEXT_WS_URL: ${VOICETEXT_WS_URL:-wss://api.voicetext.site/api/v1/transcribe/stream}
     volumes:
       - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/data/spool:/var/lib/discord-meeting/spool
-      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/data/e2e-playback-readiness:/var/lib/discord-meeting/e2e-playback-readiness
       - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/secrets/platform:/run/secrets:ro
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=0700,uid=10001,gid=10001

@@ -6,9 +6,14 @@ import {
   conversationAnswerObserverReadySchema,
   conversationAnswerPlaybackIntentSchema,
   conversationAnswerPlaybackReadinessEnvelopeSchema,
+  conversationGreetingObserverReadySchema,
+  conversationGreetingPlaybackIntentSchema,
+  conversationGreetingPlaybackReadinessEnvelopeSchema,
   conversationPlaybackReadinessProtocolVersion,
   serializeConversationAnswerPlaybackReadinessEnvelope,
+  serializeConversationGreetingPlaybackReadinessEnvelope,
   type ConversationAnswerPlaybackReadinessEnvelope,
+  type ConversationGreetingPlaybackReadinessEnvelope,
 } from "@discord-meeting/conversation-runtime-contracts";
 
 import type {
@@ -23,6 +28,8 @@ export interface FileConversationPlaybackReadinessOptions {
   readonly root: string;
   readonly runId: string;
   readonly timeoutMilliseconds: number;
+  readonly greetingObserverParticipantId?: string;
+  readonly greetingRoot?: string;
 }
 
 /** Filesystem adapter for the E2E-only two-phase answer capture protocol. */
@@ -30,25 +37,41 @@ export class FileConversationPlaybackReadiness implements ConversationPlaybackRe
   readonly #initialized: Promise<void>;
 
   public constructor(private readonly options: FileConversationPlaybackReadinessOptions) {
-    this.#initialized = initializeCleanRunRoot(options.root);
+    this.#initialized = initializeRoots([
+      initializeCleanRunRoot(options.root),
+      ...(options.greetingRoot === undefined ? [] : [initializeCleanRunRoot(options.greetingRoot)]),
+    ]);
   }
 
   public async awaitConversationPlaybackReady(
     request: ConversationPlaybackReadinessRequest,
     options: { readonly signal?: AbortSignal } = {},
   ): Promise<ConversationPortResult<"ready">> {
-    if (request.playbackKind !== "answer") {
-      return failure("PLAYBACK_READINESS_KIND_INVALID", "Only answer playback can use E2E readiness");
+    const isGreeting = request.turnId ===
+      `participant-greeting:${this.options.greetingObserverParticipantId ?? ""}` &&
+      request.participantId === this.options.greetingObserverParticipantId;
+    if (request.playbackKind !== "answer" && !isGreeting) {
+      return { ok: true, value: "ready" };
     }
-    const envelope = conversationAnswerPlaybackReadinessEnvelopeSchema.parse({
-      capturePlan: "addressed-answer",
-      kind: request.playbackKind,
-      meetingId: request.meetingId,
-      playbackAttemptId: request.playbackAttemptId,
-      protocolVersion: conversationPlaybackReadinessProtocolVersion,
-      runId: this.options.runId,
-      turnId: request.turnId,
-    });
+    const envelope = isGreeting
+      ? conversationGreetingPlaybackReadinessEnvelopeSchema.parse({
+          capturePlan: "observer-greeting",
+          kind: "greeting",
+          meetingId: request.meetingId,
+          participantId: request.participantId,
+          protocolVersion: conversationPlaybackReadinessProtocolVersion,
+          runId: this.options.runId,
+          turnId: request.turnId,
+        })
+      : conversationAnswerPlaybackReadinessEnvelopeSchema.parse({
+          capturePlan: "addressed-answer",
+          kind: request.playbackKind,
+          meetingId: request.meetingId,
+          playbackAttemptId: request.playbackAttemptId,
+          protocolVersion: conversationPlaybackReadinessProtocolVersion,
+          runId: this.options.runId,
+          turnId: request.turnId,
+        });
     try {
       await this.#initialized;
       const intentPublishedNotBeforeEpochMilliseconds = Date.now();
@@ -71,7 +94,7 @@ export class FileConversationPlaybackReadiness implements ConversationPlaybackRe
   }
 
   private async waitForExactReady(
-    expected: ConversationAnswerPlaybackReadinessEnvelope,
+    expected: ReadinessEnvelope,
     notBeforeEpochMilliseconds: number,
     signal: AbortSignal | undefined,
   ): Promise<void> {
@@ -81,9 +104,10 @@ export class FileConversationPlaybackReadiness implements ConversationPlaybackRe
       assertNotAborted(signal);
       try {
         const bytes = await readStableReceipt(readyPath, notBeforeEpochMilliseconds);
-        const ready = conversationAnswerObserverReadySchema.parse(
-          JSON.parse(new TextDecoder().decode(bytes)) as unknown,
-        );
+        const decoded = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
+        const ready = expected.kind === "greeting"
+          ? conversationGreetingObserverReadySchema.parse(decoded)
+          : conversationAnswerObserverReadySchema.parse(decoded);
         if (!sameEnvelope(ready, expected)) {
           throw new Error("Observer-ready receipt does not match the playback intent");
         }
@@ -101,13 +125,21 @@ export class FileConversationPlaybackReadiness implements ConversationPlaybackRe
     }
   }
 
-  private intentPath(envelope: ConversationAnswerPlaybackReadinessEnvelope): string {
-    return join(this.options.root, `${safeFileStem(envelope)}.intent.json`);
+  private intentPath(envelope: ReadinessEnvelope): string {
+    return join(this.rootFor(envelope), `${safeFileStem(envelope)}.intent.json`);
   }
 
-  private readyPath(envelope: ConversationAnswerPlaybackReadinessEnvelope): string {
-    return join(this.options.root, `${safeFileStem(envelope)}.ready.json`);
+  private readyPath(envelope: ReadinessEnvelope): string {
+    return join(this.rootFor(envelope), `${safeFileStem(envelope)}.ready.json`);
   }
+
+  private rootFor(envelope: ReadinessEnvelope): string {
+    return envelope.kind === "greeting" ? this.options.greetingRoot ?? this.options.root : this.options.root;
+  }
+}
+
+async function initializeRoots(initializers: readonly Promise<void>[]): Promise<void> {
+  await Promise.all(initializers);
 }
 
 async function initializeCleanRunRoot(root: string): Promise<void> {
@@ -178,14 +210,22 @@ function assertSafeReadyStats(
   }
 }
 
-function safeFileStem(envelope: ConversationAnswerPlaybackReadinessEnvelope): string {
+type ReadinessEnvelope = ConversationAnswerPlaybackReadinessEnvelope |
+  ConversationGreetingPlaybackReadinessEnvelope;
+
+function safeFileStem(envelope: ReadinessEnvelope): string {
   return createHash("sha256")
-    .update(serializeConversationAnswerPlaybackReadinessEnvelope(envelope))
+    .update(envelope.kind === "greeting"
+      ? serializeConversationGreetingPlaybackReadinessEnvelope(envelope)
+      : serializeConversationAnswerPlaybackReadinessEnvelope(envelope))
     .digest("hex");
 }
 
 async function publishCreateOnlyJson(path: string, value: unknown): Promise<void> {
-  const encoded = JSON.stringify(conversationAnswerPlaybackIntentSchema.parse(value));
+  const encoded = JSON.stringify(value !== null && typeof value === "object" &&
+      "kind" in value && value.kind === "greeting"
+    ? conversationGreetingPlaybackIntentSchema.parse(value)
+    : conversationAnswerPlaybackIntentSchema.parse(value));
   if (Buffer.byteLength(encoded, "utf8") > maximumReceiptBytes) {
     throw new Error("Playback intent is too large");
   }
@@ -218,13 +258,20 @@ async function publishCreateOnlyJson(path: string, value: unknown): Promise<void
 }
 
 function sameEnvelope(
-  actual: ReturnType<typeof conversationAnswerObserverReadySchema.parse>,
-  expected: ConversationAnswerPlaybackReadinessEnvelope,
+  actual: ReturnType<typeof conversationAnswerObserverReadySchema.parse> |
+    ReturnType<typeof conversationGreetingObserverReadySchema.parse>,
+  expected: ReadinessEnvelope,
 ): boolean {
-  return actual.meetingId === expected.meetingId &&
-    actual.playbackAttemptId === expected.playbackAttemptId &&
+  return actual.kind === expected.kind && actual.meetingId === expected.meetingId &&
+    (actual.kind === "greeting" && expected.kind === "greeting"
+      ? actual.participantId === expected.participantId
+      : actual.kind === "answer" && expected.kind === "answer" &&
+        actual.playbackAttemptId === expected.playbackAttemptId) &&
     actual.runId === expected.runId &&
-    actual.turnId === expected.turnId;
+    actual.turnId === expected.turnId &&
+    actual.intentDigestSha256 === safeFileStem(expected) &&
+    actual.authenticatedObserverBotId === actual.target.observerApplicationId &&
+    Date.parse(actual.intentObservedAt) <= Date.parse(actual.readyPublishedAt);
 }
 
 function failure(

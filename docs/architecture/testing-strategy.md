@@ -54,6 +54,44 @@ audio evidence: first-packet timing, duration, packet count, PCM checksum,
 and RMS/non-silence. Correlation IDs remain operator-supplied labels, while
 cancellation and semantic transcript accuracy require separate qualification.
 
+## Hosted private-guild campaign
+
+The test-only hosted coordinator executes one compiled three-run graph:
+sequential, overlap, then reconnect. The reconnect phase deterministically
+captures an unknown-participant greeting, named Russian and English greetings,
+the Speaker D greeting, an addressed answer, and one prepared farewell. Armed
+receipts and create-only barriers replace timing sleeps. Finite children are
+waited, stopped on failure or interruption, and must be torn down before the
+single create-only pass receipt is published.
+
+Recording identity enters later children only through the validated
+recording-ready receipt. Each post-call replay uses a create-only v2 marker bound
+to the exact run, recording, running container, image, and source revision.
+Collection retains authoritative Craig/S3 evidence, stable before/after
+deployment provenance, replay results, Discord publication evidence, recording
+playback checks, and service-level source artifacts before the campaign verifier
+can pass.
+
+The playback-link observer is armed before reconnect publication can occur. At
+the first visible possession link it immediately starts the hardened readiness
+probe and retains only bounded sanitized digests, message/container identity,
+the first-observed poll bracket, and the separate readiness request bracket.
+This honestly proves first-observed-then-ready, not atomic readiness at the
+instant of publication. The later create-only recording-ready receipt binds
+that candidate to the exact meeting marker and recording without replacing its
+first-seen timing; a missing, changed, ambiguous, stale, or failed candidate
+fails closed. A stronger ready-at-first-visibility claim requires an atomic
+publication-ready receipt and is outside this observer contract.
+
+Local coordinator, graph, process-lifecycle, and evidence tests do not authorize
+an external run. Admission recomputes the exact plan and fails closed before the
+artifact lease or any child starts. Its consumer-owned remote-probe port returns
+one closed, create-only, expiring receipt bound to the exact campaign and plan.
+That receipt has four explicit sections: deployment safety, Discord identity,
+Voicetext canary, and clock preflight. Operator-authored capability files are
+retained declarations only and cannot authorize a campaign; an absent probe
+always leaves admission blocked.
+
 ## Summary-first E2E
 
 The critical flow is:

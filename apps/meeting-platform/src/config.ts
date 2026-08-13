@@ -83,6 +83,8 @@ const environmentSchema = z
       .transform((value) => value === "true"),
     CONVERSATION_FAREWELL_CUE_ROOT: absolutePath.optional(),
     CONVERSATION_E2E_PLAYBACK_READINESS_ROOT: optionalAbsolutePath,
+    CONVERSATION_E2E_GREETING_OBSERVER_PARTICIPANT_ID: optionalSnowflake,
+    CONVERSATION_E2E_GREETING_PLAYBACK_READINESS_ROOT: optionalAbsolutePath,
     CONVERSATION_E2E_PLAYBACK_READINESS_RUN_ID: optionalProfileIdentifier,
     CONVERSATION_E2E_PLAYBACK_READINESS_TIMEOUT_MS: optionalReadinessTimeout,
     CONVERSATION_GREETING_CUE_ROOT: absolutePath.optional(),
@@ -174,6 +176,9 @@ const environmentSchema = z
       .default(defaultVoicetextLivePacketBackpressureTimeoutMs),
     VOICETEXT_SERVICE_TOKEN_FILE: absolutePath.optional(),
     VOICETEXT_WS_URL: secureWebSocketUrl.optional(),
+  })
+  .superRefine((environment, context) => {
+    validateConversationReadinessEnvironment(environment, context);
   })
   .superRefine((environment, context) => {
     const playbackReadinessParts = [
@@ -281,6 +286,24 @@ const environmentSchema = z
       });
     }
   });
+
+function validateConversationReadinessEnvironment(
+  environment: z.infer<typeof environmentSchema>,
+  context: z.RefinementCtx,
+): void {
+  const playbackCount = [environment.CONVERSATION_E2E_PLAYBACK_READINESS_ROOT,
+    environment.CONVERSATION_E2E_PLAYBACK_READINESS_RUN_ID,
+    environment.CONVERSATION_E2E_PLAYBACK_READINESS_TIMEOUT_MS]
+    .filter((value) => value !== undefined).length;
+  const greetingCount = [environment.CONVERSATION_E2E_GREETING_OBSERVER_PARTICIPANT_ID,
+    environment.CONVERSATION_E2E_GREETING_PLAYBACK_READINESS_ROOT]
+    .filter((value) => value !== undefined).length;
+  if (greetingCount !== 0 && (greetingCount !== 2 || playbackCount !== 3)) {
+    context.addIssue({ code: "custom",
+      message: "conversation E2E greeting readiness requires observer ID, greeting root and playback readiness",
+      path: ["CONVERSATION_E2E_GREETING_PLAYBACK_READINESS_ROOT"] });
+  }
+}
 
 export type ParsedPlatformEnvironment = z.infer<typeof environmentSchema>;
 

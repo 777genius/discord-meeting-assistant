@@ -19,14 +19,12 @@ export interface SupplementalPlaybackClock extends ScenarioClock {
 export async function runSupplementalVoicePlayback(
   actor: SupplementalPlaybackActor,
   expectedApplicationId: string,
-  preHoldMilliseconds: number,
   postHoldMilliseconds: number,
   clock: SupplementalPlaybackClock,
 ): Promise<SupplementalPlaybackEvidence> {
   if (actor.authenticatedApplicationId !== expectedApplicationId) {
     throw new Error("Supplemental Speaker D application ID does not match its authenticated bot");
   }
-  await clock.wait(preHoldMilliseconds);
   const state: { value: "pending" | "playing" | "idle" } = { value: "pending" };
   let playbackStartedAtEpochMs = 0;
   let playbackEndedAtEpochMs = 0;
@@ -55,6 +53,6 @@ export async function runSupplementalVoicePlayback(
     playbackEndedAtEpochMs,
     playbackStartedAtEpochMs,
     postHoldMilliseconds,
-    preHoldMilliseconds,
+    preHoldMilliseconds: 0,
   });
 }

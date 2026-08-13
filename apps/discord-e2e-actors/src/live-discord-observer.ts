@@ -1,7 +1,9 @@
 interface LiveDiscordEmbedInput {
   readonly description: string | null | undefined;
   readonly fields: readonly LiveDiscordEmbedFieldInput[];
+  readonly footerText?: string | null | undefined;
   readonly title: string | null | undefined;
+  readonly url?: string | null | undefined;
 }
 
 interface LiveDiscordEmbedFieldInput {

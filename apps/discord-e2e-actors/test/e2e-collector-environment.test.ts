@@ -9,7 +9,7 @@ const requiredEnvironment = {
   DISCORD_E2E_EXPECTED_MEETING_PLATFORM_SOURCE_REVISION: "b".repeat(40),
   DISCORD_E2E_EXPECTED_SUBSCRIPTION_RUNTIME_SOURCE_REVISION: "c".repeat(40),
   DISCORD_E2E_MUTATION_TARGET: "test-only",
-  DISCORD_E2E_RECORDING_ID: "recording-1",
+  DISCORD_E2E_READY_RECEIPT_INPUT: "/evidence/recording-ready.json",
   DISCORD_E2E_RECORDING_PLAYBACK_READINESS: "already-ready",
   DISCORD_E2E_RECORDING_PLAYBACK_ORIGIN: "https://recordings.example.test",
   DISCORD_E2E_RECORDING_PLAYBACK_TEST_SCOPE: "private-test-deployment",
@@ -25,14 +25,18 @@ const requiredEnvironment = {
 };
 const conversationEnvironment = {
   DISCORD_E2E_BOTIK_SPEAKER_ID: "1534231284467896512",
+  DISCORD_E2E_CONVERSATION_CAMPAIGN_PROOF_INPUT: "/evidence/campaign-proof.json",
+  DISCORD_E2E_DISCORD_PLAYBACK_LINK_PROOF_INPUT: "/evidence/playback-link-proof.json",
   DISCORD_E2E_CONVERSATION_VOICE_INPUTS: JSON.stringify([
     "/evidence/greeting-ru.json",
     "/evidence/greeting-en.json",
     "/evidence/greeting-unknown.json",
     "/evidence/greeting-speaker-d.json",
-    "/evidence/farewell.json",
     "/evidence/answer.json",
+    "/evidence/farewell.json",
   ]),
+  DISCORD_E2E_SERVICE_LEVELS_INPUT: "/evidence/service-levels.json",
+  DISCORD_E2E_SERVICE_LEVEL_THRESHOLDS_INPUT: "/evidence/service-level-thresholds.json",
   DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_INPUT: "/evidence/speaker-d.json",
 };
 const pipecatEnvironment = {
@@ -72,7 +76,18 @@ describe("collectorEnvironmentSchema", () => {
     expect(collectorEnvironmentSchema.safeParse(requiredEnvironment).success).toBe(true);
   });
 
-  it("accepts the complete retained V8 conversation input group", () => {
+  it.each([
+    ["too short", "abc"],
+    ["uppercase", "A".repeat(40)],
+    ["non-hex", "z".repeat(40)],
+  ])("rejects an invalid source revision before collection: %s", (_description, revision) => {
+    expect(collectorEnvironmentSchema.safeParse({
+      ...requiredEnvironment,
+      DISCORD_E2E_EXPECTED_CRAIG_SOURCE_REVISION: revision,
+    }).success).toBe(false);
+  });
+
+  it("accepts the complete retained V9 conversation input group", () => {
     const result = collectorEnvironmentSchema.safeParse({
       ...requiredEnvironment,
       ...conversationEnvironment,
@@ -82,12 +97,10 @@ describe("collectorEnvironmentSchema", () => {
     expect(result.success).toBe(true);
   });
 
-  it("rejects every partial retained V8 conversation input group", () => {
+  it("rejects every partial retained V9 conversation input group", () => {
     const entries = Object.entries(conversationEnvironment);
-    const partialGroups = Array.from({ length: 6 }, (_unused, mask) =>
-      Object.fromEntries(entries.filter(
-        (_entry, index) => ((mask + 1) & (1 << index)) !== 0,
-      ))
+    const partialGroups = entries.map((_, omittedIndex) =>
+      Object.fromEntries(entries.filter((_entry, index) => index !== omittedIndex))
     );
 
     expect(partialGroups.every((partial) =>
@@ -99,7 +112,7 @@ describe("collectorEnvironmentSchema", () => {
     )).toBe(true);
   });
 
-  it("rejects retained V8 conversation input without exact Pipecat revision", () => {
+  it("rejects retained V9 conversation input without exact Pipecat revision", () => {
     expect(collectorEnvironmentSchema.safeParse({
       ...requiredEnvironment,
       ...conversationEnvironment,

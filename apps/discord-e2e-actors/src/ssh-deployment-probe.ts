@@ -23,6 +23,7 @@ import {
 } from "./ssh-deployment-probe-commands.js";
 import {
   containerProvenanceFormat,
+  completionReceiptsScript,
   imageProvenanceFormat,
   postgresEvidenceQuery,
   replayJobScript,
@@ -34,6 +35,7 @@ import {
   assertReplayTargetAttestation,
   assertReplayTargetContainer,
   containerProvenanceOutputSchema,
+  completionReceiptsOutputSchema,
   correlationId,
   databaseOutputSchema,
   imageProvenanceOutputSchema,
@@ -181,6 +183,17 @@ export class SshDeploymentEvidenceProbe implements DeploymentEvidenceProbe {
     };
   }
 
+  public async collectRecordingCompletionReceipts(): Promise<readonly unknown[]> {
+    const containerId = await this.#findContainerId(this.#options.projectName, "meeting-platform");
+    const output = await this.#commands.runContainer(this.#options, containerId, [
+      "node",
+      "--input-type=module",
+      "-e",
+      completionReceiptsScript,
+    ]);
+    return completionReceiptsOutputSchema.parse(parseLastJsonLine(output));
+  }
+
   public async collectS3(
     manifestLocator: string,
     recordingId: string,
@@ -323,35 +336,46 @@ export class SshDeploymentEvidenceProbe implements DeploymentEvidenceProbe {
     readonly containerId: string;
     readonly markerDocument: string;
   }> {
-    const containerId = await this.#findContainerId(
-      this.#options.projectName,
-      "meeting-platform",
-    );
+    const attestationFile = this.#replayAttestationFile();
+    const provenance = await this.#collectServiceProvenance(this.#options.projectName, "meeting-platform");
     const [containerOutput, markerDocument] = await Promise.all([
       this.#commands.runRemote(this.#options, [
         "docker",
         "inspect",
         "--format",
         replayTargetContainerFormat,
-        containerId,
+        provenance.containerId,
       ]),
       this.#commands.runRemote(this.#options, [
         "sh",
         "-c",
         [...attestationFileGuard, 'cat -- "$1"'].join("; "),
         "discord-e2e-attestation",
-        this.#options.attestationFile,
+        attestationFile,
       ]),
     ]);
     assertReplayTargetAttestation(
       parseLastJsonLine(containerOutput),
       parseMarkerDocument(markerDocument),
       attestation,
+      {
+        containerId: provenance.containerId,
+        imageId: provenance.imageId,
+        sourceRevision: provenance.sourceRevision,
+      },
     );
-    return { containerId, markerDocument };
+    const confirmedContainerId = await this.#findContainerId(
+      this.#options.projectName,
+      "meeting-platform",
+    );
+    if (confirmedContainerId !== provenance.containerId) {
+      throw new Error("Replay target container changed during immutable provenance inspection");
+    }
+    return { containerId: provenance.containerId, markerDocument };
   }
 
   async #consumeReplayMarker(markerDocument: string): Promise<void> {
+    const attestationFile = this.#replayAttestationFile();
     const expectedChecksum = createHash("sha256").update(markerDocument).digest("hex");
     await this.#commands.runRemote(this.#options, [
       "sh",
@@ -364,9 +388,17 @@ export class SshDeploymentEvidenceProbe implements DeploymentEvidenceProbe {
         'rm -- "$1"',
       ].join("; "),
       "discord-e2e-attestation-consume",
-      this.#options.attestationFile,
+      attestationFile,
       expectedChecksum,
     ]);
+  }
+
+  #replayAttestationFile(): string {
+    const attestationFile = this.#options.attestationFile;
+    if (attestationFile === undefined) {
+      throw new Error("Replay target attestation file is required for replay operations");
+    }
+    return attestationFile;
   }
 }
 

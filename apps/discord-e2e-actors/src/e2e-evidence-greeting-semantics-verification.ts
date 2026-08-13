@@ -1,10 +1,10 @@
 import { normalizeTranscriptSemantics } from "./e2e-evidence-text-metrics.js";
-import type { FixtureManifestV1, RetainedE2eEvidenceV8 } from "./e2e-evidence-schema.js";
+import type { FixtureManifestV1, RetainedE2eEvidenceV8, RetainedE2eEvidenceV9 } from "./e2e-evidence-schema.js";
 import type { VerificationFailureReporter } from "./e2e-evidence-verification-types.js";
 
 export function verifyGreetingAudioSemantics(
   manifest: FixtureManifestV1,
-  evidence: RetainedE2eEvidenceV8,
+  evidence: RetainedE2eEvidenceV8 | RetainedE2eEvidenceV9,
   recordingStartMs: number,
   fail: VerificationFailureReporter,
 ): void {
@@ -72,7 +72,7 @@ interface PinnedGreetingExpectation {
 
 function verifyPinnedGreetingParticipants(
   manifest: FixtureManifestV1,
-  evidence: RetainedE2eEvidenceV8,
+  evidence: RetainedE2eEvidenceV8 | RetainedE2eEvidenceV9,
   fail: VerificationFailureReporter,
 ): void {
   const voice = manifest.conversationVoiceExpectation;
