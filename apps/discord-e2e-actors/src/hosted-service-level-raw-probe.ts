@@ -1,5 +1,6 @@
 import type { DatabaseObservation, S3RecordingEvidence } from
   "./e2e-retained-evidence-contracts.js";
+import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 
 import { z } from "zod";
@@ -50,23 +51,77 @@ const sourceClockBracketSchema = z.object({
   sample: clockSampleSchema,
 }).strict();
 
-const defaultClockObserver: HostedClockObserver = {
-  async sample() {
-    const bootId = (await readFile("/proc/sys/kernel/random/boot_id", "utf8")).trim();
-    return clockSampleSchema.parse({
-      bootId,
-      epochMs: Date.now(),
-      monotonicNs: process.hrtime.bigint().toString(),
-    });
-  },
-};
+const bootSessionIdSchema = z.string().regex(
+  /^[a-f\d]{8}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12}$/u,
+);
 
 const sourceClockBracketScript = `
 const fs = require("node:fs");
-const bootId = fs.readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
+const bootId = fs.readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim().toLowerCase();
 const sample = () => ({ bootId, epochMs: Date.now(), monotonicNs: process.hrtime.bigint().toString() });
 process.stdout.write(JSON.stringify({ before: sample(), sample: sample(), after: sample() }) + "\\n");
 `;
+
+export interface LocalHostedClockObserverDependencies {
+  readonly monotonicNow: () => bigint;
+  readonly now: () => number;
+  readonly platform: NodeJS.Platform;
+  readonly readFile: (path: string, encoding: "utf8") => Promise<string>;
+  readonly runFile: (file: string, args: readonly string[], options: Readonly<{
+    encoding: "utf8"; maxBuffer: number; timeout: number;
+  }>) => Promise<string>;
+}
+
+const defaultClockObserverDependencies: LocalHostedClockObserverDependencies = {
+  monotonicNow: () => process.hrtime.bigint(), now: Date.now, platform: process.platform, readFile,
+  runFile: runBoundedFile,
+};
+
+export class LocalHostedClockObserver implements HostedClockObserver {
+  readonly #bootId: Promise<string>;
+  readonly #dependencies: LocalHostedClockObserverDependencies;
+
+  constructor(
+    dependencies: LocalHostedClockObserverDependencies = defaultClockObserverDependencies,
+  ) {
+    this.#dependencies = dependencies;
+    this.#bootId = readLocalBootSessionId(dependencies);
+  }
+
+  async sample() {
+    return clockSampleSchema.parse({
+      bootId: await this.#bootId,
+      epochMs: this.#dependencies.now(),
+      monotonicNs: this.#dependencies.monotonicNow().toString(),
+    });
+  }
+}
+
+async function readLocalBootSessionId(
+  dependencies: LocalHostedClockObserverDependencies,
+): Promise<string> {
+  const raw = dependencies.platform === "linux"
+    ? await dependencies.readFile("/proc/sys/kernel/random/boot_id", "utf8")
+    : dependencies.platform === "darwin"
+      ? await dependencies.runFile("sysctl", ["-n", "kern.bootsessionuuid"], {
+          encoding: "utf8", maxBuffer: 1_024, timeout: 2_000,
+        })
+      : Promise.reject(new Error(`Unsupported clock observer platform: ${dependencies.platform}`));
+  return bootSessionIdSchema.parse((await raw).trim().toLowerCase());
+}
+
+function runBoundedFile(
+  file: string,
+  args: readonly string[],
+  options: Readonly<{ encoding: "utf8"; maxBuffer: number; timeout: number }>,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(file, [...args], options, (error, stdout) => {
+      if (error === null) { resolve(stdout); }
+      else { reject(new Error("Unable to read the local boot session identity", { cause: error })); }
+    });
+  });
+}
 
 export class SshHostedServiceLevelRawProbe {
   readonly #commands: HostedServiceLevelRawProbeCommands;
@@ -76,7 +131,7 @@ export class SshHostedServiceLevelRawProbe {
   constructor(
     remote: HostedServiceLevelSourceConfig["remote"],
     commands: HostedServiceLevelRawProbeCommands = defaultCommands,
-    clockObserver: HostedClockObserver = defaultClockObserver,
+    clockObserver?: HostedClockObserver,
   ) {
     this.#settings = {
       attestationFile: "/tmp/discord-e2e-attestations/unused-read-only-source-capture.json",
@@ -92,7 +147,7 @@ export class SshHostedServiceLevelRawProbe {
       timeoutMs: 330_000,
     };
     this.#commands = commands;
-    this.#clockObserver = clockObserver;
+    this.#clockObserver = clockObserver ?? new LocalHostedClockObserver();
   }
 
   async collectDatabase(recordingId: string): Promise<DatabaseObservation> {
@@ -127,7 +182,7 @@ export class SshHostedServiceLevelRawProbe {
     const after = await this.#clockObserver.sample();
     return {
       observer: { after, before },
-      observerClockId: `host:${this.#settings.host}`,
+      observerClockId: "local-actor-clock",
       source: sourceClockBracketSchema.parse(parseLastJsonLine(output)),
       sourceClockId: "container:meeting-platform",
       target: {

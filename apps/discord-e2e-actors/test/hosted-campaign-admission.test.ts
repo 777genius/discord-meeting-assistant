@@ -83,6 +83,7 @@ describe("hosted campaign admission", () => {
     await expect(inspectHostedCampaignAdmission({
       bindings: setup.bindings, definition: setup.definition, minimumFreeBytes: 1,
       plan: setup.plan, remoteAdmissionProbe: {
+        clockPreflightExpectation: { maximumClockSkewBoundMs: 250 },
         inspect: async () => readiness,
         voicetextCanaryExpectation: {
           binding: { campaignId: "x", containerId: "x", fixtureSha256: "1".repeat(64), host: "x",

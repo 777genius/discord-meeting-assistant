@@ -83,6 +83,28 @@ describe("hosted remote admission composition", () => {
     }, () => Number.NaN)).rejects.toThrow("safe evaluation time");
   });
 
+  it("rejects excessive clock skew before returning launch authorization", async () => {
+    const config = composition([]);
+    const probe = createHostedCampaignRemoteAdmissionProbe({
+      ...config,
+      clock: {
+        ...config.clock,
+        collectClockPreflight: async () => clockExchange(now, 251),
+      },
+    });
+
+    await expect(evaluateHostedRemoteAdmission(probe, {
+      campaignId, meetingPlatformRevision: revision, planSha256,
+    }, () => now)).rejects.toThrow("clock skew exceeds the trusted admission bound");
+  });
+
+  it("rejects an invalid trusted clock-skew threshold at composition", () => {
+    const config = composition([]);
+    expect(() => createHostedCampaignRemoteAdmissionProbe({
+      ...config, clock: { ...config.clock, maximumClockSkewBoundMs: Number.NaN },
+    })).toThrow();
+  });
+
   it("fails closed when any producer fails and does not continue to admission", async () => {
     const calls: string[] = [];
     const config = composition(calls);
@@ -183,7 +205,8 @@ function composition(calls: string[], time: () => number = () => now): HostedRem
     imageDigestSha256, planSha256, sourceRevision: revision } as const;
   return {
     campaignId,
-    clock: { collectClockPreflight: async () => { calls.push("clock"); return clockExchange(time()); } },
+    clock: { collectClockPreflight: async () => { calls.push("clock"); return clockExchange(time()); },
+      maximumClockSkewBoundMs: 250 },
     deployment: {
       expectation,
       producer: { collect: async () => { calls.push("deployment"); return deploymentReceipt(expectation, time()); } },
@@ -275,12 +298,13 @@ function deploymentReceipt(expectation: HostedDeploymentSafetyExpectationV1, gen
   } });
 }
 
-function clockExchange(at = now) {
+function clockExchange(at = now, sourceOffsetMs = -5) {
   return { observer: { before: { bootId: "observer", epochMs: at - 10, monotonicNs: "1000000000" },
     after: { bootId: "observer", epochMs: at, monotonicNs: "1010000000" } }, observerClockId: "observer-clock",
-  source: { before: { bootId: "source", epochMs: at - 5, monotonicNs: "1005000000" },
-    sample: { bootId: "source", epochMs: at - 3, monotonicNs: "1007000000" },
-    after: { bootId: "source", epochMs: at - 2, monotonicNs: "1008000000" } }, sourceClockId: "source-clock",
+  source: { before: { bootId: "source", epochMs: at + sourceOffsetMs, monotonicNs: "1005000000" },
+    sample: { bootId: "source", epochMs: at + sourceOffsetMs + 2, monotonicNs: "1007000000" },
+    after: { bootId: "source", epochMs: at + sourceOffsetMs + 3, monotonicNs: "1008000000" } },
+  sourceClockId: "source-clock",
   target: { environment: HOSTED_CAMPAIGN_TARGET.environment, host: HOSTED_CAMPAIGN_TARGET.host,
     project: HOSTED_CAMPAIGN_TARGET.project } };
 }

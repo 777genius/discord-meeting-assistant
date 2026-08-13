@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  LocalHostedClockObserver,
   SshHostedServiceLevelRawProbe,
   type HostedClockObserver,
   type HostedServiceLevelRawProbeCommands,
@@ -77,7 +78,7 @@ describe("hosted service-level read-only raw probe", () => {
     )).resolves.toBe(`${JSON.stringify({ meetingId: "meeting-1", message: "keep" })}\n`);
     await expect(probe.collectClockCompletion()).resolves.toMatchObject({
       observer: { after: { epochMs: 10_010 }, before: { epochMs: 10_000 } },
-      observerClockId: "host:codex-workers-eu-01",
+      observerClockId: "local-actor-clock",
       sourceClockId: "container:meeting-platform",
     });
     expect(calls).toEqual([
@@ -87,6 +88,48 @@ describe("hosted service-level read-only raw probe", () => {
       "remote:docker:logs",
       "compose:meeting-platform",
     ]);
+  });
+
+  it.each([
+    ["linux", "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"],
+    ["darwin", "11111111-2222-3333-4444-555555555555"],
+  ] as const)("uses one canonical stable local boot session identity on %s", async (platform, bootId) => {
+    let readCount = 0;
+    let execCount = 0;
+    const observer = new LocalHostedClockObserver({
+      runFile: async (file, args, options) => {
+        execCount += 1;
+        expect([file, ...args]).toEqual(["sysctl", "-n", "kern.bootsessionuuid"]);
+        expect(options).toEqual({ encoding: "utf8", maxBuffer: 1_024, timeout: 2_000 });
+        return `${bootId}\n`;
+      },
+      monotonicNow: () => 10_000_000_000n,
+      now: () => 10_000,
+      platform,
+      readFile: async () => {
+        readCount += 1;
+        return `${bootId}\n`;
+      },
+    });
+
+    await expect(Promise.all([observer.sample(), observer.sample()])).resolves.toEqual([
+      { bootId: bootId.toLowerCase(), epochMs: 10_000, monotonicNs: "10000000000" },
+      { bootId: bootId.toLowerCase(), epochMs: 10_000, monotonicNs: "10000000000" },
+    ]);
+    expect(platform === "linux" ? readCount : execCount).toBe(1);
+    expect(platform === "linux" ? execCount : readCount).toBe(0);
+  });
+
+  it("rejects unsupported platforms and malformed boot identities", async () => {
+    const dependencies = {
+      monotonicNow: () => 0n, now: () => 0,
+      readFile: async () => "not-a-boot-id",
+      runFile: async () => "not-a-boot-id",
+    };
+    await expect(new LocalHostedClockObserver({ ...dependencies, platform: "linux" }).sample())
+      .rejects.toThrow();
+    await expect(new LocalHostedClockObserver({ ...dependencies, platform: "win32" }).sample())
+      .rejects.toThrow("Unsupported clock observer platform");
   });
 });
 

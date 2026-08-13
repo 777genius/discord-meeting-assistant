@@ -7,6 +7,7 @@ const HOSTED_CLOCK_METHOD_V2 = "ssh-bracketed-clock-v2" as const;
 const admissionValidityMs = 60_000;
 const maximumRoundTripTimeMs = 5_000;
 const wallClockResolutionMs = 2;
+const maximumClockSlewPartsPerMillion = 500;
 const identifier = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u);
 const sha256 = z.string().regex(/^[a-f\d]{64}$/u);
 const safeNonnegativeInteger = z.number().refine(
@@ -216,9 +217,29 @@ function lastSample(raw: HostedClockExchangeV2, side: "observer" | "source") {
 function addWallClockContinuityIssue(before: z.infer<typeof sampleSchema>, after: z.infer<typeof sampleSchema>,
 context: z.RefinementCtx): void {
   try {
-    assertSampleSequence(before, after, "run");
+    assertLongRunningSampleSequence(before, after);
   } catch (error) {
     context.addIssue({ code: "custom", message: error instanceof Error ? error.message : "Clock continuity failed" });
+  }
+}
+
+function assertLongRunningSampleSequence(
+  before: z.infer<typeof sampleSchema>,
+  after: z.infer<typeof sampleSchema>,
+): void {
+  if (before.bootId !== after.bootId) {
+    throw new Error("run boot identity changed inside a clock bracket");
+  }
+  const monotonicDeltaNs = BigInt(after.monotonicNs) - BigInt(before.monotonicNs);
+  if (monotonicDeltaNs < 0n || after.epochMs < before.epochMs) {
+    throw new Error("run clock moved backwards inside a clock bracket");
+  }
+  const monotonicDeltaMs = Number(monotonicDeltaNs) / 1_000_000;
+  const epochDeltaMs = after.epochMs - before.epochMs;
+  const slewBudgetMs = wallClockResolutionMs
+    + Math.ceil(monotonicDeltaMs * maximumClockSlewPartsPerMillion / 1_000_000);
+  if (Math.abs(epochDeltaMs - monotonicDeltaMs) > slewBudgetMs) {
+    throw new Error("run wall clock stepped beyond the bounded slew budget");
   }
 }
 

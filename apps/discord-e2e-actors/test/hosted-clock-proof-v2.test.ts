@@ -93,6 +93,20 @@ describe("hosted bracketed clock V2 proof", () => {
     })).toThrow("wall clock stepped");
   });
 
+  it("accepts bounded NTP slew across a long run while immediate brackets stay strict", () => {
+    const admission = deriveHostedClockPreflightReceiptV2(exchange());
+    expect(() => bindHostedClockRunV2({
+      admission,
+      completion: exchange({ baseEpochMs: 601_300, baseMonotonicNs: 601_000_000_000n }),
+      meetingId: "meeting-1", recordingId: "recording-1", runId: "run-1",
+    })).not.toThrow();
+    expect(() => bindHostedClockRunV2({
+      admission,
+      completion: exchange({ baseEpochMs: 601_304, baseMonotonicNs: 601_000_000_000n }),
+      meetingId: "meeting-1", recordingId: "recording-1", runId: "run-1",
+    })).toThrow("bounded slew budget");
+  });
+
   it("produces distinct proof IDs when run binding identity changes", () => {
     const admission = deriveHostedClockPreflightReceiptV2(exchange());
     const completion = exchange({ baseEpochMs: 11_000, baseMonotonicNs: 11_000_000_000n });

@@ -65,7 +65,10 @@ function assertNotAborted(signal: AbortSignal | undefined): void {
  */
 export interface HostedRemoteAdmissionCompositionConfig {
   readonly campaignId: string;
-  readonly clock: HostedClockPreflightProbe;
+  readonly clock: HostedClockPreflightProbe & Readonly<{
+    /** Pinned by trusted host wiring; never loaded from campaign evidence. */
+    maximumClockSkewBoundMs: number;
+  }>;
   readonly deployment: {
     readonly expectation: HostedDeploymentSafetyExpectationV1;
     readonly producer: HostedDeploymentSafetyReceiptProducer;
@@ -90,6 +93,9 @@ export function createHostedCampaignRemoteAdmissionProbe(
 ): HostedCampaignRemoteAdmissionProbe {
   const config = validateComposition(configValue);
   return Object.freeze({
+    clockPreflightExpectation: Object.freeze({
+      maximumClockSkewBoundMs: config.clock.maximumClockSkewBoundMs,
+    }),
     voicetextCanaryExpectation: Object.freeze({
       binding: config.voicetext.input.binding,
       endpoint: config.voicetext.input.endpoint,
@@ -142,6 +148,11 @@ function validateComposition(
   const meetingPlatformRevision = sourceRevisionSchema.parse(value.meetingPlatformRevision);
   const planSha256 = sha256Schema.parse(value.planSha256);
   const expectation = hostedDeploymentSafetyExpectationV1Schema.parse(value.deployment.expectation);
+  const clock = Object.freeze({
+    ...value.clock,
+    maximumClockSkewBoundMs: z.number().int().nonnegative().max(60_000)
+      .parse(value.clock.maximumClockSkewBoundMs),
+  });
   const discord = value.discord;
   const voicetext = value.voicetext.input;
   const fixtureExpectation = z.object({
@@ -175,7 +186,7 @@ function validateComposition(
     || !meetingService.repositoryDigest.endsWith(`@sha256:${discord.binding.imageDigestSha256}`)) {
     throw new Error("Hosted remote admission composition is not bound to the exact private deployment and plan");
   }
-  return Object.freeze({ ...value, campaignId, meetingPlatformRevision, planSha256,
+  return Object.freeze({ ...value, campaignId, clock, meetingPlatformRevision, planSha256,
     deployment: Object.freeze({ ...value.deployment, expectation }),
     voicetext: Object.freeze({ ...value.voicetext, fixtureExpectation }) });
 }

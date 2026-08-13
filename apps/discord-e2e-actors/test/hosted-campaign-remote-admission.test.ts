@@ -69,7 +69,8 @@ describe("hosted campaign remote admission boundary", () => {
 });
 
 function fakeProbe(value: unknown): HostedCampaignRemoteAdmissionProbe {
-  return { inspect: async () => value, voicetextCanaryExpectation };
+  return { clockPreflightExpectation: { maximumClockSkewBoundMs: 250 },
+    inspect: async () => value, voicetextCanaryExpectation };
 }
 
 function validReadiness(change: Readonly<Record<string, unknown>> = {}) {

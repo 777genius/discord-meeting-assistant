@@ -80,11 +80,14 @@ interface HostedRemoteAdmissionEvidenceV1 {
 
 /** Consumer-owned application boundary. Concrete SSH/provider concerns stay outside admission. */
 export interface HostedCampaignRemoteAdmissionProbe {
+  readonly clockPreflightExpectation: Readonly<{
+    maximumClockSkewBoundMs: number;
+  }>;
   readonly voicetextCanaryExpectation: Omit<
     VoicetextSemanticCanaryExpectationV1,
     "maximumAgeMs" | "nowEpochMs"
   >;
-  inspect(request: HostedCampaignRemoteAdmissionProbeRequest): Promise<unknown>;
+  inspect(request: HostedCampaignRemoteAdmissionProbeRequest, signal?: AbortSignal): Promise<unknown>;
 }
 
 export type HostedRemoteAdmissionEvaluation = Readonly<{
@@ -122,6 +125,7 @@ export async function evaluateHostedRemoteAdmission(
     nowEpochMs,
   });
   const clock = hostedClockPreflightReceiptV2Schema.parse(evidence.clockPreflight);
+  assertClockPreflightExpectation(clock, probe.clockPreflightExpectation);
   assertEvidenceBindings({ canary, clock, deployment, identity }, expected);
   assertEvidenceLifetimes({ canary, clock, deployment, identity }, nowEpochMs);
   const content = {
@@ -147,6 +151,19 @@ export async function evaluateHostedRemoteAdmission(
   };
   const readiness = verifyHostedRemoteReadinessV1({ ...content, receiptSha256: digestCanonical(content) });
   return Object.freeze({ clockPreflightProof: clock, missingSections: Object.freeze([]), readiness });
+}
+
+function assertClockPreflightExpectation(
+  clock: HostedClockPreflightReceiptV2,
+  expectation: HostedCampaignRemoteAdmissionProbe["clockPreflightExpectation"],
+): void {
+  if (!Number.isSafeInteger(expectation.maximumClockSkewBoundMs)
+    || expectation.maximumClockSkewBoundMs < 0) {
+    throw new Error("Hosted remote admission requires a trusted maximum clock skew bound");
+  }
+  if (clock.clockSkewBoundMs > expectation.maximumClockSkewBoundMs) {
+    throw new Error("Hosted clock skew exceeds the trusted admission bound");
+  }
 }
 
 export function verifyHostedRemoteReadinessV1(value: unknown): HostedRemoteReadinessV1 {
