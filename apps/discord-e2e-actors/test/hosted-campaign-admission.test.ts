@@ -9,8 +9,8 @@ import { z } from "zod";
 import {
   inspectHostedCampaignAdmission,
   verifyHostedCampaignAdmissionReceipt,
-  writeCreateOnlyAdmissionReceipt,
 } from "../src/hosted-campaign-admission.js";
+import { writeCreateOnlyAdmissionReceipt } from "../src/hosted-admission-receipt-store.js";
 import { createHostedRemoteReadinessV1 } from "../src/hosted-campaign-remote-admission.js";
 import { parseHostedAdmissionArguments } from "../src/run-hosted-campaign-admission.js";
 

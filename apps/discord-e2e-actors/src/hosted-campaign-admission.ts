@@ -1,6 +1,8 @@
-import { createHash, randomUUID } from "node:crypto";
+/* Admission intentionally centralizes local validation and trusted remote receipt binding. */
+/* oxlint-disable max-lines */
+import { createHash } from "node:crypto";
 import { constants, type Stats } from "node:fs";
-import { link, open, realpath, rm, statfs, type FileHandle } from "node:fs/promises";
+import { open, realpath, statfs, type FileHandle } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 
 import { z } from "zod";
@@ -22,6 +24,7 @@ import {
   verifyHostedRemoteReadinessV1,
 } from "./hosted-campaign-remote-admission.js";
 import { FileSecretReader } from "./keychain.js";
+import { hostedClockPreflightReceiptV2Schema, type HostedClockPreflightReceiptV2 } from "./hosted-clock-proof-v2.js";
 import { loadVerifiedSupplementalVoiceManifest } from "./supplemental-voice-playback-config.js";
 
 const sha256Schema = z.string().regex(/^[a-f\d]{64}$/u);
@@ -62,6 +65,7 @@ export type HostedCampaignAdmissionReceiptV1 = Readonly<{
   fixtureDigests: Readonly<Record<string, string>>;
   generatedAt: string;
   kind: "hosted-campaign-admission";
+  clockPreflightProof?: HostedClockPreflightReceiptV2 | undefined;
   minimumFreeBytes: number;
   missingCapabilities: readonly HostedRemoteReadinessSection[];
   planSha256: string;
@@ -176,6 +180,9 @@ export async function inspectHostedCampaignAdmission(
     fixtureDigests: Object.freeze(fixtureDigests),
     generatedAt: new Date(generatedAtEpochMs).toISOString(),
     kind: "hosted-campaign-admission" as const,
+    ...(remoteAdmission.clockPreflightProof === undefined ? {} : {
+      clockPreflightProof: remoteAdmission.clockPreflightProof,
+    }),
     minimumFreeBytes: request.minimumFreeBytes,
     missingCapabilities: Object.freeze(missingCapabilities),
     planSha256: digestCanonical(plan),
@@ -195,6 +202,7 @@ export function verifyHostedCampaignAdmissionReceipt(value: unknown): HostedCamp
     bindingsSha256: sha256Schema, definitionSha256: sha256Schema,
     fixtureDigests: z.record(z.string(), sha256Schema), generatedAt: z.iso.datetime(),
     kind: z.literal("hosted-campaign-admission"), minimumFreeBytes: z.number().int().positive(),
+    clockPreflightProof: hostedClockPreflightReceiptV2Schema.optional(),
     missingCapabilities: z.array(z.enum(["deploymentSafety", "discordIdentity", "voicetextCanary", "clockPreflight"])),
     planSha256: sha256Schema, receiptSha256: sha256Schema,
     remoteEvidence: remoteEvidenceSchema.shape.capabilities,
@@ -221,6 +229,13 @@ export function verifyHostedCampaignAdmissionReceipt(value: unknown): HostedCamp
   }
   if (receipt.status === "admitted" && receipt.remoteReadiness === undefined) {
     throw new Error("Hosted campaign admission has no trusted remote readiness");
+  }
+  if (receipt.status === "admitted" && receipt.clockPreflightProof === undefined) {
+    throw new Error("Hosted campaign admission has no trusted clock preflight proof");
+  }
+  if (receipt.clockPreflightProof !== undefined && receipt.remoteReadiness?.clockPreflight.proofId
+    !== receipt.clockPreflightProof.proofId) {
+    throw new Error("Hosted campaign clock preflight proof does not match remote readiness");
   }
   if (receipt.remoteReadiness !== undefined) {
     verifyHostedRemoteReadinessV1(receipt.remoteReadiness);
@@ -307,6 +322,11 @@ function assertRemoteReadinessMatchesInvocation(
     || Date.parse(readiness.expiresAt) <= nowEpochMs) {
     throw new Error("Hosted campaign remote readiness is not live for this invocation");
   }
+  if (receipt.clockPreflightProof === undefined
+    || readiness.clockPreflight.proofId !== receipt.clockPreflightProof.proofId
+    || receipt.clockPreflightProof.validUntilEpochMs <= nowEpochMs) {
+    throw new Error("Hosted campaign clock preflight proof is not live for this invocation");
+  }
 }
 
 function assertSpeakerFixturePaths(
@@ -315,24 +335,6 @@ function assertSpeakerFixturePaths(
 ): void {
   if (resolve(fixtures.a) !== expectedPaths[0] || resolve(fixtures.b) !== expectedPaths[1]) {
     throw new Error("Hosted speaker fixture paths do not match the pinned fixture manifest");
-  }
-}
-
-export async function writeCreateOnlyAdmissionReceipt(
-  path: string,
-  receipt: HostedCampaignAdmissionReceiptV1,
-): Promise<void> {
-  if (!isSafeAbsolutePath(path)) {throw new Error("Hosted admission receipt path is unsafe");}
-  const temporaryPath = join(dirname(path), `.${basename(path)}.partial-${randomUUID()}`);
-  const handle = await open(temporaryPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600);
-  try {
-    await handle.writeFile(`${JSON.stringify(receipt, undefined, 2)}\n`, "utf8");
-    await handle.sync();
-    await handle.close();
-    await link(temporaryPath, path);
-  } finally {
-    await handle.close().catch(() => {});
-    await rm(temporaryPath, { force: true });
   }
 }
 

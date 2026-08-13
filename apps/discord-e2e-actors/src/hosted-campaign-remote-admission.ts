@@ -88,6 +88,7 @@ export interface HostedCampaignRemoteAdmissionProbe {
 }
 
 export type HostedRemoteAdmissionEvaluation = Readonly<{
+  clockPreflightProof?: HostedClockPreflightReceiptV2;
   missingSections: readonly HostedRemoteReadinessSection[];
   readiness?: HostedRemoteReadinessV1;
 }>;
@@ -145,7 +146,7 @@ export async function evaluateHostedRemoteAdmission(
     },
   };
   const readiness = verifyHostedRemoteReadinessV1({ ...content, receiptSha256: digestCanonical(content) });
-  return Object.freeze({ missingSections: Object.freeze([]), readiness });
+  return Object.freeze({ clockPreflightProof: clock, missingSections: Object.freeze([]), readiness });
 }
 
 export function verifyHostedRemoteReadinessV1(value: unknown): HostedRemoteReadinessV1 {

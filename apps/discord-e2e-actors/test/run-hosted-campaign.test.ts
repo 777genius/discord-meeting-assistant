@@ -9,6 +9,7 @@ import {
   type HostedCampaignLeaseHandle,
 } from "../src/hosted-campaign-coordinator.js";
 import { buildResolvedHostedCampaignPlanV1 } from "../src/hosted-campaign-plan-builder.js";
+import { deriveHostedClockPreflightReceiptV2 } from "../src/hosted-clock-proof-v2.js";
 import { parseHostedCampaignArguments, parseHostedCampaignPlan } from "../src/hosted-campaign-run-config.js";
 import {
   assertHostedCampaignReceiptAbsent,
@@ -51,12 +52,26 @@ const plan = () => {
 };
 
 const admittedReceipt = () => ({
-  remoteReadiness: { deploymentSafety: { revalidationBaseline: {
+  clockPreflightProof: clockProof(),
+  remoteReadiness: { clockPreflight: { proofId: clockProof().proofId }, deploymentSafety: { revalidationBaseline: {
     campaignId: "campaign-1", deploymentFingerprint: "1".repeat(64),
     expectationSha256: "2".repeat(64), kind: "hosted-deployment-revalidation-baseline",
     schemaVersion: 1,
   } } },
 }) as never;
+
+const clockProof = () => deriveHostedClockPreflightReceiptV2({
+  observer: {
+    after: { bootId: "observer-boot", epochMs: 1_010, monotonicNs: "1010000000" },
+    before: { bootId: "observer-boot", epochMs: 1_000, monotonicNs: "1000000000" },
+  }, observerClockId: "observer-clock",
+  source: {
+    after: { bootId: "source-boot", epochMs: 1_008, monotonicNs: "1008000000" },
+    before: { bootId: "source-boot", epochMs: 1_005, monotonicNs: "1005000000" },
+    sample: { bootId: "source-boot", epochMs: 1_007, monotonicNs: "1007000000" },
+  }, sourceClockId: "source-clock",
+  target: { environment: "private-test-guild", host: "codex-workers-eu-01", project: "discord-meeting-assistant" },
+});
 
 describe("run-hosted-campaign CLI", () => {
   it("selects only the closed trusted runtime environment", () => {
@@ -212,6 +227,7 @@ describe("run-hosted-campaign CLI", () => {
         assertReceiptAbsent: async () => {},
         createPorts: async () => { effects.push("factory"); throw new Error("unreachable"); },
         now: Date.now,
+        readClockPreflightProof: async () => clockProof(),
         readAdmission: async () => ({}), readBindings: async () => ({}),
         readDefinition: async () => ({}), readPlan: async () => plan(),
         revalidateTrustedAdmission: async () => { effects.push("revalidate"); },
@@ -239,6 +255,7 @@ describe("run-hosted-campaign CLI", () => {
           };
         },
         now: Date.now,
+        readClockPreflightProof: async () => clockProof(),
         readAdmission: async () => ({}), readBindings: async () => ({}),
         readDefinition: async () => ({}), readPlan: async () => plan(), writeReceipt: async () => {},
         revalidateTrustedAdmission: async ({ deploymentBaseline }) => {
@@ -259,6 +276,7 @@ describe("run-hosted-campaign CLI", () => {
         assertReceiptAbsent: async () => {},
         createPorts: async () => { effects.push("factory"); throw new Error("unreachable"); },
         now: () => 123,
+        readClockPreflightProof: async () => clockProof(),
         readAdmission: async () => ({}), readBindings: async () => ({}),
         readDefinition: async () => ({}), readPlan: async () => plan(),
         revalidateTrustedAdmission: async ({ deploymentBaseline, nowEpochMs, signal }) => {
@@ -288,6 +306,7 @@ describe("run-hosted-campaign CLI", () => {
         assertReceiptAbsent: async () => {},
         createPorts: async () => { effects.push("factory"); throw new Error("unreachable"); },
         now: () => nowEpochMs,
+        readClockPreflightProof: async () => clockProof(),
         readAdmission: async () => ({}), readBindings: async () => ({}),
         readDefinition: async () => ({}), readPlan: async () => plan(),
         revalidateTrustedAdmission: async () => { effects.push("revalidate"); nowEpochMs = 200; },

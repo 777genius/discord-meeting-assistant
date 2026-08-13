@@ -21,6 +21,7 @@ import {
   type HostedCampaignAdmissionReceiptV1,
 } from "./hosted-campaign-admission.js";
 import type { HostedDeploymentRevalidationBaselineV1 } from "./hosted-campaign-remote-admission.js";
+import { hostedClockPreflightReceiptV2Schema } from "./hosted-clock-proof-v2.js";
 import {
   HostedCampaignProcessAdapter,
   type HostedCampaignTrustedRuntimeEnvironment,
@@ -35,6 +36,7 @@ export interface HostedCampaignCliDependencies {
   readonly readAdmission: (path: string) => Promise<unknown>;
   readonly readBindings: (path: string) => Promise<unknown>;
   readonly readDefinition: (path: string) => Promise<unknown>;
+  readonly readClockPreflightProof?: (path: string) => Promise<unknown>;
   readonly readPlan: (path: string) => Promise<unknown>;
   readonly revalidateTrustedAdmission: (
     invocation: HostedCampaignTrustedRevalidationInvocation,
@@ -78,13 +80,21 @@ export async function runHostedCampaignCli(
     bindings, definition, maximumAgeMs: 15 * 60_000, nowEpochMs, plan: input, receipt: admission,
   };
   const verifiedAdmission = dependencies.assertAdmission(invocation);
+  const clockPreflightPath = resolveClockPreflightPath(input);
+  const clockPreflightProof = hostedClockPreflightReceiptV2Schema.parse(
+    await (dependencies.readClockPreflightProof ?? dependencies.readAdmission)(clockPreflightPath),
+  );
+  if (clockPreflightProof.proofId !== verifiedAdmission.remoteReadiness?.clockPreflight.proofId
+    || clockPreflightProof.proofId !== verifiedAdmission.clockPreflightProof?.proofId) {
+    throw new Error("Hosted campaign clock preflight proof does not match trusted admission");
+  }
   const deadlineEpochMilliseconds = nowEpochMs + config.timeoutMilliseconds;
   if (!Number.isSafeInteger(deadlineEpochMilliseconds)) {
     throw new Error("Hosted campaign deadline is unsafe");
   }
   await dependencies.revalidateTrustedAdmission({
     ...invocation,
-    deploymentBaseline: verifiedAdmission.remoteReadiness!.deploymentSafety.revalidationBaseline,
+    deploymentBaseline: verifiedAdmission.remoteReadiness.deploymentSafety.revalidationBaseline,
     receipt: verifiedAdmission,
     signal,
   });
@@ -93,6 +103,17 @@ export async function runHostedCampaignCli(
   const receipt = await runHostedCampaign(input, ports, { deadlineEpochMilliseconds, signal });
   await dependencies.writeReceipt(config.receiptPath, receipt);
   return receipt;
+}
+
+function resolveClockPreflightPath(plan: ReturnType<typeof parseHostedCampaignPlan>): string {
+  const paths = new Set(plan.children.flatMap(({ environment }) => {
+    const path = environment.DISCORD_E2E_SLA_CLOCK_PREFLIGHT_INPUT;
+    return path === undefined ? [] : [path];
+  }));
+  if (paths.size !== 1) {
+    throw new Error("Hosted campaign children require one exact clock preflight proof path");
+  }
+  return [...paths][0]!;
 }
 
 export async function readPrivateHostedCampaignPlan(path: string): Promise<unknown> {
@@ -246,6 +267,7 @@ async function main(): Promise<void> {
       },
       now: Date.now,
       readAdmission: readPrivateHostedCampaignPlan,
+      readClockPreflightProof: readPrivateHostedCampaignPlan,
       readBindings: readPrivateHostedCampaignPlan,
       readDefinition: readPrivateHostedCampaignPlan,
       readPlan: readPrivateHostedCampaignPlan,
