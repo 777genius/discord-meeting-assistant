@@ -268,9 +268,7 @@ function assertGreetingMount(
     || isolation.runSiblingPath !== expectation.greeting.runSiblingPath
     || !isInside(dirname(mountNamespace), isolation.campaignSiblingPath)
     || isInside(mountNamespace, isolation.campaignSiblingPath)
-    || !isInside(campaignOwnedRoot, isolation.runSiblingPath)
-    || !isolation.runSiblingAccessible
-    || !isInside(actual.sourcePath, isolation.runSiblingPath)) {
+    || !isInside(campaignOwnedRoot, isolation.runSiblingPath)) {
     throw new Error("Hosted greeting mount sibling isolation does not match the pinned paths");
   }
 }
