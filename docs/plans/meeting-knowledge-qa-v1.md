@@ -12,8 +12,9 @@ Context, voice transport, or model providers to the Meeting Knowledge domain:
 
 1. **Trusted evidence baseline** - a final transcript can prove its source,
    sealed human roster, producer semantics, and current final Discord projection.
-2. **Local Final Reply** - an authorized participant replies to Botik's current
-   final summary/transcript message and receives one locally grounded answer.
+2. **Memory-backed Final Reply** - an authorized participant replies to Botik's
+   current final summary/transcript message and receives one retrieval-grounded
+   answer without placing the whole transcript in the answer prompt.
 3. **Same-room historical memory** - accepted human transcript turns are indexed
    through the official Infinity Context TypeScript SDK; search results are only
    candidates and are locally rehydrated and reauthorized before generation.
@@ -44,9 +45,9 @@ reliability/security/E2E, and simplicity/DRY.
 - A non-reversible requester hash cannot support authorization after restart.
   The adapter therefore keeps a short-lived opaque authorization principal
   reference and a separate keyed dedupe subject.
-- Local Final Reply does not build a selector/window/checkpoint retrieval system.
-  It sends the complete bounded current transcript in one grounded-answer call
-  or returns `unsupported_size`; it never answers from a prefix.
+- Final Reply is retrieval-first even for the current meeting. The whole
+  transcript is never the normal answer prompt: Infinity locates candidates and
+  Meeting Knowledge locally rehydrates exact canonical turns before generation.
 - Discord delivery authorizes exactly one create attempt per answer effect. Once
   request bytes may have crossed the boundary, recovery reconciles and never
   performs another create.
@@ -113,10 +114,12 @@ Every new source file is fail-closed in the architecture dependency model.
 
 ### Capability-specific ports
 
-Local Final Reply uses only:
+Memory-backed Final Reply uses only:
 
 - `FinalReplyEvidencePort` - loads an exact current-final authoritative snapshot
-  and later rehydrates historical candidate references.
+  and rehydrates opaque candidate references into canonical turns.
+- `MemoryEvidenceRetriever` - a consumer-owned application port returning only
+  opaque evidence-block references, coverage metadata, and index generation.
 - `QuestionAuthorizationPort` - produces fresh, bounded authorization
   observations from the opaque principal reference.
 - `QuestionAdmissionCommitPort` - conditionally commits dedupe, rate reservation,
@@ -179,7 +182,7 @@ human-evidence eligibility; it does not duplicate normalization rules.
 - cross-repository contract fixtures and digests are generated from one canonical
   schema and consumed by both repositories.
 
-## Phase 1 - Local Final Reply
+## Phase 1 - Memory-backed Final Reply
 
 ### Product admission
 
@@ -253,36 +256,36 @@ add a source-owned transition ADR and versioned facts; it cannot silently mutate
 these fields. During any future R1/F1 to R2/F2 transition, zero eligible current
 projection is safer than a mixed binding.
 
-### Adaptive bounded grounding
+### Retrieval-first bounded grounding
 
-A long context window is capacity, not proof of recall. The application builds
-one explicit, persisted `GroundingPlan` before provider work:
+A long context window is capacity, not a memory design. Every answer builds one
+explicit, persisted `GroundingPlan` before provider work:
 
 ```text
-current_complete     # one complete current transcript
-focused_retrieval    # bounded same-room candidates, locally rehydrated
-exhaustive_coverage  # every relevant block visited before synthesis
+focused_retrieval    # bounded current/same-room candidates, locally rehydrated
+exhaustive_coverage  # every authorized block visited before synthesis
 ```
 
-`current_complete` is the Local Final Reply baseline. All eligible human turns
-from the bound current transcript become question-local opaque evidence IDs and
-are serialized in canonical order. Before the provider call, the production
-adapter computes exact request bytes and model-token usage against the pinned
-runtime/model capability. The direct path is admitted only below a separately
-benchmarked safe-input budget, leaving explicit room for instructions, the
-question, reasoning, structured output, and model-limit drift. If the complete
-request does not fit, it returns localized `unsupported_size`; it never uses a
-prefix, silent truncation, or summary as evidence.
+`focused_retrieval` is the default for current and historical questions. The
+application creates a bounded query plan (original question plus at most a small
+configured number of deterministic/model-assisted subqueries), searches only
+the authorized keyed room scope, deduplicates candidate block IDs, expands
+bounded adjacent blocks, and applies a locally qualified reranker. Infinity
+returns locators, never evidence. Every selected block is reauthorized and
+rehydrated from the canonical local transcript before it enters the generator.
 
-After Infinity serving is qualified, a focused question may add a small
-`priorityEvidenceIds` section before the complete current transcript. Infinity
-only suggests the IDs; every priority turn is locally rehydrated. The complete
-transcript stays present, so a retrieval miss cannot remove current-meeting
-evidence. The priority section is a relevance hint, never separate authority.
+The grounded-answer prompt contains only the question, policy, compact speaker/
+time metadata, and the selected canonical evidence. It never contains the whole
+transcript, a prefix of it, the generated summary as authority, or Infinity's
+returned snippets. Exact input bytes/tokens and reserved output headroom are
+checked against the pinned answer profile before the provider call.
 
-`focused_retrieval` is used for historical same-room questions whose complete
-source set cannot fit. It passes only locally rehydrated evidence blocks and
-honestly abstains when retrieval coverage is insufficient.
+Serving requires `appliedIndexGeneration == boundTranscriptGeneration` for the
+current meeting and a qualified retrieval result. If indexing is pending,
+unavailable, stale, or below the measured recall/admission threshold, the bot
+returns a fixed localized `memory_processing`, `memory_unavailable`, or
+`insufficient_evidence` outcome. It does not silently fall back to a giant local
+prompt or answer from partial remote state.
 
 `exhaustive_coverage` is selected for counts, absence/universal claims,
 exhaustive lists, broad summaries, or questions requiring comparison across
@@ -431,8 +434,8 @@ exists but is not published to npm. Before production dependency activation:
 - fail startup if the required capability/version attestation is absent.
 
 No custom HTTP adapter is a fallback. If deterministic mutation reconciliation or
-verified deletion cannot be implemented through the official SDK, shadow
-activation stays blocked and Local Final Reply remains fully operational.
+verified deletion cannot be implemented through the official SDK, memory-backed
+answering stays disabled and replies return the fixed localized unavailable state.
 
 ### Derived data topology
 
@@ -495,26 +498,28 @@ Before candidate text reaches the generator, Meeting Knowledge:
    current desired generation;
 4. rejects stale, deleted, duplicate, missing, cross-room, automation, or unknown
    candidates;
-5. deterministically caps and orders historical evidence within the provider
-   budget without removing current-meeting evidence.
+5. deterministically caps and orders canonical evidence within the provider
+   budget.
 
-The same grounded-answer contract and validator serve Local Final Reply and
-historical memory. For a bounded current meeting, locally rehydrated Infinity
-hits may only prioritize evidence while the complete transcript stays present.
-For historical queries, focused retrieval uses hybrid lexical/vector candidates,
-bounded query decomposition, deterministic dedupe/neighbor expansion, and a
-reranking policy qualified on the frozen corpus. Infinity outage, partial
-backlog, or an unqualified response falls back to complete current local evidence
-when it fits; it never uses a partial/stale remote cache as authority.
-Historical-only questions honestly abstain when retrieval is not safe or
-available. Exhaustive questions route to `exhaustive_coverage`, never to top-k.
+The same grounded-answer contract and validator serve current and historical
+memory. Focused retrieval uses hybrid lexical/vector candidates, bounded query
+decomposition, deterministic dedupe/neighbor expansion, and a reranking policy
+qualified on the frozen corpus. Infinity outage, partial backlog, stale index,
+or an unqualified result yields a fixed honest state; no full-transcript prompt
+or partial/stale remote text is used as fallback. Exhaustive questions route to
+`exhaustive_coverage`, never to top-k.
+
+`exhaustive_coverage` enumerates the complete authorized local block ledger,
+processes every block with bounded evidence-only extraction, persists a coverage
+bitmap and generation fence, and hierarchically reduces only structured
+propositions. Before final synthesis, every cited turn is rehydrated again from
+canonical local state. A missing/stale block, exhausted attempt budget, or
+generation change prevents an answer. Thus a two-hour meeting is never one giant
+prompt, while global/count/all/absence questions still have completeness proof.
 
 Two-hour admission is initially disabled independently from shorter questions.
-It is enabled only for a pinned profile that passes both the complete-context
-position suite and, once available, the Infinity-priority comparison. If direct
-complete context misses the quality gate, the system waits for qualified
-priority retrieval rather than lowering the gate or silently serving weaker
-answers.
+It is enabled only after focused retrieval passes positional recall gates and
+exhaustive coverage proves a complete block bitmap on the pinned profile.
 
 ## Phase 4 - Grounded voice reuse and voice E2E
 
@@ -596,8 +601,8 @@ runbook.
   start, 10%, 25%, middle, 75%, 90%, and end; adds near-duplicate distractors,
   distant corrections, contradictions, silence/noise artifacts, overlaps,
   RU/EN/mixed speech, and multi-hop questions spanning distant sections;
-- comparative two-hour runs for `current_complete`, complete-plus-priority,
-  focused retrieval, and exhaustive coverage. Retain measured token count,
+- comparative two-hour runs for focused retrieval query/rerank variants and
+  exhaustive coverage. Retain measured token count,
   latency, cost, peak memory, retrieval recall, citation validity, entailment,
   supported-answer recall, and abstention rather than merely proving that the
   request fit the model context;
@@ -648,12 +653,13 @@ project, or production transcript is a qualification target.
 - capability-less/legacy/unknown producers remain knowledge-ineligible;
 - canonical contract fixtures agree across Craig and Meeting Platform.
 
-### Local Final Reply
+### Memory-backed Final Reply
 
 - only exact current-final replies are admitted;
 - unauthorized or stale work reveals no transcript content;
-- complete bounded current human transcript reaches one generator call with
-  measured safe token headroom rather than only a byte limit;
+- the whole transcript never reaches the answer generator; only locally
+  rehydrated, authorized evidence selected by a generation-current memory index
+  is admitted within measured token headroom;
 - invalid/unsupported claims abstain; global/exhaustive claims abstain until the
   exhaustive path is qualified; every published claim has valid locally
   rehydrated citations;
@@ -670,7 +676,8 @@ project, or production transcript is a qualification target.
 - focused retrieval meets its pre-registered gold-evidence recall gate on
   ordinary and two-hour RU/EN/mixed meetings; exhaustive questions never use
   top-k as proof of completeness;
-- outage falls back locally; deletion drains with serving disabled;
+- outage/stale indexing returns a fixed localized state without a full-transcript
+  fallback; deletion drains with serving disabled;
 - local source remains authoritative at every boundary.
 
 ### Grounded voice and existing voice behavior
@@ -684,9 +691,9 @@ project, or production transcript is a qualification target.
 
 ### Two-hour answer quality
 
-- every admitted two-hour request fits the measured safe-input budget or routes
-  to a qualified retrieval/coverage mode; otherwise it returns an honest bounded
-  abstention;
+- every admitted two-hour request uses qualified focused retrieval or exhaustive
+  coverage and fits the measured evidence budget; otherwise it returns an honest
+  bounded abstention/state response;
 - facts placed in every timeline stratum, distant corrections, contradictions,
   and multi-hop evidence pass the pre-registered retrieval and semantic gates;
 - production activation records the exact model/profile/tokenizer, limits,
@@ -702,7 +709,7 @@ that slice until its deterministic and required live evidence is retained.
 | Slice | Approximate changed lines | Risk |
 | --- | ---: | --- |
 | 0. Trusted evidence completion | 350-600 across two repositories | Medium |
-| 1. Local Final Reply | 1,350-1,900 | Medium-high |
+| 1. Memory-backed Final Reply | 1,350-1,900 | Medium-high |
 | 2. Infinity SDK qualification + shadow sync | 550-850 | Medium-high |
 | 3. Same-room retrieval + exhaustive coverage | 500-850 | High |
 | 4. Grounded voice + remaining voice E2E gaps | 400-700 | Medium-high |
@@ -721,12 +728,12 @@ Top implementation strategies considered:
    Approximately 3,150-5,100 lines. Preserves present ownership, adds only real
    capability ports, and allows independent rollback.
 
-2. **Local Reply first, defer Infinity and voice to unrelated plans**
+2. **Local full-transcript reply first, defer Infinity and voice**
 
    🎯 7/10  🛡️ 8/10  🧠 4/10
 
-   Approximately 1,550-2,300 lines now. Simpler, but fails the agreed end state
-   and invites incompatible retrieval/voice contracts later.
+   Approximately 1,550-2,300 lines now. Rejected because it repeatedly sends a
+   large prompt, weakens two-hour recall, and creates a temporary architecture.
 
 3. **Extract services/aggregates and build a generic memory workflow platform**
 
