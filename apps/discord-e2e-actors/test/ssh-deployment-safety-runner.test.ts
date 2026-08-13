@@ -56,6 +56,7 @@ function serviceExpectation(
     component,
     composeProject,
     composeService,
+    containerId: hex(digit),
     imageId: image(digit),
     repositoryDigest: digest,
     sourceRevision: revision(revisionDigit),

@@ -88,6 +88,7 @@ describe("hosted campaign release binding", () => {
           runSiblingPath: "/srv/e2e/campaigns/campaign-1/run-2",
           sourcePath: "/srv/e2e/campaigns",
         },
+        services: release.services,
       } } },
       meetingPlatformRevision: campaign.meetingPlatformRevision,
       planSha256: campaign.planSha256,

@@ -26,10 +26,10 @@ const expectation: HostedDeploymentSafetyExpectationV1 = {
     sourcePath: "/srv/e2e/campaigns",
   },
   services: [
-    { component: "craig", composeProject: "craig-meeting-e2e", composeService: "bot", imageId: image("1"), repositoryDigest: `registry.test/craig@sha256:${hex("7")}`, sourceRevision: revision("a") },
-    { component: "meetingPlatform", composeProject: "discord-meeting-assistant", composeService: "meeting-platform", imageId: image("2"), repositoryDigest: `registry.test/meetingPlatform@sha256:${hex("7")}`, sourceRevision: revision("b") },
-    { component: "pipecat", composeProject: "discord-meeting-assistant", composeService: "pipecat-runtime", imageId: image("3"), repositoryDigest: `registry.test/pipecat@sha256:${hex("7")}`, sourceRevision: revision("c") },
-    { component: "subscriptionRuntime", composeProject: "discord-meeting-assistant", composeService: "subscription-runtime-sidecar", imageId: image("4"), repositoryDigest: `registry.test/subscriptionRuntime@sha256:${hex("7")}`, sourceRevision: revision("d") },
+    { component: "craig", composeProject: "craig-meeting-e2e", composeService: "bot", containerId: hex("1"), imageId: image("1"), repositoryDigest: `registry.test/craig@sha256:${hex("7")}`, sourceRevision: revision("a") },
+    { component: "meetingPlatform", composeProject: "discord-meeting-assistant", composeService: "meeting-platform", containerId: hex("2"), imageId: image("2"), repositoryDigest: `registry.test/meetingPlatform@sha256:${hex("7")}`, sourceRevision: revision("b") },
+    { component: "pipecat", composeProject: "discord-meeting-assistant", composeService: "pipecat-runtime", containerId: hex("3"), imageId: image("3"), repositoryDigest: `registry.test/pipecat@sha256:${hex("7")}`, sourceRevision: revision("c") },
+    { component: "subscriptionRuntime", composeProject: "discord-meeting-assistant", composeService: "subscription-runtime-sidecar", containerId: hex("4"), imageId: image("4"), repositoryDigest: `registry.test/subscriptionRuntime@sha256:${hex("7")}`, sourceRevision: revision("d") },
   ],
   sourceRoot: "/srv/e2e/source",
 };
@@ -143,6 +143,18 @@ describe("hosted deployment safety receipt", () => {
   });
 
   it.each([
+    ["craig", 0],
+    ["meetingPlatform", 1],
+    ["pipecat", 2],
+    ["subscriptionRuntime", 3],
+  ] as const)("rejects a %s container outside the pinned release plan", (_component, index) => {
+    const wrongContainer = snapshot();
+    wrongContainer.services[index] = { ...wrongContainer.services[index]!, containerId: hex("f") };
+    expect(() => receipt({ before: wrongContainer, after: structuredClone(wrongContainer) }))
+      .toThrow("identity does not match");
+  });
+
+  it.each([
     ["wrong source", (value: ReturnType<typeof snapshot>) => { value.greetingMount.sourcePath = "/srv/e2e/other"; }],
     ["read-only", (value: ReturnType<typeof snapshot>) => { Object.assign(value.greetingMount, { readOnly: true }); }],
     ["symlink", (value: ReturnType<typeof snapshot>) => { Object.assign(value.greetingMount, { sourceSymbolicLink: true }); }],
@@ -191,9 +203,9 @@ describe("hosted deployment safety receipt", () => {
   it("revalidates the exact deployment fingerprint before child spawn", () => {
     const admitted = receipt();
     expect(assertHostedDeploymentSafetyRevalidatedV1(admitted, receipt())).toEqual(admitted);
-    const restarted = snapshot();
-    restarted.services[1] = { ...restarted.services[1]!, containerId: hex("5"), containerStartedAt: "2026-08-13T09:02:00.000Z" };
-    const revalidated = receipt({ after: structuredClone(restarted), before: restarted });
+    const changedCommand = snapshot();
+    changedCommand.services[1] = { ...changedCommand.services[1]!, commandSha256: hex("5") };
+    const revalidated = receipt({ after: structuredClone(changedCommand), before: changedCommand });
     expect(() => assertHostedDeploymentSafetyRevalidatedV1(admitted, revalidated))
       .toThrow("changed after safety admission");
   });

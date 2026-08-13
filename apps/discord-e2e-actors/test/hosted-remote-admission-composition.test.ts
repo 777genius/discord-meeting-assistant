@@ -340,7 +340,8 @@ function tokenFile(
 function deploymentExpectation(): HostedDeploymentSafetyExpectationV1 {
   const service = (component: "craig" | "meetingPlatform" | "pipecat" | "subscriptionRuntime", digit: string, serviceName: string) => ({
     component, composeProject: component === "craig" ? "craig-meeting-e2e" : "discord-meeting-assistant",
-    composeService: serviceName, imageId: `sha256:${digit.repeat(64)}`,
+    composeService: serviceName, containerId: component === "meetingPlatform" ? containerId : digit.repeat(64),
+    imageId: `sha256:${digit.repeat(64)}`,
     repositoryDigest: `registry.test/${component}@sha256:${imageDigestSha256}`,
     sourceRevision: component === "meetingPlatform" ? revision : digit.repeat(40),
   });
@@ -364,7 +365,6 @@ function deploymentExpectation(): HostedDeploymentSafetyExpectationV1 {
 function deploymentReceipt(expectation: HostedDeploymentSafetyExpectationV1, generatedAt = now) {
   const services = expectation.services.map((value) => ({
     commandSha256: "9".repeat(64), ...value, composeConfigHash: "8".repeat(64),
-    containerId: value.component === "meetingPlatform" ? containerId : value.imageId.slice(7),
     containerStartedAt: "2026-08-13T09:00:00.000Z", networks: ["discord-meeting-e2e"],
     publishedPorts: [], testOnly: "true" as const,
   }));

@@ -151,7 +151,7 @@ export function createHostedCampaignReleaseConfig(
       runSiblingPath: `${campaignSource}/${definition.runIds[1]}`,
       sourcePath: definition.campaignRoot,
     },
-    services: release.services.map(({ containerId: _containerId, ...identity }) => identity),
+    services: release.services,
     sourceRoot: trust.sourceRoot,
   } as const;
   const ssh = {

@@ -101,6 +101,7 @@ export const hostedDeploymentSafetyExpectationV1Schema = z.object({
     component: componentSchema,
     composeProject: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,62}$/u),
     composeService: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,62}$/u),
+    containerId: containerIdSchema,
     imageId: imageIdSchema,
     repositoryDigest: repositoryDigestSchema,
     sourceRevision: sourceRevisionSchema,
@@ -220,6 +221,7 @@ function assertServices(
     const expected = expectedServices.get(actual.component);
     if (expected === undefined || actual.composeProject !== expected.composeProject
       || actual.composeService !== expected.composeService
+      || actual.containerId !== expected.containerId
       || actual.imageId !== expected.imageId
       || actual.repositoryDigest !== expected.repositoryDigest
       || actual.sourceRevision !== expected.sourceRevision) {
