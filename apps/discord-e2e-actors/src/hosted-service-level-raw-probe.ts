@@ -32,7 +32,7 @@ export interface HostedServiceLevelRawProbeCommands {
 }
 
 export interface HostedClockObserver {
-  sample(): Promise<{ readonly bootId: string; readonly epochMs: number; readonly monotonicNs: string }>;
+  sample(signal?: AbortSignal): Promise<{ readonly bootId: string; readonly epochMs: number; readonly monotonicNs: string }>;
 }
 
 const defaultCommands: HostedServiceLevelRawProbeCommands = {
@@ -88,7 +88,8 @@ export class LocalHostedClockObserver implements HostedClockObserver {
     this.#bootId = readLocalBootSessionId(dependencies);
   }
 
-  async sample() {
+  async sample(signal?: AbortSignal) {
+    signal?.throwIfAborted();
     return clockSampleSchema.parse({
       bootId: await this.#bootId,
       epochMs: this.#dependencies.now(),
@@ -166,20 +167,20 @@ export class SshHostedServiceLevelRawProbe {
     return databaseOutputSchema.parse(parseLastJsonLine(output));
   }
 
-  async collectClockCompletion(): Promise<HostedClockExchangeV2> {
-    return this.#collectClockExchange();
+  async collectClockCompletion(signal?: AbortSignal): Promise<HostedClockExchangeV2> {
+    return this.#collectClockExchange(signal);
   }
 
-  async collectClockPreflight(): Promise<HostedClockExchangeV2> {
-    return this.#collectClockExchange();
+  async collectClockPreflight(signal?: AbortSignal): Promise<HostedClockExchangeV2> {
+    return this.#collectClockExchange(signal);
   }
 
-  async #collectClockExchange(): Promise<HostedClockExchangeV2> {
-    const before = await this.#clockObserver.sample();
+  async #collectClockExchange(signal?: AbortSignal): Promise<HostedClockExchangeV2> {
+    const before = await this.#clockObserver.sample(signal);
     const output = await this.#commands.runCompose(this.#settings, "meeting-platform", [
       "node", "--input-type=commonjs", "-e", sourceClockBracketScript,
-    ]);
-    const after = await this.#clockObserver.sample();
+    ], signal);
+    const after = await this.#clockObserver.sample(signal);
     return {
       observer: { after, before },
       observerClockId: "local-actor-clock",

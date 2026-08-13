@@ -312,6 +312,32 @@ describe("SshDeploymentEvidenceProbe replay target safety", () => {
     expect(outcome).toBe("rejected");
   });
 
+  it("terminates the SSH child when the caller aborts and waits for cleanup", async () => {
+    const kill = vi.fn(() => true);
+    const child = fakeChildProcess(kill);
+    spawnMock.mockReturnValue(child);
+    const settings = parseSshDeploymentProbeOptions({
+      attestationFile: "/tmp/discord-e2e-attestations/run-1.json",
+      composeFile: "/srv/e2e/compose.yaml",
+      craigProjectName: "craig-meeting-e2e",
+      craigServiceName: "bot",
+      envFile: "/srv/e2e/source.env",
+      host: "fake-e2e-host",
+      mutationTarget: "test-only",
+      projectName: "discord-meeting-assistant",
+      sourceRoot: "/srv/e2e/source",
+      timeoutMs: 5_000,
+    });
+    const controller = new AbortController();
+    const result = runRemoteProbe(settings, ["true"], controller.signal);
+
+    controller.abort(new Error("campaign deadline expired"));
+    expect(kill).toHaveBeenCalledExactlyOnceWith("SIGTERM");
+    child.emit("close", 0, "SIGTERM");
+
+    await expect(result).rejects.toThrow("campaign deadline expired");
+  });
+
   it("rejects a non-allowlisted project before invoking a remote command", () => {
     const mutations: string[] = [];
     const commands = fakeCommands({ mutations });

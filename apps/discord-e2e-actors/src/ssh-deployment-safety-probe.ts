@@ -8,14 +8,15 @@ import {
 } from "./hosted-deployment-safety-receipt.js";
 
 export interface SshDeploymentSafetyProbeRunner {
-  readonly inspectDeployment: () => Promise<unknown>;
+  readonly inspectDeployment: (signal?: AbortSignal) => Promise<unknown>;
   readonly inspectMountIsolation: (
     sourcePath: string,
     campaignSiblingPath: string,
     runSiblingPath: string,
+    signal?: AbortSignal,
   ) => Promise<unknown>;
-  readonly observeHostNonceInContainer: (probeRoot: string, nonce: string) => Promise<string>;
-  readonly observeContainerNonceOnHost: (probeRoot: string, nonce: string) => Promise<string>;
+  readonly observeHostNonceInContainer: (probeRoot: string, nonce: string, signal?: AbortSignal) => Promise<string>;
+  readonly observeContainerNonceOnHost: (probeRoot: string, nonce: string, signal?: AbortSignal) => Promise<string>;
 }
 
 export interface SshDeploymentSafetyProbeOptions {
@@ -45,27 +46,32 @@ export class SshDeploymentSafetyProbe {
     this.#runner = runner;
   }
 
-  public async collect(): Promise<HostedDeploymentSafetyReceiptV1> {
-    const before = await this.#runner.inspectDeployment();
+  public async collect(signal?: AbortSignal): Promise<HostedDeploymentSafetyReceiptV1> {
+    signal?.throwIfAborted();
+    const before = await this.#runner.inspectDeployment(signal);
     const mountIsolation = await this.#runner.inspectMountIsolation(
       this.#options.expectation.greeting.sourcePath,
       this.#options.expectation.greeting.campaignSiblingPath,
       this.#options.expectation.greeting.runSiblingPath,
+      signal,
     );
     const probeRoot = `${this.#options.expectation.greeting.sourcePath}/.admission-probes`;
     const containerObservedHostNonce = await this.#runner.observeHostNonceInContainer(
       probeRoot,
       this.#options.hostNonce,
+      signal,
     );
     const hostObservedContainerNonce = await this.#runner.observeContainerNonceOnHost(
       probeRoot,
       this.#options.containerNonce,
+      signal,
     );
-    const after = await this.#runner.inspectDeployment();
+    const after = await this.#runner.inspectDeployment(signal);
     const mountIsolationAfter = await this.#runner.inspectMountIsolation(
       this.#options.expectation.greeting.sourcePath,
       this.#options.expectation.greeting.campaignSiblingPath,
       this.#options.expectation.greeting.runSiblingPath,
+      signal,
     );
     return createHostedDeploymentSafetyReceiptV1({
       evidence: mergeProbeEvidence(before, after, mountIsolation, mountIsolationAfter, {

@@ -31,18 +31,19 @@ export type HostedClockPreflightProducerConfig = z.infer<
 >;
 
 export interface HostedClockPreflightProbe {
-  collectClockPreflight(): Promise<unknown>;
+  collectClockPreflight(signal?: AbortSignal): Promise<unknown>;
 }
 
 export async function collectHostedClockPreflight(
   configValue: HostedClockPreflightProducerConfig,
   probe: HostedClockPreflightProbe,
+  signal?: AbortSignal,
 ): Promise<void> {
   const config = hostedClockPreflightProducerConfigSchema.parse(configValue);
   if (await privateHostedServiceLevelArtifactExists(config.outputPath)) {
     throw new Error("Hosted clock preflight output already exists and will not be replaced");
   }
-  const receipt = deriveHostedClockPreflightReceiptV2(await probe.collectClockPreflight());
+  const receipt = deriveHostedClockPreflightReceiptV2(await probe.collectClockPreflight(signal));
   await writeCreateOnlyPrivateHostedServiceLevelArtifact(
     config.outputPath,
     `${JSON.stringify(receipt, undefined, 2)}\n`,

@@ -16,6 +16,7 @@ export async function runDockerComposeProbe(
   options: SshDeploymentProbeSettings,
   service: "meeting-platform" | "postgres",
   args: readonly string[],
+  signal?: AbortSignal,
 ): Promise<string> {
   const compose = [
     "docker",
@@ -33,20 +34,22 @@ export async function runDockerComposeProbe(
     ...args,
   ];
   const command = `cd ${shellQuote(options.sourceRoot)} && ${compose.map(shellQuote).join(" ")}`;
-  return runSshProbe(options, command);
+  return runSshProbe(options, command, signal);
 }
 
 export async function runRemoteProbe(
   options: SshDeploymentProbeSettings,
   args: readonly string[],
+  signal?: AbortSignal,
 ): Promise<string> {
-  return runSshProbe(options, args.map(shellQuote).join(" "));
+  return runSshProbe(options, args.map(shellQuote).join(" "), signal);
 }
 
 export async function runDockerContainerProbe(
   options: SshDeploymentProbeSettings,
   containerId: string,
   args: readonly string[],
+  signal?: AbortSignal,
 ): Promise<string> {
   return runRemoteProbe(options, [
     "docker",
@@ -56,7 +59,7 @@ export async function runDockerContainerProbe(
     "/app/apps/meeting-platform",
     containerId,
     ...args,
-  ]);
+  ], signal);
 }
 
 export function parseLastJsonLine(output: string): unknown {
@@ -67,11 +70,12 @@ export function parseLastJsonLine(output: string): unknown {
   return JSON.parse(line) as unknown;
 }
 
-function runSshProbe(options: SshDeploymentProbeSettings, command: string): Promise<string> {
+function runSshProbe(options: SshDeploymentProbeSettings, command: string, signal?: AbortSignal): Promise<string> {
   return runProcess(
     "ssh",
     ["-o", "BatchMode=yes", "--", options.host, command],
     options.timeoutMs,
+    signal,
   );
 }
 
@@ -83,8 +87,10 @@ function runProcess(
   executable: string,
   args: readonly string[],
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
+    signal?.throwIfAborted();
     const child = spawn(executable, [...args], {
       env: sshProcessEnvironment(),
       stdio: ["ignore", "pipe", "pipe"],
@@ -98,6 +104,9 @@ function runProcess(
     const stopForSignal = (signal: NodeJS.Signals): void => {
       terminate(new EvidenceProbeInterruptedError(signal));
     };
+    const stopForAbort = (): void => {
+      terminate(signal?.reason instanceof Error ? signal.reason : new Error("Evidence probe aborted"));
+    };
     const finish = (settle: () => void): void => {
       if (settled) {
         return;
@@ -108,6 +117,7 @@ function runProcess(
       clearTimeout(hardStopTimer);
       process.off("SIGINT", stopForSignal);
       process.off("SIGTERM", stopForSignal);
+      signal?.removeEventListener("abort", stopForAbort);
       settle();
     };
     const terminate = (error: Error): void => {
@@ -131,6 +141,7 @@ function runProcess(
     }, timeoutMs);
     process.once("SIGINT", stopForSignal);
     process.once("SIGTERM", stopForSignal);
+    signal?.addEventListener("abort", stopForAbort, { once: true });
     child.stdout.on("data", (chunk: Buffer) => {
       outputBytes += chunk.byteLength;
       if (outputBytes > 16 * 1_024 * 1_024) {

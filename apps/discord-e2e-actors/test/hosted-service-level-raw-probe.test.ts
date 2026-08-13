@@ -131,6 +131,31 @@ describe("hosted service-level read-only raw probe", () => {
     await expect(new LocalHostedClockObserver({ ...dependencies, platform: "win32" }).sample())
       .rejects.toThrow("Unsupported clock observer platform");
   });
+
+  it("passes one cancellation signal through clock sampling and the SSH command", async () => {
+    const controller = new AbortController();
+    const observed: (AbortSignal | undefined)[] = [];
+    const observer: HostedClockObserver = { sample: async (signal) => {
+      observed.push(signal);
+      return { bootId: "observer-boot", epochMs: 10_000, monotonicNs: "10000000000" };
+    } };
+    const commands: HostedServiceLevelRawProbeCommands = {
+      runCompose: async (_settings, _service, _args, signal) => {
+        observed.push(signal);
+        return JSON.stringify({
+          after: { bootId: "source-boot", epochMs: 10_000, monotonicNs: "10000000000" },
+          before: { bootId: "source-boot", epochMs: 10_000, monotonicNs: "10000000000" },
+          sample: { bootId: "source-boot", epochMs: 10_000, monotonicNs: "10000000000" },
+        });
+      },
+      runRemote: async () => "",
+    };
+
+    await new SshHostedServiceLevelRawProbe(remote(), commands, observer)
+      .collectClockPreflight(controller.signal);
+
+    expect(observed).toEqual([controller.signal, controller.signal, controller.signal]);
+  });
 });
 
 function remote() {

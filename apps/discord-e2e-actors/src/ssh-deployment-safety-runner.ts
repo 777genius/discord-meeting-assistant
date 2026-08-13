@@ -127,19 +127,19 @@ export class ConcreteSshDeploymentSafetyProbeRunner implements SshDeploymentSafe
     this.#commands = commands;
   }
 
-  public async inspectDeployment(): Promise<unknown> {
+  public async inspectDeployment(signal?: AbortSignal): Promise<unknown> {
     const roots = {
-      deploy: await this.#inspectRoot(this.#expectation.deployRoot),
-      source: await this.#inspectRoot(this.#expectation.sourceRoot),
+      deploy: await this.#inspectRoot(this.#expectation.deployRoot, signal),
+      source: await this.#inspectRoot(this.#expectation.sourceRoot, signal),
     };
     const inspected = await Promise.all(this.#expectation.services.map(async (service) =>
-      this.#inspectService(service)));
+      this.#inspectService(service, signal)));
     const meetingPlatform = inspected.find(({ service }) => service.component === "meetingPlatform");
     if (meetingPlatform === undefined) {
       throw new Error("Deployment safety expectation has no Meeting Platform service");
     }
     return {
-      greetingMount: await this.#inspectGreetingMount(meetingPlatform.container),
+      greetingMount: await this.#inspectGreetingMount(meetingPlatform.container, signal),
       roots,
       services: inspected.map(({ snapshot }) => snapshot),
     };
@@ -149,9 +149,10 @@ export class ConcreteSshDeploymentSafetyProbeRunner implements SshDeploymentSafe
     sourcePath: string,
     campaignSiblingPath: string,
     runSiblingPath: string,
+    signal?: AbortSignal,
   ): Promise<unknown> {
     const meeting = this.#requiredService("meetingPlatform");
-    const { container } = await this.#inspectContainer(meeting);
+    const { container } = await this.#inspectContainer(meeting, signal);
     return {
       campaignSiblingAccessible: isExposedByMount(container.Mounts, campaignSiblingPath),
       campaignSiblingMounted: container.Mounts.some(({ Source }) => Source === campaignSiblingPath),
@@ -165,31 +166,31 @@ export class ConcreteSshDeploymentSafetyProbeRunner implements SshDeploymentSafe
     };
   }
 
-  public async observeHostNonceInContainer(probeRoot: string, nonce: string): Promise<string> {
-    const containerId = await this.#meetingContainerId();
+  public async observeHostNonceInContainer(probeRoot: string, nonce: string, signal?: AbortSignal): Promise<string> {
+    const containerId = await this.#meetingContainerId(signal);
     return (await this.#commands.runRemote(this.#settings, [
       "sh", "-ceu", hostToContainerNonceScript, "deployment-safety-host-nonce",
       containerId, probeRoot, this.#containerProbeRoot(probeRoot), nonce,
-    ])).trim();
+    ], signal)).trim();
   }
 
-  public async observeContainerNonceOnHost(probeRoot: string, nonce: string): Promise<string> {
-    const containerId = await this.#meetingContainerId();
+  public async observeContainerNonceOnHost(probeRoot: string, nonce: string, signal?: AbortSignal): Promise<string> {
+    const containerId = await this.#meetingContainerId(signal);
     return (await this.#commands.runRemote(this.#settings, [
       "sh", "-ceu", containerToHostNonceScript, "deployment-safety-container-nonce",
       containerId, probeRoot, this.#containerProbeRoot(probeRoot), nonce,
-    ])).trim();
+    ], signal)).trim();
   }
 
-  async #inspectRoot(path: string): Promise<unknown> {
+  async #inspectRoot(path: string, signal?: AbortSignal): Promise<unknown> {
     const resolvedPath = (await this.#commands.runRemote(this.#settings, [
       "sh", "-ceu", rootResolutionScript, "deployment-safety-root", path,
-    ])).trim();
+    ], signal)).trim();
     return { kind: "directory", requestedPath: path, resolvedPath, symbolicLink: false };
   }
 
-  async #inspectService(service: ServiceExpectation) {
-    const { container, image } = await this.#inspectContainer(service);
+  async #inspectService(service: ServiceExpectation, signal?: AbortSignal) {
+    const { container, image } = await this.#inspectContainer(service, signal);
     const labels = container.Config.Labels ?? {};
     const revision = sourceRevisionSchema.parse(
       image.Config.Labels?.["org.opencontainers.image.revision"],
@@ -222,21 +223,21 @@ export class ConcreteSshDeploymentSafetyProbeRunner implements SshDeploymentSafe
     };
   }
 
-  async #inspectContainer(service: ServiceExpectation) {
+  async #inspectContainer(service: ServiceExpectation, signal?: AbortSignal) {
     const ids = (await this.#commands.runRemote(this.#settings, [
       "docker", "ps", "--no-trunc", "--quiet",
       "--filter", `label=com.docker.compose.project=${service.composeProject}`,
       "--filter", `label=com.docker.compose.service=${service.composeService}`,
-    ])).trim().split("\n").filter(Boolean);
+    ], signal)).trim().split("\n").filter(Boolean);
     if (ids.length !== 1) {
       throw new Error(`Expected exactly one ${service.component} test container, found ${ids.length}`);
     }
     const containerId = parseDockerContainerId(ids[0]);
     const container = parseExactDockerInspection(dockerContainerSchema, JSON.parse(
-      await this.#commands.runRemote(this.#settings, ["docker", "inspect", "--type", "container", containerId]),
+      await this.#commands.runRemote(this.#settings, ["docker", "inspect", "--type", "container", containerId], signal),
     ));
     const image = parseExactDockerInspection(dockerImageSchema, JSON.parse(
-      await this.#commands.runRemote(this.#settings, ["docker", "image", "inspect", container.Image]),
+      await this.#commands.runRemote(this.#settings, ["docker", "image", "inspect", container.Image], signal),
     ));
     if (container.Id !== containerId || image.Id !== container.Image) {
       throw new Error(`Hosted ${service.component} immutable Docker identity changed during inspection`);
@@ -244,7 +245,7 @@ export class ConcreteSshDeploymentSafetyProbeRunner implements SshDeploymentSafe
     return { container, image };
   }
 
-  async #inspectGreetingMount(container: RawContainer): Promise<unknown> {
+  async #inspectGreetingMount(container: RawContainer, signal?: AbortSignal): Promise<unknown> {
     const expected = this.#expectation.greeting;
     const mount = container.Mounts.filter(({ Destination }) => Destination === expected.destinationPath);
     if (mount.length !== 1 || mount[0] === undefined) {
@@ -253,10 +254,10 @@ export class ConcreteSshDeploymentSafetyProbeRunner implements SshDeploymentSafe
     const [uid, gid, destinationSymbolicLink] = (await this.#commands.runRemote(this.#settings, [
       "docker", "exec", "-i", container.Id,
       "sh", "-ceu", destinationStatScript, "deployment-safety-destination", expected.destinationPath,
-    ])).trim().split("|");
+    ], signal)).trim().split("|");
     const sourceSymbolicLink = (await this.#commands.runRemote(this.#settings, [
       "sh", "-ceu", symbolicLinkStatScript, "deployment-safety-source", mount[0].Source,
-    ])).trim() === "true";
+    ], signal)).trim() === "true";
     return {
       containerGid: Number(gid),
       containerUid: Number(uid),
@@ -290,8 +291,8 @@ export class ConcreteSshDeploymentSafetyProbeRunner implements SshDeploymentSafe
     return service;
   }
 
-  async #meetingContainerId(): Promise<string> {
-    return (await this.#inspectContainer(this.#requiredService("meetingPlatform"))).container.Id;
+  async #meetingContainerId(signal?: AbortSignal): Promise<string> {
+    return (await this.#inspectContainer(this.#requiredService("meetingPlatform"), signal)).container.Id;
   }
 }
 
