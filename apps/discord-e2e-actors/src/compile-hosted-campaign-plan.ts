@@ -47,12 +47,12 @@ export async function readStablePrivateJson(path: string): Promise<unknown> {
     const after = await handle.stat();
     assertPrivateInput(after);
     if (!sameFileSnapshot(before, after) || Buffer.byteLength(contents, "utf8") !== before.size) {
-      throw new Error("Private campaign compiler input changed while reading");
+      throw new Error("Private campaign JSON input changed while reading");
     }
     try {
       return JSON.parse(contents) as unknown;
     } catch {
-      throw new Error("Private campaign compiler input is not valid JSON");
+      throw new Error("Private campaign JSON input is not valid JSON");
     }
   } finally {
     if (handle !== undefined) {
@@ -100,9 +100,9 @@ export async function compileHostedCampaignPlanCli(arguments_: readonly string[]
 function assertPrivateInput(status: Stats): void {
   if (!status.isFile() || status.nlink !== 1 || (status.mode & 0o777) !== 0o600
     || status.size < 2 || status.size > MAX_PRIVATE_INPUT_BYTES) {
-    throw new Error("Campaign compiler inputs must be single-link regular owned mode-0600 files of at most 1 MiB");
+    throw new Error("Private campaign JSON inputs must be single-link regular owned mode-0600 files of at most 1 MiB");
   }
-  assertOwnedByCurrentUser(status, "Campaign compiler input");
+  assertOwnedByCurrentUser(status, "Private campaign JSON input");
 }
 
 function assertPrivateOutputDirectory(status: Stats): void {

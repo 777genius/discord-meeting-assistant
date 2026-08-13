@@ -1,4 +1,4 @@
-import { chmod, lstat, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
+import { chmod, link, lstat, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -194,6 +194,15 @@ describe("run-hosted-campaign CLI", () => {
     await symlink(targetPath, planPath);
 
     await expect(readPrivateHostedCampaignPlan(planPath)).rejects.toMatchObject({ code: "ELOOP" });
+  });
+
+  it("rejects a hard-linked private campaign input", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "hosted-campaign-cli-"));
+    const planPath = join(directory, "plan.json");
+    await writeFile(planPath, JSON.stringify(plan()), { mode: 0o600 });
+    await link(planPath, join(directory, "plan-alias.json"));
+
+    await expect(readPrivateHostedCampaignPlan(planPath)).rejects.toThrow(/single-link/u);
   });
 
   it("rejects an empty or oversized private campaign plan before parsing", async () => {

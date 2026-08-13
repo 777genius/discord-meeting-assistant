@@ -1,11 +1,10 @@
-import { readFile } from "node:fs/promises";
-
 import {
   inspectHostedCampaignAdmission,
 } from "./hosted-campaign-admission.js";
 import { writeCreateOnlyAdmissionReceipt } from "./hosted-admission-receipt-store.js";
 import type { HostedCampaignRemoteAdmissionProbe } from "./hosted-campaign-remote-admission.js";
 import { createHostedCampaignProductionComposition } from "./hosted-campaign-production-composition.js";
+import { readStablePrivateJson } from "./compile-hosted-campaign-plan.js";
 
 export interface HostedAdmissionArguments {
   readonly bindingsPath: string;
@@ -77,10 +76,6 @@ async function runHostedCampaignAdmissionCli(
   }
 }
 
-async function readJson(path: string): Promise<unknown> {
-  return JSON.parse(await readFile(path, "utf8")) as unknown;
-}
-
 if (process.argv[1]?.replaceAll("\\", "/").endsWith("/run-hosted-campaign-admission.js") === true) {
   const controller = new AbortController();
   const abort = (): void => { controller.abort(new Error("Hosted campaign admission interrupted")); };
@@ -89,7 +84,7 @@ if (process.argv[1]?.replaceAll("\\", "/").endsWith("/run-hosted-campaign-admiss
   const production = createHostedCampaignProductionComposition();
   void runHostedCampaignAdmissionCli(process.argv.slice(2), {
     createRemoteAdmissionProbe: (input) => production.createInitialAdmissionProbe(input),
-    now: Date.now, readJson, writeReceipt: writeCreateOnlyAdmissionReceipt,
+    now: Date.now, readJson: readStablePrivateJson, writeReceipt: writeCreateOnlyAdmissionReceipt,
   }, controller.signal).catch((error: unknown) => {
     process.stderr.write(`Hosted campaign admission failed: ${error instanceof Error ? error.message : "unknown error"}\n`);
     process.exitCode = 1;

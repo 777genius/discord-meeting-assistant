@@ -2,7 +2,7 @@ import { chmod, lstat, mkdtemp, readFile, symlink, writeFile } from "node:fs/pro
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   compileHostedCampaignPlanCli,
@@ -80,6 +80,19 @@ describe("hosted campaign plan compiler CLI", () => {
     const symlinkPath = join(root, "symlink.json");
     await symlink(permissivePath, symlinkPath);
     await expect(readStablePrivateJson(symlinkPath)).rejects.toMatchObject({ code: "ELOOP" });
+  });
+
+  it("rejects a private input not owned by the current process user", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hosted-plan-owner-"));
+    const path = join(root, "input.json");
+    await writePrivateJson(path, definition());
+    const actualUid = (await lstat(path)).uid;
+    const getuid = vi.spyOn(process, "getuid").mockReturnValue(actualUid + 1);
+    try {
+      await expect(readStablePrivateJson(path)).rejects.toThrow(/owned by the current user/u);
+    } finally {
+      getuid.mockRestore();
+    }
   });
 
   it("accepts arguments in any order but rejects duplicates and relative paths", () => {

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { constants, type Stats } from "node:fs";
+import { constants } from "node:fs";
 import { link, lstat, open, rm, type FileHandle } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,6 +28,7 @@ import {
   validateHostedCampaignTrustedRuntimeEnvironment,
 } from "./hosted-campaign-process-adapter.js";
 import { createHostedCampaignProductionComposition } from "./hosted-campaign-production-composition.js";
+import { readStablePrivateJson } from "./compile-hosted-campaign-plan.js";
 
 export interface HostedCampaignCliDependencies {
   readonly assertAdmissionAudit: typeof assertAdmissionAuditMatchesInvocation;
@@ -135,34 +136,7 @@ function resolveClockPreflightPath(plan: ReturnType<typeof parseHostedCampaignPl
 }
 
 export async function readPrivateHostedCampaignPlan(path: string): Promise<unknown> {
-  let handle: FileHandle | undefined;
-  try {
-    handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-    const before = await handle.stat();
-    assertSafeHostedCampaignPlan(before);
-    const contents = await handle.readFile("utf8");
-    const after = await handle.stat();
-    assertSafeHostedCampaignPlan(after);
-    if (before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size
-      || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs
-      || Buffer.byteLength(contents, "utf8") !== before.size) {
-      throw new Error("Hosted campaign plan changed while reading");
-    }
-    return JSON.parse(contents) as unknown;
-  } finally {
-    if (handle !== undefined) {
-      await handle.close();
-    }
-  }
-}
-
-function assertSafeHostedCampaignPlan(status: Stats): void {
-  if (!status.isFile() || (status.mode & 0o777) !== 0o600 || status.size < 2 || status.size > 1024 * 1024) {
-    throw new Error("Hosted campaign plan must be a regular owned mode-0600 file of at most 1 MiB");
-  }
-  if (typeof process.getuid === "function" && status.uid !== process.getuid()) {
-    throw new Error("Hosted campaign plan must be owned by the current user");
-  }
+  return readStablePrivateJson(path);
 }
 
 export async function writeCreateOnlyHostedCampaignReceipt(
