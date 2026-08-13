@@ -95,7 +95,8 @@ describe("hosted Discord identity producer", () => {
     const accounts = ["botik-playback", "conversation-observer", "speaker-a", "speaker-b", "speaker-d", "sut", "sut"] as const;
     const roles = Object.fromEntries(names.map((name, index) => {
       const expected = expectation(roleIds[index], accounts[index], name === "botikPlayback" || name === "remotePlatformSut",
-        name === "remotePlatformSut" ? "/run/secrets/discord-sut-token" : undefined);
+        name === "remotePlatformSut" ? "/run/secrets/discord-sut-token"
+          : name === "botikPlayback" ? "/run/secrets/discord_bot_token" : undefined);
       const injected: DiscordRoleIdentityProbe = { probe: async () => identity(expected) };
       return [name, { expectation: expected, probe: injected }];
     })) as Parameters<typeof produceHostedDiscordIdentityReceiptV1>[0]["roles"];
@@ -136,7 +137,7 @@ describe("hosted Discord identity producer", () => {
       } } };
     };
     const roles = {
-      botikPlayback: delayedRole(roleIds[0], accounts[0], true),
+      botikPlayback: delayedRole(roleIds[0], accounts[0], true, "/run/secrets/discord_bot_token"),
       localObserver: delayedRole(roleIds[1], accounts[1]),
       localSpeakerA: delayedRole(roleIds[2], accounts[2]),
       localSpeakerB: delayedRole(roleIds[3], accounts[3]),

@@ -124,7 +124,8 @@ function receipt(): DiscordIdentityReceiptV1 {
 
 function identities(): DiscordIdentityRolesV1 {
   return {
-    botikPlayback: identity(ids.botikPlayback, "botik-playback", "remote-deployment-secret"),
+    botikPlayback: identity(ids.botikPlayback, "botik-playback", "remote-deployment-secret",
+      "/run/secrets/discord_bot_token"),
     localObserver: identity(ids.localObserver, "conversation-observer"),
     localSpeakerA: identity(ids.localSpeakerA, "speaker-a"),
     localSpeakerB: identity(ids.localSpeakerB, "speaker-b"),

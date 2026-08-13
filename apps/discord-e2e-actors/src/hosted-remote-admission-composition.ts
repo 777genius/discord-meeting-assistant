@@ -32,6 +32,7 @@ import {
   HostedRemoteDiscordIdentityProbe,
   type BoundedRemoteContainerProcessPort,
 } from "./hosted-remote-discord-identity-probe.js";
+import { HostedRemoteCraigIdentityProbe } from "./hosted-remote-craig-identity-probe.js";
 
 const sha256Schema = z.string().regex(/^[a-f\d]{64}$/u);
 const sourceRevisionSchema = z.string().regex(/^(?:[a-f\d]{40}|[a-f\d]{64})$/u);
@@ -78,7 +79,12 @@ export interface HostedRemoteAdmissionCompositionConfig {
     readonly producer: HostedDeploymentSafetyReceiptProducer;
   };
   readonly discord: Omit<HostedDiscordIdentityReceiptInput, "roles"> & Readonly<{
-    roles: Omit<HostedDiscordIdentityReceiptInput["roles"], "remotePlatformSut">;
+    roles: Omit<HostedDiscordIdentityReceiptInput["roles"], "botikPlayback" | "remotePlatformSut">;
+  }>;
+  readonly craig: Readonly<{
+    containerId: string;
+    imageDigestSha256: string;
+    sourceRevision: string;
   }>;
   readonly meetingPlatformRevision: string;
   readonly planSha256: string;
@@ -162,6 +168,21 @@ function createDiscordIdentityInput(
     ...config.discord,
     roles: {
       ...config.discord.roles,
+      botikPlayback: {
+        expectation: {
+          applicationId: HOSTED_CAMPAIGN_TARGET.botikApplicationId,
+          tokenFile: {
+            account: "botik-playback",
+            ownerUid: 10_001,
+            path: "/run/secrets/discord_bot_token",
+            scope: "remote-deployment-secret",
+          },
+        },
+        probe: new HostedRemoteCraigIdentityProbe(config.remoteContainerProcess, {
+          ...config.craig,
+          host: binding.host,
+        }),
+      },
       remotePlatformSut: {
         expectation: {
           applicationId: HOSTED_CAMPAIGN_TARGET.sutApplicationId,
@@ -212,6 +233,7 @@ function validateComposition(
     voiceChannelId: target.voiceChannelId,
   };
   const meetingService = expectation.services.find(({ component }) => component === "meetingPlatform");
+  const craigService = expectation.services.find(({ component }) => component === "craig");
   if (expectation.campaignId !== campaignId
     || meetingService?.sourceRevision !== meetingPlatformRevision
     || discord.binding.campaignId !== campaignId
@@ -225,7 +247,9 @@ function validateComposition(
     || voicetext.binding.host !== target.host
     || voicetext.binding.containerId !== discord.binding.containerId
     || voicetext.binding.imageDigestSha256 !== discord.binding.imageDigestSha256
-    || !meetingService.repositoryDigest.endsWith(`@sha256:${discord.binding.imageDigestSha256}`)) {
+    || !meetingService.repositoryDigest.endsWith(`@sha256:${discord.binding.imageDigestSha256}`)
+    || craigService?.sourceRevision !== value.craig.sourceRevision
+    || !craigService.repositoryDigest.endsWith(`@sha256:${value.craig.imageDigestSha256}`)) {
     throw new Error("Hosted remote admission composition is not bound to the exact private deployment and plan");
   }
   return Object.freeze({ ...value, campaignId, clock, meetingPlatformRevision, planSha256,

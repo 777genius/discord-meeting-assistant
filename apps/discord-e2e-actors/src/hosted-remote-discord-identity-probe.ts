@@ -21,6 +21,12 @@ export interface HostedRemoteDiscordProbeBinding {
   readonly sourceRevision: string;
 }
 
+export interface TrustedRemoteContainerTarget {
+  readonly composeProject: string;
+  readonly composeService: string;
+  readonly workingDirectory: string;
+}
+
 export interface BoundedRemoteContainerProcessResult {
   readonly exitCode: number | null;
   readonly signal: NodeJS.Signals | null;
@@ -40,6 +46,7 @@ export interface BoundedRemoteContainerProcessPort {
     binding: HostedRemoteDiscordProbeBinding;
     maximumOutputBytes: number;
     signal?: AbortSignal;
+    target: TrustedRemoteContainerTarget;
     timeoutMs: number;
   }>): Promise<BoundedRemoteContainerProcessResult>;
 }
@@ -96,6 +103,11 @@ export class HostedRemoteDiscordIdentityProbe implements DiscordRoleIdentityProb
       binding: this.#binding,
       maximumOutputBytes,
       ...(signal === undefined ? {} : { signal }),
+      target: {
+        composeProject: "discord-meeting-assistant",
+        composeService: "meeting-platform",
+        workingDirectory: "/app/apps/meeting-platform",
+      },
       timeoutMs: this.timeoutMs,
     });
     assertSuccessfulProcess(result);

@@ -37,6 +37,8 @@ describe("hosted remote Voicetext canary runner", () => {
       },
       maximumOutputBytes: 1_048_576,
       signal,
+      target: { composeProject: "discord-meeting-assistant", composeService: "meeting-platform",
+        workingDirectory: "/app/apps/meeting-platform" },
       timeoutMs: 20_000,
     });
     expect(request?.args.slice(0, 2)).toEqual([

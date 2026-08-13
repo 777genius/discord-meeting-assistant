@@ -34,10 +34,10 @@ describe("hosted remote admission composition", () => {
     expect(result.missingSections).toEqual([]);
     expect(result.readiness).toMatchObject({ campaignId, planSha256 });
     expect(calls).toEqual([
-      "deployment", "discord:botikPlayback", "discord:localObserver", "discord:localSpeakerA",
-      "discord:localSpeakerB", "discord:localSpeakerD", "discord:localSut", "discord:remotePlatformSut", "voicetext",
-      "discord:botikPlayback", "discord:localObserver", "discord:localSpeakerA",
-      "discord:localSpeakerB", "discord:localSpeakerD", "discord:localSut", "discord:remotePlatformSut", "clock",
+      "deployment", "discord:localObserver", "discord:localSpeakerA",
+      "discord:localSpeakerB", "discord:localSpeakerD", "discord:localSut", "discord:remoteCraig", "discord:remotePlatformSut", "voicetext",
+      "discord:localObserver", "discord:localSpeakerA",
+      "discord:localSpeakerB", "discord:localSpeakerD", "discord:localSut", "discord:remoteCraig", "discord:remotePlatformSut", "clock",
       "deployment",
     ]);
     expect(JSON.stringify(result)).not.toContain(secret);
@@ -236,7 +236,6 @@ describe("hosted remote admission composition", () => {
 function composition(calls: string[], time: () => number = () => now): HostedRemoteAdmissionCompositionConfig {
   const expectation = deploymentExpectation();
   const ids = {
-    botikPlayback: [HOSTED_CAMPAIGN_TARGET.botikApplicationId, tokenFile("botik-playback", true)],
     localObserver: [HOSTED_CAMPAIGN_TARGET.observerApplicationId, tokenFile("conversation-observer")],
     localSpeakerA: [HOSTED_CAMPAIGN_TARGET.speakerAApplicationId, tokenFile("speaker-a")],
     localSpeakerB: [HOSTED_CAMPAIGN_TARGET.speakerBApplicationId, tokenFile("speaker-b")],
@@ -256,6 +255,7 @@ function composition(calls: string[], time: () => number = () => now): HostedRem
     imageDigestSha256, planSha256, sourceRevision: revision } as const;
   return {
     campaignId,
+    craig: { containerId: "1".repeat(64), imageDigestSha256, sourceRevision: "1".repeat(40) },
     clock: { collectClockPreflight: async () => { calls.push("clock"); return clockExchange(time()); },
       maximumClockSkewBoundMs: 250 },
     deployment: {
@@ -273,13 +273,22 @@ function composition(calls: string[], time: () => number = () => now): HostedRem
     meetingPlatformRevision: revision,
     planSha256,
     remoteContainerProcess: { execute: async ({ args, binding: remoteBinding }) => {
-      calls.push("discord:remotePlatformSut");
+      const isCraig = args.includes("/app/apps/bot/dist/e2e/discordIdentityProofCli.js");
+      calls.push(isCraig ? "discord:remoteCraig" : "discord:remotePlatformSut");
       const value = (flag: string): string => {
         const index = args.indexOf(flag);
         const result = args[index + 1];
         if (index < 0 || result === undefined) {throw new Error(`missing ${flag}`);}
         return result;
       };
+      if (isCraig) {
+        return { exitCode: 0, signal: null, stderr: "", timedOut: false,
+          stdout: `${JSON.stringify({ bot: { bot: true, id: HOSTED_CAMPAIGN_TARGET.botikApplicationId },
+            ok: true, schemaVersion: 1,
+            secret: { gid: 10_001, mode: "0400", path: "/run/secrets/discord_bot_token", stable: true, uid: 10_001 },
+            target: { channelIds: [HOSTED_CAMPAIGN_TARGET.voiceChannelId, HOSTED_CAMPAIGN_TARGET.publicationChannelId],
+              guildId: HOSTED_CAMPAIGN_TARGET.guildId, testOnly: true } })}\n` };
+      }
       return {
         exitCode: 0,
         signal: null,

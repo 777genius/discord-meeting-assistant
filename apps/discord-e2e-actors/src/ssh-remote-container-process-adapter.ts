@@ -8,9 +8,6 @@ import type {
   HostedRemoteDiscordProbeBinding,
 } from "./hosted-remote-discord-identity-probe.js";
 
-const composeProject = "discord-meeting-assistant";
-const composeService = "meeting-platform";
-const containerWorkingDirectory = "/app/apps/meeting-platform";
 const containerFormat = `{"composeProject":{{json (index .Config.Labels "com.docker.compose.project")}},"composeService":{{json (index .Config.Labels "com.docker.compose.service")}},"containerId":{{json .Id}},"imageId":{{json .Image}},"running":{{json .State.Running}},"testOnly":{{json (index .Config.Labels "e2e.test-only")}}}`;
 const imageFormat = `{"imageId":{{json .Id}},"repositoryDigests":{{json .RepoDigests}},"sourceRevision":{{json (index .Config.Labels "org.opencontainers.image.revision")}}}`;
 
@@ -19,9 +16,12 @@ const containerIdSchema = z.string().regex(/^[a-f\d]{64}$/u);
 const imageIdSchema = z.string().regex(/^sha256:[a-f\d]{64}$/u);
 const repositoryDigestSchema = z.string().regex(/^[^\s@]+@sha256:[a-f\d]{64}$/u);
 const sourceRevisionSchema = z.string().regex(/^(?:[a-f\d]{40}|[a-f\d]{64})$/u);
+const composeCoordinateSchema = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,62}$/u);
+const workingDirectorySchema = z.string().regex(/^\/[A-Za-z0-9._/-]+$/u)
+  .refine((value) => !value.includes("//") && !value.includes("/../") && !value.endsWith("/.."));
 const containerOutputSchema = z.object({
-  composeProject: z.literal(composeProject),
-  composeService: z.literal(composeService),
+  composeProject: composeCoordinateSchema,
+  composeService: composeCoordinateSchema,
   containerId: containerIdSchema,
   imageId: imageIdSchema,
   running: z.literal(true),
@@ -83,7 +83,7 @@ export class SshRemoteContainerProcessAdapter implements BoundedRemoteContainerP
       await run(["docker", "inspect", "--format", containerFormat, request.binding.containerId]),
       "container",
     ));
-    assertContainerBinding(container, request.binding);
+    assertContainerBinding(container, request.binding, request.target);
 
     const image = imageOutputSchema.parse(parseSuccessfulJson(
       await run(["docker", "image", "inspect", "--format", imageFormat, container.imageId]),
@@ -92,7 +92,7 @@ export class SshRemoteContainerProcessAdapter implements BoundedRemoteContainerP
     assertImageBinding(image, container.imageId, request.binding);
 
     return run([
-      "docker", "exec", "-i", "-w", containerWorkingDirectory,
+      "docker", "exec", "-i", "-w", request.target.workingDirectory,
       container.containerId,
       ...request.args,
     ]);
@@ -102,9 +102,12 @@ export class SshRemoteContainerProcessAdapter implements BoundedRemoteContainerP
 function assertContainerBinding(
   container: z.infer<typeof containerOutputSchema>,
   binding: HostedRemoteDiscordProbeBinding,
+  target: Parameters<BoundedRemoteContainerProcessPort["execute"]>[0]["target"],
 ): void {
-  if (container.containerId !== binding.containerId) {
-    throw new Error("Running container ID does not match the requested binding");
+  if (container.containerId !== binding.containerId
+    || container.composeProject !== target.composeProject
+    || container.composeService !== target.composeService) {
+    throw new Error("Running container ID or trusted Compose target does not match the requested binding");
   }
 }
 
@@ -146,6 +149,9 @@ function assertRequestBounds(request: Parameters<BoundedRemoteContainerProcessPo
   z.number().int().positive().parse(request.maximumOutputBytes);
   z.number().int().positive().parse(request.timeoutMs);
   z.array(z.string().min(1).refine((value) => !value.includes("\0"))).min(1).parse(request.args);
+  composeCoordinateSchema.parse(request.target.composeProject);
+  composeCoordinateSchema.parse(request.target.composeService);
+  workingDirectorySchema.parse(request.target.workingDirectory);
 }
 
 function byteLength(result: BoundedRemoteContainerProcessResult): number {

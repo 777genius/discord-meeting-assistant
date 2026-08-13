@@ -57,6 +57,11 @@ export class HostedRemoteVoicetextCanaryRunnerV1 implements VoicetextCanaryRunne
       },
       maximumOutputBytes,
       ...(input.signal === undefined ? {} : { signal: input.signal }),
+      target: {
+        composeProject: "discord-meeting-assistant",
+        composeService: "meeting-platform",
+        workingDirectory: "/app/apps/meeting-platform",
+      },
       timeoutMs: input.timeoutMs,
     });
     assertSuccessfulResult(result);

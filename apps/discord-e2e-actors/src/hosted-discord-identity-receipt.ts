@@ -52,8 +52,17 @@ const remotePlatformSutIdentitySchema = authenticatedApplicationSchema.superRefi
   }
 });
 
+const remoteCraigIdentitySchema = authenticatedApplicationSchema.superRefine((identity, context) => {
+  if (identity.tokenFile.account !== "botik-playback"
+    || identity.tokenFile.scope !== "remote-deployment-secret"
+    || identity.tokenFile.path !== "/run/secrets/discord_bot_token"
+    || identity.tokenFile.ownerUid !== 10_001) {
+    context.addIssue({ code: "custom", message: "Remote Craig identity has invalid token custody" });
+  }
+});
+
 const discordIdentityRolesV1Schema = z.object({
-  botikPlayback: authenticatedApplicationSchema,
+  botikPlayback: remoteCraigIdentitySchema,
   localObserver: authenticatedApplicationSchema,
   localSpeakerA: authenticatedApplicationSchema,
   localSpeakerB: authenticatedApplicationSchema,

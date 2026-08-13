@@ -50,7 +50,10 @@ describe("hosted remote Discord identity probe", () => {
         "--source-revision", binding.sourceRevision,
         "--json",
       ],
-      binding, maximumOutputBytes: 16_384, timeoutMs: 7_500,
+      binding, maximumOutputBytes: 16_384,
+      target: { composeProject: "discord-meeting-assistant", composeService: "meeting-platform",
+        workingDirectory: "/app/apps/meeting-platform" },
+      timeoutMs: 7_500,
     });
     expect(JSON.stringify(request)).not.toMatch(/token\.[A-Za-z\d]/u);
   });

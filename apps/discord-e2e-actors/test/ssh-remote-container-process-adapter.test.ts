@@ -15,6 +15,8 @@ const request = {
   args: ["/app/apps/meeting-platform/node_modules/.bin/tsx", "/app/apps/meeting-platform/src/run-hosted-discord-identity-probe.ts", "--json"],
   binding,
   maximumOutputBytes: 16_384,
+  target: { composeProject: "discord-meeting-assistant", composeService: "meeting-platform",
+    workingDirectory: "/app/apps/meeting-platform" },
   timeoutMs: 10_000,
 } as const;
 
@@ -61,6 +63,20 @@ describe("SSH remote container process adapter", () => {
     await expect(new SshRemoteContainerProcessAdapter({ execute }, () => 1_000).execute(request))
       .rejects.toThrow();
     expect(execute.mock.calls.some(([call]) => call.args[1] === "exec")).toBe(false);
+  });
+
+  it("uses only the caller-pinned Craig Compose target and working directory", async () => {
+    const execute = vi.fn<BoundedRemoteCommandPort["execute"]>()
+      .mockResolvedValueOnce(ok(containerJson({ composeProject: "craig-meeting-e2e", composeService: "bot" })))
+      .mockResolvedValueOnce(ok(imageJson()))
+      .mockResolvedValueOnce(ok("done\n"));
+    await new SshRemoteContainerProcessAdapter({ execute }, () => 1_000).execute({
+      ...request,
+      target: { composeProject: "craig-meeting-e2e", composeService: "bot", workingDirectory: "/app/apps/bot" },
+    });
+    expect(execute.mock.calls[2]?.[0].args).toEqual([
+      "docker", "exec", "-i", "-w", "/app/apps/bot", containerId, ...request.args,
+    ]);
   });
 
   it("shares the caller's timeout and output budgets across inspection and execution", async () => {
