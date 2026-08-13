@@ -101,15 +101,26 @@ describe("hosted Discord identity producer", () => {
       "1534231284467896512", "1533867700575670282", "1533227577286852649",
       "1533228054724346087", "1533873978417086474", "1533224474609057793",
     ] as const;
-    const names = ["botikPlayback", "localObserver", "localSpeakerA", "localSpeakerB", "localSpeakerD", "localSut"] as const;
     const accounts = ["botik-playback", "conversation-observer", "speaker-a", "speaker-b", "speaker-d", "sut"] as const;
-    const roles = Object.fromEntries(names.map((name, index) => {
-      const expected = expectation(roleIds[index], accounts[index], name === "botikPlayback");
-      return [name, { expectation: expected, probe: { probe: async () => {
+    const delayedRole = (
+      id: string,
+      account: DiscordRoleIdentityExpectation["tokenFile"]["account"],
+      remote = false,
+    ): { expectation: DiscordRoleIdentityExpectation; probe: DiscordRoleIdentityProbe } => {
+      const expected = expectation(id, account, remote);
+      return { expectation: expected, probe: { probe: async () => {
         currentTime = 170_000;
         return identity(expected);
-      } } }];
-    })) as Parameters<typeof produceHostedDiscordIdentityReceiptV1>[0]["roles"];
+      } } };
+    };
+    const roles = {
+      botikPlayback: delayedRole(roleIds[0], accounts[0], true),
+      localObserver: delayedRole(roleIds[1], accounts[1]),
+      localSpeakerA: delayedRole(roleIds[2], accounts[2]),
+      localSpeakerB: delayedRole(roleIds[3], accounts[3]),
+      localSpeakerD: delayedRole(roleIds[4], accounts[4]),
+      localSut: delayedRole(roleIds[5], accounts[5]),
+    };
 
     const receipt = await produceHostedDiscordIdentityReceiptV1({
       binding: { campaignId: "campaign-1", containerId: "platform-1", host: "test-host",
