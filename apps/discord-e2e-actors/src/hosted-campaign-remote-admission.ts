@@ -21,11 +21,6 @@ import {
   type VoicetextSemanticCanaryExpectationV1,
 } from "./hosted-voicetext-semantic-canary-receipt.js";
 import { HOSTED_CAMPAIGN_TARGET } from "./hosted-campaign-target.js";
-import {
-  type HostedCampaignSharedMountExpectationV1,
-  type HostedCampaignSharedMountReceiptV1,
-  verifyHostedCampaignSharedMountReceiptV1,
-} from "./hosted-campaign-shared-mount.js";
 
 const sha256Schema = z.string().regex(/^[a-f\d]{64}$/u);
 const instantSchema = z.iso.datetime({ offset: true });
@@ -54,18 +49,13 @@ const voicetextCanaryReferenceSchema = z.object({
 const clockPreflightReferenceSchema = z.object({
   kind: z.literal("hosted-clock-preflight-receipt"), proofId: sha256Schema, schemaVersion: z.literal(2),
 }).strict();
-const sharedMountReferenceSchema = z.object({
-  kind: z.literal("hosted-campaign-shared-mount"), receiptSha256: sha256Schema,
-  schemaVersion: z.literal(1),
-}).strict();
 
 export const hostedRemoteReadinessV1Schema = z.object({
   campaignId: z.string().min(1), clockPreflight: clockPreflightReferenceSchema,
   deploymentSafety: deploymentSafetyReferenceSchema, discordIdentity: discordIdentityReferenceSchema,
   expiresAt: instantSchema, kind: z.literal("hosted-remote-readiness"), persistence: z.literal("create-only"),
   planSha256: sha256Schema, probedAt: instantSchema, receiptSha256: sha256Schema,
-  schemaVersion: z.literal(1), sharedMount: sharedMountReferenceSchema,
-  voicetextCanary: voicetextCanaryReferenceSchema,
+  schemaVersion: z.literal(1), voicetextCanary: voicetextCanaryReferenceSchema,
 }).strict();
 
 export type HostedRemoteReadinessV1 = Readonly<z.infer<typeof hostedRemoteReadinessV1Schema>>;
@@ -85,7 +75,6 @@ interface HostedRemoteAdmissionEvidenceV1 {
   readonly discordIdentity: unknown;
   readonly kind: "hosted-remote-admission-evidence";
   readonly schemaVersion: 1;
-  readonly sharedMount: unknown;
   readonly voicetextCanary: unknown;
 }
 
@@ -93,10 +82,6 @@ interface HostedRemoteAdmissionEvidenceV1 {
 export interface HostedCampaignRemoteAdmissionProbe {
   readonly clockPreflightExpectation: Readonly<{
     maximumClockSkewBoundMs: number;
-  }>;
-  readonly sharedMountExpectation: Readonly<{
-    expectation: HostedCampaignSharedMountExpectationV1;
-    probeId: string;
   }>;
   readonly voicetextCanaryExpectation: Omit<
     VoicetextSemanticCanaryExpectationV1,
@@ -112,10 +97,10 @@ export type HostedRemoteAdmissionEvaluation = Readonly<{
 }>;
 
 export type HostedRemoteReadinessSection = "clockPreflight" | "deploymentSafety" |
-"discordIdentity" | "sharedMount" | "voicetextCanary";
+"discordIdentity" | "voicetextCanary";
 
 const readinessSections = [
-  "deploymentSafety", "sharedMount", "discordIdentity", "voicetextCanary", "clockPreflight",
+  "deploymentSafety", "discordIdentity", "voicetextCanary", "clockPreflight",
 ] as const satisfies readonly HostedRemoteReadinessSection[];
 
 export async function evaluateHostedRemoteAdmission(
@@ -136,12 +121,6 @@ export async function evaluateHostedRemoteAdmission(
     throw new Error("Hosted remote admission requires a safe evaluation time");
   }
   const deployment = verifyHostedDeploymentSafetyReceiptV1(evidence.deploymentSafety);
-  const sharedMount = verifyHostedCampaignSharedMountReceiptV1(
-    evidence.sharedMount,
-    probe.sharedMountExpectation.expectation,
-    nowEpochMs,
-    probe.sharedMountExpectation.probeId,
-  );
   const identity = verifyIdentity(evidence.discordIdentity);
   const canary = evaluateVoicetextSemanticCanaryReceiptV1(evidence.voicetextCanary, {
     ...probe.voicetextCanaryExpectation,
@@ -150,8 +129,8 @@ export async function evaluateHostedRemoteAdmission(
   });
   const clock = hostedClockPreflightReceiptV2Schema.parse(evidence.clockPreflight);
   assertClockPreflightExpectation(clock, probe.clockPreflightExpectation);
-  assertEvidenceBindings({ canary, clock, deployment, identity, sharedMount }, expected);
-  assertEvidenceLifetimes({ canary, clock, deployment, identity, sharedMount }, nowEpochMs);
+  assertEvidenceBindings({ canary, clock, deployment, identity }, expected);
+  assertEvidenceLifetimes({ canary, clock, deployment, identity }, nowEpochMs);
   const content = {
     campaignId: expected.campaignId,
     clockPreflight: { kind: clock.kind, proofId: clock.proofId, schemaVersion: clock.schemaVersion },
@@ -168,7 +147,7 @@ export async function evaluateHostedRemoteAdmission(
     expiresAt: new Date(Math.min(clock.validUntilEpochMs, identity.expiresAtEpochMs, canary.expiresAtEpochMs)).toISOString(),
     kind: "hosted-remote-readiness" as const, persistence: "create-only" as const,
     planSha256: expected.planSha256, probedAt: new Date(nowEpochMs).toISOString(),
-    schemaVersion: 1 as const, sharedMount: reference(sharedMount), voicetextCanary: {
+    schemaVersion: 1 as const, voicetextCanary: {
       ...reference(canary),
       admissionExpectationSha256: digestCanonical(probe.voicetextCanaryExpectation),
     },
@@ -210,7 +189,7 @@ function parseEvidence(value: unknown): HostedRemoteAdmissionEvidenceV1 {
   const schema = z.object({
     clockPreflight: z.unknown(), deploymentSafety: z.unknown(), discordIdentity: z.unknown(),
     kind: z.literal("hosted-remote-admission-evidence"), schemaVersion: z.literal(1),
-    sharedMount: z.unknown(), voicetextCanary: z.unknown(),
+    voicetextCanary: z.unknown(),
   }).strict();
   return schema.parse(value);
 }
@@ -226,13 +205,11 @@ function verifyIdentity(value: unknown): DiscordIdentityReceiptV1 {
 
 function assertEvidenceBindings(
   evidence: Readonly<{ canary: VoicetextSemanticCanaryReceiptV1; clock: HostedClockPreflightReceiptV2;
-    deployment: HostedDeploymentSafetyReceiptV1; identity: DiscordIdentityReceiptV1;
-    sharedMount: HostedCampaignSharedMountReceiptV1 }>,
+    deployment: HostedDeploymentSafetyReceiptV1; identity: DiscordIdentityReceiptV1 }>,
   expected: HostedCampaignRemoteAdmissionProbeRequest,
 ): void {
   const target = HOSTED_CAMPAIGN_TARGET;
   if (evidence.deployment.campaignId !== expected.campaignId
-    || evidence.sharedMount.campaignId !== expected.campaignId
     || evidence.identity.binding.campaignId !== expected.campaignId
     || evidence.canary.binding.campaignId !== expected.campaignId
     || evidence.identity.binding.planSha256 !== expected.planSha256
@@ -251,12 +228,11 @@ function assertEvidenceBindings(
 
 function assertEvidenceLifetimes(
   evidence: Readonly<{ canary: VoicetextSemanticCanaryReceiptV1; clock: HostedClockPreflightReceiptV2;
-    deployment: HostedDeploymentSafetyReceiptV1; identity: DiscordIdentityReceiptV1;
-    sharedMount: HostedCampaignSharedMountReceiptV1 }>,
+    deployment: HostedDeploymentSafetyReceiptV1; identity: DiscordIdentityReceiptV1 }>,
   nowEpochMs: number,
 ): void {
   const deploymentAt = Date.parse(evidence.deployment.generatedAt);
-  const generated = [deploymentAt, evidence.sharedMount.generatedAtEpochMs, evidence.identity.generatedAtEpochMs,
+  const generated = [deploymentAt, evidence.identity.generatedAtEpochMs,
     evidence.canary.generatedAtEpochMs, evidence.clock.qualifiedAtEpochMs];
   const expirations = [evidence.identity.expiresAtEpochMs, evidence.canary.expiresAtEpochMs,
     evidence.clock.validUntilEpochMs];
@@ -272,7 +248,7 @@ function assertEvidenceLifetimes(
 }
 
 function reference(receipt: HostedDeploymentSafetyReceiptV1 | DiscordIdentityReceiptV1 |
-HostedCampaignSharedMountReceiptV1 | VoicetextSemanticCanaryReceiptV1) {
+VoicetextSemanticCanaryReceiptV1) {
   return { kind: receipt.kind, receiptSha256: receipt.receiptSha256, schemaVersion: receipt.schemaVersion };
 }
 

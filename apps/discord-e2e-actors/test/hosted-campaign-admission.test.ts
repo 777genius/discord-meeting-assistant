@@ -17,13 +17,8 @@ import { parseHostedAdmissionArguments } from "../src/run-hosted-campaign-admiss
 const fixtureRoot = new URL("./fixtures/", import.meta.url);
 const accounts = ["sut", "speaker-a", "speaker-b", "conversation-observer", "speaker-d"] as const;
 const capabilities = [
-  "deploymentSafety", "sharedMount", "discordIdentity", "voicetextCanary", "clockPreflight",
+  "deploymentSafety", "discordIdentity", "voicetextCanary", "clockPreflight",
 ] as const;
-const sharedMountExpectation = {
-  campaignId: "campaign-admission-test", containerRoot: "/run/e2e-campaign",
-  expectedGid: 10_001, expectedMode: 0o700, expectedUid: 10_001,
-  hostRoot: "/private/campaign-admission-test", maximumAgeMs: 60_000,
-} as const;
 
 describe("hosted campaign admission", () => {
   it("validates local inputs but remains blocked when remote claims have no evidence", async () => {
@@ -80,7 +75,6 @@ describe("hosted campaign admission", () => {
         },
       },
       discordIdentity: reference("hosted-discord-identity-receipt", "3"),
-      sharedMount: reference("hosted-campaign-shared-mount", "7"),
       voicetextCanary: { ...reference("hosted-voicetext-semantic-canary-receipt", "4"),
         admissionExpectationSha256: "5".repeat(64) },
       expiresAt: "2026-08-13T09:05:00.000Z", kind: "hosted-remote-readiness",
@@ -91,7 +85,6 @@ describe("hosted campaign admission", () => {
       plan: setup.plan, remoteAdmissionProbe: {
         clockPreflightExpectation: { maximumClockSkewBoundMs: 250 },
         inspect: async () => readiness,
-        sharedMountExpectation: { expectation: sharedMountExpectation, probeId: "probe-admission-1234" },
         voicetextCanaryExpectation: {
           binding: { campaignId: "x", containerId: "x", fixtureSha256: "1".repeat(64), host: "x",
             imageDigestSha256: "1".repeat(64), planSha256: "1".repeat(64), sourceRevision: "1".repeat(40),
@@ -247,7 +240,7 @@ function canonicalize(nested: unknown): unknown {
 }
 
 function reference<const Kind extends "hosted-deployment-safety" | "hosted-discord-identity-receipt" |
-"hosted-campaign-shared-mount" | "hosted-voicetext-semantic-canary-receipt">(kind: Kind, digit: string) {
+"hosted-voicetext-semantic-canary-receipt">(kind: Kind, digit: string) {
   return { kind, receiptSha256: digit.repeat(64), schemaVersion: 1 as const };
 }
 

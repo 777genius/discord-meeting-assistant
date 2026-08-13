@@ -11,11 +11,6 @@ const planSha256 = "a".repeat(64);
 const meetingPlatformRevision = "b".repeat(40);
 const expected = { campaignId, meetingPlatformRevision, planSha256 };
 const nowEpochMs = Date.parse("2026-08-13T09:00:00.000Z");
-const sharedMountExpectation = {
-  campaignId, containerRoot: "/run/e2e-campaign", expectedGid: 10_001,
-  expectedMode: 0o700, expectedUid: 10_001, hostRoot: "/private/campaign-remote-admission",
-  maximumAgeMs: 60_000,
-} as const;
 const voicetextCanaryExpectation = {
   binding: {
     campaignId, containerId: "1", fixtureSha256: "1".repeat(64), host: "host",
@@ -32,7 +27,7 @@ describe("hosted campaign remote admission boundary", () => {
   it("fails closed without a trusted remote probe", async () => {
     await expect(evaluateHostedRemoteAdmission(undefined, expected, () => nowEpochMs))
       .resolves.toEqual({
-        missingSections: ["deploymentSafety", "sharedMount", "discordIdentity", "voicetextCanary", "clockPreflight"],
+        missingSections: ["deploymentSafety", "discordIdentity", "voicetextCanary", "clockPreflight"],
       });
   });
 
@@ -83,7 +78,6 @@ describe("hosted campaign remote admission boundary", () => {
         controller.abort(reason);
         signal?.throwIfAborted();
       },
-      sharedMountExpectation: { expectation: sharedMountExpectation, probeId: "probe-remote-1234" },
       voicetextCanaryExpectation,
     };
     await expect(evaluateHostedRemoteAdmission(probe, expected, () => nowEpochMs, controller.signal))
@@ -94,9 +88,7 @@ describe("hosted campaign remote admission boundary", () => {
 
 function fakeProbe(value: unknown): HostedCampaignRemoteAdmissionProbe {
   return { clockPreflightExpectation: { maximumClockSkewBoundMs: 250 },
-    inspect: async () => value,
-    sharedMountExpectation: { expectation: sharedMountExpectation, probeId: "probe-remote-1234" },
-    voicetextCanaryExpectation };
+    inspect: async () => value, voicetextCanaryExpectation };
 }
 
 function validReadiness(change: Readonly<Record<string, unknown>> = {}) {
@@ -114,7 +106,6 @@ function validReadiness(change: Readonly<Record<string, unknown>> = {}) {
     planSha256,
     probedAt: "2026-08-13T08:59:00.000Z",
     schemaVersion: 1,
-    sharedMount: reference("hosted-campaign-shared-mount", "8"),
     voicetextCanary: { ...reference("hosted-voicetext-semantic-canary-receipt", "4"),
       admissionExpectationSha256: "7".repeat(64) },
     ...change,
@@ -127,6 +118,6 @@ function deploymentBaseline() {
 }
 
 function reference<const Kind extends "hosted-deployment-safety" | "hosted-discord-identity-receipt" |
-"hosted-campaign-shared-mount" | "hosted-voicetext-semantic-canary-receipt">(kind: Kind, digit: string) {
+"hosted-voicetext-semantic-canary-receipt">(kind: Kind, digit: string) {
   return { kind, receiptSha256: digit.repeat(64), schemaVersion: 1 as const };
 }

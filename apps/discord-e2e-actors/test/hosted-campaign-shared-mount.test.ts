@@ -122,12 +122,12 @@ describe("test-only campaign compose override", () => {
     expect(base).not.toContain("discord-e2e-campaign-runner:");
   });
 
-  it("mounts only the exact campaign root into Meeting Platform and keeps the coordinator host-side", async () => {
+  it("mounts only the exact campaign root into both test containers and separates tokens", async () => {
     const overlay = await readFile(new URL("../../../infra/deployment/compose.e2e-campaign.yaml", import.meta.url), "utf8");
-    expect(overlay.split(":/run/e2e-campaign")).toHaveLength(2);
-    expect(overlay.match(/e2e\.test-only: "true"/gu)).toHaveLength(3);
-    expect(overlay.match(/DISCORD_E2E_CAMPAIGN_SHARED_ROOT_ACKNOWLEDGED: "true"/gu)).toHaveLength(1);
-    expect(overlay).not.toContain("discord-e2e-campaign-runner:");
+    expect(overlay.split(":/run/e2e-campaign")).toHaveLength(3);
+    expect(overlay.match(/e2e\.test-only: "true"/gu)).toHaveLength(2);
+    expect(overlay.match(/DISCORD_E2E_CAMPAIGN_SHARED_ROOT_ACKNOWLEDGED: "true"/gu)).toHaveLength(2);
+    expect(overlay).toContain("${E2E_RUNNER_SECRET_DIRECTORY:?set runner-only test token directory}:/run/e2e-runner-secrets:ro");
     expect(overlay).not.toContain("/run/secrets:ro");
     expect(overlay).not.toContain("/var/run/docker.sock");
     expect(overlay).not.toContain("/mnt/volume_");
