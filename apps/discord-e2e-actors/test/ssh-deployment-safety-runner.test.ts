@@ -152,6 +152,16 @@ class SyntheticRemote {
       Type: "bind",
     });
   }
+
+  public exposeHostRoot(): void {
+    const meeting = this.#containers.get(image("2"));
+    meeting?.Mounts.push({
+      Destination: "/host-root",
+      RW: true,
+      Source: "/",
+      Type: "bind",
+    });
+  }
 }
 
 describe("concrete SSH deployment safety runner", () => {
@@ -195,6 +205,31 @@ describe("concrete SSH deployment safety runner", () => {
       campaignSiblingMounted: false,
       runSiblingAccessible: true,
     });
+    const probe = createConcreteSshDeploymentSafetyProbe({
+      containerNonce: "container-nonce", expectation,
+      generatedAt: () => "2026-08-13T09:01:00.000Z", hostNonce: "host-nonce", ssh,
+    }, remote);
+    await expect(probe.collect()).rejects.toThrow();
+  });
+
+  it("reports sibling access through a filesystem-root mount", async () => {
+    const remote = new SyntheticRemote();
+    remote.exposeHostRoot();
+    const runner = new ConcreteSshDeploymentSafetyProbeRunner(ssh, expectation, remote);
+    await expect(runner.inspectMountIsolation(
+      expectation.greeting.sourcePath,
+      expectation.greeting.campaignSiblingPath,
+      expectation.greeting.runSiblingPath,
+    )).resolves.toMatchObject({
+      campaignSiblingAccessible: true,
+      campaignSiblingMounted: false,
+      runSiblingAccessible: true,
+    });
+    const probe = createConcreteSshDeploymentSafetyProbe({
+      containerNonce: "container-nonce", expectation,
+      generatedAt: () => "2026-08-13T09:01:00.000Z", hostNonce: "host-nonce", ssh,
+    }, remote);
+    await expect(probe.collect()).rejects.toThrow();
   });
 
   it("rejects a sibling whose newline cannot hide in the encoded entry framing", async () => {

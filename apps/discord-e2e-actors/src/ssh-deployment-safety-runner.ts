@@ -374,7 +374,8 @@ function publishedPorts(container: RawContainer): readonly number[] {
 }
 
 function isExposedByMount(mounts: RawContainer["Mounts"], hostPath: string): boolean {
-  return mounts.some(({ Source }) => hostPath === Source || hostPath.startsWith(`${Source}/`));
+  return mounts.some(({ Source }) =>
+    Source === "/" || hostPath === Source || hostPath.startsWith(`${Source}/`));
 }
 
 function digest(value: unknown): string {
