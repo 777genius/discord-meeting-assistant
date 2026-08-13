@@ -31,7 +31,7 @@ describe("hosted remote Discord identity probe", () => {
 
     expect(identity).toEqual({
       applicationId, authenticatedUserId: applicationId, bot: true,
-      tokenFile: { ...expectation.tokenFile, generationId: "generation-botik-7", mode: 0o600 },
+      tokenFile: { ...expectation.tokenFile, generationId: "generation-botik-7", mode: 0o400 },
       verificationSource: "discord-current-application-and-user",
     });
     const request = execute.mock.calls[0]?.[0];
@@ -103,7 +103,7 @@ function output() {
     schemaVersion: 1,
     target,
     tokenCustody: {
-      generationId: "generation-botik-7", mode: 0o600,
+      generationId: "generation-botik-7", mode: 0o400,
       ownerUid: expectation.tokenFile.ownerUid, path: expectation.tokenFile.path,
     },
   } as const;

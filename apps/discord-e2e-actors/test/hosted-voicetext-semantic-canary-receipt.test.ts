@@ -113,7 +113,7 @@ function receipt(): VoicetextSemanticCanaryReceiptV1 {
       requiredTermMatches: 2, requiredTermsExpectationSha256: "5".repeat(64), wordErrorRate: 0.1,
     },
     schemaVersion: 1,
-    tokenFile: { generationId: "generation-1", mode: 0o600, ownerUid: 10_001, path: "/run/secrets/voicetext" },
+    tokenFile: { generationId: "generation-1", mode: 0o400, ownerUid: 10_001, path: "/run/secrets/voicetext" },
   });
 }
 

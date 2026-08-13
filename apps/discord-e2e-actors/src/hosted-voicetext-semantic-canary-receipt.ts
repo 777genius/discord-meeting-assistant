@@ -51,7 +51,7 @@ export const voicetextSemanticCanaryReceiptV1Schema = z.object({
   schemaVersion: z.literal(1),
   tokenFile: z.object({
     generationId: identifierSchema,
-    mode: z.literal(0o600),
+    mode: z.literal(0o400),
     ownerUid: z.number().int().nonnegative(),
     path: z.string().startsWith("/"),
   }).strict(),

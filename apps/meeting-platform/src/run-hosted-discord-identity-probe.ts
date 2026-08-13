@@ -68,7 +68,7 @@ export async function runHostedDiscordIdentityProbe(
     },
     tokenCustody: {
       generationId: after.generationId,
-      mode: 0o600,
+      mode: 0o400,
       ownerUid: after.ownerUid,
       path: options.tokenFile,
     },
@@ -90,7 +90,7 @@ async function readToken(
     file = await openFile(options.tokenFile, constants.O_RDONLY | constants.O_NOFOLLOW);
     const metadata = await file.stat();
     if (!metadata.isFile() || metadata.uid !== options.tokenOwnerUid
-      || (metadata.mode & 0o777) !== 0o600 || metadata.size < 50 || metadata.size > maximumTokenBytes) {
+      || (metadata.mode & 0o777) !== 0o400 || metadata.size < 50 || metadata.size > maximumTokenBytes) {
       throw new Error("unsafe token custody");
     }
     const bytes = Buffer.alloc(maximumTokenBytes + 1);

@@ -108,9 +108,12 @@ function expectation(
 }
 
 function identity(expected: DiscordRoleIdentityExpectation) {
+  const tokenFile = expected.tokenFile.scope === "remote-deployment-secret"
+    ? { ...expected.tokenFile, generationId: `generation-${expected.tokenFile.account}`, mode: 0o400 as const }
+    : { ...expected.tokenFile, generationId: `generation-${expected.tokenFile.account}`, mode: 0o600 as const };
   return {
     applicationId: expected.applicationId, authenticatedUserId: expected.applicationId, bot: true as const,
-    tokenFile: { ...expected.tokenFile, generationId: `generation-${expected.tokenFile.account}`, mode: 0o600 as const },
+    tokenFile,
     verificationSource: "discord-current-application-and-user" as const,
   };
 }

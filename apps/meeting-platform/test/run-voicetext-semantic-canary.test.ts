@@ -66,7 +66,7 @@ describe("Voicetext semantic canary", () => {
       openLiveSession,
       readFixture: async () => fixture,
       readToken: async (path) => ({
-        generationId: `file-${"f".repeat(64)}`, mode: 0o600, ownerUid: 10_001,
+        generationId: `file-${"f".repeat(64)}`, mode: 0o400, ownerUid: 10_001,
         path, token: "secret-machine-bearer",
       }),
       wait: async () => {},
@@ -112,7 +112,7 @@ describe("Voicetext semantic canary", () => {
       createBatchClient,
       openLiveSession: vi.fn(),
       readFixture: async () => fixture,
-      readToken: async () => ({ generationId: "generation", mode: 0o600, ownerUid: 1,
+      readToken: async () => ({ generationId: "generation", mode: 0o400, ownerUid: 1,
         path: "/run/secrets/token", token: "secret-machine-bearer" }),
       wait: async () => {},
     })).rejects.toThrow("pinned digest");

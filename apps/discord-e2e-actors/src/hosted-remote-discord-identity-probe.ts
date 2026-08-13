@@ -61,7 +61,7 @@ const outputSchema = z.object({
   }).strict(),
   tokenCustody: z.object({
     generationId: identifierSchema,
-    mode: z.literal(0o600),
+    mode: z.literal(0o400),
     ownerUid: z.number().int().nonnegative(),
     path: z.string().startsWith("/").max(4_096),
   }).strict(),
@@ -187,6 +187,9 @@ function toIdentity(
   output: z.infer<typeof outputSchema>,
   expectation: DiscordRoleIdentityExpectation,
 ) {
+  if (expectation.tokenFile.scope !== "remote-deployment-secret") {
+    throw new Error("Remote Discord identity probe requires remote token custody");
+  }
   return Object.freeze({
     applicationId: expectation.applicationId,
     authenticatedUserId: output.authenticatedUserId,

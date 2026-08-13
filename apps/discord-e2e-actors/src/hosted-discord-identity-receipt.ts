@@ -6,16 +6,24 @@ const identifierSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u
 const discordIdSchema = z.string().regex(/^\d{17,20}$/u);
 const sha256Schema = z.string().regex(/^[a-f\d]{64}$/u);
 const sourceRevisionSchema = z.string().regex(/^(?:[a-f\d]{40}|[a-f\d]{64})$/u);
-const privateTokenFileSchema = z.object({
+const tokenFileDescriptorSchema = z.object({
   account: z.enum([
     "botik-playback", "conversation-observer", "speaker-a", "speaker-b", "speaker-d", "sut",
   ]),
   generationId: identifierSchema,
-  mode: z.literal(0o600),
   ownerUid: z.number().int().nonnegative(),
   path: z.string().startsWith("/"),
-  scope: z.enum(["local-campaign-secret", "remote-deployment-secret"]),
 }).strict();
+const privateTokenFileSchema = z.discriminatedUnion("scope", [
+  tokenFileDescriptorSchema.extend({
+    mode: z.literal(0o600),
+    scope: z.literal("local-campaign-secret"),
+  }).strict(),
+  tokenFileDescriptorSchema.extend({
+    mode: z.literal(0o400),
+    scope: z.literal("remote-deployment-secret"),
+  }).strict(),
+]);
 
 const authenticatedApplicationSchema = z.object({
   applicationId: discordIdSchema,
@@ -100,7 +108,7 @@ export function evaluateDiscordIdentityReceiptV1(
     || JSON.stringify(receipt.target) !== JSON.stringify(expected.target)) {
     throw new Error("Discord identity receipt does not match the campaign binding");
   }
-  if (JSON.stringify(receipt.identities) !== JSON.stringify(expected.identities)) {
+  if (digestCanonical(receipt.identities) !== digestCanonical(expected.identities)) {
     throw new Error("Discord identity receipt does not match exact role credentials");
   }
   return Object.freeze(receipt);

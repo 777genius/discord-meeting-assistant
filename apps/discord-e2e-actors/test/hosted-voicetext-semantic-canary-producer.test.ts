@@ -76,6 +76,6 @@ function result(): VoicetextCanaryInternalResultV1 {
       ],
     },
     schemaVersion: 1,
-    tokenFile: { generationId: "generation-2", mode: 0o600, ownerUid: 10_001, path: "/run/secrets/voicetext" },
+    tokenFile: { generationId: "generation-2", mode: 0o400, ownerUid: 10_001, path: "/run/secrets/voicetext" },
   };
 }

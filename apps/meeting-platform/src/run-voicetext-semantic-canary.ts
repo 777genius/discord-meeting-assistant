@@ -43,7 +43,7 @@ export interface VoicetextSemanticCanaryResultV1 {
   readonly schemaVersion: 1;
   readonly tokenFile: {
     readonly generationId: string;
-    readonly mode: 0o600;
+    readonly mode: 0o400;
     readonly ownerUid: number;
     readonly path: string;
   };
@@ -77,7 +77,7 @@ export interface VoicetextSemanticCanaryDependencies {
   readonly readFixture: (path: string) => Promise<Uint8Array>;
   readonly readToken: (path: string) => Promise<Readonly<{
     generationId: string;
-    mode: 0o600;
+    mode: 0o400;
     ownerUid: number;
     path: string;
     token: string;
@@ -301,7 +301,7 @@ async function readPrivateToken(path: string) {
   const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const before = await handle.stat();
-    if (!before.isFile() || before.uid !== currentUid || (before.mode & 0o777) !== 0o600
+    if (!before.isFile() || before.uid !== currentUid || (before.mode & 0o777) !== 0o400
       || before.size < 1 || before.size > tokenFileMaximumBytes
       || before.dev !== pathMetadata.dev || before.ino !== pathMetadata.ino) {
       throw new Error("Voicetext token file custody is invalid");
@@ -319,7 +319,7 @@ async function readPrivateToken(path: string) {
     const generationSource = [before.dev, before.ino, before.size, before.ctimeMs].join(":");
     return {
       generationId: `file-${sha256(generationSource)}`,
-      mode: 0o600 as const,
+      mode: 0o400 as const,
       ownerUid: before.uid,
       path,
       token,

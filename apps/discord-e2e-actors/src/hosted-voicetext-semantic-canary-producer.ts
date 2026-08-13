@@ -33,7 +33,7 @@ export const voicetextCanaryInternalResultV1Schema = z.object({
   }).strict(),
   schemaVersion: z.literal(1),
   tokenFile: z.object({
-    generationId: z.string().min(1).max(256), mode: z.literal(0o600),
+    generationId: z.string().min(1).max(256), mode: z.literal(0o400),
     ownerUid: z.number().int().nonnegative(), path: z.string().startsWith("/").max(4_096),
   }).strict(),
 }).strict();

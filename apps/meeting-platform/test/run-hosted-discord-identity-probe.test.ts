@@ -28,7 +28,7 @@ describe("container-internal hosted Discord identity probe", () => {
     expect(result).toMatchObject({
       authenticatedUserId: applicationId, bot: true,
       target: { guildId, publicationChannelId, voiceChannelId },
-      tokenCustody: { mode: 0o600, ownerUid: process.getuid?.() ?? 0, path },
+      tokenCustody: { mode: 0o400, ownerUid: process.getuid?.() ?? 0, path },
     });
   });
 
@@ -61,7 +61,9 @@ describe("container-internal hosted Discord identity probe", () => {
     const fetchResponse = vi.fn<typeof fetch>(async (input) => {
       if (!replaced) {
         replaced = true;
-        await writeFile(path, `replacement.${"y".repeat(80)}`, { mode: 0o600 });
+        await chmod(path, 0o600);
+        await writeFile(path, `replacement.${"y".repeat(80)}`, { mode: 0o400 });
+        await chmod(path, 0o400);
       }
       return discordResponse(new URL(requestUrl(input)).pathname.replace("/api/v10", ""));
     });
@@ -70,12 +72,12 @@ describe("container-internal hosted Discord identity probe", () => {
   });
 });
 
-async function tokenFixture(mode = 0o600): Promise<{ path: string; token: string }> {
+async function tokenFixture(mode = 0o400): Promise<{ path: string; token: string }> {
   const root = await mkdtemp(join(tmpdir(), "discord-identity-probe-"));
   roots.push(root);
   const path = join(root, "botik-token");
   const token = `synthetic.${"x".repeat(80)}`;
-  await writeFile(path, token, { mode: 0o600 });
+  await writeFile(path, token, { mode: 0o400 });
   await chmod(path, mode);
   return { path, token };
 }

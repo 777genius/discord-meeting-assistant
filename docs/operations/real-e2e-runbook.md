@@ -53,7 +53,11 @@ secrets/platform/voicetext-service-token  10001:10001 0400
 
 The Meeting Platform image runs as UID/GID `10001:10001`; bind-mounted secret
 files must be readable only by that service identity. `root:root 0400` is not a
-valid deployment state because the non-root container cannot read it.
+valid deployment state because the non-root container cannot read it. The
+container-internal Botik identity and Voicetext canary probes require these
+remote deployment secrets to remain exact owner `10001` mode `0400`. Campaign
+definition, runtime-binding, and local official-bot token files are separate
+local campaign inputs and remain exact current-user-owned mode `0600`.
 
 Set `VOICETEXT_BATCH_MAX_CONCURRENCY` in the deployment environment to an
 integer from `1` through `10`; it limits provider work within each meeting. The

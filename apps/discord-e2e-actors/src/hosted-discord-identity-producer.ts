@@ -13,6 +13,7 @@ import type { FileSecretReader, PrivateFileSecret } from "./keychain.js";
 
 type RoleName = keyof DiscordIdentityRolesV1;
 type RoleIdentity = DiscordIdentityRolesV1[RoleName];
+type TokenFileExpectation<T> = T extends unknown ? Omit<T, "generationId" | "mode"> : never;
 
 export interface DiscordIdentityProbeTarget {
   readonly guildId: string;
@@ -20,10 +21,10 @@ export interface DiscordIdentityProbeTarget {
   readonly voiceChannelId: string;
 }
 
-export interface DiscordRoleIdentityExpectation {
+export type DiscordRoleIdentityExpectation = {
   readonly applicationId: string;
-  readonly tokenFile: Omit<RoleIdentity["tokenFile"], "generationId" | "mode">;
-}
+  readonly tokenFile: TokenFileExpectation<RoleIdentity["tokenFile"]>;
+};
 
 export interface DiscordRoleIdentityProbe {
   probe(expectation: DiscordRoleIdentityExpectation, target: DiscordIdentityProbeTarget): Promise<RoleIdentity>;
@@ -39,6 +40,9 @@ export class DiscordRestRoleIdentityProbe implements DiscordRoleIdentityProbe {
     expectation: DiscordRoleIdentityExpectation,
     target: DiscordIdentityProbeTarget,
   ): Promise<RoleIdentity> {
+    if (expectation.tokenFile.scope !== "local-campaign-secret") {
+      throw new Error("Local Discord identity probe requires local campaign token custody");
+    }
     const before = await this.secrets.readPrivateFile(expectation.tokenFile.account);
     assertCredentialDescriptor(before, expectation);
     const [user, guild, voiceChannel, publicationChannel] = await Promise.all([
@@ -145,6 +149,7 @@ function assertCredentialDescriptor(
   const expected = expectation.tokenFile;
   const credentialMode: number = credential.mode;
   if (credential.account !== expected.account || credential.path !== expected.path
+    || expected.scope !== "local-campaign-secret"
     || credential.ownerUid !== expected.ownerUid || credentialMode !== 0o600) {
     throw new Error("Discord credential file does not match its declared custody");
   }

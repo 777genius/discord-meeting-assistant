@@ -169,7 +169,7 @@ function composition(calls: string[]): HostedRemoteAdmissionCompositionConfig {
     probe: { probe: async () => {
       calls.push(`discord:${name}`);
       return { applicationId, authenticatedUserId: applicationId, bot: true as const,
-        tokenFile: { ...file, generationId: `generation-${name}`, mode: 0o600 as const },
+        tokenFile: { ...file, generationId: `generation-${name}`, mode: file.scope === "remote-deployment-secret" ? 0o400 as const : 0o600 as const },
         verificationSource: "discord-current-application-and-user" as const };
     } },
   }])) as unknown as HostedRemoteAdmissionCompositionConfig["discord"]["roles"];
@@ -287,6 +287,6 @@ function voicetextResult(
     idempotentReplay: { jobId: "job", resultId: "result", resultSha256: digest }, segments, utteranceCount: 1 },
   live: { audioAcknowledgements: { expected: 1, received: 1 }, finalizeComplete: true, protocolReady: true,
     segments }, schemaVersion: 1,
-  tokenFile: { generationId: "generation-voicetext", mode: 0o600, ownerUid: 10_001,
+  tokenFile: { generationId: "generation-voicetext", mode: 0o400, ownerUid: 10_001,
     path: "/run/secrets/voicetext" } };
 }

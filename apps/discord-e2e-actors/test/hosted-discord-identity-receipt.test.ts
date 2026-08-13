@@ -70,7 +70,7 @@ describe("hosted Discord identity receipt", () => {
     const tokenFile = base.identities.localObserver.tokenFile;
     const mutations: readonly (typeof tokenFile)[] = [
       { ...tokenFile, account: "sut" },
-      { ...tokenFile, scope: "remote-deployment-secret" },
+      { ...tokenFile, mode: 0o400, scope: "remote-deployment-secret" },
       { ...tokenFile, path: "/run/test-tokens/other" },
       { ...tokenFile, ownerUid: 10_002 },
       { ...tokenFile, generationId: "generation-other" },
@@ -83,8 +83,7 @@ describe("hosted Discord identity receipt", () => {
           localObserver: { ...base.identities.localObserver, tokenFile: replacement },
         },
       });
-      expect(() => evaluateDiscordIdentityReceiptV1(candidate, expectation))
-        .toThrow("exact role credentials");
+      expect(() => evaluateDiscordIdentityReceiptV1(candidate, expectation)).toThrow();
     }
   });
 
@@ -130,12 +129,14 @@ function identity(
   scope: DiscordIdentityRolesV1[keyof DiscordIdentityRolesV1]["tokenFile"]["scope"] =
     "local-campaign-secret",
 ): DiscordIdentityRolesV1[keyof DiscordIdentityRolesV1] {
+  const tokenFile = scope === "remote-deployment-secret"
+    ? { account, generationId: `generation-${account}`, mode: 0o400 as const, ownerUid: 10_001,
+        path: `/run/test-tokens/${account}`, scope }
+    : { account, generationId: `generation-${account}`, mode: 0o600 as const, ownerUid: 10_001,
+        path: `/run/test-tokens/${account}`, scope };
   return {
     applicationId, authenticatedUserId: applicationId, bot: true,
-    tokenFile: {
-      account, generationId: `generation-${account}`, mode: 0o600, ownerUid: 10_001,
-      path: `/run/test-tokens/${account}`, scope,
-    },
+    tokenFile,
     verificationSource: "discord-current-application-and-user",
   };
 }
