@@ -36,6 +36,9 @@ describe("hosted Voicetext canary container runner", () => {
     const fixtureDigestFlag = request?.args.indexOf("--fixture-sha256") ?? -1;
     expect(fixtureDigestFlag).toBeGreaterThan(-1);
     expect(request?.args[fixtureDigestFlag + 1]).toBe(input.binding.fixtureSha256);
+    const deadlineFlag = request?.args.indexOf("--deadline-ms") ?? -1;
+    expect(deadlineFlag).toBeGreaterThan(-1);
+    expect(request?.args[deadlineFlag + 1]).toBe("19000");
     expect(request?.args).not.toContain("dist/run-voicetext-semantic-canary.js");
     expect(JSON.stringify(request)).not.toMatch(/token|secret/iu);
   });
@@ -49,5 +52,13 @@ describe("hosted Voicetext canary container runner", () => {
   ])("fails closed on %s", async (_label, processResult) => {
     const process: BoundedContainerProcessPort = { execute: async () => processResult };
     await expect(new HostedVoicetextCanaryContainerRunnerV1(process).run(input)).rejects.toThrow();
+  });
+
+  it("rejects an outer timeout that cannot reserve internal teardown time", async () => {
+    const execute = vi.fn<BoundedContainerProcessPort["execute"]>();
+    await expect(new HostedVoicetextCanaryContainerRunnerV1({ execute }).run({
+      ...input, timeoutMs: 1,
+    })).rejects.toThrow("reserve bounded teardown");
+    expect(execute).not.toHaveBeenCalled();
   });
 });

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { dirname, resolve } from "node:path";
+import { dirname, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { compileOggOpus } from "@discord-meeting/recording-ingress-adapter";
@@ -75,6 +75,7 @@ describe("Voicetext semantic canary", () => {
     const result = await runVoicetextSemanticCanary({
       batchEndpoint: "https://voicetext.test/api/v1/transcribe/batch",
       campaignId: "campaign-1",
+      deadlineMs: 20_000,
       fixturePath: "/fixtures/canary.ogg",
       fixtureSha256,
       imageDigestSha256: "b".repeat(64),
@@ -102,6 +103,7 @@ describe("Voicetext semantic canary", () => {
     await expect(runVoicetextSemanticCanary({
       batchEndpoint: "https://voicetext.test/api/v1/transcribe/batch",
       campaignId: "campaign-1",
+      deadlineMs: 20_000,
       fixturePath: "/fixtures/canary.ogg",
       fixtureSha256: "a".repeat(64),
       imageDigestSha256: "b".repeat(64),
@@ -124,6 +126,7 @@ describe("Voicetext semantic canary", () => {
       "--fixture", "/fixtures/canary.ogg",
       "--fixture-sha256", "a".repeat(64),
       "--campaign", "campaign-1",
+      "--deadline-ms", "19000",
       "--plan-sha256", "b".repeat(64),
       "--source-revision", "c".repeat(40),
       "--image-digest-sha256", "d".repeat(64),
@@ -143,9 +146,93 @@ describe("Voicetext semantic canary", () => {
     })).toThrow("do not match");
   });
 
+  it("stops batch polling at one total deadline and performs no later provider activity", async () => {
+    vi.useFakeTimers();
+    try {
+      const fixture = canaryFixture();
+      const submit = vi.fn<VoicetextBatchClient["submit"]>(async () => ({
+        jobId: completed.jobId, kind: "pending", nextAction: "poll", retryAfterMs: 10_000,
+      }));
+      const poll = vi.fn<VoicetextBatchClient["poll"]>(async () => completed);
+      const wait = vi.fn<VoicetextSemanticCanaryDependencies["wait"]>(async (_delay, signal) => {
+        await new Promise<void>((_resolve, reject) => {
+          signal.addEventListener("abort", () => {reject(signal.reason);}, { once: true });
+        });
+      });
+      const operation = runVoicetextSemanticCanary(canaryArguments(fixture, 50), "/run/secrets/token", {
+        createBatchClient: () => ({ poll, submit }),
+        openLiveSession: vi.fn(),
+        readFixture: async () => fixture,
+        readToken: async () => ({ generationId: "generation", mode: 0o400, ownerUid: 1,
+          path: "/run/secrets/token", token: "secret-machine-bearer" }),
+        wait,
+      });
+      const rejection = expect(operation).rejects.toThrow("internal deadline");
+      await vi.advanceTimersByTimeAsync(50);
+      await rejection;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(submit).toHaveBeenCalledOnce();
+      expect(poll).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("terminates a live session whose finalization ignores deadline cancellation", async () => {
+    vi.useFakeTimers();
+    try {
+      const fixture = canaryFixture();
+      const terminate = vi.fn();
+      const operation = runVoicetextSemanticCanary(canaryArguments(fixture, 50), "/run/secrets/token", {
+        createBatchClient: () => ({ poll: async () => completed, submit: async () => completed }),
+        openLiveSession: async ({ onTranscript }) => {
+          onTranscript({ endMs: 40, startMs: 0, text: "привет Botik" }, true);
+          return { finalize: async () => {await new Promise<void>(() => {});},
+            sendPacket: async () => "accepted", terminate };
+        },
+        readFixture: async () => fixture,
+        readToken: async () => ({ generationId: "generation", mode: 0o400, ownerUid: 1,
+          path: "/run/secrets/token", token: "secret-machine-bearer" }),
+        wait: async () => {},
+      });
+      const rejection = expect(operation).rejects.toThrow("internal deadline");
+      await vi.advanceTimersByTimeAsync(50);
+      await rejection;
+      expect(terminate).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("terminates a live session that resolves only after its opening deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const fixture = canaryFixture();
+      const terminate = vi.fn();
+      let completeOpening: ((session: VoicetextLiveSession) => void) | undefined;
+      const operation = runVoicetextSemanticCanary(canaryArguments(fixture, 50), "/run/secrets/token", {
+        createBatchClient: () => ({ poll: async () => completed, submit: async () => completed }),
+        openLiveSession: async () => await new Promise<VoicetextLiveSession>((resolve) => {
+          completeOpening = resolve;
+        }),
+        readFixture: async () => fixture,
+        readToken: async () => ({ generationId: "generation", mode: 0o400, ownerUid: 1,
+          path: "/run/secrets/token", token: "secret-machine-bearer" }),
+        wait: async () => {},
+      });
+      const rejection = expect(operation).rejects.toThrow("internal deadline");
+      await vi.advanceTimersByTimeAsync(50);
+      await rejection;
+      completeOpening?.({ finalize: async () => {}, sendPacket: async () => "accepted", terminate });
+      await vi.waitFor(() => {expect(terminate).toHaveBeenCalledOnce();});
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("fails through a silent process envelope so secrets and transcripts cannot reach stderr", () => {
-    const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-    const result = spawnSync(resolve(packageRoot, "node_modules/.bin/tsx"), [
+    const packageRoot = resolvePath(dirname(fileURLToPath(import.meta.url)), "..");
+    const result = spawnSync(resolvePath(packageRoot, "node_modules/.bin/tsx"), [
       "src/run-voicetext-semantic-canary.ts", "--json",
     ], { cwd: packageRoot, encoding: "utf8" });
     expect(result.status).toBe(1);
@@ -172,4 +259,18 @@ function canaryFixture(): Uint8Array {
 
 function digest(value: Uint8Array): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function canaryArguments(fixture: Uint8Array, deadlineMs: number) {
+  return {
+    batchEndpoint: "https://voicetext.test/api/v1/transcribe/batch",
+    campaignId: "campaign-1",
+    deadlineMs,
+    fixturePath: "/fixtures/canary.ogg",
+    fixtureSha256: digest(fixture),
+    imageDigestSha256: "b".repeat(64),
+    liveEndpoint: "wss://voicetext.test/api/v1/transcribe/stream",
+    planSha256: "c".repeat(64),
+    sourceRevision: "d".repeat(40),
+  } as const;
 }

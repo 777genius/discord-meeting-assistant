@@ -8,7 +8,6 @@ import {
   VoicetextLiveTranscriptionAdapter,
   batchEndpointFromWebSocketUrl,
   type VoicetextBatchClient,
-  type VoicetextBatchTaskResult,
   type VoicetextLiveSession,
 } from "@discord-meeting/voicetext-adapter";
 import {
@@ -16,16 +15,22 @@ import {
   validateOggOpus,
 } from "@discord-meeting/recording-ingress-adapter";
 
+import {
+  createVoicetextCanaryDeadline,
+  waitForVoicetextCanaryOperation,
+} from "./composition/voicetext-canary-deadline.js";
+import { completeVoicetextCanaryBatch } from "./composition/voicetext-canary-batch.js";
+import {
+  voicetextCanaryBatchIdentity,
+  voicetextCanaryBatchSegments,
+  type VoicetextCanaryBatchIdentity,
+  type VoicetextCanarySegment,
+} from "./composition/voicetext-canary-result.js";
+
 const maximumFixtureBytes = 64 * 1_024 * 1_024;
-const maximumAttempts = 100;
-const maximumPollDelayMs = 60_000;
 const tokenFileMaximumBytes = 4_096;
 
-interface CanarySegment {
-  readonly endMs: number;
-  readonly startMs: number;
-  readonly text: string;
-}
+type CanarySegment = VoicetextCanarySegment;
 
 export interface VoicetextSemanticCanaryResultV1 {
   readonly batch: {
@@ -49,15 +54,12 @@ export interface VoicetextSemanticCanaryResultV1 {
   };
 }
 
-interface BatchIdentity {
-  readonly jobId: string;
-  readonly resultId: string;
-  readonly resultSha256: string;
-}
+type BatchIdentity = VoicetextCanaryBatchIdentity;
 
 export interface VoicetextSemanticCanaryArguments {
   readonly batchEndpoint: string;
   readonly campaignId: string;
+  readonly deadlineMs: number;
   readonly fixturePath: string;
   readonly fixtureSha256: string;
   readonly imageDigestSha256: string;
@@ -72,6 +74,7 @@ export interface VoicetextSemanticCanaryDependencies {
     endpoint: string;
     idempotencyKey: string;
     onTranscript: (segment: CanarySegment, isFinal: boolean) => void;
+    signal: AbortSignal;
     token: string;
   }>) => Promise<VoicetextLiveSession>;
   readonly readFixture: (path: string) => Promise<Uint8Array>;
@@ -92,11 +95,13 @@ export async function runVoicetextSemanticCanary(
   signal: AbortSignal = new AbortController().signal,
 ): Promise<VoicetextSemanticCanaryResultV1> {
   validateArguments(args);
-  signal.throwIfAborted();
-  const [fixture, tokenFile] = await Promise.all([
-    dependencies.readFixture(args.fixturePath),
-    dependencies.readToken(tokenFilePath),
-  ]);
+  const deadline = createVoicetextCanaryDeadline(signal, args.deadlineMs);
+  try {
+    deadline.signal.throwIfAborted();
+    const [fixture, tokenFile] = await waitForVoicetextCanaryOperation(Promise.all([
+      dependencies.readFixture(args.fixturePath),
+      dependencies.readToken(tokenFilePath),
+    ]), deadline.signal);
   if (fixture.byteLength > maximumFixtureBytes || sha256(fixture) !== args.fixtureSha256) {
     throw new Error("Voicetext canary fixture does not match its pinned digest");
   }
@@ -109,37 +114,45 @@ export async function runVoicetextSemanticCanary(
     sourceRevision: args.sourceRevision,
   }));
   const client = dependencies.createBatchClient({ endpoint: args.batchEndpoint, token: tokenFile.token });
-  const first = await completeBatch(client, fixture, idempotencyKey, dependencies.wait, signal);
-  const replay = await completeBatch(client, fixture, idempotencyKey, dependencies.wait, signal);
-  const batchSegments = batchSegmentsFrom(first);
-  const replaySegments = batchSegmentsFrom(replay);
-  const firstIdentity = batchIdentity(first, batchSegments);
-  const replayIdentity = batchIdentity(replay, replaySegments);
+  const first = await completeVoicetextCanaryBatch(client, fixture, idempotencyKey, dependencies.wait, deadline.signal);
+  const replay = await completeVoicetextCanaryBatch(client, fixture, idempotencyKey, dependencies.wait, deadline.signal);
+  const batchSegments = voicetextCanaryBatchSegments(first);
+  const replaySegments = voicetextCanaryBatchSegments(replay);
+  const firstIdentity = voicetextCanaryBatchIdentity(first, batchSegments);
+  const replayIdentity = voicetextCanaryBatchIdentity(replay, replaySegments);
   if (JSON.stringify(firstIdentity) !== JSON.stringify(replayIdentity)) {
     throw new Error("Voicetext batch idempotent replay changed its immutable result");
   }
 
   const liveSegments: CanarySegment[] = [];
-  const session = await dependencies.openLiveSession({
+  const openingSession = dependencies.openLiveSession({
     endpoint: args.liveEndpoint,
     idempotencyKey,
     onTranscript: (segment, isFinal) => {
       if (isFinal) {liveSegments.push(segment);}
     },
+    signal: deadline.signal,
     token: tokenFile.token,
   });
+  // A broken connector may resolve after ignoring cancellation. Do not let that
+  // late session remain active after this bounded canary has already returned.
+  void openingSession.then((lateSession) => {
+    if (deadline.signal.aborted) {lateSession.terminate();}
+    return null;
+  }, () => null);
+  const session = await waitForVoicetextCanaryOperation(openingSession, deadline.signal);
   let acknowledged = 0;
   try {
     let relativeTimeMs = 0;
     for (const [index, packet] of packets.entries()) {
-      signal.throwIfAborted();
+      deadline.signal.throwIfAborted();
       const durationSamples48Khz = opusPacketDurationSamples(packet);
-      const status = await session.sendPacket({
+      const status = await waitForVoicetextCanaryOperation(session.sendPacket({
         durationSamples48Khz,
         opus: packet,
         packetId: `${args.fixtureSha256}:${String(index)}`,
         relativeTimeMs,
-      });
+      }), deadline.signal);
       if (status !== "accepted") {
         throw new Error("Voicetext live canary unexpectedly reused a new audio packet");
       }
@@ -148,7 +161,7 @@ export async function runVoicetextSemanticCanary(
     }
     // Successful finalization is the protocol proof that all outstanding audio
     // acknowledgements were received, not merely that socket writes completed.
-    await session.finalize();
+    await waitForVoicetextCanaryOperation(session.finalize(), deadline.signal);
   } catch (error: unknown) {
     session.terminate();
     throw error;
@@ -177,52 +190,9 @@ export async function runVoicetextSemanticCanary(
       path: tokenFile.path,
     },
   };
-}
-
-async function completeBatch(
-  client: VoicetextBatchClient,
-  fixture: Uint8Array,
-  idempotencyKey: string,
-  wait: VoicetextSemanticCanaryDependencies["wait"],
-  signal: AbortSignal,
-): Promise<Extract<VoicetextBatchTaskResult, { kind: "completed" }>> {
-  let task = await client.submit({ audio: fixture, idempotencyKey, keyterms: [], signal });
-  for (let attempt = 0; attempt < maximumAttempts; attempt += 1) {
-    if (task.kind === "completed") {return task;}
-    if (task.kind === "failed") {
-      throw new Error("Voicetext batch canary returned a terminal provider failure");
-    }
-    await wait(Math.min(task.retryAfterMs, maximumPollDelayMs), signal);
-    task = task.nextAction === "retry"
-      ? await client.submit({ audio: fixture, idempotencyKey, keyterms: [], signal })
-      : await client.poll({ jobId: task.jobId, signal });
+  } finally {
+    deadline.dispose();
   }
-  throw new Error("Voicetext batch canary exceeded its bounded attempt limit");
-}
-
-function batchSegmentsFrom(
-  task: Extract<VoicetextBatchTaskResult, { kind: "completed" }>,
-): readonly CanarySegment[] {
-  const source = task.result.readableSegments.length > 0
-    ? task.result.readableSegments.map(({ endSeconds, startSeconds, transcript }) => ({
-        endMs: milliseconds(endSeconds), startMs: milliseconds(startSeconds), text: transcript.trim(),
-      }))
-    : task.result.utterances.map(({ endSeconds, startSeconds, transcript }) => ({
-        endMs: milliseconds(endSeconds), startMs: milliseconds(startSeconds), text: transcript.trim(),
-      }));
-  const segments = source.filter(({ text }) => text.length > 0);
-  if (segments.length === 0 || segments.length > 1_024) {
-    throw new Error("Voicetext batch canary returned no bounded semantic segments");
-  }
-  return segments;
-}
-
-function batchIdentity(
-  task: Extract<VoicetextBatchTaskResult, { kind: "completed" }>,
-  segments: readonly CanarySegment[],
-): BatchIdentity {
-  const resultSha256 = digestCanonical(segments);
-  return { jobId: task.jobId, resultId: `sha256:${digestCanonical(task.result)}`, resultSha256 };
 }
 
 function extractOpusPackets(bytes: Uint8Array): readonly Uint8Array[] {
@@ -262,15 +232,12 @@ function concatenate(parts: readonly Uint8Array[]): Uint8Array {
   return result;
 }
 
-function milliseconds(seconds: number): number {
-  return Math.max(0, Math.round(seconds * 1_000));
-}
-
 function validateArguments(args: VoicetextSemanticCanaryArguments): void {
   const identifier = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u;
   const digest = /^[a-f\d]{64}$/u;
   if (!identifier.test(args.campaignId) || !digest.test(args.fixtureSha256)
     || !digest.test(args.imageDigestSha256) || !digest.test(args.planSha256)
+    || !Number.isSafeInteger(args.deadlineMs) || args.deadlineMs < 1 || args.deadlineMs > 300_000
     || !/^(?:[a-f\d]{40}|[a-f\d]{64})$/u.test(args.sourceRevision)
     || !args.fixturePath.startsWith("/")) {
     throw new Error("Voicetext semantic canary arguments are invalid");
@@ -279,17 +246,6 @@ function validateArguments(args: VoicetextSemanticCanaryArguments): void {
 
 function sha256(value: string | Uint8Array): string {
   return createHash("sha256").update(value).digest("hex");
-}
-
-function digestCanonical(value: unknown): string {
-  return sha256(JSON.stringify(canonicalize(value)));
-}
-
-function canonicalize(value: unknown): unknown {
-  if (Array.isArray(value)) {return value.map(canonicalize);}
-  if (typeof value !== "object" || value === null) {return value;}
-  return Object.fromEntries(Object.entries(value).toSorted(([left], [right]) => left.localeCompare(right))
-    .map(([key, nested]) => [key, canonicalize(nested)]));
 }
 
 async function readPrivateToken(path: string) {
@@ -332,13 +288,14 @@ async function readPrivateToken(path: string) {
 function defaultDependencies(): VoicetextSemanticCanaryDependencies {
   return {
     createBatchClient: (input) => new FetchVoicetextBatchClient(input),
-    openLiveSession: async ({ endpoint, idempotencyKey, onTranscript, token }) =>
+    openLiveSession: async ({ endpoint, idempotencyKey, onTranscript, signal, token }) =>
       await new VoicetextLiveTranscriptionAdapter({ endpoint, language: "multi", token }).openSession({
         idempotencyKey,
         meetingId: `canary:${idempotencyKey}`,
         onTranscript: (event) => {
           onTranscript({ endMs: event.endMs, startMs: event.startMs, text: event.text }, event.isFinal);
         },
+        signal,
         speakerId: "canary-speaker",
       }),
     readFixture: async (path) => await readFile(path),
@@ -373,7 +330,7 @@ export function parseVoicetextSemanticCanaryArguments(
     if (value === undefined) {throw new Error("Voicetext semantic canary CLI arguments are incomplete");}
     return value;
   };
-  const allowed = new Set(["--batch-origin", "--batch-path", "--campaign", "--fixture",
+  const allowed = new Set(["--batch-origin", "--batch-path", "--campaign", "--deadline-ms", "--fixture",
     "--fixture-sha256", "--image-digest-sha256", "--json", "--live-origin", "--live-path",
     "--plan-sha256", "--source-revision"]);
   if (values.get("--json") !== "true" || [...values.keys()].some((key) => !allowed.has(key))) {
@@ -393,6 +350,7 @@ export function parseVoicetextSemanticCanaryArguments(
     args: {
       batchEndpoint,
       campaignId: required("--campaign"),
+      deadlineMs: exactDeadlineMs(required("--deadline-ms")),
       fixturePath: required("--fixture"),
       fixtureSha256: required("--fixture-sha256"),
       imageDigestSha256: required("--image-digest-sha256"),
@@ -402,6 +360,17 @@ export function parseVoicetextSemanticCanaryArguments(
     },
     tokenFilePath,
   };
+}
+
+function exactDeadlineMs(value: string): number {
+  if (!/^[1-9]\d{0,5}$/u.test(value)) {
+    throw new Error("Voicetext semantic canary deadline is invalid");
+  }
+  const deadlineMs = Number(value);
+  if (!Number.isSafeInteger(deadlineMs) || deadlineMs > 300_000) {
+    throw new Error("Voicetext semantic canary deadline is invalid");
+  }
+  return deadlineMs;
 }
 
 function exactEndpoint(origin: string, path: string): string {

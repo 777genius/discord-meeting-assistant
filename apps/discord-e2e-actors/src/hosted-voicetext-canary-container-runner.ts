@@ -4,6 +4,7 @@ import type {
 } from "./hosted-voicetext-semantic-canary-producer.js";
 
 const maximumOutputBytes = 1_048_576;
+const maximumTeardownReserveMs = 1_000;
 
 export interface BoundedContainerProcessResult {
   readonly exitCode: number | null;
@@ -31,6 +32,7 @@ export class HostedVoicetextCanaryContainerRunnerV1 implements VoicetextCanaryRu
   ) {}
 
   public async run(input: VoicetextCanaryRunnerInputV1): Promise<unknown> {
+    const internalDeadlineMs = internalDeadlineFromOuterTimeout(input.timeoutMs);
     const result = await this.process.execute({
       args: [
         "exec", "-i", "-w", "/app/apps/meeting-platform", input.binding.containerId,
@@ -39,6 +41,7 @@ export class HostedVoicetextCanaryContainerRunnerV1 implements VoicetextCanaryRu
         "--fixture", input.fixturePath,
         "--fixture-sha256", input.binding.fixtureSha256,
         "--campaign", input.binding.campaignId,
+        "--deadline-ms", String(internalDeadlineMs),
         "--plan-sha256", input.binding.planSha256,
         "--source-revision", input.binding.sourceRevision,
         "--image-digest-sha256", input.binding.imageDigestSha256,
@@ -58,6 +61,13 @@ export class HostedVoicetextCanaryContainerRunnerV1 implements VoicetextCanaryRu
     if (result.exitCode !== 0) {throw new Error(`Voicetext semantic canary container failed with exit code ${String(result.exitCode)}`);}
     return parseStrictJsonOutput(result.stdout, result.stderr);
   }
+}
+
+function internalDeadlineFromOuterTimeout(timeoutMs: number): number {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 2 || timeoutMs > 300_000) {
+    throw new Error("Voicetext semantic canary timeout cannot reserve bounded teardown time");
+  }
+  return timeoutMs - Math.min(maximumTeardownReserveMs, Math.max(1, Math.floor(timeoutMs / 10)));
 }
 
 function parseStrictJsonOutput(stdout: string, stderr: string): unknown {
