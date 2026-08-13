@@ -5,6 +5,7 @@ import {
 } from "./hosted-campaign-admission.js";
 import { writeCreateOnlyAdmissionReceipt } from "./hosted-admission-receipt-store.js";
 import type { HostedCampaignRemoteAdmissionProbe } from "./hosted-campaign-remote-admission.js";
+import { createHostedCampaignProductionComposition } from "./hosted-campaign-production-composition.js";
 
 export interface HostedAdmissionArguments {
   readonly bindingsPath: string;
@@ -54,6 +55,7 @@ interface HostedAdmissionCliDependencies {
 async function runHostedCampaignAdmissionCli(
   arguments_: readonly string[],
   dependencies: HostedAdmissionCliDependencies,
+  signal?: AbortSignal,
 ): Promise<void> {
   const config = parseHostedAdmissionArguments(arguments_);
   const definition = await dependencies.readJson(config.definitionPath);
@@ -67,7 +69,7 @@ async function runHostedCampaignAdmissionCli(
     bindings, definition, minimumFreeBytes: config.minimumFreeBytes, plan,
     ...(remoteAdmissionProbe === undefined ? {} : {
       remoteAdmissionProbe,
-    }), remoteEvidence,
+    }), remoteEvidence, ...(signal === undefined ? {} : { signal }),
   }, dependencies.now);
   await dependencies.writeReceipt(config.receiptPath, receipt);
   if (receipt.status !== "admitted") {
@@ -80,10 +82,19 @@ async function readJson(path: string): Promise<unknown> {
 }
 
 if (process.argv[1]?.replaceAll("\\", "/").endsWith("/run-hosted-campaign-admission.js") === true) {
+  const controller = new AbortController();
+  const abort = (): void => { controller.abort(new Error("Hosted campaign admission interrupted")); };
+  process.once("SIGINT", abort);
+  process.once("SIGTERM", abort);
+  const production = createHostedCampaignProductionComposition();
   void runHostedCampaignAdmissionCli(process.argv.slice(2), {
+    createRemoteAdmissionProbe: production.createInitialAdmissionProbe,
     now: Date.now, readJson, writeReceipt: writeCreateOnlyAdmissionReceipt,
-  }).catch((error: unknown) => {
+  }, controller.signal).catch((error: unknown) => {
     process.stderr.write(`Hosted campaign admission failed: ${error instanceof Error ? error.message : "unknown error"}\n`);
     process.exitCode = 1;
+  }).finally(() => {
+    process.off("SIGINT", abort);
+    process.off("SIGTERM", abort);
   });
 }

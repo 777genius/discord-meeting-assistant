@@ -27,6 +27,7 @@ import {
   type HostedCampaignTrustedRuntimeEnvironment,
   validateHostedCampaignTrustedRuntimeEnvironment,
 } from "./hosted-campaign-process-adapter.js";
+import { createHostedCampaignProductionComposition } from "./hosted-campaign-production-composition.js";
 
 export interface HostedCampaignCliDependencies {
   readonly assertAdmissionAudit: typeof assertAdmissionAuditMatchesInvocation;
@@ -268,12 +269,11 @@ async function main(): Promise<void> {
   try {
     const config = parseHostedCampaignArguments(process.argv.slice(2));
     await assertHostedCampaignReceiptAbsent(config.receiptPath);
+    const production = createHostedCampaignProductionComposition();
     await runHostedCampaignCli(process.argv.slice(2), {
       assertReceiptAbsent: assertHostedCampaignReceiptAbsent,
       assertAdmissionAudit: assertAdmissionAuditMatchesInvocation,
-      authorizeFreshAdmission: async () => {
-        throw new Error("Hosted campaign fresh remote launch authorization is not composed");
-      },
+      authorizeFreshAdmission: production.authorizeFreshAdmission,
       createPorts: async (plan) => {
         const campaignId = plan.runs[0]!.campaignId;
         const artifactRoot = resolveHostedCampaignBarrierRoot(plan);

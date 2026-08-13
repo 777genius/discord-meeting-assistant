@@ -65,6 +65,7 @@ export interface HostedCampaignAdmissionRequest {
   readonly plan: unknown;
   readonly remoteAdmissionProbe?: HostedCampaignRemoteAdmissionProbe;
   readonly remoteEvidence?: unknown;
+  readonly signal?: AbortSignal;
 }
 
 export async function inspectHostedCampaignAdmission(
@@ -241,6 +242,7 @@ async function evaluateRemote(
       planSha256: digestCanonical(plan),
     },
     now,
+    request.signal,
   );
 }
 

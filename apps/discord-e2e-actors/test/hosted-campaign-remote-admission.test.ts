@@ -66,6 +66,24 @@ describe("hosted campaign remote admission boundary", () => {
       discordIdentity: { ...readiness.discordIdentity, receiptSha256: "b".repeat(64) },
     }), expected, () => nowEpochMs)).rejects.toThrow();
   });
+
+  it("propagates cancellation to the trusted remote probe", async () => {
+    const controller = new AbortController();
+    let received: AbortSignal | undefined;
+    const reason = new Error("cancel remote readiness");
+    const probe: HostedCampaignRemoteAdmissionProbe = {
+      clockPreflightExpectation: { maximumClockSkewBoundMs: 250 },
+      inspect: async (_request, signal) => {
+        received = signal;
+        controller.abort(reason);
+        signal?.throwIfAborted();
+      },
+      voicetextCanaryExpectation,
+    };
+    await expect(evaluateHostedRemoteAdmission(probe, expected, () => nowEpochMs, controller.signal))
+      .rejects.toBe(reason);
+    expect(received).toBe(controller.signal);
+  });
 });
 
 function fakeProbe(value: unknown): HostedCampaignRemoteAdmissionProbe {

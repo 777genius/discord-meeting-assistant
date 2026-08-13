@@ -107,12 +107,15 @@ export async function evaluateHostedRemoteAdmission(
   probe: HostedCampaignRemoteAdmissionProbe | undefined,
   expected: HostedCampaignRemoteAdmissionProbeRequest,
   now: () => number,
+  signal?: AbortSignal,
 ): Promise<HostedRemoteAdmissionEvaluation> {
   if (typeof now !== "function") {
     throw new Error("Hosted remote admission requires a trusted clock callback");
   }
   if (probe === undefined) { return Object.freeze({ missingSections: readinessSections }); }
-  const evidence = parseEvidence(await probe.inspect(expected));
+  signal?.throwIfAborted();
+  const evidence = parseEvidence(await probe.inspect(expected, signal));
+  signal?.throwIfAborted();
   const nowEpochMs = now();
   if (!Number.isSafeInteger(nowEpochMs)) {
     throw new Error("Hosted remote admission requires a safe evaluation time");
