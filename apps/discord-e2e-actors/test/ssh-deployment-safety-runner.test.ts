@@ -16,13 +16,13 @@ const expectation: HostedDeploymentSafetyExpectationV1 = {
   campaignRoot: "/srv/e2e/campaigns",
   deployRoot: "/srv/e2e",
   greeting: {
-    campaignSiblingPath: "/srv/e2e/campaigns/.greeting-mounts/campaign-2/run-3",
-    destinationPath: "/var/lib/discord-meeting/e2e-playback-readiness/campaign-1/run-3",
-    environmentRoot: "/var/lib/discord-meeting/e2e-playback-readiness/campaign-1/run-3/greeting-handshakes",
-    observerRoot: "/srv/e2e/campaigns/.greeting-mounts/campaign-1/run-3/greeting-handshakes",
-    runRoot: "/srv/e2e/campaigns/.greeting-mounts/campaign-1/run-3",
-    runSiblingPath: "/srv/e2e/campaigns/.greeting-mounts/campaign-1/run-2",
-    sourcePath: "/srv/e2e/campaigns/.greeting-mounts/campaign-1/run-3",
+    campaignSiblingPath: "/srv/e2e/campaigns-sibling",
+    destinationPath: "/run/e2e-campaign",
+    environmentRoot: "/run/e2e-campaign/campaign-1/run-3/greeting-handshakes",
+    observerRoot: "/srv/e2e/campaigns/campaign-1/run-3/greeting-handshakes",
+    runRoot: "/srv/e2e/campaigns/campaign-1/run-3",
+    runSiblingPath: "/srv/e2e/campaigns/campaign-1/run-2",
+    sourcePath: "/srv/e2e/campaigns",
   },
   services: [
     serviceExpectation("craig", "craig-meeting-e2e", "bot", "1", "a"),
@@ -140,7 +140,7 @@ class SyntheticRemote {
     meeting?.Mounts.push({
       Destination: "/broad",
       RW: true,
-      Source: "/srv/e2e/campaigns/.greeting-mounts",
+      Source: "/srv/e2e",
       Type: "bind",
     });
   }
@@ -169,7 +169,7 @@ describe("concrete SSH deployment safety runner", () => {
     expect(nonceCalls).toHaveLength(2);
     expect(nonceCalls.every((args) =>
       args[2]?.includes("trap cleanup EXIT HUP INT TERM") === true)).toBe(true);
-    expect(nonceCalls.every((args) => args.includes(expectation.greeting.sourcePath + "/.admission-probes"))).toBe(true);
+    expect(nonceCalls.every((args) => args.includes(expectation.greeting.runRoot + "/.admission-probes"))).toBe(true);
   });
 
   it("reports sibling access instead of authorizing a broad mount", async () => {

@@ -124,7 +124,8 @@ describe("test-only campaign compose override", () => {
 
   it("mounts only the exact campaign root into Meeting Platform and keeps the coordinator host-side", async () => {
     const overlay = await readFile(new URL("../../../infra/deployment/compose.e2e-campaign.yaml", import.meta.url), "utf8");
-    expect(overlay.split(":/run/e2e-campaign")).toHaveLength(2);
+    expect(overlay).toContain("${E2E_CAMPAIGN_HOST_ROOT:?set fresh private per-campaign host root}:/run/e2e-campaign");
+    expect(overlay).toContain("CONVERSATION_E2E_GREETING_PLAYBACK_READINESS_ROOT: /run/e2e-campaign/${E2E_CAMPAIGN_ID:?set fresh campaign ID}/run-3/greeting-handshakes");
     expect(overlay.match(/e2e\.test-only: "true"/gu)).toHaveLength(3);
     expect(overlay.match(/DISCORD_E2E_CAMPAIGN_SHARED_ROOT_ACKNOWLEDGED: "true"/gu)).toHaveLength(1);
     expect(overlay).not.toContain("discord-e2e-campaign-runner:");

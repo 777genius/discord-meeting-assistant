@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { isAbsolute, join, normalize, resolve } from "node:path";
+import { dirname, isAbsolute, join, normalize, resolve } from "node:path";
 
 import { z } from "zod";
 
@@ -58,7 +58,7 @@ const mountIsolationSchema = z.object({
   campaignSiblingAccessible: z.literal(false),
   campaignSiblingMounted: z.literal(false),
   campaignSiblingPath: absolutePathSchema,
-  runSiblingAccessible: z.literal(false),
+  runSiblingAccessible: z.literal(true),
   runSiblingMounted: z.literal(false),
   runSiblingPath: absolutePathSchema,
 }).strict();
@@ -250,22 +250,27 @@ function assertGreetingMount(
     || actual.observerRoot !== expected.observerRoot) {
     throw new Error("Hosted greeting mount does not match the exact campaign bindings");
   }
-  const mountNamespace = join(expectation.campaignRoot, ".greeting-mounts");
+  const mountNamespace = expectation.campaignRoot;
   const campaignOwnedRoot = join(mountNamespace, expectation.campaignId);
-  if (!isInside(campaignOwnedRoot, actual.sourcePath)
-    || actual.sourcePath !== actual.runRoot
+  if (actual.sourcePath !== mountNamespace
+    || !isInside(campaignOwnedRoot, actual.runRoot)
     || !isInside(actual.runRoot, actual.observerRoot)
-    || !isInside(actual.destinationPath, actual.environmentRoot)) {
+    || actual.environmentRoot !== join(
+      actual.destinationPath,
+      expectation.campaignId,
+      actual.runRoot.slice(campaignOwnedRoot.length + 1),
+      "greeting-handshakes",
+    )) {
     throw new Error("Hosted greeting mount roots violate the pinned containment policy");
   }
   const isolation = evidence.mountIsolation;
   if (isolation.campaignSiblingPath !== expectation.greeting.campaignSiblingPath
     || isolation.runSiblingPath !== expectation.greeting.runSiblingPath
-    || !isInside(mountNamespace, isolation.campaignSiblingPath)
-    || isInside(campaignOwnedRoot, isolation.campaignSiblingPath)
+    || !isInside(dirname(mountNamespace), isolation.campaignSiblingPath)
+    || isInside(mountNamespace, isolation.campaignSiblingPath)
     || !isInside(campaignOwnedRoot, isolation.runSiblingPath)
-    || isInside(actual.sourcePath, isolation.campaignSiblingPath)
-    || isInside(actual.sourcePath, isolation.runSiblingPath)) {
+    || !isolation.runSiblingAccessible
+    || !isInside(actual.sourcePath, isolation.runSiblingPath)) {
     throw new Error("Hosted greeting mount sibling isolation does not match the pinned paths");
   }
 }
@@ -274,7 +279,7 @@ function assertRoundTrip(
   evidence: z.infer<typeof deploymentSafetyEvidenceSchema>,
   expectation: HostedDeploymentSafetyExpectationV1,
 ): void {
-  const expectedRoot = join(expectation.greeting.sourcePath, ".admission-probes");
+  const expectedRoot = join(expectation.greeting.runRoot, ".admission-probes");
   const proof = evidence.roundTrip;
   if (proof.probeRoot !== expectedRoot
     || proof.containerObservedHostNonce !== proof.hostWrittenNonce

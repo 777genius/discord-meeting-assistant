@@ -77,6 +77,18 @@ describe("hosted campaign release binding", () => {
   it("assembles host-side wiring after the exact release matches the trust root", () => {
     expect(createHostedCampaignReleaseConfig(release, trust, campaign)).toMatchObject({
       campaignId: campaign.campaignId,
+      deployment: { producer: { expectation: {
+        campaignRoot: "/srv/e2e/campaigns",
+        greeting: {
+          campaignSiblingPath: "/srv/e2e/campaigns-sibling",
+          destinationPath: "/run/e2e-campaign",
+          environmentRoot: "/run/e2e-campaign/campaign-1/run-3/greeting-handshakes",
+          observerRoot: "/srv/e2e/campaigns/campaign-1/run-3/greeting-handshakes",
+          runRoot: "/srv/e2e/campaigns/campaign-1/run-3",
+          runSiblingPath: "/srv/e2e/campaigns/campaign-1/run-2",
+          sourcePath: "/srv/e2e/campaigns",
+        },
+      } } },
       meetingPlatformRevision: campaign.meetingPlatformRevision,
       planSha256: campaign.planSha256,
       voicetext: { input: { binding: { transcriptExpectationSha256: pinnedCanary.transcriptExpectation.sha256 },

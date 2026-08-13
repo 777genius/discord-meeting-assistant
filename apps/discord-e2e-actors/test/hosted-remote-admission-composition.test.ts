@@ -348,13 +348,13 @@ function deploymentExpectation(): HostedDeploymentSafetyExpectationV1 {
     allowedNetworks: ["discord-meeting-e2e"], campaignId, campaignRoot: "/srv/e2e/campaigns",
     deployRoot: "/srv/e2e", sourceRoot: "/srv/e2e/source",
     greeting: {
-      campaignSiblingPath: "/srv/e2e/campaigns/.greeting-mounts/campaign-2/run-3",
-      destinationPath: "/var/lib/discord-meeting/e2e-playback-readiness/campaign-1/run-3",
-      environmentRoot: "/var/lib/discord-meeting/e2e-playback-readiness/campaign-1/run-3/greeting-handshakes",
-      observerRoot: "/srv/e2e/campaigns/.greeting-mounts/campaign-1/run-3/greeting-handshakes",
-      runRoot: "/srv/e2e/campaigns/.greeting-mounts/campaign-1/run-3",
-      runSiblingPath: "/srv/e2e/campaigns/.greeting-mounts/campaign-1/run-2",
-      sourcePath: "/srv/e2e/campaigns/.greeting-mounts/campaign-1/run-3",
+      campaignSiblingPath: "/srv/e2e/campaigns-sibling",
+      destinationPath: "/run/e2e-campaign",
+      environmentRoot: "/run/e2e-campaign/campaign-1/run-3/greeting-handshakes",
+      observerRoot: "/srv/e2e/campaigns/campaign-1/run-3/greeting-handshakes",
+      runRoot: "/srv/e2e/campaigns/campaign-1/run-3",
+      runSiblingPath: "/srv/e2e/campaigns/campaign-1/run-2",
+      sourcePath: "/srv/e2e/campaigns",
     },
     services: [service("craig", "1", "bot"), service("meetingPlatform", "2", "meeting-platform"),
       service("pipecat", "3", "pipecat-runtime"), service("subscriptionRuntime", "4", "subscription-runtime-sidecar")],
@@ -374,7 +374,7 @@ function deploymentReceipt(expectation: HostedDeploymentSafetyExpectationV1, gen
     readOnly: false as const, runRoot: expectation.greeting.runRoot, sourcePath: expectation.greeting.sourcePath,
     sourceSymbolicLink: false as const };
   const mountIsolation = { campaignSiblingAccessible: false as const, campaignSiblingMounted: false as const,
-    campaignSiblingPath: expectation.greeting.campaignSiblingPath, runSiblingAccessible: false as const,
+    campaignSiblingPath: expectation.greeting.campaignSiblingPath, runSiblingAccessible: true as const,
     runSiblingMounted: false as const, runSiblingPath: expectation.greeting.runSiblingPath };
   const roots = { deploy: { kind: "directory" as const, requestedPath: expectation.deployRoot, resolvedPath: expectation.deployRoot, symbolicLink: false as const },
     source: { kind: "directory" as const, requestedPath: expectation.sourceRoot, resolvedPath: expectation.sourceRoot, symbolicLink: false as const } };
@@ -383,7 +383,7 @@ function deploymentReceipt(expectation: HostedDeploymentSafetyExpectationV1, gen
     roots, rootsAfter: roots, servicesBefore: services, servicesAfter: services,
     roundTrip: { containerObservedHostNonce: "host-nonce", containerWrittenNonce: "container-nonce",
       hostObservedContainerNonce: "container-nonce", hostWrittenNonce: "host-nonce",
-      probeRoot: `${expectation.greeting.sourcePath}/.admission-probes` },
+      probeRoot: `${expectation.greeting.runRoot}/.admission-probes` },
   } });
 }
 

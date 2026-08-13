@@ -194,10 +194,12 @@ The shared-volume receipt is not a cryptographic signature: trust comes from a
 private current-user-owned directory, private current-user-owned regular files,
 create-only publication, and exact digest/schema/run validation. For a hosted
 campaign, apply `infra/deployment/compose.e2e-campaign.yaml` only to the isolated
-test deployment. `E2E_CAMPAIGN_HOST_ROOT` is a fresh mode-0700 UID/GID-10001
-wrapper containing exactly one campaign-ID directory; it is mounted into
-Meeting Platform at `/run/e2e-campaign` and read from its exact host path by the
-host-side coordinator. Never point it at the shared campaigns parent. The
+test deployment. `E2E_CAMPAIGN_HOST_ROOT` is the exact fresh mode-0700
+UID/GID-10001 wrapper used as `campaignRoot` by the host-side coordinator and
+containing exactly one campaign-ID directory. It is bound to Meeting Platform
+at `/run/e2e-campaign`, so readiness paths are
+`/run/e2e-campaign/<campaign-id>/run-3/...`. Never point it at the shared
+campaigns parent. The
 production Compose file has no readiness mount. Official test-bot tokens remain
 host-side runner secrets and are never mounted into Platform.
 The deployment-safety probe must prove exact roots, sibling isolation, freshness

@@ -309,10 +309,12 @@ It creates the matching ready receipt and retains the resolved meeting identity
 and digest in campaign proof before answer playback may begin. Any earlier
 audible packet aborts the campaign. Apply the test-only
 `infra/deployment/compose.e2e-campaign.yaml` overlay and set
-`E2E_CAMPAIGN_HOST_ROOT` to a fresh mode-0700 UID/GID-10001 wrapper containing
-exactly one campaign-ID directory. The overlay exposes only that wrapper to
-Meeting Platform at `/run/e2e-campaign`; the host-side coordinator uses the same
-exact host path. Never mount the shared campaigns parent. Official test-bot
+`E2E_CAMPAIGN_HOST_ROOT` to the exact fresh mode-0700 UID/GID-10001 wrapper used
+as `campaignRoot` by the coordinator and containing exactly one campaign-ID
+directory. The overlay binds that wrapper to Meeting Platform at
+`/run/e2e-campaign`; readiness paths are therefore exactly
+`/run/e2e-campaign/<campaign-id>/run-3/...`. Never mount the shared campaigns
+parent. Official test-bot
 tokens remain in the host-side runner secret boundary and are not Platform
 secrets. The base
 production Compose deliberately has no campaign/readiness bind mount. Require

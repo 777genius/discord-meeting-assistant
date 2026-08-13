@@ -46,6 +46,10 @@ export class SshDeploymentSafetyProbe {
     this.#runner = runner;
   }
 
+  public get expectation(): HostedDeploymentSafetyExpectationV1 {
+    return this.#options.expectation;
+  }
+
   public async collect(signal?: AbortSignal): Promise<HostedDeploymentSafetyReceiptV1> {
     signal?.throwIfAborted();
     const before = await this.#runner.inspectDeployment(signal);
@@ -55,7 +59,7 @@ export class SshDeploymentSafetyProbe {
       this.#options.expectation.greeting.runSiblingPath,
       signal,
     );
-    const probeRoot = `${this.#options.expectation.greeting.sourcePath}/.admission-probes`;
+    const probeRoot = `${this.#options.expectation.greeting.runRoot}/.admission-probes`;
     const containerObservedHostNonce = await this.#runner.observeHostNonceInContainer(
       probeRoot,
       this.#options.hostNonce,

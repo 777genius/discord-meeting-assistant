@@ -133,20 +133,23 @@ export function createHostedCampaignReleaseConfig(
   const platform = requiredService(byComponent, "meetingPlatform");
   const craig = requiredService(byComponent, "craig");
   const runId = definition.runIds[2];
-  const greetingSource = `${definition.campaignRoot}/.greeting-mounts/${campaign.campaignId}/${runId}`;
+  const campaignSource = `${definition.campaignRoot}/${campaign.campaignId}`;
+  const greetingRunSource = `${campaignSource}/${runId}`;
+  const campaignContainerRoot = `/run/e2e-campaign/${campaign.campaignId}`;
+  const greetingRunContainerRoot = `${campaignContainerRoot}/${runId}`;
   const expectation = {
     allowedNetworks: trust.allowedNetworks,
     campaignId: campaign.campaignId,
     campaignRoot: definition.campaignRoot,
     deployRoot: trust.deployRoot,
     greeting: {
-      campaignSiblingPath: `${definition.campaignRoot}/.greeting-mounts/${campaign.campaignId}-sibling/${runId}`,
-      destinationPath: `/var/lib/discord-meeting/e2e-playback-readiness/${campaign.campaignId}/${runId}`,
-      environmentRoot: `/var/lib/discord-meeting/e2e-playback-readiness/${campaign.campaignId}/${runId}/greeting-handshakes`,
-      observerRoot: `${greetingSource}/greeting-handshakes`,
-      runRoot: greetingSource,
-      runSiblingPath: `${definition.campaignRoot}/.greeting-mounts/${campaign.campaignId}/${definition.runIds[1]}`,
-      sourcePath: greetingSource,
+      campaignSiblingPath: `${definition.campaignRoot}-sibling`,
+      destinationPath: "/run/e2e-campaign",
+      environmentRoot: `${greetingRunContainerRoot}/greeting-handshakes`,
+      observerRoot: `${greetingRunSource}/greeting-handshakes`,
+      runRoot: greetingRunSource,
+      runSiblingPath: `${campaignSource}/${definition.runIds[1]}`,
+      sourcePath: definition.campaignRoot,
     },
     services: release.services.map(({ containerId: _containerId, ...identity }) => identity),
     sourceRoot: trust.sourceRoot,
