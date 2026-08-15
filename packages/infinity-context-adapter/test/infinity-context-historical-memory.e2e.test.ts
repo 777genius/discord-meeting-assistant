@@ -403,12 +403,14 @@ describe("Infinity Context production provenance deletion", () => {
       transport: endpoint,
     });
     const capabilities = await adapter.qualifyCapabilities();
-    expect(() => assertInfinityContextActivation(activation, {
-      apiVersion: capabilities.api_version ?? null,
-      enabledAdapters: capabilities.enabled_adapters ?? [],
-      serviceName: capabilities.service_name ?? null,
-      supportsQdrant: capabilities.supports_qdrant === true,
-    })).not.toThrow();
+    expect(() => {
+      assertInfinityContextActivation(activation, {
+        apiVersion: capabilities.api_version ?? null,
+        enabledAdapters: capabilities.enabled_adapters ?? [],
+        serviceName: capabilities.service_name ?? null,
+        supportsQdrant: capabilities.supports_qdrant === true,
+      });
+    }).not.toThrow();
 
     const plan = buildHistoricalIndexPlan(
       finalMeeting(1, "Tuesday"),

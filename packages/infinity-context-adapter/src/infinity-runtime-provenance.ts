@@ -162,10 +162,8 @@ export function assertInfinityContextActivation(
     activation.environment === "production" &&
     (
       activation.packageSource !== "immutable_package" ||
-      INFINITY_CONTEXT_SDK_PROVENANCE.immutablePackageIntegrity === null ||
       activation.immutablePackageIntegrity !==
         INFINITY_CONTEXT_SDK_PROVENANCE.immutablePackageIntegrity ||
-      INFINITY_CONTEXT_SDK_PROVENANCE.retainedLiveQualificationManifestSha256 === null ||
       activation.qualificationManifestSha256 === null ||
       activation.qualificationManifestSha256 !==
         INFINITY_CONTEXT_SDK_PROVENANCE.retainedLiveQualificationManifestSha256

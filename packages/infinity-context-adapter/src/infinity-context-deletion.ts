@@ -76,7 +76,7 @@ async function deleteRelease(
       }
     }
     const remaining = await listDocumentsWhenSupported(client, request, signal);
-    if (remaining?.some((document) => {
+    if (remaining !== null && remaining.some((document) => {
       const sourceExternalId = documentSourceExternalId(document);
       return !documentIsDeleted(document) &&
         sourceExternalId !== null && targetExternalIds.has(sourceExternalId);

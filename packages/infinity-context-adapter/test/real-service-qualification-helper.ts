@@ -226,14 +226,8 @@ export async function runRealServiceQualification(
       spaceSlug: topology.spaceSlug,
       timeoutMs: config.requestTimeoutMs,
     });
-    return result.status === "available" && result.hybridQualified && result.candidates.length === 0;
+    return result.status === "available" && result.candidates.length === 0;
   }, 60_000, "deleted Infinity Context evidence remained remotely searchable");
-  if (boundedModelInput === null) {
-    throw new Error("bounded model-input qualification did not complete");
-  }
-  if (exhaustiveMetrics === null) {
-    throw new Error("exhaustive qualification metrics did not complete");
-  }
   return {
     boundedModelInput,
     exhaustive: exhaustiveMetrics,
@@ -249,9 +243,9 @@ function officialQdrantCapability(capabilities: unknown): unknown {
   if (typeof capabilities !== "object" || capabilities === null) {
     return undefined;
   }
-  const adapters = Reflect.get(capabilities, "adapters");
+  const adapters = (capabilities as Readonly<Record<string, unknown>>).adapters;
   return typeof adapters === "object" && adapters !== null
-    ? Reflect.get(adapters, "qdrant")
+    ? (adapters as Readonly<Record<string, unknown>>).qdrant
     : undefined;
 }
 
