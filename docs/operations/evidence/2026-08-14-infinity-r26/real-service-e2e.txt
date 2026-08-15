@@ -1,0 +1,9 @@
+RUN v4.1.10 packages/infinity-context-adapter
+
+INFINITY_CONTEXT_REAL_E2E_RESULT {"boundedModelInput":{"evidenceCount":31,"inputTokens":3855,"maximumRequestBytes":64000,"requestBytes":15418,"requestSha256":"7ec8256e10e97241acce8ca03153b69cd9bd10ed63dd98bb96832fa532f7299f"},"exhaustive":{"absenceEvidenceCount":0,"allEvidenceCount":31,"blocksReviewed":71,"countEvidenceCount":4,"turnsReviewed":421,"universalEvidenceCount":3},"exhaustiveBlockCount":71,"focusedQuestionCount":7,"focusedRecallAt":5,"remoteCleanupVerified":true,"turnCount":421}
+
+PASS test/infinity-context-real-service.e2e.test.ts
+Official SDK actual HTTP; healthy Qdrant; PostgreSQL keyword/BM25 observed during hybrid search.
+Synthetic deterministic mock embeddings; non-production semantic evidence.
+Remote cleanup verified.
+Exit code 0.

@@ -2,6 +2,7 @@ import { normalizeTranscriptSemantics } from "./e2e-evidence-text-metrics.js";
 import type {
   RetainedE2eEvidenceV8,
   RetainedE2eEvidenceV9,
+  RetainedVoiceE2eEvidenceV10,
 } from "./e2e-evidence-schema.js";
 import type {
   VerificationFailureReporter,
@@ -19,7 +20,7 @@ interface BotikFarewellExpectation {
 const maximumSplitTurnGapMs = 500;
 
 export function verifyBotikFarewellTranscript(
-  evidence: RetainedE2eEvidenceV8 | RetainedE2eEvidenceV9,
+  evidence: RetainedE2eEvidenceV8 | RetainedE2eEvidenceV9 | RetainedVoiceE2eEvidenceV10,
   expectation: BotikFarewellExpectation,
   fail: VerificationFailureReporter,
 ): void {
@@ -52,6 +53,67 @@ export function verifyBotikFarewellTranscript(
     fail(
       "SUPPLEMENTAL_FAREWELL_DUPLICATE",
       "a second farewell-shaped Botik turn exists outside the settled farewell capture",
+    );
+  }
+}
+
+export function verifyPreparedFarewellPlayback(
+  evidence: RetainedVoiceE2eEvidenceV10,
+  maximumFirstPacketMilliseconds: number,
+  fail: VerificationFailureReporter,
+): void {
+  const farewellEvents = evidence.conversation.lifecycle.events.filter(
+    (event): event is Extract<typeof event, { readonly type: "farewell" }> =>
+      event.type === "farewell",
+  );
+  const farewellCaptures = evidence.conversation.voice.filter(
+    ({ correlation }) => correlation.purpose === "farewell",
+  );
+  const farewell = farewellEvents[0];
+  const capture = farewellCaptures[0];
+  if (farewellEvents.length !== 1 || farewellCaptures.length !== 1 ||
+    farewell === undefined || capture === undefined ||
+    capture.correlation.attemptId !== farewell.playbackAttemptId) {
+    fail(
+      "FAREWELL_PREPARED_CUE_PROVENANCE_MISSING",
+      "current farewell evidence must bind one audible capture to one prepared cue attempt",
+    );
+    return;
+  }
+  const receipts = evidence.conversation.lifecycle.playbackReceipts.filter(
+    ({ playbackAttemptId, turnId }) =>
+      playbackAttemptId === farewell.playbackAttemptId && turnId === farewell.turnId,
+  );
+  const started = receipts.filter(
+    (receipt): receipt is Extract<typeof receipt, { readonly status: "started" }> =>
+      receipt.status === "started",
+  );
+  const finished = receipts.filter(
+    (receipt): receipt is Extract<typeof receipt, { readonly status: "finished" }> =>
+      receipt.status === "finished",
+  );
+  const settled = receipts.filter(
+    (receipt): receipt is Extract<typeof receipt, { readonly status: "settled" }> =>
+      receipt.status === "settled",
+  );
+  const assetDigests = new Set(receipts.map(({ preparedAssetSha256 }) => preparedAssetSha256));
+  if (receipts.length !== 3 || started.length !== 1 || finished.length !== 1 ||
+    settled.length !== 1 || receipts.some(({ playbackKind }) => playbackKind !== "prepared-cue") ||
+    assetDigests.size !== 1 || !/^[a-f\d]{64}$/u.test([...assetDigests][0] ?? "") ||
+    settled[0]?.settlement !== "played") {
+    fail(
+      "FAREWELL_PREPARED_CUE_PROVENANCE_MISSING",
+      "current farewell must retain started, finished and played receipts for one checksum-pinned prepared asset",
+    );
+    return;
+  }
+  const startedAt = started[0]!.playbackStartedAtEpochMs;
+  const firstPacketAt = capture.capture.firstPacketAt.epochMilliseconds;
+  if (firstPacketAt < startedAt ||
+    firstPacketAt - startedAt > maximumFirstPacketMilliseconds) {
+    fail(
+      "FAREWELL_PREPARED_CUE_LATENCY_EXCEEDED",
+      "prepared farewell first packet exceeds the governed low-latency threshold",
     );
   }
 }

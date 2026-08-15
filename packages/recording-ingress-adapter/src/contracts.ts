@@ -86,6 +86,14 @@ export interface RecordingSourceIdentity {
   readonly scopeId: string;
 }
 
+export interface RecordingIdentityProvenance {
+  readonly actorObservationState: "consistent" | "conflicted";
+  readonly actorSemanticsVersion: number;
+  readonly producerCapabilityId: string;
+  readonly producerRevision: string;
+  readonly rosterState: "sealed" | "unsealed";
+}
+
 export type LifecycleIngressResult =
   | {
       readonly kind: "accepted";
@@ -99,7 +107,9 @@ export type LifecycleIngressResult =
     }
   | {
       readonly actors: readonly RecordingActorIdentity[] | null;
+      readonly identityProvenance: RecordingIdentityProvenance | null;
       readonly kind: "finalized";
+      readonly lifecycleGeneration: 1 | 2 | 3;
       readonly recording: RecordingArtifactSnapshot;
       readonly replayed: boolean;
       readonly source: RecordingSourceIdentity;

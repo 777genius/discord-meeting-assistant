@@ -41,6 +41,10 @@ export async function startPlatformServices(input: {
   readonly dependencyReadiness: PlatformDependencyReadinessPort;
   readonly discord: Client;
   readonly guildSetupHandler: DiscordGuildSetupCommandHandler;
+  readonly historicalMemory?: {
+    assertReady(): Promise<void>;
+    start(): Promise<void>;
+  };
   readonly logger: StartupLogger;
   readonly meetingPlatformInstallUrl: string;
   readonly outboxDispatcher: PostCallOutboxDispatchPort;
@@ -54,6 +58,7 @@ export async function startPlatformServices(input: {
 }): Promise<void> {
   await input.recordings.acquireExclusiveSpoolOwnership();
   await waitForCoreDependencies(input);
+  await input.historicalMemory?.assertReady();
   await loginDiscord(input.config, input.discord);
   await registerDiscordGuildSetupCommand(input.discord);
   await input.dependencyReadiness.assertReady();
@@ -61,6 +66,7 @@ export async function startPlatformServices(input: {
   await input.worker.waitUntilReady();
   await startPostCallWorker(input.worker, input.logger);
   await input.outboxDispatcher.dispatchPending();
+  await input.historicalMemory?.start();
   await input.server.start();
   input.logger.info("Meeting platform is ready", {
     discordInstallUrl: input.meetingPlatformInstallUrl,

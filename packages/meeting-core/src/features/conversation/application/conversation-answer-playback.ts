@@ -26,6 +26,7 @@ import {
   trackConversationTask,
   withConversationPlaybackOpen,
 } from "./conversation-state.js";
+import { playbackProvenance } from "./conversation-observability.js";
 
 type PlaybackTerminalEvent = Extract<
   VoicePlaybackEvent,
@@ -152,10 +153,28 @@ export class ConversationAnswerPlayback {
     run: ActiveConversationRun,
     chunk: ConversationAudioChunk,
   ): Promise<boolean> {
-    const playback = run.playback;
-    if (playback === null) {
+    if (conversationWriteIsBlocked(state, run)) {
       return false;
     }
+    const authority = run.groundedPlaybackAuthority;
+    if (authority !== null) {
+      if (!await authority()) {
+        if (!conversationWriteIsBlocked(state, run)) {
+          await this.dependencies.requestCancellation(state, run, "disconnected");
+        }
+        return false;
+      }
+      if (conversationWriteIsBlocked(state, run)) {
+        return false;
+      }
+      run.groundedPlaybackAuthority = null;
+      run.groundedPlaybackAbortController = null;
+    }
+    const playback = run.playback;
+    if (playback === null || conversationWriteIsBlocked(state, run)) {
+      return false;
+    }
+    run.answerAudioWriteAttempted = true;
     if (await this.operationFailed(() => playback.write(chunk))) {
       await this.dependencies.requestCancellation(state, run, "playback-failed");
       return false;
@@ -245,6 +264,7 @@ export class ConversationAnswerPlayback {
     }
     consumption.startedReceiptReceived = true;
     this.observePlayback({
+      ...playbackProvenance(run),
       meetingId: run.prepared.request.meetingId,
       playbackAttemptId: event.attemptId,
       playbackKind,
@@ -286,6 +306,7 @@ export class ConversationAnswerPlayback {
 
     run.playbackFinished = true;
     this.observePlayback({
+      ...playbackProvenance(run),
       finishedAtMs: event.finishedAtMs,
       meetingId: run.prepared.request.meetingId,
       playbackAttemptId: event.attemptId,
@@ -372,6 +393,13 @@ export class ConversationAnswerPlayback {
       // Observability must never alter conversation delivery or cancellation.
     }
   }
+}
+
+function conversationWriteIsBlocked(
+  state: MeetingConversationState,
+  run: ActiveConversationRun,
+): boolean {
+  return !isCurrentConversationRun(state, run) || run.cancellationInFlight;
 }
 
 function isPlaybackTerminalEvent(event: VoicePlaybackEvent): event is PlaybackTerminalEvent {

@@ -1,3 +1,11 @@
+import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -5,6 +13,7 @@ import {
   digestHostedCampaignReleaseTrustRootV1,
   hostedCampaignReleaseBindingV1Schema,
   hostedCampaignReleaseTrustRootV1Schema,
+  resolveCompiledHostedCampaignReleaseTrustRoot,
 } from "../src/hosted-campaign-release-binding.js";
 import { HOSTED_VOICETEXT_CANARY_BINDING_V1 } from "../src/hosted-voicetext-canary-binding.js";
 
@@ -48,6 +57,7 @@ const campaign = {
   runIds: ["run-1", "run-2", "run-3"], secretDirectory: trust.secretDirectory },
   meetingPlatformRevision: "b".repeat(40), plan: {}, planSha256: "9".repeat(64),
 } as const;
+const executeFile = promisify(execFile);
 
 describe("hosted campaign release binding", () => {
   it("requires one exact service identity for every release component", () => {
@@ -108,4 +118,59 @@ describe("hosted campaign release binding", () => {
     expect(() => createHostedCampaignReleaseConfig(release, trust, changed))
       .toThrow("does not match the compiled release paths");
   });
+
+  it("keeps the checked-in build unadmitted and rejects tampered generated trust", () => {
+    expect(resolveCompiledHostedCampaignReleaseTrustRoot({
+      generatorVersion: 1,
+      schemaVersion: 1,
+      status: "unadmitted",
+    })).toBeUndefined();
+    expect(() => resolveCompiledHostedCampaignReleaseTrustRoot({
+      generatorVersion: 1,
+      schemaVersion: 1,
+      status: "admitted",
+      trustRoot: trust,
+      trustRootSha256: "0".repeat(64),
+    })).toThrow("digest is invalid");
+    expect(resolveCompiledHostedCampaignReleaseTrustRoot({
+      generatorVersion: 1,
+      schemaVersion: 1,
+      status: "admitted",
+      trustRoot: trust,
+      trustRootSha256: digestHostedCampaignReleaseTrustRootV1(trust),
+    })).toEqual(trust);
+  });
+
+  it("reproducibly generates admitted source only for the reviewed input digest", async () => {
+    const root = await mkdtemp(join(tmpdir(), "compiled-hosted-release-"));
+    const trustRootPath = join(root, "trust-root.json");
+    const firstOutput = join(root, "first.ts");
+    const secondOutput = join(root, "second.ts");
+    const sourceTrust = { z: 1, a: { y: 2, x: 3 } };
+    const expectedDigest = createHash("sha256").update(
+      JSON.stringify({ a: { x: 3, y: 2 }, z: 1 }),
+    ).digest("hex");
+    await writeFile(trustRootPath, JSON.stringify(sourceTrust), { mode: 0o600 });
+    const generator = fileURLToPath(new URL(
+      "../scripts/generate-hosted-campaign-compiled-release.ts",
+      import.meta.url,
+    ));
+
+    for (const output of [firstOutput, secondOutput]) {
+      await executeFile(process.execPath, [
+        generator,
+        "--trust-root", trustRootPath,
+        "--expected-sha256", expectedDigest,
+        "--output", output,
+      ]);
+    }
+    expect(await readFile(firstOutput, "utf8")).toBe(await readFile(secondOutput, "utf8"));
+    expect(await readFile(firstOutput, "utf8")).toContain(`"trustRootSha256": "${expectedDigest}"`);
+    await expect(executeFile(process.execPath, [
+      generator,
+      "--trust-root", trustRootPath,
+      "--expected-sha256", "0".repeat(64),
+      "--output", join(root, "rejected.ts"),
+    ])).rejects.toThrow("Reviewed trust-root digest");
+  }, 15_000);
 });

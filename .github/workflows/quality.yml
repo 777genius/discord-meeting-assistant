@@ -35,5 +35,6 @@ jobs:
           python-version: "3.13"
           version: 0.11.12
           working-directory: apps/pipecat-runtime
+      - run: node vendor/infinity-context/prepare-official-sdk.mjs
       - run: pnpm install --frozen-lockfile
       - run: pnpm run check

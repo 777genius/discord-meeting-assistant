@@ -9,20 +9,14 @@ import {
   createMeetingPublicationTargetId,
   type MeetingId,
 } from "./identifiers.js";
-import {
-  RecordingArtifact,
-} from "../../recording/index.js";
-import {
-  EvidenceBackedSummary,
-} from "../../meeting-intelligence/index.js";
+import { RecordingArtifact } from "../../recording/index.js";
+import { EvidenceBackedSummary } from "../../meeting-intelligence/index.js";
 import {
   type PublicationReceipt,
   type PublicationReceiptSnapshot,
   type PublicationTargetId,
 } from "../../publishing/index.js";
-import {
-  FinalTranscript,
-} from "../../transcription/index.js";
+import { FinalTranscript } from "../../transcription/index.js";
 import {
   sameStageFailure,
   validateStageFailure,
@@ -34,8 +28,11 @@ import {
 } from "./meeting-stage.js";
 import {
   normalizeActors,
+  normalizeIdentityProvenance,
+  normalizeLifecycleGeneration,
   normalizeSource,
   type MeetingActorSnapshot,
+  type MeetingIdentityProvenanceSnapshot,
   type MeetingSourceSnapshot,
 } from "./meeting-identity.js";
 import type {
@@ -46,12 +43,7 @@ import type {
 } from "./meeting-snapshot.js";
 import { initialMeetingSnapshot } from "./meeting-snapshot.js";
 
-export type {
-  BeginStageDisposition,
-  ProcessingStage,
-  StageFailure,
-  StageState,
-} from "./meeting-stage.js";
+export type { BeginStageDisposition, ProcessingStage, StageFailure, StageState } from "./meeting-stage.js";
 
 function identityPart(value: string): string {
   return `${value.length}:${value}`;
@@ -59,6 +51,8 @@ function identityPart(value: string): string {
 
 export class Meeting {
   public readonly actors: readonly MeetingActorSnapshot[] | null;
+  public readonly identityProvenance: MeetingIdentityProvenanceSnapshot | null;
+  public readonly lifecycleGeneration: number | null;
   public readonly meetingId: MeetingId;
   public readonly publicationTargetId: PublicationTargetId;
   public readonly recording: RecordingArtifact;
@@ -72,6 +66,8 @@ export class Meeting {
 
   private constructor(snapshot: RestorableMeetingSnapshot) {
     this.actors = normalizeActors(snapshot.actors);
+    this.lifecycleGeneration = normalizeLifecycleGeneration(snapshot.lifecycleGeneration);
+    this.identityProvenance = normalizeIdentityProvenance(snapshot.identityProvenance, this.lifecycleGeneration);
     this.meetingId = createMeetingId(snapshot.meetingId);
     this.publicationTargetId = createMeetingPublicationTargetId(
       snapshot.publicationTargetId,
@@ -112,13 +108,14 @@ export class Meeting {
   }
 
   public static record(input: RecordedMeetingInput): Meeting {
-    if (input.source === null || input.source === undefined) {
+    const runtimeInput = input as { readonly actors?: RecordedMeetingInput["actors"] | null; readonly source?: RecordedMeetingInput["source"] | null };
+    if (runtimeInput.source === null || runtimeInput.source === undefined) {
       throw new DomainInvariantError(
         "INVALID_SNAPSHOT",
         "new meetings require durable source identity",
       );
     }
-    if (input.actors === null || input.actors === undefined) {
+    if (runtimeInput.actors === null || runtimeInput.actors === undefined) {
       throw new DomainInvariantError(
         "INVALID_SNAPSHOT",
         "new meetings require a durable actor roster",
@@ -302,6 +299,8 @@ export class Meeting {
       actors: this.actors === null
         ? null
         : this.actors.map((actor) => ({ actorId: actor.actorId, kind: actor.kind })),
+      identityProvenance: this.identityProvenance,
+      lifecycleGeneration: this.lifecycleGeneration,
       meetingId: this.meetingId,
       publication:
         this.publicationReceipt === null

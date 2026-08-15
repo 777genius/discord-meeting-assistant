@@ -7,6 +7,9 @@
 - Application tests exercise use cases through deterministic ports and fakes,
   including idempotency, cancellation, retry classification, and partial failure.
 - Contract tests prove lifecycle, transcript, summary, and adapter compatibility.
+- Craig lifecycle contract tests pin the producer's exact canonical bundle
+  bytes and digest, parse every producer fixture with the consumer parser, and
+  cover old/new spool overlap without upgrading a recording's generation.
 - Adapter integration tests use disposable PostgreSQL, object storage, queue,
   STT, and Discord-compatible test infrastructure.
 - End-to-end tests cover only the critical summary-first workflow and recovery
@@ -30,6 +33,24 @@ late-chunk rejection, queue bounds, worker reuse after normal turns and
 interruption, phrase streaming, terminal attestation, and exact additive
 first-audio telemetry. A local Ollama/Piper profile qualifies
 arbitrary Russian and English output separately.
+
+Grounded conversation tests additionally keep candidate lookup text-free,
+rehydrate the exact canonical turn locally, validate the complete structured
+answer before literal TTS, and prove cancellation/replacement emits no late PCM.
+The live-memory suite covers durable finalized-turn outbox replay, generation
+watermarks, bounded hot-tail dedupe, cross-room denial, and restart backfill.
+Historical recall@k is measured separately from answer generation on a
+synthetic two-hour positional corpus. Count, absence, universal, and broad
+questions must exercise every-block checkpoints and a complete coverage bitmap;
+semantic extraction oracles include paraphrased decisions, RU/EN existence,
+proven absence, duplicates, and contradictions beyond 256 turns. No lexical-only
+selection or top-k result can satisfy those assertions. The required Meeting Knowledge
+composition E2E uses disposable PostgreSQL and an HTTP endpoint fake reached
+through the official Infinity Context SDK, and hard-fails when its infrastructure
+prerequisites are unavailable. It covers restart/replay, local rehydration,
+focused and exhaustive generation plans, late-corpus evidence beyond 256 turns,
+supersession, ambiguous deletes, cross-room denial, and deletion with serving
+and indexing disabled.
 
 Application tests use a controllable delay and preloaded staged PCM cue registry
 to prove the 1.3-second neutral acknowledgement, the 3.2-second complex-request

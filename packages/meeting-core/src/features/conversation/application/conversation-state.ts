@@ -5,9 +5,42 @@ import type {
   ConversationPlaybackFence,
   ConversationTurnPlaybackSettlement,
   MeetingConversationState,
+  PreparedConversation,
 } from "./conversation-coordinator-types.js";
 
 const maximumRememberedPlaybackSettlements = 1_024;
+
+export function createActiveConversationRun(
+  prepared: PreparedConversation,
+): ActiveConversationRun {
+  return {
+    answerAudioStarted: false,
+    answerAudioWriteAttempted: false,
+    answerAudioWritten: false,
+    attemptId: null,
+    cancellationInFlight: false,
+    cueDelays: new Set(),
+    cuePlayback: null,
+    cuePlaybackOpening: false,
+    deliberationCue: null,
+    deliberationCueReady: false,
+    deliberationCueSelectionInFlight: false,
+    finalized: false,
+    groundedPlaybackAbortController: null,
+    groundedPlaybackAuthority: null,
+    playback: null,
+    playbackEventsClosed: false,
+    playbackFinishRequested: false,
+    playbackFinished: false,
+    playbackOpenAbortController: null,
+    playbackTerminalFinalizationScheduled: false,
+    playbackTerminalReceiptMissing: false,
+    prepared,
+    runtimeCompleted: false,
+    runtimeStartAbortController: null,
+    runtimeTurn: null,
+  };
+}
 
 export function createMeetingConversationState(
   meetingId: string,

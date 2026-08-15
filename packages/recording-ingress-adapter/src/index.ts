@@ -28,5 +28,6 @@ export {
   type RecordingActorIdentity,
   type RecordingActorKind,
   type RecordingIngressLimits,
+  type RecordingIdentityProvenance,
   type RecordingSourceIdentity,
 } from "./contracts.js";

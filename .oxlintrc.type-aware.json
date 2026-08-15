@@ -3,5 +3,5 @@
   "extends": [
     "./node_modules/@agent-teams/engineering-foundation/presets/oxlint/type-aware.json"
   ],
-  "ignorePatterns": ["node_modules/**", "dist/**", "coverage/**"]
+  "ignorePatterns": ["node_modules/**", "dist/**", "coverage/**", "vendor/**"]
 }

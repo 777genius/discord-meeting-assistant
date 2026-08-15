@@ -1,9 +1,13 @@
 import type { ParticipantGreetingProfiles } from "./participant-greeting-profiles.js";
+import type { InfinityContextRuntimeActivationV1 } from "@discord-meeting/infinity-context-adapter";
 
 interface PlatformSecrets {
   readonly conversationRuntimeToken?: string;
   readonly craigBearerToken: string;
   readonly discordToken: string;
+  readonly infinityContextToken?: string;
+  readonly infinityContextTopologyKey?: string;
+  readonly meetingKnowledgePrincipalKey?: string;
   readonly postgresUrl: string;
   readonly recordingPlaybackSigningSecret?: string;
   readonly redisUrl: string;
@@ -45,6 +49,14 @@ export interface PlatformConfig {
     readonly voiceChannelId: string;
   };
   readonly liveIngressOwnerMode: "singleton";
+  readonly infinityContext?: {
+    readonly activation: InfinityContextRuntimeActivationV1;
+    readonly baseUrl: string;
+    readonly requestTimeoutMs: number;
+  };
+  readonly meetingKnowledge?: {
+    readonly localFinalReply: true;
+  };
   readonly nodeEnvironment: "development" | "production" | "test";
   readonly participantGreetingDefaultLocale: "en" | "ru";
   readonly participantGreetingProfiles: ParticipantGreetingProfiles;

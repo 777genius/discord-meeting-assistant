@@ -1,8 +1,13 @@
 import {
   providerConversationAnswerSchema,
   providerIncrementalMeetingSummarySchema,
+  providerKnowledgeAnswerSchema,
+  providerKnowledgeCoverageExtractSchema,
   providerMeetingSummarySchema,
   subscriptionRuntimeConversationPurpose,
+  subscriptionRuntimeIncrementalPurpose,
+  subscriptionRuntimeKnowledgeAnswerPurpose,
+  subscriptionRuntimeKnowledgeCoveragePurpose,
   subscriptionRuntimePurpose,
   type JsonObject,
   type SubscriptionRuntimeExecutionProfile,
@@ -71,10 +76,20 @@ export function validateStructuredOutput(
   profile: SubscriptionRuntimeExecutionProfile,
   value: unknown,
 ): JsonObject | undefined {
-  const parsed = profile.purpose === subscriptionRuntimePurpose
+  const purpose: string = profile.purpose;
+  const parsed = purpose === subscriptionRuntimePurpose
     ? providerMeetingSummarySchema.safeParse(value)
-    : profile.purpose === subscriptionRuntimeConversationPurpose
+    : purpose === subscriptionRuntimeIncrementalPurpose
+      ? providerIncrementalMeetingSummarySchema.safeParse(value)
+    : purpose === subscriptionRuntimeConversationPurpose
       ? providerConversationAnswerSchema.safeParse(value)
-      : providerIncrementalMeetingSummarySchema.safeParse(value);
+      : purpose === subscriptionRuntimeKnowledgeAnswerPurpose
+        ? providerKnowledgeAnswerSchema.safeParse(value)
+        : purpose === subscriptionRuntimeKnowledgeCoveragePurpose
+          ? providerKnowledgeCoverageExtractSchema.safeParse(value)
+          : undefined;
+  if (parsed === undefined) {
+    return undefined;
+  }
   return parsed.success ? parsed.data : undefined;
 }

@@ -18,6 +18,8 @@ import {
   CorruptMeetingSnapshotError,
   MeetingPersistenceConflictError,
 } from "./errors.js";
+import { sameRecordedMeetingIdentity } from "./meeting-replay-identity.js";
+import { projectAcceptedHistoricalRelease } from "./postgres-historical-release-projection.js";
 import { PostgresPostCallTerminalSettlement } from "./postgres-post-call-terminal-settlement.js";
 
 interface StoredMeetingRow {
@@ -89,45 +91,6 @@ async function rollback(client: PoolClient): Promise<void> {
   }
 }
 
-function sameRecording(
-  left: MeetingSnapshot["recording"],
-  right: MeetingSnapshot["recording"],
-): boolean {
-  return left.recordingId === right.recordingId &&
-    left.manifestLocator === right.manifestLocator &&
-    left.speakerAudio.length === right.speakerAudio.length &&
-    left.speakerAudio.every((track, index) => {
-      const candidate = right.speakerAudio[index];
-      return candidate !== undefined &&
-        track.audioLocator === candidate.audioLocator &&
-        track.speakerId === candidate.speakerId &&
-        track.timelineOffsetMs === candidate.timelineOffsetMs;
-    });
-}
-
-function sameSource(
-  left: MeetingSnapshot["source"],
-  right: MeetingSnapshot["source"],
-): boolean {
-  return left === null || right === null
-    ? left === right
-    : left.roomId === right.roomId && left.scopeId === right.scopeId;
-}
-
-function sameActors(
-  left: MeetingSnapshot["actors"],
-  right: MeetingSnapshot["actors"],
-): boolean {
-  return left === null || right === null
-    ? left === right
-    : left.length === right.length && left.every((actor, index) => {
-        const candidate = right[index];
-        return candidate !== undefined &&
-          actor.actorId === candidate.actorId &&
-          actor.kind === candidate.kind;
-      });
-}
-
 export class PostgresMeetingRepository implements
   MeetingRepository,
   PostCallDeadLetterLedger,
@@ -167,6 +130,7 @@ export class PostgresMeetingRepository implements
     try {
       await client.query("BEGIN");
       await this.persist(client, normalized, expectedRevision);
+      await projectAcceptedHistoricalRelease(client, normalized);
       await client.query("COMMIT");
     } catch (error) {
       await rollback(client);
@@ -228,12 +192,7 @@ export class PostgresMeetingRepository implements
       throw new Error("meeting disappeared while validating a recording replay");
     }
     const currentSnapshot = restoreStoredSnapshot(current, snapshot.meetingId);
-    if (
-      currentSnapshot.publicationTargetId === snapshot.publicationTargetId &&
-      sameRecording(currentSnapshot.recording, snapshot.recording) &&
-      sameSource(currentSnapshot.source, snapshot.source) &&
-      sameActors(currentSnapshot.actors, snapshot.actors)
-    ) {
+    if (sameRecordedMeetingIdentity(currentSnapshot, snapshot)) {
       return;
     }
 

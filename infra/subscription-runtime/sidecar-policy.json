@@ -37,6 +37,38 @@
       "outputSchemaName": "discord_meeting_conversation_answer_v1",
       "isolatedCwd": "/run/discord-meeting-subscription-runtime/workspace"
     },
+    "discord_meeting.knowledge.answer.v1": {
+      "provider": "codex",
+      "model": "gpt-5.6-sol",
+      "policyVersion": "meeting-knowledge.answer.subscription-runtime.v3",
+      "maxOutputTokens": 2048,
+      "reasoningEffort": "medium",
+      "taskKind": "structured-prompt",
+      "executionProfile": "stateless-completion",
+      "disableTools": true,
+      "permissionMode": "read-only",
+      "interactive": false,
+      "responseFormat": "json",
+      "selectedOutputKind": "structured_output",
+      "outputSchemaName": "discord_meeting_knowledge_answer_v1",
+      "isolatedCwd": "/run/discord-meeting-subscription-runtime/workspace"
+    },
+    "discord_meeting.knowledge.coverage_extract.v1": {
+      "provider": "codex",
+      "model": "gpt-5.6-sol",
+      "policyVersion": "meeting-knowledge.coverage.subscription-runtime.v1",
+      "maxOutputTokens": 2048,
+      "reasoningEffort": "medium",
+      "taskKind": "structured-prompt",
+      "executionProfile": "stateless-completion",
+      "disableTools": true,
+      "permissionMode": "read-only",
+      "interactive": false,
+      "responseFormat": "json",
+      "selectedOutputKind": "structured_output",
+      "outputSchemaName": "discord_meeting_knowledge_coverage_extract_v1",
+      "isolatedCwd": "/run/discord-meeting-subscription-runtime/workspace"
+    },
     "discord_meeting.summary.generate": {
       "provider": "codex",
       "model": "gpt-5.6-sol",

@@ -5,6 +5,7 @@ export { createMeetingId, type MeetingId } from "./domain/identifiers.js";
 export type {
   MeetingActorKind,
   MeetingActorSnapshot,
+  MeetingIdentityProvenanceSnapshot,
   MeetingSourceSnapshot,
 } from "./domain/meeting-identity.js";
 export {

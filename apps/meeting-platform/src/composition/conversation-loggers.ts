@@ -1,6 +1,7 @@
 import type {
   ConversationLatencyObserverPort,
   ConversationPlaybackObserverPort,
+  GroundedKnowledgeAnswerObserverPort,
 } from "@discord-meeting/meeting-core/conversation";
 import type { Logger } from "@discord-meeting/observability-adapter";
 
@@ -24,6 +25,12 @@ export function createConversationPlaybackLogger(
         meetingId: observation.meetingId,
         playbackAttemptId: observation.playbackAttemptId,
         playbackKind: observation.playbackKind,
+        ...(observation.preparedAssetSha256 === undefined
+          ? {}
+          : { preparedAssetSha256: observation.preparedAssetSha256 }),
+        ...(observation.speechProvenance === undefined
+          ? {}
+          : { speechProvenance: observation.speechProvenance }),
         turnId: observation.turnId,
       };
       switch (observation.status) {
@@ -49,6 +56,21 @@ export function createConversationPlaybackLogger(
             settlement: observation.settlement,
           });
       }
+    },
+  };
+}
+
+export function createGroundedKnowledgeAnswerLogger(
+  logger: Pick<Logger, "info">,
+): GroundedKnowledgeAnswerObserverPort {
+  return {
+    observeGroundedKnowledgeAnswer: (observation) => {
+      logger.info(
+        observation.status === "validated"
+          ? "Grounded knowledge answer validated"
+          : "Grounded knowledge answer cancelled",
+        { ...observation },
+      );
     },
   };
 }

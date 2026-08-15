@@ -21,6 +21,7 @@ export interface ConversationFarewellClassifier {
 }
 
 export interface ConversationFarewellCue {
+  readonly assetSha256?: string;
   readonly cueId: string;
   readonly pcmChunks: readonly Uint8Array[];
   readonly playbackAttemptId: string;

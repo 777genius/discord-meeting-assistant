@@ -236,7 +236,7 @@ export class CraigVoicePlaybackSession implements VoicePlaybackSession {
       recordingId: this.request.recordingId,
       turnId: this.request.turnId,
       attemptId: this.request.attemptId,
-      reason,
+      reason: reason === "disconnected" ? "runtime-shutdown" : reason,
     }).then(
       () => ({ ok: true, value: "cancelled" as const }),
       (error: unknown) => {

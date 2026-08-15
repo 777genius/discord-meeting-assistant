@@ -28,6 +28,7 @@ import {
   createConversationCoordinator,
   createConversationLatencyLogger,
   createConversationPlaybackLogger,
+  createGroundedKnowledgeAnswerLogger,
   createVoicetextBatchFinalTranscriptionOptions,
 } from "../src/platform-runtime.js";
 import type { GrpcSubscriptionRuntimeTransport } from "../src/adapters/outbound/subscription-runtime-grpc-transport.js";
@@ -175,6 +176,33 @@ describe("meeting platform runtime wiring", () => {
     });
   });
 
+  it("writes privacy-safe grounded answer provenance to structured logs", async () => {
+    const info = vi.fn();
+    const observer = createGroundedKnowledgeAnswerLogger({ info });
+
+    await observer.observeGroundedKnowledgeAnswer({
+      citationTurnIds: ["authoritative-turn-7"],
+      evidenceEpoch: "evidence-7",
+      knowledgeEpoch: "knowledge-9",
+      meetingId: "meeting-1",
+      participantId: "participant-1",
+      playbackProvenance: "literal_tts",
+      status: "validated",
+      turnId: "question-turn-1",
+    });
+
+    expect(info).toHaveBeenCalledWith("Grounded knowledge answer validated", {
+      citationTurnIds: ["authoritative-turn-7"],
+      evidenceEpoch: "evidence-7",
+      knowledgeEpoch: "knowledge-9",
+      meetingId: "meeting-1",
+      participantId: "participant-1",
+      playbackProvenance: "literal_tts",
+      status: "validated",
+      turnId: "question-turn-1",
+    });
+  });
+
   it("writes answer playback receipts with epoch and monotonic timestamps", async () => {
     const info = vi.fn();
     const observer = createConversationPlaybackLogger({ info }, 1_000);
@@ -300,6 +328,7 @@ describe("meeting platform runtime wiring", () => {
       meetingId: "meeting-1",
       nowMs: 0,
       recordingId: "recording-1",
+      roomId: "private-room-1",
       speakerId: "speaker-1",
       systemPrompt: "Answer briefly.",
       text: "Ботик, ответь кратко.",

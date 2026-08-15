@@ -4,12 +4,13 @@ import type {
   FixtureManifestV1,
   RetainedE2eEvidenceV8,
   RetainedE2eEvidenceV9,
+  RetainedVoiceE2eEvidenceV10,
 } from "./e2e-evidence-schema.js";
 import type { VerificationFailureReporter } from "./e2e-evidence-verification-types.js";
 
 export function verifyReconnectNoRepeat(
   manifest: FixtureManifestV1,
-  evidence: RetainedE2eEvidenceV8 | RetainedE2eEvidenceV9,
+  evidence: RetainedE2eEvidenceV8 | RetainedE2eEvidenceV9 | RetainedVoiceE2eEvidenceV10,
   recordingStartMs: number,
   recordingEndMs: number,
   fail: VerificationFailureReporter,
@@ -89,7 +90,7 @@ export function verifyReconnectNoRepeat(
 }
 
 function validateReconnectReceiptWindow(input: {
-  readonly evidence: RetainedE2eEvidenceV8 | RetainedE2eEvidenceV9;
+  readonly evidence: RetainedE2eEvidenceV8 | RetainedE2eEvidenceV9 | RetainedVoiceE2eEvidenceV10;
   readonly expectedParticipantId: string | undefined;
   readonly fail: VerificationFailureReporter;
   readonly manifest: FixtureManifestV1;

@@ -59,6 +59,14 @@ const authoritativeTrackSchema = z.object({
   uploadId: identifier,
 }).strict();
 
+const identityProvenanceSchema = z.object({
+  actorObservationState: z.enum(["consistent", "conflicted"]),
+  actorSemanticsVersion: z.number().int().positive().max(1_000),
+  producerCapabilityId: z.string().min(1).max(128),
+  producerRevision: z.string().regex(/^(?:[a-f\d]{40}|[a-f\d]{64})$/u),
+  rosterState: z.enum(["sealed", "unsealed"]),
+}).strict();
+
 const completionReceiptFields = {
   channelId: snowflake,
   events: z.array(storedEventSchema).min(2),
@@ -120,9 +128,65 @@ const recordingCompletionReceiptV3Schema = z.looseObject({
   }
 });
 
+const recordingCompletionReceiptV4Schema = z.union([
+  z.looseObject({
+    ...completionReceiptFields,
+    actors: z.null(),
+    authoritativeTracks: z.array(authoritativeTrackSchema).min(1),
+    identityProvenance: z.null(),
+    lifecycleSchemaVersion: z.literal(1),
+    schemaVersion: z.literal(4),
+  }),
+  z.looseObject({
+    ...completionReceiptFields,
+    actors: actorRosterSchema,
+    authoritativeTracks: z.array(authoritativeTrackSchema).min(1),
+    identityProvenance: z.null(),
+    lifecycleSchemaVersion: z.literal(2),
+    schemaVersion: z.literal(4),
+  }),
+  z.looseObject({
+    ...completionReceiptFields,
+    actors: actorRosterSchema,
+    authoritativeTracks: z.array(authoritativeTrackSchema).min(1),
+    identityProvenance: identityProvenanceSchema,
+    lifecycleSchemaVersion: z.literal(3),
+    schemaVersion: z.literal(4),
+  }),
+]).superRefine((receipt, context) => {
+  if (receipt.actors === null) {
+    return;
+  }
+  const actorIds = new Set(receipt.actors.map((actor) => actor.actorId));
+  for (const [index, track] of receipt.recording.speakerAudio.entries()) {
+    if (!actorIds.has(track.speakerId)) {
+      context.addIssue({
+        code: "custom",
+        message: "Authoritative speaker track requires actor identity",
+        path: ["recording", "speakerAudio", index, "speakerId"],
+      });
+    }
+  }
+  const tracksBySpeaker = new Map(
+    receipt.authoritativeTracks.map((track) => [track.speakerId, track]),
+  );
+  for (const [index, speaker] of receipt.recording.speakerAudio.entries()) {
+    const track = tracksBySpeaker.get(speaker.speakerId);
+    if (track === undefined || track.audioLocator !== speaker.audioLocator ||
+      track.timelineOffsetMs !== speaker.timelineOffsetMs) {
+      context.addIssue({
+        code: "custom",
+        message: "Authoritative track identity does not match recording snapshot",
+        path: ["recording", "speakerAudio", index],
+      });
+    }
+  }
+});
+
 const recordingCompletionReceiptSchema = z.union([
   recordingCompletionReceiptV2Schema,
   recordingCompletionReceiptV3Schema,
+  recordingCompletionReceiptV4Schema,
 ]);
 
 export const recordingReadyReceiptV1Schema = z.object({
@@ -132,6 +196,7 @@ export const recordingReadyReceiptV1Schema = z.object({
     kind: z.enum([
       "meeting-platform-completion-receipt-v2",
       "meeting-platform-completion-receipt-v3",
+      "meeting-platform-completion-receipt-v4",
     ]),
     occurredAt: z.iso.datetime(),
   }).strict(),
@@ -195,7 +260,9 @@ export function deriveRecordingReadyReceipt(input: {
       eventId: finalEvent.eventId,
       kind: completion.schemaVersion === 2
         ? "meeting-platform-completion-receipt-v2"
-        : "meeting-platform-completion-receipt-v3",
+        : completion.schemaVersion === 3
+          ? "meeting-platform-completion-receipt-v3"
+          : "meeting-platform-completion-receipt-v4",
       occurredAt: finalEvent.occurredAt,
     },
     meetingId: completion.recordingId,

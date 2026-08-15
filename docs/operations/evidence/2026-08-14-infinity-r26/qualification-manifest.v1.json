@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "meeting_knowledge.infinity_live_qualification.v1",
+  "runId": "meeting-infinity-hybrid-reprovision-r26",
+  "observedAt": "2026-08-14T21:54:01Z",
+  "sdk": {
+    "package": "@infinity-context/sdk",
+    "version": "0.1.0",
+    "commit": "897efd211151e9a81a7466fdd6be5cb067ddb8eb",
+    "tree": "67a744b1accc0d4628c19f28849660bc917b8b62",
+    "packageSha256": "93ea6c98dec53c886250f3a3a06cb3825da27d1fc5ff73b85ab9633273e6bc1a",
+    "packageIntegrity": "sha512-ohD89uSSlW7zT/BqaEufIBZ7EAVcq1LYAWn/rRel8EOyMAnq5DXSh3PqjYXAYJdE9WsHgLWx7Tysy9jAY7XaHw=="
+  },
+  "transport": {
+    "officialSdk": true,
+    "actualHttp": true,
+    "injectedTransport": false
+  },
+  "capability": {
+    "officialRoute": "/v1/capabilities",
+    "enabledAdapters": ["qdrant"],
+    "healthyQdrant": true,
+    "lexicalImplementation": "built_in_postgresql_keyword_bm25",
+    "fictionalLexicalAdapterRequired": false,
+    "hybridSearchEvidenceObserved": true
+  },
+  "corpus": {
+    "turnCount": 421,
+    "durationMs": 8420000,
+    "humanTurnsSha256": "ab628151b11d8a4e2d0807db4c0fac6e2c15969253ea7495eb095a715766b3bf",
+    "embeddingProfile": "deterministic-mock-non-production-v1"
+  },
+  "results": {
+    "focusedQuestionCount": 7,
+    "focusedRecallAt5": 1,
+    "exhaustiveBlockCount": 71,
+    "countEvidenceCount": 4,
+    "absenceEvidenceCount": 0,
+    "universalEvidenceCount": 3,
+    "requestBytes": 15418,
+    "requestTokens": 3855,
+    "requestEvidenceCount": 31,
+    "requestSha256": "7ec8256e10e97241acce8ca03153b69cd9bd10ed63dd98bb96832fa532f7299f",
+    "remoteCleanupVerified": true,
+    "exitCode": 0
+  },
+  "evidence": {
+    "retainedPath": "real-service-e2e.txt",
+    "retainedSha256": "4f19e430a465294d020e6dc0eebde4a6320913744201fa60700cb75d148065fe",
+    "sourceLogSha256": "d69ad3870ea17c15a2c0fafa88e71aa9dfa87e0dfc81afa1ed3b3f0c93ed9c51"
+  },
+  "claims": {
+    "qualifiesSdkTransportMutationSearchAndDeletion": true,
+    "qualifiesProductionSemanticEmbeddingQuality": false,
+    "claimsCurrentLiveDeployment": false
+  }
+}

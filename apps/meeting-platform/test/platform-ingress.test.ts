@@ -84,7 +84,9 @@ describe("Platform recording ingress", () => {
     });
     const lifecycleResult: RecordingLifecycleIngressResult = {
       actors: null,
+      identityProvenance: null,
       kind: "finalized",
+      lifecycleGeneration: 1,
       recording: {
         manifestLocator: "s3://meeting/recordings/recording-1/manifest.json",
         recordingId: "recording-1",
@@ -189,7 +191,9 @@ describe("Platform recording ingress", () => {
         ingestAuthoritativeTrack: async () => ({ replayed: false }),
         ingestLifecycleEvent: async () => ({
           actors: null,
+          identityProvenance: null,
           kind: "finalized" as const,
+          lifecycleGeneration: 1 as const,
           recording: {
             manifestLocator:
               "s3://meeting/recordings/recording-1/manifest.json",
@@ -306,7 +310,9 @@ describe("Platform recording ingress failure isolation", () => {
         ingestAuthoritativeTrack: async () => ({ replayed: false }),
         ingestLifecycleEvent: async () => ({
           actors: null,
+          identityProvenance: null,
           kind: "finalized" as const,
+          lifecycleGeneration: 1 as const,
           recording: {
             manifestLocator:
               "s3://meeting/recordings/recording-1/manifest.json",
@@ -541,7 +547,9 @@ describe("Platform derived ingress failure isolation", () => {
         ingestAuthoritativeTrack: async () => ({ replayed: false }),
         ingestLifecycleEvent: async () => ({
           actors: null,
+          identityProvenance: null,
           kind: "finalized" as const,
+          lifecycleGeneration: 1 as const,
           recording: {
             manifestLocator: "s3://meeting/recordings/recording-1/manifest.json",
             recordingId: "recording-1",

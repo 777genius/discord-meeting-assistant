@@ -55,6 +55,26 @@ describe("recording-ready receipt", () => {
     })).toThrow(/requires actor identity/u);
   });
 
+  it("accepts the current v4 receipt with exact lifecycle-v3 provenance", () => {
+    const result = deriveRecordingReadyReceipt({
+      actorRun: actorRun(),
+      completionReceipts: [completionV4("recording-v4")],
+      expectedRevisions: expectedRevisions(),
+      observedAt: "2026-08-12T10:01:00.000Z",
+      provenance: provenance(),
+    });
+
+    expect(result.authoritativeSource.kind)
+      .toBe("meeting-platform-completion-receipt-v4");
+    expect(() => deriveRecordingReadyReceipt({
+      actorRun: actorRun(),
+      completionReceipts: [{ ...completionV4("recording-v4"), identityProvenance: null }],
+      expectedRevisions: expectedRevisions(),
+      observedAt: "2026-08-12T10:01:00.000Z",
+      provenance: provenance(),
+    })).toThrow();
+  });
+
   it("fails closed for ambiguous windows", () => {
     expect(() => deriveRecordingReadyReceipt({
       actorRun: actorRun(),
@@ -153,6 +173,22 @@ function completionV3(recordingId: string) {
     }],
     lifecycleSchemaVersion: 2 as const,
     schemaVersion: 3 as const,
+  };
+}
+
+function completionV4(recordingId: string) {
+  const previous = completionV3(recordingId);
+  return {
+    ...previous,
+    identityProvenance: {
+      actorObservationState: "consistent" as const,
+      actorSemanticsVersion: 1,
+      producerCapabilityId: "meeting.lifecycle.sealed-actor-roster.v1",
+      producerRevision: "0123456789abcdef0123456789abcdef01234567",
+      rosterState: "sealed" as const,
+    },
+    lifecycleSchemaVersion: 3 as const,
+    schemaVersion: 4 as const,
   };
 }
 

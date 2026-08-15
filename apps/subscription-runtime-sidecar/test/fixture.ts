@@ -2,6 +2,11 @@ import {
   buildSubscriptionRuntimeConversationRequest,
   buildSubscriptionRuntimeIncrementalSummaryRequest,
   buildSubscriptionRuntimeSummaryRequest,
+  knowledgeAnswerExecutionProfile,
+  knowledgeCoverageExecutionProfile,
+  providerKnowledgeAnswerJsonSchema,
+  providerKnowledgeCoverageExtractJsonSchema,
+  subscriptionRuntimeProtocolVersion,
   type JsonObject,
   type SubscriptionRuntimeAgentTaskRequest,
 } from "@discord-meeting/subscription-runtime-adapter";
@@ -127,6 +132,108 @@ export const conversationCanonicalRequest = buildSubscriptionRuntimeConversation
 
 export const conversationStructuredOutput: JsonObject = {
   answer: "Следующий релиз запланирован на пятницу.",
+};
+
+export const knowledgeAnswerCanonicalRequest: SubscriptionRuntimeAgentTaskRequest = {
+  context: {
+    application: "discord-meeting",
+    correlationId: "knowledge-answer-correlation-1",
+    metadata: {
+      locale: "en",
+      meetingId: "a".repeat(64),
+      policyVersion: knowledgeAnswerExecutionProfile.policyVersion,
+      transcriptId: "a".repeat(64),
+      transcriptVersion: "1",
+    },
+    purpose: knowledgeAnswerExecutionProfile.purpose,
+  },
+  cwd: isolatedCwd,
+  protocolVersion: subscriptionRuntimeProtocolVersion,
+  runId: "knowledge-answer-request-1",
+  task: {
+    controls: {
+      allowedTools: [],
+      disableTools: true,
+      executionProfile: "stateless-completion",
+      interactive: false,
+      maxOutputTokens: knowledgeAnswerExecutionProfile.maxOutputTokens,
+      maxTurns: 1,
+      model: knowledgeAnswerExecutionProfile.model,
+      outputKind: "structured_output",
+      outputSchema: providerKnowledgeAnswerJsonSchema,
+      outputSchemaName: knowledgeAnswerExecutionProfile.outputSchemaName,
+      permissionMode: "read-only",
+      reasoningEffort: knowledgeAnswerExecutionProfile.reasoningEffort,
+      responseFormat: "json",
+      runtimeOutput: "structured_output",
+      selectedOutputKind: "structured_output",
+    },
+    kind: "structured-prompt",
+    metadata: {
+      executionProfile: "stateless-completion",
+      model: knowledgeAnswerExecutionProfile.model,
+      policyVersion: knowledgeAnswerExecutionProfile.policyVersion,
+      reasoningEffort: knowledgeAnswerExecutionProfile.reasoningEffort,
+      runtimeOutput: "structured_output",
+      toolsDisabled: "true",
+    },
+    outputSchemaName: knowledgeAnswerExecutionProfile.outputSchemaName,
+    prompt: JSON.stringify({
+      evidence: [{ evidenceId: "evidence-000001", text: "Release is Monday." }],
+      locale: "en",
+      question: "When is the release?",
+    }),
+    systemPrompt: "Answer only from selected canonical evidence.",
+  },
+  timeoutMs: 180_000,
+};
+
+export const knowledgeCoverageCanonicalRequest: SubscriptionRuntimeAgentTaskRequest = {
+  ...knowledgeAnswerCanonicalRequest,
+  context: {
+    ...knowledgeAnswerCanonicalRequest.context,
+    correlationId: "knowledge-coverage-correlation-1",
+    metadata: {
+      meetingId: "a".repeat(64),
+      policyVersion: knowledgeCoverageExecutionProfile.policyVersion,
+      transcriptId: "a".repeat(64),
+      transcriptVersion: "1",
+    },
+    purpose: knowledgeCoverageExecutionProfile.purpose,
+  },
+  runId: "knowledge-coverage-request-1",
+  task: {
+    ...knowledgeAnswerCanonicalRequest.task,
+    controls: {
+      ...knowledgeAnswerCanonicalRequest.task.controls,
+      maxOutputTokens: knowledgeCoverageExecutionProfile.maxOutputTokens,
+      model: knowledgeCoverageExecutionProfile.model,
+      outputSchema: providerKnowledgeCoverageExtractJsonSchema,
+      outputSchemaName: knowledgeCoverageExecutionProfile.outputSchemaName,
+      reasoningEffort: knowledgeCoverageExecutionProfile.reasoningEffort,
+    },
+    metadata: {
+      ...knowledgeAnswerCanonicalRequest.task.metadata,
+      model: knowledgeCoverageExecutionProfile.model,
+      policyVersion: knowledgeCoverageExecutionProfile.policyVersion,
+      reasoningEffort: knowledgeCoverageExecutionProfile.reasoningEffort,
+    },
+    outputSchemaName: knowledgeCoverageExecutionProfile.outputSchemaName,
+    prompt: JSON.stringify({ evidenceIds: ["evidence-000001"] }),
+    systemPrompt: "Extract coverage only from selected canonical evidence.",
+  },
+};
+
+export const knowledgeAnswerStructuredOutput: JsonObject = {
+  claims: [{ evidenceIds: ["evidence-000001"], text: "Release is Monday." }],
+  locale: "en",
+  status: "answered",
+};
+
+export const knowledgeCoverageStructuredOutput: JsonObject = {
+  claims: [{ evidenceIds: ["evidence-000001"], relevance: "direct" }],
+  reviewedEvidenceIds: ["evidence-000001"],
+  status: "claims",
 };
 
 export function grpcRequest(

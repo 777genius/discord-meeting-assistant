@@ -3,7 +3,9 @@ import type {
   CurrentDeploymentProvenance,
   ProcessingEvidence,
 } from "./e2e-evidence-schema.js";
-import type { E2eServiceLevelsV1, ServiceLevelSourcesV1 } from "./e2e-service-levels.js";
+import type { E2eServiceLevelsV1, ServiceLevelSourcesV2 } from "./e2e-service-levels.js";
+import type { HostedCampaignReleaseReferenceV1 } from "./hosted-campaign-pass-receipt.js";
+import type { HostedVoiceQualificationPolicyV1 } from "./hosted-voice-qualification-policy.js";
 import type { RecordingPlaybackEvidenceProbe } from "./recording-playback-evidence-probe.js";
 
 export interface DatabaseObservation {
@@ -98,15 +100,17 @@ export interface CollectEvidenceInput {
     readonly campaignProof: unknown;
     readonly reconnectParticipantId: string;
     readonly serviceLevels: E2eServiceLevelsV1;
-    readonly serviceLevelSources?: ServiceLevelSourcesV1;
+    readonly serviceLevelSources?: ServiceLevelSourcesV2;
     readonly supplementalPlayback: unknown;
     readonly voice: readonly unknown[];
   };
   readonly fixtureSetId: string;
+  readonly qualificationPolicy: HostedVoiceQualificationPolicyV1;
   readonly recordingId: string;
   readonly recordingPlayback: RecordingPlaybackEvidenceProbe;
   readonly recordingPlaybackOrigin: string;
   readonly recordingPlaybackReadiness: "already-ready" | "transition";
   readonly recordingPlaybackTestScope: "private-test-deployment";
+  readonly release: HostedCampaignReleaseReferenceV1;
   readonly runId: string;
 }

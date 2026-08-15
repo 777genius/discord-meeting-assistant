@@ -47,7 +47,7 @@ function ingress(
 }
 
 describe("Platform recording identity admission", () => {
-  it("creates a knowledge-eligible meeting from spool-retained v2 identity", async () => {
+  it("retains capability-less v2 identity without making it knowledge-eligible", async () => {
     const saved: MeetingSnapshot[] = [];
     const event: RecordingLifecycleCommand = {
       actors,
@@ -63,7 +63,9 @@ describe("Platform recording identity admission", () => {
     };
     const application = ingress({
       actors,
+      identityProvenance: null,
       kind: "finalized",
+      lifecycleGeneration: 2,
       recording: {
         manifestLocator: "s3://meeting/recordings/recording-1/manifest.json",
         recordingId: "recording-1",
@@ -86,8 +88,67 @@ describe("Platform recording identity admission", () => {
 
     await application.ingestLifecycle(event);
 
-    expect(saved[0]).toMatchObject({ actors, source });
+    expect(saved[0]).toMatchObject({
+      actors,
+      identityProvenance: null,
+      lifecycleGeneration: 2,
+      source,
+    });
     expect(saved[0]?.recording.speakerAudio).toHaveLength(2);
+  });
+
+  it("persists exact sealed-roster v3 producer provenance", async () => {
+    const saved: MeetingSnapshot[] = [];
+    const identityProvenance = {
+      actorObservationState: "consistent",
+      actorSemanticsVersion: 1,
+      producerCapabilityId: "meeting.lifecycle.sealed-actor-roster.v1",
+      producerRevision: "0123456789abcdef0123456789abcdef01234567",
+      rosterState: "sealed",
+    } as const;
+    const event: RecordingLifecycleCommand = {
+      actors,
+      actorObservationState: "consistent",
+      actorSemanticsVersion: 1,
+      endedAt: "2026-08-02T00:02:00.000Z",
+      eventId: "recording-v3:authoritative-ready",
+      occurredAt: "2026-08-02T00:02:01.000Z",
+      producerCapabilityId: identityProvenance.producerCapabilityId,
+      producerRevision: identityProvenance.producerRevision,
+      recordingId: "recording-v3",
+      rosterState: "sealed",
+      schemaVersion: 3,
+      source,
+      sourceFilesChecksumSha256: "a".repeat(64),
+      trackCount: 2,
+      type: "recording.authoritative_ready",
+    };
+    const application = ingress({
+      actors,
+      identityProvenance,
+      kind: "finalized",
+      lifecycleGeneration: 3,
+      recording: {
+        manifestLocator: "s3://meeting/recordings/recording-v3/manifest.json",
+        recordingId: "recording-v3",
+        speakerAudio: actors.map((actor) => ({
+          audioLocator: `s3://meeting/recordings/recording-v3/${actor.actorId}.ogg`,
+          speakerId: actor.actorId,
+          timelineOffsetMs: 0,
+        })),
+      },
+      replayed: false,
+      source,
+    }, saved);
+
+    await application.ingestLifecycle(event);
+
+    expect(saved[0]).toMatchObject({
+      actors,
+      identityProvenance,
+      lifecycleGeneration: 3,
+      source,
+    });
   });
 
   it("uses source for v1 routing without enriching legacy meeting identity", async () => {
@@ -105,7 +166,9 @@ describe("Platform recording identity admission", () => {
     };
     const application = ingress({
       actors: null,
+      identityProvenance: null,
       kind: "finalized",
+      lifecycleGeneration: 1,
       recording: {
         manifestLocator: "s3://meeting/recordings/recording-legacy/manifest.json",
         recordingId: "recording-legacy",

@@ -35,6 +35,9 @@ export function createPlatformHttpComposition(input: {
   readonly configuration: ActiveCraigRecordingChannelReader;
   readonly craigPlaybackGateway: CraigPlaybackGateway;
   readonly health: PlatformHealthPort;
+  readonly historicalDeletion?: {
+    requestMeetingDeletion(meetingId: string): Promise<void>;
+  };
   readonly ingress: CraigIngressPort;
   readonly installUrls: { readonly craig: string; readonly meetingPlatform: string };
   readonly logger: Logger;
@@ -55,6 +58,9 @@ export function createPlatformHttpComposition(input: {
       createOperationsRoutesPlugin({
         bearerToken: input.config.secrets.craigBearerToken,
         health: input.health,
+        ...(input.historicalDeletion === undefined
+          ? {}
+          : { historicalDeletion: input.historicalDeletion }),
       }),
       createDiscordInstallRoutesPlugin({ installUrls: input.installUrls }),
       ...(input.recordingPlaybackRoutes === undefined

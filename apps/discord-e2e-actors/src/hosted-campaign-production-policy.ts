@@ -1,9 +1,8 @@
 import type { HostedRemoteAdmissionCompositionConfig } from "./hosted-remote-admission-composition.js";
 import {
   COMPILED_HOSTED_CAMPAIGN_RELEASE_TRUST_ROOT,
+  admitCompiledHostedCampaignReleaseBinding,
   createHostedCampaignReleaseConfig,
-  digestHostedCampaignReleaseBindingV1,
-  hostedCampaignReleaseBindingV1Schema,
   type HostedCampaignReleaseTrustRootV1,
 } from "./hosted-campaign-release-binding.js";
 import type { HostedCampaignReleaseReferenceV1 } from "./hosted-campaign-pass-receipt.js";
@@ -31,15 +30,11 @@ export function createHostedCampaignProductionPolicy(
   if (releaseBinding === undefined || trustRoot === undefined) {
     return HOSTED_CAMPAIGN_PRODUCTION_POLICY;
   }
-  const release = hostedCampaignReleaseBindingV1Schema.parse(releaseBinding);
+  const admitted = admitCompiledHostedCampaignReleaseBinding(releaseBinding, trustRoot);
   return Object.freeze({
     kind: "hosted-campaign-production-policy",
     schemaVersion: 1,
-    releaseReference: Object.freeze({
-      releaseBindingSha256: digestHostedCampaignReleaseBindingV1(release),
-      releaseId: release.releaseId,
-      trustRootSha256: release.trustRootSha256,
-    }),
+    releaseReference: admitted.releaseReference,
     trustBinding: Object.freeze({
       createConfig: (candidate: HostedCampaignProductionCandidate) =>
         createHostedCampaignReleaseConfig(releaseBinding, trustRoot, candidate),

@@ -457,6 +457,33 @@ async def test_interruption_preserves_the_warm_pipeline_for_the_queued_turn() ->
     assert profile.processor.turn_count == 2
 
 
+async def test_cancellation_fences_every_later_pcm_event() -> None:
+    """Once cancellation is recorded, queued TTS frames cannot emit more PCM."""
+    settings = deterministic_runtime_settings(
+        DeterministicPipelineOptions(audio_delay_seconds=0.05)
+    )
+    runtime = PipecatConversationRuntime(profile=create_profile(settings.profile))
+    request = sample_start_turn()
+    session = await runtime.start(request)
+    events = session.events()
+    accepted = await anext(events)
+    while not isinstance(await anext(events), AudioChunk):
+        pass
+
+    changed = await session.cancel(CancelTurn(
+        turn_id=request.turn_id,
+        attempt_id=accepted.attempt_id,
+        reason=CancellationReason.BARGE_IN,
+    ))
+    after_cancellation = await asyncio.wait_for(_collect(events), timeout=2)
+    await asyncio.wait_for(session.wait(), timeout=2)
+    await asyncio.wait_for(runtime.close(), timeout=15)
+
+    assert changed is True
+    assert not any(isinstance(event, AudioChunk) for event in after_cancellation)
+    assert isinstance(after_cancellation[-1], Cancelled)
+
+
 async def test_deterministic_pipeline_streams_ordered_normalized_pcm() -> None:
     """A fake answer still crosses a real PipelineWorker and Pipecat processors."""
     settings = deterministic_runtime_settings(

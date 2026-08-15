@@ -66,10 +66,13 @@ export class InstrumentedSubscriptionRuntimeTransport
 
   public async execute(
     request: SubscriptionRuntimeAgentTaskRequest,
+    options?: { readonly signal?: AbortSignal },
   ): Promise<SubscriptionRuntimeTaskResult> {
     const startedAt = readClock(this.nowMilliseconds);
     try {
-      const result = await this.delegate.execute(request);
+      const result = options === undefined
+        ? await this.delegate.execute(request)
+        : await this.delegate.execute(request, options);
       this.writeInfo(
         "Subscription runtime task completed",
         executionLogFields(

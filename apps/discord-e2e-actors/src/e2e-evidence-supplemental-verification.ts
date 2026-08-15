@@ -8,6 +8,7 @@ import type {
   FixtureManifestV1,
   RetainedE2eEvidenceV8,
   RetainedE2eEvidenceV9,
+  RetainedVoiceE2eEvidenceV10,
 } from "./e2e-evidence-schema.js";
 import type {
   VerificationFailureReporter,
@@ -41,7 +42,7 @@ interface SupplementalTrackExpectation {
 
 export function verifySupplementalPlayback(
   manifest: FixtureManifestV1,
-  evidence: RetainedE2eEvidenceV8 | RetainedE2eEvidenceV9,
+  evidence: RetainedE2eEvidenceV8 | RetainedE2eEvidenceV9 | RetainedVoiceE2eEvidenceV10,
   recordingStartMs: number,
   recordingEndMs: number,
   fail: VerificationFailureReporter,
@@ -176,7 +177,7 @@ export function verifySupplementalPlayback(
 }
 
 function verifySupplementalGreeting(
-  evidence: RetainedE2eEvidenceV8 | RetainedE2eEvidenceV9,
+  evidence: RetainedE2eEvidenceV8 | RetainedE2eEvidenceV9 | RetainedVoiceE2eEvidenceV10,
   expectation: NonNullable<FixtureManifestV1["supplementalVoiceExpectation"]>,
   fail: VerificationFailureReporter,
 ): void {
@@ -200,7 +201,7 @@ function verifySupplementalGreeting(
 
 function verifyFarewellTiming(
   manifest: FixtureManifestV1,
-  evidence: RetainedE2eEvidenceV8 | RetainedE2eEvidenceV9,
+  evidence: RetainedE2eEvidenceV8 | RetainedE2eEvidenceV9 | RetainedVoiceE2eEvidenceV10,
   expectation: SupplementalFarewellExpectation,
   fail: VerificationFailureReporter,
 ): void {
@@ -294,7 +295,7 @@ function verifyFarewellTiming(
 
 function verifyAddressedAnswerSemantics(
   manifest: FixtureManifestV1,
-  evidence: RetainedE2eEvidenceV8 | RetainedE2eEvidenceV9,
+  evidence: RetainedE2eEvidenceV8 | RetainedE2eEvidenceV9 | RetainedVoiceE2eEvidenceV10,
   window: SupplementalAnswerWindow,
   fail: VerificationFailureReporter,
 ): void {
@@ -358,7 +359,7 @@ function verifyAddressedAnswerSemantics(
 
 function verifySupplementalTrackCoverage(
   manifest: FixtureManifestV1,
-  evidence: RetainedE2eEvidenceV8 | RetainedE2eEvidenceV9,
+  evidence: RetainedE2eEvidenceV8 | RetainedE2eEvidenceV9 | RetainedVoiceE2eEvidenceV10,
   expectation: SupplementalTrackExpectation,
   fail: VerificationFailureReporter,
 ): void {

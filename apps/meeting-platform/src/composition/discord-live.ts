@@ -20,20 +20,19 @@ import {
 } from "@discord-meeting/meeting-core/live-meeting";
 import {
   ConversationCoordinator,
-  type ConversationLatencyObserverPort,
-  type ConversationPlaybackObserverPort,
-  type ConversationRuntime,
-  type VoicePlaybackPort,
 } from "@discord-meeting/meeting-core/conversation";
+import type { GroundedMeetingAnswer } from "@discord-meeting/meeting-core/meeting-knowledge";
 import {
   type SummaryPublicationPort,
   type SummaryPublicationEffectLedger,
 } from "@discord-meeting/meeting-core/publishing";
 import type { Logger } from "@discord-meeting/observability-adapter";
-import type {
-  PostgresGuildConfigurationRepository,
-  PostgresLiveMeetingRepository,
+import {
+  PostgresConversationOneShotReceiptStore,
+  type PostgresGuildConfigurationRepository,
+  type PostgresLiveMeetingRepository,
 } from "@discord-meeting/postgres-adapter";
+import type { Pool } from "pg";
 import { GrpcPipecatConversationRuntime } from "@discord-meeting/pipecat-runtime-adapter";
 import {
   SubscriptionRuntimeIncrementalSummaryAdapter,
@@ -42,28 +41,27 @@ import {
   type SubscriptionRuntimeTransportPort,
 } from "@discord-meeting/subscription-runtime-adapter";
 import { VoicetextLiveTranscriptionAdapter } from "@discord-meeting/voicetext-adapter";
-import { Client, GatewayIntentBits } from "discord.js";
+import { Client, GatewayIntentBits, Partials } from "discord.js";
 
 import { FileConversationFarewellCueRegistry } from "../adapters/outbound/file-conversation-farewell-cue-registry.js";
-import { FileConversationPlaybackReadiness } from "../adapters/outbound/file-conversation-playback-readiness.js";
-import { FileConversationThinkingCueRegistry } from "../adapters/outbound/file-conversation-thinking-cue-registry.js";
 import { FileParticipantGreetingCueRegistry } from "../adapters/outbound/file-participant-greeting-cue-registry.js";
 import { SubscriptionRuntimeFarewellClassifier } from "../adapters/outbound/subscription-runtime-farewell-classifier.js";
-import { SystemConversationDelay } from "../adapters/outbound/system-conversation-delay.js";
 import type { PlatformConfig } from "../config.js";
 import { PlatformLiveMeetingRuntime } from "../live-meeting-runtime.js";
 import type { PlatformStartupCleanup } from "./startup-cleanup.js";
+import type { PlatformLiveFinalizedMemoryRuntime } from "./live-finalized-memory.js";
+import type { PlatformHistoricalMemoryRuntime } from "./historical-memory.js";
 import { classifyPlatformError } from "./observability.js";
 import { discordLiveCaptionSignature } from "./discord-live-caption-signature.js";
 import { meetingVocabulary } from "./meeting-vocabulary.js";
 export {
   createConversationLatencyLogger,
   createConversationPlaybackLogger,
+  createGroundedKnowledgeAnswerLogger,
 } from "./conversation-loggers.js";
-import {
-  createConversationLatencyLogger,
-  createConversationPlaybackLogger,
-} from "./conversation-loggers.js";
+export { createConversationCoordinator } from "./conversation-coordinator.js";
+import { createLiveConversationResources } from "./conversation-coordinator.js";
+import { createVoiceGroundedAnswers } from "./voice-grounded-answers.js";
 
 // Keep wall-clock-shaped timestamps compatible with STT while preventing clock
 // adjustments from corrupting playback deadlines and the four-second guard.
@@ -88,13 +86,26 @@ export async function createPlatformDiscordLiveComposition(input: {
   readonly cleanup: PlatformStartupCleanup;
   readonly config: PlatformConfig;
   readonly guildConfigurations: PostgresGuildConfigurationRepository;
+  readonly groundedAnswerUseCase?: GroundedMeetingAnswer;
+  readonly historicalMemory?: PlatformHistoricalMemoryRuntime;
   readonly logger: Logger;
+  readonly liveFinalizedMemory?: PlatformLiveFinalizedMemoryRuntime;
   readonly meetings: PostgresLiveMeetingRepository;
+  readonly pool: Pool;
   readonly publicationEffects: SummaryPublicationEffectLedger;
   readonly recordingPlaybackUrl?: (meetingId: string) => string;
   readonly runtimeTransport: SubscriptionRuntimeTransportPort;
 }): Promise<PlatformDiscordLiveComposition> {
-  const discord = new Client({ intents: [GatewayIntentBits.Guilds] });
+  const knowledgeIntents = input.config.meetingKnowledge?.localFinalReply === true
+    ? [GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
+    : [];
+  const knowledgePartials = input.config.meetingKnowledge?.localFinalReply === true
+    ? [Partials.Message]
+    : [];
+  const discord = new Client({
+    intents: [GatewayIntentBits.Guilds, ...knowledgeIntents],
+    partials: knowledgePartials,
+  });
   input.cleanup.defer("Discord client", async () => {
     await discord.destroy();
   });
@@ -134,46 +145,33 @@ export async function createPlatformDiscordLiveComposition(input: {
       conversationRuntime.close();
     });
   }
-  const conversationCoordinator = conversationRuntime === undefined
-    ? undefined
-    : await createConversationCoordinator({
-        config: input.config,
-        latencyObserver: createConversationLatencyLogger(input.logger),
-        playback: craigPlaybackGateway,
-        ...(input.config.conversation?.playbackReadiness === undefined
-          ? {}
-          : {
-              playbackReadiness: new FileConversationPlaybackReadiness(
-                input.config.conversation.playbackReadiness,
-              ),
-            }),
-        playbackObserver: createConversationPlaybackLogger(input.logger),
-        runtime: conversationRuntime,
-      });
-  const conversationConfig = input.config.conversation;
-  const farewellCues = conversationCoordinator === undefined || conversationConfig === undefined
-    ? undefined
-    : await FileConversationFarewellCueRegistry.load(
-        conversationConfig.farewellCueRoot,
-        conversationConfig.voiceProfileId,
-        conversationConfig.voiceId,
-      );
-  const greetingCues = conversationCoordinator === undefined || conversationConfig === undefined
-    ? undefined
-    : await FileParticipantGreetingCueRegistry.load(
-        conversationConfig.greetingCueRoot,
-        conversationConfig.voiceProfileId,
-        conversationConfig.voiceId,
-      );
+  const groundedAnswers = createVoiceGroundedAnswers(input, discord);
+  const conversation = await createLiveConversationResources({
+    config: input.config,
+    ...(groundedAnswers === undefined ? {} : { groundedAnswers }),
+    logger: input.logger,
+    playback: craigPlaybackGateway,
+    ...(conversationRuntime === undefined ? {} : { runtime: conversationRuntime }),
+  });
   const live = createLiveRuntime({
     config: input.config,
-    ...(conversationCoordinator === undefined ? {} : { conversationCoordinator }),
+    ...(conversation.coordinator === undefined
+      ? {}
+      : { conversationCoordinator: conversation.coordinator }),
     discordPublisher,
-    ...(farewellCues === undefined ? {} : { farewellCues }),
-    ...(greetingCues === undefined ? {} : { greetingCues }),
+    ...(conversation.farewellCues === undefined
+      ? {}
+      : { farewellCues: conversation.farewellCues }),
+    ...(conversation.greetingCues === undefined
+      ? {}
+      : { greetingCues: conversation.greetingCues }),
     isPlaybackReady: (recordingId) => craigPlaybackGateway.hasSession(recordingId),
     logger: input.logger,
+    ...(input.liveFinalizedMemory === undefined
+      ? {}
+      : { liveFinalizedMemory: input.liveFinalizedMemory }),
     meetings: input.meetings,
+    oneShotReceipts: new PostgresConversationOneShotReceiptStore(input.pool),
     runtimeTransport: input.runtimeTransport,
   });
   if (live !== undefined) {
@@ -196,41 +194,6 @@ export async function createPlatformDiscordLiveComposition(input: {
       },
     ),
   };
-}
-
-/** Preloads required local cue assets before live conversation accepts work. */
-export async function createConversationCoordinator(input: {
-  readonly config: Pick<PlatformConfig, "conversation">;
-  readonly latencyObserver?: ConversationLatencyObserverPort;
-  readonly playback: VoicePlaybackPort;
-  readonly playbackReadiness?: import("@discord-meeting/meeting-core/conversation")
-    .ConversationPlaybackReadinessPort;
-  readonly playbackObserver?: ConversationPlaybackObserverPort;
-  readonly runtime: ConversationRuntime;
-}): Promise<ConversationCoordinator | undefined> {
-  if (input.config.conversation === undefined) {
-    return undefined;
-  }
-  const thinkingCues = await FileConversationThinkingCueRegistry.load(
-    input.config.conversation.thinkingCueRoot,
-    input.config.conversation.voiceProfileId,
-    input.config.conversation.voiceId,
-  );
-  return new ConversationCoordinator({
-    delay: new SystemConversationDelay(),
-    ...(input.latencyObserver === undefined
-      ? {}
-      : { latencyObserver: input.latencyObserver }),
-    playback: input.playback,
-    ...(input.playbackReadiness === undefined
-      ? {}
-      : { playbackReadiness: input.playbackReadiness }),
-    ...(input.playbackObserver === undefined
-      ? {}
-      : { playbackObserver: input.playbackObserver }),
-    runtime: input.runtime,
-    thinkingCues,
-  });
 }
 
 function createInstallUrls(config: PlatformConfig): {
@@ -276,7 +239,9 @@ function createLiveRuntime(input: {
   readonly greetingCues?: FileParticipantGreetingCueRegistry;
   readonly isPlaybackReady: (recordingId: string) => boolean;
   readonly logger: Logger;
+  readonly liveFinalizedMemory?: PlatformLiveFinalizedMemoryRuntime;
   readonly meetings: PostgresLiveMeetingRepository;
+  readonly oneShotReceipts: PostgresConversationOneShotReceiptStore;
   readonly runtimeTransport: SubscriptionRuntimeTransportPort;
 }): PlatformLiveMeetingRuntime | undefined {
   if (!hasLiveTranscriptionConfiguration(input.config)) {
@@ -335,11 +300,15 @@ function createLiveRuntime(input: {
             },
             locale: "auto",
             nowMilliseconds: monotonicUnixNowMilliseconds,
+            oneShotReceipts: input.oneShotReceipts,
             systemPrompt: input.config.conversation.systemPrompt,
             voiceProfileId: input.config.conversation.voiceProfileId,
           },
         }),
     finishMeeting: new FinishLiveMeeting(input.meetings),
+    ...(input.liveFinalizedMemory === undefined
+      ? {}
+      : { finalizedMemory: input.liveFinalizedMemory }),
     logger: input.logger,
     packetFlowControl: {
       maximumConcurrentSessions:

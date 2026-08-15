@@ -22,6 +22,10 @@ const migrationDefinitions = [
     transactional: false,
   },
   { fileName: "0013_rename_post_call_recoverable_index.sql" },
+  { fileName: "0014_meeting_knowledge_local_final_reply.sql" },
+  { fileName: "0015_historical_memory_projection.sql" },
+  { fileName: "0016_live_finalized_memory.sql" },
+  { fileName: "0017_conversation_one_shot_receipts.sql" },
 ] as const;
 
 const migrationLockKey = "718330091620232601";

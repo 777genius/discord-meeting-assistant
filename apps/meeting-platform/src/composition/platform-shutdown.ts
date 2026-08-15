@@ -17,6 +17,8 @@ import type { GrpcSubscriptionRuntimeTransport } from "../adapters/outbound/subs
 import type { PostCallOutboxDispatcher } from "../application/post-call-outbox-dispatcher.js";
 import type { PlatformHttpHost } from "../http/platform-http-host.js";
 import type { PlatformLiveMeetingRuntime } from "../live-meeting-runtime.js";
+import type { MeetingKnowledgeLocalFinalReplyRuntime } from "./meeting-knowledge.js";
+import type { PlatformLiveFinalizedMemoryRuntime } from "./live-finalized-memory.js";
 import {
   awaitWithinPlatformShutdownTimeout,
   resolvePlatformShutdownTimeoutMilliseconds,
@@ -46,8 +48,11 @@ export interface MeetingPlatformShutdownResources extends PostCallShutdownResour
   };
   readonly discord: Client;
   readonly guildSetupHandler?: DiscordGuildSetupCommandHandler;
+  readonly historicalMemory?: { close(): Promise<void> };
   readonly logger: Logger;
   readonly live?: PlatformLiveMeetingRuntime;
+  readonly liveFinalizedMemory?: PlatformLiveFinalizedMemoryRuntime;
+  readonly meetingKnowledge?: MeetingKnowledgeLocalFinalReplyRuntime;
   readonly pool: Pool;
   readonly recordings: CloseableRecordingIngress;
   readonly runtimeTransport: GrpcSubscriptionRuntimeTransport;
@@ -139,6 +144,21 @@ export async function closeMeetingPlatformResources(
     ),
   ]));
   failures.push(...await collectFailures([
+    awaitBounded(
+      "Meeting Knowledge local final reply",
+      startOperation(() => input.meetingKnowledge?.close()),
+      remainingShutdownMilliseconds(deadlineAtMilliseconds),
+    ),
+    awaitBounded(
+      "historical memory reconciler",
+      startOperation(() => input.historicalMemory?.close()),
+      remainingShutdownMilliseconds(deadlineAtMilliseconds),
+    ),
+    awaitBounded(
+      "live finalized memory reconciler",
+      startOperation(() => input.liveFinalizedMemory?.close()),
+      remainingShutdownMilliseconds(deadlineAtMilliseconds),
+    ),
     awaitBounded(
       "Discord client",
       startOperation(() => input.discord.destroy()),

@@ -59,6 +59,15 @@ digest. `DISCORD_FINAL_PUBLICATION_MODE=separate-message` keeps the live draft a
 publishes one separate idempotent final summary by default. Set it to
 `replace-live` only for the previous single-message behavior.
 
+Local Final Reply is independently disabled by default. To enable it, keep
+`DISCORD_PUBLICATION_MODE=message`, enable the Discord Message Content intent for
+the official bot application, write an independently generated 32-byte base64 or
+64-character lowercase-hex key to
+`${DEPLOY_ROOT}/secrets/platform/meeting-knowledge-principal-key` with mode
+`0400`, and set `MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED=true`. The key
+encrypts short-lived authorization principals and derives non-reversible dedupe
+subjects; it is not a provider or Discord credential.
+
 ## Redis queue durability
 
 Copy `redis.conf.example` to `${DEPLOY_ROOT}/secrets/redis.conf`, replace the

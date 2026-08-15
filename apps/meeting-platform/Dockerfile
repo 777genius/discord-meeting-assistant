@@ -4,7 +4,7 @@ ENV PNPM_HOME=/opt/pnpm \
     PATH=/opt/pnpm:$PATH
 
 RUN apt-get update \
-  && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends ca-certificates ffmpeg \
+  && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends ca-certificates ffmpeg git \
   && rm -rf /var/lib/apt/lists/* \
   && corepack enable && corepack prepare pnpm@11.18.0 --activate \
   && groupadd --gid 10001 meeting \
@@ -20,8 +20,10 @@ RUN printf '%s' "${SOURCE_REVISION}" \
 
 WORKDIR /app
 COPY --chown=10001:10001 . .
-RUN pnpm install --frozen-lockfile --filter @discord-meeting/meeting-platform... \
+RUN node vendor/infinity-context/prepare-official-sdk.mjs \
+  && pnpm install --frozen-lockfile --filter @discord-meeting/meeting-platform... \
   && pnpm --filter @discord-meeting/meeting-platform check \
+  && node vendor/infinity-context/prepare-official-sdk.mjs --prune-dev \
   && pnpm store prune
 
 USER 10001:10001

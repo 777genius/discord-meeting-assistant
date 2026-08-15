@@ -5,10 +5,11 @@
   "type": "module",
   "scripts": {
     "canary:voicetext": "tsx src/run-voicetext-semantic-canary.ts",
-    "check": "pnpm run typecheck && pnpm run test",
+    "check": "pnpm run typecheck && pnpm run test && pnpm run test:meeting-knowledge-e2e",
     "probe:hosted-discord-identity": "tsx src/run-hosted-discord-identity-probe.ts",
     "start": "tsx src/main.ts",
-    "test": "vitest run --exclude test/post-call-recovery.e2e.test.ts",
+    "test": "vitest run --exclude test/post-call-recovery.e2e.test.ts --exclude test/meeting-knowledge-production-composition.e2e.test.ts",
+    "test:meeting-knowledge-e2e": "vitest run test/meeting-knowledge-production-composition.e2e.test.ts --no-file-parallelism",
     "test:post-call-recovery-e2e": "vitest run test/post-call-recovery.e2e.test.ts --no-file-parallelism",
     "typecheck": "tsc --project tsconfig.json --noEmit --pretty false"
   },
@@ -20,6 +21,7 @@
     "@discord-meeting/bullmq-adapter": "workspace:*",
     "@discord-meeting/discord-adapter": "workspace:*",
     "@discord-meeting/guild-configuration-core": "workspace:*",
+    "@discord-meeting/infinity-context-adapter": "workspace:*",
     "@discord-meeting/meeting-core": "workspace:*",
     "@discord-meeting/object-storage-adapter": "workspace:*",
     "@discord-meeting/observability-adapter": "workspace:*",

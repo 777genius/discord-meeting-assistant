@@ -32,6 +32,7 @@ function createHost(
     }[];
     readonly configurationError?: Error;
     readonly ingress?: CraigIngressPort;
+    readonly requestHistoricalDeletion?: (meetingId: string) => Promise<void>;
     readonly installUrls?: { readonly craig: string; readonly meetingPlatform: string };
     readonly onInternalError?: (error: unknown) => void;
     readonly ready?: boolean;
@@ -58,6 +59,13 @@ function createHost(
           metrics: () => "meeting_ingress_accepted_total 1\n",
           readiness: async () => ({ ready: overrides.ready ?? true }),
         },
+        ...(overrides.requestHistoricalDeletion === undefined
+          ? {}
+          : {
+              historicalDeletion: {
+                requestMeetingDeletion: overrides.requestHistoricalDeletion,
+              },
+            }),
       }),
       createDiscordInstallRoutesPlugin(
         overrides.installUrls === undefined
@@ -167,6 +175,27 @@ describe("Fastify platform HTTP host", () => {
     expect(platformInstall.headers.location).toContain("11111111111111111");
     expect(craigInstall.statusCode).toBe(302);
     expect(craigInstall.headers.location).toContain("22222222222222222");
+  });
+
+  it("authenticates and accepts production historical deletion initiation", async () => {
+    const requestHistoricalDeletion = vi.fn(async () => {});
+    const context = createHost({ requestHistoricalDeletion });
+
+    const denied = await context.host.inject({
+      method: "POST",
+      url: "/internal/meeting-knowledge/history/deletions/meeting-1",
+    });
+    const accepted = await context.host.inject({
+      headers: { authorization: `Bearer ${token}` },
+      method: "POST",
+      url: "/internal/meeting-knowledge/history/deletions/meeting-1",
+    });
+
+    expect(denied.statusCode).toBe(401);
+    expect(accepted.statusCode).toBe(202);
+    expect(accepted.json()).toEqual({ status: "accepted" });
+    expect(requestHistoricalDeletion).toHaveBeenCalledOnce();
+    expect(requestHistoricalDeletion).toHaveBeenCalledWith("meeting-1");
   });
 
   it("rejects unauthenticated Craig payloads before dispatch", async () => {

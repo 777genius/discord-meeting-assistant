@@ -77,12 +77,13 @@ export function requireSnowflake(value: unknown, field: string): string {
 }
 
 function normalizeActor(actor: StoredActor): StoredActor {
-  if (actor.kind !== "human" && actor.kind !== "automation" && actor.kind !== "unknown") {
+  const kind: unknown = actor.kind;
+  if (kind !== "human" && kind !== "automation" && kind !== "unknown") {
     throw new RecordingIngressError("invalid-input", "actor kind is invalid");
   }
   return {
     actorId: requireSnowflake(actor.actorId, "actor.actorId"),
-    kind: actor.kind,
+    kind,
   };
 }
 
@@ -120,6 +121,17 @@ export function sameActorRoster(
       });
 }
 
+export function sameActorRosterIds(
+  left: readonly StoredActor[] | null,
+  right: readonly StoredActor[] | null,
+): boolean {
+  return left === null || right === null
+    ? left === right
+    : left.length === right.length && left.every((actor, index) =>
+        actor.actorId === right[index]?.actorId
+      );
+}
+
 export function addActorToRoster(
   actors: readonly StoredActor[],
   actor: StoredActor,
@@ -137,6 +149,25 @@ export function addActorToRoster(
     );
   }
   return actors;
+}
+
+export function observeActorInRoster(
+  actors: readonly StoredActor[],
+  actor: StoredActor,
+): {
+  readonly actors: readonly StoredActor[];
+  readonly conflicted: boolean;
+} {
+  const normalizedActor = normalizeActor(actor);
+  const existing = actors.find((candidate) => candidate.actorId === normalizedActor.actorId);
+  if (existing === undefined) {
+    return {
+      actors: [...actors, normalizedActor]
+        .toSorted((left, right) => compareOpaqueIds(left.actorId, right.actorId)),
+      conflicted: false,
+    };
+  }
+  return { actors, conflicted: existing.kind !== normalizedActor.kind };
 }
 
 function requireIntegerInRange(
@@ -219,6 +250,14 @@ export function canonicalLifecycleEvent(event: CraigLifecycleEvent): Record<stri
     recordingId: requireIdentifier(event.recordingId, "event.recordingId"),
     schemaVersion: event.schemaVersion,
     type: event.type,
+    ...(event.schemaVersion === 3
+      ? {
+          actorObservationState: event.actorObservationState,
+          actorSemanticsVersion: event.actorSemanticsVersion,
+          producerCapabilityId: event.producerCapabilityId,
+          producerRevision: event.producerRevision,
+        }
+      : {}),
   };
   switch (event.type) {
     case "meeting.started":
@@ -229,7 +268,11 @@ export function canonicalLifecycleEvent(event: CraigLifecycleEvent): Record<stri
               (id) => requireSnowflake(id, "participantId"),
             ),
           }
-        : { ...common, actors: normalizeActorRoster(event.actors) };
+        : {
+            ...common,
+            actors: normalizeActorRoster(event.actors),
+            ...(event.schemaVersion === 3 ? { rosterState: event.rosterState } : {}),
+          };
     case "participant.joined":
     case "participant.left":
       return event.schemaVersion === 1
@@ -255,7 +298,10 @@ export function canonicalLifecycleEvent(event: CraigLifecycleEvent): Record<stri
         ...common,
         ...(event.schemaVersion === 1
           ? {}
-          : { actors: normalizeActorRoster(event.actors) }),
+          : {
+              actors: normalizeActorRoster(event.actors),
+              ...(event.schemaVersion === 3 ? { rosterState: event.rosterState } : {}),
+            }),
         endedAt: requireInstant(event.endedAt, "event.endedAt"),
         sourceFilesChecksumSha256: event.sourceFilesChecksumSha256,
         trackCount: event.trackCount,

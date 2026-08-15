@@ -1,0 +1,28 @@
+{
+  "name": "@discord-meeting/infinity-context-adapter",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./test-support": "./test/test-support.ts"
+  },
+  "scripts": {
+    "check": "pnpm run prepare:official-sdk && pnpm run typecheck:prepared && pnpm run test:prepared",
+    "prepare:official-sdk": "node ../../vendor/infinity-context/prepare-official-sdk.mjs",
+    "test": "pnpm run prepare:official-sdk && pnpm run test:prepared",
+    "test:real-service": "INFINITY_CONTEXT_REAL_E2E=1 pnpm run prepare:official-sdk && INFINITY_CONTEXT_REAL_E2E=1 vitest run test/infinity-context-real-service.e2e.test.ts",
+    "test:prepared": "vitest run",
+    "typecheck": "pnpm run prepare:official-sdk && pnpm run typecheck:prepared",
+    "typecheck:prepared": "tsc --project tsconfig.json --noEmit --pretty false"
+  },
+  "dependencies": {
+    "@discord-meeting/meeting-core": "workspace:*",
+    "@infinity-context/sdk": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

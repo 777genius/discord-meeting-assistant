@@ -28,13 +28,19 @@
     {
       "boundary": "adapters.discord",
       "roots": ["packages/discord-adapter/src"],
-      "allowFeatureSubpaths": ["live-meeting", "publishing"]
+      "allowFeatureSubpaths": ["live-meeting", "meeting-knowledge", "publishing"]
+    },
+    {
+      "boundary": "adapters.infinity-context",
+      "roots": ["packages/infinity-context-adapter/src"],
+      "allowFeatureSubpaths": ["meeting-knowledge"]
     },
     {
       "boundary": "adapters.postgres",
       "roots": ["packages/postgres-adapter/src"],
       "allowFeatureSubpaths": [
         "live-meeting",
+        "meeting-knowledge",
         "meeting-lifecycle",
         "post-call-workflow",
         "publishing",
@@ -59,7 +65,7 @@
     {
       "boundary": "adapters.subscription-runtime",
       "roots": ["packages/subscription-runtime-adapter/src"],
-      "allowFeatureSubpaths": ["live-meeting", "meeting-intelligence", "transcription"]
+      "allowFeatureSubpaths": ["live-meeting", "meeting-intelligence", "meeting-knowledge", "transcription"]
     },
     {
       "boundary": "adapters.voicetext",
@@ -84,6 +90,7 @@
       "allowFeatureSubpaths": [
         "conversation",
         "meeting-intelligence",
+        "meeting-knowledge",
         "publishing",
         "transcription"
       ]
@@ -112,6 +119,7 @@
         "conversation",
         "live-meeting",
         "meeting-intelligence",
+        "meeting-knowledge",
         "post-call-workflow",
         "publishing",
         "transcription"

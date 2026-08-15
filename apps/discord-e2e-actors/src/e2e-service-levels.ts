@@ -171,7 +171,25 @@ export const serviceLevelSourcesV1Schema = z.object({
   }).strict()),
   schemaVersion: z.literal(1),
 }).strict();
-export type ServiceLevelSourcesV1 = z.infer<typeof serviceLevelSourcesV1Schema>;
+type ServiceLevelSourcesV1 = z.infer<typeof serviceLevelSourcesV1Schema>;
+
+export const serviceLevelSourcesV2Schema = serviceLevelSourcesV1Schema
+  .omit({ discordPlaybackLinkProof: true, schemaVersion: true })
+  .extend({
+    discordPlaybackLinkProof: serviceLevelSourcesV1Schema.shape.discordPlaybackLinkProof.extend({
+      readiness: z.object({
+        capabilitySha256: sha256Schema, messageId: identifierSchema,
+        readinessExpectation: z.literal("processing-to-ready"), recordingId: identifierSchema,
+        status: z.literal("ready"), statuses: z.array(z.enum(["processing", "ready"])).min(2).max(601), trackCount: z.number().int().min(1).max(11),
+      }).strict().refine(
+        ({ statuses }) => statuses[0] === "processing" && statuses.at(-1) === "ready" && statuses
+          .slice(0, -1).every((status) => status === "processing"),
+        "Playback link must prove an unbroken processing-to-ready transition",
+      ),
+    }).strict(),
+    schemaVersion: z.literal(2),
+  }).strict();
+export type ServiceLevelSourcesV2 = z.infer<typeof serviceLevelSourcesV2Schema>;
 
 export interface ServiceLevelEvidenceSources {
   readonly actorRun: { readonly runId: string };
@@ -208,7 +226,7 @@ export interface ServiceLevelEvidenceSources {
     readonly capabilitySha256: string;
     readonly link: { readonly origin: string; readonly pathname: string };
   } | undefined;
-  readonly serviceLevelSources?: ServiceLevelSourcesV1;
+  readonly serviceLevelSources?: ServiceLevelSourcesV1 | ServiceLevelSourcesV2;
   readonly transcript: {
     readonly transcriptId: string;
     readonly turns: readonly { readonly endMs: number; readonly turnId: string }[];

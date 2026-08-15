@@ -257,13 +257,13 @@ describe("Voicetext semantic canary", () => {
 
   it("fails through a silent process envelope so secrets and transcripts cannot reach stderr", () => {
     const packageRoot = resolvePath(dirname(fileURLToPath(import.meta.url)), "..");
-    const result = spawnSync(resolvePath(packageRoot, "node_modules/.bin/tsx"), [
-      "src/run-voicetext-semantic-canary.ts", "--json",
+    const result = spawnSync(process.execPath, [
+      "--import", "tsx", "src/run-voicetext-semantic-canary.ts", "--json",
     ], { cwd: packageRoot, encoding: "utf8" });
     expect(result.status).toBe(1);
     expect(result.stdout).toBe("");
     expect(result.stderr).toBe("");
-  });
+  }, 15_000);
 });
 
 function nextBatchResult(results: VoicetextBatchTaskResult[]): VoicetextBatchTaskResult {

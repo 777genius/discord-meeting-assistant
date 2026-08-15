@@ -1,6 +1,18 @@
+import {
+  createFastCheckParameters,
+  normalizeDeterministicSeedBank,
+} from "@agent-teams/engineering-foundation";
+import { assert, constantFrom, property, tuple } from "fast-check";
 import { describe, expect, it } from "vitest";
 
 import { MeetingFarewellPolicy } from "@discord-meeting/meeting-core/conversation";
+
+const quotedFarewellSeedBank = normalizeDeterministicSeedBank({
+  numRuns: 100,
+  propertyId: "meeting.farewell-quoted-span-never-direct-intent",
+  schemaVersion: 1,
+  seeds: [-1_417_090_813, 729_441_107],
+});
 
 function observe(
   policy: MeetingFarewellPolicy,
@@ -70,9 +82,56 @@ describe("MeetingFarewellPolicy fast path", () => {
       status: "ignored",
     });
   });
+
+  it("releases only the attempt fence while retaining observed-turn deduplication", () => {
+    const policy = new MeetingFarewellPolicy();
+    expect(observe(policy, "Всем пока", { turnId: "farewell-1" }))
+      .toMatchObject({ status: "trigger" });
+    expect(policy.reserve()).toBe(true);
+
+    policy.releaseReservation();
+
+    expect(policy.reserve()).toBe(true);
+    policy.releaseReservation();
+    expect(observe(policy, "Всем пока", { turnId: "farewell-1" }))
+      .toEqual({ reason: "duplicate", status: "ignored" });
+    expect(observe(policy, "Bye everyone", { turnId: "farewell-2" }))
+      .toMatchObject({ status: "trigger" });
+  });
 });
 
 describe("MeetingFarewellPolicy false-positive fence", () => {
+  it.each([
+    '"Bye everyone"',
+    '“Bye everyone!”',
+    '«Всем пока!»',
+    'The slide says "Bye everyone", but we are continuing',
+    'На экране написано «Всем пока!», а встреча продолжается',
+    'Please repeat “Bye, Alice” slowly',
+    'Повтори «Пока, Саша» медленно',
+  ])("rejects quoted farewell wording before normalization: %s", (text) => {
+    expect(observe(new MeetingFarewellPolicy(), text)).toEqual({
+      reason: "unsafe",
+      status: "ignored",
+    });
+  });
+
+  it("never turns a paired quoted farewell span into direct intent", () => {
+    for (const seed of quotedFarewellSeedBank.seeds) {
+      assert(property(tuple(
+        constantFrom(["\"", "\""], ["“", "”"], ["„", "“"], ["«", "»"]),
+        constantFrom("Bye everyone!", "Goodbye, Alice", "Всем пока!", "Пока, Саша"),
+        constantFrom("", "Please repeat ", "На слайде написано "),
+        constantFrom("", " before continuing", ", но мы продолжаем"),
+      ), ([quotes, farewell, prefix, suffix]) => {
+        expect(observe(
+          new MeetingFarewellPolicy(),
+          `${prefix}${quotes[0]}${farewell}${quotes[1]}${suffix}`,
+        )).toEqual({ reason: "unsafe", status: "ignored" });
+      }), createFastCheckParameters(quotedFarewellSeedBank, seed));
+    }
+  });
+
   it.each([
     "Пока не заканчиваем, ещё вопрос",
     "Он сказал всем пока",

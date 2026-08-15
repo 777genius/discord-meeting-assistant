@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { INFINITY_CONTEXT_SDK_PROVENANCE } from "@discord-meeting/infinity-context-adapter";
+
 import { loadPlatformConfig } from "../src/config.js";
 
 const environment = {
@@ -12,6 +14,8 @@ const environment = {
   DISCORD_LEGACY_VOICE_CHANNEL_ID: "1533224474609057796",
   DISCORD_RESULTS_CHANNEL_ID: "1533228891827736657",
   DISCORD_TOKEN_FILE: "/run/secrets/discord",
+  MEETING_KNOWLEDGE_PRINCIPAL_KEY_FILE:
+    "/run/secrets/meeting-knowledge-principal-key",
   NODE_ENV: "test",
   PORT: "4310",
   POSTGRES_URL_FILE: "/run/secrets/postgres",
@@ -32,6 +36,41 @@ const environment = {
 } as const;
 
 describe("platform configuration", () => {
+  it("loads Infinity activation only as a complete versioned provenance-bound set", async () => {
+    const activation = JSON.stringify({
+      apiVersion: "v1",
+      archiveSha256: INFINITY_CONTEXT_SDK_PROVENANCE.archiveSha256,
+      environment: "test",
+      immutablePackageIntegrity: null,
+      indexingEnabled: true,
+      packageSource: "reviewed_source_workspace",
+      qualificationManifestSha256: null,
+      schemaVersion: 1,
+      sdkCommit: INFINITY_CONTEXT_SDK_PROVENANCE.commit,
+      sdkTree: INFINITY_CONTEXT_SDK_PROVENANCE.tree,
+      searchEnabled: true,
+      serviceName: "disposable-infinity-context",
+      servingProfile: "same_room_retrieval",
+    });
+    const configured = await loadPlatformConfig({
+      ...environment,
+      INFINITY_CONTEXT_ACTIVATION: activation,
+      INFINITY_CONTEXT_TOKEN_FILE: "/run/secrets/infinity-token",
+      INFINITY_CONTEXT_TOPOLOGY_KEY_FILE: "/run/secrets/infinity-topology",
+      INFINITY_CONTEXT_URL: "http://infinity-context:7788",
+    }, async (path) => path.endsWith("topology") ? "t".repeat(32) : `fixture:${path}`);
+
+    expect(configured.infinityContext?.activation).toMatchObject({
+      indexingEnabled: true,
+      sdkCommit: INFINITY_CONTEXT_SDK_PROVENANCE.commit,
+    });
+    expect(configured.secrets.infinityContextTopologyKey).toBe("t".repeat(32));
+    await expect(loadPlatformConfig({
+      ...environment,
+      INFINITY_CONTEXT_ACTIVATION: activation,
+    }, async () => "fixture-value" )).rejects.toThrow("configured together");
+  });
+
   it("enables playback readiness only for a complete explicit test-only deployment", async () => {
     const conversationEnvironment = {
       ...environment,
@@ -112,6 +151,34 @@ describe("platform configuration", () => {
         async () => "value",
       ),
     ).rejects.toThrow();
+  });
+
+  it("keeps Local Final Reply disabled unless direct publication and its secret are explicit", async () => {
+    const principalKeyPath = "/run/secrets/meeting-knowledge-principal-key";
+    const config = await loadPlatformConfig({
+      ...environment,
+      MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED: "true",
+      MEETING_KNOWLEDGE_PRINCIPAL_KEY_FILE: principalKeyPath,
+    }, async (path) => `value-for:${path}`);
+
+    expect(config.meetingKnowledge).toEqual({ localFinalReply: true });
+    expect(config.secrets.meetingKnowledgePrincipalKey)
+      .toBe(`value-for:${principalKeyPath}`);
+    await expect(loadPlatformConfig({
+      ...environment,
+      MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED: "true",
+      MEETING_KNOWLEDGE_PRINCIPAL_KEY_FILE: undefined,
+    }, async () => "value")).rejects.toThrow(
+      "local final reply requires MEETING_KNOWLEDGE_PRINCIPAL_KEY_FILE",
+    );
+    await expect(loadPlatformConfig({
+      ...environment,
+      DISCORD_PUBLICATION_MODE: "thread",
+      MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED: "true",
+      MEETING_KNOWLEDGE_PRINCIPAL_KEY_FILE: principalKeyPath,
+    }, async () => "value")).rejects.toThrow(
+      "local final reply currently requires direct-message publication mode",
+    );
   });
 });
 

@@ -175,12 +175,51 @@ const addressedAnswerObservationSchema = z.object({
   type: z.literal("addressed-answer"),
 }).strict();
 
+const groundedKnowledgeAnswerObservationSchema = z.discriminatedUnion("status", [
+  z.object({
+    citationTurnIds: z.array(identifierSchema).min(1).max(32),
+    evidenceEpoch: identifierSchema,
+    knowledgeEpoch: identifierSchema,
+    observedAt: z.iso.datetime(),
+    participantId: identifierSchema,
+    playbackProvenance: z.literal("literal_tts"),
+    status: z.literal("validated"),
+    turnId: identifierSchema,
+  }).strict(),
+  z.object({
+    observedAt: z.iso.datetime(),
+    reason: z.enum([
+      "barge-in",
+      "disconnected",
+      "meeting-ended",
+      "playback-failed",
+      "runtime-shutdown",
+      "superseded",
+    ]),
+    status: z.literal("cancelled"),
+    turnId: identifierSchema,
+  }).strict(),
+]);
+
 const conversationPlaybackReceiptBaseSchema = z.object({
   observedAt: z.iso.datetime(),
   playbackAttemptId: identifierSchema,
   playbackKind: z.enum(["answer", "prepared-cue", "thinking-cue"]),
+  preparedAssetSha256: sha256Schema.optional(),
+  speechProvenance: z.enum(["literal_tts", "model_tts"]).optional(),
   turnId: identifierSchema,
 });
+function refinePlaybackProvenance(
+  receipt: z.infer<typeof conversationPlaybackReceiptBaseSchema>,
+  context: z.RefinementCtx,
+): void {
+  if (receipt.playbackKind === "prepared-cue" && receipt.speechProvenance !== undefined) {
+    context.addIssue({ code: "custom", message: "Prepared cue receipts cannot claim TTS provenance" });
+  }
+  if (receipt.playbackKind !== "prepared-cue" && receipt.preparedAssetSha256 !== undefined) {
+    context.addIssue({ code: "custom", message: "Only prepared cue receipts may carry an asset digest" });
+  }
+}
 const conversationPlaybackReceiptSchema = z.discriminatedUnion("status", [
   conversationPlaybackReceiptBaseSchema.extend({
     playbackStartedAtEpochMs: z.number().int().positive(),
@@ -198,7 +237,7 @@ const conversationPlaybackReceiptSchema = z.discriminatedUnion("status", [
     settlement: z.enum(["played", "unplayed", "partial", "unknown"]),
     status: z.literal("settled"),
   }).strict(),
-]);
+]).superRefine(refinePlaybackProvenance);
 
 export const conversationLifecycleEvidenceSchema = z.object({
   events: z.array(z.discriminatedUnion("type", [
@@ -206,6 +245,7 @@ export const conversationLifecycleEvidenceSchema = z.object({
     greetingPlaybackObservationSchema,
     farewellPlaybackObservationSchema,
   ])).min(4),
+  groundedAnswers: z.array(groundedKnowledgeAnswerObservationSchema).default([]),
   playbackReceipts: z.array(conversationPlaybackReceiptSchema).default([]),
 }).strict();
 

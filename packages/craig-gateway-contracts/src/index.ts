@@ -21,7 +21,9 @@ export {
   type CraigPlaybackEvent,
   type CraigActor,
   type CraigActorKind,
+  type CraigActorObservationState,
   type CraigLifecycleEvent,
+  type CraigRosterState,
   type VoicePacket,
   type VoicePacketBatch,
 } from "./contracts.js";

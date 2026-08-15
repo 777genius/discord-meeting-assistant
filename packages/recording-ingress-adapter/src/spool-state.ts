@@ -4,6 +4,8 @@ import { RecordingIngressError } from "./errors.js";
 
 type RecordingSpoolStatus = "active" | "aborted" | "finalizing";
 
+const immutableProducerRevision = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
+
 function compareOpaqueIds(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
@@ -25,6 +27,14 @@ export interface StoredActor {
   readonly kind: "automation" | "human" | "unknown";
 }
 
+export interface StoredIdentityProvenance {
+  readonly actorObservationState: "consistent" | "conflicted";
+  readonly actorSemanticsVersion: number;
+  readonly producerCapabilityId: string;
+  readonly producerRevision: string;
+  readonly rosterState: "sealed" | "unsealed";
+}
+
 export interface StoredAuthoritativeTrack {
   readonly audioLocator: string;
   readonly checksumSha256: string;
@@ -44,10 +54,11 @@ export interface RecordingSpoolState {
   readonly finalEventDigest?: string;
   readonly finalEventId?: string;
   readonly guildId: string;
-  readonly lifecycleSchemaVersion: 1 | 2;
+  readonly identityProvenance: StoredIdentityProvenance | null;
+  readonly lifecycleSchemaVersion: 1 | 2 | 3;
   readonly pendingAuthoritativeTracks: readonly StoredAuthoritativeTrack[];
   readonly recordingId: string;
-  readonly schemaVersion: 2;
+  readonly schemaVersion: 3;
   readonly speakers: readonly StoredSpeaker[];
   readonly startedAt: string;
   readonly status: RecordingSpoolStatus;
@@ -71,7 +82,8 @@ export interface CompletedRecordingState {
   readonly finalEventDigest: string;
   readonly finalEventId: string;
   readonly guildId: string;
-  readonly lifecycleSchemaVersion: 1 | 2;
+  readonly identityProvenance: StoredIdentityProvenance | null;
+  readonly lifecycleSchemaVersion: 1 | 2 | 3;
   readonly recording: {
     readonly manifestLocator: string;
     readonly recordingId: string;
@@ -82,7 +94,7 @@ export interface CompletedRecordingState {
     }[];
   };
   readonly recordingId: string;
-  readonly schemaVersion: 3;
+  readonly schemaVersion: 4;
 }
 
 function objectValue(value: unknown): Record<string, unknown> {
@@ -152,9 +164,42 @@ function parseActorRoster(value: unknown): readonly StoredActor[] | null {
   return actors;
 }
 
-function lifecycleSchemaVersion(value: unknown, fallback: 1): 1 | 2 {
+function parseIdentityProvenance(value: unknown): StoredIdentityProvenance | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  const record = objectValue(value);
+  const producerCapabilityId = stringValue(
+    record.producerCapabilityId,
+    "identityProvenance.producerCapabilityId",
+  );
+  const producerRevision = stringValue(
+    record.producerRevision,
+    "identityProvenance.producerRevision",
+  );
+  if (
+    (record.actorObservationState !== "consistent" && record.actorObservationState !== "conflicted") ||
+    !Number.isSafeInteger(record.actorSemanticsVersion) ||
+    (record.actorSemanticsVersion as number) < 1 ||
+    (record.actorSemanticsVersion as number) > 1_000 ||
+    producerCapabilityId.length > 128 ||
+    !immutableProducerRevision.test(producerRevision) ||
+    (record.rosterState !== "sealed" && record.rosterState !== "unsealed")
+  ) {
+    throw new RecordingIngressError("corrupt-spool", "invalid identity provenance");
+  }
+  return {
+    actorObservationState: record.actorObservationState,
+    actorSemanticsVersion: record.actorSemanticsVersion as number,
+    producerCapabilityId,
+    producerRevision,
+    rosterState: record.rosterState,
+  };
+}
+
+function lifecycleSchemaVersion(value: unknown, fallback: 1): 1 | 2 | 3 {
   const version = value ?? fallback;
-  if (version !== 1 && version !== 2) {
+  if (version !== 1 && version !== 2 && version !== 3) {
     throw new RecordingIngressError("corrupt-spool", "invalid lifecycle schema version");
   }
   return version;
@@ -194,7 +239,7 @@ function optionalString(value: unknown, field: string): string | undefined {
 export function parseRecordingSpoolState(input: unknown): RecordingSpoolState {
   const record = objectValue(input);
   if (
-    (record.schemaVersion !== 1 && record.schemaVersion !== 2) ||
+    (record.schemaVersion !== 1 && record.schemaVersion !== 2 && record.schemaVersion !== 3) ||
     !Array.isArray(record.events) ||
     !Array.isArray(record.speakers)
   ) {
@@ -207,9 +252,16 @@ export function parseRecordingSpoolState(input: unknown): RecordingSpoolState {
   const finalEventDigest = optionalString(record.finalEventDigest, "finalEventDigest");
   const finalEventId = optionalString(record.finalEventId, "finalEventId");
   const actors = parseActorRoster(record.actors);
+  const identityProvenance = parseIdentityProvenance(record.identityProvenance);
   const protocolVersion = lifecycleSchemaVersion(record.lifecycleSchemaVersion, 1);
-  if (protocolVersion === 2 && actors === null) {
-    throw new RecordingIngressError("corrupt-spool", "v2 lifecycle spool is missing actors");
+  if (protocolVersion !== 1 && actors === null) {
+    throw new RecordingIngressError("corrupt-spool", "actor lifecycle spool is missing actors");
+  }
+  if ((protocolVersion === 3) !== (identityProvenance !== null)) {
+    throw new RecordingIngressError(
+      "corrupt-spool",
+      "lifecycle generation and identity provenance do not match",
+    );
   }
   return {
     actors,
@@ -222,12 +274,13 @@ export function parseRecordingSpoolState(input: unknown): RecordingSpoolState {
     ...(finalEventDigest === undefined ? {} : { finalEventDigest }),
     ...(finalEventId === undefined ? {} : { finalEventId }),
     guildId: stringValue(record.guildId, "guildId"),
+    identityProvenance,
     lifecycleSchemaVersion: protocolVersion,
     pendingAuthoritativeTracks: Array.isArray(record.pendingAuthoritativeTracks)
       ? record.pendingAuthoritativeTracks.map(parseStoredAuthoritativeTrack)
       : [],
     recordingId: stringValue(record.recordingId, "recordingId"),
-    schemaVersion: 2,
+    schemaVersion: 3,
     speakers: record.speakers.map(parseStoredSpeaker),
     startedAt: stringValue(record.startedAt, "startedAt"),
     status: record.status,
@@ -246,7 +299,7 @@ export function parseCompletedRecordingState(input: unknown): CompletedRecording
   const record = objectValue(input);
   const recording = objectValue(record.recording);
   if (
-    (record.schemaVersion !== 2 && record.schemaVersion !== 3) ||
+    (record.schemaVersion !== 2 && record.schemaVersion !== 3 && record.schemaVersion !== 4) ||
     !Array.isArray(record.events) ||
     !Array.isArray(record.authoritativeTracks) ||
     !Array.isArray(recording.speakerAudio)
@@ -258,9 +311,16 @@ export function parseCompletedRecordingState(input: unknown): CompletedRecording
   }
   const authoritativeTracks = record.authoritativeTracks.map(parseStoredAuthoritativeTrack);
   const actors = parseActorRoster(record.actors);
+  const identityProvenance = parseIdentityProvenance(record.identityProvenance);
   const protocolVersion = lifecycleSchemaVersion(record.lifecycleSchemaVersion, 1);
-  if (protocolVersion === 2 && actors === null) {
-    throw new RecordingIngressError("corrupt-spool", "v2 completion receipt is missing actors");
+  if (protocolVersion !== 1 && actors === null) {
+    throw new RecordingIngressError("corrupt-spool", "actor completion receipt is missing actors");
+  }
+  if ((protocolVersion === 3) !== (identityProvenance !== null)) {
+    throw new RecordingIngressError(
+      "corrupt-spool",
+      "completion lifecycle generation and identity provenance do not match",
+    );
   }
   const speakerAudio = recording.speakerAudio.map((value) => {
     const reference = objectValue(value);
@@ -287,6 +347,7 @@ export function parseCompletedRecordingState(input: unknown): CompletedRecording
     finalEventDigest: stringValue(record.finalEventDigest, "finalEventDigest"),
     finalEventId: stringValue(record.finalEventId, "finalEventId"),
     guildId: stringValue(record.guildId, "guildId"),
+    identityProvenance,
     lifecycleSchemaVersion: protocolVersion,
     recording: {
       manifestLocator: stringValue(recording.manifestLocator, "manifestLocator"),
@@ -294,7 +355,7 @@ export function parseCompletedRecordingState(input: unknown): CompletedRecording
       speakerAudio,
     },
     recordingId,
-    schemaVersion: 3,
+    schemaVersion: 4,
   };
 }
 

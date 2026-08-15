@@ -13,6 +13,8 @@ import { SshHostedServiceLevelRawProbe } from "./hosted-service-level-raw-probe.
 import { createConcreteSshDeploymentSafetyProbe } from "./ssh-deployment-safety-probe-factory.js";
 import { SshRemoteContainerProcessAdapter } from "./ssh-remote-container-process-adapter.js";
 import { FileSecretReader } from "./keychain.js";
+import { GENERATED_HOSTED_CAMPAIGN_COMPILED_RELEASE } from
+  "./hosted-campaign-compiled-release.generated.js";
 
 const sha256 = z.string().regex(/^[a-f\d]{64}$/u);
 const sourceRevision = z.string().regex(/^(?:[a-f\d]{40}|[a-f\d]{64})$/u);
@@ -93,15 +95,75 @@ export const hostedCampaignReleaseTrustRootV1Schema = z.object({
 
 export type HostedCampaignReleaseTrustRootV1 = z.infer<typeof hostedCampaignReleaseTrustRootV1Schema>;
 
-/** Intentionally empty until a reviewed release supplies exact immutable identities. */
-export const COMPILED_HOSTED_CAMPAIGN_RELEASE_TRUST_ROOT: HostedCampaignReleaseTrustRootV1 | undefined = undefined;
+/**
+ * Only build-generated, source-literal trust can authorize production. Runtime
+ * environment values and the operator release binding cannot populate it.
+ */
+export const COMPILED_HOSTED_CAMPAIGN_RELEASE_TRUST_ROOT =
+  resolveCompiledHostedCampaignReleaseTrustRoot(
+    GENERATED_HOSTED_CAMPAIGN_COMPILED_RELEASE,
+  );
 
 export function digestHostedCampaignReleaseTrustRootV1(value: HostedCampaignReleaseTrustRootV1): string {
   return createHash("sha256").update(JSON.stringify(canonical(value))).digest("hex");
 }
 
-export function digestHostedCampaignReleaseBindingV1(value: unknown): string {
+export function resolveCompiledHostedCampaignReleaseTrustRoot(
+  generated: unknown,
+): HostedCampaignReleaseTrustRootV1 | undefined {
+  if (!isRecord(generated) || generated.schemaVersion !== 1 ||
+    generated.generatorVersion !== 1) {
+    throw new Error("Compiled hosted campaign release metadata is malformed");
+  }
+  if (generated.status === "unadmitted") {
+    if (Object.keys(generated).length !== 3) {
+      throw new Error("Unadmitted compiled release must not contain trust material");
+    }
+    return undefined;
+  }
+  if (generated.status !== "admitted" || Object.keys(generated).length !== 5 ||
+    typeof generated.trustRootSha256 !== "string") {
+    throw new Error("Compiled hosted campaign release admission is malformed");
+  }
+  const trustRoot = hostedCampaignReleaseTrustRootV1Schema.parse(generated.trustRoot);
+  if (digestHostedCampaignReleaseTrustRootV1(trustRoot) !== generated.trustRootSha256) {
+    throw new Error("Compiled hosted campaign release trust-root digest is invalid");
+  }
+  return Object.freeze(trustRoot);
+}
+
+function digestHostedCampaignReleaseBindingV1(value: unknown): string {
   return digestCanonical(hostedCampaignReleaseBindingV1Schema.parse(value));
+}
+
+export function admitCompiledHostedCampaignReleaseBinding(
+  candidateValue: unknown,
+  trustRoot: HostedCampaignReleaseTrustRootV1 | undefined =
+    COMPILED_HOSTED_CAMPAIGN_RELEASE_TRUST_ROOT,
+): Readonly<{
+  readonly release: z.infer<typeof hostedCampaignReleaseBindingV1Schema>;
+  readonly releaseReference: {
+    readonly releaseBindingSha256: string;
+    readonly releaseId: string;
+    readonly trustRootSha256: string;
+  };
+}> {
+  if (trustRoot === undefined) {
+    throw new Error("A build-admitted compiled hosted campaign release is required");
+  }
+  const release = hostedCampaignReleaseBindingV1Schema.parse(candidateValue);
+  if (release.trustRootSha256 !== digestHostedCampaignReleaseTrustRootV1(trustRoot)) {
+    throw new Error("Release binding does not select the compiled trust root");
+  }
+  assertReleaseMatchesTrustRoot(release, trustRoot);
+  return Object.freeze({
+    release,
+    releaseReference: Object.freeze({
+      releaseBindingSha256: digestHostedCampaignReleaseBindingV1(release),
+      releaseId: release.releaseId,
+      trustRootSha256: release.trustRootSha256,
+    }),
+  });
 }
 
 export function createHostedCampaignReleaseConfig(
@@ -275,4 +337,8 @@ function canonical(value: unknown): unknown {
   if (value === null || typeof value !== "object") { return value; }
   return Object.fromEntries(Object.entries(value).toSorted(([left], [right]) => left.localeCompare(right))
     .map(([key, nested]) => [key, canonical(nested)]));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

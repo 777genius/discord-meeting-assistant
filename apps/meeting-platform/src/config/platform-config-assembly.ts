@@ -5,6 +5,9 @@ export interface LoadedPlatformSecrets {
   readonly craigBearerToken: string;
   readonly conversationRuntimeToken?: string;
   readonly discordToken: string;
+  readonly infinityContextToken?: string;
+  readonly infinityContextTopologyKey?: string;
+  readonly meetingKnowledgePrincipalKey?: string;
   readonly postgresUrl: string;
   readonly redisUrl: string;
   readonly s3AccessKeyId: string;
@@ -19,6 +22,54 @@ export interface LoadedPlatformSecrets {
 
 function cueRoot(configured: string | undefined, fallback: string): string {
   return configured ?? fallback;
+}
+
+function infinityContextConfig(
+  environment: ParsedPlatformEnvironment,
+): Pick<PlatformConfig, "infinityContext"> {
+  if (
+    environment.INFINITY_CONTEXT_ACTIVATION === undefined ||
+    environment.INFINITY_CONTEXT_URL === undefined
+  ) {
+    return {};
+  }
+  return {
+    infinityContext: {
+      activation: environment.INFINITY_CONTEXT_ACTIVATION,
+      baseUrl: environment.INFINITY_CONTEXT_URL,
+      requestTimeoutMs: environment.INFINITY_CONTEXT_REQUEST_TIMEOUT_MS,
+    },
+  };
+}
+
+function platformSecrets(loaded: LoadedPlatformSecrets): PlatformConfig["secrets"] {
+  return Object.freeze({
+    craigBearerToken: loaded.craigBearerToken,
+    ...(loaded.conversationRuntimeToken === undefined
+      ? {}
+      : { conversationRuntimeToken: loaded.conversationRuntimeToken }),
+    discordToken: loaded.discordToken,
+    ...(loaded.infinityContextToken === undefined
+      ? {}
+      : { infinityContextToken: loaded.infinityContextToken }),
+    ...(loaded.infinityContextTopologyKey === undefined
+      ? {}
+      : { infinityContextTopologyKey: loaded.infinityContextTopologyKey }),
+    ...(loaded.meetingKnowledgePrincipalKey === undefined
+      ? {}
+      : { meetingKnowledgePrincipalKey: loaded.meetingKnowledgePrincipalKey }),
+    postgresUrl: loaded.postgresUrl,
+    ...(loaded.recordingPlayback.signingSecret === undefined
+      ? {}
+      : { recordingPlaybackSigningSecret: loaded.recordingPlayback.signingSecret }),
+    redisUrl: loaded.redisUrl,
+    s3AccessKeyId: loaded.s3AccessKeyId,
+    s3SecretAccessKey: loaded.s3SecretAccessKey,
+    subscriptionRuntimeToken: loaded.subscriptionRuntimeToken,
+    ...(loaded.voicetextServiceToken === undefined
+      ? {}
+      : { voicetextServiceToken: loaded.voicetextServiceToken }),
+  });
 }
 
 export function assemblePlatformConfig(
@@ -48,6 +99,10 @@ export function assemblePlatformConfig(
     discordCraigApplicationId: environment.DISCORD_CRAIG_APPLICATION_ID,
     ...(environment.DISCORD_LEGACY_GUILD_ID === undefined || environment.DISCORD_LEGACY_VOICE_CHANNEL_ID === undefined || environment.DISCORD_RESULTS_CHANNEL_ID === undefined ? {} : { discordLegacyRoute: { guildId: environment.DISCORD_LEGACY_GUILD_ID, publicationTargetId: environment.DISCORD_RESULTS_CHANNEL_ID, voiceChannelId: environment.DISCORD_LEGACY_VOICE_CHANNEL_ID } }),
     liveIngressOwnerMode: environment.LIVE_INGRESS_OWNER_MODE,
+    ...infinityContextConfig(environment),
+    ...(environment.MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED
+      ? { meetingKnowledge: { localFinalReply: true as const } }
+      : {}),
     nodeEnvironment: environment.NODE_ENV,
     participantGreetingDefaultLocale: environment.PARTICIPANT_GREETING_DEFAULT_LOCALE,
     participantGreetingProfiles: environment.PARTICIPANT_GREETING_PROFILES_JSON,
@@ -55,15 +110,7 @@ export function assemblePlatformConfig(
     recordingSpoolRoot: environment.RECORDING_SPOOL_ROOT,
     ...(loaded.recordingPlayback.config === undefined ? {} : { recordingPlayback: loaded.recordingPlayback.config }),
     s3: { bucket: environment.S3_BUCKET, endpoint: environment.S3_ENDPOINT, prefix: environment.S3_PREFIX, region: environment.S3_REGION },
-    secrets: Object.freeze({
-      craigBearerToken: loaded.craigBearerToken,
-      ...(loaded.conversationRuntimeToken === undefined ? {} : { conversationRuntimeToken: loaded.conversationRuntimeToken }),
-      discordToken: loaded.discordToken, postgresUrl: loaded.postgresUrl, redisUrl: loaded.redisUrl,
-      ...(loaded.recordingPlayback.signingSecret === undefined ? {} : { recordingPlaybackSigningSecret: loaded.recordingPlayback.signingSecret }),
-      s3AccessKeyId: loaded.s3AccessKeyId, s3SecretAccessKey: loaded.s3SecretAccessKey,
-      subscriptionRuntimeToken: loaded.subscriptionRuntimeToken,
-      ...(loaded.voicetextServiceToken === undefined ? {} : { voicetextServiceToken: loaded.voicetextServiceToken }),
-    }),
+    secrets: platformSecrets(loaded),
     speaches: { baseUrl: environment.SPEACHES_BASE_URL, model: environment.SPEACHES_MODEL },
     subscriptionRuntime: { address: environment.SUBSCRIPTION_RUNTIME_ADDRESS, launcherSha256: environment.SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256 },
     transcriptionProvider: environment.TRANSCRIPTION_PROVIDER,

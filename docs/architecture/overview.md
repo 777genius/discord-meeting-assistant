@@ -72,8 +72,13 @@ deployments:
   from one Discord guild and voice channel to its results channel. Discord
   commands and PostgreSQL remain adapters around this context.
 - Meeting Knowledge owns provider-neutral knowledge admission identity and, in
-  later vertical slices, question-local human evidence and grounded-answer
-  invariants. Phase 1 admits no Discord questions and adds no model runtime.
+  its historical-memory slice, deterministic final-human evidence blocks,
+  durable derived-index intent, same-room local reauthorization, focused
+  candidate retrieval, and every-block exhaustive coverage. Its active-memory
+  slice owns a durable finalized-human-turn outbox, generation-fenced bounded
+  hot tail, and canonical local rehydration for addressed voice. Infinity
+  Context suggests opaque locators only; local accepted transcripts and the
+  append-only finalized live-turn table remain the only text evidence.
 
 These names guide the first model. A separate workspace package is created only
 when a real slice and ownership boundary exist. Deployment separation is not a
@@ -103,25 +108,39 @@ explicit package subpath. Foundation denies undeclared feature dependencies and
 cross-feature deep imports, so the physical layout and executable dependency
 model describe the same architecture.
 
-Meeting Lifecycle snapshots retain an opaque source scope/room pair and an
-explicit `human | automation | unknown` actor roster. New Craig v2 recordings
-carry that identity through the durable spool and authoritative finalization.
-Legacy snapshots restore missing identity as explicit `null`; Craig v1 remains
-operational but cannot establish knowledge eligibility because its participant
-contract does not prove exclusion of every automation actor. Audio-track
-presence never implies a human actor, so Botik's authoritative track remains in
-the recording while Meeting Knowledge excludes it from human admission.
+Meeting Lifecycle snapshots retain an opaque source scope/room pair, the exact
+lifecycle generation, an explicit `human | automation | unknown` actor roster,
+and nullable producer provenance. Craig v3 carries its immutable capability,
+source revision, actor-semantics version, observation state, and terminal roster
+seal through the durable spool and authoritative finalization. Lifecycle alone
+canonicalizes those observations. Meeting Knowledge admits final and historical
+evidence only from supported, consistent, sealed v3 provenance. During an active
+meeting, the same trusted capability may admit an unsealed roster solely to the
+transient generation-fenced hot tail; it can never create a historical or
+Infinity intent. Capability-less v2, v1, old
+unversioned snapshots, unknown capabilities or future generations, unsealed
+rosters, and conflicting observations remain operational for recording and
+post-call work but are not knowledge evidence. A future wire generation still
+requires an explicit recording-only parser before ingress can accept it.
+Audio-track presence never implies a human actor, so
+Botik's authoritative track remains in the recording while Meeting Knowledge
+excludes it from human admission.
 
 ## Live conversation vertical slice
 
 The executable live slice includes derived live STT, addressed conversation,
 incremental summary, and one mutable Discord projection, followed by
 an authoritative post-call summary in a separate idempotent projection by
-default. Conversation remains stateless and excludes memory, RAG, and tools.
+default. The conversation runtime remains stateless and excludes tools. For an
+addressed knowledge question, Meeting Knowledge resolves bounded text-free live
+and same-room historical candidates, canonically rehydrates them, and returns a
+complete validated literal-speech answer before Pipecat may synthesize audio.
 
 Live conversation connects through narrow ports owned by Meeting Core:
 
 - `ConversationRuntime` for conversational execution;
+- `GroundedKnowledgeAnswerPort` as the anti-corruption edge to the one shared
+  Meeting Knowledge grounded-answer use case;
 - `VoicePlaybackPort` for cancellable provider-neutral PCM playback.
 
 Text generation is a separate consumer-owned Pipecat port implemented by the

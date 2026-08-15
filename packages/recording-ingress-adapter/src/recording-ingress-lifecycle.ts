@@ -1,10 +1,7 @@
 import type { CraigLifecycleEvent } from "@discord-meeting/craig-gateway-contracts";
 
 import type { LifecycleIngressResult } from "./contracts.js";
-import {
-  finalizeAuthoritative,
-  type AuthoritativeReadyEvent,
-} from "./recording-ingress-authoritative-finalization.js";
+import { finalizeAuthoritative, type AuthoritativeReadyEvent } from "./recording-ingress-authoritative-finalization.js";
 import { RecordingIngressError } from "./errors.js";
 import {
   abortIfRequested,
@@ -12,16 +9,16 @@ import {
   canonicalLifecycleEvent,
   ensureRecordingIdentity,
   normalizeActorRoster,
+  observeActorInRoster,
   sameActorRoster,
+  sameActorRosterIds,
   sha256,
   storedEvent,
 } from "./recording-ingress-invariants.js";
 import { RecordingIngressRuntime } from "./recording-ingress-runtime.js";
-import {
-  type AbortedRecordingState,
-  type CompletedRecordingState,
-  type RecordingSpoolState,
-} from "./spool.js";
+import type { AbortedRecordingState, CompletedRecordingState, RecordingSpoolState, StoredIdentityProvenance } from "./spool.js";
+
+type TrustedLifecycleEvent = Extract<CraigLifecycleEvent, { readonly schemaVersion: 3 }>;
 
 interface LifecycleIngressInput {
   readonly digest: string;
@@ -148,10 +145,19 @@ async function startRecording(input: LifecycleIngressInput): Promise<LifecycleIn
       channelId: startedEvent.channelId,
       events: [storedEvent(startedEvent, input.digest)],
       guildId: startedEvent.guildId,
+      identityProvenance: startedEvent.schemaVersion === 3
+        ? {
+            actorObservationState: startedEvent.actorObservationState,
+            actorSemanticsVersion: startedEvent.actorSemanticsVersion,
+            producerCapabilityId: startedEvent.producerCapabilityId,
+            producerRevision: startedEvent.producerRevision,
+            rosterState: startedEvent.rosterState,
+          }
+        : null,
       lifecycleSchemaVersion: startedEvent.schemaVersion,
       pendingAuthoritativeTracks: [],
       recordingId: startedEvent.recordingId,
-      schemaVersion: 2,
+      schemaVersion: 3,
       speakers: [],
       startedAt: startedEvent.occurredAt,
       status: "active",
@@ -184,20 +190,24 @@ async function acceptAuthoritativeReady(
   state: RecordingSpoolState,
   event: AuthoritativeReadyEvent,
 ): Promise<LifecycleIngressResult> {
-  assertAuthoritativeReady(state, event);
+  const actorKindConflicted = assertAuthoritativeReady(state, event);
+  const identityProvenance = event.schemaVersion === 3
+    ? evolveIdentityProvenance(state, event, actorKindConflicted, event.rosterState)
+    : state.identityProvenance;
   const finalizingState: RecordingSpoolState = {
     ...state,
     endedAt: event.endedAt,
     events: [...state.events, storedEvent(event, input.digest)],
     finalEventDigest: input.digest,
     finalEventId: event.eventId,
+    identityProvenance,
   };
   await input.runtime.spool.writeRecording(finalizingState);
   const recording = await finalizeAuthoritative(input.runtime, finalizingState, event, input.signal);
   return finalizedResult(finalizingState, recording, false);
 }
 
-function assertAuthoritativeReady(state: RecordingSpoolState, event: AuthoritativeReadyEvent): void {
+function assertAuthoritativeReady(state: RecordingSpoolState, event: AuthoritativeReadyEvent): boolean {
   if (state.status !== "finalizing" || state.endedAt === undefined) {
     throw new RecordingIngressError(
       "invalid-state",
@@ -225,15 +235,17 @@ function assertAuthoritativeReady(state: RecordingSpoolState, event: Authoritati
       "authoritative-ready cannot finalize an upload with an unresolved write receipt",
     );
   }
-  const finalActors = event.schemaVersion === 1
-    ? null
-    : normalizeActorRoster(event.actors);
+  const finalActors = event.schemaVersion === 1 ? null : normalizeActorRoster(event.actors);
   if (!sameActorRoster(state.actors, finalActors)) {
+    if (event.schemaVersion === 3 && sameActorRosterIds(state.actors, finalActors)) {
+      return true;
+    }
     throw new RecordingIngressError(
       "conflicting-duplicate",
       "authoritative-ready actor roster does not match the durable lifecycle roster",
     );
   }
+  return false;
 }
 
 async function acceptActiveLifecycleEvent(
@@ -259,18 +271,77 @@ async function acceptActiveLifecycleEvent(
     );
   }
   const events = [...state.events, storedEvent(input.event, input.digest)];
+  const actorObservation = applyActorObservation(state, input.event);
+  const identityProvenance = input.event.schemaVersion === 3
+    ? evolveIdentityProvenance(
+        state,
+        input.event,
+        actorObservation.conflicted,
+        state.identityProvenance?.rosterState ?? "unsealed",
+      )
+    : state.identityProvenance;
+  const nextState: RecordingSpoolState = {
+    ...state,
+    actors: actorObservation.actors,
+    identityProvenance,
+  };
   if (input.event.type === "meeting.aborted") {
-    return archiveAborted(input, state, events);
+    return archiveAborted(input, nextState, events);
   }
   if (input.event.type === "meeting.ended") {
-    return beginAuthoritativeFinalization(input, state, events);
+    return beginAuthoritativeFinalization(input, nextState, events);
   }
-  const actors = input.event.schemaVersion === 2 &&
-      (input.event.type === "participant.joined" || input.event.type === "participant.left")
-    ? addActorToRoster(state.actors ?? [], input.event.actor)
-    : state.actors;
-  await input.runtime.spool.writeRecording({ ...state, actors, events });
+  await input.runtime.spool.writeRecording({ ...nextState, events });
   return { kind: "accepted", recordingId: state.recordingId, replayed: false };
+}
+
+function applyActorObservation(
+  state: RecordingSpoolState,
+  event: CraigLifecycleEvent,
+): { readonly actors: RecordingSpoolState["actors"]; readonly conflicted: boolean } {
+  if (event.type !== "participant.joined" && event.type !== "participant.left") {
+    return { actors: state.actors, conflicted: false };
+  }
+  if (event.schemaVersion === 3) {
+    return observeActorInRoster(state.actors ?? [], event.actor);
+  }
+  return {
+    actors: event.schemaVersion === 2
+      ? addActorToRoster(state.actors ?? [], event.actor)
+      : state.actors,
+    conflicted: false,
+  };
+}
+
+function evolveIdentityProvenance(
+  state: RecordingSpoolState,
+  event: TrustedLifecycleEvent,
+  actorKindConflicted: boolean,
+  rosterState: "sealed" | "unsealed",
+): StoredIdentityProvenance {
+  const current = state.identityProvenance;
+  if (current === null) {
+    throw new RecordingIngressError(
+      "corrupt-spool",
+      "trusted lifecycle event has no durable producer provenance",
+    );
+  }
+  const producerIdentityConflicted =
+    current.actorSemanticsVersion !== event.actorSemanticsVersion ||
+    current.producerCapabilityId !== event.producerCapabilityId ||
+    current.producerRevision !== event.producerRevision ||
+    (event.type === "recording.authoritative_ready" && rosterState !== "sealed");
+  return {
+    ...current,
+    actorObservationState:
+      current.actorObservationState === "conflicted" ||
+      event.actorObservationState === "conflicted" ||
+      actorKindConflicted ||
+      producerIdentityConflicted
+        ? "conflicted"
+        : "consistent",
+    rosterState,
+  };
 }
 
 function ensureLifecycleSchemaVersion(
@@ -286,7 +357,7 @@ function ensureLifecycleSchemaVersion(
 }
 
 function finalizedResult(
-  state: Pick<RecordingSpoolState, "actors" | "channelId" | "guildId">,
+  state: Pick<RecordingSpoolState, "actors" | "channelId" | "guildId" | "identityProvenance" | "lifecycleSchemaVersion">,
   recording: Extract<LifecycleIngressResult, { readonly kind: "finalized" }>["recording"],
   replayed: boolean,
 ): Extract<LifecycleIngressResult, { readonly kind: "finalized" }> {
@@ -294,7 +365,11 @@ function finalizedResult(
     actors: state.actors === null
       ? null
       : state.actors.map((actor) => ({ actorId: actor.actorId, kind: actor.kind })),
+    identityProvenance: state.identityProvenance === null
+      ? null
+      : { ...state.identityProvenance },
     kind: "finalized",
+    lifecycleGeneration: state.lifecycleSchemaVersion,
     recording,
     replayed,
     source: { roomId: state.channelId, scopeId: state.guildId },

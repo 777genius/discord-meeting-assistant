@@ -23,8 +23,10 @@ function observeFirstSeenLiveDiscordPlaybackLink(
     prove: ({ messageId, recordingId, recordingPlaybackUrl }) => Promise.resolve({
       capabilitySha256: createHash("sha256").update(new URL(recordingPlaybackUrl).hash.slice(1)).digest("hex"),
       messageId,
+      readinessExpectation: "processing-to-ready" as const,
       recordingId: recordingId ?? "recording-42",
       status: "ready" as const,
+      statuses: ["processing", "ready"],
       trackCount: 2,
     }),
   }, { read: async () => ({ meetingId: "meeting-42", recordingId: "recording-42" }) });
@@ -94,8 +96,10 @@ describe("first-seen Live Discord playback link observation", () => {
       readiness: {
         capabilitySha256: createHash("sha256").update(rawCapability).digest("hex"),
         messageId: "33333333333333333",
+        readinessExpectation: "processing-to-ready",
         recordingId: "recording-42",
         status: "ready",
+        statuses: ["processing", "ready"],
         trackCount: 2,
       },
       timingProvenance: {
@@ -171,7 +175,8 @@ describe("first-seen Live Discord playback link observation", () => {
         return attempts === 1
           ? Promise.reject(new Error("not ready at first visibility"))
           : Promise.resolve({ capabilitySha256: "0".repeat(64), messageId: "ignored",
-            recordingId: "recording-42", status: "ready", trackCount: 1 });
+            readinessExpectation: "processing-to-ready", recordingId: "recording-42",
+            status: "ready", statuses: ["processing", "ready"], trackCount: 1 });
       },
     }, { read: () => new Promise<undefined>((resolve) => {resolve(void 0);}) })).rejects.toThrow("not ready at first visibility");
     expect(attempts).toBe(1);
@@ -200,7 +205,8 @@ describe("first-seen Live Discord playback link observation", () => {
     ]), {
       prove: ({ messageId, recordingPlaybackUrl }) => Promise.resolve({
         capabilitySha256: createHash("sha256").update(new URL(recordingPlaybackUrl).hash.slice(1)).digest("hex"),
-        messageId, recordingId: "other-recording", status: "ready", trackCount: 1,
+        messageId, readinessExpectation: "processing-to-ready", recordingId: "other-recording",
+        status: "ready", statuses: ["processing", "ready"], trackCount: 1,
       }),
     }, { read: async () => ({ meetingId: "meeting-42", recordingId: "recording-42" }) }))
       .rejects.toThrow("exact observed recording link");

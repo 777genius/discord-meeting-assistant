@@ -9,6 +9,7 @@ export {
   createConversationCoordinator,
   createConversationLatencyLogger,
   createConversationPlaybackLogger,
+  createGroundedKnowledgeAnswerLogger,
 } from "./composition/discord-live.js";
 export {
   createVoicetextBatchFinalTranscriptionOptions,

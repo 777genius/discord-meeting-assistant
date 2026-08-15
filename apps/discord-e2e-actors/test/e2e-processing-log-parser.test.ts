@@ -183,6 +183,53 @@ describe("parseConversationLifecycleEvidenceLogs", () => {
         }),
       ]);
   });
+
+  it("retains grounded epochs, citations, literal provenance and cancellation reason", () => {
+    const common = {
+      meetingId: "meeting-1",
+      time: "2026-08-06T19:18:47.000Z",
+      turnId: "human-question-1",
+    };
+    const output = [
+      ...Array.from({ length: 4 }, (_, index) => JSON.stringify({
+        greetingLocale: "ru",
+        meetingId: "meeting-1",
+        message: "Participant greeting playback settled",
+        participantId: `participant-${String(index + 1)}`,
+        participantNameStatus: "unknown",
+        time: "2026-08-06T19:18:37.000Z",
+        turnId: `participant-greeting:participant-${String(index + 1)}`,
+      })),
+      JSON.stringify({
+        ...common,
+        citationTurnIds: ["authoritative-turn-7"],
+        evidenceEpoch: "evidence-7",
+        knowledgeEpoch: "knowledge-9",
+        message: "Grounded knowledge answer validated",
+        participantId: "participant-4",
+        playbackProvenance: "literal_tts",
+        status: "validated",
+      }),
+      JSON.stringify({
+        ...common,
+        message: "Grounded knowledge answer cancelled",
+        reason: "disconnected",
+        status: "cancelled",
+      }),
+    ].join("\n");
+
+    expect(parseConversationLifecycleEvidenceLogs(output, "meeting-1").groundedAnswers)
+      .toEqual([
+        expect.objectContaining({
+          citationTurnIds: ["authoritative-turn-7"],
+          evidenceEpoch: "evidence-7",
+          knowledgeEpoch: "knowledge-9",
+          playbackProvenance: "literal_tts",
+          status: "validated",
+        }),
+        expect.objectContaining({ reason: "disconnected", status: "cancelled" }),
+      ]);
+  });
 });
 
 function stage(meetingId: string, stageName: string, durationMilliseconds: number): string {

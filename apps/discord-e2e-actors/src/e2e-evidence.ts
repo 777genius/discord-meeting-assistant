@@ -43,6 +43,7 @@ export {
   retainedE2eEvidenceV7Schema,
   retainedE2eEvidenceV8Schema,
   retainedE2eEvidenceV9Schema,
+  retainedE2eEvidenceV10Schema,
   retainedReconnectE2eEvidenceV8Schema,
   unboundActorRunEvidenceV1Schema,
 } from "./e2e-evidence-schema.js";
@@ -69,6 +70,8 @@ export type {
   RetainedE2eEvidenceV7,
   RetainedE2eEvidenceV8,
   RetainedE2eEvidenceV9,
+  RetainedE2eEvidenceV10,
+  RetainedVoiceE2eEvidenceV10,
   RetainedReconnectE2eEvidenceV8,
   UnboundActorRunEvidenceV1,
 } from "./e2e-evidence-schema.js";
@@ -117,6 +120,13 @@ export function verifyRetainedE2eEvidence(
     } else {
       verifyE2eServiceLevels(evidence.serviceLevels, serviceLevelThresholds, evidence, fail);
     }
+  } else if (evidence.schemaVersion === 10 && evidence.qualificationKind === "voice") {
+    verifyE2eServiceLevels(
+      evidence.serviceLevels,
+      evidence.qualificationPolicy.thresholds,
+      evidence,
+      fail,
+    );
   }
 
   return verificationResult(failures, metrics);

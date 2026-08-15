@@ -32,7 +32,13 @@
 - [ADR-0025: Cumulative live summary and layered Discord evidence](0025-cumulative-live-summary-and-layered-discord-evidence.md)
 - [ADR-0027: Durable meeting source and actor identity](0027-durable-meeting-source-and-actor-identity.md)
 - [ADR-0028: Meeting Knowledge test ownership](0028-meeting-knowledge-test-ownership.md)
+- [ADR-0029: Trusted lifecycle evidence](0029-trusted-lifecycle-evidence.md)
+- [ADR-0030: Memory-backed grounded final reply](0030-local-final-reply.md)
+- [ADR-0031: Infinity Context historical memory](0031-infinity-context-historical-memory.md)
+- [ADR-0032: Live finalized grounded memory](0032-live-finalized-grounded-memory.md)
+- [ADR-0034: Bounded answer-model grounding](0034-bounded-answer-model-grounding.md)
 
 ## Superseded
 
 - [ADR-0022: Provider-neutral readable transcript segments](0022-provider-neutral-readable-transcript-segments.md)
+- [ADR-0033: Adaptive bounded current grounding](0033-adaptive-current-grounding.md)

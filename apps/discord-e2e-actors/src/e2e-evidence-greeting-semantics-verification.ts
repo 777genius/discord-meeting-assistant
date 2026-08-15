@@ -1,10 +1,32 @@
 import { normalizeTranscriptSemantics } from "./e2e-evidence-text-metrics.js";
-import type { FixtureManifestV1, RetainedE2eEvidenceV8, RetainedE2eEvidenceV9 } from "./e2e-evidence-schema.js";
+import type { FixtureManifestV1, RetainedE2eEvidenceV8, RetainedE2eEvidenceV9, RetainedVoiceE2eEvidenceV10 } from "./e2e-evidence-schema.js";
 import type { VerificationFailureReporter } from "./e2e-evidence-verification-types.js";
+
+const maximumVerifiedGreetingRetry = 3;
+
+export function isVerifiedGreetingTurnId(
+  turnId: string,
+  participantId: string,
+  allowRetries: boolean,
+): boolean {
+  const initialTurnId = `participant-greeting:${participantId}`;
+  if (turnId === initialTurnId || turnId === `${initialTurnId}:anonymous-fallback`) {
+    return true;
+  }
+  if (!allowRetries) {
+    return false;
+  }
+  for (let retry = 1; retry <= maximumVerifiedGreetingRetry; retry += 1) {
+    if (turnId === `${initialTurnId}:retry-${retry}`) {
+      return true;
+    }
+  }
+  return false;
+}
 
 export function verifyGreetingAudioSemantics(
   manifest: FixtureManifestV1,
-  evidence: RetainedE2eEvidenceV8 | RetainedE2eEvidenceV9,
+  evidence: RetainedE2eEvidenceV8 | RetainedE2eEvidenceV9 | RetainedVoiceE2eEvidenceV10,
   recordingStartMs: number,
   fail: VerificationFailureReporter,
 ): void {
@@ -72,7 +94,7 @@ interface PinnedGreetingExpectation {
 
 function verifyPinnedGreetingParticipants(
   manifest: FixtureManifestV1,
-  evidence: RetainedE2eEvidenceV8 | RetainedE2eEvidenceV9,
+  evidence: RetainedE2eEvidenceV8 | RetainedE2eEvidenceV9 | RetainedVoiceE2eEvidenceV10,
   fail: VerificationFailureReporter,
 ): void {
   const voice = manifest.conversationVoiceExpectation;

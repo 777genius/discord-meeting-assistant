@@ -6,6 +6,8 @@ import {
   canonicalJsonSha256,
   subscriptionRuntimeConversationMaxOutputTokens,
   subscriptionRuntimeIncrementalMaxOutputTokens,
+  subscriptionRuntimeKnowledgeAnswerMaxOutputTokens,
+  subscriptionRuntimeKnowledgeCoverageMaxOutputTokens,
   subscriptionRuntimeSummaryMaxOutputTokens,
 } from "@discord-meeting/subscription-runtime-adapter";
 import { afterEach, describe, expect, it } from "vitest";
@@ -21,6 +23,10 @@ import {
   conversationStructuredOutput,
   incrementalCanonicalRequest,
   isolatedCwd,
+  knowledgeAnswerCanonicalRequest,
+  knowledgeAnswerStructuredOutput,
+  knowledgeCoverageCanonicalRequest,
+  knowledgeCoverageStructuredOutput,
   structuredOutput,
 } from "./fixture.js";
 import {
@@ -199,6 +205,44 @@ describe("SubscriptionRuntimeExecutor execution profiles and output", () => {
     expect(processRequest?.env.AGENT_RUNTIME_REASONING_EFFORT).toBe("low");
   });
 
+  it.each([
+    [knowledgeAnswerCanonicalRequest, knowledgeAnswerStructuredOutput],
+    [knowledgeCoverageCanonicalRequest, knowledgeCoverageStructuredOutput],
+  ] as const)("executes and attests the dedicated knowledge purpose %#", async (
+    request,
+    output,
+  ) => {
+    root = await mkdtemp(join(tmpdir(), "sidecar-executor-test-"));
+    const keyFile = join(root, "local-encryption-key");
+    await writeFile(keyFile, "private-test-key\n", { mode: 0o600 });
+    const executor = new SubscriptionRuntimeExecutor(
+      options(keyFile, {
+        processRunner: {
+          run: async () => completedProcess({
+            usage: {
+              cacheWriteInputTokens: 0,
+              cachedInputTokens: 0,
+              inputTokens: 200,
+              outputTokens: 40,
+              reasoningOutputTokens: 10,
+              totalTokens: 240,
+            },
+          }, output),
+        },
+      }),
+    );
+
+    await expect(executor.execute(request)).resolves.toMatchObject({
+      executionAttestation: {
+        model: "gpt-5.6-sol",
+        purpose: request.context.purpose,
+        reasoningEffort: "medium",
+      },
+      status: "completed",
+      structuredOutput: output,
+    });
+  });
+
   it("applies the compact schema only to the incremental purpose", async () => {
     root = await mkdtemp(join(tmpdir(), "sidecar-executor-test-"));
     const keyFile = join(root, "local-encryption-key");
@@ -342,6 +386,16 @@ describe("SubscriptionRuntimeExecutor telemetry", () => {
       "conversation answer",
       conversationCanonicalRequest,
       subscriptionRuntimeConversationMaxOutputTokens,
+    ],
+    [
+      "knowledge answer",
+      knowledgeAnswerCanonicalRequest,
+      subscriptionRuntimeKnowledgeAnswerMaxOutputTokens,
+    ],
+    [
+      "knowledge coverage",
+      knowledgeCoverageCanonicalRequest,
+      subscriptionRuntimeKnowledgeCoverageMaxOutputTokens,
     ],
   ])("rejects a completed %s that exceeds its admitted output budget", async (
     _label,

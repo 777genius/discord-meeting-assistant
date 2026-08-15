@@ -44,9 +44,10 @@ reliability/security/E2E, and simplicity/DRY.
 - A non-reversible requester hash cannot support authorization after restart.
   The adapter therefore keeps a short-lived opaque authorization principal
   reference and a separate keyed dedupe subject.
-- Local Final Reply does not build a selector/window/checkpoint retrieval system.
-  It sends the complete bounded current transcript in one grounded-answer call
-  or returns `unsupported_size`; it never answers from a prefix.
+- Under ADR-0034, Local Final Reply uses the same bounded, retrieval-first
+  evidence path as historical and voice questions. The answer model never
+  receives a complete transcript, growing prefix, generated summary, or other
+  derived substitute.
 - Discord delivery authorizes exactly one create attempt per answer effect. Once
   request bytes may have crossed the boundary, recovery reconciles and never
   performs another create.
@@ -259,30 +260,24 @@ A long context window is capacity, not proof of recall. The application builds
 one explicit, persisted `GroundingPlan` before provider work:
 
 ```text
-current_complete     # one complete current transcript
-focused_retrieval    # bounded same-room candidates, locally rehydrated
+focused_retrieval    # bounded current/same-room candidates, locally rehydrated
 exhaustive_coverage  # every relevant block visited before synthesis
 ```
 
-`current_complete` is the Local Final Reply baseline. All eligible human turns
-from the bound current transcript become question-local opaque evidence IDs and
-are serialized in canonical order. Before the provider call, the production
-adapter computes exact request bytes and model-token usage against the pinned
-runtime/model capability. The direct path is admitted only below a separately
-benchmarked safe-input budget, leaving explicit room for instructions, the
-question, reasoning, structured output, and model-limit drift. If the complete
-request does not fit, it returns localized `unsupported_size`; it never uses a
-prefix, silent truncation, or summary as evidence.
+`focused_retrieval` serves every ordinary current, voice, and historical
+question. It selects a bounded set of current and same-room candidate locators,
+locally rehydrates and reauthorizes them, and fuses source-qualified ranks. SDK
+text and metadata, oversized whole transcripts, transcript prefixes, live
+interim speech, and summaries never reach the answer model. Low-recall or
+unsupported questions abstain instead of expanding the prompt implicitly.
+The focused contract never carries a complete current reference set, so request
+size is independent of transcript length.
 
-After Infinity serving is qualified, a focused question may add a small
-`priorityEvidenceIds` section before the complete current transcript. Infinity
-only suggests the IDs; every priority turn is locally rehydrated. The complete
-transcript stays present, so a retrieval miss cannot remove current-meeting
-evidence. The priority section is a relevance hint, never separate authority.
-
-`focused_retrieval` is used for historical same-room questions whose complete
-source set cannot fit. It passes only locally rehydrated evidence blocks and
-honestly abstains when retrieval coverage is insufficient.
+Before every provider call, the production adapter computes exact request bytes
+and model-token usage against the pinned runtime/model capability, leaving
+explicit room for instructions, the question, reasoning, structured output,
+and model-limit drift. Oversized bounded requests return localized
+`unsupported_size`; they are never silently truncated.
 
 `exhaustive_coverage` is selected for counts, absence/universal claims,
 exhaustive lists, broad summaries, or questions requiring comparison across
@@ -495,26 +490,23 @@ Before candidate text reaches the generator, Meeting Knowledge:
    current desired generation;
 4. rejects stale, deleted, duplicate, missing, cross-room, automation, or unknown
    candidates;
-5. deterministically caps and orders historical evidence within the provider
-   budget without removing current-meeting evidence.
+5. deterministically fuses source-qualified current and historical ranks within
+   the provider budget, reserving current live-final evidence.
 
 The same grounded-answer contract and validator serve Local Final Reply and
-historical memory. For a bounded current meeting, locally rehydrated Infinity
-hits may only prioritize evidence while the complete transcript stays present.
-For historical queries, focused retrieval uses hybrid lexical/vector candidates,
+historical memory. Focused retrieval uses hybrid lexical/vector candidates,
 bounded query decomposition, deterministic dedupe/neighbor expansion, and a
 reranking policy qualified on the frozen corpus. Infinity outage, partial
-backlog, or an unqualified response falls back to complete current local evidence
-when it fits; it never uses a partial/stale remote cache as authority.
-Historical-only questions honestly abstain when retrieval is not safe or
-available. Exhaustive questions route to `exhaustive_coverage`, never to top-k.
+backlog, or an unqualified response may use a bounded authoritative local
+focused scan or abstain; it never sends the complete transcript or uses a
+partial/stale remote cache as authority. Historical-only questions honestly
+abstain when retrieval is not safe or available. Exhaustive questions route to
+`exhaustive_coverage`, never to top-k.
 
 Two-hour admission is initially disabled independently from shorter questions.
-It is enabled only for a pinned profile that passes both the complete-context
-position suite and, once available, the Infinity-priority comparison. If direct
-complete context misses the quality gate, the system waits for qualified
-priority retrieval rather than lowering the gate or silently serving weaker
-answers.
+It is enabled only for a pinned profile that passes focused positional recall,
+low-recall abstention, and exhaustive hierarchical-reduction gates without a
+whole-transcript prompt.
 
 ## Phase 4 - Grounded voice reuse and voice E2E
 
@@ -596,7 +588,7 @@ runbook.
   start, 10%, 25%, middle, 75%, 90%, and end; adds near-duplicate distractors,
   distant corrections, contradictions, silence/noise artifacts, overlaps,
   RU/EN/mixed speech, and multi-hop questions spanning distant sections;
-- comparative two-hour runs for `current_complete`, complete-plus-priority,
+- comparative two-hour runs for current-only focused retrieval, cross-source
   focused retrieval, and exhaustive coverage. Retain measured token count,
   latency, cost, peak memory, retrieval recall, citation validity, entailment,
   supported-answer recall, and abstention rather than merely proving that the
@@ -652,8 +644,8 @@ project, or production transcript is a qualification target.
 
 - only exact current-final replies are admitted;
 - unauthorized or stale work reveals no transcript content;
-- complete bounded current human transcript reaches one generator call with
-  measured safe token headroom rather than only a byte limit;
+- bounded focused current evidence reaches one generator call with measured safe
+  token headroom independent of transcript length;
 - invalid/unsupported claims abstain; global/exhaustive claims abstain until the
   exhaustive path is qualified; every published claim has valid locally
   rehydrated citations;

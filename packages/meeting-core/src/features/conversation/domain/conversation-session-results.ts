@@ -2,6 +2,7 @@ import type { ConversationTurn } from "./conversation-turn.js";
 
 export type ConversationCancellationReason =
   | "barge-in"
+  | "disconnected"
   | "meeting-ended"
   | "playback-failed"
   | "runtime-shutdown"

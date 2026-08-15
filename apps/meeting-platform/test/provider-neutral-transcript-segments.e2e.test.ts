@@ -201,6 +201,8 @@ class CapturingDiscordProjector {
 function initialMeeting(): MeetingSnapshot {
   return Meeting.record({
     actors: [{ actorId: "speaker-a", kind: "human" }],
+    identityProvenance: null,
+    lifecycleGeneration: 2,
     meetingId: "meeting-e2e",
     publicationTargetId: "11111111111111111",
     recording: {
@@ -223,6 +225,8 @@ function initialTwoSpeakerMeeting(): MeetingSnapshot {
       { actorId: "speaker-a", kind: "human" },
       { actorId: "speaker-b", kind: "human" },
     ],
+    identityProvenance: snapshot.identityProvenance,
+    lifecycleGeneration: 2,
     meetingId: snapshot.meetingId,
     publicationTargetId: snapshot.publicationTargetId,
     recording: {

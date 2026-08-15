@@ -36,6 +36,7 @@ class ActivePipelineTurn:
     attempt_id: str
     events: ConversationEventStream
     cancellation_requested: asyncio.Event = field(default_factory=asyncio.Event)
+    audio_emission_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     finished: asyncio.Event = field(default_factory=asyncio.Event)
     cancellation_reason: CancellationReason | None = None
     pipeline_failure: bool = False
@@ -51,6 +52,16 @@ class ActivePipelineTurn:
         self.cancellation_reason = reason
         self.cancellation_requested.set()
         return True
+
+    async def request_cancellation_after_audio_fence(
+        self,
+        reason: CancellationReason,
+    ) -> bool:
+        """Linearize cancellation against the final event-queue PCM write."""
+        if not self.request_cancellation(reason):
+            return False
+        async with self.audio_emission_lock:
+            return True
 
 
 class ActiveTurnCancellationSignal:
@@ -133,11 +144,14 @@ class PersistentTurnOutputProcessor(FrameProcessor):
         turn: ActivePipelineTurn,
         frame: TTSAudioRawFrame,
     ) -> None:
-        if not frame.audio:
+        if not frame.audio or turn.cancellation_requested.is_set():
             return
-        turn.tts_audio_byte_count += len(frame.audio)
-        first_audio_at_unix_ms = time.time_ns() // 1_000_000
-        await turn.events.audio(frame.audio)
+        async with turn.audio_emission_lock:
+            if turn.cancellation_requested.is_set():
+                return
+            first_audio_at_unix_ms = time.time_ns() // 1_000_000
+            await turn.events.audio(frame.audio)
+            turn.tts_audio_byte_count += len(frame.audio)
         await self._emit_latency(turn, first_audio_at_unix_ms)
         if (
             frame.context_id in self._active_tts_contexts

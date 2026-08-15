@@ -11,6 +11,7 @@ export interface ConversationBridgeDependencies {
   readonly logger: LiveRuntimeLogger;
   readonly meetingId: string;
   readonly meetingStartedAtMs: number;
+  readonly roomId: string;
 }
 
 /** Serializes derived conversation observations for one active meeting. */
@@ -89,6 +90,7 @@ export class ConversationBridge {
           meetingId: this.dependencies.meetingId,
           nowMs: wakeDetectedAtUnixMs,
           recordingId: this.dependencies.meetingId,
+          roomId: this.dependencies.roomId,
           speakerId: event.speakerId,
           systemPrompt: this.dependencies.configuration.systemPrompt,
           text: event.text,
@@ -155,6 +157,29 @@ export class ConversationBridge {
     void this.enqueue(async () => {
       await this.dependencies.configuration.coordinator.closeMeeting(
         this.dependencies.meetingId,
+        observedAtMs,
+      );
+    });
+  }
+
+  public disconnect(): Promise<void> {
+    this.speakingParticipants.clear();
+    const observedAtMs = this.nowMilliseconds();
+    return this.enqueue(async () => {
+      await this.dependencies.configuration.coordinator.disconnectMeeting(
+        this.dependencies.meetingId,
+        observedAtMs,
+      );
+    });
+  }
+
+  public participantLeft(participantId: string): Promise<void> {
+    this.speakingParticipants.delete(participantId);
+    const observedAtMs = this.nowMilliseconds();
+    return this.enqueue(async () => {
+      await this.dependencies.configuration.coordinator.participantLeft?.(
+        this.dependencies.meetingId,
+        participantId,
         observedAtMs,
       );
     });

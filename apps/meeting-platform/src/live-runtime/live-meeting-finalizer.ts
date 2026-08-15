@@ -66,6 +66,10 @@ export class LiveMeetingFinalizer {
         endedAtMs,
       );
       if (result !== "not-found") {
+        await this.dependencies.runtime.finalizedMemory?.synchronizeMeeting(
+          recordingId,
+        );
+        await this.dependencies.runtime.finalizedMemory?.finishMeeting(recordingId);
         this.terminalEndTimes.complete(recordingId);
       }
     })().finally(() => {
@@ -136,6 +140,10 @@ export class LiveMeetingFinalizer {
     if (result === "not-found") {
       throw new Error("Live meeting disappeared before finish");
     }
+    await this.dependencies.runtime.finalizedMemory?.synchronizeMeeting(
+      state.meetingId,
+    );
+    await this.dependencies.runtime.finalizedMemory?.finishMeeting(state.meetingId);
     this.dependencies.enqueueDomain(state, async () => {
       await this.dependencies.refreshProjection(state, endedAtMs);
     });

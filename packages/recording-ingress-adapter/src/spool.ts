@@ -29,6 +29,7 @@ export {
   type RecordingSpoolState,
   type StoredAuthoritativeTrack,
   type StoredActor,
+  type StoredIdentityProvenance,
   type StoredLifecycleEvent,
   type StoredSpeaker,
 } from "./spool-state.js";

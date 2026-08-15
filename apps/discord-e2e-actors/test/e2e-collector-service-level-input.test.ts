@@ -8,6 +8,8 @@ import {
   readPrivateLiveDiscordPlaybackLinkProof,
   serviceLevelSourcesFromLiveProof,
 } from "../src/e2e-collector-service-level-input.js";
+import { liveDiscordPlaybackLinkProofSchema } from
+  "../src/live-discord-playback-link-observer.js";
 import { serviceLevelsProof } from "./e2e-service-level-fixtures.js";
 
 describe("collector Live Discord playback link proof input", () => {
@@ -82,7 +84,7 @@ function proof() {
         name: "Meeting results",
         parentId: source.container.parentChannelId,
       };
-  return {
+  return liveDiscordPlaybackLinkProofSchema.parse({
     container,
     firstSeenPollCompletedAt: source.firstSeenPollCompletedAt,
     firstSeenPollStartedAt: source.firstSeenPollStartedAt,
@@ -94,8 +96,10 @@ function proof() {
     readiness: {
       capabilitySha256: source.capabilitySha256,
       messageId: source.messageId,
+      readinessExpectation: "processing-to-ready" as const,
       recordingId: source.recordingId,
       status: "ready" as const,
+      statuses: ["processing", "ready"],
       trackCount: 2,
     },
     messageId: source.messageId,
@@ -114,7 +118,7 @@ function proof() {
       readinessStartedAt: { epochMilliseconds: 9_520, monotonicMilliseconds: 19_520 },
       recordingIdentityBoundAt: { epochMilliseconds: 9_550, monotonicMilliseconds: 19_550 },
     },
-  };
+  });
 }
 
 async function writeProofFile(value: unknown): Promise<string> {

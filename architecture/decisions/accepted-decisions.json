@@ -136,6 +136,36 @@
       "id": "ADR-0028",
       "path": "docs/decisions/0028-meeting-knowledge-test-ownership.md",
       "immutableDigest": "sha256:ca1c4a3608bed39d0e7c5201007233822a628d6e3197694f77b51e624bfa2bf8"
+    },
+    {
+      "id": "ADR-0029",
+      "path": "docs/decisions/0029-trusted-lifecycle-evidence.md",
+      "immutableDigest": "sha256:5627c936f92a7254c207b00cf45e2293351a12950ffd936a61e9fa16f062dba1"
+    },
+    {
+      "id": "ADR-0030",
+      "path": "docs/decisions/0030-local-final-reply.md",
+      "immutableDigest": "sha256:def098ba8431b288ef752f235e983292f91d9fdc51a507ee84ce8318fd1dea40"
+    },
+    {
+      "id": "ADR-0031",
+      "path": "docs/decisions/0031-infinity-context-historical-memory.md",
+      "immutableDigest": "sha256:00513bfbbbe613d5074ccc59b458c082b708e2b35aab25f53fcb4f804cafdea8"
+    },
+    {
+      "id": "ADR-0032",
+      "path": "docs/decisions/0032-live-finalized-grounded-memory.md",
+      "immutableDigest": "sha256:135051a7fd99aeaa08e8dd9727bbeeb153782b04836776cef70210822c87bf70"
+    },
+    {
+      "id": "ADR-0033",
+      "path": "docs/decisions/0033-adaptive-current-grounding.md",
+      "immutableDigest": "sha256:2159a6184964813e3df3982eb052e96df7ca03368c4a8e08dbad397b419c4b60"
+    },
+    {
+      "id": "ADR-0034",
+      "path": "docs/decisions/0034-bounded-answer-model-grounding.md",
+      "immutableDigest": "sha256:b26e8d9351ddd9b1e97226a0dd30c0609d4f1e16850fb360ba3213d960e6cd38"
     }
   ]
 }

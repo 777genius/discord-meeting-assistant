@@ -18,6 +18,7 @@ import {
   PostgresLiveMeetingStateStore,
   type LiveMeetingQueryExecutor,
 } from "./postgres-live-meeting-state.js";
+import { projectLiveFinalizedMemoryOutbox } from "./postgres-live-finalized-memory.js";
 
 interface StoredLiveTurnRow {
   readonly is_summarized: boolean;
@@ -94,6 +95,7 @@ export class PostgresLiveMeetingRecords {
       if (insertedTurn.rowCount !== 1) {
         throw new Error("locked live meeting turn could not be appended");
       }
+      await projectLiveFinalizedMemoryOutbox(client, meetingId, normalized);
       const revisionUpdate = await client.query(
         `
           UPDATE meeting_core.live_meetings

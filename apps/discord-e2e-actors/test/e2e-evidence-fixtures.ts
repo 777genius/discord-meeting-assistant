@@ -19,6 +19,10 @@ import {
   type RetainedE2eEvidenceV7,
   type RetainedReconnectE2eEvidenceV8,
 } from "../src/e2e-evidence.js";
+import {
+  deployedService,
+  voiceObservation,
+} from "./e2e-evidence-voice-fixture-support.js";
 
 export const speakerAId = "1533227577286852649";
 export const speakerBId = "1533228054724346087";
@@ -679,7 +683,7 @@ export function retainedV8Evidence(): RetainedReconnectE2eEvidenceV8 {
     { greetingLocale: "en", observedAt: "1970-01-01T00:00:01.650Z", participantId: speakerBId, participantNameStatus: "known", turnId: `participant-greeting:${speakerBId}`, type: "greeting" as const },
     { greetingLocale: "ru", observedAt: "1970-01-01T00:00:02.750Z", participantId: speakerDId, participantNameStatus: "unknown", turnId: `participant-greeting:${speakerDId}`, type: "greeting" as const },
     { observedAt: "1970-01-01T00:00:03.800Z", outcome: "active", participantId: speakerDId, turnId: "human-question-1", type: "addressed-answer" as const },
-    { evidenceTurnIds: ["speaker-d-farewell"], locale: "ru", observedAt: "1970-01-01T00:00:07.000Z", playbackAttemptId: "farewell-attempt-1", reason: "explicit-group", turnId: "meeting-farewell:v1" as const, type: "farewell" as const },
+    { evidenceTurnIds: ["speaker-d-farewell"], locale: "ru", observedAt: "1970-01-01T00:00:07.000Z", playbackAttemptId: "farewell", reason: "explicit-group", turnId: "meeting-farewell:v1" as const, type: "farewell" as const },
   ];
   return retainedReconnectE2eEvidenceV8Schema.parse({
     ...source,
@@ -687,10 +691,17 @@ export function retainedV8Evidence(): RetainedReconnectE2eEvidenceV8 {
       botSpeakerId,
       lifecycle: {
         events,
+        groundedAnswers: [{ citationTurnIds: ["speaker-d-question"],
+          evidenceEpoch: "evidence-7", knowledgeEpoch: "knowledge-9",
+          observedAt: "1970-01-01T00:00:03.900Z", participantId: speakerDId,
+          playbackProvenance: "literal_tts" as const, status: "validated" as const, turnId: "human-question-1" }],
         playbackReceipts: [
-          { observedAt: "1970-01-01T00:00:04.000Z", playbackAttemptId: "answer", playbackKind: "answer" as const, playbackStartedAtEpochMs: 4_000, playbackStartedAtMonotonicMs: 4_000, status: "started" as const, turnId: "human-question-1" },
-          { observedAt: "1970-01-01T00:00:04.600Z", playbackAttemptId: "answer", playbackFinishedAtEpochMs: 4_600, playbackFinishedAtMonotonicMs: 4_600, playbackKind: "answer" as const, status: "finished" as const, turnId: "human-question-1" },
-          { observedAt: "1970-01-01T00:00:04.700Z", playbackAttemptId: "answer", playbackKind: "answer" as const, playbackSettledAtEpochMs: 4_700, playbackSettledAtMonotonicMs: 4_700, settlement: "played" as const, status: "settled" as const, turnId: "human-question-1" },
+          { observedAt: "1970-01-01T00:00:04.000Z", playbackAttemptId: "answer", playbackKind: "answer" as const, playbackStartedAtEpochMs: 4_000, playbackStartedAtMonotonicMs: 4_000, speechProvenance: "literal_tts" as const, status: "started" as const, turnId: "human-question-1" },
+          { observedAt: "1970-01-01T00:00:04.600Z", playbackAttemptId: "answer", playbackFinishedAtEpochMs: 4_600, playbackFinishedAtMonotonicMs: 4_600, playbackKind: "answer" as const, speechProvenance: "literal_tts" as const, status: "finished" as const, turnId: "human-question-1" },
+          { observedAt: "1970-01-01T00:00:04.700Z", playbackAttemptId: "answer", playbackKind: "answer" as const, playbackSettledAtEpochMs: 4_700, playbackSettledAtMonotonicMs: 4_700, settlement: "played" as const, speechProvenance: "literal_tts" as const, status: "settled" as const, turnId: "human-question-1" },
+          { observedAt: "1970-01-01T00:00:06.500Z", playbackAttemptId: "farewell", playbackKind: "prepared-cue" as const, playbackStartedAtEpochMs: 6_500, playbackStartedAtMonotonicMs: 6_500, preparedAssetSha256: "f".repeat(64), status: "started" as const, turnId: "meeting-farewell:v1" },
+          { observedAt: "1970-01-01T00:00:06.900Z", playbackAttemptId: "farewell", playbackFinishedAtEpochMs: 6_900, playbackFinishedAtMonotonicMs: 6_900, playbackKind: "prepared-cue" as const, preparedAssetSha256: "f".repeat(64), status: "finished" as const, turnId: "meeting-farewell:v1" },
+          { observedAt: "1970-01-01T00:00:07.000Z", playbackAttemptId: "farewell", playbackKind: "prepared-cue" as const, playbackSettledAtEpochMs: 7_000, playbackSettledAtMonotonicMs: 7_000, preparedAssetSha256: "f".repeat(64), settlement: "played" as const, status: "settled" as const, turnId: "meeting-farewell:v1" },
         ],
       },
       reconnectNoRepeat: {
@@ -698,19 +709,12 @@ export function retainedV8Evidence(): RetainedReconnectE2eEvidenceV8 {
           { eventType: "participant.left", observedAt: "1970-01-01T00:00:02.100Z", occurredAt: "1970-01-01T00:00:02.100Z", participantId: speakerBId, type: "participant-lifecycle" },
           { eventType: "participant.joined", observedAt: "1970-01-01T00:00:02.200Z", occurredAt: "1970-01-01T00:00:02.200Z", participantId: speakerBId, type: "participant-lifecycle" },
         ],
-        negativeWindow: {
-          endedAt: source.recording.endedAt,
-          source: "sut-rejoin-to-authoritative-recording-end",
-          startedAt: "1970-01-01T00:00:02.200Z",
-        },
+        negativeWindow: { endedAt: source.recording.endedAt,
+          source: "sut-rejoin-to-authoritative-recording-end", startedAt: "1970-01-01T00:00:02.200Z" },
         participantId: speakerBId,
       },
       supplementalPlayback: {
-        actor: {
-          applicationId: speakerDId,
-          authenticatedApplicationId: speakerDId,
-          name: "speaker-d",
-        },
+        actor: { applicationId: speakerDId, authenticatedApplicationId: speakerDId, name: "speaker-d" },
         fixture: {
           durationMs: 4_000,
           path: "/fixtures/supplemental-question-farewell.ru.ogg",
@@ -756,58 +760,4 @@ export function retainedV7Evidence(): RetainedE2eEvidenceV7 {
     },
     schemaVersion: 7,
   });
-}
-
-function voiceObservation(
-  purpose: "addressed-answer" | "farewell" | "greeting",
-  turnId: string,
-  attemptId: string,
-  startMs: number,
-) {
-  return {
-    capture: {
-      acceptedDurationMilliseconds: 500, acceptedPacketCount: 25,
-      cancellation: { status: "not-observed" as const }, endedAt: captureTimestamp(startMs + 500),
-      expectedDuration: { maximumMilliseconds: 600, minimumMilliseconds: 500 },
-      firstPacketAt: captureTimestamp(startMs), ignoredDuplicatePacketCount: 0, ignoredLatePacketCount: 0,
-      limits: { captureTimeoutMilliseconds: 2_000, maxCaptureDurationMilliseconds: 60_000, maxPcmBytes: 11_520_000 },
-      pcm: {
-        byteLength: 96_000, channels: 2 as const, encoding: "s16le" as const,
-        nonSilence: { sampleCount: 48_000, sampleCountAboveThreshold: 4_800, sampleRatioAboveThreshold: 0.1, thresholdSample: 256 },
-        rms: 512, sampleRateHertz: 48_000 as const, sha256: "a".repeat(64),
-      },
-      startedAt: captureTimestamp(startMs - 100), termination: "expected-duration-reached" as const,
-    },
-    correlation: purpose === "addressed-answer"
-      ? { attemptId, meetingId: "meeting-1", playbackKind: "answer" as const, provenance: "playback-readiness-handshake" as const, purpose, recordingId: "meeting-1", verification: "not-run" as const, turnId }
-      : { attemptId, provenance: "operator-supplied" as const, purpose, recordingId: "meeting-1", verification: "not-run" as const, turnId },
-    kind: "conversation-voice-observer-evidence" as const,
-    observer: { applicationId: observerId, authenticatedBotId: observerId, guildId: "1533228590643155034", privateTestGuildConfirmed: true as const, voiceChannelId: "1533228823045214398" },
-    runId: "run-overlap-1", schemaVersion: 3 as const,
-    source: { codec: "opus" as const, craigBotId: "1534231284467896512", decodedPcm: { channels: 2 as const, encoding: "s16le" as const, sampleRateHertz: 48_000 as const }, receiver: "@discordjs/voice" as const },
-    transcriptVerification: { status: "not-run" as const },
-  };
-}
-
-function captureTimestamp(epochMilliseconds: number) {
-  return { epochMilliseconds, monotonicMilliseconds: epochMilliseconds };
-}
-
-function deployedService(
-  composeProject: string,
-  composeService: string,
-  containerDigit: string,
-  imageDigit: string,
-  revisionDigit: string,
-) {
-  return {
-    composeConfigHash: "3".repeat(64),
-    composeProject,
-    composeService,
-    containerId: containerDigit.repeat(64),
-    containerStartedAt: "1969-12-31T23:00:00.000Z",
-    imageId: `sha256:${imageDigit.repeat(64)}`,
-    repositoryDigest: null,
-    sourceRevision: revisionDigit.repeat(40),
-  };
 }

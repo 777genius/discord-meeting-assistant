@@ -28,6 +28,7 @@
     "foundation:check": "pnpm run architecture:protobuf && pnpm run architecture:meeting-core-imports && agent-teams-foundation check && pnpm run foundation:assert-dev-only && pnpm run foundation:assert-registry",
     "foundation:detach": "agent-teams-foundation detach",
     "foundation:status": "agent-teams-foundation status",
+    "infinity-context-sdk:prepare": "node vendor/infinity-context/prepare-official-sdk.mjs",
     "lint": "pnpm run lint:fast && pnpm run lint:type-aware",
     "lint:fast": "oxlint --config .oxlintrc.json --deny-warnings --disable-nested-config .",
     "lint:fast:files": "oxlint --config .oxlintrc.json --deny-warnings --disable-nested-config",

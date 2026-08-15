@@ -3,6 +3,7 @@ import {
   serviceLevelClockAttestationId,
   serviceLevelEvidenceDigest,
   type E2eServiceLevelsV1,
+  type ServiceLevelSourcesV2,
   type ServiceLevelThresholds,
 } from "../src/e2e-service-levels.js";
 
@@ -147,6 +148,28 @@ export function serviceLevelSourcesProof() {
       type: "participant-lifecycle" as const,
     }],
     schemaVersion: 1 as const,
+  };
+}
+
+export function serviceLevelSourcesProofV2(): ServiceLevelSourcesV2 {
+  const v1 = serviceLevelSourcesProof();
+  const { schemaVersion: _schemaVersion, ...proof } = v1.discordPlaybackLinkProof;
+  return {
+    ...v1,
+    discordPlaybackLinkProof: {
+      ...proof,
+      readiness: {
+        capabilitySha256: proof.capabilitySha256,
+        messageId: proof.messageId,
+        readinessExpectation: "processing-to-ready" as const,
+        recordingId: proof.recordingId,
+        status: "ready" as const,
+        statuses: ["processing", "ready"],
+        trackCount: 2,
+      },
+      schemaVersion: 1 as const,
+    },
+    schemaVersion: 2 as const,
   };
 }
 

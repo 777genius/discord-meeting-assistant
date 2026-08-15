@@ -19,6 +19,11 @@ export function preparedConversationFingerprint(
     "prepared-conversation:v1",
     prepared.interruptible,
     prepared.preemptive,
+    prepared.groundedKnowledgeRequest?.meetingId ?? null,
+    prepared.groundedKnowledgeRequest?.roomId ?? null,
+    prepared.groundedKnowledgeRequest?.participantId ?? null,
+    prepared.groundedKnowledgeRequest?.question ?? null,
+    prepared.groundedKnowledgeRequest?.locale ?? null,
     prepared.request.idempotencyKey,
     prepared.request.locale,
     prepared.request.literalSpeech ?? null,
@@ -32,6 +37,7 @@ export function preparedConversationFingerprint(
     prepared.thinkingCueLocale,
     prepared.thinkingCuesEnabled,
     prepared.cue?.cueId ?? null,
+    prepared.cue?.assetSha256 ?? null,
     prepared.cue?.playbackAttemptId ?? null,
   ]);
 }

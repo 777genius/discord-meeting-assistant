@@ -1,7 +1,7 @@
 import { constants } from "node:fs";
 import { lstat, open } from "node:fs/promises";
 
-import type { E2eServiceLevelsV1, ServiceLevelSourcesV1 } from "./e2e-service-levels.js";
+import type { E2eServiceLevelsV1, ServiceLevelSourcesV2 } from "./e2e-service-levels.js";
 import {
   liveDiscordPlaybackLinkProofSchema,
   type LiveDiscordPlaybackLinkProof,
@@ -45,7 +45,7 @@ export function serviceLevelSourcesFromLiveProof(
   proof: LiveDiscordPlaybackLinkProof,
   serviceLevels: E2eServiceLevelsV1,
   expected: { readonly playbackOrigin: string; readonly recordingId: string; readonly runId: string },
-): ServiceLevelSourcesV1 {
+): ServiceLevelSourcesV2 {
   if (proof.recordingId !== expected.recordingId || proof.runId !== expected.runId) {
     throw new Error("Live Discord playback link proof does not match the requested run and recording");
   }
@@ -75,11 +75,20 @@ export function serviceLevelSourcesFromLiveProof(
     pathname: proof.link.pathname,
     projectionMarker: proof.projectionMarker,
     recordingId: proof.recordingId,
+    readiness: {
+      ...proof.readiness,
+      readinessExpectation: "processing-to-ready" as const,
+      statuses: [...proof.readiness.statuses],
+    },
     resultChannelId: proof.resultChannelId,
     runId: proof.runId,
     schemaVersion: 1 as const,
   };
-  if (JSON.stringify(discordPlaybackLinkProof) !== JSON.stringify({
+  if (proof.readiness.readinessExpectation !== "processing-to-ready") {
+    throw new Error("Live Discord playback link proof did not observe processing before ready");
+  }
+  const { readiness: _readiness, ...measurementProof } = discordPlaybackLinkProof;
+  if (JSON.stringify(measurementProof) !== JSON.stringify({
     capabilitySha256: measurement.end.source.capabilitySha256,
     container: measurement.end.source.container,
     firstSeenPollCompletedAt: measurement.end.source.firstSeenPollCompletedAt,
@@ -98,7 +107,7 @@ export function serviceLevelSourcesFromLiveProof(
   if (measurement.end.atEpochMs !== proof.firstSeenPollCompletedAt.epochMilliseconds) {
     throw new Error("Service-level measurement end timestamp does not match the exact Live Discord observer proof");
   }
-  return { discordPlaybackLinkProof, participantLifecycleReceipts: [], schemaVersion: 1 };
+  return { discordPlaybackLinkProof, participantLifecycleReceipts: [], schemaVersion: 2 };
 }
 
 function assertSafeProofFile(status: {

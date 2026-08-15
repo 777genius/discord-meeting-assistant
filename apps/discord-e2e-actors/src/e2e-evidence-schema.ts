@@ -4,80 +4,15 @@ import { z } from "zod"; import {
   reconnectNoRepeatEvidenceSchema,
   supplementalPlaybackEvidenceV1Schema,
 } from "./conversation-retained-evidence-schema.js";
-import { conversationVoiceCampaignProofV1Schema } from "./conversation-voice-campaign-proof.js"; import { e2eServiceLevelsV1Schema, serviceLevelSourcesV1Schema } from "./e2e-service-levels.js";
+import { conversationVoiceCampaignProofV1Schema } from "./conversation-voice-campaign-proof.js"; import { e2eServiceLevelsV1Schema, serviceLevelSourcesV1Schema, serviceLevelSourcesV2Schema } from "./e2e-service-levels.js";
+import { hostedCampaignReleaseReferenceV1Schema } from
+  "./hosted-campaign-release-reference.js";
+import { hostedVoiceQualificationPolicyV1Schema } from "./hosted-voice-qualification-policy.js";
+import { providerlessVoiceDurabilityQualificationV1Schema } from "./providerless-voice-durability-qualification.js";
 import { recordingPlaybackEvidenceV1Schema } from "./recording-playback-evidence-schema.js";
+import { scenarioKindSchema } from "./e2e-fixture-manifest-schema.js";
 const identifierSchema = z.string().trim().min(1); const sha256Schema = z.string().regex(/^[a-f\d]{64}$/u);
-const nonNegativeMillisecondsSchema = z.number().int().nonnegative(); const nonNegativeSafeIntegerSchema = z.number().refine(
-  (value) => Number.isSafeInteger(value) && value >= 0,
-  "Expected a nonnegative safe integer",
-); const scenarioKindSchema = z.enum(["overlap", "sequential", "reconnect"]);
-const fixtureSchema = z.object({
-  actorName: identifierSchema, audioPath: identifierSchema,
-  audioSha256: sha256Schema, durationMs: z.number().int().positive(),
-  fixtureId: identifierSchema, speechStartOffsetMs: nonNegativeSafeIntegerSchema.default(0),
-  greetingLocale: z.enum(["en", "ru"]).optional(), greetingNameStatus: z.enum(["known", "unknown"]).optional(),
-  greetingSpokenToken: identifierSchema.optional(), requiredTerms: z.array(identifierSchema).min(1),
-  sourcePath: identifierSchema, sourceSha256: sha256Schema,
-  sourceText: identifierSchema, speakerId: identifierSchema,
-}).refine(
-  ({ durationMs, speechStartOffsetMs }) => speechStartOffsetMs < durationMs,
-  { message: "speechStartOffsetMs must be less than durationMs", path: ["speechStartOffsetMs"] },
-);
-
-const scenarioSchema = z.object({
-  expectOverlap: z.boolean(),
-  kind: scenarioKindSchema,
-  playbackCountByFixture: z.record(identifierSchema, z.number().int().positive()),
-  requireReconnect: z.boolean(),
-  speakerBDelayMs: nonNegativeMillisecondsSchema,
-});
-
-export const fixtureManifestV1Schema = z.object({
-  allowedBotSpeakerIds: z.array(identifierSchema).refine(
-    (speakerIds) => new Set(speakerIds).size === speakerIds.length,
-    "Allowed bot speaker IDs must be unique",
-  ).default([]),
-  conversationVoiceExpectation: z.object({
-    botSpeakerId: identifierSchema.optional(), guildId: identifierSchema,
-    observerApplicationId: identifierSchema, observerGreetingLocale: z.enum(["en", "ru"]).optional(),
-    voiceChannelId: identifierSchema,
-  }).strict().optional(),
-  farewellCapturePcmSha256: z.object({ en: sha256Schema, ru: sha256Schema }).strict().optional(),
-  farewellExactPhrases: z.object({ en: z.array(identifierSchema).min(1), ru: z.array(identifierSchema).min(1) }).strict().optional(),
-  farewellLocaleTerms: z.object({ en: z.array(identifierSchema).min(1), ru: z.array(identifierSchema).min(1) }).strict().optional(),
-  greetingLocaleTerms: z.object({ en: z.array(identifierSchema).min(1), ru: z.array(identifierSchema).min(1) }).strict().optional(),
-  supplementalVoiceExpectation: z.object({
-    answerNonce: identifierSchema,
-    applicationId: identifierSchema,
-    durationMs: z.number().int().positive().max(60_000),
-    farewellLocale: z.enum(["en", "ru"]),
-    fixtureSha256: sha256Schema, greetingLocale: z.enum(["en", "ru"]),
-    requiredFarewellTerms: z.array(identifierSchema).min(1),
-    requiredQuestionTerms: z.array(identifierSchema).min(1),
-  }).strict().refine(
-    ({ answerNonce, requiredQuestionTerms }) => requiredQuestionTerms.includes(answerNonce),
-    { message: "The deterministic answer nonce must also be pinned in the question terms", path: ["requiredQuestionTerms"] },
-  ).optional(),
-  fixtureSetId: identifierSchema,
-  fixtures: z.array(fixtureSchema).min(2),
-  locale: identifierSchema,
-  summaryExpectations: z.object({
-    actionItems: z.array(z.object({
-      deadline: identifierSchema.nullable(),
-      ownerSpeakerId: identifierSchema,
-      requiredTerms: z.array(identifierSchema).min(1),
-    })).min(1),
-    decisionTerms: z.array(identifierSchema).min(1),
-    topicTerms: z.array(identifierSchema).min(1),
-  }),
-  scenarios: z.array(scenarioSchema).min(1),
-  schemaVersion: z.literal(1),
-  thresholds: z.object({
-    maxCharacterErrorRate: z.number().min(0).max(1),
-    maxWordErrorRate: z.number().min(0).max(1),
-    timestampToleranceMs: nonNegativeMillisecondsSchema,
-  }),
-});
+const nonNegativeMillisecondsSchema = z.number().int().nonnegative();
 
 const actorEventSchema = z.object({
   actorName: identifierSchema,
@@ -423,11 +358,69 @@ export const retainedE2eEvidenceV9Schema = retainedE2eEvidenceV8Schema.omit({ co
   serviceLevels: e2eServiceLevelsV1Schema,
   schemaVersion: z.literal(9),
 });
+const retainedE2eEvidenceV10QualificationShape = {
+  durabilityQualification: providerlessVoiceDurabilityQualificationV1Schema,
+  qualificationPolicy: hostedVoiceQualificationPolicyV1Schema,
+  release: hostedCampaignReleaseReferenceV1Schema,
+};
+const retainedPostCallE2eEvidenceV10Schema = retainedE2eEvidenceV6Schema
+  .omit({ schemaVersion: true })
+  .extend({
+    ...retainedE2eEvidenceV10QualificationShape,
+    qualificationKind: z.literal("post-call"),
+    schemaVersion: z.literal(10),
+  }).strict();
+export const retainedVoiceE2eEvidenceV10Schema = retainedE2eEvidenceV9Schema
+  .omit({ schemaVersion: true, serviceLevelSources: true })
+  .extend({
+    ...retainedE2eEvidenceV10QualificationShape,
+    qualificationKind: z.literal("voice"),
+    schemaVersion: z.literal(10),
+    serviceLevelSources: serviceLevelSourcesV2Schema,
+  }).strict();
+export const retainedE2eEvidenceV10Schema = z.union([
+  retainedPostCallE2eEvidenceV10Schema,
+  retainedVoiceE2eEvidenceV10Schema,
+]).superRefine((value, context) => {
+  if (JSON.stringify(value.release) !== JSON.stringify(value.durabilityQualification.release)) {
+    context.addIssue({ code: "custom", message: "V10 durability proof is bound to another release" });
+  }
+  if (value.durabilityQualification.sourceRevision !==
+    value.deployment.meetingPlatform.sourceRevision) {
+    context.addIssue({ code: "custom", message: "V10 durability proof is bound to another source revision" });
+  }
+  if (value.qualificationKind === "voice") {
+    const grounded = value.conversation.lifecycle.groundedAnswers.filter(
+      (observation) => observation.status === "validated",
+    );
+    const answerEvent = value.conversation.lifecycle.events.find(
+      (event) => event.type === "addressed-answer",
+    );
+    const observation = grounded[0];
+    const transcriptTurnIds = new Set(value.transcript.turns.map(({ turnId }) => turnId));
+    const receipts = observation === undefined ? [] :
+      value.conversation.lifecycle.playbackReceipts.filter(
+        ({ turnId }) => turnId === observation.turnId,
+      );
+    if (grounded.length !== 1 || observation === undefined || answerEvent === undefined ||
+      observation.turnId !== answerEvent.turnId ||
+      observation.participantId !== answerEvent.participantId ||
+      observation.citationTurnIds.some((turnId) => !transcriptTurnIds.has(turnId)) ||
+      receipts.length !== 3 || receipts.some((receipt) =>
+        receipt.playbackKind !== "answer" || receipt.speechProvenance !== "literal_tts")) {
+      context.addIssue({
+        code: "custom",
+        message: "V10 voice evidence requires one cited grounded literal-speech answer with complete playback provenance",
+      });
+    }
+  }
+});
 export const retainedE2eEvidenceSchema = z.union([retainedE2eEvidenceV2Schema,
   retainedE2eEvidenceV3Schema, retainedE2eEvidenceV4Schema, retainedE2eEvidenceV5Schema,
   retainedE2eEvidenceV6Schema, retainedE2eEvidenceV7Schema, retainedE2eEvidenceV8Schema,
-  retainedE2eEvidenceV9Schema]);
-export { collectedConversationLifecycleEvidenceSchema,
-  conversationVoiceEvidenceV3Schema } from "./conversation-retained-evidence-schema.js";
+  retainedE2eEvidenceV9Schema, retainedE2eEvidenceV10Schema]);
+export { collectedConversationLifecycleEvidenceSchema, conversationVoiceEvidenceV3Schema } from
+  "./conversation-retained-evidence-schema.js";
+export { fixtureManifestV1Schema } from "./e2e-fixture-manifest-schema.js";
 export type { CollectedConversationLifecycleEvidence } from "./conversation-retained-evidence-schema.js";
 export type * from "./e2e-evidence-types.js";

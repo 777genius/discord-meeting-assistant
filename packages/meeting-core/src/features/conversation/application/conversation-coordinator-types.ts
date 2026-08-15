@@ -2,6 +2,9 @@ import type { ConversationAlias, ConversationSession, ConversationTurn } from ".
 import type {
   ConversationDelay,
   ConversationDelayPort,
+  GroundedKnowledgeAnswerPort,
+  GroundedKnowledgeAnswerRequest,
+  GroundedKnowledgeAnswerObserverPort,
   ConversationLatencyObserverPort,
   ConversationPlaybackObserverPort,
   ConversationPlaybackReadinessPort,
@@ -20,6 +23,7 @@ export interface FinalizedConversationTurnInput {
   readonly meetingId: string;
   readonly nowMs: number;
   readonly recordingId: string;
+  readonly roomId: string;
   readonly speakerId: string;
   readonly systemPrompt: string;
   readonly text: string;
@@ -51,6 +55,8 @@ export interface ProactiveConversationTurnInput {
 
 /** Pre-generated 48 kHz mono PCM played without an LLM or TTS round-trip. */
 export interface PreparedConversationCueInput {
+  /** SHA-256 of the preloaded PCM asset, when supplied by its validating adapter. */
+  readonly assetSha256?: string;
   readonly cueId: string;
   /** Short prepared speech may opt out of human-speech interruption. */
   readonly interruptible?: boolean;
@@ -111,6 +117,8 @@ export type ConversationTurnPlaybackSettlement = ConversationPlaybackSettlement;
 
 export interface ConversationCoordinatorDependencies {
   readonly delay?: ConversationDelayPort;
+  readonly groundedAnswers?: GroundedKnowledgeAnswerPort;
+  readonly groundedAnswerObserver?: GroundedKnowledgeAnswerObserverPort;
   readonly latencyObserver?: ConversationLatencyObserverPort;
   readonly playbackObserver?: ConversationPlaybackObserverPort;
   readonly playbackReadiness?: ConversationPlaybackReadinessPort;
@@ -121,11 +129,13 @@ export interface ConversationCoordinatorDependencies {
 
 export interface PreparedConversation {
   readonly cue?: {
+    readonly assetSha256?: string;
     readonly cueId: string;
     readonly pcmChunks: readonly Uint8Array[];
     readonly playbackAttemptId: string;
   };
   readonly interruptible: boolean;
+  readonly groundedKnowledgeRequest?: GroundedKnowledgeAnswerRequest;
   readonly preemptive: boolean;
   readonly request: ConversationStartRequest;
   readonly thinkingCueLocale: string;
@@ -157,6 +167,8 @@ export interface ActiveConversationRun {
   deliberationCueSelectionInFlight: boolean;
   deliberationCueReady: boolean;
   finalized: boolean;
+  groundedPlaybackAbortController: AbortController | null;
+  groundedPlaybackAuthority: (() => Promise<boolean>) | null;
   playback: VoicePlaybackSession | null;
   playbackOpenAbortController: AbortController | null;
   playbackEventsClosed: boolean;

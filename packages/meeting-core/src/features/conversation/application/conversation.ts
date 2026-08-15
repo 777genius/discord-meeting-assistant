@@ -62,6 +62,12 @@ export class ConversationCoordinator {
     });
     this.activeTurns = new ConversationActiveTurnExecutor({
       cues,
+      ...(dependencies.groundedAnswers === undefined
+        ? {}
+        : { groundedAnswers: dependencies.groundedAnswers }),
+      ...(dependencies.groundedAnswerObserver === undefined
+        ? {}
+        : { groundedAnswerObserver: dependencies.groundedAnswerObserver }),
       ...(dependencies.latencyObserver === undefined
         ? {}
         : { latencyObserver: dependencies.latencyObserver }),
@@ -206,6 +212,47 @@ export class ConversationCoordinator {
     await waitForConversationTasks(state);
     if (this.meetings.get(meetingId) === state) {
       this.meetings.delete(meetingId);
+    }
+  }
+
+  /** Cancels active factual work while leaving the meeting reusable after recovery. */
+  public async disconnectMeeting(meetingId: string, nowMs: number): Promise<void> {
+    const state = this.meetings.get(meetingId);
+    if (state === undefined || state.closing) {
+      return;
+    }
+    advanceConversationState(state, nowMs);
+    state.pending.clear();
+    this.wakeLatches.clear(state);
+    const cancellation = state.session.close("disconnected", state.lastObservedAtMs);
+    if (cancellation.status === "requested") {
+      await this.activeTurns.enactCancellation(state, cancellation);
+    }
+  }
+
+  /** Cancels factual work owned by a participant whose live presence ended. */
+  public async participantLeft(
+    meetingId: string,
+    participantId: string,
+    nowMs: number,
+  ): Promise<void> {
+    const state = this.meetings.get(meetingId);
+    if (state === undefined || state.closing) {
+      return;
+    }
+    advanceConversationState(state, nowMs);
+    this.wakeLatches.clearForSpeaker(state, participantId);
+    const ownsWork = state.active?.prepared.turn.speakerId === participantId ||
+      [...state.pending.values()].some(({ turn }) =>
+        turn.speakerId === participantId
+      );
+    if (!ownsWork) {
+      return;
+    }
+    state.pending.clear();
+    const cancellation = state.session.close("disconnected", state.lastObservedAtMs);
+    if (cancellation.status === "requested") {
+      await this.activeTurns.enactCancellation(state, cancellation);
     }
   }
 

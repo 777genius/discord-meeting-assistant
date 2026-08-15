@@ -460,6 +460,7 @@ function input(
     meetingId: "meeting-1",
     nowMs,
     recordingId: "recording-1",
+    roomId: "private-room-1",
     speakerId: `speaker-${turnId}`,
     systemPrompt: "Отвечай кратко и дружелюбно.",
     text,

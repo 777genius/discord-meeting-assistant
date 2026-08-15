@@ -8,7 +8,7 @@ import type {
 type RetainedConversationEvidence = Extract<
   RetainedE2eEvidence,
   { schemaVersion: 7 | 8 | 9 }
->;
+> | Extract<RetainedE2eEvidence, { schemaVersion: 10; qualificationKind: "voice" }>;
 
 export function verifyAddressedAnswer(
   evidence: RetainedConversationEvidence,
@@ -29,7 +29,8 @@ export function verifyAddressedAnswer(
   for (const answer of answerCaptures) {
     if (evidence.schemaVersion >= 8) {
       verifyAddressedAnswerPlayback(
-        evidence as Extract<RetainedConversationEvidence, { schemaVersion: 8 | 9 }>,
+        evidence as Extract<RetainedConversationEvidence,
+          { schemaVersion: 8 | 9 } | { schemaVersion: 10; qualificationKind: "voice" }>,
         answer,
         timestampToleranceMs,
         fail,
@@ -49,8 +50,46 @@ export function verifyAddressedAnswer(
   }
 }
 
+export function verifyGroundedAnswerProvenance(
+  evidence: Extract<RetainedE2eEvidence, {
+    readonly qualificationKind: "voice";
+    readonly schemaVersion: 10;
+  }>,
+  fail: VerificationFailureReporter,
+): void {
+  const grounded = evidence.conversation.lifecycle.groundedAnswers.filter(
+    (observation) => observation.status === "validated",
+  );
+  const answerEvent = evidence.conversation.lifecycle.events.find(
+    (event) => event.type === "addressed-answer",
+  );
+  const observation = grounded[0];
+  if (grounded.length !== 1 || observation === undefined || answerEvent === undefined ||
+    observation.turnId !== answerEvent.turnId ||
+    observation.participantId !== answerEvent.participantId ||
+    observation.citationTurnIds.some((turnId) =>
+      !evidence.transcript.turns.some((turn) => turn.turnId === turnId))) {
+    fail(
+      "GROUNDED_ANSWER_PROVENANCE_INVALID",
+      "current addressed answer must retain exact participant, epoch and transcript citation provenance",
+    );
+    return;
+  }
+  const receipts = evidence.conversation.lifecycle.playbackReceipts.filter(
+    ({ turnId }) => turnId === observation.turnId,
+  );
+  if (receipts.length !== 3 || receipts.some((receipt) =>
+    receipt.playbackKind !== "answer" || receipt.speechProvenance !== "literal_tts")) {
+    fail(
+      "GROUNDED_ANSWER_SPEECH_PROVENANCE_INVALID",
+      "validated grounded text must use one complete literal-TTS playback receipt set",
+    );
+  }
+}
+
 function verifyAddressedAnswerPlayback(
-  evidence: Extract<RetainedConversationEvidence, { schemaVersion: 8 | 9 }>,
+  evidence: Extract<RetainedConversationEvidence,
+    { schemaVersion: 8 | 9 } | { schemaVersion: 10; qualificationKind: "voice" }>,
   answer: RetainedConversationEvidence["conversation"]["voice"][number],
   timestampToleranceMs: number,
   fail: VerificationFailureReporter,

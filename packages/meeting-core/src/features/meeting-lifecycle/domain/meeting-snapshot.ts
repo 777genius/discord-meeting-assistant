@@ -2,11 +2,17 @@ import type { EvidenceBackedSummarySnapshot } from "../../meeting-intelligence/i
 import type { PublicationReceiptSnapshot } from "../../publishing/index.js";
 import type { RecordingArtifactSnapshot } from "../../recording/index.js";
 import type { FinalTranscriptSnapshot } from "../../transcription/index.js";
-import type { MeetingActorSnapshot, MeetingSourceSnapshot } from "./meeting-identity.js";
+import type {
+  MeetingActorSnapshot,
+  MeetingIdentityProvenanceSnapshot,
+  MeetingSourceSnapshot,
+} from "./meeting-identity.js";
 import type { StageStateSnapshot } from "./meeting-stage.js";
 
 export interface MeetingSnapshot {
   readonly actors: readonly MeetingActorSnapshot[] | null;
+  readonly identityProvenance: MeetingIdentityProvenanceSnapshot | null;
+  readonly lifecycleGeneration: number | null;
   readonly meetingId: string;
   readonly publication: PublicationReceiptSnapshot | null;
   readonly publicationStage: StageStateSnapshot;
@@ -22,6 +28,8 @@ export interface MeetingSnapshot {
 
 export interface RecordedMeetingInput {
   readonly actors: readonly MeetingActorSnapshot[];
+  readonly identityProvenance: MeetingIdentityProvenanceSnapshot | null;
+  readonly lifecycleGeneration: number;
   readonly meetingId: string;
   readonly publicationTargetId: string;
   readonly recording: RecordingArtifactSnapshot;
@@ -29,23 +37,33 @@ export interface RecordedMeetingInput {
 }
 
 export interface LegacyRecordedMeetingInput {
+  readonly lifecycleGeneration?: number | null;
   readonly meetingId: string;
   readonly publicationTargetId: string;
   readonly recording: RecordingArtifactSnapshot;
   readonly source?: MeetingSourceSnapshot | null;
 }
 
-export type RestorableMeetingSnapshot = Omit<MeetingSnapshot, "actors" | "source"> & {
+export type RestorableMeetingSnapshot = Omit<
+  MeetingSnapshot,
+  "actors" | "identityProvenance" | "lifecycleGeneration" | "source"
+> & {
   readonly actors?: readonly MeetingActorSnapshot[] | null;
+  readonly identityProvenance?: MeetingIdentityProvenanceSnapshot | null;
+  readonly lifecycleGeneration?: number | null;
   readonly source?: MeetingSourceSnapshot | null;
 };
 
 export function initialMeetingSnapshot(
-  input: LegacyRecordedMeetingInput,
+  input: LegacyRecordedMeetingInput | RecordedMeetingInput,
   actors: readonly MeetingActorSnapshot[] | null,
 ): RestorableMeetingSnapshot {
   return {
     actors,
+    identityProvenance: "identityProvenance" in input
+      ? input.identityProvenance ?? null
+      : null,
+    lifecycleGeneration: input.lifecycleGeneration ?? null,
     meetingId: input.meetingId,
     publication: null,
     publicationStage: { attempts: 0, status: "pending" },

@@ -2,14 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   retainedE2eEvidenceSchema,
-  retainedE2eEvidenceV9Schema,
   verifyE2eCampaign as verifyE2eCampaignAgainstExpectedRevision,
   type DeploymentRevisionExpectation,
   type RetainedE2eEvidence,
-  type RetainedE2eEvidenceV9,
+  type RetainedVoiceE2eEvidenceV10,
 } from "../src/e2e-evidence.js";
-import { conversationVoiceCampaignObserverReadyReceipt, conversationVoiceCampaignPlanDigest } from
-  "../src/conversation-voice-campaign-proof.js";
 import {
   currentExpectedRevisions,
   directMessageEvidence,
@@ -25,9 +22,9 @@ import {
   retainedV8Evidence,
   sequentialEvidence,
 } from "./e2e-evidence-fixtures.js";
+import { currentV10Campaign } from "./e2e-evidence-v10-fixtures.js";
 import {
   exactServiceLevelThresholds,
-  serviceLevelEvidenceForIdentity,
 } from "./e2e-service-level-fixtures.js";
 
 describe("retained E2E campaign lifecycle gate", () => {
@@ -43,8 +40,8 @@ describe("retained E2E campaign lifecycle gate", () => {
 
       expect(result.passed).toBe(false);
       expect(result.failures).toContainEqual({
-        code: "LIFECYCLE_V8_NOT_PROVEN",
-        message: "campaign requires retained evidence v8 from a reconnect run",
+        code: "CURRENT_CAMPAIGN_SCHEMA_REQUIRED",
+        message: "campaign qualification requires every run to use retained evidence schema v10",
       });
     },
   );
@@ -53,7 +50,7 @@ describe("retained E2E campaign lifecycle gate", () => {
     const runs = currentCampaign();
     runs[2] = reidentify(retainedV7Evidence(), "reconnect-v7");
 
-    expect(campaignFailureCodes(runs)).toContain("LIFECYCLE_V8_NOT_PROVEN");
+    expect(campaignFailureCodes(runs)).toContain("CURRENT_CAMPAIGN_SCHEMA_REQUIRED");
   });
 
   it("rejects v8 evidence from a non-reconnect scenario", () => {
@@ -63,30 +60,68 @@ describe("retained E2E campaign lifecycle gate", () => {
     const codes = campaignFailureCodes(runs);
 
     expect(codes).toEqual(expect.arrayContaining([
-      "LIFECYCLE_V8_NOT_PROVEN",
+      "CURRENT_CAMPAIGN_SCHEMA_REQUIRED",
       "RUN_FAILED",
       "SCENARIO_NOT_PROVEN",
     ]));
   });
 
-  it("accepts v6 sequential and overlap runs plus one v8 reconnect run", () => {
-    expect(verifyCurrentCampaign(currentCampaign()).failures).toEqual([]);
+  it("rejects v6 sequential and overlap runs plus one v8 reconnect run as obsolete", () => {
+    expect(campaignFailureCodes(currentCampaign())).toContain("CURRENT_CAMPAIGN_SCHEMA_REQUIRED");
   });
 
-  it("accepts v6 sequential and overlap runs plus one valid v9 reconnect run", () => {
-    const runs = currentV9Campaign();
+  it("accepts three release-bound V10 runs with one current voice qualification", () => {
+    const runs = currentV10Campaign();
 
-    const result = verifyCurrentCampaign(runs, exactServiceLevelThresholds);
+    const result = verifyCurrentCampaign(runs);
 
     expect(result.passed).toBe(true);
     expect(result.failures).toEqual([]);
   });
 
-  it("rejects a v9 reconnect run when externally supplied SLA thresholds are missing", () => {
-    const result = verifyCurrentCampaign(currentV9Campaign());
+  it("uses retained governed V10 thresholds without an external verifier file", () => {
+    const result = verifyCurrentCampaign(currentV10Campaign());
+    expect(runFailureCodes(result)).not.toContain("SLA_THRESHOLDS_MISSING");
+  });
 
-    expect(runFailureCodes(result)).toContain("SLA_THRESHOLDS_MISSING");
-    expect(result.failures.map(({ code }) => code)).toContain("RUN_FAILED");
+  it("rejects missing prepared-farewell asset or widened cue latency evidence", () => {
+    const missingAsset = currentV10Campaign();
+    const missingVoice = missingAsset[2] as RetainedVoiceE2eEvidenceV10;
+    const farewellStarted = missingVoice.conversation.lifecycle.playbackReceipts.find(
+      ({ status, turnId }) => status === "started" && turnId === "meeting-farewell:v1",
+    );
+    if (farewellStarted === undefined) {
+      throw new Error("farewell start fixture is missing");
+    }
+    delete farewellStarted.preparedAssetSha256;
+    expect(runFailureCodes(verifyCurrentCampaign(missingAsset)))
+      .toContain("FAREWELL_PREPARED_CUE_PROVENANCE_MISSING");
+
+    const slowCue = currentV10Campaign();
+    const slowVoice = slowCue[2] as RetainedVoiceE2eEvidenceV10;
+    const slowStart = slowVoice.conversation.lifecycle.playbackReceipts.find(
+      ({ status, turnId }) => status === "started" && turnId === "meeting-farewell:v1",
+    );
+    if (slowStart?.status !== "started") {
+      throw new Error("farewell start fixture is missing");
+    }
+    slowStart.playbackStartedAtEpochMs = 5_000;
+    expect(runFailureCodes(verifyCurrentCampaign(slowCue)))
+      .toContain("FAREWELL_PREPARED_CUE_LATENCY_EXCEEDED");
+  });
+
+  it("rejects a grounded answer citation or TTS provenance not retained from the active turn", () => {
+    const runs = currentV10Campaign();
+    const voice = runs[2] as RetainedVoiceE2eEvidenceV10;
+    const grounded = voice.conversation.lifecycle.groundedAnswers.find(
+      ({ status }) => status === "validated",
+    );
+    if (grounded?.status !== "validated") {
+      throw new Error("grounded answer fixture is missing");
+    }
+    grounded.citationTurnIds[0] = "missing-turn";
+    expect(runFailureCodes(verifyCurrentCampaign(runs)))
+      .toContain("GROUNDED_ANSWER_PROVENANCE_INVALID");
   });
 
   it.each([
@@ -96,33 +131,33 @@ describe("retained E2E campaign lifecycle gate", () => {
     ["SLA proof", (evidence: Record<string, unknown>) => {
       delete evidence.serviceLevels;
     }],
-  ])("rejects v9 reconnect evidence with missing %s at the schema boundary", (
+  ])("rejects V10 reconnect evidence with missing %s at the schema boundary", (
     _description,
     removeProof,
   ) => {
-    const evidence = v9ReconnectEvidence() as unknown as Record<string, unknown>;
+    const evidence = currentV10Campaign()[2] as unknown as Record<string, unknown>;
     removeProof(evidence);
 
     expect(retainedE2eEvidenceSchema.safeParse(evidence).success).toBe(false);
   });
 
-  it("rejects a v9 reconnect run with a tampered campaign proof", () => {
-    const runs = currentV9Campaign();
-    const reconnect = runs[2] as RetainedE2eEvidenceV9;
+  it("rejects a V10 reconnect run with a tampered campaign proof", () => {
+    const runs = currentV10Campaign();
+    const reconnect = runs[2] as RetainedVoiceE2eEvidenceV10;
     reconnect.conversation.campaignProof.planDigestSha256 = "0".repeat(64);
 
-    const result = verifyCurrentCampaign(runs, exactServiceLevelThresholds);
+    const result = verifyCurrentCampaign(runs);
 
     expect(runFailureCodes(result)).toContain("VOICE_CAMPAIGN_PROOF_INVALID");
     expect(result.failures.map(({ code }) => code)).toContain("RUN_FAILED");
   });
 
-  it("rejects a v9 reconnect run with tampered SLA evidence", () => {
-    const runs = currentV9Campaign();
-    const reconnect = runs[2] as RetainedE2eEvidenceV9;
+  it("rejects a V10 reconnect run with tampered SLA evidence", () => {
+    const runs = currentV10Campaign();
+    const reconnect = runs[2] as RetainedVoiceE2eEvidenceV10;
     reconnect.serviceLevels.measurements[0]!.upperBoundMs += 1;
 
-    const result = verifyCurrentCampaign(runs, exactServiceLevelThresholds);
+    const result = verifyCurrentCampaign(runs);
 
     expect(runFailureCodes(result)).toContain("SLA_UPPER_BOUND_TAMPERED");
     expect(result.failures.map(({ code }) => code)).toContain("RUN_FAILED");
@@ -143,7 +178,7 @@ describe("retained E2E campaign lifecycle gate", () => {
   });
 
   it("still rejects shared state across mixed-schema campaign runs", () => {
-    const runs = currentCampaign();
+    const runs = currentV10Campaign();
     const overlap = runs[1]!;
     const reconnect = runs[2]!;
     reconnect.publication.messageId = overlap.publication.messageId;
@@ -153,14 +188,14 @@ describe("retained E2E campaign lifecycle gate", () => {
   });
 
   it("still rejects deployment drift across the v6 to v8 schema boundary", () => {
-    const runs = currentCampaign();
+    const runs = currentV10Campaign();
     runs[2]!.deployment.meetingPlatform.imageId = `sha256:${"f".repeat(64)}`;
 
     expect(campaignFailureCodes(runs)).toContain("CAMPAIGN_DEPLOYMENT_CHANGED");
   });
 
   it("still rejects runs retained from an older release candidate", () => {
-    const runs = currentCampaign();
+    const runs = currentV10Campaign();
     for (const run of runs) {
       run.deployment.meetingPlatform.sourceRevision = "d".repeat(40);
     }
@@ -215,72 +250,6 @@ function currentCampaign(): RetainedE2eEvidence[] {
     overlap!,
     reidentify(retainedV8Evidence(), "reconnect-v8"),
   ];
-}
-
-function currentV9Campaign(): RetainedE2eEvidence[] {
-  const runs = currentCampaign();
-  runs[2] = v9ReconnectEvidence();
-  return runs;
-}
-
-function v9ReconnectEvidence(): RetainedE2eEvidenceV9 {
-  const source = reidentify(retainedV8Evidence(), "reconnect-v9");
-  const captures = source.conversation.voice.map((voice, index) => ({
-    expectedDuration: voice.capture.expectedDuration,
-    ordinal: index + 1,
-    outputPath: `/evidence/capture-${index + 1}.json`,
-    purpose: voice.correlation.purpose,
-    resolvedAttemptId: voice.correlation.attemptId,
-    resolvedTurnId: voice.correlation.turnId,
-    role: [
-      "observer-unknown",
-      "speaker-ru-known",
-      "speaker-en-known",
-      "speaker-d-unknown",
-      "speaker-d-addressed-answer",
-      "explicit-group-farewell",
-    ][index]!,
-  }));
-  const plan = {
-    captures,
-    kind: "conversation-voice-campaign-preflight" as const,
-    status: "validated" as const,
-  };
-  const planDigestSha256 = conversationVoiceCampaignPlanDigest(plan);
-  const { serviceLevels, serviceLevelSources } = serviceLevelEvidenceForIdentity({
-    meetingId: source.meetingId,
-    messageId: source.publication.messageId,
-    runId: source.actorRun.runId,
-    transcriptId: source.transcript.transcriptId,
-  });
-
-  return retainedE2eEvidenceV9Schema.parse({
-    ...source,
-    conversation: {
-      ...source.conversation,
-      campaignProof: {
-        observerReadyReceipt: conversationVoiceCampaignObserverReadyReceipt({
-          authenticatedObserverBotId: "1533867700575670282",
-          meetingId: "meeting-1",
-          plan,
-          readyPublishedAt: "1970-01-01T00:00:00.000Z",
-          runId: source.actorRun.runId,
-          target: {
-            craigBotId: "1534231284467896512",
-            guildId: "1533228590643155034",
-            observerApplicationId: "1533867700575670282",
-            voiceChannelId: "1533228823045214398",
-          },
-        }),
-        plan,
-        planDigestSha256,
-        schemaVersion: 1,
-      },
-    },
-    schemaVersion: 9,
-    serviceLevels,
-    serviceLevelSources,
-  });
 }
 
 function verifyCurrentCampaign(

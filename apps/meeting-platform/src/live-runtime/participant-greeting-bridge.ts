@@ -1,35 +1,29 @@
 import type {
   LiveConversationConfiguration,
-  LiveParticipantGreetingProfile,
+  LiveConversationOneShotReceiptReservation,
   LiveRuntimeLogger,
+  LiveRuntimeTimer,
 } from "./contracts.js";
 import {
   ParticipantGreetingQueue,
   type ParticipantGreetingPriority,
 } from "./participant-greeting-queue.js";
-
-const exactGreetingSystemPrompt = [
-  "Speak exactly the greeting provided by the user.",
-  "Do not add, remove, translate, explain, or quote anything.",
-  "Return only the greeting itself.",
-].join(" ");
+import {
+  participantGreetingProfile,
+  resolveParticipantGreeting,
+  type GreetingAttemptOutcome,
+  type ResolvedParticipantGreeting,
+} from "./participant-greeting-content.js";
+import { playParticipantGreeting } from "./participant-greeting-playback.js";
+import {
+  participantGreetingDeadlineReason as greetingDeadlineReason,
+  ParticipantGreetingDeadlines,
+} from "./participant-greeting-deadline.js";
 const maximumSafeRetries = 3;
+const oneShotReceiptLeaseSeconds = 120;
 
-type GreetingAttemptOutcome =
-  | "played"
-  | "unplayed"
-  | "partial"
-  | "unknown"
-  | "busy"
-  | "awaiting-prompt"
-  | "ignored"
-  | "queued"
-  | "reused"
-  | "failed";
-
-interface ResolvedParticipantGreeting {
-  readonly locale: "en" | "ru";
-  readonly prompt: string;
+interface PendingGreetingCompletion {
+  readonly leaseToken: string;
 }
 
 interface ParticipantGreetingBridgeDependencies {
@@ -37,21 +31,29 @@ interface ParticipantGreetingBridgeDependencies {
   readonly isMeetingFinishing: () => boolean;
   readonly logger: LiveRuntimeLogger;
   readonly meetingId: string;
+  readonly timer: LiveRuntimeTimer;
 }
 
 /** Meeting-local, bounded queue for one proactive greeting per participant. */
 export class ParticipantGreetingBridge {
+  private readonly activeLeaseTokens = new Map<string, string>();
   private closed = false;
+  private readonly deadlines: ParticipantGreetingDeadlines;
   private drainPromise: Promise<void> | null = null;
   private readonly greetedParticipantIds = new Set<string>();
   private readonly pendingGreetings = new ParticipantGreetingQueue();
+  private readonly pendingCompletions = new Map<string, PendingGreetingCompletion>();
   private readonly presentParticipantIds = new Set<string>();
   private readonly queuedAtMillisecondsByParticipantId = new Map<string, number>();
+  private readonly reservationInProgressParticipantIds = new Set<string>();
+  private readonly reservedParticipantIds = new Set<string>();
   private readonly retryCounts = new Map<string, number>();
 
-  public constructor(
-    private readonly dependencies: ParticipantGreetingBridgeDependencies,
-  ) {}
+  public constructor(private readonly dependencies: ParticipantGreetingBridgeDependencies) {
+    this.deadlines = new ParticipantGreetingDeadlines(dependencies.timer, (participantId) => {
+      this.expire(participantId);
+    });
+  }
 
   public participantsPresent(participantIds: readonly string[]): void {
     for (const participantId of participantIds) {
@@ -70,12 +72,9 @@ export class ParticipantGreetingBridge {
     this.tryAdvance();
   }
 
-  /** Suppresses replay when an active meeting is restored after a process restart. */
+  /** Restores presence; the durable receipt decides whether playback is due. */
   public participantsRestored(participantIds: readonly string[]): void {
-    for (const participantId of participantIds) {
-      this.presentParticipantIds.add(participantId);
-      this.greetedParticipantIds.add(participantId);
-    }
+    this.participantsPresent(participantIds);
   }
 
   public participantJoined(participantId: string): void {
@@ -95,6 +94,7 @@ export class ParticipantGreetingBridge {
   public participantLeft(participantId: string): void {
     this.presentParticipantIds.delete(participantId);
     this.pendingGreetings.delete(participantId);
+    this.deadlines.clear(participantId);
     this.queuedAtMillisecondsByParticipantId.delete(participantId);
   }
 
@@ -104,14 +104,12 @@ export class ParticipantGreetingBridge {
   }
 
   private tryAdvance(): void {
-    const greetings = this.dependencies.configuration.greetings;
     if (
-      greetings === undefined ||
+      this.dependencies.configuration.greetings === undefined ||
       this.closed ||
       this.dependencies.isMeetingFinishing() ||
       this.drainPromise !== null ||
-      !this.pendingGreetings.hasReady() ||
-      !greetings.isPlaybackReady(this.dependencies.meetingId)
+      (!this.pendingGreetings.hasReady() && this.pendingCompletions.size === 0)
     ) {
       return;
     }
@@ -136,11 +134,13 @@ export class ParticipantGreetingBridge {
     this.closed = true;
     this.pendingGreetings.clear();
     this.presentParticipantIds.clear();
+    this.deadlines.clearAll();
     this.queuedAtMillisecondsByParticipantId.clear();
   }
 
   public async settle(): Promise<void> {
     await this.drainPromise;
+    await this.deadlines.settle();
   }
 
   private async drain(): Promise<void> {
@@ -149,6 +149,7 @@ export class ParticipantGreetingBridge {
       return;
     }
 
+    await this.completePendingSettlements();
     while (!this.closed && !this.dependencies.isMeetingFinishing()) {
       if (!greetings.isPlaybackReady(this.dependencies.meetingId)) {
         return;
@@ -167,9 +168,15 @@ export class ParticipantGreetingBridge {
         continue;
       }
 
-      await this.dependencies.configuration.coordinator.whenIdle(
-        this.dependencies.meetingId,
+      const idle = await this.deadlines.race(
+        participantId,
+        this.dependencies.configuration.coordinator.whenIdle(
+          this.dependencies.meetingId,
+        ),
       );
+      if (idle.status !== "completed") {
+        continue;
+      }
       if (this.shouldStopGreeting(participantId)) {
         continue;
       }
@@ -178,31 +185,123 @@ export class ParticipantGreetingBridge {
         return;
       }
 
-      // Reserve before the external runtime/playback effect. Retry only when
-      // admission was busy or the settled turn accepted no audio at all.
-      this.greetedParticipantIds.add(participantId);
-      const outcome = await this.speak(participantId, greeting);
-      if (outcome === "busy" || outcome === "unplayed") {
-        const retryCount = (this.retryCounts.get(participantId) ?? 0) + 1;
-        this.retryCounts.set(participantId, retryCount);
-        if (
-          retryCount <= maximumSafeRetries &&
-          this.presentParticipantIds.has(participantId)
-        ) {
-          this.greetedParticipantIds.delete(participantId);
-          this.pendingGreetings.deferRetry(participantId, pending.priority);
+      const reservationOperation = this.reserve(participantId);
+      this.reservationInProgressParticipantIds.add(participantId);
+      void reservationOperation.finally(() => {
+        this.reservationInProgressParticipantIds.delete(participantId);
+      }).catch(() => {});
+      const receiptResult = await this.deadlines.race(participantId, reservationOperation);
+      if (receiptResult.status === "expired") {
+        this.greetedParticipantIds.add(participantId);
+        void receiptResult.operation.then(async (lateReceipt) => {
+          if (lateReceipt.status === "reserved") {
+            this.activeLeaseTokens.set(participantId, lateReceipt.leaseToken);
+            await this.complete(participantId, lateReceipt.leaseToken);
+          }
+          this.queuedAtMillisecondsByParticipantId.delete(participantId);
           return;
-        }
-        this.dependencies.logger.warn("Participant greeting retries exhausted", {
-          meetingId: this.dependencies.meetingId,
-          participantId,
-        });
+        }).catch(() => {});
+        continue;
+      }
+      const receipt = receiptResult.value;
+      if (receipt.status !== "reserved") {
+        this.greetedParticipantIds.add(participantId);
+        this.deadlines.clear(participantId);
+        this.retryCounts.delete(participantId);
         this.queuedAtMillisecondsByParticipantId.delete(participantId);
         continue;
       }
-      this.retryCounts.delete(participantId);
-      this.queuedAtMillisecondsByParticipantId.delete(participantId);
+      this.activeLeaseTokens.set(participantId, receipt.leaseToken);
+      const speaking = await this.deadlines.race(
+        participantId,
+        this.speak(participantId, greeting),
+      );
+      if (speaking.status === "expired") {
+        this.greetedParticipantIds.add(participantId);
+        this.pendingCompletions.set(participantId, { leaseToken: receipt.leaseToken });
+        await this.cancelExpiredAdmission(participantId);
+        await this.completePendingSettlements();
+        continue;
+      }
+      const outcome = speaking.value;
+      if (await this.settleOutcome(participantId, pending.priority, receipt.leaseToken, outcome)) {
+        return;
+      }
     }
+  }
+
+  private async settleOutcome(
+    participantId: string,
+    priority: ParticipantGreetingPriority,
+    leaseToken: string,
+    outcome: GreetingAttemptOutcome,
+  ): Promise<boolean> {
+    if (outcome === "busy" || outcome === "unplayed") {
+      const retryCount = (this.retryCounts.get(participantId) ?? 0) + 1;
+      this.retryCounts.set(participantId, retryCount);
+      if (retryCount <= maximumSafeRetries && this.presentParticipantIds.has(participantId)) {
+        await this.release(participantId, leaseToken);
+        this.pendingGreetings.deferRetry(participantId, priority);
+        return true;
+      }
+      this.dependencies.logger.warn("Participant greeting retries exhausted", {
+        meetingId: this.dependencies.meetingId,
+        participantId,
+      });
+    } else if (outcome !== "played" && outcome !== "partial" && outcome !== "unknown" &&
+      outcome !== "failed" && outcome !== "queued" && outcome !== "reused") {
+      await this.release(participantId, leaseToken);
+      this.greetedParticipantIds.add(participantId);
+      this.deadlines.clear(participantId);
+      return false;
+    }
+    this.greetedParticipantIds.add(participantId);
+    this.pendingCompletions.set(participantId, { leaseToken });
+    await this.completePendingSettlements();
+    return false;
+  }
+
+  private reserve(participantId: string): Promise<LiveConversationOneShotReceiptReservation> {
+    const receipts = this.dependencies.configuration.oneShotReceipts;
+    if (receipts === undefined) {
+      if (this.greetedParticipantIds.has(participantId)) {
+        return Promise.resolve({ status: "completed" });
+      }
+      if (this.reservedParticipantIds.has(participantId)) {
+        return Promise.resolve({ status: "in_flight" });
+      }
+      this.reservedParticipantIds.add(participantId);
+      return Promise.resolve({ leaseToken: `meeting-local-greeting:${participantId}`,
+        status: "reserved" });
+    }
+    return receipts.reserve({
+      kind: "greeting", leaseSeconds: oneShotReceiptLeaseSeconds,
+      meetingId: this.dependencies.meetingId, subjectId: participantId,
+    });
+  }
+
+  private complete(participantId: string, leaseToken: string): Promise<void> {
+    const completed = this.dependencies.configuration.oneShotReceipts?.complete({
+      kind: "greeting", leaseToken,
+      meetingId: this.dependencies.meetingId,
+      subjectId: participantId,
+    }) ?? Promise.resolve();
+    return completed.finally(() => {
+      this.activeLeaseTokens.delete(participantId);
+      this.reservedParticipantIds.delete(participantId);
+    });
+  }
+
+  private release(participantId: string, leaseToken: string): Promise<void> {
+    const released = this.dependencies.configuration.oneShotReceipts?.release({
+      kind: "greeting", leaseToken,
+      meetingId: this.dependencies.meetingId,
+      subjectId: participantId,
+    }) ?? Promise.resolve();
+    return released.finally(() => {
+      this.activeLeaseTokens.delete(participantId);
+      this.reservedParticipantIds.delete(participantId);
+    });
   }
 
   private enqueue(
@@ -214,8 +313,69 @@ export class ParticipantGreetingBridge {
         participantId,
         this.nowMilliseconds(),
       );
+      this.deadlines.start(participantId);
     }
     this.pendingGreetings.enqueue(participantId, priority);
+  }
+
+  private expire(participantId: string): void {
+    this.pendingGreetings.delete(participantId);
+    this.retryCounts.delete(participantId);
+    this.dependencies.logger.warn("Participant greeting reached terminal deadline", {
+      meetingId: this.dependencies.meetingId,
+      participantId,
+      reason: greetingDeadlineReason,
+    });
+    if (!this.activeLeaseTokens.has(participantId) &&
+      !this.reservationInProgressParticipantIds.has(participantId)) {
+      this.deadlines.track(this.fenceExpiredBeforeAdmission(participantId));
+    }
+  }
+
+  private async completePendingSettlements(): Promise<void> {
+    for (const [participantId, pending] of this.pendingCompletions) {
+      await this.complete(participantId, pending.leaseToken);
+      this.pendingCompletions.delete(participantId);
+      this.deadlines.clear(participantId);
+      this.retryCounts.delete(participantId);
+      this.queuedAtMillisecondsByParticipantId.delete(participantId);
+    }
+  }
+
+  private async fenceExpiredBeforeAdmission(participantId: string): Promise<void> {
+    this.greetedParticipantIds.add(participantId);
+    try {
+      const receipt = await this.reserve(participantId);
+      if (receipt.status === "reserved") {
+        this.activeLeaseTokens.set(participantId, receipt.leaseToken);
+        await this.complete(participantId, receipt.leaseToken);
+      }
+      this.queuedAtMillisecondsByParticipantId.delete(participantId);
+    } catch (error) {
+      this.dependencies.logger.warn("Participant greeting deadline settlement failed", {
+        errorName: error instanceof Error ? error.name : "UnknownError",
+        meetingId: this.dependencies.meetingId,
+        participantId,
+        reason: greetingDeadlineReason,
+      });
+    }
+  }
+
+  private async cancelExpiredAdmission(participantId: string): Promise<void> {
+    try {
+      await this.dependencies.configuration.coordinator.participantLeft?.(
+        this.dependencies.meetingId,
+        participantId,
+        this.nowMilliseconds(),
+      );
+    } catch (error) {
+      this.dependencies.logger.warn("Participant greeting deadline cancellation failed", {
+        errorName: error instanceof Error ? error.name : "UnknownError",
+        meetingId: this.dependencies.meetingId,
+        participantId,
+        reason: greetingDeadlineReason,
+      });
+    }
   }
 
   private async speak(
@@ -226,99 +386,28 @@ export class ParticipantGreetingBridge {
     const turnId = retryCount === 0
       ? `participant-greeting:${participantId}`
       : `participant-greeting:${participantId}:retry-${retryCount}`;
-    try {
-      const preparedCue = this.dependencies.configuration.greetings?.cues?.select({
-        locale: greeting.locale,
-        meetingId: this.dependencies.meetingId,
-        participantId,
-        speech: greeting.prompt,
-        voiceProfileId: this.dependencies.configuration.voiceProfileId,
-      }) ?? null;
-      const outcome = preparedCue === null
-        ? await this.dependencies.configuration.coordinator.handleProactiveTurn({
-            interruptible: false,
-            locale: greeting.locale,
-            literalSpeech: greeting.prompt,
-            meetingId: this.dependencies.meetingId,
-            nowMs: this.nowMilliseconds(),
-            prompt: greeting.prompt,
-            recordingId: this.dependencies.meetingId,
-            speakerId: participantId,
-            systemPrompt: exactGreetingSystemPrompt,
-            turnId,
-            voiceProfileId: this.dependencies.configuration.voiceProfileId,
-          })
-        : await this.dependencies.configuration.coordinator.playPreparedCue({
-            cueId: preparedCue.cueId,
-            interruptible: false,
-            locale: greeting.locale,
-            meetingId: this.dependencies.meetingId,
-            nowMs: this.nowMilliseconds(),
-            pcmChunks: preparedCue.pcmChunks,
-            playbackAttemptId: preparedCue.playbackAttemptId,
-            preemptive: false,
-            recordingId: this.dependencies.meetingId,
-            speakerId: participantId,
-            turnId,
-            voiceProfileId: this.dependencies.configuration.voiceProfileId,
-          });
-      if (outcome.status === "active" || outcome.status === "queued") {
-        const settlement = await this.dependencies.configuration.coordinator
-          .whenTurnPlaybackSettled(
-            this.dependencies.meetingId,
-            turnId,
-          );
-        if (settlement === "played") {
-          this.dependencies.logger.info("Participant greeting playback settled", {
-            greetingLocale: greeting.locale,
-            meetingId: this.dependencies.meetingId,
-            participantId,
-            participantNameStatus: this.profile(participantId) === undefined ? "unknown" : "known",
-            playbackMode: preparedCue === null ? "tts-fallback" : "prepared-cue",
-            observedJoinToPlaybackSettledMs: this.observedGreetingLatencyMilliseconds(
-              participantId,
-            ),
-            turnId,
-          });
-        }
-        return settlement;
-      }
-      return outcome.status;
-    } catch (error) {
-      this.dependencies.logger.warn("Participant greeting failed", {
-        errorName: error instanceof Error ? error.name : "UnknownError",
-        meetingId: this.dependencies.meetingId,
-        participantId,
-      });
-      return "failed";
-    }
+    return playParticipantGreeting({
+      configuration: this.dependencies.configuration,
+      greeting,
+      isNamed: this.profile(participantId) !== undefined,
+      logger: this.dependencies.logger,
+      meetingId: this.dependencies.meetingId,
+      nowMilliseconds: () => this.nowMilliseconds(),
+      observedLatencyMilliseconds: () =>
+        this.observedGreetingLatencyMilliseconds(participantId),
+      participantId,
+      shouldStop: () => this.shouldStopGreeting(participantId),
+      turnId,
+    });
   }
 
-  private profile(
-    participantId: string,
-  ): LiveParticipantGreetingProfile | undefined {
-    return this.dependencies.configuration.greetings?.profiles[participantId];
-  }
+  private profile(participantId: string) { return participantGreetingProfile(this.dependencies.configuration, participantId); }
 
-  private greeting(
-    participantId: string,
-  ): ResolvedParticipantGreeting | undefined {
-    const greetings = this.dependencies.configuration.greetings;
-    if (
-      greetings === undefined ||
-      greetings.excludedParticipantIds.includes(participantId)
-    ) {
-      return undefined;
-    }
-    const profile = this.profile(participantId);
-    if (profile === undefined) {
-      return greetings.defaultLocale === "ru"
-        ? { locale: "ru", prompt: "Привет!" }
-        : { locale: "en", prompt: "Hi!" };
-    }
-    return profile.greetingLocale === "ru"
-      ? { locale: "ru", prompt: `Привет, ${profile.spokenName}!` }
-      : { locale: "en", prompt: `Hi, ${profile.spokenName}!` };
+  private greeting(participantId: string): ResolvedParticipantGreeting | undefined {
+    return resolveParticipantGreeting(
+      this.dependencies.configuration,
+      participantId,
+    );
   }
 
   /** Re-reads mutable meeting state after asynchronous coordinator settlement. */

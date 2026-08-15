@@ -67,10 +67,10 @@ function orderedTracks(state: RecordingSpoolState): readonly StoredAuthoritative
       "authoritative recording contains duplicate track identities",
     );
   }
-  if (
-    state.actors !== null &&
-    tracks.some((track) => !state.actors?.some((actor) => actor.actorId === track.speakerId))
-  ) {
+  const actors = state.actors;
+  if (actors !== null && tracks.some((track) =>
+    !actors.some((actor) => actor.actorId === track.speakerId)
+  )) {
     throw new RecordingIngressError(
       "invalid-state",
       "authoritative track has no actor in the durable roster",
@@ -95,6 +95,9 @@ function createManifestRequest(
             kind: actor.kind,
           })),
         }),
+    ...(state.identityProvenance === null
+      ? {}
+      : { identityProvenance: { ...state.identityProvenance } }),
     channelId: state.channelId,
     endedAt: state.endedAt,
     guildId: state.guildId,
@@ -163,10 +166,11 @@ async function persistCompleted(
     finalEventDigest: state.finalEventDigest,
     finalEventId: state.finalEventId,
     guildId: state.guildId,
+    identityProvenance: state.identityProvenance,
     lifecycleSchemaVersion: state.lifecycleSchemaVersion,
     recording,
     recordingId: state.recordingId,
-    schemaVersion: 3,
+    schemaVersion: 4,
   };
   await runtime.spool.writeCompleted(completed);
   await runtime.cleanupAfterSuccess(state.recordingId);

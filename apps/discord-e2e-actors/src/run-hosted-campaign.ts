@@ -239,6 +239,9 @@ export async function createProductionHostedCampaignPorts(
   return new HostedCampaignProcessAdapter({
     artifactStore: store,
     distRoot: dirname(fileURLToPath(import.meta.url)),
+    ...(controlPaths.releaseBindingPath === undefined
+      ? {}
+      : { releaseBindingPath: controlPaths.releaseBindingPath }),
     trustedRuntimeEnvironment,
   });
 }

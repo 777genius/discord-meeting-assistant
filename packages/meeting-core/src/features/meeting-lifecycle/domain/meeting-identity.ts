@@ -12,6 +12,16 @@ export interface MeetingActorSnapshot {
   readonly kind: MeetingActorKind;
 }
 
+export interface MeetingIdentityProvenanceSnapshot {
+  readonly actorObservationState: "consistent" | "conflicted";
+  readonly actorSemanticsVersion: number;
+  readonly producerCapabilityId: string;
+  readonly producerRevision: string;
+  readonly rosterState: "sealed" | "unsealed";
+}
+
+const immutableProducerRevision = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
+
 function compareOpaqueIds(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
@@ -35,7 +45,8 @@ export function normalizeActors(
     return null;
   }
   const normalized = actors.map((actor) => {
-    if (actor.kind !== "human" && actor.kind !== "automation" && actor.kind !== "unknown") {
+    const kind: unknown = actor.kind;
+    if (kind !== "human" && kind !== "automation" && kind !== "unknown") {
       throw new DomainInvariantError(
         "INVALID_ACTOR_KIND",
         "meeting actor kind must be human, automation, or unknown",
@@ -43,7 +54,7 @@ export function normalizeActors(
     }
     return Object.freeze({
       actorId: requireNonEmpty(actor.actorId, "meeting.actors.actorId"),
-      kind: actor.kind,
+      kind,
     });
   }).toSorted((left, right) => compareOpaqueIds(left.actorId, right.actorId));
   for (let index = 1; index < normalized.length; index += 1) {
@@ -59,4 +70,87 @@ export function normalizeActors(
     }
   }
   return Object.freeze(normalized);
+}
+
+export function normalizeLifecycleGeneration(
+  generation: number | null | undefined,
+): number | null {
+  if (generation === null || generation === undefined) {
+    return null;
+  }
+  if (!Number.isSafeInteger(generation) || generation < 1) {
+    throw new DomainInvariantError(
+      "INVALID_SNAPSHOT",
+      "meeting lifecycle generation must be a positive safe integer",
+    );
+  }
+  return generation;
+}
+
+export function normalizeIdentityProvenance(
+  provenance: MeetingIdentityProvenanceSnapshot | null | undefined,
+  lifecycleGeneration: number | null,
+): MeetingIdentityProvenanceSnapshot | null {
+  if (provenance === null || provenance === undefined) {
+    return null;
+  }
+  const actorObservationState: unknown = provenance.actorObservationState;
+  const rosterState: unknown = provenance.rosterState;
+  if (
+    actorObservationState !== "consistent" &&
+    actorObservationState !== "conflicted"
+  ) {
+    throw new DomainInvariantError(
+      "INVALID_SNAPSHOT",
+      "meeting actor observation state is invalid",
+    );
+  }
+  if (rosterState !== "sealed" && rosterState !== "unsealed") {
+    throw new DomainInvariantError(
+      "INVALID_SNAPSHOT",
+      "meeting roster state is invalid",
+    );
+  }
+  if (lifecycleGeneration === null || lifecycleGeneration < 3) {
+    throw new DomainInvariantError(
+      "INVALID_SNAPSHOT",
+      "producer capability provenance requires lifecycle generation 3 or newer",
+    );
+  }
+  if (
+    !Number.isSafeInteger(provenance.actorSemanticsVersion) ||
+    provenance.actorSemanticsVersion < 1
+  ) {
+    throw new DomainInvariantError(
+      "INVALID_SNAPSHOT",
+      "meeting actor semantics version must be a positive safe integer",
+    );
+  }
+  const producerCapabilityId: unknown = provenance.producerCapabilityId;
+  if (
+    typeof producerCapabilityId !== "string" ||
+    producerCapabilityId.trim().length === 0 ||
+    producerCapabilityId.length > 128
+  ) {
+    throw new DomainInvariantError(
+      "INVALID_SNAPSHOT",
+      "meeting producer capability ID must be a bounded non-empty string",
+    );
+  }
+  const producerRevision: unknown = provenance.producerRevision;
+  if (typeof producerRevision !== "string" || !immutableProducerRevision.test(producerRevision)) {
+    throw new DomainInvariantError(
+      "INVALID_SNAPSHOT",
+      "meeting producer revision must be an immutable lowercase hexadecimal revision",
+    );
+  }
+  return Object.freeze({
+    actorObservationState,
+    actorSemanticsVersion: provenance.actorSemanticsVersion,
+    // Capability identity is compared byte-for-byte by Meeting Knowledge. Do
+    // not trim an unsupported value into the trusted capability.
+    producerCapabilityId,
+    producerRevision,
+    rosterState,
+  });
 }

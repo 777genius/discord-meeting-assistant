@@ -22,11 +22,6 @@ import {
   type StoredAuthoritativeTrack,
 } from "./spool.js";
 
-export {
-  finalizeAuthoritative,
-  type AuthoritativeReadyEvent,
-} from "./recording-ingress-authoritative-finalization.js";
-
 interface AuthoritativeTrackUpload {
   readonly identity: {
     readonly channelId: string;

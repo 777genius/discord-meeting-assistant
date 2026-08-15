@@ -17,6 +17,12 @@ const baseEvent = {
   channelId: "1533224474609057794",
   occurredAt: "2026-08-02T20:00:00.000Z",
 } as const;
+const trustedProducer = {
+  actorObservationState: "consistent",
+  actorSemanticsVersion: 1,
+  producerCapabilityId: "meeting.lifecycle.sealed-actor-roster.v1",
+  producerRevision: "0123456789abcdef0123456789abcdef01234567",
+} as const;
 
 describe("Craig gateway contracts", () => {
   it("accepts a versioned artifact-ready event", () => {
@@ -81,6 +87,93 @@ describe("Craig gateway contracts", () => {
       participantIds: ["1533224474609057795"],
       schemaVersion: 2,
       type: "meeting.started",
+    })).toThrow();
+  });
+
+  it("accepts v3 lifecycle facts with exact producer and roster evidence", () => {
+    const actors = [{ actorId: "1533224474609057795", kind: "human" }] as const;
+    expect(parseCraigLifecycleEvent({
+      ...baseEvent,
+      ...trustedProducer,
+      actors,
+      rosterState: "unsealed",
+      schemaVersion: 3,
+      type: "meeting.started",
+    })).toMatchObject({
+      ...trustedProducer,
+      actors,
+      rosterState: "unsealed",
+      schemaVersion: 3,
+    });
+    expect(parseCraigLifecycleEvent({
+      ...baseEvent,
+      ...trustedProducer,
+      actors,
+      endedAt: "2026-08-02T20:30:00.000Z",
+      rosterState: "sealed",
+      schemaVersion: 3,
+      sourceFilesChecksumSha256: "a".repeat(64),
+      trackCount: 1,
+      type: "recording.authoritative_ready",
+    })).toMatchObject({ rosterState: "sealed", schemaVersion: 3 });
+  });
+
+  it("enforces unsealed start and sealed authoritative-ready semantics", () => {
+    const actors = [{ actorId: "1533224474609057795", kind: "human" }] as const;
+    expect(() => parseCraigLifecycleEvent({
+      ...baseEvent,
+      ...trustedProducer,
+      actors,
+      rosterState: "sealed",
+      schemaVersion: 3,
+      type: "meeting.started",
+    })).toThrow();
+    expect(() => parseCraigLifecycleEvent({
+      ...baseEvent,
+      ...trustedProducer,
+      actors,
+      endedAt: "2026-08-02T20:30:00.000Z",
+      rosterState: "unsealed",
+      schemaVersion: 3,
+      sourceFilesChecksumSha256: "a".repeat(64),
+      trackCount: 1,
+      type: "recording.authoritative_ready",
+    })).toThrow();
+  });
+
+  it("parses unknown bounded v3 capabilities for recording while trust stays a consumer decision", () => {
+    expect(parseCraigLifecycleEvent({
+      ...baseEvent,
+      ...trustedProducer,
+      actors: [],
+      producerCapabilityId: "meeting.lifecycle.future.v99",
+      rosterState: "unsealed",
+      schemaVersion: 3,
+      type: "meeting.started",
+    })).toMatchObject({
+      producerCapabilityId: "meeting.lifecycle.future.v99",
+      schemaVersion: 3,
+    });
+  });
+
+  it("rejects capability-less or partially attested v3 events", () => {
+    const complete = {
+      ...baseEvent,
+      ...trustedProducer,
+      actors: [],
+      rosterState: "unsealed",
+      schemaVersion: 3,
+      type: "meeting.started",
+    } as const;
+    const { producerRevision: _producerRevision, ...missingRevision } = complete;
+    expect(() => parseCraigLifecycleEvent(missingRevision)).toThrow();
+    expect(() => parseCraigLifecycleEvent({
+      ...complete,
+      actorSemanticsVersion: 0,
+    })).toThrow();
+    expect(() => parseCraigLifecycleEvent({
+      ...complete,
+      producerRevision: "not-an-immutable-revision",
     })).toThrow();
   });
 

@@ -571,9 +571,9 @@ describe("hosted campaign finite process completion", () => {
     // Arm the caller deadline only after the finite parent had enough time to
     // exit; the deliberately surviving grandchild still needs the adapter's
     // separate teardown budget.
-    await new Promise((resolve) => {setTimeout(resolve, 20);});
+    await new Promise((resolve) => {setTimeout(resolve, 100);});
     const completionDeadline = {
-      deadlineEpochMilliseconds: Date.now() + 15,
+      deadlineEpochMilliseconds: Date.now() + 25,
       signal: new AbortController().signal,
     };
     await expect(processAdapter.awaitChildCompletion(handle, executable, completionDeadline))

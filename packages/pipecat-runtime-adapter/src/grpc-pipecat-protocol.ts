@@ -15,6 +15,7 @@ import type { RawMessage } from "./grpc-pipecat-types.js";
 
 const cancellationReasons = {
   "barge-in": "CONVERSATION_CANCELLATION_REASON_BARGE_IN",
+  disconnected: "CONVERSATION_CANCELLATION_REASON_RUNTIME_SHUTDOWN",
   "meeting-ended": "CONVERSATION_CANCELLATION_REASON_MEETING_ENDED",
   "playback-failed": "CONVERSATION_CANCELLATION_REASON_PLAYBACK_FAILED",
   "runtime-shutdown": "CONVERSATION_CANCELLATION_REASON_RUNTIME_SHUTDOWN",

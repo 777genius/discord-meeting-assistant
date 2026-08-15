@@ -176,8 +176,16 @@ export class PlatformRecordingIngress {
       source: result.source,
     } as const;
     const meeting = result.actors === null
-      ? Meeting.recordLegacy(recordedMeeting)
-      : Meeting.record({ ...recordedMeeting, actors: result.actors });
+      ? Meeting.recordLegacy({
+          ...recordedMeeting,
+          lifecycleGeneration: result.lifecycleGeneration,
+        })
+      : Meeting.record({
+          ...recordedMeeting,
+          actors: result.actors,
+          identityProvenance: result.identityProvenance,
+          lifecycleGeneration: result.lifecycleGeneration,
+        });
     await this.dependencies.outbox.recordAndSchedule(meeting.toSnapshot(), 0);
     const dispatch = await this.dependencies.dispatcher.dispatchPending();
     this.dependencies.logger.info(
@@ -239,18 +247,67 @@ export class PlatformRecordingIngress {
         publicationTarget: {
           resolve: () => this.resolvePublicationTarget(event.source),
         },
+        roomId: event.source.roomId,
+        ...(event.schemaVersion !== 3
+          ? {}
+          : {
+              memoryIdentity: {
+                actors: event.actors,
+                identityProvenance: {
+                  actorObservationState: event.actorObservationState,
+                  actorSemanticsVersion: event.actorSemanticsVersion,
+                  producerCapabilityId: event.producerCapabilityId,
+                  producerRevision: event.producerRevision,
+                  rosterState: event.rosterState,
+                },
+                lifecycleGeneration: 3 as const,
+                roomId: event.source.roomId,
+                scopeId: event.source.scopeId,
+              },
+            }),
         type: event.type,
       };
     }
     if (event.type === "participant.joined" || event.type === "participant.left") {
-      if (event.schemaVersion === 2 && event.actor.kind !== "human") {
+      if (event.schemaVersion !== 1 && event.actor.kind !== "human") {
         return null;
       }
       return {
         ...common,
+        ...(event.schemaVersion !== 3
+          ? {}
+          : {
+              memoryHumanObservation: {
+                actorId: event.actor.actorId,
+                producerRevision: event.producerRevision,
+              },
+            }),
         participantId: event.schemaVersion === 1
           ? event.participantId
           : event.actor.actorId,
+        type: event.type,
+      };
+    }
+    if (event.type === "recording.authoritative_ready") {
+      return {
+        ...common,
+        ...(event.schemaVersion !== 3
+          ? {}
+          : {
+              memoryIdentity: {
+                actors: event.actors,
+                identityProvenance: {
+                  actorObservationState: event.actorObservationState,
+                  actorSemanticsVersion: event.actorSemanticsVersion,
+                  producerCapabilityId: event.producerCapabilityId,
+                  producerRevision: event.producerRevision,
+                  rosterState: event.rosterState,
+                },
+                lifecycleGeneration: 3 as const,
+                roomId: event.source.roomId,
+                scopeId: event.source.scopeId,
+              },
+            }),
         type: event.type,
       };
     }

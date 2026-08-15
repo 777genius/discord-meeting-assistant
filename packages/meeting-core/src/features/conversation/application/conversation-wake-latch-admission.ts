@@ -186,11 +186,20 @@ export class ConversationWakeLatchAdmission {
       speakerId: input.speakerId,
       turnId: input.turnId,
     });
+    const latency = conversationLatencyContext(input);
     return this.admitPrepared(state, {
+      groundedKnowledgeRequest: {
+        locale: input.locale,
+        meetingId: input.meetingId,
+        participantId: input.speakerId,
+        question: prompt,
+        roomId: input.roomId,
+      },
       interruptible: true,
       preemptive: false,
       request: {
         idempotencyKey: conversationIdempotencyKey(input),
+        ...(latency === undefined ? {} : { latency }),
         locale: input.locale,
         meetingId: input.meetingId,
         prompt,
@@ -256,6 +265,12 @@ export class ConversationWakeLatchAdmission {
         "prepared conversation cue must contain PCM",
       );
     }
+    if (input.assetSha256 !== undefined && !/^[a-f\d]{64}$/u.test(input.assetSha256)) {
+      throw new DomainInvariantError(
+        "INVALID_LIFECYCLE_STATE",
+        "prepared conversation cue asset digest must be lowercase SHA-256",
+      );
+    }
     const pcmChunks = input.pcmChunks.map((chunk) => {
       if (chunk.byteLength === 0 || chunk.byteLength % 2 !== 0) {
         throw new DomainInvariantError(
@@ -267,6 +282,7 @@ export class ConversationWakeLatchAdmission {
     });
     return this.admitPrepared(state, {
       cue: {
+        ...(input.assetSha256 === undefined ? {} : { assetSha256: input.assetSha256 }),
         cueId: input.cueId,
         pcmChunks: Object.freeze(pcmChunks),
         playbackAttemptId: input.playbackAttemptId,
