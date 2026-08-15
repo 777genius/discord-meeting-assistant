@@ -65,6 +65,11 @@ export interface RealServiceQualificationMetrics {
   readonly focusedQuestionCount: number;
   readonly focusedRecallAt: 5;
   readonly remoteCleanupVerified: true;
+  readonly service: {
+    readonly apiVersion: string;
+    readonly enabledAdapters: readonly string[];
+    readonly name: string;
+  };
   readonly turnCount: number;
 }
 
@@ -96,6 +101,7 @@ export async function runRealServiceQualification(
 
   let boundedModelInput: RealServiceQualificationMetrics["boundedModelInput"] | null = null;
   let exhaustiveMetrics: RealServiceQualificationMetrics["exhaustive"] | null = null;
+  let service: RealServiceQualificationMetrics["service"] | null = null;
   let cleanupRequested = false;
   try {
     let capabilities: Awaited<ReturnType<
@@ -117,6 +123,18 @@ export async function runRealServiceQualification(
       supports_search: true,
       supports_upsert: true,
     });
+    if (
+      typeof capabilities.api_version !== "string" ||
+      typeof capabilities.service_name !== "string" ||
+      !Array.isArray(capabilities.enabled_adapters)
+    ) {
+      throw new Error("real Infinity Context capabilities omitted service identity");
+    }
+    service = {
+      apiVersion: capabilities.api_version,
+      enabledAdapters: Object.freeze([...capabilities.enabled_adapters]),
+      name: capabilities.service_name,
+    };
 
     await expect(worker.executeOnce({ indexingEnabled: true })).resolves.toMatchObject({
       operation: "index",
@@ -235,6 +253,7 @@ export async function runRealServiceQualification(
     focusedQuestionCount: qualificationQuestions.focused.length,
     focusedRecallAt: 5,
     remoteCleanupVerified: true,
+    service,
     turnCount: QUALIFICATION_CORPUS_TURN_COUNT,
   };
 }

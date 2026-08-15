@@ -12,7 +12,8 @@
     "prepare:official-sdk": "node ../../vendor/infinity-context/prepare-official-sdk.mjs",
     "test": "pnpm run prepare:official-sdk && pnpm run test:prepared",
     "test:real-service": "INFINITY_CONTEXT_REAL_E2E=1 pnpm run prepare:official-sdk && INFINITY_CONTEXT_REAL_E2E=1 vitest run test/infinity-context-real-service.e2e.test.ts",
-    "test:prepared": "vitest run",
+    "test:semantic-service": "INFINITY_CONTEXT_SEMANTIC_E2E=1 pnpm run prepare:official-sdk && INFINITY_CONTEXT_SEMANTIC_E2E=1 vitest run test/infinity-context-semantic-service.e2e.test.ts",
+    "test:prepared": "vitest run --no-file-parallelism",
     "typecheck": "pnpm run prepare:official-sdk && pnpm run typecheck:prepared",
     "typecheck:prepared": "tsc --project tsconfig.json --noEmit --pretty false"
   },

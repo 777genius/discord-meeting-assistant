@@ -60,7 +60,7 @@ describe("Infinity Context combined qualification corpus contract", () => {
       .toSorted((left, right) => left.href.localeCompare(right.href));
     // Adding a production source expands the reviewed transport boundary and
     // must fail this contract until the exhaustive inventory is re-attested.
-    expect(productionPaths).toHaveLength(8);
+    expect(productionPaths).toHaveLength(9);
     const sourceFiles = productionPaths.map((path) => readFileSync(path, "utf8"));
     const source = sourceFiles.join("\n");
 
@@ -79,6 +79,10 @@ describe("Infinity Context combined qualification corpus contract", () => {
       new URL("./infinity-context-real-service.e2e.test.ts", import.meta.url),
       "utf8",
     );
+    const semanticEntrypoint = readFileSync(
+      new URL("./infinity-context-semantic-service.e2e.test.ts", import.meta.url),
+      "utf8",
+    );
 
     expect(helper).toContain("new InfinityContextHistoricalMemoryAdapter({");
     expect(helper).not.toContain('from "@infinity-context/sdk"');
@@ -86,5 +90,8 @@ describe("Infinity Context combined qualification corpus contract", () => {
     expect(helper).not.toMatch(/\bfetch\s*\(/u);
     expect(`${helper}\n${entrypoint}`).not.toMatch(/writeFile|qualificationManifest/iu);
     expect(entrypoint).toContain("deterministic-mock-non-production-v1");
+    expect(semanticEntrypoint).toContain("createInfinitySemanticQualificationManifest");
+    expect(semanticEntrypoint).not.toMatch(/\btransport\s*:/u);
+    expect(semanticEntrypoint).not.toMatch(/\bfetch\s*\(/u);
   });
 });

@@ -35,6 +35,28 @@ Production indexing, serving, and deletion reconciliation additionally remain
 fail-closed unless the exact retained live-service qualification manifest is
 configured.
 
+Production semantic retrieval has a separate qualification command. It is
+destructive only within an operator-confirmed disposable service and deletes
+its synthetic 421-turn corpus before returning:
+
+```bash
+INFINITY_CONTEXT_SEMANTIC_E2E_DISPOSABLE=YES_DELETE_ALL_TEST_DATA \
+INFINITY_CONTEXT_SEMANTIC_E2E_URL=https://disposable-infinity.example/ \
+INFINITY_CONTEXT_SEMANTIC_E2E_TOKEN=... \
+INFINITY_CONTEXT_SEMANTIC_E2E_EMBEDDING_PROFILE=reviewed-real-profile-v1 \
+INFINITY_CONTEXT_SEMANTIC_E2E_EMBEDDING_PROFILE_DIGEST_SHA256=sha256:... \
+INFINITY_CONTEXT_SEMANTIC_E2E_SERVICE_REVISION=0123456789abcdef0123456789abcdef01234567 \
+MEETING_KNOWLEDGE_RELEASE_REVISION=0123456789abcdef0123456789abcdef01234567 \
+pnpm --filter @discord-meeting/infinity-context-adapter run test:semantic-service
+```
+
+The command refuses deterministic, mock, or non-production embedding profiles
+and emits one
+`meeting_knowledge.infinity_semantic_qualification.v1` JSON manifest only after
+recall@5 is 1.0 for all seven frozen positional questions and remote absence is
+verified. Capture, hash, and review that exact line before pinning its digest in
+`INFINITY_CONTEXT_ACTIVATION`; command success alone does not activate search.
+
 The in-memory `DisposableInfinityEndpoint` under the adapter's test directory
 is only an official-SDK transport contract fixture. Its results are never live
 qualification evidence and can never populate the retained qualification
