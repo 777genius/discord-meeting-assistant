@@ -25,7 +25,9 @@ const logger: LiveRuntimeLogger = {
   debug: () => {}, error: () => {}, info: () => {}, warn: () => {},
 };
 const timer: LiveRuntimeTimer = {
-  cancel: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+  cancel: (handle) => {
+    clearTimeout(handle as ReturnType<typeof setTimeout>);
+  },
   repeat: (intervalMs, callback) => setInterval(callback, intervalMs),
   schedule: (delayMs, callback) => setTimeout(callback, delayMs),
 };

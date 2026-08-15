@@ -1,10 +1,14 @@
+import { createHash } from "node:crypto";
+
 import {
   startDisposableInfinityHttpService,
   type DisposableInfinityHttpService,
 } from "@discord-meeting/infinity-context-adapter/test-support";
 import {
+  AnswerGroundedMeetingQuestion,
   GroundedMeetingAnswer,
   HistoricalExhaustiveMemoryRetrieval,
+  LiveFinalizedMemoryWorker,
   QuestionBinding,
   SameRoomFocusedMemoryRetrieval,
   createExhaustiveCoverageGroundingPlan,
@@ -12,10 +16,15 @@ import {
   type FocusedMemoryReference,
   type HistoricalAuthorizationPort,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
+import { LiveMeeting } from "@discord-meeting/meeting-core/live-meeting";
 import type { MeetingSnapshot } from "@discord-meeting/meeting-core/meeting-lifecycle";
 import {
   PostgresFinalReplyEvidence,
   PostgresFocusedMemoryRetrieval,
+  PostgresLiveFinalizedMemoryLifecycle,
+  PostgresLiveFinalizedMemoryQuery,
+  PostgresLiveFinalizedMemoryStore,
+  PostgresLiveMeetingRepository,
   PostgresMeetingRepository,
   PostgresMigrationRunner,
   canonicalFinalReplyTurnHash,
@@ -47,6 +56,8 @@ function focusedReferenceKey(reference: FocusedMemoryReference): string {
 import {
   type PlatformHistoricalMemoryRuntime,
 } from "../src/composition/historical-memory.js";
+import { MeetingKnowledgeGroundedAnswerAcl } from
+  "../src/adapters/outbound/meeting-knowledge-grounded-answer-acl.js";
 import { localFinalReplyPolicy } from "../src/composition/meeting-knowledge.js";
 import {
   allowOnlySyntheticRoom,
@@ -66,6 +77,7 @@ import {
   roomId,
   scopeId,
 } from "./meeting-knowledge-production-composition-fixtures.js";
+import { proveComposedGroundedVoice } from "./meeting-knowledge-composed-voice-e2e.js";
 
 const postgresImage = "postgres:18.4-alpine@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15";
 const postgresPort = 5_432;
@@ -144,6 +156,11 @@ describe("Meeting Knowledge mandatory PostgreSQL qualification", () => {
         pool,
         runtime,
       });
+      await qualifyComposedGroundedVoice({
+        current: indexed.current,
+        pool,
+        runtime,
+      });
       await runtime.close();
       runtime = undefined;
       await qualifySupersessionAndDeletion(
@@ -157,7 +174,7 @@ describe("Meeting Knowledge mandatory PostgreSQL qualification", () => {
       await runtime?.close();
       await infinity.close();
     }
-  }, 180_000);
+  }, 600_000);
 });
 
 type FocusedHistoricalRetrieval = ReturnType<
@@ -187,6 +204,7 @@ async function indexAndRestart(
   const firstRuntime = requiredHistoricalRuntime(pool, infinity, true, true);
   await firstRuntime.assertReady();
   await firstRuntime.start();
+  await waitForHistoricalRows(pool, ({ state }) => state === "applied", 2);
   await firstRuntime.close();
   const initialRows = await historicalRows(pool);
   expect(initialRows.filter(({ state }) => state === "applied")).toHaveLength(2);
@@ -198,8 +216,33 @@ async function indexAndRestart(
   const runtime = requiredHistoricalRuntime(pool, infinity, true, true);
   await runtime.assertReady();
   await runtime.start();
+  // The remaining qualification is intentionally read-only. Stop the periodic
+  // reconciler so a health probe cannot race a deliberately CPU-heavy search
+  // and transiently revoke the already-qualified provider during this test.
+  await runtime.close();
   expect(infinity.endpoint.documentCount()).toBe(indexedAfterFirstPass);
   return { current, historical, repository, runtime };
+}
+
+async function waitForHistoricalRows(
+  pool: Pool,
+  predicate: (row: { readonly meeting_id: string; readonly state: string }) => boolean,
+  expectedCount: number,
+): Promise<void> {
+  const deadline = Date.now() + 30_000;
+  let rows = await historicalRows(pool);
+  while (Date.now() < deadline) {
+    if (rows.filter(predicate).length === expectedCount) {
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 50);
+    });
+    rows = await historicalRows(pool);
+  }
+  throw new Error(
+    `historical reconciliation did not settle: ${JSON.stringify(rows)}`,
+  );
 }
 
 async function qualifyFocusedRetrieval(
@@ -506,6 +549,217 @@ async function qualifyFocusedAndExhaustiveGeneration(input: {
     .resolves.toMatchObject({ status: "current" });
   expect(await checkpointAttempts(input.pool)).toEqual(attemptsBeforeReplay);
   expect(generationInvocations).toBe(2);
+}
+
+async function qualifyComposedGroundedVoice(input: {
+  readonly current: MeetingSnapshot;
+  readonly pool: Pool;
+  readonly runtime: PlatformHistoricalMemoryRuntime;
+}): Promise<void> {
+  if (input.current.transcript === null) {
+    throw new Error("synthetic current meeting has no transcript for live memory");
+  }
+  const participantId = "human-current";
+  const liveMeetings = new PostgresLiveMeetingRepository(input.pool);
+  await liveMeetings.save(LiveMeeting.start({
+    meetingId: currentMeetingId,
+    publicationTargetId: resultsContainerId,
+    startedAtMs: 0,
+  }).toSnapshot(), null);
+  for (const turn of input.current.transcript.turns) {
+    await liveMeetings.appendFinalizedTurn(currentMeetingId, turn);
+  }
+  const lifecycle = new PostgresLiveFinalizedMemoryLifecycle(input.pool);
+  await expect(lifecycle.registerMeeting({
+    actors: [{ actorId: participantId, kind: "human" }],
+    identityProvenance: {
+      actorObservationState: "consistent",
+      actorSemanticsVersion: 1,
+      producerCapabilityId: "meeting.lifecycle.sealed-actor-roster.v1",
+      producerRevision: "f".repeat(40),
+      rosterState: "unsealed",
+    },
+    lifecycleGeneration: 3,
+    meetingId: currentMeetingId,
+    roomId,
+    scopeId,
+  })).resolves.toBe("accepted");
+  const liveWorker = new LiveFinalizedMemoryWorker(
+    new PostgresLiveFinalizedMemoryStore(input.pool),
+    { hash: canonicalFinalReplyTurnHash },
+  );
+  for (;;) {
+    const projected = await liveWorker.executeOnce({ meetingId: currentMeetingId });
+    if (projected.status === "idle") {
+      break;
+    }
+    expect(projected.status).toBe("applied");
+  }
+  const live = new PostgresLiveFinalizedMemoryQuery(input.pool);
+  await expect(live.resolveContext({
+    meetingId: currentMeetingId,
+    requesterActorId: participantId,
+    roomId,
+  })).resolves.toMatchObject({
+    appliedGeneration: input.current.transcript.turns.length,
+    sourceGeneration: input.current.transcript.turns.length,
+  });
+
+  const authorization = allowOnlySyntheticRoom();
+  // Avoid treating the fixture label "current" as a semantic query term: every
+  // ordinary current-meeting turn contains that word, which deliberately makes
+  // the bounded hot-tail selector fall back to full-transcript coverage.
+  const question = "how does ANCHOR connect to PINE-GOLF?";
+  const liveSearch = await live.searchHotTail({
+    maximumCandidates: 24,
+    meetingId: currentMeetingId,
+    neighborTurns: 2,
+    question,
+    requesterActorId: participantId,
+    roomId,
+    scopeId,
+  });
+  expect(liveSearch).toMatchObject({ status: "current" });
+  if (liveSearch.status !== "current") {
+    throw new Error(`live finalized search was ${liveSearch.status}`);
+  }
+  const liveEvidence = await live.rehydrateHotTail({
+    candidates: liveSearch.candidates,
+    expectedGeneration: liveSearch.context.sourceGeneration,
+    meetingId: currentMeetingId,
+    requesterActorId: participantId,
+    roomId,
+    scopeId,
+  });
+  expect(liveEvidence).toMatchObject({ status: "current" });
+  if (liveEvidence.status === "current") {
+    expect(liveEvidence.turns.map(({ text }) => text)).toContain(
+      "CURRENT-ANCHOR confirms Project Atlas is active and connects to PINE-GOLF.",
+    );
+  }
+  let validatedAnswers = 0;
+  let qualifiedModelCalls = 0;
+  let lastGenerationMarkers = { current: false, historical: false };
+  let lastCurrentTexts: readonly string[] = [];
+  const groundedAnswer = new GroundedMeetingAnswer({
+    generate: async (request) => {
+      qualifiedModelCalls += 1;
+      const currentEvidence = request.plan.evidence.find(({ source, text }) =>
+        source?.meetingId === currentMeetingId && text.includes("CURRENT-ANCHOR")
+      );
+      const historicalEvidence = request.plan.evidence.find(({ source, text }) =>
+        source?.meetingId === historicalMeetingId && text.includes("PINE-GOLF")
+      );
+      lastCurrentTexts = request.plan.evidence
+        .filter(({ source }) => source?.meetingId === currentMeetingId)
+        .map(({ text }) => text);
+      lastGenerationMarkers = {
+        current: currentEvidence !== undefined,
+        historical: historicalEvidence !== undefined,
+      };
+      return {
+        answer: {
+          claims: [{
+            evidenceIds: [currentEvidence, historicalEvidence]
+              .filter((evidence) => evidence !== undefined)
+              .map(({ evidenceId }) => evidenceId),
+            text: "CURRENT-ANCHOR links Project Atlas to historical PINE-GOLF evidence.",
+          }],
+          locale: "en" as const,
+          status: "answered" as const,
+        },
+        status: "completed" as const,
+      };
+    },
+    measure: async (request) => ({
+      inputTokens: Math.ceil(JSON.stringify(request).length / 4),
+      requestBytes: new TextEncoder().encode(JSON.stringify(request)).byteLength,
+      runtimeProfile: "qualified-deterministic-composed-grounding.v1",
+    }),
+  }, localFinalReplyPolicy.groundingSafety);
+  const published = new AnswerGroundedMeetingQuestion({
+    answers: groundedAnswer,
+    authorization,
+    focusedHistorical: input.runtime.createFocusedRetrieval(authorization),
+    historicalSearchEnabled: () => input.runtime.searchEnabled(),
+    historicalServingAuthorized: () => input.runtime.servingAuthorized(),
+    ids: {
+      digest: (namespace, parts) => createHash("sha256")
+        .update(JSON.stringify([namespace, ...parts]), "utf8")
+        .digest("hex"),
+    },
+    live,
+    turnHashes: { hash: canonicalFinalReplyTurnHash },
+  });
+  const directAnswer = await published.execute({
+    activeParticipantId: participantId,
+    authorizationPrincipalRef: "synthetic-principal",
+    locale: "en-US",
+    meetingId: currentMeetingId,
+    question,
+    roomId,
+  }, { signal: new AbortController().signal });
+  expect(lastCurrentTexts).toContain(
+    "CURRENT-ANCHOR confirms Project Atlas is active and connects to PINE-GOLF.",
+  );
+  expect(lastGenerationMarkers).toEqual({ current: true, historical: true });
+  expect(directAnswer).toMatchObject({ status: "answered" });
+  if (directAnswer.status !== "answered") {
+    throw new Error(`composed grounded answer was ${directAnswer.status}`);
+  }
+  await expect(published.recheckPlaybackAuthority({
+    activeParticipantId: participantId,
+    authorizationPrincipalRef: "synthetic-principal",
+    citationTurnIds: directAnswer.answer.citations.map(({ turnId }) => turnId),
+    evidenceEpoch: directAnswer.answer.evidenceEpoch,
+    knowledgeEpoch: directAnswer.answer.knowledgeEpoch,
+    locale: "en-US",
+    meetingId: currentMeetingId,
+    question,
+    roomId,
+  }, { signal: new AbortController().signal })).resolves.toEqual({
+    schemaVersion: 1,
+    status: "current",
+  });
+  qualifiedModelCalls = 0;
+  const playbackAuthorityResults: unknown[] = [];
+  const groundedAnswers = new MeetingKnowledgeGroundedAnswerAcl({
+    execute: async (request, options) => {
+      const result = await published.execute({
+        ...request,
+        authorizationPrincipalRef: "synthetic-principal",
+      }, options);
+      if (result.status === "answered") {
+        validatedAnswers += 1;
+      }
+      return result;
+    },
+    recheckPlaybackAuthority: async (request, options) => {
+      const result = await published.recheckPlaybackAuthority({
+        ...request,
+        authorizationPrincipalRef: "synthetic-principal",
+      }, options);
+      playbackAuthorityResults.push(result);
+      return result;
+    },
+  });
+  try {
+    await proveComposedGroundedVoice({
+      groundedAnswers,
+      meetingId: currentMeetingId,
+      participantId,
+      question,
+      roomId,
+      validatedAnswerCount: () => validatedAnswers,
+    });
+  } catch (error) {
+    throw new Error(
+      `composed voice failed after playback authority results ${JSON.stringify(playbackAuthorityResults)}`,
+      { cause: error },
+    );
+  }
+  expect(validatedAnswers).toBe(2);
+  expect(qualifiedModelCalls).toBe(2);
 }
 
 async function qualifySupersessionAndDeletion(

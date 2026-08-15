@@ -132,7 +132,9 @@ it("retains quoted finalized farewells without producing synthetic playback", as
   const firstBatch = packets();
   firstBatch.packets[0] = { ...firstBatch.packets[0]!, relativeTimeMs: 0 };
   await runtime.acceptVoiceBatch(firstBatch);
-  await vi.waitFor(() => expect(transcriber.requests).toHaveLength(1));
+  await vi.waitFor(() => {
+    expect(transcriber.requests).toHaveLength(1);
+  });
   const request = transcriber.requests[0];
   if (request === undefined) {
     throw new Error("controlled transcription session did not open");
@@ -155,7 +157,9 @@ it("retains quoted finalized farewells without producing synthetic playback", as
       text,
     });
   }
-  await vi.waitFor(() => expect(meetings.finalizedTurns).toHaveLength(quotedTurns.length));
+  await vi.waitFor(() => {
+    expect(meetings.finalizedTurns).toHaveLength(quotedTurns.length);
+  });
   await vi.advanceTimersByTimeAsync(1_000);
 
   expect(meetings.finalizedTurns.map(({ text }) => text)).toEqual(quotedTurns);

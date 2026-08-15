@@ -55,13 +55,13 @@ export function buildSubscriptionRuntimeKnowledgeAnswerRequest(
   options: KnowledgeAnswerRequestOptions,
 ): SubscriptionRuntimeAgentTaskRequest {
   validateOptions(options);
+  const planMode = request.plan.mode as string;
   if (
     request.plan.authorityGeneration !== request.binding.memoryGeneration ||
     request.plan.evidence.length > 256 ||
-    (request.plan.mode !== "focused_retrieval" &&
-      request.plan.mode !== "exhaustive_coverage") ||
-    (request.plan.mode === "focused_retrieval" && request.plan.evidence.length < 1) ||
-    (request.plan.mode === "exhaustive_coverage" &&
+    (planMode !== "focused_retrieval" && planMode !== "exhaustive_coverage") ||
+    (planMode === "focused_retrieval" && request.plan.evidence.length < 1) ||
+    (planMode === "exhaustive_coverage" &&
       (request.plan.coverageBitmap === undefined ||
         request.plan.coveragePlanDigest === undefined ||
         request.plan.coverageReduction === undefined ||

@@ -190,7 +190,10 @@ describe("Meeting Knowledge subscription runtime contract", () => {
     expect(serializedRequest).not.toContain("FULL-CURRENT-TRANSCRIPT-TURN-500");
     expect(serializedRequest).not.toContain("currentTranscript");
     expect(serializedRequest.length).toBeLessThan(fullTranscriptLiteral.length);
-    expect(JSON.parse(runtime.request?.task.prompt ?? "null").evidence).toHaveLength(2);
+    const prompt = JSON.parse(runtime.request?.task.prompt ?? "null") as {
+      readonly evidence?: readonly unknown[];
+    };
+    expect(prompt.evidence).toHaveLength(2);
   });
 
   it("rejects the removed whole-current contract before its literal text reaches runtime", () => {

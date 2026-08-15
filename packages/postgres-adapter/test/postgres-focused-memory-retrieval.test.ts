@@ -168,6 +168,7 @@ describe("PostgreSQL focused current-meeting memory", () => {
     });
     const pool = {
       connect: async () => ({
+        processID: 12_345,
         query: () => new Promise((_resolve, reject) => {
           rejectQuery = reject;
           markQueryStarted();
@@ -181,7 +182,11 @@ describe("PostgreSQL focused current-meeting memory", () => {
       }),
     } as unknown as Pool;
     const controller = new AbortController();
-    const pending = new PostgresLiveFinalizedMemoryQuery(pool).resolveContext({
+    const pending = new PostgresLiveFinalizedMemoryQuery(pool, {
+      cancelAndVerifyInactive: async (backendPid) => {
+        expect(backendPid).toBe(12_345);
+      },
+    }).resolveContext({
       meetingId: "abortable-live-memory",
       requesterActorId: "synthetic-requester",
       roomId: "synthetic-room",
@@ -203,6 +208,7 @@ describe("PostgreSQL focused current-meeting memory", () => {
       connect: async () => {
         controller.abort(new Error("synthetic acquisition cancellation"));
         return {
+          processID: 12_346,
           query: () => {
             queryCalled = true;
             return Promise.resolve({ rowCount: 0, rows: [] });

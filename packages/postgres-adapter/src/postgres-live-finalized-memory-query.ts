@@ -4,9 +4,13 @@ import type {
   CanonicalEvidenceTurn, LiveFinalizedMemoryQueryPort, LiveMemoryCandidateReferenceV1,
   LiveMemoryCandidateResultV1, LiveMemoryContextV1, LiveMemoryRehydrationResultV1,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
-import type { Pool, PoolClient, QueryResult, QueryResultRow } from "pg";
+import type { Pool } from "pg";
 
 import { canonicalFinalReplyTurnHash } from "./postgres-final-reply-evidence.js";
+import {
+  queryHistoricalPostgres,
+  type HistoricalPostgresCancellationPort,
+} from "./postgres-historical-query.js";
 
 interface ContextRow {
   readonly applied_generation: number;
@@ -150,7 +154,10 @@ function selectRows(
 export class PostgresLiveFinalizedMemoryQuery
   implements LiveFinalizedMemoryQueryPort
 {
-  public constructor(private readonly pool: Pool) {}
+  public constructor(
+    private readonly pool: Pool,
+    private readonly cancellation?: HistoricalPostgresCancellationPort,
+  ) {}
 
   public async resolveContext(input: {
     readonly meetingId: string;
@@ -201,7 +208,7 @@ export class PostgresLiveFinalizedMemoryQuery
     if (row.applied_generation !== row.source_generation) {
       return { schemaVersion: 1, status: "pending" };
     }
-    const tail = await queryWithSignal<TailRow>(this.pool, {
+    const tail = await queryHistoricalPostgres<TailRow>(this.pool, {
       text: `
         SELECT hot.source_generation::float8 AS source_generation,
                hot.turn_hash,
@@ -214,7 +221,7 @@ export class PostgresLiveFinalizedMemoryQuery
         ORDER BY hot.source_generation
       `,
       values: [input.meetingId],
-    }, input.signal);
+    }, input.signal, this.cancellation);
     const admittedActors = new Set(roster(row.human_actor_ids));
     const eligibleTail = tail.rows.filter(({ turn }) =>
       admittedActors.has(turn.speakerId)
@@ -279,7 +286,7 @@ export class PostgresLiveFinalizedMemoryQuery
     ) {
       return { schemaVersion: 1, status: "stale" };
     }
-    const result = await queryWithSignal<TailRow>(this.pool, {
+    const result = await queryHistoricalPostgres<TailRow>(this.pool, {
       text: `
         SELECT hot.source_generation::float8 AS source_generation,
                hot.turn_hash,
@@ -292,7 +299,7 @@ export class PostgresLiveFinalizedMemoryQuery
           AND hot.turn_id = ANY($2::text[])
       `,
       values: [input.meetingId, input.candidates.map(({ turnId }) => turnId)],
-    }, input.signal);
+    }, input.signal, this.cancellation);
     const rows = new Map(result.rows.map((candidate) => [
       candidate.turn.turnId,
       candidate,
@@ -332,7 +339,7 @@ export class PostgresLiveFinalizedMemoryQuery
     meetingId: string,
     signal?: AbortSignal,
   ): Promise<ContextRow | null> {
-    const result = await queryWithSignal<ContextRow>(this.pool, {
+    const result = await queryHistoricalPostgres<ContextRow>(this.pool, {
       text: `
         SELECT meeting_id, scope_id, room_id, human_actor_ids,
                identity_generation::float8 AS identity_generation,
@@ -343,83 +350,7 @@ export class PostgresLiveFinalizedMemoryQuery
         WHERE meeting_id = $1
       `,
       values: [meetingId],
-    }, signal);
+    }, signal, this.cancellation);
     return result.rows[0] ?? null;
-  }
-}
-
-type AbortableQuery = Readonly<{ text: string; values: readonly unknown[] }>;
-
-/** A cancelled read destroys its dedicated connection so PostgreSQL work cannot linger. */
-async function queryWithSignal<Row extends QueryResultRow>(
-  pool: Pool,
-  query: AbortableQuery,
-  signal?: AbortSignal,
-): Promise<QueryResult<Row>> {
-  if (signal === undefined) {
-    return pool.query<Row>(query.text, [...query.values]);
-  }
-  signal.throwIfAborted();
-  const client = await acquireAbortableClient(pool, signal);
-  const release = releaseClientOnce(client);
-  const abort = (): void => {
-    release(true);
-  };
-  signal.addEventListener("abort", abort, { once: true });
-  try {
-    signal.throwIfAborted();
-    const result = await client.query<Row>(query.text, [...query.values]);
-    signal.throwIfAborted();
-    return result;
-  } catch (error) {
-    signal.throwIfAborted();
-    throw error;
-  } finally {
-    signal.removeEventListener("abort", abort);
-    release(signal.aborted);
-  }
-}
-
-async function acquireAbortableClient(pool: Pool, signal: AbortSignal): Promise<PoolClient> {
-  const pending = pool.connect();
-  let rejectAbort!: (reason?: unknown) => void;
-  const aborted = new Promise<never>((_resolve, reject) => {
-    rejectAbort = reject;
-  });
-  const abort = (): void => {
-    try {
-      signal.throwIfAborted();
-    } catch (error) {
-      rejectAbort(error);
-    }
-  };
-  signal.addEventListener("abort", abort, { once: true });
-  try {
-    return await Promise.race([pending, aborted]);
-  } catch (error) {
-    void destroyClientWhenAcquired(pending);
-    throw error;
-  } finally {
-    signal.removeEventListener("abort", abort);
-  }
-}
-
-function releaseClientOnce(client: PoolClient): (destroy?: boolean) => void {
-  let released = false;
-  return (destroy = false): void => {
-    if (released) {
-      return;
-    }
-    released = true;
-    client.release(destroy);
-  };
-}
-
-async function destroyClientWhenAcquired(pending: Promise<PoolClient>): Promise<void> {
-  try {
-    const client = await pending;
-    client.release(true);
-  } catch {
-    // A failed acquisition owns no connection that needs releasing.
   }
 }

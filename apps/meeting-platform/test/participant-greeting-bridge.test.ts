@@ -1,17 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  ConversationCoordinator,
-  type ConversationRuntime,
-  type ConversationRuntimeEvent,
-  type VoicePlaybackPort,
-} from "@discord-meeting/meeting-core/conversation";
-import type {
-  LiveConversationConfiguration,
-  LiveConversationOneShotReceiptPort,
-  LiveRuntimeLogger,
-  LiveRuntimeTimer,
-} from "../src/live-runtime/contracts.js";
+import { ConversationCoordinator, type ConversationRuntime, type ConversationRuntimeEvent,
+  type VoicePlaybackPort } from "@discord-meeting/meeting-core/conversation";
+import type { LiveConversationConfiguration, LiveConversationOneShotReceiptPort,
+  LiveRuntimeLogger, LiveRuntimeTimer } from "../src/live-runtime/contracts.js";
 import { ParticipantGreetingBridge } from "../src/live-runtime/participant-greeting-bridge.js";
 import { MemoryOneShotReceipts } from "./participant-greeting-receipt-memory.js";
 
@@ -22,7 +14,9 @@ const secondUnknownParticipantId = "5533224474609057795";
 const secondKnownParticipantId = "6533224474609057795";
 
 const testTimer: LiveRuntimeTimer = {
-  cancel: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+  cancel: (handle) => {
+    clearTimeout(handle as ReturnType<typeof setTimeout>);
+  },
   repeat: (intervalMs, callback) => {
     const handle = setInterval(callback, intervalMs);
     handle.unref();
@@ -103,12 +97,7 @@ class GreetingCoordinatorProbe {
   }
 }
 
-const logger: LiveRuntimeLogger = {
-  debug: () => {},
-  error: () => {},
-  info: () => {},
-  warn: () => {},
-};
+const logger: LiveRuntimeLogger = { debug: () => {}, error: () => {}, info: () => {}, warn: () => {} };
 
 function fixture(
   playbackReady = false,
@@ -686,12 +675,16 @@ describe("ParticipantGreetingBridge retries and lifecycle", () => {
       }, () => 321, undefined, { oneShotReceipts: receipts });
       let settlePlayback: (() => void) | undefined;
       context.coordinator.whenTurnPlaybackSettled = () => new Promise((resolve) => {
-        settlePlayback = () => resolve(settlement);
+        settlePlayback = () => {
+          resolve(settlement);
+        };
       });
 
       context.bridge.participantJoined(russianParticipantId);
       const draining = context.bridge.settle();
-      await vi.waitFor(() => expect(context.coordinator.calls).toHaveLength(1));
+      await vi.waitFor(() => {
+        expect(context.coordinator.calls).toHaveLength(1);
+      });
       receipts.expireReservations();
       settlePlayback?.();
       await draining;
@@ -718,13 +711,17 @@ describe("ParticipantGreetingBridge retries and lifecycle", () => {
     context.coordinator.handleProactiveTurn = (input) => {
       context.coordinator.calls.push(structuredClone(input));
       return new Promise((_resolve, reject) => {
-        rejectAdmission = () => reject(new Error("synthetic runtime failure"));
+        rejectAdmission = () => {
+          reject(new Error("synthetic runtime failure"));
+        };
       });
     };
 
     context.bridge.participantJoined(russianParticipantId);
     const draining = context.bridge.settle();
-    await vi.waitFor(() => expect(context.coordinator.calls).toHaveLength(1));
+    await vi.waitFor(() => {
+      expect(context.coordinator.calls).toHaveLength(1);
+    });
     receipts.expireReservations();
     rejectAdmission?.();
     await draining;
