@@ -52,6 +52,7 @@ describe("Infinity production semantic qualification manifest", () => {
   it.each([
     [{ ...passingEvidence, embeddingProfileId: "deterministic-mock-non-production-v1" }, /non-mock/u],
     [{ ...passingEvidence, focusedRecallAt5: 6 / 7 }, /complete frozen recall/u],
+    [{ ...passingEvidence, focusedRecallAt5: 5 }, /complete frozen recall/u],
     [{ ...passingEvidence, remoteCleanupVerified: false }, /complete frozen recall/u],
     [{ ...passingEvidence, serviceEnabledAdapters: ["graphiti"] }, /qdrant/u],
     [{ ...passingEvidence, embeddingProfileDigestSha256: "sha256:unknown" }, /sha256-prefixed/u],

@@ -63,7 +63,7 @@ export interface RealServiceQualificationMetrics {
   };
   readonly exhaustiveBlockCount: number;
   readonly focusedQuestionCount: number;
-  readonly focusedRecallAt: 5;
+  readonly focusedRecallAt5: 1;
   readonly remoteCleanupVerified: true;
   readonly service: {
     readonly apiVersion: string;
@@ -101,6 +101,7 @@ export async function runRealServiceQualification(
 
   let boundedModelInput: RealServiceQualificationMetrics["boundedModelInput"] | null = null;
   let exhaustiveMetrics: RealServiceQualificationMetrics["exhaustive"] | null = null;
+  let focusedRecallAt5: 1 | null = null;
   let service: RealServiceQualificationMetrics["service"] | null = null;
   let cleanupRequested = false;
   try {
@@ -148,7 +149,7 @@ export async function runRealServiceQualification(
       authorizationCalls += 1;
       return true;
     });
-    await assertFocusedHybridRecall(focused, meeting, localPlan);
+    focusedRecallAt5 = await assertFocusedHybridRecall(focused, meeting, localPlan);
     expect(authorizationCalls).toBeGreaterThanOrEqual(qualificationQuestions.focused.length);
 
     const denied = focusedRetrieval(adapter, authority, store, ids, async () => false);
@@ -233,6 +234,9 @@ export async function runRealServiceQualification(
     });
   }
   expect(cleanupRequested).toBe(true);
+  if (focusedRecallAt5 === null) {
+    throw new Error("focused recall qualification did not complete");
+  }
 
   const topology = buildHistoricalIndexPlan(meeting, ids, blockPolicy).topology;
   await expectEventually(async () => {
@@ -251,7 +255,7 @@ export async function runRealServiceQualification(
     exhaustive: exhaustiveMetrics,
     exhaustiveBlockCount: buildHistoricalIndexPlan(meeting, ids, blockPolicy).documents.length,
     focusedQuestionCount: qualificationQuestions.focused.length,
-    focusedRecallAt: 5,
+    focusedRecallAt5,
     remoteCleanupVerified: true,
     service,
     turnCount: QUALIFICATION_CORPUS_TURN_COUNT,
@@ -306,7 +310,8 @@ async function assertFocusedHybridRecall(
   focused: HistoricalFocusedRetrieval,
   meeting: AcceptedFinalMeetingV1,
   localPlan: ReturnType<typeof buildHistoricalIndexPlan>,
-): Promise<void> {
+): Promise<1> {
+  let passedGoldAssertions = 0;
   for (const question of qualificationQuestions.focused) {
     const fact = qualificationFacts.find(({ marker }) => question.includes(marker));
     if (fact === undefined) {
@@ -349,7 +354,11 @@ async function assertFocusedHybridRecall(
     );
     expect(rehydrated?.turns.map(({ text }) => text)).toEqual(exactCanonicalTexts);
     expect(JSON.stringify(observed.plan.blocks)).not.toContain(forbiddenPromptMaterial.rawSdkResponse);
+    passedGoldAssertions += 1;
   }
+  expect(qualificationQuestions.focused).toHaveLength(7);
+  expect(passedGoldAssertions).toBe(7);
+  return 1;
 }
 
 function exhaustiveRetrieval(

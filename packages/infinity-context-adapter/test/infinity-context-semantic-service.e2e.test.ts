@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { describe, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { createInfinitySemanticQualificationManifest } from "../src/index.js";
 import { combinedQualificationMeeting } from "./infinity-context-qualification-corpus.js";
@@ -13,6 +13,7 @@ liveDescribe("Infinity Context disposable production-semantic qualification", ()
   it("qualifies one declared non-mock embedding profile and emits a retainable manifest", async () => {
     const config = semanticServiceConfig(process.env);
     const metrics = await runRealServiceQualification(config.service);
+    expect(metrics.focusedRecallAt5).toBe(1);
     const meeting = combinedQualificationMeeting();
     const manifest = createInfinitySemanticQualificationManifest({
       corpusHumanTurnsSha256: createHash("sha256")
@@ -21,7 +22,7 @@ liveDescribe("Infinity Context disposable production-semantic qualification", ()
       embeddingProfileDigestSha256: config.embeddingProfileDigestSha256,
       embeddingProfileId: config.embeddingProfileId,
       focusedQuestionCount: metrics.focusedQuestionCount,
-      focusedRecallAt5: metrics.focusedRecallAt,
+      focusedRecallAt5: metrics.focusedRecallAt5,
       observedAt: new Date().toISOString(),
       releaseRevision: config.releaseRevision,
       remoteCleanupVerified: metrics.remoteCleanupVerified,
