@@ -3,18 +3,16 @@ import type {
   HistoricalAuthorizationPort,
   HistoricalAuthorizationRequestV1,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
-import {
-  Client,
-  PermissionFlagsBits,
-} from "discord.js";
+import { Client } from "discord.js";
 
 import {
   discordParticipantQuestionPolicyVersion,
+  freshDiscordContainerPermissions,
 } from "./discord-question-authorization.js";
 import { DiscordQuestionPrincipalCodec } from "./discord-question-principal.js";
 
 export const discordSameRoomHistoricalPolicyVersion =
-  "discord.participant-same-room-history.v1" as const;
+  "discord.participant-same-room-history.v2" as const;
 
 function denied(): HistoricalAuthorizationObservationV1 {
   return {
@@ -62,16 +60,16 @@ export class DiscordHistoricalAuthorizationAdapter
       if (principalContainer === null || sourceRoom === null) {
         return denied();
       }
-      const principalPermissions = principalContainer.permissionsFor(member);
-      const sourcePermissions = sourceRoom.permissionsFor(member);
-      const required = [
-        PermissionFlagsBits.ViewChannel,
-        PermissionFlagsBits.ReadMessageHistory,
-      ];
-      if (
-        required.some((permission) => !principalPermissions.has(permission)) ||
-        required.some((permission) => !sourcePermissions.has(permission))
-      ) {
+      const [principalPermissions, sourcePermissions] = await Promise.all([
+        freshDiscordContainerPermissions(principalContainer, member),
+        principalContainer.id === sourceRoom.id
+          ? Promise.resolve(null)
+          : freshDiscordContainerPermissions(sourceRoom, member),
+      ]);
+      const effectiveSourcePermissions = principalContainer.id === sourceRoom.id
+        ? principalPermissions
+        : sourcePermissions;
+      if (principalPermissions === null || effectiveSourcePermissions === null) {
         return denied();
       }
       const digest = this.principals.observationDigest(
@@ -83,7 +81,7 @@ export class DiscordHistoricalAuthorizationAdapter
         principal.authorizationContainerId,
         request.roomId,
         principalPermissions.bitfield.toString(),
-        sourcePermissions.bitfield.toString(),
+        effectiveSourcePermissions.bitfield.toString(),
       );
       return {
         authorizationDigest: digest,

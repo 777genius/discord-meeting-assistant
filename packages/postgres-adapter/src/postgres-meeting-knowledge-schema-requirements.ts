@@ -23,6 +23,7 @@ export const meetingKnowledgeRequiredColumns = [
   "meeting_core.answer_effects.effect_id",
   "meeting_core.answer_effects.state",
   "meeting_core.answer_effects.projection_target_container_id",
+  "meeting_core.answer_effects.delivery_container_id",
   "meeting_core.answer_effects.reply_to_remote_message_id",
   "meeting_core.answer_effects.marker",
   "meeting_core.answer_effects.payload_bytes",

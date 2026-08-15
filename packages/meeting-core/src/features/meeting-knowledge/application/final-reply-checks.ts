@@ -46,6 +46,7 @@ export function authorizedForJob(
 > {
   return observation.status === "authorized" &&
     observation.digest === binding.authorizationDigest &&
+    observation.deliveryContainerId === binding.deliveryContainerId &&
     observation.policyVersion === binding.authorizationPolicyVersion &&
     observation.scopeId === binding.scopeId &&
     observation.containerId === authority.projectionTargetContainerId &&

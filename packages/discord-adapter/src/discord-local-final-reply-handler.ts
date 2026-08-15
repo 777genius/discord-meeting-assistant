@@ -140,6 +140,7 @@ export class DiscordLocalFinalReplyHandler {
     });
     await this.admission.execute({
       authorizationPrincipalRef,
+      deliveryContainerId: message.channelId,
       finalProjectionReceipt: encodeDiscordExternalPublicationId({
         ...location.reference,
         messageId: referencedMessageId,
@@ -149,7 +150,7 @@ export class DiscordLocalFinalReplyHandler {
       questionId: message.id,
       questionText,
       requesterSubject: this.principals.keyedSubject(message.author.id, guildId),
-      schemaVersion: 1,
+      schemaVersion: 2,
       scopeId: guildId,
     });
   }

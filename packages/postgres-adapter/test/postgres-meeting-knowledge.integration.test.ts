@@ -141,6 +141,7 @@ describe("PostgreSQL Local Final Reply adapters", () => {
       authorizationPrincipalRef: "opaque-principal",
       botApplicationIdentity: authority.botApplicationIdentity,
       canonicalEvidenceHash: authority.canonicalEvidenceHash,
+      deliveryContainerId: channelId,
       expectedLocale: "en" as const,
       finalProjectionEpoch: authority.finalProjectionEpoch,
       finalProjectionReceipt: authority.finalProjectionReceipt,
@@ -161,6 +162,7 @@ describe("PostgreSQL Local Final Reply adapters", () => {
     const authorization = {
       actorId: "speaker-a",
       containerId: channelId,
+      deliveryContainerId: channelId,
       digest: binding.authorizationDigest,
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
       observedAt: new Date().toISOString(),
@@ -325,6 +327,7 @@ describe("PostgreSQL Local Final Reply adapters", () => {
       authorizationPrincipalRef: "opaque",
       botApplicationIdentity: botId,
       canonicalEvidenceHash: "b".repeat(64),
+      deliveryContainerId: channelId,
       expectedLocale: "en" as const,
       finalProjectionEpoch: "epoch-1",
       finalProjectionReceipt: `discord:v2:channel:${channelId}:message:${finalMessageId}`,
@@ -346,6 +349,7 @@ describe("PostgreSQL Local Final Reply adapters", () => {
       authorizationDigest: binding.authorizationDigest,
       binding,
       content: "Answer with citation.",
+      deliveryContainerId: channelId,
       marker: "meeting-knowledge-answer:v1:question-1",
       projectionTargetContainerId: channelId,
       replyToRemoteMessageId: questionId,
@@ -497,10 +501,11 @@ describe("PostgreSQL question job cleanup", () => {
       `
         INSERT INTO meeting_core.answer_effects (
           effect_id, state, projection_target_container_id,
-          reply_to_remote_message_id, marker, payload_bytes, payload_hash,
+          delivery_container_id, reply_to_remote_message_id, marker,
+          payload_bytes, payload_hash,
           binding_hash, authorization_digest, request_started_at
         ) VALUES (
-          $1, 'outcome_unknown', $2, $3, 'marker-1', '{"content":"sensitive"}',
+          $1, 'outcome_unknown', $2, $2, $3, 'marker-1', '{"content":"sensitive"}',
           $4, $5, $6, transaction_timestamp() - interval '90 seconds'
         )
       `,

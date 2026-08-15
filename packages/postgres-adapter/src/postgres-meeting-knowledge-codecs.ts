@@ -15,6 +15,7 @@ const questionBindingV1Schema = z.object({
   authorizationPrincipalRef: boundedText,
   botApplicationIdentity: boundedText,
   canonicalEvidenceHash: sha256Schema,
+  deliveryContainerId: boundedText,
   expectedLocale: localeSchema,
   finalProjectionEpoch: boundedText,
   finalProjectionReceipt: boundedText,

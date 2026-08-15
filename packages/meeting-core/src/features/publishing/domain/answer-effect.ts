@@ -30,6 +30,7 @@ export interface AnswerEffectRecord {
   readonly authorizationDigest: string;
   readonly bindingHash: string;
   readonly claimGeneration: number;
+  readonly deliveryContainerId: string;
   readonly effectId: string;
   readonly externalReceipt: string | null;
   readonly marker: string;

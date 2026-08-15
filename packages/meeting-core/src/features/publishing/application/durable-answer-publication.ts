@@ -28,6 +28,7 @@ export class DurableAnswerPublication {
     readonly authorizationDigest: string;
     readonly binding: AnswerPublicationBinding;
     readonly content: string;
+    readonly deliveryContainerId: string;
     readonly marker: string;
     readonly projectionTargetContainerId: string;
     readonly replyToRemoteMessageId: string;
@@ -40,6 +41,7 @@ export class DurableAnswerPublication {
     const reserved = await this.store.reserve({
       ...payload,
       authorizationDigest: input.authorizationDigest,
+      deliveryContainerId: input.deliveryContainerId,
       effectId,
       marker: input.marker,
       projectionTargetContainerId: input.projectionTargetContainerId,
@@ -82,6 +84,7 @@ export class DurableAnswerPublication {
       const record = await this.effectAfterRequestStart(input.effectId);
       const externalReceipt = await this.delivery.create({
         effectId: record.effectId,
+        deliveryContainerId: record.deliveryContainerId,
         marker: record.marker,
         payloadBytes: record.payloadBytes,
         projectionTargetContainerId: record.projectionTargetContainerId,
@@ -115,6 +118,7 @@ export class DurableAnswerPublication {
     let delivered = 0;
     for (const record of records) {
       const inspected = await this.delivery.inspect({
+        deliveryContainerId: record.deliveryContainerId,
         marker: record.marker,
         payloadHash: record.payloadHash,
         projectionTargetContainerId: record.projectionTargetContainerId,

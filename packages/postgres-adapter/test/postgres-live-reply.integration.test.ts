@@ -126,6 +126,7 @@ describe("PostgreSQL canonical live reply authority", () => {
     const authorization = {
       actorId: "speaker-a",
       containerId: channelId,
+      deliveryContainerId: threadId,
       digest: "a".repeat(64),
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
       observedAt: new Date().toISOString(),
@@ -139,6 +140,7 @@ describe("PostgreSQL canonical live reply authority", () => {
       authorizationPolicyVersion: authorization.policyVersion,
       authorizationPrincipalRef: "opaque-thread-principal",
       ...authority,
+      deliveryContainerId: threadId,
       expectedLocale: "en",
       policyVersion: "meeting-knowledge.focused-memory-final-reply.v2",
       questionHash: "b".repeat(64),
@@ -218,6 +220,7 @@ describe("PostgreSQL canonical live reply authority", () => {
         authorizationPolicyVersion: "discord.participant-current-results.v1",
         authorizationPrincipalRef: "opaque-live-principal",
         ...authority,
+        deliveryContainerId: authority.projectionTargetContainerId,
         expectedLocale: "en",
         policyVersion: "meeting-knowledge.focused-memory-final-reply.v2",
         questionHash: "b".repeat(64),

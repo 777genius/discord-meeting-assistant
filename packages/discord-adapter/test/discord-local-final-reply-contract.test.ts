@@ -11,7 +11,7 @@ import {
 } from "@discord-meeting/discord-adapter";
 import { EventEmitter } from "node:events";
 import type { AnswerPublicationBinding } from "@discord-meeting/meeting-core/publishing";
-import type { Client, REST } from "discord.js";
+import { ChannelType, PermissionFlagsBits, type Client, type REST } from "discord.js";
 
 const botId = "11111111111111111";
 const containerId = "22222222222222222";
@@ -24,6 +24,7 @@ function binding(): AnswerPublicationBinding {
     authorizationPrincipalRef: "opaque",
     botApplicationIdentity: botId,
     canonicalEvidenceHash: "b".repeat(64),
+    deliveryContainerId: containerId,
     expectedLocale: "en",
     finalProjectionEpoch: "epoch-1",
     finalProjectionReceipt:
@@ -87,15 +88,24 @@ describe("Discord Local Final Reply contracts", () => {
       expiresAtMilliseconds: 1_800_000_000_000,
       scopeId: "66666666666666666",
     });
-    const permissions = { bitfield: 3n, has: () => true };
-    const thread = { permissionsFor: () => permissions };
-    const room = { permissionsFor: () => permissions };
+    const permissions = {
+      bitfield: 3n,
+      has: (permission: bigint) => permission !== PermissionFlagsBits.ManageThreads,
+    };
+    const fetchThreadMember = vi.fn().mockResolvedValue({ id: actorId });
+    const thread = {
+      id: threadId,
+      members: { fetch: fetchThreadMember },
+      permissionsFor: () => permissions,
+      type: ChannelType.PrivateThread,
+    };
+    const room = { id: "55555555555555555", permissionsFor: () => permissions };
     const fetchChannel = vi.fn((id: string) => Promise.resolve(
       id === threadId ? thread : id === "55555555555555555" ? room : null,
     ));
     const guild = {
       channels: { fetch: fetchChannel },
-      members: { fetch: () => Promise.resolve({}) },
+      members: { fetch: () => Promise.resolve({ id: actorId }) },
       roles: { fetch: () => Promise.resolve() },
     };
     const client = {
@@ -125,8 +135,134 @@ describe("Discord Local Final Reply contracts", () => {
       scopeId: "66666666666666666",
     })).resolves.toMatchObject({ authorized: true });
     expect(fetchChannel).toHaveBeenCalledWith(threadId, { force: true });
+    expect(fetchThreadMember).toHaveBeenCalledWith({
+      cache: false,
+      force: true,
+      member: actorId,
+    });
+  });
+});
+
+describe("Discord private-thread authorization", () => {
+  it("revokes current and historical private-thread access after membership removal", async () => {
+    const threadId = "99999999999999991";
+    const actorId = "77777777777777777";
+    const codec = new DiscordQuestionPrincipalCodec(Buffer.alloc(32, 7));
+    const principal = codec.issue({
+      actorId,
+      authorizationContainerId: threadId,
+      containerId,
+      expiresAtMilliseconds: 1_800_000_000_000,
+      scopeId: "66666666666666666",
+    });
+    const permissions = {
+      bitfield: PermissionFlagsBits.ViewChannel | PermissionFlagsBits.ReadMessageHistory,
+      has: (permission: bigint) =>
+        permission === PermissionFlagsBits.ViewChannel ||
+        permission === PermissionFlagsBits.ReadMessageHistory,
+    };
+    const thread = {
+      id: threadId,
+      members: { fetch: vi.fn().mockRejectedValue(new Error("Unknown Member")) },
+      permissionsFor: () => permissions,
+      type: ChannelType.PrivateThread,
+    };
+    const room = {
+      id: "55555555555555555",
+      permissionsFor: () => permissions,
+      type: ChannelType.GuildVoice,
+    };
+    const guild = {
+      channels: { fetch: (id: string) => Promise.resolve(id === threadId ? thread : room) },
+      members: { fetch: () => Promise.resolve({ id: actorId }) },
+      roles: { fetch: () => Promise.resolve() },
+    };
+    const client = { guilds: { fetch: () => Promise.resolve(guild) } } as unknown as Client;
+
+    await expect(new DiscordQuestionAuthorizationAdapter(client, codec, () => 1_799_999_000_000)
+      .observe({
+        authorizationPrincipalRef: principal,
+        expectedContainerId: containerId,
+        expectedScopeId: "66666666666666666",
+      })).resolves.toEqual({ reason: "denied", status: "denied" });
+    await expect(new DiscordHistoricalAuthorizationAdapter(client, codec, () => 1_799_999_000_000)
+      .authorize({
+        authorizationPrincipalRef: principal,
+        roomId: "55555555555555555",
+        scopeId: "66666666666666666",
+      })).resolves.toMatchObject({ authorized: false });
   });
 
+  it("allows private-thread managers without membership and keeps public threads permission-based", async () => {
+    const actorId = "77777777777777777";
+    const codec = new DiscordQuestionPrincipalCodec(Buffer.alloc(32, 7));
+    const authorize = async (type: ChannelType, managesThreads: boolean) => {
+      const threadId = type === ChannelType.PrivateThread
+        ? "99999999999999991"
+        : "99999999999999992";
+      const principal = codec.issue({
+        actorId,
+        authorizationContainerId: threadId,
+        containerId,
+        expiresAtMilliseconds: 1_800_000_000_000,
+        scopeId: "66666666666666666",
+      });
+      const permissions = {
+        bitfield: 7n,
+        has: (permission: bigint) => permission !== PermissionFlagsBits.ManageThreads || managesThreads,
+      };
+      const fetchMembership = vi.fn().mockRejectedValue(new Error("Unknown Member"));
+      const thread = {
+        id: threadId,
+        members: { fetch: fetchMembership },
+        permissionsFor: () => permissions,
+        type,
+      };
+      const room = {
+        id: "55555555555555555",
+        permissionsFor: () => permissions,
+        type: ChannelType.GuildVoice,
+      };
+      const guild = {
+        channels: {
+          fetch: (id: string) => Promise.resolve(id === threadId ? thread : room),
+        },
+        members: { fetch: () => Promise.resolve({ id: actorId }) },
+        roles: { fetch: () => Promise.resolve() },
+      };
+      const observation = await new DiscordQuestionAuthorizationAdapter(
+        { guilds: { fetch: () => Promise.resolve(guild) } } as unknown as Client,
+        codec,
+        () => 1_799_999_000_000,
+      ).observe({
+        authorizationPrincipalRef: principal,
+        expectedContainerId: containerId,
+        expectedScopeId: "66666666666666666",
+      });
+      const historical = await new DiscordHistoricalAuthorizationAdapter(
+        { guilds: { fetch: () => Promise.resolve(guild) } } as unknown as Client,
+        codec,
+        () => 1_799_999_000_000,
+      ).authorize({
+        authorizationPrincipalRef: principal,
+        roomId: room.id,
+        scopeId: "66666666666666666",
+      });
+      return { fetchMembership, historical, observation };
+    };
+
+    const manager = await authorize(ChannelType.PrivateThread, true);
+    expect(manager.historical).toMatchObject({ authorized: true });
+    expect(manager.observation).toMatchObject({ status: "authorized" });
+    expect(manager.fetchMembership).not.toHaveBeenCalled();
+    const publicThread = await authorize(ChannelType.PublicThread, false);
+    expect(publicThread.historical).toMatchObject({ authorized: true });
+    expect(publicThread.observation).toMatchObject({ status: "authorized" });
+    expect(publicThread.fetchMembership).not.toHaveBeenCalled();
+  });
+});
+
+describe("Discord answer effect transport", () => {
   it("creates once from strict immutable bytes and reconciles exact remote identity", async () => {
     const post = vi.fn().mockResolvedValue({ id: "88888888888888888" });
     const get = vi.fn();
@@ -134,6 +270,7 @@ describe("Discord Local Final Reply contracts", () => {
     const payload = new DiscordAnswerPayloadCodec().prepare({
       binding: binding(),
       content: "The release is Monday.\n-# S2 · 2:00:00 · turn-720",
+      deliveryContainerId: containerId,
       marker: "meeting-knowledge-answer:v1:question-1",
       projectionTargetContainerId: containerId,
       replyToRemoteMessageId: questionId,
@@ -141,6 +278,7 @@ describe("Discord Local Final Reply contracts", () => {
     const delivery = new DiscordAnswerDeliveryAdapter(rest, botId);
 
     const receipt = await delivery.create({
+      deliveryContainerId: containerId,
       marker: "meeting-knowledge-answer:v1:question-1",
       payloadBytes: payload.payloadBytes,
       projectionTargetContainerId: containerId,
@@ -161,6 +299,7 @@ describe("Discord Local Final Reply contracts", () => {
       message_reference: { message_id: questionId },
     }]);
     await expect(delivery.inspect({
+      deliveryContainerId: containerId,
       marker: "meeting-knowledge-answer:v1:question-1",
       payloadHash: payload.payloadHash,
       projectionTargetContainerId: containerId,
@@ -183,6 +322,7 @@ describe("Discord Local Final Reply contracts", () => {
       },
     ]);
     await expect(delivery.inspect({
+      deliveryContainerId: containerId,
       marker: "meeting-knowledge-answer:v1:question-1",
       payloadHash: payload.payloadHash,
       projectionTargetContainerId: containerId,
@@ -236,12 +376,13 @@ describe("Discord Local Final Reply ingress", () => {
       expect(execute).toHaveBeenCalledTimes(1);
     });
     expect(execute.mock.calls[0]?.[0]).toMatchObject({
+      deliveryContainerId: containerId,
       finalProjectionReceipt:
         `discord:v2:channel:${containerId}:message:44444444444444444`,
       projectionTargetContainerId: containerId,
       questionId,
       questionText: "When is the release?",
-      schemaVersion: 1,
+      schemaVersion: 2,
       scopeId: "66666666666666666",
     });
 
@@ -299,9 +440,11 @@ describe("Discord Local Final Reply ingress", () => {
       expect(execute).toHaveBeenCalledTimes(1);
     });
     expect(execute.mock.calls[0]?.[0]).toMatchObject({
+      deliveryContainerId: threadId,
       finalProjectionReceipt:
         `discord:v2:thread:${threadId}:message:${projectionMessageId}`,
       projectionTargetContainerId: containerId,
+      schemaVersion: 2,
     });
 
     client.emit("messageDelete", {

@@ -66,6 +66,7 @@ export class PostgresQuestionAdmissionCommit
       input.authorization.digest !== binding.authorizationDigest ||
       input.authorization.policyVersion !== binding.authorizationPolicyVersion ||
       input.authorization.scopeId !== binding.scopeId ||
+      input.authorization.deliveryContainerId !== binding.deliveryContainerId ||
       input.authorization.containerId !== binding.projectionTargetContainerId
     ) {
       return { status: "conflict" };

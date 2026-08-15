@@ -13,6 +13,7 @@ const bindingInput = {
   authorizationPrincipalRef: "principal:v1:opaque",
   botApplicationIdentity: "bot-1",
   canonicalEvidenceHash: "b".repeat(64),
+  deliveryContainerId: "question-thread-1",
   expectedLocale: "mixed" as const,
   finalProjectionEpoch: "meeting-summary-publication:v1:epoch",
   finalProjectionReceipt: "projection:v1:receipt",
@@ -41,6 +42,8 @@ describe("QuestionJob vocabulary and immutable binding", () => {
     expect(Object.isFrozen(first)).toBe(true);
     expect(Object.isFrozen(first.humanActorIds)).toBe(true);
     expect(first.humanActorIds).toEqual(["speaker-a", "speaker-b"]);
+    expect(first.deliveryContainerId).toBe("question-thread-1");
+    expect(first.projectionTargetContainerId).toBe("results-channel-1");
   });
 
   it("rejects invalid hashes, locale, and revisions", () => {

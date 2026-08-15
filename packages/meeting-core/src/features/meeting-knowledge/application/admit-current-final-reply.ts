@@ -30,6 +30,7 @@ export type AdmitCurrentFinalReplyResult =
 
 export interface AdmitCurrentFinalReplyInput {
   readonly authorizationPrincipalRef: string;
+  readonly deliveryContainerId: string;
   readonly finalProjectionReceipt: string;
   readonly projectionTargetContainerId: string;
   readonly questionHash: string;
@@ -43,12 +44,14 @@ export interface AdmitCurrentFinalReplyInput {
 function authorizedForBinding(
   observation: QuestionAuthorizationObservation,
   binding: Awaited<ReturnType<FinalReplyEvidencePort["findCurrentBinding"]>>,
+  deliveryContainerId: string,
 ): observation is Extract<
   QuestionAuthorizationObservation,
   { readonly status: "authorized" }
 > {
   return observation.status === "authorized" &&
     binding !== null &&
+    observation.deliveryContainerId === deliveryContainerId &&
     observation.scopeId === binding.scopeId &&
     observation.containerId === binding.projectionTargetContainerId &&
     binding.humanActorIds.includes(observation.actorId);
@@ -67,6 +70,11 @@ export class AdmitCurrentFinalReply {
   ): Promise<AdmitCurrentFinalReplyResult> {
     input = decodeQuestionAdmissionCommand(input);
     const questionId = requireKnowledgeText(input.questionId, "questionId", 128);
+    const deliveryContainerId = requireKnowledgeText(
+      input.deliveryContainerId,
+      "deliveryContainerId",
+      256,
+    );
     const questionText = requireKnowledgeText(input.questionText, "questionText", 2_000);
     const projectionTargetContainerId = requireKnowledgeText(
       input.projectionTargetContainerId,
@@ -110,7 +118,7 @@ export class AdmitCurrentFinalReply {
     if (current === null) {
       return { reason: "not_current_final", status: "ignored" };
     }
-    if (!authorizedForBinding(authorization, current)) {
+    if (!authorizedForBinding(authorization, current, deliveryContainerId)) {
       return { reason: "participant_not_eligible", status: "ignored" };
     }
     const binding = QuestionBinding.create({
@@ -119,6 +127,7 @@ export class AdmitCurrentFinalReply {
       authorizationPrincipalRef,
       botApplicationIdentity: current.botApplicationIdentity,
       canonicalEvidenceHash: current.canonicalEvidenceHash,
+      deliveryContainerId,
       expectedLocale: resolveAnswerLocale(questionText),
       finalProjectionEpoch: current.finalProjectionEpoch,
       finalProjectionReceipt: current.finalProjectionReceipt,

@@ -28,7 +28,12 @@ class StoreFake implements AnswerEffectStore {
 
   reserve(input: AnswerEffectReservationInput) {
     if (this.record !== undefined) {
-      if (this.record.payloadHash !== input.payloadHash) {
+      if (
+        this.record.payloadHash !== input.payloadHash ||
+        this.record.deliveryContainerId !== input.deliveryContainerId ||
+        this.record.projectionTargetContainerId !== input.projectionTargetContainerId ||
+        this.record.replyToRemoteMessageId !== input.replyToRemoteMessageId
+      ) {
         return Promise.resolve({ status: "conflict" } as const);
       }
       return Promise.resolve({
@@ -116,20 +121,24 @@ class StoreFake implements AnswerEffectStore {
 
 class DeliveryFake implements AnswerDeliveryPort {
   creates = 0;
+  createInputs: Parameters<AnswerDeliveryPort["create"]>[0][] = [];
+  inspectInputs: Parameters<AnswerDeliveryPort["inspect"]>[0][] = [];
   throwAfterCreate = false;
   inspection: Awaited<ReturnType<AnswerDeliveryPort["inspect"]>> = {
     status: "unconfirmed",
   };
 
-  create(): Promise<string> {
+  create(input: Parameters<AnswerDeliveryPort["create"]>[0]): Promise<string> {
     this.creates += 1;
+    this.createInputs.push(input);
     if (this.throwAfterCreate) {
       return Promise.reject(new Error("lost response after committed create"));
     }
     return Promise.resolve("answer-message-1");
   }
 
-  inspect() {
+  inspect(input: Parameters<AnswerDeliveryPort["inspect"]>[0]) {
+    this.inspectInputs.push(input);
     return Promise.resolve(this.inspection);
   }
 }
@@ -140,6 +149,7 @@ const binding = {
   authorizationPrincipalRef: "principal:v1:opaque",
   botApplicationIdentity: "botik-application-1",
   canonicalEvidenceHash: "b".repeat(64),
+  deliveryContainerId: "thread-1",
   expectedLocale: "en" as const,
   finalProjectionEpoch: "projection-epoch-1",
   finalProjectionReceipt: "projection-receipt-1",
@@ -163,6 +173,7 @@ function reservationInput() {
     authorizationDigest: "e".repeat(64),
     binding,
     content: "Grounded answer\n-# S1 · 00:01 · turn-1",
+    deliveryContainerId: "thread-1",
     marker: "meeting-knowledge-answer:v1:question-1",
     projectionTargetContainerId: "results-1",
     replyToRemoteMessageId: "question-1",
@@ -203,6 +214,10 @@ describe("Publishing answer effects", () => {
       status: "delivered",
     });
     expect(delivery.creates).toBe(1);
+    expect(delivery.createInputs[0]).toMatchObject({
+      deliveryContainerId: "thread-1",
+      projectionTargetContainerId: "results-1",
+    });
     expect(store.record?.state).toBe("delivered");
 
     await expect(publisher.send({
@@ -211,6 +226,19 @@ describe("Publishing answer effects", () => {
       workerId: "worker-2",
     })).resolves.toEqual({ status: "rejected_before_request" });
     expect(delivery.creates).toBe(1);
+  });
+
+  it("rejects rebinding an idempotent effect to another delivery container", async () => {
+    const publisher = new DurableAnswerPublication({
+      delivery: new DeliveryFake(),
+      payloads: new PayloadFake(),
+      store: new StoreFake(),
+    });
+    await publisher.reserve(reservationInput());
+    await expect(publisher.reserve({
+      ...reservationInput(),
+      deliveryContainerId: "cross-scope-thread",
+    })).rejects.toThrow("conflicts with immutable bytes");
   });
 
   it("never creates again after an ambiguous committed create", async () => {
@@ -284,5 +312,9 @@ describe("Publishing answer effects", () => {
     });
     expect(store.record?.externalReceipt).toBe("answer-message-reconciled");
     expect(delivery.creates).toBe(1);
+    expect(delivery.inspectInputs).toEqual([expect.objectContaining({
+      deliveryContainerId: "thread-1",
+      projectionTargetContainerId: "results-1",
+    })]);
   });
 });

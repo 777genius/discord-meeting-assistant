@@ -12,6 +12,7 @@ interface AnswerEffectRow {
   readonly authorization_digest: string;
   readonly binding_hash: string;
   readonly claim_generation: number;
+  readonly delivery_container_id: string;
   readonly effect_id: string;
   readonly external_receipt: string | null;
   readonly marker: string;
@@ -27,6 +28,7 @@ function toRecord(row: AnswerEffectRow): AnswerEffectRecord {
     authorizationDigest: row.authorization_digest,
     bindingHash: row.binding_hash,
     claimGeneration: row.claim_generation,
+    deliveryContainerId: row.delivery_container_id,
     effectId: row.effect_id,
     externalReceipt: row.external_receipt,
     marker: row.marker,
@@ -49,6 +51,7 @@ function immutableFieldsMatch(
       row.state === "delivered"
     );
   return row.effect_id === input.effectId &&
+    row.delivery_container_id === input.deliveryContainerId &&
     row.projection_target_container_id === input.projectionTargetContainerId &&
     row.reply_to_remote_message_id === input.replyToRemoteMessageId &&
     row.marker === input.marker &&
@@ -67,15 +70,17 @@ export class PostgresAnswerEffectStore implements AnswerEffectStore {
     const inserted = await this.pool.query(
       `
         INSERT INTO meeting_core.answer_effects (
-          effect_id, projection_target_container_id, reply_to_remote_message_id,
-          marker, payload_bytes, payload_hash, binding_hash, authorization_digest
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          effect_id, projection_target_container_id, delivery_container_id,
+          reply_to_remote_message_id, marker, payload_bytes, payload_hash,
+          binding_hash, authorization_digest
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         ON CONFLICT (effect_id) DO NOTHING
         RETURNING effect_id
       `,
       [
         input.effectId,
         input.projectionTargetContainerId,
+        input.deliveryContainerId,
         input.replyToRemoteMessageId,
         input.marker,
         input.payloadBytes,
@@ -199,6 +204,7 @@ export class PostgresAnswerEffectStore implements AnswerEffectStore {
     const result = await this.pool.query<AnswerEffectRow>(
       `
         SELECT effect_id, state, projection_target_container_id,
+               delivery_container_id,
                reply_to_remote_message_id, marker, payload_bytes, payload_hash,
                binding_hash, authorization_digest,
                claim_generation::float8 AS claim_generation, external_receipt
@@ -249,6 +255,7 @@ export class PostgresAnswerEffectStore implements AnswerEffectStore {
     const result = await this.pool.query<AnswerEffectRow>(
       `
         SELECT effect_id, state, projection_target_container_id,
+               delivery_container_id,
                reply_to_remote_message_id, marker, payload_bytes, payload_hash,
                binding_hash, authorization_digest,
                claim_generation::float8 AS claim_generation, external_receipt

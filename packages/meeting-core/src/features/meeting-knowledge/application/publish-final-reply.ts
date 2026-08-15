@@ -260,6 +260,7 @@ export class PublishFinalReply {
         authorizationDigest: beforeReservation.digest,
         binding: lease.binding,
         content,
+        deliveryContainerId: lease.binding.deliveryContainerId,
         marker: effectMarker(lease.jobId),
         projectionTargetContainerId: stillCurrent.binding.projectionTargetContainerId,
         replyToRemoteMessageId: lease.binding.questionId,

@@ -6,6 +6,7 @@ export interface AnswerPublicationBinding {
   readonly authorizationPrincipalRef: string;
   readonly botApplicationIdentity: string;
   readonly canonicalEvidenceHash: string;
+  readonly deliveryContainerId: string;
   readonly expectedLocale: "en" | "mixed" | "ru";
   readonly finalProjectionEpoch: string;
   readonly finalProjectionReceipt: string;
@@ -34,6 +35,7 @@ export interface AnswerPayloadPort {
   prepare(input: {
     readonly binding: AnswerPublicationBinding;
     readonly content: string;
+    readonly deliveryContainerId: string;
     readonly marker: string;
     readonly projectionTargetContainerId: string;
     readonly replyToRemoteMessageId: string;
@@ -42,6 +44,7 @@ export interface AnswerPayloadPort {
 
 export interface AnswerEffectReservationInput extends PreparedAnswerPayload {
   readonly authorizationDigest: string;
+  readonly deliveryContainerId: string;
   readonly effectId: string;
   readonly marker: string;
   readonly projectionTargetContainerId: string;
@@ -78,6 +81,7 @@ export interface AnswerEffectStore {
 
 export interface AnswerDeliveryPort {
   create(input: {
+    readonly deliveryContainerId: string;
     readonly effectId: string;
     readonly marker: string;
     readonly payloadBytes: string;
@@ -86,6 +90,7 @@ export interface AnswerDeliveryPort {
   }): Promise<string>;
 
   inspect(input: {
+    readonly deliveryContainerId: string;
     readonly marker: string;
     readonly payloadHash: string;
     readonly projectionTargetContainerId: string;

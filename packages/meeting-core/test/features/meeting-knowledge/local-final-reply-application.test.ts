@@ -130,6 +130,7 @@ function authorizationObservation(): Extract<
   return {
     actorId: "requester-actor",
     containerId: authority.projectionTargetContainerId,
+    deliveryContainerId: "question-thread-1",
     digest: "a".repeat(64),
     expiresAt: "2026-08-13T18:01:00.000Z",
     observedAt: "2026-08-13T18:00:00.000Z",
@@ -262,6 +263,7 @@ function binding(): QuestionBindingSnapshot {
     authorizationPrincipalRef: "principal:v1:opaque",
     botApplicationIdentity: authority.botApplicationIdentity,
     canonicalEvidenceHash: authority.canonicalEvidenceHash,
+    deliveryContainerId: "question-thread-1",
     expectedLocale: "en",
     finalProjectionEpoch: authority.finalProjectionEpoch,
     finalProjectionReceipt: authority.finalProjectionReceipt,
@@ -398,13 +400,14 @@ describe("AdmitCurrentFinalReply", () => {
 
     await expect(useCase.execute({
       authorizationPrincipalRef: "principal:v1:opaque",
+      deliveryContainerId: "question-thread-1",
       finalProjectionReceipt: authority.finalProjectionReceipt,
       projectionTargetContainerId: authority.projectionTargetContainerId,
       questionHash: "c".repeat(64),
       questionId: "question-1",
       questionText: "Когда релиз? Please answer in English.",
       requesterSubject: "d".repeat(64),
-      schemaVersion: 1,
+      schemaVersion: 2,
       scopeId: authority.scopeId,
     })).resolves.toEqual({ jobId: "question-1", status: "accepted" });
 
@@ -423,13 +426,14 @@ describe("AdmitCurrentFinalReply", () => {
     const useCase = new AdmitCurrentFinalReply(evidence, authorization, admissions, policy);
     const input = {
       authorizationPrincipalRef: "principal:v1:opaque",
+      deliveryContainerId: "question-thread-1",
       finalProjectionReceipt: authority.finalProjectionReceipt,
       projectionTargetContainerId: authority.projectionTargetContainerId,
       questionHash: "c".repeat(64),
       questionId: "question-1",
       questionText: "Question?",
       requesterSubject: "d".repeat(64),
-      schemaVersion: 1 as const,
+      schemaVersion: 2 as const,
       scopeId: authority.scopeId,
     };
     evidence.current = null;
@@ -445,6 +449,26 @@ describe("AdmitCurrentFinalReply", () => {
     expect(admissions.commits).toEqual([]);
   });
 
+  it("rejects a delivery container not covered by the fresh authorization", async () => {
+    const admissions = new AdmissionFake();
+    const useCase = new AdmitCurrentFinalReply(
+      new EvidenceFake(), new AuthorizationFake(), admissions, policy,
+    );
+    await expect(useCase.execute({
+      authorizationPrincipalRef: "principal:v1:opaque",
+      deliveryContainerId: "cross-scope-thread",
+      finalProjectionReceipt: authority.finalProjectionReceipt,
+      projectionTargetContainerId: authority.projectionTargetContainerId,
+      questionHash: "c".repeat(64),
+      questionId: "question-cross-scope",
+      questionText: "Question?",
+      requesterSubject: "d".repeat(64),
+      schemaVersion: 2,
+      scopeId: authority.scopeId,
+    })).resolves.toEqual({ reason: "participant_not_eligible", status: "ignored" });
+    expect(admissions.commits).toEqual([]);
+  });
+
   it("rejects unknown or malformed admission contract versions", async () => {
     const useCase = new AdmitCurrentFinalReply(
       new EvidenceFake(),
@@ -454,16 +478,17 @@ describe("AdmitCurrentFinalReply", () => {
     );
     const valid = {
       authorizationPrincipalRef: "principal:v1:opaque",
+      deliveryContainerId: "question-thread-1",
       finalProjectionReceipt: authority.finalProjectionReceipt,
       projectionTargetContainerId: authority.projectionTargetContainerId,
       questionHash: "c".repeat(64),
       questionId: "question-1",
       questionText: "Question?",
       requesterSubject: "d".repeat(64),
-      schemaVersion: 1 as const,
+      schemaVersion: 2 as const,
       scopeId: authority.scopeId,
     };
-    await expect(useCase.execute({ ...valid, schemaVersion: 2 } as never))
+    await expect(useCase.execute({ ...valid, schemaVersion: 3 } as never))
       .rejects.toThrow("version is unsupported");
     await expect(useCase.execute({ ...valid, providerPayload: "forbidden" } as never))
       .rejects.toThrow("unknown field");

@@ -84,6 +84,7 @@ export class DiscordAnswerPayloadCodec implements AnswerPayloadPort {
   public prepare(input: {
     readonly binding: AnswerPublicationBinding;
     readonly content: string;
+    readonly deliveryContainerId: string;
     readonly marker: string;
     readonly projectionTargetContainerId: string;
     readonly replyToRemoteMessageId: string;
@@ -96,7 +97,7 @@ export class DiscordAnswerPayloadCodec implements AnswerPayloadPort {
         url: markerUrl(input.marker),
       }],
       message_reference: {
-        channel_id: input.projectionTargetContainerId,
+        channel_id: input.deliveryContainerId,
         fail_if_not_exists: true,
         message_id: input.replyToRemoteMessageId,
       },
@@ -116,6 +117,7 @@ export class DiscordAnswerDeliveryAdapter implements AnswerDeliveryPort {
   ) {}
 
   public async create(input: {
+    readonly deliveryContainerId: string;
     readonly marker: string;
     readonly payloadBytes: string;
     readonly projectionTargetContainerId: string;
@@ -124,13 +126,13 @@ export class DiscordAnswerDeliveryAdapter implements AnswerDeliveryPort {
     const payload = answerPayloadSchema.parse(JSON.parse(input.payloadBytes) as unknown);
     if (
       payload.embeds[0]?.url !== markerUrl(markerSchema.parse(input.marker)) ||
-      payload.message_reference.channel_id !== input.projectionTargetContainerId ||
+      payload.message_reference.channel_id !== input.deliveryContainerId ||
       payload.message_reference.message_id !== input.replyToRemoteMessageId
     ) {
       throw new Error("Discord answer payload conflicts with its immutable effect");
     }
     const response = await this.rest.post(
-      Routes.channelMessages(payload.message_reference.channel_id),
+      Routes.channelMessages(input.deliveryContainerId),
       {
         body: payload,
       },
@@ -139,6 +141,7 @@ export class DiscordAnswerDeliveryAdapter implements AnswerDeliveryPort {
   }
 
   public async inspect(input: {
+    readonly deliveryContainerId: string;
     readonly marker: string;
     readonly payloadHash: string;
     readonly projectionTargetContainerId: string;
@@ -149,7 +152,7 @@ export class DiscordAnswerDeliveryAdapter implements AnswerDeliveryPort {
   > {
     try {
       const response = await this.rest.get(
-        Routes.channelMessages(input.projectionTargetContainerId),
+        Routes.channelMessages(input.deliveryContainerId),
         { query: new URLSearchParams({ limit: "100" }) },
       );
       const messages = z.array(discordMessageSchema).parse(response);
@@ -171,7 +174,7 @@ export class DiscordAnswerDeliveryAdapter implements AnswerDeliveryPort {
             url: markerUrl(input.marker),
           }],
           message_reference: {
-            channel_id: input.projectionTargetContainerId,
+            channel_id: input.deliveryContainerId,
             fail_if_not_exists: true,
             message_id: input.replyToRemoteMessageId,
           },

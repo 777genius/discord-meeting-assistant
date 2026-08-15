@@ -5,10 +5,11 @@ import {
   requireSha256,
 } from "../../domain/errors.js";
 
-export const questionAdmissionContractVersion = 1 as const;
+export const questionAdmissionContractVersion = 2 as const;
 
 export interface QuestionAdmissionCommandV1 {
   readonly authorizationPrincipalRef: string;
+  readonly deliveryContainerId: string;
   readonly finalProjectionReceipt: string;
   readonly projectionTargetContainerId: string;
   readonly questionHash: string;
@@ -32,6 +33,7 @@ export function decodeQuestionAdmissionCommand(
   const input = value as Record<string, unknown>;
   const allowed = new Set([
     "authorizationPrincipalRef",
+    "deliveryContainerId",
     "finalProjectionReceipt",
     "projectionTargetContainerId",
     "questionHash",
@@ -47,7 +49,7 @@ export function decodeQuestionAdmissionCommand(
       "question admission command contains an unknown field",
     );
   }
-  if (requireKnowledgeInteger(input.schemaVersion as number, "schemaVersion", 1) !== 1) {
+  if (requireKnowledgeInteger(input.schemaVersion as number, "schemaVersion", 1) !== 2) {
     throw new MeetingKnowledgeInvariantError(
       "INVALID_BINDING",
       "question admission command version is unsupported",
@@ -58,6 +60,11 @@ export function decodeQuestionAdmissionCommand(
       input.authorizationPrincipalRef as string,
       "authorizationPrincipalRef",
       2_048,
+    ),
+    deliveryContainerId: requireKnowledgeText(
+      input.deliveryContainerId as string,
+      "deliveryContainerId",
+      256,
     ),
     finalProjectionReceipt: requireKnowledgeText(
       input.finalProjectionReceipt as string,

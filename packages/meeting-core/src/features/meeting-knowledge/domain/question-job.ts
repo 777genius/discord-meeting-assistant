@@ -12,6 +12,7 @@ export interface QuestionBindingSnapshot {
   readonly authorizationPrincipalRef: string;
   readonly botApplicationIdentity: string;
   readonly canonicalEvidenceHash: string;
+  readonly deliveryContainerId: string;
   readonly expectedLocale: AnswerLocale;
   readonly finalProjectionEpoch: string;
   readonly finalProjectionReceipt: string;
@@ -34,6 +35,7 @@ const bindingTextFields = [
   "authorizationPolicyVersion",
   "authorizationPrincipalRef",
   "botApplicationIdentity",
+  "deliveryContainerId",
   "finalProjectionEpoch",
   "finalProjectionReceipt",
   "meetingId",
@@ -52,6 +54,7 @@ export class QuestionBinding implements QuestionBindingSnapshot {
   public readonly authorizationPrincipalRef: string;
   public readonly botApplicationIdentity: string;
   public readonly canonicalEvidenceHash: string;
+  public readonly deliveryContainerId: string;
   public readonly expectedLocale: AnswerLocale;
   public readonly finalProjectionEpoch: string;
   public readonly finalProjectionReceipt: string;
@@ -76,6 +79,7 @@ export class QuestionBinding implements QuestionBindingSnapshot {
     this.authorizationPrincipalRef = input.authorizationPrincipalRef;
     this.botApplicationIdentity = input.botApplicationIdentity;
     this.canonicalEvidenceHash = input.canonicalEvidenceHash;
+    this.deliveryContainerId = input.deliveryContainerId;
     this.expectedLocale = input.expectedLocale;
     this.finalProjectionEpoch = input.finalProjectionEpoch;
     this.finalProjectionReceipt = input.finalProjectionReceipt;
@@ -164,6 +168,7 @@ export class QuestionBinding implements QuestionBindingSnapshot {
       authorizationPrincipalRef: this.authorizationPrincipalRef,
       botApplicationIdentity: this.botApplicationIdentity,
       canonicalEvidenceHash: this.canonicalEvidenceHash,
+      deliveryContainerId: this.deliveryContainerId,
       expectedLocale: this.expectedLocale,
       finalProjectionEpoch: this.finalProjectionEpoch,
       finalProjectionReceipt: this.finalProjectionReceipt,

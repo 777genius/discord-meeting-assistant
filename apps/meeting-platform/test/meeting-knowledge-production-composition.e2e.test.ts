@@ -411,6 +411,7 @@ async function qualifySharedAnswers(input: {
     authorizationPolicyVersion: "synthetic-room-policy.v1",
     authorizationPrincipalRef: "synthetic-principal",
     ...currentAuthority,
+    deliveryContainerId: currentAuthority.projectionTargetContainerId,
     expectedLocale: "en",
     policyVersion: "meeting-knowledge.focused-memory-final-reply.v2",
     questionHash: "b".repeat(64),

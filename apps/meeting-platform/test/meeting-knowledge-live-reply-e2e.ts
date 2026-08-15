@@ -11,7 +11,12 @@ import { LiveMeeting } from "@discord-meeting/meeting-core/live-meeting";
 import { Meeting } from "@discord-meeting/meeting-core/meeting-lifecycle";
 import { ProcessMeetingSummary } from "@discord-meeting/meeting-core/post-call-workflow";
 import {
+  DurableAnswerPublication,
+  type AnswerDeliveryPort,
+} from "@discord-meeting/meeting-core/publishing";
+import {
   PostgresGuildConfigurationRepository,
+  PostgresAnswerEffectStore,
   PostgresLiveFinalizedMemoryLifecycle,
   PostgresLiveFinalizedMemoryStore,
   PostgresLiveMeetingRepository,
@@ -20,7 +25,7 @@ import {
 } from "@discord-meeting/postgres-adapter";
 import type { SubscriptionRuntimeTransportPort } from
   "@discord-meeting/subscription-runtime-adapter";
-import type { Client } from "discord.js";
+import { ChannelType, PermissionFlagsBits, type Client } from "discord.js";
 import type { Pool } from "pg";
 import { expect } from "vitest";
 
@@ -30,6 +35,7 @@ import {
   createMeetingKnowledgeLocalFinalReply,
   localFinalReplyPolicy,
 } from "../src/composition/meeting-knowledge.js";
+import { DiscordAnswerPayloadCodec } from "@discord-meeting/discord-adapter";
 import {
   platformConfig,
   requiredHistoricalRuntime,
@@ -49,9 +55,9 @@ export async function qualifyLiveProjectionReply(input: {
   const meetingId = "synthetic-live-reply-meeting";
   const participantId = "555555555555555555";
   const liveMessageId = "666666666666666666";
+  const threadId = "666666666666666668";
   const questionId = "777777777777777777";
-  const liveReceipt =
-    `discord:v2:channel:${resultsContainerId}:message:${liveMessageId}`;
+  const liveReceipt = `discord:v2:thread:${threadId}:message:${liveMessageId}`;
   const liveMeetings = new PostgresLiveMeetingRepository(input.pool);
   const live = LiveMeeting.start({
     meetingId,
@@ -109,11 +115,30 @@ export async function qualifyLiveProjectionReply(input: {
     resultsChannelId: resultsContainerId,
     voiceChannelId: roomId,
   }).toSnapshot(), null);
-  const permissionSet = { bitfield: 3n, has: () => true };
-  const channel = { permissionsFor: () => permissionSet };
+  const permissionSet = {
+    bitfield: PermissionFlagsBits.ViewChannel | PermissionFlagsBits.ReadMessageHistory,
+    has: (permission: bigint) =>
+      permission === PermissionFlagsBits.ViewChannel ||
+      permission === PermissionFlagsBits.ReadMessageHistory,
+  };
+  const channel = {
+    id: resultsContainerId,
+    permissionsFor: () => permissionSet,
+    type: ChannelType.GuildText,
+  };
+  const thread = {
+    id: threadId,
+    isThread: () => true,
+    members: { fetch: () => Promise.resolve({ id: participantId }) },
+    parentId: resultsContainerId,
+    permissionsFor: () => permissionSet,
+    type: ChannelType.PrivateThread,
+  };
   const guild = {
-    channels: { fetch: () => Promise.resolve(channel) },
-    members: { fetch: () => Promise.resolve({}) },
+    channels: {
+      fetch: (id: string) => Promise.resolve(id === threadId ? thread : channel),
+    },
+    members: { fetch: () => Promise.resolve({ id: participantId }) },
     roles: { fetch: () => Promise.resolve() },
   };
   const emitter = new EventEmitter();
@@ -121,6 +146,30 @@ export async function qualifyLiveProjectionReply(input: {
     guilds: { fetch: () => Promise.resolve(guild) },
   }) as unknown as Client;
   const delivered: string[] = [];
+  const deliveryCalls: Parameters<AnswerDeliveryPort["create"]>[0][] = [];
+  let loseFirstResponse = true;
+  const answerDelivery: AnswerDeliveryPort = {
+    create: async (request) => {
+      deliveryCalls.push(request);
+      delivered.push(request.payloadBytes);
+      if (loseFirstResponse) {
+        loseFirstResponse = false;
+        throw new Error("synthetic response lost after committed thread create");
+      }
+      return `88888888888888888${deliveryCalls.length}`;
+    },
+    inspect: async (request) => {
+      const created = deliveryCalls.find((candidate) =>
+        candidate.marker === request.marker &&
+        candidate.deliveryContainerId === request.deliveryContainerId &&
+        candidate.projectionTargetContainerId === request.projectionTargetContainerId &&
+        candidate.replyToRemoteMessageId === request.replyToRemoteMessageId
+      );
+      return created === undefined
+        ? { status: "unconfirmed" as const }
+        : { externalReceipt: "888888888888888880", status: "found" as const };
+    },
+  };
   let generatorInvocations = 0;
   const generator = createGroundedAnswer(() => {
     generatorInvocations += 1;
@@ -136,13 +185,7 @@ export async function qualifyLiveProjectionReply(input: {
     },
   };
   const runtime = createMeetingKnowledgeLocalFinalReply({
-    answerDelivery: {
-      create: async ({ payloadBytes }) => {
-        delivered.push(payloadBytes);
-        return "888888888888888888";
-      },
-      inspect: async () => ({ status: "unconfirmed" as const }),
-    },
+    answerDelivery,
     answers: generator,
     client,
     config,
@@ -158,12 +201,12 @@ export async function qualifyLiveProjectionReply(input: {
   const emitQuestion = (overrides: Record<string, unknown> = {}): void => {
     emitter.emit("messageCreate", {
       author: { bot: false, id: participantId },
-      channel: { isThread: () => false },
-      channelId: resultsContainerId,
+      channel: thread,
+      channelId: threadId,
       content: "How does EARLY-COMET connect to PINE-GOLF?",
       guildId: scopeId,
       id: questionId,
-      reference: { channelId: resultsContainerId, messageId: liveMessageId },
+      reference: { channelId: threadId, messageId: liveMessageId },
       webhookId: null,
       ...overrides,
     });
@@ -178,6 +221,22 @@ export async function qualifyLiveProjectionReply(input: {
     emitQuestion();
     emitQuestion();
     await runtime.settleIngress();
+    await waitForQuestionEffectState(input.pool, questionId, "outcome_unknown", input.signal);
+    expect(deliveryCalls).toHaveLength(1);
+    expect(deliveryCalls[0]).toMatchObject({
+      deliveryContainerId: threadId,
+      projectionTargetContainerId: resultsContainerId,
+      replyToRemoteMessageId: questionId,
+    });
+    const reconciliation = new DurableAnswerPublication({
+      delivery: answerDelivery,
+      payloads: new DiscordAnswerPayloadCodec(),
+      store: new PostgresAnswerEffectStore(input.pool),
+    });
+    await expect(reconciliation.reconcileUnknown(100)).resolves.toEqual({
+      absentUnconfirmed: 0,
+      delivered: 1,
+    });
     await waitForQuestionEffect(input.pool, questionId, input.signal);
     expect(delivered).toHaveLength(1);
     expect(generatorInvocations).toBe(1);
@@ -389,6 +448,8 @@ async function finalizeAndProveCanonicalTransition(input: {
 
   const finalQuestionId = "777777777777777776";
   input.emitQuestion({
+    channel: { isThread: () => false },
+    channelId: resultsContainerId,
     id: finalQuestionId,
     reference: {
       channelId: resultsContainerId,
@@ -416,6 +477,28 @@ async function finalizeAndProveCanonicalTransition(input: {
     [input.meetingId],
   );
   expect(deleted.rows.every(({ state }) => state === "deleted")).toBe(true);
+}
+
+async function waitForQuestionEffectState(
+  pool: Pool,
+  questionId: string,
+  expectedState: string,
+  signal: AbortSignal,
+): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    signal.throwIfAborted();
+    const result = await pool.query<{ readonly state: string }>(
+      "SELECT state FROM meeting_core.answer_effects WHERE effect_id = $1",
+      [`meeting-knowledge-answer:v1:${questionId}`],
+    );
+    if (result.rows[0]?.state === expectedState) {
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 100);
+    });
+  }
+  throw new Error(`question effect ${questionId} did not reach ${expectedState}`);
 }
 
 async function waitForHistoricalApplication(

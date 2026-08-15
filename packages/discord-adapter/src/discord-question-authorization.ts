@@ -3,19 +3,56 @@ import type {
   QuestionAuthorizationPort,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import {
+  ChannelType,
   Client,
+  type GuildBasedChannel,
+  type GuildMember,
   PermissionFlagsBits,
+  type PermissionsBitField,
 } from "discord.js";
 
 import { DiscordQuestionPrincipalCodec } from "./discord-question-principal.js";
 
 export const discordParticipantQuestionPolicyVersion =
-  "discord.participant-current-results.v1" as const;
+  "discord.participant-current-results.v2" as const;
 
 const observationTtlMilliseconds = 30_000;
 
 function isPresent<T>(value: T | null): value is T {
   return value !== null;
+}
+
+/**
+ * discord.js computes a private thread's base permissions from its parent but
+ * does not prove that a non-manager is still a member of that thread. Fetching
+ * the exact ThreadMember with cache disabled supplies the missing fresh fence.
+ */
+export async function freshDiscordContainerPermissions(
+  channel: GuildBasedChannel,
+  member: GuildMember,
+): Promise<Readonly<PermissionsBitField> | null> {
+  const permissions = channel.permissionsFor(member);
+  if (
+    !permissions.has(PermissionFlagsBits.ViewChannel) ||
+    !permissions.has(PermissionFlagsBits.ReadMessageHistory)
+  ) {
+    return null;
+  }
+  if (
+    channel.type === ChannelType.PrivateThread &&
+    !permissions.has(PermissionFlagsBits.ManageThreads)
+  ) {
+    try {
+      await channel.members.fetch({
+        cache: false,
+        force: true,
+        member: member.id,
+      });
+    } catch {
+      return null;
+    }
+  }
+  return permissions;
 }
 
 export class DiscordQuestionAuthorizationAdapter
@@ -52,11 +89,8 @@ export class DiscordQuestionAuthorizationAdapter
       if (!isPresent(channel)) {
         return { reason: "denied", status: "denied" };
       }
-      const permissions = channel.permissionsFor(member);
-      if (
-        !permissions.has(PermissionFlagsBits.ViewChannel) ||
-        !permissions.has(PermissionFlagsBits.ReadMessageHistory)
-      ) {
+      const permissions = await freshDiscordContainerPermissions(channel, member);
+      if (permissions === null) {
         return { reason: "denied", status: "denied" };
       }
       const observedAt = new Date(now).toISOString();
@@ -67,6 +101,7 @@ export class DiscordQuestionAuthorizationAdapter
       return {
         actorId: principal.actorId,
         containerId: principal.containerId,
+        deliveryContainerId: principal.authorizationContainerId,
         digest: this.principals.observationDigest(
           discordParticipantQuestionPolicyVersion,
           principal.actorId,

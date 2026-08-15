@@ -44,6 +44,7 @@ export type QuestionAuthorizationObservation =
   | {
       readonly actorId: string;
       readonly containerId: string;
+      readonly deliveryContainerId: string;
       readonly digest: string;
       readonly expiresAt: string;
       readonly observedAt: string;
@@ -355,6 +356,7 @@ export interface AnswerPublicationPort {
     readonly authorizationDigest: string;
     readonly binding: QuestionBindingSnapshot;
     readonly content: string;
+    readonly deliveryContainerId: string;
     readonly marker: string;
     readonly projectionTargetContainerId: string;
     readonly replyToRemoteMessageId: string;

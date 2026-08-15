@@ -37,6 +37,7 @@ function generationRequest(): GroundedAnswerGenerationRequest {
       authorizationPrincipalRef: "opaque-principal",
       botApplicationIdentity: "11111111111111111",
       canonicalEvidenceHash,
+      deliveryContainerId: "22222222222222222",
       expectedLocale: "en",
       finalProjectionEpoch: "final-epoch-1",
       finalProjectionReceipt:
