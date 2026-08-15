@@ -141,7 +141,7 @@ class SyntheticCoverageRuntime implements SubscriptionRuntimeTransportPort {
 
 const syntheticCoverageRuntime = new SyntheticCoverageRuntime();
 
-function platformConfig(
+export function platformConfig(
   baseUrl: string,
   indexingEnabled: boolean,
   searchEnabled: boolean,
@@ -216,7 +216,7 @@ function platformConfig(
   };
 }
 
-const silentLogger: Logger = {
+export const silentLogger: Logger = {
   child: () => silentLogger,
   debug: () => { /* intentionally silent synthetic logger */ },
   error: () => { /* intentionally silent synthetic logger */ },

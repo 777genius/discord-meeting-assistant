@@ -66,6 +66,7 @@ import {
   scopeId,
 } from "./meeting-knowledge-production-composition-fixtures.js";
 import { proveComposedGroundedVoice } from "./meeting-knowledge-composed-voice-e2e.js";
+import { qualifyLiveProjectionReply } from "./meeting-knowledge-live-reply-e2e.js";
 import {
   assertAggregateStageBudget,
   assertProviderWire,
@@ -84,6 +85,7 @@ const qualificationStageBudgets = Object.freeze({
   focusedRetrievalRecall: 160_000,
   indexRestartReplay: 40_000,
   sharedFocusedAndExhaustiveAnswer: 160_000,
+  liveProjectionReply: 30_000,
   supersessionAndDisabledDeletionDrain: 100_000,
 });
 assertAggregateStageBudget(
@@ -177,6 +179,17 @@ describe("Meeting Knowledge mandatory PostgreSQL qualification", () => {
           signal,
         })
       );
+      await runQualificationStage(
+        "live_projection_reply",
+        qualificationStageBudgets.liveProjectionReply,
+        timings,
+        (signal) => qualifyLiveProjectionReply({
+          infinity,
+          pool,
+          runtime: qualifiedRuntime,
+          signal,
+        }),
+      );
       await runQualificationStage("composed_grounded_voice", qualificationStageBudgets.composedGroundedVoice, timings, (signal) =>
         qualifyComposedGroundedVoice({
           current: indexed.current,
@@ -203,6 +216,7 @@ describe("Meeting Knowledge mandatory PostgreSQL qualification", () => {
         "index_restart_replay",
         "focused_retrieval_recall",
         "shared_focused_and_exhaustive_answer",
+        "live_projection_reply",
         "composed_grounded_voice",
         "supersession_and_disabled_deletion_drain",
       ]);

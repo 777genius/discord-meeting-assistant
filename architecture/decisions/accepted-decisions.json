@@ -171,6 +171,11 @@
       "id": "ADR-0035",
       "path": "docs/decisions/0035-infinity-package-and-semantic-qualification.md",
       "immutableDigest": "sha256:1e69c2ed4038b467e84384d0e1ea43163b194b9d4d0db5110fe97fd20c49c76b"
+    },
+    {
+      "id": "ADR-0036",
+      "path": "docs/decisions/0036-canonical-live-projection-reply.md",
+      "immutableDigest": "sha256:cccdc041aea7006e9aafb7e61334976ea51be236bdff39d05ea2eb99033cb5ac"
     }
   ]
 }

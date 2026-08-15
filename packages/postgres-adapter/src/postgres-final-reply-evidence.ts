@@ -15,6 +15,8 @@ import {
 } from "@discord-meeting/meeting-core/meeting-lifecycle";
 import type { Pool, PoolClient } from "pg";
 
+import { loadLiveReplyAuthority } from "./postgres-live-reply-evidence.js";
+
 interface StoredMeetingRow {
   readonly meeting_id?: string;
   readonly snapshot: unknown;
@@ -118,6 +120,25 @@ export function resolveFinalReplyAuthority(
   });
 }
 
+export async function loadCurrentReplyAuthority(
+  pool: Pool,
+  meetingId: string,
+  botApplicationIdentity: string,
+): Promise<ResolvedFinalReplyAuthority | null> {
+  const result = await pool.query<StoredMeetingRow>(
+    `SELECT snapshot FROM meeting_core.meetings WHERE meeting_id = $1`,
+    [meetingId],
+  );
+  const finalAuthority = result.rows[0] === undefined
+    ? null
+    : resolveFinalReplyAuthority(result.rows[0].snapshot, botApplicationIdentity);
+  return finalAuthority ?? loadLiveReplyAuthority(
+    pool,
+    meetingId,
+    botApplicationIdentity,
+  );
+}
+
 export function finalReplyAuthorityMatches(
   authority: CurrentFinalReplyBinding,
   binding: QuestionBindingSnapshot,
@@ -153,9 +174,15 @@ export async function loadLockedFinalReplyAuthority(
     [meetingId],
   );
   const row = result.rows[0];
-  return row === undefined
+  const finalAuthority = row === undefined
     ? null
     : resolveFinalReplyAuthority(row.snapshot, botApplicationIdentity);
+  return finalAuthority ?? loadLiveReplyAuthority(
+    client,
+    meetingId,
+    botApplicationIdentity,
+    true,
+  );
 }
 
 export class PostgresFinalReplyEvidence implements FinalReplyEvidencePort {
@@ -184,13 +211,35 @@ export class PostgresFinalReplyEvidence implements FinalReplyEvidencePort {
       `,
       [input.finalProjectionReceipt, input.projectionTargetContainerId],
     );
-    if (result.rows.length !== 1) {
-      return null;
-    }
-    return resolveFinalReplyAuthority(
-      result.rows[0]!.snapshot,
-      this.botApplicationIdentity,
-    )?.binding ?? null;
+    const finalAuthorities = result.rows.flatMap(({ snapshot }) => {
+      const authority = resolveFinalReplyAuthority(snapshot, this.botApplicationIdentity);
+      return authority === null ? [] : [authority];
+    });
+    const liveRows = await this.pool.query<{ readonly meeting_id: string }>(
+      `
+        SELECT live.meeting_id
+        FROM meeting_core.live_meetings AS live
+        WHERE live.snapshot ->> 'projectionExternalId' = $1
+          AND live.snapshot ->> 'publicationTargetId' = $2
+          AND live.snapshot ->> 'status' = 'active'
+          AND NOT EXISTS (
+            SELECT 1
+            FROM meeting_knowledge.unavailable_final_projections AS unavailable
+            WHERE unavailable.final_projection_receipt = $1
+          )
+        ORDER BY live.meeting_id
+        LIMIT 2
+      `,
+      [input.finalProjectionReceipt, input.projectionTargetContainerId],
+    );
+    const liveAuthorities = (await Promise.all(liveRows.rows.map(({ meeting_id }) =>
+      loadLiveReplyAuthority(this.pool, meeting_id, this.botApplicationIdentity)
+    ))).filter((authority): authority is ResolvedFinalReplyAuthority => authority !== null);
+    const authorities = [...finalAuthorities, ...liveAuthorities].filter(({ binding }) =>
+      binding.finalProjectionReceipt === input.finalProjectionReceipt &&
+      binding.projectionTargetContainerId === input.projectionTargetContainerId
+    );
+    return authorities.length === 1 ? authorities[0]!.binding : null;
   }
 
   public async recheckCurrentBinding(binding: QuestionBindingSnapshot) {
@@ -228,6 +277,9 @@ export class PostgresFinalReplyEvidence implements FinalReplyEvidencePort {
       return { status: "stale" } as const;
     }
     const meetingIds = [...new Set(references.map(({ meetingId }) => meetingId))];
+    const historicalMeetingIds = meetingIds.filter((meetingId) =>
+      meetingId !== binding.meetingId
+    );
     const result = await this.pool.query<ReferencedMeetingRow>(
       `
         SELECT meeting.meeting_id,
@@ -247,18 +299,21 @@ export class PostgresFinalReplyEvidence implements FinalReplyEvidencePort {
         FROM meeting_core.meetings AS meeting
         WHERE meeting.meeting_id = ANY($1::text[])
       `,
-      [meetingIds],
+      [historicalMeetingIds],
     );
-    const authorities = new Map<string, ResolvedFinalReplyAuthority>();
+    const authorities = new Map<string, ResolvedFinalReplyAuthority>([
+      [binding.meetingId, anchor],
+    ]);
     for (const row of result.rows) {
-      const authority = row.meeting_id === binding.meetingId
-        ? anchor
-        : resolveFinalReplyAuthority(row.snapshot, this.botApplicationIdentity);
+      if (row.meeting_id === binding.meetingId) {
+        continue;
+      }
+      const authority = resolveFinalReplyAuthority(row.snapshot, this.botApplicationIdentity);
       if (
         authority === null ||
         authority.binding.scopeId !== binding.scopeId ||
         authority.binding.roomId !== binding.roomId ||
-        (row.meeting_id !== binding.meetingId && !row.historical_current)
+        !row.historical_current
       ) {
         return { status: "invalid_selection" } as const;
       }
@@ -322,12 +377,26 @@ export class PostgresFinalReplyEvidence implements FinalReplyEvidencePort {
       `,
       [binding.meetingId, binding.finalProjectionReceipt],
     );
+    const unavailable = await this.pool.query<{ readonly unavailable: boolean }>(
+      `
+        SELECT EXISTS (
+          SELECT 1
+          FROM meeting_knowledge.unavailable_final_projections
+          WHERE final_projection_receipt = $1
+        ) AS unavailable
+      `,
+      [binding.finalProjectionReceipt],
+    );
     const row = result.rows[0];
-    if (row === undefined || row.unavailable) {
+    if (row?.unavailable === true || unavailable.rows[0]?.unavailable === true) {
       return null;
     }
-    return resolveFinalReplyAuthority(
-      row.snapshot,
+    const finalAuthority = row === undefined
+      ? null
+      : resolveFinalReplyAuthority(row.snapshot, this.botApplicationIdentity);
+    return finalAuthority ?? loadLiveReplyAuthority(
+      this.pool,
+      binding.meetingId,
       this.botApplicationIdentity,
     );
   }

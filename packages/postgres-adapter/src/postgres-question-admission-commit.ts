@@ -168,11 +168,22 @@ export class PostgresQuestionAdmissionCommit
         `
           INSERT INTO meeting_knowledge.unavailable_final_projections
             (final_projection_receipt)
-          SELECT meeting.snapshot -> 'publication' ->> 'externalPublicationId'
-          FROM meeting_core.meetings AS meeting
-          WHERE meeting.snapshot ->> 'publicationTargetId' = $1
-            AND meeting.snapshot -> 'publication' ->> 'externalPublicationId'
-              LIKE ('%:message:' || $2)
+          SELECT projection.receipt
+          FROM (
+            SELECT meeting.snapshot -> 'publication' ->> 'externalPublicationId'
+              AS receipt
+            FROM meeting_core.meetings AS meeting
+            WHERE meeting.snapshot ->> 'publicationTargetId' = $1
+              AND meeting.snapshot -> 'publication' ->> 'externalPublicationId'
+                LIKE ('%:message:' || $2)
+            UNION ALL
+            SELECT live.snapshot ->> 'projectionExternalId' AS receipt
+            FROM meeting_core.live_meetings AS live
+            WHERE live.snapshot ->> 'publicationTargetId' = $1
+              AND live.snapshot ->> 'projectionExternalId'
+                LIKE ('%:message:' || $2)
+          ) AS projection
+          WHERE projection.receipt IS NOT NULL
           ON CONFLICT (final_projection_receipt) DO NOTHING
         `,
         [input.projectionTargetContainerId, input.remoteMessageId],

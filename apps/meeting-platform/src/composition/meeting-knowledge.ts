@@ -21,6 +21,7 @@ import {
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import {
   DurableAnswerPublication,
+  type AnswerDeliveryPort,
 } from "@discord-meeting/meeting-core/publishing";
 import type { Logger } from "@discord-meeting/observability-adapter";
 import {
@@ -95,6 +96,8 @@ class ConfiguredDiscordQuestionScope implements DiscordQuestionScopePort {
 }
 
 export function createMeetingKnowledgeLocalFinalReply(input: {
+  /** Deterministic transport fake for production-composition qualification. */
+  readonly answerDelivery?: AnswerDeliveryPort;
   readonly answers?: GroundedMeetingAnswer;
   readonly client: Client;
   readonly config: PlatformConfig;
@@ -151,7 +154,7 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
       });
   const effects = new PostgresAnswerEffectStore(input.pool);
   const publication = new DurableAnswerPublication({
-    delivery: new DiscordAnswerDeliveryAdapter(
+    delivery: input.answerDelivery ?? new DiscordAnswerDeliveryAdapter(
       createDiscordOneAttemptAnswerRest(input.config.secrets.discordToken),
       input.config.discordApplicationId,
     ),

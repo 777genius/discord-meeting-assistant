@@ -8,14 +8,9 @@ import type { Pool } from "pg";
 
 import {
   canonicalFinalReplyTurnHash,
-  resolveFinalReplyAuthority,
+  loadCurrentReplyAuthority,
   type ResolvedFinalReplyAuthority,
 } from "./postgres-final-reply-evidence.js";
-
-interface StoredMeetingRow {
-  readonly snapshot: unknown;
-  readonly unavailable: boolean;
-}
 
 interface ScoredTurn {
   readonly index: number;
@@ -210,25 +205,22 @@ export class PostgresFocusedMemoryRetrieval
       return { schemaVersion: 1, status: "unavailable" };
     }
     try {
-      const result = await this.pool.query<StoredMeetingRow>(
+      const unavailable = await this.pool.query<{ readonly unavailable: boolean }>(
         `
-          SELECT meeting.snapshot,
-                 EXISTS (
-                   SELECT 1
-                   FROM meeting_knowledge.unavailable_final_projections AS unavailable
-                   WHERE unavailable.final_projection_receipt = $2
-                 ) AS unavailable
-          FROM meeting_core.meetings AS meeting
-          WHERE meeting.meeting_id = $1
+          SELECT EXISTS (
+            SELECT 1
+            FROM meeting_knowledge.unavailable_final_projections
+            WHERE final_projection_receipt = $1
+          ) AS unavailable
         `,
-        [input.meetingId, input.finalProjectionReceipt],
+        [input.finalProjectionReceipt],
       );
-      const row = result.rows[0];
-      if (row === undefined || row.unavailable) {
+      if (unavailable.rows[0]?.unavailable === true) {
         return { schemaVersion: 1, status: "unavailable" };
       }
-      const authority = resolveFinalReplyAuthority(
-        row.snapshot,
+      const authority = await loadCurrentReplyAuthority(
+        this.pool,
+        input.meetingId,
         this.botApplicationIdentity,
       );
       if (authority === null || !authorityMatchesRetrieval(authority, input)) {

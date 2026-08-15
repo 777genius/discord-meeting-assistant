@@ -12,8 +12,10 @@ Context, voice transport, or model providers to the Meeting Knowledge domain:
 
 1. **Trusted evidence baseline** - a final transcript can prove its source,
    sealed human roster, producer semantics, and current final Discord projection.
-2. **Local Final Reply** - an authorized participant replies to Botik's current
-   final summary/transcript message and receives one locally grounded answer.
+2. **Canonical Projection Reply** - an authorized participant replies to
+   Botik's exact current live-transcript projection while its meeting is active,
+   or to the current final summary/transcript projection after finalization, and
+   receives one locally grounded answer.
 3. **Same-room historical memory** - accepted human transcript turns are indexed
    through the official Infinity Context TypeScript SDK; search results are only
    candidates and are locally rehydrated and reauthorized before generation.
@@ -114,7 +116,7 @@ Every new source file is fail-closed in the architecture dependency model.
 
 ### Capability-specific ports
 
-Local Final Reply uses only:
+Canonical Projection Reply uses only:
 
 - `FinalReplyEvidencePort` - loads an exact current-final authoritative snapshot
   and later rehydrates historical candidate references.
@@ -188,12 +190,19 @@ The Discord input adapter handles only create events that are:
 
 - in an allowlisted installed guild/results container;
 - from a human, not Botik, another bot, webhook, DM, or empty message;
-- an exact reply to Publishing's current final summary/transcript projection.
+- an exact reply to Publishing's current canonical projection: the bot-owned
+  live-transcript projection while the meeting is active, otherwise the current
+  final summary/transcript projection after finalization.
 
 Transport validation and self/bot/webhook filtering stay in the adapter. Product
-currentness is resolved exactly once by Meeting Knowledge. Replies to live
-captions, drafts, recording links, prior answers, stale finals, or unrelated
-messages are ignored without a job.
+currentness is resolved exactly once by Meeting Knowledge from persisted
+projection ownership and persisted source identity, never message text, embeds,
+captions, or nicknames. Arbitrary captions/drafts, replaced or deleted live
+projections, non-bot targets, wrong guild/container/thread, recording links,
+prior answers, stale finals, cross-scope requests, and unrelated messages are
+ignored without a job. Ending a meeting revokes its live target immediately;
+the accepted final canonical projection becomes eligible through the unchanged
+final-reply path.
 
 Question edit cancels and scrubs pre-send work; a new create event is required.
 Question deletion cancels and scrubs pre-send work. Final-projection deletion or
