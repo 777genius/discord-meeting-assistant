@@ -81,6 +81,7 @@ export function createVoiceGroundedAnswers(
       ? null
       : principals.issue({
           actorId: request.activeParticipantId,
+          authorizationContainerId: request.roomId,
           containerId: request.roomId,
           expiresAtMilliseconds: Date.now() + 5 * 60_000,
           scopeId: context.scopeId,

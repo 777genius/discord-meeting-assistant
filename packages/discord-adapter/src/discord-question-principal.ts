@@ -7,7 +7,7 @@ import {
 
 import { z } from "zod";
 
-const principalPayloadSchema = z.object({
+const principalPayloadV1Schema = z.object({
   actorId: z.string().regex(/^\d{17,20}$/u),
   containerId: z.string().regex(/^\d{17,20}$/u),
   expiresAtMilliseconds: z.number().int().positive(),
@@ -15,7 +15,28 @@ const principalPayloadSchema = z.object({
   version: z.literal(1),
 }).strict();
 
-export type DiscordQuestionPrincipal = z.infer<typeof principalPayloadSchema>;
+const principalPayloadV2Schema = z.object({
+  actorId: z.string().regex(/^\d{17,20}$/u),
+  authorizationContainerId: z.string().regex(/^\d{17,20}$/u),
+  containerId: z.string().regex(/^\d{17,20}$/u),
+  expiresAtMilliseconds: z.number().int().positive(),
+  scopeId: z.string().regex(/^\d{17,20}$/u),
+  version: z.literal(2),
+}).strict();
+
+const principalPayloadSchema = z.discriminatedUnion("version", [
+  principalPayloadV1Schema,
+  principalPayloadV2Schema,
+]);
+
+export interface DiscordQuestionPrincipal {
+  readonly actorId: string;
+  readonly authorizationContainerId: string;
+  readonly containerId: string;
+  readonly expiresAtMilliseconds: number;
+  readonly scopeId: string;
+  readonly version: 1 | 2;
+}
 
 const principalPrefix = "mkp1";
 const principalAad = Buffer.from("discord-meeting:knowledge-principal:v1", "utf8");
@@ -31,7 +52,7 @@ export class DiscordQuestionPrincipalCodec {
   }
 
   public issue(input: Omit<DiscordQuestionPrincipal, "version">): string {
-    const payload = principalPayloadSchema.parse({ ...input, version: 1 });
+    const payload = principalPayloadV2Schema.parse({ ...input, version: 2 });
     const nonce = randomBytes(12);
     const cipher = createCipheriv("aes-256-gcm", this.key, nonce);
     cipher.setAAD(principalAad);
@@ -72,7 +93,10 @@ export class DiscordQuestionPrincipalCodec {
         decipher.update(ciphertext),
         decipher.final(),
       ]).toString("utf8");
-      return principalPayloadSchema.parse(JSON.parse(plaintext) as unknown);
+      const payload = principalPayloadSchema.parse(JSON.parse(plaintext) as unknown);
+      return payload.version === 1
+        ? { ...payload, authorizationContainerId: payload.containerId }
+        : payload;
     } catch {
       return null;
     }

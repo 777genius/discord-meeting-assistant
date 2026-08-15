@@ -3,7 +3,9 @@ import { describe, expect, it, vi } from "vitest";
 import {
   DiscordAnswerDeliveryAdapter,
   DiscordAnswerPayloadCodec,
+  DiscordHistoricalAuthorizationAdapter,
   DiscordLocalFinalReplyHandler,
+  DiscordQuestionAuthorizationAdapter,
   DiscordQuestionPrincipalCodec,
   createDiscordOneAttemptAnswerRest,
 } from "@discord-meeting/discord-adapter";
@@ -54,6 +56,7 @@ describe("Discord Local Final Reply contracts", () => {
     const codec = new DiscordQuestionPrincipalCodec(Buffer.alloc(32, 7));
     const principal = codec.issue({
       actorId: "77777777777777777",
+      authorizationContainerId: containerId,
       containerId,
       expiresAtMilliseconds: 1_800_000_000_000,
       scopeId: "66666666666666666",
@@ -62,14 +65,66 @@ describe("Discord Local Final Reply contracts", () => {
     expect(principal).not.toContain("77777777777777777");
     expect(codec.resolve(principal)).toEqual({
       actorId: "77777777777777777",
+      authorizationContainerId: containerId,
       containerId,
       expiresAtMilliseconds: 1_800_000_000_000,
       scopeId: "66666666666666666",
-      version: 1,
+      version: 2,
     });
     expect(codec.resolve(`${principal}tampered`)).toBeNull();
     expect(codec.keyedSubject("77777777777777777", "66666666666666666"))
       .not.toBe(codec.questionHash("77777777777777777"));
+  });
+
+  it("authorizes a canonical parent binding through the exact Discord thread", async () => {
+    const threadId = "99999999999999991";
+    const actorId = "77777777777777777";
+    const codec = new DiscordQuestionPrincipalCodec(Buffer.alloc(32, 7));
+    const principal = codec.issue({
+      actorId,
+      authorizationContainerId: threadId,
+      containerId,
+      expiresAtMilliseconds: 1_800_000_000_000,
+      scopeId: "66666666666666666",
+    });
+    const permissions = { bitfield: 3n, has: () => true };
+    const thread = { permissionsFor: () => permissions };
+    const room = { permissionsFor: () => permissions };
+    const fetchChannel = vi.fn((id: string) => Promise.resolve(
+      id === threadId ? thread : id === "55555555555555555" ? room : null,
+    ));
+    const guild = {
+      channels: { fetch: fetchChannel },
+      members: { fetch: () => Promise.resolve({}) },
+      roles: { fetch: () => Promise.resolve() },
+    };
+    const client = {
+      guilds: { fetch: () => Promise.resolve(guild) },
+    } as unknown as Client;
+
+    await expect(new DiscordQuestionAuthorizationAdapter(
+      client,
+      codec,
+      () => 1_799_999_000_000,
+    ).observe({
+      authorizationPrincipalRef: principal,
+      expectedContainerId: containerId,
+      expectedScopeId: "66666666666666666",
+    })).resolves.toMatchObject({
+      actorId,
+      containerId,
+      status: "authorized",
+    });
+    await expect(new DiscordHistoricalAuthorizationAdapter(
+      client,
+      codec,
+      () => 1_799_999_000_000,
+    ).authorize({
+      authorizationPrincipalRef: principal,
+      roomId: "55555555555555555",
+      scopeId: "66666666666666666",
+    })).resolves.toMatchObject({ authorized: true });
+    expect(fetchChannel).toHaveBeenCalledWith(threadId, { force: true });
   });
 
   it("creates once from strict immutable bytes and reconciles exact remote identity", async () => {
@@ -135,7 +190,9 @@ describe("Discord Local Final Reply contracts", () => {
     })).resolves.toEqual({ status: "unconfirmed" });
     expect(post).toHaveBeenCalledTimes(1);
   });
+});
 
+describe("Discord Local Final Reply ingress", () => {
   it("admits one human create reply only in the installed results container", async () => {
     const execute = vi.fn().mockResolvedValue({
       jobId: questionId,
@@ -164,6 +221,7 @@ describe("Discord Local Final Reply contracts", () => {
     handler.start();
     client.emit("messageCreate", {
       author: { bot: false, id: "77777777777777777" },
+      channel: { isThread: () => false },
       channelId: containerId,
       content: "  When is the release?  ",
       guildId: "66666666666666666",
@@ -189,6 +247,7 @@ describe("Discord Local Final Reply contracts", () => {
 
     client.emit("messageCreate", {
       author: { bot: true, id: botId },
+      channel: { isThread: () => false },
       channelId: containerId,
       content: "Bot question?",
       guildId: "66666666666666666",
@@ -198,6 +257,81 @@ describe("Discord Local Final Reply contracts", () => {
     });
     await new Promise<void>((resolve) => {
       setImmediate(resolve);
+    });
+    expect(execute).toHaveBeenCalledTimes(1);
+    handler.close();
+  });
+
+  it("admits and withdraws an exact canonical thread projection under its results parent", async () => {
+    const threadId = "99999999999999991";
+    const projectionMessageId = "44444444444444444";
+    const execute = vi.fn().mockResolvedValue({ jobId: questionId, status: "accepted" });
+    const withdrawProjection = vi.fn().mockResolvedValue([questionId]);
+    const cancelQuestion = vi.fn().mockImplementation(() => Promise.resolve());
+    const client = new EventEmitter();
+    const handler = new DiscordLocalFinalReplyHandler({
+      admission: { execute },
+      admissions: { withdrawProjection },
+      client: client as unknown as Client,
+      jobs: {
+        cancelQuestion,
+        hasActiveQuestion: vi.fn().mockResolvedValue(false),
+      },
+      nowMilliseconds: () => 1_800_000_000_000,
+      options: { principalTtlSeconds: 900 },
+      principals: new DiscordQuestionPrincipalCodec(Buffer.alloc(32, 7)),
+      publication: { cancelBeforeRequest: vi.fn().mockResolvedValue(true) },
+      scopes: { resultsContainerForGuild: () => Promise.resolve(containerId) },
+    });
+    const thread = { id: threadId, isThread: () => true, parentId: containerId };
+    handler.start();
+    client.emit("messageCreate", {
+      author: { bot: false, id: "77777777777777777" },
+      channel: thread,
+      channelId: threadId,
+      content: "Where is the decision?",
+      guildId: "66666666666666666",
+      id: questionId,
+      reference: { channelId: threadId, messageId: projectionMessageId },
+      webhookId: null,
+    });
+    await vi.waitFor(() => {
+      expect(execute).toHaveBeenCalledTimes(1);
+    });
+    expect(execute.mock.calls[0]?.[0]).toMatchObject({
+      finalProjectionReceipt:
+        `discord:v2:thread:${threadId}:message:${projectionMessageId}`,
+      projectionTargetContainerId: containerId,
+    });
+
+    client.emit("messageDelete", {
+      channel: thread,
+      channelId: threadId,
+      guildId: "66666666666666666",
+      id: projectionMessageId,
+    });
+    await vi.waitFor(() => {
+      expect(withdrawProjection).toHaveBeenCalledTimes(1);
+    });
+    expect(withdrawProjection).toHaveBeenCalledWith({
+      finalProjectionReceipt:
+        `discord:v2:thread:${threadId}:message:${projectionMessageId}`,
+    });
+
+    client.emit("messageCreate", {
+      author: { bot: false, id: "77777777777777777" },
+      channel: { ...thread, parentId: "99999999999999992" },
+      channelId: threadId,
+      content: "Wrong parent?",
+      guildId: "66666666666666666",
+      id: "33333333333333334",
+      reference: { channelId: threadId, messageId: projectionMessageId },
+      webhookId: null,
+    });
+    await new Promise<void>((resolve) => {
+      setImmediate(() => {
+        resolve();
+      });
     });
     expect(execute).toHaveBeenCalledTimes(1);
     handler.close();
@@ -225,6 +359,7 @@ describe("Discord Local Final Reply contracts", () => {
     });
     handler.start();
     client.emit("messageDelete", {
+      channel: { isThread: () => false },
       channelId: containerId,
       guildId: "66666666666666666",
       id: "44444444444444444",
@@ -234,8 +369,8 @@ describe("Discord Local Final Reply contracts", () => {
       expect(cancelQuestion).toHaveBeenCalledWith(questionId);
     });
     expect(withdrawProjection).toHaveBeenCalledWith({
-      projectionTargetContainerId: containerId,
-      remoteMessageId: "44444444444444444",
+      finalProjectionReceipt:
+        `discord:v2:channel:${containerId}:message:44444444444444444`,
     });
     expect(cancelBeforeRequest).toHaveBeenCalledWith({
       questionId,

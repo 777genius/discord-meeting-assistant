@@ -228,8 +228,7 @@ export interface QuestionAdmissionCommitPort {
   }): Promise<QuestionAdmissionCommitResult>;
 
   withdrawProjection(input: {
-    readonly projectionTargetContainerId: string;
-    readonly remoteMessageId: string;
+    readonly finalProjectionReceipt: string;
   }): Promise<readonly string[]>;
 }
 

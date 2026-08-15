@@ -158,8 +158,7 @@ export class PostgresQuestionAdmissionCommit
   }
 
   public async withdrawProjection(input: {
-    readonly projectionTargetContainerId: string;
-    readonly remoteMessageId: string;
+    readonly finalProjectionReceipt: string;
   }): Promise<readonly string[]> {
     const client = await this.pool.connect();
     try {
@@ -173,20 +172,16 @@ export class PostgresQuestionAdmissionCommit
             SELECT meeting.snapshot -> 'publication' ->> 'externalPublicationId'
               AS receipt
             FROM meeting_core.meetings AS meeting
-            WHERE meeting.snapshot ->> 'publicationTargetId' = $1
-              AND meeting.snapshot -> 'publication' ->> 'externalPublicationId'
-                LIKE ('%:message:' || $2)
+            WHERE meeting.snapshot -> 'publication' ->> 'externalPublicationId' = $1
             UNION ALL
             SELECT live.snapshot ->> 'projectionExternalId' AS receipt
             FROM meeting_core.live_meetings AS live
-            WHERE live.snapshot ->> 'publicationTargetId' = $1
-              AND live.snapshot ->> 'projectionExternalId'
-                LIKE ('%:message:' || $2)
+            WHERE live.snapshot ->> 'projectionExternalId' = $1
           ) AS projection
           WHERE projection.receipt IS NOT NULL
           ON CONFLICT (final_projection_receipt) DO NOTHING
         `,
-        [input.projectionTargetContainerId, input.remoteMessageId],
+        [input.finalProjectionReceipt],
       );
       const affected = await client.query<{ readonly question_id: string }>(
         `

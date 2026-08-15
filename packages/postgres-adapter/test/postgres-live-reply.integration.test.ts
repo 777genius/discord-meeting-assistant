@@ -1,5 +1,6 @@
 import {
   LiveFinalizedMemoryWorker,
+  QuestionBinding,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import { LiveMeeting } from "@discord-meeting/meeting-core/live-meeting";
 import { describe, expect, it } from "vitest";
@@ -10,6 +11,7 @@ import {
   PostgresLiveFinalizedMemoryLifecycle,
   PostgresLiveFinalizedMemoryStore,
   PostgresLiveMeetingRepository,
+  PostgresQuestionAdmissionCommit,
   canonicalFinalReplyTurnHash,
 } from "../src/index.js";
 import {
@@ -99,6 +101,83 @@ async function persistActiveLiveProjection(
 }
 
 describe("PostgreSQL canonical live reply authority", () => {
+  it("drains only the exact canonical thread receipt under the parent target", async (context) => {
+    const database = databaseOrSkip(context);
+    const live = await persistActiveLiveProjection(database);
+    const threadId = "77777777777777777";
+    const messageId = "55555555555555555";
+    const threadReceipt = `discord:v2:thread:${threadId}:message:${messageId}`;
+    const snapshot = await live.repository.findById(live.meetingId);
+    if (snapshot === null) {
+      throw new Error("live meeting disappeared before thread projection");
+    }
+    const threaded = LiveMeeting.restore(snapshot);
+    threaded.completeProjection(threadReceipt, threaded.revision);
+    await live.repository.save(threaded.toSnapshot(), snapshot.revision);
+    const evidence = new PostgresFinalReplyEvidence(database, botId);
+    const authority = await evidence.findCurrentBinding({
+      finalProjectionReceipt: threadReceipt,
+      projectionTargetContainerId: channelId,
+    });
+    if (authority === null) {
+      throw new Error("thread authority was not admitted");
+    }
+    const questionId = "thread-question-1";
+    const authorization = {
+      actorId: "speaker-a",
+      containerId: channelId,
+      digest: "a".repeat(64),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      observedAt: new Date().toISOString(),
+      policyVersion: "discord.participant-current-results.v1",
+      scopeId: authority.scopeId,
+      source: "authoritative_remote" as const,
+      status: "authorized" as const,
+    };
+    const binding = QuestionBinding.create({
+      authorizationDigest: authorization.digest,
+      authorizationPolicyVersion: authorization.policyVersion,
+      authorizationPrincipalRef: "opaque-thread-principal",
+      ...authority,
+      expectedLocale: "en",
+      policyVersion: "meeting-knowledge.focused-memory-final-reply.v2",
+      questionHash: "b".repeat(64),
+      questionId,
+      requesterSubject: "c".repeat(64),
+    }).toSnapshot();
+    const admissions = new PostgresQuestionAdmissionCommit(database, botId);
+    await expect(admissions.commit({
+      authorization,
+      binding,
+      questionText: "What was decided?",
+      ratePolicy: {
+        guildQuestionsPerHour: 10,
+        jobTtlSeconds: 900,
+        requesterQuestionsPerHour: 10,
+      },
+    })).resolves.toMatchObject({ status: "committed" });
+
+    await expect(admissions.withdrawProjection({
+      finalProjectionReceipt:
+        `discord:v2:channel:${channelId}:message:${messageId}`,
+    })).resolves.toEqual([]);
+    await expect(admissions.withdrawProjection({
+      finalProjectionReceipt:
+        `discord:v2:thread:88888888888888888:message:${messageId}`,
+    })).resolves.toEqual([]);
+    await expect(evidence.findCurrentBinding({
+      finalProjectionReceipt: threadReceipt,
+      projectionTargetContainerId: channelId,
+    })).resolves.not.toBeNull();
+    await expect(admissions.withdrawProjection({
+      finalProjectionReceipt: threadReceipt,
+    })).resolves.toEqual([questionId]);
+    await expect(evidence.findCurrentBinding({
+      finalProjectionReceipt: threadReceipt,
+      projectionTargetContainerId: channelId,
+    })).resolves.toBeNull();
+  });
+
   it("retrieves an early fact, rejects replacement drift, and transitions to final", async (context) => {
     const database = databaseOrSkip(context);
     const live = await persistActiveLiveProjection(database);

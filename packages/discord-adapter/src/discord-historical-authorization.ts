@@ -54,9 +54,9 @@ export class DiscordHistoricalAuthorizationAdapter
       await guild.roles.fetch();
       const [member, principalContainer, sourceRoom] = await Promise.all([
         guild.members.fetch({ force: true, user: principal.actorId }),
-        guild.channels.fetch(principal.containerId, { force: true }),
-        principal.containerId === request.roomId
-          ? guild.channels.fetch(principal.containerId, { force: true })
+        guild.channels.fetch(principal.authorizationContainerId, { force: true }),
+        principal.authorizationContainerId === request.roomId
+          ? guild.channels.fetch(principal.authorizationContainerId, { force: true })
           : guild.channels.fetch(request.roomId, { force: true }),
       ]);
       if (principalContainer === null || sourceRoom === null) {
@@ -80,6 +80,7 @@ export class DiscordHistoricalAuthorizationAdapter
         principal.actorId,
         principal.scopeId,
         principal.containerId,
+        principal.authorizationContainerId,
         request.roomId,
         principalPermissions.bitfield.toString(),
         sourcePermissions.bitfield.toString(),

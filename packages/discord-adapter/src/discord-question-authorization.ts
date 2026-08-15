@@ -47,7 +47,7 @@ export class DiscordQuestionAuthorizationAdapter
       await guild.roles.fetch();
       const [member, channel] = await Promise.all([
         guild.members.fetch({ force: true, user: principal.actorId }),
-        guild.channels.fetch(principal.containerId, { force: true }),
+        guild.channels.fetch(principal.authorizationContainerId, { force: true }),
       ]);
       if (!isPresent(channel)) {
         return { reason: "denied", status: "denied" };
@@ -72,6 +72,7 @@ export class DiscordQuestionAuthorizationAdapter
           principal.actorId,
           principal.scopeId,
           principal.containerId,
+          principal.authorizationContainerId,
           permissions.bitfield.toString(),
         ),
         expiresAt,

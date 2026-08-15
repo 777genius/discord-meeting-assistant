@@ -79,6 +79,7 @@ export const localFinalReplyPolicy: LocalFinalReplyPolicy = Object.freeze({
 
 export interface MeetingKnowledgeLocalFinalReplyRuntime {
   close(): Promise<void>;
+  settleIngress(): Promise<void>;
   start(): void;
 }
 
@@ -247,8 +248,10 @@ function createPollingRuntime(input: {
       input.handler.close();
       clearInterval(processTimer);
       clearInterval(reconcileTimer);
+      await input.handler.settle();
       await Promise.allSettled([processing, reconciling]);
     },
+    settleIngress: () => input.handler.settle(),
     start: () => {
       if (processTimer !== undefined) {
         return;

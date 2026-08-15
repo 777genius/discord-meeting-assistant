@@ -34,18 +34,19 @@ export class DiscordLocalFinalReplyHandler {
   private readonly principals: DiscordQuestionPrincipalCodec;
   private readonly reportError: (error: unknown) => void;
   private readonly scopes: DiscordQuestionScopePort;
+  private readonly pending = new Set<Promise<void>>();
   private started = false;
   private readonly onCreate = (message: Message): void => {
-    void this.handleCreate(message).catch(this.reportError);
+    this.track(this.handleCreate(message));
   };
   private readonly onDelete = (message: Message | PartialMessage): void => {
-    void this.handleDelete(message).catch(this.reportError);
+    this.track(this.handleDelete(message));
   };
   private readonly onUpdate = (
     _previous: Message | PartialMessage,
     message: Message | PartialMessage,
   ): void => {
-    void this.cancelQuestion(message.id).catch(this.reportError);
+    this.track(this.cancelQuestion(message.id));
   };
 
   public constructor(input: {
@@ -99,6 +100,12 @@ export class DiscordLocalFinalReplyHandler {
     this.client.off("messageUpdate", this.onUpdate);
   }
 
+  public async settle(): Promise<void> {
+    while (this.pending.size > 0) {
+      await Promise.allSettled(this.pending);
+    }
+  }
+
   private async handleCreate(message: Message): Promise<void> {
     const guildId = message.guildId;
     const referencedMessageId = message.reference?.messageId;
@@ -116,12 +123,17 @@ export class DiscordLocalFinalReplyHandler {
       return;
     }
     const resultsContainer = await this.scopes.resultsContainerForGuild(guildId);
-    if (resultsContainer === null || resultsContainer !== message.channelId) {
+    if (resultsContainer === null) {
+      return;
+    }
+    const location = canonicalProjectionLocation(message, resultsContainer);
+    if (location === null) {
       return;
     }
     const authorizationPrincipalRef = this.principals.issue({
       actorId: message.author.id,
-      containerId: message.channelId,
+      authorizationContainerId: message.channelId,
+      containerId: resultsContainer,
       expiresAtMilliseconds: this.nowMilliseconds() +
         this.options.principalTtlSeconds * 1_000,
       scopeId: guildId,
@@ -129,11 +141,10 @@ export class DiscordLocalFinalReplyHandler {
     await this.admission.execute({
       authorizationPrincipalRef,
       finalProjectionReceipt: encodeDiscordExternalPublicationId({
-        kind: "channel-message",
+        ...location.reference,
         messageId: referencedMessageId,
-        parentChannelId: message.channelId,
       }),
-      projectionTargetContainerId: message.channelId,
+      projectionTargetContainerId: resultsContainer,
       questionHash: this.principals.questionHash(questionText),
       questionId: message.id,
       questionText,
@@ -153,12 +164,18 @@ export class DiscordLocalFinalReplyHandler {
       return;
     }
     const resultsContainer = await this.scopes.resultsContainerForGuild(message.guildId);
-    if (resultsContainer !== message.channelId) {
+    if (resultsContainer === null) {
+      return;
+    }
+    const location = canonicalProjectionLocation(message, resultsContainer);
+    if (location === null) {
       return;
     }
     const affectedQuestions = await this.admissions.withdrawProjection({
-      projectionTargetContainerId: message.channelId,
-      remoteMessageId: message.id,
+      finalProjectionReceipt: encodeDiscordExternalPublicationId({
+        ...location.reference,
+        messageId: message.id,
+      }),
     });
     for (const questionId of affectedQuestions) {
       await this.publication.cancelBeforeRequest({
@@ -176,4 +193,34 @@ export class DiscordLocalFinalReplyHandler {
     });
     await this.jobs.cancelQuestion(questionId);
   }
+
+  private track(operation: Promise<void>): void {
+    const tracked = operation.catch(this.reportError).finally(() => {
+      this.pending.delete(tracked);
+    });
+    this.pending.add(tracked);
+  }
+}
+
+function canonicalProjectionLocation(
+  message: Message | PartialMessage,
+  resultsContainerId: string,
+): {
+  readonly reference:
+    | { readonly kind: "channel-message"; readonly parentChannelId: string }
+    | { readonly kind: "thread"; readonly threadId: string };
+} | null {
+  if (message.channel.isThread()) {
+    return message.channel.parentId === resultsContainerId
+      ? { reference: { kind: "thread", threadId: message.channelId } }
+      : null;
+  }
+  return message.channelId === resultsContainerId
+    ? {
+      reference: {
+        kind: "channel-message",
+        parentChannelId: resultsContainerId,
+      },
+    }
+    : null;
 }

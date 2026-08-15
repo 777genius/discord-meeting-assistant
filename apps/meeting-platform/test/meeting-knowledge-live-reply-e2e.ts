@@ -8,11 +8,14 @@ import {
   LiveFinalizedMemoryWorker,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import { LiveMeeting } from "@discord-meeting/meeting-core/live-meeting";
+import { Meeting } from "@discord-meeting/meeting-core/meeting-lifecycle";
+import { ProcessMeetingSummary } from "@discord-meeting/meeting-core/post-call-workflow";
 import {
   PostgresGuildConfigurationRepository,
   PostgresLiveFinalizedMemoryLifecycle,
   PostgresLiveFinalizedMemoryStore,
   PostgresLiveMeetingRepository,
+  PostgresMeetingRepository,
   canonicalFinalReplyTurnHash,
 } from "@discord-meeting/postgres-adapter";
 import type { SubscriptionRuntimeTransportPort } from
@@ -29,6 +32,7 @@ import {
 } from "../src/composition/meeting-knowledge.js";
 import {
   platformConfig,
+  requiredHistoricalRuntime,
   resultsContainerId,
   roomId,
   scopeId,
@@ -56,6 +60,30 @@ export async function qualifyLiveProjectionReply(input: {
   });
   live.completeProjection(liveReceipt, live.revision);
   await liveMeetings.save(live.toSnapshot(), null);
+  const finalMeetings = new PostgresMeetingRepository(input.pool);
+  await finalMeetings.save(Meeting.record({
+    actors: [{ actorId: participantId, kind: "human" }],
+    identityProvenance: {
+      actorObservationState: "consistent",
+      actorSemanticsVersion: 1,
+      producerCapabilityId: "meeting.lifecycle.sealed-actor-roster.v1",
+      producerRevision: "f".repeat(40),
+      rosterState: "sealed",
+    },
+    lifecycleGeneration: 3,
+    meetingId,
+    publicationTargetId: resultsContainerId,
+    recording: {
+      manifestLocator: `s3://synthetic-only/${meetingId}/manifest.json`,
+      recordingId: `recording-${meetingId}`,
+      speakerAudio: [{
+        audioLocator: `s3://synthetic-only/${meetingId}/${participantId}.ogg`,
+        speakerId: participantId,
+        timelineOffsetMs: 0,
+      }],
+    },
+    source: { roomId, scopeId },
+  }).toSnapshot(), 0);
   const lifecycle = new PostgresLiveFinalizedMemoryLifecycle(input.pool);
   await expect(lifecycle.registerMeeting({
     actors: [{ actorId: participantId, kind: "human" }],
@@ -93,7 +121,11 @@ export async function qualifyLiveProjectionReply(input: {
     guilds: { fetch: () => Promise.resolve(guild) },
   }) as unknown as Client;
   const delivered: string[] = [];
-  const generator = createGroundedAnswer();
+  let generatorInvocations = 0;
+  const generator = createGroundedAnswer(() => {
+    generatorInvocations += 1;
+    return generatorInvocations;
+  });
   const baseConfig = platformConfig(input.infinity.baseUrl, true, true, "test");
   const config = {
     ...baseConfig,
@@ -126,6 +158,7 @@ export async function qualifyLiveProjectionReply(input: {
   const emitQuestion = (overrides: Record<string, unknown> = {}): void => {
     emitter.emit("messageCreate", {
       author: { bot: false, id: participantId },
+      channel: { isThread: () => false },
       channelId: resultsContainerId,
       content: "How does EARLY-COMET connect to PINE-GOLF?",
       guildId: scopeId,
@@ -138,18 +171,32 @@ export async function qualifyLiveProjectionReply(input: {
   runtime.start();
   try {
     emitRejectedQuestions(emitQuestion, participantId, liveMessageId);
+    await runtime.settleIngress();
+    await expectQuestionEffects(input.pool, 0);
+    expect(generatorInvocations).toBe(0);
+    expect(delivered).toHaveLength(0);
     emitQuestion();
     emitQuestion();
-    await waitForDelivery(delivered);
+    await runtime.settleIngress();
+    await waitForQuestionEffect(input.pool, questionId, input.signal);
     expect(delivered).toHaveLength(1);
+    expect(generatorInvocations).toBe(1);
+    await expectQuestionEffects(input.pool, 1);
     expect(delivered[0]).toContain("Ana owns the active release");
     expect(delivered[0]).not.toContain("Ongoing live ingestion detail 19");
-    await finalizeAndProveRejection({
+    await finalizeAndProveCanonicalTransition({
       delivered,
       emitQuestion,
+      finalMeetings,
+      generatorInvocations: () => generatorInvocations,
+      infinity: input.infinity,
       lifecycle,
       liveMeetings,
       meetingId,
+      participantId,
+      pool: input.pool,
+      runtime,
+      signal: input.signal,
     });
   } finally {
     await runtime.close();
@@ -188,15 +235,19 @@ async function projectLiveTurns(pool: Pool, meetingId: string): Promise<void> {
   }
 }
 
-function createGroundedAnswer(): GroundedMeetingAnswer {
+function createGroundedAnswer(onGenerate: () => number): GroundedMeetingAnswer {
   return new GroundedMeetingAnswer({
     generate: async (request) => {
+      const invocation = onGenerate();
       const early = request.plan.evidence.find(({ text }) => text.includes("EARLY-COMET"));
       const historical = request.plan.evidence.find(({ text }) => text.includes("PINE-GOLF"));
       expect(request.plan.mode).toBe("focused_retrieval");
       expect(request.plan.evidence.length).toBeLessThanOrEqual(24);
       expect(early).toBeDefined();
       expect(historical).toBeDefined();
+      if (invocation === 2) {
+        expect(early?.turnId).toBe("same-meeting-final-turn-1");
+      }
       return {
         answer: {
           claims: [{
@@ -246,20 +297,19 @@ function emitRejectedQuestions(
   });
 }
 
-async function waitForDelivery(delivered: readonly string[]): Promise<void> {
-  for (let attempt = 0; attempt < 100 && delivered.length === 0; attempt += 1) {
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 100);
-    });
-  }
-}
-
-async function finalizeAndProveRejection(input: {
+async function finalizeAndProveCanonicalTransition(input: {
   readonly delivered: readonly string[];
   readonly emitQuestion: (overrides?: Record<string, unknown>) => void;
+  readonly finalMeetings: PostgresMeetingRepository;
+  readonly generatorInvocations: () => number;
+  readonly infinity: DisposableInfinityHttpService;
   readonly lifecycle: PostgresLiveFinalizedMemoryLifecycle;
   readonly liveMeetings: PostgresLiveMeetingRepository;
   readonly meetingId: string;
+  readonly participantId: string;
+  readonly pool: Pool;
+  readonly runtime: NonNullable<ReturnType<typeof createMeetingKnowledgeLocalFinalReply>>;
+  readonly signal: AbortSignal;
 }): Promise<void> {
   const current = await input.liveMeetings.findById(input.meetingId);
   if (current === null) {
@@ -269,11 +319,162 @@ async function finalizeAndProveRejection(input: {
   ended.end(30_000);
   await input.liveMeetings.save(ended.toSnapshot(), current.revision);
   await input.lifecycle.finishMeeting(input.meetingId);
-  input.emitQuestion({ id: "777777777777777774" });
-  await new Promise<void>((resolve) => {
-    setTimeout(resolve, 750);
+  const finalMessageId = "666666666666666667";
+  const finalReceipt =
+    `discord:v2:channel:${resultsContainerId}:message:${finalMessageId}`;
+  const finalized = await new ProcessMeetingSummary({
+    meetings: input.finalMeetings,
+    publisher: {
+      publish: async () => ({
+        ok: true as const,
+        value: { externalPublicationId: finalReceipt },
+      }),
+    },
+    summarizer: {
+      generate: async () => ({
+        ok: true as const,
+        value: {
+          actionItems: [],
+          decisions: [{
+            decisionId: "same-meeting-final-decision",
+            evidenceTurnIds: ["same-meeting-final-turn-1"],
+            text: "Ana owns the active release.",
+          }],
+          openQuestions: [],
+          overview: "The same meeting reached its authoritative final state.",
+          summaryId: "same-meeting-final-summary",
+          title: "Same meeting final",
+          topics: [],
+          version: 1,
+        },
+      }),
+    },
+    transcriber: {
+      transcribe: async () => ({
+        ok: true as const,
+        value: {
+          recordingId: `recording-${input.meetingId}`,
+          transcriptId: `transcript-${input.meetingId}`,
+          turns: Array.from({ length: 6 }, (_, index) => ({
+            endMs: 2_500 + index * 1_000,
+            speakerId: input.participantId,
+            startMs: 2_000 + index * 1_000,
+            text: index === 0
+              ? "EARLY-COMET confirms Ana owns the active release."
+              : `Canonical final transcript detail ${index}.`,
+            turnId: `same-meeting-final-turn-${index + 1}`,
+          })),
+          version: 1,
+        },
+      }),
+    },
+  }).execute(input.meetingId, { signal: input.signal });
+  expect(finalized).toMatchObject({
+    externalPublicationId: finalReceipt,
+    status: "published",
   });
+  const sync = requiredHistoricalRuntime(input.pool, input.infinity, true, true);
+  await sync.assertReady();
+  await sync.start();
+  try {
+    await waitForHistoricalApplication(input.pool, input.meetingId, input.signal);
+  } finally {
+    await sync.close();
+  }
+  input.emitQuestion({ id: "777777777777777774" });
+  await input.runtime.settleIngress();
+  await expectQuestionEffects(input.pool, 1);
   expect(input.delivered).toHaveLength(1);
+  expect(input.generatorInvocations()).toBe(1);
+
+  const finalQuestionId = "777777777777777776";
+  input.emitQuestion({
+    id: finalQuestionId,
+    reference: {
+      channelId: resultsContainerId,
+      messageId: finalMessageId,
+    },
+  });
+  await input.runtime.settleIngress();
+  await waitForQuestionEffect(input.pool, finalQuestionId, input.signal);
+  await expectQuestionEffects(input.pool, 2);
+  expect(input.delivered).toHaveLength(2);
+  if (input.generatorInvocations() !== 2) {
+    throw new Error(`final reply bypassed canonical generation: ${input.delivered[1]}`);
+  }
+  const deleting = requiredHistoricalRuntime(
+    input.pool,
+    input.infinity,
+    false,
+    false,
+  );
+  await deleting.requestMeetingDeletion(input.meetingId);
+  await deleting.start();
+  await deleting.close();
+  const deleted = await input.pool.query<{ readonly state: string }>(
+    `SELECT state FROM meeting_core.historical_memory_sync WHERE meeting_id = $1`,
+    [input.meetingId],
+  );
+  expect(deleted.rows.every(({ state }) => state === "deleted")).toBe(true);
+}
+
+async function waitForHistoricalApplication(
+  pool: Pool,
+  meetingId: string,
+  signal: AbortSignal,
+): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    signal.throwIfAborted();
+    const result = await pool.query<{ readonly state: string }>(
+      `SELECT state FROM meeting_core.historical_memory_sync WHERE meeting_id = $1`,
+      [meetingId],
+    );
+    if (result.rows[0]?.state === "applied") {
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      setTimeout(() => {
+        resolve();
+      }, 100);
+    });
+  }
+  throw new Error(`historical release ${meetingId} did not apply`);
+}
+
+async function expectQuestionEffects(pool: Pool, expected: number): Promise<void> {
+  const [jobs, effects] = await Promise.all([
+    pool.query<{ readonly count: number }>(
+      "SELECT count(*)::integer AS count FROM meeting_knowledge.question_jobs",
+    ),
+    pool.query<{ readonly count: number }>(
+      "SELECT count(*)::integer AS count FROM meeting_core.answer_effects",
+    ),
+  ]);
+  expect(jobs.rows[0]?.count).toBe(expected);
+  expect(effects.rows[0]?.count).toBe(expected);
+}
+
+async function waitForQuestionEffect(
+  pool: Pool,
+  questionId: string,
+  signal: AbortSignal,
+): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    signal.throwIfAborted();
+    const result = await pool.query<{ readonly state: string }>(
+      `SELECT state FROM meeting_core.answer_effects WHERE effect_id = $1`,
+      [`meeting-knowledge-answer:v1:${questionId}`],
+    );
+    if (result.rows[0]?.state === "delivered") {
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      setTimeout(() => {
+        resolve();
+      }, 100);
+    });
+  }
+  throw new Error(`question effect ${questionId} did not settle`);
 }
 
 const unusedRuntimeTransport = {
