@@ -35,6 +35,17 @@ function admissionBindingHash(
   return sha256(JSON.stringify(dedupeBinding));
 }
 
+function legacyAdmissionBindingHash(
+  binding: ReturnType<QuestionBinding["toSnapshot"]>,
+): string {
+  const {
+    authorizationPrincipalRef: _ephemeralPrincipal,
+    deliveryContainerId: _deliveryContainerId,
+    ...legacyDedupeBinding
+  } = binding;
+  return sha256(JSON.stringify(legacyDedupeBinding));
+}
+
 function admissionBindingsEqual(
   left: ReturnType<QuestionBinding["toSnapshot"]>,
   right: ReturnType<QuestionBinding["toSnapshot"]>,
@@ -82,7 +93,9 @@ export class PostgresQuestionAdmissionCommit
           decodeQuestionBinding(existing.binding),
           binding,
         );
-        const result = activeBindingMatches && existing.binding_hash === bindingHash
+        const storedHashMatches = existing.binding_hash === bindingHash ||
+          existing.binding_hash === legacyAdmissionBindingHash(binding);
+        const result = activeBindingMatches && storedHashMatches
           ? { jobId: existing.question_id, status: "duplicate" } as const
           : { status: "conflict" } as const;
         await client.query("COMMIT");

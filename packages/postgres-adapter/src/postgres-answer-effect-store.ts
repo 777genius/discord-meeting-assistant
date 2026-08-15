@@ -6,13 +6,14 @@ import type {
   AnswerEffectStore,
   AnswerEffectStoreReservation,
 } from "@discord-meeting/meeting-core/publishing";
+import { createHash } from "node:crypto";
 import type { Pool } from "pg";
 
 interface AnswerEffectRow {
   readonly authorization_digest: string;
   readonly binding_hash: string;
   readonly claim_generation: number;
-  readonly delivery_container_id: string;
+  readonly delivery_container_id: string | null;
   readonly effect_id: string;
   readonly external_receipt: string | null;
   readonly marker: string;
@@ -24,6 +25,9 @@ interface AnswerEffectRow {
 }
 
 function toRecord(row: AnswerEffectRow): AnswerEffectRecord {
+  if (row.delivery_container_id === null) {
+    throw new Error("legacy answer effect has no recoverable delivery location and is safely terminal");
+  }
   return Object.freeze({
     authorizationDigest: row.authorization_digest,
     bindingHash: row.binding_hash,
@@ -38,6 +42,64 @@ function toRecord(row: AnswerEffectRow): AnswerEffectRecord {
     replyToRemoteMessageId: row.reply_to_remote_message_id,
     state: row.state,
   });
+}
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+function canonicalValue(value: unknown): unknown {
+  if (value === null || typeof value !== "object") {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map(canonicalValue);
+  }
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+    .toSorted(([left], [right]) => left.localeCompare(right))
+    .map(([key, item]) => [key, canonicalValue(item)]));
+}
+
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(canonicalValue(value));
+}
+
+function legacyPayloadUpgradesTo(
+  row: AnswerEffectRow,
+  input: AnswerEffectReservationInput,
+): boolean {
+  if (row.state !== "reserved" && row.state !== "claimed") {
+    return false;
+  }
+  try {
+    const payload = JSON.parse(row.payload_bytes) as Record<string, unknown>;
+    const reference = payload.message_reference;
+    if (reference === null || typeof reference !== "object" || Array.isArray(reference)) {
+      return false;
+    }
+    const upgraded = {
+      ...payload,
+      message_reference: {
+        ...(reference as Record<string, unknown>),
+        channel_id: input.deliveryContainerId,
+      },
+    };
+    return (reference as Record<string, unknown>).channel_id ===
+        row.projection_target_container_id &&
+      sha256(row.payload_bytes) === row.payload_hash &&
+      canonicalJson(upgraded) === input.payloadBytes &&
+      sha256(input.payloadBytes) === input.payloadHash;
+  } catch {
+    return false;
+  }
+}
+
+function bindingHashMatches(
+  row: AnswerEffectRow,
+  input: AnswerEffectReservationInput,
+): boolean {
+  return row.binding_hash === input.bindingHash ||
+    input.legacyBindingHash !== undefined && row.binding_hash === input.legacyBindingHash;
 }
 
 function immutableFieldsMatch(
@@ -57,8 +119,22 @@ function immutableFieldsMatch(
     row.marker === input.marker &&
     payloadMatches &&
     row.payload_hash === input.payloadHash &&
-    row.binding_hash === input.bindingHash &&
+    bindingHashMatches(row, input) &&
     row.authorization_digest === input.authorizationDigest;
+}
+
+function legacyPreRequestFieldsMatch(
+  row: AnswerEffectRow,
+  input: AnswerEffectReservationInput,
+): boolean {
+  return row.effect_id === input.effectId &&
+    row.delivery_container_id === input.deliveryContainerId &&
+    row.projection_target_container_id === input.projectionTargetContainerId &&
+    row.reply_to_remote_message_id === input.replyToRemoteMessageId &&
+    row.marker === input.marker &&
+    bindingHashMatches(row, input) &&
+    row.authorization_digest === input.authorizationDigest &&
+    legacyPayloadUpgradesTo(row, input);
 }
 
 export class PostgresAnswerEffectStore implements AnswerEffectStore {
@@ -92,9 +168,47 @@ export class PostgresAnswerEffectStore implements AnswerEffectStore {
     if (inserted.rowCount === 1) {
       return { status: "reserved" };
     }
-    const row = await this.findRow(input.effectId);
-    if (row === null || !immutableFieldsMatch(row, input)) {
+    let row = await this.findRow(input.effectId);
+    if (row === null) {
       return { status: "conflict" };
+    }
+    if (!immutableFieldsMatch(row, input)) {
+      if (!legacyPreRequestFieldsMatch(row, input)) {
+        return { status: "conflict" };
+      }
+      const normalized = await this.pool.query(
+        `
+          UPDATE meeting_core.answer_effects
+          SET payload_bytes = $2,
+              payload_hash = $3,
+              binding_hash = $4,
+              updated_at = transaction_timestamp()
+          WHERE effect_id = $1
+            AND state IN ('reserved', 'claimed')
+            AND payload_hash = $5
+            AND binding_hash = $6
+        `,
+        [
+          input.effectId,
+          input.payloadBytes,
+          input.payloadHash,
+          input.bindingHash,
+          row.payload_hash,
+          row.binding_hash,
+        ],
+      );
+      if (normalized.rowCount !== 1) {
+        row = await this.findRow(input.effectId);
+        if (row === null || !immutableFieldsMatch(row, input)) {
+          return { status: "conflict" };
+        }
+      } else {
+        row = { ...row,
+          binding_hash: input.bindingHash,
+          payload_bytes: input.payloadBytes,
+          payload_hash: input.payloadHash,
+        };
+      }
     }
     return row.state === "delivered" && row.external_receipt !== null
       ? { externalReceipt: row.external_receipt, status: "delivered" }

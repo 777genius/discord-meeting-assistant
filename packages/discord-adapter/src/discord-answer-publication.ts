@@ -64,6 +64,13 @@ function markerUrl(marker: string): string {
   return `https://discord-meeting.invalid/knowledge-answer/${sha256(marker)}`;
 }
 
+function withoutDeliveryContainer(
+  binding: AnswerPublicationBinding,
+): Omit<AnswerPublicationBinding, "deliveryContainerId"> {
+  const { deliveryContainerId: _deliveryContainerId, ...legacyBinding } = binding;
+  return legacyBinding;
+}
+
 /**
  * A dedicated REST client keeps the answer effect's one-attempt policy local
  * to this publication path. Other Discord features retain their own retry
@@ -104,6 +111,7 @@ export class DiscordAnswerPayloadCodec implements AnswerPayloadPort {
     }));
     return {
       bindingHash: sha256(canonicalJson(input.binding)),
+      legacyBindingHash: sha256(canonicalJson(withoutDeliveryContainer(input.binding))),
       payloadBytes,
       payloadHash: sha256(payloadBytes),
     };

@@ -27,6 +27,8 @@ export interface AnswerPublicationBinding {
 
 export interface PreparedAnswerPayload {
   readonly bindingHash: string;
+  /** Exact pre-delivery-container hash accepted only during the schema-17 upgrade. */
+  readonly legacyBindingHash?: string;
   readonly payloadBytes: string;
   readonly payloadHash: string;
 }

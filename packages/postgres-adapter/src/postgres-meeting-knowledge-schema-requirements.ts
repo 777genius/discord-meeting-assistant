@@ -121,6 +121,7 @@ export const meetingKnowledgeRequiredCheckConstraints = [
   ["meeting_core", "answer_effects", "answer_effects_delivery_receipt_is_consistent"],
   ["meeting_core", "answer_effects", "answer_effects_payload_is_bounded"],
   ["meeting_core", "answer_effects", "answer_effects_terminal_payload_is_scrubbed"],
+  ["meeting_core", "answer_effects", "answer_effects_actionable_delivery_is_known"],
   [
     "meeting_core",
     "conversation_one_shot_receipts",
