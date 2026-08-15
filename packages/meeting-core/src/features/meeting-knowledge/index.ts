@@ -53,6 +53,7 @@ export {
 } from "./application/historical-contract-codec.js";
 export {
   DEFAULT_HISTORICAL_SYNC_POLICY,
+  MAXIMUM_HISTORICAL_SYNC_LEASE_DURATION_MS,
   HistoricalSyncWorker,
   type HistoricalSyncPolicyV1,
   type HistoricalSyncWorkerResultV1,
@@ -139,6 +140,7 @@ export type {
   HistoricalIndexPlanV1,
   HistoricalIndexResultV1,
   HistoricalMemoryPort,
+  HistoricalMemoryOperationOptionsV1,
   HistoricalOpaqueIdPort,
   HistoricalSearchRequestV1,
   HistoricalSearchResultV1,

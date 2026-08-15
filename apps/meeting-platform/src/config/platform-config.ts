@@ -52,6 +52,7 @@ export interface PlatformConfig {
   readonly infinityContext?: {
     readonly activation: InfinityContextRuntimeActivationV1;
     readonly baseUrl: string;
+    readonly operationTimeoutMs: number;
     readonly requestTimeoutMs: number;
   };
   readonly meetingKnowledge?: {

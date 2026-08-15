@@ -665,7 +665,7 @@ describe("Infinity Context historical memory end-to-end lifecycle", () => {
     expect(providerRequests).not.toContain("fixture-scope");
     expect(providerRequests).not.toContain("fixture-room");
     expect(providerRequests).not.toContain("fixture-meeting");
-  });
+  }, 30_000);
 });
 
 describe("Infinity Context out-of-order generation reconciliation", () => {

@@ -7,7 +7,9 @@ export {
   INFINITY_CONTEXT_SDK_PROVENANCE,
   InfinityContextActivationError,
   assertInfinityContextActivation,
+  assertInfinityContextSearchActivation,
   decodeInfinityContextRuntimeActivation,
   type InfinityContextCapabilityAttestationV1,
+  type InfinityContextProductionEmbeddingProfileAttestationV1,
   type InfinityContextRuntimeActivationV1,
 } from "./infinity-runtime-provenance.js";

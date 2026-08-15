@@ -67,6 +67,8 @@ function meeting(): AcceptedFinalMeetingV1 {
 class QueueStore implements HistoricalSyncStore {
   public readonly deadLetters: string[] = [];
   public readonly deleted: string[] = [];
+  public readonly applied: string[] = [];
+  public readonly claimedLeaseDurations: number[] = [];
   public readonly plans: HistoricalIndexPlanV1[] = [];
   public readonly retries: string[] = [];
   public readonly requestedMeetingDeletions: string[] = [];
@@ -77,7 +79,8 @@ class QueueStore implements HistoricalSyncStore {
     return "accepted";
   }
 
-  public async claimNext(_options: HistoricalSyncClaimOptionsV1): Promise<HistoricalSyncLeaseV1 | null> {
+  public async claimNext(options: HistoricalSyncClaimOptionsV1): Promise<HistoricalSyncLeaseV1 | null> {
+    this.claimedLeaseDurations.push(options.leaseDurationMs);
     return this.claims.shift() ?? null;
   }
 
@@ -89,7 +92,9 @@ class QueueStore implements HistoricalSyncStore {
     _lease: HistoricalSyncLeaseV1,
     _plan: HistoricalIndexPlanV1,
     _remoteDocumentIds: Readonly<Record<string, string>>,
-  ): Promise<void> {}
+  ): Promise<void> {
+    this.applied.push(_lease.binding.releaseId);
+  }
 
   public async recordRetry(
     _lease: HistoricalSyncLeaseV1,
@@ -285,4 +290,68 @@ describe("historical projection sync worker", () => {
     expect(store.retries).toEqual(["memory.absence_unverified"]);
     expect(store.deadLetters).toEqual([]);
   });
+
+  it.each(["index", "delete_release"] as const)(
+    "does not persist a late %s outcome after its active pass is cancelled",
+    async (operation) => {
+      const accepted = meeting();
+      const ids = new TestIds();
+      const storedPlan = buildHistoricalIndexPlan(accepted, ids);
+      const store = new QueueStore([
+        lease(accepted, operation, 1, operation === "index" ? null : storedPlan),
+      ]);
+      const controller = new AbortController();
+      let settle: (() => void) | undefined;
+      let providerStarted = 0;
+      const provider = new Promise<void>((resolve) => {
+        settle = resolve;
+      });
+      const memory: HistoricalMemoryPort = {
+        deleteMeeting: async () => {
+          providerStarted += 1;
+          await provider;
+          return { status: "verified_absent" };
+        },
+        indexFinalMeeting: async () => {
+          providerStarted += 1;
+          await provider;
+          return { remoteDocumentIds: {}, status: "applied" };
+        },
+        searchRoom: vi.fn(),
+      };
+      const worker = new HistoricalSyncWorker({
+        authority: { loadAcceptedFinalMeeting: async () => accepted },
+        ids,
+        memory,
+        store,
+      }, {
+        blockPolicy: {
+          maxBlockUtf8Bytes: 4_096,
+          maxBlocksPerMeeting: 100,
+          maxTurnsPerBlock: 64,
+          version: "meeting-knowledge.block-policy.v1",
+        },
+        leaseDurationMs: 630_000,
+        maximumIndexAttempts: 2,
+        retryBackoffMs: [1],
+        version: "meeting-knowledge.historical-sync.v1",
+      });
+
+      const running = worker.executeOnce({
+        indexingEnabled: true,
+        signal: controller.signal,
+      });
+      await vi.waitFor(() => {
+        expect(providerStarted).toBe(1);
+      });
+      controller.abort(new DOMException("runtime closing", "AbortError"));
+      settle?.();
+      await expect(running).rejects.toMatchObject({ name: "AbortError" });
+      expect(store.claimedLeaseDurations).toEqual([630_000]);
+      expect(store.applied).toEqual([]);
+      expect(store.deleted).toEqual([]);
+      expect(store.retries).toEqual([]);
+      expect(store.deadLetters).toEqual([]);
+    },
+  );
 });

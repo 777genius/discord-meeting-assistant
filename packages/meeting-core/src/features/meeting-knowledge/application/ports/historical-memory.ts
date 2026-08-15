@@ -111,11 +111,22 @@ export type HistoricalDeleteResultV1 =
       readonly status: "absence_unverified" | "rejected";
     };
 
+export interface HistoricalMemoryOperationOptionsV1 {
+  /** Cancels the current resumable attempt without changing its mutation identity. */
+  readonly signal?: AbortSignal;
+}
+
 /** Purpose-specific provider boundary. SDK values cannot cross this interface. */
 export interface HistoricalMemoryPort {
-  indexFinalMeeting(request: HistoricalIndexPlanV1): Promise<HistoricalIndexResultV1>;
+  indexFinalMeeting(
+    request: HistoricalIndexPlanV1,
+    options?: HistoricalMemoryOperationOptionsV1,
+  ): Promise<HistoricalIndexResultV1>;
 
   searchRoom(request: HistoricalSearchRequestV1): Promise<HistoricalSearchResultV1>;
 
-  deleteMeeting(request: HistoricalDeleteRequestV1): Promise<HistoricalDeleteResultV1>;
+  deleteMeeting(
+    request: HistoricalDeleteRequestV1,
+    options?: HistoricalMemoryOperationOptionsV1,
+  ): Promise<HistoricalDeleteResultV1>;
 }

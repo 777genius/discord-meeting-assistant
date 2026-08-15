@@ -15,6 +15,11 @@ import type {
 } from "./ports/historical-state.js";
 import type { HistoricalReleaseBindingV1 } from "../domain/historical-evidence.js";
 
+function operationOptions(signal: AbortSignal | undefined):
+  { readonly signal?: AbortSignal } {
+  return signal === undefined ? {} : { signal };
+}
+
 export interface HistoricalSyncPolicyV1 {
   readonly blockPolicy: HistoricalEvidenceBlockPolicyV1;
   readonly leaseDurationMs: number;
@@ -35,6 +40,9 @@ export const DEFAULT_HISTORICAL_SYNC_POLICY: HistoricalSyncPolicyV1 = Object.fre
   version: "meeting-knowledge.historical-sync.v1",
 });
 
+/** Maximum composed lease: 600s provider operation plus a 30s safety margin. */
+export const MAXIMUM_HISTORICAL_SYNC_LEASE_DURATION_MS = 630_000;
+
 export type HistoricalSyncWorkerResultV1 =
   | { readonly status: "idle" }
   | {
@@ -53,7 +61,7 @@ function assertPolicy(policy: HistoricalSyncPolicyInputV1): HistoricalSyncPolicy
     policy.version !== "meeting-knowledge.historical-sync.v1" ||
     !Number.isSafeInteger(policy.leaseDurationMs) ||
     policy.leaseDurationMs < 1_000 ||
-    policy.leaseDurationMs > 300_000 ||
+    policy.leaseDurationMs > MAXIMUM_HISTORICAL_SYNC_LEASE_DURATION_MS ||
     !Number.isSafeInteger(policy.maximumIndexAttempts) ||
     policy.maximumIndexAttempts < 1 ||
     policy.maximumIndexAttempts > 20 ||
@@ -108,29 +116,33 @@ export class HistoricalSyncWorker {
   /** Serving flags never prevent a previously authorized deletion from draining. */
   public async executeOnce(input: {
     readonly indexingEnabled: boolean;
+    readonly signal?: AbortSignal;
   }): Promise<HistoricalSyncWorkerResultV1> {
     const lease = await this.dependencies.store.claimNext({
       allowIndex: input.indexingEnabled,
       leaseDurationMs: this.#policy.leaseDurationMs,
-    });
+    }, operationOptions(input.signal));
     if (lease === null) {
       return { status: "idle" };
     }
     return lease.operation === "index"
-      ? this.index(lease)
-      : this.delete(lease);
+      ? this.index(lease, input.signal)
+      : this.delete(lease, input.signal);
   }
 
   private async index(
     lease: HistoricalSyncLeaseV1,
+    signal?: AbortSignal,
   ): Promise<HistoricalSyncWorkerResultV1> {
     const accepted = await this.dependencies.authority.loadAcceptedFinalMeeting(
       lease.binding,
+      operationOptions(signal),
     );
     if (accepted === null) {
       await this.dependencies.store.recordDeadLetter(
         lease,
         "authoritative_release_unavailable",
+        operationOptions(signal),
       );
       return this.result(lease, "dead_lettered");
     }
@@ -149,6 +161,7 @@ export class HistoricalSyncWorker {
           error instanceof HistoricalIndexPlanError
             ? `historical_index_plan.${error.code.toLowerCase()}`
             : "historical_index_plan.invalid",
+          operationOptions(signal),
         );
         return this.result(lease, "dead_lettered");
       }
@@ -156,25 +169,31 @@ export class HistoricalSyncWorker {
       await this.dependencies.store.recordDeadLetter(
         lease,
         "historical_index_plan.binding_conflict",
+        operationOptions(signal),
       );
       return this.result(lease, "dead_lettered");
     }
-    await this.dependencies.store.recordPlan(lease, plan);
+    await this.dependencies.store.recordPlan(lease, plan, operationOptions(signal));
     let result;
     try {
-      result = await this.dependencies.memory.indexFinalMeeting(plan);
+      result = signal === undefined
+        ? await this.dependencies.memory.indexFinalMeeting(plan)
+        : await this.dependencies.memory.indexFinalMeeting(plan, { signal });
     } catch {
+      signal?.throwIfAborted();
       result = {
         code: "memory.port_exception",
         retryable: true,
         status: "outcome_unknown" as const,
       };
     }
+    signal?.throwIfAborted();
     if (result.status === "applied") {
       await this.dependencies.store.recordApplied(
         lease,
         plan,
         result.remoteDocumentIds,
+        operationOptions(signal),
       );
       return this.result(lease, "applied");
     }
@@ -183,27 +202,32 @@ export class HistoricalSyncWorker {
       await this.dependencies.store.recordRetry(lease, {
         code: result.code,
         retryAfterMs: retryDelay(this.#policy, lease.attempt),
-      });
+      }, operationOptions(signal));
       return this.result(lease, "retry_scheduled");
     }
-    await this.dependencies.store.recordDeadLetter(lease, result.code);
+    await this.dependencies.store.recordDeadLetter(
+      lease,
+      result.code,
+      operationOptions(signal),
+    );
     return this.result(lease, "dead_lettered");
   }
 
   private async delete(
     lease: HistoricalSyncLeaseV1,
+    signal?: AbortSignal,
   ): Promise<HistoricalSyncWorkerResultV1> {
     if (lease.plan === null) {
       // The plan is stored before the first remote byte can be sent. No plan
       // therefore proves that this release never reached Infinity, including
       // when its whole local meeting is withdrawn before the first index pass.
-      await this.dependencies.store.recordDeleted(lease);
+      await this.dependencies.store.recordDeleted(lease, operationOptions(signal));
       return this.result(lease, "deleted");
     }
     let result;
     try {
       const topology = lease.plan.topology;
-      result = await this.dependencies.memory.deleteMeeting({
+      const request = {
         deleteMutationId: deletionMutationId(lease, this.dependencies.ids),
         documentExternalIds: Object.freeze(
           lease.plan.documents.map(({ manifest }) => manifest.documentExternalId),
@@ -212,16 +236,21 @@ export class HistoricalSyncWorker {
         remoteDocumentIds: lease.remoteDocumentIds,
         schemaVersion: 1,
         topology,
-      });
+      } as const;
+      result = signal === undefined
+        ? await this.dependencies.memory.deleteMeeting(request)
+        : await this.dependencies.memory.deleteMeeting(request, { signal });
     } catch {
+      signal?.throwIfAborted();
       result = {
         code: "memory.port_exception",
         retryable: true,
         status: "absence_unverified" as const,
       };
     }
+    signal?.throwIfAborted();
     if (result.status === "verified_absent") {
-      await this.dependencies.store.recordDeleted(lease);
+      await this.dependencies.store.recordDeleted(lease, operationOptions(signal));
       return this.result(lease, "deleted");
     }
 
@@ -230,7 +259,7 @@ export class HistoricalSyncWorker {
     await this.dependencies.store.recordRetry(lease, {
       code: result.code,
       retryAfterMs: retryDelay(this.#policy, lease.attempt),
-    });
+    }, operationOptions(signal));
     return this.result(lease, "retry_scheduled");
   }
 

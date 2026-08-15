@@ -37,6 +37,7 @@ function infinityContextConfig(
     infinityContext: {
       activation: environment.INFINITY_CONTEXT_ACTIVATION,
       baseUrl: environment.INFINITY_CONTEXT_URL,
+      operationTimeoutMs: environment.INFINITY_CONTEXT_OPERATION_TIMEOUT_MS,
       requestTimeoutMs: environment.INFINITY_CONTEXT_REQUEST_TIMEOUT_MS,
     },
   };

@@ -10,6 +10,7 @@ import {
   INFINITY_CONTEXT_SDK_PROVENANCE,
   InfinityContextActivationError,
   assertInfinityContextActivation,
+  assertInfinityContextSearchActivation,
   decodeInfinityContextRuntimeActivation,
 } from "../src/index.js";
 
@@ -20,6 +21,7 @@ const baseActivation = {
   immutablePackageIntegrity: null,
   indexingEnabled: true,
   packageSource: "reviewed_source_workspace",
+  productionEmbeddingProfileAttestation: null,
   qualificationManifestSha256: null,
   schemaVersion: 1,
   sdkCommit: INFINITY_CONTEXT_SDK_PROVENANCE.commit,
@@ -140,7 +142,7 @@ describe("Infinity Context activation provenance", () => {
     }).toThrow(InfinityContextActivationError);
   });
 
-  it("accepts production only with the exact immutable package and retained r26 manifest", () => {
+  it("accepts production transport/deletion only with the immutable package and retained r26 manifest", () => {
     expect(() => decodeInfinityContextRuntimeActivation({
       ...baseActivation,
       environment: "production",
@@ -170,6 +172,61 @@ describe("Infinity Context activation provenance", () => {
       packageSource: "immutable_package",
       qualificationManifestSha256: `sha256:${"a".repeat(64)}`,
     })).toThrow(/retained live-service qualification/u);
+  });
+
+  it("keeps production search closed for missing, false, and unretained embedding attestations", () => {
+    const production = {
+      ...baseActivation,
+      environment: "production" as const,
+      immutablePackageIntegrity: INFINITY_CONTEXT_SDK_PROVENANCE.immutablePackageIntegrity,
+      packageSource: "immutable_package" as const,
+      qualificationManifestSha256:
+        INFINITY_CONTEXT_SDK_PROVENANCE.retainedLiveQualificationManifestSha256,
+    };
+    const missing = decodeInfinityContextRuntimeActivation(production);
+    expect(() => { assertInfinityContextSearchActivation(missing); })
+      .toThrow(/embedding-profile attestation/u);
+
+    const explicitlyFalse = decodeInfinityContextRuntimeActivation({
+      ...production,
+      productionEmbeddingProfileAttestation: {
+        embeddingProfile: "deterministic-mock-non-production-v1",
+        embeddingProfileDigestSha256: `sha256:${"1".repeat(64)}`,
+        productionSemanticQualification: false,
+        qualificationManifestSha256:
+          INFINITY_CONTEXT_SDK_PROVENANCE.retainedLiveQualificationManifestSha256,
+        schemaVersion: 1,
+      },
+    });
+    expect(() => { assertInfinityContextSearchActivation(explicitlyFalse); })
+      .toThrow(/productionSemanticQualification=true/u);
+
+    const mockClaimingTrue = decodeInfinityContextRuntimeActivation({
+      ...production,
+      productionEmbeddingProfileAttestation: {
+        embeddingProfile: "deterministic-mock-non-production-v1",
+        embeddingProfileDigestSha256: `sha256:${"2".repeat(64)}`,
+        productionSemanticQualification: true,
+        qualificationManifestSha256:
+          INFINITY_CONTEXT_SDK_PROVENANCE.retainedLiveQualificationManifestSha256,
+        schemaVersion: 1,
+      },
+    });
+    expect(() => { assertInfinityContextSearchActivation(mockClaimingTrue); })
+      .toThrow(/non-production qualification manifest/u);
+
+    const mismatchedDigest = decodeInfinityContextRuntimeActivation({
+      ...production,
+      productionEmbeddingProfileAttestation: {
+        embeddingProfile: "hosted-production-embeddings-v1",
+        embeddingProfileDigestSha256: "sha256:mismatch",
+        productionSemanticQualification: true,
+        qualificationManifestSha256: `sha256:${"3".repeat(64)}`,
+        schemaVersion: 1,
+      },
+    });
+    expect(() => { assertInfinityContextSearchActivation(mismatchedDigest); })
+      .toThrow(/attestation digest/u);
   });
 
   it("does not permit search under a shadow-sync activation profile", () => {

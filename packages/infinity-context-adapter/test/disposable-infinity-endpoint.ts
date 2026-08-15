@@ -105,8 +105,11 @@ export class DisposableInfinityEndpoint implements HttpTransport {
   #loseThreadDeleteResponse = false;
   #failDocumentDelete = false;
   #hangSearch = false;
+  #hangRequestPath: string | null = null;
+  #requestDelayMs = 0;
   #preserveThreadDocument = false;
   #threadStatusHidesDocuments = false;
+  #capabilitiesQualified = true;
   #ingestGate: IngestGate | null = null;
   public readonly requests: RecordedRequest[] = [];
 
@@ -152,6 +155,18 @@ export class DisposableInfinityEndpoint implements HttpTransport {
     this.#hangSearch = true;
   }
 
+  public delayEveryRequest(milliseconds: number): void {
+    this.#requestDelayMs = milliseconds;
+  }
+
+  public hangNextRequestUntilDeadline(path: string): void {
+    this.#hangRequestPath = path;
+  }
+
+  public setCapabilitiesQualified(qualified: boolean): void {
+    this.#capabilitiesQualified = qualified;
+  }
+
   public documentCount(): number {
     return [...this.#documents.values()].filter(({ status }) => status === "active").length;
   }
@@ -182,29 +197,31 @@ export class DisposableInfinityEndpoint implements HttpTransport {
       query: request.url.search,
     });
     const path = request.url.pathname;
+    await this.#waitBeforeRequest(request, path);
 
     if (request.method === "GET" && path === "/v1/capabilities") {
+      const qualified = this.#capabilitiesQualified;
       return json(200, {
         api_version: "v1",
         adapters: {
           qdrant: {
-            enabled: true,
-            healthy: true,
-            supports_search: true,
+            enabled: qualified,
+            healthy: qualified,
+            supports_search: qualified,
           },
         },
         capabilities: [{
           adapter_name: "qdrant",
           capability: "vector_recall",
-          enabled: true,
-          healthy: true,
-          status: "ok",
+          enabled: qualified,
+          healthy: qualified,
+          status: qualified ? "ok" : "unavailable",
         }],
         // The official service exposes PostgreSQL keyword/BM25 retrieval as a
         // built-in search stage, not as a separately named adapter.
-        enabled_adapters: ["qdrant"],
+        enabled_adapters: qualified ? ["qdrant"] : [],
         service_name: "disposable-infinity-context",
-        supports_qdrant: true,
+        supports_qdrant: qualified,
       });
     }
     if (path === "/v1/spaces") {
@@ -242,6 +259,41 @@ export class DisposableInfinityEndpoint implements HttpTransport {
     }
     return json(404, {
       error: { code: "memory.unknown_fake_route", message: `${request.method} ${path}`, retryable: false },
+    });
+  }
+
+  async #waitBeforeRequest(request: HttpRequest, path: string): Promise<void> {
+    const hangs = this.#hangRequestPath === path;
+    if (hangs) {
+      this.#hangRequestPath = null;
+    }
+    if (!hangs && this.#requestDelayMs === 0) {
+      return;
+    }
+    await new Promise<void>((resolve, reject) => {
+      const signal = request.signal;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const cleanup = (): void => {
+        if (timer !== undefined) {
+          clearTimeout(timer);
+        }
+        signal?.removeEventListener("abort", abort);
+      };
+      const abort = (): void => {
+        cleanup();
+        reject(signal?.reason ?? new DOMException("synthetic request aborted", "AbortError"));
+      };
+      if (signal?.aborted === true) {
+        abort();
+        return;
+      }
+      signal?.addEventListener("abort", abort, { once: true });
+      if (!hangs) {
+        timer = setTimeout(() => {
+          cleanup();
+          resolve();
+        }, this.#requestDelayMs);
+      }
     });
   }
 
@@ -314,9 +366,32 @@ export class DisposableInfinityEndpoint implements HttpTransport {
     if (gate !== null) {
       this.#ingestGate = null;
       gate.started();
-      return gate.release.then(() => this.#ingestDocument(request, body));
+      return this.#waitForIngestGate(request, gate)
+        .then(() => this.#ingestDocument(request, body));
     }
     return this.#ingestDocument(request, body);
+  }
+
+  async #waitForIngestGate(request: HttpRequest, gate: IngestGate): Promise<void> {
+    const signal = request.signal;
+    if (signal?.aborted === true) {
+      throw signal.reason;
+    }
+    await new Promise<void>((resolve, reject) => {
+      const aborted = (): void => {
+        cleanup();
+        reject(signal?.reason ?? new DOMException("synthetic ingest aborted", "AbortError"));
+      };
+      const cleanup = (): void => {
+        signal?.removeEventListener("abort", aborted);
+      };
+      signal?.addEventListener("abort", aborted, { once: true });
+      void (async () => {
+        await gate.release;
+        cleanup();
+        resolve();
+      })();
+    });
   }
 
   #ingestDocument(request: HttpRequest, body: JsonValue | null): HttpResponse | Promise<HttpResponse> {

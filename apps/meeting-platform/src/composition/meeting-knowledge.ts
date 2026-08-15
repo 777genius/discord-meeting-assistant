@@ -134,10 +134,7 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
   const historicalAuthorization = input.historicalMemory === undefined
     ? undefined
     : new DiscordHistoricalAuthorizationAdapter(input.client, principals);
-  const historicalServingAuthorized =
-    input.historicalMemory?.servingAuthorized() === true;
   const memory = input.historicalMemory === undefined ||
-      !historicalServingAuthorized ||
       historicalAuthorization === undefined
     ? currentMemory
     : new SameRoomFocusedMemoryRetrieval({
@@ -180,7 +177,6 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
     authorization,
     evidence,
     ...(input.historicalMemory === undefined ||
-      !historicalServingAuthorized ||
       historicalAuthorization === undefined
       ? {}
       : {

@@ -166,6 +166,11 @@
       "id": "ADR-0034",
       "path": "docs/decisions/0034-bounded-answer-model-grounding.md",
       "immutableDigest": "sha256:b26e8d9351ddd9b1e97226a0dd30c0609d4f1e16850fb360ba3213d960e6cd38"
+    },
+    {
+      "id": "ADR-0035",
+      "path": "docs/decisions/0035-infinity-package-and-semantic-qualification.md",
+      "immutableDigest": "sha256:1e69c2ed4038b467e84384d0e1ea43163b194b9d4d0db5110fe97fd20c49c76b"
     }
   ]
 }

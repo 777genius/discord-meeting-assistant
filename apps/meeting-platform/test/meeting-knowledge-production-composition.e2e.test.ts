@@ -13,7 +13,6 @@ import {
   SameRoomFocusedMemoryRetrieval,
   createExhaustiveCoverageGroundingPlan,
   createFocusedRetrievalGroundingPlan,
-  type FocusedMemoryReference,
   type HistoricalAuthorizationPort,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import { LiveMeeting } from "@discord-meeting/meeting-core/live-meeting";
@@ -43,16 +42,6 @@ import {
   it,
 } from "vitest";
 
-function focusedReferenceKey(reference: FocusedMemoryReference): string {
-  return [
-    reference.meetingId,
-    reference.transcriptId,
-    reference.transcriptVersion,
-    reference.turnId,
-    reference.turnHash,
-  ].join("\u0000");
-}
-
 import {
   type PlatformHistoricalMemoryRuntime,
 } from "../src/composition/historical-memory.js";
@@ -63,7 +52,6 @@ import {
   allowOnlySyntheticRoom,
   botApplicationIdentity,
   checkpointAttempts,
-  correctedHistoricalSnapshot,
   currentMeeting,
   currentMeetingId,
   historicalMeetingId,
@@ -78,9 +66,30 @@ import {
   scopeId,
 } from "./meeting-knowledge-production-composition-fixtures.js";
 import { proveComposedGroundedVoice } from "./meeting-knowledge-composed-voice-e2e.js";
+import {
+  assertAggregateStageBudget,
+  assertProviderWire,
+  focusedReferenceKey,
+  qualifySupersessionAndDeletion,
+  runQualificationStage,
+  waitForHistoricalRows,
+  type QualificationStageTiming,
+} from "./meeting-knowledge-production-composition-diagnostics.js";
 
 const postgresImage = "postgres:18.4-alpine@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15";
 const postgresPort = 5_432;
+const qualificationOuterBudgetMs = 600_000;
+const qualificationStageBudgets = Object.freeze({
+  composedGroundedVoice: 100_000,
+  focusedRetrievalRecall: 160_000,
+  indexRestartReplay: 40_000,
+  sharedFocusedAndExhaustiveAnswer: 160_000,
+  supersessionAndDisabledDeletionDrain: 100_000,
+});
+assertAggregateStageBudget(
+  qualificationOuterBudgetMs,
+  Object.values(qualificationStageBudgets),
+);
 let container: StartedTestContainer | undefined;
 let database: Pool | undefined;
 
@@ -141,35 +150,63 @@ describe("Meeting Knowledge mandatory PostgreSQL qualification", () => {
     const pool = requiredDatabase();
     const infinity = await startDisposableInfinityHttpService();
     let runtime: PlatformHistoricalMemoryRuntime | undefined;
+    const timings: QualificationStageTiming[] = [];
     try {
-      const indexed = await indexAndRestart(pool, infinity);
-      runtime = indexed.runtime;
+      const indexed = await runQualificationStage(
+        "index_restart_replay",
+        qualificationStageBudgets.indexRestartReplay,
+        timings,
+        (signal) => indexAndRestart(pool, infinity, signal),
+      );
+      const qualifiedRuntime = indexed.runtime;
+      runtime = qualifiedRuntime;
       const authorization = allowOnlySyntheticRoom();
-      const historicalRetrieval = await qualifyFocusedRetrieval(
-        runtime,
-        infinity,
+      const historicalRetrieval = await runQualificationStage(
+        "focused_retrieval_recall",
+        qualificationStageBudgets.focusedRetrievalRecall,
+        timings,
+        (signal) => qualifyFocusedRetrieval(qualifiedRuntime, infinity, signal),
       );
-      await qualifySharedAnswers({
-        authorization,
-        current: indexed.current,
-        historicalRetrieval,
-        pool,
-        runtime,
-      });
-      await qualifyComposedGroundedVoice({
-        current: indexed.current,
-        pool,
-        runtime,
-      });
-      await runtime.close();
+      await runQualificationStage("shared_focused_and_exhaustive_answer", qualificationStageBudgets.sharedFocusedAndExhaustiveAnswer, timings, (signal) =>
+        qualifySharedAnswers({
+          authorization,
+          current: indexed.current,
+          historicalRetrieval,
+          pool,
+          runtime: qualifiedRuntime,
+          signal,
+        })
+      );
+      await runQualificationStage("composed_grounded_voice", qualificationStageBudgets.composedGroundedVoice, timings, (signal) =>
+        qualifyComposedGroundedVoice({
+          current: indexed.current,
+          pool,
+          runtime: qualifiedRuntime,
+          signal,
+        })
+      );
+      await qualifiedRuntime.close();
       runtime = undefined;
-      await qualifySupersessionAndDeletion(
-        pool,
-        infinity,
-        indexed.repository,
-        indexed.historical,
+      await runQualificationStage(
+        "supersession_and_disabled_deletion_drain",
+        qualificationStageBudgets.supersessionAndDisabledDeletionDrain,
+        timings,
+        (signal) => qualifySupersessionAndDeletion(
+          pool,
+          infinity,
+          indexed.repository,
+          indexed.historical,
+          signal,
+        ),
       );
-      assertProviderWire(infinity);
+      expect(timings.map(({ stage }) => stage)).toEqual([
+        "index_restart_replay",
+        "focused_retrieval_recall",
+        "shared_focused_and_exhaustive_answer",
+        "composed_grounded_voice",
+        "supersession_and_disabled_deletion_drain",
+      ]);
+      assertProviderWire(infinity, [scopeId, roomId, historicalMeetingId]);
     } finally {
       await runtime?.close();
       await infinity.close();
@@ -191,7 +228,9 @@ interface IndexedComposition {
 async function indexAndRestart(
   pool: Pool,
   infinity: DisposableInfinityHttpService,
+  signal: AbortSignal,
 ): Promise<IndexedComposition> {
+  signal.throwIfAborted();
   const repository = new PostgresMeetingRepository(pool);
   const historical = await persistPublishedMeeting(
     repository,
@@ -204,7 +243,7 @@ async function indexAndRestart(
   const firstRuntime = requiredHistoricalRuntime(pool, infinity, true, true);
   await firstRuntime.assertReady();
   await firstRuntime.start();
-  await waitForHistoricalRows(pool, ({ state }) => state === "applied", 2);
+  await waitForHistoricalRows(pool, ({ state }) => state === "applied", 2, signal);
   await firstRuntime.close();
   const initialRows = await historicalRows(pool);
   expect(initialRows.filter(({ state }) => state === "applied")).toHaveLength(2);
@@ -214,7 +253,11 @@ async function indexAndRestart(
     .not.toContain("BOTIK INTERIM TRANSCRIPT MUST NEVER BE INDEXED");
 
   const runtime = requiredHistoricalRuntime(pool, infinity, true, true);
+  expect(runtime.searchEnabled()).toBe(false);
+  expect(runtime.servingAuthorized()).toBe(false);
   await runtime.assertReady();
+  expect(runtime.searchEnabled()).toBe(true);
+  expect(runtime.servingAuthorized()).toBe(true);
   await runtime.start();
   // The remaining qualification is intentionally read-only. Stop the periodic
   // reconciler so a health probe cannot race a deliberately CPU-heavy search
@@ -224,30 +267,10 @@ async function indexAndRestart(
   return { current, historical, repository, runtime };
 }
 
-async function waitForHistoricalRows(
-  pool: Pool,
-  predicate: (row: { readonly meeting_id: string; readonly state: string }) => boolean,
-  expectedCount: number,
-): Promise<void> {
-  const deadline = Date.now() + 30_000;
-  let rows = await historicalRows(pool);
-  while (Date.now() < deadline) {
-    if (rows.filter(predicate).length === expectedCount) {
-      return;
-    }
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 50);
-    });
-    rows = await historicalRows(pool);
-  }
-  throw new Error(
-    `historical reconciliation did not settle: ${JSON.stringify(rows)}`,
-  );
-}
-
 async function qualifyFocusedRetrieval(
   runtime: PlatformHistoricalMemoryRuntime,
   infinity: DisposableInfinityHttpService,
+  signal: AbortSignal,
 ): Promise<FocusedHistoricalRetrieval> {
   const historicalRetrieval = runtime.createFocusedRetrieval(
     allowOnlySyntheticRoom(),
@@ -259,6 +282,7 @@ async function qualifyFocusedRetrieval(
       currentMeetingId,
       question: `Where was positional marker ${needle.marker} discussed?`,
       roomId,
+      signal,
       scopeId,
       searchEnabled: runtime.searchEnabled(),
       servingAuthorized: runtime.servingAuthorized(),
@@ -294,6 +318,7 @@ async function qualifyFocusedRetrieval(
     currentMeetingId,
     question: "Meteorological zephyr calibration?",
     roomId,
+    signal,
     scopeId,
     searchEnabled: runtime.searchEnabled(),
     servingAuthorized: runtime.servingAuthorized(),
@@ -306,18 +331,20 @@ async function qualifyFocusedRetrieval(
     currentMeetingId,
     question: "Where was PINE-GOLF discussed?",
     roomId: "555555555555555555",
+    signal,
     scopeId,
     searchEnabled: runtime.searchEnabled(),
     servingAuthorized: runtime.servingAuthorized(),
     sourceSet: "historical",
   })).resolves.toMatchObject({ status: "unauthorized" });
   expect(infinity.endpoint.requests).toHaveLength(requestsBeforeCrossRoom);
-  await qualifyRetrievalRevocation(runtime);
+  await qualifyRetrievalRevocation(runtime, signal);
   return historicalRetrieval;
 }
 
 async function qualifyRetrievalRevocation(
   runtime: PlatformHistoricalMemoryRuntime,
+  signal: AbortSignal,
 ): Promise<void> {
   let observations = 0;
   const revoked: HistoricalAuthorizationPort = {
@@ -336,6 +363,7 @@ async function qualifyRetrievalRevocation(
     currentMeetingId,
     question: "Where was PINE-GOLF discussed?",
     roomId,
+    signal,
     scopeId,
     searchEnabled: runtime.searchEnabled(),
     servingAuthorized: runtime.servingAuthorized(),
@@ -350,7 +378,9 @@ async function qualifySharedAnswers(input: {
   readonly historicalRetrieval: FocusedHistoricalRetrieval;
   readonly pool: Pool;
   readonly runtime: PlatformHistoricalMemoryRuntime;
+  readonly signal: AbortSignal;
 }): Promise<void> {
+  input.signal.throwIfAborted();
   const evidence = new PostgresFinalReplyEvidence(
     input.pool,
     botApplicationIdentity,
@@ -436,6 +466,7 @@ async function qualifySharedAnswers(input: {
     focusedPlan,
     pool: input.pool,
     runtime: input.runtime,
+    signal: input.signal,
   });
 }
 
@@ -446,6 +477,7 @@ async function qualifyFocusedAndExhaustiveGeneration(input: {
   readonly focusedPlan: ReturnType<typeof createFocusedRetrievalGroundingPlan>;
   readonly pool: Pool;
   readonly runtime: PlatformHistoricalMemoryRuntime;
+  readonly signal: AbortSignal;
 }): Promise<void> {
   let generationInvocations = 0;
   let lastGenerationMode: string | undefined;
@@ -500,7 +532,10 @@ async function qualifyFocusedAndExhaustiveGeneration(input: {
     roomId,
     scopeId,
   } as const;
-  const exhaustive = await exhaustiveMemory.retrieve(exhaustiveRequest);
+  const exhaustive = await exhaustiveMemory.retrieve({
+    ...exhaustiveRequest,
+    signal: input.signal,
+  });
   if (exhaustive.status !== "current") {
     throw new Error("exhaustive coverage did not reach synthesis");
   }
@@ -545,7 +580,7 @@ async function qualifyFocusedAndExhaustiveGeneration(input: {
     });
   }
   expect(lastGenerationMode).toBe("exhaustive_coverage");
-  await expect(exhaustiveMemory.retrieve(exhaustiveRequest))
+  await expect(exhaustiveMemory.retrieve({ ...exhaustiveRequest, signal: input.signal }))
     .resolves.toMatchObject({ status: "current" });
   expect(await checkpointAttempts(input.pool)).toEqual(attemptsBeforeReplay);
   expect(generationInvocations).toBe(2);
@@ -555,7 +590,9 @@ async function qualifyComposedGroundedVoice(input: {
   readonly current: MeetingSnapshot;
   readonly pool: Pool;
   readonly runtime: PlatformHistoricalMemoryRuntime;
+  readonly signal: AbortSignal;
 }): Promise<void> {
+  input.signal.throwIfAborted();
   if (input.current.transcript === null) {
     throw new Error("synthetic current meeting has no transcript for live memory");
   }
@@ -698,7 +735,7 @@ async function qualifyComposedGroundedVoice(input: {
     meetingId: currentMeetingId,
     question,
     roomId,
-  }, { signal: new AbortController().signal });
+  }, { signal: input.signal });
   expect(lastCurrentTexts).toContain(
     "CURRENT-ANCHOR confirms Project Atlas is active and connects to PINE-GOLF.",
   );
@@ -717,7 +754,7 @@ async function qualifyComposedGroundedVoice(input: {
     meetingId: currentMeetingId,
     question,
     roomId,
-  }, { signal: new AbortController().signal })).resolves.toEqual({
+  }, { signal: input.signal })).resolves.toEqual({
     schemaVersion: 1,
     status: "current",
   });
@@ -760,60 +797,6 @@ async function qualifyComposedGroundedVoice(input: {
   }
   expect(validatedAnswers).toBe(2);
   expect(qualifiedModelCalls).toBe(2);
-}
-
-async function qualifySupersessionAndDeletion(
-  pool: Pool,
-  infinity: DisposableInfinityHttpService,
-  repository: PostgresMeetingRepository,
-  historical: MeetingSnapshot,
-): Promise<void> {
-  const corrected = correctedHistoricalSnapshot(historical);
-  await repository.save(corrected, historical.revision);
-  infinity.endpoint.loseNextDocumentDeleteResponse();
-  const superseding = requiredHistoricalRuntime(pool, infinity, true, true);
-  await superseding.assertReady();
-  await superseding.start();
-  await superseding.close();
-  const correctedText = infinity.endpoint.indexedTexts().join("\n");
-  expect(correctedText).toContain("PINE-GOLF-V2");
-  expect(correctedText).not.toMatch(/PINE-GOLF(?:\s|$)/u);
-  const supersededRows = (await historicalRows(pool)).filter(({ meeting_id }) =>
-    meeting_id === historicalMeetingId
-  );
-  expect(supersededRows.map(({ state }) => state).toSorted())
-    .toEqual(["applied", "deleted"]);
-
-  const deleting = requiredHistoricalRuntime(pool, infinity, false, false);
-  expect(deleting.servingAuthorized()).toBe(false);
-  expect(deleting.searchEnabled()).toBe(false);
-  await deleting.requestMeetingDeletion(historicalMeetingId);
-  infinity.endpoint.loseNextThreadDeleteResponse();
-  await deleting.start();
-  await deleting.close();
-  expect((await historicalRows(pool)).filter(({ meeting_id }) =>
-    meeting_id === historicalMeetingId
-  ).every(({ state }) => state === "deleted")).toBe(true);
-  expect(infinity.endpoint.indexedTexts().join("\n"))
-    .not.toContain("PINE-GOLF-V2");
-  expect(infinity.endpoint.documentCount()).toBeGreaterThan(0);
-}
-
-function assertProviderWire(infinity: DisposableInfinityHttpService): void {
-  const paths = infinity.endpoint.requests.map(({ method, path }) =>
-    `${method} ${path}`
-  );
-  expect(paths).toEqual(expect.arrayContaining([
-    "GET /v1/capabilities",
-    "POST /v1/documents",
-    "POST /v1/search",
-    "DELETE /v1/thread-memory",
-    "POST /v1/thread-memory/status",
-  ]));
-  const wire = JSON.stringify(infinity.endpoint.requests);
-  expect(wire).not.toContain(scopeId);
-  expect(wire).not.toContain(roomId);
-  expect(wire).not.toContain(historicalMeetingId);
 }
 
 function requiredDatabase(): Pool {

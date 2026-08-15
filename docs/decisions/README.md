@@ -37,6 +37,7 @@
 - [ADR-0031: Infinity Context historical memory](0031-infinity-context-historical-memory.md)
 - [ADR-0032: Live finalized grounded memory](0032-live-finalized-grounded-memory.md)
 - [ADR-0034: Bounded answer-model grounding](0034-bounded-answer-model-grounding.md)
+- [ADR-0035: Separate immutable Infinity package and semantic qualification](0035-infinity-package-and-semantic-qualification.md)
 
 ## Superseded
 

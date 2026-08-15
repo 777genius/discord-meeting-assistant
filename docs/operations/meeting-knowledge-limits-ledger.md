@@ -19,6 +19,9 @@ These limits implement ADR-0034's bounded-only answer-model grounding.
 | Canonical evidence block | 4,096 UTF-8 bytes, 64 turns | Deterministic turn-aligned final-human evidence only |
 | Exhaustive room plan | 2,048 blocks; 8,388,608 cumulative evidence-budget bytes | Questions and per-turn envelope overhead are included; over-budget plans fail unsupported before provider calls |
 | Exhaustive checkpoint attempts | 8 | Fenced durable retry budget; exhaustion terminates without synthesis |
+| Infinity SDK request deadline | 10 seconds by default; 60 seconds maximum | A fresh composed deadline is created for every official-SDK request; caller cancellation and timeout listeners/timers are removed after settlement |
+| Infinity resumable operation deadline | 300 seconds by default; 600 seconds maximum | Separately bounds one index/delete/search attempt across up to 100 documents; exhaustion preserves deterministic mutations and returns to durable retry/reconciliation |
+| Infinity historical sync lease | operation deadline plus 30 seconds; 630 seconds maximum | Durable claim always outlives the separately bounded provider operation; the margin covers bounded local plan/checkpoint settlement and no accepted configuration permits operation deadline >= lease |
 | Exhaustive reduction | fan-in 8; 1,024 calls | Deterministic lossless union of locally validated semantic selections |
 | Exhaustive synthesis | 64 selected blocks; 256 canonical turns | No truncation: an over-limit relevant selection is unsupported |
 | Local input measurement | UTF-8 byte upper bound v1 | Conservative fail-safe that cannot undercount ordinary text tokens; exact tokenizer qualification remains an activation gate |

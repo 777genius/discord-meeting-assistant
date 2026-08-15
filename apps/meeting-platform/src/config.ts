@@ -136,6 +136,7 @@ const environmentSchema = z
       .transform((value) => value === "true"),
     LIVE_INGRESS_OWNER_MODE: z.literal("singleton").default("singleton"),
     INFINITY_CONTEXT_ACTIVATION: infinityActivation.optional(),
+    INFINITY_CONTEXT_OPERATION_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(600_000).default(300_000),
     INFINITY_CONTEXT_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(100).max(60_000).default(10_000),
     INFINITY_CONTEXT_TOKEN_FILE: absolutePath.optional(),
     INFINITY_CONTEXT_TOPOLOGY_KEY_FILE: absolutePath.optional(),

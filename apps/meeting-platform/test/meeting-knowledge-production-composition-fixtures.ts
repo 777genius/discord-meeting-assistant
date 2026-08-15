@@ -59,12 +59,14 @@ export function requiredHistoricalRuntime(
   infinity: DisposableInfinityHttpService,
   indexingEnabled: boolean,
   searchEnabled: boolean,
+  environment: "production" | "test" = "test",
 ): PlatformHistoricalMemoryRuntime {
   const runtime = createPlatformHistoricalMemory({
     config: platformConfig(
       infinity.baseUrl,
       indexingEnabled,
       searchEnabled,
+      environment,
     ),
     logger: silentLogger,
     pool,
@@ -143,6 +145,7 @@ function platformConfig(
   baseUrl: string,
   indexingEnabled: boolean,
   searchEnabled: boolean,
+  environment: "production" | "test",
 ): PlatformConfig {
   return {
     bindAddress: "127.0.0.1",
@@ -155,11 +158,18 @@ function platformConfig(
       activation: {
         apiVersion: "v1",
         archiveSha256: INFINITY_CONTEXT_SDK_PROVENANCE.archiveSha256,
-        environment: "test",
-        immutablePackageIntegrity: null,
+        environment,
+        immutablePackageIntegrity: environment === "production"
+          ? INFINITY_CONTEXT_SDK_PROVENANCE.immutablePackageIntegrity
+          : null,
         indexingEnabled,
-        packageSource: "reviewed_source_workspace",
-        qualificationManifestSha256: null,
+        packageSource: environment === "production"
+          ? "immutable_package"
+          : "reviewed_source_workspace",
+        productionEmbeddingProfileAttestation: null,
+        qualificationManifestSha256: environment === "production"
+          ? INFINITY_CONTEXT_SDK_PROVENANCE.retainedLiveQualificationManifestSha256
+          : null,
         schemaVersion: 1,
         sdkCommit: INFINITY_CONTEXT_SDK_PROVENANCE.commit,
         sdkTree: INFINITY_CONTEXT_SDK_PROVENANCE.tree,
@@ -168,10 +178,11 @@ function platformConfig(
         servingProfile: searchEnabled ? "same_room_retrieval" : "shadow_sync",
       },
       baseUrl,
+      operationTimeoutMs: 120_000,
       requestTimeoutMs: 2_000,
     },
     liveIngressOwnerMode: "singleton",
-    nodeEnvironment: "test",
+    nodeEnvironment: environment,
     participantGreetingDefaultLocale: "en",
     participantGreetingProfiles: {},
     port: 4_310,

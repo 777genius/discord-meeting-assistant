@@ -2,6 +2,7 @@ import {
   HmacHistoricalOpaqueIds,
   InfinityContextHistoricalMemoryAdapter,
   assertInfinityContextActivation,
+  assertInfinityContextSearchActivation,
 } from "@discord-meeting/infinity-context-adapter";
 import {
   DEFAULT_HISTORICAL_SYNC_POLICY,
@@ -9,6 +10,7 @@ import {
   ExhaustiveCoverage,
   HistoricalFocusedRetrieval,
   HistoricalSyncWorker,
+  MAXIMUM_HISTORICAL_SYNC_LEASE_DURATION_MS,
   RequestHistoricalMeetingDeletion,
   type HistoricalAuthorizationPort,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
@@ -29,6 +31,109 @@ import type { PlatformConfig } from "../config.js";
 
 const reconciliationIntervalMs = 5_000;
 const maximumOperationsPerPass = 25;
+const historicalLeaseSafetyMarginMs = 30_000;
+const shutdownDrainTimeoutMs = 5_000;
+
+export function historicalSyncLeaseDurationMs(operationTimeoutMs: number): number {
+  const leaseDurationMs = operationTimeoutMs + historicalLeaseSafetyMarginMs;
+  if (
+    !Number.isSafeInteger(operationTimeoutMs) ||
+    operationTimeoutMs < 1_000 ||
+    leaseDurationMs > MAXIMUM_HISTORICAL_SYNC_LEASE_DURATION_MS
+  ) {
+    throw new RangeError("Infinity operation timeout cannot be covered by the historical sync lease");
+  }
+  return Math.max(DEFAULT_HISTORICAL_SYNC_POLICY.leaseDurationMs, leaseDurationMs);
+}
+
+async function awaitBoundedPass(pass: Promise<void> | undefined): Promise<void> {
+  if (pass === undefined) {
+    return;
+  }
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, shutdownDrainTimeoutMs);
+    timer.unref();
+  });
+  await Promise.race([pass, timeout]);
+  if (timer !== undefined) {
+    clearTimeout(timer);
+  }
+}
+
+function createHistoricalReconciliationLifecycle(input: {
+  readonly executePass: (signal: AbortSignal) => Promise<void>;
+  readonly logger: Logger;
+}): Pick<PlatformHistoricalMemoryRuntime, "close" | "start"> {
+  let active: Promise<void> | undefined;
+  let activeController: AbortController | undefined;
+  let timer: NodeJS.Timeout | undefined;
+  let closed = false;
+  const beginPass = (): Promise<void> => {
+    if (closed || active !== undefined) {
+      return active ?? Promise.resolve();
+    }
+    const controller = new AbortController();
+    activeController = controller;
+    const pass = input.executePass(controller.signal).catch((error: unknown) => {
+      if (!controller.signal.aborted) {
+        input.logger.warn("Historical memory reconciliation failed", {
+          errorType: error instanceof Error ? error.name : "unknown",
+        });
+      }
+    }).finally(() => {
+      if (active === pass) {
+        active = undefined;
+        activeController = undefined;
+      }
+    });
+    active = pass;
+    return pass;
+  };
+  const schedule = (): void => {
+    void beginPass();
+  };
+  const remainsOpen = (): boolean => !closed;
+  return {
+    close: async () => {
+      closed = true;
+      if (timer !== undefined) {
+        clearInterval(timer);
+      }
+      activeController?.abort(new DOMException(
+        "Historical memory runtime is closing",
+        "AbortError",
+      ));
+      await awaitBoundedPass(active);
+    },
+    start: async () => {
+      if (closed || timer !== undefined) {
+        return;
+      }
+      await beginPass();
+      if (remainsOpen()) {
+        timer = setInterval(schedule, reconciliationIntervalMs);
+        timer.unref();
+      }
+    },
+  };
+}
+
+function semanticSearchQualified(
+  activation: NonNullable<PlatformConfig["infinityContext"]>["activation"],
+  logger: Logger,
+): boolean {
+  try {
+    assertInfinityContextSearchActivation(activation);
+    return true;
+  } catch (error) {
+    logger.warn(
+      "Infinity semantic search qualification unavailable; deletion drain remains active",
+      { errorType: error instanceof Error ? error.name : "unknown" },
+    );
+    return false;
+  }
+}
 
 export interface PlatformHistoricalMemoryRuntime {
   assertReady(): Promise<void>;
@@ -65,6 +170,7 @@ export function createPlatformHistoricalMemory(input: {
   }
   const memory = new InfinityContextHistoricalMemoryAdapter({
     baseUrl: config.baseUrl,
+    operationTimeoutMs: config.operationTimeoutMs,
     requestTimeoutMs: config.requestTimeoutMs,
     schemaVersion: 1,
     token: () => token,
@@ -78,47 +184,52 @@ export function createPlatformHistoricalMemory(input: {
     store,
   }, {
     ...DEFAULT_HISTORICAL_SYNC_POLICY,
-    leaseDurationMs: Math.max(
-      DEFAULT_HISTORICAL_SYNC_POLICY.leaseDurationMs,
-      config.requestTimeoutMs + 5_000,
-    ),
+    leaseDurationMs: historicalSyncLeaseDurationMs(config.operationTimeoutMs),
   });
-  let active: Promise<void> | undefined;
-  let timer: NodeJS.Timeout | undefined;
-  let closed = false;
-  let indexingQualified = false;
+  let transportQualified = false;
+  let searchQualified = false;
   const deletion = new RequestHistoricalMeetingDeletion(store);
 
-  const refreshQualification = async (): Promise<void> => {
-    indexingQualified = false;
+  const refreshQualification = async (signal?: AbortSignal): Promise<void> => {
+    transportQualified = false;
+    searchQualified = false;
     if (!config.activation.indexingEnabled && !config.activation.searchEnabled) {
       return;
     }
-    const capabilities = await memory.qualifyCapabilities();
+    const capabilities = await memory.qualifyCapabilities(
+      signal === undefined ? {} : { signal },
+    );
     assertInfinityContextActivation(config.activation, {
       apiVersion: capabilities.api_version ?? null,
       enabledAdapters: capabilities.enabled_adapters ?? [],
       serviceName: capabilities.service_name ?? null,
       supportsQdrant: capabilities.supports_qdrant === true,
     });
-    indexingQualified = true;
+    transportQualified = true;
+    searchQualified = semanticSearchQualified(config.activation, input.logger);
   };
 
-  const refreshQualificationForReconciliation = async (): Promise<void> => {
+  const refreshQualificationForReconciliation = async (
+    signal?: AbortSignal,
+  ): Promise<void> => {
     try {
-      await refreshQualification();
+      await refreshQualification(signal);
     } catch (error) {
-      indexingQualified = false;
+      signal?.throwIfAborted();
+      transportQualified = false;
+      searchQualified = false;
       input.logger.warn("Historical memory qualification unavailable; external indexing is disabled", {
         errorType: error instanceof Error ? error.name : "unknown",
       });
     }
   };
 
-  const runPass = async (): Promise<void> => {
+  const runPass = async (signal?: AbortSignal): Promise<void> => {
     for (let count = 0; count < maximumOperationsPerPass; count += 1) {
+      signal?.throwIfAborted();
       const result = await worker.executeOnce({
-        indexingEnabled: config.activation.indexingEnabled && indexingQualified,
+        indexingEnabled: config.activation.indexingEnabled && transportQualified,
+        ...(signal === undefined ? {} : { signal }),
       });
       if (result.status === "idle") {
         break;
@@ -128,33 +239,23 @@ export function createPlatformHistoricalMemory(input: {
         state: result.status,
       });
     }
-    await checkpoints.scrubExpired(100);
+    signal?.throwIfAborted();
+    await checkpoints.scrubExpired(100, signal === undefined ? {} : { signal });
   };
-  const schedule = (): void => {
-    if (closed || active !== undefined) {
-      return;
-    }
-    active = refreshQualificationForReconciliation().then(runPass).catch((error: unknown) => {
-      input.logger.warn("Historical memory reconciliation failed", {
-        errorType: error instanceof Error ? error.name : "unknown",
-      });
-    }).finally(() => {
-      active = undefined;
-    });
-  };
+  const reconciliation = createHistoricalReconciliationLifecycle({
+    executePass: async (signal) => {
+      await refreshQualificationForReconciliation(signal);
+      await runPass(signal);
+    },
+    logger: input.logger,
+  });
 
   return {
     // Static provenance/configuration already failed closed during config
     // decoding. A transient endpoint or capability response only disables the
     // derived memory slice; it must not block recording/transcription startup.
     assertReady: refreshQualificationForReconciliation,
-    close: async () => {
-      closed = true;
-      if (timer !== undefined) {
-        clearInterval(timer);
-      }
-      await active;
-    },
+    close: reconciliation.close,
     createExhaustiveCoverage: (authorization) => {
       const extraction = new SubscriptionRuntimeCoverageExtractorAdapter(
         input.runtimeTransport,
@@ -181,16 +282,9 @@ export function createPlatformHistoricalMemory(input: {
       store: new PostgresHistoricalMemoryStore(input.pool),
     }),
     searchEnabled: () =>
-      config.activation.searchEnabled && indexingQualified,
-    servingAuthorized: () => config.activation.searchEnabled,
+      config.activation.searchEnabled && transportQualified && searchQualified,
+    servingAuthorized: () => config.activation.searchEnabled && searchQualified,
     requestMeetingDeletion: (meetingId) => deletion.execute(meetingId),
-    start: async () => {
-      if (closed || timer !== undefined) {
-        return;
-      }
-      await runPass();
-      timer = setInterval(schedule, reconciliationIntervalMs);
-      timer.unref();
-    },
+    start: reconciliation.start,
   };
 }

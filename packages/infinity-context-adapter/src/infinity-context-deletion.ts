@@ -4,6 +4,8 @@ import type {
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import type { InfinityContextClient } from "@infinity-context/sdk";
 
+import { InfinityOperationDeadline } from "./infinity-request-deadline.js";
+
 import {
   InfinityContextAdapterContractError,
   documentId,
@@ -20,19 +22,20 @@ export function deleteHistoricalMeeting(
   client: InfinityContextClient,
   request: HistoricalDeleteRequestV1,
   requestTimeoutMs: number,
+  operation: InfinityOperationDeadline,
 ): Promise<HistoricalDeleteResultV1> {
   return request.mode === "meeting"
-    ? deleteWholeMeeting(client, request, requestTimeoutMs)
-    : deleteRelease(client, request, requestTimeoutMs);
+    ? deleteWholeMeeting(client, request, requestTimeoutMs, operation)
+    : deleteRelease(client, request, requestTimeoutMs, operation);
 }
 
 async function deleteRelease(
   client: InfinityContextClient,
   request: HistoricalDeleteRequestV1,
   requestTimeoutMs: number,
+  operation: InfinityOperationDeadline,
 ): Promise<HistoricalDeleteResultV1> {
   try {
-    const signal = AbortSignal.timeout(requestTimeoutMs);
     const targetExternalIds = new Set(request.documentExternalIds);
     const remoteTargets = releaseRemoteTargets(request, targetExternalIds);
     if (targetExternalIds.size === 0 && remoteTargets.size === 0) {
@@ -42,32 +45,50 @@ async function deleteRelease(
         status: "rejected",
       };
     }
-    const discovered = await listDocumentsWhenSupported(client, request, signal);
+    const discovered = await listDocumentsWhenSupported(
+      client,
+      request,
+      requestTimeoutMs,
+      operation,
+    );
     bindDiscoveredReleaseTargets(remoteTargets, targetExternalIds, discovered);
     const resolvedExternalIds = new Set<string>();
     for (const [remoteDocumentId, externalId] of remoteTargets) {
-      signal.throwIfAborted();
+      operation.throwIfAborted();
       if (await documentAlreadyAbsent(
         client,
         remoteDocumentId,
         externalId,
-        signal,
+        requestTimeoutMs,
+        operation,
       )) {
         resolvedExternalIds.add(externalId);
         continue;
       }
       resolvedExternalIds.add(externalId);
       try {
-        await client.documents.deleteDocument(remoteDocumentId, {
-          headers: { "x-client-mutation-id": request.deleteMutationId },
-          signal,
-        });
+        await operation.request(requestTimeoutMs, (signal) =>
+          client.documents.deleteDocument(remoteDocumentId, {
+            headers: { "x-client-mutation-id": request.deleteMutationId },
+            signal,
+          })
+        );
       } catch (error) {
-        if (!isNotFound(error) && !await documentIsAbsent(client, remoteDocumentId, signal)) {
+        if (!isNotFound(error) && !await documentIsAbsent(
+          client,
+          remoteDocumentId,
+          requestTimeoutMs,
+          operation,
+        )) {
           return failure(error, "absence_unverified");
         }
       }
-      if (!await documentIsAbsent(client, remoteDocumentId, signal)) {
+      if (!await documentIsAbsent(
+        client,
+        remoteDocumentId,
+        requestTimeoutMs,
+        operation,
+      )) {
         return {
           code: "memory.document_still_present",
           retryable: true,
@@ -75,7 +96,12 @@ async function deleteRelease(
         };
       }
     }
-    const remaining = await listDocumentsWhenSupported(client, request, signal);
+    const remaining = await listDocumentsWhenSupported(
+      client,
+      request,
+      requestTimeoutMs,
+      operation,
+    );
     if (remaining !== null && remaining.some((document) => {
       const sourceExternalId = documentSourceExternalId(document);
       return !documentIsDeleted(document) &&
@@ -141,10 +167,13 @@ function bindDiscoveredReleaseTargets(
 async function listDocumentsWhenSupported(
   client: InfinityContextClient,
   request: HistoricalDeleteRequestV1,
-  signal: AbortSignal,
+  requestTimeoutMs: number,
+  operation: InfinityOperationDeadline,
 ): Promise<readonly import("@infinity-context/sdk").DocumentRecord[] | null> {
   try {
-    return await listTopologyDocuments(client, request.topology, signal);
+    return await operation.request(requestTimeoutMs, (signal) =>
+      listTopologyDocuments(client, request.topology, signal)
+    );
   } catch (error) {
     if (isMethodNotAllowed(error)) {
       return null;
@@ -157,10 +186,13 @@ async function documentAlreadyAbsent(
   client: InfinityContextClient,
   remoteDocumentId: string,
   expectedExternalId: string,
-  signal: AbortSignal,
+  requestTimeoutMs: number,
+  operation: InfinityOperationDeadline,
 ): Promise<boolean> {
   try {
-    const remote = (await client.documents.getDocument(remoteDocumentId, { signal })).data;
+    const remote = (await operation.request(requestTimeoutMs, (signal) =>
+      client.documents.getDocument(remoteDocumentId, { signal })
+    )).data;
     if (documentSourceExternalId(remote) !== expectedExternalId) {
       throw new InfinityContextAdapterContractError(
         "stored remote document identity does not match its release document",
@@ -192,7 +224,8 @@ function bindRemoteTarget(
 async function documentIsAbsent(
   client: InfinityContextClient,
   remoteDocumentId: string,
-  signal: AbortSignal,
+  requestTimeoutMs: number,
+  operation: InfinityOperationDeadline,
 ): Promise<boolean> {
   if (remoteDocumentId.length === 0 || remoteDocumentId.length > 200) {
     throw new InfinityContextAdapterContractError(
@@ -200,7 +233,9 @@ async function documentIsAbsent(
     );
   }
   try {
-    const document = (await client.documents.getDocument(remoteDocumentId, { signal })).data;
+    const document = (await operation.request(requestTimeoutMs, (signal) =>
+      client.documents.getDocument(remoteDocumentId, { signal })
+    )).data;
     return documentIsDeleted(document);
   } catch (error) {
     return isNotFound(error);
@@ -211,29 +246,37 @@ async function deleteWholeMeeting(
   client: InfinityContextClient,
   request: HistoricalDeleteRequestV1,
   requestTimeoutMs: number,
+  operation: InfinityOperationDeadline,
 ): Promise<HistoricalDeleteResultV1> {
-  const signal = AbortSignal.timeout(requestTimeoutMs);
-  const scope = {
+  const scope = (signal: AbortSignal) => ({
     headers: { "x-client-mutation-id": request.deleteMutationId },
     memoryScopeExternalRef: request.topology.roomScopeExternalRef,
     signal,
     spaceSlug: request.topology.spaceSlug,
     threadExternalRef: request.topology.threadExternalRef,
-  };
+  });
   try {
-    await client.threadMemory.delete(scope);
+    await operation.request(requestTimeoutMs, (signal) =>
+      client.threadMemory.delete(scope(signal))
+    );
   } catch (error) {
-    if (signal.aborted) {
+    try {
+      operation.throwIfAborted();
+    } catch {
       return failure(error, "absence_unverified");
     }
     try {
-      await client.threadMemory.deleteCompat(scope);
+      await operation.request(requestTimeoutMs, (signal) =>
+        client.threadMemory.deleteCompat(scope(signal))
+      );
     } catch {
       // A committed delete with a lost response is reconciled below.
     }
   }
   try {
-    const status = (await client.threadMemory.status(scope)).data;
+    const status = (await operation.request(requestTimeoutMs, (signal) =>
+      client.threadMemory.status(scope(signal))
+    )).data;
     if (
       status.chunks !== 0 || status.facts !== 0 ||
       status.jobs !== 0 || status.pending_jobs !== 0
@@ -247,7 +290,7 @@ async function deleteWholeMeeting(
     // Thread counters do not prove that source documents disappeared. Verify
     // every locally known document identity through the official SDK and a
     // bounded scope listing before claiming absence.
-    return deleteRelease(client, request, requestTimeoutMs);
+    return deleteRelease(client, request, requestTimeoutMs, operation);
   } catch (error) {
     return failure(error, "absence_unverified");
   }
