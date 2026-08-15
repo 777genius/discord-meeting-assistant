@@ -1,5 +1,16 @@
+import { createHash } from "node:crypto";
+
 import { GuildConfiguration } from "@discord-meeting/guild-configuration-core";
-import { createHistoricalReleaseBinding } from "@discord-meeting/meeting-core/meeting-knowledge";
+import {
+  createHistoricalReleaseBinding,
+  DEFAULT_HISTORICAL_MEMORY_OPERATION_TIMEOUT_MS,
+  DEFAULT_HISTORICAL_SYNC_POLICY,
+  HistoricalSyncWorker,
+  historicalSyncLeaseDurationMs,
+  MAXIMUM_HISTORICAL_MEMORY_OPERATION_TIMEOUT_MS,
+  type HistoricalMemoryPort,
+  type HistoricalOpaqueIdPort,
+} from "@discord-meeting/meeting-core/meeting-knowledge";
 import {
   Meeting,
   type MeetingSnapshot,
@@ -28,6 +39,14 @@ import {
 } from "../src/index.js";
 
 usePostgresIntegrationDatabase();
+
+class DeterministicHistoricalTestIds implements HistoricalOpaqueIdPort {
+  public keyedId(namespace: string, parts: readonly string[]): string {
+    return createHash("sha256")
+      .update([namespace, ...parts].join("\u0000"), "utf8")
+      .digest("hex");
+  }
+}
 
 describe("PostgresSummaryPublicationEffectLedger", () => {
   it("retains an unresolved create fence and reconciles one exact receipt", async (context) => {
@@ -159,6 +178,143 @@ describe("PostgresGuildConfigurationRepository", () => {
 });
 
 describe("PostgresMeetingRepository", () => {
+  it("claims index and deletion work at the default and maximum composed lease", async (context) => {
+    const database = databaseOrSkip(context);
+    const leases = [
+      historicalSyncLeaseDurationMs(DEFAULT_HISTORICAL_MEMORY_OPERATION_TIMEOUT_MS),
+      historicalSyncLeaseDurationMs(MAXIMUM_HISTORICAL_MEMORY_OPERATION_TIMEOUT_MS),
+    ];
+
+    for (const [index, leaseDurationMs] of leases.entries()) {
+      const meetingId = `meeting-historical-lease-${String(index)}`;
+      const repository = new PostgresMeetingRepository(database);
+      await repository.recordAndSchedule(recordedMeeting(meetingId).toSnapshot(), 0);
+      await repository.save(evidenceBackedMeeting(meetingId).toSnapshot(), 0);
+      const store = new PostgresHistoricalMemoryStore(database);
+      const indexLease = await store.claimNext({ allowIndex: true, leaseDurationMs });
+      expect(indexLease).toMatchObject({ operation: "index" });
+      if (indexLease === null) {
+        throw new Error("historical index lease was not claimed");
+      }
+      await store.recordRetry(indexLease, {
+        code: "fixture.known_failure",
+        outcome: "known_failure",
+        retryAfterMs: 0,
+      });
+      await store.requestMeetingDeletion(meetingId);
+      const deleteLease = await store.claimNext({ allowIndex: false, leaseDurationMs });
+      expect(deleteLease).toMatchObject({ operation: "delete_meeting" });
+      if (deleteLease === null) {
+        throw new Error("historical deletion lease was not claimed");
+      }
+      await store.recordDeleted(deleteLease);
+    }
+  });
+
+  it("quarantines an unknown index outcome until late commit cleanup after restart", async (context) => {
+    const database = databaseOrSkip(context);
+    const meetingId = "meeting-historical-unknown-outcome";
+    const repository = new PostgresMeetingRepository(database);
+    await repository.recordAndSchedule(recordedMeeting(meetingId).toSnapshot(), 0);
+    await repository.save(evidenceBackedMeeting(meetingId).toSnapshot(), 0);
+
+    let remoteCommitted = false;
+    let deletionCalls = 0;
+    const memory: HistoricalMemoryPort = {
+      deleteMeeting: async () => {
+        deletionCalls += 1;
+        expect(remoteCommitted).toBe(true);
+        remoteCommitted = false;
+        return { status: "verified_absent" };
+      },
+      indexFinalMeeting: async () => ({
+        code: "memory.ingest_timeout",
+        // Retryability cannot decide whether an uncertain remote write needs
+        // quarantine: invalid response bytes may follow a committed request.
+        retryable: false,
+        status: "outcome_unknown",
+      }),
+      searchRoom: async () => ({
+        code: "fixture.unused",
+        retryable: false,
+        status: "unavailable",
+      }),
+    };
+    const ids = new DeterministicHistoricalTestIds();
+    const store = new PostgresHistoricalMemoryStore(database);
+    const worker = new HistoricalSyncWorker({
+      authority: new PostgresHistoricalEvidenceAuthority(database),
+      ids,
+      memory,
+      store,
+    }, {
+      ...DEFAULT_HISTORICAL_SYNC_POLICY,
+      leaseDurationMs: 30_000,
+      retryBackoffMs: [1],
+    });
+
+    await expect(worker.executeOnce({ indexingEnabled: true })).resolves.toMatchObject({
+      operation: "index",
+      status: "retry_scheduled",
+    });
+    await store.requestMeetingDeletion(meetingId);
+    const quarantined = await database.query<{
+      readonly lease_active: boolean;
+      readonly operation: string;
+      readonly state: string;
+    }>(
+      `
+        SELECT lease_expires_at > transaction_timestamp() AS lease_active,
+               operation, state
+        FROM meeting_core.historical_memory_sync
+        WHERE meeting_id = $1
+      `,
+      [meetingId],
+    );
+    expect(quarantined.rows[0]).toEqual({
+      lease_active: true,
+      operation: "delete_meeting",
+      state: "in_flight",
+    });
+
+    const restarted = new HistoricalSyncWorker({
+      authority: new PostgresHistoricalEvidenceAuthority(database),
+      ids,
+      memory,
+      store: new PostgresHistoricalMemoryStore(database),
+    }, {
+      ...DEFAULT_HISTORICAL_SYNC_POLICY,
+      leaseDurationMs: 30_000,
+      retryBackoffMs: [1],
+    });
+    await expect(restarted.executeOnce({ indexingEnabled: false })).resolves.toEqual({
+      status: "idle",
+    });
+    expect(deletionCalls).toBe(0);
+
+    // The provider commits after the caller has timed out. The retained fence
+    // keeps deletion from proving absence until that uncertainty horizon ends.
+    remoteCommitted = true;
+    await database.query(
+      `
+        UPDATE meeting_core.historical_memory_sync
+        SET lease_expires_at = transaction_timestamp()
+        WHERE meeting_id = $1
+      `,
+      [meetingId],
+    );
+    await expect(restarted.executeOnce({ indexingEnabled: false })).resolves.toMatchObject({
+      operation: "delete_meeting",
+      status: "deleted",
+    });
+    expect(deletionCalls).toBe(1);
+    expect(remoteCommitted).toBe(false);
+    await expect(database.query<{ readonly state: string }>(
+      "SELECT state FROM meeting_core.historical_memory_sync WHERE meeting_id = $1",
+      [meetingId],
+    )).resolves.toMatchObject({ rows: [{ state: "deleted" }] });
+  });
+
   it("transactionally projects one replay-safe final human transcript release", async (context) => {
     const database = databaseOrSkip(context);
     const repository = new PostgresMeetingRepository(database);

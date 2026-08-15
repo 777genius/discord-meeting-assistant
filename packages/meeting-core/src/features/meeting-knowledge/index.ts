@@ -52,7 +52,11 @@ export {
   decodeHistoricalReleaseBindingV1,
 } from "./application/historical-contract-codec.js";
 export {
+  DEFAULT_HISTORICAL_MEMORY_OPERATION_TIMEOUT_MS,
   DEFAULT_HISTORICAL_SYNC_POLICY,
+  HISTORICAL_SYNC_LEASE_SAFETY_MARGIN_MS,
+  historicalSyncLeaseDurationMs,
+  MAXIMUM_HISTORICAL_MEMORY_OPERATION_TIMEOUT_MS,
   MAXIMUM_HISTORICAL_SYNC_LEASE_DURATION_MS,
   HistoricalSyncWorker,
   type HistoricalSyncPolicyV1,
@@ -155,6 +159,7 @@ export type {
   HistoricalSyncClaimOptionsV1,
   HistoricalSyncLeaseV1,
   HistoricalSyncOperationV1,
+  HistoricalSyncRetryV1,
   HistoricalSyncStore,
 } from "./application/ports/historical-state.js";
 export {

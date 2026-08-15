@@ -8,7 +8,9 @@ import {
   type HistoricalReleaseBindingV1,
   type HistoricalSyncClaimOptionsV1,
   type HistoricalSyncLeaseV1,
+  type HistoricalSyncRetryV1,
   type HistoricalSyncStore,
+  MAXIMUM_HISTORICAL_SYNC_LEASE_DURATION_MS,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import type { Pool, PoolClient } from "pg";
 
@@ -21,6 +23,7 @@ import {
   type HistoricalSyncRow,
 } from "./postgres-historical-memory-row.js";
 import { queryHistoricalPostgres, withHistoricalPostgresTransaction, type HistoricalPostgresCancellationPort } from "./postgres-historical-query.js";
+import { recordHistoricalSyncRetry } from "./postgres-historical-sync-retry.js";
 
 interface HistoricalMeetingMutationRow {
   readonly desired_generation: number;
@@ -32,7 +35,7 @@ function requireLeaseDuration(options: HistoricalSyncClaimOptionsV1): void {
   if (
     !Number.isSafeInteger(options.leaseDurationMs) ||
     options.leaseDurationMs < 1_000 ||
-    options.leaseDurationMs > 300_000
+    options.leaseDurationMs > MAXIMUM_HISTORICAL_SYNC_LEASE_DURATION_MS
   ) {
     throw new RangeError("historical sync lease duration is outside its bounds");
   }
@@ -233,20 +236,13 @@ export class PostgresHistoricalMemoryStore implements HistoricalSyncStore {
 
   public async recordRetry(
     lease: HistoricalSyncLeaseV1,
-    failure: { readonly code: string; readonly retryAfterMs: number },
+    failure: HistoricalSyncRetryV1,
     options: HistoricalOperationOptionsV1 = {},
   ): Promise<void> {
-    await requireUpdated(await queryHistoricalPostgres(this.pool, {
-      text: `
-        UPDATE meeting_core.historical_memory_sync
-        SET state = 'retry_wait', retry_after = transaction_timestamp() +
-              ($3::double precision * interval '1 millisecond'),
-            lease_expires_at = NULL, last_error_code = $4,
-            updated_at = transaction_timestamp()
-        WHERE release_id = $1 AND lease_fence = $2 AND state = 'in_flight'
-      `,
-      values: [lease.binding.releaseId, lease.fence, failure.retryAfterMs, failure.code],
-    }, options.signal, this.cancellation), "retry");
+    await requireUpdated(
+      await recordHistoricalSyncRetry(this.pool, this.cancellation, lease, failure, options),
+      "retry",
+    );
   }
 
   public async recordDeadLetter(

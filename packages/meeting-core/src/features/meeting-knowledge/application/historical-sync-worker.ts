@@ -40,8 +40,27 @@ export const DEFAULT_HISTORICAL_SYNC_POLICY: HistoricalSyncPolicyV1 = Object.fre
   version: "meeting-knowledge.historical-sync.v1",
 });
 
-/** Maximum composed lease: 600s provider operation plus a 30s safety margin. */
-export const MAXIMUM_HISTORICAL_SYNC_LEASE_DURATION_MS = 630_000;
+export const DEFAULT_HISTORICAL_MEMORY_OPERATION_TIMEOUT_MS = 300_000;
+export const MAXIMUM_HISTORICAL_MEMORY_OPERATION_TIMEOUT_MS = 600_000;
+export const HISTORICAL_SYNC_LEASE_SAFETY_MARGIN_MS = 30_000;
+/** Maximum composed lease: maximum provider operation plus its safety margin. */
+export const MAXIMUM_HISTORICAL_SYNC_LEASE_DURATION_MS =
+  MAXIMUM_HISTORICAL_MEMORY_OPERATION_TIMEOUT_MS +
+  HISTORICAL_SYNC_LEASE_SAFETY_MARGIN_MS;
+
+export function historicalSyncLeaseDurationMs(operationTimeoutMs: number): number {
+  if (
+    !Number.isSafeInteger(operationTimeoutMs) ||
+    operationTimeoutMs < 1_000 ||
+    operationTimeoutMs > MAXIMUM_HISTORICAL_MEMORY_OPERATION_TIMEOUT_MS
+  ) {
+    throw new RangeError("historical memory operation timeout is outside its qualified bounds");
+  }
+  return Math.max(
+    DEFAULT_HISTORICAL_SYNC_POLICY.leaseDurationMs,
+    operationTimeoutMs + HISTORICAL_SYNC_LEASE_SAFETY_MARGIN_MS,
+  );
+}
 
 export type HistoricalSyncWorkerResultV1 =
   | { readonly status: "idle" }
@@ -198,9 +217,21 @@ export class HistoricalSyncWorker {
       return this.result(lease, "applied");
     }
 
+    // Outcome certainty, rather than the provider's retry classification,
+    // controls the durable late-write fence. A malformed response can be
+    // non-retryable while the preceding request still committed remotely.
+    if (result.status === "outcome_unknown") {
+      await this.dependencies.store.recordRetry(lease, {
+        code: result.code,
+        outcome: "outcome_unknown",
+        retryAfterMs: retryDelay(this.#policy, lease.attempt),
+      }, operationOptions(signal));
+      return this.result(lease, "retry_scheduled");
+    }
     if (result.retryable && lease.attempt < this.#policy.maximumIndexAttempts) {
       await this.dependencies.store.recordRetry(lease, {
         code: result.code,
+        outcome: "known_failure",
         retryAfterMs: retryDelay(this.#policy, lease.attempt),
       }, operationOptions(signal));
       return this.result(lease, "retry_scheduled");
@@ -258,6 +289,7 @@ export class HistoricalSyncWorker {
     // mismatch remains visible and retryable until absence can be proven.
     await this.dependencies.store.recordRetry(lease, {
       code: result.code,
+      outcome: "known_failure",
       retryAfterMs: retryDelay(this.#policy, lease.attempt),
     }, operationOptions(signal));
     return this.result(lease, "retry_scheduled");

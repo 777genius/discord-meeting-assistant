@@ -2,6 +2,10 @@ import { z } from "zod";
 import {
   decodeInfinityContextRuntimeActivation,
 } from "@discord-meeting/infinity-context-adapter";
+import {
+  DEFAULT_HISTORICAL_MEMORY_OPERATION_TIMEOUT_MS,
+  MAXIMUM_HISTORICAL_MEMORY_OPERATION_TIMEOUT_MS,
+} from "@discord-meeting/meeting-core/meeting-knowledge";
 
 import {
   loadRecordingPlaybackConfig,
@@ -136,7 +140,9 @@ const environmentSchema = z
       .transform((value) => value === "true"),
     LIVE_INGRESS_OWNER_MODE: z.literal("singleton").default("singleton"),
     INFINITY_CONTEXT_ACTIVATION: infinityActivation.optional(),
-    INFINITY_CONTEXT_OPERATION_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(600_000).default(300_000),
+    INFINITY_CONTEXT_OPERATION_TIMEOUT_MS: z.coerce.number().int().min(1_000)
+      .max(MAXIMUM_HISTORICAL_MEMORY_OPERATION_TIMEOUT_MS)
+      .default(DEFAULT_HISTORICAL_MEMORY_OPERATION_TIMEOUT_MS),
     INFINITY_CONTEXT_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(100).max(60_000).default(10_000),
     INFINITY_CONTEXT_TOKEN_FILE: absolutePath.optional(),
     INFINITY_CONTEXT_TOPOLOGY_KEY_FILE: absolutePath.optional(),

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
@@ -50,11 +50,18 @@ describe("Infinity Context combined qualification corpus contract", () => {
   });
 
   it("keeps production transport on the official SDK and contains no custom HTTP client", () => {
-    const sourceFiles = [
-      "../src/infinity-context-deletion.ts",
-      "../src/infinity-context-historical-memory.ts",
-      "../src/infinity-context-sdk-contract.ts",
-    ].map((path) => readFileSync(new URL(path, import.meta.url), "utf8"));
+    const sourceRoot = new URL("../src/", import.meta.url);
+    const productionPaths = readdirSync(sourceRoot, {
+      recursive: true,
+      withFileTypes: true,
+    })
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".ts"))
+      .map((entry) => new URL(entry.name, new URL(`${entry.parentPath}/`, "file:")))
+      .toSorted((left, right) => left.href.localeCompare(right.href));
+    // Adding a production source expands the reviewed transport boundary and
+    // must fail this contract until the exhaustive inventory is re-attested.
+    expect(productionPaths).toHaveLength(8);
+    const sourceFiles = productionPaths.map((path) => readFileSync(path, "utf8"));
     const source = sourceFiles.join("\n");
 
     expect(source).toContain('from "@infinity-context/sdk"');

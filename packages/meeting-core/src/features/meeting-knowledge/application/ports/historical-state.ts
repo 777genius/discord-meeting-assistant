@@ -30,6 +30,12 @@ export interface HistoricalSyncClaimOptionsV1 {
   readonly leaseDurationMs: number;
 }
 
+export type HistoricalSyncRetryV1 = {
+  readonly code: string;
+  readonly outcome: "known_failure" | "outcome_unknown";
+  readonly retryAfterMs: number;
+};
+
 export interface HistoricalOperationOptionsV1 {
   readonly signal?: AbortSignal;
 }
@@ -55,7 +61,7 @@ export interface HistoricalSyncStore {
 
   recordRetry(
     lease: HistoricalSyncLeaseV1,
-    failure: { readonly code: string; readonly retryAfterMs: number },
+    failure: HistoricalSyncRetryV1,
     options?: HistoricalOperationOptionsV1,
   ): Promise<void>;
 

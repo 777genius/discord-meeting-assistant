@@ -10,7 +10,7 @@ import {
   ExhaustiveCoverage,
   HistoricalFocusedRetrieval,
   HistoricalSyncWorker,
-  MAXIMUM_HISTORICAL_SYNC_LEASE_DURATION_MS,
+  historicalSyncLeaseDurationMs,
   RequestHistoricalMeetingDeletion,
   type HistoricalAuthorizationPort,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
@@ -31,20 +31,10 @@ import type { PlatformConfig } from "../config.js";
 
 const reconciliationIntervalMs = 5_000;
 const maximumOperationsPerPass = 25;
-const historicalLeaseSafetyMarginMs = 30_000;
 const shutdownDrainTimeoutMs = 5_000;
 
-export function historicalSyncLeaseDurationMs(operationTimeoutMs: number): number {
-  const leaseDurationMs = operationTimeoutMs + historicalLeaseSafetyMarginMs;
-  if (
-    !Number.isSafeInteger(operationTimeoutMs) ||
-    operationTimeoutMs < 1_000 ||
-    leaseDurationMs > MAXIMUM_HISTORICAL_SYNC_LEASE_DURATION_MS
-  ) {
-    throw new RangeError("Infinity operation timeout cannot be covered by the historical sync lease");
-  }
-  return Math.max(DEFAULT_HISTORICAL_SYNC_POLICY.leaseDurationMs, leaseDurationMs);
-}
+export { historicalSyncLeaseDurationMs } from
+  "@discord-meeting/meeting-core/meeting-knowledge";
 
 async function awaitBoundedPass(pass: Promise<void> | undefined): Promise<void> {
   if (pass === undefined) {

@@ -1,12 +1,14 @@
-import type {
-  HistoricalDeleteRequestV1,
-  HistoricalDeleteResultV1,
-  HistoricalIndexPlanV1,
-  HistoricalIndexResultV1,
-  HistoricalMemoryPort,
-  HistoricalMemoryOperationOptionsV1,
-  HistoricalSearchRequestV1,
-  HistoricalSearchResultV1,
+import {
+  DEFAULT_HISTORICAL_MEMORY_OPERATION_TIMEOUT_MS,
+  MAXIMUM_HISTORICAL_MEMORY_OPERATION_TIMEOUT_MS,
+  type HistoricalDeleteRequestV1,
+  type HistoricalDeleteResultV1,
+  type HistoricalIndexPlanV1,
+  type HistoricalIndexResultV1,
+  type HistoricalMemoryPort,
+  type HistoricalMemoryOperationOptionsV1,
+  type HistoricalSearchRequestV1,
+  type HistoricalSearchResultV1,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import {
   InfinityContextClient,
@@ -64,13 +66,14 @@ export class InfinityContextHistoricalMemoryAdapter implements HistoricalMemoryP
       (config.operationTimeoutMs !== undefined && (
         !Number.isSafeInteger(config.operationTimeoutMs) ||
         config.operationTimeoutMs < config.requestTimeoutMs ||
-        config.operationTimeoutMs > 600_000
+        config.operationTimeoutMs > MAXIMUM_HISTORICAL_MEMORY_OPERATION_TIMEOUT_MS
       ))
     ) {
       throw new RangeError("Infinity historical memory configuration is invalid");
     }
     this.#requestTimeoutMs = config.requestTimeoutMs;
-    this.#operationTimeoutMs = config.operationTimeoutMs ?? 300_000;
+    this.#operationTimeoutMs = config.operationTimeoutMs ??
+      DEFAULT_HISTORICAL_MEMORY_OPERATION_TIMEOUT_MS;
     this.#client = new InfinityContextClient({
       baseUrl: config.baseUrl,
       retryPolicy: { maxAttempts: 1 },
