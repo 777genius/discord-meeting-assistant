@@ -93,6 +93,20 @@ export class ParticipantGreetingDeadlines {
     }
   }
 
+  /** Wakes in-flight races without treating lifecycle cancellation as expiry. */
+  public cancel(participantId: string): void {
+    const deadline = this.deadlines.get(participantId);
+    if (deadline !== undefined) {
+      this.cancelDeadline(participantId, deadline);
+    }
+  }
+
+  public cancelAll(): void {
+    for (const [participantId, deadline] of this.deadlines) {
+      this.cancelDeadline(participantId, deadline);
+    }
+  }
+
   public has(participantId: string): boolean {
     return this.deadlines.has(participantId);
   }
@@ -168,6 +182,13 @@ export class ParticipantGreetingDeadlines {
     deadline.expired = true;
     deadline.resolveExpiration();
     this.onExpired(participantId);
+  }
+
+  private cancelDeadline(participantId: string, deadline: Deadline): void {
+    this.timer.cancel(deadline.handle);
+    deadline.expired = true;
+    deadline.resolveExpiration();
+    this.deadlines.delete(participantId);
   }
 
   public track(task: Promise<void>): void {

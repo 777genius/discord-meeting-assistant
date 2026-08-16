@@ -23,6 +23,7 @@ import { participantGreetingFreshness } from "../src/live-runtime/participant-gr
 import { MemoryOneShotReceipts } from "./participant-greeting-receipt-memory.js";
 
 const participantId = "1533224474609057795";
+const secondParticipantId = "2533224474609057795";
 const occurredAt = "1970-01-01T00:00:00.321Z";
 const logger: LiveRuntimeLogger = {
   debug: () => {}, error: () => {}, info: () => {}, warn: () => {},
@@ -127,6 +128,11 @@ function deadlineFixture(
           greetingLocale: "ru",
           spokenName: "Саша",
         },
+        [secondParticipantId]: {
+          displayName: "Alex Smith",
+          greetingLocale: "en",
+          spokenName: "Alex",
+        },
       },
     },
     locale: "auto",
@@ -146,6 +152,97 @@ function deadlineFixture(
     coordinator,
   };
 }
+
+describe("ParticipantGreetingBridge lifecycle cancellation", () => {
+  it("chains a requested advance and settle across consecutive drains", async () => {
+    const context = deadlineFixture(() => true, new MemoryOneShotReceipts());
+    let releaseFirstAdmission: (() => void) | undefined;
+    let releaseSecondSettlement: (() => void) | undefined;
+    context.coordinator.handleProactiveTurn = (input: unknown) => {
+      context.coordinator.calls.push(input);
+      if (context.coordinator.calls.length === 1) {
+        return new Promise<{ readonly status: "busy" }>((resolve) => {
+          releaseFirstAdmission = () => resolve({ status: "busy" as const });
+        });
+      }
+      return Promise.resolve({ status: "active" as const });
+    };
+    context.coordinator.whenTurnPlaybackSettled = () => new Promise<"played">((resolve) => {
+      releaseSecondSettlement = () => resolve("played");
+    });
+
+    context.bridge.participantJoined(participantId, occurredAt);
+    await vi.waitFor(() => {
+      expect(context.coordinator.calls).toHaveLength(1);
+    });
+    context.bridge.participantJoined(secondParticipantId, occurredAt);
+    const settlement = context.bridge.settle();
+    let settled = false;
+    void settlement.then(() => {
+      settled = true;
+      return settled;
+    });
+    releaseFirstAdmission?.();
+    await vi.waitFor(() => {
+      expect(context.coordinator.calls).toHaveLength(2);
+    });
+    expect(settled).toBe(false);
+
+    releaseSecondSettlement?.();
+    await settlement;
+    expect(context.coordinator.calls).toEqual([
+      expect.objectContaining({ speakerId: participantId }),
+      expect.objectContaining({ speakerId: secondParticipantId }),
+    ]);
+  });
+
+  it("wakes a stuck idle wait after leave and advances the queued participant", async () => {
+    const context = deadlineFixture(() => true, new MemoryOneShotReceipts());
+    let markIdleEntered: (() => void) | undefined;
+    const idleEntered = new Promise<void>((resolve) => {
+      markIdleEntered = resolve;
+    });
+    const stuckIdle = new Promise<void>(() => {});
+    let idleCalls = 0;
+    context.coordinator.whenIdle = () => {
+      idleCalls += 1;
+      if (idleCalls === 1) {
+        markIdleEntered?.();
+        return stuckIdle;
+      }
+      return Promise.resolve();
+    };
+
+    context.bridge.participantJoined(participantId, occurredAt);
+    await idleEntered;
+    context.bridge.participantJoined(secondParticipantId, occurredAt);
+    context.bridge.participantLeft(participantId);
+    await context.bridge.settle();
+
+    expect(context.coordinator.calls).toEqual([
+      expect.objectContaining({ speakerId: secondParticipantId }),
+    ]);
+  });
+
+  it("wakes a stuck idle wait when the meeting closes", async () => {
+    const context = deadlineFixture(() => true, new MemoryOneShotReceipts());
+    let markIdleEntered: (() => void) | undefined;
+    const idleEntered = new Promise<void>((resolve) => {
+      markIdleEntered = resolve;
+    });
+    context.coordinator.whenIdle = () => {
+      markIdleEntered?.();
+      return new Promise<void>(() => {});
+    };
+
+    context.bridge.participantJoined(participantId, occurredAt);
+    await idleEntered;
+    context.bridge.close();
+
+    await expect(context.bridge.settle()).resolves.toBeUndefined();
+    expect(context.coordinator.calls).toEqual([]);
+  });
+});
 
 describe("ParticipantGreetingBridge join-to-first-audio deadline", () => {
   it("durably terminalizes a stale delivered lifecycle without PCM", async () => {

@@ -27,6 +27,7 @@ interface ParticipantGreetingBridgeDependencies {
 }
 /** Meeting-local, bounded queue for one proactive greeting per participant. */
 export class ParticipantGreetingBridge {
+  private advanceRequested = false;
   private closed = false;
   private readonly deadlines: ParticipantGreetingDeadlines;
   private drainPromise: Promise<void> | null = null;
@@ -85,7 +86,7 @@ export class ParticipantGreetingBridge {
   public participantLeft(participantId: string): void {
     this.presentParticipantIds.delete(participantId);
     this.pendingGreetings.delete(participantId);
-    this.deadlines.clear(participantId);
+    this.deadlines.cancel(participantId);
   }
   public advance(): void {
     this.pendingGreetings.releaseDeferredRetries();
@@ -96,9 +97,12 @@ export class ParticipantGreetingBridge {
       this.dependencies.configuration.greetings === undefined ||
       this.closed ||
       this.dependencies.isMeetingFinishing() ||
-      this.drainPromise !== null ||
       (!this.pendingGreetings.hasReady() && this.pendingCompletions.size === 0)
     ) {
+      return;
+    }
+    if (this.drainPromise !== null) {
+      this.advanceRequested = true;
       return;
     }
     let draining!: Promise<void>;
@@ -112,18 +116,26 @@ export class ParticipantGreetingBridge {
       .finally(() => {
         if (this.drainPromise === draining) {
           this.drainPromise = null;
+          const shouldAdvance = this.advanceRequested;
+          this.advanceRequested = false;
+          if (shouldAdvance) {
+            this.tryAdvance();
+          }
         }
       });
     this.drainPromise = draining;
   }
   public close(): void {
     this.closed = true;
+    this.advanceRequested = false;
     this.pendingGreetings.clear();
     this.presentParticipantIds.clear();
-    this.deadlines.clearAll();
+    this.deadlines.cancelAll();
   }
   public async settle(): Promise<void> {
-    await this.drainPromise;
+    while (this.drainPromise !== null) {
+      await this.drainPromise;
+    }
     await this.deadlines.settle();
   }
   private async drain(): Promise<void> {
