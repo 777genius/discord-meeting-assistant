@@ -78,6 +78,12 @@ describe("Infinity Context activation provenance", () => {
       .toMatch(/^sha512-[A-Za-z0-9+/]{86}==$/u);
     expect(INFINITY_CONTEXT_SDK_PROVENANCE.retainedLiveQualificationManifestSha256)
       .toBe("sha256:abe694b3e1cf0dcec9d5ff7c0d8b65f30ec5364ac11bb2526bd1c3a3b176c207");
+    expect(
+      INFINITY_CONTEXT_SDK_PROVENANCE
+        .retainedProductionSemanticQualificationManifestSha256,
+    ).toBe(
+      "sha256:2b0ea368ea4d1feef4616fb185ce1267b9f8735e44d03634d81f03c8d58af965",
+    );
 
     const immutablePackage = readFileSync(new URL(
       `../../../${INFINITY_CONTEXT_SDK_PROVENANCE.immutablePackagePath}`,
@@ -102,6 +108,22 @@ describe("Infinity Context activation provenance", () => {
     )).digest("hex")).toBe(
       INFINITY_CONTEXT_SDK_PROVENANCE.retainedLiveQualificationEvidenceSha256,
     );
+    const productionEvidenceRoot = new URL(
+      "../../../docs/operations/evidence/2026-08-15-infinity-r79/",
+      import.meta.url,
+    );
+    expect(`sha256:${createHash("sha256").update(readFileSync(
+      new URL("qualification-manifest.v1.json", productionEvidenceRoot),
+    )).digest("hex")}`).toBe(
+      INFINITY_CONTEXT_SDK_PROVENANCE
+        .retainedProductionSemanticQualificationManifestSha256,
+    );
+    expect(readFileSync(new URL("SHA256SUMS", productionEvidenceRoot), "utf8"))
+      .toBe([
+        "2b0ea368ea4d1feef4616fb185ce1267b9f8735e44d03634d81f03c8d58af965  qualification-manifest.v1.json",
+        "64b8266a653a96fcc156591f57f704253c4d6e65dd62fcda7ac56c0860fcd3ae  runtime-provenance.txt",
+        "",
+      ].join("\n"));
 
     const adapterManifest = JSON.parse(readFileSync(
       new URL("../package.json", import.meta.url),
@@ -227,6 +249,30 @@ describe("Infinity Context activation provenance", () => {
     });
     expect(() => { assertInfinityContextSearchActivation(mismatchedDigest); })
       .toThrow(/attestation digest/u);
+  });
+
+  it("activates production search only with the retained r79 semantic attestation", () => {
+    const activation = decodeInfinityContextRuntimeActivation({
+      ...baseActivation,
+      environment: "production",
+      immutablePackageIntegrity: INFINITY_CONTEXT_SDK_PROVENANCE.immutablePackageIntegrity,
+      packageSource: "immutable_package",
+      productionEmbeddingProfileAttestation: {
+        embeddingProfile:
+          "local-open-source-paraphrase-multilingual-minilm-l12-v2-hybrid-bm25.r73",
+        embeddingProfileDigestSha256:
+          "sha256:5ecd36edd098940cd8a6540509f90815ddc1802b4410ced2bf063c0f8c650cac",
+        productionSemanticQualification: true,
+        qualificationManifestSha256:
+          INFINITY_CONTEXT_SDK_PROVENANCE
+            .retainedProductionSemanticQualificationManifestSha256,
+        schemaVersion: 1,
+      },
+      qualificationManifestSha256:
+        INFINITY_CONTEXT_SDK_PROVENANCE.retainedLiveQualificationManifestSha256,
+    });
+
+    expect(() => { assertInfinityContextSearchActivation(activation); }).not.toThrow();
   });
 
   it("does not permit search under a shadow-sync activation profile", () => {

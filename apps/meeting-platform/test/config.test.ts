@@ -71,6 +71,55 @@ describe("platform configuration", () => {
     }, async () => "fixture-value" )).rejects.toThrow("configured together");
   });
 
+  it("loads production search only with the nested retained r79 semantic attestation", async () => {
+    const activation = JSON.stringify({
+      apiVersion: "v1",
+      archiveSha256: INFINITY_CONTEXT_SDK_PROVENANCE.archiveSha256,
+      environment: "production",
+      immutablePackageIntegrity: INFINITY_CONTEXT_SDK_PROVENANCE.immutablePackageIntegrity,
+      indexingEnabled: true,
+      packageSource: "immutable_package",
+      productionEmbeddingProfileAttestation: {
+        embeddingProfile:
+          "local-open-source-paraphrase-multilingual-minilm-l12-v2-hybrid-bm25.r73",
+        embeddingProfileDigestSha256:
+          "sha256:5ecd36edd098940cd8a6540509f90815ddc1802b4410ced2bf063c0f8c650cac",
+        productionSemanticQualification: true,
+        qualificationManifestSha256:
+          INFINITY_CONTEXT_SDK_PROVENANCE
+            .retainedProductionSemanticQualificationManifestSha256,
+        schemaVersion: 1,
+      },
+      qualificationManifestSha256:
+        INFINITY_CONTEXT_SDK_PROVENANCE.retainedLiveQualificationManifestSha256,
+      schemaVersion: 1,
+      sdkCommit: INFINITY_CONTEXT_SDK_PROVENANCE.commit,
+      sdkTree: INFINITY_CONTEXT_SDK_PROVENANCE.tree,
+      searchEnabled: true,
+      serviceName: "infinity-context",
+      servingProfile: "same_room_retrieval",
+    });
+    const configured = await loadPlatformConfig({
+      ...environment,
+      INFINITY_CONTEXT_ACTIVATION: activation,
+      INFINITY_CONTEXT_TOKEN_FILE: "/run/secrets/infinity-token",
+      INFINITY_CONTEXT_TOPOLOGY_KEY_FILE: "/run/secrets/infinity-topology",
+      INFINITY_CONTEXT_URL: "http://infinity-context:7788",
+      NODE_ENV: "production",
+    }, async (path) => path.endsWith("topology") ? "t".repeat(32) : `fixture:${path}`);
+
+    expect(configured.infinityContext?.activation).toMatchObject({
+      environment: "production",
+      productionEmbeddingProfileAttestation: {
+        productionSemanticQualification: true,
+        qualificationManifestSha256:
+          INFINITY_CONTEXT_SDK_PROVENANCE
+            .retainedProductionSemanticQualificationManifestSha256,
+      },
+      searchEnabled: true,
+    });
+  });
+
   it("enables playback readiness only for a complete explicit test-only deployment", async () => {
     const conversationEnvironment = {
       ...environment,

@@ -26,8 +26,8 @@ export const INFINITY_CONTEXT_SDK_PROVENANCE = Object.freeze({
     qualifiesDeletionDrain: true,
     qualifiesOfficialSdkTransport: true,
   }),
-  /** Populated only by a future reviewed release with retained production evidence. */
-  retainedProductionSemanticQualificationManifestSha256: null as string | null,
+  retainedProductionSemanticQualificationManifestSha256:
+    "sha256:2b0ea368ea4d1feef4616fb185ce1267b9f8735e44d03634d81f03c8d58af965",
   repository: "https://github.com/777genius/infinity-context.git",
   tree: "67a744b1accc0d4628c19f28849660bc917b8b62",
 });
@@ -246,9 +246,9 @@ export function assertInfinityContextActivation(
 
 /**
  * Search qualification is deliberately separate from immutable SDK transport
- * and deletion-drain qualification. The retained r26 manifest used a
- * deterministic mock embedding profile, so this release has no approved
- * production semantic manifest and production search remains fail closed.
+ * and deletion-drain qualification. Production search additionally requires
+ * the retained r79 semantic manifest and its immutable embedding-profile
+ * attestation; the earlier deterministic qualification cannot activate it.
  */
 export function assertInfinityContextSearchActivation(
   activation: InfinityContextRuntimeActivationV1,
@@ -280,7 +280,6 @@ export function assertInfinityContextSearchActivation(
     INFINITY_CONTEXT_SDK_PROVENANCE.retainedProductionSemanticQualificationManifestSha256;
   if (
     !/^sha256:[a-f0-9]{64}$/u.test(attestation.embeddingProfileDigestSha256) ||
-    retainedManifest === null ||
     attestation.qualificationManifestSha256 !== retainedManifest
   ) {
     throw new InfinityContextActivationError(

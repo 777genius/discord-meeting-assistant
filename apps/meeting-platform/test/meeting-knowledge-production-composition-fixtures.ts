@@ -44,6 +44,18 @@ export const roomId = "444444444444444444";
 export const historicalMeetingId = "synthetic-two-hour-history";
 export const currentMeetingId = "synthetic-current-meeting";
 
+export const retainedProductionEmbeddingProfileAttestation = Object.freeze({
+  embeddingProfile:
+    "local-open-source-paraphrase-multilingual-minilm-l12-v2-hybrid-bm25.r73",
+  embeddingProfileDigestSha256:
+    "sha256:5ecd36edd098940cd8a6540509f90815ddc1802b4410ced2bf063c0f8c650cac",
+  productionSemanticQualification: true as const,
+  qualificationManifestSha256:
+    INFINITY_CONTEXT_SDK_PROVENANCE
+      .retainedProductionSemanticQualificationManifestSha256,
+  schemaVersion: 1 as const,
+});
+
 export const positionalNeedles = Object.freeze([
   { marker: "ORCHID-ALPHA", position: 0 },
   { marker: "CEDAR-BRAVO", position: 72 },
@@ -60,6 +72,9 @@ export function requiredHistoricalRuntime(
   indexingEnabled: boolean,
   searchEnabled: boolean,
   environment: "production" | "test" = "test",
+  productionEmbeddingProfileAttestation: NonNullable<
+    PlatformConfig["infinityContext"]
+  >["activation"]["productionEmbeddingProfileAttestation"] = null,
 ): PlatformHistoricalMemoryRuntime {
   const runtime = createPlatformHistoricalMemory({
     config: platformConfig(
@@ -67,6 +82,7 @@ export function requiredHistoricalRuntime(
       indexingEnabled,
       searchEnabled,
       environment,
+      productionEmbeddingProfileAttestation,
     ),
     logger: silentLogger,
     pool,
@@ -146,6 +162,9 @@ export function platformConfig(
   indexingEnabled: boolean,
   searchEnabled: boolean,
   environment: "production" | "test",
+  productionEmbeddingProfileAttestation: NonNullable<
+    PlatformConfig["infinityContext"]
+  >["activation"]["productionEmbeddingProfileAttestation"] = null,
 ): PlatformConfig {
   return {
     bindAddress: "127.0.0.1",
@@ -166,7 +185,7 @@ export function platformConfig(
         packageSource: environment === "production"
           ? "immutable_package"
           : "reviewed_source_workspace",
-        productionEmbeddingProfileAttestation: null,
+        productionEmbeddingProfileAttestation,
         qualificationManifestSha256: environment === "production"
           ? INFINITY_CONTEXT_SDK_PROVENANCE.retainedLiveQualificationManifestSha256
           : null,

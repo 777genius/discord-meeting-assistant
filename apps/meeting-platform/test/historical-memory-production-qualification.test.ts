@@ -4,7 +4,10 @@ import { describe, expect, it, vi } from "vitest";
 import { startDisposableInfinityHttpService } from
   "@discord-meeting/infinity-context-adapter/test-support";
 
-import { requiredHistoricalRuntime } from
+import {
+  requiredHistoricalRuntime,
+  retainedProductionEmbeddingProfileAttestation,
+} from
   "./meeting-knowledge-production-composition-fixtures.js";
 import { historicalSyncLeaseDurationMs } from
   "../src/composition/historical-memory.js";
@@ -104,6 +107,35 @@ describe("Infinity production semantic qualification composition", () => {
     const runtime = requiredHistoricalRuntime(pool, infinity, true, true, "production");
     try {
       await expect(runtime.assertReady()).resolves.toBeUndefined();
+      expect(runtime.searchEnabled()).toBe(false);
+      expect(runtime.servingAuthorized()).toBe(false);
+    } finally {
+      await runtime.close();
+      await infinity.close();
+      await pool.end();
+    }
+  });
+
+  it("enables production search only when composition carries the nested retained r79 attestation", async () => {
+    const pool = new Pool({
+      connectionString: "postgresql://synthetic.invalid/never-connected",
+    });
+    const infinity = await startDisposableInfinityHttpService();
+    const runtime = requiredHistoricalRuntime(
+      pool,
+      infinity,
+      true,
+      true,
+      "production",
+      retainedProductionEmbeddingProfileAttestation,
+    );
+    try {
+      await expect(runtime.assertReady()).resolves.toBeUndefined();
+      expect(runtime.searchEnabled()).toBe(true);
+      expect(runtime.servingAuthorized()).toBe(true);
+
+      infinity.endpoint.setCapabilitiesQualified(false);
+      await runtime.assertReady();
       expect(runtime.searchEnabled()).toBe(false);
       expect(runtime.servingAuthorized()).toBe(false);
     } finally {

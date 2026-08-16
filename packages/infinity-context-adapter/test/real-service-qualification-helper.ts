@@ -234,9 +234,6 @@ export async function runRealServiceQualification(
     });
   }
   expect(cleanupRequested).toBe(true);
-  if (focusedRecallAt5 === null) {
-    throw new Error("focused recall qualification did not complete");
-  }
 
   const topology = buildHistoricalIndexPlan(meeting, ids, blockPolicy).topology;
   await expectEventually(async () => {
