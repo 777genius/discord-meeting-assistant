@@ -6,6 +6,7 @@
   "scripts": {
     "canary:voicetext": "tsx src/run-voicetext-semantic-canary.ts",
     "check": "pnpm run typecheck && pnpm run test && pnpm run test:meeting-knowledge-e2e",
+    "check:image": "pnpm run typecheck && pnpm run test",
     "probe:hosted-discord-identity": "tsx src/run-hosted-discord-identity-probe.ts",
     "start": "tsx src/main.ts",
     "test": "vitest run --exclude test/post-call-recovery.e2e.test.ts --exclude test/meeting-knowledge-production-composition.e2e.test.ts",

@@ -20,9 +20,11 @@ RUN printf '%s' "${SOURCE_REVISION}" \
 
 WORKDIR /app
 COPY --chown=10001:10001 . .
+# The mandatory PostgreSQL/Testcontainers qualification runs on the host/CI
+# before image construction; BuildKit intentionally has no Docker socket.
 RUN node vendor/infinity-context/prepare-official-sdk.mjs \
   && pnpm install --frozen-lockfile --filter @discord-meeting/meeting-platform... \
-  && pnpm --filter @discord-meeting/meeting-platform check \
+  && pnpm --filter @discord-meeting/meeting-platform check:image \
   && node vendor/infinity-context/prepare-official-sdk.mjs --prune-dev \
   && pnpm store prune
 
