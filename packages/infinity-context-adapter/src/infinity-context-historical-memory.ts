@@ -29,6 +29,8 @@ import {
   validSearchRequest,
 } from "./infinity-context-sdk-contract.js";
 
+const MAXIMUM_INFINITY_CONTEXT_SEARCH_TOKEN_BUDGET = 6_000;
+
 /* The reviewed Node SDK declaration names this DOM alias in HttpTransport. */
 declare global {
   type BodyInit = unknown;
@@ -148,7 +150,7 @@ export class InfinityContextHistoricalMemoryAdapter implements HistoricalMemoryP
           }),
           timeoutMs: request.timeoutMs,
           signal,
-          tokenBudget: Math.max(256, request.candidateLimit * 64),
+          tokenBudget: MAXIMUM_INFINITY_CONTEXT_SEARCH_TOKEN_BUDGET,
         }),
       );
       if (!isHybridQualified(this.#capabilities, response.data.diagnostics)) {

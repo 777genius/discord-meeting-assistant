@@ -112,6 +112,38 @@ describe("Infinity Context official hybrid capability", () => {
   });
 });
 
+describe("Infinity Context bounded search budget", () => {
+  it("uses the bounded service maximum so ranked evidence is not silently budget-dropped", async () => {
+    const endpoint = new DisposableInfinityEndpoint();
+    const adapter = new InfinityContextHistoricalMemoryAdapter({
+      baseUrl: "http://disposable.infinity.invalid",
+      requestTimeoutMs: 1_000,
+      schemaVersion: 1,
+      transport: endpoint,
+    });
+    await adapter.qualifyCapabilities();
+
+    for (const candidateLimit of [1, 5, 16]) {
+      await expect(adapter.searchRoom({
+        candidateLimit,
+        query: "bounded evidence budget",
+        roomScopeExternalRef: "room-scope",
+        schemaVersion: 1,
+        spaceSlug: "space-slug",
+        timeoutMs: 1_000,
+      })).resolves.toMatchObject({ status: "available" });
+    }
+
+    expect(endpoint.requests.filter(({ method, path }) =>
+      method === "POST" && path === "/v1/search"
+    ).map(({ body }) => body)).toEqual([
+      expect.objectContaining({ max_chunks: 1, max_evidence_items: 1, token_budget: 6_000 }),
+      expect.objectContaining({ max_chunks: 5, max_evidence_items: 5, token_budget: 6_000 }),
+      expect.objectContaining({ max_chunks: 16, max_evidence_items: 16, token_budget: 6_000 }),
+    ]);
+  });
+});
+
 describe("Infinity Context historical memory vertical slice", () => {
   it("requires explicit process acceptance rather than document lifecycle status", () => {
     expect(processMutationAccepted({ id: "doc", status: "active", title: "fixture" }))
