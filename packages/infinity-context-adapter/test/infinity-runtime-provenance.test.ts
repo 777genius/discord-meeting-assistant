@@ -31,6 +31,27 @@ const baseActivation = {
   servingProfile: "same_room_retrieval",
 } as const;
 
+const retainedProductionAttestation = {
+  embeddingProfile:
+    INFINITY_CONTEXT_SDK_PROVENANCE.retainedProductionSemanticEmbeddingProfileId,
+  embeddingProfileDigestSha256:
+    INFINITY_CONTEXT_SDK_PROVENANCE.retainedProductionSemanticEmbeddingProfileDigestSha256,
+  productionSemanticQualification: true,
+  qualificationManifestSha256:
+    INFINITY_CONTEXT_SDK_PROVENANCE.retainedProductionSemanticQualificationManifestSha256,
+  schemaVersion: 1,
+} as const;
+
+const productionSearchActivation = {
+  ...baseActivation,
+  environment: "production" as const,
+  immutablePackageIntegrity: INFINITY_CONTEXT_SDK_PROVENANCE.immutablePackageIntegrity,
+  packageSource: "immutable_package" as const,
+  productionEmbeddingProfileAttestation: retainedProductionAttestation,
+  qualificationManifestSha256:
+    INFINITY_CONTEXT_SDK_PROVENANCE.retainedLiveQualificationManifestSha256,
+} as const;
+
 describe("Infinity Context activation provenance", () => {
   it("loads the exact official package through ESM, CJS, and TypeScript consumers", async () => {
     const esm = await import("@infinity-context/sdk");
@@ -112,11 +133,27 @@ describe("Infinity Context activation provenance", () => {
       "../../../docs/operations/evidence/2026-08-15-infinity-r79/",
       import.meta.url,
     );
+    const productionManifest = JSON.parse(readFileSync(
+      new URL("qualification-manifest.v1.json", productionEvidenceRoot),
+      "utf8",
+    )) as {
+      readonly embeddingProfile: {
+        readonly digestSha256: string;
+        readonly id: string;
+      };
+    };
     expect(`sha256:${createHash("sha256").update(readFileSync(
       new URL("qualification-manifest.v1.json", productionEvidenceRoot),
     )).digest("hex")}`).toBe(
       INFINITY_CONTEXT_SDK_PROVENANCE
         .retainedProductionSemanticQualificationManifestSha256,
+    );
+    expect(productionManifest.embeddingProfile.id).toBe(
+      INFINITY_CONTEXT_SDK_PROVENANCE.retainedProductionSemanticEmbeddingProfileId,
+    );
+    expect(productionManifest.embeddingProfile.digestSha256).toBe(
+      INFINITY_CONTEXT_SDK_PROVENANCE
+        .retainedProductionSemanticEmbeddingProfileDigestSha256,
     );
     expect(readFileSync(new URL("SHA256SUMS", productionEvidenceRoot), "utf8"))
       .toBe([
@@ -195,7 +232,9 @@ describe("Infinity Context activation provenance", () => {
       qualificationManifestSha256: `sha256:${"a".repeat(64)}`,
     })).toThrow(/retained live-service qualification/u);
   });
+});
 
+describe("Infinity Context production search provenance", () => {
   it("keeps production search closed for missing, false, and unretained embedding attestations", () => {
     const production = {
       ...baseActivation,
@@ -236,41 +275,49 @@ describe("Infinity Context activation provenance", () => {
     });
     expect(() => { assertInfinityContextSearchActivation(mockClaimingTrue); })
       .toThrow(/non-production qualification manifest/u);
+  });
 
-    const mismatchedDigest = decodeInfinityContextRuntimeActivation({
-      ...production,
+  it("rejects a profile-name mismatch against the retained r79 evidence", () => {
+    const activation = decodeInfinityContextRuntimeActivation({
+      ...productionSearchActivation,
       productionEmbeddingProfileAttestation: {
-        embeddingProfile: "hosted-production-embeddings-v1",
-        embeddingProfileDigestSha256: "sha256:mismatch",
-        productionSemanticQualification: true,
-        qualificationManifestSha256: `sha256:${"3".repeat(64)}`,
-        schemaVersion: 1,
+        ...retainedProductionAttestation,
+        embeddingProfile: "another-valid-production-profile",
       },
     });
-    expect(() => { assertInfinityContextSearchActivation(mismatchedDigest); })
-      .toThrow(/attestation digest/u);
+
+    expect(() => { assertInfinityContextSearchActivation(activation); })
+      .toThrow(/retained qualification/u);
+  });
+
+  it("rejects a profile-digest mismatch against the retained r79 evidence", () => {
+    const activation = decodeInfinityContextRuntimeActivation({
+      ...productionSearchActivation,
+      productionEmbeddingProfileAttestation: {
+        ...retainedProductionAttestation,
+        embeddingProfileDigestSha256: `sha256:${"a".repeat(64)}`,
+      },
+    });
+
+    expect(() => { assertInfinityContextSearchActivation(activation); })
+      .toThrow(/retained qualification/u);
+  });
+
+  it("rejects a manifest mismatch against the retained r79 evidence", () => {
+    const activation = decodeInfinityContextRuntimeActivation({
+      ...productionSearchActivation,
+      productionEmbeddingProfileAttestation: {
+        ...retainedProductionAttestation,
+        qualificationManifestSha256: `sha256:${"a".repeat(64)}`,
+      },
+    });
+
+    expect(() => { assertInfinityContextSearchActivation(activation); })
+      .toThrow(/retained qualification/u);
   });
 
   it("activates production search only with the retained r79 semantic attestation", () => {
-    const activation = decodeInfinityContextRuntimeActivation({
-      ...baseActivation,
-      environment: "production",
-      immutablePackageIntegrity: INFINITY_CONTEXT_SDK_PROVENANCE.immutablePackageIntegrity,
-      packageSource: "immutable_package",
-      productionEmbeddingProfileAttestation: {
-        embeddingProfile:
-          "local-open-source-paraphrase-multilingual-minilm-l12-v2-hybrid-bm25.r73",
-        embeddingProfileDigestSha256:
-          "sha256:5ecd36edd098940cd8a6540509f90815ddc1802b4410ced2bf063c0f8c650cac",
-        productionSemanticQualification: true,
-        qualificationManifestSha256:
-          INFINITY_CONTEXT_SDK_PROVENANCE
-            .retainedProductionSemanticQualificationManifestSha256,
-        schemaVersion: 1,
-      },
-      qualificationManifestSha256:
-        INFINITY_CONTEXT_SDK_PROVENANCE.retainedLiveQualificationManifestSha256,
-    });
+    const activation = decodeInfinityContextRuntimeActivation(productionSearchActivation);
 
     expect(() => { assertInfinityContextSearchActivation(activation); }).not.toThrow();
   });

@@ -28,6 +28,10 @@ export const INFINITY_CONTEXT_SDK_PROVENANCE = Object.freeze({
   }),
   retainedProductionSemanticQualificationManifestSha256:
     "sha256:2b0ea368ea4d1feef4616fb185ce1267b9f8735e44d03634d81f03c8d58af965",
+  retainedProductionSemanticEmbeddingProfileId:
+    "local-open-source-paraphrase-multilingual-minilm-l12-v2-hybrid-bm25.r73",
+  retainedProductionSemanticEmbeddingProfileDigestSha256:
+    "sha256:5ecd36edd098940cd8a6540509f90815ddc1802b4410ced2bf063c0f8c650cac",
   repository: "https://github.com/777genius/infinity-context.git",
   tree: "67a744b1accc0d4628c19f28849660bc917b8b62",
 });
@@ -279,11 +283,15 @@ export function assertInfinityContextSearchActivation(
   const retainedManifest =
     INFINITY_CONTEXT_SDK_PROVENANCE.retainedProductionSemanticQualificationManifestSha256;
   if (
-    !/^sha256:[a-f0-9]{64}$/u.test(attestation.embeddingProfileDigestSha256) ||
+    attestation.embeddingProfile !==
+      INFINITY_CONTEXT_SDK_PROVENANCE.retainedProductionSemanticEmbeddingProfileId ||
+    attestation.embeddingProfileDigestSha256 !==
+      INFINITY_CONTEXT_SDK_PROVENANCE
+        .retainedProductionSemanticEmbeddingProfileDigestSha256 ||
     attestation.qualificationManifestSha256 !== retainedManifest
   ) {
     throw new InfinityContextActivationError(
-      "production embedding-profile attestation digest does not match retained qualification",
+      "production embedding-profile attestation does not match retained qualification",
     );
   }
 }
