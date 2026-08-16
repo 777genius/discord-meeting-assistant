@@ -18,9 +18,11 @@ import type {
   LiveRuntimeTimer,
 } from "../src/live-runtime/contracts.js";
 import { ParticipantGreetingBridge } from "../src/live-runtime/participant-greeting-bridge.js";
+import { participantGreetingFreshness } from "../src/live-runtime/participant-greeting-deadline.js";
 import { MemoryOneShotReceipts } from "./participant-greeting-receipt-memory.js";
 
 const participantId = "1533224474609057795";
+const occurredAt = "1970-01-01T00:00:00.321Z";
 const logger: LiveRuntimeLogger = {
   debug: () => {}, error: () => {}, info: () => {}, warn: () => {},
 };
@@ -32,8 +34,45 @@ const timer: LiveRuntimeTimer = {
   schedule: (delayMs, callback) => setTimeout(callback, delayMs),
 };
 
+describe("participant greeting freshness", () => {
+  const observedAt = Date.parse("2026-08-02T10:20:00.000Z");
+
+  it("gives a fresh late-in-meeting join its producer-anchored remaining budget", () => {
+    expect(participantGreetingFreshness(
+      "2026-08-02T10:19:58.000Z",
+      observedAt,
+    )).toEqual({
+      anchorMilliseconds: observedAt - 2_000,
+      remainingMilliseconds: 3_000,
+      status: "fresh",
+    });
+  });
+
+  it.each([
+    ["invalid", "not-an-instant"],
+    ["stale", "2026-08-02T10:10:00.000Z"],
+    ["implausibly future", "2026-08-02T10:20:01.001Z"],
+  ])("terminalizes an %s lifecycle timestamp", (_scenario, occurredAtValue) => {
+    expect(participantGreetingFreshness(occurredAtValue, observedAt)).toEqual({
+      status: "terminal",
+    });
+  });
+
+  it("clamps a bounded future skew without extending the five-second budget", () => {
+    expect(participantGreetingFreshness(
+      "2026-08-02T10:20:01.000Z",
+      observedAt,
+    )).toEqual({
+      anchorMilliseconds: observedAt,
+      remainingMilliseconds: 5_000,
+      status: "fresh",
+    });
+  });
+});
+
 class DeadlineCoordinator {
   public readonly calls: unknown[] = [];
+  public readonly outcomes: Array<{ readonly status: "active" | "busy" }> = [];
   public whenIdle = () => Promise.resolve();
   public advanceMeeting(): void {}
   public closeMeeting(): Promise<void> { return Promise.resolve(); }
@@ -41,7 +80,7 @@ class DeadlineCoordinator {
   public handleFinalizedTurn() { return Promise.resolve({ status: "ignored" as const }); }
   public handleProactiveTurn(input: unknown) {
     this.calls.push(input);
-    return Promise.resolve({ status: "active" as const });
+    return Promise.resolve(this.outcomes.shift() ?? { status: "active" as const });
   }
   public participantLeft(): Promise<void> { return Promise.resolve(); }
   public playPreparedCue(input: unknown) {
@@ -58,6 +97,7 @@ function deadlineFixture(
   ready: () => boolean,
   receipts: MemoryOneShotReceipts,
   runtimeLogger: LiveRuntimeLogger = logger,
+  nowMilliseconds: () => number = () => 321,
 ) {
   const coordinator = new DeadlineCoordinator();
   const configuration: LiveConversationConfiguration = {
@@ -75,7 +115,7 @@ function deadlineFixture(
       },
     },
     locale: "auto",
-    nowMilliseconds: () => 321,
+    nowMilliseconds,
     oneShotReceipts: receipts,
     systemPrompt: "Answer briefly.",
     voiceProfileId: "voice-profile",
@@ -93,6 +133,57 @@ function deadlineFixture(
 }
 
 describe("ParticipantGreetingBridge join-to-first-audio deadline", () => {
+  it("durably terminalizes a stale delivered lifecycle without PCM", async () => {
+    const receipts = new MemoryOneShotReceipts();
+    const now = Date.parse("2026-08-02T10:20:00.000Z");
+    const context = deadlineFixture(() => true, receipts, logger, () => now);
+
+    context.bridge.participantJoined(participantId, "2026-08-02T10:10:00.000Z");
+    await context.bridge.settle();
+
+    expect(context.coordinator.calls).toEqual([]);
+    expect(receipts.state("greeting", "recording-1", participantId)).toBe("completed");
+  });
+
+  it("uses only the producer-anchored remainder while waiting for readiness", async () => {
+    vi.useFakeTimers();
+    try {
+      const now = Date.parse("2026-08-02T10:20:04.000Z");
+      const receipts = new MemoryOneShotReceipts();
+      const context = deadlineFixture(() => false, receipts, logger, () => now);
+      context.bridge.participantJoined(participantId, "2026-08-02T10:20:00.000Z");
+
+      await vi.advanceTimersByTimeAsync(999);
+      expect(receipts.state("greeting", "recording-1", participantId)).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(1);
+      await context.bridge.settle();
+
+      expect(context.coordinator.calls).toEqual([]);
+      expect(receipts.state("greeting", "recording-1", participantId)).toBe("completed");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not grant a fresh budget to a busy retry", async () => {
+    vi.useFakeTimers();
+    try {
+      const context = deadlineFixture(() => true, new MemoryOneShotReceipts());
+      context.coordinator.outcomes.push({ status: "busy" });
+      context.bridge.participantJoined(participantId, occurredAt);
+      await context.bridge.settle();
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      await context.bridge.settle();
+      context.bridge.advance();
+      await context.bridge.settle();
+
+      expect(context.coordinator.calls).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("durably terminalizes a join when Craig readiness never arrives", async () => {
     vi.useFakeTimers();
     try {
@@ -103,7 +194,7 @@ describe("ParticipantGreetingBridge join-to-first-audio deadline", () => {
         ...logger,
         warn: (_message, fields) => warnings.push(fields),
       });
-      first.bridge.participantJoined(participantId);
+      first.bridge.participantJoined(participantId, occurredAt);
 
       await vi.advanceTimersByTimeAsync(5_000);
       await first.bridge.settle();
@@ -114,7 +205,7 @@ describe("ParticipantGreetingBridge join-to-first-audio deadline", () => {
       expect(first.coordinator.calls).toEqual([]);
       expect(receipts.state("greeting", "recording-1", participantId)).toBe("completed");
       const restarted = deadlineFixture(() => true, receipts);
-      restarted.bridge.participantsRestored([participantId]);
+      restarted.bridge.participantsRestored([participantId], occurredAt);
       await restarted.bridge.settle();
       expect(restarted.coordinator.calls).toEqual([]);
       expect(warnings).toContainEqual(expect.objectContaining({
@@ -134,7 +225,7 @@ describe("ParticipantGreetingBridge join-to-first-audio deadline", () => {
       });
       const context = deadlineFixture(() => true, new MemoryOneShotReceipts());
       context.coordinator.whenIdle = () => idle;
-      context.bridge.participantJoined(participantId);
+      context.bridge.participantJoined(participantId, occurredAt);
       const settlement = context.bridge.settle();
 
       await vi.advanceTimersByTimeAsync(5_000);
@@ -217,17 +308,17 @@ it("drives join, reconnect and durable restart through real Craig playback", asy
   });
   try {
     const first = createBridge();
-    first.participantJoined(participantId);
+    first.participantJoined(participantId, occurredAt);
     await first.settle();
     expect(receipts.state("greeting", "recording-1", participantId)).toBe("completed");
     expect(transport.commands.map(({ type }) => type)).toEqual([
       "playback-start", "audio-chunk", "audio-chunk", "playback-finish",
     ]);
     first.participantLeft(participantId);
-    first.participantJoined(participantId);
+    first.participantJoined(participantId, occurredAt);
     await first.settle();
     const restarted = createBridge();
-    restarted.participantsRestored([participantId]);
+    restarted.participantsRestored([participantId], occurredAt);
     await restarted.settle();
     expect(transport.commands.filter(({ type }) => type === "playback-start")).toHaveLength(1);
   } finally {

@@ -44,7 +44,6 @@ export class ParticipantGreetingBridge {
   private readonly pendingGreetings = new ParticipantGreetingQueue();
   private readonly pendingCompletions = new Map<string, PendingGreetingCompletion>();
   private readonly presentParticipantIds = new Set<string>();
-  private readonly queuedAtMillisecondsByParticipantId = new Map<string, number>();
   private readonly reservationInProgressParticipantIds = new Set<string>();
   private readonly reservedParticipantIds = new Set<string>();
   private readonly retryCounts = new Map<string, number>();
@@ -55,7 +54,7 @@ export class ParticipantGreetingBridge {
     });
   }
 
-  public participantsPresent(participantIds: readonly string[]): void {
+  public participantsPresent(participantIds: readonly string[], occurredAt: string): void {
     for (const participantId of participantIds) {
       if (this.closed) {
         return;
@@ -66,6 +65,7 @@ export class ParticipantGreetingBridge {
         this.enqueue(
           participantId,
           this.profile(participantId) === undefined ? "high" : "initial",
+          occurredAt,
         );
       }
     }
@@ -73,11 +73,11 @@ export class ParticipantGreetingBridge {
   }
 
   /** Restores presence; the durable receipt decides whether playback is due. */
-  public participantsRestored(participantIds: readonly string[]): void {
-    this.participantsPresent(participantIds);
+  public participantsRestored(participantIds: readonly string[], occurredAt: string): void {
+    this.participantsPresent(participantIds, occurredAt);
   }
 
-  public participantJoined(participantId: string): void {
+  public participantJoined(participantId: string, occurredAt: string): void {
     if (this.closed) {
       return;
     }
@@ -86,7 +86,7 @@ export class ParticipantGreetingBridge {
       this.greeting(participantId) !== undefined &&
       !this.greetedParticipantIds.has(participantId)
     ) {
-      this.enqueue(participantId, "high");
+      this.enqueue(participantId, "high", occurredAt);
     }
     this.tryAdvance();
   }
@@ -95,7 +95,6 @@ export class ParticipantGreetingBridge {
     this.presentParticipantIds.delete(participantId);
     this.pendingGreetings.delete(participantId);
     this.deadlines.clear(participantId);
-    this.queuedAtMillisecondsByParticipantId.delete(participantId);
   }
 
   public advance(): void {
@@ -135,7 +134,6 @@ export class ParticipantGreetingBridge {
     this.pendingGreetings.clear();
     this.presentParticipantIds.clear();
     this.deadlines.clearAll();
-    this.queuedAtMillisecondsByParticipantId.clear();
   }
 
   public async settle(): Promise<void> {
@@ -198,7 +196,6 @@ export class ParticipantGreetingBridge {
             this.activeLeaseTokens.set(participantId, lateReceipt.leaseToken);
             await this.complete(participantId, lateReceipt.leaseToken);
           }
-          this.queuedAtMillisecondsByParticipantId.delete(participantId);
           return;
         }).catch(() => {});
         continue;
@@ -208,7 +205,6 @@ export class ParticipantGreetingBridge {
         this.greetedParticipantIds.add(participantId);
         this.deadlines.clear(participantId);
         this.retryCounts.delete(participantId);
-        this.queuedAtMillisecondsByParticipantId.delete(participantId);
         continue;
       }
       this.activeLeaseTokens.set(participantId, receipt.leaseToken);
@@ -307,13 +303,19 @@ export class ParticipantGreetingBridge {
   private enqueue(
     participantId: string,
     priority: ParticipantGreetingPriority,
+    occurredAt?: string,
   ): void {
-    if (!this.queuedAtMillisecondsByParticipantId.has(participantId)) {
-      this.queuedAtMillisecondsByParticipantId.set(
+    if (!this.deadlines.has(participantId)) {
+      if (occurredAt === undefined) {
+        return;
+      }
+      this.pendingGreetings.enqueue(participantId, priority);
+      this.deadlines.start(
         participantId,
+        occurredAt,
         this.nowMilliseconds(),
       );
-      this.deadlines.start(participantId);
+      return;
     }
     this.pendingGreetings.enqueue(participantId, priority);
   }
@@ -338,7 +340,6 @@ export class ParticipantGreetingBridge {
       this.pendingCompletions.delete(participantId);
       this.deadlines.clear(participantId);
       this.retryCounts.delete(participantId);
-      this.queuedAtMillisecondsByParticipantId.delete(participantId);
     }
   }
 
@@ -350,7 +351,6 @@ export class ParticipantGreetingBridge {
         this.activeLeaseTokens.set(participantId, receipt.leaseToken);
         await this.complete(participantId, receipt.leaseToken);
       }
-      this.queuedAtMillisecondsByParticipantId.delete(participantId);
     } catch (error) {
       this.dependencies.logger.warn("Participant greeting deadline settlement failed", {
         errorName: error instanceof Error ? error.name : "UnknownError",
@@ -426,9 +426,6 @@ export class ParticipantGreetingBridge {
   }
 
   private observedGreetingLatencyMilliseconds(participantId: string): number {
-    const queuedAtMs = this.queuedAtMillisecondsByParticipantId.get(participantId);
-    return queuedAtMs === undefined
-      ? 0
-      : Math.max(0, this.nowMilliseconds() - queuedAtMs);
+    return this.deadlines.observedLatencyMilliseconds(participantId, this.nowMilliseconds());
   }
 }

@@ -134,6 +134,6 @@ export function createActiveLiveMeeting(input: CreateActiveLiveMeetingInput): Ac
     transcriptionFenceClosed: false,
   };
   farewell?.participantsPresent(input.event.participantIds);
-  greetings?.participantsPresent(input.event.participantIds);
+  greetings?.participantsPresent(input.event.participantIds, input.event.occurredAt);
   return state;
 }

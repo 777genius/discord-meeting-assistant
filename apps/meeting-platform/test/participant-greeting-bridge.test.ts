@@ -12,6 +12,7 @@ const unknownParticipantId = "3533224474609057795";
 const excludedParticipantId = "4533224474609057795";
 const secondUnknownParticipantId = "5533224474609057795";
 const secondKnownParticipantId = "6533224474609057795";
+const occurredAt = "1970-01-01T00:00:00.321Z";
 
 const testTimer: LiveRuntimeTimer = {
   cancel: (handle) => {
@@ -182,7 +183,7 @@ describe("ParticipantGreetingBridge", () => {
     const first = fixture(true, "en", logger, () => 321, undefined, {
       oneShotReceipts: receipts,
     });
-    first.bridge.participantJoined(englishParticipantId);
+    first.bridge.participantJoined(englishParticipantId, occurredAt);
     await first.bridge.settle();
     expect(first.coordinator.calls).toHaveLength(1);
     expect(receipts.state("greeting", "recording-1", englishParticipantId))
@@ -196,7 +197,7 @@ describe("ParticipantGreetingBridge", () => {
       undefined,
       { oneShotReceipts: receipts },
     );
-    restarted.bridge.participantsRestored([englishParticipantId]);
+    restarted.bridge.participantsRestored([englishParticipantId], occurredAt);
     await restarted.bridge.settle();
 
     expect(restarted.coordinator.calls).toEqual([]);
@@ -219,7 +220,7 @@ describe("ParticipantGreetingBridge", () => {
         playbackAttemptId: `anonymous-${selection.locale}-attempt-1`,
       };
     }, { conversationLocale });
-    context.bridge.participantJoined(unknownParticipantId);
+    context.bridge.participantJoined(unknownParticipantId, occurredAt);
     await context.bridge.settle();
     expect(context.coordinator.calls).toEqual([]);
     expect(context.coordinator.preparedCalls[0]).toMatchObject({
@@ -243,7 +244,7 @@ describe("ParticipantGreetingBridge", () => {
     });
     context.coordinator.playbackSettlements.push("unplayed", "played");
 
-    context.bridge.participantJoined(russianParticipantId);
+    context.bridge.participantJoined(russianParticipantId, occurredAt);
     await context.bridge.settle();
 
     expect(selectedSpeech).toEqual(["Привет, Саша!", "Привет!"]);
@@ -266,7 +267,7 @@ describe("ParticipantGreetingBridge", () => {
       unknownParticipantId,
       excludedParticipantId,
       englishParticipantId,
-    ]);
+    ], occurredAt);
     await context.bridge.settle();
     expect(context.coordinator.calls).toEqual([]);
 
@@ -324,7 +325,7 @@ describe("ParticipantGreetingBridge", () => {
       unknownParticipantId,
       englishParticipantId,
       secondUnknownParticipantId,
-    ]);
+    ], occurredAt);
     await context.bridge.settle();
 
     expect(context.coordinator.calls.map(({ speakerId }) => speakerId)).toEqual([
@@ -339,14 +340,14 @@ describe("ParticipantGreetingBridge", () => {
     const context = fixture(true);
     context.coordinator.onPlaybackSettlement = (turnId) => {
       if (turnId === `participant-greeting:${russianParticipantId}`) {
-        context.bridge.participantJoined(englishParticipantId);
+        context.bridge.participantJoined(englishParticipantId, occurredAt);
       }
     };
 
     context.bridge.participantsPresent([
       russianParticipantId,
       secondKnownParticipantId,
-    ]);
+    ], occurredAt);
     await context.bridge.settle();
 
     expect(context.coordinator.calls.map(({ speakerId }) => speakerId)).toEqual([
@@ -370,11 +371,11 @@ describe("ParticipantGreetingBridge", () => {
         (participantId) => turnId === `participant-greeting:${participantId}`,
       );
       if (turnId === `participant-greeting:${russianParticipantId}`) {
-        context.bridge.participantJoined(liveParticipantIds[0] ?? "");
+        context.bridge.participantJoined(liveParticipantIds[0] ?? "", occurredAt);
       } else if (completedLiveIndex >= 0) {
         const nextParticipantId = liveParticipantIds[completedLiveIndex + 1];
         if (nextParticipantId !== undefined) {
-          context.bridge.participantJoined(nextParticipantId);
+          context.bridge.participantJoined(nextParticipantId, occurredAt);
         }
       }
     };
@@ -382,7 +383,7 @@ describe("ParticipantGreetingBridge", () => {
     context.bridge.participantsPresent([
       russianParticipantId,
       englishParticipantId,
-    ]);
+    ], occurredAt);
     await context.bridge.settle();
 
     expect(context.coordinator.calls.map(({ speakerId }) => speakerId)).toEqual([
@@ -419,7 +420,7 @@ describe("ParticipantGreetingBridge", () => {
       return idleGate;
     };
 
-    context.bridge.participantJoined(russianParticipantId);
+    context.bridge.participantJoined(russianParticipantId, occurredAt);
     const settlement = context.bridge.settle();
     await idleEntered;
     expect(infoCalls).toEqual([]);
@@ -453,10 +454,10 @@ describe("ParticipantGreetingBridge reconnect and retry semantics", () => {
   }) => {
     const context = fixture(true);
 
-    context.bridge.participantJoined(participantId);
+    context.bridge.participantJoined(participantId, occurredAt);
     await context.bridge.settle();
     context.bridge.participantLeft(participantId);
-    context.bridge.participantJoined(participantId);
+    context.bridge.participantJoined(participantId, occurredAt);
     await context.bridge.settle();
 
     expect(context.coordinator.calls).toHaveLength(1);
@@ -468,11 +469,11 @@ describe("ParticipantGreetingBridge retry admission", () => {
     const context = fixture(true);
     context.coordinator.outcomes.push({ status: "busy" }, { status: "active" });
 
-    context.bridge.participantJoined(russianParticipantId);
+    context.bridge.participantJoined(russianParticipantId, occurredAt);
     await context.bridge.settle();
 
     expect(context.coordinator.calls).toHaveLength(1);
-    context.bridge.participantJoined(russianParticipantId);
+    context.bridge.participantJoined(russianParticipantId, occurredAt);
     await context.bridge.settle();
     expect(context.coordinator.calls).toHaveLength(1);
 
@@ -490,7 +491,7 @@ describe("ParticipantGreetingBridge retry admission", () => {
     ]);
 
     context.bridge.participantLeft(russianParticipantId);
-    context.bridge.participantJoined(russianParticipantId);
+    context.bridge.participantJoined(russianParticipantId, occurredAt);
     await context.bridge.settle();
     expect(context.coordinator.calls).toHaveLength(2);
   });
@@ -502,10 +503,10 @@ describe("ParticipantGreetingBridge retry admission", () => {
     context.bridge.participantsPresent([
       russianParticipantId,
       englishParticipantId,
-    ]);
+    ], occurredAt);
     await context.bridge.settle();
     context.setPlaybackReady(false);
-    context.bridge.participantJoined(unknownParticipantId);
+    context.bridge.participantJoined(unknownParticipantId, occurredAt);
     await context.bridge.settle();
 
     context.setPlaybackReady(true);
@@ -528,7 +529,7 @@ describe("ParticipantGreetingBridge retry admission", () => {
     });
     context.coordinator.playbackSettlements.push("unplayed", "played");
 
-    context.bridge.participantJoined(russianParticipantId);
+    context.bridge.participantJoined(russianParticipantId, occurredAt);
     await context.bridge.settle();
 
     expect(context.coordinator.calls).toHaveLength(1);
@@ -561,11 +562,11 @@ describe("ParticipantGreetingBridge retry admission", () => {
       "unplayed",
     );
 
-    context.bridge.participantJoined(russianParticipantId);
+    context.bridge.participantJoined(russianParticipantId, occurredAt);
     await context.bridge.settle();
     await advanceAndSettle(context.bridge, 3);
     context.bridge.participantLeft(russianParticipantId);
-    context.bridge.participantJoined(russianParticipantId);
+    context.bridge.participantJoined(russianParticipantId, occurredAt);
     await context.bridge.settle();
     await advanceAndSettle(context.bridge, 3);
 
@@ -583,11 +584,11 @@ describe("ParticipantGreetingBridge retry admission", () => {
     context.coordinator.playbackSettlements.push("unplayed", "unplayed", "unplayed", "unplayed");
     context.coordinator.onPlaybackSettlement = (turnId) => {
       if (turnId === `participant-greeting:${russianParticipantId}:retry-3`) {
-        context.bridge.participantJoined(englishParticipantId);
+        context.bridge.participantJoined(englishParticipantId, occurredAt);
       }
     };
 
-    context.bridge.participantJoined(russianParticipantId);
+    context.bridge.participantJoined(russianParticipantId, occurredAt);
     await context.bridge.settle();
     await advanceAndSettle(context.bridge, 3);
 
@@ -648,11 +649,11 @@ describe("ParticipantGreetingBridge retries and lifecycle", () => {
       timer: testTimer,
     });
 
-    bridge.participantJoined(russianParticipantId);
+    bridge.participantJoined(russianParticipantId, occurredAt);
     await bridge.settle();
     await advanceAndSettle(bridge, 3);
     bridge.participantLeft(russianParticipantId);
-    bridge.participantJoined(russianParticipantId);
+    bridge.participantJoined(russianParticipantId, occurredAt);
     await bridge.settle();
 
     expect(runtimeTurnIds).toEqual([
@@ -680,7 +681,7 @@ describe("ParticipantGreetingBridge retries and lifecycle", () => {
         };
       });
 
-      context.bridge.participantJoined(russianParticipantId);
+      context.bridge.participantJoined(russianParticipantId, occurredAt);
       const draining = context.bridge.settle();
       await vi.waitFor(() => {
         expect(context.coordinator.calls).toHaveLength(1);
@@ -693,7 +694,7 @@ describe("ParticipantGreetingBridge retries and lifecycle", () => {
       const restarted = fixture(true, "ru", logger, () => 9_999, undefined, {
         oneShotReceipts: receipts,
       });
-      restarted.bridge.participantsRestored([russianParticipantId]);
+      restarted.bridge.participantsRestored([russianParticipantId], occurredAt);
       await restarted.bridge.settle();
 
       expect(context.coordinator.calls).toHaveLength(1);
@@ -717,7 +718,7 @@ describe("ParticipantGreetingBridge retries and lifecycle", () => {
       });
     };
 
-    context.bridge.participantJoined(russianParticipantId);
+    context.bridge.participantJoined(russianParticipantId, occurredAt);
     const draining = context.bridge.settle();
     await vi.waitFor(() => {
       expect(context.coordinator.calls).toHaveLength(1);
@@ -730,7 +731,7 @@ describe("ParticipantGreetingBridge retries and lifecycle", () => {
     const restarted = fixture(true, "ru", logger, () => 9_999, undefined, {
       oneShotReceipts: receipts,
     });
-    restarted.bridge.participantsRestored([russianParticipantId]);
+    restarted.bridge.participantsRestored([russianParticipantId], occurredAt);
     await restarted.bridge.settle();
 
     expect(context.coordinator.calls).toHaveLength(1);
@@ -741,7 +742,7 @@ describe("ParticipantGreetingBridge retries and lifecycle", () => {
     "clears initial and deferred greetings on participant %s",
     async (operation) => {
       const initial = fixture(false);
-      initial.bridge.participantsPresent([russianParticipantId]);
+      initial.bridge.participantsPresent([russianParticipantId], occurredAt);
       if (operation === "left") {
         initial.bridge.participantLeft(russianParticipantId);
       } else {
@@ -754,7 +755,7 @@ describe("ParticipantGreetingBridge retries and lifecycle", () => {
 
       const deferred = fixture(true);
       deferred.coordinator.outcomes.push({ status: "busy" });
-      deferred.bridge.participantJoined(russianParticipantId);
+      deferred.bridge.participantJoined(russianParticipantId, occurredAt);
       await deferred.bridge.settle();
       if (operation === "left") {
         deferred.bridge.participantLeft(russianParticipantId);
@@ -770,14 +771,14 @@ describe("ParticipantGreetingBridge retries and lifecycle", () => {
   it("does not greet someone who left before playback became ready", async () => {
     const context = fixture();
 
-    context.bridge.participantJoined(englishParticipantId);
+    context.bridge.participantJoined(englishParticipantId, occurredAt);
     context.bridge.participantLeft(englishParticipantId);
     context.setPlaybackReady(true);
     context.bridge.advance();
     await context.bridge.settle();
     expect(context.coordinator.calls).toEqual([]);
 
-    context.bridge.participantJoined(englishParticipantId);
+    context.bridge.participantJoined(englishParticipantId, occurredAt);
     await context.bridge.settle();
     expect(context.coordinator.calls).toHaveLength(1);
   });
@@ -785,7 +786,7 @@ describe("ParticipantGreetingBridge retries and lifecycle", () => {
   it("drops queued greetings when the meeting closes", async () => {
     const context = fixture();
 
-    context.bridge.participantJoined(russianParticipantId);
+    context.bridge.participantJoined(russianParticipantId, occurredAt);
     context.bridge.close();
     context.setPlaybackReady(true);
     context.bridge.advance();
@@ -801,10 +802,10 @@ it("does not mistake process restoration for successful playback", async () => {
   context.bridge.participantsRestored([
     russianParticipantId,
     unknownParticipantId,
-  ]);
+  ], occurredAt);
   context.bridge.participantLeft(russianParticipantId);
-  context.bridge.participantJoined(russianParticipantId);
-  context.bridge.participantJoined(englishParticipantId);
+  context.bridge.participantJoined(russianParticipantId, occurredAt);
+  context.bridge.participantJoined(englishParticipantId, occurredAt);
   await context.bridge.settle();
 
   expect(context.coordinator.calls.map(({ speakerId }) => speakerId)).toEqual([
@@ -828,7 +829,7 @@ it("plays a matching prepared greeting without invoking the TTS runtime", async 
     }),
   );
 
-  context.bridge.participantJoined(russianParticipantId);
+  context.bridge.participantJoined(russianParticipantId, occurredAt);
   await context.bridge.settle();
 
   expect(context.coordinator.calls).toEqual([]);
@@ -851,7 +852,7 @@ it("plays a matching prepared greeting without invoking the TTS runtime", async 
 it("uses the configured English fallback without inventing a name", async () => {
   const context = fixture(true, "en");
 
-  context.bridge.participantJoined(unknownParticipantId);
+  context.bridge.participantJoined(unknownParticipantId, occurredAt);
   await context.bridge.settle();
 
   expect(context.coordinator.calls).toHaveLength(1);

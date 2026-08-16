@@ -54,7 +54,7 @@ function greetingRuntime(
         },
       },
       locale: "auto",
-      nowMilliseconds: () => performance.now(),
+      nowMilliseconds: () => Date.now(),
       systemPrompt: "Answer briefly.",
       voiceProfileId: "voice-profile",
     },
@@ -102,6 +102,7 @@ it("routes initial joins and reconnects through one meeting-local greeting", asy
     speakerId: "1533228054724346087",
   });
 
+  vi.setSystemTime("2026-08-02T10:01:00.000Z");
   await runtime.acceptLifecycle({
     occurredAt: "2026-08-02T10:01:00.000Z",
     participantId: "2533228054724346087",
@@ -117,6 +118,7 @@ it("routes initial joins and reconnects through one meeting-local greeting", asy
     speakerId: "2533228054724346087",
   });
 
+  vi.setSystemTime("2026-08-02T10:02:00.000Z");
   for (const type of ["participant.left", "participant.joined"] as const) {
     await runtime.acceptLifecycle({
       occurredAt: "2026-08-02T10:02:00.000Z",
@@ -214,6 +216,7 @@ it("does not suppress an unplayed greeting merely because a meeting is restored"
     speakerId: "1533228054724346087",
   });
 
+  vi.setSystemTime("2026-08-02T10:01:00.000Z");
   await restoredRuntime.acceptLifecycle({
     occurredAt: "2026-08-02T10:01:00.000Z",
     participantId: "2533228054724346087",
@@ -231,6 +234,56 @@ it("does not suppress an unplayed greeting merely because a meeting is restored"
   await restoredRuntime.close();
   await firstRuntime.close();
 });
+
+it.each([10, 20])(
+  "greets a fresh participant joining at meeting age +%i minutes",
+  async (meetingAgeMinutes) => {
+    vi.useFakeTimers();
+    vi.setSystemTime("2026-08-02T10:00:00.000Z");
+    const meetings = new MemoryLiveMeetingRepository();
+    const coordinator = new ConversationCoordinatorProbe(meetings);
+    const runtime = greetingRuntime(meetings, coordinator, () => true);
+    await runtime.acceptLifecycle(started("recording-live-1", []));
+
+    const occurredAt = `2026-08-02T10:${String(meetingAgeMinutes).padStart(2, "0")}:00.000Z`;
+    vi.setSystemTime(occurredAt);
+    await runtime.acceptLifecycle({
+      occurredAt,
+      participantId: "2533228054724346087",
+      recordingId: "recording-live-1",
+      type: "participant.joined",
+    });
+    await vi.waitFor(() => expect(coordinator.proactiveCalls).toHaveLength(1));
+    expect(coordinator.proactiveCalls[0]).toMatchObject({
+      prompt: "Hi, Alex!",
+      speakerId: "2533228054724346087",
+    });
+    await runtime.close();
+  },
+);
+
+it.each([10, 20])(
+  "terminalizes a participant lifecycle delivered %i minutes after occurredAt",
+  async (deliveryDelayMinutes) => {
+    vi.useFakeTimers();
+    vi.setSystemTime("2026-08-02T10:00:00.000Z");
+    const meetings = new MemoryLiveMeetingRepository();
+    const coordinator = new ConversationCoordinatorProbe(meetings);
+    const runtime = greetingRuntime(meetings, coordinator, () => true);
+    await runtime.acceptLifecycle(started("recording-live-1", []));
+
+    vi.setSystemTime(`2026-08-02T10:${String(deliveryDelayMinutes).padStart(2, "0")}:00.000Z`);
+    await runtime.acceptLifecycle({
+      occurredAt: "2026-08-02T10:00:00.000Z",
+      participantId: "2533228054724346087",
+      recordingId: "recording-live-1",
+      type: "participant.joined",
+    });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(coordinator.proactiveCalls).toEqual([]);
+    await runtime.close();
+  },
+);
 
 it("logs privacy-safe SUT participant lifecycle receipts for reconnect proof", async () => {
   vi.useFakeTimers();

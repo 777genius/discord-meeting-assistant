@@ -268,7 +268,7 @@ export class PlatformLiveMeetingRuntime {
     if (event.type === "participant.joined") {
       await observeFinalizedHuman(this.dependencies, event);
       state.farewell?.participantJoined(event.participantId);
-      state.greetings?.participantJoined(event.participantId);
+      state.greetings?.participantJoined(event.participantId, event.occurredAt);
     } else {
       // Cancellation owns the departure edge. A slow or failed roster projection
       // must never leave generation or playback running for the departed actor.
