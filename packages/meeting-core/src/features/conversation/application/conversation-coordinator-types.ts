@@ -115,6 +115,12 @@ export type ConversationInterruptionResult =
 /** Terminal delivery evidence for one admitted conversation turn. */
 export type ConversationTurnPlaybackSettlement = ConversationPlaybackSettlement;
 
+/** Earliest provider-confirmed evidence that a turn became audible. */
+export type ConversationTurnPlaybackStart =
+  | { readonly startedAtMs: number; readonly status: "started" }
+  | { readonly status: "unplayed" }
+  | { readonly status: "unknown" };
+
 export interface ConversationCoordinatorDependencies {
   readonly delay?: ConversationDelayPort;
   readonly groundedAnswers?: GroundedKnowledgeAnswerPort;
@@ -191,6 +197,11 @@ export interface MeetingConversationState {
   readonly pending: Map<string, PreparedConversation>;
   playbackFence: ConversationPlaybackFence | null;
   playbackOpenBarrier: Promise<void>;
+  readonly playbackStartSignals: Map<string, {
+    readonly promise: Promise<ConversationTurnPlaybackStart>;
+    readonly resolve: (value: ConversationTurnPlaybackStart) => void;
+  }>;
+  readonly playbackStarts: Map<string, ConversationTurnPlaybackStart>;
   readonly playbackSettlements: Map<string, ConversationTurnPlaybackSettlement>;
   readonly session: ConversationSession;
   readonly tasks: Set<Promise<void>>;

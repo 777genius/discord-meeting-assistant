@@ -9,6 +9,7 @@ import type {
   ConversationCoordinatorDependencies,
   ConversationCoordinatorResult,
   ConversationInterruptionResult,
+  ConversationTurnPlaybackStart,
   ConversationTurnPlaybackSettlement,
   FinalizedConversationTurnInput,
   MeetingConversationState,
@@ -17,6 +18,7 @@ import type {
 } from "./conversation-coordinator-types.js";
 import {
   advanceConversationState,
+  conversationPlaybackStartSignal,
   createMeetingConversationState,
   trackConversationTask,
   waitForConversationTasks,
@@ -27,6 +29,7 @@ export type {
   ConversationCoordinatorDependencies,
   ConversationCoordinatorResult,
   ConversationInterruptionResult,
+  ConversationTurnPlaybackStart,
   ConversationTurnPlaybackSettlement,
   FinalizedConversationTurnInput,
   PreparedConversationCueInput,
@@ -272,6 +275,41 @@ export class ConversationCoordinator {
     }
 
     await waitForConversationTasks(state);
+  }
+
+  /** Resolves on the first provider-confirmed audible frame, or terminal no-audio. */
+  public async whenTurnPlaybackStarted(
+    meetingId: string,
+    turnId: string,
+  ): Promise<ConversationTurnPlaybackStart> {
+    const state = this.meetings.get(meetingId);
+    if (state === undefined) {
+      return { status: "unknown" };
+    }
+    const remembered = state.playbackStarts.get(turnId);
+    if (remembered !== undefined) {
+      return remembered;
+    }
+    if (state.tasks.size === 0) {
+      return { status: "unknown" };
+    }
+    const signal = conversationPlaybackStartSignal(state, turnId);
+    const result = await Promise.race([
+      signal,
+      this.whenTurnPlaybackSettled(meetingId, turnId).then((settlement) => {
+        const observed = state.playbackStarts.get(turnId);
+        if (observed !== undefined) {
+          return observed;
+        }
+        return settlement === "unplayed"
+          ? { status: "unplayed" as const }
+          : { status: "unknown" as const };
+      }),
+    ]);
+    if (result.status === "unknown" && state.playbackStarts.get(turnId) === undefined) {
+      state.playbackStartSignals.delete(turnId);
+    }
+    return result;
   }
 
   /** Waits for this turn's work and reports whether audio really reached playback. */

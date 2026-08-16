@@ -14,6 +14,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type {
   LiveConversationConfiguration,
+  LiveConversationOneShotReceiptPort,
   LiveRuntimeLogger,
   LiveRuntimeTimer,
 } from "../src/live-runtime/contracts.js";
@@ -43,6 +44,7 @@ describe("participant greeting freshness", () => {
       observedAt,
     )).toEqual({
       anchorMilliseconds: observedAt - 2_000,
+      expiresAtMilliseconds: observedAt + 3_000,
       remainingMilliseconds: 3_000,
       status: "fresh",
     });
@@ -64,6 +66,7 @@ describe("participant greeting freshness", () => {
       observedAt,
     )).toEqual({
       anchorMilliseconds: observedAt,
+      expiresAtMilliseconds: observedAt + 5_000,
       remainingMilliseconds: 5_000,
       status: "fresh",
     });
@@ -72,6 +75,7 @@ describe("participant greeting freshness", () => {
 
 class DeadlineCoordinator {
   public readonly calls: unknown[] = [];
+  public participantLeftCalls = 0;
   public readonly outcomes: Array<{ readonly status: "active" | "busy" }> = [];
   public whenIdle = () => Promise.resolve();
   public advanceMeeting(): void {}
@@ -82,7 +86,10 @@ class DeadlineCoordinator {
     this.calls.push(input);
     return Promise.resolve(this.outcomes.shift() ?? { status: "active" as const });
   }
-  public participantLeft(): Promise<void> { return Promise.resolve(); }
+  public participantLeft(): Promise<void> {
+    this.participantLeftCalls += 1;
+    return Promise.resolve();
+  }
   public playPreparedCue(input: unknown) {
     this.calls.push(input);
     return Promise.resolve({ status: "active" as const });
@@ -90,12 +97,20 @@ class DeadlineCoordinator {
   public speechActivity() { return Promise.resolve({ status: "ignored" as const }); }
   public speechEnded() { return Promise.resolve({ status: "ignored" as const }); }
   public speechStarted() { return Promise.resolve({ status: "ignored" as const }); }
-  public whenTurnPlaybackSettled() { return Promise.resolve("played" as const); }
+  public whenTurnPlaybackStarted(): Promise<
+    { readonly startedAtMs: number; readonly status: "started" } |
+    { readonly status: "unplayed" | "unknown" }
+  > {
+    return Promise.resolve({ startedAtMs: 321, status: "started" as const });
+  }
+  public whenTurnPlaybackSettled(): Promise<"partial" | "played" | "unknown" | "unplayed"> {
+    return Promise.resolve("played");
+  }
 }
 
 function deadlineFixture(
   ready: () => boolean,
-  receipts: MemoryOneShotReceipts,
+  receipts: LiveConversationOneShotReceiptPort,
   runtimeLogger: LiveRuntimeLogger = logger,
   nowMilliseconds: () => number = () => 321,
 ) {
@@ -139,6 +154,24 @@ describe("ParticipantGreetingBridge join-to-first-audio deadline", () => {
     const context = deadlineFixture(() => true, receipts, logger, () => now);
 
     context.bridge.participantJoined(participantId, "2026-08-02T10:10:00.000Z");
+    await context.bridge.settle();
+
+    expect(context.coordinator.calls).toEqual([]);
+    expect(receipts.state("greeting", "recording-1", participantId)).toBe("completed");
+  });
+
+  it.each([
+    ["invalid", "not-an-instant"],
+    ["future", "2026-08-02T10:20:01.001Z"],
+  ])("durably terminalizes an %s lifecycle through the full bridge", async (
+    _scenario,
+    lifecycleAt,
+  ) => {
+    const receipts = new MemoryOneShotReceipts();
+    const now = Date.parse("2026-08-02T10:20:00.000Z");
+    const context = deadlineFixture(() => true, receipts, logger, () => now);
+
+    context.bridge.participantJoined(participantId, lifecycleAt);
     await context.bridge.settle();
 
     expect(context.coordinator.calls).toEqual([]);
@@ -238,6 +271,151 @@ describe("ParticipantGreetingBridge join-to-first-audio deadline", () => {
       vi.useRealTimers();
     }
   });
+
+  it("blocks admission after event-loop lag even before the timer callback runs", async () => {
+    let now = 321;
+    let releaseIdle: (() => void) | undefined;
+    const idle = new Promise<void>((resolve) => {
+      releaseIdle = resolve;
+    });
+    const receipts = new MemoryOneShotReceipts();
+    const context = deadlineFixture(() => true, receipts, logger, () => now);
+    context.coordinator.whenIdle = () => idle;
+    context.bridge.participantJoined(participantId, occurredAt);
+    const settlement = context.bridge.settle();
+
+    now = 5_321;
+    releaseIdle?.();
+    await settlement;
+
+    expect(context.coordinator.calls).toEqual([]);
+    expect(receipts.state("greeting", "recording-1", participantId)).toBe("completed");
+  });
+
+  it("keeps valid first audio when playback finishes after the deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      let now = 321;
+      let startPlayback: (() => void) | undefined;
+      let finishPlayback: (() => void) | undefined;
+      const receipts = new MemoryOneShotReceipts();
+      const context = deadlineFixture(() => true, receipts, logger, () => now);
+      context.coordinator.whenTurnPlaybackStarted = () => new Promise((resolve) => {
+        startPlayback = () => resolve({
+          startedAtMs: 5_320,
+          status: "started" as const,
+        });
+      });
+      context.coordinator.whenTurnPlaybackSettled = () => new Promise((resolve) => {
+        finishPlayback = () => resolve("played");
+      });
+      context.bridge.participantJoined(participantId, occurredAt);
+      const settlement = context.bridge.settle();
+      await vi.waitFor(() => {
+        expect(context.coordinator.calls).toHaveLength(1);
+      });
+      now = 5_320;
+      startPlayback?.();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(vi.getTimerCount()).toBe(0);
+
+      now = 20_000;
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(context.coordinator.participantLeftCalls).toBe(0);
+      finishPlayback?.();
+      await settlement;
+
+      expect(receipts.state("greeting", "recording-1", participantId)).toBe("completed");
+      expect(context.coordinator.participantLeftCalls).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("awaits terminal playback cancellation before completing an expired receipt", async () => {
+    vi.useFakeTimers();
+    try {
+      let finishPlayback: (() => void) | undefined;
+      let finishStartObservation: (() => void) | undefined;
+      const receipts = new MemoryOneShotReceipts();
+      const context = deadlineFixture(() => true, receipts);
+      context.coordinator.whenTurnPlaybackStarted = () => new Promise((resolve) => {
+        finishStartObservation = () => resolve({ status: "unplayed" });
+      });
+      context.coordinator.participantLeft = () => {
+        context.coordinator.participantLeftCalls += 1;
+        finishStartObservation?.();
+        return Promise.resolve();
+      };
+      context.coordinator.whenTurnPlaybackSettled = () => new Promise((resolve) => {
+        finishPlayback = () => resolve("unplayed");
+      });
+      context.bridge.participantJoined(participantId, occurredAt);
+      const settlement = context.bridge.settle();
+      await vi.waitFor(() => {
+        expect(context.coordinator.calls).toHaveLength(1);
+      });
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      await vi.waitFor(() => {
+        expect(context.coordinator.participantLeftCalls).toBe(1);
+      });
+      expect(receipts.state("greeting", "recording-1", participantId)).toBe("reserved");
+
+      finishPlayback?.();
+      await settlement;
+      expect(receipts.state("greeting", "recording-1", participantId)).toBe("completed");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("durably fences a busy release that crosses the absolute deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      let releaseReceipt: (() => void) | undefined;
+      let receiptState: "completed" | "released" | "reserved" | undefined;
+      let lease = 0;
+      const receipts: LiveConversationOneShotReceiptPort = {
+        complete: () => {
+          receiptState = "completed";
+          return Promise.resolve();
+        },
+        release: () => new Promise((resolve) => {
+          releaseReceipt = () => {
+            receiptState = "released";
+            resolve();
+          };
+        }),
+        reserve: () => {
+          lease += 1;
+          receiptState = "reserved";
+          return Promise.resolve({ leaseToken: `lease-${lease}`, status: "reserved" });
+        },
+      };
+      let now = 321;
+      const context = deadlineFixture(() => true, receipts, logger, () => now);
+      context.coordinator.outcomes.push({ status: "busy" });
+      context.bridge.participantJoined(participantId, occurredAt);
+      const settlement = context.bridge.settle();
+      await vi.waitFor(() => {
+        expect(receiptState).toBe("reserved");
+      });
+
+      now = 5_321;
+      await vi.advanceTimersByTimeAsync(5_000);
+      releaseReceipt?.();
+      await settlement;
+
+      expect(receiptState).toBe("completed");
+      expect(lease).toBe(2);
+      context.bridge.advance();
+      await context.bridge.settle();
+      expect(context.coordinator.calls).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 class GreetingCraigTransport implements CraigPlaybackTransport {
@@ -276,6 +454,64 @@ class GreetingCraigTransport implements CraigPlaybackTransport {
     return Promise.resolve();
   }
 }
+
+it.each([10, 20])(
+  "never sends Craig PCM for a lifecycle restored %i minutes late",
+  async (minutesLate) => {
+    const receipts = new MemoryOneShotReceipts();
+    const transport = new GreetingCraigTransport();
+    const playback = new CraigPlaybackGateway(() => 10);
+    playback.register(transport);
+    const coordinator = new ConversationCoordinator({
+      playback,
+      runtime: {
+        startTurn: () => Promise.reject(new Error("stale greeting must not invoke runtime")),
+      },
+    });
+    const now = Date.parse("2026-08-02T10:20:00.000Z");
+    const bridge = new ParticipantGreetingBridge({
+      configuration: {
+        coordinator,
+        greetings: {
+          cues: { select: () => ({
+            cueId: "greeting-ru-sasha-v1",
+            pcmChunks: [Uint8Array.of(1, 0, 2, 0)],
+            playbackAttemptId: `late-${minutesLate}`,
+          }) },
+          defaultLocale: "ru",
+          excludedParticipantIds: [],
+          isPlaybackReady: () => true,
+          profiles: { [participantId]: {
+            displayName: "Александр Смирнов",
+            greetingLocale: "ru",
+            spokenName: "Саша",
+          } },
+        },
+        locale: "auto",
+        nowMilliseconds: () => now,
+        oneShotReceipts: receipts,
+        systemPrompt: "Answer briefly.",
+        voiceProfileId: "voice-profile",
+      },
+      isMeetingFinishing: () => false,
+      logger,
+      meetingId: "recording-1",
+      timer,
+    });
+    try {
+      bridge.participantsRestored([
+        participantId,
+      ], new Date(now - minutesLate * 60_000).toISOString());
+      await bridge.settle();
+
+      expect(transport.commands.filter(({ type }) => type === "audio-chunk")).toEqual([]);
+      expect(receipts.state("greeting", "recording-1", participantId)).toBe("completed");
+    } finally {
+      await coordinator.closeMeeting("recording-1", now);
+      playback.close();
+    }
+  },
+);
 
 it("drives join, reconnect and durable restart through real Craig playback", async () => {
   const receipts = new MemoryOneShotReceipts();

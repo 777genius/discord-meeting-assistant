@@ -96,6 +96,14 @@ interface LiveConversationCoordinator {
   speechEnded(meetingId: string, nowMs: number): Promise<unknown>;
   speechStarted(meetingId: string, nowMs: number): Promise<unknown>;
   whenIdle(meetingId: string): Promise<void>;
+  whenTurnPlaybackStarted(
+    meetingId: string,
+    turnId: string,
+  ): Promise<
+    | { readonly startedAtMs: number; readonly status: "started" }
+    | { readonly status: "unplayed" }
+    | { readonly status: "unknown" }
+  >;
   whenTurnPlaybackSettled(
     meetingId: string,
     turnId: string,

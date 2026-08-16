@@ -22,6 +22,7 @@ import {
   isCurrentConversationRun,
   markConversationPlaybackTerminalMissing,
   matchesConversationAttempt,
+  rememberConversationPlaybackStart,
   shouldDiscardOpenedConversationPlayback,
   trackConversationTask,
   withConversationPlaybackOpen,
@@ -263,6 +264,11 @@ export class ConversationAnswerPlayback {
       return;
     }
     consumption.startedReceiptReceived = true;
+    rememberConversationPlaybackStart(
+      state,
+      run.prepared.turn.turnId,
+      { startedAtMs: event.startedAtMs, status: "started" },
+    );
     this.observePlayback({
       ...playbackProvenance(run),
       meetingId: run.prepared.request.meetingId,

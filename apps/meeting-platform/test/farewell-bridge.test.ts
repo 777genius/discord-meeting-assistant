@@ -47,6 +47,9 @@ class CoordinatorProbe {
   public speechEnded() { return Promise.resolve({ status: "ignored" as const }); }
   public speechStarted() { return Promise.resolve({ status: "ignored" as const }); }
   public whenIdle(): Promise<void> { return Promise.resolve(); }
+  public whenTurnPlaybackStarted() {
+    return Promise.resolve({ startedAtMs: 0, status: "started" as const });
+  }
   public whenTurnPlaybackSettled() {
     return this.settlementError === undefined
       ? Promise.resolve(this.playbackSettlement)

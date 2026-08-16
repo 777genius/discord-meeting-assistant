@@ -91,6 +91,8 @@ class GreetingCoordinatorProbe {
     return Promise.resolve();
   }
 
+  public whenTurnPlaybackStarted() { return Promise.resolve(this.playbackSettlements[0] === "unplayed" ? { status: "unplayed" as const } : { startedAtMs: 321, status: "started" as const }); }
+
   public async whenTurnPlaybackSettled(_meetingId: string, turnId: string) {
     await this.whenIdle();
     this.onPlaybackSettlement?.(turnId);

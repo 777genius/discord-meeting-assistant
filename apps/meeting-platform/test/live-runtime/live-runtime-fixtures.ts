@@ -550,6 +550,10 @@ export class ConversationCoordinatorProbe {
     return Promise.resolve();
   }
 
+  public whenTurnPlaybackStarted() {
+    return Promise.resolve({ startedAtMs: Date.now(), status: "started" as const });
+  }
+
   public whenTurnPlaybackSettled() {
     return Promise.resolve("played" as const);
   }
