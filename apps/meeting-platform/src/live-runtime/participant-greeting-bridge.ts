@@ -15,9 +15,6 @@ import {
 } from "./participant-greeting-deadline.js";
 import { ParticipantGreetingReceipts } from "./participant-greeting-receipts.js";
 const maximumSafeRetries = 3;
-interface PendingGreetingCompletion {
-  readonly leaseToken: string;
-}
 interface ParticipantGreetingBridgeDependencies {
   readonly configuration: LiveConversationConfiguration;
   readonly isMeetingFinishing: () => boolean;
@@ -29,11 +26,11 @@ interface ParticipantGreetingBridgeDependencies {
 export class ParticipantGreetingBridge {
   private advanceRequested = false;
   private closed = false;
+  private readonly committedParticipantIds = new Set<string>();
   private readonly deadlines: ParticipantGreetingDeadlines;
   private drainPromise: Promise<void> | null = null;
   private readonly greetedParticipantIds = new Set<string>();
   private readonly pendingGreetings = new ParticipantGreetingQueue();
-  private readonly pendingCompletions = new Map<string, PendingGreetingCompletion>();
   private readonly presentParticipantIds = new Set<string>();
   private readonly receipts: ParticipantGreetingReceipts;
   private readonly retryCounts = new Map<string, number>();
@@ -97,7 +94,7 @@ export class ParticipantGreetingBridge {
       this.dependencies.configuration.greetings === undefined ||
       this.closed ||
       this.dependencies.isMeetingFinishing() ||
-      (!this.pendingGreetings.hasReady() && this.pendingCompletions.size === 0)
+      !this.pendingGreetings.hasReady()
     ) {
       return;
     }
@@ -143,7 +140,6 @@ export class ParticipantGreetingBridge {
     if (greetings === undefined) {
       return;
     }
-    await this.completePendingSettlements();
     while (!this.closed && !this.dependencies.isMeetingFinishing()) {
       if (!greetings.isPlaybackReady(this.dependencies.meetingId)) {
         return;
@@ -195,35 +191,16 @@ export class ParticipantGreetingBridge {
         return true;
       }
 
+      if (
+        !this.committedParticipantIds.has(participantId) &&
+        !await this.commitPlaybackAdmission(participantId)
+      ) {
+        return false;
+      }
+      // The durable write is a necessary fence, not a freshness grant. Re-read
+      // the absolute producer-time deadline immediately before the irreversible
+      // provider call in case the commit consumed the remaining budget.
       if (!this.deadlines.ensureFresh(participantId, this.nowMilliseconds())) {
-        await this.receipts.fenceOnce(participantId);
-        return false;
-      }
-      const reservationOperation = this.receipts.reserve(participantId);
-      const receiptResult = await this.deadlines.race(
-        participantId,
-        reservationOperation,
-        () => this.nowMilliseconds(),
-      );
-      if (receiptResult.status === "expired") {
-        this.greetedParticipantIds.add(participantId);
-        this.deadlines.track(this.receipts.settleExpiredReservation(
-          participantId,
-          receiptResult.operation,
-        ));
-        return false;
-      }
-      const receipt = receiptResult.value;
-      if (receipt.status !== "reserved") {
-        this.greetedParticipantIds.add(participantId);
-        this.deadlines.clear(participantId);
-        this.retryCounts.delete(participantId);
-        return false;
-      }
-      if (!this.deadlines.ensureFresh(participantId, this.nowMilliseconds())) {
-        this.greetedParticipantIds.add(participantId);
-        this.pendingCompletions.set(participantId, { leaseToken: receipt.leaseToken });
-        await this.completePendingSettlements();
         return false;
       }
       const playback = this.speak(participantId, greeting);
@@ -234,29 +211,24 @@ export class ParticipantGreetingBridge {
       );
       if (firstAudio.status === "expired") {
         this.greetedParticipantIds.add(participantId);
-        this.pendingCompletions.set(participantId, { leaseToken: receipt.leaseToken });
         await this.cancelPlayback(participantId);
-        await playback.settlement;
-        await this.completePendingSettlements();
+        // The durable fence already suppresses replay. A provider settlement may
+        // never arrive after cancellation or process loss, so it cannot gate the
+        // meeting-local queue or recovery.
+        this.detachPlaybackSettlement(playback);
         return false;
       }
       if (firstAudio.value.status === "unplayed") {
         const outcome = await playback.settlement;
         if (outcome === "busy" || outcome === "unplayed") {
-          if (await this.settleOutcome(
-            participantId,
-            priority,
-            receipt.leaseToken,
-            outcome,
-          )) {
+          if (this.settleOutcome(participantId, priority, outcome)) {
             return true;
           }
           return false;
         }
         this.greetedParticipantIds.add(participantId);
-        this.pendingCompletions.set(participantId, { leaseToken: receipt.leaseToken });
         await this.cancelPlayback(participantId);
-        await this.completePendingSettlements();
+        this.clearTerminalState(participantId);
         return false;
       }
       if (!this.deadlines.acceptFirstAudio(
@@ -264,29 +236,25 @@ export class ParticipantGreetingBridge {
         firstAudio.value.startedAtMilliseconds,
       )) {
         this.greetedParticipantIds.add(participantId);
-        this.pendingCompletions.set(participantId, { leaseToken: receipt.leaseToken });
         await this.cancelPlayback(participantId);
-        await playback.settlement;
-        await this.completePendingSettlements();
+        this.detachPlaybackSettlement(playback);
+        this.clearTerminalState(participantId);
         return false;
       }
       const outcome = await playback.settlement;
-    return this.settleOutcome(participantId, priority, receipt.leaseToken, outcome);
+    return this.settleOutcome(participantId, priority, outcome);
   }
 
-  private async settleOutcome(
+  private settleOutcome(
     participantId: string,
     priority: ParticipantGreetingPriority,
-    leaseToken: string,
     outcome: GreetingAttemptOutcome,
-  ): Promise<boolean> {
+  ): boolean {
     if (outcome === "busy" || outcome === "unplayed") {
       const retryCount = (this.retryCounts.get(participantId) ?? 0) + 1;
       this.retryCounts.set(participantId, retryCount);
       if (retryCount <= maximumSafeRetries && this.presentParticipantIds.has(participantId)) {
-        await this.receipts.release(participantId, leaseToken);
         if (!this.deadlines.ensureFresh(participantId, this.nowMilliseconds())) {
-          await this.receipts.fenceOnce(participantId);
           return false;
         }
         this.pendingGreetings.deferRetry(participantId, priority);
@@ -298,15 +266,52 @@ export class ParticipantGreetingBridge {
       });
     } else if (outcome !== "played" && outcome !== "partial" && outcome !== "unknown" &&
       outcome !== "failed" && outcome !== "queued" && outcome !== "reused") {
-      await this.receipts.release(participantId, leaseToken);
       this.greetedParticipantIds.add(participantId);
-      this.deadlines.clear(participantId);
+      this.clearTerminalState(participantId);
       return false;
     }
     this.greetedParticipantIds.add(participantId);
-    this.pendingCompletions.set(participantId, { leaseToken });
-    await this.completePendingSettlements();
+    this.clearTerminalState(participantId);
     return false;
+  }
+
+  /** Commits the one-shot identity before any provider can observe playback. */
+  private async commitPlaybackAdmission(participantId: string): Promise<boolean> {
+    if (!this.deadlines.ensureFresh(participantId, this.nowMilliseconds())) {
+      await this.receipts.fenceOnce(participantId);
+      return false;
+    }
+    const reservationOperation = this.receipts.reserve(participantId);
+    const receiptResult = await this.deadlines.race(
+      participantId,
+      reservationOperation,
+      () => this.nowMilliseconds(),
+    );
+    if (receiptResult.status === "expired") {
+      this.greetedParticipantIds.add(participantId);
+      this.deadlines.track(this.receipts.settleExpiredReservation(
+        participantId,
+        receiptResult.operation,
+      ));
+      return false;
+    }
+    const receipt = receiptResult.value;
+    if (receipt.status !== "reserved") {
+      this.greetedParticipantIds.add(participantId);
+      this.clearTerminalState(participantId);
+      return false;
+    }
+    const commitResult = await this.deadlines.race(
+      participantId,
+      this.receipts.commit(participantId, receipt.leaseToken),
+      () => this.nowMilliseconds(),
+    );
+    if (commitResult.status === "expired") {
+      this.greetedParticipantIds.add(participantId);
+      return false;
+    }
+    this.committedParticipantIds.add(participantId);
+    return true;
   }
 
   private enqueue(
@@ -338,18 +343,14 @@ export class ParticipantGreetingBridge {
       participantId,
       reason: greetingDeadlineReason,
     });
-    if (!this.receipts.hasActiveWork(participantId)) {
+    if (!this.receipts.isFencedOrActive(participantId)) {
       this.deadlines.track(this.receipts.fenceOnce(participantId));
     }
   }
 
-  private async completePendingSettlements(): Promise<void> {
-    for (const [participantId, pending] of this.pendingCompletions) {
-      await this.receipts.complete(participantId, pending.leaseToken);
-      this.pendingCompletions.delete(participantId);
-      this.deadlines.clear(participantId);
-      this.retryCounts.delete(participantId);
-    }
+  private clearTerminalState(participantId: string): void {
+    this.deadlines.clear(participantId);
+    this.retryCounts.delete(participantId);
   }
 
   private cancelPlayback(participantId: string): Promise<void> {
@@ -357,6 +358,12 @@ export class ParticipantGreetingBridge {
       this.dependencies.configuration, this.dependencies.logger,
       this.dependencies.meetingId, participantId, this.nowMilliseconds(),
     );
+  }
+
+  private detachPlaybackSettlement(playback: ParticipantGreetingPlayback): void {
+    // Cancellation and process recovery must not wait for a provider that can
+    // settle late (or never settle), but a late rejection must still be handled.
+    void playback.settlement.catch(() => {});
   }
 
   private speak(

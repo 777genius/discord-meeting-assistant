@@ -13,7 +13,7 @@ interface ParticipantGreetingReceiptDependencies {
   readonly port?: LiveConversationOneShotReceiptPort;
 }
 
-/** Owns durable and meeting-local greeting receipt leases. */
+/** Owns durable and meeting-local greeting playback admission fences. */
 export class ParticipantGreetingReceipts {
   private readonly activeLeaseTokens = new Map<string, string>();
   private readonly completedParticipantIds = new Set<string>();
@@ -23,8 +23,9 @@ export class ParticipantGreetingReceipts {
 
   public constructor(private readonly dependencies: ParticipantGreetingReceiptDependencies) {}
 
-  public hasActiveWork(participantId: string): boolean {
-    return this.activeLeaseTokens.has(participantId) ||
+  public isFencedOrActive(participantId: string): boolean {
+    return this.completedParticipantIds.has(participantId) ||
+      this.activeLeaseTokens.has(participantId) ||
       this.reservationInProgressParticipantIds.has(participantId);
   }
 
@@ -42,7 +43,7 @@ export class ParticipantGreetingReceipts {
     return operation;
   }
 
-  public async complete(participantId: string, leaseToken: string): Promise<void> {
+  public async commit(participantId: string, leaseToken: string): Promise<void> {
     const completed = this.dependencies.port?.complete({
       kind: "greeting",
       leaseToken,
@@ -56,19 +57,6 @@ export class ParticipantGreetingReceipts {
       this.activeLeaseTokens.delete(participantId);
       this.reservedParticipantIds.delete(participantId);
     }
-  }
-
-  public release(participantId: string, leaseToken: string): Promise<void> {
-    const released = this.dependencies.port?.release({
-      kind: "greeting",
-      leaseToken,
-      meetingId: this.dependencies.meetingId,
-      subjectId: participantId,
-    }) ?? Promise.resolve();
-    return released.finally(() => {
-      this.activeLeaseTokens.delete(participantId);
-      this.reservedParticipantIds.delete(participantId);
-    });
   }
 
   public fenceOnce(participantId: string): Promise<void> {
@@ -92,7 +80,7 @@ export class ParticipantGreetingReceipts {
     try {
       const receipt = await reservation;
       if (receipt.status === "reserved") {
-        await this.complete(participantId, receipt.leaseToken);
+        await this.commit(participantId, receipt.leaseToken);
       }
     } catch {
       await this.fenceOnce(participantId);
@@ -103,7 +91,7 @@ export class ParticipantGreetingReceipts {
     try {
       const receipt = await this.reserve(participantId);
       if (receipt.status === "reserved") {
-        await this.complete(participantId, receipt.leaseToken);
+        await this.commit(participantId, receipt.leaseToken);
       }
     } catch (error) {
       this.dependencies.logger.warn("Participant greeting deadline settlement failed", {

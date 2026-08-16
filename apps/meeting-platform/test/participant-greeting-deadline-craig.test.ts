@@ -389,6 +389,10 @@ describe("ParticipantGreetingBridge join-to-first-audio deadline", () => {
     expect(receipts.state("greeting", "recording-1", participantId)).toBe("completed");
   });
 
+});
+
+describe("ParticipantGreetingBridge playback deadline fencing", () => {
+
   it("keeps valid first audio when playback finishes after the deadline", async () => {
     vi.useFakeTimers();
     try {
@@ -429,10 +433,9 @@ describe("ParticipantGreetingBridge join-to-first-audio deadline", () => {
     }
   });
 
-  it("awaits terminal playback cancellation before completing an expired receipt", async () => {
+  it("cancels immediately without awaiting never-settling playback", async () => {
     vi.useFakeTimers();
     try {
-      let finishPlayback: (() => void) | undefined;
       let finishStartObservation: (() => void) | undefined;
       const receipts = new MemoryOneShotReceipts();
       const context = deadlineFixture(() => true, receipts);
@@ -444,22 +447,18 @@ describe("ParticipantGreetingBridge join-to-first-audio deadline", () => {
         finishStartObservation?.();
         return Promise.resolve();
       };
-      context.coordinator.whenTurnPlaybackSettled = () => new Promise((resolve) => {
-        finishPlayback = () => resolve("unplayed");
-      });
+      context.coordinator.whenTurnPlaybackSettled = () => new Promise<never>(() => {});
       context.bridge.participantJoined(participantId, occurredAt);
       const settlement = context.bridge.settle();
       await vi.waitFor(() => {
         expect(context.coordinator.calls).toHaveLength(1);
       });
+      expect(receipts.state("greeting", "recording-1", participantId)).toBe("completed");
 
       await vi.advanceTimersByTimeAsync(5_000);
       await vi.waitFor(() => {
         expect(context.coordinator.participantLeftCalls).toBe(1);
       });
-      expect(receipts.state("greeting", "recording-1", participantId)).toBe("reserved");
-
-      finishPlayback?.();
       await settlement;
       expect(receipts.state("greeting", "recording-1", participantId)).toBe("completed");
     } finally {
@@ -467,32 +466,26 @@ describe("ParticipantGreetingBridge join-to-first-audio deadline", () => {
     }
   });
 
-  it("durably fences a busy release that crosses the absolute deadline", async () => {
+  it("emits no audio when the durable commit crosses the absolute deadline", async () => {
     vi.useFakeTimers();
     try {
-      let releaseReceipt: (() => void) | undefined;
-      let receiptState: "completed" | "released" | "reserved" | undefined;
-      let lease = 0;
+      let completeReceipt: (() => void) | undefined;
+      let receiptState: "completed" | "reserved" | undefined;
       const receipts: LiveConversationOneShotReceiptPort = {
-        complete: () => {
-          receiptState = "completed";
-          return Promise.resolve();
-        },
-        release: () => new Promise((resolve) => {
-          releaseReceipt = () => {
-            receiptState = "released";
+        complete: () => new Promise((resolve) => {
+          completeReceipt = () => {
+            receiptState = "completed";
             resolve();
           };
         }),
+        release: () => Promise.resolve(),
         reserve: () => {
-          lease += 1;
           receiptState = "reserved";
-          return Promise.resolve({ leaseToken: `lease-${lease}`, status: "reserved" });
+          return Promise.resolve({ leaseToken: "lease-1", status: "reserved" });
         },
       };
       let now = 321;
       const context = deadlineFixture(() => true, receipts, logger, () => now);
-      context.coordinator.outcomes.push({ status: "busy" });
       context.bridge.participantJoined(participantId, occurredAt);
       const settlement = context.bridge.settle();
       await vi.waitFor(() => {
@@ -501,17 +494,61 @@ describe("ParticipantGreetingBridge join-to-first-audio deadline", () => {
 
       now = 5_321;
       await vi.advanceTimersByTimeAsync(5_000);
-      releaseReceipt?.();
       await settlement;
 
+      expect(receiptState).toBe("reserved");
+      expect(context.coordinator.calls).toEqual([]);
+      completeReceipt?.();
+      await Promise.resolve();
       expect(receiptState).toBe("completed");
-      expect(lease).toBe(2);
-      context.bridge.advance();
-      await context.bridge.settle();
-      expect(context.coordinator.calls).toHaveLength(1);
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("rechecks absolute freshness after commit immediately before provider invocation", async () => {
+    let completeReceipt: (() => void) | undefined;
+    let completeCalls = 0;
+    let commitSettled = false;
+    let postCommitObservations = 0;
+    let receiptState: "completed" | "reserved" | undefined;
+    const receipts: LiveConversationOneShotReceiptPort = {
+      complete: () => new Promise((resolve) => {
+        completeCalls += 1;
+        completeReceipt = () => {
+          commitSettled = true;
+          receiptState = "completed";
+          resolve();
+        };
+      }),
+      release: () => Promise.resolve(),
+      reserve: () => {
+        receiptState = "reserved";
+        return Promise.resolve({ leaseToken: "lease-1", status: "reserved" });
+      },
+    };
+    const now = () => {
+      if (!commitSettled) {
+        return 321;
+      }
+      postCommitObservations += 1;
+      return postCommitObservations === 1 ? 5_320 : 5_321;
+    };
+    const context = deadlineFixture(() => true, receipts, logger, now);
+    context.bridge.participantJoined(participantId, occurredAt);
+    const settlement = context.bridge.settle();
+    await vi.waitFor(() => {
+      expect(receiptState).toBe("reserved");
+      expect(completeReceipt).toBeTypeOf("function");
+    });
+
+    completeReceipt?.();
+    await settlement;
+
+    expect(receiptState).toBe("completed");
+    expect(completeCalls).toBe(1);
+    expect(postCommitObservations).toBeGreaterThanOrEqual(2);
+    expect(context.coordinator.calls).toEqual([]);
   });
 });
 
