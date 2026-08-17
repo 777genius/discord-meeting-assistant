@@ -38,6 +38,7 @@ export function makeConversationObserver(context: HostedCampaignChildContext): H
       DISCORD_E2E_CONVERSATION_VOICE_OUTPUT: voicePaths[0],
       DISCORD_E2E_CONVERSATION_VOICE_PRIVATE_TEST_GUILD: "private-test-guild",
       DISCORD_E2E_CONVERSATION_VOICE_PURPOSE: "greeting",
+      DISCORD_E2E_CONVERSATION_VOICE_READY_TIMEOUT_MS: "120000",
       DISCORD_E2E_CONVERSATION_VOICE_RUN_ID: reconnect.runId,
       DISCORD_E2E_CONVERSATION_VOICE_SECRET_DIRECTORY: definition.secretDirectory,
       DISCORD_E2E_CONVERSATION_VOICE_TURN_ID: `participant-greeting:${HOSTED_CAMPAIGN_TARGET.observerApplicationId}`,

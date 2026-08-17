@@ -75,6 +75,10 @@ describe("hosted campaign strict plan builder", () => {
     const observer = result.plan.children.find(({ childId }) => childId === "conversation-observer")!;
     expect(observer.environment.DISCORD_E2E_CONVERSATION_VOICE_CRAIG_BOT_ID)
       .toBe(result.plan.target.botikApplicationId);
+    expect(observer.environment.DISCORD_E2E_CONVERSATION_VOICE_CAPTURE_TIMEOUT_MS)
+      .toBe("60000");
+    expect(observer.environment.DISCORD_E2E_CONVERSATION_VOICE_READY_TIMEOUT_MS)
+      .toBe("120000");
     expect(observer.environment.DISCORD_E2E_CONVERSATION_VOICE_EXPECTED_DURATION_MS)
       .toBe("500");
     expect(observer.environment.DISCORD_E2E_CONVERSATION_VOICE_TURN_ID)
