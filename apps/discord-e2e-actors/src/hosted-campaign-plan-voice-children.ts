@@ -87,7 +87,7 @@ export function makeActor(
         DISCORD_E2E_HOSTED_SPEAKER_B_GATE_ARMED_PATH: speakerBGate.armed,
       } : {}),
       DISCORD_E2E_PLAYBACK_TIMEOUT_MS: "120000", DISCORD_E2E_READY_TIMEOUT_MS: "120000",
-      DISCORD_E2E_RECORDER_BOT_ID: HOSTED_CAMPAIGN_TARGET.sutApplicationId,
+      DISCORD_E2E_RECORDER_BOT_ID: HOSTED_CAMPAIGN_TARGET.botikApplicationId,
       DISCORD_E2E_RUN_ID: run.runId, DISCORD_E2E_SCENARIO: run.scenario,
       DISCORD_E2E_SECRET_DIRECTORY: definition.secretDirectory,
       DISCORD_E2E_SPEAKER_A_FIXTURE: definition.speakerFixtures.a,

@@ -79,6 +79,9 @@ describe("hosted campaign strict plan builder", () => {
       .toHaveLength(5);
     expect(result.plan.children.filter(({ entrypoint }) => entrypoint === "actor")).toHaveLength(3);
     expect(result.plan.children.filter(({ entrypoint }) => entrypoint === "recording-ready")).toHaveLength(3);
+    expect(result.plan.children.filter(({ entrypoint }) => entrypoint === "actor")
+      .every(({ environment }) => environment.DISCORD_E2E_RECORDER_BOT_ID === result.plan.target.botikApplicationId))
+      .toBe(true);
     const serviceLevelSources = result.plan.children.find(({ childId }) => childId === "service-level-sources")!;
     expect(serviceLevelSources.environment.DISCORD_E2E_SLA_CLOCK_PREFLIGHT_INPUT)
       .toBe("/private/e2e/campaigns/campaign-2026-08-12/launch-clock-preflight.json");
