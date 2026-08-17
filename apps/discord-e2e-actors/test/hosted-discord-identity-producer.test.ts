@@ -16,7 +16,7 @@ import type { PrivateFileSecret } from "../src/keychain.js";
 const guildId = "1533228590643155034";
 const voiceChannelId = "1533228823045214398";
 const publicationChannelId = "1533228891827736657";
-const applicationId = "1534231284467896512";
+const applicationId = "1533877611258708230";
 const token = `token.${"x".repeat(60)}`;
 const target = { guildId, publicationChannelId, voiceChannelId } as const;
 
@@ -88,7 +88,7 @@ describe("hosted Discord identity producer", () => {
 
   it("combines seven injected role probes into one digest-bound receipt", async () => {
     const roleIds = [
-      "1534231284467896512", "1533867700575670282", "1533227577286852649",
+      "1533877611258708230", "1533867700575670282", "1533227577286852649",
       "1533228054724346087", "1533873978417086474", "1533224474609057793", "1533224474609057793",
     ] as const;
     const names = ["botikPlayback", "localObserver", "localSpeakerA", "localSpeakerB", "localSpeakerD", "localSut", "remotePlatformSut"] as const;
@@ -120,7 +120,7 @@ describe("hosted Discord identity producer", () => {
   it("timestamps the aggregate receipt after all identity probes complete", async () => {
     let currentTime = 100_000;
     const roleIds = [
-      "1534231284467896512", "1533867700575670282", "1533227577286852649",
+      "1533877611258708230", "1533867700575670282", "1533227577286852649",
       "1533228054724346087", "1533873978417086474", "1533224474609057793",
     ] as const;
     const accounts = ["botik-playback", "conversation-observer", "speaker-a", "speaker-b", "speaker-d", "sut"] as const;

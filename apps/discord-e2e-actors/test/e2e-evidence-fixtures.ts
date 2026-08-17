@@ -45,9 +45,9 @@ export function verifyRetainedE2eEvidence(
 
 export function manifest(): FixtureManifestV1 {
   return fixtureManifestV1Schema.parse({
-    allowedBotSpeakerIds: ["1534231284467896512", speakerDId],
+    allowedBotSpeakerIds: ["1533877611258708230", speakerDId],
     conversationVoiceExpectation: {
-      botSpeakerId: "1534231284467896512",
+      botSpeakerId: "1533877611258708230",
       guildId: "1533228590643155034",
       observerApplicationId: observerId,
       observerGreetingLocale: "ru",
@@ -625,7 +625,7 @@ export function retainedV8Evidence(): RetainedReconnectE2eEvidenceV8 {
   speakerATurn.endMs = 8_600;
   speakerBTurn.startMs = 2_300;
   speakerBTurn.endMs = 9_300;
-  const botSpeakerId = "1534231284467896512";
+  const botSpeakerId = "1533877611258708230";
   source.recording.speakerIds.push(botSpeakerId, speakerDId);
   source.recording.s3.tracks.push({
     checksumSha256: "4".repeat(64), durationMs: source.recording.durationMs,

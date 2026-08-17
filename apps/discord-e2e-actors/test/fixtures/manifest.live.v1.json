@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "fixtureSetId": "discord-meeting-ru-en-live-v1",
-  "allowedBotSpeakerIds": ["1534231284467896512", "1533224474609057793"],
+  "allowedBotSpeakerIds": ["1533877611258708230", "1533224474609057793"],
   "locale": "ru-RU",
   "summaryExpectations": {
     "decisionTerms": ["пятницу"],

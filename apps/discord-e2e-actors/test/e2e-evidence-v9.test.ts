@@ -20,7 +20,7 @@ import {
 } from "./e2e-service-level-fixtures.js";
 
 const pinnedTarget = {
-  craigBotId: "1534231284467896512",
+  craigBotId: "1533877611258708230",
   guildId: "1533228590643155034",
   observerApplicationId: "1533867700575670282",
   voiceChannelId: "1533228823045214398",

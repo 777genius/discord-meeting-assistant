@@ -8,7 +8,7 @@ import {
 } from "../src/hosted-discord-identity-receipt.js";
 
 const ids = {
-  botikPlayback: "1534231284467896512",
+  botikPlayback: "1533877611258708230",
   localObserver: "1533867700575670282",
   localSpeakerA: "1533227577286852649",
   localSpeakerB: "1533228054724346087",

@@ -26,7 +26,7 @@ const requiredEnvironment = {
   DISCORD_E2E_SERVICE_LEVEL_THRESHOLDS_INPUT: "/evidence/service-level-thresholds.json",
 };
 const conversationEnvironment = {
-  DISCORD_E2E_BOTIK_SPEAKER_ID: "1534231284467896512",
+  DISCORD_E2E_BOTIK_SPEAKER_ID: "1533877611258708230",
   DISCORD_E2E_CONVERSATION_CAMPAIGN_PROOF_INPUT: "/evidence/campaign-proof.json",
   DISCORD_E2E_DISCORD_PLAYBACK_LINK_PROOF_INPUT: "/evidence/playback-link-proof.json",
   DISCORD_E2E_CONVERSATION_VOICE_INPUTS: JSON.stringify([

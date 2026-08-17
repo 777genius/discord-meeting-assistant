@@ -69,7 +69,7 @@ export function voiceObservation(
     schemaVersion: 3 as const,
     source: {
       codec: "opus" as const,
-      craigBotId: "1534231284467896512",
+      craigBotId: "1533877611258708230",
       decodedPcm: {
         channels: 2 as const,
         encoding: "s16le" as const,
