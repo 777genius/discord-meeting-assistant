@@ -34,6 +34,7 @@ export interface FileConversationPlaybackReadinessOptions {
 
 /** Filesystem adapter for the E2E-only two-phase answer capture protocol. */
 export class FileConversationPlaybackReadiness implements ConversationPlaybackReadinessPort {
+  #greetingCaptureMeetingId: string | undefined;
   readonly #initialized: Promise<void>;
 
   public constructor(private readonly options: FileConversationPlaybackReadinessOptions) {
@@ -47,11 +48,14 @@ export class FileConversationPlaybackReadiness implements ConversationPlaybackRe
     request: ConversationPlaybackReadinessRequest,
     options: { readonly signal?: AbortSignal } = {},
   ): Promise<ConversationPortResult<"ready">> {
-    const isGreeting = this.options.greetingRoot !== undefined &&
+    const isExactGreeting = this.options.greetingRoot !== undefined &&
       this.options.greetingObserverParticipantId !== undefined &&
       request.playbackKind === "prepared-cue" &&
       request.participantId !== undefined &&
       request.turnId === `participant-greeting:${request.participantId}`;
+    const isGreeting = isExactGreeting &&
+      (request.participantId === this.options.greetingObserverParticipantId ||
+        request.meetingId === this.#greetingCaptureMeetingId);
     if (request.playbackKind !== "answer" && !isGreeting) {
       return { ok: true, value: "ready" };
     }
@@ -86,6 +90,14 @@ export class FileConversationPlaybackReadiness implements ConversationPlaybackRe
         intentPublishedNotBeforeEpochMilliseconds,
         options.signal,
       );
+      if (envelope.kind === "greeting" &&
+        envelope.participantId === this.options.greetingObserverParticipantId) {
+        if (this.#greetingCaptureMeetingId !== undefined &&
+          this.#greetingCaptureMeetingId !== envelope.meetingId) {
+          throw new Error("Greeting observer readiness was already bound to another meeting");
+        }
+        this.#greetingCaptureMeetingId = envelope.meetingId;
+      }
       return { ok: true, value: "ready" };
     } catch (error: unknown) {
       return failure(
