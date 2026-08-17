@@ -66,12 +66,31 @@ export async function startPlatformServices(input: {
   await input.worker.waitUntilReady();
   await startPostCallWorker(input.worker, input.logger);
   await input.outboxDispatcher.dispatchPending();
-  await input.historicalMemory?.start();
+  startHistoricalMemory(input.historicalMemory, input.logger);
   await input.server.start();
   input.logger.info("Meeting platform is ready", {
     discordInstallUrl: input.meetingPlatformInstallUrl,
     port: input.config.port,
   });
+}
+
+function startHistoricalMemory(
+  historicalMemory: { start(): Promise<void> } | undefined,
+  logger: StartupLogger,
+): void {
+  if (historicalMemory === undefined) {
+    return;
+  }
+  // Historical indexing is derived and may need to drain a large external
+  // backlog. Observe its lifecycle without holding HTTP admission or losing a
+  // synchronous/asynchronous startup failure as an unhandled rejection.
+  void Promise.resolve()
+    .then(() => historicalMemory.start())
+    .catch((error: unknown) => {
+      logger.error("Historical memory runtime failed", {
+        errorType: error instanceof Error ? error.name : "unknown",
+      });
+    });
 }
 
 async function waitForCoreDependencies(input: {

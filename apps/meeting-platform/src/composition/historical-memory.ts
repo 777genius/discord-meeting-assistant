@@ -51,7 +51,7 @@ async function awaitBoundedPass(pass: Promise<void> | undefined): Promise<void> 
   }
 }
 
-function createHistoricalReconciliationLifecycle(input: {
+export function createHistoricalReconciliationLifecycle(input: {
   readonly executePass: (signal: AbortSignal) => Promise<void>;
   readonly logger: Logger;
 }): Pick<PlatformHistoricalMemoryRuntime, "close" | "start"> {
@@ -65,25 +65,27 @@ function createHistoricalReconciliationLifecycle(input: {
     }
     const controller = new AbortController();
     activeController = controller;
-    const pass = input.executePass(controller.signal).catch((error: unknown) => {
-      if (!controller.signal.aborted) {
-        input.logger.warn("Historical memory reconciliation failed", {
-          errorType: error instanceof Error ? error.name : "unknown",
-        });
-      }
-    }).finally(() => {
-      if (active === pass) {
-        active = undefined;
-        activeController = undefined;
-      }
-    });
+    const pass = Promise.resolve()
+      .then(() => input.executePass(controller.signal))
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) {
+          input.logger.warn("Historical memory reconciliation failed", {
+            errorType: error instanceof Error ? error.name : "unknown",
+          });
+        }
+      })
+      .finally(() => {
+        if (active === pass) {
+          active = undefined;
+          activeController = undefined;
+        }
+      });
     active = pass;
     return pass;
   };
   const schedule = (): void => {
     void beginPass();
   };
-  const remainsOpen = (): boolean => !closed;
   return {
     close: async () => {
       closed = true;
@@ -100,11 +102,9 @@ function createHistoricalReconciliationLifecycle(input: {
       if (closed || timer !== undefined) {
         return;
       }
-      await beginPass();
-      if (remainsOpen()) {
-        timer = setInterval(schedule, reconciliationIntervalMs);
-        timer.unref();
-      }
+      timer = setInterval(schedule, reconciliationIntervalMs);
+      timer.unref();
+      schedule();
     },
   };
 }
