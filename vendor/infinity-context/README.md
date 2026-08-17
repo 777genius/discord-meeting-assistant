@@ -31,6 +31,9 @@ package lock, invokes the package's official build and export checks, and
 re-packs the reviewed package to prove the exact SHA-256 and SRI. The
 generated workspace remains reviewable with Git while staying outside the
 repository patch. The retained tarball is the production dependency boundary.
+Production image builds run the same verification with `--cleanup-source`
+after installing that tarball. This removes the temporary sparse checkout,
+including its `.git` provenance metadata, so it cannot enter the runtime image.
 Production indexing, serving, and deletion reconciliation additionally remain
 fail-closed unless the exact retained live-service qualification manifest is
 configured.
