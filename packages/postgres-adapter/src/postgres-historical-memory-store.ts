@@ -284,7 +284,9 @@ export class PostgresHistoricalMemoryStore implements HistoricalSyncStore {
     await withHistoricalPostgresTransaction(
       this.pool,
       options.signal,
-      async (client) => await requestAnswerSourceWithdrawal(client, meetingId),
+      async (client) => {
+        await requestAnswerSourceWithdrawal(client, meetingId);
+      },
       this.cancellation,
     );
   }
