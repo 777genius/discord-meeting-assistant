@@ -102,7 +102,7 @@ function releaseAndAdvance(input: CoordinateGreetingPlaybackInput): void {
   input.suppressOverflow();
 }
 
-export async function cancelGreetingPlaybackBounded(
+async function cancelGreetingPlaybackBounded(
   dependencies: GreetingSettlementDependencies,
   participantId: string,
 ): Promise<void> {
@@ -121,7 +121,7 @@ export async function cancelGreetingPlaybackBounded(
   void cancellation.catch(() => {});
 }
 
-export async function awaitGreetingPlaybackSettlement(
+async function awaitGreetingPlaybackSettlement(
   dependencies: GreetingSettlementDependencies,
   participantId: string,
   playback: ParticipantGreetingPlayback,
@@ -146,7 +146,7 @@ export async function awaitGreetingPlaybackSettlement(
   return "failed";
 }
 
-export function detachGreetingPlaybackSettlement(
+function detachGreetingPlaybackSettlement(
   playback: ParticipantGreetingPlayback,
 ): void {
   // Cancellation and recovery cannot wait for a late or missing provider receipt.
