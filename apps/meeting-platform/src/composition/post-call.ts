@@ -26,6 +26,7 @@ const postCallQueuePrefix = "discord-meeting-v1";
 
 interface TranscriptionExecutionBindingStore {
   backfillRecoverableUnboundTranscriptionExecutionBindings(binding: string): Promise<number>;
+  getTranscriptionExecutionBinding(meetingId: string): Promise<string | undefined>;
   pinTranscriptionExecutionBinding(meetingId: string, binding: string): Promise<string>;
 }
 
@@ -87,6 +88,10 @@ export async function createPlatformPostCallComposition(input: {
       },
     );
     const worker = createPostCallWorker({
+      admission: createPostCallBindingAdmission(
+        input.transcriptionExecutionBindings,
+        input.supportedTranscriptionExecutionBindings,
+      ),
       autorun: false,
       connection: input.connection,
       deadLetterRecorder: deadLetterLedger,
@@ -113,6 +118,18 @@ export async function createPlatformPostCallComposition(input: {
       queue,
     );
   }
+}
+
+export function createPostCallBindingAdmission(
+  bindings: Pick<TranscriptionExecutionBindingStore, "getTranscriptionExecutionBinding">,
+  supported: ReadonlySet<string>,
+) {
+  return async ({ meetingId }: { readonly meetingId: string }) => {
+    const binding = await bindings.getTranscriptionExecutionBinding(meetingId);
+    return binding !== undefined && supported.has(binding)
+      ? "accepted" as const
+      : "hold" as const;
+  };
 }
 
 export function createPostCallHandler(

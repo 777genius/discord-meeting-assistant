@@ -1,4 +1,5 @@
 import {
+  DelayedError,
   WaitingError,
   Worker,
   type ConnectionOptions,
@@ -42,10 +43,13 @@ export {
 
 export interface CreatePostCallWorkerOptions
   extends CreatePostCallProcessorOptions {
+  readonly admission?: (payload: PostCallJobPayload) => Promise<"accepted" | "hold">;
   readonly autorun?: boolean;
   readonly connection: ConnectionOptions;
   readonly prefix?: string;
 }
+
+const unsupportedRuntimeHoldMilliseconds = 60_000;
 
 function tryMeetingId(data: unknown): string | null {
   const result = parsePostCallPayloadSafely(data);
@@ -120,6 +124,28 @@ async function moveCancelledJobToWait(
   }
 }
 
+async function moveUnsupportedJobToDelayed(
+  job: PostCallBullMqJob,
+  token: string | undefined,
+  observer: PostCallObserver | undefined,
+): Promise<boolean> {
+  try {
+    await job.moveToDelayed(
+      Date.now() + unsupportedRuntimeHoldMilliseconds,
+      requiredWorkerToken(token),
+    );
+    safelyObserve(observer, {
+      component: "worker",
+      jobRef: postCallJobReference(job.id),
+      kind: "job-held",
+    });
+    return true;
+  } catch {
+    safelyObserve(observer, { component: "worker", kind: "runtime-error" });
+    return false;
+  }
+}
+
 function requiredActiveJobId(job: PostCallBullMqJob): string {
   if (job.id === undefined) {
     throw new Error("BullMQ active post-call job has no identifier");
@@ -157,6 +183,16 @@ export function createPostCallWorker(
         if (activeJobs.isAdmissionClosed()) {
           throw new PostCallCancellationError(activeJob.signal.reason);
         }
+        const payload = parsePostCallPayloadSafely(job.data);
+        if (
+          payload !== null &&
+          options.admission !== undefined &&
+          await options.admission(payload) === "hold"
+        ) {
+          const held = await moveUnsupportedJobToDelayed(job, token, options.observer);
+          releaseAfterProcessor = held;
+          throw new DelayedError();
+        }
         await processor(job, activeJob.signal);
         // Keep the lease until BullMQ commits active -> completed and emits its
         // event. Shutdown must not force-close between user work and the state
@@ -164,6 +200,9 @@ export function createPostCallWorker(
         releaseAfterProcessor = false;
         return;
       } catch (error) {
+        if (error instanceof DelayedError) {
+          throw error;
+        }
         if (!(error instanceof PostCallCancellationError)) {
           // The `failed` event owns release after BullMQ commits retry/failure
           // state and, for terminal jobs, starts the one DLQ side effect.

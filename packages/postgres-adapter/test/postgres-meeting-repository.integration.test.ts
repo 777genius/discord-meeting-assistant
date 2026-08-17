@@ -155,14 +155,16 @@ describe("PostgresGuildConfigurationRepository", () => {
   });
 });
 
+const selectedBinding = "voicetext-batch-v3:elevenlabs-scribe-v2";
+
 describe("PostgresMeetingRepository", () => {
   it("keeps an enqueued post-call item recoverable until a durable processing receipt", async (context) => {
     const database = databaseOrSkip(context);
     const repository = new PostgresMeetingRepository(database);
     const snapshot = recordedMeeting("meeting-outbox-1").toSnapshot();
 
-    await repository.recordAndSchedule(snapshot, 0);
-    await repository.recordAndSchedule(snapshot, 0);
+    await repository.recordAndSchedule(snapshot, 0, selectedBinding);
+    await repository.recordAndSchedule(snapshot, 0, selectedBinding);
     expect(await repository.listRecoverablePostCall()).toEqual([
       { meetingId: snapshot.meetingId, recoveryGeneration: 0, schemaVersion: 1 },
     ]);
@@ -176,25 +178,25 @@ describe("PostgresMeetingRepository", () => {
     expect(await repository.findById(snapshot.meetingId)).toEqual(snapshot);
   });
 
-  it("pins one immutable execution binding and preserves it across recovery", async (context) => {
+  it("records one immutable execution binding atomically and preserves it across recovery", async (context) => {
     const database = databaseOrSkip(context);
     const repository = new PostgresMeetingRepository(database);
     const bindings = new PostgresTranscriptionExecutionBindingStore(database);
     const snapshot = recordedMeeting("meeting-binding-pin").toSnapshot();
-    await repository.recordAndSchedule(snapshot, 0);
+    await repository.recordAndSchedule(snapshot, 0, selectedBinding);
 
     await expect(bindings.getTranscriptionExecutionBinding(snapshot.meetingId))
-      .resolves.toBeUndefined();
+      .resolves.toBe(selectedBinding);
     await expect(bindings.pinTranscriptionExecutionBinding(
       snapshot.meetingId,
       "voicetext-batch-v3:elevenlabs-scribe-v2",
-    )).resolves.toBe("voicetext-batch-v3:elevenlabs-scribe-v2");
+    )).resolves.toBe(selectedBinding);
     await expect(bindings.pinTranscriptionExecutionBinding(
       snapshot.meetingId,
       "voicetext-batch-v2:deepgram-nova-3",
-    )).resolves.toBe("voicetext-batch-v3:elevenlabs-scribe-v2");
+    )).resolves.toBe(selectedBinding);
     await expect(bindings.getTranscriptionExecutionBinding(snapshot.meetingId))
-      .resolves.toBe("voicetext-batch-v3:elevenlabs-scribe-v2");
+      .resolves.toBe(selectedBinding);
     await repository.markPostCallEnqueued(snapshot.meetingId);
     expect(await repository.listRecoverablePostCall()).toEqual([{
       meetingId: snapshot.meetingId,
@@ -214,8 +216,15 @@ describe("PostgresMeetingRepository", () => {
     const bindings = new PostgresTranscriptionExecutionBindingStore(database);
     const recoverable = recordedMeeting("meeting-binding-legacy").toSnapshot();
     const processed = recordedMeeting("meeting-binding-processed").toSnapshot();
-    await repository.recordAndSchedule(recoverable, 0);
-    await repository.recordAndSchedule(processed, 0);
+    await repository.save(recoverable, 0);
+    await database.query(`
+      INSERT INTO meeting_core.post_call_outbox (
+        meeting_id,
+        schema_version,
+        transcription_execution_binding_required
+      ) VALUES ($1, 1, FALSE)
+    `, [recoverable.meetingId]);
+    await repository.recordAndSchedule(processed, 0, selectedBinding);
     await repository.markPostCallProcessed(processed.meetingId);
 
     await expect(bindings.backfillRecoverableUnboundTranscriptionExecutionBindings(
@@ -224,24 +233,43 @@ describe("PostgresMeetingRepository", () => {
     await expect(bindings.getTranscriptionExecutionBinding(recoverable.meetingId))
       .resolves.toBe("voicetext-batch-v2:deepgram-nova-3");
     await expect(bindings.getTranscriptionExecutionBinding(processed.meetingId))
-      .resolves.toBeUndefined();
+      .resolves.toBe(selectedBinding);
     await expect(bindings.pinTranscriptionExecutionBinding(
       processed.meetingId,
       "voicetext-batch-v3:elevenlabs-scribe-v2",
     )).rejects.toThrow("transcription execution binding does not reference one outbox item");
   });
 
+  it("keeps rolling-deploy legacy inserts recoverable without weakening new atomic writes", async (context) => {
+    const database = databaseOrSkip(context);
+    const repository = new PostgresMeetingRepository(database);
+    const bindings = new PostgresTranscriptionExecutionBindingStore(database);
+    const legacy = recordedMeeting("meeting-binding-rolling-legacy").toSnapshot();
+
+    await repository.save(legacy, 0);
+    await database.query(`
+      INSERT INTO meeting_core.post_call_outbox (meeting_id, schema_version)
+      VALUES ($1, 1)
+    `, [legacy.meetingId]);
+
+    await expect(bindings.backfillRecoverableUnboundTranscriptionExecutionBindings(
+      "voicetext-batch-v2:deepgram-nova-3",
+    )).resolves.toBe(1);
+    await expect(bindings.getTranscriptionExecutionBinding(legacy.meetingId))
+      .resolves.toBe("voicetext-batch-v2:deepgram-nova-3");
+  });
+
   it("accepts a finalized-ingress replay after post-call processing advanced the meeting", async (context) => {
     const database = databaseOrSkip(context);
     const repository = new PostgresMeetingRepository(database);
     const initial = recordedMeeting("meeting-ready-replay").toSnapshot();
-    await repository.recordAndSchedule(initial, 0);
+    await repository.recordAndSchedule(initial, 0, selectedBinding);
 
     const processed = evidenceBackedMeeting("meeting-ready-replay").toSnapshot();
     await repository.save(processed, 0);
     await repository.markPostCallProcessed(initial.meetingId);
 
-    await expect(repository.recordAndSchedule(initial, 0)).resolves.toBeUndefined();
+    await expect(repository.recordAndSchedule(initial, 0, selectedBinding)).resolves.toBeUndefined();
     expect(await repository.findById(initial.meetingId)).toEqual(processed);
     expect(await repository.listRecoverablePostCall()).toEqual([]);
   });
@@ -282,7 +310,7 @@ describe("PostgresMeetingRepository", () => {
     const database = databaseOrSkip(context);
     const repository = new PostgresMeetingRepository(database);
     const snapshot = recordedMeeting("meeting-terminal-settlement").toSnapshot();
-    await repository.recordAndSchedule(snapshot, 0);
+    await repository.recordAndSchedule(snapshot, 0, selectedBinding);
     const record = {
       attemptsMade: 4,
       failureCode: "SUMMARY_PROVIDER_FAILED",
@@ -318,7 +346,7 @@ describe("Postgres retryable post-call recovery", () => {
     const database = databaseOrSkip(context);
     const repository = new PostgresMeetingRepository(database);
     const snapshot = recordedMeeting("meeting-invalid-recovery-receipt").toSnapshot();
-    await repository.recordAndSchedule(snapshot, 0);
+    await repository.recordAndSchedule(snapshot, 0, selectedBinding);
 
     await expect(database.query(`
       UPDATE meeting_core.post_call_outbox
@@ -332,7 +360,7 @@ describe("Postgres retryable post-call recovery", () => {
     const database = databaseOrSkip(context);
     const repository = new PostgresMeetingRepository(database);
     const snapshot = recordedMeeting("meeting-retryable-recovery").toSnapshot();
-    await repository.recordAndSchedule(snapshot, 0);
+    await repository.recordAndSchedule(snapshot, 0, selectedBinding);
     const firstFailure = {
       attemptsMade: 8,
       failureCode: "SUMMARY_PROVIDER_UNAVAILABLE",

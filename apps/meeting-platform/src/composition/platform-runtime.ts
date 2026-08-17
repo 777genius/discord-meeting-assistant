@@ -97,7 +97,14 @@ export async function startMeetingPlatform(
       ...(discordLive.live === undefined ? {} : { live: discordLive.live }),
       logger,
       metrics,
-      outbox: core.meetings,
+      outbox: {
+        recordAndSchedule: (snapshot, expectedRevision) =>
+          core.meetings.recordAndSchedule(
+            snapshot,
+            expectedRevision,
+            core.selectedTranscriptionExecutionBinding,
+          ),
+      },
       publicationTargets: core.publicationTargets,
     });
     const schemaReadiness = new PostgresSchemaReadiness(core.pool);

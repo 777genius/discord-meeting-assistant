@@ -70,6 +70,7 @@ export class PostgresTranscriptionExecutionBindingStore {
         UPDATE meeting_core.post_call_outbox
         SET transcription_execution_binding = $1
         WHERE transcription_execution_binding IS NULL
+          AND transcription_execution_binding_required = FALSE
           AND processed_at IS NULL
           AND dead_lettered_at IS NULL
       `,

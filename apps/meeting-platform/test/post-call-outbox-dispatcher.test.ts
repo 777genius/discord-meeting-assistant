@@ -17,6 +17,7 @@ import {
 } from "../src/application/post-call-outbox-dispatcher.js";
 import {
   closePartiallyCreatedPostCallQueues,
+  createPostCallBindingAdmission,
   createPostCallHandler,
 } from "../src/composition/post-call.js";
 
@@ -164,6 +165,24 @@ describe("PostCallOutboxDispatcher durable binding", () => {
       "Post-call outbox dispatch failed; durable item retained",
       { errorName: "Error", meetingId: "meeting-newer-runtime" },
     );
+  });
+});
+
+describe("post-call worker binding admission", () => {
+  it("holds missing or unsupported bindings and admits an exact supported binding", async () => {
+    const get = vi.fn(async (meetingId: string) => ({
+      missing: undefined,
+      newer: "voicetext-batch-v3:elevenlabs-scribe-v2",
+      supported: "voicetext-batch-v2:deepgram-nova-3",
+    })[meetingId]);
+    const admit = createPostCallBindingAdmission(
+      { getTranscriptionExecutionBinding: get },
+      new Set(["voicetext-batch-v2:deepgram-nova-3"]),
+    );
+
+    await expect(admit({ meetingId: "missing" })).resolves.toBe("hold");
+    await expect(admit({ meetingId: "newer" })).resolves.toBe("hold");
+    await expect(admit({ meetingId: "supported" })).resolves.toBe("accepted");
   });
 });
 

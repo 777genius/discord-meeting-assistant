@@ -23,7 +23,7 @@ export type PostCallObservabilityEvent =
   | {
       readonly component: "worker";
       readonly jobRef: string;
-      readonly kind: "job-requeued";
+      readonly kind: "job-held" | "job-requeued";
     }
   | {
       readonly attemptsMade?: number;
