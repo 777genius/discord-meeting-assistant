@@ -21,7 +21,7 @@ interface ParticipantGreetingPlaybackInput {
   readonly turnId: string;
 }
 
-export type GreetingFirstAudioOutcome =
+type GreetingFirstAudioOutcome =
   | { readonly startedAtMilliseconds: number; readonly status: "started" }
   | { readonly status: "unplayed" };
 

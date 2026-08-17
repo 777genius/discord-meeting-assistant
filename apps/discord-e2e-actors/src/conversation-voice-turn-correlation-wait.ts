@@ -7,7 +7,7 @@ import {
   type ConversationAnswerPlaybackIntent,
 } from "./conversation-voice-turn-id-source.js";
 
-export const maximumAuthorizedConversationThinkingCueCount = 2;
+const maximumAuthorizedConversationThinkingCueCount = 2;
 
 export function assertCanAuthorizeConversationThinkingCue(authorizedCueCount: number): void {
   if (!Number.isInteger(authorizedCueCount) || authorizedCueCount < 0 ||
