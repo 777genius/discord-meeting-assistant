@@ -30,11 +30,7 @@ describe("provider-neutral transcript segments E2E", () => {
       token: "machine-service-token-for-test",
     }, async (_input, init) => {
       const body = init?.body;
-      expect(body).toBeInstanceOf(FormData);
-      if (!(body instanceof FormData)) {
-        throw new Error("expected batch multipart body");
-      }
-      submittedContractVersion = body.get("contract_version");
+      submittedContractVersion = await multipartField(body, "contract_version");
       return Response.json(completedBatchV2Response());
     });
     const reader: CompleteOggArtifactReader = {
@@ -87,14 +83,7 @@ describe("provider-neutral transcript segments E2E", () => {
       token: "machine-service-token-for-test",
     }, async (_input, init) => {
       const body = init?.body;
-      if (!(body instanceof FormData)) {
-        throw new Error("expected batch multipart body");
-      }
-      const file = body.get("file");
-      if (!(file instanceof Blob)) {
-        throw new Error("expected speaker Ogg upload");
-      }
-      const marker = new Uint8Array(await file.arrayBuffer())[5];
+      const marker = (await multipartFile(body))[5];
       return Response.json(singleTurnBatchV2Response(marker === 1));
     });
     const reader: CompleteOggArtifactReader = {
@@ -129,6 +118,39 @@ describe("provider-neutral transcript segments E2E", () => {
     );
   });
 });
+
+async function multipartField(body: BodyInit | null | undefined, name: string): Promise<string> {
+  const multipart = await multipartBytes(body);
+  const text = multipart.toString("latin1");
+  const marker = `name="${name}"\r\n\r\n`;
+  const start = text.indexOf(marker);
+  if (start < 0) {
+    throw new Error(`expected multipart field ${name}`);
+  }
+  const valueStart = start + marker.length;
+  const valueEnd = text.indexOf("\r\n", valueStart);
+  if (valueEnd < 0) {
+    throw new Error(`expected multipart value ${name}`);
+  }
+  return text.slice(valueStart, valueEnd);
+}
+
+async function multipartFile(body: BodyInit | null | undefined): Promise<Uint8Array> {
+  const multipart = await multipartBytes(body);
+  const marker = Buffer.from("Content-Type: audio/ogg\r\n\r\n", "utf8");
+  const start = multipart.indexOf(marker);
+  if (start < 0) {
+    throw new Error("expected speaker Ogg upload");
+  }
+  return multipart.subarray(start + marker.length);
+}
+
+async function multipartBytes(body: BodyInit | null | undefined): Promise<Buffer> {
+  if (!(body instanceof Blob)) {
+    throw new Error("expected deterministic multipart bytes");
+  }
+  return Buffer.from(await body.arrayBuffer());
+}
 
 class MemoryMeetingRepository implements MeetingRepository {
   public snapshot: MeetingSnapshot;
