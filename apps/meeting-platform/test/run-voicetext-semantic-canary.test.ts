@@ -46,6 +46,7 @@ describe("Voicetext semantic canary", () => {
       submit: async ({ idempotencyKey }) => {submits.push(idempotencyKey); return nextBatchResult(batchResults);},
     };
     const sentPackets: Uint8Array[] = [];
+    const waits: number[] = [];
     const finalize = vi.fn(async () => {});
     const live: VoicetextLiveSession = {
       finalize,
@@ -69,7 +70,7 @@ describe("Voicetext semantic canary", () => {
         generationId: `file-${"f".repeat(64)}`, mode: 0o400, ownerUid: 10_001,
         path, token: "secret-machine-bearer",
       }),
-      wait: async () => {},
+      wait: async (delayMs) => {waits.push(delayMs);},
     };
 
     const result = await runVoicetextSemanticCanary({
@@ -93,6 +94,7 @@ describe("Voicetext semantic canary", () => {
       Uint8Array.from([0xf8, 0xff, 0xfe]),
       Uint8Array.from([0xf8, 0xff, 0xfd]),
     ]);
+    expect(waits.slice(-2)).toEqual([20, 20]);
     expect(finalize).toHaveBeenCalledOnce();
     expect(JSON.stringify(result)).not.toContain("secret-machine-bearer");
   });

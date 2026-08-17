@@ -157,7 +157,14 @@ export async function runVoicetextSemanticCanary(
         throw new Error("Voicetext live canary unexpectedly reused a new audio packet");
       }
       acknowledged += 1;
-      relativeTimeMs += durationSamples48Khz / 48;
+      const durationMs = durationSamples48Khz / 48;
+      relativeTimeMs += durationMs;
+      // The production stream receives audio in real time. Pace the synthetic
+      // fixture likewise so provider flush does not race a burst of future audio.
+      await waitForVoicetextCanaryOperation(
+        dependencies.wait(durationMs, deadline.signal),
+        deadline.signal,
+      );
     }
     // Successful finalization is the protocol proof that all outstanding audio
     // acknowledgements were received, not merely that socket writes completed.
