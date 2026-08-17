@@ -112,6 +112,10 @@ function nullableString(value: unknown, field: string): string | null {
   return string(value, field);
 }
 
+function isUnknownArray(value: unknown): value is readonly unknown[] {
+  return Array.isArray(value);
+}
+
 /**
  * Converts the provider capability response into the adapter-owned receipt
  * validated by composition. Additive provider fields remain inside this
@@ -121,10 +125,13 @@ export function decodeInfinityContextCapabilityAttestation(
   value: unknown,
 ): InfinityContextCapabilityAttestationV1 {
   const input = object(value);
-  const enabledAdapters = input.enabled_adapters;
-  if (!Array.isArray(enabledAdapters) || enabledAdapters.some((item) => typeof item !== "string")) {
+  const enabledAdaptersValue = input.enabled_adapters;
+  if (!isUnknownArray(enabledAdaptersValue)) {
     throw new InfinityContextActivationError("enabled_adapters must be an array of strings");
   }
+  const enabledAdapters = enabledAdaptersValue.map((item) =>
+    string(item, "enabled_adapters")
+  );
   const adapters = typeof input.adapters === "object" && input.adapters !== null
     ? input.adapters as Readonly<Record<string, unknown>>
     : {};
