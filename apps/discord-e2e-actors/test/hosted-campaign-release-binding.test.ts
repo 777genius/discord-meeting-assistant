@@ -54,7 +54,8 @@ const campaign = {
   definition: { campaignRoot: "/srv/e2e/campaigns", remote: { composeFile: trust.remoteComposeFile,
     environmentFile: trust.environmentFile, sourceRoot: trust.sourceRoot },
   revisions: { craig: "a".repeat(40), meetingPlatform: "b".repeat(40), pipecat: "c".repeat(40), subscriptionRuntime: "d".repeat(40) },
-  runIds: ["run-1", "run-2", "run-3"], secretDirectory: trust.secretDirectory },
+  runIds: ["campaign-1-sequential", "campaign-1-overlap", "campaign-1-reconnect"],
+  secretDirectory: trust.secretDirectory },
   meetingPlatformRevision: "b".repeat(40), plan: {}, planSha256: "9".repeat(64),
 } as const;
 const executeFile = promisify(execFile);

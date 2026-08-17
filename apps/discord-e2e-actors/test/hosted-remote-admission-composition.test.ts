@@ -273,7 +273,7 @@ function composition(calls: string[], time: () => number = () => now): HostedRem
     meetingPlatformRevision: revision,
     planSha256,
     remoteContainerProcess: { execute: async ({ args, binding: remoteBinding }) => {
-      const isCraig = args.includes("/app/apps/bot/dist/e2e/discordIdentityProofCli.js");
+      const isCraig = args.includes("CRAIG_E2E_TEST_ONLY=true");
       calls.push(isCraig ? "discord:remoteCraig" : "discord:remotePlatformSut");
       const value = (flag: string): string => {
         const index = args.indexOf(flag);

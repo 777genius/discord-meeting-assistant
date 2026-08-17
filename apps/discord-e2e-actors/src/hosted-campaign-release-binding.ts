@@ -198,11 +198,10 @@ export function createHostedCampaignReleaseConfig(
   }
   const platform = requiredService(byComponent, "meetingPlatform");
   const craig = requiredService(byComponent, "craig");
-  const runId = definition.runIds[2];
   const campaignSource = `${definition.campaignRoot}/${campaign.campaignId}`;
-  const greetingRunSource = `${campaignSource}/${runId}`;
+  const greetingRunSource = `${campaignSource}/run-3`;
   const campaignContainerRoot = `/run/e2e-campaign/${campaign.campaignId}`;
-  const greetingRunContainerRoot = `${campaignContainerRoot}/${runId}`;
+  const greetingRunContainerRoot = `${campaignContainerRoot}/run-3`;
   const expectation = {
     allowedNetworks: trust.allowedNetworks,
     campaignId: campaign.campaignId,
@@ -216,7 +215,7 @@ export function createHostedCampaignReleaseConfig(
       environmentRoot: `${greetingRunContainerRoot}/greeting-handshakes`,
       observerRoot: `${greetingRunSource}/greeting-handshakes`,
       runRoot: greetingRunSource,
-      runSiblingPath: `${campaignSource}/${definition.runIds[1]}`,
+      runSiblingPath: `${campaignSource}/run-2`,
       sourcePath: definition.campaignRoot,
     },
     services: release.services,

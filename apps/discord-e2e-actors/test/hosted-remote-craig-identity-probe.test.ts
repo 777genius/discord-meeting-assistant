@@ -23,7 +23,7 @@ const expectation = {
 } as const;
 
 describe("hosted remote Craig identity probe", () => {
-  it("executes the pinned Craig CLI in the pinned container without discovering or passing a token", async () => {
+  it("executes a bounded proof in the pinned Craig container without discovering or passing a token", async () => {
     const execute = vi.fn<BoundedRemoteContainerProcessPort["execute"]>(async () => success());
     const identity = await new HostedRemoteCraigIdentityProbe({ execute }, binding, 7_500)
       .probe(expectation, target);
@@ -37,7 +37,9 @@ describe("hosted remote Craig identity probe", () => {
         `CRAIG_E2E_DISCORD_GUILD_ID=${target.guildId}`,
         `CRAIG_E2E_DISCORD_CHANNEL_IDS=${target.voiceChannelId},${target.publicationChannelId}`,
         "DISCORD_BOT_TOKEN_FILE=/run/secrets/discord_bot_token",
-        "/usr/local/bin/node", "/app/apps/bot/dist/e2e/discordIdentityProofCli.js",
+        "/usr/local/bin/node", "--input-type=module", "--eval", expect.stringContaining(
+          'const tokenPath = required("DISCORD_BOT_TOKEN_FILE")',
+        ),
       ],
       binding, maximumOutputBytes: 16_384,
       target: { composeProject: "craig-meeting-e2e", composeService: "bot", workingDirectory: "/app/apps/bot" },
