@@ -56,8 +56,18 @@ function meaningfulTerms(value: string): ReadonlySet<string> {
   return new Set(
     normalizeText(value)
       .match(/[\p{L}\p{N}]+/gu)
-      ?.filter((term) => term.length >= 3) ?? [],
+      ?.filter((term) => term.length >= 3 && !actionLabelTerms.has(term))
+      .map(canonicalActionTerm) ?? [],
   );
+}
+
+const actionLabelTerms = new Set(["speaker", "спикер"]);
+
+function canonicalActionTerm(term: string): string {
+  if (/^\p{Script=Cyrillic}{6,}$/u.test(term)) {
+    return term.replace(/(?:ить|ыть|ать|ять|ит)$/u, "");
+  }
+  return term;
 }
 
 function normalizeText(value: string): string {

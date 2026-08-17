@@ -23,6 +23,18 @@ describe("summary action consolidation", () => {
       .toEqual([ownedAction]);
   });
 
+  it("normalizes a speaker label and Russian verb form in a covered restatement", () => {
+    const summary = summaryWith({
+      deadline: "до 7 августа 2026 года",
+      evidenceTurnIds: ["turn-a"],
+      ownerSpeakerId: null,
+      text: "Спикер B проверит Discord thread",
+    });
+
+    expect(consolidateCoveredUnassignedActions(summary, transcriptTurns()).actionItems)
+      .toEqual([ownedAction]);
+  });
+
   it("preserves a distinct unassigned task with the same deadline", () => {
     const distinct: ProviderMeetingSummary["actionItems"][number] = {
       deadline: "до 7 августа 2026 года",
