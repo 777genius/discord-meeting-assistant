@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 
 import {
   fixtureManifestV1Schema,
@@ -30,7 +30,7 @@ export async function loadVerifiedFixtureSet(
     if (selected === undefined) {
       throw new Error(`No configured audio file for ${fixture.actorName}`);
     }
-    if (resolve(selected.fixturePath) !== resolve(fixture.audioPath)) {
+    if (resolve(selected.fixturePath) !== resolve(dirname(manifestPath), fixture.audioPath)) {
       throw new Error(`${fixture.actorName} fixture path does not match the pinned manifest`);
     }
     const bytes = await readFile(selected.fixturePath);
