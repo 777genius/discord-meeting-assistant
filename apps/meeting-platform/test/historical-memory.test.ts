@@ -33,7 +33,9 @@ describe("historical memory reconciliation lifecycle", () => {
       executePass: (signal) => {
         passSignal = signal;
         return new Promise<void>((_resolve, reject) => {
-          signal.addEventListener("abort", () => reject(signal.reason), {
+          signal.addEventListener("abort", () => {
+            reject(signal.reason);
+          }, {
             once: true,
           });
         });
