@@ -57,7 +57,10 @@ function command(executable, argumentsList, options = {}) {
 }
 
 function git(argumentsList, options = {}) {
-  return command("git", ["-C", checkoutRoot, ...argumentsList], options);
+  // Docker COPY intentionally changes the checkout owner to the runtime UID,
+  // while this immutable provenance check runs in the root-owned build stage.
+  // Trust only this exact bundled checkout instead of weakening Git globally.
+  return command("git", ["-c", `safe.directory=${checkoutRoot}`, "-C", checkoutRoot, ...argumentsList], options);
 }
 
 function sha256(bytes) {
