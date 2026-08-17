@@ -272,11 +272,6 @@ async function indexAndRestart(
   await runtime.assertReady();
   expect(runtime.searchEnabled()).toBe(true);
   expect(runtime.servingAuthorized()).toBe(true);
-  await runtime.start();
-  // The remaining qualification is intentionally read-only. Stop the periodic
-  // reconciler so a health probe cannot race a deliberately CPU-heavy search
-  // and transiently revoke the already-qualified provider during this test.
-  await runtime.close();
   expect(infinity.endpoint.documentCount()).toBe(indexedAfterFirstPass);
   return { current, historical, repository, runtime };
 }

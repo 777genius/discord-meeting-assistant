@@ -37,6 +37,7 @@ import {
 } from "../src/composition/meeting-knowledge.js";
 import { DiscordAnswerPayloadCodec } from "@discord-meeting/discord-adapter";
 import {
+  historicalRows,
   platformConfig,
   requiredHistoricalRuntime,
   resultsContainerId,
@@ -44,6 +45,8 @@ import {
   scopeId,
   silentLogger,
 } from "./meeting-knowledge-production-composition-fixtures.js";
+import { waitForHistoricalRows } from
+  "./meeting-knowledge-production-composition-diagnostics.js";
 
 export async function qualifyLiveProjectionReply(input: {
   readonly infinity: DisposableInfinityHttpService;
@@ -471,8 +474,21 @@ async function finalizeAndProveCanonicalTransition(input: {
     false,
   );
   await deleting.requestMeetingDeletion(input.meetingId);
+  const deletionRowCount = (await historicalRows(input.pool)).filter(
+    ({ meeting_id }) => meeting_id === input.meetingId,
+  ).length;
   await deleting.start();
-  await deleting.close();
+  try {
+    await waitForHistoricalRows(
+      input.pool,
+      ({ meeting_id, state }) =>
+        meeting_id === input.meetingId && state === "deleted",
+      deletionRowCount,
+      input.signal,
+    );
+  } finally {
+    await deleting.close();
+  }
   const deleted = await input.pool.query<{ readonly state: string }>(
     `SELECT state FROM meeting_core.historical_memory_sync WHERE meeting_id = $1`,
     [input.meetingId],
