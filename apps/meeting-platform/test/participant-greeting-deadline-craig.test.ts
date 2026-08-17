@@ -305,8 +305,8 @@ describe("ParticipantGreetingBridge join-to-first-audio deadline", () => {
         startedAtMs: Date.now(),
         status: "started" as const,
       });
-      context.coordinator.whenTurnPlaybackSettled = (_meetingId: string, turnId: string) =>
-        turnId.endsWith(participantId)
+      context.coordinator.whenTurnPlaybackSettled = (_meetingId?: string, turnId?: string) =>
+        turnId?.endsWith(participantId) === true
           ? new Promise<never>(() => {})
           : Promise.resolve("played" as const);
       context.coordinator.participantLeft = () => {
