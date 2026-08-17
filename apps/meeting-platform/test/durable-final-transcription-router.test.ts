@@ -33,20 +33,26 @@ describe("DurableFinalTranscriptionRouter", () => {
       .toBe(elevenLabsVoicetextBatchExecutionBinding);
   });
 
-  it("maps initial migration work to the historical top-level backend", () => {
+  it("requires explicit historical provenance for initial migration work", () => {
     expect(legacyFinalTranscriptionExecutionBinding({
+      transcriptionLegacyExecutionBinding: legacyVoicetextBatchExecutionBinding,
       transcriptionProvider: "voicetext",
     })).toBe(legacyVoicetextBatchExecutionBinding);
     expect(legacyFinalTranscriptionExecutionBinding({
+      transcriptionLegacyExecutionBinding: speachesFinalTranscriptionExecutionBinding,
       transcriptionProvider: "speaches",
     })).toBe(speachesFinalTranscriptionExecutionBinding);
+    expect(() => legacyFinalTranscriptionExecutionBinding({
+      transcriptionProvider: "voicetext",
+    })).toThrow("explicit historical transcription binding is required");
   });
 
   it("selects new VoiceText work independently from frozen legacy work", () => {
     const config = {
+      transcriptionLegacyExecutionBinding: legacyVoicetextBatchExecutionBinding,
       transcriptionProvider: "voicetext" as const,
       voicetext: { batchProfile: "elevenlabs-scribe-v2" as const },
-    };
+    } as const;
     expect(selectedFinalTranscriptionExecutionBinding(config))
       .toBe(elevenLabsVoicetextBatchExecutionBinding);
     expect(legacyFinalTranscriptionExecutionBinding(config))

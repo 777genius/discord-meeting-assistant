@@ -64,6 +64,7 @@ VoiceText batch and live recognition are selected independently in Compose:
 ```text
 VOICETEXT_BATCH_PROFILE=deepgram-nova-3
 VOICETEXT_LIVE_PROFILE=deepgram-nova-3
+TRANSCRIPTION_LEGACY_EXECUTION_BINDING=voicetext-batch-v2:deepgram-nova-3
 ```
 
 Batch also permits `elevenlabs-scribe-v2`; live also permits
@@ -71,6 +72,9 @@ Batch also permits `elevenlabs-scribe-v2`; live also permits
 values fail Meeting Platform startup, and omitted selectors default
 independently to Deepgram. The Deepgram batch choice preserves contract v2 and
 its existing idempotency identity; ElevenLabs batch uses strict contract v3.
+The legacy binding has no default: it is explicit historical provenance for
+recoverable rows created before durable binding existed. Binding-aware work
+uses the isolated V2 post-call queue so a rolling V1 worker cannot claim it.
 Live always keeps raw Discord Opus at mono 48 kHz and requires the selected
 provider/model in VoiceText `ready` before any audio. Neither selector exposes
 provider credentials, endpoints, SDKs, or probes to Discord. The final batch

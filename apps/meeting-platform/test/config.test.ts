@@ -29,6 +29,7 @@ const environment = {
   SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256: "a".repeat(64),
   SUBSCRIPTION_RUNTIME_TOKEN_FILE: "/run/secrets/runtime",
   TRANSCRIPTION_PROVIDER: "speaches",
+  TRANSCRIPTION_LEGACY_EXECUTION_BINDING: "speaches-v1",
 } as const;
 
 describe("platform configuration", () => {
@@ -83,6 +84,12 @@ describe("platform configuration", () => {
     expect(config.discordPublicationMode).toBe("message");
     expect(config.discordBotikApplicationId).toBe("1533224474609057798");
     expect(Object.keys(environment)).not.toContain("OPENAI_API_KEY");
+  });
+
+  it("requires explicit historical transcription provenance", async () => {
+    const { TRANSCRIPTION_LEGACY_EXECUTION_BINDING: _, ...withoutLegacyBinding } = environment;
+    await expect(loadPlatformConfig(withoutLegacyBinding, async () => "value"))
+      .rejects.toThrow("TRANSCRIPTION_LEGACY_EXECUTION_BINDING");
   });
 
   it("falls back to the Craig identity when playback uses the same Discord bot", async () => {

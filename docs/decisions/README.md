@@ -31,6 +31,7 @@
 - [ADR-0024: Possession-based recording playback](0024-possession-based-recording-playback.md)
 - [ADR-0025: Cumulative live summary and layered Discord evidence](0025-cumulative-live-summary-and-layered-discord-evidence.md)
 - [ADR-0027: Independent VoiceText batch and live provider profiles](0027-independent-voicetext-provider-profiles.md)
+- [ADR-0028: Binding-aware post-call rollout](0028-binding-aware-post-call-rollout.md)
 
 ## Superseded
 

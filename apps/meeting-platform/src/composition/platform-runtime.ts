@@ -85,7 +85,6 @@ export async function startMeetingPlatform(
       observer: createQueueObserver(logger, metrics),
       processMeeting,
       legacyTranscriptionExecutionBinding: core.legacyTranscriptionExecutionBinding,
-      selectedTranscriptionExecutionBinding: core.selectedTranscriptionExecutionBinding,
       supportedTranscriptionExecutionBindings: core.supportedTranscriptionExecutionBindings,
       transcriptionExecutionBindings: core.transcriptionExecutionBindings,
     });

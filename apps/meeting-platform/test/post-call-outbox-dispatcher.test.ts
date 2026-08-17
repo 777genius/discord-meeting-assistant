@@ -78,7 +78,7 @@ describe("PostCallOutboxDispatcher", () => {
 describe("PostCallOutboxDispatcher durable binding", () => {
   const terminalRecorder = { record: async () => {} };
 
-  it("backfills legacy work to frozen v2 and pins selected work before Redis enqueue", async () => {
+  it("backfills and pins late legacy work to the frozen historical route", async () => {
     const events: string[] = [];
     const backfill = vi.fn(async (binding: string) => {
       events.push(`backfill:${binding}`);
@@ -112,7 +112,6 @@ describe("PostCallOutboxDispatcher durable binding", () => {
         },
         values: {
           legacyRecovery: "voicetext-batch-v2:deepgram-nova-3",
-          selected: "voicetext-batch-v3:elevenlabs-scribe-v2",
           supported: new Set([
             "voicetext-batch-v2:deepgram-nova-3",
             "voicetext-batch-v3:elevenlabs-scribe-v2",
@@ -125,7 +124,7 @@ describe("PostCallOutboxDispatcher durable binding", () => {
     await expect(dispatcher.dispatchPending()).resolves.toEqual({ dispatched: 1, failed: 0 });
     expect(events).toEqual([
       "backfill:voicetext-batch-v2:deepgram-nova-3",
-      "pin:meeting-new:voicetext-batch-v3:elevenlabs-scribe-v2",
+      "pin:meeting-new:voicetext-batch-v2:deepgram-nova-3",
       "enqueue",
     ]);
   });
@@ -153,7 +152,6 @@ describe("PostCallOutboxDispatcher durable binding", () => {
         },
         values: {
           legacyRecovery: "voicetext-batch-v2:deepgram-nova-3",
-          selected: "voicetext-batch-v2:deepgram-nova-3",
           supported: new Set(["voicetext-batch-v2:deepgram-nova-3"]),
         },
       },

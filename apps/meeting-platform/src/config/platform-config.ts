@@ -66,6 +66,9 @@ export interface PlatformConfig {
     readonly launcherSha256: string;
   };
   readonly transcriptionProvider: "speaches" | "voicetext";
+  readonly transcriptionLegacyExecutionBinding:
+    | "speaches-v1"
+    | "voicetext-batch-v2:deepgram-nova-3";
   readonly voicetext?: {
     readonly batchMaxArtifactBytes: number;
     readonly batchMaxConcurrency: number;

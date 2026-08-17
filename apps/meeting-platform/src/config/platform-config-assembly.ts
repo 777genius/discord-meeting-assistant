@@ -67,6 +67,7 @@ export function assemblePlatformConfig(
     speaches: { baseUrl: environment.SPEACHES_BASE_URL, model: environment.SPEACHES_MODEL },
     subscriptionRuntime: { address: environment.SUBSCRIPTION_RUNTIME_ADDRESS, launcherSha256: environment.SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256 },
     transcriptionProvider: environment.TRANSCRIPTION_PROVIDER,
+    transcriptionLegacyExecutionBinding: environment.TRANSCRIPTION_LEGACY_EXECUTION_BINDING,
     ...(environment.VOICETEXT_WS_URL === undefined ? {} : { voicetext: { batchMaxArtifactBytes: environment.VOICETEXT_BATCH_MAX_ARTIFACT_BYTES, batchMaxConcurrency: environment.VOICETEXT_BATCH_MAX_CONCURRENCY, batchMaxConcurrentMeetings: environment.VOICETEXT_BATCH_MAX_CONCURRENT_MEETINGS, batchProfile: environment.VOICETEXT_BATCH_PROFILE, liveMaxConcurrentSessions: environment.VOICETEXT_LIVE_MAX_CONCURRENT_SESSIONS, livePacketBackpressureTimeoutMs: environment.VOICETEXT_LIVE_PACKET_BACKPRESSURE_TIMEOUT_MS, liveProfile: environment.VOICETEXT_LIVE_PROFILE, webSocketUrl: environment.VOICETEXT_WS_URL } }),
   });
 }

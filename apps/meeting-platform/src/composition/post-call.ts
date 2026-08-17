@@ -50,7 +50,6 @@ export async function createPlatformPostCallComposition(input: {
   readonly observer: PostCallObserver;
   readonly processMeeting: ProcessMeetingSummary;
   readonly legacyTranscriptionExecutionBinding: FinalTranscriptionExecutionBinding;
-  readonly selectedTranscriptionExecutionBinding: FinalTranscriptionExecutionBinding;
   readonly supportedTranscriptionExecutionBindings: ReadonlySet<FinalTranscriptionExecutionBinding>;
   readonly transcriptionExecutionBindings: TranscriptionExecutionBindingStore;
 }): Promise<PlatformPostCallComposition> {
@@ -82,7 +81,6 @@ export async function createPlatformPostCallComposition(input: {
         store: input.transcriptionExecutionBindings,
         values: {
           legacyRecovery: input.legacyTranscriptionExecutionBinding,
-          selected: input.selectedTranscriptionExecutionBinding,
           supported: input.supportedTranscriptionExecutionBindings,
         },
       },

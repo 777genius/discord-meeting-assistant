@@ -144,6 +144,10 @@ const environmentSchema = z
     TRANSCRIPTION_PROVIDER: z
       .enum(["speaches", "voicetext"])
       .default("speaches"),
+    TRANSCRIPTION_LEGACY_EXECUTION_BINDING: z.enum([
+      "speaches-v1",
+      "voicetext-batch-v2:deepgram-nova-3",
+    ]),
     VOICETEXT_BATCH_MAX_ARTIFACT_BYTES: z.coerce
       .number()
       .int()

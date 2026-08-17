@@ -37,6 +37,9 @@ export type FinalTranscriptionExecutionBinding =
   | typeof speachesFinalTranscriptionExecutionBinding;
 
 type FinalTranscriptionBindingConfig = Readonly<{
+  transcriptionLegacyExecutionBinding?:
+    | typeof legacyVoicetextBatchExecutionBinding
+    | typeof speachesFinalTranscriptionExecutionBinding;
   transcriptionProvider: PlatformConfig["transcriptionProvider"];
   voicetext?: Pick<NonNullable<PlatformConfig["voicetext"]>, "batchProfile">;
 }>;
@@ -64,9 +67,10 @@ export function selectedFinalTranscriptionExecutionBinding(
 export function legacyFinalTranscriptionExecutionBinding(
   config: FinalTranscriptionBindingConfig,
 ): FinalTranscriptionExecutionBinding {
-  return config.transcriptionProvider === "speaches"
-    ? speachesFinalTranscriptionExecutionBinding
-    : legacyVoicetextBatchExecutionBinding;
+  if (config.transcriptionLegacyExecutionBinding === undefined) {
+    throw new Error("explicit historical transcription binding is required");
+  }
+  return config.transcriptionLegacyExecutionBinding;
 }
 
 export function supportedFinalTranscriptionExecutionBindings(

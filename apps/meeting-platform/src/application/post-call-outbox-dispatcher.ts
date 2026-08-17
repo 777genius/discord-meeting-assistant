@@ -36,7 +36,6 @@ interface TranscriptionExecutionBindingStore {
 
 interface TranscriptionExecutionBindings {
   readonly legacyRecovery: string;
-  readonly selected: string;
   readonly supported: ReadonlySet<string>;
 }
 
@@ -96,7 +95,10 @@ export class PostCallOutboxDispatcher {
         if (this.binding !== undefined) {
           const pinned = await this.binding.store.pinTranscriptionExecutionBinding(
             item.meetingId,
-            this.binding.values.selected,
+            // Current runtimes create new rows with an atomic binding. A null
+            // binding can only be late legacy work and must retain the explicit
+            // historical route instead of inheriting today's selected profile.
+            this.binding.values.legacyRecovery,
           );
           if (!this.binding.values.supported.has(pinned)) {
             throw new Error("transcription execution binding is unsupported by this runtime");

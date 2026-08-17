@@ -1,8 +1,11 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 
-export const POST_CALL_QUEUE_NAME = "meeting-post-call-v1";
-export const POST_CALL_JOB_NAME = "process-post-call-v1";
+// V2 isolates binding-aware workers from pre-binding V1 consumers during a
+// rolling deployment. Durable outbox reconciliation safely re-enqueues any
+// unfinished V1 work into this queue.
+export const POST_CALL_QUEUE_NAME = "meeting-post-call-v2";
+export const POST_CALL_JOB_NAME = "process-post-call-v2";
 export const POST_CALL_DEAD_LETTER_QUEUE_NAME = "meeting-post-call-dead-letter-v1";
 export const POST_CALL_DEAD_LETTER_JOB_NAME = "record-post-call-dead-letter-v1";
 
@@ -91,12 +94,12 @@ export function postCallJobId(meetingId: string, recoveryGeneration = 0): string
     recoveryGeneration,
   );
   if (validatedGeneration > 0) {
-    return `post-call-v1-${namespacedDigest(
-      "post-call-recovery-job-v1",
+    return `post-call-v2-${namespacedDigest(
+      "post-call-recovery-job-v2",
       `${validatedGeneration}\0${validatedMeetingId}`,
     )}`;
   }
-  return `post-call-v1-${namespacedDigest("post-call-job-v1", validatedMeetingId)}`;
+  return `post-call-v2-${namespacedDigest("post-call-job-v2", validatedMeetingId)}`;
 }
 
 export function postCallJobReference(jobId: string | undefined): string {
