@@ -1,48 +1,22 @@
-import {
-  EndBehaviorType,
-  VoiceConnectionStatus, entersState, joinVoiceChannel,
-  type AudioReceiveStream,
-  type VoiceConnection,
-} from "@discordjs/voice";
+import { EndBehaviorType, VoiceConnectionStatus, entersState, joinVoiceChannel, type AudioReceiveStream, type VoiceConnection, } from "@discordjs/voice";
 import { Client, GatewayIntentBits } from "discord.js";
 import { loadConversationVoiceObserverConfig, type ConversationVoiceObserverCapture } from
   "./conversation-voice-observer-config.js";
 import { conversationVoiceCampaignPreflight } from
   "./conversation-voice-campaign-contract.js";
-import {
-  writeCreateOnlyConversationVoiceCampaignProof, type ConversationVoiceCampaignProofV1,
-} from "./conversation-voice-campaign-proof.js";
+import { writeCreateOnlyConversationVoiceCampaignProof, type ConversationVoiceCampaignProofV1, } from "./conversation-voice-campaign-proof.js";
 import { createConversationVoiceEvidence } from "./conversation-voice-evidence.js";
 import { captureConversationVoiceFromOpenStream } from "./conversation-voice-stream-capture.js";
-import {
-  createDiscordJsOpusDecoder, type ConversationVoiceAudibilityDecoder,
-} from "./conversation-voice-audibility-decoder.js";
-import { waitForConversationVoiceCorrelationWhileGuardingAudio } from
+import { createDiscordJsOpusDecoder, type ConversationVoiceAudibilityDecoder, } from "./conversation-voice-audibility-decoder.js";
+import { waitForAddressedAnswerPlaybackIntent } from
   "./conversation-voice-turn-correlation-wait.js";
-import {
-  assertConversationAnswerHandshakeRootIsNew, waitForConversationAnswerPlaybackIntent,
-  type ConversationAnswerPlaybackIntent,
-} from "./conversation-voice-turn-id-source.js";
-import {
-  armInitialConversationObserver,
-  publishGreetingObserverReady,
-} from "./conversation-greeting-ready.js";
-import {
-  assertConfiguredCraigBotIsInVoiceChannel,
-  assertConnectableVoiceChannel,
-  requiredAuthenticatedBotId,
-} from "./conversation-observer-discord-validation.js";
-import {
-  ConversationVoiceCaptureController, ConversationVoiceCaptureError,
-  assertConversationVoiceEvidencePathIsNew,
-  writeNewConversationVoiceEvidenceAtomically,
-} from "./conversation-voice-observer.js";
+import { assertConversationAnswerHandshakeRootIsNew, type ConversationAnswerPlaybackIntent, } from "./conversation-voice-turn-id-source.js";
+import { armInitialConversationObserver, publishGreetingObserverReady, } from "./conversation-greeting-ready.js";
+import { assertConfiguredCraigBotIsInVoiceChannel, assertConnectableVoiceChannel, requiredAuthenticatedBotId, } from "./conversation-observer-discord-validation.js";
+import { ConversationVoiceCaptureController, ConversationVoiceCaptureError, assertConversationVoiceEvidencePathIsNew, writeNewConversationVoiceEvidenceAtomically, } from "./conversation-voice-observer.js";
 import { publishConversationVoiceReadyProof } from "./conversation-voice-ready-proof.js";
 import { FileSecretReader, MacOsKeychainSecretReader } from "./keychain.js";
-import {
-  publishAnswerFirstPacket, publishAnswerIntent, publishAnswerObserverReady,
-  publishCaptureRetained, publishObserverSubscribed,
-} from "./hosted-campaign-process-event-publisher.js";
+import { publishAnswerFirstPacket, publishAnswerIntent, publishAnswerObserverReady, publishCaptureRetained, publishObserverSubscribed, } from "./hosted-campaign-process-event-publisher.js";
 import { publishConversationObserverCompletion } from
   "./hosted-finite-process-completion-publisher.js";
 const systemClock = { now: () => ({ epochMilliseconds: Date.now(),
@@ -83,7 +57,6 @@ async function main(): Promise<void> {
     process.stdout.write(`${JSON.stringify(conversationVoiceCampaignPreflight(captures))}\n`);
   }
   const decoder = await createDiscordJsOpusDecoder();
-
   const secretReader = config.secretDirectory === undefined
     ? new MacOsKeychainSecretReader(config.keychainService)
     : new FileSecretReader(config.secretDirectory);
@@ -156,12 +129,9 @@ async function main(): Promise<void> {
   }
 }
 async function capturePlannedConversationVoice(input: {
-  readonly authenticatedBotId: string;
-  readonly captures: readonly ConversationVoiceObserverCapture[];
-  readonly config: ReturnType<typeof loadConversationVoiceObserverConfig>;
-  readonly decoder: ConversationVoiceAudibilityDecoder;
-  readonly greetingIntentNotBeforeEpochMilliseconds: number;
-  readonly handshakeNotBeforeEpochMilliseconds: number;
+  readonly authenticatedBotId: string; readonly captures: readonly ConversationVoiceObserverCapture[];
+  readonly config: ReturnType<typeof loadConversationVoiceObserverConfig>; readonly decoder: ConversationVoiceAudibilityDecoder;
+  readonly greetingIntentNotBeforeEpochMilliseconds: number; readonly handshakeNotBeforeEpochMilliseconds: number;
   readonly sourceStream: AudioReceiveStream;
 }): Promise<ConversationVoiceCampaignProofV1 | undefined> {
   const { authenticatedBotId, captures, config, decoder,
@@ -171,18 +141,24 @@ async function capturePlannedConversationVoice(input: {
   for (const [index, plannedCapture] of captures.entries()) {
       const playbackIntent: ConversationAnswerPlaybackIntent | undefined =
         plannedCapture.purpose === "addressed-answer"
-          ? await waitForConversationVoiceCorrelationWhileGuardingAudio({
-          isPacketAudible: (packet) => decoder.isPacketAudible(packet),
-          resolveCorrelation: async (signal) => waitForConversationAnswerPlaybackIntent({
-            ...(config.meetingId === undefined ? {} : { meetingId: config.meetingId }),
-            notBeforeEpochMilliseconds: handshakeNotBeforeEpochMilliseconds,
-            root: plannedCapture.playbackHandshakeRoot,
-            runId: config.runId,
-            signal,
-            timeoutMilliseconds: config.readyTimeoutMilliseconds,
-          }),
-          stream: sourceStream,
-        })
+          ? await waitForAddressedAnswerPlaybackIntent({
+              authenticatedBotId,
+              handshakeNotBeforeEpochMilliseconds,
+              isPacketAudible: (packet) => decoder.isPacketAudible(packet),
+              maximumThinkingCueDurationMilliseconds:
+                config.maximumThinkingCueDurationMilliseconds,
+              ...(config.meetingId === undefined ? {} : { meetingId: config.meetingId }),
+              playbackHandshakeRoot: plannedCapture.playbackHandshakeRoot,
+              readyTimeoutMilliseconds: config.readyTimeoutMilliseconds,
+              runId: config.runId,
+              sourceStream,
+              target: {
+                craigBotId: config.craigBotId,
+                guildId: config.guildId,
+                observerApplicationId: config.observerApplicationId,
+                voiceChannelId: config.voiceChannelId,
+              },
+            })
           : undefined;
       const intentObservedAt = playbackIntent === undefined ? undefined : new Date().toISOString();
       publishAnswerIntent(config, playbackIntent, intentObservedAt);
@@ -265,12 +241,9 @@ async function capturePlannedConversationVoice(input: {
   return campaignProof;
 }
 function readyPublisher(input: {
-  readonly authenticatedBotId: string; readonly captures: readonly ConversationVoiceObserverCapture[];
-  readonly config: ReturnType<typeof loadConversationVoiceObserverConfig>;
-  readonly greetingIntentNotBeforeEpochMilliseconds: number;
-  readonly plannedCapture: ConversationVoiceObserverCapture;
-  readonly playbackIntent: ConversationAnswerPlaybackIntent | undefined;
-  readonly playbackIntentObservedAt: string | undefined;
+  readonly authenticatedBotId: string; readonly captures: readonly ConversationVoiceObserverCapture[]; readonly config: ReturnType<typeof loadConversationVoiceObserverConfig>;
+  readonly greetingIntentNotBeforeEpochMilliseconds: number; readonly plannedCapture: ConversationVoiceObserverCapture;
+  readonly playbackIntent: ConversationAnswerPlaybackIntent | undefined; readonly playbackIntentObservedAt: string | undefined;
   readonly publishCampaignProof: (proof: ConversationVoiceCampaignProofV1) => void;
 }): { readonly publishReady?: () => Promise<void> } {
   const playbackIntent = input.playbackIntent;
@@ -307,7 +280,6 @@ function readyPublisher(input: {
     participantId,
   }) };
 }
-
 function greetingParticipantId(turnId: string): string {
   const prefix = "participant-greeting:";
   const participantId = turnId.startsWith(prefix) ? turnId.slice(prefix.length) : "";

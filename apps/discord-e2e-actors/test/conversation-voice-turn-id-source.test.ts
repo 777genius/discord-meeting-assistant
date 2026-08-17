@@ -5,13 +5,17 @@ import { join } from "node:path";
 
 import {
   serializeConversationAnswerPlaybackReadinessEnvelope,
+  serializeConversationThinkingCuePlaybackReadinessEnvelope,
   type ConversationAnswerPlaybackIntent,
+  type ConversationThinkingCuePlaybackIntent,
 } from "@discord-meeting/conversation-runtime-contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   assertConversationAnswerHandshakeRootIsNew,
   publishConversationAnswerObserverReady,
+  publishConversationThinkingCueObserverReady,
+  waitForConversationAnswerOrThinkingCuePlaybackIntent,
   waitForConversationAnswerPlaybackIntent,
 } from "../src/conversation-voice-turn-id-source.js";
 
@@ -20,6 +24,11 @@ const intent: ConversationAnswerPlaybackIntent = {
   capturePlan: "addressed-answer", kind: "answer", meetingId: "meeting-1",
   playbackAttemptId: "answer-attempt-1", protocolVersion: 1, runId: "run-1",
   turnId: "human-question-17", type: "playback-intent",
+};
+const thinkingCueIntent: ConversationThinkingCuePlaybackIntent = {
+  capturePlan: "thinking-cue", expectedPcmBytes: 96_000, kind: "thinking-cue", meetingId: intent.meetingId,
+  playbackAttemptId: "thinking-cue-attempt-1", protocolVersion: 1, runId: intent.runId,
+  turnId: intent.turnId, type: "playback-intent",
 };
 const readyInput = {
   authenticatedObserverBotId: "1533867700575670282",
@@ -61,6 +70,103 @@ describe("conversation answer playback readiness source", () => {
       .rejects.toMatchObject({ code: "EEXIST" });
   });
 
+  it("accepts two exact cue intents sequentially and publishes exact ready receipts", async () => {
+    const root = await temporaryRoot();
+    await publishThinkingCueIntent(root, thinkingCueIntent);
+    const first = await waitForConversationAnswerOrThinkingCuePlaybackIntent({
+      meetingId: intent.meetingId, notBeforeEpochMilliseconds: 0, root,
+      runId: intent.runId, timeoutMilliseconds: 100,
+    });
+    expect(first).toEqual(thinkingCueIntent);
+    if (first.kind !== "thinking-cue") {
+      throw new Error("Expected a thinking-cue playback intent");
+    }
+    const firstReady = await publishConversationThinkingCueObserverReady({
+      ...readyInput, intent: first, root,
+    });
+    const secondIntent = {
+      ...thinkingCueIntent,
+      playbackAttemptId: "thinking-cue-attempt-2",
+    };
+    await publishThinkingCueIntent(root, secondIntent);
+    const second = await waitForConversationAnswerOrThinkingCuePlaybackIntent({
+      ignoredIntentDigestSha256s: [firstReady.intentDigestSha256],
+      meetingId: intent.meetingId,
+      notBeforeEpochMilliseconds: 0,
+      root,
+      runId: intent.runId,
+      timeoutMilliseconds: 100,
+    });
+
+    expect(second).toEqual(secondIntent);
+    expect(firstReady).toMatchObject({
+      intentDigestSha256: thinkingCueStem(thinkingCueIntent),
+      kind: "thinking-cue",
+      type: "observer-ready",
+    });
+  });
+
+  it("prefers an exact same-turn answer over pending cue intents and rejects identity drift", async () => {
+    const root = await temporaryRoot();
+    await publishThinkingCueIntent(root, thinkingCueIntent);
+    await publishIntent(root, intent);
+
+    await expect(waitForConversationAnswerOrThinkingCuePlaybackIntent({
+      meetingId: intent.meetingId, notBeforeEpochMilliseconds: 0, root,
+      runId: intent.runId, timeoutMilliseconds: 100,
+    })).resolves.toEqual(intent);
+
+    const mismatchedRoot = await temporaryRoot();
+    await publishThinkingCueIntent(mismatchedRoot, {
+      ...thinkingCueIntent, turnId: "different-human-question",
+    });
+    await publishIntent(mismatchedRoot, intent);
+    await expect(waitForConversationAnswerOrThinkingCuePlaybackIntent({
+      meetingId: intent.meetingId, notBeforeEpochMilliseconds: 0, root: mismatchedRoot,
+      runId: intent.runId, timeoutMilliseconds: 100,
+    })).rejects.toThrow("ambiguous");
+
+    const crossMeetingRoot = await temporaryRoot();
+    await publishThinkingCueIntent(crossMeetingRoot, {
+      ...thinkingCueIntent, meetingId: "meeting-2",
+    });
+    await publishIntent(crossMeetingRoot, intent);
+    await expect(waitForConversationAnswerOrThinkingCuePlaybackIntent({
+      notBeforeEpochMilliseconds: 0, root: crossMeetingRoot,
+      runId: intent.runId, timeoutMilliseconds: 100,
+    })).rejects.toThrow("ambiguous");
+
+    const thirdCueRoot = await temporaryRoot();
+    for (const playbackAttemptId of [
+      "thinking-cue-attempt-1",
+      "thinking-cue-attempt-2",
+      "thinking-cue-attempt-3",
+    ]) {
+      await publishThinkingCueIntent(thirdCueRoot, {
+        ...thinkingCueIntent, playbackAttemptId,
+      });
+    }
+    await publishIntent(thirdCueRoot, intent);
+    await expect(waitForConversationAnswerOrThinkingCuePlaybackIntent({
+      notBeforeEpochMilliseconds: 0, root: thirdCueRoot,
+      runId: intent.runId, timeoutMilliseconds: 100,
+    })).rejects.toThrow("ambiguous");
+    await expect(waitForConversationAnswerPlaybackIntent({
+      ignoredIntentDigestSha256s: [
+        thinkingCueStem(thinkingCueIntent),
+        thinkingCueStem({ ...thinkingCueIntent, playbackAttemptId: "thinking-cue-attempt-2" }),
+      ],
+      meetingId: intent.meetingId,
+      notBeforeEpochMilliseconds: 0,
+      root: thirdCueRoot,
+      runId: intent.runId,
+      timeoutMilliseconds: 100,
+    })).rejects.toThrow("more than two thinking cue intents");
+  });
+
+});
+
+describe("conversation answer playback readiness source hardening", () => {
   it("rejects stale roots and wrong run bindings", async () => {
     const root = await temporaryRoot();
     await writeFile(join(root, `${stem()}.intent.json`), JSON.stringify(intent), {
@@ -246,4 +352,20 @@ async function publishIntent(
   } finally {
     await unlink(temporaryPath);
   }
+}
+
+
+function thinkingCueStem(value: ConversationThinkingCuePlaybackIntent): string {
+  return createHash("sha256")
+    .update(serializeConversationThinkingCuePlaybackReadinessEnvelope(value)).digest("hex");
+}
+
+async function publishThinkingCueIntent(
+  root: string,
+  value: ConversationThinkingCuePlaybackIntent,
+): Promise<void> {
+  const digest = thinkingCueStem(value);
+  await writeFile(join(root, `${digest}.intent.json`), JSON.stringify(value), {
+    flag: "wx", mode: 0o600,
+  });
 }

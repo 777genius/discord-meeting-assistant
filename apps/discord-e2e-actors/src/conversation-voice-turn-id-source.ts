@@ -1,65 +1,63 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants, link, lstat, open, readdir, unlink } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-
-import {
-  conversationAnswerObserverReadySchema,
-  conversationAnswerPlaybackIntentSchema,
-  serializeConversationAnswerPlaybackReadinessEnvelope,
-  type ConversationAnswerObserverReady,
-  type ConversationAnswerPlaybackIntent,
-  conversationGreetingObserverReadySchema,
-  conversationGreetingPlaybackIntentSchema,
-  serializeConversationGreetingPlaybackReadinessEnvelope,
-  type ConversationGreetingObserverReady,
-  type ConversationGreetingPlaybackIntent,
-} from "@discord-meeting/conversation-runtime-contracts/playback-readiness";
-
-const maximumReceiptBytes = 1_536;
-const pollIntervalMilliseconds = 25;
-export {
-  type ConversationAnswerPlaybackIntent,
-} from "@discord-meeting/conversation-runtime-contracts/playback-readiness";
-
+import { conversationAnswerObserverReadySchema, conversationAnswerPlaybackIntentSchema, serializeConversationAnswerPlaybackReadinessEnvelope, type ConversationAnswerObserverReady, type ConversationAnswerPlaybackIntent, conversationGreetingObserverReadySchema, conversationGreetingPlaybackIntentSchema, serializeConversationGreetingPlaybackReadinessEnvelope, type ConversationGreetingObserverReady, type ConversationGreetingPlaybackIntent, conversationThinkingCueObserverReadySchema, conversationThinkingCuePlaybackIntentSchema, serializeConversationThinkingCuePlaybackReadinessEnvelope, type ConversationThinkingCueObserverReady, type ConversationThinkingCuePlaybackIntent, } from "@discord-meeting/conversation-runtime-contracts/playback-readiness";
+const maximumReceiptBytes = 1_536; const pollIntervalMilliseconds = 25;
+export { type ConversationAnswerPlaybackIntent, type ConversationThinkingCuePlaybackIntent } from "@discord-meeting/conversation-runtime-contracts/playback-readiness";
+export type ConversationAnswerOrThinkingCuePlaybackIntent = ConversationAnswerPlaybackIntent | ConversationThinkingCuePlaybackIntent;
 export async function waitForConversationAnswerPlaybackIntent(input: {
-  readonly meetingId?: string;
-  readonly notBeforeEpochMilliseconds: number;
-  readonly root: string;
-  readonly runId: string;
-  readonly signal?: AbortSignal;
+  readonly ignoredIntentDigestSha256s?: readonly string[]; readonly meetingId?: string;
+  readonly notBeforeEpochMilliseconds: number; readonly root: string;
+  readonly runId: string; readonly signal?: AbortSignal;
   readonly timeoutMilliseconds: number;
 }): Promise<ConversationAnswerPlaybackIntent> {
   const deadline = Date.now() + input.timeoutMilliseconds;
   for (;;) {
     assertNotAborted(input.signal);
     const entries = await safeDirectoryEntries(input.root);
+    const cueIntents: ConversationThinkingCuePlaybackIntent[] = [];
     const matchingIntents: ConversationAnswerPlaybackIntent[] = [];
     for (const name of entries) {
-      if (!/^[a-f\d]{64}\.intent\.json$/u.test(name)) {
+      if (!/^[a-f\d]{64}\.intent\.json$/u.test(name) ||
+        input.ignoredIntentDigestSha256s?.some((digest) =>
+          name === `${digest}.intent.json`) === true) {
         continue;
       }
       const path = join(input.root, name);
       try {
-        const intent = await readIntent(path, input.notBeforeEpochMilliseconds);
-        if (intent.runId !== input.runId ||
-          input.meetingId !== undefined && intent.meetingId !== input.meetingId) {
+        const candidate = await readPlaybackIntent(path, input.notBeforeEpochMilliseconds);
+        if (candidate.runId !== input.runId ||
+          input.meetingId !== undefined && candidate.meetingId !== input.meetingId) {
           throw new Error("Conversation answer playback intent has the wrong run or meeting");
         }
-        if (name !== `${receiptStem(intent)}.intent.json`) {
+        if (name !== `${receiptStem(candidate)}.intent.json`) {
           throw new Error("Conversation answer playback intent filename digest is invalid");
         }
-        matchingIntents.push(intent);
+        if (candidate.kind === "thinking-cue") {
+          cueIntents.push(candidate);
+        } else {
+          matchingIntents.push(candidate);
+        }
       } catch (error: unknown) {
         if (!isMissingFileError(error)) {
           throw error;
         }
       }
     }
+    const cueIntentCount = cueIntents.length +
+      (input.ignoredIntentDigestSha256s?.length ?? 0);
+    if (cueIntentCount > 2) {
+      throw new Error("Conversation answer playback has more than two thinking cue intents");
+    }
     if (matchingIntents.length > 1) {
       throw new Error("Conversation answer playback intent is ambiguous for this run");
     }
     const [intent] = matchingIntents;
     if (intent !== undefined) {
+      if (cueIntents.some((cue) =>
+        cue.meetingId !== intent.meetingId || cue.turnId !== intent.turnId)) {
+        throw new Error("Conversation answer and thinking cue intents have ambiguous identity");
+      }
       return intent;
     }
     const remaining = deadline - Date.now();
@@ -69,14 +67,77 @@ export async function waitForConversationAnswerPlaybackIntent(input: {
     await abortableDelay(Math.min(pollIntervalMilliseconds, remaining), input.signal);
   }
 }
-
+export async function waitForConversationAnswerOrThinkingCuePlaybackIntent(input: {
+  readonly ignoredIntentDigestSha256s?: readonly string[]; readonly meetingId?: string;
+  readonly notBeforeEpochMilliseconds: number; readonly root: string;
+  readonly runId: string; readonly signal?: AbortSignal;
+  readonly timeoutMilliseconds: number;
+}): Promise<ConversationAnswerOrThinkingCuePlaybackIntent> {
+  const deadline = Date.now() + input.timeoutMilliseconds;
+  for (;;) {
+    assertNotAborted(input.signal);
+    const matchingIntents: ConversationAnswerOrThinkingCuePlaybackIntent[] = [];
+    for (const name of await safeDirectoryEntries(input.root)) {
+      if (!/^[a-f\d]{64}\.intent\.json$/u.test(name) ||
+        input.ignoredIntentDigestSha256s?.some((digest) =>
+          name === `${digest}.intent.json`) === true) {
+        continue;
+      }
+      try {
+        const intent = await readPlaybackIntent(
+          join(input.root, name),
+          input.notBeforeEpochMilliseconds,
+        );
+        if (intent.runId !== input.runId ||
+          input.meetingId !== undefined && intent.meetingId !== input.meetingId) {
+          throw new Error("Conversation playback intent has the wrong run or meeting");
+        }
+        if (name !== `${receiptStem(intent)}.intent.json`) {
+          throw new Error("Conversation playback intent filename digest is invalid");
+        }
+        matchingIntents.push(intent);
+      } catch (error: unknown) {
+        if (!isMissingFileError(error)) {
+          throw error;
+        }
+      }
+    }
+    const intent = preferredPlaybackIntent(
+      matchingIntents,
+      input.ignoredIntentDigestSha256s?.length ?? 0,
+    );
+    if (intent !== undefined) {
+      return intent;
+    }
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      throw new Error("Conversation playback intent was not created before timeout");
+    }
+    await abortableDelay(Math.min(pollIntervalMilliseconds, remaining), input.signal);
+  }
+}
+function preferredPlaybackIntent(
+  matchingIntents: readonly ConversationAnswerOrThinkingCuePlaybackIntent[],
+  ignoredCueCount: number,
+): ConversationAnswerOrThinkingCuePlaybackIntent | undefined {
+  if (matchingIntents.length <= 1) {
+    return matchingIntents[0];
+  }
+  const answers = matchingIntents.filter((intent) => intent.kind === "answer");
+  const [answer] = answers;
+  const cueIntentCount = matchingIntents.filter((intent) =>
+    intent.kind === "thinking-cue").length + ignoredCueCount;
+  if (answers.length === 1 && answer !== undefined && cueIntentCount <= 2 &&
+    matchingIntents.every((intent) =>
+      intent.meetingId === answer.meetingId && intent.turnId === answer.turnId)) {
+    return answer;
+  }
+  throw new Error("Conversation playback intent is ambiguous for this run");
+}
 export async function publishConversationAnswerObserverReady(input: {
-  readonly authenticatedObserverBotId: string;
-  readonly intent: ConversationAnswerPlaybackIntent;
-  readonly intentObservedAt: string;
-  readonly planDigestSha256: string;
-  readonly root: string;
-  readonly target: ConversationAnswerObserverReady["target"];
+  readonly authenticatedObserverBotId: string; readonly intent: ConversationAnswerPlaybackIntent;
+  readonly intentObservedAt: string; readonly planDigestSha256: string;
+  readonly root: string; readonly target: ConversationAnswerObserverReady["target"];
 }): Promise<ConversationAnswerObserverReady> {
   await assertSafeHandshakeRoot(input.root);
   const intent = conversationAnswerPlaybackIntentSchema.parse(input.intent);
@@ -96,14 +157,32 @@ export async function publishConversationAnswerObserverReady(input: {
   );
   return ready;
 }
-
+export async function publishConversationThinkingCueObserverReady(input: {
+  readonly authenticatedObserverBotId: string; readonly intent: ConversationThinkingCuePlaybackIntent;
+  readonly intentObservedAt: string; readonly root: string;
+  readonly target: ConversationThinkingCueObserverReady["target"];
+}): Promise<ConversationThinkingCueObserverReady> {
+  await assertSafeHandshakeRoot(input.root);
+  const intent = conversationThinkingCuePlaybackIntentSchema.parse(input.intent);
+  const ready = conversationThinkingCueObserverReadySchema.parse({
+    ...intent,
+    authenticatedObserverBotId: input.authenticatedObserverBotId,
+    intentDigestSha256: receiptStem(intent),
+    intentObservedAt: input.intentObservedAt,
+    readyPublishedAt: new Date().toISOString(),
+    target: input.target,
+    type: "observer-ready",
+  });
+  await publishCreateOnlyJson(
+    join(input.root, `${receiptStem(intent)}.ready.json`),
+    ready,
+  );
+  return ready;
+}
 export async function waitForConversationGreetingPlaybackIntent(input: {
-  readonly meetingId?: string;
-  readonly notBeforeEpochMilliseconds: number;
-  readonly participantId: string;
-  readonly root: string;
-  readonly runId: string;
-  readonly signal?: AbortSignal;
+  readonly meetingId?: string; readonly notBeforeEpochMilliseconds: number;
+  readonly participantId: string; readonly root: string;
+  readonly runId: string; readonly signal?: AbortSignal;
   readonly timeoutMilliseconds: number;
 }): Promise<ConversationGreetingPlaybackIntent> {
   const deadline = Date.now() + input.timeoutMilliseconds;
@@ -128,12 +207,9 @@ export async function waitForConversationGreetingPlaybackIntent(input: {
     await abortableDelay(Math.min(pollIntervalMilliseconds, remaining), input.signal);
   }
 }
-
 export async function publishConversationGreetingObserverReady(input: {
-  readonly authenticatedObserverBotId: string;
-  readonly intent: ConversationGreetingPlaybackIntent;
-  readonly intentObservedAt: string;
-  readonly root: string;
+  readonly authenticatedObserverBotId: string; readonly intent: ConversationGreetingPlaybackIntent;
+  readonly intentObservedAt: string; readonly root: string;
   readonly target: ConversationGreetingObserverReady["target"];
 }): Promise<ConversationGreetingObserverReady> {
   await assertSafeHandshakeRoot(input.root);
@@ -150,7 +226,6 @@ export async function publishConversationGreetingObserverReady(input: {
   await publishCreateOnlyJson(join(input.root, `${greetingReceiptStem(intent)}.ready.json`), ready);
   return ready;
 }
-
 async function readGreetingIntent(
   path: string,
   notBeforeEpochMilliseconds: number,
@@ -172,23 +247,20 @@ async function readGreetingIntent(
     );
   } finally { await handle.close(); }
 }
-
 function greetingReceiptStem(intent: ConversationGreetingPlaybackIntent): string {
   return createHash("sha256")
     .update(serializeConversationGreetingPlaybackReadinessEnvelope(intent)).digest("hex");
 }
-
 export async function assertConversationAnswerHandshakeRootIsNew(root: string): Promise<void> {
   const entries = await safeDirectoryEntries(root);
   if (entries.some((name) => /^(?:[a-f\d]{64})\.(?:intent|ready)\.json$/u.test(name))) {
     throw new Error("Conversation answer handshake root contains stale receipts");
   }
 }
-
-async function readIntent(
+async function readPlaybackIntent(
   path: string,
   notBeforeEpochMilliseconds: number,
-): Promise<ConversationAnswerPlaybackIntent> {
+): Promise<ConversationAnswerOrThinkingCuePlaybackIntent> {
   const pathStats = await lstat(path);
   assertSafeReceiptFile(pathStats, notBeforeEpochMilliseconds);
   const handle = await open(
@@ -213,12 +285,15 @@ async function readIntent(
     }
     const decoded = new TextDecoder("utf-8", { fatal: true })
       .decode(bytes.subarray(0, bytesRead));
-    return conversationAnswerPlaybackIntentSchema.parse(JSON.parse(decoded) as unknown);
+    const value = JSON.parse(decoded) as unknown;
+    return value !== null && typeof value === "object" && "kind" in value &&
+      value.kind === "thinking-cue"
+      ? conversationThinkingCuePlaybackIntentSchema.parse(value)
+      : conversationAnswerPlaybackIntentSchema.parse(value);
   } finally {
     await handle.close();
   }
 }
-
 async function publishCreateOnlyJson(path: string, value: unknown): Promise<void> {
   const encoded = JSON.stringify(value);
   if (Buffer.byteLength(encoded, "utf8") > maximumReceiptBytes) {
@@ -251,13 +326,13 @@ async function publishCreateOnlyJson(path: string, value: unknown): Promise<void
     });
   }
 }
-
-function receiptStem(intent: ConversationAnswerPlaybackIntent): string {
+function receiptStem(intent: ConversationAnswerOrThinkingCuePlaybackIntent): string {
   return createHash("sha256")
-    .update(serializeConversationAnswerPlaybackReadinessEnvelope(intent))
+    .update(intent.kind === "thinking-cue"
+      ? serializeConversationThinkingCuePlaybackReadinessEnvelope(intent)
+      : serializeConversationAnswerPlaybackReadinessEnvelope(intent))
     .digest("hex");
 }
-
 function assertSafeReceiptFile(
   stats: Awaited<ReturnType<typeof lstat>>,
   notBeforeEpochMilliseconds: number,
@@ -278,7 +353,6 @@ function assertSafeReceiptFile(
     throw new Error("Conversation answer playback intent is stale");
   }
 }
-
 async function safeDirectoryEntries(root: string): Promise<readonly string[]> {
   try {
     await assertSafeHandshakeRoot(root);
@@ -290,7 +364,6 @@ async function safeDirectoryEntries(root: string): Promise<readonly string[]> {
     throw error;
   }
 }
-
 async function assertSafeHandshakeRoot(root: string): Promise<void> {
   const stats = await lstat(root);
   if (!stats.isDirectory()) {
@@ -303,17 +376,14 @@ async function assertSafeHandshakeRoot(root: string): Promise<void> {
     throw new Error("Conversation answer handshake root must be owned by the current user");
   }
 }
-
 function isMissingFileError(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
-
 function assertNotAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted === true) {
     throw new Error("Conversation answer playback intent wait was cancelled");
   }
 }
-
 async function abortableDelay(milliseconds: number, signal: AbortSignal | undefined): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const onAbort = (): void => {

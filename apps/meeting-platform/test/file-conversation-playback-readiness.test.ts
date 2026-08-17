@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { serializeConversationAnswerPlaybackReadinessEnvelope,
-  serializeConversationGreetingPlaybackReadinessEnvelope } from
+  serializeConversationGreetingPlaybackReadinessEnvelope,
+  serializeConversationThinkingCuePlaybackReadinessEnvelope } from
   "@discord-meeting/conversation-runtime-contracts";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -66,7 +67,7 @@ describe("FileConversationPlaybackReadiness", () => {
     await expect(readiness.awaitConversationPlaybackReady(greetingRequest))
       .resolves.toEqual({ ok: true, value: "ready" });
     await expect(readiness.awaitConversationPlaybackReady({
-      ...greetingRequest, playbackKind: "thinking-cue",
+      ...greetingRequest, turnId: "ordinary-prepared-cue",
     })).resolves.toEqual({ ok: true, value: "ready" });
     await completeGreetingReadiness(readiness, greetingRoot, {
       ...greetingRequest,
@@ -79,6 +80,48 @@ describe("FileConversationPlaybackReadiness", () => {
     await expect(readiness.awaitConversationPlaybackReady({
       ...greetingRequest, meetingId: "meeting-2",
     })).resolves.toEqual({ ok: true, value: "ready" });
+  });
+
+  it("publishes and verifies an exact thinking-cue observer handshake", async () => {
+    const root = await temporaryRoot();
+    const cueRequest = {
+      ...request,
+      expectedPcmBytes: 96_000,
+      playbackAttemptId: "thinking-cue-attempt-1",
+      playbackKind: "thinking-cue" as const,
+    };
+    const cueEnvelope = {
+      capturePlan: "thinking-cue" as const,
+      expectedPcmBytes: cueRequest.expectedPcmBytes,
+      kind: "thinking-cue" as const,
+      meetingId: cueRequest.meetingId,
+      playbackAttemptId: cueRequest.playbackAttemptId,
+      protocolVersion: 1 as const,
+      runId: envelope.runId,
+      turnId: cueRequest.turnId,
+    };
+    const stem = createHash("sha256")
+      .update(serializeConversationThinkingCuePlaybackReadinessEnvelope(cueEnvelope))
+      .digest("hex");
+    const readiness = new FileConversationPlaybackReadiness({
+      root, runId: envelope.runId, timeoutMilliseconds: 1_000,
+    });
+
+    const waiting = readiness.awaitConversationPlaybackReady(cueRequest);
+    await expect(waitForJson(join(root, `${stem}.intent.json`))).resolves.toEqual({
+      ...cueEnvelope, type: "playback-intent",
+    });
+    await writeFile(join(root, `${stem}.ready.json`), JSON.stringify({
+      ...cueEnvelope,
+      authenticatedObserverBotId: readyReceipt.authenticatedObserverBotId,
+      intentDigestSha256: stem,
+      intentObservedAt: readyReceipt.intentObservedAt,
+      readyPublishedAt: readyReceipt.readyPublishedAt,
+      target: readyReceipt.target,
+      type: "observer-ready",
+    }), { flag: "wx", mode: 0o600 });
+
+    await expect(waiting).resolves.toEqual({ ok: true, value: "ready" });
   });
 
   it("publishes a create-only intent and waits for the exact observer-ready receipt", async () => {

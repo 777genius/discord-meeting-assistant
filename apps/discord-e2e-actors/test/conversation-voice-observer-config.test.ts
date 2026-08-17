@@ -32,6 +32,7 @@ describe("loadConversationVoiceObserverConfig", () => {
       keychainService: "discord-voice-bot-e2e",
       maxPcmBytes: 11_520_000,
       meetingId: "meeting-2026-08-04-01",
+      maximumThinkingCueDurationMilliseconds: 10_000,
       observerAccount: "conversation-observer",
       observerApplicationId: "22222222222222222",
       outputPath: "/tmp/conversation-voice-observer.json",
@@ -144,6 +145,7 @@ describe("loadConversationVoiceObserverConfig", () => {
     });
 
     expect(config.captureTimeoutMilliseconds).toBe(2_000);
+    expect(config.maximumThinkingCueDurationMilliseconds).toBe(10_000);
     expect(config.readyTimeoutMilliseconds).toBe(120_000);
     expect(loadConversationVoiceObserverConfig({
       ...requiredEnvironment,

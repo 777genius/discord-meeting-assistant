@@ -10,10 +10,15 @@ import {
   conversationGreetingPlaybackIntentSchema,
   conversationGreetingPlaybackReadinessEnvelopeSchema,
   conversationPlaybackReadinessProtocolVersion,
+  conversationThinkingCueObserverReadySchema,
+  conversationThinkingCuePlaybackIntentSchema,
+  conversationThinkingCuePlaybackReadinessEnvelopeSchema,
   serializeConversationAnswerPlaybackReadinessEnvelope,
   serializeConversationGreetingPlaybackReadinessEnvelope,
+  serializeConversationThinkingCuePlaybackReadinessEnvelope,
   type ConversationAnswerPlaybackReadinessEnvelope,
   type ConversationGreetingPlaybackReadinessEnvelope,
+  type ConversationThinkingCuePlaybackReadinessEnvelope,
 } from "@discord-meeting/conversation-runtime-contracts";
 
 import type {
@@ -56,7 +61,7 @@ export class FileConversationPlaybackReadiness implements ConversationPlaybackRe
     const isGreeting = isExactGreeting &&
       (request.participantId === this.options.greetingObserverParticipantId ||
         request.meetingId === this.#greetingCaptureMeetingId);
-    if (request.playbackKind !== "answer" && !isGreeting) {
+    if (request.playbackKind !== "answer" && request.playbackKind !== "thinking-cue" && !isGreeting) {
       return { ok: true, value: "ready" };
     }
     const envelope = isGreeting
@@ -69,7 +74,18 @@ export class FileConversationPlaybackReadiness implements ConversationPlaybackRe
           runId: this.options.runId,
           turnId: request.turnId,
         })
-      : conversationAnswerPlaybackReadinessEnvelopeSchema.parse({
+      : request.playbackKind === "thinking-cue"
+        ? conversationThinkingCuePlaybackReadinessEnvelopeSchema.parse({
+            capturePlan: "thinking-cue",
+            expectedPcmBytes: request.expectedPcmBytes,
+            kind: "thinking-cue",
+            meetingId: request.meetingId,
+            playbackAttemptId: request.playbackAttemptId,
+            protocolVersion: conversationPlaybackReadinessProtocolVersion,
+            runId: this.options.runId,
+            turnId: request.turnId,
+          })
+        : conversationAnswerPlaybackReadinessEnvelopeSchema.parse({
           capturePlan: "addressed-answer",
           kind: request.playbackKind,
           meetingId: request.meetingId,
@@ -121,7 +137,9 @@ export class FileConversationPlaybackReadiness implements ConversationPlaybackRe
         const decoded = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
         const ready = expected.kind === "greeting"
           ? conversationGreetingObserverReadySchema.parse(decoded)
-          : conversationAnswerObserverReadySchema.parse(decoded);
+          : expected.kind === "thinking-cue"
+            ? conversationThinkingCueObserverReadySchema.parse(decoded)
+            : conversationAnswerObserverReadySchema.parse(decoded);
         if (!sameEnvelope(
           ready,
           expected,
@@ -229,20 +247,26 @@ function assertSafeReadyStats(
 }
 
 type ReadinessEnvelope = ConversationAnswerPlaybackReadinessEnvelope |
-  ConversationGreetingPlaybackReadinessEnvelope;
+  ConversationGreetingPlaybackReadinessEnvelope |
+  ConversationThinkingCuePlaybackReadinessEnvelope;
 
 function safeFileStem(envelope: ReadinessEnvelope): string {
   return createHash("sha256")
     .update(envelope.kind === "greeting"
       ? serializeConversationGreetingPlaybackReadinessEnvelope(envelope)
-      : serializeConversationAnswerPlaybackReadinessEnvelope(envelope))
+      : envelope.kind === "thinking-cue"
+        ? serializeConversationThinkingCuePlaybackReadinessEnvelope(envelope)
+        : serializeConversationAnswerPlaybackReadinessEnvelope(envelope))
     .digest("hex");
 }
 
 async function publishCreateOnlyJson(path: string, value: unknown): Promise<void> {
-  const encoded = JSON.stringify(value !== null && typeof value === "object" &&
-      "kind" in value && value.kind === "greeting"
-    ? conversationGreetingPlaybackIntentSchema.parse(value)
+  const encoded = JSON.stringify(value !== null && typeof value === "object" && "kind" in value
+    ? value.kind === "greeting"
+      ? conversationGreetingPlaybackIntentSchema.parse(value)
+      : value.kind === "thinking-cue"
+        ? conversationThinkingCuePlaybackIntentSchema.parse(value)
+        : conversationAnswerPlaybackIntentSchema.parse(value)
     : conversationAnswerPlaybackIntentSchema.parse(value));
   if (Buffer.byteLength(encoded, "utf8") > maximumReceiptBytes) {
     throw new Error("Playback intent is too large");
@@ -277,7 +301,8 @@ async function publishCreateOnlyJson(path: string, value: unknown): Promise<void
 
 function sameEnvelope(
   actual: ReturnType<typeof conversationAnswerObserverReadySchema.parse> |
-    ReturnType<typeof conversationGreetingObserverReadySchema.parse>,
+    ReturnType<typeof conversationGreetingObserverReadySchema.parse> |
+    ReturnType<typeof conversationThinkingCueObserverReadySchema.parse>,
   expected: ReadinessEnvelope,
   expectedObserverParticipantId: string | undefined,
 ): boolean {
@@ -285,7 +310,9 @@ function sameEnvelope(
     (actual.kind === "greeting" && expected.kind === "greeting"
       ? actual.participantId === expected.participantId
       : actual.kind === "answer" && expected.kind === "answer" &&
-        actual.playbackAttemptId === expected.playbackAttemptId) &&
+          actual.playbackAttemptId === expected.playbackAttemptId ||
+        actual.kind === "thinking-cue" && expected.kind === "thinking-cue" &&
+          actual.playbackAttemptId === expected.playbackAttemptId) &&
     actual.runId === expected.runId &&
     actual.turnId === expected.turnId &&
     actual.intentDigestSha256 === safeFileStem(expected) &&

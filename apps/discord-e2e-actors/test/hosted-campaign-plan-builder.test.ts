@@ -79,6 +79,8 @@ describe("hosted campaign strict plan builder", () => {
       .toBe("60000");
     expect(observer.environment.DISCORD_E2E_CONVERSATION_VOICE_READY_TIMEOUT_MS)
       .toBe("120000");
+    expect(observer.environment.DISCORD_E2E_CONVERSATION_VOICE_THINKING_CUE_MAX_DURATION_MS)
+      .toBe("10000");
     expect(observer.environment.DISCORD_E2E_CONVERSATION_VOICE_EXPECTED_DURATION_MS)
       .toBe("500");
     expect(observer.environment.DISCORD_E2E_CONVERSATION_VOICE_TURN_ID)

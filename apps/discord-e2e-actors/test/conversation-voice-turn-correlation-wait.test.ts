@@ -6,8 +6,11 @@ import { ConversationVoiceCaptureController } from
   "../src/conversation-voice-capture-controller.js";
 import { captureConversationVoiceFromOpenStream } from
   "../src/conversation-voice-stream-capture.js";
-import { waitForConversationVoiceCorrelationWhileGuardingAudio } from
-  "../src/conversation-voice-turn-correlation-wait.js";
+import {
+  assertCanAuthorizeConversationThinkingCue,
+  drainAuthorizedConversationCue,
+  waitForConversationVoiceCorrelationWhileGuardingAudio,
+} from "../src/conversation-voice-turn-correlation-wait.js";
 
 describe("conversation voice runtime turn correlation wait", () => {
   it("discards silence while flowing, then pauses and cleans up before resolving", async () => {
@@ -86,6 +89,88 @@ describe("conversation voice runtime turn correlation wait", () => {
     expect(stream.isPaused()).toBe(true);
     expectCorrelationWaitListenersRemoved(stream);
     stream.destroy();
+  });
+
+  it("drains only an authorized audible cue through bounded silence", async () => {
+    const stream = new PassThrough();
+    const draining = drainAuthorizedConversationCue({
+      isPacketAudible: (packet) => packet[0] !== 0,
+      maximumDurationMilliseconds: 1_000,
+      minimumDurationMilliseconds: 20,
+      silenceMilliseconds: 20,
+      stream,
+    });
+    stream.write(Uint8Array.of(0));
+    stream.write(Uint8Array.of(1));
+
+    await expect(draining).resolves.toBeUndefined();
+    expect(stream.isPaused()).toBe(true);
+    expectCorrelationWaitListenersRemoved(stream);
+    stream.destroy();
+  });
+
+  it("does not mistake a long internal cue gap for terminal silence", async () => {
+    const stream = new PassThrough();
+    const draining = drainAuthorizedConversationCue({
+      isPacketAudible: (packet) => packet[0] !== 0,
+      maximumDurationMilliseconds: 1_000,
+      minimumDurationMilliseconds: 500,
+      silenceMilliseconds: 50,
+      stream,
+    });
+    stream.write(Uint8Array.of(1));
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 350);
+    });
+    stream.write(Uint8Array.of(1));
+
+    await expect(draining).resolves.toBeUndefined();
+    expect(stream.isPaused()).toBe(true);
+    expectCorrelationWaitListenersRemoved(stream);
+    stream.destroy();
+  });
+
+  it("cancels a pending no-audio cue drain when an exact answer supersedes it", async () => {
+    const stream = new PassThrough();
+    const cancellation = new AbortController();
+    const draining = drainAuthorizedConversationCue({
+      isPacketAudible: () => false,
+      maximumDurationMilliseconds: 1_000,
+      minimumDurationMilliseconds: 20,
+      signal: cancellation.signal,
+      silenceMilliseconds: 20,
+      stream,
+    });
+    cancellation.abort();
+
+    await expect(draining).rejects.toThrow("cancelled");
+    expect(stream.isPaused()).toBe(true);
+    expectCorrelationWaitListenersRemoved(stream);
+    stream.destroy();
+  });
+
+  it("fails closed when an authorized cue emits no audio or exceeds its bound", async () => {
+    const stream = new PassThrough();
+    const draining = drainAuthorizedConversationCue({
+      isPacketAudible: () => false,
+      maximumDurationMilliseconds: 20,
+      minimumDurationMilliseconds: 5,
+      silenceMilliseconds: 5,
+      stream,
+    });
+    stream.write(Uint8Array.of(0));
+
+    await expect(draining).rejects.toThrow("bounded playback duration");
+    expect(stream.isPaused()).toBe(true);
+    expectCorrelationWaitListenersRemoved(stream);
+    stream.destroy();
+  });
+
+  it("authorizes at most two exact thinking cues before an addressed answer", () => {
+    expect(() => assertCanAuthorizeConversationThinkingCue(0)).not.toThrow();
+    expect(() => assertCanAuthorizeConversationThinkingCue(1)).not.toThrow();
+    expect(() => assertCanAuthorizeConversationThinkingCue(2))
+      .toThrow("more than two thinking cue intents");
   });
 
   it("cleans up when the correlation resolver throws synchronously", async () => {
