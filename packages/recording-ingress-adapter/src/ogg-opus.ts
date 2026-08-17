@@ -363,7 +363,9 @@ function lacingBodyLength(bytes: Uint8Array, offset: number, segmentCount: numbe
 }
 
 function verifyPageChecksum(bytes: Uint8Array, offset: number, pageLength: number): void {
-  const page = bytes.slice(offset, offset + pageLength);
+  // Buffer.slice() returns a view while Uint8Array.slice() returns a copy. The
+  // validator accepts either, so force an owned copy before zeroing the CRC.
+  const page = Uint8Array.from(bytes.subarray(offset, offset + pageLength));
   const view = new DataView(page.buffer, page.byteOffset, page.byteLength);
   const storedCrc = view.getUint32(22, true);
   view.setUint32(22, 0, true);
