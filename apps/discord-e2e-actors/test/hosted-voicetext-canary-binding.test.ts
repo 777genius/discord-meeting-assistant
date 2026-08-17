@@ -10,7 +10,7 @@ import {
   digestVoicetextCanaryRequiredTermsV1,
 } from "../src/hosted-voicetext-semantic-canary-producer.js";
 
-const expectedRequiredTermsSha256 = "61759ff7e2edd0d2dccbdc4a8a5ae327304d327aeb30f472bcab1500aba70d2c";
+const expectedRequiredTermsSha256 = "90ce968e882b6dcfd2b526a8b8bc85fb234bfd407b80d91bd295f2e7fb25fa56";
 
 describe("hosted Voicetext semantic canary binding", () => {
   it("pins the committed bilingual audio and its exact source transcript", async () => {

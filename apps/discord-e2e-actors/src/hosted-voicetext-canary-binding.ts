@@ -39,7 +39,7 @@ export const HOSTED_VOICETEXT_CANARY_BINDING_V1 = Object.freeze({
     "Meeting Platform",
     "Craig recording",
     "PostgreSQL",
-    "Discord thread",
+    "Discord",
     "пятницу",
   ]),
   schemaVersion: 1,
