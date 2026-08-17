@@ -43,6 +43,30 @@ describe("hosted remote admission composition", () => {
     expect(JSON.stringify(result)).not.toContain(secret);
   });
 
+  it("preserves a prototype-backed clock probe through composition validation", async () => {
+    const calls: string[] = [];
+    const config = composition(calls);
+    class PrototypeClockProbe {
+      readonly maximumClockSkewBoundMs = 250;
+
+      async collectClockPreflight(): Promise<ReturnType<typeof clockExchange>> {
+        calls.push("prototype-clock");
+        return clockExchange(now);
+      }
+    }
+    const probe = createHostedCampaignRemoteAdmissionProbe({
+      ...config,
+      clock: new PrototypeClockProbe(),
+    });
+
+    const result = await evaluateHostedRemoteAdmission(probe, {
+      campaignId, meetingPlatformRevision: revision, planSha256,
+    }, () => now);
+
+    expect(result.missingSections).toEqual([]);
+    expect(calls).toContain("prototype-clock");
+  });
+
   it("samples time after a slow remote probe and admits evidence fresh at completion", async () => {
     let currentTime = now;
     const config = composition([], () => currentTime);
