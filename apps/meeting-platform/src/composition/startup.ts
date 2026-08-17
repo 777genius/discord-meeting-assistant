@@ -24,6 +24,7 @@ interface ExclusiveRecordingSpoolOwner {
 
 interface PostCallOutboxDispatchPort {
   dispatchPending(): Promise<unknown>;
+  prepareLegacyBindings?(): Promise<number>;
 }
 
 interface PostCallWorkerLifecycle {
@@ -57,6 +58,7 @@ export async function startPlatformServices(input: {
   await loginDiscord(input.config, input.discord);
   await registerDiscordGuildSetupCommand(input.discord);
   await input.dependencyReadiness.assertReady();
+  await input.outboxDispatcher.prepareLegacyBindings?.();
   input.guildSetupHandler.start();
   await input.worker.waitUntilReady();
   await startPostCallWorker(input.worker, input.logger);

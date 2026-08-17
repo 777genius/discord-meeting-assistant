@@ -5,6 +5,9 @@ export {
   type MeetingPersistenceConflict,
 } from "./errors.js";
 export { PostgresMeetingRepository } from "./postgres-meeting-repository.js";
+export {
+  PostgresTranscriptionExecutionBindingStore,
+} from "./postgres-transcription-execution-binding-store.js";
 export { PostgresLiveMeetingRepository } from "./postgres-live-meeting-repository.js";
 export { PostgresSummaryPublicationEffectLedger } from "./postgres-summary-publication-effect-ledger.js";
 export { PostgresGuildConfigurationRepository } from "./postgres-guild-configuration-repository.js";

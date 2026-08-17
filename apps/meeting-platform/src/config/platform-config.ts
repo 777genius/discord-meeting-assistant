@@ -70,8 +70,10 @@ export interface PlatformConfig {
     readonly batchMaxArtifactBytes: number;
     readonly batchMaxConcurrency: number;
     readonly batchMaxConcurrentMeetings: number;
+    readonly batchProfile: "deepgram-nova-3" | "elevenlabs-scribe-v2";
     readonly liveMaxConcurrentSessions: number;
     readonly livePacketBackpressureTimeoutMs: number;
+    readonly liveProfile: "deepgram-nova-3" | "elevenlabs-scribe-v2-realtime";
     readonly webSocketUrl: string;
   };
 }

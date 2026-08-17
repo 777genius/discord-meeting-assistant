@@ -20,8 +20,14 @@ import type { Logger, PrometheusMetrics } from "@discord-meeting/observability-a
 import type { ConnectionOptions } from "bullmq";
 
 import { PostCallOutboxDispatcher } from "../application/post-call-outbox-dispatcher.js";
+import type { FinalTranscriptionExecutionBinding } from "./transcription.js";
 
 const postCallQueuePrefix = "discord-meeting-v1";
+
+interface TranscriptionExecutionBindingStore {
+  backfillRecoverableUnboundTranscriptionExecutionBindings(binding: string): Promise<number>;
+  pinTranscriptionExecutionBinding(meetingId: string, binding: string): Promise<string>;
+}
 
 interface CloseablePostCallQueue {
   close(): Promise<void>;
@@ -42,6 +48,10 @@ export async function createPlatformPostCallComposition(input: {
   readonly meetings: PostCallOutbox & PostCallTerminalFailureSettlement;
   readonly observer: PostCallObserver;
   readonly processMeeting: ProcessMeetingSummary;
+  readonly legacyTranscriptionExecutionBinding: FinalTranscriptionExecutionBinding;
+  readonly selectedTranscriptionExecutionBinding: FinalTranscriptionExecutionBinding;
+  readonly supportedTranscriptionExecutionBindings: ReadonlySet<FinalTranscriptionExecutionBinding>;
+  readonly transcriptionExecutionBindings: TranscriptionExecutionBindingStore;
 }): Promise<PlatformPostCallComposition> {
   let queue: ReturnType<typeof createPostCallQueue> | undefined;
   let queueEvents: ReturnType<typeof createPostCallQueueEvents> | undefined;
@@ -67,6 +77,14 @@ export async function createPlatformPostCallComposition(input: {
       enqueuer,
       deadLetterLedger,
       input.logger,
+      {
+        store: input.transcriptionExecutionBindings,
+        values: {
+          legacyRecovery: input.legacyTranscriptionExecutionBinding,
+          selected: input.selectedTranscriptionExecutionBinding,
+          supported: input.supportedTranscriptionExecutionBindings,
+        },
+      },
     );
     const worker = createPostCallWorker({
       autorun: false,

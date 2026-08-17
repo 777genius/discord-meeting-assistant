@@ -33,6 +33,10 @@ const service = z.object({
   repositoryDigest,
   sourceRevision,
 }).strict();
+const voicetextProfiles = z.object({
+  batch: z.enum(["deepgram-nova-3", "elevenlabs-scribe-v2"]),
+  live: z.enum(["deepgram-nova-3", "elevenlabs-scribe-v2-realtime"]),
+}).strict();
 
 export const hostedCampaignReleaseBindingV1Schema = z.object({
   canary: z.object({
@@ -42,6 +46,7 @@ export const hostedCampaignReleaseBindingV1Schema = z.object({
     }).strict(),
     fixturePath: absolutePath,
     fixtureSha256: sha256,
+    profiles: voicetextProfiles,
     requiredTerms: z.array(z.string().min(1)).min(1).max(256),
   }).strict(),
   releaseId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u),
@@ -66,6 +71,7 @@ export const hostedCampaignReleaseTrustRootV1Schema = z.object({
     maximumCharacterErrorRate: z.number().min(0).lt(1),
     maximumTimelineDeltaMs: z.number().int().nonnegative().max(60_000),
     maximumWordErrorRate: z.number().min(0).lt(1),
+    profiles: voicetextProfiles,
     requiredTerms: z.array(z.string().min(1)).min(1).max(256),
     transcriptExpectationSha256: sha256,
     expectedSegments: z.array(transcriptSegment).min(1).max(1_024),
@@ -217,7 +223,8 @@ export function createHostedCampaignReleaseConfig(
       input: { binding: { ...binding, fixtureSha256: release.canary.fixtureSha256,
         transcriptExpectationSha256: trust.canary.transcriptExpectationSha256 },
       endpoint: release.canary.endpoint, expectedSegments: trust.canary.expectedSegments,
-      fixturePath: release.canary.fixturePath, now, requiredTerms: release.canary.requiredTerms,
+      fixturePath: release.canary.fixturePath, now, profiles: release.canary.profiles,
+      requiredTerms: release.canary.requiredTerms,
       timeoutMs: trust.voicetextTimeoutMs, ttlMs: trust.voicetextReceiptTtlMs },
       runner: new HostedRemoteVoicetextCanaryRunnerV1(remoteProcess),
     },
@@ -251,6 +258,7 @@ function assertReleaseMatchesTrustRoot(
   const canary = release.canary;
   if (canary.fixturePath !== trust.canary.fixturePath || canary.fixtureSha256 !== trust.canary.fixtureSha256
     || JSON.stringify(canonical(canary.endpoint)) !== JSON.stringify(canonical(trust.canary.endpoint))
+    || JSON.stringify(canonical(canary.profiles)) !== JSON.stringify(canonical(trust.canary.profiles))
     || JSON.stringify(canonical(canary.requiredTerms)) !== JSON.stringify(canonical(trust.canary.requiredTerms))) {
     throw new Error("Release canary is not allowed by the compiled trust root");
   }

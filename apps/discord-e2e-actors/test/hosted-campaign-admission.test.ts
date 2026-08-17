@@ -92,6 +92,7 @@ describe("hosted campaign admission", () => {
           endpoint: { batch: { origin: "https://example.test", path: "/batch" },
             live: { origin: "wss://example.test", path: "/live" } },
           maximumCharacterErrorRate: 0.15, maximumTimelineDeltaMs: 250, maximumWordErrorRate: 0.2,
+          profiles: { batch: "deepgram-nova-3", live: "deepgram-nova-3" },
           requiredTermCount: 1, requiredTermsExpectationSha256: "1".repeat(64),
         },
       },

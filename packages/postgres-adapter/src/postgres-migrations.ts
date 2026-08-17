@@ -22,6 +22,7 @@ const migrationDefinitions = [
     transactional: false,
   },
   { fileName: "0013_rename_post_call_recoverable_index.sql" },
+  { fileName: "0014_add_transcription_execution_binding.sql" },
 ] as const;
 
 const migrationLockKey = "718330091620232601";

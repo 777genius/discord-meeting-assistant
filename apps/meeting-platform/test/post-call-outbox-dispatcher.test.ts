@@ -72,6 +72,103 @@ describe("PostCallOutboxDispatcher", () => {
     expect(markPostCallProcessed).not.toHaveBeenCalled();
     expect(pending).toHaveLength(1);
   });
+});
+
+describe("PostCallOutboxDispatcher durable binding", () => {
+  const terminalRecorder = { record: async () => {} };
+
+  it("backfills legacy work to frozen v2 and pins selected work before Redis enqueue", async () => {
+    const events: string[] = [];
+    const backfill = vi.fn(async (binding: string) => {
+      events.push(`backfill:${binding}`);
+      return 2;
+    });
+    const pin = vi.fn(async (meetingId: string, binding: string) => {
+      events.push(`pin:${meetingId}:${binding}`);
+      return binding;
+    });
+    const enqueue = vi.fn(async () => {
+      events.push("enqueue");
+      return { status: "available" as const };
+    });
+    const dispatcher = new PostCallOutboxDispatcher(
+      {
+        listRecoverablePostCall: async () => [{
+          meetingId: "meeting-new",
+          recoveryGeneration: 0,
+          schemaVersion: 1,
+        }],
+        markPostCallEnqueued: async () => {},
+        markPostCallProcessed: async () => {},
+      },
+      { enqueue },
+      terminalRecorder,
+      { warn: vi.fn() },
+      {
+        store: {
+          backfillRecoverableUnboundTranscriptionExecutionBindings: backfill,
+          pinTranscriptionExecutionBinding: pin,
+        },
+        values: {
+          legacyRecovery: "voicetext-batch-v2:deepgram-nova-3",
+          selected: "voicetext-batch-v3:elevenlabs-scribe-v2",
+          supported: new Set([
+            "voicetext-batch-v2:deepgram-nova-3",
+            "voicetext-batch-v3:elevenlabs-scribe-v2",
+          ]),
+        },
+      },
+    );
+
+    await expect(dispatcher.prepareLegacyBindings()).resolves.toBe(2);
+    await expect(dispatcher.dispatchPending()).resolves.toEqual({ dispatched: 1, failed: 0 });
+    expect(events).toEqual([
+      "backfill:voicetext-batch-v2:deepgram-nova-3",
+      "pin:meeting-new:voicetext-batch-v3:elevenlabs-scribe-v2",
+      "enqueue",
+    ]);
+  });
+
+  it("retains a job whose persisted binding is unknown to this runtime", async () => {
+    const enqueue = vi.fn(async () => ({ status: "available" as const }));
+    const warn = vi.fn();
+    const dispatcher = new PostCallOutboxDispatcher(
+      {
+        listRecoverablePostCall: async () => [{
+          meetingId: "meeting-newer-runtime",
+          recoveryGeneration: 0,
+          schemaVersion: 1,
+        }],
+        markPostCallEnqueued: async () => {},
+        markPostCallProcessed: async () => {},
+      },
+      { enqueue },
+      terminalRecorder,
+      { warn },
+      {
+        store: {
+          backfillRecoverableUnboundTranscriptionExecutionBindings: async () => 0,
+          pinTranscriptionExecutionBinding: async () => "voicetext-batch-v4:new-provider",
+        },
+        values: {
+          legacyRecovery: "voicetext-batch-v2:deepgram-nova-3",
+          selected: "voicetext-batch-v2:deepgram-nova-3",
+          supported: new Set(["voicetext-batch-v2:deepgram-nova-3"]),
+        },
+      },
+    );
+
+    await expect(dispatcher.dispatchPending()).resolves.toEqual({ dispatched: 0, failed: 1 });
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      "Post-call outbox dispatch failed; durable item retained",
+      { errorName: "Error", meetingId: "meeting-newer-runtime" },
+    );
+  });
+});
+
+describe("PostCallOutboxDispatcher reconciliation", () => {
+  const terminalRecorder = { record: async () => {} };
 
   it("coalesces concurrent reconciliation runs", async () => {
     let release: (() => void) | undefined;

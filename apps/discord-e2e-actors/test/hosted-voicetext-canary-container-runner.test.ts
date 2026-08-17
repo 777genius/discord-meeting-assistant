@@ -16,6 +16,7 @@ const input = {
     live: { origin: "wss://live.test", path: "/v1/listen" },
   },
   fixturePath: "/fixtures/canary.ogg", timeoutMs: 20_000,
+  profiles: { batch: "elevenlabs-scribe-v2", live: "elevenlabs-scribe-v2-realtime" },
 } as const;
 
 describe("hosted Voicetext canary container runner", () => {
@@ -39,6 +40,8 @@ describe("hosted Voicetext canary container runner", () => {
     const deadlineFlag = request?.args.indexOf("--deadline-ms") ?? -1;
     expect(deadlineFlag).toBeGreaterThan(-1);
     expect(request?.args[deadlineFlag + 1]).toBe("19000");
+    expect(flagValue(request?.args, "--batch-profile")).toBe(input.profiles.batch);
+    expect(flagValue(request?.args, "--live-profile")).toBe(input.profiles.live);
     expect(request?.args).not.toContain("dist/run-voicetext-semantic-canary.js");
     expect(JSON.stringify(request)).not.toMatch(/token|secret/iu);
   });
@@ -62,3 +65,9 @@ describe("hosted Voicetext canary container runner", () => {
     expect(execute).not.toHaveBeenCalled();
   });
 });
+
+function flagValue(args: readonly string[] | undefined, flag: string): string | undefined {
+  if (args === undefined) {return undefined;}
+  const index = args.indexOf(flag);
+  return index < 0 ? undefined : args[index + 1];
+}

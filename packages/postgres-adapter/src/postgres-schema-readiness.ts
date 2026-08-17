@@ -47,6 +47,7 @@ const requiredColumns = [
   "meeting_core.post_call_outbox.recovery_generation",
   "meeting_core.post_call_outbox.recovery_after",
   "meeting_core.post_call_outbox.recovery_source_job_ref",
+  "meeting_core.post_call_outbox.transcription_execution_binding",
   "meeting_core.live_meetings.meeting_id",
   "meeting_core.live_meetings.revision",
   "meeting_core.live_meetings.snapshot",
@@ -101,6 +102,7 @@ const requiredCheckConstraints = [
   ["meeting_core", "post_call_outbox", "post_call_outbox_terminal_receipt_is_exclusive"],
   ["meeting_core", "post_call_outbox", "post_call_outbox_recovery_generation_is_valid"],
   ["meeting_core", "post_call_outbox", "post_call_outbox_recovery_receipt_is_consistent"],
+  ["meeting_core", "post_call_outbox", "post_call_outbox_transcription_execution_binding_is_bounded"],
   ["meeting_core", "live_meetings", "live_meetings_snapshot_is_object"],
   ["meeting_core", "live_meetings", "live_meetings_snapshot_identity_matches"],
   ["meeting_core", "live_meetings", "live_meetings_snapshot_revision_matches"],
@@ -194,6 +196,10 @@ interface MissingNameRow {
   readonly name: string;
 }
 
+const requiredTriggers = [
+  "meeting_core.post_call_outbox.post_call_outbox_transcription_execution_binding_is_immutable",
+] as const;
+
 export interface PostgresSchemaReadinessPort {
   assertReady(): Promise<void>;
 }
@@ -227,6 +233,7 @@ export class PostgresSchemaReadiness implements PostgresSchemaReadinessPort {
       await this.assertColumns();
       await this.assertIndexes();
       await this.assertConstraints();
+      await this.assertTriggers();
       const ledger = await readMigrationLedger(this.pool);
       if (ledger.length !== requiredMigrations.length) {
         throw new PostgresSchemaReadinessError(
@@ -333,6 +340,31 @@ export class PostgresSchemaReadiness implements PostgresSchemaReadinessPort {
       ]),
       "required PostgreSQL structural constraint is missing or invalid",
     );
+  }
+
+  private async assertTriggers(): Promise<void> {
+    const result = await this.pool.query<MissingNameRow>(
+      `
+        SELECT required_trigger.identifier AS name
+        FROM unnest($1::text[]) AS required_trigger(identifier)
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM pg_trigger AS trigger
+          JOIN pg_class AS relation ON relation.oid = trigger.tgrelid
+          JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+          WHERE namespace.nspname || '.' || relation.relname || '.' || trigger.tgname =
+            required_trigger.identifier
+            AND NOT trigger.tgisinternal
+            AND trigger.tgenabled <> 'D'
+        )
+      `,
+      [requiredTriggers],
+    );
+    if (result.rows.length > 0) {
+      throw new PostgresSchemaReadinessError(
+        `required PostgreSQL trigger is missing or disabled: ${result.rows.map(({ name }) => name).join(", ")}`,
+      );
+    }
   }
 
   private async assertConstraintsOfType(

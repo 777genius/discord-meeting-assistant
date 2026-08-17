@@ -1,14 +1,11 @@
 import type {
+  VoicetextBatchContractIdentity,
   VoicetextBatchReadableSegment,
   VoicetextBatchTaskResult,
   VoicetextBatchUtterance,
 } from "./voicetext-batch-contract.js";
-import {
-  voicetextBatchLanguage,
-  voicetextBatchModel,
-  voicetextBatchProvider,
-} from "./voicetext-batch-contract.js";
 import { VoicetextAdapterError } from "./errors.js";
+import { parseVoicetextBatchV3Response } from "./voicetext-batch-v3-response.js";
 
 const maximumResponseBytes = 2 * 1_024 * 1_024;
 const maximumRetryAfterMilliseconds = 3_600_000;
@@ -19,6 +16,7 @@ const maximumTranscriptCharacters = 1_000_000;
 
 export async function parseVoicetextBatchTaskResponse(
   response: Response,
+  identity: VoicetextBatchContractIdentity,
 ): Promise<VoicetextBatchTaskResult> {
   if (response.status === 409) {
     await discardVoicetextBatchResponse(response);
@@ -50,7 +48,9 @@ export async function parseVoicetextBatchTaskResponse(
     );
   }
   const payload = await readJson(response);
-  return response.status === 202 ? parsePending(payload) : parseFinal(payload);
+  return identity.contractVersion === "3"
+    ? parseVoicetextBatchV3Response(payload, response.status, identity)
+    : response.status === 202 ? parsePending(payload) : parseFinal(payload, identity);
 }
 
 export function validateVoicetextBatchJobId(value: unknown): string {
@@ -88,7 +88,10 @@ function parsePending(value: unknown): VoicetextBatchTaskResult {
   };
 }
 
-function parseFinal(value: unknown): VoicetextBatchTaskResult {
+function parseFinal(
+  value: unknown,
+  identity: VoicetextBatchContractIdentity,
+): VoicetextBatchTaskResult {
   const response = record(value, "batch final response");
   if (
     response.success === false &&
@@ -107,9 +110,9 @@ function parseFinal(value: unknown): VoicetextBatchTaskResult {
   }
   const result = record(response.result, "batch transcription result");
   if (
-    result.provider !== voicetextBatchProvider ||
-    result.model !== voicetextBatchModel ||
-    result.language !== voicetextBatchLanguage ||
+    result.provider !== identity.provider ||
+    result.model !== identity.model ||
+    result.language !== identity.language ||
     !isBoundedString(result.text, maximumTranscriptCharacters)
   ) {
     throw invalidVoicetextBatchResponse();
@@ -150,9 +153,9 @@ function parseOptionalReadableSegments(
     }
     let totalCharacters = 0;
     let totalSourceUtteranceReferences = 0;
-    return segmentValues.map((segmentValue) => {
+    return segmentValues.map((readableSegmentValue) => {
       const segment = parseReadableSegment(
-        segmentValue,
+        readableSegmentValue,
         durationSeconds,
         utteranceCount,
       );

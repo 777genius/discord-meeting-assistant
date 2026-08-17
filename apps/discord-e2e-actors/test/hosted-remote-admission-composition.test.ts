@@ -322,6 +322,7 @@ function composition(calls: string[], time: () => number = () => now): HostedRem
         endpoint: { batch: { origin: "https://voicetext.test", path: "/v2/listen" },
           live: { origin: "wss://voicetext.test", path: "/v1/listen" } },
         expectedSegments, fixturePath: "/fixtures/canary.ogg", now: time,
+        profiles: { batch: "deepgram-nova-3", live: "deepgram-nova-3" },
         requiredTerms: ["Botik"], timeoutMs: 30_000, ttlMs: 30_000,
       },
       runner: { run: async () => { calls.push("voicetext"); return voicetextResult(); } },
@@ -412,7 +413,7 @@ function voicetextResult(
   return { batch: { firstSubmission: { jobId: "job", resultId: "result", resultSha256: digest },
     idempotentReplay: { jobId: "job", resultId: "result", resultSha256: digest }, segments, utteranceCount: 1 },
   live: { audioAcknowledgements: { expected: 1, received: 1 }, finalizeComplete: true, protocolReady: true,
-    segments }, schemaVersion: 1,
+    segments }, profiles: { batch: "deepgram-nova-3", live: "deepgram-nova-3" }, schemaVersion: 1,
   tokenFile: { generationId: "generation-voicetext", mode: 0o400, ownerUid: 10_001,
     path: "/run/secrets/voicetext" } };
 }

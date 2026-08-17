@@ -84,6 +84,10 @@ export async function startMeetingPlatform(
       metrics,
       observer: createQueueObserver(logger, metrics),
       processMeeting,
+      legacyTranscriptionExecutionBinding: core.legacyTranscriptionExecutionBinding,
+      selectedTranscriptionExecutionBinding: core.selectedTranscriptionExecutionBinding,
+      supportedTranscriptionExecutionBindings: core.supportedTranscriptionExecutionBindings,
+      transcriptionExecutionBindings: core.transcriptionExecutionBindings,
     });
     cleanup.defer("post-call runtime", () => closePostCallResources(postCall));
     const ingress = new PlatformRecordingIngress({

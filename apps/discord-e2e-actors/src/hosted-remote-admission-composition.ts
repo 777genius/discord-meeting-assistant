@@ -113,6 +113,7 @@ export function createHostedCampaignRemoteAdmissionProbe(
       binding: config.voicetext.input.binding,
       endpoint: config.voicetext.input.endpoint,
       ...config.voicetext.fixtureExpectation,
+      profiles: config.voicetext.input.profiles,
       requiredTermCount: config.voicetext.input.requiredTerms.length,
       requiredTermsExpectationSha256: digestVoicetextCanaryRequiredTermsV1(
         config.voicetext.input.requiredTerms,

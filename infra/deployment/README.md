@@ -59,6 +59,24 @@ digest. `DISCORD_FINAL_PUBLICATION_MODE=separate-message` keeps the live draft a
 publishes one separate idempotent final summary by default. Set it to
 `replace-live` only for the previous single-message behavior.
 
+VoiceText batch and live recognition are selected independently in Compose:
+
+```text
+VOICETEXT_BATCH_PROFILE=deepgram-nova-3
+VOICETEXT_LIVE_PROFILE=deepgram-nova-3
+```
+
+Batch also permits `elevenlabs-scribe-v2`; live also permits
+`elevenlabs-scribe-v2-realtime`. Every mixed combination is supported. Invalid
+values fail Meeting Platform startup, and omitted selectors default
+independently to Deepgram. The Deepgram batch choice preserves contract v2 and
+its existing idempotency identity; ElevenLabs batch uses strict contract v3.
+Live always keeps raw Discord Opus at mono 48 kHz and requires the selected
+provider/model in VoiceText `ready` before any audio. Neither selector exposes
+provider credentials, endpoints, SDKs, or probes to Discord. The final batch
+transcript from Craig's authoritative per-speaker Ogg tracks remains the only
+final evidence used by summary, memory, or RAG; live text stays derived.
+
 ## Redis queue durability
 
 Copy `redis.conf.example` to `${DEPLOY_ROOT}/secrets/redis.conf`, replace the

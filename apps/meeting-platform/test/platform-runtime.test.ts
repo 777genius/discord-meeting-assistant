@@ -237,8 +237,10 @@ describe("meeting platform runtime wiring", () => {
       batchMaxArtifactBytes: 64 * 1_024 * 1_024,
       batchMaxConcurrency: 6,
       batchMaxConcurrentMeetings: 1,
+      batchProfile: "deepgram-nova-3",
       liveMaxConcurrentSessions: 10,
       livePacketBackpressureTimeoutMs: 2_000,
+      liveProfile: "deepgram-nova-3",
       webSocketUrl: "wss://api.voicetext.site/api/v1/transcribe/stream",
     });
 

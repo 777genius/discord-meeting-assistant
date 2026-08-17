@@ -29,6 +29,17 @@ interface OutboxLogger {
   warn(message: string, context?: Readonly<Record<string, unknown>>): void;
 }
 
+interface TranscriptionExecutionBindingStore {
+  backfillRecoverableUnboundTranscriptionExecutionBindings(binding: string): Promise<number>;
+  pinTranscriptionExecutionBinding(meetingId: string, binding: string): Promise<string>;
+}
+
+interface TranscriptionExecutionBindings {
+  readonly legacyRecovery: string;
+  readonly selected: string;
+  readonly supported: ReadonlySet<string>;
+}
+
 export interface PostCallDispatchResult {
   readonly dispatched: number;
   readonly failed: number;
@@ -42,7 +53,20 @@ export class PostCallOutboxDispatcher {
     private readonly enqueuer: PostCallEnqueuerPort,
     private readonly terminalRecorder: PostCallTerminalRecorderPort,
     private readonly logger: OutboxLogger,
+    private readonly binding?: {
+      readonly store: TranscriptionExecutionBindingStore;
+      readonly values: TranscriptionExecutionBindings;
+    },
   ) {}
+
+  public async prepareLegacyBindings(): Promise<number> {
+    if (this.binding === undefined) {
+      return 0;
+    }
+    return this.binding.store.backfillRecoverableUnboundTranscriptionExecutionBindings(
+      this.binding.values.legacyRecovery,
+    );
+  }
 
   public dispatchPending(limit = 100): Promise<PostCallDispatchResult> {
     this.#active ??= this.#dispatch(limit).finally(() => {
@@ -69,6 +93,15 @@ export class PostCallOutboxDispatcher {
     let failed = 0;
     for (const item of pending) {
       try {
+        if (this.binding !== undefined) {
+          const pinned = await this.binding.store.pinTranscriptionExecutionBinding(
+            item.meetingId,
+            this.binding.values.selected,
+          );
+          if (!this.binding.values.supported.has(pinned)) {
+            throw new Error("transcription execution binding is unsupported by this runtime");
+          }
+        }
         const receipt = await this.enqueuer.enqueue(item);
         await this.applyReceipt(item, receipt);
         dispatched += 1;
