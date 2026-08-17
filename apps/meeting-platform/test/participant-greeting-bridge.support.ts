@@ -229,7 +229,7 @@ export async function survivesCrashAfterProviderInvocation(): Promise<void> {
   });
   context.coordinator.handleProactiveTurn = (input) => {
     expect(receipts.state("greeting", "recording-1", russianParticipantId))
-      .toBe("completed");
+      .toBe("attempted");
     context.coordinator.calls.push(structuredClone(input));
     return Promise.resolve({ status: "active" as const });
   };
@@ -252,7 +252,7 @@ export async function survivesCrashAfterProviderInvocation(): Promise<void> {
   await restarted.bridge.settle();
 
   expect(receipts.state("greeting", "recording-1", russianParticipantId))
-    .toBe("completed");
+    .toBe("attempted");
   expect(restarted.coordinator.calls).toEqual([]);
   context.bridge.close();
   await abandonedDrain;
@@ -301,7 +301,7 @@ export async function fencesThrownAdmissionOutcome(): Promise<void> {
   rejectAdmission?.();
   await draining;
   expect(receipts.state("greeting", "recording-1", russianParticipantId))
-    .toBe("completed");
+    .toBe("suppressed_ambiguous");
   const restarted = fixture(true, "ru", logger, () => 9_999, undefined, {
     oneShotReceipts: receipts,
   });

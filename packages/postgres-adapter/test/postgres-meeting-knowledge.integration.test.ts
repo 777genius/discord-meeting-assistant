@@ -22,7 +22,6 @@ import {
   PostgresLiveFinalizedMemoryLifecycle,
   PostgresLiveFinalizedMemoryQuery,
   PostgresLiveFinalizedMemoryStore,
-  PostgresConversationOneShotReceiptStore,
   PostgresLiveMeetingRepository,
   PostgresQuestionAdmissionCommit,
   PostgresQuestionJobStore,
@@ -719,89 +718,5 @@ describe("PostgreSQL live finalized memory", () => {
     })).resolves.toBeNull();
     await lifecycle.finishMeeting(meetingId);
     await expect(lifecycle.registerMeeting(identity)).resolves.toBe("ineligible");
-  });
-});
-
-describe("PostgreSQL conversation one-shot receipts", () => {
-  it("durably releases a failed farewell lease so one retry can settle", async (context) => {
-    const database = databaseOrSkip(context);
-    const store = new PostgresConversationOneShotReceiptStore(database);
-    const input = {
-      kind: "farewell" as const,
-      meetingId: "farewell-retry-receipt-meeting-1",
-      subjectId: "meeting",
-    };
-    const first = await store.reserve({ ...input, leaseSeconds: 120 });
-    expect(first.status).toBe("reserved");
-    if (first.status !== "reserved") {
-      throw new Error("initial farewell receipt was not reserved");
-    }
-
-    await store.release({ ...input, leaseToken: first.leaseToken });
-    const retry = await store.reserve({ ...input, leaseSeconds: 120 });
-    expect(retry.status).toBe("reserved");
-    if (retry.status !== "reserved") {
-      throw new Error("released farewell receipt could not be retried");
-    }
-    expect(retry.leaseToken).not.toBe(first.leaseToken);
-
-    await store.complete({ ...input, leaseToken: retry.leaseToken });
-    await expect(store.reserve({ ...input, leaseSeconds: 120 })).resolves.toEqual({
-      status: "completed",
-    });
-  });
-
-  it("reclaims an expired crash lease and fences its stale owner across restart", async (context) => {
-    const database = databaseOrSkip(context);
-    const input = {
-      kind: "greeting" as const,
-      meetingId: "restart-receipt-meeting-1",
-      subjectId: "restart-receipt-participant-1",
-    };
-    const first = new PostgresConversationOneShotReceiptStore(database);
-    const firstLease = await first.reserve({ ...input, leaseSeconds: 5 });
-    expect(firstLease.status).toBe("reserved");
-    if (firstLease.status !== "reserved") {
-      throw new Error("initial receipt lease was not acquired");
-    }
-    await expect(first.reserve({ ...input, leaseSeconds: 5 })).resolves.toEqual({
-      status: "in_flight",
-    });
-    await database.query(`
-      UPDATE meeting_core.conversation_one_shot_receipts
-      SET lease_expires_at = transaction_timestamp() - interval '1 second'
-    `);
-
-    const restarted = new PostgresConversationOneShotReceiptStore(database);
-    const recoveredLease = await restarted.reserve({ ...input, leaseSeconds: 5 });
-    expect(recoveredLease.status).toBe("reserved");
-    if (recoveredLease.status !== "reserved") {
-      throw new Error("expired receipt lease was not recovered");
-    }
-    expect(recoveredLease.leaseToken).not.toBe(firstLease.leaseToken);
-    await expect(first.complete({
-      ...input,
-      leaseToken: firstLease.leaseToken,
-    })).rejects.toThrow("lost its reservation");
-    await restarted.complete({ ...input, leaseToken: recoveredLease.leaseToken });
-    await expect(restarted.reserve({ ...input, leaseSeconds: 5 })).resolves.toEqual({
-      status: "completed",
-    });
-    const rows = await database.query<{
-      readonly cue_kind: string;
-      readonly receipt_id: string;
-      readonly state: string;
-    }>(`
-      SELECT receipt_id, cue_kind, state
-      FROM meeting_core.conversation_one_shot_receipts
-    `);
-    expect(rows.rows).toHaveLength(1);
-    expect(rows.rows[0]).toMatchObject({
-      cue_kind: "greeting",
-      state: "completed",
-    });
-    expect(rows.rows[0]?.receipt_id).toMatch(/^[a-f0-9]{64}$/u);
-    expect(JSON.stringify(rows.rows)).not.toContain(input.meetingId);
-    expect(JSON.stringify(rows.rows)).not.toContain(input.subjectId);
   });
 });

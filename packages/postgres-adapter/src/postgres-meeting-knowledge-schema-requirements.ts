@@ -45,6 +45,7 @@ export const meetingKnowledgeRequiredColumns = [
   "meeting_core.conversation_one_shot_receipts.lease_expires_at",
   "meeting_core.conversation_one_shot_receipts.created_at",
   "meeting_core.conversation_one_shot_receipts.completed_at",
+  "meeting_core.conversation_one_shot_receipts.suppression_reason",
   "meeting_knowledge.question_jobs.question_id",
   "meeting_knowledge.question_jobs.requester_subject",
   "meeting_knowledge.question_jobs.question_hash",

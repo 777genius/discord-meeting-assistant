@@ -26,7 +26,6 @@ interface ParticipantGreetingBridgeDependencies {
 export class ParticipantGreetingBridge {
   private advanceRequested = false;
   private closed = false;
-  private readonly committedParticipantIds = new Set<string>();
   private readonly deadlines: ParticipantGreetingDeadlines;
   private drainPromise: Promise<void> | null = null;
   private readonly greetedParticipantIds = new Set<string>();
@@ -170,116 +169,125 @@ export class ParticipantGreetingBridge {
     greeting: ResolvedParticipantGreeting,
   ): Promise<boolean> {
     const idle = await this.deadlines.race(
-        participantId,
-        this.dependencies.configuration.coordinator.whenIdle(
-          this.dependencies.meetingId,
-        ),
-        () => this.nowMilliseconds(),
-      );
-      if (idle.status !== "completed") {
-        return false;
-      }
-      if (this.shouldStopGreeting(participantId)) {
-        return false;
-      }
-      const greetings = this.dependencies.configuration.greetings;
-      if (greetings === undefined) {
-        return false;
-      }
-      if (!greetings.isPlaybackReady(this.dependencies.meetingId)) {
-        this.enqueue(participantId, priority);
-        return true;
-      }
+      participantId,
+      this.dependencies.configuration.coordinator.whenIdle(
+        this.dependencies.meetingId,
+      ),
+      () => this.nowMilliseconds(),
+    );
+    if (idle.status !== "completed" || this.shouldStopGreeting(participantId)) {
+      return false;
+    }
+    const greetings = this.dependencies.configuration.greetings;
+    if (greetings === undefined) {
+      return false;
+    }
+    if (!greetings.isPlaybackReady(this.dependencies.meetingId)) {
+      this.enqueue(participantId, priority);
+      return true;
+    }
 
-      if (
-        !this.committedParticipantIds.has(participantId) &&
-        !await this.commitPlaybackAdmission(participantId)
-      ) {
-        return false;
-      }
-      // The durable write is a necessary fence, not a freshness grant. Re-read
-      // the absolute producer-time deadline immediately before the irreversible
-      // provider call in case the commit consumed the remaining budget.
-      if (!this.deadlines.ensureFresh(participantId, this.nowMilliseconds())) {
-        return false;
-      }
-      const playback = this.speak(participantId, greeting);
-      const firstAudio = await this.deadlines.race(
-        participantId,
-        playback.firstAudio,
-        () => this.nowMilliseconds(),
-      );
-      if (firstAudio.status === "expired") {
-        this.greetedParticipantIds.add(participantId);
-        await this.cancelPlayback(participantId);
-        // The durable fence already suppresses replay. A provider settlement may
-        // never arrive after cancellation or process loss, so it cannot gate the
-        // meeting-local queue or recovery.
-        this.detachPlaybackSettlement(playback);
-        return false;
-      }
-      if (firstAudio.value.status === "unplayed") {
-        const outcome = await playback.settlement;
-        if (outcome === "busy" || outcome === "unplayed") {
-          if (this.settleOutcome(participantId, priority, outcome)) {
-            return true;
-          }
-          return false;
-        }
-        this.greetedParticipantIds.add(participantId);
-        await this.cancelPlayback(participantId);
-        this.clearTerminalState(participantId);
-        return false;
-      }
-      if (!this.deadlines.acceptFirstAudio(
-        participantId,
-        firstAudio.value.startedAtMilliseconds,
-      )) {
-        this.greetedParticipantIds.add(participantId);
-        await this.cancelPlayback(participantId);
-        this.detachPlaybackSettlement(playback);
-        this.clearTerminalState(participantId);
-        return false;
-      }
+    const leaseToken = await this.reservePlaybackAdmission(participantId);
+    if (leaseToken === undefined) {
+      return false;
+    }
+    if (!this.deadlines.ensureFresh(participantId, this.nowMilliseconds())) {
+      await this.receipts.settle(participantId, "suppressed", "stale");
+      return false;
+    }
+    const beginAttempt = this.receipts.beginAttempt(participantId, leaseToken);
+    const attemptResult = await this.deadlines.race(
+      participantId,
+      beginAttempt,
+      () => this.nowMilliseconds(),
+    );
+    if (attemptResult.status === "expired") {
+      this.greetedParticipantIds.add(participantId);
+      void attemptResult.operation.then(
+        () => this.receipts.settle(participantId, "suppressed", "ambiguous"),
+        () => this.receipts.fenceOnce(participantId),
+      ).catch(() => {});
+      return false;
+    }
+    if (!this.deadlines.ensureFresh(participantId, this.nowMilliseconds())) {
+      await this.receipts.settle(participantId, "suppressed", "ambiguous");
+      return false;
+    }
+
+    const playback = this.speak(participantId, greeting);
+    const firstAudio = await this.deadlines.race(
+      participantId,
+      playback.firstAudio,
+      () => this.nowMilliseconds(),
+    );
+    if (firstAudio.status === "expired") {
+      this.greetedParticipantIds.add(participantId);
+      await this.cancelPlayback(participantId);
+      this.detachPlaybackSettlement(playback);
+      await this.receipts.settle(participantId, "suppressed", "ambiguous");
+      return false;
+    }
+    if (firstAudio.value.status === "unplayed") {
       const outcome = await playback.settlement;
+      if (outcome === "played") {
+        await this.receipts.settle(participantId, "suppressed", "ambiguous");
+        this.greetedParticipantIds.add(participantId);
+        this.clearTerminalState(participantId);
+        return false;
+      }
+      return this.settleOutcome(participantId, priority, outcome);
+    }
+    if (!this.deadlines.acceptFirstAudio(
+      participantId,
+      firstAudio.value.startedAtMilliseconds,
+    )) {
+      this.greetedParticipantIds.add(participantId);
+      await this.cancelPlayback(participantId);
+      this.detachPlaybackSettlement(playback);
+      await this.receipts.settle(participantId, "suppressed", "ambiguous");
+      this.clearTerminalState(participantId);
+      return false;
+    }
+    const outcome = await playback.settlement;
     return this.settleOutcome(participantId, priority, outcome);
   }
 
-  private settleOutcome(
+  private async settleOutcome(
     participantId: string,
     priority: ParticipantGreetingPriority,
     outcome: GreetingAttemptOutcome,
-  ): boolean {
+  ): Promise<boolean> {
     if (outcome === "busy" || outcome === "unplayed") {
       const retryCount = (this.retryCounts.get(participantId) ?? 0) + 1;
       this.retryCounts.set(participantId, retryCount);
-      if (retryCount <= maximumSafeRetries && this.presentParticipantIds.has(participantId)) {
-        if (!this.deadlines.ensureFresh(participantId, this.nowMilliseconds())) {
-          return false;
-        }
+      if (
+        retryCount <= maximumSafeRetries &&
+        this.presentParticipantIds.has(participantId) &&
+        this.deadlines.ensureFresh(participantId, this.nowMilliseconds())
+      ) {
+        await this.receipts.release(participantId, outcome);
         this.pendingGreetings.deferRetry(participantId, priority);
         return true;
       }
+      await this.receipts.settle(participantId, "suppressed", "ambiguous");
       this.dependencies.logger.warn("Participant greeting retries exhausted", {
         meetingId: this.dependencies.meetingId,
         participantId,
       });
-    } else if (outcome !== "played" && outcome !== "partial" && outcome !== "unknown" &&
-      outcome !== "failed" && outcome !== "queued" && outcome !== "reused") {
-      this.greetedParticipantIds.add(participantId);
-      this.clearTerminalState(participantId);
-      return false;
+    } else if (outcome === "played") {
+      await this.receipts.settle(participantId, "played");
+    } else {
+      await this.receipts.settle(participantId, "suppressed", "ambiguous");
     }
     this.greetedParticipantIds.add(participantId);
     this.clearTerminalState(participantId);
     return false;
   }
 
-  /** Commits the one-shot identity before any provider can observe playback. */
-  private async commitPlaybackAdmission(participantId: string): Promise<boolean> {
+  private async reservePlaybackAdmission(participantId: string): Promise<string | undefined> {
     if (!this.deadlines.ensureFresh(participantId, this.nowMilliseconds())) {
       await this.receipts.fenceOnce(participantId);
-      return false;
+      return undefined;
     }
     const reservationOperation = this.receipts.reserve(participantId);
     const receiptResult = await this.deadlines.race(
@@ -293,25 +301,15 @@ export class ParticipantGreetingBridge {
         participantId,
         receiptResult.operation,
       ));
-      return false;
+      return undefined;
     }
     const receipt = receiptResult.value;
     if (receipt.status !== "reserved") {
       this.greetedParticipantIds.add(participantId);
       this.clearTerminalState(participantId);
-      return false;
+      return undefined;
     }
-    const commitResult = await this.deadlines.race(
-      participantId,
-      this.receipts.commit(participantId, receipt.leaseToken),
-      () => this.nowMilliseconds(),
-    );
-    if (commitResult.status === "expired") {
-      this.greetedParticipantIds.add(participantId);
-      return false;
-    }
-    this.committedParticipantIds.add(participantId);
-    return true;
+    return receipt.leaseToken;
   }
 
   private enqueue(

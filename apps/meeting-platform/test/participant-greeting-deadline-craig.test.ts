@@ -254,7 +254,7 @@ describe("ParticipantGreetingBridge join-to-first-audio deadline", () => {
     await context.bridge.settle();
 
     expect(context.coordinator.calls).toEqual([]);
-    expect(receipts.state("greeting", "recording-1", participantId)).toBe("completed");
+    expect(receipts.state("greeting", "recording-1", participantId)).toBe("suppressed_stale");
   });
 
   it.each([
@@ -272,7 +272,7 @@ describe("ParticipantGreetingBridge join-to-first-audio deadline", () => {
     await context.bridge.settle();
 
     expect(context.coordinator.calls).toEqual([]);
-    expect(receipts.state("greeting", "recording-1", participantId)).toBe("completed");
+    expect(receipts.state("greeting", "recording-1", participantId)).toBe("suppressed_stale");
   });
 
   it("uses only the producer-anchored remainder while waiting for readiness", async () => {
@@ -289,7 +289,7 @@ describe("ParticipantGreetingBridge join-to-first-audio deadline", () => {
       await context.bridge.settle();
 
       expect(context.coordinator.calls).toEqual([]);
-      expect(receipts.state("greeting", "recording-1", participantId)).toBe("completed");
+      expect(receipts.state("greeting", "recording-1", participantId)).toBe("suppressed_stale");
     } finally {
       vi.useRealTimers();
     }
@@ -333,7 +333,7 @@ describe("ParticipantGreetingBridge join-to-first-audio deadline", () => {
       await first.bridge.settle();
 
       expect(first.coordinator.calls).toEqual([]);
-      expect(receipts.state("greeting", "recording-1", participantId)).toBe("completed");
+      expect(receipts.state("greeting", "recording-1", participantId)).toBe("suppressed_stale");
       const restarted = deadlineFixture(() => true, receipts);
       restarted.bridge.participantsRestored([participantId], occurredAt);
       await restarted.bridge.settle();
@@ -386,7 +386,7 @@ describe("ParticipantGreetingBridge join-to-first-audio deadline", () => {
     await settlement;
 
     expect(context.coordinator.calls).toEqual([]);
-    expect(receipts.state("greeting", "recording-1", participantId)).toBe("completed");
+    expect(receipts.state("greeting", "recording-1", participantId)).toBe("suppressed_stale");
   });
 
 });
@@ -426,7 +426,7 @@ describe("ParticipantGreetingBridge playback deadline fencing", () => {
       finishPlayback?.();
       await settlement;
 
-      expect(receipts.state("greeting", "recording-1", participantId)).toBe("completed");
+      expect(receipts.state("greeting", "recording-1", participantId)).toBe("played");
       expect(context.coordinator.participantLeftCalls).toBe(0);
     } finally {
       vi.useRealTimers();
@@ -453,14 +453,14 @@ describe("ParticipantGreetingBridge playback deadline fencing", () => {
       await vi.waitFor(() => {
         expect(context.coordinator.calls).toHaveLength(1);
       });
-      expect(receipts.state("greeting", "recording-1", participantId)).toBe("completed");
+      expect(receipts.state("greeting", "recording-1", participantId)).toBe("attempted");
 
       await vi.advanceTimersByTimeAsync(5_000);
       await vi.waitFor(() => {
         expect(context.coordinator.participantLeftCalls).toBe(1);
       });
       await settlement;
-      expect(receipts.state("greeting", "recording-1", participantId)).toBe("completed");
+      expect(receipts.state("greeting", "recording-1", participantId)).toBe("suppressed_ambiguous");
     } finally {
       vi.useRealTimers();
     }
@@ -639,7 +639,7 @@ it.each([10, 20])(
       await bridge.settle();
 
       expect(transport.commands.filter(({ type }) => type === "audio-chunk")).toEqual([]);
-      expect(receipts.state("greeting", "recording-1", participantId)).toBe("completed");
+      expect(receipts.state("greeting", "recording-1", participantId)).toBe("suppressed_stale");
     } finally {
       await coordinator.closeMeeting("recording-1", now);
       playback.close();
@@ -680,7 +680,7 @@ it("drives join, reconnect and durable restart through real Craig playback", asy
     const first = createBridge();
     first.participantJoined(participantId, occurredAt);
     await first.settle();
-    expect(receipts.state("greeting", "recording-1", participantId)).toBe("completed");
+    expect(receipts.state("greeting", "recording-1", participantId)).toBe("played");
     expect(transport.commands.map(({ type }) => type)).toEqual([
       "playback-start", "audio-chunk", "audio-chunk", "playback-finish",
     ]);

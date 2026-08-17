@@ -8,7 +8,7 @@
   },
   "scripts": {
     "test": "vitest run",
-    "test:integration": "vitest run test/postgres-migration-readiness.integration.test.ts test/postgres-meeting-repository.integration.test.ts test/postgres-live-meeting-repository.integration.test.ts test/postgres-meeting-knowledge.integration.test.ts",
+    "test:integration": "vitest run test/postgres-migration-readiness.integration.test.ts test/postgres-meeting-repository.integration.test.ts test/postgres-live-meeting-repository.integration.test.ts test/postgres-meeting-knowledge.integration.test.ts test/postgres-conversation-one-shot-receipts.integration.test.ts",
     "test:unit": "vitest run test/errors.test.ts",
     "typecheck": "tsc --project tsconfig.json --noEmit --pretty false",
     "check": "pnpm run typecheck && pnpm run test"

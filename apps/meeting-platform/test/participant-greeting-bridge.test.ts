@@ -38,7 +38,7 @@ describe("ParticipantGreetingBridge", () => {
     await first.bridge.settle();
     expect(first.coordinator.calls).toHaveLength(1);
     expect(receipts.state("greeting", "recording-1", englishParticipantId))
-      .toBe("completed");
+      .toBe("played");
 
     const restarted = fixture(
       true,
@@ -134,7 +134,7 @@ describe("ParticipantGreetingBridge", () => {
       expect(context.coordinator.calls).toHaveLength(1);
       expect(context.coordinator.preparedCalls).toEqual([]);
       expect(receipts.state("greeting", "recording-1", russianParticipantId))
-        .toBe("completed");
+        .toBe("suppressed_ambiguous");
 
       receipts.expireReservations();
       const restarted = fixture(true, "ru", logger, () => 654, undefined, {
@@ -352,7 +352,7 @@ describe("ParticipantGreetingBridge reconnect and retry semantics", () => {
 
     context.bridge.participantJoined(participantId, occurredAt);
     await context.bridge.settle();
-    expect(receipts.state("greeting", "recording-1", participantId)).toBe("completed");
+    expect(receipts.state("greeting", "recording-1", participantId)).toBe("played");
     context.bridge.participantLeft(participantId);
     context.bridge.participantJoined(participantId, occurredAt);
     await context.bridge.settle();
@@ -382,9 +382,9 @@ describe("ParticipantGreetingBridge retry admission", () => {
 
       expect(context.coordinator.calls).toHaveLength(1);
       expect(receipts.state("greeting", "recording-1", russianParticipantId))
-        .toBe("completed");
+        .toBeUndefined();
       expect(reserve).toHaveBeenCalledTimes(1);
-      expect(complete).toHaveBeenCalledTimes(1);
+      expect(complete).toHaveBeenCalledTimes(0);
 
       // Repeated presence alone is not retry evidence and cannot release the deferred turn.
       context.bridge.participantJoined(russianParticipantId, occurredAt);
@@ -398,8 +398,8 @@ describe("ParticipantGreetingBridge retry admission", () => {
         `participant-greeting:${russianParticipantId}`,
         `participant-greeting:${russianParticipantId}:retry-1`,
       ]);
-      expect(reserve).toHaveBeenCalledTimes(1);
-      expect(complete).toHaveBeenCalledTimes(1);
+      expect(reserve).toHaveBeenCalledTimes(2);
+      expect(complete).toHaveBeenCalledTimes(0);
 
       context.bridge.participantLeft(russianParticipantId);
       context.bridge.participantJoined(russianParticipantId, occurredAt);
@@ -414,8 +414,8 @@ describe("ParticipantGreetingBridge retry admission", () => {
       await restarted.bridge.settle();
 
       expect(restarted.coordinator.calls).toEqual([]);
-      expect(reserve).toHaveBeenCalledTimes(2);
-      expect(complete).toHaveBeenCalledTimes(1);
+      expect(reserve).toHaveBeenCalledTimes(3);
+      expect(complete).toHaveBeenCalledTimes(0);
     },
   );
 
@@ -655,3 +655,69 @@ it("does not mistake process restoration for successful playback", doesNotMistak
 it("plays a matching prepared greeting without invoking the TTS runtime", playsMatchingPreparedGreeting);
 
 it("uses the configured English fallback without inventing a name", usesConfiguredEnglishFallback);
+
+it("suppresses contradictory played settlement when provider reports no first audio", async () => {
+  const receipts = new MemoryOneShotReceipts();
+  const context = fixture(true, "ru", logger, () => 321, undefined, {
+    oneShotReceipts: receipts,
+  });
+  context.coordinator.whenTurnPlaybackStarted = () =>
+    Promise.resolve({ status: "unplayed" as const });
+  context.coordinator.playbackSettlements.push("played");
+
+  context.bridge.participantJoined(russianParticipantId, occurredAt);
+  await context.bridge.settle();
+
+  expect(receipts.state("greeting", "recording-1", russianParticipantId))
+    .toBe("suppressed_ambiguous");
+  const restarted = fixture(true, "ru", logger, () => 654, undefined, {
+    oneShotReceipts: receipts,
+  });
+  restarted.bridge.participantsRestored([russianParticipantId], occurredAt);
+  await restarted.bridge.settle();
+  expect(restarted.coordinator.calls).toEqual([]);
+});
+
+it("keeps an attempted greeting terminal when played settlement persistence fails", async () => {
+  const receipts = new MemoryOneShotReceipts();
+  receipts.settleGreeting = () => Promise.reject(new Error("synthetic settlement write failure"));
+  const context = fixture(true, "ru", logger, () => 321, undefined, {
+    oneShotReceipts: receipts,
+  });
+
+  context.bridge.participantJoined(russianParticipantId, occurredAt);
+  await context.bridge.settle();
+  expect(receipts.state("greeting", "recording-1", russianParticipantId)).toBe("attempted");
+
+  const restarted = fixture(true, "ru", logger, () => 654, undefined, {
+    oneShotReceipts: receipts,
+  });
+  restarted.bridge.participantsRestored([russianParticipantId], occurredAt);
+  await restarted.bridge.settle();
+  expect(restarted.coordinator.calls).toEqual([]);
+});
+
+it("reconciles a failed attempt transition as stale without replay after lease expiry", async () => {
+  const receipts = new MemoryOneShotReceipts();
+  receipts.beginGreetingAttempt = () =>
+    Promise.reject(new Error("synthetic attempt transition failure"));
+  const first = fixture(true, "ru", logger, () => 321, undefined, {
+    oneShotReceipts: receipts,
+  });
+
+  first.bridge.participantJoined(russianParticipantId, occurredAt);
+  await first.bridge.settle();
+  expect(first.coordinator.calls).toEqual([]);
+  expect(receipts.state("greeting", "recording-1", russianParticipantId)).toBe("reserved");
+
+  receipts.expireReservations();
+  const restarted = fixture(true, "ru", logger, () => 10_000, undefined, {
+    oneShotReceipts: receipts,
+  });
+  restarted.bridge.participantsRestored([russianParticipantId], occurredAt);
+  await restarted.bridge.settle();
+
+  expect(restarted.coordinator.calls).toEqual([]);
+  expect(receipts.state("greeting", "recording-1", russianParticipantId))
+    .toBe("suppressed_stale");
+});
