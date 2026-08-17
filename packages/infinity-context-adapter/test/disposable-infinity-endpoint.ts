@@ -34,6 +34,12 @@ interface IngestGate {
   readonly started: () => void;
 }
 
+export interface DisposableInfinityRuntimeQualificationReceipt {
+  readonly embeddingProfileDigestSha256: string;
+  readonly embeddingProfileId: string;
+  readonly serviceRevision: string;
+}
+
 function missingDeferredResolver(): void {
   throw new Error("disposable deferred resolver was not initialized");
 }
@@ -110,6 +116,8 @@ export class DisposableInfinityEndpoint implements HttpTransport {
   #preserveThreadDocument = false;
   #threadStatusHidesDocuments = false;
   #capabilitiesQualified = true;
+  #runtimeQualificationReceipt:
+    DisposableInfinityRuntimeQualificationReceipt | null = null;
   #ingestGate: IngestGate | null = null;
   public readonly requests: RecordedRequest[] = [];
 
@@ -167,6 +175,14 @@ export class DisposableInfinityEndpoint implements HttpTransport {
     this.#capabilitiesQualified = qualified;
   }
 
+  public setRuntimeQualificationReceipt(
+    receipt: DisposableInfinityRuntimeQualificationReceipt | null,
+  ): void {
+    this.#runtimeQualificationReceipt = receipt === null
+      ? null
+      : Object.freeze({ ...receipt });
+  }
+
   public documentCount(): number {
     return [...this.#documents.values()].filter(({ status }) => status === "active").length;
   }
@@ -201,6 +217,7 @@ export class DisposableInfinityEndpoint implements HttpTransport {
 
     if (request.method === "GET" && path === "/v1/capabilities") {
       const qualified = this.#capabilitiesQualified;
+      const runtimeReceipt = this.#runtimeQualificationReceipt;
       return json(200, {
         api_version: "v1",
         adapters: {
@@ -220,6 +237,14 @@ export class DisposableInfinityEndpoint implements HttpTransport {
         // The official service exposes PostgreSQL keyword/BM25 retrieval as a
         // built-in search stage, not as a separately named adapter.
         enabled_adapters: qualified ? ["qdrant"] : [],
+        ...(runtimeReceipt === null
+          ? {}
+          : {
+            embedding_profile_digest_sha256:
+              runtimeReceipt.embeddingProfileDigestSha256,
+            embedding_profile_id: runtimeReceipt.embeddingProfileId,
+            service_revision: runtimeReceipt.serviceRevision,
+          }),
         service_name: "disposable-infinity-context",
         supports_qdrant: qualified,
       });
