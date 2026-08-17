@@ -1,3 +1,4 @@
+import { createReadStream } from "node:fs";
 import { access } from "node:fs/promises";
 
 import {
@@ -98,7 +99,7 @@ class ConnectedDiscordVoiceActor implements RecorderAwareVoiceActor {
     }
 
     try {
-      player.play(createAudioResource(this.options.fixturePath, { inputType: StreamType.OggOpus }));
+      player.play(createOggOpusAudioResource(this.options.fixturePath));
       // Playing excludes local resource buffering; the first Discord voice dispatch follows on
       // the next player tick. It is a sender-side boundary, not a remote Craig receive ack.
       await entersState(player, AudioPlayerStatus.Playing, this.options.playbackTimeoutMilliseconds);
@@ -124,6 +125,10 @@ class ConnectedDiscordVoiceActor implements RecorderAwareVoiceActor {
     connection?.destroy();
     await this.options.client.destroy();
   }
+}
+
+export function createOggOpusAudioResource(path: string) {
+  return createAudioResource(createReadStream(path), { inputType: StreamType.OggOpus });
 }
 
 export async function connectDiscordVoiceActor(

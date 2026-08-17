@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { assertExpectedOfficialBotApplication } from "../src/discord-voice-actor.js";
+import {
+  assertExpectedOfficialBotApplication,
+  createOggOpusAudioResource,
+} from "../src/discord-voice-actor.js";
 import {
   runSupplementalVoicePlayback,
   type SupplementalPlaybackActor,
@@ -114,5 +117,14 @@ describe("assertExpectedOfficialBotApplication", () => {
       { bot: false, id: "33333333333333333" },
       "33333333333333333",
     )).toThrow("official bot");
+  });
+});
+
+describe("createOggOpusAudioResource", () => {
+  it("uses the pinned Ogg Opus stream without requiring FFmpeg", () => {
+    const resource = createOggOpusAudioResource("test/fixtures/speaker-a.ru-en.ogg");
+
+    expect(resource.playStream).toBeDefined();
+    resource.playStream.destroy();
   });
 });
