@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+
 import { describe, expect, it } from "vitest";
 
 import { INFINITY_CONTEXT_SDK_PROVENANCE } from "@discord-meeting/infinity-context-adapter";
@@ -36,6 +38,32 @@ const environment = {
 } as const;
 
 describe("platform configuration", () => {
+  it("keeps the standard deployment wired to the complete fail-closed Infinity contract", async () => {
+    const compose = await readFile(
+      new URL("../../../infra/deployment/compose.yaml", import.meta.url),
+      "utf8",
+    );
+
+    expect(compose).toContain(
+      "INFINITY_CONTEXT_ACTIVATION: ${INFINITY_CONTEXT_ACTIVATION:?set reviewed Infinity Context activation JSON}",
+    );
+    expect(compose).toContain(
+      "INFINITY_CONTEXT_URL: ${INFINITY_CONTEXT_URL:?set reachable Infinity Context service URL}",
+    );
+    expect(compose).toContain(
+      "INFINITY_CONTEXT_TOKEN_FILE: /run/secrets/infinity-context-token",
+    );
+    expect(compose).toContain(
+      "INFINITY_CONTEXT_TOPOLOGY_KEY_FILE: /run/secrets/infinity-context-topology-key",
+    );
+    expect(compose).toContain(
+      "INFINITY_CONTEXT_REQUEST_TIMEOUT_MS: ${INFINITY_CONTEXT_REQUEST_TIMEOUT_MS:-10000}",
+    );
+    expect(compose).toContain(
+      "INFINITY_CONTEXT_OPERATION_TIMEOUT_MS: ${INFINITY_CONTEXT_OPERATION_TIMEOUT_MS:-300000}",
+    );
+  });
+
   it("loads Infinity activation only as a complete versioned provenance-bound set", async () => {
     const activation = JSON.stringify({
       apiVersion: "v1",

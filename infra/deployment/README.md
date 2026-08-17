@@ -68,6 +68,57 @@ the official bot application, write an independently generated 32-byte base64 or
 encrypts short-lived authorization principals and derives non-reversible dedupe
 subjects; it is not a provider or Discord credential.
 
+## Infinity Context historical memory
+
+The standard Compose deployment enables the production Infinity Context path
+and fails before container creation unless `INFINITY_CONTEXT_URL` and the full
+reviewed `INFINITY_CONTEXT_ACTIVATION` JSON are present. Provision Infinity
+Context separately at the qualified service revision and embedding profile; it
+is not bundled into this Compose project. Its URL must be an HTTP(S) service
+root reachable from the `discord-meeting-egress` network and must not contain
+credentials, a query, or a fragment. Do not use `localhost`: inside Meeting
+Platform that refers to the Platform container.
+
+Place the provider-issued bearer token in
+`${DEPLOY_ROOT}/secrets/platform/infinity-context-token`. Generate an independent
+topology HMAC key and store it in
+`${DEPLOY_ROOT}/secrets/platform/infinity-context-topology-key`, for example with
+`openssl rand -base64 48`. Both must be regular, non-symlink files owned by UID
+`10001` with mode `0400`; never put either value in `.env`, Compose, logs, or the
+Infinity service. Keep the topology key stable across rollouts because rotating
+it changes the opaque remote identities and requires an explicit migration.
+
+Set these non-secret values in the deployment environment file:
+
+```text
+INFINITY_CONTEXT_URL=https://infinity-context.example.internal
+INFINITY_CONTEXT_REQUEST_TIMEOUT_MS=10000
+INFINITY_CONTEXT_OPERATION_TIMEOUT_MS=300000
+INFINITY_CONTEXT_ACTIVATION={"apiVersion":"v1","archiveSha256":"1aad93c1c9deea91f0c0ec750b99e91d1092e9d208751e11c6231badd5fbd9d2","environment":"production","immutablePackageIntegrity":"sha512-ohD89uSSlW7zT/BqaEufIBZ7EAVcq1LYAWn/rRel8EOyMAnq5DXSh3PqjYXAYJdE9WsHgLWx7Tysy9jAY7XaHw==","indexingEnabled":true,"packageSource":"immutable_package","productionEmbeddingProfileAttestation":{"embeddingProfile":"local-open-source-paraphrase-multilingual-minilm-l12-v2-hybrid-bm25.r73","embeddingProfileDigestSha256":"sha256:5ecd36edd098940cd8a6540509f90815ddc1802b4410ced2bf063c0f8c650cac","productionSemanticQualification":true,"qualificationManifestSha256":"sha256:2b0ea368ea4d1feef4616fb185ce1267b9f8735e44d03634d81f03c8d58af965","schemaVersion":1},"qualificationManifestSha256":"sha256:abe694b3e1cf0dcec9d5ff7c0d8b65f30ec5364ac11bb2526bd1c3a3b176c207","schemaVersion":1,"sdkCommit":"897efd211151e9a81a7466fdd6be5cb067ddb8eb","sdkTree":"67a744b1accc0d4628c19f28849660bc917b8b62","searchEnabled":true,"serviceName":"infinity-context","servingProfile":"same_room_retrieval"}
+```
+
+Treat that activation as a reviewed release attestation, not an operator-tuned
+feature flag. Update it only together with retained qualification evidence and
+the pinned SDK provenance in the application release. The request timeout must
+be from 100 through 60000 ms; the operation timeout must be from 1000 through
+600000 ms and must not be shorter than the request timeout.
+
+Before the stop-first rollout, validate interpolation with `docker compose
+--env-file <deployment.env> -f infra/deployment/compose.yaml config`. Then verify
+DNS, TLS, routing, and bearer authentication from a disposable container on the
+`discord-meeting-egress` network. The service capability response must identify
+`infinity-context`, API `v1`, Qdrant support, the required adapters,
+`service_revision=897efd211151e9a81a7466fdd6be5cb067ddb8eb`, and these
+activation-bound semantic fields:
+`embedding_profile_id=local-open-source-paraphrase-multilingual-minilm-l12-v2-hybrid-bm25.r73`
+and
+`embedding_profile_digest_sha256=sha256:5ecd36edd098940cd8a6540509f90815ddc1802b4410ced2bf063c0f8c650cac`.
+Do not start Meeting Platform when the endpoint is unreachable or any capability
+differs from the retained qualification evidence. Platform repeats this check
+at startup and readiness remains closed on a mismatch; it never falls back to
+an unqualified provider. Older capability endpoints that omit any of these
+runtime provenance fields are incompatible and fail closed.
+
 ## Redis queue durability
 
 Copy `redis.conf.example` to `${DEPLOY_ROOT}/secrets/redis.conf`, replace the
