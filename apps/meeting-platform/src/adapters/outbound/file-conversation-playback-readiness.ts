@@ -47,9 +47,11 @@ export class FileConversationPlaybackReadiness implements ConversationPlaybackRe
     request: ConversationPlaybackReadinessRequest,
     options: { readonly signal?: AbortSignal } = {},
   ): Promise<ConversationPortResult<"ready">> {
-    const isGreeting = request.turnId ===
-      `participant-greeting:${this.options.greetingObserverParticipantId ?? ""}` &&
-      request.participantId === this.options.greetingObserverParticipantId;
+    const isGreeting = this.options.greetingRoot !== undefined &&
+      this.options.greetingObserverParticipantId !== undefined &&
+      request.playbackKind === "prepared-cue" &&
+      request.participantId !== undefined &&
+      request.turnId === `participant-greeting:${request.participantId}`;
     if (request.playbackKind !== "answer" && !isGreeting) {
       return { ok: true, value: "ready" };
     }
@@ -108,7 +110,11 @@ export class FileConversationPlaybackReadiness implements ConversationPlaybackRe
         const ready = expected.kind === "greeting"
           ? conversationGreetingObserverReadySchema.parse(decoded)
           : conversationAnswerObserverReadySchema.parse(decoded);
-        if (!sameEnvelope(ready, expected)) {
+        if (!sameEnvelope(
+          ready,
+          expected,
+          this.options.greetingObserverParticipantId,
+        )) {
           throw new Error("Observer-ready receipt does not match the playback intent");
         }
         return;
@@ -261,6 +267,7 @@ function sameEnvelope(
   actual: ReturnType<typeof conversationAnswerObserverReadySchema.parse> |
     ReturnType<typeof conversationGreetingObserverReadySchema.parse>,
   expected: ReadinessEnvelope,
+  expectedObserverParticipantId: string | undefined,
 ): boolean {
   return actual.kind === expected.kind && actual.meetingId === expected.meetingId &&
     (actual.kind === "greeting" && expected.kind === "greeting"
@@ -271,6 +278,8 @@ function sameEnvelope(
     actual.turnId === expected.turnId &&
     actual.intentDigestSha256 === safeFileStem(expected) &&
     actual.authenticatedObserverBotId === actual.target.observerApplicationId &&
+    (expectedObserverParticipantId === undefined ||
+      actual.authenticatedObserverBotId === expectedObserverParticipantId) &&
     Date.parse(actual.intentObservedAt) <= Date.parse(actual.readyPublishedAt);
 }
 

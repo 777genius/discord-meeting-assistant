@@ -25,7 +25,7 @@ import {
 } from "./conversation-voice-turn-id-source.js";
 import {
   armInitialConversationObserver,
-  publishInitialGreetingObserverReady,
+  publishGreetingObserverReady,
 } from "./conversation-greeting-ready.js";
 import {
   assertConfiguredCraigBotIsInVoiceChannel,
@@ -45,12 +45,8 @@ import {
 } from "./hosted-campaign-process-event-publisher.js";
 import { publishConversationObserverCompletion } from
   "./hosted-finite-process-completion-publisher.js";
-
-const systemClock = { now: () => ({
-  epochMilliseconds: Date.now(),
-  monotonicMilliseconds: Number(process.hrtime.bigint() / 1_000_000n),
-}) };
-
+const systemClock = { now: () => ({ epochMilliseconds: Date.now(),
+  monotonicMilliseconds: Number(process.hrtime.bigint() / 1_000_000n) }) };
 async function main(): Promise<void> {
   const config = loadConversationVoiceObserverConfig(process.env);
   const captures = [
@@ -133,18 +129,13 @@ async function main(): Promise<void> {
         channel.id,
         config.readyTimeoutMilliseconds,
       ),
-      publishGreetingReady: () => publishInitialGreetingObserverReady({
-        authenticatedBotId,
-        captures,
-        config,
-        handshakeNotBeforeEpochMilliseconds: greetingIntentNotBeforeEpochMilliseconds,
-      }),
     });
     const campaignProof = await capturePlannedConversationVoice({
       authenticatedBotId,
       captures,
       config,
       decoder,
+      greetingIntentNotBeforeEpochMilliseconds,
       handshakeNotBeforeEpochMilliseconds,
       sourceStream,
     });
@@ -164,17 +155,18 @@ async function main(): Promise<void> {
     await client.destroy();
   }
 }
-
 async function capturePlannedConversationVoice(input: {
   readonly authenticatedBotId: string;
   readonly captures: readonly ConversationVoiceObserverCapture[];
   readonly config: ReturnType<typeof loadConversationVoiceObserverConfig>;
   readonly decoder: ConversationVoiceAudibilityDecoder;
+  readonly greetingIntentNotBeforeEpochMilliseconds: number;
   readonly handshakeNotBeforeEpochMilliseconds: number;
   readonly sourceStream: AudioReceiveStream;
 }): Promise<ConversationVoiceCampaignProofV1 | undefined> {
   const { authenticatedBotId, captures, config, decoder,
-    handshakeNotBeforeEpochMilliseconds, sourceStream } = input;
+    greetingIntentNotBeforeEpochMilliseconds, handshakeNotBeforeEpochMilliseconds,
+    sourceStream } = input;
   let campaignProof: ConversationVoiceCampaignProofV1 | undefined;
   for (const [index, plannedCapture] of captures.entries()) {
       const playbackIntent: ConversationAnswerPlaybackIntent | undefined =
@@ -216,29 +208,16 @@ async function capturePlannedConversationVoice(input: {
             publishAnswerFirstPacket(config, playbackIntent, intentObservedAt, timing.epochMilliseconds);
           },
         }),
-        ...(playbackIntent === undefined
-          ? {}
-          : {
-              publishReady: async () => {
-                if (!("playbackHandshakeRoot" in plannedCapture)) {
-                  throw new Error("Addressed answer capture is missing its handshake root");
-                }
-                campaignProof = await publishConversationVoiceReadyProof({
-                  authenticatedObserverBotId: authenticatedBotId,
-                  captures,
-                  intent: playbackIntent,
-                  intentObservedAt: intentObservedAt!,
-                  root: plannedCapture.playbackHandshakeRoot,
-                  target: {
-                    craigBotId: config.craigBotId,
-                    guildId: config.guildId,
-                    observerApplicationId: config.observerApplicationId,
-                    voiceChannelId: config.voiceChannelId,
-                  },
-                });
-                publishAnswerObserverReady(config, campaignProof);
-              },
-            }),
+        ...readyPublisher({
+          authenticatedBotId,
+          captures,
+          config,
+          greetingIntentNotBeforeEpochMilliseconds,
+          plannedCapture,
+          playbackIntent,
+          playbackIntentObservedAt: intentObservedAt,
+          publishCampaignProof: (proof) => { campaignProof = proof; },
+        }),
         stream: sourceStream,
       });
       const playbackReceipt = playbackIntent === undefined
@@ -285,7 +264,58 @@ async function capturePlannedConversationVoice(input: {
     }
   return campaignProof;
 }
+function readyPublisher(input: {
+  readonly authenticatedBotId: string; readonly captures: readonly ConversationVoiceObserverCapture[];
+  readonly config: ReturnType<typeof loadConversationVoiceObserverConfig>;
+  readonly greetingIntentNotBeforeEpochMilliseconds: number;
+  readonly plannedCapture: ConversationVoiceObserverCapture;
+  readonly playbackIntent: ConversationAnswerPlaybackIntent | undefined;
+  readonly playbackIntentObservedAt: string | undefined;
+  readonly publishCampaignProof: (proof: ConversationVoiceCampaignProofV1) => void;
+}): { readonly publishReady?: () => Promise<void> } {
+  const playbackIntent = input.playbackIntent;
+  if (playbackIntent !== undefined) {
+    return { publishReady: async () => {
+      if (!("playbackHandshakeRoot" in input.plannedCapture) ||
+        input.playbackIntentObservedAt === undefined) {
+        throw new Error("Addressed answer capture is missing its handshake correlation");
+      }
+      const proof = await publishConversationVoiceReadyProof({
+        authenticatedObserverBotId: input.authenticatedBotId,
+        captures: input.captures,
+        intent: playbackIntent,
+        intentObservedAt: input.playbackIntentObservedAt,
+        root: input.plannedCapture.playbackHandshakeRoot,
+        target: {
+          craigBotId: input.config.craigBotId, guildId: input.config.guildId,
+          observerApplicationId: input.config.observerApplicationId,
+          voiceChannelId: input.config.voiceChannelId,
+        },
+      });
+      input.publishCampaignProof(proof);
+      publishAnswerObserverReady(input.config, proof);
+    } };
+  }
+  if (input.plannedCapture.purpose !== "greeting" || input.config.greetingHandshakeRoot === undefined) {
+    return {};
+  }
+  const participantId = greetingParticipantId(input.plannedCapture.turnId);
+  return { publishReady: () => publishGreetingObserverReady({
+    authenticatedBotId: input.authenticatedBotId,
+    config: input.config,
+    handshakeNotBeforeEpochMilliseconds: input.greetingIntentNotBeforeEpochMilliseconds,
+    participantId,
+  }) };
+}
 
+function greetingParticipantId(turnId: string): string {
+  const prefix = "participant-greeting:";
+  const participantId = turnId.startsWith(prefix) ? turnId.slice(prefix.length) : "";
+  if (!/^\d{17,20}$/u.test(participantId)) { throw new Error(
+    "Greeting capture turn ID does not contain a Discord participant ID",
+  ); }
+  return participantId;
+}
 async function waitForConfiguredCraigAudioSilence(
   decoder: ConversationVoiceAudibilityDecoder,
   stream: AudioReceiveStream,
@@ -366,7 +396,6 @@ async function waitForConfiguredCraigAudioSilence(
     stream.resume();
   });
 }
-
 void main().catch((error: unknown) => {
   process.stderr.write(`${error instanceof ConversationVoiceCaptureError
     ? error.message
