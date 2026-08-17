@@ -210,12 +210,12 @@ describe("schema 17 answer-delivery upgrade", () => {
       }
 
       await expect(new PostgresMigrationRunner(isolated.pool).migrate()).resolves.toEqual({
-        appliedVersions: [18],
-        version: 18,
+        appliedVersions: [18, 19],
+        version: 19,
       });
       await expect(new PostgresMigrationRunner(isolated.pool).migrate()).resolves.toEqual({
         appliedVersions: [],
-        version: 18,
+        version: 19,
       });
       await expect(new PostgresSchemaReadiness(isolated.pool).assertReady()).resolves.toBeUndefined();
 
