@@ -249,6 +249,92 @@ describe("ParticipantGreetingBridge lifecycle cancellation", () => {
 });
 
 describe("ParticipantGreetingBridge join-to-first-audio deadline", () => {
+  it.each([
+    ["accepts", 5_320, "played"],
+    ["rejects", 5_321, "suppressed_ambiguous"],
+  ] as const)("%s first audio at the exact five-second clock bound", async (
+    _expectation,
+    startedAtMs,
+    expectedReceipt,
+  ) => {
+    const receipts = new MemoryOneShotReceipts();
+    let now = 321;
+    const context = deadlineFixture(() => true, receipts, logger, () => now);
+    context.coordinator.whenTurnPlaybackStarted = () => {
+      now = startedAtMs;
+      return Promise.resolve({ startedAtMs, status: "started" as const });
+    };
+
+    context.bridge.participantJoined(participantId, occurredAt);
+    await context.bridge.settle();
+
+    expect(receipts.state("greeting", "recording-1", participantId))
+      .toBe(expectedReceipt);
+  });
+
+  it("suppresses cohort overflow before durable playback admission", async () => {
+    const receipts = new MemoryOneShotReceipts();
+    const context = deadlineFixture(() => true, receipts);
+
+    context.bridge.participantsPresent([
+      participantId,
+      secondParticipantId,
+      "3533224474609057795",
+    ], occurredAt);
+    await context.bridge.settle();
+
+    expect(context.coordinator.calls).toHaveLength(2);
+    expect(receipts.state("greeting", "recording-1", secondParticipantId))
+      .toBe("suppressed_stale");
+  });
+
+  it("cancels a stuck settlement early enough for the second cohort slot", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(321);
+      const receipts = new MemoryOneShotReceipts();
+      const context = deadlineFixture(() => true, receipts, logger, () => Date.now());
+      const events: string[] = [];
+      context.coordinator.handleProactiveTurn = (input: unknown) => {
+        const turnId = (input as { readonly turnId: string }).turnId;
+        events.push(`admit:${turnId}`);
+        context.coordinator.calls.push(input);
+        return Promise.resolve({ status: "active" as const });
+      };
+      context.coordinator.whenTurnPlaybackStarted = () => Promise.resolve({
+        startedAtMs: Date.now(),
+        status: "started" as const,
+      });
+      context.coordinator.whenTurnPlaybackSettled = (_meetingId: string, turnId: string) =>
+        turnId.endsWith(participantId)
+          ? new Promise<never>(() => {})
+          : Promise.resolve("played" as const);
+      context.coordinator.participantLeft = () => {
+        events.push("cancel:first");
+        context.coordinator.participantLeftCalls += 1;
+        return Promise.resolve();
+      };
+
+      context.bridge.participantsPresent([
+        participantId,
+        secondParticipantId,
+      ], occurredAt);
+      const settlement = context.bridge.settle();
+      await vi.advanceTimersByTimeAsync(2_750);
+      await settlement;
+
+      expect(context.coordinator.calls).toHaveLength(2);
+      expect(events).toEqual([
+        `admit:participant-greeting:${participantId}`,
+        "cancel:first",
+        `admit:participant-greeting:${secondParticipantId}`,
+      ]);
+      expect(Date.now() - 321).toBeLessThan(5_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("durably terminalizes a stale delivered lifecycle without PCM", async () => {
     const receipts = new MemoryOneShotReceipts();
     const now = Date.parse("2026-08-02T10:20:00.000Z");
@@ -397,7 +483,7 @@ describe("ParticipantGreetingBridge join-to-first-audio deadline", () => {
 
 describe("ParticipantGreetingBridge playback deadline fencing", () => {
 
-  it("keeps valid first audio when playback finishes after the deadline", async () => {
+  it("keeps valid first audio when playback settles within its bounded slot", async () => {
     vi.useFakeTimers();
     try {
       let now = 321;
@@ -426,10 +512,10 @@ describe("ParticipantGreetingBridge playback deadline fencing", () => {
       now = 5_320;
       startPlayback?.();
       await vi.advanceTimersByTimeAsync(0);
-      expect(vi.getTimerCount()).toBe(0);
+      expect(vi.getTimerCount()).toBe(1);
 
-      now = 20_000;
-      await vi.advanceTimersByTimeAsync(20_000);
+      now = 7_000;
+      await vi.advanceTimersByTimeAsync(2_000);
       expect(context.coordinator.participantLeftCalls).toBe(0);
       finishPlayback?.();
       await settlement;

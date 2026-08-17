@@ -111,6 +111,10 @@ export class ParticipantGreetingDeadlines {
     return this.deadlines.has(participantId);
   }
 
+  public expiresAtMilliseconds(participantId: string): number | undefined {
+    return this.deadlines.get(participantId)?.expiresAtMilliseconds;
+  }
+
   /** Absolute producer-time admission check; the timer is only a wake-up. */
   public ensureFresh(participantId: string, observedAtMilliseconds: number): boolean {
     const deadline = this.deadlines.get(participantId);

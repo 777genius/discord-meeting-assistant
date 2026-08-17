@@ -7,6 +7,9 @@ import {
   type GreetingAttemptOutcome, type ResolvedParticipantGreeting,
 } from "./participant-greeting-content.js";
 import { cancelParticipantGreetingPlayback, playParticipantGreeting,
+  participantGreetingPlaybackBoundMilliseconds,
+  selectParticipantGreetingPreparedCue,
+  type ParticipantGreetingPreparedCue,
   type ParticipantGreetingPlayback,
 } from "./participant-greeting-playback.js";
 import {
@@ -15,6 +18,9 @@ import {
 } from "./participant-greeting-deadline.js";
 import { ParticipantGreetingReceipts } from "./participant-greeting-receipts.js";
 const maximumSafeRetries = 3;
+const maximumFirstAudioStartupMilliseconds = 750;
+const playbackCancellationMarginMilliseconds = 250;
+const playbackSettlementMarginMilliseconds = 250;
 interface ParticipantGreetingBridgeDependencies {
   readonly configuration: LiveConversationConfiguration;
   readonly isMeetingFinishing: () => boolean;
@@ -25,11 +31,14 @@ interface ParticipantGreetingBridgeDependencies {
 /** Meeting-local, bounded queue for one proactive greeting per participant. */
 export class ParticipantGreetingBridge {
   private advanceRequested = false;
+  private activeSlotUntilMilliseconds = 0;
   private closed = false;
   private readonly deadlines: ParticipantGreetingDeadlines;
   private drainPromise: Promise<void> | null = null;
   private readonly greetedParticipantIds = new Set<string>();
   private readonly pendingGreetings = new ParticipantGreetingQueue();
+  private readonly playbackBoundsMilliseconds = new Map<string, number>();
+  private readonly preparedCues = new Map<string, ParticipantGreetingPreparedCue | null>();
   private readonly presentParticipantIds = new Set<string>();
   private readonly receipts: ParticipantGreetingReceipts;
   private readonly retryCounts = new Map<string, number>();
@@ -60,6 +69,9 @@ export class ParticipantGreetingBridge {
         );
       }
     }
+    if (this.activeSlotUntilMilliseconds === 0) {
+      this.suppressCohortOverflow();
+    }
     this.tryAdvance();
   }
   /** Restores presence; the durable receipt decides whether playback is due. */
@@ -77,11 +89,16 @@ export class ParticipantGreetingBridge {
     ) {
       this.enqueue(participantId, "high", occurredAt);
     }
+    if (this.activeSlotUntilMilliseconds === 0) {
+      this.suppressCohortOverflow();
+    }
     this.tryAdvance();
   }
   public participantLeft(participantId: string): void {
     this.presentParticipantIds.delete(participantId);
     this.pendingGreetings.delete(participantId);
+    this.playbackBoundsMilliseconds.delete(participantId);
+    this.preparedCues.delete(participantId);
     this.deadlines.cancel(participantId);
   }
   public advance(): void {
@@ -125,6 +142,8 @@ export class ParticipantGreetingBridge {
     this.closed = true;
     this.advanceRequested = false;
     this.pendingGreetings.clear();
+    this.playbackBoundsMilliseconds.clear();
+    this.preparedCues.clear();
     this.presentParticipantIds.clear();
     this.deadlines.cancelAll();
   }
@@ -187,6 +206,15 @@ export class ParticipantGreetingBridge {
       return true;
     }
 
+    const expiresAt = this.deadlines.expiresAtMilliseconds(participantId);
+    if (
+      expiresAt === undefined ||
+      this.nowMilliseconds() + maximumFirstAudioStartupMilliseconds >= expiresAt
+    ) {
+      this.suppressCapacityOverflow(participantId);
+      return false;
+    }
+
     const leaseToken = await this.reservePlaybackAdmission(participantId);
     if (leaseToken === undefined) {
       return false;
@@ -215,6 +243,10 @@ export class ParticipantGreetingBridge {
     }
 
     const playback = this.speak(participantId, greeting);
+    const playbackBound = this.playbackBoundMilliseconds(participantId, greeting);
+    this.activeSlotUntilMilliseconds = this.nowMilliseconds() +
+      maximumFirstAudioStartupMilliseconds + playbackBound +
+      playbackSettlementMarginMilliseconds + playbackCancellationMarginMilliseconds;
     const firstAudio = await this.deadlines.race(
       participantId,
       playback.firstAudio,
@@ -222,13 +254,21 @@ export class ParticipantGreetingBridge {
     );
     if (firstAudio.status === "expired") {
       this.greetedParticipantIds.add(participantId);
-      await this.cancelPlayback(participantId);
+      await this.cancelPlaybackBounded(participantId);
       this.detachPlaybackSettlement(playback);
       await this.receipts.settle(participantId, "suppressed", "ambiguous");
+      this.activeSlotUntilMilliseconds = 0;
+      this.suppressCohortOverflow();
       return false;
     }
     if (firstAudio.value.status === "unplayed") {
-      const outcome = await playback.settlement;
+      const outcome = await this.awaitPlaybackSettlement(
+        participantId,
+        playback,
+        playbackBound,
+      );
+      this.activeSlotUntilMilliseconds = 0;
+      this.suppressCohortOverflow();
       if (outcome === "played") {
         await this.receipts.settle(participantId, "suppressed", "ambiguous");
         this.greetedParticipantIds.add(participantId);
@@ -242,13 +282,24 @@ export class ParticipantGreetingBridge {
       firstAudio.value.startedAtMilliseconds,
     )) {
       this.greetedParticipantIds.add(participantId);
-      await this.cancelPlayback(participantId);
+      await this.cancelPlaybackBounded(participantId);
       this.detachPlaybackSettlement(playback);
       await this.receipts.settle(participantId, "suppressed", "ambiguous");
+      this.activeSlotUntilMilliseconds = 0;
+      this.suppressCohortOverflow();
       this.clearTerminalState(participantId);
       return false;
     }
-    const outcome = await playback.settlement;
+    this.activeSlotUntilMilliseconds = firstAudio.value.startedAtMilliseconds +
+      playbackBound + playbackSettlementMarginMilliseconds +
+      playbackCancellationMarginMilliseconds;
+    const outcome = await this.awaitPlaybackSettlement(
+      participantId,
+      playback,
+      playbackBound,
+    );
+    this.activeSlotUntilMilliseconds = 0;
+    this.suppressCohortOverflow();
     return this.settleOutcome(participantId, priority, outcome);
   }
 
@@ -327,6 +378,20 @@ export class ParticipantGreetingBridge {
         occurredAt,
         this.nowMilliseconds(),
       );
+      const greeting = this.greeting(participantId);
+      if (greeting !== undefined) {
+        const preparedCue = selectParticipantGreetingPreparedCue(
+          this.dependencies.configuration,
+          greeting,
+          this.dependencies.meetingId,
+          participantId,
+        );
+        this.preparedCues.set(participantId, preparedCue);
+        this.playbackBoundsMilliseconds.set(
+          participantId,
+          participantGreetingPlaybackBoundMilliseconds(preparedCue),
+        );
+      }
       return;
     }
     this.pendingGreetings.enqueue(participantId, priority);
@@ -334,6 +399,8 @@ export class ParticipantGreetingBridge {
 
   private expire(participantId: string): void {
     this.pendingGreetings.delete(participantId);
+    this.playbackBoundsMilliseconds.delete(participantId);
+    this.preparedCues.delete(participantId);
     this.retryCounts.delete(participantId);
     this.greetedParticipantIds.add(participantId);
     this.dependencies.logger.warn("Participant greeting reached terminal deadline", {
@@ -348,6 +415,8 @@ export class ParticipantGreetingBridge {
 
   private clearTerminalState(participantId: string): void {
     this.deadlines.clear(participantId);
+    this.playbackBoundsMilliseconds.delete(participantId);
+    this.preparedCues.delete(participantId);
     this.retryCounts.delete(participantId);
   }
 
@@ -356,6 +425,95 @@ export class ParticipantGreetingBridge {
       this.dependencies.configuration, this.dependencies.logger,
       this.dependencies.meetingId, participantId, this.nowMilliseconds(),
     );
+  }
+
+  private async cancelPlaybackBounded(participantId: string): Promise<void> {
+    const cancellation = this.cancelPlayback(participantId);
+    await this.raceWithTimer(cancellation, playbackCancellationMarginMilliseconds);
+    void cancellation.catch(() => {});
+  }
+
+  private async awaitPlaybackSettlement(
+    participantId: string,
+    playback: ParticipantGreetingPlayback,
+    playbackBoundMilliseconds: number,
+  ): Promise<GreetingAttemptOutcome> {
+    const settlement = playback.settlement.then((outcome) => ({ outcome }));
+    const result = await this.raceWithTimer(
+      settlement,
+      playbackBoundMilliseconds + playbackSettlementMarginMilliseconds,
+    );
+    if (result !== undefined) {
+      return result.outcome;
+    }
+    await this.cancelPlaybackBounded(participantId);
+    this.detachPlaybackSettlement(playback);
+    this.dependencies.logger.warn("Participant greeting settlement exceeded playback bound", {
+      meetingId: this.dependencies.meetingId,
+      participantId,
+      playbackBoundMilliseconds,
+    });
+    return "failed";
+  }
+
+  private raceWithTimer<T>(operation: Promise<T>, delayMilliseconds: number): Promise<T | undefined> {
+    let handle: ReturnType<LiveRuntimeTimer["schedule"]> | undefined;
+    const timeout = new Promise<undefined>((resolve) => {
+      handle = this.dependencies.timer.schedule(delayMilliseconds, () => resolve());
+    });
+    return Promise.race([operation, timeout]).finally(() => {
+      if (handle !== undefined) {
+        this.dependencies.timer.cancel(handle);
+      }
+    });
+  }
+
+  private playbackBoundMilliseconds(
+    participantId: string,
+    greeting: ResolvedParticipantGreeting,
+  ): number {
+    return this.playbackBoundsMilliseconds.get(participantId) ??
+      participantGreetingPlaybackBoundMilliseconds(
+        selectParticipantGreetingPreparedCue(
+          this.dependencies.configuration,
+          greeting,
+          this.dependencies.meetingId,
+          participantId,
+        ),
+      );
+  }
+
+  private suppressCohortOverflow(): void {
+    let slotAvailableAt = Math.max(
+      this.nowMilliseconds(),
+      this.activeSlotUntilMilliseconds,
+    );
+    for (const pending of this.pendingGreetings.orderedReady()) {
+      const expiresAt = this.deadlines.expiresAtMilliseconds(pending.participantId);
+      const playbackBound = this.playbackBoundsMilliseconds.get(pending.participantId);
+      const firstAudioAt = slotAvailableAt + maximumFirstAudioStartupMilliseconds;
+      if (expiresAt === undefined || playbackBound === undefined || firstAudioAt >= expiresAt) {
+        this.suppressCapacityOverflow(pending.participantId);
+        continue;
+      }
+      slotAvailableAt = firstAudioAt + playbackBound +
+        playbackSettlementMarginMilliseconds + playbackCancellationMarginMilliseconds;
+    }
+  }
+
+  private suppressCapacityOverflow(participantId: string): void {
+    this.pendingGreetings.delete(participantId);
+    this.deadlines.clear(participantId);
+    this.playbackBoundsMilliseconds.delete(participantId);
+    this.preparedCues.delete(participantId);
+    this.retryCounts.delete(participantId);
+    this.greetedParticipantIds.add(participantId);
+    this.dependencies.logger.warn("Participant greeting suppressed before admission", {
+      meetingId: this.dependencies.meetingId,
+      participantId,
+      reason: "join-cohort-capacity",
+    });
+    this.deadlines.track(this.receipts.fenceOnce(participantId));
   }
 
   private detachPlaybackSettlement(playback: ParticipantGreetingPlayback): void {
@@ -382,6 +540,7 @@ export class ParticipantGreetingBridge {
       observedLatencyMilliseconds: () =>
         this.observedGreetingLatencyMilliseconds(participantId),
       participantId,
+      preparedCue: this.preparedCues.get(participantId) ?? null,
       shouldStop: () => this.shouldStopGreeting(participantId),
       turnId,
     });

@@ -60,6 +60,34 @@ export class ParticipantGreetingQueue {
     return this.highPriorityParticipantIds.size > 0 || this.initialParticipantIds.size > 0;
   }
 
+  /** Current deterministic selection order without mutating queue state. */
+  public orderedReady(): readonly PendingParticipantGreeting[] {
+    const high = [...this.highPriorityParticipantIds];
+    const initial = [...this.initialParticipantIds];
+    const ordered: PendingParticipantGreeting[] = [];
+    let consecutiveHigh = this.consecutiveHighPrioritySelections;
+    while (high.length > 0 || initial.length > 0) {
+      if (
+        high.length > 0 &&
+        (initial.length === 0 ||
+          consecutiveHigh < maximumConsecutiveHighPrioritySelections)
+      ) {
+        const participantId = high.shift();
+        if (participantId !== undefined) {
+          ordered.push({ participantId, priority: "high" });
+          consecutiveHigh += 1;
+          continue;
+        }
+      }
+      const participantId = initial.shift();
+      if (participantId !== undefined) {
+        ordered.push({ participantId, priority: "initial" });
+        consecutiveHigh = 0;
+      }
+    }
+    return ordered;
+  }
+
   public takeNext(): PendingParticipantGreeting | undefined {
     if (
       this.highPriorityParticipantIds.size > 0 &&

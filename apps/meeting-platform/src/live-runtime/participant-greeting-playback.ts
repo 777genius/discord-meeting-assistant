@@ -17,6 +17,7 @@ interface ParticipantGreetingPlaybackInput {
   readonly nowMilliseconds: () => number;
   readonly observedLatencyMilliseconds: () => number;
   readonly participantId: string;
+  readonly preparedCue: ParticipantGreetingPreparedCue | null;
   readonly shouldStop: () => boolean;
   readonly turnId: string;
 }
@@ -28,6 +29,48 @@ type GreetingFirstAudioOutcome =
 export interface ParticipantGreetingPlayback {
   readonly firstAudio: Promise<GreetingFirstAudioOutcome>;
   readonly settlement: Promise<GreetingAttemptOutcome>;
+}
+
+export interface ParticipantGreetingPreparedCue {
+  readonly assetSha256?: string;
+  readonly cueId: string;
+  readonly pcmChunks: readonly Uint8Array[];
+  readonly playbackAttemptId: string;
+}
+
+const pcmBytesPerMillisecond = 48_000 * 2 / 1_000;
+const maximumLiteralGreetingPlaybackMilliseconds = 2_500;
+
+/** Conservative single-slot playback bound used before any provider side effect. */
+export function participantGreetingPlaybackBoundMilliseconds(
+  preparedCue: ParticipantGreetingPreparedCue | null,
+): number {
+  if (preparedCue === null) {
+    return maximumLiteralGreetingPlaybackMilliseconds;
+  }
+  const bytes = preparedCue.pcmChunks.reduce(
+    (total, chunk) => total + chunk.byteLength,
+    0,
+  );
+  if (!Number.isSafeInteger(bytes) || bytes <= 0) {
+    return maximumLiteralGreetingPlaybackMilliseconds;
+  }
+  return Math.max(1, Math.ceil(bytes / pcmBytesPerMillisecond));
+}
+
+export function selectParticipantGreetingPreparedCue(
+  configuration: LiveConversationConfiguration,
+  greeting: ResolvedParticipantGreeting,
+  meetingId: string,
+  participantId: string,
+): ParticipantGreetingPreparedCue | null {
+  return configuration.greetings?.cues?.select({
+    locale: greeting.locale,
+    meetingId,
+    participantId,
+    speech: greeting.prompt,
+    voiceProfileId: configuration.voiceProfileId,
+  }) ?? null;
 }
 
 export async function cancelParticipantGreetingPlayback(
@@ -82,7 +125,7 @@ async function runParticipantGreeting(
   observeFirstAudio: (outcome: GreetingFirstAudioOutcome) => void,
 ): Promise<GreetingAttemptOutcome> {
   try {
-    const preparedCue = selectCue(input, input.greeting.prompt);
+    const preparedCue = input.preparedCue;
     const primary = await playAttempt(
       input,
       input.turnId,
@@ -164,6 +207,8 @@ async function playAttempt(
       startedAtMilliseconds: start.startedAtMs,
       status: "started",
     });
+  } else {
+    observeFirstAudio({ status: "unplayed" });
   }
   const settlement = await input.configuration.coordinator.whenTurnPlaybackSettled(
     input.meetingId,

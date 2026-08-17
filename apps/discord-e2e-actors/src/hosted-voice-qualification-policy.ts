@@ -40,7 +40,7 @@ const content = Object.freeze({
   reviewDueAt: "2027-02-13T00:00:00.000Z",
   schemaVersion: 1 as const,
   thresholds: Object.freeze({
-    "join-to-greeting-first-packet": 10_000,
+    "join-to-greeting-first-packet": 5_000,
     "question-end-to-answer-first-packet": 4_000,
     "recording-end-to-discord-first-seen": 900_000,
   }),
