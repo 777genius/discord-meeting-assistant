@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "voiceId": "jqcCZkN6Knx8BJ5TBdYR",
   "voiceProfileId": "elevenlabs-multilingual",
   "audio": {
@@ -9,27 +9,27 @@
   },
   "groups": {
     "ruAcknowledgement": [
-      { "cueId": "ru-seichas", "pcmFile": "ru-01.pcm" },
-      { "cueId": "ru-tak", "pcmFile": "ru-05.pcm" },
-      { "cueId": "ru-sekundocku", "pcmFile": "ru-06.pcm" }
+      { "cueId": "ru-seichas", "pcmFile": "ru-01.pcm", "sha256": "a7c34115e4f70377035211e6cbdc5e6a48c0eaa60d291442d3f5e37a552faa30" },
+      { "cueId": "ru-tak", "pcmFile": "ru-05.pcm", "sha256": "b72460d442c3c3058ff93036c3df1047a2742bde0d407cd9ae4bc8a578d337c9" },
+      { "cueId": "ru-sekundocku", "pcmFile": "ru-06.pcm", "sha256": "7a373cdcb1330199e620429458fb0034135d00ff9c162364125028c109fc75ba" }
     ],
     "ruDeliberation": [
-      { "cueId": "ru-dai-podumat", "pcmFile": "ru-02.pcm" },
-      { "cueId": "ru-interesnyi-vopros", "pcmFile": "ru-03.pcm" },
-      { "cueId": "ru-seichas-podumaiu", "pcmFile": "ru-04.pcm" }
+      { "cueId": "ru-dai-podumat", "pcmFile": "ru-02.pcm", "sha256": "d7159ca181160d029832bd5ee8058d2f163a0c8645872df6c1052df920a54726" },
+      { "cueId": "ru-interesnyi-vopros", "pcmFile": "ru-03.pcm", "sha256": "fa7c634c2a53d9c5ec296001e961fc60b190ad86cd279ee071fa6861f996c7f1" },
+      { "cueId": "ru-seichas-podumaiu", "pcmFile": "ru-04.pcm", "sha256": "9688abfe1240f7f564fafb05543379254bb095395ee646679b399453e0100a8f" }
     ],
     "enAcknowledgement": [
-      { "cueId": "en-one-moment", "pcmFile": "en-02.pcm" },
-      { "cueId": "en-lets-see", "pcmFile": "en-04.pcm" },
-      { "cueId": "en-hmm", "pcmFile": "en-05.pcm" },
-      { "cueId": "en-one-sec", "pcmFile": "en-06.pcm" }
+      { "cueId": "en-one-moment", "pcmFile": "en-02.pcm", "sha256": "cae1e9efb934717e3975cd919896d6d1bab879099c62a6aedd1a3755c2c8c04f" },
+      { "cueId": "en-lets-see", "pcmFile": "en-04.pcm", "sha256": "040d767dfa524d4326333ae61e99a132aedebcf0f5643d0378bdeee079de2366" },
+      { "cueId": "en-hmm", "pcmFile": "en-05.pcm", "sha256": "b972ebaa5e8e19e6d0d6fb6ee6dac4c10944fa8387aeca1992c0dcf5529a7d76" },
+      { "cueId": "en-one-sec", "pcmFile": "en-06.pcm", "sha256": "19e47c1aaa65fd335802fc819a1af12f66584dccbef7204f8a5b54ad579fcc88" }
     ],
     "enDeliberation": [
-      { "cueId": "en-let-me-think", "pcmFile": "en-01.pcm" },
-      { "cueId": "en-good-question", "pcmFile": "en-03.pcm" }
+      { "cueId": "en-let-me-think", "pcmFile": "en-01.pcm", "sha256": "986f280e233b16046fb79d56cfb7e7b1f9cf34370d206120de2749b83b015941" },
+      { "cueId": "en-good-question", "pcmFile": "en-03.pcm", "sha256": "b68b09dc7b04dfda1e66bbb6c2f897698993127b99c25e7d27fca191246bc19d" }
     ],
     "neutralAcknowledgement": [
-      { "cueId": "neutral-hmm", "pcmFile": "neutral-01.pcm" }
+      { "cueId": "neutral-hmm", "pcmFile": "neutral-01.pcm", "sha256": "fad1686e6b04295bd7e8cd6abce1ace19e320f22094bf10121b93270c6caeb86" }
     ]
   }
 }

@@ -64,6 +64,7 @@ const playbackReceiptLogBaseSchema = z.object({
   playbackKind: z.enum(["answer", "prepared-cue", "thinking-cue"]),
   preparedAssetSha256: z.string().regex(/^[a-f\d]{64}$/u).optional(),
   speechProvenance: z.enum(["literal_tts", "model_tts"]).optional(),
+  thinkingCuePcmSha256: z.string().regex(/^[a-f\d]{64}$/u).optional(),
   time: z.iso.datetime(),
   turnId: z.string().trim().min(1),
 });
@@ -211,6 +212,9 @@ export function parseConversationLifecycleEvidenceLogs(
         ...(playbackStarted.data.speechProvenance === undefined
           ? {}
           : { speechProvenance: playbackStarted.data.speechProvenance }),
+        ...(playbackStarted.data.thinkingCuePcmSha256 === undefined
+          ? {}
+          : { thinkingCuePcmSha256: playbackStarted.data.thinkingCuePcmSha256 }),
         playbackStartedAtEpochMs: playbackStarted.data.playbackStartedAtEpochMs,
         playbackStartedAtMonotonicMs: playbackStarted.data.playbackStartedAtMonotonicMs,
         status: "started",
@@ -232,6 +236,9 @@ export function parseConversationLifecycleEvidenceLogs(
         ...(playbackFinished.data.speechProvenance === undefined
           ? {}
           : { speechProvenance: playbackFinished.data.speechProvenance }),
+        ...(playbackFinished.data.thinkingCuePcmSha256 === undefined
+          ? {}
+          : { thinkingCuePcmSha256: playbackFinished.data.thinkingCuePcmSha256 }),
         status: "finished",
         turnId: playbackFinished.data.turnId,
       });
@@ -249,6 +256,9 @@ export function parseConversationLifecycleEvidenceLogs(
         ...(playbackSettled.data.speechProvenance === undefined
           ? {}
           : { speechProvenance: playbackSettled.data.speechProvenance }),
+        ...(playbackSettled.data.thinkingCuePcmSha256 === undefined
+          ? {}
+          : { thinkingCuePcmSha256: playbackSettled.data.thinkingCuePcmSha256 }),
         playbackSettledAtEpochMs: playbackSettled.data.playbackSettledAtEpochMs,
         playbackSettledAtMonotonicMs: playbackSettled.data.playbackSettledAtMonotonicMs,
         settlement: playbackSettled.data.settlement,

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,7 +16,11 @@ type CueGroup =
   | "enAcknowledgement"
   | "enDeliberation"
   | "neutralAcknowledgement";
-type ManifestCue = { readonly cueId: string; readonly pcmFile: string };
+type ManifestCue = {
+  readonly cueId: string;
+  readonly pcmFile: string;
+  readonly sha256: string;
+};
 const testVoiceId = "test-voice-id";
 
 afterEach(async () => {
@@ -33,24 +38,24 @@ function cueManifest(groups: Partial<Record<CueGroup, readonly ManifestCue[]>> =
     },
     groups: {
       enAcknowledgement: groups.enAcknowledgement ?? [
-        { cueId: "en-ack-one", pcmFile: "en-ack-one.pcm" },
-        { cueId: "en-ack-two", pcmFile: "en-ack-two.pcm" },
+        manifestCue("en-ack-one", "en-ack-one.pcm", 3),
+        manifestCue("en-ack-two", "en-ack-two.pcm", 4),
       ],
       enDeliberation: groups.enDeliberation ?? [
-        { cueId: "en-think-one", pcmFile: "en-think-one.pcm" },
+        manifestCue("en-think-one", "en-think-one.pcm", 6),
       ],
       neutralAcknowledgement: groups.neutralAcknowledgement ?? [
-        { cueId: "neutral-ack-one", pcmFile: "neutral-ack-one.pcm" },
+        manifestCue("neutral-ack-one", "neutral-ack-one.pcm", 5),
       ],
       ruAcknowledgement: groups.ruAcknowledgement ?? [
-        { cueId: "ru-ack-one", pcmFile: "ru-ack-one.pcm" },
-        { cueId: "ru-ack-two", pcmFile: "ru-ack-two.pcm" },
+        manifestCue("ru-ack-one", "ru-ack-one.pcm", 1, 2),
+        manifestCue("ru-ack-two", "ru-ack-two.pcm", 2),
       ],
       ruDeliberation: groups.ruDeliberation ?? [
-        { cueId: "ru-think-one", pcmFile: "ru-think-one.pcm" },
+        manifestCue("ru-think-one", "ru-think-one.pcm", 7),
       ],
     },
-    version: 2,
+    version: 3,
     voiceId: testVoiceId,
     voiceProfileId: "test-voice",
   } as const;
@@ -61,6 +66,19 @@ function pcm(seed: number, frames = 1): Uint8Array {
     { length: 3_840 * frames },
     (_, index) => (seed + index) % 256,
   );
+}
+
+function manifestCue(
+  cueId: string,
+  pcmFile: string,
+  seed: number,
+  frames = 1,
+): ManifestCue {
+  return {
+    cueId,
+    pcmFile,
+    sha256: createHash("sha256").update(pcm(seed, frames)).digest("hex"),
+  };
 }
 
 async function cueRoot(input: {
@@ -147,6 +165,9 @@ describe("FileConversationThinkingCueRegistry", () => {
     expect(neutral.cueId).toBe("neutral-hmm");
     expect([russian, english, neutral].every((cue) => cue.pcmChunks.length > 0)).toBe(
       true,
+    );
+    expect(russian.pcmSha256).toBe(
+      "a7c34115e4f70377035211e6cbdc5e6a48c0eaa60d291442d3f5e37a552faa30",
     );
   });
 
@@ -271,7 +292,7 @@ describe("FileConversationThinkingCueRegistry", () => {
   it("accepts safe relative PCM paths beneath the cue root", async () => {
     const root = await cueRoot({
       manifest: cueManifest({
-        ruAcknowledgement: [{ cueId: "ru-ack-one", pcmFile: "audio/ru-ack-one.pcm" }],
+        ruAcknowledgement: [manifestCue("ru-ack-one", "audio/ru-ack-one.pcm", 1)],
       }),
     });
     await mkdir(join(root, "audio"));
@@ -293,7 +314,11 @@ describe("FileConversationThinkingCueRegistry", () => {
 
     const traversal = await cueRoot({
       manifest: cueManifest({
-        ruAcknowledgement: [{ cueId: "ru-ack-one", pcmFile: "../outside.pcm" }],
+        ruAcknowledgement: [{
+          cueId: "ru-ack-one",
+          pcmFile: "../outside.pcm",
+          sha256: "a".repeat(64),
+        }],
       }),
     });
     await expect(FileConversationThinkingCueRegistry.load(traversal, "test-voice", testVoiceId)).rejects.toThrow(
@@ -322,5 +347,16 @@ describe("FileConversationThinkingCueRegistry", () => {
     await expect(FileConversationThinkingCueRegistry.load(oddPcm, "test-voice", testVoiceId)).rejects.toThrow(
       "non-empty s16le PCM",
     );
+  });
+
+  it("rejects corrupt same-length PCM instead of trusting its byte count", async () => {
+    const root = await cueRoot();
+    const corrupt = pcm(1, 2);
+    corrupt[corrupt.length - 1] = (corrupt.at(-1) ?? 0) ^ 0xff;
+    await writeFile(join(root, "ru-ack-one.pcm"), corrupt);
+
+    await expect(
+      FileConversationThinkingCueRegistry.load(root, "test-voice", testVoiceId),
+    ).rejects.toThrow("SHA-256 does not match its manifest");
   });
 });

@@ -207,6 +207,7 @@ const conversationPlaybackReceiptBaseSchema = z.object({
   playbackKind: z.enum(["answer", "prepared-cue", "thinking-cue"]),
   preparedAssetSha256: sha256Schema.optional(),
   speechProvenance: z.enum(["literal_tts", "model_tts"]).optional(),
+  thinkingCuePcmSha256: sha256Schema.optional(),
   turnId: identifierSchema,
 });
 function refinePlaybackProvenance(
@@ -218,6 +219,20 @@ function refinePlaybackProvenance(
   }
   if (receipt.playbackKind !== "prepared-cue" && receipt.preparedAssetSha256 !== undefined) {
     context.addIssue({ code: "custom", message: "Only prepared cue receipts may carry an asset digest" });
+  }
+  if (receipt.playbackKind === "thinking-cue" &&
+    receipt.thinkingCuePcmSha256 === undefined) {
+    context.addIssue({
+      code: "custom",
+      message: "Thinking cue receipts must carry their exact PCM digest",
+    });
+  }
+  if (receipt.playbackKind !== "thinking-cue" &&
+    receipt.thinkingCuePcmSha256 !== undefined) {
+    context.addIssue({
+      code: "custom",
+      message: "Only thinking cue receipts may carry a thinking cue PCM digest",
+    });
   }
 }
 const conversationPlaybackReceiptSchema = z.discriminatedUnion("status", [

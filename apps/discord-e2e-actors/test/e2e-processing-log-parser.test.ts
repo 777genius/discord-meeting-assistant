@@ -158,6 +158,24 @@ describe("parseConversationLifecycleEvidenceLogs", () => {
         playbackSettledAtMonotonicMs: 4_800,
         settlement: "played",
       }),
+      JSON.stringify({
+        ...shared,
+        message: "Conversation playback started",
+        playbackAttemptId: "thinking-cue-attempt-1",
+        playbackKind: "thinking-cue",
+        playbackStartedAtEpochMs: 1_754_509_526_000,
+        playbackStartedAtMonotonicMs: 3_000,
+        thinkingCuePcmSha256: "b".repeat(64),
+      }),
+      JSON.stringify({
+        ...shared,
+        message: "Conversation playback finished",
+        playbackAttemptId: "thinking-cue-attempt-1",
+        playbackFinishedAtEpochMs: 1_754_509_526_500,
+        playbackFinishedAtMonotonicMs: 3_500,
+        playbackKind: "thinking-cue",
+        thinkingCuePcmSha256: "b".repeat(64),
+      }),
     ].join("\n");
 
     expect(parseConversationLifecycleEvidenceLogs(output, "meeting-1").playbackReceipts)
@@ -180,6 +198,18 @@ describe("parseConversationLifecycleEvidenceLogs", () => {
           settlement: "played",
           status: "settled",
           turnId: "human-question-1",
+        }),
+        expect.objectContaining({
+          playbackAttemptId: "thinking-cue-attempt-1",
+          playbackKind: "thinking-cue",
+          status: "started",
+          thinkingCuePcmSha256: "b".repeat(64),
+        }),
+        expect.objectContaining({
+          playbackAttemptId: "thinking-cue-attempt-1",
+          playbackKind: "thinking-cue",
+          status: "finished",
+          thinkingCuePcmSha256: "b".repeat(64),
         }),
       ]);
   });

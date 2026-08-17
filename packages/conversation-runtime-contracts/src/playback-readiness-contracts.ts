@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 export const conversationPlaybackReadinessProtocolVersion = 1 as const;
+export const conversationThinkingCuePlaybackReadinessProtocolVersion = 2 as const;
 const identifierSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u);
 const sha256Schema = z.string().regex(/^[a-f\d]{64}$/u);
 const discordSnowflakeSchema = z.string().regex(/^\d{17,20}$/u);
@@ -41,10 +42,11 @@ export const conversationAnswerObserverReadySchema =
 export const conversationThinkingCuePlaybackReadinessEnvelopeSchema = z.object({
   capturePlan: z.literal("thinking-cue"),
   expectedPcmBytes: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  expectedPcmSha256: sha256Schema,
   kind: z.literal("thinking-cue"),
   meetingId: identifierSchema,
   playbackAttemptId: identifierSchema,
-  protocolVersion: z.literal(conversationPlaybackReadinessProtocolVersion),
+  protocolVersion: z.literal(conversationThinkingCuePlaybackReadinessProtocolVersion),
   runId: identifierSchema,
   turnId: identifierSchema,
 }).strict();
@@ -172,6 +174,7 @@ export function serializeConversationThinkingCuePlaybackReadinessEnvelope(
   const envelope = conversationThinkingCuePlaybackReadinessEnvelopeSchema.parse({
     capturePlan: source.capturePlan,
     expectedPcmBytes: source.expectedPcmBytes,
+    expectedPcmSha256: source.expectedPcmSha256,
     kind: source.kind,
     meetingId: source.meetingId,
     playbackAttemptId: source.playbackAttemptId,
@@ -186,6 +189,7 @@ export function serializeConversationThinkingCuePlaybackReadinessEnvelope(
     envelope.turnId,
     envelope.playbackAttemptId,
     envelope.expectedPcmBytes,
+    envelope.expectedPcmSha256,
     envelope.kind,
     envelope.capturePlan,
   ]);

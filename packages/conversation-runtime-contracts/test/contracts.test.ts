@@ -26,10 +26,11 @@ describe("conversation runtime contracts", () => {
     const intent = conversationThinkingCuePlaybackIntentSchema.parse({
       capturePlan: "thinking-cue",
       expectedPcmBytes: 192_000,
+      expectedPcmSha256: "b".repeat(64),
       kind: "thinking-cue",
       meetingId: "meeting-1",
       playbackAttemptId: "cue-attempt-turn-1-acknowledgement",
-      protocolVersion: 1,
+      protocolVersion: 2,
       runId: "campaign-run-1",
       turnId: "turn-1",
       type: "playback-intent",
@@ -54,12 +55,13 @@ describe("conversation runtime contracts", () => {
     expect(JSON.parse(
       serializeConversationThinkingCuePlaybackReadinessEnvelope(intent),
     )).toEqual([
-      1,
+      2,
       "campaign-run-1",
       "meeting-1",
       "turn-1",
       "cue-attempt-turn-1-acknowledgement",
       192_000,
+      "b".repeat(64),
       "thinking-cue",
       "thinking-cue",
     ]);
@@ -69,10 +71,11 @@ describe("conversation runtime contracts", () => {
     expect(() => conversationThinkingCuePlaybackIntentSchema.parse({
       capturePlan: "thinking-cue",
       expectedPcmBytes: 192_000,
+      expectedPcmSha256: "b".repeat(64),
       kind: "answer",
       meetingId: "meeting-1",
       playbackAttemptId: "cue-attempt-1",
-      protocolVersion: 1,
+      protocolVersion: 2,
       runId: "campaign-run-1",
       turnId: "turn-1",
       type: "playback-intent",
@@ -85,10 +88,11 @@ describe("conversation runtime contracts", () => {
       expect(() => conversationThinkingCuePlaybackIntentSchema.parse({
         capturePlan: "thinking-cue",
         expectedPcmBytes,
+        expectedPcmSha256: "b".repeat(64),
         kind: "thinking-cue",
         meetingId: "meeting-1",
         playbackAttemptId: "cue-attempt-1",
-        protocolVersion: 1,
+        protocolVersion: 2,
         runId: "campaign-run-1",
         turnId: "turn-1",
         type: "playback-intent",

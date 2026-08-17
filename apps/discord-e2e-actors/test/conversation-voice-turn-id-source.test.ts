@@ -26,8 +26,9 @@ const intent: ConversationAnswerPlaybackIntent = {
   turnId: "human-question-17", type: "playback-intent",
 };
 const thinkingCueIntent: ConversationThinkingCuePlaybackIntent = {
-  capturePlan: "thinking-cue", expectedPcmBytes: 96_000, kind: "thinking-cue", meetingId: intent.meetingId,
-  playbackAttemptId: "thinking-cue-attempt-1", protocolVersion: 1, runId: intent.runId,
+  capturePlan: "thinking-cue", expectedPcmBytes: 96_000,
+  expectedPcmSha256: "b".repeat(64), kind: "thinking-cue", meetingId: intent.meetingId,
+  playbackAttemptId: "thinking-cue-attempt-1", protocolVersion: 2, runId: intent.runId,
   turnId: intent.turnId, type: "playback-intent",
 };
 const readyInput = {

@@ -193,6 +193,7 @@ export type ConversationPlaybackSettlement =
 export type ConversationPlaybackObservation =
   | {
       readonly preparedAssetSha256?: string;
+      readonly thinkingCuePcmSha256?: string;
       readonly speechProvenance?: "literal_tts" | "model_tts";
       readonly meetingId: string;
       readonly playbackAttemptId: string;
@@ -203,6 +204,7 @@ export type ConversationPlaybackObservation =
     }
   | {
       readonly preparedAssetSha256?: string;
+      readonly thinkingCuePcmSha256?: string;
       readonly speechProvenance?: "literal_tts" | "model_tts";
       readonly finishedAtMs: number;
       readonly meetingId: string;
@@ -213,6 +215,7 @@ export type ConversationPlaybackObservation =
     }
   | {
       readonly preparedAssetSha256?: string;
+      readonly thinkingCuePcmSha256?: string;
       readonly speechProvenance?: "literal_tts" | "model_tts";
       readonly meetingId: string;
       readonly playbackAttemptId: string;
@@ -240,10 +243,12 @@ interface ConversationPlaybackReadinessRequestBase {
 export type ConversationPlaybackReadinessRequest =
   | ConversationPlaybackReadinessRequestBase & {
       readonly expectedPcmBytes: number;
+      readonly expectedPcmSha256: string;
       readonly playbackKind: "thinking-cue";
     }
   | ConversationPlaybackReadinessRequestBase & {
       readonly expectedPcmBytes?: never;
+      readonly expectedPcmSha256?: never;
       readonly playbackKind: Exclude<ConversationPlaybackKind, "thinking-cue">;
     };
 
@@ -304,6 +309,7 @@ export interface ConversationThinkingCue {
   readonly cueId: string;
   readonly playbackAttemptId: string;
   readonly pcmChunks: readonly Uint8Array[];
+  readonly pcmSha256: string;
 }
 
 export type ConversationThinkingCueStage = "acknowledgement" | "deliberation";

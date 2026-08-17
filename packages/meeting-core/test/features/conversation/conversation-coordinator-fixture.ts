@@ -169,6 +169,7 @@ class FixedThinkingCues implements ConversationThinkingCuePort {
         cueId: `thinking-${request.stage}`,
         playbackAttemptId: `cue-attempt-${request.turnId}-${request.stage}`,
         pcmChunks: [Uint8Array.of(1, 2), Uint8Array.of(3, 4)],
+        pcmSha256: "c".repeat(64),
       },
     });
   }

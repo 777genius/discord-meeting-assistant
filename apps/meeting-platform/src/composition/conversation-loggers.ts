@@ -31,6 +31,9 @@ export function createConversationPlaybackLogger(
         ...(observation.speechProvenance === undefined
           ? {}
           : { speechProvenance: observation.speechProvenance }),
+        ...(observation.thinkingCuePcmSha256 === undefined
+          ? {}
+          : { thinkingCuePcmSha256: observation.thinkingCuePcmSha256 }),
         turnId: observation.turnId,
       };
       switch (observation.status) {

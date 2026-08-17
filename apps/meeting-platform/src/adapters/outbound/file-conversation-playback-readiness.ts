@@ -13,6 +13,7 @@ import {
   conversationThinkingCueObserverReadySchema,
   conversationThinkingCuePlaybackIntentSchema,
   conversationThinkingCuePlaybackReadinessEnvelopeSchema,
+  conversationThinkingCuePlaybackReadinessProtocolVersion,
   serializeConversationAnswerPlaybackReadinessEnvelope,
   serializeConversationGreetingPlaybackReadinessEnvelope,
   serializeConversationThinkingCuePlaybackReadinessEnvelope,
@@ -78,10 +79,11 @@ export class FileConversationPlaybackReadiness implements ConversationPlaybackRe
         ? conversationThinkingCuePlaybackReadinessEnvelopeSchema.parse({
             capturePlan: "thinking-cue",
             expectedPcmBytes: request.expectedPcmBytes,
+            expectedPcmSha256: request.expectedPcmSha256,
             kind: "thinking-cue",
             meetingId: request.meetingId,
             playbackAttemptId: request.playbackAttemptId,
-            protocolVersion: conversationPlaybackReadinessProtocolVersion,
+            protocolVersion: conversationThinkingCuePlaybackReadinessProtocolVersion,
             runId: this.options.runId,
             turnId: request.turnId,
           })
@@ -312,7 +314,9 @@ function sameEnvelope(
       : actual.kind === "answer" && expected.kind === "answer" &&
           actual.playbackAttemptId === expected.playbackAttemptId ||
         actual.kind === "thinking-cue" && expected.kind === "thinking-cue" &&
-          actual.playbackAttemptId === expected.playbackAttemptId) &&
+          actual.playbackAttemptId === expected.playbackAttemptId &&
+          actual.expectedPcmBytes === expected.expectedPcmBytes &&
+          actual.expectedPcmSha256 === expected.expectedPcmSha256) &&
     actual.runId === expected.runId &&
     actual.turnId === expected.turnId &&
     actual.intentDigestSha256 === safeFileStem(expected) &&

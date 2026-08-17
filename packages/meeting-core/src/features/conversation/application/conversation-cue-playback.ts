@@ -60,6 +60,7 @@ export class ConversationCuePlayback {
         if (readiness !== undefined) {
           const ready = await readiness.awaitConversationPlaybackReady({
             expectedPcmBytes: expectedConversationCuePcmBytes(cue),
+            expectedPcmSha256: cue.pcmSha256,
             meetingId: run.prepared.request.meetingId,
             participantId: run.prepared.request.speakerId,
             playbackAttemptId: cue.playbackAttemptId,
@@ -107,7 +108,14 @@ export class ConversationCuePlayback {
       run.cuePlayback = opened.value;
       trackConversationTask(
         state,
-        this.consume(state, run, opened.value, fence, cue.playbackAttemptId),
+        this.consume(
+          state,
+          run,
+          opened.value,
+          fence,
+          cue.playbackAttemptId,
+          cue.pcmSha256,
+        ),
       );
       if (!this.canKeep(state, run, opened.value)) {
         this.cancel(run, opened.value, "superseded");
@@ -223,6 +231,7 @@ export class ConversationCuePlayback {
     playback: VoicePlaybackSession,
     fence: ConversationPlaybackFence,
     expectedAttemptId: string,
+    expectedPcmSha256: string,
   ): Promise<void> {
     let terminalReceiptReceived = false;
     let startedReceiptReceived = false;
@@ -250,6 +259,7 @@ export class ConversationCuePlayback {
             playbackAttemptId: event.attemptId,
             playbackKind: "thinking-cue",
             status: "finished",
+            thinkingCuePcmSha256: expectedPcmSha256,
             turnId: run.prepared.request.turnId,
           });
           advanceConversationState(state, event.finishedAtMs);
@@ -284,6 +294,7 @@ export class ConversationCuePlayback {
           playbackKind: "thinking-cue",
           startedAtMs: event.startedAtMs,
           status: "started",
+          thinkingCuePcmSha256: expectedPcmSha256,
           turnId: run.prepared.request.turnId,
         });
         const processedAtMs = advanceConversationState(state, event.startedAtMs);
