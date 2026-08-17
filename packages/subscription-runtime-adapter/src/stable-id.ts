@@ -10,6 +10,7 @@ export function stableSubscriptionRuntimeId(
     | "knowledge-coverage-extract"
     | "question"
     | "summary"
+    | "summary-action-term-repair"
     | "summary-provider-output-repair"
     | "summary-request",
   ...parts: readonly string[]

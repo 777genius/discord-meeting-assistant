@@ -334,7 +334,8 @@ boundaries:
   - id: adapters.subscription-runtime
     roots:
       - packages/subscription-runtime-adapter/src
-    entrypoints: []
+    entrypoints:
+      - packages/subscription-runtime-adapter/src/summary-action-term-postcondition.ts
     allow:
       boundaries:
         - core.meeting.intelligence

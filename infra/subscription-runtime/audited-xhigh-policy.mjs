@@ -41,7 +41,7 @@ const profiles = Object.freeze({
     model: subscriptionRuntimeFinalCodexModel,
     outputKind: "structured_output",
     outputSchemaName: "discord_meeting_summary_v4",
-    policyVersion: "meeting-summary.subscription-runtime.v15",
+    policyVersion: "meeting-summary.subscription-runtime.v16",
     provider: "codex",
     purpose: "discord_meeting.summary.generate",
     reasoningEffort: "medium",

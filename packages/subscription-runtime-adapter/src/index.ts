@@ -83,6 +83,9 @@ export {
   type SubscriptionRuntimeIncrementalSummaryAdapterOptions,
 } from "./subscription-runtime-incremental-summary-adapter.js";
 export {
+  findPotentiallyTruncatedActionTerms,
+} from "./summary-action-term-postcondition.js";
+export {
   SubscriptionRuntimeSummaryAdapter,
   type SubscriptionRuntimeSummaryAdapterOptions,
   type SubscriptionRuntimeSummaryHealth,
