@@ -1,5 +1,5 @@
 import type { ConversationAnswerPlaybackIntent } from
-  "@discord-meeting/conversation-runtime-contracts";
+  "@discord-meeting/conversation-runtime-contracts/playback-readiness";
 
 import type { ConversationVoiceCampaignProofV1 } from "./conversation-voice-campaign-proof.js";
 import { serializeHostedCampaignProcessEvent } from "./hosted-campaign-process-event.js";

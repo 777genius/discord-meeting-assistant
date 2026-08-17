@@ -13,13 +13,13 @@ import {
   serializeConversationGreetingPlaybackReadinessEnvelope,
   type ConversationGreetingObserverReady,
   type ConversationGreetingPlaybackIntent,
-} from "@discord-meeting/conversation-runtime-contracts";
+} from "@discord-meeting/conversation-runtime-contracts/playback-readiness";
 
 const maximumReceiptBytes = 1_536;
 const pollIntervalMilliseconds = 25;
 export {
   type ConversationAnswerPlaybackIntent,
-} from "@discord-meeting/conversation-runtime-contracts";
+} from "@discord-meeting/conversation-runtime-contracts/playback-readiness";
 
 export async function waitForConversationAnswerPlaybackIntent(input: {
   readonly meetingId?: string;
