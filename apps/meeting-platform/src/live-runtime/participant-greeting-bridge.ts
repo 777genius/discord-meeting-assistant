@@ -208,9 +208,7 @@ export class ParticipantGreetingBridge {
       return false;
     }
     const leaseToken = await reserveGreetingPlaybackAdmission({
-      clearTerminal: () => {
-        this.clearTerminalState(participantId);
-      },
+      clearTerminal: () => { this.clearTerminalState(participantId); },
       deadlines: this.deadlines,
       markGreeted: () => this.greetedParticipantIds.add(participantId),
       nowMilliseconds: () => this.nowMilliseconds(),
@@ -248,9 +246,7 @@ export class ParticipantGreetingBridge {
       this.nowMilliseconds(),
     );
     const coordinated = await coordinateGreetingPlayback({
-      clearTerminal: () => {
-        this.clearTerminalState(participantId);
-      },
+      clearTerminal: () => { this.clearTerminalState(participantId); },
       deadlines: this.deadlines,
       dependencies: this.settlementDependencies(),
       markGreeted: () => this.greetedParticipantIds.add(participantId),
@@ -261,19 +257,13 @@ export class ParticipantGreetingBridge {
       playback,
       playbackBoundMilliseconds: playbackBound,
       receipts: this.receipts,
-      releaseSlot: () => {
-        this.scheduling.releaseSlot();
-      },
-      suppressOverflow: () => {
-        this.suppressCohortOverflow();
-      },
+      releaseSlot: () => { this.scheduling.releaseSlot(); },
+      suppressOverflow: () => { this.suppressCohortOverflow(); },
     });
     return coordinated.status === "terminal"
       ? false
       : this.scheduling.settleOutcome({
-          clearTerminal: () => {
-            this.clearTerminalState(participantId);
-          },
+          clearTerminal: () => { this.clearTerminalState(participantId); },
           deadlines: this.deadlines,
           isPresent: () => this.presentParticipantIds.has(participantId),
           logger: this.dependencies.logger,
