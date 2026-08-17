@@ -67,6 +67,13 @@ export class ConversationCuePlayback {
           }, { signal: openAbortController.signal });
           if (!isReadyResult(ready)) {
             confirmConversationPlaybackTerminal(state, fence);
+            if (
+              openAbortController.signal.aborted ||
+              run.playbackOpenAbortController !== openAbortController ||
+              !this.canOpen(state, run)
+            ) {
+              return null;
+            }
             await this.dependencies.onFailed(run);
             return null;
           }

@@ -712,6 +712,91 @@ describe("ConversationCoordinator cue playback readiness", () => {
     expect(playback.requests).toEqual([]);
   });
 
+  it("does not let superseded cue readiness abort the succeeding answer", async () => {
+    const stream = new EventStream<ConversationRuntimeEvent>();
+    const playback = new RecordingPlayback();
+    const delay = new ControlledDelayPort();
+    const readinessRequests: ConversationPlaybackReadinessRequest[] = [];
+    let answerReadinessSignal: AbortSignal | undefined;
+    let resolveAnswerReadiness!: (
+      result: Awaited<ReturnType<ConversationPlaybackReadinessPort[
+        "awaitConversationPlaybackReady"
+      ]>>,
+    ) => void;
+    const answerReadiness = new Promise<Awaited<ReturnType<
+      ConversationPlaybackReadinessPort["awaitConversationPlaybackReady"]
+    >>>((resolve) => {
+      resolveAnswerReadiness = resolve;
+    });
+    const coordinator = new ConversationCoordinator({
+      delay,
+      playback,
+      playbackReadiness: {
+        awaitConversationPlaybackReady: (request, options) => {
+          readinessRequests.push(structuredClone(request));
+          if (request.playbackKind === "answer") {
+            answerReadinessSignal = options?.signal;
+            return answerReadiness;
+          }
+          return new Promise((resolve) => {
+            options?.signal?.addEventListener("abort", () => {
+              resolve({
+                failure: {
+                  code: "PLAYBACK_READINESS_CANCELLED",
+                  message: "cue readiness superseded",
+                  retryable: false,
+                },
+                ok: false,
+              });
+            }, { once: true });
+          });
+        },
+      },
+      runtime: new ScriptedRuntime([stream]),
+      thinkingCues: new FixedThinkingCues(),
+    });
+
+    await coordinator.handleFinalizedTurn(input("turn-1", 0));
+    stream.push({ attemptId: "answer-attempt-1", type: "accepted" });
+    delay.delays[0]?.elapse();
+    await vi.waitFor(() => {
+      expect(readinessRequests[0]?.playbackKind).toBe("thinking-cue");
+    });
+
+    stream.push({
+      attemptId: "answer-attempt-1",
+      channels: 1,
+      format: "pcm_s16le",
+      sampleRateHz: 48_000,
+      type: "audio-start",
+    });
+    await vi.waitFor(() => {
+      expect(readinessRequests.map(({ playbackKind }) => playbackKind))
+        .toEqual(["thinking-cue", "answer"]);
+    });
+    expect(answerReadinessSignal?.aborted).toBe(false);
+    expect(playback.requests).toEqual([]);
+
+    resolveAnswerReadiness({ ok: true, value: "ready" });
+    await vi.waitFor(() => {
+      expect(playback.requests).toEqual([{
+        attemptId: "answer-attempt-1",
+        meetingId: "meeting-1",
+        recordingId: "recording-1",
+        turnId: "turn-1",
+      }]);
+    });
+    stream.push(audioChunk("answer-attempt-1", "turn-1", 0));
+    stream.push({ attemptId: "answer-attempt-1", type: "audio-end" });
+    stream.push({ attemptId: "answer-attempt-1", type: "completed" });
+    stream.close();
+    await coordinator.whenIdle("meeting-1");
+
+    expect(answerReadinessSignal?.aborted).toBe(false);
+    await expect(coordinator.whenTurnPlaybackSettled("meeting-1", "turn-1"))
+      .resolves.toBe("played");
+  });
+
   it("bypasses answer readiness for prepared-cue playback", async () => {
     const playback = new RecordingPlayback();
     const awaitConversationPlaybackReady = vi.fn(() =>
