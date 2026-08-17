@@ -443,7 +443,7 @@ describe("run-hosted-campaign launch authorization", () => {
         readDefinition: async () => definition(), readPlan: async () => plan(), writeReceipt: async () => {},
         writeClockPreflightProof: async (path, proof) => {
           effects.push(`write:${proof.proofId}`);
-          expect(path).toBe(definition().clockPreflightPath);
+          expect(path).toBe("/private/evidence/campaigns/campaign-1/launch-clock-preflight.json");
           expect(proof.proofId).toBe(freshClockProof().proofId);
           expect(proof.proofId).not.toBe(clockProof().proofId);
         },
