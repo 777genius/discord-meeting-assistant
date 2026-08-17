@@ -119,7 +119,7 @@ describe("provider-neutral transcript segments E2E", () => {
   });
 });
 
-async function multipartField(body: BodyInit | null | undefined, name: string): Promise<string> {
+async function multipartField(body: unknown, name: string): Promise<string> {
   const multipart = await multipartBytes(body);
   const text = multipart.toString("latin1");
   const marker = `name="${name}"\r\n\r\n`;
@@ -135,7 +135,7 @@ async function multipartField(body: BodyInit | null | undefined, name: string): 
   return text.slice(valueStart, valueEnd);
 }
 
-async function multipartFile(body: BodyInit | null | undefined): Promise<Uint8Array> {
+async function multipartFile(body: unknown): Promise<Uint8Array> {
   const multipart = await multipartBytes(body);
   const marker = Buffer.from("Content-Type: audio/ogg\r\n\r\n", "utf8");
   const start = multipart.indexOf(marker);
@@ -145,7 +145,7 @@ async function multipartFile(body: BodyInit | null | undefined): Promise<Uint8Ar
   return multipart.subarray(start + marker.length);
 }
 
-async function multipartBytes(body: BodyInit | null | undefined): Promise<Buffer> {
+async function multipartBytes(body: unknown): Promise<Buffer> {
   if (!(body instanceof Blob)) {
     throw new Error("expected deterministic multipart bytes");
   }

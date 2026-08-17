@@ -59,7 +59,7 @@ export class ParticipantGreetingReceipts {
         });
         return;
       }
-      await port?.complete({
+      await port.complete({
         kind: "greeting",
         leaseToken,
         meetingId: this.dependencies.meetingId,

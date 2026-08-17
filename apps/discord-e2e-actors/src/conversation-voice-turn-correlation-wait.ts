@@ -251,12 +251,12 @@ export async function waitForAddressedAnswerPlaybackIntent(input: {
     authorizedCueDigests.push(ready.intentDigestSha256);
     const cueDrainCancellation = new AbortController();
     const answerWaitCancellation = new AbortController();
-    let cueAudioStarted = false;
+    const cueAudio = { started: false };
     const cueDrain = drainAuthorizedConversationCue({
       isPacketAudible: input.isPacketAudible,
       maximumDurationMilliseconds: input.maximumThinkingCueDurationMilliseconds,
       minimumDurationMilliseconds: Math.ceil(intent.expectedPcmBytes / 96),
-      onFirstAudiblePacket: () => { cueAudioStarted = true; },
+      onFirstAudiblePacket: () => { cueAudio.started = true; },
       signal: cueDrainCancellation.signal,
       silenceMilliseconds: 300,
       stream: input.sourceStream,
@@ -281,7 +281,7 @@ export async function waitForAddressedAnswerPlaybackIntent(input: {
         outcome.answerIntent.turnId !== intent.turnId) {
         throw new Error("Thinking cue and addressed answer intents belong to different meetings or turns");
       }
-      if (cueAudioStarted) {
+      if (cueAudio.started) {
         await cueDrain;
       } else {
         cueDrainCancellation.abort();

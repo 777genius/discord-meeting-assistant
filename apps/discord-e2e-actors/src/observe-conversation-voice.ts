@@ -94,7 +94,9 @@ async function main(): Promise<void> {
     const handshakeNotBeforeEpochMilliseconds = Date.now();
     await Promise.all(handshakeRoots.map(assertConversationAnswerHandshakeRootIsNew));
     await armInitialConversationObserver({
-      publishObserverSubscribed: () => publishObserverSubscribed(config, authenticatedBotId),
+      publishObserverSubscribed: () => {
+        publishObserverSubscribed(config, authenticatedBotId);
+      },
       waitForCraigBot: () => assertConfiguredCraigBotIsInVoiceChannel(
         client,
         guild,

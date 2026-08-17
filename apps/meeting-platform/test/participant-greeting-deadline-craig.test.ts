@@ -162,13 +162,17 @@ describe("ParticipantGreetingBridge lifecycle cancellation", () => {
       context.coordinator.calls.push(input);
       if (context.coordinator.calls.length === 1) {
         return new Promise<{ readonly status: "busy" }>((resolve) => {
-          releaseFirstAdmission = () => resolve({ status: "busy" as const });
+          releaseFirstAdmission = () => {
+            resolve({ status: "busy" as const });
+          };
         });
       }
       return Promise.resolve({ status: "active" as const });
     };
     context.coordinator.whenTurnPlaybackSettled = () => new Promise<"played">((resolve) => {
-      releaseSecondSettlement = () => resolve("played");
+      releaseSecondSettlement = () => {
+        resolve("played");
+      };
     });
 
     context.bridge.participantJoined(participantId, occurredAt);
@@ -402,13 +406,17 @@ describe("ParticipantGreetingBridge playback deadline fencing", () => {
       const receipts = new MemoryOneShotReceipts();
       const context = deadlineFixture(() => true, receipts, logger, () => now);
       context.coordinator.whenTurnPlaybackStarted = () => new Promise((resolve) => {
-        startPlayback = () => resolve({
-          startedAtMs: 5_320,
-          status: "started" as const,
-        });
+        startPlayback = () => {
+          resolve({
+            startedAtMs: 5_320,
+            status: "started" as const,
+          });
+        };
       });
       context.coordinator.whenTurnPlaybackSettled = () => new Promise((resolve) => {
-        finishPlayback = () => resolve("played");
+        finishPlayback = () => {
+          resolve("played");
+        };
       });
       context.bridge.participantJoined(participantId, occurredAt);
       const settlement = context.bridge.settle();
@@ -440,7 +448,9 @@ describe("ParticipantGreetingBridge playback deadline fencing", () => {
       const receipts = new MemoryOneShotReceipts();
       const context = deadlineFixture(() => true, receipts);
       context.coordinator.whenTurnPlaybackStarted = () => new Promise((resolve) => {
-        finishStartObservation = () => resolve({ status: "unplayed" });
+        finishStartObservation = () => {
+          resolve({ status: "unplayed" });
+        };
       });
       context.coordinator.participantLeft = () => {
         context.coordinator.participantLeftCalls += 1;

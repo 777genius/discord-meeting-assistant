@@ -253,7 +253,9 @@ it.each([10, 20])(
       recordingId: "recording-live-1",
       type: "participant.joined",
     });
-    await vi.waitFor(() => expect(coordinator.proactiveCalls).toHaveLength(1));
+    await vi.waitFor(() => {
+      expect(coordinator.proactiveCalls).toHaveLength(1);
+    });
     expect(coordinator.proactiveCalls[0]).toMatchObject({
       prompt: "Hi, Alex!",
       speakerId: "2533228054724346087",

@@ -167,9 +167,15 @@ describe("conversation voice runtime turn correlation wait", () => {
   });
 
   it("authorizes at most two exact thinking cues before an addressed answer", () => {
-    expect(() => assertCanAuthorizeConversationThinkingCue(0)).not.toThrow();
-    expect(() => assertCanAuthorizeConversationThinkingCue(1)).not.toThrow();
-    expect(() => assertCanAuthorizeConversationThinkingCue(2))
+    expect(() => {
+      assertCanAuthorizeConversationThinkingCue(0);
+    }).not.toThrow();
+    expect(() => {
+      assertCanAuthorizeConversationThinkingCue(1);
+    }).not.toThrow();
+    expect(() => {
+      assertCanAuthorizeConversationThinkingCue(2);
+    })
       .toThrow("more than two thinking cue intents");
   });
 
