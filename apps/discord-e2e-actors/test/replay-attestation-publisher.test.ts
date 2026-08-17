@@ -18,6 +18,9 @@ describe("replay attestation publisher", () => {
     await writeFile(fixtureManifestPath, await readFile(manifestSource));
     const runner = vi.fn(async (_config, script: string, args: readonly string[]) => {
       expect(script).toContain("e2e.test-only");
+      expect(script.indexOf('env_file=$1')).toBeLessThan(script.indexOf("set -- $container_ids"));
+      expect(script).toContain('docker compose --env-file "$env_file" -f "$compose_file"');
+      expect(script).toContain('node --input-type=module -e "$node_program" "$attestation_path" "$encoded_marker"');
       expect(args[2]).toContain("O_EXCL");
       expect(args.slice(0, 2)).toEqual(["/srv/e2e/.env", "/srv/e2e/compose.yml"]);
       const markerBase = JSON.parse(Buffer.from(args[4]!, "base64url").toString("utf8")) as Record<string, unknown>;

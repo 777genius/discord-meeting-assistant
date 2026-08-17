@@ -41,7 +41,12 @@ export type ReplayAttestationRemoteRunner = (
 
 const remoteCreateScript = String.raw`
 set -eu
-container_ids="$(docker compose --env-file "$1" -f "$2" -p discord-meeting-assistant ps -q meeting-platform)"
+env_file=$1
+compose_file=$2
+node_program=$3
+attestation_path=$4
+encoded_marker=$5
+container_ids="$(docker compose --env-file "$env_file" -f "$compose_file" -p discord-meeting-assistant ps -q meeting-platform)"
 set -- $container_ids
 [ "$#" -eq 1 ] || { echo "expected exactly one meeting-platform container" >&2; exit 41; }
 container_id="$1"
@@ -52,12 +57,12 @@ labels="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.pr
 }
 image_id="$(docker inspect --format '{{.Image}}' "$container_id")"
 source_revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image_id")"
-current_container_ids="$(docker compose --env-file "$1" -f "$2" -p discord-meeting-assistant ps -q meeting-platform)"
+current_container_ids="$(docker compose --env-file "$env_file" -f "$compose_file" -p discord-meeting-assistant ps -q meeting-platform)"
 [ "$current_container_ids" = "$container_id" ] || {
   echo "meeting-platform container changed during attestation" >&2
   exit 43
 }
-node --input-type=module -e "$3" "$4" "$5" "$container_id" "$image_id" "$source_revision"
+node --input-type=module -e "$node_program" "$attestation_path" "$encoded_marker" "$container_id" "$image_id" "$source_revision"
 `;
 
 const createOnlyNodeProgram = String.raw`
