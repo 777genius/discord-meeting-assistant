@@ -5,6 +5,19 @@ import {
   waitForConversationGreetingPlaybackIntent,
 } from "./conversation-voice-turn-id-source.js";
 
+export async function armInitialConversationObserver(input: {
+  readonly publishObserverSubscribed: () => void;
+  readonly waitForCraigBot: () => Promise<void>;
+  readonly publishGreetingReady: () => Promise<void>;
+}): Promise<void> {
+  // The actor that starts the next meeting is released by observer-subscribed.
+  // Waiting for Craig before publishing it deadlocks whenever Craig correctly
+  // leaves after the preceding meeting has finished processing.
+  input.publishObserverSubscribed();
+  await input.waitForCraigBot();
+  await input.publishGreetingReady();
+}
+
 export async function publishInitialGreetingObserverReady(input: {
   readonly authenticatedBotId: string;
   readonly captures: readonly ConversationVoiceObserverCapture[];

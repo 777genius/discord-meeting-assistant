@@ -23,7 +23,10 @@ import {
   assertConversationAnswerHandshakeRootIsNew, waitForConversationAnswerPlaybackIntent,
   type ConversationAnswerPlaybackIntent,
 } from "./conversation-voice-turn-id-source.js";
-import { publishInitialGreetingObserverReady } from "./conversation-greeting-ready.js";
+import {
+  armInitialConversationObserver,
+  publishInitialGreetingObserverReady,
+} from "./conversation-greeting-ready.js";
 import {
   assertConfiguredCraigBotIsInVoiceChannel,
   assertConnectableVoiceChannel,
@@ -121,19 +124,21 @@ async function main(): Promise<void> {
     await entersState(connection, VoiceConnectionStatus.Ready, config.readyTimeoutMilliseconds);
     const handshakeNotBeforeEpochMilliseconds = Date.now();
     await Promise.all(handshakeRoots.map(assertConversationAnswerHandshakeRootIsNew));
-    await assertConfiguredCraigBotIsInVoiceChannel(
-      client,
-      guild,
-      config.craigBotId,
-      channel.id,
-      config.readyTimeoutMilliseconds,
-    );
-    publishObserverSubscribed(config, authenticatedBotId);
-    await publishInitialGreetingObserverReady({
-      authenticatedBotId,
-      captures,
-      config,
-      handshakeNotBeforeEpochMilliseconds: greetingIntentNotBeforeEpochMilliseconds,
+    await armInitialConversationObserver({
+      publishObserverSubscribed: () => publishObserverSubscribed(config, authenticatedBotId),
+      waitForCraigBot: () => assertConfiguredCraigBotIsInVoiceChannel(
+        client,
+        guild,
+        config.craigBotId,
+        channel.id,
+        config.readyTimeoutMilliseconds,
+      ),
+      publishGreetingReady: () => publishInitialGreetingObserverReady({
+        authenticatedBotId,
+        captures,
+        config,
+        handshakeNotBeforeEpochMilliseconds: greetingIntentNotBeforeEpochMilliseconds,
+      }),
     });
     const campaignProof = await capturePlannedConversationVoice({
       authenticatedBotId,
