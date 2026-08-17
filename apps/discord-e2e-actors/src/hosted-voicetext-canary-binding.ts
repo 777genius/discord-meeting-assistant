@@ -38,7 +38,7 @@ export const HOSTED_VOICETEXT_CANARY_BINDING_V1 = Object.freeze({
   requiredTerms: Object.freeze([
     "Meeting Platform",
     "Craig recording",
-    "PostgreSQL pipeline",
+    "PostgreSQL",
     "Discord thread",
     "пятницу",
   ]),

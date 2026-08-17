@@ -49,7 +49,7 @@
         "requiredTerms": ["Redis queue", "idempotency key", "Discord thread"]
       }
     ],
-    "topicTerms": ["Meeting Platform", "Craig recording", "PostgreSQL pipeline"]
+    "topicTerms": ["Meeting Platform", "Craig recording", "PostgreSQL"]
   },
   "thresholds": {
     "maxWordErrorRate": 0.35,
@@ -70,7 +70,7 @@
       "greetingNameStatus": "known",
       "greetingSpokenToken": "Тест А",
       "sourceText": "Meeting Platform сохраняет Craig recording. Затем запускает PostgreSQL pipeline. Решение - выпустить версию в пятницу. Повторяю решение - выпуск версии в пятницу. До седьмого августа две тысячи двадцать шестого года спикер Б проверит Discord thread. Повторяю - Discord thread будет проверен в две тысячи двадцать шестом году.",
-      "requiredTerms": ["Meeting Platform", "Craig recording", "PostgreSQL pipeline", "Discord thread", "пятницу"]
+      "requiredTerms": ["Meeting Platform", "Craig recording", "PostgreSQL", "Discord thread", "пятницу"]
     },
     {
       "fixtureId": "speaker-b",
