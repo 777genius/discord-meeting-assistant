@@ -36,6 +36,7 @@ import {
   normalizeDatabase,
   parseUnboundActorRun,
 } from "./e2e-retained-evidence-snapshot.js";
+import { awaitTerminalPostCallEvidence } from "./post-call-evidence-readiness.js";
 import { qualifyProviderlessVoiceDurability } from
   "./providerless-voice-durability-qualification.js";
 
@@ -60,7 +61,10 @@ export async function collectRetainedE2eEvidence(
   const replayTarget = createReplayTargetAttestation(input, unboundActorRun);
   await deployment.assertReplayTargetSafe(replayTarget);
   const provenanceBefore = await deployment.collectProvenance();
-  const before = normalizeDatabase(await deployment.collectDatabase(input.recordingId));
+  const before = normalizeDatabase(await awaitTerminalPostCallEvidence(
+    () => deployment.collectDatabase(input.recordingId),
+    input.recordingId,
+  ));
   assertExactDatabaseCounts(before, "before replay");
   const snapshot = before.snapshot;
   if (snapshot.meetingId !== input.recordingId || snapshot.recording.recordingId !== input.recordingId) {
