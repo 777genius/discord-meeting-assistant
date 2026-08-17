@@ -41,7 +41,7 @@ describe("hosted Voicetext semantic canary binding", () => {
       live: { origin: "wss://api.voicetext.site", path: "/api/v1/transcribe/stream" },
     });
     expect(binding.fixtureExpectation).toEqual({
-      maximumCharacterErrorRate: 0.2,
+      maximumCharacterErrorRate: 0.3,
       maximumTimelineDeltaMs: 60_000,
       maximumWordErrorRate: 0.35,
     });
