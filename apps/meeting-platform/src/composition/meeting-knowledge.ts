@@ -238,6 +238,7 @@ function createPollingRuntime(input: {
   };
   const reconcile = (): void => {
     reconciling ??= input.publication.reconcileUnknown(100)
+      .then(async () => await input.publication.reconcileRetractions(100))
       .catch(input.reportError)
       .finally(() => {
         reconciling = undefined;

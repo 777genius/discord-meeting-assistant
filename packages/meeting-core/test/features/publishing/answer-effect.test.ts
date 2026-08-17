@@ -117,12 +117,44 @@ class StoreFake implements AnswerEffectStore {
     this.record = { ...this.record, payloadBytes: "{}", state: "cancelled" };
     return Promise.resolve(true);
   }
+
+  listRetractionPending() {
+    return Promise.resolve(
+      this.record?.state === "retraction_pending" ? [this.record] : [],
+    );
+  }
+
+  recordRetractionReceipt(input: {
+    readonly effectId: string;
+    readonly externalReceipt: string;
+  }) {
+    if (this.record?.effectId !== input.effectId) {
+      return Promise.resolve(false);
+    }
+    this.record = { ...this.record, externalReceipt: input.externalReceipt };
+    return Promise.resolve(true);
+  }
+
+  markRetracted(input: {
+    readonly effectId: string;
+    readonly externalReceipt: string;
+  }) {
+    if (
+      this.record?.effectId !== input.effectId ||
+      this.record.externalReceipt !== input.externalReceipt
+    ) {
+      return Promise.resolve(false);
+    }
+    this.record = { ...this.record, payloadBytes: "{}", state: "retracted" };
+    return Promise.resolve(true);
+  }
 }
 
 class DeliveryFake implements AnswerDeliveryPort {
   creates = 0;
   createInputs: Parameters<AnswerDeliveryPort["create"]>[0][] = [];
   inspectInputs: Parameters<AnswerDeliveryPort["inspect"]>[0][] = [];
+  removeInputs: Parameters<AnswerDeliveryPort["remove"]>[0][] = [];
   throwAfterCreate = false;
   inspection: Awaited<ReturnType<AnswerDeliveryPort["inspect"]>> = {
     status: "unconfirmed",
@@ -140,6 +172,11 @@ class DeliveryFake implements AnswerDeliveryPort {
   inspect(input: Parameters<AnswerDeliveryPort["inspect"]>[0]) {
     this.inspectInputs.push(input);
     return Promise.resolve(this.inspection);
+  }
+
+  remove(input: Parameters<AnswerDeliveryPort["remove"]>[0]) {
+    this.removeInputs.push(input);
+    return Promise.resolve();
   }
 }
 
@@ -176,7 +213,9 @@ function reservationInput() {
     deliveryContainerId: "thread-1",
     marker: "meeting-knowledge-answer:v1:question-1",
     projectionTargetContainerId: "results-1",
+    questionGeneration: 1,
     replyToRemoteMessageId: "question-1",
+    sourceMeetingIds: ["meeting-1"],
   };
 }
 
@@ -316,5 +355,44 @@ describe("Publishing answer effects", () => {
       deliveryContainerId: "thread-1",
       projectionTargetContainerId: "results-1",
     })]);
+  });
+
+  it("retracts an outcome-unknown answer only by its exact reconciled receipt", async () => {
+    const store = new StoreFake();
+    const delivery = new DeliveryFake();
+    delivery.throwAfterCreate = true;
+    const publisher = new DurableAnswerPublication({
+      delivery,
+      payloads: new PayloadFake(),
+      store,
+    });
+    const reservation = await publisher.reserve(reservationInput());
+    await publisher.send({
+      authorizationDigest: "e".repeat(64),
+      effectId: reservation.effectId,
+      workerId: "worker-1",
+    });
+    if (store.record === undefined) {
+      throw new Error("answer effect was not retained");
+    }
+    store.record = { ...store.record, state: "retraction_pending" };
+    delivery.inspection = {
+      externalReceipt: "answer-message-reconciled",
+      status: "found",
+    };
+
+    await expect(publisher.reconcileRetractions(10)).resolves.toEqual({
+      pending: 0,
+      retracted: 1,
+    });
+    expect(delivery.removeInputs).toEqual([{
+      deliveryContainerId: "thread-1",
+      effectId: "meeting-knowledge-answer:v1:question-1",
+      externalReceipt: "answer-message-reconciled",
+    }]);
+    expect(store.record).toMatchObject({
+      externalReceipt: "answer-message-reconciled",
+      state: "retracted",
+    });
   });
 });

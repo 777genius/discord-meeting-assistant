@@ -269,6 +269,7 @@ export interface QuestionJobStore {
     readonly measurement: GroundingRequestMeasurement;
     readonly plan: GroundingPlan;
     readonly runtimeProfile: string;
+    readonly sourceMeetingIds: readonly string[];
   }): Promise<boolean>;
 
   markReady(input: {
@@ -345,6 +346,7 @@ export interface GroundedAnswerGenerator {
 
 export type AnswerEffectReservation =
   | { readonly effectId: string; readonly status: "already_delivered" }
+  | { readonly effectId: string; readonly status: "rejected_before_request" }
   | { readonly effectId: string; readonly status: "reserved" };
 
 export type AnswerEffectDeliveryResult =
@@ -359,7 +361,9 @@ export interface AnswerPublicationPort {
     readonly deliveryContainerId: string;
     readonly marker: string;
     readonly projectionTargetContainerId: string;
+    readonly questionGeneration: number;
     readonly replyToRemoteMessageId: string;
+    readonly sourceMeetingIds: readonly string[];
   }): Promise<AnswerEffectReservation>;
 
   send(input: {

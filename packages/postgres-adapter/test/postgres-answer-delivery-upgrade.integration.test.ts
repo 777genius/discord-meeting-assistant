@@ -338,6 +338,7 @@ describe("schema 17 answer-delivery upgrade", () => {
           inspections.push(input.deliveryContainerId);
           return Promise.resolve({ status: "unconfirmed" });
         },
+        remove: () => Promise.resolve(),
       };
       const publication = new DurableAnswerPublication({ delivery, payloads, store: effects });
       await expect(effects.reserve({
@@ -353,7 +354,12 @@ describe("schema 17 answer-delivery upgrade", () => {
         payloadBytes: legacyReadyPayload,
         payloadHash: sha256(legacyReadyPayload),
         projectionTargetContainerId: parentContainerId,
+        questionFence: {
+          generation: thirdLease?.generation ?? 0,
+          jobId: ready.questionId,
+        },
         replyToRemoteMessageId: ready.questionId,
+        sourceMeetingIds: [ready.meetingId],
       })).resolves.toEqual({ status: "conflict" });
       await expect(publication.reserve({
         authorizationDigest: ready.authorizationDigest,
@@ -362,7 +368,9 @@ describe("schema 17 answer-delivery upgrade", () => {
         deliveryContainerId: threadContainerId,
         marker: `marker-${ready.questionId}`,
         projectionTargetContainerId: parentContainerId,
+        questionGeneration: thirdLease?.generation ?? 0,
         replyToRemoteMessageId: ready.questionId,
+        sourceMeetingIds: [ready.meetingId],
       })).resolves.toEqual({
         effectId: `meeting-knowledge-answer:v1:${ready.questionId}`,
         status: "reserved",

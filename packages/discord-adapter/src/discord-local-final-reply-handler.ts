@@ -179,20 +179,20 @@ export class DiscordLocalFinalReplyHandler {
       }),
     });
     for (const questionId of affectedQuestions) {
+      await this.jobs.cancelQuestion(questionId);
       await this.publication.cancelBeforeRequest({
         questionId,
         reason: "binding_drift",
       });
-      await this.jobs.cancelQuestion(questionId);
     }
   }
 
   private async cancelQuestion(questionId: string): Promise<void> {
+    await this.jobs.cancelQuestion(questionId);
     await this.publication.cancelBeforeRequest({
       questionId,
       reason: "binding_drift",
     });
-    await this.jobs.cancelQuestion(questionId);
   }
 
   private track(operation: Promise<void>): void {

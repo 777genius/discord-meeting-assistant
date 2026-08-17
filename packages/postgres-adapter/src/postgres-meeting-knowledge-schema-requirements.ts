@@ -11,6 +11,7 @@ export const meetingKnowledgeRequiredRelations = [
 
 export const meetingKnowledgeRequiredIndexes = [
   "meeting_core.answer_effects_unknown_idx",
+  "meeting_core.answer_effects_retraction_pending_idx",
   "meeting_knowledge.question_jobs_dedupe_idx",
   "meeting_knowledge.question_jobs_leasable_idx",
   "meeting_knowledge.question_rate_requester_window_idx",
@@ -38,6 +39,9 @@ export const meetingKnowledgeRequiredColumns = [
   "meeting_core.answer_effects.reserved_at",
   "meeting_core.answer_effects.updated_at",
   "meeting_core.answer_effects.settled_at",
+  "meeting_core.answer_effects.source_meeting_ids",
+  "meeting_core.answer_effects.retraction_requested_at",
+  "meeting_core.answer_effects.retracted_at",
   "meeting_core.conversation_one_shot_receipts.receipt_id",
   "meeting_core.conversation_one_shot_receipts.cue_kind",
   "meeting_core.conversation_one_shot_receipts.state",
@@ -74,6 +78,7 @@ export const meetingKnowledgeRequiredColumns = [
   "meeting_knowledge.question_jobs.ready_at",
   "meeting_knowledge.question_jobs.terminal_at",
   "meeting_knowledge.question_jobs.scrubbed_at",
+  "meeting_knowledge.question_jobs.source_meeting_ids",
   "meeting_knowledge.question_rate_reservations.question_id",
   "meeting_knowledge.question_rate_reservations.requester_subject",
   "meeting_knowledge.question_rate_reservations.scope_id",
@@ -123,6 +128,8 @@ export const meetingKnowledgeRequiredCheckConstraints = [
   ["meeting_core", "answer_effects", "answer_effects_payload_is_bounded"],
   ["meeting_core", "answer_effects", "answer_effects_terminal_payload_is_scrubbed"],
   ["meeting_core", "answer_effects", "answer_effects_actionable_delivery_is_known"],
+  ["meeting_core", "answer_effects", "answer_effects_source_meetings_are_bounded"],
+  ["meeting_core", "answer_effects", "answer_effects_retraction_state_is_consistent"],
   [
     "meeting_core",
     "conversation_one_shot_receipts",

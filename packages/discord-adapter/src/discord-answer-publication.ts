@@ -120,7 +120,7 @@ export class DiscordAnswerPayloadCodec implements AnswerPayloadPort {
 
 export class DiscordAnswerDeliveryAdapter implements AnswerDeliveryPort {
   public constructor(
-    private readonly rest: Pick<REST, "get" | "post">,
+    private readonly rest: Pick<REST, "get" | "post"> & Partial<Pick<REST, "delete">>,
     private readonly botApplicationIdentity: string,
   ) {}
 
@@ -198,5 +198,29 @@ export class DiscordAnswerDeliveryAdapter implements AnswerDeliveryPort {
       // Missing, partial, or forbidden history can never prove non-delivery.
     }
     return { status: "unconfirmed" };
+  }
+
+  public async remove(input: {
+    readonly deliveryContainerId: string;
+    readonly effectId: string;
+    readonly externalReceipt: string;
+  }): Promise<void> {
+    if (this.rest.delete === undefined) {
+      throw new Error("Discord answer deletion transport is unavailable");
+    }
+    try {
+      await this.rest.delete(
+        Routes.channelMessage(input.deliveryContainerId, input.externalReceipt),
+      );
+    } catch (error) {
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        (Reflect.get(error, "status") === 404 || Reflect.get(error, "code") === 10_008)
+      ) {
+        return;
+      }
+      throw error;
+    }
   }
 }

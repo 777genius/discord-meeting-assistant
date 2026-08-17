@@ -201,17 +201,67 @@ export class PostgresQuestionAdmissionCommit
         `
           SELECT job.question_id
           FROM meeting_knowledge.question_jobs AS job
-          WHERE job.state <> 'terminal'
-            AND job.final_projection_receipt IN (
-              SELECT unavailable.final_projection_receipt
-              FROM meeting_knowledge.unavailable_final_projections AS unavailable
-            )
+          WHERE job.final_projection_receipt = $1
           ORDER BY job.question_id
           FOR UPDATE OF job
         `,
+        [input.finalProjectionReceipt],
       );
+      const questionIds = affected.rows.map(({ question_id: questionId }) => questionId);
+      if (questionIds.length > 0) {
+        await client.query(
+          `
+            UPDATE meeting_knowledge.question_jobs
+            SET state = 'terminal', outcome = 'cancelled',
+                authorization_principal_ref = NULL, question_text = NULL,
+                binding = NULL, grounding_plan = NULL, answer_candidate = NULL,
+                lease_owner = NULL, lease_until = NULL,
+                terminal_at = COALESCE(terminal_at, transaction_timestamp()),
+                scrubbed_at = COALESCE(scrubbed_at, transaction_timestamp()),
+                updated_at = transaction_timestamp()
+            WHERE question_id = ANY($1::text[]) AND state <> 'terminal'
+          `,
+          [questionIds],
+        );
+        await client.query(
+          `
+            UPDATE meeting_core.answer_effects
+            SET state = CASE
+                  WHEN state IN ('reserved', 'claimed') THEN 'cancelled'
+                  ELSE 'retraction_pending'
+                END,
+                payload_bytes = CASE
+                  WHEN state IN ('reserved', 'claimed') THEN '{}'
+                  ELSE payload_bytes
+                END,
+                claim_until = NULL,
+                retraction_requested_at = CASE
+                  WHEN state IN (
+                    'request_started', 'delivered', 'outcome_unknown',
+                    'absent_unconfirmed', 'retraction_pending'
+                  ) THEN COALESCE(retraction_requested_at, transaction_timestamp())
+                  ELSE retraction_requested_at
+                END,
+                settled_at = CASE
+                  WHEN state IN ('reserved', 'claimed')
+                    THEN COALESCE(settled_at, transaction_timestamp())
+                  ELSE settled_at
+                END,
+                updated_at = transaction_timestamp()
+            WHERE effect_id IN (
+              SELECT 'meeting-knowledge-answer:v1:' || id.question_id
+              FROM unnest($1::text[]) AS id(question_id)
+            )
+              AND state IN (
+                'reserved', 'claimed', 'request_started', 'delivered',
+                'outcome_unknown', 'absent_unconfirmed', 'retraction_pending'
+              )
+          `,
+          [questionIds],
+        );
+      }
       await client.query("COMMIT");
-      return Object.freeze(affected.rows.map(({ question_id: questionId }) => questionId));
+      return Object.freeze(questionIds);
     } catch (error) {
       await rollback(client);
       throw error;

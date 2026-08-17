@@ -31,9 +31,12 @@ export class DurableAnswerPublication {
     readonly deliveryContainerId: string;
     readonly marker: string;
     readonly projectionTargetContainerId: string;
+    readonly questionGeneration: number;
     readonly replyToRemoteMessageId: string;
+    readonly sourceMeetingIds: readonly string[];
   }): Promise<
     | { readonly effectId: string; readonly status: "already_delivered" }
+    | { readonly effectId: string; readonly status: "rejected_before_request" }
     | { readonly effectId: string; readonly status: "reserved" }
   > {
     const effectId = effectIdForQuestion(input.binding.questionId);
@@ -45,10 +48,18 @@ export class DurableAnswerPublication {
       effectId,
       marker: input.marker,
       projectionTargetContainerId: input.projectionTargetContainerId,
+      questionFence: {
+        generation: input.questionGeneration,
+        jobId: input.binding.questionId,
+      },
       replyToRemoteMessageId: input.replyToRemoteMessageId,
+      sourceMeetingIds: input.sourceMeetingIds,
     });
     if (reserved.status === "conflict") {
       throw new Error("answer effect reservation conflicts with immutable bytes");
+    }
+    if (reserved.status === "stale_fence") {
+      return { effectId, status: "rejected_before_request" };
     }
     return reserved.status === "delivered"
       ? { effectId, status: "already_delivered" }
@@ -136,6 +147,52 @@ export class DurableAnswerPublication {
       }
     }
     return { absentUnconfirmed, delivered };
+  }
+
+  public async reconcileRetractions(limit: number): Promise<{
+    readonly pending: number;
+    readonly retracted: number;
+  }> {
+    const records = await this.store.listRetractionPending(limit);
+    let retracted = 0;
+    for (const record of records) {
+      let externalReceipt = record.externalReceipt;
+      if (externalReceipt === null) {
+        const inspected = await this.delivery.inspect({
+          deliveryContainerId: record.deliveryContainerId,
+          marker: record.marker,
+          payloadHash: record.payloadHash,
+          projectionTargetContainerId: record.projectionTargetContainerId,
+          replyToRemoteMessageId: record.replyToRemoteMessageId,
+        });
+        if (inspected.status !== "found") {
+          continue;
+        }
+        externalReceipt = inspected.externalReceipt;
+        if (!await this.store.recordRetractionReceipt({
+          effectId: record.effectId,
+          externalReceipt,
+        })) {
+          continue;
+        }
+      }
+      try {
+        await this.delivery.remove({
+          deliveryContainerId: record.deliveryContainerId,
+          effectId: record.effectId,
+          externalReceipt,
+        });
+      } catch {
+        continue;
+      }
+      if (await this.store.markRetracted({
+        effectId: record.effectId,
+        externalReceipt,
+      })) {
+        retracted += 1;
+      }
+    }
+    return { pending: records.length - retracted, retracted };
   }
 
   private async effectAfterRequestStart(effectId: string) {

@@ -120,6 +120,42 @@ async function persistPublishedMeeting(
   return { snapshot, snapshotBeforePublication };
 }
 
+async function persistRunningAnswerJob(
+  database: ReturnType<typeof databaseOrSkip>,
+  binding: {
+    readonly authorizationDigest: string;
+    readonly finalProjectionReceipt: string;
+    readonly questionHash: string;
+    readonly questionId: string;
+    readonly requesterSubject: string;
+    readonly scopeId: string;
+  },
+): Promise<void> {
+  await database.query(
+    `INSERT INTO meeting_knowledge.question_jobs (
+       question_id, requester_subject, question_hash, scope_id,
+       final_projection_receipt, authorization_principal_ref,
+       authorization_digest, locale, question_text, binding, binding_hash,
+       state, generation, lease_owner, lease_until, expires_at
+     ) VALUES (
+       $1, $2, $3, $4, $5, 'opaque', $6, 'en', 'Question?', $7::jsonb,
+       $8, 'running', 1, 'worker-1',
+       transaction_timestamp() + interval '1 minute',
+       transaction_timestamp() + interval '10 minutes'
+     )`,
+    [
+      binding.questionId,
+      binding.requesterSubject,
+      binding.questionHash,
+      binding.scopeId,
+      binding.finalProjectionReceipt,
+      binding.authorizationDigest,
+      binding,
+      "f".repeat(64),
+    ],
+  );
+}
+
 describe("PostgreSQL Local Final Reply adapters", () => {
   it("atomically binds, deduplicates, leases, readies, and scrubs one current job", async (context) => {
     const database = databaseOrSkip(context);
@@ -253,6 +289,7 @@ describe("PostgreSQL Local Final Reply adapters", () => {
       measurement: { inputTokens: 1_000, requestBytes: 4_000 },
       plan,
       runtimeProfile: "sol-medium-test",
+      sourceMeetingIds: [binding.meetingId],
     })).toBe(true);
     expect(await jobs.markReady({
       answerCandidate: {
@@ -316,6 +353,7 @@ describe("PostgreSQL Local Final Reply adapters", () => {
           return Promise.reject(new Error("ambiguous timeout"));
         },
         inspect: () => Promise.resolve({ status: "unconfirmed" as const }),
+        remove: () => Promise.resolve(),
       },
       payloads: testPayloadCodec,
       store,
@@ -344,6 +382,7 @@ describe("PostgreSQL Local Final Reply adapters", () => {
       transcriptId: "transcript-1",
       transcriptVersion: 1,
     };
+    await persistRunningAnswerJob(database, binding);
     const reservation = await publication.reserve({
       authorizationDigest: binding.authorizationDigest,
       binding,
@@ -351,7 +390,9 @@ describe("PostgreSQL Local Final Reply adapters", () => {
       deliveryContainerId: channelId,
       marker: "meeting-knowledge-answer:v1:question-1",
       projectionTargetContainerId: channelId,
+      questionGeneration: 1,
       replyToRemoteMessageId: questionId,
+      sourceMeetingIds: [binding.meetingId],
     });
     await expect(publication.send({
       authorizationDigest: binding.authorizationDigest,
@@ -502,10 +543,12 @@ describe("PostgreSQL question job cleanup", () => {
           effect_id, state, projection_target_container_id,
           delivery_container_id, reply_to_remote_message_id, marker,
           payload_bytes, payload_hash,
-          binding_hash, authorization_digest, request_started_at
+          binding_hash, authorization_digest, source_meeting_ids,
+          request_started_at
         ) VALUES (
           $1, 'outcome_unknown', $2, $2, $3, 'marker-1', '{"content":"sensitive"}',
-          $4, $5, $6, transaction_timestamp() - interval '90 seconds'
+          $4, $5, $6, ARRAY['source-meeting-1']::text[],
+          transaction_timestamp() - interval '90 seconds'
         )
       `,
       [

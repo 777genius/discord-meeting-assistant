@@ -169,6 +169,7 @@ export async function qualifyLiveProjectionReply(input: {
         ? { status: "unconfirmed" as const }
         : { externalReceipt: "888888888888888880", status: "found" as const };
     },
+    remove: () => Promise.resolve(),
   };
   let generatorInvocations = 0;
   const generator = createGroundedAnswer(() => {

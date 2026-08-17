@@ -266,7 +266,11 @@ describe("Discord answer effect transport", () => {
   it("creates once from strict immutable bytes and reconciles exact remote identity", async () => {
     const post = vi.fn().mockResolvedValue({ id: "88888888888888888" });
     const get = vi.fn();
-    const rest = { get, post } as unknown as Pick<REST, "get" | "post">;
+    const remove = vi.fn().mockImplementation(() => Promise.resolve());
+    const rest = { delete: remove, get, post } as unknown as Pick<
+      REST,
+      "delete" | "get" | "post"
+    >;
     const payload = new DiscordAnswerPayloadCodec().prepare({
       binding: binding(),
       content: "The release is Monday.\n-# S2 · 2:00:00 · turn-720",
@@ -328,6 +332,19 @@ describe("Discord answer effect transport", () => {
       projectionTargetContainerId: containerId,
       replyToRemoteMessageId: questionId,
     })).resolves.toEqual({ status: "unconfirmed" });
+
+    await expect(delivery.remove({
+      deliveryContainerId: containerId,
+      effectId: "meeting-knowledge-answer:v1:question-1",
+      externalReceipt: receipt,
+    })).resolves.toBeUndefined();
+    expect(remove).toHaveBeenCalledTimes(1);
+    remove.mockRejectedValueOnce({ code: 10_008, status: 404 });
+    await expect(delivery.remove({
+      deliveryContainerId: containerId,
+      effectId: "meeting-knowledge-answer:v1:question-1",
+      externalReceipt: receipt,
+    })).resolves.toBeUndefined();
     expect(post).toHaveBeenCalledTimes(1);
   });
 });

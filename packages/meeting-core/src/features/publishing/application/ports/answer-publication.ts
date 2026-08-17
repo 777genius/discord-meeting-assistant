@@ -50,11 +50,17 @@ export interface AnswerEffectReservationInput extends PreparedAnswerPayload {
   readonly effectId: string;
   readonly marker: string;
   readonly projectionTargetContainerId: string;
+  readonly questionFence: {
+    readonly generation: number;
+    readonly jobId: string;
+  };
   readonly replyToRemoteMessageId: string;
+  readonly sourceMeetingIds: readonly string[];
 }
 
 export type AnswerEffectStoreReservation =
   | { readonly status: "conflict" }
+  | { readonly status: "stale_fence" }
   | { readonly externalReceipt?: string; readonly status: "delivered" | "existing" }
   | { readonly status: "reserved" };
 
@@ -79,6 +85,15 @@ export interface AnswerEffectStore {
   listOutcomeUnknown(limit: number): Promise<readonly AnswerEffectRecord[]>;
   markAbsentUnconfirmed(effectId: string): Promise<boolean>;
   cancelBeforeRequest(effectId: string): Promise<boolean>;
+  listRetractionPending(limit: number): Promise<readonly AnswerEffectRecord[]>;
+  recordRetractionReceipt(input: {
+    readonly effectId: string;
+    readonly externalReceipt: string;
+  }): Promise<boolean>;
+  markRetracted(input: {
+    readonly effectId: string;
+    readonly externalReceipt: string;
+  }): Promise<boolean>;
 }
 
 export interface AnswerDeliveryPort {
@@ -101,4 +116,10 @@ export interface AnswerDeliveryPort {
     | { readonly externalReceipt: string; readonly status: "found" }
     | { readonly status: "unconfirmed" }
   >;
+
+  remove(input: {
+    readonly deliveryContainerId: string;
+    readonly effectId: string;
+    readonly externalReceipt: string;
+  }): Promise<void>;
 }

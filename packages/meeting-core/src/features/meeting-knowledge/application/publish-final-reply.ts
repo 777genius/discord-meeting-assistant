@@ -44,6 +44,17 @@ function effectMarker(jobId: string): string {
 interface PublicationFences {
   readonly coverageCurrent?: () => Promise<boolean>;
   readonly historicalAuthorizationCurrent?: () => Promise<boolean>;
+  readonly sourceMeetingIds?: readonly string[];
+}
+
+function sourceMeetingsForPlan(
+  lease: QuestionJobLease,
+  plan: GroundingPlan,
+): readonly string[] {
+  return Object.freeze([...new Set([
+    lease.binding.meetingId,
+    ...plan.evidence.map((turn) => turn.source?.meetingId ?? lease.binding.meetingId),
+  ])].toSorted());
 }
 
 async function fenceIsCurrent(
@@ -162,6 +173,7 @@ export class PublishFinalReply {
         {
           ...(coverageCurrent === undefined ? {} : { coverageCurrent }),
           historicalAuthorizationCurrent,
+          sourceMeetingIds: sourceMeetingsForPlan(lease, currentPlan),
         },
       );
     } catch {
@@ -263,13 +275,18 @@ export class PublishFinalReply {
         deliveryContainerId: lease.binding.deliveryContainerId,
         marker: effectMarker(lease.jobId),
         projectionTargetContainerId: stillCurrent.binding.projectionTargetContainerId,
+        questionGeneration: lease.generation,
         replyToRemoteMessageId: lease.binding.questionId,
+        sourceMeetingIds: fences.sourceMeetingIds ?? [lease.binding.meetingId],
       });
     } catch {
       return this.settle(lease, "unavailable");
     }
     if (reservation.status === "already_delivered") {
       return this.settle(lease, outcome);
+    }
+    if (reservation.status === "rejected_before_request") {
+      return { jobId: lease.jobId, status: "stale_generation" };
     }
     const beforeSend = await this.observe(lease, "before_send_cas");
     if (!authorizedForJob(beforeSend, stillCurrent.binding, lease.binding)) {

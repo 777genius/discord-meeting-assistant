@@ -298,6 +298,12 @@ export class ProcessFinalReplyJob {
           measurement,
           plan: preparation.plan,
           runtimeProfile: measurement.runtimeProfile,
+          sourceMeetingIds: Object.freeze([...new Set([
+            binding.meetingId,
+            ...preparation.plan.evidence.map((turn) =>
+              turn.source?.meetingId ?? binding.meetingId
+            ),
+          ])].toSorted()),
         })
           ? "continue"
           : "stale_generation",

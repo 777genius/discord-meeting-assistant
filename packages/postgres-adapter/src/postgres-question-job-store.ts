@@ -96,15 +96,25 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
   ): Promise<boolean> {
     const result = await this.pool.query(
       `
+        WITH source_fence AS (
+          SELECT meeting_id, operation
+          FROM meeting_core.historical_memory_sync
+          WHERE meeting_id = ANY($6::text[])
+          FOR UPDATE
+        )
         UPDATE meeting_knowledge.question_jobs
         SET grounding_plan = $3::jsonb,
             grounding_measurement = $4::jsonb,
             runtime_profile = $5,
+            source_meeting_ids = $6::text[],
             updated_at = transaction_timestamp()
         WHERE question_id = $1
           AND generation = $2
           AND state = 'running'
           AND lease_until > transaction_timestamp()
+          AND NOT EXISTS (
+            SELECT 1 FROM source_fence WHERE operation = 'delete_meeting'
+          )
       `,
       [
         input.jobId,
@@ -116,6 +126,7 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
           schemaVersion: 1,
         }),
         input.runtimeProfile,
+        input.sourceMeetingIds,
       ],
     );
     return result.rowCount === 1;
@@ -192,6 +203,12 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
   public async cancelQuestion(questionId: string): Promise<void> {
     await this.pool.query(
       `
+        WITH locked_question AS (
+          SELECT question_id
+          FROM meeting_knowledge.question_jobs
+          WHERE question_id = $1
+          FOR UPDATE
+        ), terminalized AS (
         UPDATE meeting_knowledge.question_jobs AS job
         SET state = 'terminal',
             outcome = CASE WHEN EXISTS (
@@ -212,8 +229,41 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
             terminal_at = transaction_timestamp(),
             scrubbed_at = transaction_timestamp(),
             updated_at = transaction_timestamp()
-        WHERE job.question_id = $1
+        FROM locked_question
+        WHERE job.question_id = locked_question.question_id
           AND job.state <> 'terminal'
+        RETURNING job.question_id
+        )
+        UPDATE meeting_core.answer_effects AS effect
+        SET state = CASE
+              WHEN effect.state IN ('reserved', 'claimed') THEN 'cancelled'
+              ELSE 'retraction_pending'
+            END,
+            payload_bytes = CASE
+              WHEN effect.state IN ('reserved', 'claimed') THEN '{}'
+              ELSE effect.payload_bytes
+            END,
+            claim_until = NULL,
+            retraction_requested_at = CASE
+              WHEN effect.state IN (
+                'request_started', 'delivered', 'outcome_unknown',
+                'absent_unconfirmed', 'retraction_pending'
+              ) THEN COALESCE(effect.retraction_requested_at, transaction_timestamp())
+              ELSE effect.retraction_requested_at
+            END,
+            settled_at = CASE
+              WHEN effect.state IN ('reserved', 'claimed')
+                THEN COALESCE(effect.settled_at, transaction_timestamp())
+              ELSE effect.settled_at
+            END,
+            updated_at = transaction_timestamp()
+        FROM locked_question
+        WHERE effect.effect_id =
+            'meeting-knowledge-answer:v1:' || locked_question.question_id
+          AND effect.state IN (
+            'reserved', 'claimed', 'request_started', 'delivered',
+            'outcome_unknown', 'absent_unconfirmed', 'retraction_pending'
+          )
       `,
       [questionId],
     );
