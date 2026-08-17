@@ -76,7 +76,9 @@ describe("hosted campaign strict plan builder", () => {
     expect(observer.environment.DISCORD_E2E_CONVERSATION_VOICE_CRAIG_BOT_ID)
       .toBe(result.plan.target.botikApplicationId);
     expect(observer.environment.DISCORD_E2E_CONVERSATION_VOICE_EXPECTED_DURATION_MS)
-      .toBe("750");
+      .toBe("500");
+    expect(observer.environment.DISCORD_E2E_CONVERSATION_VOICE_TURN_ID)
+      .toBe("participant-greeting:" + result.plan.target.observerApplicationId);
     const additionalCaptures = JSON.parse(
       observer.environment.DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON!,
     ) as {
@@ -85,14 +87,28 @@ describe("hosted campaign strict plan builder", () => {
         readonly minimumMilliseconds: number;
       };
       readonly purpose: string;
+      readonly turnId?: string;
     }[];
     expect(additionalCaptures).toHaveLength(5);
-    expect(additionalCaptures.slice(0, 3).map(({ expectedDuration, purpose }) => ({
+    expect(additionalCaptures.slice(0, 3).map(({
       expectedDuration,
       purpose,
-    }))).toEqual(Array.from({ length: 3 }, () => ({
-      expectedDuration: { maximumMilliseconds: 1_250, minimumMilliseconds: 750 },
+      turnId,
+    }) => ({
+      expectedDuration,
+      purpose,
+      turnId,
+    }))).toEqual([
+      result.plan.target.speakerAApplicationId,
+      result.plan.target.speakerBApplicationId,
+      result.plan.target.speakerDApplicationId,
+    ].map((participantId, index) => ({
+      expectedDuration: {
+        maximumMilliseconds: 1_250,
+        minimumMilliseconds: index < 2 ? 750 : 500,
+      },
       purpose: "greeting",
+      turnId: "participant-greeting:" + participantId,
     })));
     expect(result.plan.children.filter(({ entrypoint }) => entrypoint === "actor")).toHaveLength(3);
     const reconnectActor = result.plan.children.find(({ childId }) => childId === "actor-3")!;

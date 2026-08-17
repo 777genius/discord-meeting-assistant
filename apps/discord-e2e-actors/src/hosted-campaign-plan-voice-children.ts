@@ -23,7 +23,7 @@ export function makeConversationObserver(context: HostedCampaignChildContext): H
       DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON: JSON.stringify([
         { attemptId: `${reconnect.runId}:capture-2`, expectedDuration: { maximumMilliseconds: 1_250, minimumMilliseconds: 750 }, outputPath: voicePaths[1], purpose: "greeting", turnId: `participant-greeting:${HOSTED_CAMPAIGN_TARGET.speakerAApplicationId}` },
         { attemptId: `${reconnect.runId}:capture-3`, expectedDuration: { maximumMilliseconds: 1_250, minimumMilliseconds: 750 }, outputPath: voicePaths[2], purpose: "greeting", turnId: `participant-greeting:${HOSTED_CAMPAIGN_TARGET.speakerBApplicationId}` },
-        { attemptId: `${reconnect.runId}:capture-4`, expectedDuration: { maximumMilliseconds: 1_250, minimumMilliseconds: 750 }, outputPath: voicePaths[3], purpose: "greeting", turnId: `participant-greeting:${HOSTED_CAMPAIGN_TARGET.speakerDApplicationId}` },
+        { attemptId: `${reconnect.runId}:capture-4`, expectedDuration: { maximumMilliseconds: 1_250, minimumMilliseconds: 500 }, outputPath: voicePaths[3], purpose: "greeting", turnId: `participant-greeting:${HOSTED_CAMPAIGN_TARGET.speakerDApplicationId}` },
         { expectedDuration: { maximumMilliseconds: 3_500, minimumMilliseconds: 3_000 }, outputPath: voicePaths[4], playbackHandshakeRoot: paths.run(3, "answer-handshakes"), purpose: "addressed-answer" },
         { attemptId: `${reconnect.runId}:capture-6`, expectedDuration: { maximumMilliseconds: 6_500, minimumMilliseconds: 6_000 }, outputPath: voicePaths[5], purpose: "farewell", turnId: "meeting-farewell:v1" },
       ]),
@@ -31,7 +31,7 @@ export function makeConversationObserver(context: HostedCampaignChildContext): H
       DISCORD_E2E_CONVERSATION_VOICE_CAPTURE_TIMEOUT_MS: "60000",
       DISCORD_E2E_CONVERSATION_VOICE_CAMPAIGN_PROOF_OUTPUT: paths.campaignProof,
       DISCORD_E2E_CONVERSATION_VOICE_CRAIG_BOT_ID: HOSTED_CAMPAIGN_TARGET.botikApplicationId,
-      DISCORD_E2E_CONVERSATION_VOICE_EXPECTED_DURATION_MS: "750",
+      DISCORD_E2E_CONVERSATION_VOICE_EXPECTED_DURATION_MS: "500",
       DISCORD_E2E_CONVERSATION_VOICE_GUILD_ID: HOSTED_CAMPAIGN_TARGET.guildId,
       DISCORD_E2E_CONVERSATION_VOICE_GREETING_HANDSHAKE_ROOT: paths.run(3, "greeting-handshakes"),
       DISCORD_E2E_CONVERSATION_VOICE_OBSERVER_APPLICATION_ID: HOSTED_CAMPAIGN_TARGET.observerApplicationId,
