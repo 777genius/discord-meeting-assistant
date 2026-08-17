@@ -78,6 +78,14 @@ describe("hosted campaign strict plan builder", () => {
     expect(JSON.parse(observer.environment.DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON!))
       .toHaveLength(5);
     expect(result.plan.children.filter(({ entrypoint }) => entrypoint === "actor")).toHaveLength(3);
+    const reconnectActor = result.plan.children.find(({ childId }) => childId === "actor-3")!;
+    expect(reconnectActor.startBefore).toEqual({
+      action: { kind: "observer-subscribed" },
+      kind: "barrier",
+      ordinal: 3,
+      runId: "campaign-run-3",
+    });
+    expect(reconnectActor.releaseGate?.action).toEqual({ kind: "observer-subscribed" });
     expect(result.plan.children.filter(({ entrypoint }) => entrypoint === "recording-ready")).toHaveLength(3);
     expect(result.plan.children.filter(({ entrypoint }) => entrypoint === "actor")
       .every(({ environment }) => environment.DISCORD_E2E_RECORDER_BOT_ID === result.plan.target.botikApplicationId))

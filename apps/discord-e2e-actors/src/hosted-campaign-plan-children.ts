@@ -37,8 +37,9 @@ export function makeHostedCampaignChildren(
 ): readonly HostedCampaignExecutableSpec[] {
   const context = makeHostedCampaignChildContext(definition, bindings, runs, campaignRoot);
   const {
-    captures, conversationCompleted, overlap, overlapBinding, playbackLinkSeen, provenanceAfter,
-    provenanceBefore, reconnect, reconnectBinding, recordingReady, replayAttestationReady,
+    conversationCompleted, overlap, overlapBinding, playbackLinkSeen, provenanceAfter,
+    observerSubscribed, provenanceBefore, reconnect, reconnectBinding, recordingReady,
+    replayAttestationReady,
     runVerified, sequential, sequentialBinding, serviceLevelsReady, supplementalCompleted,
   } = context;
   const serviceLevelPaths = makeServiceLevelPaths(context);
@@ -46,7 +47,7 @@ export function makeHostedCampaignChildren(
   return Object.freeze([
     makeActor(context, sequential, provenanceBefore),
     makeActor(context, overlap, runVerified[0]!),
-    makeActor(context, reconnect, captures[0]!, supplementalCompleted),
+    makeActor(context, reconnect, observerSubscribed, supplementalCompleted),
     makeProvenanceProbe(context, "before", sequential, provenanceBefore),
     makeRecordingReadyCollector(context, sequential),
     makeReplayAttestationPublisher(context, sequential),
