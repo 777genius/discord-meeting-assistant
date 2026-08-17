@@ -35,6 +35,18 @@ describe("summary action consolidation", () => {
       .toEqual([ownedAction]);
   });
 
+  it("normalizes the dative Russian speaker label emitted by the final summary", () => {
+    const summary = summaryWith({
+      deadline: "До 7 августа 2026 года",
+      evidenceTurnIds: ["turn-a"],
+      ownerSpeakerId: null,
+      text: "Спикеру B проверить Discord thread",
+    });
+
+    expect(consolidateCoveredUnassignedActions(summary, transcriptTurns()).actionItems)
+      .toEqual([ownedAction]);
+  });
+
   it("preserves a distinct unassigned task with the same deadline", () => {
     const distinct: ProviderMeetingSummary["actionItems"][number] = {
       deadline: "до 7 августа 2026 года",

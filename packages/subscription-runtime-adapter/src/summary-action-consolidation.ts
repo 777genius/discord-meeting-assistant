@@ -56,12 +56,14 @@ function meaningfulTerms(value: string): ReadonlySet<string> {
   return new Set(
     normalizeText(value)
       .match(/[\p{L}\p{N}]+/gu)
-      ?.filter((term) => term.length >= 3 && !actionLabelTerms.has(term))
+      ?.filter((term) => term.length >= 3 && !isActionLabelTerm(term))
       .map(canonicalActionTerm) ?? [],
   );
 }
 
-const actionLabelTerms = new Set(["speaker", "спикер"]);
+function isActionLabelTerm(term: string): boolean {
+  return /^(?:speakers?|спикер(?:а|у|ом|е|ы|ов|ам|ами|ах)?)$/u.test(term);
+}
 
 function canonicalActionTerm(term: string): string {
   if (/^\p{Script=Cyrillic}{6,}$/u.test(term)) {
