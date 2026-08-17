@@ -160,7 +160,9 @@ async function raceWithTimer<T>(
 ): Promise<T | null> {
   let handle: ReturnType<LiveRuntimeTimer["schedule"]> | undefined;
   const timeout = new Promise<null>((resolve) => {
-    handle = timer.schedule(delayMilliseconds, () => resolve(null));
+    handle = timer.schedule(delayMilliseconds, () => {
+      resolve(null);
+    });
   });
   return Promise.race([operation, timeout]).finally(() => {
     if (handle !== undefined) {
