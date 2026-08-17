@@ -75,8 +75,23 @@ describe("hosted campaign strict plan builder", () => {
     const observer = result.plan.children.find(({ childId }) => childId === "conversation-observer")!;
     expect(observer.environment.DISCORD_E2E_CONVERSATION_VOICE_CRAIG_BOT_ID)
       .toBe(result.plan.target.botikApplicationId);
-    expect(JSON.parse(observer.environment.DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON!))
-      .toHaveLength(5);
+    const additionalCaptures = JSON.parse(
+      observer.environment.DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON!,
+    ) as {
+      readonly expectedDuration: {
+        readonly maximumMilliseconds: number;
+        readonly minimumMilliseconds: number;
+      };
+      readonly purpose: string;
+    }[];
+    expect(additionalCaptures).toHaveLength(5);
+    expect(additionalCaptures.slice(0, 3).map(({ expectedDuration, purpose }) => ({
+      expectedDuration,
+      purpose,
+    }))).toEqual(Array.from({ length: 3 }, () => ({
+      expectedDuration: { maximumMilliseconds: 1_250, minimumMilliseconds: 750 },
+      purpose: "greeting",
+    })));
     expect(result.plan.children.filter(({ entrypoint }) => entrypoint === "actor")).toHaveLength(3);
     const reconnectActor = result.plan.children.find(({ childId }) => childId === "actor-3")!;
     expect(reconnectActor.startBefore).toEqual({

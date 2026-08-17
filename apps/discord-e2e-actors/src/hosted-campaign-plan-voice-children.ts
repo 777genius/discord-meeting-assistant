@@ -21,9 +21,9 @@ export function makeConversationObserver(context: HostedCampaignChildContext): H
     completionAfter: captures[5]!,
     environment: {
       DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON: JSON.stringify([
-        { attemptId: `${reconnect.runId}:capture-2`, expectedDuration: { maximumMilliseconds: 2_500, minimumMilliseconds: 2_000 }, outputPath: voicePaths[1], purpose: "greeting", turnId: `participant-greeting:${HOSTED_CAMPAIGN_TARGET.speakerAApplicationId}` },
-        { attemptId: `${reconnect.runId}:capture-3`, expectedDuration: { maximumMilliseconds: 3_500, minimumMilliseconds: 3_000 }, outputPath: voicePaths[2], purpose: "greeting", turnId: `participant-greeting:${HOSTED_CAMPAIGN_TARGET.speakerBApplicationId}` },
-        { attemptId: `${reconnect.runId}:capture-4`, expectedDuration: { maximumMilliseconds: 4_500, minimumMilliseconds: 4_000 }, outputPath: voicePaths[3], purpose: "greeting", turnId: `participant-greeting:${HOSTED_CAMPAIGN_TARGET.speakerDApplicationId}` },
+        { attemptId: `${reconnect.runId}:capture-2`, expectedDuration: { maximumMilliseconds: 1_250, minimumMilliseconds: 750 }, outputPath: voicePaths[1], purpose: "greeting", turnId: `participant-greeting:${HOSTED_CAMPAIGN_TARGET.speakerAApplicationId}` },
+        { attemptId: `${reconnect.runId}:capture-3`, expectedDuration: { maximumMilliseconds: 1_250, minimumMilliseconds: 750 }, outputPath: voicePaths[2], purpose: "greeting", turnId: `participant-greeting:${HOSTED_CAMPAIGN_TARGET.speakerBApplicationId}` },
+        { attemptId: `${reconnect.runId}:capture-4`, expectedDuration: { maximumMilliseconds: 1_250, minimumMilliseconds: 750 }, outputPath: voicePaths[3], purpose: "greeting", turnId: `participant-greeting:${HOSTED_CAMPAIGN_TARGET.speakerDApplicationId}` },
         { expectedDuration: { maximumMilliseconds: 3_500, minimumMilliseconds: 3_000 }, outputPath: voicePaths[4], playbackHandshakeRoot: paths.run(3, "answer-handshakes"), purpose: "addressed-answer" },
         { attemptId: `${reconnect.runId}:capture-6`, expectedDuration: { maximumMilliseconds: 6_500, minimumMilliseconds: 6_000 }, outputPath: voicePaths[5], purpose: "farewell", turnId: "meeting-farewell:v1" },
       ]),
