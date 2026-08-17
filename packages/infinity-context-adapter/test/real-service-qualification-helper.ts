@@ -116,25 +116,24 @@ export async function runRealServiceQualification(
         { cause: error },
       );
     }
-    expect(capabilities.supports_qdrant).toBe(true);
-    expect(capabilities.enabled_adapters).toContain("qdrant");
-    expect(officialQdrantCapability(capabilities)).toMatchObject({
+    expect(capabilities.supportsQdrant).toBe(true);
+    expect(capabilities.enabledAdapters).toContain("qdrant");
+    expect(capabilities.qdrant).toMatchObject({
       enabled: true,
       healthy: true,
-      supports_search: true,
-      supports_upsert: true,
+      supportsSearch: true,
+      supportsUpsert: true,
     });
     if (
-      typeof capabilities.api_version !== "string" ||
-      typeof capabilities.service_name !== "string" ||
-      !Array.isArray(capabilities.enabled_adapters)
+      capabilities.apiVersion === null ||
+      capabilities.serviceName === null
     ) {
       throw new Error("real Infinity Context capabilities omitted service identity");
     }
     service = {
-      apiVersion: capabilities.api_version,
-      enabledAdapters: Object.freeze([...capabilities.enabled_adapters]),
-      name: capabilities.service_name,
+      apiVersion: capabilities.apiVersion,
+      enabledAdapters: Object.freeze([...capabilities.enabledAdapters]),
+      name: capabilities.serviceName,
     };
 
     await expect(worker.executeOnce({ indexingEnabled: true })).resolves.toMatchObject({
@@ -257,16 +256,6 @@ export async function runRealServiceQualification(
     service,
     turnCount: QUALIFICATION_CORPUS_TURN_COUNT,
   };
-}
-
-function officialQdrantCapability(capabilities: unknown): unknown {
-  if (typeof capabilities !== "object" || capabilities === null) {
-    return undefined;
-  }
-  const adapters = (capabilities as Readonly<Record<string, unknown>>).adapters;
-  return typeof adapters === "object" && adapters !== null
-    ? (adapters as Readonly<Record<string, unknown>>).qdrant
-    : undefined;
 }
 
 function focusedRetrieval(

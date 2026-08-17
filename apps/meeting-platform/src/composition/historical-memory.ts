@@ -189,12 +189,7 @@ export function createPlatformHistoricalMemory(input: {
     const capabilities = await memory.qualifyCapabilities(
       signal === undefined ? {} : { signal },
     );
-    assertInfinityContextActivation(config.activation, {
-      apiVersion: capabilities.api_version ?? null,
-      enabledAdapters: capabilities.enabled_adapters ?? [],
-      serviceName: capabilities.service_name ?? null,
-      supportsQdrant: capabilities.supports_qdrant === true,
-    });
+    assertInfinityContextActivation(config.activation, capabilities);
     transportQualified = true;
     searchQualified = semanticSearchQualified(config.activation, input.logger);
   };

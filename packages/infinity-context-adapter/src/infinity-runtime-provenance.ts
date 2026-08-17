@@ -32,6 +32,8 @@ export const INFINITY_CONTEXT_SDK_PROVENANCE = Object.freeze({
     "local-open-source-paraphrase-multilingual-minilm-l12-v2-hybrid-bm25.r73",
   retainedProductionSemanticEmbeddingProfileDigestSha256:
     "sha256:5ecd36edd098940cd8a6540509f90815ddc1802b4410ced2bf063c0f8c650cac",
+  retainedProductionSemanticServiceRevision:
+    "897efd211151e9a81a7466fdd6be5cb067ddb8eb",
   repository: "https://github.com/777genius/infinity-context.git",
   tree: "67a744b1accc0d4628c19f28849660bc917b8b62",
 });
@@ -64,7 +66,16 @@ export interface InfinityContextRuntimeActivationV1 {
 
 export interface InfinityContextCapabilityAttestationV1 {
   readonly apiVersion: string | null;
+  readonly embeddingProfileDigestSha256: string | null;
+  readonly embeddingProfileId: string | null;
   readonly enabledAdapters: readonly string[];
+  readonly qdrant?: {
+    readonly enabled: boolean;
+    readonly healthy: boolean;
+    readonly supportsSearch: boolean;
+    readonly supportsUpsert: boolean;
+  } | null;
+  readonly serviceRevision: string | null;
   readonly serviceName: string | null;
   readonly supportsQdrant: boolean;
 }
@@ -92,6 +103,54 @@ function boolean(value: unknown, field: string): boolean {
     throw new InfinityContextActivationError(`${field} must be a boolean`);
   }
   return value;
+}
+
+function nullableString(value: unknown, field: string): string | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  return string(value, field);
+}
+
+/**
+ * Converts the provider capability response into the adapter-owned receipt
+ * validated by composition. Additive provider fields remain inside this
+ * adapter boundary and an older endpoint decodes to an incomplete receipt.
+ */
+export function decodeInfinityContextCapabilityAttestation(
+  value: unknown,
+): InfinityContextCapabilityAttestationV1 {
+  const input = object(value);
+  const enabledAdapters = input.enabled_adapters;
+  if (!Array.isArray(enabledAdapters) || enabledAdapters.some((item) => typeof item !== "string")) {
+    throw new InfinityContextActivationError("enabled_adapters must be an array of strings");
+  }
+  const adapters = typeof input.adapters === "object" && input.adapters !== null
+    ? input.adapters as Readonly<Record<string, unknown>>
+    : {};
+  const qdrant = typeof adapters.qdrant === "object" && adapters.qdrant !== null
+    ? adapters.qdrant as Readonly<Record<string, unknown>>
+    : null;
+  return Object.freeze({
+    apiVersion: nullableString(input.api_version, "api_version"),
+    embeddingProfileDigestSha256: nullableString(
+      input.embedding_profile_digest_sha256,
+      "embedding_profile_digest_sha256",
+    ),
+    embeddingProfileId: nullableString(input.embedding_profile_id, "embedding_profile_id"),
+    enabledAdapters: Object.freeze([...enabledAdapters]),
+    qdrant: qdrant === null
+      ? null
+      : Object.freeze({
+        enabled: qdrant.enabled === true,
+        healthy: qdrant.healthy === true,
+        supportsSearch: qdrant.supports_search === true,
+        supportsUpsert: qdrant.supports_upsert === true,
+      }),
+    serviceRevision: nullableString(input.service_revision, "service_revision"),
+    serviceName: nullableString(input.service_name, "service_name"),
+    supportsQdrant: input.supports_qdrant === true,
+  });
 }
 
 function rejectUnknownActivationFields(input: Readonly<Record<string, unknown>>): void {
@@ -305,12 +364,23 @@ function assertInfinityContextCapabilities(
   capabilities: InfinityContextCapabilityAttestationV1,
 ): void {
   const active = activation.indexingEnabled || activation.searchEnabled;
+  const productionSearchAttestation =
+    activation.environment === "production" && activation.searchEnabled
+      ? activation.productionEmbeddingProfileAttestation
+      : null;
   if (
     capabilities.apiVersion !== activation.apiVersion ||
     capabilities.serviceName !== activation.serviceName ||
     (active && (
       !capabilities.supportsQdrant ||
       !capabilities.enabledAdapters.includes("qdrant")
+    )) ||
+    (productionSearchAttestation !== null && (
+      capabilities.embeddingProfileId !== productionSearchAttestation.embeddingProfile ||
+      capabilities.embeddingProfileDigestSha256 !==
+        productionSearchAttestation.embeddingProfileDigestSha256 ||
+      capabilities.serviceRevision !==
+        INFINITY_CONTEXT_SDK_PROVENANCE.retainedProductionSemanticServiceRevision
     ))
   ) {
     throw new InfinityContextActivationError(
