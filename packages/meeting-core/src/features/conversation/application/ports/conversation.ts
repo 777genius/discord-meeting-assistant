@@ -230,13 +230,22 @@ export interface ConversationPlaybackObserverPort {
   ): void | Promise<void>;
 }
 
-export interface ConversationPlaybackReadinessRequest {
+interface ConversationPlaybackReadinessRequestBase {
   readonly meetingId: string;
   readonly participantId?: string;
   readonly playbackAttemptId: string;
-  readonly playbackKind: ConversationPlaybackKind;
   readonly turnId: string;
 }
+
+export type ConversationPlaybackReadinessRequest =
+  | ConversationPlaybackReadinessRequestBase & {
+      readonly expectedPcmBytes: number;
+      readonly playbackKind: "thinking-cue";
+    }
+  | ConversationPlaybackReadinessRequestBase & {
+      readonly expectedPcmBytes?: never;
+      readonly playbackKind: Exclude<ConversationPlaybackKind, "thinking-cue">;
+    };
 
 /** Optional two-phase gate used when an external observer must be ready first. */
 export interface ConversationPlaybackReadinessPort {

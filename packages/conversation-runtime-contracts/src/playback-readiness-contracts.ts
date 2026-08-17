@@ -40,6 +40,7 @@ export const conversationAnswerObserverReadySchema =
 
 export const conversationThinkingCuePlaybackReadinessEnvelopeSchema = z.object({
   capturePlan: z.literal("thinking-cue"),
+  expectedPcmBytes: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   kind: z.literal("thinking-cue"),
   meetingId: identifierSchema,
   playbackAttemptId: identifierSchema,
@@ -59,7 +60,6 @@ export const conversationThinkingCueObserverReadySchema =
       authenticatedObserverBotId: discordSnowflakeSchema,
       intentDigestSha256: sha256Schema,
       intentObservedAt: z.iso.datetime(),
-      planDigestSha256: sha256Schema,
       readyPublishedAt: z.iso.datetime(),
       target: z.object({
         craigBotId: discordSnowflakeSchema,
@@ -171,6 +171,7 @@ export function serializeConversationThinkingCuePlaybackReadinessEnvelope(
   ]).parse(input);
   const envelope = conversationThinkingCuePlaybackReadinessEnvelopeSchema.parse({
     capturePlan: source.capturePlan,
+    expectedPcmBytes: source.expectedPcmBytes,
     kind: source.kind,
     meetingId: source.meetingId,
     playbackAttemptId: source.playbackAttemptId,
@@ -184,6 +185,7 @@ export function serializeConversationThinkingCuePlaybackReadinessEnvelope(
     envelope.meetingId,
     envelope.turnId,
     envelope.playbackAttemptId,
+    envelope.expectedPcmBytes,
     envelope.kind,
     envelope.capturePlan,
   ]);

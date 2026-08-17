@@ -645,6 +645,7 @@ describe("ConversationCoordinator cue playback readiness", () => {
     delay.delays[0]?.elapse();
     await vi.waitFor(() => {
       expect(readinessRequests).toEqual([{
+        expectedPcmBytes: 4,
         meetingId: "meeting-1",
         participantId: "speaker-turn-1",
         playbackAttemptId: "cue-attempt-turn-1-acknowledgement",

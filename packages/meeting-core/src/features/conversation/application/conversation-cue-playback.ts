@@ -59,6 +59,7 @@ export class ConversationCuePlayback {
         const readiness = this.dependencies.playbackReadiness;
         if (readiness !== undefined) {
           const ready = await readiness.awaitConversationPlaybackReady({
+            expectedPcmBytes: expectedConversationCuePcmBytes(cue),
             meetingId: run.prepared.request.meetingId,
             participantId: run.prepared.request.speakerId,
             playbackAttemptId: cue.playbackAttemptId,
@@ -323,4 +324,15 @@ function isReadyResult(result: unknown): boolean {
   return typeof result === "object" && result !== null &&
     "ok" in result && result.ok === true &&
     "value" in result && result.value === "ready";
+}
+
+function expectedConversationCuePcmBytes(cue: ConversationThinkingCue): number {
+  const expectedPcmBytes = cue.pcmChunks.reduce(
+    (total, chunk) => total + chunk.byteLength,
+    0,
+  );
+  if (!Number.isSafeInteger(expectedPcmBytes) || expectedPcmBytes <= 0) {
+    throw new Error("Thinking cue PCM byte count must be a positive safe integer");
+  }
+  return expectedPcmBytes;
 }

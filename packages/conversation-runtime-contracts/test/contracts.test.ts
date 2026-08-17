@@ -25,6 +25,7 @@ describe("conversation runtime contracts", () => {
   it("binds a thinking-cue intent and observer readiness to one exact playback", () => {
     const intent = conversationThinkingCuePlaybackIntentSchema.parse({
       capturePlan: "thinking-cue",
+      expectedPcmBytes: 192_000,
       kind: "thinking-cue",
       meetingId: "meeting-1",
       playbackAttemptId: "cue-attempt-turn-1-acknowledgement",
@@ -38,7 +39,6 @@ describe("conversation runtime contracts", () => {
       authenticatedObserverBotId: "123456789012345678",
       intentDigestSha256: "a".repeat(64),
       intentObservedAt: "2026-08-17T12:00:00.000Z",
-      planDigestSha256: "b".repeat(64),
       readyPublishedAt: "2026-08-17T12:00:00.100Z",
       target: {
         craigBotId: "223456789012345678",
@@ -59,6 +59,7 @@ describe("conversation runtime contracts", () => {
       "meeting-1",
       "turn-1",
       "cue-attempt-turn-1-acknowledgement",
+      192_000,
       "thinking-cue",
       "thinking-cue",
     ]);
@@ -67,6 +68,7 @@ describe("conversation runtime contracts", () => {
   it("rejects a thinking-cue readiness receipt for a different playback kind", () => {
     expect(() => conversationThinkingCuePlaybackIntentSchema.parse({
       capturePlan: "thinking-cue",
+      expectedPcmBytes: 192_000,
       kind: "answer",
       meetingId: "meeting-1",
       playbackAttemptId: "cue-attempt-1",
@@ -76,6 +78,23 @@ describe("conversation runtime contracts", () => {
       type: "playback-intent",
     })).toThrow();
   });
+
+  it.each([0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])(
+    "rejects invalid thinking-cue expected PCM byte count %s",
+    (expectedPcmBytes) => {
+      expect(() => conversationThinkingCuePlaybackIntentSchema.parse({
+        capturePlan: "thinking-cue",
+        expectedPcmBytes,
+        kind: "thinking-cue",
+        meetingId: "meeting-1",
+        playbackAttemptId: "cue-attempt-1",
+        protocolVersion: 1,
+        runId: "campaign-run-1",
+        turnId: "turn-1",
+        type: "playback-intent",
+      })).toThrow();
+    },
+  );
 
   it("parses provider-neutral health without provider credentials", () => {
     expect(parseConversationRuntimeHealth({

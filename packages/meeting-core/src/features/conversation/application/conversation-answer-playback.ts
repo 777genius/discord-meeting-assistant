@@ -374,7 +374,9 @@ export class ConversationAnswerPlayback {
       !run.cancellationInFlight;
   }
 
-  private playbackKind(run: ActiveConversationRun): ConversationPlaybackKind {
+  private playbackKind(
+    run: ActiveConversationRun,
+  ): Exclude<ConversationPlaybackKind, "thinking-cue"> {
     return run.prepared.cue === undefined ? "answer" : "prepared-cue";
   }
 
