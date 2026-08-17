@@ -83,6 +83,33 @@ describe("hosted Voicetext semantic canary producer", () => {
     });
   });
 
+  it("normalizes a bounded Voicetext phonetic alias before matching required terms", async () => {
+    const expected = [{ endMs: 1_000, startMs: 0, text: "PostgreSQL pipeline" }] as const;
+    const observed = [{ endMs: 1_000, startMs: 0, text: "Post Grazical PeopleLine" }];
+    const observedDigest = digestVoicetextCanaryExpectationV1(observed);
+    const internal: VoicetextCanaryInternalResultV1 = {
+      ...result(),
+      batch: {
+        firstSubmission: { jobId: "job-phonetic", resultId: "result-phonetic", resultSha256: observedDigest },
+        idempotentReplay: { jobId: "job-phonetic", resultId: "result-phonetic", resultSha256: observedDigest },
+        segments: observed,
+        utteranceCount: 1,
+      },
+      live: { ...result().live, segments: observed },
+    };
+    const receipt = await produceVoicetextSemanticCanaryReceiptV1({
+      ...input(),
+      binding: {
+        ...binding,
+        transcriptExpectationSha256: digestVoicetextCanaryExpectationV1(expected),
+      },
+      expectedSegments: expected,
+      requiredTerms: ["PostgreSQL"],
+    }, { run: async () => internal });
+
+    expect(receipt.quality.requiredTermMatches).toBe(1);
+  });
+
   it("rejects a receipt TTL longer than the admission freshness window", async () => {
     await expect(produceVoicetextSemanticCanaryReceiptV1({
       ...input(), ttlMs: 60_001,

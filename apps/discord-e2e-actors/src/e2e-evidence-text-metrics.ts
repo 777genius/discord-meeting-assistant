@@ -7,6 +7,7 @@ export function normalize(value: string): string {
 
 export function normalizeTranscriptSemantics(value: string): string {
   return normalize(value)
+    .replaceAll("post grazical", "postgresql")
     .replaceAll(
       "седьмого августа две тысячи двадцать шестого года",
       "7 августа 2026 года",
