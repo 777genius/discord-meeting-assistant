@@ -171,7 +171,9 @@ describe("FileConversationPlaybackReadiness", () => {
       ok: false,
     });
   });
+});
 
+describe("FileConversationPlaybackReadiness answer handshakes", () => {
   it("publishes a create-only intent and waits for the exact observer-ready receipt", async () => {
     const root = await temporaryRoot();
     const readiness = new FileConversationPlaybackReadiness({

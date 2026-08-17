@@ -34,6 +34,15 @@ interface ConversationCuePlaybackDependencies {
   readonly playbackReadiness?: ConversationPlaybackReadinessPort;
 }
 
+interface ConversationCuePlaybackReceiptInput {
+  readonly expectedAttemptId: string;
+  readonly expectedPcmSha256: string;
+  readonly fence: ConversationPlaybackFence;
+  readonly playback: VoicePlaybackSession;
+  readonly run: ActiveConversationRun;
+  readonly state: MeetingConversationState;
+}
+
 /** Owns opening, streaming and terminal-receipt tracking for one cue playback. */
 export class ConversationCuePlayback {
   public constructor(
@@ -108,14 +117,14 @@ export class ConversationCuePlayback {
       run.cuePlayback = opened.value;
       trackConversationTask(
         state,
-        this.consume(
-          state,
-          run,
-          opened.value,
+        this.consume({
+          expectedAttemptId: cue.playbackAttemptId,
+          expectedPcmSha256: cue.pcmSha256,
           fence,
-          cue.playbackAttemptId,
-          cue.pcmSha256,
-        ),
+          playback: opened.value,
+          run,
+          state,
+        }),
       );
       if (!this.canKeep(state, run, opened.value)) {
         this.cancel(run, opened.value, "superseded");
@@ -225,14 +234,15 @@ export class ConversationCuePlayback {
       run.cuePlayback === playback;
   }
 
-  private async consume(
-    state: MeetingConversationState,
-    run: ActiveConversationRun,
-    playback: VoicePlaybackSession,
-    fence: ConversationPlaybackFence,
-    expectedAttemptId: string,
-    expectedPcmSha256: string,
-  ): Promise<void> {
+  private async consume(input: ConversationCuePlaybackReceiptInput): Promise<void> {
+    const {
+      expectedAttemptId,
+      expectedPcmSha256,
+      fence,
+      playback,
+      run,
+      state,
+    } = input;
     let terminalReceiptReceived = false;
     let startedReceiptReceived = false;
     try {

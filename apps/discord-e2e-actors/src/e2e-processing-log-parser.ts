@@ -152,6 +152,82 @@ export function parseProcessingEvidenceLogs(output: string, meetingId: string): 
   return processingEvidenceSchema.parse({ stages, summaryRuntimeExecutions });
 }
 
+type PlaybackReceipt =
+  CollectedConversationLifecycleEvidence["playbackReceipts"][number];
+
+interface PlaybackReceiptMetadataInput {
+  readonly playbackAttemptId: string;
+  readonly playbackKind: PlaybackReceipt["playbackKind"];
+  readonly preparedAssetSha256?: string | undefined;
+  readonly speechProvenance?: "literal_tts" | "model_tts" | undefined;
+  readonly thinkingCuePcmSha256?: string | undefined;
+  readonly time: string;
+  readonly turnId: string;
+}
+
+function playbackReceiptMetadata(
+  input: PlaybackReceiptMetadataInput,
+): Pick<
+  PlaybackReceipt,
+  | "observedAt"
+  | "playbackAttemptId"
+  | "playbackKind"
+  | "preparedAssetSha256"
+  | "speechProvenance"
+  | "thinkingCuePcmSha256"
+  | "turnId"
+> {
+  return {
+    observedAt: input.time,
+    playbackAttemptId: input.playbackAttemptId,
+    playbackKind: input.playbackKind,
+    ...(input.preparedAssetSha256 === undefined
+      ? {}
+      : { preparedAssetSha256: input.preparedAssetSha256 }),
+    ...(input.speechProvenance === undefined
+      ? {}
+      : { speechProvenance: input.speechProvenance }),
+    ...(input.thinkingCuePcmSha256 === undefined
+      ? {}
+      : { thinkingCuePcmSha256: input.thinkingCuePcmSha256 }),
+    turnId: input.turnId,
+  };
+}
+
+function parsePlaybackReceipt(
+  event: Record<string, unknown>,
+): PlaybackReceipt | undefined {
+  const started = playbackStartedLogSchema.safeParse(event);
+  if (started.success) {
+    return {
+      ...playbackReceiptMetadata(started.data),
+      playbackStartedAtEpochMs: started.data.playbackStartedAtEpochMs,
+      playbackStartedAtMonotonicMs: started.data.playbackStartedAtMonotonicMs,
+      status: "started",
+    };
+  }
+  const finished = playbackFinishedLogSchema.safeParse(event);
+  if (finished.success) {
+    return {
+      ...playbackReceiptMetadata(finished.data),
+      playbackFinishedAtEpochMs: finished.data.playbackFinishedAtEpochMs,
+      playbackFinishedAtMonotonicMs: finished.data.playbackFinishedAtMonotonicMs,
+      status: "finished",
+    };
+  }
+  const settled = playbackSettledLogSchema.safeParse(event);
+  if (settled.success) {
+    return {
+      ...playbackReceiptMetadata(settled.data),
+      playbackSettledAtEpochMs: settled.data.playbackSettledAtEpochMs,
+      playbackSettledAtMonotonicMs: settled.data.playbackSettledAtMonotonicMs,
+      settlement: settled.data.settlement,
+      status: "settled",
+    };
+  }
+  return undefined;
+}
+
 export function parseConversationLifecycleEvidenceLogs(
   output: string,
   meetingId: string,
@@ -200,71 +276,9 @@ export function parseConversationLifecycleEvidenceLogs(
       });
       continue;
     }
-    const playbackStarted = playbackStartedLogSchema.safeParse(event);
-    if (playbackStarted.success) {
-      playbackReceipts.push({
-        observedAt: playbackStarted.data.time,
-        playbackAttemptId: playbackStarted.data.playbackAttemptId,
-        playbackKind: playbackStarted.data.playbackKind,
-        ...(playbackStarted.data.preparedAssetSha256 === undefined
-          ? {}
-          : { preparedAssetSha256: playbackStarted.data.preparedAssetSha256 }),
-        ...(playbackStarted.data.speechProvenance === undefined
-          ? {}
-          : { speechProvenance: playbackStarted.data.speechProvenance }),
-        ...(playbackStarted.data.thinkingCuePcmSha256 === undefined
-          ? {}
-          : { thinkingCuePcmSha256: playbackStarted.data.thinkingCuePcmSha256 }),
-        playbackStartedAtEpochMs: playbackStarted.data.playbackStartedAtEpochMs,
-        playbackStartedAtMonotonicMs: playbackStarted.data.playbackStartedAtMonotonicMs,
-        status: "started",
-        turnId: playbackStarted.data.turnId,
-      });
-      continue;
-    }
-    const playbackFinished = playbackFinishedLogSchema.safeParse(event);
-    if (playbackFinished.success) {
-      playbackReceipts.push({
-        observedAt: playbackFinished.data.time,
-        playbackAttemptId: playbackFinished.data.playbackAttemptId,
-        playbackFinishedAtEpochMs: playbackFinished.data.playbackFinishedAtEpochMs,
-        playbackFinishedAtMonotonicMs: playbackFinished.data.playbackFinishedAtMonotonicMs,
-        playbackKind: playbackFinished.data.playbackKind,
-        ...(playbackFinished.data.preparedAssetSha256 === undefined
-          ? {}
-          : { preparedAssetSha256: playbackFinished.data.preparedAssetSha256 }),
-        ...(playbackFinished.data.speechProvenance === undefined
-          ? {}
-          : { speechProvenance: playbackFinished.data.speechProvenance }),
-        ...(playbackFinished.data.thinkingCuePcmSha256 === undefined
-          ? {}
-          : { thinkingCuePcmSha256: playbackFinished.data.thinkingCuePcmSha256 }),
-        status: "finished",
-        turnId: playbackFinished.data.turnId,
-      });
-      continue;
-    }
-    const playbackSettled = playbackSettledLogSchema.safeParse(event);
-    if (playbackSettled.success) {
-      playbackReceipts.push({
-        observedAt: playbackSettled.data.time,
-        playbackAttemptId: playbackSettled.data.playbackAttemptId,
-        playbackKind: playbackSettled.data.playbackKind,
-        ...(playbackSettled.data.preparedAssetSha256 === undefined
-          ? {}
-          : { preparedAssetSha256: playbackSettled.data.preparedAssetSha256 }),
-        ...(playbackSettled.data.speechProvenance === undefined
-          ? {}
-          : { speechProvenance: playbackSettled.data.speechProvenance }),
-        ...(playbackSettled.data.thinkingCuePcmSha256 === undefined
-          ? {}
-          : { thinkingCuePcmSha256: playbackSettled.data.thinkingCuePcmSha256 }),
-        playbackSettledAtEpochMs: playbackSettled.data.playbackSettledAtEpochMs,
-        playbackSettledAtMonotonicMs: playbackSettled.data.playbackSettledAtMonotonicMs,
-        settlement: playbackSettled.data.settlement,
-        status: "settled",
-        turnId: playbackSettled.data.turnId,
-      });
+    const playbackReceipt = parsePlaybackReceipt(event);
+    if (playbackReceipt !== undefined) {
+      playbackReceipts.push(playbackReceipt);
       continue;
     }
     const addressed = addressedAnswerLogSchema.safeParse(event);
