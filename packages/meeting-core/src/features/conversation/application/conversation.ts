@@ -61,6 +61,9 @@ export class ConversationCoordinator {
       ...(dependencies.playbackObserver === undefined
         ? {}
         : { playbackObserver: dependencies.playbackObserver }),
+      ...(dependencies.playbackReadiness === undefined
+        ? {}
+        : { playbackReadiness: dependencies.playbackReadiness }),
       thinkingCues: dependencies.thinkingCues ?? null,
     });
     this.activeTurns = new ConversationActiveTurnExecutor({

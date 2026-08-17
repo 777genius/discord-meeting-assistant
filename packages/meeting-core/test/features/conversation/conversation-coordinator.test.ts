@@ -607,18 +607,35 @@ describe("ConversationCoordinator playback readiness", () => {
       ).resolves.toBe("unplayed");
     },
   );
+});
 
-  it("bypasses answer readiness for thinking-cue playback", async () => {
+describe("ConversationCoordinator cue playback readiness", () => {
+  it("waits for exact thinking-cue readiness before opening cue playback", async () => {
     const stream = new EventStream<ConversationRuntimeEvent>();
     const playback = new RecordingPlayback();
     const delay = new ControlledDelayPort();
-    const awaitConversationPlaybackReady = vi.fn(() =>
-      Promise.reject(new Error("answer readiness must not gate a thinking cue"))
-    );
+    const readinessRequests: ConversationPlaybackReadinessRequest[] = [];
+    let readinessSignal: AbortSignal | undefined;
+    let resolveReadiness!: (
+      result: Awaited<ReturnType<ConversationPlaybackReadinessPort[
+        "awaitConversationPlaybackReady"
+      ]>>,
+    ) => void;
+    const readiness = new Promise<Awaited<ReturnType<
+      ConversationPlaybackReadinessPort["awaitConversationPlaybackReady"]
+    >>>((resolve) => {
+      resolveReadiness = resolve;
+    });
     const coordinator = new ConversationCoordinator({
       delay,
       playback,
-      playbackReadiness: { awaitConversationPlaybackReady },
+      playbackReadiness: {
+        awaitConversationPlaybackReady: (request, options) => {
+          readinessRequests.push(structuredClone(request));
+          readinessSignal = options?.signal;
+          return readiness;
+        },
+      },
       runtime: new ScriptedRuntime([stream]),
       thinkingCues: new FixedThinkingCues(),
     });
@@ -626,6 +643,20 @@ describe("ConversationCoordinator playback readiness", () => {
     await coordinator.handleFinalizedTurn(input("turn-1", 0));
     stream.push({ attemptId: "answer-attempt-1", type: "accepted" });
     delay.delays[0]?.elapse();
+    await vi.waitFor(() => {
+      expect(readinessRequests).toEqual([{
+        meetingId: "meeting-1",
+        participantId: "speaker-turn-1",
+        playbackAttemptId: "cue-attempt-turn-1-acknowledgement",
+        playbackKind: "thinking-cue",
+        turnId: "turn-1",
+      }]);
+    });
+    expect(readinessSignal).toBeInstanceOf(AbortSignal);
+    expect(readinessSignal?.aborted).toBe(false);
+    expect(playback.requests).toEqual([]);
+
+    resolveReadiness({ ok: true, value: "ready" });
     await vi.waitFor(() => {
       expect(playback.requests).toEqual([{
         attemptId: "cue-attempt-turn-1-acknowledgement",
@@ -637,8 +668,48 @@ describe("ConversationCoordinator playback readiness", () => {
     stream.push({ attemptId: "answer-attempt-1", type: "completed" });
     stream.close();
     await coordinator.whenIdle("meeting-1");
+  });
 
-    expect(awaitConversationPlaybackReady).not.toHaveBeenCalled();
+  it("aborts pending thinking-cue readiness when the turn is interrupted", async () => {
+    const stream = new EventStream<ConversationRuntimeEvent>();
+    const playback = new RecordingPlayback();
+    const delay = new ControlledDelayPort();
+    let readinessSignal: AbortSignal | undefined;
+    const coordinator = new ConversationCoordinator({
+      delay,
+      playback,
+      playbackReadiness: {
+        awaitConversationPlaybackReady: (_request, options) => new Promise((resolve) => {
+          readinessSignal = options?.signal;
+          options?.signal?.addEventListener("abort", () => {
+            resolve({
+              failure: {
+                code: "PLAYBACK_READINESS_CANCELLED",
+                message: "cancelled",
+                retryable: false,
+              },
+              ok: false,
+            });
+          }, { once: true });
+        }),
+      },
+      runtime: new ScriptedRuntime([stream]),
+      thinkingCues: new FixedThinkingCues(),
+    });
+
+    await coordinator.handleFinalizedTurn(input("turn-1", 0));
+    stream.push({ attemptId: "answer-attempt-1", type: "accepted" });
+    delay.delays[0]?.elapse();
+    await vi.waitFor(() => {
+      expect(readinessSignal).toBeInstanceOf(AbortSignal);
+    });
+
+    await coordinator.speechStarted("meeting-1", 1_400);
+    stream.close();
+    await coordinator.whenIdle("meeting-1");
+
+    expect(readinessSignal?.aborted).toBe(true);
+    expect(playback.requests).toEqual([]);
   });
 
   it("bypasses answer readiness for prepared-cue playback", async () => {

@@ -2,6 +2,7 @@ import type {
   ConversationCancellationReason,
   ConversationPlaybackObservation,
   ConversationPlaybackObserverPort,
+  ConversationPlaybackReadinessPort,
   ConversationThinkingCue,
   ConversationThinkingCueStage,
   VoicePlaybackPort,
@@ -30,6 +31,7 @@ interface ConversationCuePlaybackDependencies {
   ) => Promise<void>;
   readonly playback: VoicePlaybackPort;
   readonly playbackObserver?: ConversationPlaybackObserverPort;
+  readonly playbackReadiness?: ConversationPlaybackReadinessPort;
 }
 
 /** Owns opening, streaming and terminal-receipt tracking for one cue playback. */
@@ -54,6 +56,25 @@ export class ConversationCuePlayback {
       const openAbortController = new AbortController();
       run.playbackOpenAbortController = openAbortController;
       try {
+        const readiness = this.dependencies.playbackReadiness;
+        if (readiness !== undefined) {
+          const ready = await readiness.awaitConversationPlaybackReady({
+            meetingId: run.prepared.request.meetingId,
+            participantId: run.prepared.request.speakerId,
+            playbackAttemptId: cue.playbackAttemptId,
+            playbackKind: "thinking-cue",
+            turnId: run.prepared.request.turnId,
+          }, { signal: openAbortController.signal });
+          if (!isReadyResult(ready)) {
+            confirmConversationPlaybackTerminal(state, fence);
+            await this.dependencies.onFailed(run);
+            return null;
+          }
+        }
+        if (!this.canOpen(state, run) || openAbortController.signal.aborted) {
+          confirmConversationPlaybackTerminal(state, fence);
+          return null;
+        }
         opened = await this.dependencies.playback.open({
           attemptId: cue.playbackAttemptId,
           meetingId: run.prepared.request.meetingId,
@@ -289,4 +310,10 @@ export class ConversationCuePlayback {
       // Observability must never alter conversation delivery or cancellation.
     }
   }
+}
+
+function isReadyResult(result: unknown): boolean {
+  return typeof result === "object" && result !== null &&
+    "ok" in result && result.ok === true &&
+    "value" in result && result.value === "ready";
 }
