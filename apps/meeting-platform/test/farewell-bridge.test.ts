@@ -180,45 +180,21 @@ describe("FarewellBridge", () => {
     });
   });
 
-  it("releases durable and in-memory fences after a pre-admission exception", async () => {
+  it("durably fences a lost provider response from restart replay", async () => {
     const receipts = new FarewellReceiptMemory();
-    const context = fixture(undefined, logger, receipts);
-    context.coordinator.playError = new Error("synthetic admission failure");
-    await triggerFarewell(context, "Всем пока!", "turn-1", 1_100);
+    const first = fixture(undefined, logger, receipts);
+    first.coordinator.playError = new Error("synthetic lost admission response");
+    await triggerFarewell(first, "Всем пока!", "turn-1", 1_100);
 
-    expect(receipts.releaseCount).toBe(1);
-    expect(receipts.completeCount).toBe(0);
+    const restarted = fixture(undefined, logger, receipts);
+    await triggerFarewell(restarted, "Bye everyone!", "turn-2", 1_100);
 
-    context.coordinator.playError = undefined;
-    await triggerFarewell(context, "Bye everyone!", "turn-2", 1_300);
-
-    expect(context.coordinator.cueCalls).toHaveLength(2);
-    expect(context.coordinator.cueCalls).toEqual([
-      expect.objectContaining({ turnId: "meeting-farewell:v1" }),
-      expect.objectContaining({ turnId: "meeting-farewell:v1" }),
-    ]);
+    expect(first.coordinator.cueCalls).toHaveLength(1);
+    expect(restarted.coordinator.cueCalls).toEqual([]);
+    expect(receipts.beginAttemptCount).toBe(1);
     expect(receipts.reserveCount).toBe(2);
-    expect(receipts.releaseCount).toBe(1);
-    expect(receipts.completeCount).toBe(1);
-  });
-
-  it("reconciles a lost admission response with the same playback identity", async () => {
-    const receipts = new FarewellReceiptMemory();
-    const context = fixture(undefined, logger, receipts);
-    context.coordinator.playError = new Error("synthetic lost admission response");
-    await triggerFarewell(context, "Всем пока!", "turn-1", 1_100);
-
-    context.coordinator.playError = undefined;
-    context.coordinator.playOutcome = "reused";
-    context.coordinator.reusedDisposition = "active";
-    await triggerFarewell(context, "Bye everyone!", "turn-2", 1_300);
-
-    expect(context.coordinator.cueCalls).toEqual([
-      expect.objectContaining({ turnId: "meeting-farewell:v1" }),
-      expect.objectContaining({ turnId: "meeting-farewell:v1" }),
-    ]);
-    expect(receipts.releaseCount).toBe(1);
-    expect(receipts.completeCount).toBe(1);
+    expect(receipts.releaseCount).toBe(0);
+    expect(receipts.completeCount).toBe(0);
   });
 
   it.each(["awaiting-prompt", "busy", "ignored"] as const)(
@@ -438,12 +414,26 @@ async function triggerFarewell(
 }
 
 class FarewellReceiptMemory implements LiveConversationOneShotReceiptPort {
+  public beginAttemptCount = 0;
   public completeCount = 0;
   private leaseSequence = 0;
   public releaseCount = 0;
   public reserveCount = 0;
-  private receipt: { readonly leaseToken?: string; readonly state: "completed" | "reserved" }
+  private receipt: {
+    readonly leaseToken?: string;
+    readonly state: "attempted" | "completed" | "reserved";
+  }
     | undefined;
+
+  public beginFarewellAttempt(
+    input: Parameters<NonNullable<LiveConversationOneShotReceiptPort["beginFarewellAttempt"]>>[0],
+  ) {
+    this.beginAttemptCount += 1;
+    if (this.receipt?.leaseToken === input.leaseToken) {
+      this.receipt = { leaseToken: input.leaseToken, state: "attempted" };
+    }
+    return Promise.resolve();
+  }
 
   public complete(input: Parameters<LiveConversationOneShotReceiptPort["complete"]>[0]) {
     this.completeCount += 1;
@@ -461,9 +451,15 @@ class FarewellReceiptMemory implements LiveConversationOneShotReceiptPort {
     return Promise.resolve();
   }
 
+  public releaseFarewellAttempt(
+    input: Parameters<NonNullable<LiveConversationOneShotReceiptPort["releaseFarewellAttempt"]>>[0],
+  ) {
+    return this.release(input);
+  }
+
   public reserve() {
     this.reserveCount += 1;
-    if (this.receipt?.state === "completed") {
+    if (this.receipt?.state === "attempted" || this.receipt?.state === "completed") {
       return Promise.resolve({ status: "completed" as const });
     }
     if (this.receipt?.state === "reserved") {
@@ -473,5 +469,11 @@ class FarewellReceiptMemory implements LiveConversationOneShotReceiptPort {
     const leaseToken = `farewell-test-lease-${this.leaseSequence}`;
     this.receipt = { leaseToken, state: "reserved" };
     return Promise.resolve({ leaseToken, status: "reserved" as const });
+  }
+
+  public settleFarewell(
+    input: Parameters<NonNullable<LiveConversationOneShotReceiptPort["settleFarewell"]>>[0],
+  ) {
+    return this.complete(input);
   }
 }

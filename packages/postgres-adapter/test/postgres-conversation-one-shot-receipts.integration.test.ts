@@ -23,7 +23,10 @@ describe("PostgreSQL conversation one-shot receipts", () => {
       throw new Error("initial farewell receipt was not reserved");
     }
 
-    await store.release({ ...input, leaseToken: first.leaseToken });
+    await store.beginFarewellAttempt({ ...input, leaseToken: first.leaseToken });
+    await store.releaseFarewellAttempt({
+      ...input, evidence: "unplayed", leaseToken: first.leaseToken,
+    });
     const retry = await store.reserve({ ...input, leaseSeconds: 120 });
     expect(retry.status).toBe("reserved");
     if (retry.status !== "reserved") {
@@ -31,11 +34,60 @@ describe("PostgreSQL conversation one-shot receipts", () => {
     }
     expect(retry.leaseToken).not.toBe(first.leaseToken);
 
-    await store.complete({ ...input, leaseToken: retry.leaseToken });
+    await store.beginFarewellAttempt({ ...input, leaseToken: retry.leaseToken });
+    await store.settleFarewell({
+      ...input, leaseToken: retry.leaseToken, outcome: "played",
+    });
     await expect(store.reserve({ ...input, leaseSeconds: 120 })).resolves.toEqual({
       status: "completed",
     });
   });
+
+  it("keeps a pre-provider farewell attempt terminal across crash and lease expiry", async (context) => {
+    const database = databaseOrSkip(context);
+    const input = {
+      kind: "farewell" as const,
+      meetingId: "farewell-crash-window-meeting-1",
+      subjectId: "meeting",
+    };
+    const first = new PostgresConversationOneShotReceiptStore(database);
+    const reservation = await first.reserve({ ...input, leaseSeconds: 5 });
+    if (reservation.status !== "reserved") {
+      throw new Error("initial farewell receipt was not reserved");
+    }
+    await first.beginFarewellAttempt({ ...input, leaseToken: reservation.leaseToken });
+    await database.query("SELECT pg_sleep(5.1)");
+
+    const restarted = new PostgresConversationOneShotReceiptStore(database);
+    await expect(restarted.reserve({ ...input, leaseSeconds: 5 })).resolves.toEqual({
+      status: "completed",
+    });
+    const attempted = await database.query<{
+      readonly lease_expires_at: Date | null;
+      readonly state: string;
+    }>(`
+      SELECT state, lease_expires_at
+      FROM meeting_core.conversation_one_shot_receipts
+    `);
+    expect(attempted.rows).toEqual([{ state: "attempted", lease_expires_at: null }]);
+
+    await first.settleFarewell({
+      ...input,
+      leaseToken: reservation.leaseToken,
+      outcome: "suppressed",
+      reason: "ambiguous",
+    });
+    const settled = await database.query<{
+      readonly state: string;
+      readonly suppression_reason: string | null;
+    }>(`
+      SELECT state, suppression_reason
+      FROM meeting_core.conversation_one_shot_receipts
+    `);
+    expect(settled.rows).toEqual([{
+      state: "suppressed", suppression_reason: "ambiguous",
+    }]);
+  }, 10_000);
 
   it("reclaims an expired crash lease and fences its stale owner across restart", async (context) => {
     const database = databaseOrSkip(context);

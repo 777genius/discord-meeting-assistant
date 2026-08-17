@@ -142,6 +142,13 @@ export type LiveConversationOneShotReceiptReservation =
   | { readonly leaseToken: string; readonly status: "reserved" };
 
 export interface LiveConversationOneShotReceiptPort {
+  /** Farewell-only durable transition immediately before provider invocation. */
+  beginFarewellAttempt?(input: {
+    readonly kind: "farewell";
+    readonly leaseToken: string;
+    readonly meetingId: string;
+    readonly subjectId: string;
+  }): Promise<void>;
   /** Greeting-only durable transition immediately before provider invocation. */
   beginGreetingAttempt?(input: {
     readonly kind: "greeting";
@@ -157,6 +164,14 @@ export interface LiveConversationOneShotReceiptPort {
   }): Promise<void>;
   release(input: {
     readonly kind: "farewell" | "greeting";
+    readonly leaseToken: string;
+    readonly meetingId: string;
+    readonly subjectId: string;
+  }): Promise<void>;
+  /** Releases only a provider-proven zero-audio farewell attempt. */
+  releaseFarewellAttempt?(input: {
+    readonly evidence: "busy" | "unplayed";
+    readonly kind: "farewell";
     readonly leaseToken: string;
     readonly meetingId: string;
     readonly subjectId: string;
@@ -182,6 +197,15 @@ export interface LiveConversationOneShotReceiptPort {
     readonly meetingId: string;
     readonly outcome: "played" | "suppressed";
     readonly reason?: "ambiguous" | "stale";
+    readonly subjectId: string;
+  }): Promise<void>;
+  /** Farewell-only terminal transition preserving the observed playback outcome. */
+  settleFarewell?(input: {
+    readonly kind: "farewell";
+    readonly leaseToken: string;
+    readonly meetingId: string;
+    readonly outcome: "played" | "suppressed";
+    readonly reason?: "ambiguous";
     readonly subjectId: string;
   }): Promise<void>;
 }

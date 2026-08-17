@@ -25,6 +25,13 @@ export interface ConversationGreetingSettlementInput extends ConversationOneShot
   readonly reason?: "ambiguous" | "stale";
 }
 
+export interface ConversationFarewellSettlementInput extends ConversationOneShotReceiptInput {
+  readonly kind: "farewell";
+  readonly leaseToken: string;
+  readonly outcome: "played" | "suppressed";
+  readonly reason?: "ambiguous";
+}
+
 /** Durable, opaque at-most-once receipt store used by live composition. */
 export class PostgresConversationOneShotReceiptStore {
   public constructor(private readonly pool: Pool) {}
@@ -98,6 +105,15 @@ export class PostgresConversationOneShotReceiptStore {
     }
   }
 
+  public async beginFarewellAttempt(
+    input: ConversationOneShotReceiptInput & {
+      readonly kind: "farewell";
+      readonly leaseToken: string;
+    },
+  ): Promise<void> {
+    await this.beginAttempt(input);
+  }
+
   public async complete(
     input: ConversationOneShotReceiptInput & { readonly leaseToken: string },
   ): Promise<void> {
@@ -157,6 +173,39 @@ export class PostgresConversationOneShotReceiptStore {
     }
   }
 
+  public async settleFarewell(input: ConversationFarewellSettlementInput): Promise<void> {
+    assertFarewellSettlement(input);
+    const receiptId = receiptIdentity(input);
+    const state = input.outcome === "played" ? "played" : "suppressed";
+    const result = await this.pool.query(
+      `
+        UPDATE meeting_core.conversation_one_shot_receipts
+        SET state = $3, suppression_reason = $4,
+            completed_at = transaction_timestamp(),
+            lease_token = NULL, lease_expires_at = NULL
+        WHERE receipt_id = $1 AND cue_kind = 'farewell' AND lease_token = $2
+          AND state = 'attempted'
+      `,
+      [
+        receiptId,
+        input.leaseToken,
+        state,
+        input.outcome === "suppressed" ? input.reason : null,
+      ],
+    );
+    if (result.rowCount === 1) {
+      return;
+    }
+    const existing = await this.readReceipt(receiptId, input.kind);
+    if (
+      existing?.state !== state ||
+      existing.suppression_reason !==
+        (input.outcome === "suppressed" ? input.reason : null)
+    ) {
+      throw new Error("farewell settlement lost its fenced attempt");
+    }
+  }
+
   public async release(
     input: ConversationOneShotReceiptInput & { readonly leaseToken: string },
   ): Promise<void> {
@@ -185,6 +234,52 @@ export class PostgresConversationOneShotReceiptStore {
     );
   }
 
+  public async releaseFarewellAttempt(
+    input: ConversationOneShotReceiptInput & {
+      readonly evidence: "busy" | "unplayed";
+      readonly kind: "farewell";
+      readonly leaseToken: string;
+    },
+  ): Promise<void> {
+    await this.releaseAttempt(input);
+  }
+
+  private async beginAttempt(
+    input: ConversationOneShotReceiptInput & { readonly leaseToken: string },
+  ): Promise<void> {
+    const receiptId = receiptIdentity(input);
+    const result = await this.pool.query(
+      `
+        UPDATE meeting_core.conversation_one_shot_receipts
+        SET state = 'attempted', lease_expires_at = NULL
+        WHERE receipt_id = $1 AND cue_kind = $2 AND state = 'reserved'
+          AND lease_token = $3
+          AND lease_expires_at > transaction_timestamp()
+      `,
+      [receiptId, input.kind, input.leaseToken],
+    );
+    if (result.rowCount === 1) {
+      return;
+    }
+    const existing = await this.readReceipt(receiptId, input.kind);
+    if (existing?.state !== "attempted" || existing.lease_token !== input.leaseToken) {
+      throw new Error(`${input.kind} attempt lost its reservation`);
+    }
+  }
+
+  private async releaseAttempt(
+    input: ConversationOneShotReceiptInput & { readonly leaseToken: string },
+  ): Promise<void> {
+    await this.pool.query(
+      `
+        DELETE FROM meeting_core.conversation_one_shot_receipts
+        WHERE receipt_id = $1 AND cue_kind = $2 AND lease_token = $3
+          AND state = 'attempted'
+      `,
+      [receiptIdentity(input), input.kind, input.leaseToken],
+    );
+  }
+
   private async readReceipt(
     receiptId: string,
     kind: ConversationOneShotReceiptInput["kind"],
@@ -207,6 +302,15 @@ function assertGreetingSettlement(input: ConversationGreetingSettlementInput): v
     (input.outcome === "suppressed" && input.reason === undefined)
   ) {
     throw new Error("greeting settlement outcome and reason are inconsistent");
+  }
+}
+
+function assertFarewellSettlement(input: ConversationFarewellSettlementInput): void {
+  if (
+    (input.outcome === "played" && input.reason !== undefined) ||
+    (input.outcome === "suppressed" && input.reason !== "ambiguous")
+  ) {
+    throw new Error("farewell settlement outcome and reason are inconsistent");
   }
 }
 

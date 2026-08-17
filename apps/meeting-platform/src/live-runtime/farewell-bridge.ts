@@ -264,6 +264,7 @@ export class FarewellBridge {
       });
       return;
     }
+    await this.beginDurableAttempt(receiptInput, receipt.leaseToken);
     const turnId = this.currentTurnId();
     let outcome: Awaited<ReturnType<
       LiveConversationConfiguration["coordinator"]["playPreparedCue"]
@@ -285,17 +286,20 @@ export class FarewellBridge {
           voiceProfileId: this.dependencies.configuration.voiceProfileId,
         });
     } catch (error) {
-      // Reuse the same turn/playback identity after an exception. If the
-      // coordinator admitted work before throwing, its replay disposition
-      // reconciles that effect instead of creating a second playback.
-      await this.releaseRetryableReceipt(receiptInput, receipt.leaseToken, false);
+      // Provider invocation may have admitted audio before its response was
+      // lost. Keep the durable attempted fence terminal across restart.
       this.logPlaybackFailure(error, locale, reason);
       return;
     }
     const admitted = outcome.status === "active" || outcome.status === "queued" ||
       (outcome.status === "reused" && outcome.disposition !== "busy");
     if (!admitted) {
-      await this.releaseRetryableReceipt(receiptInput, receipt.leaseToken, true);
+      await this.releaseRetryableReceipt(
+        receiptInput,
+        receipt.leaseToken,
+        "busy",
+        true,
+      );
       return;
     }
     let settlement: "played" | "unplayed" | "partial" | "unknown";
@@ -333,12 +337,18 @@ export class FarewellBridge {
       await this.releaseRetryableReceipt(
         input.receiptInput,
         input.leaseToken,
+        "unplayed",
         true,
       );
       return;
     }
-    await this.completeAmbiguousReceipt(input.receiptInput, input.leaseToken);
     if (input.settlement !== "played") {
+      await this.settleTerminalReceipt(
+        input.receiptInput,
+        input.leaseToken,
+        "suppressed",
+        "ambiguous",
+      );
       this.dependencies.logger.warn("Meeting farewell playback fenced after ambiguous settlement", {
         locale: input.locale,
         meetingId: this.dependencies.meetingId,
@@ -348,6 +358,11 @@ export class FarewellBridge {
       });
       return;
     }
+    await this.settleTerminalReceipt(
+      input.receiptInput,
+      input.leaseToken,
+      "played",
+    );
     this.dependencies.logger.info("Meeting farewell playback settled", {
       evidenceTurnIds: input.evidenceTurnIds,
       locale: input.locale,
@@ -361,13 +376,20 @@ export class FarewellBridge {
   private async releaseRetryableReceipt(
     receiptInput: FarewellReceiptInput,
     leaseToken: string,
+    evidence: "busy" | "unplayed",
     advanceAttempt: boolean,
   ): Promise<void> {
     try {
-      await this.dependencies.configuration.oneShotReceipts?.release({
-        ...receiptInput,
-        leaseToken,
-      });
+      const receipts = this.dependencies.configuration.oneShotReceipts;
+      if (receipts?.releaseFarewellAttempt !== undefined) {
+        await receipts.releaseFarewellAttempt({
+          evidence,
+          ...receiptInput,
+          leaseToken,
+        });
+      } else {
+        await receipts?.release({ ...receiptInput, leaseToken });
+      }
     } finally {
       this.policy.releaseReservation();
       if (advanceAttempt) {
@@ -376,14 +398,47 @@ export class FarewellBridge {
     }
   }
 
+  private async beginDurableAttempt(
+    receiptInput: FarewellReceiptInput,
+    leaseToken: string,
+  ): Promise<void> {
+    const receipts = this.dependencies.configuration.oneShotReceipts;
+    if (receipts?.beginFarewellAttempt !== undefined) {
+      await receipts.beginFarewellAttempt({ ...receiptInput, leaseToken });
+      return;
+    }
+    await receipts?.complete({ ...receiptInput, leaseToken });
+  }
+
   private async completeAmbiguousReceipt(
     receiptInput: FarewellReceiptInput,
     leaseToken: string,
   ): Promise<void> {
-    await this.dependencies.configuration.oneShotReceipts?.complete({
-      ...receiptInput,
+    await this.settleTerminalReceipt(
+      receiptInput,
       leaseToken,
-    });
+      "suppressed",
+      "ambiguous",
+    );
+  }
+
+  private async settleTerminalReceipt(
+    receiptInput: FarewellReceiptInput,
+    leaseToken: string,
+    outcome: "played" | "suppressed",
+    reason?: "ambiguous",
+  ): Promise<void> {
+    const receipts = this.dependencies.configuration.oneShotReceipts;
+    if (receipts?.settleFarewell !== undefined) {
+      await receipts.settleFarewell({
+        ...receiptInput,
+        leaseToken,
+        outcome,
+        ...(reason === undefined ? {} : { reason }),
+      });
+      return;
+    }
+    await receipts?.complete({ ...receiptInput, leaseToken });
   }
 
   private currentTurnId(): string {
