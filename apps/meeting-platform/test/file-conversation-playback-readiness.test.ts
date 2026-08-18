@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
-import { chmod, mkdir, mkdtemp, readFile, rm, symlink, utimes, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { chmod, link, mkdir, mkdtemp, readFile, rm, symlink, unlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -111,7 +111,7 @@ describe("FileConversationPlaybackReadiness", () => {
     await expect(waitForJson(join(root, `${stem}.intent.json`))).resolves.toEqual({
       ...cueEnvelope, type: "playback-intent",
     });
-    await writeFile(join(root, `${stem}.ready.json`), JSON.stringify({
+    await publishCreateOnlyJson(join(root, `${stem}.ready.json`), {
       ...cueEnvelope,
       authenticatedObserverBotId: readyReceipt.authenticatedObserverBotId,
       intentDigestSha256: stem,
@@ -119,7 +119,7 @@ describe("FileConversationPlaybackReadiness", () => {
       readyPublishedAt: readyReceipt.readyPublishedAt,
       target: readyReceipt.target,
       type: "observer-ready",
-    }), { flag: "wx", mode: 0o600 });
+    });
 
     await expect(waiting).resolves.toEqual({ ok: true, value: "ready" });
   });
@@ -135,11 +135,7 @@ describe("FileConversationPlaybackReadiness", () => {
     const waiting = readiness.awaitConversationPlaybackReady(request);
     const intent = await waitForJson(intentPath(root));
     expect(intent).toEqual({ ...envelope, type: "playback-intent" });
-    await writeFile(
-      readyPath(root),
-      JSON.stringify(readyReceipt),
-      { flag: "wx", mode: 0o600 },
-    );
+    await publishCreateOnlyJson(readyPath(root), readyReceipt);
 
     await expect(waiting).resolves.toEqual({ ok: true, value: "ready" });
   });
@@ -158,10 +154,9 @@ describe("FileConversationPlaybackReadiness", () => {
 
     const waiting = readiness.awaitConversationPlaybackReady(request);
     await waitForJson(intentPath(root));
-    await writeFile(
+    await publishCreateOnlyJson(
       readyPath(root),
-      JSON.stringify({ ...readyReceipt, ...receipt, type: "observer-ready" }),
-      { flag: "wx", mode: 0o600 },
+      { ...readyReceipt, ...receipt, type: "observer-ready" },
     );
 
     await expect(waiting).resolves.toMatchObject({
@@ -227,8 +222,7 @@ describe("FileConversationPlaybackReadiness", () => {
       await waitForJson(intentPath(root));
       const path = readyPath(root);
       if (receiptKind === "stale") {
-        await writeFile(path, JSON.stringify(readyReceipt), { flag: "wx" });
-        await utimes(path, new Date(0), new Date(0));
+        await publishCreateOnlyJson(path, readyReceipt, new Date(0));
       } else if (receiptKind === "symlink") {
         const target = join(root, "ready-target.json");
         await writeFile(target, JSON.stringify(readyReceipt));
@@ -249,7 +243,7 @@ describe("FileConversationPlaybackReadiness", () => {
     });
     const first = readiness.awaitConversationPlaybackReady(request);
     await waitForJson(intentPath(root));
-    await writeFile(readyPath(root), JSON.stringify(readyReceipt), { flag: "wx" });
+    await publishCreateOnlyJson(readyPath(root), readyReceipt);
     await expect(first).resolves.toEqual({ ok: true, value: "ready" });
     await expect(readiness.awaitConversationPlaybackReady(request)).resolves.toMatchObject({
       failure: { code: "PLAYBACK_READINESS_FAILED" }, ok: false,
@@ -334,15 +328,32 @@ async function completeGreetingReadiness(
     .update(serializeConversationGreetingPlaybackReadinessEnvelope(greetingEnvelope)).digest("hex");
   const waiting = readiness.awaitConversationPlaybackReady(greetingRequest);
   await waitForJson(join(greetingRoot, `${stem}.intent.json`));
-  await writeFile(join(greetingRoot, `${stem}.ready.json`), JSON.stringify({
+  await publishCreateOnlyJson(join(greetingRoot, `${stem}.ready.json`), {
     ...greetingEnvelope, authenticatedObserverBotId: observerParticipantId,
     intentDigestSha256: stem, intentObservedAt: "2026-08-12T10:00:00.000Z",
     readyPublishedAt: "2026-08-12T10:00:00.001Z",
     target: { craigBotId: "1534231284467896512", guildId: "1533228590643155034",
       observerApplicationId: observerParticipantId, voiceChannelId: "1533228823045214398" },
     type: "observer-ready",
-  }), { flag: "wx", mode: 0o600 });
+  });
   await expect(waiting).resolves.toEqual({ ok: true, value: "ready" });
+}
+
+async function publishCreateOnlyJson(
+  path: string,
+  value: unknown,
+  modifiedAt?: Date,
+): Promise<void> {
+  const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  await writeFile(temporaryPath, JSON.stringify(value), { flag: "wx", mode: 0o600 });
+  try {
+    if (modifiedAt !== undefined) {
+      await utimes(temporaryPath, modifiedAt, modifiedAt);
+    }
+    await link(temporaryPath, path);
+  } finally {
+    await unlink(temporaryPath).catch(() => {});
+  }
 }
 
 async function waitForJson(path: string): Promise<unknown> {
