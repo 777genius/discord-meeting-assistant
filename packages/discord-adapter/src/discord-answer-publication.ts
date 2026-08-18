@@ -11,6 +11,8 @@ import { z } from "zod";
 
 const snowflakeSchema = z.string().regex(/^\d{17,20}$/u);
 const markerSchema = z.string().trim().min(1).max(256);
+const reconciliationPageSize = 100;
+const reconciliationPageLimit = 10;
 const answerPayloadSchema = z.object({
   allowed_mentions: z.object({
     parse: z.array(z.never()).max(0),
@@ -159,40 +161,64 @@ export class DiscordAnswerDeliveryAdapter implements AnswerDeliveryPort {
     | { readonly status: "unconfirmed" }
   > {
     try {
-      const response = await this.rest.get(
-        Routes.channelMessages(input.deliveryContainerId),
-        { query: new URLSearchParams({ limit: "100" }) },
-      );
-      const messages = z.array(discordMessageSchema).parse(response);
-      const candidates = messages.filter((message) =>
-        message.author.id === this.botApplicationIdentity &&
-        (message.application_id ?? message.author.id) === this.botApplicationIdentity &&
-        message.message_reference?.message_id === input.replyToRemoteMessageId
-      );
       const exactReceipts: string[] = [];
-      for (const message of candidates) {
-        const embed = message.embeds.find(({ url }) => url === markerUrl(input.marker));
-        if (embed?.description === undefined) {
-          continue;
+      let cursor = snowflakeSchema.parse(input.replyToRemoteMessageId);
+      for (let page = 0; page < reconciliationPageLimit; page += 1) {
+        const query = new URLSearchParams({
+          after: cursor,
+          limit: reconciliationPageSize.toString(),
+        });
+        const response = await this.rest.get(
+          Routes.channelMessages(input.deliveryContainerId),
+          { query },
+        );
+        const messages = z.array(discordMessageSchema)
+          .max(reconciliationPageSize)
+          .parse(response)
+          .toSorted((left, right) => {
+            const leftId = BigInt(left.id);
+            const rightId = BigInt(right.id);
+            return leftId < rightId ? -1 : leftId > rightId ? 1 : 0;
+          });
+        if (messages.some(({ id }) => BigInt(id) <= BigInt(cursor))) {
+          return { status: "unconfirmed" };
         }
-        const reconstructed = canonicalJson(answerPayloadSchema.parse({
-          allowed_mentions: { parse: [], replied_user: false },
-          embeds: [{
-            description: embed.description,
-            url: markerUrl(input.marker),
-          }],
-          message_reference: {
-            channel_id: input.deliveryContainerId,
-            fail_if_not_exists: true,
-            message_id: input.replyToRemoteMessageId,
-          },
-        }));
-        if (sha256(reconstructed) === input.payloadHash) {
-          exactReceipts.push(message.id);
+        const candidates = messages.filter((message) =>
+          message.author.id === this.botApplicationIdentity &&
+          (message.application_id ?? message.author.id) === this.botApplicationIdentity &&
+          message.message_reference?.message_id === input.replyToRemoteMessageId
+        );
+        for (const message of candidates) {
+          const embed = message.embeds.find(({ url }) => url === markerUrl(input.marker));
+          if (embed?.description === undefined) {
+            continue;
+          }
+          const reconstructed = canonicalJson(answerPayloadSchema.parse({
+            allowed_mentions: { parse: [], replied_user: false },
+            embeds: [{
+              description: embed.description,
+              url: markerUrl(input.marker),
+            }],
+            message_reference: {
+              channel_id: input.deliveryContainerId,
+              fail_if_not_exists: true,
+              message_id: input.replyToRemoteMessageId,
+            },
+          }));
+          if (sha256(reconstructed) === input.payloadHash) {
+            exactReceipts.push(message.id);
+          }
         }
-      }
-      if (exactReceipts.length === 1) {
-        return { externalReceipt: exactReceipts[0]!, status: "found" };
+        if (exactReceipts.length > 1) {
+          return { status: "unconfirmed" };
+        }
+        if (exactReceipts.length === 1) {
+          return { externalReceipt: exactReceipts[0]!, status: "found" };
+        }
+        if (messages.length < reconciliationPageSize) {
+          break;
+        }
+        cursor = messages.at(-1)!.id;
       }
     } catch {
       // Missing, partial, or forbidden history can never prove non-delivery.

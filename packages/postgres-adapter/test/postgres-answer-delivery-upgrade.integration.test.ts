@@ -491,4 +491,51 @@ describe("schema 21 withdrawal upgrade", () => {
       await isolated.dispose();
     }
   }, 30_000);
+describe("late answer-effect receipt reconciliation", () => {
+  it("accepts a late exact receipt after absence was only unconfirmed", async (context) => {
+    const database = databaseOrSkip(context);
+    const effectId = "meeting-knowledge-answer:v1:late-receipt";
+    await database.query(
+      `
+        INSERT INTO meeting_core.answer_effects (
+          effect_id, state, projection_target_container_id,
+          delivery_container_id, reply_to_remote_message_id, marker,
+          payload_bytes, payload_hash, binding_hash, authorization_digest,
+          source_meeting_ids, request_started_at, settled_at, updated_at
+        ) VALUES (
+          $1, 'absent_unconfirmed', $2, $3, $4, 'marker-late-receipt',
+          '{}', $5, $6, $7, ARRAY['meeting-late-receipt']::text[],
+          transaction_timestamp() - interval '3 minutes',
+          transaction_timestamp(),
+          transaction_timestamp() - interval '6 minutes'
+        )
+      `,
+      [
+        effectId,
+        parentContainerId,
+        threadContainerId,
+        "666666666666666666",
+        "a".repeat(64),
+        "b".repeat(64),
+        "c".repeat(64),
+      ],
+    );
+    const effects = new PostgresAnswerEffectStore(database);
+
+    await expect(effects.listOutcomeUnknown(10)).resolves.toEqual([
+      expect.objectContaining({
+        effectId,
+        state: "absent_unconfirmed",
+      }),
+    ]);
+    await expect(effects.complete({
+      effectId,
+      externalReceipt: "777777777777777777",
+    })).resolves.toBe(true);
+    await expect(effects.findById(effectId)).resolves.toMatchObject({
+      externalReceipt: "777777777777777777",
+      payloadBytes: "{}",
+      state: "delivered",
+    });
+  });
 });

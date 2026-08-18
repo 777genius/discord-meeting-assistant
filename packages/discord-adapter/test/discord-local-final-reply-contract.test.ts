@@ -347,6 +347,63 @@ describe("Discord answer effect transport", () => {
     })).resolves.toBeUndefined();
     expect(post).toHaveBeenCalledTimes(1);
   });
+
+  it("finds an old answer by paging forward from its immutable reply receipt", async () => {
+    const payload = new DiscordAnswerPayloadCodec().prepare({
+      binding: binding(),
+      content: "The release is Monday.\n-# S2 · 2:00:00 · turn-720",
+      deliveryContainerId: containerId,
+      marker: "meeting-knowledge-answer:v1:question-1",
+      projectionTargetContainerId: containerId,
+      replyToRemoteMessageId: questionId,
+    });
+    const postedBody = JSON.parse(payload.payloadBytes) as {
+      readonly embeds: readonly unknown[];
+    };
+    const firstPage = Array.from({ length: 100 }, (_, index) => ({
+      application_id: botId,
+      author: { id: botId },
+      embeds: [],
+      id: (BigInt(questionId) + BigInt(index) + 1n).toString(),
+      message_reference: { message_id: questionId },
+    }));
+    const receipt = (BigInt(questionId) + 101n).toString();
+    const get = vi.fn().mockImplementation((
+      _route: unknown,
+      options: { readonly query: URLSearchParams },
+    ) => {
+      const after = options.query.get("after");
+      if (after === questionId) {
+        return Promise.resolve(firstPage);
+      }
+      if (after === firstPage.at(-1)?.id) {
+        return Promise.resolve([{
+          application_id: botId,
+          author: { id: botId },
+          embeds: postedBody.embeds,
+          id: receipt,
+          message_reference: { message_id: questionId },
+        }]);
+      }
+      throw new Error("unexpected reconciliation cursor");
+    });
+    const delivery = new DiscordAnswerDeliveryAdapter(
+      { get, post: vi.fn() } as unknown as Pick<REST, "get" | "post">,
+      botId,
+    );
+
+    await expect(delivery.inspect({
+      deliveryContainerId: containerId,
+      marker: "meeting-knowledge-answer:v1:question-1",
+      payloadHash: payload.payloadHash,
+      projectionTargetContainerId: containerId,
+      replyToRemoteMessageId: questionId,
+    })).resolves.toEqual({ externalReceipt: receipt, status: "found" });
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(get.mock.calls.map(([, options]) =>
+      (options as { readonly query: URLSearchParams }).query.get("after")
+    )).toEqual([questionId, firstPage.at(-1)?.id]);
+  });
 });
 
 describe("Discord Local Final Reply ingress", () => {

@@ -227,7 +227,9 @@ export class PostgresAnswerEffectStore implements AnswerEffectStore {
             settled_at = COALESCE(settled_at, transaction_timestamp()),
             updated_at = transaction_timestamp()
         WHERE effect_id = $1
-          AND state IN ('request_started', 'outcome_unknown', 'delivered')
+          AND state IN (
+            'request_started', 'outcome_unknown', 'absent_unconfirmed', 'delivered'
+          )
           AND (external_receipt IS NULL OR external_receipt = $2)
       `,
       [input.effectId, input.externalReceipt],
@@ -271,7 +273,12 @@ export class PostgresAnswerEffectStore implements AnswerEffectStore {
                claim_generation::float8 AS claim_generation, external_receipt
         FROM meeting_core.answer_effects
         WHERE state = 'outcome_unknown'
-        ORDER BY request_started_at, effect_id
+           OR (
+             state = 'absent_unconfirmed'
+             AND updated_at <= transaction_timestamp() - interval '5 minutes'
+           )
+        ORDER BY (state = 'outcome_unknown') DESC,
+                 updated_at, request_started_at, effect_id
         LIMIT $1
       `,
       [limit],
@@ -288,7 +295,7 @@ export class PostgresAnswerEffectStore implements AnswerEffectStore {
             settled_at = COALESCE(settled_at, transaction_timestamp()),
             updated_at = transaction_timestamp()
         WHERE effect_id = $1
-          AND state = 'outcome_unknown'
+          AND state IN ('outcome_unknown', 'absent_unconfirmed')
       `,
       [effectId],
     );

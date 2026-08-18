@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   DurableAnswerPublication,
@@ -78,7 +78,15 @@ class StoreFake implements AnswerEffectStore {
   }
 
   complete(input: { readonly effectId: string; readonly externalReceipt: string }) {
-    if (this.record?.effectId !== input.effectId) {
+    if (
+      this.record?.effectId !== input.effectId ||
+      ![
+        "absent_unconfirmed",
+        "delivered",
+        "outcome_unknown",
+        "request_started",
+      ].includes(this.record.state)
+    ) {
       return Promise.resolve(false);
     }
     this.record = { ...this.record, externalReceipt: input.externalReceipt, state: "delivered" };
@@ -86,7 +94,13 @@ class StoreFake implements AnswerEffectStore {
   }
 
   markOutcomeUnknown(effectId: string) {
-    if (this.record?.effectId !== effectId) {
+    if (
+      this.record?.effectId !== effectId ||
+      (
+        this.record.state !== "request_started" &&
+        this.record.state !== "outcome_unknown"
+      )
+    ) {
       return Promise.resolve(false);
     }
     this.record = { ...this.record, state: "outcome_unknown" };
@@ -95,12 +109,17 @@ class StoreFake implements AnswerEffectStore {
 
   listOutcomeUnknown() {
     return Promise.resolve(
-      this.record?.state === "outcome_unknown" ? [this.record] : [],
+      this.record !== undefined &&
+        ["absent_unconfirmed", "outcome_unknown"].includes(this.record.state)
+        ? [this.record] : [],
     );
   }
 
   markAbsentUnconfirmed(effectId: string) {
-    if (this.record?.effectId !== effectId) {
+    if (
+      this.record?.effectId !== effectId ||
+      !["absent_unconfirmed", "outcome_unknown"].includes(this.record.state)
+    ) {
       return Promise.resolve(false);
     }
     this.record = { ...this.record, state: "absent_unconfirmed" };
@@ -156,6 +175,7 @@ class DeliveryFake implements AnswerDeliveryPort {
   inspectInputs: Parameters<AnswerDeliveryPort["inspect"]>[0][] = [];
   removeInputs: Parameters<AnswerDeliveryPort["remove"]>[0][] = [];
   throwAfterCreate = false;
+  createResult?: Promise<string>;
   inspection: Awaited<ReturnType<AnswerDeliveryPort["inspect"]>> = {
     status: "unconfirmed",
   };
@@ -166,7 +186,7 @@ class DeliveryFake implements AnswerDeliveryPort {
     if (this.throwAfterCreate) {
       return Promise.reject(new Error("lost response after committed create"));
     }
-    return Promise.resolve("answer-message-1");
+    return this.createResult ?? Promise.resolve("answer-message-1");
   }
 
   inspect(input: Parameters<AnswerDeliveryPort["inspect"]>[0]) {
@@ -227,6 +247,7 @@ describe("Publishing answer effects", () => {
     expect(canTransitionAnswerEffect("request_started", "outcome_unknown")).toBe(true);
     expect(canTransitionAnswerEffect("outcome_unknown", "delivered")).toBe(true);
     expect(canTransitionAnswerEffect("outcome_unknown", "absent_unconfirmed")).toBe(true);
+    expect(canTransitionAnswerEffect("absent_unconfirmed", "delivered")).toBe(true);
     expect(canTransitionAnswerEffect("request_started", "claimed")).toBe(false);
     expect(canTransitionAnswerEffect("outcome_unknown", "request_started")).toBe(false);
   });
@@ -300,6 +321,83 @@ describe("Publishing answer effects", () => {
       effectId: reservation.effectId,
       workerId: "worker-2",
     })).resolves.toEqual({ status: "outcome_unknown" });
+    expect(delivery.creates).toBe(1);
+  });
+
+  it("keeps reconciling an unconfirmed absence after restart until its exact receipt appears", async () => {
+    const store = new StoreFake();
+    const delivery = new DeliveryFake();
+    delivery.throwAfterCreate = true;
+    const publisher = new DurableAnswerPublication({
+      delivery,
+      payloads: new PayloadFake(),
+      store,
+    });
+    const reservation = await publisher.reserve(reservationInput());
+    await publisher.send({
+      authorizationDigest: "e".repeat(64),
+      effectId: reservation.effectId,
+      workerId: "worker-1",
+    });
+    await expect(publisher.reconcileUnknown(10)).resolves.toEqual({
+      absentUnconfirmed: 1,
+      delivered: 0,
+    });
+    expect(store.record?.state).toBe("absent_unconfirmed");
+
+    delivery.inspection = {
+      externalReceipt: "answer-message-after-restart",
+      status: "found",
+    };
+    await expect(publisher.reconcileUnknown(10)).resolves.toEqual({
+      absentUnconfirmed: 0,
+      delivered: 1,
+    });
+    expect(store.record).toMatchObject({
+      externalReceipt: "answer-message-after-restart",
+      state: "delivered",
+    });
+    expect(delivery.creates).toBe(1);
+  });
+
+  it("accepts a late receipt after reconciliation observed an in-flight create as absent", async () => {
+    const store = new StoreFake();
+    const delivery = new DeliveryFake();
+    let resolveCreate: ((receipt: string) => void) | undefined;
+    delivery.createResult = new Promise<string>((resolve) => {
+      resolveCreate = resolve;
+    });
+    const publisher = new DurableAnswerPublication({
+      delivery,
+      payloads: new PayloadFake(),
+      store,
+    });
+    const reservation = await publisher.reserve(reservationInput());
+    const sending = publisher.send({
+      authorizationDigest: "e".repeat(64),
+      effectId: reservation.effectId,
+      workerId: "worker-1",
+    });
+    await vi.waitFor(() => {
+      expect(delivery.creates).toBe(1);
+    });
+
+    await store.markOutcomeUnknown(reservation.effectId);
+    await expect(publisher.reconcileUnknown(10)).resolves.toEqual({
+      absentUnconfirmed: 1,
+      delivered: 0,
+    });
+    expect(store.record?.state).toBe("absent_unconfirmed");
+
+    resolveCreate?.("answer-message-late");
+    await expect(sending).resolves.toEqual({
+      externalReceipt: "answer-message-late",
+      status: "delivered",
+    });
+    expect(store.record).toMatchObject({
+      externalReceipt: "answer-message-late",
+      state: "delivered",
+    });
     expect(delivery.creates).toBe(1);
   });
 

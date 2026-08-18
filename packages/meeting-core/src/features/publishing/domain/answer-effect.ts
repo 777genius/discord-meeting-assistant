@@ -11,7 +11,14 @@ export type AnswerEffectState =
   | "reserved";
 
 const transitions = Object.freeze({
-  absent_unconfirmed: Object.freeze(["absent_unconfirmed", "retraction_pending"]),
+  // A remote inspection can finish while the original create request is still
+  // in flight. Its late receipt must remain admissible so the effect cannot be
+  // orphaned after an absence was only unconfirmed.
+  absent_unconfirmed: Object.freeze([
+    "absent_unconfirmed",
+    "delivered",
+    "retraction_pending",
+  ]),
   cancelled: Object.freeze(["cancelled"]),
   claimed: Object.freeze(["cancelled", "claimed", "rejected_before_request", "request_started"]),
   delivered: Object.freeze(["delivered", "retraction_pending"]),
