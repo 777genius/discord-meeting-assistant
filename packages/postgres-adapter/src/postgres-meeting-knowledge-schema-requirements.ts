@@ -12,6 +12,7 @@ export const meetingKnowledgeRequiredRelations = [
 
 export const meetingKnowledgeRequiredIndexes = [
   "meeting_core.answer_effects_unknown_idx",
+  "meeting_core.answer_effects_unresolved_reconciliation_idx",
   "meeting_core.answer_effects_retraction_pending_idx",
   "meeting_knowledge.question_jobs_dedupe_idx",
   "meeting_knowledge.question_jobs_leasable_idx",
