@@ -38,6 +38,7 @@ import {
 } from "../src/composition/meeting-knowledge.js";
 import { DiscordAnswerPayloadCodec } from "@discord-meeting/discord-adapter";
 import {
+  botApplicationIdentity,
   historicalRows,
   platformConfig,
   requiredHistoricalRuntime,
@@ -68,7 +69,7 @@ export async function qualifyLiveProjectionReply(input: {
     publicationTargetId: resultsContainerId,
     startedAtMs: 1_000,
   });
-  live.completeProjection(liveReceipt, live.revision);
+  live.completeProjection(liveReceipt, live.revision, botApplicationIdentity);
   await liveMeetings.save(live.toSnapshot(), null);
   const finalMeetings = new PostgresMeetingRepository(input.pool);
   await finalMeetings.save(Meeting.record({
@@ -392,7 +393,10 @@ async function finalizeAndProveCanonicalTransition(input: {
     publisher: {
       publish: async () => ({
         ok: true as const,
-        value: { externalPublicationId: finalReceipt },
+        value: {
+          externalPublicationId: finalReceipt,
+          publisherIdentity: botApplicationIdentity,
+        },
       }),
     },
     summarizer: {
