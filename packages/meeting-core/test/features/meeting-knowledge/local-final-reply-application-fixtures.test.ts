@@ -1,3 +1,5 @@
+import { describe, expect, it } from "vitest";
+
 import {
   QuestionBinding,
   focusedMemoryGeneration,
@@ -174,3 +176,19 @@ export function binding(): QuestionBindingSnapshot {
     transcriptVersion: authority.transcriptVersion,
   }).toSnapshot();
 }
+
+describe("local final reply application fixtures", () => {
+  it("keeps selected references bound to the authoritative transcript", () => {
+    expect(references).toEqual(selectedTurns.map(({ turnHash, turnId }) => ({
+      meetingId: authority.meetingId,
+      transcriptId: authority.transcriptId,
+      transcriptVersion: authority.transcriptVersion,
+      turnHash,
+      turnId,
+    })));
+    expect(binding()).toMatchObject({
+      authorizationPolicyVersion,
+      memoryGeneration: authority.memoryGeneration,
+    });
+  });
+});
