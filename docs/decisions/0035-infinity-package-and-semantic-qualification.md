@@ -50,16 +50,6 @@ draining.
   immutable release-pinned embedding-profile attestation whose exact retained
   manifest digest matches this release and whose
   `productionSemanticQualification` is `true`.
-- The semantic manifest consumes the decoded endpoint capability receipt for
-  profile ID, profile digest, service identity, and service revision. Operator
-  environment declarations are not qualification evidence.
-- Serving also compares the manifest release revision with the immutable source
-  revision embedded in the running Meeting Platform image. Missing or stale
-  release evidence keeps search closed.
-- Meetings lasting at least two hours or containing at least 400 admitted human
-  turns have a separate versioned retrieval gate. It defaults disabled and is
-  not implied by general search; focused and exhaustive serving require an
-  explicit holdout-backed activation.
 - A missing attestation, `false` qualification, mismatched digest,
   deterministic/mock/non-production profile, or the retained r26 manifest can
   never authorize production search. Search denial does not disable deletion.

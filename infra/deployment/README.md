@@ -88,6 +88,12 @@ topology HMAC key and store it in
 Infinity service. Keep the topology key stable across rollouts because rotating
 it changes the opaque remote identities and requires an explicit migration.
 
+Before a local source build, generate provenance from the clean checkout:
+
+```sh
+pnpm provenance:generate
+```
+
 Set these non-secret values in the deployment environment file:
 
 ```text
@@ -99,9 +105,10 @@ INFINITY_CONTEXT_ACTIVATION={"apiVersion":"v1","archiveSha256":"1aad93c1c9deea91
 
 Treat that activation as a reviewed release attestation, not an operator-tuned
 feature flag. Update it only together with retained qualification evidence and
-the pinned SDK provenance in the application release. The running image embeds
-`MEETING_PLATFORM_SOURCE_REVISION` in a root-owned, read-only build artifact; a
-mutable runtime environment variable cannot replace it. Production search stays closed unless it
+the pinned SDK provenance in the application release. CI derives commit and
+canonical tree SHA-256 from a clean checkout and embeds the generated root-owned,
+read-only provenance artifact. Docker build arguments and runtime environment
+cannot replace it. Production search stays closed unless it
 equals the qualification manifest's `releaseRevision`. The retained r79
 manifest is intentionally stale for newer releases and must not activate them.
 

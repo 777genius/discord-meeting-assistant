@@ -176,6 +176,11 @@
       "id": "ADR-0036",
       "path": "docs/decisions/0036-canonical-live-projection-reply.md",
       "immutableDigest": "sha256:cccdc041aea7006e9aafb7e61334976ea51be236bdff39d05ea2eb99033cb5ac"
+    },
+    {
+      "id": "ADR-0037",
+      "path": "docs/decisions/0037-release-bound-meeting-knowledge-qualification.md",
+      "immutableDigest": "sha256:06c636988adf1a4929168017cd6eed07ff44ceb1ca930e247c24aa5a15bf5f8a"
     }
   ]
 }

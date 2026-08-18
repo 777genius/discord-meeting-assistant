@@ -37,6 +37,15 @@ const environment = {
   TRANSCRIPTION_PROVIDER: "speaches",
 } as const;
 
+function buildProvenance(releaseRevision = "c".repeat(40)) {
+  return {
+    releaseRevision,
+    schemaVersion: 1 as const,
+    sourceTree: "d".repeat(40),
+    sourceTreeSha256: "e".repeat(64),
+  };
+}
+
 describe("platform configuration", () => {
   it("keeps the standard deployment wired to the complete fail-closed Infinity contract", async () => {
     const compose = await readFile(
@@ -88,7 +97,7 @@ describe("platform configuration", () => {
       INFINITY_CONTEXT_TOPOLOGY_KEY_FILE: "/run/secrets/infinity-topology",
       INFINITY_CONTEXT_URL: "http://infinity-context:7788",
     }, async (path) => path.endsWith("topology") ? "t".repeat(32) : `fixture:${path}`,
-    async () => "c".repeat(40));
+    async () => buildProvenance());
 
     expect(configured.infinityContext?.activation).toMatchObject({
       indexingEnabled: true,
@@ -139,7 +148,7 @@ describe("platform configuration", () => {
       INFINITY_CONTEXT_URL: "http://infinity-context:7788",
       NODE_ENV: "production",
     }, async (path) => path.endsWith("topology") ? "t".repeat(32) : `fixture:${path}`,
-    async () => "c".repeat(40));
+    async () => buildProvenance());
 
     expect(configured.infinityContext?.activation).toMatchObject({
       environment: "production",
@@ -491,7 +500,7 @@ describe("platform configuration routing and conversation", () => {
         paths.push(path);
         return `value-for:${path}`;
       },
-      async () => "c".repeat(40),
+      async () => buildProvenance(),
     );
 
     expect(config.recordingPlayback).toEqual({
@@ -524,7 +533,7 @@ describe("platform configuration routing and conversation", () => {
       ...environment,
       NODE_ENV: "production",
       SOURCE_REVISION: "a".repeat(40),
-    }, async () => "value", async () => actualRevision);
+    }, async () => "value", async () => buildProvenance(actualRevision));
 
     expect(config.sourceRevision).toBe(actualRevision);
   });
@@ -805,4 +814,5 @@ describe("platform conversation and provider configuration", () => {
       ),
     ).rejects.toThrow();
   });
+
 });

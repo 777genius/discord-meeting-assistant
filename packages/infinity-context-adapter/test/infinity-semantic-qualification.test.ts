@@ -4,7 +4,10 @@ import {
   createInfinitySemanticQualificationManifest,
   infinitySemanticQualificationSchema,
 } from "../src/index.js";
-import { semanticServiceConfig } from "./infinity-context-semantic-service.e2e.test.js";
+import {
+  checkoutQualificationProvenance,
+  semanticServiceConfig,
+} from "./infinity-context-semantic-service.e2e.test.js";
 
 const passingEvidence = {
   corpusHumanTurnsSha256: "a".repeat(64),
@@ -27,6 +30,8 @@ const passingEvidence = {
   focusedRecallAt5: 1,
   observedAt: "2026-08-15T12:00:00.000Z",
   releaseRevision: "c".repeat(40),
+  qualificationHarnessSha256: "e".repeat(64),
+  releaseSourceTreeSha256: "f".repeat(64),
   remoteCleanupVerified: true,
   turnCount: 421,
 } as const;
@@ -52,6 +57,10 @@ describe("Infinity production semantic qualification manifest", () => {
         enabledAdapters: ["qdrant"],
         name: "disposable-infinity-context",
         revision: passingEvidence.endpointReceipt.serviceRevision,
+      },
+      source: {
+        harnessSha256: passingEvidence.qualificationHarnessSha256,
+        treeSha256: passingEvidence.releaseSourceTreeSha256,
       },
     });
     expect(manifest.sdk.packageSha256)
@@ -86,8 +95,18 @@ describe("Infinity production semantic qualification manifest", () => {
       INFINITY_CONTEXT_SEMANTIC_E2E_DISPOSABLE: "YES_DELETE_ALL_TEST_DATA",
       INFINITY_CONTEXT_SEMANTIC_E2E_URL: "https://infinity.invalid/",
       MEETING_KNOWLEDGE_RELEASE_REVISION: "a".repeat(40),
-    }, async () => actualRevision);
+    }, async () => ({
+      qualificationHarnessSha256: "b".repeat(64),
+      releaseRevision: actualRevision,
+      sourceTreeSha256: "c".repeat(64),
+    }));
 
     expect(config.releaseRevision).toBe(actualRevision);
+  });
+
+  it("refuses to qualify a dirty checkout before deriving release evidence", async () => {
+    await expect(checkoutQualificationProvenance(async (args) =>
+      args[0] === "status" ? " M qualification-harness.ts\n" : ""
+    )).rejects.toThrow("clean Git checkout");
   });
 });

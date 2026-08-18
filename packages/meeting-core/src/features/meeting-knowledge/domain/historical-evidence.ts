@@ -126,8 +126,8 @@ export function admitsHistoricalRetrieval(
     }
     return true;
   }
-  return (meeting.authoritativeDurationMs === null ||
-      meeting.authoritativeDurationMs < profile.minimumDurationMs) &&
+  return meeting.authoritativeDurationMs !== null &&
+    meeting.authoritativeDurationMs < profile.minimumDurationMs &&
     meeting.humanTurns.length < profile.minimumHumanTurnCount;
 }
 

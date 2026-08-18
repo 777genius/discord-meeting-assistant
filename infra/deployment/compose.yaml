@@ -23,8 +23,6 @@ services:
 
   postgres-migrations:
     build:
-      args:
-        SOURCE_REVISION: ${MEETING_PLATFORM_SOURCE_REVISION:?set immutable source revision}
       context: ../..
       dockerfile: apps/meeting-platform/Dockerfile
     image: discord-meeting/meeting-platform:${MEETING_PLATFORM_SOURCE_REVISION:?set immutable source revision}
@@ -210,8 +208,6 @@ services:
 
   meeting-platform:
     build:
-      args:
-        SOURCE_REVISION: ${MEETING_PLATFORM_SOURCE_REVISION:?set immutable source revision}
       context: ../..
       dockerfile: apps/meeting-platform/Dockerfile
     image: discord-meeting/meeting-platform:${MEETING_PLATFORM_SOURCE_REVISION:?set immutable source revision}
@@ -258,6 +254,7 @@ services:
       LIVE_INGRESS_OWNER_MODE: singleton
       MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED: ${MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED:-false}
       MEETING_KNOWLEDGE_PRINCIPAL_KEY_FILE: /run/secrets/meeting-knowledge-principal-key
+      MEETING_KNOWLEDGE_TWO_HOUR_QUALIFICATION_FILE: ${MEETING_KNOWLEDGE_TWO_HOUR_QUALIFICATION_FILE:-}
       NODE_ENV: production
       PARTICIPANT_GREETING_DEFAULT_LOCALE: ${PARTICIPANT_GREETING_DEFAULT_LOCALE:-ru}
       PARTICIPANT_GREETING_PROFILES_JSON: ${PARTICIPANT_GREETING_PROFILES_JSON:-}
@@ -289,6 +286,7 @@ services:
     volumes:
       - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/data/spool:/var/lib/discord-meeting/spool
       - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/secrets/platform:/run/secrets:ro
+      - ${MEETING_KNOWLEDGE_TWO_HOUR_QUALIFICATION_HOST_PATH:-/dev/null}:/run/qualifications/two-hour.json:ro
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=0700,uid=10001,gid=10001
     cap_drop: [ALL]

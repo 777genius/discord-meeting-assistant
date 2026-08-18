@@ -40,6 +40,7 @@ function acceptedMeeting() {
       { actorId: "botik", kind: "automation" },
       { actorId: "unverified", kind: "unknown" },
     ],
+    authoritativeDurationMs: 3_000,
     binding,
     identityProvenance: {
       actorObservationState: "consistent",
@@ -136,10 +137,16 @@ describe("historical evidence admission and block identity", () => {
         }),
       )),
     });
+    const unknownDuration = Object.freeze({
+      ...short,
+      authoritativeDurationMs: null,
+    });
+
 
     expect(admitsHistoricalRetrieval(short)).toBe(true);
     expect(admitsHistoricalRetrieval(durationThreshold)).toBe(false);
     expect(admitsHistoricalRetrieval(turnThreshold)).toBe(false);
+    expect(admitsHistoricalRetrieval(unknownDuration)).toBe(false);
     expect(admitsHistoricalRetrieval(durationThreshold, {
       ...DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
       qualification: {

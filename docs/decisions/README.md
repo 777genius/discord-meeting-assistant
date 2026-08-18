@@ -39,6 +39,7 @@
 - [ADR-0034: Bounded answer-model grounding](0034-bounded-answer-model-grounding.md)
 - [ADR-0035: Separate immutable Infinity package and semantic qualification](0035-infinity-package-and-semantic-qualification.md)
 - [ADR-0036: Canonical live-projection reply](0036-canonical-live-projection-reply.md)
+- [ADR-0037: Release-bound Meeting Knowledge qualification](0037-release-bound-meeting-knowledge-qualification.md)
 
 ## Superseded
 

@@ -77,6 +77,8 @@ export interface PlatformConfig {
   readonly secrets: PlatformSecrets;
   /** Immutable source revision embedded in the running Meeting Platform image. */
   readonly sourceRevision?: string;
+  /** SHA-256 over the canonical Git tree listing embedded at build time. */
+  readonly sourceTreeSha256?: string;
   readonly speaches: { readonly baseUrl: string; readonly model: string };
   readonly subscriptionRuntime: {
     readonly address: string;

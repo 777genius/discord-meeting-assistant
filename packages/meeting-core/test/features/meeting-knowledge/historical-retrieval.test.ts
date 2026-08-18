@@ -67,7 +67,7 @@ function makeMeeting(input: {
   });
   const meeting = admitAcceptedFinalMeeting({
     actors: [{ actorId: "speaker", kind: "human" }],
-    authoritativeDurationMs: input.authoritativeDurationMs,
+    authoritativeDurationMs: input.authoritativeDurationMs ?? 60_000,
     binding,
     identityProvenance: {
       actorObservationState: "consistent",

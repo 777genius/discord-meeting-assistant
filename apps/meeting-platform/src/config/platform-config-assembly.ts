@@ -1,8 +1,11 @@
+import type { TwoHourHistoricalQualificationV1 } from "@discord-meeting/meeting-core/meeting-knowledge";
+
+import type { BuildProvenanceV1 } from "./build-provenance.js";
 import type { PlatformConfig } from "./platform-config.js";
 import type { ParsedPlatformEnvironment } from "../config.js";
 
 export interface LoadedPlatformSecrets {
-  readonly buildSourceRevision?: string;
+  readonly buildProvenance?: BuildProvenanceV1;
   readonly craigBearerToken: string;
   readonly conversationRuntimeToken?: string;
   readonly discordToken: string;
@@ -15,6 +18,7 @@ export interface LoadedPlatformSecrets {
   readonly s3SecretAccessKey: string;
   readonly subscriptionRuntimeToken: string;
   readonly voicetextServiceToken?: string;
+  readonly twoHourHistoricalQualification?: TwoHourHistoricalQualificationV1;
   readonly recordingPlayback: {
     readonly config?: { readonly publicBaseUrl: string };
     readonly signingSecret?: string;
@@ -102,9 +106,18 @@ export function assemblePlatformConfig(
     ...(environment.DISCORD_LEGACY_GUILD_ID === undefined || environment.DISCORD_LEGACY_VOICE_CHANNEL_ID === undefined || environment.DISCORD_RESULTS_CHANNEL_ID === undefined ? {} : { discordLegacyRoute: { guildId: environment.DISCORD_LEGACY_GUILD_ID, publicationTargetId: environment.DISCORD_RESULTS_CHANNEL_ID, voiceChannelId: environment.DISCORD_LEGACY_VOICE_CHANNEL_ID } }),
     liveIngressOwnerMode: environment.LIVE_INGRESS_OWNER_MODE,
     ...infinityContextConfig(environment),
-    ...(environment.MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED
+    ...(environment.MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED ||
+      loaded.twoHourHistoricalQualification !== undefined
       ? { meetingKnowledge: {
-          localFinalReply: true as const,
+          ...(environment.MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED
+            ? { localFinalReply: true as const }
+            : {}),
+          ...(loaded.twoHourHistoricalQualification === undefined
+            ? {}
+            : {
+                twoHourHistoricalQualification:
+                  loaded.twoHourHistoricalQualification,
+              }),
         } }
       : {}),
     nodeEnvironment: environment.NODE_ENV,
@@ -115,9 +128,12 @@ export function assemblePlatformConfig(
     ...(loaded.recordingPlayback.config === undefined ? {} : { recordingPlayback: loaded.recordingPlayback.config }),
     s3: { bucket: environment.S3_BUCKET, endpoint: environment.S3_ENDPOINT, prefix: environment.S3_PREFIX, region: environment.S3_REGION },
     secrets: platformSecrets(loaded),
-    ...(loaded.buildSourceRevision === undefined
+    ...(loaded.buildProvenance === undefined
       ? {}
-      : { sourceRevision: loaded.buildSourceRevision }),
+      : {
+          sourceRevision: loaded.buildProvenance.releaseRevision,
+          sourceTreeSha256: loaded.buildProvenance.sourceTreeSha256,
+        }),
     speaches: { baseUrl: environment.SPEACHES_BASE_URL, model: environment.SPEACHES_MODEL },
     subscriptionRuntime: { address: environment.SUBSCRIPTION_RUNTIME_ADDRESS, launcherSha256: environment.SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256 },
     transcriptionProvider: environment.TRANSCRIPTION_PROVIDER,

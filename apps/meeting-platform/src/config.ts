@@ -8,7 +8,6 @@ import {
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 
 import {
-  loadRecordingPlaybackConfig,
   recordingPlaybackEnvironmentShape,
   validateRecordingPlaybackEnvironment,
 } from "./config/recording-playback-config.js";
@@ -20,10 +19,17 @@ import {
   validateConversationReadinessEnvironment,
   validateMeetingKnowledgeEnvironment,
 } from "./config/environment-validations.js";
+
 import type { PlatformConfig } from "./config/platform-config.js";
-import { readSecretFile } from "./config/secret-file-reader.js";
-import { assemblePlatformConfig } from "./config/platform-config-assembly.js";
-import { readMeetingPlatformBuildRevision, type BuildRevisionReader } from "./config/build-revision.js";
+import {
+  loadPlatformConfigWithParser,
+  type SecretFileReader,
+} from "./config/platform-config-loader.js";
+import type { BuildProvenanceReader } from "./config/build-provenance.js";
+import type {
+  AcceptedTwoHourQualification,
+  QualificationFileReader,
+} from "./config/two-hour-qualification.js";
 
 export type { PlatformConfig } from "./config/platform-config.js";
 
@@ -98,7 +104,7 @@ const infinityActivation = z.string().min(2).max(4_000).transform((value, contex
     return z.NEVER;
   }
 });
-const environmentSchema = z
+export const environmentSchema = z
   .object({
     BIND_ADDRESS: z.union([z.ipv4(), z.ipv6()]).default("0.0.0.0"),
     CONVERSATION_ENABLED: z
@@ -153,6 +159,7 @@ const environmentSchema = z
       .default("false")
       .transform((value) => value === "true"),
     MEETING_KNOWLEDGE_PRINCIPAL_KEY_FILE: absolutePath.optional(),
+    MEETING_KNOWLEDGE_TWO_HOUR_QUALIFICATION_FILE: optionalAbsolutePath,
     NODE_ENV: z
       .enum(["development", "production", "test"])
       .default("production"),
@@ -328,81 +335,23 @@ const environmentSchema = z
 
 export type ParsedPlatformEnvironment = z.infer<typeof environmentSchema>;
 
-export type SecretFileReader = (path: string) => Promise<string>;
-
-export async function loadPlatformConfig(
+export function loadPlatformConfig(
   rawEnvironment: Readonly<Record<string, string | undefined>> = process.env,
-  readSecret: SecretFileReader = readSecretFile,
-  readBuildRevision: BuildRevisionReader = readMeetingPlatformBuildRevision,
+  readSecret?: SecretFileReader,
+  readBuildProvenance?: BuildProvenanceReader,
+  readQualificationFile?: QualificationFileReader,
+  acceptedTwoHourQualification?: AcceptedTwoHourQualification | null,
 ): Promise<PlatformConfig> {
-  const forbiddenApiKey = Object.keys(rawEnvironment).find((key) =>
-    /_API_KEY(?:_FILE)?$/u.test(key),
+  return loadPlatformConfigWithParser(
+    (raw) => environmentSchema.parse(raw),
+    rawEnvironment,
+    {
+      ...(acceptedTwoHourQualification === undefined
+        ? {}
+        : { acceptedTwoHourQualification }),
+      ...(readBuildProvenance === undefined ? {} : { readBuildProvenance }),
+      ...(readQualificationFile === undefined ? {} : { readQualificationFile }),
+      ...(readSecret === undefined ? {} : { readSecret }),
+    },
   );
-  if (forbiddenApiKey !== undefined) {
-    throw new Error(`API-key environment is forbidden: ${forbiddenApiKey}`);
-  }
-  const environment = environmentSchema.parse(rawEnvironment);
-  const [
-    craigBearerToken,
-    conversationRuntimeToken,
-    discordToken,
-    infinityContextToken,
-    infinityContextTopologyKey,
-    meetingKnowledgePrincipalKey,
-    postgresUrl,
-    redisUrl,
-    s3AccessKeyId,
-    s3SecretAccessKey,
-    subscriptionRuntimeToken,
-    voicetextServiceToken,
-    recordingPlayback,
-    buildSourceRevision,
-  ] = await Promise.all([
-    readSecret(environment.CRAIG_BEARER_TOKEN_FILE),
-    !environment.CONVERSATION_ENABLED ||
-    environment.CONVERSATION_RUNTIME_TOKEN_FILE === undefined
-      ? Promise.resolve()
-      : readSecret(environment.CONVERSATION_RUNTIME_TOKEN_FILE),
-    readSecret(environment.DISCORD_TOKEN_FILE),
-    environment.INFINITY_CONTEXT_TOKEN_FILE === undefined
-      ? Promise.resolve()
-      : readSecret(environment.INFINITY_CONTEXT_TOKEN_FILE),
-    environment.INFINITY_CONTEXT_TOPOLOGY_KEY_FILE === undefined
-      ? Promise.resolve()
-      : readSecret(environment.INFINITY_CONTEXT_TOPOLOGY_KEY_FILE),
-    (!environment.MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED &&
-      !environment.CONVERSATION_ENABLED) ||
-    environment.MEETING_KNOWLEDGE_PRINCIPAL_KEY_FILE === undefined
-      ? Promise.resolve()
-      : readSecret(environment.MEETING_KNOWLEDGE_PRINCIPAL_KEY_FILE),
-    readSecret(environment.POSTGRES_URL_FILE),
-    readSecret(environment.REDIS_URL_FILE),
-    readSecret(environment.S3_ACCESS_KEY_ID_FILE),
-    readSecret(environment.S3_SECRET_ACCESS_KEY_FILE),
-    readSecret(environment.SUBSCRIPTION_RUNTIME_TOKEN_FILE),
-    environment.VOICETEXT_SERVICE_TOKEN_FILE === undefined
-      ? Promise.resolve()
-      : readSecret(environment.VOICETEXT_SERVICE_TOKEN_FILE),
-    loadRecordingPlaybackConfig(environment, readSecret),
-    environment.NODE_ENV === "production" ? readBuildRevision() : Promise.resolve(),
-  ]);
-
-  return assemblePlatformConfig(environment, {
-    craigBearerToken,
-    ...(conversationRuntimeToken === undefined ? {} : { conversationRuntimeToken }),
-    discordToken,
-    ...(infinityContextToken === undefined ? {} : { infinityContextToken }),
-    ...(infinityContextTopologyKey === undefined ? {} : { infinityContextTopologyKey }),
-    ...(meetingKnowledgePrincipalKey === undefined
-      ? {}
-      : { meetingKnowledgePrincipalKey }),
-    postgresUrl,
-    redisUrl,
-    recordingPlayback,
-    s3AccessKeyId,
-    s3SecretAccessKey,
-    subscriptionRuntimeToken,
-    ...(voicetextServiceToken === undefined ? {} : { voicetextServiceToken }),
-    ...(buildSourceRevision === undefined ? {} : { buildSourceRevision }),
-  });
 }
