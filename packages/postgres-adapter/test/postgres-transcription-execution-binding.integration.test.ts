@@ -183,4 +183,50 @@ describe("Postgres transcription execution binding", () => {
     await expect(bindings.getTranscriptionExecutionBinding(locked.meetingId))
       .resolves.toBe("voicetext-batch-v2:deepgram-nova-3");
   });
+
+  it("bounds per-dispatch pinning on a locked row and remains usable", async (context) => {
+    const database = databaseOrSkip(context);
+    const repository = new PostgresMeetingRepository(database);
+    const bindings = new PostgresTranscriptionExecutionBindingStore(database);
+    const locked = recordedMeeting("meeting-binding-locked-pin").toSnapshot();
+    const available = recordedMeeting("meeting-binding-available-pin").toSnapshot();
+    for (const snapshot of [locked, available]) {
+      await repository.save(snapshot, 0);
+      await database.query(`
+        INSERT INTO meeting_core.post_call_outbox (
+          meeting_id, schema_version, transcription_execution_binding_required
+        ) VALUES ($1, 1, FALSE)
+      `, [snapshot.meetingId]);
+    }
+
+    const locker = await database.connect();
+    try {
+      await locker.query("BEGIN");
+      await locker.query(`
+        SELECT meeting_id
+        FROM meeting_core.post_call_outbox
+        WHERE meeting_id = $1
+        FOR UPDATE
+      `, [locked.meetingId]);
+
+      const startedAt = performance.now();
+      await expect(bindings.pinTranscriptionExecutionBinding(
+        locked.meetingId,
+        "voicetext-batch-v2:deepgram-nova-3",
+      )).rejects.toMatchObject({ code: "55P03" });
+      expect(performance.now() - startedAt).toBeLessThan(2_000);
+      await expect(bindings.pinTranscriptionExecutionBinding(
+        available.meetingId,
+        "voicetext-batch-v2:deepgram-nova-3",
+      )).resolves.toBe("voicetext-batch-v2:deepgram-nova-3");
+    } finally {
+      await locker.query("ROLLBACK");
+      locker.release();
+    }
+
+    await expect(bindings.pinTranscriptionExecutionBinding(
+      locked.meetingId,
+      "voicetext-batch-v2:deepgram-nova-3",
+    )).resolves.toBe("voicetext-batch-v2:deepgram-nova-3");
+  });
 });

@@ -85,25 +85,43 @@ export class PostgresTranscriptionExecutionBindingStore {
     binding: string,
   ): Promise<string> {
     const requiredBinding = requireTranscriptionExecutionBinding(binding);
-    const result = await this.pool.query<TranscriptionExecutionBindingRow>(
-      `
-        UPDATE meeting_core.post_call_outbox
-        SET transcription_execution_binding = COALESCE(
-          transcription_execution_binding,
-          $2
-        )
-        WHERE meeting_id = $1
-          AND processed_at IS NULL
-          AND dead_lettered_at IS NULL
-        RETURNING transcription_execution_binding
-      `,
-      [meetingId, requiredBinding],
-    );
-    const row = result.rows[0];
-    if (row?.transcription_execution_binding === null || row === undefined) {
-      throw new Error("transcription execution binding does not reference one outbox item");
+    const client = await this.pool.connect();
+    let transactionActive = false;
+    let clientReusable = true;
+    try {
+      await client.query("BEGIN");
+      transactionActive = true;
+      await client.query("SET LOCAL lock_timeout = '250ms'");
+      await client.query("SET LOCAL statement_timeout = '5s'");
+      const result = await client.query<TranscriptionExecutionBindingRow>(
+        `
+          UPDATE meeting_core.post_call_outbox
+          SET transcription_execution_binding = COALESCE(
+            transcription_execution_binding,
+            $2
+          )
+          WHERE meeting_id = $1
+            AND processed_at IS NULL
+            AND dead_lettered_at IS NULL
+          RETURNING transcription_execution_binding
+        `,
+        [meetingId, requiredBinding],
+      );
+      const row = result.rows[0];
+      if (row?.transcription_execution_binding === null || row === undefined) {
+        throw new Error("transcription execution binding does not reference one outbox item");
+      }
+      await client.query("COMMIT");
+      transactionActive = false;
+      return row.transcription_execution_binding;
+    } catch (error) {
+      if (transactionActive) {
+        clientReusable = await rollbackQuietly(client);
+      }
+      throw error;
+    } finally {
+      client.release(!clientReusable);
     }
-    return row.transcription_execution_binding;
   }
 
   public async getTranscriptionExecutionBinding(meetingId: string): Promise<string | undefined> {
@@ -177,7 +195,7 @@ async function rollbackQuietly(client: PoolClient): Promise<boolean> {
     await client.query("ROLLBACK");
     return true;
   } catch {
-    // Preserve the original bounded-backfill failure.
+    // Preserve the original bounded transaction failure.
     return false;
   }
 }

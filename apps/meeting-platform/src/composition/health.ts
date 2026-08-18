@@ -126,7 +126,7 @@ function createSummaryProviderHealthProbe(
   };
 }
 
-function createTranscriptionHealthProbe(config: PlatformConfig): HealthProbe {
+export function createTranscriptionHealthProbe(config: PlatformConfig): HealthProbe {
   if (config.transcriptionProvider === "speaches") {
     return probe("stt", true, async (signal) => {
       const response = await fetch(
@@ -142,19 +142,68 @@ function createTranscriptionHealthProbe(config: PlatformConfig): HealthProbe {
   return probe("stt", true, async (signal) => {
     const response = await fetch(voicetextHealthUrl(config), { signal });
     const body = await response.json();
-    if (!response.ok || !isVoicetextHealthy(body)) {
+    if (!response.ok || !isVoicetextHealthy(body, config)) {
       throw new Error("STT dependency is not ready");
     }
   });
 }
 
-function isVoicetextHealthy(value: unknown): boolean {
+function isVoicetextHealthy(value: unknown, config: PlatformConfig): boolean {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("status" in value) ||
+    value.status !== "ok" ||
+    !("provider_profiles" in value) ||
+    !Array.isArray(value.provider_profiles) ||
+    config.voicetext === undefined
+  ) {
+    return false;
+  }
+  const expectedProfiles = [
+    {
+      mode: "live",
+      provider: providerForLiveProfile(config.voicetext.liveProfile),
+    },
+    {
+      mode: "batch",
+      provider: providerForBatchProfile(config.voicetext.batchProfile),
+    },
+  ] as const;
+  const providerProfiles: readonly unknown[] = value.provider_profiles;
+  return expectedProfiles.every(({ mode, provider }) => {
+    const matching = providerProfiles.filter((profile) =>
+      matchesVoicetextProfile(profile, mode, provider)
+    );
+    return matching.length === 1 && matching[0]?.ready === true;
+  });
+}
+
+function matchesVoicetextProfile(
+  value: unknown,
+  mode: "batch" | "live",
+  provider: "deepgram" | "elevenlabs",
+): value is { readonly ready?: unknown } {
   return (
     typeof value === "object" &&
     value !== null &&
-    "status" in value &&
-    value.status === "ok"
+    "mode" in value &&
+    value.mode === mode &&
+    "provider" in value &&
+    value.provider === provider
   );
+}
+
+function providerForLiveProfile(
+  profile: NonNullable<PlatformConfig["voicetext"]>["liveProfile"],
+): "deepgram" | "elevenlabs" {
+  return profile === "deepgram-nova-3" ? "deepgram" : "elevenlabs";
+}
+
+function providerForBatchProfile(
+  profile: NonNullable<PlatformConfig["voicetext"]>["batchProfile"],
+): "deepgram" | "elevenlabs" {
+  return profile === "deepgram-nova-3" ? "deepgram" : "elevenlabs";
 }
 
 function voicetextHealthUrl(config: PlatformConfig): URL {
