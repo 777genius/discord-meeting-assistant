@@ -1,6 +1,4 @@
-import type { ConversationCancellation,
-  ConversationCancellationReason as DomainConversationCancellationReason,
-  ConversationSession } from "../domain/conversation.js";
+import type { ConversationCancellation, ConversationCancellationReason as DomainConversationCancellationReason, ConversationSession } from "../domain/conversation.js";
 import { requireNonNegativeInteger } from "../domain/errors.js";
 import type {
   ConversationCancellationReason,
@@ -16,13 +14,9 @@ import type {
 } from "./ports/conversation.js";
 import { ConversationAnswerPlayback } from "./conversation-answer-playback.js";
 import { ConversationCueOrchestrator } from "./conversation-cue-orchestrator.js";
-import { ConversationGroundedAnswerExecutor } from
-  "./conversation-grounded-answer-executor.js";
-import { observeConversationLatency, observeConversationPlaybackSettlement } from
-  "./conversation-observability.js";
-import {
-  acceptConversationTtsAttestation,
-} from "./conversation-tts-attestation.js";
+import { ConversationGroundedAnswerExecutor } from "./conversation-grounded-answer-executor.js";
+import { observeConversationLatency, observeConversationPlaybackSettlement } from "./conversation-observability.js";
+import { acceptConversationTtsAttestation } from "./conversation-tts-attestation.js";
 import type { ActiveConversationRun, ConversationInterruptionResult, MeetingConversationState } from
   "./conversation-coordinator-types.js";
 import {
@@ -73,9 +67,7 @@ export class ConversationActiveTurnExecutor {
     this.playbackObserver = dependencies.playbackObserver ?? null;
     this.runtime = dependencies.runtime;
     this.answerPlayback = new ConversationAnswerPlayback({
-      finalize: async (state, run) => {
-        await this.finalize(state, run);
-      },
+      finalize: (state, run) => this.finalize(state, run),
       playback: dependencies.playback,
       ...(dependencies.playbackObserver === undefined
         ? {}
@@ -83,9 +75,7 @@ export class ConversationActiveTurnExecutor {
       ...(dependencies.playbackReadiness === undefined
         ? {}
         : { playbackReadiness: dependencies.playbackReadiness }),
-      requestCancellation: async (state, run, reason) => {
-        await this.requestCancellation(state, run, reason);
-      },
+      requestCancellation: (state, run, reason) => this.requestCancellation(state, run, reason),
     });
   }
 
