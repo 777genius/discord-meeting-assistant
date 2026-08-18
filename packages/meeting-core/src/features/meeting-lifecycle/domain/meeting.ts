@@ -97,8 +97,7 @@ export class Meeting {
         : Object.freeze({
             externalPublicationId: createMeetingExternalPublicationId(snapshot.publication.externalPublicationId),
             idempotencyKey: requireNonEmpty(snapshot.publication.idempotencyKey, "publication.idempotencyKey"),
-            publisherIdentity:
-              snapshot.publication.publisherIdentity !== undefined &&
+            publisherIdentity: snapshot.publication.publisherIdentity !== undefined &&
               snapshot.publication.publisherIdentity.length > 0
                 ? requireNonEmpty(snapshot.publication.publisherIdentity, "publication.publisherIdentity")
                 : "",
@@ -262,8 +261,7 @@ export class Meeting {
         receipt.externalPublicationId,
       ),
       idempotencyKey: requireNonEmpty(receipt.idempotencyKey, "publication.idempotencyKey"),
-      publisherIdentity:
-        receipt.publisherIdentity !== undefined && receipt.publisherIdentity.length > 0
+      publisherIdentity: receipt.publisherIdentity !== undefined && receipt.publisherIdentity.length > 0
           ? requireNonEmpty(receipt.publisherIdentity, "publication.publisherIdentity")
           : "",
     });
@@ -391,11 +389,7 @@ export class Meeting {
   }
 
   private validateSnapshotConsistency(): void {
-    this.validateArtifactStage(
-      "transcription",
-      this.finalTranscript,
-      "transcript",
-    );
+    this.validateArtifactStage("transcription", this.finalTranscript, "transcript");
     this.validateArtifactStage("summary", this.acceptedSummary, "summary");
     this.validateArtifactStage(
       "publication",
