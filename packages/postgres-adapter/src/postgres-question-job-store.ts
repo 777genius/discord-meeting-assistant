@@ -102,9 +102,11 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
               AND binding ->> 'authorizationPolicyVersion' = $5
               AND (
                 state = 'queued' OR
-                state IN ('running', 'ready')
+                (state = 'ready' AND
+                  lease_until <= transaction_timestamp()) OR
+                (state = 'running'
                   AND lease_until <= transaction_timestamp()
-                  AND provider_attempt_state <> 'reserved'
+                  AND provider_attempt_state IN ('none', 'failed'))
               )
             ORDER BY created_at, question_id
             FOR UPDATE SKIP LOCKED
@@ -114,6 +116,8 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
           SET state = CASE WHEN job.state = 'ready' THEN 'ready' ELSE 'running' END,
               generation = job.generation + 1,
               lease_owner = $1,
+              worker_protocol_epoch = 2,
+              worker_protocol_generation = job.generation + 1,
               lease_until = transaction_timestamp() + make_interval(secs => $2),
               updated_at = transaction_timestamp()
           FROM selected
@@ -147,10 +151,16 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
     return this.providerAttempts.reserve(input);
   }
 
-  public recordProviderAttemptOutcome(
-    input: Parameters<QuestionJobStore["recordProviderAttemptOutcome"]>[0],
+  public completeProviderAttempt(
+    input: Parameters<QuestionJobStore["completeProviderAttempt"]>[0],
   ): Promise<boolean> {
-    return this.providerAttempts.recordOutcome(input);
+    return this.providerAttempts.complete(input);
+  }
+
+  public failProviderAttempt(
+    input: Parameters<QuestionJobStore["failProviderAttempt"]>[0],
+  ): Promise<"deferred" | "settled" | "stale"> {
+    return this.providerAttempts.fail(input);
   }
 
   public async persistGroundingPlan(
@@ -197,65 +207,6 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
           }),
           input.runtimeProfile,
           input.sourceMeetingIds,
-          ...policyParameters(this.policyFence.identity),
-        ],
-      );
-      return result.rowCount === 1;
-    });
-  }
-
-  public async markReady(
-    input: Parameters<QuestionJobStore["markReady"]>[0],
-  ): Promise<boolean> {
-    return this.withCurrentPolicyMutation(async (client) => {
-      const result = await client.query(
-        `
-          UPDATE meeting_knowledge.question_jobs AS job
-          SET state = 'ready',
-              answer_candidate = $3::jsonb,
-              ready_at = COALESCE(ready_at, transaction_timestamp()),
-              updated_at = transaction_timestamp()
-          WHERE question_id = $1
-            AND generation = $2
-            AND state = 'running'
-            AND grounding_plan IS NOT NULL
-            AND provider_attempt_state = 'completed'
-            AND lease_until > transaction_timestamp()
-            AND ${currentPolicySql(4)}
-        `,
-        [
-          input.jobId,
-          input.generation,
-          JSON.stringify(input.answerCandidate),
-          ...policyParameters(this.policyFence.identity),
-        ],
-      );
-      return result.rowCount === 1;
-    });
-  }
-
-  public async releaseForRetry(
-    input: Parameters<QuestionJobStore["releaseForRetry"]>[0],
-  ): Promise<boolean> {
-    return this.withCurrentPolicyMutation(async (client) => {
-      const result = await client.query(
-        `
-          UPDATE meeting_knowledge.question_jobs AS job
-          SET state = 'queued',
-              lease_owner = NULL,
-              lease_until = NULL,
-              retry_reason = $3,
-              updated_at = transaction_timestamp()
-          WHERE question_id = $1
-            AND generation = $2
-            AND state = 'running'
-            AND ${currentPolicySql(4)}
-            AND provider_attempt_state = 'failed'
-        `,
-        [
-          input.jobId,
-          input.generation,
-          input.reason.slice(0, 256),
           ...policyParameters(this.policyFence.identity),
         ],
       );

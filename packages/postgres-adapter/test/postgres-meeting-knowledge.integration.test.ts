@@ -141,11 +141,13 @@ async function persistRunningAnswerJob(
        question_id, requester_subject, question_hash, scope_id,
        final_projection_receipt, authorization_principal_ref,
        authorization_digest, locale, question_text, binding, binding_hash,
-       state, generation, lease_owner, lease_until, expires_at
+       state, generation, lease_owner, lease_until,
+       worker_protocol_epoch, worker_protocol_generation, expires_at
      ) VALUES (
        $1, $2, $3, $4, $5, 'opaque', $6, 'en', 'Question?', $7::jsonb,
        $8, 'running', 1, 'worker-1',
        transaction_timestamp() + interval '1 minute',
+       2, 1,
        transaction_timestamp() + interval '10 minutes'
      )`,
     [
@@ -310,18 +312,13 @@ describe("PostgreSQL Local Final Reply adapters", () => {
       maximumProviderAttempts: 2,
       workerId: "competing-worker",
     })).resolves.toBeNull();
-    expect(await jobs.recordProviderAttemptOutcome({
-      attemptId: providerAttemptId,
-      generation: lease.generation,
-      jobId: lease.jobId,
-      outcome: "completed",
-    })).toBe(true);
-    expect(await jobs.markReady({
+    expect(await jobs.completeProviderAttempt({
       answerCandidate: {
         claims: [{ evidenceIds: ["evidence-000001"], text: "Friday." }],
         locale: "en",
         status: "answered",
       },
+      attemptId: providerAttemptId,
       generation: lease.generation,
       jobId: lease.jobId,
     })).toBe(true);

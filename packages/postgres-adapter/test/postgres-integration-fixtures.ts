@@ -37,6 +37,7 @@ let container: StartedTestContainer | undefined;
 let pool: Pool | undefined;
 let dockerUnavailableReason: string | undefined;
 let appendOnlyLiveMeetingMigration: string | undefined;
+let externalConnectionString: string | undefined;
 let meetingCoreMigration: string | undefined;
 let liveMeetingsMigration: string | undefined;
 let isolatedDatabaseSequence = 0;
@@ -48,6 +49,14 @@ export interface IsolatedPostgresDatabase {
 
 export function usePostgresIntegrationDatabase(): void {
   beforeAll(async () => {
+    const configuredDatabase = process.env.POSTGRES_INTEGRATION_DATABASE_URL;
+    if (configuredDatabase !== undefined) {
+      externalConnectionString = requireDisposableConnectionString(configuredDatabase);
+      pool = new Pool({ connectionString: externalConnectionString });
+      await initializeIntegrationDatabase(pool);
+      return;
+    }
+
     try {
       container = await new GenericContainer(POSTGRES_IMAGE)
         .withEnvironment({
@@ -63,29 +72,7 @@ export function usePostgresIntegrationDatabase(): void {
         .start();
 
       pool = new Pool(poolOptions("meeting_test"));
-      await pool.query("SELECT 1");
-      meetingCoreMigration = await readFile(
-        new URL(
-          "../../../infra/postgres/migrations/0001_create_meeting_core.sql",
-          import.meta.url,
-        ),
-        "utf8",
-      );
-      liveMeetingsMigration = await readFile(
-        new URL(
-          "../../../infra/postgres/migrations/0003_create_live_meetings.sql",
-          import.meta.url,
-        ),
-        "utf8",
-      );
-      appendOnlyLiveMeetingMigration = await readFile(
-        new URL(
-          "../../../infra/postgres/migrations/0005_live_meeting_append_only.sql",
-          import.meta.url,
-        ),
-        "utf8",
-      );
-      await new PostgresMigrationRunner(pool).migrate();
+      await initializeIntegrationDatabase(pool);
     } catch (error) {
       if (!isDockerUnavailable(error)) {
         throw error;
@@ -374,7 +361,56 @@ export function evidenceBackedMeeting(
   return meeting;
 }
 
+
+async function initializeIntegrationDatabase(database: Pool): Promise<void> {
+  await database.query("SELECT 1");
+  meetingCoreMigration = await readFile(
+    new URL(
+      "../../../infra/postgres/migrations/0001_create_meeting_core.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  liveMeetingsMigration = await readFile(
+    new URL(
+      "../../../infra/postgres/migrations/0003_create_live_meetings.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  appendOnlyLiveMeetingMigration = await readFile(
+    new URL(
+      "../../../infra/postgres/migrations/0005_live_meeting_append_only.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  await new PostgresMigrationRunner(database).migrate();
+}
+
+function requireDisposableConnectionString(value: string): string {
+  const parsed = new URL(value);
+  const databaseName = parsed.pathname.slice(1);
+  if (
+    (parsed.protocol !== "postgres:" && parsed.protocol !== "postgresql:") ||
+    !/^meeting_test_[a-z\d_]+$/u.test(databaseName)
+  ) {
+    throw new Error(
+      "POSTGRES_INTEGRATION_DATABASE_URL must name a disposable meeting_test_* database",
+    );
+  }
+  return parsed.toString();
+}
+
 function poolOptions(database: string): ConstructorParameters<typeof Pool>[0] {
+  if (externalConnectionString !== undefined) {
+    const parsed = new URL(externalConnectionString);
+    parsed.pathname = `/${database}`;
+    return {
+      connectionString: parsed.toString(),
+      connectionTimeoutMillis: 10_000,
+    };
+  }
   if (container === undefined) {
     throw new Error("PostgreSQL container is not initialized");
   }

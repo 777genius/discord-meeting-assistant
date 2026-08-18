@@ -9,14 +9,14 @@ import type {
 export class QuestionJobStoreFake implements QuestionJobStore {
   public activeLeaseResults: boolean[] = [];
   public plans: Parameters<QuestionJobStore["persistGroundingPlan"]>[0][] = [];
-  public ready: Parameters<QuestionJobStore["markReady"]>[0][] = [];
-  public retries: Parameters<QuestionJobStore["releaseForRetry"]>[0][] = [];
   public providerReservations:
     Parameters<QuestionJobStore["reserveProviderAttempt"]>[0][] = [];
-  public providerOutcomes:
-    Parameters<QuestionJobStore["recordProviderAttemptOutcome"]>[0][] = [];
+  public providerCompletions:
+    Parameters<QuestionJobStore["completeProviderAttempt"]>[0][] = [];
+  public providerFailures:
+    Parameters<QuestionJobStore["failProviderAttempt"]>[0][] = [];
   public providerReservationResult = true;
-  public providerOutcomeResult = true;
+  public providerCompletionResult = true;
   public settlements: QuestionJobTerminalOutcome[] = [];
 
   public constructor(public lease: QuestionJobLease | null) {}
@@ -42,31 +42,24 @@ export class QuestionJobStoreFake implements QuestionJobStore {
     return Promise.resolve(this.providerReservationResult);
   }
 
-  public recordProviderAttemptOutcome(
-    input: Parameters<QuestionJobStore["recordProviderAttemptOutcome"]>[0],
+  public completeProviderAttempt(
+    input: Parameters<QuestionJobStore["completeProviderAttempt"]>[0],
   ): Promise<boolean> {
-    this.providerOutcomes.push(input);
-    return Promise.resolve(this.providerOutcomeResult);
+    this.providerCompletions.push(input);
+    return Promise.resolve(this.providerCompletionResult);
+  }
+
+  public failProviderAttempt(
+    input: Parameters<QuestionJobStore["failProviderAttempt"]>[0],
+  ): Promise<"deferred" | "settled" | "stale"> {
+    this.providerFailures.push(input);
+    return Promise.resolve(input.retryable ? "deferred" : "settled");
   }
 
   public persistGroundingPlan(
     input: Parameters<QuestionJobStore["persistGroundingPlan"]>[0],
   ): Promise<boolean> {
     this.plans.push(input);
-    return Promise.resolve(true);
-  }
-
-  public markReady(
-    input: Parameters<QuestionJobStore["markReady"]>[0],
-  ): Promise<boolean> {
-    this.ready.push(input);
-    return Promise.resolve(true);
-  }
-
-  public releaseForRetry(
-    input: Parameters<QuestionJobStore["releaseForRetry"]>[0],
-  ): Promise<boolean> {
-    this.retries.push(input);
     return Promise.resolve(true);
   }
 

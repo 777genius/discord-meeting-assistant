@@ -272,12 +272,21 @@ export interface QuestionJobStore {
     readonly maximumProviderAttempts: number;
   }): Promise<boolean>;
 
-  recordProviderAttemptOutcome(input: {
+  completeProviderAttempt(input: {
+    readonly answerCandidate: GroundedAnswerCandidate;
     readonly attemptId: string;
     readonly generation: number;
     readonly jobId: string;
-    readonly outcome: "completed" | "failed";
   }): Promise<boolean>;
+
+  failProviderAttempt(input: {
+    readonly attemptId: string;
+    readonly generation: number;
+    readonly jobId: string;
+    readonly maximumProviderAttempts: number;
+    readonly reason: string;
+    readonly retryable: boolean;
+  }): Promise<"deferred" | "settled" | "stale">;
 
   persistGroundingPlan(input: {
     readonly generation: number;
@@ -286,18 +295,6 @@ export interface QuestionJobStore {
     readonly plan: GroundingPlan;
     readonly runtimeProfile: string;
     readonly sourceMeetingIds: readonly string[];
-  }): Promise<boolean>;
-
-  markReady(input: {
-    readonly answerCandidate: GroundedAnswerCandidate;
-    readonly generation: number;
-    readonly jobId: string;
-  }): Promise<boolean>;
-
-  releaseForRetry(input: {
-    readonly generation: number;
-    readonly jobId: string;
-    readonly reason: string;
   }): Promise<boolean>;
 
   settle(input: {

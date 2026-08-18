@@ -1,3 +1,4 @@
+import type { GroundedAnswerCandidate } from "../domain/grounded-answer.js";
 import type {
   LocalFinalReplyPolicy,
   QuestionJobLease,
@@ -30,23 +31,36 @@ export function reserveProviderAttempt(
   });
 }
 
-export function recordProviderAttemptOutcome(
+export function completeProviderAttempt(
   jobs: QuestionJobStore,
   lease: QuestionJobLease,
   attemptId: string,
-  outcome: "completed" | "failed",
+  answerCandidate: GroundedAnswerCandidate,
 ): Promise<boolean> {
-  return jobs.recordProviderAttemptOutcome({
+  return jobs.completeProviderAttempt({
+    answerCandidate,
     attemptId,
     generation: lease.generation,
     jobId: lease.jobId,
-    outcome,
   });
 }
 
-export function providerAttemptCanRetry(
+export function failProviderAttempt(
+  jobs: QuestionJobStore,
   lease: QuestionJobLease,
   policy: LocalFinalReplyPolicy,
-): boolean {
-  return lease.attempts + 1 < policy.maximumProviderAttempts;
+  attemptId: string,
+  input: {
+    readonly reason: string;
+    readonly retryable: boolean;
+  },
+): Promise<"deferred" | "settled" | "stale"> {
+  return jobs.failProviderAttempt({
+    attemptId,
+    generation: lease.generation,
+    jobId: lease.jobId,
+    maximumProviderAttempts: policy.maximumProviderAttempts,
+    reason: input.reason,
+    retryable: input.retryable,
+  });
 }

@@ -6,10 +6,10 @@ import {
 } from "./final-reply-checks.js";
 import { GroundedMeetingAnswer } from "./grounded-meeting-answer.js";
 import {
+  completeProviderAttempt,
+  failProviderAttempt,
   nextProviderAttemptId,
   providerAttemptAvailable,
-  providerAttemptCanRetry,
-  recordProviderAttemptOutcome,
   reserveProviderAttempt,
 } from "./provider-attempt-accounting.js";
 import {
@@ -129,30 +129,33 @@ export class FinalReplyAnswerGeneration {
         "unsupported_size",
       );
     }
-    if (!await recordProviderAttemptOutcome(
+    if (generated.status !== "completed") {
+      const disposition = await failProviderAttempt(
+        this.input.jobs,
+        lease,
+        this.input.policy,
+        providerAttemptId,
+        {
+          reason: generated.status === "failed"
+            ? generated.code
+            : "provider_" + generated.status,
+          retryable: generated.status === "failed" && generated.retryable,
+        },
+      );
+      if (disposition === "stale") {
+        return { jobId: lease.jobId, status: "stale_generation" };
+      }
+      return disposition === "deferred"
+        ? { jobId: lease.jobId, status: "deferred" }
+        : { jobId: lease.jobId, outcome: "unavailable", status: "settled" };
+    }
+    const answerCandidate = generated.answer.toSnapshot();
+    if (!await completeProviderAttempt(
       this.input.jobs,
       lease,
       providerAttemptId,
-      generated.status === "failed" ? "failed" : "completed",
-    )) {
-      return { jobId: lease.jobId, status: "stale_generation" };
-    }
-    if (generated.status === "failed") {
-      return this.handleFailure(lease, preparation.authority, generated.retryable);
-    }
-    if (generated.status !== "completed") {
-      return this.input.publisher.publishFixed(
-        lease,
-        preparation.authority,
-        "unavailable",
-      );
-    }
-    const answerCandidate = generated.answer.toSnapshot();
-    if (!await this.input.jobs.markReady({
       answerCandidate,
-      generation: lease.generation,
-      jobId: lease.jobId,
-    })) {
+    )) {
       return { jobId: lease.jobId, status: "stale_generation" };
     }
     return this.input.publisher.publishCandidate(
@@ -171,23 +174,5 @@ export class FinalReplyAnswerGeneration {
       expectedScopeId: lease.binding.scopeId,
       questionId: lease.binding.questionId,
     });
-  }
-
-  private async handleFailure(
-    lease: QuestionJobLease,
-    authority: CurrentFinalReplyBinding,
-    retryable: boolean,
-  ): Promise<FinalReplyJobResult> {
-    if (retryable && providerAttemptCanRetry(lease, this.input.policy)) {
-      const released = await this.input.jobs.releaseForRetry({
-        generation: lease.generation,
-        jobId: lease.jobId,
-        reason: "provider_failure",
-      });
-      return released
-        ? { jobId: lease.jobId, status: "deferred" }
-        : { jobId: lease.jobId, status: "stale_generation" };
-    }
-    return this.input.publisher.publishFixed(lease, authority, "unavailable");
   }
 }
