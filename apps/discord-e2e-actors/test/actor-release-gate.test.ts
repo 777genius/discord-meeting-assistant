@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   connectActorsAfterReleaseGate,
+  waitForActorGateArmed,
   waitForActorReleaseGate,
 } from "../src/actor-release-gate.js";
 import { HOSTED_CAMPAIGN_TARGET } from "../src/hosted-campaign-coordinator.js";
@@ -104,6 +105,7 @@ describe("hosted actor release gate", () => {
     const root = await mkdtemp(join(tmpdir(), "actor-release-gate-"));
     const path = join(root, "release.json");
     const waiting = waitForActorReleaseGate(expectation(path), AbortSignal.timeout(2_000));
+    await waitForActorGateArmed(expectation(path), AbortSignal.timeout(2_000));
 
     await writeFile(path, JSON.stringify(gate()), { encoding: "utf8", flag: "wx", mode: 0o600 });
 
@@ -133,6 +135,7 @@ describe("hosted actor release gate", () => {
     const root = await mkdtemp(join(tmpdir(), "actor-release-invalid-"));
     const path = join(root, "release.json");
     const waiting = waitForActorReleaseGate(expectation(path), AbortSignal.timeout(2_000));
+    await waitForActorGateArmed(expectation(path), AbortSignal.timeout(2_000));
     await writeFile(path, JSON.stringify(gate(overrides)), { mode: 0o600 });
 
     await expect(waiting).rejects.toThrow(expectedError);
@@ -145,12 +148,14 @@ describe("hosted actor release gate", () => {
     await writeFile(actual, JSON.stringify(gate()), { mode: 0o600 });
     const symlinkWait = waitForActorReleaseGate(expectation(linked), AbortSignal.timeout(2_000));
     const symlinkAssertion = expect(symlinkWait).rejects.toThrow(/non-symlink/u);
+    await waitForActorGateArmed(expectation(linked), AbortSignal.timeout(2_000));
     await symlink(actual, linked);
     await symlinkAssertion;
 
     const publicPath = join(root, "public.json");
     const publicWait = waitForActorReleaseGate(expectation(publicPath), AbortSignal.timeout(2_000));
     const publicAssertion = expect(publicWait).rejects.toThrow(/0600/u);
+    await waitForActorGateArmed(expectation(publicPath), AbortSignal.timeout(2_000));
     await writeFile(publicPath, JSON.stringify(gate()), { mode: 0o644 });
     await publicAssertion;
   });
@@ -168,7 +173,6 @@ describe("hosted actor release gate", () => {
     const expected = expectation(join(root, "gate.json"));
     await writeFile(expected.armedPath, "{}\n", { mode: 0o600 });
     await chmod(expected.armedPath, 0o644);
-    const { waitForActorGateArmed } = await import("../src/actor-release-gate.js");
     await expect(waitForActorGateArmed(expected, AbortSignal.timeout(100)))
       .rejects.toThrow(/private regular file/u);
   });
