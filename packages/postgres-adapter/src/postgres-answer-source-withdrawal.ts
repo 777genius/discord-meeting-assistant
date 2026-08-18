@@ -1,10 +1,30 @@
 import type { PoolClient } from "pg";
 
+/** Serializes source acceptance and withdrawal even before either has a row. */
+export async function lockMeetingKnowledgeSource(
+  client: PoolClient,
+  meetingId: string,
+): Promise<void> {
+  await client.query(
+    `SELECT pg_advisory_xact_lock(
+       hashtextextended('meeting-knowledge:source:' || $1, 0)
+     )`,
+    [meetingId],
+  );
+}
+
 /** Atomically withdraws derived memory and every answer that cites the source. */
 export async function requestAnswerSourceWithdrawal(
   client: PoolClient,
   meetingId: string,
 ): Promise<void> {
+  await lockMeetingKnowledgeSource(client, meetingId);
+  await client.query(
+    `INSERT INTO meeting_knowledge.withdrawn_meeting_sources (meeting_id)
+     VALUES ($1)
+     ON CONFLICT (meeting_id) DO NOTHING`,
+    [meetingId],
+  );
   await client.query(
     `UPDATE meeting_core.historical_memory_sync
      SET is_current = false, operation = 'delete_meeting',
@@ -40,9 +60,7 @@ export async function requestAnswerSourceWithdrawal(
            WHEN state IN ('reserved', 'claimed') THEN 'cancelled'
            ELSE 'retraction_pending'
          END,
-         payload_bytes = CASE
-           WHEN state IN ('reserved', 'claimed') THEN '{}' ELSE payload_bytes
-         END,
+         payload_bytes = '{}',
          claim_until = NULL,
          retraction_requested_at = CASE
            WHEN state IN (

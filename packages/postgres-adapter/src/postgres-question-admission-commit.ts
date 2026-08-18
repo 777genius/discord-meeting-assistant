@@ -7,6 +7,7 @@ import {
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import type { Pool, PoolClient } from "pg";
 
+import { lockMeetingKnowledgeSource } from "./postgres-answer-source-withdrawal.js";
 import { decodeQuestionBinding } from "./postgres-meeting-knowledge-codecs.js";
 import {
   finalReplyAuthorityMatches,
@@ -86,6 +87,8 @@ export class PostgresQuestionAdmissionCommit
     try {
       await client.query("BEGIN");
       await this.lockQuestion(client, binding.questionId);
+      await this.lockProjection(client, binding.finalProjectionReceipt);
+      await lockMeetingKnowledgeSource(client, binding.meetingId);
       const existing = await this.findQuestion(client, binding.questionId);
       if (existing !== null) {
         const bindingHash = admissionBindingHash(binding);
@@ -111,6 +114,7 @@ export class PostgresQuestionAdmissionCommit
         !finalReplyAuthorityMatches(authority.binding, binding) ||
         !authority.binding.humanActorIds.includes(input.authorization.actorId) ||
         await this.isProjectionUnavailable(client, binding.finalProjectionReceipt) ||
+        await this.isSourceWithdrawn(client, binding.meetingId) ||
         !await this.authorizationIsCurrent(client, input.authorization.expiresAt)
       ) {
         await client.query("ROLLBACK");
@@ -177,22 +181,12 @@ export class PostgresQuestionAdmissionCommit
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      await this.lockProjection(client, input.finalProjectionReceipt);
       await client.query(
         `
           INSERT INTO meeting_knowledge.unavailable_final_projections
             (final_projection_receipt)
-          SELECT projection.receipt
-          FROM (
-            SELECT meeting.snapshot -> 'publication' ->> 'externalPublicationId'
-              AS receipt
-            FROM meeting_core.meetings AS meeting
-            WHERE meeting.snapshot -> 'publication' ->> 'externalPublicationId' = $1
-            UNION ALL
-            SELECT live.snapshot ->> 'projectionExternalId' AS receipt
-            FROM meeting_core.live_meetings AS live
-            WHERE live.snapshot ->> 'projectionExternalId' = $1
-          ) AS projection
-          WHERE projection.receipt IS NOT NULL
+          VALUES ($1)
           ON CONFLICT (final_projection_receipt) DO NOTHING
         `,
         [input.finalProjectionReceipt],
@@ -230,10 +224,7 @@ export class PostgresQuestionAdmissionCommit
                   WHEN state IN ('reserved', 'claimed') THEN 'cancelled'
                   ELSE 'retraction_pending'
                 END,
-                payload_bytes = CASE
-                  WHEN state IN ('reserved', 'claimed') THEN '{}'
-                  ELSE payload_bytes
-                END,
+                payload_bytes = '{}',
                 claim_until = NULL,
                 retraction_requested_at = CASE
                   WHEN state IN (
@@ -300,6 +291,20 @@ export class PostgresQuestionAdmissionCommit
     );
   }
 
+  private async lockProjection(
+    client: PoolClient,
+    finalProjectionReceipt: string,
+  ): Promise<void> {
+    await client.query(
+      `
+        SELECT pg_advisory_xact_lock(
+          hashtextextended('meeting-knowledge:projection:' || $1, 0)
+        )
+      `,
+      [finalProjectionReceipt],
+    );
+  }
+
   private async isProjectionUnavailable(
     client: PoolClient,
     receipt: string,
@@ -311,6 +316,21 @@ export class PostgresQuestionAdmissionCommit
         WHERE final_projection_receipt = $1
       `,
       [receipt],
+    );
+    return result.rowCount === 1;
+  }
+
+  private async isSourceWithdrawn(
+    client: PoolClient,
+    meetingId: string,
+  ): Promise<boolean> {
+    const result = await client.query(
+      `
+        SELECT 1
+        FROM meeting_knowledge.withdrawn_meeting_sources
+        WHERE meeting_id = $1
+      `,
+      [meetingId],
     );
     return result.rowCount === 1;
   }

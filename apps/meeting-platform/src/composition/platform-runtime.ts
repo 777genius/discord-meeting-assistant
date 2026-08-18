@@ -3,7 +3,12 @@ import {
   flushLoggers,
   PrometheusMetrics,
 } from "@discord-meeting/observability-adapter";
-import { PostgresSchemaReadiness } from "@discord-meeting/postgres-adapter";
+import { RequestHistoricalMeetingDeletion } from
+  "@discord-meeting/meeting-core/meeting-knowledge";
+import {
+  PostgresHistoricalMemoryStore,
+  PostgresSchemaReadiness,
+} from "@discord-meeting/postgres-adapter";
 
 import { PlatformRecordingIngress } from "../application/platform-ingress.js";
 import type { PostCallOutboxDispatcher } from "../application/post-call-outbox-dispatcher.js";
@@ -114,9 +119,7 @@ export async function startMeetingPlatform(
         metrics: () => metrics.render(),
         readiness: async () => ({ ready: (await health.snapshot()).ready }),
       },
-      ...(historicalMemory === undefined
-        ? {}
-        : { historicalDeletion: historicalMemory }),
+      historicalDeletion: createPlatformHistoricalDeletion(core.pool),
       ingress,
       installUrls: discordLive.installUrls,
       logger,
@@ -244,6 +247,17 @@ async function createPlatformKnowledgeComposition(input: {
     liveFinalizedMemory,
     meetingKnowledge,
     recordingPlayback,
+  };
+}
+
+export function createPlatformHistoricalDeletion(
+  pool: ConstructorParameters<typeof PostgresHistoricalMemoryStore>[0],
+): { readonly requestMeetingDeletion: (meetingId: string) => Promise<void> } {
+  const deletion = new RequestHistoricalMeetingDeletion(
+    new PostgresHistoricalMemoryStore(pool),
+  );
+  return {
+    requestMeetingDeletion: (meetingId) => deletion.execute(meetingId),
   };
 }
 

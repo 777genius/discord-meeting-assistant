@@ -26,6 +26,7 @@ import { PlatformLiveMeetingRuntime } from "../src/live-meeting-runtime.js";
 import type { PlatformHttpHost } from "../src/http/platform-http-host.js";
 import {
   closeMeetingPlatformResources,
+  createPlatformHistoricalDeletion,
   createConversationCoordinator,
   createConversationLatencyLogger,
   createConversationPlaybackLogger,
@@ -153,6 +154,12 @@ async function* onePlaybackEvent(
 }
 
 describe("meeting platform runtime wiring", () => {
+  it("composes source deletion without Infinity configuration", () => {
+    const deletion = createPlatformHistoricalDeletion({} as Pool);
+
+    expect(deletion.requestMeetingDeletion).toBeTypeOf("function");
+  });
+
   it("writes provider-neutral conversation latency to structured logs", async () => {
     const info = vi.fn();
     const observer = createConversationLatencyLogger({ info });

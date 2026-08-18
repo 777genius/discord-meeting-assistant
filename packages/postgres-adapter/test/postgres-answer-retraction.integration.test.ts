@@ -1,4 +1,7 @@
 import { createHash } from "node:crypto";
+
+import { createHistoricalReleaseBinding } from
+  "@discord-meeting/meeting-core/meeting-knowledge";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -114,6 +117,34 @@ describe("PostgreSQL answer cancellation and retraction", () => {
     }
   });
 
+  it("tombstones a source without a historical row and rejects every later release", async (context) => {
+    const database = databaseOrSkip(context);
+    const store = new PostgresHistoricalMemoryStore(database);
+    const meetingId = "meeting-withdrawn-before-release";
+
+    await store.requestMeetingDeletion(meetingId);
+    await store.requestMeetingDeletion(meetingId);
+
+    await expect(database.query(
+      `SELECT meeting_id FROM meeting_knowledge.withdrawn_meeting_sources
+       WHERE meeting_id = $1`,
+      [meetingId],
+    )).resolves.toMatchObject({ rows: [{ meeting_id: meetingId }] });
+    await expect(store.acceptRelease(createHistoricalReleaseBinding({
+      acceptedMeetingRevision: 1,
+      desiredGeneration: 1,
+      meetingId,
+      roomId: "room-1",
+      scopeId: "scope-1",
+      transcriptId: "late-transcript",
+      transcriptVersion: 1,
+    }))).rejects.toThrow("withdrawn meeting");
+    await expect(store.claimNext({
+      allowIndex: false,
+      leaseDurationMs: 30_000,
+    })).resolves.toBeNull();
+  });
+
   it("retains authoritative evidence while withdrawal requests exact answer retraction", async (context) => {
     const database = databaseOrSkip(context);
     const sourceMeetingId = "withdrawn-answer-source";
@@ -158,12 +189,25 @@ describe("PostgreSQL answer cancellation and retraction", () => {
       .requestMeetingDeletion(sourceMeetingId);
 
     const effects = await database.query(
-      `SELECT state, external_receipt FROM meeting_core.answer_effects
+      `SELECT state, external_receipt, marker, payload_bytes, payload_hash
+       FROM meeting_core.answer_effects
        ORDER BY effect_id`,
     );
     expect(effects.rows).toEqual([
-      { external_receipt: "88888888888888888", state: "retraction_pending" },
-      { external_receipt: null, state: "retraction_pending" },
+      {
+        external_receipt: "88888888888888888",
+        marker: "marker-delivered",
+        payload_bytes: "{}",
+        payload_hash: digest("{}"),
+        state: "retraction_pending",
+      },
+      {
+        external_receipt: null,
+        marker: "marker-unknown",
+        payload_bytes: "{}",
+        payload_hash: digest('{"content":"answer"}'),
+        state: "retraction_pending",
+      },
     ]);
     await expect(database.query(
       "SELECT snapshot FROM meeting_core.meetings WHERE meeting_id = $1",

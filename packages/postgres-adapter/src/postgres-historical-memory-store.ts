@@ -24,7 +24,10 @@ import {
 } from "./postgres-historical-memory-row.js";
 import { queryHistoricalPostgres, withHistoricalPostgresTransaction, type HistoricalPostgresCancellationPort } from "./postgres-historical-query.js";
 import { recordHistoricalSyncRetry } from "./postgres-historical-sync-retry.js";
-import { requestAnswerSourceWithdrawal } from "./postgres-answer-source-withdrawal.js";
+import {
+  lockMeetingKnowledgeSource,
+  requestAnswerSourceWithdrawal,
+} from "./postgres-answer-source-withdrawal.js";
 
 interface HistoricalMeetingMutationRow {
   readonly desired_generation: number;
@@ -58,6 +61,15 @@ export async function acceptHistoricalReleaseInTransaction(
   candidate: HistoricalReleaseBindingV1,
 ): Promise<"accepted" | "replayed"> {
   const binding = validateHistoricalReleaseBinding(candidate);
+  await lockMeetingKnowledgeSource(client, binding.meetingId);
+  const withdrawn = await client.query(
+    `SELECT 1 FROM meeting_knowledge.withdrawn_meeting_sources
+     WHERE meeting_id = $1`,
+    [binding.meetingId],
+  );
+  if (withdrawn.rowCount === 1) {
+    throw new Error("withdrawn meeting cannot accept a new historical release");
+  }
   const existing = await client.query<HistoricalSyncRow>(
     `SELECT ${historicalSyncRowProjection} FROM meeting_core.historical_memory_sync WHERE release_id = $1 FOR UPDATE`,
     [binding.releaseId],

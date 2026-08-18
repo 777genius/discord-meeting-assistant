@@ -180,6 +180,109 @@ describe("PostgreSQL canonical live reply authority", () => {
     })).resolves.toBeNull();
   });
 
+  it("durably tombstones an unknown projection and repeats idempotently", async (context) => {
+    const database = databaseOrSkip(context);
+    const admissions = new PostgresQuestionAdmissionCommit(database, botId);
+    const receipt =
+      `discord:v2:channel:${channelId}:message:66666666666666666`;
+
+    await expect(admissions.withdrawProjection({
+      finalProjectionReceipt: receipt,
+    })).resolves.toEqual([]);
+    await expect(admissions.withdrawProjection({
+      finalProjectionReceipt: receipt,
+    })).resolves.toEqual([]);
+    await expect(database.query(
+      `SELECT final_projection_receipt
+       FROM meeting_knowledge.unavailable_final_projections
+       WHERE final_projection_receipt = $1`,
+      [receipt],
+    )).resolves.toMatchObject({
+      rows: [{ final_projection_receipt: receipt }],
+    });
+  });
+
+  it("serializes withdrawal with admission and never re-admits the projection", async (context) => {
+    const database = databaseOrSkip(context);
+    const final = await persistFinalMeeting(database);
+    const receipt = final.publication?.externalPublicationId;
+    if (receipt === undefined || receipt === null) {
+      throw new Error("final projection receipt was not persisted");
+    }
+    const evidence = new PostgresFinalReplyEvidence(database, botId);
+    const authority = await evidence.findCurrentBinding({
+      finalProjectionReceipt: receipt,
+      projectionTargetContainerId: channelId,
+    });
+    if (authority === null) {
+      throw new Error("final authority was not admitted");
+    }
+    const admissions = new PostgresQuestionAdmissionCommit(database, botId);
+    const authorization = {
+      actorId: "speaker-a",
+      containerId: channelId,
+      deliveryContainerId: channelId,
+      digest: "a".repeat(64),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      observedAt: new Date().toISOString(),
+      policyVersion: "discord.participant-current-results.v1",
+      scopeId: authority.scopeId,
+      source: "authoritative_remote" as const,
+      status: "authorized" as const,
+    };
+    const makeBinding = (questionId: string) => QuestionBinding.create({
+      authorizationDigest: authorization.digest,
+      authorizationPolicyVersion: authorization.policyVersion,
+      authorizationPrincipalRef: "opaque-concurrent-principal",
+      ...authority,
+      deliveryContainerId: channelId,
+      expectedLocale: "en",
+      policyVersion: "meeting-knowledge.focused-memory-final-reply.v2",
+      questionHash: "b".repeat(64),
+      questionId,
+      requesterSubject: "c".repeat(64),
+    }).toSnapshot();
+    const commit = (questionId: string) => admissions.commit({
+      authorization,
+      binding: makeBinding(questionId),
+      questionText: "What was decided?",
+      ratePolicy: {
+        guildQuestionsPerHour: 10,
+        jobTtlSeconds: 900,
+        requesterQuestionsPerHour: 10,
+      },
+    });
+
+    const questionId = "concurrent-withdrawal-question";
+    const [admission, firstWithdrawal] = await Promise.all([
+      commit(questionId),
+      admissions.withdrawProjection({ finalProjectionReceipt: receipt }),
+    ]);
+    expect(["committed", "stale"]).toContain(admission.status);
+    const jobs = await database.query<{
+      readonly outcome: string;
+      readonly state: string;
+    }>(
+      `SELECT state, outcome FROM meeting_knowledge.question_jobs
+       WHERE question_id = $1`,
+      [questionId],
+    );
+    if (admission.status === "committed") {
+      expect(jobs.rows).toEqual([{ outcome: "cancelled", state: "terminal" }]);
+      expect(firstWithdrawal).toEqual([questionId]);
+    } else {
+      expect(jobs.rows).toEqual([]);
+      expect(firstWithdrawal).toEqual([]);
+    }
+
+    await expect(admissions.withdrawProjection({
+      finalProjectionReceipt: receipt,
+    })).resolves.toEqual(firstWithdrawal);
+    await expect(commit("post-withdrawal-question")).resolves.toMatchObject({
+      status: "stale",
+    });
+  });
+
   it("retrieves an early fact, rejects replacement drift, and transitions to final", async (context) => {
     const database = databaseOrSkip(context);
     const live = await persistActiveLiveProjection(database);
