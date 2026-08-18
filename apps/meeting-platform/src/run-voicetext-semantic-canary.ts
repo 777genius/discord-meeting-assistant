@@ -18,6 +18,16 @@ import {
 } from "@discord-meeting/recording-ingress-adapter";
 
 import {
+  areExactCanaryKeyterms,
+  exactCanaryDeadlineMs,
+  exactCanaryEndpoint,
+  exactCanaryKeyterms,
+  isVoicetextBatchProfile,
+  isVoicetextLiveProfile,
+  requiredBatchProfile,
+  requiredLiveProfile,
+} from "./composition/voicetext-canary-arguments.js";
+import {
   createVoicetextCanaryDeadline,
   waitForVoicetextCanaryOperation,
 } from "./composition/voicetext-canary-deadline.js";
@@ -43,6 +53,7 @@ export interface VoicetextSemanticCanaryResultV1 {
     readonly finalizeComplete: true; readonly protocolReady: true;
     readonly segments: readonly CanarySegment[];
   };
+  readonly keyterms: readonly string[];
   readonly profiles: VoicetextSemanticCanaryProfiles; readonly schemaVersion: 1;
   readonly tokenFile: {
     readonly generationId: string; readonly mode: 0o400;
@@ -57,7 +68,7 @@ export interface VoicetextSemanticCanaryProfiles {
 export interface VoicetextSemanticCanaryArguments {
   readonly batchEndpoint: string; readonly campaignId: string; readonly deadlineMs: number;
   readonly fixturePath: string; readonly fixtureSha256: string; readonly imageDigestSha256: string;
-  readonly liveEndpoint: string; readonly planSha256: string;
+  readonly keyterms: readonly string[]; readonly liveEndpoint: string; readonly planSha256: string;
   readonly profiles: VoicetextSemanticCanaryProfiles; readonly sourceRevision: string;
 }
 
@@ -66,7 +77,7 @@ export interface VoicetextSemanticCanaryDependencies {
     endpoint: string; profile: VoicetextBatchProfile; token: string;
   }>) => VoicetextBatchClient;
   readonly openLiveSession: (input: Readonly<{
-    endpoint: string; idempotencyKey: string;
+    endpoint: string; idempotencyKey: string; keyterms: readonly string[];
     onTranscript: (segment: CanarySegment, isFinal: boolean) => void;
     profile: VoicetextLiveProfile; signal: AbortSignal; token: string;
   }>) => Promise<VoicetextLiveSession>;
@@ -99,6 +110,7 @@ export async function runVoicetextSemanticCanary(
     campaignId: args.campaignId,
     fixtureSha256: args.fixtureSha256,
     imageDigestSha256: args.imageDigestSha256,
+    keyterms: args.keyterms,
     planSha256: args.planSha256,
     profiles: args.profiles,
     sourceRevision: args.sourceRevision,
@@ -108,8 +120,12 @@ export async function runVoicetextSemanticCanary(
     profile: args.profiles.batch,
     token: tokenFile.token,
   });
-  const first = await completeVoicetextCanaryBatch(client, fixture, idempotencyKey, dependencies.wait, deadline.signal);
-  const replay = await completeVoicetextCanaryBatch(client, fixture, idempotencyKey, dependencies.wait, deadline.signal);
+  const first = await completeVoicetextCanaryBatch(
+    client, { fixture, idempotencyKey, keyterms: args.keyterms }, dependencies.wait, deadline.signal,
+  );
+  const replay = await completeVoicetextCanaryBatch(
+    client, { fixture, idempotencyKey, keyterms: args.keyterms }, dependencies.wait, deadline.signal,
+  );
   const batchSegments = voicetextCanaryBatchSegments(first);
   const replaySegments = voicetextCanaryBatchSegments(replay);
   const firstIdentity = voicetextCanaryBatchIdentity(first, batchSegments);
@@ -122,6 +138,7 @@ export async function runVoicetextSemanticCanary(
   const openingSession = dependencies.openLiveSession({
     endpoint: args.liveEndpoint,
     idempotencyKey,
+    keyterms: args.keyterms,
     onTranscript: (segment, isFinal) => {
       if (isFinal) {liveSegments.push(segment);}
     },
@@ -190,6 +207,7 @@ export async function runVoicetextSemanticCanary(
       protocolReady: true,
       segments: liveSegments,
     },
+    keyterms: args.keyterms,
     profiles: args.profiles,
     schemaVersion: 1,
     tokenFile: {
@@ -262,7 +280,8 @@ function validateArguments(args: VoicetextSemanticCanaryArguments): void {
     || !isVoicetextBatchProfile(args.profiles.batch)
     || !isVoicetextLiveProfile(args.profiles.live)
     || !/^(?:[a-f\d]{40}|[a-f\d]{64})$/u.test(args.sourceRevision)
-    || !args.fixturePath.startsWith("/")) {
+    || !args.fixturePath.startsWith("/")
+    || !areExactCanaryKeyterms(args.keyterms)) {
     throw new Error("Voicetext semantic canary arguments are invalid");
   }
 }
@@ -311,8 +330,8 @@ async function readPrivateToken(path: string) {
 function defaultDependencies(): VoicetextSemanticCanaryDependencies {
   return {
     createBatchClient: (input) => new FetchVoicetextBatchClient(input),
-    openLiveSession: async ({ endpoint, idempotencyKey, onTranscript, profile, signal, token }) =>
-      await new VoicetextLiveTranscriptionAdapter({ endpoint, language: "multi", profile, token }).openSession({
+    openLiveSession: async ({ endpoint, idempotencyKey, keyterms, onTranscript, profile, signal, token }) =>
+      await new VoicetextLiveTranscriptionAdapter({ endpoint, keyterms, language: "multi", profile, token }).openSession({
         idempotencyKey,
         meetingId: `canary:${idempotencyKey}`,
         onTranscript: (event) => {
@@ -354,7 +373,8 @@ export function parseVoicetextSemanticCanaryArguments(
     return value;
   };
   const allowed = new Set(["--batch-origin", "--batch-path", "--campaign", "--deadline-ms", "--fixture",
-    "--batch-profile", "--fixture-sha256", "--image-digest-sha256", "--json", "--live-origin", "--live-path",
+    "--batch-profile", "--fixture-sha256", "--image-digest-sha256", "--json", "--keyterms-json",
+    "--live-origin", "--live-path",
     "--live-profile",
     "--plan-sha256", "--source-revision"]);
   if (values.get("--json") !== "true" || [...values.keys()].some((key) => !allowed.has(key))) {
@@ -368,8 +388,8 @@ export function parseVoicetextSemanticCanaryArguments(
     || configuredBatchProfile === undefined || configuredLiveProfile === undefined) {
     throw new Error("Voicetext semantic canary runtime configuration is incomplete");
   }
-  const liveEndpoint = exactEndpoint(required("--live-origin"), required("--live-path"));
-  const batchEndpoint = exactEndpoint(required("--batch-origin"), required("--batch-path"));
+  const liveEndpoint = exactCanaryEndpoint(required("--live-origin"), required("--live-path"));
+  const batchEndpoint = exactCanaryEndpoint(required("--batch-origin"), required("--batch-path"));
   const batchProfile = requiredBatchProfile(required("--batch-profile"));
   const liveProfile = requiredLiveProfile(required("--live-profile"));
   if (liveEndpoint !== configuredLive || batchEndpoint !== batchEndpointFromWebSocketUrl(configuredLive)) {
@@ -381,41 +401,16 @@ export function parseVoicetextSemanticCanaryArguments(
   return {
     args: {
       batchEndpoint, campaignId: required("--campaign"),
-      deadlineMs: exactDeadlineMs(required("--deadline-ms")), fixturePath: required("--fixture"),
+      deadlineMs: exactCanaryDeadlineMs(required("--deadline-ms")), fixturePath: required("--fixture"),
       fixtureSha256: required("--fixture-sha256"),
-      imageDigestSha256: required("--image-digest-sha256"), liveEndpoint,
+      imageDigestSha256: required("--image-digest-sha256"),
+      keyterms: exactCanaryKeyterms(required("--keyterms-json")), liveEndpoint,
       planSha256: required("--plan-sha256"),
       profiles: { batch: batchProfile, live: liveProfile },
       sourceRevision: required("--source-revision"),
     },
     tokenFilePath,
   };
-}
-
-function isVoicetextBatchProfile(value: string): value is VoicetextBatchProfile {
-  return value === "deepgram-nova-3" || value === "elevenlabs-scribe-v2";
-} function isVoicetextLiveProfile(value: string): value is VoicetextLiveProfile {
-  return value === "deepgram-nova-3" || value === "elevenlabs-scribe-v2-realtime";
-} function requiredBatchProfile(value: string): VoicetextBatchProfile {
-  if (!isVoicetextBatchProfile(value)) {throw new Error("Voicetext semantic canary batch profile is invalid");} return value;
-}
-function requiredLiveProfile(value: string): VoicetextLiveProfile {
-  if (!isVoicetextLiveProfile(value)) {throw new Error("Voicetext semantic canary live profile is invalid");} return value;
-}
-
-function exactDeadlineMs(value: string): number {
-  if (!/^[1-9]\d{0,5}$/u.test(value)) {throw new Error("Voicetext semantic canary deadline is invalid");}
-  const deadlineMs = Number(value);
-  if (!Number.isSafeInteger(deadlineMs) || deadlineMs > 300_000) {throw new Error("Voicetext semantic canary deadline is invalid");} return deadlineMs;
-}
-
-function exactEndpoint(origin: string, path: string): string {
-  const originUrl = new URL(origin);
-  const endpoint = new URL(path, originUrl);
-  if (originUrl.origin !== origin || !path.startsWith("/") || endpoint.origin !== origin) {
-    throw new Error("Voicetext semantic canary endpoint is invalid");
-  }
-  return endpoint.toString();
 }
 
 async function main(): Promise<void> {

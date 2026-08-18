@@ -33,7 +33,7 @@ describe("Voicetext semantic canary", () => {
   it("proves same-key batch replay and live ready, ACK, and finalize without exposing the token", async () => {
     const fixture = canaryFixture();
     const fixtureSha256 = digest(fixture);
-    const submits: string[] = [];
+    const submits: Array<{ readonly idempotencyKey: string; readonly keyterms: readonly string[] }> = [];
     const polls: string[] = [];
     const batchResults: VoicetextBatchTaskResult[] = [
       { jobId: completed.jobId, kind: "pending", nextAction: "retry", retryAfterMs: 10 },
@@ -43,7 +43,9 @@ describe("Voicetext semantic canary", () => {
     ];
     const batch: VoicetextBatchClient = {
       poll: async ({ jobId }) => {polls.push(jobId); return nextBatchResult(batchResults);},
-      submit: async ({ idempotencyKey }) => {submits.push(idempotencyKey); return nextBatchResult(batchResults);},
+      submit: async ({ idempotencyKey, keyterms }) => {
+        submits.push({ idempotencyKey, keyterms }); return nextBatchResult(batchResults);
+      },
     };
     const sentPackets: Uint8Array[] = [];
     const waits: number[] = [];
@@ -81,6 +83,7 @@ describe("Voicetext semantic canary", () => {
       fixturePath: "/fixtures/canary.ogg",
       fixtureSha256,
       imageDigestSha256: "b".repeat(64),
+      keyterms: ["Meeting Platform", "Craig recording"],
       liveEndpoint: "wss://voicetext.test/api/v1/transcribe/stream",
       planSha256: "c".repeat(64),
       profiles: {
@@ -91,7 +94,8 @@ describe("Voicetext semantic canary", () => {
     }, "/run/secrets/voicetext-service-token", dependencies);
 
     expect(submits).toHaveLength(3);
-    expect(new Set(submits).size).toBe(1);
+    expect(new Set(submits.map(({ idempotencyKey }) => idempotencyKey)).size).toBe(1);
+    expect(submits.every(({ keyterms }) => keyterms.join("|") === "Meeting Platform|Craig recording")).toBe(true);
     expect(polls).toEqual([completed.jobId]);
     expect(result.batch.firstSubmission).toEqual(result.batch.idempotentReplay);
     expect(result.live.audioAcknowledgements).toEqual({ expected: 2, received: 2 });
@@ -102,12 +106,14 @@ describe("Voicetext semantic canary", () => {
     expect(waits.slice(-2)).toEqual([20, 20]);
     expect(finalize).toHaveBeenCalledOnce();
     expect(openLiveSession).toHaveBeenCalledWith(expect.objectContaining({
+      keyterms: ["Meeting Platform", "Craig recording"],
       profile: "elevenlabs-scribe-v2-realtime",
     }));
     expect(result.profiles).toEqual({
       batch: "elevenlabs-scribe-v2",
       live: "elevenlabs-scribe-v2-realtime",
     });
+    expect(result.keyterms).toEqual(["Meeting Platform", "Craig recording"]);
     expect(JSON.stringify(result)).not.toContain("secret-machine-bearer");
   });
 
@@ -121,6 +127,7 @@ describe("Voicetext semantic canary", () => {
       fixturePath: "/fixtures/canary.ogg",
       fixtureSha256: "a".repeat(64),
       imageDigestSha256: "b".repeat(64),
+      keyterms: ["Botik"],
       liveEndpoint: "wss://voicetext.test/api/v1/transcribe/stream",
       planSha256: "c".repeat(64),
       profiles: { batch: "deepgram-nova-3", live: "deepgram-nova-3" },
@@ -147,6 +154,7 @@ describe("Voicetext semantic canary boundaries", () => {
       "--plan-sha256", "b".repeat(64),
       "--source-revision", "c".repeat(40),
       "--image-digest-sha256", "d".repeat(64),
+      "--keyterms-json", JSON.stringify(["Meeting Platform", "Craig recording"]),
       "--batch-origin", "https://voicetext.test",
       "--batch-path", "/api/v1/transcribe/batch",
       "--batch-profile", "elevenlabs-scribe-v2",
@@ -160,7 +168,9 @@ describe("Voicetext semantic canary boundaries", () => {
       VOICETEXT_LIVE_PROFILE: "elevenlabs-scribe-v2-realtime",
       VOICETEXT_SERVICE_TOKEN_FILE: "/run/secrets/voicetext-service-token",
       VOICETEXT_WS_URL: "wss://voicetext.test/api/v1/transcribe/stream",
-    }).args.fixtureSha256).toBe("a".repeat(64));
+    }).args).toMatchObject({
+      fixtureSha256: "a".repeat(64), keyterms: ["Meeting Platform", "Craig recording"],
+    });
     expect(() => parseVoicetextSemanticCanaryArguments(argv, {
       VOICETEXT_BATCH_PROFILE: "elevenlabs-scribe-v2",
       VOICETEXT_LIVE_PROFILE: "elevenlabs-scribe-v2-realtime",
@@ -176,6 +186,15 @@ describe("Voicetext semantic canary boundaries", () => {
         VOICETEXT_WS_URL: "wss://voicetext.test/api/v1/transcribe/stream",
       },
     )).toThrow("batch profile is invalid");
+    expect(() => parseVoicetextSemanticCanaryArguments(
+      argv.with(argv.indexOf(JSON.stringify(["Meeting Platform", "Craig recording"])), "[\" duplicated\",\" duplicated\"]"),
+      {
+        VOICETEXT_BATCH_PROFILE: "elevenlabs-scribe-v2",
+        VOICETEXT_LIVE_PROFILE: "elevenlabs-scribe-v2-realtime",
+        VOICETEXT_SERVICE_TOKEN_FILE: "/run/secrets/voicetext-service-token",
+        VOICETEXT_WS_URL: "wss://voicetext.test/api/v1/transcribe/stream",
+      },
+    )).toThrow("keyterms are invalid");
   });
 
   it("stops batch polling at one total deadline and performs no later provider activity", async () => {
@@ -326,6 +345,7 @@ function canaryArguments(fixture: Uint8Array, deadlineMs: number) {
     fixturePath: "/fixtures/canary.ogg",
     fixtureSha256: digest(fixture),
     imageDigestSha256: "b".repeat(64),
+    keyterms: ["Botik"],
     liveEndpoint: "wss://voicetext.test/api/v1/transcribe/stream",
     planSha256: "c".repeat(64),
     profiles: { batch: "deepgram-nova-3", live: "deepgram-nova-3" },
