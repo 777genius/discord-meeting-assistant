@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 
+import { proveCraigFirewallPolicy } from "../src/craig-network-policy-proof.js";
 import type { HostedDeploymentSafetyExpectationV1 } from "../src/hosted-deployment-safety-receipt.js";
 import { createConcreteSshDeploymentSafetyProbe } from "../src/ssh-deployment-safety-probe-factory.js";
 import {
   ConcreteSshDeploymentSafetyProbeRunner,
-  proveCraigFirewallPolicy,
 } from "../src/ssh-deployment-safety-runner.js";
 import type { SshDeploymentProbeOptions } from "../src/ssh-deployment-probe-validation.js";
 
@@ -114,51 +114,76 @@ class SyntheticRemote {
 
   public readonly runRemote = async (_settings: unknown, args: readonly string[]): Promise<string> => {
     this.calls.push([...args]);
-    if (args[0] === "sh" && args[2]?.includes("campaign_id=$2") === true) {
+    switch (args[0]) {
+      case "sh": return this.#runShell(args);
+      case "docker": return this.#runDocker(args);
+      case "iptables-save": return this.firewall;
+      case undefined:
+      default: throw new Error(`unexpected synthetic command: ${args.join(" ")}`);
+    }
+  };
+
+  #runShell(args: readonly string[]): string {
+    const script = args[2] ?? "";
+    if (script.includes("campaign_id=$2")) {
       const entries = Buffer.from(`${this.campaignEntries.join("\0")}\0`).toString("base64");
       return `10001|10001|700|3|${expectation.campaignRoot}\n${entries}\n`;
     }
-    if (args[0] === "sh" && args[2]?.includes("readlink -e") === true) {
+    if (script.includes("readlink -e")) {
       return `${args.at(-1) ?? ""}\n`;
     }
-    if (args[0] === "sh" && args[2]?.includes("resolved=$(readlink") === true) {
+    if (script.includes("resolved=$(readlink")) {
       return "false";
     }
-    if (args[0] === "docker" && args[1] === "ps") {
-      const serviceLabel = args.find((value) => value.startsWith("label=com.docker.compose.service="));
-      const serviceName = serviceLabel?.split("=").at(-1);
-      const service = expectation.services.find(({ composeService }) => composeService === serviceName);
-      if (service === undefined) {throw new Error("unknown synthetic service");}
-      return `${hex(service.imageId.slice(7, 8))}\n`;
-    }
-    if (args[0] === "docker" && args[1] === "inspect") {
-      const id = args.at(-1);
-      const container = [...this.#containers.values()].find(({ Id }) => Id === id);
-      return JSON.stringify([container]);
-    }
-    if (args[0] === "docker" && args[1] === "network") {
-      return JSON.stringify([{ Driver: "bridge", Id: hex("a"), Internal: false,
-        Name: "discord-meeting-e2e", Options: { "com.docker.network.bridge.name": "br-craige2e" } }]);
-    }
-    if (args[0] === "docker" && args[1] === "image") {
-      const imageId = args.at(-1);
-      const service = expectation.services.find(({ imageId: expected }) => expected === imageId);
-      return JSON.stringify([{ Config: { Labels: { "org.opencontainers.image.revision": service?.sourceRevision } }, Id: imageId, RepoDigests: [digest] }]);
-    }
-    if (args[0] === "docker" && args[1] === "exec") {
-      return "10001|10001|false\n";
-    }
-    if (args[0] === "iptables-save") {
-      return this.firewall;
-    }
-    if (args[0] === "sh" && args[2]?.includes("host-nonce") === true) {
+    if (script.includes("host-nonce") || script.includes("container-nonce")) {
       return `${args.at(-1) ?? ""}\n`;
     }
-    if (args[0] === "sh" && args[2]?.includes("container-nonce") === true) {
-      return `${args.at(-1) ?? ""}\n`;
+    throw new Error(`unexpected synthetic shell command: ${args.join(" ")}`);
+  }
+
+  #runDocker(args: readonly string[]): string {
+    switch (args[1]) {
+      case "ps": return this.#dockerPs(args);
+      case "inspect": return this.#dockerInspect(args);
+      case "network": return JSON.stringify([{
+        Driver: "bridge",
+        Id: hex("a"),
+        Internal: false,
+        Name: "discord-meeting-e2e",
+        Options: { "com.docker.network.bridge.name": "br-craige2e" },
+      }]);
+      case "image": return this.#dockerImage(args);
+      case "exec": return "10001|10001|false\n";
+      case undefined:
+      default: throw new Error(`unexpected synthetic docker command: ${args.join(" ")}`);
     }
-    throw new Error(`unexpected synthetic command: ${args.join(" ")}`);
-  };
+  }
+
+  #dockerPs(args: readonly string[]): string {
+    const serviceLabel = args.find((value) => value.startsWith("label=com.docker.compose.service="));
+    const serviceName = serviceLabel?.split("=").at(-1);
+    const service = expectation.services.find(({ composeService }) => composeService === serviceName);
+    if (service === undefined) {
+      throw new Error("unknown synthetic service");
+    }
+    return `${hex(service.imageId.slice(7, 8))}\n`;
+  }
+
+  #dockerInspect(args: readonly string[]): string {
+    const id = args.at(-1);
+    const container = [...this.#containers.values()].find(({ Id }) => Id === id);
+    return JSON.stringify([container]);
+  }
+
+  #dockerImage(args: readonly string[]): string {
+    const imageId = args.at(-1);
+    const service = expectation.services.find(({ imageId: expected }) => expected === imageId);
+    return JSON.stringify([{
+      Config: { Labels: { "org.opencontainers.image.revision": service?.sourceRevision } },
+      Id: imageId,
+      RepoDigests: [digest],
+    }]);
+  }
 
   public exposeCampaignSibling(): void {
     const meeting = this.#containers.get(image("2"));

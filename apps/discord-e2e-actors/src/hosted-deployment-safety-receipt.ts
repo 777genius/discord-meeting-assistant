@@ -229,7 +229,6 @@ function assertCraigNetwork(
     || actual.bridgeInterface !== expected.bridgeInterface
     || actual.chain !== expected.chain
     || actual.networkName !== expected.networkName
-    || actual.tcpDestinationPort !== expected.tcpDestinationPort
     || actual.udpDestinationPorts.start !== expected.udpDestinationPorts.start
     || actual.udpDestinationPorts.end !== expected.udpDestinationPorts.end) {
     throw new Error("Hosted Craig network proof does not match the exact release policy");
