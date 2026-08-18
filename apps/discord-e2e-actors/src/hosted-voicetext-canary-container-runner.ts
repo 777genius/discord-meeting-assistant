@@ -49,6 +49,7 @@ export class HostedVoicetextCanaryContainerRunnerV1 implements VoicetextCanaryRu
         "--batch-origin", input.endpoint.batch.origin,
         "--batch-path", input.endpoint.batch.path,
         "--batch-profile", input.profiles.batch,
+        "--keyterms-json", JSON.stringify(input.requiredTerms),
         "--live-origin", input.endpoint.live.origin,
         "--live-path", input.endpoint.live.path,
         "--live-profile", input.profiles.live,

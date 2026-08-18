@@ -10,13 +10,15 @@ const maximumPollDelayMs = 60_000;
 
 export async function completeVoicetextCanaryBatch(
   client: VoicetextBatchClient,
-  fixture: Uint8Array,
-  idempotencyKey: string,
+  input: Readonly<{
+    fixture: Uint8Array; idempotencyKey: string; keyterms: readonly string[];
+  }>,
   wait: (delayMs: number, signal: AbortSignal) => Promise<void>,
   signal: AbortSignal,
 ): Promise<Extract<VoicetextBatchTaskResult, { kind: "completed" }>> {
+  const { fixture, idempotencyKey, keyterms } = input;
   let task = await waitForVoicetextCanaryOperation(
-    client.submit({ audio: fixture, idempotencyKey, keyterms: [], signal }), signal,
+    client.submit({ audio: fixture, idempotencyKey, keyterms, signal }), signal,
   );
   for (let attempt = 0; attempt < maximumAttempts; attempt += 1) {
     if (task.kind === "completed") {return task;}
@@ -25,7 +27,7 @@ export async function completeVoicetextCanaryBatch(
     }
     await wait(Math.min(task.retryAfterMs, maximumPollDelayMs), signal);
     task = await waitForVoicetextCanaryOperation(task.nextAction === "retry"
-      ? client.submit({ audio: fixture, idempotencyKey, keyterms: [], signal })
+      ? client.submit({ audio: fixture, idempotencyKey, keyterms, signal })
       : client.poll({ jobId: task.jobId, signal }), signal);
   }
   throw new Error("Voicetext batch canary exceeded its bounded attempt limit");

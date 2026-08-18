@@ -65,6 +65,7 @@ describe("hosted Voicetext semantic canary producer", () => {
     ["missing live acknowledgement", (value: VoicetextCanaryInternalResultV1) => ({ ...value, live: { ...value.live, audioAcknowledgements: { expected: 2, received: 1 } } })],
     ["unfinalized live session", (value: VoicetextCanaryInternalResultV1) => ({ ...value, live: { ...value.live, finalizeComplete: false } })],
     ["profile substitution", (value: VoicetextCanaryInternalResultV1) => ({ ...value, profiles: { ...profiles, batch: "deepgram-nova-3" as const } })],
+    ["keyterm substitution", (value: VoicetextCanaryInternalResultV1) => ({ ...value, keyterms: ["Other"] })],
   ])("rejects %s", async (_label, mutate) => {
     await expect(produceVoicetextSemanticCanaryReceiptV1(input(), {
       run: async () => mutate(result()),
@@ -101,6 +102,7 @@ function result(): VoicetextCanaryInternalResultV1 {
         { endMs: 2_020, startMs: 1_120, text: "hello Quanta" },
       ],
     },
+    keyterms: ["Botik", "Quanta"],
     profiles,
     schemaVersion: 1,
     tokenFile: { generationId: "generation-2", mode: 0o400, ownerUid: 10_001, path: "/run/secrets/voicetext" },

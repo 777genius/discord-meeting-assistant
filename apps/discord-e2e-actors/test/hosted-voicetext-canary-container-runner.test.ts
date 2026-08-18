@@ -15,7 +15,7 @@ const input = {
     batch: { origin: "https://batch.test", path: "/v2/listen" },
     live: { origin: "wss://live.test", path: "/v1/listen" },
   },
-  fixturePath: "/fixtures/canary.ogg", timeoutMs: 20_000,
+  fixturePath: "/fixtures/canary.ogg", requiredTerms: ["Meeting Platform", "Craig recording"], timeoutMs: 20_000,
   profiles: { batch: "elevenlabs-scribe-v2", live: "elevenlabs-scribe-v2-realtime" },
 } as const;
 
@@ -41,6 +41,7 @@ describe("hosted Voicetext canary container runner", () => {
     expect(deadlineFlag).toBeGreaterThan(-1);
     expect(request?.args[deadlineFlag + 1]).toBe("19000");
     expect(flagValue(request?.args, "--batch-profile")).toBe(input.profiles.batch);
+    expect(flagValue(request?.args, "--keyterms-json")).toBe(JSON.stringify(input.requiredTerms));
     expect(flagValue(request?.args, "--live-profile")).toBe(input.profiles.live);
     expect(request?.args).not.toContain("dist/run-voicetext-semantic-canary.js");
     expect(JSON.stringify(request)).not.toMatch(/token|secret/iu);

@@ -16,7 +16,7 @@ const input = {
     batch: { origin: "https://batch.test", path: "/v2/listen" },
     live: { origin: "wss://live.test", path: "/v1/listen" },
   },
-  fixturePath: "/app/fixtures/canary.ogg", timeoutMs: 20_000,
+  fixturePath: "/app/fixtures/canary.ogg", requiredTerms: ["Meeting Platform", "Craig recording"], timeoutMs: 20_000,
   profiles: { batch: "elevenlabs-scribe-v2", live: "elevenlabs-scribe-v2-realtime" },
 } as const;
 
@@ -49,6 +49,7 @@ describe("hosted remote Voicetext canary runner", () => {
     expect(flagValue(request?.args, "--deadline-ms")).toBe("19000");
     expect(flagValue(request?.args, "--fixture-sha256")).toBe(input.binding.fixtureSha256);
     expect(flagValue(request?.args, "--batch-profile")).toBe(input.profiles.batch);
+    expect(flagValue(request?.args, "--keyterms-json")).toBe(JSON.stringify(input.requiredTerms));
     expect(flagValue(request?.args, "--live-profile")).toBe(input.profiles.live);
     expect(request?.args).not.toContain("docker");
     expect(request?.args).not.toContain("sh");
@@ -82,6 +83,7 @@ describe("hosted remote Voicetext canary runner", () => {
     ["relative fixture", { fixturePath: "fixtures/canary.ogg" }],
     ["too-short timeout", { timeoutMs: 1 }],
     ["unknown profile", { profiles: { ...input.profiles, batch: "other" } }],
+    ["untrimmed keyterm", { requiredTerms: [" Meeting Platform"] }],
   ])("rejects invalid input: %s", async (_label, override) => {
     const execute = vi.fn<BoundedRemoteContainerProcessPort["execute"]>();
     await expect(new HostedRemoteVoicetextCanaryRunnerV1({ execute }).run({
