@@ -80,7 +80,7 @@ export const hostedCampaignReleaseTrustRootV1Schema = z.object({
   environmentFile: absolutePath,
   host: z.literal(HOSTED_CAMPAIGN_TARGET.host),
   remoteComposeFile: absolutePath,
-  schemaVersion: z.literal(2),
+  schemaVersion: z.literal(3),
   secretDirectory: absolutePath,
   services: z.array(service.omit({ containerId: true })).length(4),
   sourceRoot: absolutePath,
@@ -113,8 +113,8 @@ export function digestHostedCampaignReleaseTrustRootV1(value: HostedCampaignRele
 export function resolveCompiledHostedCampaignReleaseTrustRoot(
   generated: unknown,
 ): HostedCampaignReleaseTrustRootV1 | undefined {
-  if (!isRecord(generated) || generated.schemaVersion !== 1 ||
-    generated.generatorVersion !== 1) {
+  if (!isRecord(generated) || generated.schemaVersion !== 2 ||
+    generated.generatorVersion !== 2) {
     throw new Error("Compiled hosted campaign release metadata is malformed");
   }
   if (generated.status === "unadmitted") {
