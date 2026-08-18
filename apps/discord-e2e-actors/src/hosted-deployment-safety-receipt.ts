@@ -11,6 +11,13 @@ const repositoryDigestSchema = z.string().regex(/^[^\s@]+@sha256:[a-f\d]{64}$/u)
 const safeIdentifierSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u);
 const base64Schema = z.string().regex(/^(?:[A-Za-z\d+/]{4})*(?:[A-Za-z\d+/]{2}==|[A-Za-z\d+/]{3}=)?$/u);
 const absolutePathSchema = z.string().refine(isSafeAbsolutePath, "Expected a normalized absolute path");
+const linuxInterfaceSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,14}$/u);
+const iptablesChainSchema = z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,27}$/u);
+const ipv4Schema = z.string().refine((value) => {
+  const octets = value.split(".");
+  return octets.length === 4 && octets.every((octet) => /^\d{1,3}$/u.test(octet)
+    && Number(octet) <= 255 && (octet === "0" || !octet.startsWith("0")));
+}, "Expected a canonical IPv4 address");
 
 const componentSchema = z.enum([
   "craig",
@@ -95,8 +102,27 @@ const deploymentSafetyEvidenceSchema = z.object({
   roots: z.object({ deploy: rootResolutionSchema, source: rootResolutionSchema }).strict(),
   rootsAfter: z.object({ deploy: rootResolutionSchema, source: rootResolutionSchema }).strict(),
   roundTrip: roundTripSchema,
+  craigNetworkAfter: z.lazy(() => craigNetworkProofSchema),
+  craigNetworkBefore: z.lazy(() => craigNetworkProofSchema),
   servicesAfter: z.array(serviceSnapshotSchema).length(4),
   servicesBefore: z.array(serviceSnapshotSchema).length(4),
+}).strict();
+
+export const hostedCraigNetworkPolicyV1Schema = z.object({
+  bridgeInterface: linuxInterfaceSchema,
+  chain: iptablesChainSchema,
+  networkName: z.string().regex(/^[a-z0-9][a-z0-9_.-]{0,62}$/u),
+  tcpDestinationPort: z.literal(443),
+  udpDestinationPorts: z.object({ end: z.number().int().min(1).max(65_535),
+    start: z.number().int().min(1).max(65_535) }).strict()
+    .refine(({ end, start }) => end >= start, "UDP destination port range is inverted"),
+}).strict();
+
+const craigNetworkProofSchema = hostedCraigNetworkPolicyV1Schema.extend({
+  containerId: containerIdSchema,
+  containerIpv4: ipv4Schema,
+  networkId: sha256Schema,
+  semanticPolicySha256: sha256Schema,
 }).strict();
 
 export const hostedDeploymentSafetyExpectationV1Schema = z.object({
@@ -105,6 +131,7 @@ export const hostedDeploymentSafetyExpectationV1Schema = z.object({
   campaignRoot: absolutePathSchema,
   campaignRootOwnerGid: z.literal(10_001),
   campaignRootOwnerUid: z.literal(10_001),
+  craigNetworkPolicy: hostedCraigNetworkPolicyV1Schema,
   deployRoot: absolutePathSchema,
   greeting: z.object({
     campaignSiblingPath: absolutePathSchema,
@@ -160,12 +187,14 @@ export function createHostedDeploymentSafetyReceiptV1(
   assertUniqueComponents(evidence.servicesBefore, "before snapshot");
   assertUniqueComponents(evidence.servicesAfter, "after snapshot");
   assertCampaignRoot(evidence, expectation);
+  assertCraigNetwork(evidence, expectation);
   assertRoots(evidence, expectation);
   assertServices(evidence, expectation);
   assertGreetingMount(evidence, expectation);
   assertRoundTrip(evidence, expectation);
   const deploymentFingerprint = digestCanonical({
     campaignRoot: evidence.campaignRoot,
+    craigNetwork: evidence.craigNetworkAfter,
     greetingMount: evidence.greetingMount,
     mountIsolation: evidence.mountIsolation,
     roots: evidence.roots,
@@ -180,6 +209,31 @@ export function createHostedDeploymentSafetyReceiptV1(
     schemaVersion: 2,
   });
   return Object.freeze({ ...content, receiptSha256: digestCanonical(content) });
+}
+
+function assertCraigNetwork(
+  evidence: z.infer<typeof deploymentSafetyEvidenceSchema>,
+  expectation: HostedDeploymentSafetyExpectationV1,
+): void {
+  if (digestCanonical(evidence.craigNetworkBefore)
+    !== digestCanonical(evidence.craigNetworkAfter)) {
+    throw new Error("Hosted Craig network policy changed while safety evidence was collected");
+  }
+  const craig = expectation.services.find(({ component }) => component === "craig");
+  if (craig === undefined) {
+    throw new Error("Hosted deployment expectation has no Craig service");
+  }
+  const actual = evidence.craigNetworkAfter;
+  const expected = expectation.craigNetworkPolicy;
+  if (actual.containerId !== craig.containerId
+    || actual.bridgeInterface !== expected.bridgeInterface
+    || actual.chain !== expected.chain
+    || actual.networkName !== expected.networkName
+    || actual.tcpDestinationPort !== expected.tcpDestinationPort
+    || actual.udpDestinationPorts.start !== expected.udpDestinationPorts.start
+    || actual.udpDestinationPorts.end !== expected.udpDestinationPorts.end) {
+    throw new Error("Hosted Craig network proof does not match the exact release policy");
+  }
 }
 
 function assertCampaignRoot(

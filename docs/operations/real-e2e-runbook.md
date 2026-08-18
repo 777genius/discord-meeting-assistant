@@ -217,6 +217,19 @@ remote-capability files remain untrusted diagnostic declarations and never grant
 authority. Do not bypass admission, run against production, or present local
 coordinator coverage as real-provider qualification.
 
+Craig egress is provisioned separately by test-host operations; admission is
+strictly read-only and never installs, deletes, or reorders firewall rules. The
+compiled trust root pins `craigNetworkPolicy` (the Docker bridge/interface,
+dedicated filter chain, TCP destination port 443, and UDP destination range).
+Preflight resolves the exact release-bound Craig container, network ID, and IPv4
+address, then reads `iptables-save` twice. It requires exact source-bound TCP and
+UDP accepts, an exact destination-bound `ESTABLISHED,RELATED` return, reachable
+FORWARD dispatches with no earlier matching DROP/REJECT, and a terminal RETURN.
+An unrelated container/source cannot use the chain. Counter changes and
+unrelated rule ordering do not change the retained semantic digest; a container,
+bridge, address, or semantic rule swap blocks admission. This gate performs no
+Discord voice or UDP endpoint probe.
+
 Use the audited host-side checkout for compile, preflight, and run. Do not run
 the coordinator as a Compose service: its bounded SSH/process probes and local
 official-bot secret boundary are part of the host-side command surface. Prepare

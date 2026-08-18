@@ -33,6 +33,9 @@ const trust = hostedCampaignReleaseTrustRootV1Schema.parse({
     ...pinnedCanary.fixtureExpectation, requiredTerms: pinnedCanary.requiredTerms,
     transcriptExpectationSha256: pinnedCanary.transcriptExpectation.sha256 },
   clockMaximumSkewMs: 250, deployRoot: "/srv/e2e", discordReceiptTtlMs: 30_000,
+  craigNetworkPolicy: { bridgeInterface: "br-craige2e", chain: "CRAIG_E2E",
+    networkName: "discord-meeting-e2e", tcpDestinationPort: 443,
+    udpDestinationPorts: { end: 65_535, start: 1_024 } },
   environmentFile: "/srv/e2e/source.env", host: "codex-workers-eu-01",
   remoteComposeFile: "/srv/e2e/source/compose.yaml", schemaVersion: 2,
   secretDirectory: "/run/secrets/discord-e2e",
@@ -91,6 +94,7 @@ describe("hosted campaign release binding", () => {
       campaignId: campaign.campaignId,
       deployment: { producer: { expectation: {
         campaignRoot: "/srv/e2e/campaigns",
+        craigNetworkPolicy: trust.craigNetworkPolicy,
         greeting: {
           campaignSiblingPath: "/srv/e2e/campaigns-sibling",
           destinationPath: "/run/e2e-campaign",
