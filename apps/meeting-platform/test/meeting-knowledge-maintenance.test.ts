@@ -4,7 +4,10 @@ import {
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createMeetingKnowledgePollingRuntime } from
+import {
+  createMeetingKnowledgePollingRuntime,
+  MeetingKnowledgeDrainTimeoutError,
+} from
   "../src/composition/meeting-knowledge.js";
 
 class MaintenanceFake implements FinalReplyMaintenancePort {
@@ -113,15 +116,12 @@ describe("Meeting Knowledge final reply runtime lifecycle", () => {
     runtime.start();
     await vi.advanceTimersByTimeAsync(0);
 
-    let closed = false;
-    const closing = (async () => {
-      await runtime.close();
-      closed = true;
-    })();
+    const closing = expect(runtime.close()).rejects.toBeInstanceOf(
+      MeetingKnowledgeDrainTimeoutError,
+    );
     await vi.advanceTimersByTimeAsync(4_999);
-    expect(closed).toBe(false);
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
     await vi.advanceTimersByTimeAsync(1);
     await closing;
-    expect(closed).toBe(true);
   });
 });

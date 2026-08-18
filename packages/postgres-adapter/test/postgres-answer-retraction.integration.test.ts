@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   PostgresAnswerEffectStore,
+  PostgresFinalReplyMaintenance,
   PostgresHistoricalMemoryStore,
   PostgresQuestionAdmissionCommit,
   PostgresQuestionJobStore,
@@ -99,6 +100,64 @@ async function waitForBlockedAnswerFence(
 }
 
 usePostgresIntegrationDatabase();
+
+async function insertMaintenanceFixture(
+  database: ReturnType<typeof databaseOrSkip>,
+  suffix: string,
+  state: "reserved" | "request_started" | "outcome_unknown",
+  expired: boolean,
+): Promise<{ readonly effectId: string; readonly questionId: string }> {
+  const questionId = `maintenance-${suffix}`;
+  const effectId = `meeting-knowledge-answer:v1:${questionId}`;
+  const payload = JSON.stringify({ sensitive: `raw-${suffix}` });
+  await database.query(
+    `INSERT INTO meeting_knowledge.question_jobs (
+       question_id, requester_subject, question_hash, scope_id,
+       final_projection_receipt, authorization_principal_ref,
+       authorization_digest, locale, question_text, binding, binding_hash,
+       state, created_at, expires_at
+     ) VALUES (
+       $1, $2, $3, 'scope-1', 'projection-1', 'opaque-principal',
+       $4, 'en', 'Sensitive question?', $5::jsonb, $6, 'queued',
+       transaction_timestamp() - interval '2 minutes',
+       CASE WHEN $7 THEN transaction_timestamp() - interval '1 minute'
+            ELSE transaction_timestamp() + interval '10 minutes' END
+     )`,
+    [
+      questionId,
+      "a".repeat(64),
+      digest(`question-${suffix}`),
+      "c".repeat(64),
+      { meetingId: `source-${suffix}` },
+      digest(`binding-${suffix}`),
+      expired,
+    ],
+  );
+  await database.query(
+    `INSERT INTO meeting_core.answer_effects (
+       effect_id, state, projection_target_container_id,
+       delivery_container_id, reply_to_remote_message_id, marker,
+       payload_bytes, payload_hash, binding_hash, authorization_digest,
+       source_meeting_ids, request_started_at
+     ) VALUES (
+       $1, $2, $3, $3, $4, $1, $5, $6, $7, $8,
+       ARRAY[$9]::text[],
+       CASE WHEN $2 = 'reserved' THEN NULL ELSE transaction_timestamp() END
+     )`,
+    [
+      effectId,
+      state,
+      channelId,
+      questionId,
+      payload,
+      digest(payload),
+      digest(`binding-${suffix}`),
+      "c".repeat(64),
+      `source-${suffix}`,
+    ],
+  );
+  return { effectId, questionId };
+}
 
 describe("PostgreSQL answer cancellation and retraction", () => {
   it("rejects a reservation already waiting when cancellation terminalizes the job", async (context) => {
@@ -269,6 +328,98 @@ describe("PostgreSQL answer cancellation and retraction", () => {
       "SELECT snapshot FROM meeting_core.meetings WHERE meeting_id = $1",
       [sourceMeetingId],
     )).resolves.toMatchObject({ rowCount: 1 });
+  });
+
+  it("atomically fences and scrubs effects when jobs expire", async (context) => {
+    const database = databaseOrSkip(context);
+    const reserved = await insertMaintenanceFixture(
+      database,
+      "expired-reserved",
+      "reserved",
+      true,
+    );
+    await insertMaintenanceFixture(
+      database,
+      "expired-started",
+      "request_started",
+      true,
+    );
+
+    await expect(new PostgresFinalReplyMaintenance(database).maintain({
+      maximumJobs: 10,
+      servingEnabled: true,
+    })).resolves.toEqual({ cancelled: 0, expired: 2 });
+
+    const rows = await database.query(
+      `SELECT job.question_id, job.outcome, effect.state, effect.payload_bytes,
+              effect.retraction_requested_at IS NOT NULL AS retracting
+       FROM meeting_knowledge.question_jobs AS job
+       JOIN meeting_core.answer_effects AS effect
+         ON effect.effect_id = 'meeting-knowledge-answer:v1:' || job.question_id
+       WHERE job.question_id LIKE 'maintenance-expired-%'
+       ORDER BY job.question_id`,
+    );
+    expect(rows.rows).toEqual([
+      {
+        outcome: "expired",
+        payload_bytes: "{}",
+        question_id: "maintenance-expired-reserved",
+        retracting: false,
+        state: "cancelled",
+      },
+      {
+        outcome: "delivery_unknown",
+        payload_bytes: "{}",
+        question_id: "maintenance-expired-started",
+        retracting: true,
+        state: "retraction_pending",
+      },
+    ]);
+    await expect(new PostgresAnswerEffectStore(database).claim(
+      reserved.effectId,
+      "late-worker",
+    )).resolves.toEqual({ status: "not_claimable" });
+  });
+
+  it("drains a bounded disabled-serving backlog without retaining payloads", async (context) => {
+    const database = databaseOrSkip(context);
+    for (const [suffix, state] of [
+      ["backlog-1", "reserved"],
+      ["backlog-2", "request_started"],
+      ["backlog-3", "outcome_unknown"],
+    ] as const) {
+      await insertMaintenanceFixture(database, suffix, state, false);
+    }
+    const maintenance = new PostgresFinalReplyMaintenance(database);
+
+    for (let pass = 0; pass < 3; pass += 1) {
+      await expect(maintenance.maintain({
+        maximumJobs: 1,
+        servingEnabled: false,
+      })).resolves.toEqual({ cancelled: 1, expired: 0 });
+    }
+
+    const rows = await database.query(
+      `SELECT job.outcome, effect.state, effect.payload_bytes
+       FROM meeting_knowledge.question_jobs AS job
+       JOIN meeting_core.answer_effects AS effect
+         ON effect.effect_id = 'meeting-knowledge-answer:v1:' || job.question_id
+       WHERE job.question_id LIKE 'maintenance-backlog-%'
+       ORDER BY job.question_id`,
+    );
+    expect(rows.rows).toEqual([
+      { outcome: "cancelled", payload_bytes: "{}", state: "cancelled" },
+      {
+        outcome: "delivery_unknown",
+        payload_bytes: "{}",
+        state: "retraction_pending",
+      },
+      {
+        outcome: "delivery_unknown",
+        payload_bytes: "{}",
+        state: "retraction_pending",
+      },
+    ]);
   });
 });
 

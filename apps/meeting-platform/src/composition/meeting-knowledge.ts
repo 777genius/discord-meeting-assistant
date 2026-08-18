@@ -52,6 +52,15 @@ const reconciliationIntervalMilliseconds = 30_000;
 const maximumMaintenanceJobsPerPass = 100;
 const shutdownDrainTimeoutMilliseconds = 5_000;
 
+export class MeetingKnowledgeDrainTimeoutError extends Error {
+  public constructor(timeoutMilliseconds: number) {
+    super(
+      `Meeting Knowledge final reply drain exceeded ${timeoutMilliseconds}ms`,
+    );
+    this.name = "MeetingKnowledgeDrainTimeoutError";
+  }
+}
+
 /**
  * This ledger is deliberately co-located with composition policy. Any change
  * requires replay of the retained focused-retrieval and two-hour corpora.
@@ -243,13 +252,29 @@ async function awaitBoundedFinalReplyDrain(
   operations: readonly (Promise<unknown> | undefined)[],
 ): Promise<void> {
   let timer: NodeJS.Timeout | undefined;
-  const timeout = new Promise<void>((resolve) => {
-    timer = setTimeout(resolve, shutdownDrainTimeoutMilliseconds);
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(new MeetingKnowledgeDrainTimeoutError(
+        shutdownDrainTimeoutMilliseconds,
+      ));
+    }, shutdownDrainTimeoutMilliseconds);
     timer.unref();
   });
-  await Promise.race([Promise.allSettled(operations), timeout]);
-  if (timer !== undefined) {
-    clearTimeout(timer);
+  try {
+    const results = await Promise.race([
+      Promise.allSettled(operations),
+      timeout,
+    ]);
+    const failures = results.flatMap((result): unknown[] =>
+      result.status === "rejected" ? [result.reason as unknown] : [],
+    );
+    if (failures.length > 0) {
+      throw new AggregateError(failures, "Meeting Knowledge drain failed");
+    }
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
   }
 }
 

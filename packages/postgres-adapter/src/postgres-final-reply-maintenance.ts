@@ -46,7 +46,7 @@ export class PostgresFinalReplyMaintenance
                     'meeting-knowledge-answer:v1:' || job.question_id
                   AND effect.state IN (
                     'request_started', 'delivered', 'outcome_unknown',
-                    'absent_unconfirmed'
+                    'absent_unconfirmed', 'retraction_pending'
                   )
               ) THEN 'delivery_unknown' ELSE 'cancelled' END,
               authorization_principal_ref = NULL,
@@ -69,10 +69,7 @@ export class PostgresFinalReplyMaintenance
                 WHEN effect.state IN ('reserved', 'claimed') THEN 'cancelled'
                 ELSE 'retraction_pending'
               END,
-              payload_bytes = CASE
-                WHEN effect.state IN ('reserved', 'claimed') THEN '{}'
-                ELSE effect.payload_bytes
-              END,
+              payload_bytes = '{}',
               claim_until = NULL,
               retraction_requested_at = CASE
                 WHEN effect.state IN (
@@ -127,7 +124,7 @@ export class PostgresFinalReplyMaintenance
                     'meeting-knowledge-answer:v1:' || job.question_id
                   AND effect.state IN (
                     'request_started', 'delivered', 'outcome_unknown',
-                    'absent_unconfirmed'
+                    'absent_unconfirmed', 'retraction_pending'
                   )
               ) THEN 'delivery_unknown' ELSE 'expired' END,
               authorization_principal_ref = NULL,
@@ -144,6 +141,38 @@ export class PostgresFinalReplyMaintenance
           WHERE job.question_id = expired.question_id
             AND job.state <> 'terminal'
           RETURNING job.question_id
+        ), effects AS (
+          UPDATE meeting_core.answer_effects AS effect
+          SET state = CASE
+                WHEN effect.state IN ('reserved', 'claimed') THEN 'cancelled'
+                ELSE 'retraction_pending'
+              END,
+              payload_bytes = '{}',
+              claim_until = NULL,
+              retraction_requested_at = CASE
+                WHEN effect.state IN (
+                  'request_started', 'delivered', 'outcome_unknown',
+                  'absent_unconfirmed', 'retraction_pending'
+                ) THEN COALESCE(
+                  effect.retraction_requested_at,
+                  transaction_timestamp()
+                )
+                ELSE effect.retraction_requested_at
+              END,
+              settled_at = CASE
+                WHEN effect.state IN ('reserved', 'claimed')
+                  THEN COALESCE(effect.settled_at, transaction_timestamp())
+                ELSE effect.settled_at
+              END,
+              updated_at = transaction_timestamp()
+          FROM expired
+          WHERE effect.effect_id =
+              'meeting-knowledge-answer:v1:' || expired.question_id
+            AND effect.state IN (
+              'reserved', 'claimed', 'request_started', 'delivered',
+              'outcome_unknown', 'absent_unconfirmed', 'retraction_pending'
+            )
+          RETURNING effect.effect_id
         )
         SELECT count(*)::text AS expired FROM terminalized
       `,

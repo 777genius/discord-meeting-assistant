@@ -387,6 +387,45 @@ describe("meeting platform runtime wiring", () => {
 
 });
 
+describe("Meeting Knowledge shutdown dependency fence", () => {
+  it("keeps final-reply dependencies alive when its drain times out", async () => {
+    const calls: string[] = [];
+    const never = new Promise<void>(() => {});
+
+    const closing = closeMeetingPlatformResources({
+      discord: { destroy: () => { calls.push("discord:destroy"); } } as unknown as Client,
+      logger: { flush: async () => { calls.push("logger:flush"); } } as unknown as Logger,
+      meetingKnowledge: {
+        close: async () => never,
+        settleIngress: async () => {},
+        start: () => {},
+      },
+      outboxDispatcher: { whenIdle: async () => {} },
+      pool: { end: async () => { calls.push("pool:end"); } } as unknown as Pool,
+      queue: { close: async () => {} },
+      queueEvents: { close: async () => {} },
+      recordings: { close: async () => {} },
+      runtimeTransport: { close: () => { calls.push("runtime:close"); } } as unknown as GrpcSubscriptionRuntimeTransport,
+      s3: { destroy: () => { calls.push("s3:destroy"); } } as unknown as S3Client,
+      server: { close: async () => {}, start: async () => {} },
+      shutdownTimeoutMilliseconds: 25,
+      worker: {
+        cancelActivePostCallJobs: () => {},
+        close: async () => {},
+        pause: async () => {},
+        waitForActivePostCallJobs: async () => {},
+      } as unknown as PostCallWorker,
+    });
+
+    await expect(closing).rejects.toBeInstanceOf(AggregateError);
+    expect(calls).toContain("s3:destroy");
+    expect(calls).toContain("logger:flush");
+    expect(calls).not.toContain("discord:destroy");
+    expect(calls).not.toContain("runtime:close");
+    expect(calls).not.toContain("pool:end");
+  });
+});
+
 describe("meeting platform shutdown", () => {
   it("starts BullMQ admission closure before slow HTTP and live drains", async () => {
     const calls: string[] = [];
@@ -502,6 +541,7 @@ describe("meeting platform shutdown", () => {
       calls.indexOf("queue:close"),
     );
   });
+
 
   it("bounds shutdown when an in-flight outbox reconciliation never settles", async () => {
     const calls: string[] = [];

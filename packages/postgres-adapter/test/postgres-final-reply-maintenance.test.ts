@@ -32,6 +32,10 @@ describe("PostgresFinalReplyMaintenance", () => {
       "WHEN effect.state IN ('reserved', 'claimed') THEN 'cancelled'",
     );
     expect(queries[0]?.text).toContain("ELSE 'retraction_pending'");
+    expect(queries[0]?.text).toContain("payload_bytes = '{}'");
+    expect(queries[0]?.text).toContain(
+      "'absent_unconfirmed', 'retraction_pending'",
+    );
     expect(queries[0]?.text).toContain("question_text = NULL");
     expect(queries[0]?.text).toContain("authorization_principal_ref = NULL");
     expect(queries[0]?.text).toContain("scrubbed_at = transaction_timestamp()");
@@ -49,5 +53,10 @@ describe("PostgresFinalReplyMaintenance", () => {
     expect(queries[0]?.parameters).toEqual([25]);
     expect(queries[0]?.text).toContain("expires_at <= transaction_timestamp()");
     expect(queries[0]?.text).toContain("question_text = NULL");
+    expect(queries[0]?.text).toContain(
+      "WHEN effect.state IN ('reserved', 'claimed') THEN 'cancelled'",
+    );
+    expect(queries[0]?.text).toContain("ELSE 'retraction_pending'");
+    expect(queries[0]?.text).toContain("payload_bytes = '{}'");
   });
 });
