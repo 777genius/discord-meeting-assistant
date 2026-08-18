@@ -21,7 +21,7 @@ export interface HistoricalBlockManifestV1 {
   readonly documentExternalId: string;
   readonly embeddingTokenEstimate: number;
   readonly embeddingTokenLimit: number;
-  readonly embeddingTokenProfile: "meeting-knowledge.wordpiece-conservative.v1";
+  readonly embeddingTokenProfile: string;
   readonly endMs: number;
   readonly indexGeneration: string;
   readonly ordinal: number;

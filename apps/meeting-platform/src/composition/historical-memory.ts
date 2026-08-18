@@ -194,12 +194,14 @@ export function createPlatformHistoricalMemory(input: {
   if (token === undefined || topologyKey === undefined) {
     throw new Error("Infinity runtime secrets are missing after configuration validation");
   }
+  let qualifiedTokenizer: HistoricalEmbeddingTokenizerPort | undefined;
   const memory = new InfinityContextHistoricalMemoryAdapter({
     baseUrl: config.baseUrl,
     operationTimeoutMs: config.operationTimeoutMs,
     requestTimeoutMs: config.requestTimeoutMs,
     schemaVersion: 1,
     token: () => token,
+    tokenizer: () => qualifiedTokenizer,
   });
   let embeddingTokenizer: PinnedMultilingualMiniLmTokenizer | undefined;
   const store = new PostgresHistoricalMemoryStore(input.pool);
@@ -209,13 +211,13 @@ export function createPlatformHistoricalMemory(input: {
     ids: new HmacHistoricalOpaqueIds(topologyKey),
     memory,
     store,
+    tokenizer: () => qualifiedTokenizer,
   }, {
     ...DEFAULT_HISTORICAL_SYNC_POLICY,
     leaseDurationMs: historicalSyncLeaseDurationMs(config.operationTimeoutMs),
   });
   let transportQualified = false;
   let searchQualified = false;
-  let qualifiedTokenizer: HistoricalEmbeddingTokenizerPort | undefined;
   const deletion = new RequestHistoricalMeetingDeletion(store);
   const twoHourProfile = Object.freeze({
     ...DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
@@ -312,6 +314,7 @@ export function createPlatformHistoricalMemory(input: {
         ids: new HmacHistoricalOpaqueIds(topologyKey),
         reducer: new DeterministicCoverageReducer(64, 256),
         sync: new PostgresHistoricalMemoryStore(input.pool),
+        tokenizer: () => qualifiedTokenizer,
       }, undefined, twoHourProfile);
     },
     createFocusedRetrieval: (authorization) => new HistoricalFocusedRetrieval({
@@ -320,6 +323,7 @@ export function createPlatformHistoricalMemory(input: {
       ids: new HmacHistoricalOpaqueIds(topologyKey),
       memory,
       store: new PostgresHistoricalMemoryStore(input.pool),
+      tokenizer: () => qualifiedTokenizer,
     }, undefined, twoHourProfile),
     embeddingTokenizer: () => qualifiedTokenizer,
     searchEnabled: () =>

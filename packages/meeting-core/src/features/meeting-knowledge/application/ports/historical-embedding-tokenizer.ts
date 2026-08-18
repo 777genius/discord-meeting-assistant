@@ -3,7 +3,7 @@ export interface HistoricalEmbeddingTokenizerProfileV1 {
   readonly embeddingModelRevision: string;
   readonly id: string;
   readonly maxInputTokens: number;
-  readonly teiBuildRevision: string;
+  readonly servingRuntimeRevision: string;
   readonly tokenizerArtifactSha256: `sha256:${string}`;
   readonly tokenizerConfigSha256: `sha256:${string}`;
 }
@@ -12,6 +12,25 @@ export interface HistoricalEmbeddingTokenizerProfileV1 {
 export interface HistoricalEmbeddingTokenizerPort {
   readonly profile: HistoricalEmbeddingTokenizerProfileV1;
   countTokens(text: string): number;
+}
+
+export function historicalEmbeddingTokenProfile(
+  tokenizer: HistoricalEmbeddingTokenizerPort | undefined,
+): string {
+  if (tokenizer === undefined) {
+    return "meeting-knowledge.wordpiece-conservative.v1";
+  }
+  const profile = tokenizer.profile;
+  return [
+    "meeting-knowledge.multilingual-minilm-exact.v1",
+    profile.id,
+    profile.embeddingModelRevision,
+    profile.servingRuntimeRevision,
+    profile.tokenizerArtifactSha256,
+    profile.tokenizerConfigSha256,
+    profile.conformanceVectorSetSha256,
+    String(profile.maxInputTokens),
+  ].join("|");
 }
 
 export interface HistoricalEmbeddingRuntimeCompatibilityV1 {
@@ -72,7 +91,7 @@ function assertProfile(
   if (
     profile.id.trim().length === 0 ||
     !gitSha.test(profile.embeddingModelRevision) ||
-    !gitSha.test(profile.teiBuildRevision) ||
+    !gitSha.test(profile.servingRuntimeRevision) ||
     !sha256.test(profile.tokenizerArtifactSha256) ||
     !sha256.test(profile.tokenizerConfigSha256) ||
     !sha256.test(profile.conformanceVectorSetSha256) ||
@@ -89,7 +108,7 @@ function sameProfile(
 ): boolean {
   return left.id === right.id &&
     left.embeddingModelRevision === right.embeddingModelRevision &&
-    left.teiBuildRevision === right.teiBuildRevision &&
+    left.servingRuntimeRevision === right.servingRuntimeRevision &&
     left.tokenizerArtifactSha256 === right.tokenizerArtifactSha256 &&
     left.tokenizerConfigSha256 === right.tokenizerConfigSha256 &&
     left.conformanceVectorSetSha256 === right.conformanceVectorSetSha256 &&

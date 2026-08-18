@@ -4,6 +4,8 @@ import type {
   HistoricalEvidenceSliceV1,
   HistoricalIndexPlanV1,
 } from "./ports/historical-memory.js";
+import type { HistoricalEmbeddingTokenizerPort } from
+  "./ports/historical-embedding-tokenizer.js";
 
 export interface HistoricalEmbeddingWindowPolicy {
   readonly maximumEmbeddingTokens: number;
@@ -174,14 +176,22 @@ function sourceRangeMatchesTurn(
 export function partitionHistoricalEmbeddingWindows(
   meeting: AcceptedFinalMeetingV1,
   policy: HistoricalEmbeddingWindowPolicy,
+  tokenizer?: HistoricalEmbeddingTokenizerPort,
 ): HistoricalEmbeddingPartitions {
+  const countTokens = tokenizer?.countTokens.bind(tokenizer) ??
+    estimateHistoricalEmbeddingTokens;
   const projections = meeting.humanTurns.flatMap((turn) =>
-    splitTurn(turn, policy.maximumEmbeddingTokens)
+    splitTurn(turn, policy.maximumEmbeddingTokens, countTokens)
   );
   const overlapCandidates = [...new Set([policy.turnOverlap, 1, 0])]
     .filter((overlap) => overlap <= policy.turnOverlap);
   for (const effectiveTurnOverlap of overlapCandidates) {
-    const windows = partitionProjections(projections, policy, effectiveTurnOverlap);
+    const windows = partitionProjections(
+      projections,
+      policy,
+      effectiveTurnOverlap,
+      countTokens,
+    );
     if (windows.length <= policy.maxBlocksPerMeeting) {
       return Object.freeze({ effectiveTurnOverlap, windows });
     }
@@ -195,6 +205,7 @@ function partitionProjections(
   projections: readonly HistoricalTurnProjection[],
   policy: HistoricalEmbeddingWindowPolicy,
   effectiveTurnOverlap: number,
+  countTokens: (text: string) => number,
 ): readonly (readonly HistoricalTurnProjection[])[] {
   const partitions: Array<readonly HistoricalTurnProjection[]> = [];
   const maximumWindowSize = Math.min(
@@ -211,13 +222,13 @@ function partitionProjections(
         current.length > 0 &&
         (candidate.length > maximumWindowSize ||
           byteLength(candidateText) > policy.maxBlockUtf8Bytes ||
-          estimateHistoricalEmbeddingTokens(candidateText) > policy.maximumEmbeddingTokens)
+          countTokens(candidateText) > policy.maximumEmbeddingTokens)
       ) {
         break;
       }
       if (
         byteLength(candidateText) > policy.maxBlockUtf8Bytes ||
-        estimateHistoricalEmbeddingTokens(candidateText) > policy.maximumEmbeddingTokens
+        countTokens(candidateText) > policy.maximumEmbeddingTokens
       ) {
         throw new RangeError("one historical projection exceeds its qualified bounds");
       }
@@ -235,6 +246,7 @@ function partitionProjections(
 function splitTurn(
   turn: AcceptedFinalMeetingV1["humanTurns"][number],
   maximumTokens: number,
+  countTokens: (text: string) => number,
 ): readonly HistoricalTurnProjection[] {
   const characters = Array.from(turn.text);
   const projections: HistoricalTurnProjection[] = [];
@@ -252,7 +264,7 @@ function splitTurn(
     while (low <= high) {
       const middle = Math.floor((low + high) / 2);
       const text = characters.slice(start, middle).join("").trimEnd();
-      if (estimateHistoricalEmbeddingTokens(text) <= maximumTokens) {
+      if (countTokens(text) <= maximumTokens) {
         fittingEnd = middle;
         low = middle + 1;
       } else {

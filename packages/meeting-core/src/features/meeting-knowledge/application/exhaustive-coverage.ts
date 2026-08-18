@@ -42,6 +42,8 @@ import type {
   HistoricalEvidenceAuthority,
   HistoricalSyncStore,
 } from "./ports/historical-state.js";
+import type { HistoricalEmbeddingTokenizerPort } from
+  "./ports/historical-embedding-tokenizer.js";
 
 export class ExhaustiveCoverage {
   readonly #policy: ExhaustiveCoveragePolicyV1;
@@ -56,6 +58,7 @@ export class ExhaustiveCoverage {
       readonly ids: HistoricalOpaqueIdPort;
       readonly reducer: CoverageReducerPort;
       readonly sync: HistoricalSyncStore;
+      readonly tokenizer?: () => HistoricalEmbeddingTokenizerPort | undefined;
     },
     policy: ExhaustiveCoveragePolicyV1 = DEFAULT_EXHAUSTIVE_COVERAGE_POLICY,
     twoHourProfile: TwoHourHistoricalRetrievalProfileV1 =

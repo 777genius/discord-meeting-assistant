@@ -6,10 +6,12 @@ import {
   ExhaustiveCoverage,
   HistoricalFocusedRetrieval,
   HistoricalSyncWorker,
-  buildHistoricalIndexPlan,
+  buildHistoricalIndexPlan as buildCoreHistoricalIndexPlan,
   type AcceptedFinalMeetingV1,
   type CoverageExtractV1,
   type CoverageReducerPort,
+  type HistoricalEvidenceBlockPolicyV1,
+  type HistoricalOpaqueIdPort,
   type LocallyRehydratedEvidenceBlockV1,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 
@@ -17,6 +19,7 @@ import {
   HmacHistoricalOpaqueIds,
   INFINITY_CONTEXT_SDK_PROVENANCE,
   InfinityContextHistoricalMemoryAdapter,
+  PinnedMultilingualMiniLmTokenizer,
   assertInfinityContextActivation,
   decodeInfinityContextRuntimeActivation,
 } from "../src/index.js";
@@ -40,6 +43,15 @@ const blockPolicy = {
   maxTurnsPerBlock: 64,
   version: "meeting-knowledge.block-policy.v1",
 } as const;
+const exactTokenizer = new PinnedMultilingualMiniLmTokenizer();
+
+function buildHistoricalIndexPlan(
+  meeting: AcceptedFinalMeetingV1,
+  ids: HistoricalOpaqueIdPort,
+  policy: HistoricalEvidenceBlockPolicyV1,
+) {
+  return buildCoreHistoricalIndexPlan(meeting, ids, policy, exactTokenizer);
+}
 
 function boundedWindowPlan(turnCount: number, maximumBlocks = turnCount) {
   const ids = new HmacHistoricalOpaqueIds(new Uint8Array(32).fill(0x4a));
@@ -176,8 +188,9 @@ describe("Infinity Context bounded search budget", () => {
 });
 
 describe("Infinity Context bounded historical plan", () => {
+
   it("accepts 500 deterministic windows and rejects a 501-window domain policy", () => {
-    expect(validIndexPlan(boundedWindowPlan(500, 500))).toBe(true);
+    expect(validIndexPlan(boundedWindowPlan(500, 500), exactTokenizer)).toBe(true);
     expect(() => boundedWindowPlan(501, 501)).toThrow(
       "historical evidence block policy is outside its qualified bounds",
     );
@@ -547,7 +560,8 @@ describe("Infinity Context historical memory end-to-end lifecycle", () => {
     });
     endpoint.loseNextIngestResponse();
     endpoint.loseNextProcessResponse();
-    const firstWorker = new HistoricalSyncWorker({ authority, ids, memory: firstAdapter, store }, {
+    const firstWorker = new HistoricalSyncWorker({ authority, ids, memory: firstAdapter, store,
+      tokenizer: () => exactTokenizer }, {
       blockPolicy,
       leaseDurationMs: 30_000,
       maximumIndexAttempts: 3,
@@ -574,7 +588,8 @@ describe("Infinity Context historical memory end-to-end lifecycle", () => {
       transport: endpoint,
     });
     await restartedAdapter.qualifyCapabilities();
-    const restartedWorker = new HistoricalSyncWorker({ authority, ids, memory: restartedAdapter, store }, {
+    const restartedWorker = new HistoricalSyncWorker({ authority, ids, memory: restartedAdapter,
+      store, tokenizer: () => exactTokenizer }, {
       blockPolicy,
       leaseDurationMs: 30_000,
       maximumIndexAttempts: 3,
@@ -598,6 +613,7 @@ describe("Infinity Context historical memory end-to-end lifecycle", () => {
       ids,
       memory: restartedAdapter,
       store,
+      tokenizer: () => exactTokenizer,
     }, {
       blockPolicy,
       candidateLimitPerQuery: 8,
@@ -686,6 +702,7 @@ describe("Infinity Context historical memory end-to-end lifecycle", () => {
         reduce: async ({ values }) => reduceCedar(values),
       },
       sync: store,
+      tokenizer: () => exactTokenizer,
     }, {
       blockPolicy,
       checkpointRetentionSeconds: 86_400,
@@ -773,7 +790,8 @@ describe("Infinity Context out-of-order generation reconciliation", () => {
       schemaVersion: 1,
       transport: endpoint,
     });
-    const worker = new HistoricalSyncWorker({ authority, ids, memory: adapter, store }, {
+    const worker = new HistoricalSyncWorker({ authority, ids, memory: adapter, store,
+      tokenizer: () => exactTokenizer }, {
       blockPolicy,
       leaseDurationMs: 30_000,
       maximumIndexAttempts: 3,

@@ -5,6 +5,7 @@ import {
   type HistoricalDeleteResultV1,
   type HistoricalIndexPlanV1,
   type HistoricalIndexResultV1,
+  type HistoricalEmbeddingTokenizerPort,
   type HistoricalMemoryPort,
   type HistoricalMemoryOperationOptionsV1,
   type HistoricalSearchRequestV1,
@@ -24,6 +25,8 @@ import {
 import { deleteHistoricalMeeting } from "./infinity-context-deletion.js";
 import { indexHistoricalMeeting } from "./infinity-context-indexing.js";
 import { InfinityOperationDeadline } from "./infinity-request-deadline.js";
+import { PinnedMultilingualMiniLmTokenizer } from
+  "./pinned-multilingual-minilm-tokenizer.js";
 import {
   candidateLocators,
   failure,
@@ -47,6 +50,8 @@ export interface InfinityContextHistoricalMemoryConfigV1 {
   readonly requestTimeoutMs: number;
   readonly schemaVersion: 1;
   readonly token?: string | (() => Promise<string | null | undefined> | string | null | undefined);
+  /** Qualified tokenizer provider; default remains lazy for isolated adapter tests. */
+  readonly tokenizer?: () => HistoricalEmbeddingTokenizerPort | undefined;
   /** Test-only injection still traverses the official SDK request executor. */
   readonly transport?: unknown;
 }
@@ -60,6 +65,7 @@ export class InfinityContextHistoricalMemoryAdapter implements HistoricalMemoryP
   readonly #client: InfinityContextClient;
   readonly #operationTimeoutMs: number;
   readonly #requestTimeoutMs: number;
+  readonly #tokenizer: () => HistoricalEmbeddingTokenizerPort | undefined;
   #capabilities: InfinityContextCapabilities | null = null;
 
   public constructor(config: InfinityContextHistoricalMemoryConfigV1);
@@ -80,6 +86,10 @@ export class InfinityContextHistoricalMemoryAdapter implements HistoricalMemoryP
     this.#requestTimeoutMs = config.requestTimeoutMs;
     this.#operationTimeoutMs = config.operationTimeoutMs ??
       DEFAULT_HISTORICAL_MEMORY_OPERATION_TIMEOUT_MS;
+    let defaultTokenizer: HistoricalEmbeddingTokenizerPort | undefined;
+    this.#tokenizer = config.tokenizer ?? (() =>
+      defaultTokenizer ??= new PinnedMultilingualMiniLmTokenizer()
+    );
     this.#client = new InfinityContextClient({
       baseUrl: config.baseUrl,
       retryPolicy: { maxAttempts: 1 },
@@ -114,7 +124,8 @@ export class InfinityContextHistoricalMemoryAdapter implements HistoricalMemoryP
     request: HistoricalIndexPlanV1,
     options: HistoricalMemoryOperationOptionsV1 = {},
   ): Promise<HistoricalIndexResultV1> {
-    if (!validIndexPlan(request)) {
+    const tokenizer = this.#tokenizer();
+    if (tokenizer === undefined || !validIndexPlan(request, tokenizer)) {
       return {
         code: "memory.index_plan_outside_qualified_bounds",
         retryable: false,

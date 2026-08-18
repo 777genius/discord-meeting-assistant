@@ -235,7 +235,21 @@ export function decodeGroundingPlan(value: unknown): GroundingPlan {
       endMs: evidence.endMs,
       evidenceId: evidence.evidenceId,
       speakerId: evidence.speakerId,
-      ...(evidence.source === undefined ? {} : { source: evidence.source }),
+      ...(evidence.source === undefined
+        ? {}
+        : {
+            source: {
+              meetingId: evidence.source.meetingId,
+              ...(evidence.source.sourceEndCodePoint === undefined
+                ? {}
+                : {
+                    sourceEndCodePoint: evidence.source.sourceEndCodePoint,
+                    sourceStartCodePoint: evidence.source.sourceStartCodePoint!,
+                  }),
+              transcriptId: evidence.source.transcriptId,
+              transcriptVersion: evidence.source.transcriptVersion,
+            },
+          }),
       startMs: evidence.startMs,
       text: evidence.text,
       turnHash: evidence.turnHash,

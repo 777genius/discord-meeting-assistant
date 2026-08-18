@@ -15,6 +15,8 @@ import type {
   HistoricalOpaqueIdPort,
   LocallyRehydratedEvidenceBlockV1,
 } from "./ports/historical-memory.js";
+import type { HistoricalEmbeddingTokenizerPort } from
+  "./ports/historical-embedding-tokenizer.js";
 
 export async function refreshStrictFocusedBlocks(input: {
   readonly authority: HistoricalEvidenceAuthority;
@@ -26,6 +28,7 @@ export async function refreshStrictFocusedBlocks(input: {
   readonly selected: readonly LocallyRehydratedEvidenceBlockV1[];
   readonly signal: AbortSignal | undefined;
   readonly store: HistoricalSyncStore;
+  readonly tokenizer: HistoricalEmbeddingTokenizerPort | undefined;
 }): Promise<readonly LocallyRehydratedEvidenceBlockV1[]> {
   const refreshed: LocallyRehydratedEvidenceBlockV1[] = [];
   const authoritativeTurnCounts = new Map<string, number>();
@@ -66,7 +69,7 @@ export async function refreshStrictFocusedBlocks(input: {
         record.plan,
         record.ordinal,
         input.ids,
-        input.blockPolicy,
+        { policy: input.blockPolicy, tokenizer: input.tokenizer },
       );
       if (
         block.candidateLocator === prior.candidateLocator &&

@@ -5,18 +5,21 @@ import {
   requireSha256,
 } from "./errors.js";
 import type {
-  CanonicalEvidenceTurn,
   GroundingPlan,
   RehydratedEvidenceTurn,
 } from "./grounding-plan.js";
 
 function compareCanonicalTurns(
-  left: Pick<CanonicalEvidenceTurn, "endMs" | "startMs" | "turnId">,
-  right: Pick<CanonicalEvidenceTurn, "endMs" | "startMs" | "turnId">,
+  left: RehydratedEvidenceTurn,
+  right: RehydratedEvidenceTurn,
 ): number {
   return left.startMs - right.startMs ||
     left.endMs - right.endMs ||
-    (left.turnId < right.turnId ? -1 : left.turnId > right.turnId ? 1 : 0);
+    (left.turnId < right.turnId ? -1 : left.turnId > right.turnId ? 1 : 0) ||
+    (left.source?.sourceStartCodePoint ?? -1) -
+      (right.source?.sourceStartCodePoint ?? -1) ||
+    (left.source?.sourceEndCodePoint ?? -1) -
+      (right.source?.sourceEndCodePoint ?? -1);
 }
 
 function normalizeEvidenceSource(
@@ -50,7 +53,7 @@ function normalizeEvidenceSource(
     meetingId: requireKnowledgeText(source.meetingId, "evidence.source.meetingId", 1_024),
     ...(sourceEndCodePoint === undefined
       ? {}
-      : { sourceEndCodePoint, sourceStartCodePoint }),
+      : { sourceEndCodePoint, sourceStartCodePoint: sourceStartCodePoint! }),
     transcriptId: requireKnowledgeText(
       source.transcriptId,
       "evidence.source.transcriptId",
@@ -120,12 +123,16 @@ export function normalizeRehydratedTurns(
       turn.source?.transcriptId ?? "current",
       turn.source?.transcriptVersion ?? 0,
       turn.turnId,
+      turn.source?.sourceStartCodePoint ?? "whole",
+      turn.source?.sourceEndCodePoint ?? "whole",
     ].join("\u0000"))).size !== normalized.length ||
     new Set(normalized.map((turn) => [
       turn.source?.meetingId ?? "current",
       turn.source?.transcriptId ?? "current",
       turn.source?.transcriptVersion ?? 0,
       turn.turnHash,
+      turn.source?.sourceStartCodePoint ?? "whole",
+      turn.source?.sourceEndCodePoint ?? "whole",
     ].join("\u0000"))).size !== normalized.length
   ) {
     throw new MeetingKnowledgeInvariantError(

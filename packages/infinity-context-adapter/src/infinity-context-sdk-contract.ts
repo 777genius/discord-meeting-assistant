@@ -1,5 +1,6 @@
 import {
-  estimateHistoricalEmbeddingTokens,
+  historicalEmbeddingTokenProfile,
+  type HistoricalEmbeddingTokenizerPort,
   type HistoricalCandidateLocatorV1,
   type HistoricalDeleteRequestV1,
   type HistoricalIndexPlanV1,
@@ -172,7 +173,10 @@ function isBoundedInteger(value: number, minimum: number, maximum: number): bool
   return Number.isSafeInteger(value) && value >= minimum && value <= maximum;
 }
 
-export function validIndexPlan(request: HistoricalIndexPlanInputV1): boolean {
+export function validIndexPlan(
+  request: HistoricalIndexPlanInputV1,
+  tokenizer: HistoricalEmbeddingTokenizerPort,
+): boolean {
   const candidateLocatorSet = new Set(
     request.documents.map(({ manifest }) => manifest.candidateLocator),
   );
@@ -193,9 +197,9 @@ export function validIndexPlan(request: HistoricalIndexPlanInputV1): boolean {
       boundedString(document.manifest.candidateLocator, 200) &&
       boundedString(document.manifest.documentExternalId, 200) &&
       document.manifest.embeddingTokenProfile ===
-        "meeting-knowledge.wordpiece-conservative.v1" &&
+        historicalEmbeddingTokenProfile(tokenizer) &&
       document.manifest.embeddingTokenEstimate ===
-        estimateHistoricalEmbeddingTokens(document.embeddingText) &&
+        tokenizer.countTokens(document.embeddingText) &&
       isBoundedInteger(document.manifest.embeddingTokenEstimate, 1,
         document.manifest.embeddingTokenLimit) &&
       isBoundedInteger(document.manifest.embeddingTokenLimit, 16,

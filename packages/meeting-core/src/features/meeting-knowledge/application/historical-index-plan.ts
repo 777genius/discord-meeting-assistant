@@ -12,6 +12,10 @@ import type {
   LocallyRehydratedEvidenceBlockV1,
 } from "./ports/historical-memory.js";
 import {
+  historicalEmbeddingTokenProfile,
+  type HistoricalEmbeddingTokenizerPort,
+} from "./ports/historical-embedding-tokenizer.js";
+import {
   buildHistoricalTurnSources,
   canonicalHistoricalTurnSources,
   estimateHistoricalEmbeddingTokens,
@@ -88,6 +92,7 @@ export function buildHistoricalTopology(
   ids: HistoricalOpaqueIdPort,
   candidatePolicy: HistoricalEvidenceBlockPolicyV1 =
     DEFAULT_HISTORICAL_EVIDENCE_BLOCK_POLICY,
+  tokenizer?: HistoricalEmbeddingTokenizerPort,
 ): HistoricalTopologyV1 {
   const policy = assertPolicy(candidatePolicy);
   const { roomScopeExternalRef, spaceSlug } = buildHistoricalRoomTopology(
@@ -126,6 +131,7 @@ export function buildHistoricalTopology(
         String(policy.maxTurnsPerBlock),
         String(policy.maximumEmbeddingTokens),
         String(policy.turnOverlap),
+        historicalEmbeddingTokenProfile(tokenizer),
       ]),
     ),
     releaseRef,
@@ -218,12 +224,20 @@ export function buildHistoricalIndexPlan(
   ids: HistoricalOpaqueIdPort,
   candidatePolicy: HistoricalEvidenceBlockPolicyV1 =
     DEFAULT_HISTORICAL_EVIDENCE_BLOCK_POLICY,
+  tokenizer?: HistoricalEmbeddingTokenizerPort,
 ): HistoricalIndexPlanV1 {
-  const policy = assertPolicy(candidatePolicy);
+  const candidate = assertPolicy(candidatePolicy);
+  const policy = Object.freeze({
+    ...candidate,
+    maximumEmbeddingTokens: Math.min(
+      candidate.maximumEmbeddingTokens,
+      tokenizer?.profile.maxInputTokens ?? candidate.maximumEmbeddingTokens,
+    ),
+  });
   const { binding } = meeting;
   let partitionResult: ReturnType<typeof partitionHistoricalEmbeddingWindows>;
   try {
-    partitionResult = partitionHistoricalEmbeddingWindows(meeting, policy);
+    partitionResult = partitionHistoricalEmbeddingWindows(meeting, policy, tokenizer);
   } catch (error) {
     throw new HistoricalIndexPlanError(
       "BLOCK_LIMIT_EXCEEDED",
@@ -234,7 +248,7 @@ export function buildHistoricalIndexPlan(
     ...policy,
     turnOverlap: partitionResult.effectiveTurnOverlap,
   });
-  const topology = buildHistoricalTopology(binding, ids, effectivePolicy);
+  const topology = buildHistoricalTopology(binding, ids, effectivePolicy, tokenizer);
   const { indexGeneration, releaseRef } = topology;
   const documents: HistoricalIndexDocumentV1[] = partitionResult.windows.map(
     (projections, ordinal) => {
@@ -281,9 +295,10 @@ export function buildHistoricalIndexPlan(
       candidateLocator,
       contentHash,
       documentExternalId,
-      embeddingTokenEstimate: estimateHistoricalEmbeddingTokens(cleanEmbeddingText),
+      embeddingTokenEstimate: tokenizer?.countTokens(cleanEmbeddingText) ??
+        estimateHistoricalEmbeddingTokens(cleanEmbeddingText),
       embeddingTokenLimit: policy.maximumEmbeddingTokens,
-      embeddingTokenProfile: "meeting-knowledge.wordpiece-conservative.v1",
+      embeddingTokenProfile: historicalEmbeddingTokenProfile(tokenizer),
       endMs: projections.at(-1)?.turn.endMs ?? 0,
       indexGeneration,
       ordinal,
@@ -342,9 +357,18 @@ export function rehydrateHistoricalBlock(
   plan: HistoricalIndexPlanV1,
   ordinal: number,
   ids: HistoricalOpaqueIdPort,
-  policy: HistoricalEvidenceBlockPolicyV1 = DEFAULT_HISTORICAL_EVIDENCE_BLOCK_POLICY,
+  policyOrOptions: HistoricalEvidenceBlockPolicyV1 | {
+    readonly policy: HistoricalEvidenceBlockPolicyV1;
+    readonly tokenizer: HistoricalEmbeddingTokenizerPort | undefined;
+  } = DEFAULT_HISTORICAL_EVIDENCE_BLOCK_POLICY,
 ): LocallyRehydratedEvidenceBlockV1 {
-  const current = buildHistoricalIndexPlan(meeting, ids, policy);
+  const policy = "policy" in policyOrOptions
+    ? policyOrOptions.policy
+    : policyOrOptions;
+  const tokenizer = "policy" in policyOrOptions
+    ? policyOrOptions.tokenizer
+    : undefined;
+  const current = buildHistoricalIndexPlan(meeting, ids, policy, tokenizer);
   const expected = plan.documents[ordinal];
   const actual = current.documents[ordinal];
   if (
@@ -354,7 +378,8 @@ export function rehydrateHistoricalBlock(
     actual.manifest.candidateLocator !== expected.manifest.candidateLocator ||
     actual.manifest.contentHash !== expected.manifest.contentHash ||
     actual.embeddingText !== expected.embeddingText ||
-    !sameTurnSources(actual.manifest.turnSources, expected.manifest.turnSources) ||
+    canonicalHistoricalTurnSources(actual.manifest.turnSources) !==
+      canonicalHistoricalTurnSources(expected.manifest.turnSources) ||
     current.topology.indexGeneration !== plan.topology.indexGeneration
   ) {
     throw new HistoricalIndexPlanError(
@@ -380,24 +405,5 @@ export function rehydrateHistoricalBlock(
     indexGeneration: expected.manifest.indexGeneration,
     ordinal,
     turns: Object.freeze(turns),
-  });
-}
-
-function sameTurnSources(
-  left: HistoricalBlockManifestV1["turnSources"],
-  right: HistoricalBlockManifestV1["turnSources"],
-): boolean {
-  return left.length === right.length && left.every((source, index) => {
-    const expected = right[index];
-    return expected !== undefined &&
-      source.embeddingStartCodePoint === expected.embeddingStartCodePoint &&
-      source.embeddingEndCodePoint === expected.embeddingEndCodePoint &&
-      source.sourceStartCodePoint === expected.sourceStartCodePoint &&
-      source.sourceEndCodePoint === expected.sourceEndCodePoint &&
-      source.sourceRef === expected.sourceRef &&
-      source.turnId === expected.turnId &&
-      source.speakerId === expected.speakerId &&
-      source.startMs === expected.startMs &&
-      source.endMs === expected.endMs;
   });
 }

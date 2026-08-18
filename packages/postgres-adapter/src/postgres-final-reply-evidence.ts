@@ -3,6 +3,7 @@ import {
   type CanonicalEvidenceTurn,
   type CurrentFinalReplyBinding,
   type FinalReplyEvidencePort,
+  type FocusedMemoryReference,
   type QuestionBindingSnapshot,
   focusedMemoryGeneration,
 } from "@discord-meeting/meeting-core/meeting-knowledge";

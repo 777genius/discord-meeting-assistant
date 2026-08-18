@@ -95,6 +95,9 @@ function block(textOverride?: string): LocallyRehydratedEvidenceBlockV1 {
     turns: [
       {
         endMs: 1_000,
+        sourceEndCodePoint: Array.from(textOverride ?? "Routine status update.").length,
+        sourceRef: "turn1.routine",
+        sourceStartCodePoint: 0,
         speakerId: "private-speaker-a",
         startMs: 0,
         text: textOverride ?? "Routine status update.",
@@ -102,6 +105,9 @@ function block(textOverride?: string): LocallyRehydratedEvidenceBlockV1 {
       },
       {
         endMs: 2_000,
+        sourceEndCodePoint: Array.from("The team agreed to launch Beta next week.").length,
+        sourceRef: "turn1.decision",
+        sourceStartCodePoint: 0,
         speakerId: "private-speaker-b",
         startMs: 1_000,
         text: "The team agreed to launch Beta next week.",
@@ -109,6 +115,9 @@ function block(textOverride?: string): LocallyRehydratedEvidenceBlockV1 {
       },
       {
         endMs: 3_000,
+        sourceEndCodePoint: Array.from("Correction: Beta was rejected pending review.").length,
+        sourceRef: "turn1.contradiction",
+        sourceStartCodePoint: 0,
         speakerId: "private-speaker-a",
         startMs: 2_000,
         text: "Correction: Beta was rejected pending review.",

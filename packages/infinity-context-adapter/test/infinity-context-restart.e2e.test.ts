@@ -9,6 +9,7 @@ import {
 import {
   HmacHistoricalOpaqueIds,
   InfinityContextHistoricalMemoryAdapter,
+  PinnedMultilingualMiniLmTokenizer,
 } from "../src/index.js";
 import { DisposableInfinityEndpoint } from "./disposable-infinity-endpoint.js";
 import {
@@ -25,6 +26,7 @@ const policy = Object.freeze({
   turnOverlap: 0,
   version: "meeting-knowledge.block-policy.v1" as const,
 });
+const exactTokenizer = new PinnedMultilingualMiniLmTokenizer();
 
 function adapter(endpoint: DisposableInfinityEndpoint) {
   return new InfinityContextHistoricalMemoryAdapter({
@@ -53,7 +55,7 @@ describe("Infinity Context durable restart convergence", () => {
         })
       )),
     });
-    const plan = buildHistoricalIndexPlan(meeting, ids, policy);
+    const plan = buildHistoricalIndexPlan(meeting, ids, policy, exactTokenizer);
     const authority = new MemoryHistoricalAuthority();
     const store = new MemoryHistoricalStore();
     authority.put(meeting);
@@ -87,6 +89,7 @@ describe("Infinity Context durable restart convergence", () => {
       ids,
       memory: partialMemory,
       store,
+      tokenizer: () => exactTokenizer,
     }, syncPolicy);
 
     await expect(firstWorker.executeOnce({ indexingEnabled: true })).resolves.toMatchObject({
@@ -105,6 +108,7 @@ describe("Infinity Context durable restart convergence", () => {
       ids,
       memory: adapter(endpoint),
       store,
+      tokenizer: () => exactTokenizer,
     }, syncPolicy);
     await expect(restartedWorker.executeOnce({ indexingEnabled: true })).resolves.toMatchObject({
       status: "applied",

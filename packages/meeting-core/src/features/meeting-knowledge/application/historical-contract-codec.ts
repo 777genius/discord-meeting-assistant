@@ -14,7 +14,6 @@ import type {
   CoverageReductionV1,
   CoverageSelectedTurnV1,
 } from "./ports/historical-grounding.js";
-import { estimateHistoricalEmbeddingTokens } from "./historical-embedding-windows.js";
 
 export class HistoricalContractCodecError extends Error {
   public override readonly name = "HistoricalContractCodecError";
@@ -155,11 +154,8 @@ function decodeManifest(value: unknown, ordinal: number): HistoricalBlockManifes
   });
 }
 
-function tokenProfile(value: unknown): "meeting-knowledge.wordpiece-conservative.v1" {
-  if (value !== "meeting-knowledge.wordpiece-conservative.v1") {
-    throw new HistoricalContractCodecError("manifest embedding token profile is unsupported");
-  }
-  return value;
+function tokenProfile(value: unknown): string {
+  return string(value, "manifest.embeddingTokenProfile");
 }
 
 function decodeTurnSources(value: unknown, ordinal: number): readonly HistoricalTurnSourceV1[] {
@@ -229,8 +225,6 @@ function validProjectionMetadata(document: HistoricalIndexDocumentV1): boolean {
     expectedStart = source.embeddingEndCodePoint + 1;
   }
   return expectedStart - 1 === embeddingLength &&
-    manifest.embeddingTokenEstimate ===
-      estimateHistoricalEmbeddingTokens(document.embeddingText) &&
     manifest.turnIds.length === projectedTurnIds.size &&
     manifest.turnIds.every((turnId) => projectedTurnIds.has(turnId));
 }

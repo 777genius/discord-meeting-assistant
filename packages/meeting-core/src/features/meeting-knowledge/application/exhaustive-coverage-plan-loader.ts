@@ -19,6 +19,8 @@ import type {
   HistoricalAuthorizationPort,
 } from "./ports/historical-grounding.js";
 import type { HistoricalOpaqueIdPort } from "./ports/historical-memory.js";
+import type { HistoricalEmbeddingTokenizerPort } from
+  "./ports/historical-embedding-tokenizer.js";
 import type {
   HistoricalEvidenceAuthority,
   HistoricalSyncStore,
@@ -31,6 +33,7 @@ export interface CoveragePlanLoaderDependencies {
   readonly ids: HistoricalOpaqueIdPort;
   readonly reducer: CoverageReducerPort;
   readonly sync: HistoricalSyncStore;
+  readonly tokenizer?: () => HistoricalEmbeddingTokenizerPort | undefined;
 }
 
 export async function loadExhaustiveCoveragePlan(input: {
@@ -60,7 +63,13 @@ export async function loadExhaustiveCoveragePlan(input: {
     if (meeting === null || !admitsHistoricalRetrieval(meeting, twoHourProfile)) {
       return null;
     }
-    const plan = buildHistoricalIndexPlan(meeting, dependencies.ids, policy.blockPolicy);
+    const tokenizer = dependencies.tokenizer?.();
+    const plan = buildHistoricalIndexPlan(
+      meeting,
+      dependencies.ids,
+      policy.blockPolicy,
+      tokenizer,
+    );
     if (!await dependencies.sync.isCurrentGeneration(
       binding,
       plan.topology.indexGeneration,
@@ -75,7 +84,7 @@ export async function loadExhaustiveCoveragePlan(input: {
         plan,
         document.manifest.ordinal,
         dependencies.ids,
-        policy.blockPolicy,
+        { policy: policy.blockPolicy, tokenizer },
       ));
       if (blocks.length > policy.maximumBlocks) {
         throw new HistoricalIndexPlanError(

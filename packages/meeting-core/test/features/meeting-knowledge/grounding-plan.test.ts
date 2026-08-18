@@ -49,6 +49,38 @@ describe("Meeting Knowledge GroundingPlan", () => {
     expect(Object.isFrozen(plan.evidence)).toBe(true);
   });
 
+  it("preserves two distant slices from the same long authoritative turn", () => {
+    const source = {
+      meetingId: "meeting-long",
+      transcriptId: "transcript-long",
+      transcriptVersion: 1,
+    } as const;
+    const base = turn(1, "first distant fact", "speaker-a");
+    const plan = createFocusedRetrievalGroundingPlan({
+      authorityGeneration: focusedMemoryGeneration("c".repeat(64)),
+      coverage: "sufficient",
+      humanActorIds: ["speaker-a"],
+      turns: [{
+        ...base,
+        source: { ...source, sourceEndCodePoint: 118, sourceStartCodePoint: 100 },
+        turnHash: "d".repeat(64),
+      }, {
+        ...base,
+        source: { ...source, sourceEndCodePoint: 20_019, sourceStartCodePoint: 20_000 },
+        text: "second distant fact",
+        turnHash: "e".repeat(64),
+      }],
+    });
+
+    expect(plan.evidence).toHaveLength(2);
+    expect(plan.evidence.map(({ source: evidenceSource }) =>
+      evidenceSource?.sourceStartCodePoint
+    )).toEqual([100, 20_000]);
+    expect(plan.evidence.reduce((bytes, evidence) =>
+      bytes + new TextEncoder().encode(evidence.text).byteLength, 0
+    )).toBeLessThan(1_000);
+  });
+
   it("rejects low coverage, duplicate turns, and non-human canonical evidence", () => {
     const base = {
       authorityGeneration: focusedMemoryGeneration("a".repeat(64)),

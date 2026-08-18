@@ -176,6 +176,7 @@ export type {
 } from "./application/ports/historical-state.js";
 export {
   HistoricalEmbeddingTokenizerQualificationError,
+  historicalEmbeddingTokenProfile,
   prepareQualifiedHistoricalEmbeddingTokenizer,
   type HistoricalEmbeddingRuntimeCompatibilityV1,
   type HistoricalEmbeddingTokenizerPort,

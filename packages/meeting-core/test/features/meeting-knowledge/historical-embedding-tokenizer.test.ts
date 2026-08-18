@@ -12,7 +12,7 @@ const profile: HistoricalEmbeddingTokenizerProfileV1 = Object.freeze({
   embeddingModelRevision: "a".repeat(40),
   id: "pinned-tokenizer",
   maxInputTokens: 128,
-  teiBuildRevision: "b".repeat(40),
+  servingRuntimeRevision: "b".repeat(40),
   tokenizerArtifactSha256: `sha256:${"d".repeat(64)}`,
   tokenizerConfigSha256: `sha256:${"e".repeat(64)}`,
 });
@@ -49,7 +49,7 @@ describe("historical embedding tokenizer qualification", () => {
   it.each([
     ["id", "other"],
     ["embeddingModelRevision", "1".repeat(40)],
-    ["teiBuildRevision", "2".repeat(40)],
+    ["servingRuntimeRevision", "2".repeat(40)],
     ["tokenizerArtifactSha256", `sha256:${"3".repeat(64)}`],
     ["tokenizerConfigSha256", `sha256:${"4".repeat(64)}`],
     ["conformanceVectorSetSha256", `sha256:${"5".repeat(64)}`],

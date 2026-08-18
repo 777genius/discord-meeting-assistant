@@ -6,6 +6,7 @@ import {
 } from "./historical-index-plan.js";
 import type {
   HistoricalMemoryPort,
+  HistoricalIndexPlanV1,
   HistoricalOpaqueIdPort,
 } from "./ports/historical-memory.js";
 import type {
@@ -13,8 +14,13 @@ import type {
   HistoricalSyncLeaseV1,
   HistoricalSyncStore,
 } from "./ports/historical-state.js";
-import type { HistoricalReleaseBindingV1 } from "../domain/historical-evidence.js";
+import type {
+  AcceptedFinalMeetingV1,
+  HistoricalReleaseBindingV1,
+} from "../domain/historical-evidence.js";
 import { historicalPlanProjectionMatches } from "./historical-embedding-windows.js";
+import type { HistoricalEmbeddingTokenizerPort } from
+  "./ports/historical-embedding-tokenizer.js";
 
 function operationOptions(signal: AbortSignal | undefined):
   { readonly signal?: AbortSignal } {
@@ -127,6 +133,7 @@ export class HistoricalSyncWorker {
       readonly ids: HistoricalOpaqueIdPort;
       readonly memory: HistoricalMemoryPort;
       readonly store: HistoricalSyncStore;
+      readonly tokenizer?: () => HistoricalEmbeddingTokenizerPort | undefined;
     },
     policy: HistoricalSyncPolicyV1 = DEFAULT_HISTORICAL_SYNC_POLICY,
   ) {
@@ -167,24 +174,20 @@ export class HistoricalSyncWorker {
       return this.result(lease, "dead_lettered");
     }
 
+    const tokenizer = this.dependencies.tokenizer?.();
     let plan = lease.plan;
     if (plan === null) {
-      try {
-        plan = buildHistoricalIndexPlan(
-          accepted,
-          this.dependencies.ids,
-          this.#policy.blockPolicy,
-        );
-      } catch (error) {
-        await this.dependencies.store.recordDeadLetter(
-          lease,
-          error instanceof HistoricalIndexPlanError
-            ? `historical_index_plan.${error.code.toLowerCase()}`
-            : "historical_index_plan.invalid",
-          operationOptions(signal),
-        );
+      const built = tryBuildPlan(
+        accepted,
+        this.dependencies.ids,
+        this.#policy.blockPolicy,
+        tokenizer,
+      );
+      if (built.status === "invalid") {
+        await this.dependencies.store.recordDeadLetter(lease, built.reason, operationOptions(signal));
         return this.result(lease, "dead_lettered");
       }
+      plan = built.plan;
     } else if (!sameBinding(plan.binding, lease.binding)) {
       await this.dependencies.store.recordDeadLetter(
         lease,
@@ -192,6 +195,53 @@ export class HistoricalSyncWorker {
         operationOptions(signal),
       );
       return this.result(lease, "dead_lettered");
+    } else if (tokenizer !== undefined && !sameCanonicalPlan(
+      accepted,
+      plan,
+      this.dependencies.ids,
+      this.#policy.blockPolicy,
+      tokenizer,
+    )) {
+      const stalePlan = plan;
+      const replacement = tryBuildPlan(
+        accepted,
+        this.dependencies.ids,
+        this.#policy.blockPolicy,
+        tokenizer,
+      );
+      if (replacement.status === "invalid") {
+        await this.dependencies.store.recordDeadLetter(
+          lease, replacement.reason, operationOptions(signal)
+        );
+        return this.result(lease, "dead_lettered");
+      }
+      let deletion;
+      try {
+        deletion = await this.dependencies.memory.deleteMeeting({
+          deleteMutationId: `mkmutation1.${this.dependencies.ids.keyedId(
+            "historical-profile-migration",
+            [stalePlan.planDigest],
+          )}`,
+          documentExternalIds: stalePlan.documents.map(
+            ({ manifest }) => manifest.documentExternalId,
+          ),
+          mode: "release",
+          remoteDocumentIds: lease.remoteDocumentIds,
+          schemaVersion: 1,
+          topology: stalePlan.topology,
+        }, operationOptions(signal));
+      } catch {
+        deletion = { code: "memory.port_exception", status: "absence_unverified" } as const;
+      }
+      if (deletion.status !== "verified_absent") {
+        await this.dependencies.store.recordRetry(lease, {
+          code: deletion.code,
+          outcome: "outcome_unknown",
+          retryAfterMs: retryDelay(this.#policy, lease.attempt),
+        }, operationOptions(signal));
+        return this.result(lease, "retry_scheduled");
+      }
+      plan = replacement.plan;
     } else if (!historicalPlanProjectionMatches(accepted, plan, (turnId) =>
       `turn1.${this.dependencies.ids.keyedId("historical-turn", [
         accepted.binding.scopeId,
@@ -321,5 +371,44 @@ export class HistoricalSyncWorker {
       releaseId: lease.binding.releaseId,
       status,
     };
+  }
+}
+
+function tryBuildPlan(
+  meeting: AcceptedFinalMeetingV1,
+  ids: HistoricalOpaqueIdPort,
+  policy: HistoricalEvidenceBlockPolicyV1,
+  tokenizer?: HistoricalEmbeddingTokenizerPort,
+): { readonly status: "ok"; readonly plan: HistoricalIndexPlanV1 } | {
+  readonly status: "invalid";
+  readonly reason: string;
+} {
+  try {
+    return {
+      plan: buildHistoricalIndexPlan(meeting, ids, policy, tokenizer),
+      status: "ok",
+    };
+  } catch (error) {
+    return {
+      reason: error instanceof HistoricalIndexPlanError
+        ? `historical_index_plan.${error.code.toLowerCase()}`
+        : "historical_index_plan.invalid",
+      status: "invalid",
+    };
+  }
+}
+
+function sameCanonicalPlan(
+  meeting: AcceptedFinalMeetingV1,
+  persisted: HistoricalIndexPlanV1,
+  ids: HistoricalOpaqueIdPort,
+  policy: HistoricalEvidenceBlockPolicyV1,
+  tokenizer: HistoricalEmbeddingTokenizerPort,
+): boolean {
+  try {
+    const canonical = buildHistoricalIndexPlan(meeting, ids, policy, tokenizer);
+    return JSON.stringify(canonical) === JSON.stringify(persisted);
+  } catch {
+    return false;
   }
 }

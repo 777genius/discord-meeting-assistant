@@ -10,6 +10,7 @@ import {
   type HistoricalAppliedPlanV1,
   type HistoricalCandidateRecordV1,
   type HistoricalIndexPlanV1,
+  type HistoricalEmbeddingTokenizerPort,
   type HistoricalMemoryPort,
   type HistoricalOpaqueIdPort,
   type HistoricalReleaseBindingV1,
@@ -17,6 +18,19 @@ import {
   type HistoricalSyncLeaseV1,
   type HistoricalSyncStore,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
+
+const exactTokenizer: HistoricalEmbeddingTokenizerPort = Object.freeze({
+  countTokens: (text: string) => 2 + Array.from(text).length,
+  profile: Object.freeze({
+    conformanceVectorSetSha256: `sha256:${"c".repeat(64)}`,
+    embeddingModelRevision: "a".repeat(40),
+    servingRuntimeRevision: "b".repeat(40),
+    id: "fixture-exact-tokenizer",
+    maxInputTokens: 128,
+    tokenizerArtifactSha256: `sha256:${"d".repeat(64)}`,
+    tokenizerConfigSha256: `sha256:${"e".repeat(64)}`,
+  }),
+});
 
 class TestIds implements HistoricalOpaqueIdPort {
   public keyedId(namespace: string, parts: readonly string[]): string {
@@ -288,6 +302,39 @@ describe("historical projection sync worker", () => {
     expect(store.deadLetters).toEqual(["historical_index_plan.stale_plan"]);
     expect(store.plans).toEqual([]);
     expect(indexFinalMeeting).not.toHaveBeenCalled();
+  });
+
+  it("deletes and rebuilds a persisted pre-tokenizer plan before restart convergence", async () => {
+    const accepted = meeting();
+    const ids = new TestIds();
+    const stale = buildHistoricalIndexPlan(accepted, ids);
+    const store = new QueueStore([lease(accepted, "index", 2, stale)]);
+    const deleteMeeting = vi.fn().mockResolvedValue({ status: "verified_absent" });
+    const indexFinalMeeting = vi.fn().mockImplementation(
+      async (plan: HistoricalIndexPlanV1) => ({
+        remoteDocumentIds: {
+          [plan.documents[0]!.manifest.documentExternalId]: "remote-rebuilt",
+        },
+        status: "applied",
+      }),
+    );
+    const worker = new HistoricalSyncWorker({
+      authority: { loadAcceptedFinalMeeting: async () => accepted },
+      ids,
+      memory: { deleteMeeting, indexFinalMeeting, searchRoom: vi.fn() },
+      store,
+      tokenizer: () => exactTokenizer,
+    });
+
+    await expect(worker.executeOnce({ indexingEnabled: true })).resolves.toMatchObject({
+      status: "applied",
+    });
+    expect(deleteMeeting).toHaveBeenCalledWith(expect.objectContaining({
+      documentExternalIds: stale.documents.map(({ manifest }) => manifest.documentExternalId),
+    }), {});
+    expect(store.plans[0]?.documents[0]?.manifest.embeddingTokenProfile)
+      .toContain("meeting-knowledge.multilingual-minilm-exact.v1");
+    expect(store.plans[0]?.planDigest).not.toBe(stale.planDigest);
   });
 
   it("never abandons authorized deletion in a dead letter", async () => {

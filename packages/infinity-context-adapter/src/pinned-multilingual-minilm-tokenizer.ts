@@ -47,7 +47,7 @@ HistoricalEmbeddingTokenizerProfileV1 = Object.freeze({
   embeddingModelRevision: "e8f8c211226b894fcb81acc59f3b34ba3efd5f42",
   id: "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
   maxInputTokens: 128,
-  teiBuildRevision: "78502d8e61223d2c73d4bb7aeaea46787e90d596",
+  servingRuntimeRevision: "78502d8e61223d2c73d4bb7aeaea46787e90d596",
   tokenizerArtifactSha256,
   tokenizerConfigSha256,
 });
@@ -124,7 +124,7 @@ implements HistoricalEmbeddingTokenizerPort {
     if (
       receipt.schemaVersion !== "meeting-knowledge.tokenizer-conformance.v1" ||
       receipt.modelRevision !== this.profile.embeddingModelRevision ||
-      receipt.teiBuildRevision !== this.profile.teiBuildRevision ||
+      receipt.teiBuildRevision !== this.profile.servingRuntimeRevision ||
       receipt.maxInputTokens !== this.profile.maxInputTokens ||
       receipt.teiVersion !== "1.8.3" ||
       receipt.imageDigestSha256 !==

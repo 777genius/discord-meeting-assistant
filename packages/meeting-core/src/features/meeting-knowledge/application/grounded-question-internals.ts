@@ -149,6 +149,8 @@ export function deduplicateEvidenceTurns(
       source?.transcriptId ?? fallback.transcriptId,
       String(source?.transcriptVersion ?? fallback.transcriptVersion),
       turn.turnId,
+      String(source?.sourceStartCodePoint ?? "whole"),
+      String(source?.sourceEndCodePoint ?? "whole"),
     ].join("\u0000");
     if (!existing.has(key)) {
       existing.set(key, turn);

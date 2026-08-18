@@ -21,6 +21,7 @@ import {
   rerankHistoricalBlocks,
 } from "./historical-retrieval-ranking.js";
 import { refreshStrictFocusedBlocks } from "./historical-focused-refresh.js";
+import type { HistoricalEmbeddingTokenizerPort } from "./ports/historical-embedding-tokenizer.js";
 
 export interface FocusedRetrievalPolicyV1 {
   readonly blockPolicy: HistoricalEvidenceBlockPolicyV1;
@@ -114,6 +115,7 @@ export class HistoricalFocusedRetrieval {
       readonly ids: HistoricalOpaqueIdPort;
       readonly memory: HistoricalMemoryPort;
       readonly store: HistoricalSyncStore;
+      readonly tokenizer?: () => HistoricalEmbeddingTokenizerPort | undefined;
     },
     policy: FocusedRetrievalPolicyV1 = DEFAULT_FOCUSED_RETRIEVAL_POLICY,
     twoHourProfile: TwoHourHistoricalRetrievalProfileV1 =
@@ -192,6 +194,7 @@ export class HistoricalFocusedRetrieval {
       selected: ranked.map(({ block }) => block),
       signal: input.signal,
       store: this.dependencies.store,
+      tokenizer: this.dependencies.tokenizer?.(),
     });
     if (refreshed.length === 0) {
       return { reason: "selected_evidence_became_stale", status: "insufficient_evidence" };
@@ -311,10 +314,8 @@ export class HistoricalFocusedRetrieval {
       return;
     }
     const first = Math.max(0, record.ordinal - this.#policy.neighborRadius);
-    const last = Math.min(
-      record.plan.documents.length - 1,
-      record.ordinal + this.#policy.neighborRadius,
-    );
+    const last = Math.min(record.plan.documents.length - 1,
+      record.ordinal + this.#policy.neighborRadius);
     try {
       for (let ordinal = first; ordinal <= last; ordinal += 1) {
         const block = rehydrateHistoricalBlock(
@@ -322,7 +323,7 @@ export class HistoricalFocusedRetrieval {
           record.plan,
           ordinal,
           this.dependencies.ids,
-          this.#policy.blockPolicy,
+          { policy: this.#policy.blockPolicy, tokenizer: this.dependencies.tokenizer?.() },
         );
         output.set(block.candidateLocator, block);
       }
@@ -403,7 +404,7 @@ export class HistoricalFocusedRetrieval {
             record.plan,
             document.manifest.ordinal,
             this.dependencies.ids,
-            this.#policy.blockPolicy,
+            { policy: this.#policy.blockPolicy, tokenizer: this.dependencies.tokenizer?.() },
           )
         );
         output.push(...recordBlocks);

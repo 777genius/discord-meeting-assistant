@@ -1,13 +1,17 @@
 import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
+import { buildHistoricalIndexPlan } from
+  "@discord-meeting/meeting-core/meeting-knowledge";
 
 import {
   PINNED_MULTILINGUAL_MINILM_TOKENIZER_PROFILE,
+  HmacHistoricalOpaqueIds,
   PinnedMultilingualMiniLmTokenizer,
   PinnedMultilingualMiniLmTokenizerError,
   type PinnedMultilingualMiniLmArtifacts,
 } from "../src/index.js";
+import { finalMeeting } from "./historical-e2e-test-kit.js";
 
 const assetDirectory = new URL(
   "../assets/paraphrase-multilingual-minilm-l12-v2-e8f8c211/",
@@ -49,6 +53,39 @@ describe("pinned multilingual MiniLM tokenizer", () => {
     expect(tokenizer.countTokens("word ".repeat(126))).toBe(128);
     expect(tokenizer.countTokens("word ".repeat(127))).toBe(129);
     expect(tokenizer.profile.maxInputTokens).toBe(128);
+  });
+
+  it("splits the exact 190-token Cyrillic regression before the 96-token limit", () => {
+    const tokenizer = new PinnedMultilingualMiniLmTokenizer();
+    const base = finalMeeting(1, "Tuesday");
+    const text = "Привет".repeat(94);
+    const meeting = Object.freeze({
+      ...base,
+      humanTurns: Object.freeze([Object.freeze({
+        ...base.humanTurns[0]!,
+        text,
+        turnId: "cyrillic-regression",
+      })]),
+    });
+    const plan = buildHistoricalIndexPlan(
+      meeting,
+      new HmacHistoricalOpaqueIds(new Uint8Array(32).fill(0x33)),
+      {
+        maximumEmbeddingTokens: 96,
+        maxBlockUtf8Bytes: 4_096,
+        maxBlocksPerMeeting: 500,
+        maxTurnsPerBlock: 64,
+        version: "meeting-knowledge.block-policy.v1",
+      },
+      tokenizer,
+    );
+
+    expect(tokenizer.countTokens(text)).toBe(190);
+    expect(plan.documents.length).toBeGreaterThan(1);
+    expect(plan.documents.every(({ embeddingText, manifest }) =>
+      tokenizer.countTokens(embeddingText) === manifest.embeddingTokenEstimate &&
+      manifest.embeddingTokenEstimate <= 96
+    )).toBe(true);
   });
 
   it.each([
