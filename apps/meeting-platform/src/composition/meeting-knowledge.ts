@@ -81,7 +81,9 @@ export const localFinalReplyPolicy: LocalFinalReplyPolicy = Object.freeze({
     safeInputTokens: 300_000,
     tokenDriftReserve: 32_768,
   }),
-  jobLeaseSeconds: 60,
+  // Longer than the grounded-answer adapter's maximum allowed 300-second provider deadline.
+  // Reservation renews this lease immediately before the provider call.
+  jobLeaseSeconds: 360,
   maximumProviderAttempts: 2,
   policyVersion: "meeting-knowledge.focused-memory-final-reply.v2",
   retrieval: Object.freeze({

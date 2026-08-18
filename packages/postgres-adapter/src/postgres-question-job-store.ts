@@ -15,6 +15,7 @@ import {
   PostgresQuestionPolicyFence,
   type QuestionPolicyIdentity,
 } from "./postgres-question-policy-fence.js";
+import { PostgresQuestionProviderAttemptStore } from "./postgres-question-provider-attempt-store.js";
 
 interface QuestionJobRow {
   readonly answer_candidate: unknown;
@@ -64,19 +65,23 @@ function toLease(row: QuestionJobRow): QuestionJobLease {
 
 export class PostgresQuestionJobStore implements QuestionJobStore {
   private readonly policyFence: PostgresQuestionPolicyFence;
+  private readonly providerAttempts: PostgresQuestionProviderAttemptStore;
 
   public constructor(
     private readonly pool: Pool,
     policy: QuestionPolicyIdentity,
   ) {
     this.policyFence = new PostgresQuestionPolicyFence(policy);
+    this.providerAttempts = new PostgresQuestionProviderAttemptStore(pool, policy);
   }
 
   public async leaseNext(input: {
     readonly leaseSeconds: number;
+    readonly maximumProviderAttempts: number;
     readonly workerId: string;
   }): Promise<QuestionJobLease | null> {
     const leaseSeconds = requireLeaseSeconds(input.leaseSeconds);
+    requireMaximumProviderAttempts(input.maximumProviderAttempts);
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
@@ -85,6 +90,7 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
         return null;
       }
       await this.expireJobs(client);
+      await this.providerAttempts.failAbandoned(client);
       const result = await client.query<QuestionJobRow>(
         `
           WITH selected AS (
@@ -96,7 +102,9 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
               AND binding ->> 'authorizationPolicyVersion' = $5
               AND (
                 state = 'queued' OR
-                state IN ('running', 'ready') AND lease_until <= transaction_timestamp()
+                state IN ('running', 'ready')
+                  AND lease_until <= transaction_timestamp()
+                  AND provider_attempt_state <> 'reserved'
               )
             ORDER BY created_at, question_id
             FOR UPDATE SKIP LOCKED
@@ -104,7 +112,6 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
           )
           UPDATE meeting_knowledge.question_jobs AS job
           SET state = CASE WHEN job.state = 'ready' THEN 'ready' ELSE 'running' END,
-              attempts = CASE WHEN job.state = 'ready' THEN job.attempts ELSE job.attempts + 1 END,
               generation = job.generation + 1,
               lease_owner = $1,
               lease_until = transaction_timestamp() + make_interval(secs => $2),
@@ -132,6 +139,18 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
     } finally {
       client.release();
     }
+  }
+
+  public reserveProviderAttempt(
+    input: Parameters<QuestionJobStore["reserveProviderAttempt"]>[0],
+  ): Promise<boolean> {
+    return this.providerAttempts.reserve(input);
+  }
+
+  public recordProviderAttemptOutcome(
+    input: Parameters<QuestionJobStore["recordProviderAttemptOutcome"]>[0],
+  ): Promise<boolean> {
+    return this.providerAttempts.recordOutcome(input);
   }
 
   public async persistGroundingPlan(
@@ -200,6 +219,7 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
             AND generation = $2
             AND state = 'running'
             AND grounding_plan IS NOT NULL
+            AND provider_attempt_state = 'completed'
             AND lease_until > transaction_timestamp()
             AND ${currentPolicySql(4)}
         `,
@@ -230,6 +250,7 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
             AND generation = $2
             AND state = 'running'
             AND ${currentPolicySql(4)}
+            AND provider_attempt_state = 'failed'
         `,
         [
           input.jobId,
@@ -448,4 +469,11 @@ function currentPolicySql(firstParameter: number): string {
       AND job.binding ->> 'policyVersion' = policy.policy_version
       AND job.binding ->> 'authorizationPolicyVersion' = policy.authorization_policy_version
   )`;
+}
+
+function requireMaximumProviderAttempts(value: number): number {
+  if (!Number.isSafeInteger(value) || value < 1 || value > 32) {
+    throw new RangeError("maximum provider attempts must be between 1 and 32");
+  }
+  return value;
 }

@@ -260,8 +260,24 @@ export interface QuestionJobLease {
 export interface QuestionJobStore {
   leaseNext(input: {
     readonly leaseSeconds: number;
+    readonly maximumProviderAttempts: number;
     readonly workerId: string;
   }): Promise<QuestionJobLease | null>;
+
+  reserveProviderAttempt(input: {
+    readonly attemptId: string;
+    readonly generation: number;
+    readonly jobId: string;
+    readonly leaseSeconds: number;
+    readonly maximumProviderAttempts: number;
+  }): Promise<boolean>;
+
+  recordProviderAttemptOutcome(input: {
+    readonly attemptId: string;
+    readonly generation: number;
+    readonly jobId: string;
+    readonly outcome: "completed" | "failed";
+  }): Promise<boolean>;
 
   persistGroundingPlan(input: {
     readonly generation: number;

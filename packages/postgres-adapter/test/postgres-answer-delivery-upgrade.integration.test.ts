@@ -260,9 +260,9 @@ describe("schema 17 answer-delivery upgrade", () => {
       });
 
       const jobs = new PostgresQuestionJobStore(isolated.pool, upgradedQuestionPolicy);
-      const firstLease = await jobs.leaseNext({ leaseSeconds: 60, workerId: "upgrade-worker" });
-      const secondLease = await jobs.leaseNext({ leaseSeconds: 60, workerId: "upgrade-worker" });
-      const thirdLease = await jobs.leaseNext({ leaseSeconds: 60, workerId: "upgrade-worker" });
+      const firstLease = await jobs.leaseNext({ leaseSeconds: 60, maximumProviderAttempts: 2, workerId: "upgrade-worker" });
+      const secondLease = await jobs.leaseNext({ leaseSeconds: 60, maximumProviderAttempts: 2, workerId: "upgrade-worker" });
+      const thirdLease = await jobs.leaseNext({ leaseSeconds: 60, maximumProviderAttempts: 2, workerId: "upgrade-worker" });
       expect([firstLease?.binding.deliveryContainerId, secondLease?.binding.deliveryContainerId])
         .toEqual([parentContainerId, threadContainerId]);
       expect(thirdLease).toMatchObject({

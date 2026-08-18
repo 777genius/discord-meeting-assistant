@@ -1,19 +1,19 @@
 import { requiresExhaustiveCoverage } from "../domain/question-scope.js";
 import {
-  type GroundingPlan,
-} from "../domain/grounding-plan.js";
-import {
   QuestionBinding,
   type QuestionBindingSnapshot,
 } from "../domain/question-job.js";
 import {
   authorityMatchesBinding,
   authorizedForJob,
-  reauthorizeHistoricalPlan,
 } from "./final-reply-checks.js";
 import { admittedHumanActors } from "./admitted-human-evidence.js";
 import { prepareExhaustiveFinalReply } from "./exhaustive-final-reply.js";
 import { GroundedMeetingAnswer } from "./grounded-meeting-answer.js";
+import {
+  FinalReplyAnswerGeneration,
+  type PreparedAnswerGrounding,
+} from "./final-reply-answer-generation.js";
 import {
   fixedOutcomeForFocusedRetrieval,
   createPlanFromFocusedHydration,
@@ -28,11 +28,9 @@ import type {
   AnswerPublicationPort,
   CurrentFinalReplyBinding,
   ExhaustiveMemoryRetrievalPort,
-  ExhaustiveMemoryRetrievalRequest,
   FinalReplyEvidencePort,
   FinalReplyRendererPort,
   FocusedMemoryRetrievalPort,
-  GroundedAnswerGenerationRequest,
   GroundedAnswerGenerator,
   LocalFinalReplyPolicy,
   QuestionAuthorizationObservation,
@@ -46,25 +44,15 @@ export type ProcessFinalReplyResult =
   | FinalReplyJobResult;
 
 type GroundingPreparation =
-  | {
-      readonly authority: CurrentFinalReplyBinding;
-      readonly exhaustive?: ExhaustiveMemoryRetrievalRequest & {
-        readonly coveragePlanDigest: string;
-      };
-      readonly plan: GroundingPlan;
-      readonly status: "prepared";
-    }
+  | (PreparedAnswerGrounding & { readonly status: "prepared" })
   | {
       readonly result: FinalReplyJobResult;
       readonly status: "settled";
     };
 
-function attemptId(lease: QuestionJobLease): string {
-  return `${lease.jobId}:generation:${lease.generation}:attempt:${lease.attempts}`;
-}
-
 export class ProcessFinalReplyJob {
   private readonly answers: GroundedMeetingAnswer;
+  private readonly generation: FinalReplyAnswerGeneration;
   private readonly publisher: PublishFinalReply;
 
   public constructor(
@@ -99,11 +87,23 @@ export class ProcessFinalReplyJob {
       renderer: input.renderer,
       workerId: input.workerId,
     });
+    this.generation = new FinalReplyAnswerGeneration({
+      answers: this.answers,
+      authorization: input.authorization,
+      ...(input.exhaustiveMemory === undefined
+        ? {}
+        : { exhaustiveMemory: input.exhaustiveMemory }),
+      jobs: input.jobs,
+      memory: input.memory,
+      policy: input.policy,
+      publisher: this.publisher,
+    });
   }
 
   public async executeOnce(): Promise<ProcessFinalReplyResult> {
     const lease = await this.input.jobs.leaseNext({
       leaseSeconds: this.input.policy.jobLeaseSeconds,
+      maximumProviderAttempts: this.input.policy.maximumProviderAttempts,
       workerId: this.input.workerId,
     });
     if (lease === null) {
@@ -124,7 +124,7 @@ export class ProcessFinalReplyJob {
     }
     const preparation = await this.prepareFocusedGrounding(lease, binding);
     return preparation.status === "prepared"
-      ? this.generateAndPublish(lease, binding, preparation)
+      ? this.generation.execute(lease, binding, preparation)
       : preparation.result;
   }
 
@@ -263,95 +263,6 @@ export class ProcessFinalReplyJob {
     }
   }
 
-  private async generateAndPublish(
-    lease: QuestionJobLease,
-    binding: QuestionBindingSnapshot,
-    preparation: Extract<GroundingPreparation, { readonly status: "prepared" }>,
-  ): Promise<FinalReplyJobResult> {
-    const request: GroundedAnswerGenerationRequest = {
-      attemptId: attemptId(lease),
-      binding,
-      locale: binding.expectedLocale,
-      plan: preparation.plan,
-      question: lease.questionText,
-    };
-    const generated = await this.answers.execute(request, {
-      beforeGenerate: async () => {
-        if (!await reauthorizeHistoricalPlan(
-          this.input.memory,
-          binding,
-          preparation.plan,
-        )) {
-          return "stale_authorization";
-        }
-        if (
-          preparation.exhaustive !== undefined &&
-          (this.input.exhaustiveMemory === undefined ||
-            !await this.input.exhaustiveMemory.recheck(preparation.exhaustive))
-        ) {
-          return "stale_binding";
-        }
-        const beforeGeneration = await this.observe(lease, "before_generation");
-        return authorizedForJob(beforeGeneration, preparation.authority, binding)
-          ? "continue"
-          : "stale_authorization";
-      },
-      onMeasured: async (measurement) =>
-        await this.input.jobs.persistGroundingPlan({
-          generation: lease.generation,
-          jobId: lease.jobId,
-          measurement,
-          plan: preparation.plan,
-          runtimeProfile: measurement.runtimeProfile,
-          sourceMeetingIds: Object.freeze([...new Set([
-            binding.meetingId,
-            ...preparation.plan.evidence.map((turn) =>
-              turn.source?.meetingId ?? binding.meetingId
-            ),
-          ])].toSorted()),
-        })
-          ? "continue"
-          : "stale_generation",
-    });
-    if (generated.status === "stopped") {
-      return generated.checkpoint === "stale_generation"
-        ? { jobId: lease.jobId, status: "stale_generation" }
-        : this.publisher.settle(
-            lease,
-            generated.checkpoint === "stale_binding"
-              ? "stale_binding"
-              : "stale_authorization",
-          );
-    }
-    if (generated.status === "unsupported_size") {
-      return this.publisher.publishFixed(lease, preparation.authority, "unsupported_size");
-    }
-    if (generated.status === "failed") {
-      return this.handleGenerationFailure(
-        lease,
-        preparation.authority,
-        generated.retryable,
-      );
-    }
-    if (generated.status !== "completed") {
-      return this.publisher.publishFixed(lease, preparation.authority, "unavailable");
-    }
-    const answerCandidate = generated.answer.toSnapshot();
-    if (!await this.input.jobs.markReady({
-      answerCandidate,
-      generation: lease.generation,
-      jobId: lease.jobId,
-    })) {
-      return { jobId: lease.jobId, status: "stale_generation" };
-    }
-    return this.publisher.publishCandidate(
-      lease,
-      preparation.authority,
-      preparation.plan,
-      answerCandidate,
-    );
-  }
-
   private async prepareExhaustiveGrounding(
     lease: QuestionJobLease,
     binding: QuestionBindingSnapshot,
@@ -387,24 +298,6 @@ export class ProcessFinalReplyJob {
       expectedScopeId: lease.binding.scopeId,
       questionId: lease.binding.questionId,
     });
-  }
-
-  private async handleGenerationFailure(
-    lease: QuestionJobLease,
-    authority: CurrentFinalReplyBinding,
-    retryable: boolean,
-  ): Promise<FinalReplyJobResult> {
-    if (retryable && lease.attempts < this.input.policy.maximumProviderAttempts) {
-      const released = await this.input.jobs.releaseForRetry({
-        generation: lease.generation,
-        jobId: lease.jobId,
-        reason: "provider_failure",
-      });
-      return released
-        ? { jobId: lease.jobId, status: "deferred" }
-        : { jobId: lease.jobId, status: "stale_generation" };
-    }
-    return this.publisher.publishFixed(lease, authority, "unavailable");
   }
 
   private settled(result: FinalReplyJobResult): GroundingPreparation {

@@ -37,6 +37,7 @@ const migrationDefinitions = [
     transactional: false,
   },
   { fileName: "0024_question_policy_fence.sql" },
+  { fileName: "0025_question_provider_attempt_accounting.sql" },
 ] as const;
 
 const migrationLockKey = "718330091620232601";

@@ -89,6 +89,10 @@ export const meetingKnowledgeRequiredColumns = [
   "meeting_knowledge.current_question_policy.policy_version",
   "meeting_knowledge.current_question_policy.authorization_policy_version",
   "meeting_knowledge.current_question_policy.activated_at",
+  "meeting_knowledge.question_jobs.provider_attempt_state",
+  "meeting_knowledge.question_jobs.provider_attempt_id",
+  "meeting_knowledge.question_jobs.provider_attempt_started_at",
+  "meeting_knowledge.question_jobs.provider_attempt_finished_at",
   "meeting_knowledge.question_rate_reservations.question_id",
   "meeting_knowledge.question_rate_reservations.requester_subject",
   "meeting_knowledge.question_rate_reservations.scope_id",
@@ -176,6 +180,16 @@ export const meetingKnowledgeRequiredCheckConstraints = [
     "meeting_knowledge",
     "current_question_policy",
     "current_question_policy_identity_is_valid",
+  ],
+  [
+    "meeting_knowledge",
+    "question_jobs",
+    "question_jobs_provider_attempt_state_is_supported",
+  ],
+  [
+    "meeting_knowledge",
+    "question_jobs",
+    "question_jobs_provider_attempt_is_consistent",
   ],
   [
     "meeting_knowledge",

@@ -240,7 +240,7 @@ describe("PostgreSQL Local Final Reply adapters", () => {
     ]);
 
     const jobs = new PostgresQuestionJobStore(database, questionPolicy);
-    const lease = await jobs.leaseNext({ leaseSeconds: 60, workerId: "worker-1" });
+    const lease = await jobs.leaseNext({ leaseSeconds: 60, maximumProviderAttempts: 2, workerId: "worker-1" });
     expect(lease).toMatchObject({ generation: 1, jobId: questionId, state: "running" });
     if (lease === null) {
       return;
@@ -296,6 +296,26 @@ describe("PostgreSQL Local Final Reply adapters", () => {
       runtimeProfile: "sol-medium-test",
       sourceMeetingIds: [binding.meetingId],
     })).toBe(true);
+    const providerAttemptId =
+      `${lease.jobId}:generation:${lease.generation}:attempt:1`;
+    expect(await jobs.reserveProviderAttempt({
+      attemptId: providerAttemptId,
+      generation: lease.generation,
+      jobId: lease.jobId,
+      leaseSeconds: 240,
+      maximumProviderAttempts: 2,
+    })).toBe(true);
+    await expect(jobs.leaseNext({
+      leaseSeconds: 240,
+      maximumProviderAttempts: 2,
+      workerId: "competing-worker",
+    })).resolves.toBeNull();
+    expect(await jobs.recordProviderAttemptOutcome({
+      attemptId: providerAttemptId,
+      generation: lease.generation,
+      jobId: lease.jobId,
+      outcome: "completed",
+    })).toBe(true);
     expect(await jobs.markReady({
       answerCandidate: {
         claims: [{ evidenceIds: ["evidence-000001"], text: "Friday." }],
@@ -313,7 +333,7 @@ describe("PostgreSQL Local Final Reply adapters", () => {
       `,
       [questionId],
     );
-    const ready = await jobs.leaseNext({ leaseSeconds: 60, workerId: "worker-2" });
+    const ready = await jobs.leaseNext({ leaseSeconds: 60, maximumProviderAttempts: 2, workerId: "worker-2" });
     expect(ready).toMatchObject({ generation: 2, state: "ready" });
     expect(await jobs.settle({
       generation: ready?.generation ?? 0,
@@ -345,8 +365,12 @@ describe("PostgreSQL Local Final Reply adapters", () => {
       question_text: null,
       state: "terminal",
     });
+
   });
 
+});
+
+describe("PostgreSQL answer effect recovery", () => {
   it("durably fences an ambiguous answer create from every retry", async (context) => {
     const database = databaseOrSkip(context);
     const store = new PostgresAnswerEffectStore(database, questionPolicy);
@@ -567,7 +591,7 @@ describe("PostgreSQL question job cleanup", () => {
     );
 
     const jobs = new PostgresQuestionJobStore(database, questionPolicy);
-    await expect(jobs.leaseNext({ leaseSeconds: 60, workerId: "worker-1" }))
+    await expect(jobs.leaseNext({ leaseSeconds: 60, maximumProviderAttempts: 2, workerId: "worker-1" }))
       .resolves.toBeNull();
     const stored = await database.query(
       `
