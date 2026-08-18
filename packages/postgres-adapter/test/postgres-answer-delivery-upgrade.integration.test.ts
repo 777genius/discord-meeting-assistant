@@ -491,6 +491,8 @@ describe("schema 21 withdrawal upgrade", () => {
       await isolated.dispose();
     }
   }, 30_000);
+});
+
 describe("late answer-effect receipt reconciliation", () => {
   it("does not starve an older retryable absence behind unknown effects", async (context) => {
     const database = databaseOrSkip(context);
