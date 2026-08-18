@@ -176,9 +176,11 @@ describe("Infinity Context bounded search budget", () => {
 });
 
 describe("Infinity Context bounded historical plan", () => {
-  it("accepts 500 deterministic windows and rejects 501", () => {
-    expect(validIndexPlan(boundedWindowPlan(500, 501))).toBe(true);
-    expect(validIndexPlan(boundedWindowPlan(501, 501))).toBe(false);
+  it("accepts 500 deterministic windows and rejects a 501-window domain policy", () => {
+    expect(validIndexPlan(boundedWindowPlan(500, 500))).toBe(true);
+    expect(() => boundedWindowPlan(501, 501)).toThrow(
+      "historical evidence block policy is outside its qualified bounds",
+    );
   });
 
   it("converges a partial >100-window ingest within the bounded sequential envelope", async () => {
@@ -202,6 +204,7 @@ describe("Infinity Context bounded historical plan", () => {
       method === "POST" && path === "/v1/documents"
     ).length).toBeLessThanOrEqual(121);
   });
+
 });
 
 describe("Infinity Context historical memory vertical slice", () => {

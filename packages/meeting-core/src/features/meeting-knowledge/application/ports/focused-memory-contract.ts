@@ -25,6 +25,8 @@ function focusedMemoryReferenceKey(reference: FocusedMemoryReference): string {
     reference.transcriptVersion,
     reference.turnId,
     reference.turnHash,
+    reference.sourceStartCodePoint ?? "whole",
+    reference.sourceEndCodePoint ?? "whole",
   ].join("\u0000");
 }
 
@@ -219,15 +221,25 @@ function decodeCandidates(
     const candidate = record(candidateValue, `${field}[${index}]`);
     assertOnlyKeys(
       candidate,
-      new Set(["meetingId", "transcriptId", "transcriptVersion", "turnHash", "turnId"]),
+      new Set([
+        "meetingId",
+        "sourceEndCodePoint",
+        "sourceStartCodePoint",
+        "transcriptId",
+        "transcriptVersion",
+        "turnHash",
+        "turnId",
+      ]),
       `${field}[${index}]`,
     );
+    const range = decodeCandidateSourceRange(candidate, `${field}[${index}]`);
     return Object.freeze({
       meetingId: requireKnowledgeText(
         candidate.meetingId as string,
         `${field}[${index}].meetingId`,
         1_024,
       ),
+      ...range,
       transcriptId: requireKnowledgeText(
         candidate.transcriptId as string,
         `${field}[${index}].transcriptId`,
@@ -258,8 +270,43 @@ function decodeCandidates(
   return candidates;
 }
 
+function decodeCandidateSourceRange(
+  candidate: Record<string, unknown>,
+  field: string,
+): Pick<FocusedMemoryReference, "sourceEndCodePoint" | "sourceStartCodePoint"> {
+  const hasStart = candidate.sourceStartCodePoint !== undefined;
+  const hasEnd = candidate.sourceEndCodePoint !== undefined;
+  if (hasStart !== hasEnd) {
+    throw new MeetingKnowledgeInvariantError(
+      "INVALID_GROUNDING_PLAN",
+      `${field} source range must be complete`,
+    );
+  }
+  if (!hasStart) {
+    return {};
+  }
+  const sourceStartCodePoint = requireKnowledgeInteger(
+    candidate.sourceStartCodePoint as number,
+    `${field}.sourceStartCodePoint`,
+  );
+  const sourceEndCodePoint = requireKnowledgeInteger(
+    candidate.sourceEndCodePoint as number,
+    `${field}.sourceEndCodePoint`,
+    1,
+  );
+  if (sourceEndCodePoint <= sourceStartCodePoint) {
+    throw new MeetingKnowledgeInvariantError(
+      "INVALID_GROUNDING_PLAN",
+      `${field} source range is invalid`,
+    );
+  }
+  return { sourceEndCodePoint, sourceStartCodePoint };
+}
+
 function candidateKey(candidate: {
   readonly meetingId: string;
+  readonly sourceEndCodePoint?: number;
+  readonly sourceStartCodePoint?: number;
   readonly transcriptId: string;
   readonly transcriptVersion: number;
   readonly turnId: string;
@@ -269,5 +316,7 @@ function candidateKey(candidate: {
     candidate.transcriptId,
     candidate.transcriptVersion,
     candidate.turnId,
+    candidate.sourceStartCodePoint ?? "whole",
+    candidate.sourceEndCodePoint ?? "whole",
   ].join("\u0000");
 }

@@ -264,6 +264,32 @@ describe("historical projection sync worker", () => {
     expect(store.plans).toEqual([persisted]);
   });
 
+  it("dead-letters a persisted projection that no longer matches authoritative evidence", async () => {
+    const accepted = meeting();
+    const ids = new TestIds();
+    const persisted = buildHistoricalIndexPlan(accepted, ids);
+    const first = persisted.documents[0]!;
+    const tampered = {
+      ...persisted,
+      documents: [{ ...first, embeddingText: `${first.embeddingText} tampered` }],
+    };
+    const store = new QueueStore([lease(accepted, "index", 2, tampered)]);
+    const indexFinalMeeting = vi.fn();
+    const worker = new HistoricalSyncWorker({
+      authority: { loadAcceptedFinalMeeting: async () => accepted },
+      ids,
+      memory: { deleteMeeting: vi.fn(), indexFinalMeeting, searchRoom: vi.fn() },
+      store,
+    });
+
+    await expect(worker.executeOnce({ indexingEnabled: true })).resolves.toMatchObject({
+      status: "dead_lettered",
+    });
+    expect(store.deadLetters).toEqual(["historical_index_plan.stale_plan"]);
+    expect(store.plans).toEqual([]);
+    expect(indexFinalMeeting).not.toHaveBeenCalled();
+  });
+
   it("never abandons authorized deletion in a dead letter", async () => {
     const accepted = meeting();
     const ids = new TestIds();

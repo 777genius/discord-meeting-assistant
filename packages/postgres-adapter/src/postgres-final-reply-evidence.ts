@@ -1,11 +1,8 @@
-import { createHash } from "node:crypto";
-
 import {
   MeetingKnowledgeIdentity,
   type CanonicalEvidenceTurn,
   type CurrentFinalReplyBinding,
   type FinalReplyEvidencePort,
-  type FocusedMemoryReference,
   type QuestionBindingSnapshot,
   focusedMemoryGeneration,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
@@ -16,6 +13,14 @@ import {
 import type { Pool, PoolClient } from "pg";
 
 import { loadLiveReplyAuthority } from "./postgres-live-reply-evidence.js";
+import {
+  canonicalFinalReplyEvidenceHash,
+  canonicalFinalReplyTurnHash,
+  canonicalFinalReplyTurns,
+  sliceReferencedTurn,
+} from "./postgres-meeting-knowledge-codecs.js";
+
+export { canonicalFinalReplyTurnHash } from "./postgres-meeting-knowledge-codecs.js";
 
 interface StoredMeetingRow {
   readonly meeting_id?: string;
@@ -30,45 +35,6 @@ interface ReferencedMeetingRow extends StoredMeetingRow {
 export interface ResolvedFinalReplyAuthority {
   readonly binding: CurrentFinalReplyBinding;
   readonly turns: readonly CanonicalEvidenceTurn[];
-}
-
-function canonicalTurns(snapshot: MeetingSnapshot): readonly CanonicalEvidenceTurn[] {
-  const transcript = snapshot.transcript;
-  if (transcript === null) {
-    return [];
-  }
-  return Object.freeze(transcript.turns.map((turn) => Object.freeze({
-    endMs: turn.endMs,
-    speakerId: turn.speakerId,
-    startMs: turn.startMs,
-    text: turn.text,
-    turnId: turn.turnId,
-  })).toSorted((left, right) =>
-    left.startMs - right.startMs ||
-    left.endMs - right.endMs ||
-    (left.turnId < right.turnId ? -1 : left.turnId > right.turnId ? 1 : 0)
-  ));
-}
-
-function canonicalEvidenceHash(snapshot: MeetingSnapshot): string {
-  if (snapshot.transcript === null) {
-    throw new Error("final reply authority requires an accepted transcript");
-  }
-  return createHash("sha256").update(JSON.stringify({
-    transcriptId: snapshot.transcript.transcriptId,
-    turns: canonicalTurns(snapshot),
-    version: snapshot.transcript.version,
-  }), "utf8").digest("hex");
-}
-
-export function canonicalFinalReplyTurnHash(turn: CanonicalEvidenceTurn): string {
-  return createHash("sha256").update(JSON.stringify({
-    endMs: turn.endMs,
-    speakerId: turn.speakerId,
-    startMs: turn.startMs,
-    text: turn.text,
-    turnId: turn.turnId,
-  }), "utf8").digest("hex");
 }
 
 export function resolveFinalReplyAuthority(
@@ -103,11 +69,11 @@ export function resolveFinalReplyAuthority(
   if (identity === null || identity.humanActorIds.length === 0) {
     return null;
   }
-  const turns = canonicalTurns(snapshot);
+  const turns = canonicalFinalReplyTurns(snapshot);
   if (!turns.some(({ speakerId }) => identity.supportsHumanActor(speakerId))) {
     return null;
   }
-  const evidenceHash = canonicalEvidenceHash(snapshot);
+  const evidenceHash = canonicalFinalReplyEvidenceHash(snapshot);
   return Object.freeze({
     binding: Object.freeze({
       botApplicationIdentity: publisherIdentity,
@@ -273,6 +239,8 @@ export class PostgresFinalReplyEvidence implements FinalReplyEvidencePort {
         reference.transcriptId,
         reference.transcriptVersion,
         reference.turnId,
+        reference.sourceStartCodePoint ?? "whole",
+        reference.sourceEndCodePoint ?? "whole",
       ].join("\u0000"))).size !== references.length
     ) {
       return { status: "invalid_selection" } as const;
@@ -340,19 +308,26 @@ export class PostgresFinalReplyEvidence implements FinalReplyEvidencePort {
         return [];
       }
       const turn = authority.turns.find(({ turnId }) => turnId === reference.turnId);
-      const turnHash = turn === undefined ? null : canonicalFinalReplyTurnHash(turn);
+      const sliced = turn === undefined ? null : sliceReferencedTurn(turn, reference);
+      const turnHash = sliced === null ? null : canonicalFinalReplyTurnHash(sliced);
       if (
-        turn === undefined ||
+        sliced === null ||
         turnHash === null ||
-        !authority.binding.humanActorIds.includes(turn.speakerId) ||
+        !authority.binding.humanActorIds.includes(sliced.speakerId) ||
         reference.turnHash !== turnHash
       ) {
         return [];
       }
       return [Object.freeze({
-        ...turn,
+        ...sliced,
         source: Object.freeze({
           meetingId: reference.meetingId,
+          ...(reference.sourceEndCodePoint === undefined
+            ? {}
+            : {
+                sourceEndCodePoint: reference.sourceEndCodePoint,
+                sourceStartCodePoint: reference.sourceStartCodePoint,
+              }),
           transcriptId: reference.transcriptId,
           transcriptVersion: reference.transcriptVersion,
         }),

@@ -284,6 +284,8 @@ export class AnswerGroundedMeetingQuestion {
           ...turn,
           source: Object.freeze({
             meetingId: block.binding.meetingId,
+            sourceEndCodePoint: turn.sourceEndCodePoint,
+            sourceStartCodePoint: turn.sourceStartCodePoint,
             transcriptId: block.binding.transcriptId,
             transcriptVersion: block.binding.transcriptVersion,
           }),

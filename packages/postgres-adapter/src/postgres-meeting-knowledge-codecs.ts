@@ -1,13 +1,48 @@
+import { createHash } from "node:crypto";
+
 import type {
+  CanonicalEvidenceTurn,
+  FocusedMemoryReference,
   GroundedAnswerCandidate,
   GroundingPlan,
   QuestionBindingSnapshot,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
+import type { MeetingSnapshot } from "@discord-meeting/meeting-core/meeting-lifecycle";
 import { z } from "zod";
 
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/u);
 const boundedText = z.string().trim().min(1).max(32_768);
 const localeSchema = z.enum(["en", "mixed", "ru"]);
+
+export function canonicalFinalReplyTurns(
+  snapshot: MeetingSnapshot,
+): readonly CanonicalEvidenceTurn[] {
+  const transcript = snapshot.transcript;
+  if (transcript === null) {
+    return [];
+  }
+  return Object.freeze(transcript.turns.map((turn) => Object.freeze({
+    endMs: turn.endMs,
+    speakerId: turn.speakerId,
+    startMs: turn.startMs,
+    text: turn.text,
+    turnId: turn.turnId,
+  })).toSorted((left, right) =>
+    left.startMs - right.startMs || left.endMs - right.endMs ||
+    (left.turnId < right.turnId ? -1 : left.turnId > right.turnId ? 1 : 0)
+  ));
+}
+
+export function canonicalFinalReplyEvidenceHash(snapshot: MeetingSnapshot): string {
+  if (snapshot.transcript === null) {
+    throw new Error("final reply authority requires an accepted transcript");
+  }
+  return createHash("sha256").update(JSON.stringify({
+    transcriptId: snapshot.transcript.transcriptId,
+    turns: canonicalFinalReplyTurns(snapshot),
+    version: snapshot.transcript.version,
+  }), "utf8").digest("hex");
+}
 
 const questionBindingV1Schema = z.object({
   authorizationDigest: sha256Schema,
@@ -40,14 +75,57 @@ const groundingEvidenceSchema = z.object({
   speakerId: boundedText,
   source: z.object({
     meetingId: boundedText,
+    sourceEndCodePoint: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+    sourceStartCodePoint: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
     transcriptId: boundedText,
     transcriptVersion: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-  }).strict().optional(),
+  }).strict().superRefine((source, context) => {
+    const hasStart = source.sourceStartCodePoint !== undefined;
+    const hasEnd = source.sourceEndCodePoint !== undefined;
+    if (hasStart !== hasEnd || (hasStart && source.sourceEndCodePoint! <= source.sourceStartCodePoint!)) {
+      context.addIssue({ code: "custom", message: "evidence source range is invalid" });
+    }
+  }).optional(),
   startMs: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   text: boundedText,
   turnHash: sha256Schema,
   turnId: boundedText,
 }).strict();
+
+export function canonicalFinalReplyTurnHash(turn: CanonicalEvidenceTurn): string {
+  return createHash("sha256").update(JSON.stringify({
+    endMs: turn.endMs,
+    speakerId: turn.speakerId,
+    startMs: turn.startMs,
+    text: turn.text,
+    turnId: turn.turnId,
+  }), "utf8").digest("hex");
+}
+
+export function sliceReferencedTurn(
+  turn: CanonicalEvidenceTurn,
+  reference: FocusedMemoryReference,
+): CanonicalEvidenceTurn | null {
+  const hasStart = reference.sourceStartCodePoint !== undefined;
+  const hasEnd = reference.sourceEndCodePoint !== undefined;
+  if (hasStart !== hasEnd) {
+    return null;
+  }
+  if (!hasStart) {
+    return turn;
+  }
+  const start = reference.sourceStartCodePoint;
+  const end = reference.sourceEndCodePoint;
+  if (start === undefined || end === undefined) {
+    return null;
+  }
+  const codePoints = Array.from(turn.text);
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) ||
+    start < 0 || end <= start || end > codePoints.length) {
+    return null;
+  }
+  return Object.freeze({ ...turn, text: codePoints.slice(start, end).join("") });
+}
 
 const coverageReductionValueSchema = z.union([
   z.boolean(),

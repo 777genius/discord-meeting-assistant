@@ -30,6 +30,8 @@ function historicalPriorityCandidates(
   return Object.freeze(result.plan.blocks.flatMap((block) =>
     block.turns.map((turn) => Object.freeze({
       meetingId: block.binding.meetingId,
+      sourceEndCodePoint: turn.sourceEndCodePoint,
+      sourceStartCodePoint: turn.sourceStartCodePoint,
       transcriptId: block.binding.transcriptId,
       transcriptVersion: block.binding.transcriptVersion,
       turnHash: turnHashes.hash(turn),
@@ -201,5 +203,7 @@ function referenceKey(candidate: FocusedMemoryReference): string {
     candidate.transcriptId,
     candidate.transcriptVersion,
     candidate.turnId,
+    candidate.sourceStartCodePoint ?? "whole",
+    candidate.sourceEndCodePoint ?? "whole",
   ].join("\u0000");
 }

@@ -61,6 +61,8 @@ export class HistoricalExhaustiveMemoryRetrieval
     const candidates = selectedTurns.map(({ block, turn }) =>
       Object.freeze({
         meetingId: block.binding.meetingId,
+        sourceEndCodePoint: turn.sourceEndCodePoint,
+        sourceStartCodePoint: turn.sourceStartCodePoint,
         transcriptId: block.binding.transcriptId,
         transcriptVersion: block.binding.transcriptVersion,
         turnHash: this.hashes.hash(turn),

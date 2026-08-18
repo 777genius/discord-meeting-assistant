@@ -43,6 +43,13 @@ export interface HistoricalTurnSourceV1 {
   readonly turnId: string;
 }
 
+/** Canonical code-point slice rehydrated from one authoritative transcript turn. */
+export interface HistoricalEvidenceSliceV1 extends HistoricalTranscriptTurnV1 {
+  readonly sourceEndCodePoint: number;
+  readonly sourceRef: string;
+  readonly sourceStartCodePoint: number;
+}
+
 export interface HistoricalIndexDocumentV1 {
   /** Retrieval-only text: human speech without opaque IDs or timing noise. */
   readonly embeddingText: string;
@@ -57,6 +64,8 @@ export interface HistoricalIndexPlanV1 {
   readonly binding: HistoricalReleaseBindingV1;
   readonly deleteMutationId: string;
   readonly documents: readonly HistoricalIndexDocumentV1[];
+  /** Effective deterministic overlap selected to remain inside the qualified cap. */
+  readonly effectiveTurnOverlap: number;
   readonly indexMutationId: string;
   readonly planDigest: string;
   readonly schemaVersion: 1;
@@ -69,7 +78,7 @@ export interface LocallyRehydratedEvidenceBlockV1 {
   readonly contentHash: string;
   readonly indexGeneration: string;
   readonly ordinal: number;
-  readonly turns: readonly HistoricalTranscriptTurnV1[];
+  readonly turns: readonly HistoricalEvidenceSliceV1[];
 }
 
 export type HistoricalIndexResultV1 =

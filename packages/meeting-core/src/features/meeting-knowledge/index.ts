@@ -150,6 +150,7 @@ export type {
   HistoricalCandidateLocatorV1,
   HistoricalDeleteRequestV1,
   HistoricalDeleteResultV1,
+  HistoricalEvidenceSliceV1,
   HistoricalIndexDocumentV1,
   HistoricalIndexPlanV1,
   HistoricalIndexResultV1,

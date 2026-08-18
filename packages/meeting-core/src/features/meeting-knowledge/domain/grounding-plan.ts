@@ -23,6 +23,8 @@ export interface CanonicalEvidenceTurn {
 /** A provider-neutral candidate identity. Candidate locators never return text. */
 export interface FocusedMemoryReference {
   readonly meetingId: string;
+  readonly sourceEndCodePoint?: number;
+  readonly sourceStartCodePoint?: number;
   readonly transcriptId: string;
   readonly transcriptVersion: number;
   readonly turnHash: string;
@@ -38,6 +40,8 @@ export interface RehydratedEvidenceTurn extends CanonicalEvidenceTurn {
    */
   readonly source?: {
     readonly meetingId: string;
+    readonly sourceEndCodePoint?: number;
+    readonly sourceStartCodePoint?: number;
     readonly transcriptId: string;
     readonly transcriptVersion: number;
   };

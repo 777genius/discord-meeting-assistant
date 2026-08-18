@@ -19,6 +19,51 @@ function compareCanonicalTurns(
     (left.turnId < right.turnId ? -1 : left.turnId > right.turnId ? 1 : 0);
 }
 
+function normalizeEvidenceSource(
+  source: NonNullable<RehydratedEvidenceTurn["source"]>,
+): NonNullable<RehydratedEvidenceTurn["source"]> {
+  const hasStart = source.sourceStartCodePoint !== undefined;
+  const hasEnd = source.sourceEndCodePoint !== undefined;
+  if (hasStart !== hasEnd) {
+    throw new MeetingKnowledgeInvariantError(
+      "INVALID_EVIDENCE",
+      "historical evidence source range must be complete",
+    );
+  }
+  const sourceStartCodePoint = hasStart
+    ? requireKnowledgeInteger(source.sourceStartCodePoint, "evidence.sourceStartCodePoint")
+    : undefined;
+  const sourceEndCodePoint = hasEnd
+    ? requireKnowledgeInteger(source.sourceEndCodePoint, "evidence.sourceEndCodePoint", 1)
+    : undefined;
+  if (
+    sourceStartCodePoint !== undefined &&
+    sourceEndCodePoint !== undefined &&
+    sourceEndCodePoint <= sourceStartCodePoint
+  ) {
+    throw new MeetingKnowledgeInvariantError(
+      "INVALID_EVIDENCE",
+      "historical evidence source range is invalid",
+    );
+  }
+  return Object.freeze({
+    meetingId: requireKnowledgeText(source.meetingId, "evidence.source.meetingId", 1_024),
+    ...(sourceEndCodePoint === undefined
+      ? {}
+      : { sourceEndCodePoint, sourceStartCodePoint }),
+    transcriptId: requireKnowledgeText(
+      source.transcriptId,
+      "evidence.source.transcriptId",
+      1_024,
+    ),
+    transcriptVersion: requireKnowledgeInteger(
+      source.transcriptVersion,
+      "evidence.source.transcriptVersion",
+      1,
+    ),
+  });
+}
+
 export function normalizeRehydratedTurns(
   turns: readonly RehydratedEvidenceTurn[],
   humanActorIds: readonly string[],
@@ -60,25 +105,7 @@ export function normalizeRehydratedTurns(
       speakerId,
       ...(turn.source === undefined
         ? {}
-        : {
-            source: Object.freeze({
-              meetingId: requireKnowledgeText(
-                turn.source.meetingId,
-                "evidence.source.meetingId",
-                1_024,
-              ),
-              transcriptId: requireKnowledgeText(
-                turn.source.transcriptId,
-                "evidence.source.transcriptId",
-                1_024,
-              ),
-              transcriptVersion: requireKnowledgeInteger(
-                turn.source.transcriptVersion,
-                "evidence.source.transcriptVersion",
-                1,
-              ),
-            }),
-          }),
+        : { source: normalizeEvidenceSource(turn.source) }),
       startMs,
       text: requireKnowledgeText(turn.text, "evidence.text", 32_768),
       turnHash: requireSha256(turn.turnHash, "evidence.turnHash"),

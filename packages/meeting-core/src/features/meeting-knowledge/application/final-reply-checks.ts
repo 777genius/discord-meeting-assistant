@@ -59,6 +59,12 @@ export function referencesFromPlan(
 ): readonly FocusedMemoryReference[] {
   return Object.freeze(plan.evidence.map(({ source, turnHash, turnId }) => Object.freeze({
     meetingId: source?.meetingId ?? binding.meetingId,
+    ...(source?.sourceEndCodePoint === undefined
+      ? {}
+      : {
+          sourceEndCodePoint: source.sourceEndCodePoint,
+          sourceStartCodePoint: source.sourceStartCodePoint,
+        }),
     transcriptId: source?.transcriptId ?? binding.transcriptId,
     transcriptVersion: source?.transcriptVersion ?? binding.transcriptVersion,
     turnHash,
@@ -72,18 +78,30 @@ export function sameEvidenceIdentity(
 ): boolean {
   return left.length === right.length && left.every((item, index) => {
     const candidate = right[index];
-    return candidate !== undefined &&
-      item.evidenceId === candidate.evidenceId &&
-      item.turnHash === candidate.turnHash &&
-      item.turnId === candidate.turnId &&
-      item.source?.meetingId === candidate.source?.meetingId &&
-      item.source?.transcriptId === candidate.source?.transcriptId &&
-      item.source?.transcriptVersion === candidate.source?.transcriptVersion &&
-      item.speakerId === candidate.speakerId &&
-      item.startMs === candidate.startMs &&
-      item.endMs === candidate.endMs &&
-      item.text === candidate.text;
+    return candidate !== undefined && sameEvidenceItem(item, candidate);
   });
+}
+
+function sameEvidenceItem(left: GroundingEvidence, right: GroundingEvidence): boolean {
+  return left.evidenceId === right.evidenceId &&
+    left.turnHash === right.turnHash &&
+    left.turnId === right.turnId &&
+    sameEvidenceSource(left.source, right.source) &&
+    left.speakerId === right.speakerId &&
+    left.startMs === right.startMs &&
+    left.endMs === right.endMs &&
+    left.text === right.text;
+}
+
+function sameEvidenceSource(
+  left: GroundingEvidence["source"],
+  right: GroundingEvidence["source"],
+): boolean {
+  return left?.meetingId === right?.meetingId &&
+    left?.sourceStartCodePoint === right?.sourceStartCodePoint &&
+    left?.sourceEndCodePoint === right?.sourceEndCodePoint &&
+    left?.transcriptId === right?.transcriptId &&
+    left?.transcriptVersion === right?.transcriptVersion;
 }
 
 export function rebuildGroundingPlan(

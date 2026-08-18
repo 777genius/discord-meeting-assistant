@@ -181,7 +181,27 @@ describe("historical evidence admission and block identity", () => {
       ...first,
       documents: [{ ...first.documents[0], providerMetadata: "untrusted" }],
     })).toThrow("unknown field");
-    expect(rehydrateHistoricalBlock(meeting, first, 0, ids).turns).toEqual(meeting.humanTurns);
+    expect(rehydrateHistoricalBlock(meeting, first, 0, ids).turns).toEqual([
+      expect.objectContaining({
+        ...meeting.humanTurns[0],
+        sourceEndCodePoint: Array.from(meeting.humanTurns[0]!.text).length,
+        sourceStartCodePoint: 0,
+      }),
+    ]);
+
+    const source = first.documents[0]!.manifest.turnSources[0]!;
+    const tampered = {
+      ...first,
+      documents: [{
+        ...first.documents[0]!,
+        manifest: {
+          ...first.documents[0]!.manifest,
+          turnSources: [{ ...source, sourceEndCodePoint: source.sourceEndCodePoint - 1 }],
+        },
+      }],
+    };
+    expect(() => rehydrateHistoricalBlock(meeting, tampered, 0, ids))
+      .toThrow("historical candidate no longer matches canonical local evidence");
   });
 });
 
@@ -254,6 +274,42 @@ describe("historical evidence bounded embedding windows", () => {
         });
       }
     }
+  });
+
+});
+
+describe("historical evidence long meeting bounds", () => {
+  it("keeps evidence near the end of a turn larger than 24 KB selectable", () => {
+    const base = acceptedMeeting();
+    if (base === null) {
+      throw new Error("fixture admission failed");
+    }
+    const marker = "PROJECT_ORBIT_FINAL_OWNER_MARIA";
+    const text = `${"длинный контекст встречи и решения команды ".repeat(700)}${marker}`;
+    expect(new TextEncoder().encode(text).byteLength).toBeGreaterThan(24 * 1_024);
+    const meeting = Object.freeze({
+      ...base,
+      humanTurns: Object.freeze([Object.freeze({
+        endMs: 60_000,
+        speakerId: "human-a",
+        startMs: 0,
+        text,
+        turnId: "long-turn",
+      })]),
+    });
+    const ids = new DeterministicTestIds();
+    const plan = buildHistoricalIndexPlan(meeting, ids);
+    const ordinal = plan.documents.findIndex(({ embeddingText }) => embeddingText.includes(marker));
+
+    expect(ordinal).toBeGreaterThanOrEqual(0);
+    expect(plan.documents.length).toBeGreaterThan(1);
+    const block = rehydrateHistoricalBlock(meeting, plan, ordinal, ids);
+    expect(block.turns).toHaveLength(1);
+    expect(block.turns[0]?.text).toContain(marker);
+    expect(block.turns[0]?.text).toBe(Array.from(text).slice(
+      block.turns[0]?.sourceStartCodePoint,
+      block.turns[0]?.sourceEndCodePoint,
+    ).join(""));
   });
 
   it("preserves coverage and stable IDs for bounded generated turn sequences", () => {
@@ -338,6 +394,39 @@ describe("historical evidence bounded embedding windows", () => {
     )).toBe(true);
   });
 
+  it("reduces overlap deterministically before rejecting a meeting at the 500-window cap", () => {
+    const base = acceptedMeeting();
+    if (base === null) {
+      throw new Error("fixture admission failed");
+    }
+    const meeting = Object.freeze({
+      ...base,
+      humanTurns: Object.freeze(Array.from({ length: 1_003 }, (_, index) => Object.freeze({
+        endMs: index * 10 + 9,
+        speakerId: "human-a",
+        startMs: index * 10,
+        text: `turn ${index}`,
+        turnId: `adaptive-${index}`,
+      }))),
+    });
+    const ids = new DeterministicTestIds();
+    const policy = Object.freeze({
+      maximumEmbeddingTokens: 512,
+      maxBlockUtf8Bytes: 4_096,
+      maxBlocksPerMeeting: 500,
+      maxTurnsPerBlock: 4,
+      turnOverlap: 2,
+      version: "meeting-knowledge.block-policy.v1" as const,
+    });
+    const plan = buildHistoricalIndexPlan(meeting, ids, policy);
+    const explicit = buildHistoricalIndexPlan(meeting, ids, { ...policy, turnOverlap: 1 });
+
+    expect(plan.effectiveTurnOverlap).toBe(1);
+    expect(plan.documents.length).toBeLessThanOrEqual(500);
+    expect(plan).toEqual(explicit);
+    expect(plan.planDigest).toContain("mkplan1.");
+  });
+
   it("accepts exactly 500 windows and rejects the 501st", () => {
     const base = acceptedMeeting();
     if (base === null) {
@@ -361,6 +450,10 @@ describe("historical evidence bounded embedding windows", () => {
       turnOverlap: 0,
       version: "meeting-knowledge.block-policy.v1" as const,
     });
+    expect(() => buildHistoricalIndexPlan(meeting(1), new DeterministicTestIds(), {
+      ...policy,
+      maxBlocksPerMeeting: 501,
+    })).toThrow("historical evidence block policy is outside its qualified bounds");
 
     expect(buildHistoricalIndexPlan(meeting(500), new DeterministicTestIds(), policy).documents)
       .toHaveLength(500);

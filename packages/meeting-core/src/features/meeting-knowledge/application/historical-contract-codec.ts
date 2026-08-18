@@ -19,14 +19,12 @@ import { estimateHistoricalEmbeddingTokens } from "./historical-embedding-window
 export class HistoricalContractCodecError extends Error {
   public override readonly name = "HistoricalContractCodecError";
 }
-
 function record(value: unknown, field: string): Readonly<Record<string, unknown>> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new HistoricalContractCodecError(`${field} must be an object`);
   }
   return value as Readonly<Record<string, unknown>>;
 }
-
 function exactFields(
   input: Readonly<Record<string, unknown>>,
   allowed: readonly string[],
@@ -37,28 +35,24 @@ function exactFields(
     throw new HistoricalContractCodecError(`${field} contains an unknown field`);
   }
 }
-
 function string(value: unknown, field: string): string {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new HistoricalContractCodecError(`${field} must be a non-empty string`);
   }
   return value;
 }
-
 function integer(value: unknown, field: string, minimum: number): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < minimum) {
     throw new HistoricalContractCodecError(`${field} must be a safe integer`);
   }
   return value;
 }
-
 function stringArray(value: unknown, field: string): readonly string[] {
   if (!Array.isArray(value)) {
     throw new HistoricalContractCodecError(`${field} must be an array`);
   }
   return Object.freeze(value.map((item, index) => string(item, `${field}[${index}]`)));
 }
-
 export function decodeHistoricalReleaseBindingV1(
   value: unknown,
 ): HistoricalReleaseBindingV1 {
@@ -187,24 +181,15 @@ function decodeTurnSources(value: unknown, ordinal: number): readonly Historical
       "turnId",
     ], field);
     return Object.freeze({
-      embeddingEndCodePoint: integer(
-        input.embeddingEndCodePoint,
-        `${field}.embeddingEndCodePoint`,
-        1,
-      ),
-      embeddingStartCodePoint: integer(
-        input.embeddingStartCodePoint,
-        `${field}.embeddingStartCodePoint`,
-        0,
-      ),
+      embeddingEndCodePoint: integer(input.embeddingEndCodePoint,
+        `${field}.embeddingEndCodePoint`, 1),
+      embeddingStartCodePoint: integer(input.embeddingStartCodePoint,
+        `${field}.embeddingStartCodePoint`, 0),
       endMs: integer(input.endMs, `${field}.endMs`, 1),
       sourceEndCodePoint: integer(input.sourceEndCodePoint, `${field}.sourceEndCodePoint`, 1),
       sourceRef: string(input.sourceRef, `${field}.sourceRef`),
-      sourceStartCodePoint: integer(
-        input.sourceStartCodePoint,
-        `${field}.sourceStartCodePoint`,
-        0,
-      ),
+      sourceStartCodePoint: integer(input.sourceStartCodePoint,
+        `${field}.sourceStartCodePoint`, 0),
       speakerId: string(input.speakerId, `${field}.speakerId`),
       startMs: integer(input.startMs, `${field}.startMs`, 0),
       turnId: string(input.turnId, `${field}.turnId`),
@@ -256,6 +241,7 @@ export function decodeHistoricalIndexPlanV1(value: unknown): HistoricalIndexPlan
     "binding",
     "deleteMutationId",
     "documents",
+    "effectiveTurnOverlap",
     "indexMutationId",
     "planDigest",
     "schemaVersion",
@@ -266,10 +252,13 @@ export function decodeHistoricalIndexPlanV1(value: unknown): HistoricalIndexPlan
   }
   const binding = decodeHistoricalReleaseBindingV1(input.binding);
   const topology = decodeTopology(input.topology);
-  const documents = Object.freeze(
-    input.documents.map((document, ordinal) => decodeDocument(document, ordinal)),
-  );
+  const documents = Object.freeze(input.documents.map(
+    (document, ordinal) => decodeDocument(document, ordinal),
+  ));
+  const effectiveTurnOverlap = integer(input.effectiveTurnOverlap,
+    "plan.effectiveTurnOverlap", 0);
   if (
+    effectiveTurnOverlap > 8 ||
     documents.length === 0 ||
     documents.some(({ manifest }) =>
       manifest.indexGeneration !== topology.indexGeneration ||
@@ -292,6 +281,7 @@ export function decodeHistoricalIndexPlanV1(value: unknown): HistoricalIndexPlan
     binding,
     deleteMutationId: string(input.deleteMutationId, "plan.deleteMutationId"),
     documents,
+    effectiveTurnOverlap,
     indexMutationId: string(input.indexMutationId, "plan.indexMutationId"),
     planDigest: string(input.planDigest, "plan.planDigest"),
     schemaVersion: 1,

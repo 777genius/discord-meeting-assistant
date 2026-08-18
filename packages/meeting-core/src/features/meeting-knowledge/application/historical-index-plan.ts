@@ -12,9 +12,12 @@ import type {
   LocallyRehydratedEvidenceBlockV1,
 } from "./ports/historical-memory.js";
 import {
+  buildHistoricalTurnSources,
+  canonicalHistoricalTurnSources,
   estimateHistoricalEmbeddingTokens,
   historicalEmbeddingText,
   partitionHistoricalEmbeddingWindows,
+  rehydrateHistoricalProjectionTurns,
   type HistoricalTurnProjection,
 } from "./historical-embedding-windows.js";
 
@@ -144,7 +147,7 @@ function assertPolicy(
     policy.maxBlockUtf8Bytes > 32_768 ||
     !Number.isSafeInteger(policy.maxBlocksPerMeeting) ||
     policy.maxBlocksPerMeeting < 1 ||
-    policy.maxBlocksPerMeeting > 2_048 ||
+    policy.maxBlocksPerMeeting > 500 ||
     !Number.isSafeInteger(policy.maxTurnsPerBlock) ||
     policy.maxTurnsPerBlock < 1 ||
     policy.maxTurnsPerBlock > 64 ||
@@ -218,26 +221,45 @@ export function buildHistoricalIndexPlan(
 ): HistoricalIndexPlanV1 {
   const policy = assertPolicy(candidatePolicy);
   const { binding } = meeting;
-  const topology = buildHistoricalTopology(binding, ids, policy);
-  const { indexGeneration, releaseRef } = topology;
-
-  let partitions: readonly (readonly HistoricalTurnProjection[])[];
+  let partitionResult: ReturnType<typeof partitionHistoricalEmbeddingWindows>;
   try {
-    partitions = partitionHistoricalEmbeddingWindows(meeting, policy);
+    partitionResult = partitionHistoricalEmbeddingWindows(meeting, policy);
   } catch (error) {
     throw new HistoricalIndexPlanError(
       "BLOCK_LIMIT_EXCEEDED",
       error instanceof Error ? error.message : "historical projection failed",
     );
   }
-  const documents: HistoricalIndexDocumentV1[] = partitions.map((projections, ordinal) => {
+  const effectivePolicy = Object.freeze({
+    ...policy,
+    turnOverlap: partitionResult.effectiveTurnOverlap,
+  });
+  const topology = buildHistoricalTopology(binding, ids, effectivePolicy);
+  const { indexGeneration, releaseRef } = topology;
+  const documents: HistoricalIndexDocumentV1[] = partitionResult.windows.map(
+    (projections, ordinal) => {
     const remoteText = projections
       .map((projection) => canonicalTurn(ids, binding, projection))
       .join("\n\n");
     const cleanEmbeddingText = historicalEmbeddingText(projections);
+    const turnSources = buildHistoricalTurnSources(projections, (turnId) => opaque(
+      "turn1",
+      ids.keyedId("historical-turn", [
+        binding.scopeId,
+        binding.roomId,
+        binding.meetingId,
+        binding.transcriptId,
+        String(binding.transcriptVersion),
+        turnId,
+      ]),
+    ));
     const contentHash = opaque(
       "mkcontent1",
-      ids.keyedId("historical-block-content", [remoteText]),
+      ids.keyedId("historical-block-content", [
+        cleanEmbeddingText,
+        remoteText,
+        canonicalHistoricalTurnSources(turnSources),
+      ]),
     );
     const candidateLocator = opaque(
       "mkcandidate1",
@@ -269,7 +291,7 @@ export function buildHistoricalIndexPlan(
       turnIds: Object.freeze([
         ...new Set(projections.map(({ turn }) => turn.turnId)),
       ]),
-      turnSources: buildTurnSources(projections, ids, binding),
+      turnSources,
     });
     return Object.freeze({
       embeddingText: cleanEmbeddingText,
@@ -281,11 +303,13 @@ export function buildHistoricalIndexPlan(
         ids.keyedId("historical-document-title", [candidateLocator]),
       ),
     });
-  });
+    },
+  );
   const planDigest = opaque(
     "mkplan1",
     ids.keyedId("historical-index-plan", [
       indexGeneration,
+      `turnOverlap=${partitionResult.effectiveTurnOverlap}`,
       ...documents.map(({ manifest }) =>
         [
           manifest.candidateLocator,
@@ -302,6 +326,7 @@ export function buildHistoricalIndexPlan(
       ids.keyedId("historical-delete-mutation", [releaseRef]),
     ),
     documents: Object.freeze(documents),
+    effectiveTurnOverlap: partitionResult.effectiveTurnOverlap,
     indexMutationId: opaque(
       "mkmutation1",
       ids.keyedId("historical-release-index-mutation", [releaseRef]),
@@ -310,37 +335,6 @@ export function buildHistoricalIndexPlan(
     schemaVersion: 1,
     topology,
   });
-}
-
-function buildTurnSources(
-  projections: readonly HistoricalTurnProjection[],
-  ids: HistoricalOpaqueIdPort,
-  binding: HistoricalReleaseBindingV1,
-): HistoricalBlockManifestV1["turnSources"] {
-  let embeddingOffset = 0;
-  return Object.freeze(projections.map((projection) => {
-    const textLength = Array.from(projection.text).length;
-    const source = Object.freeze({
-      embeddingEndCodePoint: embeddingOffset + textLength,
-      embeddingStartCodePoint: embeddingOffset,
-      endMs: projection.turn.endMs,
-      sourceEndCodePoint: projection.sourceEndCodePoint,
-      sourceRef: opaque("turn1", ids.keyedId("historical-turn", [
-        binding.scopeId,
-        binding.roomId,
-        binding.meetingId,
-        binding.transcriptId,
-        String(binding.transcriptVersion),
-        projection.turn.turnId,
-      ])),
-      sourceStartCodePoint: projection.sourceStartCodePoint,
-      speakerId: projection.turn.speakerId,
-      startMs: projection.turn.startMs,
-      turnId: projection.turn.turnId,
-    });
-    embeddingOffset += textLength + 1;
-    return source;
-  }));
 }
 
 export function rehydrateHistoricalBlock(
@@ -359,6 +353,8 @@ export function rehydrateHistoricalBlock(
     current.planDigest !== plan.planDigest ||
     actual.manifest.candidateLocator !== expected.manifest.candidateLocator ||
     actual.manifest.contentHash !== expected.manifest.contentHash ||
+    actual.embeddingText !== expected.embeddingText ||
+    !sameTurnSources(actual.manifest.turnSources, expected.manifest.turnSources) ||
     current.topology.indexGeneration !== plan.topology.indexGeneration
   ) {
     throw new HistoricalIndexPlanError(
@@ -366,17 +362,17 @@ export function rehydrateHistoricalBlock(
       "historical candidate no longer matches canonical local evidence",
     );
   }
-  const turnsById = new Map(meeting.humanTurns.map((turn) => [turn.turnId, turn]));
-  const turns = expected.manifest.turnIds.map((turnId) => {
-    const turn = turnsById.get(turnId);
-    if (turn === undefined) {
-      throw new HistoricalIndexPlanError(
-        "STALE_PLAN",
-        "historical candidate references a missing authoritative turn",
-      );
-    }
-    return turn;
-  });
+  const turns = rehydrateHistoricalProjectionTurns(
+    meeting,
+    expected.embeddingText,
+    expected.manifest.turnSources,
+  );
+  if (turns === null) {
+    throw new HistoricalIndexPlanError(
+      "STALE_PLAN",
+      "historical source range no longer matches canonical local evidence",
+    );
+  }
   return Object.freeze({
     binding: meeting.binding,
     candidateLocator: expected.manifest.candidateLocator,
@@ -384,5 +380,24 @@ export function rehydrateHistoricalBlock(
     indexGeneration: expected.manifest.indexGeneration,
     ordinal,
     turns: Object.freeze(turns),
+  });
+}
+
+function sameTurnSources(
+  left: HistoricalBlockManifestV1["turnSources"],
+  right: HistoricalBlockManifestV1["turnSources"],
+): boolean {
+  return left.length === right.length && left.every((source, index) => {
+    const expected = right[index];
+    return expected !== undefined &&
+      source.embeddingStartCodePoint === expected.embeddingStartCodePoint &&
+      source.embeddingEndCodePoint === expected.embeddingEndCodePoint &&
+      source.sourceStartCodePoint === expected.sourceStartCodePoint &&
+      source.sourceEndCodePoint === expected.sourceEndCodePoint &&
+      source.sourceRef === expected.sourceRef &&
+      source.turnId === expected.turnId &&
+      source.speakerId === expected.speakerId &&
+      source.startMs === expected.startMs &&
+      source.endMs === expected.endMs;
   });
 }

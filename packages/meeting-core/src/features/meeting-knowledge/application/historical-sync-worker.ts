@@ -14,6 +14,7 @@ import type {
   HistoricalSyncStore,
 } from "./ports/historical-state.js";
 import type { HistoricalReleaseBindingV1 } from "../domain/historical-evidence.js";
+import { historicalPlanProjectionMatches } from "./historical-embedding-windows.js";
 
 function operationOptions(signal: AbortSignal | undefined):
   { readonly signal?: AbortSignal } {
@@ -188,6 +189,22 @@ export class HistoricalSyncWorker {
       await this.dependencies.store.recordDeadLetter(
         lease,
         "historical_index_plan.binding_conflict",
+        operationOptions(signal),
+      );
+      return this.result(lease, "dead_lettered");
+    } else if (!historicalPlanProjectionMatches(accepted, plan, (turnId) =>
+      `turn1.${this.dependencies.ids.keyedId("historical-turn", [
+        accepted.binding.scopeId,
+        accepted.binding.roomId,
+        accepted.binding.meetingId,
+        accepted.binding.transcriptId,
+        String(accepted.binding.transcriptVersion),
+        turnId,
+      ])}`
+    )) {
+      await this.dependencies.store.recordDeadLetter(
+        lease,
+        "historical_index_plan.stale_plan",
         operationOptions(signal),
       );
       return this.result(lease, "dead_lettered");
