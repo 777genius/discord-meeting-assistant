@@ -326,6 +326,7 @@ function createLiveRuntime(input: {
       endpoint: input.config.voicetext.webSocketUrl,
       keyterms: meetingVocabulary,
       language: "multi",
+      profile: input.config.voicetext.liveProfile,
       token: input.config.secrets.voicetextServiceToken,
     }),
   });

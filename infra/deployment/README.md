@@ -68,6 +68,28 @@ the official bot application, write an independently generated 32-byte base64 or
 encrypts short-lived authorization principals and derives non-reversible dedupe
 subjects; it is not a provider or Discord credential.
 
+VoiceText batch and live recognition are selected independently in Compose:
+
+```text
+VOICETEXT_BATCH_PROFILE=deepgram-nova-3
+VOICETEXT_LIVE_PROFILE=deepgram-nova-3
+TRANSCRIPTION_LEGACY_EXECUTION_BINDING=voicetext-batch-v2:deepgram-nova-3
+```
+
+Batch also permits `elevenlabs-scribe-v2`; live also permits
+`elevenlabs-scribe-v2-realtime`. Every mixed combination is supported. Invalid
+values fail Meeting Platform startup, and omitted selectors default
+independently to Deepgram. The Deepgram batch choice preserves contract v2 and
+its existing idempotency identity; ElevenLabs batch uses strict contract v3.
+The legacy binding has no default: it is explicit historical provenance for
+recoverable rows created before durable binding existed. Binding-aware work
+uses the isolated V2 post-call queue so a rolling V1 worker cannot claim it.
+Live always keeps raw Discord Opus at mono 48 kHz and requires the selected
+provider/model in VoiceText `ready` before any audio. Neither selector exposes
+provider credentials, endpoints, SDKs, or probes to Discord. The final batch
+transcript from Craig's authoritative per-speaker Ogg tracks remains the only
+final evidence used by summary, memory, or RAG; live text stays derived.
+
 ## Redis queue durability
 
 Copy `redis.conf.example` to `${DEPLOY_ROOT}/secrets/redis.conf`, replace the

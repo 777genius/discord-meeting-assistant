@@ -14,6 +14,10 @@ const segmentSchema = z.object({
   startMs: z.number().int().nonnegative(),
   text: z.string().min(1).max(16_384),
 }).strict().refine(({ endMs, startMs }) => endMs >= startMs);
+const profilesSchema = z.object({
+  batch: z.enum(["deepgram-nova-3", "elevenlabs-scribe-v2"]),
+  live: z.enum(["deepgram-nova-3", "elevenlabs-scribe-v2-realtime"]),
+}).strict();
 
 const voicetextCanaryInternalResultV1Schema = z.object({
   batch: z.object({
@@ -32,6 +36,7 @@ const voicetextCanaryInternalResultV1Schema = z.object({
     protocolReady: z.literal(true),
     segments: z.array(segmentSchema).min(1).max(1_024),
   }).strict(),
+  profiles: profilesSchema,
   schemaVersion: z.literal(1),
   tokenFile: z.object({
     generationId: z.string().min(1).max(256), mode: z.literal(0o400),
@@ -49,6 +54,7 @@ export interface VoicetextCanaryRunnerInputV1 {
   readonly binding: VoicetextSemanticCanaryReceiptV1["binding"];
   readonly endpoint: VoicetextSemanticCanaryReceiptV1["endpoint"];
   readonly fixturePath: string;
+  readonly profiles: z.infer<typeof profilesSchema>;
   readonly signal?: AbortSignal;
   readonly timeoutMs: number;
 }
@@ -70,6 +76,9 @@ export async function produceVoicetextSemanticCanaryReceiptV1(
 ): Promise<VoicetextSemanticCanaryReceiptV1> {
   assertInput(input);
   const result = voicetextCanaryInternalResultV1Schema.parse(await runner.run(input));
+  if (digestCanonical(result.profiles) !== digestCanonical(input.profiles)) {
+    throw new Error("Voicetext internal canary profiles do not match the pinned execution profiles");
+  }
   assertIdempotentBatch(result);
   const expected = input.expectedSegments.map((segment) => segmentSchema.parse(segment));
   const expectedWords = normalizedWords(expected);
@@ -111,6 +120,7 @@ export async function produceVoicetextSemanticCanaryReceiptV1(
       requiredTermsExpectationSha256: digestVoicetextCanaryRequiredTermsV1(requiredTerms),
       wordErrorRate: Math.max(batchQuality.wordErrorRate, liveQuality.wordErrorRate),
     },
+    profiles: result.profiles,
     schemaVersion: 1,
     tokenFile: result.tokenFile,
   };

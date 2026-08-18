@@ -1,4 +1,5 @@
 import { VoicetextAdapterError } from "./errors.js";
+import type { VoicetextLiveContractIdentity } from "./voicetext-live-transcription-configuration.js";
 
 export interface VoicetextFinalSegment {
   readonly confidence?: number;
@@ -15,7 +16,7 @@ export interface VoicetextPartialSegment {
 }
 
 export type VoicetextServerMessage =
-  | { readonly sessionId: string; readonly type: "ready" }
+  | ({ readonly sessionId: string; readonly type: "ready" } & VoicetextLiveContractIdentity)
   | { readonly seq: number; readonly type: "ack" }
   | ({ readonly type: "final" } & VoicetextFinalSegment)
   | { readonly segment: VoicetextPartialSegment | null; readonly type: "partial" }
@@ -35,8 +36,9 @@ interface VoicetextConfigBase {
   readonly client_session_id: string;
   readonly keyterms?: readonly string[];
   readonly language: string;
+  readonly model: "nova-3" | "scribe_v2_realtime";
   readonly protocol_v: 2;
-  readonly provider: "deepgram";
+  readonly provider: "deepgram" | "elevenlabs";
   readonly type: "config";
 }
 
@@ -48,6 +50,10 @@ export type VoicetextConfigMessage = VoicetextConfigBase & (
 export function parseServerMessage(
   raw: string,
   maxTranscriptChars: number,
+  expectedIdentity: VoicetextLiveContractIdentity = {
+    model: "nova-3",
+    provider: "deepgram",
+  },
 ): VoicetextServerMessage {
   let value: unknown;
   try {
@@ -61,7 +67,7 @@ export function parseServerMessage(
 
   switch (value.type) {
     case "ready":
-      return parseReady(value);
+      return parseReady(value, expectedIdentity);
     case "ack":
       return parseAcknowledgement(value);
     case "partial":
@@ -85,11 +91,22 @@ export function parseServerMessage(
 
 function parseReady(
   value: Readonly<Record<string, unknown>>,
+  expectedIdentity: VoicetextLiveContractIdentity,
 ): Extract<VoicetextServerMessage, { readonly type: "ready" }> {
-  if (typeof value.session_id !== "string" || !uuidPattern.test(value.session_id)) {
+  if (
+    typeof value.session_id !== "string" ||
+    !uuidPattern.test(value.session_id) ||
+    value.provider !== expectedIdentity.provider ||
+    value.model !== expectedIdentity.model
+  ) {
     throw protocolError("Voicetext returned an invalid ready message");
   }
-  return { sessionId: value.session_id, type: "ready" };
+  return {
+    model: expectedIdentity.model,
+    provider: expectedIdentity.provider,
+    sessionId: value.session_id,
+    type: "ready",
+  };
 }
 
 function parseAcknowledgement(

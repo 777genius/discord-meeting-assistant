@@ -40,8 +40,18 @@ export interface VoicetextLiveTranscriptionOptions {
   readonly language?: string;
   readonly maxInboundFrameBytes?: number;
   readonly maxTranscriptCharsPerSegment?: number;
+  readonly profile?: VoicetextLiveProfile;
   readonly readyTimeoutMs?: number;
   readonly token: string;
+}
+
+export type VoicetextLiveProfile =
+  | "deepgram-nova-3"
+  | "elevenlabs-scribe-v2-realtime";
+
+export interface VoicetextLiveContractIdentity {
+  readonly model: "nova-3" | "scribe_v2_realtime";
+  readonly provider: "deepgram" | "elevenlabs";
 }
 
 export interface ValidatedVoicetextLiveTranscriptionOptions {
@@ -54,6 +64,7 @@ export interface ValidatedVoicetextLiveTranscriptionOptions {
   readonly language: string;
   readonly maxInboundFrameBytes: number;
   readonly maxTranscriptCharsPerSegment: number;
+  readonly identity: VoicetextLiveContractIdentity;
   readonly readyTimeoutMs: number;
 }
 
@@ -69,6 +80,7 @@ export function validateVoicetextLiveTranscriptionOptions(
     throw new VoicetextAdapterError("invalid_input", "Voicetext token is malformed", false);
   }
   const language = options.language?.trim();
+  const identity = voicetextLiveContractIdentity(options.profile ?? "deepgram-nova-3");
   return {
     audioAckTimeoutMs: boundedLiveInteger(options.audioAckTimeoutMs, 10_000, 100, 120_000),
     authorization: "Bearer " + token,
@@ -89,8 +101,18 @@ export function validateVoicetextLiveTranscriptionOptions(
       64,
       65_536,
     ),
+    identity,
     readyTimeoutMs: boundedLiveInteger(options.readyTimeoutMs, 15_000, 100, 120_000),
   };
+}
+
+function voicetextLiveContractIdentity(
+  profile: VoicetextLiveProfile,
+): VoicetextLiveContractIdentity {
+  if (profile === "deepgram-nova-3") {
+    return { model: "nova-3", provider: "deepgram" };
+  }
+  return { model: "scribe_v2_realtime", provider: "elevenlabs" };
 }
 
 export function validateVoicetextLiveIdentity(value: string, field: string): void {

@@ -120,6 +120,69 @@ afterAll(async () => {
 });
 
 describe("BullMQ post-call adapter with disposable Redis", () => {
+  it("holds an unsupported job before business handling and lets a newer runtime resume it", async (context) => {
+    const redis = redisOrSkip(context);
+    const connection = {
+      host: redis.getHost(),
+      port: redis.getMappedPort(REDIS_PORT),
+    };
+    const prefix = "bullmq-post-call-runtime-binding-hold";
+    const queue = createPostCallQueue({ connection, prefix });
+    const queueEvents = createPostCallQueueEvents({ connection, prefix });
+    const deadLetters: PostCallDeadLetterRecord[] = [];
+    let handlerCalls = 0;
+    const rollbackWorker = createPostCallWorker({
+      admission: async () => "hold",
+      connection,
+      deadLetterRecorder: { record: async (record) => void deadLetters.push(record) },
+      handler: async () => {
+        handlerCalls += 1;
+      },
+      prefix,
+    });
+    let newerWorker: ReturnType<typeof createPostCallWorker> | undefined;
+    try {
+      await Promise.all([queue.waitUntilReady(), queueEvents.waitUntilReady(), rollbackWorker.waitUntilReady()]);
+      const receipt = await new BullMqPostCallEnqueuer(queue).enqueue({
+        meetingId: "meeting-newer-binding",
+        schemaVersion: 1,
+      });
+      const job = await queue.getJob(receipt.jobId);
+      await vi.waitFor(async () => {
+        expect(await job?.getState()).toBe("delayed");
+      });
+      expect(job?.attemptsMade).toBe(0);
+      expect(handlerCalls).toBe(0);
+      expect(deadLetters).toEqual([]);
+
+      await rollbackWorker.close(false);
+      await job?.promote();
+      newerWorker = createPostCallWorker({
+        admission: async () => "accepted",
+        connection,
+        deadLetterRecorder: { record: async (record) => void deadLetters.push(record) },
+        handler: async () => {
+          handlerCalls += 1;
+        },
+        prefix,
+      });
+      await newerWorker.waitUntilReady();
+      await expect(job!.waitUntilFinished(queueEvents, 10_000)).resolves.toBeNull();
+      expect(handlerCalls).toBe(1);
+      expect(deadLetters).toEqual([]);
+    } finally {
+      await Promise.allSettled([
+        rollbackWorker.close(false),
+        newerWorker?.close(false) ?? Promise.resolve(),
+        queueEvents.close(),
+        queue.close(),
+      ]);
+    }
+  }, 30_000);
+
+});
+
+describe("BullMQ post-call adapter with disposable Redis", () => {
   it("deduplicates success and explicitly dead-letters retry exhaustion", async (context) => {
     const redis = redisOrSkip(context);
     const connection = {

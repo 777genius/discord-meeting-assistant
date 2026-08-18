@@ -155,7 +155,11 @@ describe("post-call retryable recovery E2E", () => {
   it("resumes from the saved transcript and publishes exactly once", async (context) => {
     const infrastructure = infrastructureOrSkip(context);
     const repository = new PostgresMeetingRepository(infrastructure.database);
-    await repository.recordAndSchedule(initialMeeting(), 0);
+    await repository.recordAndSchedule(
+      initialMeeting(),
+      0,
+      "voicetext-batch-v2:deepgram-nova-3",
+    );
 
     const connection = {
       host: infrastructure.redis.getHost(),

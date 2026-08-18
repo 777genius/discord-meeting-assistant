@@ -36,6 +36,10 @@ const inputSchema = z.object({
     live: z.object({ origin: exactOriginSchema("wss:"), path: endpointPathSchema }).strict(),
   }).strict(),
   fixturePath: absolutePathSchema,
+  profiles: z.object({
+    batch: z.enum(["deepgram-nova-3", "elevenlabs-scribe-v2"]),
+    live: z.enum(["deepgram-nova-3", "elevenlabs-scribe-v2-realtime"]),
+  }).strict(),
   signal: z.instanceof(AbortSignal).optional(),
   timeoutMs: z.number().int().min(2).max(300_000),
 }).strict();
@@ -90,8 +94,10 @@ function buildCanaryArgs(
     "--image-digest-sha256", input.binding.imageDigestSha256,
     "--batch-origin", input.endpoint.batch.origin,
     "--batch-path", input.endpoint.batch.path,
+    "--batch-profile", input.profiles.batch,
     "--live-origin", input.endpoint.live.origin,
     "--live-path", input.endpoint.live.path,
+    "--live-profile", input.profiles.live,
     "--json",
   ]);
 }

@@ -28,6 +28,7 @@ const migrationDefinitions = [
   { fileName: "0017_conversation_one_shot_receipts.sql" },
   { fileName: "0018_answer_delivery_container.sql" },
   { fileName: "0019_greeting_receipt_state_machine.sql" },
+  { fileName: "0020_add_transcription_execution_binding.sql" },
 ] as const;
 
 const migrationLockKey = "718330091620232601";

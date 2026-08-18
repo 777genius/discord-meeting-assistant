@@ -143,6 +143,7 @@ export class PostgresMeetingRepository implements
   public async recordAndSchedule(
     snapshot: MeetingSnapshot,
     expectedRevision: number,
+    transcriptionExecutionBinding: string,
   ): Promise<void> {
     requireExpectedRevision(expectedRevision);
     const normalized = normalizeSnapshot(snapshot);
@@ -150,16 +151,22 @@ export class PostgresMeetingRepository implements
       throw new RangeError("recordAndSchedule requires an initial revision-zero snapshot");
     }
     const client = await this.pool.connect();
+    const requiredBinding = requireTranscriptionExecutionBinding(transcriptionExecutionBinding);
     try {
       await client.query("BEGIN");
       await this.insertRecordedOrValidateExisting(client, normalized);
       await client.query(
         `
-          INSERT INTO meeting_core.post_call_outbox (meeting_id, schema_version)
-          VALUES ($1, 1)
+          INSERT INTO meeting_core.post_call_outbox (
+            meeting_id,
+            schema_version,
+            transcription_execution_binding,
+            transcription_execution_binding_required
+          )
+          VALUES ($1, 1, $2, TRUE)
           ON CONFLICT (meeting_id) DO NOTHING
         `,
-        [normalized.meetingId],
+        [normalized.meetingId, requiredBinding],
       );
       await client.query("COMMIT");
     } catch (error) {
@@ -391,4 +398,17 @@ export class PostgresMeetingRepository implements
   ): boolean {
     return current.revision === snapshot.revision && current.snapshot_matches;
   }
+}
+
+const maximumTranscriptionExecutionBindingLength = 128;
+
+function requireTranscriptionExecutionBinding(binding: string): string {
+  if (
+    binding.length < 1 ||
+    binding.length > maximumTranscriptionExecutionBindingLength ||
+    !/^[a-z0-9][a-z0-9._:-]*$/u.test(binding)
+  ) {
+    throw new RangeError("transcription execution binding is invalid");
+  }
+  return binding;
 }

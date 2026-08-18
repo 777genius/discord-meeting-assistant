@@ -176,6 +176,16 @@
       "id": "ADR-0036",
       "path": "docs/decisions/0036-canonical-live-projection-reply.md",
       "immutableDigest": "sha256:cccdc041aea7006e9aafb7e61334976ea51be236bdff39d05ea2eb99033cb5ac"
+    },
+    {
+      "id": "ADR-0037",
+      "path": "docs/decisions/0037-independent-voicetext-provider-profiles.md",
+      "immutableDigest": "sha256:f49f2e14ba4741698d8116f6741e011955f6fdbab3a36cd5d5e5a5692602f5fc"
+    },
+    {
+      "id": "ADR-0038",
+      "path": "docs/decisions/0038-binding-aware-post-call-rollout.md",
+      "immutableDigest": "sha256:e164589dbb95565529ad95aa40f7dbb94497a7d05d4bb4a366406822150bb64e"
     }
   ]
 }

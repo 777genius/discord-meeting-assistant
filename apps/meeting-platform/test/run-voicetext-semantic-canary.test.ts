@@ -60,7 +60,8 @@ describe("Voicetext semantic canary", () => {
       },
     );
     const dependencies: VoicetextSemanticCanaryDependencies = {
-      createBatchClient: ({ token }) => {
+      createBatchClient: ({ profile, token }) => {
+        expect(profile).toBe("elevenlabs-scribe-v2");
         expect(token).toBe("secret-machine-bearer");
         return batch;
       },
@@ -82,6 +83,10 @@ describe("Voicetext semantic canary", () => {
       imageDigestSha256: "b".repeat(64),
       liveEndpoint: "wss://voicetext.test/api/v1/transcribe/stream",
       planSha256: "c".repeat(64),
+      profiles: {
+        batch: "elevenlabs-scribe-v2",
+        live: "elevenlabs-scribe-v2-realtime",
+      },
       sourceRevision: "d".repeat(40),
     }, "/run/secrets/voicetext-service-token", dependencies);
 
@@ -96,6 +101,13 @@ describe("Voicetext semantic canary", () => {
     ]);
     expect(waits.slice(-2)).toEqual([20, 20]);
     expect(finalize).toHaveBeenCalledOnce();
+    expect(openLiveSession).toHaveBeenCalledWith(expect.objectContaining({
+      profile: "elevenlabs-scribe-v2-realtime",
+    }));
+    expect(result.profiles).toEqual({
+      batch: "elevenlabs-scribe-v2",
+      live: "elevenlabs-scribe-v2-realtime",
+    });
     expect(JSON.stringify(result)).not.toContain("secret-machine-bearer");
   });
 
@@ -111,6 +123,7 @@ describe("Voicetext semantic canary", () => {
       imageDigestSha256: "b".repeat(64),
       liveEndpoint: "wss://voicetext.test/api/v1/transcribe/stream",
       planSha256: "c".repeat(64),
+      profiles: { batch: "deepgram-nova-3", live: "deepgram-nova-3" },
       sourceRevision: "d".repeat(40),
     }, "/run/secrets/token", {
       createBatchClient,
@@ -122,7 +135,9 @@ describe("Voicetext semantic canary", () => {
     })).rejects.toThrow("pinned digest");
     expect(createBatchClient).not.toHaveBeenCalled();
   });
+});
 
+describe("Voicetext semantic canary boundaries", () => {
   it("accepts only endpoints that exactly match the runtime configuration", () => {
     const argv = [
       "--fixture", "/fixtures/canary.ogg",
@@ -134,18 +149,33 @@ describe("Voicetext semantic canary", () => {
       "--image-digest-sha256", "d".repeat(64),
       "--batch-origin", "https://voicetext.test",
       "--batch-path", "/api/v1/transcribe/batch",
+      "--batch-profile", "elevenlabs-scribe-v2",
       "--live-origin", "wss://voicetext.test",
       "--live-path", "/api/v1/transcribe/stream",
+      "--live-profile", "elevenlabs-scribe-v2-realtime",
       "--json",
     ];
     expect(parseVoicetextSemanticCanaryArguments(argv, {
+      VOICETEXT_BATCH_PROFILE: "elevenlabs-scribe-v2",
+      VOICETEXT_LIVE_PROFILE: "elevenlabs-scribe-v2-realtime",
       VOICETEXT_SERVICE_TOKEN_FILE: "/run/secrets/voicetext-service-token",
       VOICETEXT_WS_URL: "wss://voicetext.test/api/v1/transcribe/stream",
     }).args.fixtureSha256).toBe("a".repeat(64));
     expect(() => parseVoicetextSemanticCanaryArguments(argv, {
+      VOICETEXT_BATCH_PROFILE: "elevenlabs-scribe-v2",
+      VOICETEXT_LIVE_PROFILE: "elevenlabs-scribe-v2-realtime",
       VOICETEXT_SERVICE_TOKEN_FILE: "/run/secrets/voicetext-service-token",
       VOICETEXT_WS_URL: "wss://other.test/api/v1/transcribe/stream",
     })).toThrow("do not match");
+    expect(() => parseVoicetextSemanticCanaryArguments(
+      argv.with(argv.indexOf("elevenlabs-scribe-v2"), "other"),
+      {
+        VOICETEXT_BATCH_PROFILE: "elevenlabs-scribe-v2",
+        VOICETEXT_LIVE_PROFILE: "elevenlabs-scribe-v2-realtime",
+        VOICETEXT_SERVICE_TOKEN_FILE: "/run/secrets/voicetext-service-token",
+        VOICETEXT_WS_URL: "wss://voicetext.test/api/v1/transcribe/stream",
+      },
+    )).toThrow("batch profile is invalid");
   });
 
   it("stops batch polling at one total deadline and performs no later provider activity", async () => {
@@ -298,6 +328,7 @@ function canaryArguments(fixture: Uint8Array, deadlineMs: number) {
     imageDigestSha256: "b".repeat(64),
     liveEndpoint: "wss://voicetext.test/api/v1/transcribe/stream",
     planSha256: "c".repeat(64),
+    profiles: { batch: "deepgram-nova-3", live: "deepgram-nova-3" },
     sourceRevision: "d".repeat(40),
   } as const;
 }

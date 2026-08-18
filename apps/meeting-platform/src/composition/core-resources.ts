@@ -14,6 +14,7 @@ import {
   PostgresLiveMeetingRepository,
   PostgresMeetingRepository,
   PostgresSummaryPublicationEffectLedger,
+  PostgresTranscriptionExecutionBindingStore,
 } from "@discord-meeting/postgres-adapter";
 import { DurableCraigRecordingIngress } from "@discord-meeting/recording-ingress-adapter";
 import {
@@ -31,7 +32,13 @@ import type { RecordingDurabilityPort } from "../application/recording-ingress.j
 import type { PlatformConfig } from "../config.js";
 import type { PlatformStartupCleanup } from "./startup-cleanup.js";
 import { meetingVocabulary } from "./meeting-vocabulary.js";
-import { createFinalTranscriber } from "./transcription.js";
+import {
+  createFinalTranscriber,
+  legacyFinalTranscriptionExecutionBinding,
+  selectedFinalTranscriptionExecutionBinding,
+  supportedFinalTranscriptionExecutionBindings,
+  type FinalTranscriptionExecutionBinding,
+} from "./transcription.js";
 
 export interface PlatformCoreResources {
   readonly connection: ConnectionOptions;
@@ -44,6 +51,10 @@ export interface PlatformCoreResources {
   readonly rawRuntimeTransport: GrpcSubscriptionRuntimeTransport;
   readonly rawSummarizer: SubscriptionRuntimeSummaryAdapter;
   readonly rawTranscriber: FinalTranscriptionPort;
+  readonly legacyTranscriptionExecutionBinding: FinalTranscriptionExecutionBinding;
+  readonly selectedTranscriptionExecutionBinding: FinalTranscriptionExecutionBinding;
+  readonly supportedTranscriptionExecutionBindings: ReadonlySet<FinalTranscriptionExecutionBinding>;
+  readonly transcriptionExecutionBindings: PostgresTranscriptionExecutionBindingStore;
   readonly recordingIngress: RecordingDurabilityPort;
   readonly recordings: DurableCraigRecordingIngress;
   readonly runtimeTransport: InstrumentedSubscriptionRuntimeTransport;
@@ -75,6 +86,7 @@ export function createPlatformCoreResources(input: {
   });
   input.cleanup.defer("recording ingress spool", () => recordings.close());
   const meetings = new PostgresMeetingRepository(pool);
+  const transcriptionExecutionBindings = new PostgresTranscriptionExecutionBindingStore(pool);
   const guildConfigurations = new PostgresGuildConfigurationRepository(pool);
   const publicationTargets = new DiscordPublicationTargetResolver(
     new ResolveGuildMeetingTarget(guildConfigurations),
@@ -107,11 +119,19 @@ export function createPlatformCoreResources(input: {
       maxOutputTokens: subscriptionRuntimeSummaryMaxOutputTokens,
       technicalVocabulary: meetingVocabulary,
     }),
-    rawTranscriber: createFinalTranscriber(input.config, artifactReader),
+    rawTranscriber: createFinalTranscriber(
+      input.config,
+      artifactReader,
+      transcriptionExecutionBindings,
+    ),
     recordingIngress: new CraigRecordingIngressAdapter(recordings),
     recordings,
     runtimeTransport,
     s3,
+    legacyTranscriptionExecutionBinding: legacyFinalTranscriptionExecutionBinding(input.config),
+    selectedTranscriptionExecutionBinding: selectedFinalTranscriptionExecutionBinding(input.config),
+    supportedTranscriptionExecutionBindings: supportedFinalTranscriptionExecutionBindings(input.config),
+    transcriptionExecutionBindings,
   };
 }
 

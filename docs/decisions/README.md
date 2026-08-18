@@ -39,6 +39,8 @@
 - [ADR-0034: Bounded answer-model grounding](0034-bounded-answer-model-grounding.md)
 - [ADR-0035: Separate immutable Infinity package and semantic qualification](0035-infinity-package-and-semantic-qualification.md)
 - [ADR-0036: Canonical live-projection reply](0036-canonical-live-projection-reply.md)
+- [ADR-0037: Independent VoiceText batch and live provider profiles](0037-independent-voicetext-provider-profiles.md)
+- [ADR-0038: Binding-aware post-call rollout](0038-binding-aware-post-call-rollout.md)
 
 ## Superseded
 

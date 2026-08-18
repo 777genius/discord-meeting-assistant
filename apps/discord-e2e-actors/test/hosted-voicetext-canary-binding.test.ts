@@ -45,6 +45,10 @@ describe("hosted Voicetext semantic canary binding", () => {
       maximumTimelineDeltaMs: 60_000,
       maximumWordErrorRate: 0.35,
     });
+    expect(binding.profiles).toEqual({
+      batch: "deepgram-nova-3",
+      live: "deepgram-nova-3",
+    });
     expect(digestVoicetextCanaryRequiredTermsV1(binding.requiredTerms))
       .toBe(expectedRequiredTermsSha256);
     expect(binding.requiredTerms.some((term) => /[А-Яа-яЁё]/u.test(term))).toBe(true);
@@ -61,6 +65,7 @@ describe("hosted Voicetext semantic canary binding", () => {
       binding.endpoint.live,
       binding.fixture,
       binding.fixtureExpectation,
+      binding.profiles,
       binding.requiredTerms,
       binding.transcriptExpectation,
       binding.transcriptExpectation.segments,

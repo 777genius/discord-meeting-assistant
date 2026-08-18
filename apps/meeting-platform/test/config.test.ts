@@ -33,6 +33,7 @@ const environment = {
   SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256: "a".repeat(64),
   SUBSCRIPTION_RUNTIME_TOKEN_FILE: "/run/secrets/runtime",
   TRANSCRIPTION_PROVIDER: "speaches",
+  TRANSCRIPTION_LEGACY_EXECUTION_BINDING: "speaches-v1",
 } as const;
 
 describe("platform configuration", () => {
@@ -171,6 +172,12 @@ describe("platform configuration", () => {
     expect(config.discordPublicationMode).toBe("message");
     expect(config.discordBotikApplicationId).toBe("1533224474609057798");
     expect(Object.keys(environment)).not.toContain("OPENAI_API_KEY");
+  });
+
+  it("requires explicit historical transcription provenance", async () => {
+    const { TRANSCRIPTION_LEGACY_EXECUTION_BINDING: _, ...withoutLegacyBinding } = environment;
+    await expect(loadPlatformConfig(withoutLegacyBinding, async () => "value"))
+      .rejects.toThrow("TRANSCRIPTION_LEGACY_EXECUTION_BINDING");
   });
 
   it("falls back to the Craig identity when playback uses the same Discord bot", async () => {
@@ -502,8 +509,10 @@ describe("platform configuration routing and conversation", () => {
     expect(config.voicetext?.batchMaxArtifactBytes).toBe(64 * 1_024 * 1_024);
     expect(config.voicetext?.batchMaxConcurrency).toBe(6);
     expect(config.voicetext?.batchMaxConcurrentMeetings).toBe(2);
+    expect(config.voicetext?.batchProfile).toBe("deepgram-nova-3");
     expect(config.voicetext?.liveMaxConcurrentSessions).toBe(10);
     expect(config.voicetext?.livePacketBackpressureTimeoutMs).toBe(2_000);
+    expect(config.voicetext?.liveProfile).toBe("deepgram-nova-3");
 
     const defaults = await loadPlatformConfig(
       {
@@ -516,6 +525,37 @@ describe("platform configuration routing and conversation", () => {
     );
     expect(defaults.voicetext?.batchMaxConcurrentMeetings).toBe(1);
     expect(defaults.voicetext?.liveMaxConcurrentSessions).toBe(3);
+  });
+
+  it("validates independent batch and live VoiceText profile selectors", async () => {
+    const base = {
+      ...environment,
+      TRANSCRIPTION_PROVIDER: "voicetext",
+      VOICETEXT_SERVICE_TOKEN_FILE: "/run/secrets/voicetext",
+      VOICETEXT_WS_URL: "wss://api.voicetext.site/api/v1/transcribe/stream",
+    } as const;
+    const batchProfiles = ["deepgram-nova-3", "elevenlabs-scribe-v2"] as const;
+    const liveProfiles = ["deepgram-nova-3", "elevenlabs-scribe-v2-realtime"] as const;
+
+    for (const batchProfile of batchProfiles) {
+      for (const liveProfile of liveProfiles) {
+        const config = await loadPlatformConfig({
+          ...base,
+          VOICETEXT_BATCH_PROFILE: batchProfile,
+          VOICETEXT_LIVE_PROFILE: liveProfile,
+        }, async () => "value");
+        expect(config.voicetext).toMatchObject({ batchProfile, liveProfile });
+      }
+    }
+
+    await expect(loadPlatformConfig({
+      ...base,
+      VOICETEXT_BATCH_PROFILE: "elevenlabs-scribe-v2-realtime",
+    }, async () => "value")).rejects.toThrow();
+    await expect(loadPlatformConfig({
+      ...base,
+      VOICETEXT_LIVE_PROFILE: "elevenlabs-scribe-v2",
+    }, async () => "value")).rejects.toThrow();
   });
 
   it("loads provider-neutral live conversation config only from complete secret-backed input", async () => {

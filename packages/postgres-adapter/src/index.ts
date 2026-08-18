@@ -13,6 +13,9 @@ export {
   PgNativeHistoricalPostgresCancellation,
   type HistoricalPostgresCancellationPort,
 } from "./postgres-historical-query.js";
+export {
+  PostgresTranscriptionExecutionBindingStore,
+} from "./postgres-transcription-execution-binding-store.js";
 export { PostgresLiveMeetingRepository } from "./postgres-live-meeting-repository.js";
 export {
   PostgresLiveFinalizedMemoryLifecycle,

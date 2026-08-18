@@ -29,6 +29,16 @@ interface OutboxLogger {
   warn(message: string, context?: Readonly<Record<string, unknown>>): void;
 }
 
+interface TranscriptionExecutionBindingStore {
+  backfillRecoverableUnboundTranscriptionExecutionBindings(binding: string): Promise<number>;
+  pinTranscriptionExecutionBinding(meetingId: string, binding: string): Promise<string>;
+}
+
+interface TranscriptionExecutionBindings {
+  readonly legacyRecovery: string;
+  readonly supported: ReadonlySet<string>;
+}
+
 export interface PostCallDispatchResult {
   readonly dispatched: number;
   readonly failed: number;
@@ -42,7 +52,20 @@ export class PostCallOutboxDispatcher {
     private readonly enqueuer: PostCallEnqueuerPort,
     private readonly terminalRecorder: PostCallTerminalRecorderPort,
     private readonly logger: OutboxLogger,
+    private readonly binding?: {
+      readonly store: TranscriptionExecutionBindingStore;
+      readonly values: TranscriptionExecutionBindings;
+    },
   ) {}
+
+  public async prepareLegacyBindings(): Promise<number> {
+    if (this.binding === undefined) {
+      return 0;
+    }
+    return this.binding.store.backfillRecoverableUnboundTranscriptionExecutionBindings(
+      this.binding.values.legacyRecovery,
+    );
+  }
 
   public dispatchPending(limit = 100): Promise<PostCallDispatchResult> {
     this.#active ??= this.#dispatch(limit).finally(() => {
@@ -69,6 +92,18 @@ export class PostCallOutboxDispatcher {
     let failed = 0;
     for (const item of pending) {
       try {
+        if (this.binding !== undefined) {
+          const pinned = await this.binding.store.pinTranscriptionExecutionBinding(
+            item.meetingId,
+            // Current runtimes create new rows with an atomic binding. A null
+            // binding can only be late legacy work and must retain the explicit
+            // historical route instead of inheriting today's selected profile.
+            this.binding.values.legacyRecovery,
+          );
+          if (!this.binding.values.supported.has(pinned)) {
+            throw new Error("transcription execution binding is unsupported by this runtime");
+          }
+        }
         const receipt = await this.enqueuer.enqueue(item);
         await this.applyReceipt(item, receipt);
         dispatched += 1;

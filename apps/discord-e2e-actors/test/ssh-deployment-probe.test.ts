@@ -109,7 +109,7 @@ function fakeCommands(input: {
         ]);
         return JSON.stringify({
           beforeProcessedOn: 1_000,
-          jobId: "post-call-v1-test",
+          jobId: "post-call-v2-test",
           state: "completed",
         });
       }
@@ -129,7 +129,7 @@ function fakeCommands(input: {
         return JSON.stringify({
           afterProcessedOn: 2_000,
           beforeProcessedOn: 1_000,
-          jobId: "post-call-v1-test",
+          jobId: "post-call-v2-test",
           state: "completed",
         });
       }

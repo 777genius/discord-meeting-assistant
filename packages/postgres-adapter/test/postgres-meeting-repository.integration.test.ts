@@ -177,6 +177,8 @@ describe("PostgresGuildConfigurationRepository", () => {
   });
 });
 
+const selectedBinding = "voicetext-batch-v3:elevenlabs-scribe-v2";
+
 describe("PostgresMeetingRepository", () => {
   it("claims index and deletion work at the default and maximum composed lease", async (context) => {
     const database = databaseOrSkip(context);
@@ -188,7 +190,7 @@ describe("PostgresMeetingRepository", () => {
     for (const [index, leaseDurationMs] of leases.entries()) {
       const meetingId = `meeting-historical-lease-${String(index)}`;
       const repository = new PostgresMeetingRepository(database);
-      await repository.recordAndSchedule(recordedMeeting(meetingId).toSnapshot(), 0);
+      await repository.recordAndSchedule(recordedMeeting(meetingId).toSnapshot(), 0, selectedBinding);
       await repository.save(evidenceBackedMeeting(meetingId).toSnapshot(), 0);
       const store = new PostgresHistoricalMemoryStore(database);
       const indexLease = await store.claimNext({ allowIndex: true, leaseDurationMs });
@@ -215,7 +217,7 @@ describe("PostgresMeetingRepository", () => {
     const database = databaseOrSkip(context);
     const meetingId = "meeting-historical-unknown-outcome";
     const repository = new PostgresMeetingRepository(database);
-    await repository.recordAndSchedule(recordedMeeting(meetingId).toSnapshot(), 0);
+    await repository.recordAndSchedule(recordedMeeting(meetingId).toSnapshot(), 0, selectedBinding);
     await repository.save(evidenceBackedMeeting(meetingId).toSnapshot(), 0);
 
     let remoteCommitted = false;
@@ -319,7 +321,7 @@ describe("PostgresMeetingRepository", () => {
     const database = databaseOrSkip(context);
     const repository = new PostgresMeetingRepository(database);
     const initial = recordedMeeting("meeting-historical-release").toSnapshot();
-    await repository.recordAndSchedule(initial, 0);
+    await repository.recordAndSchedule(initial, 0, selectedBinding);
     const accepted = evidenceBackedMeeting("meeting-historical-release").toSnapshot();
 
     await repository.save(accepted, 0);
@@ -380,7 +382,7 @@ describe("PostgresMeetingRepository", () => {
     const database = databaseOrSkip(context);
     const meetingId = "meeting-historical-in-flight-supersession";
     const repository = new PostgresMeetingRepository(database);
-    await repository.recordAndSchedule(recordedMeeting(meetingId).toSnapshot(), 0);
+    await repository.recordAndSchedule(recordedMeeting(meetingId).toSnapshot(), 0, selectedBinding);
     await repository.save(evidenceBackedMeeting(meetingId).toSnapshot(), 0);
     const store = new PostgresHistoricalMemoryStore(database);
     const [first] = await store.listDesiredRoomBindings("scope-1", "room-1", 100);
@@ -429,8 +431,8 @@ describe("PostgresMeetingRepository post-call durability", () => {
     const repository = new PostgresMeetingRepository(database);
     const snapshot = recordedMeeting("meeting-outbox-1").toSnapshot();
 
-    await repository.recordAndSchedule(snapshot, 0);
-    await repository.recordAndSchedule(snapshot, 0);
+    await repository.recordAndSchedule(snapshot, 0, selectedBinding);
+    await repository.recordAndSchedule(snapshot, 0, selectedBinding);
     expect(await repository.listRecoverablePostCall()).toEqual([
       { meetingId: snapshot.meetingId, recoveryGeneration: 0, schemaVersion: 1 },
     ]);
@@ -448,13 +450,13 @@ describe("PostgresMeetingRepository post-call durability", () => {
     const database = databaseOrSkip(context);
     const repository = new PostgresMeetingRepository(database);
     const initial = recordedMeeting("meeting-ready-replay").toSnapshot();
-    await repository.recordAndSchedule(initial, 0);
+    await repository.recordAndSchedule(initial, 0, selectedBinding);
 
     const processed = evidenceBackedMeeting("meeting-ready-replay").toSnapshot();
     await repository.save(processed, 0);
     await repository.markPostCallProcessed(initial.meetingId);
 
-    await expect(repository.recordAndSchedule(initial, 0)).resolves.toBeUndefined();
+    await expect(repository.recordAndSchedule(initial, 0, selectedBinding)).resolves.toBeUndefined();
     expect(await repository.findById(initial.meetingId)).toEqual(processed);
     expect(await repository.listRecoverablePostCall()).toEqual([]);
   });
@@ -485,7 +487,7 @@ describe("PostgresMeetingRepository post-call durability", () => {
       source: current.source,
     }).toSnapshot();
 
-    await expect(repository.recordAndSchedule(replay, 0)).resolves.toBeUndefined();
+    await expect(repository.recordAndSchedule(replay, 0, selectedBinding)).resolves.toBeUndefined();
     expect(await repository.findById(current.meetingId)).toMatchObject({
       actors: null,
       identityProvenance: null,
@@ -539,9 +541,9 @@ describe("PostgresMeetingRepository post-call durability", () => {
 
     for (const variant of variants) {
       const original = recordedMeeting(variant.meetingId).toSnapshot();
-      await repository.recordAndSchedule(original, 0);
+      await repository.recordAndSchedule(original, 0, selectedBinding);
 
-      await expect(repository.recordAndSchedule(variant.change(original), 0))
+      await expect(repository.recordAndSchedule(variant.change(original), 0, selectedBinding))
         .rejects.toMatchObject({
           code: "MEETING_PERSISTENCE_CONFLICT",
           conflict: { kind: "meeting-already-exists", meetingId: variant.meetingId },
@@ -585,7 +587,7 @@ describe("PostgresMeetingRepository post-call durability", () => {
     const database = databaseOrSkip(context);
     const repository = new PostgresMeetingRepository(database);
     const snapshot = recordedMeeting("meeting-terminal-settlement").toSnapshot();
-    await repository.recordAndSchedule(snapshot, 0);
+    await repository.recordAndSchedule(snapshot, 0, selectedBinding);
     const record = {
       attemptsMade: 4,
       failureCode: "SUMMARY_PROVIDER_FAILED",
@@ -621,7 +623,7 @@ describe("Postgres retryable post-call recovery", () => {
     const database = databaseOrSkip(context);
     const repository = new PostgresMeetingRepository(database);
     const snapshot = recordedMeeting("meeting-invalid-recovery-receipt").toSnapshot();
-    await repository.recordAndSchedule(snapshot, 0);
+    await repository.recordAndSchedule(snapshot, 0, selectedBinding);
 
     await expect(database.query(`
       UPDATE meeting_core.post_call_outbox
@@ -635,7 +637,7 @@ describe("Postgres retryable post-call recovery", () => {
     const database = databaseOrSkip(context);
     const repository = new PostgresMeetingRepository(database);
     const snapshot = recordedMeeting("meeting-retryable-recovery").toSnapshot();
-    await repository.recordAndSchedule(snapshot, 0);
+    await repository.recordAndSchedule(snapshot, 0, selectedBinding);
     const firstFailure = {
       attemptsMade: 8,
       failureCode: "SUMMARY_PROVIDER_UNAVAILABLE",

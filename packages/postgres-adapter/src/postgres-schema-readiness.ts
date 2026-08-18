@@ -13,6 +13,10 @@ import {
   meetingKnowledgeRequiredRelations,
   meetingKnowledgeRequiredStructuralConstraints,
 } from "./postgres-meeting-knowledge-schema-requirements.js";
+import { PostgresSchemaReadinessError } from "./postgres-schema-readiness-error.js";
+import { findMissingPostgresTriggers } from "./postgres-trigger-readiness.js";
+
+export { PostgresSchemaReadinessError } from "./postgres-schema-readiness-error.js";
 
 const requiredRelations = [
   "meeting_core.schema_migration_ledger",
@@ -61,6 +65,8 @@ const requiredColumns = [
   "meeting_core.post_call_outbox.recovery_generation",
   "meeting_core.post_call_outbox.recovery_after",
   "meeting_core.post_call_outbox.recovery_source_job_ref",
+  "meeting_core.post_call_outbox.transcription_execution_binding",
+  "meeting_core.post_call_outbox.transcription_execution_binding_required",
   "meeting_core.live_meetings.meeting_id",
   "meeting_core.live_meetings.revision",
   "meeting_core.live_meetings.snapshot",
@@ -131,6 +137,8 @@ const requiredCheckConstraints = [
   ["meeting_core", "post_call_outbox", "post_call_outbox_terminal_receipt_is_exclusive"],
   ["meeting_core", "post_call_outbox", "post_call_outbox_recovery_generation_is_valid"],
   ["meeting_core", "post_call_outbox", "post_call_outbox_recovery_receipt_is_consistent"],
+  ["meeting_core", "post_call_outbox", "post_call_outbox_transcription_execution_binding_is_bounded"],
+  ["meeting_core", "post_call_outbox", "post_call_outbox_required_transcription_binding_is_present"],
   ["meeting_core", "live_meetings", "live_meetings_snapshot_is_object"],
   ["meeting_core", "live_meetings", "live_meetings_snapshot_identity_matches"],
   ["meeting_core", "live_meetings", "live_meetings_snapshot_revision_matches"],
@@ -224,26 +232,11 @@ const requiredStructuralConstraints = [
   ["guild_configuration", "guild_installations", "guild_installations_pkey", "p"],
 ] as const;
 
-interface ConstraintRow {
-  readonly validated: boolean;
-  readonly identifier: string;
-  readonly type: string;
-}
+interface ConstraintRow { readonly validated: boolean; readonly identifier: string; readonly type: string; }
 
-interface MissingNameRow {
-  readonly name: string;
-}
+interface MissingNameRow { readonly name: string; }
 
-export interface PostgresSchemaReadinessPort {
-  assertReady(): Promise<void>;
-}
-
-export class PostgresSchemaReadinessError extends Error {
-  public constructor(message: string, options?: ErrorOptions) {
-    super(message, options);
-    this.name = "PostgresSchemaReadinessError";
-  }
-}
+export interface PostgresSchemaReadinessPort { assertReady(): Promise<void>; }
 
 /**
  * Startup-facing PostgreSQL schema contract. It deliberately verifies the
@@ -267,6 +260,7 @@ export class PostgresSchemaReadiness implements PostgresSchemaReadinessPort {
       await this.assertColumns();
       await this.assertIndexes();
       await this.assertConstraints();
+      await this.assertTriggers();
       const ledger = await readMigrationLedger(this.pool);
       if (ledger.length !== requiredMigrations.length) {
         throw new PostgresSchemaReadinessError(
@@ -373,6 +367,15 @@ export class PostgresSchemaReadiness implements PostgresSchemaReadinessPort {
       ]),
       "required PostgreSQL structural constraint is missing or invalid",
     );
+  }
+
+  private async assertTriggers(): Promise<void> {
+    const missing = await findMissingPostgresTriggers(this.pool, ["meeting_core.post_call_outbox.post_call_outbox_transcription_execution_binding_is_immutable"]);
+    if (missing.length > 0) {
+      throw new PostgresSchemaReadinessError(
+        `required PostgreSQL trigger is missing or disabled: ${missing.join(", ")}`,
+      );
+    }
   }
 
   private async assertConstraintsOfType(
