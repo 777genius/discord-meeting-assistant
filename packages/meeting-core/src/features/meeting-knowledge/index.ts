@@ -175,6 +175,13 @@ export type {
   HistoricalSyncStore,
 } from "./application/ports/historical-state.js";
 export {
+  HistoricalEmbeddingTokenizerQualificationError,
+  prepareQualifiedHistoricalEmbeddingTokenizer,
+  type HistoricalEmbeddingRuntimeCompatibilityV1,
+  type HistoricalEmbeddingTokenizerPort,
+  type HistoricalEmbeddingTokenizerProfileV1,
+} from "./application/ports/historical-embedding-tokenizer.js";
+export {
   resolveAnswerLocale,
   type AnswerLocale,
 } from "./domain/answer-locale.js";

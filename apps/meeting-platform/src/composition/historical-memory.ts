@@ -1,6 +1,9 @@
 import {
   HmacHistoricalOpaqueIds,
   InfinityContextHistoricalMemoryAdapter,
+  PINNED_MULTILINGUAL_MINILM_EMBEDDING_PROFILE_ID,
+  PINNED_MULTILINGUAL_MINILM_TOKENIZER_PROFILE,
+  PinnedMultilingualMiniLmTokenizer,
   assertInfinityContextActivation,
   assertInfinityContextSearchActivation,
 } from "@discord-meeting/infinity-context-adapter";
@@ -14,6 +17,8 @@ import {
   historicalSyncLeaseDurationMs,
   RequestHistoricalMeetingDeletion,
   type HistoricalAuthorizationPort,
+  type HistoricalEmbeddingTokenizerPort,
+  prepareQualifiedHistoricalEmbeddingTokenizer,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import {
   PostgresHistoricalEvidenceAuthority,
@@ -127,6 +132,34 @@ function semanticSearchQualified(
   }
 }
 
+function qualifyEmbeddingTokenizer(
+  tokenizer: HistoricalEmbeddingTokenizerPort,
+  expected: {
+    readonly embeddingProfile: string;
+    readonly embeddingProfileDigestSha256: string;
+  } | null,
+  observed: {
+    readonly embeddingProfileDigestSha256: string | null;
+    readonly embeddingProfileId: string | null;
+  },
+): HistoricalEmbeddingTokenizerPort {
+  if (
+    expected === null ||
+    expected.embeddingProfile !== PINNED_MULTILINGUAL_MINILM_EMBEDDING_PROFILE_ID
+  ) {
+    throw new Error("Infinity dense embedding profile attestation is required");
+  }
+  return prepareQualifiedHistoricalEmbeddingTokenizer(tokenizer, {
+    expectedEmbeddingProfileDigestSha256:
+      expected.embeddingProfileDigestSha256 as `sha256:${string}`,
+    expectedEmbeddingProfileId: expected.embeddingProfile,
+    expectedTokenizerProfile: PINNED_MULTILINGUAL_MINILM_TOKENIZER_PROFILE,
+    observedEmbeddingProfileDigestSha256:
+      observed.embeddingProfileDigestSha256,
+    observedEmbeddingProfileId: observed.embeddingProfileId,
+  });
+}
+
 export interface PlatformHistoricalMemoryRuntime {
   assertReady(): Promise<void>;
   close(): Promise<void>;
@@ -136,6 +169,7 @@ export interface PlatformHistoricalMemoryRuntime {
   createFocusedRetrieval(
     authorization: HistoricalAuthorizationPort,
   ): HistoricalFocusedRetrieval;
+  embeddingTokenizer(): HistoricalEmbeddingTokenizerPort | undefined;
   searchEnabled(): boolean;
   servingAuthorized(): boolean;
   requestMeetingDeletion(meetingId: string): Promise<void>;
@@ -167,6 +201,7 @@ export function createPlatformHistoricalMemory(input: {
     schemaVersion: 1,
     token: () => token,
   });
+  const embeddingTokenizer = new PinnedMultilingualMiniLmTokenizer();
   const store = new PostgresHistoricalMemoryStore(input.pool);
   const checkpoints = new PostgresExhaustiveCoverageStore(input.pool);
   const worker = new HistoricalSyncWorker({
@@ -180,6 +215,7 @@ export function createPlatformHistoricalMemory(input: {
   });
   let transportQualified = false;
   let searchQualified = false;
+  let qualifiedTokenizer: HistoricalEmbeddingTokenizerPort | undefined;
   const deletion = new RequestHistoricalMeetingDeletion(store);
   const twoHourProfile = Object.freeze({
     ...DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
@@ -190,6 +226,7 @@ export function createPlatformHistoricalMemory(input: {
   const refreshQualification = async (signal?: AbortSignal): Promise<void> => {
     transportQualified = false;
     searchQualified = false;
+    qualifiedTokenizer = undefined;
     if (!config.activation.indexingEnabled && !config.activation.searchEnabled) {
       return;
     }
@@ -197,6 +234,11 @@ export function createPlatformHistoricalMemory(input: {
       signal === undefined ? {} : { signal },
     );
     assertInfinityContextActivation(config.activation, capabilities);
+    qualifiedTokenizer = qualifyEmbeddingTokenizer(
+      embeddingTokenizer,
+      config.activation.productionEmbeddingProfileAttestation,
+      capabilities,
+    );
     transportQualified = true;
     searchQualified = semanticSearchQualified(
       config.activation,
@@ -214,6 +256,7 @@ export function createPlatformHistoricalMemory(input: {
       signal?.throwIfAborted();
       transportQualified = false;
       searchQualified = false;
+      qualifiedTokenizer = undefined;
       input.logger.warn("Historical memory qualification unavailable; external indexing is disabled", {
         errorType: error instanceof Error ? error.name : "unknown",
       });
@@ -277,6 +320,7 @@ export function createPlatformHistoricalMemory(input: {
       memory,
       store: new PostgresHistoricalMemoryStore(input.pool),
     }, undefined, twoHourProfile),
+    embeddingTokenizer: () => qualifiedTokenizer,
     searchEnabled: () =>
       config.activation.searchEnabled && transportQualified && searchQualified,
     servingAuthorized: () => config.activation.searchEnabled && searchQualified,
