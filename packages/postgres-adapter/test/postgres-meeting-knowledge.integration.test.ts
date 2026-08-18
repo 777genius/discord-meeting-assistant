@@ -16,6 +16,7 @@ import { describe, expect, it } from "vitest";
 import {
   PostgresAnswerEffectStore,
   PostgresExhaustiveCoverageStore,
+  PostgresFinalReplyMaintenance,
   PostgresFinalReplyEvidence,
   PostgresFocusedMemoryRetrieval,
   PostgresHistoricalEvidenceAuthority,
@@ -399,7 +400,7 @@ describe("PostgreSQL answer effect recovery", () => {
       meetingId: "meeting-1",
       meetingRevision: 1,
       memoryGeneration: `focused-memory:v1:${"b".repeat(64)}`,
-      policyVersion: "discord.participant-current-results.v1",
+      policyVersion: "meeting-knowledge.focused-memory-final-reply.v2",
       projectionTargetContainerId: channelId,
       questionHash: "c".repeat(64),
       questionId,
@@ -588,9 +589,9 @@ describe("PostgreSQL question job cleanup", () => {
       ],
     );
 
-    const jobs = new PostgresQuestionJobStore(database, questionPolicy);
-    await expect(jobs.leaseNext({ leaseSeconds: 60, maximumProviderAttempts: 2, workerId: "worker-1" }))
-      .resolves.toBeNull();
+    const maintenance = new PostgresFinalReplyMaintenance(database, questionPolicy);
+    await expect(maintenance.maintain({ maximumJobs: 1, servingEnabled: true }))
+      .resolves.toEqual({ cancelled: 0, expired: 1 });
     const stored = await database.query(
       `
         SELECT authorization_principal_ref, question_text, binding, state, outcome

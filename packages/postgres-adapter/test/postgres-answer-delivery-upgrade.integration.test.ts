@@ -258,18 +258,17 @@ describe("schema 17 answer-delivery upgrade", () => {
         payload_bytes: "{}",
         state: "cancelled",
       });
-
       const jobs = new PostgresQuestionJobStore(isolated.pool, upgradedQuestionPolicy);
       const firstLease = await jobs.leaseNext({ leaseSeconds: 60, maximumProviderAttempts: 2, workerId: "upgrade-worker" });
-      const secondLease = await jobs.leaseNext({ leaseSeconds: 60, maximumProviderAttempts: 2, workerId: "upgrade-worker" });
-      const thirdLease = await jobs.leaseNext({ leaseSeconds: 60, maximumProviderAttempts: 2, workerId: "upgrade-worker" });
-      expect([firstLease?.binding.deliveryContainerId, secondLease?.binding.deliveryContainerId])
-        .toEqual([parentContainerId, threadContainerId]);
-      expect(thirdLease).toMatchObject({
+      const readyLease = await jobs.leaseNext({ leaseSeconds: 60, maximumProviderAttempts: 2, workerId: "upgrade-worker" });
+      const noMoreLeases = await jobs.leaseNext({ leaseSeconds: 60, maximumProviderAttempts: 2, workerId: "upgrade-worker" });
+      expect(firstLease?.binding.deliveryContainerId).toBe(parentContainerId);
+      expect(readyLease).toMatchObject({
         binding: { deliveryContainerId: threadContainerId },
         jobId: ready.questionId,
         state: "ready",
       });
+      expect(noMoreLeases).toBeNull();
 
       const upgradedQueued = QuestionBinding.create({
         ...queued,
@@ -360,7 +359,7 @@ describe("schema 17 answer-delivery upgrade", () => {
         payloadHash: sha256(legacyReadyPayload),
         projectionTargetContainerId: parentContainerId,
         questionFence: {
-          generation: thirdLease?.generation ?? 0,
+          generation: readyLease?.generation ?? 0,
           jobId: ready.questionId,
         },
         replyToRemoteMessageId: ready.questionId,
@@ -373,7 +372,7 @@ describe("schema 17 answer-delivery upgrade", () => {
         deliveryContainerId: threadContainerId,
         marker: `marker-${ready.questionId}`,
         projectionTargetContainerId: parentContainerId,
-        questionGeneration: thirdLease?.generation ?? 0,
+        questionGeneration: readyLease?.generation ?? 0,
         replyToRemoteMessageId: ready.questionId,
         sourceMeetingIds: [ready.meetingId],
       })).resolves.toEqual({
@@ -390,7 +389,7 @@ describe("schema 17 answer-delivery upgrade", () => {
       await expect(publication.send({
         authorizationDigest: ready.authorizationDigest,
         effectId: `meeting-knowledge-answer:v1:${ready.questionId}`,
-        questionGeneration: thirdLease?.generation ?? 0,
+        questionGeneration: readyLease?.generation ?? 0,
         workerId: "publisher-upgrade",
       })).resolves.toEqual({
         externalReceipt: "999999999999999999",

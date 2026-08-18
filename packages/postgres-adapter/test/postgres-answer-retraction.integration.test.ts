@@ -45,12 +45,13 @@ async function insertRunningQuestion(
        question_id, requester_subject, question_hash, scope_id,
        final_projection_receipt, authorization_principal_ref,
        authorization_digest, locale, question_text, binding, binding_hash,
-       source_meeting_ids, state, generation, lease_owner, lease_until, expires_at
+       source_meeting_ids, state, generation, lease_owner, lease_until, worker_protocol_epoch,
+       worker_protocol_generation, expires_at
      ) VALUES (
        $1, $2, $3, 'scope-1', $4, 'opaque-principal',
        $5, 'en', 'Sensitive question?', $6::jsonb, $7,
        $8::text[], 'running', 1, 'worker-1',
-       transaction_timestamp() + interval '1 minute',
+       transaction_timestamp() + interval '1 minute', 2, 1,
        transaction_timestamp() + interval '10 minutes'
      )`,
     [
@@ -174,12 +175,12 @@ describe("PostgreSQL answer cancellation and retraction", () => {
          question_id, requester_subject, question_hash, scope_id,
          final_projection_receipt, authorization_principal_ref,
          authorization_digest, locale, question_text, binding, binding_hash,
-         state, generation, lease_owner, lease_until, expires_at
+         state, generation, lease_owner, lease_until, worker_protocol_epoch, worker_protocol_generation, expires_at
        ) VALUES (
          $1, $2, $3, 'scope-1', 'projection-1', 'opaque-principal',
          $4, 'en', 'Sensitive question?', $5::jsonb, $6,
          'running', 1, 'worker-1',
-         transaction_timestamp() + interval '1 minute',
+         transaction_timestamp() + interval '1 minute', 2, 1,
          transaction_timestamp() + interval '10 minutes'
        )`,
       [
