@@ -121,6 +121,36 @@ describe("PostgresMigrationRunner and PostgresSchemaReadiness", () => {
     }
   });
 
+  it("fails immediately when another migration runner owns the advisory lock", async (context) => {
+    databaseOrSkip(context);
+    const isolated = await createIsolatedDatabase();
+    const blocker = await isolated.pool.connect();
+    const migrationLockKey = "718330091620232601";
+    try {
+      await blocker.query("SELECT pg_advisory_lock($1::bigint)", [migrationLockKey]);
+      const startedAt = performance.now();
+      await expect(new PostgresMigrationRunner(isolated.pool).migrate()).rejects.toThrow(
+        "migration lock is already held",
+      );
+      expect(performance.now() - startedAt).toBeLessThan(2_000);
+      const settings = await isolated.pool.query<{
+        readonly lock_timeout: string;
+        readonly statement_timeout: string;
+      }>(`
+        SELECT current_setting('lock_timeout') AS lock_timeout,
+               current_setting('statement_timeout') AS statement_timeout
+      `);
+      expect(settings.rows).toEqual([{
+        lock_timeout: "0",
+        statement_timeout: "0",
+      }]);
+    } finally {
+      await blocker.query("SELECT pg_advisory_unlock($1::bigint)", [migrationLockKey]);
+      blocker.release();
+      await isolated.dispose();
+    }
+  });
+
 });
 
 describe("Postgres concurrent index recovery", () => {

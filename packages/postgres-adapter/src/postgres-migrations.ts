@@ -49,6 +49,8 @@ const migrationDefinitions = [
 ] as const;
 
 const migrationLockKey = "718330091620232601";
+const migrationLockTimeoutMilliseconds = 5_000;
+const migrationStatementTimeoutMilliseconds = 300_000;
 
 export const requiredPostgresSchemaVersion = migrationDefinitions.length;
 
@@ -90,10 +92,17 @@ export class PostgresMigrationRunner {
     const migrations = await this.resolveMigrations();
     const client = await this.pool.connect();
     let migrationLockAcquired = false;
+    let migrationTimeoutsConfigured = false;
     let transactionActive = false;
     try {
-      await client.query("SELECT pg_advisory_lock($1::bigint)", [migrationLockKey]);
-      migrationLockAcquired = true;
+      await configureMigrationTimeouts(client);
+      migrationTimeoutsConfigured = true;
+      migrationLockAcquired = await tryAcquireMigrationLock(client);
+      if (!migrationLockAcquired) {
+        throw new PostgresMigrationError(
+          "PostgreSQL migration lock is already held; retry the rollout later",
+        );
+      }
       await client.query("BEGIN");
       transactionActive = true;
       await ensureMigrationLedger(client);
@@ -162,7 +171,9 @@ export class PostgresMigrationRunner {
     } finally {
       const migrationLockReleased = !migrationLockAcquired
         || await releaseMigrationLock(client);
-      client.release(!migrationLockReleased);
+      const migrationTimeoutsReset = !migrationTimeoutsConfigured
+        || await resetMigrationTimeouts(client);
+      client.release(!(migrationLockReleased && migrationTimeoutsReset));
     }
   }
 
@@ -335,6 +346,27 @@ async function rollback(client: PoolClient): Promise<void> {
   }
 }
 
+async function configureMigrationTimeouts(client: PoolClient): Promise<void> {
+  await client.query(
+    `
+      SELECT set_config('lock_timeout', $1, false),
+             set_config('statement_timeout', $2, false)
+    `,
+    [
+      `${migrationLockTimeoutMilliseconds}ms`,
+      `${migrationStatementTimeoutMilliseconds}ms`,
+    ],
+  );
+}
+
+async function tryAcquireMigrationLock(client: PoolClient): Promise<boolean> {
+  const result = await client.query<{ readonly acquired: boolean }>(
+    "SELECT pg_try_advisory_lock($1::bigint) AS acquired",
+    [migrationLockKey],
+  );
+  return result.rows[0]?.acquired === true;
+}
+
 async function releaseMigrationLock(client: PoolClient): Promise<boolean> {
   try {
     const result = await client.query<{ readonly unlocked: boolean }>(
@@ -342,6 +374,16 @@ async function releaseMigrationLock(client: PoolClient): Promise<boolean> {
       [migrationLockKey],
     );
     return result.rows[0]?.unlocked === true;
+  } catch {
+    return false;
+  }
+}
+
+async function resetMigrationTimeouts(client: PoolClient): Promise<boolean> {
+  try {
+    await client.query("RESET lock_timeout");
+    await client.query("RESET statement_timeout");
+    return true;
   } catch {
     return false;
   }
