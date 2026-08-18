@@ -23,6 +23,7 @@ import {
   classifyPostCallWorkerError,
   createPostCallProcessor,
   effectivePostCallMaxAttempts,
+  mapPostCallFailureToWorkerError,
   postCallAttemptNumber,
   type CreatePostCallProcessorOptions,
   type PostCallJobLike,
@@ -160,6 +161,30 @@ function requiredWorkerToken(token: string | undefined): string {
   return token;
 }
 
+async function resolvePostCallAdmission(
+  options: CreatePostCallWorkerOptions,
+  payload: PostCallJobPayload | null,
+  job: PostCallBullMqJob,
+  policy: ResolvedPostCallWorkerPolicy,
+): Promise<"accepted" | "hold"> {
+  if (payload === null || options.admission === undefined) {
+    return "accepted";
+  }
+  try {
+    return await options.admission(payload);
+  } catch (error) {
+    // Admission is part of durable post-call processing. Map its failures
+    // through the same bounded retry contract as the handler, so a terminal
+    // Redis job remains reconstructable if dead-letter persistence also fails.
+    throw mapPostCallFailureToWorkerError(
+      error,
+      job,
+      policy,
+      options.classifyFailure,
+    );
+  }
+}
+
 export function createPostCallWorker(
   options: CreatePostCallWorkerOptions,
 ): PostCallWorker {
@@ -184,11 +209,7 @@ export function createPostCallWorker(
           throw new PostCallCancellationError(activeJob.signal.reason);
         }
         const payload = parsePostCallPayloadSafely(job.data);
-        if (
-          payload !== null &&
-          options.admission !== undefined &&
-          await options.admission(payload) === "hold"
-        ) {
+        if (await resolvePostCallAdmission(options, payload, job, policy) === "hold") {
           const held = await moveUnsupportedJobToDelayed(job, token, options.observer);
           releaseAfterProcessor = held;
           throw new DelayedError();
