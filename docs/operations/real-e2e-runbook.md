@@ -224,11 +224,13 @@ dedicated filter chain, TCP destination port 443, and UDP destination range).
 Preflight resolves the exact release-bound Craig container, network ID, and IPv4
 address, then reads `iptables-save` twice. It requires exact source-bound TCP and
 UDP accepts, an exact destination-bound `ESTABLISHED,RELATED` return, reachable
-FORWARD dispatches with no earlier matching DROP/REJECT, and a terminal RETURN.
-An unrelated container/source cannot use the chain. Counter changes and
+FORWARD dispatches with no earlier matching DROP/REJECT, and one unconditional
+terminal DROP after the exact allow rules. RETURN and unreviewed policy-chain
+rules fail closed so later broad FORWARD accepts or jumps cannot extend Craig
+egress. An unrelated container/source cannot use the chain. Counter changes and
 unrelated rule ordering do not change the retained semantic digest; a container,
-bridge, address, or semantic rule swap blocks admission. This gate performs no
-Discord voice or UDP endpoint probe.
+bridge, address, terminal disposition, or semantic rule swap blocks admission.
+This gate performs no Discord voice or UDP endpoint probe.
 
 Use the audited host-side checkout for compile, preflight, and run. Do not run
 the coordinator as a Compose service: its bounded SSH/process probes and local

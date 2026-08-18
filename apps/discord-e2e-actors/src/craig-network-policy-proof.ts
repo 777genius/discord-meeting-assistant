@@ -114,14 +114,15 @@ export function proveCraigFirewallPolicy(input: Readonly<{
     !accepted.some((actual) => sameMatch(actual, expected)))) {
     throw new Error("Craig firewall policy lacks the exact TCP 443, UDP, or established return rule");
   }
-  if (policyRules.some((rule) => rule.target !== "ACCEPT" && rule.target !== "RETURN")) {
+  if (policyRules.some((rule) => rule.target !== "ACCEPT" && rule.target !== "DROP")) {
     throw new Error("Craig firewall policy chain contains an unreviewed semantic rule");
   }
-  const returns = policyRules.filter(({ target }) => target === "RETURN");
-  const returnIndex = returns.length === 1 ? policyRules.indexOf(returns[0]!) : -1;
-  if (returns.length !== 1 || Object.keys(withoutUndefined(returns[0]!)).length !== 2
-    || returnIndex < Math.max(...accepted.map((rule) => policyRules.indexOf(rule)))) {
-    throw new Error("Craig firewall policy chain must have one terminal unconditional return");
+  const drops = policyRules.filter(({ target }) => target === "DROP");
+  const dropIndex = drops.length === 1 ? policyRules.indexOf(drops[0]!) : -1;
+  if (drops.length !== 1 || Object.keys(withoutUndefined(drops[0]!)).length !== 2
+    || dropIndex !== policyRules.length - 1
+    || dropIndex < Math.max(...accepted.map((rule) => policyRules.indexOf(rule)))) {
+    throw new Error("Craig firewall policy chain must have one terminal unconditional drop");
   }
   const forward = rules.filter(({ chain }) => chain === "FORWARD");
   for (const direction of [
@@ -143,6 +144,10 @@ export function proveCraigFirewallPolicy(input: Readonly<{
   }
   const semantics = required.map((rule) => withoutUndefined({ chain: input.policy.chain, ...rule }))
     .toSorted((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+  const terminalDisposition = {
+    chain: input.policy.chain,
+    target: "DROP",
+  } as const;
   const proof = {
     ...input.policy,
     containerId: input.containerId,
@@ -151,7 +156,7 @@ export function proveCraigFirewallPolicy(input: Readonly<{
   };
   return Object.freeze({
     ...proof,
-    semanticPolicySha256: digest({ proof, semantics }),
+    semanticPolicySha256: digest({ proof, semantics, terminalDisposition }),
   });
 }
 
