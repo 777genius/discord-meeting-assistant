@@ -426,7 +426,9 @@ describe("Discord Local Final Reply ingress", () => {
     const execute = vi.fn().mockResolvedValue({ jobId: questionId, status: "accepted" });
     const withdrawProjection = vi.fn().mockResolvedValue([questionId]);
     const cancelQuestion = vi.fn().mockImplementation(() => Promise.resolve());
-    const client = new EventEmitter();
+    const client = Object.assign(new EventEmitter(), {
+      user: { id: botId },
+    });
     const handler = new DiscordLocalFinalReplyHandler({
       admission: { execute },
       admissions: { withdrawProjection },
@@ -501,7 +503,9 @@ describe("Discord Local Final Reply ingress", () => {
     const cancelBeforeRequest = vi.fn().mockResolvedValue(true);
     const cancelQuestion = vi.fn().mockImplementation(() => Promise.resolve());
     const withdrawProjection = vi.fn().mockResolvedValue([questionId]);
-    const client = new EventEmitter();
+    const client = Object.assign(new EventEmitter(), {
+      user: { id: botId },
+    });
     const handler = new DiscordLocalFinalReplyHandler({
       admission: { execute: vi.fn() },
       admissions: { withdrawProjection },
@@ -518,6 +522,20 @@ describe("Discord Local Final Reply ingress", () => {
       },
     });
     handler.start();
+    client.emit("messageDelete", {
+      author: { id: "77777777777777777" },
+      channel: { isThread: () => false },
+      channelId: containerId,
+      guildId: "66666666666666666",
+      id: "44444444444444443",
+    });
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve);
+    });
+    expect(withdrawProjection).not.toHaveBeenCalled();
+
+    // Partial delete events have no author. Keep their race-safe DB tombstone
+    // path; the PostgreSQL adapter bounds unmatched observations.
     client.emit("messageDelete", {
       channel: { isThread: () => false },
       channelId: containerId,

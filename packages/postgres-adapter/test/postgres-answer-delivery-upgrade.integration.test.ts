@@ -21,6 +21,7 @@ import {
 import {
   createIsolatedDatabase,
   databaseOrSkip,
+  evidenceBackedMeeting,
   usePostgresIntegrationDatabase,
 } from "./postgres-integration-fixtures.js";
 
@@ -210,12 +211,12 @@ describe("schema 17 answer-delivery upgrade", () => {
       }
 
       await expect(new PostgresMigrationRunner(isolated.pool).migrate()).resolves.toEqual({
-        appliedVersions: [18, 19, 20, 21],
-        version: 21,
+        appliedVersions: [18, 19, 20, 21, 22],
+        version: 22,
       });
       await expect(new PostgresMigrationRunner(isolated.pool).migrate()).resolves.toEqual({
         appliedVersions: [],
-        version: 21,
+        version: 22,
       });
       await expect(new PostgresSchemaReadiness(isolated.pool).assertReady()).resolves.toBeUndefined();
 
@@ -405,6 +406,87 @@ describe("schema 17 answer-delivery upgrade", () => {
       });
       expect(inspections).toEqual([parentContainerId]);
       expect(creates).toHaveLength(1);
+    } finally {
+      await isolated.dispose();
+    }
+  }, 30_000);
+});
+
+describe("schema 21 withdrawal upgrade", () => {
+
+  it("backfills durable source withdrawals and scrubs pending answer payloads", async (context) => {
+    databaseOrSkip(context);
+    const isolated = await createIsolatedDatabase();
+    try {
+      const migrations = await loadPostgresMigrations();
+      await new PostgresMigrationRunner(isolated.pool, {
+        migrations: migrations.slice(0, 21),
+      }).migrate();
+      const meeting = evidenceBackedMeeting("legacy-withdrawn-meeting", parentContainerId)
+        .toSnapshot();
+      await isolated.pool.query(
+        `INSERT INTO meeting_core.meetings (meeting_id, revision, snapshot)
+         VALUES ($1, $2, $3::jsonb)`,
+        [meeting.meetingId, meeting.revision, meeting],
+      );
+      await isolated.pool.query(
+        `INSERT INTO meeting_core.historical_memory_sync (
+           release_id, meeting_id, schema_version, accepted_meeting_revision,
+           desired_generation, transcript_id, transcript_version,
+           evidence_policy_version, scope_id, room_id, is_current, operation, state
+         ) VALUES (
+           'legacy-delete-release', $1, 1, $2, 1, 'legacy-transcript', 1,
+           'meeting-knowledge.historical-evidence.v1', 'scope-1', 'room-1',
+           false, 'delete_meeting', 'deleted'
+         )`,
+        [meeting.meetingId, meeting.revision],
+      );
+      const payload = JSON.stringify({ content: "legacy sensitive answer" });
+      await isolated.pool.query(
+        `INSERT INTO meeting_core.answer_effects (
+           effect_id, state, projection_target_container_id,
+           delivery_container_id, reply_to_remote_message_id, marker,
+           payload_bytes, payload_hash, binding_hash, authorization_digest,
+           source_meeting_ids, request_started_at, retraction_requested_at
+         ) VALUES (
+           'meeting-knowledge-answer:v1:legacy-pending', 'retraction_pending',
+           $1, $1, 'legacy-question', 'legacy-marker', $2, $3, $4, $5,
+           ARRAY[$6]::text[], transaction_timestamp(), transaction_timestamp()
+         )`,
+        [
+          parentContainerId,
+          payload,
+          sha256(payload),
+          "b".repeat(64),
+          "c".repeat(64),
+          meeting.meetingId,
+        ],
+      );
+
+      await expect(new PostgresMigrationRunner(isolated.pool).migrate()).resolves.toEqual({
+        appliedVersions: [22],
+        version: 22,
+      });
+      await expect(isolated.pool.query(
+        `SELECT meeting_id
+         FROM meeting_knowledge.withdrawn_meeting_sources
+         WHERE meeting_id = $1`,
+        [meeting.meetingId],
+      )).resolves.toMatchObject({
+        rows: [{ meeting_id: meeting.meetingId }],
+      });
+      await expect(isolated.pool.query(
+        `SELECT payload_bytes, payload_hash
+         FROM meeting_core.answer_effects
+         WHERE effect_id = 'meeting-knowledge-answer:v1:legacy-pending'`,
+      )).resolves.toMatchObject({
+        rows: [{
+          payload_bytes: "{}",
+          payload_hash: sha256(payload),
+        }],
+      });
+      await expect(new PostgresSchemaReadiness(isolated.pool).assertReady())
+        .resolves.toBeUndefined();
     } finally {
       await isolated.dispose();
     }

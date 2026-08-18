@@ -13,6 +13,10 @@ import {
   finalReplyAuthorityMatches,
   loadLockedFinalReplyAuthority,
 } from "./postgres-final-reply-evidence.js";
+import {
+  lockMeetingKnowledgeProjection,
+  pruneUnmatchedProjectionTombstones,
+} from "./postgres-projection-withdrawal.js";
 
 interface StoredQuestionRow {
   readonly binding: unknown;
@@ -87,7 +91,7 @@ export class PostgresQuestionAdmissionCommit
     try {
       await client.query("BEGIN");
       await this.lockQuestion(client, binding.questionId);
-      await this.lockProjection(client, binding.finalProjectionReceipt);
+      await lockMeetingKnowledgeProjection(client, binding.finalProjectionReceipt);
       await lockMeetingKnowledgeSource(client, binding.meetingId);
       const existing = await this.findQuestion(client, binding.questionId);
       if (existing !== null) {
@@ -136,10 +140,11 @@ export class PostgresQuestionAdmissionCommit
             question_id, requester_subject, question_hash, scope_id,
             final_projection_receipt, authorization_principal_ref,
             authorization_digest, locale, question_text, binding, binding_hash,
-            expires_at
+            source_meeting_ids, expires_at
           ) VALUES (
             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11,
-            transaction_timestamp() + make_interval(secs => $12)
+            ARRAY[$12]::text[],
+            transaction_timestamp() + make_interval(secs => $13)
           )
         `,
         [
@@ -154,6 +159,7 @@ export class PostgresQuestionAdmissionCommit
           input.questionText,
           bindingJson,
           admissionBindingHash(binding),
+          binding.meetingId,
           input.ratePolicy.jobTtlSeconds,
         ],
       );
@@ -181,7 +187,8 @@ export class PostgresQuestionAdmissionCommit
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
-      await this.lockProjection(client, input.finalProjectionReceipt);
+      await pruneUnmatchedProjectionTombstones(client);
+      await lockMeetingKnowledgeProjection(client, input.finalProjectionReceipt);
       await client.query(
         `
           INSERT INTO meeting_knowledge.unavailable_final_projections
@@ -202,6 +209,20 @@ export class PostgresQuestionAdmissionCommit
         [input.finalProjectionReceipt],
       );
       const questionIds = affected.rows.map(({ question_id: questionId }) => questionId);
+      const expectedEffectIds = questionIds.map((questionId) =>
+        `meeting-knowledge-answer:v1:${questionId}`
+      );
+      const affectedEffects = await client.query<{ readonly effect_id: string }>(
+        `
+          SELECT effect_id
+          FROM meeting_core.answer_effects
+          WHERE effect_id = ANY($1::text[])
+          ORDER BY effect_id
+          FOR UPDATE
+        `,
+        [expectedEffectIds],
+      );
+      const effectIds = affectedEffects.rows.map(({ effect_id: effectId }) => effectId);
       if (questionIds.length > 0) {
         await client.query(
           `
@@ -239,16 +260,12 @@ export class PostgresQuestionAdmissionCommit
                   ELSE settled_at
                 END,
                 updated_at = transaction_timestamp()
-            WHERE effect_id IN (
-              SELECT 'meeting-knowledge-answer:v1:' || id.question_id
-              FROM unnest($1::text[]) AS id(question_id)
-            )
-              AND state IN (
+            WHERE effect_id = ANY($1::text[]) AND state IN (
                 'reserved', 'claimed', 'request_started', 'delivered',
                 'outcome_unknown', 'absent_unconfirmed', 'retraction_pending'
               )
           `,
-          [questionIds],
+          [effectIds],
         );
       }
       await client.query("COMMIT");
@@ -288,20 +305,6 @@ export class PostgresQuestionAdmissionCommit
         )
       `,
       [questionId],
-    );
-  }
-
-  private async lockProjection(
-    client: PoolClient,
-    finalProjectionReceipt: string,
-  ): Promise<void> {
-    await client.query(
-      `
-        SELECT pg_advisory_xact_lock(
-          hashtextextended('meeting-knowledge:projection:' || $1, 0)
-        )
-      `,
-      [finalProjectionReceipt],
     );
   }
 

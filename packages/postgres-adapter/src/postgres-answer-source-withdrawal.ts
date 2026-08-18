@@ -13,6 +13,16 @@ export async function lockMeetingKnowledgeSource(
   );
 }
 
+/** Locks a source set in one canonical order before a multi-source mutation. */
+export async function lockMeetingKnowledgeSources(
+  client: PoolClient,
+  meetingIds: readonly string[],
+): Promise<void> {
+  for (const meetingId of [...new Set(meetingIds)].toSorted()) {
+    await lockMeetingKnowledgeSource(client, meetingId);
+  }
+}
+
 /** Atomically withdraws derived memory and every answer that cites the source. */
 export async function requestAnswerSourceWithdrawal(
   client: PoolClient,
@@ -41,6 +51,18 @@ export async function requestAnswerSourceWithdrawal(
      WHERE meeting_id = $1`,
     [meetingId],
   );
+  const affectedQuestions = await client.query<{ readonly question_id: string }>(
+    `SELECT question_id
+     FROM meeting_knowledge.question_jobs
+     WHERE binding ->> 'meetingId' = $1
+        OR source_meeting_ids @> ARRAY[$1]::text[]
+     ORDER BY question_id
+     FOR UPDATE`,
+    [meetingId],
+  );
+  const questionIds = affectedQuestions.rows.map(({ question_id: questionId }) =>
+    questionId
+  );
   await client.query(
     `UPDATE meeting_knowledge.question_jobs
      SET state = 'terminal', outcome = 'cancelled',
@@ -50,10 +72,25 @@ export async function requestAnswerSourceWithdrawal(
          terminal_at = COALESCE(terminal_at, transaction_timestamp()),
          scrubbed_at = COALESCE(scrubbed_at, transaction_timestamp()),
          updated_at = transaction_timestamp()
-     WHERE state <> 'terminal'
-       AND source_meeting_ids @> ARRAY[$1]::text[]`,
-    [meetingId],
+     WHERE question_id = ANY($1::text[])
+       AND state <> 'terminal'`,
+    [questionIds],
   );
+  const affectedEffects = await client.query<{ readonly effect_id: string }>(
+    `SELECT effect_id
+     FROM meeting_core.answer_effects
+     WHERE source_meeting_ids @> ARRAY[$1]::text[]
+        OR effect_id = ANY($2::text[])
+     ORDER BY effect_id
+     FOR UPDATE`,
+    [
+      meetingId,
+      questionIds.map((questionId) =>
+        `meeting-knowledge-answer:v1:${questionId}`
+      ),
+    ],
+  );
+  const effectIds = affectedEffects.rows.map(({ effect_id: effectId }) => effectId);
   await client.query(
     `UPDATE meeting_core.answer_effects
      SET state = CASE
@@ -75,11 +112,11 @@ export async function requestAnswerSourceWithdrawal(
            ELSE settled_at
          END,
          updated_at = transaction_timestamp()
-     WHERE source_meeting_ids @> ARRAY[$1]::text[]
+     WHERE effect_id = ANY($1::text[])
        AND state IN (
          'reserved', 'claimed', 'request_started', 'delivered',
          'outcome_unknown', 'absent_unconfirmed', 'retraction_pending'
        )`,
-    [meetingId],
+    [effectIds],
   );
 }

@@ -17,6 +17,7 @@ export const meetingKnowledgeRequiredIndexes = [
   "meeting_knowledge.question_jobs_leasable_idx",
   "meeting_knowledge.question_rate_requester_window_idx",
   "meeting_knowledge.question_rate_scope_window_idx",
+  "meeting_knowledge.unavailable_final_projections_unavailable_at_idx",
   "meeting_knowledge.live_memory_outbox_recoverable_idx",
   "meeting_knowledge.live_memory_hot_tail_generation_idx",
 ] as const;

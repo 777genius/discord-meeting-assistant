@@ -30,6 +30,7 @@ const migrationDefinitions = [
   { fileName: "0019_greeting_receipt_state_machine.sql" },
   { fileName: "0020_answer_retraction_lifecycle.sql" },
   { fileName: "0021_farewell_receipt_state_machine.sql" },
+  { fileName: "0022_meeting_knowledge_withdrawal_tombstones.sql" },
 ] as const;
 
 const migrationLockKey = "718330091620232601";

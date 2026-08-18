@@ -201,6 +201,89 @@ describe("PostgreSQL canonical live reply authority", () => {
       rows: [{ final_projection_receipt: receipt }],
     });
   });
+});
+
+describe("PostgreSQL projection tombstone retention", () => {
+
+  it("prunes stale unmatched deletes but preserves a delete observed before authority", async (context) => {
+    const database = databaseOrSkip(context);
+    const admissions = new PostgresQuestionAdmissionCommit(database, botId);
+    const staleReceipt =
+      `discord:v2:channel:${channelId}:message:66666666666666661`;
+    const validReceipt =
+      `discord:v2:channel:${channelId}:message:33333333333333333`;
+    await admissions.withdrawProjection({ finalProjectionReceipt: staleReceipt });
+    await admissions.withdrawProjection({ finalProjectionReceipt: validReceipt });
+    await database.query(
+      `UPDATE meeting_knowledge.unavailable_final_projections
+       SET unavailable_at = transaction_timestamp() - interval '25 hours'
+       WHERE final_projection_receipt = ANY($1::text[])`,
+      [[staleReceipt, validReceipt]],
+    );
+
+    await persistFinalMeeting(database);
+    const triggerReceipt =
+      `discord:v2:channel:${channelId}:message:66666666666666662`;
+    await admissions.withdrawProjection({ finalProjectionReceipt: triggerReceipt });
+
+    await expect(database.query<{ readonly final_projection_receipt: string }>(
+      `SELECT final_projection_receipt
+       FROM meeting_knowledge.unavailable_final_projections
+       WHERE final_projection_receipt = ANY($1::text[])
+       ORDER BY final_projection_receipt`,
+      [[staleReceipt, validReceipt, triggerReceipt]],
+    )).resolves.toMatchObject({
+      rows: [
+        { final_projection_receipt: validReceipt },
+        { final_projection_receipt: triggerReceipt },
+      ].toSorted((left, right) =>
+        left.final_projection_receipt.localeCompare(right.final_projection_receipt)
+      ),
+    });
+    await expect(new PostgresFinalReplyEvidence(database, botId).findCurrentBinding({
+      finalProjectionReceipt: validReceipt,
+      projectionTargetContainerId: channelId,
+    })).resolves.toBeNull();
+  });
+
+  it("does not prune a tombstone behind an active projection fence", async (context) => {
+    const database = databaseOrSkip(context);
+    const admissions = new PostgresQuestionAdmissionCommit(database, botId);
+    const lockedReceipt =
+      `discord:v2:channel:${channelId}:message:66666666666666663`;
+    await admissions.withdrawProjection({ finalProjectionReceipt: lockedReceipt });
+    await database.query(
+      `UPDATE meeting_knowledge.unavailable_final_projections
+       SET unavailable_at = transaction_timestamp() - interval '25 hours'
+       WHERE final_projection_receipt = $1`,
+      [lockedReceipt],
+    );
+    const lockOwner = await database.connect();
+    try {
+      await lockOwner.query("BEGIN");
+      await lockOwner.query(
+        `SELECT pg_advisory_xact_lock(
+           hashtextextended('meeting-knowledge:projection:' || $1, 0)
+         )`,
+        [lockedReceipt],
+      );
+      await admissions.withdrawProjection({
+        finalProjectionReceipt:
+          `discord:v2:channel:${channelId}:message:66666666666666664`,
+      });
+      await expect(database.query(
+        `SELECT 1 FROM meeting_knowledge.unavailable_final_projections
+         WHERE final_projection_receipt = $1`,
+        [lockedReceipt],
+      )).resolves.toMatchObject({ rowCount: 1 });
+    } finally {
+      await lockOwner.query("ROLLBACK").catch(() => {});
+      lockOwner.release();
+    }
+  });
+});
+
+describe("PostgreSQL canonical live reply authority races", () => {
 
   it("serializes withdrawal with admission and never re-admits the projection", async (context) => {
     const database = databaseOrSkip(context);

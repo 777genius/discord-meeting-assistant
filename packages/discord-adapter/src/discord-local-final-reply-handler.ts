@@ -161,6 +161,14 @@ export class DiscordLocalFinalReplyHandler {
     if (wasQuestion) {
       return;
     }
+    const botUserId = this.client.user?.id;
+    const deletedAuthorId = message.author?.id;
+    if (
+      botUserId === undefined ||
+      (deletedAuthorId !== undefined && deletedAuthorId !== botUserId)
+    ) {
+      return;
+    }
     if (message.guildId === null) {
       return;
     }

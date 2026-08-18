@@ -3,8 +3,9 @@ import type {
   QuestionJobState,
   QuestionJobStore,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 
+import { lockMeetingKnowledgeSources } from "./postgres-answer-source-withdrawal.js";
 import {
   decodeGroundedAnswerCandidate,
   decodeGroundingPlan,
@@ -20,6 +21,14 @@ interface QuestionJobRow {
   readonly question_id: string;
   readonly question_text: string;
   readonly state: QuestionJobState;
+}
+
+async function rollback(client: PoolClient): Promise<void> {
+  try {
+    await client.query("ROLLBACK");
+  } catch {
+    // Preserve the original persistence failure.
+  }
 }
 
 function requireLeaseSeconds(value: number): number {
@@ -94,42 +103,58 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
   public async persistGroundingPlan(
     input: Parameters<QuestionJobStore["persistGroundingPlan"]>[0],
   ): Promise<boolean> {
-    const result = await this.pool.query(
-      `
-        WITH source_fence AS (
-          SELECT meeting_id, operation
-          FROM meeting_core.historical_memory_sync
-          WHERE meeting_id = ANY($6::text[])
-          FOR UPDATE
-        )
-        UPDATE meeting_knowledge.question_jobs
-        SET grounding_plan = $3::jsonb,
-            grounding_measurement = $4::jsonb,
-            runtime_profile = $5,
-            source_meeting_ids = $6::text[],
-            updated_at = transaction_timestamp()
-        WHERE question_id = $1
-          AND generation = $2
-          AND state = 'running'
-          AND lease_until > transaction_timestamp()
-          AND NOT EXISTS (
-            SELECT 1 FROM source_fence WHERE operation = 'delete_meeting'
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await lockMeetingKnowledgeSources(client, input.sourceMeetingIds);
+      const result = await client.query(
+        `
+          WITH source_fence AS (
+            SELECT meeting_id, operation
+            FROM meeting_core.historical_memory_sync
+            WHERE meeting_id = ANY($6::text[])
+            FOR UPDATE
           )
-      `,
-      [
-        input.jobId,
-        input.generation,
-        JSON.stringify(input.plan),
-        JSON.stringify({
-          inputTokens: input.measurement.inputTokens,
-          requestBytes: input.measurement.requestBytes,
-          schemaVersion: 1,
-        }),
-        input.runtimeProfile,
-        input.sourceMeetingIds,
-      ],
-    );
-    return result.rowCount === 1;
+          UPDATE meeting_knowledge.question_jobs
+          SET grounding_plan = $3::jsonb,
+              grounding_measurement = $4::jsonb,
+              runtime_profile = $5,
+              source_meeting_ids = $6::text[],
+              updated_at = transaction_timestamp()
+          WHERE question_id = $1
+            AND generation = $2
+            AND state = 'running'
+            AND lease_until > transaction_timestamp()
+            AND NOT EXISTS (
+              SELECT 1 FROM source_fence WHERE operation = 'delete_meeting'
+            )
+            AND NOT EXISTS (
+              SELECT 1
+              FROM meeting_knowledge.withdrawn_meeting_sources AS withdrawn
+              WHERE withdrawn.meeting_id = ANY($6::text[])
+            )
+        `,
+        [
+          input.jobId,
+          input.generation,
+          JSON.stringify(input.plan),
+          JSON.stringify({
+            inputTokens: input.measurement.inputTokens,
+            requestBytes: input.measurement.requestBytes,
+            schemaVersion: 1,
+          }),
+          input.runtimeProfile,
+          input.sourceMeetingIds,
+        ],
+      );
+      await client.query("COMMIT");
+      return result.rowCount === 1;
+    } catch (error) {
+      await rollback(client);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   public async markReady(
