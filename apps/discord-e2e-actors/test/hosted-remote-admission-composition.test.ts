@@ -436,6 +436,7 @@ function voicetextResult(
   const digest = digestVoicetextCanaryExpectationV1(segments);
   return { batch: { firstSubmission: { jobId: "job", resultId: "result", resultSha256: digest },
     idempotentReplay: { jobId: "job", resultId: "result", resultSha256: digest }, segments, utteranceCount: 1 },
+  keyterms: ["Botik"],
   live: { audioAcknowledgements: { expected: 1, received: 1 }, finalizeComplete: true, protocolReady: true,
     segments }, profiles: { batch: "deepgram-nova-3", live: "deepgram-nova-3" }, schemaVersion: 1,
   tokenFile: { generationId: "generation-voicetext", mode: 0o400, ownerUid: 10_001,
