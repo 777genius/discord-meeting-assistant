@@ -16,6 +16,7 @@ import {
   type PreparedAnswerGrounding,
 } from "./final-reply-answer-generation.js";
 import {
+  abortProviderAttempt,
   nextProviderAttemptId,
   providerAttemptAvailable,
   reserveProviderAttempt,
@@ -276,16 +277,19 @@ export class ProcessFinalReplyJob {
     }
     try {
       const selection = await this.input.selector.execute({
+        attemptId: providerAttemptId,
         question: lease.questionText,
         turns: hydrated.turns,
       });
       if (selection.status === "insufficient_evidence" ||
           selection.mode === "lexical_fallback") {
-        return this.settled(await this.publisher.publishFixed(
+        return this.abortSelectionAttempt(
           lease,
           current.binding,
+          providerAttemptId,
+          "selector_insufficient_evidence",
           "insufficient_evidence",
-        ));
+        );
       }
       const humanActorIds = admittedHumanActors(hydrated);
       return {
@@ -300,12 +304,27 @@ export class ProcessFinalReplyJob {
         status: "prepared",
       };
     } catch {
-      return this.settled(await this.publisher.publishFixed(
+      return this.abortSelectionAttempt(
         lease,
         current.binding,
+        providerAttemptId,
+        "selector_failed",
         "unavailable",
-      ));
+      );
     }
+  }
+
+  private async abortSelectionAttempt(
+    lease: QuestionJobLease,
+    authority: CurrentFinalReplyBinding,
+    attemptId: string,
+    reason: string,
+    outcome: "insufficient_evidence" | "unavailable",
+  ): Promise<GroundingPreparation> {
+    if (!await abortProviderAttempt(this.input.jobs, lease, attemptId, reason)) {
+      return this.settled({ jobId: lease.jobId, status: "stale_generation" });
+    }
+    return this.settled(await this.publisher.publishFixed(lease, authority, outcome));
   }
 
   private async prepareExhaustiveGrounding(

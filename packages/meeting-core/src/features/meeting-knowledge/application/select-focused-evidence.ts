@@ -43,6 +43,7 @@ export class SelectFocusedEvidence {
   ) {}
 
   public async execute(input: {
+    readonly attemptId: string;
     readonly question: string;
     readonly signal?: AbortSignal;
     readonly turns: readonly RehydratedEvidenceTurn[];
@@ -54,6 +55,7 @@ export class SelectFocusedEvidence {
     let result: FocusedEvidenceSelectionResultV1;
     try {
       result = validateResult(await this.selector.select({
+        attemptId: input.attemptId,
         candidates,
         question: boundedText(input.question, MAX_QUESTION_BYTES),
         ...(input.signal === undefined ? {} : { signal: input.signal }),

@@ -461,7 +461,7 @@ describe("ProcessFinalReplyJob", () => {
       selectedCandidateIds: [],
       status: "insufficient_evidence",
     });
-    const { generator, processor, publication } = processingFixture(
+    const { generator, jobs, processor, publication } = processingFixture(
       undefined,
       selector,
     );
@@ -472,6 +472,10 @@ describe("ProcessFinalReplyJob", () => {
     });
     expect(generator.generationCalls).toBe(0);
     expect(generator.requests).toEqual([]);
+    expect(jobs.providerAborts).toEqual([expect.objectContaining({
+      attemptId: "question-1:generation:1:attempt:1",
+      reason: "selector_insufficient_evidence",
+    })]);
     expect(publication.reservations[0]?.content).toContain(
       "not enough confirmed",
     );
@@ -495,8 +499,9 @@ describe("ProcessFinalReplyJob", () => {
       fixture.jobs.providerReservations[0]?.attemptId,
     );
   });
+});
 
-
+describe("ProcessFinalReplyJob answer generation", () => {
   it("uses checkpointed every-block coverage and rechecks it before an exhaustive answer", async () => {
     const exhaustive = new ExhaustiveMemoryFake();
     const { generator, jobs, memory, processor } = processingFixture(exhaustive);

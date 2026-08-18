@@ -41,6 +41,7 @@
 - [ADR-0036: Canonical live-projection reply](0036-canonical-live-projection-reply.md)
 - [ADR-0037: Release-bound Meeting Knowledge qualification](0037-release-bound-meeting-knowledge-qualification.md)
 - [ADR-0038: Projection trust and cluster policy epoch](0038-projection-trust-and-policy-epoch.md)
+- [ADR-0039: Bounded evidence selector accounting](0039-bounded-evidence-selector.md)
 
 ## Superseded
 

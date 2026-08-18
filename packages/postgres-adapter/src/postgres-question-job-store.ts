@@ -52,6 +52,12 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
     return this.providerAttempts.complete(input);
   }
 
+  public abortProviderAttempt(
+    input: Parameters<QuestionJobStore["abortProviderAttempt"]>[0],
+  ): Promise<boolean> {
+    return this.providerAttempts.abort(input);
+  }
+
   public failProviderAttempt(
     input: Parameters<QuestionJobStore["failProviderAttempt"]>[0],
   ): Promise<"deferred" | "settled" | "stale"> {

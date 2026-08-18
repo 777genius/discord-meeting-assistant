@@ -21,6 +21,7 @@ export type FocusedEvidenceSelectionResultV1 =
 export interface FocusedEvidenceSelectorPort {
   readonly profile: string;
   select(input: {
+    readonly attemptId: string;
     readonly candidates: readonly FocusedEvidenceSelectionCandidateV1[];
     readonly question: string;
     readonly signal?: AbortSignal;

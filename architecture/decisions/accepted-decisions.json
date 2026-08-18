@@ -186,6 +186,11 @@
       "id": "ADR-0038",
       "path": "docs/decisions/0038-projection-trust-and-policy-epoch.md",
       "immutableDigest": "sha256:693dbe121aeb0376ce6c140715fc095d770fdb65ddf5ea702e20a050ba3bb45a"
+    },
+    {
+      "id": "ADR-0039",
+      "path": "docs/decisions/0039-bounded-evidence-selector.md",
+      "immutableDigest": "sha256:deb9bb018a6d3e9a4ca6f44166e9c2404602dd1bc01f58302f7db35ffb689223"
     }
   ]
 }

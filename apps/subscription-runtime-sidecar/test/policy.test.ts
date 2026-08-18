@@ -143,6 +143,7 @@ describe("subscription runtime request policy", () => {
 
   it("admits the exact dedicated bounded evidence selector profile", () => {
     const request = buildFocusedEvidenceSelectorRequest({
+      attemptId: "question-1:generation:1:attempt:1",
       candidates: [{
         candidateId: "candidate-000001",
         endMs: 1_000,

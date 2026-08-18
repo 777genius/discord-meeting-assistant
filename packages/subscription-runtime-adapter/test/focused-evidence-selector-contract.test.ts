@@ -99,6 +99,7 @@ describe("subscription runtime focused evidence selector", () => {
   it("sends one bounded RU/EN candidate-only prompt and accepts IDs only", async () => {
     const runtime = new RuntimeFake();
     const result = await adapter(runtime).select({
+      attemptId: "question-1:generation:1:attempt:1",
       candidates: candidates(),
       question: "Когда release и подтвержден ли Monday?",
     });
@@ -151,6 +152,7 @@ describe("subscription runtime focused evidence selector", () => {
     runtime.output = output;
 
     await expect(adapter(runtime).select({
+      attemptId: "question-1:generation:1:attempt:1",
       candidates: candidates(),
       question: "When is the release?",
     })).rejects.toThrow();
@@ -161,15 +163,28 @@ describe("subscription runtime focused evidence selector", () => {
     runtime.failure = new Error("synthetic timeout");
 
     await expect(adapter(runtime).select({
+      attemptId: "question-1:generation:1:attempt:1",
       candidates: candidates(),
       question: "When is the release?",
     })).rejects.toThrow("synthetic timeout");
+  });
+
+  it("binds provider trace identity to the durable attempt", async () => {
+    const firstRuntime = new RuntimeFake();
+    const secondRuntime = new RuntimeFake();
+    const base = { candidates: candidates(), question: "When is the release?" };
+
+    await adapter(firstRuntime).select({ ...base, attemptId: "attempt-1" });
+    await adapter(secondRuntime).select({ ...base, attemptId: "attempt-2" });
+
+    expect(firstRuntime.request?.runId).not.toBe(secondRuntime.request?.runId);
   });
 
   it("rejects oversized candidates before the provider receives a long transcript", async () => {
     const runtime = new RuntimeFake();
 
     await expect(adapter(runtime).select({
+      attemptId: "question-1:generation:1:attempt:1",
       candidates: [{
         ...candidates()[0],
         snippet: "x".repeat(1_601),
@@ -179,4 +194,3 @@ describe("subscription runtime focused evidence selector", () => {
     expect(runtime.request).toBeUndefined();
   });
 });
-

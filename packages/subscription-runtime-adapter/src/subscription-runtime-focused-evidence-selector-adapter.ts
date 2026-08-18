@@ -152,6 +152,7 @@ export function buildFocusedEvidenceSelectorRequest(
   const runId = stableSubscriptionRuntimeId(
     "knowledge-evidence-select",
     knowledgeEvidenceSelectorPolicyVersion,
+    input.attemptId,
     prompt,
   );
   return {
@@ -209,6 +210,8 @@ function validateInput(
 ): void {
   const encoder = new TextEncoder();
   if (
+    input.attemptId.length < 1 ||
+    input.attemptId.length > 256 ||
     input.candidates.length < 1 ||
     input.candidates.length > 40 ||
     input.question.trim().length === 0 ||

@@ -61,6 +61,7 @@ describe("focused evidence selection", () => {
     ];
 
     const result = await selector.execute({
+      attemptId: "question-1:generation:1:attempt:1",
       question: "When is the release?",
       turns,
     });
@@ -111,6 +112,7 @@ describe("focused evidence selection", () => {
     const { observations, selector } = fixture(provider);
 
     const result = await selector.execute({
+      attemptId: "question-1:generation:1:attempt:1",
       question: "Когда релиз Альфа?",
       turns: [turn("turn-1", "Релиз Альфа состоится в понедельник.")],
     });
@@ -132,6 +134,7 @@ describe("focused evidence selection", () => {
     const { observations, selector } = fixture(provider);
 
     const result = await selector.execute({
+      attemptId: "question-1:generation:1:attempt:1",
       question: "Who approved Project Zeta?",
       turns: [turn("turn-1", "Обсудили сроки проекта Альфа.")],
     });
@@ -158,8 +161,16 @@ describe("focused evidence selection", () => {
       index * 70_000,
     ));
 
-    const first = await selector.execute({ question: "orbital marker", turns });
-    const second = await selector.execute({ question: "orbital marker", turns });
+    const first = await selector.execute({
+      attemptId: "question-1:generation:1:attempt:1",
+      question: "orbital marker",
+      turns,
+    });
+    const second = await selector.execute({
+      attemptId: "question-1:generation:1:attempt:1",
+      question: "orbital marker",
+      turns,
+    });
 
     expect(first.status).toBe("selected");
     expect(first.turns).toHaveLength(5);
