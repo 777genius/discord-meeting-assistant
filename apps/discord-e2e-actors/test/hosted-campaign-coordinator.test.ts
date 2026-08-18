@@ -365,7 +365,7 @@ describe("hosted campaign coordinator", () => {
         expect(bound.signal).not.toBe(campaignCancellation.signal);
         ownedPolls.add(bound.signal);
         markBarrierStarted?.();
-        return new Promise((_, reject) => {
+        return new Promise((_resolve, reject) => {
           const cancel = () => {
             ownedPolls.delete(bound.signal);
             reject(cancellationFailure);
