@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
 
+import { frozenSemanticQualityCorpus } from "./semantic-quality-corpus.js";
+import {
+  immutableCheckoutProvenance,
+  runAuthenticatedAnswerEvaluation,
+  type SubscriptionAnswerTransport,
+} from "./semantic-quality-answer-runner.js";
 import { runSemanticQualityRetrieval } from "./semantic-quality-retrieval-helper.js";
 
 const enabled = process.env.INFINITY_CONTEXT_SEMANTIC_QUALITY_E2E === "1";
@@ -14,10 +20,9 @@ liveDescribe("Infinity Context frozen semantic quality retrieval", () => {
     const artifact = Object.freeze({
       binding: Object.freeze({
         corpusSha256: result.corpusSha256,
-        embeddingProfileDigestSha256: config.embeddingProfileDigestSha256,
-        embeddingProfileId: config.embeddingProfileId,
-        releaseRevision: config.releaseRevision,
-        serviceRevision: config.serviceRevision,
+        embeddingProfileDigestSha256: result.service.embeddingProfileDigestSha256,
+        embeddingProfileId: result.service.embeddingProfileId,
+        serviceRevision: result.service.revision,
       }),
       claims: Object.freeze({
         finalAnswerQualityMeasured: false,
@@ -31,6 +36,28 @@ liveDescribe("Infinity Context frozen semantic quality retrieval", () => {
     process.stdout.write(
       `INFINITY_CONTEXT_SEMANTIC_QUALITY_RETRIEVAL_V1 ${JSON.stringify(artifact)}\n`,
     );
+    if (process.env.INFINITY_CONTEXT_SEMANTIC_ANSWER_E2E === "1") {
+      const corpus = frozenSemanticQualityCorpus();
+      const transport = await injectedTransport(process.env);
+      const answerRun = await runAuthenticatedAnswerEvaluation({
+        build: immutableCheckoutProvenance(repositoryRoot()),
+        corpus,
+        observedAt: new Date().toISOString(),
+        repetition: positiveInteger(process.env.INFINITY_CONTEXT_SEMANTIC_E2E_REPETITION),
+        retrieval: result,
+        runId: required(process.env.INFINITY_CONTEXT_SEMANTIC_E2E_RUN_ID,
+          "INFINITY_CONTEXT_SEMANTIC_E2E_RUN_ID"),
+        transport,
+      });
+      process.stdout.write(
+        `INFINITY_CONTEXT_SEMANTIC_QUALITY_ANSWER_V1 ${JSON.stringify(Object.freeze({
+          ...answerRun,
+          claims: Object.freeze({ independentlyAdjudicated: false,
+            productionQualityQualified: false }),
+          schemaVersion: "meeting_knowledge.semantic_quality_answer_pending.v1",
+        }))}\n`,
+      );
+    }
   }, 1_800_000);
 });
 function semanticQualityConfig(environment: NodeJS.ProcessEnv) {
@@ -39,13 +66,6 @@ function semanticQualityConfig(environment: NodeJS.ProcessEnv) {
     "INFINITY_CONTEXT_SEMANTIC_E2E_DISPOSABLE",
   ) !== "YES_DELETE_ALL_TEST_DATA") {
     throw new Error("semantic quality retrieval requires explicit disposable-data consent");
-  }
-  const embeddingProfileId = required(
-    environment.INFINITY_CONTEXT_SEMANTIC_E2E_EMBEDDING_PROFILE,
-    "INFINITY_CONTEXT_SEMANTIC_E2E_EMBEDDING_PROFILE",
-  );
-  if (/(?:deterministic|mock|non-production)/iu.test(embeddingProfileId)) {
-    throw new Error("semantic quality requires a non-mock embedding profile");
   }
   const url = new URL(required(
     environment.INFINITY_CONTEXT_SEMANTIC_E2E_URL,
@@ -56,12 +76,6 @@ function semanticQualityConfig(environment: NodeJS.ProcessEnv) {
     throw new Error("semantic quality URL must be an HTTP(S) service root");
   }
   return {
-    embeddingProfileDigestSha256: required(
-      environment.INFINITY_CONTEXT_SEMANTIC_E2E_EMBEDDING_PROFILE_DIGEST_SHA256,
-      "INFINITY_CONTEXT_SEMANTIC_E2E_EMBEDDING_PROFILE_DIGEST_SHA256",
-    ),
-    embeddingProfileId,
-    releaseRevision: revision(environment.MEETING_KNOWLEDGE_RELEASE_REVISION),
     service: {
       baseUrl: url.toString().replace(/\/$/u, ""),
       requestTimeoutMs: 30_000,
@@ -69,7 +83,6 @@ function semanticQualityConfig(environment: NodeJS.ProcessEnv) {
         ? {}
         : { token: environment.INFINITY_CONTEXT_SEMANTIC_E2E_TOKEN }),
     },
-    serviceRevision: revision(environment.INFINITY_CONTEXT_SEMANTIC_E2E_SERVICE_REVISION),
   };
 }
 
@@ -80,10 +93,23 @@ function required(value: string | undefined, field: string): string {
   return value.trim();
 }
 
-function revision(value: string | undefined): string {
-  const normalized = required(value, "revision");
-  if (!/^[a-f0-9]{40}$/u.test(normalized)) {
-    throw new Error("semantic quality requires an exact git revision");
+async function injectedTransport(environment: NodeJS.ProcessEnv): Promise<SubscriptionAnswerTransport> {
+  const path = required(environment.INFINITY_CONTEXT_SEMANTIC_ANSWER_TRANSPORT_MODULE,
+    "INFINITY_CONTEXT_SEMANTIC_ANSWER_TRANSPORT_MODULE");
+  const module = await import(path) as { readonly default?: unknown };
+  const transport = module.default as Partial<SubscriptionAnswerTransport> | undefined;
+  if (transport === undefined || typeof transport.execute !== "function") {
+    throw new Error("injected answer transport must export a SubscriptionAnswerTransport");
   }
-  return normalized;
+  return transport as SubscriptionAnswerTransport;
+}
+
+function positiveInteger(value: string | undefined): number {
+  const parsed = Number.parseInt(required(value, "INFINITY_CONTEXT_SEMANTIC_E2E_REPETITION"), 10);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {throw new Error("repetition must be positive");}
+  return parsed;
+}
+
+function repositoryRoot(): string {
+  return new URL("../../../", import.meta.url).pathname;
 }

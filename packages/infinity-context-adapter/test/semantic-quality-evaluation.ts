@@ -1,8 +1,17 @@
+import { createHash } from "node:crypto";
+
 import { INFINITY_CONTEXT_SDK_PROVENANCE } from "../src/index.js";
-import type { FrozenQualityQuestion, QualityLocale } from "./semantic-quality-corpus.js";
+import {
+  semanticQualityCorpusDigest,
+  semanticQualityQuestionSetDigest,
+  type FrozenQualityQuestion,
+  type FrozenSemanticQualityCorpus,
+  type QualityLocale,
+} from "./semantic-quality-corpus.js";
 
 export interface QualityRunBinding {
   readonly corpusSha256: string;
+  readonly questionSetSha256: string;
   readonly embeddingProfileDigestSha256: `sha256:${string}`;
   readonly embeddingProfileId: string;
   readonly modelConfigurationSha256: string;
@@ -11,6 +20,7 @@ export interface QualityRunBinding {
   readonly modelRevision: string;
   readonly observedAt: string;
   readonly releaseRevision: string;
+  readonly releaseTree: string;
   readonly repetition: number;
   readonly runId: string;
   readonly serviceApiVersion: string;
@@ -45,8 +55,11 @@ export interface QualityResourceSummary {
 
 export interface QualityRawOutcome {
   readonly adjudication: {
-    readonly citationValid: boolean;
-    readonly matchedGoldClaimIds: readonly (string | null)[];
+    readonly claims: readonly {
+      readonly citationValid: boolean;
+      readonly matchedGoldClaimId: string | null;
+      readonly verdict: "pending" | "stale" | "supported" | "unsupported";
+    }[];
     readonly status: "fixture" | "human_verified" | "pending";
   };
   readonly answer: {
@@ -81,6 +94,7 @@ export interface QualityScore {
 }
 
 export interface SemanticQualityRunEvidence {
+  readonly adjudicationReceipt: HumanAdjudicationReceipt | null;
   readonly binding: QualityRunBinding;
   readonly claims: {
     readonly productionQualityQualified: false;
@@ -100,6 +114,15 @@ export interface SemanticQualityRunEvidence {
   readonly resources: QualityResourceSummary;
 }
 
+export interface HumanAdjudicationReceipt {
+  readonly adjudicatorId: string;
+  readonly answerRunSha256: string;
+  readonly corpusSha256: string;
+  readonly questionSetSha256: string;
+  readonly reviewedAt: string;
+  readonly schemaVersion: "meeting_knowledge.human_adjudication_receipt.v1";
+}
+
 export interface SemanticQualityDistribution {
   readonly metric: keyof QualityScore;
   readonly repetitions: number;
@@ -112,14 +135,17 @@ export interface SemanticQualityDistribution {
  * claims; model prose never grades itself.
  */
 export function createSemanticQualityRunEvidence(input: {
+  readonly adjudicationReceipt?: HumanAdjudicationReceipt;
   readonly binding: QualityRunBinding;
+  readonly corpus: FrozenSemanticQualityCorpus;
   readonly labelStatus: SemanticQualityRunEvidence["labelStatus"];
   readonly outcomes: readonly QualityRawOutcome[];
-  readonly questions: readonly FrozenQualityQuestion[];
 }): SemanticQualityRunEvidence {
   validateBinding(input.binding);
-  const byId = new Map(input.questions.map((question) => [question.id, question]));
-  if (byId.size !== input.questions.length || input.outcomes.length !== input.questions.length) {
+  validateCorpus(input.corpus, input.binding);
+  const questions = input.corpus.questions;
+  const byId = new Map(questions.map((question) => [question.id, question]));
+  if (byId.size !== questions.length || input.outcomes.length !== questions.length) {
     throw new Error("quality run requires exactly one outcome for every unique frozen question");
   }
   const outcomeIds = new Set<string>();
@@ -135,12 +161,13 @@ export function createSemanticQualityRunEvidence(input: {
     (adjudicationStatuses.size !== 1 || !adjudicationStatuses.has("human_verified"))) {
     throw new Error("human-verified evidence requires every outcome to be human adjudicated");
   }
-  const score = (questions: readonly FrozenQualityQuestion[]): QualityScore =>
-    scoreSlice(questions, new Map(input.outcomes.map((outcome) => [outcome.queryId, outcome])));
+  validateAdjudicationReceipt(input);
+  const score = (slice: readonly FrozenQualityQuestion[]): QualityScore =>
+    scoreSlice(slice, new Map(input.outcomes.map((outcome) => [outcome.queryId, outcome])));
   const perLocale = Object.freeze({
-    en: score(input.questions.filter(({ locale }) => locale === "en")),
-    mixed: score(input.questions.filter(({ locale }) => locale === "mixed")),
-    ru: score(input.questions.filter(({ locale }) => locale === "ru")),
+    en: score(questions.filter(({ locale }) => locale === "en")),
+    mixed: score(questions.filter(({ locale }) => locale === "mixed")),
+    ru: score(questions.filter(({ locale }) => locale === "ru")),
   });
   const status = adjudicationStatuses.size === 1 && adjudicationStatuses.has("fixture")
     ? "harness_validation_only"
@@ -148,11 +175,14 @@ export function createSemanticQualityRunEvidence(input: {
       ? "measured_human_adjudicated"
       : "measurement_requires_human_adjudication";
   return Object.freeze({
+    adjudicationReceipt: input.adjudicationReceipt === undefined
+      ? null
+      : Object.freeze({ ...input.adjudicationReceipt }),
     binding: Object.freeze({ ...input.binding }),
     claims: Object.freeze({ productionQualityQualified: false as const, status }),
     labelStatus: input.labelStatus,
     outcomes: Object.freeze([...input.outcomes]),
-    overall: score(input.questions),
+    overall: score(questions),
     perLocale,
     schemaVersion: "meeting_knowledge.semantic_quality_run.v1",
     resources: summarizeResources(input.outcomes),
@@ -163,6 +193,11 @@ export function createSemanticQualityRunEvidence(input: {
       tree: INFINITY_CONTEXT_SDK_PROVENANCE.tree,
     }),
   });
+}
+
+export function semanticQualityAnswerRunDigest(outcomes: readonly QualityRawOutcome[]): string {
+  const answerRun = outcomes.map(({ adjudication: _adjudication, ...outcome }) => outcome);
+  return sha256(JSON.stringify(answerRun));
 }
 
 export function qualityDistribution(
@@ -195,10 +230,12 @@ export function qualityDistribution(
 function bindingKey(run: SemanticQualityRunEvidence): string {
   return JSON.stringify({
     corpus: run.binding.corpusSha256,
+    questions: run.binding.questionSetSha256,
     embedding: [run.binding.embeddingProfileId, run.binding.embeddingProfileDigestSha256],
     model: [run.binding.modelId, run.binding.modelRevision, run.binding.modelConfigurationSha256],
     tokenizer: [run.binding.tokenizerId, run.binding.tokenizerDigestSha256],
     release: run.binding.releaseRevision,
+    releaseTree: run.binding.releaseTree,
     service: [run.binding.serviceName, run.binding.serviceApiVersion, run.binding.serviceRevision],
   });
 }
@@ -227,22 +264,24 @@ function scoreSlice(
       retrievalHits += 1;
     }
     const expectedClaims = new Set(question.expectedClaimIds);
-    const matched = new Set(outcome.adjudication.matchedGoldClaimIds
-      .filter((claimId): claimId is string => claimId !== null));
+    const supportedMappings = outcome.adjudication.claims.filter(({ verdict }) =>
+      verdict === "supported");
+    const matched = new Set(supportedMappings
+      .map(({ matchedGoldClaimId }) => matchedGoldClaimId)
+      .filter((claimId): claimId is string => claimId !== null && expectedClaims.has(claimId)));
     emittedClaims += outcome.answer.claims.length;
-    matchedClaims += outcome.adjudication.matchedGoldClaimIds
-      .filter((claimId) => claimId !== null && expectedClaims.has(claimId)).length;
+    matchedClaims += matched.size;
     if (question.kind === "answerable" && outcome.answer.status === "answered" &&
-      expectedClaims.size > 0 && [...expectedClaims].every((claim) => matched.has(claim))) {
+      expectedClaims.size > 0 && matched.size === expectedClaims.size &&
+      supportedMappings.length === expectedClaims.size &&
+      [...expectedClaims].every((claim) => matched.has(claim))) {
       answerHits += 1;
     }
     if (question.kind === "unsupported" && outcome.answer.status === "abstained" &&
       outcome.answer.claims.length === 0) {
       abstentionHits += 1;
     }
-    if (outcome.adjudication.citationValid) {
-      validCitations += outcome.answer.claims.length;
-    }
+    validCitations += outcome.adjudication.claims.filter(({ citationValid }) => citationValid).length;
   }
   return Object.freeze({
     abstentionRecall: proportion(abstentionHits, unsupported.length),
@@ -295,6 +334,7 @@ function summarizeResources(outcomes: readonly QualityRawOutcome[]): QualityReso
 
 function validateBinding(binding: QualityRunBinding): void {
   if (!/^[a-f0-9]{40}$/u.test(binding.releaseRevision) ||
+    !/^[a-f0-9]{40}$/u.test(binding.releaseTree) ||
     !/^[a-f0-9]{40}$/u.test(binding.serviceRevision) ||
     !/^sha256:[a-f0-9]{64}$/u.test(binding.embeddingProfileDigestSha256) ||
     !/^[a-f0-9]{64}$/u.test(binding.modelConfigurationSha256) ||
@@ -312,8 +352,9 @@ function validateBinding(binding: QualityRunBinding): void {
       throw new Error("quality run binding contains empty identity");
     }
   }
-  if (!/^[a-f0-9]{64}$/u.test(binding.corpusSha256)) {
-    throw new Error("quality corpus digest must be SHA-256");
+  if (!/^[a-f0-9]{64}$/u.test(binding.corpusSha256) ||
+    !/^[a-f0-9]{64}$/u.test(binding.questionSetSha256)) {
+    throw new Error("quality corpus and question-set digests must be SHA-256");
   }
 }
 
@@ -327,12 +368,83 @@ function validateOutcome(outcome: QualityRawOutcome): void {
     outcome.retrieval.candidateBlockCountAt5 < 0 || outcome.retrieval.candidateBlockCountAt5 > 5) {
     throw new Error("retrieval recall@5 received more than five candidate blocks");
   }
-  if (outcome.adjudication.matchedGoldClaimIds.length !== outcome.answer.claims.length) {
+  if (outcome.adjudication.claims.length !== outcome.answer.claims.length) {
     throw new Error("quality adjudication requires exactly one gold mapping per emitted claim");
+  }
+  for (const claim of outcome.adjudication.claims) {
+    if (claim.verdict !== "supported" && claim.matchedGoldClaimId !== null) {
+      throw new Error("unsupported or stale claims cannot map to gold");
+    }
+    if (claim.verdict !== "supported" && claim.citationValid) {
+      throw new Error("unsupported or stale claims cannot have a valid citation");
+    }
   }
   if (!/^[a-f0-9]{64}$/u.test(outcome.measurement.requestSha256) ||
     Object.values(outcome.measurement).some((value) => typeof value === "number" &&
       (!Number.isFinite(value) || value < 0))) {
     throw new Error("quality outcome contains invalid resource measurement");
   }
+}
+
+function validateCorpus(corpus: FrozenSemanticQualityCorpus, binding: QualityRunBinding): void {
+  const answerable = corpus.questions.filter(({ kind }) => kind === "answerable");
+  const unsupported = corpus.questions.filter(({ kind }) => kind === "unsupported");
+  const ids = new Set(corpus.questions.map(({ id }) => id));
+  const texts = new Set(corpus.questions.map(({ question }) => question.trim().toLocaleLowerCase()));
+  const turnIds = new Set(corpus.meeting.humanTurns.map(({ turnId }) => turnId));
+  const questionSetSha256 = semanticQualityQuestionSetDigest(corpus.questions);
+  const corpusSha256 = semanticQualityCorpusDigest({
+    questionSetSha256,
+    turns: corpus.meeting.humanTurns,
+  });
+  if (answerable.length !== 100 || unsupported.length !== 100 ||
+    ids.size !== 200 || texts.size !== 200) {
+    throw new Error("quality corpus requires exactly 100/100 unique questions");
+  }
+  if (questionSetSha256 !== corpus.questionSetSha256 ||
+    corpusSha256 !== corpus.corpusSha256 ||
+    binding.questionSetSha256 !== questionSetSha256 ||
+    binding.corpusSha256 !== corpusSha256) {
+    throw new Error("quality corpus digest binding mismatch");
+  }
+  for (const question of answerable) {
+    if (question.expectedClaimIds.length === 0 || question.goldTurnIds.length === 0 ||
+      question.goldTurnIds.some((turnId) => !turnIds.has(turnId))) {
+      throw new Error("answerable question has incomplete gold topology");
+    }
+  }
+  for (const question of unsupported) {
+    if (question.expectedClaimIds.length !== 0 || question.goldTurnIds.length !== 0 ||
+      question.distractorTurnIds.length === 0 ||
+      question.distractorTurnIds.some((turnId) => !turnIds.has(turnId))) {
+      throw new Error("unsupported question requires actual distractor evidence");
+    }
+  }
+}
+
+function validateAdjudicationReceipt(input: {
+  readonly adjudicationReceipt?: HumanAdjudicationReceipt;
+  readonly corpus: FrozenSemanticQualityCorpus;
+  readonly labelStatus: SemanticQualityRunEvidence["labelStatus"];
+  readonly outcomes: readonly QualityRawOutcome[];
+}): void {
+  if (input.labelStatus !== "independent_human_verified") {
+    if (input.adjudicationReceipt !== undefined) {
+      throw new Error("human adjudication receipt requires independent labels");
+    }
+    return;
+  }
+  const receipt = input.adjudicationReceipt;
+  if (receipt === undefined ||
+    receipt.schemaVersion !== "meeting_knowledge.human_adjudication_receipt.v1" ||
+    receipt.corpusSha256 !== input.corpus.corpusSha256 ||
+    receipt.questionSetSha256 !== input.corpus.questionSetSha256 ||
+    receipt.answerRunSha256 !== semanticQualityAnswerRunDigest(input.outcomes) ||
+    receipt.adjudicatorId.trim() === "" || Number.isNaN(Date.parse(receipt.reviewedAt))) {
+    throw new Error("independent human adjudication receipt is absent or misbound");
+  }
+}
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex");
 }

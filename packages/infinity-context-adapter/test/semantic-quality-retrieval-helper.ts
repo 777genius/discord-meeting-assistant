@@ -29,6 +29,11 @@ export interface SemanticQualityRetrievalConfig {
 }
 
 export interface SemanticQualityRetrievalOutcome {
+  readonly answerRequest: {
+    readonly evidence: readonly { readonly text: string; readonly turnId: string }[];
+    readonly question: string;
+    readonly requestBytes: number;
+  } | null;
   readonly candidateBlockCountAt5: number;
   readonly localRehydrationVerified: boolean;
   readonly providerPayloadWasReferenceOnly: true;
@@ -45,8 +50,11 @@ export interface SemanticQualityRetrievalRun {
   readonly remoteCleanupVerified: true;
   readonly service: {
     readonly apiVersion: string;
+    readonly embeddingProfileDigestSha256: `sha256:${string}`;
+    readonly embeddingProfileId: string;
     readonly enabledAdapters: readonly string[];
     readonly name: string;
+    readonly revision: string;
   };
 }
 
@@ -80,8 +88,14 @@ export async function runSemanticQualityRetrieval(
 
   const capabilities = await adapter.qualifyCapabilities();
   if (!capabilities.supportsQdrant || capabilities.apiVersion === null ||
-    capabilities.serviceName === null || !capabilities.enabledAdapters.includes("qdrant")) {
-    throw new Error("semantic quality retrieval requires a healthy identified qdrant service");
+    capabilities.serviceName === null || capabilities.serviceRevision === null ||
+    !/^[a-f0-9]{40}$/u.test(capabilities.serviceRevision) ||
+    capabilities.embeddingProfileId === null ||
+    capabilities.embeddingProfileDigestSha256 === null ||
+    !/^sha256:[a-f0-9]{64}$/u.test(capabilities.embeddingProfileDigestSha256) ||
+    /(?:deterministic|mock|non-production)/iu.test(capabilities.embeddingProfileId) ||
+    !capabilities.enabledAdapters.includes("qdrant")) {
+    throw new Error("semantic quality retrieval requires an endpoint-attested production profile");
   }
   let resultRun: Omit<SemanticQualityRetrievalRun, "remoteCleanupVerified"> | null = null;
   const topology = buildHistoricalIndexPlan(corpus.meeting, ids, blockPolicy).topology;
@@ -106,6 +120,7 @@ export async function runSemanticQualityRetrieval(
       });
       if (result.status !== "ready") {
         outcomes.push(Object.freeze({
+          answerRequest: null,
           candidateBlockCountAt5: 0,
           localRehydrationVerified: true,
           providerPayloadWasReferenceOnly: true,
@@ -126,7 +141,17 @@ export async function runSemanticQualityRetrieval(
         blocksByLocator.get(locator)?.turns.map(({ turnId }) => turnId) ?? []));
       const rehydratedTurnIds = unique(result.plan.blocks.flatMap((block) =>
         block.turns.map(({ turnId }) => turnId)));
+      const evidence = uniqueTurns(result.plan.blocks.flatMap((block) => block.turns));
+      const answerRequest = Object.freeze({
+        evidence,
+        question: question.question,
+        requestBytes: Buffer.byteLength(JSON.stringify({ evidence, question: question.question }), "utf8"),
+      });
+      if (answerRequest.requestBytes > 16_000) {
+        throw new Error("semantic quality answer request exceeded the bounded evidence budget");
+      }
       outcomes.push(Object.freeze({
+        answerRequest,
         candidateBlockCountAt5: topLocators.length,
         localRehydrationVerified: locallyMatches(corpus.meeting, result.plan.blocks),
         providerPayloadWasReferenceOnly: true,
@@ -142,8 +167,12 @@ export async function runSemanticQualityRetrieval(
       outcomes: Object.freeze(outcomes),
       service: Object.freeze({
         apiVersion: capabilities.apiVersion,
+        embeddingProfileDigestSha256:
+          capabilities.embeddingProfileDigestSha256 as `sha256:${string}`,
+        embeddingProfileId: capabilities.embeddingProfileId,
         enabledAdapters: Object.freeze([...capabilities.enabledAdapters]),
         name: capabilities.serviceName,
+        revision: capabilities.serviceRevision,
       }),
     });
   } catch (error) {
@@ -223,6 +252,14 @@ function locallyMatches(
 
 function unique(values: readonly string[]): readonly string[] {
   return Object.freeze([...new Set(values)]);
+}
+
+function uniqueTurns(
+  turns: readonly { readonly text: string; readonly turnId: string }[],
+): readonly { readonly text: string; readonly turnId: string }[] {
+  const byId = new Map<string, { readonly text: string; readonly turnId: string }>();
+  for (const turn of turns) {byId.set(turn.turnId, Object.freeze({ ...turn }));}
+  return Object.freeze([...byId.values()]);
 }
 
 function combinedFailure(primary: unknown, cleanup: unknown): AggregateError {
