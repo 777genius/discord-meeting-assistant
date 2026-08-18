@@ -23,8 +23,53 @@ interface TokenizerModule {
 
 // 0.1.3 ships NodeNext-incompatible declarations. Keep that provider defect
 // inside this adapter while the exact runtime package remains lockfile-pinned.
-const tokenizerModule = createRequire(import.meta.url)("@huggingface/tokenizers") as
-  TokenizerModule;
+const tokenizerRequire = createRequire(import.meta.url);
+const tokenizerRuntimePath = tokenizerRequire.resolve("@huggingface/tokenizers");
+const tokenizerModule = tokenizerRequire("@huggingface/tokenizers") as TokenizerModule;
+
+export const PINNED_HUGGINGFACE_TOKENIZERS_RUNTIME = Object.freeze({
+  integrity:
+    "sha512-8rF/RRT10u+kn7YuUbUg0OF30K8rjTc78aHpxT+qJ1uWSqxT1MHi8+9ltwYfkFYJzT/oS+qw3JVfHtNMGAdqyA==",
+  manifestSha256:
+    "sha256:2e5425540a964ccbc721566f0e066772c4be7339a4663d9f33c3b04be4d2daaf",
+  package: "@huggingface/tokenizers",
+  runtimeSha256:
+    "sha256:31a6ace9e7b9bab8e16e27b575308fe698546457fc0f78bd9b8729bd1139d7f2",
+  tarballSha256:
+    "sha256:0ef814be66cad9c1123859b2b46a7220a6215c4deb9752e1a345c470f06268cb",
+  version: "0.1.3",
+});
+
+function verifyInstalledTokenizerRuntime(): void {
+  const runtimeSuffix = "dist/tokenizers.cjs";
+  if (!tokenizerRuntimePath.replaceAll("\\", "/").endsWith(runtimeSuffix)) {
+    throw new PinnedMultilingualMiniLmTokenizerError(
+      "tokenizer runtime entrypoint mismatch",
+    );
+  }
+  const manifestPath =
+    `${tokenizerRuntimePath.slice(0, -runtimeSuffix.length)}package.json`;
+  verifyDigest(
+    readFileSync(tokenizerRuntimePath),
+    PINNED_HUGGINGFACE_TOKENIZERS_RUNTIME.runtimeSha256,
+    "@huggingface/tokenizers runtime",
+  );
+  const manifest = readFileSync(manifestPath);
+  verifyDigest(
+    manifest,
+    PINNED_HUGGINGFACE_TOKENIZERS_RUNTIME.manifestSha256,
+    "@huggingface/tokenizers package manifest",
+  );
+  const parsed = parseObject(manifest, "@huggingface/tokenizers package manifest");
+  if (
+    parsed.name !== PINNED_HUGGINGFACE_TOKENIZERS_RUNTIME.package ||
+    parsed.version !== PINNED_HUGGINGFACE_TOKENIZERS_RUNTIME.version
+  ) {
+    throw new PinnedMultilingualMiniLmTokenizerError(
+      "tokenizer runtime identity mismatch",
+    );
+  }
+}
 
 const assetDirectory = new URL(
   "../assets/paraphrase-multilingual-minilm-l12-v2-e8f8c211/",
@@ -84,6 +129,7 @@ implements HistoricalEmbeddingTokenizerPort {
   readonly #tokenizer: TokenizerRuntime;
 
   public constructor(artifacts: PinnedMultilingualMiniLmArtifacts = loadArtifacts()) {
+    verifyInstalledTokenizerRuntime();
     verifyDigest(artifacts.tokenizerJson, tokenizerArtifactSha256, "tokenizer.json");
     verifyDigest(
       artifacts.tokenizerConfig,

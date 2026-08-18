@@ -1,0 +1,13 @@
+Pinned multilingual MiniLM tokenizer artifacts
+
+Source: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+Revision: e8f8c211226b894fcb81acc59f3b34ba3efd5f42
+Source URL: https://huggingface.co/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2/tree/e8f8c211226b894fcb81acc59f3b34ba3efd5f42
+Declared license: Apache-2.0
+
+Vendored artifacts:
+- tokenizer.json SHA-256: 2c3387be76557bd40970cec13153b3bbf80407865484b209e655e5e4729076b8
+- tokenizer_config.json SHA-256: 5036ea374ffedd706e3bef33e2e0d6953cb868ef8a490e76e32ba0faa37a6b9b
+
+The exact upstream revision did not publish a separate NOTICE file. This local
+notice records source and artifact identity; it does not imply endorsement.

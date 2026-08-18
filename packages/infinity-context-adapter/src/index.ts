@@ -21,6 +21,7 @@ export {
   type InfinitySemanticQualificationManifestV2,
 } from "./infinity-semantic-qualification.js";
 export {
+  PINNED_HUGGINGFACE_TOKENIZERS_RUNTIME,
   PINNED_MULTILINGUAL_MINILM_EMBEDDING_PROFILE_ID,
   PINNED_MULTILINGUAL_MINILM_TOKENIZER_PROFILE,
   PinnedMultilingualMiniLmTokenizer,
