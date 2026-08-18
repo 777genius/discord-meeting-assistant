@@ -41,6 +41,7 @@ function adapter(endpoint: DisposableInfinityEndpoint) {
 describe("Infinity Context durable restart convergence", () => {
   it("finishes a partial ingest after a fresh worker and adapter restart", async () => {
     const endpoint = new DisposableInfinityEndpoint();
+    endpoint.delayEveryRequest(30);
     const ids = new HmacHistoricalOpaqueIds(new Uint8Array(32).fill(0x6b));
     const base = finalMeeting(1, "Tuesday");
     const meeting = Object.freeze({
@@ -130,7 +131,7 @@ describe("Infinity Context durable restart convergence", () => {
       expect(endpoint.requests.filter(({ idempotencyKey, method, path }) =>
         method === "POST" && path.endsWith("/process") &&
         idempotencyKey === `${document.mutationId}:process`
-      )).toHaveLength(2);
+      )).toHaveLength(1);
     }
-  });
+  }, 15_000);
 });

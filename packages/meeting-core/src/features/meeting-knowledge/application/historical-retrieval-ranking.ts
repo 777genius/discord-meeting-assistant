@@ -174,23 +174,23 @@ export function rerankHistoricalBlocks(
 
 export function retainStrictSourceSubsets(
   blocks: readonly LocallyRehydratedEvidenceBlockV1[],
-  authoritativeTurnCounts: ReadonlyMap<string, number>,
+  authoritativeLocators: ReadonlyMap<string, ReadonlySet<string>>,
 ): readonly LocallyRehydratedEvidenceBlockV1[] {
-  const selectedTurnCounts = new Map<string, number>();
-  const selectedTurnIds = new Map<string, Set<string>>();
+  const selectedLocators = new Map<string, Set<string>>();
   for (const block of blocks) {
     const key = historicalSourceKey(block.binding);
-    const ids = selectedTurnIds.get(key) ?? new Set<string>();
-    for (const { turnId } of block.turns) {
-      ids.add(turnId);
-    }
-    selectedTurnIds.set(key, ids);
-    selectedTurnCounts.set(key, ids.size);
+    const locators = selectedLocators.get(key) ?? new Set<string>();
+    locators.add(block.candidateLocator);
+    selectedLocators.set(key, locators);
   }
   const lastLocatorForCompleteSource = new Map<string, string>();
   for (const block of blocks) {
     const key = historicalSourceKey(block.binding);
-    if ((selectedTurnCounts.get(key) ?? 0) >= (authoritativeTurnCounts.get(key) ?? 0)) {
+    const selected = selectedLocators.get(key);
+    const authoritative = authoritativeLocators.get(key);
+    if (selected !== undefined && authoritative !== undefined &&
+      selected.size === authoritative.size &&
+      [...authoritative].every((locator) => selected.has(locator))) {
       lastLocatorForCompleteSource.set(key, block.candidateLocator);
     }
   }

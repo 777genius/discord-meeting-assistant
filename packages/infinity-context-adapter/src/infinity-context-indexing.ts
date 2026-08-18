@@ -19,6 +19,7 @@ import {
 } from "./infinity-context-sdk-contract.js";
 
 const maximumTopologyListEntries = 100;
+const maximumParallelDocuments = 4;
 
 export async function indexHistoricalMeeting(input: {
   readonly client: InfinityContextClient;
@@ -69,26 +70,73 @@ class HistoricalMeetingIndexer {
         throw error;
       }
     }
-    const remoteDocumentIds: Record<string, string> = {};
-    for (const document of request.documents) {
-      this.operation.throwIfAborted();
-      const remote = await this.ingestOrReconcile(request, document, existing);
-      if (documentSourceExternalId(remote) !== document.manifest.documentExternalId) {
-        throw new InfinityContextAdapterContractError(
-          "official SDK reconciled an index mutation to a conflicting document",
-        );
-      }
-      const remoteId = documentId(remote);
-      remoteDocumentIds[document.manifest.documentExternalId] = remoteId;
-      if (!await this.ensureProcessed(remoteId, document.mutationId)) {
-        return {
-          code: "memory.document_processing_outcome_unknown",
-          retryable: true,
-          status: "outcome_unknown",
-        };
-      }
+    const indexed = await this.indexDocuments(request, existing);
+    if (indexed === null) {
+      return {
+        code: "memory.document_processing_outcome_unknown",
+        retryable: true,
+        status: "outcome_unknown",
+      };
     }
+    const remoteDocumentIds = Object.fromEntries(indexed.map(({ externalId, remoteId }) =>
+      [externalId, remoteId]
+    ));
     return { remoteDocumentIds: Object.freeze(remoteDocumentIds), status: "applied" };
+  }
+
+  private async indexDocuments(
+    request: HistoricalIndexPlanV1,
+    existing: readonly DocumentRecord[],
+  ): Promise<readonly { readonly externalId: string; readonly remoteId: string }[] | null> {
+    const results: ({ readonly externalId: string; readonly remoteId: string } | undefined)[] =
+      Array.from({ length: request.documents.length });
+    let cursor = 0;
+    let processingUnknown = false;
+    let firstError: unknown;
+    const worker = async () => {
+      try {
+        while (true) {
+          if (processingUnknown || firstError !== undefined) { return; }
+          const index = cursor;
+          cursor += 1;
+          const document = request.documents[index];
+          if (document === undefined) { return; }
+          this.operation.throwIfAborted();
+          const alreadyProcessed = existing.some((candidate) =>
+            documentSourceExternalId(candidate) === document.manifest.documentExternalId &&
+            processMutationAccepted(candidate)
+          );
+          const remote = await this.ingestOrReconcile(request, document, existing);
+          if (documentSourceExternalId(remote) !== document.manifest.documentExternalId) {
+            throw new InfinityContextAdapterContractError(
+              "official SDK reconciled an index mutation to a conflicting document",
+            );
+          }
+          const remoteId = documentId(remote);
+          if (!alreadyProcessed &&
+            !await this.ensureProcessed(remoteId, document.mutationId)) {
+            processingUnknown = true;
+            return;
+          }
+          results[index] = { externalId: document.manifest.documentExternalId, remoteId };
+        }
+      } catch (error) {
+        firstError ??= error;
+      }
+    };
+    await Promise.all(Array.from(
+      { length: Math.min(maximumParallelDocuments, request.documents.length) },
+      worker,
+    ));
+    if (firstError !== undefined) { throw firstError; }
+    if (processingUnknown) { return null; }
+    const complete = results.filter((result): result is NonNullable<typeof result> =>
+      result !== undefined
+    );
+    if (complete.length !== request.documents.length) {
+      throw new InfinityContextAdapterContractError("parallel index result is incomplete");
+    }
+    return Object.freeze(complete);
   }
 
   private async ingestOrReconcile(

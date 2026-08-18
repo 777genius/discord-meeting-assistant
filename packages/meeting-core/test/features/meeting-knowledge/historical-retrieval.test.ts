@@ -196,6 +196,41 @@ function retrieval(input: {
   });
 }
 
+describe("focused historical long-turn retrieval", () => {
+  it("retains a bounded matching slice near the end of one long turn", async () => {
+    const marker = "ORBITAL-CEDAR-947 launches on Friday";
+    const meeting = makeMeeting({ meetingId: "long-turn-meeting", turns: [{
+      endMs: 60_000, startMs: 0, text: `${"planning filler ".repeat(1_700)}${marker}`,
+      turnId: "one-long-turn",
+    }] });
+    const plan = buildHistoricalIndexPlan(meeting, new TestIds(), blockPolicy);
+    const target = plan.documents.find(({ remoteText }) => remoteText.includes(marker));
+    if (target === undefined) { throw new Error("long-turn marker slice missing"); }
+    const store = new AppliedStore([{ binding: meeting.binding, plan, remoteDocumentIds: {} }]);
+    const result = await retrieval({
+      meetings: [meeting],
+      memory: { deleteMeeting: vi.fn(), indexFinalMeeting: vi.fn(),
+        searchRoom: vi.fn().mockResolvedValue({ candidates: [{
+          locator: target.manifest.candidateLocator, providerRank: 0, providerScore: 0.99,
+        }], hybridQualified: true, status: "available" }) },
+      policy: { ...retrievalPolicy, neighborRadius: 0, rerankLimit: 1 },
+      store,
+    }).buildPlan({
+      authorizationPrincipalRef: "principal", currentMeetingId: meeting.binding.meetingId,
+      question: "When does ORBITAL-CEDAR-947 launch?",
+      roomId: "room-1", scopeId: "scope-1", searchEnabled: true,
+      servingAuthorized: true, sourceSet: "current",
+    });
+
+    expect(result.status).toBe("ready");
+    if (result.status !== "ready") { throw new Error("focused grounding failed"); }
+    expect(result.plan.blocks).toHaveLength(1);
+    expect(result.plan.blocks[0]?.turns[0]?.text).toContain(marker);
+    expect(new TextEncoder().encode(JSON.stringify(result.plan.blocks)).byteLength)
+      .toBeLessThanOrEqual(retrievalPolicy.maximumEvidenceBytes);
+  });
+});
+
 describe("focused historical retrieval", () => {
   it("deduplicates provider locators, expands neighbors, and only prioritizes current evidence", async () => {
     const meeting = makeMeeting({

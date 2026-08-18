@@ -574,7 +574,11 @@ describe("Infinity Context historical memory end-to-end lifecycle", () => {
     });
     const processRequests = endpoint.requests.filter(({ path }) => path.endsWith("/process"));
     expect(processRequests.length).toBeGreaterThan(endpoint.documentCount());
-    expect(processRequests[0]?.idempotencyKey).toBe(processRequests[1]?.idempotencyKey);
+    expect(processRequests.some((request, index) =>
+      processRequests.some((candidate, candidateIndex) =>
+        candidateIndex !== index && candidate.idempotencyKey === request.idempotencyKey
+      )
+    )).toBe(true);
     expect(store.state(firstMeeting.binding.releaseId)).toBe("applied");
     expect(endpoint.documentCount()).toBeGreaterThan(1);
     expect(endpoint.indexedTexts().join("\n")).not.toContain("BOTIK GENERATED SUMMARY");

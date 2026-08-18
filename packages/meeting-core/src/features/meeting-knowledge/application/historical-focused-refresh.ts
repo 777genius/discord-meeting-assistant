@@ -31,7 +31,7 @@ export async function refreshStrictFocusedBlocks(input: {
   readonly tokenizer: HistoricalEmbeddingTokenizerPort | undefined;
 }): Promise<readonly LocallyRehydratedEvidenceBlockV1[]> {
   const refreshed: LocallyRehydratedEvidenceBlockV1[] = [];
-  const authoritativeTurnCounts = new Map<string, number>();
+  const authoritativeLocators = new Map<string, ReadonlySet<string>>();
   for (const prior of input.selected) {
     const options = input.signal === undefined ? {} : { signal: input.signal };
     const record = await input.store.findCurrentCandidate(
@@ -59,9 +59,9 @@ export async function refreshStrictFocusedBlocks(input: {
     if (meeting === null) {
       continue;
     }
-    authoritativeTurnCounts.set(
+    authoritativeLocators.set(
       historicalSourceKey(record.binding),
-      meeting.humanTurns.length,
+      new Set(record.plan.documents.map(({ manifest }) => manifest.candidateLocator)),
     );
     try {
       const block = rehydrateHistoricalBlock(
@@ -83,5 +83,5 @@ export async function refreshStrictFocusedBlocks(input: {
       }
     }
   }
-  return retainStrictSourceSubsets(refreshed, authoritativeTurnCounts);
+  return retainStrictSourceSubsets(refreshed, authoritativeLocators);
 }
