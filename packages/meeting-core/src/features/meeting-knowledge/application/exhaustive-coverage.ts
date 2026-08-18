@@ -90,6 +90,8 @@ export class ExhaustiveCoverage {
     if (!before.authorized) {
       return { reason: "room_authorization_denied", status: "unauthorized" };
     }
+    const authorizationIsCurrent = async () => sameAuthorization(before,
+      await this.dependencies.authorization.authorize(authorizationRequest));
 
     const bindings = await this.dependencies.sync.listDesiredRoomBindings(
       request.scopeId,
@@ -123,7 +125,7 @@ export class ExhaustiveCoverage {
     }
 
     const extracted = await extractEveryCoverageBlock(
-      this.dependencies,
+      { ...this.dependencies, authorizationIsCurrent },
       this.#policy,
       request,
       bindings,
@@ -132,7 +134,12 @@ export class ExhaustiveCoverage {
     if ("status" in extracted) {
       return extracted;
     }
-    const reduced = await this.reduceExtracts(request, extracted, loaded);
+    const reduced = await this.reduceExtracts(
+      request,
+      extracted,
+      loaded,
+      authorizationIsCurrent,
+    );
     if ("status" in reduced) {
       return reduced;
     }
@@ -151,6 +158,7 @@ export class ExhaustiveCoverage {
     input: ExhaustiveCoverageRequestV1,
     extracted: ExtractedCoverage,
     loaded: LoadedCoveragePlan,
+    authorizationIsCurrent: () => Promise<boolean>,
   ): Promise<{ readonly reduction: CoverageReductionV1 } | ExhaustiveCoverageResultV1> {
     if (extracted.checkpoint.state === "completed") {
       const stored = extracted.checkpoint.reduction;
@@ -187,6 +195,12 @@ export class ExhaustiveCoverage {
         }
         const values = levelValues.slice(index, index + this.#policy.reduceFanIn);
         try {
+          if (!await authorizationIsCurrent()) {
+            return {
+              reason: "authorization_changed",
+              status: "unauthorized",
+            };
+          }
           next.push(validateReduction(await this.dependencies.reducer.reduce({
             level,
             question: input.question,

@@ -44,6 +44,8 @@ describe("grounded Meeting Knowledge answers", () => {
       },
       evidence: plan.evidence,
       expectedLocale: "en",
+      groundingMode: "focused_retrieval",
+      question: "When did Alex correct the release date?",
     });
 
     expect(answer.status).toBe("answered");
@@ -99,6 +101,8 @@ describe("grounded Meeting Knowledge answers", () => {
       candidate,
       evidence: plan.evidence,
       expectedLocale: "en",
+      groundingMode: "focused_retrieval",
+      question: "When did Alex correct the release date?",
     })).toThrow(MeetingKnowledgeInvariantError);
   });
 
@@ -107,6 +111,8 @@ describe("grounded Meeting Knowledge answers", () => {
       candidate: { claims: [], locale: "en", status: "insufficient_evidence" },
       evidence: plan.evidence,
       expectedLocale: "en",
+      groundingMode: "focused_retrieval",
+      question: "When did Alex correct the release date?",
     }).claims).toEqual([]);
     expect(() => GroundedAnswer.create({
       candidate: {
@@ -116,6 +122,8 @@ describe("grounded Meeting Knowledge answers", () => {
       },
       evidence: plan.evidence,
       expectedLocale: "en",
+      groundingMode: "focused_retrieval",
+      question: "When did Alex correct the release date?",
     })).toThrow(MeetingKnowledgeInvariantError);
   });
 
@@ -131,6 +139,8 @@ describe("grounded Meeting Knowledge answers", () => {
       },
       evidence: plan.evidence,
       expectedLocale: "en",
+      groundingMode: "focused_retrieval",
+      question: "When did Alex correct the release date?",
     }).status).toBe("answered");
     expect(() => GroundedAnswer.create({
       candidate: {
@@ -143,6 +153,8 @@ describe("grounded Meeting Knowledge answers", () => {
       },
       evidence: plan.evidence,
       expectedLocale: "en",
+      groundingMode: "focused_retrieval",
+      question: "When did Alex correct the release date?",
     })).toThrow(MeetingKnowledgeInvariantError);
     expect(() => GroundedAnswer.create({
       candidate: {
@@ -155,6 +167,42 @@ describe("grounded Meeting Knowledge answers", () => {
       },
       evidence: plan.evidence,
       expectedLocale: "en",
+      groundingMode: "focused_retrieval",
+      question: "When did Alex correct the release date?",
     })).toThrow(MeetingKnowledgeInvariantError);
+  });
+
+  it.each([
+    "There are exactly two release decisions.",
+    "All release decisions were approved.",
+    "There were no other release decisions.",
+    "Всего 2 решения по релизу.",
+  ])("rejects exhaustive provider semantics from focused evidence: %s", (text) => {
+    expect(() => GroundedAnswer.create({
+      candidate: {
+        claims: [{ evidenceIds: ["evidence-000002"], text }],
+        locale: "en",
+        status: "answered",
+      },
+      evidence: plan.evidence,
+      expectedLocale: "en",
+      groundingMode: "focused_retrieval",
+      question: "When did Alex correct the release date?",
+    })).toThrow("focused evidence cannot support");
+  });
+
+  it("rejects uncited positive prose even when an exhaustive no-match proof exists", () => {
+    expect(() => GroundedAnswer.create({
+      candidate: {
+        claims: [{ evidenceIds: [], text: "Project Zeta was approved." }],
+        locale: "en",
+        status: "answered",
+      },
+      evidence: [],
+      exhaustiveAbsenceProven: true,
+      expectedLocale: "en",
+      groundingMode: "exhaustive_coverage",
+      question: "Was Project Zeta ever approved?",
+    })).toThrow("between one and eight citations");
   });
 });

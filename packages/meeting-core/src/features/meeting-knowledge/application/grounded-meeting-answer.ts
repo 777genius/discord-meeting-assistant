@@ -86,6 +86,9 @@ export class GroundedMeetingAnswer {
     if (admitGroundingRequest(measurement, this.limits).status === "unsupported_size") {
       return { measurement, status: "unsupported_size" };
     }
+    if (request.plan.mode === "exhaustive_coverage" && options.beforeGenerate === undefined) {
+      return { status: "rejected" };
+    }
     if (options.beforeGenerate !== undefined) {
       const checkpoint = await options.beforeGenerate();
       if (checkpoint !== "continue") {
@@ -120,6 +123,8 @@ export class GroundedMeetingAnswer {
           evidence: request.plan.evidence,
           expectedLocale: request.locale,
           exhaustiveAbsenceProven: exhaustiveCoverageProvesAbsence(request.plan),
+          groundingMode: request.plan.mode,
+          question: request.question,
         }),
         measurement,
         status: "completed",

@@ -45,6 +45,8 @@ describe("DiscordGroundedAnswerRenderer", () => {
       },
       evidence: plan.evidence,
       expectedLocale: "en",
+      groundingMode: "focused_retrieval",
+      question: "When is the release?",
     });
     const renderer = new DiscordGroundedAnswerRenderer();
     const rendered = renderer.renderAnswer({

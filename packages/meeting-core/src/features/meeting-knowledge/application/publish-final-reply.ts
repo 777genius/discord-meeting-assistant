@@ -150,6 +150,8 @@ export class PublishFinalReply {
         evidence: currentPlan.evidence,
         expectedLocale: lease.binding.expectedLocale,
         exhaustiveAbsenceProven: absenceProven,
+        groundingMode: currentPlan.mode,
+        question: lease.questionText,
       });
     } catch {
       return this.publishFixed(lease, rehydrated.binding, "unavailable");
