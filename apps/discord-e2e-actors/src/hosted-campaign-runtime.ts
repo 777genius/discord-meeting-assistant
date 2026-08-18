@@ -20,20 +20,17 @@ const BARRIER_RACE_COMPLETED = "Hosted campaign barrier race completed";
 const BARRIER_TEARDOWN_GRACE_MILLISECONDS = 250;
 
 async function awaitBarrierTeardown(barrier: Promise<unknown>): Promise<boolean> {
-  let timeout: ReturnType<typeof setTimeout> | null = null;
+  const deadline = Promise.withResolvers<false>();
+  const timeout = setTimeout(() => {
+    deadline.resolve(false);
+  }, BARRIER_TEARDOWN_GRACE_MILLISECONDS);
   try {
     return await Promise.race([
       barrier.then(() => true, () => true),
-      new Promise<boolean>((resolve) => {
-        timeout = setTimeout(() => {
-          resolve(false);
-        }, BARRIER_TEARDOWN_GRACE_MILLISECONDS);
-      }),
+      deadline.promise,
     ]);
   } finally {
-    if (timeout !== null) {
-      clearTimeout(timeout);
-    }
+    clearTimeout(timeout);
   }
 }
 
