@@ -78,6 +78,41 @@ function platformSecrets(loaded: LoadedPlatformSecrets): PlatformConfig["secrets
   });
 }
 
+function meetingKnowledgeConfig(
+  environment: ParsedPlatformEnvironment,
+  twoHourHistoricalQualification: TwoHourHistoricalQualificationV1 | undefined,
+): Pick<PlatformConfig, "meetingKnowledge"> {
+  if (
+    !environment.MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED &&
+    !environment.MEETING_KNOWLEDGE_GROUNDED_VOICE_ENABLED &&
+    twoHourHistoricalQualification === undefined
+  ) {
+    return {};
+  }
+  return {
+    meetingKnowledge: {
+      ...(environment.MEETING_KNOWLEDGE_GROUNDED_VOICE_ENABLED &&
+        environment.MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_EPOCH !== undefined &&
+        environment.MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_STATE_FILE !== undefined
+        ? { groundedVoice: {
+            rolloutEpoch:
+              environment.MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_EPOCH,
+            rolloutStateFile:
+              environment.MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_STATE_FILE,
+          } }
+        : {}),
+      ...(environment.MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED
+        ? { localFinalReply: true as const }
+        : {}),
+      ...(twoHourHistoricalQualification === undefined
+        ? {}
+        : {
+            twoHourHistoricalQualification,
+          }),
+    },
+  };
+}
+
 export function assemblePlatformConfig(
   environment: ParsedPlatformEnvironment,
   loaded: LoadedPlatformSecrets,
@@ -106,31 +141,10 @@ export function assemblePlatformConfig(
     ...(environment.DISCORD_LEGACY_GUILD_ID === undefined || environment.DISCORD_LEGACY_VOICE_CHANNEL_ID === undefined || environment.DISCORD_RESULTS_CHANNEL_ID === undefined ? {} : { discordLegacyRoute: { guildId: environment.DISCORD_LEGACY_GUILD_ID, publicationTargetId: environment.DISCORD_RESULTS_CHANNEL_ID, voiceChannelId: environment.DISCORD_LEGACY_VOICE_CHANNEL_ID } }),
     liveIngressOwnerMode: environment.LIVE_INGRESS_OWNER_MODE,
     ...infinityContextConfig(environment),
-    ...(environment.MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED ||
-      environment.MEETING_KNOWLEDGE_GROUNDED_VOICE_ENABLED ||
-      loaded.twoHourHistoricalQualification !== undefined
-      ? { meetingKnowledge: {
-          ...(environment.MEETING_KNOWLEDGE_GROUNDED_VOICE_ENABLED &&
-            environment.MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_EPOCH !== undefined &&
-            environment.MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_STATE_FILE !== undefined
-            ? { groundedVoice: {
-                rolloutEpoch:
-                  environment.MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_EPOCH,
-                rolloutStateFile:
-                  environment.MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_STATE_FILE,
-              } }
-            : {}),
-          ...(environment.MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED
-            ? { localFinalReply: true as const }
-            : {}),
-          ...(loaded.twoHourHistoricalQualification === undefined
-            ? {}
-            : {
-                twoHourHistoricalQualification:
-                  loaded.twoHourHistoricalQualification,
-              }),
-        } }
-      : {}),
+    ...meetingKnowledgeConfig(
+      environment,
+      loaded.twoHourHistoricalQualification,
+    ),
     nodeEnvironment: environment.NODE_ENV,
     participantGreetingDefaultLocale: environment.PARTICIPANT_GREETING_DEFAULT_LOCALE,
     participantGreetingProfiles: environment.PARTICIPANT_GREETING_PROFILES_JSON,
