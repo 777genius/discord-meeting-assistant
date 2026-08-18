@@ -199,8 +199,10 @@ describe("PostgresMigrationRunner and PostgresSchemaReadiness validation", () =>
   it("rejects a required index that exists but is not valid and ready", async (context) => {
     const database = databaseOrSkip(context);
     const migrations = await loadPostgresMigrations();
-    const reconciliationMigration = migrations.at(-1);
-    if (reconciliationMigration?.version !== requiredPostgresSchemaVersion) {
+    const reconciliationMigration = migrations.find(({ fileName }) =>
+      fileName === "0023_answer_effect_reconciliation_schedule.sql"
+    );
+    if (reconciliationMigration?.version !== 23) {
       throw new Error("required reconciliation migration was not loaded");
     }
 

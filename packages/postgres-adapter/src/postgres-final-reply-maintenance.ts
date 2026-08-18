@@ -1,7 +1,12 @@
 import type {
   FinalReplyMaintenancePort,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
+
+import {
+  PostgresQuestionPolicyFence,
+  type QuestionPolicyIdentity,
+} from "./postgres-question-policy-fence.js";
 
 function requireMaximumJobs(value: number): number {
   if (!Number.isSafeInteger(value) || value < 1 || value > 1_000) {
@@ -13,17 +18,39 @@ function requireMaximumJobs(value: number): number {
 export class PostgresFinalReplyMaintenance
   implements FinalReplyMaintenancePort
 {
-  public constructor(private readonly pool: Pool) {}
+  private readonly policyFence: PostgresQuestionPolicyFence;
+
+  public constructor(
+    private readonly pool: Pool,
+    policy: QuestionPolicyIdentity,
+  ) {
+    this.policyFence = new PostgresQuestionPolicyFence(policy);
+  }
 
   public async maintain(
     input: Parameters<FinalReplyMaintenancePort["maintain"]>[0],
   ): ReturnType<FinalReplyMaintenancePort["maintain"]> {
     const maximumJobs = requireMaximumJobs(input.maximumJobs);
+    await this.activatePolicy();
     const cancelled = input.servingEnabled
       ? 0
       : await this.cancelUnservedJobs(maximumJobs);
     const expired = await this.expireJobs(maximumJobs);
     return { cancelled, expired };
+  }
+
+  private async activatePolicy(): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await this.policyFence.lockCurrent(client);
+      await client.query("COMMIT");
+    } catch (error) {
+      await rollback(client);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   private async cancelUnservedJobs(maximumJobs: number): Promise<number> {
@@ -179,5 +206,13 @@ export class PostgresFinalReplyMaintenance
       [maximumJobs],
     );
     return Number(result.rows[0]?.expired ?? "0");
+  }
+}
+
+async function rollback(client: PoolClient): Promise<void> {
+  try {
+    await client.query("ROLLBACK");
+  } catch {
+    // Preserve the maintenance error.
   }
 }

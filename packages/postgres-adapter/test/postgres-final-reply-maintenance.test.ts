@@ -3,6 +3,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import { PostgresFinalReplyMaintenance } from "../src/index.js";
 
+const questionPolicy = Object.freeze({
+  authorizationPolicyVersion: "discord.participant-current-results.v1",
+  policyEpoch: 1,
+  policyVersion: "meeting-knowledge.focused-memory-final-reply.v2",
+});
+
 function fixture() {
   const queries: { readonly parameters: readonly unknown[]; readonly text: string }[] = [];
   const query = vi.fn(async (text: string, parameters: readonly unknown[]) => {
@@ -11,9 +17,23 @@ function fixture() {
       ? { rows: [{ cancelled: "2" }] }
       : { rows: [{ expired: "1" }] };
   });
+  const release = vi.fn();
+  const policyQuery = vi.fn(async (text: string) => {
+    if (text.includes("INSERT INTO meeting_knowledge.current_question_policy")) {
+      return {
+        rows: [{
+          authorization_policy_version: questionPolicy.authorizationPolicyVersion,
+          policy_epoch: questionPolicy.policyEpoch,
+          policy_version: questionPolicy.policyVersion,
+        }],
+      };
+    }
+    return { rows: [] };
+  });
   const maintenance = new PostgresFinalReplyMaintenance({
+    connect: vi.fn(async () => ({ query: policyQuery, release })),
     query,
-  } as unknown as Pool);
+  } as unknown as Pool, questionPolicy);
   return { maintenance, queries };
 }
 

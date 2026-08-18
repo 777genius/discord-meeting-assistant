@@ -350,7 +350,7 @@ describe("PostgreSQL answer cancellation and retraction", () => {
       true,
     );
 
-    await expect(new PostgresFinalReplyMaintenance(database).maintain({
+    await expect(new PostgresFinalReplyMaintenance(database, questionPolicy).maintain({
       maximumJobs: 10,
       servingEnabled: true,
     })).resolves.toEqual({ cancelled: 0, expired: 2 });
@@ -380,7 +380,7 @@ describe("PostgreSQL answer cancellation and retraction", () => {
         state: "retraction_pending",
       },
     ]);
-    await expect(new PostgresAnswerEffectStore(database).claim(
+    await expect(new PostgresAnswerEffectStore(database, questionPolicy).claim(
       reserved.effectId,
       "late-worker",
     )).resolves.toEqual({ status: "not_claimable" });
@@ -395,7 +395,7 @@ describe("PostgreSQL answer cancellation and retraction", () => {
     ] as const) {
       await insertMaintenanceFixture(database, suffix, state, false);
     }
-    const maintenance = new PostgresFinalReplyMaintenance(database);
+    const maintenance = new PostgresFinalReplyMaintenance(database, questionPolicy);
 
     for (let pass = 0; pass < 3; pass += 1) {
       await expect(maintenance.maintain({
@@ -455,7 +455,7 @@ describe("PostgreSQL withdrawal fencing", () => {
         state: "terminal",
       }],
     });
-    await expect(new PostgresQuestionJobStore(database).persistGroundingPlan({
+    await expect(new PostgresQuestionJobStore(database, questionPolicy).persistGroundingPlan({
       generation: 1,
       jobId: questionId,
       measurement: { inputTokens: 10, requestBytes: 100 },
@@ -476,7 +476,7 @@ describe("PostgreSQL withdrawal fencing", () => {
       questionId,
       sourceMeetingIds: [admittedMeetingId],
     });
-    const jobs = new PostgresQuestionJobStore(database);
+    const jobs = new PostgresQuestionJobStore(database, questionPolicy);
     const deletion = new PostgresHistoricalMemoryStore(database);
 
     const [persisted] = await Promise.all([
@@ -555,7 +555,7 @@ describe("PostgreSQL withdrawal fencing", () => {
 
     const [, affectedQuestions] = await Promise.all([
       new PostgresHistoricalMemoryStore(database).requestMeetingDeletion(meetingId),
-      new PostgresQuestionAdmissionCommit(database, "bot-test")
+      new PostgresQuestionAdmissionCommit(database, "bot-test", questionPolicy)
         .withdrawProjection({ finalProjectionReceipt: projectionReceipt }),
     ]);
 

@@ -345,6 +345,7 @@ describe("Publishing answer effects", () => {
     await publisher.send({
       authorizationDigest: "e".repeat(64),
       effectId: reservation.effectId,
+      questionGeneration: 1,
       workerId: "worker-1",
     });
     await expect(publisher.reconcileUnknown(10)).resolves.toEqual({
@@ -384,6 +385,7 @@ describe("Duplicate answer-effect reconciliation", () => {
     await publisher.send({
       authorizationDigest: "e".repeat(64),
       effectId: reservation.effectId,
+      questionGeneration: 1,
       workerId: "worker-1",
     });
     delivery.inspection = {
@@ -416,6 +418,7 @@ describe("Publishing answer effect recovery", () => {
     const sending = publisher.send({
       authorizationDigest: "e".repeat(64),
       effectId: reservation.effectId,
+      questionGeneration: 1,
       workerId: "worker-1",
     });
     await vi.waitFor(() => {

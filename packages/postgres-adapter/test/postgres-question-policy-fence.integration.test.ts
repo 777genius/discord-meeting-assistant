@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   PostgresAnswerEffectStore,
+  PostgresFinalReplyMaintenance,
   PostgresQuestionJobStore,
   type QuestionPolicyIdentity,
 } from "../src/index.js";
@@ -104,6 +105,39 @@ async function waitForPolicyFenceWait(
 }
 
 describe("PostgreSQL question policy fence", () => {
+  it("activates the next epoch from maintenance while serving is disabled", async (context) => {
+    const database = databaseOrSkip(context);
+    const oldStore = new PostgresQuestionJobStore(database, oldPolicy);
+    const initialBinding = policyBinding("policy-maintenance-initial", oldPolicy);
+    await insertQueuedPolicyJob(database, initialBinding, oldPolicy.policyEpoch);
+    await expect(oldStore.leaseNext({ leaseSeconds: 60, workerId: "old-worker" }))
+      .resolves.toMatchObject({ jobId: initialBinding.questionId });
+
+    const maintenance = new PostgresFinalReplyMaintenance(database, nextPolicy);
+    await expect(maintenance.maintain({ maximumJobs: 100, servingEnabled: false }))
+      .resolves.toMatchObject({ cancelled: 1 });
+
+    const current = await database.query<{
+      readonly authorization_policy_version: string;
+      readonly policy_epoch: number;
+      readonly policy_version: string;
+    }>(
+      `SELECT policy_epoch, policy_version, authorization_policy_version
+       FROM meeting_knowledge.current_question_policy
+       WHERE policy_key = 'local-final-reply'`,
+    );
+    expect(current.rows).toEqual([{
+      authorization_policy_version: nextPolicy.authorizationPolicyVersion,
+      policy_epoch: nextPolicy.policyEpoch,
+      policy_version: nextPolicy.policyVersion,
+    }]);
+
+    const staleBinding = policyBinding("policy-maintenance-stale", oldPolicy);
+    await insertQueuedPolicyJob(database, staleBinding, oldPolicy.policyEpoch);
+    await expect(oldStore.leaseNext({ leaseSeconds: 60, workerId: "old-worker" }))
+      .resolves.toBeNull();
+  });
+
   it("prevents an old pod from leasing or processing after the epoch switch", async (context) => {
     const database = databaseOrSkip(context);
     const oldStore = new PostgresQuestionJobStore(database, oldPolicy);

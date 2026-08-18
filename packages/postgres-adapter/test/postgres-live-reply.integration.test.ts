@@ -222,7 +222,7 @@ describe("PostgreSQL canonical live reply authority", () => {
 
   it("durably tombstones an unknown projection and repeats idempotently", async (context) => {
     const database = databaseOrSkip(context);
-    const admissions = new PostgresQuestionAdmissionCommit(database, botId);
+    const admissions = new PostgresQuestionAdmissionCommit(database, botId, questionPolicy);
     const receipt =
       `discord:v2:channel:${channelId}:message:66666666666666666`;
 
@@ -247,7 +247,7 @@ describe("PostgreSQL projection tombstone retention", () => {
 
   it("prunes stale unmatched deletes but preserves a delete observed before authority", async (context) => {
     const database = databaseOrSkip(context);
-    const admissions = new PostgresQuestionAdmissionCommit(database, botId);
+    const admissions = new PostgresQuestionAdmissionCommit(database, botId, questionPolicy);
     const staleReceipt =
       `discord:v2:channel:${channelId}:message:66666666666666661`;
     const validReceipt =
@@ -288,7 +288,7 @@ describe("PostgreSQL projection tombstone retention", () => {
 
   it("does not prune a tombstone behind an active projection fence", async (context) => {
     const database = databaseOrSkip(context);
-    const admissions = new PostgresQuestionAdmissionCommit(database, botId);
+    const admissions = new PostgresQuestionAdmissionCommit(database, botId, questionPolicy);
     const lockedReceipt =
       `discord:v2:channel:${channelId}:message:66666666666666663`;
     await admissions.withdrawProjection({ finalProjectionReceipt: lockedReceipt });
@@ -340,7 +340,7 @@ describe("PostgreSQL canonical live reply authority races", () => {
     if (authority === null) {
       throw new Error("final authority was not admitted");
     }
-    const admissions = new PostgresQuestionAdmissionCommit(database, botId);
+    const admissions = new PostgresQuestionAdmissionCommit(database, botId, questionPolicy);
     const authorization = {
       actorId: "speaker-a",
       containerId: channelId,

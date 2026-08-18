@@ -139,7 +139,7 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
     store: new PostgresAnswerEffectStore(input.pool, localFinalReplyPolicyRelease),
   });
   const maintenance = new MaintainFinalReplies(
-    new PostgresFinalReplyMaintenance(input.pool),
+    new PostgresFinalReplyMaintenance(input.pool, localFinalReplyPolicyRelease),
     servingEnabled,
   );
   const reportError = (error: unknown): void => {

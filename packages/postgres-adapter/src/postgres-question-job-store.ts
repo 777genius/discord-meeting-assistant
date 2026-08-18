@@ -80,11 +80,11 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
-      await this.expireJobs(client);
       if (!await this.policyFence.lockCurrent(client)) {
         await client.query("COMMIT");
         return null;
       }
+      await this.expireJobs(client);
       const result = await client.query<QuestionJobRow>(
         `
           WITH selected AS (
@@ -137,9 +137,7 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
   public async persistGroundingPlan(
     input: Parameters<QuestionJobStore["persistGroundingPlan"]>[0],
   ): Promise<boolean> {
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
+    return this.withCurrentPolicyMutation(async (client) => {
       await lockMeetingKnowledgeSources(client, input.sourceMeetingIds);
       const result = await client.query(
         `
@@ -183,100 +181,100 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
           ...policyParameters(this.policyFence.identity),
         ],
       );
-      await client.query("COMMIT");
       return result.rowCount === 1;
-    } catch (error) {
-      await rollback(client);
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   public async markReady(
     input: Parameters<QuestionJobStore["markReady"]>[0],
   ): Promise<boolean> {
-    const result = await this.pool.query(
-      `
-        UPDATE meeting_knowledge.question_jobs AS job
-        SET state = 'ready',
-            answer_candidate = $3::jsonb,
-            ready_at = COALESCE(ready_at, transaction_timestamp()),
-            updated_at = transaction_timestamp()
-        WHERE question_id = $1
-          AND generation = $2
-          AND state = 'running'
-          AND grounding_plan IS NOT NULL
-          AND lease_until > transaction_timestamp()
-          AND ${currentPolicySql(4)}
-      `,
-      [
-        input.jobId,
-        input.generation,
-        JSON.stringify(input.answerCandidate),
-        ...policyParameters(this.policyFence.identity),
-      ],
-    );
-    return result.rowCount === 1;
+    return this.withCurrentPolicyMutation(async (client) => {
+      const result = await client.query(
+        `
+          UPDATE meeting_knowledge.question_jobs AS job
+          SET state = 'ready',
+              answer_candidate = $3::jsonb,
+              ready_at = COALESCE(ready_at, transaction_timestamp()),
+              updated_at = transaction_timestamp()
+          WHERE question_id = $1
+            AND generation = $2
+            AND state = 'running'
+            AND grounding_plan IS NOT NULL
+            AND lease_until > transaction_timestamp()
+            AND ${currentPolicySql(4)}
+        `,
+        [
+          input.jobId,
+          input.generation,
+          JSON.stringify(input.answerCandidate),
+          ...policyParameters(this.policyFence.identity),
+        ],
+      );
+      return result.rowCount === 1;
+    });
   }
 
   public async releaseForRetry(
     input: Parameters<QuestionJobStore["releaseForRetry"]>[0],
   ): Promise<boolean> {
-    const result = await this.pool.query(
-      `
-        UPDATE meeting_knowledge.question_jobs AS job
-        SET state = 'queued',
-            lease_owner = NULL,
-            lease_until = NULL,
-            retry_reason = $3,
-            updated_at = transaction_timestamp()
-        WHERE question_id = $1
-          AND generation = $2
-          AND state = 'running'
-          AND ${currentPolicySql(4)}
-      `,
-      [
-        input.jobId,
-        input.generation,
-        input.reason.slice(0, 256),
-        ...policyParameters(this.policyFence.identity),
-      ],
-    );
-    return result.rowCount === 1;
+    return this.withCurrentPolicyMutation(async (client) => {
+      const result = await client.query(
+        `
+          UPDATE meeting_knowledge.question_jobs AS job
+          SET state = 'queued',
+              lease_owner = NULL,
+              lease_until = NULL,
+              retry_reason = $3,
+              updated_at = transaction_timestamp()
+          WHERE question_id = $1
+            AND generation = $2
+            AND state = 'running'
+            AND ${currentPolicySql(4)}
+        `,
+        [
+          input.jobId,
+          input.generation,
+          input.reason.slice(0, 256),
+          ...policyParameters(this.policyFence.identity),
+        ],
+      );
+      return result.rowCount === 1;
+    });
   }
 
   public async settle(
     input: Parameters<QuestionJobStore["settle"]>[0],
   ): Promise<boolean> {
-    const result = await this.pool.query(
-      `
-        UPDATE meeting_knowledge.question_jobs AS job
-        SET state = 'terminal',
-            outcome = $3,
-            authorization_principal_ref = NULL,
-            question_text = NULL,
-            binding = NULL,
-            grounding_plan = NULL,
-            answer_candidate = NULL,
-            lease_owner = NULL,
-            lease_until = NULL,
-            terminal_at = COALESCE(terminal_at, transaction_timestamp()),
-            scrubbed_at = COALESCE(scrubbed_at, transaction_timestamp()),
-            updated_at = transaction_timestamp()
-        WHERE question_id = $1
-          AND generation = $2
-          AND state IN ('running', 'ready')
-          AND ${currentPolicySql(4)}
-      `,
-      [
-        input.jobId,
-        input.generation,
-        input.outcome,
-        ...policyParameters(this.policyFence.identity),
-      ],
-    );
-    return result.rowCount === 1;
+    return this.withCurrentPolicyMutation(async (client) => {
+      const result = await client.query(
+        `
+          UPDATE meeting_knowledge.question_jobs AS job
+          SET state = 'terminal',
+              outcome = $3,
+              authorization_principal_ref = NULL,
+              question_text = NULL,
+              binding = NULL,
+              grounding_plan = NULL,
+              answer_candidate = NULL,
+              lease_owner = NULL,
+              lease_until = NULL,
+              terminal_at = COALESCE(terminal_at, transaction_timestamp()),
+              scrubbed_at = COALESCE(scrubbed_at, transaction_timestamp()),
+              updated_at = transaction_timestamp()
+          WHERE question_id = $1
+            AND generation = $2
+            AND state IN ('running', 'ready')
+            AND ${currentPolicySql(4)}
+        `,
+        [
+          input.jobId,
+          input.generation,
+          input.outcome,
+          ...policyParameters(this.policyFence.identity),
+        ],
+      );
+      return result.rowCount === 1;
+    });
   }
 
   public async cancelQuestion(questionId: string): Promise<void> {
@@ -406,8 +404,31 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
             updated_at = transaction_timestamp()
         WHERE job.state <> 'terminal'
           AND job.expires_at <= transaction_timestamp()
+          AND ${currentPolicySql(1)}
       `,
+      [...policyParameters(this.policyFence.identity)],
     );
+  }
+
+  private async withCurrentPolicyMutation(
+    operation: (client: PoolClient) => Promise<boolean>,
+  ): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      if (!await this.policyFence.lockCurrent(client)) {
+        await client.query("COMMIT");
+        return false;
+      }
+      const result = await operation(client);
+      await client.query("COMMIT");
+      return result;
+    } catch (error) {
+      await rollback(client);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 }
 

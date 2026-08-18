@@ -469,8 +469,8 @@ describe("schema 21 withdrawal upgrade", () => {
       );
 
       await expect(new PostgresMigrationRunner(isolated.pool).migrate()).resolves.toEqual({
-        appliedVersions: [22],
-        version: 22,
+        appliedVersions: [22, 23, 24],
+        version: 24,
       });
       await expect(isolated.pool.query(
         `SELECT meeting_id
@@ -537,7 +537,7 @@ describe("late answer-effect receipt reconciliation", () => {
         "c".repeat(64),
       ],
     );
-    const effects = new PostgresAnswerEffectStore(database);
+    const effects = new PostgresAnswerEffectStore(database, upgradedQuestionPolicy);
 
     await expect(effects.listOutcomeUnknown(1)).resolves.toEqual([
       expect.objectContaining({
@@ -575,7 +575,7 @@ describe("late answer-effect receipt reconciliation", () => {
         "c".repeat(64),
       ],
     );
-    const effects = new PostgresAnswerEffectStore(database);
+    const effects = new PostgresAnswerEffectStore(database, upgradedQuestionPolicy);
 
     await expect(effects.listOutcomeUnknown(10)).resolves.toEqual([
       expect.objectContaining({
