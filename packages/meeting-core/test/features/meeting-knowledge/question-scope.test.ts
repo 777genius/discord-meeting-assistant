@@ -16,6 +16,10 @@ describe("question scope admission", () => {
     "Did anyone mention security?",
     "Was Project Cedar mentioned?",
     "Was budget pressure discussed?",
+    "Were there any decisions?",
+    "Was there any action item?",
+    "Which decisions were made?",
+    "What's in all of Alex's decisions?",
     "Summarize the whole meeting",
     "What decisions were made?",
     "Give me an overview and timeline",
@@ -23,6 +27,9 @@ describe("question scope admission", () => {
     "Сколько решений приняли?",
     "Перечисли все задачи",
     "Никто не возражал?",
+    "Были ли какие-либо решения?",
+    "Были решения?",
+    "Есть ли задачи?",
     "Подведи итог всей встречи",
     "Какие решения приняли?",
   ])("requires exhaustive coverage for %s", (question) => {
@@ -35,9 +42,15 @@ describe("question scope admission", () => {
     "Was Monday the corrected date?",
     "How many days did Alex propose?",
     "What did Alex mean by 'no downtime'?",
+    "What did Alex mean by 'all decisions'?",
+    "What did Alex mean by 'all of Alice's decisions'?",
+    "What did Alex mean by ‘all decisions’?",
+    "What did Alex mean by `all decisions`?",
     "What did Alex mean by \"all decisions\"?",
     "Что Мария имела в виду под «все готово»?",
     "Did Alex say the launch was not delayed?",
+    "Were there two days between the dates?",
+    "Был ли понедельник исправленной датой?",
   ])("keeps ordinary current facts on focused retrieval for %s", (question) => {
     expect(requiresExhaustiveCoverage(question)).toBe(false);
   });

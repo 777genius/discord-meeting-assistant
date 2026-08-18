@@ -174,8 +174,12 @@ describe("grounded Meeting Knowledge answers", () => {
 
   it.each([
     "There are exactly two release decisions.",
+    "Two release decisions were made.",
+    "Those were the only release decisions.",
+    "No other release decisions were made.",
     "All release decisions were approved.",
     "There were no other release decisions.",
+    "Два решения по релизу были приняты.",
     "Всего 2 решения по релизу.",
   ])("rejects exhaustive provider semantics from focused evidence: %s", (text) => {
     expect(() => GroundedAnswer.create({
@@ -191,6 +195,26 @@ describe("grounded Meeting Knowledge answers", () => {
     })).toThrow("focused evidence cannot support");
   });
 
+  it.each([
+    "Alex proposed two days for review.",
+    "Monday was the only corrected date Alex stated.",
+  ])("keeps local provider semantics valid with focused evidence: %s", (text) => {
+    expect(GroundedAnswer.create({
+      candidate: {
+        claims: [{
+          evidenceIds: ["evidence-000002"],
+          text,
+        }],
+        locale: "en",
+        status: "answered",
+      },
+      evidence: plan.evidence,
+      expectedLocale: "en",
+      groundingMode: "focused_retrieval",
+      question: "When did Alex correct the release date?",
+    }).status).toBe("answered");
+  });
+
   it("rejects uncited positive prose even when an exhaustive no-match proof exists", () => {
     expect(() => GroundedAnswer.create({
       candidate: {
@@ -203,6 +227,61 @@ describe("grounded Meeting Knowledge answers", () => {
       expectedLocale: "en",
       groundingMode: "exhaustive_coverage",
       question: "Was Project Zeta ever approved?",
+    })).toThrow("between one and eight citations");
+  });
+
+  it.each([
+    "There were no blockers, and Alice approved the release.",
+    "Project Zeta was never approved, but Project Omega was approved.",
+    "There were no blockers; Alice approved the release.",
+    "There were no blockers after Alice approved the release.",
+  ])("rejects mixed uncited absence claims: %s", (text) => {
+    expect(() => GroundedAnswer.create({
+      candidate: {
+        claims: [{ evidenceIds: [], text }],
+        locale: "en",
+        status: "answered",
+      },
+      evidence: [],
+      exhaustiveAbsenceProven: true,
+      expectedLocale: "en",
+      groundingMode: "exhaustive_coverage",
+      question: "Were there any blockers?",
+    })).toThrow("between one and eight citations");
+  });
+
+  it("accepts only a pure Russian absence claim without citations", () => {
+    const pure = GroundedAnswer.create({
+      candidate: {
+        claims: [{
+          evidenceIds: [],
+          text: "Проект Зета никогда не был одобрен.",
+        }],
+        locale: "ru",
+        status: "answered",
+      },
+      evidence: [],
+      exhaustiveAbsenceProven: true,
+      expectedLocale: "ru",
+      groundingMode: "exhaustive_coverage",
+      question: "Был ли проект Зета одобрен?",
+    });
+    expect(pure.claims[0]?.support).toBe("complete_coverage_absence");
+
+    expect(() => GroundedAnswer.create({
+      candidate: {
+        claims: [{
+          evidenceIds: [],
+          text: "Проект Зета никогда не был одобрен, но проект Омега одобрили.",
+        }],
+        locale: "ru",
+        status: "answered",
+      },
+      evidence: [],
+      exhaustiveAbsenceProven: true,
+      expectedLocale: "ru",
+      groundingMode: "exhaustive_coverage",
+      question: "Был ли проект Зета одобрен?",
     })).toThrow("between one and eight citations");
   });
 });
