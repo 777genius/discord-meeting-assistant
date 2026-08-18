@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "canary:voicetext": "tsx src/run-voicetext-semantic-canary.ts",
-    "check": "pnpm run typecheck && pnpm run test && pnpm run test:meeting-knowledge-e2e",
+    "check": "pnpm run typecheck && pnpm run test && pnpm run test:meeting-knowledge-e2e && pnpm run test:voice-durability-e2e",
     "check:image": "pnpm run typecheck && pnpm run test",
     "probe:hosted-discord-identity": "tsx src/run-hosted-discord-identity-probe.ts",
     "start": "tsx src/main.ts",

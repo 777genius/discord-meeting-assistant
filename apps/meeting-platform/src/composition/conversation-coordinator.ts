@@ -29,7 +29,7 @@ interface ConversationResources {
 }
 
 export async function createLiveConversationResources(input: {
-  readonly config: PlatformConfig;
+  readonly config: Pick<PlatformConfig, "conversation">;
   readonly groundedAnswers?: GroundedKnowledgeAnswerPort;
   readonly logger: Logger;
   readonly playback: CraigPlaybackGateway;

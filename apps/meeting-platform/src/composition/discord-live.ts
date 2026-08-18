@@ -12,15 +12,8 @@ import {
 } from "@discord-meeting/discord-adapter";
 import { ConfigureGuild } from "@discord-meeting/guild-configuration-core";
 import { CraigPlaybackGateway } from "@discord-meeting/craig-playback-adapter";
-import {
-  AppendLiveTranscriptTurn,
-  FinishLiveMeeting,
-  RefreshLiveMeeting,
-  StartLiveMeeting,
-} from "@discord-meeting/meeting-core/live-meeting";
-import {
-  ConversationCoordinator,
-} from "@discord-meeting/meeting-core/conversation";
+import type { ConversationCoordinator } from
+  "@discord-meeting/meeting-core/conversation";
 import type { GroundedMeetingAnswer } from "@discord-meeting/meeting-core/meeting-knowledge";
 import {
   type SummaryPublicationPort,
@@ -54,6 +47,14 @@ import type { PlatformHistoricalMemoryRuntime } from "./historical-memory.js";
 import { classifyPlatformError } from "./observability.js";
 import { discordLiveCaptionSignature } from "./discord-live-caption-signature.js";
 import { meetingVocabulary } from "./meeting-vocabulary.js";
+import {
+  createPlatformLiveConversationConfiguration,
+  createPlatformLiveMeetingRuntime,
+} from "./live-runtime-factory.js";
+export {
+  createPlatformLiveConversationConfiguration,
+  createPlatformLiveMeetingRuntime,
+} from "./live-runtime-factory.js";
 export {
   createConversationLatencyLogger,
   createConversationPlaybackLogger,
@@ -258,70 +259,36 @@ function createLiveRuntime(input: {
     },
   );
   const projector = new DiscordLiveMeetingProjectionAdapter(input.discordPublisher);
-  return new PlatformLiveMeetingRuntime({
-    appendTurn: new AppendLiveTranscriptTurn(input.meetings),
-    captionSignature: discordLiveCaptionSignature,
-    ...(input.config.conversation === undefined ||
-    input.conversationCoordinator === undefined
+  const conversation = createPlatformLiveConversationConfiguration({
+    config: input.config,
+    ...(input.conversationCoordinator === undefined
       ? {}
-      : {
-          conversation: {
-            coordinator: input.conversationCoordinator,
-            ...(input.farewellCues === undefined
-              ? {}
-              : {
-                  farewells: {
-                    classifier: new SubscriptionRuntimeFarewellClassifier(
-                      input.runtimeTransport,
-                      input.config.subscriptionRuntime.launcherSha256,
-                    ),
-                    cues: input.farewellCues,
-                    participantNames: Object.freeze(Object.fromEntries(
-                      Object.entries(input.config.participantGreetingProfiles)
-                        .map(([participantId, profile]) => [
-                          participantId,
-                          profile.displayName,
-                        ]),
-                    )),
-                  },
-                }),
-            greetings: {
-              ...(input.greetingCues === undefined
-                ? {}
-                : { cues: input.greetingCues }),
-              defaultLocale: input.config.participantGreetingDefaultLocale,
-              excludedParticipantIds: Object.freeze([
-                input.config.discordApplicationId,
-                input.config.discordBotikApplicationId,
-                input.config.discordCraigApplicationId,
-              ]),
-              isPlaybackReady: input.isPlaybackReady,
-              profiles: input.config.participantGreetingProfiles,
-            },
-            locale: "auto",
-            nowMilliseconds: monotonicUnixNowMilliseconds,
-            oneShotReceipts: input.oneShotReceipts,
-            systemPrompt: input.config.conversation.systemPrompt,
-            voiceProfileId: input.config.conversation.voiceProfileId,
-          },
-        }),
-    finishMeeting: new FinishLiveMeeting(input.meetings),
+      : { coordinator: input.conversationCoordinator }),
+    ...(input.farewellCues === undefined ? {} : { farewellCues: input.farewellCues }),
+    farewellClassifier: new SubscriptionRuntimeFarewellClassifier(
+      input.runtimeTransport,
+      input.config.subscriptionRuntime.launcherSha256,
+    ),
+    ...(input.greetingCues === undefined ? {} : { greetingCues: input.greetingCues }),
+    isPlaybackReady: input.isPlaybackReady,
+    oneShotReceipts: input.oneShotReceipts,
+  });
+  return createPlatformLiveMeetingRuntime({
+    captionSignature: discordLiveCaptionSignature,
+    ...(conversation === undefined ? {} : { conversation }),
     ...(input.liveFinalizedMemory === undefined
       ? {}
       : { finalizedMemory: input.liveFinalizedMemory }),
     logger: input.logger,
+    meetings: input.meetings,
     packetFlowControl: {
       maximumConcurrentSessions:
         input.config.voicetext.liveMaxConcurrentSessions,
       packetBackpressureTimeoutMs:
         input.config.voicetext.livePacketBackpressureTimeoutMs,
     },
-    refreshMeeting: new RefreshLiveMeeting({
-      meetings: input.meetings,
-      projector,
-      summarizer,
-    }),
-    startMeeting: new StartLiveMeeting({ meetings: input.meetings }),
+    projector,
+    summarizer,
     transcriber: new VoicetextLiveTranscriptionAdapter({
       endpoint: input.config.voicetext.webSocketUrl,
       keyterms: meetingVocabulary,

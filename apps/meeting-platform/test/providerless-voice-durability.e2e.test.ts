@@ -1,520 +1,367 @@
-import type { CraigPlaybackCommand, CraigPlaybackEvent } from "@discord-meeting/craig-gateway-contracts";
-import {
-  CraigPlaybackGateway,
-  type CraigPlaybackTransport,
-} from "@discord-meeting/craig-playback-adapter";
-import {
-  AppendLiveTranscriptTurn,
-  FinishLiveMeeting,
-  RefreshLiveMeeting,
-  StartLiveMeeting,
-} from "@discord-meeting/meeting-core/live-meeting";
-import {
-  ConversationCoordinator,
-  type ConversationCancellationReason,
-  type ConversationPortResult,
-  type ConversationRuntime,
-  type ConversationRuntimeEvent,
-  type ConversationRuntimeTurn,
-  type ConversationStartRequest,
-  type GroundedKnowledgeAnswerPort,
-} from "@discord-meeting/meeting-core/conversation";
-import {
-  PostgresConversationOneShotReceiptStore,
-  PostgresLiveMeetingRepository,
-  PostgresMigrationRunner,
-} from "@discord-meeting/postgres-adapter";
-import { Pool } from "pg";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { randomUUID } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { PlatformLiveMeetingRuntime } from "../src/live-meeting-runtime.js";
-import type {
-  LiveMeetingStartedEvent,
-  LiveTranscriptionEvent,
-} from "../src/live-runtime/contracts.js";
+import { PostgresMigrationRunner } from "@discord-meeting/postgres-adapter";
+import { Pool, type PoolConfig } from "pg";
+import { GenericContainer, type StartedTestContainer, Wait } from "testcontainers";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import { stableLiveTranscriptTurnId } from "../src/live-runtime/transcript-turn-id.js";
 import {
-  ControlledLiveTranscriberStub,
-  logger,
-  packets,
-  ProjectionStub,
-  SummaryStub,
-} from "./live-runtime/live-runtime-fixtures.js";
+  composePhase,
+  GroundedAnswerProbe,
+  hardGreetingLatencyMs,
+  oneMinuteMs,
+  packetBatch,
+  participantEvent,
+  participantOne,
+  participantTwo,
+  type QualificationPhase,
+  runMinute,
+  startEvent,
+  transcript,
+  twoHoursMs,
+  VirtualClock,
+} from "./providerless-voice-durability-fixtures.js";
+import {
+  audioChunks,
+  completedReceiptStates,
+  completedTurn,
+  expectAuthoritativeRecording,
+  farewellSha256,
+  greetingStarts,
+  playbackStarts,
+  readEvents,
+  readGreetingManifest,
+  turnPcmSha256,
+  waitForEvidence,
+  waitForPersistedTurn,
+} from "./providerless-voice-durability-recording.js";
 
-const meetingId = "recording-providerless-durability";
-const roomId = "voice-room-providerless-durability";
-const participantOne = "1533224474609057795";
-const participantTwo = "2533224474609057795";
-const twoHoursMs = 7_200_000;
-let qualificationNowMs = 0;
-
-let database: Pool;
-const cleanupTasks: Array<() => Promise<void>> = [];
+const postgresImage =
+  "postgres:18.4-alpine@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15";
+const postgresPort = 5_432;
+let container: StartedTestContainer | undefined;
+let databaseOptions: PoolConfig | undefined;
 
 beforeAll(async () => {
-  const connectionString = process.env.VOICE_DURABILITY_DATABASE_URL;
-  if (connectionString === undefined) {
-    throw new Error("VOICE_DURABILITY_DATABASE_URL must point to a disposable qualification database");
+  const databaseName = `voice_durability_test_${randomUUID().replaceAll("-", "")}`;
+  const useHostNetwork = process.env.VOICE_DURABILITY_HOST_NETWORK === "true";
+  let postgres = new GenericContainer(postgresImage)
+    .withEnvironment({
+      POSTGRES_DB: databaseName,
+      POSTGRES_PASSWORD: "synthetic-only",
+      POSTGRES_USER: databaseName,
+    })
+    .withWaitStrategy(
+      Wait.forLogMessage(/database system is ready to accept connections/u, 2),
+    )
+    .withStartupTimeout(120_000);
+  postgres = useHostNetwork
+    ? postgres.withNetworkMode("host")
+    : postgres.withExposedPorts(postgresPort);
+  container = await postgres.start();
+  databaseOptions = {
+    database: databaseName,
+    host: useHostNetwork ? "127.0.0.1" : container.getHost(),
+    password: "synthetic-only",
+    port: useHostNetwork ? postgresPort : container.getMappedPort(postgresPort),
+    user: databaseName,
+  };
+  const bootstrap = new Pool(databaseOptions);
+  try {
+    await new PostgresMigrationRunner(bootstrap).migrate();
+  } finally {
+    await bootstrap.end();
   }
-  const databaseName = new URL(connectionString).pathname.slice(1);
-  if (!/^voice_durability_test_[a-z\d_]+$/u.test(databaseName)) {
-    throw new Error("Voice durability qualification requires a dedicated voice_durability_test_* database");
-  }
-  database = new Pool({ connectionString });
-  await new PostgresMigrationRunner(database).migrate();
-}, 30_000);
+}, 150_000);
 
 afterAll(async () => {
-  await database?.end();
-});
-
-afterEach(async () => {
-  let firstFailure: unknown;
-  for (const cleanup of cleanupTasks.splice(0).toReversed()) {
-    try {
-      await cleanup();
-    } catch (error: unknown) {
-      firstFailure ??= error;
-    }
-  }
-  if (firstFailure !== undefined) {
-    throw firstFailure;
-  }
+  await container?.stop();
 });
 
 describe("providerless production-composition voice durability", () => {
-  it("qualifies two compressed hours across playback, persistence and restart boundaries", async () => {
-    const meetings = new PostgresLiveMeetingRepository(database);
-    const receipts = new PostgresConversationOneShotReceiptStore(database);
-    const playback = new CraigPlaybackGateway(() => Date.now());
-    const transport = new SyntheticCraigPlaybackTransport(meetingId);
-    playback.register(transport);
-    const conversationRuntime = new ControlledConversationRuntime();
-    cleanupTasks.push(async () => playback.close());
-    const groundedAnswers = groundedAnswerPort();
-    qualificationNowMs = Date.now();
-    const firstCoordinator = new ConversationCoordinator({
-      groundedAnswers,
-      playback,
-      runtime: conversationRuntime,
-    });
-    const firstTranscriber = new ControlledLiveTranscriberStub();
-    cleanupTasks.push(async () => firstCoordinator.close(Date.now()));
-    const startedAt = new Date(qualificationNowMs).toISOString();
-    const started = startEvent(startedAt, []);
-    const firstRuntime = composedRuntime({
-      coordinator: firstCoordinator,
-      meetings,
-      receipts,
-      transcriber: firstTranscriber,
-    });
+  it("qualifies two compressed hours across durable playback and owner restart", async () => {
+    const meetingId = `voice-durability-${randomUUID()}`;
+    const recordingRoot = await mkdtemp(join(tmpdir(), "voice-durability-recording-"));
+    const startedAtMs = 1_800_000_000_000;
+    const startedAt = new Date(startedAtMs).toISOString();
+    let first: QualificationPhase | undefined;
+    let restarted: QualificationPhase | undefined;
+    try {
+      first = await composePhase({
+        clock: new VirtualClock(startedAtMs),
+        database: requiredDatabaseOptions(),
+        groundedAnswers: new GroundedAnswerProbe("unused-first-owner"),
+        meetingId,
+        phase: "owner-1",
+        recordingRoot,
+      });
+      await first.runtime.acceptLifecycle(startEvent(meetingId, startedAt, []));
 
-    cleanupTasks.push(async () => firstRuntime.close());
-    await firstRuntime.acceptLifecycle(started);
-    await firstRuntime.acceptLifecycle(participantEvent("participant.joined", participantOne));
-    await waitFor(() => greetingStarts(transport).length === 1);
-    await firstRuntime.acceptLifecycle(participantEvent("participant.joined", participantTwo));
-    await waitFor(() => greetingStarts(transport).length === 2);
-    expect(greetingStarts(transport).map(({ turnId }) => turnId)).toEqual([
-      `participant-greeting:${participantOne}`,
-      `participant-greeting:${participantTwo}`,
-    ]);
+      const firstGreetingAt = performance.now();
+      await first.runtime.acceptLifecycle(participantEvent(
+        meetingId,
+        first.clock,
+        "participant.joined",
+        participantOne,
+      ));
+      await waitForEvidence(
+        recordingRoot,
+        (events) => audioChunks(events, `participant-greeting:${participantOne}`).length > 0,
+        hardGreetingLatencyMs,
+      );
+      expect(performance.now() - firstGreetingAt).toBeLessThan(hardGreetingLatencyMs);
+      await waitForEvidence(
+        recordingRoot,
+        (events) => completedTurn(events, `participant-greeting:${participantOne}`),
+      );
 
-    await firstRuntime.acceptLifecycle(participantEvent("participant.left", participantOne));
-    await firstRuntime.acceptLifecycle(participantEvent("participant.joined", participantOne));
-    await wait(150);
-    expect(greetingStarts(transport)).toHaveLength(2);
-
-    await firstRuntime.acceptLifecycle({
-      occurredAt: new Date().toISOString(),
-      recordingId: meetingId,
-      type: "meeting.connection_lost",
-    });
-
-    const restartedCoordinator = new ConversationCoordinator({
-      groundedAnswers,
-      playback,
-      runtime: conversationRuntime,
-    });
-    const restartedTranscriber = new ControlledLiveTranscriberStub();
-    cleanupTasks.push(async () => restartedCoordinator.close(Date.now()));
-    const restartedRuntime = composedRuntime({
-      coordinator: restartedCoordinator,
-      meetings,
-      receipts,
-      transcriber: restartedTranscriber,
-    });
-    cleanupTasks.push(async () => restartedRuntime.close());
-    await restartedRuntime.acceptLifecycle(startEvent(startedAt, [participantOne, participantTwo]));
-    await wait(150);
-    expect(greetingStarts(transport)).toHaveLength(2);
-
-    qualificationNowMs += twoHoursMs;
-    const finalPacketBatch = packets();
-    finalPacketBatch.packets[0] = {
-      ...finalPacketBatch.packets[0]!,
-      recordingId: meetingId,
-      relativeTimeMs: twoHoursMs - 20,
-      speakerId: participantOne,
-    };
-    await restartedRuntime.acceptVoiceBatch(finalPacketBatch);
-    await waitFor(() => restartedTranscriber.requests.length === 1);
-    const transcription = restartedTranscriber.requests[0];
-    if (transcription === undefined) {
-      throw new Error("providerless transcription session did not open");
-    }
-
-    transcription.onTranscript(transcript(
-      transcription.meetingId,
-      transcription.speakerId,
-      twoHoursMs - 2_000,
-      twoHoursMs - 1_000,
-      "Botik, what did we decide?",
-    ));
-    await waitFor(() => answerChunks(transport).length === 1);
-    transcription.onTranscript({
-      ...transcript(
-        transcription.meetingId,
+      const secondGreetingAt = performance.now();
+      await first.runtime.acceptLifecycle(participantEvent(
+        meetingId,
+        first.clock,
+        "participant.joined",
         participantTwo,
-        twoHoursMs - 900,
-        twoHoursMs - 800,
-        "interrupting",
-      ),
-      isFinal: false,
-    });
-    await waitFor(() => transport.commands.some(({ type }) => type === "playback-cancel"));
-    conversationRuntime.releaseLateChunk();
-    await restartedCoordinator.whenIdle(meetingId);
-    await wait(50);
-    expect(answerChunks(transport)).toHaveLength(1);
-    expect(conversationRuntime.cancelReasons).toContain("barge-in");
+      ));
+      await waitForEvidence(
+        recordingRoot,
+        (events) => audioChunks(events, `participant-greeting:${participantTwo}`).length > 0,
+        hardGreetingLatencyMs,
+      );
+      expect(performance.now() - secondGreetingAt).toBeLessThan(hardGreetingLatencyMs);
+      await waitForEvidence(
+        recordingRoot,
+        (events) => completedTurn(events, `participant-greeting:${participantTwo}`),
+      );
+      expect(await completedReceiptStates(first.pool)).toEqual([
+        "played",
+        "played",
+      ]);
 
-    transcription.onTranscript(transcript(
-      transcription.meetingId,
-      participantOne,
-      twoHoursMs - 500,
-      twoHoursMs,
-      "Bye everyone!",
-    ));
-    await wait(50);
-    qualificationNowMs += 100;
-    await waitFor(() => farewellStarts(transport).length === 1);
-    transcription.onTranscript(transcript(
-      transcription.meetingId,
-      participantOne,
-      twoHoursMs - 500,
-      twoHoursMs,
-      "Bye everyone!",
-    ));
-    await wait(200);
-    expect(farewellStarts(transport)).toHaveLength(1);
+      for (let minute = 1; minute <= 60; minute += 1) {
+        await runMinute(first, meetingId, startedAtMs, minute, `Status update ${minute}.`);
+      }
+      await first.runtime.acceptLifecycle({
+        occurredAt: first.clock.isoNow(),
+        recordingId: meetingId,
+        type: "meeting.connection_lost",
+      });
+      const beforeRestart = await first.releaseForRestart();
+      expect(beforeRestart?.snapshot.status).toBe("active");
+      expect(first.transcriber.activeSessions).toBe(0);
+      expect(first.transport.activeAttempts).toBe(0);
 
-    await restartedRuntime.acceptLifecycle({
-      occurredAt: new Date().toISOString(),
-      recordingId: meetingId,
-      type: "meeting.ended",
-    });
-    await restartedRuntime.settleBeforeFinalPublication(meetingId);
-    const persisted = await meetings.readSnapshotAndTimeline(meetingId);
-    expect(persisted?.snapshot.status).toBe("ended");
-    expect(persisted?.timeline.map(({ turn }) => turn.text)).toEqual(expect.arrayContaining([
-      "Botik, what did we decide?",
-      "Bye everyone!",
-    ]));
-    expect(Math.max(...(persisted?.timeline.map(({ turn }) => turn.endMs) ?? []))).toBe(twoHoursMs);
+      const evidenceEvent = transcript(
+        meetingId,
+        participantOne,
+        7_080_000 - 500,
+        7_080_000,
+        "We decided to ship Friday.",
+      );
+      const evidenceTurnId = stableLiveTranscriptTurnId(evidenceEvent);
+      const groundedAnswers = new GroundedAnswerProbe(evidenceTurnId);
+      restarted = await composePhase({
+        clock: new VirtualClock(startedAtMs + 3_600_000),
+        database: requiredDatabaseOptions(),
+        groundedAnswers,
+        meetingId,
+        phase: "owner-2",
+        recordingRoot,
+      });
+      await restarted.runtime.acceptLifecycle(startEvent(meetingId, startedAt, []));
+      await restarted.runtime.acceptLifecycle(participantEvent(
+        meetingId,
+        restarted.clock,
+        "participant.joined",
+        participantOne,
+      ));
+      await restarted.runtime.acceptLifecycle(participantEvent(
+        meetingId,
+        restarted.clock,
+        "participant.joined",
+        participantTwo,
+      ));
+      await restarted.clock.advanceTo(startedAtMs + 3_610_000);
+      await restarted.coordinator.whenIdle(meetingId);
+      expect(await completedReceiptStates(restarted.pool)).toEqual([
+        "played",
+        "played",
+      ]);
+      expect(greetingStarts(await readEvents(recordingRoot))).toHaveLength(2);
 
-    const receiptRows = await database.query<{ readonly count: number }>(
-      "SELECT count(*)::integer AS count FROM meeting_core.conversation_one_shot_receipts",
-    );
-    expect(receiptRows.rows[0]?.count).toBe(3);
-    expect(transport.peakBufferedBytes).toBeLessThanOrEqual(8);
-    expect(conversationRuntime.maximumActiveTurns).toBe(1);
-  }, 150_000);
+      for (let minute = 61; minute <= 117; minute += 1) {
+        await runMinute(
+          restarted,
+          meetingId,
+          startedAtMs,
+          minute,
+          `Status update ${minute}.`,
+        );
+      }
+      await runMinute(
+        restarted,
+        meetingId,
+        startedAtMs,
+        118,
+        evidenceEvent.text,
+      );
+      await waitForPersistedTurn(restarted.meetings, meetingId, evidenceTurnId);
+
+      const questionEvent = await runMinute(
+        restarted,
+        meetingId,
+        startedAtMs,
+        119,
+        "Botik, what did we decide?",
+      );
+      const questionTurnId = stableLiveTranscriptTurnId(questionEvent);
+      await waitForEvidence(
+        recordingRoot,
+        (events) => audioChunks(events, questionTurnId).length === 1,
+      );
+      await restarted.clock.advanceTo(startedAtMs + 119 * oneMinuteMs + 4_001);
+      await restarted.runtime.acceptVoiceBatch(packetBatch(
+        meetingId,
+        participantTwo,
+        119 * oneMinuteMs + 4_000,
+        10_119,
+        startedAtMs + 119 * oneMinuteMs + 4_001,
+      ));
+      restarted.transcriber.emit(participantTwo, {
+        ...transcript(
+          meetingId,
+          participantTwo,
+          119 * oneMinuteMs + 3_900,
+          119 * oneMinuteMs + 4_000,
+          "interrupting",
+        ),
+        isFinal: false,
+      });
+      await waitForEvidence(
+        recordingRoot,
+        (events) => events.some((event) =>
+          event.turnId === questionTurnId && event.type === "playback-cancel"
+        ),
+      );
+      restarted.conversationRuntime.releaseLateChunk();
+      await restarted.coordinator.whenIdle(meetingId);
+
+      assertGroundedTurn(
+        restarted, groundedAnswers, evidenceTurnId, questionTurnId,
+      );
+
+      const farewellEvent = await runMinute(
+        restarted,
+        meetingId,
+        startedAtMs,
+        120,
+        "Bye everyone!",
+      );
+      await restarted.clock.advanceTo(startedAtMs + twoHoursMs + 100);
+      await waitForEvidence(
+        recordingRoot,
+        (events) => completedTurn(events, "meeting-farewell:v1"),
+      );
+      restarted.transcriber.emit(participantOne, farewellEvent);
+      await restarted.clock.advanceTo(startedAtMs + twoHoursMs + 10_000);
+
+      await restarted.runtime.acceptLifecycle({
+        occurredAt: restarted.clock.isoNow(),
+        recordingId: meetingId,
+        type: "meeting.ended",
+      });
+      await restarted.runtime.settleBeforeFinalPublication(meetingId);
+      await restarted.transport.finalizeAuthoritativeRecording();
+
+      const persisted = await restarted.meetings.readSnapshotAndTimeline(meetingId);
+      expect(persisted?.snapshot.status).toBe("ended");
+      expect(persisted?.timeline).toHaveLength(120);
+      expect(persisted?.timeline.some(({ turn }) => turn.turnId === evidenceTurnId))
+        .toBe(true);
+      expect(persisted?.timeline.some(({ turn }) => turn.turnId === questionTurnId))
+        .toBe(true);
+      expect(Math.max(...(persisted?.timeline.map(({ turn }) => turn.endMs) ?? [])))
+        .toBe(twoHoursMs);
+      expect(await completedReceiptStates(restarted.pool)).toEqual([
+        "played",
+        "played",
+        "played",
+      ]);
+
+      const events = await readEvents(recordingRoot);
+      expect(greetingStarts(events)).toHaveLength(2);
+      expect(playbackStarts(events, "meeting-farewell:v1")).toHaveLength(1);
+      expect(completedTurn(events, "meeting-farewell:v1")).toBe(true);
+      expect(audioChunks(events, questionTurnId)).toHaveLength(1);
+      const cancelIndex = events.findIndex((event) =>
+        event.turnId === questionTurnId && event.type === "playback-cancel"
+      );
+      expect(cancelIndex).toBeGreaterThanOrEqual(0);
+      expect(events.slice(cancelIndex + 1).some((event) =>
+        event.turnId === questionTurnId && event.type === "audio-chunk"
+      )).toBe(false);
+
+      const greetingManifest = await readGreetingManifest();
+      expect(turnPcmSha256(events, `participant-greeting:${participantOne}`)).toBe(
+        greetingManifest.get("Привет, Тест А!"),
+      );
+      expect(turnPcmSha256(events, `participant-greeting:${participantTwo}`)).toBe(
+        greetingManifest.get("Hi, Test B!"),
+      );
+      expect(turnPcmSha256(events, "meeting-farewell:v1")).toBe(
+        await farewellSha256("en"),
+      );
+      await expectAuthoritativeRecording(recordingRoot, meetingId);
+
+      expect(restarted.transcriber.totalPackets).toBeGreaterThanOrEqual(61);
+      expect(first.transcriber.totalPackets + restarted.transcriber.totalPackets)
+        .toBeGreaterThanOrEqual(121);
+      expect(restarted.transcriber.peakActiveSessions).toBeLessThanOrEqual(2);
+      expect(restarted.transcriber.peakPendingPacketWrites).toBeLessThanOrEqual(1);
+      expect(restarted.transcriber.activeSessions).toBe(0);
+      expect(restarted.transport.peakActiveAttempts).toBeLessThanOrEqual(1);
+      expect(restarted.transport.peakPendingWrites).toBeLessThanOrEqual(1);
+      expect(restarted.transport.peakBufferedBytes).toBeGreaterThan(0);
+      expect(restarted.transport.peakBufferedBytes).toBeLessThanOrEqual(3_840);
+      expect(restarted.transport.activeAttempts).toBe(0);
+      expect(restarted.transport.pendingWrites).toBe(0);
+      expect(restarted.conversationRuntime.maximumActiveTurns).toBe(1);
+      expect(restarted.conversationRuntime.activeTurns).toBe(0);
+      expect(restarted.projector.requests.length).toBeLessThanOrEqual(256);
+      expect(restarted.summarizer.requests.length).toBeLessThanOrEqual(256);
+    } finally {
+      await restarted?.closeFinal().catch(() => {});
+      await first?.closeFinal().catch(() => {});
+      await rm(recordingRoot, { force: true, recursive: true });
+    }
+  }, 180_000);
 });
 
-function composedRuntime(input: {
-  readonly coordinator: ConversationCoordinator;
-  readonly meetings: PostgresLiveMeetingRepository;
-  readonly receipts: PostgresConversationOneShotReceiptStore;
-  readonly transcriber: ControlledLiveTranscriberStub;
-}): PlatformLiveMeetingRuntime {
-  return new PlatformLiveMeetingRuntime({
-    appendTurn: new AppendLiveTranscriptTurn(input.meetings),
-    conversation: {
-      coordinator: input.coordinator,
-      farewells: {
-        cues: {
-          select: ({ locale }) => ({
-            cueId: `farewell-${locale}-v1`,
-            pcmChunks: [Uint8Array.of(7, 0, 7, 0)],
-            playbackAttemptId: `farewell-${meetingId}-${locale}`,
-          }),
-        },
-        participantNames: {},
-      },
-      greetings: {
-        cues: {
-          select: ({ participantId }) => ({
-            cueId: `greeting-${participantId}`,
-            pcmChunks: [Uint8Array.of(1, 0, 2, 0)],
-            playbackAttemptId: `greeting-${participantId}`,
-          }),
-        },
-        defaultLocale: "en",
-        excludedParticipantIds: [],
-        isPlaybackReady: () => true,
-        profiles: {},
-      },
-      locale: "en-US",
-      nowMilliseconds: () => qualificationNowMs,
-      oneShotReceipts: input.receipts,
-      systemPrompt: "Answer only from durable transcript evidence.",
-      voiceProfileId: "providerless-voice",
-    },
-    clock: {
-      monotonicMilliseconds: () => qualificationNowMs,
-      nowMilliseconds: () => qualificationNowMs,
-    },
-    finishMeeting: new FinishLiveMeeting(input.meetings),
-    logger,
-    packetFlowControl: {
-      maximumConcurrentSessions: 2,
-      packetBackpressureTimeoutMs: 100,
-    },
-    refreshMeeting: new RefreshLiveMeeting({
-      meetings: input.meetings,
-      projector: new ProjectionStub(),
-      summarizer: new SummaryStub(),
-    }),
-    startMeeting: new StartLiveMeeting({ meetings: input.meetings }),
-    transcriber: input.transcriber,
+function assertGroundedTurn(
+  phase: QualificationPhase,
+  groundedAnswers: GroundedAnswerProbe,
+  evidenceTurnId: string,
+  questionTurnId: string,
+): void {
+  expect(groundedAnswers.answerRequests).toHaveLength(1);
+  expect(groundedAnswers.recheckRequests).toHaveLength(1);
+  expect(groundedAnswers.recheckRequests[0]?.citationTurnIds).toEqual([
+    evidenceTurnId,
+  ]);
+  expect(phase.conversationRuntime.requests).toHaveLength(1);
+  expect(phase.conversationRuntime.requests[0]).toMatchObject({
+    literalSpeech: "We decided to ship Friday.",
+    turnId: questionTurnId,
   });
+  expect(phase.conversationRuntime.cancelReasons).toContain("barge-in");
 }
 
-function startEvent(
-  occurredAt: string,
-  participantIds: readonly string[],
-): LiveMeetingStartedEvent {
-  return {
-    occurredAt,
-    participantIds,
-    publicationTarget: { resolve: async () => "results-channel-providerless" },
-    recordingId: meetingId,
-    roomId,
-    type: "meeting.started",
-  };
-}
-
-function participantEvent(
-  type: "participant.joined" | "participant.left",
-  participantId: string,
-) {
-  return {
-    occurredAt: new Date().toISOString(),
-    participantId,
-    recordingId: meetingId,
-    type,
-  } as const;
-}
-
-function transcript(
-  targetMeetingId: string,
-  speakerId: string,
-  startMs: number,
-  endMs: number,
-  text: string,
-): LiveTranscriptionEvent {
-  return { endMs, isFinal: true, meetingId: targetMeetingId, speakerId, startMs, text };
-}
-
-function groundedAnswerPort(): GroundedKnowledgeAnswerPort {
-  return {
-    answer: async () => ({
-      ok: true,
-      value: {
-        citations: [{ turnId: "durable-evidence-turn" }],
-        evidenceEpoch: "evidence-1",
-        knowledgeEpoch: "knowledge-1",
-        plainText: "We decided to ship Friday.",
-        schemaVersion: 1,
-        status: "answered",
-      },
-    }),
-    recheckPlaybackAuthority: async () => ({ ok: true, value: "current" }),
-  };
-}
-
-class ControlledConversationRuntime implements ConversationRuntime {
-  public readonly cancelReasons: ConversationCancellationReason[] = [];
-  public maximumActiveTurns = 0;
-  private activeTurns = 0;
-  private releaseLate: (() => void) | undefined;
-
-  public startTurn(
-    request: ConversationStartRequest,
-  ): Promise<ConversationPortResult<ConversationRuntimeTurn>> {
-    this.activeTurns += 1;
-    this.maximumActiveTurns = Math.max(this.maximumActiveTurns, this.activeTurns);
-    let cancelled: ConversationCancellationReason | undefined;
-    const late = new Promise<void>((resolve) => {
-      this.releaseLate = resolve;
-    });
-    const events = this.events(request, late, () => cancelled, () => {
-      this.activeTurns -= 1;
-    });
-    return Promise.resolve({
-      ok: true,
-      value: {
-        cancel: async (reason) => {
-          cancelled = reason;
-          this.cancelReasons.push(reason);
-          this.releaseLate?.();
-        },
-        events,
-      },
-    });
+function requiredDatabaseOptions(): PoolConfig {
+  if (databaseOptions === undefined) {
+    throw new Error("disposable PostgreSQL was not initialized");
   }
-
-  public releaseLateChunk(): void {
-    this.releaseLate?.();
-  }
-
-  private async *events(
-    request: ConversationStartRequest,
-    late: Promise<void>,
-    cancelled: () => ConversationCancellationReason | undefined,
-    settled: () => void,
-  ): AsyncGenerator<ConversationRuntimeEvent> {
-    const attemptId = `attempt-${request.turnId}`;
-    try {
-      yield { attemptId, type: "accepted" };
-      yield { attemptId, channels: 1, format: "pcm_s16le", sampleRateHz: 48_000, type: "audio-start" };
-      yield audioChunk(attemptId, request.turnId, 0, Uint8Array.of(3, 0, 4, 0));
-      await late;
-      yield audioChunk(attemptId, request.turnId, 1, Uint8Array.of(5, 0, 6, 0));
-      const reason = cancelled();
-      if (reason === undefined) {
-        yield { attemptId, type: "audio-end" };
-        yield { attemptId, type: "completed" };
-      } else {
-        yield { attemptId, reason, type: "cancelled" };
-      }
-    } finally {
-      settled();
-    }
-  }
-}
-
-function audioChunk(
-  attemptId: string,
-  turnId: string,
-  sequence: number,
-  bytes: Uint8Array,
-): ConversationRuntimeEvent {
-  return {
-    attemptId,
-    bytes,
-    channels: 1,
-    format: "pcm_s16le",
-    sampleRateHz: 48_000,
-    sequence,
-    turnId,
-    type: "audio-chunk",
-  };
-}
-
-class SyntheticCraigPlaybackTransport implements CraigPlaybackTransport {
-  public bufferedBytes = 0;
-  public readonly commands: CraigPlaybackCommand[] = [];
-  public readonly identity;
-  public peakBufferedBytes = 0;
-  private closeListener: (reason: string) => void = () => {};
-  private eventListener: (event: CraigPlaybackEvent) => void = () => {};
-  private readonly startedAttempts = new Set<string>();
-
-  public constructor(recordingId: string) {
-    this.identity = {
-      channelId: roomId,
-      gatewaySessionId: "providerless-gateway-session",
-      guildId: "providerless-guild",
-      recordingId,
-    };
-  }
-
-  public close(_code: number, reason: string): void {
-    this.closeListener(reason);
-  }
-
-  public onClose(listener: (reason: string) => void): void {
-    this.closeListener = listener;
-  }
-
-  public onEvent(listener: (event: CraigPlaybackEvent) => void): void {
-    this.eventListener = listener;
-  }
-
-  public send(command: CraigPlaybackCommand): Promise<void> {
-    this.commands.push(structuredClone(command));
-    if (command.type === "audio-chunk") {
-      this.bufferedBytes += Buffer.from(command.pcmBase64, "base64").byteLength;
-      this.peakBufferedBytes = Math.max(this.peakBufferedBytes, this.bufferedBytes);
-      if (!this.startedAttempts.has(command.attemptId)) {
-        this.startedAttempts.add(command.attemptId);
-        this.eventListener({
-          attemptId: command.attemptId,
-          recordingId: command.recordingId,
-          schemaVersion: 1,
-          startedAtMs: Date.now(),
-          turnId: command.turnId,
-          type: "playback-started",
-        });
-      }
-      this.bufferedBytes = 0;
-    }
-    if (command.type === "playback-finish" || command.type === "playback-cancel") {
-      this.eventListener({
-        attemptId: command.attemptId,
-        finishedAtMs: Date.now(),
-        recordingId: command.recordingId,
-        schemaVersion: 1,
-        turnId: command.turnId,
-        type: "playback-finished",
-      });
-    }
-    return Promise.resolve();
-  }
-}
-
-function greetingStarts(transport: SyntheticCraigPlaybackTransport) {
-  return transport.commands.filter(({ type, turnId }) =>
-    type === "playback-start" && turnId.startsWith("participant-greeting:")
-  );
-}
-
-function farewellStarts(transport: SyntheticCraigPlaybackTransport) {
-  return transport.commands.filter(({ type, turnId }) =>
-    type === "playback-start" && turnId === "meeting-farewell:v1"
-  );
-}
-
-function answerChunks(transport: SyntheticCraigPlaybackTransport) {
-  return transport.commands.filter(({ type, turnId }) =>
-    type === "audio-chunk" && !turnId.startsWith("participant-greeting:") &&
-      turnId !== "meeting-farewell:v1"
-  );
-}
-
-async function waitFor(condition: () => boolean, timeoutMs = 5_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (!condition()) {
-    if (Date.now() >= deadline) {
-      throw new Error("providerless durability condition timed out");
-    }
-    await wait(10);
-  }
-}
-
-async function wait(milliseconds: number): Promise<void> {
-  await new Promise<void>((resolve) => {
-    setTimeout(resolve, milliseconds);
-  });
+  return databaseOptions;
 }
