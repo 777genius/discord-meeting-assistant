@@ -82,12 +82,14 @@ export function finalMeeting(
 }
 
 interface StateRow {
+  appliedIndexProfileId: string | null;
   attempt: number;
   readonly binding: HistoricalReleaseBindingV1;
   current: boolean;
   fence: number;
   operation: HistoricalSyncOperationV1;
   plan: HistoricalIndexPlanV1 | null;
+  profileRebuildRequired: boolean;
   remoteDocumentIds: Readonly<Record<string, string>>;
   state: RowState;
 }
@@ -109,6 +111,21 @@ export class MemoryHistoricalAuthority implements HistoricalEvidenceAuthority {
 export class MemoryHistoricalStore implements HistoricalSyncStore {
   readonly #rows = new Map<string, StateRow>();
 
+  public async enqueueAppliedProfileRebuilds(indexProfileId: string) {
+    let enqueued = 0;
+    for (const row of this.#rows.values()) {
+      if (
+        row.current && row.operation === "index" && row.state === "applied" &&
+        row.appliedIndexProfileId !== indexProfileId
+      ) {
+        row.profileRebuildRequired = true;
+        row.state = "pending";
+        enqueued += 1;
+      }
+    }
+    return { enqueued, remaining: false } as const;
+  }
+
   public async acceptRelease(
     binding: HistoricalReleaseBindingV1,
   ): Promise<"accepted" | "replayed"> {
@@ -127,12 +144,14 @@ export class MemoryHistoricalStore implements HistoricalSyncStore {
       }
     }
     this.#rows.set(binding.releaseId, {
+      appliedIndexProfileId: null,
       attempt: 0,
       binding,
       current: true,
       fence: 0,
       operation: "index",
       plan: null,
+      profileRebuildRequired: false,
       remoteDocumentIds: {},
       state: "pending",
     });
@@ -170,9 +189,12 @@ export class MemoryHistoricalStore implements HistoricalSyncStore {
     lease: HistoricalSyncLeaseV1,
     plan: HistoricalIndexPlanV1,
     remoteDocumentIds: Readonly<Record<string, string>>,
+    indexProfileId = "meeting-knowledge.unqualified-index-profile.v1",
   ): Promise<void> {
     const row = this.#requireIndexLease(lease);
     row.plan = plan;
+    row.appliedIndexProfileId = indexProfileId;
+    row.profileRebuildRequired = false;
     row.remoteDocumentIds = remoteDocumentIds;
     row.state = "applied";
   }
@@ -304,11 +326,13 @@ export class MemoryHistoricalStore implements HistoricalSyncStore {
 
   #lease(row: StateRow): HistoricalSyncLeaseV1 {
     return {
+      appliedIndexProfileId: row.appliedIndexProfileId,
       attempt: row.attempt,
       binding: row.binding,
       fence: row.fence,
       operation: row.operation,
       plan: row.plan,
+      profileRebuildRequired: row.profileRebuildRequired,
       remoteDocumentIds: row.remoteDocumentIds,
     };
   }

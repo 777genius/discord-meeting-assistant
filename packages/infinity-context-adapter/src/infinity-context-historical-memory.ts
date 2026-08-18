@@ -158,6 +158,7 @@ export class InfinityContextHistoricalMemoryAdapter implements HistoricalMemoryP
           maxChunks: request.candidateLimit,
           maxEvidenceItems: request.candidateLimit,
           maxFacts: 0,
+          projectAnchorPolicy: "advisory",
           query: request.query,
           readScope: ReadScope.external({
             memoryScopeExternalRefs: [request.roomScopeExternalRef],

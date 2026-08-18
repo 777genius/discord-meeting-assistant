@@ -7,6 +7,8 @@ import type {
   HistoricalEmbeddingTokenizerProfileV1,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 
+import { INFINITY_CONTEXT_SDK_PROVENANCE } from "./infinity-runtime-provenance.js";
+
 interface TokenizerRuntime {
   encode(
     text: string,
@@ -96,6 +98,16 @@ HistoricalEmbeddingTokenizerProfileV1 = Object.freeze({
   tokenizerArtifactSha256,
   tokenizerConfigSha256,
 });
+
+/** Opaque durable identity for indexes produced by this exact qualified stack. */
+export const PINNED_INFINITY_CONTEXT_HISTORICAL_INDEX_PROFILE_ID = [
+  "meeting-knowledge.infinity-index.v1",
+  INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedServiceRevision,
+  PINNED_MULTILINGUAL_MINILM_EMBEDDING_PROFILE_ID,
+  PINNED_MULTILINGUAL_MINILM_TOKENIZER_PROFILE.embeddingModelRevision,
+  PINNED_MULTILINGUAL_MINILM_TOKENIZER_PROFILE.servingRuntimeRevision,
+  PINNED_MULTILINGUAL_MINILM_TOKENIZER_PROFILE.conformanceVectorSetSha256,
+].join("|");
 
 export interface PinnedMultilingualMiniLmArtifacts {
   readonly conformance: Uint8Array;

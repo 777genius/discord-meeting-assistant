@@ -18,6 +18,7 @@ import {
 import {
   HmacHistoricalOpaqueIds,
   InfinityContextHistoricalMemoryAdapter,
+  PinnedMultilingualMiniLmTokenizer,
 } from "../src/index.js";
 import { DisposableInfinityEndpoint } from "./disposable-infinity-endpoint.js";
 import {
@@ -189,6 +190,7 @@ async function assertFocusedRecall(
 describe("Infinity Context positional retrieval qualification", () => {
   it("qualifies one combined >400-turn RU/EN corpus with bounded focused and exhaustive paths", async () => {
     const endpoint = new DisposableInfinityEndpoint();
+    const exactTokenizer = new PinnedMultilingualMiniLmTokenizer();
     const ids = new HmacHistoricalOpaqueIds(new Uint8Array(32).fill(0xa5));
     const authority = new MemoryHistoricalAuthority();
     const store = new MemoryHistoricalStore();
@@ -202,10 +204,17 @@ describe("Infinity Context positional retrieval qualification", () => {
       baseUrl: "http://disposable.infinity.invalid",
       requestTimeoutMs: 250,
       schemaVersion: 1,
+      tokenizer: () => exactTokenizer,
       transport: endpoint,
     });
     await adapter.qualifyCapabilities();
-    const worker = new HistoricalSyncWorker({ authority, ids, memory: adapter, store }, {
+    const worker = new HistoricalSyncWorker({
+      authority,
+      ids,
+      memory: adapter,
+      store,
+      tokenizer: () => exactTokenizer,
+    }, {
       blockPolicy: twoHourBlockPolicy,
       leaseDurationMs: 30_000,
       maximumIndexAttempts: 3,
@@ -216,7 +225,12 @@ describe("Infinity Context positional retrieval qualification", () => {
       operation: "index",
       status: "applied",
     });
-    const localPlan = buildHistoricalIndexPlan(meeting, ids, twoHourBlockPolicy);
+    const localPlan = buildHistoricalIndexPlan(
+      meeting,
+      ids,
+      twoHourBlockPolicy,
+      exactTokenizer,
+    );
     expect(localPlan.documents.length).toBeGreaterThan(5);
     expect(localPlan.documents.length).toBeLessThanOrEqual(500);
 
@@ -250,6 +264,7 @@ describe("Infinity Context positional retrieval qualification", () => {
       ids,
       memory: adapter,
       store,
+      tokenizer: () => exactTokenizer,
     }, {
       blockPolicy: twoHourBlockPolicy,
       candidateLimitPerQuery: 40,

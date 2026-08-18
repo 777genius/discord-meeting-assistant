@@ -179,10 +179,14 @@ describe("Infinity Context bounded search budget", () => {
     expect(endpoint.requests.filter(({ method, path }) =>
       method === "POST" && path === "/v1/search"
     ).map(({ body }) => body)).toEqual([
-      expect.objectContaining({ max_chunks: 1, max_evidence_items: 1, token_budget: 6_000 }),
-      expect.objectContaining({ max_chunks: 5, max_evidence_items: 5, token_budget: 6_000 }),
-      expect.objectContaining({ max_chunks: 16, max_evidence_items: 16, token_budget: 6_000 }),
-      expect.objectContaining({ max_chunks: 40, max_evidence_items: 40, token_budget: 6_000 }),
+      expect.objectContaining({ max_chunks: 1, max_evidence_items: 1,
+        project_anchor_policy: "advisory", token_budget: 6_000 }),
+      expect.objectContaining({ max_chunks: 5, max_evidence_items: 5,
+        project_anchor_policy: "advisory", token_budget: 6_000 }),
+      expect.objectContaining({ max_chunks: 16, max_evidence_items: 16,
+        project_anchor_policy: "advisory", token_budget: 6_000 }),
+      expect.objectContaining({ max_chunks: 40, max_evidence_items: 40,
+        project_anchor_policy: "advisory", token_budget: 6_000 }),
     ]);
   });
 });

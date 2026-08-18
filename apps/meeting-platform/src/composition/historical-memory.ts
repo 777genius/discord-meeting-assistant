@@ -1,6 +1,7 @@
 import {
   HmacHistoricalOpaqueIds,
   InfinityContextHistoricalMemoryAdapter,
+  PINNED_INFINITY_CONTEXT_HISTORICAL_INDEX_PROFILE_ID,
   PINNED_MULTILINGUAL_MINILM_EMBEDDING_PROFILE_ID,
   PINNED_MULTILINGUAL_MINILM_TOKENIZER_PROFILE,
   PinnedMultilingualMiniLmTokenizer,
@@ -18,6 +19,7 @@ import {
   RequestHistoricalMeetingDeletion,
   type HistoricalAuthorizationPort,
   type HistoricalEmbeddingTokenizerPort,
+  type HistoricalSyncStore,
   prepareQualifiedHistoricalEmbeddingTokenizer,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import {
@@ -117,11 +119,10 @@ export function createHistoricalReconciliationLifecycle(input: {
 
 function semanticSearchQualified(
   activation: NonNullable<PlatformConfig["infinityContext"]>["activation"],
-  currentReleaseRevision: string | undefined,
   logger: Logger,
 ): boolean {
   try {
-    assertInfinityContextSearchActivation(activation, currentReleaseRevision);
+    assertInfinityContextSearchActivation(activation);
     return true;
   } catch (error) {
     logger.warn(
@@ -180,6 +181,8 @@ export function createPlatformHistoricalMemory(input: {
   readonly config: PlatformConfig;
   readonly logger: Logger;
   readonly pool: Pool;
+  /** Deterministic test seam; production always uses the PostgreSQL store. */
+  readonly profileMaintenance?: Pick<HistoricalSyncStore, "enqueueAppliedProfileRebuilds">;
   readonly runtimeTransport: SubscriptionRuntimeTransportPort;
 }): PlatformHistoricalMemoryRuntime | undefined {
   const config = input.config.infinityContext;
@@ -205,10 +208,12 @@ export function createPlatformHistoricalMemory(input: {
   });
   let embeddingTokenizer: PinnedMultilingualMiniLmTokenizer | undefined;
   const store = new PostgresHistoricalMemoryStore(input.pool);
+  const profileMaintenance = input.profileMaintenance ?? store;
   const checkpoints = new PostgresExhaustiveCoverageStore(input.pool);
   const worker = new HistoricalSyncWorker({
     authority: new PostgresHistoricalEvidenceAuthority(input.pool),
     ids: new HmacHistoricalOpaqueIds(topologyKey),
+    indexProfileId: PINNED_INFINITY_CONTEXT_HISTORICAL_INDEX_PROFILE_ID,
     memory,
     store,
     tokenizer: () => qualifiedTokenizer,
@@ -239,15 +244,24 @@ export function createPlatformHistoricalMemory(input: {
     qualifiedTokenizer = qualifyEmbeddingTokenizer(
       embeddingTokenizer ??=
         new PinnedMultilingualMiniLmTokenizer(),
-      config.activation.productionEmbeddingProfileAttestation,
+      config.activation.embeddingProfileAttestation,
       capabilities,
     );
-    transportQualified = true;
-    searchQualified = semanticSearchQualified(
-      config.activation,
-      input.config.sourceRevision,
-      input.logger,
+    const rebuilds = await profileMaintenance.enqueueAppliedProfileRebuilds(
+      PINNED_INFINITY_CONTEXT_HISTORICAL_INDEX_PROFILE_ID,
+      4_096,
+      signal === undefined ? {} : { signal },
     );
+    transportQualified = true;
+    searchQualified = !rebuilds.remaining && semanticSearchQualified(
+      config.activation, input.logger,
+    );
+    if (rebuilds.enqueued > 0 || rebuilds.remaining) {
+      input.logger.info("Historical index profile rebuilds enqueued", {
+        enqueued: rebuilds.enqueued,
+        remaining: rebuilds.remaining,
+      });
+    }
   };
 
   const refreshQualificationForReconciliation = async (

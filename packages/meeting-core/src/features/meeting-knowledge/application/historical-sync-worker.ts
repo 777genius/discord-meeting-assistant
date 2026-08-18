@@ -125,12 +125,14 @@ function sameBinding(
 }
 
 export class HistoricalSyncWorker {
+  readonly #indexProfileId: string;
   readonly #policy: HistoricalSyncPolicyV1;
 
   public constructor(
     private readonly dependencies: {
       readonly authority: HistoricalEvidenceAuthority;
       readonly ids: HistoricalOpaqueIdPort;
+      readonly indexProfileId?: string;
       readonly memory: HistoricalMemoryPort;
       readonly store: HistoricalSyncStore;
       readonly tokenizer?: () => HistoricalEmbeddingTokenizerPort | undefined;
@@ -138,6 +140,14 @@ export class HistoricalSyncWorker {
     policy: HistoricalSyncPolicyV1 = DEFAULT_HISTORICAL_SYNC_POLICY,
   ) {
     this.#policy = assertPolicy(policy);
+    this.#indexProfileId = dependencies.indexProfileId ??
+      "meeting-knowledge.unqualified-index-profile.v1";
+    if (
+      this.#indexProfileId.trim().length === 0 ||
+      new TextEncoder().encode(this.#indexProfileId).byteLength > 1_000
+    ) {
+      throw new RangeError("historical index profile identity is outside its bounds");
+    }
   }
 
   /** Serving flags never prevent a previously authorized deletion from draining. */
@@ -195,13 +205,16 @@ export class HistoricalSyncWorker {
         operationOptions(signal),
       );
       return this.result(lease, "dead_lettered");
-    } else if (tokenizer !== undefined && !sameCanonicalPlan(
-      accepted,
-      plan,
-      this.dependencies.ids,
-      this.#policy.blockPolicy,
-      tokenizer,
-    )) {
+    } else if (
+      lease.profileRebuildRequired ||
+      (tokenizer !== undefined && !sameCanonicalPlan(
+        accepted,
+        plan,
+        this.dependencies.ids,
+        this.#policy.blockPolicy,
+        tokenizer,
+      ))
+    ) {
       const stalePlan = plan;
       const replacement = tryBuildPlan(
         accepted,
@@ -279,6 +292,7 @@ export class HistoricalSyncWorker {
         lease,
         plan,
         result.remoteDocumentIds,
+        this.#indexProfileId,
         operationOptions(signal),
       );
       return this.result(lease, "applied");

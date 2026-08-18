@@ -49,6 +49,15 @@ function requireMaximumRows(maximumRows: number): void {
   }
 }
 
+function requireIndexProfileId(indexProfileId: string): void {
+  if (
+    indexProfileId.trim().length === 0 ||
+    new TextEncoder().encode(indexProfileId).byteLength > 1_000
+  ) {
+    throw new RangeError("historical index profile identity is outside its bounds");
+  }
+}
+
 async function requireUpdated(result: { readonly rowCount: number | null }, operation: string): Promise<void> {
   if (result.rowCount !== 1) {
     throw new Error(`historical sync ${operation} lost its lease fence`);
@@ -158,6 +167,56 @@ export class PostgresHistoricalMemoryStore implements HistoricalSyncStore {
     );
   }
 
+  public async enqueueAppliedProfileRebuilds(
+    indexProfileId: string,
+    maximumRows: number,
+    options: HistoricalOperationOptionsV1 = {},
+  ): Promise<{ readonly enqueued: number; readonly remaining: boolean }> {
+    requireIndexProfileId(indexProfileId);
+    requireMaximumRows(maximumRows);
+    return withHistoricalPostgresTransaction(
+      this.pool,
+      options.signal,
+      async (client) => {
+        const result = await client.query<{ readonly enqueued: number; readonly remaining: boolean }>(
+          `
+            WITH selected AS (
+              SELECT release_id
+              FROM meeting_core.historical_memory_sync
+              WHERE is_current AND operation = 'index' AND state = 'applied'
+                AND applied_index_profile_id IS DISTINCT FROM $1
+              ORDER BY meeting_id, desired_generation, release_id
+              LIMIT $2
+              FOR UPDATE SKIP LOCKED
+            ), rebuilt AS (
+              UPDATE meeting_core.historical_memory_sync AS historical
+              SET state = 'pending', profile_rebuild_requested = true,
+                  retry_after = NULL, lease_expires_at = NULL,
+                  last_error_code = NULL, updated_at = transaction_timestamp()
+              FROM selected
+              WHERE historical.release_id = selected.release_id
+              RETURNING 1
+            )
+            SELECT count(*)::float8 AS enqueued,
+              EXISTS (
+                SELECT 1 FROM meeting_core.historical_memory_sync
+                WHERE is_current AND operation = 'index' AND state = 'applied'
+                  AND applied_index_profile_id IS DISTINCT FROM $1
+              ) AS remaining
+            FROM rebuilt
+          `,
+          [indexProfileId, maximumRows],
+        );
+        const row = result.rows[0];
+        if (row === undefined || !Number.isSafeInteger(row.enqueued)) {
+          throw new Error("historical profile rebuild query returned an invalid result");
+        }
+        return Object.freeze({ enqueued: row.enqueued, remaining: row.remaining });
+      },
+      this.cancellation,
+    );
+  }
+
   public async claimNext(
     options: HistoricalSyncClaimOptionsV1,
     operationOptions: HistoricalOperationOptionsV1 = {},
@@ -227,19 +286,23 @@ export class PostgresHistoricalMemoryStore implements HistoricalSyncStore {
     lease: HistoricalSyncLeaseV1,
     plan: HistoricalIndexPlanV1,
     documentIds: Readonly<Record<string, string>>,
+    indexProfileId: string,
     options: HistoricalOperationOptionsV1 = {},
   ): Promise<void> {
+    requireIndexProfileId(indexProfileId);
     await requireUpdated(await queryHistoricalPostgres(this.pool, {
       text: `
         UPDATE meeting_core.historical_memory_sync
         SET state = 'applied', plan = $3::jsonb,
             remote_document_ids = $4::jsonb, lease_expires_at = NULL,
             retry_after = NULL, last_error_code = NULL,
+            applied_index_profile_id = $5,
+            profile_rebuild_requested = false,
             updated_at = transaction_timestamp()
         WHERE release_id = $1 AND lease_fence = $2
           AND state = 'in_flight' AND operation = 'index' AND is_current
       `,
-      values: [lease.binding.releaseId, lease.fence, plan, documentIds],
+      values: [lease.binding.releaseId, lease.fence, plan, documentIds, indexProfileId],
     }, options.signal, this.cancellation), "apply");
   }
 

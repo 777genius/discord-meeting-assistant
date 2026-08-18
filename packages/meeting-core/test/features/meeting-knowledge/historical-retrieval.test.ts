@@ -107,6 +107,10 @@ class AppliedStore implements HistoricalSyncStore {
     return "replayed";
   }
 
+  public async enqueueAppliedProfileRebuilds() {
+    return { enqueued: 0, remaining: false } as const;
+  }
+
   public async claimNext(): Promise<null> { return null; }
   public async recordPlan(): Promise<void> {}
   public async recordApplied(): Promise<void> {}

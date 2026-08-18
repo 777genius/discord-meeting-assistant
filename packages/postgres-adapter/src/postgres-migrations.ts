@@ -39,6 +39,7 @@ const migrationDefinitions = [
   { fileName: "0024_question_policy_fence.sql" },
   { fileName: "0025_question_provider_attempt_accounting.sql" },
   { fileName: "0026_answer_effect_duplicate_containment.sql" },
+  { fileName: "0027_historical_memory_profile_rebuild.sql" },
 ] as const;
 
 const migrationLockKey = "718330091620232601";

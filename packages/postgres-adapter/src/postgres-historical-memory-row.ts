@@ -7,6 +7,7 @@ import {
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 
 export interface HistoricalSyncRow {
+  readonly applied_index_profile_id: string | null;
   readonly accepted_meeting_revision: number;
   readonly attempt_count: number;
   readonly desired_generation: number;
@@ -15,6 +16,7 @@ export interface HistoricalSyncRow {
   readonly meeting_id: string;
   readonly operation: "delete_meeting" | "delete_release" | "index";
   readonly plan: unknown;
+  readonly profile_rebuild_requested: boolean;
   readonly release_id: string;
   readonly remote_document_ids: unknown;
   readonly room_id: string;
@@ -31,7 +33,8 @@ export const historicalSyncRowProjection = `
   transcript_id, transcript_version::float8 AS transcript_version,
   evidence_policy_version, scope_id, room_id, operation,
   attempt_count::float8 AS attempt_count,
-  lease_fence::float8 AS lease_fence, plan, remote_document_ids
+  lease_fence::float8 AS lease_fence, plan, remote_document_ids,
+  applied_index_profile_id, profile_rebuild_requested
 `;
 
 export function historicalBindingsEqual(
@@ -91,11 +94,13 @@ export function historicalLeaseFromRow(
     throw new Error("stored historical index plan conflicts with its release binding");
   }
   return Object.freeze({
+    appliedIndexProfileId: row.applied_index_profile_id,
     attempt: row.attempt_count,
     binding,
     fence: row.lease_fence,
     operation: row.operation,
     plan,
+    profileRebuildRequired: row.profile_rebuild_requested,
     remoteDocumentIds: remoteIds(row.remote_document_ids),
   });
 }

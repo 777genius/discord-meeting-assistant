@@ -80,7 +80,7 @@ describe("platform configuration", () => {
     }, async () => "fixture-value" )).rejects.toThrow("configured together");
   });
 
-  it("loads production search only with the nested retained r79 semantic attestation", async () => {
+  it("loads production search only with the source-pinned profile and instance echo", async () => {
     const activation = JSON.stringify({
       apiVersion: "v1",
       archiveSha256: INFINITY_CONTEXT_SDK_PROVENANCE.archiveSha256,
@@ -88,17 +88,11 @@ describe("platform configuration", () => {
       immutablePackageIntegrity: INFINITY_CONTEXT_SDK_PROVENANCE.immutablePackageIntegrity,
       indexingEnabled: true,
       packageSource: "immutable_package",
-      productionEmbeddingProfileAttestation: {
+      embeddingProfileAttestation: {
         embeddingProfile:
-          "local-open-source-paraphrase-multilingual-minilm-l12-v2-hybrid-bm25.r73",
+          INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedEmbeddingProfileId,
         embeddingProfileDigestSha256:
-          "sha256:5ecd36edd098940cd8a6540509f90815ddc1802b4410ced2bf063c0f8c650cac",
-        productionSemanticQualification: true,
-        qualificationManifestSha256:
-          INFINITY_CONTEXT_SDK_PROVENANCE
-            .retainedProductionSemanticQualificationManifestSha256,
-        releaseRevision:
-          INFINITY_CONTEXT_SDK_PROVENANCE.retainedProductionSemanticReleaseRevision,
+          `sha256:${"a".repeat(64)}`,
         schemaVersion: 1,
       },
       qualificationManifestSha256:
@@ -122,11 +116,8 @@ describe("platform configuration", () => {
 
     expect(configured.infinityContext?.activation).toMatchObject({
       environment: "production",
-      productionEmbeddingProfileAttestation: {
-        productionSemanticQualification: true,
-        qualificationManifestSha256:
-          INFINITY_CONTEXT_SDK_PROVENANCE
-            .retainedProductionSemanticQualificationManifestSha256,
+      embeddingProfileAttestation: {
+        embeddingProfile: INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedEmbeddingProfileId,
       },
       searchEnabled: true,
     });

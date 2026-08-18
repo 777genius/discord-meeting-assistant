@@ -123,7 +123,7 @@ describe("Infinity production semantic qualification composition", () => {
     }
   });
 
-  it("enables production search only when composition carries the nested retained r79 attestation", async () => {
+  it("enables production search for the source-pinned profile and instance echo", async () => {
     const pool = new Pool({
       connectionString: "postgresql://synthetic.invalid/never-connected",
     });
@@ -134,7 +134,7 @@ describe("Infinity production semantic qualification composition", () => {
       embeddingProfileId:
         retainedProductionEmbeddingProfileAttestation.embeddingProfile,
       serviceRevision:
-        INFINITY_CONTEXT_SDK_PROVENANCE.retainedProductionSemanticServiceRevision,
+        INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedServiceRevision,
     });
     const runtime = requiredHistoricalRuntime(
       pool,
@@ -160,7 +160,7 @@ describe("Infinity production semantic qualification composition", () => {
     }
   });
 
-  it("keeps production search closed when the semantic manifest is stale for this release", async () => {
+  it("does not treat the Meeting release SHA as Infinity semantic authority", async () => {
     const pool = new Pool({
       connectionString: "postgresql://synthetic.invalid/never-connected",
     });
@@ -171,7 +171,7 @@ describe("Infinity production semantic qualification composition", () => {
       embeddingProfileId:
         retainedProductionEmbeddingProfileAttestation.embeddingProfile,
       serviceRevision:
-        INFINITY_CONTEXT_SDK_PROVENANCE.retainedProductionSemanticServiceRevision,
+        INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedServiceRevision,
     });
     const runtime = createPlatformHistoricalMemory({
       config: platformConfig(
@@ -184,6 +184,12 @@ describe("Infinity production semantic qualification composition", () => {
       ),
       logger: silentLogger,
       pool,
+      profileMaintenance: {
+        enqueueAppliedProfileRebuilds: async () => ({
+          enqueued: 0,
+          remaining: false,
+        }),
+      },
       runtimeTransport: syntheticCoverageRuntime,
     });
     if (runtime === undefined) {
@@ -191,8 +197,8 @@ describe("Infinity production semantic qualification composition", () => {
     }
     try {
       await expect(runtime.assertReady()).resolves.toBeUndefined();
-      expect(runtime.searchEnabled()).toBe(false);
-      expect(runtime.servingAuthorized()).toBe(false);
+      expect(runtime.searchEnabled()).toBe(true);
+      expect(runtime.servingAuthorized()).toBe(true);
     } finally {
       await runtime.close();
       await infinity.close();
@@ -200,7 +206,7 @@ describe("Infinity production semantic qualification composition", () => {
     }
   });
 
-  it("keeps production search closed when the endpoint receipt drifts from r79", async () => {
+  it("keeps production search closed when the endpoint instance echo drifts", async () => {
     const pool = new Pool({
       connectionString: "postgresql://synthetic.invalid/never-connected",
     });
@@ -210,7 +216,7 @@ describe("Infinity production semantic qualification composition", () => {
       embeddingProfileId:
         retainedProductionEmbeddingProfileAttestation.embeddingProfile,
       serviceRevision:
-        INFINITY_CONTEXT_SDK_PROVENANCE.retainedProductionSemanticServiceRevision,
+        INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedServiceRevision,
     });
     const runtime = requiredHistoricalRuntime(
       pool,

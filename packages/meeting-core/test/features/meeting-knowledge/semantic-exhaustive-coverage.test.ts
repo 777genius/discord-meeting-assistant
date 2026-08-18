@@ -266,6 +266,10 @@ function semanticCoverage(
 function semanticSync(binding: HistoricalReleaseBindingV1): HistoricalSyncStore {
   return {
     claimNext: async () => null,
+    enqueueAppliedProfileRebuilds: async () => ({
+      enqueued: 0,
+      remaining: false,
+    }),
     findCurrentCandidate: async () => null,
     isCurrentGeneration: async () => true,
     listCurrentRoomPlans: async () => [],

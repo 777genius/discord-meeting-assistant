@@ -64,7 +64,7 @@ describe("Infinity production semantic qualification manifest", () => {
       },
     });
     expect(manifest.sdk.packageSha256)
-      .toBe("93ea6c98dec53c886250f3a3a06cb3825da27d1fc5ff73b85ab9633273e6bc1a");
+      .toBe("2e4bcced4df632a7953c7ff767a4076ce6cfff1aa4469a40e8b36659f29a90c8");
   });
 
   it.each([

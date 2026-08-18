@@ -93,6 +93,12 @@ class QueueStore implements HistoricalSyncStore {
     return "accepted";
   }
 
+  public async enqueueAppliedProfileRebuilds(): Promise<{
+    readonly enqueued: number; readonly remaining: boolean;
+  }> {
+    return { enqueued: 0, remaining: false };
+  }
+
   public async claimNext(options: HistoricalSyncClaimOptionsV1): Promise<HistoricalSyncLeaseV1 | null> {
     this.claimedLeaseDurations.push(options.leaseDurationMs);
     return this.claims.shift() ?? null;
@@ -166,11 +172,13 @@ function lease(
   plan: HistoricalIndexPlanV1 | null = null,
 ): HistoricalSyncLeaseV1 {
   return {
+    appliedIndexProfileId: null,
     attempt,
     binding: accepted.binding,
     fence: attempt,
     operation,
     plan,
+    profileRebuildRequired: false,
     remoteDocumentIds: {},
   };
 }

@@ -11,7 +11,7 @@ export {
   decodeInfinityContextCapabilityAttestation,
   decodeInfinityContextRuntimeActivation,
   type InfinityContextCapabilityAttestationV1,
-  type InfinityContextProductionEmbeddingProfileAttestationV1,
+  type InfinityContextEmbeddingProfileAttestationV1,
   type InfinityContextRuntimeActivationV1,
 } from "./infinity-runtime-provenance.js";
 export {
@@ -22,6 +22,7 @@ export {
 } from "./infinity-semantic-qualification.js";
 export {
   PINNED_HUGGINGFACE_TOKENIZERS_RUNTIME,
+  PINNED_INFINITY_CONTEXT_HISTORICAL_INDEX_PROFILE_ID,
   PINNED_MULTILINGUAL_MINILM_EMBEDDING_PROFILE_ID,
   PINNED_MULTILINGUAL_MINILM_TOKENIZER_PROFILE,
   PinnedMultilingualMiniLmTokenizer,

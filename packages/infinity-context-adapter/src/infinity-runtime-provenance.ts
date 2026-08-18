@@ -1,18 +1,18 @@
 export const INFINITY_CONTEXT_SDK_PROVENANCE = Object.freeze({
-  archiveSha256: "1aad93c1c9deea91f0c0ec750b99e91d1092e9d208751e11c6231badd5fbd9d2",
-  commit: "897efd211151e9a81a7466fdd6be5cb067ddb8eb",
+  archiveSha256: "4d96f50ae01f9000e9ac4c50eaa61b4d875c3a452aed58f7e2efe1d69ee8d08d",
+  commit: "b77b490cebbf9d80d4204425df3d795b4866ea19",
   developmentPackageLink:
     "vendor/infinity-context/.upstream/packages/infinity_context_ts_sdk",
   immutablePackageIntegrity:
-    "sha512-ohD89uSSlW7zT/BqaEufIBZ7EAVcq1LYAWn/rRel8EOyMAnq5DXSh3PqjYXAYJdE9WsHgLWx7Tysy9jAY7XaHw==",
+    "sha512-YurXjgFGoRxwc5zJghj69ZFyZx8WLS1ucvgVvV2EFjZMCATxr9YrJW1ueeyLqwkaLKnO1JEvbTpqn7Q8K33b+A==",
   immutablePackagePath:
-    "vendor/infinity-context/artifacts/infinity-context-sdk-0.1.0-897efd21.tgz",
+    "vendor/infinity-context/artifacts/infinity-context-sdk-0.1.0-b77b490c.tgz",
   packageLockSha256: "068b3129a4ccd449c50cdc6a72755dbae3d4a977c5a468565e2f3841529cac0e",
   packageManifestSha256: "a646c42b1f8948b0f1b81d3d988f79b4f2c64616a1c5e2711648b2686ce1e135",
   packageName: "@infinity-context/sdk",
   packageTarballIntegrity:
-    "sha512-ohD89uSSlW7zT/BqaEufIBZ7EAVcq1LYAWn/rRel8EOyMAnq5DXSh3PqjYXAYJdE9WsHgLWx7Tysy9jAY7XaHw==",
-  packageTarballSha256: "93ea6c98dec53c886250f3a3a06cb3825da27d1fc5ff73b85ab9633273e6bc1a",
+    "sha512-YurXjgFGoRxwc5zJghj69ZFyZx8WLS1ucvgVvV2EFjZMCATxr9YrJW1ueeyLqwkaLKnO1JEvbTpqn7Q8K33b+A==",
+  packageTarballSha256: "2e4bcced4df632a7953c7ff767a4076ce6cfff1aa4469a40e8b36659f29a90c8",
   packageVersion: "0.1.0",
   retainedLiveQualificationEvidenceSha256:
     "4f19e430a465294d020e6dc0eebde4a6320913744201fa60700cb75d148065fe",
@@ -26,26 +26,18 @@ export const INFINITY_CONTEXT_SDK_PROVENANCE = Object.freeze({
     qualifiesDeletionDrain: true,
     qualifiesOfficialSdkTransport: true,
   }),
-  retainedProductionSemanticQualificationManifestSha256:
-    "sha256:2b0ea368ea4d1feef4616fb185ce1267b9f8735e44d03634d81f03c8d58af965",
-  retainedProductionSemanticEmbeddingProfileId:
-    "local-open-source-paraphrase-multilingual-minilm-l12-v2-hybrid-bm25.r73",
-  retainedProductionSemanticEmbeddingProfileDigestSha256:
-    "sha256:5ecd36edd098940cd8a6540509f90815ddc1802b4410ced2bf063c0f8c650cac",
-  retainedProductionSemanticServiceRevision:
-    "897efd211151e9a81a7466fdd6be5cb067ddb8eb",
-  retainedProductionSemanticReleaseRevision:
-    "8cc180cd043b95469f295ad9247bcb7886d29f10",
+  sourcePinnedEmbeddingProfileId:
+    "tei-sentence-transformers-paraphrase-multilingual-minilm-l12-v2-384d-dense.v1",
+  sourcePinnedServiceRevision:
+    "b77b490cebbf9d80d4204425df3d795b4866ea19",
   repository: "https://github.com/777genius/infinity-context.git",
-  tree: "67a744b1accc0d4628c19f28849660bc917b8b62",
+  tree: "ac25c12c4733953bf7a4882d5c2c4476589455f2",
 });
 
-export interface InfinityContextProductionEmbeddingProfileAttestationV1 {
+export interface InfinityContextEmbeddingProfileAttestationV1 {
   readonly embeddingProfile: string;
+  /** Deployment-instance echo. It is not semantic compatibility authority. */
   readonly embeddingProfileDigestSha256: string;
-  readonly productionSemanticQualification: boolean;
-  readonly qualificationManifestSha256: string;
-  readonly releaseRevision: string;
   readonly schemaVersion: 1;
 }
 
@@ -56,8 +48,8 @@ export interface InfinityContextRuntimeActivationV1 {
   readonly immutablePackageIntegrity: string | null;
   readonly indexingEnabled: boolean;
   readonly packageSource: "immutable_package" | "reviewed_source_workspace";
-  readonly productionEmbeddingProfileAttestation:
-    InfinityContextProductionEmbeddingProfileAttestationV1 | null;
+  readonly embeddingProfileAttestation:
+    InfinityContextEmbeddingProfileAttestationV1 | null;
   readonly qualificationManifestSha256: string | null;
   readonly schemaVersion: 1;
   readonly sdkCommit: string;
@@ -171,7 +163,7 @@ function rejectUnknownActivationFields(input: Readonly<Record<string, unknown>>)
     "immutablePackageIntegrity",
     "indexingEnabled",
     "packageSource",
-    "productionEmbeddingProfileAttestation",
+    "embeddingProfileAttestation",
     "qualificationManifestSha256",
     "schemaVersion",
     "sdkCommit",
@@ -188,9 +180,9 @@ function rejectUnknownActivationFields(input: Readonly<Record<string, unknown>>)
   }
 }
 
-function decodeProductionEmbeddingProfileAttestation(
+function decodeEmbeddingProfileAttestation(
   value: unknown,
-): InfinityContextProductionEmbeddingProfileAttestationV1 | null {
+): InfinityContextEmbeddingProfileAttestationV1 | null {
   if (value === undefined || value === null) {
     return null;
   }
@@ -198,19 +190,16 @@ function decodeProductionEmbeddingProfileAttestation(
   const allowed = new Set([
     "embeddingProfile",
     "embeddingProfileDigestSha256",
-    "productionSemanticQualification",
-    "qualificationManifestSha256",
-    "releaseRevision",
     "schemaVersion",
   ]);
   if (Object.keys(input).some((key) => !allowed.has(key))) {
     throw new InfinityContextActivationError(
-      "production embedding-profile attestation contains an unknown field",
+      "embedding-profile attestation contains an unknown field",
     );
   }
   if (input.schemaVersion !== 1) {
     throw new InfinityContextActivationError(
-      "unsupported production embedding-profile attestation schema version",
+      "unsupported embedding-profile attestation schema version",
     );
   }
   return Object.freeze({
@@ -219,15 +208,6 @@ function decodeProductionEmbeddingProfileAttestation(
       input.embeddingProfileDigestSha256,
       "embeddingProfileDigestSha256",
     ),
-    productionSemanticQualification: boolean(
-      input.productionSemanticQualification,
-      "productionSemanticQualification",
-    ),
-    qualificationManifestSha256: string(
-      input.qualificationManifestSha256,
-      "qualificationManifestSha256",
-    ),
-    releaseRevision: string(input.releaseRevision, "releaseRevision"),
     schemaVersion: 1 as const,
   });
 }
@@ -266,9 +246,9 @@ export function decodeInfinityContextRuntimeActivation(
     immutablePackageIntegrity,
     indexingEnabled: boolean(input.indexingEnabled, "indexingEnabled"),
     packageSource: packageSource as InfinityContextRuntimeActivationV1["packageSource"],
-    productionEmbeddingProfileAttestation:
-      decodeProductionEmbeddingProfileAttestation(
-        input.productionEmbeddingProfileAttestation,
+    embeddingProfileAttestation:
+      decodeEmbeddingProfileAttestation(
+        input.embeddingProfileAttestation,
       ),
     qualificationManifestSha256,
     schemaVersion: 1 as const,
@@ -298,6 +278,7 @@ export function assertInfinityContextActivation(
       "Infinity search requires the same-room retrieval activation profile",
     );
   }
+  assertPinnedProductionProfile(activation);
   if (
     activation.environment === "production" &&
     (
@@ -320,57 +301,51 @@ export function assertInfinityContextActivation(
 }
 
 /**
- * Search qualification is deliberately separate from immutable SDK transport
- * and deletion-drain qualification. Production search additionally requires
- * the retained r79 semantic manifest and its immutable embedding-profile
- * attestation; the earlier deterministic qualification cannot activate it.
+ * Search is independently switchable, but production compatibility comes from
+ * the source-pinned service/profile pair and the locally verified tokenizer.
+ * The deployment-specific profile digest is retained only as an endpoint echo.
  */
 export function assertInfinityContextSearchActivation(
   activation: InfinityContextRuntimeActivationV1,
-  currentReleaseRevision?: string,
 ): void {
   if (!activation.searchEnabled || activation.environment !== "production") {
     return;
   }
-  const attestation = activation.productionEmbeddingProfileAttestation;
+  const attestation = activation.embeddingProfileAttestation;
   if (attestation === null) {
     throw new InfinityContextActivationError(
-      "production Infinity search requires an immutable embedding-profile attestation",
+      "production Infinity search requires an embedding-profile attestation",
     );
   }
-  if (!attestation.productionSemanticQualification) {
-    throw new InfinityContextActivationError(
-      "production Infinity search requires productionSemanticQualification=true",
-    );
-  }
-  if (
-    /(?:deterministic|mock|non-production)/iu.test(attestation.embeddingProfile) ||
-    attestation.qualificationManifestSha256 ===
-      INFINITY_CONTEXT_SDK_PROVENANCE.retainedLiveQualificationManifestSha256
-  ) {
-    throw new InfinityContextActivationError(
-      "the retained non-production qualification manifest cannot activate semantic search",
-    );
-  }
-  const retainedManifest =
-    INFINITY_CONTEXT_SDK_PROVENANCE.retainedProductionSemanticQualificationManifestSha256;
   if (
     attestation.embeddingProfile !==
-      INFINITY_CONTEXT_SDK_PROVENANCE.retainedProductionSemanticEmbeddingProfileId ||
-    attestation.embeddingProfileDigestSha256 !==
-      INFINITY_CONTEXT_SDK_PROVENANCE
-        .retainedProductionSemanticEmbeddingProfileDigestSha256 ||
-    attestation.qualificationManifestSha256 !== retainedManifest ||
-    attestation.releaseRevision !==
-      INFINITY_CONTEXT_SDK_PROVENANCE.retainedProductionSemanticReleaseRevision
+      INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedEmbeddingProfileId ||
+    !/^sha256:[a-f0-9]{64}$/u.test(attestation.embeddingProfileDigestSha256)
   ) {
     throw new InfinityContextActivationError(
-      "production embedding-profile attestation does not match retained qualification",
+      "production embedding-profile attestation does not match the source-pinned profile",
     );
   }
-  if (currentReleaseRevision !== attestation.releaseRevision) {
+}
+
+function assertPinnedProductionProfile(
+  activation: InfinityContextRuntimeActivationV1,
+): void {
+  if (
+    activation.environment !== "production" ||
+    (!activation.indexingEnabled && !activation.searchEnabled)
+  ) {
+    return;
+  }
+  const attestation = activation.embeddingProfileAttestation;
+  if (
+    attestation === null ||
+    attestation.embeddingProfile !==
+      INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedEmbeddingProfileId ||
+    !/^sha256:[a-f0-9]{64}$/u.test(attestation.embeddingProfileDigestSha256)
+  ) {
     throw new InfinityContextActivationError(
-      "production Infinity search qualification does not match the running Meeting Platform release",
+      "production Infinity indexing/search requires the source-pinned embedding profile",
     );
   }
 }
@@ -384,9 +359,9 @@ function assertInfinityContextCapabilities(
   capabilities: InfinityContextCapabilityAttestationV1,
 ): void {
   const active = activation.indexingEnabled || activation.searchEnabled;
-  const productionSearchAttestation =
-    activation.environment === "production" && activation.searchEnabled
-      ? activation.productionEmbeddingProfileAttestation
+  const productionActiveAttestation =
+    activation.environment === "production" && active
+      ? activation.embeddingProfileAttestation
       : null;
   if (
     capabilities.apiVersion !== activation.apiVersion ||
@@ -395,12 +370,12 @@ function assertInfinityContextCapabilities(
       !capabilities.supportsQdrant ||
       !capabilities.enabledAdapters.includes("qdrant")
     )) ||
-    (productionSearchAttestation !== null && (
-      capabilities.embeddingProfileId !== productionSearchAttestation.embeddingProfile ||
+    (productionActiveAttestation !== null && (
+      capabilities.embeddingProfileId !== productionActiveAttestation.embeddingProfile ||
       capabilities.embeddingProfileDigestSha256 !==
-        productionSearchAttestation.embeddingProfileDigestSha256 ||
+        productionActiveAttestation.embeddingProfileDigestSha256 ||
       capabilities.serviceRevision !==
-        INFINITY_CONTEXT_SDK_PROVENANCE.retainedProductionSemanticServiceRevision
+        INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedServiceRevision
     ))
   ) {
     throw new InfinityContextActivationError(
