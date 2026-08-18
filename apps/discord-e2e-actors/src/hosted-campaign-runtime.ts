@@ -3,6 +3,8 @@ import { stopEveryChild, validateActionEvidence } from "./hosted-campaign-action
 import { validateHostedCampaign } from "./hosted-campaign-validation.js";
 import type {
   HostedCampaignActionReference,
+  HostedCampaignActionEvidence,
+  HostedCampaignBarrierAction,
   HostedCampaignBoundedSignal,
   HostedCampaignChildHandle,
   HostedCampaignExecutableSpec,
@@ -13,6 +15,8 @@ import type {
   HostedCampaignPorts,
   HostedCampaignStartPoint,
 } from "./hosted-campaign-coordinator.js";
+
+const BARRIER_RACE_COMPLETED = "Hosted campaign barrier race completed";
 
 function startPointIdentity(startPoint: HostedCampaignStartPoint): string {
   return startPoint.kind === "campaign" ? "campaign" : `barrier:${actionReferenceIdentity(startPoint)}`;
@@ -81,6 +85,34 @@ interface CampaignExecutionState {
   firstChildAuthorization?: (() => void) | undefined;
 }
 
+async function awaitBarrierOrCompletionFailure<Action extends HostedCampaignBarrierAction>(
+  action: Action,
+  ports: HostedCampaignPorts,
+  bounded: HostedCampaignBoundedSignal,
+  completionFailures: readonly Promise<never>[],
+): Promise<HostedCampaignActionEvidence<Action>> {
+  const cancellation = new AbortController();
+  const forwardCampaignAbort = () => { cancellation.abort(bounded.signal.reason); };
+  if (bounded.signal.aborted) {
+    forwardCampaignAbort();
+  } else {
+    bounded.signal.addEventListener("abort", forwardCampaignAbort, { once: true });
+  }
+  const barrier = Promise.resolve().then(async () => ports.awaitBarrier(action, {
+    deadlineEpochMilliseconds: bounded.deadlineEpochMilliseconds,
+    signal: cancellation.signal,
+  }));
+  try {
+    return await Promise.race([barrier, ...completionFailures]);
+  } finally {
+    bounded.signal.removeEventListener("abort", forwardCampaignAbort);
+    cancellation.abort(new Error(BARRIER_RACE_COMPLETED));
+    // A losing poll owns resources until it observes cancellation. Do not let
+    // campaign cleanup or return race ahead of that poll's settled teardown.
+    try { await barrier; } catch { /* Preserve the race's primary result or failure. */ }
+  }
+}
+
 async function startChildren(
   input: HostedCampaignInput,
   ports: HostedCampaignPorts,
@@ -127,10 +159,9 @@ async function executeActions(
     const { action } = reference;
     await startChildren(input, ports, bounded, state, { ...reference, kind: "barrier" });
     assertActive(bounded);
-    const actionEvidence = await Promise.race([
-      ports.awaitBarrier(action, bounded),
-      ...state.completionFailures,
-    ]);
+    const actionEvidence = await awaitBarrierOrCompletionFailure(
+      action, ports, bounded, state.completionFailures,
+    );
     validateActionEvidence(action, actionEvidence, input.thresholds);
     state.retainedEvidence.set(actionReferenceIdentity(reference), actionEvidence);
     evidence.push(Object.freeze({ action, evidence: actionEvidence }));
