@@ -69,6 +69,7 @@ describe("hosted Voicetext semantic canary producer", () => {
         segments: numeric,
         utteranceCount: 1,
       },
+      keyterms: ["августа", "2026"],
       live: { ...result().live, segments: numeric },
     };
     const receipt = await produceVoicetextSemanticCanaryReceiptV1({
@@ -100,6 +101,7 @@ describe("hosted Voicetext semantic canary producer", () => {
         segments: observed,
         utteranceCount: 1,
       },
+      keyterms: ["PostgreSQL"],
       live: { ...result().live, segments: observed },
     };
     const receipt = await produceVoicetextSemanticCanaryReceiptV1({

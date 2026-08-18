@@ -56,6 +56,7 @@ export class HostedRemoteVoicetextCanaryRunnerV1 implements VoicetextCanaryRunne
       endpoint: rawInput.endpoint,
       fixturePath: rawInput.fixturePath,
       profiles: rawInput.profiles,
+      requiredTerms: rawInput.requiredTerms,
       ...(rawInput.signal === undefined ? {} : { signal: rawInput.signal }),
       timeoutMs: rawInput.timeoutMs,
     });
