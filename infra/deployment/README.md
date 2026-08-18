@@ -90,6 +90,13 @@ provider credentials, endpoints, SDKs, or probes to Discord. The final batch
 transcript from Craig's authoritative per-speaker Ogg tracks remains the only
 final evidence used by summary, memory, or RAG; live text stays derived.
 
+Rollback is a profile change on the binding-aware release: set both selectors
+back to Deepgram and redeploy the same source revision. Do not code-revert to a
+pre-binding image after migration 0020. Schema readiness intentionally rejects
+that image, while V2-bound rows remain durable and hidden from V1 recovery.
+Deploying an older image is therefore a stop-only boundary, not a supported
+rollback path.
+
 ## Redis queue durability
 
 Copy `redis.conf.example` to `${DEPLOY_ROOT}/secrets/redis.conf`, replace the

@@ -35,6 +35,7 @@ import type {
 import {
   PostgresMeetingRepository,
   PostgresMigrationRunner,
+  PostgresTranscriptionExecutionBindingStore,
 } from "@discord-meeting/postgres-adapter";
 import { Pool } from "pg";
 import {
@@ -53,7 +54,10 @@ import {
 } from "vitest";
 
 import { PostCallOutboxDispatcher } from "../src/application/post-call-outbox-dispatcher.js";
-import { createPostCallHandler } from "../src/composition/post-call.js";
+import {
+  createPostCallBindingAdmission,
+  createPostCallHandler,
+} from "../src/composition/post-call.js";
 
 const POSTGRES_IMAGE = "postgres:18.4-alpine@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15";
 const POSTGRES_PORT = 5_432;
@@ -155,6 +159,8 @@ describe("post-call retryable recovery E2E", () => {
   it("resumes from the saved transcript and publishes exactly once", async (context) => {
     const infrastructure = infrastructureOrSkip(context);
     const repository = new PostgresMeetingRepository(infrastructure.database);
+    const bindings = new PostgresTranscriptionExecutionBindingStore(infrastructure.database);
+    const supportedBindings = new Set(["voicetext-batch-v2:deepgram-nova-3"]);
     await repository.recordAndSchedule(
       initialMeeting(),
       0,
@@ -200,6 +206,7 @@ describe("post-call retryable recovery E2E", () => {
       recordDiscordPublication: vi.fn(),
     } as unknown as PrometheusMetrics;
     const worker = createPostCallWorker({
+      admission: createPostCallBindingAdmission(bindings, supportedBindings),
       connection,
       deadLetterRecorder: deadLetters,
       handler: createPostCallHandler(processMeeting, repository, logger, metrics),
@@ -211,6 +218,13 @@ describe("post-call retryable recovery E2E", () => {
       new BullMqPostCallEnqueuer(queue, queuePolicy),
       deadLetters,
       logger,
+      {
+        store: bindings,
+        values: {
+          legacyRecovery: "voicetext-batch-v2:deepgram-nova-3",
+          supported: supportedBindings,
+        },
+      },
     );
 
     try {
@@ -235,11 +249,11 @@ describe("post-call retryable recovery E2E", () => {
       expect(transcriber.requests).toHaveLength(1);
       expect(summarizer.requests).toHaveLength(2);
       expect(publisher.requests).toHaveLength(0);
-      expect(await repository.listRecoverablePostCall()).toEqual([]);
+      expect(await repository.listRecoverablePostCall(100, supportedBindings)).toEqual([]);
 
       await infrastructure.database.query(`
         UPDATE meeting_core.post_call_outbox
-        SET recovery_after = transaction_timestamp() - interval '1 second'
+        SET binding_recovery_after = transaction_timestamp() - interval '1 second'
         WHERE meeting_id = $1
       `, [meetingId]);
       await expect(dispatcher.dispatchPending()).resolves.toEqual({
@@ -257,7 +271,7 @@ describe("post-call retryable recovery E2E", () => {
       expect(transcriber.requests).toHaveLength(1);
       expect(summarizer.requests).toHaveLength(3);
       expect(publisher.requests).toHaveLength(1);
-      expect(await repository.listRecoverablePostCall()).toEqual([]);
+      expect(await repository.listRecoverablePostCall(100, supportedBindings)).toEqual([]);
       await expect(dispatcher.dispatchPending()).resolves.toEqual({
         dispatched: 0,
         failed: 0,

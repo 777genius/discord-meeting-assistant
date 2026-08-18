@@ -124,6 +124,23 @@ describe("PostgresMigrationRunner and PostgresSchemaReadiness", () => {
     await expect(new PostgresSchemaReadiness(database).assertReady()).resolves.toBeUndefined();
   });
 
+  it("treats a pre-binding binary after migration 0020 as a stop-only rollback boundary", async (context) => {
+    const database = databaseOrSkip(context);
+    const migrations = await loadPostgresMigrations();
+    const preBindingMigrations = migrations.slice(0, -1);
+    const preBindingVersion = preBindingMigrations.at(-1)?.version;
+    if (preBindingVersion === undefined) {
+      throw new Error("pre-binding migration fixture is missing");
+    }
+
+    await expect(new PostgresSchemaReadiness(database, {
+      migrations: preBindingMigrations,
+      requiredVersion: preBindingVersion,
+    }).assertReady()).rejects.toThrow(
+      `migration ledger has ${migrations.length} receipts; expected ${preBindingMigrations.length}`,
+    );
+  });
+
   it("rejects checksum drift, ledger gaps, and a non-validated required check", async (context) => {
     const database = databaseOrSkip(context);
     const migrations = await loadPostgresMigrations();
