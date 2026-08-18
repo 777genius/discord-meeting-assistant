@@ -148,12 +148,15 @@ describe("GrpcPipecatConversationRuntime", () => {
       "model=eleven_multilingual_v2",
       "voice=voice-1",
     ].join("\n");
+    const attestationKey = createHmac("sha256", serviceToken)
+      .update("discord-meeting/pipecat-tts-attestation/key/v1")
+      .digest();
     const attestation = {
       deployment: "pipecat-runtime",
-      keyId: createHash("sha256").update(serviceToken).digest("hex"),
+      keyId: createHash("sha256").update(attestationKey).digest("hex"),
       model: "eleven_multilingual_v2",
       provider: "elevenlabs",
-      signature: createHmac("sha256", serviceToken).update(canonical).digest("hex"),
+      signature: createHmac("sha256", attestationKey).update(canonical).digest("hex"),
       sourceRevision: "a".repeat(40),
       voice: "voice-1",
       voiceProfileId: "voice-profile-1",
@@ -165,6 +168,14 @@ describe("GrpcPipecatConversationRuntime", () => {
     )).toMatchObject({ type: "tts-attestation", provider: "elevenlabs" });
     expect(() => decodeGrpcConversationRuntimeEvent(
       serverMessage("ttsAttestation", 1, { ...attestation, voice: "substituted" }),
+      serviceToken,
+    )).toThrow(/signature is invalid/u);
+    expect(() => decodeGrpcConversationRuntimeEvent(
+      serverMessage("ttsAttestation", 1, {
+        ...attestation,
+        keyId: createHash("sha256").update(serviceToken).digest("hex"),
+        signature: createHmac("sha256", serviceToken).update(canonical).digest("hex"),
+      }),
       serviceToken,
     )).toThrow(/signature is invalid/u);
   });

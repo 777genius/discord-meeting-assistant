@@ -39,7 +39,7 @@ export class GrpcConversationRuntimeTurn implements ConversationRuntimeTurn {
     private readonly call: ConversationDuplexCall,
     private readonly turnId: string,
     private readonly cancellationTimeoutMs: number,
-    private readonly attestationKey: string,
+    private readonly attestationSecret: string,
   ) {
     this.eventBuffer = new AsyncEventBuffer((event) => {
       this.eventConsumed(event);
@@ -130,7 +130,7 @@ export class GrpcConversationRuntimeTurn implements ConversationRuntimeTurn {
       return;
     }
     try {
-      const event = decodeGrpcConversationRuntimeEvent(message, this.attestationKey);
+      const event = decodeGrpcConversationRuntimeEvent(message, this.attestationSecret);
       this.validateIncomingEvent(event);
       const coreEvent = toCoreConversationRuntimeEvent(event);
       this.trackIncomingAudio(coreEvent);

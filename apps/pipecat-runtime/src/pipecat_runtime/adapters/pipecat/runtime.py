@@ -29,6 +29,8 @@ type PipelineKey = tuple[str, str, str]
 # instead of being cancelled at the exact same boundary and leaking its worker.
 _PIPELINE_CLOSE_TIMEOUT_SECONDS = 12.0
 
+_TTS_ATTESTATION_KEY_DERIVATION_LABEL = b"discord-meeting/pipecat-tts-attestation/key/v1"
+
 
 @dataclass(frozen=True, slots=True)
 class _TtsAttestationPayload:
@@ -53,7 +55,7 @@ class PipecatConversationRuntime(ConversationRuntime):
         maximum_idempotency_keys: int = 1_024,
         maximum_persistent_pipelines: int = 64,
         attempt_id_factory: Callable[[], str] | None = None,
-        attestation_key: str = "local-development-attestation-key",
+        attestation_secret: str = "local-development-attestation-key",
         deployment: str = "local-unqualified",
         source_revision: str = "local-unqualified",
     ) -> None:
@@ -74,7 +76,7 @@ class PipecatConversationRuntime(ConversationRuntime):
         self._pipeline_close_failures: list[Exception] = []
         self._pipeline_close_tasks: set[asyncio.Task[None]] = set()
         self._attempt_id_factory = attempt_id_factory or _new_attempt_id
-        self._attestation_key = attestation_key.encode("utf-8")
+        self._attestation_key = _derive_tts_attestation_key(attestation_secret)
         self._deployment = deployment
         self._source_revision = source_revision
         self._state_lock = asyncio.Lock()
@@ -318,6 +320,14 @@ class PipecatConversationSession(ConversationSession):
 
 def _new_attempt_id() -> str:
     return f"attempt-{uuid4().hex}"
+
+
+def _derive_tts_attestation_key(secret: str) -> bytes:
+    return hmac.new(
+        secret.encode("utf-8"),
+        _TTS_ATTESTATION_KEY_DERIVATION_LABEL,
+        hashlib.sha256,
+    ).digest()
 
 
 def _tts_attestation_signature(

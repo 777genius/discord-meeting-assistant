@@ -23,6 +23,9 @@ const cancellationReasons = {
   superseded: "CONVERSATION_CANCELLATION_REASON_SUPERSEDED",
 } satisfies Record<ConversationCancellationReason, string>;
 
+const ttsAttestationKeyDerivationLabel =
+  "discord-meeting/pipecat-tts-attestation/key/v1";
+
 export function createGrpcConversationStartMessage(
   request: ConversationRuntimeStartTurn,
 ): RawMessage {
@@ -75,7 +78,7 @@ export function parseGrpcConversationRuntimeHealth(
 
 export function decodeGrpcConversationRuntimeEvent(
   message: RawMessage,
-  attestationKey?: string,
+  attestationSecret?: string,
 ): TransportEvent {
   const base = {
     protocolVersion: integerValue(message.schemaVersion, "schemaVersion"),
@@ -104,7 +107,7 @@ export function decodeGrpcConversationRuntimeEvent(
     if (event.type !== "tts-attestation") {
       throw new Error("Conversation runtime TTS attestation payload is invalid");
     }
-    if (attestationKey === undefined || !verifyTtsAttestation(event, attestationKey)) {
+    if (attestationSecret === undefined || !verifyTtsAttestation(event, attestationSecret)) {
       throw new Error("Conversation runtime TTS attestation signature is invalid");
     }
     return event;
@@ -284,9 +287,12 @@ export function toCoreConversationRuntimeEvent(
 
 function verifyTtsAttestation(
   event: Extract<TransportEvent, { readonly type: "tts-attestation" }>,
-  key: string,
+  secret: string,
 ): boolean {
-  const expectedKeyId = createHash("sha256").update(key, "utf8").digest("hex");
+  const key = createHmac("sha256", Buffer.from(secret, "utf8"))
+    .update(ttsAttestationKeyDerivationLabel, "utf8")
+    .digest();
+  const expectedKeyId = createHash("sha256").update(key).digest("hex");
   if (event.keyId !== expectedKeyId) {
     return false;
   }

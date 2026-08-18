@@ -85,7 +85,7 @@ def _compose_runtime(
     runtime = PipecatConversationRuntime(
         profile=profile,
         maximum_pending_events=settings.maximum_pending_events,
-        attestation_key=settings.bearer_token,
+        attestation_secret=settings.bearer_token,
         deployment=settings.deployment,
         source_revision=settings.source_revision,
     )
