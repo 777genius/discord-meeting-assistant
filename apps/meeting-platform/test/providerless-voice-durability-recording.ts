@@ -18,9 +18,13 @@ const assetRoot = join(platformRoot, "assets");
 
 export interface StoredPlaybackEvent {
   readonly attemptId: string;
+  readonly cancellationObservedAtMs?: number;
+  readonly meetingId?: string;
   readonly pcmBase64?: string;
   readonly pcmSha256?: string;
   readonly phase: string;
+  readonly reason?: string;
+  readonly schemaVersion?: number;
   readonly turnId: string;
   readonly type: CraigPlaybackCommand["type"];
 }
@@ -141,6 +145,14 @@ export class DurableCraigPlaybackTransport implements CraigPlaybackTransport {
     }
     const stored: StoredPlaybackEvent = {
       attemptId: command.attemptId,
+      ...(command.type === "playback-cancel" && command.schemaVersion === 2
+        ? {
+            cancellationObservedAtMs: command.cancellationObservedAtMs,
+            meetingId: command.meetingId,
+            reason: command.reason,
+            schemaVersion: command.schemaVersion,
+          }
+        : {}),
       ...(pcmBase64 === undefined ? {} : { pcmBase64 }),
       ...(pcmSha256 === undefined ? {} : { pcmSha256 }),
       phase: this.input.phase,

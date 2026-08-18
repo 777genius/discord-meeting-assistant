@@ -126,9 +126,15 @@ const groundedAnswerCancelledLogSchema = z.object({
     "runtime-shutdown", "superseded",
   ]),
   status: z.literal("cancelled"),
+  cancellationObservedAt: z.iso.datetime(),
+  cancellationObservedAtMs: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   time: z.iso.datetime(),
   turnId: z.string().trim().min(1),
-}).loose();
+}).loose().refine(
+  ({ cancellationObservedAt, cancellationObservedAtMs }) =>
+    Date.parse(cancellationObservedAt) === cancellationObservedAtMs,
+  "grounded cancellation ISO timestamp must exactly match its application milliseconds",
+);
 const groundedCancellationPcmFenceLogSchema = z.object({
   acceptedPacketCountAfterCancellation: z.literal(0),
   attemptId: z.string().trim().min(1),
@@ -328,7 +334,7 @@ export function parseConversationLifecycleEvidenceLogs(
     const groundedCancelled = groundedAnswerCancelledLogSchema.safeParse(event);
     if (groundedCancelled.success) {
       groundedAnswers.push({
-        observedAt: groundedCancelled.data.time,
+        observedAt: groundedCancelled.data.cancellationObservedAt,
         reason: groundedCancelled.data.reason,
         status: groundedCancelled.data.status,
         turnId: groundedCancelled.data.turnId,

@@ -17,6 +17,7 @@ import type {
   VoicePlaybackOpenOptions,
   VoicePlaybackPort,
   VoicePlaybackRequest,
+  VoicePlaybackCancellationRequest,
   VoicePlaybackSession,
 } from "@discord-meeting/meeting-core/conversation";
 
@@ -177,6 +178,7 @@ class FixedThinkingCues implements ConversationThinkingCuePort {
 
 class RecordingPlaybackSession implements VoicePlaybackSession {
   public readonly cancelReasons: ConversationCancellationReason[] = [];
+  public readonly cancellationRequests: VoicePlaybackCancellationRequest[] = [];
   public readonly chunks: ConversationAudioChunk[] = [];
   public readonly events = new EventStream<VoicePlaybackEvent>();
   public finishCalls = 0;
@@ -193,9 +195,10 @@ class RecordingPlaybackSession implements VoicePlaybackSession {
   }
 
   public cancel(
-    reason: ConversationCancellationReason,
+    request: VoicePlaybackCancellationRequest,
   ): Promise<ConversationPortResult<"cancelled" | "reused">> {
-    this.cancelReasons.push(reason);
+    this.cancellationRequests.push(structuredClone(request));
+    this.cancelReasons.push(request.reason);
     this.events.push({
       attemptId: this.request.attemptId,
       finishedAtMs: 200,
@@ -316,9 +319,10 @@ class HeldFinishPlaybackSession extends RecordingPlaybackSession {
 
 class HeldTerminalPlaybackSession extends RecordingPlaybackSession {
   public override cancel(
-    reason: ConversationCancellationReason,
+    request: VoicePlaybackCancellationRequest,
   ): Promise<ConversationPortResult<"cancelled" | "reused">> {
-    this.cancelReasons.push(reason);
+    this.cancellationRequests.push(structuredClone(request));
+    this.cancelReasons.push(request.reason);
     return Promise.resolve({ ok: true, value: "cancelled" });
   }
 
@@ -350,9 +354,10 @@ class FailingCancellationPlaybackSession extends RecordingPlaybackSession {
   }
 
   public override cancel(
-    reason: ConversationCancellationReason,
+    request: VoicePlaybackCancellationRequest,
   ): Promise<ConversationPortResult<"cancelled" | "reused">> {
-    this.cancelReasons.push(reason);
+    this.cancellationRequests.push(structuredClone(request));
+    this.cancelReasons.push(request.reason);
     if (this.cancellationFailure === "throw") {
       return Promise.reject(new Error("injected cancellation error"));
     }

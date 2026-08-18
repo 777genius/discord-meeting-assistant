@@ -256,6 +256,7 @@ export const voicePacketBatchSchema = z
 export type VoicePacketBatch = z.infer<typeof voicePacketBatchSchema>;
 
 export const craigPlaybackProtocolVersion = 1 as const;
+export const craigPlaybackCancellationProtocolVersion = 2 as const;
 export const craigPlaybackSampleRateHz = 48_000 as const;
 export const craigPlaybackChannels = 1 as const;
 export const maximumCraigPlaybackPcmBytes = 19_200;
@@ -297,7 +298,7 @@ const playbackFinishSchema = playbackTurnEnvelopeSchema
   .extend({ type: z.literal("playback-finish") })
   .strict();
 
-const playbackCancelSchema = playbackTurnEnvelopeSchema
+const playbackCancelV1Schema = playbackTurnEnvelopeSchema
   .extend({
     type: z.literal("playback-cancel"),
     reason: z.enum([
@@ -310,11 +311,31 @@ const playbackCancelSchema = playbackTurnEnvelopeSchema
   })
   .strict();
 
-export const craigPlaybackCommandSchema = z.discriminatedUnion("type", [
-  playbackStartSchema,
-  playbackAudioChunkSchema,
-  playbackFinishSchema,
-  playbackCancelSchema,
+const playbackCancelV2Schema = z.object({
+  schemaVersion: z.literal(craigPlaybackCancellationProtocolVersion),
+  type: z.literal("playback-cancel"),
+  meetingId: identifierSchema,
+  recordingId: identifierSchema,
+  turnId: identifierSchema,
+  attemptId: identifierSchema,
+  cancellationObservedAtMs: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  reason: z.enum([
+    "barge-in",
+    "meeting-ended",
+    "playback-failed",
+    "runtime-shutdown",
+    "superseded",
+  ]),
+}).strict();
+
+export const craigPlaybackCommandSchema = z.union([
+  z.discriminatedUnion("type", [
+    playbackStartSchema,
+    playbackAudioChunkSchema,
+    playbackFinishSchema,
+    playbackCancelV1Schema,
+  ]),
+  playbackCancelV2Schema,
 ]);
 
 export type CraigPlaybackCommand = z.infer<typeof craigPlaybackCommandSchema>;

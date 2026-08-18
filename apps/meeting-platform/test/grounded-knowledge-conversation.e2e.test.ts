@@ -1,6 +1,5 @@
 import type {
   ConversationAudioChunk,
-  ConversationCancellationReason,
   ConversationPortResult,
   ConversationRuntime,
   ConversationRuntimeEvent,
@@ -148,7 +147,7 @@ class CapturingPlayback implements VoicePlaybackPort {
     return Promise.resolve({
       ok: true,
       value: {
-        cancel: (_reason: ConversationCancellationReason) => {
+        cancel: () => {
           events.push({ attemptId: request.attemptId, finishedAtMs: 3, type: "finished" });
           events.close();
           return Promise.resolve({ ok: true, value: "cancelled" as const });

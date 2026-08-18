@@ -274,6 +274,7 @@ describe("Conversation grounded knowledge execution", () => {
     expect(runtime.requests).toEqual([]);
     expect(playback.sessions.flatMap(({ chunks }) => chunks)).toEqual([]);
     expect(observations).toContainEqual({
+      cancellationObservedAtMs: 2,
       meetingId: "meeting-1",
       reason: _label === "disconnect" || _label === "participant departure"
         ? "disconnected" :
@@ -306,6 +307,52 @@ describe("Conversation grounded knowledge execution", () => {
     expect(runtime.requests).toEqual([]);
     // Acknowledgement cue PCM is allowed; the factual runtime never started.
     expect(playback.requests.map(({ turnId }) => turnId)).toEqual(["turn-1"]);
+  });
+
+  it("sends one canonical cancellation observation to grounding and playback", async () => {
+    const groundedAnswers = new ControlledGroundedAnswers();
+    const events = new EventStream<ConversationRuntimeEvent>();
+    const runtime = new ScriptedRuntime([events]);
+    const playback = new RecordingPlayback();
+    const observations: GroundedKnowledgeAnswerObservation[] = [];
+    const coordinator = new ConversationCoordinator({
+      groundedAnswerObserver: {
+        observeGroundedKnowledgeAnswer: (observation) => {
+          observations.push(observation);
+        },
+      },
+      groundedAnswers,
+      playback,
+      runtime,
+    });
+
+    await coordinator.handleFinalizedTurn(input("turn-1", 1));
+    groundedAnswers.resolve(answer());
+    await waitUntil(() => runtime.requests.length === 1);
+    events.push({ attemptId: "attempt-1", type: "accepted" });
+    events.push(ttsAttestation());
+    events.push({
+      attemptId: "attempt-1",
+      channels: 1,
+      format: "pcm_s16le",
+      sampleRateHz: 48_000,
+      type: "audio-start",
+    });
+    await waitUntil(() => playback.sessions.length === 1);
+
+    await coordinator.disconnectMeeting("meeting-1", 177);
+    await coordinator.whenIdle("meeting-1");
+
+    expect(observations).toContainEqual(expect.objectContaining({
+      cancellationObservedAtMs: 177,
+      meetingId: "meeting-1",
+      status: "cancelled",
+      turnId: "turn-1",
+    }));
+    expect(playback.sessions[0]?.cancellationRequests).toEqual([{
+      cancellationObservedAtMs: 177,
+      reason: "disconnected",
+    }]);
   });
 });
 

@@ -300,6 +300,12 @@ describe("providerless production-composition voice durability", () => {
         event.turnId === questionTurnId && event.type === "playback-cancel"
       );
       expect(cancelIndex).toBeGreaterThanOrEqual(0);
+      expect(events[cancelIndex]).toMatchObject({
+        cancellationObservedAtMs: startedAtMs + 119 * oneMinuteMs + 4_001,
+        meetingId,
+        reason: "barge-in",
+        schemaVersion: 2,
+      });
       expect(events.slice(cancelIndex + 1).some((event) =>
         event.turnId === questionTurnId && event.type === "audio-chunk"
       )).toBe(false);

@@ -230,20 +230,25 @@ export class ConversationActiveTurnExecutor {
 
     run.cancellationInFlight = true;
     const reason: ConversationCancellationReason = cancellation.reason;
-    this.groundedAnswers?.observeCancellation(run.prepared, reason);
+    const cancellationObservedAtMs = requireNonNegativeInteger(
+      state.lastObservedAtMs,
+      "conversation.cancellationObservedAtMs",
+    );
+    const cancellationRequest = Object.freeze({ cancellationObservedAtMs, reason });
+    this.groundedAnswers?.observeCancellation(run.prepared, reason, cancellationObservedAtMs);
     run.runtimeStartAbortController?.abort(reason);
     run.runtimeStartAbortController = null;
     run.groundedPlaybackAbortController?.abort(reason);
     run.groundedPlaybackAbortController = null;
     run.groundedPlaybackAuthority = null;
-    run.playbackOpenAbortController?.abort(reason);
+    run.playbackOpenAbortController?.abort(cancellationRequest);
     run.playbackOpenAbortController = null;
-    const cancellations: Promise<void>[] = [this.cues.stop(run, reason)];
+    const cancellations: Promise<void>[] = [this.cues.stop(run, cancellationRequest)];
     if (run.runtimeTurn !== null) {
       cancellations.push(ignoreConversationFailure(() => run.runtimeTurn!.cancel(reason)));
     }
     if (run.playback !== null) {
-      this.answerPlayback.cancel(run, run.playback, reason);
+      this.answerPlayback.cancel(run, run.playback, cancellationRequest);
     }
     await Promise.all(cancellations);
     await this.finalize(state, run);
@@ -303,7 +308,10 @@ export class ConversationActiveTurnExecutor {
           return;
         }
         run.answerAudioStarted = true;
-        await this.cues.stop(run, "superseded");
+        await this.cues.stop(run, {
+          cancellationObservedAtMs: state.lastObservedAtMs,
+          reason: "superseded",
+        });
         await this.answerPlayback.open(state, run);
         return;
       case "audio-chunk":
@@ -369,7 +377,10 @@ export class ConversationActiveTurnExecutor {
     run.groundedPlaybackAbortController?.abort("conversation-finalized");
     run.groundedPlaybackAbortController = null;
     run.groundedPlaybackAuthority = null;
-    await this.cues.stop(run, "superseded");
+    await this.cues.stop(run, {
+      cancellationObservedAtMs: state.lastObservedAtMs,
+      reason: "superseded",
+    });
     if (state.playbackFence !== null) {
       this.schedulePlaybackTerminalFinalization(state, run);
       return;

@@ -1,11 +1,11 @@
 import type {
-  ConversationCancellationReason,
   ConversationPlaybackObservation,
   ConversationPlaybackObserverPort,
   ConversationPlaybackReadinessPort,
   ConversationThinkingCue,
   ConversationThinkingCueStage,
   VoicePlaybackPort,
+  VoicePlaybackCancellationRequest,
   VoicePlaybackSession,
 } from "./ports/conversation.js";
 import type {
@@ -24,7 +24,10 @@ import {
 } from "./conversation-state.js";
 
 interface ConversationCuePlaybackDependencies {
-  readonly onFailed: (run: ActiveConversationRun) => Promise<void>;
+  readonly onFailed: (
+    state: MeetingConversationState,
+    run: ActiveConversationRun,
+  ) => Promise<void>;
   readonly onFinished: (
     state: MeetingConversationState,
     run: ActiveConversationRun,
@@ -85,7 +88,7 @@ export class ConversationCuePlayback {
             ) {
               return null;
             }
-            await this.dependencies.onFailed(run);
+            await this.dependencies.onFailed(state, run);
             return null;
           }
         }
@@ -127,7 +130,10 @@ export class ConversationCuePlayback {
         }),
       );
       if (!this.canKeep(state, run, opened.value)) {
-        this.cancel(run, opened.value, "superseded");
+        this.cancel(run, opened.value, {
+          cancellationObservedAtMs: state.lastObservedAtMs,
+          reason: "superseded",
+        });
         return null;
       }
       if (stage === "deliberation") {
@@ -144,9 +150,9 @@ export class ConversationCuePlayback {
   public cancel(
     run: ActiveConversationRun,
     playback: VoicePlaybackSession,
-    reason: ConversationCancellationReason,
+    request: VoicePlaybackCancellationRequest,
   ): void {
-    void playback.cancel(reason).then(
+    void playback.cancel(request).then(
       (result) => {
         if (!result.ok && run.cuePlayback === playback) {
           run.playbackTerminalReceiptMissing = true;
@@ -183,18 +189,18 @@ export class ConversationCuePlayback {
           turnId: run.prepared.request.turnId,
         });
         if (!written.ok) {
-          await this.dependencies.onFailed(run);
+          await this.dependencies.onFailed(state, run);
           return;
         }
       }
       if (this.canStream(state, run, playback)) {
         const finished = await playback.finish();
         if (!finished.ok) {
-          await this.dependencies.onFailed(run);
+          await this.dependencies.onFailed(state, run);
         }
       }
     } catch {
-      await this.dependencies.onFailed(run);
+      await this.dependencies.onFailed(state, run);
     }
   }
 
@@ -287,7 +293,7 @@ export class ConversationCuePlayback {
           }
           run.playbackTerminalReceiptMissing = false;
           if (isCurrentConversationRun(state, run)) {
-            await this.dependencies.onFailed(run);
+            await this.dependencies.onFailed(state, run);
           }
           continue;
         }

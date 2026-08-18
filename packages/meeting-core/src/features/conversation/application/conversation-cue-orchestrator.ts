@@ -4,7 +4,6 @@ import {
   shouldUseConversationDeliberationCue,
 } from "../domain/conversation.js";
 import type {
-  ConversationCancellationReason,
   ConversationDelay,
   ConversationDelayPort,
   ConversationThinkingCue,
@@ -13,6 +12,7 @@ import type {
   ConversationPlaybackObserverPort,
   ConversationPlaybackReadinessPort,
   VoicePlaybackPort,
+  VoicePlaybackCancellationRequest,
 } from "./ports/conversation.js";
 import type {
   ActiveConversationRun,
@@ -42,7 +42,10 @@ export class ConversationCueOrchestrator {
     this.delay = dependencies.delay;
     this.thinkingCues = dependencies.thinkingCues;
     this.cuePlayback = new ConversationCuePlayback({
-      onFailed: async (run) => this.stop(run, "playback-failed"),
+      onFailed: async (state, run) => this.stop(run, {
+        cancellationObservedAtMs: state.lastObservedAtMs,
+        reason: "playback-failed",
+      }),
       onFinished: async (state, run) => {
         if (run.deliberationCueReady) {
           await this.startStage(state, run, "deliberation");
@@ -80,9 +83,9 @@ export class ConversationCueOrchestrator {
 
   public async stop(
     run: ActiveConversationRun,
-    reason: ConversationCancellationReason,
+    request: VoicePlaybackCancellationRequest,
   ): Promise<void> {
-    run.playbackOpenAbortController?.abort(reason);
+    run.playbackOpenAbortController?.abort(request);
     run.playbackOpenAbortController = null;
     run.deliberationCue = null;
     run.deliberationCueReady = false;
@@ -92,7 +95,7 @@ export class ConversationCueOrchestrator {
     run.cueDelays.clear();
     const playback = run.cuePlayback;
     if (playback !== null) {
-      this.cuePlayback.cancel(run, playback, reason);
+      this.cuePlayback.cancel(run, playback, request);
     }
   }
 

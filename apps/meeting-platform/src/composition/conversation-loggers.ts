@@ -73,11 +73,19 @@ export function createGroundedKnowledgeAnswerLogger(
 ): GroundedKnowledgeAnswerObserverPort {
   return {
     observeGroundedKnowledgeAnswer: (observation) => {
+      const fields = observation.status === "cancelled"
+        ? {
+            ...observation,
+            cancellationObservedAt: new Date(
+              observation.cancellationObservedAtMs,
+            ).toISOString(),
+          }
+        : observation;
       logger.info(
         observation.status === "validated"
           ? "Grounded knowledge answer validated"
           : "Grounded knowledge answer cancelled",
-        { ...observation },
+        { ...fields },
       );
     },
   };

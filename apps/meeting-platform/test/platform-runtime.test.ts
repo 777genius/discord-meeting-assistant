@@ -153,6 +153,34 @@ async function* onePlaybackEvent(
   yield await event;
 }
 
+describe("grounded answer runtime logging", () => {
+  it("writes privacy-safe grounded answer provenance to structured logs", async () => {
+    const info = vi.fn();
+    const observer = createGroundedKnowledgeAnswerLogger({ info });
+
+    await observer.observeGroundedKnowledgeAnswer({
+      citationTurnIds: ["authoritative-turn-7"], evidenceEpoch: "evidence-7",
+      knowledgeEpoch: "knowledge-9", meetingId: "meeting-1", participantId: "participant-1",
+      playbackProvenance: "literal_tts", status: "validated", turnId: "question-turn-1",
+    });
+    expect(info).toHaveBeenCalledWith("Grounded knowledge answer validated", {
+      citationTurnIds: ["authoritative-turn-7"], evidenceEpoch: "evidence-7",
+      knowledgeEpoch: "knowledge-9", meetingId: "meeting-1", participantId: "participant-1",
+      playbackProvenance: "literal_tts", status: "validated", turnId: "question-turn-1",
+    });
+
+    await observer.observeGroundedKnowledgeAnswer({
+      cancellationObservedAtMs: 1_775_555_527_123, meetingId: "meeting-1",
+      reason: "barge-in", status: "cancelled", turnId: "question-turn-1",
+    });
+    expect(info).toHaveBeenLastCalledWith("Grounded knowledge answer cancelled", {
+      cancellationObservedAt: "2026-04-07T09:52:07.123Z",
+      cancellationObservedAtMs: 1_775_555_527_123, meetingId: "meeting-1",
+      reason: "barge-in", status: "cancelled", turnId: "question-turn-1",
+    });
+  });
+});
+
 describe("meeting platform runtime wiring", () => {
   it("composes source deletion without Infinity configuration", () => {
     const deletion = createPlatformHistoricalDeletion({} as Pool);
@@ -182,33 +210,6 @@ describe("meeting platform runtime wiring", () => {
       totalToFirstAudioMs: 1_870,
       turnId: "turn-1",
       wakeToFirstLlmTokenMs: 1_500,
-    });
-  });
-
-  it("writes privacy-safe grounded answer provenance to structured logs", async () => {
-    const info = vi.fn();
-    const observer = createGroundedKnowledgeAnswerLogger({ info });
-
-    await observer.observeGroundedKnowledgeAnswer({
-      citationTurnIds: ["authoritative-turn-7"],
-      evidenceEpoch: "evidence-7",
-      knowledgeEpoch: "knowledge-9",
-      meetingId: "meeting-1",
-      participantId: "participant-1",
-      playbackProvenance: "literal_tts",
-      status: "validated",
-      turnId: "question-turn-1",
-    });
-
-    expect(info).toHaveBeenCalledWith("Grounded knowledge answer validated", {
-      citationTurnIds: ["authoritative-turn-7"],
-      evidenceEpoch: "evidence-7",
-      knowledgeEpoch: "knowledge-9",
-      meetingId: "meeting-1",
-      participantId: "participant-1",
-      playbackProvenance: "literal_tts",
-      status: "validated",
-      turnId: "question-turn-1",
     });
   });
 

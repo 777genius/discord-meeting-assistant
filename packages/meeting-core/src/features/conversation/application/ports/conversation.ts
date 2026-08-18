@@ -164,6 +164,7 @@ export type GroundedKnowledgeAnswerObservation =
       readonly turnId: string;
     }
   | {
+      readonly cancellationObservedAtMs: number;
       readonly meetingId: string;
       readonly reason: ConversationCancellationReason;
       readonly status: "cancelled";
@@ -297,8 +298,14 @@ export interface VoicePlaybackSession {
   finish(): Promise<ConversationPortResult<"finished" | "reused">>;
 
   cancel(
-    reason: ConversationCancellationReason,
+    request: VoicePlaybackCancellationRequest,
   ): Promise<ConversationPortResult<"cancelled" | "reused">>;
+}
+
+/** One deterministic application observation shared with every cancellation sink. */
+export interface VoicePlaybackCancellationRequest {
+  readonly cancellationObservedAtMs: number;
+  readonly reason: ConversationCancellationReason;
 }
 
 export type VoicePlaybackEvent =

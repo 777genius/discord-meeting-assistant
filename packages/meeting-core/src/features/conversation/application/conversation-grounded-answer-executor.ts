@@ -89,11 +89,13 @@ export class ConversationGroundedAnswerExecutor {
   public observeCancellation(
     prepared: PreparedConversation,
     reason: ConversationCancellationReason,
+    cancellationObservedAtMs: number,
   ): void {
     if (prepared.groundedKnowledgeRequest === undefined || this.answers === null) {
       return;
     }
     this.observe({
+      cancellationObservedAtMs,
       meetingId: prepared.request.meetingId,
       reason,
       status: "cancelled",
