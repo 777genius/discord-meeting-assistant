@@ -175,6 +175,13 @@ const addressedAnswerObservationSchema = z.object({
   type: z.literal("addressed-answer"),
 }).strict();
 
+const ttsDeploymentAttestationV1Schema = z.object({
+  deployment: identifierSchema,
+  model: identifierSchema,
+  schemaVersion: z.literal(1),
+  voice: identifierSchema,
+}).strict();
+
 const groundedKnowledgeAnswerObservationSchema = z.discriminatedUnion("status", [
   z.object({
     citationTurnIds: z.array(identifierSchema).min(1).max(32),
@@ -182,11 +189,12 @@ const groundedKnowledgeAnswerObservationSchema = z.discriminatedUnion("status", 
     knowledgeEpoch: identifierSchema,
     observedAt: z.iso.datetime(),
     participantId: identifierSchema,
-    playbackProvenance: z.literal("literal_tts"),
+    playbackProvenance: z.enum(["literal_tts", "model_tts"]),
     status: z.literal("validated"),
     turnId: identifierSchema,
   }).strict(),
   z.object({
+    factualPcmAfterCancellation: z.literal("none"),
     observedAt: z.iso.datetime(),
     reason: z.enum([
       "barge-in",
@@ -207,6 +215,7 @@ const conversationPlaybackReceiptBaseSchema = z.object({
   playbackKind: z.enum(["answer", "prepared-cue", "thinking-cue"]),
   preparedAssetSha256: sha256Schema.optional(),
   speechProvenance: z.enum(["literal_tts", "model_tts"]).optional(),
+  ttsAttestation: ttsDeploymentAttestationV1Schema.optional(),
   thinkingCuePcmSha256: sha256Schema.optional(),
   turnId: identifierSchema,
 });
@@ -214,6 +223,9 @@ function refinePlaybackProvenance(
   receipt: z.infer<typeof conversationPlaybackReceiptBaseSchema>,
   context: z.RefinementCtx,
 ): void {
+  if (receipt.speechProvenance === undefined && receipt.ttsAttestation !== undefined) {
+    context.addIssue({ code: "custom", message: "Only TTS receipts may carry TTS attestation" });
+  }
   if (receipt.playbackKind === "prepared-cue" && receipt.speechProvenance !== undefined) {
     context.addIssue({ code: "custom", message: "Prepared cue receipts cannot claim TTS provenance" });
   }
@@ -262,7 +274,17 @@ export const conversationLifecycleEvidenceSchema = z.object({
   ])).min(4),
   groundedAnswers: z.array(groundedKnowledgeAnswerObservationSchema).default([]),
   playbackReceipts: z.array(conversationPlaybackReceiptSchema).default([]),
-}).strict();
+}).strict().superRefine(({ groundedAnswers, playbackReceipts }, context) => {
+  for (const cancellation of groundedAnswers.filter((answer) => answer.status === "cancelled")) {
+    if (playbackReceipts.some((receipt) => receipt.turnId === cancellation.turnId &&
+      Date.parse(receipt.observedAt) > Date.parse(cancellation.observedAt))) {
+      context.addIssue({
+        code: "custom",
+        message: "Cancellation proof cannot retain factual playback after cancellation",
+      });
+    }
+  }
+});
 
 export const collectedConversationLifecycleEvidenceSchema =
   conversationLifecycleEvidenceSchema.extend({

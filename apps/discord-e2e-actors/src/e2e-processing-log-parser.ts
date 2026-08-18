@@ -58,12 +58,19 @@ const addressedAnswerLogSchema = z.object({
   time: z.iso.datetime(),
   turnId: z.string().trim().min(1),
 }).loose();
+const ttsAttestationSchema = z.object({
+  deployment: z.string().trim().min(1),
+  model: z.string().trim().min(1),
+  schemaVersion: z.literal(1),
+  voice: z.string().trim().min(1),
+}).strict();
 const playbackReceiptLogBaseSchema = z.object({
   meetingId: z.string(),
   playbackAttemptId: z.string().trim().min(1),
   playbackKind: z.enum(["answer", "prepared-cue", "thinking-cue"]),
   preparedAssetSha256: z.string().regex(/^[a-f\d]{64}$/u).optional(),
   speechProvenance: z.enum(["literal_tts", "model_tts"]).optional(),
+  ttsAttestation: ttsAttestationSchema.optional(),
   thinkingCuePcmSha256: z.string().regex(/^[a-f\d]{64}$/u).optional(),
   time: z.iso.datetime(),
   turnId: z.string().trim().min(1),
@@ -99,7 +106,7 @@ const groundedAnswerValidatedLogSchema = z.object({
   meetingId: z.string(),
   message: z.literal("Grounded knowledge answer validated"),
   participantId: z.string().trim().min(1),
-  playbackProvenance: z.literal("literal_tts"),
+  playbackProvenance: z.enum(["literal_tts", "model_tts"]),
   status: z.literal("validated"),
   time: z.iso.datetime(),
   turnId: z.string().trim().min(1),
@@ -161,6 +168,12 @@ interface PlaybackReceiptMetadataInput {
   readonly preparedAssetSha256?: string | undefined;
   readonly speechProvenance?: "literal_tts" | "model_tts" | undefined;
   readonly thinkingCuePcmSha256?: string | undefined;
+  readonly ttsAttestation?: {
+    readonly deployment: string;
+    readonly model: string;
+    readonly schemaVersion: 1;
+    readonly voice: string;
+  } | undefined;
   readonly time: string;
   readonly turnId: string;
 }
@@ -175,6 +188,7 @@ function playbackReceiptMetadata(
   | "preparedAssetSha256"
   | "speechProvenance"
   | "thinkingCuePcmSha256"
+  | "ttsAttestation"
   | "turnId"
 > {
   return {
@@ -187,6 +201,9 @@ function playbackReceiptMetadata(
     ...(input.speechProvenance === undefined
       ? {}
       : { speechProvenance: input.speechProvenance }),
+    ...(input.ttsAttestation === undefined
+      ? {}
+      : { ttsAttestation: input.ttsAttestation }),
     ...(input.thinkingCuePcmSha256 === undefined
       ? {}
       : { thinkingCuePcmSha256: input.thinkingCuePcmSha256 }),
@@ -269,6 +286,7 @@ export function parseConversationLifecycleEvidenceLogs(
     const groundedCancelled = groundedAnswerCancelledLogSchema.safeParse(event);
     if (groundedCancelled.success) {
       groundedAnswers.push({
+        factualPcmAfterCancellation: "none",
         observedAt: groundedCancelled.data.time,
         reason: groundedCancelled.data.reason,
         status: groundedCancelled.data.status,

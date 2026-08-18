@@ -57,6 +57,9 @@ export interface PlatformConfig {
     readonly requestTimeoutMs: number;
   };
   readonly meetingKnowledge?: {
+    readonly groundedVoice?: {
+      readonly rolloutEpoch: string;
+    };
     readonly localFinalReply?: true;
     readonly twoHourHistoricalQualification?: TwoHourHistoricalQualificationV1;
   };

@@ -269,6 +269,26 @@ describe("meeting platform runtime wiring", () => {
     });
   });
 
+  it("attests TTS deployment, model and voice on speech receipts", async () => {
+    const info = vi.fn();
+    const ttsAttestation = {
+      deployment: "pipecat-runtime",
+      model: "elevenlabs-multilingual-v1",
+      schemaVersion: 1 as const,
+      voice: "test-voice",
+    };
+    const observer = createConversationPlaybackLogger({ info }, 1_000, ttsAttestation);
+
+    await observer.observeConversationPlayback({
+      meetingId: "meeting-1", playbackAttemptId: "answer-attempt-1",
+      playbackKind: "answer", speechProvenance: "literal_tts", startedAtMs: 1_250,
+      status: "started", turnId: "turn-1",
+    });
+
+    expect(info).toHaveBeenCalledWith("Conversation playback started",
+      expect.objectContaining({ ttsAttestation }));
+  });
+
   it("retains the exact thinking cue PCM digest in playback receipts", async () => {
     const info = vi.fn();
     const observer = createConversationPlaybackLogger({ info }, 1_000);

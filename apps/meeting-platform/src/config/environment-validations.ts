@@ -11,6 +11,8 @@ interface ConversationReadinessEnvironment {
 interface MeetingKnowledgeEnvironment {
   readonly CONVERSATION_ENABLED: boolean;
   readonly DISCORD_PUBLICATION_MODE: string;
+  readonly MEETING_KNOWLEDGE_GROUNDED_VOICE_ENABLED: boolean;
+  readonly MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_EPOCH?: string | undefined;
   readonly MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED: boolean;
   readonly MEETING_KNOWLEDGE_PRINCIPAL_KEY_FILE?: string | undefined;
 }
@@ -53,14 +55,23 @@ export function validateMeetingKnowledgeEnvironment(
     });
   }
   if (
-    environment.CONVERSATION_ENABLED &&
-    !environment.MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED &&
+    environment.MEETING_KNOWLEDGE_GROUNDED_VOICE_ENABLED &&
     environment.MEETING_KNOWLEDGE_PRINCIPAL_KEY_FILE === undefined
   ) {
     context.addIssue({
       code: "custom",
       message: "grounded voice requires MEETING_KNOWLEDGE_PRINCIPAL_KEY_FILE",
       path: ["MEETING_KNOWLEDGE_PRINCIPAL_KEY_FILE"],
+    });
+  }
+  if (
+    environment.MEETING_KNOWLEDGE_GROUNDED_VOICE_ENABLED &&
+    environment.MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_EPOCH === undefined
+  ) {
+    context.addIssue({
+      code: "custom",
+      message: "grounded voice requires a versioned rollout epoch",
+      path: ["MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_EPOCH"],
     });
   }
   if (

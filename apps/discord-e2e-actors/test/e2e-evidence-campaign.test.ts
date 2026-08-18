@@ -28,6 +28,44 @@ import {
 } from "./e2e-service-level-fixtures.js";
 
 describe("retained E2E campaign lifecycle gate", () => {
+  it("rejects missing TTS attestation and cancellation campaign proof", () => {
+    const missingAttestation = currentV10Campaign();
+    const voice = missingAttestation[2] as RetainedVoiceE2eEvidenceV10;
+    const receipt = voice.conversation.lifecycle.playbackReceipts.find(
+      ({ speechProvenance }) => speechProvenance !== undefined,
+    );
+    if (receipt === undefined) {
+      throw new Error("TTS receipt fixture is missing");
+    }
+    delete receipt.ttsAttestation;
+    expect(runFailureCodes(verifyCurrentCampaign(missingAttestation)))
+      .toContain("GROUNDED_ANSWER_SPEECH_PROVENANCE_INVALID");
+
+    const missingCancellation = currentV10Campaign();
+    const cancellationVoice = missingCancellation[2] as RetainedVoiceE2eEvidenceV10;
+    cancellationVoice.conversation.lifecycle.groundedAnswers =
+      cancellationVoice.conversation.lifecycle.groundedAnswers.filter(
+        ({ status }) => status !== "cancelled",
+      );
+    expect(verifyCurrentCampaign(missingCancellation).failures.map(({ code }) => code))
+      .toContain("GROUNDED_CANCELLATION_PROOF_MISSING");
+  });
+
+  it("rejects factual PCM retained after grounded cancellation", () => {
+    const runs = currentV10Campaign();
+    const voice = runs[2] as RetainedVoiceE2eEvidenceV10;
+    const cancellation = voice.conversation.lifecycle.groundedAnswers.find(
+      ({ status }) => status === "cancelled",
+    );
+    if (cancellation?.status !== "cancelled") {
+      throw new Error("cancellation fixture is missing");
+    }
+    cancellation.turnId = "human-question-1";
+    cancellation.observedAt = "1970-01-01T00:00:03.950Z";
+    expect(runFailureCodes(verifyCurrentCampaign(runs)))
+      .toContain("GROUNDED_CANCELLATION_PCM_AFTER_CANCEL");
+  });
+
   it.each([2, 3, 4, 5, 6] as const)(
     "rejects a legacy v%s sequential, overlap, and reconnect campaign",
     (schemaVersion) => {

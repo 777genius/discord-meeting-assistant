@@ -6,6 +6,7 @@ import type {
 import { Client } from "discord.js";
 
 import {
+  abortableDiscordOperation,
   discordParticipantQuestionPolicyVersion,
   freshDiscordContainerPermissions,
 } from "./discord-question-authorization.js";
@@ -48,23 +49,33 @@ export class DiscordHistoricalAuthorizationAdapter
       return denied();
     }
     try {
-      const guild = await this.client.guilds.fetch(principal.scopeId);
-      await guild.roles.fetch();
+      const guild = await abortableDiscordOperation(request.signal, () =>
+        this.client.guilds.fetch(principal.scopeId)
+      );
+      await abortableDiscordOperation(request.signal, () => guild.roles.fetch());
       const [member, principalContainer, sourceRoom] = await Promise.all([
-        guild.members.fetch({ force: true, user: principal.actorId }),
-        guild.channels.fetch(principal.authorizationContainerId, { force: true }),
+        abortableDiscordOperation(request.signal, () =>
+          guild.members.fetch({ force: true, user: principal.actorId })
+        ),
+        abortableDiscordOperation(request.signal, () =>
+          guild.channels.fetch(principal.authorizationContainerId, { force: true })
+        ),
         principal.authorizationContainerId === request.roomId
-          ? guild.channels.fetch(principal.authorizationContainerId, { force: true })
-          : guild.channels.fetch(request.roomId, { force: true }),
+          ? abortableDiscordOperation(request.signal, () =>
+              guild.channels.fetch(principal.authorizationContainerId, { force: true })
+            )
+          : abortableDiscordOperation(request.signal, () =>
+              guild.channels.fetch(request.roomId, { force: true })
+            ),
       ]);
       if (principalContainer === null || sourceRoom === null) {
         return denied();
       }
       const [principalPermissions, sourcePermissions] = await Promise.all([
-        freshDiscordContainerPermissions(principalContainer, member),
+        freshDiscordContainerPermissions(principalContainer, member, request.signal),
         principalContainer.id === sourceRoom.id
           ? Promise.resolve(null)
-          : freshDiscordContainerPermissions(sourceRoom, member),
+          : freshDiscordContainerPermissions(sourceRoom, member, request.signal),
       ]);
       const effectiveSourcePermissions = principalContainer.id === sourceRoom.id
         ? principalPermissions
@@ -90,6 +101,7 @@ export class DiscordHistoricalAuthorizationAdapter
         policyVersion: discordSameRoomHistoricalPolicyVersion,
       };
     } catch {
+      request.signal?.throwIfAborted();
       return denied();
     }
   }

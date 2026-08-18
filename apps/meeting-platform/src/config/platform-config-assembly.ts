@@ -107,8 +107,16 @@ export function assemblePlatformConfig(
     liveIngressOwnerMode: environment.LIVE_INGRESS_OWNER_MODE,
     ...infinityContextConfig(environment),
     ...(environment.MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED ||
+      environment.MEETING_KNOWLEDGE_GROUNDED_VOICE_ENABLED ||
       loaded.twoHourHistoricalQualification !== undefined
       ? { meetingKnowledge: {
+          ...(environment.MEETING_KNOWLEDGE_GROUNDED_VOICE_ENABLED &&
+            environment.MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_EPOCH !== undefined
+            ? { groundedVoice: {
+                rolloutEpoch:
+                  environment.MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_EPOCH,
+              } }
+            : {}),
           ...(environment.MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED
             ? { localFinalReply: true as const }
             : {}),

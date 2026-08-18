@@ -278,6 +278,30 @@ describe("platform configuration", () => {
       "local final reply currently requires direct-message publication mode",
     );
   });
+
+  it("keeps grounded voice independently disabled and requires a versioned epoch", async () => {
+    const principalKeyPath = "/run/secrets/meeting-knowledge-principal-key";
+    const disabled = await loadPlatformConfig(environment, async () => "value");
+    expect(disabled.meetingKnowledge?.groundedVoice).toBeUndefined();
+
+    await expect(loadPlatformConfig({
+      ...environment,
+      MEETING_KNOWLEDGE_GROUNDED_VOICE_ENABLED: "true",
+      MEETING_KNOWLEDGE_PRINCIPAL_KEY_FILE: principalKeyPath,
+    }, async () => "value")).rejects.toThrow(
+      "grounded voice requires a versioned rollout epoch",
+    );
+
+    const enabled = await loadPlatformConfig({
+      ...environment,
+      MEETING_KNOWLEDGE_GROUNDED_VOICE_ENABLED: "true",
+      MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_EPOCH: "grounded-voice-v1",
+      MEETING_KNOWLEDGE_PRINCIPAL_KEY_FILE: principalKeyPath,
+    }, async () => "value");
+    expect(enabled.meetingKnowledge?.groundedVoice).toEqual({
+      rolloutEpoch: "grounded-voice-v1",
+    });
+  });
 });
 
 describe("participant greeting profile configuration", () => {

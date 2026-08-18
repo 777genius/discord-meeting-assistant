@@ -260,6 +260,34 @@ describe("Discord private-thread authorization", () => {
     expect(publicThread.observation).toMatchObject({ status: "authorized" });
     expect(publicThread.fetchMembership).not.toHaveBeenCalled();
   });
+
+  it("aborts an in-flight historical authorization fetch", async () => {
+    const codec = new DiscordQuestionPrincipalCodec(Buffer.alloc(32, 7));
+    const principal = codec.issue({
+      actorId: "77777777777777777",
+      authorizationContainerId: containerId,
+      containerId,
+      expiresAtMilliseconds: 1_800_000_000_000,
+      scopeId: "66666666666666666",
+    });
+    const fetchGuild = vi.fn(() => new Promise<never>(() => {}));
+    const controller = new AbortController();
+    const pending = new DiscordHistoricalAuthorizationAdapter(
+      { guilds: { fetch: fetchGuild } } as unknown as Client,
+      codec,
+      () => 1_799_999_000_000,
+    ).authorize({
+      authorizationPrincipalRef: principal,
+      roomId: "55555555555555555",
+      scopeId: "66666666666666666",
+      signal: controller.signal,
+    });
+    await Promise.resolve();
+    controller.abort("disconnected");
+
+    await expect(pending).rejects.toBe("disconnected");
+    expect(fetchGuild).toHaveBeenCalledOnce();
+  });
 });
 
 describe("Discord answer effect transport", () => {

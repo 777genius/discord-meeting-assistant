@@ -143,6 +143,13 @@ invoice.
 
 ### Live Botik conversation acceptance
 
+Grounded voice is an independent default-off serving surface. Enabling ordinary
+conversation does not enable it. A deployment must set both
+`MEETING_KNOWLEDGE_GROUNDED_VOICE_ENABLED=true` and a reviewed
+`MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_EPOCH`; removing the enable flag
+disables new grounded answers without disabling greetings, farewells, or normal
+conversation. Every rollout change uses a new epoch.
+
 Conversation rollout remains unqualified until one isolated private-guild run
 proves the complete path with official test bots and synthetic speech:
 
@@ -161,7 +168,12 @@ proves the complete path with official test bots and synthetic speech:
    and recognizable answer text, then verify the authoritative summary may cite
    those Botik turns without treating Botik as a human participant;
 6. verify the derived live transcript does not ingest outbound Botik audio and
-   therefore cannot create a self-response loop.
+   therefore cannot create a self-response loop;
+7. retain at least one barge-in or disconnect/meeting-end cancellation reason
+   and prove that no factual PCM for that turn appears after cancellation;
+8. retain identical versioned deployment, model, and voice attestation on every
+   literal/model TTS receipt, or the exact asset SHA-256 for prepared playback.
+   Missing, mixed, or unversioned provenance fails V10 qualification.
 
 Passing local, provider, or voice-observer checks alone does not satisfy this
 gate. Record the private guild/channel IDs, recording ID, Botik track checksum,
@@ -358,13 +370,13 @@ the pinned Botik speaker ID to the normal collector:
 DISCORD_E2E_BOTIK_SPEAKER_ID=1534231284467896512 \
 DISCORD_E2E_CONVERSATION_VOICE_INPUTS='["/absolute/evidence/greeting-observer.json","/absolute/evidence/greeting-ru.json","/absolute/evidence/greeting-en.json","/absolute/evidence/greeting-speaker-d.json","/absolute/evidence/addressed-answer.json","/absolute/evidence/farewell.json"]' \
 DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_INPUT=/absolute/evidence/speaker-d.playback.json \
-DISCORD_E2E_EVIDENCE_OUTPUT=/absolute/evidence/reconnect.evidence.v9.json \
+DISCORD_E2E_EVIDENCE_OUTPUT=/absolute/evidence/reconnect.evidence.v10.json \
 DISCORD_E2E_SECRET_DIRECTORY=/run/secrets/discord-e2e \
 pnpm --filter @discord-meeting/discord-e2e-actors collect:e2e
 
 pnpm --filter @discord-meeting/discord-e2e-actors run verify:e2e -- \
   apps/discord-e2e-actors/test/fixtures/manifest.v1.json \
-  /absolute/evidence/reconnect.evidence.v9.json
+  /absolute/evidence/reconnect.evidence.v10.json
 ```
 
 The gate derives locale and known/unknown status from privacy-safe runtime
@@ -534,22 +546,21 @@ result. Run the campaign verifier with the standard pnpm separator:
 ```sh
 pnpm --filter @discord-meeting/discord-e2e-actors run verify:campaign -- \
   apps/discord-e2e-actors/test/fixtures/manifest.v1.json \
-  /absolute/evidence/sequential.evidence.v6.json \
-  /absolute/evidence/overlap.evidence.v6.json \
-  /absolute/evidence/reconnect.evidence.v9.json
+  /absolute/evidence/sequential.evidence.v10.json \
+  /absolute/evidence/overlap.evidence.v10.json \
+  /absolute/evidence/reconnect.evidence.v10.json
 ```
 
-The campaign must contain at least one retained v8-or-newer reconnect run; the
-hosted coordinator currently emits v9, while sequential and overlap collection
-remains v6. Mixed schema versions are valid
-only when every run retains identical immutable deployment provenance. Set
+The current campaign requires V10 for sequential, overlap, and reconnect, with
+exactly one reconnect voice qualification. All runs retain identical release,
+durability, governed latency policy, and immutable deployment provenance. Set
 `DISCORD_E2E_EXPECTED_PIPECAT_SOURCE_REVISION` for all three collections so the
-v6 runs retain the same four-component provenance as the reconnect run. The
+V10 runs retain the same four-component provenance as the reconnect run. The
 verifier rejects cross-meeting identity reuse, mixed deployments, raw
 internal IDs in Discord text, missing action-owner mentions, and missing or
 invalid authoritative evidence references. Historical v2-v4 evidence still
 verifies inline intervals and speaker mentions; v5 remains readable as the first
-clean-summary format. Current v6 additionally proves the two attachments
+clean-summary format. Historical v6 additionally proves the two attachments
 containing layered evidence from ADR-0025 and their replay stability. Historical
 evidence remains individually readable but cannot replace the required
 v8-or-newer reconnect proof.

@@ -78,12 +78,44 @@ export function verifyGroundedAnswerProvenance(
   const receipts = evidence.conversation.lifecycle.playbackReceipts.filter(
     ({ turnId }) => turnId === observation.turnId,
   );
+  const pipecatDeployment = evidence.deployment.pipecat?.composeService;
+  const attestations = new Set(receipts.map((receipt) =>
+    JSON.stringify(receipt.ttsAttestation)
+  ));
   if (receipts.length !== 3 || receipts.some((receipt) =>
-    receipt.playbackKind !== "answer" || receipt.speechProvenance !== "literal_tts")) {
+    receipt.playbackKind !== "answer" ||
+    receipt.speechProvenance !== observation.playbackProvenance ||
+    receipt.ttsAttestation === undefined ||
+    receipt.ttsAttestation.deployment !== pipecatDeployment) ||
+    pipecatDeployment === undefined || attestations.size !== 1) {
     fail(
       "GROUNDED_ANSWER_SPEECH_PROVENANCE_INVALID",
-      "validated grounded text must use one complete literal-TTS playback receipt set",
+      "validated grounded text must use one complete attested TTS playback receipt set",
     );
+  }
+  const preparedWithoutAsset = evidence.conversation.lifecycle.playbackReceipts.some(
+    (receipt) => receipt.playbackKind === "prepared-cue" &&
+      receipt.preparedAssetSha256 === undefined,
+  );
+  if (preparedWithoutAsset) {
+    fail(
+      "VOICE_PLAYBACK_ATTESTATION_INVALID",
+      "prepared playback requires its exact asset hash",
+    );
+  }
+  for (const cancellation of evidence.conversation.lifecycle.groundedAnswers.filter(
+    (answer) => answer.status === "cancelled",
+  )) {
+    const latePcm = evidence.conversation.lifecycle.playbackReceipts.some((receipt) =>
+      receipt.turnId === cancellation.turnId &&
+      Date.parse(receipt.observedAt) > Date.parse(cancellation.observedAt)
+    );
+    if (cancellation.factualPcmAfterCancellation !== "none" || latePcm) {
+      fail(
+        "GROUNDED_CANCELLATION_PCM_AFTER_CANCEL",
+        "grounded cancellation must retain its reason and prove no later factual PCM",
+      );
+    }
   }
 }
 

@@ -18,6 +18,12 @@ export function createConversationLatencyLogger(
 export function createConversationPlaybackLogger(
   logger: Pick<Logger, "info">,
   timeOriginMilliseconds = performance.timeOrigin,
+  ttsAttestation?: {
+    readonly deployment: string;
+    readonly model: string;
+    readonly schemaVersion: 1;
+    readonly voice: string;
+  },
 ): ConversationPlaybackObserverPort {
   return {
     observeConversationPlayback: (observation) => {
@@ -30,7 +36,10 @@ export function createConversationPlaybackLogger(
           : { preparedAssetSha256: observation.preparedAssetSha256 }),
         ...(observation.speechProvenance === undefined
           ? {}
-          : { speechProvenance: observation.speechProvenance }),
+          : {
+              speechProvenance: observation.speechProvenance,
+              ...(ttsAttestation === undefined ? {} : { ttsAttestation }),
+            }),
         ...(observation.thinkingCuePcmSha256 === undefined
           ? {}
           : { thinkingCuePcmSha256: observation.thinkingCuePcmSha256 }),

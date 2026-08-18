@@ -26,11 +26,15 @@ export function createVoiceGroundedAnswers(
 ): MeetingKnowledgeGroundedAnswerAcl | undefined {
   if (
     input.config.conversation === undefined ||
+    input.config.meetingKnowledge?.groundedVoice === undefined ||
     input.groundedAnswerUseCase === undefined ||
     input.liveFinalizedMemory === undefined
   ) {
     return undefined;
   }
+  const rolloutEpoch = input.config.meetingKnowledge.groundedVoice.rolloutEpoch;
+  const rolloutAuthorized = (): boolean =>
+    input.config.meetingKnowledge?.groundedVoice?.rolloutEpoch === rolloutEpoch;
   const secret = input.config.secrets.meetingKnowledgePrincipalKey;
   if (secret === undefined) {
     throw new Error("Grounded voice requires the Meeting Knowledge principal key");
@@ -89,8 +93,16 @@ export function createVoiceGroundedAnswers(
   };
   return new MeetingKnowledgeGroundedAnswerAcl({
     execute: async (request, options) => {
+      options.signal.throwIfAborted();
+      if (!rolloutAuthorized()) {
+        return {
+          reason: "grounded_voice_rollout_disabled",
+          schemaVersion: 1,
+          status: "unavailable",
+        };
+      }
       const authorizationPrincipalRef = await principalFor(request, options.signal);
-      if (authorizationPrincipalRef === null) {
+      if (!rolloutAuthorized() || authorizationPrincipalRef === null) {
         return {
           reason: "live_room_authority_unavailable",
           schemaVersion: 1,
@@ -100,8 +112,16 @@ export function createVoiceGroundedAnswers(
       return answers.execute({ ...request, authorizationPrincipalRef }, options);
     },
     recheckPlaybackAuthority: async (request, options) => {
+      options.signal.throwIfAborted();
+      if (!rolloutAuthorized()) {
+        return {
+          reason: "grounded_voice_rollout_disabled",
+          schemaVersion: 1,
+          status: "stale",
+        };
+      }
       const authorizationPrincipalRef = await principalFor(request, options.signal);
-      return authorizationPrincipalRef === null
+      return !rolloutAuthorized() || authorizationPrincipalRef === null
         ? {
             reason: "live_room_authority_unavailable",
             schemaVersion: 1,

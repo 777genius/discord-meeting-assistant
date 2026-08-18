@@ -22,6 +22,23 @@ function isPresent<T>(value: T | null): value is T {
   return value !== null;
 }
 
+export async function abortableDiscordOperation<T>(
+  signal: AbortSignal | undefined,
+  operation: () => Promise<T>,
+): Promise<T> {
+  signal?.throwIfAborted();
+  if (signal === undefined) {
+    return operation();
+  }
+  return new Promise<T>((resolve, reject) => {
+    const aborted = (): void => reject(signal.reason);
+    signal.addEventListener("abort", aborted, { once: true });
+    void operation().then(resolve, reject).finally(() => {
+      signal.removeEventListener("abort", aborted);
+    });
+  });
+}
+
 /**
  * discord.js computes a private thread's base permissions from its parent but
  * does not prove that a non-manager is still a member of that thread. Fetching
@@ -30,7 +47,9 @@ function isPresent<T>(value: T | null): value is T {
 export async function freshDiscordContainerPermissions(
   channel: GuildBasedChannel,
   member: GuildMember,
+  signal?: AbortSignal,
 ): Promise<Readonly<PermissionsBitField> | null> {
+  signal?.throwIfAborted();
   const permissions = channel.permissionsFor(member);
   if (
     !permissions.has(PermissionFlagsBits.ViewChannel) ||
@@ -43,12 +62,14 @@ export async function freshDiscordContainerPermissions(
     !permissions.has(PermissionFlagsBits.ManageThreads)
   ) {
     try {
-      await channel.members.fetch({
+      await abortableDiscordOperation(signal, () => channel.members.fetch({
         cache: false,
         force: true,
         member: member.id,
-      });
+      }));
+      signal?.throwIfAborted();
     } catch {
+      signal?.throwIfAborted();
       return null;
     }
   }
