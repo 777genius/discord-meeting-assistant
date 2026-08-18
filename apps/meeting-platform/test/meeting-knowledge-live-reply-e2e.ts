@@ -240,6 +240,7 @@ export async function qualifyLiveProjectionReply(input: {
     });
     await expect(reconciliation.reconcileUnknown(100)).resolves.toEqual({
       absentUnconfirmed: 0,
+      containedDuplicates: 0,
       delivered: 1,
     });
     await waitForQuestionEffect(input.pool, questionId, input.signal);

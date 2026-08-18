@@ -51,6 +51,7 @@ export interface AnswerEffectRecord {
   readonly authorizationDigest: string;
   readonly bindingHash: string;
   readonly claimGeneration: number;
+  readonly containmentReceipts: readonly string[];
   readonly deliveryContainerId: string;
   readonly effectId: string;
   readonly externalReceipt: string | null;

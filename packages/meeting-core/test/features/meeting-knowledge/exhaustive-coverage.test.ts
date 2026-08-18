@@ -38,6 +38,18 @@ const blockPolicy = {
   version: "meeting-knowledge.block-policy.v1",
 } as const;
 
+const qualifiedTwoHourProfile = {
+  minimumDurationMs: 7_200_000,
+  minimumHumanTurnCount: 400,
+  qualification: {
+    evidenceSha256: "a".repeat(64),
+    releaseRevision: "b".repeat(40),
+    rolloutEpoch: "test",
+    schemaVersion: 1,
+  },
+  version: "meeting-knowledge.two-hour-historical-retrieval.v1",
+} as const;
+
 function makeMeeting(meetingId: string, transcriptVersion = 1): AcceptedFinalMeetingV1 {
   const binding = createHistoricalReleaseBinding({
     acceptedMeetingRevision: transcriptVersion + 2,
@@ -365,7 +377,7 @@ function useCase(input: {
       input.processingRelease ?? "meeting-knowledge.test-coverage.r2",
     reduceFanIn: 2,
     version: "meeting-knowledge.exhaustive-coverage.v1",
-  });
+  }, qualifiedTwoHourProfile);
 }
 
 function largeCoverage(
@@ -405,7 +417,7 @@ function largeCoverage(
     processingRelease: "meeting-knowledge.test-coverage.r2",
     reduceFanIn: 2,
     version: "meeting-knowledge.exhaustive-coverage.v1",
-  });
+  }, qualifiedTwoHourProfile);
 }
 
 const request = {

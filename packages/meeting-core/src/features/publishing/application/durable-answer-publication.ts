@@ -125,10 +125,12 @@ export class DurableAnswerPublication {
 
   public async reconcileUnknown(limit: number): Promise<{
     readonly absentUnconfirmed: number;
+    readonly containedDuplicates: number;
     readonly delivered: number;
   }> {
     const records = await this.store.listOutcomeUnknown(limit);
     let absentUnconfirmed = 0;
+    let containedDuplicates = 0;
     let delivered = 0;
     for (const record of records) {
       const inspected = await this.delivery.inspect({
@@ -145,6 +147,13 @@ export class DurableAnswerPublication {
         })) {
           delivered += 1;
         }
+      } else if (inspected.status === "duplicate") {
+        if (await this.store.containDuplicateReceipts({
+          effectId: record.effectId,
+          externalReceipts: inspected.externalReceipts,
+        })) {
+          containedDuplicates += 1;
+        }
       } else if (
         inspected.status === "unconfirmed"
         && await this.store.markAbsentUnconfirmed(record.effectId)
@@ -152,7 +161,7 @@ export class DurableAnswerPublication {
         absentUnconfirmed += 1;
       }
     }
-    return { absentUnconfirmed, delivered };
+    return { absentUnconfirmed, containedDuplicates, delivered };
   }
 
   public async reconcileRetractions(limit: number): Promise<{
@@ -163,6 +172,7 @@ export class DurableAnswerPublication {
     let retracted = 0;
     for (const record of records) {
       let externalReceipt = record.externalReceipt;
+      let externalReceipts = record.containmentReceipts;
       if (externalReceipt === null) {
         const inspected = await this.delivery.inspect({
           deliveryContainerId: record.deliveryContainerId,
@@ -171,23 +181,39 @@ export class DurableAnswerPublication {
           projectionTargetContainerId: record.projectionTargetContainerId,
           replyToRemoteMessageId: record.replyToRemoteMessageId,
         });
-        if (inspected.status !== "found") {
+        if (inspected.status === "duplicate") {
+          if (!await this.store.containDuplicateReceipts({
+            effectId: record.effectId,
+            externalReceipts: inspected.externalReceipts,
+          })) {
+            continue;
+          }
+          externalReceipts = inspected.externalReceipts;
+          externalReceipt = externalReceipts[0] ?? null;
+        } else if (inspected.status !== "found") {
           continue;
-        }
-        externalReceipt = inspected.externalReceipt;
-        if (!await this.store.recordRetractionReceipt({
-          effectId: record.effectId,
-          externalReceipt,
-        })) {
-          continue;
+        } else {
+          externalReceipt = inspected.externalReceipt;
+          if (!await this.store.recordRetractionReceipt({
+            effectId: record.effectId,
+            externalReceipt,
+          })) {
+            continue;
+          }
         }
       }
+      if (externalReceipt === null) {
+        continue;
+      }
+      const receipts = externalReceipts.length === 0 ? [externalReceipt] : externalReceipts;
       try {
-        await this.delivery.remove({
-          deliveryContainerId: record.deliveryContainerId,
-          effectId: record.effectId,
-          externalReceipt,
-        });
+        for (const receipt of receipts) {
+          await this.delivery.remove({
+            deliveryContainerId: record.deliveryContainerId,
+            effectId: record.effectId,
+            externalReceipt: receipt,
+          });
+        }
       } catch {
         continue;
       }

@@ -85,6 +85,10 @@ export interface AnswerEffectStore {
   markOutcomeUnknown(effectId: string): Promise<boolean>;
   listOutcomeUnknown(limit: number): Promise<readonly AnswerEffectRecord[]>;
   markAbsentUnconfirmed(effectId: string): Promise<boolean>;
+  containDuplicateReceipts(input: {
+    readonly effectId: string;
+    readonly externalReceipts: readonly string[];
+  }): Promise<boolean>;
   cancelBeforeRequest(effectId: string): Promise<boolean>;
   listRetractionPending(limit: number): Promise<readonly AnswerEffectRecord[]>;
   recordRetractionReceipt(input: {

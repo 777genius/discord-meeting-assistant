@@ -29,11 +29,13 @@ describe("Meeting Knowledge final reply runtime lifecycle", () => {
     const jobs = new MaintenanceFake();
     const publication = {
       reconcileRetractions: vi.fn(async () => ({ pending: 0, retracted: 1 })),
-      reconcileUnknown: vi.fn(async () => ({ absentUnconfirmed: 0, delivered: 1 })),
+      reconcileUnknown: vi.fn(async () => ({ absentUnconfirmed: 0, containedDuplicates: 1, delivered: 1 })),
     };
+    const reportDuplicateContainment = vi.fn();
     const runtime = createMeetingKnowledgePollingRuntime({
       maintenance: new MaintainFinalReplies(jobs, false),
       publication,
+      reportDuplicateContainment,
       reportError: vi.fn(),
     });
 
@@ -43,6 +45,7 @@ describe("Meeting Knowledge final reply runtime lifecycle", () => {
     expect(jobs.calls).toEqual([{ maximumJobs: 100, servingEnabled: false }]);
     expect(publication.reconcileUnknown).toHaveBeenCalledOnce();
     expect(publication.reconcileRetractions).toHaveBeenCalledOnce();
+    expect(reportDuplicateContainment).toHaveBeenCalledWith(1);
 
     await runtime.close();
     await vi.advanceTimersByTimeAsync(60_000);
@@ -80,7 +83,7 @@ describe("Meeting Knowledge final reply runtime lifecycle", () => {
       processor,
       publication: {
         reconcileRetractions: async () => ({ pending: 0, retracted: 0 }),
-        reconcileUnknown: async () => ({ absentUnconfirmed: 0, delivered: 0 }),
+        reconcileUnknown: async () => ({ absentUnconfirmed: 0, containedDuplicates: 0, delivered: 0 }),
       },
       reportError: vi.fn(),
     });

@@ -4,20 +4,14 @@ import {
 } from "../domain/grounding-mode.js";
 import {
   DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
-  admitsHistoricalRetrieval,
   type HistoricalReleaseBindingV1,
   type TwoHourHistoricalRetrievalProfileV1,
 } from "../domain/historical-evidence.js";
-import {
-  buildHistoricalIndexPlan,
-  HistoricalIndexPlanError,
-  rehydrateHistoricalBlock,
-} from "./historical-index-plan.js";
+import { HistoricalIndexPlanError } from "./historical-index-plan.js";
 import {
   DEFAULT_EXHAUSTIVE_COVERAGE_POLICY,
   assertExhaustiveCoveragePolicy,
   boundedCoverageIdentity,
-  compareOpaque,
   sameAuthorization,
   sameBindings,
   selectedTurnIdentity,
@@ -30,6 +24,7 @@ import {
   type LoadedCoveragePlan,
 } from "./exhaustive-coverage-contract.js";
 import { extractEveryCoverageBlock } from "./exhaustive-coverage-extraction.js";
+import { loadExhaustiveCoveragePlan } from "./exhaustive-coverage-plan-loader.js";
 import { CoverageSelectionLimitExceededError } from "./deterministic-coverage-extraction.js";
 import type {
   CoverageExtractV1,
@@ -40,7 +35,6 @@ import type {
   HistoricalAuthorizationPort,
 } from "./ports/historical-grounding.js";
 import type {
-  HistoricalIndexPlanV1,
   HistoricalOpaqueIdPort,
   LocallyRehydratedEvidenceBlockV1,
 } from "./ports/historical-memory.js";
@@ -318,76 +312,12 @@ export class ExhaustiveCoverage {
     bindings: readonly HistoricalReleaseBindingV1[],
     signal?: AbortSignal,
   ): Promise<LoadedCoveragePlan | null> {
-    if (new Set(bindings.map(({ releaseId }) => releaseId)).size !== bindings.length) {
-      return null;
-    }
-    const ordered = bindings.toSorted((left, right) =>
-      compareOpaque(left.meetingId, right.meetingId) ||
-      left.transcriptVersion - right.transcriptVersion ||
-      compareOpaque(left.releaseId, right.releaseId)
-    );
-    const indexPlans: HistoricalIndexPlanV1[] = [];
-    const blocks: LocallyRehydratedEvidenceBlockV1[] = [];
-    for (const binding of ordered) {
-      signal?.throwIfAborted();
-      const meeting = await this.dependencies.authority.loadAcceptedFinalMeeting(
-        binding,
-        signal === undefined ? {} : { signal },
-      );
-      if (
-        meeting === null ||
-        !admitsHistoricalRetrieval(meeting, this.#twoHourProfile)
-      ) {
-        return null;
-      }
-      const plan = buildHistoricalIndexPlan(
-        meeting,
-        this.dependencies.ids,
-        this.#policy.blockPolicy,
-      );
-      if (!await this.dependencies.sync.isCurrentGeneration(
-        binding,
-        plan.topology.indexGeneration,
-        signal === undefined ? {} : { signal },
-      )) {
-        return null;
-      }
-      indexPlans.push(plan);
-      for (const document of plan.documents) {
-        blocks.push(rehydrateHistoricalBlock(
-          meeting,
-          plan,
-          document.manifest.ordinal,
-          this.dependencies.ids,
-          this.#policy.blockPolicy,
-        ));
-        if (blocks.length > this.#policy.maximumBlocks) {
-          throw new HistoricalIndexPlanError(
-            "BLOCK_LIMIT_EXCEEDED",
-            "authorized room exceeds the exhaustive block bound",
-          );
-        }
-      }
-    }
-    if (
-      new Set(blocks.map(({ candidateLocator }) => candidateLocator)).size !==
-        blocks.length
-    ) {
-      return null;
-    }
-    return Object.freeze({
-      blocks: Object.freeze(blocks),
-      digest: `mkcoverageplan1.${this.dependencies.ids.keyedId(
-        "coverage-plan",
-        [
-          this.#policy.processingRelease,
-          this.#policy.version,
-          this.dependencies.extractor.profile,
-          this.dependencies.reducer.profile,
-          ...indexPlans.map(({ planDigest }) => planDigest),
-        ],
-      )}`,
-      indexPlans: Object.freeze(indexPlans),
+    return loadExhaustiveCoveragePlan({
+      bindings,
+      dependencies: this.dependencies,
+      policy: this.#policy,
+      ...(signal === undefined ? {} : { signal }),
+      twoHourProfile: this.#twoHourProfile,
     });
   }
 

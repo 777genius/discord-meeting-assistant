@@ -8,6 +8,7 @@ interface AnswerRetractionRow {
   readonly authorization_digest: string;
   readonly binding_hash: string;
   readonly claim_generation: number;
+  readonly containment_receipts: readonly string[];
   readonly delivery_container_id: string;
   readonly effect_id: string;
   readonly external_receipt: string | null;
@@ -32,7 +33,8 @@ export async function listAnswerRetractions(
             delivery_container_id, reply_to_remote_message_id, marker,
             payload_bytes, payload_hash, binding_hash, authorization_digest,
             source_meeting_ids,
-            claim_generation::float8 AS claim_generation, external_receipt
+            claim_generation::float8 AS claim_generation, external_receipt,
+            containment_receipts
      FROM meeting_core.answer_effects
      WHERE state = 'retraction_pending'
      ORDER BY updated_at, effect_id
@@ -43,6 +45,7 @@ export async function listAnswerRetractions(
     authorizationDigest: row.authorization_digest,
     bindingHash: row.binding_hash,
     claimGeneration: row.claim_generation,
+    containmentReceipts: Object.freeze([...row.containment_receipts]),
     deliveryContainerId: row.delivery_container_id,
     effectId: row.effect_id,
     externalReceipt: row.external_receipt,
@@ -78,6 +81,7 @@ export async function markAnswerRetracted(
   const result = await pool.query(
     `UPDATE meeting_core.answer_effects
      SET state = 'retracted', payload_bytes = '{}',
+         containment_receipts = ARRAY[]::text[],
          retracted_at = COALESCE(retracted_at, transaction_timestamp()),
          settled_at = COALESCE(settled_at, transaction_timestamp()),
          updated_at = transaction_timestamp()

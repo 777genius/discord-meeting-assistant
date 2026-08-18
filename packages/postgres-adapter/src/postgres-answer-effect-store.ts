@@ -28,6 +28,7 @@ interface AnswerEffectRow {
   readonly authorization_digest: string;
   readonly binding_hash: string;
   readonly claim_generation: number;
+  readonly containment_receipts: readonly string[];
   readonly delivery_container_id: string | null;
   readonly effect_id: string;
   readonly external_receipt: string | null;
@@ -48,6 +49,7 @@ function toRecord(row: AnswerEffectRow): AnswerEffectRecord {
     authorizationDigest: row.authorization_digest,
     bindingHash: row.binding_hash,
     claimGeneration: row.claim_generation,
+    containmentReceipts: Object.freeze([...row.containment_receipts]),
     deliveryContainerId: row.delivery_container_id,
     effectId: row.effect_id,
     externalReceipt: row.external_receipt,
@@ -269,7 +271,8 @@ export class PostgresAnswerEffectStore implements AnswerEffectStore {
                delivery_container_id,
                reply_to_remote_message_id, marker, payload_bytes, payload_hash,
                binding_hash, authorization_digest, source_meeting_ids,
-               claim_generation::float8 AS claim_generation, external_receipt
+               claim_generation::float8 AS claim_generation, external_receipt,
+               containment_receipts
         FROM meeting_core.answer_effects
         WHERE state = 'outcome_unknown'
            OR (
@@ -296,6 +299,43 @@ export class PostgresAnswerEffectStore implements AnswerEffectStore {
           AND state IN ('outcome_unknown', 'absent_unconfirmed')
       `,
       [effectId],
+    );
+    return result.rowCount === 1;
+  }
+
+  public async containDuplicateReceipts(input: {
+    readonly effectId: string;
+    readonly externalReceipts: readonly string[];
+  }): Promise<boolean> {
+    const receipts = [...new Set(input.externalReceipts)];
+    if (
+      receipts.length !== input.externalReceipts.length ||
+      receipts.length < 2 ||
+      receipts.length > 1_000 ||
+      receipts.some((receipt) => receipt.length === 0 || receipt.length > 512)
+    ) {
+      throw new RangeError("duplicate answer receipts must contain 2 to 1000 unique values");
+    }
+    const result = await this.pool.query(
+      `
+        UPDATE meeting_core.answer_effects
+        SET state = 'retraction_pending',
+            external_receipt = $3,
+            containment_receipts = $2::text[],
+            payload_bytes = '{}',
+            retraction_requested_at = COALESCE(
+              retraction_requested_at, transaction_timestamp()
+            ),
+            updated_at = transaction_timestamp()
+        WHERE effect_id = $1
+          AND (
+            state IN ('outcome_unknown', 'absent_unconfirmed') OR
+            state = 'retraction_pending'
+              AND (cardinality(containment_receipts) = 0 OR containment_receipts = $2::text[])
+          )
+          AND (external_receipt IS NULL OR external_receipt = $3)
+      `,
+      [input.effectId, receipts, receipts[0]],
     );
     return result.rowCount === 1;
   }
@@ -344,7 +384,8 @@ export class PostgresAnswerEffectStore implements AnswerEffectStore {
                delivery_container_id,
                reply_to_remote_message_id, marker, payload_bytes, payload_hash,
                binding_hash, authorization_digest, source_meeting_ids,
-               claim_generation::float8 AS claim_generation, external_receipt
+               claim_generation::float8 AS claim_generation, external_receipt,
+               containment_receipts
         FROM meeting_core.answer_effects
         WHERE effect_id = $1
       `,

@@ -31,6 +31,8 @@ describe("question scope admission", () => {
     "Были решения?",
     "Есть ли задачи?",
     "Подведи итог всей встречи",
+    "How often was Project Cedar mentioned?",
+    "Как часто упоминался проект Кедр?",
     "Какие решения приняли?",
   ])("requires exhaustive coverage for %s", (question) => {
     expect(requiresExhaustiveCoverage(question)).toBe(true);
@@ -51,6 +53,7 @@ describe("question scope admission", () => {
     "Did Alex say the launch was not delayed?",
     "Were there two days between the dates?",
     "Был ли понедельник исправленной датой?",
+    "How often must Valley access be reviewed?",
   ])("keeps ordinary current facts on focused retrieval for %s", (question) => {
     expect(requiresExhaustiveCoverage(question)).toBe(false);
   });

@@ -427,6 +427,62 @@ describe("PostgreSQL answer cancellation and retraction", () => {
     ]);
   });
 });
+  it("scrubs a request-started payload on direct question cancellation", async (context) => {
+    const database = databaseOrSkip(context);
+    const fixture = await insertMaintenanceFixture(
+      database,
+      "direct-cancel-started",
+      "request_started",
+      false,
+    );
+
+    await new PostgresQuestionJobStore(database, questionPolicy)
+      .cancelQuestion(fixture.questionId);
+
+    await expect(database.query(
+      `SELECT state, payload_bytes
+       FROM meeting_core.answer_effects
+       WHERE effect_id = $1`,
+      [fixture.effectId],
+    )).resolves.toMatchObject({
+      rows: [{ payload_bytes: "{}", state: "retraction_pending" }],
+    });
+  });
+
+  it("durably contains every bounded duplicate receipt before retraction", async (context) => {
+    const database = databaseOrSkip(context);
+    const fixture = await insertMaintenanceFixture(
+      database,
+      "duplicate-containment",
+      "outcome_unknown",
+      false,
+    );
+    const effects = new PostgresAnswerEffectStore(database, questionPolicy);
+    const receipts = ["duplicate-receipt-1", "duplicate-receipt-2"];
+
+    await expect(effects.containDuplicateReceipts({
+      effectId: fixture.effectId,
+      externalReceipts: receipts,
+    })).resolves.toBe(true);
+    await expect(database.query(
+      `SELECT state, external_receipt, containment_receipts, payload_bytes
+       FROM meeting_core.answer_effects
+       WHERE effect_id = $1`,
+      [fixture.effectId],
+    )).resolves.toMatchObject({
+      rows: [{
+        containment_receipts: receipts,
+        external_receipt: receipts[0],
+        payload_bytes: "{}",
+        state: "retraction_pending",
+      }],
+    });
+    await expect(effects.containDuplicateReceipts({
+      effectId: fixture.effectId,
+      externalReceipts: ["duplicate-receipt-1", "duplicate-receipt-1"],
+    })).rejects.toThrow("2 to 1000 unique");
+  });
+
 
 describe("PostgreSQL withdrawal fencing", () => {
 

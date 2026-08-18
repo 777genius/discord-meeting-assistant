@@ -150,10 +150,17 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
       classifyPlatformError(error),
     );
   };
+  const reportDuplicateContainment = (count: number): void => {
+    input.logger.warn(
+      "Meeting Knowledge contained duplicate answer receipts",
+      { containedEffects: count },
+    );
+  };
   if (!servingEnabled) {
     return createMeetingKnowledgePollingRuntime({
       maintenance,
       publication,
+      reportDuplicateContainment,
       reportError,
     });
   }
@@ -253,6 +260,7 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
     maintenance,
     processor,
     publication,
+    reportDuplicateContainment,
     reportError,
   });
 }
@@ -298,6 +306,7 @@ export function createMeetingKnowledgePollingRuntime(input: {
     DurableAnswerPublication,
     "reconcileRetractions" | "reconcileUnknown"
   >;
+  readonly reportDuplicateContainment?: (count: number) => void;
   readonly reportError: (error: unknown) => void;
 }): MeetingKnowledgeLocalFinalReplyRuntime {
   let processing: Promise<unknown> | undefined;
@@ -314,6 +323,12 @@ export function createMeetingKnowledgePollingRuntime(input: {
   };
   const reconcile = (): void => {
     reconciling ??= input.publication.reconcileUnknown(100)
+      .then((result) => {
+        if (result.containedDuplicates > 0) {
+          input.reportDuplicateContainment?.(result.containedDuplicates);
+        }
+        return result;
+      })
       .then(async () => await input.publication.reconcileRetractions(100))
       .catch(input.reportError)
       .finally(() => {

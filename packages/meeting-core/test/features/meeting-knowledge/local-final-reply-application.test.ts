@@ -26,7 +26,7 @@ import {
   MemoryFake,
   references,
   selectedTurns,
-} from "./local-final-reply-application-fixtures.test.js";
+} from "./local-final-reply-application-fixtures.js";
 
 const policy: LocalFinalReplyPolicy = {
   admission: {

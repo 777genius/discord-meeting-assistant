@@ -46,6 +46,7 @@ export const meetingKnowledgeRequiredColumns = [
   "meeting_core.answer_effects.source_meeting_ids",
   "meeting_core.answer_effects.retraction_requested_at",
   "meeting_core.answer_effects.retracted_at",
+  "meeting_core.answer_effects.containment_receipts",
   "meeting_core.conversation_one_shot_receipts.receipt_id",
   "meeting_core.conversation_one_shot_receipts.cue_kind",
   "meeting_core.conversation_one_shot_receipts.state",
@@ -149,6 +150,8 @@ export const meetingKnowledgeRequiredCheckConstraints = [
   ["meeting_core", "answer_effects", "answer_effects_actionable_delivery_is_known"],
   ["meeting_core", "answer_effects", "answer_effects_source_meetings_are_bounded"],
   ["meeting_core", "answer_effects", "answer_effects_retraction_state_is_consistent"],
+  ["meeting_core", "answer_effects", "answer_effects_containment_receipts_are_bounded"],
+  ["meeting_core", "answer_effects", "answer_effects_containment_state_is_consistent"],
   [
     "meeting_core",
     "conversation_one_shot_receipts",

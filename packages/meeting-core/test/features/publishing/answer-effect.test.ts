@@ -46,6 +46,7 @@ class StoreFake implements AnswerEffectStore {
     this.record = {
       ...input,
       claimGeneration: 0,
+      containmentReceipts: [],
       externalReceipt: null,
       state: "reserved",
     };
@@ -118,6 +119,23 @@ class StoreFake implements AnswerEffectStore {
         ? [this.record] : [],
     );
   }
+  containDuplicateReceipts(input: {
+    readonly effectId: string;
+    readonly externalReceipts: readonly string[];
+  }) {
+    if (this.record?.effectId !== input.effectId || input.externalReceipts.length < 2) {
+      return Promise.resolve(false);
+    }
+    this.record = {
+      ...this.record,
+      containmentReceipts: [...input.externalReceipts],
+      externalReceipt: input.externalReceipts[0] ?? null,
+      payloadBytes: "{}",
+      state: "retraction_pending",
+    };
+    return Promise.resolve(true);
+  }
+
 
   markAbsentUnconfirmed(effectId: string) {
     if (
@@ -168,7 +186,7 @@ class StoreFake implements AnswerEffectStore {
     ) {
       return Promise.resolve(false);
     }
-    this.record = { ...this.record, payloadBytes: "{}", state: "retracted" };
+    this.record = { ...this.record, containmentReceipts: [], payloadBytes: "{}", state: "retracted" };
     return Promise.resolve(true);
   }
 }
@@ -350,6 +368,7 @@ describe("Publishing answer effects", () => {
     });
     await expect(publisher.reconcileUnknown(10)).resolves.toEqual({
       absentUnconfirmed: 1,
+      containedDuplicates: 0,
       delivered: 0,
     });
     expect(store.record?.state).toBe("absent_unconfirmed");
@@ -360,6 +379,7 @@ describe("Publishing answer effects", () => {
     };
     await expect(publisher.reconcileUnknown(10)).resolves.toEqual({
       absentUnconfirmed: 0,
+      containedDuplicates: 0,
       delivered: 1,
     });
     expect(store.record).toMatchObject({
@@ -395,9 +415,20 @@ describe("Duplicate answer-effect reconciliation", () => {
 
     await expect(publisher.reconcileUnknown(10)).resolves.toEqual({
       absentUnconfirmed: 0,
+      containedDuplicates: 1,
       delivered: 0,
     });
-    expect(store.record?.state).toBe("outcome_unknown");
+    expect(store.record).toMatchObject({
+      containmentReceipts: ["answer-message-1", "answer-message-2"],
+      payloadBytes: "{}",
+      state: "retraction_pending",
+    });
+    await expect(publisher.reconcileRetractions(10)).resolves.toEqual({
+      pending: 0,
+      retracted: 1,
+    });
+    expect(delivery.removeInputs.map(({ externalReceipt }) => externalReceipt))
+      .toEqual(["answer-message-1", "answer-message-2"]);
   });
 });
 
@@ -428,6 +459,7 @@ describe("Publishing answer effect recovery", () => {
     await store.markOutcomeUnknown(reservation.effectId);
     await expect(publisher.reconcileUnknown(10)).resolves.toEqual({
       absentUnconfirmed: 1,
+      containedDuplicates: 0,
       delivered: 0,
     });
     expect(store.record?.state).toBe("absent_unconfirmed");
@@ -490,6 +522,7 @@ describe("Publishing answer effect recovery", () => {
     };
     await expect(publisher.reconcileUnknown(10)).resolves.toEqual({
       absentUnconfirmed: 0,
+      containedDuplicates: 0,
       delivered: 1,
     });
     expect(store.record?.externalReceipt).toBe("answer-message-reconciled");

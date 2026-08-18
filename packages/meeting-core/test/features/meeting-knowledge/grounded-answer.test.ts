@@ -181,6 +181,8 @@ describe("grounded Meeting Knowledge answers", () => {
     "There were no other release decisions.",
     "Два решения по релизу были приняты.",
     "Всего 2 решения по релизу.",
+    "It was mentioned three times.",
+    "Проект был упомянут три раза.",
   ])("rejects exhaustive provider semantics from focused evidence: %s", (text) => {
     expect(() => GroundedAnswer.create({
       candidate: {
@@ -198,6 +200,7 @@ describe("grounded Meeting Knowledge answers", () => {
   it.each([
     "Alex proposed two days for review.",
     "Monday was the only corrected date Alex stated.",
+    "The parser was three times faster.",
   ])("keeps local provider semantics valid with focused evidence: %s", (text) => {
     expect(GroundedAnswer.create({
       candidate: {

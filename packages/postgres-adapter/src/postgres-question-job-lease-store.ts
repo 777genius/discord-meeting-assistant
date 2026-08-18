@@ -3,7 +3,7 @@ import type {
   QuestionJobState,
   QuestionJobStore,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
-import type { Pool, PoolClient } from "pg";
+import type { Pool } from "pg";
 
 import {
   decodeGroundedAnswerCandidate,
@@ -11,7 +11,6 @@ import {
   decodeQuestionBinding,
 } from "./postgres-meeting-knowledge-codecs.js";
 import {
-  currentQuestionPolicySql,
   PostgresQuestionPolicyTransaction,
   questionPolicyParameters,
 } from "./postgres-question-policy-transaction.js";
@@ -80,7 +79,6 @@ export class PostgresQuestionJobLeaseStore {
     const leaseSeconds = requireLeaseSeconds(input.leaseSeconds);
     requireMaximumProviderAttempts(input.maximumProviderAttempts);
     return this.policyTransaction.execute(null, async (client) => {
-      await this.expireJobs(client);
       await this.providerAttempts.failAbandoned(client);
       const result = await client.query<QuestionJobRow>(
         `
@@ -128,34 +126,4 @@ export class PostgresQuestionJobLeaseStore {
     });
   }
 
-  private async expireJobs(client: PoolClient): Promise<void> {
-    await client.query(
-      `
-        UPDATE meeting_knowledge.question_jobs AS job
-        SET state = 'terminal',
-            outcome = CASE WHEN EXISTS (
-              SELECT 1
-              FROM meeting_core.answer_effects AS effect
-              WHERE effect.effect_id = 'meeting-knowledge-answer:v1:' || job.question_id
-                AND effect.state IN (
-                  'request_started', 'delivered', 'outcome_unknown', 'absent_unconfirmed'
-                )
-            ) THEN 'delivery_unknown' ELSE 'expired' END,
-            authorization_principal_ref = NULL,
-            question_text = NULL,
-            binding = NULL,
-            grounding_plan = NULL,
-            answer_candidate = NULL,
-            lease_owner = NULL,
-            lease_until = NULL,
-            terminal_at = transaction_timestamp(),
-            scrubbed_at = transaction_timestamp(),
-            updated_at = transaction_timestamp()
-        WHERE job.state <> 'terminal'
-          AND job.expires_at <= transaction_timestamp()
-          AND ${currentQuestionPolicySql(1)}
-      `,
-      [...questionPolicyParameters(this.policyTransaction.identity)],
-    );
-  }
 }

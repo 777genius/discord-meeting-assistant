@@ -13,7 +13,7 @@ const countWords =
 
 const aggregateExistenceQuestionPatterns = [
   new RegExp(
-    String.raw`\b(?:is|are|was|were)\s+there\s+(?:any\s+)?${aggregateNouns}\b`,
+    String.raw`\b(?:is|are|was|were)\s+there\s+(?:(?:any|no)\s+)?${aggregateNouns}\b`,
     "iu",
   ),
   new RegExp(
@@ -27,6 +27,9 @@ const exhaustivePatterns = [
   new RegExp(String.raw`\b(?:how\s+many|number\s+of|total(?:\s+number\s+of)?|count(?:\s+of)?)\s+${aggregateNouns}\b`, "iu"),
   new RegExp(String.raw`(?:^|[?!;.])\s*(?:total|count)\s+${aggregateNouns}\b`, "iu"),
   new RegExp(String.raw`(?:^|\s)(?:сколько|посчитай|подсчитай|общее\s+количество|итого)\s+${aggregateNouns}(?:\s|$)`, "iu"),
+  /\bhow\s+often\b[^?]{0,4096}\b(?:mention(?:ed)?|discuss(?:ed)?|rais(?:e|ed)|cover(?:ed)?|address(?:ed)?)\b/iu,
+  /(?:^|\s)как\s+часто(?=\s|$)[^?]{0,4096}(?:упомин\S*|обсужд\S*|поднимал\S*|затрагивал\S*)/iu,
+  /(?:^|\s)сколько\s+раз(?=\s|$)[^?]{0,4096}(?:упомин\S*|обсужд\S*|поднимал\S*|затрагивал\S*)/iu,
   /^(?:was|were|is|are)\b[^?]{0,4096}\b(?:mentioned|discussed|raised|covered|addressed|recorded|present|approved)\b/iu,
   /^(?:do|does|did|has|have|had)\b[^?]{0,4096}\b(?:mention|discuss|raise|cover|address|record|approve)\b/iu,
   /\b(?:all|every|each|entire|exhaustive|complete\s+list|overall\s+history|whole\s+(?:meeting|history)|across\s+(?:the\s+)?meetings?)\b/iu,
@@ -50,6 +53,8 @@ const absenceQuestionPatterns = [
 
 const exhaustiveClaimPatterns = [
   new RegExp(String.raw`(?:^|[.!?;]\s*)${countWords}\s+${boundedClaimAggregateNoun}(?=\s|[.,!?;:]|$)`, "iu"),
+  new RegExp(String.raw`\b(?:mentioned|discussed|raised|covered|addressed)\s+${countWords}\s+times?\b`, "iu"),
+  new RegExp(String.raw`(?:упомянут\S*|обсужден\S*|поднят\S*|затронут\S*)\s+${countWords}\s+раз(?:а)?(?=\s|[.,!?;:]|$)`, "iu"),
   new RegExp(String.raw`\b(?:the\s+)?only\s+${boundedClaimAggregateNoun}(?=\s|[.,!?;:]|$)`, "iu"),
   new RegExp(String.raw`\bno\s+(?:other\s+)?${boundedClaimAggregateNoun}(?=\s|[.,!?;:]|$)`, "iu"),
   /\b(?:all|every|entire|exhaustive|complete\s+(?:authorized\s+)?corpus|overall|in\s+total)\b/iu,
