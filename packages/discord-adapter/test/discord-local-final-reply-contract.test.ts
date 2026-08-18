@@ -12,6 +12,9 @@ import {
 import { EventEmitter } from "node:events";
 import type { AnswerPublicationBinding } from "@discord-meeting/meeting-core/publishing";
 import { ChannelType, PermissionFlagsBits, type Client, type REST } from "discord.js";
+import {
+  BoundedDiscordAuthorizationQueue,
+} from "../src/discord-question-authorization.js";
 
 const botId = "11111111111111111";
 const containerId = "22222222222222222";
@@ -272,21 +275,46 @@ describe("Discord private-thread authorization", () => {
     });
     const fetchGuild = vi.fn(() => new Promise<never>(() => {}));
     const controller = new AbortController();
-    const pending = new DiscordHistoricalAuthorizationAdapter(
+    const adapter = new DiscordHistoricalAuthorizationAdapter(
       { guilds: { fetch: fetchGuild } } as unknown as Client,
       codec,
       () => 1_799_999_000_000,
-    ).authorize({
+    );
+    const pending = adapter.authorize({
       authorizationPrincipalRef: principal,
       roomId: "55555555555555555",
       scopeId: "66666666666666666",
       signal: controller.signal,
     });
-    await Promise.resolve();
+    await vi.waitFor(() => {
+      expect(fetchGuild).toHaveBeenCalledOnce();
+    });
     controller.abort("disconnected");
 
     await expect(pending).rejects.toBe("disconnected");
     expect(fetchGuild).toHaveBeenCalledOnce();
+
+    const queuedController = new AbortController();
+    const queued = adapter.authorize({
+      authorizationPrincipalRef: principal,
+      roomId: "55555555555555555",
+      scopeId: "66666666666666666",
+      signal: queuedController.signal,
+    });
+    await Promise.resolve();
+    queuedController.abort("superseded");
+    await expect(queued).rejects.toBe("superseded");
+    expect(fetchGuild).toHaveBeenCalledOnce();
+  });
+
+  it("releases the bounded slot when a manager throws synchronously", async () => {
+    const operations = new BoundedDiscordAuthorizationQueue();
+
+    await expect(operations.execute(undefined, () => {
+      throw new Error("synchronous manager failure");
+    })).rejects.toThrow("synchronous manager failure");
+    await expect(operations.execute(undefined, async () => "recovered"))
+      .resolves.toBe("recovered");
   });
 });
 

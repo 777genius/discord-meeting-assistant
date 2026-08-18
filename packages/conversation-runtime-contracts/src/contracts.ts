@@ -121,6 +121,20 @@ const audioEndEventSchema = runtimeEventEnvelopeSchema
   .extend({ type: z.literal("audio-end") })
   .strict();
 
+const ttsAttestationEventSchema = runtimeEventEnvelopeSchema
+  .extend({
+    type: z.literal("tts-attestation"),
+    deployment: identifierSchema,
+    keyId: z.string().regex(/^[a-f\d]{64}$/u),
+    model: identifierSchema,
+    provider: identifierSchema,
+    signature: z.string().regex(/^[a-f\d]{64}$/u),
+    sourceRevision: identifierSchema,
+    voice: identifierSchema,
+    voiceProfileId: identifierSchema,
+  })
+  .strict();
+
 const usageEventSchema = runtimeEventEnvelopeSchema
   .extend({
     type: z.literal("usage"),
@@ -174,6 +188,7 @@ const failedEventSchema = runtimeEventEnvelopeSchema
 
 export const conversationRuntimeEventSchema = z.discriminatedUnion("type", [
   acceptedEventSchema,
+  ttsAttestationEventSchema,
   textDeltaEventSchema,
   audioStartEventSchema,
   audioChunkEventSchema,

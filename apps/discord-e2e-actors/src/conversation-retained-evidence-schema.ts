@@ -176,10 +176,17 @@ const addressedAnswerObservationSchema = z.object({
 }).strict();
 
 const ttsDeploymentAttestationV1Schema = z.object({
+  attemptId: identifierSchema,
   deployment: identifierSchema,
+  keyId: sha256Schema,
   model: identifierSchema,
+  provider: identifierSchema,
   schemaVersion: z.literal(1),
+  signature: sha256Schema,
+  sourceRevision: identifierSchema,
+  turnId: identifierSchema,
   voice: identifierSchema,
+  voiceProfileId: identifierSchema,
 }).strict();
 
 const groundedKnowledgeAnswerObservationSchema = z.discriminatedUnion("status", [
@@ -194,7 +201,6 @@ const groundedKnowledgeAnswerObservationSchema = z.discriminatedUnion("status", 
     turnId: identifierSchema,
   }).strict(),
   z.object({
-    factualPcmAfterCancellation: z.literal("none"),
     observedAt: z.iso.datetime(),
     reason: z.enum([
       "barge-in",
@@ -208,6 +214,21 @@ const groundedKnowledgeAnswerObservationSchema = z.discriminatedUnion("status", 
     turnId: identifierSchema,
   }).strict(),
 ]);
+
+const groundedCancellationPcmProofSchema = z.object({
+  acceptedPacketCountAfterCancellation: z.literal(0),
+  attemptId: identifierSchema,
+  cancellationObservedAt: z.iso.datetime(),
+  fenceObservedAt: z.iso.datetime(),
+  recordingId: identifierSchema,
+  source: z.literal("craig-authoritative-playback-track"),
+  trackSha256: sha256Schema,
+  turnId: identifierSchema,
+}).strict().refine(
+  ({ cancellationObservedAt, fenceObservedAt }) =>
+    Date.parse(fenceObservedAt) >= Date.parse(cancellationObservedAt),
+  { message: "authoritative PCM fence cannot precede cancellation" },
+);
 
 const conversationPlaybackReceiptBaseSchema = z.object({
   observedAt: z.iso.datetime(),
@@ -267,6 +288,7 @@ const conversationPlaybackReceiptSchema = z.discriminatedUnion("status", [
 ]).superRefine(refinePlaybackProvenance);
 
 export const conversationLifecycleEvidenceSchema = z.object({
+  cancellationPcmProofs: z.array(groundedCancellationPcmProofSchema).default([]),
   events: z.array(z.discriminatedUnion("type", [
     addressedAnswerObservationSchema,
     greetingPlaybackObservationSchema,
@@ -274,8 +296,16 @@ export const conversationLifecycleEvidenceSchema = z.object({
   ])).min(4),
   groundedAnswers: z.array(groundedKnowledgeAnswerObservationSchema).default([]),
   playbackReceipts: z.array(conversationPlaybackReceiptSchema).default([]),
-}).strict().superRefine(({ groundedAnswers, playbackReceipts }, context) => {
+}).strict().superRefine(({ cancellationPcmProofs, groundedAnswers, playbackReceipts }, context) => {
   for (const cancellation of groundedAnswers.filter((answer) => answer.status === "cancelled")) {
+    if (!cancellationPcmProofs.some((proof) =>
+      proof.turnId === cancellation.turnId &&
+      proof.cancellationObservedAt === cancellation.observedAt)) {
+      context.addIssue({
+        code: "custom",
+        message: "Cancellation requires a matching authoritative Craig PCM fence",
+      });
+    }
     if (playbackReceipts.some((receipt) => receipt.turnId === cancellation.turnId &&
       Date.parse(receipt.observedAt) > Date.parse(cancellation.observedAt))) {
       context.addIssue({

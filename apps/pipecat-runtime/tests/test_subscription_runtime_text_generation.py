@@ -21,6 +21,7 @@ from pipecat_runtime.adapters.pipecat.runtime import PipecatConversationRuntime
 from pipecat_runtime.adapters.pipecat.text_generation import (
     StreamingSubscriptionRuntimeTextGenerationProcessor,
 )
+from pipecat_runtime.adapters.providers.profiles import TtsRuntimeIdentity
 from pipecat_runtime.adapters.subscription_runtime.generated import agent_runtime_pb2 as contract
 from pipecat_runtime.adapters.subscription_runtime.generated import agent_runtime_pb2_grpc
 from pipecat_runtime.adapters.subscription_runtime.text_generation import (
@@ -221,6 +222,10 @@ class _SubscriptionRuntimeFixtureProfile:
 
     profile_id: str
     text_generator: StreamingConversationTextGenerationPort
+
+    @property
+    def tts_identity(self) -> TtsRuntimeIdentity:
+        return TtsRuntimeIdentity(provider="fixture", model="fixture-tts-v1", voice="fixture")
 
     def create_processors(
         self,

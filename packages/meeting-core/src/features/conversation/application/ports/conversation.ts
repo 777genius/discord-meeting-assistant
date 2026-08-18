@@ -44,8 +44,27 @@ export interface ConversationAudioChunk {
   readonly turnId: string;
 }
 
+export interface ConversationTtsAttestation {
+  readonly attemptId: string;
+  readonly deployment: string;
+  readonly keyId: string;
+  readonly model: string;
+  readonly provider: string;
+  readonly schemaVersion: 1;
+  readonly signature: string;
+  readonly sourceRevision: string;
+  readonly turnId: string;
+  readonly voice: string;
+  readonly voiceProfileId: string;
+}
+
 export type ConversationRuntimeEvent =
   | { readonly attemptId: string; readonly type: "accepted" }
+  | {
+      readonly attemptId: string;
+      readonly attestation: ConversationTtsAttestation;
+      readonly type: "tts-attestation";
+    }
   | { readonly attemptId: string; readonly text: string; readonly type: "text-delta" }
   | {
       readonly attemptId: string;
@@ -195,6 +214,7 @@ export type ConversationPlaybackObservation =
       readonly preparedAssetSha256?: string;
       readonly thinkingCuePcmSha256?: string;
       readonly speechProvenance?: "literal_tts" | "model_tts";
+      readonly ttsAttestation?: ConversationTtsAttestation;
       readonly meetingId: string;
       readonly playbackAttemptId: string;
       readonly playbackKind: ConversationPlaybackKind;
@@ -206,6 +226,7 @@ export type ConversationPlaybackObservation =
       readonly preparedAssetSha256?: string;
       readonly thinkingCuePcmSha256?: string;
       readonly speechProvenance?: "literal_tts" | "model_tts";
+      readonly ttsAttestation?: ConversationTtsAttestation;
       readonly finishedAtMs: number;
       readonly meetingId: string;
       readonly playbackAttemptId: string;
@@ -217,6 +238,7 @@ export type ConversationPlaybackObservation =
       readonly preparedAssetSha256?: string;
       readonly thinkingCuePcmSha256?: string;
       readonly speechProvenance?: "literal_tts" | "model_tts";
+      readonly ttsAttestation?: ConversationTtsAttestation;
       readonly meetingId: string;
       readonly playbackAttemptId: string;
       readonly playbackKind: ConversationPlaybackKind;

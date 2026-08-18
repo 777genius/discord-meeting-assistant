@@ -20,6 +20,9 @@ import { ConversationGroundedAnswerExecutor } from
   "./conversation-grounded-answer-executor.js";
 import { observeConversationLatency, observeConversationPlaybackSettlement } from
   "./conversation-observability.js";
+import {
+  acceptConversationTtsAttestation,
+} from "./conversation-tts-attestation.js";
 import type { ActiveConversationRun, ConversationInterruptionResult, MeetingConversationState } from
   "./conversation-coordinator-types.js";
 import {
@@ -287,7 +290,18 @@ export class ConversationActiveTurnExecutor {
     }
 
     switch (event.type) {
+      case "tts-attestation":
+        await acceptConversationTtsAttestation(
+          run,
+          event,
+          () => this.requestCancellation(state, run, "runtime-shutdown"),
+        );
+        return;
       case "audio-start":
+        if (run.groundedPlaybackAuthority !== null && run.ttsAttestation === null) {
+          await this.requestCancellation(state, run, "runtime-shutdown");
+          return;
+        }
         run.answerAudioStarted = true;
         await this.cues.stop(run, "superseded");
         await this.answerPlayback.open(state, run);
@@ -320,7 +334,6 @@ export class ConversationActiveTurnExecutor {
         return;
     }
   }
-
   private async maybeFinalizeAfterRuntime(
     state: MeetingConversationState,
     run: ActiveConversationRun,

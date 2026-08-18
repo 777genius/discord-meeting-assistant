@@ -69,6 +69,7 @@ async def test_converse_streams_ordered_contract_events() -> None:
             contract_payloads = [payload for payload in payloads if payload != "latency"]
             assert contract_payloads == [
                 "accepted",
+                "tts_attestation",
                 "text_delta",
                 "audio_start",
                 "audio_chunk",

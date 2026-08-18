@@ -9,11 +9,34 @@ import {
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import { canonicalFinalReplyTurnHash } from "@discord-meeting/postgres-adapter";
 import type { Client } from "discord.js";
+import { readFile } from "node:fs/promises";
 
 import { MeetingKnowledgeGroundedAnswerAcl } from "../adapters/outbound/meeting-knowledge-grounded-answer-acl.js";
 import type { PlatformConfig } from "../config.js";
 import type { PlatformHistoricalMemoryRuntime } from "./historical-memory.js";
 import type { PlatformLiveFinalizedMemoryRuntime } from "./live-finalized-memory.js";
+
+export function createGroundedVoiceRolloutAuthority(
+  rolloutStateFile: string,
+  rolloutEpoch: string,
+): (signal: AbortSignal) => Promise<boolean> {
+  return async (signal) => {
+    signal.throwIfAborted();
+    try {
+      const raw = await readFile(rolloutStateFile, { encoding: "utf8", signal });
+      signal.throwIfAborted();
+      const parsed: unknown = JSON.parse(raw);
+      return typeof parsed === "object" && parsed !== null &&
+        !Array.isArray(parsed) &&
+        Object.keys(parsed).toSorted().join(",") === "enabled,rolloutEpoch" &&
+        "enabled" in parsed && parsed.enabled === true &&
+        "rolloutEpoch" in parsed && parsed.rolloutEpoch === rolloutEpoch;
+    } catch {
+      signal.throwIfAborted();
+      return false;
+    }
+  };
+}
 
 export function createVoiceGroundedAnswers(
   input: {
@@ -33,8 +56,11 @@ export function createVoiceGroundedAnswers(
     return undefined;
   }
   const rolloutEpoch = input.config.meetingKnowledge.groundedVoice.rolloutEpoch;
-  const rolloutAuthorized = (): boolean =>
-    input.config.meetingKnowledge?.groundedVoice?.rolloutEpoch === rolloutEpoch;
+  const rolloutStateFile = input.config.meetingKnowledge.groundedVoice.rolloutStateFile;
+  const rolloutAuthorized = createGroundedVoiceRolloutAuthority(
+    rolloutStateFile,
+    rolloutEpoch,
+  );
   const secret = input.config.secrets.meetingKnowledgePrincipalKey;
   if (secret === undefined) {
     throw new Error("Grounded voice requires the Meeting Knowledge principal key");
@@ -94,7 +120,7 @@ export function createVoiceGroundedAnswers(
   return new MeetingKnowledgeGroundedAnswerAcl({
     execute: async (request, options) => {
       options.signal.throwIfAborted();
-      if (!rolloutAuthorized()) {
+      if (!await rolloutAuthorized(options.signal)) {
         return {
           reason: "grounded_voice_rollout_disabled",
           schemaVersion: 1,
@@ -102,7 +128,7 @@ export function createVoiceGroundedAnswers(
         };
       }
       const authorizationPrincipalRef = await principalFor(request, options.signal);
-      if (!rolloutAuthorized() || authorizationPrincipalRef === null) {
+      if (!await rolloutAuthorized(options.signal) || authorizationPrincipalRef === null) {
         return {
           reason: "live_room_authority_unavailable",
           schemaVersion: 1,
@@ -113,7 +139,7 @@ export function createVoiceGroundedAnswers(
     },
     recheckPlaybackAuthority: async (request, options) => {
       options.signal.throwIfAborted();
-      if (!rolloutAuthorized()) {
+      if (!await rolloutAuthorized(options.signal)) {
         return {
           reason: "grounded_voice_rollout_disabled",
           schemaVersion: 1,
@@ -121,7 +147,7 @@ export function createVoiceGroundedAnswers(
         };
       }
       const authorizationPrincipalRef = await principalFor(request, options.signal);
-      return !rolloutAuthorized() || authorizationPrincipalRef === null
+      return !await rolloutAuthorized(options.signal) || authorizationPrincipalRef === null
         ? {
             reason: "live_room_authority_unavailable",
             schemaVersion: 1,

@@ -84,11 +84,32 @@ function answer(plainText = "Решили выпустить в пятницу."
   };
 }
 
+function ttsAttestation(): ConversationRuntimeEvent {
+  return {
+    attemptId: "attempt-1",
+    attestation: {
+      attemptId: "attempt-1",
+      deployment: "pipecat-runtime",
+      keyId: "a".repeat(64),
+      model: "fixture-tts-v1",
+      provider: "fixture",
+      schemaVersion: 1,
+      signature: "b".repeat(64),
+      sourceRevision: "c".repeat(40),
+      turnId: "turn-1",
+      voice: "fixture",
+      voiceProfileId: "default",
+    },
+    type: "tts-attestation",
+  };
+}
+
 describe("Conversation grounded knowledge execution", () => {
   it("buffers and validates the complete answer before existing literal speech", async () => {
     const groundedAnswers = new ControlledGroundedAnswers();
     const runtime = new ScriptedRuntime([closedStream([
       { attemptId: "attempt-1", type: "accepted" },
+      ttsAttestation(),
       { attemptId: "attempt-1", channels: 1, format: "pcm_s16le", sampleRateHz: 48_000, type: "audio-start" },
       audioChunk("attempt-1", "turn-1", 1),
       { attemptId: "attempt-1", type: "audio-end" },
@@ -164,6 +185,7 @@ describe("Conversation grounded knowledge execution", () => {
     groundedAnswers.resolve(answer());
     await waitUntil(() => runtime.requests.length === 1);
     events.push({ attemptId: "attempt-1", type: "accepted" });
+    events.push(ttsAttestation());
     events.push({
       attemptId: "attempt-1",
       channels: 1,

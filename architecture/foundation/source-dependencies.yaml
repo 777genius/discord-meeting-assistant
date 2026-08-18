@@ -276,6 +276,7 @@ boundaries:
         - "@grpc/grpc-js"
         - "@grpc/proto-loader"
       builtins:
+        - node:crypto
         - node:url
       runtimeReferences: []
   - id: adapters.recording-ingress

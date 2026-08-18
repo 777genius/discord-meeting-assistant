@@ -6,7 +6,7 @@ import type {
 import { Client } from "discord.js";
 
 import {
-  abortableDiscordOperation,
+  BoundedDiscordAuthorizationQueue,
   discordParticipantQuestionPolicyVersion,
   freshDiscordContainerPermissions,
 } from "./discord-question-authorization.js";
@@ -35,6 +35,7 @@ export class DiscordHistoricalAuthorizationAdapter
     private readonly client: Client,
     private readonly principals: DiscordQuestionPrincipalCodec,
     private readonly nowMilliseconds: () => number = Date.now,
+    private readonly operations = new BoundedDiscordAuthorizationQueue(),
   ) {}
 
   public async authorize(
@@ -49,22 +50,22 @@ export class DiscordHistoricalAuthorizationAdapter
       return denied();
     }
     try {
-      const guild = await abortableDiscordOperation(request.signal, () =>
+      const guild = await this.operations.execute(request.signal, () =>
         this.client.guilds.fetch(principal.scopeId)
       );
-      await abortableDiscordOperation(request.signal, () => guild.roles.fetch());
+      await this.operations.execute(request.signal, () => guild.roles.fetch());
       const [member, principalContainer, sourceRoom] = await Promise.all([
-        abortableDiscordOperation(request.signal, () =>
+        this.operations.execute(request.signal, () =>
           guild.members.fetch({ force: true, user: principal.actorId })
         ),
-        abortableDiscordOperation(request.signal, () =>
+        this.operations.execute(request.signal, () =>
           guild.channels.fetch(principal.authorizationContainerId, { force: true })
         ),
         principal.authorizationContainerId === request.roomId
-          ? abortableDiscordOperation(request.signal, () =>
+          ? this.operations.execute(request.signal, () =>
               guild.channels.fetch(principal.authorizationContainerId, { force: true })
             )
-          : abortableDiscordOperation(request.signal, () =>
+          : this.operations.execute(request.signal, () =>
               guild.channels.fetch(request.roomId, { force: true })
             ),
       ]);
@@ -72,10 +73,20 @@ export class DiscordHistoricalAuthorizationAdapter
         return denied();
       }
       const [principalPermissions, sourcePermissions] = await Promise.all([
-        freshDiscordContainerPermissions(principalContainer, member, request.signal),
+        freshDiscordContainerPermissions(
+          principalContainer,
+          member,
+          request.signal,
+          this.operations,
+        ),
         principalContainer.id === sourceRoom.id
           ? Promise.resolve(null)
-          : freshDiscordContainerPermissions(sourceRoom, member, request.signal),
+          : freshDiscordContainerPermissions(
+              sourceRoom,
+              member,
+              request.signal,
+              this.operations,
+            ),
       ]);
       const effectiveSourcePermissions = principalContainer.id === sourceRoom.id
         ? principalPermissions

@@ -68,12 +68,24 @@ message ConversationRuntimeServerMessage {
     ConversationCancelled cancelled = 12;
     ConversationFailed failed = 13;
     ConversationLatency latency = 14;
+    ConversationTtsAttestation tts_attestation = 15;
   }
 }
 
 message ConversationAccepted {}
 message ConversationAudioEnd {}
 message ConversationCompleted {}
+
+message ConversationTtsAttestation {
+  string deployment = 1;
+  string key_id = 2;
+  string model = 3;
+  string provider = 4;
+  string signature = 5;
+  string source_revision = 6;
+  string voice = 7;
+  string voice_profile_id = 8;
+}
 
 message ConversationTextDelta { string text = 1; }
 

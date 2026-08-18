@@ -41,6 +41,7 @@ export class GrpcPipecatConversationRuntime implements ConversationRuntime {
   private readonly callFactory: ConversationDuplexCallFactory;
   private readonly cancellationTimeoutMs: number;
   private readonly metadata: ReturnType<typeof createAuthorizationMetadata>;
+  private readonly serviceToken: string;
 
   public constructor(options: GrpcPipecatConversationRuntimeOptions) {
     if (options.serviceToken.trim().length < 16) {
@@ -51,6 +52,7 @@ export class GrpcPipecatConversationRuntime implements ConversationRuntime {
     );
     this.callFactory = options.callFactory ?? createGrpcConversationDuplexCallFactory(options);
     this.metadata = createAuthorizationMetadata(options.serviceToken);
+    this.serviceToken = options.serviceToken;
   }
 
   public async startTurn(
@@ -84,6 +86,7 @@ export class GrpcPipecatConversationRuntime implements ConversationRuntime {
       call,
       transportRequest.value.turnId,
       this.cancellationTimeoutMs,
+      this.serviceToken,
     );
     let abortRequested = signalIsAborted(options.signal);
     const recordAbort = () => {

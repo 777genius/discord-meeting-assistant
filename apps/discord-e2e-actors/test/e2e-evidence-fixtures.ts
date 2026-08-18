@@ -466,6 +466,10 @@ export function reidentify<T extends RetainedE2eEvidence>(source: T, suffix: str
     evidence.replay.container.threadId = `thread-${suffix}`;
   }
   if ("conversation" in evidence) {
+    evidence.conversation.lifecycle.cancellationPcmProofs =
+      evidence.conversation.lifecycle.cancellationPcmProofs.map((proof) => ({
+        ...proof, recordingId: `meeting-${suffix}`,
+      }));
     evidence.conversation.voice = evidence.conversation.voice.map((observation) => ({
       ...observation,
       correlation: {
@@ -685,21 +689,44 @@ export function retainedV8Evidence(): RetainedReconnectE2eEvidenceV8 {
     { observedAt: "1970-01-01T00:00:03.800Z", outcome: "active", participantId: speakerDId, turnId: "human-question-1", type: "addressed-answer" as const },
     { evidenceTurnIds: ["speaker-d-farewell"], locale: "ru", observedAt: "1970-01-01T00:00:07.000Z", playbackAttemptId: "farewell", reason: "explicit-group", turnId: "meeting-farewell:v1" as const, type: "farewell" as const },
   ];
+  const ttsAttestation = {
+    attemptId: "answer",
+    deployment: "pipecat-runtime",
+    keyId: "8".repeat(64),
+    model: "elevenlabs-multilingual-v1",
+    provider: "elevenlabs",
+    schemaVersion: 1 as const,
+    signature: "9".repeat(64),
+    sourceRevision: "7".repeat(40),
+    turnId: "human-question-1",
+    voice: "test-voice",
+    voiceProfileId: "elevenlabs-multilingual-v1",
+  };
   return retainedReconnectE2eEvidenceV8Schema.parse({
     ...source,
     conversation: {
       botSpeakerId,
       lifecycle: {
+        cancellationPcmProofs: [{
+          acceptedPacketCountAfterCancellation: 0 as const,
+          attemptId: "cancelled-answer",
+          cancellationObservedAt: "1970-01-01T00:00:05.000Z",
+          fenceObservedAt: "1970-01-01T00:00:05.250Z",
+          recordingId: source.recording.recordingId,
+          source: "craig-authoritative-playback-track" as const,
+          trackSha256: "4".repeat(64),
+          turnId: "cancelled-question-1",
+        }],
         events,
         groundedAnswers: [{ citationTurnIds: ["speaker-d-question"],
           evidenceEpoch: "evidence-7", knowledgeEpoch: "knowledge-9",
           observedAt: "1970-01-01T00:00:03.900Z", participantId: speakerDId,
           playbackProvenance: "literal_tts" as const, status: "validated" as const, turnId: "human-question-1" },
-          { factualPcmAfterCancellation: "none" as const, observedAt: "1970-01-01T00:00:05.000Z", reason: "barge-in" as const, status: "cancelled" as const, turnId: "cancelled-question-1" }] ,
+          { observedAt: "1970-01-01T00:00:05.000Z", reason: "barge-in" as const, status: "cancelled" as const, turnId: "cancelled-question-1" }] ,
         playbackReceipts: [
-          { observedAt: "1970-01-01T00:00:04.000Z", playbackAttemptId: "answer", playbackKind: "answer" as const, playbackStartedAtEpochMs: 4_000, playbackStartedAtMonotonicMs: 4_000, speechProvenance: "literal_tts" as const, ttsAttestation: { deployment: "pipecat-runtime", model: "elevenlabs-multilingual-v1", schemaVersion: 1 as const, voice: "test-voice" }, status: "started" as const, turnId: "human-question-1" },
-          { observedAt: "1970-01-01T00:00:04.600Z", playbackAttemptId: "answer", playbackFinishedAtEpochMs: 4_600, playbackFinishedAtMonotonicMs: 4_600, playbackKind: "answer" as const, speechProvenance: "literal_tts" as const, ttsAttestation: { deployment: "pipecat-runtime", model: "elevenlabs-multilingual-v1", schemaVersion: 1 as const, voice: "test-voice" }, status: "finished" as const, turnId: "human-question-1" },
-          { observedAt: "1970-01-01T00:00:04.700Z", playbackAttemptId: "answer", playbackKind: "answer" as const, playbackSettledAtEpochMs: 4_700, playbackSettledAtMonotonicMs: 4_700, settlement: "played" as const, speechProvenance: "literal_tts" as const, ttsAttestation: { deployment: "pipecat-runtime", model: "elevenlabs-multilingual-v1", schemaVersion: 1 as const, voice: "test-voice" }, status: "settled" as const, turnId: "human-question-1" },
+          { observedAt: "1970-01-01T00:00:04.000Z", playbackAttemptId: "answer", playbackKind: "answer" as const, playbackStartedAtEpochMs: 4_000, playbackStartedAtMonotonicMs: 4_000, speechProvenance: "literal_tts" as const, ttsAttestation, status: "started" as const, turnId: "human-question-1" },
+          { observedAt: "1970-01-01T00:00:04.600Z", playbackAttemptId: "answer", playbackFinishedAtEpochMs: 4_600, playbackFinishedAtMonotonicMs: 4_600, playbackKind: "answer" as const, speechProvenance: "literal_tts" as const, ttsAttestation, status: "finished" as const, turnId: "human-question-1" },
+          { observedAt: "1970-01-01T00:00:04.700Z", playbackAttemptId: "answer", playbackKind: "answer" as const, playbackSettledAtEpochMs: 4_700, playbackSettledAtMonotonicMs: 4_700, settlement: "played" as const, speechProvenance: "literal_tts" as const, ttsAttestation, status: "settled" as const, turnId: "human-question-1" },
           { observedAt: "1970-01-01T00:00:06.500Z", playbackAttemptId: "farewell", playbackKind: "prepared-cue" as const, playbackStartedAtEpochMs: 6_500, playbackStartedAtMonotonicMs: 6_500, preparedAssetSha256: "f".repeat(64), status: "started" as const, turnId: "meeting-farewell:v1" },
           { observedAt: "1970-01-01T00:00:06.900Z", playbackAttemptId: "farewell", playbackFinishedAtEpochMs: 6_900, playbackFinishedAtMonotonicMs: 6_900, playbackKind: "prepared-cue" as const, preparedAssetSha256: "f".repeat(64), status: "finished" as const, turnId: "meeting-farewell:v1" },
           { observedAt: "1970-01-01T00:00:07.000Z", playbackAttemptId: "farewell", playbackKind: "prepared-cue" as const, playbackSettledAtEpochMs: 7_000, playbackSettledAtMonotonicMs: 7_000, preparedAssetSha256: "f".repeat(64), settlement: "played" as const, status: "settled" as const, turnId: "meeting-farewell:v1" },

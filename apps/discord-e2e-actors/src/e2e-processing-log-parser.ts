@@ -59,10 +59,17 @@ const addressedAnswerLogSchema = z.object({
   turnId: z.string().trim().min(1),
 }).loose();
 const ttsAttestationSchema = z.object({
+  attemptId: z.string().trim().min(1),
   deployment: z.string().trim().min(1),
+  keyId: z.string().regex(/^[a-f\d]{64}$/u),
   model: z.string().trim().min(1),
+  provider: z.string().trim().min(1),
   schemaVersion: z.literal(1),
+  signature: z.string().regex(/^[a-f\d]{64}$/u),
+  sourceRevision: z.string().trim().min(1),
+  turnId: z.string().trim().min(1),
   voice: z.string().trim().min(1),
+  voiceProfileId: z.string().trim().min(1),
 }).strict();
 const playbackReceiptLogBaseSchema = z.object({
   meetingId: z.string(),
@@ -122,6 +129,18 @@ const groundedAnswerCancelledLogSchema = z.object({
   time: z.iso.datetime(),
   turnId: z.string().trim().min(1),
 }).loose();
+const groundedCancellationPcmFenceLogSchema = z.object({
+  acceptedPacketCountAfterCancellation: z.literal(0),
+  attemptId: z.string().trim().min(1),
+  cancellationObservedAt: z.iso.datetime(),
+  fenceObservedAt: z.iso.datetime(),
+  meetingId: z.string(),
+  message: z.literal("Craig authoritative cancellation PCM fence observed"),
+  recordingId: z.string().trim().min(1),
+  source: z.literal("craig-authoritative-playback-track"),
+  trackSha256: z.string().regex(/^[a-f\d]{64}$/u),
+  turnId: z.string().trim().min(1),
+}).loose();
 
 export function parseProcessingEvidenceLogs(output: string, meetingId: string): ProcessingEvidence {
   const stages: ProcessingEvidence["stages"][number][] = [];
@@ -169,10 +188,17 @@ interface PlaybackReceiptMetadataInput {
   readonly speechProvenance?: "literal_tts" | "model_tts" | undefined;
   readonly thinkingCuePcmSha256?: string | undefined;
   readonly ttsAttestation?: {
+    readonly attemptId: string;
     readonly deployment: string;
+    readonly keyId: string;
     readonly model: string;
+    readonly provider: string;
     readonly schemaVersion: 1;
+    readonly signature: string;
+    readonly sourceRevision: string;
+    readonly turnId: string;
     readonly voice: string;
+    readonly voiceProfileId: string;
   } | undefined;
   readonly time: string;
   readonly turnId: string;
@@ -250,6 +276,8 @@ export function parseConversationLifecycleEvidenceLogs(
   meetingId: string,
 ): CollectedConversationLifecycleEvidence {
   const events: CollectedConversationLifecycleEvidence["events"][number][] = [];
+  const cancellationPcmProofs:
+    CollectedConversationLifecycleEvidence["cancellationPcmProofs"][number][] = [];
   const groundedAnswers: CollectedConversationLifecycleEvidence["groundedAnswers"][number][] = [];
   const playbackReceipts: CollectedConversationLifecycleEvidence["playbackReceipts"][number][] = [];
   const participantLifecycleReceipts: CollectedConversationLifecycleEvidence["participantLifecycleReceipts"][number][] = [];
@@ -266,6 +294,20 @@ export function parseConversationLifecycleEvidenceLogs(
         occurredAt: participantLifecycle.data.occurredAt,
         participantId: participantLifecycle.data.participantId,
         type: "participant-lifecycle",
+      });
+      continue;
+    }
+    const cancellationPcmFence = groundedCancellationPcmFenceLogSchema.safeParse(event);
+    if (cancellationPcmFence.success) {
+      cancellationPcmProofs.push({
+        acceptedPacketCountAfterCancellation: 0,
+        attemptId: cancellationPcmFence.data.attemptId,
+        cancellationObservedAt: cancellationPcmFence.data.cancellationObservedAt,
+        fenceObservedAt: cancellationPcmFence.data.fenceObservedAt,
+        recordingId: cancellationPcmFence.data.recordingId,
+        source: cancellationPcmFence.data.source,
+        trackSha256: cancellationPcmFence.data.trackSha256,
+        turnId: cancellationPcmFence.data.turnId,
       });
       continue;
     }
@@ -286,7 +328,6 @@ export function parseConversationLifecycleEvidenceLogs(
     const groundedCancelled = groundedAnswerCancelledLogSchema.safeParse(event);
     if (groundedCancelled.success) {
       groundedAnswers.push({
-        factualPcmAfterCancellation: "none",
         observedAt: groundedCancelled.data.time,
         reason: groundedCancelled.data.reason,
         status: groundedCancelled.data.status,
@@ -336,6 +377,7 @@ export function parseConversationLifecycleEvidenceLogs(
     }
   }
   return collectedConversationLifecycleEvidenceSchema.parse({
+    cancellationPcmProofs,
     events,
     groundedAnswers,
     participantLifecycleReceipts,

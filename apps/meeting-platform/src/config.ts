@@ -163,6 +163,7 @@ export const environmentSchema = z
       .default("false")
       .transform((value) => value === "true"),
     MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_EPOCH: profileIdentifier.optional(),
+    MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_STATE_FILE: absolutePath.optional(),
     MEETING_KNOWLEDGE_PRINCIPAL_KEY_FILE: absolutePath.optional(),
     MEETING_KNOWLEDGE_TWO_HOUR_QUALIFICATION_FILE: optionalAbsolutePath,
     NODE_ENV: z

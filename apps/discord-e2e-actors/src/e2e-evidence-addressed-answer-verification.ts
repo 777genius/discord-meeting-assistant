@@ -9,6 +9,10 @@ type RetainedConversationEvidence = Extract<
   RetainedE2eEvidence,
   { schemaVersion: 7 | 8 | 9 }
 > | Extract<RetainedE2eEvidence, { schemaVersion: 10; qualificationKind: "voice" }>;
+type RetainedVoiceV10Evidence = Extract<RetainedE2eEvidence, {
+  readonly qualificationKind: "voice";
+  readonly schemaVersion: 10;
+}>;
 
 export function verifyAddressedAnswer(
   evidence: RetainedConversationEvidence,
@@ -51,10 +55,7 @@ export function verifyAddressedAnswer(
 }
 
 export function verifyGroundedAnswerProvenance(
-  evidence: Extract<RetainedE2eEvidence, {
-    readonly qualificationKind: "voice";
-    readonly schemaVersion: 10;
-  }>,
+  evidence: RetainedVoiceV10Evidence,
   fail: VerificationFailureReporter,
 ): void {
   const grounded = evidence.conversation.lifecycle.groundedAnswers.filter(
@@ -79,6 +80,7 @@ export function verifyGroundedAnswerProvenance(
     ({ turnId }) => turnId === observation.turnId,
   );
   const pipecatDeployment = evidence.deployment.pipecat?.composeService;
+  const pipecatSourceRevision = evidence.deployment.pipecat?.sourceRevision;
   const attestations = new Set(receipts.map((receipt) =>
     JSON.stringify(receipt.ttsAttestation)
   ));
@@ -86,8 +88,12 @@ export function verifyGroundedAnswerProvenance(
     receipt.playbackKind !== "answer" ||
     receipt.speechProvenance !== observation.playbackProvenance ||
     receipt.ttsAttestation === undefined ||
-    receipt.ttsAttestation.deployment !== pipecatDeployment) ||
-    pipecatDeployment === undefined || attestations.size !== 1) {
+    receipt.ttsAttestation.attemptId !== receipt.playbackAttemptId ||
+    receipt.ttsAttestation.turnId !== receipt.turnId ||
+    receipt.ttsAttestation.deployment !== pipecatDeployment ||
+    receipt.ttsAttestation.sourceRevision !== pipecatSourceRevision) ||
+    pipecatDeployment === undefined || pipecatSourceRevision === undefined ||
+    attestations.size !== 1) {
     fail(
       "GROUNDED_ANSWER_SPEECH_PROVENANCE_INVALID",
       "validated grounded text must use one complete attested TTS playback receipt set",
@@ -103,14 +109,32 @@ export function verifyGroundedAnswerProvenance(
       "prepared playback requires its exact asset hash",
     );
   }
-  for (const cancellation of evidence.conversation.lifecycle.groundedAnswers.filter(
+  verifyGroundedCancellationPcm(evidence, fail);
+}
+
+function verifyGroundedCancellationPcm(
+  evidence: RetainedVoiceV10Evidence,
+  fail: VerificationFailureReporter,
+): void {
+  const cancellations = evidence.conversation.lifecycle.groundedAnswers.filter(
     (answer) => answer.status === "cancelled",
-  )) {
+  );
+  for (const cancellation of cancellations) {
+    const botTrack = evidence.recording.s3.tracks.find(
+      ({ speakerId }) => speakerId === evidence.conversation.botSpeakerId,
+    );
+    const proof = evidence.conversation.lifecycle.cancellationPcmProofs.find(
+      (candidate) => candidate.turnId === cancellation.turnId &&
+        candidate.cancellationObservedAt === cancellation.observedAt &&
+        candidate.recordingId === evidence.recording.recordingId,
+    );
     const latePcm = evidence.conversation.lifecycle.playbackReceipts.some((receipt) =>
       receipt.turnId === cancellation.turnId &&
       Date.parse(receipt.observedAt) > Date.parse(cancellation.observedAt)
     );
-    if (cancellation.factualPcmAfterCancellation !== "none" || latePcm) {
+    if (proof === undefined || botTrack === undefined ||
+      proof.trackSha256 !== botTrack.checksumSha256 ||
+      proof.acceptedPacketCountAfterCancellation !== 0 || latePcm) {
       fail(
         "GROUNDED_CANCELLATION_PCM_AFTER_CANCEL",
         "grounded cancellation must retain its reason and prove no later factual PCM",

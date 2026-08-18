@@ -35,6 +35,8 @@ class RuntimeSettings:
     bind_host: str
     bind_port: int
     maximum_pending_events: int
+    deployment: str = "local-unqualified"
+    source_revision: str = "local-unqualified"
     subscription_runtime: SubscriptionRuntimeTextGenerationSettings | None = None
 
     @classmethod
@@ -65,6 +67,10 @@ class RuntimeSettings:
         )
         return cls(
             bearer_token=bearer_token,
+            deployment=_non_empty(
+                values.get("PIPECAT_RUNTIME_DEPLOYMENT", "local-unqualified"),
+                "PIPECAT_RUNTIME_DEPLOYMENT",
+            ),
             profile=RuntimeProfileSettings(
                 environment=runtime_environment,
                 profile_name=profile_name,
@@ -104,6 +110,10 @@ class RuntimeSettings:
                 "PIPECAT_RUNTIME_MAXIMUM_PENDING_EVENTS",
                 minimum=1,
                 maximum=1_024,
+            ),
+            source_revision=_non_empty(
+                values.get("PIPECAT_RUNTIME_SOURCE_REVISION", "local-unqualified"),
+                "PIPECAT_RUNTIME_SOURCE_REVISION",
             ),
             subscription_runtime=subscription_runtime,
         )

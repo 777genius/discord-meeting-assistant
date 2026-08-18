@@ -113,8 +113,9 @@ describe("retained E2E campaign lifecycle gate", () => {
 
     const result = verifyCurrentCampaign(runs);
 
-    expect(result.passed).toBe(true);
+    expect(result.runResults["run-reconnect-v9"]?.failures).toEqual([]);
     expect(result.failures).toEqual([]);
+    expect(result.passed).toBe(true);
   });
 
   it("uses retained governed V10 thresholds without an external verifier file", () => {

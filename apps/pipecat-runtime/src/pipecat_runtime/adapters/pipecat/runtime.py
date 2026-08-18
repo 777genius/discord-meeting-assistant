@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable
+from dataclasses import dataclass
 from uuid import uuid4
 
 from pipecat_runtime.adapters.pipecat.events import ConversationEventStream
@@ -27,6 +30,18 @@ type PipelineKey = tuple[str, str, str]
 _PIPELINE_CLOSE_TIMEOUT_SECONDS = 12.0
 
 
+@dataclass(frozen=True, slots=True)
+class _TtsAttestationPayload:
+    deployment: str
+    key_id: str
+    model: str
+    provider: str
+    signature: str
+    source_revision: str
+    voice: str
+    voice_profile_id: str
+
+
 class PipecatConversationRuntime(ConversationRuntime):
     """Reuse one isolated provider pipeline for sequential turns in each meeting."""
 
@@ -38,6 +53,9 @@ class PipecatConversationRuntime(ConversationRuntime):
         maximum_idempotency_keys: int = 1_024,
         maximum_persistent_pipelines: int = 64,
         attempt_id_factory: Callable[[], str] | None = None,
+        attestation_key: str = "local-development-attestation-key",
+        deployment: str = "local-unqualified",
+        source_revision: str = "local-unqualified",
     ) -> None:
         if min(
             maximum_pending_events,
@@ -56,6 +74,9 @@ class PipecatConversationRuntime(ConversationRuntime):
         self._pipeline_close_failures: list[Exception] = []
         self._pipeline_close_tasks: set[asyncio.Task[None]] = set()
         self._attempt_id_factory = attempt_id_factory or _new_attempt_id
+        self._attestation_key = attestation_key.encode("utf-8")
+        self._deployment = deployment
+        self._source_revision = source_revision
         self._state_lock = asyncio.Lock()
         self._closed = False
 
@@ -85,9 +106,32 @@ class PipecatConversationRuntime(ConversationRuntime):
             self._active_meeting_ids.add(request.meeting_id)
         self._schedule_pipeline_closes(detached_pipelines)
         await events.accepted()
+        identity = self._profile.tts_identity
+        signature = _tts_attestation_signature(
+            key=self._attestation_key,
+            turn_id=request.turn_id,
+            attempt_id=attempt_id,
+            voice_profile_id=request.voice_profile_id,
+            deployment=self._deployment,
+            source_revision=self._source_revision,
+            provider=identity.provider,
+            model=identity.model,
+            voice=identity.voice,
+        )
+        tts_attestation = _TtsAttestationPayload(
+            deployment=self._deployment,
+            key_id=hashlib.sha256(self._attestation_key).hexdigest(),
+            model=identity.model,
+            provider=identity.provider,
+            signature=signature,
+            source_revision=self._source_revision,
+            voice=identity.voice,
+            voice_profile_id=request.voice_profile_id,
+        )
         session = PipecatConversationSession(
             turn=turn,
             pipeline=pipeline,
+            tts_attestation=tts_attestation,
             on_finished=lambda: self._release_turn(request),
         )
         session.start()
@@ -212,10 +256,12 @@ class PipecatConversationSession(ConversationSession):
         *,
         turn: ActivePipelineTurn,
         pipeline: PersistentConversationPipeline,
+        tts_attestation: _TtsAttestationPayload,
         on_finished: Callable[[], None],
     ) -> None:
         self._turn = turn
         self._pipeline = pipeline
+        self._tts_attestation = tts_attestation
         self._on_finished = on_finished
         self._runner_task: asyncio.Task[None] | None = None
 
@@ -254,6 +300,17 @@ class PipecatConversationSession(ConversationSession):
 
     async def _run_turn(self) -> None:
         try:
+            attestation = self._tts_attestation
+            await self._turn.events.tts_attestation(
+                deployment=attestation.deployment,
+                key_id=attestation.key_id,
+                model=attestation.model,
+                provider=attestation.provider,
+                signature=attestation.signature,
+                source_revision=attestation.source_revision,
+                voice=attestation.voice,
+                voice_profile_id=attestation.voice_profile_id,
+            )
             await self._pipeline.execute(self._turn)
         finally:
             self._on_finished()
@@ -261,3 +318,29 @@ class PipecatConversationSession(ConversationSession):
 
 def _new_attempt_id() -> str:
     return f"attempt-{uuid4().hex}"
+
+
+def _tts_attestation_signature(
+    *,
+    key: bytes,
+    turn_id: str,
+    attempt_id: str,
+    voice_profile_id: str,
+    deployment: str,
+    source_revision: str,
+    provider: str,
+    model: str,
+    voice: str,
+) -> str:
+    canonical = "\n".join((
+        "schemaVersion=1",
+        f"turnId={turn_id}",
+        f"attemptId={attempt_id}",
+        f"voiceProfileId={voice_profile_id}",
+        f"deployment={deployment}",
+        f"sourceRevision={source_revision}",
+        f"provider={provider}",
+        f"model={model}",
+        f"voice={voice}",
+    ))
+    return hmac.new(key, canonical.encode("utf-8"), hashlib.sha256).hexdigest()

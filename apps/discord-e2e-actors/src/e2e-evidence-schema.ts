@@ -1,6 +1,13 @@
 import { z } from "zod"; import { conversationLifecycleEvidenceSchema,
   conversationVoiceEvidenceV3Schema, reconnectNoRepeatEvidenceSchema,
   supplementalPlaybackEvidenceV1Schema } from "./conversation-retained-evidence-schema.js";
+import {
+  currentDeploymentProvenanceSchema, historicalDeploymentProvenanceSchema,
+  runtimeDeploymentProvenanceSchema,
+} from "./e2e-deployment-provenance-schema.js";
+export {
+  currentDeploymentProvenanceSchema, deploymentRevisionExpectationSchema,
+} from "./e2e-deployment-provenance-schema.js";
 import { conversationVoiceCampaignProofV1Schema } from "./conversation-voice-campaign-proof.js"; import { e2eServiceLevelsV1Schema, serviceLevelSourcesV1Schema, serviceLevelSourcesV2Schema } from "./e2e-service-levels.js";
 import { hostedCampaignReleaseReferenceV1Schema } from "./hosted-campaign-release-reference.js";
 import { hostedVoiceQualificationPolicyV1Schema } from "./hosted-voice-qualification-policy.js";
@@ -8,6 +15,7 @@ import { providerlessVoiceDurabilityQualificationV1Schema } from "./providerless
 import { recordingPlaybackEvidenceV1Schema } from "./recording-playback-evidence-schema.js";
 import { scenarioKindSchema } from "./e2e-fixture-manifest-schema.js";
 const identifierSchema = z.string().trim().min(1); const sha256Schema = z.string().regex(/^[a-f\d]{64}$/u);
+const identifierCountSchema = z.number().int().nonnegative();
 const nonNegativeMillisecondsSchema = z.number().int().nonnegative();
 const actorEventSchema = z.object({
   actorName: identifierSchema,
@@ -43,37 +51,6 @@ export const actorRunEvidenceV1Schema = z.object({
   scenario: scenarioKindSchema,
   schemaVersion: z.literal(1),
   timelineOrigin: z.literal("actor-run-start-correlated-to-recording-id"),
-});
-const identifierCountSchema = z.number().int().nonnegative();
-const dockerContainerIdSchema = z.string().regex(/^[a-f\d]{64}$/u);
-const dockerImageIdSchema = z.string().regex(/^sha256:[a-f\d]{64}$/u);
-const repositoryDigestSchema = z.string().regex(/^[^\s@]+@sha256:[a-f\d]{64}$/u);
-const sourceRevisionSchema = z.string().regex(/^(?:[a-f\d]{40}|[a-f\d]{64})$/u);
-export const deploymentRevisionExpectationSchema = z.object({
-  craig: sourceRevisionSchema,
-  meetingPlatform: sourceRevisionSchema,
-  pipecat: sourceRevisionSchema.optional(),
-  subscriptionRuntime: sourceRevisionSchema.optional(),
-}).strict();
-const deployedServiceProvenanceSchema = z.object({
-  composeConfigHash: sha256Schema,
-  composeProject: identifierSchema,
-  composeService: identifierSchema,
-  containerId: dockerContainerIdSchema,
-  containerStartedAt: z.iso.datetime(),
-  imageId: dockerImageIdSchema,
-  repositoryDigest: repositoryDigestSchema.nullable(),
-  sourceRevision: sourceRevisionSchema,
-});
-const historicalDeploymentProvenanceSchema = z.object({
-  craig: deployedServiceProvenanceSchema,
-  meetingPlatform: deployedServiceProvenanceSchema,
-});
-const runtimeDeploymentProvenanceSchema = historicalDeploymentProvenanceSchema.extend({
-  subscriptionRuntime: deployedServiceProvenanceSchema,
-});
-export const currentDeploymentProvenanceSchema = runtimeDeploymentProvenanceSchema.extend({
-  pipecat: deployedServiceProvenanceSchema.optional(),
 });
 export const retainedE2eEvidenceV2Schema = z.object({
   actorRun: actorRunEvidenceV1Schema,
@@ -391,8 +368,13 @@ export const retainedE2eEvidenceV10Schema = z.union([
     );
     const ttsAttestations = receipts.map((receipt) => JSON.stringify(receipt.ttsAttestation));
     const pipecatDeployment = value.deployment.pipecat?.composeService;
+    const pipecatSourceRevision = value.deployment.pipecat?.sourceRevision;
     if (preparedWithoutAsset || pipecatDeployment === undefined ||
-      receipts.some((receipt) => receipt.ttsAttestation?.deployment !== pipecatDeployment) ||
+      pipecatSourceRevision === undefined || receipts.some((receipt) =>
+        receipt.ttsAttestation?.deployment !== pipecatDeployment ||
+        receipt.ttsAttestation.sourceRevision !== pipecatSourceRevision ||
+        receipt.ttsAttestation.attemptId !== receipt.playbackAttemptId ||
+        receipt.ttsAttestation.turnId !== receipt.turnId) ||
       new Set(ttsAttestations).size !== 1) {
       context.addIssue({ code: "custom", message: "V10 voice playback provenance must be versioned and fail closed" });
     }

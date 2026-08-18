@@ -246,6 +246,17 @@ describe("parseConversationLifecycleEvidenceLogs", () => {
         reason: "disconnected",
         status: "cancelled",
       }),
+      JSON.stringify({
+        ...common,
+        acceptedPacketCountAfterCancellation: 0,
+        attemptId: "attempt-cancelled-1",
+        cancellationObservedAt: common.time,
+        fenceObservedAt: "2026-08-06T19:18:47.250Z",
+        message: "Craig authoritative cancellation PCM fence observed",
+        recordingId: "recording-1",
+        source: "craig-authoritative-playback-track",
+        trackSha256: "a".repeat(64),
+      }),
     ].join("\n");
 
     expect(parseConversationLifecycleEvidenceLogs(output, "meeting-1").groundedAnswers)

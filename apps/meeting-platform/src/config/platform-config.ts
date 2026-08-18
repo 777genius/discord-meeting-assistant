@@ -59,6 +59,7 @@ export interface PlatformConfig {
   readonly meetingKnowledge?: {
     readonly groundedVoice?: {
       readonly rolloutEpoch: string;
+      readonly rolloutStateFile: string;
     };
     readonly localFinalReply?: true;
     readonly twoHourHistoricalQualification?: TwoHourHistoricalQualificationV1;

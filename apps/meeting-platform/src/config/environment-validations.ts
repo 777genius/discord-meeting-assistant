@@ -13,6 +13,7 @@ interface MeetingKnowledgeEnvironment {
   readonly DISCORD_PUBLICATION_MODE: string;
   readonly MEETING_KNOWLEDGE_GROUNDED_VOICE_ENABLED: boolean;
   readonly MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_EPOCH?: string | undefined;
+  readonly MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_STATE_FILE?: string | undefined;
   readonly MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED: boolean;
   readonly MEETING_KNOWLEDGE_PRINCIPAL_KEY_FILE?: string | undefined;
 }
@@ -72,6 +73,26 @@ export function validateMeetingKnowledgeEnvironment(
       code: "custom",
       message: "grounded voice requires a versioned rollout epoch",
       path: ["MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_EPOCH"],
+    });
+  }
+  if (
+    environment.MEETING_KNOWLEDGE_GROUNDED_VOICE_ENABLED &&
+    environment.MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_STATE_FILE === undefined
+  ) {
+    context.addIssue({
+      code: "custom",
+      message: "grounded voice requires a runtime-readable rollout state file",
+      path: ["MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_STATE_FILE"],
+    });
+  }
+  if (
+    environment.MEETING_KNOWLEDGE_GROUNDED_VOICE_ENABLED &&
+    !environment.CONVERSATION_ENABLED
+  ) {
+    context.addIssue({
+      code: "custom",
+      message: "grounded voice requires conversation runtime",
+      path: ["CONVERSATION_ENABLED"],
     });
   }
   if (

@@ -58,16 +58,6 @@ export async function createLiveConversationResources(input: {
     playbackObserver: createConversationPlaybackLogger(
       input.logger,
       performance.timeOrigin,
-      input.config.conversation === undefined
-        ? undefined
-        : {
-            deployment: input.config.conversation.runtimeAddress.slice(
-              0, input.config.conversation.runtimeAddress.lastIndexOf(":"),
-            ),
-            model: input.config.conversation.voiceProfileId,
-            schemaVersion: 1,
-            voice: input.config.conversation.voiceId,
-          },
     ),
     runtime: input.runtime,
   });

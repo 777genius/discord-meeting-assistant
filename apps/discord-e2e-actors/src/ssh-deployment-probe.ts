@@ -152,15 +152,23 @@ export class SshDeploymentEvidenceProbe implements DeploymentEvidenceProbe {
 
   public async collectConversationLifecycle(meetingId: string, recordingStartedAt: string) {
     const validatedMeetingId = correlationId.parse(meetingId);
-    const containerId = await this.#findContainerId(this.#options.projectName, "meeting-platform");
-    const output = await this.#commands.runRemote(this.#options, [
-      "docker",
-      "logs",
-      "--since",
-      recordingStartedAtSchema.parse(recordingStartedAt),
-      containerId,
+    const since = recordingStartedAtSchema.parse(recordingStartedAt);
+    const [meetingPlatformContainerId, craigContainerId] = await Promise.all([
+      this.#findContainerId(this.#options.projectName, "meeting-platform"),
+      this.#findContainerId(this.#options.craigProjectName, this.#options.craigServiceName),
     ]);
-    return parseConversationLifecycleEvidenceLogs(output, validatedMeetingId);
+    const [meetingPlatformOutput, craigOutput] = await Promise.all([
+      this.#commands.runRemote(this.#options, [
+        "docker", "logs", "--since", since, meetingPlatformContainerId,
+      ]),
+      this.#commands.runRemote(this.#options, [
+        "docker", "logs", "--since", since, craigContainerId,
+      ]),
+    ]);
+    return parseConversationLifecycleEvidenceLogs(
+      `${meetingPlatformOutput}\n${craigOutput}`,
+      validatedMeetingId,
+    );
   }
 
   public async collectProvenance(): Promise<CurrentDeploymentProvenance> {

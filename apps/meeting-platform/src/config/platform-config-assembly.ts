@@ -111,10 +111,13 @@ export function assemblePlatformConfig(
       loaded.twoHourHistoricalQualification !== undefined
       ? { meetingKnowledge: {
           ...(environment.MEETING_KNOWLEDGE_GROUNDED_VOICE_ENABLED &&
-            environment.MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_EPOCH !== undefined
+            environment.MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_EPOCH !== undefined &&
+            environment.MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_STATE_FILE !== undefined
             ? { groundedVoice: {
                 rolloutEpoch:
                   environment.MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_EPOCH,
+                rolloutStateFile:
+                  environment.MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_STATE_FILE,
               } }
             : {}),
           ...(environment.MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED

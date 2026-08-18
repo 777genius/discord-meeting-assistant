@@ -10,6 +10,7 @@ import {
   type ConversationCancellationReason,
   type ConversationRuntimeEvent,
 } from "@discord-meeting/meeting-core/conversation";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 import type { RawMessage } from "./grpc-pipecat-types.js";
 
@@ -72,7 +73,10 @@ export function parseGrpcConversationRuntimeHealth(
   });
 }
 
-export function decodeGrpcConversationRuntimeEvent(message: RawMessage): TransportEvent {
+export function decodeGrpcConversationRuntimeEvent(
+  message: RawMessage,
+  attestationKey?: string,
+): TransportEvent {
   const base = {
     protocolVersion: integerValue(message.schemaVersion, "schemaVersion"),
     turnId: requiredString(message.turnId, "turnId"),
@@ -82,6 +86,28 @@ export function decodeGrpcConversationRuntimeEvent(message: RawMessage): Transpo
   const payload = requiredString(message.payload, "payload");
   if (payload === "accepted") {
     return parseConversationRuntimeEvent({ ...base, type: "accepted" });
+  }
+  if (payload === "ttsAttestation") {
+    const value = recordValue(message.ttsAttestation, "ttsAttestation");
+    const event = parseConversationRuntimeEvent({
+      ...base,
+      type: "tts-attestation",
+      deployment: requiredString(value.deployment, "ttsAttestation.deployment"),
+      keyId: requiredString(value.keyId, "ttsAttestation.keyId"),
+      model: requiredString(value.model, "ttsAttestation.model"),
+      provider: requiredString(value.provider, "ttsAttestation.provider"),
+      signature: requiredString(value.signature, "ttsAttestation.signature"),
+      sourceRevision: requiredString(value.sourceRevision, "ttsAttestation.sourceRevision"),
+      voice: requiredString(value.voice, "ttsAttestation.voice"),
+      voiceProfileId: requiredString(value.voiceProfileId, "ttsAttestation.voiceProfileId"),
+    });
+    if (event.type !== "tts-attestation") {
+      throw new Error("Conversation runtime TTS attestation payload is invalid");
+    }
+    if (attestationKey === undefined || !verifyTtsAttestation(event, attestationKey)) {
+      throw new Error("Conversation runtime TTS attestation signature is invalid");
+    }
+    return event;
   }
   if (payload === "textDelta") {
     const value = recordValue(message.textDelta, "textDelta");
@@ -185,6 +211,25 @@ export function toCoreConversationRuntimeEvent(
       bytes: event.pcm,
     };
   }
+  if (event.type === "tts-attestation") {
+    return {
+      type: "tts-attestation",
+      attemptId: event.attemptId,
+      attestation: {
+        attemptId: event.attemptId,
+        deployment: event.deployment,
+        keyId: event.keyId,
+        model: event.model,
+        provider: event.provider,
+        schemaVersion: 1,
+        signature: event.signature,
+        sourceRevision: event.sourceRevision,
+        turnId: event.turnId,
+        voice: event.voice,
+        voiceProfileId: event.voiceProfileId,
+      },
+    };
+  }
   if (event.type === "failed") {
     return {
       type: "failed",
@@ -235,6 +280,30 @@ export function toCoreConversationRuntimeEvent(
     };
   }
   return { type: event.type, attemptId: event.attemptId };
+}
+
+function verifyTtsAttestation(
+  event: Extract<TransportEvent, { readonly type: "tts-attestation" }>,
+  key: string,
+): boolean {
+  const expectedKeyId = createHash("sha256").update(key, "utf8").digest("hex");
+  if (event.keyId !== expectedKeyId) {
+    return false;
+  }
+  const canonical = [
+    "schemaVersion=1",
+    `turnId=${event.turnId}`,
+    `attemptId=${event.attemptId}`,
+    `voiceProfileId=${event.voiceProfileId}`,
+    `deployment=${event.deployment}`,
+    `sourceRevision=${event.sourceRevision}`,
+    `provider=${event.provider}`,
+    `model=${event.model}`,
+    `voice=${event.voice}`,
+  ].join("\n");
+  const expected = createHmac("sha256", key).update(canonical, "utf8").digest();
+  const actual = Buffer.from(event.signature, "hex");
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
 export function isGrpcConversationTerminalEvent(event: TransportEvent): boolean {
