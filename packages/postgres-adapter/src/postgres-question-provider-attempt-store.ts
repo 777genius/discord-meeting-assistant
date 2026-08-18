@@ -116,41 +116,6 @@ export class PostgresQuestionProviderAttemptStore {
     });
   }
 
-  public async abort(
-    input: Parameters<QuestionJobStore["abortProviderAttempt"]>[0],
-  ): Promise<boolean> {
-    return this.policyTransaction.execute(false, async (client) => {
-      const result = await client.query(
-        `
-          UPDATE meeting_knowledge.question_jobs AS job
-          SET provider_attempt_state = 'failed',
-              provider_attempt_finished_at = transaction_timestamp(),
-              provider_attempt_retryable = FALSE,
-              retry_reason = $4,
-              updated_at = transaction_timestamp()
-          WHERE question_id = $1
-            AND generation = $2
-            AND state = 'running'
-            AND worker_protocol_epoch = 2
-            AND worker_protocol_generation = generation
-            AND provider_attempt_id = $3
-            AND provider_attempt_state = 'reserved'
-            AND lease_until > transaction_timestamp()
-            AND expires_at > transaction_timestamp()
-            AND ${currentQuestionPolicySql(5)}
-        `,
-        [
-          input.jobId,
-          input.generation,
-          input.attemptId,
-          input.reason.slice(0, 256),
-          ...questionPolicyParameters(this.policyTransaction.identity),
-        ],
-      );
-      return result.rowCount === 1;
-    });
-  }
-
   public async fail(
     input: Parameters<QuestionJobStore["failProviderAttempt"]>[0],
   ): Promise<"deferred" | "settled" | "stale"> {

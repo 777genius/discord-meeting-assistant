@@ -13,8 +13,6 @@ export class QuestionJobStoreFake implements QuestionJobStore {
     Parameters<QuestionJobStore["reserveProviderAttempt"]>[0][] = [];
   public providerCompletions:
     Parameters<QuestionJobStore["completeProviderAttempt"]>[0][] = [];
-  public providerAborts:
-    Parameters<QuestionJobStore["abortProviderAttempt"]>[0][] = [];
   public providerFailures:
     Parameters<QuestionJobStore["failProviderAttempt"]>[0][] = [];
   public providerReservationResult = true;
@@ -49,13 +47,6 @@ export class QuestionJobStoreFake implements QuestionJobStore {
   ): Promise<boolean> {
     this.providerCompletions.push(input);
     return Promise.resolve(this.providerCompletionResult);
-  }
-
-  public abortProviderAttempt(
-    input: Parameters<QuestionJobStore["abortProviderAttempt"]>[0],
-  ): Promise<boolean> {
-    this.providerAborts.push(input);
-    return Promise.resolve(true);
   }
 
   public failProviderAttempt(

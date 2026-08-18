@@ -29,9 +29,11 @@ audit state.
 - The worker reserves one durable provider attempt before selection. Selector
   request identity is bound to that attempt ID, and a successful selection
   continues into answer generation under the same attempt.
-- Deterministic refusal, fallback, or selector failure changes the attempt from
-  `reserved` to terminal `failed` before a fixed reply is published. A crash
-  while still reserved remains fail-closed and cannot authorize replay.
+- Deterministic refusal, fallback, or selector failure publishes a fixed reply
+  without releasing the durable reservation. If the worker crashes first, the
+  abandoned reserved attempt terminalizes as unavailable and cannot be leased
+  for selector replay. The conservative `reserved` audit state is intentional
+  until a later atomic fixed-outcome resume protocol is introduced.
 
 ## Consequences
 

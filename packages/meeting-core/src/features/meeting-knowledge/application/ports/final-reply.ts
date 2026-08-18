@@ -272,13 +272,6 @@ export interface QuestionJobStore {
     readonly maximumProviderAttempts: number;
   }): Promise<boolean>;
 
-  abortProviderAttempt(input: {
-    readonly attemptId: string;
-    readonly generation: number;
-    readonly jobId: string;
-    readonly reason: string;
-  }): Promise<boolean>;
-
   completeProviderAttempt(input: {
     readonly answerCandidate: GroundedAnswerCandidate;
     readonly attemptId: string;

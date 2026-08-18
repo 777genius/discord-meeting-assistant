@@ -45,20 +45,6 @@ export function completeProviderAttempt(
   });
 }
 
-export function abortProviderAttempt(
-  jobs: QuestionJobStore,
-  lease: QuestionJobLease,
-  attemptId: string,
-  reason: string,
-): Promise<boolean> {
-  return jobs.abortProviderAttempt({
-    attemptId,
-    generation: lease.generation,
-    jobId: lease.jobId,
-    reason,
-  });
-}
-
 export function failProviderAttempt(
   jobs: QuestionJobStore,
   lease: QuestionJobLease,

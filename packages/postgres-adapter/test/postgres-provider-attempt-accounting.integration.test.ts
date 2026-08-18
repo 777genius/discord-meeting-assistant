@@ -16,7 +16,7 @@ const questionPolicy = Object.freeze({
 
 
 describe("PostgreSQL provider attempt accounting", () => {
-  it("never reclaims an expired reserved provider attempt", async (context) => {
+  it("never replays selection after a reserved-attempt crash window", async (context) => {
     const database = databaseOrSkip(context);
     const questionId = "77777777777777776";
     await database.query(
@@ -120,42 +120,6 @@ describe("PostgreSQL provider attempt accounting", () => {
     })).resolves.toBe(false);
   });
 
-  it("records a deterministic selector abort without terminalizing publication", async (context) => {
-    const database = databaseOrSkip(context);
-    const questionId = "77777777777777769";
-    await insertQueued(database, questionId, 600);
-    const jobs = new PostgresQuestionJobStore(database, questionPolicy);
-    const lease = await jobs.leaseNext({
-      leaseSeconds: 60,
-      maximumProviderAttempts: 2,
-      workerId: "selector-worker",
-    });
-    expect(await jobs.reserveProviderAttempt({
-      attemptId: "selector-attempt-1",
-      generation: lease?.generation ?? 0,
-      jobId: questionId,
-      leaseSeconds: 240,
-      maximumProviderAttempts: 2,
-    })).toBe(true);
-    expect(await jobs.abortProviderAttempt({
-      attemptId: "selector-attempt-1",
-      generation: lease?.generation ?? 0,
-      jobId: questionId,
-      reason: "selector_insufficient_evidence",
-    })).toBe(true);
-
-    const stored = await database.query(
-      `SELECT provider_attempt_state, provider_attempt_retryable, retry_reason, state
-       FROM meeting_knowledge.question_jobs WHERE question_id = $1`,
-      [questionId],
-    );
-    expect(stored.rows[0]).toEqual({
-      provider_attempt_retryable: false,
-      provider_attempt_state: "failed",
-      retry_reason: "selector_insufficient_evidence",
-      state: "running",
-    });
-  });
 });
 
 describe("PostgreSQL provider attempt recovery", () => {

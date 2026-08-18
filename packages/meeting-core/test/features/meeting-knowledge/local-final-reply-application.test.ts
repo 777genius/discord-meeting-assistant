@@ -472,10 +472,9 @@ describe("ProcessFinalReplyJob", () => {
     });
     expect(generator.generationCalls).toBe(0);
     expect(generator.requests).toEqual([]);
-    expect(jobs.providerAborts).toEqual([expect.objectContaining({
-      attemptId: "question-1:generation:1:attempt:1",
-      reason: "selector_insufficient_evidence",
-    })]);
+    expect(jobs.providerReservations).toHaveLength(1);
+    expect(jobs.providerCompletions).toEqual([]);
+    expect(jobs.providerFailures).toEqual([]);
     expect(publication.reservations[0]?.content).toContain(
       "not enough confirmed",
     );

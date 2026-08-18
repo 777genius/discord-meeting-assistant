@@ -190,7 +190,7 @@
     {
       "id": "ADR-0039",
       "path": "docs/decisions/0039-bounded-evidence-selector.md",
-      "immutableDigest": "sha256:deb9bb018a6d3e9a4ca6f44166e9c2404602dd1bc01f58302f7db35ffb689223"
+      "immutableDigest": "sha256:368a0dfb2ed06fb793009fc3ec28f29081a421d17bf4e0120e3c6527de2f038f"
     }
   ]
 }
