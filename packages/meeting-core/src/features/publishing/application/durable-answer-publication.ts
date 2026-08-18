@@ -154,10 +154,7 @@ export class DurableAnswerPublication {
         })) {
           containedDuplicates += 1;
         }
-      } else if (
-        inspected.status === "unconfirmed"
-        && await this.store.markAbsentUnconfirmed(record.effectId)
-      ) {
+      } else if (await this.store.markAbsentUnconfirmed(record.effectId)) {
         absentUnconfirmed += 1;
       }
     }

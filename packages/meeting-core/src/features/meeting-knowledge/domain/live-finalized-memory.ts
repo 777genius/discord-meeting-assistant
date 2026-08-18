@@ -50,10 +50,11 @@ export interface AttestedActiveLiveMemoryIdentityV1 {
 export function isAttestedActiveLiveMemoryIdentity(
   input: AttestedActiveLiveMemoryIdentityV1,
 ): boolean {
+  const rosterState: string = input.rosterState;
   return input.schemaVersion === LIVE_FINALIZED_MEMORY_SCHEMA_VERSION &&
     input.producerCapabilityId === trustedSealedRosterProducerCapabilityId &&
     input.actorSemanticsVersion === trustedSealedRosterActorSemanticsVersion &&
-    (input.rosterState === "sealed" || input.rosterState === "unsealed") &&
+    (rosterState === "sealed" || rosterState === "unsealed") &&
     input.state === "active";
 }
 

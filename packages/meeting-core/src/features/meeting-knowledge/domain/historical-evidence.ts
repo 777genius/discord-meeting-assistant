@@ -16,6 +16,13 @@ export interface TwoHourHistoricalQualificationV1 {
   readonly schemaVersion: 1;
 }
 
+interface TwoHourHistoricalQualificationInputV1 {
+  readonly evidenceSha256: string;
+  readonly releaseRevision: string;
+  readonly rolloutEpoch: string;
+  readonly schemaVersion: number;
+}
+
 export interface TwoHourHistoricalRetrievalProfileV1 {
   readonly qualification: TwoHourHistoricalQualificationV1 | null;
   readonly minimumDurationMs: 7_200_000;
@@ -101,18 +108,24 @@ export function admitsHistoricalRetrieval(
   profile: TwoHourHistoricalRetrievalProfileV1 =
     DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
 ): boolean {
+  const runtimeProfile = profile as {
+    readonly qualification: TwoHourHistoricalQualificationInputV1 | null;
+    readonly minimumDurationMs: number;
+    readonly minimumHumanTurnCount: number;
+    readonly version: string;
+  };
   if (
-    profile.version !== TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE_VERSION ||
-    profile.minimumDurationMs !== 7_200_000 ||
-    profile.minimumHumanTurnCount !== 400
+    runtimeProfile.version !== TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE_VERSION ||
+    runtimeProfile.minimumDurationMs !== 7_200_000 ||
+    runtimeProfile.minimumHumanTurnCount !== 400
   ) {
     throw new HistoricalEvidenceInvariantError(
       "INVALID_CONTRACT",
       "two-hour historical retrieval profile is not centrally qualified",
     );
   }
-  if (profile.qualification !== null) {
-    const qualification = profile.qualification;
+  if (runtimeProfile.qualification !== null) {
+    const qualification = runtimeProfile.qualification;
     if (
       qualification.schemaVersion !== 1 ||
       !/^[0-9a-f]{64}$/u.test(qualification.evidenceSha256) ||
@@ -127,8 +140,8 @@ export function admitsHistoricalRetrieval(
     return true;
   }
   return meeting.authoritativeDurationMs !== null &&
-    meeting.authoritativeDurationMs < profile.minimumDurationMs &&
-    meeting.humanTurns.length < profile.minimumHumanTurnCount;
+    meeting.authoritativeDurationMs < runtimeProfile.minimumDurationMs &&
+    meeting.humanTurns.length < runtimeProfile.minimumHumanTurnCount;
 }
 
 export class HistoricalEvidenceInvariantError extends Error {

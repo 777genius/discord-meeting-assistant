@@ -400,10 +400,20 @@ describe("ProcessFinalReplyJob", () => {
       leaseSeconds: policy.jobLeaseSeconds,
       maximumProviderAttempts: policy.maximumProviderAttempts,
     })]);
-    expect(jobs.providerCompletions).toEqual([expect.objectContaining({
-      attemptId: "question-1:generation:1:attempt:1",
-      answerCandidate: expect.any(Object),
-    })]);
+    expect(jobs.providerCompletions).toHaveLength(1);
+    expect(jobs.providerCompletions[0]?.attemptId).toBe(
+      "question-1:generation:1:attempt:1",
+    );
+    expect(jobs.providerCompletions[0]?.answerCandidate).toEqual(
+      {
+        claims: [{
+          evidenceIds: ["evidence-000001", "evidence-000002"],
+          text: "The corrected release day is Monday, replacing Friday.",
+        }],
+        locale: "en",
+        status: "answered",
+      },
+    );
     expect(authorization.checkpoints).toEqual([
       "before_retrieval",
       "before_hydration",

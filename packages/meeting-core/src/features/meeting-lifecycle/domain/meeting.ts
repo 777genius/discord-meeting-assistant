@@ -97,8 +97,11 @@ export class Meeting {
         : Object.freeze({
             externalPublicationId: createMeetingExternalPublicationId(snapshot.publication.externalPublicationId),
             idempotencyKey: requireNonEmpty(snapshot.publication.idempotencyKey, "publication.idempotencyKey"),
-            publisherIdentity: snapshot.publication.publisherIdentity
-              ? requireNonEmpty(snapshot.publication.publisherIdentity, "publication.publisherIdentity") : "",
+            publisherIdentity:
+              snapshot.publication.publisherIdentity !== undefined &&
+              snapshot.publication.publisherIdentity.length > 0
+                ? requireNonEmpty(snapshot.publication.publisherIdentity, "publication.publisherIdentity")
+                : "",
           });
 
     this.validateSnapshotConsistency();
@@ -259,8 +262,10 @@ export class Meeting {
         receipt.externalPublicationId,
       ),
       idempotencyKey: requireNonEmpty(receipt.idempotencyKey, "publication.idempotencyKey"),
-      publisherIdentity: receipt.publisherIdentity
-        ? requireNonEmpty(receipt.publisherIdentity, "publication.publisherIdentity") : "",
+      publisherIdentity:
+        receipt.publisherIdentity !== undefined && receipt.publisherIdentity.length > 0
+          ? requireNonEmpty(receipt.publisherIdentity, "publication.publisherIdentity")
+          : "",
     });
     if (normalized.idempotencyKey !== this.publicationIdempotencyKey()) {
       throw new DomainInvariantError(
