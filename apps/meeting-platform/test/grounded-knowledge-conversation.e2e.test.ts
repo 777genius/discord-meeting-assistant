@@ -1,6 +1,5 @@
 import type {
   ConversationAudioChunk,
-  ConversationCancellationReason,
   ConversationPortResult,
   ConversationRuntime,
   ConversationRuntimeEvent,
@@ -95,6 +94,23 @@ class LiteralRuntime implements ConversationRuntime {
       { attemptId: "literal-attempt-1", type: "accepted" },
       {
         attemptId: "literal-attempt-1",
+        attestation: {
+          attemptId: "literal-attempt-1",
+          deployment: "pipecat-runtime",
+          keyId: "a".repeat(64),
+          model: "fixture-tts-v1",
+          provider: "fixture",
+          schemaVersion: 1,
+          signature: "b".repeat(64),
+          sourceRevision: "c".repeat(40),
+          turnId: "question-turn-1",
+          voice: "fixture",
+          voiceProfileId: "test-voice",
+        },
+        type: "tts-attestation",
+      },
+      {
+        attemptId: "literal-attempt-1",
         channels: 1,
         format: "pcm_s16le",
         sampleRateHz: 48_000,
@@ -131,7 +147,7 @@ class CapturingPlayback implements VoicePlaybackPort {
     return Promise.resolve({
       ok: true,
       value: {
-        cancel: (_reason: ConversationCancellationReason) => {
+        cancel: () => {
           events.push({ attemptId: request.attemptId, finishedAtMs: 3, type: "finished" });
           events.close();
           return Promise.resolve({ ok: true, value: "cancelled" as const });

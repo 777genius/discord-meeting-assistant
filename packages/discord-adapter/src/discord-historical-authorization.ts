@@ -6,6 +6,7 @@ import type {
 import { Client } from "discord.js";
 
 import {
+  BoundedDiscordAuthorizationQueue,
   discordParticipantQuestionPolicyVersion,
   freshDiscordContainerPermissions,
 } from "./discord-question-authorization.js";
@@ -34,6 +35,7 @@ export class DiscordHistoricalAuthorizationAdapter
     private readonly client: Client,
     private readonly principals: DiscordQuestionPrincipalCodec,
     private readonly nowMilliseconds: () => number = Date.now,
+    private readonly operations = new BoundedDiscordAuthorizationQueue(),
   ) {}
 
   public async authorize(
@@ -48,23 +50,43 @@ export class DiscordHistoricalAuthorizationAdapter
       return denied();
     }
     try {
-      const guild = await this.client.guilds.fetch(principal.scopeId);
-      await guild.roles.fetch();
+      const guild = await this.operations.execute(request.signal, () =>
+        this.client.guilds.fetch(principal.scopeId)
+      );
+      await this.operations.execute(request.signal, () => guild.roles.fetch());
       const [member, principalContainer, sourceRoom] = await Promise.all([
-        guild.members.fetch({ force: true, user: principal.actorId }),
-        guild.channels.fetch(principal.authorizationContainerId, { force: true }),
+        this.operations.execute(request.signal, () =>
+          guild.members.fetch({ force: true, user: principal.actorId })
+        ),
+        this.operations.execute(request.signal, () =>
+          guild.channels.fetch(principal.authorizationContainerId, { force: true })
+        ),
         principal.authorizationContainerId === request.roomId
-          ? guild.channels.fetch(principal.authorizationContainerId, { force: true })
-          : guild.channels.fetch(request.roomId, { force: true }),
+          ? this.operations.execute(request.signal, () =>
+              guild.channels.fetch(principal.authorizationContainerId, { force: true })
+            )
+          : this.operations.execute(request.signal, () =>
+              guild.channels.fetch(request.roomId, { force: true })
+            ),
       ]);
       if (principalContainer === null || sourceRoom === null) {
         return denied();
       }
       const [principalPermissions, sourcePermissions] = await Promise.all([
-        freshDiscordContainerPermissions(principalContainer, member),
+        freshDiscordContainerPermissions(
+          principalContainer,
+          member,
+          request.signal,
+          this.operations,
+        ),
         principalContainer.id === sourceRoom.id
           ? Promise.resolve(null)
-          : freshDiscordContainerPermissions(sourceRoom, member),
+          : freshDiscordContainerPermissions(
+              sourceRoom,
+              member,
+              request.signal,
+              this.operations,
+            ),
       ]);
       const effectiveSourcePermissions = principalContainer.id === sourceRoom.id
         ? principalPermissions
@@ -90,6 +112,7 @@ export class DiscordHistoricalAuthorizationAdapter
         policyVersion: discordSameRoomHistoricalPolicyVersion,
       };
     } catch {
+      request.signal?.throwIfAborted();
       return denied();
     }
   }

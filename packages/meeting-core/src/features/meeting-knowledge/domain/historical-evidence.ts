@@ -6,6 +6,42 @@ import {
 export const HISTORICAL_MEMORY_SCHEMA_VERSION = 1 as const;
 export const HISTORICAL_EVIDENCE_POLICY_VERSION =
   "meeting-knowledge.evidence-block.v1" as const;
+export const TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE_VERSION =
+  "meeting-knowledge.two-hour-historical-retrieval.v1" as const;
+
+export interface TwoHourHistoricalQualificationV1 {
+  readonly evidenceSha256: string;
+  readonly releaseRevision: string;
+  readonly rolloutEpoch: string;
+  readonly schemaVersion: 1;
+}
+
+interface TwoHourHistoricalQualificationInputV1 {
+  readonly evidenceSha256: string;
+  readonly releaseRevision: string;
+  readonly rolloutEpoch: string;
+  readonly schemaVersion: number;
+}
+
+export interface TwoHourHistoricalRetrievalProfileV1 {
+  readonly qualification: TwoHourHistoricalQualificationV1 | null;
+  readonly minimumDurationMs: 7_200_000;
+  readonly minimumHumanTurnCount: 400;
+  readonly version: typeof TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE_VERSION;
+}
+
+/**
+ * Independent production admission for corpora that require retained two-hour
+ * retrieval and answer-quality evidence. General historical search never
+ * enables this profile.
+ */
+export const DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE:
+  TwoHourHistoricalRetrievalProfileV1 = Object.freeze({
+    qualification: null,
+    minimumDurationMs: 7_200_000,
+    minimumHumanTurnCount: 400,
+    version: TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE_VERSION,
+  });
 
 export interface HistoricalReleaseBindingV1 {
   readonly acceptedMeetingRevision: number;
@@ -48,6 +84,7 @@ export interface HistoricalTranscriptTurnV1 {
 
 export interface AcceptedFinalMeetingInputV1 {
   readonly actors: readonly HistoricalActorV1[] | null;
+  readonly authoritativeDurationMs?: number | null;
   readonly binding: HistoricalReleaseBindingV1;
   readonly identityProvenance: MeetingKnowledgeIdentityProvenance | null;
   readonly lifecycleGeneration: number | null;
@@ -60,9 +97,51 @@ export interface AcceptedFinalMeetingInputV1 {
 }
 
 export interface AcceptedFinalMeetingV1 {
+  readonly authoritativeDurationMs: number | null;
   readonly binding: HistoricalReleaseBindingV1;
   readonly humanTurns: readonly HistoricalTranscriptTurnV1[];
   readonly schemaVersion: typeof HISTORICAL_MEMORY_SCHEMA_VERSION;
+}
+
+export function admitsHistoricalRetrieval(
+  meeting: AcceptedFinalMeetingV1,
+  profile: TwoHourHistoricalRetrievalProfileV1 =
+    DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
+): boolean {
+  const runtimeProfile = profile as {
+    readonly qualification: TwoHourHistoricalQualificationInputV1 | null;
+    readonly minimumDurationMs: number;
+    readonly minimumHumanTurnCount: number;
+    readonly version: string;
+  };
+  if (
+    runtimeProfile.version !== TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE_VERSION ||
+    runtimeProfile.minimumDurationMs !== 7_200_000 ||
+    runtimeProfile.minimumHumanTurnCount !== 400
+  ) {
+    throw new HistoricalEvidenceInvariantError(
+      "INVALID_CONTRACT",
+      "two-hour historical retrieval profile is not centrally qualified",
+    );
+  }
+  if (runtimeProfile.qualification !== null) {
+    const qualification = runtimeProfile.qualification;
+    if (
+      qualification.schemaVersion !== 1 ||
+      !/^[0-9a-f]{64}$/u.test(qualification.evidenceSha256) ||
+      !/^[0-9a-f]{40}$/u.test(qualification.releaseRevision) ||
+      qualification.rolloutEpoch.trim().length === 0
+    ) {
+      throw new HistoricalEvidenceInvariantError(
+        "INVALID_CONTRACT",
+        "two-hour historical retrieval qualification is invalid",
+      );
+    }
+    return true;
+  }
+  return meeting.authoritativeDurationMs !== null &&
+    meeting.authoritativeDurationMs < runtimeProfile.minimumDurationMs &&
+    meeting.humanTurns.length < runtimeProfile.minimumHumanTurnCount;
 }
 
 export class HistoricalEvidenceInvariantError extends Error {
@@ -286,6 +365,14 @@ export function admitAcceptedFinalMeeting(
   }
 
   return Object.freeze({
+    authoritativeDurationMs: input.authoritativeDurationMs === undefined ||
+        input.authoritativeDurationMs === null
+      ? null
+      : requireSafeInteger(
+          input.authoritativeDurationMs,
+          "authoritativeDurationMs",
+          0,
+        ),
     binding,
     humanTurns: Object.freeze(humanTurns),
     schemaVersion: HISTORICAL_MEMORY_SCHEMA_VERSION,

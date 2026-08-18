@@ -21,6 +21,7 @@ import {
 import {
   createIsolatedDatabase,
   databaseOrSkip,
+  evidenceBackedMeeting,
   usePostgresIntegrationDatabase,
 } from "./postgres-integration-fixtures.js";
 
@@ -28,6 +29,11 @@ usePostgresIntegrationDatabase();
 
 const parentContainerId = "111111111111111111";
 const threadContainerId = "222222222222222222";
+const upgradedQuestionPolicy = Object.freeze({
+  authorizationPolicyVersion: "discord.participant-current-results.v2",
+  policyEpoch: 1,
+  policyVersion: "meeting-knowledge.focused-memory-final-reply.v2",
+});
 
 function sha256(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
@@ -210,12 +216,12 @@ describe("schema 17 answer-delivery upgrade", () => {
       }
 
       await expect(new PostgresMigrationRunner(isolated.pool).migrate()).resolves.toEqual({
-        appliedVersions: [18, 19, 20],
-        version: 20,
+        appliedVersions: [18, 19, 20, 21, 22, 23, 24, 25, 26, 27],
+        version: 27,
       });
       await expect(new PostgresMigrationRunner(isolated.pool).migrate()).resolves.toEqual({
         appliedVersions: [],
-        version: 20,
+        version: 27,
       });
       await expect(new PostgresSchemaReadiness(isolated.pool).assertReady()).resolves.toBeUndefined();
 
@@ -252,26 +258,24 @@ describe("schema 17 answer-delivery upgrade", () => {
         payload_bytes: "{}",
         state: "cancelled",
       });
-
-      const jobs = new PostgresQuestionJobStore(isolated.pool);
-      const firstLease = await jobs.leaseNext({ leaseSeconds: 60, workerId: "upgrade-worker" });
-      const secondLease = await jobs.leaseNext({ leaseSeconds: 60, workerId: "upgrade-worker" });
-      const thirdLease = await jobs.leaseNext({ leaseSeconds: 60, workerId: "upgrade-worker" });
-      expect([firstLease?.binding.deliveryContainerId, secondLease?.binding.deliveryContainerId])
-        .toEqual([parentContainerId, threadContainerId]);
-      expect(thirdLease).toMatchObject({
+      const jobs = new PostgresQuestionJobStore(isolated.pool, upgradedQuestionPolicy);
+      const firstLease = await jobs.leaseNext({ leaseSeconds: 60, maximumProviderAttempts: 2, workerId: "upgrade-worker" });
+      const readyLease = await jobs.leaseNext({ leaseSeconds: 60, maximumProviderAttempts: 2, workerId: "upgrade-worker" });
+      const noMoreLeases = await jobs.leaseNext({ leaseSeconds: 60, maximumProviderAttempts: 2, workerId: "upgrade-worker" });
+      expect(firstLease?.binding.deliveryContainerId).toBe(parentContainerId);
+      expect(readyLease).toMatchObject({
         binding: { deliveryContainerId: threadContainerId },
         jobId: ready.questionId,
         state: "ready",
       });
+      expect(noMoreLeases).toBeNull();
 
       const upgradedQueued = QuestionBinding.create({
         ...queued,
         deliveryContainerId: parentContainerId,
       }).toSnapshot();
       const admission = new PostgresQuestionAdmissionCommit(
-        isolated.pool,
-        upgradedQueued.botApplicationIdentity,
+        isolated.pool, upgradedQueued.botApplicationIdentity, upgradedQuestionPolicy,
       );
       await expect(admission.commit({
         authorization: {
@@ -316,7 +320,7 @@ describe("schema 17 answer-delivery upgrade", () => {
         },
       })).resolves.toEqual({ status: "conflict" });
 
-      const effects = new PostgresAnswerEffectStore(isolated.pool);
+      const effects = new PostgresAnswerEffectStore(isolated.pool, upgradedQuestionPolicy);
       const currentReadyBinding = { ...ready, deliveryContainerId: threadContainerId };
       const currentReadyPayload = answerPayload(threadContainerId, ready.questionId);
       const payloads: AnswerPayloadPort = {
@@ -338,6 +342,7 @@ describe("schema 17 answer-delivery upgrade", () => {
           inspections.push(input.deliveryContainerId);
           return Promise.resolve({ status: "unconfirmed" });
         },
+        remove: () => Promise.resolve(),
       };
       const publication = new DurableAnswerPublication({ delivery, payloads, store: effects });
       await expect(effects.reserve({
@@ -353,7 +358,12 @@ describe("schema 17 answer-delivery upgrade", () => {
         payloadBytes: legacyReadyPayload,
         payloadHash: sha256(legacyReadyPayload),
         projectionTargetContainerId: parentContainerId,
+        questionFence: {
+          generation: readyLease?.generation ?? 0,
+          jobId: ready.questionId,
+        },
         replyToRemoteMessageId: ready.questionId,
+        sourceMeetingIds: [ready.meetingId],
       })).resolves.toEqual({ status: "conflict" });
       await expect(publication.reserve({
         authorizationDigest: ready.authorizationDigest,
@@ -362,7 +372,9 @@ describe("schema 17 answer-delivery upgrade", () => {
         deliveryContainerId: threadContainerId,
         marker: `marker-${ready.questionId}`,
         projectionTargetContainerId: parentContainerId,
+        questionGeneration: readyLease?.generation ?? 0,
         replyToRemoteMessageId: ready.questionId,
+        sourceMeetingIds: [ready.meetingId],
       })).resolves.toEqual({
         effectId: `meeting-knowledge-answer:v1:${ready.questionId}`,
         status: "reserved",
@@ -377,6 +389,7 @@ describe("schema 17 answer-delivery upgrade", () => {
       await expect(publication.send({
         authorizationDigest: ready.authorizationDigest,
         effectId: `meeting-knowledge-answer:v1:${ready.questionId}`,
+        questionGeneration: readyLease?.generation ?? 0,
         workerId: "publisher-upgrade",
       })).resolves.toEqual({
         externalReceipt: "999999999999999999",
@@ -391,9 +404,8 @@ describe("schema 17 answer-delivery upgrade", () => {
         effectId: `meeting-knowledge-answer:v1:${unknown.questionId}`,
         payloadBytes: legacyUnknownPayload,
       });
-      await expect(publication.reconcileUnknown(10)).resolves.toEqual({
-        absentUnconfirmed: 1,
-        delivered: 0,
+      await expect(publication.reconcileUnknown(10)).resolves.toMatchObject({
+        containedDuplicates: 0,
       });
       expect(inspections).toEqual([parentContainerId]);
       expect(creates).toHaveLength(1);
@@ -401,4 +413,188 @@ describe("schema 17 answer-delivery upgrade", () => {
       await isolated.dispose();
     }
   }, 30_000);
+});
+
+describe("schema 21 withdrawal upgrade", () => {
+
+  it("backfills durable source withdrawals and scrubs pending answer payloads", async (context) => {
+    databaseOrSkip(context);
+    const isolated = await createIsolatedDatabase();
+    try {
+      const migrations = await loadPostgresMigrations();
+      await new PostgresMigrationRunner(isolated.pool, {
+        migrations: migrations.slice(0, 21),
+      }).migrate();
+      const meeting = evidenceBackedMeeting("legacy-withdrawn-meeting", parentContainerId)
+        .toSnapshot();
+      await isolated.pool.query(
+        `INSERT INTO meeting_core.meetings (meeting_id, revision, snapshot)
+         VALUES ($1, $2, $3::jsonb)`,
+        [meeting.meetingId, meeting.revision, meeting],
+      );
+      await isolated.pool.query(
+        `INSERT INTO meeting_core.historical_memory_sync (
+           release_id, meeting_id, schema_version, accepted_meeting_revision,
+           desired_generation, transcript_id, transcript_version,
+           evidence_policy_version, scope_id, room_id, is_current, operation, state
+         ) VALUES (
+           'legacy-delete-release', $1, 1, $2, 1, 'legacy-transcript', 1,
+           'meeting-knowledge.historical-evidence.v1', 'scope-1', 'room-1',
+           false, 'delete_meeting', 'deleted'
+         )`,
+        [meeting.meetingId, meeting.revision],
+      );
+      const payload = JSON.stringify({ content: "legacy sensitive answer" });
+      await isolated.pool.query(
+        `INSERT INTO meeting_core.answer_effects (
+           effect_id, state, projection_target_container_id,
+           delivery_container_id, reply_to_remote_message_id, marker,
+           payload_bytes, payload_hash, binding_hash, authorization_digest,
+           source_meeting_ids, request_started_at, retraction_requested_at
+         ) VALUES (
+           'meeting-knowledge-answer:v1:legacy-pending', 'retraction_pending',
+           $1, $1, 'legacy-question', 'legacy-marker', $2, $3, $4, $5,
+           ARRAY[$6]::text[], transaction_timestamp(), transaction_timestamp()
+         )`,
+        [
+          parentContainerId,
+          payload,
+          sha256(payload),
+          "b".repeat(64),
+          "c".repeat(64),
+          meeting.meetingId,
+        ],
+      );
+
+      await expect(new PostgresMigrationRunner(isolated.pool, {
+        migrations: migrations.slice(0, 22),
+      }).migrate()).resolves.toEqual({
+        appliedVersions: [22],
+        version: 22,
+      });
+      await expect(isolated.pool.query(
+        `SELECT meeting_id
+         FROM meeting_knowledge.withdrawn_meeting_sources
+         WHERE meeting_id = $1`,
+        [meeting.meetingId],
+      )).resolves.toMatchObject({
+        rows: [{ meeting_id: meeting.meetingId }],
+      });
+      await expect(isolated.pool.query(
+        `SELECT payload_bytes, payload_hash
+         FROM meeting_core.answer_effects
+         WHERE effect_id = 'meeting-knowledge-answer:v1:legacy-pending'`,
+      )).resolves.toMatchObject({
+        rows: [{
+          payload_bytes: "{}",
+          payload_hash: sha256(payload),
+        }],
+      });
+      await expect(new PostgresMigrationRunner(isolated.pool).migrate()).resolves.toEqual({
+        appliedVersions: [23, 24, 25, 26],
+        version: 26,
+      });
+      await expect(new PostgresSchemaReadiness(isolated.pool).assertReady())
+        .resolves.toBeUndefined();
+    } finally {
+      await isolated.dispose();
+    }
+  }, 30_000);
+});
+
+describe("late answer-effect receipt reconciliation", () => {
+  it("does not starve an older retryable absence behind unknown effects", async (context) => {
+    const database = databaseOrSkip(context);
+    const unknownEffectId = "meeting-knowledge-answer:v1:fair-unknown";
+    const absentEffectId = "meeting-knowledge-answer:v1:fair-absent";
+    await database.query(
+      `
+        INSERT INTO meeting_core.answer_effects (
+          effect_id, state, projection_target_container_id,
+          delivery_container_id, reply_to_remote_message_id, marker,
+          payload_bytes, payload_hash, binding_hash, authorization_digest,
+          source_meeting_ids, request_started_at, settled_at, updated_at
+        ) VALUES
+          (
+            $1, 'outcome_unknown', $3, $3, '666666666666666661',
+            'marker-fair-unknown', '{}', $4, $5, $6,
+            ARRAY['meeting-fair']::text[],
+            transaction_timestamp() - interval '11 minutes',
+            NULL,
+            transaction_timestamp() - interval '10 minutes'
+          ),
+          (
+            $2, 'absent_unconfirmed', $3, $3, '666666666666666662',
+            'marker-fair-absent', '{}', $4, $5, $6,
+            ARRAY['meeting-fair']::text[],
+            transaction_timestamp() - interval '21 minutes',
+            transaction_timestamp() - interval '20 minutes',
+            transaction_timestamp() - interval '20 minutes'
+          )
+      `,
+      [
+        unknownEffectId,
+        absentEffectId,
+        parentContainerId,
+        "a".repeat(64),
+        "b".repeat(64),
+        "c".repeat(64),
+      ],
+    );
+    const effects = new PostgresAnswerEffectStore(database, upgradedQuestionPolicy);
+
+    await expect(effects.listOutcomeUnknown(1)).resolves.toEqual([
+      expect.objectContaining({
+        effectId: absentEffectId,
+        state: "absent_unconfirmed",
+      }),
+    ]);
+  });
+
+  it("accepts a late exact receipt after absence was only unconfirmed", async (context) => {
+    const database = databaseOrSkip(context);
+    const effectId = "meeting-knowledge-answer:v1:late-receipt";
+    await database.query(
+      `
+        INSERT INTO meeting_core.answer_effects (
+          effect_id, state, projection_target_container_id,
+          delivery_container_id, reply_to_remote_message_id, marker,
+          payload_bytes, payload_hash, binding_hash, authorization_digest,
+          source_meeting_ids, request_started_at, settled_at, updated_at
+        ) VALUES (
+          $1, 'absent_unconfirmed', $2, $3, $4, 'marker-late-receipt',
+          '{}', $5, $6, $7, ARRAY['meeting-late-receipt']::text[],
+          transaction_timestamp() - interval '3 minutes',
+          transaction_timestamp(),
+          transaction_timestamp() - interval '6 minutes'
+        )
+      `,
+      [
+        effectId,
+        parentContainerId,
+        threadContainerId,
+        "666666666666666666",
+        "a".repeat(64),
+        "b".repeat(64),
+        "c".repeat(64),
+      ],
+    );
+    const effects = new PostgresAnswerEffectStore(database, upgradedQuestionPolicy);
+
+    await expect(effects.listOutcomeUnknown(10)).resolves.toEqual([
+      expect.objectContaining({
+        effectId,
+        state: "absent_unconfirmed",
+      }),
+    ]);
+    await expect(effects.complete({
+      effectId,
+      externalReceipt: "777777777777777777",
+    })).resolves.toBe(true);
+    await expect(effects.findById(effectId)).resolves.toMatchObject({
+      externalReceipt: "777777777777777777",
+      payloadBytes: "{}",
+      state: "delivered",
+    });
+  });
 });

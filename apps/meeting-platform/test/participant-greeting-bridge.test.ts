@@ -164,7 +164,7 @@ describe("ParticipantGreetingBridge", () => {
     context.bridge.advance();
     await context.bridge.settle();
 
-    expect(context.coordinator.calls).toHaveLength(3);
+    expect(context.coordinator.calls).toHaveLength(2);
     expect(context.coordinator.calls.map(({
       interruptible,
       locale,
@@ -192,25 +192,18 @@ describe("ParticipantGreetingBridge", () => {
         prompt: "Привет, Саша!",
         speakerId: russianParticipantId,
       },
-      {
-        interruptible: false,
-        locale: "en",
-        literalSpeech: "Hi, Alex!",
-        prompt: "Hi, Alex!",
-        speakerId: englishParticipantId,
-      },
     ]);
     expect(context.coordinator.calls[0]?.systemPrompt).toContain(
       "Speak exactly the greeting provided",
     );
-    expect(context.coordinator.idleCalls).toBe(6);
+    expect(context.coordinator.idleCalls).toBe(4);
   });
 
 });
 
 describe("ParticipantGreetingBridge ordering and observability", () => {
 
-  it("preserves FIFO order within initial and high-priority lanes", async () => {
+  it("preserves FIFO order while suppressing simultaneous overflow before admission", async () => {
     const context = fixture(true);
 
     context.bridge.participantsPresent([
@@ -224,8 +217,6 @@ describe("ParticipantGreetingBridge ordering and observability", () => {
     expect(context.coordinator.calls.map(({ speakerId }) => speakerId)).toEqual([
       unknownParticipantId,
       secondUnknownParticipantId,
-      russianParticipantId,
-      englishParticipantId,
     ]);
   });
 

@@ -78,7 +78,7 @@ class ConversationCancelTurn(_message.Message):
     def __init__(self, turn_id: _Optional[str] = ..., attempt_id: _Optional[str] = ..., reason: _Optional[_Union[ConversationCancellationReason, str]] = ...) -> None: ...
 
 class ConversationRuntimeServerMessage(_message.Message):
-    __slots__ = ("schema_version", "turn_id", "attempt_id", "event_sequence", "accepted", "text_delta", "audio_start", "audio_chunk", "audio_end", "usage", "completed", "cancelled", "failed", "latency")
+    __slots__ = ("schema_version", "turn_id", "attempt_id", "event_sequence", "accepted", "text_delta", "audio_start", "audio_chunk", "audio_end", "usage", "completed", "cancelled", "failed", "latency", "tts_attestation")
     SCHEMA_VERSION_FIELD_NUMBER: _ClassVar[int]
     TURN_ID_FIELD_NUMBER: _ClassVar[int]
     ATTEMPT_ID_FIELD_NUMBER: _ClassVar[int]
@@ -93,6 +93,7 @@ class ConversationRuntimeServerMessage(_message.Message):
     CANCELLED_FIELD_NUMBER: _ClassVar[int]
     FAILED_FIELD_NUMBER: _ClassVar[int]
     LATENCY_FIELD_NUMBER: _ClassVar[int]
+    TTS_ATTESTATION_FIELD_NUMBER: _ClassVar[int]
     schema_version: int
     turn_id: str
     attempt_id: str
@@ -107,7 +108,8 @@ class ConversationRuntimeServerMessage(_message.Message):
     cancelled: ConversationCancelled
     failed: ConversationFailed
     latency: ConversationLatency
-    def __init__(self, schema_version: _Optional[int] = ..., turn_id: _Optional[str] = ..., attempt_id: _Optional[str] = ..., event_sequence: _Optional[int] = ..., accepted: _Optional[_Union[ConversationAccepted, _Mapping]] = ..., text_delta: _Optional[_Union[ConversationTextDelta, _Mapping]] = ..., audio_start: _Optional[_Union[ConversationAudioStart, _Mapping]] = ..., audio_chunk: _Optional[_Union[ConversationAudioChunk, _Mapping]] = ..., audio_end: _Optional[_Union[ConversationAudioEnd, _Mapping]] = ..., usage: _Optional[_Union[ConversationUsage, _Mapping]] = ..., completed: _Optional[_Union[ConversationCompleted, _Mapping]] = ..., cancelled: _Optional[_Union[ConversationCancelled, _Mapping]] = ..., failed: _Optional[_Union[ConversationFailed, _Mapping]] = ..., latency: _Optional[_Union[ConversationLatency, _Mapping]] = ...) -> None: ...
+    tts_attestation: ConversationTtsAttestation
+    def __init__(self, schema_version: _Optional[int] = ..., turn_id: _Optional[str] = ..., attempt_id: _Optional[str] = ..., event_sequence: _Optional[int] = ..., accepted: _Optional[_Union[ConversationAccepted, _Mapping]] = ..., text_delta: _Optional[_Union[ConversationTextDelta, _Mapping]] = ..., audio_start: _Optional[_Union[ConversationAudioStart, _Mapping]] = ..., audio_chunk: _Optional[_Union[ConversationAudioChunk, _Mapping]] = ..., audio_end: _Optional[_Union[ConversationAudioEnd, _Mapping]] = ..., usage: _Optional[_Union[ConversationUsage, _Mapping]] = ..., completed: _Optional[_Union[ConversationCompleted, _Mapping]] = ..., cancelled: _Optional[_Union[ConversationCancelled, _Mapping]] = ..., failed: _Optional[_Union[ConversationFailed, _Mapping]] = ..., latency: _Optional[_Union[ConversationLatency, _Mapping]] = ..., tts_attestation: _Optional[_Union[ConversationTtsAttestation, _Mapping]] = ...) -> None: ...
 
 class ConversationAccepted(_message.Message):
     __slots__ = ()
@@ -120,6 +122,26 @@ class ConversationAudioEnd(_message.Message):
 class ConversationCompleted(_message.Message):
     __slots__ = ()
     def __init__(self) -> None: ...
+
+class ConversationTtsAttestation(_message.Message):
+    __slots__ = ("deployment", "key_id", "model", "provider", "signature", "source_revision", "voice", "voice_profile_id")
+    DEPLOYMENT_FIELD_NUMBER: _ClassVar[int]
+    KEY_ID_FIELD_NUMBER: _ClassVar[int]
+    MODEL_FIELD_NUMBER: _ClassVar[int]
+    PROVIDER_FIELD_NUMBER: _ClassVar[int]
+    SIGNATURE_FIELD_NUMBER: _ClassVar[int]
+    SOURCE_REVISION_FIELD_NUMBER: _ClassVar[int]
+    VOICE_FIELD_NUMBER: _ClassVar[int]
+    VOICE_PROFILE_ID_FIELD_NUMBER: _ClassVar[int]
+    deployment: str
+    key_id: str
+    model: str
+    provider: str
+    signature: str
+    source_revision: str
+    voice: str
+    voice_profile_id: str
+    def __init__(self, deployment: _Optional[str] = ..., key_id: _Optional[str] = ..., model: _Optional[str] = ..., provider: _Optional[str] = ..., signature: _Optional[str] = ..., source_revision: _Optional[str] = ..., voice: _Optional[str] = ..., voice_profile_id: _Optional[str] = ...) -> None: ...
 
 class ConversationTextDelta(_message.Message):
     __slots__ = ("text",)

@@ -73,6 +73,16 @@ function verifyCurrentVoiceQualification(
   if (voice.length !== 1 || voice[0]?.actorRun.scenario !== "reconnect") {
     fail("CURRENT_VOICE_PROOF_MISSING", "campaign requires one V10 reconnect voice qualification");
   }
+  const cancellationReasons = new Set(["barge-in", "disconnected", "meeting-ended"]);
+  const cancellations = voice.flatMap((run) => run.conversation.lifecycle.groundedAnswers)
+    .filter((answer) => answer.status === "cancelled" &&
+      cancellationReasons.has(answer.reason));
+  if (cancellations.length === 0) {
+    fail(
+      "GROUNDED_CANCELLATION_PROOF_MISSING",
+      "voice qualification requires barge-in or disconnect/meeting-end cancellation with no late factual PCM",
+    );
+  }
   const releaseBindings = new Set(current.map((run) => JSON.stringify(run.release)));
   if (releaseBindings.size !== 1) {
     fail("CAMPAIGN_RELEASE_CHANGED", "release binding changed between current campaign runs");

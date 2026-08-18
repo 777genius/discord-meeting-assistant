@@ -1,15 +1,15 @@
 ---
-id: ADR-0038
+id: ADR-0040
 status: accepted
 supersedes: []
 superseded_by: []
 ---
 
-# ADR-0038: Binding-aware post-call rollout
+# ADR-0040: Binding-aware post-call rollout
 
 ## Status
 
-Accepted on 2026-08-18. This decision tightens ADR-0037's migration and rolling
+Accepted on 2026-08-18. This decision tightens ADR-0039's migration and rolling
 deployment rules after implementation review. Its durable provider-binding and
 rollback guarantees remain unchanged.
 

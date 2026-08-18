@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { expect } from "vitest";
 
 import {
+  DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
   DeterministicExhaustiveCoverageExtraction,
   ExhaustiveCoverage,
   GroundedMeetingAnswer,
@@ -17,6 +18,7 @@ import {
 import {
   HmacHistoricalOpaqueIds,
   InfinityContextHistoricalMemoryAdapter,
+  type InfinityContextCapabilityAttestationV1,
 } from "../src/index.js";
 import {
   MemoryCoverageCheckpoints,
@@ -46,6 +48,7 @@ export interface RealServiceQualificationConfig {
 }
 
 export interface RealServiceQualificationMetrics {
+  readonly endpointReceipt: InfinityContextCapabilityAttestationV1;
   readonly boundedModelInput: {
     readonly evidenceCount: number;
     readonly inputTokens: number;
@@ -67,8 +70,11 @@ export interface RealServiceQualificationMetrics {
   readonly remoteCleanupVerified: true;
   readonly service: {
     readonly apiVersion: string;
+    readonly embeddingProfileDigestSha256: string;
+    readonly embeddingProfileId: string;
     readonly enabledAdapters: readonly string[];
     readonly name: string;
+    readonly revision: string;
   };
   readonly turnCount: number;
 }
@@ -102,6 +108,7 @@ export async function runRealServiceQualification(
   let boundedModelInput: RealServiceQualificationMetrics["boundedModelInput"] | null = null;
   let exhaustiveMetrics: RealServiceQualificationMetrics["exhaustive"] | null = null;
   let focusedRecallAt5: 1 | null = null;
+  let endpointReceipt: InfinityContextCapabilityAttestationV1 | null = null;
   let service: RealServiceQualificationMetrics["service"] | null = null;
   let cleanupRequested = false;
   try {
@@ -116,25 +123,31 @@ export async function runRealServiceQualification(
         { cause: error },
       );
     }
-    expect(capabilities.supports_qdrant).toBe(true);
-    expect(capabilities.enabled_adapters).toContain("qdrant");
-    expect(officialQdrantCapability(capabilities)).toMatchObject({
+    expect(capabilities.supportsQdrant).toBe(true);
+    expect(capabilities.enabledAdapters).toContain("qdrant");
+    expect(capabilities.qdrant).toMatchObject({
       enabled: true,
       healthy: true,
-      supports_search: true,
-      supports_upsert: true,
+      supportsSearch: true,
+      supportsUpsert: true,
     });
     if (
-      typeof capabilities.api_version !== "string" ||
-      typeof capabilities.service_name !== "string" ||
-      !Array.isArray(capabilities.enabled_adapters)
+      capabilities.apiVersion === null ||
+      capabilities.embeddingProfileDigestSha256 === null ||
+      capabilities.embeddingProfileId === null ||
+      capabilities.serviceName === null ||
+      capabilities.serviceRevision === null
     ) {
-      throw new Error("real Infinity Context capabilities omitted service identity");
+      throw new Error("real Infinity Context capabilities omitted its qualification receipt");
     }
+    endpointReceipt = capabilities;
     service = {
-      apiVersion: capabilities.api_version,
-      enabledAdapters: Object.freeze([...capabilities.enabled_adapters]),
-      name: capabilities.service_name,
+      apiVersion: capabilities.apiVersion,
+      embeddingProfileDigestSha256: capabilities.embeddingProfileDigestSha256,
+      embeddingProfileId: capabilities.embeddingProfileId,
+      enabledAdapters: Object.freeze([...capabilities.enabledAdapters]),
+      name: capabilities.serviceName,
+      revision: capabilities.serviceRevision,
     };
 
     await expect(worker.executeOnce({ indexingEnabled: true })).resolves.toMatchObject({
@@ -250,6 +263,7 @@ export async function runRealServiceQualification(
   return {
     boundedModelInput,
     exhaustive: exhaustiveMetrics,
+    endpointReceipt,
     exhaustiveBlockCount: buildHistoricalIndexPlan(meeting, ids, blockPolicy).documents.length,
     focusedQuestionCount: qualificationQuestions.focused.length,
     focusedRecallAt5,
@@ -257,16 +271,6 @@ export async function runRealServiceQualification(
     service,
     turnCount: QUALIFICATION_CORPUS_TURN_COUNT,
   };
-}
-
-function officialQdrantCapability(capabilities: unknown): unknown {
-  if (typeof capabilities !== "object" || capabilities === null) {
-    return undefined;
-  }
-  const adapters = (capabilities as Readonly<Record<string, unknown>>).adapters;
-  return typeof adapters === "object" && adapters !== null
-    ? (adapters as Readonly<Record<string, unknown>>).qdrant
-    : undefined;
 }
 
 function focusedRetrieval(
@@ -300,6 +304,9 @@ function focusedRetrieval(
     rerankLimit: 5,
     searchTimeoutMs: 30_000,
     version: "meeting-knowledge.focused-retrieval.v1",
+  }, {
+    ...DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
+    qualification: { evidenceSha256: "e".repeat(64), releaseRevision: "f".repeat(40), rolloutEpoch: "test-r1", schemaVersion: 1 },
   });
 }
 
@@ -391,6 +398,9 @@ function exhaustiveRetrieval(
     processingRelease: "meeting-knowledge.real-service-coverage.r1",
     reduceFanIn: 8,
     version: "meeting-knowledge.exhaustive-coverage.v1",
+  }, {
+    ...DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
+    qualification: { evidenceSha256: "e".repeat(64), releaseRevision: "f".repeat(40), rolloutEpoch: "test-r1", schemaVersion: 1 },
   }), { hash: historicalTurnHash });
 }
 

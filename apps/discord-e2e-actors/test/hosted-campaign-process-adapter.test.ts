@@ -73,7 +73,8 @@ async function readJsonEventually(path: string): Promise<unknown> {
     try {
       return JSON.parse(await readFile(path, "utf8")) as unknown;
     } catch (error: unknown) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {throw error;}
+      if (!(error instanceof SyntaxError) &&
+        (error as NodeJS.ErrnoException).code !== "ENOENT") {throw error;}
       await new Promise((resolve) => {setTimeout(resolve, 10);});
     }
   }

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,6 +26,7 @@ import { PlatformLiveMeetingRuntime } from "../src/live-meeting-runtime.js";
 import type { PlatformHttpHost } from "../src/http/platform-http-host.js";
 import {
   closeMeetingPlatformResources,
+  createPlatformHistoricalDeletion,
   createConversationCoordinator,
   createConversationLatencyLogger,
   createConversationPlaybackLogger,
@@ -119,23 +121,24 @@ afterEach(async () => {
 async function thinkingCueRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "meeting-platform-runtime-cues-"));
   temporaryCueRoots.push(root);
+  const pcm = Uint8Array.from({ length: 3_840 }, (_, index) => index % 256);
+  const sha256 = createHash("sha256").update(pcm).digest("hex");
   await writeFile(
     join(root, "manifest.json"),
     JSON.stringify({
       audio: { channels: 1, format: "pcm_s16le", sampleRateHz: 48_000 },
       groups: {
-        enAcknowledgement: [{ cueId: "en-ack", pcmFile: "en-ack.pcm" }],
-        enDeliberation: [{ cueId: "en-think", pcmFile: "en-think.pcm" }],
-        neutralAcknowledgement: [{ cueId: "neutral-ack", pcmFile: "neutral-ack.pcm" }],
-        ruAcknowledgement: [{ cueId: "ru-ack", pcmFile: "ru-ack.pcm" }],
-        ruDeliberation: [{ cueId: "ru-think", pcmFile: "ru-think.pcm" }],
+        enAcknowledgement: [{ cueId: "en-ack", pcmFile: "en-ack.pcm", sha256 }],
+        enDeliberation: [{ cueId: "en-think", pcmFile: "en-think.pcm", sha256 }],
+        neutralAcknowledgement: [{ cueId: "neutral-ack", pcmFile: "neutral-ack.pcm", sha256 }],
+        ruAcknowledgement: [{ cueId: "ru-ack", pcmFile: "ru-ack.pcm", sha256 }],
+        ruDeliberation: [{ cueId: "ru-think", pcmFile: "ru-think.pcm", sha256 }],
       },
-      version: 2,
+      version: 3,
       voiceId: "test-voice-id",
       voiceProfileId: "test-voice",
     }),
   );
-  const pcm = Uint8Array.from({ length: 3_840 }, (_, index) => index % 256);
   await Promise.all(
     ["en-ack.pcm", "en-think.pcm", "neutral-ack.pcm", "ru-ack.pcm", "ru-think.pcm"].map((name) =>
       writeFile(join(root, name), pcm),
@@ -150,7 +153,41 @@ async function* onePlaybackEvent(
   yield await event;
 }
 
+describe("grounded answer runtime logging", () => {
+  it("writes privacy-safe grounded answer provenance to structured logs", async () => {
+    const info = vi.fn();
+    const observer = createGroundedKnowledgeAnswerLogger({ info });
+
+    await observer.observeGroundedKnowledgeAnswer({
+      citationTurnIds: ["authoritative-turn-7"], evidenceEpoch: "evidence-7",
+      knowledgeEpoch: "knowledge-9", meetingId: "meeting-1", participantId: "participant-1",
+      playbackProvenance: "literal_tts", status: "validated", turnId: "question-turn-1",
+    });
+    expect(info).toHaveBeenCalledWith("Grounded knowledge answer validated", {
+      citationTurnIds: ["authoritative-turn-7"], evidenceEpoch: "evidence-7",
+      knowledgeEpoch: "knowledge-9", meetingId: "meeting-1", participantId: "participant-1",
+      playbackProvenance: "literal_tts", status: "validated", turnId: "question-turn-1",
+    });
+
+    await observer.observeGroundedKnowledgeAnswer({
+      cancellationObservedAtMs: 1_775_555_527_123, meetingId: "meeting-1",
+      reason: "barge-in", status: "cancelled", turnId: "question-turn-1",
+    });
+    expect(info).toHaveBeenLastCalledWith("Grounded knowledge answer cancelled", {
+      cancellationObservedAt: "2026-04-07T09:52:07.123Z",
+      cancellationObservedAtMs: 1_775_555_527_123, meetingId: "meeting-1",
+      reason: "barge-in", status: "cancelled", turnId: "question-turn-1",
+    });
+  });
+});
+
 describe("meeting platform runtime wiring", () => {
+  it("composes source deletion without Infinity configuration", () => {
+    const deletion = createPlatformHistoricalDeletion({} as Pool);
+
+    expect(deletion.requestMeetingDeletion).toBeTypeOf("function");
+  });
+
   it("writes provider-neutral conversation latency to structured logs", async () => {
     const info = vi.fn();
     const observer = createConversationLatencyLogger({ info });
@@ -173,33 +210,6 @@ describe("meeting platform runtime wiring", () => {
       totalToFirstAudioMs: 1_870,
       turnId: "turn-1",
       wakeToFirstLlmTokenMs: 1_500,
-    });
-  });
-
-  it("writes privacy-safe grounded answer provenance to structured logs", async () => {
-    const info = vi.fn();
-    const observer = createGroundedKnowledgeAnswerLogger({ info });
-
-    await observer.observeGroundedKnowledgeAnswer({
-      citationTurnIds: ["authoritative-turn-7"],
-      evidenceEpoch: "evidence-7",
-      knowledgeEpoch: "knowledge-9",
-      meetingId: "meeting-1",
-      participantId: "participant-1",
-      playbackProvenance: "literal_tts",
-      status: "validated",
-      turnId: "question-turn-1",
-    });
-
-    expect(info).toHaveBeenCalledWith("Grounded knowledge answer validated", {
-      citationTurnIds: ["authoritative-turn-7"],
-      evidenceEpoch: "evidence-7",
-      knowledgeEpoch: "knowledge-9",
-      meetingId: "meeting-1",
-      participantId: "participant-1",
-      playbackProvenance: "literal_tts",
-      status: "validated",
-      turnId: "question-turn-1",
     });
   });
 
@@ -256,6 +266,58 @@ describe("meeting platform runtime wiring", () => {
       playbackSettledAtEpochMs: 1_750,
       playbackSettledAtMonotonicMs: 750,
       settlement: "played",
+      turnId: "turn-1",
+    });
+  });
+
+  it("attests TTS deployment, model and voice on speech receipts", async () => {
+    const info = vi.fn();
+    const ttsAttestation = {
+      attemptId: "answer-attempt-1",
+      deployment: "pipecat-runtime",
+      keyId: "a".repeat(64),
+      model: "elevenlabs-multilingual-v1",
+      provider: "elevenlabs",
+      schemaVersion: 1 as const,
+      signature: "b".repeat(64),
+      sourceRevision: "c".repeat(40),
+      turnId: "turn-1",
+      voice: "test-voice",
+      voiceProfileId: "elevenlabs-multilingual-v1",
+    };
+    const observer = createConversationPlaybackLogger({ info }, 1_000);
+
+    await observer.observeConversationPlayback({
+      meetingId: "meeting-1", playbackAttemptId: "answer-attempt-1",
+      playbackKind: "answer", speechProvenance: "literal_tts", startedAtMs: 1_250,
+      status: "started", ttsAttestation, turnId: "turn-1",
+    });
+
+    expect(info).toHaveBeenCalledWith("Conversation playback started",
+      expect.objectContaining({ ttsAttestation }));
+  });
+
+  it("retains the exact thinking cue PCM digest in playback receipts", async () => {
+    const info = vi.fn();
+    const observer = createConversationPlaybackLogger({ info }, 1_000);
+
+    await observer.observeConversationPlayback({
+      meetingId: "meeting-1",
+      playbackAttemptId: "thinking-cue-attempt-1",
+      playbackKind: "thinking-cue",
+      startedAtMs: 1_250,
+      status: "started",
+      thinkingCuePcmSha256: "b".repeat(64),
+      turnId: "turn-1",
+    });
+
+    expect(info).toHaveBeenCalledWith("Conversation playback started", {
+      meetingId: "meeting-1",
+      playbackAttemptId: "thinking-cue-attempt-1",
+      playbackKind: "thinking-cue",
+      playbackStartedAtEpochMs: 1_250,
+      playbackStartedAtMonotonicMs: 250,
+      thinkingCuePcmSha256: "b".repeat(64),
       turnId: "turn-1",
     });
   });
@@ -353,6 +415,45 @@ describe("meeting platform runtime wiring", () => {
     await coordinator.whenIdle("meeting-1");
   });
 
+});
+
+describe("Meeting Knowledge shutdown dependency fence", () => {
+  it("keeps final-reply dependencies alive when its drain times out", async () => {
+    const calls: string[] = [];
+    const never = new Promise<void>(() => {});
+
+    const closing = closeMeetingPlatformResources({
+      discord: { destroy: () => { calls.push("discord:destroy"); } } as unknown as Client,
+      logger: { flush: async () => { calls.push("logger:flush"); } } as unknown as Logger,
+      meetingKnowledge: {
+        close: async () => never,
+        settleIngress: async () => {},
+        start: () => {},
+      },
+      outboxDispatcher: { whenIdle: async () => {} },
+      pool: { end: async () => { calls.push("pool:end"); } } as unknown as Pool,
+      queue: { close: async () => {} },
+      queueEvents: { close: async () => {} },
+      recordings: { close: async () => {} },
+      runtimeTransport: { close: () => { calls.push("runtime:close"); } } as unknown as GrpcSubscriptionRuntimeTransport,
+      s3: { destroy: () => { calls.push("s3:destroy"); } } as unknown as S3Client,
+      server: { close: async () => {}, start: async () => {} },
+      shutdownTimeoutMilliseconds: 25,
+      worker: {
+        cancelActivePostCallJobs: () => {},
+        close: async () => {},
+        pause: async () => {},
+        waitForActivePostCallJobs: async () => {},
+      } as unknown as PostCallWorker,
+    });
+
+    await expect(closing).rejects.toBeInstanceOf(AggregateError);
+    expect(calls).toContain("s3:destroy");
+    expect(calls).toContain("logger:flush");
+    expect(calls).not.toContain("discord:destroy");
+    expect(calls).not.toContain("runtime:close");
+    expect(calls).not.toContain("pool:end");
+  });
 });
 
 describe("meeting platform shutdown", () => {
@@ -470,6 +571,7 @@ describe("meeting platform shutdown", () => {
       calls.indexOf("queue:close"),
     );
   });
+
 
   it("bounds shutdown when an in-flight outbox reconciliation never settles", async () => {
     const calls: string[] = [];

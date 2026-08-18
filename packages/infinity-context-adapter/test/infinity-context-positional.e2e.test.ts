@@ -3,6 +3,7 @@ import { InfinityContextClient } from "@infinity-context/sdk";
 import { createHash } from "node:crypto";
 
 import {
+  DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
   DeterministicExhaustiveCoverageExtraction,
   ExhaustiveCoverage,
   GroundedMeetingAnswer,
@@ -259,7 +260,10 @@ describe("Infinity Context positional retrieval qualification", () => {
       rerankLimit: 5,
       searchTimeoutMs: 40,
       version: "meeting-knowledge.focused-retrieval.v1",
-    });
+    }, {
+    ...DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
+    qualification: { evidenceSha256: "e".repeat(64), releaseRevision: "f".repeat(40), rolloutEpoch: "test-r1", schemaVersion: 1 },
+  });
     await assertFocusedRecall(focused, meeting, localPlan);
 
     const extraction = new DeterministicExhaustiveCoverageExtraction(64);
@@ -293,7 +297,10 @@ describe("Infinity Context positional retrieval qualification", () => {
         processingRelease: "meeting-knowledge.positional-coverage.r2",
         reduceFanIn: 8,
         version: "meeting-knowledge.exhaustive-coverage.v1",
-      }),
+      }, {
+    ...DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
+    qualification: { evidenceSha256: "e".repeat(64), releaseRevision: "f".repeat(40), rolloutEpoch: "test-r1", schemaVersion: 1 },
+  }),
       { hash: historicalTurnHash },
     );
     const exhaustive = await exhaustiveMemory.retrieve({
@@ -402,6 +409,8 @@ describe("Infinity Context positional retrieval qualification", () => {
       locale: "en",
       plan: groundingPlan,
       question: qualificationQuestions.all,
+    }, {
+      beforeGenerate: async () => "continue",
     })).resolves.toMatchObject({ status: "completed" });
     expect(synthesisReduction).toEqual(exhaustive.coverageReduction);
     assertExactBoundedModelRequest(

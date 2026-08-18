@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from pipecat_runtime.application.models import (
@@ -40,6 +41,35 @@ class EventEnvelope:
 @dataclass(frozen=True, slots=True)
 class Accepted(EventEnvelope):
     """The runtime accepted the turn and assigned its attempt identity."""
+
+
+@dataclass(frozen=True, slots=True)
+class TtsAttestation(EventEnvelope):
+    """Signed identity of the concrete TTS selected for this attempt."""
+
+    deployment: str
+    key_id: str
+    model: str
+    provider: str
+    signature: str
+    source_revision: str
+    voice: str
+    voice_profile_id: str
+
+    def __post_init__(self) -> None:
+        EventEnvelope.__post_init__(self)
+        for field_name in (
+            "deployment", "model", "provider", "source_revision", "voice", "voice_profile_id"
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                identifier(getattr(self, field_name), field_name=field_name),
+            )
+        if re.fullmatch(r"[0-9a-f]{64}", self.key_id) is None:
+            raise RuntimeInputError("TTS attestation key_id must be SHA-256")
+        if re.fullmatch(r"[0-9a-f]{64}", self.signature) is None:
+            raise RuntimeInputError("TTS attestation signature must be HMAC-SHA256")
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,6 +184,7 @@ class Failed(EventEnvelope):
 
 type ConversationEvent = (
     Accepted
+    | TtsAttestation
     | TextDelta
     | AudioStart
     | AudioChunk

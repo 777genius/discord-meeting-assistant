@@ -5,17 +5,38 @@ export type AnswerEffectState =
   | "delivered"
   | "outcome_unknown"
   | "rejected_before_request"
+  | "retracted"
+  | "retraction_pending"
   | "request_started"
   | "reserved";
 
 const transitions = Object.freeze({
-  absent_unconfirmed: Object.freeze(["absent_unconfirmed"]),
+  // A remote inspection can finish while the original create request is still
+  // in flight. Its late receipt must remain admissible so the effect cannot be
+  // orphaned after an absence was only unconfirmed.
+  absent_unconfirmed: Object.freeze([
+    "absent_unconfirmed",
+    "delivered",
+    "retraction_pending",
+  ]),
   cancelled: Object.freeze(["cancelled"]),
   claimed: Object.freeze(["cancelled", "claimed", "rejected_before_request", "request_started"]),
-  delivered: Object.freeze(["delivered"]),
-  outcome_unknown: Object.freeze(["absent_unconfirmed", "delivered", "outcome_unknown"]),
+  delivered: Object.freeze(["delivered", "retraction_pending"]),
+  outcome_unknown: Object.freeze([
+    "absent_unconfirmed",
+    "delivered",
+    "outcome_unknown",
+    "retraction_pending",
+  ]),
   rejected_before_request: Object.freeze(["rejected_before_request"]),
-  request_started: Object.freeze(["delivered", "outcome_unknown", "request_started"]),
+  retracted: Object.freeze(["retracted"]),
+  retraction_pending: Object.freeze(["retracted", "retraction_pending"]),
+  request_started: Object.freeze([
+    "delivered",
+    "outcome_unknown",
+    "request_started",
+    "retraction_pending",
+  ]),
   reserved: Object.freeze(["cancelled", "claimed", "rejected_before_request", "reserved"]),
 } as const satisfies Readonly<Record<AnswerEffectState, readonly AnswerEffectState[]>>);
 
@@ -30,6 +51,7 @@ export interface AnswerEffectRecord {
   readonly authorizationDigest: string;
   readonly bindingHash: string;
   readonly claimGeneration: number;
+  readonly containmentReceipts: readonly string[];
   readonly deliveryContainerId: string;
   readonly effectId: string;
   readonly externalReceipt: string | null;
@@ -38,5 +60,6 @@ export interface AnswerEffectRecord {
   readonly payloadHash: string;
   readonly projectionTargetContainerId: string;
   readonly replyToRemoteMessageId: string;
+  readonly sourceMeetingIds: readonly string[];
   readonly state: AnswerEffectState;
 }

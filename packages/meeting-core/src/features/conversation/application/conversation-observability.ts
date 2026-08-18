@@ -43,6 +43,7 @@ export function observeConversationPlaybackSettlement(
 export function playbackProvenance(run: ActiveConversationRun): {
   readonly preparedAssetSha256?: string;
   readonly speechProvenance?: "literal_tts" | "model_tts";
+  readonly ttsAttestation?: NonNullable<ActiveConversationRun["ttsAttestation"]>;
 } {
   if (run.prepared.cue !== undefined) {
     return run.prepared.cue.assetSha256 === undefined
@@ -53,6 +54,7 @@ export function playbackProvenance(run: ActiveConversationRun): {
     speechProvenance: run.prepared.request.literalSpeech === undefined
       ? "model_tts"
       : "literal_tts",
+    ...(run.ttsAttestation === null ? {} : { ttsAttestation: run.ttsAttestation }),
   };
 }
 

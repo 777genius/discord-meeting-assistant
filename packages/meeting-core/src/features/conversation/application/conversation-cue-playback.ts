@@ -1,11 +1,11 @@
 import type {
-  ConversationCancellationReason,
   ConversationPlaybackObservation,
   ConversationPlaybackObserverPort,
   ConversationPlaybackReadinessPort,
   ConversationThinkingCue,
   ConversationThinkingCueStage,
   VoicePlaybackPort,
+  VoicePlaybackCancellationRequest,
   VoicePlaybackSession,
 } from "./ports/conversation.js";
 import type {
@@ -24,7 +24,10 @@ import {
 } from "./conversation-state.js";
 
 interface ConversationCuePlaybackDependencies {
-  readonly onFailed: (run: ActiveConversationRun) => Promise<void>;
+  readonly onFailed: (
+    state: MeetingConversationState,
+    run: ActiveConversationRun,
+  ) => Promise<void>;
   readonly onFinished: (
     state: MeetingConversationState,
     run: ActiveConversationRun,
@@ -32,6 +35,15 @@ interface ConversationCuePlaybackDependencies {
   readonly playback: VoicePlaybackPort;
   readonly playbackObserver?: ConversationPlaybackObserverPort;
   readonly playbackReadiness?: ConversationPlaybackReadinessPort;
+}
+
+interface ConversationCuePlaybackReceiptInput {
+  readonly expectedAttemptId: string;
+  readonly expectedPcmSha256: string;
+  readonly fence: ConversationPlaybackFence;
+  readonly playback: VoicePlaybackSession;
+  readonly run: ActiveConversationRun;
+  readonly state: MeetingConversationState;
 }
 
 /** Owns opening, streaming and terminal-receipt tracking for one cue playback. */
@@ -60,6 +72,7 @@ export class ConversationCuePlayback {
         if (readiness !== undefined) {
           const ready = await readiness.awaitConversationPlaybackReady({
             expectedPcmBytes: expectedConversationCuePcmBytes(cue),
+            expectedPcmSha256: cue.pcmSha256,
             meetingId: run.prepared.request.meetingId,
             participantId: run.prepared.request.speakerId,
             playbackAttemptId: cue.playbackAttemptId,
@@ -75,7 +88,7 @@ export class ConversationCuePlayback {
             ) {
               return null;
             }
-            await this.dependencies.onFailed(run);
+            await this.dependencies.onFailed(state, run);
             return null;
           }
         }
@@ -107,10 +120,20 @@ export class ConversationCuePlayback {
       run.cuePlayback = opened.value;
       trackConversationTask(
         state,
-        this.consume(state, run, opened.value, fence, cue.playbackAttemptId),
+        this.consume({
+          expectedAttemptId: cue.playbackAttemptId,
+          expectedPcmSha256: cue.pcmSha256,
+          fence,
+          playback: opened.value,
+          run,
+          state,
+        }),
       );
       if (!this.canKeep(state, run, opened.value)) {
-        this.cancel(run, opened.value, "superseded");
+        this.cancel(run, opened.value, {
+          cancellationObservedAtMs: state.lastObservedAtMs,
+          reason: "superseded",
+        });
         return null;
       }
       if (stage === "deliberation") {
@@ -127,9 +150,9 @@ export class ConversationCuePlayback {
   public cancel(
     run: ActiveConversationRun,
     playback: VoicePlaybackSession,
-    reason: ConversationCancellationReason,
+    request: VoicePlaybackCancellationRequest,
   ): void {
-    void playback.cancel(reason).then(
+    void playback.cancel(request).then(
       (result) => {
         if (!result.ok && run.cuePlayback === playback) {
           run.playbackTerminalReceiptMissing = true;
@@ -166,18 +189,18 @@ export class ConversationCuePlayback {
           turnId: run.prepared.request.turnId,
         });
         if (!written.ok) {
-          await this.dependencies.onFailed(run);
+          await this.dependencies.onFailed(state, run);
           return;
         }
       }
       if (this.canStream(state, run, playback)) {
         const finished = await playback.finish();
         if (!finished.ok) {
-          await this.dependencies.onFailed(run);
+          await this.dependencies.onFailed(state, run);
         }
       }
     } catch {
-      await this.dependencies.onFailed(run);
+      await this.dependencies.onFailed(state, run);
     }
   }
 
@@ -217,13 +240,15 @@ export class ConversationCuePlayback {
       run.cuePlayback === playback;
   }
 
-  private async consume(
-    state: MeetingConversationState,
-    run: ActiveConversationRun,
-    playback: VoicePlaybackSession,
-    fence: ConversationPlaybackFence,
-    expectedAttemptId: string,
-  ): Promise<void> {
+  private async consume(input: ConversationCuePlaybackReceiptInput): Promise<void> {
+    const {
+      expectedAttemptId,
+      expectedPcmSha256,
+      fence,
+      playback,
+      run,
+      state,
+    } = input;
     let terminalReceiptReceived = false;
     let startedReceiptReceived = false;
     try {
@@ -250,6 +275,7 @@ export class ConversationCuePlayback {
             playbackAttemptId: event.attemptId,
             playbackKind: "thinking-cue",
             status: "finished",
+            thinkingCuePcmSha256: expectedPcmSha256,
             turnId: run.prepared.request.turnId,
           });
           advanceConversationState(state, event.finishedAtMs);
@@ -267,7 +293,7 @@ export class ConversationCuePlayback {
           }
           run.playbackTerminalReceiptMissing = false;
           if (isCurrentConversationRun(state, run)) {
-            await this.dependencies.onFailed(run);
+            await this.dependencies.onFailed(state, run);
           }
           continue;
         }
@@ -284,6 +310,7 @@ export class ConversationCuePlayback {
           playbackKind: "thinking-cue",
           startedAtMs: event.startedAtMs,
           status: "started",
+          thinkingCuePcmSha256: expectedPcmSha256,
           turnId: run.prepared.request.turnId,
         });
         const processedAtMs = advanceConversationState(state, event.startedAtMs);

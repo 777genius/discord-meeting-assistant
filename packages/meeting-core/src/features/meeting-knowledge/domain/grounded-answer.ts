@@ -4,6 +4,12 @@ import {
   requireKnowledgeText,
 } from "./errors.js";
 import type { GroundingEvidence } from "./grounding-plan.js";
+import {
+  claimRequiresExhaustiveCoverage,
+  isExhaustiveAbsenceClaim,
+  permitsUncitedExhaustiveAbsence,
+  type HistoricalGroundingMode,
+} from "./grounding-mode.js";
 
 export type GroundedAnswerStatus =
   | "answered"
@@ -110,6 +116,8 @@ export class GroundedAnswer {
     readonly evidence: readonly GroundingEvidence[];
     readonly expectedLocale: AnswerLocale;
     readonly exhaustiveAbsenceProven?: boolean;
+    readonly groundingMode: HistoricalGroundingMode;
+    readonly question: string;
   }): GroundedAnswer {
     const { candidate } = input;
     const candidateLocale: unknown = candidate.locale;
@@ -166,8 +174,20 @@ export class GroundedAnswer {
         600,
       );
       assertSafeClaim(text);
+      if (
+        input.groundingMode === "focused_retrieval" &&
+        claimRequiresExhaustiveCoverage(text)
+      ) {
+        throw new MeetingKnowledgeInvariantError(
+          "INVALID_PROVIDER_ANSWER",
+          "focused evidence cannot support exhaustive, absence, or global-count claims",
+        );
+      }
       const uncitedAbsence = claim.evidenceIds.length === 0 &&
-        input.exhaustiveAbsenceProven === true;
+        input.exhaustiveAbsenceProven === true &&
+        input.groundingMode === "exhaustive_coverage" &&
+        permitsUncitedExhaustiveAbsence(input.question) &&
+        isExhaustiveAbsenceClaim(text);
       if ((!uncitedAbsence && claim.evidenceIds.length < 1) || claim.evidenceIds.length > 8) {
         throw new MeetingKnowledgeInvariantError(
           "INVALID_PROVIDER_ANSWER",

@@ -1,11 +1,11 @@
 ---
-id: ADR-0037
+id: ADR-0039
 status: accepted
 supersedes: []
 superseded_by: []
 ---
 
-# ADR-0037: Independent VoiceText batch and live provider profiles
+# ADR-0039: Independent VoiceText batch and live provider profiles
 
 ## Status
 

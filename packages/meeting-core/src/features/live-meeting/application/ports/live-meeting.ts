@@ -171,5 +171,8 @@ export interface LiveMeetingProjectionRequest {
 export interface LiveMeetingProjectionPort {
   publish(
     request: LiveMeetingProjectionRequest,
-  ): Promise<LiveMeetingPortResult<{ readonly externalPublicationId: string }>>;
+  ): Promise<LiveMeetingPortResult<{
+    readonly externalPublicationId: string;
+    readonly publisherIdentity?: string;
+  }>>;
 }

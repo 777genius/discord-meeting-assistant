@@ -1,44 +1,26 @@
 import { requiresExhaustiveCoverage } from "../domain/question-scope.js";
-import {
-  createFocusedRetrievalGroundingPlan,
-  type RehydratedEvidenceTurn,
-} from "../domain/grounding-plan.js";
+import { createFocusedRetrievalGroundingPlan, type RehydratedEvidenceTurn } from "../domain/grounding-plan.js";
 import type { ExhaustiveCoverage } from "./exhaustive-coverage.js";
 import { GroundedMeetingAnswer } from "./grounded-meeting-answer.js";
 import type { HistoricalFocusedRetrieval } from "./historical-retrieval.js";
-import type {
-  HistoricalAuthorizationObservationV1,
-  HistoricalAuthorizationPort,
-} from "./ports/historical-grounding.js";
+import type { HistoricalAuthorizationObservationV1, HistoricalAuthorizationPort } from "./ports/historical-grounding.js";
 import type { CanonicalEvidenceTurnHashPort } from "./same-room-focused-memory.js";
 import type { LiveFinalizedMemoryQueryPort } from "./ports/live-finalized-memory.js";
-import {
-  crossSourceTurns,
-  deduplicateEvidenceTurns,
-  executeActiveExhaustiveCoverage,
-  normalizedLocale,
-  notAnswered,
-  recheckGroundedPlaybackAuthority,
-  sameAuthorization,
-  sameLiveContext,
-  type GroundedPlaybackAuthorityRequest,
-  type GroundedPlaybackAuthorityResultV1,
-} from "./grounded-question-internals.js";
-
+import { crossSourceTurns, deduplicateEvidenceTurns, executeActiveExhaustiveCoverage,
+  normalizedLocale, notAnswered, recheckGroundedPlaybackAuthority, sameAuthorization,
+  sameLiveContext, type GroundedPlaybackAuthorityRequest,
+  type GroundedPlaybackAuthorityResultV1 } from "./grounded-question-internals.js";
 export interface GroundedMeetingQuestionIdentityPort { digest(namespace: string, parts: readonly string[]): string }
-
 export interface AnswerGroundedMeetingQuestionPolicyV1 {
   readonly maximumCandidates: number;
   readonly neighborTurns: number;
   readonly version: string;
 }
-
 export const DEFAULT_GROUNDED_MEETING_QUESTION_POLICY: AnswerGroundedMeetingQuestionPolicyV1 = Object.freeze({
     maximumCandidates: 24,
     neighborTurns: 2,
     version: "meeting-knowledge.grounded-question.v1",
   });
-
 export type GroundedMeetingQuestionResultV1 =
   | {
       readonly answer: {
@@ -55,9 +37,7 @@ export type GroundedMeetingQuestionResultV1 =
       readonly schemaVersion: 1;
       readonly status: "cancelled" | "insufficient_evidence" | "unavailable";
     };
-
 export type GroundedMeetingPlaybackAuthorityResultV1 = GroundedPlaybackAuthorityResultV1;
-
 interface PreparedFocusedEvidence {
   readonly authorityGeneration: string;
   readonly canonicalEvidenceHash: string;
@@ -66,7 +46,6 @@ interface PreparedFocusedEvidence {
   readonly transcriptVersion: number;
   readonly turns: readonly RehydratedEvidenceTurn[];
 }
-
 /**
  * Published synchronous Meeting Knowledge answer use case used by voice and
  * reusable by other transports. Retrieval produces locators, every selected
@@ -75,7 +54,6 @@ interface PreparedFocusedEvidence {
  */
 export class AnswerGroundedMeetingQuestion {
   readonly #policy: AnswerGroundedMeetingQuestionPolicyV1;
-
   public constructor(
     private readonly dependencies: {
       readonly answers: GroundedMeetingAnswer;
@@ -104,7 +82,6 @@ export class AnswerGroundedMeetingQuestion {
     }
     this.#policy = Object.freeze({ ...policy });
   }
-
   public async execute(
     input: {
       readonly activeParticipantId: string;
@@ -128,7 +105,7 @@ export class AnswerGroundedMeetingQuestion {
     if (current === null) {
       return notAnswered("unavailable", "live_room_authority_unavailable");
     }
-    const admittedAuthorization = await this.authorize(input, current.scopeId);
+    const admittedAuthorization = await this.authorize(input, current.scopeId, options.signal);
     if (admittedAuthorization === null) {
       return notAnswered("unavailable", "source_room_authorization_denied");
     }
@@ -222,7 +199,6 @@ export class AnswerGroundedMeetingQuestion {
       status: "answered",
     });
   }
-
   /**
    * Rebuilds the locally authorized focused watermark immediately before voice
    * playback. The answer text is never accepted as evidence for this check.
@@ -236,12 +212,11 @@ export class AnswerGroundedMeetingQuestion {
       maximumCandidates: this.#policy.maximumCandidates,
       signal: options.signal,
     }, {
-      authorize: (scopeId) => this.authorize(input, scopeId),
+      authorize: (scopeId) => this.authorize(input, scopeId, options.signal),
       live: this.dependencies.live,
       prepare: (context) => this.prepareFocused(input, context, options.signal),
     });
   }
-
   private async prepareFocused(
     input: Parameters<AnswerGroundedMeetingQuestion["execute"]>[0],
     context: NonNullable<Awaited<ReturnType<LiveFinalizedMemoryQueryPort["resolveContext"]>>>,
@@ -359,11 +334,12 @@ export class AnswerGroundedMeetingQuestion {
       turns: Object.freeze(selected),
     });
   }
-
   private async authorize(
     input: Parameters<AnswerGroundedMeetingQuestion["execute"]>[0],
     scopeId: string,
+    signal: AbortSignal,
   ): Promise<HistoricalAuthorizationObservationV1 | null> {
+    signal.throwIfAborted();
     if (this.dependencies.authorization === undefined) {
       return Object.freeze({
         authorizationDigest: "local-live-authority",
@@ -379,14 +355,16 @@ export class AnswerGroundedMeetingQuestion {
       const observation = await this.dependencies.authorization.authorize({
         authorizationPrincipalRef: input.authorizationPrincipalRef,
         roomId: input.roomId,
+        signal,
         scopeId,
       });
+      signal.throwIfAborted();
       return observation.authorized ? observation : null;
     } catch {
+      signal.throwIfAborted();
       return null;
     }
   }
-
   private async recheckFocusedFence(
     input: Parameters<AnswerGroundedMeetingQuestion["execute"]>[0],
     admittedContext: NonNullable<Awaited<ReturnType<LiveFinalizedMemoryQueryPort["resolveContext"]>>>,
@@ -404,7 +382,7 @@ export class AnswerGroundedMeetingQuestion {
         roomId: input.roomId,
         signal,
       }),
-      this.authorize(input, admittedContext.scopeId),
+      this.authorize(input, admittedContext.scopeId, signal),
     ]);
     if (
       context === null ||

@@ -179,6 +179,7 @@ describe("recording identity spool", () => {
       kind: "finalized",
       lifecycleGeneration: 2,
       recording: {
+        authoritativeDurationMs: 299_000,
         speakerAudio: [{ speakerId: humanId }, { speakerId: automationId }],
       },
       source: { roomId: channelId, scopeId: guildId },
@@ -190,7 +191,8 @@ describe("recording identity spool", () => {
     expect(receipt).toMatchObject({
       actors,
       lifecycleSchemaVersion: 2,
-      schemaVersion: 4,
+      recording: { authoritativeDurationMs: 299_000 },
+      schemaVersion: 5,
     });
   });
 
@@ -326,7 +328,8 @@ describe("trusted recording identity spool", () => {
     )).toMatchObject({
       identityProvenance: { producerCapabilityId, producerRevision, rosterState: "sealed" },
       lifecycleSchemaVersion: 3,
-      schemaVersion: 4,
+      recording: { authoritativeDurationMs: 299_000 },
+      schemaVersion: 5,
     });
     await recovered.close();
   });

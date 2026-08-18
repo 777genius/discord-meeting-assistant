@@ -32,7 +32,7 @@ from pipecat_runtime.adapters.pipecat.processors import (
 )
 from pipecat_runtime.adapters.pipecat.runtime import PipecatConversationRuntime
 from pipecat_runtime.adapters.pipecat.turn_lifecycle import ActivePipelineTurn
-from pipecat_runtime.adapters.providers.profiles import create_profile
+from pipecat_runtime.adapters.providers.profiles import TtsRuntimeIdentity, create_profile
 from pipecat_runtime.application.conversation_events import (
     AudioChunk,
     AudioEnd,
@@ -93,7 +93,13 @@ class _FramedSpeechProcessor(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
-class _FramedSpeechProfile:
+class _FixtureTtsIdentity:
+    @property
+    def tts_identity(self) -> TtsRuntimeIdentity:
+        return TtsRuntimeIdentity(provider="fixture", model="fixture-tts-v1", voice="fixture")
+
+
+class _FramedSpeechProfile(_FixtureTtsIdentity):
     profile_id = "framed-speech"
 
     def __init__(self, probe: _PlaybackLifecycleProbe) -> None:
@@ -128,7 +134,7 @@ class _EmptyTtsProcessor(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
-class _EmptyThenSpeechProfile:
+class _EmptyThenSpeechProfile(_FixtureTtsIdentity):
     profile_id = "empty-then-speech"
 
     def __init__(self) -> None:
@@ -176,7 +182,7 @@ class _CountingTurnProcessor(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
-class _CountingProfile:
+class _CountingProfile(_FixtureTtsIdentity):
     profile_id = "persistent-test"
 
     def __init__(self) -> None:
@@ -193,7 +199,7 @@ class _CountingProfile:
         return self.processor, ConversationTextCaptureProcessor()
 
 
-class _IndependentCountingProfile:
+class _IndependentCountingProfile(_FixtureTtsIdentity):
     """Create isolated processors for tests that exercise multiple meeting pipelines."""
 
     profile_id = "independent-persistent-test"
@@ -243,7 +249,7 @@ class _InterruptibleTurnProcessor(FrameProcessor):
         await self.push_frame(LLMFullResponseEndFrame(), direction)
 
 
-class _InterruptibleProfile:
+class _InterruptibleProfile(_FixtureTtsIdentity):
     profile_id = "persistent-interruption-test"
 
     def __init__(self) -> None:

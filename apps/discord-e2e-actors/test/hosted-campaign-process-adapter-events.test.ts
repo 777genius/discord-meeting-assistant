@@ -97,6 +97,20 @@ function completionAction(specification: HostedCampaignExecutableSpec) {
   return completion.action;
 }
 
+async function waitForFileContents(path: string, expected: string): Promise<void> {
+  for (let attempt = 0; attempt < 300; attempt += 1) {
+    try {
+      if ((await readFile(path, "utf8")) === expected) {
+        return;
+      }
+    } catch {}
+    await new Promise((resolve) => {
+      setTimeout(resolve, 10);
+    });
+  }
+  throw new Error(`File ${path} did not contain ${expected}`);
+}
+
 describe("hosted campaign process adapter events", () => {
   it("ingests exact prefixed fragmented events while allowing ordinary stdout", async () => {
     const outputPath = "/tmp/capture-1.json";
@@ -324,17 +338,19 @@ describe("hosted campaign process adapter events", () => {
 
   it("cleans a grandchild after invalid startup output", async () => {
     const root = await mkdtemp(join(tmpdir(), "hosted-invalid-process-tree-"));
+    const readinessPath = join(root, "grandchild-ready.txt");
+    const releasePath = join(root, "release-invalid-output.txt");
     const markerPath = join(root, "grandchild-state.txt");
     const childSource = [
       'require("node:fs").writeFileSync(process.argv[1], "ready")',
-      'process.on("SIGTERM", () => { require("node:fs").writeFileSync(process.argv[1], "term"); process.exit(0); })',
+      'process.on("SIGTERM", () => { require("node:fs").writeFileSync(process.argv[2], "term"); process.exit(0); })',
       "setInterval(() => {}, 1000)",
     ].join(";");
     const source = `
       const { spawn } = require("node:child_process");
-      spawn(process.execPath, ["-e", ${JSON.stringify(childSource)}, ${JSON.stringify(markerPath)}], { stdio: "ignore" }).unref();
+      spawn(process.execPath, ["-e", ${JSON.stringify(childSource)}, ${JSON.stringify(readinessPath)}, ${JSON.stringify(markerPath)}], { stdio: "ignore" }).unref();
       const timer = setInterval(() => {
-        if (!require("node:fs").existsSync(${JSON.stringify(markerPath)})) return;
+        if (!require("node:fs").existsSync(${JSON.stringify(readinessPath)}) || !require("node:fs").existsSync(${JSON.stringify(releasePath)})) return;
         clearInterval(timer);
         process.stdout.write(${JSON.stringify(`${hostedCampaignProcessEventPrefix}{bad-json}\n`)});
       }, 5);
@@ -346,6 +362,9 @@ describe("hosted campaign process adapter events", () => {
       DISCORD_E2E_RUN_ID: "run-3",
     });
     const handle = await processAdapter.startChild(executable, bounded());
+    await waitForFileContents(readinessPath, "ready");
+    await writeFile(releasePath, "release", { mode: 0o600 });
+    await waitForFileContents(markerPath, "term");
     await expect(processAdapter.awaitBarrier({ kind: "provenance-before" }, bounded()))
       .rejects.toThrow(/invalid prefixed event/u);
     await expect(processAdapter.stopChild(handle)).rejects.toThrow(/invalid prefixed event/u);

@@ -60,6 +60,8 @@ export class PostgresHistoricalEvidenceAuthority implements HistoricalEvidenceAu
     }
     return admitAcceptedFinalMeeting({
       actors: snapshot.actors,
+      authoritativeDurationMs:
+        snapshot.recording.authoritativeDurationMs ?? null,
       binding,
       identityProvenance: snapshot.identityProvenance,
       lifecycleGeneration: snapshot.lifecycleGeneration,

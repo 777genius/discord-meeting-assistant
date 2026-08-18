@@ -16,6 +16,7 @@ from pipecat_runtime.application.conversation_events import (
     Failed,
     Latency,
     TextDelta,
+    TtsAttestation,
     Usage,
 )
 from pipecat_runtime.application.models import CancellationReason, StartTurn
@@ -63,6 +64,31 @@ class ConversationEventStream:
     async def accepted(self) -> None:
         """Publish the first event for a newly created attempt."""
         await self._emit(Accepted)
+
+    async def tts_attestation(
+        self,
+        *,
+        deployment: str,
+        key_id: str,
+        model: str,
+        provider: str,
+        signature: str,
+        source_revision: str,
+        voice: str,
+        voice_profile_id: str,
+    ) -> None:
+        """Publish the signed concrete TTS identity before any PCM event."""
+        await self._emit(
+            TtsAttestation,
+            deployment=deployment,
+            key_id=key_id,
+            model=model,
+            provider=provider,
+            signature=signature,
+            source_revision=source_revision,
+            voice=voice,
+            voice_profile_id=voice_profile_id,
+        )
 
     async def text(self, text: str) -> None:
         """Publish one text fragment before it reaches TTS."""

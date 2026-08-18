@@ -3,6 +3,7 @@ import { posix } from "node:path";
 
 import { z } from "zod";
 
+import { inspectCraigNetworkPolicy } from "./craig-network-policy-proof.js";
 import type { HostedDeploymentSafetyExpectationV1 } from "./hosted-deployment-safety-receipt.js";
 import { hostedDeploymentSafetyExpectationV1Schema } from "./hosted-deployment-safety-receipt.js";
 import { runRemoteProbe } from "./ssh-deployment-probe-commands.js";
@@ -29,7 +30,10 @@ const dockerContainerSchema = z.object({
     Source: z.string(),
   }).loose()),
   NetworkSettings: z.object({
-    Networks: z.record(z.string(), z.unknown()),
+    Networks: z.record(z.string(), z.object({
+      IPAddress: z.string(),
+      NetworkID: z.string(),
+    }).loose()),
     Ports: z.record(z.string(), z.array(z.object({
       HostIp: z.string(),
       HostPort: z.string(),
@@ -152,11 +156,23 @@ export class ConcreteSshDeploymentSafetyProbeRunner implements SshDeploymentSafe
     const inspected = await Promise.all(this.#expectation.services.map(async (service) =>
       this.#inspectService(service, signal)));
     const meetingPlatform = inspected.find(({ service }) => service.component === "meetingPlatform");
+    const craig = inspected.find(({ service }) => service.component === "craig");
     if (meetingPlatform === undefined) {
       throw new Error("Deployment safety expectation has no Meeting Platform service");
     }
+    if (craig === undefined) {
+      throw new Error("Deployment safety expectation has no Craig service");
+    }
     return {
       campaignRoot,
+      craigNetwork: await inspectCraigNetworkPolicy({
+        commands: this.#commands,
+        container: craig.container,
+        expectedContainerId: craig.service.containerId,
+        policy: this.#expectation.craigNetworkPolicy,
+        settings: this.#settings,
+        ...(signal === undefined ? {} : { signal }),
+      }),
       greetingMount: await this.#inspectGreetingMount(meetingPlatform.container, signal),
       roots,
       services: inspected.map(({ snapshot }) => snapshot),

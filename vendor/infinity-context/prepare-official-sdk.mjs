@@ -26,7 +26,11 @@ const provenance = Object.freeze({
 });
 
 const argumentsSet = new Set(process.argv.slice(2));
-const supportedArguments = new Set(["--prune-dev", "--verify-only"]);
+const supportedArguments = new Set([
+  "--cleanup-source",
+  "--prune-dev",
+  "--verify-only",
+]);
 if ([...argumentsSet].some((argument) => !supportedArguments.has(argument))) {
   throw new Error("Unsupported Infinity Context SDK preparation argument");
 }
@@ -113,6 +117,14 @@ function verifyPackageTarball() {
     }
   } finally {
     rmSync(packRoot, { force: true, recursive: true });
+  }
+}
+
+function cleanupTemporaryBuildInputs() {
+  rmSync(checkoutRoot, { force: true, recursive: true });
+  rmSync(npmCache, { force: true, recursive: true });
+  if (existsSync(checkoutRoot)) {
+    throw new Error("Infinity Context SDK source workspace cleanup failed");
   }
 }
 
@@ -221,4 +233,11 @@ verifyPackageTarball();
 if (argumentsSet.has("--prune-dev")) {
   npm(["prune", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"]);
 }
-process.stdout.write("Infinity Context SDK source workspace prepared.\n");
+if (argumentsSet.has("--cleanup-source")) {
+  cleanupTemporaryBuildInputs();
+  process.stdout.write(
+    "Infinity Context SDK package verified; temporary source workspace removed.\n",
+  );
+} else {
+  process.stdout.write("Infinity Context SDK source workspace prepared.\n");
+}

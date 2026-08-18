@@ -20,6 +20,7 @@ import type {
 } from "./ports/historical-memory.js";
 
 interface CoverageExtractionDependencies {
+  readonly authorizationIsCurrent: () => Promise<boolean>;
   readonly checkpoints: ExhaustiveCoverageStore;
   readonly extractor: CoverageExtractorPort;
   readonly ids: HistoricalOpaqueIdPort;
@@ -168,6 +169,12 @@ async function validateOpenedCheckpoint(
 
 async function extractOneBlock(input: ExtractOneInput): Promise<ExtractOneResult> {
   try {
+    if (!await input.dependencies.authorizationIsCurrent()) {
+      return {
+        reason: "authorization_changed",
+        status: "unauthorized",
+      };
+    }
     const extract = validateExtract(await input.dependencies.extractor.extract({
       block: input.block,
       question: input.request.question,

@@ -161,6 +161,14 @@ export class DiscordLocalFinalReplyHandler {
     if (wasQuestion) {
       return;
     }
+    const botUserId = this.client.user?.id;
+    const deletedAuthorId = message.author?.id;
+    if (
+      botUserId === undefined ||
+      (deletedAuthorId !== undefined && deletedAuthorId !== botUserId)
+    ) {
+      return;
+    }
     if (message.guildId === null) {
       return;
     }
@@ -179,20 +187,20 @@ export class DiscordLocalFinalReplyHandler {
       }),
     });
     for (const questionId of affectedQuestions) {
+      await this.jobs.cancelQuestion(questionId);
       await this.publication.cancelBeforeRequest({
         questionId,
         reason: "binding_drift",
       });
-      await this.jobs.cancelQuestion(questionId);
     }
   }
 
   private async cancelQuestion(questionId: string): Promise<void> {
+    await this.jobs.cancelQuestion(questionId);
     await this.publication.cancelBeforeRequest({
       questionId,
       reason: "binding_drift",
     });
-    await this.jobs.cancelQuestion(questionId);
   }
 
   private track(operation: Promise<void>): void {

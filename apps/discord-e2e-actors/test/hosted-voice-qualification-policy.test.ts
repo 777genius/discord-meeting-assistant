@@ -16,6 +16,9 @@ describe("governed hosted voice latency policy", () => {
       policyVersion: 1,
       preparedCueFirstPacketMilliseconds: 750,
       schemaVersion: 1,
+      thresholds: {
+        "join-to-greeting-first-packet": 5_000,
+      },
     });
   });
 

@@ -11,6 +11,7 @@ import {
   InfinityContextActivationError,
   assertInfinityContextActivation,
   assertInfinityContextSearchActivation,
+  decodeInfinityContextCapabilityAttestation,
   decodeInfinityContextRuntimeActivation,
 } from "../src/index.js";
 
@@ -39,6 +40,8 @@ const retainedProductionAttestation = {
   productionSemanticQualification: true,
   qualificationManifestSha256:
     INFINITY_CONTEXT_SDK_PROVENANCE.retainedProductionSemanticQualificationManifestSha256,
+  releaseRevision:
+    INFINITY_CONTEXT_SDK_PROVENANCE.retainedProductionSemanticReleaseRevision,
   schemaVersion: 1,
 } as const;
 
@@ -53,6 +56,17 @@ const productionSearchActivation = {
 } as const;
 
 describe("Infinity Context activation provenance", () => {
+  const testCapabilities = {
+    apiVersion: "v1",
+    embeddingProfileDigestSha256: null,
+    embeddingProfileId: null,
+    enabledAdapters: ["qdrant"],
+    qdrant: null,
+    serviceName: "disposable-infinity-context",
+    serviceRevision: null,
+    supportsQdrant: true,
+  } as const;
+
   it("loads the exact official package through ESM, CJS, and TypeScript consumers", async () => {
     const esm = await import("@infinity-context/sdk");
     const cjs = createRequire(import.meta.url)("@infinity-context/sdk") as {
@@ -185,16 +199,16 @@ describe("Infinity Context activation provenance", () => {
     const activation = decodeInfinityContextRuntimeActivation(baseActivation);
     expect(() => {
       assertInfinityContextActivation(activation, {
-        apiVersion: "v1",
-        enabledAdapters: ["qdrant"],
-        serviceName: "disposable-infinity-context",
-        supportsQdrant: true,
+        ...testCapabilities,
       });
     }).not.toThrow();
     expect(() => {
       assertInfinityContextActivation(activation, {
         apiVersion: "v1",
+        embeddingProfileDigestSha256: null,
+        embeddingProfileId: null,
         enabledAdapters: ["keyword"],
+        serviceRevision: null,
         serviceName: "disposable-infinity-context",
         supportsQdrant: false,
       });
@@ -235,6 +249,19 @@ describe("Infinity Context activation provenance", () => {
 });
 
 describe("Infinity Context production search provenance", () => {
+  const exactProductionCapabilities = {
+    apiVersion: "v1",
+    embeddingProfileDigestSha256:
+      retainedProductionAttestation.embeddingProfileDigestSha256,
+    embeddingProfileId: retainedProductionAttestation.embeddingProfile,
+    enabledAdapters: ["qdrant"],
+    qdrant: null,
+    serviceName: "disposable-infinity-context",
+    serviceRevision:
+      INFINITY_CONTEXT_SDK_PROVENANCE.retainedProductionSemanticServiceRevision,
+    supportsQdrant: true,
+  } as const;
+
   it("keeps production search closed for missing, false, and unretained embedding attestations", () => {
     const production = {
       ...baseActivation,
@@ -256,6 +283,8 @@ describe("Infinity Context production search provenance", () => {
         productionSemanticQualification: false,
         qualificationManifestSha256:
           INFINITY_CONTEXT_SDK_PROVENANCE.retainedLiveQualificationManifestSha256,
+        releaseRevision:
+          INFINITY_CONTEXT_SDK_PROVENANCE.retainedProductionSemanticReleaseRevision,
         schemaVersion: 1,
       },
     });
@@ -270,6 +299,8 @@ describe("Infinity Context production search provenance", () => {
         productionSemanticQualification: true,
         qualificationManifestSha256:
           INFINITY_CONTEXT_SDK_PROVENANCE.retainedLiveQualificationManifestSha256,
+        releaseRevision:
+          INFINITY_CONTEXT_SDK_PROVENANCE.retainedProductionSemanticReleaseRevision,
         schemaVersion: 1,
       },
     });
@@ -319,7 +350,72 @@ describe("Infinity Context production search provenance", () => {
   it("activates production search only with the retained r79 semantic attestation", () => {
     const activation = decodeInfinityContextRuntimeActivation(productionSearchActivation);
 
-    expect(() => { assertInfinityContextSearchActivation(activation); }).not.toThrow();
+    expect(() => {
+      assertInfinityContextSearchActivation(
+        activation,
+        INFINITY_CONTEXT_SDK_PROVENANCE.retainedProductionSemanticReleaseRevision,
+      );
+    }).not.toThrow();
+  });
+
+  it("keeps production search closed for a stale or missing Meeting Platform release", () => {
+    const activation = decodeInfinityContextRuntimeActivation(productionSearchActivation);
+
+    expect(() => { assertInfinityContextSearchActivation(activation); })
+      .toThrow(/running Meeting Platform release/u);
+    expect(() => {
+      assertInfinityContextSearchActivation(activation, "f".repeat(40));
+    }).toThrow(/running Meeting Platform release/u);
+  });
+
+  it("fails closed when the endpoint omits its runtime qualification receipt", () => {
+    const activation = decodeInfinityContextRuntimeActivation(productionSearchActivation);
+
+    expect(() => {
+      assertInfinityContextActivation(activation, {
+        ...exactProductionCapabilities,
+        embeddingProfileDigestSha256: null,
+        embeddingProfileId: null,
+        serviceRevision: null,
+      });
+    }).toThrow(/capability attestation/u);
+  });
+
+  it.each([
+    ["profile", { embeddingProfileId: "another-production-profile" }],
+    ["digest", { embeddingProfileDigestSha256: `sha256:${"d".repeat(64)}` }],
+    ["revision", { serviceRevision: "f".repeat(40) }],
+  ] as const)("rejects endpoint %s drift from the retained qualification", (_field, drift) => {
+    const activation = decodeInfinityContextRuntimeActivation(productionSearchActivation);
+
+    expect(() => {
+      assertInfinityContextActivation(activation, {
+        ...exactProductionCapabilities,
+        ...drift,
+      });
+    }).toThrow(/capability attestation/u);
+  });
+
+  it("binds production search to the endpoint's exact qualification receipt", () => {
+    const activation = decodeInfinityContextRuntimeActivation(productionSearchActivation);
+
+    expect(() => {
+      assertInfinityContextActivation(activation, exactProductionCapabilities);
+    }).not.toThrow();
+  });
+
+  it("decodes additive provider fields into an adapter-owned receipt", () => {
+    expect(decodeInfinityContextCapabilityAttestation({
+      api_version: exactProductionCapabilities.apiVersion,
+      embedding_profile_digest_sha256:
+        exactProductionCapabilities.embeddingProfileDigestSha256,
+      embedding_profile_id: exactProductionCapabilities.embeddingProfileId,
+      enabled_adapters: exactProductionCapabilities.enabledAdapters,
+      ignored_provider_field: "kept outside composition",
+      service_name: exactProductionCapabilities.serviceName,
+      service_revision: exactProductionCapabilities.serviceRevision,
+      supports_qdrant: true,
+    })).toEqual(exactProductionCapabilities);
   });
 
   it("does not permit search under a shadow-sync activation profile", () => {

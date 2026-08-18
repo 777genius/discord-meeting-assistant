@@ -318,13 +318,15 @@ export class PostgresSchemaReadiness implements PostgresSchemaReadinessPort {
       `
         SELECT index_name AS name
         FROM unnest($1::text[]) AS index_name
-        WHERE to_regclass(index_name) IS NULL
+        WHERE NOT EXISTS (SELECT 1 FROM pg_index AS required_index
+          WHERE required_index.indexrelid = to_regclass(index_name)
+            AND required_index.indisvalid AND required_index.indisready)
       `,
       [requiredIndexes],
     );
     if (result.rows.length > 0) {
       throw new PostgresSchemaReadinessError(
-        `required PostgreSQL index is missing: ${result.rows.map(({ name }) => name).join(", ")}`,
+        `required PostgreSQL index is missing or invalid: ${result.rows.map(({ name }) => name).join(", ")}`,
       );
     }
   }

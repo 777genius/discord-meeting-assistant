@@ -249,7 +249,7 @@ function provenance(): CurrentDeploymentProvenance {
       containerStartedAt: "1970-01-01T00:15:00.000Z",
       imageId: `sha256:${"3".repeat(64)}`,
       repositoryDigest: null,
-      sourceRevision: "4".repeat(40),
+      sourceRevision: "7".repeat(40),
     },
     subscriptionRuntime: {
       composeConfigHash: "b".repeat(64),

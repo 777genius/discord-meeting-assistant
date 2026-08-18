@@ -34,9 +34,12 @@ import type { PlatformHistoricalMemoryRuntime } from
 import {
   createMeetingKnowledgeLocalFinalReply,
   localFinalReplyPolicy,
+  localFinalReplyPolicyRelease,
 } from "../src/composition/meeting-knowledge.js";
 import { DiscordAnswerPayloadCodec } from "@discord-meeting/discord-adapter";
 import {
+  botApplicationIdentity,
+  historicalRows,
   platformConfig,
   requiredHistoricalRuntime,
   resultsContainerId,
@@ -44,6 +47,8 @@ import {
   scopeId,
   silentLogger,
 } from "./meeting-knowledge-production-composition-fixtures.js";
+import { waitForHistoricalRows } from
+  "./meeting-knowledge-production-composition-diagnostics.js";
 
 export async function qualifyLiveProjectionReply(input: {
   readonly infinity: DisposableInfinityHttpService;
@@ -64,7 +69,7 @@ export async function qualifyLiveProjectionReply(input: {
     publicationTargetId: resultsContainerId,
     startedAtMs: 1_000,
   });
-  live.completeProjection(liveReceipt, live.revision);
+  live.completeProjection(liveReceipt, live.revision, botApplicationIdentity);
   await liveMeetings.save(live.toSnapshot(), null);
   const finalMeetings = new PostgresMeetingRepository(input.pool);
   await finalMeetings.save(Meeting.record({
@@ -169,6 +174,7 @@ export async function qualifyLiveProjectionReply(input: {
         ? { status: "unconfirmed" as const }
         : { externalReceipt: "888888888888888880", status: "found" as const };
     },
+    remove: () => Promise.resolve(),
   };
   let generatorInvocations = 0;
   const generator = createGroundedAnswer(() => {
@@ -195,9 +201,6 @@ export async function qualifyLiveProjectionReply(input: {
     pool: input.pool,
     runtimeTransport: unusedRuntimeTransport,
   });
-  if (runtime === undefined) {
-    throw new Error("live projection reply composition was disabled");
-  }
   const emitQuestion = (overrides: Record<string, unknown> = {}): void => {
     emitter.emit("messageCreate", {
       author: { bot: false, id: participantId },
@@ -231,10 +234,11 @@ export async function qualifyLiveProjectionReply(input: {
     const reconciliation = new DurableAnswerPublication({
       delivery: answerDelivery,
       payloads: new DiscordAnswerPayloadCodec(),
-      store: new PostgresAnswerEffectStore(input.pool),
+      store: new PostgresAnswerEffectStore(input.pool, localFinalReplyPolicyRelease),
     });
     await expect(reconciliation.reconcileUnknown(100)).resolves.toEqual({
       absentUnconfirmed: 0,
+      containedDuplicates: 0,
       delivered: 1,
     });
     await waitForQuestionEffect(input.pool, questionId, input.signal);
@@ -386,7 +390,10 @@ async function finalizeAndProveCanonicalTransition(input: {
     publisher: {
       publish: async () => ({
         ok: true as const,
-        value: { externalPublicationId: finalReceipt },
+        value: {
+          externalPublicationId: finalReceipt,
+          publisherIdentity: botApplicationIdentity,
+        },
       }),
     },
     summarizer: {
@@ -470,8 +477,21 @@ async function finalizeAndProveCanonicalTransition(input: {
     false,
   );
   await deleting.requestMeetingDeletion(input.meetingId);
+  const deletionRowCount = (await historicalRows(input.pool)).filter(
+    ({ meeting_id }) => meeting_id === input.meetingId,
+  ).length;
   await deleting.start();
-  await deleting.close();
+  try {
+    await waitForHistoricalRows(
+      input.pool,
+      ({ meeting_id, state }) =>
+        meeting_id === input.meetingId && state === "deleted",
+      deletionRowCount,
+      input.signal,
+    );
+  } finally {
+    await deleting.close();
+  }
   const deleted = await input.pool.query<{ readonly state: string }>(
     `SELECT state FROM meeting_core.historical_memory_sync WHERE meeting_id = $1`,
     [input.meetingId],

@@ -17,6 +17,11 @@ export interface SpeakerAudioReferenceSnapshot {
 }
 
 export interface RecordingArtifactSnapshot {
+  /**
+   * Duration derived from the authoritative recording lifecycle, when the
+   * producer can prove it. Legacy snapshots legitimately omit this field.
+   */
+  readonly authoritativeDurationMs?: number;
   readonly manifestLocator: string;
   readonly recordingId: string;
   readonly speakerAudio: readonly SpeakerAudioReferenceSnapshot[];
@@ -29,11 +34,18 @@ export interface SpeakerAudioReference {
 }
 
 export class RecordingArtifact {
+  public readonly authoritativeDurationMs: number | undefined;
   public readonly recordingId: RecordingId;
   public readonly manifestLocator: string;
   public readonly speakerAudio: readonly SpeakerAudioReference[];
 
   private constructor(snapshot: RecordingArtifactSnapshot) {
+    this.authoritativeDurationMs = snapshot.authoritativeDurationMs === undefined
+      ? undefined
+      : requireNonNegativeInteger(
+          snapshot.authoritativeDurationMs,
+          "recording.authoritativeDurationMs",
+        );
     this.recordingId = createRecordingId(snapshot.recordingId);
     this.manifestLocator = requireNonEmpty(
       snapshot.manifestLocator,
@@ -71,6 +83,9 @@ export class RecordingArtifact {
 
   public toSnapshot(): RecordingArtifactSnapshot {
     return {
+      ...(this.authoritativeDurationMs === undefined
+        ? {}
+        : { authoritativeDurationMs: this.authoritativeDurationMs }),
       manifestLocator: this.manifestLocator,
       recordingId: this.recordingId,
       speakerAudio: this.speakerAudio.map((reference) => ({
@@ -85,6 +100,7 @@ export class RecordingArtifact {
     if (
       this.recordingId !== other.recordingId ||
       this.manifestLocator !== other.manifestLocator ||
+      this.authoritativeDurationMs !== other.authoritativeDurationMs ||
       this.speakerAudio.length !== other.speakerAudio.length
     ) {
       return false;

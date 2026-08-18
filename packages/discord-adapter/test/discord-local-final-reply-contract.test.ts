@@ -12,6 +12,9 @@ import {
 import { EventEmitter } from "node:events";
 import type { AnswerPublicationBinding } from "@discord-meeting/meeting-core/publishing";
 import { ChannelType, PermissionFlagsBits, type Client, type REST } from "discord.js";
+import {
+  BoundedDiscordAuthorizationQueue,
+} from "../src/discord-question-authorization.js";
 
 const botId = "11111111111111111";
 const containerId = "22222222222222222";
@@ -260,13 +263,70 @@ describe("Discord private-thread authorization", () => {
     expect(publicThread.observation).toMatchObject({ status: "authorized" });
     expect(publicThread.fetchMembership).not.toHaveBeenCalled();
   });
+
+  it("aborts an in-flight historical authorization fetch", async () => {
+    const codec = new DiscordQuestionPrincipalCodec(Buffer.alloc(32, 7));
+    const principal = codec.issue({
+      actorId: "77777777777777777",
+      authorizationContainerId: containerId,
+      containerId,
+      expiresAtMilliseconds: 1_800_000_000_000,
+      scopeId: "66666666666666666",
+    });
+    const fetchGuild = vi.fn(() => new Promise<never>(() => {}));
+    const controller = new AbortController();
+    const adapter = new DiscordHistoricalAuthorizationAdapter(
+      { guilds: { fetch: fetchGuild } } as unknown as Client,
+      codec,
+      () => 1_799_999_000_000,
+    );
+    const pending = adapter.authorize({
+      authorizationPrincipalRef: principal,
+      roomId: "55555555555555555",
+      scopeId: "66666666666666666",
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => {
+      expect(fetchGuild).toHaveBeenCalledOnce();
+    });
+    controller.abort("disconnected");
+
+    await expect(pending).rejects.toBe("disconnected");
+    expect(fetchGuild).toHaveBeenCalledOnce();
+
+    const queuedController = new AbortController();
+    const queued = adapter.authorize({
+      authorizationPrincipalRef: principal,
+      roomId: "55555555555555555",
+      scopeId: "66666666666666666",
+      signal: queuedController.signal,
+    });
+    await Promise.resolve();
+    queuedController.abort("superseded");
+    await expect(queued).rejects.toBe("superseded");
+    expect(fetchGuild).toHaveBeenCalledOnce();
+  });
+
+  it("releases the bounded slot when a manager throws synchronously", async () => {
+    const operations = new BoundedDiscordAuthorizationQueue();
+
+    await expect(operations.execute(undefined, () => {
+      throw new Error("synchronous manager failure");
+    })).rejects.toThrow("synchronous manager failure");
+    await expect(operations.execute(undefined, async () => "recovered"))
+      .resolves.toBe("recovered");
+  });
 });
 
 describe("Discord answer effect transport", () => {
   it("creates once from strict immutable bytes and reconciles exact remote identity", async () => {
     const post = vi.fn().mockResolvedValue({ id: "88888888888888888" });
     const get = vi.fn();
-    const rest = { get, post } as unknown as Pick<REST, "get" | "post">;
+    const remove = vi.fn().mockImplementation(() => Promise.resolve());
+    const rest = { delete: remove, get, post } as unknown as Pick<
+      REST,
+      "delete" | "get" | "post"
+    >;
     const payload = new DiscordAnswerPayloadCodec().prepare({
       binding: binding(),
       content: "The release is Monday.\n-# S2 · 2:00:00 · turn-720",
@@ -327,8 +387,139 @@ describe("Discord answer effect transport", () => {
       payloadHash: payload.payloadHash,
       projectionTargetContainerId: containerId,
       replyToRemoteMessageId: questionId,
-    })).resolves.toEqual({ status: "unconfirmed" });
+    })).resolves.toEqual({
+      externalReceipts: [receipt, "99999999999999999"],
+      status: "duplicate",
+    });
+
+    await expect(delivery.remove({
+      deliveryContainerId: containerId,
+      effectId: "meeting-knowledge-answer:v1:question-1",
+      externalReceipt: receipt,
+    })).resolves.toBeUndefined();
+    expect(remove).toHaveBeenCalledTimes(1);
+    remove.mockRejectedValueOnce({ code: 10_008, status: 404 });
+    await expect(delivery.remove({
+      deliveryContainerId: containerId,
+      effectId: "meeting-knowledge-answer:v1:question-1",
+      externalReceipt: receipt,
+    })).resolves.toBeUndefined();
     expect(post).toHaveBeenCalledTimes(1);
+  });
+
+  it("finds an old answer by paging forward from its immutable reply receipt", async () => {
+    const payload = new DiscordAnswerPayloadCodec().prepare({
+      binding: binding(),
+      content: "The release is Monday.\n-# S2 · 2:00:00 · turn-720",
+      deliveryContainerId: containerId,
+      marker: "meeting-knowledge-answer:v1:question-1",
+      projectionTargetContainerId: containerId,
+      replyToRemoteMessageId: questionId,
+    });
+    const postedBody = JSON.parse(payload.payloadBytes) as {
+      readonly embeds: readonly unknown[];
+    };
+    const firstPage = Array.from({ length: 100 }, (_, index) => ({
+      application_id: botId,
+      author: { id: botId },
+      embeds: [],
+      id: (BigInt(questionId) + BigInt(index) + 1n).toString(),
+      message_reference: { message_id: questionId },
+    }));
+    const receipt = (BigInt(questionId) + 101n).toString();
+    const get = vi.fn().mockImplementation((
+      _route: unknown,
+      options: { readonly query: URLSearchParams },
+    ) => {
+      const after = options.query.get("after");
+      if (after === questionId) {
+        return Promise.resolve(firstPage);
+      }
+      if (after === firstPage.at(-1)?.id) {
+        return Promise.resolve([{
+          application_id: botId,
+          author: { id: botId },
+          embeds: postedBody.embeds,
+          id: receipt,
+          message_reference: { message_id: questionId },
+        }]);
+      }
+      throw new Error("unexpected reconciliation cursor");
+    });
+    const delivery = new DiscordAnswerDeliveryAdapter(
+      { get, post: vi.fn() },
+      botId,
+    );
+
+    await expect(delivery.inspect({
+      deliveryContainerId: containerId,
+      marker: "meeting-knowledge-answer:v1:question-1",
+      payloadHash: payload.payloadHash,
+      projectionTargetContainerId: containerId,
+      replyToRemoteMessageId: questionId,
+    })).resolves.toEqual({ externalReceipt: receipt, status: "found" });
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(get.mock.calls.map(([, options]) =>
+      (options as { readonly query: URLSearchParams }).query.get("after")
+    )).toEqual([questionId, firstPage.at(-1)?.id]);
+  });
+
+  it("reports duplicate exact receipts discovered on different history pages", async () => {
+    const payload = new DiscordAnswerPayloadCodec().prepare({
+      binding: binding(),
+      content: "The release is Monday.\n-# S2 · 2:00:00 · turn-720",
+      deliveryContainerId: containerId,
+      marker: "meeting-knowledge-answer:v1:question-1",
+      projectionTargetContainerId: containerId,
+      replyToRemoteMessageId: questionId,
+    });
+    const postedBody = JSON.parse(payload.payloadBytes) as {
+      readonly embeds: readonly unknown[];
+    };
+    const firstReceipt = (BigInt(questionId) + 1n).toString();
+    const firstPage = Array.from({ length: 100 }, (_, index) => ({
+      application_id: botId,
+      author: { id: botId },
+      embeds: index === 0 ? postedBody.embeds : [],
+      id: (BigInt(questionId) + BigInt(index) + 1n).toString(),
+      message_reference: { message_id: questionId },
+    }));
+    const secondReceipt = (BigInt(questionId) + 101n).toString();
+    const get = vi.fn().mockImplementation((
+      _route: unknown,
+      options: { readonly query: URLSearchParams },
+    ) => {
+      const after = options.query.get("after");
+      if (after === questionId) {
+        return Promise.resolve(firstPage);
+      }
+      if (after === firstPage.at(-1)?.id) {
+        return Promise.resolve([{
+          application_id: botId,
+          author: { id: botId },
+          embeds: postedBody.embeds,
+          id: secondReceipt,
+          message_reference: { message_id: questionId },
+        }]);
+      }
+      throw new Error("unexpected reconciliation cursor");
+    });
+    const delivery = new DiscordAnswerDeliveryAdapter(
+      { get, post: vi.fn() },
+      botId,
+    );
+
+    await expect(delivery.inspect({
+      deliveryContainerId: containerId,
+      marker: "meeting-knowledge-answer:v1:question-1",
+      payloadHash: payload.payloadHash,
+      projectionTargetContainerId: containerId,
+      replyToRemoteMessageId: questionId,
+    })).resolves.toEqual({
+      externalReceipts: [firstReceipt, secondReceipt],
+      status: "duplicate",
+    });
+    expect(get).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -409,7 +600,9 @@ describe("Discord Local Final Reply ingress", () => {
     const execute = vi.fn().mockResolvedValue({ jobId: questionId, status: "accepted" });
     const withdrawProjection = vi.fn().mockResolvedValue([questionId]);
     const cancelQuestion = vi.fn().mockImplementation(() => Promise.resolve());
-    const client = new EventEmitter();
+    const client = Object.assign(new EventEmitter(), {
+      user: { id: botId },
+    });
     const handler = new DiscordLocalFinalReplyHandler({
       admission: { execute },
       admissions: { withdrawProjection },
@@ -484,7 +677,9 @@ describe("Discord Local Final Reply ingress", () => {
     const cancelBeforeRequest = vi.fn().mockResolvedValue(true);
     const cancelQuestion = vi.fn().mockImplementation(() => Promise.resolve());
     const withdrawProjection = vi.fn().mockResolvedValue([questionId]);
-    const client = new EventEmitter();
+    const client = Object.assign(new EventEmitter(), {
+      user: { id: botId },
+    });
     const handler = new DiscordLocalFinalReplyHandler({
       admission: { execute: vi.fn() },
       admissions: { withdrawProjection },
@@ -501,6 +696,20 @@ describe("Discord Local Final Reply ingress", () => {
       },
     });
     handler.start();
+    client.emit("messageDelete", {
+      author: { id: "77777777777777777" },
+      channel: { isThread: () => false },
+      channelId: containerId,
+      guildId: "66666666666666666",
+      id: "44444444444444443",
+    });
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve);
+    });
+    expect(withdrawProjection).not.toHaveBeenCalled();
+
+    // Partial delete events have no author. Keep their race-safe DB tombstone
+    // path; the PostgreSQL adapter bounds unmatched observations.
     client.emit("messageDelete", {
       channel: { isThread: () => false },
       channelId: containerId,

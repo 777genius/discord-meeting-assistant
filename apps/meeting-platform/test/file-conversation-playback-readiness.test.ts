@@ -87,16 +87,18 @@ describe("FileConversationPlaybackReadiness", () => {
     const cueRequest = {
       ...request,
       expectedPcmBytes: 96_000,
+      expectedPcmSha256: "b".repeat(64),
       playbackAttemptId: "thinking-cue-attempt-1",
       playbackKind: "thinking-cue" as const,
     };
     const cueEnvelope = {
       capturePlan: "thinking-cue" as const,
       expectedPcmBytes: cueRequest.expectedPcmBytes,
+      expectedPcmSha256: cueRequest.expectedPcmSha256,
       kind: "thinking-cue" as const,
       meetingId: cueRequest.meetingId,
       playbackAttemptId: cueRequest.playbackAttemptId,
-      protocolVersion: 1 as const,
+      protocolVersion: 2 as const,
       runId: envelope.runId,
       turnId: cueRequest.turnId,
     };
@@ -124,6 +126,54 @@ describe("FileConversationPlaybackReadiness", () => {
     await expect(waiting).resolves.toEqual({ ok: true, value: "ready" });
   });
 
+  it("rejects a same-length cue readiness receipt with the wrong PCM digest", async () => {
+    const root = await temporaryRoot();
+    const cueRequest = {
+      ...request,
+      expectedPcmBytes: 96_000,
+      expectedPcmSha256: "b".repeat(64),
+      playbackAttemptId: "thinking-cue-attempt-corrupt",
+      playbackKind: "thinking-cue" as const,
+    };
+    const cueEnvelope = {
+      capturePlan: "thinking-cue" as const,
+      expectedPcmBytes: cueRequest.expectedPcmBytes,
+      expectedPcmSha256: cueRequest.expectedPcmSha256,
+      kind: "thinking-cue" as const,
+      meetingId: cueRequest.meetingId,
+      playbackAttemptId: cueRequest.playbackAttemptId,
+      protocolVersion: 2 as const,
+      runId: envelope.runId,
+      turnId: cueRequest.turnId,
+    };
+    const stem = createHash("sha256")
+      .update(serializeConversationThinkingCuePlaybackReadinessEnvelope(cueEnvelope))
+      .digest("hex");
+    const readiness = new FileConversationPlaybackReadiness({
+      root, runId: envelope.runId, timeoutMilliseconds: 1_000,
+    });
+
+    const waiting = readiness.awaitConversationPlaybackReady(cueRequest);
+    await waitForJson(join(root, `${stem}.intent.json`));
+    await writeFile(join(root, `${stem}.ready.json`), JSON.stringify({
+      ...cueEnvelope,
+      authenticatedObserverBotId: readyReceipt.authenticatedObserverBotId,
+      expectedPcmSha256: "c".repeat(64),
+      intentDigestSha256: stem,
+      intentObservedAt: readyReceipt.intentObservedAt,
+      readyPublishedAt: readyReceipt.readyPublishedAt,
+      target: readyReceipt.target,
+      type: "observer-ready",
+    }), { flag: "wx", mode: 0o600 });
+
+    await expect(waiting).resolves.toMatchObject({
+      failure: { code: "PLAYBACK_READINESS_FAILED" },
+      ok: false,
+    });
+  });
+});
+
+describe("FileConversationPlaybackReadiness answer handshakes", () => {
   it("publishes a create-only intent and waits for the exact observer-ready receipt", async () => {
     const root = await temporaryRoot();
     const readiness = new FileConversationPlaybackReadiness({

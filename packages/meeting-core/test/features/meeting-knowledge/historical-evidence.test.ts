@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
   HistoricalEvidenceInvariantError,
   admitAcceptedFinalMeeting,
+  admitsHistoricalRetrieval,
   buildHistoricalIndexPlan,
   classifyHistoricalGroundingMode,
   createHistoricalReleaseBinding,
@@ -38,6 +40,7 @@ function acceptedMeeting() {
       { actorId: "botik", kind: "automation" },
       { actorId: "unverified", kind: "unknown" },
     ],
+    authoritativeDurationMs: 3_000,
     binding,
     identityProvenance: {
       actorObservationState: "consistent",
@@ -110,6 +113,49 @@ describe("historical evidence admission and block identity", () => {
       code: "CONFLICTING_BINDING",
       name: HistoricalEvidenceInvariantError.name,
     }));
+  });
+
+  it("keeps long-meeting retrieval independently disabled at exact authoritative thresholds", () => {
+    const short = acceptedMeeting();
+    if (short === null) {
+      throw new Error("fixture admission failed");
+    }
+    const durationThreshold = Object.freeze({
+      ...short,
+      authoritativeDurationMs:
+        DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE.minimumDurationMs,
+    });
+    const turnThreshold = Object.freeze({
+      ...short,
+      humanTurns: Object.freeze(Array.from(
+        { length: DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE.minimumHumanTurnCount },
+        (_, index) => Object.freeze({
+          ...short.humanTurns[0]!,
+          endMs: index * 2 + 2,
+          startMs: index * 2 + 1,
+          turnId: `long-turn-${index}`,
+        }),
+      )),
+    });
+    const unknownDuration = Object.freeze({
+      ...short,
+      authoritativeDurationMs: null,
+    });
+
+
+    expect(admitsHistoricalRetrieval(short)).toBe(true);
+    expect(admitsHistoricalRetrieval(durationThreshold)).toBe(false);
+    expect(admitsHistoricalRetrieval(turnThreshold)).toBe(false);
+    expect(admitsHistoricalRetrieval(unknownDuration)).toBe(false);
+    expect(admitsHistoricalRetrieval(durationThreshold, {
+      ...DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
+      qualification: {
+        evidenceSha256: "e".repeat(64),
+        releaseRevision: "f".repeat(40),
+        rolloutEpoch: "test-r1",
+        schemaVersion: 1,
+      },
+    })).toBe(true);
   });
 
   it("builds replay-stable opaque topology and turn-aligned documents", () => {

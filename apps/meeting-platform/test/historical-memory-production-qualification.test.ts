@@ -3,14 +3,21 @@ import { describe, expect, it, vi } from "vitest";
 
 import { startDisposableInfinityHttpService } from
   "@discord-meeting/infinity-context-adapter/test-support";
+import { INFINITY_CONTEXT_SDK_PROVENANCE } from
+  "@discord-meeting/infinity-context-adapter";
 
 import {
+  platformConfig,
   requiredHistoricalRuntime,
   retainedProductionEmbeddingProfileAttestation,
+  silentLogger,
+  syntheticCoverageRuntime,
 } from
   "./meeting-knowledge-production-composition-fixtures.js";
-import { historicalSyncLeaseDurationMs } from
-  "../src/composition/historical-memory.js";
+import {
+  createPlatformHistoricalMemory,
+  historicalSyncLeaseDurationMs,
+} from "../src/composition/historical-memory.js";
 import {
   assertAggregateStageBudget,
   runQualificationStage,
@@ -121,6 +128,14 @@ describe("Infinity production semantic qualification composition", () => {
       connectionString: "postgresql://synthetic.invalid/never-connected",
     });
     const infinity = await startDisposableInfinityHttpService();
+    infinity.endpoint.setRuntimeQualificationReceipt({
+      embeddingProfileDigestSha256:
+        retainedProductionEmbeddingProfileAttestation.embeddingProfileDigestSha256,
+      embeddingProfileId:
+        retainedProductionEmbeddingProfileAttestation.embeddingProfile,
+      serviceRevision:
+        INFINITY_CONTEXT_SDK_PROVENANCE.retainedProductionSemanticServiceRevision,
+    });
     const runtime = requiredHistoricalRuntime(
       pool,
       infinity,
@@ -136,6 +151,77 @@ describe("Infinity production semantic qualification composition", () => {
 
       infinity.endpoint.setCapabilitiesQualified(false);
       await runtime.assertReady();
+      expect(runtime.searchEnabled()).toBe(false);
+      expect(runtime.servingAuthorized()).toBe(false);
+    } finally {
+      await runtime.close();
+      await infinity.close();
+      await pool.end();
+    }
+  });
+
+  it("keeps production search closed when the semantic manifest is stale for this release", async () => {
+    const pool = new Pool({
+      connectionString: "postgresql://synthetic.invalid/never-connected",
+    });
+    const infinity = await startDisposableInfinityHttpService();
+    infinity.endpoint.setRuntimeQualificationReceipt({
+      embeddingProfileDigestSha256:
+        retainedProductionEmbeddingProfileAttestation.embeddingProfileDigestSha256,
+      embeddingProfileId:
+        retainedProductionEmbeddingProfileAttestation.embeddingProfile,
+      serviceRevision:
+        INFINITY_CONTEXT_SDK_PROVENANCE.retainedProductionSemanticServiceRevision,
+    });
+    const runtime = createPlatformHistoricalMemory({
+      config: platformConfig(
+        infinity.baseUrl,
+        true,
+        true,
+        "production",
+        retainedProductionEmbeddingProfileAttestation,
+        "f".repeat(40),
+      ),
+      logger: silentLogger,
+      pool,
+      runtimeTransport: syntheticCoverageRuntime,
+    });
+    if (runtime === undefined) {
+      throw new Error("stale-release fixture did not compose");
+    }
+    try {
+      await expect(runtime.assertReady()).resolves.toBeUndefined();
+      expect(runtime.searchEnabled()).toBe(false);
+      expect(runtime.servingAuthorized()).toBe(false);
+    } finally {
+      await runtime.close();
+      await infinity.close();
+      await pool.end();
+    }
+  });
+
+  it("keeps production search closed when the endpoint receipt drifts from r79", async () => {
+    const pool = new Pool({
+      connectionString: "postgresql://synthetic.invalid/never-connected",
+    });
+    const infinity = await startDisposableInfinityHttpService();
+    infinity.endpoint.setRuntimeQualificationReceipt({
+      embeddingProfileDigestSha256: `sha256:${"f".repeat(64)}`,
+      embeddingProfileId:
+        retainedProductionEmbeddingProfileAttestation.embeddingProfile,
+      serviceRevision:
+        INFINITY_CONTEXT_SDK_PROVENANCE.retainedProductionSemanticServiceRevision,
+    });
+    const runtime = requiredHistoricalRuntime(
+      pool,
+      infinity,
+      true,
+      true,
+      "production",
+      retainedProductionEmbeddingProfileAttestation,
+    );
+    try {
+      await expect(runtime.assertReady()).resolves.toBeUndefined();
       expect(runtime.searchEnabled()).toBe(false);
       expect(runtime.servingAuthorized()).toBe(false);
     } finally {

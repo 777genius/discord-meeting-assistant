@@ -84,11 +84,86 @@ function answer(plainText = "Решили выпустить в пятницу."
   };
 }
 
+function ttsAttestation(): ConversationRuntimeEvent {
+  return {
+    attemptId: "attempt-1",
+    attestation: {
+      attemptId: "attempt-1",
+      deployment: "pipecat-runtime",
+      keyId: "a".repeat(64),
+      model: "fixture-tts-v1",
+      provider: "fixture",
+      schemaVersion: 1,
+      signature: "b".repeat(64),
+      sourceRevision: "c".repeat(40),
+      turnId: "turn-1",
+      voice: "fixture",
+      voiceProfileId: "default",
+    },
+    type: "tts-attestation",
+  };
+}
+
+type InvalidTtsAttestationScenario =
+  | "missing"
+  | "mismatched-attempt"
+  | "mismatched-turn"
+  | "mismatched-voice-profile";
+
+async function expectGroundedPcmRejectedForAttestation(
+  scenario: InvalidTtsAttestationScenario,
+): Promise<void> {
+  const groundedAnswers = new ControlledGroundedAnswers();
+  const events = new EventStream<ConversationRuntimeEvent>();
+  const runtime = new ScriptedRuntime([events]);
+  const playback = new RecordingPlayback();
+  const coordinator = new ConversationCoordinator({ groundedAnswers, playback, runtime });
+
+  await coordinator.handleFinalizedTurn(input("turn-1", 1));
+  groundedAnswers.resolve(answer());
+  await waitUntil(() => runtime.requests.length === 1);
+  events.push({ attemptId: "attempt-1", type: "accepted" });
+  if (scenario !== "missing") {
+    const attestation = ttsAttestation();
+    if (attestation.type !== "tts-attestation") {
+      throw new Error("fixture did not create a TTS attestation");
+    }
+    events.push({
+      ...attestation,
+      ...(scenario === "mismatched-attempt" ? { attemptId: "other-attempt" } : {}),
+      attestation: {
+        ...attestation.attestation,
+        ...(scenario === "mismatched-turn"
+          ? { turnId: "other-turn" }
+          : scenario === "mismatched-voice-profile"
+            ? { voiceProfileId: "other-profile" }
+            : {}),
+      },
+    });
+  }
+  events.push({
+    attemptId: "attempt-1",
+    channels: 1,
+    format: "pcm_s16le",
+    sampleRateHz: 48_000,
+    type: "audio-start",
+  });
+  await coordinator.whenIdle("meeting-1");
+
+  expect(playback.requests).toEqual([]);
+  expect(groundedAnswers.playbackAuthorityCalls).toEqual([]);
+  expect(runtime.cancellations).toContainEqual({
+    reason: "runtime-shutdown",
+    turnId: "turn-1",
+  });
+}
+
 describe("Conversation grounded knowledge execution", () => {
   it("buffers and validates the complete answer before existing literal speech", async () => {
     const groundedAnswers = new ControlledGroundedAnswers();
     const runtime = new ScriptedRuntime([closedStream([
       { attemptId: "attempt-1", type: "accepted" },
+      ttsAttestation(),
       { attemptId: "attempt-1", channels: 1, format: "pcm_s16le", sampleRateHz: 48_000, type: "audio-start" },
       audioChunk("attempt-1", "turn-1", 1),
       { attemptId: "attempt-1", type: "audio-end" },
@@ -164,6 +239,7 @@ describe("Conversation grounded knowledge execution", () => {
     groundedAnswers.resolve(answer());
     await waitUntil(() => runtime.requests.length === 1);
     events.push({ attemptId: "attempt-1", type: "accepted" });
+    events.push(ttsAttestation());
     events.push({
       attemptId: "attempt-1",
       channels: 1,
@@ -185,6 +261,16 @@ describe("Conversation grounded knowledge execution", () => {
     await expect(coordinator.whenTurnPlaybackSettled("meeting-1", "turn-1"))
       .resolves.toBe("unplayed");
   });
+
+  it.each([
+    "missing",
+    "mismatched-attempt",
+    "mismatched-turn",
+    "mismatched-voice-profile",
+  ] as const)(
+    "fails closed before grounded PCM for %s TTS attestation",
+    expectGroundedPcmRejectedForAttestation,
+  );
 
   it("fails closed before runtime for incomplete, ungrounded or unsafe answers", async () => {
     for (const value of [
@@ -252,6 +338,7 @@ describe("Conversation grounded knowledge execution", () => {
     expect(runtime.requests).toEqual([]);
     expect(playback.sessions.flatMap(({ chunks }) => chunks)).toEqual([]);
     expect(observations).toContainEqual({
+      cancellationObservedAtMs: 2,
       meetingId: "meeting-1",
       reason: _label === "disconnect" || _label === "participant departure"
         ? "disconnected" :
@@ -284,6 +371,52 @@ describe("Conversation grounded knowledge execution", () => {
     expect(runtime.requests).toEqual([]);
     // Acknowledgement cue PCM is allowed; the factual runtime never started.
     expect(playback.requests.map(({ turnId }) => turnId)).toEqual(["turn-1"]);
+  });
+
+  it("sends one canonical cancellation observation to grounding and playback", async () => {
+    const groundedAnswers = new ControlledGroundedAnswers();
+    const events = new EventStream<ConversationRuntimeEvent>();
+    const runtime = new ScriptedRuntime([events]);
+    const playback = new RecordingPlayback();
+    const observations: GroundedKnowledgeAnswerObservation[] = [];
+    const coordinator = new ConversationCoordinator({
+      groundedAnswerObserver: {
+        observeGroundedKnowledgeAnswer: (observation) => {
+          observations.push(observation);
+        },
+      },
+      groundedAnswers,
+      playback,
+      runtime,
+    });
+
+    await coordinator.handleFinalizedTurn(input("turn-1", 1));
+    groundedAnswers.resolve(answer());
+    await waitUntil(() => runtime.requests.length === 1);
+    events.push({ attemptId: "attempt-1", type: "accepted" });
+    events.push(ttsAttestation());
+    events.push({
+      attemptId: "attempt-1",
+      channels: 1,
+      format: "pcm_s16le",
+      sampleRateHz: 48_000,
+      type: "audio-start",
+    });
+    await waitUntil(() => playback.sessions.length === 1);
+
+    await coordinator.disconnectMeeting("meeting-1", 177);
+    await coordinator.whenIdle("meeting-1");
+
+    expect(observations).toContainEqual(expect.objectContaining({
+      cancellationObservedAtMs: 177,
+      meetingId: "meeting-1",
+      status: "cancelled",
+      turnId: "turn-1",
+    }));
+    expect(playback.sessions[0]?.cancellationRequests).toEqual([{
+      cancellationObservedAtMs: 177,
+      reason: "disconnected",
+    }]);
   });
 });
 

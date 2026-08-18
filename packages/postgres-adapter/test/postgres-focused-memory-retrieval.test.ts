@@ -81,6 +81,7 @@ function twoHourSnapshot(turnCount = 720) {
     externalPublicationId:
       "discord:v2:channel:22222222222222222:message:33333333333333333",
     idempotencyKey: meeting.publicationIdempotencyKey(),
+    publisherIdentity: botId,
   });
   return meeting.toSnapshot();
 }

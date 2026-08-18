@@ -8,6 +8,7 @@ export {
   InfinityContextActivationError,
   assertInfinityContextActivation,
   assertInfinityContextSearchActivation,
+  decodeInfinityContextCapabilityAttestation,
   decodeInfinityContextRuntimeActivation,
   type InfinityContextCapabilityAttestationV1,
   type InfinityContextProductionEmbeddingProfileAttestationV1,
@@ -16,6 +17,6 @@ export {
 export {
   createInfinitySemanticQualificationManifest,
   infinitySemanticQualificationSchema,
-  type InfinitySemanticQualificationEvidenceV1,
-  type InfinitySemanticQualificationManifestV1,
+  type InfinitySemanticQualificationEvidenceV2,
+  type InfinitySemanticQualificationManifestV2,
 } from "./infinity-semantic-qualification.js";

@@ -162,7 +162,17 @@ export async function qualifySupersessionAndDeletion(
   const superseding = requiredHistoricalRuntime(pool, infinity, true, true);
   await superseding.assertReady();
   await superseding.start();
-  await superseding.close();
+  try {
+    await waitForHistoricalRows(
+      pool,
+      ({ meeting_id, state }) => meeting_id === historicalMeetingId &&
+        (state === "applied" || state === "deleted"),
+      2,
+      signal,
+    );
+  } finally {
+    await superseding.close();
+  }
   const correctedText = infinity.endpoint.indexedTexts().join("\n");
   expect(correctedText).toContain("PINE-GOLF-V2");
   expect(correctedText).not.toMatch(/PINE-GOLF(?:\s|$)/u);
@@ -236,9 +246,22 @@ export async function qualifySupersessionAndDeletion(
   expect(deleting.servingAuthorized()).toBe(false);
   expect(deleting.searchEnabled()).toBe(false);
   await deleting.requestMeetingDeletion(historicalMeetingId);
+  const deletionRowCount = (await historicalRows(pool)).filter(
+    ({ meeting_id }) => meeting_id === historicalMeetingId,
+  ).length;
   infinity.endpoint.loseNextThreadDeleteResponse();
   await deleting.start();
-  await deleting.close();
+  try {
+    await waitForHistoricalRows(
+      pool,
+      ({ meeting_id, state }) =>
+        meeting_id === historicalMeetingId && state === "deleted",
+      deletionRowCount,
+      signal,
+    );
+  } finally {
+    await deleting.close();
+  }
   expect((await historicalRows(pool)).filter(({ meeting_id }) =>
     meeting_id === historicalMeetingId
   ).every(({ state }) => state === "deleted")).toBe(true);

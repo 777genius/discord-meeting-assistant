@@ -40,6 +40,7 @@ export function createActiveConversationRun(
     runtimeCompleted: false,
     runtimeStartAbortController: null,
     runtimeTurn: null,
+    ttsAttestation: null,
   };
 }
 

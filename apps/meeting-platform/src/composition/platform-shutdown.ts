@@ -143,12 +143,19 @@ export async function closeMeetingPlatformResources(
       remainingShutdownMilliseconds(deadlineAtMilliseconds),
     ),
   ]));
-  failures.push(...await collectFailures([
+  const meetingKnowledgeFailures = await collectFailures([
     awaitBounded(
       "Meeting Knowledge local final reply",
       startOperation(() => input.meetingKnowledge?.close()),
       remainingShutdownMilliseconds(deadlineAtMilliseconds),
     ),
+  ]);
+  failures.push(...meetingKnowledgeFailures);
+  // A timed-out drain still owns Discord, transport, and PostgreSQL work. Keep
+  // those dependencies alive and surface the failure instead of racing their
+  // teardown against an operation that may complete after this function exits.
+  const meetingKnowledgeDrained = meetingKnowledgeFailures.length === 0;
+  failures.push(...await collectFailures([
     awaitBounded(
       "historical memory reconciler",
       startOperation(() => input.historicalMemory?.close()),
@@ -159,23 +166,23 @@ export async function closeMeetingPlatformResources(
       startOperation(() => input.liveFinalizedMemory?.close()),
       remainingShutdownMilliseconds(deadlineAtMilliseconds),
     ),
-    awaitBounded(
+    ...(meetingKnowledgeDrained ? [awaitBounded(
       "Discord client",
       startOperation(() => input.discord.destroy()),
       remainingShutdownMilliseconds(deadlineAtMilliseconds),
-    ),
+    )] : []),
     awaitBounded(
       "Pipecat conversation runtime",
       startOperation(() => input.conversationRuntime?.close()),
       remainingShutdownMilliseconds(deadlineAtMilliseconds),
     ),
-    awaitBounded(
+    ...(meetingKnowledgeDrained ? [awaitBounded(
       "subscription runtime transport",
       startOperation(() => {
         input.runtimeTransport.close();
       }),
       remainingShutdownMilliseconds(deadlineAtMilliseconds),
-    ),
+    )] : []),
     awaitBounded(
       "S3 client",
       startOperation(() => {
@@ -183,11 +190,11 @@ export async function closeMeetingPlatformResources(
       }),
       remainingShutdownMilliseconds(deadlineAtMilliseconds),
     ),
-    awaitBounded(
+    ...(meetingKnowledgeDrained ? [awaitBounded(
       "PostgreSQL pool",
       startOperation(() => input.pool.end()),
       remainingShutdownMilliseconds(deadlineAtMilliseconds),
-    ),
+    )] : []),
     awaitBounded(
       "logger flush",
       flushLoggers([input.logger]),

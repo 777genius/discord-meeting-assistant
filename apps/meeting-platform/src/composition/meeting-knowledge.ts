@@ -15,6 +15,7 @@ import {
   AdmitCurrentFinalReply,
   GroundedMeetingAnswer,
   HistoricalExhaustiveMemoryRetrieval,
+  MaintainFinalReplies,
   ProcessFinalReplyJob,
   SameRoomFocusedMemoryRetrieval,
   type LocalFinalReplyPolicy,
@@ -26,6 +27,7 @@ import {
 import type { Logger } from "@discord-meeting/observability-adapter";
 import {
   PostgresAnswerEffectStore,
+  PostgresFinalReplyMaintenance,
   canonicalFinalReplyTurnHash,
   PostgresFinalReplyEvidence,
   PostgresFocusedMemoryRetrieval,
@@ -47,6 +49,17 @@ import type { PlatformHistoricalMemoryRuntime } from "./historical-memory.js";
 
 const processIntervalMilliseconds = 500;
 const reconciliationIntervalMilliseconds = 30_000;
+const maximumMaintenanceJobsPerPass = 100;
+const shutdownDrainTimeoutMilliseconds = 5_000;
+
+export class MeetingKnowledgeDrainTimeoutError extends Error {
+  public constructor(timeoutMilliseconds: number) {
+    super(
+      `Meeting Knowledge final reply drain exceeded ${timeoutMilliseconds}ms`,
+    );
+    this.name = "MeetingKnowledgeDrainTimeoutError";
+  }
+}
 
 /**
  * This ledger is deliberately co-located with composition policy. Any change
@@ -68,13 +81,21 @@ export const localFinalReplyPolicy: LocalFinalReplyPolicy = Object.freeze({
     safeInputTokens: 300_000,
     tokenDriftReserve: 32_768,
   }),
-  jobLeaseSeconds: 60,
+  // Longer than the grounded-answer adapter's maximum allowed 300-second provider deadline.
+  // Reservation renews this lease immediately before the provider call.
+  jobLeaseSeconds: 360,
   maximumProviderAttempts: 2,
   policyVersion: "meeting-knowledge.focused-memory-final-reply.v2",
   retrieval: Object.freeze({
     maximumCandidates: 24,
     neighborTurns: 2,
   }),
+});
+
+export const localFinalReplyPolicyRelease = Object.freeze({
+  authorizationPolicyVersion: localFinalReplyPolicy.authorizationPolicyVersion,
+  policyEpoch: 1,
+  policyVersion: localFinalReplyPolicy.policyVersion,
 });
 
 export interface MeetingKnowledgeLocalFinalReplyRuntime {
@@ -107,10 +128,43 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
   readonly logger: Logger;
   readonly pool: Pool;
   readonly runtimeTransport: SubscriptionRuntimeTransportPort;
-}): MeetingKnowledgeLocalFinalReplyRuntime | undefined {
-  if (input.config.meetingKnowledge?.localFinalReply !== true) {
-    return undefined;
+}): MeetingKnowledgeLocalFinalReplyRuntime {
+  const servingEnabled =
+    input.config.meetingKnowledge?.localFinalReply === true;
+  const jobs = new PostgresQuestionJobStore(input.pool, localFinalReplyPolicyRelease);
+  const publication = new DurableAnswerPublication({
+    delivery: input.answerDelivery ?? new DiscordAnswerDeliveryAdapter(
+      createDiscordOneAttemptAnswerRest(input.config.secrets.discordToken),
+      input.config.discordApplicationId,
+    ),
+    payloads: new DiscordAnswerPayloadCodec(),
+    store: new PostgresAnswerEffectStore(input.pool, localFinalReplyPolicyRelease),
+  });
+  const maintenance = new MaintainFinalReplies(
+    new PostgresFinalReplyMaintenance(input.pool, localFinalReplyPolicyRelease),
+    servingEnabled,
+  );
+  const reportError = (error: unknown): void => {
+    input.logger.error(
+      "Meeting Knowledge local final reply operation failed",
+      classifyPlatformError(error),
+    );
+  };
+  const reportDuplicateContainment = (count: number): void => {
+    input.logger.warn(
+      "Meeting Knowledge contained duplicate answer receipts",
+      { containedEffects: count },
+    );
+  };
+  if (!servingEnabled) {
+    return createMeetingKnowledgePollingRuntime({
+      maintenance,
+      publication,
+      reportDuplicateContainment,
+      reportError,
+    });
   }
+
   const secret = input.config.secrets.meetingKnowledgePrincipalKey;
   if (secret === undefined) {
     throw new Error("Meeting Knowledge principal key is missing from validated config");
@@ -125,8 +179,8 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
   const admissions = new PostgresQuestionAdmissionCommit(
     input.pool,
     input.config.discordApplicationId,
+    localFinalReplyPolicyRelease,
   );
-  const jobs = new PostgresQuestionJobStore(input.pool);
   const authorization = new DiscordQuestionAuthorizationAdapter(
     input.client,
     principals,
@@ -153,15 +207,6 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
         remoteSearchAvailable: () =>
           input.historicalMemory?.searchEnabled() === true,
       });
-  const effects = new PostgresAnswerEffectStore(input.pool);
-  const publication = new DurableAnswerPublication({
-    delivery: input.answerDelivery ?? new DiscordAnswerDeliveryAdapter(
-      createDiscordOneAttemptAnswerRest(input.config.secrets.discordToken),
-      input.config.discordApplicationId,
-    ),
-    payloads: new DiscordAnswerPayloadCodec(),
-    store: effects,
-  });
   const admission = new AdmitCurrentFinalReply(
     evidence,
     authorization,
@@ -197,14 +242,8 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
     memory,
     policy: localFinalReplyPolicy,
     renderer: new DiscordGroundedAnswerRenderer(),
-    workerId: `local-final-reply-${process.pid}`,
+    workerId: `local-final-reply-e${localFinalReplyPolicyRelease.policyEpoch}-${process.pid}`,
   });
-  const reportError = (error: unknown): void => {
-    input.logger.error(
-      "Meeting Knowledge local final reply operation failed",
-      classifyPlatformError(error),
-    );
-  };
   const handler = new DiscordLocalFinalReplyHandler({
     admission,
     admissions,
@@ -216,13 +255,60 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
     reportError,
     scopes: new ConfiguredDiscordQuestionScope(input.guildConfigurations),
   });
-  return createPollingRuntime({ handler, processor, publication, reportError });
+  return createMeetingKnowledgePollingRuntime({
+    handler,
+    maintenance,
+    processor,
+    publication,
+    reportDuplicateContainment,
+    reportError,
+  });
 }
 
-function createPollingRuntime(input: {
-  readonly handler: DiscordLocalFinalReplyHandler;
-  readonly processor: ProcessFinalReplyJob;
-  readonly publication: DurableAnswerPublication;
+async function awaitBoundedFinalReplyDrain(
+  operations: readonly (Promise<unknown> | undefined)[],
+): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  const pending = operations.filter(
+    (operation): operation is Promise<unknown> => operation !== undefined);
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(new MeetingKnowledgeDrainTimeoutError(
+        shutdownDrainTimeoutMilliseconds,
+      ));
+    }, shutdownDrainTimeoutMilliseconds);
+    timer.unref();
+  });
+  try {
+    const results = await Promise.race([
+      Promise.allSettled(pending),
+      timeout,
+    ]);
+    const failures = results.flatMap((result): unknown[] =>
+      result.status === "rejected" ? [result.reason as unknown] : [],
+    );
+    if (failures.length > 0) {
+      throw new AggregateError(failures, "Meeting Knowledge drain failed");
+    }
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+  }
+}
+
+export function createMeetingKnowledgePollingRuntime(input: {
+  readonly handler?: Pick<
+    DiscordLocalFinalReplyHandler,
+    "close" | "settle" | "start"
+  >;
+  readonly maintenance: MaintainFinalReplies;
+  readonly processor?: Pick<ProcessFinalReplyJob, "executeOnce">;
+  readonly publication: Pick<
+    DurableAnswerPublication,
+    "reconcileRetractions" | "reconcileUnknown"
+  >;
+  readonly reportDuplicateContainment?: (count: number) => void;
   readonly reportError: (error: unknown) => void;
 }): MeetingKnowledgeLocalFinalReplyRuntime {
   let processing: Promise<unknown> | undefined;
@@ -230,7 +316,8 @@ function createPollingRuntime(input: {
   let processTimer: NodeJS.Timeout | undefined;
   let reconcileTimer: NodeJS.Timeout | undefined;
   const processOnce = (): void => {
-    processing ??= input.processor.executeOnce()
+    processing ??= input.maintenance.execute(maximumMaintenanceJobsPerPass)
+      .then(async () => await input.processor?.executeOnce())
       .catch(input.reportError)
       .finally(() => {
         processing = undefined;
@@ -238,6 +325,13 @@ function createPollingRuntime(input: {
   };
   const reconcile = (): void => {
     reconciling ??= input.publication.reconcileUnknown(100)
+      .then((result) => {
+        if (result.containedDuplicates > 0) {
+          input.reportDuplicateContainment?.(result.containedDuplicates);
+        }
+        return result;
+      })
+      .then(async () => await input.publication.reconcileRetractions(100))
       .catch(input.reportError)
       .finally(() => {
         reconciling = undefined;
@@ -245,18 +339,18 @@ function createPollingRuntime(input: {
   };
   return {
     close: async () => {
-      input.handler.close();
+      input.handler?.close();
       clearInterval(processTimer);
       clearInterval(reconcileTimer);
-      await input.handler.settle();
-      await Promise.allSettled([processing, reconciling]);
+      const ingress = input.handler?.settle();
+      await awaitBoundedFinalReplyDrain([ingress, processing, reconciling]);
     },
-    settleIngress: () => input.handler.settle(),
+    settleIngress: () => input.handler?.settle() ?? Promise.resolve(),
     start: () => {
       if (processTimer !== undefined) {
         return;
       }
-      input.handler.start();
+      input.handler?.start();
       processTimer = setInterval(processOnce, processIntervalMilliseconds);
       reconcileTimer = setInterval(reconcile, reconciliationIntervalMilliseconds);
       processTimer.unref();

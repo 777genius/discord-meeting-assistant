@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { dirname, isAbsolute, join, parse, resolve } from "node:path";
 import {
   lstat,
@@ -15,7 +16,6 @@ import {
   parseAbortedRecordingState,
   parseCompletedRecordingState,
   parseRecordingSpoolState,
-  spoolToken,
   type AbortedRecordingState,
   type CompletedRecordingState,
   type RecordingSpoolState,
@@ -23,7 +23,6 @@ import {
 import { terminalReceiptTokens } from "./spool-terminal-receipts.js";
 
 export {
-  spoolToken,
   type AbortedRecordingState,
   type CompletedRecordingState,
   type RecordingSpoolState,
@@ -33,6 +32,10 @@ export {
   type StoredLifecycleEvent,
   type StoredSpeaker,
 } from "./spool-state.js";
+
+export function spoolToken(namespace: string, identifier: string): string {
+  return createHash("sha256").update(namespace).update("\0").update(identifier).digest("hex");
+}
 
 let atomicWriteSequence = 0;
 

@@ -26,11 +26,13 @@ type CueGroup = (typeof cueGroups)[number];
 interface ManifestCue {
   readonly cueId: string;
   readonly pcmFile: string;
+  readonly sha256: string;
 }
 
 interface LoadedCue {
   readonly cueId: string;
   readonly pcmChunks: readonly Uint8Array[];
+  readonly pcmSha256: string;
 }
 
 type CueGroups<Value> = { readonly [Group in CueGroup]: readonly Value[] };
@@ -119,6 +121,7 @@ export class FileConversationThinkingCueRegistry
         cueId: cue.cueId,
         pcmChunks: Object.freeze(cue.pcmChunks.map((chunk) => chunk.slice())),
         playbackAttemptId: playbackAttemptId(request, cue.cueId),
+        pcmSha256: cue.pcmSha256,
       }),
     };
   }
@@ -191,9 +194,14 @@ async function loadCueGroup(
       if (pcm.byteLength === 0 || pcm.byteLength % 2 !== 0) {
         throw new Error(`Thinking cue ${cue.cueId} must contain non-empty s16le PCM`);
       }
+      const pcmSha256 = createHash("sha256").update(pcm).digest("hex");
+      if (pcmSha256 !== cue.sha256) {
+        throw new Error(`Thinking cue ${cue.cueId} SHA-256 does not match its manifest`);
+      }
       return Object.freeze({
         cueId: cue.cueId,
         pcmChunks: Object.freeze(splitPcm(pcm)),
+        pcmSha256,
       });
     }),
   );
@@ -219,14 +227,25 @@ function parseCue(
   if (!isRecord(value)) {
     throw new Error(`Thinking cue ${group}[${index}] must be an object`);
   }
-  assertExactKeys(value, ["cueId", "pcmFile"], `Thinking cue ${group}[${index}]`);
+  assertExactKeys(
+    value,
+    ["cueId", "pcmFile", "sha256"],
+    `Thinking cue ${group}[${index}]`,
+  );
   if (typeof value.cueId !== "string" || !cueIdentifier.test(value.cueId)) {
     throw new Error(`Thinking cue ${group}[${index}] has an invalid cueId`);
   }
   if (typeof value.pcmFile !== "string" || !pcmRelativePath.test(value.pcmFile)) {
     throw new Error(`Thinking cue ${group}[${index}] has an unsafe pcmFile`);
   }
-  return Object.freeze({ cueId: value.cueId, pcmFile: value.pcmFile });
+  if (typeof value.sha256 !== "string" || !/^[a-f\d]{64}$/u.test(value.sha256)) {
+    throw new Error(`Thinking cue ${group}[${index}] has an invalid SHA-256`);
+  }
+  return Object.freeze({
+    cueId: value.cueId,
+    pcmFile: value.pcmFile,
+    sha256: value.sha256,
+  });
 }
 
 function parseCueGroup(value: unknown, group: CueGroup): readonly ManifestCue[] {
@@ -253,8 +272,8 @@ function parseManifest(value: unknown): CueManifest {
     ["version", "voiceId", "voiceProfileId", "audio", "groups"],
     "Thinking cue manifest",
   );
-  if (value.version !== 2) {
-    throw new Error("Thinking cue manifest version must be 2");
+  if (value.version !== 3) {
+    throw new Error("Thinking cue manifest version must be 3");
   }
   if (typeof value.voiceProfileId !== "string" || !cueIdentifier.test(value.voiceProfileId)) {
     throw new Error("Thinking cue manifest voiceProfileId is invalid");

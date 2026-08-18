@@ -34,14 +34,22 @@ const trust = hostedCampaignReleaseTrustRootV1Schema.parse({
     requiredTerms: pinnedCanary.requiredTerms,
     transcriptExpectationSha256: pinnedCanary.transcriptExpectation.sha256 },
   clockMaximumSkewMs: 250, deployRoot: "/srv/e2e", discordReceiptTtlMs: 30_000,
+  craigNetworkPolicy: { bridgeInterface: "br-craige2e", chain: "CRAIG_E2E",
+    networkName: "discord-meeting-e2e", tcpDestinationPort: 443,
+    udpDestinationPorts: { end: 65_535, start: 1_024 } },
   environmentFile: "/srv/e2e/source.env", host: "codex-workers-eu-01",
-  remoteComposeFile: "/srv/e2e/source/compose.yaml", schemaVersion: 2,
+  remoteComposeFile: "/srv/e2e/source/compose.yaml", schemaVersion: 3,
   secretDirectory: "/run/secrets/discord-e2e",
   services: services.map(([component, composeProject, composeService, digit]) => ({
     component, composeProject, composeService, imageId: `sha256:${digit.repeat(64)}`,
     repositoryDigest: `registry.test/${component}@sha256:${digit.repeat(64)}`, sourceRevision: digit.repeat(40),
   })),
   sourceRoot: "/srv/e2e/source", voicetextReceiptTtlMs: 30_000, voicetextTimeoutMs: 60_000,
+});
+const priorSerializedV2TrustRoot = JSON.stringify({
+  ...trust,
+  craigNetworkPolicy: undefined,
+  schemaVersion: 2,
 });
 const release = {
   canary: { endpoint, fixturePath: pinnedCanary.fixture.audioPath,
@@ -63,6 +71,24 @@ const campaign = {
 const executeFile = promisify(execFile);
 
 describe("hosted campaign release binding", () => {
+  it("rejects the serialized v2 trust root from before Craig policy binding", () => {
+    const priorTrustRoot: unknown = JSON.parse(priorSerializedV2TrustRoot);
+    expect(priorTrustRoot).not.toHaveProperty("craigNetworkPolicy");
+    expect(() => hostedCampaignReleaseTrustRootV1Schema.parse(priorTrustRoot)).toThrow();
+    expect(() => resolveCompiledHostedCampaignReleaseTrustRoot({
+      generatorVersion: 2,
+      schemaVersion: 2,
+      status: "admitted",
+      trustRoot: priorTrustRoot,
+      trustRootSha256: "0".repeat(64),
+    })).toThrow();
+    expect(() => resolveCompiledHostedCampaignReleaseTrustRoot({
+      generatorVersion: 1,
+      schemaVersion: 1,
+      status: "unadmitted",
+    })).toThrow("metadata is malformed");
+  });
+
   it("requires one exact service identity for every release component", () => {
     expect(() => hostedCampaignReleaseBindingV1Schema.parse({ ...release,
       services: [release.services[0], release.services[0], release.services[2], release.services[3]] }))
@@ -93,6 +119,7 @@ describe("hosted campaign release binding", () => {
       campaignId: campaign.campaignId,
       deployment: { producer: { expectation: {
         campaignRoot: "/srv/e2e/campaigns",
+        craigNetworkPolicy: trust.craigNetworkPolicy,
         greeting: {
           campaignSiblingPath: "/srv/e2e/campaigns-sibling",
           destinationPath: "/run/e2e-campaign",
@@ -143,20 +170,20 @@ describe("hosted campaign release binding", () => {
 
   it("keeps the checked-in build unadmitted and rejects tampered generated trust", () => {
     expect(resolveCompiledHostedCampaignReleaseTrustRoot({
-      generatorVersion: 1,
-      schemaVersion: 1,
+      generatorVersion: 2,
+      schemaVersion: 2,
       status: "unadmitted",
     })).toBeUndefined();
     expect(() => resolveCompiledHostedCampaignReleaseTrustRoot({
-      generatorVersion: 1,
-      schemaVersion: 1,
+      generatorVersion: 2,
+      schemaVersion: 2,
       status: "admitted",
       trustRoot: trust,
       trustRootSha256: "0".repeat(64),
     })).toThrow("digest is invalid");
     expect(resolveCompiledHostedCampaignReleaseTrustRoot({
-      generatorVersion: 1,
-      schemaVersion: 1,
+      generatorVersion: 2,
+      schemaVersion: 2,
       status: "admitted",
       trustRoot: trust,
       trustRootSha256: digestHostedCampaignReleaseTrustRootV1(trust),
@@ -187,6 +214,8 @@ describe("hosted campaign release binding", () => {
       ]);
     }
     expect(await readFile(firstOutput, "utf8")).toBe(await readFile(secondOutput, "utf8"));
+    expect(await readFile(firstOutput, "utf8")).toContain('"generatorVersion": 2');
+    expect(await readFile(firstOutput, "utf8")).toContain('"schemaVersion": 2');
     expect(await readFile(firstOutput, "utf8")).toContain(`"trustRootSha256": "${expectedDigest}"`);
     await expect(executeFile(process.execPath, [
       generator,

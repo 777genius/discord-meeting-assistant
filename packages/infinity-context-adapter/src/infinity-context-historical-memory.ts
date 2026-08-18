@@ -17,6 +17,10 @@ import {
   type InfinityContextCapabilities,
 } from "@infinity-context/sdk";
 
+import {
+  decodeInfinityContextCapabilityAttestation,
+  type InfinityContextCapabilityAttestationV1,
+} from "./infinity-runtime-provenance.js";
 import { deleteHistoricalMeeting } from "./infinity-context-deletion.js";
 import { indexHistoricalMeeting } from "./infinity-context-indexing.js";
 import { InfinityOperationDeadline } from "./infinity-request-deadline.js";
@@ -89,7 +93,7 @@ export class InfinityContextHistoricalMemoryAdapter implements HistoricalMemoryP
 
   public async qualifyCapabilities(
     options: HistoricalMemoryOperationOptionsV1 = {},
-  ): Promise<InfinityContextCapabilities> {
+  ): Promise<InfinityContextCapabilityAttestationV1> {
     const operation = new InfinityOperationDeadline(
       this.#operationTimeoutMs,
       options.signal,
@@ -100,7 +104,7 @@ export class InfinityContextHistoricalMemoryAdapter implements HistoricalMemoryP
         (signal) => this.#client.system.capabilities({ signal }),
       );
       this.#capabilities = capabilities;
-      return capabilities;
+      return decodeInfinityContextCapabilityAttestation(capabilities);
     } finally {
       operation.close();
     }

@@ -373,6 +373,9 @@ function deploymentExpectation(): HostedDeploymentSafetyExpectationV1 {
   return {
     allowedNetworks: ["discord-meeting-e2e"], campaignId, campaignRoot: "/srv/e2e/campaigns",
     campaignRootOwnerGid: 10_001, campaignRootOwnerUid: 10_001,
+    craigNetworkPolicy: { bridgeInterface: "br-craige2e", chain: "CRAIG-E2E",
+      networkName: "discord-meeting-e2e", tcpDestinationPort: 443,
+      udpDestinationPorts: { end: 65_535, start: 1_024 } },
     deployRoot: "/srv/e2e", sourceRoot: "/srv/e2e/source",
     greeting: {
       campaignSiblingPath: "/srv/e2e/campaigns-sibling",
@@ -409,8 +412,12 @@ function deploymentReceipt(expectation: HostedDeploymentSafetyExpectationV1, gen
     gid: expectation.campaignRootOwnerGid, linkCount: 3, mode: "0700" as const,
     requestedPath: expectation.campaignRoot, resolvedPath: expectation.campaignRoot, symbolicLink: false as const,
     uid: expectation.campaignRootOwnerUid };
+  const craigNetwork = { ...expectation.craigNetworkPolicy,
+    containerId: expectation.services.find(({ component }) => component === "craig")?.containerId,
+    containerIpv4: "172.28.0.2", networkId: "a".repeat(64), semanticPolicySha256: "b".repeat(64) };
   return createHostedDeploymentSafetyReceiptV1({ expectation, generatedAt: new Date(generatedAt).toISOString(), evidence: {
     campaignRoot, campaignRootAfter: campaignRoot,
+    craigNetworkBefore: craigNetwork, craigNetworkAfter: craigNetwork,
     greetingMount, greetingMountAfter: greetingMount, mountIsolation, mountIsolationAfter: mountIsolation,
     roots, rootsAfter: roots, servicesBefore: services, servicesAfter: services,
     roundTrip: { containerObservedHostNonce: "host-nonce", containerWrittenNonce: "container-nonce",

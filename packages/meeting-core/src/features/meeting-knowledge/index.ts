@@ -13,14 +13,19 @@ export {
   LIVE_FINALIZED_MEMORY_POLICY_VERSION,
   LIVE_FINALIZED_MEMORY_SCHEMA_VERSION,
   admitTrustedLiveMemoryIdentity,
+  isAttestedActiveLiveMemoryIdentity,
+  type AttestedActiveLiveMemoryIdentityV1,
   type TrustedLiveMemoryIdentityInputV1,
   type TrustedLiveMemoryIdentityV1,
 } from "./domain/live-finalized-memory.js";
 export {
   HISTORICAL_EVIDENCE_POLICY_VERSION,
   HISTORICAL_MEMORY_SCHEMA_VERSION,
+  TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE_VERSION,
+  DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
   HistoricalEvidenceInvariantError,
   admitAcceptedFinalMeeting,
+  admitsHistoricalRetrieval,
   createHistoricalReleaseBinding,
   validateHistoricalReleaseBinding,
   type AcceptedFinalMeetingInputV1,
@@ -28,6 +33,8 @@ export {
   type HistoricalActorV1,
   type HistoricalReleaseBindingV1,
   type HistoricalTranscriptTurnV1,
+  type TwoHourHistoricalQualificationV1,
+  type TwoHourHistoricalRetrievalProfileV1,
 } from "./domain/historical-evidence.js";
 export {
   MAXIMUM_HISTORICAL_QUESTION_UTF8_BYTES,
@@ -209,6 +216,9 @@ export {
   type AdmitCurrentFinalReplyResult,
 } from "./application/admit-current-final-reply.js";
 export {
+  MaintainFinalReplies,
+} from "./application/maintain-final-replies.js";
+export {
   ProcessFinalReplyJob,
   type ProcessFinalReplyResult,
 } from "./application/process-final-reply.js";
@@ -222,6 +232,7 @@ export type {
   ExhaustiveMemoryRetrievalPort,
   ExhaustiveMemoryRetrievalRequest,
   ExhaustiveMemoryRetrievalResult,
+  FinalReplyMaintenancePort,
   FinalReplyEvidencePort,
   FinalReplyRendererPort,
   FocusedMemoryRetrievalPort,

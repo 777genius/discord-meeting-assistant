@@ -6,6 +6,7 @@ import {
 } from "@discord-meeting/infinity-context-adapter";
 import {
   DEFAULT_HISTORICAL_SYNC_POLICY,
+  DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
   DeterministicCoverageReducer,
   ExhaustiveCoverage,
   HistoricalFocusedRetrieval,
@@ -51,7 +52,7 @@ async function awaitBoundedPass(pass: Promise<void> | undefined): Promise<void> 
   }
 }
 
-function createHistoricalReconciliationLifecycle(input: {
+export function createHistoricalReconciliationLifecycle(input: {
   readonly executePass: (signal: AbortSignal) => Promise<void>;
   readonly logger: Logger;
 }): Pick<PlatformHistoricalMemoryRuntime, "close" | "start"> {
@@ -65,25 +66,27 @@ function createHistoricalReconciliationLifecycle(input: {
     }
     const controller = new AbortController();
     activeController = controller;
-    const pass = input.executePass(controller.signal).catch((error: unknown) => {
-      if (!controller.signal.aborted) {
-        input.logger.warn("Historical memory reconciliation failed", {
-          errorType: error instanceof Error ? error.name : "unknown",
-        });
-      }
-    }).finally(() => {
-      if (active === pass) {
-        active = undefined;
-        activeController = undefined;
-      }
-    });
+    const pass = Promise.resolve()
+      .then(() => input.executePass(controller.signal))
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) {
+          input.logger.warn("Historical memory reconciliation failed", {
+            errorType: error instanceof Error ? error.name : "unknown",
+          });
+        }
+      })
+      .finally(() => {
+        if (active === pass) {
+          active = undefined;
+          activeController = undefined;
+        }
+      });
     active = pass;
     return pass;
   };
   const schedule = (): void => {
     void beginPass();
   };
-  const remainsOpen = (): boolean => !closed;
   return {
     close: async () => {
       closed = true;
@@ -100,21 +103,20 @@ function createHistoricalReconciliationLifecycle(input: {
       if (closed || timer !== undefined) {
         return;
       }
-      await beginPass();
-      if (remainsOpen()) {
-        timer = setInterval(schedule, reconciliationIntervalMs);
-        timer.unref();
-      }
+      timer = setInterval(schedule, reconciliationIntervalMs);
+      timer.unref();
+      schedule();
     },
   };
 }
 
 function semanticSearchQualified(
   activation: NonNullable<PlatformConfig["infinityContext"]>["activation"],
+  currentReleaseRevision: string | undefined,
   logger: Logger,
 ): boolean {
   try {
-    assertInfinityContextSearchActivation(activation);
+    assertInfinityContextSearchActivation(activation, currentReleaseRevision);
     return true;
   } catch (error) {
     logger.warn(
@@ -179,6 +181,11 @@ export function createPlatformHistoricalMemory(input: {
   let transportQualified = false;
   let searchQualified = false;
   const deletion = new RequestHistoricalMeetingDeletion(store);
+  const twoHourProfile = Object.freeze({
+    ...DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
+    qualification:
+      input.config.meetingKnowledge?.twoHourHistoricalQualification ?? null,
+  });
 
   const refreshQualification = async (signal?: AbortSignal): Promise<void> => {
     transportQualified = false;
@@ -189,14 +196,13 @@ export function createPlatformHistoricalMemory(input: {
     const capabilities = await memory.qualifyCapabilities(
       signal === undefined ? {} : { signal },
     );
-    assertInfinityContextActivation(config.activation, {
-      apiVersion: capabilities.api_version ?? null,
-      enabledAdapters: capabilities.enabled_adapters ?? [],
-      serviceName: capabilities.service_name ?? null,
-      supportsQdrant: capabilities.supports_qdrant === true,
-    });
+    assertInfinityContextActivation(config.activation, capabilities);
     transportQualified = true;
-    searchQualified = semanticSearchQualified(config.activation, input.logger);
+    searchQualified = semanticSearchQualified(
+      config.activation,
+      input.config.sourceRevision,
+      input.logger,
+    );
   };
 
   const refreshQualificationForReconciliation = async (
@@ -262,7 +268,7 @@ export function createPlatformHistoricalMemory(input: {
         ids: new HmacHistoricalOpaqueIds(topologyKey),
         reducer: new DeterministicCoverageReducer(64, 256),
         sync: new PostgresHistoricalMemoryStore(input.pool),
-      });
+      }, undefined, twoHourProfile);
     },
     createFocusedRetrieval: (authorization) => new HistoricalFocusedRetrieval({
       authority: new PostgresHistoricalEvidenceAuthority(input.pool),
@@ -270,7 +276,7 @@ export function createPlatformHistoricalMemory(input: {
       ids: new HmacHistoricalOpaqueIds(topologyKey),
       memory,
       store: new PostgresHistoricalMemoryStore(input.pool),
-    }),
+    }, undefined, twoHourProfile),
     searchEnabled: () =>
       config.activation.searchEnabled && transportQualified && searchQualified,
     servingAuthorized: () => config.activation.searchEnabled && searchQualified,

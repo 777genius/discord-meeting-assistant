@@ -30,7 +30,9 @@ export interface SummaryPublicationRequest {
 export interface SummaryPublicationPort {
   publish(
     request: SummaryPublicationRequest,
-  ): Promise<SummaryPublicationResult<Pick<PublicationReceiptSnapshot, "externalPublicationId">>>;
+  ): Promise<SummaryPublicationResult<
+    Pick<PublicationReceiptSnapshot, "externalPublicationId" | "publisherIdentity">
+  >>;
 }
 
 export type SummaryPublicationEffectReservation =

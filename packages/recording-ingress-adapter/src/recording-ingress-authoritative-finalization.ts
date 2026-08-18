@@ -139,6 +139,7 @@ function createRecordingSnapshot(
   manifestLocator: string,
 ): RecordingArtifactSnapshot {
   return {
+    authoritativeDurationMs: authoritativeDurationMs(state),
     manifestLocator,
     recordingId: state.recordingId,
     speakerAudio: tracks.map((track) => ({
@@ -147,6 +148,27 @@ function createRecordingSnapshot(
       timelineOffsetMs: track.timelineOffsetMs,
     })),
   };
+}
+
+function authoritativeDurationMs(state: RecordingSpoolState): number {
+  if (state.endedAt === undefined) {
+    throw new RecordingIngressError("corrupt-spool", "recording end time is missing");
+  }
+  const startedAtMs = Date.parse(state.startedAt);
+  const endedAtMs = Date.parse(state.endedAt);
+  const durationMs = endedAtMs - startedAtMs;
+  if (
+    !Number.isSafeInteger(startedAtMs) ||
+    !Number.isSafeInteger(endedAtMs) ||
+    !Number.isSafeInteger(durationMs) ||
+    durationMs < 0
+  ) {
+    throw new RecordingIngressError(
+      "corrupt-spool",
+      "recording lifecycle does not contain a valid authoritative duration",
+    );
+  }
+  return durationMs;
 }
 
 async function persistCompleted(
@@ -170,7 +192,7 @@ async function persistCompleted(
     lifecycleSchemaVersion: state.lifecycleSchemaVersion,
     recording,
     recordingId: state.recordingId,
-    schemaVersion: 4,
+    schemaVersion: 5,
   };
   await runtime.spool.writeCompleted(completed);
   await runtime.cleanupAfterSuccess(state.recordingId);

@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 
 import { describe, expect, it } from "vitest";
 
@@ -8,10 +10,11 @@ import { runRealServiceQualification } from "./real-service-qualification-helper
 
 const enabled = process.env.INFINITY_CONTEXT_SEMANTIC_E2E === "1";
 const liveDescribe = enabled ? describe : describe.skip;
+const execFileAsync = promisify(execFile);
 
 liveDescribe("Infinity Context disposable production-semantic qualification", () => {
   it("qualifies one declared non-mock embedding profile and emits a retainable manifest", async () => {
-    const config = semanticServiceConfig(process.env);
+    const config = await semanticServiceConfig(process.env);
     const metrics = await runRealServiceQualification(config.service);
     expect(metrics.focusedRecallAt5).toBe(1);
     const meeting = combinedQualificationMeeting();
@@ -19,17 +22,14 @@ liveDescribe("Infinity Context disposable production-semantic qualification", ()
       corpusHumanTurnsSha256: createHash("sha256")
         .update(JSON.stringify(meeting.humanTurns), "utf8")
         .digest("hex"),
-      embeddingProfileDigestSha256: config.embeddingProfileDigestSha256,
-      embeddingProfileId: config.embeddingProfileId,
+      endpointReceipt: metrics.endpointReceipt,
       focusedQuestionCount: metrics.focusedQuestionCount,
       focusedRecallAt5: metrics.focusedRecallAt5,
       observedAt: new Date().toISOString(),
       releaseRevision: config.releaseRevision,
+      qualificationHarnessSha256: config.qualificationHarnessSha256,
+      releaseSourceTreeSha256: config.releaseSourceTreeSha256,
       remoteCleanupVerified: metrics.remoteCleanupVerified,
-      serviceApiVersion: metrics.service.apiVersion,
-      serviceEnabledAdapters: metrics.service.enabledAdapters,
-      serviceName: metrics.service.name,
-      serviceRevision: config.serviceRevision,
       turnCount: metrics.turnCount,
     });
     process.stdout.write(
@@ -38,21 +38,15 @@ liveDescribe("Infinity Context disposable production-semantic qualification", ()
   }, 600_000);
 });
 
-export function semanticServiceConfig(environment: NodeJS.ProcessEnv) {
+export async function semanticServiceConfig(
+  environment: NodeJS.ProcessEnv,
+  resolveCheckoutProvenance: () => Promise<QualificationCheckoutProvenance> = checkoutQualificationProvenance,
+) {
   required(
     environment.INFINITY_CONTEXT_SEMANTIC_E2E_DISPOSABLE,
     "INFINITY_CONTEXT_SEMANTIC_E2E_DISPOSABLE",
     "YES_DELETE_ALL_TEST_DATA",
   );
-  const embeddingProfileId = required(
-    environment.INFINITY_CONTEXT_SEMANTIC_E2E_EMBEDDING_PROFILE,
-    "INFINITY_CONTEXT_SEMANTIC_E2E_EMBEDDING_PROFILE",
-  );
-  if (/(?:deterministic|mock|non-production)/iu.test(embeddingProfileId)) {
-    throw new Error(
-      "INFINITY_CONTEXT_SEMANTIC_E2E_EMBEDDING_PROFILE must identify a non-mock profile",
-    );
-  }
   const baseUrl = required(
     environment.INFINITY_CONTEXT_SEMANTIC_E2E_URL,
     "INFINITY_CONTEXT_SEMANTIC_E2E_URL",
@@ -80,13 +74,14 @@ export function semanticServiceConfig(environment: NodeJS.ProcessEnv) {
       "INFINITY_CONTEXT_SEMANTIC_E2E_REQUEST_TIMEOUT_MS must be an integer from 1000 through 60000",
     );
   }
+  const provenance = await resolveCheckoutProvenance();
   return {
-    embeddingProfileDigestSha256: required(
-      environment.INFINITY_CONTEXT_SEMANTIC_E2E_EMBEDDING_PROFILE_DIGEST_SHA256,
-      "INFINITY_CONTEXT_SEMANTIC_E2E_EMBEDDING_PROFILE_DIGEST_SHA256",
+    releaseRevision: revision(
+      provenance.releaseRevision,
+      "checked-out release revision",
     ),
-    embeddingProfileId,
-    releaseRevision: revision(environment.MEETING_KNOWLEDGE_RELEASE_REVISION, "MEETING_KNOWLEDGE_RELEASE_REVISION"),
+    qualificationHarnessSha256: provenance.qualificationHarnessSha256,
+    releaseSourceTreeSha256: provenance.sourceTreeSha256,
     service: {
       baseUrl: url.toString().replace(/\/$/u, ""),
       requestTimeoutMs,
@@ -94,10 +89,49 @@ export function semanticServiceConfig(environment: NodeJS.ProcessEnv) {
         ? {}
         : { token: environment.INFINITY_CONTEXT_SEMANTIC_E2E_TOKEN }),
     },
-    serviceRevision: revision(
-      environment.INFINITY_CONTEXT_SEMANTIC_E2E_SERVICE_REVISION,
-      "INFINITY_CONTEXT_SEMANTIC_E2E_SERVICE_REVISION",
-    ),
+  };
+}
+
+interface QualificationCheckoutProvenance {
+  readonly qualificationHarnessSha256: string;
+  readonly releaseRevision: string;
+  readonly sourceTreeSha256: string;
+}
+
+const qualificationHarnessPaths = Object.freeze([
+  "packages/infinity-context-adapter/src/infinity-semantic-qualification.ts",
+  "packages/infinity-context-adapter/test/infinity-context-qualification-corpus.ts",
+  "packages/infinity-context-adapter/test/infinity-context-semantic-service.e2e.test.ts",
+  "packages/infinity-context-adapter/test/real-service-qualification-helper.ts",
+]);
+
+async function git(args: readonly string[]): Promise<string> {
+  const result = await execFileAsync("git", [...args], {
+    encoding: "utf8",
+    maxBuffer: 32 * 1024 * 1024,
+  });
+  return result.stdout;
+}
+
+export async function checkoutQualificationProvenance(
+  runGit: (args: readonly string[]) => Promise<string> = git,
+): Promise<QualificationCheckoutProvenance> {
+  if ((await runGit(["status", "--porcelain=v1", "--untracked-files=all"])).length !== 0) {
+    throw new Error("semantic qualification requires a clean Git checkout");
+  }
+  const releaseRevision = (await runGit(["rev-parse", "--verify", "HEAD"])).trim();
+  const treeListing = await runGit(["ls-tree", "-r", "-z", "--full-tree", "HEAD"]);
+  const harness = createHash("sha256");
+  for (const path of qualificationHarnessPaths) {
+    harness.update(path, "utf8");
+    harness.update("\0", "utf8");
+    harness.update(await runGit(["show", `HEAD:${path}`]), "utf8");
+    harness.update("\0", "utf8");
+  }
+  return {
+    qualificationHarnessSha256: harness.digest("hex"),
+    releaseRevision,
+    sourceTreeSha256: createHash("sha256").update(treeListing, "utf8").digest("hex"),
   };
 }
 

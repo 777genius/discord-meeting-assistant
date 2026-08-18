@@ -7,11 +7,10 @@ import type {
   LiveRuntimeLogger,
   LiveTranscriptionEvent,
 } from "./contracts.js";
+import { FarewellPlaybackAttempts } from "./farewell-playback-attempts.js";
 
 const fastPathFenceMs = 100;
 const maximumContextTurns = 5;
-const oneShotReceiptLeaseSeconds = 120;
-const farewellTurnId = "meeting-farewell:v1";
 
 interface FarewellBridgeDependencies {
   readonly configuration: LiveConversationConfiguration;
@@ -28,26 +27,26 @@ interface PendingFastPath {
   readonly revision: number;
 }
 
-interface FarewellReceiptInput {
-  readonly kind: "farewell";
-  readonly meetingId: string;
-  readonly subjectId: "meeting";
-}
-
 /** Meeting-local farewell policy with a 100 ms continuation fence. */
 export class FarewellBridge {
-  private attemptOrdinal = 0;
   private classificationPromise: Promise<void> | null = null;
   private closed = false;
   private readonly contextTurns: LiveFarewellTurn[] = [];
   private pendingFastPath: PendingFastPath | null = null;
   private readonly policy = new MeetingFarewellPolicy();
+  private readonly playback: FarewellPlaybackAttempts;
   private readonly presentParticipantIds = new Set<string>();
   private queuedReview: LiveFarewellClassificationInput | null = null;
   private revision = 0;
   private readonly tasks = new Set<Promise<void>>();
 
-  public constructor(private readonly dependencies: FarewellBridgeDependencies) {}
+  public constructor(private readonly dependencies: FarewellBridgeDependencies) {
+    this.playback = new FarewellPlaybackAttempts({
+      ...dependencies,
+      isClosed: () => this.closed,
+      policy: this.policy,
+    });
+  }
 
   public participantsPresent(participantIds: readonly string[]): void {
     for (const participantId of participantIds) {
@@ -131,7 +130,11 @@ export class FarewellBridge {
       return;
     }
     this.pendingFastPath = null;
-    this.track(this.play(pending.locale, pending.reason, pending.evidenceTurnIds));
+    this.track(this.playback.play(
+      pending.locale,
+      pending.reason,
+      pending.evidenceTurnIds,
+    ));
   }
 
   public close(): void {
@@ -200,7 +203,7 @@ export class FarewellBridge {
         !this.dependencies.isMeetingFinishing() &&
         input.revision === this.revision
       ) {
-        await this.play(
+        await this.playback.play(
           outcome,
           "semantic",
           [input.turns.at(-1)?.turnId].filter(
@@ -223,192 +226,6 @@ export class FarewellBridge {
       }
     });
     this.classificationPromise = running;
-  }
-
-  private async play(
-    locale: "en" | "ru",
-    reason: string,
-    evidenceTurnIds: readonly string[],
-  ): Promise<void> {
-    const farewells = this.dependencies.configuration.farewells;
-    if (
-      farewells === undefined ||
-      this.closed ||
-      this.dependencies.isMeetingFinishing()
-    ) {
-      return;
-    }
-    const cue = farewells.cues.select({
-      locale,
-      meetingId: this.dependencies.meetingId,
-      voiceProfileId: this.dependencies.configuration.voiceProfileId,
-    });
-    if (cue === null) {
-      return;
-    }
-    const receiptInput: FarewellReceiptInput = {
-      kind: "farewell", meetingId: this.dependencies.meetingId, subjectId: "meeting",
-    };
-    const receipt = await this.dependencies.configuration.oneShotReceipts
-      ?.reserve({ ...receiptInput, leaseSeconds: oneShotReceiptLeaseSeconds }) ?? {
-        leaseToken: "meeting-local-farewell",
-        status: "reserved" as const,
-      };
-    if (receipt.status !== "reserved") {
-      return;
-    }
-    if (!this.policy.reserve()) {
-      await this.dependencies.configuration.oneShotReceipts?.release({
-        ...receiptInput,
-        leaseToken: receipt.leaseToken,
-      });
-      return;
-    }
-    const turnId = this.currentTurnId();
-    let outcome: Awaited<ReturnType<
-      LiveConversationConfiguration["coordinator"]["playPreparedCue"]
-    >>;
-    try {
-      outcome = await this.dependencies.configuration.coordinator
-        .playPreparedCue({
-          ...(cue.assetSha256 === undefined ? {} : { assetSha256: cue.assetSha256 }),
-          cueId: cue.cueId,
-          locale,
-          meetingId: this.dependencies.meetingId,
-          nowMs: this.nowMilliseconds(),
-          pcmChunks: cue.pcmChunks,
-          playbackAttemptId: cue.playbackAttemptId,
-          preemptive: true,
-          recordingId: this.dependencies.meetingId,
-          speakerId: "farewell-system",
-          turnId,
-          voiceProfileId: this.dependencies.configuration.voiceProfileId,
-        });
-    } catch (error) {
-      // Reuse the same turn/playback identity after an exception. If the
-      // coordinator admitted work before throwing, its replay disposition
-      // reconciles that effect instead of creating a second playback.
-      await this.releaseRetryableReceipt(receiptInput, receipt.leaseToken, false);
-      this.logPlaybackFailure(error, locale, reason);
-      return;
-    }
-    const admitted = outcome.status === "active" || outcome.status === "queued" ||
-      (outcome.status === "reused" && outcome.disposition !== "busy");
-    if (!admitted) {
-      await this.releaseRetryableReceipt(receiptInput, receipt.leaseToken, true);
-      return;
-    }
-    let settlement: "played" | "unplayed" | "partial" | "unknown";
-    try {
-      settlement = await this.dependencies.configuration.coordinator
-        .whenTurnPlaybackSettled(this.dependencies.meetingId, turnId);
-    } catch (error) {
-      await this.completeAmbiguousReceipt(receiptInput, receipt.leaseToken);
-      this.logPlaybackFailure(error, locale, reason);
-      return;
-    }
-    await this.settleAdmittedPlayback({
-      evidenceTurnIds,
-      leaseToken: receipt.leaseToken,
-      locale,
-      playbackAttemptId: cue.playbackAttemptId,
-      reason,
-      receiptInput,
-      settlement,
-      turnId,
-    });
-  }
-
-  private async settleAdmittedPlayback(input: {
-    readonly evidenceTurnIds: readonly string[];
-    readonly leaseToken: string;
-    readonly locale: "en" | "ru";
-    readonly playbackAttemptId: string;
-    readonly reason: string;
-    readonly receiptInput: FarewellReceiptInput;
-    readonly settlement: "played" | "unplayed" | "partial" | "unknown";
-    readonly turnId: string;
-  }): Promise<void> {
-    if (input.settlement === "unplayed") {
-      await this.releaseRetryableReceipt(
-        input.receiptInput,
-        input.leaseToken,
-        true,
-      );
-      return;
-    }
-    await this.completeAmbiguousReceipt(input.receiptInput, input.leaseToken);
-    if (input.settlement !== "played") {
-      this.dependencies.logger.warn("Meeting farewell playback fenced after ambiguous settlement", {
-        locale: input.locale,
-        meetingId: this.dependencies.meetingId,
-        playbackAttemptId: input.playbackAttemptId,
-        settlement: input.settlement,
-        turnId: input.turnId,
-      });
-      return;
-    }
-    this.dependencies.logger.info("Meeting farewell playback settled", {
-      evidenceTurnIds: input.evidenceTurnIds,
-      locale: input.locale,
-      meetingId: this.dependencies.meetingId,
-      playbackAttemptId: input.playbackAttemptId,
-      reason: input.reason,
-      turnId: input.turnId,
-    });
-  }
-
-  private async releaseRetryableReceipt(
-    receiptInput: FarewellReceiptInput,
-    leaseToken: string,
-    advanceAttempt: boolean,
-  ): Promise<void> {
-    try {
-      await this.dependencies.configuration.oneShotReceipts?.release({
-        ...receiptInput,
-        leaseToken,
-      });
-    } finally {
-      this.policy.releaseReservation();
-      if (advanceAttempt) {
-        this.advanceAttemptOrdinal();
-      }
-    }
-  }
-
-  private async completeAmbiguousReceipt(
-    receiptInput: FarewellReceiptInput,
-    leaseToken: string,
-  ): Promise<void> {
-    await this.dependencies.configuration.oneShotReceipts?.complete({
-      ...receiptInput,
-      leaseToken,
-    });
-  }
-
-  private currentTurnId(): string {
-    return this.attemptOrdinal === 0 ? farewellTurnId
-      : `${farewellTurnId}:retry-${this.attemptOrdinal}`;
-  }
-
-  private advanceAttemptOrdinal(): void {
-    if (this.attemptOrdinal === Number.MAX_SAFE_INTEGER) {
-      throw new Error("Farewell playback attempt ordinal exhausted");
-    }
-    this.attemptOrdinal += 1;
-  }
-
-  private logPlaybackFailure(
-    error: unknown,
-    locale: "en" | "ru",
-    reason: string,
-  ): void {
-    this.dependencies.logger.warn("Meeting farewell failed", {
-      errorName: error instanceof Error ? error.name : "UnknownError",
-      locale,
-      meetingId: this.dependencies.meetingId,
-      reason,
-    });
   }
 
   private track(task: Promise<void>): void {

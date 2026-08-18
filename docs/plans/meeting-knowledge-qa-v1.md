@@ -211,8 +211,10 @@ causes automatic recreation.
 
 ### Authorization
 
-V1 is participant-only: requester must be positively present as a human in the
-sealed roster and currently able to view the results channel and history. A
+V1 is participant-only: for a transient live reply, the requester must be
+positively present as a human in the current `attested_active` roster; final and
+historical replies still require the terminal sealed roster. In every path the
+requester must currently be able to view the results channel and history. A
 configurable admin/Q&A role is a later Configuration vertical slice.
 
 Ingress creates:
@@ -239,8 +241,14 @@ network create.
 The application first obtains a fresh authorization observation and authoritative
 snapshot. `QuestionAdmissionCommitPort` then uses one local PostgreSQL transaction
 to verify that the expected projection, meeting revision, transcript identity,
-sealed roster, and policy are still current while inserting the immutable job and
+eligible roster (`attested_active` for transient live, sealed for final or
+historical), and policy are still current while inserting the immutable job and
 rate reservation.
+
+Policy currentness is a monotonic cluster-wide PostgreSQL epoch. Admission,
+leasing, worker checkpoints, and publication must match its exact grounding and
+authorization versions, so rolling old/new pods cannot process or terminalize
+each other's work and an old pod cannot lower the active epoch.
 
 The binding contains only bounded primitives:
 

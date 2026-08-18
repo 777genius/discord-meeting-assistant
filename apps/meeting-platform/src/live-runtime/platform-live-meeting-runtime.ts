@@ -1,38 +1,21 @@
-import {
-  LiveSessionAdmission,
-  GlobalPacketFlowControl,
-  resolveLivePacketFlowControl,
-} from "./live-packet-flow-control.js";
-import type {
-  LiveMeetingLifecycleEvent,
-  LiveMeetingParticipantEvent,
-  LiveMeetingRuntimeDependencies,
-  LiveMeetingStartedEvent,
-  LiveRuntimeClock,
-  LiveRuntimeTimer,
-  LiveRuntimeTimerHandle,
-  LiveTranscriptionEvent,
-  LiveVoicePacket,
-  LiveVoicePacketBatch,
-} from "./contracts.js";
-import {
-  createActiveLiveMeeting,
-  type ActiveLiveMeeting,
-} from "./live-meeting-state.js";
+import { GlobalPacketFlowControl, LiveSessionAdmission,
+  resolveLivePacketFlowControl } from "./live-packet-flow-control.js";
+import type { LiveMeetingLifecycleEvent, LiveMeetingParticipantEvent,
+  LiveMeetingRuntimeDependencies, LiveMeetingStartedEvent, LiveRuntimeClock,
+  LiveRuntimeTimer, LiveRuntimeTimerHandle, LiveTranscriptionEvent,
+  LiveVoicePacket, LiveVoicePacketBatch } from "./contracts.js";
+import { createActiveLiveMeeting, type ActiveLiveMeeting } from
+  "./live-meeting-state.js";
 import { LiveMeetingFinalizer } from "./live-meeting-finalizer.js";
-import {
-  observeFinalizedHuman,
-  registerFinalizedMemory,
-  sealFinalizedMemory,
-} from "./live-finalized-memory-lifecycle.js";
+import { observeFinalizedHuman, registerFinalizedMemory,
+  sealFinalizedMemory } from "./live-finalized-memory-lifecycle.js";
 import { resolveSpeakerIdleFinalizeMs } from "./live-runtime-settings.js";
 import { logFinalizedLiveTranscript } from "./live-transcript-observability.js";
-import {
-  systemLiveRuntimeClock,
-  systemLiveRuntimeTimer,
-} from "./runtime-clock.js";
+import { systemLiveRuntimeClock, systemLiveRuntimeTimer } from
+  "./runtime-clock.js";
 import { closeLiveMeetings } from "./close-live-meetings.js";
 import { RecordingOperationQueue } from "./recording-operation-queue.js";
+import { releaseLiveMeetingsForRestart } from "./release-live-meetings-for-restart.js";
 import { stableLiveTranscriptTurnId } from "./transcript-turn-id.js";
 
 const refreshSchedulerIntervalMs = 100;
@@ -182,6 +165,20 @@ export class PlatformLiveMeetingRuntime {
       endedAtMs: nowMs,
       finalizer: this.finalizer,
       recordingIds,
+      recordingOperations: this.recordingOperations,
+    });
+    return this.closePromise;
+  }
+
+  /** Releases derived ownership without committing a terminal transition. */
+  public async releaseForRestart(): Promise<void> {
+    if (this.closePromise !== null) {
+      return this.closePromise;
+    }
+    this.closed = true;
+    this.timer.cancel(this.refreshTimer);
+    this.closePromise = releaseLiveMeetingsForRestart({
+      meetings: this.meetings,
       recordingOperations: this.recordingOperations,
     });
     return this.closePromise;

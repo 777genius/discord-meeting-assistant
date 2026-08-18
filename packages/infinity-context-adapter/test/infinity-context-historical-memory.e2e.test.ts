@@ -436,12 +436,7 @@ describe("Infinity Context production provenance deletion", () => {
     });
     const capabilities = await adapter.qualifyCapabilities();
     expect(() => {
-      assertInfinityContextActivation(activation, {
-        apiVersion: capabilities.api_version ?? null,
-        enabledAdapters: capabilities.enabled_adapters ?? [],
-        serviceName: capabilities.service_name ?? null,
-        supportsQdrant: capabilities.supports_qdrant === true,
-      });
+      assertInfinityContextActivation(activation, capabilities);
     }).not.toThrow();
 
     const plan = buildHistoricalIndexPlan(
@@ -485,7 +480,7 @@ describe("Infinity Context historical memory end-to-end lifecycle", () => {
       transport: endpoint,
     });
     await expect(firstAdapter.qualifyCapabilities()).resolves.toMatchObject({
-      supports_qdrant: true,
+      supportsQdrant: true,
     });
     endpoint.loseNextIngestResponse();
     endpoint.loseNextProcessResponse();

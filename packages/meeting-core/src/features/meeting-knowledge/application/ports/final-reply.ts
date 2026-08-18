@@ -260,8 +260,33 @@ export interface QuestionJobLease {
 export interface QuestionJobStore {
   leaseNext(input: {
     readonly leaseSeconds: number;
+    readonly maximumProviderAttempts: number;
     readonly workerId: string;
   }): Promise<QuestionJobLease | null>;
+
+  reserveProviderAttempt(input: {
+    readonly attemptId: string;
+    readonly generation: number;
+    readonly jobId: string;
+    readonly leaseSeconds: number;
+    readonly maximumProviderAttempts: number;
+  }): Promise<boolean>;
+
+  completeProviderAttempt(input: {
+    readonly answerCandidate: GroundedAnswerCandidate;
+    readonly attemptId: string;
+    readonly generation: number;
+    readonly jobId: string;
+  }): Promise<boolean>;
+
+  failProviderAttempt(input: {
+    readonly attemptId: string;
+    readonly generation: number;
+    readonly jobId: string;
+    readonly maximumProviderAttempts: number;
+    readonly reason: string;
+    readonly retryable: boolean;
+  }): Promise<"deferred" | "settled" | "stale">;
 
   persistGroundingPlan(input: {
     readonly generation: number;
@@ -269,18 +294,7 @@ export interface QuestionJobStore {
     readonly measurement: GroundingRequestMeasurement;
     readonly plan: GroundingPlan;
     readonly runtimeProfile: string;
-  }): Promise<boolean>;
-
-  markReady(input: {
-    readonly answerCandidate: GroundedAnswerCandidate;
-    readonly generation: number;
-    readonly jobId: string;
-  }): Promise<boolean>;
-
-  releaseForRetry(input: {
-    readonly generation: number;
-    readonly jobId: string;
-    readonly reason: string;
+    readonly sourceMeetingIds: readonly string[];
   }): Promise<boolean>;
 
   settle(input: {
@@ -297,6 +311,16 @@ export interface QuestionJobStore {
     readonly generation: number;
     readonly jobId: string;
   }): Promise<boolean>;
+}
+
+export interface FinalReplyMaintenancePort {
+  maintain(input: {
+    readonly maximumJobs: number;
+    readonly servingEnabled: boolean;
+  }): Promise<{
+    readonly cancelled: number;
+    readonly expired: number;
+  }>;
 }
 
 /**
@@ -345,6 +369,7 @@ export interface GroundedAnswerGenerator {
 
 export type AnswerEffectReservation =
   | { readonly effectId: string; readonly status: "already_delivered" }
+  | { readonly effectId: string; readonly status: "rejected_before_request" }
   | { readonly effectId: string; readonly status: "reserved" };
 
 export type AnswerEffectDeliveryResult =
@@ -359,12 +384,15 @@ export interface AnswerPublicationPort {
     readonly deliveryContainerId: string;
     readonly marker: string;
     readonly projectionTargetContainerId: string;
+    readonly questionGeneration: number;
     readonly replyToRemoteMessageId: string;
+    readonly sourceMeetingIds: readonly string[];
   }): Promise<AnswerEffectReservation>;
 
   send(input: {
     readonly authorizationDigest: string;
     readonly effectId: string;
+    readonly questionGeneration: number;
     readonly workerId: string;
   }): Promise<AnswerEffectDeliveryResult>;
 

@@ -58,12 +58,26 @@ class ProfileConfigurationError(ValueError):
     """Raised when selected provider composition cannot safely start."""
 
 
+@dataclass(frozen=True, slots=True)
+class TtsRuntimeIdentity:
+    """Exact TTS implementation selected by runtime composition."""
+
+    provider: str
+    model: str
+    voice: str
+
+
 class ConversationPipelineProfile(Protocol):
     """Build Pipecat-only processors for one preconfigured voice profile."""
 
     @property
     def profile_id(self) -> str:
         """Return the only request voice profile this composition accepts."""
+        ...
+
+    @property
+    def tts_identity(self) -> TtsRuntimeIdentity:
+        """Return the concrete runtime-selected TTS identity."""
         ...
 
     def create_processors(
@@ -144,6 +158,14 @@ class DeterministicE2EProfile:
     profile_id: str
     options: DeterministicPipelineOptions
 
+    @property
+    def tts_identity(self) -> TtsRuntimeIdentity:
+        return TtsRuntimeIdentity(
+            provider="fixture",
+            model="deterministic-speech-v1",
+            voice="deterministic-russian-v1",
+        )
+
     def create_processors(
         self,
         request: StartTurn,
@@ -175,6 +197,14 @@ class LocalRussianProfile:
     ollama_model: str
     piper_base_url: str
     piper_voice_id: str
+
+    @property
+    def tts_identity(self) -> TtsRuntimeIdentity:
+        return TtsRuntimeIdentity(
+            provider="piper",
+            model="piper-http",
+            voice=self.piper_voice_id,
+        )
 
     def create_processors(
         self,
@@ -213,6 +243,14 @@ class ElevenLabsMultilingualProfile:
     model: ElevenLabsTTSModel
     voice_id: str
     text_generator: StreamingConversationTextGenerationPort
+
+    @property
+    def tts_identity(self) -> TtsRuntimeIdentity:
+        return TtsRuntimeIdentity(
+            provider="elevenlabs",
+            model=self.model.value,
+            voice=self.voice_id,
+        )
 
     def create_processors(
         self,

@@ -16,6 +16,7 @@ import { describe, expect, it } from "vitest";
 import {
   PostgresAnswerEffectStore,
   PostgresExhaustiveCoverageStore,
+  PostgresFinalReplyMaintenance,
   PostgresFinalReplyEvidence,
   PostgresFocusedMemoryRetrieval,
   PostgresHistoricalEvidenceAuthority,
@@ -37,6 +38,11 @@ const botId = "11111111111111111";
 const channelId = "22222222222222222";
 const finalMessageId = "33333333333333333";
 const questionId = "44444444444444444";
+const questionPolicy = Object.freeze({
+  authorizationPolicyVersion: "discord.participant-current-results.v1",
+  policyEpoch: 1,
+  policyVersion: "meeting-knowledge.focused-memory-final-reply.v2",
+});
 
 function digest(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
@@ -108,6 +114,7 @@ async function persistPublishedMeeting(
     externalPublicationId:
       `discord:v2:channel:${channelId}:message:${finalMessageId}`,
     idempotencyKey: meeting.publicationIdempotencyKey(),
+    publisherIdentity: botId,
   });
   const snapshot = meeting.toSnapshot();
   await database.query(
@@ -118,6 +125,44 @@ async function persistPublishedMeeting(
     [snapshot.meetingId, snapshot.revision, snapshot],
   );
   return { snapshot, snapshotBeforePublication };
+}
+
+async function persistRunningAnswerJob(
+  database: ReturnType<typeof databaseOrSkip>,
+  binding: {
+    readonly authorizationDigest: string;
+    readonly finalProjectionReceipt: string;
+    readonly questionHash: string;
+    readonly questionId: string;
+    readonly requesterSubject: string;
+    readonly scopeId: string;
+  },
+): Promise<void> {
+  await database.query(
+    `INSERT INTO meeting_knowledge.question_jobs (
+       question_id, requester_subject, question_hash, scope_id,
+       final_projection_receipt, authorization_principal_ref,
+       authorization_digest, locale, question_text, binding, binding_hash,
+       state, generation, lease_owner, lease_until,
+       worker_protocol_epoch, worker_protocol_generation, expires_at
+     ) VALUES (
+       $1, $2, $3, $4, $5, 'opaque', $6, 'en', 'Question?', $7::jsonb,
+       $8, 'running', 1, 'worker-1',
+       transaction_timestamp() + interval '1 minute',
+       2, 1,
+       transaction_timestamp() + interval '10 minutes'
+     )`,
+    [
+      binding.questionId,
+      binding.requesterSubject,
+      binding.questionHash,
+      binding.scopeId,
+      binding.finalProjectionReceipt,
+      binding.authorizationDigest,
+      binding,
+      "f".repeat(64),
+    ],
+  );
 }
 
 describe("PostgreSQL Local Final Reply adapters", () => {
@@ -170,7 +215,7 @@ describe("PostgreSQL Local Final Reply adapters", () => {
       source: "authoritative_remote" as const,
       status: "authorized" as const,
     };
-    const admissions = new PostgresQuestionAdmissionCommit(database, botId);
+    const admissions = new PostgresQuestionAdmissionCommit(database, botId, questionPolicy);
     const command = {
       authorization,
       binding,
@@ -198,8 +243,8 @@ describe("PostgreSQL Local Final Reply adapters", () => {
       { jobId: questionId, status: "duplicate" },
     ]);
 
-    const jobs = new PostgresQuestionJobStore(database);
-    const lease = await jobs.leaseNext({ leaseSeconds: 60, workerId: "worker-1" });
+    const jobs = new PostgresQuestionJobStore(database, questionPolicy);
+    const lease = await jobs.leaseNext({ leaseSeconds: 60, maximumProviderAttempts: 2, workerId: "worker-1" });
     expect(lease).toMatchObject({ generation: 1, jobId: questionId, state: "running" });
     if (lease === null) {
       return;
@@ -253,13 +298,29 @@ describe("PostgreSQL Local Final Reply adapters", () => {
       measurement: { inputTokens: 1_000, requestBytes: 4_000 },
       plan,
       runtimeProfile: "sol-medium-test",
+      sourceMeetingIds: [binding.meetingId],
     })).toBe(true);
-    expect(await jobs.markReady({
+    const providerAttemptId =
+      `${lease.jobId}:generation:${lease.generation}:attempt:1`;
+    expect(await jobs.reserveProviderAttempt({
+      attemptId: providerAttemptId,
+      generation: lease.generation,
+      jobId: lease.jobId,
+      leaseSeconds: 240,
+      maximumProviderAttempts: 2,
+    })).toBe(true);
+    await expect(jobs.leaseNext({
+      leaseSeconds: 240,
+      maximumProviderAttempts: 2,
+      workerId: "competing-worker",
+    })).resolves.toBeNull();
+    expect(await jobs.completeProviderAttempt({
       answerCandidate: {
         claims: [{ evidenceIds: ["evidence-000001"], text: "Friday." }],
         locale: "en",
         status: "answered",
       },
+      attemptId: providerAttemptId,
       generation: lease.generation,
       jobId: lease.jobId,
     })).toBe(true);
@@ -271,7 +332,7 @@ describe("PostgreSQL Local Final Reply adapters", () => {
       `,
       [questionId],
     );
-    const ready = await jobs.leaseNext({ leaseSeconds: 60, workerId: "worker-2" });
+    const ready = await jobs.leaseNext({ leaseSeconds: 60, maximumProviderAttempts: 2, workerId: "worker-2" });
     expect(ready).toMatchObject({ generation: 2, state: "ready" });
     expect(await jobs.settle({
       generation: ready?.generation ?? 0,
@@ -303,11 +364,15 @@ describe("PostgreSQL Local Final Reply adapters", () => {
       question_text: null,
       state: "terminal",
     });
+
   });
 
+});
+
+describe("PostgreSQL answer effect recovery", () => {
   it("durably fences an ambiguous answer create from every retry", async (context) => {
     const database = databaseOrSkip(context);
-    const store = new PostgresAnswerEffectStore(database);
+    const store = new PostgresAnswerEffectStore(database, questionPolicy);
     let creates = 0;
     const publication = new DurableAnswerPublication({
       delivery: {
@@ -316,6 +381,7 @@ describe("PostgreSQL Local Final Reply adapters", () => {
           return Promise.reject(new Error("ambiguous timeout"));
         },
         inspect: () => Promise.resolve({ status: "unconfirmed" as const }),
+        remove: () => Promise.resolve(),
       },
       payloads: testPayloadCodec,
       store,
@@ -334,7 +400,7 @@ describe("PostgreSQL Local Final Reply adapters", () => {
       meetingId: "meeting-1",
       meetingRevision: 1,
       memoryGeneration: `focused-memory:v1:${"b".repeat(64)}`,
-      policyVersion: "discord.participant-current-results.v1",
+      policyVersion: "meeting-knowledge.focused-memory-final-reply.v2",
       projectionTargetContainerId: channelId,
       questionHash: "c".repeat(64),
       questionId,
@@ -344,6 +410,7 @@ describe("PostgreSQL Local Final Reply adapters", () => {
       transcriptId: "transcript-1",
       transcriptVersion: 1,
     };
+    await persistRunningAnswerJob(database, binding);
     const reservation = await publication.reserve({
       authorizationDigest: binding.authorizationDigest,
       binding,
@@ -351,17 +418,19 @@ describe("PostgreSQL Local Final Reply adapters", () => {
       deliveryContainerId: channelId,
       marker: "meeting-knowledge-answer:v1:question-1",
       projectionTargetContainerId: channelId,
+      questionGeneration: 1,
       replyToRemoteMessageId: questionId,
+      sourceMeetingIds: [binding.meetingId],
     });
     await expect(publication.send({
       authorizationDigest: binding.authorizationDigest,
       effectId: reservation.effectId,
-      workerId: "worker-1",
+      questionGeneration: 1, workerId: "worker-1",
     })).resolves.toEqual({ status: "outcome_unknown" });
     await expect(publication.send({
       authorizationDigest: binding.authorizationDigest,
       effectId: reservation.effectId,
-      workerId: "worker-2",
+      questionGeneration: 1, workerId: "worker-2",
     })).resolves.toEqual({ status: "outcome_unknown" });
     await publication.reconcileUnknown(100);
     expect(creates).toBe(1);
@@ -502,10 +571,12 @@ describe("PostgreSQL question job cleanup", () => {
           effect_id, state, projection_target_container_id,
           delivery_container_id, reply_to_remote_message_id, marker,
           payload_bytes, payload_hash,
-          binding_hash, authorization_digest, request_started_at
+          binding_hash, authorization_digest, source_meeting_ids,
+          request_started_at
         ) VALUES (
           $1, 'outcome_unknown', $2, $2, $3, 'marker-1', '{"content":"sensitive"}',
-          $4, $5, $6, transaction_timestamp() - interval '90 seconds'
+          $4, $5, $6, ARRAY['source-meeting-1']::text[],
+          transaction_timestamp() - interval '90 seconds'
         )
       `,
       [
@@ -518,9 +589,9 @@ describe("PostgreSQL question job cleanup", () => {
       ],
     );
 
-    const jobs = new PostgresQuestionJobStore(database);
-    await expect(jobs.leaseNext({ leaseSeconds: 60, workerId: "worker-1" }))
-      .resolves.toBeNull();
+    const maintenance = new PostgresFinalReplyMaintenance(database, questionPolicy);
+    await expect(maintenance.maintain({ maximumJobs: 1, servingEnabled: true }))
+      .resolves.toEqual({ cancelled: 0, expired: 1 });
     const stored = await database.query(
       `
         SELECT authorization_principal_ref, question_text, binding, state, outcome

@@ -104,6 +104,8 @@ function mergeProbeEvidence(
   return {
     campaignRootAfter: afterValue.campaignRoot,
     campaignRoot: beforeValue.campaignRoot,
+    craigNetworkAfter: afterValue.craigNetwork,
+    craigNetworkBefore: beforeValue.craigNetwork,
     greetingMountAfter: afterValue.greetingMount,
     greetingMount: beforeValue.greetingMount,
     mountIsolation,

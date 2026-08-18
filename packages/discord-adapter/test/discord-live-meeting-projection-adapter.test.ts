@@ -110,7 +110,9 @@ class AbortableHangingLiveProjector {
 describe("DiscordLiveMeetingProjectionAdapter", () => {
   it("maps a live core projection into the same stable Discord projection as the final summary", async () => {
     const projector = new FakeLiveProjector();
-    const adapter = new DiscordLiveMeetingProjectionAdapter(projector);
+    const adapter = new DiscordLiveMeetingProjectionAdapter(projector, {
+      publisherIdentity: "bot-application-1",
+    });
 
     const result = await adapter.publish(request);
 
@@ -119,6 +121,7 @@ describe("DiscordLiveMeetingProjectionAdapter", () => {
       value: {
         externalPublicationId:
           "discord:v2:thread:22222222222222222:message:33333333333333333",
+        publisherIdentity: "bot-application-1",
       },
     });
     expect(projector.inputs).toHaveLength(1);

@@ -111,7 +111,7 @@ describe("CraigPlaybackGateway", () => {
     await vi.waitFor(() => {
       expect(transport.commands).toHaveLength(1);
     });
-    controller.abort("meeting-ended");
+    controller.abort({ cancellationObservedAtMs: 1_234, reason: "meeting-ended" });
 
     await expect(
       gateway.open({ ...request, attemptId: "attempt-2", turnId: "turn-2" }),
@@ -143,7 +143,7 @@ describe("CraigPlaybackGateway", () => {
       throw new Error("playback did not open");
     }
 
-    void opened.value.cancel("barge-in");
+    void opened.value.cancel({ cancellationObservedAtMs: 1_234, reason: "barge-in" });
     await vi.waitFor(() => {
       expect(transport.commands.at(-1)?.type).toBe("playback-cancel");
     });
@@ -390,10 +390,9 @@ describe("CraigPlaybackGateway validation and cancellation", () => {
       ok: false,
       failure: { code: "CRAIG_PLAYBACK_BACKPRESSURE", retryable: true },
     });
-    expect(transport.commands.at(-1)).toMatchObject({
+    expect(transport.commands).not.toContainEqual(expect.objectContaining({
       type: "playback-cancel",
-      reason: "playback-failed",
-    });
+    }));
     transport.emit({
       schemaVersion: 1,
       type: "playback-finished",
@@ -416,14 +415,26 @@ describe("CraigPlaybackGateway validation and cancellation", () => {
       throw new Error("playback did not open");
     }
 
-    await expect(opened.value.cancel("barge-in")).resolves.toEqual({
+    await expect(opened.value.cancel({
+      cancellationObservedAtMs: 1_234,
+      reason: "barge-in",
+    })).resolves.toEqual({
       ok: true,
       value: "cancelled",
     });
-    await expect(opened.value.cancel("barge-in")).resolves.toEqual({
+    await expect(opened.value.cancel({
+      cancellationObservedAtMs: 9_999,
+      reason: "barge-in",
+    })).resolves.toEqual({
       ok: true,
       value: "reused",
     });
+    expect(transport.commands.filter((command) => command.type === "playback-cancel"))
+      .toEqual([expect.objectContaining({
+        schemaVersion: 2,
+        meetingId: request.meetingId,
+        cancellationObservedAtMs: 1_234,
+      })]);
     await expect(opened.value.write(chunk(0))).resolves.toMatchObject({
       failure: { code: "CRAIG_PLAYBACK_NOT_WRITABLE" },
       ok: false,

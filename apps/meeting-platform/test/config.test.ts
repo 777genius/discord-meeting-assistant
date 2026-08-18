@@ -1,42 +1,49 @@
+import { readFile } from "node:fs/promises";
+
 import { describe, expect, it } from "vitest";
 
 import { INFINITY_CONTEXT_SDK_PROVENANCE } from "@discord-meeting/infinity-context-adapter";
 
 import { loadPlatformConfig } from "../src/config.js";
+import { platformTestEnvironment as environment } from "./config-test-environment.js";
 
-const environment = {
-  BIND_ADDRESS: "127.0.0.1",
-  CRAIG_BEARER_TOKEN_FILE: "/run/secrets/craig",
-  DISCORD_APPLICATION_ID: "1533224474609057793",
-  DISCORD_BOTIK_APPLICATION_ID: "1533224474609057798",
-  DISCORD_CRAIG_APPLICATION_ID: "1533224474609057794",
-  DISCORD_LEGACY_GUILD_ID: "1533224474609057795",
-  DISCORD_LEGACY_VOICE_CHANNEL_ID: "1533224474609057796",
-  DISCORD_RESULTS_CHANNEL_ID: "1533228891827736657",
-  DISCORD_TOKEN_FILE: "/run/secrets/discord",
-  MEETING_KNOWLEDGE_PRINCIPAL_KEY_FILE:
-    "/run/secrets/meeting-knowledge-principal-key",
-  NODE_ENV: "test",
-  PORT: "4310",
-  POSTGRES_URL_FILE: "/run/secrets/postgres",
-  RECORDING_SPOOL_ROOT: "/var/lib/discord-meeting/spool",
-  REDIS_URL_FILE: "/run/secrets/redis",
-  S3_ACCESS_KEY_ID_FILE: "/run/secrets/s3-access",
-  S3_BUCKET: "discord-meeting",
-  S3_ENDPOINT: "http://object-storage:8333",
-  S3_PREFIX: "recordings/",
-  S3_REGION: "us-east-1",
-  S3_SECRET_ACCESS_KEY_FILE: "/run/secrets/s3-secret",
-  SPEACHES_BASE_URL: "http://speaches:8000",
-  SPEACHES_MODEL: "Systran/faster-whisper-small",
-  SUBSCRIPTION_RUNTIME_ADDRESS: "subscription-runtime-sidecar:50052",
-  SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256: "a".repeat(64),
-  SUBSCRIPTION_RUNTIME_TOKEN_FILE: "/run/secrets/runtime",
-  TRANSCRIPTION_PROVIDER: "speaches",
-  TRANSCRIPTION_LEGACY_EXECUTION_BINDING: "speaches-v1",
-} as const;
+function buildProvenance(releaseRevision = "c".repeat(40)) {
+  return {
+    releaseRevision,
+    schemaVersion: 1 as const,
+    sourceTree: "d".repeat(40),
+    sourceTreeSha256: "e".repeat(64),
+  };
+}
 
 describe("platform configuration", () => {
+  it("keeps the standard deployment wired to the complete fail-closed Infinity contract", async () => {
+    const compose = await readFile(
+      new URL("../../../infra/deployment/compose.yaml", import.meta.url),
+      "utf8",
+    );
+
+    expect(compose).toContain(
+      "INFINITY_CONTEXT_ACTIVATION: ${INFINITY_CONTEXT_ACTIVATION:?set reviewed Infinity Context activation JSON}",
+    );
+    expect(compose).toContain(
+      "INFINITY_CONTEXT_URL: ${INFINITY_CONTEXT_URL:?set reachable Infinity Context service URL}",
+    );
+    expect(compose).toContain(
+      "INFINITY_CONTEXT_TOKEN_FILE: /run/secrets/infinity-context-token",
+    );
+    expect(compose).toContain(
+      "INFINITY_CONTEXT_TOPOLOGY_KEY_FILE: /run/secrets/infinity-context-topology-key",
+    );
+    expect(compose).toContain(
+      "INFINITY_CONTEXT_REQUEST_TIMEOUT_MS: ${INFINITY_CONTEXT_REQUEST_TIMEOUT_MS:-10000}",
+    );
+    expect(compose).toContain(
+      "INFINITY_CONTEXT_OPERATION_TIMEOUT_MS: ${INFINITY_CONTEXT_OPERATION_TIMEOUT_MS:-300000}",
+    );
+    expect(compose).not.toContain("MEETING_KNOWLEDGE_TWO_HOUR_HISTORICAL_ENABLED");
+  });
+
   it("loads Infinity activation only as a complete versioned provenance-bound set", async () => {
     const activation = JSON.stringify({
       apiVersion: "v1",
@@ -59,7 +66,8 @@ describe("platform configuration", () => {
       INFINITY_CONTEXT_TOKEN_FILE: "/run/secrets/infinity-token",
       INFINITY_CONTEXT_TOPOLOGY_KEY_FILE: "/run/secrets/infinity-topology",
       INFINITY_CONTEXT_URL: "http://infinity-context:7788",
-    }, async (path) => path.endsWith("topology") ? "t".repeat(32) : `fixture:${path}`);
+    }, async (path) => path.endsWith("topology") ? "t".repeat(32) : `fixture:${path}`,
+    async () => buildProvenance());
 
     expect(configured.infinityContext?.activation).toMatchObject({
       indexingEnabled: true,
@@ -89,6 +97,8 @@ describe("platform configuration", () => {
         qualificationManifestSha256:
           INFINITY_CONTEXT_SDK_PROVENANCE
             .retainedProductionSemanticQualificationManifestSha256,
+        releaseRevision:
+          INFINITY_CONTEXT_SDK_PROVENANCE.retainedProductionSemanticReleaseRevision,
         schemaVersion: 1,
       },
       qualificationManifestSha256:
@@ -107,7 +117,8 @@ describe("platform configuration", () => {
       INFINITY_CONTEXT_TOPOLOGY_KEY_FILE: "/run/secrets/infinity-topology",
       INFINITY_CONTEXT_URL: "http://infinity-context:7788",
       NODE_ENV: "production",
-    }, async (path) => path.endsWith("topology") ? "t".repeat(32) : `fixture:${path}`);
+    }, async (path) => path.endsWith("topology") ? "t".repeat(32) : `fixture:${path}`,
+    async () => buildProvenance());
 
     expect(configured.infinityContext?.activation).toMatchObject({
       environment: "production",
@@ -211,6 +222,13 @@ describe("platform configuration", () => {
 
   it("keeps Local Final Reply disabled unless direct publication and its secret are explicit", async () => {
     const principalKeyPath = "/run/secrets/meeting-knowledge-principal-key";
+    const maintenanceOnly = await loadPlatformConfig({
+      ...environment,
+      MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED: "false",
+      MEETING_KNOWLEDGE_PRINCIPAL_KEY_FILE: undefined,
+    }, async () => "value");
+    expect(maintenanceOnly.meetingKnowledge).toBeUndefined();
+    expect(maintenanceOnly.secrets.meetingKnowledgePrincipalKey).toBeUndefined();
     const config = await loadPlatformConfig({
       ...environment,
       MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED: "true",
@@ -234,6 +252,58 @@ describe("platform configuration", () => {
       MEETING_KNOWLEDGE_PRINCIPAL_KEY_FILE: principalKeyPath,
     }, async () => "value")).rejects.toThrow(
       "local final reply currently requires direct-message publication mode",
+    );
+  });
+
+});
+
+describe("grounded voice configuration", () => {
+  it("keeps grounded voice independently disabled and requires a versioned epoch", async () => {
+    const principalKeyPath = "/run/secrets/meeting-knowledge-principal-key";
+    const rolloutStatePath = "/run/config/grounded-voice-rollout.json";
+    const disabled = await loadPlatformConfig(environment, async () => "value");
+    expect(disabled.meetingKnowledge?.groundedVoice).toBeUndefined();
+
+    await expect(loadPlatformConfig({
+      ...environment,
+      CONVERSATION_ENABLED: "true",
+      CONVERSATION_RUNTIME_ADDRESS: "pipecat-runtime:50053",
+      CONVERSATION_RUNTIME_TOKEN_FILE: "/run/secrets/conversation-runtime",
+      TRANSCRIPTION_PROVIDER: "voicetext",
+      VOICETEXT_SERVICE_TOKEN_FILE: "/run/secrets/voicetext",
+      VOICETEXT_WS_URL: "wss://api.voicetext.site/api/v1/transcribe/stream",
+      MEETING_KNOWLEDGE_GROUNDED_VOICE_ENABLED: "true",
+      MEETING_KNOWLEDGE_PRINCIPAL_KEY_FILE: principalKeyPath,
+    }, async () => "value")).rejects.toThrow(
+      "grounded voice requires a versioned rollout epoch",
+    );
+
+    const enabled = await loadPlatformConfig({
+      ...environment,
+      CONVERSATION_ENABLED: "true",
+      CONVERSATION_RUNTIME_ADDRESS: "pipecat-runtime:50053",
+      CONVERSATION_RUNTIME_TOKEN_FILE: "/run/secrets/conversation-runtime",
+      TRANSCRIPTION_PROVIDER: "voicetext",
+      VOICETEXT_SERVICE_TOKEN_FILE: "/run/secrets/voicetext",
+      VOICETEXT_WS_URL: "wss://api.voicetext.site/api/v1/transcribe/stream",
+      MEETING_KNOWLEDGE_GROUNDED_VOICE_ENABLED: "true",
+      MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_EPOCH: "grounded-voice-v1",
+      MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_STATE_FILE: rolloutStatePath,
+      MEETING_KNOWLEDGE_PRINCIPAL_KEY_FILE: principalKeyPath,
+    }, async () => "value");
+    expect(enabled.meetingKnowledge?.groundedVoice).toEqual({
+      rolloutEpoch: "grounded-voice-v1",
+      rolloutStateFile: rolloutStatePath,
+    });
+
+    await expect(loadPlatformConfig({
+      ...environment,
+      MEETING_KNOWLEDGE_GROUNDED_VOICE_ENABLED: "true",
+      MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_EPOCH: "grounded-voice-v1",
+      MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_STATE_FILE: rolloutStatePath,
+      MEETING_KNOWLEDGE_PRINCIPAL_KEY_FILE: principalKeyPath,
+    }, async () => "value")).rejects.toThrow(
+      "grounded voice requires conversation runtime",
     );
   });
 });
@@ -458,6 +528,7 @@ describe("platform configuration routing and conversation", () => {
         paths.push(path);
         return `value-for:${path}`;
       },
+      async () => buildProvenance(),
     );
 
     expect(config.recordingPlayback).toEqual({
@@ -482,6 +553,17 @@ describe("platform configuration routing and conversation", () => {
       RECORDING_PLAYBACK_PUBLIC_BASE_URL: "http://recordings.example.com",
       RECORDING_PLAYBACK_SIGNING_SECRET_FILE: "/run/secrets/recording-playback",
     }, async () => "value")).rejects.toThrow("requires HTTPS");
+  });
+
+  it("uses the immutable build artifact even when runtime environment spoofs SOURCE_REVISION", async () => {
+    const actualRevision = "c".repeat(40);
+    const config = await loadPlatformConfig({
+      ...environment,
+      NODE_ENV: "production",
+      SOURCE_REVISION: "a".repeat(40),
+    }, async () => "value", async () => buildProvenance(actualRevision));
+
+    expect(config.sourceRevision).toBe(actualRevision);
   });
 
   it("loads a Voicetext machine bearer only from a secret file", async () => {
@@ -623,173 +705,6 @@ describe("platform configuration routing and conversation", () => {
           VOICETEXT_WS_URL: "wss://api.voicetext.site/api/v1/transcribe/stream",
         },
         async () => "value",
-      ),
-    ).rejects.toThrow();
-  });
-});
-
-describe("platform conversation and provider configuration", () => {
-  it("does not read a conversation secret while conversation is disabled", async () => {
-    const readPaths: string[] = [];
-    const config = await loadPlatformConfig(
-      {
-        ...environment,
-        CONVERSATION_ENABLED: "false",
-        CONVERSATION_RUNTIME_ADDRESS: "pipecat-runtime:50053",
-        CONVERSATION_RUNTIME_TOKEN_FILE: "/run/secrets/not-mounted",
-        CONVERSATION_THINKING_CUE_ROOT: "/unused/thinking-cues",
-        CONVERSATION_VOICE_PROFILE_ID: "local-russian",
-      },
-      async (path) => {
-        readPaths.push(path);
-        return `value-for:${path}`;
-      },
-    );
-
-    expect(config.conversation).toBeUndefined();
-    expect(config.secrets.conversationRuntimeToken).toBeUndefined();
-    expect(readPaths).not.toContain("/run/secrets/not-mounted");
-  });
-
-  it("fails closed on incomplete or production fake conversation profiles", async () => {
-    await expect(
-      loadPlatformConfig(
-        { ...environment, CONVERSATION_ENABLED: "true" },
-        async () => "value",
-      ),
-    ).rejects.toThrow();
-    await expect(
-      loadPlatformConfig(
-        {
-          ...environment,
-          CONVERSATION_ENABLED: "true",
-          CONVERSATION_RUNTIME_ADDRESS: "pipecat-runtime:50053",
-          CONVERSATION_RUNTIME_TOKEN_FILE: "/run/secrets/conversation-runtime",
-          NODE_ENV: "production",
-          TRANSCRIPTION_PROVIDER: "voicetext",
-          VOICETEXT_SERVICE_TOKEN_FILE: "/run/secrets/voicetext",
-          VOICETEXT_WS_URL: "wss://api.voicetext.site/api/v1/transcribe/stream",
-        },
-        async () => "value",
-      ),
-    ).rejects.toThrow("deterministic E2E voice profiles are forbidden in production");
-  });
-
-  it("requires secure complete Voicetext configuration", async () => {
-    await expect(
-      loadPlatformConfig(
-        { ...environment, TRANSCRIPTION_PROVIDER: "voicetext" },
-        async () => "x",
-      ),
-    ).rejects.toThrow();
-    await expect(
-      loadPlatformConfig(
-        {
-          ...environment,
-          TRANSCRIPTION_PROVIDER: "voicetext",
-          VOICETEXT_BATCH_MAX_CONCURRENT_MEETINGS: "0",
-          VOICETEXT_SERVICE_TOKEN_FILE: "/run/secrets/voicetext",
-          VOICETEXT_WS_URL: "wss://api.voicetext.site/api/v1/transcribe/stream",
-        },
-        async () => "x",
-      ),
-    ).rejects.toThrow();
-    await expect(
-      loadPlatformConfig(
-        {
-          ...environment,
-          TRANSCRIPTION_PROVIDER: "voicetext",
-          VOICETEXT_LIVE_MAX_CONCURRENT_SESSIONS: "11",
-          VOICETEXT_SERVICE_TOKEN_FILE: "/run/secrets/voicetext",
-          VOICETEXT_WS_URL: "wss://api.voicetext.site/api/v1/transcribe/stream",
-        },
-        async () => "x",
-      ),
-    ).rejects.toThrow();
-    await expect(
-      loadPlatformConfig(
-        {
-          ...environment,
-          TRANSCRIPTION_PROVIDER: "voicetext",
-          VOICETEXT_LIVE_PACKET_BACKPRESSURE_TIMEOUT_MS: "99",
-          VOICETEXT_SERVICE_TOKEN_FILE: "/run/secrets/voicetext",
-          VOICETEXT_WS_URL: "wss://api.voicetext.site/api/v1/transcribe/stream",
-        },
-        async () => "x",
-      ),
-    ).rejects.toThrow();
-    await expect(
-      loadPlatformConfig(
-        {
-          ...environment,
-          TRANSCRIPTION_PROVIDER: "voicetext",
-          VOICETEXT_BATCH_MAX_CONCURRENT_MEETINGS: "3",
-          VOICETEXT_SERVICE_TOKEN_FILE: "/run/secrets/voicetext",
-          VOICETEXT_WS_URL: "wss://api.voicetext.site/api/v1/transcribe/stream",
-        },
-        async () => "x",
-      ),
-    ).rejects.toThrow();
-    await expect(
-      loadPlatformConfig(
-        {
-          ...environment,
-          TRANSCRIPTION_PROVIDER: "voicetext",
-          VOICETEXT_SERVICE_TOKEN_FILE: "/run/secrets/voicetext",
-          VOICETEXT_WS_URL: "ws://api.voicetext.site/api/v1/transcribe/stream",
-        },
-        async () => "x",
-      ),
-    ).rejects.toThrow();
-  });
-
-  it("rejects unknown environment input and credential-bearing endpoints", async () => {
-    await expect(
-      loadPlatformConfig(
-        { ...environment, OPENAI_API_KEY: "forbidden" },
-        async () => "x",
-      ),
-    ).rejects.toThrow();
-    await expect(
-      loadPlatformConfig(
-        { ...environment, SPEACHES_BASE_URL: "http://user:pass@speaches:8000" },
-        async () => "x",
-      ),
-    ).rejects.toThrow();
-    await expect(
-      loadPlatformConfig(
-        {
-          ...environment,
-          TRANSCRIPTION_PROVIDER: "voicetext",
-          VOICETEXT_BATCH_MAX_ARTIFACT_BYTES: String(64 * 1_024 * 1_024 + 1),
-          VOICETEXT_SERVICE_TOKEN_FILE: "/run/secrets/voicetext",
-          VOICETEXT_WS_URL: "wss://api.voicetext.site/api/v1/transcribe/stream",
-        },
-        async () => "x",
-      ),
-    ).rejects.toThrow();
-    await expect(
-      loadPlatformConfig(
-        {
-          ...environment,
-          TRANSCRIPTION_PROVIDER: "voicetext",
-          VOICETEXT_BATCH_MAX_CONCURRENCY: "0",
-          VOICETEXT_SERVICE_TOKEN_FILE: "/run/secrets/voicetext",
-          VOICETEXT_WS_URL: "wss://api.voicetext.site/api/v1/transcribe/stream",
-        },
-        async () => "x",
-      ),
-    ).rejects.toThrow();
-    await expect(
-      loadPlatformConfig(
-        {
-          ...environment,
-          TRANSCRIPTION_PROVIDER: "voicetext",
-          VOICETEXT_BATCH_MAX_CONCURRENCY: "11",
-          VOICETEXT_SERVICE_TOKEN_FILE: "/run/secrets/voicetext",
-          VOICETEXT_WS_URL: "wss://api.voicetext.site/api/v1/transcribe/stream",
-        },
-        async () => "x",
       ),
     ).rejects.toThrow();
   });

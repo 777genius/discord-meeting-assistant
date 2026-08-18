@@ -2,11 +2,9 @@ import type { LiveConversationConfiguration, LiveRuntimeLogger,
   LiveRuntimeTimer } from "./contracts.js";
 import { ParticipantGreetingQueue, type ParticipantGreetingPriority,
 } from "./participant-greeting-queue.js";
-import {
-  participantGreetingProfile, resolveParticipantGreeting,
-  type GreetingAttemptOutcome, type ResolvedParticipantGreeting,
-} from "./participant-greeting-content.js";
-import { cancelParticipantGreetingPlayback, playParticipantGreeting,
+import { participantGreetingProfile, resolveParticipantGreeting,
+  type ResolvedParticipantGreeting } from "./participant-greeting-content.js";
+import { playParticipantGreeting,
   type ParticipantGreetingPlayback,
 } from "./participant-greeting-playback.js";
 import {
@@ -14,7 +12,13 @@ import {
   ParticipantGreetingDeadlines,
 } from "./participant-greeting-deadline.js";
 import { ParticipantGreetingReceipts } from "./participant-greeting-receipts.js";
-const maximumSafeRetries = 3;
+import {
+  ParticipantGreetingScheduling,
+  reserveGreetingPlaybackAdmission,
+} from "./participant-greeting-scheduling.js";
+import {
+  coordinateGreetingPlayback,
+} from "./participant-greeting-settlement.js";
 interface ParticipantGreetingBridgeDependencies {
   readonly configuration: LiveConversationConfiguration;
   readonly isMeetingFinishing: () => boolean;
@@ -32,7 +36,7 @@ export class ParticipantGreetingBridge {
   private readonly pendingGreetings = new ParticipantGreetingQueue();
   private readonly presentParticipantIds = new Set<string>();
   private readonly receipts: ParticipantGreetingReceipts;
-  private readonly retryCounts = new Map<string, number>();
+  private readonly scheduling: ParticipantGreetingScheduling;
   public constructor(private readonly dependencies: ParticipantGreetingBridgeDependencies) {
     this.deadlines = new ParticipantGreetingDeadlines(dependencies.timer, (participantId) => {
       this.expire(participantId);
@@ -43,6 +47,10 @@ export class ParticipantGreetingBridge {
       ...(dependencies.configuration.oneShotReceipts === undefined
         ? {}
         : { port: dependencies.configuration.oneShotReceipts }),
+    });
+    this.scheduling = new ParticipantGreetingScheduling({
+      configuration: dependencies.configuration,
+      meetingId: dependencies.meetingId,
     });
   }
   public participantsPresent(participantIds: readonly string[], occurredAt: string): void {
@@ -59,6 +67,9 @@ export class ParticipantGreetingBridge {
           occurredAt,
         );
       }
+    }
+    if (!this.scheduling.isActive) {
+      this.suppressCohortOverflow();
     }
     this.tryAdvance();
   }
@@ -77,11 +88,15 @@ export class ParticipantGreetingBridge {
     ) {
       this.enqueue(participantId, "high", occurredAt);
     }
+    if (!this.scheduling.isActive) {
+      this.suppressCohortOverflow();
+    }
     this.tryAdvance();
   }
   public participantLeft(participantId: string): void {
     this.presentParticipantIds.delete(participantId);
     this.pendingGreetings.delete(participantId);
+    this.scheduling.forget(participantId);
     this.deadlines.cancel(participantId);
   }
   public advance(): void {
@@ -125,6 +140,7 @@ export class ParticipantGreetingBridge {
     this.closed = true;
     this.advanceRequested = false;
     this.pendingGreetings.clear();
+    this.scheduling.clear();
     this.presentParticipantIds.clear();
     this.deadlines.cancelAll();
   }
@@ -156,13 +172,11 @@ export class ParticipantGreetingBridge {
       ) {
         continue;
       }
-
       if (await this.processGreeting(participantId, pending.priority, greeting)) {
         return;
       }
     }
   }
-
   private async processGreeting(
     participantId: string,
     priority: ParticipantGreetingPriority,
@@ -186,8 +200,21 @@ export class ParticipantGreetingBridge {
       this.enqueue(participantId, priority);
       return true;
     }
-
-    const leaseToken = await this.reservePlaybackAdmission(participantId);
+    if (!this.scheduling.canStartBeforeDeadline(
+      this.deadlines.expiresAtMilliseconds(participantId),
+      this.nowMilliseconds(),
+    )) {
+      this.suppressCapacityOverflow(participantId);
+      return false;
+    }
+    const leaseToken = await reserveGreetingPlaybackAdmission({
+      clearTerminal: () => { this.clearTerminalState(participantId); },
+      deadlines: this.deadlines,
+      markGreeted: () => this.greetedParticipantIds.add(participantId),
+      nowMilliseconds: () => this.nowMilliseconds(),
+      participantId,
+      receipts: this.receipts,
+    });
     if (leaseToken === undefined) {
       return false;
     }
@@ -213,105 +240,43 @@ export class ParticipantGreetingBridge {
       await this.receipts.settle(participantId, "suppressed", "ambiguous");
       return false;
     }
-
     const playback = this.speak(participantId, greeting);
-    const firstAudio = await this.deadlines.race(
+    const playbackBound = this.scheduling.beginSlot(
       participantId,
-      playback.firstAudio,
-      () => this.nowMilliseconds(),
+      this.nowMilliseconds(),
     );
-    if (firstAudio.status === "expired") {
-      this.greetedParticipantIds.add(participantId);
-      await this.cancelPlayback(participantId);
-      this.detachPlaybackSettlement(playback);
-      await this.receipts.settle(participantId, "suppressed", "ambiguous");
-      return false;
-    }
-    if (firstAudio.value.status === "unplayed") {
-      const outcome = await playback.settlement;
-      if (outcome === "played") {
-        await this.receipts.settle(participantId, "suppressed", "ambiguous");
-        this.greetedParticipantIds.add(participantId);
-        this.clearTerminalState(participantId);
-        return false;
-      }
-      return this.settleOutcome(participantId, priority, outcome);
-    }
-    if (!this.deadlines.acceptFirstAudio(
+    const coordinated = await coordinateGreetingPlayback({
+      clearTerminal: () => { this.clearTerminalState(participantId); },
+      deadlines: this.deadlines,
+      dependencies: this.settlementDependencies(),
+      markGreeted: () => this.greetedParticipantIds.add(participantId),
+      observeFirstAudio: (startedAtMilliseconds) => {
+        this.scheduling.observeFirstAudio(startedAtMilliseconds, playbackBound);
+      },
       participantId,
-      firstAudio.value.startedAtMilliseconds,
-    )) {
-      this.greetedParticipantIds.add(participantId);
-      await this.cancelPlayback(participantId);
-      this.detachPlaybackSettlement(playback);
-      await this.receipts.settle(participantId, "suppressed", "ambiguous");
-      this.clearTerminalState(participantId);
-      return false;
-    }
-    const outcome = await playback.settlement;
-    return this.settleOutcome(participantId, priority, outcome);
+      playback,
+      playbackBoundMilliseconds: playbackBound,
+      receipts: this.receipts,
+      releaseSlot: () => { this.scheduling.releaseSlot(); },
+      suppressOverflow: () => { this.suppressCohortOverflow(); },
+    });
+    return coordinated.status === "terminal"
+      ? false
+      : this.scheduling.settleOutcome({
+          clearTerminal: () => { this.clearTerminalState(participantId); },
+          deadlines: this.deadlines,
+          isPresent: () => this.presentParticipantIds.has(participantId),
+          logger: this.dependencies.logger,
+          markGreeted: () => this.greetedParticipantIds.add(participantId),
+          meetingId: this.dependencies.meetingId,
+          nowMilliseconds: () => this.nowMilliseconds(),
+          outcome: coordinated.outcome,
+          participantId,
+          pendingGreetings: this.pendingGreetings,
+          priority,
+          receipts: this.receipts,
+        });
   }
-
-  private async settleOutcome(
-    participantId: string,
-    priority: ParticipantGreetingPriority,
-    outcome: GreetingAttemptOutcome,
-  ): Promise<boolean> {
-    if (outcome === "busy" || outcome === "unplayed") {
-      const retryCount = (this.retryCounts.get(participantId) ?? 0) + 1;
-      this.retryCounts.set(participantId, retryCount);
-      if (
-        retryCount <= maximumSafeRetries &&
-        this.presentParticipantIds.has(participantId) &&
-        this.deadlines.ensureFresh(participantId, this.nowMilliseconds())
-      ) {
-        await this.receipts.release(participantId, outcome);
-        this.pendingGreetings.deferRetry(participantId, priority);
-        return true;
-      }
-      await this.receipts.settle(participantId, "suppressed", "ambiguous");
-      this.dependencies.logger.warn("Participant greeting retries exhausted", {
-        meetingId: this.dependencies.meetingId,
-        participantId,
-      });
-    } else if (outcome === "played") {
-      await this.receipts.settle(participantId, "played");
-    } else {
-      await this.receipts.settle(participantId, "suppressed", "ambiguous");
-    }
-    this.greetedParticipantIds.add(participantId);
-    this.clearTerminalState(participantId);
-    return false;
-  }
-
-  private async reservePlaybackAdmission(participantId: string): Promise<string | undefined> {
-    if (!this.deadlines.ensureFresh(participantId, this.nowMilliseconds())) {
-      await this.receipts.fenceOnce(participantId);
-      return undefined;
-    }
-    const reservationOperation = this.receipts.reserve(participantId);
-    const receiptResult = await this.deadlines.race(
-      participantId,
-      reservationOperation,
-      () => this.nowMilliseconds(),
-    );
-    if (receiptResult.status === "expired") {
-      this.greetedParticipantIds.add(participantId);
-      this.deadlines.track(this.receipts.settleExpiredReservation(
-        participantId,
-        receiptResult.operation,
-      ));
-      return undefined;
-    }
-    const receipt = receiptResult.value;
-    if (receipt.status !== "reserved") {
-      this.greetedParticipantIds.add(participantId);
-      this.clearTerminalState(participantId);
-      return undefined;
-    }
-    return receipt.leaseToken;
-  }
-
   private enqueue(
     participantId: string,
     priority: ParticipantGreetingPriority,
@@ -327,14 +292,17 @@ export class ParticipantGreetingBridge {
         occurredAt,
         this.nowMilliseconds(),
       );
+      const greeting = this.greeting(participantId);
+      if (greeting !== undefined) {
+        this.scheduling.plan(participantId, greeting);
+      }
       return;
     }
     this.pendingGreetings.enqueue(participantId, priority);
   }
-
   private expire(participantId: string): void {
     this.pendingGreetings.delete(participantId);
-    this.retryCounts.delete(participantId);
+    this.scheduling.forget(participantId);
     this.greetedParticipantIds.add(participantId);
     this.dependencies.logger.warn("Participant greeting reached terminal deadline", {
       meetingId: this.dependencies.meetingId,
@@ -345,30 +313,37 @@ export class ParticipantGreetingBridge {
       this.deadlines.track(this.receipts.fenceOnce(participantId));
     }
   }
-
   private clearTerminalState(participantId: string): void {
     this.deadlines.clear(participantId);
-    this.retryCounts.delete(participantId);
+    this.scheduling.forget(participantId);
   }
-
-  private cancelPlayback(participantId: string): Promise<void> {
-    return cancelParticipantGreetingPlayback(
-      this.dependencies.configuration, this.dependencies.logger,
-      this.dependencies.meetingId, participantId, this.nowMilliseconds(),
+  private suppressCohortOverflow(): void {
+    const overflow = this.scheduling.cohortOverflow(
+      this.pendingGreetings.orderedReady(),
+      (participantId) => this.deadlines.expiresAtMilliseconds(participantId),
+      this.nowMilliseconds(),
     );
+    for (const participantId of overflow) {
+      this.suppressCapacityOverflow(participantId);
+    }
   }
-
-  private detachPlaybackSettlement(playback: ParticipantGreetingPlayback): void {
-    // Cancellation and process recovery must not wait for a provider that can
-    // settle late (or never settle), but a late rejection must still be handled.
-    void playback.settlement.catch(() => {});
+  private suppressCapacityOverflow(participantId: string): void {
+    this.pendingGreetings.delete(participantId);
+    this.deadlines.clear(participantId);
+    this.scheduling.forget(participantId);
+    this.greetedParticipantIds.add(participantId);
+    this.dependencies.logger.warn("Participant greeting suppressed before admission", {
+      meetingId: this.dependencies.meetingId,
+      participantId,
+      reason: "join-cohort-capacity",
+    });
+    this.deadlines.track(this.receipts.fenceOnce(participantId));
   }
-
   private speak(
     participantId: string,
     greeting: ResolvedParticipantGreeting,
   ): ParticipantGreetingPlayback {
-    const retryCount = this.retryCounts.get(participantId) ?? 0;
+    const retryCount = this.scheduling.retryCount(participantId);
     const turnId = retryCount === 0
       ? `participant-greeting:${participantId}`
       : `participant-greeting:${participantId}:retry-${retryCount}`;
@@ -382,27 +357,24 @@ export class ParticipantGreetingBridge {
       observedLatencyMilliseconds: () =>
         this.observedGreetingLatencyMilliseconds(participantId),
       participantId,
+      preparedCue: this.scheduling.preparedCue(participantId),
       shouldStop: () => this.shouldStopGreeting(participantId),
       turnId,
     });
   }
-
   private profile(participantId: string) { return participantGreetingProfile(this.dependencies.configuration, participantId); }
-
   private greeting(participantId: string): ResolvedParticipantGreeting | undefined {
     return resolveParticipantGreeting(
       this.dependencies.configuration,
       participantId,
     );
   }
-
   /** Re-reads mutable meeting state after asynchronous coordinator settlement. */
   private shouldStopGreeting(participantId: string): boolean {
     return this.closed ||
       this.dependencies.isMeetingFinishing() ||
       !this.presentParticipantIds.has(participantId);
   }
-
   private nowMilliseconds(): number {
     const value = Math.floor(this.dependencies.configuration.nowMilliseconds());
     if (!Number.isSafeInteger(value) || value < 0) {
@@ -410,8 +382,16 @@ export class ParticipantGreetingBridge {
     }
     return value;
   }
-
   private observedGreetingLatencyMilliseconds(participantId: string): number {
     return this.deadlines.observedLatencyMilliseconds(participantId, this.nowMilliseconds());
+  }
+  private settlementDependencies() {
+    return {
+      configuration: this.dependencies.configuration,
+      logger: this.dependencies.logger,
+      meetingId: this.dependencies.meetingId,
+      nowMilliseconds: () => this.nowMilliseconds(),
+      timer: this.dependencies.timer,
+    };
   }
 }

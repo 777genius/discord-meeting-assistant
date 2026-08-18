@@ -30,6 +30,7 @@ export {
   conversationThinkingCueObserverReadySchema,
   conversationThinkingCuePlaybackIntentSchema,
   conversationThinkingCuePlaybackReadinessEnvelopeSchema,
+  conversationThinkingCuePlaybackReadinessProtocolVersion,
   serializeConversationThinkingCuePlaybackReadinessEnvelope,
   type ConversationThinkingCueObserverReady,
   type ConversationThinkingCuePlaybackIntent,

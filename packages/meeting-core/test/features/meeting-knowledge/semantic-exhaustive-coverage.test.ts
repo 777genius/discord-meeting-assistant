@@ -1,11 +1,13 @@
 import { createHash } from "node:crypto";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
+  DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
   DeterministicCoverageReducer,
   ExhaustiveCoverage,
   GroundedAnswer,
+  GroundedMeetingAnswer,
   admitAcceptedFinalMeeting,
   createExhaustiveCoverageGroundingPlan,
   createHistoricalReleaseBinding,
@@ -16,6 +18,7 @@ import {
   type CoverageReductionV1,
   type ExhaustiveCoverageStore,
   type GroundingPlan,
+  type HistoricalAuthorizationPort,
   type HistoricalEvidenceAuthority,
   type HistoricalOpaqueIdPort,
   type HistoricalReleaseBindingV1,
@@ -173,6 +176,8 @@ function corpus(): AcceptedFinalMeetingV1 {
 function semanticCoverage(
   meeting: AcceptedFinalMeetingV1,
   checkpoints: SemanticCheckpoints,
+  authorization?: HistoricalAuthorizationPort,
+  twoHourEnabled = true,
 ): ExhaustiveCoverage {
   const authority: HistoricalEvidenceAuthority = {
     loadAcceptedFinalMeeting: async (binding) =>
@@ -181,7 +186,7 @@ function semanticCoverage(
   const sync = semanticSync(meeting.binding);
   return new ExhaustiveCoverage({
     authority,
-    authorization: { authorize: async () => ({
+    authorization: authorization ?? { authorize: async () => ({
       authorizationDigest: "authorized-room-1",
       authorizationEpoch: "1",
       authorized: true,
@@ -244,6 +249,14 @@ function semanticCoverage(
     processingRelease: "meeting-knowledge.test-semantic-coverage.r1",
     reduceFanIn: 2,
     version: "meeting-knowledge.exhaustive-coverage.v1",
+  }, {
+    ...DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
+    qualification: twoHourEnabled ? {
+      evidenceSha256: "e".repeat(64),
+      releaseRevision: "f".repeat(40),
+      rolloutEpoch: "test-r1",
+      schemaVersion: 1,
+    } : null,
   });
 }
 
@@ -318,7 +331,143 @@ async function coverageFor(question: string, requestId: string) {
   return { checkpoints, result };
 }
 
+function revokingAuthorization(input: {
+  readonly revokeOnCall: number;
+  readonly signal: AbortSignal;
+}): { readonly calls: () => number; readonly port: HistoricalAuthorizationPort } {
+  let calls = 0;
+  return {
+    calls: () => calls,
+    port: {
+      authorize: async (request) => {
+        calls += 1;
+        expect(request.signal).toBe(input.signal);
+        return {
+          authorizationDigest: "authorized-room-1",
+          authorizationEpoch: "1",
+          authorized: calls < input.revokeOnCall,
+          policyVersion: "room-policy.v1",
+        };
+      },
+    },
+  };
+}
+
 describe("semantic exhaustive coverage exact-answer oracles", () => {
+  it("stops before the next extractor when authorization is revoked mid-pass", async () => {
+    const signal = new AbortController().signal;
+    const authorization = revokingAuthorization({ revokeOnCall: 3, signal });
+    const checkpoints = new SemanticCheckpoints();
+    const result = await semanticCoverage(
+      corpus(),
+      checkpoints,
+      authorization.port,
+    ).buildPlan({
+      authorizationPrincipalRef: "principal",
+      question: "Count every decision assertion",
+      requestId: "request-revoked-extract",
+      roomId: "room-1",
+      scopeId: "scope-1",
+      signal,
+    });
+
+    expect(result).toEqual({
+      reason: "authorization_changed",
+      status: "unauthorized",
+    });
+    expect(checkpoints.extractionCount).toBe(1);
+    expect(authorization.calls()).toBe(3);
+  });
+
+  it("stops before the next reducer when authorization is revoked mid-pass", async () => {
+    const signal = new AbortController().signal;
+    // Initial admission + seven blocks + first reducer are authorized.
+    const authorization = revokingAuthorization({ revokeOnCall: 10, signal });
+    const checkpoints = new SemanticCheckpoints();
+    const result = await semanticCoverage(
+      corpus(),
+      checkpoints,
+      authorization.port,
+    ).buildPlan({
+      authorizationPrincipalRef: "principal",
+      question: "Count every decision assertion",
+      requestId: "request-revoked-reduce",
+      roomId: "room-1",
+      scopeId: "scope-1",
+      signal,
+    });
+
+    expect(result).toEqual({
+      reason: "authorization_changed",
+      status: "unauthorized",
+    });
+    expect(checkpoints.extractionCount).toBe(7);
+    expect(authorization.calls()).toBe(10);
+  });
+
+  it("does not call the final provider without a fresh exhaustive authorization fence", async () => {
+    const coverage = await coverageFor(
+      "Count every decision assertion",
+      "request-provider-fence",
+    );
+    const plan = answerPlan(coverage.result);
+    const generate = vi.fn(async () => ({
+      answer: {
+        claims: [{
+          evidenceIds: [plan.evidence[0]?.evidenceId ?? "missing"],
+          text: "One decision was found.",
+        }],
+        locale: "en" as const,
+        status: "answered" as const,
+      },
+      status: "completed" as const,
+    }));
+    const answers = new GroundedMeetingAnswer({
+      generate,
+      measure: async () => ({
+        inputTokens: 100,
+        requestBytes: 1_000,
+        runtimeProfile: "fixture",
+      }),
+    }, {
+      maximumRequestBytes: 10_000,
+      modelContextTokens: 10_000,
+      outputTokensReserved: 100,
+      reasoningTokensReserved: 100,
+      safeInputTokens: 8_000,
+      tokenDriftReserve: 100,
+    });
+
+    await expect(answers.execute({
+      attemptId: "attempt-provider-fence",
+      binding: { canonicalEvidenceHash: "hash", memoryGeneration: "generation", transcriptVersion: 1 },
+      locale: "en",
+      plan,
+      question: "Count every decision assertion",
+    })).resolves.toEqual({ status: "rejected" });
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+  it("blocks long exhaustive retrieval before semantic extraction by default", async () => {
+    const meeting = corpus();
+    const checkpoints = new SemanticCheckpoints();
+    const result = await semanticCoverage(
+      meeting,
+      checkpoints,
+      undefined,
+      false,
+    ).buildPlan({
+      authorizationPrincipalRef: "principal",
+      question: "List every decision across all meetings",
+      requestId: "two-hour-disabled",
+      roomId: meeting.binding.roomId,
+      scopeId: meeting.binding.scopeId,
+    });
+
+    expect(result).toMatchObject({ status: "invalidated" });
+    expect(checkpoints.extractionCount).toBe(0);
+  });
+
   it("returns exact count and all/list answers across more than 400 turns, retaining duplicates and contradictions", async () => {
     const { checkpoints, result } = await coverageFor(
       "Count every decision assertion and list all of them",
@@ -355,6 +504,8 @@ describe("semantic exhaustive coverage exact-answer oracles", () => {
       },
       evidence: plan.evidence,
       expectedLocale: "en",
+      groundingMode: "exhaustive_coverage",
+      question: "Was Project Zeta ever approved?",
     });
     expect(count.toSnapshot().claims).toEqual([{
       evidenceIds,
@@ -372,6 +523,8 @@ describe("semantic exhaustive coverage exact-answer oracles", () => {
       },
       evidence: plan.evidence,
       expectedLocale: "en",
+      groundingMode: "exhaustive_coverage",
+      question: "Was Project Zeta ever approved?",
     });
     expect(list.claims.map(({ text }) => text)).toEqual(
       Array.from({ length: 6 }, (_, index) => `Decision assertion ${index + 1} of 6.`),
@@ -397,6 +550,8 @@ describe("semantic exhaustive coverage exact-answer oracles", () => {
       },
       evidence: gamma.evidence,
       expectedLocale: "ru",
+      groundingMode: "exhaustive_coverage",
+      question: "Был ли проект Гамма одобрен?",
     });
     expect(existence.claims[0]?.text).toBe(
       "Да, команда договорилась запустить Гамма в июне.",
@@ -419,6 +574,8 @@ describe("semantic exhaustive coverage exact-answer oracles", () => {
       evidence: absence.evidence,
       exhaustiveAbsenceProven: true,
       expectedLocale: "en",
+      groundingMode: "exhaustive_coverage",
+      question: "Was Project Zeta ever approved?",
     });
     expect(answer.toSnapshot().claims[0]).toEqual({
       evidenceIds: [],
@@ -429,6 +586,8 @@ describe("semantic exhaustive coverage exact-answer oracles", () => {
       evidence: [],
       exhaustiveAbsenceProven: false,
       expectedLocale: "en",
+      groundingMode: "exhaustive_coverage",
+      question: "Was Project Zeta ever approved?",
     })).toThrow("between one and eight citations");
   });
 });

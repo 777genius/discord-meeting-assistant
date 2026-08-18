@@ -113,12 +113,14 @@ import {
     });
     const firstReceipt = "discord:v1:thread:22222222222222222:message:33333333333333333";
     const recoveredReceipt = "discord:v1:thread:22222222222222222:message:33333333333333334";
+    const publisherIdentity = "discord-bot-application:test";
 
-    expect(meeting.completeProjection(firstReceipt, 0)).toBe(true);
-    expect(meeting.completeProjection(recoveredReceipt, 1)).toBe(true);
+    expect(meeting.completeProjection(firstReceipt, 0, publisherIdentity)).toBe(true);
+    expect(meeting.completeProjection(recoveredReceipt, 1, publisherIdentity)).toBe(true);
     expect(() => meeting.completeProjection(
       "discord:v1:thread:22222222222222222:message:33333333333333335",
       0,
+      publisherIdentity,
     )).toThrow(/stale revision/);
     expect(meeting.projectionExternalId).toBe(recoveredReceipt);
   });

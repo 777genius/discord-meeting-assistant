@@ -24,13 +24,15 @@ import {
 } from "./postgres-historical-memory-row.js";
 import { queryHistoricalPostgres, withHistoricalPostgresTransaction, type HistoricalPostgresCancellationPort } from "./postgres-historical-query.js";
 import { recordHistoricalSyncRetry } from "./postgres-historical-sync-retry.js";
+import {
+  lockMeetingKnowledgeSource,
+  requestAnswerSourceWithdrawal,
+} from "./postgres-answer-source-withdrawal.js";
 
 interface HistoricalMeetingMutationRow {
   readonly desired_generation: number;
   readonly operation: "delete_meeting" | "delete_release" | "index";
 }
-
-
 function requireLeaseDuration(options: HistoricalSyncClaimOptionsV1): void {
   if (
     !Number.isSafeInteger(options.leaseDurationMs) ||
@@ -59,6 +61,15 @@ export async function acceptHistoricalReleaseInTransaction(
   candidate: HistoricalReleaseBindingV1,
 ): Promise<"accepted" | "replayed"> {
   const binding = validateHistoricalReleaseBinding(candidate);
+  await lockMeetingKnowledgeSource(client, binding.meetingId);
+  const withdrawn = await client.query(
+    `SELECT 1 FROM meeting_knowledge.withdrawn_meeting_sources
+     WHERE meeting_id = $1`,
+    [binding.meetingId],
+  );
+  if (withdrawn.rowCount === 1) {
+    throw new Error("withdrawn meeting cannot accept a new historical release");
+  }
   const existing = await client.query<HistoricalSyncRow>(
     `SELECT ${historicalSyncRowProjection} FROM meeting_core.historical_memory_sync WHERE release_id = $1 FOR UPDATE`,
     [binding.releaseId],
@@ -197,7 +208,6 @@ export class PostgresHistoricalMemoryStore implements HistoricalSyncStore {
       this.cancellation,
     );
   }
-
   public async recordPlan(
     lease: HistoricalSyncLeaseV1,
     plan: HistoricalIndexPlanV1,
@@ -213,7 +223,6 @@ export class PostgresHistoricalMemoryStore implements HistoricalSyncStore {
       values: [lease.binding.releaseId, lease.fence, plan],
     }, options.signal, this.cancellation), "plan checkpoint");
   }
-
   public async recordApplied(
     lease: HistoricalSyncLeaseV1,
     plan: HistoricalIndexPlanV1,
@@ -284,25 +293,14 @@ export class PostgresHistoricalMemoryStore implements HistoricalSyncStore {
     meetingId: string,
     options: HistoricalOperationOptionsV1 = {},
   ): Promise<void> {
-    await queryHistoricalPostgres(this.pool, {
-      text: `
-        UPDATE meeting_core.historical_memory_sync
-        SET is_current = false, operation = 'delete_meeting',
-            state = CASE
-              WHEN state = 'deleted' THEN 'deleted'
-              WHEN state = 'in_flight' THEN 'in_flight'
-              ELSE 'deleting'
-            END,
-            retry_after = NULL,
-            lease_expires_at = CASE
-              WHEN state = 'in_flight' THEN lease_expires_at
-              ELSE NULL
-            END,
-            updated_at = transaction_timestamp()
-        WHERE meeting_id = $1
-      `,
-      values: [meetingId],
-    }, options.signal, this.cancellation);
+    await withHistoricalPostgresTransaction(
+      this.pool,
+      options.signal,
+      async (client) => {
+        await requestAnswerSourceWithdrawal(client, meetingId);
+      },
+      this.cancellation,
+    );
   }
 
   public async findCurrentCandidate(

@@ -1,6 +1,7 @@
 export {
   authoritativeTrackUploadMetadataSchema,
   craigPlaybackChannels,
+  craigPlaybackCancellationProtocolVersion,
   craigPlaybackCommandSchema,
   craigPlaybackEventSchema,
   craigPlaybackProtocolVersion,

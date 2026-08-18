@@ -30,7 +30,15 @@ export function createConversationPlaybackLogger(
           : { preparedAssetSha256: observation.preparedAssetSha256 }),
         ...(observation.speechProvenance === undefined
           ? {}
-          : { speechProvenance: observation.speechProvenance }),
+          : {
+              speechProvenance: observation.speechProvenance,
+              ...(observation.ttsAttestation === undefined
+                ? {}
+                : { ttsAttestation: observation.ttsAttestation }),
+            }),
+        ...(observation.thinkingCuePcmSha256 === undefined
+          ? {}
+          : { thinkingCuePcmSha256: observation.thinkingCuePcmSha256 }),
         turnId: observation.turnId,
       };
       switch (observation.status) {
@@ -65,11 +73,19 @@ export function createGroundedKnowledgeAnswerLogger(
 ): GroundedKnowledgeAnswerObserverPort {
   return {
     observeGroundedKnowledgeAnswer: (observation) => {
+      const fields = observation.status === "cancelled"
+        ? {
+            ...observation,
+            cancellationObservedAt: new Date(
+              observation.cancellationObservedAtMs,
+            ).toISOString(),
+          }
+        : observation;
       logger.info(
         observation.status === "validated"
           ? "Grounded knowledge answer validated"
           : "Grounded knowledge answer cancelled",
-        { ...observation },
+        { ...fields },
       );
     },
   };

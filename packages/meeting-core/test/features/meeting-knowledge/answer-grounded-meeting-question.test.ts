@@ -194,6 +194,29 @@ describe("published grounded meeting question", () => {
     expect(exhaustive.buildPlan).toHaveBeenCalledTimes(1);
   });
 
+  it("propagates the active cancellation signal into authorization", async () => {
+    const controller = new AbortController();
+    const authorize = vi.fn<HistoricalAuthorizationPort["authorize"]>(async (authorizationRequest) => {
+      expect(authorizationRequest.signal).toBe(controller.signal);
+      controller.abort("barge-in");
+      controller.signal.throwIfAborted();
+      throw new Error("unreachable");
+    });
+    const answer = new AnswerGroundedMeetingQuestion({
+      answers: new GroundedMeetingAnswer(generator(), limits),
+      authorization: { authorize },
+      ids: { digest: () => "c".repeat(64) },
+      live: live(),
+      turnHashes: { hash: () => "b".repeat(64) },
+    });
+
+    await expect(answer.execute({
+      ...request,
+      authorizationPrincipalRef: "opaque",
+    }, { signal: controller.signal })).rejects.toBe("barge-in");
+    expect(authorize).toHaveBeenCalledOnce();
+  });
+
   it("rechecks source-room authorization before generation and publication", async () => {
     let observations = 0;
     const authorization: HistoricalAuthorizationPort = {

@@ -237,12 +237,14 @@ describe("ConversationCoordinator cue and answer playback", () => {
           playbackAttemptId: "cue-attempt-turn-1-acknowledgement",
           playbackKind: "thinking-cue",
           status: "started",
+          thinkingCuePcmSha256: "c".repeat(64),
           turnId: "turn-1",
         }),
         expect.objectContaining({
           playbackAttemptId: "cue-attempt-turn-1-acknowledgement",
           playbackKind: "thinking-cue",
           status: "finished",
+          thinkingCuePcmSha256: "c".repeat(64),
           turnId: "turn-1",
         }),
       ]);
@@ -646,6 +648,7 @@ describe("ConversationCoordinator cue playback readiness", () => {
     await vi.waitFor(() => {
       expect(readinessRequests).toEqual([{
         expectedPcmBytes: 4,
+        expectedPcmSha256: "c".repeat(64),
         meetingId: "meeting-1",
         participantId: "speaker-turn-1",
         playbackAttemptId: "cue-attempt-turn-1-acknowledgement",

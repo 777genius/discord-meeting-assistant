@@ -11,6 +11,8 @@ import { z } from "zod";
 
 const snowflakeSchema = z.string().regex(/^\d{17,20}$/u);
 const markerSchema = z.string().trim().min(1).max(256);
+const reconciliationPageSize = 100;
+const reconciliationPageLimit = 10;
 const answerPayloadSchema = z.object({
   allowed_mentions: z.object({
     parse: z.array(z.never()).max(0),
@@ -120,7 +122,7 @@ export class DiscordAnswerPayloadCodec implements AnswerPayloadPort {
 
 export class DiscordAnswerDeliveryAdapter implements AnswerDeliveryPort {
   public constructor(
-    private readonly rest: Pick<REST, "get" | "post">,
+    private readonly rest: Pick<REST, "get" | "post"> & Partial<Pick<REST, "delete">>,
     private readonly botApplicationIdentity: string,
   ) {}
 
@@ -156,47 +158,102 @@ export class DiscordAnswerDeliveryAdapter implements AnswerDeliveryPort {
     readonly replyToRemoteMessageId: string;
   }): Promise<
     | { readonly externalReceipt: string; readonly status: "found" }
+    | { readonly externalReceipts: readonly string[]; readonly status: "duplicate" }
     | { readonly status: "unconfirmed" }
   > {
+    const exactReceipts: string[] = [];
     try {
-      const response = await this.rest.get(
-        Routes.channelMessages(input.deliveryContainerId),
-        { query: new URLSearchParams({ limit: "100" }) },
-      );
-      const messages = z.array(discordMessageSchema).parse(response);
-      const candidates = messages.filter((message) =>
-        message.author.id === this.botApplicationIdentity &&
-        (message.application_id ?? message.author.id) === this.botApplicationIdentity &&
-        message.message_reference?.message_id === input.replyToRemoteMessageId
-      );
-      const exactReceipts: string[] = [];
-      for (const message of candidates) {
-        const embed = message.embeds.find(({ url }) => url === markerUrl(input.marker));
-        if (embed?.description === undefined) {
-          continue;
+      let cursor = snowflakeSchema.parse(input.replyToRemoteMessageId);
+      for (let page = 0; page < reconciliationPageLimit; page += 1) {
+        const query = new URLSearchParams({
+          after: cursor,
+          limit: reconciliationPageSize.toString(),
+        });
+        const response = await this.rest.get(
+          Routes.channelMessages(input.deliveryContainerId),
+          { query },
+        );
+        const messages = z.array(discordMessageSchema)
+          .max(reconciliationPageSize)
+          .parse(response)
+          .toSorted((left, right) => {
+            const leftId = BigInt(left.id);
+            const rightId = BigInt(right.id);
+            return leftId < rightId ? -1 : leftId > rightId ? 1 : 0;
+          });
+        if (messages.some(({ id }) => BigInt(id) <= BigInt(cursor))) {
+          throw new Error("Discord reconciliation history overlaps its cursor");
         }
-        const reconstructed = canonicalJson(answerPayloadSchema.parse({
-          allowed_mentions: { parse: [], replied_user: false },
-          embeds: [{
-            description: embed.description,
-            url: markerUrl(input.marker),
-          }],
-          message_reference: {
-            channel_id: input.deliveryContainerId,
-            fail_if_not_exists: true,
-            message_id: input.replyToRemoteMessageId,
-          },
-        }));
-        if (sha256(reconstructed) === input.payloadHash) {
-          exactReceipts.push(message.id);
+        const candidates = messages.filter((message) =>
+          message.author.id === this.botApplicationIdentity &&
+          (message.application_id ?? message.author.id) === this.botApplicationIdentity &&
+          message.message_reference?.message_id === input.replyToRemoteMessageId
+        );
+        for (const message of candidates) {
+          const embed = message.embeds.find(({ url }) => url === markerUrl(input.marker));
+          if (embed?.description === undefined) {
+            continue;
+          }
+          const reconstructed = canonicalJson(answerPayloadSchema.parse({
+            allowed_mentions: { parse: [], replied_user: false },
+            embeds: [{
+              description: embed.description,
+              url: markerUrl(input.marker),
+            }],
+            message_reference: {
+              channel_id: input.deliveryContainerId,
+              fail_if_not_exists: true,
+              message_id: input.replyToRemoteMessageId,
+            },
+          }));
+          if (sha256(reconstructed) === input.payloadHash) {
+            exactReceipts.push(message.id);
+          }
         }
-      }
-      if (exactReceipts.length === 1) {
-        return { externalReceipt: exactReceipts[0]!, status: "found" };
+        if (messages.length < reconciliationPageSize) {
+          break;
+        }
+        cursor = messages.at(-1)!.id;
       }
     } catch {
-      // Missing, partial, or forbidden history can never prove non-delivery.
+      if (exactReceipts.length < 2) {
+        // Missing, partial, or forbidden history can never prove non-delivery.
+        return { status: "unconfirmed" };
+      }
+    }
+    if (exactReceipts.length > 1) {
+      return {
+        externalReceipts: Object.freeze(exactReceipts),
+        status: "duplicate",
+      };
+    }
+    if (exactReceipts.length === 1) {
+      return { externalReceipt: exactReceipts[0]!, status: "found" };
     }
     return { status: "unconfirmed" };
+  }
+
+  public async remove(input: {
+    readonly deliveryContainerId: string;
+    readonly effectId: string;
+    readonly externalReceipt: string;
+  }): Promise<void> {
+    if (this.rest.delete === undefined) {
+      throw new Error("Discord answer deletion transport is unavailable");
+    }
+    try {
+      await this.rest.delete(
+        Routes.channelMessage(input.deliveryContainerId, input.externalReceipt),
+      );
+    } catch (error) {
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        (Reflect.get(error, "status") === 404 || Reflect.get(error, "code") === 10_008)
+      ) {
+        return;
+      }
+      throw error;
+    }
   }
 }

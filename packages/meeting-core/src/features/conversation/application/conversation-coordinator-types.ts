@@ -14,6 +14,7 @@ import type {
   ConversationStartRequest,
   ConversationThinkingCue,
   ConversationThinkingCuePort,
+  ConversationTtsAttestation,
   VoicePlaybackPort,
   VoicePlaybackSession,
 } from "./ports/conversation.js";
@@ -186,6 +187,7 @@ export interface ActiveConversationRun {
   runtimeCompleted: boolean;
   runtimeStartAbortController: AbortController | null;
   runtimeTurn: ConversationRuntimeTurn | null;
+  ttsAttestation: ConversationTtsAttestation | null;
 }
 
 export interface MeetingConversationState {

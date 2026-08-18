@@ -319,6 +319,46 @@ describe("Craig conversation playback", () => {
     ).toMatchObject({ type: "playback-cancel" });
   });
 
+  it("accepts legacy v1 cancellation exactly and requires bound v2 cancellation evidence", () => {
+    expect(parseCraigPlaybackCommand({
+      ...playbackEnvelope,
+      type: "playback-cancel",
+      reason: "barge-in",
+    })).toEqual({
+      ...playbackEnvelope,
+      type: "playback-cancel",
+      reason: "barge-in",
+    });
+    expect(parseCraigPlaybackCommand({
+      ...playbackEnvelope,
+      schemaVersion: 2,
+      type: "playback-cancel",
+      meetingId: "meeting-1",
+      cancellationObservedAtMs: 12_345,
+      reason: "barge-in",
+    })).toMatchObject({
+      schemaVersion: 2,
+      meetingId: "meeting-1",
+      cancellationObservedAtMs: 12_345,
+    });
+  });
+
+  it.each([
+    { schemaVersion: 2, cancellationObservedAtMs: -1 },
+    { schemaVersion: 2, cancellationObservedAtMs: 1.5 },
+    { schemaVersion: 2, cancellationObservedAtMs: Number.MAX_SAFE_INTEGER + 1 },
+    { schemaVersion: 2 },
+    { schemaVersion: 3, cancellationObservedAtMs: 12_345 },
+  ])("fails closed for malformed or future cancellation %#", (variant) => {
+    expect(() => parseCraigPlaybackCommand({
+      ...playbackEnvelope,
+      type: "playback-cancel",
+      meetingId: "meeting-1",
+      reason: "barge-in",
+      ...variant,
+    })).toThrow();
+  });
+
   it("accepts recording-scoped readiness and sender-side playback evidence", () => {
     expect(
       parseCraigPlaybackEvent({

@@ -158,6 +158,24 @@ describe("parseConversationLifecycleEvidenceLogs", () => {
         playbackSettledAtMonotonicMs: 4_800,
         settlement: "played",
       }),
+      JSON.stringify({
+        ...shared,
+        message: "Conversation playback started",
+        playbackAttemptId: "thinking-cue-attempt-1",
+        playbackKind: "thinking-cue",
+        playbackStartedAtEpochMs: 1_754_509_526_000,
+        playbackStartedAtMonotonicMs: 3_000,
+        thinkingCuePcmSha256: "b".repeat(64),
+      }),
+      JSON.stringify({
+        ...shared,
+        message: "Conversation playback finished",
+        playbackAttemptId: "thinking-cue-attempt-1",
+        playbackFinishedAtEpochMs: 1_754_509_526_500,
+        playbackFinishedAtMonotonicMs: 3_500,
+        playbackKind: "thinking-cue",
+        thinkingCuePcmSha256: "b".repeat(64),
+      }),
     ].join("\n");
 
     expect(parseConversationLifecycleEvidenceLogs(output, "meeting-1").playbackReceipts)
@@ -181,6 +199,18 @@ describe("parseConversationLifecycleEvidenceLogs", () => {
           status: "settled",
           turnId: "human-question-1",
         }),
+        expect.objectContaining({
+          playbackAttemptId: "thinking-cue-attempt-1",
+          playbackKind: "thinking-cue",
+          status: "started",
+          thinkingCuePcmSha256: "b".repeat(64),
+        }),
+        expect.objectContaining({
+          playbackAttemptId: "thinking-cue-attempt-1",
+          playbackKind: "thinking-cue",
+          status: "finished",
+          thinkingCuePcmSha256: "b".repeat(64),
+        }),
       ]);
   });
 
@@ -191,15 +221,7 @@ describe("parseConversationLifecycleEvidenceLogs", () => {
       turnId: "human-question-1",
     };
     const output = [
-      ...Array.from({ length: 4 }, (_, index) => JSON.stringify({
-        greetingLocale: "ru",
-        meetingId: "meeting-1",
-        message: "Participant greeting playback settled",
-        participantId: `participant-${String(index + 1)}`,
-        participantNameStatus: "unknown",
-        time: "2026-08-06T19:18:37.000Z",
-        turnId: `participant-greeting:participant-${String(index + 1)}`,
-      })),
+      ...minimumGreetingLogs(),
       JSON.stringify({
         ...common,
         citationTurnIds: ["authoritative-turn-7"],
@@ -212,9 +234,22 @@ describe("parseConversationLifecycleEvidenceLogs", () => {
       }),
       JSON.stringify({
         ...common,
+        cancellationObservedAt: common.time,
+        cancellationObservedAtMs: Date.parse(common.time),
         message: "Grounded knowledge answer cancelled",
         reason: "disconnected",
         status: "cancelled",
+      }),
+      JSON.stringify({
+        ...common,
+        acceptedPacketCountAfterCancellation: 0,
+        attemptId: "attempt-cancelled-1",
+        cancellationObservedAt: common.time,
+        fenceObservedAt: "2026-08-06T19:18:47.250Z",
+        message: "Craig authoritative cancellation PCM fence observed",
+        recordingId: "recording-1",
+        source: "craig-authoritative-playback-track",
+        trackSha256: "a".repeat(64),
       }),
     ].join("\n");
 
@@ -230,7 +265,38 @@ describe("parseConversationLifecycleEvidenceLogs", () => {
         expect.objectContaining({ reason: "disconnected", status: "cancelled" }),
       ]);
   });
+
+  it.each([
+    {},
+    { cancellationObservedAt: "not-a-date", cancellationObservedAtMs: 1 },
+    { cancellationObservedAt: "2026-08-06T19:18:47.000Z", cancellationObservedAtMs: 2 },
+  ])("fails closed for unbound grounded cancellation timestamp %#", (timestamp) => {
+    const output = [
+      ...minimumGreetingLogs(),
+      JSON.stringify({
+        meetingId: "meeting-1",
+        message: "Grounded knowledge answer cancelled",
+        reason: "barge-in",
+        status: "cancelled",
+        time: "2026-08-06T19:18:48.000Z",
+        turnId: "turn-1",
+        ...timestamp,
+      }),
+    ].join("\n");
+    expect(parseConversationLifecycleEvidenceLogs(output, "meeting-1").groundedAnswers)
+      .toEqual([]);
+  });
 });
+
+function minimumGreetingLogs(): string[] {
+  return Array.from({ length: 4 }, (_, index) => JSON.stringify({
+    greetingLocale: "ru", meetingId: "meeting-1",
+    message: "Participant greeting playback settled",
+    participantId: `participant-${String(index + 1)}`, participantNameStatus: "unknown",
+    time: "2026-08-06T19:18:37.000Z",
+    turnId: `participant-greeting:participant-${String(index + 1)}`,
+  }));
+}
 
 function stage(meetingId: string, stageName: string, durationMilliseconds: number): string {
   return JSON.stringify({

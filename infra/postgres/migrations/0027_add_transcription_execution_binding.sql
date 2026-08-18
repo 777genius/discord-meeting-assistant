@@ -1,3 +1,4 @@
+-- Migration 0027 adds the immutable transcription execution binding.
 ALTER TABLE meeting_core.post_call_outbox
   ADD COLUMN IF NOT EXISTS transcription_execution_binding text;
 

@@ -42,11 +42,12 @@ interface DiscordSummaryProjector {
 }
 
 type PublicationResult = SummaryPublicationResult<
-  Pick<PublicationReceiptSnapshot, "externalPublicationId">
+  Pick<PublicationReceiptSnapshot, "externalPublicationId" | "publisherIdentity">
 >;
 
 export interface DiscordSummaryPublicationAdapterOptions {
   readonly finalPublicationMode?: DiscordFinalPublicationMode;
+  readonly publisherIdentity?: string;
   readonly recordingPlaybackUrl?: (meetingId: string) => string;
 }
 
@@ -127,7 +128,10 @@ export class DiscordSummaryPublicationAdapter implements SummaryPublicationPort 
       }
       return {
         ok: true,
-        value: { externalPublicationId: encodeDiscordExternalPublicationId(reference) },
+        value: {
+          externalPublicationId: encodeDiscordExternalPublicationId(reference),
+          publisherIdentity: this.options.publisherIdentity ?? "",
+        },
       };
     } catch (error: unknown) {
       return { ok: false, failure: toDiscordPublicationFailure(error) };

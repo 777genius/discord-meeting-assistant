@@ -78,6 +78,7 @@ export type {
   VoicePlaybackOpenOptions,
   VoicePlaybackPort,
   VoicePlaybackRequest,
+  VoicePlaybackCancellationRequest,
   VoicePlaybackSession,
 } from "./application/ports/conversation.js";
 export {

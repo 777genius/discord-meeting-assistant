@@ -3,7 +3,12 @@ import {
   flushLoggers,
   PrometheusMetrics,
 } from "@discord-meeting/observability-adapter";
-import { PostgresSchemaReadiness } from "@discord-meeting/postgres-adapter";
+import { RequestHistoricalMeetingDeletion } from
+  "@discord-meeting/meeting-core/meeting-knowledge";
+import {
+  PostgresHistoricalMemoryStore,
+  PostgresSchemaReadiness,
+} from "@discord-meeting/postgres-adapter";
 
 import { PlatformRecordingIngress } from "../application/platform-ingress.js";
 import type { PostCallOutboxDispatcher } from "../application/post-call-outbox-dispatcher.js";
@@ -124,9 +129,7 @@ export async function startMeetingPlatform(
         metrics: () => metrics.render(),
         readiness: async () => ({ ready: (await health.snapshot()).ready }),
       },
-      ...(historicalMemory === undefined
-        ? {}
-        : { historicalDeletion: historicalMemory }),
+      historicalDeletion: createPlatformHistoricalDeletion(core.pool),
       ingress,
       installUrls: discordLive.installUrls,
       logger,
@@ -151,7 +154,7 @@ export async function startMeetingPlatform(
       server: http.server,
       worker: postCall.worker,
     });
-    meetingKnowledge?.start();
+    meetingKnowledge.start();
     liveFinalizedMemory?.start();
     cleanup.release();
     return createRunningPlatformRuntime({
@@ -168,7 +171,7 @@ export async function startMeetingPlatform(
       ...(liveFinalizedMemory === undefined ? {} : { liveFinalizedMemory }),
       logger,
       ...(discordLive.live === undefined ? {} : { live: discordLive.live }),
-      ...(meetingKnowledge === undefined ? {} : { meetingKnowledge }),
+      meetingKnowledge,
       outboxDispatcher: postCall.outboxDispatcher,
       pool: core.pool,
       queue: postCall.queue,
@@ -245,15 +248,24 @@ async function createPlatformKnowledgeComposition(input: {
     pool: core.pool,
     runtimeTransport: core.runtimeTransport,
   });
-  if (meetingKnowledge !== undefined) {
-    cleanup.defer("Meeting Knowledge local final reply", () => meetingKnowledge.close());
-  }
+  cleanup.defer("Meeting Knowledge local final reply", () => meetingKnowledge.close());
   return {
     discordLive,
     historicalMemory,
     liveFinalizedMemory,
     meetingKnowledge,
     recordingPlayback,
+  };
+}
+
+export function createPlatformHistoricalDeletion(
+  pool: ConstructorParameters<typeof PostgresHistoricalMemoryStore>[0],
+): { readonly requestMeetingDeletion: (meetingId: string) => Promise<void> } {
+  const deletion = new RequestHistoricalMeetingDeletion(
+    new PostgresHistoricalMemoryStore(pool),
+  );
+  return {
+    requestMeetingDeletion: (meetingId) => deletion.execute(meetingId),
   };
 }
 

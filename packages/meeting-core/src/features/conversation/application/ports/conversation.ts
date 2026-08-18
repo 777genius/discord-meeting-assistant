@@ -44,8 +44,27 @@ export interface ConversationAudioChunk {
   readonly turnId: string;
 }
 
+export interface ConversationTtsAttestation {
+  readonly attemptId: string;
+  readonly deployment: string;
+  readonly keyId: string;
+  readonly model: string;
+  readonly provider: string;
+  readonly schemaVersion: 1;
+  readonly signature: string;
+  readonly sourceRevision: string;
+  readonly turnId: string;
+  readonly voice: string;
+  readonly voiceProfileId: string;
+}
+
 export type ConversationRuntimeEvent =
   | { readonly attemptId: string; readonly type: "accepted" }
+  | {
+      readonly attemptId: string;
+      readonly attestation: ConversationTtsAttestation;
+      readonly type: "tts-attestation";
+    }
   | { readonly attemptId: string; readonly text: string; readonly type: "text-delta" }
   | {
       readonly attemptId: string;
@@ -145,6 +164,7 @@ export type GroundedKnowledgeAnswerObservation =
       readonly turnId: string;
     }
   | {
+      readonly cancellationObservedAtMs: number;
       readonly meetingId: string;
       readonly reason: ConversationCancellationReason;
       readonly status: "cancelled";
@@ -193,7 +213,9 @@ export type ConversationPlaybackSettlement =
 export type ConversationPlaybackObservation =
   | {
       readonly preparedAssetSha256?: string;
+      readonly thinkingCuePcmSha256?: string;
       readonly speechProvenance?: "literal_tts" | "model_tts";
+      readonly ttsAttestation?: ConversationTtsAttestation;
       readonly meetingId: string;
       readonly playbackAttemptId: string;
       readonly playbackKind: ConversationPlaybackKind;
@@ -203,7 +225,9 @@ export type ConversationPlaybackObservation =
     }
   | {
       readonly preparedAssetSha256?: string;
+      readonly thinkingCuePcmSha256?: string;
       readonly speechProvenance?: "literal_tts" | "model_tts";
+      readonly ttsAttestation?: ConversationTtsAttestation;
       readonly finishedAtMs: number;
       readonly meetingId: string;
       readonly playbackAttemptId: string;
@@ -213,7 +237,9 @@ export type ConversationPlaybackObservation =
     }
   | {
       readonly preparedAssetSha256?: string;
+      readonly thinkingCuePcmSha256?: string;
       readonly speechProvenance?: "literal_tts" | "model_tts";
+      readonly ttsAttestation?: ConversationTtsAttestation;
       readonly meetingId: string;
       readonly playbackAttemptId: string;
       readonly playbackKind: ConversationPlaybackKind;
@@ -240,10 +266,12 @@ interface ConversationPlaybackReadinessRequestBase {
 export type ConversationPlaybackReadinessRequest =
   | ConversationPlaybackReadinessRequestBase & {
       readonly expectedPcmBytes: number;
+      readonly expectedPcmSha256: string;
       readonly playbackKind: "thinking-cue";
     }
   | ConversationPlaybackReadinessRequestBase & {
       readonly expectedPcmBytes?: never;
+      readonly expectedPcmSha256?: never;
       readonly playbackKind: Exclude<ConversationPlaybackKind, "thinking-cue">;
     };
 
@@ -270,8 +298,14 @@ export interface VoicePlaybackSession {
   finish(): Promise<ConversationPortResult<"finished" | "reused">>;
 
   cancel(
-    reason: ConversationCancellationReason,
+    request: VoicePlaybackCancellationRequest,
   ): Promise<ConversationPortResult<"cancelled" | "reused">>;
+}
+
+/** One deterministic application observation shared with every cancellation sink. */
+export interface VoicePlaybackCancellationRequest {
+  readonly cancellationObservedAtMs: number;
+  readonly reason: ConversationCancellationReason;
 }
 
 export type VoicePlaybackEvent =
@@ -304,6 +338,7 @@ export interface ConversationThinkingCue {
   readonly cueId: string;
   readonly playbackAttemptId: string;
   readonly pcmChunks: readonly Uint8Array[];
+  readonly pcmSha256: string;
 }
 
 export type ConversationThinkingCueStage = "acknowledgement" | "deliberation";

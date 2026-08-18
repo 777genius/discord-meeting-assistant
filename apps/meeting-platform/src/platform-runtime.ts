@@ -1,5 +1,6 @@
 /** Compatibility entry point for the Meeting Platform composition root. */
 export {
+  createPlatformHistoricalDeletion,
   startMeetingPlatform,
 } from "./composition/platform-runtime.js";
 export {

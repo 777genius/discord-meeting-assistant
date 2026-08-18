@@ -23,8 +23,6 @@ services:
 
   postgres-migrations:
     build:
-      args:
-        SOURCE_REVISION: ${MEETING_PLATFORM_SOURCE_REVISION:?set immutable source revision}
       context: ../..
       dockerfile: apps/meeting-platform/Dockerfile
     image: discord-meeting/meeting-platform:${MEETING_PLATFORM_SOURCE_REVISION:?set immutable source revision}
@@ -169,6 +167,7 @@ services:
       PIPECAT_RUNTIME_BEARER_TOKEN_FILE: /run/platform-secrets/conversation-runtime-token
       PIPECAT_RUNTIME_BIND_HOST: 0.0.0.0
       PIPECAT_RUNTIME_BIND_PORT: "50053"
+      PIPECAT_RUNTIME_DEPLOYMENT: pipecat-runtime
       PIPECAT_RUNTIME_ELEVENLABS_API_KEY_FILE: /run/pipecat-secrets/elevenlabs-api-key
       PIPECAT_RUNTIME_ELEVENLABS_MODEL: ${PIPECAT_RUNTIME_ELEVENLABS_MODEL:-eleven_flash_v2_5}
       PIPECAT_RUNTIME_ELEVENLABS_VOICE_ID: ${PIPECAT_RUNTIME_ELEVENLABS_VOICE_ID:-jqcCZkN6Knx8BJ5TBdYR}
@@ -179,6 +178,7 @@ services:
       PIPECAT_RUNTIME_PIPER_VOICE_ID: ${PIPECAT_RUNTIME_PIPER_VOICE_ID:-ru_RU-irina-medium}
       PIPECAT_RUNTIME_PROFILE: ${PIPECAT_RUNTIME_PROFILE:-elevenlabs-multilingual}
       PIPECAT_RUNTIME_PROFILE_ID: ${CONVERSATION_VOICE_PROFILE_ID:-elevenlabs-multilingual}
+      PIPECAT_RUNTIME_SOURCE_REVISION: ${MEETING_PLATFORM_SOURCE_REVISION:?set immutable source revision}
       PIPECAT_RUNTIME_SUBSCRIPTION_RUNTIME_ADDRESS: subscription-runtime-sidecar:50052
       PIPECAT_RUNTIME_SUBSCRIPTION_RUNTIME_SERVICE_TOKEN_FILE: /run/platform-secrets/runtime-service-token
       PIPECAT_RUNTIME_SUBSCRIPTION_RUNTIME_TIMEOUT_MS: ${PIPECAT_RUNTIME_SUBSCRIPTION_RUNTIME_TIMEOUT_MS:-30000}
@@ -210,8 +210,6 @@ services:
 
   meeting-platform:
     build:
-      args:
-        SOURCE_REVISION: ${MEETING_PLATFORM_SOURCE_REVISION:?set immutable source revision}
       context: ../..
       dockerfile: apps/meeting-platform/Dockerfile
     image: discord-meeting/meeting-platform:${MEETING_PLATFORM_SOURCE_REVISION:?set immutable source revision}
@@ -249,9 +247,19 @@ services:
       DISCORD_RESULTS_CHANNEL_ID: ${DISCORD_RESULTS_CHANNEL_ID:-}
       DISCORD_TOKEN_FILE: /run/secrets/discord-sut-token
       E2E_TEST_ONLY_LABEL: ${E2E_TEST_ONLY_LABEL:-false}
+      INFINITY_CONTEXT_ACTIVATION: ${INFINITY_CONTEXT_ACTIVATION:?set reviewed Infinity Context activation JSON}
+      INFINITY_CONTEXT_OPERATION_TIMEOUT_MS: ${INFINITY_CONTEXT_OPERATION_TIMEOUT_MS:-300000}
+      INFINITY_CONTEXT_REQUEST_TIMEOUT_MS: ${INFINITY_CONTEXT_REQUEST_TIMEOUT_MS:-10000}
+      INFINITY_CONTEXT_TOKEN_FILE: /run/secrets/infinity-context-token
+      INFINITY_CONTEXT_TOPOLOGY_KEY_FILE: /run/secrets/infinity-context-topology-key
+      INFINITY_CONTEXT_URL: ${INFINITY_CONTEXT_URL:?set reachable Infinity Context service URL}
       LIVE_INGRESS_OWNER_MODE: singleton
+      MEETING_KNOWLEDGE_GROUNDED_VOICE_ENABLED: ${MEETING_KNOWLEDGE_GROUNDED_VOICE_ENABLED:-false}
+      MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_EPOCH: ${MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_EPOCH:-}
+      MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_STATE_FILE: /run/secrets/grounded-voice-rollout.json
       MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED: ${MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED:-false}
       MEETING_KNOWLEDGE_PRINCIPAL_KEY_FILE: /run/secrets/meeting-knowledge-principal-key
+      MEETING_KNOWLEDGE_TWO_HOUR_QUALIFICATION_FILE: ${MEETING_KNOWLEDGE_TWO_HOUR_QUALIFICATION_FILE:-}
       NODE_ENV: production
       PARTICIPANT_GREETING_DEFAULT_LOCALE: ${PARTICIPANT_GREETING_DEFAULT_LOCALE:-ru}
       PARTICIPANT_GREETING_PROFILES_JSON: ${PARTICIPANT_GREETING_PROFILES_JSON:-}
@@ -286,6 +294,7 @@ services:
     volumes:
       - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/data/spool:/var/lib/discord-meeting/spool
       - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/secrets/platform:/run/secrets:ro
+      - ${MEETING_KNOWLEDGE_TWO_HOUR_QUALIFICATION_HOST_PATH:-/dev/null}:/run/qualifications/two-hour.json:ro
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=0700,uid=10001,gid=10001
     cap_drop: [ALL]

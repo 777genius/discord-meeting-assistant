@@ -15,6 +15,7 @@ import { SshRemoteContainerProcessAdapter } from "./ssh-remote-container-process
 import { FileSecretReader } from "./keychain.js";
 import { GENERATED_HOSTED_CAMPAIGN_COMPILED_RELEASE } from
   "./hosted-campaign-compiled-release.generated.js";
+import { hostedCraigNetworkPolicyV1Schema } from "./hosted-deployment-safety-receipt.js";
 
 const sha256 = z.string().regex(/^[a-f\d]{64}$/u);
 const sourceRevision = z.string().regex(/^(?:[a-f\d]{40}|[a-f\d]{64})$/u);
@@ -79,12 +80,13 @@ export const hostedCampaignReleaseTrustRootV1Schema = z.object({
     expectedSegments: z.array(transcriptSegment).min(1).max(1_024),
   }).strict(),
   clockMaximumSkewMs: z.number().int().nonnegative().max(60_000),
+  craigNetworkPolicy: hostedCraigNetworkPolicyV1Schema,
   deployRoot: absolutePath,
   discordReceiptTtlMs: z.number().int().positive().max(60_000),
   environmentFile: absolutePath,
   host: z.literal(HOSTED_CAMPAIGN_TARGET.host),
   remoteComposeFile: absolutePath,
-  schemaVersion: z.literal(2),
+  schemaVersion: z.literal(3),
   secretDirectory: absolutePath,
   services: z.array(service.omit({ containerId: true })).length(4),
   sourceRoot: absolutePath,
@@ -117,8 +119,8 @@ export function digestHostedCampaignReleaseTrustRootV1(value: HostedCampaignRele
 export function resolveCompiledHostedCampaignReleaseTrustRoot(
   generated: unknown,
 ): HostedCampaignReleaseTrustRootV1 | undefined {
-  if (!isRecord(generated) || generated.schemaVersion !== 1 ||
-    generated.generatorVersion !== 1) {
+  if (!isRecord(generated) || generated.schemaVersion !== 2 ||
+    generated.generatorVersion !== 2) {
     throw new Error("Compiled hosted campaign release metadata is malformed");
   }
   if (generated.status === "unadmitted") {
@@ -214,6 +216,7 @@ export function createHostedCampaignReleaseConfig(
     campaignRoot: trust.campaignRoot,
     campaignRootOwnerGid: trust.campaignRootOwnerGid,
     campaignRootOwnerUid: trust.campaignRootOwnerUid,
+    craigNetworkPolicy: trust.craigNetworkPolicy,
     deployRoot: trust.deployRoot,
     greeting: {
       campaignSiblingPath: `${definition.campaignRoot}-sibling`,

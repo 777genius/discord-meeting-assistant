@@ -29,7 +29,7 @@ interface ConversationResources {
 }
 
 export async function createLiveConversationResources(input: {
-  readonly config: PlatformConfig;
+  readonly config: Pick<PlatformConfig, "conversation">;
   readonly groundedAnswers?: GroundedKnowledgeAnswerPort;
   readonly logger: Logger;
   readonly playback: CraigPlaybackGateway;
@@ -55,7 +55,10 @@ export async function createLiveConversationResources(input: {
             input.config.conversation.playbackReadiness,
           ),
         }),
-    playbackObserver: createConversationPlaybackLogger(input.logger),
+    playbackObserver: createConversationPlaybackLogger(
+      input.logger,
+      performance.timeOrigin,
+    ),
     runtime: input.runtime,
   });
   const conversation = input.config.conversation;

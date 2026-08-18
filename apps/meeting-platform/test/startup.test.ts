@@ -203,4 +203,53 @@ describe("startPlatformServices", () => {
     expect(calls).not.toContain("outbox:dispatch");
     expect(calls).not.toContain("http:start");
   });
+
+  it("starts HTTP without waiting for the derived historical backlog", async () => {
+    const calls: string[] = [];
+    const input = {
+      ...createInput(calls),
+      historicalMemory: {
+        assertReady: async () => {
+          calls.push("historical:ready");
+        },
+        start: () => {
+          calls.push("historical:start");
+          return new Promise<void>(() => {});
+        },
+      },
+    };
+
+    await startPlatformServices(input);
+
+    expect(calls).toContain("historical:ready");
+    expect(calls).toContain("historical:start");
+    expect(calls.indexOf("http:start")).toBeLessThan(
+      calls.indexOf("historical:start"),
+    );
+  });
+
+  it("observes a detached historical-memory startup rejection", async () => {
+    const calls: string[] = [];
+    const error = vi.fn();
+    const input = {
+      ...createInput(calls),
+      historicalMemory: {
+        assertReady: async () => {},
+        start: async () => {
+          throw new Error("historical runtime failed");
+        },
+      },
+      logger: {
+        error,
+        info: vi.fn(),
+      },
+    };
+
+    await startPlatformServices(input);
+    await vi.waitFor(() => {
+      expect(error).toHaveBeenCalledWith("Historical memory runtime failed", {
+        errorType: "Error",
+      });
+    });
+  });
 });

@@ -1,37 +1,37 @@
-import { z } from "zod"; import {
-  conversationLifecycleEvidenceSchema,
-  conversationVoiceEvidenceV3Schema,
-  reconnectNoRepeatEvidenceSchema,
-  supplementalPlaybackEvidenceV1Schema,
-} from "./conversation-retained-evidence-schema.js";
+import { z } from "zod"; import { conversationLifecycleEvidenceSchema,
+  conversationVoiceEvidenceV3Schema, reconnectNoRepeatEvidenceSchema,
+  supplementalPlaybackEvidenceV1Schema } from "./conversation-retained-evidence-schema.js";
+import {
+  currentDeploymentProvenanceSchema, historicalDeploymentProvenanceSchema,
+  runtimeDeploymentProvenanceSchema,
+} from "./e2e-deployment-provenance-schema.js";
+export {
+  currentDeploymentProvenanceSchema, deploymentRevisionExpectationSchema,
+} from "./e2e-deployment-provenance-schema.js";
 import { conversationVoiceCampaignProofV1Schema } from "./conversation-voice-campaign-proof.js"; import { e2eServiceLevelsV1Schema, serviceLevelSourcesV1Schema, serviceLevelSourcesV2Schema } from "./e2e-service-levels.js";
-import { hostedCampaignReleaseReferenceV1Schema } from
-  "./hosted-campaign-release-reference.js";
+import { hostedCampaignReleaseReferenceV1Schema } from "./hosted-campaign-release-reference.js";
 import { hostedVoiceQualificationPolicyV1Schema } from "./hosted-voice-qualification-policy.js";
 import { providerlessVoiceDurabilityQualificationV1Schema } from "./providerless-voice-durability-qualification.js";
 import { recordingPlaybackEvidenceV1Schema } from "./recording-playback-evidence-schema.js";
 import { scenarioKindSchema } from "./e2e-fixture-manifest-schema.js";
 const identifierSchema = z.string().trim().min(1); const sha256Schema = z.string().regex(/^[a-f\d]{64}$/u);
+const identifierCountSchema = z.number().int().nonnegative();
 const nonNegativeMillisecondsSchema = z.number().int().nonnegative();
-
 const actorEventSchema = z.object({
   actorName: identifierSchema,
   atRecordingMs: nonNegativeMillisecondsSchema,
   fixtureId: identifierSchema.optional(),
   type: z.enum(["disconnected", "playback-end", "playback-start", "ready"]),
 });
-
 const actorWallClockEventSchema = actorEventSchema.omit({ atRecordingMs: true }).extend({
   atEpochMs: z.number().int().positive(),
 });
-
 const actorFixtureProofSchema = z.object({
   audioSha256: sha256Schema,
   durationMs: z.number().int().positive(),
   fixtureId: identifierSchema,
   sourceSha256: sha256Schema,
 });
-
 export const unboundActorRunEvidenceV1Schema = z.object({
   events: z.array(actorWallClockEventSchema).min(1),
   fixtureSetId: identifierSchema,
@@ -42,7 +42,6 @@ export const unboundActorRunEvidenceV1Schema = z.object({
   schemaVersion: z.literal(1),
   timelineOrigin: z.literal("unix-epoch"),
 });
-
 export const actorRunEvidenceV1Schema = z.object({
   events: z.array(actorEventSchema).min(1),
   fixtureSetId: identifierSchema,
@@ -53,44 +52,6 @@ export const actorRunEvidenceV1Schema = z.object({
   schemaVersion: z.literal(1),
   timelineOrigin: z.literal("actor-run-start-correlated-to-recording-id"),
 });
-
-const identifierCountSchema = z.number().int().nonnegative();
-const dockerContainerIdSchema = z.string().regex(/^[a-f\d]{64}$/u);
-const dockerImageIdSchema = z.string().regex(/^sha256:[a-f\d]{64}$/u);
-const repositoryDigestSchema = z.string().regex(/^[^\s@]+@sha256:[a-f\d]{64}$/u);
-const sourceRevisionSchema = z.string().regex(/^(?:[a-f\d]{40}|[a-f\d]{64})$/u);
-
-export const deploymentRevisionExpectationSchema = z.object({
-  craig: sourceRevisionSchema,
-  meetingPlatform: sourceRevisionSchema,
-  pipecat: sourceRevisionSchema.optional(),
-  subscriptionRuntime: sourceRevisionSchema.optional(),
-}).strict();
-
-const deployedServiceProvenanceSchema = z.object({
-  composeConfigHash: sha256Schema,
-  composeProject: identifierSchema,
-  composeService: identifierSchema,
-  containerId: dockerContainerIdSchema,
-  containerStartedAt: z.iso.datetime(),
-  imageId: dockerImageIdSchema,
-  repositoryDigest: repositoryDigestSchema.nullable(),
-  sourceRevision: sourceRevisionSchema,
-});
-
-const historicalDeploymentProvenanceSchema = z.object({
-  craig: deployedServiceProvenanceSchema,
-  meetingPlatform: deployedServiceProvenanceSchema,
-});
-
-const runtimeDeploymentProvenanceSchema = historicalDeploymentProvenanceSchema.extend({
-  subscriptionRuntime: deployedServiceProvenanceSchema,
-});
-
-export const currentDeploymentProvenanceSchema = runtimeDeploymentProvenanceSchema.extend({
-  pipecat: deployedServiceProvenanceSchema.optional(),
-});
-
 export const retainedE2eEvidenceV2Schema = z.object({
   actorRun: actorRunEvidenceV1Schema,
   deployment: historicalDeploymentProvenanceSchema,
@@ -203,7 +164,6 @@ export const retainedE2eEvidenceV2Schema = z.object({
     })).min(1),
   }),
 });
-
 const publicationContainerV3Schema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("channel-message"),
@@ -215,7 +175,6 @@ const publicationContainerV3Schema = z.discriminatedUnion("kind", [
     threadId: identifierSchema,
   }),
 ]);
-
 const publicationEvidenceV3Schema = z.object({
   container: publicationContainerV3Schema,
   embedDescription: z.string().min(1).max(4_000).refine((value) => value.trim().length > 0),
@@ -223,12 +182,10 @@ const publicationEvidenceV3Schema = z.object({
   matchingThreadCount: identifierCountSchema,
   messageId: identifierSchema,
 });
-
 const discordAttachmentEvidenceSchema = z.object({
   filename: identifierSchema,
   sizeBytes: z.number().int().positive(),
 }).strict();
-
 const layeredDiscordAttachmentsSchema = z.array(discordAttachmentEvidenceSchema).length(2)
   .refine(
     (attachments) => new Set(attachments.map(({ filename }) => filename)).size === attachments.length,
@@ -240,7 +197,6 @@ const layeredDiscordAttachmentsSchema = z.array(discordAttachmentEvidenceSchema)
       attachments.some(({ filename }) => filename === "meeting-transcript.md"),
     "Layered Discord evidence requires meeting-summary.md and meeting-transcript.md",
   );
-
 const replayEvidenceV3Schema = z.object({
   container: publicationContainerV3Schema,
   matchingMeetingCount: identifierCountSchema,
@@ -261,7 +217,6 @@ const replayEvidenceV3Schema = z.object({
     state: z.literal("completed"),
   }),
 });
-
 /**
  * v3 records the physical Discord container faithfully. v2 always modelled a
  * thread, so it remains a supported read format for retained historical proof.
@@ -273,14 +228,12 @@ export const retainedE2eEvidenceV3Schema = retainedE2eEvidenceV2Schema
     replay: replayEvidenceV3Schema,
     schemaVersion: z.literal(3),
   });
-
 const processingStageObservationSchema = z.object({
   durationMs: nonNegativeMillisecondsSchema,
   observedAt: z.iso.datetime(),
   outcome: z.literal("succeeded"),
   stage: z.enum(["publication", "summary", "transcription"]),
 }).strict();
-
 const summaryRuntimeExecutionObservationSchema = z.object({
   durationMs: nonNegativeMillisecondsSchema,
   model: identifierSchema,
@@ -292,12 +245,10 @@ const summaryRuntimeExecutionObservationSchema = z.object({
   runId: identifierSchema,
   status: z.literal("completed"),
 }).strict();
-
 export const processingEvidenceSchema = z.object({
   stages: z.array(processingStageObservationSchema).min(3),
   summaryRuntimeExecutions: z.array(summaryRuntimeExecutionObservationSchema).min(1).max(2),
 }).strict();
-
 /**
  * v4 binds the summary-producing Subscription Runtime container and retains
  * non-secret stage/runtime latency observations from the correlated deployment.
@@ -309,7 +260,6 @@ export const retainedE2eEvidenceV4Schema = retainedE2eEvidenceV3Schema
     processing: processingEvidenceSchema,
     schemaVersion: z.literal(4),
   });
-
 export const retainedE2eEvidenceV5Schema = retainedE2eEvidenceV4Schema
   .omit({ deployment: true, schemaVersion: true })
   .extend({
@@ -407,11 +357,26 @@ export const retainedE2eEvidenceV10Schema = z.union([
       observation.participantId !== answerEvent.participantId ||
       observation.citationTurnIds.some((turnId) => !transcriptTurnIds.has(turnId)) ||
       receipts.length !== 3 || receipts.some((receipt) =>
-        receipt.playbackKind !== "answer" || receipt.speechProvenance !== "literal_tts")) {
-      context.addIssue({
-        code: "custom",
-        message: "V10 voice evidence requires one cited grounded literal-speech answer with complete playback provenance",
-      });
+        receipt.playbackKind !== "answer" ||
+        receipt.speechProvenance !== observation.playbackProvenance ||
+        receipt.ttsAttestation === undefined)) {
+      context.addIssue({ code: "custom", message: "V10 voice evidence requires one cited grounded answer with complete TTS attestation" });
+    }
+    const preparedWithoutAsset = value.conversation.lifecycle.playbackReceipts.some(
+      (receipt) => receipt.playbackKind === "prepared-cue" &&
+        receipt.preparedAssetSha256 === undefined,
+    );
+    const ttsAttestations = receipts.map((receipt) => JSON.stringify(receipt.ttsAttestation));
+    const pipecatDeployment = value.deployment.pipecat?.composeService;
+    const pipecatSourceRevision = value.deployment.pipecat?.sourceRevision;
+    if (preparedWithoutAsset || pipecatDeployment === undefined ||
+      pipecatSourceRevision === undefined || receipts.some((receipt) =>
+        receipt.ttsAttestation?.deployment !== pipecatDeployment ||
+        receipt.ttsAttestation.sourceRevision !== pipecatSourceRevision ||
+        receipt.ttsAttestation.attemptId !== receipt.playbackAttemptId ||
+        receipt.ttsAttestation.turnId !== receipt.turnId) ||
+      new Set(ttsAttestations).size !== 1) {
+      context.addIssue({ code: "custom", message: "V10 voice playback provenance must be versioned and fail closed" });
     }
   }
 });
@@ -419,8 +384,7 @@ export const retainedE2eEvidenceSchema = z.union([retainedE2eEvidenceV2Schema,
   retainedE2eEvidenceV3Schema, retainedE2eEvidenceV4Schema, retainedE2eEvidenceV5Schema,
   retainedE2eEvidenceV6Schema, retainedE2eEvidenceV7Schema, retainedE2eEvidenceV8Schema,
   retainedE2eEvidenceV9Schema, retainedE2eEvidenceV10Schema]);
-export { collectedConversationLifecycleEvidenceSchema, conversationVoiceEvidenceV3Schema } from
-  "./conversation-retained-evidence-schema.js";
+export { collectedConversationLifecycleEvidenceSchema, conversationVoiceEvidenceV3Schema } from "./conversation-retained-evidence-schema.js";
 export { fixtureManifestV1Schema } from "./e2e-fixture-manifest-schema.js";
 export type { CollectedConversationLifecycleEvidence } from "./conversation-retained-evidence-schema.js";
 export type * from "./e2e-evidence-types.js";

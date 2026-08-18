@@ -43,10 +43,14 @@ export function exactCanaryKeyterms(value: string): readonly string[] {
   } catch (error) {
     throw new Error("Voicetext semantic canary keyterms are invalid", { cause: error });
   }
-  if (!Array.isArray(parsed) || !areExactCanaryKeyterms(parsed)) {
+  if (!Array.isArray(parsed)) {
     throw new Error("Voicetext semantic canary keyterms are invalid");
   }
-  return Object.freeze([...parsed]);
+  const candidates: readonly unknown[] = parsed;
+  if (!areExactCanaryKeyterms(candidates)) {
+    throw new Error("Voicetext semantic canary keyterms are invalid");
+  }
+  return Object.freeze([...candidates]);
 }
 
 export function areExactCanaryKeyterms(value: readonly unknown[]): value is readonly string[] {

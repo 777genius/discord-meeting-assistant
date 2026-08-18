@@ -1,13 +1,13 @@
 import type { ConversationCancellationReason as DomainConversationCancellationReason } from "../domain/conversation.js";
 import type {
   ConversationAudioChunk,
-  ConversationCancellationReason,
   ConversationPlaybackKind,
   ConversationPlaybackObservation,
   ConversationPlaybackObserverPort,
   ConversationPlaybackReadinessPort,
   VoicePlaybackEvent,
   VoicePlaybackPort,
+  VoicePlaybackCancellationRequest,
   VoicePlaybackSession,
 } from "./ports/conversation.js";
 import type {
@@ -133,7 +133,10 @@ export class ConversationAnswerPlayback {
         this.consume(state, run, opened.value, fence, playbackKind),
       );
       if (shouldDiscardOpenedConversationPlayback(state, run)) {
-        this.cancel(run, opened.value, "superseded");
+        this.cancel(run, opened.value, {
+          cancellationObservedAtMs: state.lastObservedAtMs,
+          reason: "superseded",
+        });
       }
     });
   }
@@ -141,9 +144,9 @@ export class ConversationAnswerPlayback {
   public cancel(
     run: ActiveConversationRun,
     playback: VoicePlaybackSession,
-    reason: ConversationCancellationReason,
+    request: VoicePlaybackCancellationRequest,
   ): void {
-    void playback.cancel(reason).then(
+    void playback.cancel(request).then(
       (result) => this.recordCancellationResult(run, playback, result.ok),
       () => this.recordCancellationResult(run, playback, false),
     );

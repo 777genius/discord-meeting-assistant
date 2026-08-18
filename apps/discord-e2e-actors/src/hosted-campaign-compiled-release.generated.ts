@@ -4,7 +4,7 @@
  * fail closed until a reviewed release build replaces this exact source.
  */
 export const GENERATED_HOSTED_CAMPAIGN_COMPILED_RELEASE = Object.freeze({
-  generatorVersion: 1,
-  schemaVersion: 1,
+  generatorVersion: 2,
+  schemaVersion: 2,
   status: "unadmitted",
 } as const);

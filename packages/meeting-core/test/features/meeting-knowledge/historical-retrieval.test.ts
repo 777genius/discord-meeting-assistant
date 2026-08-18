@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
   HistoricalFocusedRetrieval,
   SameRoomFocusedMemoryRetrieval,
   admitAcceptedFinalMeeting,
@@ -49,6 +50,7 @@ const retrievalPolicy: FocusedRetrievalPolicyV1 = {
 };
 
 function makeMeeting(input: {
+  readonly authoritativeDurationMs?: number;
   readonly meetingId: string;
   readonly roomId?: string;
   readonly transcriptId?: string;
@@ -65,6 +67,7 @@ function makeMeeting(input: {
   });
   const meeting = admitAcceptedFinalMeeting({
     actors: [{ actorId: "speaker", kind: "human" }],
+    authoritativeDurationMs: input.authoritativeDurationMs ?? 60_000,
     binding,
     identityProvenance: {
       actorObservationState: "consistent",
@@ -167,6 +170,7 @@ function retrieval(input: {
   readonly memory: HistoricalMemoryPort;
   readonly policy?: FocusedRetrievalPolicyV1;
   readonly store: AppliedStore;
+  readonly twoHourEnabled?: boolean;
 }) {
   return new HistoricalFocusedRetrieval({
     authority: authority(input.meetings),
@@ -181,7 +185,15 @@ function retrieval(input: {
     ids: new TestIds(),
     memory: input.memory,
     store: input.store,
-  }, input.policy ?? retrievalPolicy);
+  }, input.policy ?? retrievalPolicy, {
+    ...DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
+    qualification: input.twoHourEnabled === true ? {
+      evidenceSha256: "e".repeat(64),
+      releaseRevision: "f".repeat(40),
+      rolloutEpoch: "test-r1",
+      schemaVersion: 1,
+    } : null,
+  });
 }
 
 describe("focused historical retrieval", () => {
@@ -704,6 +716,7 @@ describe("focused historical retrieval fencing and qualification", () => {
   it("measures recall@5 on a two-hour positional corpus independently of generation", async () => {
     const positions = [0, 12, 30, 60, 90, 108, 119];
     const meeting = makeMeeting({
+      authoritativeDurationMs: 7_200_000,
       meetingId: "two-hour-meeting",
       turns: Array.from({ length: 120 }, (_, index) => ({
         endMs: (index + 1) * 60_000,
@@ -717,10 +730,12 @@ describe("focused historical retrieval fencing and qualification", () => {
     expect(meeting.humanTurns.at(-1)?.endMs).toBe(7_200_000);
     const plan = buildHistoricalIndexPlan(meeting, new TestIds(), blockPolicy);
     const store = new AppliedStore([{ binding: meeting.binding, plan, remoteDocumentIds: {} }]);
+    let remoteSearchCalls = 0;
     const memory: HistoricalMemoryPort = {
       deleteMeeting: vi.fn(),
       indexFinalMeeting: vi.fn(),
       searchRoom: async ({ candidateLimit, query }) => {
+        remoteSearchCalls += 1;
         const marker = query.match(/marker-p\d+/u)?.[0];
         const matches = marker === undefined
           ? []
@@ -736,7 +751,28 @@ describe("focused historical retrieval fencing and qualification", () => {
         };
       },
     };
-    const useCase = retrieval({ meetings: [meeting], memory, store });
+    const blocked = await retrieval({ meetings: [meeting], memory, store }).buildPlan({
+      authorizationPrincipalRef: "principal",
+      currentMeetingId: meeting.binding.meetingId,
+      question: "Where was marker-p0 discussed?",
+      roomId: "room-1",
+      scopeId: "scope-1",
+      searchEnabled: true,
+      servingAuthorized: true,
+      sourceSet: "current",
+    });
+    expect(blocked).toMatchObject({
+      reason: "no_current_authorized_evidence",
+      status: "insufficient_evidence",
+    });
+    expect(remoteSearchCalls).toBe(0);
+
+    const useCase = retrieval({
+      meetings: [meeting],
+      memory,
+      store,
+      twoHourEnabled: true,
+    });
     let recalled = 0;
     for (const position of positions) {
       const result = await useCase.buildPlan({

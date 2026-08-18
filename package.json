@@ -38,6 +38,7 @@
     "python:check": "pnpm run python:sync && cd apps/pipecat-runtime && uv run ruff check . && uv run pyright && uv run lint-imports && uv run python tools/check_no_suppressions.py && uv run pytest",
     "python:sync": "cd apps/pipecat-runtime && uv sync --frozen --all-groups",
     "post-call:e2e": "pnpm --filter @discord-meeting/meeting-platform run test:post-call-recovery-e2e",
+    "provenance:generate": "node tooling/generate-build-provenance.mjs",
     "tooling:check": "pnpm --filter @discord-meeting/architecture-baseline run check",
     "workspace:check": "pnpm --recursive --if-present run check",
     "typecheck": "tsc --project tsconfig.json --noEmit --pretty false"

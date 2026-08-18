@@ -80,6 +80,7 @@ export class LiveMeetingProjectionCoordinator {
         const receiptChanged = meeting.completeProjection(
           result.value.externalPublicationId,
           projectedRevision,
+          result.value.publisherIdentity,
         );
         if (receiptChanged) {
           await this.meetings.save(meeting.toSnapshot(), expectedRevision);
@@ -97,6 +98,7 @@ export class LiveMeetingProjectionCoordinator {
         }
         if (
           latest.projectionExternalId === result.value.externalPublicationId &&
+          latest.projectionPublisherIdentity === result.value.publisherIdentity &&
           latest.projectedRevision >= projectedRevision
         ) {
           return { projected: true };
