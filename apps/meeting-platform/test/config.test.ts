@@ -232,6 +232,13 @@ describe("platform configuration", () => {
 
   it("keeps Local Final Reply disabled unless direct publication and its secret are explicit", async () => {
     const principalKeyPath = "/run/secrets/meeting-knowledge-principal-key";
+    const maintenanceOnly = await loadPlatformConfig({
+      ...environment,
+      MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED: "false",
+      MEETING_KNOWLEDGE_PRINCIPAL_KEY_FILE: undefined,
+    }, async () => "value");
+    expect(maintenanceOnly.meetingKnowledge).toBeUndefined();
+    expect(maintenanceOnly.secrets.meetingKnowledgePrincipalKey).toBeUndefined();
     const config = await loadPlatformConfig({
       ...environment,
       MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED: "true",

@@ -34,6 +34,7 @@ export { PostgresFocusedMemoryRetrieval } from "./postgres-focused-memory-retrie
 export { PostgresConversationOneShotReceiptStore } from "./postgres-conversation-one-shot-receipts.js";
 export { PostgresQuestionAdmissionCommit } from "./postgres-question-admission-commit.js";
 export { PostgresQuestionJobStore } from "./postgres-question-job-store.js";
+export { PostgresFinalReplyMaintenance } from "./postgres-final-reply-maintenance.js";
 export { PostgresGuildConfigurationRepository } from "./postgres-guild-configuration-repository.js";
 export {
   PostgresMigrationError,

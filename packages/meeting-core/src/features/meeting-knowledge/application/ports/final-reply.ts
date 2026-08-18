@@ -300,6 +300,16 @@ export interface QuestionJobStore {
   }): Promise<boolean>;
 }
 
+export interface FinalReplyMaintenancePort {
+  maintain(input: {
+    readonly maximumJobs: number;
+    readonly servingEnabled: boolean;
+  }): Promise<{
+    readonly cancelled: number;
+    readonly expired: number;
+  }>;
+}
+
 /**
  * Minimal release identity required by the provider-neutral generation edge.
  * A Discord question binding is structurally compatible, while live voice can

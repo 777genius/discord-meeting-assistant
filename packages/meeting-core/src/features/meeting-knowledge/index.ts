@@ -209,6 +209,9 @@ export {
   type AdmitCurrentFinalReplyResult,
 } from "./application/admit-current-final-reply.js";
 export {
+  MaintainFinalReplies,
+} from "./application/maintain-final-replies.js";
+export {
   ProcessFinalReplyJob,
   type ProcessFinalReplyResult,
 } from "./application/process-final-reply.js";
@@ -222,6 +225,7 @@ export type {
   ExhaustiveMemoryRetrievalPort,
   ExhaustiveMemoryRetrievalRequest,
   ExhaustiveMemoryRetrievalResult,
+  FinalReplyMaintenancePort,
   FinalReplyEvidencePort,
   FinalReplyRendererPort,
   FocusedMemoryRetrievalPort,
