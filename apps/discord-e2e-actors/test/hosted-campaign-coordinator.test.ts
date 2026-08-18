@@ -399,6 +399,64 @@ describe("hosted campaign coordinator", () => {
     expect(events.at(-1)).toBe("release:campaign-1");
   });
 
+  it("bounds teardown when a losing barrier poll ignores abort", async () => {
+    vi.useFakeTimers();
+    try {
+      const base = input();
+      const action = { kind: "actor-completed" as const, ordinal: 1, runId: "run-1" };
+      const provenance = campaignActions(base)[0]!;
+      const actor = {
+        arguments: { kind: "environment" as const }, childId: "failing-actor", entrypoint: "actor" as const,
+        environment: { DISCORD_E2E_ACTOR_RUN_OUTPUT: "/evidence/actor.json",
+          DISCORD_E2E_HOSTED_RELEASE_GATE_PATH: "/evidence/release.json", DISCORD_E2E_RUN_ID: "run-1",
+          DISCORD_E2E_SCENARIO: "sequential" },
+        completion: { action, kind: "actor" as const, outputPath: "/evidence/actor.json", runId: "run-1",
+          scenario: "sequential" as const },
+        produces: [{ action, ordinal: 1, runId: "run-1", outputPath: "/evidence/actor-completed.json" }],
+        requires: [], startBefore: { kind: "campaign" as const },
+        releaseGate: { action: provenance.action, ordinal: provenance.ordinal, path: "/evidence/release.json",
+          runId: provenance.runId },
+      };
+      const events: string[] = [];
+      const primaryFailure = new Error("actor exploded");
+      let markBarrierStarted: (() => void) | undefined;
+      const barrierStarted = new Promise<void>((resolve) => { markBarrierStarted = resolve; });
+      const fakePorts = ports(events);
+      fakePorts.awaitChildCompletion = async (_handle, spec) => {
+        if (spec.childId === "failing-actor") {
+          await barrierStarted;
+          throw primaryFailure;
+        }
+      };
+      const originalBarrier = fakePorts.awaitBarrier.bind(fakePorts);
+      fakePorts.awaitBarrier = async (barrierAction, bound) => {
+        if (barrierAction.kind === "provenance-before") {
+          markBarrierStarted?.();
+          expect(bound.signal.aborted).toBe(false);
+          return new Promise<never>(() => {});
+        }
+        return originalBarrier(barrierAction, bound);
+      };
+
+      const campaignFailure = runHostedCampaign(
+        { ...base, children: [...base.children, actor] }, fakePorts, bounded(),
+      ).catch((error: unknown) => error);
+      await barrierStarted;
+      await vi.advanceTimersByTimeAsync(249);
+      expect(events.some((event) => event.startsWith("stop:"))).toBe(false);
+      expect(events).not.toContain("release:campaign-1");
+      await vi.advanceTimersByTimeAsync(1);
+      const failure = await campaignFailure;
+      expect(failure).toBeInstanceOf(AggregateError);
+      expect((failure as AggregateError).cause).toBe(primaryFailure);
+      expect(events.filter((event) => event.startsWith("stop:"))).toHaveLength(4);
+      expect(events).not.toContain("release:campaign-1");
+      expect(events.at(-1)?.startsWith("stop:")).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
 });
 
 describe("hosted campaign coordinator lifecycle", () => {

@@ -17,6 +17,25 @@ import type {
 } from "./hosted-campaign-coordinator.js";
 
 const BARRIER_RACE_COMPLETED = "Hosted campaign barrier race completed";
+const BARRIER_TEARDOWN_GRACE_MILLISECONDS = 250;
+
+async function awaitBarrierTeardown(barrier: Promise<unknown>): Promise<boolean> {
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      barrier.then(() => true, () => true),
+      new Promise<boolean>((resolve) => {
+        timeout = setTimeout(() => {
+          resolve(false);
+        }, BARRIER_TEARDOWN_GRACE_MILLISECONDS);
+      }),
+    ]);
+  } finally {
+    if (timeout !== null) {
+      clearTimeout(timeout);
+    }
+  }
+}
 
 function startPointIdentity(startPoint: HostedCampaignStartPoint): string {
   return startPoint.kind === "campaign" ? "campaign" : `barrier:${actionReferenceIdentity(startPoint)}`;
@@ -82,6 +101,7 @@ interface CampaignExecutionState {
   readonly handles: HostedCampaignChildHandle[];
   readonly retainedEvidence: Map<string, unknown>;
   readonly startedChildIds: Set<string>;
+  barrierTeardownIncomplete: boolean;
   firstChildAuthorization?: (() => void) | undefined;
 }
 
@@ -89,7 +109,7 @@ async function awaitBarrierOrCompletionFailure<Action extends HostedCampaignBarr
   action: Action,
   ports: HostedCampaignPorts,
   bounded: HostedCampaignBoundedSignal,
-  completionFailures: readonly Promise<never>[],
+  state: CampaignExecutionState,
 ): Promise<HostedCampaignActionEvidence<Action>> {
   const cancellation = new AbortController();
   const forwardCampaignAbort = () => { cancellation.abort(bounded.signal.reason); };
@@ -103,13 +123,16 @@ async function awaitBarrierOrCompletionFailure<Action extends HostedCampaignBarr
     signal: cancellation.signal,
   }));
   try {
-    return await Promise.race([barrier, ...completionFailures]);
+    return await Promise.race([barrier, ...state.completionFailures]);
   } finally {
     bounded.signal.removeEventListener("abort", forwardCampaignAbort);
     cancellation.abort(new Error(BARRIER_RACE_COMPLETED));
     // A losing poll owns resources until it observes cancellation. Do not let
-    // campaign cleanup or return race ahead of that poll's settled teardown.
-    try { await barrier; } catch { /* Preserve the race's primary result or failure. */ }
+    // campaign cleanup race ahead of cooperative teardown. A noncompliant
+    // adapter that ignores abort quarantines the campaign lease instead.
+    if (!await awaitBarrierTeardown(barrier)) {
+      state.barrierTeardownIncomplete = true;
+    }
   }
 }
 
@@ -160,7 +183,7 @@ async function executeActions(
     await startChildren(input, ports, bounded, state, { ...reference, kind: "barrier" });
     assertActive(bounded);
     const actionEvidence = await awaitBarrierOrCompletionFailure(
-      action, ports, bounded, state.completionFailures,
+      action, ports, bounded, state,
     );
     validateActionEvidence(action, actionEvidence, input.thresholds);
     state.retainedEvidence.set(actionReferenceIdentity(reference), actionEvidence);
@@ -180,6 +203,7 @@ async function cleanupCampaign(
   handles: HostedCampaignChildHandle[],
   lease: HostedCampaignLeaseHandle | undefined,
   ports: HostedCampaignPorts,
+  leaseQuarantined: boolean,
   failure: unknown,
 ): Promise<void> {
   const cleanupFailures: unknown[] = [];
@@ -191,7 +215,10 @@ async function cleanupCampaign(
   // The lease is also the quarantine for an incompletely reaped process tree.
   // Releasing it after any stop failure could admit a second campaign beside a
   // surviving child with the same external credentials and artifact scope.
-  if (lease !== undefined && childrenStopped) {
+  if (leaseQuarantined) {
+    cleanupFailures.push(new Error("Hosted campaign barrier poll teardown did not settle after abort"));
+  }
+  if (lease !== undefined && childrenStopped && !leaseQuarantined) {
     try { await ports.releaseCampaignLease(lease); } catch (error) { cleanupFailures.push(error); }
   }
   if (cleanupFailures.length > 0) {
@@ -211,7 +238,8 @@ export async function runHostedCampaign(
   validateHostedCampaign(input);
   assertActive(bounded);
   const state: CampaignExecutionState = {
-    completionFailures: [], completionTasks: [], handles: [], retainedEvidence: new Map(), startedChildIds: new Set(),
+    barrierTeardownIncomplete: false, completionFailures: [], completionTasks: [], handles: [],
+    retainedEvidence: new Map(), startedChildIds: new Set(),
   };
   const evidence: unknown[] = [];
   let lease: HostedCampaignLeaseHandle | undefined;
@@ -228,7 +256,7 @@ export async function runHostedCampaign(
     await executeActions(input, ports, bounded, state, evidence);
     await Promise.all(state.completionTasks);
   } catch (error) { failure = error; }
-  await cleanupCampaign(state.handles, lease, ports, failure);
+  await cleanupCampaign(state.handles, lease, ports, state.barrierTeardownIncomplete, failure);
   if (failure !== undefined) {throw failure instanceof Error
     ? failure : new Error("Hosted campaign failed", { cause: failure });}
   return Object.freeze({
