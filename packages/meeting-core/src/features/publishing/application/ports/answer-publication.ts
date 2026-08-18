@@ -114,6 +114,7 @@ export interface AnswerDeliveryPort {
     readonly replyToRemoteMessageId: string;
   }): Promise<
     | { readonly externalReceipt: string; readonly status: "found" }
+    | { readonly externalReceipts: readonly string[]; readonly status: "duplicate" }
     | { readonly status: "unconfirmed" }
   >;
 

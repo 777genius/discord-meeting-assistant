@@ -277,8 +277,7 @@ export class PostgresAnswerEffectStore implements AnswerEffectStore {
              state = 'absent_unconfirmed'
              AND updated_at <= transaction_timestamp() - interval '5 minutes'
            )
-        ORDER BY (state = 'outcome_unknown') DESC,
-                 updated_at, request_started_at, effect_id
+        ORDER BY updated_at, request_started_at, effect_id
         LIMIT $1
       `,
       [limit],

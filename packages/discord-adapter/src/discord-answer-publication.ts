@@ -158,10 +158,11 @@ export class DiscordAnswerDeliveryAdapter implements AnswerDeliveryPort {
     readonly replyToRemoteMessageId: string;
   }): Promise<
     | { readonly externalReceipt: string; readonly status: "found" }
+    | { readonly externalReceipts: readonly string[]; readonly status: "duplicate" }
     | { readonly status: "unconfirmed" }
   > {
+    const exactReceipts: string[] = [];
     try {
-      const exactReceipts: string[] = [];
       let cursor = snowflakeSchema.parse(input.replyToRemoteMessageId);
       for (let page = 0; page < reconciliationPageLimit; page += 1) {
         const query = new URLSearchParams({
@@ -181,7 +182,7 @@ export class DiscordAnswerDeliveryAdapter implements AnswerDeliveryPort {
             return leftId < rightId ? -1 : leftId > rightId ? 1 : 0;
           });
         if (messages.some(({ id }) => BigInt(id) <= BigInt(cursor))) {
-          return { status: "unconfirmed" };
+          throw new Error("Discord reconciliation history overlaps its cursor");
         }
         const candidates = messages.filter((message) =>
           message.author.id === this.botApplicationIdentity &&
@@ -209,19 +210,25 @@ export class DiscordAnswerDeliveryAdapter implements AnswerDeliveryPort {
             exactReceipts.push(message.id);
           }
         }
-        if (exactReceipts.length > 1) {
-          return { status: "unconfirmed" };
-        }
-        if (exactReceipts.length === 1) {
-          return { externalReceipt: exactReceipts[0]!, status: "found" };
-        }
         if (messages.length < reconciliationPageSize) {
           break;
         }
         cursor = messages.at(-1)!.id;
       }
     } catch {
-      // Missing, partial, or forbidden history can never prove non-delivery.
+      if (exactReceipts.length < 2) {
+        // Missing, partial, or forbidden history can never prove non-delivery.
+        return { status: "unconfirmed" };
+      }
+    }
+    if (exactReceipts.length > 1) {
+      return {
+        externalReceipts: Object.freeze(exactReceipts),
+        status: "duplicate",
+      };
+    }
+    if (exactReceipts.length === 1) {
+      return { externalReceipt: exactReceipts[0]!, status: "found" };
     }
     return { status: "unconfirmed" };
   }

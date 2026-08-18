@@ -492,6 +492,54 @@ describe("schema 21 withdrawal upgrade", () => {
     }
   }, 30_000);
 describe("late answer-effect receipt reconciliation", () => {
+  it("does not starve an older retryable absence behind unknown effects", async (context) => {
+    const database = databaseOrSkip(context);
+    const unknownEffectId = "meeting-knowledge-answer:v1:fair-unknown";
+    const absentEffectId = "meeting-knowledge-answer:v1:fair-absent";
+    await database.query(
+      `
+        INSERT INTO meeting_core.answer_effects (
+          effect_id, state, projection_target_container_id,
+          delivery_container_id, reply_to_remote_message_id, marker,
+          payload_bytes, payload_hash, binding_hash, authorization_digest,
+          source_meeting_ids, request_started_at, settled_at, updated_at
+        ) VALUES
+          (
+            $1, 'outcome_unknown', $3, $3, '666666666666666661',
+            'marker-fair-unknown', '{}', $4, $5, $6,
+            ARRAY['meeting-fair']::text[],
+            transaction_timestamp() - interval '11 minutes',
+            NULL,
+            transaction_timestamp() - interval '10 minutes'
+          ),
+          (
+            $2, 'absent_unconfirmed', $3, $3, '666666666666666662',
+            'marker-fair-absent', '{}', $4, $5, $6,
+            ARRAY['meeting-fair']::text[],
+            transaction_timestamp() - interval '21 minutes',
+            transaction_timestamp() - interval '20 minutes',
+            transaction_timestamp() - interval '20 minutes'
+          )
+      `,
+      [
+        unknownEffectId,
+        absentEffectId,
+        parentContainerId,
+        "a".repeat(64),
+        "b".repeat(64),
+        "c".repeat(64),
+      ],
+    );
+    const effects = new PostgresAnswerEffectStore(database);
+
+    await expect(effects.listOutcomeUnknown(1)).resolves.toEqual([
+      expect.objectContaining({
+        effectId: absentEffectId,
+        state: "absent_unconfirmed",
+      }),
+    ]);
+  });
+
   it("accepts a late exact receipt after absence was only unconfirmed", async (context) => {
     const database = databaseOrSkip(context);
     const effectId = "meeting-knowledge-answer:v1:late-receipt";

@@ -360,6 +360,38 @@ describe("Publishing answer effects", () => {
     expect(delivery.creates).toBe(1);
   });
 
+});
+
+describe("Duplicate answer-effect reconciliation", () => {
+  it("keeps duplicate exact receipts unresolved for manual containment", async () => {
+    const store = new StoreFake();
+    const delivery = new DeliveryFake();
+    delivery.throwAfterCreate = true;
+    const publisher = new DurableAnswerPublication({
+      delivery,
+      payloads: new PayloadFake(),
+      store,
+    });
+    const reservation = await publisher.reserve(reservationInput());
+    await publisher.send({
+      authorizationDigest: "e".repeat(64),
+      effectId: reservation.effectId,
+      workerId: "worker-1",
+    });
+    delivery.inspection = {
+      externalReceipts: ["answer-message-1", "answer-message-2"],
+      status: "duplicate",
+    };
+
+    await expect(publisher.reconcileUnknown(10)).resolves.toEqual({
+      absentUnconfirmed: 0,
+      delivered: 0,
+    });
+    expect(store.record?.state).toBe("outcome_unknown");
+  });
+});
+
+describe("Publishing answer effect recovery", () => {
   it("accepts a late receipt after reconciliation observed an in-flight create as absent", async () => {
     const store = new StoreFake();
     const delivery = new DeliveryFake();

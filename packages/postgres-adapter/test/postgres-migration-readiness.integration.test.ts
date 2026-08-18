@@ -114,6 +114,78 @@ describe("PostgresMigrationRunner and PostgresSchemaReadiness", () => {
     }
   });
 
+});
+
+describe("Postgres concurrent index recovery", () => {
+  it("repairs an invalid index left by a failed concurrent build", async (context) => {
+    databaseOrSkip(context);
+    const isolated = await createIsolatedDatabase();
+    const indexSql = `
+      CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS online_migration_repair_idx
+      ON meeting_core.online_migration_repair_probe (duplicate_key);
+    `;
+    try {
+      await isolated.pool.query("CREATE SCHEMA meeting_core");
+      await isolated.pool.query(`
+        CREATE TABLE meeting_core.online_migration_repair_probe (
+          id integer PRIMARY KEY,
+          duplicate_key integer NOT NULL
+        )
+      `);
+      await isolated.pool.query(`
+        INSERT INTO meeting_core.online_migration_repair_probe (id, duplicate_key)
+        VALUES (1, 7), (2, 7)
+      `);
+      await expect(isolated.pool.query(indexSql)).rejects.toThrow();
+      const invalid = await isolated.pool.query<{
+        readonly indisready: boolean;
+        readonly indisvalid: boolean;
+      }>(`
+        SELECT indisready, indisvalid
+        FROM pg_index
+        WHERE indexrelid = 'meeting_core.online_migration_repair_idx'::regclass
+      `);
+      expect(invalid.rows).toEqual([{ indisready: false, indisvalid: false }]);
+
+      await isolated.pool.query(
+        "DELETE FROM meeting_core.online_migration_repair_probe WHERE id = 2",
+      );
+      const runner = new PostgresMigrationRunner(isolated.pool, {
+        migrations: [{
+          checksumSha256: sha256(indexSql),
+          fileName: "0001_online_migration_repair.sql",
+          repairInvalidConcurrentIndex: "meeting_core.online_migration_repair_idx",
+          sql: indexSql,
+          transactional: false,
+          version: 1,
+        }],
+      });
+
+      await expect(runner.migrate()).resolves.toEqual({
+        appliedVersions: [1],
+        version: 1,
+      });
+      const repaired = await isolated.pool.query<{
+        readonly indisready: boolean;
+        readonly indisvalid: boolean;
+      }>(`
+        SELECT indisready, indisvalid
+        FROM pg_index
+        WHERE indexrelid = 'meeting_core.online_migration_repair_idx'::regclass
+      `);
+      expect(repaired.rows).toEqual([{ indisready: true, indisvalid: true }]);
+      await expect(runner.migrate()).resolves.toEqual({
+        appliedVersions: [],
+        version: 1,
+      });
+    } finally {
+      await isolated.dispose();
+    }
+  });
+
+});
+
+describe("PostgresMigrationRunner and PostgresSchemaReadiness validation", () => {
   it("records the exact migration ledger and accepts a fully validated schema", async (context) => {
     const database = databaseOrSkip(context);
 
@@ -122,6 +194,66 @@ describe("PostgresMigrationRunner and PostgresSchemaReadiness", () => {
       version: requiredPostgresSchemaVersion,
     });
     await expect(new PostgresSchemaReadiness(database).assertReady()).resolves.toBeUndefined();
+  });
+
+  it("rejects a required index that exists but is not valid and ready", async (context) => {
+    const database = databaseOrSkip(context);
+    const migrations = await loadPostgresMigrations();
+    const reconciliationMigration = migrations.at(-1);
+    if (reconciliationMigration?.version !== requiredPostgresSchemaVersion) {
+      throw new Error("required reconciliation migration was not loaded");
+    }
+
+    await database.query(`
+      INSERT INTO meeting_core.answer_effects (
+        effect_id, state, projection_target_container_id,
+        delivery_container_id, reply_to_remote_message_id, marker,
+        payload_bytes, payload_hash, binding_hash, authorization_digest,
+        source_meeting_ids, request_started_at
+      )
+      SELECT
+        'meeting-knowledge-answer:v1:invalid-index-' || sequence,
+        'outcome_unknown',
+        'projection-invalid-index',
+        'delivery-invalid-index',
+        '66666666666666666' || sequence,
+        'marker-invalid-index-' || sequence,
+        '{}',
+        repeat('a', 64),
+        repeat('b', 64),
+        repeat('c', 64),
+        ARRAY['meeting-invalid-index']::text[],
+        transaction_timestamp() - interval '3 minutes'
+      FROM generate_series(1, 2) AS sequence
+    `);
+    await database.query(
+      "DROP INDEX CONCURRENTLY meeting_core.answer_effects_unresolved_reconciliation_idx",
+    );
+    try {
+      await expect(database.query(`
+        CREATE UNIQUE INDEX CONCURRENTLY answer_effects_unresolved_reconciliation_idx
+        ON meeting_core.answer_effects (state)
+      `)).rejects.toThrow();
+      const invalid = await database.query<{
+        readonly indisready: boolean;
+        readonly indisvalid: boolean;
+      }>(`
+        SELECT indisready, indisvalid
+        FROM pg_index
+        WHERE indexrelid =
+          'meeting_core.answer_effects_unresolved_reconciliation_idx'::regclass
+      `);
+      expect(invalid.rows).toEqual([{ indisready: false, indisvalid: false }]);
+
+      await expect(new PostgresSchemaReadiness(database).assertReady()).rejects.toThrow(
+        "required PostgreSQL index is missing or invalid",
+      );
+    } finally {
+      await database.query(
+        "DROP INDEX CONCURRENTLY IF EXISTS meeting_core.answer_effects_unresolved_reconciliation_idx",
+      );
+      await database.query(reconciliationMigration.sql);
+    }
   });
 
   it("rejects checksum drift, ledger gaps, and a non-validated required check", async (context) => {
