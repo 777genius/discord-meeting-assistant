@@ -577,6 +577,8 @@ async function qualifyFocusedAndExhaustiveGeneration(input: {
     locale: "en",
     plan: exhaustivePlan,
     question: exhaustiveRequest.question,
+  }, {
+    beforeGenerate: async () => "continue",
   });
   expect(exhaustiveAnswer).toMatchObject({ status: "completed" });
   if (exhaustiveAnswer.status === "completed") {
