@@ -405,16 +405,12 @@ export class PostgresSchemaReadiness implements PostgresSchemaReadinessPort {
       return constraint?.type !== expectedTypes.get(identifier) || constraint?.validated !== true;
     });
     if (missing.length > 0) {
-      throw new PostgresSchemaReadinessError(
-        `${errorPrefix}: ${missing.join(", ")}`,
-      );
+      throw new PostgresSchemaReadinessError(`${errorPrefix}: ${missing.join(", ")}`);
     }
   }
 
   private resolveMigrations(): Promise<readonly PostgresMigration[]> {
-    return this.options.migrations === undefined
-      ? loadPostgresMigrations()
-      : Promise.resolve(this.options.migrations);
+    return this.options.migrations === undefined ? loadPostgresMigrations() : Promise.resolve(this.options.migrations);
   }
 
   private resolveRequiredVersion(migrations: readonly PostgresMigration[]): number {
