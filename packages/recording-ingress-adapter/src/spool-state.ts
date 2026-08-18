@@ -359,7 +359,7 @@ export function parseCompletedRecordingState(input: unknown): CompletedRecording
     recording: {
       ...(authoritativeDurationMs === undefined
         ? {}
-        : { authoritativeDurationMs: authoritativeDurationMs as number }),
+        : { authoritativeDurationMs }),
       manifestLocator: stringValue(recording.manifestLocator, "manifestLocator"),
       recordingId: stringValue(recording.recordingId, "recording.recordingId"),
       speakerAudio,

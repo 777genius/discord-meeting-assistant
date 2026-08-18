@@ -31,7 +31,9 @@ export async function abortableDiscordOperation<T>(
     return operation();
   }
   return new Promise<T>((resolve, reject) => {
-    const aborted = (): void => reject(signal.reason);
+    const aborted = (): void => {
+      reject(signal.reason);
+    };
     signal.addEventListener("abort", aborted, { once: true });
     void operation().then(resolve, reject).finally(() => {
       signal.removeEventListener("abort", aborted);

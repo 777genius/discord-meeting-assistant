@@ -447,7 +447,7 @@ describe("Discord answer effect transport", () => {
       throw new Error("unexpected reconciliation cursor");
     });
     const delivery = new DiscordAnswerDeliveryAdapter(
-      { get, post: vi.fn() } as unknown as Pick<REST, "get" | "post">,
+      { get, post: vi.fn() },
       botId,
     );
 
@@ -505,7 +505,7 @@ describe("Discord answer effect transport", () => {
       throw new Error("unexpected reconciliation cursor");
     });
     const delivery = new DiscordAnswerDeliveryAdapter(
-      { get, post: vi.fn() } as unknown as Pick<REST, "get" | "post">,
+      { get, post: vi.fn() },
       botId,
     );
 

@@ -24,7 +24,7 @@ function acceptedInput(
   return {
     actors: snapshot.actors,
     authoritativeDurationMs:
-      snapshot.recording?.authoritativeDurationMs ?? null,
+      snapshot.recording.authoritativeDurationMs ?? null,
     binding,
     identityProvenance: snapshot.identityProvenance,
     lifecycleGeneration: snapshot.lifecycleGeneration,

@@ -329,7 +329,7 @@ describe("PostgreSQL canonical live reply authority races", () => {
     const database = databaseOrSkip(context);
     const final = await persistFinalMeeting(database);
     const receipt = final.publication?.externalPublicationId;
-    if (receipt === undefined || receipt === null) {
+    if (receipt === undefined) {
       throw new Error("final projection receipt was not persisted");
     }
     const evidence = new PostgresFinalReplyEvidence(database, botId);
