@@ -189,6 +189,7 @@ export async function createPlatformDiscordLiveComposition(input: {
       discordPublisher,
       {
         finalPublicationMode: input.config.discordFinalPublicationMode,
+        publisherIdentity: input.config.discordApplicationId,
         ...(input.recordingPlaybackUrl === undefined
           ? {}
           : { recordingPlaybackUrl: input.recordingPlaybackUrl }),
@@ -258,7 +259,9 @@ function createLiveRuntime(input: {
       timeoutMs: incrementalSummaryTimeoutMs,
     },
   );
-  const projector = new DiscordLiveMeetingProjectionAdapter(input.discordPublisher);
+  const projector = new DiscordLiveMeetingProjectionAdapter(input.discordPublisher, {
+    publisherIdentity: input.config.discordApplicationId,
+  });
   const conversation = createPlatformLiveConversationConfiguration({
     config: input.config,
     ...(input.conversationCoordinator === undefined

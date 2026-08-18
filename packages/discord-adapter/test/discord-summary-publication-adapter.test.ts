@@ -176,7 +176,9 @@ describe("DiscordSummaryPublicationAdapter transcript projection", () => {
 describe("DiscordSummaryPublicationAdapter", () => {
   it("maps the core port request to one separate deterministic Discord projection by default", async () => {
     const projector = new FakeProjector();
-    const adapter: SummaryPublicationPort = new DiscordSummaryPublicationAdapter(projector);
+    const adapter: SummaryPublicationPort = new DiscordSummaryPublicationAdapter(projector, {
+      publisherIdentity: "bot-application-1",
+    });
 
     const first = await adapter.publish(request);
     const second = await adapter.publish(request);
@@ -186,6 +188,7 @@ describe("DiscordSummaryPublicationAdapter", () => {
       value: {
         externalPublicationId:
           "discord:v2:thread:22222222222222222:message:33333333333333333",
+        publisherIdentity: "bot-application-1",
       },
     });
     expect(second).toEqual(first);
@@ -353,6 +356,7 @@ describe("DiscordSummaryPublicationAdapter rendering", () => {
       value: {
         externalPublicationId:
           "discord:v2:thread:22222222222222222:message:33333333333333333",
+        publisherIdentity: "",
       },
     });
     expect(projector.inputs).toHaveLength(2);

@@ -18,6 +18,7 @@ interface StoredLiveMemoryRow {
   readonly applied_generation: number;
   readonly human_actor_ids: unknown;
   readonly room_id: string;
+  readonly roster_state: "sealed" | "unsealed";
   readonly scope_id: string;
   readonly source_generation: number;
   readonly state: "active" | "ended" | "withdrawn";
@@ -63,7 +64,11 @@ function resolveLiveReplyAuthority(
   if (
     snapshot.status !== "active" ||
     snapshot.projectionExternalId === null ||
+    snapshot.projectionPublisherIdentity === null ||
+    snapshot.projectionPublisherIdentity === undefined ||
+    snapshot.projectionPublisherIdentity !== botApplicationIdentity ||
     memory.state !== "active" ||
+    memory.roster_state !== "sealed" ||
     memory.applied_generation !== memory.source_generation ||
     memory.source_generation < 1 ||
     humanActorIds === null
@@ -90,7 +95,7 @@ function resolveLiveReplyAuthority(
   });
   return Object.freeze({
     binding: Object.freeze({
-      botApplicationIdentity,
+      botApplicationIdentity: snapshot.projectionPublisherIdentity,
       canonicalEvidenceHash: evidenceHash,
       finalProjectionEpoch:
         `live-projection:v1:${snapshot.projectedRevision}:${snapshot.projectionExternalId}`,
@@ -130,7 +135,7 @@ export async function loadLiveReplyAuthority(
   }
   const memory = await executor.query<StoredLiveMemoryRow>(
     `
-      SELECT scope_id, room_id, human_actor_ids,
+      SELECT scope_id, room_id, human_actor_ids, roster_state,
              source_generation::float8 AS source_generation,
              applied_generation::float8 AS applied_generation,
              state

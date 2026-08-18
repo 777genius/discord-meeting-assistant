@@ -86,6 +86,14 @@ export function resolveFinalReplyAuthority(
   ) {
     return null;
   }
+  const publisherIdentity = snapshot.publication.publisherIdentity;
+  if (
+    publisherIdentity === undefined ||
+    publisherIdentity.length === 0 ||
+    publisherIdentity !== botApplicationIdentity
+  ) {
+    return null;
+  }
   const identity = MeetingKnowledgeIdentity.admit({
     actors: snapshot.actors,
     identityProvenance: snapshot.identityProvenance,
@@ -102,7 +110,7 @@ export function resolveFinalReplyAuthority(
   const evidenceHash = canonicalEvidenceHash(snapshot);
   return Object.freeze({
     binding: Object.freeze({
-      botApplicationIdentity,
+      botApplicationIdentity: publisherIdentity,
       canonicalEvidenceHash: evidenceHash,
       finalProjectionEpoch: snapshot.publication.idempotencyKey,
       finalProjectionReceipt: snapshot.publication.externalPublicationId,

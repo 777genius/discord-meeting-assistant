@@ -95,13 +95,10 @@ export class Meeting {
       snapshot.publication === null
         ? null
         : Object.freeze({
-            externalPublicationId: createMeetingExternalPublicationId(
-              snapshot.publication.externalPublicationId,
-            ),
-            idempotencyKey: requireNonEmpty(
-              snapshot.publication.idempotencyKey,
-              "publication.idempotencyKey",
-            ),
+            externalPublicationId: createMeetingExternalPublicationId(snapshot.publication.externalPublicationId),
+            idempotencyKey: requireNonEmpty(snapshot.publication.idempotencyKey, "publication.idempotencyKey"),
+            publisherIdentity: snapshot.publication.publisherIdentity
+              ? requireNonEmpty(snapshot.publication.publisherIdentity, "publication.publisherIdentity") : "",
           });
 
     this.validateSnapshotConsistency();
@@ -262,6 +259,8 @@ export class Meeting {
         receipt.externalPublicationId,
       ),
       idempotencyKey: requireNonEmpty(receipt.idempotencyKey, "publication.idempotencyKey"),
+      publisherIdentity: receipt.publisherIdentity
+        ? requireNonEmpty(receipt.publisherIdentity, "publication.publisherIdentity") : "",
     });
     if (normalized.idempotencyKey !== this.publicationIdempotencyKey()) {
       throw new DomainInvariantError(
@@ -274,7 +273,8 @@ export class Meeting {
       if (
         this.publicationReceipt?.externalPublicationId ===
           normalized.externalPublicationId &&
-        this.publicationReceipt.idempotencyKey === normalized.idempotencyKey
+        this.publicationReceipt.idempotencyKey === normalized.idempotencyKey &&
+        this.publicationReceipt.publisherIdentity === normalized.publisherIdentity
       ) {
         return false;
       }
@@ -308,6 +308,7 @@ export class Meeting {
           : {
               externalPublicationId: this.publicationReceipt.externalPublicationId,
               idempotencyKey: this.publicationReceipt.idempotencyKey,
+              publisherIdentity: this.publicationReceipt.publisherIdentity,
             },
       publicationStage: this.stage("publication"),
       publicationTargetId: this.publicationTargetId,

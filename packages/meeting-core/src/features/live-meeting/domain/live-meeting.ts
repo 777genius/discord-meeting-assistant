@@ -1,5 +1,6 @@
 import {
   DomainInvariantError,
+  requireNonEmpty,
   requireNonNegativeInteger,
 } from "./errors.js";
 import {
@@ -30,6 +31,8 @@ export interface LiveMeetingSnapshot {
   readonly meetingId: string;
   readonly projectedRevision: number;
   readonly projectionExternalId: string | null;
+  /** Opaque authenticated identity that last wrote the projection. */
+  readonly projectionPublisherIdentity?: string | null;
   readonly publicationTargetId: string;
   readonly revision: number;
   readonly startedAtMs: number;
@@ -73,6 +76,7 @@ export class LiveMeeting {
   private summaryDraft: LiveSummaryDraftSnapshot | null;
   private summaryTimestampMs: number | null;
   private externalProjectionId: ExternalPublicationId | null;
+  private projectionPublisherIdentity: string | null;
   private lastProjectedRevision: number;
 
   private constructor(snapshot: LiveMeetingSnapshot) {
@@ -94,6 +98,14 @@ export class LiveMeeting {
     this.externalProjectionId = snapshot.projectionExternalId === null
       ? null
       : createExternalPublicationId(snapshot.projectionExternalId);
+    this.projectionPublisherIdentity = snapshot.projectionPublisherIdentity === null ||
+        snapshot.projectionPublisherIdentity === undefined ||
+        snapshot.projectionPublisherIdentity.length === 0
+      ? null
+      : requireNonEmpty(
+          snapshot.projectionPublisherIdentity,
+          "liveMeeting.projectionPublisherIdentity",
+        );
     this.lastProjectedRevision = requireNonNegativeInteger(
       snapshot.projectedRevision,
       "liveMeeting.projectedRevision",
@@ -108,6 +120,7 @@ export class LiveMeeting {
       meetingId: input.meetingId,
       projectedRevision: 0,
       projectionExternalId: null,
+      projectionPublisherIdentity: null,
       publicationTargetId: input.publicationTargetId,
       revision: 0,
       startedAtMs: input.startedAtMs,
@@ -177,14 +190,31 @@ export class LiveMeeting {
     this.incrementRevision();
   }
 
-  public completeProjection(externalPublicationId: string, projectedRevision: number): boolean {
+  public completeProjection(
+    externalPublicationId: string,
+    projectedRevision: number,
+    publisherIdentity?: string,
+  ): boolean {
     const normalized = createExternalPublicationId(externalPublicationId);
+    const normalizedPublisherIdentity = publisherIdentity === undefined
+      ? ""
+      : requireNonEmpty(publisherIdentity, "projection.publisherIdentity");
     const revision = requireNonNegativeInteger(projectedRevision, "projection.projectedRevision");
     if (revision > this.currentRevision) {
       throw new DomainInvariantError("CONFLICTING_COMPLETION", "cannot project a future revision");
     }
     const receiptRotated = this.externalProjectionId !== null &&
       this.externalProjectionId !== normalized;
+    if (
+      this.projectionPublisherIdentity !== null &&
+      this.projectionPublisherIdentity.length > 0 &&
+      this.projectionPublisherIdentity !== normalizedPublisherIdentity
+    ) {
+      throw new DomainInvariantError(
+        "CONFLICTING_COMPLETION",
+        "cannot change the authenticated live projection publisher",
+      );
+    }
     if (receiptRotated && revision < this.lastProjectedRevision) {
       throw new DomainInvariantError(
         "CONFLICTING_COMPLETION",
@@ -200,6 +230,7 @@ export class LiveMeeting {
     }
 
     this.externalProjectionId = normalized;
+    this.projectionPublisherIdentity = normalizedPublisherIdentity;
     this.incrementRevision();
     this.lastProjectedRevision = this.currentRevision;
     return true;
@@ -232,6 +263,7 @@ export class LiveMeeting {
       meetingId: this.meetingId,
       projectedRevision: this.lastProjectedRevision,
       projectionExternalId: this.externalProjectionId,
+      projectionPublisherIdentity: this.projectionPublisherIdentity,
       publicationTargetId: this.publicationTargetId,
       revision: this.currentRevision,
       startedAtMs: this.startedAtMs,

@@ -2,7 +2,6 @@ import {
   type LiveCaptionSnapshot,
   type LiveMeetingProjectionPort,
   type LiveMeetingProjectionRequest,
-  type LiveMeetingPortResult,
 } from "@discord-meeting/meeting-core/live-meeting";
 
 import type {
@@ -40,14 +39,20 @@ export class DiscordLiveMeetingProjectionAdapter implements LiveMeetingProjectio
 
   public constructor(
     private readonly publisher: DiscordLiveProjectionPublisher,
-    options: { readonly finalizingTimeoutMs?: number } = {},
+    options: {
+      readonly finalizingTimeoutMs?: number;
+      readonly publisherIdentity?: string;
+    } = {},
   ) {
+    this.publisherIdentity = options.publisherIdentity ?? "";
     this.finalizingTimeoutMs = options.finalizingTimeoutMs ?? finalizingProjectionTimeoutMs;
   }
 
+  private readonly publisherIdentity: string;
+
   public async publish(
     request: LiveMeetingProjectionRequest,
-  ): Promise<LiveMeetingPortResult<{ readonly externalPublicationId: string }>> {
+  ): ReturnType<LiveMeetingProjectionPort["publish"]> {
     try {
       const referenceHint = currentReference(request.currentExternalPublicationId);
       const reference = await this.publisher.publish(
@@ -74,7 +79,10 @@ export class DiscordLiveMeetingProjectionAdapter implements LiveMeetingProjectio
       );
       return {
         ok: true,
-        value: { externalPublicationId: encodeDiscordExternalPublicationId(reference) },
+        value: {
+          externalPublicationId: encodeDiscordExternalPublicationId(reference),
+          publisherIdentity: this.publisherIdentity,
+        },
       };
     } catch (error: unknown) {
       return { ok: false, failure: toDiscordPublicationFailure(error) };

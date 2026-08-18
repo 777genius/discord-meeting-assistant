@@ -110,6 +110,11 @@ export class ProcessFinalReplyJob {
       return { status: "idle" };
     }
     const binding = QuestionBinding.create(lease.binding).toSnapshot();
+    const stalePolicy = binding.policyVersion !== this.input.policy.policyVersion ||
+      binding.authorizationPolicyVersion !== this.input.policy.authorizationPolicyVersion;
+    if (stalePolicy) {
+      return this.publisher.settle(lease, "stale_binding");
+    }
     if (
       lease.state === "ready" &&
       lease.answerCandidate !== null &&

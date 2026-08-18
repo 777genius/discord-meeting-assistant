@@ -2,10 +2,27 @@ import { expect, it } from "vitest";
 
 import {
   FinishLiveMeeting,
+  LiveMeeting,
   StartLiveMeeting,
   type LiveMeetingSnapshot,
 } from "@discord-meeting/meeting-core/live-meeting";
 import { MemoryLiveMeetingRepository } from "./live-meeting-fixtures.js";
+
+it("persists the authenticated projection publisher and rejects bot rotation", () => {
+  const meeting = LiveMeeting.start({
+    meetingId: "meeting-projection-owner",
+    publicationTargetId: "results-channel",
+    startedAtMs: 0,
+  });
+  meeting.completeProjection("message-1", meeting.revision, "bot-application-1");
+
+  expect(meeting.toSnapshot().projectionPublisherIdentity).toBe("bot-application-1");
+  expect(() => meeting.completeProjection(
+    "message-1",
+    meeting.revision,
+    "bot-application-2",
+  )).toThrow(/cannot change the authenticated live projection publisher/u);
+});
 
 it("reconciles a contested live-meeting start through the bounded CAS path", async () => {
   const meetings = new ConflictOnceStartRepository();

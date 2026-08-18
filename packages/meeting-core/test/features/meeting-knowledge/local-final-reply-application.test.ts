@@ -573,7 +573,6 @@ async function executeFocusedPlanFixture() {
 }
 
 describe("ProcessFinalReplyJob", () => {
-
   it("retrieves references first, locally rehydrates only selected canonical evidence, and sends once", async () => {
     const { authorization, evidence, generator, jobs, memory, processor, publication } =
       processingFixture();
@@ -817,6 +816,10 @@ describe("ProcessFinalReplyJob publication fences", () => {
   });
 
   it("rejects a changed binding before any answer effect", async () => {
+    const stale = processingFixture();
+    stale.jobs.lease = { ...stale.jobs.lease!, binding: { ...stale.jobs.lease!.binding, policyVersion: "stale-policy.v1" } };
+    await expect(stale.processor.executeOnce()).resolves.toMatchObject({ outcome: "stale_binding" });
+    expect(stale.memory.calls).toEqual([]);
     const { evidence, processor, publication } = processingFixture();
     let rechecks = 0;
     evidence.recheckCurrentBinding = () => {

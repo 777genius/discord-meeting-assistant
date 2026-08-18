@@ -34,6 +34,7 @@ async function persistFinalMeeting(
     externalPublicationId:
       `discord:v2:channel:${channelId}:message:33333333333333333`,
     idempotencyKey: meeting.publicationIdempotencyKey(),
+    publisherIdentity: botId,
   });
   const snapshot = meeting.toSnapshot();
   await database.query(
@@ -58,7 +59,7 @@ async function persistActiveLiveProjection(
     publicationTargetId: channelId,
     startedAtMs: 1_000,
   });
-  meeting.completeProjection(receipt, meeting.revision);
+  meeting.completeProjection(receipt, meeting.revision, botId);
   await repository.save(meeting.toSnapshot(), null);
   const lifecycle = new PostgresLiveFinalizedMemoryLifecycle(database);
   await lifecycle.registerMeeting({
@@ -68,7 +69,7 @@ async function persistActiveLiveProjection(
       actorSemanticsVersion: 1,
       producerCapabilityId: "meeting.lifecycle.sealed-actor-roster.v1",
       producerRevision: "0123456789abcdef0123456789abcdef01234567",
-      rosterState: "unsealed",
+      rosterState: "sealed",
     },
     lifecycleGeneration: 3,
     meetingId,
@@ -101,6 +102,36 @@ async function persistActiveLiveProjection(
 }
 
 describe("PostgreSQL canonical live reply authority", () => {
+  it("rejects an unsealed roster and projections written by another bot", async (context) => {
+    const database = databaseOrSkip(context);
+    const live = await persistActiveLiveProjection(database);
+    const evidence = new PostgresFinalReplyEvidence(database, botId);
+    const rotatedBotEvidence = new PostgresFinalReplyEvidence(
+      database,
+      "99999999999999999",
+    );
+
+    await expect(rotatedBotEvidence.findCurrentBinding({
+      finalProjectionReceipt: live.receipt,
+      projectionTargetContainerId: channelId,
+    })).resolves.toBeNull();
+    await database.query(
+      `UPDATE meeting_knowledge.live_memory_meetings
+       SET roster_state = 'unsealed' WHERE meeting_id = $1`,
+      [live.meetingId],
+    );
+    await expect(evidence.findCurrentBinding({
+      finalProjectionReceipt: live.receipt,
+      projectionTargetContainerId: channelId,
+    })).resolves.toBeNull();
+
+    const final = await persistFinalMeeting(database);
+    await expect(rotatedBotEvidence.findCurrentBinding({
+      finalProjectionReceipt: final.publication?.externalPublicationId ?? "",
+      projectionTargetContainerId: channelId,
+    })).resolves.toBeNull();
+  });
+
   it("drains only the exact canonical thread receipt under the parent target", async (context) => {
     const database = databaseOrSkip(context);
     const live = await persistActiveLiveProjection(database);
@@ -112,7 +143,7 @@ describe("PostgreSQL canonical live reply authority", () => {
       throw new Error("live meeting disappeared before thread projection");
     }
     const threaded = LiveMeeting.restore(snapshot);
-    threaded.completeProjection(threadReceipt, threaded.revision);
+    threaded.completeProjection(threadReceipt, threaded.revision, botId);
     await live.repository.save(threaded.toSnapshot(), snapshot.revision);
     const evidence = new PostgresFinalReplyEvidence(database, botId);
     const authority = await evidence.findCurrentBinding({
@@ -441,7 +472,7 @@ async function rotateAndEndLiveProjection(
   const replacementReceipt =
     `discord:v2:channel:${channelId}:message:66666666666666666`;
   const rotated = LiveMeeting.restore(snapshot);
-  rotated.completeProjection(replacementReceipt, rotated.revision);
+  rotated.completeProjection(replacementReceipt, rotated.revision, botId);
   await live.repository.save(rotated.toSnapshot(), snapshot.revision);
   await expect(evidence.findCurrentBinding({
     finalProjectionReceipt: live.receipt,
