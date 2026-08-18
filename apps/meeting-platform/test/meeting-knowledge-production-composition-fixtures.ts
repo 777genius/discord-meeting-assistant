@@ -370,6 +370,7 @@ export async function persistPublishedMeeting(
     externalPublicationId:
       `discord:v2:channel:${resultsContainerId}:message:${meeting.meetingId}`,
     idempotencyKey: meeting.publicationIdempotencyKey(),
+    publisherIdentity: botApplicationIdentity,
   });
   const snapshot = meeting.toSnapshot();
   await repository.save(snapshot, 0);
