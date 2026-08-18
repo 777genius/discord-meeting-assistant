@@ -21,6 +21,11 @@ import {
 } from "./postgres-integration-fixtures.js";
 
 const channelId = "22222222222222222";
+const questionPolicy = Object.freeze({
+  authorizationPolicyVersion: "discord.participant-current-results.v1",
+  policyEpoch: 1,
+  policyVersion: "meeting-knowledge.focused-memory-final-reply.v2",
+});
 
 function digest(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
@@ -194,7 +199,7 @@ describe("PostgreSQL answer cancellation and retraction", () => {
          WHERE question_id = $1 FOR UPDATE`,
         [questionId],
       );
-      const reservation = new PostgresAnswerEffectStore(database).reserve({
+      const reservation = new PostgresAnswerEffectStore(database, questionPolicy).reserve({
         authorizationDigest: "c".repeat(64),
         bindingHash: "d".repeat(64),
         deliveryContainerId: channelId,

@@ -36,6 +36,7 @@ const migrationDefinitions = [
     repairInvalidConcurrentIndex: "meeting_core.answer_effects_unresolved_reconciliation_idx",
     transactional: false,
   },
+  { fileName: "0024_question_policy_fence.sql" },
 ] as const;
 
 const migrationLockKey = "718330091620232601";

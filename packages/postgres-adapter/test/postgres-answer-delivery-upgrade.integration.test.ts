@@ -29,6 +29,11 @@ usePostgresIntegrationDatabase();
 
 const parentContainerId = "111111111111111111";
 const threadContainerId = "222222222222222222";
+const upgradedQuestionPolicy = Object.freeze({
+  authorizationPolicyVersion: "discord.participant-current-results.v2",
+  policyEpoch: 1,
+  policyVersion: "meeting-knowledge.focused-memory-final-reply.v2",
+});
 
 function sha256(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
@@ -211,12 +216,12 @@ describe("schema 17 answer-delivery upgrade", () => {
       }
 
       await expect(new PostgresMigrationRunner(isolated.pool).migrate()).resolves.toEqual({
-        appliedVersions: [18, 19, 20, 21, 22, 23],
-        version: 23,
+        appliedVersions: [18, 19, 20, 21, 22, 23, 24],
+        version: 24,
       });
       await expect(new PostgresMigrationRunner(isolated.pool).migrate()).resolves.toEqual({
         appliedVersions: [],
-        version: 23,
+        version: 24,
       });
       await expect(new PostgresSchemaReadiness(isolated.pool).assertReady()).resolves.toBeUndefined();
 
@@ -254,7 +259,7 @@ describe("schema 17 answer-delivery upgrade", () => {
         state: "cancelled",
       });
 
-      const jobs = new PostgresQuestionJobStore(isolated.pool);
+      const jobs = new PostgresQuestionJobStore(isolated.pool, upgradedQuestionPolicy);
       const firstLease = await jobs.leaseNext({ leaseSeconds: 60, workerId: "upgrade-worker" });
       const secondLease = await jobs.leaseNext({ leaseSeconds: 60, workerId: "upgrade-worker" });
       const thirdLease = await jobs.leaseNext({ leaseSeconds: 60, workerId: "upgrade-worker" });
@@ -271,8 +276,7 @@ describe("schema 17 answer-delivery upgrade", () => {
         deliveryContainerId: parentContainerId,
       }).toSnapshot();
       const admission = new PostgresQuestionAdmissionCommit(
-        isolated.pool,
-        upgradedQueued.botApplicationIdentity,
+        isolated.pool, upgradedQueued.botApplicationIdentity, upgradedQuestionPolicy,
       );
       await expect(admission.commit({
         authorization: {
@@ -317,7 +321,7 @@ describe("schema 17 answer-delivery upgrade", () => {
         },
       })).resolves.toEqual({ status: "conflict" });
 
-      const effects = new PostgresAnswerEffectStore(isolated.pool);
+      const effects = new PostgresAnswerEffectStore(isolated.pool, upgradedQuestionPolicy);
       const currentReadyBinding = { ...ready, deliveryContainerId: threadContainerId };
       const currentReadyPayload = answerPayload(threadContainerId, ready.questionId);
       const payloads: AnswerPayloadPort = {
@@ -386,6 +390,7 @@ describe("schema 17 answer-delivery upgrade", () => {
       await expect(publication.send({
         authorizationDigest: ready.authorizationDigest,
         effectId: `meeting-knowledge-answer:v1:${ready.questionId}`,
+        questionGeneration: thirdLease?.generation ?? 0,
         workerId: "publisher-upgrade",
       })).resolves.toEqual({
         externalReceipt: "999999999999999999",

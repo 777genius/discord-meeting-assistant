@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import {
   focusedMemoryGeneration,
+  isAttestedActiveLiveMemoryIdentity,
   type CanonicalEvidenceTurn,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import {
@@ -15,10 +16,13 @@ import type { ResolvedFinalReplyAuthority } from "./postgres-final-reply-evidenc
 interface StoredLiveMeetingRow { readonly snapshot: unknown }
 
 interface StoredLiveMemoryRow {
+  readonly actor_semantics_version: number;
   readonly applied_generation: number;
   readonly human_actor_ids: unknown;
+  readonly producer_capability_id: string;
   readonly room_id: string;
   readonly roster_state: "sealed" | "unsealed";
+  readonly schema_version: number;
   readonly scope_id: string;
   readonly source_generation: number;
   readonly state: "active" | "ended" | "withdrawn";
@@ -67,8 +71,13 @@ function resolveLiveReplyAuthority(
     snapshot.projectionPublisherIdentity === null ||
     snapshot.projectionPublisherIdentity === undefined ||
     snapshot.projectionPublisherIdentity !== botApplicationIdentity ||
-    memory.state !== "active" ||
-    memory.roster_state !== "sealed" ||
+    !isAttestedActiveLiveMemoryIdentity({
+      actorSemanticsVersion: memory.actor_semantics_version,
+      producerCapabilityId: memory.producer_capability_id,
+      rosterState: memory.roster_state,
+      schemaVersion: memory.schema_version,
+      state: memory.state,
+    }) ||
     memory.applied_generation !== memory.source_generation ||
     memory.source_generation < 1 ||
     humanActorIds === null
@@ -135,7 +144,8 @@ export async function loadLiveReplyAuthority(
   }
   const memory = await executor.query<StoredLiveMemoryRow>(
     `
-      SELECT scope_id, room_id, human_actor_ids, roster_state,
+      SELECT schema_version, scope_id, room_id, human_actor_ids, roster_state,
+             producer_capability_id, actor_semantics_version::float8 AS actor_semantics_version,
              source_generation::float8 AS source_generation,
              applied_generation::float8 AS applied_generation,
              state

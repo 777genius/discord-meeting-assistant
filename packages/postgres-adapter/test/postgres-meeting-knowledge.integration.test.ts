@@ -37,6 +37,11 @@ const botId = "11111111111111111";
 const channelId = "22222222222222222";
 const finalMessageId = "33333333333333333";
 const questionId = "44444444444444444";
+const questionPolicy = Object.freeze({
+  authorizationPolicyVersion: "discord.participant-current-results.v1",
+  policyEpoch: 1,
+  policyVersion: "meeting-knowledge.focused-memory-final-reply.v2",
+});
 
 function digest(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
@@ -206,7 +211,7 @@ describe("PostgreSQL Local Final Reply adapters", () => {
       source: "authoritative_remote" as const,
       status: "authorized" as const,
     };
-    const admissions = new PostgresQuestionAdmissionCommit(database, botId);
+    const admissions = new PostgresQuestionAdmissionCommit(database, botId, questionPolicy);
     const command = {
       authorization,
       binding,
@@ -234,7 +239,7 @@ describe("PostgreSQL Local Final Reply adapters", () => {
       { jobId: questionId, status: "duplicate" },
     ]);
 
-    const jobs = new PostgresQuestionJobStore(database);
+    const jobs = new PostgresQuestionJobStore(database, questionPolicy);
     const lease = await jobs.leaseNext({ leaseSeconds: 60, workerId: "worker-1" });
     expect(lease).toMatchObject({ generation: 1, jobId: questionId, state: "running" });
     if (lease === null) {
@@ -344,7 +349,7 @@ describe("PostgreSQL Local Final Reply adapters", () => {
 
   it("durably fences an ambiguous answer create from every retry", async (context) => {
     const database = databaseOrSkip(context);
-    const store = new PostgresAnswerEffectStore(database);
+    const store = new PostgresAnswerEffectStore(database, questionPolicy);
     let creates = 0;
     const publication = new DurableAnswerPublication({
       delivery: {
@@ -397,12 +402,12 @@ describe("PostgreSQL Local Final Reply adapters", () => {
     await expect(publication.send({
       authorizationDigest: binding.authorizationDigest,
       effectId: reservation.effectId,
-      workerId: "worker-1",
+      questionGeneration: 1, workerId: "worker-1",
     })).resolves.toEqual({ status: "outcome_unknown" });
     await expect(publication.send({
       authorizationDigest: binding.authorizationDigest,
       effectId: reservation.effectId,
-      workerId: "worker-2",
+      questionGeneration: 1, workerId: "worker-2",
     })).resolves.toEqual({ status: "outcome_unknown" });
     await publication.reconcileUnknown(100);
     expect(creates).toBe(1);
@@ -561,7 +566,7 @@ describe("PostgreSQL question job cleanup", () => {
       ],
     );
 
-    const jobs = new PostgresQuestionJobStore(database);
+    const jobs = new PostgresQuestionJobStore(database, questionPolicy);
     await expect(jobs.leaseNext({ leaseSeconds: 60, workerId: "worker-1" }))
       .resolves.toBeNull();
     const stored = await database.query(

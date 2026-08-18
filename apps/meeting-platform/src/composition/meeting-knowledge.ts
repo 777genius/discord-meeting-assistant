@@ -90,6 +90,12 @@ export const localFinalReplyPolicy: LocalFinalReplyPolicy = Object.freeze({
   }),
 });
 
+export const localFinalReplyPolicyRelease = Object.freeze({
+  authorizationPolicyVersion: localFinalReplyPolicy.authorizationPolicyVersion,
+  policyEpoch: 1,
+  policyVersion: localFinalReplyPolicy.policyVersion,
+});
+
 export interface MeetingKnowledgeLocalFinalReplyRuntime {
   close(): Promise<void>;
   settleIngress(): Promise<void>;
@@ -123,14 +129,14 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
 }): MeetingKnowledgeLocalFinalReplyRuntime {
   const servingEnabled =
     input.config.meetingKnowledge?.localFinalReply === true;
-  const jobs = new PostgresQuestionJobStore(input.pool);
+  const jobs = new PostgresQuestionJobStore(input.pool, localFinalReplyPolicyRelease);
   const publication = new DurableAnswerPublication({
     delivery: input.answerDelivery ?? new DiscordAnswerDeliveryAdapter(
       createDiscordOneAttemptAnswerRest(input.config.secrets.discordToken),
       input.config.discordApplicationId,
     ),
     payloads: new DiscordAnswerPayloadCodec(),
-    store: new PostgresAnswerEffectStore(input.pool),
+    store: new PostgresAnswerEffectStore(input.pool, localFinalReplyPolicyRelease),
   });
   const maintenance = new MaintainFinalReplies(
     new PostgresFinalReplyMaintenance(input.pool),
@@ -164,6 +170,7 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
   const admissions = new PostgresQuestionAdmissionCommit(
     input.pool,
     input.config.discordApplicationId,
+    localFinalReplyPolicyRelease,
   );
   const authorization = new DiscordQuestionAuthorizationAdapter(
     input.client,
@@ -226,7 +233,7 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
     memory,
     policy: localFinalReplyPolicy,
     renderer: new DiscordGroundedAnswerRenderer(),
-    workerId: `local-final-reply-${process.pid}`,
+    workerId: `local-final-reply-e${localFinalReplyPolicyRelease.policyEpoch}-${process.pid}`,
   });
   const handler = new DiscordLocalFinalReplyHandler({
     admission,

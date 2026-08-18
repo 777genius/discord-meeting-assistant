@@ -33,6 +33,30 @@ export interface TrustedLiveMemoryIdentityV1 {
   readonly scopeId: string;
 }
 
+export interface AttestedActiveLiveMemoryIdentityV1 {
+  readonly actorSemanticsVersion: number;
+  readonly producerCapabilityId: string;
+  readonly rosterState: "sealed" | "unsealed";
+  readonly schemaVersion: number;
+  readonly state: "active" | "ended" | "withdrawn";
+}
+
+/**
+ * Durable `attested_active` predicate for transient live knowledge. Schema v1
+ * rows can only be created after v3 lifecycle admission has proved a consistent
+ * observation; reads additionally recheck the exact capability and semantics.
+ * A terminal seal is intentionally not required until final/historical use.
+ */
+export function isAttestedActiveLiveMemoryIdentity(
+  input: AttestedActiveLiveMemoryIdentityV1,
+): boolean {
+  return input.schemaVersion === LIVE_FINALIZED_MEMORY_SCHEMA_VERSION &&
+    input.producerCapabilityId === trustedSealedRosterProducerCapabilityId &&
+    input.actorSemanticsVersion === trustedSealedRosterActorSemanticsVersion &&
+    (input.rosterState === "sealed" || input.rosterState === "unsealed") &&
+    input.state === "active";
+}
+
 /**
  * Active memory may use a trusted but not-yet-sealed lifecycle roster. This is
  * deliberately narrower than historical admission: it is transient, checked

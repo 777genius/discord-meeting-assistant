@@ -76,6 +76,7 @@ export interface AnswerEffectStore {
     readonly authorizationDigest: string;
     readonly effectId: string;
     readonly generation: number;
+    readonly questionGeneration: number;
   }): Promise<boolean>;
   complete(input: {
     readonly effectId: string;

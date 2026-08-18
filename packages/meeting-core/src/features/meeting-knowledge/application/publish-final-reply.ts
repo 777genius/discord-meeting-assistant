@@ -335,6 +335,7 @@ export class PublishFinalReply {
     const delivery = await this.publication.send({
       authorizationDigest: beforeSend.digest,
       effectId: reservation.effectId,
+      questionGeneration: lease.generation,
       workerId: this.workerId,
     });
     if (delivery.status === "delivered") {

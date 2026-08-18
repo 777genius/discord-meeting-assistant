@@ -65,7 +65,11 @@ class StoreFake implements AnswerEffectStore {
     return Promise.resolve({ generation: this.generation, status: "claimed" });
   }
 
-  startRequest(input: { readonly effectId: string; readonly generation: number }) {
+  startRequest(input: {
+    readonly effectId: string;
+    readonly generation: number;
+    readonly questionGeneration: number;
+  }) {
     if (
       this.record?.effectId !== input.effectId ||
       this.record.state !== "claimed" ||
@@ -268,6 +272,7 @@ describe("Publishing answer effects", () => {
     await expect(publisher.send({
       authorizationDigest: "e".repeat(64),
       effectId: reservation.effectId,
+      questionGeneration: 1,
       workerId: "worker-1",
     })).resolves.toEqual({
       externalReceipt: "answer-message-1",
@@ -283,6 +288,7 @@ describe("Publishing answer effects", () => {
     await expect(publisher.send({
       authorizationDigest: "e".repeat(64),
       effectId: reservation.effectId,
+      questionGeneration: 1,
       workerId: "worker-2",
     })).resolves.toEqual({ status: "rejected_before_request" });
     expect(delivery.creates).toBe(1);
@@ -314,11 +320,13 @@ describe("Publishing answer effects", () => {
     await expect(publisher.send({
       authorizationDigest: "e".repeat(64),
       effectId: reservation.effectId,
+      questionGeneration: 1,
       workerId: "worker-1",
     })).resolves.toEqual({ status: "outcome_unknown" });
     await expect(publisher.send({
       authorizationDigest: "e".repeat(64),
       effectId: reservation.effectId,
+      questionGeneration: 1,
       workerId: "worker-2",
     })).resolves.toEqual({ status: "outcome_unknown" });
     expect(delivery.creates).toBe(1);
@@ -451,6 +459,7 @@ describe("Publishing answer effect recovery", () => {
     await expect(publisher.send({
       authorizationDigest: "e".repeat(64),
       effectId: reservation.effectId,
+      questionGeneration: 1,
       workerId: "worker-2",
     })).resolves.toEqual({ status: "rejected_before_request" });
     expect(delivery.creates).toBe(0);
@@ -469,6 +478,7 @@ describe("Publishing answer effect recovery", () => {
     await publisher.send({
       authorizationDigest: "e".repeat(64),
       effectId: reservation.effectId,
+      questionGeneration: 1,
       workerId: "worker-1",
     });
     delivery.inspection = {
@@ -500,6 +510,7 @@ describe("Publishing answer effect recovery", () => {
     await publisher.send({
       authorizationDigest: "e".repeat(64),
       effectId: reservation.effectId,
+      questionGeneration: 1,
       workerId: "worker-1",
     });
     if (store.record === undefined) {

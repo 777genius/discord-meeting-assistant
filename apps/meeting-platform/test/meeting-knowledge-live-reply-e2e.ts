@@ -34,6 +34,7 @@ import type { PlatformHistoricalMemoryRuntime } from
 import {
   createMeetingKnowledgeLocalFinalReply,
   localFinalReplyPolicy,
+  localFinalReplyPolicyRelease,
 } from "../src/composition/meeting-knowledge.js";
 import { DiscordAnswerPayloadCodec } from "@discord-meeting/discord-adapter";
 import {
@@ -235,7 +236,7 @@ export async function qualifyLiveProjectionReply(input: {
     const reconciliation = new DurableAnswerPublication({
       delivery: answerDelivery,
       payloads: new DiscordAnswerPayloadCodec(),
-      store: new PostgresAnswerEffectStore(input.pool),
+      store: new PostgresAnswerEffectStore(input.pool, localFinalReplyPolicyRelease),
     });
     await expect(reconciliation.reconcileUnknown(100)).resolves.toEqual({
       absentUnconfirmed: 0,

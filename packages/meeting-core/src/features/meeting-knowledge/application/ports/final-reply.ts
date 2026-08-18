@@ -379,6 +379,7 @@ export interface AnswerPublicationPort {
   send(input: {
     readonly authorizationDigest: string;
     readonly effectId: string;
+    readonly questionGeneration: number;
     readonly workerId: string;
   }): Promise<AnswerEffectDeliveryResult>;
 

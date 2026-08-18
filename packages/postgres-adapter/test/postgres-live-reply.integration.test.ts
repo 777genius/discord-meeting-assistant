@@ -22,6 +22,11 @@ import {
 
 const botId = "11111111111111111";
 const channelId = "22222222222222222";
+const questionPolicy = Object.freeze({
+  authorizationPolicyVersion: "discord.participant-current-results.v1",
+  policyEpoch: 1,
+  policyVersion: "meeting-knowledge.focused-memory-final-reply.v2",
+});
 
 usePostgresIntegrationDatabase();
 
@@ -69,7 +74,7 @@ async function persistActiveLiveProjection(
       actorSemanticsVersion: 1,
       producerCapabilityId: "meeting.lifecycle.sealed-actor-roster.v1",
       producerRevision: "0123456789abcdef0123456789abcdef01234567",
-      rosterState: "sealed",
+      rosterState: "unsealed",
     },
     lifecycleGeneration: 3,
     meetingId,
@@ -102,7 +107,7 @@ async function persistActiveLiveProjection(
 }
 
 describe("PostgreSQL canonical live reply authority", () => {
-  it("rejects an unsealed roster and projections written by another bot", async (context) => {
+  it("admits attested active memory and rejects another bot or capability", async (context) => {
     const database = databaseOrSkip(context);
     const live = await persistActiveLiveProjection(database);
     const evidence = new PostgresFinalReplyEvidence(database, botId);
@@ -111,13 +116,17 @@ describe("PostgreSQL canonical live reply authority", () => {
       "99999999999999999",
     );
 
+    await expect(evidence.findCurrentBinding({
+      finalProjectionReceipt: live.receipt,
+      projectionTargetContainerId: channelId,
+    })).resolves.not.toBeNull();
     await expect(rotatedBotEvidence.findCurrentBinding({
       finalProjectionReceipt: live.receipt,
       projectionTargetContainerId: channelId,
     })).resolves.toBeNull();
     await database.query(
       `UPDATE meeting_knowledge.live_memory_meetings
-       SET roster_state = 'unsealed' WHERE meeting_id = $1`,
+       SET producer_capability_id = 'unknown-capability' WHERE meeting_id = $1`,
       [live.meetingId],
     );
     await expect(evidence.findCurrentBinding({
@@ -178,7 +187,7 @@ describe("PostgreSQL canonical live reply authority", () => {
       questionId,
       requesterSubject: "c".repeat(64),
     }).toSnapshot();
-    const admissions = new PostgresQuestionAdmissionCommit(database, botId);
+    const admissions = new PostgresQuestionAdmissionCommit(database, botId, questionPolicy);
     await expect(admissions.commit({
       authorization,
       binding,

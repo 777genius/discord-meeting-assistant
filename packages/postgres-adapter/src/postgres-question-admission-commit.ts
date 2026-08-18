@@ -17,10 +17,15 @@ import {
   lockMeetingKnowledgeProjection,
   pruneUnmatchedProjectionTombstones,
 } from "./postgres-projection-withdrawal.js";
+import {
+  PostgresQuestionPolicyFence,
+  type QuestionPolicyIdentity,
+} from "./postgres-question-policy-fence.js";
 
 interface StoredQuestionRow {
   readonly binding: unknown;
   readonly binding_hash: string;
+  readonly policy_epoch: number;
   readonly question_id: string;
 }
 
@@ -58,6 +63,28 @@ function admissionBindingsEqual(
   return admissionBindingHash(left) === admissionBindingHash(right);
 }
 
+function admissionMatchesPolicy(
+  input: Parameters<QuestionAdmissionCommitPort["commit"]>[0],
+  binding: ReturnType<QuestionBinding["toSnapshot"]>,
+  policy: QuestionPolicyIdentity,
+): boolean {
+  return input.authorization.digest === binding.authorizationDigest &&
+    input.authorization.policyVersion === binding.authorizationPolicyVersion &&
+    input.authorization.scopeId === binding.scopeId &&
+    input.authorization.deliveryContainerId === binding.deliveryContainerId &&
+    input.authorization.containerId === binding.projectionTargetContainerId &&
+    binding.policyVersion === policy.policyVersion &&
+    binding.authorizationPolicyVersion === policy.authorizationPolicyVersion;
+}
+
+async function beginCurrentPolicy(
+  client: PoolClient,
+  fence: PostgresQuestionPolicyFence,
+): Promise<boolean> {
+  await client.query("BEGIN");
+  return fence.lockCurrent(client);
+}
+
 async function rollback(client: PoolClient): Promise<void> {
   try {
     await client.query("ROLLBACK");
@@ -69,27 +96,29 @@ async function rollback(client: PoolClient): Promise<void> {
 export class PostgresQuestionAdmissionCommit
   implements QuestionAdmissionCommitPort
 {
+  private readonly policyFence: PostgresQuestionPolicyFence;
+
   public constructor(
     private readonly pool: Pool,
     private readonly botApplicationIdentity: string,
-  ) {}
+    policy: QuestionPolicyIdentity,
+  ) {
+    this.policyFence = new PostgresQuestionPolicyFence(policy);
+  }
 
   public async commit(
     input: Parameters<QuestionAdmissionCommitPort["commit"]>[0],
   ): Promise<QuestionAdmissionCommitResult> {
     const binding = QuestionBinding.create(input.binding).toSnapshot();
-    if (
-      input.authorization.digest !== binding.authorizationDigest ||
-      input.authorization.policyVersion !== binding.authorizationPolicyVersion ||
-      input.authorization.scopeId !== binding.scopeId ||
-      input.authorization.deliveryContainerId !== binding.deliveryContainerId ||
-      input.authorization.containerId !== binding.projectionTargetContainerId
-    ) {
+    if (!admissionMatchesPolicy(input, binding, this.policyFence.identity)) {
       return { status: "conflict" };
     }
     const client = await this.pool.connect();
     try {
-      await client.query("BEGIN");
+      if (!await beginCurrentPolicy(client, this.policyFence)) {
+        await client.query("ROLLBACK");
+        return { status: "stale" };
+      }
       await this.lockQuestion(client, binding.questionId);
       await lockMeetingKnowledgeProjection(client, binding.finalProjectionReceipt);
       await lockMeetingKnowledgeSource(client, binding.meetingId);
@@ -102,7 +131,8 @@ export class PostgresQuestionAdmissionCommit
         );
         const storedHashMatches = existing.binding_hash === bindingHash ||
           existing.binding_hash === legacyAdmissionBindingHash(binding);
-        const result = activeBindingMatches && storedHashMatches
+        const result = activeBindingMatches && storedHashMatches &&
+            existing.policy_epoch === this.policyFence.identity.policyEpoch
           ? { jobId: existing.question_id, status: "duplicate" } as const
           : { status: "conflict" } as const;
         await client.query("COMMIT");
@@ -140,11 +170,11 @@ export class PostgresQuestionAdmissionCommit
             question_id, requester_subject, question_hash, scope_id,
             final_projection_receipt, authorization_principal_ref,
             authorization_digest, locale, question_text, binding, binding_hash,
-            source_meeting_ids, expires_at
+            source_meeting_ids, policy_epoch, expires_at
           ) VALUES (
             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11,
-            ARRAY[$12]::text[],
-            transaction_timestamp() + make_interval(secs => $13)
+            ARRAY[$12]::text[], $13,
+            transaction_timestamp() + make_interval(secs => $14)
           )
         `,
         [
@@ -160,6 +190,7 @@ export class PostgresQuestionAdmissionCommit
           bindingJson,
           admissionBindingHash(binding),
           binding.meetingId,
+          this.policyFence.identity.policyEpoch,
           input.ratePolicy.jobTtlSeconds,
         ],
       );
@@ -284,7 +315,7 @@ export class PostgresQuestionAdmissionCommit
   ): Promise<StoredQuestionRow | null> {
     const result = await client.query<StoredQuestionRow>(
       `
-        SELECT question_id, binding, binding_hash
+        SELECT question_id, binding, binding_hash, policy_epoch::float8 AS policy_epoch
         FROM meeting_knowledge.question_jobs
         WHERE question_id = $1
         FOR UPDATE

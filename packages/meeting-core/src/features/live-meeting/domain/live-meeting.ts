@@ -65,6 +65,38 @@ function restoreSummary(
   return normalizeLiveSummary(snapshot.draftSummary, undefined, snapshot.draftSummary.revision);
 }
 
+function isPublisherRotation(input: {
+  readonly currentPublisherIdentity: string | null;
+  readonly hasExistingProjection: boolean;
+  readonly nextPublisherIdentity: string;
+  readonly receiptRotated: boolean;
+}): boolean {
+  const knownPublisherRotated = input.currentPublisherIdentity !== null &&
+    input.currentPublisherIdentity.length > 0 &&
+    input.currentPublisherIdentity !== input.nextPublisherIdentity;
+  const legacyPublisherRotated = input.hasExistingProjection &&
+    input.currentPublisherIdentity === null &&
+    input.nextPublisherIdentity.length > 0 &&
+    input.receiptRotated;
+  return knownPublisherRotated || legacyPublisherRotated;
+}
+
+function normalizeProjectionPublisherIdentity(
+  publisherIdentity: string | undefined,
+  currentPublisherIdentity: string | null,
+): string {
+  if (publisherIdentity !== undefined) {
+    return requireNonEmpty(publisherIdentity, "projection.publisherIdentity");
+  }
+  if (currentPublisherIdentity !== null) {
+    throw new DomainInvariantError(
+      "CONFLICTING_COMPLETION",
+      "publisher identity cannot be omitted after ownership is established",
+    );
+  }
+  return "";
+}
+
 export class LiveMeeting {
   public readonly meetingId: MeetingId;
   public readonly publicationTargetId: PublicationTargetId;
@@ -196,23 +228,29 @@ export class LiveMeeting {
     publisherIdentity?: string,
   ): boolean {
     const normalized = createExternalPublicationId(externalPublicationId);
-    const normalizedPublisherIdentity = publisherIdentity === undefined
-      ? ""
-      : requireNonEmpty(publisherIdentity, "projection.publisherIdentity");
+    const normalizedPublisherIdentity = normalizeProjectionPublisherIdentity(
+      publisherIdentity,
+      this.projectionPublisherIdentity,
+    );
     const revision = requireNonNegativeInteger(projectedRevision, "projection.projectedRevision");
     if (revision > this.currentRevision) {
       throw new DomainInvariantError("CONFLICTING_COMPLETION", "cannot project a future revision");
     }
     const receiptRotated = this.externalProjectionId !== null &&
       this.externalProjectionId !== normalized;
+    const publisherRotated = isPublisherRotation({
+      currentPublisherIdentity: this.projectionPublisherIdentity,
+      hasExistingProjection: this.externalProjectionId !== null,
+      nextPublisherIdentity: normalizedPublisherIdentity,
+      receiptRotated,
+    });
     if (
-      this.projectionPublisherIdentity !== null &&
-      this.projectionPublisherIdentity.length > 0 &&
-      this.projectionPublisherIdentity !== normalizedPublisherIdentity
+      publisherRotated &&
+      (!receiptRotated || revision !== this.currentRevision)
     ) {
       throw new DomainInvariantError(
         "CONFLICTING_COMPLETION",
-        "cannot change the authenticated live projection publisher",
+        "publisher rotation requires a current projection with a new receipt",
       );
     }
     if (receiptRotated && revision < this.lastProjectedRevision) {
@@ -226,6 +264,15 @@ export class LiveMeeting {
       this.externalProjectionId !== null &&
       revision <= this.lastProjectedRevision
     ) {
+      if (
+        this.projectionPublisherIdentity === null &&
+        normalizedPublisherIdentity.length > 0 &&
+        revision === this.lastProjectedRevision
+      ) {
+        this.projectionPublisherIdentity = normalizedPublisherIdentity;
+        this.incrementRevision();
+        return true;
+      }
       return false;
     }
 

@@ -11,6 +11,10 @@ import {
   decodeGroundingPlan,
   decodeQuestionBinding,
 } from "./postgres-meeting-knowledge-codecs.js";
+import {
+  PostgresQuestionPolicyFence,
+  type QuestionPolicyIdentity,
+} from "./postgres-question-policy-fence.js";
 
 interface QuestionJobRow {
   readonly answer_candidate: unknown;
@@ -59,45 +63,75 @@ function toLease(row: QuestionJobRow): QuestionJobLease {
 }
 
 export class PostgresQuestionJobStore implements QuestionJobStore {
-  public constructor(private readonly pool: Pool) {}
+  private readonly policyFence: PostgresQuestionPolicyFence;
+
+  public constructor(
+    private readonly pool: Pool,
+    policy: QuestionPolicyIdentity,
+  ) {
+    this.policyFence = new PostgresQuestionPolicyFence(policy);
+  }
 
   public async leaseNext(input: {
     readonly leaseSeconds: number;
     readonly workerId: string;
   }): Promise<QuestionJobLease | null> {
     const leaseSeconds = requireLeaseSeconds(input.leaseSeconds);
-    await this.expireJobs();
-    const result = await this.pool.query<QuestionJobRow>(
-      `
-        WITH selected AS (
-          SELECT question_id
-          FROM meeting_knowledge.question_jobs
-          WHERE expires_at > transaction_timestamp()
-            AND (
-              state = 'queued' OR
-              state IN ('running', 'ready') AND lease_until <= transaction_timestamp()
-            )
-          ORDER BY created_at, question_id
-          FOR UPDATE SKIP LOCKED
-          LIMIT 1
-        )
-        UPDATE meeting_knowledge.question_jobs AS job
-        SET state = CASE WHEN job.state = 'ready' THEN 'ready' ELSE 'running' END,
-            attempts = CASE WHEN job.state = 'ready' THEN job.attempts ELSE job.attempts + 1 END,
-            generation = job.generation + 1,
-            lease_owner = $1,
-            lease_until = transaction_timestamp() + make_interval(secs => $2),
-            updated_at = transaction_timestamp()
-        FROM selected
-        WHERE job.question_id = selected.question_id
-        RETURNING job.question_id, job.question_text, job.binding,
-                  job.state, job.attempts, job.generation::float8 AS generation,
-                  job.grounding_plan, job.answer_candidate
-      `,
-      [input.workerId, leaseSeconds],
-    );
-    const row = result.rows[0];
-    return row === undefined ? null : toLease(row);
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await this.expireJobs(client);
+      if (!await this.policyFence.lockCurrent(client)) {
+        await client.query("COMMIT");
+        return null;
+      }
+      const result = await client.query<QuestionJobRow>(
+        `
+          WITH selected AS (
+            SELECT question_id
+            FROM meeting_knowledge.question_jobs
+            WHERE expires_at > transaction_timestamp()
+              AND policy_epoch = $3
+              AND binding ->> 'policyVersion' = $4
+              AND binding ->> 'authorizationPolicyVersion' = $5
+              AND (
+                state = 'queued' OR
+                state IN ('running', 'ready') AND lease_until <= transaction_timestamp()
+              )
+            ORDER BY created_at, question_id
+            FOR UPDATE SKIP LOCKED
+            LIMIT 1
+          )
+          UPDATE meeting_knowledge.question_jobs AS job
+          SET state = CASE WHEN job.state = 'ready' THEN 'ready' ELSE 'running' END,
+              attempts = CASE WHEN job.state = 'ready' THEN job.attempts ELSE job.attempts + 1 END,
+              generation = job.generation + 1,
+              lease_owner = $1,
+              lease_until = transaction_timestamp() + make_interval(secs => $2),
+              updated_at = transaction_timestamp()
+          FROM selected
+          WHERE job.question_id = selected.question_id
+          RETURNING job.question_id, job.question_text, job.binding,
+                    job.state, job.attempts, job.generation::float8 AS generation,
+                    job.grounding_plan, job.answer_candidate
+        `,
+        [
+          input.workerId,
+          leaseSeconds,
+          this.policyFence.identity.policyEpoch,
+          this.policyFence.identity.policyVersion,
+          this.policyFence.identity.authorizationPolicyVersion,
+        ],
+      );
+      await client.query("COMMIT");
+      const row = result.rows[0];
+      return row === undefined ? null : toLease(row);
+    } catch (error) {
+      await rollback(client);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   public async persistGroundingPlan(
@@ -115,7 +149,7 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
             WHERE meeting_id = ANY($6::text[])
             FOR UPDATE
           )
-          UPDATE meeting_knowledge.question_jobs
+          UPDATE meeting_knowledge.question_jobs AS job
           SET grounding_plan = $3::jsonb,
               grounding_measurement = $4::jsonb,
               runtime_profile = $5,
@@ -133,6 +167,7 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
               FROM meeting_knowledge.withdrawn_meeting_sources AS withdrawn
               WHERE withdrawn.meeting_id = ANY($6::text[])
             )
+            AND ${currentPolicySql(7)}
         `,
         [
           input.jobId,
@@ -145,6 +180,7 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
           }),
           input.runtimeProfile,
           input.sourceMeetingIds,
+          ...policyParameters(this.policyFence.identity),
         ],
       );
       await client.query("COMMIT");
@@ -162,7 +198,7 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
   ): Promise<boolean> {
     const result = await this.pool.query(
       `
-        UPDATE meeting_knowledge.question_jobs
+        UPDATE meeting_knowledge.question_jobs AS job
         SET state = 'ready',
             answer_candidate = $3::jsonb,
             ready_at = COALESCE(ready_at, transaction_timestamp()),
@@ -172,8 +208,14 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
           AND state = 'running'
           AND grounding_plan IS NOT NULL
           AND lease_until > transaction_timestamp()
+          AND ${currentPolicySql(4)}
       `,
-      [input.jobId, input.generation, JSON.stringify(input.answerCandidate)],
+      [
+        input.jobId,
+        input.generation,
+        JSON.stringify(input.answerCandidate),
+        ...policyParameters(this.policyFence.identity),
+      ],
     );
     return result.rowCount === 1;
   }
@@ -183,7 +225,7 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
   ): Promise<boolean> {
     const result = await this.pool.query(
       `
-        UPDATE meeting_knowledge.question_jobs
+        UPDATE meeting_knowledge.question_jobs AS job
         SET state = 'queued',
             lease_owner = NULL,
             lease_until = NULL,
@@ -192,8 +234,14 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
         WHERE question_id = $1
           AND generation = $2
           AND state = 'running'
+          AND ${currentPolicySql(4)}
       `,
-      [input.jobId, input.generation, input.reason.slice(0, 256)],
+      [
+        input.jobId,
+        input.generation,
+        input.reason.slice(0, 256),
+        ...policyParameters(this.policyFence.identity),
+      ],
     );
     return result.rowCount === 1;
   }
@@ -203,7 +251,7 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
   ): Promise<boolean> {
     const result = await this.pool.query(
       `
-        UPDATE meeting_knowledge.question_jobs
+        UPDATE meeting_knowledge.question_jobs AS job
         SET state = 'terminal',
             outcome = $3,
             authorization_principal_ref = NULL,
@@ -219,8 +267,14 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
         WHERE question_id = $1
           AND generation = $2
           AND state IN ('running', 'ready')
+          AND ${currentPolicySql(4)}
       `,
-      [input.jobId, input.generation, input.outcome],
+      [
+        input.jobId,
+        input.generation,
+        input.outcome,
+        ...policyParameters(this.policyFence.identity),
+      ],
     );
     return result.rowCount === 1;
   }
@@ -298,7 +352,7 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
     const result = await this.pool.query(
       `
         SELECT 1
-        FROM meeting_knowledge.question_jobs
+        FROM meeting_knowledge.question_jobs AS job
         WHERE question_id = $1
           AND state <> 'terminal'
       `,
@@ -314,20 +368,21 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
     const result = await this.pool.query(
       `
         SELECT 1
-        FROM meeting_knowledge.question_jobs
+        FROM meeting_knowledge.question_jobs AS job
         WHERE question_id = $1
           AND generation = $2
           AND state IN ('running', 'ready')
           AND lease_until > transaction_timestamp()
           AND expires_at > transaction_timestamp()
+          AND ${currentPolicySql(3)}
       `,
-      [input.jobId, input.generation],
+      [input.jobId, input.generation, ...policyParameters(this.policyFence.identity)],
     );
     return result.rowCount === 1;
   }
 
-  private async expireJobs(): Promise<void> {
-    await this.pool.query(
+  private async expireJobs(executor: Pick<PoolClient, "query">): Promise<void> {
+    await executor.query(
       `
         UPDATE meeting_knowledge.question_jobs AS job
         SET state = 'terminal',
@@ -354,4 +409,22 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
       `,
     );
   }
+}
+
+function policyParameters(policy: QuestionPolicyIdentity): readonly [number, string, string] {
+  return [policy.policyEpoch, policy.policyVersion, policy.authorizationPolicyVersion];
+}
+
+function currentPolicySql(firstParameter: number): string {
+  return `EXISTS (
+    SELECT 1
+    FROM meeting_knowledge.current_question_policy AS policy
+    WHERE policy.policy_key = 'local-final-reply'
+      AND policy.policy_epoch = $${firstParameter}
+      AND policy.policy_version = $${firstParameter + 1}
+      AND policy.authorization_policy_version = $${firstParameter + 2}
+      AND job.policy_epoch = policy.policy_epoch
+      AND job.binding ->> 'policyVersion' = policy.policy_version
+      AND job.binding ->> 'authorizationPolicyVersion' = policy.authorization_policy_version
+  )`;
 }

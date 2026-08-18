@@ -17,6 +17,12 @@ import {
   markAnswerRetracted,
   recordAnswerRetractionReceipt,
 } from "./postgres-answer-retraction-store.js";
+import {
+  PostgresQuestionPolicyFence,
+  type QuestionPolicyIdentity,
+} from "./postgres-question-policy-fence.js";
+import { startPolicyFencedAnswerRequest } from
+  "./postgres-answer-effect-request-start.js";
 
 interface AnswerEffectRow {
   readonly authorization_digest: string;
@@ -56,7 +62,14 @@ function toRecord(row: AnswerEffectRow): AnswerEffectRecord {
 }
 
 export class PostgresAnswerEffectStore implements AnswerEffectStore {
-  public constructor(private readonly pool: Pool) {}
+  private readonly policyFence: PostgresQuestionPolicyFence;
+
+  public constructor(
+    private readonly pool: Pool,
+    policy: QuestionPolicyIdentity,
+  ) {
+    this.policyFence = new PostgresQuestionPolicyFence(policy);
+  }
 
   public async reserve(
     input: AnswerEffectReservationInput,
@@ -195,23 +208,9 @@ export class PostgresAnswerEffectStore implements AnswerEffectStore {
     readonly authorizationDigest: string;
     readonly effectId: string;
     readonly generation: number;
+    readonly questionGeneration: number;
   }): Promise<boolean> {
-    const result = await this.pool.query(
-      `
-        UPDATE meeting_core.answer_effects
-        SET state = 'request_started',
-            request_started_at = transaction_timestamp(),
-            claim_until = NULL,
-            updated_at = transaction_timestamp()
-        WHERE effect_id = $1
-          AND state = 'claimed'
-          AND claim_generation = $2
-          AND authorization_digest = $3
-          AND claim_until > transaction_timestamp()
-      `,
-      [input.effectId, input.generation, input.authorizationDigest],
-    );
-    return result.rowCount === 1;
+    return startPolicyFencedAnswerRequest(this.pool, this.policyFence, input);
   }
 
   public async complete(input: {

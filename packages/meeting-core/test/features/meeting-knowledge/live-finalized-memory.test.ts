@@ -1,6 +1,7 @@
 import {
   LiveFinalizedMemoryWorker,
   admitTrustedLiveMemoryIdentity,
+  isAttestedActiveLiveMemoryIdentity,
   type CanonicalEvidenceTurn,
   type LiveFinalizedMemoryLeaseV1,
   type LiveFinalizedMemorySyncStore,
@@ -83,6 +84,26 @@ class MemoryStore implements LiveFinalizedMemorySyncStore {
 }
 
 describe("trusted live finalized memory", () => {
+  it("defines attested_active independently from the terminal roster seal", () => {
+    const attestation = {
+      actorSemanticsVersion: 1,
+      producerCapabilityId: "meeting.lifecycle.sealed-actor-roster.v1",
+      rosterState: "unsealed" as const,
+      schemaVersion: 1,
+      state: "active" as const,
+    };
+
+    expect(isAttestedActiveLiveMemoryIdentity(attestation)).toBe(true);
+    expect(isAttestedActiveLiveMemoryIdentity({
+      ...attestation,
+      producerCapabilityId: "unknown-capability",
+    })).toBe(false);
+    expect(isAttestedActiveLiveMemoryIdentity({
+      ...attestation,
+      state: "ended",
+    })).toBe(false);
+  });
+
   it("admits only trusted consistent human lifecycle identity", () => {
     expect(admitTrustedLiveMemoryIdentity(trustedIdentity())).toMatchObject({
       humanActorIds: ["human-1"],

@@ -13,6 +13,8 @@ export {
   LIVE_FINALIZED_MEMORY_POLICY_VERSION,
   LIVE_FINALIZED_MEMORY_SCHEMA_VERSION,
   admitTrustedLiveMemoryIdentity,
+  isAttestedActiveLiveMemoryIdentity,
+  type AttestedActiveLiveMemoryIdentityV1,
   type TrustedLiveMemoryIdentityInputV1,
   type TrustedLiveMemoryIdentityV1,
 } from "./domain/live-finalized-memory.js";

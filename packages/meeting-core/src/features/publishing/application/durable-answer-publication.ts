@@ -69,6 +69,7 @@ export class DurableAnswerPublication {
   public async send(input: {
     readonly authorizationDigest: string;
     readonly effectId: string;
+    readonly questionGeneration: number;
     readonly workerId: string;
   }): Promise<
     | { readonly externalReceipt: string; readonly status: "delivered" }
@@ -87,8 +88,10 @@ export class DurableAnswerPublication {
       authorizationDigest: input.authorizationDigest,
       effectId: input.effectId,
       generation: claim.generation,
+      questionGeneration: input.questionGeneration,
     });
     if (!started) {
+      await this.store.cancelBeforeRequest(input.effectId);
       return { status: "rejected_before_request" };
     }
     try {
