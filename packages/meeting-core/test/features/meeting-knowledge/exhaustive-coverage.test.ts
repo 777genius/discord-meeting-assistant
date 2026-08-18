@@ -4,6 +4,7 @@ import {
   DeterministicExhaustiveCoverageExtraction,
   ExhaustiveCoverage,
   admitAcceptedFinalMeeting,
+  buildHistoricalIndexPlan,
   createHistoricalReleaseBinding,
   type AcceptedFinalMeetingV1,
   type CoverageCheckpointLeaseV1,
@@ -380,6 +381,13 @@ function useCase(input: {
   }, qualifiedTwoHourProfile);
 }
 
+const largeBlockPolicy = Object.freeze({
+  maxBlockUtf8Bytes: 32_768,
+  maxBlocksPerMeeting: 100,
+  maxTurnsPerBlock: 64,
+  version: "meeting-knowledge.block-policy.v1" as const,
+});
+
 function largeCoverage(
   meeting: AcceptedFinalMeetingV1,
   checkpoints: MemoryCheckpoints,
@@ -399,12 +407,7 @@ function largeCoverage(
     reducer: extraction,
     sync: new BindingStore([meeting.binding]),
   }, {
-    blockPolicy: {
-      maxBlockUtf8Bytes: 32_768,
-      maxBlocksPerMeeting: 100,
-      maxTurnsPerBlock: 64,
-      version: "meeting-knowledge.block-policy.v1",
-    },
+    blockPolicy: largeBlockPolicy,
     checkpointRetentionSeconds: 86_400,
     maximumBlocks: 100,
     maximumCheckpointAttempts: 8,
@@ -468,6 +471,11 @@ describe("exhaustive historical coverage", () => {
       (index) => index === 359 ? "Project Cedar was mentioned." : `Noise ${index}.`,
     );
     const checkpoints = new MemoryCheckpoints();
+    const expectedBlockCount = buildHistoricalIndexPlan(
+      meeting,
+      new TestIds(),
+      largeBlockPolicy,
+    ).documents.length;
     const result = await largeCoverage(meeting, checkpoints).buildPlan({
       ...request,
       question: "Was Project Cedar mentioned?",
@@ -477,10 +485,10 @@ describe("exhaustive historical coverage", () => {
     if (result.status === "ready") {
       expect(result.plan.reduction.selectedTurns.map(({ turnId }) => turnId))
         .toContain("meeting-late-relevant-turn-turn-0359");
-      expect(result.plan.coverageBitmap).toHaveLength(6);
+      expect(result.plan.coverageBitmap).toHaveLength(expectedBlockCount);
       expect(result.plan.coverageBitmap.every(Boolean)).toBe(true);
     }
-    expect(checkpoints.extractsRecorded).toBe(6);
+    expect(checkpoints.extractsRecorded).toBe(expectedBlockCount);
   });
 
   it("never claims completeness when more than 256 canonical turns are selected", async () => {
@@ -490,6 +498,11 @@ describe("exhaustive historical coverage", () => {
       (index) => `Project Cedar mention ${index}.`,
     );
     const checkpoints = new MemoryCheckpoints();
+    const expectedBlockCount = buildHistoricalIndexPlan(
+      meeting,
+      new TestIds(),
+      largeBlockPolicy,
+    ).documents.length;
 
     await expect(largeCoverage(meeting, checkpoints).buildPlan({
       ...request,
@@ -498,7 +511,7 @@ describe("exhaustive historical coverage", () => {
       reason: "coverage_synthesis_selection_exceeded",
       status: "unsupported",
     });
-    expect(checkpoints.extractsRecorded).toBe(6);
+    expect(checkpoints.extractsRecorded).toBe(expectedBlockCount);
     expect(checkpoints.completed).toBe(false);
   });
 });

@@ -39,13 +39,13 @@ type FocusedRetrievalPolicyInputV1 = Omit<FocusedRetrievalPolicyV1, "version"> &
 
 export const DEFAULT_FOCUSED_RETRIEVAL_POLICY: FocusedRetrievalPolicyV1 = Object.freeze({
   blockPolicy: DEFAULT_HISTORICAL_EVIDENCE_BLOCK_POLICY,
-  candidateLimitPerQuery: 16,
+  candidateLimitPerQuery: 40,
   maximumDecomposedQueries: 4,
   maximumEvidenceBytes: 24_000,
   maximumLocalScanBlocks: 512,
   minimumProviderScore: 0.01,
   neighborRadius: 1,
-  rerankLimit: 12,
+  rerankLimit: 8,
   searchTimeoutMs: 3_000,
   version: "meeting-knowledge.focused-retrieval.v1",
 });

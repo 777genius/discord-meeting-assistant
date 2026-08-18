@@ -1,3 +1,4 @@
+import { array, assert, constantFrom, property } from "fast-check";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -9,6 +10,7 @@ import {
   classifyHistoricalGroundingMode,
   createHistoricalReleaseBinding,
   decodeHistoricalIndexPlanV1,
+  estimateHistoricalEmbeddingTokens,
   rehydrateHistoricalBlock,
   type HistoricalOpaqueIdPort,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
@@ -180,6 +182,190 @@ describe("historical evidence admission and block identity", () => {
       documents: [{ ...first.documents[0], providerMetadata: "untrusted" }],
     })).toThrow("unknown field");
     expect(rehydrateHistoricalBlock(meeting, first, 0, ids).turns).toEqual(meeting.humanTurns);
+  });
+});
+
+describe("historical evidence bounded embedding windows", () => {
+  it("builds clean bounded multilingual windows with exact authoritative ranges", () => {
+    const base = acceptedMeeting();
+    if (base === null) {
+      throw new Error("fixture admission failed");
+    }
+    const texts = [
+      "Мария уточнила срок релиза на следующий вторник.",
+      "Vitaliy confirmed the rollback owner and the no-downtime constraint.",
+      "Nazar сказал: API gateway remains compatible после миграции.",
+      `Длинная реплика ${"безопасность контекст восстановление ".repeat(18)}`,
+      "Iliya corrected the earlier date and Mark acknowledged it.",
+      "Финальное решение принято, ответственный Дима.",
+      "The evidence must retain speaker attribution and exact timing.",
+      "Следующая тема - наблюдаемость и алерты.",
+      "No customer data is copied into retrieval metadata.",
+    ];
+    const meeting = Object.freeze({
+      ...base,
+      authoritativeDurationMs: 90_000,
+      humanTurns: Object.freeze(texts.map((text, index) => Object.freeze({
+        endMs: (index + 1) * 10_000,
+        speakerId: index % 2 === 0 ? "human-a" : "human-b",
+        startMs: index * 10_000,
+        text,
+        turnId: `turn-${index}`,
+      }))),
+    });
+    const ids = new DeterministicTestIds();
+    const policy = Object.freeze({
+      maximumEmbeddingTokens: 32,
+      maxBlockUtf8Bytes: 4_096,
+      maxBlocksPerMeeting: 100,
+      maxTurnsPerBlock: 8,
+      turnOverlap: 2,
+      version: "meeting-knowledge.block-policy.v1" as const,
+    });
+    const first = buildHistoricalIndexPlan(meeting, ids, policy);
+
+    expect(buildHistoricalIndexPlan(meeting, ids, policy)).toEqual(first);
+    expect(decodeHistoricalIndexPlanV1(JSON.parse(JSON.stringify(first)))).toEqual(first);
+    expect(new Set(first.documents.flatMap(({ manifest }) => manifest.turnIds)))
+      .toEqual(new Set(meeting.humanTurns.map(({ turnId }) => turnId)));
+    expect(first.documents.some((document, index) => {
+      const next = first.documents[index + 1];
+      return next !== undefined && document.manifest.turnIds.some((turnId) =>
+        next.manifest.turnIds.includes(turnId)
+      );
+    })).toBe(true);
+    for (const document of first.documents) {
+      expect(document.embeddingText).not.toMatch(/turn=|start_ms=|mkcandidate/iu);
+      expect(estimateHistoricalEmbeddingTokens(document.embeddingText))
+        .toBe(document.manifest.embeddingTokenEstimate);
+      expect(document.manifest.embeddingTokenEstimate)
+        .toBeLessThanOrEqual(document.manifest.embeddingTokenLimit);
+      for (const source of document.manifest.turnSources) {
+        const turn = meeting.humanTurns.find(({ turnId }) => turnId === source.turnId);
+        expect(turn).toBeDefined();
+        expect(Array.from(document.embeddingText)
+          .slice(source.embeddingStartCodePoint, source.embeddingEndCodePoint).join(""))
+          .toBe(Array.from(turn?.text ?? "")
+            .slice(source.sourceStartCodePoint, source.sourceEndCodePoint).join(""));
+        expect(source).toMatchObject({
+          endMs: turn?.endMs,
+          speakerId: turn?.speakerId,
+          startMs: turn?.startMs,
+        });
+      }
+    }
+  });
+
+  it("preserves coverage and stable IDs for bounded generated turn sequences", () => {
+    const base = acceptedMeeting();
+    if (base === null) {
+      throw new Error("fixture admission failed");
+    }
+    assert(property(array(constantFrom(
+      "короткая русская реплика",
+      "short English statement",
+      "mixed API решение confirmed",
+      "emoji 🚀 remains source evidence",
+    ), { minLength: 1, maxLength: 40 }), (texts) => {
+      const meeting = Object.freeze({
+        ...base,
+        humanTurns: Object.freeze(texts.map((text, index) => Object.freeze({
+          endMs: index * 10 + 9,
+          speakerId: `speaker-${index % 3}`,
+          startMs: index * 10,
+          text,
+          turnId: `generated-${index}`,
+        }))),
+      });
+      const ids = new DeterministicTestIds();
+      const policy = Object.freeze({
+        maximumEmbeddingTokens: 24,
+        maxBlockUtf8Bytes: 4_096,
+        maxBlocksPerMeeting: 100,
+        maxTurnsPerBlock: 8,
+        turnOverlap: 2,
+        version: "meeting-knowledge.block-policy.v1" as const,
+      });
+      const first = buildHistoricalIndexPlan(meeting, ids, policy);
+      const second = buildHistoricalIndexPlan(meeting, ids, policy);
+      expect(second.planDigest).toBe(first.planDigest);
+      expect(second.documents.map(({ manifest }) => manifest.candidateLocator))
+        .toEqual(first.documents.map(({ manifest }) => manifest.candidateLocator));
+      expect(new Set(first.documents.flatMap(({ manifest }) => manifest.turnIds)))
+        .toEqual(new Set(meeting.humanTurns.map(({ turnId }) => turnId)));
+      expect(first.documents.every(({ manifest }) =>
+        manifest.embeddingTokenEstimate <= manifest.embeddingTokenLimit
+      )).toBe(true);
+    }), { seed: 1_703_311_337 });
+  });
+
+  it("keeps a 1779-turn two-hour corpus within the qualified 500-window bound", () => {
+    const base = acceptedMeeting();
+    if (base === null) {
+      throw new Error("fixture admission failed");
+    }
+    const meeting = Object.freeze({
+      ...base,
+      authoritativeDurationMs: 7_200_000,
+      humanTurns: Object.freeze(Array.from({ length: 1_779 }, (_, index) => Object.freeze({
+        endMs: index * 4_000 + 3_900,
+        speakerId: `speaker-${index % 7}`,
+        startMs: index * 4_000,
+        text: index % 3 === 0
+          ? `Routine English planning segment ${index} with release context.`
+          : index % 3 === 1
+            ? `Обычное русское обсуждение ${index} с контекстом релиза.`
+            : `Mixed планирование ${index} and operational follow-up.`,
+        turnId: `two-hour-turn-${index}`,
+      }))),
+    });
+    const policy = Object.freeze({
+      maximumEmbeddingTokens: 96,
+      maxBlockUtf8Bytes: 4_096,
+      maxBlocksPerMeeting: 500,
+      maxTurnsPerBlock: 14,
+      turnOverlap: 2,
+      version: "meeting-knowledge.block-policy.v1" as const,
+    });
+    const plan = buildHistoricalIndexPlan(meeting, new DeterministicTestIds(), policy);
+
+    expect(plan.documents.length).toBeLessThanOrEqual(500);
+    expect(plan.documents.length).toBeGreaterThan(100);
+    expect(new Set(plan.documents.flatMap(({ manifest }) => manifest.turnIds)).size)
+      .toBe(meeting.humanTurns.length);
+    expect(plan.documents.every(({ manifest }) =>
+      manifest.embeddingTokenEstimate <= manifest.embeddingTokenLimit
+    )).toBe(true);
+  });
+
+  it("accepts exactly 500 windows and rejects the 501st", () => {
+    const base = acceptedMeeting();
+    if (base === null) {
+      throw new Error("fixture admission failed");
+    }
+    const meeting = (turnCount: number) => Object.freeze({
+      ...base,
+      humanTurns: Object.freeze(Array.from({ length: turnCount }, (_, index) => Object.freeze({
+        endMs: index * 10 + 9,
+        speakerId: "human-a",
+        startMs: index * 10,
+        text: `bounded turn ${index}`,
+        turnId: `bounded-${index}`,
+      }))),
+    });
+    const policy = Object.freeze({
+      maximumEmbeddingTokens: 96,
+      maxBlockUtf8Bytes: 4_096,
+      maxBlocksPerMeeting: 500,
+      maxTurnsPerBlock: 1,
+      turnOverlap: 0,
+      version: "meeting-knowledge.block-policy.v1" as const,
+    });
+
+    expect(buildHistoricalIndexPlan(meeting(500), new DeterministicTestIds(), policy).documents)
+      .toHaveLength(500);
+    expect(() => buildHistoricalIndexPlan(meeting(501), new DeterministicTestIds(), policy))
+      .toThrow(expect.objectContaining({ code: "BLOCK_LIMIT_EXCEEDED" }));
   });
 
   it.each([

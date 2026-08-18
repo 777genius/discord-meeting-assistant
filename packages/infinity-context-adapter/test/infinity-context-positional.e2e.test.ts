@@ -43,7 +43,7 @@ const positionalNeedles = qualificationQuestions.focused.map((question) => {
 
 const twoHourBlockPolicy = {
   maxBlockUtf8Bytes: 1_536,
-  maxBlocksPerMeeting: 100,
+  maxBlocksPerMeeting: 500,
   maxTurnsPerBlock: 64,
   version: "meeting-knowledge.block-policy.v1",
 } as const;
@@ -66,6 +66,7 @@ async function assertExhaustiveQuestionFamilies(
   retrieval: HistoricalExhaustiveMemoryRetrieval,
   meeting: AcceptedFinalMeetingV1,
   evidenceBlockCount: number,
+  examinedTurnReferenceCount: number,
 ): Promise<void> {
   for (const [kind, question] of Object.entries({
     absence: qualificationQuestions.absence,
@@ -88,7 +89,7 @@ async function assertExhaustiveQuestionFamilies(
     expect(result.coverageBitmap.every(Boolean)).toBe(true);
     expect(result.coverageReduction.payload).toMatchObject({
       blocksReviewed: evidenceBlockCount,
-      turnsReviewed: QUALIFICATION_CORPUS_TURN_COUNT,
+      turnsReviewed: examinedTurnReferenceCount,
     });
     if (kind === "absence") {
       expect(result.candidates).toEqual([]);
@@ -131,9 +132,9 @@ function assertExactBoundedModelRequest(
   expect(parsedModelRequest.plan.evidence.length).toBeLessThanOrEqual(256);
   const exactPromptBytes = new TextEncoder().encode(exactModelRequest).byteLength;
   expect(exactPromptBytes).toBeLessThanOrEqual(64_000);
-  expect(exactPromptBytes).toBe(15_414);
+  expect(exactPromptBytes).toBe(19_468);
   expect(createHash("sha256").update(exactModelRequest, "utf8").digest("hex"))
-    .toBe("93b5ede6225c1dbf62c91971e39c0f1aab5f01c6f2301d3bae3e5a98651cb389");
+    .toBe("03244e18ab252baef55e21168cea729b4df7c7387106aa9cd35d252cc2a29812");
   expect(exactModelRequest).not.toContain("current_complete");
   expect(exactModelRequest).not.toContain(forbiddenPromptMaterial.summary);
   expect(exactModelRequest).not.toContain(forbiddenPromptMaterial.transcriptPrefix);
@@ -217,7 +218,7 @@ describe("Infinity Context positional retrieval qualification", () => {
     });
     const localPlan = buildHistoricalIndexPlan(meeting, ids, twoHourBlockPolicy);
     expect(localPlan.documents.length).toBeGreaterThan(5);
-    expect(localPlan.documents.length).toBeLessThanOrEqual(100);
+    expect(localPlan.documents.length).toBeLessThanOrEqual(500);
 
     const officialClient = new InfinityContextClient({
       baseUrl: "http://disposable.infinity.invalid",
@@ -251,13 +252,13 @@ describe("Infinity Context positional retrieval qualification", () => {
       store,
     }, {
       blockPolicy: twoHourBlockPolicy,
-      candidateLimitPerQuery: 8,
+      candidateLimitPerQuery: 40,
       maximumDecomposedQueries: 4,
       maximumEvidenceBytes: 16_000,
-      maximumLocalScanBlocks: 100,
+      maximumLocalScanBlocks: 500,
       minimumProviderScore: 0.01,
       neighborRadius: 1,
-      rerankLimit: 5,
+      rerankLimit: 8,
       searchTimeoutMs: 40,
       version: "meeting-knowledge.focused-retrieval.v1",
     }, {
@@ -286,7 +287,7 @@ describe("Infinity Context positional retrieval qualification", () => {
       }, {
         blockPolicy: twoHourBlockPolicy,
         checkpointRetentionSeconds: 86_400,
-        maximumBlocks: 100,
+        maximumBlocks: 500,
         maximumCheckpointAttempts: 8,
         maximumCumulativeEvidenceUtf8Bytes: 8_388_608,
         maximumExtractPayloadUtf8Bytes: 4_096,
@@ -316,9 +317,16 @@ describe("Infinity Context positional retrieval qualification", () => {
       throw new Error("two-hour exhaustive coverage did not reach synthesis");
     }
     expect(exhaustive.coverageBitmap).toHaveLength(localPlan.documents.length);
+    const examinedTurnReferenceCount = localPlan.documents.reduce(
+      (total, document) => total + document.manifest.turnIds.length,
+      0,
+    );
+    expect(new Set(localPlan.documents.flatMap(
+      (document) => document.manifest.turnIds,
+    )).size).toBe(QUALIFICATION_CORPUS_TURN_COUNT);
     expect(exhaustive.coverageReduction.payload).toMatchObject({
       blocksReviewed: localPlan.documents.length,
-      turnsReviewed: QUALIFICATION_CORPUS_TURN_COUNT,
+      turnsReviewed: examinedTurnReferenceCount,
     });
     expect(exhaustive.candidates.length).toBeLessThan(QUALIFICATION_CORPUS_TURN_COUNT);
     expect(exhaustive.candidates.length).toBeLessThanOrEqual(256);
@@ -337,6 +345,7 @@ describe("Infinity Context positional retrieval qualification", () => {
       exhaustiveMemory,
       meeting,
       localPlan.documents.length,
+      examinedTurnReferenceCount,
     );
 
     await expectOverSelectionToAbstain(exhaustiveMemory, meeting);

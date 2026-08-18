@@ -52,6 +52,9 @@ export {
   type HistoricalEvidenceBlockPolicyV1,
 } from "./application/historical-index-plan.js";
 export {
+  estimateHistoricalEmbeddingTokens,
+} from "./application/historical-embedding-windows.js";
+export {
   HistoricalContractCodecError,
   decodeCoverageExtractV1,
   decodeCoverageReductionV1,
@@ -156,6 +159,7 @@ export type {
   HistoricalSearchRequestV1,
   HistoricalSearchResultV1,
   HistoricalTopologyV1,
+  HistoricalTurnSourceV1,
   LocallyRehydratedEvidenceBlockV1,
 } from "./application/ports/historical-memory.js";
 export type {

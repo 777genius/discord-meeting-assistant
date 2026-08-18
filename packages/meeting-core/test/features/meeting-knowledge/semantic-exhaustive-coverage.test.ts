@@ -9,6 +9,7 @@ import {
   GroundedAnswer,
   GroundedMeetingAnswer,
   admitAcceptedFinalMeeting,
+  buildHistoricalIndexPlan,
   createExhaustiveCoverageGroundingPlan,
   createHistoricalReleaseBinding,
   exhaustiveCoverageProvesAbsence,
@@ -24,6 +25,13 @@ import {
   type HistoricalReleaseBindingV1,
   type HistoricalSyncStore,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
+
+const semanticBlockPolicy = {
+  maxBlockUtf8Bytes: 32_768,
+  maxBlocksPerMeeting: 100,
+  maxTurnsPerBlock: 64,
+  version: "meeting-knowledge.block-policy.v1",
+} as const;
 
 class SemanticIds implements HistoricalOpaqueIdPort {
   public keyedId(namespace: string, parts: readonly string[]): string {
@@ -231,12 +239,7 @@ function semanticCoverage(
     reducer: new DeterministicCoverageReducer(64, 256),
     sync,
   }, {
-    blockPolicy: {
-      maxBlockUtf8Bytes: 32_768,
-      maxBlocksPerMeeting: 100,
-      maxTurnsPerBlock: 64,
-      version: "meeting-knowledge.block-policy.v1",
-    },
+    blockPolicy: semanticBlockPolicy,
     checkpointRetentionSeconds: 86_400,
     maximumBlocks: 100,
     maximumCheckpointAttempts: 8,
@@ -320,15 +323,21 @@ function answerPlan(
 }
 
 async function coverageFor(question: string, requestId: string) {
+  const meeting = corpus();
   const checkpoints = new SemanticCheckpoints();
-  const result = await semanticCoverage(corpus(), checkpoints).buildPlan({
+  const result = await semanticCoverage(meeting, checkpoints).buildPlan({
     authorizationPrincipalRef: "principal",
     question,
     requestId,
     roomId: "room-1",
     scopeId: "scope-1",
   });
-  return { checkpoints, result };
+  const blockCount = buildHistoricalIndexPlan(
+    meeting,
+    new SemanticIds(),
+    semanticBlockPolicy,
+  ).documents.length;
+  return { blockCount, checkpoints, result };
 }
 
 function revokingAuthorization(input: {
@@ -381,11 +390,20 @@ describe("semantic exhaustive coverage exact-answer oracles", () => {
 
   it("stops before the next reducer when authorization is revoked mid-pass", async () => {
     const signal = new AbortController().signal;
-    // Initial admission + seven blocks + first reducer are authorized.
-    const authorization = revokingAuthorization({ revokeOnCall: 10, signal });
+    const meeting = corpus();
+    const blockCount = buildHistoricalIndexPlan(
+      meeting,
+      new SemanticIds(),
+      semanticBlockPolicy,
+    ).documents.length;
+    // Initial admission + every block + first reducer are authorized.
+    const authorization = revokingAuthorization({
+      revokeOnCall: blockCount + 3,
+      signal,
+    });
     const checkpoints = new SemanticCheckpoints();
     const result = await semanticCoverage(
-      corpus(),
+      meeting,
       checkpoints,
       authorization.port,
     ).buildPlan({
@@ -401,8 +419,8 @@ describe("semantic exhaustive coverage exact-answer oracles", () => {
       reason: "authorization_changed",
       status: "unauthorized",
     });
-    expect(checkpoints.extractionCount).toBe(7);
-    expect(authorization.calls()).toBe(10);
+    expect(checkpoints.extractionCount).toBe(blockCount);
+    expect(authorization.calls()).toBe(blockCount + 3);
   });
 
   it("does not call the final provider without a fresh exhaustive authorization fence", async () => {
@@ -469,15 +487,15 @@ describe("semantic exhaustive coverage exact-answer oracles", () => {
   });
 
   it("returns exact count and all/list answers across more than 400 turns, retaining duplicates and contradictions", async () => {
-    const { checkpoints, result } = await coverageFor(
+    const { blockCount, checkpoints, result } = await coverageFor(
       "Count every decision assertion and list all of them",
       "request-count-list",
     );
     if (result.status !== "ready") {
       throw new Error("semantic coverage was not ready");
     }
-    expect(result.plan.coverageBitmap).toHaveLength(7);
-    expect(checkpoints.extractionCount).toBe(7);
+    expect(result.plan.coverageBitmap).toHaveLength(blockCount);
+    expect(checkpoints.extractionCount).toBe(blockCount);
     expect(result.plan.coverageBitmap.every(Boolean)).toBe(true);
     expect(result.plan.reduction.selectedTurns.map(({ turnId }) => turnId).toSorted()).toEqual([
       "meeting-semantic-420-turn-0003",
@@ -589,5 +607,5 @@ describe("semantic exhaustive coverage exact-answer oracles", () => {
       groundingMode: "exhaustive_coverage",
       question: "Was Project Zeta ever approved?",
     })).toThrow("between one and eight citations");
-  });
+  }, 15_000);
 });

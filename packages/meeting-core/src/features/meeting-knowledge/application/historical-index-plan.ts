@@ -11,11 +11,20 @@ import type {
   HistoricalTopologyV1,
   LocallyRehydratedEvidenceBlockV1,
 } from "./ports/historical-memory.js";
+import {
+  estimateHistoricalEmbeddingTokens,
+  historicalEmbeddingText,
+  partitionHistoricalEmbeddingWindows,
+  type HistoricalTurnProjection,
+} from "./historical-embedding-windows.js";
 
 export interface HistoricalEvidenceBlockPolicyV1 {
+  /** Conservative retrieval projection budget; provider input must be at least this large. */
+  readonly maximumEmbeddingTokens?: number;
   readonly maxBlockUtf8Bytes: number;
   readonly maxBlocksPerMeeting: number;
   readonly maxTurnsPerBlock: number;
+  readonly turnOverlap?: number;
   readonly version: "meeting-knowledge.block-policy.v1";
 }
 
@@ -26,11 +35,22 @@ type HistoricalEvidenceBlockPolicyInputV1 = Omit<
 
 export const DEFAULT_HISTORICAL_EVIDENCE_BLOCK_POLICY: HistoricalEvidenceBlockPolicyV1 =
   Object.freeze({
+    maximumEmbeddingTokens: 96,
     maxBlockUtf8Bytes: 4_096,
-    maxBlocksPerMeeting: 100,
+    maxBlocksPerMeeting: 500,
     maxTurnsPerBlock: 64,
+    turnOverlap: 2,
     version: "meeting-knowledge.block-policy.v1",
   });
+
+interface ResolvedHistoricalEvidenceBlockPolicyV1 {
+  readonly maximumEmbeddingTokens: number;
+  readonly maxBlockUtf8Bytes: number;
+  readonly maxBlocksPerMeeting: number;
+  readonly maxTurnsPerBlock: number;
+  readonly turnOverlap: number;
+  readonly version: "meeting-knowledge.block-policy.v1";
+}
 
 export class HistoricalIndexPlanError extends Error {
   public override readonly name = "HistoricalIndexPlanError";
@@ -101,6 +121,8 @@ export function buildHistoricalTopology(
         String(policy.maxBlockUtf8Bytes),
         String(policy.maxBlocksPerMeeting),
         String(policy.maxTurnsPerBlock),
+        String(policy.maximumEmbeddingTokens),
+        String(policy.turnOverlap),
       ]),
     ),
     releaseRef,
@@ -112,7 +134,9 @@ export function buildHistoricalTopology(
 
 function assertPolicy(
   policy: HistoricalEvidenceBlockPolicyInputV1,
-): HistoricalEvidenceBlockPolicyV1 {
+): ResolvedHistoricalEvidenceBlockPolicyV1 {
+  const maximumEmbeddingTokens = policy.maximumEmbeddingTokens ?? 96;
+  const turnOverlap = policy.turnOverlap ?? 2;
   if (
     policy.version !== "meeting-knowledge.block-policy.v1" ||
     !Number.isSafeInteger(policy.maxBlockUtf8Bytes) ||
@@ -123,18 +147,26 @@ function assertPolicy(
     policy.maxBlocksPerMeeting > 2_048 ||
     !Number.isSafeInteger(policy.maxTurnsPerBlock) ||
     policy.maxTurnsPerBlock < 1 ||
-    policy.maxTurnsPerBlock > 64
+    policy.maxTurnsPerBlock > 64 ||
+    !Number.isSafeInteger(maximumEmbeddingTokens) ||
+    maximumEmbeddingTokens < 16 ||
+    maximumEmbeddingTokens > 512 ||
+    !Number.isSafeInteger(turnOverlap) ||
+    turnOverlap < 0 ||
+    turnOverlap > 8 ||
+    turnOverlap >= policy.maxTurnsPerBlock
   ) {
     throw new HistoricalIndexPlanError(
       "INVALID_POLICY",
       "historical evidence block policy is outside its qualified bounds",
     );
   }
-  return Object.freeze({ ...policy, version: "meeting-knowledge.block-policy.v1" });
-}
-
-function byteLength(value: string): number {
-  return new TextEncoder().encode(value).byteLength;
+  return Object.freeze({
+    ...policy,
+    maximumEmbeddingTokens,
+    turnOverlap,
+    version: "meeting-knowledge.block-policy.v1",
+  });
 }
 
 function opaque(prefix: string, value: string): string {
@@ -144,8 +176,9 @@ function opaque(prefix: string, value: string): string {
 function canonicalTurn(
   ids: HistoricalOpaqueIdPort,
   binding: HistoricalReleaseBindingV1,
-  turn: AcceptedFinalMeetingV1["humanTurns"][number],
+  projection: HistoricalTurnProjection,
 ): string {
+  const { turn } = projection;
   const turnRef = opaque(
     "turn1",
     ids.keyedId("historical-turn", [
@@ -171,51 +204,10 @@ function canonicalTurn(
     `speaker=${speakerRef}`,
     `start_ms=${turn.startMs}`,
     `end_ms=${turn.endMs}`,
+    `source_code_points=${projection.sourceStartCodePoint}:${projection.sourceEndCodePoint}`,
     "text:",
-    turn.text,
+    projection.text,
   ].join("\n");
-}
-
-function partitionTurns(
-  meeting: AcceptedFinalMeetingV1,
-  ids: HistoricalOpaqueIdPort,
-  policy: HistoricalEvidenceBlockPolicyV1,
-): readonly (readonly AcceptedFinalMeetingV1["humanTurns"][number][])[] {
-  const partitions: Array<AcceptedFinalMeetingV1["humanTurns"][number][]> = [];
-  let current: AcceptedFinalMeetingV1["humanTurns"][number][] = [];
-  let currentBytes = 0;
-
-  for (const turn of meeting.humanTurns) {
-    const serialized = canonicalTurn(ids, meeting.binding, turn);
-    const serializedBytes = byteLength(serialized) + (current.length === 0 ? 0 : 2);
-    if (serializedBytes > policy.maxBlockUtf8Bytes) {
-      throw new HistoricalIndexPlanError(
-        "BLOCK_LIMIT_EXCEEDED",
-        `authoritative turn ${turn.turnId} exceeds the evidence block byte bound`,
-      );
-    }
-    if (
-      current.length > 0 &&
-      (currentBytes + serializedBytes > policy.maxBlockUtf8Bytes ||
-        current.length >= policy.maxTurnsPerBlock)
-    ) {
-      partitions.push(current);
-      current = [];
-      currentBytes = 0;
-    }
-    current.push(turn);
-    currentBytes += serializedBytes;
-  }
-  if (current.length > 0) {
-    partitions.push(current);
-  }
-  if (partitions.length > policy.maxBlocksPerMeeting) {
-    throw new HistoricalIndexPlanError(
-      "BLOCK_LIMIT_EXCEEDED",
-      "accepted meeting requires more evidence blocks than the qualified policy permits",
-    );
-  }
-  return Object.freeze(partitions.map((partition) => Object.freeze(partition)));
 }
 
 export function buildHistoricalIndexPlan(
@@ -229,14 +221,20 @@ export function buildHistoricalIndexPlan(
   const topology = buildHistoricalTopology(binding, ids, policy);
   const { indexGeneration, releaseRef } = topology;
 
-  const documents: HistoricalIndexDocumentV1[] = partitionTurns(
-    meeting,
-    ids,
-    policy,
-  ).map((turns, ordinal) => {
-    const remoteText = turns
-      .map((turn) => canonicalTurn(ids, binding, turn))
+  let partitions: readonly (readonly HistoricalTurnProjection[])[];
+  try {
+    partitions = partitionHistoricalEmbeddingWindows(meeting, policy);
+  } catch (error) {
+    throw new HistoricalIndexPlanError(
+      "BLOCK_LIMIT_EXCEEDED",
+      error instanceof Error ? error.message : "historical projection failed",
+    );
+  }
+  const documents: HistoricalIndexDocumentV1[] = partitions.map((projections, ordinal) => {
+    const remoteText = projections
+      .map((projection) => canonicalTurn(ids, binding, projection))
       .join("\n\n");
+    const cleanEmbeddingText = historicalEmbeddingText(projections);
     const contentHash = opaque(
       "mkcontent1",
       ids.keyedId("historical-block-content", [remoteText]),
@@ -261,13 +259,20 @@ export function buildHistoricalIndexPlan(
       candidateLocator,
       contentHash,
       documentExternalId,
-      endMs: turns.at(-1)?.endMs ?? 0,
+      embeddingTokenEstimate: estimateHistoricalEmbeddingTokens(cleanEmbeddingText),
+      embeddingTokenLimit: policy.maximumEmbeddingTokens,
+      embeddingTokenProfile: "meeting-knowledge.wordpiece-conservative.v1",
+      endMs: projections.at(-1)?.turn.endMs ?? 0,
       indexGeneration,
       ordinal,
-      startMs: turns[0]?.startMs ?? 0,
-      turnIds: Object.freeze(turns.map(({ turnId }) => turnId)),
+      startMs: projections[0]?.turn.startMs ?? 0,
+      turnIds: Object.freeze([
+        ...new Set(projections.map(({ turn }) => turn.turnId)),
+      ]),
+      turnSources: buildTurnSources(projections, ids, binding),
     });
     return Object.freeze({
+      embeddingText: cleanEmbeddingText,
       manifest,
       mutationId,
       remoteText,
@@ -305,6 +310,37 @@ export function buildHistoricalIndexPlan(
     schemaVersion: 1,
     topology,
   });
+}
+
+function buildTurnSources(
+  projections: readonly HistoricalTurnProjection[],
+  ids: HistoricalOpaqueIdPort,
+  binding: HistoricalReleaseBindingV1,
+): HistoricalBlockManifestV1["turnSources"] {
+  let embeddingOffset = 0;
+  return Object.freeze(projections.map((projection) => {
+    const textLength = Array.from(projection.text).length;
+    const source = Object.freeze({
+      embeddingEndCodePoint: embeddingOffset + textLength,
+      embeddingStartCodePoint: embeddingOffset,
+      endMs: projection.turn.endMs,
+      sourceEndCodePoint: projection.sourceEndCodePoint,
+      sourceRef: opaque("turn1", ids.keyedId("historical-turn", [
+        binding.scopeId,
+        binding.roomId,
+        binding.meetingId,
+        binding.transcriptId,
+        String(binding.transcriptVersion),
+        projection.turn.turnId,
+      ])),
+      sourceStartCodePoint: projection.sourceStartCodePoint,
+      speakerId: projection.turn.speakerId,
+      startMs: projection.turn.startMs,
+      turnId: projection.turn.turnId,
+    });
+    embeddingOffset += textLength + 1;
+    return source;
+  }));
 }
 
 export function rehydrateHistoricalBlock(

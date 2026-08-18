@@ -19,17 +19,36 @@ export interface HistoricalBlockManifestV1 {
   readonly candidateLocator: string;
   readonly contentHash: string;
   readonly documentExternalId: string;
+  readonly embeddingTokenEstimate: number;
+  readonly embeddingTokenLimit: number;
+  readonly embeddingTokenProfile: "meeting-knowledge.wordpiece-conservative.v1";
   readonly endMs: number;
   readonly indexGeneration: string;
   readonly ordinal: number;
   readonly startMs: number;
+  /** Exact local evidence coordinates for the clean embedding projection. */
+  readonly turnSources: readonly HistoricalTurnSourceV1[];
   readonly turnIds: readonly string[];
 }
 
+export interface HistoricalTurnSourceV1 {
+  readonly embeddingEndCodePoint: number;
+  readonly embeddingStartCodePoint: number;
+  readonly endMs: number;
+  readonly sourceEndCodePoint: number;
+  readonly sourceRef: string;
+  readonly sourceStartCodePoint: number;
+  readonly speakerId: string;
+  readonly startMs: number;
+  readonly turnId: string;
+}
+
 export interface HistoricalIndexDocumentV1 {
+  /** Retrieval-only text: human speech without opaque IDs or timing noise. */
+  readonly embeddingText: string;
   readonly manifest: HistoricalBlockManifestV1;
   readonly mutationId: string;
-  /** Canonical local human turns prepared for remote retrieval indexing only. */
+  /** Canonical local evidence payload used for identity and reconciliation. */
   readonly remoteText: string;
   readonly title: string;
 }

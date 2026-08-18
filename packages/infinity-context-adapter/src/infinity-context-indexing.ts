@@ -141,10 +141,13 @@ class HistoricalMeetingIndexer {
         sourceRefs: [{
           source_id: document.manifest.candidateLocator,
           source_type: CANDIDATE_SOURCE_TYPE,
-        }],
+        }, ...document.manifest.turnSources.map(({ sourceRef }) => ({
+          source_id: sourceRef,
+          source_type: "meeting_evidence_turn",
+        }))],
         sourceType: DOCUMENT_SOURCE_TYPE,
         spaceSlug: request.topology.spaceSlug,
-        text: document.remoteText,
+        text: document.embeddingText,
         threadExternalRef: request.topology.threadExternalRef,
         title: document.title,
       })

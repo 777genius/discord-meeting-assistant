@@ -23,6 +23,7 @@ import {
 import {
   isHybridQualified,
   processMutationAccepted,
+  validIndexPlan,
 } from "../src/infinity-context-sdk-contract.js";
 import { DisposableInfinityEndpoint } from "./disposable-infinity-endpoint.js";
 import {
@@ -39,6 +40,31 @@ const blockPolicy = {
   maxTurnsPerBlock: 64,
   version: "meeting-knowledge.block-policy.v1",
 } as const;
+
+function boundedWindowPlan(turnCount: number, maximumBlocks = turnCount) {
+  const ids = new HmacHistoricalOpaqueIds(new Uint8Array(32).fill(0x4a));
+  const base = finalMeeting(1, "Tuesday");
+  const meeting = Object.freeze({
+    ...base,
+    humanTurns: Object.freeze(Array.from({ length: turnCount }, (_, index) =>
+      Object.freeze({
+        ...base.humanTurns[0]!,
+        endMs: index * 10 + 9,
+        startMs: index * 10,
+        text: `bounded adapter turn ${index}`,
+        turnId: `adapter-boundary-${index}`,
+      })
+    )),
+  });
+  return buildHistoricalIndexPlan(meeting, ids, {
+    maximumEmbeddingTokens: 96,
+    maxBlockUtf8Bytes: 4_096,
+    maxBlocksPerMeeting: maximumBlocks,
+    maxTurnsPerBlock: 1,
+    turnOverlap: 0,
+    version: "meeting-knowledge.block-policy.v1",
+  });
+}
 
 function cedarExtract(block: LocallyRehydratedEvidenceBlockV1): CoverageExtractV1 {
   const selectedTurns = block.turns.filter(({ text }) =>
@@ -123,15 +149,19 @@ describe("Infinity Context bounded search budget", () => {
     });
     await adapter.qualifyCapabilities();
 
-    for (const candidateLimit of [1, 5, 16]) {
-      await expect(adapter.searchRoom({
+    for (const candidateLimit of [1, 5, 16, 40]) {
+      const result = await adapter.searchRoom({
         candidateLimit,
         query: "bounded evidence budget",
         roomScopeExternalRef: "room-scope",
         schemaVersion: 1,
         spaceSlug: "space-slug",
         timeoutMs: 1_000,
-      })).resolves.toMatchObject({ status: "available" });
+      });
+      expect(result).toMatchObject({ status: "available" });
+      if (result.status === "available") {
+        expect(result.candidates.length).toBeLessThanOrEqual(candidateLimit);
+      }
     }
 
     expect(endpoint.requests.filter(({ method, path }) =>
@@ -140,7 +170,37 @@ describe("Infinity Context bounded search budget", () => {
       expect.objectContaining({ max_chunks: 1, max_evidence_items: 1, token_budget: 6_000 }),
       expect.objectContaining({ max_chunks: 5, max_evidence_items: 5, token_budget: 6_000 }),
       expect.objectContaining({ max_chunks: 16, max_evidence_items: 16, token_budget: 6_000 }),
+      expect.objectContaining({ max_chunks: 40, max_evidence_items: 40, token_budget: 6_000 }),
     ]);
+  });
+});
+
+describe("Infinity Context bounded historical plan", () => {
+  it("accepts 500 deterministic windows and rejects 501", () => {
+    expect(validIndexPlan(boundedWindowPlan(500, 501))).toBe(true);
+    expect(validIndexPlan(boundedWindowPlan(501, 501))).toBe(false);
+  });
+
+  it("converges a partial >100-window ingest within the bounded sequential envelope", async () => {
+    const endpoint = new DisposableInfinityEndpoint();
+    const adapter = new InfinityContextHistoricalMemoryAdapter({
+      baseUrl: "http://disposable.infinity.invalid",
+      operationTimeoutMs: 30_000,
+      requestTimeoutMs: 1_000,
+      schemaVersion: 1,
+      transport: endpoint,
+    });
+    const plan = boundedWindowPlan(120);
+    endpoint.loseNextIngestResponse();
+    const startedAt = performance.now();
+
+    await expect(adapter.indexFinalMeeting(plan)).resolves.toMatchObject({ status: "applied" });
+    const elapsedMs = performance.now() - startedAt;
+    expect(endpoint.documentCount()).toBe(120);
+    expect(elapsedMs).toBeLessThan(30_000);
+    expect(endpoint.requests.filter(({ method, path }) =>
+      method === "POST" && path === "/v1/documents"
+    ).length).toBeLessThanOrEqual(121);
   });
 });
 
@@ -243,7 +303,7 @@ describe("Infinity Context historical memory vertical slice", () => {
       timeoutMs: 1_000,
       transport: endpoint,
     });
-    await Promise.all(Array.from({ length: 100 }, (_, index) =>
+    await Promise.all(Array.from({ length: 500 }, (_, index) =>
       client.documents.ingestDocument({
         idempotencyKey: `decoy-${index}`,
         memoryScopeExternalRef: plan.topology.roomScopeExternalRef,

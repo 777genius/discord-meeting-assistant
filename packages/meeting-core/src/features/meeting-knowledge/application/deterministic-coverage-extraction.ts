@@ -183,7 +183,10 @@ function reduceSelections(
   const selected = new Map<string, CoverageSelectedTurnV1>();
   for (const value of input.values) {
     for (const turn of value.selectedTurns) {
-      selected.set(`${turn.blockLocator}\u0000${turn.turnId}`, turn);
+      const prior = selected.get(turn.turnId);
+      if (prior === undefined || preferredSelection(turn, prior) === turn) {
+        selected.set(turn.turnId, turn);
+      }
     }
   }
   const selectedTurns = [...selected.values()].toSorted((left, right) =>
@@ -223,4 +226,16 @@ function reduceSelections(
     selectionStatus: selectedTurns.length === 0 ? "no_match" : "selected",
     schemaVersion: 1,
   }));
+}
+
+function preferredSelection(
+  left: CoverageSelectedTurnV1,
+  right: CoverageSelectedTurnV1,
+): CoverageSelectedTurnV1 {
+  const relevance = { conflicting: 2, context: 1, direct: 3 } as const;
+  const difference = relevance[left.relevance] - relevance[right.relevance];
+  return difference > 0 ||
+      (difference === 0 && left.blockLocator.localeCompare(right.blockLocator) < 0)
+    ? left
+    : right;
 }

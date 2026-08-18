@@ -177,9 +177,15 @@ export function retainStrictSourceSubsets(
   authoritativeTurnCounts: ReadonlyMap<string, number>,
 ): readonly LocallyRehydratedEvidenceBlockV1[] {
   const selectedTurnCounts = new Map<string, number>();
+  const selectedTurnIds = new Map<string, Set<string>>();
   for (const block of blocks) {
     const key = historicalSourceKey(block.binding);
-    selectedTurnCounts.set(key, (selectedTurnCounts.get(key) ?? 0) + block.turns.length);
+    const ids = selectedTurnIds.get(key) ?? new Set<string>();
+    for (const { turnId } of block.turns) {
+      ids.add(turnId);
+    }
+    selectedTurnIds.set(key, ids);
+    selectedTurnCounts.set(key, ids.size);
   }
   const lastLocatorForCompleteSource = new Map<string, string>();
   for (const block of blocks) {

@@ -1,9 +1,10 @@
-import type {
-  HistoricalCandidateLocatorV1,
-  HistoricalDeleteRequestV1,
-  HistoricalIndexPlanV1,
-  HistoricalSearchRequestV1,
-  HistoricalTopologyV1,
+import {
+  estimateHistoricalEmbeddingTokens,
+  type HistoricalCandidateLocatorV1,
+  type HistoricalDeleteRequestV1,
+  type HistoricalIndexPlanV1,
+  type HistoricalSearchRequestV1,
+  type HistoricalTopologyV1,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import {
   InfinityContextError,
@@ -14,7 +15,7 @@ import {
 
 export const CANDIDATE_SOURCE_TYPE = "meeting_evidence_locator";
 export const DOCUMENT_SOURCE_TYPE = "meeting_final_human_evidence";
-const MAXIMUM_SCOPE_DOCUMENTS = 100;
+const MAXIMUM_SCOPE_DOCUMENTS = 500;
 const acceptedProcessStatuses = new Set([
   "already_indexed_or_pending",
   "indexed",
@@ -24,6 +25,7 @@ const acceptedProcessStatuses = new Set([
 const CANDIDATE_LOCATOR_PREFIX = "mkcandidate1.";
 const MAXIMUM_PROVIDER_ITEMS_MULTIPLIER = 4;
 const MAXIMUM_PROVIDER_SOURCE_REFS_PER_ITEM = 16;
+const MAXIMUM_QUALIFIED_EMBEDDING_TOKENS = 128;
 
 type HistoricalDeleteRequestInputV1 = Omit<HistoricalDeleteRequestV1, "schemaVersion"> & {
   readonly schemaVersion: number;
@@ -190,7 +192,26 @@ export function validIndexPlan(request: HistoricalIndexPlanInputV1): boolean {
     request.documents.every((document) =>
       boundedString(document.manifest.candidateLocator, 200) &&
       boundedString(document.manifest.documentExternalId, 200) &&
+      document.manifest.embeddingTokenProfile ===
+        "meeting-knowledge.wordpiece-conservative.v1" &&
+      document.manifest.embeddingTokenEstimate ===
+        estimateHistoricalEmbeddingTokens(document.embeddingText) &&
+      isBoundedInteger(document.manifest.embeddingTokenEstimate, 1,
+        document.manifest.embeddingTokenLimit) &&
+      isBoundedInteger(document.manifest.embeddingTokenLimit, 16,
+        MAXIMUM_QUALIFIED_EMBEDDING_TOKENS) &&
+      document.manifest.turnSources.length > 0 &&
+      document.manifest.turnSources.length < MAXIMUM_PROVIDER_SOURCE_REFS_PER_ITEM &&
+      document.manifest.turnSources.every((source) =>
+        boundedString(source.sourceRef, 200) &&
+        boundedString(source.speakerId, 200) &&
+        boundedString(source.turnId, 200) &&
+        source.endMs > source.startMs &&
+        source.sourceEndCodePoint > source.sourceStartCodePoint &&
+        source.embeddingEndCodePoint > source.embeddingStartCodePoint
+      ) &&
       boundedString(document.mutationId, 200) &&
+      boundedString(document.embeddingText, 4_096) &&
       boundedString(document.remoteText, 32_768) &&
       boundedString(document.title, 200)
     );
