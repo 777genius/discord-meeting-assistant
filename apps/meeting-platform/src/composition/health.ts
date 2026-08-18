@@ -161,19 +161,13 @@ function isVoicetextHealthy(value: unknown, config: PlatformConfig): boolean {
     return false;
   }
   const expectedProfiles = [
-    {
-      mode: "live",
-      provider: providerForLiveProfile(config.voicetext.liveProfile),
-    },
-    {
-      mode: "batch",
-      provider: providerForBatchProfile(config.voicetext.batchProfile),
-    },
+    liveHealthIdentity(config.voicetext.liveProfile),
+    batchHealthIdentity(config.voicetext.batchProfile),
   ] as const;
   const providerProfiles: readonly unknown[] = value.provider_profiles;
-  return expectedProfiles.every(({ mode, provider }) => {
+  return expectedProfiles.every((identity) => {
     const matching = providerProfiles.filter((profile) =>
-      matchesVoicetextProfile(profile, mode, provider)
+      matchesVoicetextProfile(profile, identity)
     );
     return matching.length === 1 && matching[0]?.ready === true;
   });
@@ -181,29 +175,72 @@ function isVoicetextHealthy(value: unknown, config: PlatformConfig): boolean {
 
 function matchesVoicetextProfile(
   value: unknown,
-  mode: "batch" | "live",
-  provider: "deepgram" | "elevenlabs",
+  identity: VoicetextHealthIdentity,
 ): value is { readonly ready?: unknown } {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const profile = value as Readonly<Record<string, unknown>>;
   return (
-    typeof value === "object" &&
-    value !== null &&
-    "mode" in value &&
-    value.mode === mode &&
-    "provider" in value &&
-    value.provider === provider
+    profile.mode === identity.mode &&
+    profile.profile === identity.profile &&
+    profile.provider === identity.provider &&
+    profile.model === identity.model &&
+    profile[identity.versionField] === identity.version
   );
 }
 
-function providerForLiveProfile(
-  profile: NonNullable<PlatformConfig["voicetext"]>["liveProfile"],
-): "deepgram" | "elevenlabs" {
-  return profile === "deepgram-nova-3" ? "deepgram" : "elevenlabs";
+interface VoicetextHealthIdentity {
+  readonly mode: "batch" | "live";
+  readonly model: "nova-3" | "scribe_v2" | "scribe_v2_realtime";
+  readonly profile: "deepgram-nova-3" | "elevenlabs-scribe-v2" | "elevenlabs-scribe-v2-realtime";
+  readonly provider: "deepgram" | "elevenlabs";
+  readonly version: 2 | 3;
+  readonly versionField: "contract_version" | "protocol_version";
 }
 
-function providerForBatchProfile(
+function liveHealthIdentity(
+  profile: NonNullable<PlatformConfig["voicetext"]>["liveProfile"],
+): VoicetextHealthIdentity {
+  return profile === "deepgram-nova-3"
+    ? {
+        mode: "live",
+        model: "nova-3",
+        profile,
+        provider: "deepgram",
+        version: 2,
+        versionField: "protocol_version",
+      }
+    : {
+        mode: "live",
+        model: "scribe_v2_realtime",
+        profile,
+        provider: "elevenlabs",
+        version: 2,
+        versionField: "protocol_version",
+      };
+}
+
+function batchHealthIdentity(
   profile: NonNullable<PlatformConfig["voicetext"]>["batchProfile"],
-): "deepgram" | "elevenlabs" {
-  return profile === "deepgram-nova-3" ? "deepgram" : "elevenlabs";
+): VoicetextHealthIdentity {
+  return profile === "deepgram-nova-3"
+    ? {
+        mode: "batch",
+        model: "nova-3",
+        profile,
+        provider: "deepgram",
+        version: 2,
+        versionField: "contract_version",
+      }
+    : {
+        mode: "batch",
+        model: "scribe_v2",
+        profile,
+        provider: "elevenlabs",
+        version: 3,
+        versionField: "contract_version",
+      };
 }
 
 function voicetextHealthUrl(config: PlatformConfig): URL {

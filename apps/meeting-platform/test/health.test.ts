@@ -48,10 +48,10 @@ describe("Voicetext health", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
       status: "ok",
       provider_profiles: [
-        { mode: "live", provider: "deepgram", ready: true },
-        { mode: "live", provider: "elevenlabs", ready: false },
-        { mode: "batch", provider: "deepgram", ready: true },
-        { mode: "batch", provider: "elevenlabs", ready: true },
+        { mode: "live", model: "nova-3", profile: "deepgram-nova-3", protocol_version: 2, provider: "deepgram", ready: true },
+        { mode: "live", model: "scribe_v2_realtime", profile: "elevenlabs-scribe-v2-realtime", protocol_version: 2, provider: "elevenlabs", ready: false },
+        { contract_version: 2, mode: "batch", model: "nova-3", profile: "deepgram-nova-3", provider: "deepgram", ready: true },
+        { contract_version: 3, mode: "batch", model: "scribe_v2", profile: "elevenlabs-scribe-v2", provider: "elevenlabs", ready: true },
       ],
     }), { status: 200 })));
 
@@ -69,10 +69,10 @@ describe("Voicetext health", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
       status: "ok",
       provider_profiles: [
-        { mode: "live", provider: "deepgram", ready: true },
-        { mode: "live", provider: "elevenlabs", ready: true },
-        { mode: "batch", provider: "deepgram", ready: true },
-        { mode: "batch", provider: "elevenlabs", ready: true },
+        { mode: "live", model: "nova-3", profile: "deepgram-nova-3", protocol_version: 2, provider: "deepgram", ready: true },
+        { mode: "live", model: "scribe_v2_realtime", profile: "elevenlabs-scribe-v2-realtime", protocol_version: 2, provider: "elevenlabs", ready: true },
+        { contract_version: 2, mode: "batch", model: "nova-3", profile: "deepgram-nova-3", provider: "deepgram", ready: true },
+        { contract_version: 3, mode: "batch", model: "scribe_v2", profile: "elevenlabs-scribe-v2", provider: "elevenlabs", ready: true },
       ],
     }), { status: 200 })));
 
@@ -80,6 +80,25 @@ describe("Voicetext health", () => {
       dependencies: [{ name: "stt", status: "healthy" }],
       ready: true,
       status: "healthy",
+    });
+  });
+
+  it("rejects a provider and mode match with the wrong contract identity", async () => {
+    const health = new HealthAggregator([
+      createTranscriptionHealthProbe(voicetextConfig()),
+    ]);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      status: "ok",
+      provider_profiles: [
+        { mode: "live", model: "scribe_v2_realtime", profile: "elevenlabs-scribe-v2-realtime", protocol_version: 2, provider: "elevenlabs", ready: true },
+        { contract_version: 2, mode: "batch", model: "scribe_v2", profile: "elevenlabs-scribe-v2", provider: "elevenlabs", ready: true },
+      ],
+    }), { status: 200 })));
+
+    await expect(health.snapshot()).resolves.toMatchObject({
+      dependencies: [{ name: "stt", status: "unhealthy" }],
+      ready: false,
+      status: "unhealthy",
     });
   });
 });
