@@ -491,8 +491,8 @@ describe("schema 21 withdrawal upgrade", () => {
         }],
       });
       await expect(new PostgresMigrationRunner(isolated.pool).migrate()).resolves.toEqual({
-        appliedVersions: [23, 24, 25, 26],
-        version: 26,
+        appliedVersions: [23, 24, 25, 26, 27],
+        version: 27,
       });
       await expect(new PostgresSchemaReadiness(isolated.pool).assertReady())
         .resolves.toBeUndefined();
