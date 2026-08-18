@@ -1,5 +1,5 @@
 import type { PostCallWorkItem } from "@discord-meeting/meeting-core/post-call-workflow";
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 
 interface TranscriptionExecutionBindingRow {
   readonly transcription_execution_binding: string | null;
@@ -12,6 +12,7 @@ interface BindingRecoverablePostCallRow {
 }
 
 const maximumTranscriptionExecutionBindingLength = 128;
+const legacyBindingBackfillBatchSize = 100;
 
 function requireTranscriptionExecutionBinding(binding: string): string {
   if (
@@ -123,17 +124,60 @@ export class PostgresTranscriptionExecutionBindingStore {
   public async backfillRecoverableUnboundTranscriptionExecutionBindings(
     binding: string,
   ): Promise<number> {
-    const result = await this.pool.query(
-      `
-        UPDATE meeting_core.post_call_outbox
-        SET transcription_execution_binding = $1
-        WHERE transcription_execution_binding IS NULL
-          AND transcription_execution_binding_required = FALSE
-          AND processed_at IS NULL
-          AND dead_lettered_at IS NULL
-      `,
-      [requireTranscriptionExecutionBinding(binding)],
-    );
-    return result.rowCount ?? 0;
+    const client = await this.pool.connect();
+    let transactionActive = false;
+    let clientReusable = true;
+    try {
+      await client.query("BEGIN");
+      transactionActive = true;
+      await client.query("SET LOCAL lock_timeout = '250ms'");
+      await client.query("SET LOCAL statement_timeout = '5s'");
+      const result = await client.query(
+        `
+          WITH batch AS (
+            SELECT meeting_id
+            FROM meeting_core.post_call_outbox
+            WHERE transcription_execution_binding IS NULL
+              AND transcription_execution_binding_required = FALSE
+              AND processed_at IS NULL
+              AND dead_lettered_at IS NULL
+            ORDER BY COALESCE(recovery_after, created_at), meeting_id
+            LIMIT $2
+            FOR UPDATE SKIP LOCKED
+          )
+          UPDATE meeting_core.post_call_outbox AS outbox
+          SET transcription_execution_binding = $1
+          FROM batch
+          WHERE outbox.meeting_id = batch.meeting_id
+        `,
+        [
+          requireTranscriptionExecutionBinding(binding),
+          legacyBindingBackfillBatchSize,
+        ],
+      );
+      await client.query("COMMIT");
+      transactionActive = false;
+      // Startup performs one bounded maintenance batch. Remaining legacy rows
+      // stay recoverable and are pinned individually by dispatch, so a large or
+      // concurrently locked backlog cannot hold readiness indefinitely.
+      return result.rowCount ?? 0;
+    } catch (error) {
+      if (transactionActive) {
+        clientReusable = await rollbackQuietly(client);
+      }
+      throw error;
+    } finally {
+      client.release(!clientReusable);
+    }
+  }
+}
+
+async function rollbackQuietly(client: PoolClient): Promise<boolean> {
+  try {
+    await client.query("ROLLBACK");
+    return true;
+  } catch {
+    // Preserve the original bounded-backfill failure.
+    return false;
   }
 }

@@ -99,6 +99,12 @@ export class PostgresMigrationRunner {
       await ensureMigrationLedger(client);
       const ledger = await listMigrationLedger(client);
       assertLedgerIsKnownAndContiguous(ledger, migrations);
+      // The session advisory lock remains held, but the ledger transaction must
+      // not span multiple migrations. In particular, metadata DDL must commit
+      // before a following validation scan starts so ACCESS EXCLUSIVE locks are
+      // released at the intended online-migration boundary.
+      await client.query("COMMIT");
+      transactionActive = false;
 
       const appliedVersions: number[] = [];
       const ledgerByVersion = new Map(ledger.map((entry) => [entry.version, entry]));
@@ -113,8 +119,6 @@ export class PostgresMigrationRunner {
           continue;
         }
         if (migration.transactional === false) {
-          await client.query("COMMIT");
-          transactionActive = false;
           if (migration.repairInvalidConcurrentIndex !== undefined) {
             await dropInvalidConcurrentIndex(
               client,
@@ -122,10 +126,14 @@ export class PostgresMigrationRunner {
             );
           }
           await client.query(migration.sql);
+        } else {
           await client.query("BEGIN");
           transactionActive = true;
-        } else {
           await client.query(migration.sql);
+        }
+        if (!transactionActive) {
+          await client.query("BEGIN");
+          transactionActive = true;
         }
         await client.query(
           `
@@ -135,10 +143,10 @@ export class PostgresMigrationRunner {
           `,
           [migration.version, migration.checksumSha256],
         );
+        await client.query("COMMIT");
+        transactionActive = false;
         appliedVersions.push(migration.version);
       }
-      await client.query("COMMIT");
-      transactionActive = false;
       return Object.freeze({
         appliedVersions: Object.freeze(appliedVersions),
         version: migrations.at(-1)?.version ?? 0,

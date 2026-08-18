@@ -140,4 +140,47 @@ describe("Postgres transcription execution binding", () => {
     await expect(bindings.getTranscriptionExecutionBinding(legacy.meetingId))
       .resolves.toBe("voicetext-batch-v2:deepgram-nova-3");
   });
+
+  it("skips a locked legacy row and commits an independently bounded batch", async (context) => {
+    const database = databaseOrSkip(context);
+    const repository = new PostgresMeetingRepository(database);
+    const bindings = new PostgresTranscriptionExecutionBindingStore(database);
+    const locked = recordedMeeting("meeting-binding-locked-legacy").toSnapshot();
+    const available = recordedMeeting("meeting-binding-available-legacy").toSnapshot();
+    await repository.save(locked, 0);
+    await repository.save(available, 0);
+    await database.query(`
+      INSERT INTO meeting_core.post_call_outbox (
+        meeting_id, schema_version, transcription_execution_binding_required
+      ) VALUES ($1, 1, FALSE), ($2, 1, FALSE)
+    `, [locked.meetingId, available.meetingId]);
+
+    const locker = await database.connect();
+    try {
+      await locker.query("BEGIN");
+      await locker.query(`
+        SELECT meeting_id
+        FROM meeting_core.post_call_outbox
+        WHERE meeting_id = $1
+        FOR UPDATE
+      `, [locked.meetingId]);
+
+      await expect(bindings.backfillRecoverableUnboundTranscriptionExecutionBindings(
+        "voicetext-batch-v2:deepgram-nova-3",
+      )).resolves.toBe(1);
+      await expect(bindings.getTranscriptionExecutionBinding(available.meetingId))
+        .resolves.toBe("voicetext-batch-v2:deepgram-nova-3");
+      await expect(bindings.getTranscriptionExecutionBinding(locked.meetingId))
+        .resolves.toBeUndefined();
+    } finally {
+      await locker.query("ROLLBACK");
+      locker.release();
+    }
+
+    await expect(bindings.backfillRecoverableUnboundTranscriptionExecutionBindings(
+      "voicetext-batch-v2:deepgram-nova-3",
+    )).resolves.toBe(1);
+    await expect(bindings.getTranscriptionExecutionBinding(locked.meetingId))
+      .resolves.toBe("voicetext-batch-v2:deepgram-nova-3");
+  });
 });

@@ -40,6 +40,8 @@ import {
   type FinalTranscriptionExecutionBinding,
 } from "./transcription.js";
 
+const postgresPoolConnectionTimeoutMillis = 5_000;
+
 export interface PlatformCoreResources {
   readonly connection: ConnectionOptions;
   readonly guildConfigurations: PostgresGuildConfigurationRepository;
@@ -67,7 +69,10 @@ export function createPlatformCoreResources(input: {
   readonly logger: Logger;
   readonly metrics: PrometheusMetrics;
 }): PlatformCoreResources {
-  const pool = new Pool({ connectionString: input.config.secrets.postgresUrl });
+  const pool = new Pool({
+    connectionString: input.config.secrets.postgresUrl,
+    connectionTimeoutMillis: postgresPoolConnectionTimeoutMillis,
+  });
   input.cleanup.defer("PostgreSQL pool", () => pool.end());
   const s3 = new S3Client(s3ClientOptions(input.config));
   input.cleanup.defer("S3 client", () => {

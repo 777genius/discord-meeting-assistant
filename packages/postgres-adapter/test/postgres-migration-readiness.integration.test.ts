@@ -21,7 +21,7 @@ import {
 usePostgresIntegrationDatabase();
 
 describe("PostgresMigrationRunner and PostgresSchemaReadiness", () => {
-  it("rolls migration side effects and ledger receipts back as one transaction", async (context) => {
+  it("commits each migration and its receipt before starting the next one", async (context) => {
     databaseOrSkip(context);
     const isolated = await createIsolatedDatabase();
     const firstSql = "CREATE TABLE meeting_core.migration_atomicity_probe (id integer PRIMARY KEY);";
@@ -52,7 +52,14 @@ describe("PostgresMigrationRunner and PostgresSchemaReadiness", () => {
         SELECT to_regclass('meeting_core.schema_migration_ledger')::text AS ledger,
                to_regclass('meeting_core.migration_atomicity_probe')::text AS probe
       `);
-      expect(result.rows).toEqual([{ ledger: null, probe: null }]);
+      expect(result.rows).toEqual([{
+        ledger: "meeting_core.schema_migration_ledger",
+        probe: "meeting_core.migration_atomicity_probe",
+      }]);
+      const ledger = await isolated.pool.query<{
+        readonly version: number;
+      }>("SELECT version FROM meeting_core.schema_migration_ledger ORDER BY version");
+      expect(ledger.rows).toEqual([{ version: 1 }]);
     } finally {
       await isolated.dispose();
     }
