@@ -4,6 +4,11 @@ import type {
 import type { Pool, PoolClient } from "pg";
 
 import type { QuestionPolicyIdentity } from "./postgres-question-policy-fence.js";
+import {
+  currentQuestionPolicySql,
+  PostgresQuestionPolicyTransaction,
+  questionPolicyParameters,
+} from "./postgres-question-policy-transaction.js";
 
 function requireLeaseSeconds(value: number): number {
   if (!Number.isSafeInteger(value) || value < 5 || value > 600) {
@@ -20,10 +25,14 @@ function requireMaximumProviderAttempts(value: number): number {
 }
 
 export class PostgresQuestionProviderAttemptStore {
+  private readonly policyTransaction: PostgresQuestionPolicyTransaction;
+
   public constructor(
-    private readonly pool: Pool,
-    _policy: QuestionPolicyIdentity,
-  ) {}
+    pool: Pool,
+    policy: QuestionPolicyIdentity,
+  ) {
+    this.policyTransaction = new PostgresQuestionPolicyTransaction(pool, policy);
+  }
 
   public async reserve(
     input: Parameters<QuestionJobStore["reserveProviderAttempt"]>[0],
@@ -32,9 +41,10 @@ export class PostgresQuestionProviderAttemptStore {
     const maximumProviderAttempts = requireMaximumProviderAttempts(
       input.maximumProviderAttempts,
     );
-    const result = await this.pool.query(
+    return this.policyTransaction.execute(false, async (client) => {
+      const result = await client.query(
       `
-        UPDATE meeting_knowledge.question_jobs
+        UPDATE meeting_knowledge.question_jobs AS job
         SET attempts = attempts + 1,
             provider_attempt_state = 'reserved',
             provider_attempt_id = $3,
@@ -53,6 +63,7 @@ export class PostgresQuestionProviderAttemptStore {
           AND expires_at >
             transaction_timestamp() + make_interval(secs => $4)
           AND attempts < $5
+          AND ${currentQuestionPolicySql(6)}
       `,
       [
         input.jobId,
@@ -60,17 +71,20 @@ export class PostgresQuestionProviderAttemptStore {
         input.attemptId,
         leaseSeconds,
         maximumProviderAttempts,
+        ...questionPolicyParameters(this.policyTransaction.identity),
       ],
     );
-    return result.rowCount === 1;
+      return result.rowCount === 1;
+    });
   }
 
   public async complete(
     input: Parameters<QuestionJobStore["completeProviderAttempt"]>[0],
   ): Promise<boolean> {
-    const result = await this.pool.query(
+    return this.policyTransaction.execute(false, async (client) => {
+      const result = await client.query(
       `
-        UPDATE meeting_knowledge.question_jobs
+        UPDATE meeting_knowledge.question_jobs AS job
         SET state = 'ready',
             answer_candidate = $4::jsonb,
             ready_at = COALESCE(ready_at, transaction_timestamp()),
@@ -88,10 +102,18 @@ export class PostgresQuestionProviderAttemptStore {
           AND lease_until > transaction_timestamp()
           AND expires_at > transaction_timestamp()
           AND grounding_plan IS NOT NULL
+          AND ${currentQuestionPolicySql(5)}
       `,
-      [input.jobId, input.generation, input.attemptId, JSON.stringify(input.answerCandidate)],
+        [
+        input.jobId,
+        input.generation,
+        input.attemptId,
+        JSON.stringify(input.answerCandidate),
+        ...questionPolicyParameters(this.policyTransaction.identity),
+      ],
     );
-    return result.rowCount === 1;
+      return result.rowCount === 1;
+    });
   }
 
   public async fail(
@@ -100,9 +122,12 @@ export class PostgresQuestionProviderAttemptStore {
     const maximumProviderAttempts = requireMaximumProviderAttempts(
       input.maximumProviderAttempts,
     );
-    const result = await this.pool.query<{ readonly state: "queued" | "terminal" }>(
+    return this.policyTransaction.execute<"deferred" | "settled" | "stale">(
+      "stale",
+      async (client) => {
+        const result = await client.query<{ readonly state: "queued" | "terminal" }>(
       `
-        UPDATE meeting_knowledge.question_jobs
+        UPDATE meeting_knowledge.question_jobs AS job
         SET provider_attempt_state = 'failed',
             provider_attempt_finished_at = transaction_timestamp(),
             provider_attempt_retryable = $4,
@@ -159,27 +184,31 @@ export class PostgresQuestionProviderAttemptStore {
           AND provider_attempt_id = $3
           AND provider_attempt_state = 'reserved'
           AND lease_until > transaction_timestamp()
+          AND ${currentQuestionPolicySql(7)}
         RETURNING state
       `,
-      [
-        input.jobId,
-        input.generation,
-        input.attemptId,
-        input.retryable,
-        maximumProviderAttempts,
-        input.reason.slice(0, 256),
-      ],
+          [
+            input.jobId,
+            input.generation,
+            input.attemptId,
+            input.retryable,
+            maximumProviderAttempts,
+            input.reason.slice(0, 256),
+            ...questionPolicyParameters(this.policyTransaction.identity),
+          ],
+        );
+        const state = result.rows[0]?.state;
+        return state === "queued" ? "deferred" : state === "terminal" ? "settled" : "stale";
+      },
     );
-    const state = result.rows[0]?.state;
-    return state === "queued" ? "deferred" : state === "terminal" ? "settled" : "stale";
   }
 
   public async failAbandoned(
-    executor: Pick<PoolClient, "query"> = this.pool,
+    executor: Pick<PoolClient, "query">,
   ): Promise<void> {
     await executor.query(
       `
-        UPDATE meeting_knowledge.question_jobs
+        UPDATE meeting_knowledge.question_jobs AS job
         SET state = 'terminal',
             outcome = 'unavailable',
             authorization_principal_ref = NULL,
@@ -195,7 +224,9 @@ export class PostgresQuestionProviderAttemptStore {
         WHERE state = 'running'
           AND provider_attempt_state IN ('reserved', 'completed')
           AND lease_until <= transaction_timestamp()
+          AND ${currentQuestionPolicySql(1)}
       `,
+      [...questionPolicyParameters(this.policyTransaction.identity)],
     );
   }
 }

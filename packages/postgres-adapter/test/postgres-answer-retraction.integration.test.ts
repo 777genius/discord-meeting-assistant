@@ -512,12 +512,13 @@ describe("PostgreSQL withdrawal fencing", () => {
       runtimeProfile: "test-runtime",
       sourceMeetingIds: [admittedMeetingId, historicalMeetingId],
     })).resolves.toBe(false);
-    await expect(jobs.markReady({
+    await expect(jobs.completeProviderAttempt({
       answerCandidate: {
         claims: [{ evidenceIds: ["evidence-000001"], text: "Unsafe answer" }],
         locale: "en",
         status: "answered",
       },
+      attemptId: "unreserved-withdrawn-source-attempt",
       generation: 1,
       jobId: questionId,
     })).resolves.toBe(false);

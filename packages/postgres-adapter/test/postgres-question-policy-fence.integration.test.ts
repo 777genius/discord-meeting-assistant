@@ -110,7 +110,7 @@ describe("PostgreSQL question policy fence", () => {
     const oldStore = new PostgresQuestionJobStore(database, oldPolicy);
     const initialBinding = policyBinding("policy-maintenance-initial", oldPolicy);
     await insertQueuedPolicyJob(database, initialBinding, oldPolicy.policyEpoch);
-    await expect(oldStore.leaseNext({ leaseSeconds: 60, workerId: "old-worker" }))
+    await expect(oldStore.leaseNext({ leaseSeconds: 60, maximumProviderAttempts: 2, workerId: "old-worker" }))
       .resolves.toMatchObject({ jobId: initialBinding.questionId });
 
     const maintenance = new PostgresFinalReplyMaintenance(database, nextPolicy);
@@ -122,7 +122,7 @@ describe("PostgreSQL question policy fence", () => {
       readonly policy_epoch: number;
       readonly policy_version: string;
     }>(
-      `SELECT policy_epoch, policy_version, authorization_policy_version
+      `SELECT policy_epoch::int AS policy_epoch, policy_version, authorization_policy_version
        FROM meeting_knowledge.current_question_policy
        WHERE policy_key = 'local-final-reply'`,
     );
@@ -134,7 +134,7 @@ describe("PostgreSQL question policy fence", () => {
 
     const staleBinding = policyBinding("policy-maintenance-stale", oldPolicy);
     await insertQueuedPolicyJob(database, staleBinding, oldPolicy.policyEpoch);
-    await expect(oldStore.leaseNext({ leaseSeconds: 60, workerId: "old-worker" }))
+    await expect(oldStore.leaseNext({ leaseSeconds: 60, maximumProviderAttempts: 2, workerId: "old-worker" }))
       .resolves.toBeNull();
   });
 
@@ -143,11 +143,11 @@ describe("PostgreSQL question policy fence", () => {
     const oldStore = new PostgresQuestionJobStore(database, oldPolicy);
     const oldBinding = policyBinding("policy-old-question", oldPolicy);
     await insertQueuedPolicyJob(database, oldBinding, oldPolicy.policyEpoch);
-    const oldLease = await oldStore.leaseNext({ leaseSeconds: 60, workerId: "old-worker" });
+    const oldLease = await oldStore.leaseNext({ leaseSeconds: 60, maximumProviderAttempts: 2, workerId: "old-worker" });
     expect(oldLease?.jobId).toBe(oldBinding.questionId);
 
     const nextStore = new PostgresQuestionJobStore(database, nextPolicy);
-    await expect(nextStore.leaseNext({ leaseSeconds: 60, workerId: "next-worker" }))
+    await expect(nextStore.leaseNext({ leaseSeconds: 60, maximumProviderAttempts: 2, workerId: "next-worker" }))
       .resolves.toBeNull();
     await expect(oldStore.confirmActiveLease({
       generation: oldLease?.generation ?? 0,
@@ -156,9 +156,9 @@ describe("PostgreSQL question policy fence", () => {
 
     const nextBinding = policyBinding("policy-next-question", nextPolicy);
     await insertQueuedPolicyJob(database, nextBinding, nextPolicy.policyEpoch);
-    await expect(oldStore.leaseNext({ leaseSeconds: 60, workerId: "old-worker" }))
+    await expect(oldStore.leaseNext({ leaseSeconds: 60, maximumProviderAttempts: 2, workerId: "old-worker" }))
       .resolves.toBeNull();
-    await expect(nextStore.leaseNext({ leaseSeconds: 60, workerId: "next-worker" }))
+    await expect(nextStore.leaseNext({ leaseSeconds: 60, maximumProviderAttempts: 2, workerId: "next-worker" }))
       .resolves.toMatchObject({ jobId: nextBinding.questionId });
   });
 
@@ -167,7 +167,7 @@ describe("PostgreSQL question policy fence", () => {
     const oldStore = new PostgresQuestionJobStore(database, oldPolicy);
     const binding = policyBinding("policy-request-question", oldPolicy);
     await insertQueuedPolicyJob(database, binding, oldPolicy.policyEpoch);
-    const lease = await oldStore.leaseNext({ leaseSeconds: 60, workerId: "old-worker" });
+    const lease = await oldStore.leaseNext({ leaseSeconds: 60, maximumProviderAttempts: 2, workerId: "old-worker" });
     expect(lease).not.toBeNull();
 
     const effects = new PostgresAnswerEffectStore(database, oldPolicy);
@@ -231,7 +231,7 @@ describe("PostgreSQL question policy fence", () => {
     const jobs = new PostgresQuestionJobStore(database, oldPolicy);
     const binding = policyBinding("policy-lease-takeover-question", oldPolicy);
     await insertQueuedPolicyJob(database, binding, oldPolicy.policyEpoch);
-    const staleLease = await jobs.leaseNext({ leaseSeconds: 60, workerId: "stale-worker" });
+    const staleLease = await jobs.leaseNext({ leaseSeconds: 60, maximumProviderAttempts: 2, workerId: "stale-worker" });
     expect(staleLease).not.toBeNull();
 
     const effects = new PostgresAnswerEffectStore(database, oldPolicy);
@@ -266,6 +266,7 @@ describe("PostgreSQL question policy fence", () => {
     );
     const replacementLease = await jobs.leaseNext({
       leaseSeconds: 60,
+      maximumProviderAttempts: 2,
       workerId: "replacement-worker",
     });
     expect(replacementLease?.generation).toBe((staleLease?.generation ?? 0) + 1);

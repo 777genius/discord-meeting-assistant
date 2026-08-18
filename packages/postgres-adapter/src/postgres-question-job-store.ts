@@ -1,148 +1,43 @@
 import type {
   QuestionJobLease,
-  QuestionJobState,
   QuestionJobStore,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
-import type { Pool, PoolClient } from "pg";
+import type { Pool } from "pg";
 
 import { lockMeetingKnowledgeSources } from "./postgres-answer-source-withdrawal.js";
 import {
-  decodeGroundedAnswerCandidate,
-  decodeGroundingPlan,
-  decodeQuestionBinding,
-} from "./postgres-meeting-knowledge-codecs.js";
+  PostgresQuestionJobLeaseStore,
+} from "./postgres-question-job-lease-store.js";
+import type { QuestionPolicyIdentity } from "./postgres-question-policy-fence.js";
 import {
-  PostgresQuestionPolicyFence,
-  type QuestionPolicyIdentity,
-} from "./postgres-question-policy-fence.js";
+  currentQuestionPolicySql,
+  PostgresQuestionPolicyTransaction,
+  questionPolicyParameters,
+} from "./postgres-question-policy-transaction.js";
 import { PostgresQuestionProviderAttemptStore } from "./postgres-question-provider-attempt-store.js";
 
-interface QuestionJobRow {
-  readonly answer_candidate: unknown;
-  readonly attempts: number;
-  readonly binding: unknown;
-  readonly generation: number;
-  readonly grounding_plan: unknown;
-  readonly question_id: string;
-  readonly question_text: string;
-  readonly state: QuestionJobState;
-}
-
-async function rollback(client: PoolClient): Promise<void> {
-  try {
-    await client.query("ROLLBACK");
-  } catch {
-    // Preserve the original persistence failure.
-  }
-}
-
-function requireLeaseSeconds(value: number): number {
-  if (!Number.isSafeInteger(value) || value < 5 || value > 600) {
-    throw new RangeError("question job lease must be between 5 and 600 seconds");
-  }
-  return value;
-}
-
-function toLease(row: QuestionJobRow): QuestionJobLease {
-  if (row.state !== "running" && row.state !== "ready") {
-    throw new Error("leased question job has an unsupported state");
-  }
-  return Object.freeze({
-    answerCandidate: row.answer_candidate === null
-      ? null
-      : decodeGroundedAnswerCandidate(row.answer_candidate),
-    attempts: row.attempts,
-    binding: decodeQuestionBinding(row.binding),
-    generation: row.generation,
-    groundingPlan: row.grounding_plan === null
-      ? null
-      : decodeGroundingPlan(row.grounding_plan),
-    jobId: row.question_id,
-    questionText: row.question_text,
-    state: row.state,
-  });
-}
-
 export class PostgresQuestionJobStore implements QuestionJobStore {
-  private readonly policyFence: PostgresQuestionPolicyFence;
+  private readonly leases: PostgresQuestionJobLeaseStore;
+  private readonly policyTransaction: PostgresQuestionPolicyTransaction;
   private readonly providerAttempts: PostgresQuestionProviderAttemptStore;
 
   public constructor(
     private readonly pool: Pool,
     policy: QuestionPolicyIdentity,
   ) {
-    this.policyFence = new PostgresQuestionPolicyFence(policy);
+    this.policyTransaction = new PostgresQuestionPolicyTransaction(pool, policy);
     this.providerAttempts = new PostgresQuestionProviderAttemptStore(pool, policy);
+    this.leases = new PostgresQuestionJobLeaseStore(
+      pool,
+      policy,
+      this.providerAttempts,
+    );
   }
 
-  public async leaseNext(input: {
-    readonly leaseSeconds: number;
-    readonly maximumProviderAttempts: number;
-    readonly workerId: string;
-  }): Promise<QuestionJobLease | null> {
-    const leaseSeconds = requireLeaseSeconds(input.leaseSeconds);
-    requireMaximumProviderAttempts(input.maximumProviderAttempts);
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
-      if (!await this.policyFence.lockCurrent(client)) {
-        await client.query("COMMIT");
-        return null;
-      }
-      await this.expireJobs(client);
-      await this.providerAttempts.failAbandoned(client);
-      const result = await client.query<QuestionJobRow>(
-        `
-          WITH selected AS (
-            SELECT question_id
-            FROM meeting_knowledge.question_jobs
-            WHERE expires_at > transaction_timestamp()
-              AND policy_epoch = $3
-              AND binding ->> 'policyVersion' = $4
-              AND binding ->> 'authorizationPolicyVersion' = $5
-              AND (
-                state = 'queued' OR
-                (state = 'ready' AND
-                  lease_until <= transaction_timestamp()) OR
-                (state = 'running'
-                  AND lease_until <= transaction_timestamp()
-                  AND provider_attempt_state IN ('none', 'failed'))
-              )
-            ORDER BY created_at, question_id
-            FOR UPDATE SKIP LOCKED
-            LIMIT 1
-          )
-          UPDATE meeting_knowledge.question_jobs AS job
-          SET state = CASE WHEN job.state = 'ready' THEN 'ready' ELSE 'running' END,
-              generation = job.generation + 1,
-              lease_owner = $1,
-              worker_protocol_epoch = 2,
-              worker_protocol_generation = job.generation + 1,
-              lease_until = transaction_timestamp() + make_interval(secs => $2),
-              updated_at = transaction_timestamp()
-          FROM selected
-          WHERE job.question_id = selected.question_id
-          RETURNING job.question_id, job.question_text, job.binding,
-                    job.state, job.attempts, job.generation::float8 AS generation,
-                    job.grounding_plan, job.answer_candidate
-        `,
-        [
-          input.workerId,
-          leaseSeconds,
-          this.policyFence.identity.policyEpoch,
-          this.policyFence.identity.policyVersion,
-          this.policyFence.identity.authorizationPolicyVersion,
-        ],
-      );
-      await client.query("COMMIT");
-      const row = result.rows[0];
-      return row === undefined ? null : toLease(row);
-    } catch (error) {
-      await rollback(client);
-      throw error;
-    } finally {
-      client.release();
-    }
+  public leaseNext(
+    input: Parameters<QuestionJobStore["leaseNext"]>[0],
+  ): Promise<QuestionJobLease | null> {
+    return this.leases.leaseNext(input);
   }
 
   public reserveProviderAttempt(
@@ -166,7 +61,7 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
   public async persistGroundingPlan(
     input: Parameters<QuestionJobStore["persistGroundingPlan"]>[0],
   ): Promise<boolean> {
-    return this.withCurrentPolicyMutation(async (client) => {
+    return this.policyTransaction.execute(false, async (client) => {
       await lockMeetingKnowledgeSources(client, input.sourceMeetingIds);
       const result = await client.query(
         `
@@ -194,7 +89,7 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
               FROM meeting_knowledge.withdrawn_meeting_sources AS withdrawn
               WHERE withdrawn.meeting_id = ANY($6::text[])
             )
-            AND ${currentPolicySql(7)}
+            AND ${currentQuestionPolicySql(7)}
         `,
         [
           input.jobId,
@@ -207,7 +102,7 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
           }),
           input.runtimeProfile,
           input.sourceMeetingIds,
-          ...policyParameters(this.policyFence.identity),
+          ...questionPolicyParameters(this.policyTransaction.identity),
         ],
       );
       return result.rowCount === 1;
@@ -217,7 +112,7 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
   public async settle(
     input: Parameters<QuestionJobStore["settle"]>[0],
   ): Promise<boolean> {
-    return this.withCurrentPolicyMutation(async (client) => {
+    return this.policyTransaction.execute(false, async (client) => {
       const result = await client.query(
         `
           UPDATE meeting_knowledge.question_jobs AS job
@@ -236,13 +131,13 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
           WHERE question_id = $1
             AND generation = $2
             AND state IN ('running', 'ready')
-            AND ${currentPolicySql(4)}
+            AND ${currentQuestionPolicySql(4)}
         `,
         [
           input.jobId,
           input.generation,
           input.outcome,
-          ...policyParameters(this.policyFence.identity),
+          ...questionPolicyParameters(this.policyTransaction.identity),
         ],
       );
       return result.rowCount === 1;
@@ -344,87 +239,14 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
           AND state IN ('running', 'ready')
           AND lease_until > transaction_timestamp()
           AND expires_at > transaction_timestamp()
-          AND ${currentPolicySql(3)}
+          AND ${currentQuestionPolicySql(3)}
       `,
-      [input.jobId, input.generation, ...policyParameters(this.policyFence.identity)],
+      [
+        input.jobId,
+        input.generation,
+        ...questionPolicyParameters(this.policyTransaction.identity),
+      ],
     );
     return result.rowCount === 1;
   }
-
-  private async expireJobs(executor: Pick<PoolClient, "query">): Promise<void> {
-    await executor.query(
-      `
-        UPDATE meeting_knowledge.question_jobs AS job
-        SET state = 'terminal',
-            outcome = CASE WHEN EXISTS (
-              SELECT 1
-              FROM meeting_core.answer_effects AS effect
-              WHERE effect.effect_id = 'meeting-knowledge-answer:v1:' || job.question_id
-                AND effect.state IN (
-                  'request_started', 'delivered', 'outcome_unknown', 'absent_unconfirmed'
-                )
-            ) THEN 'delivery_unknown' ELSE 'expired' END,
-            authorization_principal_ref = NULL,
-            question_text = NULL,
-            binding = NULL,
-            grounding_plan = NULL,
-            answer_candidate = NULL,
-            lease_owner = NULL,
-            lease_until = NULL,
-            terminal_at = transaction_timestamp(),
-            scrubbed_at = transaction_timestamp(),
-            updated_at = transaction_timestamp()
-        WHERE job.state <> 'terminal'
-          AND job.expires_at <= transaction_timestamp()
-          AND ${currentPolicySql(1)}
-      `,
-      [...policyParameters(this.policyFence.identity)],
-    );
-  }
-
-  private async withCurrentPolicyMutation(
-    operation: (client: PoolClient) => Promise<boolean>,
-  ): Promise<boolean> {
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
-      if (!await this.policyFence.lockCurrent(client)) {
-        await client.query("COMMIT");
-        return false;
-      }
-      const result = await operation(client);
-      await client.query("COMMIT");
-      return result;
-    } catch (error) {
-      await rollback(client);
-      throw error;
-    } finally {
-      client.release();
-    }
-  }
-}
-
-function policyParameters(policy: QuestionPolicyIdentity): readonly [number, string, string] {
-  return [policy.policyEpoch, policy.policyVersion, policy.authorizationPolicyVersion];
-}
-
-function currentPolicySql(firstParameter: number): string {
-  return `EXISTS (
-    SELECT 1
-    FROM meeting_knowledge.current_question_policy AS policy
-    WHERE policy.policy_key = 'local-final-reply'
-      AND policy.policy_epoch = $${firstParameter}
-      AND policy.policy_version = $${firstParameter + 1}
-      AND policy.authorization_policy_version = $${firstParameter + 2}
-      AND job.policy_epoch = policy.policy_epoch
-      AND job.binding ->> 'policyVersion' = policy.policy_version
-      AND job.binding ->> 'authorizationPolicyVersion' = policy.authorization_policy_version
-  )`;
-}
-
-function requireMaximumProviderAttempts(value: number): number {
-  if (!Number.isSafeInteger(value) || value < 1 || value > 32) {
-    throw new RangeError("maximum provider attempts must be between 1 and 32");
-  }
-  return value;
 }

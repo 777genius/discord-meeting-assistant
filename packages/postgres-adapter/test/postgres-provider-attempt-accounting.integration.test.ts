@@ -8,6 +8,12 @@ import {
 } from "./postgres-integration-fixtures.js";
 
 usePostgresIntegrationDatabase();
+const questionPolicy = Object.freeze({
+  authorizationPolicyVersion: "discord.participant-current-results.v1",
+  policyEpoch: 1,
+  policyVersion: "meeting-knowledge.focused-memory-final-reply.v2",
+});
+
 
 describe("PostgreSQL provider attempt accounting", () => {
   it("never reclaims an expired reserved provider attempt", async (context) => {
@@ -23,7 +29,9 @@ describe("PostgreSQL provider attempt accounting", () => {
           worker_protocol_epoch, worker_protocol_generation, expires_at
         ) VALUES (
           $1, $2, $3, 'scope-lost-provider', 'projection-lost-provider',
-          'opaque', $4, 'en', 'Question?', '{}'::jsonb, $5,
+          'opaque', $4, 'en', 'Question?', jsonb_build_object(
+            'policyVersion', 'meeting-knowledge.focused-memory-final-reply.v2',
+            'authorizationPolicyVersion', 'discord.participant-current-results.v1'), $5,
           'running', 1, 'provider-worker',
           transaction_timestamp() + interval '1 minute',
           2, 1,
@@ -38,7 +46,7 @@ describe("PostgreSQL provider attempt accounting", () => {
         "d".repeat(64),
       ],
     );
-    const jobs = new PostgresQuestionJobStore(database);
+    const jobs = new PostgresQuestionJobStore(database, questionPolicy);
     expect(await jobs.reserveProviderAttempt({
       attemptId: "lost-provider-attempt-1",
       generation: 1,
@@ -92,7 +100,9 @@ describe("PostgreSQL provider attempt accounting", () => {
           worker_protocol_epoch, worker_protocol_generation, expires_at
         ) VALUES (
           '77777777777777775', $1, $2, 'scope-max', 'projection-max', 'opaque',
-          $3, 'en', 'Question?', '{}'::jsonb, $4, 'running', 2, 1, 'worker',
+          $3, 'en', 'Question?', jsonb_build_object(
+            'policyVersion', 'meeting-knowledge.focused-memory-final-reply.v2',
+            'authorizationPolicyVersion', 'discord.participant-current-results.v1'), $4, 'running', 2, 1, 'worker',
           transaction_timestamp() + interval '1 minute',
           2, 1,
           transaction_timestamp() + interval '10 minutes'
@@ -100,7 +110,7 @@ describe("PostgreSQL provider attempt accounting", () => {
       `,
       ["a".repeat(64), "b".repeat(64), "c".repeat(64), "d".repeat(64)],
     );
-    const jobs = new PostgresQuestionJobStore(database);
+    const jobs = new PostgresQuestionJobStore(database, questionPolicy);
     await expect(jobs.reserveProviderAttempt({
       attemptId: "forbidden-attempt-3",
       generation: 1,
@@ -129,7 +139,7 @@ describe("PostgreSQL provider attempt recovery", () => {
       [questionId],
     )).rejects.toThrow(/question_jobs_running_worker_protocol_is_current/u);
 
-    const jobs = new PostgresQuestionJobStore(database);
+    const jobs = new PostgresQuestionJobStore(database, questionPolicy);
     await expect(jobs.leaseNext({
       leaseSeconds: 60,
       maximumProviderAttempts: 2,
@@ -141,7 +151,7 @@ describe("PostgreSQL provider attempt recovery", () => {
     const database = databaseOrSkip(context);
     const questionId = "77777777777777773";
     await insertQueued(database, questionId, 120);
-    const jobs = new PostgresQuestionJobStore(database);
+    const jobs = new PostgresQuestionJobStore(database, questionPolicy);
     const lease = await jobs.leaseNext({
       leaseSeconds: 60,
       maximumProviderAttempts: 2,
@@ -167,7 +177,7 @@ describe("PostgreSQL provider attempt recovery", () => {
     const database = databaseOrSkip(context);
     const questionId = "77777777777777772";
     await insertQueued(database, questionId, 600);
-    const jobs = new PostgresQuestionJobStore(database);
+    const jobs = new PostgresQuestionJobStore(database, questionPolicy);
     const lease = await jobs.leaseNext({
       leaseSeconds: 60,
       maximumProviderAttempts: 2,
@@ -215,7 +225,7 @@ describe("PostgreSQL provider attempt recovery", () => {
     const database = databaseOrSkip(context);
     const questionId = "77777777777777771";
     await insertQueued(database, questionId, 600);
-    const jobs = new PostgresQuestionJobStore(database);
+    const jobs = new PostgresQuestionJobStore(database, questionPolicy);
     const lease = await jobs.leaseNext({
       leaseSeconds: 60,
       maximumProviderAttempts: 2,
@@ -252,7 +262,7 @@ describe("PostgreSQL provider attempt recovery", () => {
     const database = databaseOrSkip(context);
     const questionId = "77777777777777770";
     await insertQueued(database, questionId, 600);
-    const jobs = new PostgresQuestionJobStore(database);
+    const jobs = new PostgresQuestionJobStore(database, questionPolicy);
     const lease = await jobs.leaseNext({
       leaseSeconds: 60,
       maximumProviderAttempts: 2,
