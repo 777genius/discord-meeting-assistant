@@ -2,7 +2,12 @@ import {
   classifyHistoricalGroundingMode,
   normalizeHistoricalQuestion,
 } from "../domain/grounding-mode.js";
-import type { HistoricalReleaseBindingV1 } from "../domain/historical-evidence.js";
+import {
+  DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
+  admitsHistoricalRetrieval,
+  type HistoricalReleaseBindingV1,
+  type TwoHourHistoricalRetrievalProfileV1,
+} from "../domain/historical-evidence.js";
 import {
   buildHistoricalIndexPlan,
   HistoricalIndexPlanError,
@@ -46,6 +51,7 @@ import type {
 
 export class ExhaustiveCoverage {
   readonly #policy: ExhaustiveCoveragePolicyV1;
+  readonly #twoHourProfile: TwoHourHistoricalRetrievalProfileV1;
 
   public constructor(
     private readonly dependencies: {
@@ -58,8 +64,11 @@ export class ExhaustiveCoverage {
       readonly sync: HistoricalSyncStore;
     },
     policy: ExhaustiveCoveragePolicyV1 = DEFAULT_EXHAUSTIVE_COVERAGE_POLICY,
+    twoHourProfile: TwoHourHistoricalRetrievalProfileV1 =
+      DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
   ) {
     this.#policy = assertExhaustiveCoveragePolicy(policy);
+    this.#twoHourProfile = Object.freeze({ ...twoHourProfile });
   }
 
   public async buildPlan(
@@ -325,7 +334,10 @@ export class ExhaustiveCoverage {
         binding,
         signal === undefined ? {} : { signal },
       );
-      if (meeting === null) {
+      if (
+        meeting === null ||
+        !admitsHistoricalRetrieval(meeting, this.#twoHourProfile)
+      ) {
         return null;
       }
       const plan = buildHistoricalIndexPlan(

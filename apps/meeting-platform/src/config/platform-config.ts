@@ -56,7 +56,8 @@ export interface PlatformConfig {
     readonly requestTimeoutMs: number;
   };
   readonly meetingKnowledge?: {
-    readonly localFinalReply: true;
+    readonly localFinalReply?: true;
+    readonly twoHourHistoricalRetrieval?: true;
   };
   readonly nodeEnvironment: "development" | "production" | "test";
   readonly participantGreetingDefaultLocale: "en" | "ru";
@@ -73,6 +74,8 @@ export interface PlatformConfig {
     readonly region: string;
   };
   readonly secrets: PlatformSecrets;
+  /** Immutable source revision embedded in the running Meeting Platform image. */
+  readonly sourceRevision?: string;
   readonly speaches: { readonly baseUrl: string; readonly model: string };
   readonly subscriptionRuntime: {
     readonly address: string;

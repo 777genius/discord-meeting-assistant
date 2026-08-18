@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
   HistoricalEvidenceInvariantError,
   admitAcceptedFinalMeeting,
+  admitsHistoricalRetrieval,
   buildHistoricalIndexPlan,
   classifyHistoricalGroundingMode,
   createHistoricalReleaseBinding,
@@ -110,6 +112,40 @@ describe("historical evidence admission and block identity", () => {
       code: "CONFLICTING_BINDING",
       name: HistoricalEvidenceInvariantError.name,
     }));
+  });
+
+  it("keeps long-meeting retrieval independently disabled at exact authoritative thresholds", () => {
+    const short = acceptedMeeting();
+    if (short === null) {
+      throw new Error("fixture admission failed");
+    }
+    const durationThreshold = Object.freeze({
+      ...short,
+      humanTurns: Object.freeze([Object.freeze({
+        ...short.humanTurns[0]!,
+        endMs: DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE.minimumDurationMs,
+      })]),
+    });
+    const turnThreshold = Object.freeze({
+      ...short,
+      humanTurns: Object.freeze(Array.from(
+        { length: DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE.minimumHumanTurnCount },
+        (_, index) => Object.freeze({
+          ...short.humanTurns[0]!,
+          endMs: index * 2 + 2,
+          startMs: index * 2 + 1,
+          turnId: `long-turn-${index}`,
+        }),
+      )),
+    });
+
+    expect(admitsHistoricalRetrieval(short)).toBe(true);
+    expect(admitsHistoricalRetrieval(durationThreshold)).toBe(false);
+    expect(admitsHistoricalRetrieval(turnThreshold)).toBe(false);
+    expect(admitsHistoricalRetrieval(durationThreshold, {
+      ...DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
+      enabled: true,
+    })).toBe(true);
   });
 
   it("builds replay-stable opaque topology and turn-aligned documents", () => {

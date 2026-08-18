@@ -53,6 +53,8 @@ export const retainedProductionEmbeddingProfileAttestation = Object.freeze({
   qualificationManifestSha256:
     INFINITY_CONTEXT_SDK_PROVENANCE
       .retainedProductionSemanticQualificationManifestSha256,
+  releaseRevision:
+    INFINITY_CONTEXT_SDK_PROVENANCE.retainedProductionSemanticReleaseRevision,
   schemaVersion: 1 as const,
 });
 
@@ -155,7 +157,7 @@ class SyntheticCoverageRuntime implements SubscriptionRuntimeTransportPort {
   }
 }
 
-const syntheticCoverageRuntime = new SyntheticCoverageRuntime();
+export const syntheticCoverageRuntime = new SyntheticCoverageRuntime();
 
 export function platformConfig(
   baseUrl: string,
@@ -165,6 +167,8 @@ export function platformConfig(
   productionEmbeddingProfileAttestation: NonNullable<
     PlatformConfig["infinityContext"]
   >["activation"]["productionEmbeddingProfileAttestation"] = null,
+  sourceRevision: string =
+    INFINITY_CONTEXT_SDK_PROVENANCE.retainedProductionSemanticReleaseRevision,
 ): PlatformConfig {
   return {
     bindAddress: "127.0.0.1",
@@ -201,6 +205,7 @@ export function platformConfig(
       requestTimeoutMs: 2_000,
     },
     liveIngressOwnerMode: "singleton",
+    meetingKnowledge: { twoHourHistoricalRetrieval: true },
     nodeEnvironment: environment,
     participantGreetingDefaultLocale: "en",
     participantGreetingProfiles: {},
@@ -212,6 +217,7 @@ export function platformConfig(
       prefix: "synthetic/",
       region: "us-east-1",
     },
+    sourceRevision,
     secrets: {
       craigBearerToken: "synthetic-craig-token",
       discordToken: "synthetic-discord-token",

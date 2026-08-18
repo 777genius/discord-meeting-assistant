@@ -32,6 +32,7 @@ const optionalSnowflake = z.preprocess(
   snowflake.optional(),
 );
 const sha256 = z.string().regex(/^[0-9a-f]{64}$/u);
+const sourceRevision = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u);
 const mebibyte = 1_024 * 1_024;
 const defaultVoicetextBatchMaxArtifactBytes = 64 * mebibyte;
 const defaultVoicetextBatchMaxConcurrency = 2;
@@ -151,6 +152,10 @@ const environmentSchema = z
       .enum(["true", "false"])
       .default("false")
       .transform((value) => value === "true"),
+    MEETING_KNOWLEDGE_TWO_HOUR_HISTORICAL_ENABLED: z
+      .enum(["true", "false"])
+      .default("false")
+      .transform((value) => value === "true"),
     MEETING_KNOWLEDGE_PRINCIPAL_KEY_FILE: absolutePath.optional(),
     NODE_ENV: z
       .enum(["development", "production", "test"])
@@ -172,6 +177,7 @@ const environmentSchema = z
       .regex(/^[a-zA-Z0-9][a-zA-Z0-9/_-]*\/$/u),
     S3_REGION: z.string().min(1).max(64),
     S3_SECRET_ACCESS_KEY_FILE: absolutePath,
+    SOURCE_REVISION: sourceRevision.optional(),
     SPEACHES_BASE_URL: httpUrl,
     SPEACHES_MODEL: z.string().min(1).max(256),
     SUBSCRIPTION_RUNTIME_ADDRESS: runtimeAddress,

@@ -62,6 +62,9 @@ describe("platform configuration", () => {
     expect(compose).toContain(
       "INFINITY_CONTEXT_OPERATION_TIMEOUT_MS: ${INFINITY_CONTEXT_OPERATION_TIMEOUT_MS:-300000}",
     );
+    expect(compose).toContain(
+      "MEETING_KNOWLEDGE_TWO_HOUR_HISTORICAL_ENABLED: ${MEETING_KNOWLEDGE_TWO_HOUR_HISTORICAL_ENABLED:-false}",
+    );
   });
 
   it("loads Infinity activation only as a complete versioned provenance-bound set", async () => {
@@ -116,6 +119,8 @@ describe("platform configuration", () => {
         qualificationManifestSha256:
           INFINITY_CONTEXT_SDK_PROVENANCE
             .retainedProductionSemanticQualificationManifestSha256,
+        releaseRevision:
+          INFINITY_CONTEXT_SDK_PROVENANCE.retainedProductionSemanticReleaseRevision,
         schemaVersion: 1,
       },
       qualificationManifestSha256:

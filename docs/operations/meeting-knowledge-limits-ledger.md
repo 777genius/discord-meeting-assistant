@@ -50,6 +50,12 @@ private-test-guild zero-or-one create test. A changed value or identity requires
 replaying both qualification sets and binding the evidence to the deployed
 revision.
 
+Historical retrieval of an authoritative meeting at or above 7,200,000 ms
+(from earliest admitted human turn start to latest end) or 400 admitted human
+turns has the separately versioned `meeting-knowledge.two-hour-historical-retrieval.v1` gate. It defaults disabled
+and is checked before focused provider search and before focused/exhaustive
+canonical rehydration. The general Infinity search flag cannot enable it.
+
 Historical retrieval and `exhaustive_coverage` remain rollout-disabled even
 with these executable limits. Production activation still requires immutable
 official-SDK package integrity, retained live Infinity qualification, and a

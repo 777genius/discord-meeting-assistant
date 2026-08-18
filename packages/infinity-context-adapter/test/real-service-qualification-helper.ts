@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { expect } from "vitest";
 
 import {
+  DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
   DeterministicExhaustiveCoverageExtraction,
   ExhaustiveCoverage,
   GroundedMeetingAnswer,
@@ -17,6 +18,7 @@ import {
 import {
   HmacHistoricalOpaqueIds,
   InfinityContextHistoricalMemoryAdapter,
+  type InfinityContextCapabilityAttestationV1,
 } from "../src/index.js";
 import {
   MemoryCoverageCheckpoints,
@@ -46,6 +48,7 @@ export interface RealServiceQualificationConfig {
 }
 
 export interface RealServiceQualificationMetrics {
+  readonly endpointReceipt: InfinityContextCapabilityAttestationV1;
   readonly boundedModelInput: {
     readonly evidenceCount: number;
     readonly inputTokens: number;
@@ -67,8 +70,11 @@ export interface RealServiceQualificationMetrics {
   readonly remoteCleanupVerified: true;
   readonly service: {
     readonly apiVersion: string;
+    readonly embeddingProfileDigestSha256: string;
+    readonly embeddingProfileId: string;
     readonly enabledAdapters: readonly string[];
     readonly name: string;
+    readonly revision: string;
   };
   readonly turnCount: number;
 }
@@ -102,6 +108,7 @@ export async function runRealServiceQualification(
   let boundedModelInput: RealServiceQualificationMetrics["boundedModelInput"] | null = null;
   let exhaustiveMetrics: RealServiceQualificationMetrics["exhaustive"] | null = null;
   let focusedRecallAt5: 1 | null = null;
+  let endpointReceipt: InfinityContextCapabilityAttestationV1 | null = null;
   let service: RealServiceQualificationMetrics["service"] | null = null;
   let cleanupRequested = false;
   try {
@@ -126,14 +133,21 @@ export async function runRealServiceQualification(
     });
     if (
       capabilities.apiVersion === null ||
-      capabilities.serviceName === null
+      capabilities.embeddingProfileDigestSha256 === null ||
+      capabilities.embeddingProfileId === null ||
+      capabilities.serviceName === null ||
+      capabilities.serviceRevision === null
     ) {
-      throw new Error("real Infinity Context capabilities omitted service identity");
+      throw new Error("real Infinity Context capabilities omitted its qualification receipt");
     }
+    endpointReceipt = capabilities;
     service = {
       apiVersion: capabilities.apiVersion,
+      embeddingProfileDigestSha256: capabilities.embeddingProfileDigestSha256,
+      embeddingProfileId: capabilities.embeddingProfileId,
       enabledAdapters: Object.freeze([...capabilities.enabledAdapters]),
       name: capabilities.serviceName,
+      revision: capabilities.serviceRevision,
     };
 
     await expect(worker.executeOnce({ indexingEnabled: true })).resolves.toMatchObject({
@@ -234,6 +248,9 @@ export async function runRealServiceQualification(
   }
   expect(cleanupRequested).toBe(true);
 
+  if (endpointReceipt === null) {
+    throw new Error("real Infinity Context qualification omitted endpoint receipt");
+  }
   const topology = buildHistoricalIndexPlan(meeting, ids, blockPolicy).topology;
   await expectEventually(async () => {
     const result = await adapter.searchRoom({
@@ -249,6 +266,7 @@ export async function runRealServiceQualification(
   return {
     boundedModelInput,
     exhaustive: exhaustiveMetrics,
+    endpointReceipt,
     exhaustiveBlockCount: buildHistoricalIndexPlan(meeting, ids, blockPolicy).documents.length,
     focusedQuestionCount: qualificationQuestions.focused.length,
     focusedRecallAt5,
@@ -289,6 +307,9 @@ function focusedRetrieval(
     rerankLimit: 5,
     searchTimeoutMs: 30_000,
     version: "meeting-knowledge.focused-retrieval.v1",
+  }, {
+    ...DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
+    enabled: true,
   });
 }
 
@@ -380,6 +401,9 @@ function exhaustiveRetrieval(
     processingRelease: "meeting-knowledge.real-service-coverage.r1",
     reduceFanIn: 8,
     version: "meeting-knowledge.exhaustive-coverage.v1",
+  }, {
+    ...DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
+    enabled: true,
   }), { hash: historicalTurnHash });
 }
 

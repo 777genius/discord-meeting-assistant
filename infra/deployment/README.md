@@ -94,12 +94,21 @@ Set these non-secret values in the deployment environment file:
 INFINITY_CONTEXT_URL=https://infinity-context.example.internal
 INFINITY_CONTEXT_REQUEST_TIMEOUT_MS=10000
 INFINITY_CONTEXT_OPERATION_TIMEOUT_MS=300000
-INFINITY_CONTEXT_ACTIVATION={"apiVersion":"v1","archiveSha256":"1aad93c1c9deea91f0c0ec750b99e91d1092e9d208751e11c6231badd5fbd9d2","environment":"production","immutablePackageIntegrity":"sha512-ohD89uSSlW7zT/BqaEufIBZ7EAVcq1LYAWn/rRel8EOyMAnq5DXSh3PqjYXAYJdE9WsHgLWx7Tysy9jAY7XaHw==","indexingEnabled":true,"packageSource":"immutable_package","productionEmbeddingProfileAttestation":{"embeddingProfile":"local-open-source-paraphrase-multilingual-minilm-l12-v2-hybrid-bm25.r73","embeddingProfileDigestSha256":"sha256:5ecd36edd098940cd8a6540509f90815ddc1802b4410ced2bf063c0f8c650cac","productionSemanticQualification":true,"qualificationManifestSha256":"sha256:2b0ea368ea4d1feef4616fb185ce1267b9f8735e44d03634d81f03c8d58af965","schemaVersion":1},"qualificationManifestSha256":"sha256:abe694b3e1cf0dcec9d5ff7c0d8b65f30ec5364ac11bb2526bd1c3a3b176c207","schemaVersion":1,"sdkCommit":"897efd211151e9a81a7466fdd6be5cb067ddb8eb","sdkTree":"67a744b1accc0d4628c19f28849660bc917b8b62","searchEnabled":true,"serviceName":"infinity-context","servingProfile":"same_room_retrieval"}
+INFINITY_CONTEXT_ACTIVATION={"apiVersion":"v1","archiveSha256":"1aad93c1c9deea91f0c0ec750b99e91d1092e9d208751e11c6231badd5fbd9d2","environment":"production","immutablePackageIntegrity":"sha512-ohD89uSSlW7zT/BqaEufIBZ7EAVcq1LYAWn/rRel8EOyMAnq5DXSh3PqjYXAYJdE9WsHgLWx7Tysy9jAY7XaHw==","indexingEnabled":true,"packageSource":"immutable_package","productionEmbeddingProfileAttestation":{"embeddingProfile":"local-open-source-paraphrase-multilingual-minilm-l12-v2-hybrid-bm25.r73","embeddingProfileDigestSha256":"sha256:5ecd36edd098940cd8a6540509f90815ddc1802b4410ced2bf063c0f8c650cac","productionSemanticQualification":true,"qualificationManifestSha256":"sha256:2b0ea368ea4d1feef4616fb185ce1267b9f8735e44d03634d81f03c8d58af965","releaseRevision":"8cc180cd043b95469f295ad9247bcb7886d29f10","schemaVersion":1},"qualificationManifestSha256":"sha256:abe694b3e1cf0dcec9d5ff7c0d8b65f30ec5364ac11bb2526bd1c3a3b176c207","schemaVersion":1,"sdkCommit":"897efd211151e9a81a7466fdd6be5cb067ddb8eb","sdkTree":"67a744b1accc0d4628c19f28849660bc917b8b62","searchEnabled":true,"serviceName":"infinity-context","servingProfile":"same_room_retrieval"}
 ```
 
 Treat that activation as a reviewed release attestation, not an operator-tuned
 feature flag. Update it only together with retained qualification evidence and
-the pinned SDK provenance in the application release. The request timeout must
+the pinned SDK provenance in the application release. The running image embeds
+`MEETING_PLATFORM_SOURCE_REVISION`; production search stays closed unless it
+equals the qualification manifest's `releaseRevision`. The retained r79
+manifest is intentionally stale for newer releases and must not activate them.
+
+`MEETING_KNOWLEDGE_TWO_HOUR_HISTORICAL_ENABLED` defaults to `false` and is an
+independent admission gate. Keep it false until a holdout qualifies focused
+retrieval, exhaustive coverage, and final-answer quality for the exact current
+release. General Infinity search does not enable it. Indexing, reconciliation,
+and deletion continue while either serving gate is closed. The request timeout must
 be from 100 through 60000 ms; the operation timeout must be from 1000 through
 600000 ms and must not be shorter than the request timeout.
 

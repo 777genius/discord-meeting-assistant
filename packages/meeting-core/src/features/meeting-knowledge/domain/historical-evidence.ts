@@ -6,6 +6,28 @@ import {
 export const HISTORICAL_MEMORY_SCHEMA_VERSION = 1 as const;
 export const HISTORICAL_EVIDENCE_POLICY_VERSION =
   "meeting-knowledge.evidence-block.v1" as const;
+export const TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE_VERSION =
+  "meeting-knowledge.two-hour-historical-retrieval.v1" as const;
+
+export interface TwoHourHistoricalRetrievalProfileV1 {
+  readonly enabled: boolean;
+  readonly minimumDurationMs: 7_200_000;
+  readonly minimumHumanTurnCount: 400;
+  readonly version: typeof TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE_VERSION;
+}
+
+/**
+ * Independent production admission for corpora that require retained two-hour
+ * retrieval and answer-quality evidence. General historical search never
+ * enables this profile.
+ */
+export const DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE:
+  TwoHourHistoricalRetrievalProfileV1 = Object.freeze({
+    enabled: false,
+    minimumDurationMs: 7_200_000,
+    minimumHumanTurnCount: 400,
+    version: TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE_VERSION,
+  });
 
 export interface HistoricalReleaseBindingV1 {
   readonly acceptedMeetingRevision: number;
@@ -63,6 +85,39 @@ export interface AcceptedFinalMeetingV1 {
   readonly binding: HistoricalReleaseBindingV1;
   readonly humanTurns: readonly HistoricalTranscriptTurnV1[];
   readonly schemaVersion: typeof HISTORICAL_MEMORY_SCHEMA_VERSION;
+}
+
+export function admitsHistoricalRetrieval(
+  meeting: AcceptedFinalMeetingV1,
+  profile: TwoHourHistoricalRetrievalProfileV1 =
+    DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
+): boolean {
+  if (
+    profile.version !== TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE_VERSION ||
+    profile.minimumDurationMs !== 7_200_000 ||
+    profile.minimumHumanTurnCount !== 400
+  ) {
+    throw new HistoricalEvidenceInvariantError(
+      "INVALID_CONTRACT",
+      "two-hour historical retrieval profile is not centrally qualified",
+    );
+  }
+  if (profile.enabled) {
+    return true;
+  }
+  const firstStartMs = meeting.humanTurns.reduce(
+    (minimum, turn) => Math.min(minimum, turn.startMs),
+    Number.POSITIVE_INFINITY,
+  );
+  const lastEndMs = meeting.humanTurns.reduce(
+    (maximum, turn) => Math.max(maximum, turn.endMs),
+    0,
+  );
+  const durationMs = meeting.humanTurns.length === 0
+    ? 0
+    : lastEndMs - firstStartMs;
+  return durationMs < profile.minimumDurationMs &&
+    meeting.humanTurns.length < profile.minimumHumanTurnCount;
 }
 
 export class HistoricalEvidenceInvariantError extends Error {

@@ -34,6 +34,8 @@ export const INFINITY_CONTEXT_SDK_PROVENANCE = Object.freeze({
     "sha256:5ecd36edd098940cd8a6540509f90815ddc1802b4410ced2bf063c0f8c650cac",
   retainedProductionSemanticServiceRevision:
     "897efd211151e9a81a7466fdd6be5cb067ddb8eb",
+  retainedProductionSemanticReleaseRevision:
+    "8cc180cd043b95469f295ad9247bcb7886d29f10",
   repository: "https://github.com/777genius/infinity-context.git",
   tree: "67a744b1accc0d4628c19f28849660bc917b8b62",
 });
@@ -43,6 +45,7 @@ export interface InfinityContextProductionEmbeddingProfileAttestationV1 {
   readonly embeddingProfileDigestSha256: string;
   readonly productionSemanticQualification: boolean;
   readonly qualificationManifestSha256: string;
+  readonly releaseRevision: string;
   readonly schemaVersion: 1;
 }
 
@@ -197,6 +200,7 @@ function decodeProductionEmbeddingProfileAttestation(
     "embeddingProfileDigestSha256",
     "productionSemanticQualification",
     "qualificationManifestSha256",
+    "releaseRevision",
     "schemaVersion",
   ]);
   if (Object.keys(input).some((key) => !allowed.has(key))) {
@@ -223,6 +227,7 @@ function decodeProductionEmbeddingProfileAttestation(
       input.qualificationManifestSha256,
       "qualificationManifestSha256",
     ),
+    releaseRevision: string(input.releaseRevision, "releaseRevision"),
     schemaVersion: 1 as const,
   });
 }
@@ -322,6 +327,7 @@ export function assertInfinityContextActivation(
  */
 export function assertInfinityContextSearchActivation(
   activation: InfinityContextRuntimeActivationV1,
+  currentReleaseRevision?: string,
 ): void {
   if (!activation.searchEnabled || activation.environment !== "production") {
     return;
@@ -354,10 +360,17 @@ export function assertInfinityContextSearchActivation(
     attestation.embeddingProfileDigestSha256 !==
       INFINITY_CONTEXT_SDK_PROVENANCE
         .retainedProductionSemanticEmbeddingProfileDigestSha256 ||
-    attestation.qualificationManifestSha256 !== retainedManifest
+    attestation.qualificationManifestSha256 !== retainedManifest ||
+    attestation.releaseRevision !==
+      INFINITY_CONTEXT_SDK_PROVENANCE.retainedProductionSemanticReleaseRevision
   ) {
     throw new InfinityContextActivationError(
       "production embedding-profile attestation does not match retained qualification",
+    );
+  }
+  if (currentReleaseRevision !== attestation.releaseRevision) {
+    throw new InfinityContextActivationError(
+      "production Infinity search qualification does not match the running Meeting Platform release",
     );
   }
 }

@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
   DeterministicCoverageReducer,
   ExhaustiveCoverage,
   GroundedAnswer,
@@ -176,6 +177,7 @@ function semanticCoverage(
   meeting: AcceptedFinalMeetingV1,
   checkpoints: SemanticCheckpoints,
   authorization?: HistoricalAuthorizationPort,
+  twoHourEnabled = true,
 ): ExhaustiveCoverage {
   const authority: HistoricalEvidenceAuthority = {
     loadAcceptedFinalMeeting: async (binding) =>
@@ -247,6 +249,9 @@ function semanticCoverage(
     processingRelease: "meeting-knowledge.test-semantic-coverage.r1",
     reduceFanIn: 2,
     version: "meeting-knowledge.exhaustive-coverage.v1",
+  }, {
+    ...DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
+    enabled: twoHourEnabled,
   });
 }
 
@@ -436,6 +441,26 @@ describe("semantic exhaustive coverage exact-answer oracles", () => {
       question: "Count every decision assertion",
     })).resolves.toEqual({ status: "rejected" });
     expect(generate).not.toHaveBeenCalled();
+  });
+
+  it("blocks long exhaustive retrieval before semantic extraction by default", async () => {
+    const meeting = corpus();
+    const checkpoints = new SemanticCheckpoints();
+    const result = await semanticCoverage(
+      meeting,
+      checkpoints,
+      undefined,
+      false,
+    ).buildPlan({
+      authorizationPrincipalRef: "principal",
+      question: "List every decision across all meetings",
+      requestId: "two-hour-disabled",
+      roomId: meeting.binding.roomId,
+      scopeId: meeting.binding.scopeId,
+    });
+
+    expect(result).toMatchObject({ status: "invalidated" });
+    expect(checkpoints.extractionCount).toBe(0);
   });
 
   it("returns exact count and all/list answers across more than 400 turns, retaining duplicates and contradictions", async () => {

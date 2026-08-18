@@ -8,17 +8,26 @@ import { semanticServiceConfig } from "./infinity-context-semantic-service.e2e.t
 
 const passingEvidence = {
   corpusHumanTurnsSha256: "a".repeat(64),
-  embeddingProfileDigestSha256: `sha256:${"b".repeat(64)}`,
-  embeddingProfileId: "text-embedding-production-v1",
+  endpointReceipt: {
+    apiVersion: "v1",
+    embeddingProfileDigestSha256: `sha256:${"b".repeat(64)}`,
+    embeddingProfileId: "text-embedding-production-v1",
+    enabledAdapters: ["qdrant"],
+    qdrant: {
+      enabled: true,
+      healthy: true,
+      supportsSearch: true,
+      supportsUpsert: true,
+    },
+    serviceName: "disposable-infinity-context",
+    serviceRevision: "d".repeat(40),
+    supportsQdrant: true,
+  },
   focusedQuestionCount: 7,
   focusedRecallAt5: 1,
   observedAt: "2026-08-15T12:00:00.000Z",
   releaseRevision: "c".repeat(40),
   remoteCleanupVerified: true,
-  serviceApiVersion: "v1",
-  serviceEnabledAdapters: ["qdrant"],
-  serviceName: "disposable-infinity-context",
-  serviceRevision: "d".repeat(40),
   turnCount: 421,
 } as const;
 
@@ -33,8 +42,8 @@ describe("Infinity production semantic qualification manifest", () => {
       },
       corpus: { focusedQuestionCount: 7, focusedRecallAt5: 1, turnCount: 421 },
       embeddingProfile: {
-        digestSha256: passingEvidence.embeddingProfileDigestSha256,
-        id: passingEvidence.embeddingProfileId,
+        digestSha256: passingEvidence.endpointReceipt.embeddingProfileDigestSha256,
+        id: passingEvidence.endpointReceipt.embeddingProfileId,
       },
       releaseRevision: passingEvidence.releaseRevision,
       schemaVersion: infinitySemanticQualificationSchema,
@@ -42,7 +51,7 @@ describe("Infinity production semantic qualification manifest", () => {
         apiVersion: "v1",
         enabledAdapters: ["qdrant"],
         name: "disposable-infinity-context",
-        revision: passingEvidence.serviceRevision,
+        revision: passingEvidence.endpointReceipt.serviceRevision,
       },
     });
     expect(manifest.sdk.packageSha256)
@@ -50,12 +59,12 @@ describe("Infinity production semantic qualification manifest", () => {
   });
 
   it.each([
-    [{ ...passingEvidence, embeddingProfileId: "deterministic-mock-non-production-v1" }, /non-mock/u],
+    [{ ...passingEvidence, endpointReceipt: { ...passingEvidence.endpointReceipt, embeddingProfileId: "deterministic-mock-non-production-v1" } }, /non-mock/u],
     [{ ...passingEvidence, focusedRecallAt5: 6 / 7 }, /complete frozen recall/u],
     [{ ...passingEvidence, focusedRecallAt5: 5 }, /complete frozen recall/u],
     [{ ...passingEvidence, remoteCleanupVerified: false }, /complete frozen recall/u],
-    [{ ...passingEvidence, serviceEnabledAdapters: ["graphiti"] }, /qdrant/u],
-    [{ ...passingEvidence, embeddingProfileDigestSha256: "sha256:unknown" }, /sha256-prefixed/u],
+    [{ ...passingEvidence, endpointReceipt: { ...passingEvidence.endpointReceipt, enabledAdapters: ["graphiti"] } }, /qdrant/u],
+    [{ ...passingEvidence, endpointReceipt: { ...passingEvidence.endpointReceipt, embeddingProfileDigestSha256: "sha256:unknown" } }, /sha256-prefixed/u],
   ])("fails closed when evidence cannot qualify production search", (evidence, message) => {
     expect(() => createInfinitySemanticQualificationManifest(evidence)).toThrow(message);
   });
@@ -67,7 +76,7 @@ describe("Infinity production semantic qualification manifest", () => {
     expect(() => semanticServiceConfig({
       INFINITY_CONTEXT_SEMANTIC_E2E_DISPOSABLE: "YES_DELETE_ALL_TEST_DATA",
       INFINITY_CONTEXT_SEMANTIC_E2E_EMBEDDING_PROFILE:
-        "deterministic-mock-non-production-v1",
-    })).toThrow("must identify a non-mock profile");
+        "operator-value-is-not-evidence",
+    })).toThrow("INFINITY_CONTEXT_SEMANTIC_E2E_URL is required");
   });
 });

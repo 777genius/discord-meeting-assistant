@@ -40,6 +40,8 @@ const retainedProductionAttestation = {
   productionSemanticQualification: true,
   qualificationManifestSha256:
     INFINITY_CONTEXT_SDK_PROVENANCE.retainedProductionSemanticQualificationManifestSha256,
+  releaseRevision:
+    INFINITY_CONTEXT_SDK_PROVENANCE.retainedProductionSemanticReleaseRevision,
   schemaVersion: 1,
 } as const;
 
@@ -281,6 +283,8 @@ describe("Infinity Context production search provenance", () => {
         productionSemanticQualification: false,
         qualificationManifestSha256:
           INFINITY_CONTEXT_SDK_PROVENANCE.retainedLiveQualificationManifestSha256,
+        releaseRevision:
+          INFINITY_CONTEXT_SDK_PROVENANCE.retainedProductionSemanticReleaseRevision,
         schemaVersion: 1,
       },
     });
@@ -295,6 +299,8 @@ describe("Infinity Context production search provenance", () => {
         productionSemanticQualification: true,
         qualificationManifestSha256:
           INFINITY_CONTEXT_SDK_PROVENANCE.retainedLiveQualificationManifestSha256,
+        releaseRevision:
+          INFINITY_CONTEXT_SDK_PROVENANCE.retainedProductionSemanticReleaseRevision,
         schemaVersion: 1,
       },
     });
@@ -344,7 +350,22 @@ describe("Infinity Context production search provenance", () => {
   it("activates production search only with the retained r79 semantic attestation", () => {
     const activation = decodeInfinityContextRuntimeActivation(productionSearchActivation);
 
-    expect(() => { assertInfinityContextSearchActivation(activation); }).not.toThrow();
+    expect(() => {
+      assertInfinityContextSearchActivation(
+        activation,
+        INFINITY_CONTEXT_SDK_PROVENANCE.retainedProductionSemanticReleaseRevision,
+      );
+    }).not.toThrow();
+  });
+
+  it("keeps production search closed for a stale or missing Meeting Platform release", () => {
+    const activation = decodeInfinityContextRuntimeActivation(productionSearchActivation);
+
+    expect(() => { assertInfinityContextSearchActivation(activation); })
+      .toThrow(/running Meeting Platform release/u);
+    expect(() => {
+      assertInfinityContextSearchActivation(activation, "f".repeat(40));
+    }).toThrow(/running Meeting Platform release/u);
   });
 
   it("fails closed when the endpoint omits its runtime qualification receipt", () => {

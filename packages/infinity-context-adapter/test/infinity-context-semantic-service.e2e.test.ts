@@ -19,17 +19,12 @@ liveDescribe("Infinity Context disposable production-semantic qualification", ()
       corpusHumanTurnsSha256: createHash("sha256")
         .update(JSON.stringify(meeting.humanTurns), "utf8")
         .digest("hex"),
-      embeddingProfileDigestSha256: config.embeddingProfileDigestSha256,
-      embeddingProfileId: config.embeddingProfileId,
+      endpointReceipt: metrics.endpointReceipt,
       focusedQuestionCount: metrics.focusedQuestionCount,
       focusedRecallAt5: metrics.focusedRecallAt5,
       observedAt: new Date().toISOString(),
       releaseRevision: config.releaseRevision,
       remoteCleanupVerified: metrics.remoteCleanupVerified,
-      serviceApiVersion: metrics.service.apiVersion,
-      serviceEnabledAdapters: metrics.service.enabledAdapters,
-      serviceName: metrics.service.name,
-      serviceRevision: config.serviceRevision,
       turnCount: metrics.turnCount,
     });
     process.stdout.write(
@@ -44,15 +39,6 @@ export function semanticServiceConfig(environment: NodeJS.ProcessEnv) {
     "INFINITY_CONTEXT_SEMANTIC_E2E_DISPOSABLE",
     "YES_DELETE_ALL_TEST_DATA",
   );
-  const embeddingProfileId = required(
-    environment.INFINITY_CONTEXT_SEMANTIC_E2E_EMBEDDING_PROFILE,
-    "INFINITY_CONTEXT_SEMANTIC_E2E_EMBEDDING_PROFILE",
-  );
-  if (/(?:deterministic|mock|non-production)/iu.test(embeddingProfileId)) {
-    throw new Error(
-      "INFINITY_CONTEXT_SEMANTIC_E2E_EMBEDDING_PROFILE must identify a non-mock profile",
-    );
-  }
   const baseUrl = required(
     environment.INFINITY_CONTEXT_SEMANTIC_E2E_URL,
     "INFINITY_CONTEXT_SEMANTIC_E2E_URL",
@@ -81,11 +67,6 @@ export function semanticServiceConfig(environment: NodeJS.ProcessEnv) {
     );
   }
   return {
-    embeddingProfileDigestSha256: required(
-      environment.INFINITY_CONTEXT_SEMANTIC_E2E_EMBEDDING_PROFILE_DIGEST_SHA256,
-      "INFINITY_CONTEXT_SEMANTIC_E2E_EMBEDDING_PROFILE_DIGEST_SHA256",
-    ),
-    embeddingProfileId,
     releaseRevision: revision(environment.MEETING_KNOWLEDGE_RELEASE_REVISION, "MEETING_KNOWLEDGE_RELEASE_REVISION"),
     service: {
       baseUrl: url.toString().replace(/\/$/u, ""),
@@ -94,10 +75,6 @@ export function semanticServiceConfig(environment: NodeJS.ProcessEnv) {
         ? {}
         : { token: environment.INFINITY_CONTEXT_SEMANTIC_E2E_TOKEN }),
     },
-    serviceRevision: revision(
-      environment.INFINITY_CONTEXT_SEMANTIC_E2E_SERVICE_REVISION,
-      "INFINITY_CONTEXT_SEMANTIC_E2E_SERVICE_REVISION",
-    ),
   };
 }
 

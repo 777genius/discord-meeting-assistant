@@ -13,6 +13,7 @@ RUN apt-get update \
 # Keep the expensive system dependency layer independent from the immutable
 # source revision so a rollout does not download and install apt packages again.
 ARG SOURCE_REVISION
+ENV SOURCE_REVISION=${SOURCE_REVISION}
 LABEL org.opencontainers.image.revision="${SOURCE_REVISION}"
 
 RUN printf '%s' "${SOURCE_REVISION}" \

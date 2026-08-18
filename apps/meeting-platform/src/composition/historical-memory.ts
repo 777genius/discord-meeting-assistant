@@ -6,6 +6,7 @@ import {
 } from "@discord-meeting/infinity-context-adapter";
 import {
   DEFAULT_HISTORICAL_SYNC_POLICY,
+  DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
   DeterministicCoverageReducer,
   ExhaustiveCoverage,
   HistoricalFocusedRetrieval,
@@ -111,10 +112,11 @@ export function createHistoricalReconciliationLifecycle(input: {
 
 function semanticSearchQualified(
   activation: NonNullable<PlatformConfig["infinityContext"]>["activation"],
+  currentReleaseRevision: string | undefined,
   logger: Logger,
 ): boolean {
   try {
-    assertInfinityContextSearchActivation(activation);
+    assertInfinityContextSearchActivation(activation, currentReleaseRevision);
     return true;
   } catch (error) {
     logger.warn(
@@ -179,6 +181,11 @@ export function createPlatformHistoricalMemory(input: {
   let transportQualified = false;
   let searchQualified = false;
   const deletion = new RequestHistoricalMeetingDeletion(store);
+  const twoHourProfile = Object.freeze({
+    ...DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
+    enabled:
+      input.config.meetingKnowledge?.twoHourHistoricalRetrieval === true,
+  });
 
   const refreshQualification = async (signal?: AbortSignal): Promise<void> => {
     transportQualified = false;
@@ -191,7 +198,11 @@ export function createPlatformHistoricalMemory(input: {
     );
     assertInfinityContextActivation(config.activation, capabilities);
     transportQualified = true;
-    searchQualified = semanticSearchQualified(config.activation, input.logger);
+    searchQualified = semanticSearchQualified(
+      config.activation,
+      input.config.sourceRevision,
+      input.logger,
+    );
   };
 
   const refreshQualificationForReconciliation = async (
@@ -257,7 +268,7 @@ export function createPlatformHistoricalMemory(input: {
         ids: new HmacHistoricalOpaqueIds(topologyKey),
         reducer: new DeterministicCoverageReducer(64, 256),
         sync: new PostgresHistoricalMemoryStore(input.pool),
-      });
+      }, undefined, twoHourProfile);
     },
     createFocusedRetrieval: (authorization) => new HistoricalFocusedRetrieval({
       authority: new PostgresHistoricalEvidenceAuthority(input.pool),
@@ -265,7 +276,7 @@ export function createPlatformHistoricalMemory(input: {
       ids: new HmacHistoricalOpaqueIds(topologyKey),
       memory,
       store: new PostgresHistoricalMemoryStore(input.pool),
-    }),
+    }, undefined, twoHourProfile),
     searchEnabled: () =>
       config.activation.searchEnabled && transportQualified && searchQualified,
     servingAuthorized: () => config.activation.searchEnabled && searchQualified,

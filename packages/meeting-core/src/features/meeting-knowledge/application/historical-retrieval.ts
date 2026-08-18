@@ -1,5 +1,10 @@
 import { classifyHistoricalGroundingMode, normalizeHistoricalQuestion } from "../domain/grounding-mode.js";
 import {
+  DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
+  admitsHistoricalRetrieval,
+  type TwoHourHistoricalRetrievalProfileV1,
+} from "../domain/historical-evidence.js";
+import {
   buildHistoricalRoomTopology,
   HistoricalIndexPlanError,
   rehydrateHistoricalBlock,
@@ -100,6 +105,7 @@ function assertPolicy(policy: FocusedRetrievalPolicyInputV1): FocusedRetrievalPo
 
 export class HistoricalFocusedRetrieval {
   readonly #policy: FocusedRetrievalPolicyV1;
+  readonly #twoHourProfile: TwoHourHistoricalRetrievalProfileV1;
 
   public constructor(
     private readonly dependencies: {
@@ -110,8 +116,11 @@ export class HistoricalFocusedRetrieval {
       readonly store: HistoricalSyncStore;
     },
     policy: FocusedRetrievalPolicyV1 = DEFAULT_FOCUSED_RETRIEVAL_POLICY,
+    twoHourProfile: TwoHourHistoricalRetrievalProfileV1 =
+      DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
   ) {
     this.#policy = assertPolicy(policy);
+    this.#twoHourProfile = Object.freeze({ ...twoHourProfile });
   }
 
   public async buildPlan(input: {
@@ -148,9 +157,7 @@ export class HistoricalFocusedRetrieval {
       question,
       this.#policy.maximumDecomposedQueries,
     );
-    const remoteCandidates = input.searchEnabled
-      ? await this.search(input.scopeId, input.roomId, queries, input.signal)
-      : null;
+    const remoteCandidates = await this.remoteCandidates(input, queries);
     const candidates = remoteCandidates?.candidates ?? [];
     let retrievalSource: FocusedGroundingPlanV1["retrievalSource"] =
       remoteCandidates === null ? "local_fallback" : "qualified_hybrid";
@@ -293,7 +300,10 @@ export class HistoricalFocusedRetrieval {
       record.binding,
       signal === undefined ? {} : { signal },
     );
-    if (meeting === null || !await this.dependencies.store.isCurrentGeneration(
+    if (
+      meeting === null ||
+      !admitsHistoricalRetrieval(meeting, this.#twoHourProfile) ||
+      !await this.dependencies.store.isCurrentGeneration(
       record.binding,
       record.plan.topology.indexGeneration,
       signal === undefined ? {} : { signal },
@@ -323,6 +333,40 @@ export class HistoricalFocusedRetrieval {
     }
   }
 
+  private async remoteCandidates(
+    input: Parameters<HistoricalFocusedRetrieval["buildPlan"]>[0],
+    queries: readonly string[],
+  ): Promise<{ readonly candidates: readonly HistoricalCandidateLocatorV1[] } | null> {
+    if (!input.searchEnabled || !await this.remoteSearchAdmitted(input)) {
+      return null;
+    }
+    return this.search(input.scopeId, input.roomId, queries, input.signal);
+  }
+
+  private async remoteSearchAdmitted(
+    input: Parameters<HistoricalFocusedRetrieval["buildPlan"]>[0],
+  ): Promise<boolean> {
+    const plans = (await this.dependencies.store.listCurrentRoomPlans(
+      input.scopeId,
+      input.roomId,
+      this.#policy.maximumLocalScanBlocks + 1,
+      input.signal === undefined ? {} : { signal: input.signal },
+    )).filter(({ binding }) => isRequestedMeeting(binding.meetingId, input));
+    for (const { binding } of plans) {
+      const meeting = await this.dependencies.authority.loadAcceptedFinalMeeting(
+        binding,
+        input.signal === undefined ? {} : { signal: input.signal },
+      );
+      if (
+        meeting === null ||
+        !admitsHistoricalRetrieval(meeting, this.#twoHourProfile)
+      ) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   private async localFallback(
     input: Parameters<HistoricalFocusedRetrieval["buildPlan"]>[0],
   ): Promise<readonly LocallyRehydratedEvidenceBlockV1[] | null> {
@@ -342,7 +386,10 @@ export class HistoricalFocusedRetrieval {
         record.binding,
         input.signal === undefined ? {} : { signal: input.signal },
       );
-      if (meeting === null || !await this.dependencies.store.isCurrentGeneration(
+      if (
+        meeting === null ||
+        !admitsHistoricalRetrieval(meeting, this.#twoHourProfile) ||
+        !await this.dependencies.store.isCurrentGeneration(
         record.binding,
         record.plan.topology.indexGeneration,
         input.signal === undefined ? {} : { signal: input.signal },

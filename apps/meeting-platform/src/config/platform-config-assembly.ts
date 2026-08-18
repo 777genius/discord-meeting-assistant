@@ -101,8 +101,16 @@ export function assemblePlatformConfig(
     ...(environment.DISCORD_LEGACY_GUILD_ID === undefined || environment.DISCORD_LEGACY_VOICE_CHANNEL_ID === undefined || environment.DISCORD_RESULTS_CHANNEL_ID === undefined ? {} : { discordLegacyRoute: { guildId: environment.DISCORD_LEGACY_GUILD_ID, publicationTargetId: environment.DISCORD_RESULTS_CHANNEL_ID, voiceChannelId: environment.DISCORD_LEGACY_VOICE_CHANNEL_ID } }),
     liveIngressOwnerMode: environment.LIVE_INGRESS_OWNER_MODE,
     ...infinityContextConfig(environment),
-    ...(environment.MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED
-      ? { meetingKnowledge: { localFinalReply: true as const } }
+    ...(environment.MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED ||
+      environment.MEETING_KNOWLEDGE_TWO_HOUR_HISTORICAL_ENABLED
+      ? { meetingKnowledge: {
+          ...(environment.MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED
+            ? { localFinalReply: true as const }
+            : {}),
+          ...(environment.MEETING_KNOWLEDGE_TWO_HOUR_HISTORICAL_ENABLED
+            ? { twoHourHistoricalRetrieval: true as const }
+            : {}),
+        } }
       : {}),
     nodeEnvironment: environment.NODE_ENV,
     participantGreetingDefaultLocale: environment.PARTICIPANT_GREETING_DEFAULT_LOCALE,
@@ -112,6 +120,9 @@ export function assemblePlatformConfig(
     ...(loaded.recordingPlayback.config === undefined ? {} : { recordingPlayback: loaded.recordingPlayback.config }),
     s3: { bucket: environment.S3_BUCKET, endpoint: environment.S3_ENDPOINT, prefix: environment.S3_PREFIX, region: environment.S3_REGION },
     secrets: platformSecrets(loaded),
+    ...(environment.SOURCE_REVISION === undefined
+      ? {}
+      : { sourceRevision: environment.SOURCE_REVISION }),
     speaches: { baseUrl: environment.SPEACHES_BASE_URL, model: environment.SPEACHES_MODEL },
     subscriptionRuntime: { address: environment.SUBSCRIPTION_RUNTIME_ADDRESS, launcherSha256: environment.SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256 },
     transcriptionProvider: environment.TRANSCRIPTION_PROVIDER,
