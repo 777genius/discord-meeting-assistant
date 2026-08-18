@@ -201,9 +201,6 @@ export async function qualifyLiveProjectionReply(input: {
     pool: input.pool,
     runtimeTransport: unusedRuntimeTransport,
   });
-  if (runtime === undefined) {
-    throw new Error("live projection reply composition was disabled");
-  }
   const emitQuestion = (overrides: Record<string, unknown> = {}): void => {
     emitter.emit("messageCreate", {
       author: { bot: false, id: participantId },

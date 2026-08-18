@@ -144,7 +144,7 @@ export async function startMeetingPlatform(
       server: http.server,
       worker: postCall.worker,
     });
-    meetingKnowledge?.start();
+    meetingKnowledge.start();
     liveFinalizedMemory?.start();
     cleanup.release();
     return createRunningPlatformRuntime({
@@ -161,7 +161,7 @@ export async function startMeetingPlatform(
       ...(liveFinalizedMemory === undefined ? {} : { liveFinalizedMemory }),
       logger,
       ...(discordLive.live === undefined ? {} : { live: discordLive.live }),
-      ...(meetingKnowledge === undefined ? {} : { meetingKnowledge }),
+      meetingKnowledge,
       outboxDispatcher: postCall.outboxDispatcher,
       pool: core.pool,
       queue: postCall.queue,
@@ -238,9 +238,7 @@ async function createPlatformKnowledgeComposition(input: {
     pool: core.pool,
     runtimeTransport: core.runtimeTransport,
   });
-  if (meetingKnowledge !== undefined) {
-    cleanup.defer("Meeting Knowledge local final reply", () => meetingKnowledge.close());
-  }
+  cleanup.defer("Meeting Knowledge local final reply", () => meetingKnowledge.close());
   return {
     discordLive,
     historicalMemory,

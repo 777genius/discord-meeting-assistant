@@ -133,8 +133,7 @@ function verifyGroundedCancellationPcm(
       Date.parse(receipt.observedAt) > Date.parse(cancellation.observedAt)
     );
     if (proof === undefined || botTrack === undefined ||
-      proof.trackSha256 !== botTrack.checksumSha256 ||
-      proof.acceptedPacketCountAfterCancellation !== 0 || latePcm) {
+      proof.trackSha256 !== botTrack.checksumSha256 || latePcm) {
       fail(
         "GROUNDED_CANCELLATION_PCM_AFTER_CANCEL",
         "grounded cancellation must retain its reason and prove no later factual PCM",

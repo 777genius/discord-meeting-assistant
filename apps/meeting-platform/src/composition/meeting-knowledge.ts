@@ -269,6 +269,8 @@ async function awaitBoundedFinalReplyDrain(
   operations: readonly (Promise<unknown> | undefined)[],
 ): Promise<void> {
   let timer: NodeJS.Timeout | undefined;
+  const pending = operations.filter(
+    (operation): operation is Promise<unknown> => operation !== undefined);
   const timeout = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => {
       reject(new MeetingKnowledgeDrainTimeoutError(
@@ -279,7 +281,7 @@ async function awaitBoundedFinalReplyDrain(
   });
   try {
     const results = await Promise.race([
-      Promise.allSettled(operations),
+      Promise.allSettled(pending),
       timeout,
     ]);
     const failures = results.flatMap((result): unknown[] =>
