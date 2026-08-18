@@ -53,6 +53,14 @@ const processIntervalMilliseconds = 500;
 const reconciliationIntervalMilliseconds = 30_000;
 const maximumMaintenanceJobsPerPass = 100;
 const shutdownDrainTimeoutMilliseconds = 5_000;
+const focusedEvidenceSelectorTimeoutMilliseconds = 60_000;
+const groundedAnswerTimeoutMilliseconds = 180_000;
+const providerAttemptLeaseSafetyMilliseconds = 120_000;
+const providerAttemptLeaseSeconds = (
+  focusedEvidenceSelectorTimeoutMilliseconds +
+  groundedAnswerTimeoutMilliseconds +
+  providerAttemptLeaseSafetyMilliseconds
+) / 1_000;
 
 export class MeetingKnowledgeDrainTimeoutError extends Error {
   public constructor(timeoutMilliseconds: number) {
@@ -83,9 +91,9 @@ export const localFinalReplyPolicy: LocalFinalReplyPolicy = Object.freeze({
     safeInputTokens: 300_000,
     tokenDriftReserve: 32_768,
   }),
-  // Longer than the grounded-answer adapter's maximum allowed 300-second provider deadline.
-  // Reservation renews this lease immediately before the provider call.
-  jobLeaseSeconds: 360,
+  // One reservation spans selector and answer generation. Keep their explicit
+  // deadlines plus bounded orchestration slack inside the durable lease.
+  jobLeaseSeconds: providerAttemptLeaseSeconds,
   maximumProviderAttempts: 2,
   policyVersion: "meeting-knowledge.focused-memory-final-reply.v3",
   retrieval: Object.freeze({
@@ -119,6 +127,17 @@ class ConfiguredDiscordQuestionScope implements DiscordQuestionScopePort {
   }
 }
 
+function createGroundedAnswerGenerator(input: {
+  readonly launcherSha256: string;
+  readonly runtimeTransport: SubscriptionRuntimeTransportPort;
+}): SubscriptionRuntimeGroundedAnswerAdapter {
+  return new SubscriptionRuntimeGroundedAnswerAdapter(input.runtimeTransport, {
+    expectedLauncherSha256: input.launcherSha256,
+    expectedRuntimeEngine: subscriptionRuntimeCliEngine,
+    timeoutMs: groundedAnswerTimeoutMilliseconds,
+  });
+}
+
 function createFocusedEvidenceSelector(input: {
   readonly launcherSha256: string;
   readonly logger: Logger;
@@ -130,6 +149,7 @@ function createFocusedEvidenceSelector(input: {
       {
         expectedLauncherSha256: input.launcherSha256,
         expectedRuntimeEngine: subscriptionRuntimeCliEngine,
+        timeoutMs: focusedEvidenceSelectorTimeoutMilliseconds,
       },
     ),
     (measurement) => {
@@ -233,13 +253,10 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
     admissions,
     localFinalReplyPolicy,
   );
-  const generator = new SubscriptionRuntimeGroundedAnswerAdapter(
-    input.runtimeTransport,
-    {
-      expectedLauncherSha256: input.config.subscriptionRuntime.launcherSha256,
-      expectedRuntimeEngine: subscriptionRuntimeCliEngine,
-    },
-  );
+  const generator = createGroundedAnswerGenerator({
+    launcherSha256: input.config.subscriptionRuntime.launcherSha256,
+    runtimeTransport: input.runtimeTransport,
+  });
   const selector = createFocusedEvidenceSelector({
     launcherSha256: input.config.subscriptionRuntime.launcherSha256,
     logger: input.logger,
