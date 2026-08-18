@@ -136,6 +136,11 @@
       "id": "ADR-0028",
       "path": "docs/decisions/0028-binding-aware-post-call-rollout.md",
       "immutableDigest": "sha256:43b59a83676007e1514e26ef72f28776601bc9d168ec6d7f2dfc6f13e789572d"
+    },
+    {
+      "id": "ADR-0029",
+      "path": "docs/decisions/0029-fence-binding-recovery-from-legacy-workers.md",
+      "immutableDigest": "sha256:b87168e3a7c505801c26277d25b1fdaf838312191cd2007a8a45e8619ca8e104"
     }
   ]
 }

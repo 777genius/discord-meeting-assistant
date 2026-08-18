@@ -92,13 +92,18 @@ describe("PostCallOutboxDispatcher durable binding", () => {
       events.push("enqueue");
       return { status: "available" as const };
     });
+    const supported = new Set([
+      "voicetext-batch-v2:deepgram-nova-3",
+      "voicetext-batch-v3:elevenlabs-scribe-v2",
+    ]);
+    const listRecoverablePostCall = vi.fn(async () => [{
+      meetingId: "meeting-new",
+      recoveryGeneration: 0,
+      schemaVersion: 1 as const,
+    }]);
     const dispatcher = new PostCallOutboxDispatcher(
       {
-        listRecoverablePostCall: async () => [{
-          meetingId: "meeting-new",
-          recoveryGeneration: 0,
-          schemaVersion: 1,
-        }],
+        listRecoverablePostCall,
         markPostCallEnqueued: async () => {},
         markPostCallProcessed: async () => {},
       },
@@ -112,16 +117,14 @@ describe("PostCallOutboxDispatcher durable binding", () => {
         },
         values: {
           legacyRecovery: "voicetext-batch-v2:deepgram-nova-3",
-          supported: new Set([
-            "voicetext-batch-v2:deepgram-nova-3",
-            "voicetext-batch-v3:elevenlabs-scribe-v2",
-          ]),
+          supported,
         },
       },
     );
 
     await expect(dispatcher.prepareLegacyBindings()).resolves.toBe(2);
     await expect(dispatcher.dispatchPending()).resolves.toEqual({ dispatched: 1, failed: 0 });
+    expect(listRecoverablePostCall).toHaveBeenCalledWith(100, supported);
     expect(events).toEqual([
       "backfill:voicetext-batch-v2:deepgram-nova-3",
       "pin:meeting-new:voicetext-batch-v2:deepgram-nova-3",

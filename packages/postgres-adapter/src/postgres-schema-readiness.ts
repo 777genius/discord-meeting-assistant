@@ -23,6 +23,7 @@ const requiredRelations = [
 
 const requiredIndexes = [
   "meeting_core.post_call_outbox_recoverable_idx",
+  "meeting_core.post_call_outbox_binding_recoverable_idx",
   "meeting_core.post_call_dead_letters_recorded_idx",
   "meeting_core.live_meeting_turns_timeline_idx",
 ] as const;
@@ -49,6 +50,7 @@ const requiredColumns = [
   "meeting_core.post_call_outbox.recovery_source_job_ref",
   "meeting_core.post_call_outbox.transcription_execution_binding",
   "meeting_core.post_call_outbox.transcription_execution_binding_required",
+  "meeting_core.post_call_outbox.binding_recovery_after",
   "meeting_core.live_meetings.meeting_id",
   "meeting_core.live_meetings.revision",
   "meeting_core.live_meetings.snapshot",
@@ -105,6 +107,7 @@ const requiredCheckConstraints = [
   ["meeting_core", "post_call_outbox", "post_call_outbox_recovery_receipt_is_consistent"],
   ["meeting_core", "post_call_outbox", "post_call_outbox_transcription_execution_binding_is_bounded"],
   ["meeting_core", "post_call_outbox", "post_call_outbox_required_transcription_binding_is_present"],
+  ["meeting_core", "post_call_outbox", "post_call_outbox_bound_work_is_hidden_from_legacy_recovery"],
   ["meeting_core", "live_meetings", "live_meetings_snapshot_is_object"],
   ["meeting_core", "live_meetings", "live_meetings_snapshot_identity_matches"],
   ["meeting_core", "live_meetings", "live_meetings_snapshot_revision_matches"],

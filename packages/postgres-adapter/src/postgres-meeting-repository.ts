@@ -19,6 +19,7 @@ import {
   MeetingPersistenceConflictError,
 } from "./errors.js";
 import { PostgresPostCallTerminalSettlement } from "./postgres-post-call-terminal-settlement.js";
+import { PostgresTranscriptionExecutionBindingStore } from "./postgres-transcription-execution-binding-store.js";
 
 interface StoredMeetingRow {
   readonly revision: number;
@@ -174,9 +175,10 @@ export class PostgresMeetingRepository implements
             meeting_id,
             schema_version,
             transcription_execution_binding,
-            transcription_execution_binding_required
+            transcription_execution_binding_required,
+            recovery_after
           )
-          VALUES ($1, 1, $2, TRUE)
+          VALUES ($1, 1, $2, TRUE, 'infinity'::timestamptz)
           ON CONFLICT (meeting_id) DO NOTHING
         `,
         [normalized.meetingId, requiredBinding],
@@ -228,8 +230,15 @@ export class PostgresMeetingRepository implements
     });
   }
 
-  public async listRecoverablePostCall(limit = 100): Promise<readonly PostCallWorkItem[]> {
+  public async listRecoverablePostCall(
+    limit = 100,
+    supportedBindings?: ReadonlySet<string>,
+  ): Promise<readonly PostCallWorkItem[]> {
     requirePostCallLimit(limit);
+    if (supportedBindings !== undefined) {
+      return new PostgresTranscriptionExecutionBindingStore(this.pool)
+        .listRecoverablePostCall(limit, supportedBindings);
+    }
     const result = await this.pool.query<RecoverablePostCallRow>(
       `
         SELECT meeting_id, schema_version::float8 AS schema_version,

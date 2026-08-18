@@ -9,6 +9,47 @@ ALTER TABLE meeting_core.post_call_outbox
   ADD COLUMN IF NOT EXISTS transcription_execution_binding_required boolean
   NOT NULL DEFAULT FALSE;
 
+-- Binding-aware rows keep the legacy recovery timestamp at infinity so a
+-- still-running V1 dispatcher cannot discover them with its historical query.
+-- V2 owns an independent retry clock that V1 does not know exists.
+ALTER TABLE meeting_core.post_call_outbox
+  ADD COLUMN IF NOT EXISTS binding_recovery_after timestamptz;
+
+ALTER TABLE meeting_core.post_call_outbox
+  DROP CONSTRAINT IF EXISTS post_call_outbox_recovery_receipt_is_consistent;
+
+ALTER TABLE meeting_core.post_call_outbox
+  ADD CONSTRAINT post_call_outbox_recovery_receipt_is_consistent
+  CHECK ((
+    (
+      transcription_execution_binding_required = FALSE
+      AND binding_recovery_after IS NULL
+      AND (
+        (recovery_generation = 0
+          AND recovery_after IS NULL
+          AND recovery_source_job_ref IS NULL)
+        OR
+        (recovery_generation > 0
+          AND recovery_after IS NOT NULL
+          AND recovery_source_job_ref IS NOT NULL)
+      )
+    )
+    OR
+    (
+      transcription_execution_binding_required = TRUE
+      AND recovery_after = 'infinity'::timestamptz
+      AND (
+        (recovery_generation = 0
+          AND binding_recovery_after IS NULL
+          AND recovery_source_job_ref IS NULL)
+        OR
+        (recovery_generation > 0
+          AND binding_recovery_after IS NOT NULL
+          AND recovery_source_job_ref IS NOT NULL)
+      )
+    )
+  ) IS TRUE);
+
 ALTER TABLE meeting_core.post_call_outbox
   DROP CONSTRAINT IF EXISTS post_call_outbox_transcription_execution_binding_is_bounded;
 
@@ -30,6 +71,25 @@ ALTER TABLE meeting_core.post_call_outbox
     NOT transcription_execution_binding_required
     OR transcription_execution_binding IS NOT NULL
   );
+
+ALTER TABLE meeting_core.post_call_outbox
+  DROP CONSTRAINT IF EXISTS post_call_outbox_bound_work_is_hidden_from_legacy_recovery;
+
+ALTER TABLE meeting_core.post_call_outbox
+  ADD CONSTRAINT post_call_outbox_bound_work_is_hidden_from_legacy_recovery
+  CHECK (
+    NOT transcription_execution_binding_required
+    OR recovery_after = 'infinity'::timestamptz
+  );
+
+CREATE INDEX IF NOT EXISTS post_call_outbox_binding_recoverable_idx
+  ON meeting_core.post_call_outbox (
+    COALESCE(binding_recovery_after, created_at),
+    meeting_id
+  )
+  WHERE processed_at IS NULL
+    AND dead_lettered_at IS NULL
+    AND transcription_execution_binding_required = TRUE;
 
 CREATE OR REPLACE FUNCTION meeting_core.reject_transcription_execution_binding_change()
 RETURNS trigger
@@ -56,3 +116,6 @@ EXECUTE FUNCTION meeting_core.reject_transcription_execution_binding_change();
 
 COMMENT ON COLUMN meeting_core.post_call_outbox.transcription_execution_binding IS
   'Immutable composition-owned execution binding for authoritative final transcription.';
+
+COMMENT ON COLUMN meeting_core.post_call_outbox.binding_recovery_after IS
+  'V2-only retry clock for binding-aware work hidden from legacy recovery.';

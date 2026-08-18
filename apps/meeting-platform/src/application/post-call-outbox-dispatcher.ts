@@ -6,8 +6,13 @@ import {
 
 type PostCallOutboxPort = Pick<
   PostCallOutbox,
-  "listRecoverablePostCall" | "markPostCallEnqueued" | "markPostCallProcessed"
->;
+  "markPostCallEnqueued" | "markPostCallProcessed"
+> & {
+  listRecoverablePostCall(
+    limit?: number,
+    supportedBindings?: ReadonlySet<string>,
+  ): Promise<readonly PostCallWorkItem[]>;
+};
 
 type PostCallEnqueueOutcome =
   | { readonly status: "available" }
@@ -81,7 +86,10 @@ export class PostCallOutboxDispatcher {
   async #dispatch(limit: number): Promise<PostCallDispatchResult> {
     let pending: readonly PostCallWorkItem[];
     try {
-      pending = await this.outbox.listRecoverablePostCall(limit);
+      pending = await this.outbox.listRecoverablePostCall(
+        limit,
+        this.binding?.values.supported,
+      );
     } catch (error) {
       this.logger.warn("Post-call outbox reconciliation failed before dispatch", {
         errorName: error instanceof Error ? error.name : "UNKNOWN_THROWABLE",
