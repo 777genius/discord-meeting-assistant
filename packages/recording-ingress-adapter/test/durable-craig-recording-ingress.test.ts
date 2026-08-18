@@ -259,6 +259,7 @@ describe("authoritative Craig recording finalization", () => {
     expect(finalized).toMatchObject({
       kind: "finalized",
       recording: {
+        authoritativeDurationMs: 299_000,
         recordingId: "recording-1",
         speakerAudio: [{ speakerId: firstSpeakerId, timelineOffsetMs: 0 }],
       },
@@ -275,7 +276,9 @@ describe("authoritative Craig recording finalization", () => {
     expect(manifest.startedAt).toBe("2026-08-01T10:00:00.000Z");
     expect(manifest.tracks).toHaveLength(1);
   });
+});
 
+describe("authoritative Craig recording durability", () => {
   it("keeps completed Craig tracks immutable and reuses only an exact upload retry", async () => {
     const root = await spoolRoot();
     const writer = new MemoryArtifactWriter();
@@ -329,8 +332,20 @@ describe("authoritative Craig recording finalization", () => {
           uploadId: track.metadata.uploadId,
         },
       ],
-      schemaVersion: 4,
+      recording: { authoritativeDurationMs: 299_000 },
+      schemaVersion: 5,
     });
+
+    await adapter.close();
+    const recovered = ingress(root, writer);
+    await expect(
+      recovered.ingestLifecycleEvent(authoritativeReady()),
+    ).resolves.toMatchObject({
+      kind: "finalized",
+      recording: { authoritativeDurationMs: 299_000 },
+      replayed: true,
+    });
+    await recovered.close();
   });
 
   it("persists track intent before storage and recovers a commit-then-fail retry", async () => {

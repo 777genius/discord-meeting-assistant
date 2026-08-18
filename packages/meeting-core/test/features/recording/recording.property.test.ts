@@ -31,6 +31,7 @@ const token = array(constantFrom(...Array.from("abcdefghijklmnopqrstuvwxyz012345
   .map((characters) => characters.join(""));
 
 const recordingArtifactSnapshot = record({
+  authoritativeDurationMs: nat({ max: Number.MAX_SAFE_INTEGER }),
   manifestLocator: token.map((value) => `recordings/${value}/manifest.json`),
   recordingId: token,
   speakerAudio: uniqueArray(
@@ -66,5 +67,15 @@ describe("RecordingArtifact properties", () => {
         createFastCheckParameters(seedBank, seed, replay),
       );
     }
+  });
+
+  it("keeps legacy snapshots without authoritative duration backward-compatible", () => {
+    const snapshot = {
+      manifestLocator: "recordings/legacy/manifest.json",
+      recordingId: "legacy-recording",
+      speakerAudio: [],
+    };
+
+    expect(RecordingArtifact.create(snapshot).toSnapshot()).toEqual(snapshot);
   });
 });

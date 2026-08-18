@@ -2,6 +2,7 @@ import type { PlatformConfig } from "./platform-config.js";
 import type { ParsedPlatformEnvironment } from "../config.js";
 
 export interface LoadedPlatformSecrets {
+  readonly buildSourceRevision?: string;
   readonly craigBearerToken: string;
   readonly conversationRuntimeToken?: string;
   readonly discordToken: string;
@@ -101,15 +102,9 @@ export function assemblePlatformConfig(
     ...(environment.DISCORD_LEGACY_GUILD_ID === undefined || environment.DISCORD_LEGACY_VOICE_CHANNEL_ID === undefined || environment.DISCORD_RESULTS_CHANNEL_ID === undefined ? {} : { discordLegacyRoute: { guildId: environment.DISCORD_LEGACY_GUILD_ID, publicationTargetId: environment.DISCORD_RESULTS_CHANNEL_ID, voiceChannelId: environment.DISCORD_LEGACY_VOICE_CHANNEL_ID } }),
     liveIngressOwnerMode: environment.LIVE_INGRESS_OWNER_MODE,
     ...infinityContextConfig(environment),
-    ...(environment.MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED ||
-      environment.MEETING_KNOWLEDGE_TWO_HOUR_HISTORICAL_ENABLED
+    ...(environment.MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED
       ? { meetingKnowledge: {
-          ...(environment.MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED
-            ? { localFinalReply: true as const }
-            : {}),
-          ...(environment.MEETING_KNOWLEDGE_TWO_HOUR_HISTORICAL_ENABLED
-            ? { twoHourHistoricalRetrieval: true as const }
-            : {}),
+          localFinalReply: true as const,
         } }
       : {}),
     nodeEnvironment: environment.NODE_ENV,
@@ -120,9 +115,9 @@ export function assemblePlatformConfig(
     ...(loaded.recordingPlayback.config === undefined ? {} : { recordingPlayback: loaded.recordingPlayback.config }),
     s3: { bucket: environment.S3_BUCKET, endpoint: environment.S3_ENDPOINT, prefix: environment.S3_PREFIX, region: environment.S3_REGION },
     secrets: platformSecrets(loaded),
-    ...(environment.SOURCE_REVISION === undefined
+    ...(loaded.buildSourceRevision === undefined
       ? {}
-      : { sourceRevision: environment.SOURCE_REVISION }),
+      : { sourceRevision: loaded.buildSourceRevision }),
     speaches: { baseUrl: environment.SPEACHES_BASE_URL, model: environment.SPEACHES_MODEL },
     subscriptionRuntime: { address: environment.SUBSCRIPTION_RUNTIME_ADDRESS, launcherSha256: environment.SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256 },
     transcriptionProvider: environment.TRANSCRIPTION_PROVIDER,

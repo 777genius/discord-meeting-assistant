@@ -251,7 +251,12 @@ function semanticCoverage(
     version: "meeting-knowledge.exhaustive-coverage.v1",
   }, {
     ...DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
-    enabled: twoHourEnabled,
+    qualification: twoHourEnabled ? {
+      evidenceSha256: "e".repeat(64),
+      releaseRevision: "f".repeat(40),
+      rolloutEpoch: "test-r1",
+      schemaVersion: 1,
+    } : null,
   });
 }
 

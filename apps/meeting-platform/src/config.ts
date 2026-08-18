@@ -23,6 +23,7 @@ import {
 import type { PlatformConfig } from "./config/platform-config.js";
 import { readSecretFile } from "./config/secret-file-reader.js";
 import { assemblePlatformConfig } from "./config/platform-config-assembly.js";
+import { readMeetingPlatformBuildRevision, type BuildRevisionReader } from "./config/build-revision.js";
 
 export type { PlatformConfig } from "./config/platform-config.js";
 
@@ -32,7 +33,6 @@ const optionalSnowflake = z.preprocess(
   snowflake.optional(),
 );
 const sha256 = z.string().regex(/^[0-9a-f]{64}$/u);
-const sourceRevision = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u);
 const mebibyte = 1_024 * 1_024;
 const defaultVoicetextBatchMaxArtifactBytes = 64 * mebibyte;
 const defaultVoicetextBatchMaxConcurrency = 2;
@@ -152,10 +152,6 @@ const environmentSchema = z
       .enum(["true", "false"])
       .default("false")
       .transform((value) => value === "true"),
-    MEETING_KNOWLEDGE_TWO_HOUR_HISTORICAL_ENABLED: z
-      .enum(["true", "false"])
-      .default("false")
-      .transform((value) => value === "true"),
     MEETING_KNOWLEDGE_PRINCIPAL_KEY_FILE: absolutePath.optional(),
     NODE_ENV: z
       .enum(["development", "production", "test"])
@@ -177,7 +173,6 @@ const environmentSchema = z
       .regex(/^[a-zA-Z0-9][a-zA-Z0-9/_-]*\/$/u),
     S3_REGION: z.string().min(1).max(64),
     S3_SECRET_ACCESS_KEY_FILE: absolutePath,
-    SOURCE_REVISION: sourceRevision.optional(),
     SPEACHES_BASE_URL: httpUrl,
     SPEACHES_MODEL: z.string().min(1).max(256),
     SUBSCRIPTION_RUNTIME_ADDRESS: runtimeAddress,
@@ -338,6 +333,7 @@ export type SecretFileReader = (path: string) => Promise<string>;
 export async function loadPlatformConfig(
   rawEnvironment: Readonly<Record<string, string | undefined>> = process.env,
   readSecret: SecretFileReader = readSecretFile,
+  readBuildRevision: BuildRevisionReader = readMeetingPlatformBuildRevision,
 ): Promise<PlatformConfig> {
   const forbiddenApiKey = Object.keys(rawEnvironment).find((key) =>
     /_API_KEY(?:_FILE)?$/u.test(key),
@@ -360,6 +356,7 @@ export async function loadPlatformConfig(
     subscriptionRuntimeToken,
     voicetextServiceToken,
     recordingPlayback,
+    buildSourceRevision,
   ] = await Promise.all([
     readSecret(environment.CRAIG_BEARER_TOKEN_FILE),
     !environment.CONVERSATION_ENABLED ||
@@ -387,6 +384,7 @@ export async function loadPlatformConfig(
       ? Promise.resolve()
       : readSecret(environment.VOICETEXT_SERVICE_TOKEN_FILE),
     loadRecordingPlaybackConfig(environment, readSecret),
+    environment.NODE_ENV === "production" ? readBuildRevision() : Promise.resolve(),
   ]);
 
   return assemblePlatformConfig(environment, {
@@ -405,5 +403,6 @@ export async function loadPlatformConfig(
     s3SecretAccessKey,
     subscriptionRuntimeToken,
     ...(voicetextServiceToken === undefined ? {} : { voicetextServiceToken }),
+    ...(buildSourceRevision === undefined ? {} : { buildSourceRevision }),
   });
 }

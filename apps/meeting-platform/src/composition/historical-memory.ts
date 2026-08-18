@@ -183,8 +183,8 @@ export function createPlatformHistoricalMemory(input: {
   const deletion = new RequestHistoricalMeetingDeletion(store);
   const twoHourProfile = Object.freeze({
     ...DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
-    enabled:
-      input.config.meetingKnowledge?.twoHourHistoricalRetrieval === true,
+    qualification:
+      input.config.meetingKnowledge?.twoHourHistoricalQualification ?? null,
   });
 
   const refreshQualification = async (signal?: AbortSignal): Promise<void> => {

@@ -121,10 +121,8 @@ describe("historical evidence admission and block identity", () => {
     }
     const durationThreshold = Object.freeze({
       ...short,
-      humanTurns: Object.freeze([Object.freeze({
-        ...short.humanTurns[0]!,
-        endMs: DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE.minimumDurationMs,
-      })]),
+      authoritativeDurationMs:
+        DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE.minimumDurationMs,
     });
     const turnThreshold = Object.freeze({
       ...short,
@@ -144,7 +142,12 @@ describe("historical evidence admission and block identity", () => {
     expect(admitsHistoricalRetrieval(turnThreshold)).toBe(false);
     expect(admitsHistoricalRetrieval(durationThreshold, {
       ...DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
-      enabled: true,
+      qualification: {
+        evidenceSha256: "e".repeat(64),
+        releaseRevision: "f".repeat(40),
+        rolloutEpoch: "test-r1",
+        schemaVersion: 1,
+      },
     })).toBe(true);
   });
 

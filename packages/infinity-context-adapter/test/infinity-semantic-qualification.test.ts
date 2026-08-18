@@ -69,14 +69,25 @@ describe("Infinity production semantic qualification manifest", () => {
     expect(() => createInfinitySemanticQualificationManifest(evidence)).toThrow(message);
   });
 
-  it("reports the first exact missing input and refuses a mock live profile", () => {
-    expect(() => semanticServiceConfig({})).toThrow(
+  it("reports the first exact missing input and refuses a mock live profile", async () => {
+    await expect(semanticServiceConfig({})).rejects.toThrow(
       "INFINITY_CONTEXT_SEMANTIC_E2E_DISPOSABLE is required",
     );
-    expect(() => semanticServiceConfig({
+    await expect(semanticServiceConfig({
       INFINITY_CONTEXT_SEMANTIC_E2E_DISPOSABLE: "YES_DELETE_ALL_TEST_DATA",
       INFINITY_CONTEXT_SEMANTIC_E2E_EMBEDDING_PROFILE:
         "operator-value-is-not-evidence",
-    })).toThrow("INFINITY_CONTEXT_SEMANTIC_E2E_URL is required");
+    })).rejects.toThrow("INFINITY_CONTEXT_SEMANTIC_E2E_URL is required");
+  });
+
+  it("binds evidence to checkout HEAD and ignores a spoofed operator label", async () => {
+    const actualRevision = "f".repeat(40);
+    const config = await semanticServiceConfig({
+      INFINITY_CONTEXT_SEMANTIC_E2E_DISPOSABLE: "YES_DELETE_ALL_TEST_DATA",
+      INFINITY_CONTEXT_SEMANTIC_E2E_URL: "https://infinity.invalid/",
+      MEETING_KNOWLEDGE_RELEASE_REVISION: "a".repeat(40),
+    }, async () => actualRevision);
+
+    expect(config.releaseRevision).toBe(actualRevision);
   });
 });

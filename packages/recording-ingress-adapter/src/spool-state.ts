@@ -1,6 +1,5 @@
-import { createHash } from "node:crypto";
-
 import { RecordingIngressError } from "./errors.js";
+import { parseCompletedAuthoritativeDuration } from "./spool-completed-duration.js";
 
 type RecordingSpoolStatus = "active" | "aborted" | "finalizing";
 
@@ -85,6 +84,7 @@ export interface CompletedRecordingState {
   readonly identityProvenance: StoredIdentityProvenance | null;
   readonly lifecycleSchemaVersion: 1 | 2 | 3;
   readonly recording: {
+    readonly authoritativeDurationMs?: number;
     readonly manifestLocator: string;
     readonly recordingId: string;
     readonly speakerAudio: readonly {
@@ -94,7 +94,7 @@ export interface CompletedRecordingState {
     }[];
   };
   readonly recordingId: string;
-  readonly schemaVersion: 4;
+  readonly schemaVersion: 5;
 }
 
 function objectValue(value: unknown): Record<string, unknown> {
@@ -299,7 +299,10 @@ export function parseCompletedRecordingState(input: unknown): CompletedRecording
   const record = objectValue(input);
   const recording = objectValue(record.recording);
   if (
-    (record.schemaVersion !== 2 && record.schemaVersion !== 3 && record.schemaVersion !== 4) ||
+    (record.schemaVersion !== 2 &&
+      record.schemaVersion !== 3 &&
+      record.schemaVersion !== 4 &&
+      record.schemaVersion !== 5) ||
     !Array.isArray(record.events) ||
     !Array.isArray(record.authoritativeTracks) ||
     !Array.isArray(recording.speakerAudio)
@@ -333,6 +336,10 @@ export function parseCompletedRecordingState(input: unknown): CompletedRecording
       timelineOffsetMs: reference.timelineOffsetMs as number,
     };
   });
+  const authoritativeDurationMs = parseCompletedAuthoritativeDuration(
+    recording.authoritativeDurationMs,
+    record.schemaVersion === 5,
+  );
   const recordingId = stringValue(record.recordingId, "recordingId");
   if (recording.recordingId !== recordingId) {
     throw new RecordingIngressError("corrupt-spool", "completion recording identity does not match");
@@ -350,12 +357,15 @@ export function parseCompletedRecordingState(input: unknown): CompletedRecording
     identityProvenance,
     lifecycleSchemaVersion: protocolVersion,
     recording: {
+      ...(authoritativeDurationMs === undefined
+        ? {}
+        : { authoritativeDurationMs: authoritativeDurationMs as number }),
       manifestLocator: stringValue(recording.manifestLocator, "manifestLocator"),
       recordingId: stringValue(recording.recordingId, "recording.recordingId"),
       speakerAudio,
     },
     recordingId,
-    schemaVersion: 4,
+    schemaVersion: 5,
   };
 }
 
@@ -416,8 +426,4 @@ function assertCompletedTrackIdentity(
       );
     }
   }
-}
-
-export function spoolToken(namespace: string, identifier: string): string {
-  return createHash("sha256").update(namespace).update("\0").update(identifier).digest("hex");
 }

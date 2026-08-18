@@ -31,6 +31,7 @@ export {
   type HistoricalActorV1,
   type HistoricalReleaseBindingV1,
   type HistoricalTranscriptTurnV1,
+  type TwoHourHistoricalQualificationV1,
   type TwoHourHistoricalRetrievalProfileV1,
 } from "./domain/historical-evidence.js";
 export {

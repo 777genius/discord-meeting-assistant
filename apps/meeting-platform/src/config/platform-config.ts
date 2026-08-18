@@ -1,5 +1,6 @@
 import type { ParticipantGreetingProfiles } from "./participant-greeting-profiles.js";
 import type { InfinityContextRuntimeActivationV1 } from "@discord-meeting/infinity-context-adapter";
+import type { TwoHourHistoricalQualificationV1 } from "@discord-meeting/meeting-core/meeting-knowledge";
 
 interface PlatformSecrets {
   readonly conversationRuntimeToken?: string;
@@ -57,7 +58,7 @@ export interface PlatformConfig {
   };
   readonly meetingKnowledge?: {
     readonly localFinalReply?: true;
-    readonly twoHourHistoricalRetrieval?: true;
+    readonly twoHourHistoricalQualification?: TwoHourHistoricalQualificationV1;
   };
   readonly nodeEnvironment: "development" | "production" | "test";
   readonly participantGreetingDefaultLocale: "en" | "ru";

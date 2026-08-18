@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 
 import { describe, expect, it } from "vitest";
 
@@ -8,10 +10,11 @@ import { runRealServiceQualification } from "./real-service-qualification-helper
 
 const enabled = process.env.INFINITY_CONTEXT_SEMANTIC_E2E === "1";
 const liveDescribe = enabled ? describe : describe.skip;
+const execFileAsync = promisify(execFile);
 
 liveDescribe("Infinity Context disposable production-semantic qualification", () => {
   it("qualifies one declared non-mock embedding profile and emits a retainable manifest", async () => {
-    const config = semanticServiceConfig(process.env);
+    const config = await semanticServiceConfig(process.env);
     const metrics = await runRealServiceQualification(config.service);
     expect(metrics.focusedRecallAt5).toBe(1);
     const meeting = combinedQualificationMeeting();
@@ -33,7 +36,10 @@ liveDescribe("Infinity Context disposable production-semantic qualification", ()
   }, 600_000);
 });
 
-export function semanticServiceConfig(environment: NodeJS.ProcessEnv) {
+export async function semanticServiceConfig(
+  environment: NodeJS.ProcessEnv,
+  resolveCheckoutRevision: () => Promise<string> = checkoutRevision,
+) {
   required(
     environment.INFINITY_CONTEXT_SEMANTIC_E2E_DISPOSABLE,
     "INFINITY_CONTEXT_SEMANTIC_E2E_DISPOSABLE",
@@ -67,7 +73,10 @@ export function semanticServiceConfig(environment: NodeJS.ProcessEnv) {
     );
   }
   return {
-    releaseRevision: revision(environment.MEETING_KNOWLEDGE_RELEASE_REVISION, "MEETING_KNOWLEDGE_RELEASE_REVISION"),
+    releaseRevision: revision(
+      await resolveCheckoutRevision(),
+      "checked-out release revision",
+    ),
     service: {
       baseUrl: url.toString().replace(/\/$/u, ""),
       requestTimeoutMs,
@@ -76,6 +85,13 @@ export function semanticServiceConfig(environment: NodeJS.ProcessEnv) {
         : { token: environment.INFINITY_CONTEXT_SEMANTIC_E2E_TOKEN }),
     },
   };
+}
+
+async function checkoutRevision(): Promise<string> {
+  const result = await execFileAsync("git", ["rev-parse", "--verify", "HEAD"], {
+    encoding: "utf8",
+  });
+  return result.stdout.trim();
 }
 
 function required(value: string | undefined, field: string, exact?: string): string {

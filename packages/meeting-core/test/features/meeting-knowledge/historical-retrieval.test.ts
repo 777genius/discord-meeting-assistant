@@ -50,6 +50,7 @@ const retrievalPolicy: FocusedRetrievalPolicyV1 = {
 };
 
 function makeMeeting(input: {
+  readonly authoritativeDurationMs?: number;
   readonly meetingId: string;
   readonly roomId?: string;
   readonly transcriptId?: string;
@@ -66,6 +67,7 @@ function makeMeeting(input: {
   });
   const meeting = admitAcceptedFinalMeeting({
     actors: [{ actorId: "speaker", kind: "human" }],
+    authoritativeDurationMs: input.authoritativeDurationMs,
     binding,
     identityProvenance: {
       actorObservationState: "consistent",
@@ -185,7 +187,12 @@ function retrieval(input: {
     store: input.store,
   }, input.policy ?? retrievalPolicy, {
     ...DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
-    enabled: input.twoHourEnabled === true,
+    qualification: input.twoHourEnabled === true ? {
+      evidenceSha256: "e".repeat(64),
+      releaseRevision: "f".repeat(40),
+      rolloutEpoch: "test-r1",
+      schemaVersion: 1,
+    } : null,
   });
 }
 
@@ -709,6 +716,7 @@ describe("focused historical retrieval fencing and qualification", () => {
   it("measures recall@5 on a two-hour positional corpus independently of generation", async () => {
     const positions = [0, 12, 30, 60, 90, 108, 119];
     const meeting = makeMeeting({
+      authoritativeDurationMs: 7_200_000,
       meetingId: "two-hour-meeting",
       turns: Array.from({ length: 120 }, (_, index) => ({
         endMs: (index + 1) * 60_000,

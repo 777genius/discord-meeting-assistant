@@ -9,8 +9,15 @@ export const HISTORICAL_EVIDENCE_POLICY_VERSION =
 export const TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE_VERSION =
   "meeting-knowledge.two-hour-historical-retrieval.v1" as const;
 
+export interface TwoHourHistoricalQualificationV1 {
+  readonly evidenceSha256: string;
+  readonly releaseRevision: string;
+  readonly rolloutEpoch: string;
+  readonly schemaVersion: 1;
+}
+
 export interface TwoHourHistoricalRetrievalProfileV1 {
-  readonly enabled: boolean;
+  readonly qualification: TwoHourHistoricalQualificationV1 | null;
   readonly minimumDurationMs: 7_200_000;
   readonly minimumHumanTurnCount: 400;
   readonly version: typeof TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE_VERSION;
@@ -23,7 +30,7 @@ export interface TwoHourHistoricalRetrievalProfileV1 {
  */
 export const DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE:
   TwoHourHistoricalRetrievalProfileV1 = Object.freeze({
-    enabled: false,
+    qualification: null,
     minimumDurationMs: 7_200_000,
     minimumHumanTurnCount: 400,
     version: TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE_VERSION,
@@ -70,6 +77,7 @@ export interface HistoricalTranscriptTurnV1 {
 
 export interface AcceptedFinalMeetingInputV1 {
   readonly actors: readonly HistoricalActorV1[] | null;
+  readonly authoritativeDurationMs?: number | null;
   readonly binding: HistoricalReleaseBindingV1;
   readonly identityProvenance: MeetingKnowledgeIdentityProvenance | null;
   readonly lifecycleGeneration: number | null;
@@ -82,6 +90,7 @@ export interface AcceptedFinalMeetingInputV1 {
 }
 
 export interface AcceptedFinalMeetingV1 {
+  readonly authoritativeDurationMs: number | null;
   readonly binding: HistoricalReleaseBindingV1;
   readonly humanTurns: readonly HistoricalTranscriptTurnV1[];
   readonly schemaVersion: typeof HISTORICAL_MEMORY_SCHEMA_VERSION;
@@ -102,21 +111,23 @@ export function admitsHistoricalRetrieval(
       "two-hour historical retrieval profile is not centrally qualified",
     );
   }
-  if (profile.enabled) {
+  if (profile.qualification !== null) {
+    const qualification = profile.qualification;
+    if (
+      qualification.schemaVersion !== 1 ||
+      !/^[0-9a-f]{64}$/u.test(qualification.evidenceSha256) ||
+      !/^[0-9a-f]{40}$/u.test(qualification.releaseRevision) ||
+      qualification.rolloutEpoch.trim().length === 0
+    ) {
+      throw new HistoricalEvidenceInvariantError(
+        "INVALID_CONTRACT",
+        "two-hour historical retrieval qualification is invalid",
+      );
+    }
     return true;
   }
-  const firstStartMs = meeting.humanTurns.reduce(
-    (minimum, turn) => Math.min(minimum, turn.startMs),
-    Number.POSITIVE_INFINITY,
-  );
-  const lastEndMs = meeting.humanTurns.reduce(
-    (maximum, turn) => Math.max(maximum, turn.endMs),
-    0,
-  );
-  const durationMs = meeting.humanTurns.length === 0
-    ? 0
-    : lastEndMs - firstStartMs;
-  return durationMs < profile.minimumDurationMs &&
+  return (meeting.authoritativeDurationMs === null ||
+      meeting.authoritativeDurationMs < profile.minimumDurationMs) &&
     meeting.humanTurns.length < profile.minimumHumanTurnCount;
 }
 
@@ -341,6 +352,14 @@ export function admitAcceptedFinalMeeting(
   }
 
   return Object.freeze({
+    authoritativeDurationMs: input.authoritativeDurationMs === undefined ||
+        input.authoritativeDurationMs === null
+      ? null
+      : requireSafeInteger(
+          input.authoritativeDurationMs,
+          "authoritativeDurationMs",
+          0,
+        ),
     binding,
     humanTurns: Object.freeze(humanTurns),
     schemaVersion: HISTORICAL_MEMORY_SCHEMA_VERSION,

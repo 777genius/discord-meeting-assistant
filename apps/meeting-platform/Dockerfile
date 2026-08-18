@@ -13,11 +13,13 @@ RUN apt-get update \
 # Keep the expensive system dependency layer independent from the immutable
 # source revision so a rollout does not download and install apt packages again.
 ARG SOURCE_REVISION
-ENV SOURCE_REVISION=${SOURCE_REVISION}
 LABEL org.opencontainers.image.revision="${SOURCE_REVISION}"
 
 RUN printf '%s' "${SOURCE_REVISION}" \
-  | grep -Eq '^([0-9a-f]{40}|[0-9a-f]{64})$'
+  | grep -Eq '^([0-9a-f]{40}|[0-9a-f]{64})$' \
+  && install -d --owner=root --group=root --mode=0755 /opt/discord-meeting \
+  && printf '%s\n' "${SOURCE_REVISION}" > /opt/discord-meeting/meeting-platform-source-revision \
+  && chmod 0444 /opt/discord-meeting/meeting-platform-source-revision
 
 FROM runtime-base AS build
 

@@ -205,7 +205,14 @@ export function platformConfig(
       requestTimeoutMs: 2_000,
     },
     liveIngressOwnerMode: "singleton",
-    meetingKnowledge: { twoHourHistoricalRetrieval: true },
+    meetingKnowledge: {
+      twoHourHistoricalQualification: {
+        evidenceSha256: "e".repeat(64),
+        releaseRevision: sourceRevision,
+        rolloutEpoch: "synthetic-composition-test-r1",
+        schemaVersion: 1,
+      },
+    },
     nodeEnvironment: environment,
     participantGreetingDefaultLocale: "en",
     participantGreetingProfiles: {},

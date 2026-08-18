@@ -262,7 +262,7 @@ describe("Infinity Context positional retrieval qualification", () => {
       version: "meeting-knowledge.focused-retrieval.v1",
     }, {
     ...DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
-    enabled: true,
+    qualification: { evidenceSha256: "e".repeat(64), releaseRevision: "f".repeat(40), rolloutEpoch: "test-r1", schemaVersion: 1 },
   });
     await assertFocusedRecall(focused, meeting, localPlan);
 
@@ -299,7 +299,7 @@ describe("Infinity Context positional retrieval qualification", () => {
         version: "meeting-knowledge.exhaustive-coverage.v1",
       }, {
     ...DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
-    enabled: true,
+    qualification: { evidenceSha256: "e".repeat(64), releaseRevision: "f".repeat(40), rolloutEpoch: "test-r1", schemaVersion: 1 },
   }),
       { hash: historicalTurnHash },
     );

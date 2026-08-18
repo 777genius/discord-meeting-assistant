@@ -100,14 +100,15 @@ INFINITY_CONTEXT_ACTIVATION={"apiVersion":"v1","archiveSha256":"1aad93c1c9deea91
 Treat that activation as a reviewed release attestation, not an operator-tuned
 feature flag. Update it only together with retained qualification evidence and
 the pinned SDK provenance in the application release. The running image embeds
-`MEETING_PLATFORM_SOURCE_REVISION`; production search stays closed unless it
+`MEETING_PLATFORM_SOURCE_REVISION` in a root-owned, read-only build artifact; a
+mutable runtime environment variable cannot replace it. Production search stays closed unless it
 equals the qualification manifest's `releaseRevision`. The retained r79
 manifest is intentionally stale for newer releases and must not activate them.
 
-`MEETING_KNOWLEDGE_TWO_HOUR_HISTORICAL_ENABLED` defaults to `false` and is an
-independent admission gate. Keep it false until a holdout qualifies focused
-retrieval, exhaustive coverage, and final-answer quality for the exact current
-release. General Infinity search does not enable it. Indexing, reconciliation,
+Two-hour historical retrieval has no operator boolean. It remains unavailable
+until the release retains an accepted evidence digest, exact release revision,
+and rollout epoch proving focused retrieval, exhaustive coverage, and final-answer
+quality. General Infinity search does not enable it. Indexing, reconciliation,
 and deletion continue while either serving gate is closed. The request timeout must
 be from 100 through 60000 ms; the operation timeout must be from 1000 through
 600000 ms and must not be shorter than the request timeout.
@@ -122,11 +123,12 @@ activation-bound semantic fields:
 `embedding_profile_id=local-open-source-paraphrase-multilingual-minilm-l12-v2-hybrid-bm25.r73`
 and
 `embedding_profile_digest_sha256=sha256:5ecd36edd098940cd8a6540509f90815ddc1802b4410ced2bf063c0f8c650cac`.
-Do not start Meeting Platform when the endpoint is unreachable or any capability
-differs from the retained qualification evidence. Platform repeats this check
-at startup and readiness remains closed on a mismatch; it never falls back to
-an unqualified provider. Older capability endpoints that omit any of these
-runtime provenance fields are incompatible and fail closed.
+Meeting Platform still starts when the endpoint is unreachable or a capability
+differs so recording and authoritative publication remain available. Historical
+indexing and search are soft-disabled, a warning is emitted, and deletion and
+reconciliation continue. The platform repeats qualification and never falls back
+to an unqualified provider. Older capability endpoints that omit any required
+runtime provenance fields are incompatible and fail historical serving closed.
 
 ## Redis queue durability
 

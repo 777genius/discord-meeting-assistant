@@ -62,9 +62,7 @@ describe("platform configuration", () => {
     expect(compose).toContain(
       "INFINITY_CONTEXT_OPERATION_TIMEOUT_MS: ${INFINITY_CONTEXT_OPERATION_TIMEOUT_MS:-300000}",
     );
-    expect(compose).toContain(
-      "MEETING_KNOWLEDGE_TWO_HOUR_HISTORICAL_ENABLED: ${MEETING_KNOWLEDGE_TWO_HOUR_HISTORICAL_ENABLED:-false}",
-    );
+    expect(compose).not.toContain("MEETING_KNOWLEDGE_TWO_HOUR_HISTORICAL_ENABLED");
   });
 
   it("loads Infinity activation only as a complete versioned provenance-bound set", async () => {
@@ -89,7 +87,8 @@ describe("platform configuration", () => {
       INFINITY_CONTEXT_TOKEN_FILE: "/run/secrets/infinity-token",
       INFINITY_CONTEXT_TOPOLOGY_KEY_FILE: "/run/secrets/infinity-topology",
       INFINITY_CONTEXT_URL: "http://infinity-context:7788",
-    }, async (path) => path.endsWith("topology") ? "t".repeat(32) : `fixture:${path}`);
+    }, async (path) => path.endsWith("topology") ? "t".repeat(32) : `fixture:${path}`,
+    async () => "c".repeat(40));
 
     expect(configured.infinityContext?.activation).toMatchObject({
       indexingEnabled: true,
@@ -139,7 +138,8 @@ describe("platform configuration", () => {
       INFINITY_CONTEXT_TOPOLOGY_KEY_FILE: "/run/secrets/infinity-topology",
       INFINITY_CONTEXT_URL: "http://infinity-context:7788",
       NODE_ENV: "production",
-    }, async (path) => path.endsWith("topology") ? "t".repeat(32) : `fixture:${path}`);
+    }, async (path) => path.endsWith("topology") ? "t".repeat(32) : `fixture:${path}`,
+    async () => "c".repeat(40));
 
     expect(configured.infinityContext?.activation).toMatchObject({
       environment: "production",
@@ -491,6 +491,7 @@ describe("platform configuration routing and conversation", () => {
         paths.push(path);
         return `value-for:${path}`;
       },
+      async () => "c".repeat(40),
     );
 
     expect(config.recordingPlayback).toEqual({
@@ -515,6 +516,17 @@ describe("platform configuration routing and conversation", () => {
       RECORDING_PLAYBACK_PUBLIC_BASE_URL: "http://recordings.example.com",
       RECORDING_PLAYBACK_SIGNING_SECRET_FILE: "/run/secrets/recording-playback",
     }, async () => "value")).rejects.toThrow("requires HTTPS");
+  });
+
+  it("uses the immutable build artifact even when runtime environment spoofs SOURCE_REVISION", async () => {
+    const actualRevision = "c".repeat(40);
+    const config = await loadPlatformConfig({
+      ...environment,
+      NODE_ENV: "production",
+      SOURCE_REVISION: "a".repeat(40),
+    }, async () => "value", async () => actualRevision);
+
+    expect(config.sourceRevision).toBe(actualRevision);
   });
 
   it("loads a Voicetext machine bearer only from a secret file", async () => {
