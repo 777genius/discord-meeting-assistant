@@ -8,6 +8,8 @@ import { sameRecordedMeetingIdentity } from "../src/meeting-replay-identity.js";
 import { resolveFinalReplyAuthority } from "../src/postgres-final-reply-evidence.js";
 import { evidenceBackedMeeting } from "./postgres-integration-fixtures.js";
 
+const botId = "11111111111111111";
+
 describe("PostgreSQL meeting identity regressions", () => {
   it("rejects a finalized-ingress replay whose producer revision changed", () => {
     const accepted = evidenceBackedMeeting("identity-replay-regression").toSnapshot();
@@ -37,18 +39,20 @@ describe("PostgreSQL meeting identity regressions", () => {
     meeting.completePublication({
       externalPublicationId: receipt,
       idempotencyKey: projectionEpoch,
+      publisherIdentity: botId,
     });
 
     const restored = Meeting.restore(meeting.toSnapshot()).toSnapshot();
     const authority = resolveFinalReplyAuthority(
       restored,
-      "11111111111111111",
+      botId,
     );
 
     expect(restored.publicationTargetId).toBe(targetId);
     expect(restored.publication).toEqual({
       externalPublicationId: receipt,
       idempotencyKey: projectionEpoch,
+      publisherIdentity: botId,
     });
     expect(authority?.binding).toMatchObject({
       finalProjectionEpoch: projectionEpoch,

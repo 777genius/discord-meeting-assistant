@@ -409,6 +409,8 @@ describe("Infinity Context positional retrieval qualification", () => {
       locale: "en",
       plan: groundingPlan,
       question: qualificationQuestions.all,
+    }, {
+      beforeGenerate: async () => "continue",
     })).resolves.toMatchObject({ status: "completed" });
     expect(synthesisReduction).toEqual(exhaustive.coverageReduction);
     assertExactBoundedModelRequest(

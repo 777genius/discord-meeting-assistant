@@ -41,6 +41,7 @@ export function finalMeeting(
       { actorId: "human-maya", kind: "human" },
       { actorId: "fixture-automation", kind: "automation" },
     ],
+    authoritativeDurationMs: 150_000,
     binding,
     identityProvenance: {
       actorObservationState: "consistent",

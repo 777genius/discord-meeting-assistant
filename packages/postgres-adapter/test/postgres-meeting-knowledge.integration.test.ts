@@ -113,6 +113,7 @@ async function persistPublishedMeeting(
     externalPublicationId:
       `discord:v2:channel:${channelId}:message:${finalMessageId}`,
     idempotencyKey: meeting.publicationIdempotencyKey(),
+    publisherIdentity: botId,
   });
   const snapshot = meeting.toSnapshot();
   await database.query(
