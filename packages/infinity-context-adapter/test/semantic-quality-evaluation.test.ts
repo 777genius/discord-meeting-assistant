@@ -405,7 +405,7 @@ function answerTransport(options: {
   return {
     execute: async (batch) => ({
       answers: batch.requests.map((request, index) => ({
-        claims: options.outsideCitation && index === 0
+        claims: options.outsideCitation === true && index === 0
           ? [{ citedTurnIds: ["quality-turn-420"], text: "Out-of-request claim" }]
           : [],
         measurement: {
@@ -415,13 +415,14 @@ function answerTransport(options: {
           requestSha256: createHash("sha256").update(JSON.stringify(request)).digest("hex"),
         },
         queryId: request.queryId,
-        status: options.outsideCitation && index === 0 ? "answered" as const : "abstained" as const,
+        status: options.outsideCitation === true && index === 0
+          ? "answered" as const : "abstained" as const,
       })),
       attestation: { authKind: "subscription_session", modelConfigurationSha256: "1".repeat(64),
         modelContextTokens: 32_000, modelId: "hosted-model", modelRevision: "pinned-r1",
         runnerRevision: "2".repeat(40), tokenizerDigestSha256: `sha256:${"3".repeat(64)}`,
         tokenizerId: "pinned-tokenizer" },
-      requestSha256: options.wrongBatchDigest
+      requestSha256: options.wrongBatchDigest === true
         ? "0".repeat(64)
         : createHash("sha256").update(JSON.stringify(batch)).digest("hex"),
       schemaVersion: "meeting_knowledge.subscription_answer_receipt.v1",

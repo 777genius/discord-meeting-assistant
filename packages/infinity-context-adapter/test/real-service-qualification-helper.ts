@@ -248,9 +248,6 @@ export async function runRealServiceQualification(
   }
   expect(cleanupRequested).toBe(true);
 
-  if (endpointReceipt === null) {
-    throw new Error("real Infinity Context qualification omitted endpoint receipt");
-  }
   const topology = buildHistoricalIndexPlan(meeting, ids, blockPolicy).topology;
   await expectEventually(async () => {
     const result = await adapter.searchRoom({

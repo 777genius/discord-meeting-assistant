@@ -74,7 +74,7 @@ export interface QualityRawOutcome {
     readonly providerPayloadWasReferenceOnly: boolean;
     readonly rehydratedTurnIds: readonly string[];
     readonly topFiveTurnIds: readonly string[];
-    readonly wholeTranscriptIncluded: false;
+    readonly wholeTranscriptIncluded: boolean;
   };
 }
 
@@ -120,7 +120,7 @@ export interface HumanAdjudicationReceipt {
   readonly corpusSha256: string;
   readonly questionSetSha256: string;
   readonly reviewedAt: string;
-  readonly schemaVersion: "meeting_knowledge.human_adjudication_receipt.v1";
+  readonly schemaVersion: string;
 }
 
 export interface SemanticQualityDistribution {

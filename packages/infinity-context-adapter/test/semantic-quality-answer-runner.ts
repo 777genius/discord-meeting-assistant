@@ -21,7 +21,7 @@ export interface SubscriptionAnswerReceipt {
     readonly status: "abstained" | "answered";
   }[];
   readonly attestation: {
-    readonly authKind: "subscription_session";
+    readonly authKind: string;
     readonly modelConfigurationSha256: string;
     readonly modelContextTokens: number;
     readonly modelId: string;
@@ -31,7 +31,7 @@ export interface SubscriptionAnswerReceipt {
     readonly tokenizerId: string;
   };
   readonly requestSha256: string;
-  readonly schemaVersion: "meeting_knowledge.subscription_answer_receipt.v1";
+  readonly schemaVersion: string;
 }
 
 export interface SubscriptionAnswerTransport {

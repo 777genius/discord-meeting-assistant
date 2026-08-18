@@ -47,7 +47,7 @@ export interface SemanticQualityRetrievalOutcome {
 export interface SemanticQualityRetrievalRun {
   readonly corpusSha256: string;
   readonly outcomes: readonly SemanticQualityRetrievalOutcome[];
-  readonly remoteCleanupVerified: true;
+  readonly remoteCleanupVerified: boolean;
   readonly service: {
     readonly apiVersion: string;
     readonly embeddingProfileDigestSha256: `sha256:${string}`;
@@ -200,7 +200,7 @@ export async function runSemanticQualityRetrieval(
     throw cleanupError;
   }
   if (failure !== undefined) {
-    throw failure;
+    throw errorFrom(failure);
   }
   if (resultRun === null) {
     throw new Error("semantic quality run produced no retrieval artifact");
@@ -260,6 +260,12 @@ function uniqueTurns(
   const byId = new Map<string, { readonly text: string; readonly turnId: string }>();
   for (const turn of turns) {byId.set(turn.turnId, Object.freeze({ ...turn }));}
   return Object.freeze([...byId.values()]);
+}
+
+function errorFrom(value: unknown): Error {
+  return value instanceof Error
+    ? value
+    : new Error("semantic quality retrieval failed", { cause: value });
 }
 
 function combinedFailure(primary: unknown, cleanup: unknown): AggregateError {

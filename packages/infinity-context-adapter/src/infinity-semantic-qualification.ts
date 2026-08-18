@@ -72,9 +72,9 @@ export function createInfinitySemanticQualificationManifest(
     receipt.serviceRevision === null ||
     !receipt.supportsQdrant ||
     receipt.qdrant?.enabled !== true ||
-    receipt.qdrant.healthy !== true ||
-    receipt.qdrant.supportsSearch !== true ||
-    receipt.qdrant.supportsUpsert !== true
+    !receipt.qdrant.healthy ||
+    !receipt.qdrant.supportsSearch ||
+    !receipt.qdrant.supportsUpsert
   ) {
     throw new Error(
       "production semantic qualification requires a complete healthy endpoint receipt",
