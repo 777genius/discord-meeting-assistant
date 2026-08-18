@@ -208,6 +208,59 @@ describe("Conversation grounded knowledge execution", () => {
       .resolves.toBe("unplayed");
   });
 
+  it.each([
+    "missing",
+    "mismatched-attempt",
+    "mismatched-turn",
+    "mismatched-voice-profile",
+  ] as const)("fails closed before grounded PCM for %s TTS attestation", async (scenario) => {
+    const groundedAnswers = new ControlledGroundedAnswers();
+    const events = new EventStream<ConversationRuntimeEvent>();
+    const runtime = new ScriptedRuntime([events]);
+    const playback = new RecordingPlayback();
+    const coordinator = new ConversationCoordinator({ groundedAnswers, playback, runtime });
+
+    await coordinator.handleFinalizedTurn(input("turn-1", 1));
+    groundedAnswers.resolve(answer());
+    await waitUntil(() => runtime.requests.length === 1);
+    events.push({ attemptId: "attempt-1", type: "accepted" });
+    if (scenario !== "missing") {
+      const attestation = ttsAttestation();
+      if (attestation.type !== "tts-attestation") {
+        throw new Error("fixture did not create a TTS attestation");
+      }
+      events.push({
+        ...attestation,
+        ...(scenario === "mismatched-attempt"
+          ? { attemptId: "other-attempt" }
+          : {}),
+        attestation: {
+          ...attestation.attestation,
+          ...(scenario === "mismatched-turn"
+            ? { turnId: "other-turn" }
+            : scenario === "mismatched-voice-profile"
+              ? { voiceProfileId: "other-profile" }
+              : {}),
+        },
+      });
+    }
+    events.push({
+      attemptId: "attempt-1",
+      channels: 1,
+      format: "pcm_s16le",
+      sampleRateHz: 48_000,
+      type: "audio-start",
+    });
+    await coordinator.whenIdle("meeting-1");
+
+    expect(playback.requests).toEqual([]);
+    expect(groundedAnswers.playbackAuthorityCalls).toEqual([]);
+    expect(runtime.cancellations).toContainEqual({
+      reason: "runtime-shutdown",
+      turnId: "turn-1",
+    });
+  });
+
   it("fails closed before runtime for incomplete, ungrounded or unsafe answers", async () => {
     for (const value of [
       { ...answer(), value: { plainText: "partial", schemaVersion: 1, status: "answered" } },

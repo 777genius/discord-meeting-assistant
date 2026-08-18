@@ -399,6 +399,23 @@ class ControlledGroundedConversationRuntime implements ConversationRuntime {
       yield { attemptId, type: "accepted" };
       yield {
         attemptId,
+        attestation: {
+          attemptId,
+          deployment: "providerless-pipecat-runtime",
+          keyId: "a".repeat(64),
+          model: "providerless-tts-v1",
+          provider: "providerless-fixture",
+          schemaVersion: 1,
+          signature: "b".repeat(64),
+          sourceRevision: "c".repeat(40),
+          turnId: request.turnId,
+          voice: "providerless-fixture",
+          voiceProfileId: request.voiceProfileId,
+        },
+        type: "tts-attestation",
+      };
+      yield {
+        attemptId,
         channels: 1,
         format: "pcm_s16le",
         sampleRateHz: 48_000,
