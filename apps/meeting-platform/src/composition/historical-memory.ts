@@ -201,7 +201,7 @@ export function createPlatformHistoricalMemory(input: {
     schemaVersion: 1,
     token: () => token,
   });
-  const embeddingTokenizer = new PinnedMultilingualMiniLmTokenizer();
+  let embeddingTokenizer: PinnedMultilingualMiniLmTokenizer | undefined;
   const store = new PostgresHistoricalMemoryStore(input.pool);
   const checkpoints = new PostgresExhaustiveCoverageStore(input.pool);
   const worker = new HistoricalSyncWorker({
@@ -235,7 +235,8 @@ export function createPlatformHistoricalMemory(input: {
     );
     assertInfinityContextActivation(config.activation, capabilities);
     qualifiedTokenizer = qualifyEmbeddingTokenizer(
-      embeddingTokenizer,
+      embeddingTokenizer ??=
+        new PinnedMultilingualMiniLmTokenizer(),
       config.activation.productionEmbeddingProfileAttestation,
       capabilities,
     );
