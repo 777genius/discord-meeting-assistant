@@ -11,6 +11,8 @@ import {
   knowledgeAnswerPolicyVersion,
   knowledgeCoverageOutputSchemaName,
   knowledgeCoveragePolicyVersion,
+  knowledgeEvidenceSelectorOutputSchemaName,
+  knowledgeEvidenceSelectorPolicyVersion,
   meetingSummaryOutputSchemaName,
   meetingSummaryPolicyVersion,
   subscriptionRuntimeConversationMaxOutputTokens,
@@ -22,6 +24,7 @@ import {
   subscriptionRuntimeIncrementalReasoningEffort,
   subscriptionRuntimeKnowledgeAnswerMaxOutputTokens,
   subscriptionRuntimeKnowledgeCoverageMaxOutputTokens,
+  subscriptionRuntimeKnowledgeEvidenceSelectorMaxOutputTokens,
   subscriptionRuntimeReasoningEffort,
   subscriptionRuntimeSummaryMaxOutputTokens,
 } from "@discord-meeting/subscription-runtime-adapter";
@@ -75,6 +78,7 @@ const deploymentPolicySchema = z
           z.literal(conversationAnswerPolicyVersion),
           z.literal(knowledgeAnswerPolicyVersion),
           z.literal(knowledgeCoveragePolicyVersion),
+          z.literal(knowledgeEvidenceSelectorPolicyVersion),
         ]),
         maxOutputTokens: z.union([
           z.literal(subscriptionRuntimeSummaryMaxOutputTokens),
@@ -82,6 +86,7 @@ const deploymentPolicySchema = z
           z.literal(subscriptionRuntimeConversationMaxOutputTokens),
           z.literal(subscriptionRuntimeKnowledgeAnswerMaxOutputTokens),
           z.literal(subscriptionRuntimeKnowledgeCoverageMaxOutputTokens),
+          z.literal(subscriptionRuntimeKnowledgeEvidenceSelectorMaxOutputTokens),
         ]),
         reasoningEffort: z.union([
           z.literal(subscriptionRuntimeReasoningEffort),
@@ -101,6 +106,7 @@ const deploymentPolicySchema = z
           z.literal(conversationAnswerOutputSchemaName),
           z.literal(knowledgeAnswerOutputSchemaName),
           z.literal(knowledgeCoverageOutputSchemaName),
+          z.literal(knowledgeEvidenceSelectorOutputSchemaName),
         ]),
         isolatedCwd: z.string().min(1),
       }),

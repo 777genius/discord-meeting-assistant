@@ -35,6 +35,7 @@ export interface PreparedAnswerGrounding {
     readonly coveragePlanDigest: string;
   };
   readonly plan: GroundingPlan;
+  readonly providerAttemptId?: string;
 }
 
 export class FinalReplyAnswerGeneration {
@@ -55,14 +56,18 @@ export class FinalReplyAnswerGeneration {
     binding: QuestionBindingSnapshot,
     preparation: PreparedAnswerGrounding,
   ): Promise<FinalReplyJobResult> {
-    if (!providerAttemptAvailable(lease, this.input.policy)) {
+    if (
+      preparation.providerAttemptId === undefined &&
+      !providerAttemptAvailable(lease, this.input.policy)
+    ) {
       return this.input.publisher.publishFixed(
         lease,
         preparation.authority,
         "unavailable",
       );
     }
-    const providerAttemptId = nextProviderAttemptId(lease);
+    const providerAttemptId = preparation.providerAttemptId ??
+      nextProviderAttemptId(lease);
     const request: GroundedAnswerGenerationRequest = {
       attemptId: providerAttemptId,
       binding,
@@ -90,12 +95,14 @@ export class FinalReplyAnswerGeneration {
         if (!authorizedForJob(beforeGeneration, preparation.authority, binding)) {
           return "stale_authorization";
         }
-        return await reserveProviderAttempt(
-          this.input.jobs,
-          lease,
-          this.input.policy,
-          providerAttemptId,
-        ) ? "continue" : "stale_generation";
+        return preparation.providerAttemptId !== undefined
+          ? "continue"
+          : await reserveProviderAttempt(
+              this.input.jobs,
+              lease,
+              this.input.policy,
+              providerAttemptId,
+            ) ? "continue" : "stale_generation";
       },
       onMeasured: async (measurement) =>
         await this.input.jobs.persistGroundingPlan({

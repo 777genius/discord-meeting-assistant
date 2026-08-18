@@ -8,6 +8,7 @@ export function stableSubscriptionRuntimeId(
     | "incremental-summary-request"
     | "knowledge-answer-request"
     | "knowledge-coverage-extract"
+    | "knowledge-evidence-select"
     | "question"
     | "summary"
     | "summary-action-term-repair"

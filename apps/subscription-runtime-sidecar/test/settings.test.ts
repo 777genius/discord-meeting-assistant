@@ -22,6 +22,7 @@ import {
   subscriptionRuntimeKnowledgeAnswerPurpose,
   subscriptionRuntimeKnowledgeCoveragePurpose,
   subscriptionRuntimePurpose,
+  subscriptionRuntimeKnowledgeEvidenceSelectorPurpose,
 } from "@discord-meeting/subscription-runtime-adapter";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -217,12 +218,15 @@ async function environmentForPolicy(
   const conversation = policy.purposeProfiles[subscriptionRuntimeConversationPurpose];
   const knowledgeAnswer = policy.purposeProfiles[subscriptionRuntimeKnowledgeAnswerPurpose];
   const knowledgeCoverage = policy.purposeProfiles[subscriptionRuntimeKnowledgeCoveragePurpose];
+  const knowledgeSelector =
+    policy.purposeProfiles[subscriptionRuntimeKnowledgeEvidenceSelectorPurpose];
   if (
     final === undefined ||
     incremental === undefined ||
     conversation === undefined ||
     knowledgeAnswer === undefined ||
-    knowledgeCoverage === undefined
+    knowledgeCoverage === undefined ||
+    knowledgeSelector === undefined
   ) {
     throw new Error("Test deployment policy is missing an admitted profile");
   }
@@ -231,6 +235,7 @@ async function environmentForPolicy(
   conversation.isolatedCwd = isolatedCwd;
   knowledgeAnswer.isolatedCwd = isolatedCwd;
   knowledgeCoverage.isolatedCwd = isolatedCwd;
+  knowledgeSelector.isolatedCwd = isolatedCwd;
   mutate(policy);
 
   await Promise.all(authSlotRoots.map(async (slotRoot) => {

@@ -235,6 +235,15 @@ export {
   ProcessFinalReplyJob,
   type ProcessFinalReplyResult,
 } from "./application/process-final-reply.js";
+export {
+  SelectFocusedEvidence,
+  type FocusedEvidenceSelection,
+} from "./application/select-focused-evidence.js";
+export type {
+  FocusedEvidenceSelectionCandidateV1,
+  FocusedEvidenceSelectionResultV1,
+  FocusedEvidenceSelectorPort,
+} from "./application/ports/focused-evidence-selector.js";
 export type {
   AnswerEffectDeliveryResult,
   AnswerEffectReservation,

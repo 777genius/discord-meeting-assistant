@@ -68,6 +68,13 @@ export {
   type SubscriptionRuntimeGroundedAnswerAdapterOptions,
 } from "./subscription-runtime-grounded-answer-adapter.js";
 export {
+  SubscriptionRuntimeFocusedEvidenceSelectorAdapter,
+  buildFocusedEvidenceSelectorRequest,
+  focusedEvidenceSelectorJsonSchema,
+  providerFocusedEvidenceSelectionSchema,
+  type SubscriptionRuntimeFocusedEvidenceSelectorOptions,
+} from "./subscription-runtime-focused-evidence-selector-adapter.js";
+export {
   SubscriptionRuntimeCoverageExtractorAdapter,
   utf8ByteUpperBoundKnowledgeCoverageTokenCounter,
   type KnowledgeCoverageTokenCounter,
@@ -107,6 +114,9 @@ export {
   knowledgeCoverageExecutionProfile,
   knowledgeCoverageOutputSchemaName,
   knowledgeCoveragePolicyVersion,
+  knowledgeEvidenceSelectorExecutionProfile,
+  knowledgeEvidenceSelectorOutputSchemaName,
+  knowledgeEvidenceSelectorPolicyVersion,
   meetingSummaryOutputSchemaName,
   meetingSummaryPolicyVersion,
   subscriptionRuntimeCliEngine,
@@ -123,6 +133,8 @@ export {
   subscriptionRuntimeKnowledgeAnswerPurpose,
   subscriptionRuntimeKnowledgeCoverageMaxOutputTokens,
   subscriptionRuntimeKnowledgeCoveragePurpose,
+  subscriptionRuntimeKnowledgeEvidenceSelectorMaxOutputTokens,
+  subscriptionRuntimeKnowledgeEvidenceSelectorPurpose,
   subscriptionRuntimeModel,
   subscriptionRuntimeProtocolVersion,
   subscriptionRuntimeProvider,

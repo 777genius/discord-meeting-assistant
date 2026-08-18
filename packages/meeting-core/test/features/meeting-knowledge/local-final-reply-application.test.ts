@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   AdmitCurrentFinalReply,
   ProcessFinalReplyJob,
+  SelectFocusedEvidence,
   createFocusedRetrievalGroundingPlan,
   decodeFocusedMemoryRetrievalResult,
   focusedMemoryGeneration,
@@ -10,6 +11,8 @@ import {
   type ExhaustiveMemoryRetrievalPort,
   type FinalReplyRendererPort,
   type GroundedAnswerGenerationRequest,
+  type FocusedEvidenceSelectorPort,
+  type FocusedEvidenceSelectionResultV1,
   type GroundedAnswerGenerationResult,
   type GroundedAnswerGenerator,
   type LocalFinalReplyPolicy,
@@ -303,7 +306,30 @@ describe("focused-memory boundary contract", () => {
   });
 });
 
-function processingFixture(exhaustiveMemory?: ExhaustiveMemoryRetrievalPort) {
+function focusedSelector(
+  result?: FocusedEvidenceSelectionResultV1,
+  onSelect: () => void = () => {},
+) {
+  const provider: FocusedEvidenceSelectorPort = {
+    profile: "focused-selector-test.v1",
+    select: ({ candidates }) => {
+      onSelect();
+      return Promise.resolve(result ?? {
+        schemaVersion: 1,
+        selectedCandidateIds: candidates.slice(0, 2).map(({ candidateId }) =>
+          candidateId
+        ),
+        status: "selected",
+      });
+    },
+  };
+  return new SelectFocusedEvidence(provider, () => {}, () => 1);
+}
+
+function processingFixture(
+  exhaustiveMemory?: ExhaustiveMemoryRetrievalPort,
+  selector = focusedSelector(),
+) {
   const evidence = new EvidenceFake();
   const authorization = new AuthorizationFake();
   const jobs = new QuestionJobStoreFake({
@@ -328,6 +354,7 @@ function processingFixture(exhaustiveMemory?: ExhaustiveMemoryRetrievalPort) {
     jobs,
     memory,
     policy,
+    selector,
     renderer,
     workerId: "worker-1",
   });
@@ -418,6 +445,7 @@ describe("ProcessFinalReplyJob", () => {
       "before_retrieval",
       "before_hydration",
       "before_generation",
+      "before_generation",
       "before_hydration",
       "before_effect_reservation",
       "before_send_cas",
@@ -426,6 +454,48 @@ describe("ProcessFinalReplyJob", () => {
     expect(publication.reservations[0]?.content).toContain("turn-correction");
     expect(publication.sends).toHaveLength(1);
   });
+
+  it("abstains before answer generation when focused selection finds no support", async () => {
+    const selector = focusedSelector({
+      schemaVersion: 1,
+      selectedCandidateIds: [],
+      status: "insufficient_evidence",
+    });
+    const { generator, processor, publication } = processingFixture(
+      undefined,
+      selector,
+    );
+
+    await expect(processor.executeOnce()).resolves.toMatchObject({
+      outcome: "insufficient_evidence",
+      status: "settled",
+    });
+    expect(generator.generationCalls).toBe(0);
+    expect(generator.requests).toEqual([]);
+    expect(publication.reservations[0]?.content).toContain(
+      "not enough confirmed",
+    );
+  });
+
+  it("reserves the shared provider attempt before billed evidence selection", async () => {
+    let fixtureJobs: QuestionJobStoreFake | undefined;
+    let reservationsSeenBySelector = -1;
+    const selector = focusedSelector(undefined, () => {
+      reservationsSeenBySelector = fixtureJobs?.providerReservations.length ?? -1;
+    });
+    const fixture = processingFixture(undefined, selector);
+    fixtureJobs = fixture.jobs;
+
+    await expect(fixture.processor.executeOnce()).resolves.toMatchObject({
+      outcome: "answered",
+    });
+    expect(reservationsSeenBySelector).toBe(1);
+    expect(fixture.jobs.providerReservations).toHaveLength(1);
+    expect(fixture.generator.requests[0]?.attemptId).toBe(
+      fixture.jobs.providerReservations[0]?.attemptId,
+    );
+  });
+
 
   it("uses checkpointed every-block coverage and rechecks it before an exhaustive answer", async () => {
     const exhaustive = new ExhaustiveMemoryFake();
@@ -536,13 +606,18 @@ describe("ProcessFinalReplyJob", () => {
   });
 
   it("does not call the provider when the durable attempt reservation loses its fence", async () => {
-    const { generator, jobs, processor } = processingFixture();
+    let selectorCalls = 0;
+    const selector = focusedSelector(undefined, () => {
+      selectorCalls += 1;
+    });
+    const { generator, jobs, processor } = processingFixture(undefined, selector);
     jobs.providerReservationResult = false;
 
     await expect(processor.executeOnce()).resolves.toEqual(
       { jobId: "question-1", status: "stale_generation" },
     );
     expect(generator.generationCalls).toBe(0);
+    expect(selectorCalls).toBe(0);
     expect(jobs.providerReservations).toHaveLength(1);
   });
 

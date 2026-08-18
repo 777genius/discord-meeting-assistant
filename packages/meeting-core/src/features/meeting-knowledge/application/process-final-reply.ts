@@ -1,4 +1,5 @@
 import { requiresExhaustiveCoverage } from "../domain/question-scope.js";
+import { createFocusedRetrievalGroundingPlan } from "../domain/grounding-plan.js";
 import {
   QuestionBinding,
   type QuestionBindingSnapshot,
@@ -15,8 +16,12 @@ import {
   type PreparedAnswerGrounding,
 } from "./final-reply-answer-generation.js";
 import {
+  nextProviderAttemptId,
+  providerAttemptAvailable,
+  reserveProviderAttempt,
+} from "./provider-attempt-accounting.js";
+import {
   fixedOutcomeForFocusedRetrieval,
-  createPlanFromFocusedHydration,
   mergeFocusedHydrationReferences,
   retrieveFocusedMemory,
 } from "./ports/focused-memory-contract.js";
@@ -24,6 +29,7 @@ import {
   PublishFinalReply,
   type FinalReplyJobResult,
 } from "./publish-final-reply.js";
+import type { SelectFocusedEvidence } from "./select-focused-evidence.js";
 import type {
   AnswerPublicationPort,
   CurrentFinalReplyBinding,
@@ -65,6 +71,7 @@ export class ProcessFinalReplyJob {
       readonly generator: GroundedAnswerGenerator;
       readonly jobs: QuestionJobStore;
       readonly memory: FocusedMemoryRetrievalPort;
+      readonly selector: Pick<SelectFocusedEvidence, "execute">;
       readonly policy: LocalFinalReplyPolicy;
       readonly renderer: FinalReplyRendererPort;
       readonly workerId: string;
@@ -242,16 +249,54 @@ export class ProcessFinalReplyJob {
     if (!authorityMatchesBinding(hydrated.binding, binding)) {
       return this.settled(await this.publisher.settle(lease, "stale_binding"));
     }
+    if (!providerAttemptAvailable(lease, this.input.policy)) {
+      return this.settled(await this.publisher.publishFixed(
+        lease,
+        current.binding,
+        "unavailable",
+      ));
+    }
+    const beforeSelection = await this.observe(lease, "before_generation");
+    if (!authorizedForJob(beforeSelection, current.binding, binding)) {
+      return this.settled(
+        await this.publisher.settle(lease, "stale_authorization"),
+      );
+    }
+    const providerAttemptId = nextProviderAttemptId(lease);
+    if (!await reserveProviderAttempt(
+      this.input.jobs,
+      lease,
+      this.input.policy,
+      providerAttemptId,
+    )) {
+      return this.settled({
+        jobId: lease.jobId,
+        status: "stale_generation",
+      });
+    }
     try {
+      const selection = await this.input.selector.execute({
+        question: lease.questionText,
+        turns: hydrated.turns,
+      });
+      if (selection.status === "insufficient_evidence" ||
+          selection.mode === "lexical_fallback") {
+        return this.settled(await this.publisher.publishFixed(
+          lease,
+          current.binding,
+          "insufficient_evidence",
+        ));
+      }
       const humanActorIds = admittedHumanActors(hydrated);
       return {
         authority: hydrated.binding,
-        plan: createPlanFromFocusedHydration(
-          retrieval,
-          hydrationReferences,
-          hydrated.turns,
+        plan: createFocusedRetrievalGroundingPlan({
+          authorityGeneration: retrieval.authorityGeneration,
+          coverage: "sufficient",
           humanActorIds,
-        ),
+          turns: selection.turns,
+        }),
+        providerAttemptId,
         status: "prepared",
       };
     } catch {

@@ -4,6 +4,7 @@ export const subscriptionRuntimeIncrementalPurpose = "discord_meeting.summary.in
 export const subscriptionRuntimeConversationPurpose = "discord_meeting.conversation.answer" as const;
 export const subscriptionRuntimeKnowledgeAnswerPurpose = "discord_meeting.knowledge.answer.v1" as const;
 export const subscriptionRuntimeKnowledgeCoveragePurpose = "discord_meeting.knowledge.coverage_extract.v1" as const;
+export const subscriptionRuntimeKnowledgeEvidenceSelectorPurpose = "discord_meeting.knowledge.evidence_select.v1" as const;
 export const subscriptionRuntimeProvider = "codex" as const;
 export const subscriptionRuntimeModel = "gpt-5.6-sol" as const;
 export const subscriptionRuntimeIncrementalModel = "gpt-5.6-luna" as const;
@@ -16,6 +17,7 @@ export const subscriptionRuntimeIncrementalMaxOutputTokens = 2_048 as const;
 export const subscriptionRuntimeConversationMaxOutputTokens = 512 as const;
 export const subscriptionRuntimeKnowledgeAnswerMaxOutputTokens = 2_048 as const;
 export const subscriptionRuntimeKnowledgeCoverageMaxOutputTokens = 2_048 as const;
+export const subscriptionRuntimeKnowledgeEvidenceSelectorMaxOutputTokens = 1_024 as const;
 export const subscriptionRuntimeEngine = "subscription-runtime-app-server" as const;
 export const subscriptionRuntimeCliEngine = "subscription-runtime-cli" as const;
 export type SubscriptionRuntimeEngine =
@@ -27,23 +29,27 @@ export const incrementalMeetingSummaryOutputSchemaName = "discord_meeting_increm
 export const conversationAnswerOutputSchemaName = "discord_meeting_conversation_answer_v1" as const;
 export const knowledgeAnswerOutputSchemaName = "discord_meeting_knowledge_answer_v1" as const;
 export const knowledgeCoverageOutputSchemaName = "discord_meeting_knowledge_coverage_extract_v1" as const;
+export const knowledgeEvidenceSelectorOutputSchemaName = "discord_meeting_knowledge_evidence_select_v1" as const;
 export const meetingSummaryPolicyVersion = "meeting-summary.subscription-runtime.v16" as const;
 export const incrementalMeetingSummaryPolicyVersion = "meeting-summary.incremental.subscription-runtime.v7" as const;
 export const conversationAnswerPolicyVersion = "meeting-conversation.subscription-runtime.v1" as const;
 export const knowledgeAnswerPolicyVersion = "meeting-knowledge.answer.subscription-runtime.v3" as const;
 export const knowledgeCoveragePolicyVersion = "meeting-knowledge.coverage.subscription-runtime.v1" as const;
+export const knowledgeEvidenceSelectorPolicyVersion = "meeting-knowledge.evidence-select.subscription-runtime.v1" as const;
 
 export type SubscriptionRuntimeOutputSchemaName =
   | typeof conversationAnswerOutputSchemaName
   | typeof incrementalMeetingSummaryOutputSchemaName
   | typeof knowledgeAnswerOutputSchemaName
   | typeof knowledgeCoverageOutputSchemaName
+  | typeof knowledgeEvidenceSelectorOutputSchemaName
   | typeof meetingSummaryOutputSchemaName;
 
 export interface SubscriptionRuntimeExecutionProfile {
   readonly maxOutputTokens:
     | typeof subscriptionRuntimeConversationMaxOutputTokens
     | typeof subscriptionRuntimeIncrementalMaxOutputTokens
+    | typeof subscriptionRuntimeKnowledgeEvidenceSelectorMaxOutputTokens
     | typeof subscriptionRuntimeSummaryMaxOutputTokens;
   readonly model:
     | typeof subscriptionRuntimeIncrementalModel
@@ -54,12 +60,14 @@ export interface SubscriptionRuntimeExecutionProfile {
     | typeof incrementalMeetingSummaryPolicyVersion
     | typeof knowledgeAnswerPolicyVersion
     | typeof knowledgeCoveragePolicyVersion
+    | typeof knowledgeEvidenceSelectorPolicyVersion
     | typeof meetingSummaryPolicyVersion;
   readonly purpose:
     | typeof subscriptionRuntimeConversationPurpose
     | typeof subscriptionRuntimeIncrementalPurpose
     | typeof subscriptionRuntimeKnowledgeAnswerPurpose
     | typeof subscriptionRuntimeKnowledgeCoveragePurpose
+    | typeof subscriptionRuntimeKnowledgeEvidenceSelectorPurpose
     | typeof subscriptionRuntimePurpose;
   readonly reasoningEffort:
     | typeof subscriptionRuntimeIncrementalReasoningEffort
@@ -110,6 +118,15 @@ export const knowledgeCoverageExecutionProfile: SubscriptionRuntimeExecutionProf
   purpose: subscriptionRuntimeKnowledgeCoveragePurpose,
   reasoningEffort: subscriptionRuntimeReasoningEffort,
 });
+export const knowledgeEvidenceSelectorExecutionProfile: SubscriptionRuntimeExecutionProfile =
+  Object.freeze({
+    maxOutputTokens: subscriptionRuntimeKnowledgeEvidenceSelectorMaxOutputTokens,
+    model: subscriptionRuntimeModel,
+    outputSchemaName: knowledgeEvidenceSelectorOutputSchemaName,
+    policyVersion: knowledgeEvidenceSelectorPolicyVersion,
+    purpose: subscriptionRuntimeKnowledgeEvidenceSelectorPurpose,
+    reasoningEffort: subscriptionRuntimeReasoningEffort,
+  });
 
 export const admittedSubscriptionRuntimeExecutionProfiles = Object.freeze([
   conversationAnswerExecutionProfile,
@@ -117,6 +134,7 @@ export const admittedSubscriptionRuntimeExecutionProfiles = Object.freeze([
   incrementalSummaryExecutionProfile,
   knowledgeAnswerExecutionProfile,
   knowledgeCoverageExecutionProfile,
+  knowledgeEvidenceSelectorExecutionProfile,
 ]);
 
 export const admittedSummaryExecutionProfiles = Object.freeze([

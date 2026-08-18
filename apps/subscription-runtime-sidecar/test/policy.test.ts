@@ -1,5 +1,7 @@
 import {
   canonicalJsonSha256,
+  buildFocusedEvidenceSelectorRequest,
+  focusedEvidenceSelectorJsonSchema,
   conversationAnswerOutputSchemaName,
   conversationAnswerPolicyVersion,
   incrementalMeetingSummaryOutputSchemaName,
@@ -139,6 +141,35 @@ describe("subscription runtime request policy", () => {
     );
   });
 
+  it("admits the exact dedicated bounded evidence selector profile", () => {
+    const request = buildFocusedEvidenceSelectorRequest({
+      candidates: [{
+        candidateId: "candidate-000001",
+        endMs: 1_000,
+        snippet: "Релиз перенесли на Monday.",
+        speakerReference: "S1",
+        startMs: 0,
+      }],
+      question: "Когда release?",
+    }, {
+      cwd: isolatedCwd,
+      timeoutMs: 60_000,
+    });
+    const reconstructed = reconstructCanonicalRequest(
+      grpcRequest(request),
+      options,
+    );
+
+    expect(reconstructed).toEqual(request);
+    expect(reconstructed.task.controls.outputSchema).toEqual(
+      focusedEvidenceSelectorJsonSchema,
+    );
+    expect(reconstructed.context.purpose)
+      .toBe("discord_meeting.knowledge.evidence_select.v1");
+  });
+});
+
+describe("subscription runtime request rejection policy", () => {
   it.each([
     ["unknown purpose", { purpose: "discord_meeting.other" }],
     ["wrong provider", { provider: "AGENT_RUNTIME_PROVIDER_CLAUDE" }],
