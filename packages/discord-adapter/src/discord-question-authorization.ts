@@ -22,7 +22,7 @@ function isPresent<T>(value: T | null): value is T {
   return value !== null;
 }
 
-export async function abortableDiscordOperation<T>(
+async function abortableDiscordOperation<T>(
   signal: AbortSignal | undefined,
   operation: () => Promise<T>,
 ): Promise<T> {

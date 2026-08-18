@@ -13,7 +13,7 @@ export interface ImmutableBuildProvenance {
   readonly releaseTree: string;
 }
 
-export interface SubscriptionAnswerReceipt {
+interface SubscriptionAnswerReceipt {
   readonly answers: readonly {
     readonly claims: readonly { readonly citedTurnIds: readonly string[]; readonly text: string }[];
     readonly measurement: QualityRawOutcome["measurement"];

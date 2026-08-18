@@ -30,7 +30,7 @@ export interface QualityRunBinding {
   readonly tokenizerDigestSha256: `sha256:${string}`;
 }
 
-export interface QualityResourceMeasurement {
+interface QualityResourceMeasurement {
   readonly estimatedCostUsd: number;
   readonly inputTokens: number;
   readonly latencyMs: number;
@@ -40,7 +40,7 @@ export interface QualityResourceMeasurement {
   readonly requestSha256: string;
 }
 
-export interface QualityResourceSummary {
+interface QualityResourceSummary {
   readonly estimatedCostUsd: number;
   readonly inputTokens: number;
   readonly latencyMs: {
@@ -78,7 +78,7 @@ export interface QualityRawOutcome {
   };
 }
 
-export interface ProportionMetric {
+interface ProportionMetric {
   readonly denominator: number;
   readonly estimate: number | null;
   readonly numerator: number;

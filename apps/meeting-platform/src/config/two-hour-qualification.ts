@@ -19,7 +19,7 @@ export interface AcceptedTwoHourQualification {
 }
 
 // Fail closed until a reviewed two-hour holdout manifest is retained.
-export const ACCEPTED_TWO_HOUR_QUALIFICATION:
+const ACCEPTED_TWO_HOUR_QUALIFICATION:
   AcceptedTwoHourQualification | null = null;
 
 export type QualificationFileReader = (path: string) => Promise<Buffer>;

@@ -104,7 +104,7 @@ const infinityActivation = z.string().min(2).max(4_000).transform((value, contex
     return z.NEVER;
   }
 });
-export const environmentSchema = z
+const environmentSchema = z
   .object({
     BIND_ADDRESS: z.union([z.ipv4(), z.ipv6()]).default("0.0.0.0"),
     CONVERSATION_ENABLED: z

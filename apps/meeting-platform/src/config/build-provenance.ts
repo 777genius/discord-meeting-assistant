@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 
-export const MEETING_PLATFORM_BUILD_PROVENANCE_PATH =
+const MEETING_PLATFORM_BUILD_PROVENANCE_PATH =
   "/opt/discord-meeting/meeting-platform-build-provenance.json";
 
 export interface BuildProvenanceV1 {
