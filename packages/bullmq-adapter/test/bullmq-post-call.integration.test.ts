@@ -151,7 +151,8 @@ describe("BullMQ post-call adapter with disposable Redis", () => {
       await vi.waitFor(async () => {
         expect(await job?.getState()).toBe("delayed");
       });
-      expect(job?.attemptsMade).toBe(0);
+      const heldJob = await queue.getJob(receipt.jobId);
+      expect(heldJob?.attemptsMade).toBe(0);
       expect(handlerCalls).toBe(0);
       expect(deadLetters).toEqual([]);
 

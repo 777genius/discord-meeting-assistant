@@ -40,6 +40,12 @@ const migrationDefinitions = [
   { fileName: "0025_question_provider_attempt_accounting.sql" },
   { fileName: "0026_answer_effect_duplicate_containment.sql" },
   { fileName: "0027_add_transcription_execution_binding.sql" },
+  { fileName: "0028_validate_transcription_execution_binding_constraints.sql" },
+  {
+    fileName: "0029_create_post_call_binding_recoverable_index.sql",
+    repairInvalidConcurrentIndex: "meeting_core.post_call_outbox_binding_recoverable_idx",
+    transactional: false,
+  },
 ] as const;
 
 const migrationLockKey = "718330091620232601";

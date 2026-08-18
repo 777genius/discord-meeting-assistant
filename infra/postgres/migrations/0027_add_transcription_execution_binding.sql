@@ -49,7 +49,7 @@ ALTER TABLE meeting_core.post_call_outbox
           AND recovery_source_job_ref IS NOT NULL)
       )
     )
-  ) IS TRUE);
+  ) IS TRUE) NOT VALID;
 
 ALTER TABLE meeting_core.post_call_outbox
   DROP CONSTRAINT IF EXISTS post_call_outbox_transcription_execution_binding_is_bounded;
@@ -61,7 +61,7 @@ ALTER TABLE meeting_core.post_call_outbox
       char_length(transcription_execution_binding) BETWEEN 1 AND 128
       AND transcription_execution_binding ~ '^[a-z0-9][a-z0-9._:-]*$'
     )
-  );
+  ) NOT VALID;
 
 ALTER TABLE meeting_core.post_call_outbox
   DROP CONSTRAINT IF EXISTS post_call_outbox_required_transcription_binding_is_present;
@@ -71,7 +71,7 @@ ALTER TABLE meeting_core.post_call_outbox
   CHECK (
     NOT transcription_execution_binding_required
     OR transcription_execution_binding IS NOT NULL
-  );
+  ) NOT VALID;
 
 ALTER TABLE meeting_core.post_call_outbox
   DROP CONSTRAINT IF EXISTS post_call_outbox_bound_work_is_hidden_from_legacy_recovery;
@@ -81,16 +81,7 @@ ALTER TABLE meeting_core.post_call_outbox
   CHECK (
     NOT transcription_execution_binding_required
     OR recovery_after = 'infinity'::timestamptz
-  );
-
-CREATE INDEX IF NOT EXISTS post_call_outbox_binding_recoverable_idx
-  ON meeting_core.post_call_outbox (
-    COALESCE(binding_recovery_after, created_at),
-    meeting_id
-  )
-  WHERE processed_at IS NULL
-    AND dead_lettered_at IS NULL
-    AND transcription_execution_binding_required = TRUE;
+  ) NOT VALID;
 
 CREATE OR REPLACE FUNCTION meeting_core.reject_transcription_execution_binding_change()
 RETURNS trigger

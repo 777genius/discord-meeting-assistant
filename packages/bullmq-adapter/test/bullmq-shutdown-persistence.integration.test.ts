@@ -90,6 +90,49 @@ afterAll(async () => {
 });
 
 describe("BullMQ shutdown persistence with disposable Redis", () => {
+  it("bounds a stalled admission read and maps it through the retry contract", async (context) => {
+    const redis = redisOrSkip(context);
+    const connection = {
+      host: redis.getHost(),
+      port: redis.getMappedPort(REDIS_PORT),
+    };
+    const prefix = "bullmq-post-call-admission-timeout";
+    const queue = createPostCallQueue({ attempts: 1, connection, prefix });
+    const queueEvents = createPostCallQueueEvents({ connection, prefix });
+    const deadLetters: PostCallDeadLetterRecord[] = [];
+    const handler = vi.fn(() => Promise.resolve());
+    const worker = createPostCallWorker({
+      admission: () => new Promise(() => {}),
+      admissionTimeoutMilliseconds: 25,
+      attempts: 1,
+      connection,
+      deadLetterRecorder: { record: async (record) => void deadLetters.push(record) },
+      handler,
+      prefix,
+    });
+    try {
+      await Promise.all([queue.waitUntilReady(), queueEvents.waitUntilReady(), worker.waitUntilReady()]);
+      const receipt = await new BullMqPostCallEnqueuer(queue, { attempts: 1 }).enqueue({
+        meetingId: "meeting-admission-timeout",
+        schemaVersion: 1,
+      });
+      const job = await queue.getJob(receipt.jobId);
+      await expect(job!.waitUntilFinished(queueEvents, 10_000)).rejects.toThrow(
+        "ADMISSION_TIMEOUT",
+      );
+      await vi.waitFor(() => {
+        expect(deadLetters).toHaveLength(1);
+      });
+      expect(deadLetters[0]?.failureCode).toBe("ADMISSION_TIMEOUT");
+      expect(handler).not.toHaveBeenCalled();
+    } finally {
+      await Promise.allSettled([worker.close(false), queueEvents.close(), queue.close()]);
+    }
+  }, 30_000);
+
+});
+
+describe("BullMQ shutdown persistence with disposable Redis", () => {
   it("reconstructs a terminal admission failure when dead-letter persistence also fails", async (context) => {
     const redis = redisOrSkip(context);
     const connection = {

@@ -45,6 +45,14 @@ describe("DurableFinalTranscriptionRouter", () => {
     expect(() => legacyFinalTranscriptionExecutionBinding({
       transcriptionProvider: "voicetext",
     })).toThrow("explicit historical transcription binding is required");
+    expect(() => legacyFinalTranscriptionExecutionBinding({
+      transcriptionLegacyExecutionBinding: speachesFinalTranscriptionExecutionBinding,
+      transcriptionProvider: "voicetext",
+    })).toThrow("historical transcription binding is incompatible with the active provider");
+    expect(() => legacyFinalTranscriptionExecutionBinding({
+      transcriptionLegacyExecutionBinding: legacyVoicetextBatchExecutionBinding,
+      transcriptionProvider: "speaches",
+    })).toThrow("historical transcription binding is incompatible with the active provider");
   });
 
   it("selects new VoiceText work independently from frozen legacy work", () => {

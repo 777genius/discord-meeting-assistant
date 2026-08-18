@@ -196,10 +196,33 @@ describe("PostgresMigrationRunner and PostgresSchemaReadiness validation", () =>
     await expect(new PostgresSchemaReadiness(database).assertReady()).resolves.toBeUndefined();
   });
 
+  it("rejects a replica-only immutable binding trigger", async (context) => {
+    const database = databaseOrSkip(context);
+    await database.query(`
+      ALTER TABLE meeting_core.post_call_outbox
+      ENABLE REPLICA TRIGGER post_call_outbox_transcription_execution_binding_is_immutable
+    `);
+    try {
+      await expect(new PostgresSchemaReadiness(database).assertReady()).rejects.toThrow(
+        "required PostgreSQL trigger is missing or disabled",
+      );
+    } finally {
+      await database.query(`
+        ALTER TABLE meeting_core.post_call_outbox
+        ENABLE TRIGGER post_call_outbox_transcription_execution_binding_is_immutable
+      `);
+    }
+  });
+
   it("treats a pre-binding binary after migration 0027 as a stop-only rollback boundary", async (context) => {
     const database = databaseOrSkip(context);
     const migrations = await loadPostgresMigrations();
-    const preBindingMigrations = migrations.slice(0, -1);
+    const bindingMigrationVersion = 27;
+    expect(migrations.find(({ version }) => version === bindingMigrationVersion)?.fileName)
+      .toBe("0027_add_transcription_execution_binding.sql");
+    const preBindingMigrations = migrations.filter(
+      ({ version }) => version < bindingMigrationVersion,
+    );
     const preBindingVersion = preBindingMigrations.at(-1)?.version;
     if (preBindingVersion === undefined) {
       throw new Error("pre-binding migration fixture is missing");

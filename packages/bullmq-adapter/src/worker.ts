@@ -15,7 +15,10 @@ import {
   parsePostCallJobPayload,
   postCallJobReference,
 } from "./contracts.js";
-import type { PostCallFailureClassification } from "./errors.js";
+import {
+  RetryablePostCallError,
+  type PostCallFailureClassification,
+} from "./errors.js";
 import type { PostCallObserver } from "./observability.js";
 import { safelyObserve } from "./observability.js";
 import {
@@ -45,12 +48,15 @@ export {
 export interface CreatePostCallWorkerOptions
   extends CreatePostCallProcessorOptions {
   readonly admission?: (payload: PostCallJobPayload) => Promise<"accepted" | "hold">;
+  readonly admissionTimeoutMilliseconds?: number;
   readonly autorun?: boolean;
   readonly connection: ConnectionOptions;
   readonly prefix?: string;
 }
 
 const unsupportedRuntimeHoldMilliseconds = 60_000;
+const defaultAdmissionTimeoutMilliseconds = 5_000;
+const maximumAdmissionTimeoutMilliseconds = 60_000;
 
 function tryMeetingId(data: unknown): string | null {
   const result = parsePostCallPayloadSafely(data);
@@ -166,12 +172,16 @@ async function resolvePostCallAdmission(
   payload: PostCallJobPayload | null,
   job: PostCallBullMqJob,
   policy: ResolvedPostCallWorkerPolicy,
+  timeoutMilliseconds: number,
 ): Promise<"accepted" | "hold"> {
   if (payload === null || options.admission === undefined) {
     return "accepted";
   }
   try {
-    return await options.admission(payload);
+    return await withAdmissionTimeout(
+      options.admission(payload),
+      timeoutMilliseconds,
+    );
   } catch (error) {
     // Admission is part of durable post-call processing. Map its failures
     // through the same bounded retry contract as the handler, so a terminal
@@ -185,13 +195,47 @@ async function resolvePostCallAdmission(
   }
 }
 
+async function withAdmissionTimeout(
+  pending: Promise<"accepted" | "hold">,
+  timeoutMilliseconds: number,
+): Promise<"accepted" | "hold"> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(new RetryablePostCallError("ADMISSION_TIMEOUT"));
+    }, timeoutMilliseconds);
+    timer.unref();
+  });
+  try {
+    return await Promise.race([pending, timeout]);
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+  }
+}
+
+function resolveAdmissionTimeoutMilliseconds(
+  configured: number | undefined,
+): number {
+  const value = configured ?? defaultAdmissionTimeoutMilliseconds;
+  if (
+    !Number.isSafeInteger(value) ||
+    value < 1 ||
+    value > maximumAdmissionTimeoutMilliseconds
+  ) {
+    throw new RangeError("post-call admission timeout is outside its bound");
+  }
+  return value;
+}
+
 export function createPostCallWorker(
   options: CreatePostCallWorkerOptions,
 ): PostCallWorker {
   const policy = resolvePostCallWorkerPolicy(options);
+  const admissionTimeoutMilliseconds = resolveAdmissionTimeoutMilliseconds(options.admissionTimeoutMilliseconds);
   const processor = createPostCallProcessor(options);
   const activeJobs = new ActivePostCallJobs();
-  const shouldAutorun = options.autorun ?? true;
   const worker = new Worker<
     PostCallJobPayload,
     void,
@@ -209,7 +253,13 @@ export function createPostCallWorker(
           throw new PostCallCancellationError(activeJob.signal.reason);
         }
         const payload = parsePostCallPayloadSafely(job.data);
-        if (await resolvePostCallAdmission(options, payload, job, policy) === "hold") {
+        if (await resolvePostCallAdmission(
+          options,
+          payload,
+          job,
+          policy,
+          admissionTimeoutMilliseconds,
+        ) === "hold") {
           const held = await moveUnsupportedJobToDelayed(job, token, options.observer);
           releaseAfterProcessor = held;
           throw new DelayedError();
@@ -339,7 +389,7 @@ export function createPostCallWorker(
     }
   });
 
-  if (shouldAutorun) {
+  if (options.autorun ?? true) {
     void postCallWorker.run().catch((error: unknown) => {
       postCallWorker.emit(
         "error",

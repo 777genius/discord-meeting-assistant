@@ -9,6 +9,7 @@ import {
   type VoicetextWebSocketConnector,
   type VoicetextWebSocketConnectRequest,
 } from "../src/index.js";
+import { validateVoicetextLiveTranscriptionOptions } from "../src/voicetext-live-transcription-configuration.js";
 
 class QueueSocket implements VoicetextWebSocketConnection {
   public readonly binary: Uint8Array[] = [];
@@ -221,6 +222,14 @@ function adapter(
 }
 
 describe("VoicetextLiveTranscriptionAdapter", () => {
+  it("fails closed for an unsupported runtime live profile", () => {
+    expect(() => validateVoicetextLiveTranscriptionOptions({
+      endpoint: "wss://api.voicetext.test/api/v1/transcribe/stream",
+      profile: "elevenlabs-scribe-v2-realtime-typo" as VoicetextLiveProfile,
+      token: "x".repeat(16),
+    })).toThrow("Voicetext live profile is unsupported");
+  });
+
   it.each([
     ["deepgram-nova-3", "deepgram", "nova-3"],
     ["elevenlabs-scribe-v2-realtime", "elevenlabs", "scribe_v2_realtime"],

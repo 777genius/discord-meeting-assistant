@@ -395,14 +395,18 @@ async function publishCreateOnlyJson(
   modifiedAt?: Date,
 ): Promise<void> {
   const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
-  await writeFile(temporaryPath, JSON.stringify(value), { flag: "wx", mode: 0o600 });
   try {
+    await writeFile(temporaryPath, JSON.stringify(value), { flag: "wx", mode: 0o600 });
     if (modifiedAt !== undefined) {
       await utimes(temporaryPath, modifiedAt, modifiedAt);
     }
     await link(temporaryPath, path);
   } finally {
-    await unlink(temporaryPath).catch(() => {});
+    await unlink(temporaryPath).catch((error: unknown) => {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+        throw error;
+      }
+    });
   }
 }
 

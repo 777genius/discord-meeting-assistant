@@ -107,12 +107,19 @@ export function validateVoicetextLiveTranscriptionOptions(
 }
 
 function voicetextLiveContractIdentity(
-  profile: VoicetextLiveProfile,
+  profile: string,
 ): VoicetextLiveContractIdentity {
   if (profile === "deepgram-nova-3") {
     return { model: "nova-3", provider: "deepgram" };
   }
-  return { model: "scribe_v2_realtime", provider: "elevenlabs" };
+  if (profile === "elevenlabs-scribe-v2-realtime") {
+    return { model: "scribe_v2_realtime", provider: "elevenlabs" };
+  }
+  throw new VoicetextAdapterError(
+    "invalid_input",
+    "Voicetext live profile is unsupported",
+    false,
+  );
 }
 
 export function validateVoicetextLiveIdentity(value: string, field: string): void {

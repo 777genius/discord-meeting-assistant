@@ -1,0 +1,11 @@
+ALTER TABLE meeting_core.post_call_outbox
+  VALIDATE CONSTRAINT post_call_outbox_recovery_receipt_is_consistent;
+
+ALTER TABLE meeting_core.post_call_outbox
+  VALIDATE CONSTRAINT post_call_outbox_transcription_execution_binding_is_bounded;
+
+ALTER TABLE meeting_core.post_call_outbox
+  VALIDATE CONSTRAINT post_call_outbox_required_transcription_binding_is_present;
+
+ALTER TABLE meeting_core.post_call_outbox
+  VALIDATE CONSTRAINT post_call_outbox_bound_work_is_hidden_from_legacy_recovery;

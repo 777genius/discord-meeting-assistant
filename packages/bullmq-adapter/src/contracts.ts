@@ -6,6 +6,8 @@ import { z } from "zod";
 // unfinished V1 work into this queue.
 export const POST_CALL_QUEUE_NAME = "meeting-post-call-v2";
 export const POST_CALL_JOB_NAME = "process-post-call-v2";
+export const POST_CALL_JOB_ID_NAMESPACE = "post-call-job-v2";
+export const POST_CALL_JOB_ID_PREFIX = "post-call-v2-";
 export const POST_CALL_DEAD_LETTER_QUEUE_NAME = "meeting-post-call-dead-letter-v1";
 export const POST_CALL_DEAD_LETTER_JOB_NAME = "record-post-call-dead-letter-v1";
 
@@ -99,7 +101,10 @@ export function postCallJobId(meetingId: string, recoveryGeneration = 0): string
       `${validatedGeneration}\0${validatedMeetingId}`,
     )}`;
   }
-  return `post-call-v2-${namespacedDigest("post-call-job-v2", validatedMeetingId)}`;
+  return `${POST_CALL_JOB_ID_PREFIX}${namespacedDigest(
+    POST_CALL_JOB_ID_NAMESPACE,
+    validatedMeetingId,
+  )}`;
 }
 
 export function postCallJobReference(jobId: string | undefined): string {

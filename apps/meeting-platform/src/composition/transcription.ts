@@ -67,10 +67,19 @@ export function selectedFinalTranscriptionExecutionBinding(
 export function legacyFinalTranscriptionExecutionBinding(
   config: FinalTranscriptionBindingConfig,
 ): FinalTranscriptionExecutionBinding {
-  if (config.transcriptionLegacyExecutionBinding === undefined) {
+  const binding = config.transcriptionLegacyExecutionBinding;
+  if (binding === undefined) {
     throw new Error("explicit historical transcription binding is required");
   }
-  return config.transcriptionLegacyExecutionBinding;
+  const compatible = config.transcriptionProvider === "speaches"
+    ? binding === speachesFinalTranscriptionExecutionBinding
+    : binding === legacyVoicetextBatchExecutionBinding;
+  if (!compatible) {
+    throw new Error(
+      "historical transcription binding is incompatible with the active provider",
+    );
+  }
+  return binding;
 }
 
 export function supportedFinalTranscriptionExecutionBindings(

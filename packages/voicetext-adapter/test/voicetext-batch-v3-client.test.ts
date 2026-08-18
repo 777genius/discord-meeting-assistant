@@ -5,6 +5,9 @@ import {
   FetchVoicetextBatchClient,
   type VoicetextBatchFetch,
 } from "../src/voicetext-batch-client.js";
+import {
+  voicetextBatchContractIdentity,
+} from "../src/voicetext-batch-contract.js";
 
 const idempotencyKey = "a".repeat(64);
 const jobId = "00000000-0000-4000-8000-000000000001";
@@ -89,6 +92,12 @@ async function submitWith(payload: unknown, status = 200) {
 }
 
 describe("FetchVoicetextBatchClient contract v3", () => {
+  it("fails closed for an unsupported runtime batch profile", () => {
+    expect(() => voicetextBatchContractIdentity(
+      "elevenlabs-scribe-v2-typo",
+    )).toThrow("Voicetext batch profile is unsupported");
+  });
+
   it("sends the exact ElevenLabs v3 identity and maps duration_ms and segments", async () => {
     let capturedInit: RequestInit | undefined;
     const result = await client(async (_input, init) => {

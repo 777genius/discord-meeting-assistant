@@ -153,6 +153,9 @@ importers:
         specifier: 'catalog:'
         version: 4.4.3
     devDependencies:
+      '@discord-meeting/bullmq-adapter':
+        specifier: workspace:*
+        version: link:../../packages/bullmq-adapter
       '@discord-meeting/discord-adapter':
         specifier: workspace:*
         version: link:../../packages/discord-adapter

@@ -20,7 +20,7 @@ export async function findMissingPostgresTriggers(
         WHERE namespace.nspname || '.' || relation.relname || '.' || trigger.tgname =
           required_trigger.identifier
           AND NOT trigger.tgisinternal
-          AND trigger.tgenabled <> 'D'
+          AND trigger.tgenabled IN ('O', 'A')
       )
     `,
     [requiredTriggers],
