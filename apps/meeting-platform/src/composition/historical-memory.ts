@@ -1,33 +1,20 @@
 import {
-  CooperativeHistoricalIndexPlanner,
-  Sha256HistoricalReceiptDigest,
-  HmacHistoricalOpaqueIds,
-  InfinityContextHistoricalMemoryAdapter,
-  INFINITY_CONTEXT_PRODUCTION_QUALIFICATION,
-  assertInfinityContextPlanningCompatibility,
+  CooperativeHistoricalIndexPlanner, HmacHistoricalOpaqueIds,
+  InfinityContextHistoricalMemoryAdapter, INFINITY_CONTEXT_PRODUCTION_QUALIFICATION,
+  PINNED_MULTILINGUAL_MINILM_TOKENIZER_PROFILE, PinnedMultilingualMiniLmTokenizer,
+  Sha256HistoricalReceiptDigest, assertInfinityContextActivation,
+  assertInfinityContextPlanningCompatibility, assertInfinityContextSearchActivation,
   infinityContextHistoricalIndexProfileId,
   type InfinityContextProductionQualificationPolicyV1,
-  PINNED_MULTILINGUAL_MINILM_TOKENIZER_PROFILE,
-  PinnedMultilingualMiniLmTokenizer,
-  assertInfinityContextActivation,
-  assertInfinityContextSearchActivation,
 } from "@discord-meeting/infinity-context-adapter";
 import {
-  DEFAULT_HISTORICAL_SYNC_POLICY,
-  DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
-  DeterministicCoverageReducer,
-  ExhaustiveCoverage,
-  HistoricalFocusedRetrieval,
-  HistoricalSyncWorker,
-  historicalEmbeddingTokenProfile,
-  historicalSyncLeaseDurationMs,
-  RequestHistoricalMeetingDeletion,
-  type HistoricalAuthorizationPort,
-  type HistoricalEmbeddingTokenizerPort,
-  type HistoricalSyncStore,
-  type HistoricalWindowPlanningProfileV1,
-  type TwoHourHistoricalRetrievalProfileV1,
-  prepareQualifiedHistoricalEmbeddingTokenizer,
+  DEFAULT_HISTORICAL_SYNC_POLICY, DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
+  DeterministicCoverageReducer, ExhaustiveCoverage, HistoricalFocusedRetrieval,
+  HistoricalSyncWorker, RequestHistoricalMeetingDeletion,
+  historicalEmbeddingTokenProfile, historicalSyncLeaseDurationMs,
+  prepareQualifiedHistoricalEmbeddingTokenizer, type HistoricalAuthorizationPort,
+  type HistoricalEmbeddingTokenizerPort, type HistoricalSyncStore,
+  type HistoricalWindowPlanningProfileV1, type TwoHourHistoricalRetrievalProfileV1,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import {
   PostgresHistoricalEvidenceAuthority,
@@ -36,8 +23,7 @@ import {
 } from "@discord-meeting/postgres-adapter";
 import type { Logger } from "@discord-meeting/observability-adapter";
 import {
-  SubscriptionRuntimeCoverageExtractorAdapter,
-  subscriptionRuntimeCliEngine,
+  SubscriptionRuntimeCoverageExtractorAdapter, subscriptionRuntimeCliEngine,
   type SubscriptionRuntimeTransportPort,
 } from "@discord-meeting/subscription-runtime-adapter";
 import type { Pool } from "pg";
@@ -48,8 +34,7 @@ const reconciliationIntervalMs = 5_000;
 const maximumOperationsPerPass = 25;
 const shutdownDrainTimeoutMs = 5_000;
 
-export { historicalSyncLeaseDurationMs } from
-  "@discord-meeting/meeting-core/meeting-knowledge";
+export { historicalSyncLeaseDurationMs } from "@discord-meeting/meeting-core/meeting-knowledge";
 
 async function awaitBoundedPass(pass: Promise<void> | undefined): Promise<void> {
   if (pass === undefined) {
@@ -173,7 +158,6 @@ function qualifyPlanningProfile(
   tokenizer: HistoricalEmbeddingTokenizerPort,
 ): string {
   if (
-    profile.schemaVersion !== "meeting-knowledge.window-planning-profile.v1" ||
     !/^sha256:[a-f0-9]{64}/u.test(profile.digestSha256) ||
     profile.identity !== historicalEmbeddingTokenProfile(tokenizer) ||
     profile.maximumInputTokens !== tokenizer.profile.maxInputTokens

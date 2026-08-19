@@ -186,7 +186,7 @@ export function partitionHistoricalEmbeddingWindows(
     estimateHistoricalEmbeddingTokens;
   const planner = planHistoricalEmbeddingWindows(meeting, policy);
   let step = planner.next();
-  while (!step.done) {
+  while (step.done !== true) {
     step = planner.next(
       step.value.kind === "count_tokens"
         ? countTokens(step.value.text)

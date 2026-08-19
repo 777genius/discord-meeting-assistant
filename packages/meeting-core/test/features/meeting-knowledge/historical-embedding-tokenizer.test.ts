@@ -79,7 +79,7 @@ describe("historical embedding tokenizer qualification", () => {
     expect(() => prepareQualifiedHistoricalEmbeddingTokenizer(
       tokenizer,
       compatibility({
-        expectedEmbeddingProfileDigestSha256: "sha256:mutable" as `sha256:${string}`,
+        expectedEmbeddingProfileDigestSha256: "sha256:mutable",
       }),
     )).toThrow("expected Infinity embedding profile binding is invalid");
   });

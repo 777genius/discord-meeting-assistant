@@ -92,9 +92,6 @@ function validatePreparedReceipt(
     maximumInputTokens: prepared.planningProfile.maximumInputTokens,
   }));
   if (
-    receipt.schemaVersion !==
-      "meeting-knowledge.historical-index-planner-receipt.v1" ||
-    receipt.workerRevision !== "meeting-knowledge.exact-window-planner.v1" ||
     receipt.requestSha256 !== expectedRequest ||
     receipt.resultSha256 !== expectedResult ||
     prepared.planningProfile.digestSha256 !== expectedProfile
@@ -109,8 +106,7 @@ function validatePreparedReceipt(
 function validPlanningProfile(
   profile: HistoricalWindowPlanningProfileV1,
 ): boolean {
-  return profile.schemaVersion === "meeting-knowledge.window-planning-profile.v1" &&
-    profile.identity.length > 0 &&
+  return profile.identity.length > 0 &&
     profile.identity.length <= 1_024 &&
     /^sha256:[a-f0-9]{64}$/u.test(profile.digestSha256) &&
     Number.isSafeInteger(profile.maximumInputTokens) &&

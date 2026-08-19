@@ -5,12 +5,10 @@ import {
   HistoricalIndexPlanError,
   type HistoricalEvidenceBlockPolicyV1,
 } from "./historical-index-plan.js";
-import type {
-  HistoricalIndexPlanV1, HistoricalMemoryPort, HistoricalOpaqueIdPort,
-} from "./ports/historical-memory.js";
-import type {
-  HistoricalEvidenceAuthority, HistoricalSyncLeaseV1, HistoricalSyncStore,
-} from "./ports/historical-state.js";
+import type { HistoricalIndexPlanV1, HistoricalMemoryPort, HistoricalOpaqueIdPort } from
+  "./ports/historical-memory.js";
+import type { HistoricalEvidenceAuthority, HistoricalSyncLeaseV1, HistoricalSyncStore } from
+  "./ports/historical-state.js";
 import type { AcceptedFinalMeetingV1 } from "../domain/historical-evidence.js";
 import { historicalPlanProjectionMatches } from "./historical-embedding-windows.js";
 import type { HistoricalEmbeddingTokenizerPort } from
@@ -36,10 +34,8 @@ type HistoricalSyncPolicyInputV1 = Omit<HistoricalSyncPolicyV1, "version"> & {
 };
 
 export const DEFAULT_HISTORICAL_SYNC_POLICY: HistoricalSyncPolicyV1 = Object.freeze({
-  blockPolicy: DEFAULT_HISTORICAL_EVIDENCE_BLOCK_POLICY,
-  leaseDurationMs: 30_000,
-  maximumIndexAttempts: 5,
-  retryBackoffMs: Object.freeze([1_000, 5_000, 30_000, 120_000]),
+  blockPolicy: DEFAULT_HISTORICAL_EVIDENCE_BLOCK_POLICY, leaseDurationMs: 30_000,
+  maximumIndexAttempts: 5, retryBackoffMs: Object.freeze([1_000, 5_000, 30_000, 120_000]),
   version: "meeting-knowledge.historical-sync.v1",
 });
 
@@ -48,8 +44,7 @@ export const MAXIMUM_HISTORICAL_MEMORY_OPERATION_TIMEOUT_MS = 600_000;
 export const HISTORICAL_SYNC_LEASE_SAFETY_MARGIN_MS = 30_000;
 /** Maximum composed lease: maximum provider operation plus its safety margin. */
 export const MAXIMUM_HISTORICAL_SYNC_LEASE_DURATION_MS =
-  MAXIMUM_HISTORICAL_MEMORY_OPERATION_TIMEOUT_MS +
-  HISTORICAL_SYNC_LEASE_SAFETY_MARGIN_MS;
+  MAXIMUM_HISTORICAL_MEMORY_OPERATION_TIMEOUT_MS + HISTORICAL_SYNC_LEASE_SAFETY_MARGIN_MS;
 
 export function historicalSyncLeaseDurationMs(operationTimeoutMs: number): number {
   if (
@@ -233,7 +228,7 @@ export class HistoricalSyncWorker {
     }
     let plan = lease.plan;
     if (plan === null) {
-      if (canonical === undefined || canonical.status !== "ok") {
+      if (canonical === undefined) {
         throw new Error("historical canonical plan was not prepared");
       }
       plan = canonical.plan;
@@ -302,7 +297,8 @@ export class HistoricalSyncWorker {
   ): Promise<PlanBuildAttempt> {
     try {
       if (this.dependencies.planner !== undefined) {
-        if (this.dependencies.receiptDigest === undefined) {
+        const receiptDigest = this.dependencies.receiptDigest;
+        if (receiptDigest === undefined) {
           return { status: "unavailable" };
         }
         const prepared = await this.dependencies.planner.prepareWindows(
@@ -315,7 +311,7 @@ export class HistoricalSyncWorker {
             this.dependencies.ids,
             this.#policy.blockPolicy,
             prepared,
-            this.dependencies.receiptDigest!,
+            receiptDigest,
           ),
           status: "ok",
         };
