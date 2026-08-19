@@ -414,6 +414,13 @@ describe("Infinity Context document deletion verification", () => {
 describe("Infinity Context production provenance deletion", () => {
   it("keeps verified deletion available with serving and indexing disabled", async () => {
     const endpoint = new DisposableInfinityEndpoint();
+    endpoint.setRuntimeQualificationReceipt({
+      embeddingProfileDigestSha256:
+        INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedEmbeddingProfileDigestSha256,
+      embeddingProfileId:
+        INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedEmbeddingProfileId,
+      serviceRevision: INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedServiceRevision,
+    });
     const activation = decodeInfinityContextRuntimeActivation({
       apiVersion: "v1",
       archiveSha256: INFINITY_CONTEXT_SDK_PROVENANCE.archiveSha256,
