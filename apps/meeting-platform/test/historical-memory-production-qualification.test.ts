@@ -135,6 +135,45 @@ describe("Infinity production semantic qualification composition", () => {
     }
   });
 
+});
+
+describe("Infinity deletion-only transport qualification", () => {
+  it.each([
+    ["missing", null],
+    ["wrong", {
+      embeddingProfileDigestSha256:
+        retainedProductionEmbeddingProfileAttestation.embeddingProfileDigestSha256,
+      embeddingProfileId:
+        retainedProductionEmbeddingProfileAttestation.embeddingProfile,
+      serviceRevision: "f".repeat(40),
+    }],
+  ] as const)("keeps deletion-only reconciliation closed for %s service revision", async (
+    _label,
+    receipt,
+  ) => {
+    const pool = new Pool({
+      connectionString: "postgresql://synthetic.invalid/never-connected",
+    });
+    const infinity = await startDisposableInfinityHttpService();
+    infinity.endpoint.setRuntimeQualificationReceipt(receipt);
+    const runtime = requiredHistoricalRuntime(pool, infinity, false, false, "test");
+    try {
+      await expect(runtime.assertReady()).resolves.toBeUndefined();
+      await expect(runtime.assertReady()).resolves.toBeUndefined();
+      expect(infinity.endpoint.requests.map(({ method, path }) => `${method} ${path}`))
+        .toEqual(["GET /v1/capabilities", "GET /v1/capabilities"]);
+      expect(runtime.searchEnabled()).toBe(false);
+      expect(runtime.servingAuthorized()).toBe(false);
+    } finally {
+      await runtime.close();
+      await infinity.close();
+      await pool.end();
+    }
+  });
+});
+
+describe("Infinity production semantic qualification continuation", () => {
+
   it("keeps production search closed without explicit semantic qualification", async () => {
     const pool = new Pool({
       connectionString: "postgresql://synthetic.invalid/never-connected",

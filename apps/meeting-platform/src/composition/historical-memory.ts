@@ -4,6 +4,7 @@ import {
   PINNED_MULTILINGUAL_MINILM_TOKENIZER_PROFILE, PinnedMultilingualMiniLmTokenizer,
   Sha256HistoricalReceiptDigest, assertInfinityContextActivation,
   assertInfinityContextPlanningCompatibility, assertInfinityContextSearchActivation,
+  assertInfinityContextTransportCapabilities,
   infinityContextHistoricalIndexProfileId,
   type InfinityContextProductionQualificationPolicyV1,
 } from "@discord-meeting/infinity-context-adapter";
@@ -308,6 +309,7 @@ export function createPlatformHistoricalMemory(
     leaseDurationMs: historicalSyncLeaseDurationMs(config.operationTimeoutMs),
   });
   let transportQualified = false;
+  let projectionQualified = false;
   let searchQualified = false;
   const deletion = new RequestHistoricalMeetingDeletion(store);
   const twoHourProfile = Object.freeze({
@@ -317,16 +319,14 @@ export function createPlatformHistoricalMemory(
   });
 
   const refreshQualification = async (signal?: AbortSignal): Promise<void> => {
-    transportQualified = false;
-    searchQualified = false;
-    qualifiedTokenProfile = undefined;
-    qualifiedTokenizer = undefined;
-    if (!config.activation.indexingEnabled && !config.activation.searchEnabled) {
-      return;
-    }
+    transportQualified = projectionQualified = searchQualified = false;
+    qualifiedTokenProfile = undefined; qualifiedTokenizer = undefined;
     const capabilities = await memory.qualifyCapabilities(
       signal === undefined ? {} : { signal },
     );
+    assertInfinityContextTransportCapabilities(config.activation, capabilities);
+    transportQualified = true;
+    if (!config.activation.indexingEnabled && !config.activation.searchEnabled) { return; }
     assertInfinityContextActivation(
       config.activation, capabilities, productionQualification,
     );
@@ -350,7 +350,7 @@ export function createPlatformHistoricalMemory(
     if (rebuilds.enqueued > 0 || rebuilds.remaining) {
       input.logger.info("Historical index profile rebuilds enqueued", rebuilds);
     }
-    transportQualified = true;
+    projectionQualified = true;
     searchQualified = !rebuilds.remaining && semanticSearchQualified(
       config.activation, input.logger, productionQualification,
     );
@@ -363,10 +363,8 @@ export function createPlatformHistoricalMemory(
       await refreshQualification(signal);
     } catch (error) {
       signal?.throwIfAborted();
-      transportQualified = false;
-      searchQualified = false;
-      qualifiedTokenProfile = undefined;
-      qualifiedTokenizer = undefined;
+      transportQualified = projectionQualified = searchQualified = false;
+      qualifiedTokenProfile = undefined; qualifiedTokenizer = undefined;
       input.logger.warn("Historical memory qualification unavailable; external indexing is disabled", {
         errorType: error instanceof Error ? error.name : "unknown",
       });
@@ -376,9 +374,10 @@ export function createPlatformHistoricalMemory(
   const reconciliation = createHistoricalReconciliationLifecycle({
     executePass: async (signal) => {
       await refreshQualificationForReconciliation(signal);
+      if (!transportQualified) { return; }
       await executeHistoricalPass({
         checkpoints,
-        indexingEnabled: () => config.activation.indexingEnabled && transportQualified,
+        indexingEnabled: () => config.activation.indexingEnabled && projectionQualified,
         logger: input.logger,
         worker,
       }, signal);

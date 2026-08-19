@@ -8,6 +8,7 @@ export {
   InfinityContextActivationError,
   assertInfinityContextActivation,
   assertInfinityContextSearchActivation,
+  assertInfinityContextTransportCapabilities,
   decodeInfinityContextCapabilityAttestation,
   decodeInfinityContextRuntimeActivation,
   type InfinityContextCapabilityAttestationV1,

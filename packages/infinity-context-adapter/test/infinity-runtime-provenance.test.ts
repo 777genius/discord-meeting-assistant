@@ -15,6 +15,7 @@ import {
   assertInfinityContextPlanningCompatibility,
   assertInfinityContextActivation,
   assertInfinityContextSearchActivation,
+  assertInfinityContextTransportCapabilities,
   decodeInfinityContextCapabilityAttestation,
   decodeInfinityContextRuntimeActivation,
   infinityContextHistoricalIndexProfileId,
@@ -291,7 +292,28 @@ describe("Infinity Context source-pinned activation", () => {
     expect(() => { assertInfinityContextActivation(activation, {
       ...exactCapabilities,
       ...drift,
-    }, testProductionPolicy); }).toThrow(/capability attestation/u);
+    }, testProductionPolicy); }).toThrow(/attestation/u);
+  });
+
+  it("binds deletion-only transport to the exact reviewed service", () => {
+    const deletionOnly = decodeInfinityContextRuntimeActivation({
+      ...baseActivation,
+      indexingEnabled: false,
+      searchEnabled: false,
+    });
+    expect(() => {
+      assertInfinityContextTransportCapabilities(deletionOnly, exactCapabilities);
+    }).not.toThrow();
+    for (const capabilities of [
+      { ...exactCapabilities, serviceRevision: null },
+      { ...exactCapabilities, serviceRevision: "f".repeat(40) },
+      { ...exactCapabilities, serviceName: "other-infinity-context" },
+      { ...exactCapabilities, apiVersion: "v2" },
+    ]) {
+      expect(() => {
+        assertInfinityContextTransportCapabilities(deletionOnly, capabilities);
+      }).toThrow(/transport attestation/u);
+    }
   });
 
   it("rejects the removed r79 operator-authored qualification fields", () => {

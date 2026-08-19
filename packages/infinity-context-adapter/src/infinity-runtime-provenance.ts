@@ -312,8 +312,17 @@ export function assertInfinityContextActivation(
   if (capabilities === undefined) {
     return;
   }
+  assertInfinityContextTransportCapabilities(activation, capabilities);
   assertProductionQualificationPolicy(activation, productionPolicy);
-  assertInfinityContextCapabilities(activation, capabilities);
+  assertInfinityContextProjectionCapabilities(activation, capabilities);
+}
+
+/** Bind every remote operation, including deletion, to the reviewed service. */
+export function assertInfinityContextTransportCapabilities(activation: InfinityContextRuntimeActivationV1, capabilities: InfinityContextCapabilityAttestationV1): void {
+  const drifted = capabilities.apiVersion !== activation.apiVersion ||
+    capabilities.serviceName !== activation.serviceName ||
+    capabilities.serviceRevision !== INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedServiceRevision;
+  if (drifted) { throw new InfinityContextActivationError("Infinity endpoint transport attestation does not satisfy this release"); }
 }
 
 function assertProductionQualificationPolicy(
@@ -403,17 +412,10 @@ function searchProfileMismatch(activation: InfinityContextRuntimeActivationV1): 
   return activation.searchEnabled && activation.servingProfile !== "same_room_retrieval";
 }
 
-function assertInfinityContextCapabilities(
-  activation: InfinityContextRuntimeActivationV1,
-  capabilities: InfinityContextCapabilityAttestationV1,
-): void {
+function assertInfinityContextProjectionCapabilities(activation: InfinityContextRuntimeActivationV1, capabilities: InfinityContextCapabilityAttestationV1): void {
   const active = activation.indexingEnabled || activation.searchEnabled;
-  const productionActiveAttestation = activation.environment === "production" && active
-      ? activation.embeddingProfileAttestation
-      : null;
+  const productionActiveAttestation = activation.environment === "production" && active ? activation.embeddingProfileAttestation : null;
   if (
-    capabilities.apiVersion !== activation.apiVersion ||
-    capabilities.serviceName !== activation.serviceName ||
     (active && (
       !capabilities.supportsQdrant ||
       !capabilities.enabledAdapters.includes("qdrant")
