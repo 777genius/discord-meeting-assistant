@@ -125,6 +125,14 @@ class SemanticCheckpoints implements ExhaustiveCoverageStore {
     return Promise.resolve(0);
   }
 
+  public corruptCompletedReduction(reduction: CoverageReductionV1): void {
+    for (const [checkpointId, row] of this.#rows) {
+      if (row.state === "completed") {
+        this.#rows.set(checkpointId, { ...row, reduction });
+      }
+    }
+  }
+
   private required(checkpointId: string): CoverageCheckpointLeaseV1 {
     const row = this.#rows.get(checkpointId);
     if (row === undefined) {
@@ -214,12 +222,15 @@ function semanticCoverage(
           asksForGamma
             ? /гамм|gamma/iu.test(text)
             : /agreed to ship Beta|договорилась запустить Гамма|settled on Project Delta|Correction: Beta|approved Omega/iu.test(text)
-        ).map(({ text, turnId }) => ({
+        ).map((turn) => ({
           blockLocator: block.candidateLocator,
-          relevance: /Correction:/u.test(text)
+          relevance: /Correction:/u.test(turn.text)
             ? "conflicting" as const
             : "direct" as const,
-          turnId,
+          sourceEndCodePoint: turn.sourceEndCodePoint,
+          sourceRef: turn.sourceRef,
+          sourceStartCodePoint: turn.sourceStartCodePoint,
+          turnId: turn.turnId,
         }));
         return {
           blockLocator: block.candidateLocator,
@@ -302,7 +313,12 @@ function answerPlan(
   ]));
   const turns = result.plan.reduction.selectedTurns.map((selection) => {
     const block = blocks.get(selection.blockLocator);
-    const turn = block?.turns.find(({ turnId }) => turnId === selection.turnId);
+    const turn = block?.turns.find((candidate) =>
+      candidate.turnId === selection.turnId &&
+      candidate.sourceRef === selection.sourceRef &&
+      candidate.sourceStartCodePoint === selection.sourceStartCodePoint &&
+      candidate.sourceEndCodePoint === selection.sourceEndCodePoint
+    );
     if (block === undefined || turn === undefined) {
       throw new Error("semantic selection did not rehydrate locally");
     }
@@ -619,4 +635,59 @@ describe("semantic exhaustive coverage exact-answer oracles", () => {
       question: "Was Project Zeta ever approved?",
     })).toThrow("between one and eight citations");
   }, 15_000);
+});
+
+describe("semantic exhaustive coverage checkpoint replay", () => {
+  it("rejects a completed checkpoint that selects an overlap-excluded slice", async () => {
+    const meeting = corpus();
+    const checkpoints = new SemanticCheckpoints();
+    const coverage = semanticCoverage(meeting, checkpoints);
+    const plan = buildHistoricalIndexPlan(meeting, new SemanticIds(), semanticBlockPolicy);
+    const occurrences = plan.documents.flatMap(({ manifest }) =>
+      manifest.turnSources.map((source) => ({
+        blockLocator: manifest.candidateLocator,
+        identity: JSON.stringify([
+          source.sourceRef,
+          source.sourceStartCodePoint,
+          source.sourceEndCodePoint,
+        ]),
+        source,
+      }))
+    );
+    const excluded = occurrences.find((candidate, index) =>
+      occurrences.findIndex(({ identity }) => identity === candidate.identity) < index
+    );
+    if (excluded === undefined) {
+      throw new Error("semantic fixture has no overlap-excluded source slice");
+    }
+    const checkpointRequest = {
+      authorizationPrincipalRef: "principal",
+      question: "Was Project Zeta ever approved? Check all discussions.",
+      requestId: "request-corrupt-overlap-checkpoint",
+      roomId: "room-1",
+      scopeId: "scope-1",
+    } as const;
+    await expect(coverage.buildPlan(checkpointRequest)).resolves.toMatchObject({
+      status: "ready",
+    });
+    checkpoints.corruptCompletedReduction({
+      evidenceLocators: [excluded.blockLocator],
+      payload: { staleOverlapSelection: true },
+      selectedTurns: [{
+        blockLocator: excluded.blockLocator,
+        relevance: "direct",
+        sourceEndCodePoint: excluded.source.sourceEndCodePoint,
+        sourceRef: excluded.source.sourceRef,
+        sourceStartCodePoint: excluded.source.sourceStartCodePoint,
+        turnId: excluded.source.turnId,
+      }],
+      selectionStatus: "selected",
+      schemaVersion: 1,
+    });
+
+    await expect(coverage.buildPlan(checkpointRequest)).resolves.toEqual({
+      reason: "coverage_checkpoint_reduction_invalid",
+      status: "invalidated",
+    });
+  });
 });

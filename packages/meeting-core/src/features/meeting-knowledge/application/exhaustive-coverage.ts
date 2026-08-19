@@ -176,10 +176,13 @@ export class ExhaustiveCoverage {
           reduction: validateReduction(
             stored,
             new Set(loaded.blocks.map(({ candidateLocator }) => candidateLocator)),
-            new Set(loaded.blocks.flatMap((block) =>
-              block.turns.map(({ turnId }) => selectedTurnIdentity({
+            new Set(loaded.blocks.flatMap((block, ordinal) =>
+              (loaded.analysisTurns[ordinal] ?? []).map((turn) => selectedTurnIdentity({
                 blockLocator: block.candidateLocator,
-                turnId,
+                sourceEndCodePoint: turn.sourceEndCodePoint,
+                sourceRef: turn.sourceRef,
+                sourceStartCodePoint: turn.sourceStartCodePoint,
+                turnId: turn.turnId,
               }))
             )),
             this.#policy,

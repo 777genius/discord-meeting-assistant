@@ -34,6 +34,9 @@ type CoverageTurnRelevanceV1 = "conflicting" | "context" | "direct";
 export interface CoverageSelectedTurnV1 {
   readonly blockLocator: string;
   readonly relevance: CoverageTurnRelevanceV1;
+  readonly sourceEndCodePoint: number;
+  readonly sourceRef: string;
+  readonly sourceStartCodePoint: number;
   readonly turnId: string;
 }
 

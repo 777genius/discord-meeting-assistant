@@ -196,7 +196,13 @@ export function validateExtract(
 ): CoverageExtractV1 {
   const selectedTurns = validateSelectedTurns(
     extract.selectedTurns,
-    new Map([[block.candidateLocator, new Set(analysisTurns.map(({ turnId }) => turnId))]]),
+    new Set(analysisTurns.map((turn) => selectedTurnIdentity({
+      blockLocator: block.candidateLocator,
+      sourceEndCodePoint: turn.sourceEndCodePoint,
+      sourceRef: turn.sourceRef,
+      sourceStartCodePoint: turn.sourceStartCodePoint,
+      turnId: turn.turnId,
+    }))),
     policy.maximumSelectedTurns,
   );
   const selectedLocators = unique(selectedTurns.map(({ blockLocator }) => blockLocator));
@@ -232,21 +238,9 @@ export function validateReduction(
   allowedSelectedTurns: ReadonlySet<string>,
   policy: ExhaustiveCoveragePolicyV1,
 ): CoverageReductionV1 {
-  const allowedByBlock = new Map<string, Set<string>>();
-  for (const identity of allowedSelectedTurns) {
-    const separator = identity.indexOf("\u0000");
-    if (separator < 1) {
-      throw new Error("coverage reducer allowed-turn identity is invalid");
-    }
-    const blockLocator = identity.slice(0, separator);
-    const turnId = identity.slice(separator + 1);
-    const turns = allowedByBlock.get(blockLocator) ?? new Set<string>();
-    turns.add(turnId);
-    allowedByBlock.set(blockLocator, turns);
-  }
   const selectedTurns = validateSelectedTurns(
     reduction.selectedTurns,
-    allowedByBlock,
+    allowedSelectedTurns,
     policy.maximumSelectedTurns,
   );
   const selectedLocators = unique(selectedTurns.map(({ blockLocator }) => blockLocator));
@@ -308,14 +302,21 @@ export function assertExhaustiveCoveragePolicy(
 }
 
 export function selectedTurnIdentity(
-  turn: Pick<CoverageSelectedTurnV1, "blockLocator" | "turnId">,
+  turn: Pick<CoverageSelectedTurnV1,
+    "blockLocator" | "sourceEndCodePoint" | "sourceRef" | "sourceStartCodePoint" | "turnId">,
 ): string {
-  return `${turn.blockLocator}\u0000${turn.turnId}`;
+  return JSON.stringify([
+    turn.blockLocator,
+    turn.turnId,
+    turn.sourceRef,
+    turn.sourceStartCodePoint,
+    turn.sourceEndCodePoint,
+  ]);
 }
 
 function validateSelectedTurns(
   selected: readonly CoverageSelectedTurnV1[],
-  allowedByBlock: ReadonlyMap<string, ReadonlySet<string>>,
+  allowed: ReadonlySet<string>,
   maximum: number,
 ): readonly CoverageSelectedTurnV1[] {
   const typedSelection: readonly CoverageSelectedTurnV1[] = selected;
@@ -324,11 +325,9 @@ function validateSelectedTurns(
   }
   const identities = new Set<string>();
   const normalized = typedSelection.map((turn) => {
-    const allowedTurns = allowedByBlock.get(turn.blockLocator);
     const identity = selectedTurnIdentity(turn);
     if (
-      allowedTurns === undefined ||
-      !allowedTurns.has(turn.turnId) ||
+      !allowed.has(identity) ||
       !new Set(["conflicting", "context", "direct"]).has(turn.relevance) ||
       identities.has(identity)
     ) {
@@ -338,6 +337,9 @@ function validateSelectedTurns(
     return Object.freeze({ ...turn });
   }).toSorted((left, right) =>
     compareOpaque(left.blockLocator, right.blockLocator) ||
+    compareOpaque(left.sourceRef, right.sourceRef) ||
+    left.sourceStartCodePoint - right.sourceStartCodePoint ||
+    left.sourceEndCodePoint - right.sourceEndCodePoint ||
     compareOpaque(left.turnId, right.turnId)
   );
   return Object.freeze(normalized);

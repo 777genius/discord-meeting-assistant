@@ -376,7 +376,14 @@ function coverageSelectedTurns(
   }
   return Object.freeze(value.map((candidate, index) => {
     const selected = record(candidate, `${field}[${index}]`);
-    exactFields(selected, ["blockLocator", "relevance", "turnId"], `${field}[${index}]`);
+    exactFields(selected, [
+      "blockLocator",
+      "relevance",
+      "sourceEndCodePoint",
+      "sourceRef",
+      "sourceStartCodePoint",
+      "turnId",
+    ], `${field}[${index}]`);
     const relevance = selected.relevance;
     if (!new Set(["conflicting", "context", "direct"]).has(relevance as string)) {
       throw new HistoricalContractCodecError(`${field}[${index}].relevance is unsupported`);
@@ -384,6 +391,11 @@ function coverageSelectedTurns(
     return Object.freeze({
       blockLocator: string(selected.blockLocator, `${field}[${index}].blockLocator`),
       relevance: relevance as CoverageSelectedTurnV1["relevance"],
+      sourceEndCodePoint: integer(selected.sourceEndCodePoint,
+        `${field}[${index}].sourceEndCodePoint`, 1),
+      sourceRef: string(selected.sourceRef, `${field}[${index}].sourceRef`),
+      sourceStartCodePoint: integer(selected.sourceStartCodePoint,
+        `${field}[${index}].sourceStartCodePoint`, 0),
       turnId: string(selected.turnId, `${field}[${index}].turnId`),
     });
   }));

@@ -355,7 +355,8 @@ function useCase(input: {
           ? [{
               blockLocator: block.candidateLocator,
               relevance: "direct" as const,
-              turnId: firstTurn.turnId,
+              sourceEndCodePoint: firstTurn.sourceEndCodePoint, sourceRef: firstTurn.sourceRef,
+              sourceStartCodePoint: firstTurn.sourceStartCodePoint, turnId: firstTurn.turnId,
             }]
           : [];
         return {
@@ -371,7 +372,7 @@ function useCase(input: {
       reduce: async ({ values }) => {
         const reducedTurns = [...new Map(values.flatMap(({ selectedTurns }) =>
           selectedTurns.map((turn) => [
-            `${turn.blockLocator}\u0000${turn.turnId}`,
+            JSON.stringify([turn.blockLocator, turn.turnId, turn.sourceRef, turn.sourceStartCodePoint, turn.sourceEndCodePoint]),
             turn,
           ] as const)
         )).values()];

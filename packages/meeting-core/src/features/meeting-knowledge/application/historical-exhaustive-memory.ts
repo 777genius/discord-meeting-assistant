@@ -46,15 +46,24 @@ export class HistoricalExhaustiveMemoryRetrieval
     ]));
     const selectedTurns = result.plan.reduction.selectedTurns.flatMap((selection) => {
       const block = blocks.get(selection.blockLocator);
-      const turn = block?.turns.find(({ turnId }) => turnId === selection.turnId);
+      const turn = block?.turns.find((candidate) =>
+        candidate.turnId === selection.turnId &&
+        candidate.sourceRef === selection.sourceRef &&
+        candidate.sourceStartCodePoint === selection.sourceStartCodePoint &&
+        candidate.sourceEndCodePoint === selection.sourceEndCodePoint
+      );
       return block === undefined || turn === undefined ? [] : [{ block, turn }];
     });
     if (
       selectedTurns.length !== result.plan.reduction.selectedTurns.length ||
       selectedTurns.length > 256 ||
-      new Set(selectedTurns.map(({ block, turn }) =>
-        `${block.candidateLocator}\u0000${turn.turnId}`
-      )).size !== selectedTurns.length
+      new Set(result.plan.reduction.selectedTurns.map((selection) => JSON.stringify([
+        selection.blockLocator,
+        selection.turnId,
+        selection.sourceRef,
+        selection.sourceStartCodePoint,
+        selection.sourceEndCodePoint,
+      ]))).size !== selectedTurns.length
     ) {
       return { schemaVersion: 1, status: "unsupported" };
     }
@@ -74,6 +83,8 @@ export class HistoricalExhaustiveMemoryRetrieval
       candidate.transcriptId,
       candidate.transcriptVersion,
       candidate.turnId,
+      candidate.sourceStartCodePoint,
+      candidate.sourceEndCodePoint,
     ].join("\u0000"), candidate]));
     if (unique.size > 256) {
       return { schemaVersion: 1, status: "unsupported" };

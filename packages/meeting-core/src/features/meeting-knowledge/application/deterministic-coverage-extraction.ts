@@ -5,6 +5,7 @@ import type {
   CoverageReductionV1,
   CoverageSelectedTurnV1,
 } from "./ports/historical-grounding.js";
+import { selectedTurnIdentity } from "./exhaustive-coverage-contract.js";
 
 const word = /[\p{L}\p{N}]{3,}/gu;
 const ignoredQuestionTerms = new Set([
@@ -96,6 +97,9 @@ export class DeterministicExhaustiveCoverageExtraction
             : correctionOrConflict.test(turn.text)
               ? "conflicting" as const
               : "context" as const,
+          sourceEndCodePoint: turn.sourceEndCodePoint,
+          sourceRef: turn.sourceRef,
+          sourceStartCodePoint: turn.sourceStartCodePoint,
           turnId: turn.turnId,
         });
       })
@@ -183,14 +187,18 @@ function reduceSelections(
   const selected = new Map<string, CoverageSelectedTurnV1>();
   for (const value of input.values) {
     for (const turn of value.selectedTurns) {
-      const prior = selected.get(turn.turnId);
+      const identity = selectedTurnIdentity(turn);
+      const prior = selected.get(identity);
       if (prior === undefined || preferredSelection(turn, prior) === turn) {
-        selected.set(turn.turnId, turn);
+        selected.set(identity, turn);
       }
     }
   }
   const selectedTurns = [...selected.values()].toSorted((left, right) =>
     left.blockLocator.localeCompare(right.blockLocator) ||
+    left.sourceRef.localeCompare(right.sourceRef) ||
+    left.sourceStartCodePoint - right.sourceStartCodePoint ||
+    left.sourceEndCodePoint - right.sourceEndCodePoint ||
     left.turnId.localeCompare(right.turnId)
   );
   const evidenceLocators = [...new Set(
