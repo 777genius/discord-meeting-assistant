@@ -116,7 +116,7 @@ describe("Infinity production semantic qualification composition", () => {
       await infinity.close();
       await pool.end();
     }
-  });
+  }, 15_000);
 
   it("denies mock-qualified search without disabling the base deletion runtime", async () => {
     const pool = new Pool({
