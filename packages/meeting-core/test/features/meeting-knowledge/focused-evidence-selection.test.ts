@@ -68,6 +68,7 @@ describe("focused evidence selection", () => {
 
     expect(result).toMatchObject({
       mode: "semantic",
+      selectedTurnIndices: [1],
       status: "selected",
       turns: [{ turnId: "turn-2" }],
     });
@@ -119,6 +120,7 @@ describe("focused evidence selection", () => {
 
     expect(result).toMatchObject({
       mode: "lexical_fallback",
+      selectedTurnIndices: [0],
       status: "selected",
       turns: [{ turnId: "turn-1" }],
     });
@@ -141,6 +143,7 @@ describe("focused evidence selection", () => {
 
     expect(result).toEqual({
       mode: "lexical_fallback",
+      selectedTurnIndices: [],
       status: "insufficient_evidence",
       turns: [],
     });

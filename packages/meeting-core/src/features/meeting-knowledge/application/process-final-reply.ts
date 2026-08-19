@@ -1,5 +1,4 @@
 import { requiresExhaustiveCoverage } from "../domain/question-scope.js";
-import { createFocusedRetrievalGroundingPlan } from "../domain/grounding-plan.js";
 import {
   QuestionBinding,
   type QuestionBindingSnapshot,
@@ -8,7 +7,6 @@ import {
   authorityMatchesBinding,
   authorizedForJob,
 } from "./final-reply-checks.js";
-import { admittedHumanActors } from "./admitted-human-evidence.js";
 import { prepareExhaustiveFinalReply } from "./exhaustive-final-reply.js";
 import { GroundedMeetingAnswer } from "./grounded-meeting-answer.js";
 import {
@@ -29,7 +27,10 @@ import {
   PublishFinalReply,
   type FinalReplyJobResult,
 } from "./publish-final-reply.js";
-import type { SelectFocusedEvidence } from "./select-focused-evidence.js";
+import {
+  prepareSelectedFocusedEvidence,
+  type SelectFocusedEvidence,
+} from "./select-focused-evidence.js";
 import type {
   AnswerPublicationPort,
   CurrentFinalReplyBinding,
@@ -275,31 +276,23 @@ export class ProcessFinalReplyJob {
       });
     }
     try {
-      const selection = await this.input.selector.execute({
-        attemptId: providerAttemptId,
+      const prepared = await prepareSelectedFocusedEvidence({
+        authorityGeneration: retrieval.authorityGeneration,
+        binding,
+        evidence: this.input.evidence,
+        hydrationReferences,
+        providerAttemptId,
         question: lease.questionText,
+        selector: this.input.selector,
         turns: hydrated.turns,
       });
-      if (selection.status === "insufficient_evidence" ||
-          selection.mode === "lexical_fallback") {
-        return this.settled(await this.publisher.publishFixed(
-          lease,
-          current.binding,
-          "insufficient_evidence",
-        ));
+      if (prepared.status === "prepared") {
+        return { ...prepared, providerAttemptId };
       }
-      const humanActorIds = admittedHumanActors(hydrated);
-      return {
-        authority: hydrated.binding,
-        plan: createFocusedRetrievalGroundingPlan({
-          authorityGeneration: retrieval.authorityGeneration,
-          coverage: "sufficient",
-          humanActorIds,
-          turns: selection.turns,
-        }),
-        providerAttemptId,
-        status: "prepared",
-      };
+      const result = prepared.status === "stale_binding"
+        ? await this.publisher.settle(lease, "stale_binding")
+        : await this.publisher.publishFixed(lease, current.binding, prepared.status);
+      return this.settled(result);
     } catch {
       return this.settled(await this.publisher.publishFixed(
         lease,

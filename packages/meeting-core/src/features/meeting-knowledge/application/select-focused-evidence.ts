@@ -1,9 +1,18 @@
-import type { RehydratedEvidenceTurn } from "../domain/grounding-plan.js";
+import {
+  createFocusedRetrievalGroundingPlan,
+  type FocusedMemoryReference,
+  type GroundingPlan,
+  type RehydratedEvidenceTurn,
+} from "../domain/grounding-plan.js";
+import type { QuestionBindingSnapshot } from "../domain/question-job.js";
+import { admittedHumanActors } from "./admitted-human-evidence.js";
+import { authorityMatchesBinding } from "./final-reply-checks.js";
 import type {
   FocusedEvidenceSelectionCandidateV1,
   FocusedEvidenceSelectionResultV1,
   FocusedEvidenceSelectorPort,
 } from "./ports/focused-evidence-selector.js";
+import type { FinalReplyEvidencePort } from "./ports/final-reply.js";
 
 const MAX_CANDIDATES = 40;
 const MAX_SELECTED = 5;
@@ -19,14 +28,85 @@ const stopWords = new Set([
 export type FocusedEvidenceSelection =
   | {
       readonly mode: "lexical_fallback" | "semantic";
+      readonly selectedTurnIndices: readonly number[];
       readonly status: "selected";
       readonly turns: readonly RehydratedEvidenceTurn[];
     }
   | {
       readonly mode: "lexical_fallback" | "semantic";
+      readonly selectedTurnIndices: readonly [];
       readonly status: "insufficient_evidence";
       readonly turns: readonly [];
     };
+
+export type SelectedFocusedEvidencePreparation =
+  | {
+      readonly authority: Extract<
+        Awaited<ReturnType<FinalReplyEvidencePort["rehydrateSelectedEvidence"]>>,
+        { readonly status: "current" }
+      >["binding"];
+      readonly plan: GroundingPlan;
+      readonly status: "prepared";
+    }
+  | {
+      readonly status:
+        | "insufficient_evidence"
+        | "stale_binding"
+        | "unavailable";
+    };
+
+export async function prepareSelectedFocusedEvidence(input: {
+  readonly authorityGeneration: string;
+  readonly binding: QuestionBindingSnapshot;
+  readonly evidence: FinalReplyEvidencePort;
+  readonly hydrationReferences: readonly FocusedMemoryReference[];
+  readonly providerAttemptId: string;
+  readonly question: string;
+  readonly selector: Pick<SelectFocusedEvidence, "execute">;
+  readonly turns: readonly RehydratedEvidenceTurn[];
+}): Promise<SelectedFocusedEvidencePreparation> {
+  const selection = await input.selector.execute({
+    attemptId: input.providerAttemptId,
+    question: input.question,
+    turns: input.turns,
+  });
+  if (selection.status === "insufficient_evidence" ||
+      selection.mode === "lexical_fallback") {
+    return { status: "insufficient_evidence" };
+  }
+  const references = selection.selectedTurnIndices.map(
+    (index) => input.hydrationReferences[index],
+  );
+  if (!references.every(isReference)) {
+    return { status: "unavailable" };
+  }
+  const refreshed = await input.evidence.rehydrateSelectedEvidence(
+    input.binding,
+    references,
+  );
+  if (refreshed.status === "stale") {
+    return { status: "stale_binding" };
+  }
+  if (refreshed.status !== "current") {
+    return { status: "unavailable" };
+  }
+  if (!authorityMatchesBinding(refreshed.binding, input.binding)) {
+    return { status: "stale_binding" };
+  }
+  if (!hydrationMatchesReferences(input.binding, references, refreshed.turns)) {
+    return { status: "unavailable" };
+  }
+  return {
+    authority: refreshed.binding,
+    plan: createFocusedRetrievalGroundingPlan({
+      authorityGeneration: input.authorityGeneration,
+      coverage: "sufficient",
+      humanActorIds: admittedHumanActors(refreshed),
+      turns: refreshed.turns,
+    }),
+    status: "prepared",
+  };
+}
 
 export class SelectFocusedEvidence {
   public constructor(
@@ -65,12 +145,25 @@ export class SelectFocusedEvidence {
       mode = "lexical_fallback";
       result = lexicalFallback(input.question, input.turns);
     }
+    const selectedTurnIndices = result.status === "selected"
+      ? result.selectedCandidateIds.map(candidateIndex)
+      : [];
     const turns = result.status === "selected"
-      ? result.selectedCandidateIds.map((id) => input.turns[candidateIndex(id)])
+      ? selectedTurnIndices.map((index) => input.turns[index])
       : [];
     const selection = result.status === "selected" && turns.every(isTurn)
-      ? { mode, status: "selected" as const, turns: Object.freeze(turns) }
-      : { mode, status: "insufficient_evidence" as const, turns: [] as const };
+      ? {
+          mode,
+          selectedTurnIndices: Object.freeze(selectedTurnIndices),
+          status: "selected" as const,
+          turns: Object.freeze(turns),
+        }
+      : {
+          mode,
+          selectedTurnIndices: [] as const,
+          status: "insufficient_evidence" as const,
+          turns: [] as const,
+        };
     const elapsed = this.now() - startedAt;
     try {
       this.observe({
@@ -225,6 +318,39 @@ function candidateIndex(id: string): number {
 function isTurn(value: RehydratedEvidenceTurn | undefined):
   value is RehydratedEvidenceTurn {
   return value !== undefined;
+}
+
+function isReference(
+  value: FocusedMemoryReference | undefined,
+): value is FocusedMemoryReference {
+  return value !== undefined;
+}
+
+function hydrationMatchesReferences(
+  binding: QuestionBindingSnapshot,
+  references: readonly FocusedMemoryReference[],
+  turns: readonly RehydratedEvidenceTurn[],
+): boolean {
+  return references.length === turns.length && references.every((reference, index) => {
+    const turn = turns[index];
+    if (turn === undefined ||
+        turn.turnId !== reference.turnId ||
+        turn.turnHash !== reference.turnHash) {
+      return false;
+    }
+    if (turn.source === undefined) {
+      return reference.meetingId === binding.meetingId &&
+        reference.transcriptId === binding.transcriptId &&
+        reference.transcriptVersion === binding.transcriptVersion &&
+        reference.sourceStartCodePoint === undefined &&
+        reference.sourceEndCodePoint === undefined;
+    }
+    return turn.source.meetingId === reference.meetingId &&
+      turn.source.transcriptId === reference.transcriptId &&
+      turn.source.transcriptVersion === reference.transcriptVersion &&
+      turn.source.sourceStartCodePoint === reference.sourceStartCodePoint &&
+      turn.source.sourceEndCodePoint === reference.sourceEndCodePoint;
+  });
 }
 
 function bytes(value: string): number {

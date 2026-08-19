@@ -404,8 +404,9 @@ describe("ProcessFinalReplyJob", () => {
     expect(memory.calls).toHaveLength(1);
     expect(memory.calls[0]).not.toHaveProperty("turns");
     expect(memory.calls[0]).not.toHaveProperty("transcript");
-    expect(evidence.references).toHaveLength(2);
+    expect(evidence.references).toHaveLength(3);
     expect(evidence.references[0]).toEqual(references);
+    expect(evidence.references[1]).toEqual(references);
     expect(generator.requests[0]?.plan).toMatchObject({
       authorityGeneration: authority.memoryGeneration,
       mode: "focused_retrieval",
@@ -497,6 +498,118 @@ describe("ProcessFinalReplyJob", () => {
     expect(fixture.generator.requests[0]?.attemptId).toBe(
       fixture.jobs.providerReservations[0]?.attemptId,
     );
+  });
+
+  it("rehydrates only the exact selected references after semantic selection", async () => {
+    const selector = focusedSelector({
+      schemaVersion: 1,
+      selectedCandidateIds: ["candidate-000002"],
+      status: "selected",
+    });
+    const { evidence, generator, processor } = processingFixture(undefined, selector);
+    generator.result = {
+      answer: {
+        claims: [{
+          evidenceIds: ["evidence-000001"],
+          text: "The corrected release day is Monday.",
+        }],
+        locale: "en",
+        status: "answered",
+      },
+      status: "completed",
+    };
+    evidence.hydrated = {
+      binding: authority,
+      status: "current",
+      turns: [selectedTurns[1]!],
+    };
+    const originalRehydrate = evidence.rehydrateSelectedEvidence.bind(evidence);
+    let calls = 0;
+    evidence.rehydrateSelectedEvidence = (inputBinding, inputReferences) => {
+      calls += 1;
+      if (calls === 1) {
+        evidence.references.push(inputReferences);
+        return Promise.resolve({
+          binding: authority,
+          status: "current" as const,
+          turns: selectedTurns,
+        });
+      }
+      return originalRehydrate(inputBinding, inputReferences);
+    };
+
+    await expect(processor.executeOnce()).resolves.toMatchObject({ outcome: "answered" });
+    expect(evidence.references[1]).toEqual([references[1]]);
+    expect(generator.requests[0]?.plan.evidence.map(({ turnId }) => turnId))
+      .toEqual(["turn-correction"]);
+  });
+
+  it("settles stale binding when evidence changes during semantic selection", async () => {
+    let evidence: EvidenceFake | undefined;
+    const selector = focusedSelector(undefined, () => {
+      if (evidence !== undefined) {
+        evidence.hydrated = { status: "stale" };
+      }
+    });
+    const fixture = processingFixture(undefined, selector);
+    evidence = fixture.evidence;
+
+    await expect(fixture.processor.executeOnce()).resolves.toMatchObject({
+      outcome: "stale_binding",
+      status: "settled",
+    });
+    expect(fixture.evidence.references).toEqual([references, references]);
+    expect(fixture.generator.requests).toEqual([]);
+    expect(fixture.generator.generationCalls).toBe(0);
+  });
+
+  it("settles stale binding when current authority changes during selection", async () => {
+    let evidence: EvidenceFake | undefined;
+    const selector = focusedSelector(undefined, () => {
+      if (evidence !== undefined) {
+        evidence.hydrated = {
+          binding: {
+            ...authority,
+            meetingRevision: authority.meetingRevision + 1,
+          },
+          status: "current",
+          turns: selectedTurns,
+        };
+      }
+    });
+    const fixture = processingFixture(undefined, selector);
+    evidence = fixture.evidence;
+
+    await expect(fixture.processor.executeOnce()).resolves.toMatchObject({
+      outcome: "stale_binding",
+      status: "settled",
+    });
+    expect(fixture.evidence.references).toEqual([references, references]);
+    expect(fixture.generator.requests).toEqual([]);
+    expect(fixture.generator.generationCalls).toBe(0);
+  });
+
+  it("fails closed when refreshed evidence does not preserve selected order", async () => {
+    let evidence: EvidenceFake | undefined;
+    const selector = focusedSelector(undefined, () => {
+      if (evidence !== undefined) {
+        evidence.hydrated = {
+          binding: authority,
+          status: "current",
+          turns: selectedTurns.toReversed(),
+        };
+      }
+    });
+    const fixture = processingFixture(undefined, selector);
+    evidence = fixture.evidence;
+
+    await expect(fixture.processor.executeOnce()).resolves.toMatchObject({
+      outcome: "unavailable",
+      status: "settled",
+    });
+    expect(fixture.evidence.references).toEqual([references, references]);
+    expect(fixture.generator.requests).toEqual([]);
+    expect(fixture.generator.generationCalls).toBe(0);
   });
 });
 
