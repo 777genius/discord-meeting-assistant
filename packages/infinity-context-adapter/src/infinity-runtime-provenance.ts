@@ -337,9 +337,10 @@ function assertProductionQualificationPolicy(
     policy.embeddingProfileDigestSha256 !== attestation.embeddingProfileDigestSha256 ||
     policy.qualificationManifestSha256 !== activation.qualificationManifestSha256
   ) {
-    throw new InfinityContextActivationError(
-      "production Infinity indexing/search requires retained b77 qualification evidence",
-    );
+    throw new InfinityContextActivationError("production Infinity indexing/search requires exact-head qualification evidence");
+  }
+  if (activation.indexingEnabled && !(policy?.productionSemanticQualification ?? false)) {
+    throw new InfinityContextActivationError("production Infinity indexing requires exact-head ingest, process, and dense-profile qualification");
   }
 }
 
@@ -407,8 +408,7 @@ function assertInfinityContextCapabilities(
   capabilities: InfinityContextCapabilityAttestationV1,
 ): void {
   const active = activation.indexingEnabled || activation.searchEnabled;
-  const productionActiveAttestation =
-    activation.environment === "production" && active
+  const productionActiveAttestation = activation.environment === "production" && active
       ? activation.embeddingProfileAttestation
       : null;
   if (

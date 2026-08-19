@@ -184,13 +184,14 @@ describe("Infinity Context delete reconciliation contract", () => {
     expectNoDeletionPost(endpoint, start);
   });
 
-  it("walks deterministic cursor pages through the last target", async () => {
+  it("accepts a realistic encoded cursor and deletes later-page targets and duplicates", async () => {
     const endpoint = new DisposableInfinityEndpoint();
-    endpoint.configureScopeList(1);
+    endpoint.configureScopeList(1, null, "encoded");
     const memory = adapter(endpoint);
     const { plan, request } = fixture();
     const indexed = await memory.indexFinalMeeting(plan);
     expect(indexed.status).toBe("applied");
+    await ingest(endpoint, plan.topology, request.documentExternalIds[1]!);
     const start = endpoint.requests.length;
 
     await expect(memory.deleteMeeting({
@@ -201,7 +202,11 @@ describe("Infinity Context delete reconciliation contract", () => {
     const listRequests = deletionRequests(endpoint, start).filter(({ method, path }) =>
       method === "GET" && path === "/v1/documents"
     );
-    expect(listRequests.some(({ query }) => query.includes("cursor=1"))).toBe(true);
+    const opaqueCursors = listRequests.flatMap(({ query }) => {
+      const cursor = new URLSearchParams(query).get("cursor");
+      return cursor === null ? [] : [cursor];
+    });
+    expect(opaqueCursors.some((cursor) => cursor.length > 200)).toBe(true);
     expect(listRequests.every(({ query }) =>
       query.includes(`space_slug=${encodeURIComponent(plan.topology.spaceSlug)}`) &&
       query.includes(`memory_scope_external_ref=${encodeURIComponent(plan.topology.roomScopeExternalRef)}`) &&
@@ -212,13 +217,16 @@ describe("Infinity Context delete reconciliation contract", () => {
     expectNoDeletionPost(endpoint, start);
   });
 
-  it.each(["missing", "oversized", "repeated"] as const)(
+  it.each(["missing", "overlong", "oversized", "repeated", "repeated_rows"] as const)(
     "fails closed on a %s scope-list cursor chain",
     async (fault) => {
       const endpoint = new DisposableInfinityEndpoint();
       endpoint.configureScopeList(1, fault);
       const memory = adapter(endpoint);
       const { plan, request } = fixture();
+      if (fault === "repeated_rows") {
+        await ingest(endpoint, plan.topology, "foreign-list-row", { sourceType: "foreign_source" });
+      }
       const indexed = await memory.indexFinalMeeting(plan);
       expect(indexed.status).toBe("applied");
       const start = endpoint.requests.length;
@@ -231,7 +239,14 @@ describe("Infinity Context delete reconciliation contract", () => {
         retryable: false,
         status: "absence_unverified",
       });
-      expect(endpoint.documentCount()).toBe(plan.documents.length);
+      expect(endpoint.documentCount()).toBe(
+        plan.documents.length + (fault === "repeated_rows" ? 1 : 0),
+      );
+      if (fault === "overlong") {
+        expect(deletionRequests(endpoint, start).filter(({ method, path }) =>
+          method === "GET" && path === "/v1/documents"
+        )).toHaveLength(1);
+      }
       expectNoDeletionPost(endpoint, start);
     },
   );

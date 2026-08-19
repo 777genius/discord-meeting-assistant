@@ -2,7 +2,7 @@ import type {
   HistoricalDeleteRequestV1,
   HistoricalDeleteResultV1,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
-import type { DocumentRecord, InfinityContextClient } from "@infinity-context/sdk";
+import { ValueError, type DocumentRecord, type InfinityContextClient } from "@infinity-context/sdk";
 
 import { InfinityOperationDeadline } from "./infinity-request-deadline.js";
 
@@ -18,7 +18,6 @@ import {
 
 const SCOPE_PAGE_LIMIT = 100;
 const MAXIMUM_SCOPE_PAGES = 1_000;
-const MAXIMUM_CURSOR_LENGTH = 200;
 
 interface ScopeDocumentPageInput {
   readonly cursor?: string;
@@ -136,19 +135,31 @@ async function listActiveRemoteTargets(
   const documents = client.documents as unknown as ScopeDocumentsClient;
   const targets = new Map<string, string>();
   const seenCursors = new Set<string>();
+  const seenDocumentIds = new Set<string>();
   let cursor: string | undefined;
   for (let pageNumber = 0; pageNumber < MAXIMUM_SCOPE_PAGES; pageNumber += 1) {
-    const page = await operation.request(requestTimeoutMs, (signal) =>
-      documents.listScopeDocuments({
-        ...(cursor === undefined ? {} : { cursor }),
-        limit: SCOPE_PAGE_LIMIT,
-        memoryScopeExternalRef: request.topology.roomScopeExternalRef,
-        signal,
-        spaceSlug: request.topology.spaceSlug,
-        status: "active",
-        threadExternalRef: request.topology.threadExternalRef,
-      })
-    );
+    let page: ScopeDocumentPage;
+    try {
+      page = await operation.request(requestTimeoutMs, (signal) =>
+        documents.listScopeDocuments({
+          ...(cursor === undefined ? {} : { cursor }),
+          limit: SCOPE_PAGE_LIMIT,
+          memoryScopeExternalRef: request.topology.roomScopeExternalRef,
+          signal,
+          spaceSlug: request.topology.spaceSlug,
+          status: "active",
+          threadExternalRef: request.topology.threadExternalRef,
+        })
+      );
+    } catch (error) {
+      if (cursor !== undefined && (error instanceof ValueError ||
+        (error instanceof Error && error.name === "ValueError"))) {
+        throw new InfinityContextAdapterContractError(
+          "official SDK rejected a document cursor returned by the provider",
+        );
+      }
+      throw error;
+    }
     const remoteDocuments = scopeDocumentRecords(page.data);
     if (remoteDocuments.length > SCOPE_PAGE_LIMIT) {
       throw new InfinityContextAdapterContractError(
@@ -156,7 +167,7 @@ async function listActiveRemoteTargets(
       );
     }
     for (const remote of remoteDocuments) {
-      const remoteId = documentId(remote);
+        const remoteId = rememberScopeDocumentId(seenDocumentIds, remote);
       const externalId = documentSourceExternalId(remote);
       const sourceType = documentSourceType(remote);
       if (documentIsDeleted(remote) || asStatus(remote) !== "active") {
@@ -181,7 +192,7 @@ async function listActiveRemoteTargets(
     }
     if (
       typeof nextCursor !== "string" || nextCursor.length === 0 ||
-      nextCursor.length > MAXIMUM_CURSOR_LENGTH || remoteDocuments.length === 0 ||
+      remoteDocuments.length === 0 ||
       seenCursors.has(nextCursor)
     ) {
       throw new InfinityContextAdapterContractError(
@@ -194,6 +205,20 @@ async function listActiveRemoteTargets(
   throw new InfinityContextAdapterContractError(
     "official SDK document pagination exceeded its bounded contract",
   );
+}
+
+function rememberScopeDocumentId(
+  seenDocumentIds: Set<string>,
+  remote: DocumentRecord,
+): string {
+  const remoteId = documentId(remote);
+  if (seenDocumentIds.has(remoteId)) {
+    throw new InfinityContextAdapterContractError(
+      "official SDK repeated a document across cursor pages",
+    );
+  }
+  seenDocumentIds.add(remoteId);
+  return remoteId;
 }
 
 function scopeDocumentRecords(value: unknown): readonly DocumentRecord[] {

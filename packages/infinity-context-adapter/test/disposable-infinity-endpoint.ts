@@ -122,7 +122,8 @@ export class DisposableInfinityEndpoint implements HttpTransport {
     DisposableInfinityRuntimeQualificationReceipt | null = null;
   #ingestGate: IngestGate | null = null;
   #scopeListPageSize = 100;
-  #scopeListCursorFault: "missing" | "oversized" | "repeated" | null = null;
+  #scopeListCursorFault: "missing" | "overlong" | "oversized" | "repeated" | "repeated_rows" | null = null;
+  #scopeListCursorFormat: "encoded" | "numeric" = "numeric";
   public readonly requests: RecordedRequest[] = [];
 
   public pauseNextIngest(): {
@@ -156,10 +157,12 @@ export class DisposableInfinityEndpoint implements HttpTransport {
 
   public configureScopeList(
     pageSize: number,
-    cursorFault: "missing" | "oversized" | "repeated" | null = null,
+    cursorFault: "missing" | "overlong" | "oversized" | "repeated" | "repeated_rows" | null = null,
+    cursorFormat: "encoded" | "numeric" = "numeric",
   ): void {
     this.#scopeListPageSize = pageSize;
     this.#scopeListCursorFault = cursorFault;
+    this.#scopeListCursorFormat = cursorFormat;
   }
 
   public preserveNextThreadDocumentAndHideItFromStatus(): void {
@@ -514,7 +517,10 @@ export class DisposableInfinityEndpoint implements HttpTransport {
     const requestedLimit = Number.isSafeInteger(limit) && limit > 0 ? limit : 100;
     const pageSize = Math.min(requestedLimit, this.#scopeListPageSize);
     const cursor = url.searchParams.get("cursor");
-    const offset = cursor === null ? 0 : Number.parseInt(cursor, 10);
+    const cursorOffset = cursor !== null && this.#scopeListCursorFormat === "encoded"
+      ? cursor.slice(cursor.lastIndexOf(":") + 1)
+      : cursor;
+    const offset = cursorOffset === null ? 0 : Number.parseInt(cursorOffset, 10);
     if (!Number.isSafeInteger(offset) || offset < 0) {
       return json(400, { detail: "invalid cursor" });
     }
@@ -530,9 +536,15 @@ export class DisposableInfinityEndpoint implements HttpTransport {
     const page = documents.slice(offset, requestedEnd);
     const responsePage = this.#scopeListCursorFault === "oversized" && page[0] !== undefined
       ? Array.from({ length: requestedLimit + 1 }, () => page[0]!)
-      : page;
+      : this.#scopeListCursorFault === "repeated_rows" && documents[0] !== undefined
+        ? [documents[0]]
+        : page;
     const nextOffset = offset + page.length;
-    const nextCursor = nextOffset < documents.length ? String(nextOffset) : null;
+    const nextCursor = nextOffset < documents.length
+      ? this.#scopeListCursorFormat === "encoded"
+        ? "opaque-token".repeat(22) + ":" + nextOffset
+        : String(nextOffset)
+      : null;
     if (this.#scopeListCursorFault === "missing" && nextCursor !== null) {
       return json(200, { data: responsePage.map((document) => this.#documentRecord(document)) });
     }
@@ -540,7 +552,9 @@ export class DisposableInfinityEndpoint implements HttpTransport {
       data: responsePage.map((document) => this.#documentRecord(document)),
       next_cursor: this.#scopeListCursorFault === "repeated" && nextCursor !== null
         ? (cursor ?? "0")
-        : nextCursor,
+        : this.#scopeListCursorFault === "overlong" && nextCursor !== null
+          ? "x".repeat(1_001)
+          : nextCursor,
     });
   }
 

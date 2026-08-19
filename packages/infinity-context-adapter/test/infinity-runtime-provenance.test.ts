@@ -200,7 +200,7 @@ describe("Infinity Context source-pinned activation", () => {
     })).toThrow(/source-pinned embedding profile/u);
   });
 
-  it("permits production indexing-only with source transport qualification", () => {
+  it("rejects production indexing backed only by scoped-list qualification", () => {
     const sourceDigest =
       INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedEmbeddingProfileDigestSha256;
     const activation = decodeInfinityContextRuntimeActivation({
@@ -214,12 +214,15 @@ describe("Infinity Context source-pinned activation", () => {
     expect(() => { assertInfinityContextActivation(activation, {
       ...exactCapabilities,
       embeddingProfileDigestSha256: sourceDigest,
-    }, INFINITY_CONTEXT_PRODUCTION_QUALIFICATION); }).not.toThrow();
+    }, INFINITY_CONTEXT_PRODUCTION_QUALIFICATION); }).toThrow(
+      /exact-head ingest, process, and dense-profile qualification/u,
+    );
   });
 
   it("rejects production search with source transport-only qualification", () => {
     const activation = decodeInfinityContextRuntimeActivation({
       ...productionActivation,
+      indexingEnabled: false,
       embeddingProfileAttestation: {
         ...profileAttestation,
         embeddingProfileDigestSha256:
@@ -238,12 +241,15 @@ describe("Infinity Context source-pinned activation", () => {
   });
 
   it("permits production search with explicit semantic qualification", () => {
-    const activation = decodeInfinityContextRuntimeActivation(productionActivation);
+    const activation = decodeInfinityContextRuntimeActivation({
+      ...productionActivation,
+      indexingEnabled: false,
+    });
     expect(() => {
       assertInfinityContextSearchActivation(activation, testProductionPolicy);
     }).not.toThrow();
     expect(() => { assertInfinityContextSearchActivation(activation); })
-      .toThrow(/retained b77 qualification/u);
+      .toThrow(/exact-head qualification evidence/u);
   });
 
   it("requires the source-owned policy to qualify an exact instance digest", () => {
