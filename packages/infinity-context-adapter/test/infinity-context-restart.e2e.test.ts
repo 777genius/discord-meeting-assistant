@@ -129,7 +129,7 @@ describe("Infinity Context durable restart convergence", () => {
       expect(endpoint.requests.filter(({ idempotencyKey, method, path }) =>
         method === "POST" && path === "/v1/documents" &&
         idempotencyKey === document.mutationId
-      )).toHaveLength(1);
+      )).toHaveLength(2);
       expect(endpoint.requests.filter(({ idempotencyKey, method, path }) =>
         method === "POST" && path.endsWith("/process") &&
         idempotencyKey === `${document.mutationId}:process`

@@ -371,21 +371,7 @@ export class DisposableInfinityEndpoint implements HttpTransport {
 
   #documentsRequest(request: HttpRequest, body: JsonValue | null): HttpResponse | Promise<HttpResponse> {
     if (request.method === "GET") {
-      const scope = request.url.searchParams.get("memory_scope_external_ref");
-      const space = request.url.searchParams.get("space_slug");
-      const thread = request.url.searchParams.get("thread_external_ref");
-      const requestedLimit = Number.parseInt(request.url.searchParams.get("limit") ?? "100", 10);
-      const limit = Number.isSafeInteger(requestedLimit) && requestedLimit > 0
-        ? requestedLimit
-        : 100;
-      return envelope([...this.#documents.values()]
-        .filter((document) =>
-          document.memoryScopeExternalRef === scope &&
-          document.spaceSlug === space &&
-          document.threadExternalRef === thread
-        )
-        .slice(0, limit)
-        .map((document) => this.#documentRecord(document)));
+      return json(405, { detail: "method not allowed" });
     }
     const gate = this.#ingestGate;
     if (gate !== null) {
@@ -424,6 +410,7 @@ export class DisposableInfinityEndpoint implements HttpTransport {
     const idempotencyKey = request.headers.get("idempotency-key") ?? "";
     const priorId = this.#ingestIdempotency.get(idempotencyKey);
     let document = priorId === undefined ? undefined : this.#documents.get(priorId);
+    const replayed = document !== undefined;
     if (document === undefined) {
       document = {
         id: `document-${this.#nextDocument++}`,
@@ -445,6 +432,9 @@ export class DisposableInfinityEndpoint implements HttpTransport {
       };
       this.#documents.set(document.id, document);
       this.#ingestIdempotency.set(idempotencyKey, document.id);
+    }
+    if (replayed && document.processed) {
+      document.indexingStatus = "already_indexed_or_pending";
     }
     if (this.#loseIngestResponse) {
       this.#loseIngestResponse = false;

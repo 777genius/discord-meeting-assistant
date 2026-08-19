@@ -154,10 +154,8 @@ describe("Infinity Context bounded search budget", () => {
   it("uses the bounded service maximum so ranked evidence is not silently budget-dropped", async () => {
     const endpoint = new DisposableInfinityEndpoint();
     const adapter = new InfinityContextHistoricalMemoryAdapter({
-      baseUrl: "http://disposable.infinity.invalid", embeddingTokenProfile: () => historicalEmbeddingTokenProfile(exactTokenizer),
-      requestTimeoutMs: 1_000,
-      schemaVersion: 1,
-      transport: endpoint,
+      baseUrl: "http://disposable.infinity.invalid", embeddingTokenProfile: () => historicalEmbeddingTokenProfile(exactTokenizer), requestTimeoutMs: 1_000,
+      schemaVersion: 1, transport: endpoint,
     });
     await adapter.qualifyCapabilities();
 
@@ -242,10 +240,8 @@ describe("Infinity Context historical memory vertical slice", () => {
   it("fails closed when the unpageable official space listing is full", async () => {
     const endpoint = new DisposableInfinityEndpoint();
     const client = new InfinityContextClient({
-      baseUrl: "http://disposable.infinity.invalid",
-      retryPolicy: { maxAttempts: 1 },
-      timeoutMs: 1_000,
-      transport: endpoint,
+      baseUrl: "http://disposable.infinity.invalid", retryPolicy: { maxAttempts: 1 },
+      timeoutMs: 1_000, transport: endpoint,
     });
     await Promise.all(Array.from({ length: 100 }, (_, index) =>
       client.spaces.createSpace({
@@ -316,27 +312,13 @@ describe("Infinity Context historical memory vertical slice", () => {
     )).toHaveLength(100);
   });
 
-  it("does not claim release absence from a full unpageable SDK listing", async () => {
+});
+
+describe("Infinity Context b77 document compatibility", () => {
+  it("recovers an unknown ingest outcome without unsupported document listing", async () => {
     const endpoint = new DisposableInfinityEndpoint();
     const ids = new HmacHistoricalOpaqueIds(new Uint8Array(32).fill(0x4d));
     const plan = buildHistoricalIndexPlan(finalMeeting(1, "Tuesday"), ids, blockPolicy);
-    const client = new InfinityContextClient({
-      baseUrl: "http://disposable.infinity.invalid",
-      retryPolicy: { maxAttempts: 1 },
-      timeoutMs: 1_000,
-      transport: endpoint,
-    });
-    await Promise.all(Array.from({ length: 500 }, (_, index) =>
-      client.documents.ingestDocument({
-        idempotencyKey: `decoy-${index}`,
-        memoryScopeExternalRef: plan.topology.roomScopeExternalRef,
-        sourceExternalId: `decoy-document-${index}`,
-        spaceSlug: plan.topology.spaceSlug,
-        text: `synthetic decoy ${index}`,
-        threadExternalRef: plan.topology.threadExternalRef,
-        title: `decoy-${index}`,
-      })
-    ));
     const target = plan.documents[0];
     if (target === undefined) {
       throw new Error("historical plan fixture produced no target document");
@@ -347,28 +329,36 @@ describe("Infinity Context historical memory vertical slice", () => {
       schemaVersion: 1,
       transport: endpoint,
     });
+    endpoint.loseNextIngestResponse();
 
     await expect(adapter.deleteMeeting({
-      deleteMutationId: plan.deleteMutationId,
+      deleteMutationId: plan.deleteMutationId, mode: "release",
       documentExternalIds: [target.manifest.documentExternalId],
-      mode: "release",
-      remoteDocumentIds: {},
-      schemaVersion: 1,
-      topology: plan.topology,
-    })).resolves.toEqual({
-      code: "memory.scope_document_listing_incomplete",
-      retryable: true,
-      status: "absence_unverified",
-    });
+      reconciliationDocuments: [target], remoteDocumentIds: {},
+      schemaVersion: 1, topology: plan.topology,
+    })).resolves.toEqual({ status: "verified_absent" });
+    expect(endpoint.requests.some(({ method, path }) =>
+      method === "GET" && path === "/v1/documents"
+    )).toBe(false);
+    expect(endpoint.requests.filter(({ idempotencyKey, method, path }) =>
+      idempotencyKey === target.mutationId && method === "POST" &&
+      path === "/v1/documents"
+    )).toHaveLength(2);
+    expect(endpoint.requests.some(({ idempotencyKey, path }) =>
+      idempotencyKey === `${target.mutationId}:process` && path.endsWith("/process")
+    )).toBe(false);
+    const recoveryWire = endpoint.requests.filter(({ path }) => /^\/v1\/documents\/document-\d+$/u.test(path));
+    expect(recoveryWire.some(({ method }) => method === "DELETE")).toBe(true);
+    expect(recoveryWire.some(({ method }) => method === "GET")).toBe(true);
   });
 
   it("does not delete a document through a corrupt local remote-id binding", async () => {
     const endpoint = new DisposableInfinityEndpoint();
-    const ids = new HmacHistoricalOpaqueIds(new Uint8Array(32).fill(0x2f));
-    const plan = buildHistoricalIndexPlan(finalMeeting(1, "Tuesday"), ids, blockPolicy);
+    const plan = boundedWindowPlan(2);
     const target = plan.documents[0];
-    if (target === undefined) {
-      throw new Error("historical plan fixture produced no target document");
+    const missingTarget = plan.documents[1];
+    if (target === undefined || missingTarget === undefined) {
+      throw new Error("historical plan fixture produced too few target documents");
     }
     const client = new InfinityContextClient({
       baseUrl: "http://disposable.infinity.invalid",
@@ -377,11 +367,9 @@ describe("Infinity Context historical memory vertical slice", () => {
       transport: endpoint,
     });
     const unrelated = (await client.documents.ingestDocument({
-      idempotencyKey: "unrelated-ingest",
+      idempotencyKey: "unrelated-ingest", text: "synthetic unrelated evidence",
       memoryScopeExternalRef: plan.topology.roomScopeExternalRef,
-      sourceExternalId: "unrelated-document",
-      spaceSlug: plan.topology.spaceSlug,
-      text: "synthetic unrelated evidence",
+      sourceExternalId: "unrelated-document", spaceSlug: plan.topology.spaceSlug,
       threadExternalRef: plan.topology.threadExternalRef,
       title: "unrelated",
     })).data;
@@ -394,8 +382,12 @@ describe("Infinity Context historical memory vertical slice", () => {
 
     await expect(adapter.deleteMeeting({
       deleteMutationId: plan.deleteMutationId,
-      documentExternalIds: [target.manifest.documentExternalId],
+      documentExternalIds: [
+        target.manifest.documentExternalId,
+        missingTarget.manifest.documentExternalId,
+      ],
       mode: "release",
+      reconciliationDocuments: [target, missingTarget],
       remoteDocumentIds: { [target.manifest.documentExternalId]: unrelated.id },
       schemaVersion: 1,
       topology: plan.topology,
@@ -405,8 +397,13 @@ describe("Infinity Context historical memory vertical slice", () => {
       status: "absence_unverified",
     });
     expect(endpoint.documentCount()).toBe(1);
+    expect(endpoint.requests.some(({ idempotencyKey }) =>
+      idempotencyKey === missingTarget.mutationId
+    )).toBe(false);
   });
+});
 
+describe("Infinity Context document deletion verification", () => {
   it("never treats zero thread counters as verified absence while a known document remains", async () => {
     const endpoint = new DisposableInfinityEndpoint();
     const ids = new HmacHistoricalOpaqueIds(new Uint8Array(32).fill(0x31));
@@ -431,6 +428,7 @@ describe("Infinity Context historical memory vertical slice", () => {
         manifest.documentExternalId
       ),
       mode: "meeting",
+      reconciliationDocuments: plan.documents,
       remoteDocumentIds: indexed.remoteDocumentIds,
       schemaVersion: 1,
       topology: plan.topology,
@@ -443,6 +441,7 @@ describe("Infinity Context historical memory vertical slice", () => {
         manifest.documentExternalId
       ),
       mode: "meeting",
+      reconciliationDocuments: plan.documents,
       remoteDocumentIds: indexed.remoteDocumentIds,
       schemaVersion: 1,
       topology: plan.topology,
@@ -472,6 +471,7 @@ describe("Infinity Context historical memory vertical slice", () => {
         manifest.documentExternalId
       ),
       mode: "release" as const,
+      reconciliationDocuments: plan.documents,
       remoteDocumentIds: indexed.remoteDocumentIds,
       schemaVersion: 1 as const,
       topology: plan.topology,
@@ -538,6 +538,7 @@ describe("Infinity Context production provenance deletion", () => {
         manifest.documentExternalId
       ),
       mode: "release",
+      reconciliationDocuments: plan.documents,
       remoteDocumentIds: indexed.remoteDocumentIds,
       schemaVersion: 1,
       topology: plan.topology,

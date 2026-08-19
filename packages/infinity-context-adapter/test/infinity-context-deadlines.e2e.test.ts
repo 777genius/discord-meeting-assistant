@@ -78,6 +78,7 @@ describe("Infinity Context SDK request and resumable operation deadlines", () =>
         manifest.documentExternalId
       ),
       mode: "release",
+      reconciliationDocuments: largePlan.documents,
       remoteDocumentIds: indexed.remoteDocumentIds,
       schemaVersion: 1,
       topology: largePlan.topology,
