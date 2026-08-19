@@ -469,6 +469,9 @@ describe("PostgreSQL exhaustive coverage checkpoints", () => {
         selectedTurns: [{
           blockLocator: identity.blockLocators[0]!,
           relevance: "direct",
+          sourceEndCodePoint: 18,
+          sourceRef: "checkpoint-source-1",
+          sourceStartCodePoint: 0,
           turnId: "checkpoint-turn-1",
         }],
         selectionStatus: "selected",
@@ -482,6 +485,9 @@ describe("PostgreSQL exhaustive coverage checkpoints", () => {
       selectedTurns: [{
         blockLocator: identity.blockLocators[0]!,
         relevance: "direct" as const,
+        sourceEndCodePoint: 18,
+        sourceRef: "checkpoint-source-1",
+        sourceStartCodePoint: 0,
         turnId: "checkpoint-turn-1",
       }],
       selectionStatus: "selected" as const,

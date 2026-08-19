@@ -81,11 +81,10 @@ function boundedWindowPlan(turnCount: number, maximumBlocks = turnCount) {
 
 function cedarExtract(block: LocallyRehydratedEvidenceBlockV1, analysisTurns: LocallyRehydratedEvidenceBlockV1["turns"]): CoverageExtractV1 {
   const selectedTurns = analysisTurns.filter(({ text }) => text.includes("Cedar"))
-    .map(({ turnId }) => ({
-    blockLocator: block.candidateLocator,
-    relevance: "direct" as const,
-    turnId,
-  }));
+    .map((turn) => ({
+      blockLocator: block.candidateLocator, relevance: "direct" as const,
+      sourceEndCodePoint: turn.sourceEndCodePoint, sourceRef: turn.sourceRef, sourceStartCodePoint: turn.sourceStartCodePoint, turnId: turn.turnId,
+    }));
   return {
     blockLocator: block.candidateLocator,
     evidenceLocators: selectedTurns.length === 0 ? [] : [block.candidateLocator],
@@ -101,7 +100,8 @@ function reduceCedar(
 ) {
   const reducedTurns = [...new Map(values.flatMap(({ selectedTurns }) =>
     selectedTurns.map((turn) => [
-      `${turn.blockLocator}\u0000${turn.turnId}`,
+      JSON.stringify([turn.blockLocator, turn.sourceRef, turn.sourceStartCodePoint,
+        turn.sourceEndCodePoint, turn.turnId]),
       turn,
     ] as const)
   )).values()];
