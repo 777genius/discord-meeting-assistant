@@ -254,7 +254,7 @@ export class HistoricalSyncWorker {
           documentExternalIds: stalePlan.documents.map(
             ({ manifest }) => manifest.documentExternalId,
           ),
-          mode: "release",
+          mode: "release", reconciliationDocuments: stalePlan.documents,
           remoteDocumentIds: remoteDocumentIdsForPlan(stalePlan, lease.remoteDocumentIds),
           schemaVersion: 1,
           topology: stalePlan.topology,
@@ -379,7 +379,7 @@ export class HistoricalSyncWorker {
           lease.plan.documents.map(({ manifest }) => manifest.documentExternalId),
         ),
         mode: lease.operation === "delete_meeting" ? "meeting" : "release",
-        remoteDocumentIds: lease.remoteDocumentIds,
+        reconciliationDocuments: lease.plan.documents, remoteDocumentIds: lease.remoteDocumentIds,
         schemaVersion: 1,
         topology,
       } as const;

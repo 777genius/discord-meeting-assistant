@@ -310,9 +310,65 @@ describe("historical projection sync worker", () => {
       status: "deleted",
     });
     expect(deleteMeeting).toHaveBeenCalledWith(expect.objectContaining({
+      deleteMutationId: plan.deleteMutationId,
       documentExternalIds: plan.documents.map(({ manifest }) => manifest.documentExternalId),
       mode: "release",
+      reconciliationDocuments: plan.documents,
+      remoteDocumentIds: {},
     }));
+  });
+
+  it("retains persisted reconciliation documents after an unknown ingest outcome", async () => {
+    const accepted = meeting();
+    const ids = new TestIds();
+    const indexingStore = new QueueStore([lease(accepted, "index", 1)]);
+    const indexFinalMeeting = vi.fn().mockResolvedValue({
+      code: "memory.network_error",
+      retryable: true,
+      status: "outcome_unknown",
+    });
+    const indexing = new HistoricalSyncWorker({
+      authority: { loadAcceptedFinalMeeting: async () => accepted },
+      ids,
+      memory: { deleteMeeting: vi.fn(), indexFinalMeeting, searchRoom: vi.fn() },
+      store: indexingStore,
+    });
+
+    await expect(indexing.executeOnce({ indexingEnabled: true })).resolves.toMatchObject({
+      status: "retry_scheduled",
+    });
+    const persisted = indexingStore.plans[0];
+    if (persisted === undefined) {
+      throw new Error("unknown ingest outcome did not retain its persisted plan");
+    }
+    const deletionStore = new QueueStore([
+      lease(accepted, "delete_release", 2, persisted),
+    ]);
+    const deleteMeeting = vi.fn().mockResolvedValue({ status: "verified_absent" });
+    const deleting = new HistoricalSyncWorker({
+      authority: { loadAcceptedFinalMeeting: async () => accepted },
+      ids,
+      memory: { deleteMeeting, indexFinalMeeting: vi.fn(), searchRoom: vi.fn() },
+      store: deletionStore,
+    });
+
+    await expect(deleting.executeOnce({ indexingEnabled: false })).resolves.toMatchObject({
+      status: "deleted",
+    });
+    expect(deleteMeeting).toHaveBeenCalledWith({
+      deleteMutationId: persisted.deleteMutationId,
+      documentExternalIds: persisted.documents.map(
+        ({ manifest }) => manifest.documentExternalId,
+      ),
+      mode: "release",
+      reconciliationDocuments: persisted.documents,
+      remoteDocumentIds: {},
+      schemaVersion: 1,
+      topology: persisted.topology,
+    });
+    expect(persisted.documents.map(({ mutationId }) => mutationId)).toEqual(
+      indexingStore.plans[0]?.documents.map(({ mutationId }) => mutationId),
+    );
   });
 
   it("replays the persisted mutation plan exactly after policy drift", async () => {

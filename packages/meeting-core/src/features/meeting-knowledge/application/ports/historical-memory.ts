@@ -126,6 +126,8 @@ export interface HistoricalDeleteRequestV1 {
   /** Exact release document identities used to reconcile an unknown ingest outcome. */
   readonly documentExternalIds: readonly string[];
   readonly mode: "meeting" | "release";
+  /** Persisted provider-neutral payloads used for idempotent ingest reconciliation. */
+  readonly reconciliationDocuments: HistoricalIndexPlanV1["documents"];
   readonly remoteDocumentIds: Readonly<Record<string, string>>;
   readonly schemaVersion: 1;
   readonly topology: HistoricalTopologyV1;
