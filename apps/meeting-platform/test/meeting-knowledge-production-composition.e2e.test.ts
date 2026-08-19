@@ -96,6 +96,10 @@ let container: StartedTestContainer | undefined;
 let database: Pool | undefined;
 
 describe("Meeting Knowledge production-composition qualification", () => {
+  it("leases one provider attempt across selector, answer, and safety deadlines", () => {
+    expect(localFinalReplyPolicy.jobLeaseSeconds).toBe(360);
+  });
+
   it("degrades transient Infinity health without blocking application readiness", async () => {
     const transientPool = new Pool({
       connectionString: "postgresql://synthetic.invalid/never-connected",

@@ -78,7 +78,7 @@ describe("Infinity production semantic qualification composition", () => {
       embeddingProfileId:
         retainedProductionEmbeddingProfileAttestation.embeddingProfile,
       serviceRevision:
-        INFINITY_CONTEXT_SDK_PROVENANCE.retainedProductionSemanticServiceRevision,
+        INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedServiceRevision,
     });
     const runtime = requiredHistoricalRuntime(
       pool, infinity, true, true, "test",
@@ -135,7 +135,7 @@ describe("Infinity production semantic qualification composition", () => {
     }
   });
 
-  it("enables production search for the source-pinned profile and instance echo", async () => {
+  it("keeps production search closed without explicit semantic qualification", async () => {
     const pool = new Pool({
       connectionString: "postgresql://synthetic.invalid/never-connected",
     });
@@ -158,8 +158,8 @@ describe("Infinity production semantic qualification composition", () => {
     );
     try {
       await expect(runtime.assertReady()).resolves.toBeUndefined();
-      expect(runtime.searchEnabled()).toBe(true);
-      expect(runtime.servingAuthorized()).toBe(true);
+      expect(runtime.searchEnabled()).toBe(false);
+      expect(runtime.servingAuthorized()).toBe(false);
 
       infinity.endpoint.setCapabilitiesQualified(false);
       await runtime.assertReady();
