@@ -2,7 +2,7 @@
 id: ADR-0035
 status: accepted
 supersedes: []
-superseded_by: []
+superseded_by: [ADR-0040]
 ---
 
 # ADR-0035: Separate immutable Infinity package and semantic qualification

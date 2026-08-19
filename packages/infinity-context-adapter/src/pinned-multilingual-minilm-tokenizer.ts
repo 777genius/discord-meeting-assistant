@@ -99,24 +99,120 @@ HistoricalEmbeddingTokenizerProfileV1 = Object.freeze({
   tokenizerConfigSha256,
 });
 
-/** Opaque durable identity for indexes produced by this exact qualified stack. */
-const PINNED_INFINITY_CONTEXT_HISTORICAL_INDEX_PROFILE_BASE_ID = [
-  "meeting-knowledge.infinity-index.v1",
-  INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedServiceRevision,
-  PINNED_MULTILINGUAL_MINILM_EMBEDDING_PROFILE_ID,
-  PINNED_MULTILINGUAL_MINILM_TOKENIZER_PROFILE.embeddingModelRevision,
-  PINNED_MULTILINGUAL_MINILM_TOKENIZER_PROFILE.servingRuntimeRevision,
-  PINNED_MULTILINGUAL_MINILM_TOKENIZER_PROFILE.conformanceVectorSetSha256,
-].join("|");
+export interface InfinityContextHistoricalIndexSemanticTupleV2 {
+  readonly conformanceVectorSetSha256: string;
+  readonly embeddingModelRevision: string;
+  readonly embeddingProfileId: string;
+  readonly embeddingProfileInstanceDigestSha256: string;
+  readonly maxInputTokens: number;
+  readonly serviceRevision: string;
+  readonly servingRuntimeRevision: string;
+  readonly tokenizerArtifactSha256: string;
+  readonly tokenizerConfigSha256: string;
+  readonly tokenizerRuntimeIntegrity: string;
+  readonly tokenizerRuntimeManifestSha256: string;
+  readonly tokenizerRuntimePackage: string;
+  readonly tokenizerRuntimeSha256: string;
+  readonly tokenizerRuntimeTarballSha256: string;
+  readonly tokenizerRuntimeVersion: string;
+}
+
+/** Pure durable identity constructor for one complete embedding semantic tuple. */
+export function historicalIndexProfileIdForSemanticTuple(
+  tuple: InfinityContextHistoricalIndexSemanticTupleV2,
+): string {
+  for (const [label, digest] of [
+    ["conformance vector set", tuple.conformanceVectorSetSha256],
+    ["embedding profile instance", tuple.embeddingProfileInstanceDigestSha256],
+    ["tokenizer artifact", tuple.tokenizerArtifactSha256],
+    ["tokenizer config", tuple.tokenizerConfigSha256],
+    ["tokenizer runtime manifest", tuple.tokenizerRuntimeManifestSha256],
+    ["tokenizer runtime", tuple.tokenizerRuntimeSha256],
+    ["tokenizer runtime tarball", tuple.tokenizerRuntimeTarballSha256],
+  ] as const) {
+    if (!/^sha256:[a-f0-9]{64}$/u.test(digest)) {
+      throw new RangeError(`${label} digest must be an exact SHA-256 identity`);
+    }
+  }
+  if (!Number.isSafeInteger(tuple.maxInputTokens) || tuple.maxInputTokens < 1) {
+    throw new RangeError("maximum input tokens must be a positive safe integer");
+  }
+  for (const [label, revision] of [
+    ["embedding model", tuple.embeddingModelRevision],
+    ["service", tuple.serviceRevision],
+    ["serving runtime", tuple.servingRuntimeRevision],
+  ] as const) {
+    if (!/^[a-f0-9]{40}$/u.test(revision)) {
+      throw new RangeError(`${label} revision must be an exact Git identity`);
+    }
+  }
+  if (!/^sha512-[A-Za-z0-9+/]{86}==$/u.test(tuple.tokenizerRuntimeIntegrity)) {
+    throw new RangeError("tokenizer runtime integrity must be an exact SHA-512 identity");
+  }
+  if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/u.test(
+    tuple.tokenizerRuntimeVersion,
+  )) {
+    throw new RangeError("tokenizer runtime version must be an exact semver identity");
+  }
+  for (const [label, value] of [
+    ["embedding profile", tuple.embeddingProfileId],
+    ["tokenizer runtime package", tuple.tokenizerRuntimePackage],
+  ] as const) {
+    if (value.length === 0) {
+      throw new RangeError(`${label} must be non-empty`);
+    }
+  }
+
+  const canonicalTuple = JSON.stringify([
+    "meeting-knowledge.infinity-index.semantic-tuple.v2",
+    tuple.serviceRevision,
+    tuple.embeddingProfileId,
+    tuple.embeddingProfileInstanceDigestSha256,
+    tuple.embeddingModelRevision,
+    tuple.servingRuntimeRevision,
+    tuple.maxInputTokens,
+    tuple.tokenizerArtifactSha256,
+    tuple.tokenizerConfigSha256,
+    tuple.conformanceVectorSetSha256,
+    tuple.tokenizerRuntimePackage,
+    tuple.tokenizerRuntimeVersion,
+    tuple.tokenizerRuntimeIntegrity,
+    tuple.tokenizerRuntimeManifestSha256,
+    tuple.tokenizerRuntimeSha256,
+    tuple.tokenizerRuntimeTarballSha256,
+  ]);
+  const digest = createHash("sha256").update(canonicalTuple).digest("hex");
+  return `meeting-knowledge.infinity-index.v2|sha256:${digest}`;
+}
 
 /** Binds durable serving identity to the exact qualified deployment instance. */
 export function infinityContextHistoricalIndexProfileId(
   embeddingProfileDigestSha256: string,
 ): string {
-  if (!/^sha256:[a-f0-9]{64}$/u.test(embeddingProfileDigestSha256)) {
-    throw new RangeError("embedding profile digest must be an exact SHA-256 identity");
-  }
-  return `${PINNED_INFINITY_CONTEXT_HISTORICAL_INDEX_PROFILE_BASE_ID}|${embeddingProfileDigestSha256}`;
+  return historicalIndexProfileIdForSemanticTuple({
+    conformanceVectorSetSha256:
+      PINNED_MULTILINGUAL_MINILM_TOKENIZER_PROFILE.conformanceVectorSetSha256,
+    embeddingModelRevision:
+      PINNED_MULTILINGUAL_MINILM_TOKENIZER_PROFILE.embeddingModelRevision,
+    embeddingProfileId: PINNED_MULTILINGUAL_MINILM_EMBEDDING_PROFILE_ID,
+    embeddingProfileInstanceDigestSha256: embeddingProfileDigestSha256,
+    maxInputTokens: PINNED_MULTILINGUAL_MINILM_TOKENIZER_PROFILE.maxInputTokens,
+    serviceRevision: INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedServiceRevision,
+    servingRuntimeRevision:
+      PINNED_MULTILINGUAL_MINILM_TOKENIZER_PROFILE.servingRuntimeRevision,
+    tokenizerArtifactSha256:
+      PINNED_MULTILINGUAL_MINILM_TOKENIZER_PROFILE.tokenizerArtifactSha256,
+    tokenizerConfigSha256:
+      PINNED_MULTILINGUAL_MINILM_TOKENIZER_PROFILE.tokenizerConfigSha256,
+    tokenizerRuntimeIntegrity: PINNED_HUGGINGFACE_TOKENIZERS_RUNTIME.integrity,
+    tokenizerRuntimeManifestSha256:
+      PINNED_HUGGINGFACE_TOKENIZERS_RUNTIME.manifestSha256,
+    tokenizerRuntimePackage: PINNED_HUGGINGFACE_TOKENIZERS_RUNTIME.package,
+    tokenizerRuntimeSha256: PINNED_HUGGINGFACE_TOKENIZERS_RUNTIME.runtimeSha256,
+    tokenizerRuntimeTarballSha256:
+      PINNED_HUGGINGFACE_TOKENIZERS_RUNTIME.tarballSha256,
+    tokenizerRuntimeVersion: PINNED_HUGGINGFACE_TOKENIZERS_RUNTIME.version,
+  });
 }
 
 export interface PinnedMultilingualMiniLmArtifacts {
