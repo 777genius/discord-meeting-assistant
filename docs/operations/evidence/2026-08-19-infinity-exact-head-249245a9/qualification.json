@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "qualification_kind": "composite_exact_head",
+  "head_revision": "249245a98bdae6d357c586aa078374c2a9da728c",
+  "root_tree": "82c2a0d45c9e4ef18aa643ddc0f4a974f0f327a9",
+  "sdk": {
+    "tree": "a2ed97138f1d52e33aa04de6efe17c4726baf19e",
+    "source_archive_sha256": "4ce4b9b2319e2015e8a4c9e81263ff23ae024e468bd6ae4523ee8b0ac95eb97c",
+    "source_bundle_sha256": "0168c397b761950e9dd5e7d2586516c773287f0bd101d8900cff961608b358bd",
+    "tarball_sha256": "8727f751aed94769de8e7aec93ea0b927479a4ab501b3b01c31c2472b6cebc7f",
+    "tarball_integrity": "sha512-V2RCQKfJ3XMiIXQ7B3F+wvGAu9RJeRYGnDaRIVdT890tLvv0asviGpmsyyM5El7JuNjgPKI+TpdygaoKjxYSDw=="
+  },
+  "revision_chain": [
+    "15809619e61ae76f45d04176d1b681a78bf41de3",
+    "698537f91162b21070b2f43445650a85e8d90737",
+    "249245a98bdae6d357c586aa078374c2a9da728c"
+  ],
+  "retained_inputs": {
+    "scoped_documents_live_manifest": {
+      "path": "docs/operations/evidence/2026-08-19-infinity-scoped-documents-9b5c0e38/manifest.json",
+      "sha256": "sha256:42807626aa1867c8d9663fa4a8c9ad27cc08c0d2eb93adbcea8f138a3f230c43"
+    },
+    "active_only_delta_qualification": {
+      "path": "docs/operations/evidence/2026-08-19-infinity-active-only-15809619/qualification.json",
+      "sha256": "sha256:e9a78deeae033daa95da161782802f65a85e314226dae6f87657b33f6e89458f"
+    }
+  },
+  "exact_head_gates": {
+    "sdk_tests": {
+      "passed": 86,
+      "failed": 0
+    },
+    "server_tests": {
+      "passed": 116,
+      "failed": 0
+    },
+    "bidirectional_api_parity": {
+      "passed": 93,
+      "failed": 0
+    },
+    "file_boundary": "passed",
+    "ruff": "passed",
+    "typecheck": "passed",
+    "build": "passed",
+    "consumer_install": "passed"
+  },
+  "production_capabilities": {
+    "deletion_reconciliation": true,
+    "indexing": false,
+    "semantic_search": false
+  }
+}

@@ -221,6 +221,11 @@
       "id": "ADR-0045",
       "path": "docs/decisions/0045-active-only-scoped-document-enumeration.md",
       "immutableDigest": "sha256:05e4d589f0d5b5fbc87a3d3f376d0ea988eb5f4bd295d1462714e5d18ff76933"
+    },
+    {
+      "id": "ADR-0046",
+      "path": "docs/decisions/0046-exact-head-infinity-deletion-qualification.md",
+      "immutableDigest": "sha256:58ec4cdedaea7684e4e0fa2e40d317e9788b0e722af6658d28e36e8e1e8c81a4"
     }
   ]
 }

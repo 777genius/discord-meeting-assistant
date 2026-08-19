@@ -50,7 +50,7 @@ const productionActivation = {
   immutablePackageIntegrity: INFINITY_CONTEXT_SDK_PROVENANCE.immutablePackageIntegrity,
   packageSource: "immutable_package" as const,
   qualificationManifestSha256:
-    INFINITY_CONTEXT_SDK_PROVENANCE.retainedPredecessorScopedDocumentsManifestSha256,
+    INFINITY_CONTEXT_SDK_PROVENANCE.retainedExactHeadQualificationManifestSha256,
 } as const;
 const exactCapabilities = {
   apiVersion: "v1",
@@ -67,7 +67,7 @@ const testProductionPolicy = {
   embeddingProfileId: INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedEmbeddingProfileId,
   productionSemanticQualification: true,
   qualificationManifestSha256:
-    INFINITY_CONTEXT_SDK_PROVENANCE.retainedPredecessorScopedDocumentsManifestSha256,
+    INFINITY_CONTEXT_SDK_PROVENANCE.retainedExactHeadQualificationManifestSha256,
   sdkCommit: INFINITY_CONTEXT_SDK_PROVENANCE.commit,
   serviceRevision: INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedServiceRevision,
 } as const;
@@ -123,7 +123,7 @@ describe("Infinity Context official SDK provenance", () => {
       .toBe(INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedServiceRevision);
   });
 
-  it("binds predecessor scoped-list and exact active-only qualification evidence", () => {
+  it("binds the composite exact-head and retained predecessor qualification evidence", () => {
     const repositoryRoot = new URL("../../../", import.meta.url);
     const retainedDigest = (path: string): string =>
       "sha256:" + createHash("sha256").update(readFileSync(new URL(path, repositoryRoot))).digest("hex");
@@ -131,6 +131,31 @@ describe("Infinity Context official SDK provenance", () => {
       .toBe(INFINITY_CONTEXT_SDK_PROVENANCE.retainedPredecessorScopedDocumentsManifestSha256);
     expect(retainedDigest(INFINITY_CONTEXT_SDK_PROVENANCE.retainedActiveOnlyQualificationPath))
       .toBe(INFINITY_CONTEXT_SDK_PROVENANCE.retainedActiveOnlyQualificationSha256);
+    expect(retainedDigest(INFINITY_CONTEXT_SDK_PROVENANCE.retainedExactHeadQualificationManifestPath))
+      .toBe(INFINITY_CONTEXT_SDK_PROVENANCE.retainedExactHeadQualificationManifestSha256);
+    const exactHeadManifest = JSON.parse(readFileSync(new URL(
+      INFINITY_CONTEXT_SDK_PROVENANCE.retainedExactHeadQualificationManifestPath,
+      repositoryRoot,
+    ), "utf8")) as unknown;
+    expect(exactHeadManifest).toMatchObject({
+      exact_head_gates: {
+        bidirectional_api_parity: { failed: 0, passed: 93 },
+        sdk_tests: { failed: 0, passed: 86 },
+        server_tests: { failed: 0, passed: 116 },
+      },
+      head_revision: INFINITY_CONTEXT_SDK_PROVENANCE.commit,
+      production_capabilities: {
+        deletion_reconciliation: true,
+        indexing: false,
+        semantic_search: false,
+      },
+      sdk: {
+        source_bundle_sha256:
+          INFINITY_CONTEXT_SDK_PROVENANCE.retainedExactHeadSourceBundleSha256,
+        tarball_sha256: INFINITY_CONTEXT_SDK_PROVENANCE.packageTarballSha256,
+        tree: INFINITY_CONTEXT_SDK_PROVENANCE.tree,
+      },
+    });
     const evidenceRoot = new URL(
       "../../../docs/operations/evidence/2026-08-19-infinity-scoped-documents-9b5c0e38/",
       import.meta.url,

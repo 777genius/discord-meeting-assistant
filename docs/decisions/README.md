@@ -48,6 +48,7 @@
 - [ADR-0043: Source-bound Infinity index semantics and migration](0043-source-bound-infinity-index-semantics.md)
 - [ADR-0044: Scoped Infinity deletion reconciliation](0044-scoped-infinity-deletion-reconciliation.md)
 - [ADR-0045: Active-only scoped document enumeration](0045-active-only-scoped-document-enumeration.md)
+- [ADR-0046: Exact-head Infinity deletion qualification](0046-exact-head-infinity-deletion-qualification.md)
 
 ## Superseded
 

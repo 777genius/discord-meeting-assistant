@@ -59,7 +59,7 @@ export const testProductionQualificationPolicy = Object.freeze({
     retainedProductionEmbeddingProfileAttestation.embeddingProfile,
   productionSemanticQualification: true as const,
   qualificationManifestSha256:
-    INFINITY_CONTEXT_SDK_PROVENANCE.retainedPredecessorScopedDocumentsManifestSha256,
+    INFINITY_CONTEXT_SDK_PROVENANCE.retainedExactHeadQualificationManifestSha256,
   sdkCommit: INFINITY_CONTEXT_SDK_PROVENANCE.commit,
   serviceRevision: INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedServiceRevision,
 });
@@ -218,7 +218,7 @@ export function platformConfig(
           : "reviewed_source_workspace",
         embeddingProfileAttestation,
         qualificationManifestSha256: environment === "production"
-          ? INFINITY_CONTEXT_SDK_PROVENANCE.retainedPredecessorScopedDocumentsManifestSha256
+          ? INFINITY_CONTEXT_SDK_PROVENANCE.retainedExactHeadQualificationManifestSha256
           : null,
         schemaVersion: 1,
         sdkCommit: INFINITY_CONTEXT_SDK_PROVENANCE.commit,

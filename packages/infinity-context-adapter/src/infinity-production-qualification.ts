@@ -6,7 +6,7 @@ import {
   type InfinityContextProductionQualificationPolicyV1,
 } from "./infinity-runtime-provenance.js";
 
-/** Exact retained b77 canary receipt selected by source, never operator input. */
+/** Exact-head composite deletion qualification selected by source, never operator input. */
 export const INFINITY_CONTEXT_PRODUCTION_QUALIFICATION:
 InfinityContextProductionQualificationPolicyV1 = Object.freeze({
   embeddingProfileDigestSha256:
@@ -14,7 +14,7 @@ InfinityContextProductionQualificationPolicyV1 = Object.freeze({
   embeddingProfileId: INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedEmbeddingProfileId,
   productionSemanticQualification: false,
   qualificationManifestSha256:
-    INFINITY_CONTEXT_SDK_PROVENANCE.retainedPredecessorScopedDocumentsManifestSha256,
+    INFINITY_CONTEXT_SDK_PROVENANCE.retainedExactHeadQualificationManifestSha256,
   sdkCommit: INFINITY_CONTEXT_SDK_PROVENANCE.commit,
   serviceRevision: INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedServiceRevision,
 });

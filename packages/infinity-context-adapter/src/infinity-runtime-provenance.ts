@@ -17,6 +17,11 @@ export const INFINITY_CONTEXT_SDK_PROVENANCE = Object.freeze({
   retainedActiveOnlyQualificationPath: "docs/operations/evidence/2026-08-19-infinity-active-only-15809619/qualification.json",
   retainedActiveOnlyQualificationSha256: "sha256:e9a78deeae033daa95da161782802f65a85e314226dae6f87657b33f6e89458f",
   retainedPredecessorScopedDocumentsManifestPath: "docs/operations/evidence/2026-08-19-infinity-scoped-documents-9b5c0e38/manifest.json",
+  retainedExactHeadQualificationManifestPath: "docs/operations/evidence/2026-08-19-infinity-exact-head-249245a9/qualification.json",
+  retainedExactHeadQualificationManifestSha256:
+    "sha256:c972c35ceeb6abcb37529961dc0c844243627c80a9a792944dd776db7c6ac74b",
+  retainedExactHeadSourceBundleSha256:
+    "0168c397b761950e9dd5e7d2586516c773287f0bd101d8900cff961608b358bd",
   retainedPredecessorScopedDocumentsManifestSha256: "sha256:42807626aa1867c8d9663fa4a8c9ad27cc08c0d2eb93adbcea8f138a3f230c43",
   retainedScopedDocumentsParityBaselineSha256: "sha256:d7e58a5d8d1ef010c413d2b76a35ac196ee6f5ba7033573fcab100fca040fa97",
   retainedScopedDocumentsPostgresEvidenceSha256:
@@ -302,7 +307,7 @@ export function assertInfinityContextActivation(
         INFINITY_CONTEXT_SDK_PROVENANCE.immutablePackageIntegrity ||
       activation.qualificationManifestSha256 === null ||
       activation.qualificationManifestSha256 !==
-        INFINITY_CONTEXT_SDK_PROVENANCE.retainedPredecessorScopedDocumentsManifestSha256
+        INFINITY_CONTEXT_SDK_PROVENANCE.retainedExactHeadQualificationManifestSha256
     )
   ) {
     throw new InfinityContextActivationError(
