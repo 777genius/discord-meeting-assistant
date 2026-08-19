@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { InfinityContextClient } from "@infinity-context/sdk";
 
 import {
   buildHistoricalIndexPlan,
@@ -61,6 +62,39 @@ function adapter(endpoint: DisposableInfinityEndpoint) {
   });
 }
 
+async function ingest(
+  endpoint: DisposableInfinityEndpoint,
+  topology: ReturnType<typeof fixture>["plan"]["topology"],
+  sourceExternalId: string,
+  input: { readonly sourceType?: string; readonly threadExternalRef?: string } = {},
+): Promise<string> {
+  const client = new InfinityContextClient({
+    baseUrl: "http://disposable.infinity.invalid",
+    retryPolicy: { maxAttempts: 1 },
+    timeoutMs: 1_000,
+    transport: endpoint,
+  });
+  return (await client.documents.ingestDocument({
+    idempotencyKey: `seed-${sourceExternalId}-${endpoint.requests.length}`,
+    memoryScopeExternalRef: topology.roomScopeExternalRef,
+    sourceExternalId,
+    sourceType: input.sourceType ?? "meeting_final_human_evidence",
+    spaceSlug: topology.spaceSlug,
+    text: "synthetic reconciliation seed",
+    threadExternalRef: input.threadExternalRef ?? topology.threadExternalRef,
+    title: "reconciliation seed",
+  })).data.id;
+}
+
+function deletionRequests(endpoint: DisposableInfinityEndpoint, start: number) {
+  return endpoint.requests.slice(start);
+}
+
+function expectNoDeletionPost(endpoint: DisposableInfinityEndpoint, start: number): void {
+  expect(deletionRequests(endpoint, start).filter(({ method }) => method === "POST"))
+    .toEqual([]);
+}
+
 describe("Infinity Context delete reconciliation contract", () => {
   it.each([
     ["mismatched sets", ({ plan, request }: ReturnType<typeof fixture>) => ({
@@ -108,15 +142,13 @@ describe("Infinity Context delete reconciliation contract", () => {
     expect(endpoint.requests).toEqual([]);
   });
 
-  it("recovers and deletes the canonical document behind a stale missing ID", async () => {
+  it("recovers a stale missing ID through exact-scope listing without POST", async () => {
     const endpoint = new DisposableInfinityEndpoint();
     const memory = adapter(endpoint);
     const { plan, request } = fixture();
     const indexed = await memory.indexFinalMeeting(plan);
     expect(indexed.status).toBe("applied");
-    const processCount = endpoint.requests.filter(({ path }) =>
-      path.endsWith("/process")
-    ).length;
+    const start = endpoint.requests.length;
 
     await expect(memory.deleteMeeting({
       ...request,
@@ -128,19 +160,19 @@ describe("Infinity Context delete reconciliation contract", () => {
     expect(endpoint.documentCount()).toBe(0);
     expect(endpoint.requests.some(({ method, path }) =>
       method === "GET" && path === "/v1/documents"
-    )).toBe(false);
-    expect(endpoint.requests.filter(({ path }) => path.endsWith("/process")))
-      .toHaveLength(processCount);
+    )).toBe(true);
+    expectNoDeletionPost(endpoint, start);
     expect(endpoint.requests.some(({ method, path }) =>
       method === "DELETE" && /^\/v1\/documents\/document-\d+$/u.test(path)
     )).toBe(true);
   });
 
-  it("materializes an unprocessed canonical document solely to verify deletion", async () => {
+  it("does not materialize a document when no canonical remote row exists", async () => {
     const endpoint = new DisposableInfinityEndpoint();
     const memory = adapter(endpoint);
-    const { plan, request } = fixture();
+    const { request } = fixture();
 
+    const start = endpoint.requests.length;
     await expect(memory.deleteMeeting({
       ...request,
       remoteDocumentIds: Object.fromEntries(request.documentExternalIds.map(
@@ -149,12 +181,149 @@ describe("Infinity Context delete reconciliation contract", () => {
     })).resolves.toEqual({ status: "verified_absent" });
 
     expect(endpoint.documentCount()).toBe(0);
-    expect(endpoint.requests.filter(({ method, path }) =>
-      method === "POST" && path === "/v1/documents"
-    )).toHaveLength(plan.documents.length);
-    expect(endpoint.requests.some(({ path }) => path.endsWith("/process"))).toBe(false);
-    expect(endpoint.requests.some(({ method, path }) =>
+    expectNoDeletionPost(endpoint, start);
+  });
+
+  it("walks deterministic cursor pages through the last target", async () => {
+    const endpoint = new DisposableInfinityEndpoint();
+    endpoint.configureScopeList(1);
+    const memory = adapter(endpoint);
+    const { plan, request } = fixture();
+    const indexed = await memory.indexFinalMeeting(plan);
+    expect(indexed.status).toBe("applied");
+    const start = endpoint.requests.length;
+
+    await expect(memory.deleteMeeting({
+      ...request,
+      remoteDocumentIds: indexed.status === "applied" ? indexed.remoteDocumentIds : {},
+    })).resolves.toEqual({ status: "verified_absent" });
+
+    const listRequests = deletionRequests(endpoint, start).filter(({ method, path }) =>
       method === "GET" && path === "/v1/documents"
-    )).toBe(false);
+    );
+    expect(listRequests.some(({ query }) => query.includes("cursor=1"))).toBe(true);
+    expect(listRequests.every(({ query }) =>
+      query.includes(`space_slug=${encodeURIComponent(plan.topology.spaceSlug)}`) &&
+      query.includes(`memory_scope_external_ref=${encodeURIComponent(plan.topology.roomScopeExternalRef)}`) &&
+      query.includes(`thread_external_ref=${encodeURIComponent(plan.topology.threadExternalRef)}`) &&
+      query.includes("status=active")
+    )).toBe(true);
+    expect(endpoint.documentCount()).toBe(0);
+    expectNoDeletionPost(endpoint, start);
+  });
+
+  it.each(["missing", "oversized", "repeated"] as const)(
+    "fails closed on a %s scope-list cursor chain",
+    async (fault) => {
+      const endpoint = new DisposableInfinityEndpoint();
+      endpoint.configureScopeList(1, fault);
+      const memory = adapter(endpoint);
+      const { plan, request } = fixture();
+      const indexed = await memory.indexFinalMeeting(plan);
+      expect(indexed.status).toBe("applied");
+      const start = endpoint.requests.length;
+
+      await expect(memory.deleteMeeting({
+        ...request,
+        remoteDocumentIds: indexed.status === "applied" ? indexed.remoteDocumentIds : {},
+      })).resolves.toMatchObject({
+        code: "memory.invalid_sdk_response",
+        retryable: false,
+        status: "absence_unverified",
+      });
+      expect(endpoint.documentCount()).toBe(plan.documents.length);
+      expectNoDeletionPost(endpoint, start);
+    },
+  );
+
+  it("discards a wrong foreign ID and preserves foreign scope and source rows", async () => {
+    const endpoint = new DisposableInfinityEndpoint();
+    const memory = adapter(endpoint);
+    const { plan, request } = fixture();
+    const indexed = await memory.indexFinalMeeting(plan);
+    expect(indexed.status).toBe("applied");
+    const externalId = request.documentExternalIds[0]!;
+    const foreignId = await ingest(endpoint, plan.topology, externalId, {
+      threadExternalRef: `${plan.topology.threadExternalRef}-foreign`,
+    });
+    await ingest(endpoint, plan.topology, externalId, { sourceType: "foreign_source" });
+    const start = endpoint.requests.length;
+
+    await expect(memory.deleteMeeting({
+      ...request,
+      remoteDocumentIds: { ...(
+        indexed.status === "applied" ? indexed.remoteDocumentIds : {}
+      ), [externalId]: foreignId },
+    })).resolves.toEqual({ status: "verified_absent" });
+
+    expect(endpoint.documentIds()).toContain(foreignId);
+    expect(endpoint.documentCount()).toBe(2);
+    expectNoDeletionPost(endpoint, start);
+  });
+
+  it("deletes every canonical duplicate found in the exact scope", async () => {
+    const endpoint = new DisposableInfinityEndpoint();
+    const memory = adapter(endpoint);
+    const { plan, request } = fixture();
+    const indexed = await memory.indexFinalMeeting(plan);
+    expect(indexed.status).toBe("applied");
+    const externalId = request.documentExternalIds[0]!;
+    await ingest(endpoint, plan.topology, externalId);
+    const start = endpoint.requests.length;
+
+    await expect(memory.deleteMeeting({
+      ...request,
+      remoteDocumentIds: indexed.status === "applied" ? indexed.remoteDocumentIds : {},
+    })).resolves.toEqual({ status: "verified_absent" });
+
+    expect(endpoint.documentCount()).toBe(0);
+    expect(deletionRequests(endpoint, start).filter(({ method }) => method === "DELETE"))
+      .toHaveLength(plan.documents.length + 1);
+    expectNoDeletionPost(endpoint, start);
+  });
+
+  it("converges after a crash-window partial delete with a fresh adapter", async () => {
+    const endpoint = new DisposableInfinityEndpoint();
+    const { plan, request } = fixture();
+    const indexed = await adapter(endpoint).indexFinalMeeting(plan);
+    expect(indexed.status).toBe("applied");
+    const deleteRequest = {
+      ...request,
+      remoteDocumentIds: indexed.status === "applied" ? indexed.remoteDocumentIds : {},
+    };
+    endpoint.failDocumentDeleteAfter(1);
+    const start = endpoint.requests.length;
+
+    await expect(adapter(endpoint).deleteMeeting(deleteRequest)).resolves.toMatchObject({
+      status: "absence_unverified",
+    });
+    expect(endpoint.documentCount()).toBe(1);
+    await expect(adapter(endpoint).deleteMeeting(deleteRequest)).resolves.toEqual({
+      status: "verified_absent",
+    });
+
+    expect(endpoint.documentCount()).toBe(0);
+    expectNoDeletionPost(endpoint, start);
+  });
+
+  it("reconciles a lost DELETE response with GET and a final scope scan", async () => {
+    const endpoint = new DisposableInfinityEndpoint();
+    const memory = adapter(endpoint);
+    const { plan, request } = fixture();
+    const indexed = await memory.indexFinalMeeting(plan);
+    expect(indexed.status).toBe("applied");
+    endpoint.loseNextDocumentDeleteResponse();
+    const start = endpoint.requests.length;
+
+    await expect(memory.deleteMeeting({
+      ...request,
+      remoteDocumentIds: indexed.status === "applied" ? indexed.remoteDocumentIds : {},
+    })).resolves.toEqual({ status: "verified_absent" });
+
+    expect(endpoint.documentCount()).toBe(0);
+    expect(deletionRequests(endpoint, start).some(({ method, path }) =>
+      method === "GET" && /^\/v1\/documents\/document-\d+$/u.test(path)
+    )).toBe(true);
+    expectNoDeletionPost(endpoint, start);
   });
 });
