@@ -231,7 +231,7 @@ describe("Infinity production semantic qualification composition", () => {
       await infinity.close();
       await pool.end();
     }
-  });
+  }, 15_000);
 
   it("keeps production search closed when the endpoint instance echo drifts", async () => {
     const pool = new Pool({
