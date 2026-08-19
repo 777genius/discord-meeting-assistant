@@ -3,7 +3,12 @@ import {
   flushLoggers,
   PrometheusMetrics,
 } from "@discord-meeting/observability-adapter";
-import { PostgresSchemaReadiness } from "@discord-meeting/postgres-adapter";
+import { RequestHistoricalMeetingDeletion } from
+  "@discord-meeting/meeting-core/meeting-knowledge";
+import {
+  PostgresHistoricalMemoryStore,
+  PostgresSchemaReadiness,
+} from "@discord-meeting/postgres-adapter";
 
 import { PlatformRecordingIngress } from "../application/platform-ingress.js";
 import type { PostCallOutboxDispatcher } from "../application/post-call-outbox-dispatcher.js";
@@ -11,7 +16,11 @@ import type { PlatformConfig } from "../config.js";
 import { createPlatformCoreResources } from "./core-resources.js";
 import { createPlatformDiscordLiveComposition } from "./discord-live.js";
 import { createPlatformHealth } from "./health.js";
+import { createPlatformHistoricalMemory } from "./historical-memory.js";
+import { createPlatformGroundedMeetingAnswer } from "./grounded-answer.js";
+import { createPlatformLiveFinalizedMemory } from "./live-finalized-memory.js";
 import { createPlatformHttpComposition } from "./http.js";
+import { createMeetingKnowledgeLocalFinalReply } from "./meeting-knowledge.js";
 import {
   classifyRecordingIngressRejection,
   createQueueObserver,
@@ -50,23 +59,13 @@ export async function startMeetingPlatform(
   const metrics = new PrometheusMetrics();
   try {
     const core = createPlatformCoreResources({ cleanup, config, logger, metrics });
-    const recordingPlayback = createPlatformRecordingPlaybackComposition({
-      config,
-      meetings: core.meetings,
-      s3: core.s3,
-    });
-    const discordLive = await createPlatformDiscordLiveComposition({
-      cleanup,
-      config,
-      guildConfigurations: core.guildConfigurations,
-      logger,
-      meetings: core.liveMeetings,
-      publicationEffects: core.publicationEffects,
-      ...(recordingPlayback.recordingPlaybackUrl === undefined
-        ? {}
-        : { recordingPlaybackUrl: recordingPlayback.recordingPlaybackUrl }),
-      runtimeTransport: core.runtimeTransport,
-    });
+    const {
+      discordLive,
+      historicalMemory,
+      liveFinalizedMemory,
+      meetingKnowledge,
+      recordingPlayback,
+    } = await createPlatformKnowledgeComposition({ cleanup, config, core, logger });
     const processMeeting = createProcessingRuntime({
       ...(discordLive.live === undefined ? {} : { live: discordLive.live }),
       liveMeetings: core.liveMeetings,
@@ -120,6 +119,7 @@ export async function startMeetingPlatform(
         metrics: () => metrics.render(),
         readiness: async () => ({ ready: (await health.snapshot()).ready }),
       },
+      historicalDeletion: createPlatformHistoricalDeletion(core.pool),
       ingress,
       installUrls: discordLive.installUrls,
       logger,
@@ -132,6 +132,7 @@ export async function startMeetingPlatform(
       dependencyReadiness: createDependencyReadiness(health),
       discord: discordLive.discord,
       guildSetupHandler: discordLive.guildSetupHandler,
+      ...(historicalMemory === undefined ? {} : { historicalMemory }),
       logger,
       meetingPlatformInstallUrl: discordLive.installUrls.meetingPlatform,
       outboxDispatcher: postCall.outboxDispatcher,
@@ -143,6 +144,8 @@ export async function startMeetingPlatform(
       server: http.server,
       worker: postCall.worker,
     });
+    meetingKnowledge.start();
+    liveFinalizedMemory?.start();
     cleanup.release();
     return createRunningPlatformRuntime({
       ...(discordLive.conversationRuntime === undefined
@@ -154,8 +157,11 @@ export async function startMeetingPlatform(
       },
       discord: discordLive.discord,
       guildSetupHandler: discordLive.guildSetupHandler,
+      ...(historicalMemory === undefined ? {} : { historicalMemory }),
+      ...(liveFinalizedMemory === undefined ? {} : { liveFinalizedMemory }),
       logger,
       ...(discordLive.live === undefined ? {} : { live: discordLive.live }),
+      meetingKnowledge,
       outboxDispatcher: postCall.outboxDispatcher,
       pool: core.pool,
       queue: postCall.queue,
@@ -169,6 +175,88 @@ export async function startMeetingPlatform(
   } catch (error) {
     return rethrowAfterFailedPlatformStartup(error, cleanup);
   }
+}
+
+async function createPlatformKnowledgeComposition(input: {
+  readonly cleanup: PlatformStartupCleanup;
+  readonly config: PlatformConfig;
+  readonly core: ReturnType<typeof createPlatformCoreResources>;
+  readonly logger: Parameters<typeof createPlatformHistoricalMemory>[0]["logger"];
+}) {
+  const { cleanup, config, core, logger } = input;
+  const historicalMemory = createPlatformHistoricalMemory({
+    config,
+    logger,
+    pool: core.pool,
+    runtimeTransport: core.runtimeTransport,
+  });
+  if (historicalMemory !== undefined) {
+    cleanup.defer("historical memory reconciler", () => historicalMemory.close());
+  }
+  const liveFinalizedMemory = createPlatformLiveFinalizedMemory({
+    config,
+    logger,
+    pool: core.pool,
+  });
+  if (liveFinalizedMemory !== undefined) {
+    cleanup.defer("live finalized memory reconciler", () =>
+      liveFinalizedMemory.close()
+    );
+  }
+  const groundedAnswerUseCase = createPlatformGroundedMeetingAnswer({
+    config,
+    runtimeTransport: core.runtimeTransport,
+  });
+  const recordingPlayback = createPlatformRecordingPlaybackComposition({
+    config,
+    meetings: core.meetings,
+    s3: core.s3,
+  });
+  const discordLive = await createPlatformDiscordLiveComposition({
+    cleanup,
+    config,
+    guildConfigurations: core.guildConfigurations,
+    ...(groundedAnswerUseCase === undefined ? {} : { groundedAnswerUseCase }),
+    ...(historicalMemory === undefined ? {} : { historicalMemory }),
+    logger,
+    ...(liveFinalizedMemory === undefined ? {} : { liveFinalizedMemory }),
+    meetings: core.liveMeetings,
+    pool: core.pool,
+    publicationEffects: core.publicationEffects,
+    ...(recordingPlayback.recordingPlaybackUrl === undefined
+      ? {}
+      : { recordingPlaybackUrl: recordingPlayback.recordingPlaybackUrl }),
+    runtimeTransport: core.runtimeTransport,
+  });
+  const meetingKnowledge = createMeetingKnowledgeLocalFinalReply({
+    ...(groundedAnswerUseCase === undefined ? {} : { answers: groundedAnswerUseCase }),
+    client: discordLive.discord,
+    config,
+    guildConfigurations: core.guildConfigurations,
+    ...(historicalMemory === undefined ? {} : { historicalMemory }),
+    logger,
+    pool: core.pool,
+    runtimeTransport: core.runtimeTransport,
+  });
+  cleanup.defer("Meeting Knowledge local final reply", () => meetingKnowledge.close());
+  return {
+    discordLive,
+    historicalMemory,
+    liveFinalizedMemory,
+    meetingKnowledge,
+    recordingPlayback,
+  };
+}
+
+export function createPlatformHistoricalDeletion(
+  pool: ConstructorParameters<typeof PostgresHistoricalMemoryStore>[0],
+): { readonly requestMeetingDeletion: (meetingId: string) => Promise<void> } {
+  const deletion = new RequestHistoricalMeetingDeletion(
+    new PostgresHistoricalMemoryStore(pool),
+  );
+  return {
+    requestMeetingDeletion: (meetingId) => deletion.execute(meetingId),
+  };
 }
 
 function createDependencyReadiness(

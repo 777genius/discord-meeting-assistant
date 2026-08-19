@@ -50,6 +50,12 @@ export type {
   ConversationDelay,
   ConversationDelayPort,
   ConversationFailure,
+  GroundedKnowledgeAnswerOptions,
+  GroundedKnowledgeAnswerObservation,
+  GroundedKnowledgeAnswerObserverPort,
+  GroundedKnowledgeAnswerPort,
+  GroundedKnowledgeAnswerRequest,
+  GroundedKnowledgePlaybackAuthorityRequest,
   ConversationLatencyObservation,
   ConversationLatencyObserverPort,
   ConversationPlaybackKind,
@@ -72,5 +78,11 @@ export type {
   VoicePlaybackOpenOptions,
   VoicePlaybackPort,
   VoicePlaybackRequest,
+  VoicePlaybackCancellationRequest,
   VoicePlaybackSession,
 } from "./application/ports/conversation.js";
+export {
+  groundedLiteralSpeechRequest,
+  validateCompleteGroundedKnowledgeAnswer,
+  type ValidatedGroundedKnowledgeAnswer,
+} from "./application/conversation-grounded-answer.js";

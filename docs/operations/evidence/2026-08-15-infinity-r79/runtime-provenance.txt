@@ -1,0 +1,30 @@
+captured_at=2026-08-15T21:08:36Z
+service_commit=897efd211151e9a81a7466fdd6be5cb067ddb8eb
+service_tree=da950cc67c6fa582b705abcfab004bee988759d3
+server_image=sha256:88c895b67447556a4a1f45f27a9d76be294f30c11608a06efd24b5c0d8d75007
+embedding_image=sha256:c466c97680cc9c2968108c4b1b44ca7729a091a44b61c840d9487f07d42e9099
+embedding_command=["--model-id","sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2","--revision","e8f8c211226b894fcb81acc59f3b34ba3efd5f42","--port","80","--max-batch-tokens","2048","--auto-truncate"]
+embedding_repo_digests=["ghcr.io/huggingface/text-embeddings-inference@sha256:c466c97680cc9c2968108c4b1b44ca7729a091a44b61c840d9487f07d42e9099"]
+embedding_profile_digest=sha256:5ecd36edd098940cd8a6540509f90815ddc1802b4410ced2bf063c0f8c650cac
+embedding_backend_health=true
+selected_environment
+MEMORY_EMBEDDINGS_DIMENSIONS=384
+MEMORY_EMBEDDINGS_ENABLED=true
+MEMORY_EMBEDDINGS_MODEL=sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+MEMORY_EMBEDDINGS_PROVIDER=openai
+MEMORY_GRAPHITI_BUILD_INDICES=false
+MEMORY_GRAPHITI_ENABLED=true
+MEMORY_QDRANT_ENABLED=true
+MEMORY_QDRANT_HYBRID_SPARSE_ENABLED=true
+OPENAI_BASE_URL=http://infinity_context_embeddings:80/v1
+model_files
+10f7a088420252b26caf819236ca2c9d2987afd0fc06fec7553b542a5655a05a  /data/models--sentence-transformers--paraphrase-multilingual-MiniLM-L12-v2/blobs/10f7a088420252b26caf819236ca2c9d2987afd0fc06fec7553b542a5655a05a
+2c3387be76557bd40970cec13153b3bbf80407865484b209e655e5e4729076b8  /data/models--sentence-transformers--paraphrase-multilingual-MiniLM-L12-v2/blobs/2c3387be76557bd40970cec13153b3bbf80407865484b209e655e5e4729076b8
+5036ea374ffedd706e3bef33e2e0d6953cb868ef8a490e76e32ba0faa37a6b9b  /data/models--sentence-transformers--paraphrase-multilingual-MiniLM-L12-v2/blobs/3c1b565ae10a15a1d0c31096f834af2fd9359e91
+70f4448f31320443fe3557cacea5abf2dcc4915dda8c80646bec9f3bb0aa5a1f  /data/models--sentence-transformers--paraphrase-multilingual-MiniLM-L12-v2/blobs/5fd10429389515d3e5cccdeda08cae5fea1ae82e
+b8c64b5cece00d8424b4896ea75b512b6008576088497609dfeb6bd63e6d36b8  /data/models--sentence-transformers--paraphrase-multilingual-MiniLM-L12-v2/blobs/b974b349cb2d419ada11181750a733ff82f291ad
+6300193cb75e01cf80c96decef7187dfb33094d97cc1490b7ead6ff134476e4e  /data/models--sentence-transformers--paraphrase-multilingual-MiniLM-L12-v2/blobs/c06d5b49495f044e6380e68a60538be17a6bd5d1
+4be450dde3b0273bb9787637cfbd28fe04a7ba6ab9d36ac48e92b11e350ffc23  /data/models--sentence-transformers--paraphrase-multilingual-MiniLM-L12-v2/blobs/d1514c3162bbe87b343f565fadc62e6c06f04f03
+a853f5512505eda32a718ab6b730d20641a9fde2ddf15fe971de9fb7ff2cfa19  /data/models--sentence-transformers--paraphrase-multilingual-MiniLM-L12-v2/refs/e8f8c211226b894fcb81acc59f3b34ba3efd5f42
+service_health
+{"status":"ok","service":"infinity-context","deploy_profile":"server"}

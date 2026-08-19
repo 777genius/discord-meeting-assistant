@@ -320,7 +320,7 @@ describe("hosted campaign coordinator", () => {
     expect(events).toContain("barrier:provenance-before");
   });
 
-  it("propagates an asynchronous finite child failure and still tears down", async () => {
+  it("cancels a losing owned barrier poll and preserves the child failure through exact-once cleanup", async () => {
     const base = input();
     const action = { kind: "actor-completed" as const, ordinal: 1, runId: "run-1" };
     const provenance = campaignActions(base)[0]!;
@@ -337,20 +337,124 @@ describe("hosted campaign coordinator", () => {
         runId: provenance.runId },
     };
     const events: string[] = [];
+    const primaryFailure = new Error("actor exploded");
+    const cancellationFailure = new Error("owned barrier poll cancelled");
+    const campaignCancellation = new AbortController();
+    const ownedPolls = new Set<AbortSignal>();
+    const ownedHandles = new Set<string>();
+    const stopCounts = new Map<string, number>();
+    let releaseCount = 0;
+    let markBarrierStarted: (() => void) | undefined;
+    const barrierStarted = new Promise<void>((resolve) => { markBarrierStarted = resolve; });
     const fakePorts = ports(events);
+    const startChild = fakePorts.startChild.bind(fakePorts);
+    fakePorts.startChild = async (spec, bound) => {
+      const handle = await startChild(spec, bound);
+      ownedHandles.add(handle.childId);
+      return handle;
+    };
     fakePorts.awaitChildCompletion = async (_handle, spec) => {
-      if (spec.childId === "failing-actor") {throw new Error("actor exploded");}
+      if (spec.childId === "failing-actor") {
+        await barrierStarted;
+        throw primaryFailure;
+      }
     };
     const originalBarrier = fakePorts.awaitBarrier.bind(fakePorts);
     fakePorts.awaitBarrier = async (barrierAction, bound) => {
-      if (barrierAction.kind === "actor-completed") {return new Promise(() => {});}
+      if (barrierAction.kind === "provenance-before") {
+        expect(bound.signal).not.toBe(campaignCancellation.signal);
+        ownedPolls.add(bound.signal);
+        markBarrierStarted?.();
+        return new Promise((_resolve, reject) => {
+          const cancel = () => {
+            ownedPolls.delete(bound.signal);
+            reject(cancellationFailure);
+          };
+          if (bound.signal.aborted) { cancel(); }
+          else { bound.signal.addEventListener("abort", cancel, { once: true }); }
+        });
+      }
       return originalBarrier(barrierAction, bound);
     };
+    fakePorts.stopChild = async (handle) => {
+      stopCounts.set(handle.childId, (stopCounts.get(handle.childId) ?? 0) + 1);
+      ownedHandles.delete(handle.childId);
+      events.push(`stop:${handle.childId}`);
+    };
+    fakePorts.releaseCampaignLease = async (handle) => {
+      releaseCount += 1;
+      events.push(`release:${handle.campaignId}`);
+    };
 
-    await expect(runHostedCampaign({ ...base, children: [...base.children, actor] }, fakePorts, bounded()))
-      .rejects.toThrow("actor exploded");
+    await expect(runHostedCampaign({ ...base, children: [...base.children, actor] }, fakePorts, {
+      deadlineEpochMilliseconds: Date.now() + 60_000,
+      signal: campaignCancellation.signal,
+    })).rejects.toBe(primaryFailure);
+    expect(ownedPolls.size).toBe(0);
+    expect(ownedHandles.size).toBe(0);
+    expect([...stopCounts.values()].every((count) => count === 1)).toBe(true);
+    expect(releaseCount).toBe(1);
+    expect(campaignCancellation.signal.aborted).toBe(false);
     expect(events.filter((event) => event.startsWith("stop:"))).toHaveLength(4);
     expect(events.at(-1)).toBe("release:campaign-1");
+  });
+
+  it("bounds teardown when a losing barrier poll ignores abort", async () => {
+    vi.useFakeTimers();
+    try {
+      const base = input();
+      const action = { kind: "actor-completed" as const, ordinal: 1, runId: "run-1" };
+      const provenance = campaignActions(base)[0]!;
+      const actor = {
+        arguments: { kind: "environment" as const }, childId: "failing-actor", entrypoint: "actor" as const,
+        environment: { DISCORD_E2E_ACTOR_RUN_OUTPUT: "/evidence/actor.json",
+          DISCORD_E2E_HOSTED_RELEASE_GATE_PATH: "/evidence/release.json", DISCORD_E2E_RUN_ID: "run-1",
+          DISCORD_E2E_SCENARIO: "sequential" },
+        completion: { action, kind: "actor" as const, outputPath: "/evidence/actor.json", runId: "run-1",
+          scenario: "sequential" as const },
+        produces: [{ action, ordinal: 1, runId: "run-1", outputPath: "/evidence/actor-completed.json" }],
+        requires: [], startBefore: { kind: "campaign" as const },
+        releaseGate: { action: provenance.action, ordinal: provenance.ordinal, path: "/evidence/release.json",
+          runId: provenance.runId },
+      };
+      const events: string[] = [];
+      const primaryFailure = new Error("actor exploded");
+      let markBarrierStarted: (() => void) | undefined;
+      const barrierStarted = new Promise<void>((resolve) => { markBarrierStarted = resolve; });
+      const fakePorts = ports(events);
+      fakePorts.awaitChildCompletion = async (_handle, spec) => {
+        if (spec.childId === "failing-actor") {
+          await barrierStarted;
+          throw primaryFailure;
+        }
+      };
+      const originalBarrier = fakePorts.awaitBarrier.bind(fakePorts);
+      fakePorts.awaitBarrier = async (barrierAction, bound) => {
+        if (barrierAction.kind === "provenance-before") {
+          markBarrierStarted?.();
+          expect(bound.signal.aborted).toBe(false);
+          return new Promise<never>(() => {});
+        }
+        return originalBarrier(barrierAction, bound);
+      };
+
+      const campaignFailure = runHostedCampaign(
+        { ...base, children: [...base.children, actor] }, fakePorts, bounded(),
+      ).catch((error: unknown) => error);
+      await barrierStarted;
+      await vi.advanceTimersByTimeAsync(249);
+      expect(events.some((event) => event.startsWith("stop:"))).toBe(false);
+      expect(events).not.toContain("release:campaign-1");
+      await vi.advanceTimersByTimeAsync(1);
+      const failure = await campaignFailure;
+      expect(failure).toBeInstanceOf(AggregateError);
+      expect((failure as AggregateError).cause).toBe(primaryFailure);
+      expect(events.filter((event) => event.startsWith("stop:"))).toHaveLength(4);
+      expect(events).not.toContain("release:campaign-1");
+      expect(events.at(-1)?.startsWith("stop:")).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
 });
@@ -418,7 +522,26 @@ describe("hosted campaign coordinator lifecycle", () => {
 
   it("keeps long-lived observer and actors alive across every barrier, then stops all", async () => {
     const events: string[] = [];
-    const receipt = await runHostedCampaign(input(), ports(events), bounded());
+    const campaignCancellation = new AbortController();
+    const ownedPolls = new Set<AbortSignal>();
+    const pollSignals = new Set<AbortSignal>();
+    let pollCleanupCount = 0;
+    const fakePorts = ports(events);
+    const awaitBarrier = fakePorts.awaitBarrier.bind(fakePorts);
+    fakePorts.awaitBarrier = async (action, bound) => {
+      expect(bound.signal).not.toBe(campaignCancellation.signal);
+      ownedPolls.add(bound.signal);
+      pollSignals.add(bound.signal);
+      bound.signal.addEventListener("abort", () => {
+        pollCleanupCount += 1;
+        ownedPolls.delete(bound.signal);
+      }, { once: true });
+      return awaitBarrier(action, bound);
+    };
+    const receipt = await runHostedCampaign(input(), fakePorts, {
+      deadlineEpochMilliseconds: Date.now() + 60_000,
+      signal: campaignCancellation.signal,
+    });
     const firstStop = events.findIndex((event) => event.startsWith("stop:"));
 
     expect(events.slice(0, firstStop).filter((event) => event.startsWith("barrier:"))).toEqual([
@@ -444,6 +567,10 @@ describe("hosted campaign coordinator lifecycle", () => {
     ]);
     expect(events.slice(firstStop).filter((event) => event.startsWith("stop:"))).toHaveLength(input().children.length);
     expect(events.at(-1)).toBe("release:campaign-1");
+    expect(ownedPolls.size).toBe(0);
+    expect(pollCleanupCount).toBe(receipt.actionEvidence.length);
+    expect(pollSignals.size).toBe(receipt.actionEvidence.length);
+    expect(campaignCancellation.signal.aborted).toBe(false);
     expect(receipt.actionEvidence.map((entry) => (entry as {
       readonly action: HostedCampaignBarrierAction;
     }).action)).toEqual([

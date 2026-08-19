@@ -1,5 +1,9 @@
-import { verifyAddressedAnswer } from "./e2e-evidence-addressed-answer-verification.js";
-import { verifyGreetingAudioSemantics } from "./e2e-evidence-greeting-semantics-verification.js";
+import { verifyAddressedAnswer, verifyGroundedAnswerProvenance } from
+  "./e2e-evidence-addressed-answer-verification.js";
+import { verifyPreparedFarewellPlayback } from
+  "./e2e-evidence-farewell-semantics-verification.js";
+import { isVerifiedGreetingTurnId, verifyGreetingAudioSemantics } from
+  "./e2e-evidence-greeting-semantics-verification.js";
 import { verifyReconnectNoRepeat } from "./e2e-evidence-reconnect-verification.js";
 import { verifySupplementalPlayback } from "./e2e-evidence-supplemental-verification.js";
 import { authoritativeTrackCoverage } from "./e2e-evidence-track-verification.js";
@@ -10,11 +14,8 @@ import {
 } from
   "./conversation-voice-campaign-contract.js";
 import { conversationVoiceCampaignProofIssue } from "./conversation-voice-campaign-proof.js";
-import type {
-  DeploymentRevisionExpectation,
-  FixtureManifestV1,
-  RetainedE2eEvidence,
-} from "./e2e-evidence-schema.js";
+import type { DeploymentRevisionExpectation, FixtureManifestV1, RetainedE2eEvidence } from
+  "./e2e-evidence-schema.js";
 import type { VerificationFailureReporter } from "./e2e-evidence-verification-types.js";
 
 export function verifyConversationEvidence(
@@ -23,7 +24,11 @@ export function verifyConversationEvidence(
   expectedRevisions: DeploymentRevisionExpectation,
   fail: VerificationFailureReporter,
 ): void {
-  if (evidence.schemaVersion !== 7 && evidence.schemaVersion !== 8 && evidence.schemaVersion !== 9) {
+  if (evidence.schemaVersion === 10 && evidence.qualificationKind !== "voice") {
+    return;
+  }
+  if (evidence.schemaVersion !== 7 && evidence.schemaVersion !== 8 &&
+    evidence.schemaVersion !== 9 && evidence.schemaVersion !== 10) {
     return;
   }
   const recordingStartMs = Date.parse(evidence.recording.startedAt);
@@ -64,7 +69,7 @@ export function verifyConversationEvidence(
   if (evidence.schemaVersion >= 8) {
     const currentEvidence = evidence as Extract<
       RetainedE2eEvidence,
-      { schemaVersion: 8 | 9 }
+      { schemaVersion: 8 | 9 } | { schemaVersion: 10; qualificationKind: "voice" }
     >;
     verifyCampaignProof(currentEvidence, fail);
     verifyCurrentConversationEvidence(
@@ -81,11 +86,19 @@ export function verifyConversationEvidence(
     manifest.thresholds.timestampToleranceMs,
     fail,
   );
+  if (evidence.schemaVersion === 10) {
+    verifyGroundedAnswerProvenance(evidence, fail);
+    verifyPreparedFarewellPlayback(
+      evidence,
+      evidence.qualificationPolicy.preparedCueFirstPacketMilliseconds,
+      fail,
+    );
+  }
 }
 
-function verifyCampaignProof(evidence: Extract<RetainedE2eEvidence, { schemaVersion: 8 | 9 }>,
+function verifyCampaignProof(evidence: RetainedCurrentConversationEvidence,
   fail: VerificationFailureReporter): void {
-  if (evidence.schemaVersion !== 9) {
+  if (evidence.schemaVersion !== 9 && evidence.schemaVersion !== 10) {
     return;
   }
   const issue = conversationVoiceCampaignProofIssue(
@@ -100,7 +113,7 @@ function verifyCampaignProof(evidence: Extract<RetainedE2eEvidence, { schemaVers
 
 function verifyCurrentConversationEvidence(
   manifest: FixtureManifestV1,
-  evidence: Extract<RetainedE2eEvidence, { schemaVersion: 8 | 9 }>,
+  evidence: RetainedCurrentConversationEvidence,
   recordingStartMs: number,
   recordingEndMs: number,
   fail: VerificationFailureReporter,
@@ -113,8 +126,11 @@ function verifyCurrentConversationEvidence(
 type RetainedConversationEvidence = Extract<
   RetainedE2eEvidence,
   { schemaVersion: 7 | 8 | 9 }
+> | Extract<RetainedE2eEvidence, { schemaVersion: 10; qualificationKind: "voice" }>;
+type RetainedCurrentConversationEvidence = Extract<
+  RetainedConversationEvidence,
+  { schemaVersion: 8 | 9 } | { schemaVersion: 10; qualificationKind: "voice" }
 >;
-const maximumVerifiedGreetingRetry = 3;
 
 function verifyGreetingAndFarewellLifecycle(
   manifest: FixtureManifestV1,
@@ -159,7 +175,7 @@ function verifyGreetingAndFarewellLifecycle(
   if (evidence.schemaVersion >= 8) {
     verifyReconnectNoRepeat(
       manifest,
-      evidence as Extract<RetainedE2eEvidence, { schemaVersion: 8 | 9 }>,
+      evidence as RetainedCurrentConversationEvidence,
       recordingStartMs,
       recordingEndMs,
       fail,
@@ -174,26 +190,6 @@ function verifyGreetingAndFarewellLifecycle(
       fail("STALE_LIFECYCLE_EVENT", "conversation lifecycle event is outside the recording interval");
     }
   }
-}
-
-function isVerifiedGreetingTurnId(
-  turnId: string,
-  participantId: string,
-  allowRetries: boolean,
-): boolean {
-  const initialTurnId = `participant-greeting:${participantId}`;
-  if (turnId === initialTurnId) {
-    return true;
-  }
-  if (!allowRetries) {
-    return false;
-  }
-  for (let retry = 1; retry <= maximumVerifiedGreetingRetry; retry += 1) {
-    if (turnId === `${initialTurnId}:retry-${retry}`) {
-      return true;
-    }
-  }
-  return false;
 }
 
 function verifyReconnectGreeting(
@@ -401,12 +397,13 @@ function verifyLifecycleAudioBindings(
 function isLifecycleTurnBinding(
   event: RetainedConversationEvidence["conversation"]["lifecycle"]["events"][number],
   capturedTurnId: string,
-  schemaVersion: 7 | 8 | 9,
+  schemaVersion: 7 | 8 | 9 | 10,
 ): boolean {
   if (capturedTurnId === event.turnId) {
     return true;
   }
   return schemaVersion >= 8 && event.type === "greeting" &&
     isVerifiedGreetingTurnId(event.turnId, event.participantId, true) &&
-    capturedTurnId === `participant-greeting:${event.participantId}`;
+    (capturedTurnId === `participant-greeting:${event.participantId}` ||
+      capturedTurnId === `participant-greeting:${event.participantId}:anonymous-fallback`);
 }

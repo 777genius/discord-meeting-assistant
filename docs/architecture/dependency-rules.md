@@ -64,6 +64,12 @@ supplement Foundation for that one package. They validate the exact exported
 feature surface and enforce consumer-specific subpaths across static, type,
 dynamic, export-from, and import-equals syntax.
 
+Foundation 0.6.0 also treats governed test imports as runtime imports, which
+would incorrectly require Vitest to become a production dependency and blocks
+Meeting Core's intentional public self-import. Meeting Knowledge test ownership
+is therefore enforced by the repository-local architecture-baseline verifier:
+the exact feature test path must exist and may contain only test source files.
+
 The first production change must extend governed roots beyond current tooling.
 An unclassified source file, unresolved import, cross-package relative import,
 undeclared dependency, blocked export, or parser error is a failing gate.

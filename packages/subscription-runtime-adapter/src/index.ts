@@ -43,6 +43,37 @@ export {
   providerMeetingSummarySchema,
 } from "./provider-summary-schema.js";
 export {
+  type ProviderKnowledgeAnswer,
+  type ProviderKnowledgeCoverageExtract,
+  providerKnowledgeAnswerJsonSchema,
+  providerKnowledgeAnswerSchema,
+  providerKnowledgeCoverageExtractJsonSchema,
+  providerKnowledgeCoverageExtractSchema,
+} from "./provider-knowledge-schema.js";
+export {
+  buildSubscriptionRuntimeKnowledgeAnswerRequest,
+  knowledgeAnswerRuntimeProfile,
+  type KnowledgeAnswerRequestOptions,
+} from "./knowledge-answer-request-mapper.js";
+export {
+  buildSubscriptionRuntimeKnowledgeCoverageRequest,
+  knowledgeCoverageRuntimeProfile,
+  type KnowledgeCoverageExtractionRequest,
+  type KnowledgeCoverageRequestOptions,
+} from "./knowledge-coverage-request-mapper.js";
+export {
+  SubscriptionRuntimeGroundedAnswerAdapter,
+  utf8ByteUpperBoundKnowledgeTokenCounter,
+  type KnowledgeAnswerTokenCounter,
+  type SubscriptionRuntimeGroundedAnswerAdapterOptions,
+} from "./subscription-runtime-grounded-answer-adapter.js";
+export {
+  SubscriptionRuntimeCoverageExtractorAdapter,
+  utf8ByteUpperBoundKnowledgeCoverageTokenCounter,
+  type KnowledgeCoverageTokenCounter,
+  type SubscriptionRuntimeCoverageExtractorAdapterOptions,
+} from "./subscription-runtime-coverage-extractor-adapter.js";
+export {
   buildSubscriptionRuntimeSummaryRequest,
   type SubscriptionRuntimeSummaryRequestOptions,
 } from "./request-mapper.js";
@@ -51,6 +82,9 @@ export {
   SubscriptionRuntimeIncrementalSummaryAdapter,
   type SubscriptionRuntimeIncrementalSummaryAdapterOptions,
 } from "./subscription-runtime-incremental-summary-adapter.js";
+export {
+  findPotentiallyTruncatedActionTerms,
+} from "./summary-action-term-postcondition.js";
 export {
   SubscriptionRuntimeSummaryAdapter,
   type SubscriptionRuntimeSummaryAdapterOptions,
@@ -67,6 +101,12 @@ export {
   incrementalMeetingSummaryOutputSchemaName,
   incrementalMeetingSummaryPolicyVersion,
   incrementalSummaryExecutionProfile,
+  knowledgeAnswerExecutionProfile,
+  knowledgeAnswerOutputSchemaName,
+  knowledgeAnswerPolicyVersion,
+  knowledgeCoverageExecutionProfile,
+  knowledgeCoverageOutputSchemaName,
+  knowledgeCoveragePolicyVersion,
   meetingSummaryOutputSchemaName,
   meetingSummaryPolicyVersion,
   subscriptionRuntimeCliEngine,
@@ -79,6 +119,10 @@ export {
   subscriptionRuntimeIncrementalModel,
   subscriptionRuntimeIncrementalPurpose,
   subscriptionRuntimeIncrementalReasoningEffort,
+  subscriptionRuntimeKnowledgeAnswerMaxOutputTokens,
+  subscriptionRuntimeKnowledgeAnswerPurpose,
+  subscriptionRuntimeKnowledgeCoverageMaxOutputTokens,
+  subscriptionRuntimeKnowledgeCoveragePurpose,
   subscriptionRuntimeModel,
   subscriptionRuntimeProtocolVersion,
   subscriptionRuntimeProvider,

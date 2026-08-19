@@ -29,6 +29,7 @@ export function observeConversationPlaybackSettlement(
   settledAtMs: number,
 ): void {
   safelyObserve(() => observer?.observeConversationPlayback({
+    ...playbackProvenance(run),
     meetingId: run.prepared.request.meetingId,
     playbackAttemptId: run.attemptId!,
     playbackKind: run.prepared.cue === undefined ? "answer" : "prepared-cue",
@@ -37,6 +38,24 @@ export function observeConversationPlaybackSettlement(
     status: "settled",
     turnId: run.prepared.request.turnId,
   }));
+}
+
+export function playbackProvenance(run: ActiveConversationRun): {
+  readonly preparedAssetSha256?: string;
+  readonly speechProvenance?: "literal_tts" | "model_tts";
+  readonly ttsAttestation?: NonNullable<ActiveConversationRun["ttsAttestation"]>;
+} {
+  if (run.prepared.cue !== undefined) {
+    return run.prepared.cue.assetSha256 === undefined
+      ? {}
+      : { preparedAssetSha256: run.prepared.cue.assetSha256 };
+  }
+  return {
+    speechProvenance: run.prepared.request.literalSpeech === undefined
+      ? "model_tts"
+      : "literal_tts",
+    ...(run.ttsAttestation === null ? {} : { ttsAttestation: run.ttsAttestation }),
+  };
 }
 
 function safelyObserve(observe: () => Promise<void> | void | undefined): void {

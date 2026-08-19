@@ -3,11 +3,46 @@ import { requireNonNegativeInteger } from "../domain/errors.js";
 import type {
   ActiveConversationRun,
   ConversationPlaybackFence,
+  ConversationTurnPlaybackStart,
   ConversationTurnPlaybackSettlement,
   MeetingConversationState,
+  PreparedConversation,
 } from "./conversation-coordinator-types.js";
 
 const maximumRememberedPlaybackSettlements = 1_024;
+
+export function createActiveConversationRun(
+  prepared: PreparedConversation,
+): ActiveConversationRun {
+  return {
+    answerAudioStarted: false,
+    answerAudioWriteAttempted: false,
+    answerAudioWritten: false,
+    attemptId: null,
+    cancellationInFlight: false,
+    cueDelays: new Set(),
+    cuePlayback: null,
+    cuePlaybackOpening: false,
+    deliberationCue: null,
+    deliberationCueReady: false,
+    deliberationCueSelectionInFlight: false,
+    finalized: false,
+    groundedPlaybackAbortController: null,
+    groundedPlaybackAuthority: null,
+    playback: null,
+    playbackEventsClosed: false,
+    playbackFinishRequested: false,
+    playbackFinished: false,
+    playbackOpenAbortController: null,
+    playbackTerminalFinalizationScheduled: false,
+    playbackTerminalReceiptMissing: false,
+    prepared,
+    runtimeCompleted: false,
+    runtimeStartAbortController: null,
+    runtimeTurn: null,
+    ttsAttestation: null,
+  };
+}
 
 export function createMeetingConversationState(
   meetingId: string,
@@ -21,6 +56,8 @@ export function createMeetingConversationState(
     pending: new Map(),
     playbackFence: null,
     playbackOpenBarrier: Promise.resolve(),
+    playbackStartSignals: new Map(),
+    playbackStarts: new Map(),
     playbackSettlements: new Map(),
     session: new ConversationSession(meetingId),
     tasks: new Set(),
@@ -41,6 +78,54 @@ export function rememberConversationPlaybackSettlement(
     }
   }
   state.playbackSettlements.set(turnId, settlement);
+  if (!state.playbackStarts.has(turnId)) {
+    if (settlement === "unplayed") {
+      rememberConversationPlaybackStart(state, turnId, { status: "unplayed" });
+    } else {
+      state.playbackStartSignals.get(turnId)?.resolve({ status: "unknown" });
+      state.playbackStartSignals.delete(turnId);
+    }
+  }
+}
+
+export function rememberConversationPlaybackStart(
+  state: MeetingConversationState,
+  turnId: string,
+  start: Exclude<ConversationTurnPlaybackStart, { readonly status: "unknown" }>,
+): void {
+  if (state.playbackStarts.has(turnId)) {
+    return;
+  }
+  if (state.playbackStarts.size >= maximumRememberedPlaybackSettlements) {
+    const oldestTurnId = state.playbackStarts.keys().next().value;
+    if (oldestTurnId !== undefined) {
+      state.playbackStarts.delete(oldestTurnId);
+      state.playbackStartSignals.delete(oldestTurnId);
+    }
+  }
+  state.playbackStarts.set(turnId, start);
+  state.playbackStartSignals.get(turnId)?.resolve(start);
+  state.playbackStartSignals.delete(turnId);
+}
+
+export function conversationPlaybackStartSignal(
+  state: MeetingConversationState,
+  turnId: string,
+): Promise<ConversationTurnPlaybackStart> {
+  const remembered = state.playbackStarts.get(turnId);
+  if (remembered !== undefined) {
+    return Promise.resolve(remembered);
+  }
+  const existing = state.playbackStartSignals.get(turnId);
+  if (existing !== undefined) {
+    return existing.promise;
+  }
+  let resolveSignal!: (value: ConversationTurnPlaybackStart) => void;
+  const promise = new Promise<ConversationTurnPlaybackStart>((resolve) => {
+    resolveSignal = resolve;
+  });
+  state.playbackStartSignals.set(turnId, { promise, resolve: resolveSignal });
+  return promise;
 }
 
 export function advanceConversationState(

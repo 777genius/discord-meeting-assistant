@@ -15,6 +15,7 @@ governedRoots:
   - packages/craig-playback-adapter/src
   - packages/discord-adapter/src
   - packages/guild-configuration-core/src
+  - packages/infinity-context-adapter/src
   - packages/meeting-core/src
   - packages/object-storage-adapter/src
   - packages/observability-adapter/src
@@ -105,6 +106,16 @@ boundaries:
         - core.meeting.lifecycle
         - core.meeting.publishing
         - core.meeting.transcription
+      packages: []
+      builtins: []
+      runtimeReferences: []
+  - id: core.meeting.knowledge
+    roots:
+      - packages/meeting-core/src/features/meeting-knowledge
+    entrypoints:
+      - packages/meeting-core/src/features/meeting-knowledge/index.ts
+    allow:
+      boundaries: []
       packages: []
       builtins: []
       runtimeReferences: []
@@ -204,6 +215,7 @@ boundaries:
       boundaries:
         - core.guild-configuration
         - core.meeting.live-meeting
+        - core.meeting.knowledge
         - core.meeting.publishing
       packages:
         - "@discord-meeting/guild-configuration-core"
@@ -223,6 +235,7 @@ boundaries:
         - core.guild-configuration
         - core.meeting.lifecycle
         - core.meeting.live-meeting
+        - core.meeting.knowledge
         - core.meeting.post-call-workflow
         - core.meeting.publishing
         - core.meeting.transcription
@@ -230,9 +243,23 @@ boundaries:
         - "@discord-meeting/guild-configuration-core"
         - "@discord-meeting/meeting-core"
         - pg
+        - zod
       builtins:
         - node:crypto
         - node:fs/promises
+      runtimeReferences: []
+  - id: adapters.infinity-context
+    roots:
+      - packages/infinity-context-adapter/src
+    entrypoints: []
+    allow:
+      boundaries:
+        - core.meeting.knowledge
+      packages:
+        - "@discord-meeting/meeting-core"
+        - "@infinity-context/sdk"
+      builtins:
+        - node:crypto
       runtimeReferences: []
   - id: adapters.pipecat-runtime
     roots:
@@ -249,6 +276,7 @@ boundaries:
         - "@grpc/grpc-js"
         - "@grpc/proto-loader"
       builtins:
+        - node:crypto
         - node:url
       runtimeReferences: []
   - id: adapters.recording-ingress
@@ -307,11 +335,13 @@ boundaries:
   - id: adapters.subscription-runtime
     roots:
       - packages/subscription-runtime-adapter/src
-    entrypoints: []
+    entrypoints:
+      - packages/subscription-runtime-adapter/src/summary-action-term-postcondition.ts
     allow:
       boundaries:
         - core.meeting.intelligence
         - core.meeting.live-meeting
+        - core.meeting.knowledge
         - core.meeting.transcription
       packages:
         - "@discord-meeting/meeting-core"
@@ -404,6 +434,7 @@ boundaries:
       - apps/meeting-platform/src/adapters/outbound/file-participant-greeting-cue-registry.ts
       - apps/meeting-platform/src/adapters/outbound/instrumented-processing-ports.ts
       - apps/meeting-platform/src/adapters/outbound/instrumented-subscription-runtime-transport.ts
+      - apps/meeting-platform/src/adapters/outbound/meeting-knowledge-grounded-answer-acl.ts
       - apps/meeting-platform/src/adapters/outbound/s3-ogg-audio-artifact-reader.ts
       - apps/meeting-platform/src/adapters/outbound/subscription-runtime-grpc-transport.ts
       - apps/meeting-platform/src/adapters/outbound/subscription-runtime-farewell-classifier.ts
@@ -420,6 +451,7 @@ boundaries:
         - contracts.conversation-runtime
         - core.meeting.conversation
         - core.meeting.intelligence
+        - core.meeting.knowledge
         - core.meeting.publishing
         - core.meeting.transcription
       packages:
@@ -559,6 +591,7 @@ boundaries:
         - adapters.bullmq
         - adapters.craig-playback
         - adapters.discord
+        - adapters.infinity-context
         - adapters.object-storage
         - adapters.observability
         - adapters.postgres
@@ -581,6 +614,7 @@ boundaries:
         - core.meeting.conversation
         - core.meeting.intelligence
         - core.meeting.live-meeting
+        - core.meeting.knowledge
         - core.meeting.post-call-workflow
         - core.meeting.publishing
         - core.meeting.transcription
@@ -591,6 +625,7 @@ boundaries:
         - "@discord-meeting/craig-playback-adapter"
         - "@discord-meeting/discord-adapter"
         - "@discord-meeting/guild-configuration-core"
+        - "@discord-meeting/infinity-context-adapter"
         - "@discord-meeting/meeting-core"
         - "@discord-meeting/object-storage-adapter"
         - "@discord-meeting/observability-adapter"

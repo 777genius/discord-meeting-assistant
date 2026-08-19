@@ -212,7 +212,7 @@ function validateComposition(
   const planSha256 = sha256Schema.parse(value.planSha256);
   const expectation = hostedDeploymentSafetyExpectationV1Schema.parse(value.deployment.expectation);
   const clock = Object.freeze({
-    ...value.clock,
+    collectClockPreflight: (signal?: AbortSignal) => value.clock.collectClockPreflight(signal),
     maximumClockSkewBoundMs: z.number().int().nonnegative().max(60_000)
       .parse(value.clock.maximumClockSkewBoundMs),
   });

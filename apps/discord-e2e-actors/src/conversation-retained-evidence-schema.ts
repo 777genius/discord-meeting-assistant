@@ -175,12 +175,99 @@ const addressedAnswerObservationSchema = z.object({
   type: z.literal("addressed-answer"),
 }).strict();
 
+const ttsDeploymentAttestationV1Schema = z.object({
+  attemptId: identifierSchema,
+  deployment: identifierSchema,
+  keyId: sha256Schema,
+  model: identifierSchema,
+  provider: identifierSchema,
+  schemaVersion: z.literal(1),
+  signature: sha256Schema,
+  sourceRevision: identifierSchema,
+  turnId: identifierSchema,
+  voice: identifierSchema,
+  voiceProfileId: identifierSchema,
+}).strict();
+
+const groundedKnowledgeAnswerObservationSchema = z.discriminatedUnion("status", [
+  z.object({
+    citationTurnIds: z.array(identifierSchema).min(1).max(32),
+    evidenceEpoch: identifierSchema,
+    knowledgeEpoch: identifierSchema,
+    observedAt: z.iso.datetime(),
+    participantId: identifierSchema,
+    playbackProvenance: z.enum(["literal_tts", "model_tts"]),
+    status: z.literal("validated"),
+    turnId: identifierSchema,
+  }).strict(),
+  z.object({
+    observedAt: z.iso.datetime(),
+    reason: z.enum([
+      "barge-in",
+      "disconnected",
+      "meeting-ended",
+      "playback-failed",
+      "runtime-shutdown",
+      "superseded",
+    ]),
+    status: z.literal("cancelled"),
+    turnId: identifierSchema,
+  }).strict(),
+]);
+
+const groundedCancellationPcmProofSchema = z.object({
+  acceptedPacketCountAfterCancellation: z.literal(0),
+  attemptId: identifierSchema,
+  cancellationObservedAt: z.iso.datetime(),
+  fenceObservedAt: z.iso.datetime(),
+  recordingId: identifierSchema,
+  source: z.literal("craig-authoritative-playback-track"),
+  trackSha256: sha256Schema,
+  turnId: identifierSchema,
+}).strict().refine(
+  ({ cancellationObservedAt, fenceObservedAt }) =>
+    Date.parse(fenceObservedAt) >= Date.parse(cancellationObservedAt),
+  { message: "authoritative PCM fence cannot precede cancellation" },
+);
+
 const conversationPlaybackReceiptBaseSchema = z.object({
   observedAt: z.iso.datetime(),
   playbackAttemptId: identifierSchema,
   playbackKind: z.enum(["answer", "prepared-cue", "thinking-cue"]),
+  preparedAssetSha256: sha256Schema.optional(),
+  speechProvenance: z.enum(["literal_tts", "model_tts"]).optional(),
+  ttsAttestation: ttsDeploymentAttestationV1Schema.optional(),
+  thinkingCuePcmSha256: sha256Schema.optional(),
   turnId: identifierSchema,
 });
+function refinePlaybackProvenance(
+  receipt: z.infer<typeof conversationPlaybackReceiptBaseSchema>,
+  context: z.RefinementCtx,
+): void {
+  if (receipt.speechProvenance === undefined && receipt.ttsAttestation !== undefined) {
+    context.addIssue({ code: "custom", message: "Only TTS receipts may carry TTS attestation" });
+  }
+  if (receipt.playbackKind === "prepared-cue" && receipt.speechProvenance !== undefined) {
+    context.addIssue({ code: "custom", message: "Prepared cue receipts cannot claim TTS provenance" });
+  }
+  if (receipt.playbackKind !== "prepared-cue" && receipt.preparedAssetSha256 !== undefined) {
+    context.addIssue({ code: "custom", message: "Only prepared cue receipts may carry an asset digest" });
+  }
+  if (receipt.playbackKind === "thinking-cue" &&
+    receipt.thinkingCuePcmSha256 === undefined) {
+    context.addIssue({
+      code: "custom",
+      message: "Thinking cue receipts must carry their exact PCM digest",
+    });
+  }
+  if (receipt.playbackKind !== "thinking-cue" &&
+    receipt.thinkingCuePcmSha256 !== undefined) {
+    context.addIssue({
+      code: "custom",
+      message: "Only thinking cue receipts may carry a thinking cue PCM digest",
+    });
+  }
+}
 const conversationPlaybackReceiptSchema = z.discriminatedUnion("status", [
   conversationPlaybackReceiptBaseSchema.extend({
     playbackStartedAtEpochMs: z.number().int().positive(),
@@ -198,16 +285,36 @@ const conversationPlaybackReceiptSchema = z.discriminatedUnion("status", [
     settlement: z.enum(["played", "unplayed", "partial", "unknown"]),
     status: z.literal("settled"),
   }).strict(),
-]);
+]).superRefine(refinePlaybackProvenance);
 
 export const conversationLifecycleEvidenceSchema = z.object({
+  cancellationPcmProofs: z.array(groundedCancellationPcmProofSchema).default([]),
   events: z.array(z.discriminatedUnion("type", [
     addressedAnswerObservationSchema,
     greetingPlaybackObservationSchema,
     farewellPlaybackObservationSchema,
   ])).min(4),
+  groundedAnswers: z.array(groundedKnowledgeAnswerObservationSchema).default([]),
   playbackReceipts: z.array(conversationPlaybackReceiptSchema).default([]),
-}).strict();
+}).strict().superRefine(({ cancellationPcmProofs, groundedAnswers, playbackReceipts }, context) => {
+  for (const cancellation of groundedAnswers.filter((answer) => answer.status === "cancelled")) {
+    if (!cancellationPcmProofs.some((proof) =>
+      proof.turnId === cancellation.turnId &&
+      proof.cancellationObservedAt === cancellation.observedAt)) {
+      context.addIssue({
+        code: "custom",
+        message: "Cancellation requires a matching authoritative Craig PCM fence",
+      });
+    }
+    if (playbackReceipts.some((receipt) => receipt.turnId === cancellation.turnId &&
+      Date.parse(receipt.observedAt) > Date.parse(cancellation.observedAt))) {
+      context.addIssue({
+        code: "custom",
+        message: "Cancellation proof cannot retain factual playback after cancellation",
+      });
+    }
+  }
+});
 
 export const collectedConversationLifecycleEvidenceSchema =
   conversationLifecycleEvidenceSchema.extend({

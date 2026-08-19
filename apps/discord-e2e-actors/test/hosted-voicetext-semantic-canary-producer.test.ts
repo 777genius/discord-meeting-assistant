@@ -48,6 +48,68 @@ describe("hosted Voicetext semantic canary producer", () => {
     expect(receipt.expiresAtEpochMs).toBe(460_000);
   });
 
+  it("treats spoken and numeric Russian dates as the same semantic transcript", async () => {
+    const spoken = [{
+      endMs: 2_000,
+      startMs: 0,
+      text: "До седьмого августа две тысячи двадцать шестого года",
+    }] as const;
+    const numeric = [{ endMs: 2_000, startMs: 0, text: "До 7 августа 2026 года" }];
+    const numericDigest = digestVoicetextCanaryExpectationV1(numeric);
+    const internal: VoicetextCanaryInternalResultV1 = {
+      ...result(),
+      batch: {
+        firstSubmission: { jobId: "job-date", resultId: "result-date", resultSha256: numericDigest },
+        idempotentReplay: { jobId: "job-date", resultId: "result-date", resultSha256: numericDigest },
+        segments: numeric,
+        utteranceCount: 1,
+      },
+      live: { ...result().live, segments: numeric },
+    };
+    const receipt = await produceVoicetextSemanticCanaryReceiptV1({
+      ...input(),
+      binding: {
+        ...binding,
+        transcriptExpectationSha256: digestVoicetextCanaryExpectationV1(spoken),
+      },
+      expectedSegments: spoken,
+      requiredTerms: ["августа", "2026"],
+    }, { run: async () => internal });
+
+    expect(receipt.quality).toMatchObject({
+      characterErrorRate: 0,
+      requiredTermMatches: 2,
+      wordErrorRate: 0,
+    });
+  });
+
+  it("normalizes a bounded Voicetext phonetic alias before matching required terms", async () => {
+    const expected = [{ endMs: 1_000, startMs: 0, text: "PostgreSQL pipeline" }] as const;
+    const observed = [{ endMs: 1_000, startMs: 0, text: "Post Grazical PeopleLine" }];
+    const observedDigest = digestVoicetextCanaryExpectationV1(observed);
+    const internal: VoicetextCanaryInternalResultV1 = {
+      ...result(),
+      batch: {
+        firstSubmission: { jobId: "job-phonetic", resultId: "result-phonetic", resultSha256: observedDigest },
+        idempotentReplay: { jobId: "job-phonetic", resultId: "result-phonetic", resultSha256: observedDigest },
+        segments: observed,
+        utteranceCount: 1,
+      },
+      live: { ...result().live, segments: observed },
+    };
+    const receipt = await produceVoicetextSemanticCanaryReceiptV1({
+      ...input(),
+      binding: {
+        ...binding,
+        transcriptExpectationSha256: digestVoicetextCanaryExpectationV1(expected),
+      },
+      expectedSegments: expected,
+      requiredTerms: ["PostgreSQL"],
+    }, { run: async () => internal });
+
+    expect(receipt.quality.requiredTermMatches).toBe(1);
+  });
+
   it("rejects a receipt TTL longer than the admission freshness window", async () => {
     await expect(produceVoicetextSemanticCanaryReceiptV1({
       ...input(), ttlMs: 60_001,

@@ -29,9 +29,28 @@ export function validateHostedCampaignOwnedPaths(
       throw new Error(`Hosted campaign external path aliases a generated owned resource: ${path}`);
     }
   }
+  registerOrchestratorOwnedArtifacts(plan.children, ownedRoot, identitiesByPath);
   registerEnvironmentOutputs(plan.children, ownedRoot, identitiesByPath);
   validateOwnedEnvironmentReferences(plan.children, ownedRoot, external, identitiesByPath);
   validateOwnedArgumentReferences(plan.children, ownedRoot, external, identitiesByPath);
+}
+
+function registerOrchestratorOwnedArtifacts(
+  children: readonly HostedCampaignExecutableSpec[],
+  ownedRoot: string,
+  identitiesByPath: Map<string, string>,
+): void {
+  const launchClockPaths = new Set(children.flatMap(({ environment }) => {
+    const path = environment.DISCORD_E2E_SLA_CLOCK_PREFLIGHT_INPUT;
+    return path === undefined ? [] : [path];
+  }));
+  if (launchClockPaths.size !== 1) {
+    throw new Error("Hosted campaign requires one orchestrator-owned launch clock preflight artifact");
+  }
+  registerClaim({
+    identity: "orchestrator:launch-clock-preflight",
+    path: [...launchClockPaths][0]!,
+  }, ownedRoot, identitiesByPath);
 }
 
 function structuralClaims(child: HostedCampaignExecutableSpec): PathClaim[] {

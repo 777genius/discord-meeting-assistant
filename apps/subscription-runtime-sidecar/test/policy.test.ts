@@ -7,6 +7,8 @@ import {
   meetingSummaryPolicyVersion,
   providerConversationAnswerJsonSchema,
   providerIncrementalMeetingSummaryJsonSchema,
+  providerKnowledgeAnswerJsonSchema,
+  providerKnowledgeCoverageExtractJsonSchema,
   providerMeetingSummaryJsonSchema,
 } from "@discord-meeting/subscription-runtime-adapter";
 import { describe, expect, it } from "vitest";
@@ -18,6 +20,8 @@ import {
   grpcRequest,
   incrementalCanonicalRequest,
   isolatedCwd,
+  knowledgeAnswerCanonicalRequest,
+  knowledgeCoverageCanonicalRequest,
 } from "./fixture.js";
 
 const options = {
@@ -100,6 +104,38 @@ describe("subscription runtime request policy", () => {
     });
     expect(reconstructed.task.controls.outputSchema).toEqual(
       providerConversationAnswerJsonSchema,
+    );
+  });
+
+  it("reconstructs only the two dedicated Sol/medium knowledge profiles", () => {
+    const answer = reconstructCanonicalRequest(
+      grpcRequest(knowledgeAnswerCanonicalRequest),
+      options,
+    );
+    const coverage = reconstructCanonicalRequest(
+      grpcRequest(knowledgeCoverageCanonicalRequest),
+      options,
+    );
+
+    expect(answer).toEqual(knowledgeAnswerCanonicalRequest);
+    expect(answer.context).toMatchObject({
+      metadata: { locale: "en" },
+      purpose: "discord_meeting.knowledge.answer.v1",
+    });
+    expect(answer.task.controls).toMatchObject({
+      maxOutputTokens: 2_048,
+      model: "gpt-5.6-sol",
+      reasoningEffort: "medium",
+    });
+    expect(answer.task.controls.outputSchema).toEqual(
+      providerKnowledgeAnswerJsonSchema,
+    );
+    expect(coverage).toEqual(knowledgeCoverageCanonicalRequest);
+    expect(coverage.context.purpose).toBe(
+      "discord_meeting.knowledge.coverage_extract.v1",
+    );
+    expect(coverage.task.controls.outputSchema).toEqual(
+      providerKnowledgeCoverageExtractJsonSchema,
     );
   });
 
@@ -205,6 +241,18 @@ describe("subscription runtime request policy", () => {
       },
       options,
     )).toThrow("output schema");
+  });
+
+  it("rejects answer/coverage profile and schema swaps before execution", () => {
+    const answer = grpcRequest(knowledgeAnswerCanonicalRequest);
+    const controls = JSON.parse(String(answer.controlsJson)) as Record<string, unknown>;
+    controls.outputSchema = providerKnowledgeCoverageExtractJsonSchema;
+    controls.outputSchemaName = knowledgeCoverageCanonicalRequest.task.outputSchemaName;
+    expect(() => reconstructCanonicalRequest({
+      ...answer,
+      controlsJson: JSON.stringify(controls),
+      outputSchemaJson: JSON.stringify(providerKnowledgeCoverageExtractJsonSchema),
+    }, options)).toThrow("output schema");
   });
 
   it("fails closed for stale incremental policy and output-budget profiles", () => {

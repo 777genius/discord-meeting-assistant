@@ -6,7 +6,7 @@ import {
   type BoundedRemoteContainerProcessResult,
 } from "../src/hosted-remote-discord-identity-probe.js";
 
-const applicationId = "1534231284467896512";
+const applicationId = "1533877611258708230";
 const guildId = "1533228590643155034";
 const voiceChannelId = "1533228823045214398";
 const publicationChannelId = "1533228891827736657";

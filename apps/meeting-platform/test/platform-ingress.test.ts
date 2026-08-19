@@ -71,7 +71,7 @@ const defaultPublicationTargets = {
 } as const;
 
 describe("Platform recording ingress", () => {
-  it("atomically records and schedules a finalized recording before dispatch", async () => {
+  it("atomically records and schedules a legacy finalized recording before dispatch", async () => {
     const order: string[] = [];
     const saved: MeetingSnapshot[] = [];
     const recordAndSchedule = vi.fn(async (snapshot: MeetingSnapshot) => {
@@ -83,7 +83,10 @@ describe("Platform recording ingress", () => {
       return { dispatched: 1, failed: 0 };
     });
     const lifecycleResult: RecordingLifecycleIngressResult = {
+      actors: null,
+      identityProvenance: null,
       kind: "finalized",
+      lifecycleGeneration: 1,
       recording: {
         manifestLocator: "s3://meeting/recordings/recording-1/manifest.json",
         recordingId: "recording-1",
@@ -96,6 +99,7 @@ describe("Platform recording ingress", () => {
         ],
       },
       replayed: false,
+      source: meetingEnded.source,
     };
     const ingress = new PlatformRecordingIngress({
       dispatcher: { dispatchPending },
@@ -134,9 +138,11 @@ describe("Platform recording ingress", () => {
       "dispatch",
     ]);
     expect(saved[0]).toMatchObject({
+      actors: null,
       meetingId: "recording-1",
       publicationTargetId: "1533228891827736657",
       revision: 0,
+      source: null,
     });
     expect(recordAndSchedule).toHaveBeenCalledWith(saved[0], 0);
     expect(dispatchPending).toHaveBeenCalledOnce();
@@ -184,7 +190,10 @@ describe("Platform recording ingress", () => {
       ingress: {
         ingestAuthoritativeTrack: async () => ({ replayed: false }),
         ingestLifecycleEvent: async () => ({
+          actors: null,
+          identityProvenance: null,
           kind: "finalized" as const,
+          lifecycleGeneration: 1 as const,
           recording: {
             manifestLocator:
               "s3://meeting/recordings/recording-1/manifest.json",
@@ -198,6 +207,7 @@ describe("Platform recording ingress", () => {
             ],
           },
           replayed: false,
+          source: meetingEnded.source,
         }),
         ingestPacketBatch: async () => ({
           acceptedPackets: 0,
@@ -299,7 +309,10 @@ describe("Platform recording ingress failure isolation", () => {
       ingress: {
         ingestAuthoritativeTrack: async () => ({ replayed: false }),
         ingestLifecycleEvent: async () => ({
+          actors: null,
+          identityProvenance: null,
           kind: "finalized" as const,
+          lifecycleGeneration: 1 as const,
           recording: {
             manifestLocator:
               "s3://meeting/recordings/recording-1/manifest.json",
@@ -313,6 +326,7 @@ describe("Platform recording ingress failure isolation", () => {
             ],
           },
           replayed: true,
+          source: meetingEnded.source,
         }),
         ingestPacketBatch: async () => ({
           acceptedPackets: 0,
@@ -532,13 +546,17 @@ describe("Platform derived ingress failure isolation", () => {
       ingress: {
         ingestAuthoritativeTrack: async () => ({ replayed: false }),
         ingestLifecycleEvent: async () => ({
+          actors: null,
+          identityProvenance: null,
           kind: "finalized" as const,
+          lifecycleGeneration: 1 as const,
           recording: {
             manifestLocator: "s3://meeting/recordings/recording-1/manifest.json",
             recordingId: "recording-1",
             speakerAudio: [],
           },
           replayed: false,
+          source: meetingEnded.source,
         }),
         ingestPacketBatch: async () => ({
           acceptedPackets: 0,

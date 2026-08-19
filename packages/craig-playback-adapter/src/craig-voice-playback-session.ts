@@ -1,5 +1,6 @@
 import {
   craigPlaybackChannels,
+  craigPlaybackCancellationProtocolVersion,
   craigPlaybackProtocolVersion,
   craigPlaybackSampleRateHz,
   parseCraigPlaybackCommand,
@@ -8,9 +9,9 @@ import {
 } from "@discord-meeting/craig-gateway-contracts";
 import {
   type ConversationAudioChunk,
-  type ConversationCancellationReason,
   type VoicePlaybackEvent,
   type VoicePlaybackRequest,
+  type VoicePlaybackCancellationRequest,
   type VoicePlaybackSession,
   type ConversationPortResult,
   type ConversationFailure,
@@ -33,6 +34,25 @@ import {
 const maximumBufferedAudioBytes = 192_000;
 const maximumRememberedChunkSequences = 100_000;
 const pcmBytesPerSecond = craigPlaybackSampleRateHz * craigPlaybackChannels * 2;
+const cancellationReasons = new Set([
+  "barge-in", "disconnected", "meeting-ended", "playback-failed",
+  "runtime-shutdown", "superseded",
+]);
+
+function playbackCancellationFromSignal(
+  signal: AbortSignal | undefined,
+): VoicePlaybackCancellationRequest | undefined {
+  const reason: unknown = signal?.reason;
+  if (typeof reason !== "object" || reason === null) {
+    return undefined;
+  }
+  const candidate = reason as Partial<VoicePlaybackCancellationRequest>;
+  return Number.isSafeInteger(candidate.cancellationObservedAtMs) &&
+      (candidate.cancellationObservedAtMs ?? -1) >= 0 &&
+      typeof candidate.reason === "string" && cancellationReasons.has(candidate.reason)
+    ? candidate as VoicePlaybackCancellationRequest
+    : undefined;
+}
 
 export class CraigVoicePlaybackSession implements VoicePlaybackSession {
   public readonly events: AsyncIterable<VoicePlaybackEvent>;
@@ -98,7 +118,15 @@ export class CraigVoicePlaybackSession implements VoicePlaybackSession {
       signal,
     );
     if (delivery.status === "aborted" || isSignalAborted(signal)) {
-      void this.cancel("superseded");
+      const cancellation = playbackCancellationFromSignal(signal);
+      if (cancellation !== undefined) {
+        void this.cancel(cancellation);
+      } else {
+        const cancelled = playbackOpenCancelled();
+        if (!cancelled.ok) {
+          this.fail(cancelled.failure);
+        }
+      }
       await this.terminalReceipt;
       return playbackOpenCancelled();
     }
@@ -146,7 +174,6 @@ export class CraigVoicePlaybackSession implements VoicePlaybackSession {
         "Craig playback exceeded its bounded sequence memory",
         false,
       );
-      await this.cancelAfterFailure();
       return bounded;
     }
     if (this.transport.bufferedBytes + chunk.bytes.byteLength > maximumBufferedAudioBytes) {
@@ -155,7 +182,6 @@ export class CraigVoicePlaybackSession implements VoicePlaybackSession {
         "Craig playback exceeded two seconds of buffered PCM",
         true,
       );
-      await this.cancelAfterFailure();
       return backpressure;
     }
     try {
@@ -216,7 +242,7 @@ export class CraigVoicePlaybackSession implements VoicePlaybackSession {
   }
 
   public cancel(
-    reason: ConversationCancellationReason,
+    request: VoicePlaybackCancellationRequest,
   ): Promise<ConversationPortResult<"cancelled" | "reused">> {
     if (this.state === "finished" || this.state === "failed") {
       return Promise.resolve({ ok: true, value: "reused" });
@@ -231,12 +257,14 @@ export class CraigVoicePlaybackSession implements VoicePlaybackSession {
       failure("CRAIG_PLAYBACK_CANCELLED", "Craig playback was cancelled", false),
     );
     this.cancelPromise = this.send({
-      schemaVersion: craigPlaybackProtocolVersion,
+      schemaVersion: craigPlaybackCancellationProtocolVersion,
       type: "playback-cancel",
+      meetingId: this.request.meetingId,
       recordingId: this.request.recordingId,
       turnId: this.request.turnId,
       attemptId: this.request.attemptId,
-      reason,
+      cancellationObservedAtMs: request.cancellationObservedAtMs,
+      reason: request.reason === "disconnected" ? "runtime-shutdown" : request.reason,
     }).then(
       () => ({ ok: true, value: "cancelled" as const }),
       (error: unknown) => {
@@ -307,11 +335,6 @@ export class CraigVoicePlaybackSession implements VoicePlaybackSession {
     return event.recordingId === this.request.recordingId &&
       event.turnId === this.request.turnId &&
       event.attemptId === this.request.attemptId;
-  }
-
-  private cancelAfterFailure(): Promise<void> {
-    void this.cancel("playback-failed");
-    return Promise.resolve();
   }
 
   private send(command: CraigPlaybackCommand): Promise<void> {

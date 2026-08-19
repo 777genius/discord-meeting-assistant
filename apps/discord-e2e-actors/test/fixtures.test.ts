@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -21,9 +22,8 @@ describe("synthetic actor fixtures", () => {
   });
 
   it("pins the Russian/English ground truth source hashes", async () => {
-    const manifest = fixtureManifestV1Schema.parse(
-      JSON.parse(await readFile("test/fixtures/manifest.v1.json", "utf8")),
-    );
+    const manifestPath = "test/fixtures/manifest.v1.json";
+    const manifest = fixtureManifestV1Schema.parse(JSON.parse(await readFile(manifestPath, "utf8")));
 
     expect(manifest.locale).toBe("ru-RU");
     expect(manifest.farewellLocaleTerms).toEqual({
@@ -39,7 +39,7 @@ describe("synthetic actor fixtures", () => {
       manifest.scenarios.find(({ kind }) => kind === "reconnect")?.playbackCountByFixture,
     ).toEqual({ "speaker-a": 1, "speaker-b": 1 });
     for (const fixture of manifest.fixtures) {
-      const source = await readFile(fixture.sourcePath);
+      const source = await readFile(resolve(dirname(manifestPath), fixture.sourcePath));
       expect(createHash("sha256").update(source).digest("hex")).toBe(fixture.sourceSha256);
       expect(source.toString("utf8").trim()).toBe(fixture.sourceText);
       expect(fixture.requiredTerms.some((term) => /[a-z]/iu.test(term))).toBe(true);

@@ -40,7 +40,7 @@ export function makeServiceLevelSources(
       ...remote, DISCORD_E2E_SLA_CAMPAIGN_ID: definition.campaignId,
       DISCORD_E2E_SLA_CAMPAIGN_PROOF_INPUT: paths.campaignProof,
       DISCORD_E2E_SLA_CLOCK_ATTESTATIONS_INPUT: sourcePaths.clock,
-      DISCORD_E2E_SLA_CLOCK_PREFLIGHT_INPUT: definition.clockPreflightPath,
+      DISCORD_E2E_SLA_CLOCK_PREFLIGHT_INPUT: paths.launchClockPreflight,
       DISCORD_E2E_SLA_DATABASE_INPUT: sourcePaths.database,
       DISCORD_E2E_SLA_FIXTURE_MANIFEST_INPUT: definition.fixtureManifestPath,
       DISCORD_E2E_SLA_MEETING_PLATFORM_LOG_INPUT: sourcePaths.logs,

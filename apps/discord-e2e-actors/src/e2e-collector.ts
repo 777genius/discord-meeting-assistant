@@ -1,10 +1,10 @@
 import {
   conversationVoiceEvidenceV3Schema,
   retainedE2eEvidenceV6Schema,
-  retainedE2eEvidenceV9Schema,
+  retainedE2eEvidenceV10Schema,
   sameDeploymentProvenance,
   type RetainedE2eEvidenceV6,
-  type RetainedE2eEvidenceV9,
+  type RetainedE2eEvidenceV10,
 } from "./e2e-evidence.js";
 import {
   assertDiscordReference,
@@ -36,6 +36,9 @@ import {
   normalizeDatabase,
   parseUnboundActorRun,
 } from "./e2e-retained-evidence-snapshot.js";
+import { awaitTerminalPostCallEvidence } from "./post-call-evidence-readiness.js";
+import { qualifyProviderlessVoiceDurability } from
+  "./providerless-voice-durability-qualification.js";
 
 export type {
   CollectEvidenceInput,
@@ -53,12 +56,15 @@ export async function collectRetainedE2eEvidence(
   input: CollectEvidenceInput,
   deployment: DeploymentEvidenceProbe,
   discord: DiscordEvidenceProbe,
-): Promise<RetainedE2eEvidenceV6 | RetainedE2eEvidenceV9> {
+): Promise<RetainedE2eEvidenceV10> {
   const unboundActorRun = parseUnboundActorRun(input.actorRun);
   const replayTarget = createReplayTargetAttestation(input, unboundActorRun);
   await deployment.assertReplayTargetSafe(replayTarget);
   const provenanceBefore = await deployment.collectProvenance();
-  const before = normalizeDatabase(await deployment.collectDatabase(input.recordingId));
+  const before = normalizeDatabase(await awaitTerminalPostCallEvidence(
+    () => deployment.collectDatabase(input.recordingId),
+    input.recordingId,
+  ));
   assertExactDatabaseCounts(before, "before replay");
   const snapshot = before.snapshot;
   if (snapshot.meetingId !== input.recordingId || snapshot.recording.recordingId !== input.recordingId) {
@@ -167,9 +173,14 @@ export async function collectRetainedE2eEvidence(
     summary: snapshot.summary,
     transcript: snapshot.transcript,
   });
+  const durabilityQualification = qualifyProviderlessVoiceDurability({
+    release: input.release,
+    sourceRevision: provenanceBefore.meetingPlatform.sourceRevision,
+  });
   if (input.conversation === undefined) {
-    return baseEvidence;
+    return qualifyPostCallEvidence(baseEvidence, input, durabilityQualification);
   }
+  const conversation = input.conversation;
   if (deployment.collectConversationLifecycle === undefined) {
     throw new Error("Deployment probe cannot collect conversation lifecycle evidence");
   }
@@ -179,23 +190,57 @@ export async function collectRetainedE2eEvidence(
   );
   const { participantLifecycleReceipts, ...lifecycle } = lifecycleEvidence;
   const reconnectNoRepeat = createReconnectNoRepeatEvidence(
-    participantLifecycleReceipts, input.conversation.reconnectParticipantId, s3.endedAt,
+    participantLifecycleReceipts, conversation.reconnectParticipantId, s3.endedAt,
   );
-  return retainedE2eEvidenceV9Schema.parse({
+  return qualifyVoiceEvidence({
+    baseEvidence, conversation, durabilityQualification, input, lifecycle,
+    participantLifecycleReceipts, reconnectNoRepeat,
+  });
+}
+
+type DurabilityQualification = ReturnType<typeof qualifyProviderlessVoiceDurability>;
+
+function qualifyPostCallEvidence(
+  baseEvidence: RetainedE2eEvidenceV6,
+  input: CollectEvidenceInput,
+  durabilityQualification: DurabilityQualification,
+): RetainedE2eEvidenceV10 {
+  return retainedE2eEvidenceV10Schema.parse({
+    ...baseEvidence, durabilityQualification, qualificationKind: "post-call",
+    qualificationPolicy: input.qualificationPolicy, release: input.release, schemaVersion: 10,
+  });
+}
+
+function qualifyVoiceEvidence(context: {
+  readonly baseEvidence: RetainedE2eEvidenceV6;
+  readonly conversation: NonNullable<CollectEvidenceInput["conversation"]>;
+  readonly durabilityQualification: DurabilityQualification;
+  readonly input: CollectEvidenceInput;
+  readonly lifecycle: Omit<Awaited<ReturnType<NonNullable<
+    DeploymentEvidenceProbe["collectConversationLifecycle"]
+  >>>, "participantLifecycleReceipts">;
+  readonly participantLifecycleReceipts: Awaited<ReturnType<NonNullable<
+    DeploymentEvidenceProbe["collectConversationLifecycle"]
+  >>>["participantLifecycleReceipts"];
+  readonly reconnectNoRepeat: ReturnType<typeof createReconnectNoRepeatEvidence>;
+}): RetainedE2eEvidenceV10 {
+  const { baseEvidence, conversation, durabilityQualification, input, lifecycle,
+    participantLifecycleReceipts, reconnectNoRepeat } = context;
+  return retainedE2eEvidenceV10Schema.parse({
     ...baseEvidence,
     conversation: {
-      botSpeakerId: input.conversation.botSpeakerId,
-      campaignProof: input.conversation.campaignProof,
+      botSpeakerId: conversation.botSpeakerId,
+      campaignProof: conversation.campaignProof,
       lifecycle,
       reconnectNoRepeat,
-      supplementalPlayback: input.conversation.supplementalPlayback,
-      voice: input.conversation.voice.map((observation) =>
-        bindConversationVoiceRecording(observation, input.recordingId)
-      ),
+      supplementalPlayback: conversation.supplementalPlayback,
+      voice: conversation.voice.map((observation) =>
+        bindConversationVoiceRecording(observation, input.recordingId)),
     },
-    serviceLevels: input.conversation.serviceLevels,
+    serviceLevels: conversation.serviceLevels,
     serviceLevelSources: bindServiceLevelSources(input, participantLifecycleReceipts),
-    schemaVersion: 9,
+    durabilityQualification, qualificationKind: "voice",
+    qualificationPolicy: input.qualificationPolicy, release: input.release, schemaVersion: 10,
   });
 }
 
@@ -204,7 +249,7 @@ function bindServiceLevelSources(
   participantLifecycleReceipts: Awaited<ReturnType<NonNullable<DeploymentEvidenceProbe["collectConversationLifecycle"]>>>["participantLifecycleReceipts"],
 ) {
   if (input.conversation?.serviceLevelSources === undefined) {
-    throw new Error("V9 collection requires authoritative service-level source receipts");
+    throw new Error("V10 collection requires authoritative service-level source receipts");
   }
   return { ...input.conversation.serviceLevelSources, participantLifecycleReceipts };
 }

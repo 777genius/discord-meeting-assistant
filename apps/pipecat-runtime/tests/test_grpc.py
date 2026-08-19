@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+
 import grpc
 import pytest
 
@@ -69,6 +72,7 @@ async def test_converse_streams_ordered_contract_events() -> None:
             contract_payloads = [payload for payload in payloads if payload != "latency"]
             assert contract_payloads == [
                 "accepted",
+                "tts_attestation",
                 "text_delta",
                 "audio_start",
                 "audio_chunk",
@@ -81,6 +85,31 @@ async def test_converse_streams_ordered_contract_events() -> None:
                 "usage",
                 "completed",
             ]
+            attestation_message = next(
+                message for message in messages if message.HasField("tts_attestation")
+            )
+            attestation = attestation_message.tts_attestation
+            attestation_key = hmac.new(
+                BEARER_TOKEN.encode(),
+                b"discord-meeting/pipecat-tts-attestation/key/v1",
+                hashlib.sha256,
+            ).digest()
+            canonical = "\n".join((
+                "schemaVersion=1",
+                f"turnId={attestation_message.turn_id}",
+                f"attemptId={attestation_message.attempt_id}",
+                f"voiceProfileId={attestation.voice_profile_id}",
+                f"deployment={attestation.deployment}",
+                f"sourceRevision={attestation.source_revision}",
+                f"provider={attestation.provider}",
+                f"model={attestation.model}",
+                f"voice={attestation.voice}",
+            ))
+            assert attestation.key_id == hashlib.sha256(attestation_key).hexdigest()
+            assert attestation.signature == hmac.new(
+                attestation_key, canonical.encode(), hashlib.sha256
+            ).hexdigest()
+            assert attestation.key_id != hashlib.sha256(BEARER_TOKEN.encode()).hexdigest()
             assert payloads.index("latency") > payloads.index("audio_start")
             latency = next(message.latency for message in messages if message.HasField("latency"))
             assert latency.end_turn_to_wake_ms == 25

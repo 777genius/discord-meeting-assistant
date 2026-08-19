@@ -158,7 +158,18 @@ function projectionDescription(
   ))?.description;
   return description === null || description === undefined
     ? undefined
-    : extractRecordingPlaybackLink(description);
+    : extractOptionalRecordingPlaybackLink(description);
+}
+
+export function extractOptionalRecordingPlaybackLink(
+  description: string,
+): ExtractedRecordingPlaybackLink | undefined {
+  const links = [...description.matchAll(markdownLinkPattern)];
+  const hasRecordingLabel = links.some((match) => recordingLinkLabels.has(match[1] ?? ""));
+  const hasPlaybackTarget = links.some((match) => match[2]?.includes(recordingPlaybackPath) ?? false);
+  return hasRecordingLabel || hasPlaybackTarget
+    ? extractRecordingPlaybackLink(description)
+    : undefined;
 }
 
 export function extractRecordingPlaybackLink(

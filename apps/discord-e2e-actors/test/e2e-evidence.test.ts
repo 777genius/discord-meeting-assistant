@@ -96,7 +96,7 @@ describe("verifyRetainedE2eEvidence", () => {
   });
 
   it("allows pinned bot tracks without letting them satisfy human overlap", () => {
-    const botSpeakerId = "1534231284467896512";
+    const botSpeakerId = "1533877611258708230";
     const fixtureManifest = manifest();
     fixtureManifest.allowedBotSpeakerIds = [botSpeakerId];
     const evidence = sequentialEvidence();

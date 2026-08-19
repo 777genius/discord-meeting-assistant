@@ -1,0 +1,257 @@
+{
+  "bundleVersion": 2,
+  "contract": "craig-lifecycle-v3",
+  "producerCapabilityId": "meeting.lifecycle.sealed-actor-roster.v1",
+  "actorSemanticsVersion": 1,
+  "producerRevision": "0123456789abcdef0123456789abcdef01234567",
+  "fixtures": [
+    {
+      "name": "sealed-human-late-join",
+      "expectedKnowledgeEligibleActorIds": [
+        "1533227577286852649",
+        "1533228590643155035"
+      ],
+      "events": [
+        {
+          "schemaVersion": 3,
+          "eventId": "synthetic-human-recording:1",
+          "recordingId": "synthetic-human-recording",
+          "guildId": "1533228590643155034",
+          "channelId": "1533228823045214398",
+          "occurredAt": "2026-08-13T00:00:00.000Z",
+          "type": "meeting.started",
+          "actorObservationState": "consistent",
+          "actorSemanticsVersion": 1,
+          "producerCapabilityId": "meeting.lifecycle.sealed-actor-roster.v1",
+          "producerRevision": "0123456789abcdef0123456789abcdef01234567",
+          "actors": [
+            { "actorId": "1533227577286852649", "kind": "human" },
+            { "actorId": "1533228054724346087", "kind": "automation" }
+          ],
+          "rosterState": "unsealed"
+        },
+        {
+          "schemaVersion": 3,
+          "eventId": "synthetic-human-recording:2",
+          "recordingId": "synthetic-human-recording",
+          "guildId": "1533228590643155034",
+          "channelId": "1533228823045214398",
+          "occurredAt": "2026-08-13T00:00:01.000Z",
+          "type": "participant.joined",
+          "actorObservationState": "consistent",
+          "actorSemanticsVersion": 1,
+          "producerCapabilityId": "meeting.lifecycle.sealed-actor-roster.v1",
+          "producerRevision": "0123456789abcdef0123456789abcdef01234567",
+          "actor": { "actorId": "1533228590643155035", "kind": "human" }
+        },
+        {
+          "schemaVersion": 3,
+          "eventId": "synthetic-human-recording:3",
+          "recordingId": "synthetic-human-recording",
+          "guildId": "1533228590643155034",
+          "channelId": "1533228823045214398",
+          "occurredAt": "2026-08-13T00:00:02.000Z",
+          "type": "participant.left",
+          "actorObservationState": "consistent",
+          "actorSemanticsVersion": 1,
+          "producerCapabilityId": "meeting.lifecycle.sealed-actor-roster.v1",
+          "producerRevision": "0123456789abcdef0123456789abcdef01234567",
+          "actor": { "actorId": "1533228590643155035", "kind": "human" }
+        },
+        {
+          "schemaVersion": 3,
+          "eventId": "synthetic-human-recording:4",
+          "recordingId": "synthetic-human-recording",
+          "guildId": "1533228590643155034",
+          "channelId": "1533228823045214398",
+          "occurredAt": "2026-08-13T00:01:00.000Z",
+          "type": "meeting.ended",
+          "actorObservationState": "consistent",
+          "actorSemanticsVersion": 1,
+          "producerCapabilityId": "meeting.lifecycle.sealed-actor-roster.v1",
+          "producerRevision": "0123456789abcdef0123456789abcdef01234567",
+          "reason": null
+        },
+        {
+          "schemaVersion": 3,
+          "eventId": "synthetic-human-recording:authoritative-ready:v3",
+          "recordingId": "synthetic-human-recording",
+          "guildId": "1533228590643155034",
+          "channelId": "1533228823045214398",
+          "occurredAt": "2026-08-13T00:01:00.000Z",
+          "type": "recording.authoritative_ready",
+          "actorObservationState": "consistent",
+          "actorSemanticsVersion": 1,
+          "producerCapabilityId": "meeting.lifecycle.sealed-actor-roster.v1",
+          "producerRevision": "0123456789abcdef0123456789abcdef01234567",
+          "actors": [
+            { "actorId": "1533227577286852649", "kind": "human" },
+            { "actorId": "1533228054724346087", "kind": "automation" },
+            { "actorId": "1533228590643155035", "kind": "human" }
+          ],
+          "rosterState": "sealed",
+          "endedAt": "2026-08-13T00:01:00.000Z",
+          "trackCount": 2,
+          "sourceFilesChecksumSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "authoritativeTrackActorIds": [
+        "1533227577286852649",
+        "1533228590643155035"
+      ]
+    },
+    {
+      "name": "sealed-mixed-actor-kinds",
+      "expectedKnowledgeEligibleActorIds": [
+        "1533227577286852649"
+      ],
+      "events": [
+        {
+          "schemaVersion": 3,
+          "eventId": "synthetic-mixed-recording:1",
+          "recordingId": "synthetic-mixed-recording",
+          "guildId": "1533228590643155034",
+          "channelId": "1533228823045214398",
+          "occurredAt": "2026-08-13T01:00:00.000Z",
+          "type": "meeting.started",
+          "actorObservationState": "consistent",
+          "actorSemanticsVersion": 1,
+          "producerCapabilityId": "meeting.lifecycle.sealed-actor-roster.v1",
+          "producerRevision": "0123456789abcdef0123456789abcdef01234567",
+          "actors": [
+            { "actorId": "1533227577286852649", "kind": "human" },
+            { "actorId": "1533228054724346087", "kind": "automation" }
+          ],
+          "rosterState": "unsealed"
+        },
+        {
+          "schemaVersion": 3,
+          "eventId": "synthetic-mixed-recording:2",
+          "recordingId": "synthetic-mixed-recording",
+          "guildId": "1533228590643155034",
+          "channelId": "1533228823045214398",
+          "occurredAt": "2026-08-13T01:00:01.000Z",
+          "type": "participant.joined",
+          "actorObservationState": "consistent",
+          "actorSemanticsVersion": 1,
+          "producerCapabilityId": "meeting.lifecycle.sealed-actor-roster.v1",
+          "producerRevision": "0123456789abcdef0123456789abcdef01234567",
+          "actor": { "actorId": "1533228590643155036", "kind": "unknown" }
+        },
+        {
+          "schemaVersion": 3,
+          "eventId": "synthetic-mixed-recording:3",
+          "recordingId": "synthetic-mixed-recording",
+          "guildId": "1533228590643155034",
+          "channelId": "1533228823045214398",
+          "occurredAt": "2026-08-13T01:01:00.000Z",
+          "type": "meeting.ended",
+          "actorObservationState": "consistent",
+          "actorSemanticsVersion": 1,
+          "producerCapabilityId": "meeting.lifecycle.sealed-actor-roster.v1",
+          "producerRevision": "0123456789abcdef0123456789abcdef01234567",
+          "reason": null
+        },
+        {
+          "schemaVersion": 3,
+          "eventId": "synthetic-mixed-recording:authoritative-ready:v3",
+          "recordingId": "synthetic-mixed-recording",
+          "guildId": "1533228590643155034",
+          "channelId": "1533228823045214398",
+          "occurredAt": "2026-08-13T01:01:00.000Z",
+          "type": "recording.authoritative_ready",
+          "actorObservationState": "consistent",
+          "actorSemanticsVersion": 1,
+          "producerCapabilityId": "meeting.lifecycle.sealed-actor-roster.v1",
+          "producerRevision": "0123456789abcdef0123456789abcdef01234567",
+          "actors": [
+            { "actorId": "1533227577286852649", "kind": "human" },
+            { "actorId": "1533228054724346087", "kind": "automation" },
+            { "actorId": "1533228590643155036", "kind": "unknown" }
+          ],
+          "rosterState": "sealed",
+          "endedAt": "2026-08-13T01:01:00.000Z",
+          "trackCount": 3,
+          "sourceFilesChecksumSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      ],
+      "authoritativeTrackActorIds": [
+        "1533227577286852649",
+        "1533228054724346087",
+        "1533228590643155036"
+      ]
+    },
+    {
+      "name": "contradictory-observation-poisons-identity",
+      "expectedKnowledgeEligibleActorIds": [],
+      "actorObservations": [
+        { "actorId": "1533227577286852649", "kind": "human" },
+        { "actorId": "1533227577286852649", "kind": "automation" }
+      ],
+      "events": [
+        {
+          "schemaVersion": 3,
+          "eventId": "synthetic-conflicted-recording:1",
+          "recordingId": "synthetic-conflicted-recording",
+          "guildId": "1533228590643155034",
+          "channelId": "1533228823045214398",
+          "occurredAt": "2026-08-13T02:00:00.000Z",
+          "type": "meeting.started",
+          "actorObservationState": "consistent",
+          "actorSemanticsVersion": 1,
+          "producerCapabilityId": "meeting.lifecycle.sealed-actor-roster.v1",
+          "producerRevision": "0123456789abcdef0123456789abcdef01234567",
+          "actors": [
+            { "actorId": "1533227577286852649", "kind": "human" },
+            { "actorId": "1533228054724346087", "kind": "automation" }
+          ],
+          "rosterState": "unsealed"
+        },
+        {
+          "schemaVersion": 3,
+          "eventId": "synthetic-conflicted-recording:2",
+          "recordingId": "synthetic-conflicted-recording",
+          "guildId": "1533228590643155034",
+          "channelId": "1533228823045214398",
+          "occurredAt": "2026-08-13T02:01:00.000Z",
+          "type": "meeting.ended",
+          "actorObservationState": "conflicted",
+          "actorSemanticsVersion": 1,
+          "producerCapabilityId": "meeting.lifecycle.sealed-actor-roster.v1",
+          "producerRevision": "0123456789abcdef0123456789abcdef01234567",
+          "reason": null
+        },
+        {
+          "schemaVersion": 3,
+          "eventId": "synthetic-conflicted-recording:authoritative-ready:v3",
+          "recordingId": "synthetic-conflicted-recording",
+          "guildId": "1533228590643155034",
+          "channelId": "1533228823045214398",
+          "occurredAt": "2026-08-13T02:01:00.000Z",
+          "type": "recording.authoritative_ready",
+          "actorObservationState": "conflicted",
+          "actorSemanticsVersion": 1,
+          "producerCapabilityId": "meeting.lifecycle.sealed-actor-roster.v1",
+          "producerRevision": "0123456789abcdef0123456789abcdef01234567",
+          "actors": [
+            { "actorId": "1533227577286852649", "kind": "human" },
+            { "actorId": "1533228054724346087", "kind": "automation" }
+          ],
+          "rosterState": "sealed",
+          "endedAt": "2026-08-13T02:01:00.000Z",
+          "trackCount": 1,
+          "sourceFilesChecksumSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      ],
+      "authoritativeTrackActorIds": [
+        "1533227577286852649"
+      ]
+    }
+  ],
+  "identityLabels": {
+    "1533227577286852649": "synthetic-human",
+    "1533228054724346087": "synthetic-Botik-and-Craig-recorder",
+    "1533228590643155035": "synthetic-late-human",
+    "1533228590643155036": "synthetic-partial-member"
+  }
+}

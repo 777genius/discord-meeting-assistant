@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./playback-readiness": "./src/playback-readiness-contracts.ts",
     "./proto/conversation_runtime.proto": "./proto/conversation_runtime.proto"
   },
   "scripts": {

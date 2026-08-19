@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://craig.chat/contracts/craig-lifecycle-v3.schema.json",
+  "title": "Craig trusted lifecycle event schema v3",
+  "oneOf": [
+    { "$ref": "#/$defs/meetingStarted" },
+    { "$ref": "#/$defs/participantChanged" },
+    { "$ref": "#/$defs/connectionChanged" },
+    { "$ref": "#/$defs/meetingStopped" },
+    { "$ref": "#/$defs/authoritativeReady" }
+  ],
+  "$defs": {
+    "snowflake": { "type": "string", "pattern": "^[0-9]{17,20}$" },
+    "identifier": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "instant": { "type": "string", "format": "date-time" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "producerRevision": { "type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$" },
+    "actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actorId", "kind"],
+      "properties": {
+        "actorId": { "$ref": "#/$defs/snowflake" },
+        "kind": { "enum": ["human", "automation", "unknown"] }
+      }
+    },
+    "actors": {
+      "type": "array",
+      "maxItems": 1000,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/actor" },
+      "$comment": "Consumers MUST additionally reject repeated actorId values, including entries whose kinds conflict."
+    },
+    "envelope": {
+      "type": "object",
+      "required": [
+        "schemaVersion", "eventId", "recordingId", "guildId", "channelId", "occurredAt", "type",
+        "actorObservationState", "actorSemanticsVersion", "producerCapabilityId", "producerRevision"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 3 },
+        "eventId": { "$ref": "#/$defs/identifier" },
+        "recordingId": { "$ref": "#/$defs/identifier" },
+        "guildId": { "$ref": "#/$defs/snowflake" },
+        "channelId": { "$ref": "#/$defs/snowflake" },
+        "occurredAt": { "$ref": "#/$defs/instant" },
+        "actorObservationState": { "enum": ["consistent", "conflicted"] },
+        "actorSemanticsVersion": { "const": 1 },
+        "producerCapabilityId": { "const": "meeting.lifecycle.sealed-actor-roster.v1" },
+        "producerRevision": { "$ref": "#/$defs/producerRevision" }
+      }
+    },
+    "meetingStarted": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schemaVersion", "eventId", "recordingId", "guildId", "channelId", "occurredAt", "type",
+            "actorObservationState", "actorSemanticsVersion", "producerCapabilityId", "producerRevision", "actors", "rosterState"
+          ],
+          "properties": {
+            "schemaVersion": true, "eventId": true, "recordingId": true, "guildId": true, "channelId": true, "occurredAt": true,
+            "actorObservationState": true, "actorSemanticsVersion": true, "producerCapabilityId": true, "producerRevision": true,
+            "type": { "const": "meeting.started" }, "actors": { "$ref": "#/$defs/actors" }, "rosterState": { "const": "unsealed" }
+          }
+        }
+      ]
+    },
+    "participantChanged": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schemaVersion", "eventId", "recordingId", "guildId", "channelId", "occurredAt", "type",
+            "actorObservationState", "actorSemanticsVersion", "producerCapabilityId", "producerRevision", "actor"
+          ],
+          "properties": {
+            "schemaVersion": true, "eventId": true, "recordingId": true, "guildId": true, "channelId": true, "occurredAt": true,
+            "actorObservationState": true, "actorSemanticsVersion": true, "producerCapabilityId": true, "producerRevision": true,
+            "type": { "enum": ["participant.joined", "participant.left"] }, "actor": { "$ref": "#/$defs/actor" }
+          }
+        }
+      ]
+    },
+    "connectionChanged": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": [
+            "schemaVersion", "eventId", "recordingId", "guildId", "channelId", "occurredAt", "type",
+            "actorObservationState", "actorSemanticsVersion", "producerCapabilityId", "producerRevision", "reason"
+          ],
+          "properties": {
+            "schemaVersion": true, "eventId": true, "recordingId": true, "guildId": true, "channelId": true, "occurredAt": true,
+            "actorObservationState": true, "actorSemanticsVersion": true, "producerCapabilityId": true, "producerRevision": true,
+            "type": { "enum": ["meeting.connection_lost", "meeting.connection_recovered"] },
+            "reason": { "type": ["string", "null"], "minLength": 1, "maxLength": 256 }
+          }
+        }
+      ]
+    },
+    "meetingStopped": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": [
+            "schemaVersion", "eventId", "recordingId", "guildId", "channelId", "occurredAt", "type",
+            "actorObservationState", "actorSemanticsVersion", "producerCapabilityId", "producerRevision", "reason"
+          ],
+          "properties": {
+            "schemaVersion": true, "eventId": true, "recordingId": true, "guildId": true, "channelId": true, "occurredAt": true,
+            "actorObservationState": true, "actorSemanticsVersion": true, "producerCapabilityId": true, "producerRevision": true,
+            "type": { "enum": ["meeting.ended", "meeting.aborted"] },
+            "reason": { "type": ["string", "null"], "minLength": 1, "maxLength": 256 }
+          }
+        }
+      ]
+    },
+    "authoritativeReady": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": [
+            "schemaVersion", "eventId", "recordingId", "guildId", "channelId", "occurredAt", "type",
+            "actorObservationState", "actorSemanticsVersion", "producerCapabilityId", "producerRevision", "actors", "rosterState",
+            "endedAt", "sourceFilesChecksumSha256", "trackCount"
+          ],
+          "properties": {
+            "schemaVersion": true, "eventId": true, "recordingId": true, "guildId": true, "channelId": true, "occurredAt": true,
+            "actorObservationState": true, "actorSemanticsVersion": true, "producerCapabilityId": true, "producerRevision": true,
+            "type": { "const": "recording.authoritative_ready" }, "actors": { "$ref": "#/$defs/actors" },
+            "rosterState": { "const": "sealed" }, "endedAt": { "$ref": "#/$defs/instant" },
+            "sourceFilesChecksumSha256": { "$ref": "#/$defs/sha256" },
+            "trackCount": { "type": "integer", "minimum": 1, "maximum": 64 }
+          }
+        }
+      ]
+    }
+  }
+}

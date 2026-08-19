@@ -32,7 +32,7 @@ from pipecat_runtime.adapters.pipecat.processors import (
 )
 from pipecat_runtime.adapters.pipecat.runtime import PipecatConversationRuntime
 from pipecat_runtime.adapters.pipecat.turn_lifecycle import ActivePipelineTurn
-from pipecat_runtime.adapters.providers.profiles import create_profile
+from pipecat_runtime.adapters.providers.profiles import TtsRuntimeIdentity, create_profile
 from pipecat_runtime.application.conversation_events import (
     AudioChunk,
     AudioEnd,
@@ -93,7 +93,13 @@ class _FramedSpeechProcessor(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
-class _FramedSpeechProfile:
+class _FixtureTtsIdentity:
+    @property
+    def tts_identity(self) -> TtsRuntimeIdentity:
+        return TtsRuntimeIdentity(provider="fixture", model="fixture-tts-v1", voice="fixture")
+
+
+class _FramedSpeechProfile(_FixtureTtsIdentity):
     profile_id = "framed-speech"
 
     def __init__(self, probe: _PlaybackLifecycleProbe) -> None:
@@ -128,7 +134,7 @@ class _EmptyTtsProcessor(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
-class _EmptyThenSpeechProfile:
+class _EmptyThenSpeechProfile(_FixtureTtsIdentity):
     profile_id = "empty-then-speech"
 
     def __init__(self) -> None:
@@ -176,7 +182,7 @@ class _CountingTurnProcessor(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
-class _CountingProfile:
+class _CountingProfile(_FixtureTtsIdentity):
     profile_id = "persistent-test"
 
     def __init__(self) -> None:
@@ -193,7 +199,7 @@ class _CountingProfile:
         return self.processor, ConversationTextCaptureProcessor()
 
 
-class _IndependentCountingProfile:
+class _IndependentCountingProfile(_FixtureTtsIdentity):
     """Create isolated processors for tests that exercise multiple meeting pipelines."""
 
     profile_id = "independent-persistent-test"
@@ -243,7 +249,7 @@ class _InterruptibleTurnProcessor(FrameProcessor):
         await self.push_frame(LLMFullResponseEndFrame(), direction)
 
 
-class _InterruptibleProfile:
+class _InterruptibleProfile(_FixtureTtsIdentity):
     profile_id = "persistent-interruption-test"
 
     def __init__(self) -> None:
@@ -455,6 +461,33 @@ async def test_interruption_preserves_the_warm_pipeline_for_the_queued_turn() ->
     assert isinstance(second_events[-1], Completed)
     assert profile.create_count == 1
     assert profile.processor.turn_count == 2
+
+
+async def test_cancellation_fences_every_later_pcm_event() -> None:
+    """Once cancellation is recorded, queued TTS frames cannot emit more PCM."""
+    settings = deterministic_runtime_settings(
+        DeterministicPipelineOptions(audio_delay_seconds=0.05)
+    )
+    runtime = PipecatConversationRuntime(profile=create_profile(settings.profile))
+    request = sample_start_turn()
+    session = await runtime.start(request)
+    events = session.events()
+    accepted = await anext(events)
+    while not isinstance(await anext(events), AudioChunk):
+        pass
+
+    changed = await session.cancel(CancelTurn(
+        turn_id=request.turn_id,
+        attempt_id=accepted.attempt_id,
+        reason=CancellationReason.BARGE_IN,
+    ))
+    after_cancellation = await asyncio.wait_for(_collect(events), timeout=2)
+    await asyncio.wait_for(session.wait(), timeout=2)
+    await asyncio.wait_for(runtime.close(), timeout=15)
+
+    assert changed is True
+    assert not any(isinstance(event, AudioChunk) for event in after_cancellation)
+    assert isinstance(after_cancellation[-1], Cancelled)
 
 
 async def test_deterministic_pipeline_streams_ordered_normalized_pcm() -> None:

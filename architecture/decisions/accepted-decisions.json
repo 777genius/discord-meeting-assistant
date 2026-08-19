@@ -126,6 +126,66 @@
       "id": "ADR-0025",
       "path": "docs/decisions/0025-cumulative-live-summary-and-layered-discord-evidence.md",
       "immutableDigest": "sha256:3b4c5f35b9b555639fd2d16bdab9201f7efecbcb6a72c530683e9c065e7b22a6"
+    },
+    {
+      "id": "ADR-0027",
+      "path": "docs/decisions/0027-durable-meeting-source-and-actor-identity.md",
+      "immutableDigest": "sha256:aa17b2f48e3ae1ffc054edd3cc3af5c04def717589547fc8c717815ffd81111a"
+    },
+    {
+      "id": "ADR-0028",
+      "path": "docs/decisions/0028-meeting-knowledge-test-ownership.md",
+      "immutableDigest": "sha256:ca1c4a3608bed39d0e7c5201007233822a628d6e3197694f77b51e624bfa2bf8"
+    },
+    {
+      "id": "ADR-0029",
+      "path": "docs/decisions/0029-trusted-lifecycle-evidence.md",
+      "immutableDigest": "sha256:5627c936f92a7254c207b00cf45e2293351a12950ffd936a61e9fa16f062dba1"
+    },
+    {
+      "id": "ADR-0030",
+      "path": "docs/decisions/0030-local-final-reply.md",
+      "immutableDigest": "sha256:def098ba8431b288ef752f235e983292f91d9fdc51a507ee84ce8318fd1dea40"
+    },
+    {
+      "id": "ADR-0031",
+      "path": "docs/decisions/0031-infinity-context-historical-memory.md",
+      "immutableDigest": "sha256:00513bfbbbe613d5074ccc59b458c082b708e2b35aab25f53fcb4f804cafdea8"
+    },
+    {
+      "id": "ADR-0032",
+      "path": "docs/decisions/0032-live-finalized-grounded-memory.md",
+      "immutableDigest": "sha256:135051a7fd99aeaa08e8dd9727bbeeb153782b04836776cef70210822c87bf70"
+    },
+    {
+      "id": "ADR-0033",
+      "path": "docs/decisions/0033-adaptive-current-grounding.md",
+      "immutableDigest": "sha256:2159a6184964813e3df3982eb052e96df7ca03368c4a8e08dbad397b419c4b60"
+    },
+    {
+      "id": "ADR-0034",
+      "path": "docs/decisions/0034-bounded-answer-model-grounding.md",
+      "immutableDigest": "sha256:b26e8d9351ddd9b1e97226a0dd30c0609d4f1e16850fb360ba3213d960e6cd38"
+    },
+    {
+      "id": "ADR-0035",
+      "path": "docs/decisions/0035-infinity-package-and-semantic-qualification.md",
+      "immutableDigest": "sha256:1e69c2ed4038b467e84384d0e1ea43163b194b9d4d0db5110fe97fd20c49c76b"
+    },
+    {
+      "id": "ADR-0036",
+      "path": "docs/decisions/0036-canonical-live-projection-reply.md",
+      "immutableDigest": "sha256:cccdc041aea7006e9aafb7e61334976ea51be236bdff39d05ea2eb99033cb5ac"
+    },
+    {
+      "id": "ADR-0037",
+      "path": "docs/decisions/0037-release-bound-meeting-knowledge-qualification.md",
+      "immutableDigest": "sha256:06c636988adf1a4929168017cd6eed07ff44ceb1ca930e247c24aa5a15bf5f8a"
+    },
+    {
+      "id": "ADR-0038",
+      "path": "docs/decisions/0038-projection-trust-and-policy-epoch.md",
+      "immutableDigest": "sha256:693dbe121aeb0376ce6c140715fc095d770fdb65ddf5ea702e20a050ba3bb45a"
     }
   ]
 }

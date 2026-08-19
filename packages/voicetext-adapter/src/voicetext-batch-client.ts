@@ -71,24 +71,17 @@ export class FetchVoicetextBatchClient implements VoicetextBatchClient {
   ): Promise<VoicetextBatchTaskResult> {
     validateIdempotencyKey(request.idempotencyKey);
     validateAudio(request.audio);
-    const form = new FormData();
-    form.set("contract_version", voicetextBatchContractVersion);
-    form.set("provider", voicetextBatchProvider);
-    form.set("model", voicetextBatchModel);
-    form.set("language", voicetextBatchLanguage);
-    form.set("keyterms", JSON.stringify(validateKeyterms(request.keyterms)));
-    // Avoid passing the object-store locator or any caller-controlled filename
-    // to the remote service. The authenticated body is the only audio egress.
-    form.set(
-      "file",
-      new Blob([request.audio], { type: "audio/ogg" }),
-      "speaker-track.ogg",
+    const multipart = deterministicMultipartBody(
+      request.audio,
+      request.idempotencyKey,
+      validateKeyterms(request.keyterms),
     );
 
     const response = await this.request(this.endpoint, {
-      body: form,
+      body: multipart.body,
       headers: {
         Authorization: this.authorization,
+        "Content-Type": multipart.contentType,
         "X-Idempotency-Key": request.idempotencyKey,
       },
       method: "POST",
@@ -130,6 +123,40 @@ export class FetchVoicetextBatchClient implements VoicetextBatchClient {
       );
     }
   }
+}
+
+function deterministicMultipartBody(
+  audio: Uint8Array,
+  idempotencyKey: string,
+  keyterms: readonly string[],
+): Readonly<{ body: Blob; contentType: string }> {
+  let boundary = `discord-meeting-${idempotencyKey}`;
+  const audioBytes = Buffer.from(audio);
+  while (audioBytes.includes(Buffer.from(`\r\n--${boundary}`, "utf8"))) {
+    boundary += "-x";
+    if (boundary.length > 200) {
+      throw new VoicetextAdapterError("invalid_input", "audio cannot be encoded safely", false);
+    }
+  }
+  const fields = [
+    ["contract_version", voicetextBatchContractVersion],
+    ["provider", voicetextBatchProvider],
+    ["model", voicetextBatchModel],
+    ["language", voicetextBatchLanguage],
+    ["keyterms", JSON.stringify(keyterms)],
+  ] as const;
+  const parts: Array<string | Uint8Array> = fields.map(([name, value]) =>
+    `--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`);
+  parts.push(
+    `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="speaker-track.ogg"\r\n` +
+      "Content-Type: audio/ogg\r\n\r\n",
+    audio,
+    `\r\n--${boundary}--\r\n`,
+  );
+  return Object.freeze({
+    body: new Blob(parts),
+    contentType: `multipart/form-data; boundary=${boundary}`,
+  });
 }
 
 /** Converts the configured live WSS origin to its same-origin batch-v2 URL. */

@@ -1,19 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  bindConversationVoiceRecording,
-  collectRetainedE2eEvidence,
-  type DatabaseObservation,
-  type DeploymentEvidenceProbe,
-  type DiscordEvidenceProbe,
-  type S3RecordingEvidence,
-} from "../src/e2e-collector.js";
+import { bindConversationVoiceRecording, collectRetainedE2eEvidence,
+  type DatabaseObservation, type DeploymentEvidenceProbe, type DiscordEvidenceProbe,
+  type S3RecordingEvidence } from "../src/e2e-collector.js";
 import type { CurrentDeploymentProvenance, ProcessingEvidence } from "../src/e2e-evidence.js";
 import type { RecordingPlaybackEvidenceProbe } from "../src/recording-playback-evidence-probe.js";
 import { retainedV7Evidence, retainedV8Evidence } from "./e2e-evidence-fixtures.js";
-import { conversationVoiceCampaignObserverReadyReceipt, conversationVoiceCampaignPlanDigest } from
-  "../src/conversation-voice-campaign-proof.js";
-import { serviceLevelSourcesProof, serviceLevelsProof } from "./e2e-service-level-fixtures.js";
+import { conversationVoiceCampaignObserverReadyReceipt, conversationVoiceCampaignPlanDigest } from "../src/conversation-voice-campaign-proof.js";
+import { serviceLevelSourcesProofV2, serviceLevelsProof } from "./e2e-service-level-fixtures.js";
+import { HOSTED_VOICE_QUALIFICATION_POLICY_V1 } from "../src/hosted-voice-qualification-policy.js";
 
 const campaignProof = {
   plan: { captures: [], kind: "conversation-voice-campaign-preflight", status: "validated" },
@@ -69,11 +64,13 @@ function collectionInput(
   return {
     actorRun: actorRun(),
     fixtureSetId: "discord-meeting-ru-en-v1",
+    qualificationPolicy: HOSTED_VOICE_QUALIFICATION_POLICY_V1,
     recordingId: "recording-1",
     recordingPlayback: recordingPlayback(),
     recordingPlaybackOrigin: "https://recordings.example.test",
     recordingPlaybackReadiness: "already-ready",
     recordingPlaybackTestScope: "private-test-deployment",
+    release: { releaseBindingSha256: "1".repeat(64), releaseId: "release-1", trustRootSha256: "2".repeat(64) },
     runId: "run-1",
     ...overrides,
   };
@@ -252,7 +249,7 @@ function provenance(): CurrentDeploymentProvenance {
       containerStartedAt: "1970-01-01T00:15:00.000Z",
       imageId: `sha256:${"3".repeat(64)}`,
       repositoryDigest: null,
-      sourceRevision: "4".repeat(40),
+      sourceRevision: "7".repeat(40),
     },
     subscriptionRuntime: {
       composeConfigHash: "b".repeat(64),
@@ -284,7 +281,7 @@ function processing(): ProcessingEvidence {
       model: "gpt-5.6-sol",
       observedAt: "1970-01-01T00:17:05.900Z",
       outputSchemaName: "discord_meeting_summary_v4",
-      policyVersion: "meeting-summary.subscription-runtime.v15",
+      policyVersion: "meeting-summary.subscription-runtime.v16",
       purpose: "discord_meeting.summary.generate",
       reasoningEffort: "medium",
       runId: "summary-run-1",
@@ -435,7 +432,8 @@ describe("collectRetainedE2eEvidence", () => {
       discord,
     );
 
-    expect(evidence.schemaVersion).toBe(6);
+    expect(evidence.schemaVersion).toBe(10);
+    expect(evidence.qualificationKind).toBe("post-call");
     expect(evidence.deployment.pipecat).toBeUndefined();
     expect(evidence.publication).toMatchObject({
       container: {
@@ -448,13 +446,18 @@ describe("collectRetainedE2eEvidence", () => {
     expect(evidence.replay.container).toEqual(evidence.publication.container);
   });
 
-  it("collects lifecycle, voice and supplemental playback as retained v8 evidence", async () => {
+  it("collects lifecycle, voice and supplemental playback as current V10 evidence", async () => {
     const conversationFixture = retainedV8Evidence().conversation;
     const deployment: DeploymentEvidenceProbe = {
       assertRecordingPlaybackTargetSafe: async () => {},
       assertReplayTargetSafe: async () => {},
       collectConversationLifecycle: async () => ({
         ...conversationFixture.lifecycle,
+        groundedAnswers: conversationFixture.lifecycle.groundedAnswers.map((observation) =>
+          observation.status === "validated"
+            ? { ...observation, citationTurnIds: ["turn-a"] }
+            : observation
+        ),
         participantLifecycleReceipts: [
           {
             eventType: "participant.joined",
@@ -512,15 +515,15 @@ describe("collectRetainedE2eEvidence", () => {
         campaignProof: campaignProofFor(conversationFixture),
         reconnectParticipantId: speakerB,
         serviceLevels: serviceLevelsProof(),
-        serviceLevelSources: serviceLevelSourcesProof(),
+        serviceLevelSources: serviceLevelSourcesProofV2(),
         supplementalPlayback,
         voice,
       },
     }), deployment, discord);
 
-    expect(evidence.schemaVersion).toBe(9);
-    if (evidence.schemaVersion !== 9) {
-      throw new Error("expected retained V9 evidence");
+    expect(evidence.schemaVersion).toBe(10);
+    if (evidence.qualificationKind !== "voice") {
+      throw new Error("expected retained V10 voice evidence");
     }
     expect(evidence.conversation.supplementalPlayback).toEqual(supplementalPlayback);
     expect(evidence.conversation.reconnectNoRepeat?.lifecycleReceipts).toEqual(
@@ -621,7 +624,7 @@ describe("failures", () => {
         campaignProof: campaignProofFor(conversationFixture),
         reconnectParticipantId: speakerB,
         serviceLevels: serviceLevelsProof(),
-        serviceLevelSources: serviceLevelSourcesProof(),
+        serviceLevelSources: serviceLevelSourcesProofV2(),
         supplementalPlayback: {
           ...structuredClone(conversationFixture.supplementalPlayback),
           runId: "run-1",
@@ -824,7 +827,7 @@ function campaignProofFor(conversation: ReturnType<typeof retainedV8Evidence>["c
       readyPublishedAt: "1970-01-01T00:00:00.000Z",
       runId: "run-1",
       target: {
-        craigBotId: "1534231284467896512",
+        craigBotId: "1533877611258708230",
         guildId: "1533228590643155034",
         observerApplicationId: "1533867700575670282",
         voiceChannelId: "1533228823045214398",

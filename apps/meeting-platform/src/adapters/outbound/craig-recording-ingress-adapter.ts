@@ -55,6 +55,18 @@ export class CraigRecordingIngressAdapter implements RecordingDurabilityPort {
   public ingestLifecycleEvent(
     event: RecordingLifecycleCommand,
   ): Promise<RecordingLifecycleIngressResult> {
+    if (
+      event.schemaVersion !== 1 &&
+      (event.type === "meeting.started" || event.type === "recording.authoritative_ready")
+    ) {
+      const { source, ...providerNeutralEvent } = event;
+      return this.delegate.ingestLifecycleEvent({
+        ...providerNeutralEvent,
+        actors: event.actors.map((actor) => ({ ...actor })),
+        channelId: source.roomId,
+        guildId: source.scopeId,
+      });
+    }
     const { source, ...providerNeutralEvent } = event;
     return this.delegate.ingestLifecycleEvent({
       ...providerNeutralEvent,

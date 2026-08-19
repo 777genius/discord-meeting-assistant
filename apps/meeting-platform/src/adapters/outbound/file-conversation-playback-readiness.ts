@@ -10,10 +10,16 @@ import {
   conversationGreetingPlaybackIntentSchema,
   conversationGreetingPlaybackReadinessEnvelopeSchema,
   conversationPlaybackReadinessProtocolVersion,
+  conversationThinkingCueObserverReadySchema,
+  conversationThinkingCuePlaybackIntentSchema,
+  conversationThinkingCuePlaybackReadinessEnvelopeSchema,
+  conversationThinkingCuePlaybackReadinessProtocolVersion,
   serializeConversationAnswerPlaybackReadinessEnvelope,
   serializeConversationGreetingPlaybackReadinessEnvelope,
+  serializeConversationThinkingCuePlaybackReadinessEnvelope,
   type ConversationAnswerPlaybackReadinessEnvelope,
   type ConversationGreetingPlaybackReadinessEnvelope,
+  type ConversationThinkingCuePlaybackReadinessEnvelope,
 } from "@discord-meeting/conversation-runtime-contracts";
 
 import type {
@@ -34,6 +40,7 @@ export interface FileConversationPlaybackReadinessOptions {
 
 /** Filesystem adapter for the E2E-only two-phase answer capture protocol. */
 export class FileConversationPlaybackReadiness implements ConversationPlaybackReadinessPort {
+  #greetingCaptureMeetingId: string | undefined;
   readonly #initialized: Promise<void>;
 
   public constructor(private readonly options: FileConversationPlaybackReadinessOptions) {
@@ -47,10 +54,15 @@ export class FileConversationPlaybackReadiness implements ConversationPlaybackRe
     request: ConversationPlaybackReadinessRequest,
     options: { readonly signal?: AbortSignal } = {},
   ): Promise<ConversationPortResult<"ready">> {
-    const isGreeting = request.turnId ===
-      `participant-greeting:${this.options.greetingObserverParticipantId ?? ""}` &&
-      request.participantId === this.options.greetingObserverParticipantId;
-    if (request.playbackKind !== "answer" && !isGreeting) {
+    const isExactGreeting = this.options.greetingRoot !== undefined &&
+      this.options.greetingObserverParticipantId !== undefined &&
+      request.playbackKind === "prepared-cue" &&
+      request.participantId !== undefined &&
+      request.turnId === `participant-greeting:${request.participantId}`;
+    const isGreeting = isExactGreeting &&
+      (request.participantId === this.options.greetingObserverParticipantId ||
+        request.meetingId === this.#greetingCaptureMeetingId);
+    if (request.playbackKind !== "answer" && request.playbackKind !== "thinking-cue" && !isGreeting) {
       return { ok: true, value: "ready" };
     }
     const envelope = isGreeting
@@ -63,7 +75,19 @@ export class FileConversationPlaybackReadiness implements ConversationPlaybackRe
           runId: this.options.runId,
           turnId: request.turnId,
         })
-      : conversationAnswerPlaybackReadinessEnvelopeSchema.parse({
+      : request.playbackKind === "thinking-cue"
+        ? conversationThinkingCuePlaybackReadinessEnvelopeSchema.parse({
+            capturePlan: "thinking-cue",
+            expectedPcmBytes: request.expectedPcmBytes,
+            expectedPcmSha256: request.expectedPcmSha256,
+            kind: "thinking-cue",
+            meetingId: request.meetingId,
+            playbackAttemptId: request.playbackAttemptId,
+            protocolVersion: conversationThinkingCuePlaybackReadinessProtocolVersion,
+            runId: this.options.runId,
+            turnId: request.turnId,
+          })
+        : conversationAnswerPlaybackReadinessEnvelopeSchema.parse({
           capturePlan: "addressed-answer",
           kind: request.playbackKind,
           meetingId: request.meetingId,
@@ -84,6 +108,14 @@ export class FileConversationPlaybackReadiness implements ConversationPlaybackRe
         intentPublishedNotBeforeEpochMilliseconds,
         options.signal,
       );
+      if (envelope.kind === "greeting" &&
+        envelope.participantId === this.options.greetingObserverParticipantId) {
+        if (this.#greetingCaptureMeetingId !== undefined &&
+          this.#greetingCaptureMeetingId !== envelope.meetingId) {
+          throw new Error("Greeting observer readiness was already bound to another meeting");
+        }
+        this.#greetingCaptureMeetingId = envelope.meetingId;
+      }
       return { ok: true, value: "ready" };
     } catch (error: unknown) {
       return failure(
@@ -107,8 +139,14 @@ export class FileConversationPlaybackReadiness implements ConversationPlaybackRe
         const decoded = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
         const ready = expected.kind === "greeting"
           ? conversationGreetingObserverReadySchema.parse(decoded)
-          : conversationAnswerObserverReadySchema.parse(decoded);
-        if (!sameEnvelope(ready, expected)) {
+          : expected.kind === "thinking-cue"
+            ? conversationThinkingCueObserverReadySchema.parse(decoded)
+            : conversationAnswerObserverReadySchema.parse(decoded);
+        if (!sameEnvelope(
+          ready,
+          expected,
+          this.options.greetingObserverParticipantId,
+        )) {
           throw new Error("Observer-ready receipt does not match the playback intent");
         }
         return;
@@ -211,20 +249,26 @@ function assertSafeReadyStats(
 }
 
 type ReadinessEnvelope = ConversationAnswerPlaybackReadinessEnvelope |
-  ConversationGreetingPlaybackReadinessEnvelope;
+  ConversationGreetingPlaybackReadinessEnvelope |
+  ConversationThinkingCuePlaybackReadinessEnvelope;
 
 function safeFileStem(envelope: ReadinessEnvelope): string {
   return createHash("sha256")
     .update(envelope.kind === "greeting"
       ? serializeConversationGreetingPlaybackReadinessEnvelope(envelope)
-      : serializeConversationAnswerPlaybackReadinessEnvelope(envelope))
+      : envelope.kind === "thinking-cue"
+        ? serializeConversationThinkingCuePlaybackReadinessEnvelope(envelope)
+        : serializeConversationAnswerPlaybackReadinessEnvelope(envelope))
     .digest("hex");
 }
 
 async function publishCreateOnlyJson(path: string, value: unknown): Promise<void> {
-  const encoded = JSON.stringify(value !== null && typeof value === "object" &&
-      "kind" in value && value.kind === "greeting"
-    ? conversationGreetingPlaybackIntentSchema.parse(value)
+  const encoded = JSON.stringify(value !== null && typeof value === "object" && "kind" in value
+    ? value.kind === "greeting"
+      ? conversationGreetingPlaybackIntentSchema.parse(value)
+      : value.kind === "thinking-cue"
+        ? conversationThinkingCuePlaybackIntentSchema.parse(value)
+        : conversationAnswerPlaybackIntentSchema.parse(value)
     : conversationAnswerPlaybackIntentSchema.parse(value));
   if (Buffer.byteLength(encoded, "utf8") > maximumReceiptBytes) {
     throw new Error("Playback intent is too large");
@@ -259,18 +303,26 @@ async function publishCreateOnlyJson(path: string, value: unknown): Promise<void
 
 function sameEnvelope(
   actual: ReturnType<typeof conversationAnswerObserverReadySchema.parse> |
-    ReturnType<typeof conversationGreetingObserverReadySchema.parse>,
+    ReturnType<typeof conversationGreetingObserverReadySchema.parse> |
+    ReturnType<typeof conversationThinkingCueObserverReadySchema.parse>,
   expected: ReadinessEnvelope,
+  expectedObserverParticipantId: string | undefined,
 ): boolean {
   return actual.kind === expected.kind && actual.meetingId === expected.meetingId &&
     (actual.kind === "greeting" && expected.kind === "greeting"
       ? actual.participantId === expected.participantId
       : actual.kind === "answer" && expected.kind === "answer" &&
-        actual.playbackAttemptId === expected.playbackAttemptId) &&
+          actual.playbackAttemptId === expected.playbackAttemptId ||
+        actual.kind === "thinking-cue" && expected.kind === "thinking-cue" &&
+          actual.playbackAttemptId === expected.playbackAttemptId &&
+          actual.expectedPcmBytes === expected.expectedPcmBytes &&
+          actual.expectedPcmSha256 === expected.expectedPcmSha256) &&
     actual.runId === expected.runId &&
     actual.turnId === expected.turnId &&
     actual.intentDigestSha256 === safeFileStem(expected) &&
     actual.authenticatedObserverBotId === actual.target.observerApplicationId &&
+    (expectedObserverParticipantId === undefined ||
+      actual.authenticatedObserverBotId === expectedObserverParticipantId) &&
     Date.parse(actual.intentObservedAt) <= Date.parse(actual.readyPublishedAt);
 }
 

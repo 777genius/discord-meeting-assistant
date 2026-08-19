@@ -27,6 +27,19 @@ function sendMetrics(reply: FastifyReply, body: string): FastifyReply {
 export interface OperationsRoutesOptions {
   readonly bearerToken: string;
   readonly health: PlatformHealthPort;
+  readonly historicalDeletion?: {
+    requestMeetingDeletion(meetingId: string): Promise<void>;
+  };
+}
+
+function containsControlCharacter(value: string): boolean {
+  for (const character of value) {
+    const codePoint = character.codePointAt(0);
+    if (codePoint !== undefined && (codePoint < 32 || codePoint === 127)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export function createOperationsRoutesPlugin(
@@ -55,4 +68,22 @@ function registerOperationsRoutes(
     { onRequest: createBearerTokenGuard(options.bearerToken) },
     (_request, reply) => sendMetrics(reply, options.health.metrics()),
   );
+  if (options.historicalDeletion !== undefined) {
+    app.post<{ Params: { readonly meetingId: string } }>(
+      "/internal/meeting-knowledge/history/deletions/:meetingId",
+      { onRequest: createBearerTokenGuard(options.bearerToken) },
+      async (request, reply) => {
+        const meetingId = request.params.meetingId.normalize("NFKC").trim();
+        if (
+          meetingId.length < 1 ||
+          meetingId.length > 1_024 ||
+          containsControlCharacter(meetingId)
+        ) {
+          return sendJson(reply, 400, { code: "INVALID_MEETING_ID" });
+        }
+        await options.historicalDeletion?.requestMeetingDeletion(meetingId);
+        return sendJson(reply, 202, { status: "accepted" });
+      },
+    );
+  }
 }

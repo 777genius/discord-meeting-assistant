@@ -6,8 +6,11 @@ export function stableSubscriptionRuntimeId(
     | "conversation-answer-request"
     | "decision"
     | "incremental-summary-request"
+    | "knowledge-answer-request"
+    | "knowledge-coverage-extract"
     | "question"
     | "summary"
+    | "summary-action-term-repair"
     | "summary-provider-output-repair"
     | "summary-request",
   ...parts: readonly string[]

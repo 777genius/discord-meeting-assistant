@@ -100,6 +100,10 @@ it("queues a non-preemptive prepared greeting behind an answer race", async () =
   answerStream.push({ attemptId: "answer-attempt", type: "accepted" });
   answerStream.push({ attemptId: "answer-attempt", type: "completed" });
   answerStream.close();
+  await expect(coordinator.whenTurnPlaybackStarted(
+    "meeting-1",
+    "participant-greeting:1",
+  )).resolves.toEqual({ startedAtMs: 100, status: "started" });
   await expect(coordinator.whenTurnPlaybackSettled(
     "meeting-1",
     "participant-greeting:1",

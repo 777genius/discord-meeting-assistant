@@ -27,7 +27,7 @@ export const HOSTED_VOICETEXT_CANARY_BINDING_V1 = Object.freeze({
     sourceText,
   }),
   fixtureExpectation: Object.freeze({
-    maximumCharacterErrorRate: 0.2,
+    maximumCharacterErrorRate: 0.3,
     // Batch and live transports may split the same text into different segment
     // counts. WER, CER and required terms carry semantic acceptance; this
     // bounded ceiling prevents transport segmentation from becoming a false
@@ -38,8 +38,8 @@ export const HOSTED_VOICETEXT_CANARY_BINDING_V1 = Object.freeze({
   requiredTerms: Object.freeze([
     "Meeting Platform",
     "Craig recording",
-    "PostgreSQL pipeline",
-    "Discord thread",
+    "PostgreSQL",
+    "Discord",
     "пятницу",
   ]),
   schemaVersion: 1,

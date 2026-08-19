@@ -58,6 +58,23 @@ describe("hosted campaign artifact store", () => {
       .toEqual(["admission.json", "bindings.json", "definition.json", "plan.json"]);
   });
 
+  it("accepts the exact empty run-3 roots pre-created by Meeting Platform", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "hosted-artifacts-"));
+    const campaignRoot = join(parent, "campaign-1");
+    const controlRoot = join(campaignRoot, "control");
+    await mkdir(controlRoot, { mode: 0o700, recursive: true });
+    const controlPath = join(controlRoot, "definition.json");
+    await writeFile(controlPath, "{}\n", { mode: 0o600 });
+    await mkdir(join(campaignRoot, "run-3", "answer-handshakes"), { mode: 0o700, recursive: true });
+    await mkdir(join(campaignRoot, "run-3", "greeting-handshakes"), { mode: 0o700, recursive: true });
+
+    const store = new HostedCampaignArtifactStore(join(campaignRoot, "barriers"), "campaign-1");
+    await store.initializeFreshCampaignLayout([controlPath]);
+
+    expect((await readdir(campaignRoot)).toSorted())
+      .toEqual(["barriers", "control", "run-1", "run-2", "run-3"]);
+  });
+
   it("rejects undeclared, linked, or non-private pre-created control artifacts", async () => {
     const extra = await makeLayout("extra");
     await writeFile(join(extra.controlRoot, "undeclared.json"), "{}\n", { mode: 0o600 });

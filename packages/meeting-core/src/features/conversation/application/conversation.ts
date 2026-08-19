@@ -9,6 +9,7 @@ import type {
   ConversationCoordinatorDependencies,
   ConversationCoordinatorResult,
   ConversationInterruptionResult,
+  ConversationTurnPlaybackStart,
   ConversationTurnPlaybackSettlement,
   FinalizedConversationTurnInput,
   MeetingConversationState,
@@ -17,6 +18,7 @@ import type {
 } from "./conversation-coordinator-types.js";
 import {
   advanceConversationState,
+  conversationPlaybackStartSignal,
   createMeetingConversationState,
   trackConversationTask,
   waitForConversationTasks,
@@ -27,6 +29,7 @@ export type {
   ConversationCoordinatorDependencies,
   ConversationCoordinatorResult,
   ConversationInterruptionResult,
+  ConversationTurnPlaybackStart,
   ConversationTurnPlaybackSettlement,
   FinalizedConversationTurnInput,
   PreparedConversationCueInput,
@@ -58,10 +61,19 @@ export class ConversationCoordinator {
       ...(dependencies.playbackObserver === undefined
         ? {}
         : { playbackObserver: dependencies.playbackObserver }),
+      ...(dependencies.playbackReadiness === undefined
+        ? {}
+        : { playbackReadiness: dependencies.playbackReadiness }),
       thinkingCues: dependencies.thinkingCues ?? null,
     });
     this.activeTurns = new ConversationActiveTurnExecutor({
       cues,
+      ...(dependencies.groundedAnswers === undefined
+        ? {}
+        : { groundedAnswers: dependencies.groundedAnswers }),
+      ...(dependencies.groundedAnswerObserver === undefined
+        ? {}
+        : { groundedAnswerObserver: dependencies.groundedAnswerObserver }),
       ...(dependencies.latencyObserver === undefined
         ? {}
         : { latencyObserver: dependencies.latencyObserver }),
@@ -209,6 +221,47 @@ export class ConversationCoordinator {
     }
   }
 
+  /** Cancels active factual work while leaving the meeting reusable after recovery. */
+  public async disconnectMeeting(meetingId: string, nowMs: number): Promise<void> {
+    const state = this.meetings.get(meetingId);
+    if (state === undefined || state.closing) {
+      return;
+    }
+    advanceConversationState(state, nowMs);
+    state.pending.clear();
+    this.wakeLatches.clear(state);
+    const cancellation = state.session.close("disconnected", state.lastObservedAtMs);
+    if (cancellation.status === "requested") {
+      await this.activeTurns.enactCancellation(state, cancellation);
+    }
+  }
+
+  /** Cancels factual work owned by a participant whose live presence ended. */
+  public async participantLeft(
+    meetingId: string,
+    participantId: string,
+    nowMs: number,
+  ): Promise<void> {
+    const state = this.meetings.get(meetingId);
+    if (state === undefined || state.closing) {
+      return;
+    }
+    advanceConversationState(state, nowMs);
+    this.wakeLatches.clearForSpeaker(state, participantId);
+    const ownsWork = state.active?.prepared.turn.speakerId === participantId ||
+      [...state.pending.values()].some(({ turn }) =>
+        turn.speakerId === participantId
+      );
+    if (!ownsWork) {
+      return;
+    }
+    state.pending.clear();
+    const cancellation = state.session.close("disconnected", state.lastObservedAtMs);
+    if (cancellation.status === "requested") {
+      await this.activeTurns.enactCancellation(state, cancellation);
+    }
+  }
+
   public async close(nowMs: number): Promise<void> {
     const closures: Promise<void>[] = [];
     for (const meetingId of this.meetings.keys()) {
@@ -225,6 +278,41 @@ export class ConversationCoordinator {
     }
 
     await waitForConversationTasks(state);
+  }
+
+  /** Resolves on the first provider-confirmed audible frame, or terminal no-audio. */
+  public async whenTurnPlaybackStarted(
+    meetingId: string,
+    turnId: string,
+  ): Promise<ConversationTurnPlaybackStart> {
+    const state = this.meetings.get(meetingId);
+    if (state === undefined) {
+      return { status: "unknown" };
+    }
+    const remembered = state.playbackStarts.get(turnId);
+    if (remembered !== undefined) {
+      return remembered;
+    }
+    if (state.tasks.size === 0) {
+      return { status: "unknown" };
+    }
+    const signal = conversationPlaybackStartSignal(state, turnId);
+    const result = await Promise.race([
+      signal,
+      this.whenTurnPlaybackSettled(meetingId, turnId).then((settlement) => {
+        const observed = state.playbackStarts.get(turnId);
+        if (observed !== undefined) {
+          return observed;
+        }
+        return settlement === "unplayed"
+          ? { status: "unplayed" as const }
+          : { status: "unknown" as const };
+      }),
+    ]);
+    if (result.status === "unknown" && state.playbackStarts.get(turnId) === undefined) {
+      state.playbackStartSignals.delete(turnId);
+    }
+    return result;
   }
 
   /** Waits for this turn's work and reports whether audio really reached playback. */

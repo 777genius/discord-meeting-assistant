@@ -18,6 +18,7 @@ interface ManifestCue {
 }
 
 interface LoadedCue {
+  readonly assetSha256: string;
   readonly cueId: string;
   readonly pcmChunks: readonly Uint8Array[];
 }
@@ -91,6 +92,7 @@ export class FileParticipantGreetingCueRegistry {
       cue.cueId,
     ]);
     return Object.freeze({
+      assetSha256: cue.assetSha256,
       cueId: cue.cueId,
       pcmChunks: Object.freeze(cue.pcmChunks.map((chunk) => chunk.slice())),
       playbackAttemptId:
@@ -119,6 +121,7 @@ async function loadCue(root: string, cue: ManifestCue): Promise<LoadedCue> {
     pcmChunks.push(bytes.slice(offset, offset + pcmChunkBytes));
   }
   return Object.freeze({
+    assetSha256: digest,
     cueId: cue.cueId,
     pcmChunks: Object.freeze(pcmChunks),
   });

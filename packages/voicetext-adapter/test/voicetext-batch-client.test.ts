@@ -40,35 +40,25 @@ describe("FetchVoicetextBatchClient", () => {
     expect(capturedInit).toMatchObject({
       headers: {
         Authorization: "Bearer machine-service-token-for-test",
+        "Content-Type": `multipart/form-data; boundary=discord-meeting-${idempotencyKey}`,
         "X-Idempotency-Key": idempotencyKey,
       },
       method: "POST",
       redirect: "error",
       signal,
     });
-    const form = capturedInit?.body;
-    expect(form).toBeInstanceOf(FormData);
-    if (!(form instanceof FormData)) {
-      throw new Error("expected multipart form data");
+    const body = capturedInit?.body;
+    expect(body).toBeInstanceOf(Blob);
+    if (!(body instanceof Blob)) {
+      throw new Error("expected deterministic multipart bytes");
     }
-    expect([...form.keys()]).toEqual([
-      "contract_version",
-      "provider",
-      "model",
-      "language",
-      "keyterms",
-      "file",
-    ]);
-    expect(form.get("contract_version")).toBe("2");
-    expect(form.get("provider")).toBe("deepgram");
-    expect(form.get("model")).toBe("nova-3");
-    expect(form.get("language")).toBe("multi");
-    expect(form.get("keyterms")).toBe('["Craig","Deepgram"]');
-    expect(form.get("file")).toMatchObject({
-      name: "speaker-track.ogg",
-      size: validOgg().byteLength,
-      type: "audio/ogg",
-    });
+    const multipart = Buffer.from(await body.arrayBuffer()).toString("latin1");
+    expect(multipart).toContain('name="contract_version"\r\n\r\n2\r\n');
+    expect(multipart).toContain('name="provider"\r\n\r\ndeepgram\r\n');
+    expect(multipart).toContain('name="model"\r\n\r\nnova-3\r\n');
+    expect(multipart).toContain('name="language"\r\n\r\nmulti\r\n');
+    expect(multipart).toContain('name="keyterms"\r\n\r\n["Craig","Deepgram"]\r\n');
+    expect(multipart).toContain('name="file"; filename="speaker-track.ogg"\r\nContent-Type: audio/ogg');
     expect(result).toEqual({
       jobId,
       kind: "completed",
@@ -88,6 +78,29 @@ describe("FetchVoicetextBatchClient", () => {
         }],
       },
     });
+  });
+
+  it("reuses byte-identical multipart content for one idempotency key", async () => {
+    const requests: RequestInit[] = [];
+    const client = new FetchVoicetextBatchClient({
+      endpoint: "https://api.voicetext.test/api/v1/transcribe/batch",
+      token: "machine-service-token-for-test",
+    }, async (_input, init) => {
+      requests.push(init ?? {});
+      return Response.json(completedPayload());
+    });
+    const request = { audio: validOgg(), idempotencyKey, keyterms: ["Craig"],
+      signal: new AbortController().signal };
+
+    await client.submit(request);
+    await client.submit(request);
+
+    const bodies = await Promise.all(requests.map(async ({ body }) => {
+      if (!(body instanceof Blob)) {throw new Error("expected deterministic multipart bytes");}
+      return Buffer.from(await body.arrayBuffer());
+    }));
+    expect(bodies[0]).toEqual(bodies[1]);
+    expect(requests[0]?.headers).toEqual(requests[1]?.headers);
   });
 
   it("parses a running result and polls the contract job URL with the machine bearer", async () => {

@@ -3,6 +3,10 @@ import {
   conversationAnswerPolicyVersion,
   incrementalMeetingSummaryOutputSchemaName,
   incrementalMeetingSummaryPolicyVersion,
+  knowledgeAnswerOutputSchemaName,
+  knowledgeAnswerPolicyVersion,
+  knowledgeCoverageOutputSchemaName,
+  knowledgeCoveragePolicyVersion,
   meetingSummaryOutputSchemaName,
   meetingSummaryPolicyVersion,
   subscriptionRuntimeConversationModel,
@@ -11,6 +15,8 @@ import {
   subscriptionRuntimeIncrementalModel,
   subscriptionRuntimeIncrementalPurpose,
   subscriptionRuntimeIncrementalReasoningEffort,
+  subscriptionRuntimeKnowledgeAnswerPurpose,
+  subscriptionRuntimeKnowledgeCoveragePurpose,
   subscriptionRuntimeModel,
   subscriptionRuntimeProtocolVersion,
   subscriptionRuntimePurpose,
@@ -47,6 +53,8 @@ export const controlsSchema = z
       z.literal(meetingSummaryOutputSchemaName),
       z.literal(incrementalMeetingSummaryOutputSchemaName),
       z.literal(conversationAnswerOutputSchemaName),
+      z.literal(knowledgeAnswerOutputSchemaName),
+      z.literal(knowledgeCoverageOutputSchemaName),
     ]),
     permissionMode: z.literal("read-only"),
     reasoningEffort: z.union([
@@ -106,10 +114,43 @@ export const conversationTransportMetadataSchema = z
   })
   .strict();
 
+export const knowledgeAnswerTransportMetadataSchema = z
+  .object({
+    application: z.literal(applicationName),
+    executionProfile: z.literal("stateless-completion"),
+    locale: nonEmptyText,
+    meetingId: nonEmptyText,
+    model: z.literal(subscriptionRuntimeModel),
+    policyVersion: z.literal(knowledgeAnswerPolicyVersion),
+    reasoningEffort: z.literal(subscriptionRuntimeReasoningEffort),
+    runtimeOutput: z.literal("structured_output"),
+    toolsDisabled: z.literal("true"),
+    transcriptId: nonEmptyText,
+    transcriptVersion: nonEmptyText,
+  })
+  .strict();
+
+export const knowledgeCoverageTransportMetadataSchema = z
+  .object({
+    application: z.literal(applicationName),
+    executionProfile: z.literal("stateless-completion"),
+    meetingId: nonEmptyText,
+    model: z.literal(subscriptionRuntimeModel),
+    policyVersion: z.literal(knowledgeCoveragePolicyVersion),
+    reasoningEffort: z.literal(subscriptionRuntimeReasoningEffort),
+    runtimeOutput: z.literal("structured_output"),
+    toolsDisabled: z.literal("true"),
+    transcriptId: nonEmptyText,
+    transcriptVersion: nonEmptyText,
+  })
+  .strict();
+
 const transportMetadataSchema = z.union([
   finalTransportMetadataSchema,
   incrementalTransportMetadataSchema,
   conversationTransportMetadataSchema,
+  knowledgeAnswerTransportMetadataSchema,
+  knowledgeCoverageTransportMetadataSchema,
 ]);
 
 export const finalContextMetadataSchema = z
@@ -140,16 +181,39 @@ export const conversationContextMetadataSchema = z
   })
   .strict();
 
+export const knowledgeAnswerContextMetadataSchema = z
+  .object({
+    locale: nonEmptyText,
+    meetingId: nonEmptyText,
+    policyVersion: z.literal(knowledgeAnswerPolicyVersion),
+    transcriptId: nonEmptyText,
+    transcriptVersion: nonEmptyText,
+  })
+  .strict();
+
+export const knowledgeCoverageContextMetadataSchema = z
+  .object({
+    meetingId: nonEmptyText,
+    policyVersion: z.literal(knowledgeCoveragePolicyVersion),
+    transcriptId: nonEmptyText,
+    transcriptVersion: nonEmptyText,
+  })
+  .strict();
+
 const contextMetadataSchema = z.union([
   finalContextMetadataSchema,
   incrementalContextMetadataSchema,
   conversationContextMetadataSchema,
+  knowledgeAnswerContextMetadataSchema,
+  knowledgeCoverageContextMetadataSchema,
 ]);
 
 const canonicalTaskMetadataSchema = z.union([
   finalTransportMetadataSchema.omit({ application: true, meetingId: true, transcriptId: true, transcriptVersion: true }),
   incrementalTransportMetadataSchema.omit({ application: true, meetingId: true, summaryRevision: true, throughTurnCount: true }),
   conversationTransportMetadataSchema.omit({ application: true, locale: true, meetingId: true, recordingId: true, turnId: true }),
+  knowledgeAnswerTransportMetadataSchema.omit({ application: true, locale: true, meetingId: true, transcriptId: true, transcriptVersion: true }),
+  knowledgeCoverageTransportMetadataSchema.omit({ application: true, meetingId: true, transcriptId: true, transcriptVersion: true }),
 ]);
 
 export const canonicalRequestSchema = z
@@ -163,6 +227,8 @@ export const canonicalRequestSchema = z
           z.literal(subscriptionRuntimePurpose),
           z.literal(subscriptionRuntimeIncrementalPurpose),
           z.literal(subscriptionRuntimeConversationPurpose),
+          z.literal(subscriptionRuntimeKnowledgeAnswerPurpose),
+          z.literal(subscriptionRuntimeKnowledgeCoveragePurpose),
         ]),
       })
       .strict(),
@@ -178,6 +244,8 @@ export const canonicalRequestSchema = z
           z.literal(meetingSummaryOutputSchemaName),
           z.literal(incrementalMeetingSummaryOutputSchemaName),
           z.literal(conversationAnswerOutputSchemaName),
+          z.literal(knowledgeAnswerOutputSchemaName),
+          z.literal(knowledgeCoverageOutputSchemaName),
         ]),
         prompt: z.string().min(1),
         systemPrompt: z.string().min(1),
@@ -203,6 +271,8 @@ export const rawGrpcRequestSchema = z
       z.literal(subscriptionRuntimePurpose),
       z.literal(subscriptionRuntimeIncrementalPurpose),
       z.literal(subscriptionRuntimeConversationPurpose),
+      z.literal(subscriptionRuntimeKnowledgeAnswerPurpose),
+      z.literal(subscriptionRuntimeKnowledgeCoveragePurpose),
     ]),
     systemPrompt: z.string().min(1),
     prompt: z.string().min(1),

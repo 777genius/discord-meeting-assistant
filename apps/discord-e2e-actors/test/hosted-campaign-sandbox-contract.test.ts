@@ -17,12 +17,8 @@ import { writeCreateOnlyHostedCampaignReceipt } from "../src/run-hosted-campaign
 import {
   currentExpectedRevisions,
   manifest,
-  overlapEvidence,
-  reidentify,
-  retainedV6Evidence,
-  retainedV8Evidence,
-  sequentialEvidence,
 } from "./e2e-evidence-fixtures.js";
+import { currentV10Campaign } from "./e2e-evidence-v10-fixtures.js";
 import { HostedCampaignSandboxAdapter } from "./hosted-campaign-sandbox-adapter.js";
 
 const fixturePath = join(dirname(fileURLToPath(import.meta.url)), "fixtures", "hosted-campaign-child.mjs");
@@ -151,11 +147,11 @@ async function sandbox(behavior = "ack") {
   await chmod(parent, 0o700);
   const rootPath = join(parent, "barriers");
   await createCampaignBarrierRoot(rootPath);
-  const sources = [
-    reidentify(retainedV6Evidence(sequentialEvidence()), "sandbox-sequential"),
-    reidentify(retainedV6Evidence(overlapEvidence()), "sandbox-overlap"),
-    reidentify(retainedV8Evidence(), "sandbox-reconnect"),
-  ] as const;
+  const [sequential, overlap, reconnect] = currentV10Campaign();
+  if (sequential === undefined || overlap === undefined || reconnect === undefined) {
+    throw new Error("Current V10 campaign fixtures are required");
+  }
+  const sources = [sequential, overlap, reconnect] as const;
   const writeRunFile = async (source: (typeof sources)[number], index: number) => {
     const sourcePath = join(parent, `source-${index + 1}.json`);
     const outputPath = join(parent, `retained-${index + 1}.json`);

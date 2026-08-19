@@ -48,6 +48,7 @@ interface ChildExit { readonly code: number | null; readonly signal: NodeJS.Sign
 export interface HostedCampaignProcessAdapterOptions {
   readonly artifactStore: HostedCampaignArtifactStore; readonly distRoot: string;
   readonly outputLimitBytes?: number; readonly terminationGraceMilliseconds?: number;
+  readonly releaseBindingPath?: string;
   readonly trustedRuntimeEnvironment: HostedCampaignTrustedRuntimeEnvironment;
 }
 export {
@@ -65,6 +66,9 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
     }
     if (!isAbsolute(options.distRoot)) {
       throw new Error("Hosted campaign dist root must be absolute");
+    }
+    if (options.releaseBindingPath !== undefined && !isAbsolute(options.releaseBindingPath)) {
+      throw new Error("Hosted campaign release binding path must be absolute");
     }
     this.#options = options;
     this.#trustedRuntimeEnvironment = validateHostedCampaignTrustedRuntimeEnvironment(
@@ -166,6 +170,9 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
     const environment = {
       ...(SSH_RUNTIME_ENTRYPOINTS.has(spec.entrypoint) ? this.#trustedRuntimeEnvironment : {}),
       ...validateChildEnvironment(spec.environment),
+      ...(spec.entrypoint === "collector" && this.#options.releaseBindingPath !== undefined
+        ? { DISCORD_E2E_HOSTED_RELEASE_BINDING_INPUT: this.#options.releaseBindingPath }
+        : {}),
     };
     const child = spawn(process.execPath, [join(this.#options.distRoot, entrypointFile(spec.entrypoint)), ...argumentsFor(spec)], {
       detached: process.platform !== "win32", env: environment, shell: false, stdio: ["ignore", "pipe", "pipe"],

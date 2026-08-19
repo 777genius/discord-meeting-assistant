@@ -498,9 +498,12 @@ describe("DiscordSummaryPublisher finalization contract", () => {
   it("replaces the live timeline with a clean final summary and two evidence files", async () => {
     const client = new FakeDiscordProjectionClient();
     const subject = publisher(client);
-    const livePublisher = new DiscordLiveMeetingProjectionAdapter(subject);
+    const livePublisher = new DiscordLiveMeetingProjectionAdapter(subject, {
+      publisherIdentity: "bot-application-1",
+    });
     const finalPublisher = new DiscordSummaryPublicationAdapter(subject, {
       finalPublicationMode: "replace-live",
+      publisherIdentity: "bot-application-1",
     });
     const live = await livePublisher.publish({
       captions: [
@@ -591,7 +594,10 @@ describe("DiscordSummaryPublisher finalization contract", () => {
 
     expect(final).toEqual({
       ok: true,
-      value: { externalPublicationId: live.value.externalPublicationId },
+      value: {
+        externalPublicationId: live.value.externalPublicationId,
+        publisherIdentity: "bot-application-1",
+      },
     });
     expect(client.threads).toHaveLength(1);
     expect(client.createMessageCount).toBe(1);
@@ -622,9 +628,12 @@ describe("DiscordSummaryPublisher finalization contract", () => {
   it("keeps one projection when a manually renamed live thread is finalized", async () => {
     const client = new FakeDiscordProjectionClient();
     const subject = publisher(client);
-    const livePublisher = new DiscordLiveMeetingProjectionAdapter(subject);
+    const livePublisher = new DiscordLiveMeetingProjectionAdapter(subject, {
+      publisherIdentity: "bot-application-1",
+    });
     const finalPublisher = new DiscordSummaryPublicationAdapter(subject, {
       finalPublicationMode: "replace-live",
+      publisherIdentity: "bot-application-1",
     });
     const liveRequest: LiveMeetingProjectionRequest = {
       captions: [{
@@ -689,7 +698,10 @@ describe("DiscordSummaryPublisher finalization contract", () => {
 
     expect(final).toEqual({
       ok: true,
-      value: { externalPublicationId: live.value.externalPublicationId },
+      value: {
+        externalPublicationId: live.value.externalPublicationId,
+        publisherIdentity: "bot-application-1",
+      },
     });
     expect(client.threads).toHaveLength(1);
     expect(client.createThreadCount).toBe(1);

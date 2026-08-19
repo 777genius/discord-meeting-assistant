@@ -113,6 +113,9 @@ function evidenceWithAnswerPlaybackReceipts(overrides: {
       observedAt: "1970-01-01T00:00:04.000Z",
       playbackAttemptId,
       playbackKind,
+      ...(playbackKind === "thinking-cue"
+        ? { thinkingCuePcmSha256: "b".repeat(64) }
+        : {}),
       playbackStartedAtEpochMs: startedAtEpochMs,
       playbackStartedAtMonotonicMs: startedAtEpochMs,
       status: "started",
@@ -124,6 +127,9 @@ function evidenceWithAnswerPlaybackReceipts(overrides: {
       playbackFinishedAtEpochMs: finishedAtEpochMs,
       playbackFinishedAtMonotonicMs: finishedAtEpochMs,
       playbackKind,
+      ...(playbackKind === "thinking-cue"
+        ? { thinkingCuePcmSha256: "b".repeat(64) }
+        : {}),
       status: "finished",
       turnId: "human-question-1",
     },
@@ -131,6 +137,9 @@ function evidenceWithAnswerPlaybackReceipts(overrides: {
       observedAt: "1970-01-01T00:00:04.800Z",
       playbackAttemptId,
       playbackKind,
+      ...(playbackKind === "thinking-cue"
+        ? { thinkingCuePcmSha256: "b".repeat(64) }
+        : {}),
       playbackSettledAtEpochMs: 4_800,
       playbackSettledAtMonotonicMs: 4_800,
       settlement: "played",

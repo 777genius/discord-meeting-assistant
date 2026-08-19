@@ -17,6 +17,9 @@ const expectation: HostedDeploymentSafetyExpectationV1 = {
   campaignRoot: "/srv/e2e/campaigns",
   campaignRootOwnerGid: 10_001,
   campaignRootOwnerUid: 10_001,
+  craigNetworkPolicy: { bridgeInterface: "br-craige2e", chain: "CRAIG-E2E",
+    networkName: "discord-meeting-e2e", tcpDestinationPort: 443,
+    udpDestinationPorts: { end: 65_535, start: 1_024 } },
   deployRoot: "/srv/e2e",
   greeting: {
     campaignSiblingPath: "/srv/e2e/campaigns-sibling",
@@ -74,6 +77,11 @@ function snapshot() {
       symbolicLink: false as const,
       uid: expectation.campaignRootOwnerUid,
     },
+    craigNetwork: {
+      ...expectation.craigNetworkPolicy,
+      containerId: hex("1"), containerIpv4: "172.28.0.2", networkId: hex("a"),
+      semanticPolicySha256: hex("b"),
+    },
     greetingMount: {
       containerGid: 10_001,
       containerUid: 10_001,
@@ -114,6 +122,8 @@ function receipt(overrides: {
     evidence: {
       campaignRoot: before.campaignRoot,
       campaignRootAfter: after.campaignRoot,
+      craigNetworkAfter: after.craigNetwork,
+      craigNetworkBefore: before.craigNetwork,
       greetingMount: before.greetingMount,
       greetingMountAfter: after.greetingMount,
       mountIsolation: before.mountIsolation,
@@ -144,6 +154,16 @@ describe("hosted deployment safety receipt", () => {
     const after = snapshot();
     after.services[1] = { ...after.services[1]!, containerId: hex("5"), containerStartedAt: "2026-08-13T09:00:30.000Z" };
     expect(() => receipt({ after })).toThrow("deployment changed");
+  });
+
+  it("rejects a Craig rule swap or proof from the wrong container", () => {
+    const after = snapshot();
+    after.craigNetwork.semanticPolicySha256 = hex("c");
+    expect(() => receipt({ after })).toThrow("network policy changed");
+    const wrong = snapshot();
+    wrong.craigNetwork.containerId = hex("f");
+    expect(() => receipt({ before: wrong, after: structuredClone(wrong) }))
+      .toThrow("exact release policy");
   });
 
   it("rejects an image or repository digest outside the pinned release plan", () => {

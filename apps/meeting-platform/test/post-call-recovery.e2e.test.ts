@@ -55,7 +55,7 @@ import {
 import { PostCallOutboxDispatcher } from "../src/application/post-call-outbox-dispatcher.js";
 import { createPostCallHandler } from "../src/composition/post-call.js";
 
-const POSTGRES_IMAGE = "postgres:18.4-alpine";
+const POSTGRES_IMAGE = "postgres:18.4-alpine@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15";
 const POSTGRES_PORT = 5_432;
 const REDIS_IMAGE =
   "redis:8.8.1-alpine@sha256:8096655e437712b07503796fb64d81359256cfcff0ab29d95a7da72863786efb";
@@ -364,6 +364,9 @@ class CapturingPublisher implements SummaryPublicationPort {
 
 function initialMeeting(): MeetingSnapshot {
   return Meeting.record({
+    actors: [{ actorId: "speaker-a", kind: "human" }],
+    identityProvenance: null,
+    lifecycleGeneration: 2,
     meetingId,
     publicationTargetId: "test-results-channel",
     recording: {
@@ -375,5 +378,6 @@ function initialMeeting(): MeetingSnapshot {
         timelineOffsetMs: 0,
       }],
     },
+    source: { roomId: "room-1", scopeId: "scope-1" },
   }).toSnapshot();
 }

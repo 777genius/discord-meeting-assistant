@@ -620,7 +620,7 @@ describe("retained conversation V8 reconnect response semantics", () => {
       evidence.conversation.voice[3]!.correlation.attemptId;
     evidence.conversation.botSpeakerId = "wrong-bot-speaker";
     const codes = verifyRetainedE2eEvidence(
-      { ...manifest(), allowedBotSpeakerIds: ["1534231284467896512"] },
+      { ...manifest(), allowedBotSpeakerIds: ["1533877611258708230"] },
       evidence,
       currentExpectedRevisions,
     ).failures.map(({ code }) => code);

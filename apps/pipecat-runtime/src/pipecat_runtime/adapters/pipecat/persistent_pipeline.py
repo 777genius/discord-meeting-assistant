@@ -117,8 +117,11 @@ class PersistentConversationPipeline:
     async def cancel(self, turn: ActivePipelineTurn, reason: CancellationReason) -> bool:
         """Interrupt only the reserved attempt without ending a healthy provider socket."""
         async with self._state_lock:
-            if self._active is not turn or not turn.request_cancellation(reason):
+            if self._active is not turn:
                 return False
+        if not await turn.request_cancellation_after_audio_fence(reason):
+            return False
+        async with self._state_lock:
             runner_started = self._runner_task is not None
         if runner_started:
             await self._worker.queue_frame(InterruptionFrame())
@@ -173,7 +176,9 @@ class PersistentConversationPipeline:
             active = self._active
             runner_task = self._runner_task
         if active is not None:
-            active.request_cancellation(CancellationReason.RUNTIME_SHUTDOWN)
+            await active.request_cancellation_after_audio_fence(
+                CancellationReason.RUNTIME_SHUTDOWN
+            )
             active.finished.set()
         if runner_task is None or runner_task.done():
             return

@@ -2,10 +2,93 @@ import { expect, it } from "vitest";
 
 import {
   FinishLiveMeeting,
+  LiveMeeting,
   StartLiveMeeting,
   type LiveMeetingSnapshot,
 } from "@discord-meeting/meeting-core/live-meeting";
 import { MemoryLiveMeetingRepository } from "./live-meeting-fixtures.js";
+
+it("persists the publisher and rotates it only with a current new receipt", () => {
+  const meeting = LiveMeeting.start({
+    meetingId: "meeting-projection-owner",
+    publicationTargetId: "results-channel",
+    startedAtMs: 0,
+  });
+  meeting.completeProjection("message-1", meeting.revision, "bot-application-1");
+
+  expect(meeting.toSnapshot().projectionPublisherIdentity).toBe("bot-application-1");
+  expect(() => meeting.completeProjection(
+    "message-1",
+    meeting.revision,
+    "bot-application-2",
+  )).toThrow(/publisher rotation requires a current projection with a new receipt/u);
+
+  expect(meeting.completeProjection(
+    "message-2",
+    meeting.revision,
+    "bot-application-2",
+  )).toBe(true);
+  expect(meeting.toSnapshot()).toMatchObject({
+    projectionExternalId: "message-2",
+    projectionPublisherIdentity: "bot-application-2",
+  });
+});
+
+it("cannot erase established projection ownership by omitting the publisher", () => {
+  const meeting = LiveMeeting.start({
+    meetingId: "meeting-projection-owner-omission",
+    publicationTargetId: "results-channel",
+    startedAtMs: 0,
+  });
+  meeting.completeProjection("message-1", meeting.revision, "bot-application-1");
+
+  expect(() => meeting.completeProjection("message-2", meeting.revision))
+    .toThrow(/publisher identity cannot be omitted after ownership is established/u);
+  expect(() => meeting.completeProjection(
+    "message-1",
+    meeting.projectedRevision,
+    "bot-application-2",
+  )).toThrow(/publisher rotation requires a current projection with a new receipt/u);
+  expect(meeting.toSnapshot().projectionPublisherIdentity).toBe("bot-application-1");
+});
+
+it("write-upgrades an exact legacy projection with its authenticated publisher", () => {
+  const meeting = LiveMeeting.start({
+    meetingId: "meeting-legacy-projection-owner",
+    publicationTargetId: "results-channel",
+    startedAtMs: 0,
+  });
+  meeting.completeProjection("message-1", meeting.revision);
+  const { projectionPublisherIdentity: _legacyMissingField, ...legacySnapshot } =
+    meeting.toSnapshot();
+  const restored = LiveMeeting.restore(legacySnapshot);
+
+  expect(restored.completeProjection(
+    "message-1",
+    restored.projectedRevision,
+    "bot-application-1",
+  )).toBe(true);
+  expect(restored.toSnapshot().projectionPublisherIdentity).toBe("bot-application-1");
+});
+
+it("rejects assigning a legacy projection owner through a stale new receipt", () => {
+  const meeting = LiveMeeting.start({
+    meetingId: "meeting-stale-legacy-projection-owner",
+    publicationTargetId: "results-channel",
+    startedAtMs: 0,
+  });
+  meeting.completeProjection("message-1", meeting.revision);
+  meeting.end(1);
+  const { projectionPublisherIdentity: _legacyMissingField, ...legacySnapshot } =
+    meeting.toSnapshot();
+  const restored = LiveMeeting.restore(legacySnapshot);
+
+  expect(() => restored.completeProjection(
+    "message-2",
+    restored.projectedRevision,
+    "bot-application-1",
+  )).toThrow(/publisher rotation requires a current projection with a new receipt/u);
+});
 
 it("reconciles a contested live-meeting start through the bounded CAS path", async () => {
   const meetings = new ConflictOnceStartRepository();

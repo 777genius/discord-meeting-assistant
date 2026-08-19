@@ -4,7 +4,7 @@
     "./node_modules/@agent-teams/engineering-foundation/presets/oxlint/node.json",
     "./node_modules/@agent-teams/engineering-foundation/presets/oxlint/maintainability.json"
   ],
-  "ignorePatterns": ["node_modules/**", "dist/**", "coverage/**"],
+  "ignorePatterns": ["node_modules/**", "dist/**", "coverage/**", "vendor/**"],
   "rules": {
     "max-lines": [
       "error",

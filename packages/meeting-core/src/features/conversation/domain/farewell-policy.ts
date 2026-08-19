@@ -55,6 +55,10 @@ export class MeetingFarewellPolicy {
       return Object.freeze({ reason: "duplicate" as const, status: "ignored" as const });
     }
     this.rememberTurn(turnId);
+    if (containsQuotedFarewell(input.text)) {
+      this.recentFarewells.length = 0;
+      return Object.freeze({ reason: "unsafe" as const, status: "ignored" as const });
+    }
     const normalized = normalize(input.text);
     const locale = farewellLocale(normalized);
     if (isUnsafe(normalized, input.text)) {
@@ -97,6 +101,15 @@ export class MeetingFarewellPolicy {
     return true;
   }
 
+  /**
+   * Releases a reservation only when composition has proved that no playback
+   * effect was admitted. Observed turn identities remain fenced, so a retry
+   * requires a new farewell observation instead of replaying the same input.
+   */
+  public releaseReservation(): void {
+    this.attempted = false;
+  }
+
   private rememberFarewell(candidate: RecentFarewell): void {
     const cutoff = candidate.endMs - consensusWindowMs;
     while (
@@ -122,6 +135,23 @@ export class MeetingFarewellPolicy {
 function containsFarewellCandidate(text: string): boolean {
   return /\b(?:bye|farewell|goodbye|good night|see you|see ya|catch you|talk to you|take care|have a good|wrap|end (?:the )?(?:call|meeting)|call it a day|done for today|that'?s (?:all|it))\b/u.test(text) ||
     /(?:пока|до встречи|до свидания|до связи|до завтра|увидимся|услышимся|созвонимся|всего доброго|хорошего (?:дня|вечера|выходных)|спокойной ночи|прощ|законч|заканч|заверша|на сегодня|на этом все)/u.test(text);
+}
+
+/** Quoted speech is evidence about words, never a direct meeting-wide intent. */
+function containsQuotedFarewell(rawText: string): boolean {
+  const text = rawText
+    .normalize("NFKC")
+    .toLocaleLowerCase("und")
+    .replace(/ё/gu, "е");
+  const quotedSpans = [
+    ...text.matchAll(/"([^"\n]*)"/gu),
+    ...text.matchAll(/“([^”\n]*)”/gu),
+    ...text.matchAll(/„([^“\n]*)“/gu),
+    ...text.matchAll(/«([^»\n]*)»/gu),
+  ];
+  return quotedSpans.some((match) =>
+    match[1] !== undefined && containsFarewellCandidate(match[1])
+  );
 }
 
 function farewellLocale(text: string): FarewellLocale {

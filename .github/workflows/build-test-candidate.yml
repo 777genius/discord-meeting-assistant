@@ -63,6 +63,11 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
+      - name: Generate immutable Meeting Platform provenance
+        if: matrix.component == 'meeting-platform'
+        shell: bash
+        run: node tooling/generate-build-provenance.mjs
+
       - name: Derive immutable image name
         id: image
         shell: bash

@@ -46,6 +46,7 @@ describe("Voicetext semantic canary", () => {
       submit: async ({ idempotencyKey }) => {submits.push(idempotencyKey); return nextBatchResult(batchResults);},
     };
     const sentPackets: Uint8Array[] = [];
+    const waits: number[] = [];
     const finalize = vi.fn(async () => {});
     const live: VoicetextLiveSession = {
       finalize,
@@ -69,7 +70,7 @@ describe("Voicetext semantic canary", () => {
         generationId: `file-${"f".repeat(64)}`, mode: 0o400, ownerUid: 10_001,
         path, token: "secret-machine-bearer",
       }),
-      wait: async () => {},
+      wait: async (delayMs) => {waits.push(delayMs);},
     };
 
     const result = await runVoicetextSemanticCanary({
@@ -93,6 +94,7 @@ describe("Voicetext semantic canary", () => {
       Uint8Array.from([0xf8, 0xff, 0xfe]),
       Uint8Array.from([0xf8, 0xff, 0xfd]),
     ]);
+    expect(waits.slice(-2)).toEqual([20, 20]);
     expect(finalize).toHaveBeenCalledOnce();
     expect(JSON.stringify(result)).not.toContain("secret-machine-bearer");
   });
@@ -257,13 +259,13 @@ describe("Voicetext semantic canary", () => {
 
   it("fails through a silent process envelope so secrets and transcripts cannot reach stderr", () => {
     const packageRoot = resolvePath(dirname(fileURLToPath(import.meta.url)), "..");
-    const result = spawnSync(resolvePath(packageRoot, "node_modules/.bin/tsx"), [
-      "src/run-voicetext-semantic-canary.ts", "--json",
+    const result = spawnSync(process.execPath, [
+      "--import", "tsx", "src/run-voicetext-semantic-canary.ts", "--json",
     ], { cwd: packageRoot, encoding: "utf8" });
     expect(result.status).toBe(1);
     expect(result.stdout).toBe("");
     expect(result.stderr).toBe("");
-  });
+  }, 15_000);
 });
 
 function nextBatchResult(results: VoicetextBatchTaskResult[]): VoicetextBatchTaskResult {

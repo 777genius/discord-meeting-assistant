@@ -51,7 +51,7 @@ export class HostedCampaignArtifactStore {
     await assertSafeRoot(campaignRoot);
     await syncDirectory(dirname(campaignRoot));
     for (const path of [this.#rootPath, ...[1, 2, 3].map((ordinal) => join(campaignRoot, `run-${ordinal}`))]) {
-      await mkdir(path, { mode: 0o700 });
+      await mkdir(path, { mode: 0o700, recursive: true });
       await assertSafeRoot(path);
     }
     await syncDirectory(campaignRoot);
@@ -149,6 +149,8 @@ interface PrecreatedControlLayout {
   readonly controlFileStatuses: readonly Stats[];
   readonly controlPath: string;
   readonly controlStatus: Stats;
+  readonly readinessPaths: readonly string[];
+  readonly readinessStatuses: readonly Stats[];
 }
 
 async function inspectPrecreatedControlLayout(
@@ -163,9 +165,10 @@ async function inspectPrecreatedControlLayout(
   }
   const campaignRootStatus = await lstat(campaignRoot);
   await assertSafeRoot(campaignRoot);
-  const rootEntries = await readdir(campaignRoot);
-  if (rootEntries.length !== 1 || rootEntries[0] !== "control") {
-    throw new Error("Fresh hosted campaign root may contain only its declared control directory");
+  const rootEntries = (await readdir(campaignRoot)).toSorted();
+  const hasReadinessRoot = JSON.stringify(rootEntries) === JSON.stringify(["control", "run-3"]);
+  if (!hasReadinessRoot && JSON.stringify(rootEntries) !== JSON.stringify(["control"])) {
+    throw new Error("Fresh hosted campaign root may contain only control and the pinned run-3 readiness roots");
   }
   const controlStatus = await lstat(controlPath);
   await assertSafeRoot(controlPath);
@@ -175,9 +178,28 @@ async function inspectPrecreatedControlLayout(
     throw new Error("Hosted campaign control directory must contain exactly the declared private files");
   }
   const controlFileStatuses = await Promise.all(normalizedPaths.map(assertSafeControlFile));
+  const readinessPaths = hasReadinessRoot
+    ? [
+        join(campaignRoot, "run-3"),
+        join(campaignRoot, "run-3", "answer-handshakes"),
+        join(campaignRoot, "run-3", "greeting-handshakes"),
+      ]
+    : [];
+  if (hasReadinessRoot && JSON.stringify((await readdir(readinessPaths[0]!)).toSorted())
+    !== JSON.stringify(["answer-handshakes", "greeting-handshakes"])) {
+    throw new Error("Pre-created run-3 may contain only the pinned empty readiness roots");
+  }
+  const readinessStatuses = await Promise.all(readinessPaths.map(async (path) => {
+    await assertSafeRoot(path);
+    if ((await readdir(path)).length !== (path === readinessPaths[0] ? 2 : 0)) {
+      throw new Error("Pre-created playback readiness roots must be empty");
+    }
+    return lstat(path);
+  }));
   return Object.freeze({
     campaignRoot, campaignRootStatus, controlFilePaths: Object.freeze(normalizedPaths),
-    controlFileStatuses: Object.freeze(controlFileStatuses),
+    controlFileStatuses: Object.freeze(controlFileStatuses), readinessPaths: Object.freeze(readinessPaths),
+    readinessStatuses: Object.freeze(readinessStatuses),
     controlPath, controlStatus,
   });
 }
@@ -203,6 +225,13 @@ async function assertPrecreatedControlLayoutUnchanged(layout: PrecreatedControlL
   const fileStatuses = await Promise.all(layout.controlFilePaths.map(assertSafeControlFile));
   if (fileStatuses.some((status, index) => !sameFileSnapshot(layout.controlFileStatuses[index]!, status))) {
     throw new Error("Hosted campaign control input changed during initialization");
+  }
+  const readinessStatuses = await Promise.all(layout.readinessPaths.map(async (path) => {
+    await assertSafeRoot(path);
+    return lstat(path);
+  }));
+  if (readinessStatuses.some((status, index) => !sameFileIdentity(layout.readinessStatuses[index]!, status))) {
+    throw new Error("Hosted campaign readiness layout changed during initialization");
   }
 }
 

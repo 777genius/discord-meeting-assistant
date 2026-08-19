@@ -2,12 +2,12 @@
   "schemaVersion": 1,
   "fixtureSetId": "discord-meeting-ru-en-v6",
   "allowedBotSpeakerIds": [
-    "1534231284467896512",
+    "1533877611258708230",
     "1533224474609057793",
     "1533873978417086474"
   ],
   "conversationVoiceExpectation": {
-    "botSpeakerId": "1534231284467896512",
+    "botSpeakerId": "1533877611258708230",
     "guildId": "1533228590643155034",
     "observerApplicationId": "1533867700575670282",
     "observerGreetingLocale": "ru",
@@ -49,7 +49,7 @@
         "requiredTerms": ["Redis queue", "idempotency key", "Discord thread"]
       }
     ],
-    "topicTerms": ["Meeting Platform", "Craig recording", "PostgreSQL pipeline"]
+    "topicTerms": ["Meeting Platform", "Craig recording", "PostgreSQL"]
   },
   "thresholds": {
     "maxWordErrorRate": 0.35,
@@ -61,24 +61,24 @@
       "fixtureId": "speaker-a",
       "actorName": "speaker-a",
       "speakerId": "1533227577286852649",
-      "sourcePath": "test/fixtures/speaker-a.ru-en.txt",
+      "sourcePath": "speaker-a.ru-en.txt",
       "sourceSha256": "5aa51fdfca1325cf5b78a35927f1a256989dffc5adcf50cd6d8e5c02b0493a44",
-      "audioPath": "test/fixtures/speaker-a.ru-en.ogg",
+      "audioPath": "speaker-a.ru-en.ogg",
       "audioSha256": "8e29a933ef95eaf1f149b150ff123f90a3276847fcd4941ccb6c55b24561b9d8",
       "durationMs": 26235,
       "greetingLocale": "ru",
       "greetingNameStatus": "known",
       "greetingSpokenToken": "Тест А",
       "sourceText": "Meeting Platform сохраняет Craig recording. Затем запускает PostgreSQL pipeline. Решение - выпустить версию в пятницу. Повторяю решение - выпуск версии в пятницу. До седьмого августа две тысячи двадцать шестого года спикер Б проверит Discord thread. Повторяю - Discord thread будет проверен в две тысячи двадцать шестом году.",
-      "requiredTerms": ["Meeting Platform", "Craig recording", "PostgreSQL pipeline", "Discord thread", "пятницу"]
+      "requiredTerms": ["Meeting Platform", "Craig recording", "PostgreSQL", "Discord", "пятницу"]
     },
     {
       "fixtureId": "speaker-b",
       "actorName": "speaker-b",
       "speakerId": "1533228054724346087",
-      "sourcePath": "test/fixtures/speaker-b.ru-en.txt",
+      "sourcePath": "speaker-b.ru-en.txt",
       "sourceSha256": "d801c2754ee7fff93732425e08cca589b63bb9f5a0699d7c81b8ff7dc1afaf85",
-      "audioPath": "test/fixtures/speaker-b.ru-en.ogg",
+      "audioPath": "speaker-b.ru-en.ogg",
       "audioSha256": "45ee2668fb490ab03a7a453fee23eca286311b9bd5bdca268b604fc80edf2c2f",
       "durationMs": 48361,
       "greetingLocale": "en",

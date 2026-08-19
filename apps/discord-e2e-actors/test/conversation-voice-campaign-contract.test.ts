@@ -19,7 +19,7 @@ import {
 describe("conversation voice campaign contract", () => {
   it("requires the pinned private Discord target", () => {
     const pinnedTarget = {
-      craigBotId: "1534231284467896512",
+      craigBotId: "1533877611258708230",
       guildId: "1533228590643155034",
       observerApplicationId: "1533867700575670282",
       voiceChannelId: "1533228823045214398",
@@ -152,7 +152,7 @@ describe("conversation voice campaign contract", () => {
         readyPublishedAt: "2026-08-12T10:00:00.000Z",
         runId: "campaign-1",
         target: {
-          craigBotId: "1534231284467896512",
+          craigBotId: "1533877611258708230",
           guildId: "1533228590643155034",
           observerApplicationId: "1533867700575670282",
           voiceChannelId: "1533228823045214398",

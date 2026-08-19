@@ -20,7 +20,50 @@ const discordIdSchema = z.string().regex(/^\d{17,20}$/u);
 const sha256Schema = z.string().regex(/^[a-f\d]{64}$/u);
 const sourceRevisionSchema = z.string().regex(/^(?:[a-f\d]{40}|[a-f\d]{64})$/u);
 const secretPath = "/run/secrets/discord_bot_token";
-const cliEntrypoint = "/app/apps/bot/dist/e2e/discordIdentityProofCli.js";
+const discordIdentityProofScript = String.raw`
+import { lstat, readFile } from "node:fs/promises";
+
+const required = (name) => {
+  const value = process.env[name];
+  if (!value) throw new Error("Missing pinned identity proof input");
+  return value;
+};
+if (required("CRAIG_E2E_TEST_ONLY") !== "true") throw new Error("Identity proof is test-only");
+const tokenPath = required("DISCORD_BOT_TOKEN_FILE");
+const applicationId = required("DISCORD_APPLICATION_ID");
+const guildId = required("CRAIG_E2E_DISCORD_GUILD_ID");
+const channelIds = required("CRAIG_E2E_DISCORD_CHANNEL_IDS").split(",");
+if (tokenPath !== "/run/secrets/discord_bot_token" || channelIds.length !== 2) {
+  throw new Error("Identity proof target is not pinned");
+}
+const before = await lstat(tokenPath);
+if (!before.isFile() || before.isSymbolicLink() || before.uid !== 10001 || before.gid !== 10001
+  || (before.mode & 0o777) !== 0o400) throw new Error("Craig token custody is invalid");
+const token = (await readFile(tokenPath, "utf8")).trim();
+const get = async (path) => {
+  const response = await fetch("https://discord.com/api/v10" + path, {
+    headers: { authorization: "Bot " + token },
+  });
+  if (!response.ok) throw new Error("Discord identity request failed");
+  return response.json();
+};
+const [bot, guild, ...channels] = await Promise.all([
+  get("/users/@me"), get("/guilds/" + guildId), ...channelIds.map((id) => get("/channels/" + id)),
+]);
+if (bot.id !== applicationId || bot.bot !== true || guild.id !== guildId
+  || channels.some((channel, index) => channel.id !== channelIds[index] || channel.guild_id !== guildId)) {
+  throw new Error("Discord identity proof does not match the pinned target");
+}
+const after = await lstat(tokenPath);
+const tokenAfter = (await readFile(tokenPath, "utf8")).trim();
+const stable = before.dev === after.dev && before.ino === after.ino && before.size === after.size
+  && before.mtimeMs === after.mtimeMs && token === tokenAfter;
+console.log(JSON.stringify({
+  bot: { bot: true, id: bot.id }, ok: true, schemaVersion: 1,
+  secret: { gid: after.gid, mode: "0400", path: tokenPath, stable, uid: after.uid },
+  target: { channelIds, guildId, testOnly: true },
+}));
+`;
 
 const outputSchema = z.object({
   bot: z.object({ bot: z.literal(true), id: discordIdSchema }).strict(),
@@ -127,7 +170,7 @@ function buildArgs(
     `CRAIG_E2E_DISCORD_GUILD_ID=${target.guildId}`,
     `CRAIG_E2E_DISCORD_CHANNEL_IDS=${target.voiceChannelId},${target.publicationChannelId}`,
     `DISCORD_BOT_TOKEN_FILE=${secretPath}`,
-    "/usr/local/bin/node", cliEntrypoint,
+    "/usr/local/bin/node", "--input-type=module", "--eval", discordIdentityProofScript,
   ]);
 }
 

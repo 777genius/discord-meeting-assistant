@@ -330,6 +330,9 @@ export class ProcessMeetingSummary {
       meeting.completePublication({
         externalPublicationId: result.value.externalPublicationId,
         idempotencyKey,
+        ...(result.value.publisherIdentity === undefined
+          ? {}
+          : { publisherIdentity: result.value.publisherIdentity }),
       });
       throwIfAborted(signal);
       await this.meetings.save(meeting.toSnapshot(), beforeCompletion);

@@ -24,6 +24,14 @@ const recording = {
   ],
 } as const;
 
+const identityProvenance = {
+  actorObservationState: "consistent",
+  actorSemanticsVersion: 1,
+  producerCapabilityId: "meeting.lifecycle.sealed-actor-roster.v1",
+  producerRevision: "0123456789abcdef0123456789abcdef01234567",
+  rosterState: "sealed",
+} as const;
+
 const transcriptSnapshot = {
   recordingId: "recording-1",
   transcriptId: "transcript-1",
@@ -86,13 +94,175 @@ const summarySnapshot = {
 
 function recordedMeeting(): Meeting {
   return Meeting.record({
+    actors: [
+      { actorId: "speaker-a", kind: "human" },
+      { actorId: "speaker-b", kind: "human" },
+      { actorId: "botik", kind: "automation" },
+    ],
+    identityProvenance,
+    lifecycleGeneration: 3,
     meetingId: "meeting-1",
     publicationTargetId: "results-channel",
     recording,
+    source: { roomId: "room-1", scopeId: "scope-1" },
   });
 }
 
 describe("Meeting lifecycle", () => {
+  it("retains normalized source and actor identity in every snapshot", () => {
+    const snapshot = recordedMeeting().toSnapshot();
+
+    expect(snapshot.source).toEqual({ roomId: "room-1", scopeId: "scope-1" });
+    expect(snapshot.identityProvenance).toEqual(identityProvenance);
+    expect(snapshot.lifecycleGeneration).toBe(3);
+    expect(snapshot.actors).toEqual([
+      { actorId: "botik", kind: "automation" },
+      { actorId: "speaker-a", kind: "human" },
+      { actorId: "speaker-b", kind: "human" },
+    ]);
+    expect(Meeting.restore(snapshot).toSnapshot()).toEqual(snapshot);
+  });
+
+  it("normalizes identity whitespace and orders opaque IDs by UTF-16 code units", () => {
+    const snapshot = Meeting.record({
+      actors: [
+        { actorId: " ä ", kind: "human" },
+        { actorId: " z ", kind: "unknown" },
+        { actorId: " Z ", kind: "automation" },
+      ],
+      identityProvenance,
+      lifecycleGeneration: 3,
+      meetingId: "meeting-opaque-order",
+      publicationTargetId: "results-channel",
+      recording,
+      source: { roomId: " room-1 ", scopeId: " scope-1 " },
+    }).toSnapshot();
+
+    expect(snapshot.source).toEqual({ roomId: "room-1", scopeId: "scope-1" });
+    expect(snapshot.actors).toEqual([
+      { actorId: "Z", kind: "automation" },
+      { actorId: "z", kind: "unknown" },
+      { actorId: "ä", kind: "human" },
+    ]);
+  });
+
+  it("rejects runtime-null identity for new meetings", () => {
+    const valid = {
+      actors: [{ actorId: "speaker-a", kind: "human" }],
+      identityProvenance,
+      lifecycleGeneration: 3,
+      meetingId: "meeting-runtime-identity",
+      publicationTargetId: "results-channel",
+      recording,
+      source: { roomId: "room-1", scopeId: "scope-1" },
+    } as const;
+
+    expect(() => Meeting.record({ ...valid, source: null } as never))
+      .toThrow(expect.objectContaining({ code: "INVALID_SNAPSHOT" }));
+    expect(() => Meeting.record({ ...valid, actors: null } as never))
+      .toThrow(expect.objectContaining({ code: "INVALID_SNAPSHOT" }));
+    expect(() => Meeting.record({ ...valid, source: undefined } as never))
+      .toThrow(expect.objectContaining({ code: "INVALID_SNAPSHOT" }));
+    expect(() => Meeting.record({ ...valid, actors: undefined } as never))
+      .toThrow(expect.objectContaining({ code: "INVALID_SNAPSHOT" }));
+  });
+
+  it("keeps legacy admission identity null even when routing source is supplied", () => {
+    const snapshot = Meeting.recordLegacy({
+      meetingId: "meeting-legacy-source",
+      publicationTargetId: "results-channel",
+      recording,
+      source: { roomId: "room-1", scopeId: "scope-1" },
+    }).toSnapshot();
+
+    expect(snapshot.source).toBeNull();
+    expect(snapshot.actors).toBeNull();
+    expect(snapshot.identityProvenance).toBeNull();
+  });
+
+  it("maps absent legacy identity to explicit nulls without blocking old workflows", () => {
+    const {
+      actors: _actors,
+      identityProvenance: _identityProvenance,
+      lifecycleGeneration: _lifecycleGeneration,
+      source: _source,
+      ...legacy
+    } = recordedMeeting().toSnapshot();
+    const restored = Meeting.restore(legacy).toSnapshot();
+
+    expect(restored.actors).toBeNull();
+    expect(restored.identityProvenance).toBeNull();
+    expect(restored.lifecycleGeneration).toBeNull();
+    expect(restored.source).toBeNull();
+    expect(restored.transcriptionStage.status).toBe("pending");
+  });
+
+  it("preserves capability bytes exactly and rejects a non-immutable producer revision", () => {
+    const paddedCapability = ` ${identityProvenance.producerCapabilityId} `;
+    const base = {
+      actors: [{ actorId: "speaker-a", kind: "human" as const }],
+      identityProvenance: {
+        ...identityProvenance,
+        producerCapabilityId: paddedCapability,
+      },
+      lifecycleGeneration: 3,
+      meetingId: "meeting-exact-producer-identity",
+      publicationTargetId: "results-channel",
+      recording,
+      source: { roomId: "room-1", scopeId: "scope-1" },
+    } as const;
+
+    expect(Meeting.record(base).toSnapshot().identityProvenance?.producerCapabilityId)
+      .toBe(paddedCapability);
+    expect(() => Meeting.record({
+      ...base,
+      identityProvenance: {
+        ...base.identityProvenance,
+        producerRevision: "mutable-revision",
+      },
+    })).toThrow(expect.objectContaining({ code: "INVALID_SNAPSHOT" }));
+  });
+
+  it("preserves a future lifecycle generation for fail-closed knowledge admission", () => {
+    const snapshot = Meeting.record({
+      actors: [],
+      identityProvenance,
+      lifecycleGeneration: 4,
+      meetingId: "meeting-future-lifecycle",
+      publicationTargetId: "results-channel",
+      recording,
+      source: { roomId: "room-1", scopeId: "scope-1" },
+    }).toSnapshot();
+
+    expect(snapshot.lifecycleGeneration).toBe(4);
+  });
+
+  it("fails closed for duplicate actors and conflicting actor kinds", () => {
+    const base = {
+      meetingId: "meeting-1",
+      identityProvenance,
+      lifecycleGeneration: 3,
+      publicationTargetId: "results-channel",
+      recording,
+      source: { roomId: "room-1", scopeId: "scope-1" },
+    } as const;
+
+    expect(() => Meeting.record({
+      ...base,
+      actors: [
+        { actorId: "speaker-a", kind: "human" },
+        { actorId: "speaker-a", kind: "automation" },
+      ],
+    })).toThrow(expect.objectContaining({ code: "CONFLICTING_ACTOR_KIND" }));
+    expect(() => Meeting.record({
+      ...base,
+      actors: [
+        { actorId: "speaker-a", kind: "human" },
+        { actorId: "speaker-a", kind: "human" },
+      ],
+    })).toThrow(expect.objectContaining({ code: "DUPLICATE_ACTOR" }));
+  });
+
   it("allows only ordered transitions and treats identical completion as idempotent", () => {
     const meeting = recordedMeeting();
     const transcript = FinalTranscript.create(transcriptSnapshot);

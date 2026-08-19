@@ -4,11 +4,14 @@ import { loadSync } from "@grpc/proto-loader";
 import { describe, expect, it } from "vitest";
 
 import {
+  conversationThinkingCueObserverReadySchema,
+  conversationThinkingCuePlaybackIntentSchema,
   conversationRuntimeProtocolVersion,
   parseConversationRuntimeCancelTurn,
   parseConversationRuntimeEvent,
   parseConversationRuntimeHealth,
   parseConversationRuntimeStartTurn,
+  serializeConversationThinkingCuePlaybackReadinessEnvelope,
 } from "../src/index.js";
 
 const baseEvent = {
@@ -19,6 +22,84 @@ const baseEvent = {
 } as const;
 
 describe("conversation runtime contracts", () => {
+  it("binds a thinking-cue intent and observer readiness to one exact playback", () => {
+    const intent = conversationThinkingCuePlaybackIntentSchema.parse({
+      capturePlan: "thinking-cue",
+      expectedPcmBytes: 192_000,
+      expectedPcmSha256: "b".repeat(64),
+      kind: "thinking-cue",
+      meetingId: "meeting-1",
+      playbackAttemptId: "cue-attempt-turn-1-acknowledgement",
+      protocolVersion: 2,
+      runId: "campaign-run-1",
+      turnId: "turn-1",
+      type: "playback-intent",
+    });
+    const ready = conversationThinkingCueObserverReadySchema.parse({
+      ...intent,
+      authenticatedObserverBotId: "123456789012345678",
+      intentDigestSha256: "a".repeat(64),
+      intentObservedAt: "2026-08-17T12:00:00.000Z",
+      readyPublishedAt: "2026-08-17T12:00:00.100Z",
+      target: {
+        craigBotId: "223456789012345678",
+        guildId: "323456789012345678",
+        observerApplicationId: "423456789012345678",
+        voiceChannelId: "523456789012345678",
+      },
+      type: "observer-ready",
+    });
+
+    expect(serializeConversationThinkingCuePlaybackReadinessEnvelope(intent))
+      .toBe(serializeConversationThinkingCuePlaybackReadinessEnvelope(ready));
+    expect(JSON.parse(
+      serializeConversationThinkingCuePlaybackReadinessEnvelope(intent),
+    )).toEqual([
+      2,
+      "campaign-run-1",
+      "meeting-1",
+      "turn-1",
+      "cue-attempt-turn-1-acknowledgement",
+      192_000,
+      "b".repeat(64),
+      "thinking-cue",
+      "thinking-cue",
+    ]);
+  });
+
+  it("rejects a thinking-cue readiness receipt for a different playback kind", () => {
+    expect(() => conversationThinkingCuePlaybackIntentSchema.parse({
+      capturePlan: "thinking-cue",
+      expectedPcmBytes: 192_000,
+      expectedPcmSha256: "b".repeat(64),
+      kind: "answer",
+      meetingId: "meeting-1",
+      playbackAttemptId: "cue-attempt-1",
+      protocolVersion: 2,
+      runId: "campaign-run-1",
+      turnId: "turn-1",
+      type: "playback-intent",
+    })).toThrow();
+  });
+
+  it.each([0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])(
+    "rejects invalid thinking-cue expected PCM byte count %s",
+    (expectedPcmBytes) => {
+      expect(() => conversationThinkingCuePlaybackIntentSchema.parse({
+        capturePlan: "thinking-cue",
+        expectedPcmBytes,
+        expectedPcmSha256: "b".repeat(64),
+        kind: "thinking-cue",
+        meetingId: "meeting-1",
+        playbackAttemptId: "cue-attempt-1",
+        protocolVersion: 2,
+        runId: "campaign-run-1",
+        turnId: "turn-1",
+        type: "playback-intent",
+      })).toThrow();
+    },
+  );
+
   it("parses provider-neutral health without provider credentials", () => {
     expect(parseConversationRuntimeHealth({
       status: "serving",

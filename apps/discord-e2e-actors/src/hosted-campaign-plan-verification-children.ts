@@ -37,13 +37,13 @@ export function makeCollector(
       DISCORD_E2E_RECORDING_PLAYBACK_TEST_SCOPE: "private-test-deployment",
       DISCORD_E2E_REMOTE_ATTESTATION_FILE: binding.remoteAttestationPath, DISCORD_E2E_RUN_ID: run.runId,
       DISCORD_E2E_SECRET_DIRECTORY: definition.secretDirectory,
+      DISCORD_E2E_SERVICE_LEVEL_THRESHOLDS_INPUT: definition.serviceLevelThresholdsPath,
       ...(run.ordinal === 3 ? {
         DISCORD_E2E_BOTIK_SPEAKER_ID: HOSTED_CAMPAIGN_TARGET.botikApplicationId,
         DISCORD_E2E_CONVERSATION_CAMPAIGN_PROOF_INPUT: paths.campaignProof,
         DISCORD_E2E_CONVERSATION_VOICE_INPUTS: JSON.stringify(voicePaths),
         DISCORD_E2E_DISCORD_PLAYBACK_LINK_PROOF_INPUT: paths.run(3, "playback-link.json"),
         DISCORD_E2E_SERVICE_LEVELS_INPUT: serviceLevelsPath,
-        DISCORD_E2E_SERVICE_LEVEL_THRESHOLDS_INPUT: definition.serviceLevelThresholdsPath,
         DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_INPUT: paths.run(3, "supplemental.json"),
       } : {}),
     }, produces: [produced(run, action.action, barrierPath(`run-${run.ordinal}-verified`))], requires: required,
@@ -57,7 +57,6 @@ export function makeCampaignVerifier(context: HostedCampaignChildContext): Hoste
     arguments: {
       evidencePaths: [paths.run(1, "evidence.json"), paths.run(2, "evidence.json"), paths.run(3, "evidence.json")],
       kind: "campaign-verifier", manifestPath: definition.fixtureManifestPath,
-      thresholdsPath: definition.serviceLevelThresholdsPath,
     }, childId: "campaign-verifier", completion: {
       action: { kind: "campaign-verified" }, campaignId: definition.campaignId,
       kind: "campaign-verifier", runIds: definition.runIds,

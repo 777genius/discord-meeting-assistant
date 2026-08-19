@@ -129,9 +129,13 @@ const generatedSummary: GeneratedSummary = {
 
 function initialSnapshot(): MeetingSnapshot {
   return Meeting.record({
+    actors: [{ actorId: "speaker-a", kind: "human" }],
+    identityProvenance: null,
+    lifecycleGeneration: 2,
     meetingId: "meeting-1",
     publicationTargetId: "results-channel",
     recording,
+    source: { roomId: "room-1", scopeId: "scope-1" },
   }).toSnapshot();
 }
 

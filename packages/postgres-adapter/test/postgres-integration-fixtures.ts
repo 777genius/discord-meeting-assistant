@@ -30,13 +30,14 @@ import {
 
 import { PostgresMigrationRunner } from "../src/index.js";
 
-const POSTGRES_IMAGE = "postgres:18.4-alpine";
+const POSTGRES_IMAGE = "postgres:18.4-alpine@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15";
 const POSTGRES_PORT = 5432;
 
 let container: StartedTestContainer | undefined;
 let pool: Pool | undefined;
 let dockerUnavailableReason: string | undefined;
 let appendOnlyLiveMeetingMigration: string | undefined;
+let externalConnectionString: string | undefined;
 let meetingCoreMigration: string | undefined;
 let liveMeetingsMigration: string | undefined;
 let isolatedDatabaseSequence = 0;
@@ -48,11 +49,19 @@ export interface IsolatedPostgresDatabase {
 
 export function usePostgresIntegrationDatabase(): void {
   beforeAll(async () => {
+    const configuredDatabase = process.env.POSTGRES_INTEGRATION_DATABASE_URL;
+    if (configuredDatabase !== undefined) {
+      externalConnectionString = requireDisposableConnectionString(configuredDatabase);
+      pool = new Pool({ connectionString: externalConnectionString });
+      await initializeIntegrationDatabase(pool);
+      return;
+    }
+
     try {
       container = await new GenericContainer(POSTGRES_IMAGE)
         .withEnvironment({
           POSTGRES_DB: "meeting_test",
-          POSTGRES_PASSWORD: "meeting_test_password",
+          POSTGRES_PASSWORD: "fixture",
           POSTGRES_USER: "meeting_test",
         })
         .withExposedPorts(POSTGRES_PORT)
@@ -63,29 +72,7 @@ export function usePostgresIntegrationDatabase(): void {
         .start();
 
       pool = new Pool(poolOptions("meeting_test"));
-      await pool.query("SELECT 1");
-      meetingCoreMigration = await readFile(
-        new URL(
-          "../../../infra/postgres/migrations/0001_create_meeting_core.sql",
-          import.meta.url,
-        ),
-        "utf8",
-      );
-      liveMeetingsMigration = await readFile(
-        new URL(
-          "../../../infra/postgres/migrations/0003_create_live_meetings.sql",
-          import.meta.url,
-        ),
-        "utf8",
-      );
-      appendOnlyLiveMeetingMigration = await readFile(
-        new URL(
-          "../../../infra/postgres/migrations/0005_live_meeting_append_only.sql",
-          import.meta.url,
-        ),
-        "utf8",
-      );
-      await new PostgresMigrationRunner(pool).migrate();
+      await initializeIntegrationDatabase(pool);
     } catch (error) {
       if (!isDockerUnavailable(error)) {
         throw error;
@@ -97,7 +84,7 @@ export function usePostgresIntegrationDatabase(): void {
   beforeEach(async () => {
     if (pool !== undefined) {
       await pool.query(
-        "TRUNCATE TABLE guild_configuration.guild_installations, meeting_core.summary_publication_effects, meeting_core.post_call_dead_letters, meeting_core.live_meeting_summary_coverage, meeting_core.live_meeting_turns, meeting_core.live_meeting_generation_usage, meeting_core.live_meeting_generation_telemetry, meeting_core.live_meetings, meeting_core.post_call_outbox, meeting_core.meetings",
+        "TRUNCATE TABLE guild_configuration.guild_installations, meeting_core.conversation_one_shot_receipts, meeting_core.answer_effects, meeting_knowledge.current_question_policy, meeting_knowledge.question_rate_reservations, meeting_knowledge.question_jobs, meeting_knowledge.unavailable_final_projections, meeting_knowledge.withdrawn_meeting_sources, meeting_core.historical_coverage_checkpoints, meeting_core.historical_memory_sync, meeting_knowledge.live_memory_hot_tail, meeting_knowledge.live_memory_outbox, meeting_knowledge.live_memory_meetings, meeting_core.summary_publication_effects, meeting_core.post_call_dead_letters, meeting_core.live_meeting_summary_coverage, meeting_core.live_meeting_turns, meeting_core.live_meeting_generation_usage, meeting_core.live_meeting_generation_telemetry, meeting_core.live_meetings, meeting_core.post_call_outbox, meeting_core.meetings",
       );
     }
   });
@@ -183,10 +170,23 @@ export async function waitForTimelineReadToBlock(database: Pool): Promise<void> 
 export function recordedMeeting(
   meetingId = "meeting-postgres-1",
   manifestLocator = "s3://recordings/meeting-postgres-1/manifest.json",
+  publicationTargetId = "discord-channel-1",
 ): Meeting {
   return Meeting.record({
+    actors: [
+      { actorId: "speaker-a", kind: "human" },
+      { actorId: "speaker-b", kind: "human" },
+    ],
+    identityProvenance: {
+      actorObservationState: "consistent",
+      actorSemanticsVersion: 1,
+      producerCapabilityId: "meeting.lifecycle.sealed-actor-roster.v1",
+      producerRevision: "0123456789abcdef0123456789abcdef01234567",
+      rosterState: "sealed",
+    },
+    lifecycleGeneration: 3,
     meetingId,
-    publicationTargetId: "discord-channel-1",
+    publicationTargetId,
     recording: {
       manifestLocator,
       recordingId: `recording-${meetingId}`,
@@ -203,6 +203,7 @@ export function recordedMeeting(
         },
       ],
     },
+    source: { roomId: "room-1", scopeId: "scope-1" },
   });
 }
 
@@ -283,8 +284,15 @@ export function liveSummary(
   };
 }
 
-export function evidenceBackedMeeting(meetingId = "meeting-postgres-1"): Meeting {
-  const meeting = recordedMeeting(meetingId);
+export function evidenceBackedMeeting(
+  meetingId = "meeting-postgres-1",
+  publicationTargetId = "discord-channel-1",
+): Meeting {
+  const meeting = recordedMeeting(
+    meetingId,
+    "s3://recordings/meeting-postgres-1/manifest.json",
+    publicationTargetId,
+  );
   meeting.beginTranscription();
   const transcript = FinalTranscript.create({
     recordingId: meeting.recording.recordingId,
@@ -303,6 +311,13 @@ export function evidenceBackedMeeting(meetingId = "meeting-postgres-1"): Meeting
         startMs: 900,
         text: "I will prepare the release checklist.",
         turnId: "turn-action",
+      },
+      {
+        endMs: 3_200,
+        speakerId: "speaker-a",
+        startMs: 2_400,
+        text: "The support rotation remains unchanged.",
+        turnId: "turn-support-rotation",
       },
     ],
     version: 1,
@@ -346,7 +361,56 @@ export function evidenceBackedMeeting(meetingId = "meeting-postgres-1"): Meeting
   return meeting;
 }
 
+
+async function initializeIntegrationDatabase(database: Pool): Promise<void> {
+  await database.query("SELECT 1");
+  meetingCoreMigration = await readFile(
+    new URL(
+      "../../../infra/postgres/migrations/0001_create_meeting_core.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  liveMeetingsMigration = await readFile(
+    new URL(
+      "../../../infra/postgres/migrations/0003_create_live_meetings.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  appendOnlyLiveMeetingMigration = await readFile(
+    new URL(
+      "../../../infra/postgres/migrations/0005_live_meeting_append_only.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  await new PostgresMigrationRunner(database).migrate();
+}
+
+function requireDisposableConnectionString(value: string): string {
+  const parsed = new URL(value);
+  const databaseName = parsed.pathname.slice(1);
+  if (
+    (parsed.protocol !== "postgres:" && parsed.protocol !== "postgresql:") ||
+    !/^meeting_test_[a-z\d_]+$/u.test(databaseName)
+  ) {
+    throw new Error(
+      "POSTGRES_INTEGRATION_DATABASE_URL must name a disposable meeting_test_* database",
+    );
+  }
+  return parsed.toString();
+}
+
 function poolOptions(database: string): ConstructorParameters<typeof Pool>[0] {
+  if (externalConnectionString !== undefined) {
+    const parsed = new URL(externalConnectionString);
+    parsed.pathname = `/${database}`;
+    return {
+      connectionString: parsed.toString(),
+      connectionTimeoutMillis: 10_000,
+    };
+  }
   if (container === undefined) {
     throw new Error("PostgreSQL container is not initialized");
   }
@@ -354,7 +418,7 @@ function poolOptions(database: string): ConstructorParameters<typeof Pool>[0] {
     connectionTimeoutMillis: 10_000,
     database,
     host: container.getHost(),
-    password: "meeting_test_password",
+    password: "fixture",
     port: container.getMappedPort(POSTGRES_PORT),
     user: "meeting_test",
   };

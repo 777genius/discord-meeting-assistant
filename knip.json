@@ -13,6 +13,10 @@
       "entry": ["src/features/*/index.ts"],
       "project": ["src/**/*.ts", "test/**/*.ts"]
     },
+    "packages/infinity-context-adapter": {
+      "entry": ["src/index.ts"],
+      "project": ["src/**/*.ts", "test/**/*.ts"]
+    },
     "packages/bullmq-adapter": {
       "entry": ["src/index.ts"],
       "project": ["src/**/*.ts", "test/**/*.ts"]
@@ -72,6 +76,7 @@
         "src/observe-live-discord.ts",
         "src/play-supplemental-voice.ts",
         "src/publish-replay-attestation.ts",
+        "src/qualify-providerless-voice-durability.ts",
         "src/verify-campaign.ts",
         "src/verify-retained-evidence.ts"
       ],

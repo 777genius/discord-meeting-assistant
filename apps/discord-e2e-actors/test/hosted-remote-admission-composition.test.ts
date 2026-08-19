@@ -43,6 +43,30 @@ describe("hosted remote admission composition", () => {
     expect(JSON.stringify(result)).not.toContain(secret);
   });
 
+  it("preserves a prototype-backed clock probe through composition validation", async () => {
+    const calls: string[] = [];
+    const config = composition(calls);
+    class PrototypeClockProbe {
+      readonly maximumClockSkewBoundMs = 250;
+
+      async collectClockPreflight(): Promise<ReturnType<typeof clockExchange>> {
+        calls.push("prototype-clock");
+        return clockExchange(now);
+      }
+    }
+    const probe = createHostedCampaignRemoteAdmissionProbe({
+      ...config,
+      clock: new PrototypeClockProbe(),
+    });
+
+    const result = await evaluateHostedRemoteAdmission(probe, {
+      campaignId, meetingPlatformRevision: revision, planSha256,
+    }, () => now);
+
+    expect(result.missingSections).toEqual([]);
+    expect(calls).toContain("prototype-clock");
+  });
+
   it("samples time after a slow remote probe and admits evidence fresh at completion", async () => {
     let currentTime = now;
     const config = composition([], () => currentTime);
@@ -273,7 +297,7 @@ function composition(calls: string[], time: () => number = () => now): HostedRem
     meetingPlatformRevision: revision,
     planSha256,
     remoteContainerProcess: { execute: async ({ args, binding: remoteBinding }) => {
-      const isCraig = args.includes("/app/apps/bot/dist/e2e/discordIdentityProofCli.js");
+      const isCraig = args.includes("CRAIG_E2E_TEST_ONLY=true");
       calls.push(isCraig ? "discord:remoteCraig" : "discord:remotePlatformSut");
       const value = (flag: string): string => {
         const index = args.indexOf(flag);
@@ -348,6 +372,9 @@ function deploymentExpectation(): HostedDeploymentSafetyExpectationV1 {
   return {
     allowedNetworks: ["discord-meeting-e2e"], campaignId, campaignRoot: "/srv/e2e/campaigns",
     campaignRootOwnerGid: 10_001, campaignRootOwnerUid: 10_001,
+    craigNetworkPolicy: { bridgeInterface: "br-craige2e", chain: "CRAIG-E2E",
+      networkName: "discord-meeting-e2e", tcpDestinationPort: 443,
+      udpDestinationPorts: { end: 65_535, start: 1_024 } },
     deployRoot: "/srv/e2e", sourceRoot: "/srv/e2e/source",
     greeting: {
       campaignSiblingPath: "/srv/e2e/campaigns-sibling",
@@ -384,8 +411,12 @@ function deploymentReceipt(expectation: HostedDeploymentSafetyExpectationV1, gen
     gid: expectation.campaignRootOwnerGid, linkCount: 3, mode: "0700" as const,
     requestedPath: expectation.campaignRoot, resolvedPath: expectation.campaignRoot, symbolicLink: false as const,
     uid: expectation.campaignRootOwnerUid };
+  const craigNetwork = { ...expectation.craigNetworkPolicy,
+    containerId: expectation.services.find(({ component }) => component === "craig")?.containerId,
+    containerIpv4: "172.28.0.2", networkId: "a".repeat(64), semanticPolicySha256: "b".repeat(64) };
   return createHostedDeploymentSafetyReceiptV1({ expectation, generatedAt: new Date(generatedAt).toISOString(), evidence: {
     campaignRoot, campaignRootAfter: campaignRoot,
+    craigNetworkBefore: craigNetwork, craigNetworkAfter: craigNetwork,
     greetingMount, greetingMountAfter: greetingMount, mountIsolation, mountIsolationAfter: mountIsolation,
     roots, rootsAfter: roots, servicesBefore: services, servicesAfter: services,
     roundTrip: { containerObservedHostNonce: "host-nonce", containerWrittenNonce: "container-nonce",

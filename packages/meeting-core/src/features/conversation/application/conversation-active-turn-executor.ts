@@ -1,11 +1,9 @@
-import type {
-  ConversationCancellation,
-  ConversationCancellationReason as DomainConversationCancellationReason,
-  ConversationSession,
-} from "../domain/conversation.js";
+import type { ConversationCancellation, ConversationCancellationReason as DomainConversationCancellationReason, ConversationSession } from "../domain/conversation.js";
 import { requireNonNegativeInteger } from "../domain/errors.js";
 import type {
   ConversationCancellationReason,
+  GroundedKnowledgeAnswerObserverPort,
+  GroundedKnowledgeAnswerPort,
   ConversationLatencyObserverPort,
   ConversationPlaybackObserverPort,
   ConversationPlaybackReadinessPort,
@@ -16,17 +14,14 @@ import type {
 } from "./ports/conversation.js";
 import { ConversationAnswerPlayback } from "./conversation-answer-playback.js";
 import { ConversationCueOrchestrator } from "./conversation-cue-orchestrator.js";
-import {
-  observeConversationLatency,
-  observeConversationPlaybackSettlement,
-} from "./conversation-observability.js";
-import type {
-  ActiveConversationRun,
-  ConversationInterruptionResult,
-  MeetingConversationState,
-} from "./conversation-coordinator-types.js";
+import { ConversationGroundedAnswerExecutor } from "./conversation-grounded-answer-executor.js";
+import { observeConversationLatency, observeConversationPlaybackSettlement } from "./conversation-observability.js";
+import { acceptConversationTtsAttestation } from "./conversation-tts-attestation.js";
+import type { ActiveConversationRun, ConversationInterruptionResult, MeetingConversationState } from
+  "./conversation-coordinator-types.js";
 import {
   advanceConversationState,
+  createActiveConversationRun,
   ignoreConversationFailure,
   isCurrentConversationRun,
   matchesConversationAttempt,
@@ -36,6 +31,8 @@ import {
 
 export interface ConversationActiveTurnExecutorDependencies {
   readonly cues: ConversationCueOrchestrator;
+  readonly groundedAnswers?: GroundedKnowledgeAnswerPort;
+  readonly groundedAnswerObserver?: GroundedKnowledgeAnswerObserverPort;
   readonly latencyObserver?: ConversationLatencyObserverPort;
   readonly playback: VoicePlaybackPort;
   readonly playbackObserver?: ConversationPlaybackObserverPort;
@@ -51,19 +48,26 @@ export interface ConversationActiveTurnExecutorDependencies {
 export class ConversationActiveTurnExecutor {
   private readonly answerPlayback: ConversationAnswerPlayback;
   private readonly cues: ConversationCueOrchestrator;
+  private readonly groundedAnswers: ConversationGroundedAnswerExecutor | null;
   private readonly latencyObserver: ConversationLatencyObserverPort | null;
   private readonly playbackObserver: ConversationPlaybackObserverPort | null;
   private readonly runtime: ConversationRuntime;
 
   public constructor(dependencies: ConversationActiveTurnExecutorDependencies) {
     this.cues = dependencies.cues;
+    this.groundedAnswers = dependencies.groundedAnswers === undefined
+      ? null
+      : new ConversationGroundedAnswerExecutor({
+        answers: dependencies.groundedAnswers,
+        ...(dependencies.groundedAnswerObserver === undefined
+          ? {}
+          : { observer: dependencies.groundedAnswerObserver }),
+      });
     this.latencyObserver = dependencies.latencyObserver ?? null;
     this.playbackObserver = dependencies.playbackObserver ?? null;
     this.runtime = dependencies.runtime;
     this.answerPlayback = new ConversationAnswerPlayback({
-      finalize: async (state, run) => {
-        await this.finalize(state, run);
-      },
+      finalize: (state, run) => this.finalize(state, run),
       playback: dependencies.playback,
       ...(dependencies.playbackObserver === undefined
         ? {}
@@ -71,9 +75,7 @@ export class ConversationActiveTurnExecutor {
       ...(dependencies.playbackReadiness === undefined
         ? {}
         : { playbackReadiness: dependencies.playbackReadiness }),
-      requestCancellation: async (state, run, reason) => {
-        await this.requestCancellation(state, run, reason);
-      },
+      requestCancellation: (state, run, reason) => this.requestCancellation(state, run, reason),
     });
   }
 
@@ -87,31 +89,7 @@ export class ConversationActiveTurnExecutor {
       return;
     }
 
-    const run: ActiveConversationRun = {
-      answerAudioStarted: false,
-      answerAudioWriteAttempted: false,
-      answerAudioWritten: false,
-      attemptId: null,
-      cancellationInFlight: false,
-      cueDelays: new Set(),
-      cuePlayback: null,
-      cuePlaybackOpening: false,
-      deliberationCue: null,
-      deliberationCueSelectionInFlight: false,
-      deliberationCueReady: false,
-      finalized: false,
-      playback: null,
-      playbackOpenAbortController: null,
-      playbackEventsClosed: false,
-      playbackFinishRequested: false,
-      playbackFinished: false,
-      playbackTerminalFinalizationScheduled: false,
-      playbackTerminalReceiptMissing: false,
-      prepared,
-      runtimeCompleted: false,
-      runtimeStartAbortController: null,
-      runtimeTurn: null,
-    };
+    const run = createActiveConversationRun(prepared);
     state.active = run;
     if (prepared.thinkingCuesEnabled) {
       this.cues.schedule(state, run);
@@ -124,8 +102,21 @@ export class ConversationActiveTurnExecutor {
     let started: Awaited<ReturnType<ConversationRuntime["startTurn"]>>;
     const startAbortController = new AbortController();
     run.runtimeStartAbortController = startAbortController;
+    if (prepared.groundedKnowledgeRequest !== undefined && this.groundedAnswers !== null) {
+      run.groundedPlaybackAbortController = startAbortController;
+    }
     try {
-      started = await this.runtime.startTurn(prepared.request, {
+      const resolved = this.groundedAnswers === null
+        ? { playbackAuthority: null, request: prepared.request }
+        : await this.groundedAnswers.resolve(prepared, startAbortController.signal,
+          () => isCurrentConversationRun(state, run));
+      if (resolved === null || startAbortController.signal.aborted ||
+        !isCurrentConversationRun(state, run)) {
+        await this.finalize(state, run);
+        return;
+      }
+      run.groundedPlaybackAuthority = resolved.playbackAuthority;
+      started = await this.runtime.startTurn(resolved.request, {
         signal: startAbortController.signal,
       });
     } catch {
@@ -170,7 +161,6 @@ export class ConversationActiveTurnExecutor {
       if (!isCurrentConversationRun(state, run)) {
         return;
       }
-      run.answerAudioWriteAttempted = true;
       const written = await this.answerPlayback.write(state, run, {
         attemptId: cue.playbackAttemptId,
         bytes,
@@ -230,16 +220,25 @@ export class ConversationActiveTurnExecutor {
 
     run.cancellationInFlight = true;
     const reason: ConversationCancellationReason = cancellation.reason;
+    const cancellationObservedAtMs = requireNonNegativeInteger(
+      state.lastObservedAtMs,
+      "conversation.cancellationObservedAtMs",
+    );
+    const cancellationRequest = Object.freeze({ cancellationObservedAtMs, reason });
+    this.groundedAnswers?.observeCancellation(run.prepared, reason, cancellationObservedAtMs);
     run.runtimeStartAbortController?.abort(reason);
     run.runtimeStartAbortController = null;
-    run.playbackOpenAbortController?.abort(reason);
+    run.groundedPlaybackAbortController?.abort(reason);
+    run.groundedPlaybackAbortController = null;
+    run.groundedPlaybackAuthority = null;
+    run.playbackOpenAbortController?.abort(cancellationRequest);
     run.playbackOpenAbortController = null;
-    const cancellations: Promise<void>[] = [this.cues.stop(run, reason)];
+    const cancellations: Promise<void>[] = [this.cues.stop(run, cancellationRequest)];
     if (run.runtimeTurn !== null) {
       cancellations.push(ignoreConversationFailure(() => run.runtimeTurn!.cancel(reason)));
     }
     if (run.playback !== null) {
-      this.answerPlayback.cancel(run, run.playback, reason);
+      this.answerPlayback.cancel(run, run.playback, cancellationRequest);
     }
     await Promise.all(cancellations);
     await this.finalize(state, run);
@@ -286,14 +285,27 @@ export class ConversationActiveTurnExecutor {
     }
 
     switch (event.type) {
+      case "tts-attestation":
+        await acceptConversationTtsAttestation(
+          run,
+          event,
+          () => this.requestCancellation(state, run, "runtime-shutdown"),
+        );
+        return;
       case "audio-start":
+        if (run.groundedPlaybackAuthority !== null && run.ttsAttestation === null) {
+          await this.requestCancellation(state, run, "runtime-shutdown");
+          return;
+        }
         run.answerAudioStarted = true;
-        await this.cues.stop(run, "superseded");
+        await this.cues.stop(run, {
+          cancellationObservedAtMs: state.lastObservedAtMs,
+          reason: "superseded",
+        });
         await this.answerPlayback.open(state, run);
         return;
       case "audio-chunk":
         if (event.turnId === run.prepared.turn.turnId) {
-          run.answerAudioWriteAttempted = true;
           const written = await this.answerPlayback.write(state, run, event);
           run.answerAudioWritten ||= written;
         }
@@ -320,7 +332,6 @@ export class ConversationActiveTurnExecutor {
         return;
     }
   }
-
   private async maybeFinalizeAfterRuntime(
     state: MeetingConversationState,
     run: ActiveConversationRun,
@@ -353,7 +364,13 @@ export class ConversationActiveTurnExecutor {
       return;
     }
 
-    await this.cues.stop(run, "superseded");
+    run.groundedPlaybackAbortController?.abort("conversation-finalized");
+    run.groundedPlaybackAbortController = null;
+    run.groundedPlaybackAuthority = null;
+    await this.cues.stop(run, {
+      cancellationObservedAtMs: state.lastObservedAtMs,
+      reason: "superseded",
+    });
     if (state.playbackFence !== null) {
       this.schedulePlaybackTerminalFinalization(state, run);
       return;

@@ -1,9 +1,13 @@
-import type {
-  ConversationFarewellClassificationInput,
-  ConversationFarewellClassifier,
-  ConversationFarewellCueRegistry,
-  ConversationFarewellTurn,
-} from "@discord-meeting/meeting-core/conversation";
+import type { LiveConversationConfiguration } from "./conversation-contracts.js";
+
+export type {
+  LiveConversationConfiguration,
+  LiveConversationOneShotReceiptPort,
+  LiveConversationOneShotReceiptReservation,
+  LiveFarewellClassificationInput,
+  LiveFarewellTurn,
+  LiveParticipantGreetingProfile,
+} from "./conversation-contracts.js";
 
 /**
  * Consumer-owned vocabulary for the derived live-meeting runtime. Inbound and
@@ -41,6 +45,23 @@ interface LiveMeetingEventBase {
   readonly recordingId: string;
 }
 
+interface LiveMemoryIdentity {
+  readonly actors: readonly {
+    readonly actorId: string;
+    readonly kind: "automation" | "human" | "unknown";
+  }[];
+  readonly identityProvenance: {
+    readonly actorObservationState: "consistent" | "conflicted";
+    readonly actorSemanticsVersion: number;
+    readonly producerCapabilityId: string;
+    readonly producerRevision: string;
+    readonly rosterState: "sealed" | "unsealed";
+  };
+  readonly lifecycleGeneration: 3;
+  readonly roomId: string;
+  readonly scopeId: string;
+}
+
 interface DeferredLivePublicationTarget {
   resolve(): Promise<string | null>;
 }
@@ -48,10 +69,16 @@ interface DeferredLivePublicationTarget {
 export interface LiveMeetingStartedEvent extends LiveMeetingEventBase {
   readonly participantIds: readonly string[];
   readonly publicationTarget: DeferredLivePublicationTarget;
+  readonly roomId: string;
+  readonly memoryIdentity?: LiveMemoryIdentity;
   readonly type: "meeting.started";
 }
 
 export interface LiveMeetingParticipantEvent extends LiveMeetingEventBase {
+  readonly memoryHumanObservation?: {
+    readonly actorId: string;
+    readonly producerRevision: string;
+  };
   readonly participantId: string;
   readonly type: "participant.joined" | "participant.left";
 }
@@ -64,12 +91,17 @@ interface LiveMeetingIgnoredEvent extends LiveMeetingEventBase {
   readonly type:
     | "meeting.connection_lost"
     | "meeting.connection_recovered"
-    | "recording.artifact_ready"
-    | "recording.authoritative_ready";
+    | "recording.artifact_ready";
+}
+
+interface LiveMeetingAuthoritativeReadyEvent extends LiveMeetingEventBase {
+  readonly memoryIdentity?: LiveMemoryIdentity;
+  readonly type: "recording.authoritative_ready";
 }
 
 export type LiveMeetingLifecycleEvent =
   | LiveMeetingIgnoredEvent
+  | LiveMeetingAuthoritativeReadyEvent
   | LiveMeetingParticipantEvent
   | LiveMeetingStartedEvent
   | LiveMeetingStoppedEvent;
@@ -247,128 +279,6 @@ export interface LiveMeetingRefresher {
   execute(input: LiveMeetingRefreshInput): Promise<LiveMeetingRefreshResult>;
 }
 
-interface LiveConversationOutcome {
-  readonly status:
-    | "ignored"
-    | "awaiting-prompt"
-    | "active"
-    | "queued"
-    | "busy"
-    | "reused";
-}
-
-interface LiveConversationTurnInput {
-  readonly locale: string;
-  readonly meetingId: string;
-  readonly nowMs: number;
-  readonly recordingId: string;
-  readonly speakerId: string;
-  readonly systemPrompt: string;
-  readonly text: string;
-  readonly thinkingCueLocale: string;
-  readonly turnEndedAtUnixMs: number;
-  readonly transcriptEndMs: number;
-  readonly transcriptStartMs: number;
-  readonly turnId: string;
-  readonly voiceProfileId: string;
-  readonly wakeDetectedAtUnixMs: number;
-}
-
-interface LiveProactiveConversationTurnInput {
-  readonly interruptible?: boolean;
-  readonly locale: string;
-  readonly literalSpeech?: string;
-  readonly meetingId: string;
-  readonly nowMs: number;
-  readonly prompt: string;
-  readonly recordingId: string;
-  readonly speakerId: string;
-  readonly systemPrompt: string;
-  readonly turnId: string;
-  readonly voiceProfileId: string;
-}
-
-interface LivePreparedConversationCueInput {
-  readonly cueId: string;
-  readonly interruptible?: boolean;
-  readonly locale: string;
-  readonly meetingId: string;
-  readonly nowMs: number;
-  readonly pcmChunks: readonly Uint8Array[];
-  readonly playbackAttemptId: string;
-  readonly preemptive?: boolean;
-  readonly recordingId: string;
-  readonly speakerId: string;
-  readonly turnId: string;
-  readonly voiceProfileId: string;
-}
-
-interface LiveConversationCoordinator {
-  advanceMeeting(meetingId: string, nowMs: number): void;
-  closeMeeting(meetingId: string, nowMs: number): Promise<void>;
-  handleFinalizedTurn(
-    input: LiveConversationTurnInput,
-  ): Promise<LiveConversationOutcome>;
-  handleProactiveTurn(
-    input: LiveProactiveConversationTurnInput,
-  ): Promise<LiveConversationOutcome>;
-  playPreparedCue(
-    input: LivePreparedConversationCueInput,
-  ): Promise<LiveConversationOutcome>;
-  speechActivity(meetingId: string, nowMs: number): Promise<unknown>;
-  speechEnded(meetingId: string, nowMs: number): Promise<unknown>;
-  speechStarted(meetingId: string, nowMs: number): Promise<unknown>;
-  whenIdle(meetingId: string): Promise<void>;
-  whenTurnPlaybackSettled(
-    meetingId: string,
-    turnId: string,
-  ): Promise<"played" | "unplayed" | "partial" | "unknown">;
-}
-
-export interface LiveParticipantGreetingProfile {
-  readonly displayName: string;
-  readonly greetingLocale: "en" | "ru";
-  readonly spokenName: string;
-}
-
-interface LiveParticipantGreetingConfiguration {
-  readonly cues?: {
-    select(input: {
-      readonly locale: "en" | "ru";
-      readonly meetingId: string;
-      readonly participantId: string;
-      readonly speech: string;
-      readonly voiceProfileId: string;
-    }): {
-      readonly cueId: string;
-      readonly pcmChunks: readonly Uint8Array[];
-      readonly playbackAttemptId: string;
-    } | null;
-  };
-  readonly defaultLocale: "en" | "ru";
-  readonly excludedParticipantIds: readonly string[];
-  readonly isPlaybackReady: (recordingId: string) => boolean;
-  readonly profiles: Readonly<Record<string, LiveParticipantGreetingProfile>>;
-}
-
-export type LiveFarewellTurn = ConversationFarewellTurn;
-export type LiveFarewellClassificationInput = ConversationFarewellClassificationInput;
-
-interface LiveFarewellConfiguration {
-  readonly classifier?: ConversationFarewellClassifier;
-  readonly cues: ConversationFarewellCueRegistry;
-  readonly participantNames: Readonly<Record<string, string>>;
-}
-
-export interface LiveConversationConfiguration {
-  readonly coordinator: LiveConversationCoordinator;
-  readonly farewells?: LiveFarewellConfiguration;
-  readonly greetings?: LiveParticipantGreetingConfiguration;
-  readonly locale: string;
-  readonly nowMilliseconds: () => number;
-  readonly systemPrompt: string;
-  readonly voiceProfileId: string;
-}
 
 export interface LivePacketFlowControl {
   readonly maximumConcurrentSessions?: number;
@@ -383,6 +293,36 @@ export interface LiveMeetingRuntimeDependencies {
   readonly clock?: LiveRuntimeClock;
   readonly conversation?: LiveConversationConfiguration;
   readonly finishMeeting: LiveMeetingFinisher;
+  readonly finalizedMemory?: {
+    finishMeeting(meetingId: string): Promise<void>;
+    observeHuman(input: {
+      readonly actorId: string;
+      readonly meetingId: string;
+      readonly producerRevision: string;
+    }): Promise<"accepted" | "ineligible" | "replayed">;
+    removeHuman(input: {
+      readonly actorId: string;
+      readonly meetingId: string;
+      readonly producerRevision: string;
+    }): Promise<"accepted" | "ineligible" | "replayed">;
+    registerMeeting(input: {
+      readonly actors: LiveMemoryIdentity["actors"];
+      readonly identityProvenance: LiveMemoryIdentity["identityProvenance"];
+      readonly lifecycleGeneration: 3;
+      readonly meetingId: string;
+      readonly roomId: string;
+      readonly scopeId: string;
+    }): Promise<"accepted" | "ineligible" | "replayed">;
+    sealMeeting(input: {
+      readonly actors: LiveMemoryIdentity["actors"];
+      readonly identityProvenance: LiveMemoryIdentity["identityProvenance"];
+      readonly lifecycleGeneration: 3;
+      readonly meetingId: string;
+      readonly roomId: string;
+      readonly scopeId: string;
+    }): Promise<"accepted" | "ineligible" | "replayed">;
+    synchronizeMeeting(meetingId: string): Promise<void>;
+  };
   readonly logger: LiveRuntimeLogger;
   readonly packetFlowControl?: LivePacketFlowControl;
   readonly packetInspector?: LivePacketInspector;

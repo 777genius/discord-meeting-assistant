@@ -1,32 +1,21 @@
-import {
-  LiveSessionAdmission,
-  GlobalPacketFlowControl,
-  resolveLivePacketFlowControl,
-} from "./live-packet-flow-control.js";
-import type {
-  LiveMeetingLifecycleEvent,
-  LiveMeetingParticipantEvent,
-  LiveMeetingRuntimeDependencies,
-  LiveMeetingStartedEvent,
-  LiveRuntimeClock,
-  LiveRuntimeTimer,
-  LiveRuntimeTimerHandle,
-  LiveTranscriptionEvent,
-  LiveVoicePacket,
-  LiveVoicePacketBatch,
-} from "./contracts.js";
-import {
-  createActiveLiveMeeting,
-  type ActiveLiveMeeting,
-} from "./live-meeting-state.js";
+import { GlobalPacketFlowControl, LiveSessionAdmission,
+  resolveLivePacketFlowControl } from "./live-packet-flow-control.js";
+import type { LiveMeetingLifecycleEvent, LiveMeetingParticipantEvent,
+  LiveMeetingRuntimeDependencies, LiveMeetingStartedEvent, LiveRuntimeClock,
+  LiveRuntimeTimer, LiveRuntimeTimerHandle, LiveTranscriptionEvent,
+  LiveVoicePacket, LiveVoicePacketBatch } from "./contracts.js";
+import { createActiveLiveMeeting, type ActiveLiveMeeting } from
+  "./live-meeting-state.js";
 import { LiveMeetingFinalizer } from "./live-meeting-finalizer.js";
+import { observeFinalizedHuman, registerFinalizedMemory,
+  sealFinalizedMemory } from "./live-finalized-memory-lifecycle.js";
 import { resolveSpeakerIdleFinalizeMs } from "./live-runtime-settings.js";
 import { logFinalizedLiveTranscript } from "./live-transcript-observability.js";
-import {
-  systemLiveRuntimeClock,
-  systemLiveRuntimeTimer,
-} from "./runtime-clock.js";
+import { systemLiveRuntimeClock, systemLiveRuntimeTimer } from
+  "./runtime-clock.js";
+import { closeLiveMeetings } from "./close-live-meetings.js";
 import { RecordingOperationQueue } from "./recording-operation-queue.js";
+import { releaseLiveMeetingsForRestart } from "./release-live-meetings-for-restart.js";
 import { stableLiveTranscriptTurnId } from "./transcript-turn-id.js";
 
 const refreshSchedulerIntervalMs = 100;
@@ -94,9 +83,8 @@ export class PlatformLiveMeetingRuntime {
       return;
     }
     if (event.type === "participant.joined" || event.type === "participant.left") {
-      await this.recordingOperations.enqueue(event.recordingId, () => {
-        this.acceptParticipant(event);
-        return Promise.resolve();
+      await this.recordingOperations.enqueue(event.recordingId, async () => {
+        await this.acceptParticipant(event);
       });
       return;
     }
@@ -104,6 +92,16 @@ export class PlatformLiveMeetingRuntime {
       await this.recordingOperations.enqueue(event.recordingId, () =>
         this.finalizer.finishRecording(event.recordingId, Date.parse(event.occurredAt))
       );
+      return;
+    }
+    if (event.type === "meeting.connection_lost") {
+      await this.recordingOperations.enqueue(event.recordingId, () =>
+        this.meetings.get(event.recordingId)?.conversation?.disconnect() ?? Promise.resolve()
+      );
+      return;
+    }
+    if (event.type === "recording.authoritative_ready") {
+      await sealFinalizedMemory(this.dependencies, event);
     }
   }
 
@@ -163,7 +161,26 @@ export class PlatformLiveMeetingRuntime {
       ...this.recordingOperations.pendingRecordingIds(),
       ...this.finalizer.pendingRecordingIds(nowMs),
     ]);
-    this.closePromise = this.closeAll(recordingIds, nowMs);
+    this.closePromise = closeLiveMeetings({
+      endedAtMs: nowMs,
+      finalizer: this.finalizer,
+      recordingIds,
+      recordingOperations: this.recordingOperations,
+    });
+    return this.closePromise;
+  }
+
+  /** Releases derived ownership without committing a terminal transition. */
+  public async releaseForRestart(): Promise<void> {
+    if (this.closePromise !== null) {
+      return this.closePromise;
+    }
+    this.closed = true;
+    this.timer.cancel(this.refreshTimer);
+    this.closePromise = releaseLiveMeetingsForRestart({
+      meetings: this.meetings,
+      recordingOperations: this.recordingOperations,
+    });
     return this.closePromise;
   }
 
@@ -192,6 +209,7 @@ export class PlatformLiveMeetingRuntime {
       });
       return;
     }
+    await registerFinalizedMemory(this.dependencies, event);
     const state = createActiveLiveMeeting({
       clock: this.clock,
       dependencies: this.dependencies,
@@ -239,17 +257,22 @@ export class PlatformLiveMeetingRuntime {
     });
   }
 
-  private acceptParticipant(event: LiveMeetingParticipantEvent): void {
+  private async acceptParticipant(event: LiveMeetingParticipantEvent): Promise<void> {
     const state = this.meetings.get(event.recordingId);
     if (state === undefined || state.finishing) {
       return;
     }
     if (event.type === "participant.joined") {
+      await observeFinalizedHuman(this.dependencies, event);
       state.farewell?.participantJoined(event.participantId);
-      state.greetings?.participantJoined(event.participantId);
+      state.greetings?.participantJoined(event.participantId, event.occurredAt);
     } else {
+      // Cancellation owns the departure edge. A slow or failed roster projection
+      // must never leave generation or playback running for the departed actor.
+      await state.conversation?.participantLeft(event.participantId);
       state.farewell?.participantLeft(event.participantId);
       state.greetings?.participantLeft(event.participantId);
+      await observeFinalizedHuman(this.dependencies, event);
     }
     this.dependencies.logger.info("Live participant lifecycle accepted", {
       eventType: event.type,
@@ -295,6 +318,7 @@ export class PlatformLiveMeetingRuntime {
       if (result === "not-found") {
         throw new Error("Live meeting disappeared before transcript append");
       }
+      await this.dependencies.finalizedMemory?.synchronizeMeeting(state.meetingId);
       if (farewellRevision !== undefined) {
         state.farewell?.observeFinalizedTurn(event, turnId, farewellRevision);
       }
@@ -375,28 +399,6 @@ export class PlatformLiveMeetingRuntime {
   ): Promise<void> {
     const outcome = await state.projection.refresh(nowMs, state.finishing);
     state.summary.reconcileEvidenceBase(outcome.generationBase);
-  }
-
-  private async closeAll(
-    recordingIds: ReadonlySet<string>,
-    endedAtMs: number,
-  ): Promise<void> {
-    const results = await Promise.allSettled(
-      [...recordingIds].map((recordingId) =>
-        this.recordingOperations.enqueue(recordingId, () =>
-          this.finalizer.finishRecording(recordingId, endedAtMs)
-        )
-      ),
-    );
-    const failures: unknown[] = [];
-    for (const result of results) {
-      if (result.status === "rejected") {
-        failures.push(result.reason);
-      }
-    }
-    if (failures.length > 0) {
-      throw new AggregateError(failures, "derived live runtime shutdown failed");
-    }
   }
 
   private enqueueDomain(

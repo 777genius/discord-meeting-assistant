@@ -59,6 +59,20 @@ describe("Ogg Opus compiler", () => {
     expect(validation.pages.at(-1)?.headerType).toBe(0x04);
   });
 
+  it("does not mutate Buffer inputs while checking page CRC values", () => {
+    const compiled = compileOggOpus(
+      "recording-buffer-validation",
+      "11111111111111111",
+      [packet()],
+    );
+    const input = Buffer.from(compiled.bytes);
+    const original = Buffer.from(input);
+
+    validateOggOpus(input);
+
+    expect(input).toEqual(original);
+  });
+
   it("uses global timing across RTP wrap, delivery reordering and reconnect gaps", () => {
     const compiled = compileOggOpus(
       "recording-wrap",

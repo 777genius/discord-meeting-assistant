@@ -162,18 +162,30 @@ export class PlatformRecordingIngress {
 
     await this.prepareDerivedAuthoritativeFinal(result.recording.recordingId);
 
-    const publicationTargetId = await this.resolvePublicationTarget(event.source);
+    const publicationTargetId = await this.resolvePublicationTarget(result.source);
     if (publicationTargetId === null) {
       throw new MeetingPublicationTargetUnavailableError(
-        event.source.scopeId,
-        event.source.roomId,
+        result.source.scopeId,
+        result.source.roomId,
       );
     }
-    const meeting = Meeting.record({
+    const recordedMeeting = {
       meetingId: result.recording.recordingId,
       publicationTargetId,
       recording: result.recording,
-    });
+      source: result.source,
+    } as const;
+    const meeting = result.actors === null
+      ? Meeting.recordLegacy({
+          ...recordedMeeting,
+          lifecycleGeneration: result.lifecycleGeneration,
+        })
+      : Meeting.record({
+          ...recordedMeeting,
+          actors: result.actors,
+          identityProvenance: result.identityProvenance,
+          lifecycleGeneration: result.lifecycleGeneration,
+        });
     await this.dependencies.outbox.recordAndSchedule(meeting.toSnapshot(), 0);
     const dispatch = await this.dependencies.dispatcher.dispatchPending();
     this.dependencies.logger.info(
@@ -205,10 +217,12 @@ export class PlatformRecordingIngress {
       return;
     }
     try {
+      const derived = this.toDerivedLifecycleEvent(event);
+      if (derived === null) {
+        return;
+      }
       await Promise.resolve(
-        this.dependencies.live.acceptLifecycle(
-          this.toDerivedLifecycleEvent(event),
-        ),
+        this.dependencies.live.acceptLifecycle(derived),
       );
     } catch (error) {
       this.recordDerivedFailure("lifecycle", event.recordingId, error);
@@ -217,7 +231,7 @@ export class PlatformRecordingIngress {
 
   private toDerivedLifecycleEvent(
     event: RecordingLifecycleCommand,
-  ): DerivedLiveLifecycleEvent {
+  ): DerivedLiveLifecycleEvent | null {
     const common = {
       occurredAt: event.occurredAt,
       recordingId: event.recordingId,
@@ -225,15 +239,77 @@ export class PlatformRecordingIngress {
     if (event.type === "meeting.started") {
       return {
         ...common,
-        participantIds: [...event.participantIds],
+        participantIds: event.schemaVersion === 1
+          ? [...event.participantIds]
+          : event.actors
+              .filter((actor) => actor.kind === "human")
+              .map((actor) => actor.actorId),
         publicationTarget: {
           resolve: () => this.resolvePublicationTarget(event.source),
         },
+        roomId: event.source.roomId,
+        ...(event.schemaVersion !== 3
+          ? {}
+          : {
+              memoryIdentity: {
+                actors: event.actors,
+                identityProvenance: {
+                  actorObservationState: event.actorObservationState,
+                  actorSemanticsVersion: event.actorSemanticsVersion,
+                  producerCapabilityId: event.producerCapabilityId,
+                  producerRevision: event.producerRevision,
+                  rosterState: event.rosterState,
+                },
+                lifecycleGeneration: 3 as const,
+                roomId: event.source.roomId,
+                scopeId: event.source.scopeId,
+              },
+            }),
         type: event.type,
       };
     }
     if (event.type === "participant.joined" || event.type === "participant.left") {
-      return { ...common, participantId: event.participantId, type: event.type };
+      if (event.schemaVersion !== 1 && event.actor.kind !== "human") {
+        return null;
+      }
+      return {
+        ...common,
+        ...(event.schemaVersion !== 3
+          ? {}
+          : {
+              memoryHumanObservation: {
+                actorId: event.actor.actorId,
+                producerRevision: event.producerRevision,
+              },
+            }),
+        participantId: event.schemaVersion === 1
+          ? event.participantId
+          : event.actor.actorId,
+        type: event.type,
+      };
+    }
+    if (event.type === "recording.authoritative_ready") {
+      return {
+        ...common,
+        ...(event.schemaVersion !== 3
+          ? {}
+          : {
+              memoryIdentity: {
+                actors: event.actors,
+                identityProvenance: {
+                  actorObservationState: event.actorObservationState,
+                  actorSemanticsVersion: event.actorSemanticsVersion,
+                  producerCapabilityId: event.producerCapabilityId,
+                  producerRevision: event.producerRevision,
+                  rosterState: event.rosterState,
+                },
+                lifecycleGeneration: 3 as const,
+                roomId: event.source.roomId,
+                scopeId: event.source.scopeId,
+              },
+            }),
+        type: event.type,
+      };
     }
     return { ...common, type: event.type };
   }

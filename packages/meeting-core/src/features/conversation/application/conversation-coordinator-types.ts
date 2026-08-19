@@ -2,6 +2,9 @@ import type { ConversationAlias, ConversationSession, ConversationTurn } from ".
 import type {
   ConversationDelay,
   ConversationDelayPort,
+  GroundedKnowledgeAnswerPort,
+  GroundedKnowledgeAnswerRequest,
+  GroundedKnowledgeAnswerObserverPort,
   ConversationLatencyObserverPort,
   ConversationPlaybackObserverPort,
   ConversationPlaybackReadinessPort,
@@ -11,6 +14,7 @@ import type {
   ConversationStartRequest,
   ConversationThinkingCue,
   ConversationThinkingCuePort,
+  ConversationTtsAttestation,
   VoicePlaybackPort,
   VoicePlaybackSession,
 } from "./ports/conversation.js";
@@ -20,6 +24,7 @@ export interface FinalizedConversationTurnInput {
   readonly meetingId: string;
   readonly nowMs: number;
   readonly recordingId: string;
+  readonly roomId: string;
   readonly speakerId: string;
   readonly systemPrompt: string;
   readonly text: string;
@@ -51,6 +56,8 @@ export interface ProactiveConversationTurnInput {
 
 /** Pre-generated 48 kHz mono PCM played without an LLM or TTS round-trip. */
 export interface PreparedConversationCueInput {
+  /** SHA-256 of the preloaded PCM asset, when supplied by its validating adapter. */
+  readonly assetSha256?: string;
   readonly cueId: string;
   /** Short prepared speech may opt out of human-speech interruption. */
   readonly interruptible?: boolean;
@@ -109,8 +116,16 @@ export type ConversationInterruptionResult =
 /** Terminal delivery evidence for one admitted conversation turn. */
 export type ConversationTurnPlaybackSettlement = ConversationPlaybackSettlement;
 
+/** Earliest provider-confirmed evidence that a turn became audible. */
+export type ConversationTurnPlaybackStart =
+  | { readonly startedAtMs: number; readonly status: "started" }
+  | { readonly status: "unplayed" }
+  | { readonly status: "unknown" };
+
 export interface ConversationCoordinatorDependencies {
   readonly delay?: ConversationDelayPort;
+  readonly groundedAnswers?: GroundedKnowledgeAnswerPort;
+  readonly groundedAnswerObserver?: GroundedKnowledgeAnswerObserverPort;
   readonly latencyObserver?: ConversationLatencyObserverPort;
   readonly playbackObserver?: ConversationPlaybackObserverPort;
   readonly playbackReadiness?: ConversationPlaybackReadinessPort;
@@ -121,11 +136,13 @@ export interface ConversationCoordinatorDependencies {
 
 export interface PreparedConversation {
   readonly cue?: {
+    readonly assetSha256?: string;
     readonly cueId: string;
     readonly pcmChunks: readonly Uint8Array[];
     readonly playbackAttemptId: string;
   };
   readonly interruptible: boolean;
+  readonly groundedKnowledgeRequest?: GroundedKnowledgeAnswerRequest;
   readonly preemptive: boolean;
   readonly request: ConversationStartRequest;
   readonly thinkingCueLocale: string;
@@ -157,6 +174,8 @@ export interface ActiveConversationRun {
   deliberationCueSelectionInFlight: boolean;
   deliberationCueReady: boolean;
   finalized: boolean;
+  groundedPlaybackAbortController: AbortController | null;
+  groundedPlaybackAuthority: (() => Promise<boolean>) | null;
   playback: VoicePlaybackSession | null;
   playbackOpenAbortController: AbortController | null;
   playbackEventsClosed: boolean;
@@ -168,6 +187,7 @@ export interface ActiveConversationRun {
   runtimeCompleted: boolean;
   runtimeStartAbortController: AbortController | null;
   runtimeTurn: ConversationRuntimeTurn | null;
+  ttsAttestation: ConversationTtsAttestation | null;
 }
 
 export interface MeetingConversationState {
@@ -179,6 +199,11 @@ export interface MeetingConversationState {
   readonly pending: Map<string, PreparedConversation>;
   playbackFence: ConversationPlaybackFence | null;
   playbackOpenBarrier: Promise<void>;
+  readonly playbackStartSignals: Map<string, {
+    readonly promise: Promise<ConversationTurnPlaybackStart>;
+    readonly resolve: (value: ConversationTurnPlaybackStart) => void;
+  }>;
+  readonly playbackStarts: Map<string, ConversationTurnPlaybackStart>;
   readonly playbackSettlements: Map<string, ConversationTurnPlaybackSettlement>;
   readonly session: ConversationSession;
   readonly tasks: Set<Promise<void>>;

@@ -74,6 +74,26 @@ export interface PacketBatchIngressResult {
   readonly recordingId: string;
 }
 
+export type RecordingActorKind = "automation" | "human" | "unknown";
+
+export interface RecordingActorIdentity {
+  readonly actorId: string;
+  readonly kind: RecordingActorKind;
+}
+
+export interface RecordingSourceIdentity {
+  readonly roomId: string;
+  readonly scopeId: string;
+}
+
+export interface RecordingIdentityProvenance {
+  readonly actorObservationState: "consistent" | "conflicted";
+  readonly actorSemanticsVersion: number;
+  readonly producerCapabilityId: string;
+  readonly producerRevision: string;
+  readonly rosterState: "sealed" | "unsealed";
+}
+
 export type LifecycleIngressResult =
   | {
       readonly kind: "accepted";
@@ -86,9 +106,13 @@ export type LifecycleIngressResult =
       readonly replayed: boolean;
     }
   | {
+      readonly actors: readonly RecordingActorIdentity[] | null;
+      readonly identityProvenance: RecordingIdentityProvenance | null;
       readonly kind: "finalized";
+      readonly lifecycleGeneration: 1 | 2 | 3;
       readonly recording: RecordingArtifactSnapshot;
       readonly replayed: boolean;
+      readonly source: RecordingSourceIdentity;
     };
 
 export interface OggOpusPageSummary {

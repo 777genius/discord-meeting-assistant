@@ -32,6 +32,7 @@ describe("loadConversationVoiceObserverConfig", () => {
       keychainService: "discord-voice-bot-e2e",
       maxPcmBytes: 11_520_000,
       meetingId: "meeting-2026-08-04-01",
+      maximumThinkingCueDurationMilliseconds: 10_000,
       observerAccount: "conversation-observer",
       observerApplicationId: "22222222222222222",
       outputPath: "/tmp/conversation-voice-observer.json",
@@ -114,7 +115,7 @@ describe("loadConversationVoiceObserverConfig", () => {
       DISCORD_E2E_CONVERSATION_VOICE_ATTEMPT_ID: "attempt-1",
       DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON: JSON.stringify(campaignCaptures),
       DISCORD_E2E_CONVERSATION_VOICE_CAMPAIGN_PROOF_OUTPUT: "/tmp/campaign-proof.json",
-      DISCORD_E2E_CONVERSATION_VOICE_CRAIG_BOT_ID: "1534231284467896512",
+      DISCORD_E2E_CONVERSATION_VOICE_CRAIG_BOT_ID: "1533877611258708230",
       DISCORD_E2E_CONVERSATION_VOICE_EXPECTED_DURATION_MS: "1000",
       DISCORD_E2E_CONVERSATION_VOICE_GUILD_ID: "1533228590643155034",
       DISCORD_E2E_CONVERSATION_VOICE_GREETING_HANDSHAKE_ROOT: "/tmp/conversation-greeting-handshake",
@@ -144,6 +145,7 @@ describe("loadConversationVoiceObserverConfig", () => {
     });
 
     expect(config.captureTimeoutMilliseconds).toBe(2_000);
+    expect(config.maximumThinkingCueDurationMilliseconds).toBe(10_000);
     expect(config.readyTimeoutMilliseconds).toBe(120_000);
     expect(loadConversationVoiceObserverConfig({
       ...requiredEnvironment,
@@ -203,7 +205,7 @@ describe("loadConversationVoiceObserverConfig capture sequences", () => {
     expect(loadConversationVoiceObserverConfig({
       ...requiredEnvironment,
       DISCORD_E2E_CONVERSATION_VOICE_ATTEMPT_ID: "attempt-1",
-      DISCORD_E2E_CONVERSATION_VOICE_CRAIG_BOT_ID: "1534231284467896512",
+      DISCORD_E2E_CONVERSATION_VOICE_CRAIG_BOT_ID: "1533877611258708230",
       DISCORD_E2E_CONVERSATION_VOICE_EXPECTED_DURATION_MS: "1000",
       DISCORD_E2E_CONVERSATION_VOICE_GUILD_ID: "1533228590643155034",
       DISCORD_E2E_CONVERSATION_VOICE_GREETING_HANDSHAKE_ROOT: "/tmp/conversation-greeting-handshake",

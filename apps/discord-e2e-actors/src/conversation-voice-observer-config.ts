@@ -110,6 +110,11 @@ const environmentSchema = z.object({
   DISCORD_E2E_CONVERSATION_VOICE_RECORDING_ID: correlationIdSchema.optional(),
   DISCORD_E2E_CONVERSATION_VOICE_RUN_ID: correlationIdSchema,
   DISCORD_E2E_CONVERSATION_VOICE_SECRET_DIRECTORY: absoluteDirectorySchema.optional(),
+  DISCORD_E2E_CONVERSATION_VOICE_THINKING_CUE_MAX_DURATION_MS: z.coerce.number()
+    .int()
+    .min(1_000)
+    .max(10_000)
+    .default(10_000),
   DISCORD_E2E_CONVERSATION_VOICE_TURN_ID: correlationIdSchema,
   DISCORD_E2E_CONVERSATION_VOICE_VOICE_CHANNEL_ID: snowflakeSchema,
 }).superRefine((value, context) => {
@@ -286,6 +291,7 @@ export interface ConversationVoiceObserverConfig {
   readonly keychainService: string;
   readonly maxPcmBytes: number;
   readonly meetingId?: string;
+  readonly maximumThinkingCueDurationMilliseconds: number;
   readonly observerAccount: string;
   readonly observerApplicationId: string;
   readonly outputPath: string;
@@ -351,6 +357,8 @@ export function loadConversationVoiceObserverConfig(
     ...(parsed.DISCORD_E2E_CONVERSATION_VOICE_MEETING_ID === undefined
       ? {}
       : { meetingId: parsed.DISCORD_E2E_CONVERSATION_VOICE_MEETING_ID }),
+    maximumThinkingCueDurationMilliseconds:
+      parsed.DISCORD_E2E_CONVERSATION_VOICE_THINKING_CUE_MAX_DURATION_MS,
     observerAccount: parsed.DISCORD_E2E_CONVERSATION_VOICE_OBSERVER_ACCOUNT,
     observerApplicationId: parsed.DISCORD_E2E_CONVERSATION_VOICE_OBSERVER_APPLICATION_ID,
     outputPath: parsed.DISCORD_E2E_CONVERSATION_VOICE_OUTPUT,

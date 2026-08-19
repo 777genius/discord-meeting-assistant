@@ -26,6 +26,7 @@ import {
   validateSummaryRequestOptions,
 } from "./summary-adapter-options.js";
 import { consolidateCoveredUnassignedActions } from "./summary-action-consolidation.js";
+import { findPotentiallyTruncatedActionTerms } from "./summary-action-term-postcondition.js";
 import {
   mapFinalProviderSummary,
   validateProviderSummaryEvidence,
@@ -35,7 +36,9 @@ import {
 } from "./subscription-runtime-contract.js";
 
 export interface SubscriptionRuntimeSummaryAdapterOptions
-  extends BaseSubscriptionRuntimeSummaryAdapterOptions {}
+  extends BaseSubscriptionRuntimeSummaryAdapterOptions {
+  readonly technicalVocabulary?: readonly string[];
+}
 
 export interface SubscriptionRuntimeSummaryHealth {
   readonly code:
@@ -53,6 +56,7 @@ export class SubscriptionRuntimeSummaryAdapter
 {
   private readonly attestationExpectation: AttestationExpectation;
   private readonly requestOptions: SubscriptionRuntimeSummaryRequestOptions;
+  private readonly technicalVocabulary: readonly string[];
 
   public constructor(
     private readonly transport: SubscriptionRuntimeTransportPort,
@@ -60,6 +64,7 @@ export class SubscriptionRuntimeSummaryAdapter
   ) {
     this.attestationExpectation = validateAttestationExpectation(options);
     this.requestOptions = validateSummaryRequestOptions(options);
+    this.technicalVocabulary = Object.freeze([...(options.technicalVocabulary ?? [])]);
   }
 
   public async generate(
@@ -162,10 +167,64 @@ export class SubscriptionRuntimeSummaryAdapter
       new Set(request.transcript.turns.map(({ turnId }) => turnId)),
       new Set(request.transcript.turns.map(({ speakerId }) => speakerId)),
     );
-    const consolidated = consolidateCoveredUnassignedActions(
+    let consolidated = consolidateCoveredUnassignedActions(
       parsed.data,
       request.transcript.turns,
     );
+    const potentiallyTruncatedTerms = findPotentiallyTruncatedActionTerms(
+      consolidated.actionItems,
+      request.transcript.turns,
+      this.technicalVocabulary,
+    );
+    if (potentiallyTruncatedTerms.length > 0) {
+      runtimeRequest = actionTermRepairRequest(runtimeRequest, potentiallyTruncatedTerms);
+      result = await this.transport.execute(runtimeRequest);
+      assertSupportedProtocolVersion(result);
+      if (result.status === "failed") {
+        throw new RuntimeTaskFailureError(
+          result.failure.code === "provider_output_invalid"
+            ? { ...result.failure, reconnectRequired: false, retryable: false }
+            : result.failure,
+        );
+      }
+      if (result.status === "waiting_for_input") {
+        throw new SubscriptionRuntimeAdapterError(
+          "invalid_provider_response",
+          "Subscription runtime requested forbidden interactive input",
+        );
+      }
+      verifySubscriptionRuntimeAttestation(
+        runtimeRequest,
+        result,
+        this.attestationExpectation,
+      );
+      const repaired = providerMeetingSummarySchema.safeParse(result.structuredOutput);
+      if (!repaired.success) {
+        throw new SubscriptionRuntimeAdapterError(
+          "invalid_provider_response",
+          "Subscription runtime returned an invalid meeting summary",
+        );
+      }
+      validateProviderSummaryEvidence(
+        repaired.data,
+        new Set(request.transcript.turns.map(({ turnId }) => turnId)),
+        new Set(request.transcript.turns.map(({ speakerId }) => speakerId)),
+      );
+      consolidated = consolidateCoveredUnassignedActions(
+        repaired.data,
+        request.transcript.turns,
+      );
+      if (findPotentiallyTruncatedActionTerms(
+        consolidated.actionItems,
+        request.transcript.turns,
+        this.technicalVocabulary,
+      ).length > 0) {
+        throw new SubscriptionRuntimeAdapterError(
+          "invalid_provider_response",
+          "Summary action text omitted grounded compound technical terminology",
+        );
+      }
+    }
     return mapFinalProviderSummary(consolidated, request.idempotencyKey);
   }
 }
@@ -200,6 +259,30 @@ function providerOutputRepairRequest(
       systemPrompt: [
         request.task.systemPrompt,
         "A previous generation failed strict output validation. Regenerate once from the original transcript and obey every schema bound exactly.",
+      ].join(" "),
+    },
+  };
+}
+
+function actionTermRepairRequest(
+  request: ReturnType<typeof buildSubscriptionRuntimeSummaryRequest>,
+  candidateTerms: readonly string[],
+): ReturnType<typeof buildSubscriptionRuntimeSummaryRequest> {
+  const runId = stableSubscriptionRuntimeId(
+    "summary-action-term-repair",
+    request.runId,
+    ...candidateTerms,
+  );
+  return {
+    ...request,
+    context: { ...request.context, correlationId: runId },
+    runId,
+    task: {
+      ...request.task,
+      systemPrompt: [
+        request.task.systemPrompt,
+        "A previous generation may have shortened compound technical terms in an action item. Regenerate once from the original transcript, preserving every grounded term from this exact candidate list in the relevant action text:",
+        JSON.stringify(candidateTerms),
       ].join(" "),
     },
   };

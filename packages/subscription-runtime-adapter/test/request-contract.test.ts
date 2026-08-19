@@ -42,7 +42,7 @@ describe("subscription runtime request contract", () => {
     expect(canonicalJsonSha256(second)).toBe(canonicalJsonSha256(first));
     expect(first.runId).toMatch(/^summary-request-[0-9a-f]{32}$/u);
     expect(first.context.metadata.policyVersion).toBe(
-      "meeting-summary.subscription-runtime.v15",
+      "meeting-summary.subscription-runtime.v16",
     );
     expect(first.task.controls.outputSchemaName).toBe(
       "discord_meeting_summary_v4",

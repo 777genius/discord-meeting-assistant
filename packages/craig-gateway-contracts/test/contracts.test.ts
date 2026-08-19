@@ -17,6 +17,12 @@ const baseEvent = {
   channelId: "1533224474609057794",
   occurredAt: "2026-08-02T20:00:00.000Z",
 } as const;
+const trustedProducer = {
+  actorObservationState: "consistent",
+  actorSemanticsVersion: 1,
+  producerCapabilityId: "meeting.lifecycle.sealed-actor-roster.v1",
+  producerRevision: "0123456789abcdef0123456789abcdef01234567",
+} as const;
 
 describe("Craig gateway contracts", () => {
   it("accepts a versioned artifact-ready event", () => {
@@ -41,6 +47,134 @@ describe("Craig gateway contracts", () => {
     });
 
     expect(event.type).toBe("recording.authoritative_ready");
+  });
+
+  it("accepts v2 lifecycle identity with an explicit actor vocabulary", () => {
+    const actors = [
+      { actorId: "1533224474609057795", kind: "human" },
+      { actorId: "1533224474609057796", kind: "automation" },
+      { actorId: "1533224474609057797", kind: "unknown" },
+    ] as const;
+    expect(parseCraigLifecycleEvent({
+      ...baseEvent,
+      actors,
+      schemaVersion: 2,
+      type: "meeting.started",
+    })).toMatchObject({ actors, schemaVersion: 2 });
+    expect(parseCraigLifecycleEvent({
+      ...baseEvent,
+      actors,
+      endedAt: "2026-08-02T20:30:00.000Z",
+      schemaVersion: 2,
+      sourceFilesChecksumSha256: "a".repeat(64),
+      trackCount: 3,
+      type: "recording.authoritative_ready",
+    })).toMatchObject({ actors, schemaVersion: 2 });
+  });
+
+  it("rejects duplicate actors, conflicting kinds, and inferred v2 participants", () => {
+    expect(() => parseCraigLifecycleEvent({
+      ...baseEvent,
+      actors: [
+        { actorId: "1533224474609057795", kind: "human" },
+        { actorId: "1533224474609057795", kind: "automation" },
+      ],
+      schemaVersion: 2,
+      type: "meeting.started",
+    })).toThrow();
+    expect(() => parseCraigLifecycleEvent({
+      ...baseEvent,
+      participantIds: ["1533224474609057795"],
+      schemaVersion: 2,
+      type: "meeting.started",
+    })).toThrow();
+  });
+
+  it("accepts v3 lifecycle facts with exact producer and roster evidence", () => {
+    const actors = [{ actorId: "1533224474609057795", kind: "human" }] as const;
+    expect(parseCraigLifecycleEvent({
+      ...baseEvent,
+      ...trustedProducer,
+      actors,
+      rosterState: "unsealed",
+      schemaVersion: 3,
+      type: "meeting.started",
+    })).toMatchObject({
+      ...trustedProducer,
+      actors,
+      rosterState: "unsealed",
+      schemaVersion: 3,
+    });
+    expect(parseCraigLifecycleEvent({
+      ...baseEvent,
+      ...trustedProducer,
+      actors,
+      endedAt: "2026-08-02T20:30:00.000Z",
+      rosterState: "sealed",
+      schemaVersion: 3,
+      sourceFilesChecksumSha256: "a".repeat(64),
+      trackCount: 1,
+      type: "recording.authoritative_ready",
+    })).toMatchObject({ rosterState: "sealed", schemaVersion: 3 });
+  });
+
+  it("enforces unsealed start and sealed authoritative-ready semantics", () => {
+    const actors = [{ actorId: "1533224474609057795", kind: "human" }] as const;
+    expect(() => parseCraigLifecycleEvent({
+      ...baseEvent,
+      ...trustedProducer,
+      actors,
+      rosterState: "sealed",
+      schemaVersion: 3,
+      type: "meeting.started",
+    })).toThrow();
+    expect(() => parseCraigLifecycleEvent({
+      ...baseEvent,
+      ...trustedProducer,
+      actors,
+      endedAt: "2026-08-02T20:30:00.000Z",
+      rosterState: "unsealed",
+      schemaVersion: 3,
+      sourceFilesChecksumSha256: "a".repeat(64),
+      trackCount: 1,
+      type: "recording.authoritative_ready",
+    })).toThrow();
+  });
+
+  it("parses unknown bounded v3 capabilities for recording while trust stays a consumer decision", () => {
+    expect(parseCraigLifecycleEvent({
+      ...baseEvent,
+      ...trustedProducer,
+      actors: [],
+      producerCapabilityId: "meeting.lifecycle.future.v99",
+      rosterState: "unsealed",
+      schemaVersion: 3,
+      type: "meeting.started",
+    })).toMatchObject({
+      producerCapabilityId: "meeting.lifecycle.future.v99",
+      schemaVersion: 3,
+    });
+  });
+
+  it("rejects capability-less or partially attested v3 events", () => {
+    const complete = {
+      ...baseEvent,
+      ...trustedProducer,
+      actors: [],
+      rosterState: "unsealed",
+      schemaVersion: 3,
+      type: "meeting.started",
+    } as const;
+    const { producerRevision: _producerRevision, ...missingRevision } = complete;
+    expect(() => parseCraigLifecycleEvent(missingRevision)).toThrow();
+    expect(() => parseCraigLifecycleEvent({
+      ...complete,
+      actorSemanticsVersion: 0,
+    })).toThrow();
+    expect(() => parseCraigLifecycleEvent({
+      ...complete,
+      producerRevision: "not-an-immutable-revision",
+    })).toThrow();
   });
 
   it("validates bounded authoritative track upload metadata", () => {
@@ -183,6 +317,46 @@ describe("Craig conversation playback", () => {
         reason: "barge-in",
       }),
     ).toMatchObject({ type: "playback-cancel" });
+  });
+
+  it("accepts legacy v1 cancellation exactly and requires bound v2 cancellation evidence", () => {
+    expect(parseCraigPlaybackCommand({
+      ...playbackEnvelope,
+      type: "playback-cancel",
+      reason: "barge-in",
+    })).toEqual({
+      ...playbackEnvelope,
+      type: "playback-cancel",
+      reason: "barge-in",
+    });
+    expect(parseCraigPlaybackCommand({
+      ...playbackEnvelope,
+      schemaVersion: 2,
+      type: "playback-cancel",
+      meetingId: "meeting-1",
+      cancellationObservedAtMs: 12_345,
+      reason: "barge-in",
+    })).toMatchObject({
+      schemaVersion: 2,
+      meetingId: "meeting-1",
+      cancellationObservedAtMs: 12_345,
+    });
+  });
+
+  it.each([
+    { schemaVersion: 2, cancellationObservedAtMs: -1 },
+    { schemaVersion: 2, cancellationObservedAtMs: 1.5 },
+    { schemaVersion: 2, cancellationObservedAtMs: Number.MAX_SAFE_INTEGER + 1 },
+    { schemaVersion: 2 },
+    { schemaVersion: 3, cancellationObservedAtMs: 12_345 },
+  ])("fails closed for malformed or future cancellation %#", (variant) => {
+    expect(() => parseCraigPlaybackCommand({
+      ...playbackEnvelope,
+      type: "playback-cancel",
+      meetingId: "meeting-1",
+      reason: "barge-in",
+      ...variant,
+    })).toThrow();
   });
 
   it("accepts recording-scoped readiness and sender-side playback evidence", () => {

@@ -2,9 +2,13 @@ import {
   canonicalJsonSha256,
   conversationAnswerPolicyVersion,
   incrementalMeetingSummaryPolicyVersion,
+  knowledgeAnswerPolicyVersion,
+  knowledgeCoveragePolicyVersion,
   meetingSummaryPolicyVersion,
   providerConversationAnswerJsonSchema,
   providerIncrementalMeetingSummaryJsonSchema,
+  providerKnowledgeAnswerJsonSchema,
+  providerKnowledgeCoverageExtractJsonSchema,
   providerMeetingSummaryJsonSchema,
   subscriptionRuntimeConversationModel,
   subscriptionRuntimeConversationPurpose,
@@ -12,6 +16,8 @@ import {
   subscriptionRuntimeIncrementalModel,
   subscriptionRuntimeIncrementalPurpose,
   subscriptionRuntimeIncrementalReasoningEffort,
+  subscriptionRuntimeKnowledgeAnswerPurpose,
+  subscriptionRuntimeKnowledgeCoveragePurpose,
   subscriptionRuntimeModel,
   subscriptionRuntimeProfileForPurpose,
   subscriptionRuntimePurpose,
@@ -30,6 +36,10 @@ import {
   finalTransportMetadataSchema,
   incrementalContextMetadataSchema,
   incrementalTransportMetadataSchema,
+  knowledgeAnswerContextMetadataSchema,
+  knowledgeAnswerTransportMetadataSchema,
+  knowledgeCoverageContextMetadataSchema,
+  knowledgeCoverageTransportMetadataSchema,
 } from "./policy-schemas.js";
 
 interface PolicyParser {
@@ -93,6 +103,39 @@ export function reconstructProfileMetadata(
       ),
     };
   }
+  if (purpose === subscriptionRuntimeKnowledgeAnswerPurpose) {
+    const parsed = parseWithPolicy(knowledgeAnswerTransportMetadataSchema, metadata);
+    return {
+      context: {
+        locale: parsed.locale,
+        meetingId: parsed.meetingId,
+        policyVersion: knowledgeAnswerPolicyVersion,
+        transcriptId: parsed.transcriptId,
+        transcriptVersion: parsed.transcriptVersion,
+      },
+      task: fixedTaskMetadata(
+        subscriptionRuntimeModel,
+        knowledgeAnswerPolicyVersion,
+        subscriptionRuntimeReasoningEffort,
+      ),
+    };
+  }
+  if (purpose === subscriptionRuntimeKnowledgeCoveragePurpose) {
+    const parsed = parseWithPolicy(knowledgeCoverageTransportMetadataSchema, metadata);
+    return {
+      context: {
+        meetingId: parsed.meetingId,
+        policyVersion: knowledgeCoveragePolicyVersion,
+        transcriptId: parsed.transcriptId,
+        transcriptVersion: parsed.transcriptVersion,
+      },
+      task: fixedTaskMetadata(
+        subscriptionRuntimeModel,
+        knowledgeCoveragePolicyVersion,
+        subscriptionRuntimeReasoningEffort,
+      ),
+    };
+  }
   throw new RequestPolicyError("request purpose is not admitted");
 }
 
@@ -144,6 +187,31 @@ export function assertCanonicalProfile(
     }, parseWithPolicy);
     return;
   }
+  if (request.context.purpose === subscriptionRuntimeKnowledgeAnswerPurpose) {
+    const metadata = parseWithPolicy(
+      knowledgeAnswerContextMetadataSchema,
+      request.context.metadata,
+    );
+    reconstructProfileMetadata(request.context.purpose, {
+      ...commonMetadata,
+      locale: metadata.locale,
+      transcriptId: metadata.transcriptId,
+      transcriptVersion: metadata.transcriptVersion,
+    }, parseWithPolicy);
+    return;
+  }
+  if (request.context.purpose === subscriptionRuntimeKnowledgeCoveragePurpose) {
+    const metadata = parseWithPolicy(
+      knowledgeCoverageContextMetadataSchema,
+      request.context.metadata,
+    );
+    reconstructProfileMetadata(request.context.purpose, {
+      ...commonMetadata,
+      transcriptId: metadata.transcriptId,
+      transcriptVersion: metadata.transcriptVersion,
+    }, parseWithPolicy);
+    return;
+  }
   const metadata = parseWithPolicy(incrementalContextMetadataSchema, request.context.metadata);
   reconstructProfileMetadata(request.context.purpose, {
     ...commonMetadata,
@@ -162,6 +230,10 @@ export function assertExactOutputSchema(
       ? providerIncrementalMeetingSummaryJsonSchema
       : purpose === subscriptionRuntimeConversationPurpose
         ? providerConversationAnswerJsonSchema
+        : purpose === subscriptionRuntimeKnowledgeAnswerPurpose
+          ? providerKnowledgeAnswerJsonSchema
+          : purpose === subscriptionRuntimeKnowledgeCoveragePurpose
+            ? providerKnowledgeCoverageExtractJsonSchema
         : undefined;
   if (
     expectedSchema === undefined ||

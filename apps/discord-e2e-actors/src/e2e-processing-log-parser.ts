@@ -58,10 +58,27 @@ const addressedAnswerLogSchema = z.object({
   time: z.iso.datetime(),
   turnId: z.string().trim().min(1),
 }).loose();
+const ttsAttestationSchema = z.object({
+  attemptId: z.string().trim().min(1),
+  deployment: z.string().trim().min(1),
+  keyId: z.string().regex(/^[a-f\d]{64}$/u),
+  model: z.string().trim().min(1),
+  provider: z.string().trim().min(1),
+  schemaVersion: z.literal(1),
+  signature: z.string().regex(/^[a-f\d]{64}$/u),
+  sourceRevision: z.string().trim().min(1),
+  turnId: z.string().trim().min(1),
+  voice: z.string().trim().min(1),
+  voiceProfileId: z.string().trim().min(1),
+}).strict();
 const playbackReceiptLogBaseSchema = z.object({
   meetingId: z.string(),
   playbackAttemptId: z.string().trim().min(1),
   playbackKind: z.enum(["answer", "prepared-cue", "thinking-cue"]),
+  preparedAssetSha256: z.string().regex(/^[a-f\d]{64}$/u).optional(),
+  speechProvenance: z.enum(["literal_tts", "model_tts"]).optional(),
+  ttsAttestation: ttsAttestationSchema.optional(),
+  thinkingCuePcmSha256: z.string().regex(/^[a-f\d]{64}$/u).optional(),
   time: z.iso.datetime(),
   turnId: z.string().trim().min(1),
 });
@@ -88,6 +105,47 @@ const participantLifecycleLogSchema = z.object({
   occurredAt: z.iso.datetime(),
   participantId: z.string().trim().min(1),
   time: z.iso.datetime(),
+}).loose();
+const groundedAnswerValidatedLogSchema = z.object({
+  citationTurnIds: z.array(z.string().trim().min(1)).min(1).max(32),
+  evidenceEpoch: z.string().trim().min(1),
+  knowledgeEpoch: z.string().trim().min(1),
+  meetingId: z.string(),
+  message: z.literal("Grounded knowledge answer validated"),
+  participantId: z.string().trim().min(1),
+  playbackProvenance: z.enum(["literal_tts", "model_tts"]),
+  status: z.literal("validated"),
+  time: z.iso.datetime(),
+  turnId: z.string().trim().min(1),
+}).loose();
+const groundedAnswerCancelledLogSchema = z.object({
+  meetingId: z.string(),
+  message: z.literal("Grounded knowledge answer cancelled"),
+  reason: z.enum([
+    "barge-in", "disconnected", "meeting-ended", "playback-failed",
+    "runtime-shutdown", "superseded",
+  ]),
+  status: z.literal("cancelled"),
+  cancellationObservedAt: z.iso.datetime(),
+  cancellationObservedAtMs: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  time: z.iso.datetime(),
+  turnId: z.string().trim().min(1),
+}).loose().refine(
+  ({ cancellationObservedAt, cancellationObservedAtMs }) =>
+    Date.parse(cancellationObservedAt) === cancellationObservedAtMs,
+  "grounded cancellation ISO timestamp must exactly match its application milliseconds",
+);
+const groundedCancellationPcmFenceLogSchema = z.object({
+  acceptedPacketCountAfterCancellation: z.literal(0),
+  attemptId: z.string().trim().min(1),
+  cancellationObservedAt: z.iso.datetime(),
+  fenceObservedAt: z.iso.datetime(),
+  meetingId: z.string(),
+  message: z.literal("Craig authoritative cancellation PCM fence observed"),
+  recordingId: z.string().trim().min(1),
+  source: z.literal("craig-authoritative-playback-track"),
+  trackSha256: z.string().regex(/^[a-f\d]{64}$/u),
+  turnId: z.string().trim().min(1),
 }).loose();
 
 export function parseProcessingEvidenceLogs(output: string, meetingId: string): ProcessingEvidence {
@@ -126,15 +184,109 @@ export function parseProcessingEvidenceLogs(output: string, meetingId: string): 
   return processingEvidenceSchema.parse({ stages, summaryRuntimeExecutions });
 }
 
+type PlaybackReceipt =
+  CollectedConversationLifecycleEvidence["playbackReceipts"][number];
+
+interface PlaybackReceiptMetadataInput {
+  readonly playbackAttemptId: string;
+  readonly playbackKind: PlaybackReceipt["playbackKind"];
+  readonly preparedAssetSha256?: string | undefined;
+  readonly speechProvenance?: "literal_tts" | "model_tts" | undefined;
+  readonly thinkingCuePcmSha256?: string | undefined;
+  readonly ttsAttestation?: {
+    readonly attemptId: string;
+    readonly deployment: string;
+    readonly keyId: string;
+    readonly model: string;
+    readonly provider: string;
+    readonly schemaVersion: 1;
+    readonly signature: string;
+    readonly sourceRevision: string;
+    readonly turnId: string;
+    readonly voice: string;
+    readonly voiceProfileId: string;
+  } | undefined;
+  readonly time: string;
+  readonly turnId: string;
+}
+
+function playbackReceiptMetadata(
+  input: PlaybackReceiptMetadataInput,
+): Pick<
+  PlaybackReceipt,
+  | "observedAt"
+  | "playbackAttemptId"
+  | "playbackKind"
+  | "preparedAssetSha256"
+  | "speechProvenance"
+  | "thinkingCuePcmSha256"
+  | "ttsAttestation"
+  | "turnId"
+> {
+  return {
+    observedAt: input.time,
+    playbackAttemptId: input.playbackAttemptId,
+    playbackKind: input.playbackKind,
+    ...(input.preparedAssetSha256 === undefined
+      ? {}
+      : { preparedAssetSha256: input.preparedAssetSha256 }),
+    ...(input.speechProvenance === undefined
+      ? {}
+      : { speechProvenance: input.speechProvenance }),
+    ...(input.ttsAttestation === undefined
+      ? {}
+      : { ttsAttestation: input.ttsAttestation }),
+    ...(input.thinkingCuePcmSha256 === undefined
+      ? {}
+      : { thinkingCuePcmSha256: input.thinkingCuePcmSha256 }),
+    turnId: input.turnId,
+  };
+}
+
+function parsePlaybackReceipt(
+  event: Record<string, unknown>,
+): PlaybackReceipt | undefined {
+  const started = playbackStartedLogSchema.safeParse(event);
+  if (started.success) {
+    return {
+      ...playbackReceiptMetadata(started.data),
+      playbackStartedAtEpochMs: started.data.playbackStartedAtEpochMs,
+      playbackStartedAtMonotonicMs: started.data.playbackStartedAtMonotonicMs,
+      status: "started",
+    };
+  }
+  const finished = playbackFinishedLogSchema.safeParse(event);
+  if (finished.success) {
+    return {
+      ...playbackReceiptMetadata(finished.data),
+      playbackFinishedAtEpochMs: finished.data.playbackFinishedAtEpochMs,
+      playbackFinishedAtMonotonicMs: finished.data.playbackFinishedAtMonotonicMs,
+      status: "finished",
+    };
+  }
+  const settled = playbackSettledLogSchema.safeParse(event);
+  if (settled.success) {
+    return {
+      ...playbackReceiptMetadata(settled.data),
+      playbackSettledAtEpochMs: settled.data.playbackSettledAtEpochMs,
+      playbackSettledAtMonotonicMs: settled.data.playbackSettledAtMonotonicMs,
+      settlement: settled.data.settlement,
+      status: "settled",
+    };
+  }
+  return undefined;
+}
+
 export function parseConversationLifecycleEvidenceLogs(
   output: string,
   meetingId: string,
 ): CollectedConversationLifecycleEvidence {
   const events: CollectedConversationLifecycleEvidence["events"][number][] = [];
+  const cancellationPcmProofs:
+    CollectedConversationLifecycleEvidence["cancellationPcmProofs"][number][] = [];
+  const groundedAnswers: CollectedConversationLifecycleEvidence["groundedAnswers"][number][] = [];
   const playbackReceipts: CollectedConversationLifecycleEvidence["playbackReceipts"][number][] = [];
-  const participantLifecycleReceipts: CollectedConversationLifecycleEvidence[
-    "participantLifecycleReceipts"
-  ][number][] = [];
+  const participantLifecycleReceipts: CollectedConversationLifecycleEvidence["participantLifecycleReceipts"][number][] = [];
   for (const line of output.split("\n")) {
     const event = parseJsonLine(line);
     if (event === undefined || event.meetingId !== meetingId) {
@@ -151,47 +303,47 @@ export function parseConversationLifecycleEvidenceLogs(
       });
       continue;
     }
-    const playbackStarted = playbackStartedLogSchema.safeParse(event);
-    if (playbackStarted.success) {
-      playbackReceipts.push({
-        observedAt: playbackStarted.data.time,
-        playbackAttemptId: playbackStarted.data.playbackAttemptId,
-        playbackKind: playbackStarted.data.playbackKind,
-        playbackStartedAtEpochMs: playbackStarted.data.playbackStartedAtEpochMs,
-        playbackStartedAtMonotonicMs:
-          playbackStarted.data.playbackStartedAtMonotonicMs,
-        status: "started",
-        turnId: playbackStarted.data.turnId,
+    const cancellationPcmFence = groundedCancellationPcmFenceLogSchema.safeParse(event);
+    if (cancellationPcmFence.success) {
+      cancellationPcmProofs.push({
+        acceptedPacketCountAfterCancellation: 0,
+        attemptId: cancellationPcmFence.data.attemptId,
+        cancellationObservedAt: cancellationPcmFence.data.cancellationObservedAt,
+        fenceObservedAt: cancellationPcmFence.data.fenceObservedAt,
+        recordingId: cancellationPcmFence.data.recordingId,
+        source: cancellationPcmFence.data.source,
+        trackSha256: cancellationPcmFence.data.trackSha256,
+        turnId: cancellationPcmFence.data.turnId,
       });
       continue;
     }
-    const playbackFinished = playbackFinishedLogSchema.safeParse(event);
-    if (playbackFinished.success) {
-      playbackReceipts.push({
-        observedAt: playbackFinished.data.time,
-        playbackAttemptId: playbackFinished.data.playbackAttemptId,
-        playbackFinishedAtEpochMs: playbackFinished.data.playbackFinishedAtEpochMs,
-        playbackFinishedAtMonotonicMs:
-          playbackFinished.data.playbackFinishedAtMonotonicMs,
-        playbackKind: playbackFinished.data.playbackKind,
-        status: "finished",
-        turnId: playbackFinished.data.turnId,
+    const groundedValidated = groundedAnswerValidatedLogSchema.safeParse(event);
+    if (groundedValidated.success) {
+      groundedAnswers.push({
+        citationTurnIds: groundedValidated.data.citationTurnIds,
+        evidenceEpoch: groundedValidated.data.evidenceEpoch,
+        knowledgeEpoch: groundedValidated.data.knowledgeEpoch,
+        observedAt: groundedValidated.data.time,
+        participantId: groundedValidated.data.participantId,
+        playbackProvenance: groundedValidated.data.playbackProvenance,
+        status: groundedValidated.data.status,
+        turnId: groundedValidated.data.turnId,
       });
       continue;
     }
-    const playbackSettled = playbackSettledLogSchema.safeParse(event);
-    if (playbackSettled.success) {
-      playbackReceipts.push({
-        observedAt: playbackSettled.data.time,
-        playbackAttemptId: playbackSettled.data.playbackAttemptId,
-        playbackKind: playbackSettled.data.playbackKind,
-        playbackSettledAtEpochMs: playbackSettled.data.playbackSettledAtEpochMs,
-        playbackSettledAtMonotonicMs:
-          playbackSettled.data.playbackSettledAtMonotonicMs,
-        settlement: playbackSettled.data.settlement,
-        status: "settled",
-        turnId: playbackSettled.data.turnId,
+    const groundedCancelled = groundedAnswerCancelledLogSchema.safeParse(event);
+    if (groundedCancelled.success) {
+      groundedAnswers.push({
+        observedAt: groundedCancelled.data.cancellationObservedAt,
+        reason: groundedCancelled.data.reason,
+        status: groundedCancelled.data.status,
+        turnId: groundedCancelled.data.turnId,
       });
+      continue;
+    }
+    const playbackReceipt = parsePlaybackReceipt(event);
+    if (playbackReceipt !== undefined) {
+      playbackReceipts.push(playbackReceipt);
       continue;
     }
     const addressed = addressedAnswerLogSchema.safeParse(event);
@@ -231,7 +383,9 @@ export function parseConversationLifecycleEvidenceLogs(
     }
   }
   return collectedConversationLifecycleEvidenceSchema.parse({
+    cancellationPcmProofs,
     events,
+    groundedAnswers,
     participantLifecycleReceipts,
     playbackReceipts,
   });

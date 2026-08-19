@@ -443,6 +443,11 @@ export class ConversationCoordinatorProbe {
   public readonly advanceCalls: Array<{ meetingId: string; nowMs: number }> = [];
   public readonly calls: FinalizedConversationTurnInput[] = [];
   public readonly closeCalls: string[] = [];
+  public readonly disconnectCalls: string[] = [];
+  public readonly participantLeftCalls: Array<{
+    readonly meetingId: string;
+    readonly participantId: string;
+  }> = [];
   public readonly persistedBeforeCall: boolean[] = [];
   public readonly preparedCueCalls: PreparedConversationCueInput[] = [];
   public readonly proactiveCalls: ProactiveConversationTurnInput[] = [];
@@ -466,6 +471,16 @@ export class ConversationCoordinatorProbe {
 
   public closeMeeting(meetingId: string): Promise<void> {
     this.closeCalls.push(meetingId);
+    return Promise.resolve();
+  }
+
+  public disconnectMeeting(meetingId: string): Promise<void> {
+    this.disconnectCalls.push(meetingId);
+    return Promise.resolve();
+  }
+
+  public participantLeft(meetingId: string, participantId: string): Promise<void> {
+    this.participantLeftCalls.push({ meetingId, participantId });
     return Promise.resolve();
   }
 
@@ -533,6 +548,10 @@ export class ConversationCoordinatorProbe {
 
   public whenIdle(): Promise<void> {
     return Promise.resolve();
+  }
+
+  public whenTurnPlaybackStarted() {
+    return Promise.resolve({ startedAtMs: Date.now(), status: "started" as const });
   }
 
   public whenTurnPlaybackSettled() {
@@ -730,6 +749,7 @@ export function started(
       resolve: async () => "1533228891827736657",
     },
     recordingId,
+    roomId: "1533228823045214398",
     type: "meeting.started",
   };
 }

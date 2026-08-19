@@ -22,6 +22,23 @@ const migrationDefinitions = [
     transactional: false,
   },
   { fileName: "0013_rename_post_call_recoverable_index.sql" },
+  { fileName: "0014_meeting_knowledge_local_final_reply.sql" },
+  { fileName: "0015_historical_memory_projection.sql" },
+  { fileName: "0016_live_finalized_memory.sql" },
+  { fileName: "0017_conversation_one_shot_receipts.sql" },
+  { fileName: "0018_answer_delivery_container.sql" },
+  { fileName: "0019_greeting_receipt_state_machine.sql" },
+  { fileName: "0020_answer_retraction_lifecycle.sql" },
+  { fileName: "0021_farewell_receipt_state_machine.sql" },
+  { fileName: "0022_meeting_knowledge_withdrawal_tombstones.sql" },
+  {
+    fileName: "0023_answer_effect_reconciliation_schedule.sql",
+    repairInvalidConcurrentIndex: "meeting_core.answer_effects_unresolved_reconciliation_idx",
+    transactional: false,
+  },
+  { fileName: "0024_question_policy_fence.sql" },
+  { fileName: "0025_question_provider_attempt_accounting.sql" },
+  { fileName: "0026_answer_effect_duplicate_containment.sql" },
 ] as const;
 
 const migrationLockKey = "718330091620232601";
@@ -32,6 +49,8 @@ export interface PostgresMigration {
   readonly checksumSha256: string;
   readonly fileName: string;
   readonly sql: string;
+  /** Qualified index to drop outside a transaction when a prior concurrent build is invalid. */
+  readonly repairInvalidConcurrentIndex?: string;
   /** False only for one-statement, idempotent operations forbidden in a transaction. */
   readonly transactional?: boolean;
   readonly version: number;
@@ -89,6 +108,12 @@ export class PostgresMigrationRunner {
         if (migration.transactional === false) {
           await client.query("COMMIT");
           transactionActive = false;
+          if (migration.repairInvalidConcurrentIndex !== undefined) {
+            await dropInvalidConcurrentIndex(
+              client,
+              migration.repairInvalidConcurrentIndex,
+            );
+          }
           await client.query(migration.sql);
           await client.query("BEGIN");
           transactionActive = true;
@@ -141,6 +166,9 @@ export async function loadPostgresMigrations(): Promise<readonly PostgresMigrati
       checksumSha256: sha256(sql),
       fileName: definition.fileName,
       sql,
+      ...("repairInvalidConcurrentIndex" in definition
+        ? { repairInvalidConcurrentIndex: definition.repairInvalidConcurrentIndex }
+        : {}),
       transactional: "transactional" in definition
         ? definition.transactional
         : true,
@@ -173,6 +201,19 @@ function validateMigrations(
     if (containsTransactionControl(migration.sql)) {
       throw new PostgresMigrationError(
         `migration ${migration.version} must not contain transaction control; the runner owns atomicity`,
+      );
+    }
+    if (
+      migration.repairInvalidConcurrentIndex !== undefined
+      && (
+        migration.transactional !== false
+        || !/^[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*$/u.test(
+          migration.repairInvalidConcurrentIndex,
+        )
+      )
+    ) {
+      throw new PostgresMigrationError(
+        `migration ${migration.version} has an invalid concurrent-index repair target`,
       );
     }
   }
@@ -243,6 +284,32 @@ function assertLedgerIsKnownAndContiguous(
 
 function containsTransactionControl(sql: string): boolean {
   return /^\s*(?:BEGIN|COMMIT|ROLLBACK)(?:\s+(?:WORK|TRANSACTION))?\s*;/imu.test(sql);
+}
+
+async function dropInvalidConcurrentIndex(
+  client: PoolClient,
+  qualifiedIndexName: string,
+): Promise<void> {
+  const [schemaName, indexName] = qualifiedIndexName.split(".");
+  if (schemaName === undefined || indexName === undefined) {
+    throw new PostgresMigrationError("invalid concurrent-index repair target");
+  }
+  const result = await client.query<{ readonly invalid: boolean }>(
+    `
+      SELECT NOT (target_index.indisvalid AND target_index.indisready) AS invalid
+      FROM pg_index AS target_index
+      JOIN pg_class AS relation ON relation.oid = target_index.indexrelid
+      JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+      WHERE namespace.nspname = $1
+        AND relation.relname = $2
+    `,
+    [schemaName, indexName],
+  );
+  if (result.rows[0]?.invalid === true) {
+    await client.query(
+      `DROP INDEX CONCURRENTLY IF EXISTS "${schemaName}"."${indexName}"`,
+    );
+  }
 }
 
 async function rollback(client: PoolClient): Promise<void> {

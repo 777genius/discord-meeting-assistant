@@ -45,7 +45,13 @@ export class HostedRemoteVoicetextCanaryRunnerV1 implements VoicetextCanaryRunne
   public constructor(private readonly process: BoundedRemoteContainerProcessPort) {}
 
   public async run(rawInput: VoicetextCanaryRunnerInputV1): Promise<unknown> {
-    const input = inputSchema.parse(rawInput);
+    const input = inputSchema.parse({
+      binding: rawInput.binding,
+      endpoint: rawInput.endpoint,
+      fixturePath: rawInput.fixturePath,
+      ...(rawInput.signal === undefined ? {} : { signal: rawInput.signal }),
+      timeoutMs: rawInput.timeoutMs,
+    });
     input.signal?.throwIfAborted();
     const result = await this.process.execute({
       args: buildCanaryArgs(input, internalDeadlineFromOuterTimeout(input.timeoutMs)),

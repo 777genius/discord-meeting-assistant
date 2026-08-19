@@ -10,6 +10,7 @@ export type ConversationPortResult<Value> =
 
 export type ConversationCancellationReason =
   | "barge-in"
+  | "disconnected"
   | "meeting-ended"
   | "playback-failed"
   | "runtime-shutdown"
@@ -43,8 +44,27 @@ export interface ConversationAudioChunk {
   readonly turnId: string;
 }
 
+export interface ConversationTtsAttestation {
+  readonly attemptId: string;
+  readonly deployment: string;
+  readonly keyId: string;
+  readonly model: string;
+  readonly provider: string;
+  readonly schemaVersion: 1;
+  readonly signature: string;
+  readonly sourceRevision: string;
+  readonly turnId: string;
+  readonly voice: string;
+  readonly voiceProfileId: string;
+}
+
 export type ConversationRuntimeEvent =
   | { readonly attemptId: string; readonly type: "accepted" }
+  | {
+      readonly attemptId: string;
+      readonly attestation: ConversationTtsAttestation;
+      readonly type: "tts-attestation";
+    }
   | { readonly attemptId: string; readonly text: string; readonly type: "text-delta" }
   | {
       readonly attemptId: string;
@@ -88,6 +108,76 @@ export interface ConversationStartOptions {
   readonly signal?: AbortSignal;
 }
 
+/**
+ * Conversation-owned request vocabulary for grounded meeting knowledge. The
+ * provider boundary deliberately contains only participant, room, meeting and
+ * question primitives; published Meeting Knowledge, database and model types
+ * cannot cross this port.
+ */
+export interface GroundedKnowledgeAnswerRequest {
+  readonly locale: string;
+  readonly meetingId: string;
+  readonly participantId: string;
+  readonly question: string;
+  readonly roomId: string;
+}
+
+export interface GroundedKnowledgeAnswerOptions {
+  /** The same active-turn signal used by generation and speech startup. */
+  readonly signal: AbortSignal;
+}
+
+export interface GroundedKnowledgePlaybackAuthorityRequest {
+  readonly citationTurnIds: readonly string[];
+  readonly evidenceEpoch: string;
+  readonly knowledgeEpoch: string;
+  readonly request: GroundedKnowledgeAnswerRequest;
+}
+
+/** Consumer-owned port. Its untrusted complete result is validated by Conversation. */
+export interface GroundedKnowledgeAnswerPort {
+  answer(
+    request: GroundedKnowledgeAnswerRequest,
+    options: GroundedKnowledgeAnswerOptions,
+  ): Promise<ConversationPortResult<unknown>>;
+
+  /**
+   * Fresh source authorization and canonical-memory watermark fence. Conversation
+   * invokes it after TTS has produced a complete first chunk but before that PCM
+   * can cross the playback boundary.
+   */
+  recheckPlaybackAuthority(
+    request: GroundedKnowledgePlaybackAuthorityRequest,
+    options: GroundedKnowledgeAnswerOptions,
+  ): Promise<ConversationPortResult<"current">>;
+}
+
+export type GroundedKnowledgeAnswerObservation =
+  | {
+      readonly citationTurnIds: readonly string[];
+      readonly evidenceEpoch: string;
+      readonly knowledgeEpoch: string;
+      readonly meetingId: string;
+      readonly participantId: string;
+      readonly playbackProvenance: "literal_tts";
+      readonly status: "validated";
+      readonly turnId: string;
+    }
+  | {
+      readonly cancellationObservedAtMs: number;
+      readonly meetingId: string;
+      readonly reason: ConversationCancellationReason;
+      readonly status: "cancelled";
+      readonly turnId: string;
+    };
+
+/** Consumer-owned privacy-safe evidence sink for grounded factual turns. */
+export interface GroundedKnowledgeAnswerObserverPort {
+  observeGroundedKnowledgeAnswer(
+    observation: GroundedKnowledgeAnswerObservation,
+  ): void | Promise<void>;
+}
+
 export interface ConversationRuntime {
   startTurn(
     request: ConversationStartRequest,
@@ -122,6 +212,10 @@ export type ConversationPlaybackSettlement =
 
 export type ConversationPlaybackObservation =
   | {
+      readonly preparedAssetSha256?: string;
+      readonly thinkingCuePcmSha256?: string;
+      readonly speechProvenance?: "literal_tts" | "model_tts";
+      readonly ttsAttestation?: ConversationTtsAttestation;
       readonly meetingId: string;
       readonly playbackAttemptId: string;
       readonly playbackKind: ConversationPlaybackKind;
@@ -130,6 +224,10 @@ export type ConversationPlaybackObservation =
       readonly turnId: string;
     }
   | {
+      readonly preparedAssetSha256?: string;
+      readonly thinkingCuePcmSha256?: string;
+      readonly speechProvenance?: "literal_tts" | "model_tts";
+      readonly ttsAttestation?: ConversationTtsAttestation;
       readonly finishedAtMs: number;
       readonly meetingId: string;
       readonly playbackAttemptId: string;
@@ -138,6 +236,10 @@ export type ConversationPlaybackObservation =
       readonly turnId: string;
     }
   | {
+      readonly preparedAssetSha256?: string;
+      readonly thinkingCuePcmSha256?: string;
+      readonly speechProvenance?: "literal_tts" | "model_tts";
+      readonly ttsAttestation?: ConversationTtsAttestation;
       readonly meetingId: string;
       readonly playbackAttemptId: string;
       readonly playbackKind: ConversationPlaybackKind;
@@ -154,13 +256,24 @@ export interface ConversationPlaybackObserverPort {
   ): void | Promise<void>;
 }
 
-export interface ConversationPlaybackReadinessRequest {
+interface ConversationPlaybackReadinessRequestBase {
   readonly meetingId: string;
   readonly participantId?: string;
   readonly playbackAttemptId: string;
-  readonly playbackKind: ConversationPlaybackKind;
   readonly turnId: string;
 }
+
+export type ConversationPlaybackReadinessRequest =
+  | ConversationPlaybackReadinessRequestBase & {
+      readonly expectedPcmBytes: number;
+      readonly expectedPcmSha256: string;
+      readonly playbackKind: "thinking-cue";
+    }
+  | ConversationPlaybackReadinessRequestBase & {
+      readonly expectedPcmBytes?: never;
+      readonly expectedPcmSha256?: never;
+      readonly playbackKind: Exclude<ConversationPlaybackKind, "thinking-cue">;
+    };
 
 /** Optional two-phase gate used when an external observer must be ready first. */
 export interface ConversationPlaybackReadinessPort {
@@ -185,8 +298,14 @@ export interface VoicePlaybackSession {
   finish(): Promise<ConversationPortResult<"finished" | "reused">>;
 
   cancel(
-    reason: ConversationCancellationReason,
+    request: VoicePlaybackCancellationRequest,
   ): Promise<ConversationPortResult<"cancelled" | "reused">>;
+}
+
+/** One deterministic application observation shared with every cancellation sink. */
+export interface VoicePlaybackCancellationRequest {
+  readonly cancellationObservedAtMs: number;
+  readonly reason: ConversationCancellationReason;
 }
 
 export type VoicePlaybackEvent =
@@ -219,6 +338,7 @@ export interface ConversationThinkingCue {
   readonly cueId: string;
   readonly playbackAttemptId: string;
   readonly pcmChunks: readonly Uint8Array[];
+  readonly pcmSha256: string;
 }
 
 export type ConversationThinkingCueStage = "acknowledgement" | "deliberation";

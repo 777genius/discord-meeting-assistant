@@ -1,16 +1,35 @@
 import { z } from "zod";
+import {
+  decodeInfinityContextRuntimeActivation,
+} from "@discord-meeting/infinity-context-adapter";
+import {
+  DEFAULT_HISTORICAL_MEMORY_OPERATION_TIMEOUT_MS,
+  MAXIMUM_HISTORICAL_MEMORY_OPERATION_TIMEOUT_MS,
+} from "@discord-meeting/meeting-core/meeting-knowledge";
 
 import {
-  loadRecordingPlaybackConfig,
   recordingPlaybackEnvironmentShape,
   validateRecordingPlaybackEnvironment,
 } from "./config/recording-playback-config.js";
 import {
   participantGreetingProfilesEnvironmentSchema,
 } from "./config/participant-greeting-profiles.js";
+import { validateInfinityContextEnvironment } from "./config/infinity-context-environment.js";
+import {
+  validateConversationReadinessEnvironment,
+  validateMeetingKnowledgeEnvironment,
+} from "./config/environment-validations.js";
+
 import type { PlatformConfig } from "./config/platform-config.js";
-import { readSecretFile } from "./config/secret-file-reader.js";
-import { assemblePlatformConfig } from "./config/platform-config-assembly.js";
+import {
+  loadPlatformConfigWithParser,
+  type SecretFileReader,
+} from "./config/platform-config-loader.js";
+import type { BuildProvenanceReader } from "./config/build-provenance.js";
+import type {
+  AcceptedTwoHourQualification,
+  QualificationFileReader,
+} from "./config/two-hour-qualification.js";
 
 export type { PlatformConfig } from "./config/platform-config.js";
 
@@ -74,6 +93,17 @@ const runtimeAddress = z
   .string()
   .regex(/^(?:[a-zA-Z0-9][a-zA-Z0-9.-]*|\[[0-9a-fA-F:]+\]):\d{1,5}$/u);
 const voiceIdentifier = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/u);
+const infinityActivation = z.string().min(2).max(4_000).transform((value, context) => {
+  try {
+    return decodeInfinityContextRuntimeActivation(JSON.parse(value) as unknown);
+  } catch (error) {
+    context.addIssue({
+      code: "custom",
+      message: error instanceof Error ? error.message : "invalid Infinity activation",
+    });
+    return z.NEVER;
+  }
+});
 const environmentSchema = z
   .object({
     BIND_ADDRESS: z.union([z.ipv4(), z.ipv6()]).default("0.0.0.0"),
@@ -116,6 +146,26 @@ const environmentSchema = z
     E2E_TEST_ONLY_LABEL: z.enum(["true", "false"]).default("false")
       .transform((value) => value === "true"),
     LIVE_INGRESS_OWNER_MODE: z.literal("singleton").default("singleton"),
+    INFINITY_CONTEXT_ACTIVATION: infinityActivation.optional(),
+    INFINITY_CONTEXT_OPERATION_TIMEOUT_MS: z.coerce.number().int().min(1_000)
+      .max(MAXIMUM_HISTORICAL_MEMORY_OPERATION_TIMEOUT_MS)
+      .default(DEFAULT_HISTORICAL_MEMORY_OPERATION_TIMEOUT_MS),
+    INFINITY_CONTEXT_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(100).max(60_000).default(10_000),
+    INFINITY_CONTEXT_TOKEN_FILE: absolutePath.optional(),
+    INFINITY_CONTEXT_TOPOLOGY_KEY_FILE: absolutePath.optional(),
+    INFINITY_CONTEXT_URL: httpUrl.optional(),
+    MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED: z
+      .enum(["true", "false"])
+      .default("false")
+      .transform((value) => value === "true"),
+    MEETING_KNOWLEDGE_GROUNDED_VOICE_ENABLED: z
+      .enum(["true", "false"])
+      .default("false")
+      .transform((value) => value === "true"),
+    MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_EPOCH: profileIdentifier.optional(),
+    MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_STATE_FILE: absolutePath.optional(),
+    MEETING_KNOWLEDGE_PRINCIPAL_KEY_FILE: absolutePath.optional(),
+    MEETING_KNOWLEDGE_TWO_HOUR_QUALIFICATION_FILE: optionalAbsolutePath,
     NODE_ENV: z
       .enum(["development", "production", "test"])
       .default("production"),
@@ -267,6 +317,8 @@ const environmentSchema = z
       });
     }
     validateRecordingPlaybackEnvironment(environment, context);
+    validateInfinityContextEnvironment(environment, context);
+    validateMeetingKnowledgeEnvironment(environment, context);
     if (environment.TRANSCRIPTION_PROVIDER !== "voicetext") {
       return;
     }
@@ -287,78 +339,25 @@ const environmentSchema = z
     }
   });
 
-function validateConversationReadinessEnvironment(
-  environment: z.infer<typeof environmentSchema>,
-  context: z.RefinementCtx,
-): void {
-  const playbackCount = [environment.CONVERSATION_E2E_PLAYBACK_READINESS_ROOT,
-    environment.CONVERSATION_E2E_PLAYBACK_READINESS_RUN_ID,
-    environment.CONVERSATION_E2E_PLAYBACK_READINESS_TIMEOUT_MS]
-    .filter((value) => value !== undefined).length;
-  const greetingCount = [environment.CONVERSATION_E2E_GREETING_OBSERVER_PARTICIPANT_ID,
-    environment.CONVERSATION_E2E_GREETING_PLAYBACK_READINESS_ROOT]
-    .filter((value) => value !== undefined).length;
-  if (greetingCount !== 0 && (greetingCount !== 2 || playbackCount !== 3)) {
-    context.addIssue({ code: "custom",
-      message: "conversation E2E greeting readiness requires observer ID, greeting root and playback readiness",
-      path: ["CONVERSATION_E2E_GREETING_PLAYBACK_READINESS_ROOT"] });
-  }
-}
-
 export type ParsedPlatformEnvironment = z.infer<typeof environmentSchema>;
 
-export type SecretFileReader = (path: string) => Promise<string>;
-
-export async function loadPlatformConfig(
+export function loadPlatformConfig(
   rawEnvironment: Readonly<Record<string, string | undefined>> = process.env,
-  readSecret: SecretFileReader = readSecretFile,
+  readSecret?: SecretFileReader,
+  readBuildProvenance?: BuildProvenanceReader,
+  readQualificationFile?: QualificationFileReader,
+  acceptedTwoHourQualification?: AcceptedTwoHourQualification | null,
 ): Promise<PlatformConfig> {
-  const forbiddenApiKey = Object.keys(rawEnvironment).find((key) =>
-    /_API_KEY(?:_FILE)?$/u.test(key),
+  return loadPlatformConfigWithParser(
+    (raw) => environmentSchema.parse(raw),
+    rawEnvironment,
+    {
+      ...(acceptedTwoHourQualification === undefined
+        ? {}
+        : { acceptedTwoHourQualification }),
+      ...(readBuildProvenance === undefined ? {} : { readBuildProvenance }),
+      ...(readQualificationFile === undefined ? {} : { readQualificationFile }),
+      ...(readSecret === undefined ? {} : { readSecret }),
+    },
   );
-  if (forbiddenApiKey !== undefined) {
-    throw new Error(`API-key environment is forbidden: ${forbiddenApiKey}`);
-  }
-  const environment = environmentSchema.parse(rawEnvironment);
-  const [
-    craigBearerToken,
-    conversationRuntimeToken,
-    discordToken,
-    postgresUrl,
-    redisUrl,
-    s3AccessKeyId,
-    s3SecretAccessKey,
-    subscriptionRuntimeToken,
-    voicetextServiceToken,
-    recordingPlayback,
-  ] = await Promise.all([
-    readSecret(environment.CRAIG_BEARER_TOKEN_FILE),
-    !environment.CONVERSATION_ENABLED ||
-    environment.CONVERSATION_RUNTIME_TOKEN_FILE === undefined
-      ? Promise.resolve()
-      : readSecret(environment.CONVERSATION_RUNTIME_TOKEN_FILE),
-    readSecret(environment.DISCORD_TOKEN_FILE),
-    readSecret(environment.POSTGRES_URL_FILE),
-    readSecret(environment.REDIS_URL_FILE),
-    readSecret(environment.S3_ACCESS_KEY_ID_FILE),
-    readSecret(environment.S3_SECRET_ACCESS_KEY_FILE),
-    readSecret(environment.SUBSCRIPTION_RUNTIME_TOKEN_FILE),
-    environment.VOICETEXT_SERVICE_TOKEN_FILE === undefined
-      ? Promise.resolve()
-      : readSecret(environment.VOICETEXT_SERVICE_TOKEN_FILE),
-    loadRecordingPlaybackConfig(environment, readSecret),
-  ]);
-
-  return assemblePlatformConfig(environment, {
-    craigBearerToken,
-    ...(conversationRuntimeToken === undefined ? {} : { conversationRuntimeToken }),
-    discordToken,
-    postgresUrl,
-    redisUrl,
-    recordingPlayback,
-    s3AccessKeyId,
-    s3SecretAccessKey,
-    subscriptionRuntimeToken,
-    ...(voicetextServiceToken === undefined ? {} : { voicetextServiceToken }),
-  });
 }

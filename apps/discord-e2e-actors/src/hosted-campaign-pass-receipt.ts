@@ -10,6 +10,10 @@ import {
   digestCanonical,
   sha256Schema,
 } from "./hosted-campaign-local-admission.js";
+import {
+  hostedCampaignReleaseReferenceV1Schema,
+  type HostedCampaignReleaseReferenceV1,
+} from "./hosted-campaign-release-reference.js";
 
 const identifierSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u);
 const revisionsSchema = z.object({
@@ -18,12 +22,6 @@ const revisionsSchema = z.object({
   pipecat: z.string().min(1),
   subscriptionRuntime: z.string().min(1),
 }).strict();
-const releaseReferenceSchema = z.object({
-  releaseBindingSha256: sha256Schema,
-  releaseId: identifierSchema,
-  trustRootSha256: sha256Schema,
-}).strict();
-
 const hostedCampaignPassReceiptV2Schema = z.object({
   actionEvidence: z.array(z.unknown()).readonly(),
   actionEvidenceSha256: sha256Schema,
@@ -37,7 +35,7 @@ const hostedCampaignPassReceiptV2Schema = z.object({
   kind: z.literal("hosted-campaign-pass-receipt"),
   planSha256: sha256Schema,
   receiptSha256: sha256Schema,
-  release: releaseReferenceSchema,
+  release: hostedCampaignReleaseReferenceV1Schema,
   revisions: revisionsSchema,
   runIds: z.tuple([identifierSchema, identifierSchema, identifierSchema]).readonly(),
   schemaVersion: z.literal(2),
@@ -48,7 +46,9 @@ const hostedCampaignPassReceiptV2Schema = z.object({
 }).strict();
 
 export type HostedCampaignPassReceiptV2 = Readonly<z.infer<typeof hostedCampaignPassReceiptV2Schema>>;
-export type HostedCampaignReleaseReferenceV1 = Readonly<z.infer<typeof releaseReferenceSchema>>;
+export {
+  type HostedCampaignReleaseReferenceV1,
+} from "./hosted-campaign-release-reference.js";
 
 export interface HostedCampaignPassReceiptExpectation {
   readonly admissionReceiptSha256: string;

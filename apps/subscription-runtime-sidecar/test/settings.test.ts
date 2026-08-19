@@ -19,6 +19,8 @@ import {
   meetingSummaryPolicyVersion,
   subscriptionRuntimeConversationPurpose,
   subscriptionRuntimeIncrementalPurpose,
+  subscriptionRuntimeKnowledgeAnswerPurpose,
+  subscriptionRuntimeKnowledgeCoveragePurpose,
   subscriptionRuntimePurpose,
 } from "@discord-meeting/subscription-runtime-adapter";
 import { afterEach, describe, expect, it } from "vitest";
@@ -98,7 +100,16 @@ const invalidPolicyCases: readonly [
       conversation.outputSchemaName = meetingSummaryOutputSchemaName;
     }
   }],
-  ["an unadmitted fourth profile", (policy) => {
+  ["a missing knowledge answer profile", (policy) => {
+    delete policy.purposeProfiles[subscriptionRuntimeKnowledgeAnswerPurpose];
+  }],
+  ["a stale knowledge coverage version", (policy) => {
+    const coverage = policy.purposeProfiles[subscriptionRuntimeKnowledgeCoveragePurpose];
+    if (coverage !== undefined) {
+      coverage.policyVersion = "meeting-knowledge.coverage.subscription-runtime.v0";
+    }
+  }],
+  ["an unadmitted sixth profile", (policy) => {
     const conversation = policy.purposeProfiles[subscriptionRuntimeConversationPurpose];
     if (conversation !== undefined) {
       policy.purposeProfiles.discord_meeting_other = { ...conversation };
@@ -133,7 +144,7 @@ describe("sidecar deployment policy", () => {
     root = undefined;
   });
 
-  it("admits exactly the final, incremental, and conversation policy profiles", async () => {
+  it("admits exactly the summary, conversation, and knowledge policy profiles", async () => {
     await expect(resolveSidecarSettings(await environmentForPolicy(() => {}, 2))).resolves
       .toMatchObject({
         accounts: [
@@ -204,12 +215,22 @@ async function environmentForPolicy(
   const final = policy.purposeProfiles[subscriptionRuntimePurpose];
   const incremental = policy.purposeProfiles[subscriptionRuntimeIncrementalPurpose];
   const conversation = policy.purposeProfiles[subscriptionRuntimeConversationPurpose];
-  if (final === undefined || incremental === undefined || conversation === undefined) {
+  const knowledgeAnswer = policy.purposeProfiles[subscriptionRuntimeKnowledgeAnswerPurpose];
+  const knowledgeCoverage = policy.purposeProfiles[subscriptionRuntimeKnowledgeCoveragePurpose];
+  if (
+    final === undefined ||
+    incremental === undefined ||
+    conversation === undefined ||
+    knowledgeAnswer === undefined ||
+    knowledgeCoverage === undefined
+  ) {
     throw new Error("Test deployment policy is missing an admitted profile");
   }
   final.isolatedCwd = isolatedCwd;
   incremental.isolatedCwd = isolatedCwd;
   conversation.isolatedCwd = isolatedCwd;
+  knowledgeAnswer.isolatedCwd = isolatedCwd;
+  knowledgeCoverage.isolatedCwd = isolatedCwd;
   mutate(policy);
 
   await Promise.all(authSlotRoots.map(async (slotRoot) => {

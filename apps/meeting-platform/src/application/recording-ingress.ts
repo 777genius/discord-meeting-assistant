@@ -15,39 +15,138 @@ export interface RecordingSource {
   readonly roomId: string;
 }
 
+type RecordingActorKind = "automation" | "human" | "unknown";
+
+interface RecordingActor {
+  readonly actorId: string;
+  readonly kind: RecordingActorKind;
+}
+
+type RecordingActorObservationState = "consistent" | "conflicted";
+type RecordingRosterState = "sealed" | "unsealed";
+
+interface RecordingIdentityProvenance {
+  readonly actorObservationState: RecordingActorObservationState;
+  readonly actorSemanticsVersion: number;
+  readonly producerCapabilityId: string;
+  readonly producerRevision: string;
+  readonly rosterState: RecordingRosterState;
+}
+
+interface DerivedLiveMemoryIdentity {
+  readonly actors: readonly RecordingActor[];
+  readonly identityProvenance: RecordingIdentityProvenance;
+  readonly lifecycleGeneration: 3;
+  readonly roomId: string;
+  readonly scopeId: string;
+}
+
 interface RecordingLifecycleEnvelope {
   readonly eventId: string;
   readonly occurredAt: string;
   readonly recordingId: string;
-  readonly schemaVersion: 1;
   readonly source: RecordingSource;
+}
+
+interface TrustedRecordingLifecycleEnvelope extends RecordingLifecycleEnvelope {
+  readonly actorObservationState: RecordingActorObservationState;
+  readonly actorSemanticsVersion: number;
+  readonly producerCapabilityId: string;
+  readonly producerRevision: string;
+  readonly schemaVersion: 3;
 }
 
 export type RecordingLifecycleCommand =
   | (RecordingLifecycleEnvelope & {
       readonly participantIds: string[];
+      readonly schemaVersion: 1;
       readonly type: "meeting.started";
     })
   | (RecordingLifecycleEnvelope & {
       readonly participantId: string;
+      readonly schemaVersion: 1;
       readonly type: "participant.joined" | "participant.left";
     })
   | (RecordingLifecycleEnvelope & {
       readonly reason: string | null;
+      readonly schemaVersion: 1;
       readonly type: "meeting.connection_lost" | "meeting.connection_recovered";
     })
   | (RecordingLifecycleEnvelope & {
       readonly reason: string | null;
+      readonly schemaVersion: 1;
       readonly type: "meeting.ended" | "meeting.aborted";
     })
   | (RecordingLifecycleEnvelope & {
       readonly endedAt: string;
       readonly multitrackManifestKey: string;
+      readonly schemaVersion: 1;
       readonly type: "recording.artifact_ready";
       readonly usersManifestKey: string;
     })
   | (RecordingLifecycleEnvelope & {
       readonly endedAt: string;
+      readonly schemaVersion: 1;
+      readonly sourceFilesChecksumSha256: string;
+      readonly trackCount: number;
+      readonly type: "recording.authoritative_ready";
+    })
+  | (RecordingLifecycleEnvelope & {
+      readonly actors: readonly RecordingActor[];
+      readonly schemaVersion: 2;
+      readonly type: "meeting.started";
+    })
+  | (RecordingLifecycleEnvelope & {
+      readonly actor: RecordingActor;
+      readonly schemaVersion: 2;
+      readonly type: "participant.joined" | "participant.left";
+    })
+  | (RecordingLifecycleEnvelope & {
+      readonly reason: string | null;
+      readonly schemaVersion: 2;
+      readonly type: "meeting.connection_lost" | "meeting.connection_recovered";
+    })
+  | (RecordingLifecycleEnvelope & {
+      readonly reason: string | null;
+      readonly schemaVersion: 2;
+      readonly type: "meeting.ended" | "meeting.aborted";
+    })
+  | (RecordingLifecycleEnvelope & {
+      readonly endedAt: string;
+      readonly multitrackManifestKey: string;
+      readonly schemaVersion: 2;
+      readonly type: "recording.artifact_ready";
+      readonly usersManifestKey: string;
+    })
+  | (RecordingLifecycleEnvelope & {
+      readonly actors: readonly RecordingActor[];
+      readonly endedAt: string;
+      readonly schemaVersion: 2;
+      readonly sourceFilesChecksumSha256: string;
+      readonly trackCount: number;
+      readonly type: "recording.authoritative_ready";
+    })
+  | (TrustedRecordingLifecycleEnvelope & {
+      readonly actors: readonly RecordingActor[];
+      readonly rosterState: "unsealed";
+      readonly type: "meeting.started";
+    })
+  | (TrustedRecordingLifecycleEnvelope & {
+      readonly actor: RecordingActor;
+      readonly type: "participant.joined" | "participant.left";
+    })
+  | (TrustedRecordingLifecycleEnvelope & {
+      readonly reason: string | null;
+      readonly type: "meeting.connection_lost" | "meeting.connection_recovered";
+    })
+  | (TrustedRecordingLifecycleEnvelope & {
+      readonly reason: string | null;
+      readonly type: "meeting.ended" | "meeting.aborted";
+    })
+  | (TrustedRecordingLifecycleEnvelope & {
+      readonly actors: readonly RecordingActor[];
+      readonly endedAt: string;
+      readonly rosterState: "sealed";
       readonly sourceFilesChecksumSha256: string;
       readonly trackCount: number;
       readonly type: "recording.authoritative_ready";
@@ -113,6 +212,8 @@ export type DerivedLiveLifecycleEvent =
       readonly participantIds: readonly string[];
       readonly publicationTarget: DeferredPublicationTarget;
       readonly recordingId: string;
+      readonly roomId: string;
+      readonly memoryIdentity?: DerivedLiveMemoryIdentity;
       readonly type: "meeting.started";
     }
   | {
@@ -122,6 +223,10 @@ export type DerivedLiveLifecycleEvent =
     }
   | {
       readonly occurredAt: string;
+      readonly memoryHumanObservation?: {
+        readonly actorId: string;
+        readonly producerRevision: string;
+      };
       readonly participantId: string;
       readonly recordingId: string;
       readonly type: "participant.joined" | "participant.left";
@@ -132,8 +237,13 @@ export type DerivedLiveLifecycleEvent =
       readonly type:
         | "meeting.connection_lost"
         | "meeting.connection_recovered"
-        | "recording.artifact_ready"
-        | "recording.authoritative_ready";
+        | "recording.artifact_ready";
+    }
+  | {
+      readonly occurredAt: string;
+      readonly memoryIdentity?: DerivedLiveMemoryIdentity;
+      readonly recordingId: string;
+      readonly type: "recording.authoritative_ready";
     };
 
 export interface PublicationTargetResolverPort {
@@ -164,9 +274,13 @@ export type RecordingLifecycleIngressResult =
       readonly replayed: boolean;
     }
   | {
+      readonly actors: readonly RecordingActor[] | null;
+      readonly identityProvenance: RecordingIdentityProvenance | null;
       readonly kind: "finalized";
+      readonly lifecycleGeneration: 1 | 2 | 3;
       readonly recording: RecordingArtifactSnapshot;
       readonly replayed: boolean;
+      readonly source: RecordingSource;
     };
 
 /** Consumer-owned durability port implemented by one recording-source adapter. */

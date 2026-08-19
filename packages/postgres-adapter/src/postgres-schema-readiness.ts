@@ -6,6 +6,13 @@ import {
   requiredPostgresSchemaVersion,
   type PostgresMigration,
 } from "./postgres-migrations.js";
+import {
+  meetingKnowledgeRequiredCheckConstraints,
+  meetingKnowledgeRequiredColumns,
+  meetingKnowledgeRequiredIndexes,
+  meetingKnowledgeRequiredRelations,
+  meetingKnowledgeRequiredStructuralConstraints,
+} from "./postgres-meeting-knowledge-schema-requirements.js";
 
 const requiredRelations = [
   "meeting_core.schema_migration_ledger",
@@ -18,6 +25,9 @@ const requiredRelations = [
   "meeting_core.live_meeting_generation_telemetry",
   "meeting_core.post_call_dead_letters",
   "meeting_core.summary_publication_effects",
+  "meeting_core.historical_memory_sync",
+  "meeting_core.historical_coverage_checkpoints",
+  ...meetingKnowledgeRequiredRelations,
   "guild_configuration.guild_installations",
 ] as const;
 
@@ -25,6 +35,10 @@ const requiredIndexes = [
   "meeting_core.post_call_outbox_recoverable_idx",
   "meeting_core.post_call_dead_letters_recorded_idx",
   "meeting_core.live_meeting_turns_timeline_idx",
+  "meeting_core.historical_memory_sync_current_meeting_idx",
+  "meeting_core.historical_memory_sync_recoverable_idx",
+  "meeting_core.historical_memory_sync_room_idx",
+  ...meetingKnowledgeRequiredIndexes,
 ] as const;
 
 const requiredColumns = [
@@ -83,6 +97,22 @@ const requiredColumns = [
   "meeting_core.summary_publication_effects.external_receipt",
   "meeting_core.summary_publication_effects.reserved_at",
   "meeting_core.summary_publication_effects.completed_at",
+  "meeting_core.historical_memory_sync.release_id",
+  "meeting_core.historical_memory_sync.meeting_id",
+  "meeting_core.historical_memory_sync.desired_generation",
+  "meeting_core.historical_memory_sync.operation",
+  "meeting_core.historical_memory_sync.state",
+  "meeting_core.historical_memory_sync.lease_fence",
+  "meeting_core.historical_memory_sync.plan",
+  "meeting_core.historical_memory_sync.remote_document_ids",
+  "meeting_core.historical_coverage_checkpoints.checkpoint_id",
+  "meeting_core.historical_coverage_checkpoints.plan_digest",
+  "meeting_core.historical_coverage_checkpoints.coverage_bitmap",
+  "meeting_core.historical_coverage_checkpoints.extracts",
+  "meeting_core.historical_coverage_checkpoints.reduction",
+  "meeting_core.historical_coverage_checkpoints.attempt_count",
+  "meeting_core.historical_coverage_checkpoints.lease_fence",
+  ...meetingKnowledgeRequiredColumns,
   "guild_configuration.guild_installations.guild_id",
   "guild_configuration.guild_installations.revision",
   "guild_configuration.guild_installations.snapshot",
@@ -123,6 +153,20 @@ const requiredCheckConstraints = [
   ["meeting_core", "summary_publication_effects", "summary_publication_effects_target_is_valid"],
   ["meeting_core", "summary_publication_effects", "summary_publication_effects_receipt_is_consistent"],
   ["meeting_core", "summary_publication_effects", "summary_publication_effects_receipt_is_bounded"],
+  ["meeting_core", "historical_memory_sync", "historical_memory_sync_schema_is_supported"],
+  ["meeting_core", "historical_memory_sync", "historical_memory_sync_binding_is_valid"],
+  ["meeting_core", "historical_memory_sync", "historical_memory_sync_operation_is_supported"],
+  ["meeting_core", "historical_memory_sync", "historical_memory_sync_state_is_supported"],
+  ["meeting_core", "historical_memory_sync", "historical_memory_sync_attempt_and_fence_are_valid"],
+  ["meeting_core", "historical_memory_sync", "historical_memory_sync_plan_is_object"],
+  ["meeting_core", "historical_memory_sync", "historical_memory_sync_remote_ids_are_object"],
+  ["meeting_core", "historical_memory_sync", "historical_memory_sync_applied_has_plan"],
+  ["meeting_core", "historical_coverage_checkpoints", "historical_coverage_schema_is_supported"],
+  ["meeting_core", "historical_coverage_checkpoints", "historical_coverage_identity_is_valid"],
+  ["meeting_core", "historical_coverage_checkpoints", "historical_coverage_payloads_are_valid"],
+  ["meeting_core", "historical_coverage_checkpoints", "historical_coverage_state_is_supported"],
+  ["meeting_core", "historical_coverage_checkpoints", "historical_coverage_completion_is_consistent"],
+  ...meetingKnowledgeRequiredCheckConstraints,
   ["guild_configuration", "guild_installations", "guild_installations_snapshot_is_object"],
   ["guild_configuration", "guild_installations", "guild_installations_snapshot_identity_matches"],
   ["guild_configuration", "guild_installations", "guild_installations_snapshot_revision_matches"],
@@ -133,18 +177,8 @@ const requiredStructuralConstraints = [
   ["meeting_core", "meetings", "meetings_pkey", "p"],
   ["meeting_core", "post_call_outbox", "post_call_outbox_pkey", "p"],
   ["meeting_core", "post_call_outbox", "post_call_outbox_meeting_id_fkey", "f"],
-  [
-    "meeting_core",
-    "post_call_outbox",
-    "post_call_outbox_dead_letter_source_job_ref_fkey",
-    "f",
-  ],
-  [
-    "meeting_core",
-    "post_call_outbox",
-    "post_call_outbox_recovery_source_job_ref_fkey",
-    "f",
-  ],
+  ["meeting_core", "post_call_outbox", "post_call_outbox_dead_letter_source_job_ref_fkey", "f"],
+  ["meeting_core", "post_call_outbox", "post_call_outbox_recovery_source_job_ref_fkey", "f"],
   ["meeting_core", "live_meetings", "live_meetings_pkey", "p"],
   ["meeting_core", "live_meeting_turns", "live_meeting_turns_pkey", "p"],
   ["meeting_core", "live_meeting_turns", "live_meeting_turns_meeting_id_fkey", "f"],
@@ -181,6 +215,12 @@ const requiredStructuralConstraints = [
   ],
   ["meeting_core", "post_call_dead_letters", "post_call_dead_letters_pkey", "p"],
   ["meeting_core", "summary_publication_effects", "summary_publication_effects_pkey", "p"],
+  ["meeting_core", "historical_memory_sync", "historical_memory_sync_pkey", "p"],
+  ["meeting_core", "historical_memory_sync", "historical_memory_sync_meeting_id_fkey", "f"],
+  ["meeting_core", "historical_memory_sync", "historical_memory_sync_release_generation_unique", "u"],
+  ["meeting_core", "historical_memory_sync", "historical_memory_sync_transcript_policy_unique", "u"],
+  ["meeting_core", "historical_coverage_checkpoints", "historical_coverage_checkpoints_pkey", "p"],
+  ...meetingKnowledgeRequiredStructuralConstraints,
   ["guild_configuration", "guild_installations", "guild_installations_pkey", "p"],
 ] as const;
 
@@ -281,13 +321,15 @@ export class PostgresSchemaReadiness implements PostgresSchemaReadinessPort {
       `
         SELECT index_name AS name
         FROM unnest($1::text[]) AS index_name
-        WHERE to_regclass(index_name) IS NULL
+        WHERE NOT EXISTS (SELECT 1 FROM pg_index AS required_index
+          WHERE required_index.indexrelid = to_regclass(index_name)
+            AND required_index.indisvalid AND required_index.indisready)
       `,
       [requiredIndexes],
     );
     if (result.rows.length > 0) {
       throw new PostgresSchemaReadinessError(
-        `required PostgreSQL index is missing: ${result.rows.map(({ name }) => name).join(", ")}`,
+        `required PostgreSQL index is missing or invalid: ${result.rows.map(({ name }) => name).join(", ")}`,
       );
     }
   }

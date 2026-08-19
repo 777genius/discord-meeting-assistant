@@ -30,6 +30,7 @@ import { GrpcSubscriptionRuntimeTransport } from "../adapters/outbound/subscript
 import type { RecordingDurabilityPort } from "../application/recording-ingress.js";
 import type { PlatformConfig } from "../config.js";
 import type { PlatformStartupCleanup } from "./startup-cleanup.js";
+import { meetingVocabulary } from "./meeting-vocabulary.js";
 import { createFinalTranscriber } from "./transcription.js";
 
 export interface PlatformCoreResources {
@@ -104,6 +105,7 @@ export function createPlatformCoreResources(input: {
       expectedLauncherSha256: input.config.subscriptionRuntime.launcherSha256,
       expectedRuntimeEngine: subscriptionRuntimeCliEngine,
       maxOutputTokens: subscriptionRuntimeSummaryMaxOutputTokens,
+      technicalVocabulary: meetingVocabulary,
     }),
     rawTranscriber: createFinalTranscriber(input.config, artifactReader),
     recordingIngress: new CraigRecordingIngressAdapter(recordings),

@@ -1,6 +1,7 @@
 export {
   authoritativeTrackUploadMetadataSchema,
   craigPlaybackChannels,
+  craigPlaybackCancellationProtocolVersion,
   craigPlaybackCommandSchema,
   craigPlaybackEventSchema,
   craigPlaybackProtocolVersion,
@@ -19,7 +20,11 @@ export {
   type AuthoritativeTrackUploadMetadata,
   type CraigPlaybackCommand,
   type CraigPlaybackEvent,
+  type CraigActor,
+  type CraigActorKind,
+  type CraigActorObservationState,
   type CraigLifecycleEvent,
+  type CraigRosterState,
   type VoicePacket,
   type VoicePacketBatch,
 } from "./contracts.js";

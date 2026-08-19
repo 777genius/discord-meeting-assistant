@@ -4,6 +4,7 @@ coverage/
 .nx/
 .DS_Store
 *.log
+.build/
 .env
 .env.*
 !.env.example

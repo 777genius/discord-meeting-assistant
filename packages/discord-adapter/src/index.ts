@@ -63,3 +63,27 @@ export {
   discordGuildSetupCommand,
 } from "./discord-guild-setup-command.js";
 export { registerDiscordGuildSetupCommand } from "./register-discord-guild-setup-command.js";
+export {
+  createDiscordOneAttemptAnswerRest,
+  DiscordAnswerDeliveryAdapter,
+  DiscordAnswerPayloadCodec,
+} from "./discord-answer-publication.js";
+export { DiscordGroundedAnswerRenderer } from "./discord-grounded-answer-renderer.js";
+export {
+  DiscordQuestionAuthorizationAdapter,
+  discordParticipantQuestionPolicyVersion,
+} from "./discord-question-authorization.js";
+export {
+  DiscordHistoricalAuthorizationAdapter,
+  discordSameRoomHistoricalPolicyVersion,
+} from "./discord-historical-authorization.js";
+export {
+  DiscordQuestionPrincipalCodec,
+  decodeDiscordQuestionPrincipalKey,
+  type DiscordQuestionPrincipal,
+} from "./discord-question-principal.js";
+export {
+  DiscordLocalFinalReplyHandler,
+  type DiscordLocalFinalReplyHandlerOptions,
+  type DiscordQuestionScopePort,
+} from "./discord-local-final-reply-handler.js";

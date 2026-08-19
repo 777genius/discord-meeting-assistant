@@ -59,6 +59,84 @@ digest. `DISCORD_FINAL_PUBLICATION_MODE=separate-message` keeps the live draft a
 publishes one separate idempotent final summary by default. Set it to
 `replace-live` only for the previous single-message behavior.
 
+Local Final Reply is independently disabled by default. To enable it, keep
+`DISCORD_PUBLICATION_MODE=message`, enable the Discord Message Content intent for
+the official bot application, write an independently generated 32-byte base64 or
+64-character lowercase-hex key to
+`${DEPLOY_ROOT}/secrets/platform/meeting-knowledge-principal-key` with mode
+`0400`, and set `MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED=true`. The key
+encrypts short-lived authorization principals and derives non-reversible dedupe
+subjects; it is not a provider or Discord credential.
+
+## Infinity Context historical memory
+
+The standard Compose deployment enables the production Infinity Context path
+and fails before container creation unless `INFINITY_CONTEXT_URL` and the full
+reviewed `INFINITY_CONTEXT_ACTIVATION` JSON are present. Provision Infinity
+Context separately at the qualified service revision and embedding profile; it
+is not bundled into this Compose project. Its URL must be an HTTP(S) service
+root reachable from the `discord-meeting-egress` network and must not contain
+credentials, a query, or a fragment. Do not use `localhost`: inside Meeting
+Platform that refers to the Platform container.
+
+Place the provider-issued bearer token in
+`${DEPLOY_ROOT}/secrets/platform/infinity-context-token`. Generate an independent
+topology HMAC key and store it in
+`${DEPLOY_ROOT}/secrets/platform/infinity-context-topology-key`, for example with
+`openssl rand -base64 48`. Both must be regular, non-symlink files owned by UID
+`10001` with mode `0400`; never put either value in `.env`, Compose, logs, or the
+Infinity service. Keep the topology key stable across rollouts because rotating
+it changes the opaque remote identities and requires an explicit migration.
+
+Before a local source build, generate provenance from the clean checkout:
+
+```sh
+pnpm provenance:generate
+```
+
+Set these non-secret values in the deployment environment file:
+
+```text
+INFINITY_CONTEXT_URL=https://infinity-context.example.internal
+INFINITY_CONTEXT_REQUEST_TIMEOUT_MS=10000
+INFINITY_CONTEXT_OPERATION_TIMEOUT_MS=300000
+INFINITY_CONTEXT_ACTIVATION={"apiVersion":"v1","archiveSha256":"1aad93c1c9deea91f0c0ec750b99e91d1092e9d208751e11c6231badd5fbd9d2","environment":"production","immutablePackageIntegrity":"sha512-ohD89uSSlW7zT/BqaEufIBZ7EAVcq1LYAWn/rRel8EOyMAnq5DXSh3PqjYXAYJdE9WsHgLWx7Tysy9jAY7XaHw==","indexingEnabled":true,"packageSource":"immutable_package","productionEmbeddingProfileAttestation":{"embeddingProfile":"local-open-source-paraphrase-multilingual-minilm-l12-v2-hybrid-bm25.r73","embeddingProfileDigestSha256":"sha256:5ecd36edd098940cd8a6540509f90815ddc1802b4410ced2bf063c0f8c650cac","productionSemanticQualification":true,"qualificationManifestSha256":"sha256:2b0ea368ea4d1feef4616fb185ce1267b9f8735e44d03634d81f03c8d58af965","releaseRevision":"8cc180cd043b95469f295ad9247bcb7886d29f10","schemaVersion":1},"qualificationManifestSha256":"sha256:abe694b3e1cf0dcec9d5ff7c0d8b65f30ec5364ac11bb2526bd1c3a3b176c207","schemaVersion":1,"sdkCommit":"897efd211151e9a81a7466fdd6be5cb067ddb8eb","sdkTree":"67a744b1accc0d4628c19f28849660bc917b8b62","searchEnabled":true,"serviceName":"infinity-context","servingProfile":"same_room_retrieval"}
+```
+
+Treat that activation as a reviewed release attestation, not an operator-tuned
+feature flag. Update it only together with retained qualification evidence and
+the pinned SDK provenance in the application release. CI derives commit and
+canonical tree SHA-256 from a clean checkout and embeds the generated root-owned,
+read-only provenance artifact. Docker build arguments and runtime environment
+cannot replace it. Production search stays closed unless it
+equals the qualification manifest's `releaseRevision`. The retained r79
+manifest is intentionally stale for newer releases and must not activate them.
+
+Two-hour historical retrieval has no operator boolean. It remains unavailable
+until the release retains an accepted evidence digest, exact release revision,
+and rollout epoch proving focused retrieval, exhaustive coverage, and final-answer
+quality. General Infinity search does not enable it. Indexing, reconciliation,
+and deletion continue while either serving gate is closed. The request timeout must
+be from 100 through 60000 ms; the operation timeout must be from 1000 through
+600000 ms and must not be shorter than the request timeout.
+
+Before the stop-first rollout, validate interpolation with `docker compose
+--env-file <deployment.env> -f infra/deployment/compose.yaml config`. Then verify
+DNS, TLS, routing, and bearer authentication from a disposable container on the
+`discord-meeting-egress` network. The service capability response must identify
+`infinity-context`, API `v1`, Qdrant support, the required adapters,
+`service_revision=897efd211151e9a81a7466fdd6be5cb067ddb8eb`, and these
+activation-bound semantic fields:
+`embedding_profile_id=local-open-source-paraphrase-multilingual-minilm-l12-v2-hybrid-bm25.r73`
+and
+`embedding_profile_digest_sha256=sha256:5ecd36edd098940cd8a6540509f90815ddc1802b4410ced2bf063c0f8c650cac`.
+Meeting Platform still starts when the endpoint is unreachable or a capability
+differs so recording and authoritative publication remain available. Historical
+indexing and search are soft-disabled, a warning is emitted, and deletion and
+reconciliation continue. The platform repeats qualification and never falls back
+to an unqualified provider. Older capability endpoints that omit any required
+runtime provenance fields are incompatible and fail historical serving closed.
+
 ## Redis queue durability
 
 Copy `redis.conf.example` to `${DEPLOY_ROOT}/secrets/redis.conf`, replace the

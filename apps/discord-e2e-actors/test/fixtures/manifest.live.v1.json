@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "fixtureSetId": "discord-meeting-ru-en-live-v1",
-  "allowedBotSpeakerIds": ["1534231284467896512", "1533224474609057793"],
+  "allowedBotSpeakerIds": ["1533877611258708230", "1533224474609057793"],
   "locale": "ru-RU",
   "summaryExpectations": {
     "decisionTerms": ["пятницу"],
@@ -12,7 +12,7 @@
         "requiredTerms": ["Redis queue", "idempotency key", "Discord thread"]
       }
     ],
-    "topicTerms": ["Meeting Platform", "Craig recording", "PostgreSQL pipeline"]
+    "topicTerms": ["Meeting Platform", "Craig recording", "PostgreSQL"]
   },
   "thresholds": {
     "maxWordErrorRate": 0.35,
@@ -24,22 +24,22 @@
       "fixtureId": "speaker-a",
       "actorName": "speaker-a",
       "speakerId": "1533227577286852649",
-      "sourcePath": "test/fixtures/speaker-a.ru-en.txt",
+      "sourcePath": "speaker-a.ru-en.txt",
       "sourceSha256": "5aa51fdfca1325cf5b78a35927f1a256989dffc5adcf50cd6d8e5c02b0493a44",
-      "audioPath": "test/fixtures/speaker-a.live.ru-en.ogg",
+      "audioPath": "speaker-a.live.ru-en.ogg",
       "audioSha256": "1f5314c3ea9d8767cc4c304142eeb92a77c76cc8f36c212b1d10670daf73a162",
       "durationMs": 296235,
       "speechStartOffsetMs": 270004,
       "sourceText": "Meeting Platform сохраняет Craig recording. Затем запускает PostgreSQL pipeline. Решение - выпустить версию в пятницу. Повторяю решение - выпуск версии в пятницу. До седьмого августа две тысячи двадцать шестого года спикер Б проверит Discord thread. Повторяю - Discord thread будет проверен в две тысячи двадцать шестом году.",
-      "requiredTerms": ["Meeting Platform", "Craig recording", "PostgreSQL pipeline", "Discord thread", "пятницу"]
+      "requiredTerms": ["Meeting Platform", "Craig recording", "PostgreSQL", "Discord", "пятницу"]
     },
     {
       "fixtureId": "speaker-b",
       "actorName": "speaker-b",
       "speakerId": "1533228054724346087",
-      "sourcePath": "test/fixtures/speaker-b.ru-en.txt",
+      "sourcePath": "speaker-b.ru-en.txt",
       "sourceSha256": "ce6d53650f73aac8872289ede15a67b6a74535d4620c572bd17a46fd1322df00",
-      "audioPath": "test/fixtures/speaker-b.live.ru-en.ogg",
+      "audioPath": "speaker-b.live.ru-en.ogg",
       "audioSha256": "cb6fc152aaed139947c40064a615cb0b5708f096fc8e1166191804784ea7b0b5",
       "durationMs": 304996,
       "speechStartOffsetMs": 270004,

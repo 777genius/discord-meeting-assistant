@@ -17,7 +17,7 @@ function decodedBase64ByteLength(value: string): number {
   return (value.length / 4) * 3 - padding;
 }
 
-const envelopeSchema = z
+const envelopeV1Schema = z
   .object({
     schemaVersion: z.literal(1),
     eventId: identifierSchema,
@@ -28,50 +28,181 @@ const envelopeSchema = z
   })
   .strict();
 
-const meetingStartedSchema = envelopeSchema.extend({
+const meetingStartedV1Schema = envelopeV1Schema.extend({
   type: z.literal("meeting.started"),
   participantIds: z.array(discordSnowflakeSchema).max(1_000),
 });
 
-const participantChangedSchema = envelopeSchema.extend({
+const participantChangedV1Schema = envelopeV1Schema.extend({
   type: z.enum(["participant.joined", "participant.left"]),
   participantId: discordSnowflakeSchema,
 });
 
-const connectionChangedSchema = envelopeSchema.extend({
+const connectionChangedV1Schema = envelopeV1Schema.extend({
   type: z.enum(["meeting.connection_lost", "meeting.connection_recovered"]),
   reason: z.string().min(1).max(256).nullable(),
 });
 
-const meetingStoppedSchema = envelopeSchema.extend({
+const meetingStoppedV1Schema = envelopeV1Schema.extend({
   type: z.enum(["meeting.ended", "meeting.aborted"]),
   reason: z.string().min(1).max(256).nullable(),
 });
 
-const artifactReadySchema = envelopeSchema.extend({
+const artifactReadyV1Schema = envelopeV1Schema.extend({
   type: z.literal("recording.artifact_ready"),
   endedAt: instantSchema,
   multitrackManifestKey: storageKeySchema,
   usersManifestKey: storageKeySchema,
 });
 
-const authoritativeRecordingReadySchema = envelopeSchema.extend({
+const authoritativeRecordingReadyV1Schema = envelopeV1Schema.extend({
   type: z.literal("recording.authoritative_ready"),
   endedAt: instantSchema,
   sourceFilesChecksumSha256: sha256Schema,
   trackCount: z.number().int().min(1).max(64),
 });
 
-export const craigLifecycleEventSchema = z.discriminatedUnion("type", [
-  meetingStartedSchema,
-  participantChangedSchema,
-  connectionChangedSchema,
-  meetingStoppedSchema,
-  artifactReadySchema,
-  authoritativeRecordingReadySchema,
+const actorKindSchema = z.enum(["human", "automation", "unknown"]);
+const actorSchema = z.object({
+  actorId: discordSnowflakeSchema,
+  kind: actorKindSchema,
+}).strict();
+const actorRosterSchema = z.array(actorSchema).max(1_000).superRefine((actors, context) => {
+  const kindsByActor = new Map<string, string>();
+  for (const [index, actor] of actors.entries()) {
+    const existingKind = kindsByActor.get(actor.actorId);
+    if (existingKind !== undefined) {
+      context.addIssue({
+        code: "custom",
+        message: existingKind === actor.kind
+          ? "Actor roster cannot repeat an actor"
+          : "Actor roster contains conflicting actor kinds",
+        path: [index, "actorId"],
+      });
+    }
+    kindsByActor.set(actor.actorId, actor.kind);
+  }
+});
+
+const actorObservationStateSchema = z.enum(["consistent", "conflicted"]);
+const rosterStateSchema = z.enum(["sealed", "unsealed"]);
+const actorSemanticsVersionSchema = z.number().int().positive().max(1_000);
+const producerCapabilityIdSchema = z.string().min(1).max(128);
+const producerRevisionSchema = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u);
+
+const envelopeV2Schema = z.object({
+  schemaVersion: z.literal(2),
+  eventId: identifierSchema,
+  recordingId: identifierSchema,
+  guildId: discordSnowflakeSchema,
+  channelId: discordSnowflakeSchema,
+  occurredAt: instantSchema,
+}).strict();
+
+const meetingStartedV2Schema = envelopeV2Schema.extend({
+  type: z.literal("meeting.started"),
+  actors: actorRosterSchema,
+});
+const participantChangedV2Schema = envelopeV2Schema.extend({
+  type: z.enum(["participant.joined", "participant.left"]),
+  actor: actorSchema,
+});
+const connectionChangedV2Schema = envelopeV2Schema.extend({
+  type: z.enum(["meeting.connection_lost", "meeting.connection_recovered"]),
+  reason: z.string().min(1).max(256).nullable(),
+});
+const meetingStoppedV2Schema = envelopeV2Schema.extend({
+  type: z.enum(["meeting.ended", "meeting.aborted"]),
+  reason: z.string().min(1).max(256).nullable(),
+});
+const artifactReadyV2Schema = envelopeV2Schema.extend({
+  type: z.literal("recording.artifact_ready"),
+  endedAt: instantSchema,
+  multitrackManifestKey: storageKeySchema,
+  usersManifestKey: storageKeySchema,
+});
+const authoritativeRecordingReadyV2Schema = envelopeV2Schema.extend({
+  type: z.literal("recording.authoritative_ready"),
+  actors: actorRosterSchema,
+  endedAt: instantSchema,
+  sourceFilesChecksumSha256: sha256Schema,
+  trackCount: z.number().int().min(1).max(64),
+});
+
+const envelopeV3Schema = z.object({
+  schemaVersion: z.literal(3),
+  eventId: identifierSchema,
+  recordingId: identifierSchema,
+  guildId: discordSnowflakeSchema,
+  channelId: discordSnowflakeSchema,
+  occurredAt: instantSchema,
+  actorObservationState: actorObservationStateSchema,
+  actorSemanticsVersion: actorSemanticsVersionSchema,
+  producerCapabilityId: producerCapabilityIdSchema,
+  producerRevision: producerRevisionSchema,
+}).strict();
+
+const meetingStartedV3Schema = envelopeV3Schema.extend({
+  type: z.literal("meeting.started"),
+  actors: actorRosterSchema,
+  rosterState: z.literal("unsealed"),
+});
+const participantChangedV3Schema = envelopeV3Schema.extend({
+  type: z.enum(["participant.joined", "participant.left"]),
+  actor: actorSchema,
+});
+const connectionChangedV3Schema = envelopeV3Schema.extend({
+  type: z.enum(["meeting.connection_lost", "meeting.connection_recovered"]),
+  reason: z.string().min(1).max(256).nullable(),
+});
+const meetingStoppedV3Schema = envelopeV3Schema.extend({
+  type: z.enum(["meeting.ended", "meeting.aborted"]),
+  reason: z.string().min(1).max(256).nullable(),
+});
+const authoritativeRecordingReadyV3Schema = envelopeV3Schema.extend({
+  type: z.literal("recording.authoritative_ready"),
+  actors: actorRosterSchema,
+  rosterState: z.literal("sealed"),
+  endedAt: instantSchema,
+  sourceFilesChecksumSha256: sha256Schema,
+  trackCount: z.number().int().min(1).max(64),
+});
+
+const craigLifecycleEventV1Schema = z.discriminatedUnion("type", [
+  meetingStartedV1Schema,
+  participantChangedV1Schema,
+  connectionChangedV1Schema,
+  meetingStoppedV1Schema,
+  artifactReadyV1Schema,
+  authoritativeRecordingReadyV1Schema,
+]);
+const craigLifecycleEventV2Schema = z.discriminatedUnion("type", [
+  meetingStartedV2Schema,
+  participantChangedV2Schema,
+  connectionChangedV2Schema,
+  meetingStoppedV2Schema,
+  artifactReadyV2Schema,
+  authoritativeRecordingReadyV2Schema,
+]);
+const craigLifecycleEventV3Schema = z.discriminatedUnion("type", [
+  meetingStartedV3Schema,
+  participantChangedV3Schema,
+  connectionChangedV3Schema,
+  meetingStoppedV3Schema,
+  authoritativeRecordingReadyV3Schema,
+]);
+
+export const craigLifecycleEventSchema = z.union([
+  craigLifecycleEventV1Schema,
+  craigLifecycleEventV2Schema,
+  craigLifecycleEventV3Schema,
 ]);
 
 export type CraigLifecycleEvent = z.infer<typeof craigLifecycleEventSchema>;
+export type CraigActor = z.infer<typeof actorSchema>;
+export type CraigActorKind = z.infer<typeof actorKindSchema>;
+export type CraigActorObservationState = z.infer<typeof actorObservationStateSchema>;
+export type CraigRosterState = z.infer<typeof rosterStateSchema>;
 
 export const authoritativeTrackUploadMetadataSchema = z
   .object({
@@ -125,6 +256,7 @@ export const voicePacketBatchSchema = z
 export type VoicePacketBatch = z.infer<typeof voicePacketBatchSchema>;
 
 export const craigPlaybackProtocolVersion = 1 as const;
+export const craigPlaybackCancellationProtocolVersion = 2 as const;
 export const craigPlaybackSampleRateHz = 48_000 as const;
 export const craigPlaybackChannels = 1 as const;
 export const maximumCraigPlaybackPcmBytes = 19_200;
@@ -166,7 +298,7 @@ const playbackFinishSchema = playbackTurnEnvelopeSchema
   .extend({ type: z.literal("playback-finish") })
   .strict();
 
-const playbackCancelSchema = playbackTurnEnvelopeSchema
+const playbackCancelV1Schema = playbackTurnEnvelopeSchema
   .extend({
     type: z.literal("playback-cancel"),
     reason: z.enum([
@@ -179,11 +311,31 @@ const playbackCancelSchema = playbackTurnEnvelopeSchema
   })
   .strict();
 
-export const craigPlaybackCommandSchema = z.discriminatedUnion("type", [
-  playbackStartSchema,
-  playbackAudioChunkSchema,
-  playbackFinishSchema,
-  playbackCancelSchema,
+const playbackCancelV2Schema = z.object({
+  schemaVersion: z.literal(craigPlaybackCancellationProtocolVersion),
+  type: z.literal("playback-cancel"),
+  meetingId: identifierSchema,
+  recordingId: identifierSchema,
+  turnId: identifierSchema,
+  attemptId: identifierSchema,
+  cancellationObservedAtMs: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  reason: z.enum([
+    "barge-in",
+    "meeting-ended",
+    "playback-failed",
+    "runtime-shutdown",
+    "superseded",
+  ]),
+}).strict();
+
+export const craigPlaybackCommandSchema = z.union([
+  z.discriminatedUnion("type", [
+    playbackStartSchema,
+    playbackAudioChunkSchema,
+    playbackFinishSchema,
+    playbackCancelV1Schema,
+  ]),
+  playbackCancelV2Schema,
 ]);
 
 export type CraigPlaybackCommand = z.infer<typeof craigPlaybackCommandSchema>;

@@ -1,9 +1,14 @@
 import type { ParticipantGreetingProfiles } from "./participant-greeting-profiles.js";
+import type { InfinityContextRuntimeActivationV1 } from "@discord-meeting/infinity-context-adapter";
+import type { TwoHourHistoricalQualificationV1 } from "@discord-meeting/meeting-core/meeting-knowledge";
 
 interface PlatformSecrets {
   readonly conversationRuntimeToken?: string;
   readonly craigBearerToken: string;
   readonly discordToken: string;
+  readonly infinityContextToken?: string;
+  readonly infinityContextTopologyKey?: string;
+  readonly meetingKnowledgePrincipalKey?: string;
   readonly postgresUrl: string;
   readonly recordingPlaybackSigningSecret?: string;
   readonly redisUrl: string;
@@ -45,6 +50,20 @@ export interface PlatformConfig {
     readonly voiceChannelId: string;
   };
   readonly liveIngressOwnerMode: "singleton";
+  readonly infinityContext?: {
+    readonly activation: InfinityContextRuntimeActivationV1;
+    readonly baseUrl: string;
+    readonly operationTimeoutMs: number;
+    readonly requestTimeoutMs: number;
+  };
+  readonly meetingKnowledge?: {
+    readonly groundedVoice?: {
+      readonly rolloutEpoch: string;
+      readonly rolloutStateFile: string;
+    };
+    readonly localFinalReply?: true;
+    readonly twoHourHistoricalQualification?: TwoHourHistoricalQualificationV1;
+  };
   readonly nodeEnvironment: "development" | "production" | "test";
   readonly participantGreetingDefaultLocale: "en" | "ru";
   readonly participantGreetingProfiles: ParticipantGreetingProfiles;
@@ -60,6 +79,10 @@ export interface PlatformConfig {
     readonly region: string;
   };
   readonly secrets: PlatformSecrets;
+  /** Immutable source revision embedded in the running Meeting Platform image. */
+  readonly sourceRevision?: string;
+  /** SHA-256 over the canonical Git tree listing embedded at build time. */
+  readonly sourceTreeSha256?: string;
   readonly speaches: { readonly baseUrl: string; readonly model: string };
   readonly subscriptionRuntime: {
     readonly address: string;

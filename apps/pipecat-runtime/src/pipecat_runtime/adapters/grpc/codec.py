@@ -16,6 +16,7 @@ from pipecat_runtime.application.conversation_events import (
     Failed,
     Latency,
     TextDelta,
+    TtsAttestation,
     Usage,
 )
 from pipecat_runtime.application.models import (
@@ -86,6 +87,28 @@ def event_to_message(event: ConversationEvent) -> contract.ConversationRuntimeSe
     match event:
         case Accepted():
             message.accepted.CopyFrom(contract.ConversationAccepted())
+        case TtsAttestation(
+            deployment=deployment,
+            key_id=key_id,
+            model=model,
+            provider=provider,
+            signature=signature,
+            source_revision=source_revision,
+            voice=voice,
+            voice_profile_id=voice_profile_id,
+        ):
+            message.tts_attestation.CopyFrom(
+                contract.ConversationTtsAttestation(
+                    deployment=deployment,
+                    key_id=key_id,
+                    model=model,
+                    provider=provider,
+                    signature=signature,
+                    source_revision=source_revision,
+                    voice=voice,
+                    voice_profile_id=voice_profile_id,
+                )
+            )
         case TextDelta(text=text):
             message.text_delta.CopyFrom(contract.ConversationTextDelta(text=text))
         case AudioStart(sample_rate_hz=sample_rate_hz, channels=channels):

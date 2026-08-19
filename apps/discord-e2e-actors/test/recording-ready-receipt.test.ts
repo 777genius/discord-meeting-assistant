@@ -25,6 +25,56 @@ describe("recording-ready receipt", () => {
     });
   });
 
+  it("accepts a v3 completion receipt only with validated lifecycle actor identity", () => {
+    const result = deriveRecordingReadyReceipt({
+      actorRun: actorRun(),
+      completionReceipts: [completionV3("recording-v3")],
+      expectedRevisions: expectedRevisions(),
+      observedAt: "2026-08-12T10:01:00.000Z",
+      provenance: provenance(),
+    });
+
+    expect(result.authoritativeSource.kind)
+      .toBe("meeting-platform-completion-receipt-v3");
+
+    const missingActors = { ...completionV3("recording-v3"), actors: null };
+    expect(() => deriveRecordingReadyReceipt({
+      actorRun: actorRun(), completionReceipts: [missingActors],
+      expectedRevisions: expectedRevisions(), observedAt: "2026-08-12T10:01:00.000Z",
+      provenance: provenance(),
+    })).toThrow(/requires actors/u);
+
+    const mismatchedActor = {
+      ...completionV3("recording-v3"),
+      actors: [{ actorId: "1533227577286852650", kind: "automation" }],
+    };
+    expect(() => deriveRecordingReadyReceipt({
+      actorRun: actorRun(), completionReceipts: [mismatchedActor],
+      expectedRevisions: expectedRevisions(), observedAt: "2026-08-12T10:01:00.000Z",
+      provenance: provenance(),
+    })).toThrow(/requires actor identity/u);
+  });
+
+  it("accepts the current v4 receipt with exact lifecycle-v3 provenance", () => {
+    const result = deriveRecordingReadyReceipt({
+      actorRun: actorRun(),
+      completionReceipts: [completionV4("recording-v4")],
+      expectedRevisions: expectedRevisions(),
+      observedAt: "2026-08-12T10:01:00.000Z",
+      provenance: provenance(),
+    });
+
+    expect(result.authoritativeSource.kind)
+      .toBe("meeting-platform-completion-receipt-v4");
+    expect(() => deriveRecordingReadyReceipt({
+      actorRun: actorRun(),
+      completionReceipts: [{ ...completionV4("recording-v4"), identityProvenance: null }],
+      expectedRevisions: expectedRevisions(),
+      observedAt: "2026-08-12T10:01:00.000Z",
+      provenance: provenance(),
+    })).toThrow();
+  });
+
   it("fails closed for ambiguous windows", () => {
     expect(() => deriveRecordingReadyReceipt({
       actorRun: actorRun(),
@@ -104,6 +154,41 @@ function completion(recordingId: string) {
     },
     recordingId,
     schemaVersion: 2,
+  };
+}
+
+function completionV3(recordingId: string) {
+  const legacy = completion(recordingId);
+  return {
+    ...legacy,
+    actors: [{ actorId: "1533227577286852649", kind: "human" as const }],
+    authoritativeTracks: [{
+      audioLocator: legacy.recording.speakerAudio[0]!.audioLocator,
+      checksumSha256: "a".repeat(64),
+      sizeBytes: 1_024,
+      speakerId: legacy.recording.speakerAudio[0]!.speakerId,
+      timelineOffsetMs: 0,
+      trackNumber: 1,
+      uploadId: `${recordingId}:track:1`,
+    }],
+    lifecycleSchemaVersion: 2 as const,
+    schemaVersion: 3 as const,
+  };
+}
+
+function completionV4(recordingId: string) {
+  const previous = completionV3(recordingId);
+  return {
+    ...previous,
+    identityProvenance: {
+      actorObservationState: "consistent" as const,
+      actorSemanticsVersion: 1,
+      producerCapabilityId: "meeting.lifecycle.sealed-actor-roster.v1",
+      producerRevision: "0123456789abcdef0123456789abcdef01234567",
+      rosterState: "sealed" as const,
+    },
+    lifecycleSchemaVersion: 3 as const,
+    schemaVersion: 4 as const,
   };
 }
 

@@ -1,3 +1,4 @@
+import { createHash, createHmac } from "node:crypto";
 import { EventEmitter } from "node:events";
 
 import type { Metadata } from "@grpc/grpc-js";
@@ -8,6 +9,7 @@ import {
   type ConversationDuplexCall,
   type ConversationDuplexCallFactory,
 } from "../src/index.js";
+import { decodeGrpcConversationRuntimeEvent } from "../src/grpc-pipecat-protocol.js";
 
 class FakeCall extends EventEmitter implements ConversationDuplexCall {
   public readonly writes: Record<string, unknown>[] = [];
@@ -133,6 +135,51 @@ async function collect<T>(values: AsyncIterable<T>): Promise<T[]> {
 }
 
 describe("GrpcPipecatConversationRuntime", () => {
+  it("accepts only an HMAC-bound concrete TTS runtime attestation", () => {
+    const serviceToken = "test-service-token-1234";
+    const canonical = [
+      "schemaVersion=1",
+      "turnId=turn-1",
+      "attemptId=attempt-1",
+      "voiceProfileId=voice-profile-1",
+      "deployment=pipecat-runtime",
+      "sourceRevision=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "provider=elevenlabs",
+      "model=eleven_multilingual_v2",
+      "voice=voice-1",
+    ].join("\n");
+    const attestationKey = createHmac("sha256", serviceToken)
+      .update("discord-meeting/pipecat-tts-attestation/key/v1")
+      .digest();
+    const attestation = {
+      deployment: "pipecat-runtime",
+      keyId: createHash("sha256").update(attestationKey).digest("hex"),
+      model: "eleven_multilingual_v2",
+      provider: "elevenlabs",
+      signature: createHmac("sha256", attestationKey).update(canonical).digest("hex"),
+      sourceRevision: "a".repeat(40),
+      voice: "voice-1",
+      voiceProfileId: "voice-profile-1",
+    };
+
+    expect(decodeGrpcConversationRuntimeEvent(
+      serverMessage("ttsAttestation", 1, attestation),
+      serviceToken,
+    )).toMatchObject({ type: "tts-attestation", provider: "elevenlabs" });
+    expect(() => decodeGrpcConversationRuntimeEvent(
+      serverMessage("ttsAttestation", 1, { ...attestation, voice: "substituted" }),
+      serviceToken,
+    )).toThrow(/signature is invalid/u);
+    expect(() => decodeGrpcConversationRuntimeEvent(
+      serverMessage("ttsAttestation", 1, {
+        ...attestation,
+        keyId: createHash("sha256").update(serviceToken).digest("hex"),
+        signature: createHmac("sha256", serviceToken).update(canonical).digest("hex"),
+      }),
+      serviceToken,
+    )).toThrow(/signature is invalid/u);
+  });
+
   it("loads the generated local gRPC service without opening a provider call", () => {
     const runtime = new GrpcPipecatConversationRuntime({
       address: "127.0.0.1:50052",

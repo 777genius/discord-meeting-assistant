@@ -22,6 +22,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { WebSocket, type RawData } from "ws";
 
 import { GrpcPipecatConversationRuntime } from "../src/index.js";
+import { proveGroundedConversationTransport } from "./providerless-grounded-transport-proof.js";
 
 const serviceToken = "providerless-e2e-token-123";
 const workspaceRoot = fileURLToPath(new URL("../../../", import.meta.url));
@@ -59,6 +60,7 @@ beforeAll(async () => {
       PIPECAT_RUNTIME_BEARER_TOKEN_FILE: tokenFile,
       PIPECAT_RUNTIME_BIND_HOST: "127.0.0.1",
       PIPECAT_RUNTIME_BIND_PORT: String(port),
+      PIPECAT_RUNTIME_DETERMINISTIC_AUDIO_DELAY_MS: "50",
       PIPECAT_RUNTIME_DETERMINISTIC_TEXT_DELAY_MS: "250",
       PIPECAT_RUNTIME_ENVIRONMENT: "test",
       PIPECAT_RUNTIME_PROFILE: "deterministic-e2e",
@@ -165,12 +167,22 @@ describe("Node to Python providerless conversation E2E", () => {
       done: false,
       value: { type: "accepted" },
     });
+    for (;;) {
+      const next = await iterator.next();
+      if (next.done === true) {
+        throw new Error("providerless cancellation turn ended before first PCM");
+      }
+      if (next.value.type === "audio-chunk") {
+        break;
+      }
+    }
     await started.value.cancel("barge-in");
     const remaining = await collectIteratorWithTimeout(iterator);
     expect(remaining.at(-1)).toMatchObject({
       type: "cancelled",
       reason: "barge-in",
     });
+    expect(remaining.some(({ type }) => type === "audio-chunk")).toBe(false);
     expect(remaining.some(({ type }) => type === "completed")).toBe(false);
 
     const queued = await activeRuntime.startTurn({
@@ -255,6 +267,7 @@ describe("Node to Python providerless conversation E2E", () => {
         meetingId: "meeting-e2e",
         nowMs: 1,
         recordingId: "recording-e2e",
+        roomId: "room-e2e",
         speakerId: "speaker-e2e",
         systemPrompt: request.systemPrompt,
         text: "Ботик, скажи, что ты слушаешь.",
@@ -300,6 +313,14 @@ describe("Node to Python providerless conversation E2E", () => {
       });
     }
   }, 15_000);
+
+  it("bridges a deterministic grounded answer through real gRPC, Pipecat, WebSocket and PCM",
+    () => proveGroundedConversationTransport({
+      openPlaybackHarness,
+      runtime: requireRuntime(runtime),
+      voiceProfileId: request.voiceProfileId,
+      waitForCondition,
+    }), 15_000);
 });
 
 describe("Providerless greeting and farewell playback E2E", () => {

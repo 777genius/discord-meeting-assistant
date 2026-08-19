@@ -30,7 +30,19 @@
 - [ADR-0023: Backward-compatible readable segments in batch v2](0023-backward-compatible-readable-segments.md)
 - [ADR-0024: Possession-based recording playback](0024-possession-based-recording-playback.md)
 - [ADR-0025: Cumulative live summary and layered Discord evidence](0025-cumulative-live-summary-and-layered-discord-evidence.md)
+- [ADR-0027: Durable meeting source and actor identity](0027-durable-meeting-source-and-actor-identity.md)
+- [ADR-0028: Meeting Knowledge test ownership](0028-meeting-knowledge-test-ownership.md)
+- [ADR-0029: Trusted lifecycle evidence](0029-trusted-lifecycle-evidence.md)
+- [ADR-0030: Memory-backed grounded final reply](0030-local-final-reply.md)
+- [ADR-0031: Infinity Context historical memory](0031-infinity-context-historical-memory.md)
+- [ADR-0032: Live finalized grounded memory](0032-live-finalized-grounded-memory.md)
+- [ADR-0034: Bounded answer-model grounding](0034-bounded-answer-model-grounding.md)
+- [ADR-0035: Separate immutable Infinity package and semantic qualification](0035-infinity-package-and-semantic-qualification.md)
+- [ADR-0036: Canonical live-projection reply](0036-canonical-live-projection-reply.md)
+- [ADR-0037: Release-bound Meeting Knowledge qualification](0037-release-bound-meeting-knowledge-qualification.md)
+- [ADR-0038: Projection trust and cluster policy epoch](0038-projection-trust-and-policy-epoch.md)
 
 ## Superseded
 
 - [ADR-0022: Provider-neutral readable transcript segments](0022-provider-neutral-readable-transcript-segments.md)
+- [ADR-0033: Adaptive bounded current grounding](0033-adaptive-current-grounding.md)

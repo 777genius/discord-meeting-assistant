@@ -21,9 +21,9 @@ export interface CampaignVerificationOptions {
 }
 
 const campaignSchemaPolicy = {
-  overlap: { minimumSchemaVersion: 6 },
-  reconnect: { minimumSchemaVersion: 8 },
-  sequential: { minimumSchemaVersion: 6 },
+  overlap: { minimumSchemaVersion: 10 },
+  reconnect: { minimumSchemaVersion: 10 },
+  sequential: { minimumSchemaVersion: 10 },
 } as const;
 
 export function verifyCampaign(
@@ -47,7 +47,7 @@ export function verifyCampaign(
   }
   verifyRequiredScenarios(runs, fail);
   verifyPostCallScenarioSchemaMinima(runs, fail);
-  verifyLifecycleV8(runs, fail);
+  verifyCurrentVoiceQualification(runs, fail);
   verifyCampaignIsolation(runs, fail);
   verifyCampaignDeploymentProvenance(runs, fail);
   return {
@@ -57,18 +57,43 @@ export function verifyCampaign(
   };
 }
 
-function verifyLifecycleV8(
+function verifyCurrentVoiceQualification(
   runs: readonly RetainedE2eEvidence[],
   fail: VerificationFailureReporter,
 ): void {
-  if (!runs.some((run) =>
-    run.schemaVersion >= campaignSchemaPolicy.reconnect.minimumSchemaVersion &&
-    run.actorRun.scenario === "reconnect"
-  )) {
+  const current = runs.filter((run) => run.schemaVersion === 10);
+  if (current.length !== runs.length) {
     fail(
-      "LIFECYCLE_V8_NOT_PROVEN",
-      "campaign requires retained evidence v8 from a reconnect run",
+      "CURRENT_CAMPAIGN_SCHEMA_REQUIRED",
+      "campaign qualification requires every run to use retained evidence schema v10",
     );
+    return;
+  }
+  const voice = current.filter((run) => run.qualificationKind === "voice");
+  if (voice.length !== 1 || voice[0]?.actorRun.scenario !== "reconnect") {
+    fail("CURRENT_VOICE_PROOF_MISSING", "campaign requires one V10 reconnect voice qualification");
+  }
+  const cancellationReasons = new Set(["barge-in", "disconnected", "meeting-ended"]);
+  const cancellations = voice.flatMap((run) => run.conversation.lifecycle.groundedAnswers)
+    .filter((answer) => answer.status === "cancelled" &&
+      cancellationReasons.has(answer.reason));
+  if (cancellations.length === 0) {
+    fail(
+      "GROUNDED_CANCELLATION_PROOF_MISSING",
+      "voice qualification requires barge-in or disconnect/meeting-end cancellation with no late factual PCM",
+    );
+  }
+  const releaseBindings = new Set(current.map((run) => JSON.stringify(run.release)));
+  if (releaseBindings.size !== 1) {
+    fail("CAMPAIGN_RELEASE_CHANGED", "release binding changed between current campaign runs");
+  }
+  const policies = new Set(current.map((run) => run.qualificationPolicy.policySha256));
+  if (policies.size !== 1) {
+    fail("CAMPAIGN_LATENCY_POLICY_CHANGED", "governed latency policy changed between campaign runs");
+  }
+  const durability = new Set(current.map((run) => run.durabilityQualification.artifactSha256));
+  if (durability.size !== 1) {
+    fail("CAMPAIGN_DURABILITY_PROOF_CHANGED", "durability proof changed between campaign runs");
   }
 }
 

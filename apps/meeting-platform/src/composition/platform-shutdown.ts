@@ -17,6 +17,8 @@ import type { GrpcSubscriptionRuntimeTransport } from "../adapters/outbound/subs
 import type { PostCallOutboxDispatcher } from "../application/post-call-outbox-dispatcher.js";
 import type { PlatformHttpHost } from "../http/platform-http-host.js";
 import type { PlatformLiveMeetingRuntime } from "../live-meeting-runtime.js";
+import type { MeetingKnowledgeLocalFinalReplyRuntime } from "./meeting-knowledge.js";
+import type { PlatformLiveFinalizedMemoryRuntime } from "./live-finalized-memory.js";
 import {
   awaitWithinPlatformShutdownTimeout,
   resolvePlatformShutdownTimeoutMilliseconds,
@@ -46,8 +48,11 @@ export interface MeetingPlatformShutdownResources extends PostCallShutdownResour
   };
   readonly discord: Client;
   readonly guildSetupHandler?: DiscordGuildSetupCommandHandler;
+  readonly historicalMemory?: { close(): Promise<void> };
   readonly logger: Logger;
   readonly live?: PlatformLiveMeetingRuntime;
+  readonly liveFinalizedMemory?: PlatformLiveFinalizedMemoryRuntime;
+  readonly meetingKnowledge?: MeetingKnowledgeLocalFinalReplyRuntime;
   readonly pool: Pool;
   readonly recordings: CloseableRecordingIngress;
   readonly runtimeTransport: GrpcSubscriptionRuntimeTransport;
@@ -138,24 +143,46 @@ export async function closeMeetingPlatformResources(
       remainingShutdownMilliseconds(deadlineAtMilliseconds),
     ),
   ]));
+  const meetingKnowledgeFailures = await collectFailures([
+    awaitBounded(
+      "Meeting Knowledge local final reply",
+      startOperation(() => input.meetingKnowledge?.close()),
+      remainingShutdownMilliseconds(deadlineAtMilliseconds),
+    ),
+  ]);
+  failures.push(...meetingKnowledgeFailures);
+  // A timed-out drain still owns Discord, transport, and PostgreSQL work. Keep
+  // those dependencies alive and surface the failure instead of racing their
+  // teardown against an operation that may complete after this function exits.
+  const meetingKnowledgeDrained = meetingKnowledgeFailures.length === 0;
   failures.push(...await collectFailures([
     awaitBounded(
+      "historical memory reconciler",
+      startOperation(() => input.historicalMemory?.close()),
+      remainingShutdownMilliseconds(deadlineAtMilliseconds),
+    ),
+    awaitBounded(
+      "live finalized memory reconciler",
+      startOperation(() => input.liveFinalizedMemory?.close()),
+      remainingShutdownMilliseconds(deadlineAtMilliseconds),
+    ),
+    ...(meetingKnowledgeDrained ? [awaitBounded(
       "Discord client",
       startOperation(() => input.discord.destroy()),
       remainingShutdownMilliseconds(deadlineAtMilliseconds),
-    ),
+    )] : []),
     awaitBounded(
       "Pipecat conversation runtime",
       startOperation(() => input.conversationRuntime?.close()),
       remainingShutdownMilliseconds(deadlineAtMilliseconds),
     ),
-    awaitBounded(
+    ...(meetingKnowledgeDrained ? [awaitBounded(
       "subscription runtime transport",
       startOperation(() => {
         input.runtimeTransport.close();
       }),
       remainingShutdownMilliseconds(deadlineAtMilliseconds),
-    ),
+    )] : []),
     awaitBounded(
       "S3 client",
       startOperation(() => {
@@ -163,11 +190,11 @@ export async function closeMeetingPlatformResources(
       }),
       remainingShutdownMilliseconds(deadlineAtMilliseconds),
     ),
-    awaitBounded(
+    ...(meetingKnowledgeDrained ? [awaitBounded(
       "PostgreSQL pool",
       startOperation(() => input.pool.end()),
       remainingShutdownMilliseconds(deadlineAtMilliseconds),
-    ),
+    )] : []),
     awaitBounded(
       "logger flush",
       flushLoggers([input.logger]),

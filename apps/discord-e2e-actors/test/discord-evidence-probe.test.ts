@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  extractOptionalRecordingPlaybackLink,
   extractRecordingPlaybackLink,
   footerHasMarker,
   threadNameHasLegacyMarker,
@@ -30,6 +31,18 @@ describe("Discord projection marker compatibility", () => {
 });
 
 describe("Discord recording playback link extraction", () => {
+  it("ignores a live draft without a recording link", () => {
+    expect(extractOptionalRecordingPlaybackLink(
+      "# Live notes\n\n[Open thread](https://discord.example.com/thread/1)",
+    )).toBeUndefined();
+  });
+
+  it("still rejects a playback target hidden behind an unsupported label", () => {
+    expect(() => extractOptionalRecordingPlaybackLink(
+      `[Download](https://recordings.example.com/recordings/playback#${capability})`,
+    )).toThrow(/exactly one/u);
+  });
+
   it.each([
     "Listen to the recording",
     "Прослушать запись",

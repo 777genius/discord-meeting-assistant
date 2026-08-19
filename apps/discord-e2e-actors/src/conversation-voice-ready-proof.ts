@@ -1,5 +1,5 @@
 import type { ConversationAnswerObserverReady, ConversationAnswerPlaybackIntent } from
-  "@discord-meeting/conversation-runtime-contracts";
+  "@discord-meeting/conversation-runtime-contracts/playback-readiness";
 
 import type { ConversationVoiceObserverCapture } from "./conversation-voice-observer-config.js";
 import {

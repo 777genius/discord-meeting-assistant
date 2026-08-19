@@ -41,6 +41,10 @@ export async function startPlatformServices(input: {
   readonly dependencyReadiness: PlatformDependencyReadinessPort;
   readonly discord: Client;
   readonly guildSetupHandler: DiscordGuildSetupCommandHandler;
+  readonly historicalMemory?: {
+    assertReady(): Promise<void>;
+    start(): Promise<void>;
+  };
   readonly logger: StartupLogger;
   readonly meetingPlatformInstallUrl: string;
   readonly outboxDispatcher: PostCallOutboxDispatchPort;
@@ -54,6 +58,7 @@ export async function startPlatformServices(input: {
 }): Promise<void> {
   await input.recordings.acquireExclusiveSpoolOwnership();
   await waitForCoreDependencies(input);
+  await input.historicalMemory?.assertReady();
   await loginDiscord(input.config, input.discord);
   await registerDiscordGuildSetupCommand(input.discord);
   await input.dependencyReadiness.assertReady();
@@ -61,11 +66,31 @@ export async function startPlatformServices(input: {
   await input.worker.waitUntilReady();
   await startPostCallWorker(input.worker, input.logger);
   await input.outboxDispatcher.dispatchPending();
+  startHistoricalMemory(input.historicalMemory, input.logger);
   await input.server.start();
   input.logger.info("Meeting platform is ready", {
     discordInstallUrl: input.meetingPlatformInstallUrl,
     port: input.config.port,
   });
+}
+
+function startHistoricalMemory(
+  historicalMemory: { start(): Promise<void> } | undefined,
+  logger: StartupLogger,
+): void {
+  if (historicalMemory === undefined) {
+    return;
+  }
+  // Historical indexing is derived and may need to drain a large external
+  // backlog. Observe its lifecycle without holding HTTP admission or losing a
+  // synchronous/asynchronous startup failure as an unhandled rejection.
+  void Promise.resolve()
+    .then(() => historicalMemory.start())
+    .catch((error: unknown) => {
+      logger.error("Historical memory runtime failed", {
+        errorType: error instanceof Error ? error.name : "unknown",
+      });
+    });
 }
 
 async function waitForCoreDependencies(input: {

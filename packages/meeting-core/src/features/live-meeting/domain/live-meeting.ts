@@ -1,5 +1,6 @@
 import {
   DomainInvariantError,
+  requireNonEmpty,
   requireNonNegativeInteger,
 } from "./errors.js";
 import {
@@ -30,6 +31,8 @@ export interface LiveMeetingSnapshot {
   readonly meetingId: string;
   readonly projectedRevision: number;
   readonly projectionExternalId: string | null;
+  /** Opaque authenticated identity that last wrote the projection. */
+  readonly projectionPublisherIdentity?: string | null;
   readonly publicationTargetId: string;
   readonly revision: number;
   readonly startedAtMs: number;
@@ -62,6 +65,38 @@ function restoreSummary(
   return normalizeLiveSummary(snapshot.draftSummary, undefined, snapshot.draftSummary.revision);
 }
 
+function isPublisherRotation(input: {
+  readonly currentPublisherIdentity: string | null;
+  readonly hasExistingProjection: boolean;
+  readonly nextPublisherIdentity: string;
+  readonly receiptRotated: boolean;
+}): boolean {
+  const knownPublisherRotated = input.currentPublisherIdentity !== null &&
+    input.currentPublisherIdentity.length > 0 &&
+    input.currentPublisherIdentity !== input.nextPublisherIdentity;
+  const legacyPublisherRotated = input.hasExistingProjection &&
+    input.currentPublisherIdentity === null &&
+    input.nextPublisherIdentity.length > 0 &&
+    input.receiptRotated;
+  return knownPublisherRotated || legacyPublisherRotated;
+}
+
+function normalizeProjectionPublisherIdentity(
+  publisherIdentity: string | undefined,
+  currentPublisherIdentity: string | null,
+): string {
+  if (publisherIdentity !== undefined) {
+    return requireNonEmpty(publisherIdentity, "projection.publisherIdentity");
+  }
+  if (currentPublisherIdentity !== null) {
+    throw new DomainInvariantError(
+      "CONFLICTING_COMPLETION",
+      "publisher identity cannot be omitted after ownership is established",
+    );
+  }
+  return "";
+}
+
 export class LiveMeeting {
   public readonly meetingId: MeetingId;
   public readonly publicationTargetId: PublicationTargetId;
@@ -73,6 +108,7 @@ export class LiveMeeting {
   private summaryDraft: LiveSummaryDraftSnapshot | null;
   private summaryTimestampMs: number | null;
   private externalProjectionId: ExternalPublicationId | null;
+  private projectionPublisherIdentity: string | null;
   private lastProjectedRevision: number;
 
   private constructor(snapshot: LiveMeetingSnapshot) {
@@ -94,6 +130,14 @@ export class LiveMeeting {
     this.externalProjectionId = snapshot.projectionExternalId === null
       ? null
       : createExternalPublicationId(snapshot.projectionExternalId);
+    this.projectionPublisherIdentity = snapshot.projectionPublisherIdentity === null ||
+        snapshot.projectionPublisherIdentity === undefined ||
+        snapshot.projectionPublisherIdentity.length === 0
+      ? null
+      : requireNonEmpty(
+          snapshot.projectionPublisherIdentity,
+          "liveMeeting.projectionPublisherIdentity",
+        );
     this.lastProjectedRevision = requireNonNegativeInteger(
       snapshot.projectedRevision,
       "liveMeeting.projectedRevision",
@@ -108,6 +152,7 @@ export class LiveMeeting {
       meetingId: input.meetingId,
       projectedRevision: 0,
       projectionExternalId: null,
+      projectionPublisherIdentity: null,
       publicationTargetId: input.publicationTargetId,
       revision: 0,
       startedAtMs: input.startedAtMs,
@@ -177,14 +222,37 @@ export class LiveMeeting {
     this.incrementRevision();
   }
 
-  public completeProjection(externalPublicationId: string, projectedRevision: number): boolean {
+  public completeProjection(
+    externalPublicationId: string,
+    projectedRevision: number,
+    publisherIdentity?: string,
+  ): boolean {
     const normalized = createExternalPublicationId(externalPublicationId);
+    const normalizedPublisherIdentity = normalizeProjectionPublisherIdentity(
+      publisherIdentity,
+      this.projectionPublisherIdentity,
+    );
     const revision = requireNonNegativeInteger(projectedRevision, "projection.projectedRevision");
     if (revision > this.currentRevision) {
       throw new DomainInvariantError("CONFLICTING_COMPLETION", "cannot project a future revision");
     }
     const receiptRotated = this.externalProjectionId !== null &&
       this.externalProjectionId !== normalized;
+    const publisherRotated = isPublisherRotation({
+      currentPublisherIdentity: this.projectionPublisherIdentity,
+      hasExistingProjection: this.externalProjectionId !== null,
+      nextPublisherIdentity: normalizedPublisherIdentity,
+      receiptRotated,
+    });
+    if (
+      publisherRotated &&
+      (!receiptRotated || revision !== this.currentRevision)
+    ) {
+      throw new DomainInvariantError(
+        "CONFLICTING_COMPLETION",
+        "publisher rotation requires a current projection with a new receipt",
+      );
+    }
     if (receiptRotated && revision < this.lastProjectedRevision) {
       throw new DomainInvariantError(
         "CONFLICTING_COMPLETION",
@@ -196,10 +264,20 @@ export class LiveMeeting {
       this.externalProjectionId !== null &&
       revision <= this.lastProjectedRevision
     ) {
+      if (
+        this.projectionPublisherIdentity === null &&
+        normalizedPublisherIdentity.length > 0 &&
+        revision === this.lastProjectedRevision
+      ) {
+        this.projectionPublisherIdentity = normalizedPublisherIdentity;
+        this.incrementRevision();
+        return true;
+      }
       return false;
     }
 
     this.externalProjectionId = normalized;
+    this.projectionPublisherIdentity = normalizedPublisherIdentity;
     this.incrementRevision();
     this.lastProjectedRevision = this.currentRevision;
     return true;
@@ -232,6 +310,7 @@ export class LiveMeeting {
       meetingId: this.meetingId,
       projectedRevision: this.lastProjectedRevision,
       projectionExternalId: this.externalProjectionId,
+      projectionPublisherIdentity: this.projectionPublisherIdentity,
       publicationTargetId: this.publicationTargetId,
       revision: this.currentRevision,
       startedAtMs: this.startedAtMs,

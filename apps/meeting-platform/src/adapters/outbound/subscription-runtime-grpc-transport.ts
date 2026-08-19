@@ -95,12 +95,14 @@ export class GrpcSubscriptionRuntimeTransport
 
   public async execute(
     request: SubscriptionRuntimeAgentTaskRequest,
+    options: { readonly signal?: AbortSignal } = {},
   ): Promise<SubscriptionRuntimeTaskResult> {
     const response = await callUnary(
       this.client.runAgentTask.bind(this.client),
       toGrpcTaskRequest(request),
       this.metadata,
       request.timeoutMs,
+      options.signal,
     );
     return fromGrpcTaskResponse(response);
   }
@@ -238,15 +240,41 @@ async function callUnary(
   request: unknown,
   metadata: Metadata,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<unknown> {
+  signal?.throwIfAborted();
   return await new Promise((resolve, reject) => {
-    method(request, metadata, { deadline: Date.now() + timeoutMs }, (error, response) => {
+    let settled = false;
+    let call: ClientUnaryCall | undefined;
+    const finish = (outcome: () => void): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      signal?.removeEventListener("abort", abort);
+      outcome();
+    };
+    const abort = (): void => {
+      call?.cancel();
+      finish(() => {
+        reject(signal?.reason ?? new Error("Subscription runtime task cancelled"));
+      });
+    };
+    call = method(request, metadata, { deadline: Date.now() + timeoutMs }, (error, response) => {
       if (error !== null) {
-        reject(new Error("Subscription runtime transport failed", { cause: error }));
+        finish(() => {
+          reject(new Error("Subscription runtime transport failed", { cause: error }));
+        });
       } else {
-        resolve(response);
+        finish(() => {
+          resolve(response);
+        });
       }
     });
+    signal?.addEventListener("abort", abort, { once: true });
+    if (signal?.aborted === true) {
+      abort();
+    }
   });
 }
 

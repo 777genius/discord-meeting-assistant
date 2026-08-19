@@ -29,8 +29,10 @@ export interface LiveDiscordPlaybackLinkClock {
 export interface LiveDiscordPlaybackReadinessProof {
   readonly capabilitySha256: string;
   readonly messageId: string;
+  readonly readinessExpectation: "already-ready" | "processing-to-ready";
   readonly recordingId: string;
   readonly status: "ready";
+  readonly statuses: readonly ("processing" | "ready")[];
   readonly trackCount: number;
 }
 
@@ -95,10 +97,22 @@ export const liveDiscordPlaybackLinkProofSchema = z.object({
   readiness: z.object({
     capabilitySha256: z.string().regex(/^[a-f\d]{64}$/u),
     messageId: identifierSchema,
+    readinessExpectation: z.enum(["already-ready", "processing-to-ready"]),
     recordingId: identifierSchema,
     status: z.literal("ready"),
+    statuses: z.array(z.enum(["processing", "ready"])).min(1).max(601),
     trackCount: z.number().int().min(1).max(11),
-  }).strict(),
+  }).strict().superRefine((readiness, context) => {
+    if (readiness.statuses.at(-1) !== "ready" ||
+      readiness.statuses.slice(0, -1).some((status) => status !== "processing")) {
+      context.addIssue({ code: "custom", message: "Playback readiness statuses must terminate processing with ready" });
+    }
+    if ((readiness.readinessExpectation === "already-ready" && readiness.statuses.length !== 1) ||
+      (readiness.readinessExpectation === "processing-to-ready" &&
+        !readiness.statuses.slice(0, -1).includes("processing"))) {
+      context.addIssue({ code: "custom", message: "Playback readiness statuses do not match their expectation" });
+    }
+  }),
   messageId: identifierSchema,
   observerArmedAt: pollTimingSchema,
   pollIntervalMs: safeNonnegativeIntegerSchema.refine((value) => value > 0),
@@ -212,7 +226,10 @@ export async function observeFirstSeenLiveDiscordPlaybackLink(
           firstSeenPollCompletedAt: candidate.firstSeenPollCompletedAt,
           pollIntervalMs: input.pollIntervalMs,
           link,
-          readiness: Object.freeze({ ...readiness }),
+          readiness: {
+            ...readiness,
+            statuses: [...readiness.statuses],
+          },
           timingProvenance: Object.freeze({
             candidateSnapshotSha256: candidate.snapshotSha256,
             kind: "first-observed-then-ready" as const,

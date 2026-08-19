@@ -7,6 +7,7 @@ import type {
   LiveRuntimeLogger,
   LiveTranscriptionEvent,
 } from "./contracts.js";
+import { FarewellPlaybackAttempts } from "./farewell-playback-attempts.js";
 
 const fastPathFenceMs = 100;
 const maximumContextTurns = 5;
@@ -33,12 +34,19 @@ export class FarewellBridge {
   private readonly contextTurns: LiveFarewellTurn[] = [];
   private pendingFastPath: PendingFastPath | null = null;
   private readonly policy = new MeetingFarewellPolicy();
+  private readonly playback: FarewellPlaybackAttempts;
   private readonly presentParticipantIds = new Set<string>();
   private queuedReview: LiveFarewellClassificationInput | null = null;
   private revision = 0;
   private readonly tasks = new Set<Promise<void>>();
 
-  public constructor(private readonly dependencies: FarewellBridgeDependencies) {}
+  public constructor(private readonly dependencies: FarewellBridgeDependencies) {
+    this.playback = new FarewellPlaybackAttempts({
+      ...dependencies,
+      isClosed: () => this.closed,
+      policy: this.policy,
+    });
+  }
 
   public participantsPresent(participantIds: readonly string[]): void {
     for (const participantId of participantIds) {
@@ -122,7 +130,11 @@ export class FarewellBridge {
       return;
     }
     this.pendingFastPath = null;
-    this.track(this.play(pending.locale, pending.reason, pending.evidenceTurnIds));
+    this.track(this.playback.play(
+      pending.locale,
+      pending.reason,
+      pending.evidenceTurnIds,
+    ));
   }
 
   public close(): void {
@@ -191,7 +203,7 @@ export class FarewellBridge {
         !this.dependencies.isMeetingFinishing() &&
         input.revision === this.revision
       ) {
-        await this.play(
+        await this.playback.play(
           outcome,
           "semantic",
           [input.turns.at(-1)?.turnId].filter(
@@ -214,69 +226,6 @@ export class FarewellBridge {
       }
     });
     this.classificationPromise = running;
-  }
-
-  private async play(
-    locale: "en" | "ru",
-    reason: string,
-    evidenceTurnIds: readonly string[],
-  ): Promise<void> {
-    const farewells = this.dependencies.configuration.farewells;
-    if (
-      farewells === undefined ||
-      this.closed ||
-      this.dependencies.isMeetingFinishing()
-    ) {
-      return;
-    }
-    const cue = farewells.cues.select({
-      locale,
-      meetingId: this.dependencies.meetingId,
-      voiceProfileId: this.dependencies.configuration.voiceProfileId,
-    });
-    if (cue === null || !this.policy.reserve()) {
-      return;
-    }
-    try {
-      const outcome = await this.dependencies.configuration.coordinator
-        .playPreparedCue({
-          cueId: cue.cueId,
-          locale,
-          meetingId: this.dependencies.meetingId,
-          nowMs: this.nowMilliseconds(),
-          pcmChunks: cue.pcmChunks,
-          playbackAttemptId: cue.playbackAttemptId,
-          preemptive: true,
-          recordingId: this.dependencies.meetingId,
-          speakerId: "farewell-system",
-          turnId: "meeting-farewell:v1",
-          voiceProfileId: this.dependencies.configuration.voiceProfileId,
-        });
-      if (outcome.status === "active" || outcome.status === "queued") {
-        const settlement = await this.dependencies.configuration.coordinator
-          .whenTurnPlaybackSettled(
-            this.dependencies.meetingId,
-            "meeting-farewell:v1",
-          );
-        if (settlement === "played") {
-          this.dependencies.logger.info("Meeting farewell playback settled", {
-            evidenceTurnIds,
-            locale,
-            meetingId: this.dependencies.meetingId,
-            playbackAttemptId: cue.playbackAttemptId,
-            reason,
-            turnId: "meeting-farewell:v1",
-          });
-        }
-      }
-    } catch (error) {
-      this.dependencies.logger.warn("Meeting farewell failed", {
-        errorName: error instanceof Error ? error.name : "UnknownError",
-        locale,
-        meetingId: this.dependencies.meetingId,
-        reason,
-      });
-    }
   }
 
   private track(task: Promise<void>): void {

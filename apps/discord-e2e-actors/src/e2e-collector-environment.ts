@@ -31,6 +31,7 @@ export const collectorEnvironmentSchema = z.object({
   DISCORD_E2E_EXPECTED_PIPECAT_SOURCE_REVISION: sourceRevision.optional(),
   DISCORD_E2E_EXPECTED_SUBSCRIPTION_RUNTIME_SOURCE_REVISION: sourceRevision,
   DISCORD_E2E_FIXTURE_MANIFEST: z.string().min(1).default("test/fixtures/manifest.v1.json"),
+  DISCORD_E2E_HOSTED_RELEASE_BINDING_INPUT: absolutePath,
   DISCORD_E2E_KEYCHAIN_SERVICE: z.string().min(1).default("discord-voice-bot-e2e"),
   DISCORD_E2E_MUTATION_TARGET: z.literal("test-only"),
   DISCORD_E2E_READY_RECEIPT_INPUT: absolutePath,
@@ -51,7 +52,7 @@ export const collectorEnvironmentSchema = z.object({
   DISCORD_E2E_RUN_ID: correlationId,
   DISCORD_E2E_SECRET_DIRECTORY: absolutePath.optional(),
   DISCORD_E2E_SERVICE_LEVELS_INPUT: absolutePath.optional(),
-  DISCORD_E2E_SERVICE_LEVEL_THRESHOLDS_INPUT: absolutePath.optional(),
+  DISCORD_E2E_SERVICE_LEVEL_THRESHOLDS_INPUT: absolutePath,
   DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_INPUT: absolutePath.optional(),
   DISCORD_E2E_SUT_ACCOUNT: z.string().min(1).default("sut"),
 }).superRefine((value, context) => {
@@ -61,14 +62,13 @@ export const collectorEnvironmentSchema = z.object({
     value.DISCORD_E2E_DISCORD_PLAYBACK_LINK_PROOF_INPUT,
     value.DISCORD_E2E_CONVERSATION_VOICE_INPUTS,
     value.DISCORD_E2E_SERVICE_LEVELS_INPUT,
-    value.DISCORD_E2E_SERVICE_LEVEL_THRESHOLDS_INPUT,
     value.DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_INPUT,
   ];
   if (conversationInputs.some((input) => input !== undefined) &&
     conversationInputs.some((input) => input === undefined)) {
     context.addIssue({
       code: "custom",
-      message: "Botik speaker ID, conversation voice, service levels, thresholds, and supplemental playback must be supplied together",
+      message: "Botik speaker ID, conversation voice, service levels, playback proof, and supplemental playback must be supplied together",
       path: ["DISCORD_E2E_CONVERSATION_VOICE_INPUTS"],
     });
   }

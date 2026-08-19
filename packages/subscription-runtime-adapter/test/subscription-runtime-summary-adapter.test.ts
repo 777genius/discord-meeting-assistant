@@ -597,12 +597,101 @@ describe("SubscriptionRuntimeSummaryAdapter runtime failures", () => {
   });
 });
 
+describe("SubscriptionRuntimeSummaryAdapter action terminology postcondition", () => {
+  const technicalVocabulary = ["Redis", "Redis queue"] as const;
+  const redisRequest: SummaryGenerationRequest = {
+    ...requestFixture,
+    transcript: {
+      ...requestFixture.transcript,
+      turns: [
+        ...requestFixture.transcript.turns,
+        {
+          endMs: 6_000,
+          speakerId: "speaker-b",
+          startMs: 5_100,
+          text: "Сначала проверю Redis queue.",
+          turnId: "turn-redis-queue",
+        },
+        {
+          endMs: 7_000,
+          speakerId: "speaker-b",
+          startMs: 6_100,
+          text: "Проверю Redis и idempotency key; результат оставлю в Discord thread.",
+          turnId: "turn-redis-action",
+        },
+      ],
+    },
+  };
+  const truncatedRedisOutput: JsonObject = {
+    ...validStructuredOutput,
+    actionItems: [{
+      deadline: "к пятнице",
+      evidenceTurnIds: ["turn-redis-action"],
+      ownerSpeakerId: "speaker-b",
+      text: "Проверить Redis и idempotency key; результат оставить в Discord thread.",
+    }],
+  };
+  const repairedRedisOutput: JsonObject = {
+    ...truncatedRedisOutput,
+    actionItems: [{
+      deadline: "к пятнице",
+      evidenceTurnIds: ["turn-redis-action"],
+      ownerSpeakerId: "speaker-b",
+      text: "Проверить Redis queue и idempotency key; результат оставить в Discord thread.",
+    }],
+  };
+
+  it("repairs the r60 Redis truncation once with a distinct stable runId", async () => {
+    let attempt = 0;
+    const transport = new FakeTransport((request) => {
+      attempt += 1;
+      return completedResult(
+        request,
+        attempt === 1 ? truncatedRedisOutput : repairedRedisOutput,
+      );
+    });
+
+    const result = await createAdapter(transport, technicalVocabulary).generate(redisRequest);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.actionItems[0]?.text).toContain("Redis queue");
+    }
+    expect(transport.requests).toHaveLength(2);
+    expect(transport.requests[1]?.runId).not.toBe(transport.requests[0]?.runId);
+    expect(transport.requests[1]?.context.correlationId).toBe(
+      transport.requests[1]?.runId,
+    );
+    expect(transport.requests[1]?.task.prompt).toBe(transport.requests[0]?.task.prompt);
+    expect(transport.requests[1]?.task.systemPrompt).toContain('["Redis queue"]');
+  });
+
+  it("fails closed when the single terminology repair is still invalid", async () => {
+    const transport = new FakeTransport((request) =>
+      completedResult(request, truncatedRedisOutput),
+    );
+
+    const result = await createAdapter(transport, technicalVocabulary).generate(redisRequest);
+
+    expect(result).toMatchObject({
+      failure: {
+        code: "SUBSCRIPTION_RUNTIME_SUMMARY_INVALID_PROVIDER_RESPONSE",
+        retryable: false,
+      },
+      ok: false,
+    });
+    expect(transport.requests).toHaveLength(2);
+  });
+});
+
 function createAdapter(
   transport: SubscriptionRuntimeTransportPort,
+  technicalVocabulary?: readonly string[],
 ): SubscriptionRuntimeSummaryAdapter {
   return new SubscriptionRuntimeSummaryAdapter(transport, {
     expectedLauncherSha256: launcherSha256,
     outputLanguage: "English",
+    ...(technicalVocabulary === undefined ? {} : { technicalVocabulary }),
   });
 }
 

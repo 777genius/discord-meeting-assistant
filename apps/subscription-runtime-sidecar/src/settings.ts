@@ -7,18 +7,21 @@ import {
   conversationAnswerPolicyVersion,
   incrementalMeetingSummaryOutputSchemaName,
   incrementalMeetingSummaryPolicyVersion,
+  knowledgeAnswerOutputSchemaName,
+  knowledgeAnswerPolicyVersion,
+  knowledgeCoverageOutputSchemaName,
+  knowledgeCoveragePolicyVersion,
   meetingSummaryOutputSchemaName,
   meetingSummaryPolicyVersion,
   subscriptionRuntimeConversationMaxOutputTokens,
   subscriptionRuntimeConversationModel,
-  subscriptionRuntimeConversationPurpose,
   subscriptionRuntimeConversationReasoningEffort,
   subscriptionRuntimeIncrementalMaxOutputTokens,
   subscriptionRuntimeModel,
   subscriptionRuntimeIncrementalModel,
-  subscriptionRuntimeIncrementalPurpose,
   subscriptionRuntimeIncrementalReasoningEffort,
-  subscriptionRuntimePurpose,
+  subscriptionRuntimeKnowledgeAnswerMaxOutputTokens,
+  subscriptionRuntimeKnowledgeCoverageMaxOutputTokens,
   subscriptionRuntimeReasoningEffort,
   subscriptionRuntimeSummaryMaxOutputTokens,
 } from "@discord-meeting/subscription-runtime-adapter";
@@ -27,6 +30,7 @@ import {
   providerInstanceId,
   runtimePackageName,
 } from "./constants.js";
+import { assertDeploymentPurposeProfiles } from "./deployment-purpose-policy.js";
 import type { SubscriptionRuntimeAccount } from "./subscription-account-pool.js";
 import {
   maximumAccountPoolSize,
@@ -69,11 +73,15 @@ const deploymentPolicySchema = z
           z.literal(meetingSummaryPolicyVersion),
           z.literal(incrementalMeetingSummaryPolicyVersion),
           z.literal(conversationAnswerPolicyVersion),
+          z.literal(knowledgeAnswerPolicyVersion),
+          z.literal(knowledgeCoveragePolicyVersion),
         ]),
         maxOutputTokens: z.union([
           z.literal(subscriptionRuntimeSummaryMaxOutputTokens),
           z.literal(subscriptionRuntimeIncrementalMaxOutputTokens),
           z.literal(subscriptionRuntimeConversationMaxOutputTokens),
+          z.literal(subscriptionRuntimeKnowledgeAnswerMaxOutputTokens),
+          z.literal(subscriptionRuntimeKnowledgeCoverageMaxOutputTokens),
         ]),
         reasoningEffort: z.union([
           z.literal(subscriptionRuntimeReasoningEffort),
@@ -91,6 +99,8 @@ const deploymentPolicySchema = z
           z.literal(meetingSummaryOutputSchemaName),
           z.literal(incrementalMeetingSummaryOutputSchemaName),
           z.literal(conversationAnswerOutputSchemaName),
+          z.literal(knowledgeAnswerOutputSchemaName),
+          z.literal(knowledgeCoverageOutputSchemaName),
         ]),
         isolatedCwd: z.string().min(1),
       }),
@@ -222,80 +232,14 @@ async function assertDeploymentPolicy(
   if (!parsed.success) {
     rejectDeploymentPolicy();
   }
-  const profiles = requiredPurposeProfiles(parsed.data);
-  assertFinalPurposeProfile(profiles.final);
-  assertIncrementalPurposeProfile(profiles.incremental);
-  assertConversationPurposeProfile(profiles.conversation);
-  assertDeploymentWiring(parsed.data, profiles, env, settings);
+  assertDeploymentPurposeProfiles(parsed.data.purposeProfiles, settings.isolatedCwd);
+  assertDeploymentWiring(parsed.data, env, settings);
 }
 
 type DeploymentPolicy = z.infer<typeof deploymentPolicySchema>;
-type PurposeProfile = DeploymentPolicy["purposeProfiles"][string];
-
-interface RequiredPurposeProfiles {
-  readonly conversation: PurposeProfile;
-  readonly final: PurposeProfile;
-  readonly incremental: PurposeProfile;
-}
-
-function requiredPurposeProfiles(policy: DeploymentPolicy): RequiredPurposeProfiles {
-  const names = Object.keys(policy.purposeProfiles).toSorted();
-  if (
-    names.length !== 3 ||
-    names[0] !== subscriptionRuntimeConversationPurpose ||
-    names[1] !== subscriptionRuntimePurpose ||
-    names[2] !== subscriptionRuntimeIncrementalPurpose
-  ) {
-    rejectDeploymentPolicy();
-  }
-  const final = policy.purposeProfiles[subscriptionRuntimePurpose];
-  const incremental = policy.purposeProfiles[subscriptionRuntimeIncrementalPurpose];
-  const conversation = policy.purposeProfiles[subscriptionRuntimeConversationPurpose];
-  if (final === undefined || incremental === undefined || conversation === undefined) {
-    rejectDeploymentPolicy();
-  }
-  return { conversation, final, incremental };
-}
-
-function assertFinalPurposeProfile(profile: PurposeProfile): void {
-  if (
-    profile.model !== subscriptionRuntimeModel ||
-    profile.policyVersion !== meetingSummaryPolicyVersion ||
-    profile.maxOutputTokens !== subscriptionRuntimeSummaryMaxOutputTokens ||
-    profile.reasoningEffort !== subscriptionRuntimeReasoningEffort ||
-    profile.outputSchemaName !== meetingSummaryOutputSchemaName
-  ) {
-    rejectDeploymentPolicy();
-  }
-}
-
-function assertIncrementalPurposeProfile(profile: PurposeProfile): void {
-  if (
-    profile.model !== subscriptionRuntimeIncrementalModel ||
-    profile.policyVersion !== incrementalMeetingSummaryPolicyVersion ||
-    profile.maxOutputTokens !== subscriptionRuntimeIncrementalMaxOutputTokens ||
-    profile.reasoningEffort !== subscriptionRuntimeIncrementalReasoningEffort ||
-    profile.outputSchemaName !== incrementalMeetingSummaryOutputSchemaName
-  ) {
-    rejectDeploymentPolicy();
-  }
-}
-
-function assertConversationPurposeProfile(profile: PurposeProfile): void {
-  if (
-    profile.model !== subscriptionRuntimeConversationModel ||
-    profile.policyVersion !== conversationAnswerPolicyVersion ||
-    profile.maxOutputTokens !== subscriptionRuntimeConversationMaxOutputTokens ||
-    profile.reasoningEffort !== subscriptionRuntimeConversationReasoningEffort ||
-    profile.outputSchemaName !== conversationAnswerOutputSchemaName
-  ) {
-    rejectDeploymentPolicy();
-  }
-}
 
 function assertDeploymentWiring(
   policy: DeploymentPolicy,
-  profiles: RequiredPurposeProfiles,
   env: NodeJS.ProcessEnv,
   settings: SidecarSettings,
 ): void {
@@ -305,9 +249,6 @@ function assertDeploymentWiring(
     policy.custody.authPoolManifestPath !== settings.authPoolManifestPath ||
     policy.custody.stateRoot !== settings.stateRoot ||
     policy.custody.localEncryptionKeyFile !== settings.localEncryptionKeyFile ||
-    profiles.final.isolatedCwd !== settings.isolatedCwd ||
-    profiles.incremental.isolatedCwd !== settings.isolatedCwd ||
-    profiles.conversation.isolatedCwd !== settings.isolatedCwd ||
     !policy.environment.denyKeySuffixes.includes("_API_KEY") ||
     !policy.environment.denyKeySuffixes.includes("_API_KEY_FILE")
   ) {

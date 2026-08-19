@@ -75,10 +75,65 @@ describe("hosted campaign strict plan builder", () => {
     const observer = result.plan.children.find(({ childId }) => childId === "conversation-observer")!;
     expect(observer.environment.DISCORD_E2E_CONVERSATION_VOICE_CRAIG_BOT_ID)
       .toBe(result.plan.target.botikApplicationId);
-    expect(JSON.parse(observer.environment.DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON!))
-      .toHaveLength(5);
+    expect(observer.environment.DISCORD_E2E_CONVERSATION_VOICE_CAPTURE_TIMEOUT_MS)
+      .toBe("60000");
+    expect(observer.environment.DISCORD_E2E_CONVERSATION_VOICE_READY_TIMEOUT_MS)
+      .toBe("120000");
+    expect(observer.environment.DISCORD_E2E_CONVERSATION_VOICE_THINKING_CUE_MAX_DURATION_MS)
+      .toBe("10000");
+    expect(observer.environment.DISCORD_E2E_CONVERSATION_VOICE_EXPECTED_DURATION_MS)
+      .toBe("500");
+    expect(observer.environment.DISCORD_E2E_CONVERSATION_VOICE_TURN_ID)
+      .toBe("participant-greeting:" + result.plan.target.observerApplicationId);
+    const additionalCaptures = JSON.parse(
+      observer.environment.DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON!,
+    ) as {
+      readonly expectedDuration: {
+        readonly maximumMilliseconds: number;
+        readonly minimumMilliseconds: number;
+      };
+      readonly purpose: string;
+      readonly turnId?: string;
+    }[];
+    expect(additionalCaptures).toHaveLength(5);
+    expect(additionalCaptures.slice(0, 3).map(({
+      expectedDuration,
+      purpose,
+      turnId,
+    }) => ({
+      expectedDuration,
+      purpose,
+      turnId,
+    }))).toEqual([
+      result.plan.target.speakerAApplicationId,
+      result.plan.target.speakerBApplicationId,
+      result.plan.target.speakerDApplicationId,
+    ].map((participantId, index) => ({
+      expectedDuration: {
+        maximumMilliseconds: 1_250,
+        minimumMilliseconds: index < 2 ? 750 : 500,
+      },
+      purpose: "greeting",
+      turnId: "participant-greeting:" + participantId,
+    })));
     expect(result.plan.children.filter(({ entrypoint }) => entrypoint === "actor")).toHaveLength(3);
+    const reconnectActor = result.plan.children.find(({ childId }) => childId === "actor-3")!;
+    expect(reconnectActor.startBefore).toEqual({
+      action: { kind: "observer-subscribed" },
+      kind: "barrier",
+      ordinal: 3,
+      runId: "campaign-run-3",
+    });
+    expect(reconnectActor.releaseGate?.action).toEqual({ kind: "observer-subscribed" });
     expect(result.plan.children.filter(({ entrypoint }) => entrypoint === "recording-ready")).toHaveLength(3);
+    expect(result.plan.children.filter(({ entrypoint }) => entrypoint === "actor")
+      .every(({ environment }) => environment.DISCORD_E2E_RECORDER_BOT_ID === result.plan.target.botikApplicationId))
+      .toBe(true);
+    const serviceLevelSources = result.plan.children.find(({ childId }) => childId === "service-level-sources")!;
+    expect(serviceLevelSources.environment.DISCORD_E2E_SLA_CLOCK_PREFLIGHT_INPUT)
+      .toBe("/private/e2e/campaigns/campaign-2026-08-12/launch-clock-preflight.json");
+    expect(serviceLevelSources.environment.DISCORD_E2E_SLA_CLOCK_PREFLIGHT_INPUT)
+      .not.toBe(definition().clockPreflightPath);
   });
 
   it("keeps every generated local path under the owned campaign directory", () => {

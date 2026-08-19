@@ -19,6 +19,7 @@ export type HostedCampaignRuns = readonly [
 interface CampaignPaths {
   readonly artifactRoot: string;
   readonly campaignProof: string;
+  readonly launchClockPreflight: string;
   readonly provenanceSnapshot: string;
   readonly run: (ordinal: 1 | 2 | 3, leaf: string) => string;
 }
@@ -81,6 +82,7 @@ export function makeHostedCampaignChildContext(
   const paths: CampaignPaths = Object.freeze({
     artifactRoot: safeJoin(ownedRoot, "barriers"),
     campaignProof: safeJoin(ownedRoot, "campaign-proof.json"),
+    launchClockPreflight: safeJoin(ownedRoot, "launch-clock-preflight.json"),
     provenanceSnapshot: safeJoin(ownedRoot, "provenance.json"),
     run: (ordinal: 1 | 2 | 3, leaf: string) => safeJoin(ownedRoot, `run-${ordinal}`, leaf),
   });

@@ -25,5 +25,9 @@ export {
   type RecordingBinaryArtifactWriter,
   type RecordingBinaryArtifactWriteReceipt,
   type RecordingBinaryArtifactWriteRequest,
+  type RecordingActorIdentity,
+  type RecordingActorKind,
   type RecordingIngressLimits,
+  type RecordingIdentityProvenance,
+  type RecordingSourceIdentity,
 } from "./contracts.js";

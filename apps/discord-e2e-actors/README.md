@@ -377,7 +377,7 @@ farewell, and the addressed answer. Current collection emits v9 when the pinned
 Botik speaker ID and the JSON array of those six files are supplied:
 
 ```sh
-DISCORD_E2E_BOTIK_SPEAKER_ID=1534231284467896512 \
+DISCORD_E2E_BOTIK_SPEAKER_ID=1533877611258708230 \
 DISCORD_E2E_DISCORD_PLAYBACK_LINK_PROOF_INPUT=/absolute/evidence/playback-link-proof.json \
 DISCORD_E2E_CONVERSATION_VOICE_INPUTS='["/absolute/evidence/greeting-observer.json","/absolute/evidence/greeting-ru.json","/absolute/evidence/greeting-en.json","/absolute/evidence/greeting-speaker-d.json","/absolute/evidence/addressed-answer.json","/absolute/evidence/farewell.json"]' \
 DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_INPUT=/absolute/evidence/speaker-d.playback.json \

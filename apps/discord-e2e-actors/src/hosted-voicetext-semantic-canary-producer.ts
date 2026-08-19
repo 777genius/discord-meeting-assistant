@@ -6,6 +6,7 @@ import {
   digestVoicetextSemanticCanaryReceiptContentV1,
   type VoicetextSemanticCanaryReceiptV1,
 } from "./hosted-voicetext-semantic-canary-receipt.js";
+import { normalizeTranscriptSemantics } from "./e2e-evidence-text-metrics.js";
 
 const sha256Schema = z.string().regex(/^[a-f\d]{64}$/u);
 const segmentSchema = z.object({
@@ -204,7 +205,7 @@ function normalizedCharacters(segments: readonly z.infer<typeof segmentSchema>[]
 }
 
 function normalizeText(value: string): string {
-  return value.normalize("NFKC").toLocaleLowerCase("und").replaceAll(/[^\p{L}\p{N}]+/gu, " ").trim();
+  return normalizeTranscriptSemantics(value);
 }
 
 export function digestVoicetextCanaryExpectationV1(value: unknown): string {

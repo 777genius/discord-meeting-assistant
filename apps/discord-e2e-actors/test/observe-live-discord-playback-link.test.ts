@@ -24,7 +24,9 @@ describe("live Discord playback-link observer CLI boundary", () => {
       discord,
       { prove: ({ messageId, recordingId }) => Promise.resolve({
         capabilitySha256: "2bb80d537b1da3e38bd30361aa855686bde0eacd7162fef6a25fe97bf527a25b",
-        messageId, recordingId: recordingId ?? "recording-42", status: "ready", trackCount: 1,
+        messageId, readinessExpectation: "processing-to-ready",
+        recordingId: recordingId ?? "recording-42", status: "ready",
+        statuses: ["processing", "ready"], trackCount: 1,
       }) },
     );
 

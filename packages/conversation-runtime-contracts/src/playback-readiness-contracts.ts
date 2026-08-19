@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 export const conversationPlaybackReadinessProtocolVersion = 1 as const;
+export const conversationThinkingCuePlaybackReadinessProtocolVersion = 2 as const;
 const identifierSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u);
 const sha256Schema = z.string().regex(/^[a-f\d]{64}$/u);
 const discordSnowflakeSchema = z.string().regex(/^\d{17,20}$/u);
@@ -27,6 +28,40 @@ export const conversationAnswerObserverReadySchema =
       intentDigestSha256: sha256Schema,
       intentObservedAt: z.iso.datetime(),
       planDigestSha256: sha256Schema,
+      readyPublishedAt: z.iso.datetime(),
+      target: z.object({
+        craigBotId: discordSnowflakeSchema,
+        guildId: discordSnowflakeSchema,
+        observerApplicationId: discordSnowflakeSchema,
+        voiceChannelId: discordSnowflakeSchema,
+      }).strict(),
+      type: z.literal("observer-ready"),
+    })
+    .strict();
+
+export const conversationThinkingCuePlaybackReadinessEnvelopeSchema = z.object({
+  capturePlan: z.literal("thinking-cue"),
+  expectedPcmBytes: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  expectedPcmSha256: sha256Schema,
+  kind: z.literal("thinking-cue"),
+  meetingId: identifierSchema,
+  playbackAttemptId: identifierSchema,
+  protocolVersion: z.literal(conversationThinkingCuePlaybackReadinessProtocolVersion),
+  runId: identifierSchema,
+  turnId: identifierSchema,
+}).strict();
+
+export const conversationThinkingCuePlaybackIntentSchema =
+  conversationThinkingCuePlaybackReadinessEnvelopeSchema
+    .extend({ type: z.literal("playback-intent") })
+    .strict();
+
+export const conversationThinkingCueObserverReadySchema =
+  conversationThinkingCuePlaybackReadinessEnvelopeSchema
+    .extend({
+      authenticatedObserverBotId: discordSnowflakeSchema,
+      intentDigestSha256: sha256Schema,
+      intentObservedAt: z.iso.datetime(),
       readyPublishedAt: z.iso.datetime(),
       target: z.object({
         craigBotId: discordSnowflakeSchema,
@@ -79,6 +114,15 @@ export type ConversationAnswerPlaybackIntent = z.infer<
 export type ConversationAnswerObserverReady = z.infer<
   typeof conversationAnswerObserverReadySchema
 >;
+export type ConversationThinkingCuePlaybackReadinessEnvelope = z.infer<
+  typeof conversationThinkingCuePlaybackReadinessEnvelopeSchema
+>;
+export type ConversationThinkingCuePlaybackIntent = z.infer<
+  typeof conversationThinkingCuePlaybackIntentSchema
+>;
+export type ConversationThinkingCueObserverReady = z.infer<
+  typeof conversationThinkingCueObserverReadySchema
+>;
 export type ConversationGreetingPlaybackReadinessEnvelope = z.infer<
   typeof conversationGreetingPlaybackReadinessEnvelopeSchema
 >;
@@ -113,6 +157,39 @@ export function serializeConversationAnswerPlaybackReadinessEnvelope(
     envelope.meetingId,
     envelope.turnId,
     envelope.playbackAttemptId,
+    envelope.kind,
+    envelope.capturePlan,
+  ]);
+}
+
+/** Stable canonical input for the content-addressed thinking-cue handshake filenames. */
+export function serializeConversationThinkingCuePlaybackReadinessEnvelope(
+  input: unknown,
+): string {
+  const source = z.union([
+    conversationThinkingCuePlaybackReadinessEnvelopeSchema,
+    conversationThinkingCuePlaybackIntentSchema,
+    conversationThinkingCueObserverReadySchema,
+  ]).parse(input);
+  const envelope = conversationThinkingCuePlaybackReadinessEnvelopeSchema.parse({
+    capturePlan: source.capturePlan,
+    expectedPcmBytes: source.expectedPcmBytes,
+    expectedPcmSha256: source.expectedPcmSha256,
+    kind: source.kind,
+    meetingId: source.meetingId,
+    playbackAttemptId: source.playbackAttemptId,
+    protocolVersion: source.protocolVersion,
+    runId: source.runId,
+    turnId: source.turnId,
+  });
+  return JSON.stringify([
+    envelope.protocolVersion,
+    envelope.runId,
+    envelope.meetingId,
+    envelope.turnId,
+    envelope.playbackAttemptId,
+    envelope.expectedPcmBytes,
+    envelope.expectedPcmSha256,
     envelope.kind,
     envelope.capturePlan,
   ]);

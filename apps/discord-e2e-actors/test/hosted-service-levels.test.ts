@@ -463,7 +463,8 @@ function playbackProof(runId: string, marker: string) {
     firstSeenPollStartedAt: { epochMilliseconds: 9_490, monotonicMilliseconds: 19_490 },
     link: { capabilitySha256: "6".repeat(64), origin: "https://recordings.example.test", pathname: "/recordings/playback" },
     readiness: { capabilitySha256: "6".repeat(64), messageId: "message-1",
-      recordingId: "meeting-1", status: "ready", trackCount: 2 },
+      readinessExpectation: "processing-to-ready", recordingId: "meeting-1", status: "ready",
+      statuses: ["processing", "ready"], trackCount: 2 },
     messageId: "message-1", observerArmedAt: { epochMilliseconds: 9_350, monotonicMilliseconds: 19_350 },
     pollIntervalMs: 25, projectionMarker: marker, recordingId: "meeting-1",
     resultChannelId: publicationChannel, runId, schemaVersion: 1, sutApplicationId: "1533224474609057793",
@@ -520,4 +521,4 @@ const publicationChannel = "1533228891827736657";
 const observer = "1533867700575670282";
 const speakerB = "1533228054724346087";
 const speakerD = "1533873978417086474";
-const botik = "1534231284467896512";
+const botik = "1533877611258708230";

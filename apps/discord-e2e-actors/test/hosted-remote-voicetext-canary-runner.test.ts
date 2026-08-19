@@ -53,6 +53,20 @@ describe("hosted remote Voicetext canary runner", () => {
     expect(JSON.stringify(request)).not.toMatch(/token|secret/iu);
   });
 
+  it("projects an extended producer request onto the runner contract", async () => {
+    const execute = vi.fn<BoundedRemoteContainerProcessPort["execute"]>(async () => ok("{\"schemaVersion\":1}\n"));
+    const producerInput = {
+      ...input,
+      expectedSegments: [{ endMs: 1, startMs: 0, text: "expected" }],
+      now: Date.now,
+      requiredTerms: ["expected"],
+      ttlMs: 30_000,
+    };
+    await expect(new HostedRemoteVoicetextCanaryRunnerV1({ execute }).run(producerInput))
+      .resolves.toEqual({ schemaVersion: 1 });
+    expect(execute).toHaveBeenCalledOnce();
+  });
+
   it("forwards cancellation and rejects pre-aborted runs before process execution", async () => {
     const controller = new AbortController();
     controller.abort(new Error("campaign stopped"));
