@@ -4,7 +4,6 @@ import {
   type TwoHourHistoricalRetrievalProfileV1,
 } from "../domain/historical-evidence.js";
 import {
-  buildHistoricalIndexPlan,
   HistoricalIndexPlanError,
   rehydrateHistoricalBlock,
 } from "./historical-index-plan.js";
@@ -19,8 +18,6 @@ import type {
   HistoricalAuthorizationPort,
 } from "./ports/historical-grounding.js";
 import type { HistoricalOpaqueIdPort } from "./ports/historical-memory.js";
-import type { HistoricalEmbeddingTokenizerPort } from
-  "./ports/historical-embedding-tokenizer.js";
 import type {
   HistoricalEvidenceAuthority,
   HistoricalSyncStore,
@@ -33,7 +30,6 @@ export interface CoveragePlanLoaderDependencies {
   readonly ids: HistoricalOpaqueIdPort;
   readonly reducer: CoverageReducerPort;
   readonly sync: HistoricalSyncStore;
-  readonly tokenizer?: () => HistoricalEmbeddingTokenizerPort | undefined;
 }
 
 export async function loadExhaustiveCoveragePlan(input: {
@@ -52,10 +48,33 @@ export async function loadExhaustiveCoveragePlan(input: {
     left.transcriptVersion - right.transcriptVersion ||
     compareOpaque(left.releaseId, right.releaseId)
   );
+  const first = ordered[0];
+  const persistedPlans = first === undefined
+    ? []
+    : await dependencies.sync.listCurrentRoomPlans(
+        first.scopeId,
+        first.roomId,
+        policy.maximumBlocks + 1,
+        signal === undefined ? {} : { signal },
+      );
+  const orderedPersisted = persistedPlans.toSorted((left, right) =>
+    compareOpaque(left.binding.meetingId, right.binding.meetingId) ||
+    left.binding.transcriptVersion - right.binding.transcriptVersion ||
+    compareOpaque(left.binding.releaseId, right.binding.releaseId)
+  );
+  if (orderedPersisted.length !== ordered.length) {
+    return null;
+  }
   const indexPlans = [];
   const blocks = [];
-  for (const binding of ordered) {
+  for (const [index, binding] of ordered.entries()) {
     signal?.throwIfAborted();
+    const persisted = orderedPersisted[index];
+    if (persisted === undefined ||
+      !sameReleaseBinding(binding, persisted.binding) ||
+      !sameReleaseBinding(binding, persisted.plan.binding)) {
+      return null;
+    }
     const meeting = await dependencies.authority.loadAcceptedFinalMeeting(
       binding,
       signal === undefined ? {} : { signal },
@@ -63,13 +82,7 @@ export async function loadExhaustiveCoveragePlan(input: {
     if (meeting === null || !admitsHistoricalRetrieval(meeting, twoHourProfile)) {
       return null;
     }
-    const tokenizer = dependencies.tokenizer?.();
-    const plan = buildHistoricalIndexPlan(
-      meeting,
-      dependencies.ids,
-      policy.blockPolicy,
-      tokenizer,
-    );
+    const { plan } = persisted;
     if (!await dependencies.sync.isCurrentGeneration(
       binding,
       plan.topology.indexGeneration,
@@ -84,7 +97,7 @@ export async function loadExhaustiveCoveragePlan(input: {
         plan,
         document.manifest.ordinal,
         dependencies.ids,
-        { policy: policy.blockPolicy, tokenizer },
+        policy.blockPolicy,
       ));
       if (blocks.length > policy.maximumBlocks) {
         throw new HistoricalIndexPlanError(
@@ -108,4 +121,16 @@ export async function loadExhaustiveCoveragePlan(input: {
     ])}`,
     indexPlans: Object.freeze(indexPlans),
   });
+}
+
+function sameReleaseBinding(
+  left: HistoricalReleaseBindingV1,
+  right: HistoricalReleaseBindingV1,
+): boolean {
+  return left.acceptedMeetingRevision === right.acceptedMeetingRevision &&
+    left.desiredGeneration === right.desiredGeneration &&
+    left.meetingId === right.meetingId && left.releaseId === right.releaseId &&
+    left.roomId === right.roomId && left.scopeId === right.scopeId &&
+    left.transcriptId === right.transcriptId &&
+    left.transcriptVersion === right.transcriptVersion;
 }

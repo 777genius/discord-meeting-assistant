@@ -40,19 +40,6 @@ const blockPolicy = {
   version: "meeting-knowledge.block-policy.v1",
 } as const;
 
-const impossibleTokenizer: HistoricalEmbeddingTokenizerPort = Object.freeze({
-  countTokens: () => 97,
-  profile: Object.freeze({
-    conformanceVectorSetSha256: `sha256:${"c".repeat(64)}`,
-    embeddingModelRevision: "a".repeat(40),
-    id: "impossible-test-tokenizer",
-    maxInputTokens: 96,
-    servingRuntimeRevision: "b".repeat(40),
-    tokenizerArtifactSha256: `sha256:${"d".repeat(64)}`,
-    tokenizerConfigSha256: `sha256:${"e".repeat(64)}`,
-  }),
-});
-
 const qualifiedTwoHourProfile = {
   minimumDurationMs: 7_200_000,
   minimumHumanTurnCount: 400,
@@ -277,10 +264,16 @@ class MemoryCheckpoints implements ExhaustiveCoverageStore {
 
 class BindingStore implements HistoricalSyncStore {
   public current = true;
+  public currentPlans: readonly HistoricalAppliedPlanV1[];
   public bindingSnapshots: readonly (readonly HistoricalReleaseBindingV1[])[];
+  public currentPlanReads = 0;
 
-  public constructor(bindings: readonly HistoricalReleaseBindingV1[]) {
+  public constructor(
+    bindings: readonly HistoricalReleaseBindingV1[],
+    currentPlans: readonly HistoricalAppliedPlanV1[] = [],
+  ) {
     this.bindingSnapshots = [bindings];
+    this.currentPlans = currentPlans;
   }
 
   public async acceptRelease(): Promise<"replayed"> { return "replayed"; }
@@ -295,7 +288,10 @@ class BindingStore implements HistoricalSyncStore {
   public async recordDeleted(): Promise<void> {}
   public async requestMeetingDeletion(): Promise<void> {}
   public async findCurrentCandidate(): Promise<HistoricalCandidateRecordV1 | null> { return null; }
-  public async listCurrentRoomPlans(): Promise<readonly HistoricalAppliedPlanV1[]> { return []; }
+  public async listCurrentRoomPlans(): Promise<readonly HistoricalAppliedPlanV1[]> {
+    this.currentPlanReads += 1;
+    return this.currentPlans;
+  }
 
   public async listDesiredRoomBindings(): Promise<readonly HistoricalReleaseBindingV1[]> {
     const [head, ...tail] = this.bindingSnapshots;
@@ -325,9 +321,20 @@ function useCase(input: {
   readonly meetings: readonly AcceptedFinalMeetingV1[];
   readonly processingRelease?: string;
   readonly store: BindingStore;
-  readonly tokenizer?: HistoricalEmbeddingTokenizerPort;
+  readonly tokenizerFactory?: () => HistoricalEmbeddingTokenizerPort | undefined;
 }) {
-  const tokenizer = input.tokenizer;
+  if (input.store.currentPlans.length === 0 && input.meetings.length > 0) {
+    const initialReleases = new Set(
+      (input.store.bindingSnapshots[0] ?? []).map(({ releaseId }) => releaseId),
+    );
+    input.store.currentPlans = input.meetings
+      .filter(({ binding }) => initialReleases.has(binding.releaseId))
+      .map((meeting) => ({
+        binding: meeting.binding,
+        plan: buildHistoricalIndexPlan(meeting, new TestIds(), blockPolicy),
+        remoteDocumentIds: {},
+      }));
+  }
   return new ExhaustiveCoverage({
     authority: authority(input.meetings),
     authorization: {
@@ -381,7 +388,7 @@ function useCase(input: {
       },
     },
     sync: input.store,
-    ...(tokenizer === undefined ? {} : { tokenizer: () => tokenizer }),
+    ...(input.tokenizerFactory === undefined ? {} : { tokenizer: input.tokenizerFactory }),
   }, {
     blockPolicy,
     checkpointRetentionSeconds: 86_400,
@@ -413,6 +420,7 @@ function largeCoverage(
   checkpoints: MemoryCheckpoints,
 ): ExhaustiveCoverage {
   const extraction = new DeterministicExhaustiveCoverageExtraction(64, 256);
+  const plan = buildHistoricalIndexPlan(meeting, new TestIds(), largeBlockPolicy);
   return new ExhaustiveCoverage({
     authority: authority([meeting]),
     authorization: { authorize: async () => ({
@@ -425,7 +433,11 @@ function largeCoverage(
     extractor: extraction,
     ids: new TestIds(),
     reducer: extraction,
-    sync: new BindingStore([meeting.binding]),
+    sync: new BindingStore([meeting.binding], [{
+      binding: meeting.binding,
+      plan,
+      remoteDocumentIds: {},
+    }]),
   }, {
     blockPolicy: largeBlockPolicy,
     checkpointRetentionSeconds: 86_400,
@@ -750,54 +762,72 @@ describe("exhaustive historical coverage checkpoint lifecycle", () => {
     expect(checkpoints.rowCount).toBe(2);
     expect(extractor.mock.calls.length).toBe(callsAfterFirstProfile * 2);
   });
+});
 
-  it("returns an honest unsupported result when an authoritative turn cannot fit the tokenizer profile", async () => {
-    const binding = createHistoricalReleaseBinding({
-      acceptedMeetingRevision: 3,
-      desiredGeneration: 1,
-      meetingId: "meeting-oversized-turn",
-      roomId: "room-1",
-      scopeId: "scope-1",
-      transcriptId: "transcript-oversized-turn",
-      transcriptVersion: 1,
+describe("exhaustive persisted plan rehydration", () => {
+  it("rehydrates persisted plans during query and finalize without tokenizer replanning", async () => {
+    const meetings = [makeMeeting("meeting-persisted-a"), makeMeeting("meeting-persisted-b")];
+    const plans = meetings.map((meeting) => ({
+      binding: meeting.binding,
+      plan: buildHistoricalIndexPlan(meeting, new TestIds(), blockPolicy),
+      remoteDocumentIds: {},
+    }));
+    const store = new BindingStore(meetings.map(({ binding }) => binding), plans);
+    const tokenizerFactory = vi.fn(() => {
+      throw new Error("query-time tokenizer must not be resolved");
     });
-    const meeting = admitAcceptedFinalMeeting({
-      actors: [{ actorId: "speaker", kind: "human" }],
-      binding,
-      identityProvenance: {
-        actorObservationState: "consistent",
-        actorSemanticsVersion: 1,
-        producerCapabilityId: "meeting.lifecycle.sealed-actor-roster.v1",
-        producerRevision: "fixture-r1",
-        rosterState: "sealed",
-      },
-      lifecycleGeneration: 3,
-      meetingRevision: 3,
-      roomId: binding.roomId,
-      scopeId: binding.scopeId,
-      transcriptId: binding.transcriptId,
-      transcriptVersion: 1,
-      turns: [{
-        endMs: 1_000,
-        speakerId: "speaker",
-        startMs: 0,
-        text: "x".repeat(1_000),
-        turnId: "oversized-turn",
-      }],
-    });
-    if (meeting === null) {
-      throw new Error("fixture admission failed");
-    }
 
     await expect(useCase({
       checkpoints: new MemoryCheckpoints(),
-      extractor: vi.fn(),
-      meetings: [meeting],
-      store: new BindingStore([binding]),
-      tokenizer: impossibleTokenizer,
-    }).buildPlan(request)).resolves.toEqual({
-      reason: "exhaustive_block_plan_not_qualified",
-      status: "unsupported",
+      extractor: async (blockLocator) => ({
+        blockLocator,
+        evidenceLocators: [],
+        payload: { matches: 0 },
+        schemaVersion: 1,
+      }),
+      meetings,
+      store,
+      tokenizerFactory,
+    }).buildPlan(request)).resolves.toMatchObject({ status: "ready" });
+
+    expect(store.currentPlanReads).toBe(2);
+    expect(tokenizerFactory).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when a persisted exhaustive block identity is tampered", async () => {
+    const meeting = makeMeeting("meeting-tampered-plan");
+    const plan = buildHistoricalIndexPlan(meeting, new TestIds(), blockPolicy);
+    const document = plan.documents[0]!;
+    const tamperedPlan = {
+      ...plan,
+      documents: [{
+        ...document,
+        manifest: {
+          ...document.manifest,
+          contentHash: `${document.manifest.contentHash}-tampered`,
+        },
+      }, ...plan.documents.slice(1)],
+    };
+    const extractor = vi.fn();
+    const tokenizerFactory = vi.fn(() => {
+      throw new Error("query-time tokenizer must not be resolved");
     });
+
+    await expect(useCase({
+      checkpoints: new MemoryCheckpoints(),
+      extractor,
+      meetings: [meeting],
+      store: new BindingStore([meeting.binding], [{
+        binding: meeting.binding,
+        plan: tamperedPlan,
+        remoteDocumentIds: {},
+      }]),
+      tokenizerFactory,
+    }).buildPlan(request)).resolves.toEqual({
+      reason: "missing_or_stale_authoritative_release",
+      status: "invalidated",
+    });
+    expect(extractor).not.toHaveBeenCalled();
+    expect(tokenizerFactory).not.toHaveBeenCalled();
   });
 });
