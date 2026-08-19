@@ -1,12 +1,14 @@
 import {
   HmacHistoricalOpaqueIds,
   InfinityContextHistoricalMemoryAdapter,
-  PINNED_INFINITY_CONTEXT_HISTORICAL_INDEX_PROFILE_ID,
+  infinityContextHistoricalIndexProfileId,
   PINNED_MULTILINGUAL_MINILM_EMBEDDING_PROFILE_ID,
   PINNED_MULTILINGUAL_MINILM_TOKENIZER_PROFILE,
   PinnedMultilingualMiniLmTokenizer,
   assertInfinityContextActivation,
   assertInfinityContextSearchActivation,
+  INFINITY_CONTEXT_PRODUCTION_QUALIFICATION,
+  type InfinityContextProductionQualificationPolicyV1,
 } from "@discord-meeting/infinity-context-adapter";
 import {
   DEFAULT_HISTORICAL_SYNC_POLICY,
@@ -120,9 +122,10 @@ export function createHistoricalReconciliationLifecycle(input: {
 function semanticSearchQualified(
   activation: NonNullable<PlatformConfig["infinityContext"]>["activation"],
   logger: Logger,
+  productionQualification: InfinityContextProductionQualificationPolicyV1 | undefined,
 ): boolean {
   try {
-    assertInfinityContextSearchActivation(activation);
+    assertInfinityContextSearchActivation(activation, productionQualification);
     return true;
   } catch (error) {
     logger.warn(
@@ -161,6 +164,50 @@ function qualifyEmbeddingTokenizer(
   });
 }
 
+async function qualifyHistoricalRuntime(input: {
+  readonly activation: NonNullable<PlatformConfig["infinityContext"]>["activation"];
+  readonly logger: Logger;
+  readonly memory: InfinityContextHistoricalMemoryAdapter;
+  readonly profileMaintenance: Pick<HistoricalSyncStore, "enqueueAppliedProfileRebuilds">;
+  readonly productionQualification?: InfinityContextProductionQualificationPolicyV1;
+  readonly signal?: AbortSignal;
+  readonly tokenizer: HistoricalEmbeddingTokenizerPort;
+}): Promise<{
+  readonly indexProfileId: string;
+  readonly searchQualified: boolean;
+  readonly tokenizer: HistoricalEmbeddingTokenizerPort;
+}> {
+  const options = input.signal === undefined ? {} : { signal: input.signal };
+  const capabilities = await input.memory.qualifyCapabilities(options);
+  assertInfinityContextActivation(
+    input.activation, capabilities, input.productionQualification,
+  );
+  const tokenizer = qualifyEmbeddingTokenizer(
+    input.tokenizer,
+    input.activation.embeddingProfileAttestation,
+    capabilities,
+  );
+  const digest = input.activation.embeddingProfileAttestation
+    ?.embeddingProfileDigestSha256;
+  if (digest === undefined) {
+    throw new Error("Infinity dense embedding profile digest is required");
+  }
+  const indexProfileId = infinityContextHistoricalIndexProfileId(digest);
+  const rebuilds = await input.profileMaintenance.enqueueAppliedProfileRebuilds(
+    indexProfileId, 4_096, options,
+  );
+  if (rebuilds.enqueued > 0 || rebuilds.remaining) {
+    input.logger.info("Historical index profile rebuilds enqueued", rebuilds);
+  }
+  return {
+    indexProfileId,
+    searchQualified: !rebuilds.remaining && semanticSearchQualified(
+      input.activation, input.logger, input.productionQualification,
+    ),
+    tokenizer,
+  };
+}
+
 export interface PlatformHistoricalMemoryRuntime {
   assertReady(): Promise<void>;
   close(): Promise<void>;
@@ -177,12 +224,35 @@ export interface PlatformHistoricalMemoryRuntime {
   start(): Promise<void>;
 }
 
+function requireHistoricalRuntimeSecrets(config: PlatformConfig): {
+  readonly token: string;
+  readonly topologyKey: string;
+} {
+  const token = config.secrets.infinityContextToken;
+  const topologyKey = config.secrets.infinityContextTopologyKey;
+  if (token === undefined || topologyKey === undefined) {
+    throw new Error("Infinity runtime secrets are missing after configuration validation");
+  }
+  return { token, topologyKey };
+}
+
+function configuredHistoricalIndexProfileId(
+  activation: NonNullable<PlatformConfig["infinityContext"]>["activation"],
+): string {
+  return infinityContextHistoricalIndexProfileId(
+    activation.embeddingProfileAttestation?.embeddingProfileDigestSha256 ??
+      `sha256:${"0".repeat(64)}`,
+  );
+}
+
 export function createPlatformHistoricalMemory(input: {
   readonly config: PlatformConfig;
   readonly logger: Logger;
   readonly pool: Pool;
   /** Deterministic test seam; production always uses the PostgreSQL store. */
   readonly profileMaintenance?: Pick<HistoricalSyncStore, "enqueueAppliedProfileRebuilds">;
+  /** Test-only seam until an exact retained b77 qualification policy is checked in. */
+  readonly productionQualification?: InfinityContextProductionQualificationPolicyV1;
   readonly runtimeTransport: SubscriptionRuntimeTransportPort;
 }): PlatformHistoricalMemoryRuntime | undefined {
   const config = input.config.infinityContext;
@@ -192,11 +262,9 @@ export function createPlatformHistoricalMemory(input: {
   if (config.activation.environment !== input.config.nodeEnvironment) {
     throw new Error("Infinity activation environment does not match Meeting Platform");
   }
-  const token = input.config.secrets.infinityContextToken;
-  const topologyKey = input.config.secrets.infinityContextTopologyKey;
-  if (token === undefined || topologyKey === undefined) {
-    throw new Error("Infinity runtime secrets are missing after configuration validation");
-  }
+  const { token, topologyKey } = requireHistoricalRuntimeSecrets(input.config);
+  const productionQualification = input.productionQualification ??
+    INFINITY_CONTEXT_PRODUCTION_QUALIFICATION;
   let qualifiedTokenizer: HistoricalEmbeddingTokenizerPort | undefined;
   const memory = new InfinityContextHistoricalMemoryAdapter({
     baseUrl: config.baseUrl,
@@ -213,7 +281,7 @@ export function createPlatformHistoricalMemory(input: {
   const worker = new HistoricalSyncWorker({
     authority: new PostgresHistoricalEvidenceAuthority(input.pool),
     ids: new HmacHistoricalOpaqueIds(topologyKey),
-    indexProfileId: PINNED_INFINITY_CONTEXT_HISTORICAL_INDEX_PROFILE_ID,
+    indexProfileId: configuredHistoricalIndexProfileId(config.activation),
     memory,
     store,
     tokenizer: () => qualifiedTokenizer,
@@ -229,7 +297,6 @@ export function createPlatformHistoricalMemory(input: {
     qualification:
       input.config.meetingKnowledge?.twoHourHistoricalQualification ?? null,
   });
-
   const refreshQualification = async (signal?: AbortSignal): Promise<void> => {
     transportQualified = false;
     searchQualified = false;
@@ -237,33 +304,19 @@ export function createPlatformHistoricalMemory(input: {
     if (!config.activation.indexingEnabled && !config.activation.searchEnabled) {
       return;
     }
-    const capabilities = await memory.qualifyCapabilities(
-      signal === undefined ? {} : { signal },
-    );
-    assertInfinityContextActivation(config.activation, capabilities);
-    qualifiedTokenizer = qualifyEmbeddingTokenizer(
-      embeddingTokenizer ??=
-        new PinnedMultilingualMiniLmTokenizer(),
-      config.activation.embeddingProfileAttestation,
-      capabilities,
-    );
-    const rebuilds = await profileMaintenance.enqueueAppliedProfileRebuilds(
-      PINNED_INFINITY_CONTEXT_HISTORICAL_INDEX_PROFILE_ID,
-      4_096,
-      signal === undefined ? {} : { signal },
-    );
+    const qualified = await qualifyHistoricalRuntime({
+      activation: config.activation,
+      logger: input.logger,
+      memory,
+      profileMaintenance,
+      productionQualification,
+      ...(signal === undefined ? {} : { signal }),
+      tokenizer: embeddingTokenizer ??= new PinnedMultilingualMiniLmTokenizer(),
+    });
+    qualifiedTokenizer = qualified.tokenizer;
     transportQualified = true;
-    searchQualified = !rebuilds.remaining && semanticSearchQualified(
-      config.activation, input.logger,
-    );
-    if (rebuilds.enqueued > 0 || rebuilds.remaining) {
-      input.logger.info("Historical index profile rebuilds enqueued", {
-        enqueued: rebuilds.enqueued,
-        remaining: rebuilds.remaining,
-      });
-    }
+    searchQualified = qualified.searchQualified;
   };
-
   const refreshQualificationForReconciliation = async (
     signal?: AbortSignal,
   ): Promise<void> => {
@@ -279,7 +332,6 @@ export function createPlatformHistoricalMemory(input: {
       });
     }
   };
-
   const runPass = async (signal?: AbortSignal): Promise<void> => {
     for (let count = 0; count < maximumOperationsPerPass; count += 1) {
       signal?.throwIfAborted();
@@ -307,8 +359,7 @@ export function createPlatformHistoricalMemory(input: {
   });
 
   return {
-    // Static provenance/configuration already failed closed during config
-    // decoding. A transient endpoint or capability response only disables the
+      // A transient endpoint or capability response only disables the
     // derived memory slice; it must not block recording/transcription startup.
     assertReady: refreshQualificationForReconciliation,
     close: reconciliation.close,

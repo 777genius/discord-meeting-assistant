@@ -100,7 +100,7 @@ HistoricalEmbeddingTokenizerProfileV1 = Object.freeze({
 });
 
 /** Opaque durable identity for indexes produced by this exact qualified stack. */
-export const PINNED_INFINITY_CONTEXT_HISTORICAL_INDEX_PROFILE_ID = [
+const PINNED_INFINITY_CONTEXT_HISTORICAL_INDEX_PROFILE_BASE_ID = [
   "meeting-knowledge.infinity-index.v1",
   INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedServiceRevision,
   PINNED_MULTILINGUAL_MINILM_EMBEDDING_PROFILE_ID,
@@ -108,6 +108,16 @@ export const PINNED_INFINITY_CONTEXT_HISTORICAL_INDEX_PROFILE_ID = [
   PINNED_MULTILINGUAL_MINILM_TOKENIZER_PROFILE.servingRuntimeRevision,
   PINNED_MULTILINGUAL_MINILM_TOKENIZER_PROFILE.conformanceVectorSetSha256,
 ].join("|");
+
+/** Binds durable serving identity to the exact qualified deployment instance. */
+export function infinityContextHistoricalIndexProfileId(
+  embeddingProfileDigestSha256: string,
+): string {
+  if (!/^sha256:[a-f0-9]{64}$/u.test(embeddingProfileDigestSha256)) {
+    throw new RangeError("embedding profile digest must be an exact SHA-256 identity");
+  }
+  return `${PINNED_INFINITY_CONTEXT_HISTORICAL_INDEX_PROFILE_BASE_ID}|${embeddingProfileDigestSha256}`;
+}
 
 export interface PinnedMultilingualMiniLmArtifacts {
   readonly conformance: Uint8Array;

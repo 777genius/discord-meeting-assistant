@@ -52,6 +52,18 @@ export const retainedProductionEmbeddingProfileAttestation = Object.freeze({
   schemaVersion: 1 as const,
 });
 
+export const testProductionQualificationPolicy = Object.freeze({
+  embeddingProfileDigestSha256:
+    retainedProductionEmbeddingProfileAttestation.embeddingProfileDigestSha256,
+  embeddingProfileId:
+    retainedProductionEmbeddingProfileAttestation.embeddingProfile,
+  productionSemanticQualification: true as const,
+  qualificationManifestSha256:
+    INFINITY_CONTEXT_SDK_PROVENANCE.retainedB77SemanticTransportManifestSha256,
+  sdkCommit: INFINITY_CONTEXT_SDK_PROVENANCE.commit,
+  serviceRevision: INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedServiceRevision,
+});
+
 export const positionalNeedles = Object.freeze([
   { marker: "ORCHID-ALPHA", position: 0 },
   { marker: "CEDAR-BRAVO", position: 72 },
@@ -101,6 +113,9 @@ export function requiredHistoricalRuntime(
     profileMaintenance: {
       enqueueAppliedProfileRebuilds: async () => ({ enqueued: 0, remaining: false }),
     },
+    ...(environment === "production"
+      ? { productionQualification: testProductionQualificationPolicy }
+      : {}),
     runtimeTransport: syntheticCoverageRuntime,
   });
   if (runtime === undefined) {
@@ -203,7 +218,7 @@ export function platformConfig(
           : "reviewed_source_workspace",
         embeddingProfileAttestation,
         qualificationManifestSha256: environment === "production"
-          ? INFINITY_CONTEXT_SDK_PROVENANCE.retainedLiveQualificationManifestSha256
+          ? INFINITY_CONTEXT_SDK_PROVENANCE.retainedB77SemanticTransportManifestSha256
           : null,
         schemaVersion: 1,
         sdkCommit: INFINITY_CONTEXT_SDK_PROVENANCE.commit,

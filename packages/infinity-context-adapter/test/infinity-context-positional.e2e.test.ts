@@ -187,27 +187,32 @@ async function assertFocusedRecall(
   });
 }
 
+async function createPositionalRuntime() {
+  const endpoint = new DisposableInfinityEndpoint();
+  const exactTokenizer = new PinnedMultilingualMiniLmTokenizer();
+  const ids = new HmacHistoricalOpaqueIds(new Uint8Array(32).fill(0xa5));
+  const authority = new MemoryHistoricalAuthority();
+  const store = new MemoryHistoricalStore();
+  const meeting = combinedQualificationMeeting();
+  authority.put(meeting);
+  await store.acceptRelease(meeting.binding);
+  const adapter = new InfinityContextHistoricalMemoryAdapter({
+    baseUrl: "http://disposable.infinity.invalid",
+    requestTimeoutMs: 250,
+    schemaVersion: 1,
+    tokenizer: () => exactTokenizer,
+    transport: endpoint,
+  });
+  await adapter.qualifyCapabilities();
+  return { adapter, authority, endpoint, exactTokenizer, ids, meeting, store } as const;
+}
+
 describe("Infinity Context positional retrieval qualification", () => {
   it("qualifies one combined >400-turn RU/EN corpus with bounded focused and exhaustive paths", async () => {
-    const endpoint = new DisposableInfinityEndpoint();
-    const exactTokenizer = new PinnedMultilingualMiniLmTokenizer();
-    const ids = new HmacHistoricalOpaqueIds(new Uint8Array(32).fill(0xa5));
-    const authority = new MemoryHistoricalAuthority();
-    const store = new MemoryHistoricalStore();
-    const meeting = combinedQualificationMeeting();
+    const { adapter, authority, endpoint, exactTokenizer, ids, meeting, store } =
+      await createPositionalRuntime();
     expect(meeting.humanTurns).toHaveLength(QUALIFICATION_CORPUS_TURN_COUNT);
     expect(meeting.humanTurns.at(-1)?.endMs).toBe(8_420_000);
-    authority.put(meeting);
-    await store.acceptRelease(meeting.binding);
-
-    const adapter = new InfinityContextHistoricalMemoryAdapter({
-      baseUrl: "http://disposable.infinity.invalid",
-      requestTimeoutMs: 250,
-      schemaVersion: 1,
-      tokenizer: () => exactTokenizer,
-      transport: endpoint,
-    });
-    await adapter.qualifyCapabilities();
     const worker = new HistoricalSyncWorker({
       authority,
       ids,

@@ -12,6 +12,7 @@ import {
   retainedProductionEmbeddingProfileAttestation,
   silentLogger,
   syntheticCoverageRuntime,
+  testProductionQualificationPolicy,
 } from
   "./meeting-knowledge-production-composition-fixtures.js";
 import {
@@ -190,6 +191,7 @@ describe("Infinity production semantic qualification composition", () => {
           remaining: false,
         }),
       },
+      productionQualification: testProductionQualificationPolicy,
       runtimeTransport: syntheticCoverageRuntime,
     });
     if (runtime === undefined) {

@@ -8,6 +8,7 @@ ALTER TABLE meeting_core.historical_memory_sync
 UPDATE meeting_core.historical_memory_sync
 SET state = 'pending',
     profile_rebuild_requested = true,
+    attempt_count = 0,
     retry_after = NULL,
     lease_expires_at = NULL,
     last_error_code = NULL,

@@ -14,18 +14,15 @@ import type {
   HistoricalSyncLeaseV1,
   HistoricalSyncStore,
 } from "./ports/historical-state.js";
-import type {
-  AcceptedFinalMeetingV1,
-  HistoricalReleaseBindingV1,
-} from "../domain/historical-evidence.js";
+import type { AcceptedFinalMeetingV1 } from "../domain/historical-evidence.js";
 import { historicalPlanProjectionMatches } from "./historical-embedding-windows.js";
 import type { HistoricalEmbeddingTokenizerPort } from
   "./ports/historical-embedding-tokenizer.js";
-
-function operationOptions(signal: AbortSignal | undefined):
-  { readonly signal?: AbortSignal } {
-  return signal === undefined ? {} : { signal };
-}
+import {
+  historicalBindingsMatch as sameBinding,
+  historicalDeletionMutationId as deletionMutationId,
+  historicalOperationOptions as operationOptions,
+} from "./historical-sync-support.js";
 
 export interface HistoricalSyncPolicyV1 {
   readonly blockPolicy: HistoricalEvidenceBlockPolicyV1;
@@ -100,28 +97,6 @@ function assertPolicy(policy: HistoricalSyncPolicyInputV1): HistoricalSyncPolicy
     throw new RangeError("historical sync policy is outside its qualified bounds");
   }
   return Object.freeze({ ...policy, version: "meeting-knowledge.historical-sync.v1" });
-}
-
-function deletionMutationId(
-  lease: HistoricalSyncLeaseV1,
-  ids: HistoricalOpaqueIdPort,
-): string {
-  return lease.plan?.deleteMutationId ??
-    `mkmutation1.${ids.keyedId("historical-delete-mutation", [lease.binding.releaseId])}`;
-}
-
-function sameBinding(
-  left: HistoricalReleaseBindingV1,
-  right: HistoricalReleaseBindingV1,
-): boolean {
-  return left.acceptedMeetingRevision === right.acceptedMeetingRevision &&
-    left.desiredGeneration === right.desiredGeneration &&
-    left.meetingId === right.meetingId &&
-    left.releaseId === right.releaseId &&
-    left.roomId === right.roomId &&
-    left.scopeId === right.scopeId &&
-    left.transcriptId === right.transcriptId &&
-    left.transcriptVersion === right.transcriptVersion;
 }
 
 export class HistoricalSyncWorker {
@@ -215,44 +190,11 @@ export class HistoricalSyncWorker {
         tokenizer,
       ))
     ) {
-      const stalePlan = plan;
-      const replacement = tryBuildPlan(
-        accepted,
-        this.dependencies.ids,
-        this.#policy.blockPolicy,
-        tokenizer,
+      const replacement = await this.replaceStaleProfilePlan(
+        accepted, lease, plan, tokenizer, signal,
       );
-      if (replacement.status === "invalid") {
-        await this.dependencies.store.recordDeadLetter(
-          lease, replacement.reason, operationOptions(signal)
-        );
-        return this.result(lease, "dead_lettered");
-      }
-      let deletion;
-      try {
-        deletion = await this.dependencies.memory.deleteMeeting({
-          deleteMutationId: `mkmutation1.${this.dependencies.ids.keyedId(
-            "historical-profile-migration",
-            [stalePlan.planDigest],
-          )}`,
-          documentExternalIds: stalePlan.documents.map(
-            ({ manifest }) => manifest.documentExternalId,
-          ),
-          mode: "release",
-          remoteDocumentIds: lease.remoteDocumentIds,
-          schemaVersion: 1,
-          topology: stalePlan.topology,
-        }, operationOptions(signal));
-      } catch {
-        deletion = { code: "memory.port_exception", status: "absence_unverified" } as const;
-      }
-      if (deletion.status !== "verified_absent") {
-        await this.dependencies.store.recordRetry(lease, {
-          code: deletion.code,
-          outcome: "outcome_unknown",
-          retryAfterMs: retryDelay(this.#policy, lease.attempt),
-        }, operationOptions(signal));
-        return this.result(lease, "retry_scheduled");
+      if (replacement.status === "terminal") {
+        return replacement.result;
       }
       plan = replacement.plan;
     } else if (!historicalPlanProjectionMatches(accepted, plan, (turnId) =>
@@ -323,6 +265,53 @@ export class HistoricalSyncWorker {
       operationOptions(signal),
     );
     return this.result(lease, "dead_lettered");
+  }
+
+  private async replaceStaleProfilePlan(
+    accepted: AcceptedFinalMeetingV1,
+    lease: HistoricalSyncLeaseV1,
+    stalePlan: HistoricalIndexPlanV1,
+    tokenizer: HistoricalEmbeddingTokenizerPort | undefined,
+    signal?: AbortSignal,
+  ): Promise<
+    | { readonly plan: HistoricalIndexPlanV1; readonly status: "ready" }
+    | { readonly result: HistoricalSyncWorkerResultV1; readonly status: "terminal" }
+  > {
+    const replacement = tryBuildPlan(
+      accepted, this.dependencies.ids, this.#policy.blockPolicy, tokenizer,
+    );
+    if (replacement.status === "invalid") {
+      await this.dependencies.store.recordDeadLetter(
+        lease, replacement.reason, operationOptions(signal),
+      );
+      return { result: this.result(lease, "dead_lettered"), status: "terminal" };
+    }
+    let deletion;
+    try {
+      deletion = await this.dependencies.memory.deleteMeeting({
+        deleteMutationId: `mkmutation1.${this.dependencies.ids.keyedId(
+          "historical-profile-migration", [stalePlan.planDigest],
+        )}`,
+        documentExternalIds: stalePlan.documents.map(
+          ({ manifest }) => manifest.documentExternalId,
+        ),
+        mode: "release",
+        remoteDocumentIds: lease.remoteDocumentIds,
+        schemaVersion: 1,
+        topology: stalePlan.topology,
+      }, operationOptions(signal));
+    } catch {
+      deletion = { code: "memory.port_exception", status: "absence_unverified" } as const;
+    }
+    if (deletion.status !== "verified_absent") {
+      await this.dependencies.store.recordRetry(lease, {
+        code: deletion.code,
+        outcome: "outcome_unknown",
+        retryAfterMs: retryDelay(this.#policy, lease.attempt),
+      }, operationOptions(signal));
+      return { result: this.result(lease, "retry_scheduled"), status: "terminal" };
+    }
+    return { plan: replacement.plan, status: "ready" };
   }
 
   private async delete(

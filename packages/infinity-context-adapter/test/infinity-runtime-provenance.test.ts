@@ -14,6 +14,7 @@ import {
   assertInfinityContextSearchActivation,
   decodeInfinityContextCapabilityAttestation,
   decodeInfinityContextRuntimeActivation,
+  infinityContextHistoricalIndexProfileId,
 } from "../src/index.js";
 
 const instanceDigest = `sha256:${"a".repeat(64)}` as const;
@@ -45,7 +46,7 @@ const productionActivation = {
   immutablePackageIntegrity: INFINITY_CONTEXT_SDK_PROVENANCE.immutablePackageIntegrity,
   packageSource: "immutable_package" as const,
   qualificationManifestSha256:
-    INFINITY_CONTEXT_SDK_PROVENANCE.retainedLiveQualificationManifestSha256,
+    INFINITY_CONTEXT_SDK_PROVENANCE.retainedB77SemanticTransportManifestSha256,
 } as const;
 const exactCapabilities = {
   apiVersion: "v1",
@@ -56,6 +57,15 @@ const exactCapabilities = {
   serviceName: "disposable-infinity-context",
   serviceRevision: INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedServiceRevision,
   supportsQdrant: true,
+} as const;
+const testProductionPolicy = {
+  embeddingProfileDigestSha256: instanceDigest,
+  embeddingProfileId: INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedEmbeddingProfileId,
+  productionSemanticQualification: true,
+  qualificationManifestSha256:
+    INFINITY_CONTEXT_SDK_PROVENANCE.retainedB77SemanticTransportManifestSha256,
+  sdkCommit: INFINITY_CONTEXT_SDK_PROVENANCE.commit,
+  serviceRevision: INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedServiceRevision,
 } as const;
 
 describe("Infinity Context official SDK provenance", () => {
@@ -101,6 +111,15 @@ describe("Infinity Context official SDK provenance", () => {
 });
 
 describe("Infinity Context source-pinned activation", () => {
+  it("changes durable index identity when the qualified instance digest changes", () => {
+    const secondDigest = `sha256:${"b".repeat(64)}`;
+    expect(infinityContextHistoricalIndexProfileId(instanceDigest)).not.toBe(
+      infinityContextHistoricalIndexProfileId(secondDigest),
+    );
+    expect(() => infinityContextHistoricalIndexProfileId("operator-label"))
+      .toThrow(RangeError);
+  });
+
   it("requires the dense profile for every active production projection", () => {
     expect(() => decodeInfinityContextRuntimeActivation({
       ...productionActivation,
@@ -114,10 +133,14 @@ describe("Infinity Context source-pinned activation", () => {
       },
     })).toThrow(/source-pinned embedding profile/u);
     const activation = decodeInfinityContextRuntimeActivation(productionActivation);
-    expect(() => assertInfinityContextSearchActivation(activation)).not.toThrow();
+    expect(() => {
+      assertInfinityContextSearchActivation(activation, testProductionPolicy);
+    }).not.toThrow();
+    expect(() => { assertInfinityContextSearchActivation(activation); })
+      .toThrow(/retained b77 qualification/u);
   });
 
-  it("treats the profile digest as an exact instance echo, not hard-coded authority", () => {
+  it("requires the source-owned policy to qualify an exact instance digest", () => {
     const secondDigest = `sha256:${"b".repeat(64)}`;
     const activation = decodeInfinityContextRuntimeActivation({
       ...productionActivation,
@@ -126,11 +149,17 @@ describe("Infinity Context source-pinned activation", () => {
         embeddingProfileDigestSha256: secondDigest,
       },
     });
-    expect(() => assertInfinityContextActivation(activation, {
+    const secondPolicy = {
+      ...testProductionPolicy,
+      embeddingProfileDigestSha256: secondDigest,
+    };
+    expect(() => { assertInfinityContextActivation(activation, {
       ...exactCapabilities,
       embeddingProfileDigestSha256: secondDigest,
-    })).not.toThrow();
-    expect(() => assertInfinityContextActivation(activation, exactCapabilities))
+    }, secondPolicy); }).not.toThrow();
+    expect(() => {
+      assertInfinityContextActivation(activation, exactCapabilities, secondPolicy);
+    })
       .toThrow(/capability attestation/u);
   });
 
@@ -140,10 +169,10 @@ describe("Infinity Context source-pinned activation", () => {
     ["digest", { embeddingProfileDigestSha256: `sha256:${"c".repeat(64)}` }],
   ] as const)("fails closed on %s drift", (_label, drift) => {
     const activation = decodeInfinityContextRuntimeActivation(productionActivation);
-    expect(() => assertInfinityContextActivation(activation, {
+    expect(() => { assertInfinityContextActivation(activation, {
       ...exactCapabilities,
       ...drift,
-    })).toThrow(/capability attestation/u);
+    }, testProductionPolicy); }).toThrow(/capability attestation/u);
   });
 
   it("rejects the removed r79 operator-authored qualification fields", () => {

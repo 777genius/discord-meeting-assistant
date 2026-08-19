@@ -10,7 +10,6 @@ import {
   type HistoricalSyncLeaseV1,
   type HistoricalSyncRetryV1,
   type HistoricalSyncStore,
-  MAXIMUM_HISTORICAL_SYNC_LEASE_DURATION_MS,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import type { Pool, PoolClient } from "pg";
 
@@ -25,6 +24,16 @@ import {
 import { queryHistoricalPostgres, withHistoricalPostgresTransaction, type HistoricalPostgresCancellationPort } from "./postgres-historical-query.js";
 import { recordHistoricalSyncRetry } from "./postgres-historical-sync-retry.js";
 import {
+  enqueueHistoricalProfileRebuilds,
+  requireHistoricalIndexProfileId as requireIndexProfileId,
+  requireHistoricalMaximumRows as requireMaximumRows,
+} from
+  "./postgres-historical-profile-rebuild.js";
+import {
+  requireHistoricalLeaseDuration as requireLeaseDuration,
+  requireHistoricalRowUpdated as requireUpdated,
+} from "./postgres-historical-store-guards.js";
+import {
   lockMeetingKnowledgeSource,
   requestAnswerSourceWithdrawal,
 } from "./postgres-answer-source-withdrawal.js";
@@ -33,37 +42,6 @@ interface HistoricalMeetingMutationRow {
   readonly desired_generation: number;
   readonly operation: "delete_meeting" | "delete_release" | "index";
 }
-function requireLeaseDuration(options: HistoricalSyncClaimOptionsV1): void {
-  if (
-    !Number.isSafeInteger(options.leaseDurationMs) ||
-    options.leaseDurationMs < 1_000 ||
-    options.leaseDurationMs > MAXIMUM_HISTORICAL_SYNC_LEASE_DURATION_MS
-  ) {
-    throw new RangeError("historical sync lease duration is outside its bounds");
-  }
-}
-
-function requireMaximumRows(maximumRows: number): void {
-  if (!Number.isSafeInteger(maximumRows) || maximumRows < 1 || maximumRows > 4_096) {
-    throw new RangeError("historical room read bound is outside its qualified range");
-  }
-}
-
-function requireIndexProfileId(indexProfileId: string): void {
-  if (
-    indexProfileId.trim().length === 0 ||
-    new TextEncoder().encode(indexProfileId).byteLength > 1_000
-  ) {
-    throw new RangeError("historical index profile identity is outside its bounds");
-  }
-}
-
-async function requireUpdated(result: { readonly rowCount: number | null }, operation: string): Promise<void> {
-  if (result.rowCount !== 1) {
-    throw new Error(`historical sync ${operation} lost its lease fence`);
-  }
-}
-
 /** Shared mutation used by both the repository's acceptance transaction and the public store port. */
 export async function acceptHistoricalReleaseInTransaction(
   client: PoolClient,
@@ -172,48 +150,8 @@ export class PostgresHistoricalMemoryStore implements HistoricalSyncStore {
     maximumRows: number,
     options: HistoricalOperationOptionsV1 = {},
   ): Promise<{ readonly enqueued: number; readonly remaining: boolean }> {
-    requireIndexProfileId(indexProfileId);
-    requireMaximumRows(maximumRows);
-    return withHistoricalPostgresTransaction(
-      this.pool,
-      options.signal,
-      async (client) => {
-        const result = await client.query<{ readonly enqueued: number; readonly remaining: boolean }>(
-          `
-            WITH selected AS (
-              SELECT release_id
-              FROM meeting_core.historical_memory_sync
-              WHERE is_current AND operation = 'index' AND state = 'applied'
-                AND applied_index_profile_id IS DISTINCT FROM $1
-              ORDER BY meeting_id, desired_generation, release_id
-              LIMIT $2
-              FOR UPDATE SKIP LOCKED
-            ), rebuilt AS (
-              UPDATE meeting_core.historical_memory_sync AS historical
-              SET state = 'pending', profile_rebuild_requested = true,
-                  retry_after = NULL, lease_expires_at = NULL,
-                  last_error_code = NULL, updated_at = transaction_timestamp()
-              FROM selected
-              WHERE historical.release_id = selected.release_id
-              RETURNING 1
-            )
-            SELECT count(*)::float8 AS enqueued,
-              EXISTS (
-                SELECT 1 FROM meeting_core.historical_memory_sync
-                WHERE is_current AND operation = 'index' AND state = 'applied'
-                  AND applied_index_profile_id IS DISTINCT FROM $1
-              ) AS remaining
-            FROM rebuilt
-          `,
-          [indexProfileId, maximumRows],
-        );
-        const row = result.rows[0];
-        if (row === undefined || !Number.isSafeInteger(row.enqueued)) {
-          throw new Error("historical profile rebuild query returned an invalid result");
-        }
-        return Object.freeze({ enqueued: row.enqueued, remaining: row.remaining });
-      },
-      this.cancellation,
+    return enqueueHistoricalProfileRebuilds(
+      this.pool, this.cancellation, indexProfileId, maximumRows, options,
     );
   }
 

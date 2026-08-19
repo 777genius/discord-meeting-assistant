@@ -12,8 +12,11 @@ export {
   decodeInfinityContextRuntimeActivation,
   type InfinityContextCapabilityAttestationV1,
   type InfinityContextEmbeddingProfileAttestationV1,
+  type InfinityContextProductionQualificationPolicyV1,
   type InfinityContextRuntimeActivationV1,
 } from "./infinity-runtime-provenance.js";
+export { INFINITY_CONTEXT_PRODUCTION_QUALIFICATION } from
+  "./infinity-production-qualification.js";
 export {
   createInfinitySemanticQualificationManifest,
   infinitySemanticQualificationSchema,
@@ -22,7 +25,7 @@ export {
 } from "./infinity-semantic-qualification.js";
 export {
   PINNED_HUGGINGFACE_TOKENIZERS_RUNTIME,
-  PINNED_INFINITY_CONTEXT_HISTORICAL_INDEX_PROFILE_ID,
+  infinityContextHistoricalIndexProfileId,
   PINNED_MULTILINGUAL_MINILM_EMBEDDING_PROFILE_ID,
   PINNED_MULTILINGUAL_MINILM_TOKENIZER_PROFILE,
   PinnedMultilingualMiniLmTokenizer,

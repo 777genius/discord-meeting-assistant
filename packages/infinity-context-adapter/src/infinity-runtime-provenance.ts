@@ -20,6 +20,10 @@ export const INFINITY_CONTEXT_SDK_PROVENANCE = Object.freeze({
     "sha256:abe694b3e1cf0dcec9d5ff7c0d8b65f30ec5364ac11bb2526bd1c3a3b176c207",
   retainedLiveQualificationSourceLogSha256:
     "d69ad3870ea17c15a2c0fafa88e71aa9dfa87e0dfc81afa1ed3b3f0c93ed9c51",
+  retainedB77SemanticTransportManifestPath:
+    "docs/operations/evidence/2026-08-18-infinity-b77-semantic-transport/manifest.json",
+  retainedB77SemanticTransportManifestSha256:
+    "sha256:2ba18c3e7b2297e6103fd0d285bb2db424f0d3ac5ea407b857422e3204925133",
   retainedTransportQualification: Object.freeze({
     embeddingProfile: "deterministic-mock-non-production-v1",
     productionSemanticQualification: false,
@@ -28,6 +32,8 @@ export const INFINITY_CONTEXT_SDK_PROVENANCE = Object.freeze({
   }),
   sourcePinnedEmbeddingProfileId:
     "tei-sentence-transformers-paraphrase-multilingual-minilm-l12-v2-384d-dense.v1",
+  sourcePinnedEmbeddingProfileDigestSha256:
+    "sha256:b183b9d6350dfaf9f874cab9fef993d3ded5060a4a18d972c45ec97def5faf31",
   sourcePinnedServiceRevision:
     "b77b490cebbf9d80d4204425df3d795b4866ea19",
   repository: "https://github.com/777genius/infinity-context.git",
@@ -73,6 +79,16 @@ export interface InfinityContextCapabilityAttestationV1 {
   readonly serviceRevision: string | null;
   readonly serviceName: string | null;
   readonly supportsQdrant: boolean;
+}
+
+/** Source-owned qualification receipt. Operator activation cannot create this authority. */
+export interface InfinityContextProductionQualificationPolicyV1 {
+  readonly embeddingProfileDigestSha256: string;
+  readonly embeddingProfileId: string;
+  readonly productionSemanticQualification: true;
+  readonly qualificationManifestSha256: string;
+  readonly sdkCommit: string;
+  readonly serviceRevision: string;
 }
 
 export class InfinityContextActivationError extends Error {
@@ -265,6 +281,7 @@ export function decodeInfinityContextRuntimeActivation(
 export function assertInfinityContextActivation(
   activation: InfinityContextRuntimeActivationV1,
   capabilities?: InfinityContextCapabilityAttestationV1,
+  productionPolicy?: InfinityContextProductionQualificationPolicyV1,
 ): void {
   if (
     activation.sdkCommit !== INFINITY_CONTEXT_SDK_PROVENANCE.commit ||
@@ -287,7 +304,7 @@ export function assertInfinityContextActivation(
         INFINITY_CONTEXT_SDK_PROVENANCE.immutablePackageIntegrity ||
       activation.qualificationManifestSha256 === null ||
       activation.qualificationManifestSha256 !==
-        INFINITY_CONTEXT_SDK_PROVENANCE.retainedLiveQualificationManifestSha256
+        INFINITY_CONTEXT_SDK_PROVENANCE.retainedB77SemanticTransportManifestSha256
     )
   ) {
     throw new InfinityContextActivationError(
@@ -297,7 +314,35 @@ export function assertInfinityContextActivation(
   if (capabilities === undefined) {
     return;
   }
+  assertProductionQualificationPolicy(activation, productionPolicy);
   assertInfinityContextCapabilities(activation, capabilities);
+}
+
+function assertProductionQualificationPolicy(
+  activation: InfinityContextRuntimeActivationV1,
+  policy: InfinityContextProductionQualificationPolicyV1 | undefined,
+): void {
+  if (
+    activation.environment !== "production" ||
+    (!activation.indexingEnabled && !activation.searchEnabled)
+  ) {
+    return;
+  }
+  const attestation = activation.embeddingProfileAttestation;
+  if (
+    policy === undefined ||
+    attestation === null ||
+    policy.sdkCommit !== INFINITY_CONTEXT_SDK_PROVENANCE.commit ||
+    policy.serviceRevision !== INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedServiceRevision ||
+    policy.embeddingProfileId !== INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedEmbeddingProfileId ||
+    policy.embeddingProfileId !== attestation.embeddingProfile ||
+    policy.embeddingProfileDigestSha256 !== attestation.embeddingProfileDigestSha256 ||
+    policy.qualificationManifestSha256 !== activation.qualificationManifestSha256
+  ) {
+    throw new InfinityContextActivationError(
+      "production Infinity indexing/search requires retained b77 qualification evidence",
+    );
+  }
 }
 
 /**
@@ -307,6 +352,7 @@ export function assertInfinityContextActivation(
  */
 export function assertInfinityContextSearchActivation(
   activation: InfinityContextRuntimeActivationV1,
+  productionPolicy?: InfinityContextProductionQualificationPolicyV1,
 ): void {
   if (!activation.searchEnabled || activation.environment !== "production") {
     return;
@@ -326,6 +372,7 @@ export function assertInfinityContextSearchActivation(
       "production embedding-profile attestation does not match the source-pinned profile",
     );
   }
+  assertProductionQualificationPolicy(activation, productionPolicy);
 }
 
 function assertPinnedProductionProfile(

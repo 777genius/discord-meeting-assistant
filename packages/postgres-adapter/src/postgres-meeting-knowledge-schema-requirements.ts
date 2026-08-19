@@ -25,6 +25,8 @@ export const meetingKnowledgeRequiredIndexes = [
 ] as const;
 
 export const meetingKnowledgeRequiredColumns = [
+  "meeting_core.historical_memory_sync.applied_index_profile_id",
+  "meeting_core.historical_memory_sync.profile_rebuild_requested",
   "meeting_core.answer_effects.effect_id",
   "meeting_core.answer_effects.state",
   "meeting_core.answer_effects.projection_target_container_id",
@@ -138,6 +140,8 @@ export const meetingKnowledgeRequiredColumns = [
 ] as const;
 
 export const meetingKnowledgeRequiredCheckConstraints = [
+  ["meeting_core", "historical_memory_sync", "historical_memory_sync_applied_profile_is_present"],
+  ["meeting_core", "historical_memory_sync", "historical_memory_sync_applied_profile_is_bounded"],
   ["meeting_core", "answer_effects", "answer_effects_state_is_supported"],
   ["meeting_core", "answer_effects", "answer_effects_payload_hash_is_sha256"],
   ["meeting_core", "answer_effects", "answer_effects_binding_hash_is_sha256"],
