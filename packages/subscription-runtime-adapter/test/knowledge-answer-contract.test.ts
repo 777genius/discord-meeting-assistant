@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -28,6 +30,10 @@ import {
 const launcherSha256 = "a".repeat(64);
 const knowledgeAnswerStatusContract =
   "status=answered means claims contains 1..12 items; status=insufficient_evidence or status=not_a_question means claims is exactly []; a non-answered output must not contain any explanatory claim";
+const admittedKnowledgeAnswerSchemaSha256 =
+  "2730c8feca5d7cb7570c4bfe0e960d313fbb39d5f2638909a5a622eef1a9c126";
+const persistentKnowledgeAnswerSchemaJsonSha256 =
+  "2730c8feca5d7cb7570c4bfe0e960d313fbb39d5f2638909a5a622eef1a9c126";
 
 function generationRequest(): GroundedAnswerGenerationRequest {
   const canonicalEvidenceHash = "c".repeat(64);
@@ -169,6 +175,19 @@ describe("Meeting Knowledge subscription runtime contract", () => {
       model: "gpt-5.6-sol",
       reasoningEffort: "medium",
     });
+    const outputSchema = runtime.request?.task.controls.outputSchema as {
+      readonly properties: Readonly<Record<string, unknown>>;
+    };
+    expect(Object.keys(outputSchema.properties)).toEqual([
+      "claims",
+      "locale",
+      "status",
+    ]);
+    expect(canonicalJsonSha256(outputSchema)).toBe(
+      admittedKnowledgeAnswerSchemaSha256,
+    );
+    expect(createHash("sha256").update(JSON.stringify(outputSchema)).digest("hex"))
+      .toBe(persistentKnowledgeAnswerSchemaJsonSha256);
     expect(runtime.request?.task.prompt).toContain("evidence-000001");
     expect(runtime.request?.task.prompt).toContain("evidence-000002");
     expect(runtime.request?.task.prompt).not.toContain("77777777777777777");
@@ -188,6 +207,15 @@ describe("Meeting Knowledge subscription runtime contract", () => {
     expect(serializedPrompt).not.toContain("currentTranscriptEvidenceIds");
     expect(serializedPrompt).not.toContain("priorityEvidenceIds");
     expect(runtime.request?.task.systemPrompt).toContain("bounded focused selection");
+    expect(runtime.request?.task.systemPrompt).toContain(
+      "Before emitting the first JSON key, decide privately",
+    );
+    expect(runtime.request?.task.systemPrompt).toContain(
+      "never emit claims=[] and then status=answered",
+    );
+    expect(runtime.request?.task.systemPrompt).toContain(
+      '"claims":[{"evidenceIds":["evidence-000001"]',
+    );
     expect(runtime.request?.task.systemPrompt).toContain(
       knowledgeAnswerStatusContract,
     );
@@ -271,6 +299,12 @@ describe("Meeting Knowledge subscription runtime contract", () => {
     );
     expect(runtime.requests[1]?.task.systemPrompt).toContain(
       `Enforce this cross-field contract exactly: ${knowledgeAnswerStatusContract}.`,
+    );
+    expect(runtime.requests[1]?.task.systemPrompt).toContain(
+      "claims=[] with status=answered is forbidden",
+    );
+    expect(runtime.requests[1]?.task.systemPrompt).toContain(
+      "for an answerable question populate claims with at least one concise supported claim",
     );
   });
 
