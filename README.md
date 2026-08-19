@@ -4,6 +4,11 @@ Summary-first meeting intelligence for Discord. The system records through an
 isolated Craig fork, produces a speaker-attributed final transcript, generates an
 evidence-backed summary, and publishes it to Discord.
 
+<img width="776" height="594" alt="image" src="https://github.com/user-attachments/assets/820f6a34-6f18-4577-9828-a3c557b4a624" />
+<img width="556" height="590" alt="image" src="https://github.com/user-attachments/assets/7d6b9613-e257-4970-a273-056cd45aef11" />
+<img width="558" height="567" alt="image" src="https://github.com/user-attachments/assets/391d71f1-2955-4ae5-a719-12892f228e97" />
+
+
 ## Current phase
 
 This repository contains the executable V1 vertical slice and its architecture
