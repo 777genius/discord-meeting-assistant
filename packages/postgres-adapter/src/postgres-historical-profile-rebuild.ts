@@ -57,8 +57,11 @@ export async function enqueueHistoricalProfileRebuilds(
     const pending = await client.query<{ readonly remaining: boolean }>(`
       SELECT EXISTS (
         SELECT 1 FROM meeting_core.historical_memory_sync
-        WHERE is_current AND operation = 'index' AND state = 'applied'
-          AND applied_index_profile_id IS DISTINCT FROM $1
+        WHERE is_current AND operation = 'index'
+          AND (
+            (state = 'applied' AND applied_index_profile_id IS DISTINCT FROM $1)
+            OR profile_rebuild_requested = true
+          )
       ) AS remaining
     `, [indexProfileId]);
     const remaining = pending.rows[0]?.remaining;

@@ -6,16 +6,17 @@ import { PostgresHistoricalMemoryStore } from "@discord-meeting/postgres-adapter
 import type { Pool, PoolClient } from "pg";
 
 describe("historical index profile rebuild budget", () => {
-  it("resets exhausted attempts in the runtime enqueue transaction", async () => {
+  it("keeps a post-update profile rebuild pending until completion", async () => {
     const queries: string[] = [];
+    let rebuildCompleted = false;
     const client = {
       query: vi.fn(async (text: string) => {
         queries.push(text);
         if (text.includes("WITH selected AS")) {
-          return { rows: [{ enqueued: 1 }] };
+          return { rows: [{ enqueued: rebuildCompleted ? 0 : 1 }] };
         }
         if (text.includes("SELECT EXISTS")) {
-          return { rows: [{ remaining: false }] };
+          return { rows: [{ remaining: !rebuildCompleted }] };
         }
         return { rows: [] };
       }),
@@ -27,13 +28,24 @@ describe("historical index profile rebuild budget", () => {
 
     await expect(new PostgresHistoricalMemoryStore(pool)
       .enqueueAppliedProfileRebuilds("qualified-profile", 1))
-      .resolves.toEqual({ enqueued: 1, remaining: false });
+      .resolves.toEqual({ enqueued: 1, remaining: true });
+
+    rebuildCompleted = true;
+    await expect(new PostgresHistoricalMemoryStore(pool)
+      .enqueueAppliedProfileRebuilds("qualified-profile", 1))
+      .resolves.toEqual({ enqueued: 0, remaining: false });
 
     const rebuildQuery = queries.find((query) => query.includes("WITH selected AS"));
     expect(rebuildQuery).toContain("attempt_count = 0");
-    expect(queries.find((query) => query.includes("SELECT EXISTS")))
-      .toContain("applied_index_profile_id IS DISTINCT FROM $1");
-    expect(queries).toEqual(expect.arrayContaining(["BEGIN", "COMMIT"]));
+    const remainderQuery = queries.find((query) => query.includes("SELECT EXISTS"));
+    expect(remainderQuery?.replace(/\s+/gu, " ").trim()).toBe(
+      "SELECT EXISTS ( SELECT 1 FROM meeting_core.historical_memory_sync "
+      + "WHERE is_current AND operation = 'index' AND ( "
+      + "(state = 'applied' AND applied_index_profile_id IS DISTINCT FROM $1) "
+      + "OR profile_rebuild_requested = true ) ) AS remaining",
+    );
+    expect(queries.filter((query) => query === "BEGIN")).toHaveLength(2);
+    expect(queries.filter((query) => query === "COMMIT")).toHaveLength(2);
   });
 
   it("resets old max-attempt applied rows during migration 0027", () => {
