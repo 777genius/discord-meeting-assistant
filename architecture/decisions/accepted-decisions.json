@@ -203,6 +203,11 @@
       "immutableDigest": "sha256:4360c25fdcebb63d90f336da140eac99947962e686d9f4e00f83ba7b387070b7"
     },
     {
+      "id": "ADR-0042",
+      "path": "docs/decisions/0042-provider-neutral-meeting-source-routing.md",
+      "immutableDigest": "sha256:a05f024e422459dd8ad9ea3ef79e67c2d9463afc968060cb8226a2f66b1e159e"
+    },
+    {
       "id": "ADR-0043",
       "path": "docs/decisions/0043-attach-authoritative-transcript-to-final-publication.md",
       "immutableDigest": "sha256:2323451925963e9d1c8a7c458d0d65df5ea32523b79ad29d07427428758102aa"

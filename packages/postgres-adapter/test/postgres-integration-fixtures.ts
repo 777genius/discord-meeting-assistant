@@ -1,4 +1,4 @@
-import { GuildConfiguration } from "@discord-meeting/guild-configuration-core";
+import { MeetingSourceConfiguration } from "@discord-meeting/meeting-routing-core";
 import {
   EvidenceBackedSummary,
 } from "@discord-meeting/meeting-core/meeting-intelligence";
@@ -84,7 +84,7 @@ export function usePostgresIntegrationDatabase(): void {
   beforeEach(async () => {
     if (pool !== undefined) {
       await pool.query(
-        "TRUNCATE TABLE guild_configuration.guild_installations, meeting_core.conversation_one_shot_receipts, meeting_core.answer_effects, meeting_knowledge.current_question_policy, meeting_knowledge.question_rate_reservations, meeting_knowledge.question_jobs, meeting_knowledge.unavailable_final_projections, meeting_knowledge.withdrawn_meeting_sources, meeting_core.historical_coverage_checkpoints, meeting_core.historical_memory_sync, meeting_knowledge.live_memory_hot_tail, meeting_knowledge.live_memory_outbox, meeting_knowledge.live_memory_meetings, meeting_core.summary_publication_effects, meeting_core.post_call_dead_letters, meeting_core.live_meeting_summary_coverage, meeting_core.live_meeting_turns, meeting_core.live_meeting_generation_usage, meeting_core.live_meeting_generation_telemetry, meeting_core.live_meetings, meeting_core.post_call_outbox, meeting_core.meetings",
+        "TRUNCATE TABLE meeting_routing.source_configurations, meeting_core.conversation_one_shot_receipts, meeting_core.answer_effects, meeting_knowledge.current_question_policy, meeting_knowledge.question_rate_reservations, meeting_knowledge.question_jobs, meeting_knowledge.unavailable_final_projections, meeting_knowledge.withdrawn_meeting_sources, meeting_core.historical_coverage_checkpoints, meeting_core.historical_memory_sync, meeting_knowledge.live_memory_hot_tail, meeting_knowledge.live_memory_outbox, meeting_knowledge.live_memory_meetings, meeting_core.summary_publication_effects, meeting_core.post_call_dead_letters, meeting_core.live_meeting_summary_coverage, meeting_core.live_meeting_turns, meeting_core.live_meeting_generation_usage, meeting_core.live_meeting_generation_telemetry, meeting_core.live_meetings, meeting_core.post_call_outbox, meeting_core.meetings",
       );
     }
   });
@@ -207,12 +207,12 @@ export function recordedMeeting(
   });
 }
 
-export function configuredGuild(): GuildConfiguration {
-  return GuildConfiguration.configure({
-    configuredByUserId: "11111111111111111",
-    guildId: "22222222222222222",
-    resultsChannelId: "33333333333333333",
-    voiceChannelId: "44444444444444444",
+export function configuredMeetingSource(): MeetingSourceConfiguration {
+  return MeetingSourceConfiguration.configure({
+    configuredByActorId: "11111111111111111",
+    sourceId: "22222222222222222",
+    publicationTargetId: "33333333333333333",
+    roomId: "44444444444444444",
   });
 }
 

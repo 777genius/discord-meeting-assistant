@@ -32,7 +32,7 @@ import {
   canonicalFinalReplyTurnHash,
   PostgresFinalReplyEvidence,
   PostgresFocusedMemoryRetrieval,
-  PostgresGuildConfigurationRepository,
+  PostgresMeetingSourceConfigurationRepository,
   PostgresQuestionAdmissionCommit,
   PostgresQuestionJobStore,
 } from "@discord-meeting/postgres-adapter";
@@ -119,13 +119,13 @@ export interface MeetingKnowledgeLocalFinalReplyRuntime {
 
 class ConfiguredDiscordQuestionScope implements DiscordQuestionScopePort {
   public constructor(
-    private readonly configurations: PostgresGuildConfigurationRepository,
+    private readonly configurations: PostgresMeetingSourceConfigurationRepository,
   ) {}
 
   public async resultsContainerForGuild(guildId: string): Promise<string | null> {
-    const configuration = await this.configurations.findByGuildId(guildId);
+    const configuration = await this.configurations.findBySourceId(guildId);
     return configuration?.status === "active"
-      ? configuration.resultsChannelId
+      ? configuration.publicationTargetId
       : null;
   }
 }
@@ -136,7 +136,7 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
   readonly answers?: GroundedMeetingAnswer;
   readonly client: Client;
   readonly config: PlatformConfig;
-  readonly guildConfigurations: PostgresGuildConfigurationRepository;
+  readonly sourceConfigurations: PostgresMeetingSourceConfigurationRepository;
   readonly historicalMemory?: PlatformHistoricalMemoryRuntime;
   readonly logger: Logger;
   readonly pool: Pool;
@@ -266,7 +266,7 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
     principals,
     publication,
     reportError,
-    scopes: new ConfiguredDiscordQuestionScope(input.guildConfigurations),
+    scopes: new ConfiguredDiscordQuestionScope(input.sourceConfigurations),
   });
   return createMeetingKnowledgePollingRuntime({
     handler,

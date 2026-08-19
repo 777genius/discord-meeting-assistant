@@ -11,6 +11,8 @@ import {
 } from "@discord-meeting/postgres-adapter";
 
 import { PlatformRecordingIngress } from "../application/platform-ingress.js";
+import { CraigRecordingConfigurationAdapter } from
+  "../adapters/inbound/craig/craig-recording-configuration-adapter.js";
 import type { PostCallOutboxDispatcher } from "../application/post-call-outbox-dispatcher.js";
 import type { PlatformConfig } from "../config.js";
 import { createPlatformCoreResources } from "./core-resources.js";
@@ -123,7 +125,7 @@ export async function startMeetingPlatform(
     const http = createPlatformHttpComposition({
       cleanup,
       config,
-      configuration: core.guildConfigurations,
+      configuration: new CraigRecordingConfigurationAdapter(core.sourceConfigurations),
       craigPlaybackGateway: discordLive.craigPlaybackGateway,
       health: {
         metrics: () => metrics.render(),
@@ -225,7 +227,7 @@ async function createPlatformKnowledgeComposition(input: {
   const discordLive = await createPlatformDiscordLiveComposition({
     cleanup,
     config,
-    guildConfigurations: core.guildConfigurations,
+    sourceConfigurations: core.sourceConfigurations,
     ...(groundedAnswerUseCase === undefined ? {} : { groundedAnswerUseCase }),
     ...(historicalMemory === undefined ? {} : { historicalMemory }),
     logger,
@@ -242,7 +244,7 @@ async function createPlatformKnowledgeComposition(input: {
     ...(groundedAnswerUseCase === undefined ? {} : { answers: groundedAnswerUseCase }),
     client: discordLive.discord,
     config,
-    guildConfigurations: core.guildConfigurations,
+    sourceConfigurations: core.sourceConfigurations,
     ...(historicalMemory === undefined ? {} : { historicalMemory }),
     logger,
     pool: core.pool,

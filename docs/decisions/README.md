@@ -18,7 +18,6 @@
 - [ADR-0010: Live conversation behind consumer-owned runtime ports](0010-live-conversation-runtime.md)
 - [ADR-0011: Subscription conversation and authoritative Botik playback](0011-subscription-conversation-and-authoritative-botik-track.md)
 - [ADR-0012: Meeting Platform transport and runtime boundary refactoring](0012-meeting-platform-boundary-refactoring.md)
-- [ADR-0013: Provider-neutral meeting source boundary](0013-provider-neutral-meeting-source-boundary.md)
 - [ADR-0014: Streaming warm conversation pipeline](0014-streaming-warm-conversation-pipeline.md)
 - [ADR-0015: Meeting Core feature modules](0015-meeting-core-feature-modules.md)
 - [ADR-0016: Separate final publication and evidence-oriented summaries](0016-separate-final-publication-and-summary-quality.md)
@@ -44,9 +43,11 @@
 - [ADR-0039: Independent VoiceText batch and live provider profiles](0039-independent-voicetext-provider-profiles.md)
 - [ADR-0040: Binding-aware post-call rollout](0040-binding-aware-post-call-rollout.md)
 - [ADR-0041: Fence binding recovery from legacy workers](0041-fence-binding-recovery-from-legacy-workers.md)
+- [ADR-0042: Provider-neutral meeting source routing](0042-provider-neutral-meeting-source-routing.md)
 - [ADR-0043: Attach the authoritative transcript to final publication](0043-attach-authoritative-transcript-to-final-publication.md)
 
 ## Superseded
 
+- [ADR-0013: Provider-neutral meeting source boundary](0013-provider-neutral-meeting-source-boundary.md)
 - [ADR-0022: Provider-neutral readable transcript segments](0022-provider-neutral-readable-transcript-segments.md)
 - [ADR-0033: Adaptive bounded current grounding](0033-adaptive-current-grounding.md)

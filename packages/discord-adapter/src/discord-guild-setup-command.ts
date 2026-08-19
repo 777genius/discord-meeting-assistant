@@ -1,7 +1,7 @@
 import type {
-  ConfigureGuild,
-  ConfigureGuildResult,
-} from "@discord-meeting/guild-configuration-core";
+  ConfigureMeetingSource,
+  ConfigureMeetingSourceResult,
+} from "@discord-meeting/meeting-routing-core";
 import {
   ApplicationIntegrationType,
   ChannelType,
@@ -35,8 +35,10 @@ export const discordGuildSetupCommand = new SlashCommandBuilder()
       .setRequired(true)
   );
 
-interface ConfigureGuildUseCase {
-  execute(input: Parameters<ConfigureGuild["execute"]>[0]): Promise<ConfigureGuildResult>;
+interface ConfigureMeetingSourceUseCase {
+  execute(
+    input: Parameters<ConfigureMeetingSource["execute"]>[0],
+  ): Promise<ConfigureMeetingSourceResult>;
 }
 
 export class DiscordGuildSetupCommandHandler {
@@ -53,7 +55,7 @@ export class DiscordGuildSetupCommandHandler {
 
   public constructor(
     private readonly client: Client,
-    private readonly configureGuild: ConfigureGuildUseCase,
+    private readonly configureMeetingSource: ConfigureMeetingSourceUseCase,
     private readonly craigInstallUrl: string,
     private readonly onError: (error: unknown) => void = () => {},
   ) {}
@@ -88,11 +90,11 @@ export class DiscordGuildSetupCommandHandler {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const voiceChannel = interaction.options.getChannel("voice-channel", true);
     const resultsChannel = interaction.options.getChannel("results-channel", true);
-    const result = await this.configureGuild.execute({
-      configuredByUserId: interaction.user.id,
-      guildId: interaction.guildId,
-      resultsChannelId: resultsChannel.id,
-      voiceChannelId: voiceChannel.id,
+    const result = await this.configureMeetingSource.execute({
+      configuredByActorId: interaction.user.id,
+      publicationTargetId: resultsChannel.id,
+      roomId: voiceChannel.id,
+      sourceId: interaction.guildId,
     });
     await interaction.editReply({ content: renderSetupResult(result, this.craigInstallUrl) });
   }
@@ -110,7 +112,10 @@ export class DiscordGuildSetupCommandHandler {
   }
 }
 
-function renderSetupResult(result: ConfigureGuildResult, craigInstallUrl: string): string {
+function renderSetupResult(
+  result: ConfigureMeetingSourceResult,
+  craigInstallUrl: string,
+): string {
   if (result.status === "configured") {
     return "✅ Setup complete. Permissions were verified, a test message was posted, and settings were saved. Recording starts automatically when people join the selected voice channel.";
   }
@@ -120,7 +125,10 @@ function renderSetupResult(result: ConfigureGuildResult, craigInstallUrl: string
   if (result.status === "conflict") {
     return "Another administrator changed the settings at the same time. Run /setup-voice-bot again.";
   }
-  if ("failure" in result && result.failure.code === "craig-not-installed") {
+  if (
+    "failure" in result &&
+    result.failure.code === "capture-capability-unavailable"
+  ) {
     return `${result.failure.message}\nInstall Craig: ${craigInstallUrl}`;
   }
   return "failure" in result ? result.failure.message : "Setup was not completed.";

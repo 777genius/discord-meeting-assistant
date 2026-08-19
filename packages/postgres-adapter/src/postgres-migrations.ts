@@ -46,6 +46,7 @@ const migrationDefinitions = [
     repairInvalidConcurrentIndex: "meeting_core.post_call_outbox_binding_recoverable_idx",
     transactional: false,
   },
+  { fileName: "0030_provider_neutral_meeting_source_routing.sql" },
 ] as const;
 
 const migrationLockKey = "718330091620232601";

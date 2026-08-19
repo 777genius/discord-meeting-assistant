@@ -10,7 +10,7 @@ import {
   createDiscordGuildInstallUrl,
   meetingPlatformInstallPermissions,
 } from "@discord-meeting/discord-adapter";
-import { ConfigureGuild } from "@discord-meeting/guild-configuration-core";
+import { ConfigureMeetingSource } from "@discord-meeting/meeting-routing-core";
 import { CraigPlaybackGateway } from "@discord-meeting/craig-playback-adapter";
 import type { ConversationCoordinator } from
   "@discord-meeting/meeting-core/conversation";
@@ -22,7 +22,7 @@ import {
 import type { Logger } from "@discord-meeting/observability-adapter";
 import {
   PostgresConversationOneShotReceiptStore,
-  type PostgresGuildConfigurationRepository,
+  type PostgresMeetingSourceConfigurationRepository,
   type PostgresLiveMeetingRepository,
 } from "@discord-meeting/postgres-adapter";
 import type { Pool } from "pg";
@@ -86,7 +86,7 @@ export interface PlatformDiscordLiveComposition {
 export async function createPlatformDiscordLiveComposition(input: {
   readonly cleanup: PlatformStartupCleanup;
   readonly config: PlatformConfig;
-  readonly guildConfigurations: PostgresGuildConfigurationRepository;
+  readonly sourceConfigurations: PostgresMeetingSourceConfigurationRepository;
   readonly groundedAnswerUseCase?: GroundedMeetingAnswer;
   readonly historicalMemory?: PlatformHistoricalMemoryRuntime;
   readonly logger: Logger;
@@ -117,8 +117,8 @@ export async function createPlatformDiscordLiveComposition(input: {
   );
   const guildSetupHandler = new DiscordGuildSetupCommandHandler(
     discord,
-    new ConfigureGuild(
-      input.guildConfigurations,
+    new ConfigureMeetingSource(
+      input.sourceConfigurations,
       guildSetupAdapter,
       guildSetupAdapter,
     ),

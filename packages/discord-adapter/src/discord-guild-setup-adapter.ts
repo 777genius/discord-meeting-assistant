@@ -1,10 +1,10 @@
 import type {
-  GuildConfigurationVerificationPort,
-  GuildConfigurationVerificationRequest,
-  GuildSetupFailure,
-  GuildSetupPublicationRequest,
-  GuildSetupPublisher,
-} from "@discord-meeting/guild-configuration-core";
+  MeetingSourceConfigurationVerificationPort,
+  MeetingSourceConfigurationVerificationRequest,
+  MeetingSourceSetupFailure,
+  MeetingSourceSetupPublicationRequest,
+  MeetingSourceSetupPublisher,
+} from "@discord-meeting/meeting-routing-core";
 import {
   ChannelType,
   Client,
@@ -27,10 +27,10 @@ const requiredCraigVoicePermissions = [
 ] as const;
 
 function failure(
-  code: GuildSetupFailure["code"],
+  code: MeetingSourceSetupFailure["code"],
   message: string,
   retryable = false,
-): { readonly failure: GuildSetupFailure; readonly ok: false } {
+): { readonly failure: MeetingSourceSetupFailure; readonly ok: false } {
   return { failure: { code, message, retryable }, ok: false };
 }
 
@@ -57,17 +57,27 @@ function isVoiceChannel(channel: GuildBasedChannel): boolean {
 }
 
 export class DiscordGuildSetupAdapter implements
-  GuildConfigurationVerificationPort,
-  GuildSetupPublisher
+  MeetingSourceConfigurationVerificationPort,
+  MeetingSourceSetupPublisher
 {
   public constructor(
     private readonly client: Client,
     private readonly craigBotUserId: string,
   ) {}
 
-  public async verify(request: GuildConfigurationVerificationRequest) {
-    const guild = await this.fetchGuild(request.guildId);
-    const actor = await guild.members.fetch(request.configuredByUserId).catch(() => null);
+  public async verify(request: MeetingSourceConfigurationVerificationRequest) {
+    const guildId = requireDiscordSnowflake(request.sourceId, "sourceId");
+    const actorId = requireDiscordSnowflake(
+      request.configuredByActorId,
+      "configuredByActorId",
+    );
+    const voiceChannelId = requireDiscordSnowflake(request.roomId, "roomId");
+    const resultsChannelId = requireDiscordSnowflake(
+      request.publicationTargetId,
+      "publicationTargetId",
+    );
+    const guild = await this.fetchGuild(guildId);
+    const actor = await guild.members.fetch(actorId).catch(() => null);
     if (actor === null || !actor.permissions.has(PermissionFlagsBits.ManageGuild)) {
       return failure(
         "actor-not-authorized",
@@ -75,14 +85,17 @@ export class DiscordGuildSetupAdapter implements
       );
     }
     const [voiceChannel, resultsChannel] = await Promise.all([
-      guild.channels.fetch(request.voiceChannelId),
-      guild.channels.fetch(request.resultsChannelId),
+      guild.channels.fetch(voiceChannelId),
+      guild.channels.fetch(resultsChannelId),
     ]);
     if (voiceChannel === null || !isVoiceChannel(voiceChannel)) {
-      return failure("voice-channel-invalid", "Select a voice or Stage channel.");
+      return failure("capture-room-invalid", "Select a voice or Stage channel.");
     }
     if (resultsChannel === null || !isResultsChannel(resultsChannel)) {
-      return failure("results-channel-invalid", "Select a text or announcement channel.");
+      return failure(
+        "publication-target-invalid",
+        "Select a text or announcement channel.",
+      );
     }
     const platformUserId = this.client.user?.id;
     if (
@@ -90,7 +103,7 @@ export class DiscordGuildSetupAdapter implements
       !hasAllPermissions(resultsChannel, platformUserId, requiredResultsPermissions)
     ) {
       return failure(
-        "platform-results-permission-missing",
+        "publication-target-permission-missing",
         "Meeting Assistant cannot view the results channel, send messages, or embed links.",
       );
     }
@@ -102,25 +115,38 @@ export class DiscordGuildSetupAdapter implements
     });
     if (craig === null) {
       return failure(
-        "craig-not-installed",
+        "capture-capability-unavailable",
         "Install the separate Craig Voice Gateway first.",
       );
     }
     if (!hasAllPermissions(voiceChannel, craig.id, requiredCraigVoicePermissions)) {
       return failure(
-        "craig-voice-permission-missing",
+        "capture-room-permission-missing",
         "Craig Voice Gateway needs the View Channel and Connect permissions.",
       );
     }
     return { ok: true as const };
   }
 
-  public async publish(request: GuildSetupPublicationRequest) {
+  public async publish(request: MeetingSourceSetupPublicationRequest) {
     try {
-      const guild = await this.fetchGuild(request.guildId);
-      const channel = await guild.channels.fetch(request.resultsChannelId);
+      const guildId = requireDiscordSnowflake(request.sourceId, "sourceId");
+      const voiceChannelId = requireDiscordSnowflake(request.roomId, "roomId");
+      const resultsChannelId = requireDiscordSnowflake(
+        request.publicationTargetId,
+        "publicationTargetId",
+      );
+      const actorId = requireDiscordSnowflake(
+        request.configuredByActorId,
+        "configuredByActorId",
+      );
+      const guild = await this.fetchGuild(guildId);
+      const channel = await guild.channels.fetch(resultsChannelId);
       if (channel === null || !isResultsChannel(channel)) {
-        return failure("results-channel-invalid", "The results channel is no longer available.");
+        return failure(
+          "publication-target-invalid",
+          "The results channel is no longer available.",
+        );
       }
       const footer = `Server setup · revision ${request.configurationRevision + 1}`;
       const embed = new EmbedBuilder()
@@ -128,8 +154,8 @@ export class DiscordGuildSetupAdapter implements
         .setTitle("Meeting Assistant channel check")
         .setDescription(
           "✅ The bot can publish transcripts and summaries here.\n" +
-          `Voice channel: <#${request.voiceChannelId}>\n` +
-          `Checked by: <@${request.configuredByUserId}>`,
+          `Voice channel: <#${voiceChannelId}>\n` +
+          `Checked by: <@${actorId}>`,
         )
         .setFooter({ text: footer });
       const nonce = createHash("sha256")
@@ -150,5 +176,14 @@ export class DiscordGuildSetupAdapter implements
   private async fetchGuild(guildId: string): Promise<Guild> {
     return this.client.guilds.fetch(guildId);
   }
+}
+
+const discordSnowflake = /^\d{17,20}$/u;
+
+function requireDiscordSnowflake(value: string, field: string): string {
+  if (!discordSnowflake.test(value)) {
+    throw new TypeError(`${field} must be a Discord snowflake`);
+  }
+  return value;
 }
 import { createHash } from "node:crypto";

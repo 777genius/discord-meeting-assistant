@@ -1,5 +1,5 @@
 {
-  "name": "@discord-meeting/guild-configuration-core",
+  "name": "@discord-meeting/meeting-routing-core",
   "version": "0.1.0",
   "private": true,
   "type": "module",
