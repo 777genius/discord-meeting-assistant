@@ -27,6 +27,7 @@ const temporaryRoots: string[] = [];
 
 class MemoryArtifactWriter implements RecordingBinaryArtifactWriter {
   public readonly directBodies: Uint8Array[] = [];
+  public omitVersionId = false;
 
   public async write(request: RecordingBinaryArtifactWriteRequest) {
     if (request.body instanceof Uint8Array) {
@@ -41,6 +42,9 @@ class MemoryArtifactWriter implements RecordingBinaryArtifactWriter {
       checksumSha256: request.checksumSha256,
       locator: request.locator,
       sizeBytes: request.sizeBytes,
+      ...(this.omitVersionId
+        ? {}
+        : { versionId: `version-${createHash("sha256").update(request.locator).digest("hex")}` }),
     };
   }
 }
@@ -113,6 +117,33 @@ function bytesOnce(bytes: Uint8Array): AsyncIterable<Uint8Array> {
 }
 
 describe("recording identity spool", () => {
+  it("requires storage to prove an immutable object version", async () => {
+    const root = await spoolRoot();
+    const writer = new MemoryArtifactWriter();
+    writer.omitVersionId = true;
+    const ingress = new DurableCraigRecordingIngress({
+      artifactLocatorPrefix: "memory://recordings",
+      spoolRoot: root,
+      writer,
+    });
+    await ingress.ingestLifecycleEvent(event({
+      actors: [{ actorId: humanId, kind: "human" }],
+      eventId: "started",
+      type: "meeting.started",
+    }));
+    await ingress.ingestLifecycleEvent(event({
+      eventId: "ended",
+      occurredAt: "2026-08-01T10:05:00.000Z",
+      reason: null,
+      type: "meeting.ended",
+    }));
+    const original = track(humanId, 1);
+
+    await expect(
+      ingress.ingestAuthoritativeTrack(original.metadata, bytesOnce(original.body)),
+    ).rejects.toMatchObject({ failure: "artifact-write-mismatch" });
+  });
+
   it("retains v2 source and actors through restart while keeping automation tracks", async () => {
     const root = await spoolRoot();
     const writer = new MemoryArtifactWriter();
@@ -644,6 +675,13 @@ describe("legacy recording identity spool", () => {
     const [receiptName] = await readdir(join(root, "completed-v1"));
     const receiptPath = join(root, "completed-v1", receiptName ?? "missing");
     const current = JSON.parse(await readFile(receiptPath, "utf8")) as Record<string, unknown>;
+    const [currentTrack] = Array.isArray(current.authoritativeTracks)
+      ? current.authoritativeTracks as Record<string, unknown>[]
+      : [];
+    if (currentTrack === undefined) {
+      throw new Error("legacy completion receipt track is required");
+    }
+    const { artifactVersionId: _artifactVersionId, ...legacyTrack } = currentTrack;
     const {
       actors: _actors,
       identityProvenance: _identityProvenance,
@@ -652,6 +690,7 @@ describe("legacy recording identity spool", () => {
     } = current;
     const preUpgradeBytes = `${JSON.stringify({
       ...preUpgradeReceipt,
+      authoritativeTracks: [legacyTrack],
       schemaVersion: 2,
     })}\n`;
     await writeFile(receiptPath, preUpgradeBytes);
@@ -670,6 +709,9 @@ describe("legacy recording identity spool", () => {
       source: { roomId: channelId, scopeId: guildId },
     });
     expect(await readFile(receiptPath, "utf8")).toBe(preUpgradeBytes);
+    await expect(
+      recovered.ingestAuthoritativeTrack(original.metadata, bytesOnce(original.body)),
+    ).rejects.toMatchObject({ failure: "artifact-write-mismatch" });
     await recovered.close();
   });
 });

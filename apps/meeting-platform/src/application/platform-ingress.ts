@@ -5,6 +5,7 @@ import {
 
 import type {
   AuthoritativeSpeakerTrackUpload,
+  AuthoritativeTrackDurabilityReceipt,
   DerivedLiveLifecycleEvent,
   DerivedLiveVoicePacketBatch,
   LiveVoicePacketBatchCommand,
@@ -93,7 +94,7 @@ export class PlatformRecordingIngress {
   public async ingestAuthoritativeTrack(
     metadata: AuthoritativeSpeakerTrackUpload,
     body: AsyncIterable<Uint8Array>,
-  ): Promise<{ readonly replayed: boolean }> {
+  ): Promise<AuthoritativeTrackDurabilityReceipt> {
     const result = await this.acceptDurably(() =>
       this.dependencies.ingress.ingestAuthoritativeTrack(metadata, body),
     );

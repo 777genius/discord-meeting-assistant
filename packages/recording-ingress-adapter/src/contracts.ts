@@ -17,6 +17,7 @@ export interface RecordingBinaryArtifactWriteReceipt {
   readonly checksumSha256: string;
   readonly locator: string;
   readonly sizeBytes: number;
+  readonly versionId?: string;
 }
 
 /**
@@ -54,10 +55,15 @@ export interface DurableCraigRecordingIngressOptions {
 }
 
 export interface AuthoritativeTrackIngressResult {
+  readonly checksumSha256: string;
   readonly locator: string;
   readonly recordingId: string;
   readonly replayed: boolean;
+  readonly sizeBytes: number;
   readonly speakerId: string;
+  readonly trackNumber: number;
+  readonly uploadId: string;
+  readonly versionId: string;
 }
 
 export interface AuthoritativeTrackIngressPort {
