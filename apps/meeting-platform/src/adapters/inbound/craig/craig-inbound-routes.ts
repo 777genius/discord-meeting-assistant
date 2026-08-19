@@ -31,6 +31,8 @@ import {
 import { sendJson } from "../../../http/http-response.js";
 
 export const maximumCraigJsonBodyBytes = 4 * 1_024 * 1_024;
+const s3BucketPattern = /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/u;
+const s3KeySegmentPattern = /^[A-Za-z0-9!_.*'()-]+$/u;
 
 export type CraigIngressPort = MeetingRecordingIngress;
 
@@ -126,14 +128,74 @@ function registerCraigInboundRoutes(
           metadata,
           asByteStream(request.body),
         );
-        return sendJson(reply, result.replayed ? 200 : 201, {
-          status: result.replayed ? "reused" : "accepted",
-        });
+        return sendJson(
+          reply,
+          result.replayed ? 200 : 201,
+          createDurableTrackUploadAcknowledgement(result),
+        );
       } catch (error: unknown) {
         return respondToCraigFailure(error, reply);
       }
     },
   );
+}
+
+function createDurableTrackUploadAcknowledgement(
+  receipt: Awaited<ReturnType<CraigIngressPort["ingestAuthoritativeTrack"]>>,
+) {
+  const object = parseImmutableS3Object(receipt.locator, receipt.versionId);
+  return {
+    checksumSha256: receipt.checksumSha256,
+    durable: true,
+    immutable: true,
+    object,
+    recordingId: receipt.recordingId,
+    schemaVersion: 1,
+    sizeBytes: receipt.sizeBytes,
+    trackNumber: receipt.trackNumber,
+    uploadId: receipt.uploadId,
+  } as const;
+}
+
+function parseImmutableS3Object(locator: string, versionId: string) {
+  if (
+    !locator.startsWith("s3://") ||
+    locator.includes("?") ||
+    locator.includes("#") ||
+    locator.includes("\\") ||
+    locator.includes("%") ||
+    versionId.length === 0 ||
+    versionId === "null" ||
+    containsControlCharacter(versionId)
+  ) {
+    throw new Error("Durability receipt does not contain an immutable S3 object identity");
+  }
+  const bucketAndKey = locator.slice("s3://".length);
+  const separatorIndex = bucketAndKey.indexOf("/");
+  const bucket = bucketAndKey.slice(0, separatorIndex);
+  const key = bucketAndKey.slice(separatorIndex + 1);
+  const keySegments = key.split("/");
+  if (
+    separatorIndex < 1 ||
+    !s3BucketPattern.test(bucket) ||
+    bucket.includes("..") ||
+    key.length === 0 ||
+    key.endsWith("/") ||
+    keySegments.some((segment) => !s3KeySegmentPattern.test(segment))
+  ) {
+    throw new Error("Durability receipt does not contain an immutable S3 object identity");
+  }
+  return { bucket, key, provider: "s3" as const, versionId };
+}
+
+function containsControlCharacter(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    if (codeUnit < 32 || codeUnit === 127) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function protectCraigPayload(token: string, expectedContentType: string) {

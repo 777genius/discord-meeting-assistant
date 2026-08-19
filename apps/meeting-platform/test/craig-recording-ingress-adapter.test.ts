@@ -4,6 +4,17 @@ import { CraigRecordingIngressAdapter } from "../src/adapters/outbound/craig-rec
 import { canonicalLiveAudioFormat } from "../src/application/recording-ingress.js";
 
 describe("CraigRecordingIngressAdapter", () => {
+  const trackReceipt = {
+    checksumSha256: "a".repeat(64),
+    locator: "s3://test-recordings/recordings/recording-1/track-1.ogg",
+    recordingId: "recording-1",
+    replayed: false,
+    sizeBytes: 3,
+    trackNumber: 1,
+    uploadId: "upload-1",
+    versionId: "version-1",
+  } as const;
+
   it("maps provider-neutral v2 actor identity without inferring a human", async () => {
     const ingestLifecycleEvent = vi.fn(async () => ({
       kind: "accepted" as const,
@@ -11,7 +22,7 @@ describe("CraigRecordingIngressAdapter", () => {
       replayed: false,
     }));
     const adapter = new CraigRecordingIngressAdapter({
-      ingestAuthoritativeTrack: async () => ({ replayed: false }),
+      ingestAuthoritativeTrack: async () => trackReceipt,
       ingestLifecycleEvent,
       ingestPacketBatch: async () => ({
         acceptedPackets: 0,
@@ -51,7 +62,7 @@ describe("CraigRecordingIngressAdapter", () => {
   });
 
   it("maps provider-neutral application commands to Craig durability contracts", async () => {
-    const ingestAuthoritativeTrack = vi.fn(async () => ({ replayed: false }));
+    const ingestAuthoritativeTrack = vi.fn(async () => trackReceipt);
     const ingestLifecycleEvent = vi.fn(async () => ({
       kind: "accepted" as const,
       recordingId: "recording-1",

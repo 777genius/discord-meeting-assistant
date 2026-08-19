@@ -39,10 +39,19 @@ const migrationDefinitions = [
   { fileName: "0024_question_policy_fence.sql" },
   { fileName: "0025_question_provider_attempt_accounting.sql" },
   { fileName: "0026_answer_effect_duplicate_containment.sql" },
-  { fileName: "0027_historical_memory_profile_rebuild.sql" },
+  { fileName: "0027_add_transcription_execution_binding.sql" },
+  { fileName: "0028_validate_transcription_execution_binding_constraints.sql" },
+  {
+    fileName: "0029_create_post_call_binding_recoverable_index.sql",
+    repairInvalidConcurrentIndex: "meeting_core.post_call_outbox_binding_recoverable_idx",
+    transactional: false,
+  },
+  { fileName: "0030_historical_memory_profile_rebuild.sql" },
 ] as const;
 
 const migrationLockKey = "718330091620232601";
+const migrationLockTimeoutMilliseconds = 5_000;
+const migrationStatementTimeoutMilliseconds = 300_000;
 
 export const requiredPostgresSchemaVersion = migrationDefinitions.length;
 
@@ -84,15 +93,28 @@ export class PostgresMigrationRunner {
     const migrations = await this.resolveMigrations();
     const client = await this.pool.connect();
     let migrationLockAcquired = false;
+    let migrationTimeoutsConfigured = false;
     let transactionActive = false;
     try {
-      await client.query("SELECT pg_advisory_lock($1::bigint)", [migrationLockKey]);
-      migrationLockAcquired = true;
+      await configureMigrationTimeouts(client);
+      migrationTimeoutsConfigured = true;
+      migrationLockAcquired = await tryAcquireMigrationLock(client);
+      if (!migrationLockAcquired) {
+        throw new PostgresMigrationError(
+          "PostgreSQL migration lock is already held; retry the rollout later",
+        );
+      }
       await client.query("BEGIN");
       transactionActive = true;
       await ensureMigrationLedger(client);
       const ledger = await listMigrationLedger(client);
       assertLedgerIsKnownAndContiguous(ledger, migrations);
+      // The session advisory lock remains held, but the ledger transaction must
+      // not span multiple migrations. In particular, metadata DDL must commit
+      // before a following validation scan starts so ACCESS EXCLUSIVE locks are
+      // released at the intended online-migration boundary.
+      await client.query("COMMIT");
+      transactionActive = false;
 
       const appliedVersions: number[] = [];
       const ledgerByVersion = new Map(ledger.map((entry) => [entry.version, entry]));
@@ -107,8 +129,6 @@ export class PostgresMigrationRunner {
           continue;
         }
         if (migration.transactional === false) {
-          await client.query("COMMIT");
-          transactionActive = false;
           if (migration.repairInvalidConcurrentIndex !== undefined) {
             await dropInvalidConcurrentIndex(
               client,
@@ -116,10 +136,14 @@ export class PostgresMigrationRunner {
             );
           }
           await client.query(migration.sql);
+        } else {
           await client.query("BEGIN");
           transactionActive = true;
-        } else {
           await client.query(migration.sql);
+        }
+        if (!transactionActive) {
+          await client.query("BEGIN");
+          transactionActive = true;
         }
         await client.query(
           `
@@ -129,10 +153,10 @@ export class PostgresMigrationRunner {
           `,
           [migration.version, migration.checksumSha256],
         );
+        await client.query("COMMIT");
+        transactionActive = false;
         appliedVersions.push(migration.version);
       }
-      await client.query("COMMIT");
-      transactionActive = false;
       return Object.freeze({
         appliedVersions: Object.freeze(appliedVersions),
         version: migrations.at(-1)?.version ?? 0,
@@ -148,7 +172,9 @@ export class PostgresMigrationRunner {
     } finally {
       const migrationLockReleased = !migrationLockAcquired
         || await releaseMigrationLock(client);
-      client.release(!migrationLockReleased);
+      const migrationTimeoutsReset = !migrationTimeoutsConfigured
+        || await resetMigrationTimeouts(client);
+      client.release(!(migrationLockReleased && migrationTimeoutsReset));
     }
   }
 
@@ -321,6 +347,27 @@ async function rollback(client: PoolClient): Promise<void> {
   }
 }
 
+async function configureMigrationTimeouts(client: PoolClient): Promise<void> {
+  await client.query(
+    `
+      SELECT set_config('lock_timeout', $1, false),
+             set_config('statement_timeout', $2, false)
+    `,
+    [
+      `${migrationLockTimeoutMilliseconds}ms`,
+      `${migrationStatementTimeoutMilliseconds}ms`,
+    ],
+  );
+}
+
+async function tryAcquireMigrationLock(client: PoolClient): Promise<boolean> {
+  const result = await client.query<{ readonly acquired: boolean }>(
+    "SELECT pg_try_advisory_lock($1::bigint) AS acquired",
+    [migrationLockKey],
+  );
+  return result.rows[0]?.acquired === true;
+}
+
 async function releaseMigrationLock(client: PoolClient): Promise<boolean> {
   try {
     const result = await client.query<{ readonly unlocked: boolean }>(
@@ -328,6 +375,16 @@ async function releaseMigrationLock(client: PoolClient): Promise<boolean> {
       [migrationLockKey],
     );
     return result.rows[0]?.unlocked === true;
+  } catch {
+    return false;
+  }
+}
+
+async function resetMigrationTimeouts(client: PoolClient): Promise<boolean> {
+  try {
+    await client.query("RESET lock_timeout");
+    await client.query("RESET statement_timeout");
+    return true;
   } catch {
     return false;
   }

@@ -4,10 +4,12 @@ import {
   VoicetextLiveTranscriptionAdapter,
   type VoicetextInboundFrame,
   type VoicetextLiveTranscriptEvent,
+  type VoicetextLiveProfile,
   type VoicetextWebSocketConnection,
   type VoicetextWebSocketConnector,
   type VoicetextWebSocketConnectRequest,
 } from "../src/index.js";
+import { validateVoicetextLiveTranscriptionOptions } from "../src/voicetext-live-transcription-configuration.js";
 
 class QueueSocket implements VoicetextWebSocketConnection {
   public readonly binary: Uint8Array[] = [];
@@ -37,7 +39,12 @@ class QueueSocket implements VoicetextWebSocketConnection {
     const message = JSON.parse(data) as Readonly<Record<string, unknown>>;
     this.text.push(message);
     if (message.type === "config") {
-      this.enqueue({ session_id: "00000000-0000-4000-8000-000000000001", type: "ready" });
+      this.enqueue({
+        model: message.model,
+        provider: message.provider,
+        session_id: "00000000-0000-4000-8000-000000000001",
+        type: "ready",
+      });
     } else if (message.type === "finalize") {
       this.enqueue({
         saw_result: this.finalizeStatus === "flushed",
@@ -196,13 +203,17 @@ class NoFinalizeResponseSocket extends QueueSocket {
   }
 }
 
-function adapter(socket: QueueSocket): VoicetextLiveTranscriptionAdapter {
+function adapter(
+  socket: QueueSocket,
+  profile: VoicetextLiveProfile = "deepgram-nova-3",
+): VoicetextLiveTranscriptionAdapter {
   return new VoicetextLiveTranscriptionAdapter(
     {
       audioAckTimeoutMs: 1_000,
       endpoint: "wss://voicetext.test/api/v1/transcribe/stream",
       finalizeTimeoutMs: 1_000,
       keyterms: ["Craig", "Craig", "Discord"],
+      profile,
       readyTimeoutMs: 1_000,
       token: "service-token-that-is-long-enough",
     },
@@ -211,6 +222,66 @@ function adapter(socket: QueueSocket): VoicetextLiveTranscriptionAdapter {
 }
 
 describe("VoicetextLiveTranscriptionAdapter", () => {
+  it("fails closed for an unsupported runtime live profile", () => {
+    expect(() => validateVoicetextLiveTranscriptionOptions({
+      endpoint: "wss://api.voicetext.test/api/v1/transcribe/stream",
+      profile: "elevenlabs-scribe-v2-realtime-typo" as VoicetextLiveProfile,
+      token: "x".repeat(16),
+    })).toThrow("Voicetext live profile is unsupported");
+  });
+
+  it.each([
+    ["deepgram-nova-3", "deepgram", "nova-3"],
+    ["elevenlabs-scribe-v2-realtime", "elevenlabs", "scribe_v2_realtime"],
+  ] as const)("requires the exact ready identity for %s before raw Opus audio", async (profile, provider, model) => {
+    const socket = new QueueSocket();
+    const session = await adapter(socket, profile).openSession({
+      idempotencyKey: "live-session-profile",
+      meetingId: "meeting-1",
+      onTranscript: () => {},
+      speakerId: "speaker-a",
+    });
+
+    expect(socket.text[0]).toMatchObject({
+      encoding: "opus",
+      model,
+      protocol_v: 2,
+      provider,
+      sample_rate: 48_000,
+    });
+    expect(socket.binary).toEqual([]);
+    session.terminate();
+  });
+
+  it.each([
+    ["absent", {}],
+    ["provider mismatch", { model: "nova-3", provider: "elevenlabs" }],
+    ["model mismatch", { model: "scribe_v2_realtime", provider: "deepgram" }],
+  ])("fails closed for %s ready identity and sends no audio", async (_label, readyIdentity) => {
+    class InvalidReadySocket extends QueueSocket {
+      public override async sendText(data: string): Promise<void> {
+        const message = JSON.parse(data) as Readonly<Record<string, unknown>>;
+        this.text.push(message);
+        if (message.type === "config") {
+          this.enqueue({
+            ...readyIdentity,
+            session_id: "00000000-0000-4000-8000-000000000001",
+            type: "ready",
+          });
+        }
+      }
+    }
+    const socket = new InvalidReadySocket();
+
+    await expect(adapter(socket).openSession({
+      idempotencyKey: "live-session-invalid-ready",
+      meetingId: "meeting-1",
+      onTranscript: () => {},
+      speakerId: "speaker-a",
+    })).rejects.toMatchObject({ code: "protocol_error", retryable: false });
+    expect(socket.binary).toEqual([]);
+  });
+
   it("streams raw Opus, emits bounded per-speaker partial/final events, and deduplicates", async () => {
     const socket = new QueueSocket();
     const events: VoicetextLiveTranscriptEvent[] = [];
@@ -227,6 +298,7 @@ describe("VoicetextLiveTranscriptionAdapter", () => {
       encoding: "opus",
       keyterms: ["Craig", "Discord"],
       language: "ru",
+      model: "nova-3",
       protocol_v: 2,
       provider: "deepgram",
       sample_rate: 48_000,

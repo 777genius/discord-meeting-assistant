@@ -4,6 +4,11 @@ Summary-first meeting intelligence for Discord. The system records through an
 isolated Craig fork, produces a speaker-attributed final transcript, generates an
 evidence-backed summary, and publishes it to Discord.
 
+<img width="776" height="594" alt="image" src="https://github.com/user-attachments/assets/820f6a34-6f18-4577-9828-a3c557b4a624" />
+<img width="556" height="590" alt="image" src="https://github.com/user-attachments/assets/7d6b9613-e257-4970-a273-056cd45aef11" />
+<img width="558" height="567" alt="image" src="https://github.com/user-attachments/assets/391d71f1-2955-4ae5-a719-12892f228e97" />
+
+
 ## Current phase
 
 This repository contains the executable V1 vertical slice and its architecture
@@ -22,6 +27,14 @@ Live voice conversation is an executable stateless vertical slice behind
 consumer-owned `ConversationRuntime` and `VoicePlaybackPort` boundaries. Pipecat,
 realtime STT, TTS providers, and Craig transport do not enter the meeting domain.
 Memory, RAG, and tools remain intentionally out of scope.
+
+VoiceText provider selection is explicit and independent for authoritative
+batch and derived live transcription. `VOICETEXT_BATCH_PROFILE` accepts
+`deepgram-nova-3` (default) or `elevenlabs-scribe-v2`;
+`VOICETEXT_LIVE_PROFILE` accepts `deepgram-nova-3` (default) or
+`elevenlabs-scribe-v2-realtime`. Invalid values fail startup. These selectors
+change only the server-side VoiceText boundary: Discord receives no upstream
+credentials, endpoints, provider probes, provider names, or SDK types.
 
 ## Repository boundary
 

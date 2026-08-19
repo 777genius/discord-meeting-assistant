@@ -35,6 +35,10 @@ export const HOSTED_VOICETEXT_CANARY_BINDING_V1 = Object.freeze({
     maximumTimelineDeltaMs: 60_000,
     maximumWordErrorRate: 0.35,
   }),
+  profiles: Object.freeze({
+    batch: "deepgram-nova-3",
+    live: "deepgram-nova-3",
+  }),
   requiredTerms: Object.freeze([
     "Meeting Platform",
     "Craig recording",

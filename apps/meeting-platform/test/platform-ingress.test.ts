@@ -70,6 +70,19 @@ const defaultPublicationTargets = {
   resolve: async () => "1533228891827736657",
 } as const;
 
+function authoritativeTrackReceipt() {
+  return {
+    checksumSha256: "a".repeat(64),
+    locator: "s3://meeting/recordings/recording-1/speaker.ogg",
+    recordingId: "recording-1",
+    replayed: false,
+    sizeBytes: 3,
+    trackNumber: 1,
+    uploadId: "recording-1:track:1",
+    versionId: "version-1",
+  } as const;
+}
+
 describe("Platform recording ingress", () => {
   it("atomically records and schedules a legacy finalized recording before dispatch", async () => {
     const order: string[] = [];
@@ -105,7 +118,7 @@ describe("Platform recording ingress", () => {
       dispatcher: { dispatchPending },
       failureClassifier,
       ingress: {
-        ingestAuthoritativeTrack: async () => ({ replayed: false }),
+        ingestAuthoritativeTrack: async () => authoritativeTrackReceipt(),
         ingestLifecycleEvent: async (): Promise<RecordingLifecycleIngressResult> =>
           lifecycleResult,
         ingestPacketBatch: async () => ({
@@ -155,7 +168,7 @@ describe("Platform recording ingress", () => {
       dispatcher: { dispatchPending },
       failureClassifier,
       ingress: {
-        ingestAuthoritativeTrack: async () => ({ replayed: false }),
+        ingestAuthoritativeTrack: async () => authoritativeTrackReceipt(),
         ingestLifecycleEvent: async (): Promise<RecordingLifecycleIngressResult> => ({
           kind: "accepted",
           recordingId: "recording-1",
@@ -188,7 +201,7 @@ describe("Platform recording ingress", () => {
       },
       failureClassifier,
       ingress: {
-        ingestAuthoritativeTrack: async () => ({ replayed: false }),
+        ingestAuthoritativeTrack: async () => authoritativeTrackReceipt(),
         ingestLifecycleEvent: async () => ({
           actors: null,
           identityProvenance: null,
@@ -257,7 +270,7 @@ describe("Platform recording ingress", () => {
       },
       failureClassifier,
       ingress: {
-        ingestAuthoritativeTrack: async () => ({ replayed: false }),
+        ingestAuthoritativeTrack: async () => authoritativeTrackReceipt(),
         ingestLifecycleEvent: async () => ({
           kind: "accepted" as const,
           recordingId: "recording-1",
@@ -307,7 +320,7 @@ describe("Platform recording ingress failure isolation", () => {
       },
       failureClassifier,
       ingress: {
-        ingestAuthoritativeTrack: async () => ({ replayed: false }),
+        ingestAuthoritativeTrack: async () => authoritativeTrackReceipt(),
         ingestLifecycleEvent: async () => ({
           actors: null,
           identityProvenance: null,
@@ -357,7 +370,7 @@ describe("Platform recording ingress failure isolation", () => {
       },
       failureClassifier,
       ingress: {
-        ingestAuthoritativeTrack: async () => ({ replayed: false }),
+        ingestAuthoritativeTrack: async () => authoritativeTrackReceipt(),
         ingestLifecycleEvent: async () => ({
           kind: "accepted" as const,
           recordingId: "recording-1",
@@ -413,7 +426,7 @@ describe("Platform recording ingress failure isolation", () => {
       },
       failureClassifier,
       ingress: {
-        ingestAuthoritativeTrack: async () => ({ replayed: false }),
+        ingestAuthoritativeTrack: async () => authoritativeTrackReceipt(),
         ingestLifecycleEvent: async () => ({
           kind: "accepted" as const,
           recordingId: "recording-1",
@@ -472,7 +485,7 @@ describe("Platform derived ingress failure isolation", () => {
       },
       failureClassifier,
       ingress: {
-        ingestAuthoritativeTrack: async () => ({ replayed: false }),
+        ingestAuthoritativeTrack: async () => authoritativeTrackReceipt(),
         ingestLifecycleEvent: async () => ({
           kind: "accepted" as const,
           recordingId: "recording-1",
@@ -507,7 +520,7 @@ describe("Platform derived ingress failure isolation", () => {
         classify: (error) => error === durableFailure ? "conflict" : null,
       },
       ingress: {
-        ingestAuthoritativeTrack: async () => ({ replayed: false }),
+        ingestAuthoritativeTrack: async () => authoritativeTrackReceipt(),
         ingestLifecycleEvent: async () => {
           throw durableFailure;
         },
@@ -544,7 +557,7 @@ describe("Platform derived ingress failure isolation", () => {
       },
       failureClassifier,
       ingress: {
-        ingestAuthoritativeTrack: async () => ({ replayed: false }),
+        ingestAuthoritativeTrack: async () => authoritativeTrackReceipt(),
         ingestLifecycleEvent: async () => ({
           actors: null,
           identityProvenance: null,

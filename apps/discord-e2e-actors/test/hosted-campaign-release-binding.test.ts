@@ -30,7 +30,8 @@ const trust = hostedCampaignReleaseTrustRootV1Schema.parse({
   campaignRoot: "/srv/e2e/campaigns", campaignRootOwnerGid: 10_001, campaignRootOwnerUid: 10_001,
   canary: { endpoint, expectedSegments: pinnedCanary.transcriptExpectation.segments,
     fixturePath: pinnedCanary.fixture.audioPath, fixtureSha256: pinnedCanary.fixture.audioSha256,
-    ...pinnedCanary.fixtureExpectation, requiredTerms: pinnedCanary.requiredTerms,
+    ...pinnedCanary.fixtureExpectation, profiles: pinnedCanary.profiles,
+    requiredTerms: pinnedCanary.requiredTerms,
     transcriptExpectationSha256: pinnedCanary.transcriptExpectation.sha256 },
   clockMaximumSkewMs: 250, deployRoot: "/srv/e2e", discordReceiptTtlMs: 30_000,
   craigNetworkPolicy: { bridgeInterface: "br-craige2e", chain: "CRAIG_E2E",
@@ -52,7 +53,8 @@ const priorSerializedV2TrustRoot = JSON.stringify({
 });
 const release = {
   canary: { endpoint, fixturePath: pinnedCanary.fixture.audioPath,
-    fixtureSha256: pinnedCanary.fixture.audioSha256, requiredTerms: pinnedCanary.requiredTerms },
+    fixtureSha256: pinnedCanary.fixture.audioSha256, profiles: pinnedCanary.profiles,
+    requiredTerms: pinnedCanary.requiredTerms },
   releaseId: "release-1", schemaVersion: 1,
   services: trust.services.map((entry, index) => ({ ...entry, containerId: String(index + 1).repeat(64) })),
   trustRootSha256: digestHostedCampaignReleaseTrustRootV1(trust),
@@ -132,8 +134,27 @@ describe("hosted campaign release binding", () => {
       meetingPlatformRevision: campaign.meetingPlatformRevision,
       planSha256: campaign.planSha256,
       voicetext: { input: { binding: { transcriptExpectationSha256: pinnedCanary.transcriptExpectation.sha256 },
-        expectedSegments: pinnedCanary.transcriptExpectation.segments } },
+        expectedSegments: pinnedCanary.transcriptExpectation.segments,
+        profiles: pinnedCanary.profiles } },
     });
+  });
+
+  it("admits an allowlisted ElevenLabs pair only when release and trust root match", () => {
+    const profiles = { batch: "elevenlabs-scribe-v2", live: "elevenlabs-scribe-v2-realtime" } as const;
+    const elevenTrust = hostedCampaignReleaseTrustRootV1Schema.parse({
+      ...trust, canary: { ...trust.canary, profiles },
+    });
+    const elevenRelease = {
+      ...release,
+      canary: { ...release.canary, profiles },
+      trustRootSha256: digestHostedCampaignReleaseTrustRootV1(elevenTrust),
+    };
+
+    expect(createHostedCampaignReleaseConfig(elevenRelease, elevenTrust, campaign).voicetext.input.profiles)
+      .toEqual(profiles);
+    expect(() => createHostedCampaignReleaseConfig({
+      ...elevenRelease, canary: { ...elevenRelease.canary, profiles: pinnedCanary.profiles },
+    }, elevenTrust, campaign)).toThrow("Release canary is not allowed");
   });
 
   it("binds operator declaration to the exact compiled trust root digest", () => {

@@ -20,6 +20,7 @@ const voicetextCanaryExpectation = {
   endpoint: { batch: { origin: "https://voicetext.test", path: "/batch" },
     live: { origin: "wss://voicetext.test", path: "/live" } },
   maximumCharacterErrorRate: 0.15, maximumTimelineDeltaMs: 250, maximumWordErrorRate: 0.2,
+  profiles: { batch: "deepgram-nova-3", live: "deepgram-nova-3" },
   requiredTermCount: 1, requiredTermsExpectationSha256: "4".repeat(64),
 } as const;
 

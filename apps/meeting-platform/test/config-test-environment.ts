@@ -27,4 +27,5 @@ export const platformTestEnvironment = {
   SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256: "a".repeat(64),
   SUBSCRIPTION_RUNTIME_TOKEN_FILE: "/run/secrets/runtime",
   TRANSCRIPTION_PROVIDER: "speaches",
+  TRANSCRIPTION_LEGACY_EXECUTION_BINDING: "speaches-v1",
 } as const;

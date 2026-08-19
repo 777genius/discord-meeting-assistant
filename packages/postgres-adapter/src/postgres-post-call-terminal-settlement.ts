@@ -256,7 +256,16 @@ export class PostgresPostCallTerminalSettlement {
       `
         UPDATE meeting_core.post_call_outbox
         SET recovery_generation = $2,
-            recovery_after = transaction_timestamp() + ($3 * interval '1 millisecond'),
+            recovery_after = CASE
+              WHEN transcription_execution_binding_required
+                THEN 'infinity'::timestamptz
+              ELSE transaction_timestamp() + ($3 * interval '1 millisecond')
+            END,
+            binding_recovery_after = CASE
+              WHEN transcription_execution_binding_required
+                THEN transaction_timestamp() + ($3 * interval '1 millisecond')
+              ELSE binding_recovery_after
+            END,
             recovery_source_job_ref = $4
         WHERE meeting_id = $1
           AND processed_at IS NULL

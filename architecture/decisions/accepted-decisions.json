@@ -189,23 +189,38 @@
     },
     {
       "id": "ADR-0039",
-      "path": "docs/decisions/0039-bounded-evidence-selector.md",
-      "immutableDigest": "sha256:368a0dfb2ed06fb793009fc3ec28f29081a421d17bf4e0120e3c6527de2f038f"
+      "path": "docs/decisions/0039-independent-voicetext-provider-profiles.md",
+      "immutableDigest": "sha256:173b3f10218b70f1b815cc044884c1b2eeb2c494ac6e545baab4b2aa813cb046"
     },
     {
       "id": "ADR-0040",
-      "path": "docs/decisions/0040-source-bound-infinity-index-semantics.md",
-      "immutableDigest": "sha256:384151153f489ba52630c3dd75ca1265457d8305e6bab0660ae9bedd903765c4"
+      "path": "docs/decisions/0040-binding-aware-post-call-rollout.md",
+      "immutableDigest": "sha256:b01fa9184e644bf5cf85efee6283f7f3127a2f83dfd34bd8ef8604df17f97411"
     },
     {
       "id": "ADR-0041",
-      "path": "docs/decisions/0041-scoped-infinity-deletion-reconciliation.md",
-      "immutableDigest": "sha256:dcae62ec6ee623a60d7b80b7bead4212769ae0f7ffa147d28fa2e83bc344696c"
+      "path": "docs/decisions/0041-fence-binding-recovery-from-legacy-workers.md",
+      "immutableDigest": "sha256:4360c25fdcebb63d90f336da140eac99947962e686d9f4e00f83ba7b387070b7"
     },
     {
       "id": "ADR-0042",
-      "path": "docs/decisions/0042-active-only-scoped-document-enumeration.md",
-      "immutableDigest": "sha256:0112fd5d5421444096a6740c2d466ad67448aa4066da9f1ba10bef5b15bce286"
+      "path": "docs/decisions/0042-bounded-evidence-selector.md",
+      "immutableDigest": "sha256:aea468257c48adea526531d60caa73f50e17d88011b5dd630da226bbc256c72f"
+    },
+    {
+      "id": "ADR-0043",
+      "path": "docs/decisions/0043-source-bound-infinity-index-semantics.md",
+      "immutableDigest": "sha256:5ebf72862e2ee69d1b3cb16a0f1de0084b6a9419e4f7cf268282648703d1ec57"
+    },
+    {
+      "id": "ADR-0044",
+      "path": "docs/decisions/0044-scoped-infinity-deletion-reconciliation.md",
+      "immutableDigest": "sha256:739cef236031a4e7b41cf0a6e7239a440303b3eeb4c14f3867bfcac59c7a1c2a"
+    },
+    {
+      "id": "ADR-0045",
+      "path": "docs/decisions/0045-active-only-scoped-document-enumeration.md",
+      "immutableDigest": "sha256:05e4d589f0d5b5fbc87a3d3f376d0ea988eb5f4bd295d1462714e5d18ff76933"
     }
   ]
 }

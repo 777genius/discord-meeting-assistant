@@ -4,6 +4,7 @@ import { validateVoicetextBatchFinalTranscriptionOptions } from "../src/voicetex
 import {
   mapVoicetextBatchProviderReadableSegments,
   mapVoicetextBatchProviderTurns,
+  stableVoicetextBatchIdempotencyKey,
 } from "../src/voicetext-batch-final-transcription-turns.js";
 
 const input = (
@@ -30,6 +31,14 @@ const input = (
 });
 
 describe("Voicetext batch final turn normalization", () => {
+  it("freezes the legacy batch-v2 idempotency salt and digest", () => {
+    expect(stableVoicetextBatchIdempotencyKey(
+      "job-key",
+      "recording-1",
+      "speaker-a",
+    )).toBe("8a2e9d6f65b93de8b11512886a3c623cc9442532471ea84e4d23488813513369");
+  });
+
   it("merges a bounded fully contained segment without losing its text", () => {
     const turns = mapVoicetextBatchProviderTurns(input([
       { endSeconds: 10, startSeconds: 5, transcript: "первая реплика" },

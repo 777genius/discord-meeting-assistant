@@ -59,4 +59,4 @@ allowBuilds:
   ssh2: false
 
 overrides:
-  "@infinity-context/sdk": "file:vendor/infinity-context/artifacts/infinity-context-sdk-0.1.0-15809619.tgz"
+  "@infinity-context/sdk": "file:vendor/infinity-context/artifacts/infinity-context-sdk-0.1.0-249245a9.tgz"

@@ -21,7 +21,7 @@ import {
 usePostgresIntegrationDatabase();
 
 describe("PostgresMigrationRunner and PostgresSchemaReadiness", () => {
-  it("rolls migration side effects and ledger receipts back as one transaction", async (context) => {
+  it("commits each migration and its receipt before starting the next one", async (context) => {
     databaseOrSkip(context);
     const isolated = await createIsolatedDatabase();
     const firstSql = "CREATE TABLE meeting_core.migration_atomicity_probe (id integer PRIMARY KEY);";
@@ -52,7 +52,14 @@ describe("PostgresMigrationRunner and PostgresSchemaReadiness", () => {
         SELECT to_regclass('meeting_core.schema_migration_ledger')::text AS ledger,
                to_regclass('meeting_core.migration_atomicity_probe')::text AS probe
       `);
-      expect(result.rows).toEqual([{ ledger: null, probe: null }]);
+      expect(result.rows).toEqual([{
+        ledger: "meeting_core.schema_migration_ledger",
+        probe: "meeting_core.migration_atomicity_probe",
+      }]);
+      const ledger = await isolated.pool.query<{
+        readonly version: number;
+      }>("SELECT version FROM meeting_core.schema_migration_ledger ORDER BY version");
+      expect(ledger.rows).toEqual([{ version: 1 }]);
     } finally {
       await isolated.dispose();
     }
@@ -110,6 +117,36 @@ describe("PostgresMigrationRunner and PostgresSchemaReadiness", () => {
       `);
       expect(index.rows).toEqual([{ indisready: true, indisvalid: true }]);
     } finally {
+      await isolated.dispose();
+    }
+  });
+
+  it("fails immediately when another migration runner owns the advisory lock", async (context) => {
+    databaseOrSkip(context);
+    const isolated = await createIsolatedDatabase();
+    const blocker = await isolated.pool.connect();
+    const migrationLockKey = "718330091620232601";
+    try {
+      await blocker.query("SELECT pg_advisory_lock($1::bigint)", [migrationLockKey]);
+      const startedAt = performance.now();
+      await expect(new PostgresMigrationRunner(isolated.pool).migrate()).rejects.toThrow(
+        "migration lock is already held",
+      );
+      expect(performance.now() - startedAt).toBeLessThan(2_000);
+      const settings = await isolated.pool.query<{
+        readonly lock_timeout: string;
+        readonly statement_timeout: string;
+      }>(`
+        SELECT current_setting('lock_timeout') AS lock_timeout,
+               current_setting('statement_timeout') AS statement_timeout
+      `);
+      expect(settings.rows).toEqual([{
+        lock_timeout: "0",
+        statement_timeout: "0",
+      }]);
+    } finally {
+      await blocker.query("SELECT pg_advisory_unlock($1::bigint)", [migrationLockKey]);
+      blocker.release();
       await isolated.dispose();
     }
   });
@@ -194,6 +231,46 @@ describe("PostgresMigrationRunner and PostgresSchemaReadiness validation", () =>
       version: requiredPostgresSchemaVersion,
     });
     await expect(new PostgresSchemaReadiness(database).assertReady()).resolves.toBeUndefined();
+  });
+
+  it("rejects a replica-only immutable binding trigger", async (context) => {
+    const database = databaseOrSkip(context);
+    await database.query(`
+      ALTER TABLE meeting_core.post_call_outbox
+      ENABLE REPLICA TRIGGER post_call_outbox_transcription_execution_binding_is_immutable
+    `);
+    try {
+      await expect(new PostgresSchemaReadiness(database).assertReady()).rejects.toThrow(
+        "required PostgreSQL trigger is missing or disabled",
+      );
+    } finally {
+      await database.query(`
+        ALTER TABLE meeting_core.post_call_outbox
+        ENABLE TRIGGER post_call_outbox_transcription_execution_binding_is_immutable
+      `);
+    }
+  });
+
+  it("treats a pre-binding binary after migration 0027 as a stop-only rollback boundary", async (context) => {
+    const database = databaseOrSkip(context);
+    const migrations = await loadPostgresMigrations();
+    const bindingMigrationVersion = 27;
+    expect(migrations.find(({ version }) => version === bindingMigrationVersion)?.fileName)
+      .toBe("0027_add_transcription_execution_binding.sql");
+    const preBindingMigrations = migrations.filter(
+      ({ version }) => version < bindingMigrationVersion,
+    );
+    const preBindingVersion = preBindingMigrations.at(-1)?.version;
+    if (preBindingVersion === undefined) {
+      throw new Error("pre-binding migration fixture is missing");
+    }
+
+    await expect(new PostgresSchemaReadiness(database, {
+      migrations: preBindingMigrations,
+      requiredVersion: preBindingVersion,
+    }).assertReady()).rejects.toThrow(
+      `migration ledger has ${migrations.length} receipts; expected ${preBindingMigrations.length}`,
+    );
   });
 
   it("rejects a required index that exists but is not valid and ready", async (context) => {

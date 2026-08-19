@@ -11,6 +11,10 @@ const endpointSchema = z.object({
   path: z.string().regex(/^\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*$/u),
 }).strict();
 const maximumAllowedTimelineDeltaMs = 60_000;
+const voicetextCanaryProfilesSchema = z.object({
+  batch: z.enum(["deepgram-nova-3", "elevenlabs-scribe-v2"]),
+  live: z.enum(["deepgram-nova-3", "elevenlabs-scribe-v2-realtime"]),
+}).strict();
 
 const voicetextSemanticCanaryReceiptV1Schema = z.object({
   batch: z.object({
@@ -47,6 +51,9 @@ const voicetextSemanticCanaryReceiptV1Schema = z.object({
     requiredTermsExpectationSha256: sha256Schema,
     wordErrorRate: z.number().min(0).max(1),
   }).strict(),
+  // Optional only to keep historical schema-v1 receipts readable. New
+  // evaluation always requires an exact trusted profile expectation.
+  profiles: voicetextCanaryProfilesSchema.optional(),
   receiptSha256: sha256Schema,
   schemaVersion: z.literal(1),
   tokenFile: z.object({
@@ -67,6 +74,7 @@ export interface VoicetextSemanticCanaryExpectationV1 {
   readonly maximumTimelineDeltaMs: number;
   readonly maximumWordErrorRate: number;
   readonly nowEpochMs: number;
+  readonly profiles: z.infer<typeof voicetextCanaryProfilesSchema>;
   readonly requiredTermCount: number;
   readonly requiredTermsExpectationSha256: string;
 }
@@ -88,7 +96,9 @@ export function evaluateVoicetextSemanticCanaryReceiptV1(
   }
   assertLifetime(receipt, expected);
   if (digestCanonical(receipt.binding) !== digestCanonical(expected.binding)
-    || digestCanonical(receipt.endpoint) !== digestCanonical(expected.endpoint)) {
+    || digestCanonical(receipt.endpoint) !== digestCanonical(expected.endpoint)
+    || receipt.profiles === undefined
+    || digestCanonical(receipt.profiles) !== digestCanonical(expected.profiles)) {
     throw new Error("Voicetext semantic canary does not match its campaign binding");
   }
   assertBatchIdempotency(receipt);

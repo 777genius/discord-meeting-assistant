@@ -1,8 +1,14 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 
-export const POST_CALL_QUEUE_NAME = "meeting-post-call-v1";
-export const POST_CALL_JOB_NAME = "process-post-call-v1";
+// V2 changes both BullMQ namespace dimensions so pre-binding V1 workers cannot
+// fetch binding-aware jobs during rollout. Durable outbox reconciliation safely
+// re-enqueues unfinished legacy work into this isolated queue.
+export const POST_CALL_QUEUE_PREFIX = "discord-meeting-v2";
+export const POST_CALL_QUEUE_NAME = "meeting-post-call-v2";
+export const POST_CALL_JOB_NAME = "process-post-call-v2";
+export const POST_CALL_JOB_ID_NAMESPACE = "post-call-job-v2";
+export const POST_CALL_JOB_ID_PREFIX = "post-call-v2-";
 export const POST_CALL_DEAD_LETTER_QUEUE_NAME = "meeting-post-call-dead-letter-v1";
 export const POST_CALL_DEAD_LETTER_JOB_NAME = "record-post-call-dead-letter-v1";
 
@@ -91,12 +97,15 @@ export function postCallJobId(meetingId: string, recoveryGeneration = 0): string
     recoveryGeneration,
   );
   if (validatedGeneration > 0) {
-    return `post-call-v1-${namespacedDigest(
-      "post-call-recovery-job-v1",
+    return `post-call-v2-${namespacedDigest(
+      "post-call-recovery-job-v2",
       `${validatedGeneration}\0${validatedMeetingId}`,
     )}`;
   }
-  return `post-call-v1-${namespacedDigest("post-call-job-v1", validatedMeetingId)}`;
+  return `${POST_CALL_JOB_ID_PREFIX}${namespacedDigest(
+    POST_CALL_JOB_ID_NAMESPACE,
+    validatedMeetingId,
+  )}`;
 }
 
 export function postCallJobReference(jobId: string | undefined): string {

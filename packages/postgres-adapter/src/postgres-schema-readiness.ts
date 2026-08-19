@@ -7,243 +7,22 @@ import {
   type PostgresMigration,
 } from "./postgres-migrations.js";
 import {
-  meetingKnowledgeRequiredCheckConstraints,
-  meetingKnowledgeRequiredColumns,
-  meetingKnowledgeRequiredIndexes,
-  meetingKnowledgeRequiredRelations,
-  meetingKnowledgeRequiredStructuralConstraints,
-} from "./postgres-meeting-knowledge-schema-requirements.js";
+  requiredCheckConstraints,
+  requiredColumns,
+  requiredIndexes,
+  requiredRelations,
+  requiredStructuralConstraints,
+} from "./postgres-core-schema-requirements.js";
+import { PostgresSchemaReadinessError } from "./postgres-schema-readiness-error.js";
+import { findMissingPostgresTriggers } from "./postgres-trigger-readiness.js";
 
-const requiredRelations = [
-  "meeting_core.schema_migration_ledger",
-  "meeting_core.meetings",
-  "meeting_core.post_call_outbox",
-  "meeting_core.live_meetings",
-  "meeting_core.live_meeting_turns",
-  "meeting_core.live_meeting_summary_coverage",
-  "meeting_core.live_meeting_generation_usage",
-  "meeting_core.live_meeting_generation_telemetry",
-  "meeting_core.post_call_dead_letters",
-  "meeting_core.summary_publication_effects",
-  "meeting_core.historical_memory_sync",
-  "meeting_core.historical_coverage_checkpoints",
-  ...meetingKnowledgeRequiredRelations,
-  "guild_configuration.guild_installations",
-] as const;
+export { PostgresSchemaReadinessError } from "./postgres-schema-readiness-error.js";
 
-const requiredIndexes = [
-  "meeting_core.post_call_outbox_recoverable_idx",
-  "meeting_core.post_call_dead_letters_recorded_idx",
-  "meeting_core.live_meeting_turns_timeline_idx",
-  "meeting_core.historical_memory_sync_current_meeting_idx",
-  "meeting_core.historical_memory_sync_recoverable_idx",
-  "meeting_core.historical_memory_sync_room_idx",
-  ...meetingKnowledgeRequiredIndexes,
-] as const;
+interface ConstraintRow { readonly validated: boolean; readonly identifier: string; readonly type: string; }
 
-const requiredColumns = [
-  "meeting_core.schema_migration_ledger.version",
-  "meeting_core.schema_migration_ledger.checksum_sha256",
-  "meeting_core.schema_migration_ledger.applied_at",
-  "meeting_core.meetings.meeting_id",
-  "meeting_core.meetings.revision",
-  "meeting_core.meetings.snapshot",
-  "meeting_core.meetings.created_at",
-  "meeting_core.meetings.updated_at",
-  "meeting_core.post_call_outbox.meeting_id",
-  "meeting_core.post_call_outbox.schema_version",
-  "meeting_core.post_call_outbox.created_at",
-  "meeting_core.post_call_outbox.dispatched_at",
-  "meeting_core.post_call_outbox.last_enqueued_at",
-  "meeting_core.post_call_outbox.processed_at",
-  "meeting_core.post_call_outbox.dead_lettered_at",
-  "meeting_core.post_call_outbox.dead_letter_source_job_ref",
-  "meeting_core.post_call_outbox.recovery_generation",
-  "meeting_core.post_call_outbox.recovery_after",
-  "meeting_core.post_call_outbox.recovery_source_job_ref",
-  "meeting_core.live_meetings.meeting_id",
-  "meeting_core.live_meetings.revision",
-  "meeting_core.live_meetings.snapshot",
-  "meeting_core.live_meetings.created_at",
-  "meeting_core.live_meetings.updated_at",
-  "meeting_core.live_meeting_turns.meeting_id",
-  "meeting_core.live_meeting_turns.turn_id",
-  "meeting_core.live_meeting_turns.start_ms",
-  "meeting_core.live_meeting_turns.end_ms",
-  "meeting_core.live_meeting_turns.speaker_id",
-  "meeting_core.live_meeting_turns.turn",
-  "meeting_core.live_meeting_turns.created_at",
-  "meeting_core.live_meeting_summary_coverage.meeting_id",
-  "meeting_core.live_meeting_summary_coverage.turn_id",
-  "meeting_core.live_meeting_summary_coverage.first_summary_revision",
-  "meeting_core.live_meeting_summary_coverage.created_at",
-  "meeting_core.live_meeting_generation_usage.meeting_id",
-  "meeting_core.live_meeting_generation_usage.run_id",
-  "meeting_core.live_meeting_generation_usage.payload",
-  "meeting_core.live_meeting_generation_usage.created_at",
-  "meeting_core.live_meeting_generation_telemetry.meeting_id",
-  "meeting_core.live_meeting_generation_telemetry.run_id",
-  "meeting_core.live_meeting_generation_telemetry.payload",
-  "meeting_core.live_meeting_generation_telemetry.created_at",
-  "meeting_core.post_call_dead_letters.source_job_ref",
-  "meeting_core.post_call_dead_letters.schema_version",
-  "meeting_core.post_call_dead_letters.meeting_id",
-  "meeting_core.post_call_dead_letters.attempts_made",
-  "meeting_core.post_call_dead_letters.failure_code",
-  "meeting_core.post_call_dead_letters.retryable",
-  "meeting_core.post_call_dead_letters.recorded_at",
-  "meeting_core.summary_publication_effects.projection_key",
-  "meeting_core.summary_publication_effects.publication_target_id",
-  "meeting_core.summary_publication_effects.external_receipt",
-  "meeting_core.summary_publication_effects.reserved_at",
-  "meeting_core.summary_publication_effects.completed_at",
-  "meeting_core.historical_memory_sync.release_id",
-  "meeting_core.historical_memory_sync.meeting_id",
-  "meeting_core.historical_memory_sync.desired_generation",
-  "meeting_core.historical_memory_sync.operation",
-  "meeting_core.historical_memory_sync.state",
-  "meeting_core.historical_memory_sync.lease_fence",
-  "meeting_core.historical_memory_sync.plan",
-  "meeting_core.historical_memory_sync.remote_document_ids",
-  "meeting_core.historical_coverage_checkpoints.checkpoint_id",
-  "meeting_core.historical_coverage_checkpoints.plan_digest",
-  "meeting_core.historical_coverage_checkpoints.coverage_bitmap",
-  "meeting_core.historical_coverage_checkpoints.extracts",
-  "meeting_core.historical_coverage_checkpoints.reduction",
-  "meeting_core.historical_coverage_checkpoints.attempt_count",
-  "meeting_core.historical_coverage_checkpoints.lease_fence",
-  ...meetingKnowledgeRequiredColumns,
-  "guild_configuration.guild_installations.guild_id",
-  "guild_configuration.guild_installations.revision",
-  "guild_configuration.guild_installations.snapshot",
-  "guild_configuration.guild_installations.created_at",
-  "guild_configuration.guild_installations.updated_at",
-] as const;
+interface MissingNameRow { readonly name: string; }
 
-const requiredCheckConstraints = [
-  ["meeting_core", "schema_migration_ledger", "schema_migration_ledger_version_is_positive"],
-  ["meeting_core", "schema_migration_ledger", "schema_migration_ledger_checksum_is_sha256"],
-  ["meeting_core", "meetings", "meetings_snapshot_is_object"],
-  ["meeting_core", "meetings", "meetings_snapshot_identity_matches"],
-  ["meeting_core", "meetings", "meetings_snapshot_revision_matches"],
-  ["meeting_core", "post_call_outbox", "post_call_outbox_schema_version_is_supported"],
-  ["meeting_core", "post_call_outbox", "post_call_outbox_terminal_receipt_is_consistent"],
-  ["meeting_core", "post_call_outbox", "post_call_outbox_terminal_receipt_is_exclusive"],
-  ["meeting_core", "post_call_outbox", "post_call_outbox_recovery_generation_is_valid"],
-  ["meeting_core", "post_call_outbox", "post_call_outbox_recovery_receipt_is_consistent"],
-  ["meeting_core", "live_meetings", "live_meetings_snapshot_is_object"],
-  ["meeting_core", "live_meetings", "live_meetings_snapshot_identity_matches"],
-  ["meeting_core", "live_meetings", "live_meetings_snapshot_revision_matches"],
-  ["meeting_core", "live_meetings", "live_meetings_snapshot_excludes_legacy_records"],
-  ["meeting_core", "live_meeting_turns", "live_meeting_turn_is_object"],
-  ["meeting_core", "live_meeting_turns", "live_meeting_turn_identity_matches"],
-  ["meeting_core", "live_meeting_turns", "live_meeting_turn_timing_matches"],
-  ["meeting_core", "live_meeting_turns", "live_meeting_turn_speaker_matches"],
-  ["meeting_core", "live_meeting_turns", "live_meeting_turn_text_is_string"],
-  ["meeting_core", "live_meeting_summary_coverage", "live_meeting_summary_coverage_revision_is_positive"],
-  ["meeting_core", "live_meeting_generation_usage", "live_meeting_generation_usage_payload_is_object"],
-  ["meeting_core", "live_meeting_generation_usage", "live_meeting_generation_usage_identity_matches"],
-  ["meeting_core", "live_meeting_generation_telemetry", "live_meeting_generation_telemetry_payload_is_object"],
-  ["meeting_core", "live_meeting_generation_telemetry", "live_meeting_generation_telemetry_identity_matches"],
-  ["meeting_core", "post_call_dead_letters", "post_call_dead_letters_schema_version_is_supported"],
-  ["meeting_core", "post_call_dead_letters", "post_call_dead_letters_source_job_ref_is_sha256"],
-  ["meeting_core", "post_call_dead_letters", "post_call_dead_letters_attempts_are_positive"],
-  ["meeting_core", "post_call_dead_letters", "post_call_dead_letters_failure_code_is_valid"],
-  ["meeting_core", "summary_publication_effects", "summary_publication_effects_key_is_valid"],
-  ["meeting_core", "summary_publication_effects", "summary_publication_effects_target_is_valid"],
-  ["meeting_core", "summary_publication_effects", "summary_publication_effects_receipt_is_consistent"],
-  ["meeting_core", "summary_publication_effects", "summary_publication_effects_receipt_is_bounded"],
-  ["meeting_core", "historical_memory_sync", "historical_memory_sync_schema_is_supported"],
-  ["meeting_core", "historical_memory_sync", "historical_memory_sync_binding_is_valid"],
-  ["meeting_core", "historical_memory_sync", "historical_memory_sync_operation_is_supported"],
-  ["meeting_core", "historical_memory_sync", "historical_memory_sync_state_is_supported"],
-  ["meeting_core", "historical_memory_sync", "historical_memory_sync_attempt_and_fence_are_valid"],
-  ["meeting_core", "historical_memory_sync", "historical_memory_sync_plan_is_object"],
-  ["meeting_core", "historical_memory_sync", "historical_memory_sync_remote_ids_are_object"],
-  ["meeting_core", "historical_memory_sync", "historical_memory_sync_applied_has_plan"],
-  ["meeting_core", "historical_coverage_checkpoints", "historical_coverage_schema_is_supported"],
-  ["meeting_core", "historical_coverage_checkpoints", "historical_coverage_identity_is_valid"],
-  ["meeting_core", "historical_coverage_checkpoints", "historical_coverage_payloads_are_valid"],
-  ["meeting_core", "historical_coverage_checkpoints", "historical_coverage_state_is_supported"],
-  ["meeting_core", "historical_coverage_checkpoints", "historical_coverage_completion_is_consistent"],
-  ...meetingKnowledgeRequiredCheckConstraints,
-  ["guild_configuration", "guild_installations", "guild_installations_snapshot_is_object"],
-  ["guild_configuration", "guild_installations", "guild_installations_snapshot_identity_matches"],
-  ["guild_configuration", "guild_installations", "guild_installations_snapshot_revision_matches"],
-] as const;
-
-const requiredStructuralConstraints = [
-  ["meeting_core", "schema_migration_ledger", "schema_migration_ledger_pkey", "p"],
-  ["meeting_core", "meetings", "meetings_pkey", "p"],
-  ["meeting_core", "post_call_outbox", "post_call_outbox_pkey", "p"],
-  ["meeting_core", "post_call_outbox", "post_call_outbox_meeting_id_fkey", "f"],
-  ["meeting_core", "post_call_outbox", "post_call_outbox_dead_letter_source_job_ref_fkey", "f"],
-  ["meeting_core", "post_call_outbox", "post_call_outbox_recovery_source_job_ref_fkey", "f"],
-  ["meeting_core", "live_meetings", "live_meetings_pkey", "p"],
-  ["meeting_core", "live_meeting_turns", "live_meeting_turns_pkey", "p"],
-  ["meeting_core", "live_meeting_turns", "live_meeting_turns_meeting_id_fkey", "f"],
-  [
-    "meeting_core",
-    "live_meeting_summary_coverage",
-    "live_meeting_summary_coverage_pkey",
-    "p",
-  ],
-  [
-    "meeting_core",
-    "live_meeting_summary_coverage",
-    "live_meeting_summary_coverage_meeting_id_turn_id_fkey",
-    "f",
-  ],
-  ["meeting_core", "live_meeting_generation_usage", "live_meeting_generation_usage_pkey", "p"],
-  [
-    "meeting_core",
-    "live_meeting_generation_usage",
-    "live_meeting_generation_usage_meeting_id_fkey",
-    "f",
-  ],
-  [
-    "meeting_core",
-    "live_meeting_generation_telemetry",
-    "live_meeting_generation_telemetry_pkey",
-    "p",
-  ],
-  [
-    "meeting_core",
-    "live_meeting_generation_telemetry",
-    "live_meeting_generation_telemetry_meeting_id_fkey",
-    "f",
-  ],
-  ["meeting_core", "post_call_dead_letters", "post_call_dead_letters_pkey", "p"],
-  ["meeting_core", "summary_publication_effects", "summary_publication_effects_pkey", "p"],
-  ["meeting_core", "historical_memory_sync", "historical_memory_sync_pkey", "p"],
-  ["meeting_core", "historical_memory_sync", "historical_memory_sync_meeting_id_fkey", "f"],
-  ["meeting_core", "historical_memory_sync", "historical_memory_sync_release_generation_unique", "u"],
-  ["meeting_core", "historical_memory_sync", "historical_memory_sync_transcript_policy_unique", "u"],
-  ["meeting_core", "historical_coverage_checkpoints", "historical_coverage_checkpoints_pkey", "p"],
-  ...meetingKnowledgeRequiredStructuralConstraints,
-  ["guild_configuration", "guild_installations", "guild_installations_pkey", "p"],
-] as const;
-
-interface ConstraintRow {
-  readonly validated: boolean;
-  readonly identifier: string;
-  readonly type: string;
-}
-
-interface MissingNameRow {
-  readonly name: string;
-}
-
-export interface PostgresSchemaReadinessPort {
-  assertReady(): Promise<void>;
-}
-
-export class PostgresSchemaReadinessError extends Error {
-  public constructor(message: string, options?: ErrorOptions) {
-    super(message, options);
-    this.name = "PostgresSchemaReadinessError";
-  }
-}
+export interface PostgresSchemaReadinessPort { assertReady(): Promise<void>; }
 
 /**
  * Startup-facing PostgreSQL schema contract. It deliberately verifies the
@@ -267,6 +46,7 @@ export class PostgresSchemaReadiness implements PostgresSchemaReadinessPort {
       await this.assertColumns();
       await this.assertIndexes();
       await this.assertConstraints();
+      await this.assertTriggers();
       const ledger = await readMigrationLedger(this.pool);
       if (ledger.length !== requiredMigrations.length) {
         throw new PostgresSchemaReadinessError(
@@ -377,6 +157,15 @@ export class PostgresSchemaReadiness implements PostgresSchemaReadinessPort {
     );
   }
 
+  private async assertTriggers(): Promise<void> {
+    const missing = await findMissingPostgresTriggers(this.pool, ["meeting_core.post_call_outbox.post_call_outbox_transcription_execution_binding_is_immutable"]);
+    if (missing.length > 0) {
+      throw new PostgresSchemaReadinessError(
+        `required PostgreSQL trigger is missing or disabled: ${missing.join(", ")}`,
+      );
+    }
+  }
+
   private async assertConstraintsOfType(
     expectedConstraints: readonly (readonly [string, string])[],
     errorPrefix: string,
@@ -401,16 +190,12 @@ export class PostgresSchemaReadiness implements PostgresSchemaReadinessPort {
       return constraint?.type !== expectedTypes.get(identifier) || constraint?.validated !== true;
     });
     if (missing.length > 0) {
-      throw new PostgresSchemaReadinessError(
-        `${errorPrefix}: ${missing.join(", ")}`,
-      );
+      throw new PostgresSchemaReadinessError(`${errorPrefix}: ${missing.join(", ")}`);
     }
   }
 
   private resolveMigrations(): Promise<readonly PostgresMigration[]> {
-    return this.options.migrations === undefined
-      ? loadPostgresMigrations()
-      : Promise.resolve(this.options.migrations);
+    return this.options.migrations === undefined ? loadPostgresMigrations() : Promise.resolve(this.options.migrations);
   }
 
   private resolveRequiredVersion(migrations: readonly PostgresMigration[]): number {

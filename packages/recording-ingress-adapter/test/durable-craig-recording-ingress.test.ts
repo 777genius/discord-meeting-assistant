@@ -60,6 +60,7 @@ class MemoryArtifactWriter implements RecordingBinaryArtifactWriter {
       checksumSha256: request.checksumSha256,
       locator: request.locator,
       sizeBytes: request.sizeBytes + (this.returnMismatchedReceipt ? 1 : 0),
+      versionId: `version-${createHash("sha256").update(request.locator).digest("hex")}`,
     };
   }
 }
@@ -324,6 +325,7 @@ describe("authoritative Craig recording durability", () => {
       authoritativeTracks: [
         {
           audioLocator: accepted.locator,
+          artifactVersionId: accepted.versionId,
           checksumSha256: track.metadata.checksumSha256,
           sizeBytes: track.metadata.sizeBytes,
           speakerId: track.metadata.speakerId,

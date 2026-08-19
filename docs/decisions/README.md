@@ -41,10 +41,13 @@
 - [ADR-0036: Canonical live-projection reply](0036-canonical-live-projection-reply.md)
 - [ADR-0037: Release-bound Meeting Knowledge qualification](0037-release-bound-meeting-knowledge-qualification.md)
 - [ADR-0038: Projection trust and cluster policy epoch](0038-projection-trust-and-policy-epoch.md)
-- [ADR-0039: Bounded evidence selector accounting](0039-bounded-evidence-selector.md)
-- [ADR-0040: Source-bound Infinity index semantics and migration](0040-source-bound-infinity-index-semantics.md)
-- [ADR-0041: Scoped Infinity deletion reconciliation](0041-scoped-infinity-deletion-reconciliation.md)
-- [ADR-0042: Active-only scoped document enumeration](0042-active-only-scoped-document-enumeration.md)
+- [ADR-0039: Independent VoiceText batch and live provider profiles](0039-independent-voicetext-provider-profiles.md)
+- [ADR-0040: Binding-aware post-call rollout](0040-binding-aware-post-call-rollout.md)
+- [ADR-0041: Fence binding recovery from legacy workers](0041-fence-binding-recovery-from-legacy-workers.md)
+- [ADR-0042: Bounded evidence selector accounting](0042-bounded-evidence-selector.md)
+- [ADR-0043: Source-bound Infinity index semantics and migration](0043-source-bound-infinity-index-semantics.md)
+- [ADR-0044: Scoped Infinity deletion reconciliation](0044-scoped-infinity-deletion-reconciliation.md)
+- [ADR-0045: Active-only scoped document enumeration](0045-active-only-scoped-document-enumeration.md)
 
 ## Superseded
 

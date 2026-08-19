@@ -151,17 +151,17 @@ const connection = {
 };
 const meetingId = process.argv[1];
 const digest = createHash("sha256")
-  .update("post-call-job-v1", "utf8")
+  .update("post-call-job-v2", "utf8")
   .update("\0", "utf8")
   .update(meetingId, "utf8")
   .digest("hex");
-const jobId = "post-call-v1-" + digest;
+const jobId = "post-call-v2-" + digest;
 `;
 
 export const replayReadinessScript = String.raw`
 import { Queue } from "bullmq";
 ${replayConnectionScript}
-const queue = new Queue("meeting-post-call-v1", { connection, prefix: "discord-meeting-v1" });
+const queue = new Queue("meeting-post-call-v2", { connection, prefix: "discord-meeting-v2" });
 try {
   await queue.waitUntilReady();
   const job = await queue.getJob(jobId);
@@ -178,7 +178,7 @@ export const replayJobScript = String.raw`
 import { Queue } from "bullmq";
 ${replayConnectionScript}
 const expectedBeforeProcessedOn = Number(process.argv[2]);
-const queue = new Queue("meeting-post-call-v1", { connection, prefix: "discord-meeting-v1" });
+const queue = new Queue("meeting-post-call-v2", { connection, prefix: "discord-meeting-v2" });
 try {
   await queue.waitUntilReady();
   const job = await queue.getJob(jobId);

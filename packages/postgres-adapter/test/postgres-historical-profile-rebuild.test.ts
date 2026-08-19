@@ -52,9 +52,9 @@ describe("historical index profile rebuild budget", () => {
     expect(queries.filter((query) => query === "COMMIT")).toHaveLength(2);
   });
 
-  it("resets old max-attempt applied rows during migration 0027", () => {
+  it("resets old max-attempt applied rows during migration 0030", () => {
     const migration = readFileSync(new URL(
-      "../../../infra/postgres/migrations/0027_historical_memory_profile_rebuild.sql",
+      "../../../infra/postgres/migrations/0030_historical_memory_profile_rebuild.sql",
       import.meta.url,
     ), "utf8");
     expect(migration).toMatch(/state = 'pending',[\s\S]*attempt_count = 0/u);

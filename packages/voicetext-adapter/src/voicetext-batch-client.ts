@@ -1,9 +1,8 @@
 import { VoicetextAdapterError } from "./errors.js";
 import {
-  voicetextBatchContractVersion,
-  voicetextBatchLanguage,
-  voicetextBatchModel,
-  voicetextBatchProvider,
+  defaultVoicetextBatchProfile,
+  voicetextBatchContractIdentity,
+  type VoicetextBatchProfile,
   type VoicetextBatchTaskResult,
 } from "./voicetext-batch-contract.js";
 import {
@@ -13,6 +12,7 @@ import {
 } from "./voicetext-batch-response.js";
 
 export type {
+  VoicetextBatchProfile,
   VoicetextBatchReadableSegment,
   VoicetextBatchTaskResult,
   VoicetextBatchTranscriptionResult,
@@ -33,7 +33,7 @@ export interface VoicetextBatchPollRequest {
   readonly signal: AbortSignal;
 }
 
-/** HTTP boundary for the authenticated Deepgram batch-v2 service contract. */
+/** HTTP boundary for one authenticated, profile-fixed VoiceText batch job. */
 export interface VoicetextBatchClient {
   poll(request: VoicetextBatchPollRequest): Promise<VoicetextBatchTaskResult>;
 
@@ -47,11 +47,13 @@ export type VoicetextBatchFetch = (
 
 export interface FetchVoicetextBatchClientOptions {
   readonly endpoint: string;
+  readonly profile?: VoicetextBatchProfile;
   readonly token: string;
 }
 
 export class FetchVoicetextBatchClient implements VoicetextBatchClient {
   private readonly authorization: string;
+  private readonly identity: ReturnType<typeof voicetextBatchContractIdentity>;
   private readonly endpoint: URL;
 
   public constructor(
@@ -59,6 +61,7 @@ export class FetchVoicetextBatchClient implements VoicetextBatchClient {
     private readonly fetchImplementation: VoicetextBatchFetch = globalThis.fetch,
   ) {
     this.endpoint = validateBatchEndpoint(options.endpoint);
+    this.identity = voicetextBatchContractIdentity(options.profile ?? defaultVoicetextBatchProfile);
     const token = requireNonEmpty(options.token, "token");
     if (token.length > 8_192 || containsAsciiControlCharacter(token)) {
       throw new VoicetextAdapterError("invalid_input", "token is invalid", false);
@@ -74,6 +77,7 @@ export class FetchVoicetextBatchClient implements VoicetextBatchClient {
     const multipart = deterministicMultipartBody(
       request.audio,
       request.idempotencyKey,
+      this.identity,
       validateKeyterms(request.keyterms),
     );
 
@@ -88,7 +92,7 @@ export class FetchVoicetextBatchClient implements VoicetextBatchClient {
       redirect: "error",
       signal: request.signal,
     });
-    return await parseVoicetextBatchTaskResponse(response);
+    return await parseVoicetextBatchTaskResponse(response, this.identity);
   }
 
   public async poll(
@@ -101,7 +105,7 @@ export class FetchVoicetextBatchClient implements VoicetextBatchClient {
       redirect: "error",
       signal: request.signal,
     });
-    const result = await parseVoicetextBatchTaskResponse(response);
+    const result = await parseVoicetextBatchTaskResponse(response, this.identity);
     if (result.jobId !== jobId) {
       throw invalidVoicetextBatchResponse();
     }
@@ -128,6 +132,7 @@ export class FetchVoicetextBatchClient implements VoicetextBatchClient {
 function deterministicMultipartBody(
   audio: Uint8Array,
   idempotencyKey: string,
+  identity: ReturnType<typeof voicetextBatchContractIdentity>,
   keyterms: readonly string[],
 ): Readonly<{ body: Blob; contentType: string }> {
   let boundary = `discord-meeting-${idempotencyKey}`;
@@ -139,10 +144,10 @@ function deterministicMultipartBody(
     }
   }
   const fields = [
-    ["contract_version", voicetextBatchContractVersion],
-    ["provider", voicetextBatchProvider],
-    ["model", voicetextBatchModel],
-    ["language", voicetextBatchLanguage],
+    ["contract_version", identity.contractVersion],
+    ["provider", identity.provider],
+    ["model", identity.model],
+    ["language", identity.language],
     ["keyterms", JSON.stringify(keyterms)],
   ] as const;
   const parts: Array<string | Uint8Array> = fields.map(([name, value]) =>
@@ -159,7 +164,7 @@ function deterministicMultipartBody(
   });
 }
 
-/** Converts the configured live WSS origin to its same-origin batch-v2 URL. */
+/** Converts the configured live WSS origin to its same-origin batch URL. */
 export function batchEndpointFromWebSocketUrl(webSocketUrl: string): string {
   let endpoint: URL;
   try {
@@ -218,7 +223,7 @@ function validateBatchEndpoint(value: string): URL {
   ) {
     throw new VoicetextAdapterError(
       "invalid_input",
-      "Voicetext batch endpoint must be a credential-free batch-v2 HTTP(S) URL",
+      "Voicetext batch endpoint must be a credential-free batch HTTP(S) URL",
       false,
     );
   }

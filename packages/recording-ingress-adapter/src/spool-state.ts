@@ -35,6 +35,7 @@ export interface StoredIdentityProvenance {
 }
 
 export interface StoredAuthoritativeTrack {
+  readonly artifactVersionId: string | null;
   readonly audioLocator: string;
   readonly checksumSha256: string;
   readonly sizeBytes: number;
@@ -222,6 +223,7 @@ function parseStoredAuthoritativeTrack(value: unknown): StoredAuthoritativeTrack
     throw new RecordingIngressError("corrupt-spool", "invalid authoritative track checksum");
   }
   return {
+    artifactVersionId: record.artifactVersionId === undefined || record.artifactVersionId === null ? null : stringValue(record.artifactVersionId, "authoritativeTracks.artifactVersionId"),
     audioLocator: stringValue(record.audioLocator, "authoritativeTracks.audioLocator"),
     checksumSha256,
     sizeBytes: record.sizeBytes as number,

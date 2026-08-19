@@ -66,8 +66,9 @@ export class LiveSession implements VoicetextLiveSession {
       encoding: "opus",
       ...(this.options.keyterms.length === 0 ? {} : { keyterms: this.options.keyterms }),
       language: this.options.language,
+      model: this.options.identity.model,
       protocol_v: 2,
-      provider: "deepgram",
+      provider: this.options.identity.provider,
       sample_rate: 48_000,
       type: "config",
     };
@@ -95,6 +96,7 @@ export class LiveSession implements VoicetextLiveSession {
       const message = parseServerMessage(
         frame.data,
         this.options.maxTranscriptCharsPerSegment,
+        this.options.identity,
       );
       if (message.type === "ready") {
         break;
@@ -273,6 +275,7 @@ export class LiveSession implements VoicetextLiveSession {
         this.handleServerMessage(parseServerMessage(
           frame.data,
           this.options.maxTranscriptCharsPerSegment,
+          this.options.identity,
         ));
       }
     } catch (error) {

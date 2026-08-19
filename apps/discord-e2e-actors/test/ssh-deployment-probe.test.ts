@@ -3,6 +3,13 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  POST_CALL_JOB_ID_NAMESPACE,
+  POST_CALL_JOB_ID_PREFIX,
+  POST_CALL_QUEUE_NAME,
+  POST_CALL_QUEUE_PREFIX,
+  postCallJobId,
+} from "@discord-meeting/bullmq-adapter";
 
 import type { ReplayTargetAttestation } from "../src/e2e-retained-evidence-contracts.js";
 import {
@@ -109,7 +116,7 @@ function fakeCommands(input: {
         ]);
         return JSON.stringify({
           beforeProcessedOn: 1_000,
-          jobId: "post-call-v1-test",
+          jobId: "post-call-v2-test",
           state: "completed",
         });
       }
@@ -129,7 +136,7 @@ function fakeCommands(input: {
         return JSON.stringify({
           afterProcessedOn: 2_000,
           beforeProcessedOn: 1_000,
-          jobId: "post-call-v1-test",
+          jobId: "post-call-v2-test",
           state: "completed",
         });
       }
@@ -193,6 +200,14 @@ function fakeCommands(input: {
 }
 
 describe("SshDeploymentEvidenceProbe replay target safety", () => {
+  it("pins the embedded replay job identity to the queue contract", () => {
+    expect(replayReadinessScript).toContain(JSON.stringify(POST_CALL_QUEUE_NAME));
+    expect(replayReadinessScript).toContain(JSON.stringify(POST_CALL_QUEUE_PREFIX));
+    expect(replayReadinessScript).toContain(JSON.stringify(POST_CALL_JOB_ID_NAMESPACE));
+    expect(replayReadinessScript).toContain(JSON.stringify(POST_CALL_JOB_ID_PREFIX));
+    expect(postCallJobId(target.recordingId)).toMatch(/^post-call-v2-[a-f0-9]{64}$/u);
+  });
+
   it("allows read-only provenance probes without a replay attestation path", async () => {
     const servicesByContainer = new Map<string, { project: string; service: string }>();
     let containerSequence = 0;

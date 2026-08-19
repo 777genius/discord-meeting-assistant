@@ -61,6 +61,10 @@ function createInput(calls: string[]): PlatformStartupInput {
       dispatchPending: async () => {
         calls.push("outbox:dispatch");
       },
+      prepareLegacyBindings: async () => {
+        calls.push("outbox:backfill-bindings");
+        return 0;
+      },
     },
     pool: {
       query: async () => {
@@ -123,6 +127,7 @@ describe("startPlatformServices", () => {
       "discord:login",
       "discord:register-command",
       "dependencies:ready",
+      "outbox:backfill-bindings",
       "guild-setup:start",
       "worker:ready",
       "worker:run",

@@ -10,7 +10,12 @@ interface ConversationReadinessEnvironment {
 
 interface MeetingKnowledgeEnvironment {
   readonly CONVERSATION_ENABLED: boolean;
+  readonly DISCORD_APPLICATION_ID: string;
+  readonly DISCORD_BOTIK_APPLICATION_ID?: string | undefined;
+  readonly DISCORD_CRAIG_APPLICATION_ID: string;
   readonly DISCORD_PUBLICATION_MODE: string;
+  readonly E2E_TEST_ONLY_LABEL: boolean;
+  readonly MEETING_KNOWLEDGE_E2E_SYNTHETIC_HUMAN_ACTOR_IDS: readonly string[];
   readonly MEETING_KNOWLEDGE_GROUNDED_VOICE_ENABLED: boolean;
   readonly MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_EPOCH?: string | undefined;
   readonly MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_STATE_FILE?: string | undefined;
@@ -45,6 +50,42 @@ export function validateMeetingKnowledgeEnvironment(
   environment: MeetingKnowledgeEnvironment,
   context: RefinementCtx,
 ): void {
+  if (
+    environment.MEETING_KNOWLEDGE_E2E_SYNTHETIC_HUMAN_ACTOR_IDS.length > 0 &&
+    !environment.E2E_TEST_ONLY_LABEL
+  ) {
+    context.addIssue({
+      code: "custom",
+      message: "synthetic human question actors are permitted only in an explicitly test-only deployment",
+      path: ["E2E_TEST_ONLY_LABEL"],
+    });
+  }
+  if (
+    environment.MEETING_KNOWLEDGE_E2E_SYNTHETIC_HUMAN_ACTOR_IDS.length > 0 &&
+    !environment.MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED
+  ) {
+    context.addIssue({
+      code: "custom",
+      message: "synthetic human question actors require local final reply",
+      path: ["MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED"],
+    });
+  }
+  const protectedApplicationIds = new Set([
+    environment.DISCORD_APPLICATION_ID,
+    environment.DISCORD_CRAIG_APPLICATION_ID,
+    ...(environment.DISCORD_BOTIK_APPLICATION_ID === undefined
+      ? []
+      : [environment.DISCORD_BOTIK_APPLICATION_ID]),
+  ]);
+  if (environment.MEETING_KNOWLEDGE_E2E_SYNTHETIC_HUMAN_ACTOR_IDS.some(
+    (actorId) => protectedApplicationIds.has(actorId),
+  )) {
+    context.addIssue({
+      code: "custom",
+      message: "platform application identities cannot be synthetic human question actors",
+      path: ["MEETING_KNOWLEDGE_E2E_SYNTHETIC_HUMAN_ACTOR_IDS"],
+    });
+  }
   if (
     environment.MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED &&
     environment.MEETING_KNOWLEDGE_PRINCIPAL_KEY_FILE === undefined

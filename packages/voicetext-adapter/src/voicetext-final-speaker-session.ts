@@ -42,6 +42,7 @@ export class VoicetextFinalSpeakerSession {
       encoding: "pcm_s16le",
       ...(this.options.keyterms.length === 0 ? {} : { keyterms: this.options.keyterms }),
       language: this.options.language,
+      model: "nova-3",
       protocol_v: 2,
       provider: "deepgram",
       sample_rate: 16_000,

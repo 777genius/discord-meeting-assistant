@@ -19,6 +19,10 @@ const endpoint = {
   batch: { origin: "https://voicetext.test", path: "/v2/listen" },
   live: { origin: "wss://voicetext.test", path: "/v1/listen" },
 } as const;
+const profiles = {
+  batch: "elevenlabs-scribe-v2",
+  live: "elevenlabs-scribe-v2-realtime",
+} as const;
 
 describe("hosted Voicetext semantic canary producer", () => {
   it("computes semantic evidence locally and retains no transcript or token content", async () => {
@@ -32,6 +36,7 @@ describe("hosted Voicetext semantic canary producer", () => {
       requiredTermMatches: 2, wordErrorRate: 0,
     });
     expect(receipt.expiresAtEpochMs).toBe(160_000);
+    expect(receipt.profiles).toEqual(profiles);
     expect(JSON.stringify(receipt)).not.toMatch(/Привет|hello Quanta|secret-token/u);
   });
 
@@ -64,6 +69,7 @@ describe("hosted Voicetext semantic canary producer", () => {
         segments: numeric,
         utteranceCount: 1,
       },
+      keyterms: ["августа", "2026"],
       live: { ...result().live, segments: numeric },
     };
     const receipt = await produceVoicetextSemanticCanaryReceiptV1({
@@ -95,6 +101,7 @@ describe("hosted Voicetext semantic canary producer", () => {
         segments: observed,
         utteranceCount: 1,
       },
+      keyterms: ["PostgreSQL"],
       live: { ...result().live, segments: observed },
     };
     const receipt = await produceVoicetextSemanticCanaryReceiptV1({
@@ -121,6 +128,8 @@ describe("hosted Voicetext semantic canary producer", () => {
     ["immutable result substitution", (value: VoicetextCanaryInternalResultV1) => ({ ...value, batch: { ...value.batch, firstSubmission: { ...value.batch.firstSubmission, resultSha256: "0".repeat(64) }, idempotentReplay: { ...value.batch.idempotentReplay, resultSha256: "0".repeat(64) } } })],
     ["missing live acknowledgement", (value: VoicetextCanaryInternalResultV1) => ({ ...value, live: { ...value.live, audioAcknowledgements: { expected: 2, received: 1 } } })],
     ["unfinalized live session", (value: VoicetextCanaryInternalResultV1) => ({ ...value, live: { ...value.live, finalizeComplete: false } })],
+    ["profile substitution", (value: VoicetextCanaryInternalResultV1) => ({ ...value, profiles: { ...profiles, batch: "deepgram-nova-3" as const } })],
+    ["keyterm substitution", (value: VoicetextCanaryInternalResultV1) => ({ ...value, keyterms: ["Other"] })],
   ])("rejects %s", async (_label, mutate) => {
     await expect(produceVoicetextSemanticCanaryReceiptV1(input(), {
       run: async () => mutate(result()),
@@ -137,7 +146,8 @@ describe("hosted Voicetext semantic canary producer", () => {
 function input() {
   return {
     binding, endpoint, expectedSegments, fixturePath: "/fixtures/canary.ogg",
-    now: () => 100_000, requiredTerms: ["Botik", "Quanta"], timeoutMs: 30_000, ttlMs: 60_000,
+    now: () => 100_000, profiles, requiredTerms: ["Botik", "Quanta"],
+    timeoutMs: 30_000, ttlMs: 60_000,
   } as const;
 }
 
@@ -156,6 +166,8 @@ function result(): VoicetextCanaryInternalResultV1 {
         { endMs: 2_020, startMs: 1_120, text: "hello Quanta" },
       ],
     },
+    keyterms: ["Botik", "Quanta"],
+    profiles,
     schemaVersion: 1,
     tokenFile: { generationId: "generation-2", mode: 0o400, ownerUid: 10_001, path: "/run/secrets/voicetext" },
   };

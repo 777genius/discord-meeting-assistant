@@ -1,14 +1,14 @@
 export const INFINITY_CONTEXT_SDK_PROVENANCE = Object.freeze({
-  archiveSha256: "a14b3d0c071b08fcef003436f4f46b52b948f734e8093096abc699c09d5deaa8",
-  commit: "15809619e61ae76f45d04176d1b681a78bf41de3",
+  archiveSha256: "4ce4b9b2319e2015e8a4c9e81263ff23ae024e468bd6ae4523ee8b0ac95eb97c",
+  commit: "249245a98bdae6d357c586aa078374c2a9da728c",
   developmentPackageLink: "vendor/infinity-context/.upstream/packages/infinity_context_ts_sdk",
-  immutablePackageIntegrity: "sha512-+g8mKVBvJCJWkpmMgUUBjwPZT86Q6KIIwVADy2nLvxfR8n5leA+gHJL/0JU8oYfG08tOlonSLfhPo4JxH+2q5Q==",
-  immutablePackagePath: "vendor/infinity-context/artifacts/infinity-context-sdk-0.1.0-15809619.tgz",
+  immutablePackageIntegrity: "sha512-V2RCQKfJ3XMiIXQ7B3F+wvGAu9RJeRYGnDaRIVdT890tLvv0asviGpmsyyM5El7JuNjgPKI+TpdygaoKjxYSDw==",
+  immutablePackagePath: "vendor/infinity-context/artifacts/infinity-context-sdk-0.1.0-249245a9.tgz",
   packageLockSha256: "068b3129a4ccd449c50cdc6a72755dbae3d4a977c5a468565e2f3841529cac0e",
   packageManifestSha256: "020c37993fc2749dd55649b2649d35e79570c1b43757a67ee16618de15be6ccd",
   packageName: "@infinity-context/sdk",
-  packageTarballIntegrity: "sha512-+g8mKVBvJCJWkpmMgUUBjwPZT86Q6KIIwVADy2nLvxfR8n5leA+gHJL/0JU8oYfG08tOlonSLfhPo4JxH+2q5Q==",
-  packageTarballSha256: "a59e128c9c0b38c9e665f1da608cb5df09d25f2d14677d32f1a44d6eefc6efe9",
+  packageTarballIntegrity: "sha512-V2RCQKfJ3XMiIXQ7B3F+wvGAu9RJeRYGnDaRIVdT890tLvv0asviGpmsyyM5El7JuNjgPKI+TpdygaoKjxYSDw==",
+  packageTarballSha256: "8727f751aed94769de8e7aec93ea0b927479a4ab501b3b01c31c2472b6cebc7f",
   packageVersion: "0.1.0",
   retainedLiveQualificationEvidenceSha256: "4f19e430a465294d020e6dc0eebde4a6320913744201fa60700cb75d148065fe",
   retainedLiveQualificationManifestSha256: "sha256:abe694b3e1cf0dcec9d5ff7c0d8b65f30ec5364ac11bb2526bd1c3a3b176c207",
@@ -34,9 +34,9 @@ export const INFINITY_CONTEXT_SDK_PROVENANCE = Object.freeze({
   sourcePinnedEmbeddingProfileDigestSha256:
     "sha256:b183b9d6350dfaf9f874cab9fef993d3ded5060a4a18d972c45ec97def5faf31",
   sourcePinnedServiceRevision:
-    "15809619e61ae76f45d04176d1b681a78bf41de3",
+    "249245a98bdae6d357c586aa078374c2a9da728c",
   repository: "https://github.com/777genius/infinity-context.git",
-  tree: "5c08ffaa071b2a4e511ad8096b1fbf828f1e4145",
+  tree: "a2ed97138f1d52e33aa04de6efe17c4726baf19e",
 });
 
 export interface InfinityContextEmbeddingProfileAttestationV1 {

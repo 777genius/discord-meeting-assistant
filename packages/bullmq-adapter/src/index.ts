@@ -1,8 +1,11 @@
 export {
   POST_CALL_DEAD_LETTER_JOB_NAME,
   POST_CALL_DEAD_LETTER_QUEUE_NAME,
+  POST_CALL_JOB_ID_NAMESPACE,
+  POST_CALL_JOB_ID_PREFIX,
   POST_CALL_JOB_NAME,
   POST_CALL_QUEUE_NAME,
+  POST_CALL_QUEUE_PREFIX,
   parsePostCallEnqueueRequest,
   parsePostCallDeadLetterRecord,
   parsePostCallJobPayload,

@@ -136,6 +136,8 @@ describe("VoicetextFinalTranscriptionAdapter", () => {
       socket.onText = (message) => {
         if (message.type === "config") {
           socket.enqueue({
+            model: "nova-3",
+            provider: "deepgram",
             session_id: `00000000-0000-4000-8000-00000000000${connectionIndex + 1}`,
             type: "ready",
           });
@@ -314,7 +316,7 @@ describe("VoicetextFinalTranscriptionAdapter failure handling", () => {
     const connector = new ScriptedConnector((socket) => {
       socket.onText = (message) => {
         if (message.type === "config") {
-          socket.enqueue({ session_id: "00000000-0000-4000-8000-000000000001", type: "ready" });
+          socket.enqueue({ model: "nova-3", provider: "deepgram", session_id: "00000000-0000-4000-8000-000000000001", type: "ready" });
         }
       };
       socket.onBinary = () => {
@@ -442,7 +444,7 @@ describe("VoicetextFinalTranscriptionAdapter failure handling", () => {
 function standardReadyAndAck(socket: FakeSocket): void {
   socket.onText = (message) => {
     if (message.type === "config") {
-      socket.enqueue({ session_id: "00000000-0000-4000-8000-000000000001", type: "ready" });
+      socket.enqueue({ model: "nova-3", provider: "deepgram", session_id: "00000000-0000-4000-8000-000000000001", type: "ready" });
     }
   };
   socket.onBinary = (_frame, sequence) => {

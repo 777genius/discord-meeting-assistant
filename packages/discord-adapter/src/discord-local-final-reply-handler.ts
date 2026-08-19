@@ -20,6 +20,7 @@ export interface DiscordQuestionScopePort {
 }
 
 export interface DiscordLocalFinalReplyHandlerOptions {
+  readonly e2eSyntheticHumanAuthorIds?: readonly string[];
   readonly principalTtlSeconds: number;
 }
 
@@ -30,6 +31,7 @@ export class DiscordLocalFinalReplyHandler {
   private readonly jobs: Pick<QuestionJobStore, "cancelQuestion" | "hasActiveQuestion">;
   private readonly nowMilliseconds: () => number;
   private readonly options: DiscordLocalFinalReplyHandlerOptions;
+  private readonly e2eSyntheticHumanAuthorIds: ReadonlySet<string>;
   private readonly publication: Pick<AnswerPublicationPort, "cancelBeforeRequest">;
   private readonly principals: DiscordQuestionPrincipalCodec;
   private readonly reportError: (error: unknown) => void;
@@ -67,6 +69,19 @@ export class DiscordLocalFinalReplyHandler {
     this.jobs = input.jobs;
     this.nowMilliseconds = input.nowMilliseconds ?? Date.now;
     this.options = input.options;
+    const e2eSyntheticHumanAuthorIds =
+      input.options.e2eSyntheticHumanAuthorIds ?? [];
+    if (
+      e2eSyntheticHumanAuthorIds.length > 128 ||
+      new Set(e2eSyntheticHumanAuthorIds).size !==
+        e2eSyntheticHumanAuthorIds.length ||
+      e2eSyntheticHumanAuthorIds.some(
+        (actorId) => !/^\d{17,20}$/u.test(actorId),
+      )
+    ) {
+      throw new RangeError("Discord E2E synthetic human authors are invalid");
+    }
+    this.e2eSyntheticHumanAuthorIds = new Set(e2eSyntheticHumanAuthorIds);
     this.principals = input.principals;
     this.publication = input.publication;
     this.reportError = input.reportError ?? (() => {});
@@ -112,7 +127,8 @@ export class DiscordLocalFinalReplyHandler {
     const questionText = message.content.trim();
     if (
       guildId === null ||
-      message.author.bot ||
+      (message.author.bot &&
+        !this.e2eSyntheticHumanAuthorIds.has(message.author.id)) ||
       message.webhookId !== null ||
       referencedMessageId === undefined ||
       questionText.length === 0 ||
