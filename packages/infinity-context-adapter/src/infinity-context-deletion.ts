@@ -2,7 +2,13 @@ import type {
   HistoricalDeleteRequestV1,
   HistoricalDeleteResultV1,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
-import { ValueError, type DocumentRecord, type InfinityContextClient } from "@infinity-context/sdk";
+import {
+  ValueError,
+  type DocumentRecord,
+  type InfinityContextClient,
+  type ListScopeDocumentsInput,
+  type PaginatedEnvelope,
+} from "@infinity-context/sdk";
 
 import { InfinityOperationDeadline } from "./infinity-request-deadline.js";
 
@@ -18,25 +24,6 @@ import {
 
 const SCOPE_PAGE_LIMIT = 100;
 const MAXIMUM_SCOPE_PAGES = 1_000;
-
-interface ScopeDocumentPageInput {
-  readonly cursor?: string;
-  readonly limit: number;
-  readonly memoryScopeExternalRef: string;
-  readonly signal: AbortSignal;
-  readonly spaceSlug: string;
-  readonly status: "active";
-  readonly threadExternalRef: string;
-}
-
-interface ScopeDocumentPage {
-  readonly data: unknown;
-  readonly next_cursor?: unknown;
-}
-
-interface ScopeDocumentsClient {
-  listScopeDocuments(input: ScopeDocumentPageInput): Promise<ScopeDocumentPage>;
-}
 
 export function deleteHistoricalMeeting(
   client: InfinityContextClient,
@@ -132,16 +119,15 @@ async function listActiveRemoteTargets(
   requestTimeoutMs: number,
   operation: InfinityOperationDeadline,
 ): Promise<Map<string, string>> {
-  const documents = client.documents as unknown as ScopeDocumentsClient;
   const targets = new Map<string, string>();
   const seenCursors = new Set<string>();
   const seenDocumentIds = new Set<string>();
   let cursor: string | undefined;
   for (let pageNumber = 0; pageNumber < MAXIMUM_SCOPE_PAGES; pageNumber += 1) {
-    let page: ScopeDocumentPage;
+    let page: PaginatedEnvelope<readonly DocumentRecord[]>;
     try {
       page = await operation.request(requestTimeoutMs, (signal) =>
-        documents.listScopeDocuments({
+        client.documents.listScopeDocuments({
           ...(cursor === undefined ? {} : { cursor }),
           limit: SCOPE_PAGE_LIMIT,
           memoryScopeExternalRef: request.topology.roomScopeExternalRef,
@@ -149,7 +135,7 @@ async function listActiveRemoteTargets(
           spaceSlug: request.topology.spaceSlug,
           status: "active",
           threadExternalRef: request.topology.threadExternalRef,
-        })
+        } satisfies ListScopeDocumentsInput)
       );
     } catch (error) {
       if (cursor !== undefined && (error instanceof ValueError ||
