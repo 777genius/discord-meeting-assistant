@@ -276,9 +276,8 @@ async function deleteWholeMeeting(
         status: "absence_unverified",
       };
     }
-    // Thread counters do not prove that source documents disappeared. Verify
-    // every locally known document identity through the official SDK and a
-    // bounded scope listing before claiming absence.
+    // Thread counters do not prove source-document absence. Reconcile every
+    // persisted plan identity, then verify each remote ID through GET-by-ID.
     return deleteRelease(client, request, requestTimeoutMs, operation);
   } catch (error) {
     return failure(error, "absence_unverified");
