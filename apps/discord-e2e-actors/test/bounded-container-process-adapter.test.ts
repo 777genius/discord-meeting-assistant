@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { spawnSync } from "node:child_process";
+
+import { describe, expect, it, vi } from "vitest";
 
 import { BoundedContainerProcessAdapter } from
   "../src/bounded-container-process-adapter.js";
@@ -69,7 +71,14 @@ describe("bounded container process adapter", () => {
     const result = await executeNode(source, { timeoutMs: 250 });
     const descendantPid = Number.parseInt(result.stdout, 10);
     expect(Number.isSafeInteger(descendantPid)).toBe(true);
-    expect(() => { process.kill(descendantPid, 0); }).toThrow(expect.objectContaining({ code: "ESRCH" }));
+    const descendant = spawnSync("/bin/ps", ["-o", "stat=", "-p", String(descendantPid)], {
+      encoding: "utf8", shell: false,
+    });
+    expect(descendant.status === 1 || descendant.stdout.trimStart().startsWith("Z")).toBe(true);
+    await vi.waitFor(
+      () => { expect(() => { process.kill(descendantPid, 0); }).toThrow(expect.objectContaining({ code: "ESRCH" })); },
+      { interval: 10, timeout: 1_000 },
+    );
   });
 
   it("honors AbortSignal without misreporting a timeout", async () => {
