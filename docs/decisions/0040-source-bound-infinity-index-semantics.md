@@ -1,7 +1,7 @@
 ---
 id: ADR-0040
 status: accepted
-supersedes: [ADR-0035]
+supersedes: []
 superseded_by: []
 ---
 
@@ -9,10 +9,10 @@ superseded_by: []
 
 ## Status
 
-Accepted on 2026-08-19. This decision supersedes ADR-0035 while preserving its
-official-SDK provenance, evidence-authority, independent deletion-drain, and
-fail-closed production rules. ADR-0037 remains an additional release-bound
-serving gate.
+Accepted on 2026-08-19. This decision extends and narrows ADR-0035 while
+preserving its official-SDK provenance, evidence-authority, independent
+deletion-drain, and fail-closed production rules. ADR-0037 remains an additional
+release-bound serving gate.
 
 ## Context
 

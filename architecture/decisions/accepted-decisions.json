@@ -191,6 +191,11 @@
       "id": "ADR-0039",
       "path": "docs/decisions/0039-bounded-evidence-selector.md",
       "immutableDigest": "sha256:368a0dfb2ed06fb793009fc3ec28f29081a421d17bf4e0120e3c6527de2f038f"
+    },
+    {
+      "id": "ADR-0040",
+      "path": "docs/decisions/0040-source-bound-infinity-index-semantics.md",
+      "immutableDigest": "sha256:384151153f489ba52630c3dd75ca1265457d8305e6bab0660ae9bedd903765c4"
     }
   ]
 }
