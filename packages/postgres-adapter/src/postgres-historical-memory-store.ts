@@ -213,7 +213,8 @@ export class PostgresHistoricalMemoryStore implements HistoricalSyncStore {
     await requireUpdated(await queryHistoricalPostgres(this.pool, {
       text: `
         UPDATE meeting_core.historical_memory_sync
-        SET plan = $3::jsonb, updated_at = transaction_timestamp()
+        SET plan = $3::jsonb, remote_document_ids = CASE WHEN profile_rebuild_requested
+              THEN '{}'::jsonb ELSE remote_document_ids END, updated_at = transaction_timestamp()
         WHERE release_id = $1 AND lease_fence = $2
           AND state = 'in_flight' AND operation = 'index' AND is_current
       `,

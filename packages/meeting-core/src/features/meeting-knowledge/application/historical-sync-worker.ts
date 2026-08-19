@@ -16,9 +16,9 @@ import type { HistoricalEmbeddingTokenizerPort } from
 import { HistoricalIndexPlannerUnavailableError, type HistoricalIndexPlannerPort,
   type HistoricalReceiptDigestPort } from "./ports/historical-index-planner.js";
 import {
-  historicalBindingsMatch as sameBinding,
-  historicalDeletionMutationId as deletionMutationId,
+  historicalBindingsMatch as sameBinding, historicalDeletionMutationId as deletionMutationId,
   historicalOperationOptions as operationOptions,
+  historicalRemoteDocumentIdsForPlan as remoteDocumentIdsForPlan,
 } from "./historical-sync-support.js";
 
 export interface HistoricalSyncPolicyV1 {
@@ -255,7 +255,7 @@ export class HistoricalSyncWorker {
             ({ manifest }) => manifest.documentExternalId,
           ),
           mode: "release",
-          remoteDocumentIds: lease.remoteDocumentIds,
+          remoteDocumentIds: remoteDocumentIdsForPlan(stalePlan, lease.remoteDocumentIds),
           schemaVersion: 1,
           topology: stalePlan.topology,
         }, operationOptions(signal));

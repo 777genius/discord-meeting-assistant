@@ -166,6 +166,34 @@ class QueueStore implements HistoricalSyncStore {
   }
 }
 
+class LegacyProfileRebuildStore extends QueueStore {
+  #checkpointedPlan: HistoricalIndexPlanV1 | null = null;
+
+  public override async recordPlan(
+    syncLease: HistoricalSyncLeaseV1,
+    plan: HistoricalIndexPlanV1,
+  ): Promise<void> {
+    await super.recordPlan(syncLease, plan);
+    this.#checkpointedPlan = plan;
+  }
+
+  public override async recordRetry(
+    syncLease: HistoricalSyncLeaseV1,
+    failure: { readonly code: string; readonly retryAfterMs: number },
+  ): Promise<void> {
+    await super.recordRetry(syncLease, failure);
+    if (this.#checkpointedPlan === null) {
+      throw new Error("profile rebuild retry has no durable plan checkpoint");
+    }
+    this.claims.push({
+      ...syncLease,
+      attempt: syncLease.attempt + 1,
+      fence: syncLease.fence + 1,
+      plan: this.#checkpointedPlan,
+    });
+  }
+}
+
 function lease(
   accepted: AcceptedFinalMeetingV1,
   operation: HistoricalSyncLeaseV1["operation"],
@@ -374,6 +402,117 @@ describe("historical projection sync worker", () => {
     expect(store.plans[0]?.planDigest).not.toBe(stale.planDigest);
   });
 
+});
+
+describe("historical profile rebuild retry", () => {
+  it.each([
+    {
+      code: "memory.network_error",
+      retryable: true,
+      status: "outcome_unknown",
+    },
+    {
+      code: "memory.known_failure",
+      retryable: true,
+      status: "rejected",
+    },
+  ] as const)(
+    "converges a profile rebuild after $status without leaking the old projection",
+    async (firstIndexResult) => {
+      const accepted = meeting();
+      const ids = new TestIds();
+      const blockPolicy = {
+        maxBlockUtf8Bytes: 4_096,
+        maxBlocksPerMeeting: 100,
+        maxTurnsPerBlock: 64,
+        version: "meeting-knowledge.block-policy.v1" as const,
+      };
+      const oldPlan = buildHistoricalIndexPlan(accepted, ids, blockPolicy);
+      const oldExternalId = oldPlan.documents[0]!.manifest.documentExternalId;
+      const oldRemoteIds = { [oldExternalId]: "remote-old" };
+      const initialLease = {
+        ...lease(accepted, "index", 1, oldPlan),
+        appliedIndexProfileId: "old-profile",
+        profileRebuildRequired: true,
+        remoteDocumentIds: oldRemoteIds,
+      };
+      const store = new LegacyProfileRebuildStore([initialLease]);
+      const remoteDocuments = new Map([["remote-old", oldExternalId]]);
+      let remoteSequence = 0;
+      const deleteMeeting = vi.fn(async (request: Parameters<
+        HistoricalMemoryPort["deleteMeeting"]
+      >[0]) => {
+        const targets = new Set(request.documentExternalIds);
+        if (Object.keys(request.remoteDocumentIds).some((externalId) =>
+          !targets.has(externalId)
+        )) {
+          return {
+            code: "memory.contract_rejected",
+            retryable: false,
+            status: "absence_unverified" as const,
+          };
+        }
+        for (const [remoteId, externalId] of remoteDocuments) {
+          if (targets.has(externalId)) {
+            remoteDocuments.delete(remoteId);
+          }
+        }
+        return { status: "verified_absent" as const };
+      });
+      const indexFinalMeeting = vi.fn(async (plan: HistoricalIndexPlanV1) => {
+        const externalId = plan.documents[0]!.manifest.documentExternalId;
+        remoteSequence += 1;
+        remoteDocuments.set(`remote-new-${remoteSequence}`, externalId);
+        return remoteSequence === 1
+          ? firstIndexResult
+          : {
+              remoteDocumentIds: { [externalId]: `remote-new-${remoteSequence}` },
+              status: "applied" as const,
+            };
+      });
+      const worker = new HistoricalSyncWorker({
+        authority: { loadAcceptedFinalMeeting: async () => accepted },
+        ids,
+        indexProfileId: "new-profile",
+        memory: { deleteMeeting, indexFinalMeeting, searchRoom: vi.fn() },
+        store,
+        tokenizer: () => exactTokenizer,
+      }, {
+        blockPolicy,
+        leaseDurationMs: 30_000,
+        maximumIndexAttempts: 3,
+        retryBackoffMs: [1],
+        version: "meeting-knowledge.historical-sync.v1",
+      });
+
+      await expect(worker.executeOnce({ indexingEnabled: true })).resolves.toMatchObject({
+        status: "retry_scheduled",
+      });
+      await expect(worker.executeOnce({ indexingEnabled: true })).resolves.toMatchObject({
+        status: "applied",
+      });
+
+      const rebuiltPlan = store.plans[0]!;
+      const rebuiltExternalId = rebuiltPlan.documents[0]!.manifest.documentExternalId;
+      expect(rebuiltExternalId).not.toBe(oldExternalId);
+      expect(deleteMeeting).toHaveBeenNthCalledWith(1, expect.objectContaining({
+        documentExternalIds: [oldExternalId],
+        remoteDocumentIds: oldRemoteIds,
+      }), {});
+      expect(deleteMeeting).toHaveBeenNthCalledWith(2, expect.objectContaining({
+        documentExternalIds: [rebuiltExternalId],
+        remoteDocumentIds: {},
+      }), {});
+      expect([...remoteDocuments.values()]).toEqual([rebuiltExternalId]);
+      expect(store.retries).toEqual([firstIndexResult.code]);
+      expect(store.applied).toEqual([accepted.binding.releaseId]);
+      expect(store.deadLetters).toEqual([]);
+    },
+  );
+
+});
+
+describe("historical projection sync worker recovery", () => {
   it("never abandons authorized deletion in a dead letter", async () => {
     const accepted = meeting();
     const ids = new TestIds();

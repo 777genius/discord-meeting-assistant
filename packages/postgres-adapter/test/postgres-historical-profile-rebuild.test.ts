@@ -3,6 +3,10 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
 import { PostgresHistoricalMemoryStore } from "@discord-meeting/postgres-adapter";
+import type {
+  HistoricalIndexPlanV1,
+  HistoricalSyncLeaseV1,
+} from "@discord-meeting/meeting-core/meeting-knowledge";
 import type { Pool, PoolClient } from "pg";
 
 describe("historical index profile rebuild budget", () => {
@@ -56,5 +60,31 @@ describe("historical index profile rebuild budget", () => {
     expect(migration).toMatch(/state = 'pending',[\s\S]*attempt_count = 0/u);
     expect(migration).toMatch(/WHERE is_current AND operation = 'index' AND state = 'applied'/u);
     expect(migration).not.toMatch(/remote_document_ids\s*=/u);
+  });
+
+  it("atomically drops obsolete remote ids at the rebuild plan checkpoint", async () => {
+    const query = vi.fn(async (_text: string, _values: readonly unknown[]) => ({
+      rowCount: 1,
+      rows: [],
+    }));
+    const pool = { query } as unknown as Pool;
+    const lease = {
+      binding: { releaseId: "release-1" },
+      fence: 7,
+    } as unknown as HistoricalSyncLeaseV1;
+    const plan = { schemaVersion: 1 } as unknown as HistoricalIndexPlanV1;
+
+    await expect(new PostgresHistoricalMemoryStore(pool).recordPlan(lease, plan))
+      .resolves.toBeUndefined();
+
+    const checkpoint = query.mock.calls[0];
+    expect(checkpoint?.[0].replace(/\s+/gu, " ").trim()).toBe(
+      "UPDATE meeting_core.historical_memory_sync SET plan = $3::jsonb, "
+      + "remote_document_ids = CASE WHEN profile_rebuild_requested THEN '{}'::jsonb "
+      + "ELSE remote_document_ids END, updated_at = transaction_timestamp() "
+      + "WHERE release_id = $1 AND lease_fence = $2 AND state = 'in_flight' "
+      + "AND operation = 'index' AND is_current",
+    );
+    expect(checkpoint?.[1]).toEqual(["release-1", 7, plan]);
   });
 });
