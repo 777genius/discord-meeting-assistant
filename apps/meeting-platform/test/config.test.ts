@@ -96,7 +96,7 @@ describe("platform configuration", () => {
         schemaVersion: 1,
       },
       qualificationManifestSha256:
-        INFINITY_CONTEXT_SDK_PROVENANCE.retainedB77SemanticTransportManifestSha256,
+        INFINITY_CONTEXT_SDK_PROVENANCE.retainedScopedDocumentsManifestSha256,
       schemaVersion: 1,
       sdkCommit: INFINITY_CONTEXT_SDK_PROVENANCE.commit,
       sdkTree: INFINITY_CONTEXT_SDK_PROVENANCE.tree,

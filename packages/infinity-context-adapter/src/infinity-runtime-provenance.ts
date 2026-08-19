@@ -1,17 +1,14 @@
 export const INFINITY_CONTEXT_SDK_PROVENANCE = Object.freeze({
-  archiveSha256: "4d96f50ae01f9000e9ac4c50eaa61b4d875c3a452aed58f7e2efe1d69ee8d08d",
-  commit: "b77b490cebbf9d80d4204425df3d795b4866ea19",
+  archiveSha256: "b95264ecd7b94943b718fa99d34aabff387beadcf9ce6cdf5cd72146cddd3091",
+  commit: "9b5c0e38bf46cdabe32698c84e62e1711a8b0aee",
   developmentPackageLink: "vendor/infinity-context/.upstream/packages/infinity_context_ts_sdk",
-  immutablePackageIntegrity:
-    "sha512-YurXjgFGoRxwc5zJghj69ZFyZx8WLS1ucvgVvV2EFjZMCATxr9YrJW1ueeyLqwkaLKnO1JEvbTpqn7Q8K33b+A==",
-  immutablePackagePath:
-    "vendor/infinity-context/artifacts/infinity-context-sdk-0.1.0-b77b490c.tgz",
+  immutablePackageIntegrity: "sha512-muYj1Pzi7eonaOq+zBsFjoQzPh/veOjWh3z9yMzoywHYqAEDtZdg+YE7DYSl3fuKPjYgglOInbL7CWBOsx0Naw==",
+  immutablePackagePath: "vendor/infinity-context/artifacts/infinity-context-sdk-0.1.0-9b5c0e38.tgz",
   packageLockSha256: "068b3129a4ccd449c50cdc6a72755dbae3d4a977c5a468565e2f3841529cac0e",
-  packageManifestSha256: "a646c42b1f8948b0f1b81d3d988f79b4f2c64616a1c5e2711648b2686ce1e135",
+  packageManifestSha256: "020c37993fc2749dd55649b2649d35e79570c1b43757a67ee16618de15be6ccd",
   packageName: "@infinity-context/sdk",
-  packageTarballIntegrity:
-    "sha512-YurXjgFGoRxwc5zJghj69ZFyZx8WLS1ucvgVvV2EFjZMCATxr9YrJW1ueeyLqwkaLKnO1JEvbTpqn7Q8K33b+A==",
-  packageTarballSha256: "2e4bcced4df632a7953c7ff767a4076ce6cfff1aa4469a40e8b36659f29a90c8",
+  packageTarballIntegrity: "sha512-muYj1Pzi7eonaOq+zBsFjoQzPh/veOjWh3z9yMzoywHYqAEDtZdg+YE7DYSl3fuKPjYgglOInbL7CWBOsx0Naw==",
+  packageTarballSha256: "8f8015583ba3ccb71b1654d11ad6af111881ceedde68dec52241edc431981dc0",
   packageVersion: "0.1.0",
   retainedLiveQualificationEvidenceSha256:
     "4f19e430a465294d020e6dc0eebde4a6320913744201fa60700cb75d148065fe",
@@ -19,10 +16,13 @@ export const INFINITY_CONTEXT_SDK_PROVENANCE = Object.freeze({
     "sha256:abe694b3e1cf0dcec9d5ff7c0d8b65f30ec5364ac11bb2526bd1c3a3b176c207",
   retainedLiveQualificationSourceLogSha256:
     "d69ad3870ea17c15a2c0fafa88e71aa9dfa87e0dfc81afa1ed3b3f0c93ed9c51",
-  retainedB77SemanticTransportManifestPath:
-    "docs/operations/evidence/2026-08-18-infinity-b77-semantic-transport/manifest.json",
-  retainedB77SemanticTransportManifestSha256:
-    "sha256:2ba18c3e7b2297e6103fd0d285bb2db424f0d3ac5ea407b857422e3204925133",
+  retainedScopedDocumentsManifestPath: "docs/operations/evidence/2026-08-19-infinity-scoped-documents-9b5c0e38/manifest.json",
+  retainedScopedDocumentsManifestSha256: "sha256:42807626aa1867c8d9663fa4a8c9ad27cc08c0d2eb93adbcea8f138a3f230c43",
+  retainedScopedDocumentsParityBaselineSha256: "sha256:d7e58a5d8d1ef010c413d2b76a35ac196ee6f5ba7033573fcab100fca040fa97",
+  retainedScopedDocumentsPostgresEvidenceSha256:
+    "sha256:4331f5ca203cdc6a2b2c654820675a51a355fffc4ad0f900e1f7c33c9e1850ba",
+  retainedScopedDocumentsSdkAsgiEvidenceSha256:
+    "sha256:63a31a0f2ea0a40b7802612838ea045998a59bda2646236e7a88190923e84487",
   retainedTransportQualification: Object.freeze({
     embeddingProfile: "deterministic-mock-non-production-v1",
     productionSemanticQualification: false,
@@ -34,9 +34,9 @@ export const INFINITY_CONTEXT_SDK_PROVENANCE = Object.freeze({
   sourcePinnedEmbeddingProfileDigestSha256:
     "sha256:b183b9d6350dfaf9f874cab9fef993d3ded5060a4a18d972c45ec97def5faf31",
   sourcePinnedServiceRevision:
-    "b77b490cebbf9d80d4204425df3d795b4866ea19",
+    "9b5c0e38bf46cdabe32698c84e62e1711a8b0aee",
   repository: "https://github.com/777genius/infinity-context.git",
-  tree: "ac25c12c4733953bf7a4882d5c2c4476589455f2",
+  tree: "74f071f748591a26f1721dfba1c9742f7a8fb9d1",
 });
 
 export interface InfinityContextEmbeddingProfileAttestationV1 {
@@ -302,7 +302,7 @@ export function assertInfinityContextActivation(
         INFINITY_CONTEXT_SDK_PROVENANCE.immutablePackageIntegrity ||
       activation.qualificationManifestSha256 === null ||
       activation.qualificationManifestSha256 !==
-        INFINITY_CONTEXT_SDK_PROVENANCE.retainedB77SemanticTransportManifestSha256
+        INFINITY_CONTEXT_SDK_PROVENANCE.retainedScopedDocumentsManifestSha256
     )
   ) {
     throw new InfinityContextActivationError(

@@ -49,7 +49,7 @@ const productionActivation = {
   immutablePackageIntegrity: INFINITY_CONTEXT_SDK_PROVENANCE.immutablePackageIntegrity,
   packageSource: "immutable_package" as const,
   qualificationManifestSha256:
-    INFINITY_CONTEXT_SDK_PROVENANCE.retainedB77SemanticTransportManifestSha256,
+    INFINITY_CONTEXT_SDK_PROVENANCE.retainedScopedDocumentsManifestSha256,
 } as const;
 const exactCapabilities = {
   apiVersion: "v1",
@@ -66,7 +66,7 @@ const testProductionPolicy = {
   embeddingProfileId: INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedEmbeddingProfileId,
   productionSemanticQualification: true,
   qualificationManifestSha256:
-    INFINITY_CONTEXT_SDK_PROVENANCE.retainedB77SemanticTransportManifestSha256,
+    INFINITY_CONTEXT_SDK_PROVENANCE.retainedScopedDocumentsManifestSha256,
   sdkCommit: INFINITY_CONTEXT_SDK_PROVENANCE.commit,
   serviceRevision: INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedServiceRevision,
 } as const;
@@ -96,7 +96,7 @@ describe("Infinity Context official SDK provenance", () => {
     expect(typedSearch.projectAnchorPolicy).toBe("advisory");
   });
 
-  it("binds checkout, package tree, archive, and immutable tarball to b77", () => {
+  it("binds checkout, package tree, archive, and immutable scoped-list tarball", () => {
     const root = fileURLToPath(
       new URL("../../../vendor/infinity-context/.upstream/", import.meta.url),
     );
@@ -121,10 +121,27 @@ describe("Infinity Context official SDK provenance", () => {
     expect(INFINITY_CONTEXT_SDK_PROVENANCE.commit)
       .toBe(INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedServiceRevision);
   });
+
+  it("binds scoped-list service, PostgreSQL, ASGI, and parity evidence", () => {
+    const evidenceRoot = new URL(
+      "../../../docs/operations/evidence/2026-08-19-infinity-scoped-documents-9b5c0e38/",
+      import.meta.url,
+    );
+    const digest = (name: string): string =>
+      `sha256:${createHash("sha256").update(readFileSync(new URL(name, evidenceRoot))).digest("hex")}`;
+    expect(digest("manifest.json"))
+      .toBe(INFINITY_CONTEXT_SDK_PROVENANCE.retainedScopedDocumentsManifestSha256);
+    expect(digest("postgres-live-evidence.json"))
+      .toBe(INFINITY_CONTEXT_SDK_PROVENANCE.retainedScopedDocumentsPostgresEvidenceSha256);
+    expect(digest("sdk-asgi-postgres-evidence.json"))
+      .toBe(INFINITY_CONTEXT_SDK_PROVENANCE.retainedScopedDocumentsSdkAsgiEvidenceSha256);
+    expect(digest("parity-baseline.sha256"))
+      .toBe(INFINITY_CONTEXT_SDK_PROVENANCE.retainedScopedDocumentsParityBaselineSha256);
+  });
 });
 
 describe("Infinity Context planning compatibility", () => {
-  it("retains the reviewed b77 dense service and tokenizer tuple", () => {
+  it("retains the reviewed scoped-list dense service and tokenizer tuple", () => {
     expect(() => { assertCompatibility(); }).not.toThrow();
   });
 

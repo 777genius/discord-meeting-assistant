@@ -196,6 +196,11 @@
       "id": "ADR-0040",
       "path": "docs/decisions/0040-source-bound-infinity-index-semantics.md",
       "immutableDigest": "sha256:384151153f489ba52630c3dd75ca1265457d8305e6bab0660ae9bedd903765c4"
+    },
+    {
+      "id": "ADR-0041",
+      "path": "docs/decisions/0041-scoped-infinity-deletion-reconciliation.md",
+      "immutableDigest": "sha256:dcae62ec6ee623a60d7b80b7bead4212769ae0f7ffa147d28fa2e83bc344696c"
     }
   ]
 }

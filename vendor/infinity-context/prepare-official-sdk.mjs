@@ -13,16 +13,16 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const provenance = Object.freeze({
-  archiveSha256: "4d96f50ae01f9000e9ac4c50eaa61b4d875c3a452aed58f7e2efe1d69ee8d08d",
-  commit: "b77b490cebbf9d80d4204425df3d795b4866ea19",
+  archiveSha256: "b95264ecd7b94943b718fa99d34aabff387beadcf9ce6cdf5cd72146cddd3091",
+  commit: "9b5c0e38bf46cdabe32698c84e62e1711a8b0aee",
   packageLockSha256: "068b3129a4ccd449c50cdc6a72755dbae3d4a977c5a468565e2f3841529cac0e",
-  packageManifestSha256: "a646c42b1f8948b0f1b81d3d988f79b4f2c64616a1c5e2711648b2686ce1e135",
+  packageManifestSha256: "020c37993fc2749dd55649b2649d35e79570c1b43757a67ee16618de15be6ccd",
   packagePath: "packages/infinity_context_ts_sdk",
   packageTarballIntegrity:
-    "sha512-YurXjgFGoRxwc5zJghj69ZFyZx8WLS1ucvgVvV2EFjZMCATxr9YrJW1ueeyLqwkaLKnO1JEvbTpqn7Q8K33b+A==",
-  packageTarballSha256: "2e4bcced4df632a7953c7ff767a4076ce6cfff1aa4469a40e8b36659f29a90c8",
+    "sha512-muYj1Pzi7eonaOq+zBsFjoQzPh/veOjWh3z9yMzoywHYqAEDtZdg+YE7DYSl3fuKPjYgglOInbL7CWBOsx0Naw==",
+  packageTarballSha256: "8f8015583ba3ccb71b1654d11ad6af111881ceedde68dec52241edc431981dc0",
   repository: "https://github.com/777genius/infinity-context.git",
-  tree: "ac25c12c4733953bf7a4882d5c2c4476589455f2",
+  tree: "74f071f748591a26f1721dfba1c9742f7a8fb9d1",
 });
 
 const argumentsSet = new Set(process.argv.slice(2));
@@ -43,7 +43,7 @@ const checkoutRoot = resolve(vendorRoot, ".upstream");
 const packageRoot = resolve(checkoutRoot, provenance.packagePath);
 const retainedPackagePath = resolve(
   vendorRoot,
-  "artifacts/infinity-context-sdk-0.1.0-b77b490c.tgz",
+  "artifacts/infinity-context-sdk-0.1.0-9b5c0e38.tgz",
 );
 const npmCache = resolve(tmpdir(), "discord-meeting-infinity-sdk-npm-cache");
 const stampPath = resolve(checkoutRoot, ".git", "meeting-knowledge-sdk-build.json");

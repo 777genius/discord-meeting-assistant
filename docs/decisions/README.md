@@ -43,6 +43,7 @@
 - [ADR-0038: Projection trust and cluster policy epoch](0038-projection-trust-and-policy-epoch.md)
 - [ADR-0039: Bounded evidence selector accounting](0039-bounded-evidence-selector.md)
 - [ADR-0040: Source-bound Infinity index semantics and migration](0040-source-bound-infinity-index-semantics.md)
+- [ADR-0041: Scoped Infinity deletion reconciliation](0041-scoped-infinity-deletion-reconciliation.md)
 
 ## Superseded
 

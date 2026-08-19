@@ -3,7 +3,7 @@
 `.upstream` is an ignored, sparse Git source workspace for the official
 Infinity Context repository. The reviewable `prepare-official-sdk.mjs` script
 fetches and checks out exact commit
-`b77b490cebbf9d80d4204425df3d795b4866ea19`. Consumers install the retained,
+`9b5c0e38bf46cdabe32698c84e62e1711a8b0aee`. Consumers install the retained,
 immutable official `npm pack` artifact under `artifacts/`; the script rebuilds
 that artifact from `packages/infinity_context_ts_sdk` and verifies that both
 copies have the exact pinned SHA-256 and SRI. No SDK implementation is copied
@@ -12,18 +12,18 @@ into repository source.
 Reviewed provenance:
 
 - repository: `https://github.com/777genius/infinity-context.git`
-- commit: `b77b490cebbf9d80d4204425df3d795b4866ea19`
-- package tree: `ac25c12c4733953bf7a4882d5c2c4476589455f2`
+- commit: `9b5c0e38bf46cdabe32698c84e62e1711a8b0aee`
+- package tree: `74f071f748591a26f1721dfba1c9742f7a8fb9d1`
 - canonical package-source archive SHA-256:
-  `4d96f50ae01f9000e9ac4c50eaa61b4d875c3a452aed58f7e2efe1d69ee8d08d`
+  `b95264ecd7b94943b718fa99d34aabff387beadcf9ce6cdf5cd72146cddd3091`
 - package manifest SHA-256:
-  `a646c42b1f8948b0f1b81d3d988f79b4f2c64616a1c5e2711648b2686ce1e135`
+  `020c37993fc2749dd55649b2649d35e79570c1b43757a67ee16618de15be6ccd`
 - package lock SHA-256:
   `068b3129a4ccd449c50cdc6a72755dbae3d4a977c5a468565e2f3841529cac0e`
 - reproducible official npm package tarball SHA-256:
-  `2e4bcced4df632a7953c7ff767a4076ce6cfff1aa4469a40e8b36659f29a90c8`
+  `8f8015583ba3ccb71b1654d11ad6af111881ceedde68dec52241edc431981dc0`
 - reproducible official npm package tarball integrity:
-  `sha512-YurXjgFGoRxwc5zJghj69ZFyZx8WLS1ucvgVvV2EFjZMCATxr9YrJW1ueeyLqwkaLKnO1JEvbTpqn7Q8K33b+A==`
+  `sha512-muYj1Pzi7eonaOq+zBsFjoQzPh/veOjWh3z9yMzoywHYqAEDtZdg+YE7DYSl3fuKPjYgglOInbL7CWBOsx0Naw==`
 
 Run `node vendor/infinity-context/prepare-official-sdk.mjs` before installing
 the main workspace. It verifies every digest above, installs from the official
@@ -49,7 +49,7 @@ INFINITY_CONTEXT_SEMANTIC_E2E_URL=https://disposable-infinity.example/ \
 INFINITY_CONTEXT_SEMANTIC_E2E_TOKEN=... \
 INFINITY_CONTEXT_SEMANTIC_E2E_EMBEDDING_PROFILE=reviewed-real-profile-v1 \
 INFINITY_CONTEXT_SEMANTIC_E2E_EMBEDDING_PROFILE_DIGEST_SHA256=sha256:... \
-INFINITY_CONTEXT_SEMANTIC_E2E_SERVICE_REVISION=b77b490cebbf9d80d4204425df3d795b4866ea19 \
+INFINITY_CONTEXT_SEMANTIC_E2E_SERVICE_REVISION=9b5c0e38bf46cdabe32698c84e62e1711a8b0aee \
 pnpm --filter @discord-meeting/infinity-context-adapter run test:semantic-service
 ```
 

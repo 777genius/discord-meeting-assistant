@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "repository": "777genius/infinity-context",
+  "branch": "feat/scoped-document-listing",
+  "base_sha": "b77b490cebbf9d80d4204425df3d795b4866ea19",
+  "head_sha": "9b5c0e38bf46cdabe32698c84e62e1711a8b0aee",
+  "tree_sha": "b94ec5568d0af2f0a2ac54b4e67d2cbabadabf62",
+  "worktree_clean": true,
+  "tracked_tree_manifest": {
+    "path": "source-tree-files-9b5c0e38.sha256",
+    "sha256": "c3b04f0eba07467209de62e0d92c913ab182e4b55ce1ee645d04494079cf2428"
+  },
+  "parity_baseline_manifest": {
+    "path": "parity-baseline-9b5c0e38.sha256",
+    "sha256": "d7e58a5d8d1ef010c413d2b76a35ac196ee6f5ba7033573fcab100fca040fa97"
+  }
+}

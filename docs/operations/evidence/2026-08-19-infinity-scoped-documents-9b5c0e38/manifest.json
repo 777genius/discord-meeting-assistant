@@ -1,0 +1,277 @@
+{
+  "schema_version": 1,
+  "head_sha": "9b5c0e38bf46cdabe32698c84e62e1711a8b0aee",
+  "service": {
+    "endpoint": "GET /v1/documents",
+    "scope_required": true,
+    "pagination": "opaque keyset cursor (updated_at DESC, id DESC)",
+    "status": [
+      "active",
+      "deleted"
+    ],
+    "max_public_limit": 500,
+    "migration": "0033_document_scope_listing_indexes"
+  },
+  "gates": [
+    {
+      "command": "npm run verify (packages/infinity_context_ts_sdk)",
+      "result": "passed: parity 93/93; 86 tests; typecheck, build, exports, consumer install"
+    },
+    {
+      "command": "pytest tests/unit/test_document_listing_migration_contract.py tests/unit/test_document_listing_openapi_types.py tests/server/test_scoped_document_listing_contract.py -q",
+      "result": "passed: 16 tests"
+    },
+    {
+      "command": "live PostgreSQL 120k online-index/cancel/recovery qualification",
+      "result": "passed"
+    },
+    {
+      "command": "official TypeScript SDK -> ASGI -> PostgreSQL E2E",
+      "result": "passed"
+    }
+  ],
+  "evidence": {
+    "postgres": {
+      "source_path": "/var/data/hosted-review-sandboxes/infinity-pg-document-list-qualification-r1/evidence-9b5c0e38.json",
+      "sha256": "4331f5ca203cdc6a2b2c654820675a51a355fffc4ad0f900e1f7c33c9e1850ba",
+      "result": {
+        "cancelled_attempt_error": "DBAPIError",
+        "explain_after_recovery": {
+          "with_source": "ix_memory_documents_scope_thread_source_page",
+          "without_source": "ix_memory_documents_scope_thread_status_page"
+        },
+        "explain_before_recovery": {
+          "with_source": "ix_memory_documents_scope_thread_source_page",
+          "without_source": "ix_memory_documents_scope_thread_status_page"
+        },
+        "history_recorded_exactly_once": true,
+        "initial_migrations": 34,
+        "invalid_index_observed": [
+          "ix_memory_documents_scope_status_page"
+        ],
+        "recovered_indexes": {
+          "ix_memory_documents_scope_status_page": true,
+          "ix_memory_documents_scope_thread_source_page": true,
+          "ix_memory_documents_scope_thread_status_page": true
+        },
+        "status": "passed",
+        "writer_during_concurrent_build": "passed"
+      }
+    },
+    "sdk_asgi_postgres": {
+      "source_path": "/var/data/hosted-review-sandboxes/infinity-scoped-list-gate-runner-r1/evidence/9b5c0e38bf46cdabe32698c84e62e1711a8b0aee/result.json",
+      "sha256": "63a31a0f2ea0a40b7802612838ea045998a59bda2646236e7a88190923e84487",
+      "result": {
+        "status": "passed",
+        "pages": 4,
+        "documents": 7,
+        "wire": [
+          {
+            "method": "POST",
+            "path": "/v1/documents",
+            "status": 201
+          },
+          {
+            "method": "POST",
+            "path": "/v1/documents",
+            "status": 201
+          },
+          {
+            "method": "POST",
+            "path": "/v1/documents",
+            "status": 201
+          },
+          {
+            "method": "POST",
+            "path": "/v1/documents",
+            "status": 201
+          },
+          {
+            "method": "POST",
+            "path": "/v1/documents",
+            "status": 201
+          },
+          {
+            "method": "POST",
+            "path": "/v1/documents",
+            "status": 201
+          },
+          {
+            "method": "POST",
+            "path": "/v1/documents",
+            "status": 201
+          },
+          {
+            "method": "POST",
+            "path": "/v1/documents",
+            "status": 201
+          },
+          {
+            "method": "POST",
+            "path": "/v1/documents",
+            "status": 201
+          },
+          {
+            "method": "POST",
+            "path": "/v1/documents",
+            "status": 201
+          },
+          {
+            "method": "POST",
+            "path": "/v1/documents",
+            "status": 201
+          },
+          {
+            "method": "GET",
+            "path": "/v1/documents",
+            "status": 200
+          },
+          {
+            "method": "GET",
+            "path": "/v1/documents",
+            "status": 200
+          },
+          {
+            "method": "GET",
+            "path": "/v1/documents",
+            "status": 200
+          },
+          {
+            "method": "GET",
+            "path": "/v1/documents",
+            "status": 200
+          },
+          {
+            "method": "GET",
+            "path": "/v1/documents",
+            "status": 200
+          },
+          {
+            "method": "GET",
+            "path": "/v1/documents",
+            "status": 200
+          },
+          {
+            "method": "GET",
+            "path": "/v1/documents",
+            "status": 200
+          },
+          {
+            "method": "GET",
+            "path": "/v1/documents",
+            "status": 200
+          },
+          {
+            "method": "GET",
+            "path": "/v1/documents",
+            "status": 400
+          },
+          {
+            "method": "GET",
+            "path": "/v1/documents",
+            "status": 400
+          },
+          {
+            "method": "GET",
+            "path": "/v1/documents",
+            "status": 400
+          },
+          {
+            "method": "GET",
+            "path": "/v1/documents",
+            "status": 400
+          },
+          {
+            "method": "GET",
+            "path": "/v1/spaces",
+            "status": 200
+          },
+          {
+            "method": "GET",
+            "path": "/v1/documents",
+            "status": 200
+          },
+          {
+            "method": "GET",
+            "path": "/v1/spaces",
+            "status": 200
+          },
+          {
+            "method": "GET",
+            "path": "/v1/documents",
+            "status": 400
+          },
+          {
+            "method": "GET",
+            "path": "/v1/documents",
+            "status": 400
+          },
+          {
+            "method": "GET",
+            "path": "/v1/documents",
+            "status": 400
+          },
+          {
+            "method": "GET",
+            "path": "/v1/documents",
+            "status": 200
+          },
+          {
+            "method": "GET",
+            "path": "/v1/documents",
+            "status": 403
+          },
+          {
+            "method": "GET",
+            "path": "/v1/documents",
+            "status": 403
+          },
+          {
+            "method": "GET",
+            "path": "/v1/documents",
+            "status": 403
+          },
+          {
+            "method": "GET",
+            "path": "/v1/documents",
+            "status": 403
+          },
+          {
+            "method": "POST",
+            "path": "/v1/code-repositories/resolve",
+            "status": 200
+          },
+          {
+            "method": "GET",
+            "path": "/v1/documents",
+            "status": 403
+          },
+          {
+            "method": "GET",
+            "path": "/v1/documents",
+            "status": 403
+          },
+          {
+            "method": "DELETE",
+            "path": "/v1/documents/doc_6d1c6102eaa0425caf157b862650ac38",
+            "status": 200
+          },
+          {
+            "method": "GET",
+            "path": "/v1/documents",
+            "status": 200
+          },
+          {
+            "method": "GET",
+            "path": "/v1/documents",
+            "status": 200
+          }
+        ]
+      }
+    }
+  },
+  "release": {
+    "deployed": false,
+    "rollout_runbook": "docs/document-listing-index-rollout.md"
+  }
+}
