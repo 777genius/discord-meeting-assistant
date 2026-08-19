@@ -7,9 +7,7 @@ import {
 } from "./historical-index-plan-types.js";
 export {
   HistoricalIndexPlanError,
-  resolveHistoricalEvidenceBlockPolicy,
   type HistoricalEvidenceBlockPolicyV1,
-  type ResolvedHistoricalEvidenceBlockPolicyV1,
 } from "./historical-index-plan-types.js";
 import {
   HISTORICAL_EVIDENCE_POLICY_VERSION,

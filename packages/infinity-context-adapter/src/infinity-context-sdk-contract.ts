@@ -13,7 +13,7 @@ import {
   type InfinityContextClient,
 } from "@infinity-context/sdk";
 
-export const CANDIDATE_SOURCE_TYPE = "meeting_evidence_locator";
+const CANDIDATE_SOURCE_TYPE = "meeting_evidence_locator";
 export const DOCUMENT_SOURCE_TYPE = "meeting_final_human_evidence";
 const MAXIMUM_SCOPE_DOCUMENTS = 500;
 const acceptedProcessStatuses = new Set([
@@ -121,10 +121,6 @@ export async function ingestHistoricalDocument(
 
 export function isNotFound(error: unknown): boolean {
   return error instanceof InfinityContextError && error.statusCode === 404;
-}
-
-export function isMethodNotAllowed(error: unknown): boolean {
-  return error instanceof InfinityContextError && error.statusCode === 405;
 }
 
 export function failure<

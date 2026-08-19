@@ -26,6 +26,9 @@ interface TokenizerModule {
 // 0.1.3 ships NodeNext-incompatible declarations. Keep that provider defect
 // inside this adapter while the exact runtime package remains lockfile-pinned.
 const tokenizerRequire = createRequire(import.meta.url);
+// The package is intentionally loaded through createRequire because its CommonJS
+// runtime is not safe to bind through a static ESM import. Keep the matching,
+// package-scoped Knip exception in knip.json while this boundary remains dynamic.
 const tokenizerRuntimePath = tokenizerRequire.resolve("@huggingface/tokenizers");
 const tokenizerModule = tokenizerRequire("@huggingface/tokenizers") as TokenizerModule;
 

@@ -15,6 +15,7 @@
     },
     "packages/infinity-context-adapter": {
       "entry": ["src/index.ts"],
+      "ignoreDependencies": ["@huggingface/tokenizers"],
       "project": ["src/**/*.ts", "test/**/*.ts"]
     },
     "packages/bullmq-adapter": {

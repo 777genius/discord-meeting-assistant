@@ -5,10 +5,7 @@ import {
   requireSha256,
 } from "../../domain/errors.js";
 import {
-  createFocusedRetrievalGroundingPlan,
   type FocusedMemoryReference,
-  type GroundingPlan,
-  type RehydratedEvidenceTurn,
 } from "../../domain/grounding-plan.js";
 import type {
   FocusedMemoryRetrievalPort,
@@ -37,45 +34,6 @@ export function mergeFocusedHydrationReferences(
     focusedMemoryReferenceKey(reference),
     reference,
   ])).values()]);
-}
-
-function selectHydratedTurns(
-  selected: readonly FocusedMemoryReference[],
-  hydratedReferences: readonly FocusedMemoryReference[],
-  turns: readonly RehydratedEvidenceTurn[],
-): readonly RehydratedEvidenceTurn[] {
-  if (hydratedReferences.length !== turns.length) {
-    throw new Error("canonical hydration did not preserve the selected reference cardinality");
-  }
-  const turnsByReference = new Map(hydratedReferences.map((reference, index) => [
-    focusedMemoryReferenceKey(reference),
-    turns[index],
-  ]));
-  return Object.freeze(selected.map((reference) => {
-    const turn = turnsByReference.get(focusedMemoryReferenceKey(reference));
-    if (turn === undefined) {
-      throw new Error("canonical hydration omitted a selected reference");
-    }
-    return turn;
-  }));
-}
-
-export function createPlanFromFocusedHydration(
-  retrieval: Extract<FocusedMemoryRetrievalResult, { readonly status: "current" }>,
-  hydratedReferences: readonly FocusedMemoryReference[],
-  turns: readonly RehydratedEvidenceTurn[],
-  humanActorIds: readonly string[],
-): GroundingPlan {
-  return createFocusedRetrievalGroundingPlan({
-    authorityGeneration: retrieval.authorityGeneration,
-    coverage: "sufficient",
-    humanActorIds,
-    turns: selectHydratedTurns(
-      retrieval.candidates,
-      hydratedReferences,
-      turns,
-    ),
-  });
 }
 
 const terminalStatuses = new Set([
