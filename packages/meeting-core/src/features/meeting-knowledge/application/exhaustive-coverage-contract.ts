@@ -12,6 +12,7 @@ import type {
   HistoricalAuthorizationRequestV1,
 } from "./ports/historical-grounding.js";
 import type {
+  HistoricalEvidenceSliceV1,
   HistoricalIndexPlanV1,
   LocallyRehydratedEvidenceBlockV1,
 } from "./ports/historical-memory.js";
@@ -89,6 +90,8 @@ export interface ExhaustiveCoverageRequestV1 {
 }
 
 export interface LoadedCoveragePlan {
+  /** Question-analysis slices aligned by ordinal with immutable canonical blocks. */
+  readonly analysisTurns: readonly (readonly HistoricalEvidenceSliceV1[])[];
   readonly blocks: readonly LocallyRehydratedEvidenceBlockV1[];
   readonly digest: string;
   readonly indexPlans: readonly HistoricalIndexPlanV1[];
@@ -189,10 +192,11 @@ export function validateExtract(
   extract: CoverageExtractInputV1,
   block: LocallyRehydratedEvidenceBlockV1,
   policy: ExhaustiveCoveragePolicyV1,
+  analysisTurns: readonly HistoricalEvidenceSliceV1[] = block.turns,
 ): CoverageExtractV1 {
   const selectedTurns = validateSelectedTurns(
     extract.selectedTurns,
-    new Map([[block.candidateLocator, new Set(block.turns.map(({ turnId }) => turnId))]]),
+    new Map([[block.candidateLocator, new Set(analysisTurns.map(({ turnId }) => turnId))]]),
     policy.maximumSelectedTurns,
   );
   const selectedLocators = unique(selectedTurns.map(({ blockLocator }) => blockLocator));

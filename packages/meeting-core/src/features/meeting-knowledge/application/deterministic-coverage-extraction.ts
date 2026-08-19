@@ -61,7 +61,7 @@ export class DeterministicExhaustiveCoverageExtraction
   ): Promise<CoverageExtractV1> {
     input.signal?.throwIfAborted();
     const queryTerms = terms(input.question);
-    const matchedOrdinals = input.block.turns.flatMap((turn, ordinal) => {
+    const matchedOrdinals = input.analysisTurns.flatMap((turn, ordinal) => {
       const turnTerms = terms(turn.text);
       return (queryTerms.size === 0 ||
           [...queryTerms].some((term) => turnTerms.has(term)))
@@ -74,18 +74,18 @@ export class DeterministicExhaustiveCoverageExtraction
       if (ordinal > 0) {
         selectedOrdinals.add(ordinal - 1);
       }
-      if (ordinal + 1 < input.block.turns.length) {
+      if (ordinal + 1 < input.analysisTurns.length) {
         selectedOrdinals.add(ordinal + 1);
       }
     }
-    for (const [ordinal, turn] of input.block.turns.entries()) {
+    for (const [ordinal, turn] of input.analysisTurns.entries()) {
       if (matchedOrdinals.length > 0 && correctionOrConflict.test(turn.text)) {
         selectedOrdinals.add(ordinal);
       }
     }
     const selectedTurns = [...selectedOrdinals].toSorted((left, right) => left - right)
       .map((ordinal): CoverageSelectedTurnV1 | undefined => {
-        const turn = input.block.turns[ordinal];
+        const turn = input.analysisTurns[ordinal];
         if (turn === undefined) {
           return undefined;
         }
@@ -114,7 +114,7 @@ export class DeterministicExhaustiveCoverageExtraction
         blocksReviewed: 1,
         lexicalMatches: matchedOrdinals.length,
         selectedTurnCount: selectedTurns.length,
-        turnsReviewed: input.block.turns.length,
+        turnsReviewed: input.analysisTurns.length,
       }),
       selectedTurns: Object.freeze(selectedTurns),
       selectionStatus: selectedTurns.length === 0 ? "no_match" : "selected",

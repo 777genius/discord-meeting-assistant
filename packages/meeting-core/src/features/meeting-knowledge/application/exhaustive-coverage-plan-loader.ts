@@ -17,7 +17,10 @@ import type {
   CoverageReducerPort,
   HistoricalAuthorizationPort,
 } from "./ports/historical-grounding.js";
-import type { HistoricalOpaqueIdPort } from "./ports/historical-memory.js";
+import type {
+  HistoricalOpaqueIdPort,
+  LocallyRehydratedEvidenceBlockV1,
+} from "./ports/historical-memory.js";
 import type {
   HistoricalEvidenceAuthority,
   HistoricalSyncStore,
@@ -110,7 +113,9 @@ export async function loadExhaustiveCoveragePlan(input: {
   if (new Set(blocks.map(({ candidateLocator }) => candidateLocator)).size !== blocks.length) {
     return null;
   }
+  const analysisTurns = retainFirstHistoricalSliceOccurrence(blocks, dependencies.ids);
   return Object.freeze({
+    analysisTurns,
     blocks: Object.freeze(blocks),
     digest: `mkcoverageplan1.${dependencies.ids.keyedId("coverage-plan", [
       policy.processingRelease,
@@ -118,9 +123,50 @@ export async function loadExhaustiveCoveragePlan(input: {
       dependencies.extractor.profile,
       dependencies.reducer.profile,
       ...indexPlans.map(({ planDigest }) => planDigest),
+      "analysisProjection=unique-exact-slices.v1",
+      ...blocks.map((block, ordinal) => [
+        block.candidateLocator,
+        ...(analysisTurns[ordinal] ?? []).map((turn) => historicalAnalysisSliceIdentity(
+          block,
+          turn,
+          dependencies.ids,
+        )),
+      ].join("|")),
     ])}`,
     indexPlans: Object.freeze(indexPlans),
   });
+}
+
+function retainFirstHistoricalSliceOccurrence(
+  blocks: readonly LocallyRehydratedEvidenceBlockV1[],
+  ids: HistoricalOpaqueIdPort,
+): readonly (readonly LocallyRehydratedEvidenceBlockV1["turns"][number][])[] {
+  const seen = new Set<string>();
+  return Object.freeze(blocks.map((block) =>
+    Object.freeze(block.turns.filter((turn) => {
+      const identity = historicalAnalysisSliceIdentity(block, turn, ids);
+      if (seen.has(identity)) {
+        return false;
+      }
+      seen.add(identity);
+      return true;
+    }))
+  ));
+}
+
+function historicalAnalysisSliceIdentity(
+  block: LocallyRehydratedEvidenceBlockV1,
+  turn: LocallyRehydratedEvidenceBlockV1["turns"][number],
+  ids: HistoricalOpaqueIdPort,
+): string {
+  return ids.keyedId("coverage-analysis-slice", [
+    block.binding.meetingId,
+    block.binding.releaseId,
+    turn.sourceRef,
+    String(turn.sourceStartCodePoint),
+    String(turn.sourceEndCodePoint),
+    turn.text,
+  ]);
 }
 
 function sameReleaseBinding(

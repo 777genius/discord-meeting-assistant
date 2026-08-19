@@ -207,10 +207,10 @@ function semanticCoverage(
     checkpoints,
     extractor: {
       profile: "meeting-knowledge.test-semantic-every-block.v1",
-      extract: async ({ block, question }) => {
+      extract: async ({ analysisTurns, block, question }) => {
         const asksForGamma = /гамм|gamma/iu.test(question);
         const asksForZeta = /zeta|зет/iu.test(question);
-        const selectedTurns = asksForZeta ? [] : block.turns.filter(({ text }) =>
+        const selectedTurns = asksForZeta ? [] : analysisTurns.filter(({ text }) =>
           asksForGamma
             ? /гамм|gamma/iu.test(text)
             : /agreed to ship Beta|договорилась запустить Гамма|settled on Project Delta|Correction: Beta|approved Omega/iu.test(text)
@@ -229,7 +229,7 @@ function semanticCoverage(
           payload: {
             blocksReviewed: 1,
             semanticClaimCount: selectedTurns.length,
-            turnsReviewed: block.turns.length,
+            turnsReviewed: analysisTurns.length,
           },
           selectedTurns,
           selectionStatus: selectedTurns.length === 0

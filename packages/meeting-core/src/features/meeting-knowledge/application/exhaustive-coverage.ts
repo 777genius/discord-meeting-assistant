@@ -35,8 +35,8 @@ import type {
   HistoricalAuthorizationPort,
 } from "./ports/historical-grounding.js";
 import type {
+  HistoricalEvidenceSliceV1,
   HistoricalOpaqueIdPort,
-  LocallyRehydratedEvidenceBlockV1,
 } from "./ports/historical-memory.js";
 import type {
   HistoricalEvidenceAuthority,
@@ -125,7 +125,7 @@ export class ExhaustiveCoverage {
     if (loaded.blocks.length > this.#policy.maximumBlocks) {
       return { reason: "exhaustive_block_bound_not_qualified", status: "unsupported" };
     }
-    if (coverageInputUpperBoundBytes(loaded.blocks, request.question) >
+    if (coverageInputUpperBoundBytes(loaded.analysisTurns, request.question) >
       this.#policy.maximumCumulativeEvidenceUtf8Bytes) {
       return { reason: "exhaustive_evidence_budget_exceeded", status: "unsupported" };
     }
@@ -343,12 +343,12 @@ export class ExhaustiveCoverage {
 }
 
 function coverageInputUpperBoundBytes(
-  blocks: readonly LocallyRehydratedEvidenceBlockV1[],
+  analysisTurns: readonly (readonly HistoricalEvidenceSliceV1[])[],
   question: string,
 ): number {
   const encoder = new TextEncoder();
   const questionBytes = encoder.encode(question).byteLength;
-  return blocks.reduce((total, block) => total + questionBytes + 1_024 +
-    block.turns.reduce((turnTotal, turn) =>
+  return analysisTurns.reduce((total, turns) => total + questionBytes + 1_024 +
+    turns.reduce((turnTotal, turn) =>
       turnTotal + encoder.encode(turn.text).byteLength + 512, 0), 0);
 }

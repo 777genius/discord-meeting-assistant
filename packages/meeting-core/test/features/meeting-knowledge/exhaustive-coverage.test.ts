@@ -315,7 +315,7 @@ function authority(meetings: readonly AcceptedFinalMeetingV1[]): HistoricalEvide
 function useCase(input: {
   readonly authorize?: () => Promise<HistoricalAuthorizationObservationV1>;
   readonly checkpoints: MemoryCheckpoints;
-  readonly extractor: (blockLocator: string) => Promise<TestExtract>;
+  readonly extractor: (blockLocator: string, turnCount: number) => Promise<TestExtract>;
   readonly extractorProfile?: string;
   readonly maximumCumulativeEvidenceUtf8Bytes?: number;
   readonly meetings: readonly AcceptedFinalMeetingV1[];
@@ -348,9 +348,9 @@ function useCase(input: {
     checkpoints: input.checkpoints,
     extractor: {
       profile: input.extractorProfile ?? "meeting-knowledge.test-extractor.v1",
-      extract: async ({ block }) => {
-        const extracted = await input.extractor(block.candidateLocator);
-        const firstTurn = block.turns[0];
+      extract: async ({ analysisTurns, block }) => {
+        const extracted = await input.extractor(block.candidateLocator, analysisTurns.length);
+        const firstTurn = analysisTurns[0];
         const selectedTurns = extracted.evidenceLocators.length > 0 && firstTurn !== undefined
           ? [{
               blockLocator: block.candidateLocator,
@@ -380,6 +380,10 @@ function useCase(input: {
           payload: {
             matches: values.reduce((total, value) =>
               total + (typeof value.payload.matches === "number" ? value.payload.matches : 0), 0),
+            turnsReviewed: values.reduce((total, value) =>
+              total + (typeof value.payload.turnsReviewed === "number"
+                ? value.payload.turnsReviewed
+                : 0), 0),
           },
           selectedTurns: reducedTurns,
           selectionStatus: reducedTurns.length === 0 ? "no_match" : "selected",
@@ -557,7 +561,7 @@ describe("exhaustive historical coverage checkpoint lifecycle", () => {
     let failOnce = true;
     const extractor = vi.fn(async (blockLocator: string) => {
       calls += 1;
-      if (calls === 2 && failOnce) {
+      if (calls === 1 && failOnce) {
         failOnce = false;
         throw new Error("synthetic extraction timeout");
       }
@@ -582,11 +586,13 @@ describe("exhaustive historical coverage checkpoint lifecycle", () => {
     }
     expect(second.plan.coverageBitmap.every(Boolean)).toBe(true);
     expect(second.plan.coverageBitmap.length).toBeGreaterThan(1);
-    expect(second.plan.selectedBlocks).toHaveLength(second.plan.coverageBitmap.length);
+    expect(second.plan.selectedBlocks.length).toBeGreaterThan(0);
+    expect(second.plan.selectedBlocks.length)
+      .toBeLessThanOrEqual(second.plan.coverageBitmap.length);
     expect(second.plan.finalSynthesisAllowed).toBe(true);
     expect(checkpoints.completed).toBe(true);
-    expect(extractor).toHaveBeenCalledTimes(second.plan.coverageBitmap.length + 1);
-    expect(callsAfterFailure).toBe(2);
+    expect(extractor).toHaveBeenCalledTimes(second.plan.selectedBlocks.length + 1);
+    expect(callsAfterFailure).toBe(1);
 
     const callsAfterCompletion = calls;
     const replay = await useCase({ checkpoints, extractor, meetings: [meeting], store })
@@ -766,7 +772,17 @@ describe("exhaustive historical coverage checkpoint lifecycle", () => {
 
 describe("exhaustive persisted plan rehydration", () => {
   it("rehydrates persisted plans during query and finalize without tokenizer replanning", async () => {
-    const meetings = [makeMeeting("meeting-persisted-a"), makeMeeting("meeting-persisted-b")];
+    const base = makeMeeting("meeting-persisted-split");
+    const split = Object.freeze({
+      ...base,
+      humanTurns: Object.freeze([Object.freeze({
+        ...base.humanTurns[0]!,
+        endMs: 60_000,
+        text: "distinct long source range ".repeat(80),
+        turnId: "split-long-turn",
+      })]),
+    });
+    const meetings = [makeMeeting("meeting-persisted-a"), split];
     const plans = meetings.map((meeting) => ({
       binding: meeting.binding,
       plan: buildHistoricalIndexPlan(meeting, new TestIds(), blockPolicy),
@@ -776,20 +792,35 @@ describe("exhaustive persisted plan rehydration", () => {
     const tokenizerFactory = vi.fn(() => {
       throw new Error("query-time tokenizer must not be resolved");
     });
+    const persistedSources = plans.flatMap(({ plan }) => plan.documents)
+      .flatMap(({ manifest }) => manifest.turnSources);
+    const exactSlices = new Set(persistedSources.map((source) => [
+      source.sourceRef,
+      source.sourceStartCodePoint,
+      source.sourceEndCodePoint,
+    ].join("\u0000")));
 
-    await expect(useCase({
+    const result = await useCase({
       checkpoints: new MemoryCheckpoints(),
-      extractor: async (blockLocator) => ({
+      extractor: async (blockLocator, turnCount) => ({
         blockLocator,
         evidenceLocators: [],
-        payload: { matches: 0 },
+        payload: { matches: 0, turnsReviewed: turnCount },
         schemaVersion: 1,
       }),
       meetings,
       store,
       tokenizerFactory,
-    }).buildPlan(request)).resolves.toMatchObject({ status: "ready" });
+    }).buildPlan(request);
 
+    expect(result.status).toBe("ready");
+    if (result.status === "ready") {
+      expect(result.plan.reduction.payload.turnsReviewed).toBe(exactSlices.size);
+    }
+    expect(persistedSources.length).toBeGreaterThan(exactSlices.size);
+    expect(exactSlices.size).toBeGreaterThan(
+      meetings.reduce((total, meeting) => total + meeting.humanTurns.length, 0),
+    );
     expect(store.currentPlanReads).toBe(2);
     expect(tokenizerFactory).not.toHaveBeenCalled();
   });
