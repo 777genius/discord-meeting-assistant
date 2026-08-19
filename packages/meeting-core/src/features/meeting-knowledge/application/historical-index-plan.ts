@@ -36,6 +36,8 @@ import {
   validatePreparedEnvelope,
   validatePreparedWindows,
 } from "./prepared-historical-index-validation.js";
+import { rehydrateHistoricalBlockFromPersistedPlan } from
+  "./historical-block-rehydration.js";
 export { canonicalHistoricalPlannerJson } from
   "./prepared-historical-index-validation.js";
 import {
@@ -45,7 +47,6 @@ import {
   historicalEmbeddingText,
   historicalPlanProjectionMatches,
   partitionHistoricalEmbeddingWindows,
-  rehydrateHistoricalProjectionTurns,
   type HistoricalTurnProjection,
 } from "./historical-embedding-windows.js";
 
@@ -332,48 +333,14 @@ export function rehydrateHistoricalBlock(
     readonly tokenizer: HistoricalEmbeddingTokenizerPort | undefined;
   } = DEFAULT_HISTORICAL_EVIDENCE_BLOCK_POLICY,
 ): LocallyRehydratedEvidenceBlockV1 {
-  const policy = "policy" in policyOrOptions
+  const candidatePolicy = "policy" in policyOrOptions
     ? policyOrOptions.policy
     : policyOrOptions;
-  const tokenizer = "policy" in policyOrOptions
-    ? policyOrOptions.tokenizer
-    : undefined;
-  const current = buildHistoricalIndexPlan(meeting, ids, policy, tokenizer);
-  const expected = plan.documents[ordinal];
-  const actual = current.documents[ordinal];
-  if (
-    expected === undefined ||
-    actual === undefined ||
-    current.planDigest !== plan.planDigest ||
-    actual.manifest.candidateLocator !== expected.manifest.candidateLocator ||
-    actual.manifest.contentHash !== expected.manifest.contentHash ||
-    actual.embeddingText !== expected.embeddingText ||
-    canonicalHistoricalTurnSources(actual.manifest.turnSources) !==
-      canonicalHistoricalTurnSources(expected.manifest.turnSources) ||
-    current.topology.indexGeneration !== plan.topology.indexGeneration
-  ) {
-    throw new HistoricalIndexPlanError(
-      "STALE_PLAN",
-      "historical candidate no longer matches canonical local evidence",
-    );
-  }
-  const turns = rehydrateHistoricalProjectionTurns(
+  return rehydrateHistoricalBlockFromPersistedPlan(
     meeting,
-    expected.embeddingText,
-    expected.manifest.turnSources,
-  );
-  if (turns === null) {
-    throw new HistoricalIndexPlanError(
-      "STALE_PLAN",
-      "historical source range no longer matches canonical local evidence",
-    );
-  }
-  return Object.freeze({
-    binding: meeting.binding,
-    candidateLocator: expected.manifest.candidateLocator,
-    contentHash: expected.manifest.contentHash,
-    indexGeneration: expected.manifest.indexGeneration,
+    plan,
     ordinal,
-    turns: Object.freeze(turns),
-  });
+    ids,
+    candidatePolicy,
+  );
 }

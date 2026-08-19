@@ -2,6 +2,7 @@ import { array, assert, constantFrom, property } from "fast-check";
 import { describe, expect, it } from "vitest";
 
 import {
+  DEFAULT_HISTORICAL_EVIDENCE_BLOCK_POLICY,
   DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
   HistoricalEvidenceInvariantError,
   admitAcceptedFinalMeeting,
@@ -12,6 +13,7 @@ import {
   decodeHistoricalIndexPlanV1,
   estimateHistoricalEmbeddingTokens,
   rehydrateHistoricalBlock,
+  type HistoricalEmbeddingTokenizerPort,
   type HistoricalOpaqueIdPort,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 
@@ -202,6 +204,83 @@ describe("historical evidence admission and block identity", () => {
     };
     expect(() => rehydrateHistoricalBlock(meeting, tampered, 0, ids))
       .toThrow("historical candidate no longer matches canonical local evidence");
+  });
+
+  it("rehydrates from the persisted block without invoking the tokenizer", () => {
+    const meeting = acceptedMeeting();
+    if (meeting === null) {
+      throw new Error("fixture admission failed");
+    }
+    let tokenCalls = 0;
+    let rejectTokenCalls = false;
+    const tokenizer: HistoricalEmbeddingTokenizerPort = Object.freeze({
+      countTokens: (text: string) => {
+        tokenCalls += 1;
+        if (rejectTokenCalls) {
+          throw new Error("query-time tokenizer invocation");
+        }
+        return estimateHistoricalEmbeddingTokens(text);
+      },
+      profile: Object.freeze({
+        conformanceVectorSetSha256: `sha256:${"a".repeat(64)}`,
+        embeddingModelRevision: "b".repeat(40),
+        id: "fixture-query-isolation-tokenizer",
+        maxInputTokens: 96,
+        servingRuntimeRevision: "c".repeat(40),
+        tokenizerArtifactSha256: `sha256:${"d".repeat(64)}`,
+        tokenizerConfigSha256: `sha256:${"e".repeat(64)}`,
+      }),
+    });
+    const ids = new DeterministicTestIds();
+    const plan = buildHistoricalIndexPlan(
+      meeting,
+      ids,
+      DEFAULT_HISTORICAL_EVIDENCE_BLOCK_POLICY,
+      tokenizer,
+    );
+    const planningTokenCalls = tokenCalls;
+    rejectTokenCalls = true;
+
+    expect(rehydrateHistoricalBlock(meeting, plan, 0, ids, {
+      policy: DEFAULT_HISTORICAL_EVIDENCE_BLOCK_POLICY,
+      tokenizer,
+    }).turns).toHaveLength(1);
+    expect(tokenCalls).toBe(planningTokenCalls);
+  });
+
+  it("fails closed when persisted block sources or derived identities are tampered", () => {
+    const meeting = acceptedMeeting();
+    if (meeting === null) {
+      throw new Error("fixture admission failed");
+    }
+    const ids = new DeterministicTestIds();
+    const plan = buildHistoricalIndexPlan(meeting, ids);
+    const document = plan.documents[0]!;
+    const source = document.manifest.turnSources[0]!;
+    const changedDocument = (
+      changes: Partial<typeof document>,
+      manifestChanges: Partial<typeof document.manifest> = {},
+    ) => ({
+      ...plan,
+      documents: [{
+        ...document,
+        ...changes,
+        manifest: { ...document.manifest, ...manifestChanges },
+      }],
+    });
+    const tamperedPlans = [
+      changedDocument({}, {
+        turnSources: [{ ...source, sourceRef: `${source.sourceRef}-tampered` }],
+      }),
+      changedDocument({}, { contentHash: `${document.manifest.contentHash}-tampered` }),
+      { ...plan, topology: { ...plan.topology, releaseRef: "tampered-release" } },
+      { ...plan, binding: { ...plan.binding, acceptedMeetingRevision: 8 } },
+    ];
+
+    for (const tampered of tamperedPlans) {
+      expect(() => rehydrateHistoricalBlock(meeting, tampered, 0, ids))
+        .toThrow("historical candidate no longer matches canonical local evidence");
+    }
   });
 });
 
