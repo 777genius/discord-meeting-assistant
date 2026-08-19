@@ -14,7 +14,7 @@ InfinityContextProductionQualificationPolicyV1 = Object.freeze({
   embeddingProfileId: INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedEmbeddingProfileId,
   productionSemanticQualification: false,
   qualificationManifestSha256:
-    INFINITY_CONTEXT_SDK_PROVENANCE.retainedScopedDocumentsManifestSha256,
+    INFINITY_CONTEXT_SDK_PROVENANCE.retainedPredecessorScopedDocumentsManifestSha256,
   sdkCommit: INFINITY_CONTEXT_SDK_PROVENANCE.commit,
   serviceRevision: INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedServiceRevision,
 });

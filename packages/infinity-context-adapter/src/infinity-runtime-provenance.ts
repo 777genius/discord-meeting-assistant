@@ -10,14 +10,14 @@ export const INFINITY_CONTEXT_SDK_PROVENANCE = Object.freeze({
   packageTarballIntegrity: "sha512-+g8mKVBvJCJWkpmMgUUBjwPZT86Q6KIIwVADy2nLvxfR8n5leA+gHJL/0JU8oYfG08tOlonSLfhPo4JxH+2q5Q==",
   packageTarballSha256: "a59e128c9c0b38c9e665f1da608cb5df09d25f2d14677d32f1a44d6eefc6efe9",
   packageVersion: "0.1.0",
-  retainedLiveQualificationEvidenceSha256:
-    "4f19e430a465294d020e6dc0eebde4a6320913744201fa60700cb75d148065fe",
-  retainedLiveQualificationManifestSha256:
-    "sha256:abe694b3e1cf0dcec9d5ff7c0d8b65f30ec5364ac11bb2526bd1c3a3b176c207",
+  retainedLiveQualificationEvidenceSha256: "4f19e430a465294d020e6dc0eebde4a6320913744201fa60700cb75d148065fe",
+  retainedLiveQualificationManifestSha256: "sha256:abe694b3e1cf0dcec9d5ff7c0d8b65f30ec5364ac11bb2526bd1c3a3b176c207",
   retainedLiveQualificationSourceLogSha256:
     "d69ad3870ea17c15a2c0fafa88e71aa9dfa87e0dfc81afa1ed3b3f0c93ed9c51",
-  retainedScopedDocumentsManifestPath: "docs/operations/evidence/2026-08-19-infinity-scoped-documents-15809619/manifest.json",
-  retainedScopedDocumentsManifestSha256: "sha256:42807626aa1867c8d9663fa4a8c9ad27cc08c0d2eb93adbcea8f138a3f230c43",
+  retainedActiveOnlyQualificationPath: "docs/operations/evidence/2026-08-19-infinity-active-only-15809619/qualification.json",
+  retainedActiveOnlyQualificationSha256: "sha256:e9a78deeae033daa95da161782802f65a85e314226dae6f87657b33f6e89458f",
+  retainedPredecessorScopedDocumentsManifestPath: "docs/operations/evidence/2026-08-19-infinity-scoped-documents-9b5c0e38/manifest.json",
+  retainedPredecessorScopedDocumentsManifestSha256: "sha256:42807626aa1867c8d9663fa4a8c9ad27cc08c0d2eb93adbcea8f138a3f230c43",
   retainedScopedDocumentsParityBaselineSha256: "sha256:d7e58a5d8d1ef010c413d2b76a35ac196ee6f5ba7033573fcab100fca040fa97",
   retainedScopedDocumentsPostgresEvidenceSha256:
     "sha256:4331f5ca203cdc6a2b2c654820675a51a355fffc4ad0f900e1f7c33c9e1850ba",
@@ -302,7 +302,7 @@ export function assertInfinityContextActivation(
         INFINITY_CONTEXT_SDK_PROVENANCE.immutablePackageIntegrity ||
       activation.qualificationManifestSha256 === null ||
       activation.qualificationManifestSha256 !==
-        INFINITY_CONTEXT_SDK_PROVENANCE.retainedScopedDocumentsManifestSha256
+        INFINITY_CONTEXT_SDK_PROVENANCE.retainedPredecessorScopedDocumentsManifestSha256
     )
   ) {
     throw new InfinityContextActivationError(

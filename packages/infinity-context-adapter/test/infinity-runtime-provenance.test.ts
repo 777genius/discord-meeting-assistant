@@ -49,7 +49,7 @@ const productionActivation = {
   immutablePackageIntegrity: INFINITY_CONTEXT_SDK_PROVENANCE.immutablePackageIntegrity,
   packageSource: "immutable_package" as const,
   qualificationManifestSha256:
-    INFINITY_CONTEXT_SDK_PROVENANCE.retainedScopedDocumentsManifestSha256,
+    INFINITY_CONTEXT_SDK_PROVENANCE.retainedPredecessorScopedDocumentsManifestSha256,
 } as const;
 const exactCapabilities = {
   apiVersion: "v1",
@@ -66,7 +66,7 @@ const testProductionPolicy = {
   embeddingProfileId: INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedEmbeddingProfileId,
   productionSemanticQualification: true,
   qualificationManifestSha256:
-    INFINITY_CONTEXT_SDK_PROVENANCE.retainedScopedDocumentsManifestSha256,
+    INFINITY_CONTEXT_SDK_PROVENANCE.retainedPredecessorScopedDocumentsManifestSha256,
   sdkCommit: INFINITY_CONTEXT_SDK_PROVENANCE.commit,
   serviceRevision: INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedServiceRevision,
 } as const;
@@ -122,7 +122,14 @@ describe("Infinity Context official SDK provenance", () => {
       .toBe(INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedServiceRevision);
   });
 
-  it("binds scoped-list service, PostgreSQL, ASGI, and parity evidence", () => {
+  it("binds predecessor scoped-list and exact active-only qualification evidence", () => {
+    const repositoryRoot = new URL("../../../", import.meta.url);
+    const retainedDigest = (path: string): string =>
+      "sha256:" + createHash("sha256").update(readFileSync(new URL(path, repositoryRoot))).digest("hex");
+    expect(retainedDigest(INFINITY_CONTEXT_SDK_PROVENANCE.retainedPredecessorScopedDocumentsManifestPath))
+      .toBe(INFINITY_CONTEXT_SDK_PROVENANCE.retainedPredecessorScopedDocumentsManifestSha256);
+    expect(retainedDigest(INFINITY_CONTEXT_SDK_PROVENANCE.retainedActiveOnlyQualificationPath))
+      .toBe(INFINITY_CONTEXT_SDK_PROVENANCE.retainedActiveOnlyQualificationSha256);
     const evidenceRoot = new URL(
       "../../../docs/operations/evidence/2026-08-19-infinity-scoped-documents-9b5c0e38/",
       import.meta.url,
@@ -130,7 +137,7 @@ describe("Infinity Context official SDK provenance", () => {
     const digest = (name: string): string =>
       `sha256:${createHash("sha256").update(readFileSync(new URL(name, evidenceRoot))).digest("hex")}`;
     expect(digest("manifest.json"))
-      .toBe(INFINITY_CONTEXT_SDK_PROVENANCE.retainedScopedDocumentsManifestSha256);
+      .toBe(INFINITY_CONTEXT_SDK_PROVENANCE.retainedPredecessorScopedDocumentsManifestSha256);
     expect(digest("postgres-live-evidence.json"))
       .toBe(INFINITY_CONTEXT_SDK_PROVENANCE.retainedScopedDocumentsPostgresEvidenceSha256);
     expect(digest("sdk-asgi-postgres-evidence.json"))
