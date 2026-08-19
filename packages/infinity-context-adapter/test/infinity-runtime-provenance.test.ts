@@ -71,6 +71,16 @@ const testProductionPolicy = {
   serviceRevision: INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedServiceRevision,
 } as const;
 
+function assertCompatibility(
+  productionQualification = INFINITY_CONTEXT_PRODUCTION_QUALIFICATION,
+  tokenizerProfile = PINNED_MULTILINGUAL_MINILM_TOKENIZER_PROFILE,
+): void {
+  assertInfinityContextPlanningCompatibility({
+    productionQualification,
+    tokenizerProfile,
+  });
+}
+
 describe("Infinity Context official SDK provenance", () => {
   it("loads the exact official package through ESM, CJS, and advisory-search types", async () => {
     const esm = await import("@infinity-context/sdk");
@@ -114,16 +124,6 @@ describe("Infinity Context official SDK provenance", () => {
 });
 
 describe("Infinity Context planning compatibility", () => {
-  const assertCompatibility = (
-    productionQualification = INFINITY_CONTEXT_PRODUCTION_QUALIFICATION,
-    tokenizerProfile = PINNED_MULTILINGUAL_MINILM_TOKENIZER_PROFILE,
-  ): void => {
-    assertInfinityContextPlanningCompatibility({
-      productionQualification,
-      tokenizerProfile,
-    });
-  };
-
   it("retains the reviewed b77 dense service and tokenizer tuple", () => {
     expect(() => { assertCompatibility(); }).not.toThrow();
   });

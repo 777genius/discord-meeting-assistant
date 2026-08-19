@@ -336,7 +336,7 @@ function assertProductionQualificationPolicy(
     policy.serviceRevision !== INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedServiceRevision ||
     policy.embeddingProfileId !== INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedEmbeddingProfileId ||
     policy.embeddingProfileId !== attestation.embeddingProfile ||
-    policy.productionSemanticQualification !== true ||
+    !policy.productionSemanticQualification ||
     policy.embeddingProfileDigestSha256 !== attestation.embeddingProfileDigestSha256 ||
     policy.qualificationManifestSha256 !== activation.qualificationManifestSha256
   ) {

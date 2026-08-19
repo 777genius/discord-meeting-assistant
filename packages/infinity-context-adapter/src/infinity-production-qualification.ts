@@ -72,7 +72,7 @@ function assertExactFields(
   for (const field of Object.keys(expectedFields)) {
     if (actualFields[field] !== expectedFields[field]) {
       throw new Error(
-        `Infinity Context planning ${identity} mismatch: ${String(field)}`,
+        `Infinity Context planning ${identity} mismatch: ${field}`,
       );
     }
   }
