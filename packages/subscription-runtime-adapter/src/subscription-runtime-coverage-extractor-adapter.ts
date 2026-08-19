@@ -2,7 +2,6 @@ import {
   CoverageExtractionCapacityError,
   type CoverageExtractV1,
   type CoverageExtractorPort,
-  type CoverageSelectedTurnV1,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 
 import {
@@ -147,7 +146,7 @@ export class SubscriptionRuntimeCoverageExtractorAdapter
       );
     }
     const selectedTurns = parsed.data.claims.flatMap(({ evidenceIds, relevance }) =>
-      evidenceIds.map((evidenceId): CoverageSelectedTurnV1 => {
+      evidenceIds.map((evidenceId) => {
         const turn = turnsByEvidenceId.get(evidenceId);
         if (turn === undefined) {
           throw new Error("semantic coverage extraction cited an unknown local turn");
@@ -155,13 +154,16 @@ export class SubscriptionRuntimeCoverageExtractorAdapter
         return Object.freeze({
           blockLocator: input.block.candidateLocator,
           relevance,
+          sourceEndCodePoint: turn.sourceEndCodePoint,
+          sourceRef: turn.sourceRef,
+          sourceStartCodePoint: turn.sourceStartCodePoint,
           turnId: turn.turnId,
         });
       })
     );
     if (
       selectedTurns.length > input.analysisTurns.length ||
-      new Set(selectedTurns.map(({ turnId }) => turnId)).size !== selectedTurns.length ||
+      new Set(selectedTurns.map(selectedSliceIdentity)).size !== selectedTurns.length ||
       (parsed.data.status === "claims") !== (selectedTurns.length > 0)
     ) {
       throw new Error("semantic coverage extraction omitted or duplicated claim references");
@@ -204,6 +206,20 @@ export class SubscriptionRuntimeCoverageExtractorAdapter
       );
     }
   }
+}
+
+function selectedSliceIdentity(selected: {
+  readonly sourceEndCodePoint: number;
+  readonly sourceRef: string;
+  readonly sourceStartCodePoint: number;
+  readonly turnId: string;
+}): string {
+  return JSON.stringify([
+    selected.sourceRef,
+    selected.sourceStartCodePoint,
+    selected.sourceEndCodePoint,
+    selected.turnId,
+  ]);
 }
 
 function validateRequestOptions(

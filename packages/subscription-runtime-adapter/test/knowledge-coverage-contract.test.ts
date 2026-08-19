@@ -237,9 +237,12 @@ describe("Meeting Knowledge semantic every-block provider contract", () => {
     };
     const firstRuntime = new RuntimeFake();
     firstRuntime.output = {
-      claims: [],
+      claims: [{
+        evidenceIds: ["evidence-000001", "evidence-000002"],
+        relevance: "direct",
+      }],
       reviewedEvidenceIds: ["evidence-000001", "evidence-000002"],
-      status: "no_match",
+      status: "claims",
     };
     const secondRuntime = new RuntimeFake();
     secondRuntime.output = {
@@ -248,7 +251,7 @@ describe("Meeting Knowledge semantic every-block provider contract", () => {
       status: "no_match",
     };
 
-    await adapter(firstRuntime).extract({
+    const result = await adapter(firstRuntime).extract({
       analysisTurns: [firstHalf, secondHalf],
       block: canonicalBlock,
       question: "What was agreed?",
@@ -265,6 +268,24 @@ describe("Meeting Knowledge semantic every-block provider contract", () => {
     expect(prompt.evidence.map(({ text }) => text)).toEqual([
       "The team agreed to",
       "launch Beta next week.",
+    ]);
+    expect(result.selectedTurns).toEqual([
+      {
+        blockLocator: canonicalBlock.candidateLocator,
+        relevance: "direct",
+        sourceEndCodePoint: 18,
+        sourceRef: source.sourceRef,
+        sourceStartCodePoint: 0,
+        turnId: source.turnId,
+      },
+      {
+        blockLocator: canonicalBlock.candidateLocator,
+        relevance: "direct",
+        sourceEndCodePoint: source.sourceEndCodePoint,
+        sourceRef: source.sourceRef,
+        sourceStartCodePoint: 19,
+        turnId: source.turnId,
+      },
     ]);
     expect(firstRuntime.request?.runId).not.toBe(secondRuntime.request?.runId);
   });
