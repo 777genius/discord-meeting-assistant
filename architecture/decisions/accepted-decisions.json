@@ -186,6 +186,21 @@
       "id": "ADR-0038",
       "path": "docs/decisions/0038-projection-trust-and-policy-epoch.md",
       "immutableDigest": "sha256:693dbe121aeb0376ce6c140715fc095d770fdb65ddf5ea702e20a050ba3bb45a"
+    },
+    {
+      "id": "ADR-0039",
+      "path": "docs/decisions/0039-independent-voicetext-provider-profiles.md",
+      "immutableDigest": "sha256:173b3f10218b70f1b815cc044884c1b2eeb2c494ac6e545baab4b2aa813cb046"
+    },
+    {
+      "id": "ADR-0040",
+      "path": "docs/decisions/0040-binding-aware-post-call-rollout.md",
+      "immutableDigest": "sha256:b01fa9184e644bf5cf85efee6283f7f3127a2f83dfd34bd8ef8604df17f97411"
+    },
+    {
+      "id": "ADR-0041",
+      "path": "docs/decisions/0041-fence-binding-recovery-from-legacy-workers.md",
+      "immutableDigest": "sha256:4360c25fdcebb63d90f336da140eac99947962e686d9f4e00f83ba7b387070b7"
     }
   ]
 }

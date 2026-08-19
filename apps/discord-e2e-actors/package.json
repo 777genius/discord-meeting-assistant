@@ -38,6 +38,7 @@
     "zod": "catalog:"
   },
   "devDependencies": {
+    "@discord-meeting/bullmq-adapter": "workspace:*",
     "@discord-meeting/discord-adapter": "workspace:*",
     "@types/node": "catalog:",
     "typescript": "catalog:",

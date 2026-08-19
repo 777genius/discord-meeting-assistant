@@ -1,7 +1,31 @@
-export const voicetextBatchContractVersion = "2";
-export const voicetextBatchLanguage = "multi";
-export const voicetextBatchModel = "nova-3";
-export const voicetextBatchProvider = "deepgram";
+import { VoicetextAdapterError } from "./errors.js";
+
+export type VoicetextBatchProfile = "deepgram-nova-3" | "elevenlabs-scribe-v2";
+
+export interface VoicetextBatchContractIdentity {
+  readonly contractVersion: "2" | "3";
+  readonly language: "multi";
+  readonly model: "nova-3" | "scribe_v2";
+  readonly provider: "deepgram" | "elevenlabs";
+}
+
+export const defaultVoicetextBatchProfile: VoicetextBatchProfile = "deepgram-nova-3";
+
+export function voicetextBatchContractIdentity(
+  profile: string,
+): VoicetextBatchContractIdentity {
+  if (profile === "deepgram-nova-3") {
+    return { contractVersion: "2", language: "multi", model: "nova-3", provider: "deepgram" };
+  }
+  if (profile === "elevenlabs-scribe-v2") {
+    return { contractVersion: "3", language: "multi", model: "scribe_v2", provider: "elevenlabs" };
+  }
+  throw new VoicetextAdapterError(
+    "invalid_input",
+    "Voicetext batch profile is unsupported",
+    false,
+  );
+}
 
 export interface VoicetextBatchUtterance {
   readonly confidence?: number;

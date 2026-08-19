@@ -124,6 +124,18 @@ function toWorkerError(
     : new MappedRetryableWorkerError(failure.code);
 }
 
+export function mapPostCallFailureToWorkerError(
+  error: unknown,
+  job: PostCallJobLike,
+  policy: ResolvedPostCallWorkerPolicy,
+  classifier: PostCallFailureClassifier = classifyPostCallFailure,
+): Error {
+  return toWorkerError(
+    safelyClassifyPostCallFailure(error, classifier),
+    postCallAttemptNumber(job) >= effectivePostCallMaxAttempts(job, policy),
+  );
+}
+
 export function classifyPostCallWorkerError(
   error: Error,
 ): PostCallFailureClassification {

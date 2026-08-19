@@ -41,6 +41,9 @@
 - [ADR-0036: Canonical live-projection reply](0036-canonical-live-projection-reply.md)
 - [ADR-0037: Release-bound Meeting Knowledge qualification](0037-release-bound-meeting-knowledge-qualification.md)
 - [ADR-0038: Projection trust and cluster policy epoch](0038-projection-trust-and-policy-epoch.md)
+- [ADR-0039: Independent VoiceText batch and live provider profiles](0039-independent-voicetext-provider-profiles.md)
+- [ADR-0040: Binding-aware post-call rollout](0040-binding-aware-post-call-rollout.md)
+- [ADR-0041: Fence binding recovery from legacy workers](0041-fence-binding-recovery-from-legacy-workers.md)
 
 ## Superseded
 

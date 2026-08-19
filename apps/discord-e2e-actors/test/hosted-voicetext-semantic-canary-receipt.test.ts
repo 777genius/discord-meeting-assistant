@@ -15,9 +15,14 @@ const endpoint = {
   batch: { origin: "https://voicetext.test", path: "/v2/listen" },
   live: { origin: "wss://voicetext.test", path: "/v1/listen" },
 } as const;
+const profiles = {
+  batch: "elevenlabs-scribe-v2",
+  live: "elevenlabs-scribe-v2-realtime",
+} as const;
 const expectation = {
   binding, endpoint, maximumAgeMs: 60_000, maximumCharacterErrorRate: 0.15,
   maximumTimelineDeltaMs: 250, maximumWordErrorRate: 0.2, nowEpochMs: 110_000,
+  profiles,
   requiredTermCount: 2, requiredTermsExpectationSha256: "5".repeat(64),
 };
 
@@ -32,6 +37,7 @@ describe("hosted Voicetext semantic canary receipt", () => {
     ["digest tampering", (value: VoicetextSemanticCanaryReceiptV1) => ({ ...value, receiptSha256: "0".repeat(64) })],
     ["fixture substitution", (value: VoicetextSemanticCanaryReceiptV1) => signed({ ...withoutDigest(value), binding: { ...value.binding, fixtureSha256: "f".repeat(64) } })],
     ["endpoint redirection", (value: VoicetextSemanticCanaryReceiptV1) => signed({ ...withoutDigest(value), endpoint: { ...value.endpoint, batch: { ...value.endpoint.batch, path: "/other" } } })],
+    ["profile substitution", (value: VoicetextSemanticCanaryReceiptV1) => signed({ ...withoutDigest(value), profiles: { ...profiles, batch: "deepgram-nova-3" } })],
     ["changed idempotency result", (value: VoicetextSemanticCanaryReceiptV1) => signed({ ...withoutDigest(value), batch: { ...value.batch, idempotentReplay: { ...value.batch.idempotentReplay, resultId: "result-2" } } })],
     ["WER threshold failure", (value: VoicetextSemanticCanaryReceiptV1) => signed({ ...withoutDigest(value), quality: { ...value.quality, wordErrorRate: 0.21 } })],
     ["missing required term", (value: VoicetextSemanticCanaryReceiptV1) => signed({ ...withoutDigest(value), quality: { ...value.quality, requiredTermMatches: 1 } })],
@@ -72,6 +78,7 @@ describe("hosted Voicetext semantic canary receipt", () => {
       { ...expectation, binding: { ...binding, fixtureSha256: "f".repeat(64) } },
       { ...expectation, endpoint: { ...endpoint, live: { ...endpoint.live, path: "/v2/listen" } } },
       { ...expectation, binding: { ...binding, sourceRevision: "f".repeat(40) } },
+      { ...expectation, profiles: { ...profiles, live: "deepgram-nova-3" as const } },
     ];
     for (const mismatch of mismatches) {
       expect(() => evaluateVoicetextSemanticCanaryReceiptV1(receipt(), mismatch)).toThrow(
@@ -112,6 +119,7 @@ function receipt(): VoicetextSemanticCanaryReceiptV1 {
       characterErrorRate: 0.05, observedMaximumTimelineDeltaMs: 100,
       requiredTermMatches: 2, requiredTermsExpectationSha256: "5".repeat(64), wordErrorRate: 0.1,
     },
+    profiles,
     schemaVersion: 1,
     tokenFile: { generationId: "generation-1", mode: 0o400, ownerUid: 10_001, path: "/run/secrets/voicetext" },
   });

@@ -5,6 +5,7 @@ import {
   describe,
   expect,
   it,
+  vi,
   type TestContext,
 } from "vitest";
 
@@ -89,6 +90,130 @@ afterAll(async () => {
 });
 
 describe("BullMQ shutdown persistence with disposable Redis", () => {
+  it("bounds a stalled admission read and maps it through the retry contract", async (context) => {
+    const redis = redisOrSkip(context);
+    const connection = {
+      host: redis.getHost(),
+      port: redis.getMappedPort(REDIS_PORT),
+    };
+    const prefix = "bullmq-post-call-admission-timeout";
+    const queue = createPostCallQueue({ attempts: 1, connection, prefix });
+    const queueEvents = createPostCallQueueEvents({ connection, prefix });
+    const deadLetters: PostCallDeadLetterRecord[] = [];
+    const handler = vi.fn(() => Promise.resolve());
+    let admissionSignal: AbortSignal | undefined;
+    const worker = createPostCallWorker({
+      admission: (_payload, signal) => {
+        admissionSignal = signal;
+        return new Promise((_resolve, reject) => {
+          signal.addEventListener("abort", () => {
+            reject(signal.reason);
+          }, { once: true });
+        });
+      },
+      admissionTimeoutMilliseconds: 25,
+      attempts: 1,
+      connection,
+      deadLetterRecorder: { record: async (record) => void deadLetters.push(record) },
+      handler,
+      prefix,
+    });
+    try {
+      await Promise.all([queue.waitUntilReady(), queueEvents.waitUntilReady(), worker.waitUntilReady()]);
+      const receipt = await new BullMqPostCallEnqueuer(queue, { attempts: 1 }).enqueue({
+        meetingId: "meeting-admission-timeout",
+        schemaVersion: 1,
+      });
+      const job = await queue.getJob(receipt.jobId);
+      await expect(job!.waitUntilFinished(queueEvents, 10_000)).rejects.toThrow(
+        "ADMISSION_TIMEOUT",
+      );
+      await vi.waitFor(() => {
+        expect(deadLetters).toHaveLength(1);
+      });
+      expect(deadLetters[0]?.failureCode).toBe("ADMISSION_TIMEOUT");
+      expect(admissionSignal?.aborted).toBe(true);
+      expect(admissionSignal?.reason).toMatchObject({
+        code: "ADMISSION_TIMEOUT",
+        retryable: true,
+      });
+      expect(handler).not.toHaveBeenCalled();
+    } finally {
+      await Promise.allSettled([worker.close(false), queueEvents.close(), queue.close()]);
+    }
+  }, 30_000);
+
+});
+
+describe("BullMQ shutdown persistence with disposable Redis", () => {
+  it("reconstructs a terminal admission failure when dead-letter persistence also fails", async (context) => {
+    const redis = redisOrSkip(context);
+    const connection = {
+      host: redis.getHost(),
+      port: redis.getMappedPort(REDIS_PORT),
+    };
+    const prefix = "bullmq-post-call-admission-terminal-recovery";
+    const queue = createPostCallQueue({ attempts: 1, connection, prefix });
+    const queueEvents = createPostCallQueueEvents({ connection, prefix });
+    const handler = vi.fn(() => Promise.resolve());
+    const worker = createPostCallWorker({
+      admission: async () => {
+        throw new RetryablePostCallError("ADMISSION_STORE_UNAVAILABLE");
+      },
+      attempts: 1,
+      connection,
+      deadLetterRecorder: {
+        record: async () => {
+          throw new Error("synthetic terminal settlement outage");
+        },
+      },
+      handler,
+      prefix,
+    });
+
+    try {
+      await Promise.all([
+        queue.waitUntilReady(),
+        queueEvents.waitUntilReady(),
+        worker.waitUntilReady(),
+      ]);
+      const enqueuer = new BullMqPostCallEnqueuer(queue, { attempts: 1 });
+      const payload = {
+        meetingId: "meeting-admission-terminal-recovery",
+        schemaVersion: 1 as const,
+      };
+      const receipt = await enqueuer.enqueue(payload);
+      const job = await queue.getJob(receipt.jobId);
+      expect(job).toBeDefined();
+      await expect(job!.waitUntilFinished(queueEvents, 10_000)).rejects.toThrow(
+        "ADMISSION_STORE_UNAVAILABLE",
+      );
+      await expect(worker.waitForActivePostCallJobs()).rejects.toThrow(
+        "post-call terminal durability effects failed",
+      );
+
+      await expect(enqueuer.enqueue(payload)).resolves.toEqual({
+        deadLetter: {
+          attemptsMade: 1,
+          failureCode: "ADMISSION_STORE_UNAVAILABLE",
+          meetingId: payload.meetingId,
+          retryable: true,
+          schemaVersion: 1,
+          sourceJobRef: postCallJobReference(receipt.jobId),
+        },
+        jobId: receipt.jobId,
+        status: "failed",
+      });
+      expect(handler).not.toHaveBeenCalled();
+    } finally {
+      await Promise.allSettled([
+        worker.close(false),
+        queueEvents.close(),
+        queue.close(),
+      ]);
+    }
+  }, 30_000);
+
   it("waits for terminal DLQ persistence before shutdown closes its queues", async (context) => {
     const redis = redisOrSkip(context);
     const connection = {

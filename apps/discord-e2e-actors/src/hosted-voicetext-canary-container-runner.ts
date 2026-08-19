@@ -32,6 +32,7 @@ export class HostedVoicetextCanaryContainerRunnerV1 implements VoicetextCanaryRu
   ) {}
 
   public async run(input: VoicetextCanaryRunnerInputV1): Promise<unknown> {
+    assertProfiles(input.profiles);
     const internalDeadlineMs = internalDeadlineFromOuterTimeout(input.timeoutMs);
     const result = await this.process.execute({
       args: [
@@ -47,8 +48,11 @@ export class HostedVoicetextCanaryContainerRunnerV1 implements VoicetextCanaryRu
         "--image-digest-sha256", input.binding.imageDigestSha256,
         "--batch-origin", input.endpoint.batch.origin,
         "--batch-path", input.endpoint.batch.path,
+        "--batch-profile", input.profiles.batch,
+        "--keyterms-json", JSON.stringify(input.requiredTerms),
         "--live-origin", input.endpoint.live.origin,
         "--live-path", input.endpoint.live.path,
+        "--live-profile", input.profiles.live,
         "--json",
       ],
       executable: this.executable,
@@ -60,6 +64,13 @@ export class HostedVoicetextCanaryContainerRunnerV1 implements VoicetextCanaryRu
     if (result.signal !== null) {throw new Error(`Voicetext semantic canary container exited on ${result.signal}`);}
     if (result.exitCode !== 0) {throw new Error(`Voicetext semantic canary container failed with exit code ${String(result.exitCode)}`);}
     return parseStrictJsonOutput(result.stdout, result.stderr);
+  }
+}
+
+function assertProfiles(profiles: VoicetextCanaryRunnerInputV1["profiles"]): void {
+  if (!(["deepgram-nova-3", "elevenlabs-scribe-v2"] as const).includes(profiles.batch)
+    || !(["deepgram-nova-3", "elevenlabs-scribe-v2-realtime"] as const).includes(profiles.live)) {
+    throw new Error("Voicetext semantic canary profiles are invalid");
   }
 }
 

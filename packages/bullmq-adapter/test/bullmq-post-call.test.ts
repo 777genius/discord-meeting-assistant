@@ -9,6 +9,8 @@ import {
   PostCallJobConflictError,
   POST_CALL_DEAD_LETTER_JOB_NAME,
   POST_CALL_JOB_NAME,
+  POST_CALL_QUEUE_NAME,
+  POST_CALL_QUEUE_PREFIX,
   RetryablePostCallError,
   createPostCallProcessor,
   drainActivePostCallJobsAndClose,
@@ -119,6 +121,12 @@ function postCallJob(
 }
 
 describe("post-call queue contract", () => {
+  it("isolates binding-aware work from legacy V1 workers", () => {
+    expect(POST_CALL_QUEUE_PREFIX).toBe("discord-meeting-v2");
+    expect(POST_CALL_QUEUE_NAME).toBe("meeting-post-call-v2");
+    expect(POST_CALL_JOB_NAME).toBe("process-post-call-v2");
+  });
+
   it("accepts only the exact V1 payload and preserves the meeting identifier", () => {
     expect(
       parsePostCallJobPayload({
@@ -160,7 +168,7 @@ describe("post-call queue contract", () => {
       postCallJobId("meeting-queue-1", 2),
     );
     expect(first).not.toContain(":");
-    expect(first).toMatch(/^post-call-v1-[a-f0-9]{64}$/u);
+    expect(first).toMatch(/^post-call-v2-[a-f0-9]{64}$/u);
   });
 
   it("enqueues with deterministic id, bounded retries, and durable deduplication", async () => {
@@ -656,8 +664,8 @@ describe("post-call processor", () => {
       meetingId: "meeting-async",
       schemaVersion: 1,
     });
-    expect(synchronousReceipt.jobId).toMatch(/^post-call-v1-[a-f0-9]{64}$/u);
-    expect(asynchronousReceipt.jobId).toMatch(/^post-call-v1-[a-f0-9]{64}$/u);
+    expect(synchronousReceipt.jobId).toMatch(/^post-call-v2-[a-f0-9]{64}$/u);
+    expect(asynchronousReceipt.jobId).toMatch(/^post-call-v2-[a-f0-9]{64}$/u);
   });
 });
 

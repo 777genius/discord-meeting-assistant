@@ -36,6 +36,12 @@ const inputSchema = z.object({
     live: z.object({ origin: exactOriginSchema("wss:"), path: endpointPathSchema }).strict(),
   }).strict(),
   fixturePath: absolutePathSchema,
+  requiredTerms: z.array(z.string().min(1).max(100).refine((term) => term.trim() === term))
+    .min(1).max(100).refine((terms) => new Set(terms).size === terms.length),
+  profiles: z.object({
+    batch: z.enum(["deepgram-nova-3", "elevenlabs-scribe-v2"]),
+    live: z.enum(["deepgram-nova-3", "elevenlabs-scribe-v2-realtime"]),
+  }).strict(),
   signal: z.instanceof(AbortSignal).optional(),
   timeoutMs: z.number().int().min(2).max(300_000),
 }).strict();
@@ -49,6 +55,8 @@ export class HostedRemoteVoicetextCanaryRunnerV1 implements VoicetextCanaryRunne
       binding: rawInput.binding,
       endpoint: rawInput.endpoint,
       fixturePath: rawInput.fixturePath,
+      profiles: rawInput.profiles,
+      requiredTerms: rawInput.requiredTerms,
       ...(rawInput.signal === undefined ? {} : { signal: rawInput.signal }),
       timeoutMs: rawInput.timeoutMs,
     });
@@ -90,8 +98,11 @@ function buildCanaryArgs(
     "--image-digest-sha256", input.binding.imageDigestSha256,
     "--batch-origin", input.endpoint.batch.origin,
     "--batch-path", input.endpoint.batch.path,
+    "--batch-profile", input.profiles.batch,
+    "--keyterms-json", JSON.stringify(input.requiredTerms),
     "--live-origin", input.endpoint.live.origin,
     "--live-path", input.endpoint.live.path,
+    "--live-profile", input.profiles.live,
     "--json",
   ]);
 }

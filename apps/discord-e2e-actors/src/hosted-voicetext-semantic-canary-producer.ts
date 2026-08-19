@@ -14,6 +14,12 @@ const segmentSchema = z.object({
   startMs: z.number().int().nonnegative(),
   text: z.string().min(1).max(16_384),
 }).strict().refine(({ endMs, startMs }) => endMs >= startMs);
+const profilesSchema = z.object({
+  batch: z.enum(["deepgram-nova-3", "elevenlabs-scribe-v2"]),
+  live: z.enum(["deepgram-nova-3", "elevenlabs-scribe-v2-realtime"]),
+}).strict();
+const keytermsSchema = z.array(z.string().min(1).max(100).refine((term) => term.trim() === term))
+  .min(1).max(100).refine((terms) => new Set(terms).size === terms.length);
 
 const voicetextCanaryInternalResultV1Schema = z.object({
   batch: z.object({
@@ -32,6 +38,8 @@ const voicetextCanaryInternalResultV1Schema = z.object({
     protocolReady: z.literal(true),
     segments: z.array(segmentSchema).min(1).max(1_024),
   }).strict(),
+  keyterms: keytermsSchema,
+  profiles: profilesSchema,
   schemaVersion: z.literal(1),
   tokenFile: z.object({
     generationId: z.string().min(1).max(256), mode: z.literal(0o400),
@@ -49,6 +57,8 @@ export interface VoicetextCanaryRunnerInputV1 {
   readonly binding: VoicetextSemanticCanaryReceiptV1["binding"];
   readonly endpoint: VoicetextSemanticCanaryReceiptV1["endpoint"];
   readonly fixturePath: string;
+  readonly requiredTerms: readonly string[];
+  readonly profiles: z.infer<typeof profilesSchema>;
   readonly signal?: AbortSignal;
   readonly timeoutMs: number;
 }
@@ -56,7 +66,6 @@ export interface VoicetextCanaryRunnerInputV1 {
 export interface ProduceVoicetextCanaryInputV1 extends VoicetextCanaryRunnerInputV1 {
   readonly expectedSegments: readonly z.infer<typeof segmentSchema>[];
   readonly now: () => number;
-  readonly requiredTerms: readonly string[];
   readonly ttlMs: number;
 }
 
@@ -70,6 +79,12 @@ export async function produceVoicetextSemanticCanaryReceiptV1(
 ): Promise<VoicetextSemanticCanaryReceiptV1> {
   assertInput(input);
   const result = voicetextCanaryInternalResultV1Schema.parse(await runner.run(input));
+  if (digestCanonical(result.profiles) !== digestCanonical(input.profiles)) {
+    throw new Error("Voicetext internal canary profiles do not match the pinned execution profiles");
+  }
+  if (digestCanonical(result.keyterms) !== digestCanonical(input.requiredTerms)) {
+    throw new Error("Voicetext internal canary keyterms do not match the pinned execution keyterms");
+  }
   assertIdempotentBatch(result);
   const expected = input.expectedSegments.map((segment) => segmentSchema.parse(segment));
   const expectedWords = normalizedWords(expected);
@@ -111,6 +126,7 @@ export async function produceVoicetextSemanticCanaryReceiptV1(
       requiredTermsExpectationSha256: digestVoicetextCanaryRequiredTermsV1(requiredTerms),
       wordErrorRate: Math.max(batchQuality.wordErrorRate, liveQuality.wordErrorRate),
     },
+    profiles: result.profiles,
     schemaVersion: 1,
     tokenFile: result.tokenFile,
   };
@@ -122,12 +138,12 @@ function assertInput(input: ProduceVoicetextCanaryInputV1): void {
     || !Number.isSafeInteger(input.ttlMs) || input.ttlMs < 1 || input.ttlMs > 60_000
     || !Number.isSafeInteger(input.timeoutMs) || input.timeoutMs < 1 || input.timeoutMs > 300_000
     || input.expectedSegments.length < 1 || input.expectedSegments.length > 1_024
-    || input.requiredTerms.length < 1 || input.requiredTerms.length > 256) {
+    || !keytermsSchema.safeParse(input.requiredTerms).success) {
     throw new Error("Voicetext semantic canary producer input is invalid");
   }
   const expected = input.expectedSegments.map((segment) => segmentSchema.parse(segment));
   const normalizedTerms = input.requiredTerms.map(normalizeText);
-  if (normalizedTerms.some((term) => term.length === 0) || new Set(normalizedTerms).size !== normalizedTerms.length
+  if (new Set(normalizedTerms).size !== normalizedTerms.length
     || digestCanonical(expected) !== input.binding.transcriptExpectationSha256) {
     throw new Error("Voicetext semantic canary expectation binding is invalid");
   }

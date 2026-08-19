@@ -1,4 +1,5 @@
 import {
+  DelayedError,
   WaitingError,
   Worker,
   type ConnectionOptions,
@@ -14,7 +15,10 @@ import {
   parsePostCallJobPayload,
   postCallJobReference,
 } from "./contracts.js";
-import type { PostCallFailureClassification } from "./errors.js";
+import {
+  RetryablePostCallError,
+  type PostCallFailureClassification,
+} from "./errors.js";
 import type { PostCallObserver } from "./observability.js";
 import { safelyObserve } from "./observability.js";
 import {
@@ -22,6 +26,7 @@ import {
   classifyPostCallWorkerError,
   createPostCallProcessor,
   effectivePostCallMaxAttempts,
+  mapPostCallFailureToWorkerError,
   postCallAttemptNumber,
   type CreatePostCallProcessorOptions,
   type PostCallJobLike,
@@ -42,10 +47,19 @@ export {
 
 export interface CreatePostCallWorkerOptions
   extends CreatePostCallProcessorOptions {
+  readonly admission?: (
+    payload: PostCallJobPayload,
+    signal: AbortSignal,
+  ) => Promise<"accepted" | "hold">;
+  readonly admissionTimeoutMilliseconds?: number;
   readonly autorun?: boolean;
   readonly connection: ConnectionOptions;
   readonly prefix?: string;
 }
+
+const unsupportedRuntimeHoldMilliseconds = 60_000;
+const defaultAdmissionTimeoutMilliseconds = 5_000;
+const maximumAdmissionTimeoutMilliseconds = 60_000;
 
 function tryMeetingId(data: unknown): string | null {
   const result = parsePostCallPayloadSafely(data);
@@ -120,6 +134,28 @@ async function moveCancelledJobToWait(
   }
 }
 
+async function moveUnsupportedJobToDelayed(
+  job: PostCallBullMqJob,
+  token: string | undefined,
+  observer: PostCallObserver | undefined,
+): Promise<boolean> {
+  try {
+    await job.moveToDelayed(
+      Date.now() + unsupportedRuntimeHoldMilliseconds,
+      requiredWorkerToken(token),
+    );
+    safelyObserve(observer, {
+      component: "worker",
+      jobRef: postCallJobReference(job.id),
+      kind: "job-held",
+    });
+    return true;
+  } catch {
+    safelyObserve(observer, { component: "worker", kind: "runtime-error" });
+    return false;
+  }
+}
+
 function requiredActiveJobId(job: PostCallBullMqJob): string {
   if (job.id === undefined) {
     throw new Error("BullMQ active post-call job has no identifier");
@@ -134,13 +170,78 @@ function requiredWorkerToken(token: string | undefined): string {
   return token;
 }
 
+async function resolvePostCallAdmission(
+  options: CreatePostCallWorkerOptions,
+  payload: PostCallJobPayload | null,
+  job: PostCallBullMqJob,
+  policy: ResolvedPostCallWorkerPolicy,
+  timeoutMilliseconds: number,
+): Promise<"accepted" | "hold"> {
+  if (payload === null || options.admission === undefined) {
+    return "accepted";
+  }
+  try {
+    return await withAdmissionTimeout(
+      (signal) => options.admission!(payload, signal),
+      timeoutMilliseconds,
+    );
+  } catch (error) {
+    // Admission is part of durable post-call processing. Map its failures
+    // through the same bounded retry contract as the handler, so a terminal
+    // Redis job remains reconstructable if dead-letter persistence also fails.
+    throw mapPostCallFailureToWorkerError(
+      error,
+      job,
+      policy,
+      options.classifyFailure,
+    );
+  }
+}
+
+async function withAdmissionTimeout(
+  admission: (signal: AbortSignal) => Promise<"accepted" | "hold">,
+  timeoutMilliseconds: number,
+): Promise<"accepted" | "hold"> {
+  const controller = new AbortController();
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      const error = new RetryablePostCallError("ADMISSION_TIMEOUT");
+      controller.abort(error);
+      reject(error);
+    }, timeoutMilliseconds);
+    timer.unref();
+  });
+  try {
+    return await Promise.race([admission(controller.signal), timeout]);
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+  }
+}
+
+function resolveAdmissionTimeoutMilliseconds(
+  configured: number | undefined,
+): number {
+  const value = configured ?? defaultAdmissionTimeoutMilliseconds;
+  if (
+    !Number.isSafeInteger(value) ||
+    value < 1 ||
+    value > maximumAdmissionTimeoutMilliseconds
+  ) {
+    throw new RangeError("post-call admission timeout is outside its bound");
+  }
+  return value;
+}
+
 export function createPostCallWorker(
   options: CreatePostCallWorkerOptions,
 ): PostCallWorker {
   const policy = resolvePostCallWorkerPolicy(options);
+  const admissionTimeoutMilliseconds = resolveAdmissionTimeoutMilliseconds(options.admissionTimeoutMilliseconds);
   const processor = createPostCallProcessor(options);
   const activeJobs = new ActivePostCallJobs();
-  const shouldAutorun = options.autorun ?? true;
   const worker = new Worker<
     PostCallJobPayload,
     void,
@@ -157,6 +258,18 @@ export function createPostCallWorker(
         if (activeJobs.isAdmissionClosed()) {
           throw new PostCallCancellationError(activeJob.signal.reason);
         }
+        const payload = parsePostCallPayloadSafely(job.data);
+        if (await resolvePostCallAdmission(
+          options,
+          payload,
+          job,
+          policy,
+          admissionTimeoutMilliseconds,
+        ) === "hold") {
+          const held = await moveUnsupportedJobToDelayed(job, token, options.observer);
+          releaseAfterProcessor = held;
+          throw new DelayedError();
+        }
         await processor(job, activeJob.signal);
         // Keep the lease until BullMQ commits active -> completed and emits its
         // event. Shutdown must not force-close between user work and the state
@@ -164,6 +277,9 @@ export function createPostCallWorker(
         releaseAfterProcessor = false;
         return;
       } catch (error) {
+        if (error instanceof DelayedError) {
+          throw error;
+        }
         if (!(error instanceof PostCallCancellationError)) {
           // The `failed` event owns release after BullMQ commits retry/failure
           // state and, for terminal jobs, starts the one DLQ side effect.
@@ -279,7 +395,7 @@ export function createPostCallWorker(
     }
   });
 
-  if (shouldAutorun) {
+  if (options.autorun ?? true) {
     void postCallWorker.run().catch((error: unknown) => {
       postCallWorker.emit(
         "error",

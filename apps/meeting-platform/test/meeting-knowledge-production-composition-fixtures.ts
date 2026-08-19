@@ -245,6 +245,7 @@ export function platformConfig(
       launcherSha256: "d".repeat(64),
     },
     transcriptionProvider: "speaches",
+    transcriptionLegacyExecutionBinding: "speaches-v1",
   };
 }
 

@@ -7,6 +7,10 @@ import {
   verifyRetainedE2eEvidence as verifyRetainedE2eEvidenceAgainstExpectedRevision,
 } from "../src/e2e-evidence.js";
 import {
+  characterErrorRate,
+  wordErrorRate,
+} from "../src/e2e-evidence-text-metrics.js";
+import {
   currentExpectedRevisions,
   directMessageEvidence,
   expectedRevisions,
@@ -464,6 +468,15 @@ describe("verifyRetainedE2eEvidence continued", () => {
       wordErrorRate: 0,
     });
     expect(verification.failures.map(({ code }) => code)).not.toContain("TERM_MISSING");
+  });
+
+  it("treats Scribe punctuation words after pinned technical phrases as formatting", () => {
+    const expected = "Discord thread. Pipecat assistant.";
+    const actual = "Discord thread точка Pipecat assistant точка";
+
+    expect(wordErrorRate(expected, actual)).toBe(0);
+    expect(characterErrorRate(expected, actual)).toBe(0);
+    expect(wordErrorRate("Контрольная точка", "Контрольная")).toBeGreaterThan(0);
   });
 
   it("accepts mixed numeric and spoken dates in transcripts and summary deadlines", () => {

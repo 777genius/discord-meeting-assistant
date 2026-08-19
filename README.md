@@ -23,6 +23,14 @@ consumer-owned `ConversationRuntime` and `VoicePlaybackPort` boundaries. Pipecat
 realtime STT, TTS providers, and Craig transport do not enter the meeting domain.
 Memory, RAG, and tools remain intentionally out of scope.
 
+VoiceText provider selection is explicit and independent for authoritative
+batch and derived live transcription. `VOICETEXT_BATCH_PROFILE` accepts
+`deepgram-nova-3` (default) or `elevenlabs-scribe-v2`;
+`VOICETEXT_LIVE_PROFILE` accepts `deepgram-nova-3` (default) or
+`elevenlabs-scribe-v2-realtime`. Invalid values fail startup. These selectors
+change only the server-side VoiceText boundary: Discord receives no upstream
+credentials, endpoints, provider probes, provider names, or SDK types.
+
 ## Repository boundary
 
 - The Craig fork is a separate Voice Gateway repository and keeps its upstream

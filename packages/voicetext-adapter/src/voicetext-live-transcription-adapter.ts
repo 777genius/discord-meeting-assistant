@@ -14,6 +14,7 @@ import { WsVoicetextWebSocketConnector } from "./ws-websocket-connector.js";
 export type {
   OpenVoicetextLiveSessionRequest,
   VoicetextLivePacket,
+  VoicetextLiveProfile,
   VoicetextLiveSession,
   VoicetextLiveTranscriptEvent,
   VoicetextLiveTranscriptionOptions,

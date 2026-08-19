@@ -17,6 +17,7 @@ import {
 } from "../src/application/post-call-outbox-dispatcher.js";
 import {
   closePartiallyCreatedPostCallQueues,
+  createPostCallBindingAdmission,
   createPostCallHandler,
 } from "../src/composition/post-call.js";
 
@@ -72,6 +73,122 @@ describe("PostCallOutboxDispatcher", () => {
     expect(markPostCallProcessed).not.toHaveBeenCalled();
     expect(pending).toHaveLength(1);
   });
+});
+
+describe("PostCallOutboxDispatcher durable binding", () => {
+  const terminalRecorder = { record: async () => {} };
+
+  it("backfills and pins late legacy work to the frozen historical route", async () => {
+    const events: string[] = [];
+    const backfill = vi.fn(async (binding: string) => {
+      events.push(`backfill:${binding}`);
+      return 2;
+    });
+    const pin = vi.fn(async (meetingId: string, binding: string) => {
+      events.push(`pin:${meetingId}:${binding}`);
+      return binding;
+    });
+    const enqueue = vi.fn(async () => {
+      events.push("enqueue");
+      return { status: "available" as const };
+    });
+    const supported = new Set([
+      "voicetext-batch-v2:deepgram-nova-3",
+      "voicetext-batch-v3:elevenlabs-scribe-v2",
+    ]);
+    const listRecoverablePostCall = vi.fn(async () => [{
+      meetingId: "meeting-new",
+      recoveryGeneration: 0,
+      schemaVersion: 1 as const,
+    }]);
+    const dispatcher = new PostCallOutboxDispatcher(
+      {
+        listRecoverablePostCall,
+        markPostCallEnqueued: async () => {},
+        markPostCallProcessed: async () => {},
+      },
+      { enqueue },
+      terminalRecorder,
+      { warn: vi.fn() },
+      {
+        store: {
+          backfillRecoverableUnboundTranscriptionExecutionBindings: backfill,
+          pinTranscriptionExecutionBinding: pin,
+        },
+        values: {
+          legacyRecovery: "voicetext-batch-v2:deepgram-nova-3",
+          supported,
+        },
+      },
+    );
+
+    await expect(dispatcher.prepareLegacyBindings()).resolves.toBe(2);
+    await expect(dispatcher.dispatchPending()).resolves.toEqual({ dispatched: 1, failed: 0 });
+    expect(listRecoverablePostCall).toHaveBeenCalledWith(100, supported);
+    expect(events).toEqual([
+      "backfill:voicetext-batch-v2:deepgram-nova-3",
+      "pin:meeting-new:voicetext-batch-v2:deepgram-nova-3",
+      "enqueue",
+    ]);
+  });
+
+  it("retains a job whose persisted binding is unknown to this runtime", async () => {
+    const enqueue = vi.fn(async () => ({ status: "available" as const }));
+    const warn = vi.fn();
+    const dispatcher = new PostCallOutboxDispatcher(
+      {
+        listRecoverablePostCall: async () => [{
+          meetingId: "meeting-newer-runtime",
+          recoveryGeneration: 0,
+          schemaVersion: 1,
+        }],
+        markPostCallEnqueued: async () => {},
+        markPostCallProcessed: async () => {},
+      },
+      { enqueue },
+      terminalRecorder,
+      { warn },
+      {
+        store: {
+          backfillRecoverableUnboundTranscriptionExecutionBindings: async () => 0,
+          pinTranscriptionExecutionBinding: async () => "voicetext-batch-v4:new-provider",
+        },
+        values: {
+          legacyRecovery: "voicetext-batch-v2:deepgram-nova-3",
+          supported: new Set(["voicetext-batch-v2:deepgram-nova-3"]),
+        },
+      },
+    );
+
+    await expect(dispatcher.dispatchPending()).resolves.toEqual({ dispatched: 0, failed: 1 });
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      "Post-call outbox dispatch failed; durable item retained",
+      { errorName: "Error", meetingId: "meeting-newer-runtime" },
+    );
+  });
+});
+
+describe("post-call worker binding admission", () => {
+  it("holds missing or unsupported bindings and admits an exact supported binding", async () => {
+    const get = vi.fn(async (meetingId: string) => ({
+      missing: undefined,
+      newer: "voicetext-batch-v3:elevenlabs-scribe-v2",
+      supported: "voicetext-batch-v2:deepgram-nova-3",
+    })[meetingId]);
+    const admit = createPostCallBindingAdmission(
+      { getTranscriptionExecutionBinding: get },
+      new Set(["voicetext-batch-v2:deepgram-nova-3"]),
+    );
+
+    await expect(admit({ meetingId: "missing" })).resolves.toBe("hold");
+    await expect(admit({ meetingId: "newer" })).resolves.toBe("hold");
+    await expect(admit({ meetingId: "supported" })).resolves.toBe("accepted");
+  });
+});
+
+describe("PostCallOutboxDispatcher reconciliation", () => {
+  const terminalRecorder = { record: async () => {} };
 
   it("coalesces concurrent reconciliation runs", async () => {
     let release: (() => void) | undefined;

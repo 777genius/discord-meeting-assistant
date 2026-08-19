@@ -89,12 +89,17 @@ export interface PlatformConfig {
     readonly launcherSha256: string;
   };
   readonly transcriptionProvider: "speaches" | "voicetext";
+  readonly transcriptionLegacyExecutionBinding:
+    | "speaches-v1"
+    | "voicetext-batch-v2:deepgram-nova-3";
   readonly voicetext?: {
     readonly batchMaxArtifactBytes: number;
     readonly batchMaxConcurrency: number;
     readonly batchMaxConcurrentMeetings: number;
+    readonly batchProfile: "deepgram-nova-3" | "elevenlabs-scribe-v2";
     readonly liveMaxConcurrentSessions: number;
     readonly livePacketBackpressureTimeoutMs: number;
+    readonly liveProfile: "deepgram-nova-3" | "elevenlabs-scribe-v2-realtime";
     readonly webSocketUrl: string;
   };
 }

@@ -83,6 +83,9 @@ export async function startMeetingPlatform(
       metrics,
       observer: createQueueObserver(logger, metrics),
       processMeeting,
+      legacyTranscriptionExecutionBinding: core.legacyTranscriptionExecutionBinding,
+      supportedTranscriptionExecutionBindings: core.supportedTranscriptionExecutionBindings,
+      transcriptionExecutionBindings: core.transcriptionExecutionBindings,
     });
     cleanup.defer("post-call runtime", () => closePostCallResources(postCall));
     const ingress = new PlatformRecordingIngress({
@@ -92,7 +95,14 @@ export async function startMeetingPlatform(
       ...(discordLive.live === undefined ? {} : { live: discordLive.live }),
       logger,
       metrics,
-      outbox: core.meetings,
+      outbox: {
+        recordAndSchedule: (snapshot, expectedRevision) =>
+          core.meetings.recordAndSchedule(
+            snapshot,
+            expectedRevision,
+            core.selectedTranscriptionExecutionBinding,
+          ),
+      },
       publicationTargets: core.publicationTargets,
     });
     const schemaReadiness = new PostgresSchemaReadiness(core.pool);

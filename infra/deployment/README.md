@@ -68,6 +68,41 @@ the official bot application, write an independently generated 32-byte base64 or
 encrypts short-lived authorization principals and derives non-reversible dedupe
 subjects; it is not a provider or Discord credential.
 
+## VoiceText provider profiles
+
+VoiceText batch and live recognition are selected independently in Compose:
+
+```text
+VOICETEXT_BATCH_PROFILE=deepgram-nova-3
+VOICETEXT_LIVE_PROFILE=deepgram-nova-3
+# VoiceText-history example only:
+TRANSCRIPTION_LEGACY_EXECUTION_BINDING=voicetext-batch-v2:deepgram-nova-3
+```
+
+Batch also permits `elevenlabs-scribe-v2`; live also permits
+`elevenlabs-scribe-v2-realtime`. Every mixed combination is supported. Invalid
+values fail Meeting Platform startup, and omitted selectors default
+independently to Deepgram. The Deepgram batch choice preserves contract v2 and
+its existing idempotency identity; ElevenLabs batch uses strict contract v3.
+The legacy binding has no default: it is explicit historical provenance for
+recoverable rows created before durable binding existed. Binding-aware work
+uses the isolated V2 post-call queue so a rolling V1 worker cannot claim it.
+Set `TRANSCRIPTION_LEGACY_EXECUTION_BINDING=speaches-v1` for Speaches history;
+use the frozen Deepgram value shown above only for VoiceText history. Do not
+change the top-level transcription backend in the same migration.
+Live always keeps raw Discord Opus at mono 48 kHz and requires the selected
+provider/model in VoiceText `ready` before any audio. Neither selector exposes
+provider credentials, endpoints, SDKs, or probes to Discord. The final batch
+transcript from Craig's authoritative per-speaker Ogg tracks remains the only
+final evidence used by summary, memory, or RAG; live text stays derived.
+
+Rollback is a profile change on the binding-aware release: set both selectors
+back to Deepgram and redeploy the same source revision. Do not code-revert to a
+pre-binding image after migration 0027. Schema readiness intentionally rejects
+that image, while V2-bound rows remain durable and hidden from V1 recovery.
+Deploying an older image is therefore a stop-only boundary, not a supported
+rollback path.
+
 ## Infinity Context historical memory
 
 The standard Compose deployment enables the production Infinity Context path

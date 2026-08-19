@@ -5,7 +5,7 @@ import { PostgresMigrationRunner } from "./postgres-migrations.js";
 
 const connectionString = await resolveConnectionString();
 
-const pool = new Pool({ connectionString });
+const pool = new Pool({ connectionString, connectionTimeoutMillis: 5_000 });
 try {
   const result = await new PostgresMigrationRunner(pool).migrate();
   process.stdout.write(

@@ -194,12 +194,15 @@ const environmentSchema = z
     TRANSCRIPTION_PROVIDER: z
       .enum(["speaches", "voicetext"])
       .default("speaches"),
+    TRANSCRIPTION_LEGACY_EXECUTION_BINDING: z.enum(["speaches-v1", "voicetext-batch-v2:deepgram-nova-3"]),
     VOICETEXT_BATCH_MAX_ARTIFACT_BYTES: z.coerce
       .number()
       .int()
       .min(27)
       .max(maximumVoicetextBatchMaxArtifactBytes)
       .default(defaultVoicetextBatchMaxArtifactBytes),
+    VOICETEXT_BATCH_PROFILE: z.enum(["deepgram-nova-3", "elevenlabs-scribe-v2"])
+      .default("deepgram-nova-3"),
     VOICETEXT_BATCH_MAX_CONCURRENCY: z.coerce
       .number()
       .int()
@@ -224,6 +227,8 @@ const environmentSchema = z
       .min(100)
       .max(maximumVoicetextLivePacketBackpressureTimeoutMs)
       .default(defaultVoicetextLivePacketBackpressureTimeoutMs),
+    VOICETEXT_LIVE_PROFILE: z.enum(["deepgram-nova-3", "elevenlabs-scribe-v2-realtime"])
+      .default("deepgram-nova-3"),
     VOICETEXT_SERVICE_TOKEN_FILE: absolutePath.optional(),
     VOICETEXT_WS_URL: secureWebSocketUrl.optional(),
   })
