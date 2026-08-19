@@ -10,6 +10,7 @@ import {
   POST_CALL_DEAD_LETTER_JOB_NAME,
   POST_CALL_JOB_NAME,
   POST_CALL_QUEUE_NAME,
+  POST_CALL_QUEUE_PREFIX,
   RetryablePostCallError,
   createPostCallProcessor,
   drainActivePostCallJobsAndClose,
@@ -121,6 +122,7 @@ function postCallJob(
 
 describe("post-call queue contract", () => {
   it("isolates binding-aware work from legacy V1 workers", () => {
+    expect(POST_CALL_QUEUE_PREFIX).toBe("discord-meeting-v2");
     expect(POST_CALL_QUEUE_NAME).toBe("meeting-post-call-v2");
     expect(POST_CALL_JOB_NAME).toBe("process-post-call-v2");
   });

@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 
-// V2 isolates binding-aware workers from pre-binding V1 consumers during a
-// rolling deployment. Durable outbox reconciliation safely re-enqueues any
-// unfinished V1 work into this queue.
+// V2 changes both BullMQ namespace dimensions so pre-binding V1 workers cannot
+// fetch binding-aware jobs during rollout. Durable outbox reconciliation safely
+// re-enqueues unfinished legacy work into this isolated queue.
+export const POST_CALL_QUEUE_PREFIX = "discord-meeting-v2";
 export const POST_CALL_QUEUE_NAME = "meeting-post-call-v2";
 export const POST_CALL_JOB_NAME = "process-post-call-v2";
 export const POST_CALL_JOB_ID_NAMESPACE = "post-call-job-v2";

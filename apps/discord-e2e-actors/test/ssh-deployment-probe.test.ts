@@ -7,6 +7,7 @@ import {
   POST_CALL_JOB_ID_NAMESPACE,
   POST_CALL_JOB_ID_PREFIX,
   POST_CALL_QUEUE_NAME,
+  POST_CALL_QUEUE_PREFIX,
   postCallJobId,
 } from "@discord-meeting/bullmq-adapter";
 
@@ -201,6 +202,7 @@ function fakeCommands(input: {
 describe("SshDeploymentEvidenceProbe replay target safety", () => {
   it("pins the embedded replay job identity to the queue contract", () => {
     expect(replayReadinessScript).toContain(JSON.stringify(POST_CALL_QUEUE_NAME));
+    expect(replayReadinessScript).toContain(JSON.stringify(POST_CALL_QUEUE_PREFIX));
     expect(replayReadinessScript).toContain(JSON.stringify(POST_CALL_JOB_ID_NAMESPACE));
     expect(replayReadinessScript).toContain(JSON.stringify(POST_CALL_JOB_ID_PREFIX));
     expect(postCallJobId(target.recordingId)).toMatch(/^post-call-v2-[a-f0-9]{64}$/u);

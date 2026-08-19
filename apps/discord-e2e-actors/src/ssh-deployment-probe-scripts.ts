@@ -161,7 +161,7 @@ const jobId = "post-call-v2-" + digest;
 export const replayReadinessScript = String.raw`
 import { Queue } from "bullmq";
 ${replayConnectionScript}
-const queue = new Queue("meeting-post-call-v2", { connection, prefix: "discord-meeting-v1" });
+const queue = new Queue("meeting-post-call-v2", { connection, prefix: "discord-meeting-v2" });
 try {
   await queue.waitUntilReady();
   const job = await queue.getJob(jobId);
@@ -178,7 +178,7 @@ export const replayJobScript = String.raw`
 import { Queue } from "bullmq";
 ${replayConnectionScript}
 const expectedBeforeProcessedOn = Number(process.argv[2]);
-const queue = new Queue("meeting-post-call-v2", { connection, prefix: "discord-meeting-v1" });
+const queue = new Queue("meeting-post-call-v2", { connection, prefix: "discord-meeting-v2" });
 try {
   await queue.waitUntilReady();
   const job = await queue.getJob(jobId);

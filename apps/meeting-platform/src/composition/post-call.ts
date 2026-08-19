@@ -2,6 +2,7 @@ import {
   BullMqPostCallEnqueuer,
   NonRetryablePostCallError,
   RetryablePostCallError,
+  POST_CALL_QUEUE_PREFIX,
   createRedisPolicyReadiness,
   createPostCallQueue,
   createPostCallQueueEvents,
@@ -21,8 +22,6 @@ import type { ConnectionOptions } from "bullmq";
 
 import { PostCallOutboxDispatcher } from "../application/post-call-outbox-dispatcher.js";
 import type { FinalTranscriptionExecutionBinding } from "./transcription.js";
-
-const postCallQueuePrefix = "discord-meeting-v1";
 
 interface TranscriptionExecutionBindingStore {
   backfillRecoverableUnboundTranscriptionExecutionBindings(binding: string): Promise<number>;
@@ -59,12 +58,12 @@ export async function createPlatformPostCallComposition(input: {
     queue = createPostCallQueue({
       connection: input.connection,
       observer: input.observer,
-      prefix: postCallQueuePrefix,
+      prefix: POST_CALL_QUEUE_PREFIX,
     });
     queueEvents = createPostCallQueueEvents({
       connection: input.connection,
       observer: input.observer,
-      prefix: postCallQueuePrefix,
+      prefix: POST_CALL_QUEUE_PREFIX,
     });
     const deadLetterLedger: PostCallDeadLetterRecorder = {
       record: async (record) => {
@@ -100,7 +99,7 @@ export async function createPlatformPostCallComposition(input: {
         input.metrics,
       ),
       observer: input.observer,
-      prefix: postCallQueuePrefix,
+      prefix: POST_CALL_QUEUE_PREFIX,
     });
     return {
       outboxDispatcher,
