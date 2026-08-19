@@ -28,6 +28,7 @@ import {
   type FinalReplyJobResult,
 } from "./publish-final-reply.js";
 import {
+  focusedHydrationMatchesReferences,
   prepareSelectedFocusedEvidence,
   type SelectFocusedEvidence,
 } from "./select-focused-evidence.js";
@@ -249,6 +250,17 @@ export class ProcessFinalReplyJob {
     }
     if (!authorityMatchesBinding(hydrated.binding, binding)) {
       return this.settled(await this.publisher.settle(lease, "stale_binding"));
+    }
+    if (!focusedHydrationMatchesReferences(
+      binding,
+      hydrationReferences,
+      hydrated.turns,
+    )) {
+      return this.settled(await this.publisher.publishFixed(
+        lease,
+        current.binding,
+        "unavailable",
+      ));
     }
     if (!providerAttemptAvailable(lease, this.input.policy)) {
       return this.settled(await this.publisher.publishFixed(

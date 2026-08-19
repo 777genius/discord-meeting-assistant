@@ -93,7 +93,11 @@ export async function prepareSelectedFocusedEvidence(input: {
   if (!authorityMatchesBinding(refreshed.binding, input.binding)) {
     return { status: "stale_binding" };
   }
-  if (!hydrationMatchesReferences(input.binding, references, refreshed.turns)) {
+  if (!focusedHydrationMatchesReferences(
+    input.binding,
+    references,
+    refreshed.turns,
+  )) {
     return { status: "unavailable" };
   }
   return {
@@ -326,7 +330,7 @@ function isReference(
   return value !== undefined;
 }
 
-function hydrationMatchesReferences(
+export function focusedHydrationMatchesReferences(
   binding: QuestionBindingSnapshot,
   references: readonly FocusedMemoryReference[],
   turns: readonly RehydratedEvidenceTurn[],

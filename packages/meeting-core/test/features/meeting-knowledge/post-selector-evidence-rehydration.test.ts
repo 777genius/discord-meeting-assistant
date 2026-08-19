@@ -158,6 +158,28 @@ function processingFixture(selector = focusedSelector()) {
 }
 
 describe("post-selector evidence rehydration", () => {
+  it("rejects reordered initial hydration before selection or generation", async () => {
+    let selectorCalls = 0;
+    const selector = focusedSelector(undefined, () => {
+      selectorCalls += 1;
+    });
+    const fixture = processingFixture(selector);
+    fixture.evidence.hydrated = {
+      binding: authority,
+      status: "current",
+      turns: selectedTurns.toReversed(),
+    };
+
+    await expect(fixture.processor.executeOnce()).resolves.toMatchObject({
+      outcome: "unavailable",
+      status: "settled",
+    });
+    expect(selectorCalls).toBe(0);
+    expect(fixture.jobs.providerReservations).toEqual([]);
+    expect(fixture.generator.requests).toEqual([]);
+    expect(fixture.generator.generationCalls).toBe(0);
+  });
+
   it("reserves the shared provider attempt before billed evidence selection", async () => {
     let fixture: ReturnType<typeof processingFixture> | undefined;
     let reservationsSeenBySelector = -1;
