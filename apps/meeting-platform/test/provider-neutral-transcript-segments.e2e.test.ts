@@ -23,7 +23,7 @@ import { describe, expect, it } from "vitest";
 const jobId = "00000000-0000-4000-8000-000000000001";
 
 describe("provider-neutral transcript segments E2E", () => {
-  it("persists enriched v2 segments, renders a compact timeline, and keeps raw evidence", async () => {
+  it("persists enriched v2 segments, omits the final preview, and keeps raw evidence", async () => {
     let submittedContractVersion: unknown = null;
     const client = new FetchVoicetextBatchClient({
       endpoint: "https://api.voicetext.test/api/v1/transcribe/batch",
@@ -70,8 +70,7 @@ describe("provider-neutral transcript segments E2E", () => {
 
     const publication = projector.inputs[0];
     expect(publication).toBeDefined();
-    expect(publication?.liveCaptionsMarkdown).toContain("Релиз в пятницу.");
-    expect(publication?.liveCaptionsMarkdown).not.toContain("✓ `00:00-00:01`");
+    expect(publication?.liveCaptionsMarkdown).toBeUndefined();
     expect(publication?.transcriptAttachment?.content).toContain("Релиз");
     expect(publication?.transcriptAttachment?.content).toContain("в пятницу");
     expect(publication?.transcriptAttachment?.content.match(/^## `/gmu)).toHaveLength(2);
@@ -108,8 +107,7 @@ describe("provider-neutral transcript segments E2E", () => {
 
     expect(meetings.snapshot.transcript?.readableSegments).toEqual([]);
     expect(projector.inputs[0]).toBeDefined();
-    expect(projector.inputs[0]?.liveCaptionsMarkdown).toContain("speaker-a");
-    expect(projector.inputs[0]?.liveCaptionsMarkdown).toContain("speaker-b");
+    expect(projector.inputs[0]?.liveCaptionsMarkdown).toBeUndefined();
     expect(projector.inputs[0]?.transcriptAttachment?.content).toContain(
       "speaker-a",
     );
