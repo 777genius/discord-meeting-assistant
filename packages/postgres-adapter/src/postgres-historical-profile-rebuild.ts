@@ -32,10 +32,7 @@ export async function enqueueHistoricalProfileRebuilds(
   requireHistoricalIndexProfileId(indexProfileId);
   requireHistoricalMaximumRows(maximumRows);
   return withHistoricalPostgresTransaction(pool, options.signal, async (client) => {
-    const result = await client.query<{
-      readonly enqueued: number;
-      readonly remaining: boolean;
-    }>(`
+    const result = await client.query<{ readonly enqueued: number }>(`
       WITH selected AS (
         SELECT release_id FROM meeting_core.historical_memory_sync
         WHERE is_current AND operation = 'index' AND state = 'applied'
@@ -51,16 +48,23 @@ export async function enqueueHistoricalProfileRebuilds(
         FROM selected WHERE historical.release_id = selected.release_id
         RETURNING 1
       )
-      SELECT count(*)::float8 AS enqueued, EXISTS (
-        SELECT 1 FROM meeting_core.historical_memory_sync
-        WHERE is_current AND operation = 'index' AND state = 'applied'
-          AND applied_index_profile_id IS DISTINCT FROM $1
-      ) AS remaining FROM rebuilt
+      SELECT count(*)::float8 AS enqueued FROM rebuilt
     `, [indexProfileId, maximumRows]);
     const row = result.rows[0];
     if (row === undefined || !Number.isSafeInteger(row.enqueued)) {
       throw new Error("historical profile rebuild query returned an invalid result");
     }
-    return Object.freeze({ enqueued: row.enqueued, remaining: row.remaining });
+    const pending = await client.query<{ readonly remaining: boolean }>(`
+      SELECT EXISTS (
+        SELECT 1 FROM meeting_core.historical_memory_sync
+        WHERE is_current AND operation = 'index' AND state = 'applied'
+          AND applied_index_profile_id IS DISTINCT FROM $1
+      ) AS remaining
+    `, [indexProfileId]);
+    const remaining = pending.rows[0]?.remaining;
+    if (typeof remaining !== "boolean") {
+      throw new Error("historical profile rebuild remainder query returned an invalid result");
+    }
+    return Object.freeze({ enqueued: row.enqueued, remaining });
   }, cancellation);
 }

@@ -12,7 +12,10 @@ describe("historical index profile rebuild budget", () => {
       query: vi.fn(async (text: string) => {
         queries.push(text);
         if (text.includes("WITH selected AS")) {
-          return { rows: [{ enqueued: 1, remaining: false }] };
+          return { rows: [{ enqueued: 1 }] };
+        }
+        if (text.includes("SELECT EXISTS")) {
+          return { rows: [{ remaining: false }] };
         }
         return { rows: [] };
       }),
@@ -28,6 +31,8 @@ describe("historical index profile rebuild budget", () => {
 
     const rebuildQuery = queries.find((query) => query.includes("WITH selected AS"));
     expect(rebuildQuery).toContain("attempt_count = 0");
+    expect(queries.find((query) => query.includes("SELECT EXISTS")))
+      .toContain("applied_index_profile_id IS DISTINCT FROM $1");
     expect(queries).toEqual(expect.arrayContaining(["BEGIN", "COMMIT"]));
   });
 
