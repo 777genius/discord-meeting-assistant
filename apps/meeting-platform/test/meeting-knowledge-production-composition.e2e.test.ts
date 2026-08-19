@@ -69,6 +69,7 @@ import { proveComposedGroundedVoice } from "./meeting-knowledge-composed-voice-e
 import { qualifyLiveProjectionReply } from "./meeting-knowledge-live-reply-e2e.js";
 import {
   assertAggregateStageBudget,
+  assertPersistedCoverageAnalysis,
   assertProviderWire,
   focusedReferenceKey,
   qualifySupersessionAndDeletion,
@@ -232,16 +233,9 @@ describe("Meeting Knowledge mandatory PostgreSQL qualification", () => {
   }, 600_000);
 });
 
-type FocusedHistoricalRetrieval = ReturnType<
-  PlatformHistoricalMemoryRuntime["createFocusedRetrieval"]
->;
+type FocusedHistoricalRetrieval = ReturnType<PlatformHistoricalMemoryRuntime["createFocusedRetrieval"]>;
 
-interface IndexedComposition {
-  readonly current: MeetingSnapshot;
-  readonly historical: MeetingSnapshot;
-  readonly repository: PostgresMeetingRepository;
-  readonly runtime: PlatformHistoricalMemoryRuntime;
-}
+interface IndexedComposition { readonly current: MeetingSnapshot; readonly historical: MeetingSnapshot; readonly repository: PostgresMeetingRepository; readonly runtime: PlatformHistoricalMemoryRuntime; }
 
 async function indexAndRestart(
   pool: Pool,
@@ -554,7 +548,15 @@ async function qualifyFocusedAndExhaustiveGeneration(input: {
     throw new Error("exhaustive coverage did not reach synthesis");
   }
   expect(exhaustive.coverageBitmap.every(Boolean)).toBe(true);
-  expect(exhaustive.coverageReduction.payload).toMatchObject({ turnsReviewed: 736 });
+  const uniqueAuthorizedSlices = await assertPersistedCoverageAnalysis(
+    input.pool,
+    scopeId,
+    roomId,
+    input.signal,
+  );
+  expect(exhaustive.coverageReduction.payload).toMatchObject({
+    turnsReviewed: uniqueAuthorizedSlices,
+  });
   expect(exhaustive.candidates.length).toBeLessThanOrEqual(256);
   expect(exhaustive.candidates).toContainEqual(expect.objectContaining({
     turnId: "history-turn-0719",
@@ -816,8 +818,6 @@ async function qualifyComposedGroundedVoice(input: {
 }
 
 function requiredDatabase(): Pool {
-  if (database !== undefined) {
-    return database;
-  }
-  throw new Error("mandatory PostgreSQL qualification database was not initialized");
+  if (database === undefined) { throw new Error("mandatory PostgreSQL qualification database was not initialized"); }
+  return database;
 }

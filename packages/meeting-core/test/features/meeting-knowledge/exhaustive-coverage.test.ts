@@ -773,15 +773,8 @@ describe("exhaustive historical coverage checkpoint lifecycle", () => {
 describe("exhaustive persisted plan rehydration", () => {
   it("rehydrates persisted plans during query and finalize without tokenizer replanning", async () => {
     const base = makeMeeting("meeting-persisted-split");
-    const split = Object.freeze({
-      ...base,
-      humanTurns: Object.freeze([Object.freeze({
-        ...base.humanTurns[0]!,
-        endMs: 60_000,
-        text: "distinct long source range ".repeat(80),
-        turnId: "split-long-turn",
-      })]),
-    });
+    const split = Object.freeze({ ...base, humanTurns: Object.freeze([Object.freeze({
+      ...base.humanTurns[0]!, endMs: 60_000, text: "distinct long source range ".repeat(80), turnId: "split-long-turn" })]) });
     const meetings = [makeMeeting("meeting-persisted-a"), split];
     const plans = meetings.map((meeting) => ({
       binding: meeting.binding,
@@ -794,11 +787,8 @@ describe("exhaustive persisted plan rehydration", () => {
     });
     const persistedSources = plans.flatMap(({ plan }) => plan.documents)
       .flatMap(({ manifest }) => manifest.turnSources);
-    const exactSlices = new Set(persistedSources.map((source) => [
-      source.sourceRef,
-      source.sourceStartCodePoint,
-      source.sourceEndCodePoint,
-    ].join("\u0000")));
+    const exactSlices = new Set(persistedSources.map((source) =>
+      [source.sourceRef, source.sourceStartCodePoint, source.sourceEndCodePoint].join("\u0000")));
 
     const result = await useCase({
       checkpoints: new MemoryCheckpoints(),
@@ -818,9 +808,8 @@ describe("exhaustive persisted plan rehydration", () => {
       expect(result.plan.reduction.payload.turnsReviewed).toBe(exactSlices.size);
     }
     expect(persistedSources.length).toBeGreaterThan(exactSlices.size);
-    expect(exactSlices.size).toBeGreaterThan(
-      meetings.reduce((total, meeting) => total + meeting.humanTurns.length, 0),
-    );
+    expect(exactSlices.size).toBeGreaterThan(meetings.reduce(
+      (total, meeting) => total + meeting.humanTurns.length, 0));
     expect(store.currentPlanReads).toBe(2);
     expect(tokenizerFactory).not.toHaveBeenCalled();
   });

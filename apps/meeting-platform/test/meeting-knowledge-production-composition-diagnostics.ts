@@ -4,8 +4,10 @@ import type { FocusedMemoryReference } from
   "@discord-meeting/meeting-core/meeting-knowledge";
 import { Meeting, type MeetingSnapshot } from
   "@discord-meeting/meeting-core/meeting-lifecycle";
-import type { PostgresMeetingRepository } from
-  "@discord-meeting/postgres-adapter";
+import {
+  PostgresHistoricalMemoryStore,
+  type PostgresMeetingRepository,
+} from "@discord-meeting/postgres-adapter";
 import type { Pool } from "pg";
 import { expect } from "vitest";
 
@@ -44,6 +46,36 @@ export function focusedReferenceKey(reference: FocusedMemoryReference): string {
     reference.turnId,
     reference.turnHash,
   ].join("\u0000");
+}
+
+export async function assertPersistedCoverageAnalysis(
+  pool: Pool,
+  scopeId: string,
+  roomId: string,
+  signal: AbortSignal,
+): Promise<number> {
+  const plans = await new PostgresHistoricalMemoryStore(pool)
+    .listCurrentRoomPlans(scopeId, roomId, 3, { signal });
+  const slices = plans.flatMap(({ binding, plan }) =>
+    plan.documents.flatMap(({ manifest }) => manifest.turnSources.map((source) => [
+      binding.meetingId,
+      binding.releaseId,
+      source.sourceRef,
+      source.sourceStartCodePoint,
+      source.sourceEndCodePoint,
+    ].join("\u0000")))
+  );
+  const uniqueSlices = new Set(slices);
+  expect({
+    duplicateOverlapSlices: slices.length - uniqueSlices.size,
+    persistedSlices: slices.length,
+    uniqueAuthorizedSlices: uniqueSlices.size,
+  }).toEqual({
+    duplicateOverlapSlices: 352,
+    persistedSlices: 1_088,
+    uniqueAuthorizedSlices: 736,
+  });
+  return uniqueSlices.size;
 }
 
 export async function waitForHistoricalRows(

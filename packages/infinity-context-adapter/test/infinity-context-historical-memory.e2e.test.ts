@@ -79,8 +79,9 @@ function boundedWindowPlan(turnCount: number, maximumBlocks = turnCount) {
   });
 }
 
-function cedarExtract(block: LocallyRehydratedEvidenceBlockV1): CoverageExtractV1 {
-  const selectedTurns = block.turns.filter(({ text }) => text.includes("Cedar")).map(({ turnId }) => ({
+function cedarExtract(block: LocallyRehydratedEvidenceBlockV1, analysisTurns: LocallyRehydratedEvidenceBlockV1["turns"]): CoverageExtractV1 {
+  const selectedTurns = analysisTurns.filter(({ text }) => text.includes("Cedar"))
+    .map(({ turnId }) => ({
     blockLocator: block.candidateLocator,
     relevance: "direct" as const,
     turnId,
@@ -701,9 +702,9 @@ describe("Infinity Context historical memory end-to-end lifecycle", () => {
       checkpoints,
       extractor: {
         profile: "meeting-knowledge.fixture-cedar-extractor.v1",
-        extract: async ({ block }): Promise<CoverageExtractV1> => {
+        extract: async ({ analysisTurns, block }): Promise<CoverageExtractV1> => {
           extracted.add(block.candidateLocator);
-          return cedarExtract(block);
+          return cedarExtract(block, analysisTurns);
         },
       },
       ids,
@@ -742,7 +743,7 @@ describe("Infinity Context historical memory end-to-end lifecycle", () => {
     const firstPlan = buildHistoricalIndexPlan(firstMeeting, ids, blockPolicy);
     expect(exhaustiveResult.plan.coverageBitmap).toHaveLength(firstPlan.documents.length);
     expect(exhaustiveResult.plan.coverageBitmap.every(Boolean)).toBe(true);
-    expect(extracted.size).toBe(firstPlan.documents.length);
+    expect(extracted.size).toBe(firstPlan.documents.length - 1);
     expect(checkpoints.completed).toBe(true);
 
     const replacement = finalMeeting(2, "Thursday");
