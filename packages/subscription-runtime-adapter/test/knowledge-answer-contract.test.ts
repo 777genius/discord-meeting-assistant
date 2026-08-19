@@ -26,6 +26,8 @@ import {
 } from "@discord-meeting/subscription-runtime-adapter";
 
 const launcherSha256 = "a".repeat(64);
+const knowledgeAnswerStatusContract =
+  "status=answered means claims contains 1..12 items; status=insufficient_evidence or status=not_a_question means claims is exactly []; a non-answered output must not contain any explanatory claim";
 
 function generationRequest(): GroundedAnswerGenerationRequest {
   const canonicalEvidenceHash = "c".repeat(64);
@@ -186,6 +188,9 @@ describe("Meeting Knowledge subscription runtime contract", () => {
     expect(serializedPrompt).not.toContain("currentTranscriptEvidenceIds");
     expect(serializedPrompt).not.toContain("priorityEvidenceIds");
     expect(runtime.request?.task.systemPrompt).toContain("bounded focused selection");
+    expect(runtime.request?.task.systemPrompt).toContain(
+      knowledgeAnswerStatusContract,
+    );
   });
 
   it("cannot serialize the literal full current transcript through the answer contract", async () => {
@@ -263,6 +268,9 @@ describe("Meeting Knowledge subscription runtime contract", () => {
     );
     expect(runtime.requests[1]?.task.systemPrompt).toContain(
       "previous generation failed strict output validation",
+    );
+    expect(runtime.requests[1]?.task.systemPrompt).toContain(
+      `Enforce this cross-field contract exactly: ${knowledgeAnswerStatusContract}.`,
     );
   });
 
