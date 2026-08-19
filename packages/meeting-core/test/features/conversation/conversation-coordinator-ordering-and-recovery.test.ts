@@ -7,6 +7,7 @@ import {
 import type { ConversationRuntimeEvent } from "@discord-meeting/meeting-core/conversation";
 import {
   EventStream,
+  ReceiptControlledPlayback,
   RecordingPlayback,
   ScriptedRuntime,
   audioChunk,
@@ -154,6 +155,54 @@ describe("ConversationCoordinator wake latch ordering", () => {
 });
 
 describe("ConversationCoordinator cancellation and recovery", () => {
+  it("cancels once only after the current playback receipt wins the command/receipt race", async () => {
+    const events = new EventStream<ConversationRuntimeEvent>();
+    const runtime = new ScriptedRuntime([events]);
+    const playback = new ReceiptControlledPlayback();
+    const coordinator = new ConversationCoordinator({ playback, runtime });
+
+    await coordinator.handleFinalizedTurn(input("turn-1", 0));
+    events.push({ attemptId: "attempt-current", type: "accepted" });
+    events.push({
+      attemptId: "attempt-current",
+      channels: 1,
+      format: "pcm_s16le",
+      sampleRateHz: 48_000,
+      type: "audio-start",
+    });
+    events.push(audioChunk("attempt-current", "turn-1", 0));
+    await vi.waitFor(() => {
+      expect(playback.sessions[0]?.chunks).toHaveLength(1);
+    });
+
+    const currentAuthority = coordinator.whenTurnPlaybackStarted("meeting-1", "turn-1");
+    const foreignAuthority = coordinator.whenTurnPlaybackStarted("meeting-1", "turn-foreign");
+    playback.sessions[0]?.events.push({
+      attemptId: "attempt-stale",
+      startedAtMs: 100,
+      type: "started",
+    });
+    playback.sessions[0]?.events.push({
+      attemptId: "attempt-current",
+      startedAtMs: 100,
+      type: "started",
+    });
+
+    await expect(currentAuthority).resolves.toEqual({ startedAtMs: 100, status: "started" });
+    await expect(coordinator.speechStarted("meeting-1", 4_101)).resolves.toEqual({
+      status: "cancel-requested",
+      turnId: "turn-1",
+    });
+    await expect(coordinator.speechStarted("meeting-1", 4_102)).resolves.toEqual({
+      status: "ignored",
+    });
+    await expect(foreignAuthority).resolves.toEqual({ status: "unknown" });
+    expect(playback.sessions[0]?.cancellationRequests).toEqual([{
+      cancellationObservedAtMs: 4_101,
+      reason: "barge-in",
+    }]);
+  });
+
   it("ignores stale runtime attempt events and stale audio chunks", async () => {
     const runtime = new ScriptedRuntime([
       closedStream([

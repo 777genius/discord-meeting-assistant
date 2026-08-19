@@ -210,6 +210,13 @@ export async function proveComposedGroundedVoice(input: {
     await waitForCondition(() => commands.some((command) =>
       command.turnId === interruptedTurnId && command.type === "audio-chunk"
     ));
+    await expect(coordinator.whenTurnPlaybackStarted(
+      input.meetingId,
+      interruptedTurnId,
+    )).resolves.toEqual({
+      startedAtMs: playbackClockMs,
+      status: "started",
+    });
     const cancellation = await coordinator.speechStarted(
       input.meetingId,
       playbackClockMs + 4_100,

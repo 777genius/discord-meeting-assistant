@@ -329,6 +329,44 @@ describe("CraigPlaybackGateway", () => {
     await expect(opened.value.finish()).resolves.toEqual({ ok: true, value: "reused" });
   });
 
+  it("accepts the current playback-start receipt exactly once and ignores foreign receipts", async () => {
+    const gateway = new CraigPlaybackGateway(() => 4_000);
+    const transport = new FakeTransport();
+    gateway.register(transport);
+    const opened = await gateway.open(request);
+    if (!opened.ok) {
+      throw new Error("playback did not open");
+    }
+    const events = collect(opened.value.events);
+    const started = {
+      attemptId: request.attemptId,
+      recordingId: request.recordingId,
+      schemaVersion: 1 as const,
+      startedAtMs: 4_000,
+      turnId: request.turnId,
+      type: "playback-started" as const,
+    };
+
+    transport.emit({ ...started, attemptId: "attempt-stale" });
+    transport.emit({ ...started, turnId: "turn-foreign" });
+    transport.emit({ ...started, recordingId: "recording-foreign" });
+    transport.emit(started);
+    transport.emit(started);
+    transport.emit({
+      attemptId: request.attemptId,
+      finishedAtMs: 5_000,
+      recordingId: request.recordingId,
+      schemaVersion: 1,
+      turnId: request.turnId,
+      type: "playback-finished",
+    });
+
+    await expect(events).resolves.toEqual([
+      { attemptId: request.attemptId, startedAtMs: 4_000, type: "started" },
+      { attemptId: request.attemptId, finishedAtMs: 4_000, type: "finished" },
+    ]);
+  });
+
 });
 
 describe("CraigPlaybackGateway terminal deadline", () => {
