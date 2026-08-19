@@ -148,14 +148,28 @@ describe("Infinity production semantic qualification composition", () => {
       serviceRevision:
         INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedServiceRevision,
     });
-    const runtime = requiredHistoricalRuntime(
+    const runtime = createPlatformHistoricalMemory({
+      config: platformConfig(
+        infinity.baseUrl,
+        true,
+        true,
+        "production",
+        retainedProductionEmbeddingProfileAttestation,
+      ),
+      logger: silentLogger,
       pool,
-      infinity,
-      true,
-      true,
-      "production",
-      retainedProductionEmbeddingProfileAttestation,
-    );
+      profileMaintenance: {
+        enqueueAppliedProfileRebuilds: async () => ({
+          enqueued: 0,
+          remaining: false,
+        }),
+      },
+      runtimeTransport: syntheticCoverageRuntime,
+    });
+    expect(runtime).toBeDefined();
+    if (runtime === undefined) {
+      throw new Error("source policy fixture did not compose");
+    }
     try {
       await expect(runtime.assertReady()).resolves.toBeUndefined();
       expect(runtime.searchEnabled()).toBe(false);

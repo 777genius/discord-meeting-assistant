@@ -48,7 +48,7 @@ export const retainedProductionEmbeddingProfileAttestation = Object.freeze({
   embeddingProfile:
     INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedEmbeddingProfileId,
   embeddingProfileDigestSha256:
-    `sha256:${"a".repeat(64)}`,
+    INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedEmbeddingProfileDigestSha256,
   schemaVersion: 1 as const,
 });
 

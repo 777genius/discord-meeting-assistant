@@ -504,7 +504,7 @@ describe("Infinity Context production provenance deletion", () => {
       indexingEnabled: false,
       packageSource: "immutable_package",
       qualificationManifestSha256:
-        INFINITY_CONTEXT_SDK_PROVENANCE.retainedLiveQualificationManifestSha256,
+        INFINITY_CONTEXT_SDK_PROVENANCE.retainedB77SemanticTransportManifestSha256,
       schemaVersion: 1,
       sdkCommit: INFINITY_CONTEXT_SDK_PROVENANCE.commit,
       sdkTree: INFINITY_CONTEXT_SDK_PROVENANCE.tree,

@@ -206,8 +206,13 @@ export class HistoricalSyncWorker {
     accepted: AcceptedFinalMeetingV1,
     signal?: AbortSignal,
   ): Promise<PreparedIndexPlan> {
+    const exactPlanningConfigured = this.dependencies.planner !== undefined ||
+      this.dependencies.tokenizer !== undefined;
     const planningRequired = planNeeded(
-      lease.plan, lease.profileRebuildRequired,
+      lease.plan,
+      lease.appliedIndexProfileId,
+      lease.profileRebuildRequired,
+      exactPlanningConfigured,
     );
     const tokenizer = planningRequired
       ? this.dependencies.tokenizer?.()
@@ -416,7 +421,10 @@ export class HistoricalSyncWorker {
 
 function planNeeded(
   persisted: HistoricalIndexPlanV1 | null,
+  appliedIndexProfileId: string | null,
   profileRebuildRequired: boolean,
+  exactPlanningConfigured: boolean,
 ): boolean {
-  return persisted === null || profileRebuildRequired;
+  return persisted === null || profileRebuildRequired ||
+    (exactPlanningConfigured && appliedIndexProfileId === null);
 }
