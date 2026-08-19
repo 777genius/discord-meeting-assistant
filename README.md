@@ -17,9 +17,10 @@ The final post stays compact: it shows the meeting notes and attaches
 is not repeated in the message body. A private recording link appears when
 playback is enabled.
 
-| Summary and attachments | Actions, questions, and recording |
-| :---: | :---: |
-| <img src="https://github.com/user-attachments/assets/820f6a34-6f18-4577-9828-a3c557b4a624" alt="Botik meeting summary with attached full summary and transcript" width="100%"> | <img src="https://github.com/user-attachments/assets/7d6b9613-e257-4970-a273-056cd45aef11" alt="Botik action items, open questions, and meeting recording link" width="100%"> |
+| Summary and attachments | Actions, questions, and recording | Transcript |
+| :---: | :---: | :---: |
+| <img src="https://github.com/user-attachments/assets/820f6a34-6f18-4577-9828-a3c557b4a624" alt="Botik meeting summary with attached full summary and transcript" width="100%"> | <img src="https://github.com/user-attachments/assets/7d6b9613-e257-4970-a273-056cd45aef11" alt="Botik action items, open questions, and meeting recording link" width="100%"> | <img width="100%" alt="image" src="https://github.com/user-attachments/assets/f3465217-c314-4ddc-9cc7-0a6388945887" /> |
+
 
 ## What Botik does
 
