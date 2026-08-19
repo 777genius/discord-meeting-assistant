@@ -99,7 +99,11 @@ export class SubscriptionRuntimeCoverageExtractorAdapter
   ): Promise<CoverageExtractV1> {
     input.signal?.throwIfAborted();
     const request = buildSubscriptionRuntimeKnowledgeCoverageRequest(
-      { block: input.block, question: input.question },
+      {
+        analysisTurns: input.analysisTurns,
+        block: input.block,
+        question: input.question,
+      },
       this.requestOptions,
     );
     this.assertCapacity(request);
@@ -124,7 +128,7 @@ export class SubscriptionRuntimeCoverageExtractorAdapter
     if (!parsed.success) {
       throw new Error("semantic coverage extraction returned a malformed contract");
     }
-    const turnsByEvidenceId = new Map(input.block.turns.map((turn, index) => [
+    const turnsByEvidenceId = new Map(input.analysisTurns.map((turn, index) => [
       coverageEvidenceId(index),
       turn,
     ]));
@@ -156,7 +160,7 @@ export class SubscriptionRuntimeCoverageExtractorAdapter
       })
     );
     if (
-      selectedTurns.length > input.block.turns.length ||
+      selectedTurns.length > input.analysisTurns.length ||
       new Set(selectedTurns.map(({ turnId }) => turnId)).size !== selectedTurns.length ||
       (parsed.data.status === "claims") !== (selectedTurns.length > 0)
     ) {

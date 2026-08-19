@@ -1,4 +1,5 @@
 import type {
+  HistoricalEvidenceSliceV1,
   LocallyRehydratedEvidenceBlockV1,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 
@@ -40,6 +41,7 @@ export interface KnowledgeCoverageRequestOptions {
 
 export interface KnowledgeCoverageExtractionRequest {
   readonly block: LocallyRehydratedEvidenceBlockV1;
+  readonly analysisTurns: readonly HistoricalEvidenceSliceV1[];
   readonly question: string;
 }
 
@@ -50,7 +52,7 @@ export function buildSubscriptionRuntimeKnowledgeCoverageRequest(
   validateOptions(options);
   validateInput(request);
   const speakerReferences = new Map<string, string>();
-  const evidence = request.block.turns.map((turn, index) => {
+  const evidence = request.analysisTurns.map((turn, index) => {
     let speakerReference = speakerReferences.get(turn.speakerId);
     if (speakerReference === undefined) {
       speakerReference = `S${speakerReferences.size + 1}`;
@@ -73,6 +75,12 @@ export function buildSubscriptionRuntimeKnowledgeCoverageRequest(
     request.block.candidateLocator,
     request.block.contentHash,
     request.question,
+    JSON.stringify(request.analysisTurns.map((turn) => ({
+      end: turn.sourceEndCodePoint,
+      sourceRef: turn.sourceRef,
+      start: turn.sourceStartCodePoint,
+      text: turn.text,
+    }))),
     knowledgeCoveragePolicyVersion,
   );
   return {
@@ -135,13 +143,18 @@ function evidenceId(index: number): string {
 
 function validateInput(request: KnowledgeCoverageExtractionRequest): void {
   const question = request.question.normalize("NFKC").trim();
-  const turnIds = new Set(request.block.turns.map(({ turnId }) => turnId));
+  const sliceIds = new Set(request.analysisTurns.map((turn) => JSON.stringify([
+    turn.sourceRef,
+    turn.sourceStartCodePoint,
+    turn.sourceEndCodePoint,
+    turn.text,
+  ])));
   if (
     question.length === 0 ||
     new TextEncoder().encode(question).byteLength > maximumQuestionUtf8Bytes ||
-    request.block.turns.length < 1 ||
-    request.block.turns.length > maximumBlockTurns ||
-    turnIds.size !== request.block.turns.length ||
+    request.analysisTurns.length < 1 ||
+    request.analysisTurns.length > maximumBlockTurns ||
+    sliceIds.size !== request.analysisTurns.length ||
     request.block.candidateLocator.trim().length === 0 ||
     request.block.contentHash.trim().length === 0
   ) {
