@@ -101,8 +101,16 @@ describe("BullMQ shutdown persistence with disposable Redis", () => {
     const queueEvents = createPostCallQueueEvents({ connection, prefix });
     const deadLetters: PostCallDeadLetterRecord[] = [];
     const handler = vi.fn(() => Promise.resolve());
+    let admissionSignal: AbortSignal | undefined;
     const worker = createPostCallWorker({
-      admission: () => new Promise(() => {}),
+      admission: (_payload, signal) => {
+        admissionSignal = signal;
+        return new Promise((_resolve, reject) => {
+          signal.addEventListener("abort", () => {
+            reject(signal.reason);
+          }, { once: true });
+        });
+      },
       admissionTimeoutMilliseconds: 25,
       attempts: 1,
       connection,
@@ -124,6 +132,11 @@ describe("BullMQ shutdown persistence with disposable Redis", () => {
         expect(deadLetters).toHaveLength(1);
       });
       expect(deadLetters[0]?.failureCode).toBe("ADMISSION_TIMEOUT");
+      expect(admissionSignal?.aborted).toBe(true);
+      expect(admissionSignal?.reason).toMatchObject({
+        code: "ADMISSION_TIMEOUT",
+        retryable: true,
+      });
       expect(handler).not.toHaveBeenCalled();
     } finally {
       await Promise.allSettled([worker.close(false), queueEvents.close(), queue.close()]);

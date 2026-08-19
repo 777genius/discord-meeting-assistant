@@ -25,7 +25,10 @@ import type { FinalTranscriptionExecutionBinding } from "./transcription.js";
 
 interface TranscriptionExecutionBindingStore {
   backfillRecoverableUnboundTranscriptionExecutionBindings(binding: string): Promise<number>;
-  getTranscriptionExecutionBinding(meetingId: string): Promise<string | undefined>;
+  getTranscriptionExecutionBinding(
+    meetingId: string,
+    signal?: AbortSignal,
+  ): Promise<string | undefined>;
   pinTranscriptionExecutionBinding(meetingId: string, binding: string): Promise<string>;
 }
 
@@ -121,8 +124,14 @@ export function createPostCallBindingAdmission(
   bindings: Pick<TranscriptionExecutionBindingStore, "getTranscriptionExecutionBinding">,
   supported: ReadonlySet<string>,
 ) {
-  return async ({ meetingId }: { readonly meetingId: string }) => {
-    const binding = await bindings.getTranscriptionExecutionBinding(meetingId);
+  return async (
+    { meetingId }: { readonly meetingId: string },
+    signal?: AbortSignal,
+  ) => {
+    const binding = await bindings.getTranscriptionExecutionBinding(
+      meetingId,
+      signal,
+    );
     return binding !== undefined && supported.has(binding)
       ? "accepted" as const
       : "hold" as const;

@@ -1,6 +1,8 @@
 import type { PostCallWorkItem } from "@discord-meeting/meeting-core/post-call-workflow";
 import type { Pool, PoolClient } from "pg";
 
+import { queryHistoricalPostgres } from "./postgres-historical-query.js";
+
 interface TranscriptionExecutionBindingRow {
   readonly transcription_execution_binding: string | null;
 }
@@ -124,14 +126,22 @@ export class PostgresTranscriptionExecutionBindingStore {
     }
   }
 
-  public async getTranscriptionExecutionBinding(meetingId: string): Promise<string | undefined> {
-    const result = await this.pool.query<TranscriptionExecutionBindingRow>(
-      `
+  public async getTranscriptionExecutionBinding(
+    meetingId: string,
+    signal?: AbortSignal,
+  ): Promise<string | undefined> {
+    const result = await queryHistoricalPostgres<TranscriptionExecutionBindingRow>(
+      this.pool,
+      {
+        text: `
+        /* transcription_execution_binding_admission_v1 */
         SELECT transcription_execution_binding
         FROM meeting_core.post_call_outbox
         WHERE meeting_id = $1
       `,
-      [meetingId],
+        values: [meetingId],
+      },
+      signal,
     );
     const binding = result.rows[0]?.transcription_execution_binding;
     return binding === undefined || binding === null

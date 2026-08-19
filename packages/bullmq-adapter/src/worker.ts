@@ -47,7 +47,10 @@ export {
 
 export interface CreatePostCallWorkerOptions
   extends CreatePostCallProcessorOptions {
-  readonly admission?: (payload: PostCallJobPayload) => Promise<"accepted" | "hold">;
+  readonly admission?: (
+    payload: PostCallJobPayload,
+    signal: AbortSignal,
+  ) => Promise<"accepted" | "hold">;
   readonly admissionTimeoutMilliseconds?: number;
   readonly autorun?: boolean;
   readonly connection: ConnectionOptions;
@@ -179,7 +182,7 @@ async function resolvePostCallAdmission(
   }
   try {
     return await withAdmissionTimeout(
-      options.admission(payload),
+      (signal) => options.admission!(payload, signal),
       timeoutMilliseconds,
     );
   } catch (error) {
@@ -196,18 +199,21 @@ async function resolvePostCallAdmission(
 }
 
 async function withAdmissionTimeout(
-  pending: Promise<"accepted" | "hold">,
+  admission: (signal: AbortSignal) => Promise<"accepted" | "hold">,
   timeoutMilliseconds: number,
 ): Promise<"accepted" | "hold"> {
+  const controller = new AbortController();
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => {
-      reject(new RetryablePostCallError("ADMISSION_TIMEOUT"));
+      const error = new RetryablePostCallError("ADMISSION_TIMEOUT");
+      controller.abort(error);
+      reject(error);
     }, timeoutMilliseconds);
     timer.unref();
   });
   try {
-    return await Promise.race([pending, timeout]);
+    return await Promise.race([admission(controller.signal), timeout]);
   } finally {
     if (timer !== undefined) {
       clearTimeout(timer);

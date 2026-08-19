@@ -1,21 +1,108 @@
+import type { PoolClient } from "pg";
 import { describe, expect, it } from "vitest";
 
 import {
+  createIsolatedDatabase,
   databaseOrSkip,
   recordedMeeting,
   usePostgresIntegrationDatabase,
 } from "./postgres-integration-fixtures.js";
 import {
   PostgresMeetingRepository,
+  PostgresMigrationRunner,
   PostgresTranscriptionExecutionBindingStore,
 } from "../src/index.js";
 
 const selectedBinding = "voicetext-batch-v3:elevenlabs-scribe-v2";
 const selectedBindings = new Set([selectedBinding]);
+const admissionQueryPattern = "%transcription_execution_binding_admission_v1%";
 
 usePostgresIntegrationDatabase();
 
+async function waitForAdmissionBackend(
+  database: ReturnType<typeof databaseOrSkip>,
+): Promise<number> {
+  for (let attempt = 0; attempt < 500; attempt += 1) {
+    const result = await database.query<{ readonly pid: number }>(`
+      SELECT pid::float8 AS pid
+      FROM pg_stat_activity
+      WHERE datname = current_database()
+        AND pid <> pg_backend_pid()
+        AND state = 'active'
+        AND query LIKE $1
+      ORDER BY pid
+      LIMIT 1
+    `, [admissionQueryPattern]);
+    const pid = result.rows[0]?.pid;
+    if (pid !== undefined) {
+      return pid;
+    }
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 10);
+    });
+  }
+  throw new Error("PostgreSQL admission cancellation probe did not start");
+}
+
+async function backendIsActive(
+  database: ReturnType<typeof databaseOrSkip>,
+  backendPid: number,
+): Promise<boolean> {
+  const result = await database.query<{ readonly active: boolean }>(`
+    SELECT EXISTS (
+      SELECT 1
+      FROM pg_stat_activity
+      WHERE pid = $1 AND state = 'active'
+    ) AS active
+  `, [backendPid]);
+  return result.rows[0]?.active === true;
+}
+
 describe("Postgres transcription execution binding", () => {
+  it("cancels an admission read and proves its PostgreSQL backend inactive", async (context) => {
+    databaseOrSkip(context);
+    const isolated = await createIsolatedDatabase();
+    const controller = new AbortController();
+    const cancellation = new Error("synthetic admission cancellation");
+    let operation: Promise<unknown> | undefined;
+    let backendPid: number | undefined;
+    let locker: PoolClient | undefined;
+    try {
+      await new PostgresMigrationRunner(isolated.pool).migrate();
+      const repository = new PostgresMeetingRepository(isolated.pool);
+      const bindings = new PostgresTranscriptionExecutionBindingStore(isolated.pool);
+      const snapshot = recordedMeeting("meeting-binding-admission-cancel").toSnapshot();
+      await repository.recordAndSchedule(snapshot, 0, selectedBinding);
+      locker = await isolated.pool.connect();
+      await locker.query("BEGIN");
+      await locker.query("LOCK TABLE meeting_core.post_call_outbox IN ACCESS EXCLUSIVE MODE");
+
+      operation = bindings.getTranscriptionExecutionBinding(
+        snapshot.meetingId,
+        controller.signal,
+      );
+      backendPid = await waitForAdmissionBackend(isolated.pool);
+      controller.abort(cancellation);
+
+      await expect(operation).rejects.toBe(cancellation);
+      await expect(backendIsActive(isolated.pool, backendPid)).resolves.toBe(false);
+    } finally {
+      if (!controller.signal.aborted) {
+        controller.abort(new Error("synthetic admission probe cleanup"));
+      }
+      await operation?.catch(() => {});
+      if (backendPid !== undefined) {
+        await isolated.pool.query(
+          "SELECT pg_terminate_backend($1) FROM pg_stat_activity WHERE pid = $1",
+          [backendPid],
+        );
+      }
+      await locker?.query("ROLLBACK").catch(() => {});
+      locker?.release();
+      await isolated.dispose();
+    }
+  }, 45_000);
+
   it("records one immutable binding atomically and preserves it across recovery", async (context) => {
     const database = databaseOrSkip(context);
     const repository = new PostgresMeetingRepository(database);
