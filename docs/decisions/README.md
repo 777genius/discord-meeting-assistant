@@ -44,6 +44,7 @@
 - [ADR-0039: Independent VoiceText batch and live provider profiles](0039-independent-voicetext-provider-profiles.md)
 - [ADR-0040: Binding-aware post-call rollout](0040-binding-aware-post-call-rollout.md)
 - [ADR-0041: Fence binding recovery from legacy workers](0041-fence-binding-recovery-from-legacy-workers.md)
+- [ADR-0043: Attach the authoritative transcript to final publication](0043-attach-authoritative-transcript-to-final-publication.md)
 
 ## Superseded
 
