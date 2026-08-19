@@ -104,7 +104,7 @@ catalogs:
       version: 4.4.3
 
 overrides:
-  '@infinity-context/sdk': file:vendor/infinity-context/artifacts/infinity-context-sdk-0.1.0-9b5c0e38.tgz
+  '@infinity-context/sdk': file:vendor/infinity-context/artifacts/infinity-context-sdk-0.1.0-15809619.tgz
 
 importers:
 
@@ -452,8 +452,8 @@ importers:
         specifier: 'catalog:'
         version: 0.1.3
       '@infinity-context/sdk':
-        specifier: file:../../vendor/infinity-context/artifacts/infinity-context-sdk-0.1.0-9b5c0e38.tgz
-        version: file:vendor/infinity-context/artifacts/infinity-context-sdk-0.1.0-9b5c0e38.tgz
+        specifier: file:../../vendor/infinity-context/artifacts/infinity-context-sdk-0.1.0-15809619.tgz
+        version: file:vendor/infinity-context/artifacts/infinity-context-sdk-0.1.0-15809619.tgz
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -1157,8 +1157,8 @@ packages:
   '@huggingface/tokenizers@0.1.3':
     resolution: {integrity: sha512-8rF/RRT10u+kn7YuUbUg0OF30K8rjTc78aHpxT+qJ1uWSqxT1MHi8+9ltwYfkFYJzT/oS+qw3JVfHtNMGAdqyA==}
 
-  '@infinity-context/sdk@file:vendor/infinity-context/artifacts/infinity-context-sdk-0.1.0-9b5c0e38.tgz':
-    resolution: {integrity: sha512-muYj1Pzi7eonaOq+zBsFjoQzPh/veOjWh3z9yMzoywHYqAEDtZdg+YE7DYSl3fuKPjYgglOInbL7CWBOsx0Naw==, tarball: file:vendor/infinity-context/artifacts/infinity-context-sdk-0.1.0-9b5c0e38.tgz}
+  '@infinity-context/sdk@file:vendor/infinity-context/artifacts/infinity-context-sdk-0.1.0-15809619.tgz':
+    resolution: {integrity: sha512-+g8mKVBvJCJWkpmMgUUBjwPZT86Q6KIIwVADy2nLvxfR8n5leA+gHJL/0JU8oYfG08tOlonSLfhPo4JxH+2q5Q==, tarball: file:vendor/infinity-context/artifacts/infinity-context-sdk-0.1.0-15809619.tgz}
     version: 0.1.0
     engines: {node: '>=20'}
     hasBin: true
@@ -4742,7 +4742,7 @@ snapshots:
 
   '@huggingface/tokenizers@0.1.3': {}
 
-  '@infinity-context/sdk@file:vendor/infinity-context/artifacts/infinity-context-sdk-0.1.0-9b5c0e38.tgz': {}
+  '@infinity-context/sdk@file:vendor/infinity-context/artifacts/infinity-context-sdk-0.1.0-15809619.tgz': {}
 
   '@ioredis/commands@1.10.0': {}
 

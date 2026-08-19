@@ -44,6 +44,7 @@
 - [ADR-0039: Bounded evidence selector accounting](0039-bounded-evidence-selector.md)
 - [ADR-0040: Source-bound Infinity index semantics and migration](0040-source-bound-infinity-index-semantics.md)
 - [ADR-0041: Scoped Infinity deletion reconciliation](0041-scoped-infinity-deletion-reconciliation.md)
+- [ADR-0042: Active-only scoped document enumeration](0042-active-only-scoped-document-enumeration.md)
 
 ## Superseded
 

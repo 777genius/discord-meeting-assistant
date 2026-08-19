@@ -1,14 +1,14 @@
 export const INFINITY_CONTEXT_SDK_PROVENANCE = Object.freeze({
-  archiveSha256: "b95264ecd7b94943b718fa99d34aabff387beadcf9ce6cdf5cd72146cddd3091",
-  commit: "9b5c0e38bf46cdabe32698c84e62e1711a8b0aee",
+  archiveSha256: "a14b3d0c071b08fcef003436f4f46b52b948f734e8093096abc699c09d5deaa8",
+  commit: "15809619e61ae76f45d04176d1b681a78bf41de3",
   developmentPackageLink: "vendor/infinity-context/.upstream/packages/infinity_context_ts_sdk",
-  immutablePackageIntegrity: "sha512-muYj1Pzi7eonaOq+zBsFjoQzPh/veOjWh3z9yMzoywHYqAEDtZdg+YE7DYSl3fuKPjYgglOInbL7CWBOsx0Naw==",
-  immutablePackagePath: "vendor/infinity-context/artifacts/infinity-context-sdk-0.1.0-9b5c0e38.tgz",
+  immutablePackageIntegrity: "sha512-+g8mKVBvJCJWkpmMgUUBjwPZT86Q6KIIwVADy2nLvxfR8n5leA+gHJL/0JU8oYfG08tOlonSLfhPo4JxH+2q5Q==",
+  immutablePackagePath: "vendor/infinity-context/artifacts/infinity-context-sdk-0.1.0-15809619.tgz",
   packageLockSha256: "068b3129a4ccd449c50cdc6a72755dbae3d4a977c5a468565e2f3841529cac0e",
   packageManifestSha256: "020c37993fc2749dd55649b2649d35e79570c1b43757a67ee16618de15be6ccd",
   packageName: "@infinity-context/sdk",
-  packageTarballIntegrity: "sha512-muYj1Pzi7eonaOq+zBsFjoQzPh/veOjWh3z9yMzoywHYqAEDtZdg+YE7DYSl3fuKPjYgglOInbL7CWBOsx0Naw==",
-  packageTarballSha256: "8f8015583ba3ccb71b1654d11ad6af111881ceedde68dec52241edc431981dc0",
+  packageTarballIntegrity: "sha512-+g8mKVBvJCJWkpmMgUUBjwPZT86Q6KIIwVADy2nLvxfR8n5leA+gHJL/0JU8oYfG08tOlonSLfhPo4JxH+2q5Q==",
+  packageTarballSha256: "a59e128c9c0b38c9e665f1da608cb5df09d25f2d14677d32f1a44d6eefc6efe9",
   packageVersion: "0.1.0",
   retainedLiveQualificationEvidenceSha256:
     "4f19e430a465294d020e6dc0eebde4a6320913744201fa60700cb75d148065fe",
@@ -16,7 +16,7 @@ export const INFINITY_CONTEXT_SDK_PROVENANCE = Object.freeze({
     "sha256:abe694b3e1cf0dcec9d5ff7c0d8b65f30ec5364ac11bb2526bd1c3a3b176c207",
   retainedLiveQualificationSourceLogSha256:
     "d69ad3870ea17c15a2c0fafa88e71aa9dfa87e0dfc81afa1ed3b3f0c93ed9c51",
-  retainedScopedDocumentsManifestPath: "docs/operations/evidence/2026-08-19-infinity-scoped-documents-9b5c0e38/manifest.json",
+  retainedScopedDocumentsManifestPath: "docs/operations/evidence/2026-08-19-infinity-scoped-documents-15809619/manifest.json",
   retainedScopedDocumentsManifestSha256: "sha256:42807626aa1867c8d9663fa4a8c9ad27cc08c0d2eb93adbcea8f138a3f230c43",
   retainedScopedDocumentsParityBaselineSha256: "sha256:d7e58a5d8d1ef010c413d2b76a35ac196ee6f5ba7033573fcab100fca040fa97",
   retainedScopedDocumentsPostgresEvidenceSha256:
@@ -34,9 +34,9 @@ export const INFINITY_CONTEXT_SDK_PROVENANCE = Object.freeze({
   sourcePinnedEmbeddingProfileDigestSha256:
     "sha256:b183b9d6350dfaf9f874cab9fef993d3ded5060a4a18d972c45ec97def5faf31",
   sourcePinnedServiceRevision:
-    "9b5c0e38bf46cdabe32698c84e62e1711a8b0aee",
+    "15809619e61ae76f45d04176d1b681a78bf41de3",
   repository: "https://github.com/777genius/infinity-context.git",
-  tree: "74f071f748591a26f1721dfba1c9742f7a8fb9d1",
+  tree: "5c08ffaa071b2a4e511ad8096b1fbf828f1e4145",
 });
 
 export interface InfinityContextEmbeddingProfileAttestationV1 {
@@ -339,7 +339,7 @@ function assertProductionQualificationPolicy(
   ) {
     throw new InfinityContextActivationError("production Infinity indexing/search requires exact-head qualification evidence");
   }
-  if (activation.indexingEnabled && !(policy?.productionSemanticQualification ?? false)) {
+  if (activation.indexingEnabled && !policy.productionSemanticQualification) {
     throw new InfinityContextActivationError("production Infinity indexing requires exact-head ingest, process, and dense-profile qualification");
   }
 }

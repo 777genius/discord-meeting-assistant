@@ -201,6 +201,11 @@
       "id": "ADR-0041",
       "path": "docs/decisions/0041-scoped-infinity-deletion-reconciliation.md",
       "immutableDigest": "sha256:dcae62ec6ee623a60d7b80b7bead4212769ae0f7ffa147d28fa2e83bc344696c"
+    },
+    {
+      "id": "ADR-0042",
+      "path": "docs/decisions/0042-active-only-scoped-document-enumeration.md",
+      "immutableDigest": "sha256:0112fd5d5421444096a6740c2d466ad67448aa4066da9f1ba10bef5b15bce286"
     }
   ]
 }

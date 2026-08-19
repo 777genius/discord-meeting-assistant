@@ -1,11 +1,11 @@
 # Official Infinity Context SDK package artifact
 
-`infinity-context-sdk-0.1.0-9b5c0e38.tgz` is the unmodified output of
+`infinity-context-sdk-0.1.0-15809619.tgz` is the unmodified output of
 `npm pack --ignore-scripts` for `packages/infinity_context_ts_sdk` at upstream
-commit `9b5c0e38bf46cdabe32698c84e62e1711a8b0aee`.
+commit `15809619e61ae76f45d04176d1b681a78bf41de3`.
 
 The preparation verifier rebuilds the package from the reviewed Git tree and
 requires both the rebuilt tarball and this retained artifact to match SHA-256
-`8f8015583ba3ccb71b1654d11ad6af111881ceedde68dec52241edc431981dc0`
+`a59e128c9c0b38c9e665f1da608cb5df09d25f2d14677d32f1a44d6eefc6efe9`
 and SRI
-`sha512-muYj1Pzi7eonaOq+zBsFjoQzPh/veOjWh3z9yMzoywHYqAEDtZdg+YE7DYSl3fuKPjYgglOInbL7CWBOsx0Naw==`.
+`sha512-+g8mKVBvJCJWkpmMgUUBjwPZT86Q6KIIwVADy2nLvxfR8n5leA+gHJL/0JU8oYfG08tOlonSLfhPo4JxH+2q5Q==`.
