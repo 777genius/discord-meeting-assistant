@@ -39,7 +39,7 @@ export { PostgresQuestionAdmissionCommit } from "./postgres-question-admission-c
 export { PostgresQuestionJobStore } from "./postgres-question-job-store.js";
 export { PostgresFinalReplyMaintenance } from "./postgres-final-reply-maintenance.js";
 export type { QuestionPolicyIdentity } from "./postgres-question-policy-fence.js";
-export { PostgresGuildConfigurationRepository } from "./postgres-guild-configuration-repository.js";
+export { PostgresMeetingSourceConfigurationRepository } from "./postgres-meeting-source-configuration-repository.js";
 export {
   PostgresMigrationError,
   PostgresMigrationRunner,

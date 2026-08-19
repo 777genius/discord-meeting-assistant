@@ -1,0 +1,14 @@
+id: provider-neutral-routing-no-provider-identifiers
+language: TypeScript
+severity: error
+message: Provider-neutral routing boundaries cannot expose Discord or Craig identifiers.
+note: Map provider vocabulary to sourceId, roomId, publicationTargetId, and actorId at the adapter edge.
+files:
+  - "packages/meeting-routing-core/src/**/*.ts"
+  - "packages/postgres-adapter/src/postgres-meeting-source-configuration-repository.ts"
+rule:
+  any:
+    - kind: identifier
+      regex: "(?i).*(discord|craig|snowflake|guild|voicechannel|resultschannel).*"
+    - kind: property_identifier
+      regex: "(?i).*(discord|craig|snowflake|guild|voicechannel|resultschannel).*"

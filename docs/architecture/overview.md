@@ -72,9 +72,9 @@ deployments:
 - Recording Playback owns possession-based access to the authoritative private
   speaker tracks. Its public page presents one synchronized player, while
   byte-range delivery and access tokens remain outside Meeting Core.
-- Guild Installation & Configuration owns the administrator-approved mapping
-  from one Discord guild and voice channel to its results channel. Discord
-  commands and PostgreSQL remain adapters around this context.
+- Meeting Source Routing owns the administrator-approved mapping from one
+  opaque meeting source and room to its publication target. Discord commands
+  and PostgreSQL remain adapters around this context.
 - Meeting Knowledge owns provider-neutral knowledge admission identity and, in
   its historical-memory slice, deterministic final-human evidence blocks,
   durable derived-index intent, same-room local reauthorization, focused

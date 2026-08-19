@@ -134,10 +134,10 @@ describe("/setup-voice-bot command contract", () => {
 
 describe("DiscordGuildSetupAdapter", () => {
   const request = {
-    configuredByUserId: ids.actor,
-    guildId: ids.guild,
-    resultsChannelId: ids.results,
-    voiceChannelId: ids.voice,
+    configuredByActorId: ids.actor,
+    publicationTargetId: ids.results,
+    roomId: ids.voice,
+    sourceId: ids.guild,
   } as const;
 
   function client(input: { readonly craigInstalled?: boolean; readonly platformCanPublish?: boolean }) {
@@ -191,19 +191,26 @@ describe("DiscordGuildSetupAdapter", () => {
       .resolves.toEqual({ ok: true });
   });
 
+  it("keeps Discord Snowflake validation inside the adapter", async () => {
+    await expect(new DiscordGuildSetupAdapter(client({}), ids.craig).verify({
+      ...request,
+      sourceId: "provider-neutral-source",
+    })).rejects.toThrow("sourceId must be a Discord snowflake");
+  });
+
   it("rejects a missing Craig bot and insufficient publication access", async () => {
     await expect(
       new DiscordGuildSetupAdapter(client({ craigInstalled: false }), ids.craig)
         .verify(request),
     ).resolves.toMatchObject({
-      failure: { code: "craig-not-installed" },
+      failure: { code: "capture-capability-unavailable" },
       ok: false,
     });
     await expect(
       new DiscordGuildSetupAdapter(client({ platformCanPublish: false }), ids.craig)
         .verify(request),
     ).resolves.toMatchObject({
-      failure: { code: "platform-results-permission-missing" },
+      failure: { code: "publication-target-permission-missing" },
       ok: false,
     });
   });
@@ -231,12 +238,12 @@ describe("DiscordGuildSetupAdapter", () => {
       },
     } as unknown as Client;
     await expect(new DiscordGuildSetupAdapter(setupClient, ids.craig).publish({
-      configuredByUserId: ids.actor,
+      configuredByActorId: ids.actor,
       configurationRevision: 0,
-      guildId: ids.guild,
-      idempotencyKey: "guild-setup:v1|candidate-a",
-      resultsChannelId: ids.results,
-      voiceChannelId: ids.voice,
+      idempotencyKey: "meeting-source-setup:v1|candidate-a",
+      publicationTargetId: ids.results,
+      roomId: ids.voice,
+      sourceId: ids.guild,
     })).resolves.toEqual({ ok: true });
     expect(send).toHaveBeenCalledOnce();
     expect(sent[0]?.enforceNonce).toBe(true);
@@ -285,14 +292,14 @@ describe("DiscordGuildSetupCommandHandler", () => {
     const handler = new DiscordGuildSetupCommandHandler(new EventEmitter() as unknown as Client, {
       execute: async () => ({
         configuration: {
-          configuredByUserId: ids.actor,
-          guildId: ids.guild,
-          resultsChannelId: ids.results,
+          configuredByActorId: ids.actor,
+          publicationTargetId: ids.results,
           revision: 0,
+          roomId: ids.voice,
+          sourceId: ids.guild,
           status: "active",
-          voiceChannelId: ids.voice,
         },
-        idempotencyKey: "guild-setup:v1|candidate-a",
+        idempotencyKey: "meeting-source-setup:v1|candidate-a",
         status: "configured",
       }),
     }, "https://discord.com/oauth2/authorize?client_id=22222222222222222");

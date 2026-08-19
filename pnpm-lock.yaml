@@ -189,15 +189,15 @@ importers:
       '@discord-meeting/discord-adapter':
         specifier: workspace:*
         version: link:../../packages/discord-adapter
-      '@discord-meeting/guild-configuration-core':
-        specifier: workspace:*
-        version: link:../../packages/guild-configuration-core
       '@discord-meeting/infinity-context-adapter':
         specifier: workspace:*
         version: link:../../packages/infinity-context-adapter
       '@discord-meeting/meeting-core':
         specifier: workspace:*
         version: link:../../packages/meeting-core
+      '@discord-meeting/meeting-routing-core':
+        specifier: workspace:*
+        version: link:../../packages/meeting-routing-core
       '@discord-meeting/object-storage-adapter':
         specifier: workspace:*
         version: link:../../packages/object-storage-adapter
@@ -408,30 +408,18 @@ importers:
 
   packages/discord-adapter:
     dependencies:
-      '@discord-meeting/guild-configuration-core':
-        specifier: workspace:*
-        version: link:../guild-configuration-core
       '@discord-meeting/meeting-core':
         specifier: workspace:*
         version: link:../meeting-core
+      '@discord-meeting/meeting-routing-core':
+        specifier: workspace:*
+        version: link:../meeting-routing-core
       discord.js:
         specifier: 'catalog:'
         version: 14.27.0
       zod:
         specifier: 'catalog:'
         version: 4.4.3
-    devDependencies:
-      '@types/node':
-        specifier: 'catalog:'
-        version: 24.13.3
-      typescript:
-        specifier: 'catalog:'
-        version: 7.0.2
-      vitest:
-        specifier: 'catalog:'
-        version: 4.1.10(@types/node@24.13.3)(vite@8.2.0(@types/node@24.13.3)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.1)(yaml@2.9.0))
-
-  packages/guild-configuration-core:
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -473,6 +461,18 @@ importers:
       fast-check:
         specifier: 'catalog:'
         version: 4.9.0
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
+      vitest:
+        specifier: 'catalog:'
+        version: 4.1.10(@types/node@24.13.3)(vite@8.2.0(@types/node@24.13.3)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.1)(yaml@2.9.0))
+
+  packages/meeting-routing-core:
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.13.3
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
@@ -554,12 +554,12 @@ importers:
 
   packages/postgres-adapter:
     dependencies:
-      '@discord-meeting/guild-configuration-core':
-        specifier: workspace:*
-        version: link:../guild-configuration-core
       '@discord-meeting/meeting-core':
         specifier: workspace:*
         version: link:../meeting-core
+      '@discord-meeting/meeting-routing-core':
+        specifier: workspace:*
+        version: link:../meeting-routing-core
       pg:
         specifier: 'catalog:'
         version: 8.22.0

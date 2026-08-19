@@ -9,7 +9,7 @@
     "contractId": "meeting-platform-rpc",
     "publicContractVersion": "0.1.0",
     "bufVersion": "1.72.0",
-    "bufConfigDigest": "sha256:635a7cab1e684b9f2a8aa00960cfa441a32ce6cf011f646c2af54f70d6a19845",
+    "bufConfigDigest": "sha256:4206f76049031d5f0182a10bce67d1f39ab488727f5e28cf41ffd3ce882ed47d",
     "descriptorImageDigest": "sha256:fd8c7e2fc0a551b7c6c4cd85db0630f962cc437e5840c30b10651ac8edabd23b",
     "releasedDescriptorImageDigest": "sha256:fd8c7e2fc0a551b7c6c4cd85db0630f962cc437e5840c30b10651ac8edabd23b",
     "generatorVersions": [],
@@ -19,7 +19,7 @@
     },
     "breaking": {
       "status": "compatible",
-      "fingerprint": "sha256:c72ca30e5236a8e4787f4c66ac472bbbac14b6eac22ba9992ee7e753bc911d3d"
+      "fingerprint": "sha256:3b9f7e1de3f56c4ac1fe43afb62a460d7d083504ae3c2f019cb613908e4b8960"
     }
   }
 }

@@ -223,6 +223,59 @@ describe("Postgres concurrent index recovery", () => {
 });
 
 describe("PostgresMigrationRunner and PostgresSchemaReadiness validation", () => {
+  it("migrates existing Discord routing snapshots without changing route meaning", async (context) => {
+    databaseOrSkip(context);
+    const isolated = await createIsolatedDatabase();
+    const migrations = await loadPostgresMigrations();
+    try {
+      await new PostgresMigrationRunner(isolated.pool, {
+        migrations: migrations.slice(0, 29),
+      }).migrate();
+      await isolated.pool.query(
+        `
+          INSERT INTO guild_configuration.guild_installations
+            (guild_id, revision, snapshot)
+          VALUES ($1, $2, $3::jsonb)
+        `,
+        [
+          "guild-1",
+          4,
+          {
+            configuredByUserId: "user-1",
+            guildId: "guild-1",
+            resultsChannelId: "results-1",
+            revision: 4,
+            status: "active",
+            voiceChannelId: "voice-1",
+          },
+        ],
+      );
+
+      await expect(new PostgresMigrationRunner(isolated.pool, {
+        migrations,
+      }).migrate()).resolves.toEqual({ appliedVersions: [30], version: 30 });
+      const migrated = await isolated.pool.query(
+        "SELECT source_id, revision::float8 AS revision, snapshot FROM meeting_routing.source_configurations",
+      );
+      expect(migrated.rows).toEqual([{
+        revision: 4,
+        snapshot: {
+          configuredByActorId: "user-1",
+          publicationTargetId: "results-1",
+          revision: 4,
+          roomId: "voice-1",
+          sourceId: "guild-1",
+          status: "active",
+        },
+        source_id: "guild-1",
+      }]);
+      await expect(new PostgresSchemaReadiness(isolated.pool).assertReady())
+        .resolves.toBeUndefined();
+    } finally {
+      await isolated.dispose();
+    }
+  });
+
   it("records the exact migration ledger and accepts a fully validated schema", async (context) => {
     const database = databaseOrSkip(context);
 

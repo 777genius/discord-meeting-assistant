@@ -14,7 +14,7 @@
     "check": "pnpm run typecheck && pnpm run test"
   },
   "dependencies": {
-    "@discord-meeting/guild-configuration-core": "workspace:*",
+    "@discord-meeting/meeting-routing-core": "workspace:*",
     "@discord-meeting/meeting-core": "workspace:*",
     "pg": "catalog:",
     "zod": "catalog:"

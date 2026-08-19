@@ -1,8 +1,8 @@
 ---
 id: ADR-0013
-status: accepted
+status: superseded
 supersedes: []
-superseded_by: []
+superseded_by: [ADR-0042]
 ---
 
 # ADR-0013: Provider-neutral meeting source boundary

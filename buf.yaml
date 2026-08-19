@@ -13,7 +13,7 @@ modules:
       - packages/craig-gateway-contracts/node_modules
       - packages/craig-playback-adapter/node_modules
       - packages/discord-adapter/node_modules
-      - packages/guild-configuration-core/node_modules
+      - packages/meeting-routing-core/node_modules
       - packages/meeting-core/node_modules
       - packages/object-storage-adapter/node_modules
       - packages/observability-adapter/node_modules

@@ -1,0 +1,7 @@
+id: provider-neutral-routing-no-provider-identifiers
+valid:
+  - "interface Route { sourceId: string; roomId: string; publicationTargetId: string }"
+  - "function resolveMeetingSource(sourceId) { return sourceId; }"
+invalid:
+  - "interface Route { guildId: string; voiceChannelId: string }"
+  - "function resolveCraigSource(discordId) { return discordId; }"
