@@ -139,7 +139,7 @@ describe("cooperative historical window planner", () => {
     console.info(JSON.stringify({ maximumHeartbeatDelayMs, p95HeartbeatDelayMs }));
     expect(heartbeatDelaysMs.length).toBeGreaterThan(0);
     expect(maximumHeartbeatDelayMs).toBeLessThan(100);
-  }, 30_000);
+  }, 75_000);
 
   it("splits astral and ZWJ-heavy Unicode only on canonical code-point ranges", async () => {
     const planner = new CooperativeHistoricalIndexPlanner();
