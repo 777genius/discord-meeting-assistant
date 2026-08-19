@@ -181,10 +181,34 @@ describe("Infinity Context source-pinned activation", () => {
         embeddingProfile: "local-open-source-paraphrase-multilingual-minilm-l12-v2-hybrid-bm25.r73",
       },
     })).toThrow(/source-pinned embedding profile/u);
-    const activation = decodeInfinityContextRuntimeActivation(productionActivation);
-    expect(() => {
-      assertInfinityContextSearchActivation(activation, testProductionPolicy);
-    }).not.toThrow();
+  });
+
+  it("permits production indexing-only with source transport qualification", () => {
+    const sourceDigest =
+      INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedEmbeddingProfileDigestSha256;
+    const activation = decodeInfinityContextRuntimeActivation({
+      ...productionActivation,
+      embeddingProfileAttestation: {
+        ...profileAttestation,
+        embeddingProfileDigestSha256: sourceDigest,
+      },
+      searchEnabled: false,
+    });
+    expect(() => { assertInfinityContextActivation(activation, {
+      ...exactCapabilities,
+      embeddingProfileDigestSha256: sourceDigest,
+    }, INFINITY_CONTEXT_PRODUCTION_QUALIFICATION); }).not.toThrow();
+  });
+
+  it("rejects production search with source transport-only qualification", () => {
+    const activation = decodeInfinityContextRuntimeActivation({
+      ...productionActivation,
+      embeddingProfileAttestation: {
+        ...profileAttestation,
+        embeddingProfileDigestSha256:
+          INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedEmbeddingProfileDigestSha256,
+      },
+    });
     expect(
       INFINITY_CONTEXT_PRODUCTION_QUALIFICATION.productionSemanticQualification,
     ).toBe(false);
@@ -193,7 +217,14 @@ describe("Infinity Context source-pinned activation", () => {
         activation,
         INFINITY_CONTEXT_PRODUCTION_QUALIFICATION,
       );
-    }).toThrow(/retained b77 qualification/u);
+    }).toThrow(/explicit semantic qualification/u);
+  });
+
+  it("permits production search with explicit semantic qualification", () => {
+    const activation = decodeInfinityContextRuntimeActivation(productionActivation);
+    expect(() => {
+      assertInfinityContextSearchActivation(activation, testProductionPolicy);
+    }).not.toThrow();
     expect(() => { assertInfinityContextSearchActivation(activation); })
       .toThrow(/retained b77 qualification/u);
   });

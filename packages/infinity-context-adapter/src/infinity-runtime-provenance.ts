@@ -1,8 +1,7 @@
 export const INFINITY_CONTEXT_SDK_PROVENANCE = Object.freeze({
   archiveSha256: "4d96f50ae01f9000e9ac4c50eaa61b4d875c3a452aed58f7e2efe1d69ee8d08d",
   commit: "b77b490cebbf9d80d4204425df3d795b4866ea19",
-  developmentPackageLink:
-    "vendor/infinity-context/.upstream/packages/infinity_context_ts_sdk",
+  developmentPackageLink: "vendor/infinity-context/.upstream/packages/infinity_context_ts_sdk",
   immutablePackageIntegrity:
     "sha512-YurXjgFGoRxwc5zJghj69ZFyZx8WLS1ucvgVvV2EFjZMCATxr9YrJW1ueeyLqwkaLKnO1JEvbTpqn7Q8K33b+A==",
   immutablePackagePath:
@@ -54,8 +53,7 @@ export interface InfinityContextRuntimeActivationV1 {
   readonly immutablePackageIntegrity: string | null;
   readonly indexingEnabled: boolean;
   readonly packageSource: "immutable_package" | "reviewed_source_workspace";
-  readonly embeddingProfileAttestation:
-    InfinityContextEmbeddingProfileAttestationV1 | null;
+  readonly embeddingProfileAttestation: InfinityContextEmbeddingProfileAttestationV1 | null;
   readonly qualificationManifestSha256: string | null;
   readonly schemaVersion: 1;
   readonly sdkCommit: string;
@@ -336,7 +334,6 @@ function assertProductionQualificationPolicy(
     policy.serviceRevision !== INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedServiceRevision ||
     policy.embeddingProfileId !== INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedEmbeddingProfileId ||
     policy.embeddingProfileId !== attestation.embeddingProfile ||
-    !policy.productionSemanticQualification ||
     policy.embeddingProfileDigestSha256 !== attestation.embeddingProfileDigestSha256 ||
     policy.qualificationManifestSha256 !== activation.qualificationManifestSha256
   ) {
@@ -374,6 +371,9 @@ export function assertInfinityContextSearchActivation(
     );
   }
   assertProductionQualificationPolicy(activation, productionPolicy);
+  if (!(productionPolicy?.productionSemanticQualification ?? false)) {
+    throw new InfinityContextActivationError("production search requires explicit semantic qualification");
+  }
 }
 
 function assertPinnedProductionProfile(
