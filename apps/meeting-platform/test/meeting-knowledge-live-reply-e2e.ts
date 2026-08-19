@@ -23,8 +23,16 @@ import {
   PostgresMeetingRepository,
   canonicalFinalReplyTurnHash,
 } from "@discord-meeting/postgres-adapter";
-import type { SubscriptionRuntimeTransportPort } from
-  "@discord-meeting/subscription-runtime-adapter";
+import {
+  auditedSubscriptionRuntimePackageVersion,
+  canonicalJsonSha256,
+  subscriptionRuntimeCliEngine,
+  subscriptionRuntimeKnowledgeEvidenceSelectorPurpose,
+  type JsonObject,
+  type SubscriptionRuntimeAgentTaskRequest,
+  type SubscriptionRuntimeTaskResult,
+  type SubscriptionRuntimeTransportPort,
+} from "@discord-meeting/subscription-runtime-adapter";
 import { ChannelType, PermissionFlagsBits, type Client } from "discord.js";
 import type { Pool } from "pg";
 import { expect } from "vitest";
@@ -181,6 +189,7 @@ export async function qualifyLiveProjectionReply(input: {
     generatorInvocations += 1;
     return generatorInvocations;
   });
+  const selectorRuntime = new SyntheticFocusedSelectorRuntime();
   const baseConfig = platformConfig(input.infinity.baseUrl, true, true, "test");
   const config = {
     ...baseConfig,
@@ -199,7 +208,7 @@ export async function qualifyLiveProjectionReply(input: {
     historicalMemory: input.runtime,
     logger: silentLogger,
     pool: input.pool,
-    runtimeTransport: unusedRuntimeTransport,
+    runtimeTransport: selectorRuntime,
   });
   const emitQuestion = (overrides: Record<string, unknown> = {}): void => {
     emitter.emit("messageCreate", {
@@ -243,6 +252,7 @@ export async function qualifyLiveProjectionReply(input: {
     });
     await waitForQuestionEffect(input.pool, questionId, input.signal);
     expect(delivered).toHaveLength(1);
+    expect(selectorRuntime.invocations).toBe(1);
     expect(generatorInvocations).toBe(1);
     await expectQuestionEffects(input.pool, 1);
     expect(delivered[0]).toContain("Ana owns the active release");
@@ -580,7 +590,64 @@ async function waitForQuestionEffect(
   throw new Error(`question effect ${questionId} did not settle`);
 }
 
-const unusedRuntimeTransport = {
-  checkHealth: () => Promise.reject(new Error("unused synthetic runtime")),
-  execute: () => Promise.reject(new Error("unused synthetic runtime")),
-} as SubscriptionRuntimeTransportPort;
+const syntheticLauncherSha256 = "d".repeat(64);
+
+class SyntheticFocusedSelectorRuntime implements SubscriptionRuntimeTransportPort {
+  public invocations = 0;
+
+  public checkHealth() {
+    return Promise.resolve({
+      launcherSha256: syntheticLauncherSha256,
+      runtimeEngine: subscriptionRuntimeCliEngine,
+      runtimeVersion: auditedSubscriptionRuntimePackageVersion,
+      status: "serving" as const,
+      warningCodes: [],
+    });
+  }
+
+  public execute(
+    request: SubscriptionRuntimeAgentTaskRequest,
+    options: { readonly signal?: AbortSignal } = {},
+  ): Promise<SubscriptionRuntimeTaskResult> {
+    options.signal?.throwIfAborted();
+    expect(request.context.purpose).toBe(
+      subscriptionRuntimeKnowledgeEvidenceSelectorPurpose,
+    );
+    this.invocations += 1;
+    const prompt = JSON.parse(request.task.prompt) as {
+      readonly candidates: readonly {
+        readonly candidateId: string;
+        readonly snippet: string;
+      }[];
+    };
+    const selectedCandidateIds = prompt.candidates
+      .filter(({ snippet }) => /EARLY-COMET|PINE-GOLF/u.test(snippet))
+      .map(({ candidateId }) => candidateId)
+      .slice(0, 5);
+    expect(selectedCandidateIds.length).toBeGreaterThan(0);
+    const output: JsonObject = {
+      schemaVersion: 1,
+      selectedCandidateIds,
+      status: "selected",
+    };
+    return Promise.resolve({
+      executionAttestation: {
+        canonicalRequestSha256: canonicalJsonSha256(request),
+        launcherSha256: syntheticLauncherSha256,
+        model: request.task.controls.model,
+        provider: "codex",
+        purpose: request.context.purpose,
+        reasoningEffort: request.task.controls.reasoningEffort,
+        requestId: request.runId,
+        runtimeEngine: subscriptionRuntimeCliEngine,
+        runtimePackageVersion: auditedSubscriptionRuntimePackageVersion,
+        schemaVersion: 1,
+        selectedOutputKind: "structured_output",
+        selectedOutputSha256: canonicalJsonSha256(output),
+      },
+      protocolVersion: 1,
+      status: "completed",
+      structuredOutput: output,
+    });
+  }
+}
