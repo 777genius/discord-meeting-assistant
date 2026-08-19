@@ -163,6 +163,7 @@ function providerOutputRepairRequest(
       systemPrompt: [
         request.task.systemPrompt,
         "A previous generation failed strict output validation. Regenerate once from the original supplied question and evidence and obey every schema bound exactly.",
+        "In particular, claims=[] with status=answered is forbidden. Decide answerability before emitting claims: for an answerable question populate claims with at least one concise supported claim and its direct evidenceIds, then emit status=answered; otherwise keep claims=[] and emit insufficient_evidence or not_a_question.",
       ].join(" "),
     },
   };
