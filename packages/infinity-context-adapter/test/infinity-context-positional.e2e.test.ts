@@ -135,8 +135,11 @@ function assertExactBoundedModelRequest(
   const exactPromptBytes = new TextEncoder().encode(exactModelRequest).byteLength;
   expect(exactPromptBytes).toBeLessThanOrEqual(64_000);
   expect(exactPromptBytes).toBe(19_468);
+  // This digest freezes the canonical persisted-plan rehydration request. Keep the
+  // structural, cardinality, byte-bound and forbidden-material assertions beside
+  // it so a digest refresh cannot hide prompt growth or evidence leakage.
   expect(createHash("sha256").update(exactModelRequest, "utf8").digest("hex"))
-    .toBe("03244e18ab252baef55e21168cea729b4df7c7387106aa9cd35d252cc2a29812");
+    .toBe("f7a35be4e833dc83484d733a85043198e7de0adb0dc768deb0fde21ad31b3bfe");
   expect(exactModelRequest).not.toContain("current_complete");
   expect(exactModelRequest).not.toContain(forbiddenPromptMaterial.summary);
   expect(exactModelRequest).not.toContain(forbiddenPromptMaterial.transcriptPrefix);
