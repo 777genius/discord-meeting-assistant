@@ -183,7 +183,6 @@ function resolvePolicy(
   );
   const turnOverlap = policy.turnOverlap ?? 2;
   if (
-    policy.version !== "meeting-knowledge.block-policy.v1" ||
     !Number.isSafeInteger(maximumEmbeddingTokens) ||
     maximumEmbeddingTokens < 16 ||
     maximumEmbeddingTokens > 512 ||
@@ -227,7 +226,7 @@ async function drivePlanner(
 ): Promise<HistoricalEmbeddingPartitions> {
   try {
     let step = planner.next();
-    while (!step.done) {
+    while (step.done !== true) {
       if (step.value.kind === "checkpoint") {
         await checkpoint();
         step = planner.next();

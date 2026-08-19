@@ -21,6 +21,11 @@ import {
 const maximumTopologyListEntries = 100;
 const maximumParallelDocuments = 4;
 
+type IndexWorkerOutcome =
+  | { readonly status: "complete" }
+  | { readonly status: "processing_unknown" }
+  | { readonly error: Error; readonly sequence: number; readonly status: "failed" };
+
 export async function indexHistoricalMeeting(input: {
   readonly client: InfinityContextClient;
   readonly operationTimeoutMs: number;
@@ -91,16 +96,15 @@ class HistoricalMeetingIndexer {
     const results: ({ readonly externalId: string; readonly remoteId: string } | undefined)[] =
       Array.from({ length: request.documents.length });
     let cursor = 0;
-    let processingUnknown = false;
-    let firstError: unknown;
-    const worker = async () => {
+    let failureSequence = 0;
+    const coordination = { stopped: false };
+    const worker = async (): Promise<IndexWorkerOutcome> => {
       try {
-        while (true) {
-          if (processingUnknown || firstError !== undefined) { return; }
+        while (!coordination.stopped) {
           const index = cursor;
           cursor += 1;
           const document = request.documents[index];
-          if (document === undefined) { return; }
+          if (document === undefined) { return { status: "complete" }; }
           this.operation.throwIfAborted();
           const alreadyProcessed = existing.some((candidate) =>
             documentSourceExternalId(candidate) === document.manifest.documentExternalId &&
@@ -115,21 +119,35 @@ class HistoricalMeetingIndexer {
           const remoteId = documentId(remote);
           if (!alreadyProcessed &&
             !await this.ensureProcessed(remoteId, document.mutationId)) {
-            processingUnknown = true;
-            return;
+            coordination.stopped = true;
+            return { status: "processing_unknown" };
           }
           results[index] = { externalId: document.manifest.documentExternalId, remoteId };
         }
+        return { status: "complete" };
       } catch (error) {
-        firstError ??= error;
+        coordination.stopped = true;
+        const sequence = failureSequence;
+        failureSequence += 1;
+        return {
+          error: error instanceof Error
+            ? error
+            : new Error("historical document indexing failed", { cause: error }),
+          sequence,
+          status: "failed",
+        };
       }
     };
-    await Promise.all(Array.from(
+    const outcomes = await Promise.all(Array.from(
       { length: Math.min(maximumParallelDocuments, request.documents.length) },
       worker,
     ));
-    if (firstError !== undefined) { throw firstError; }
-    if (processingUnknown) { return null; }
+    const failures = outcomes
+      .filter((outcome): outcome is Extract<IndexWorkerOutcome, { readonly status: "failed" }> =>
+        outcome.status === "failed")
+      .toSorted((left, right) => left.sequence - right.sequence);
+    if (failures[0] !== undefined) { throw failures[0].error; }
+    if (outcomes.some(({ status }) => status === "processing_unknown")) { return null; }
     const complete = results.filter((result): result is NonNullable<typeof result> =>
       result !== undefined
     );

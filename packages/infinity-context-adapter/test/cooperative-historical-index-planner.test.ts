@@ -231,7 +231,7 @@ describe("cooperative historical window planner", () => {
         planningProfile: { ...prepared.planningProfile, digestSha256: invalidSha },
       },
     ]) {
-      expect(() => build(candidate)).toThrowError(/receipt is invalid/u);
+      expect(() => build(candidate)).toThrow(/receipt is invalid/u);
     }
   });
 
@@ -262,8 +262,8 @@ describe("cooperative historical window planner", () => {
     controller.abort();
 
     await expect(aborted).rejects.toMatchObject({ name: "AbortError" });
-    await expect(planner.prepareWindows(meeting(["reusable"]), policy))
-      .resolves.toMatchObject({ windows: expect.any(Array) });
+    const prepared = await planner.prepareWindows(meeting(["reusable"]), policy);
+    expect(Array.isArray(prepared.windows)).toBe(true);
   }, 30_000);
 
   it("bounds a timed-out job and remains reusable", async () => {
@@ -278,8 +278,8 @@ describe("cooperative historical window planner", () => {
     await expect(planner.prepareWindows(slowMeeting(), policy))
       .rejects.toBeInstanceOf(HistoricalIndexPlannerUnavailableError);
     expect(performance.now() - startedAt).toBeLessThan(1_000);
-    await expect(planner.prepareWindows(meeting(["reusable"]), policy))
-      .resolves.toMatchObject({ windows: expect.any(Array) });
+    const prepared = await planner.prepareWindows(meeting(["reusable"]), policy);
+    expect(Array.isArray(prepared.windows)).toBe(true);
   }, 30_000);
 
   it("interrupts a job on close and rejects all future work", async () => {

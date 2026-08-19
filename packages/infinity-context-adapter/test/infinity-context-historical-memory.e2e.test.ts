@@ -80,9 +80,7 @@ function boundedWindowPlan(turnCount: number, maximumBlocks = turnCount) {
 }
 
 function cedarExtract(block: LocallyRehydratedEvidenceBlockV1): CoverageExtractV1 {
-  const selectedTurns = block.turns.filter(({ text }) =>
-    text.includes("Cedar")
-  ).map(({ turnId }) => ({
+  const selectedTurns = block.turns.filter(({ text }) => text.includes("Cedar")).map(({ turnId }) => ({
     blockLocator: block.candidateLocator,
     relevance: "direct" as const,
     turnId,
