@@ -46,6 +46,8 @@ export {
   DEFAULT_HISTORICAL_EVIDENCE_BLOCK_POLICY,
   HistoricalIndexPlanError,
   buildHistoricalIndexPlan,
+  buildHistoricalIndexPlanFromPreparedWindows,
+  canonicalHistoricalPlannerJson,
   buildHistoricalRoomTopology,
   buildHistoricalTopology,
   rehydrateHistoricalBlock,
@@ -53,6 +55,13 @@ export {
 } from "./application/historical-index-plan.js";
 export {
   estimateHistoricalEmbeddingTokens,
+  historicalEmbeddingText,
+  partitionHistoricalEmbeddingWindows,
+  planHistoricalEmbeddingWindows,
+  type HistoricalEmbeddingPartitions,
+  type HistoricalEmbeddingWindowPolicy,
+  type HistoricalWindowPlanningAction,
+  type HistoricalTurnProjection,
 } from "./application/historical-embedding-windows.js";
 export {
   HistoricalContractCodecError,
@@ -145,6 +154,19 @@ export type {
 export {
   CoverageExtractionCapacityError,
 } from "./application/ports/historical-grounding.js";
+export {
+  HistoricalIndexPlannerUnavailableError,
+} from "./application/ports/historical-index-planner.js";
+export type {
+  HistoricalIndexPlannerOptionsV1,
+  HistoricalIndexPlannerPort,
+  HistoricalIndexPlannerReceiptV1,
+  HistoricalIndexPlannerResultV1,
+  HistoricalPreparedSegmentV1,
+  HistoricalPreparedWindowV1,
+  HistoricalReceiptDigestPort,
+  HistoricalWindowPlanningProfileV1,
+} from "./application/ports/historical-index-planner.js";
 export type {
   HistoricalBlockManifestV1,
   HistoricalCandidateLocatorV1,
@@ -177,6 +199,7 @@ export type {
 export {
   HistoricalEmbeddingTokenizerQualificationError,
   historicalEmbeddingTokenProfile,
+  historicalEmbeddingTokenProfileFromProfile,
   prepareQualifiedHistoricalEmbeddingTokenizer,
   type HistoricalEmbeddingRuntimeCompatibilityV1,
   type HistoricalEmbeddingTokenizerPort,

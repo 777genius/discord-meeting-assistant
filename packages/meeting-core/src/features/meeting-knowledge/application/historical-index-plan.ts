@@ -1,3 +1,16 @@
+import { canonicalHistoricalTurn } from "./canonical-historical-turn.js";
+import {
+  HistoricalIndexPlanError,
+  resolveHistoricalEvidenceBlockPolicy,
+  type HistoricalEvidenceBlockPolicyV1,
+  type ResolvedHistoricalEvidenceBlockPolicyV1,
+} from "./historical-index-plan-types.js";
+export {
+  HistoricalIndexPlanError,
+  resolveHistoricalEvidenceBlockPolicy,
+  type HistoricalEvidenceBlockPolicyV1,
+  type ResolvedHistoricalEvidenceBlockPolicyV1,
+} from "./historical-index-plan-types.js";
 import {
   HISTORICAL_EVIDENCE_POLICY_VERSION,
   type AcceptedFinalMeetingV1,
@@ -15,30 +28,26 @@ import {
   historicalEmbeddingTokenProfile,
   type HistoricalEmbeddingTokenizerPort,
 } from "./ports/historical-embedding-tokenizer.js";
+import type {
+  HistoricalIndexPlannerResultV1,
+  HistoricalReceiptDigestPort,
+} from "./ports/historical-index-planner.js";
+import {
+  validatePreparedEnvelope,
+  validatePreparedWindows,
+} from "./prepared-historical-index-validation.js";
+export { canonicalHistoricalPlannerJson } from
+  "./prepared-historical-index-validation.js";
 import {
   buildHistoricalTurnSources,
   canonicalHistoricalTurnSources,
   estimateHistoricalEmbeddingTokens,
   historicalEmbeddingText,
+  historicalPlanProjectionMatches,
   partitionHistoricalEmbeddingWindows,
   rehydrateHistoricalProjectionTurns,
   type HistoricalTurnProjection,
 } from "./historical-embedding-windows.js";
-
-export interface HistoricalEvidenceBlockPolicyV1 {
-  /** Conservative retrieval projection budget; provider input must be at least this large. */
-  readonly maximumEmbeddingTokens?: number;
-  readonly maxBlockUtf8Bytes: number;
-  readonly maxBlocksPerMeeting: number;
-  readonly maxTurnsPerBlock: number;
-  readonly turnOverlap?: number;
-  readonly version: "meeting-knowledge.block-policy.v1";
-}
-
-type HistoricalEvidenceBlockPolicyInputV1 = Omit<
-  HistoricalEvidenceBlockPolicyV1,
-  "version"
-> & { readonly version: string };
 
 export const DEFAULT_HISTORICAL_EVIDENCE_BLOCK_POLICY: HistoricalEvidenceBlockPolicyV1 =
   Object.freeze({
@@ -49,26 +58,6 @@ export const DEFAULT_HISTORICAL_EVIDENCE_BLOCK_POLICY: HistoricalEvidenceBlockPo
     turnOverlap: 2,
     version: "meeting-knowledge.block-policy.v1",
   });
-
-interface ResolvedHistoricalEvidenceBlockPolicyV1 {
-  readonly maximumEmbeddingTokens: number;
-  readonly maxBlockUtf8Bytes: number;
-  readonly maxBlocksPerMeeting: number;
-  readonly maxTurnsPerBlock: number;
-  readonly turnOverlap: number;
-  readonly version: "meeting-knowledge.block-policy.v1";
-}
-
-export class HistoricalIndexPlanError extends Error {
-  public override readonly name = "HistoricalIndexPlanError";
-
-  public constructor(
-    public readonly code: "BLOCK_LIMIT_EXCEEDED" | "INVALID_POLICY" | "STALE_PLAN",
-    message: string,
-  ) {
-    super(message);
-  }
-}
 
 export function buildHistoricalRoomTopology(
   scopeId: string,
@@ -94,7 +83,21 @@ export function buildHistoricalTopology(
     DEFAULT_HISTORICAL_EVIDENCE_BLOCK_POLICY,
   tokenizer?: HistoricalEmbeddingTokenizerPort,
 ): HistoricalTopologyV1 {
-  const policy = assertPolicy(candidatePolicy);
+  return buildHistoricalTopologyForProfile(
+    binding,
+    ids,
+    candidatePolicy,
+    historicalEmbeddingTokenProfile(tokenizer),
+  );
+}
+
+function buildHistoricalTopologyForProfile(
+  binding: HistoricalReleaseBindingV1,
+  ids: HistoricalOpaqueIdPort,
+  candidatePolicy: HistoricalEvidenceBlockPolicyV1,
+  tokenProfile: string,
+): HistoricalTopologyV1 {
+  const policy = resolveHistoricalEvidenceBlockPolicy(candidatePolicy);
   const { roomScopeExternalRef, spaceSlug } = buildHistoricalRoomTopology(
     binding.scopeId,
     binding.roomId,
@@ -131,7 +134,7 @@ export function buildHistoricalTopology(
         String(policy.maxTurnsPerBlock),
         String(policy.maximumEmbeddingTokens),
         String(policy.turnOverlap),
-        historicalEmbeddingTokenProfile(tokenizer),
+        tokenProfile,
       ]),
     ),
     releaseRef,
@@ -141,82 +144,8 @@ export function buildHistoricalTopology(
   });
 }
 
-function assertPolicy(
-  policy: HistoricalEvidenceBlockPolicyInputV1,
-): ResolvedHistoricalEvidenceBlockPolicyV1 {
-  const maximumEmbeddingTokens = policy.maximumEmbeddingTokens ?? 96;
-  const turnOverlap = policy.turnOverlap ?? 2;
-  if (
-    policy.version !== "meeting-knowledge.block-policy.v1" ||
-    !Number.isSafeInteger(policy.maxBlockUtf8Bytes) ||
-    policy.maxBlockUtf8Bytes < 256 ||
-    policy.maxBlockUtf8Bytes > 32_768 ||
-    !Number.isSafeInteger(policy.maxBlocksPerMeeting) ||
-    policy.maxBlocksPerMeeting < 1 ||
-    policy.maxBlocksPerMeeting > 500 ||
-    !Number.isSafeInteger(policy.maxTurnsPerBlock) ||
-    policy.maxTurnsPerBlock < 1 ||
-    policy.maxTurnsPerBlock > 64 ||
-    !Number.isSafeInteger(maximumEmbeddingTokens) ||
-    maximumEmbeddingTokens < 16 ||
-    maximumEmbeddingTokens > 512 ||
-    !Number.isSafeInteger(turnOverlap) ||
-    turnOverlap < 0 ||
-    turnOverlap > 8 ||
-    turnOverlap >= policy.maxTurnsPerBlock
-  ) {
-    throw new HistoricalIndexPlanError(
-      "INVALID_POLICY",
-      "historical evidence block policy is outside its qualified bounds",
-    );
-  }
-  return Object.freeze({
-    ...policy,
-    maximumEmbeddingTokens,
-    turnOverlap,
-    version: "meeting-knowledge.block-policy.v1",
-  });
-}
-
 function opaque(prefix: string, value: string): string {
   return `${prefix}.${value}`;
-}
-
-function canonicalTurn(
-  ids: HistoricalOpaqueIdPort,
-  binding: HistoricalReleaseBindingV1,
-  projection: HistoricalTurnProjection,
-): string {
-  const { turn } = projection;
-  const turnRef = opaque(
-    "turn1",
-    ids.keyedId("historical-turn", [
-      binding.scopeId,
-      binding.roomId,
-      binding.meetingId,
-      binding.transcriptId,
-      String(binding.transcriptVersion),
-      turn.turnId,
-    ]),
-  );
-  const speakerRef = opaque(
-    "actor1",
-    ids.keyedId("historical-actor", [
-      binding.scopeId,
-      binding.roomId,
-      binding.meetingId,
-      turn.speakerId,
-    ]),
-  );
-  return [
-    `turn=${turnRef}`,
-    `speaker=${speakerRef}`,
-    `start_ms=${turn.startMs}`,
-    `end_ms=${turn.endMs}`,
-    `source_code_points=${projection.sourceStartCodePoint}:${projection.sourceEndCodePoint}`,
-    "text:",
-    projection.text,
-  ].join("\n");
 }
 
 export function buildHistoricalIndexPlan(
@@ -226,7 +155,7 @@ export function buildHistoricalIndexPlan(
     DEFAULT_HISTORICAL_EVIDENCE_BLOCK_POLICY,
   tokenizer?: HistoricalEmbeddingTokenizerPort,
 ): HistoricalIndexPlanV1 {
-  const candidate = assertPolicy(candidatePolicy);
+  const candidate = resolveHistoricalEvidenceBlockPolicy(candidatePolicy);
   const policy = Object.freeze({
     ...candidate,
     maximumEmbeddingTokens: Math.min(
@@ -234,117 +163,158 @@ export function buildHistoricalIndexPlan(
       tokenizer?.profile.maxInputTokens ?? candidate.maximumEmbeddingTokens,
     ),
   });
-  const { binding } = meeting;
   let partitionResult: ReturnType<typeof partitionHistoricalEmbeddingWindows>;
   try {
     partitionResult = partitionHistoricalEmbeddingWindows(meeting, policy, tokenizer);
   } catch (error) {
+    throw blockLimitError(error);
+  }
+  const tokenProfile = historicalEmbeddingTokenProfile(tokenizer);
+  return assembleHistoricalIndexPlan({
+    ids,
+    meeting,
+    policy: Object.freeze({
+      ...policy,
+      turnOverlap: partitionResult.effectiveTurnOverlap,
+    }),
+    tokenCounts: partitionResult.windows.map((window) =>
+      tokenizer?.countTokens(historicalEmbeddingText(window)) ??
+        estimateHistoricalEmbeddingTokens(historicalEmbeddingText(window))
+    ),
+    tokenProfile,
+    windows: partitionResult.windows,
+  });
+}
+
+export function buildHistoricalIndexPlanFromPreparedWindows(
+  meeting: AcceptedFinalMeetingV1,
+  ids: HistoricalOpaqueIdPort,
+  candidatePolicy: HistoricalEvidenceBlockPolicyV1,
+  prepared: HistoricalIndexPlannerResultV1,
+  receiptDigest: HistoricalReceiptDigestPort,
+): HistoricalIndexPlanV1 {
+  const candidate = resolveHistoricalEvidenceBlockPolicy(candidatePolicy);
+  validatePreparedEnvelope(meeting, candidatePolicy, prepared, receiptDigest);
+  const policy = Object.freeze({
+    ...candidate,
+    maximumEmbeddingTokens: Math.min(
+      candidate.maximumEmbeddingTokens,
+      prepared.planningProfile.maximumInputTokens,
+    ),
+  });
+  const projections = validatePreparedWindows(meeting, prepared, policy);
+  const plan = assembleHistoricalIndexPlan({
+    ids,
+    meeting,
+    policy: Object.freeze({
+      ...policy,
+      turnOverlap: prepared.effectiveTurnOverlap,
+    }),
+    tokenCounts: prepared.windows.map(({ tokenCount }) => tokenCount),
+    tokenProfile: prepared.planningProfile.identity,
+    windows: projections,
+  });
+  if (!historicalPlanProjectionMatches(meeting, plan, (turnId) =>
+    opaque("turn1", ids.keyedId("historical-turn", [
+      meeting.binding.scopeId, meeting.binding.roomId, meeting.binding.meetingId,
+      meeting.binding.transcriptId, String(meeting.binding.transcriptVersion), turnId,
+    ]))
+  )) {
     throw new HistoricalIndexPlanError(
-      "BLOCK_LIMIT_EXCEEDED",
-      error instanceof Error ? error.message : "historical projection failed",
+      "STALE_PLAN",
+      "historical window result does not cover canonical evidence",
     );
   }
-  const effectivePolicy = Object.freeze({
-    ...policy,
-    turnOverlap: partitionResult.effectiveTurnOverlap,
-  });
-  const topology = buildHistoricalTopology(binding, ids, effectivePolicy, tokenizer);
+  return plan;
+}
+
+function blockLimitError(error: unknown): HistoricalIndexPlanError {
+  return new HistoricalIndexPlanError(
+    "BLOCK_LIMIT_EXCEEDED",
+    error instanceof Error ? error.message : "historical projection failed",
+  );
+}
+
+interface HistoricalIndexAssembly {
+  readonly ids: HistoricalOpaqueIdPort;
+  readonly meeting: AcceptedFinalMeetingV1;
+  readonly policy: ResolvedHistoricalEvidenceBlockPolicyV1;
+  readonly tokenCounts: readonly number[];
+  readonly tokenProfile: string;
+  readonly windows: readonly (readonly HistoricalTurnProjection[])[];
+}
+
+function assembleHistoricalIndexPlan(input: HistoricalIndexAssembly): HistoricalIndexPlanV1 {
+  const { ids, meeting, policy, tokenCounts, tokenProfile, windows } = input;
+  const { binding } = meeting;
+  const topology = buildHistoricalTopologyForProfile(binding, ids, policy, tokenProfile);
   const { indexGeneration, releaseRef } = topology;
-  const documents: HistoricalIndexDocumentV1[] = partitionResult.windows.map(
+  const documents: HistoricalIndexDocumentV1[] = windows.map(
     (projections, ordinal) => {
-    const remoteText = projections
-      .map((projection) => canonicalTurn(ids, binding, projection))
-      .join("\n\n");
-    const cleanEmbeddingText = historicalEmbeddingText(projections);
-    const turnSources = buildHistoricalTurnSources(projections, (turnId) => opaque(
-      "turn1",
-      ids.keyedId("historical-turn", [
-        binding.scopeId,
-        binding.roomId,
-        binding.meetingId,
-        binding.transcriptId,
-        String(binding.transcriptVersion),
-        turnId,
-      ]),
-    ));
-    const contentHash = opaque(
-      "mkcontent1",
-      ids.keyedId("historical-block-content", [
-        cleanEmbeddingText,
-        remoteText,
-        canonicalHistoricalTurnSources(turnSources),
-      ]),
-    );
-    const candidateLocator = opaque(
-      "mkcandidate1",
-      ids.keyedId("historical-candidate", [
-        indexGeneration,
-        String(ordinal),
+      const remoteText = projections.map((projection) =>
+        canonicalHistoricalTurn(ids, binding, projection)
+      ).join("\n\n");
+      const cleanEmbeddingText = historicalEmbeddingText(projections);
+      const turnSources = buildHistoricalTurnSources(projections, (turnId) => opaque(
+        "turn1", ids.keyedId("historical-turn", [
+          binding.scopeId, binding.roomId, binding.meetingId, binding.transcriptId,
+          String(binding.transcriptVersion), turnId,
+        ]),
+      ));
+      const contentHash = opaque("mkcontent1", ids.keyedId(
+        "historical-block-content",
+        [cleanEmbeddingText, remoteText, canonicalHistoricalTurnSources(turnSources)],
+      ));
+      const candidateLocator = opaque("mkcandidate1", ids.keyedId(
+        "historical-candidate", [indexGeneration, String(ordinal), contentHash],
+      ));
+      const documentExternalId = opaque(
+        "mkdocument1", ids.keyedId("historical-document", [candidateLocator]),
+      );
+      const mutationId = opaque(
+        "mkmutation1", ids.keyedId("historical-index-mutation", [documentExternalId]),
+      );
+      const manifest: HistoricalBlockManifestV1 = Object.freeze({
+        candidateLocator,
         contentHash,
-      ]),
-    );
-    const documentExternalId = opaque(
-      "mkdocument1",
-      ids.keyedId("historical-document", [candidateLocator]),
-    );
-    const mutationId = opaque(
-      "mkmutation1",
-      ids.keyedId("historical-index-mutation", [documentExternalId]),
-    );
-    const manifest: HistoricalBlockManifestV1 = Object.freeze({
-      candidateLocator,
-      contentHash,
-      documentExternalId,
-      embeddingTokenEstimate: tokenizer?.countTokens(cleanEmbeddingText) ??
-        estimateHistoricalEmbeddingTokens(cleanEmbeddingText),
-      embeddingTokenLimit: policy.maximumEmbeddingTokens,
-      embeddingTokenProfile: historicalEmbeddingTokenProfile(tokenizer),
-      endMs: projections.at(-1)?.turn.endMs ?? 0,
-      indexGeneration,
-      ordinal,
-      startMs: projections[0]?.turn.startMs ?? 0,
-      turnIds: Object.freeze([
-        ...new Set(projections.map(({ turn }) => turn.turnId)),
-      ]),
-      turnSources,
-    });
-    return Object.freeze({
-      embeddingText: cleanEmbeddingText,
-      manifest,
-      mutationId,
-      remoteText,
-      title: opaque(
-        "mkevidence1",
-        ids.keyedId("historical-document-title", [candidateLocator]),
-      ),
-    });
+        documentExternalId,
+        embeddingTokenEstimate: tokenCounts[ordinal] ?? 0,
+        embeddingTokenLimit: policy.maximumEmbeddingTokens,
+        embeddingTokenProfile: tokenProfile,
+        endMs: projections.at(-1)?.turn.endMs ?? 0,
+        indexGeneration,
+        ordinal,
+        startMs: projections[0]?.turn.startMs ?? 0,
+        turnIds: Object.freeze([...new Set(projections.map(({ turn }) => turn.turnId))]),
+        turnSources,
+      });
+      return Object.freeze({
+        embeddingText: cleanEmbeddingText,
+        manifest,
+        mutationId,
+        remoteText,
+        title: opaque(
+          "mkevidence1", ids.keyedId("historical-document-title", [candidateLocator]),
+        ),
+      });
     },
   );
-  const planDigest = opaque(
-    "mkplan1",
-    ids.keyedId("historical-index-plan", [
-      indexGeneration,
-      `turnOverlap=${partitionResult.effectiveTurnOverlap}`,
-      ...documents.map(({ manifest }) =>
-        [
-          manifest.candidateLocator,
-          manifest.contentHash,
-          manifest.turnIds.join(","),
-        ].join("|")
-      ),
-    ]),
-  );
+  const planDigest = opaque("mkplan1", ids.keyedId("historical-index-plan", [
+    indexGeneration,
+    `turnOverlap=${policy.turnOverlap}`,
+    ...documents.map(({ manifest }) => [
+      manifest.candidateLocator, manifest.contentHash, manifest.turnIds.join(","),
+    ].join("|")),
+  ]));
   return Object.freeze({
     binding,
     deleteMutationId: opaque(
-      "mkmutation1",
-      ids.keyedId("historical-delete-mutation", [releaseRef]),
+      "mkmutation1", ids.keyedId("historical-delete-mutation", [releaseRef]),
     ),
     documents: Object.freeze(documents),
-    effectiveTurnOverlap: partitionResult.effectiveTurnOverlap,
+    effectiveTurnOverlap: policy.turnOverlap,
     indexMutationId: opaque(
-      "mkmutation1",
-      ids.keyedId("historical-release-index-mutation", [releaseRef]),
+      "mkmutation1", ids.keyedId("historical-release-index-mutation", [releaseRef]),
     ),
     planDigest,
     schemaVersion: 1,

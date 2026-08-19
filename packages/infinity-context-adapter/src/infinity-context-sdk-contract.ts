@@ -1,6 +1,4 @@
 import {
-  historicalEmbeddingTokenProfile,
-  type HistoricalEmbeddingTokenizerPort,
   type HistoricalCandidateLocatorV1,
   type HistoricalDeleteRequestV1,
   type HistoricalIndexPlanV1,
@@ -175,7 +173,7 @@ function isBoundedInteger(value: number, minimum: number, maximum: number): bool
 
 export function validIndexPlan(
   request: HistoricalIndexPlanInputV1,
-  tokenizer: HistoricalEmbeddingTokenizerPort,
+  expectedTokenProfile: string,
 ): boolean {
   const candidateLocatorSet = new Set(
     request.documents.map(({ manifest }) => manifest.candidateLocator),
@@ -196,10 +194,7 @@ export function validIndexPlan(
     request.documents.every((document) =>
       boundedString(document.manifest.candidateLocator, 200) &&
       boundedString(document.manifest.documentExternalId, 200) &&
-      document.manifest.embeddingTokenProfile ===
-        historicalEmbeddingTokenProfile(tokenizer) &&
-      document.manifest.embeddingTokenEstimate ===
-        tokenizer.countTokens(document.embeddingText) &&
+      document.manifest.embeddingTokenProfile === expectedTokenProfile &&
       isBoundedInteger(document.manifest.embeddingTokenEstimate, 1,
         document.manifest.embeddingTokenLimit) &&
       isBoundedInteger(document.manifest.embeddingTokenLimit, 16,

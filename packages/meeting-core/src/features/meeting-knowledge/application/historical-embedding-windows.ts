@@ -22,6 +22,10 @@ export interface HistoricalTurnProjection {
   readonly turn: AcceptedFinalMeetingV1["humanTurns"][number];
 }
 
+export type HistoricalWindowPlanningAction =
+  | Readonly<{ kind: "checkpoint" }>
+  | Readonly<{ kind: "count_tokens"; text: string }>;
+
 export interface HistoricalEmbeddingPartitions {
   readonly effectiveTurnOverlap: number;
   readonly windows: readonly (readonly HistoricalTurnProjection[])[];
@@ -180,17 +184,41 @@ export function partitionHistoricalEmbeddingWindows(
 ): HistoricalEmbeddingPartitions {
   const countTokens = tokenizer?.countTokens.bind(tokenizer) ??
     estimateHistoricalEmbeddingTokens;
-  const projections = meeting.humanTurns.flatMap((turn) =>
-    splitTurn(turn, policy.maximumEmbeddingTokens, countTokens)
-  );
+  const planner = planHistoricalEmbeddingWindows(meeting, policy);
+  let step = planner.next();
+  while (!step.done) {
+    step = planner.next(
+      step.value.kind === "count_tokens"
+        ? countTokens(step.value.text)
+        : undefined,
+    );
+  }
+  return step.value;
+}
+
+/**
+ * Provider-neutral deterministic planner. It yields text requiring an exact token
+ * count and accepts that count on the following next call.
+ */
+export function* planHistoricalEmbeddingWindows(
+  meeting: AcceptedFinalMeetingV1,
+  policy: HistoricalEmbeddingWindowPolicy,
+): Generator<HistoricalWindowPlanningAction, HistoricalEmbeddingPartitions, number | undefined> {
+  const projections: HistoricalTurnProjection[] = [];
+  for (const turn of meeting.humanTurns) {
+    projections.push(...yield* splitTurn(
+      turn,
+      policy.maximumEmbeddingTokens,
+      policy.maxBlockUtf8Bytes,
+    ));
+  }
   const overlapCandidates = [...new Set([policy.turnOverlap, 1, 0])]
     .filter((overlap) => overlap <= policy.turnOverlap);
   for (const effectiveTurnOverlap of overlapCandidates) {
-    const windows = partitionProjections(
+    const windows = yield* partitionProjections(
       projections,
       policy,
       effectiveTurnOverlap,
-      countTokens,
     );
     if (windows.length <= policy.maxBlocksPerMeeting) {
       return Object.freeze({ effectiveTurnOverlap, windows });
@@ -201,12 +229,11 @@ export function partitionHistoricalEmbeddingWindows(
   );
 }
 
-function partitionProjections(
+function* partitionProjections(
   projections: readonly HistoricalTurnProjection[],
   policy: HistoricalEmbeddingWindowPolicy,
   effectiveTurnOverlap: number,
-  countTokens: (text: string) => number,
-): readonly (readonly HistoricalTurnProjection[])[] {
+): Generator<HistoricalWindowPlanningAction, readonly (readonly HistoricalTurnProjection[])[], number | undefined> {
   const partitions: Array<readonly HistoricalTurnProjection[]> = [];
   const maximumWindowSize = Math.min(
     policy.maxTurnsPerBlock,
@@ -218,18 +245,18 @@ function partitionProjections(
     for (let index = start; index < projections.length; index += 1) {
       const candidate = [...current, projections[index]!];
       const candidateText = historicalEmbeddingText(candidate);
-      if (
-        current.length > 0 &&
-        (candidate.length > maximumWindowSize ||
-          byteLength(candidateText) > policy.maxBlockUtf8Bytes ||
-          countTokens(candidateText) > policy.maximumEmbeddingTokens)
-      ) {
+      const outsideStructuralBound = candidate.length > maximumWindowSize ||
+        byteLength(candidateText) > policy.maxBlockUtf8Bytes;
+      const outsideTokenBound = outsideStructuralBound
+        ? false
+        : requireTokenCount(yield Object.freeze({
+          kind: "count_tokens",
+          text: candidateText,
+        })) > policy.maximumEmbeddingTokens;
+      if (current.length > 0 && (outsideStructuralBound || outsideTokenBound)) {
         break;
       }
-      if (
-        byteLength(candidateText) > policy.maxBlockUtf8Bytes ||
-        countTokens(candidateText) > policy.maximumEmbeddingTokens
-      ) {
+      if (outsideStructuralBound || outsideTokenBound) {
         throw new RangeError("one historical projection exceeds its qualified bounds");
       }
       current.push(projections[index]!);
@@ -243,12 +270,12 @@ function partitionProjections(
   return Object.freeze(partitions);
 }
 
-function splitTurn(
+function* splitTurn(
   turn: AcceptedFinalMeetingV1["humanTurns"][number],
   maximumTokens: number,
-  countTokens: (text: string) => number,
-): readonly HistoricalTurnProjection[] {
-  const characters = Array.from(turn.text);
+  maximumUtf8Bytes: number,
+): Generator<HistoricalWindowPlanningAction, readonly HistoricalTurnProjection[], number | undefined> {
+  const { characters, utf8PrefixBytes } = yield* readCodePoints(turn.text);
   const projections: HistoricalTurnProjection[] = [];
   let start = 0;
   while (start < characters.length) {
@@ -259,12 +286,16 @@ function splitTurn(
       break;
     }
     let low = start + 1;
-    let high = characters.length;
+    let high = byteBoundEnd(utf8PrefixBytes, start, maximumUtf8Bytes);
     let fittingEnd = start;
     while (low <= high) {
       const middle = Math.floor((low + high) / 2);
       const text = characters.slice(start, middle).join("").trimEnd();
-      if (countTokens(text) <= maximumTokens) {
+      const count = requireTokenCount(yield Object.freeze({
+        kind: "count_tokens",
+        text,
+      }));
+      if (count <= maximumTokens) {
         fittingEnd = middle;
         low = middle + 1;
       } else {
@@ -272,7 +303,9 @@ function splitTurn(
       }
     }
     if (fittingEnd === start) {
-      throw new RangeError(`authoritative turn ${turn.turnId} cannot fit the token bound`);
+      throw new RangeError(
+        "authoritative turn " + turn.turnId + " cannot fit the token bound",
+      );
     }
     if (fittingEnd < characters.length) {
       const whitespace = characters
@@ -298,6 +331,55 @@ function splitTurn(
     start = fittingEnd;
   }
   return Object.freeze(projections);
+}
+
+function* readCodePoints(
+  value: string,
+): Generator<
+  HistoricalWindowPlanningAction,
+  Readonly<{ characters: readonly string[]; utf8PrefixBytes: readonly number[] }>,
+  number | undefined
+> {
+  const characters: string[] = [];
+  const utf8PrefixBytes = [0];
+  for (const character of value) {
+    characters.push(character);
+    utf8PrefixBytes.push(utf8PrefixBytes.at(-1)! + byteLength(character));
+    if (characters.length % 1_024 === 0) {
+      yield Object.freeze({ kind: "checkpoint" });
+    }
+  }
+  return Object.freeze({
+    characters: Object.freeze(characters),
+    utf8PrefixBytes: Object.freeze(utf8PrefixBytes),
+  });
+}
+
+function byteBoundEnd(
+  utf8PrefixBytes: readonly number[],
+  start: number,
+  maximumUtf8Bytes: number,
+): number {
+  let low = start + 1;
+  let high = utf8PrefixBytes.length - 1;
+  let fitting = start;
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    if (utf8PrefixBytes[middle]! - utf8PrefixBytes[start]! <= maximumUtf8Bytes) {
+      fitting = middle;
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
+  }
+  return fitting;
+}
+
+function requireTokenCount(value: number | undefined): number {
+  if (value === undefined || !Number.isSafeInteger(value) || value < 0) {
+    throw new RangeError("exact historical token count is invalid");
+  }
+  return value;
 }
 
 function byteLength(value: string): number {

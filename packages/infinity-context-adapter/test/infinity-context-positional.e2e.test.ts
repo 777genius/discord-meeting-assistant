@@ -12,13 +12,13 @@ import {
   HistoricalSyncWorker,
   buildHistoricalIndexPlan,
   createExhaustiveCoverageGroundingPlan,
+  historicalEmbeddingTokenProfile,
   type AcceptedFinalMeetingV1,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 
 import {
   HmacHistoricalOpaqueIds,
   InfinityContextHistoricalMemoryAdapter,
-  PinnedMultilingualMiniLmTokenizer,
 } from "../src/index.js";
 import { DisposableInfinityEndpoint } from "./disposable-infinity-endpoint.js";
 import {
@@ -48,6 +48,7 @@ const twoHourBlockPolicy = {
   maxTurnsPerBlock: 64,
   version: "meeting-knowledge.block-policy.v1",
 } as const;
+const expectedTokenProfile = historicalEmbeddingTokenProfile();
 
 async function expectOverSelectionToAbstain(
   retrieval: HistoricalExhaustiveMemoryRetrieval,
@@ -187,39 +188,25 @@ async function assertFocusedRecall(
   });
 }
 
-async function createPositionalRuntime() {
-  const endpoint = new DisposableInfinityEndpoint();
-  const exactTokenizer = new PinnedMultilingualMiniLmTokenizer();
-  const ids = new HmacHistoricalOpaqueIds(new Uint8Array(32).fill(0xa5));
-  const authority = new MemoryHistoricalAuthority();
-  const store = new MemoryHistoricalStore();
-  const meeting = combinedQualificationMeeting();
-  authority.put(meeting);
-  await store.acceptRelease(meeting.binding);
-  const adapter = new InfinityContextHistoricalMemoryAdapter({
-    baseUrl: "http://disposable.infinity.invalid",
-    requestTimeoutMs: 250,
-    schemaVersion: 1,
-    tokenizer: () => exactTokenizer,
-    transport: endpoint,
-  });
-  await adapter.qualifyCapabilities();
-  return { adapter, authority, endpoint, exactTokenizer, ids, meeting, store } as const;
-}
-
 describe("Infinity Context positional retrieval qualification", () => {
   it("qualifies one combined >400-turn RU/EN corpus with bounded focused and exhaustive paths", async () => {
-    const { adapter, authority, endpoint, exactTokenizer, ids, meeting, store } =
-      await createPositionalRuntime();
+    const endpoint = new DisposableInfinityEndpoint();
+    const ids = new HmacHistoricalOpaqueIds(new Uint8Array(32).fill(0xa5));
+    const authority = new MemoryHistoricalAuthority();
+    const store = new MemoryHistoricalStore();
+    const meeting = combinedQualificationMeeting();
     expect(meeting.humanTurns).toHaveLength(QUALIFICATION_CORPUS_TURN_COUNT);
     expect(meeting.humanTurns.at(-1)?.endMs).toBe(8_420_000);
-    const worker = new HistoricalSyncWorker({
-      authority,
-      ids,
-      memory: adapter,
-      store,
-      tokenizer: () => exactTokenizer,
-    }, {
+    authority.put(meeting); await store.acceptRelease(meeting.binding);
+    const adapter = new InfinityContextHistoricalMemoryAdapter({
+      baseUrl: "http://disposable.infinity.invalid",
+      embeddingTokenProfile: () => expectedTokenProfile,
+      requestTimeoutMs: 250,
+      schemaVersion: 1,
+      transport: endpoint,
+    });
+    await adapter.qualifyCapabilities();
+    const worker = new HistoricalSyncWorker({ authority, ids, memory: adapter, store }, {
       blockPolicy: twoHourBlockPolicy,
       leaseDurationMs: 30_000,
       maximumIndexAttempts: 3,
@@ -230,15 +217,9 @@ describe("Infinity Context positional retrieval qualification", () => {
       operation: "index",
       status: "applied",
     });
-    const localPlan = buildHistoricalIndexPlan(
-      meeting,
-      ids,
-      twoHourBlockPolicy,
-      exactTokenizer,
-    );
+    const localPlan = buildHistoricalIndexPlan(meeting, ids, twoHourBlockPolicy);
     expect(localPlan.documents.length).toBeGreaterThan(5);
     expect(localPlan.documents.length).toBeLessThanOrEqual(500);
-
     const officialClient = new InfinityContextClient({
       baseUrl: "http://disposable.infinity.invalid",
       retryPolicy: { maxAttempts: 1 },
@@ -269,7 +250,6 @@ describe("Infinity Context positional retrieval qualification", () => {
       ids,
       memory: adapter,
       store,
-      tokenizer: () => exactTokenizer,
     }, {
       blockPolicy: twoHourBlockPolicy,
       candidateLimitPerQuery: 40,

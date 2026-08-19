@@ -32,3 +32,9 @@ export {
   PinnedMultilingualMiniLmTokenizerError,
   type PinnedMultilingualMiniLmArtifacts,
 } from "./pinned-multilingual-minilm-tokenizer.js";
+
+export {
+  CooperativeHistoricalIndexPlanner,
+  Sha256HistoricalReceiptDigest,
+  type CooperativeHistoricalIndexPlannerConfigV1,
+} from "./cooperative-historical-index-planner.js";

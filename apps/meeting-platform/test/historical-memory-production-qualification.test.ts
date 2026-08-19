@@ -72,7 +72,18 @@ describe("Infinity production semantic qualification composition", () => {
       connectionString: "postgresql://synthetic.invalid/never-connected",
     });
     const infinity = await startDisposableInfinityHttpService();
-    const runtime = requiredHistoricalRuntime(pool, infinity, true, true, "test");
+    infinity.endpoint.setRuntimeQualificationReceipt({
+      embeddingProfileDigestSha256:
+        retainedProductionEmbeddingProfileAttestation.embeddingProfileDigestSha256,
+      embeddingProfileId:
+        retainedProductionEmbeddingProfileAttestation.embeddingProfile,
+      serviceRevision:
+        INFINITY_CONTEXT_SDK_PROVENANCE.retainedProductionSemanticServiceRevision,
+    });
+    const runtime = requiredHistoricalRuntime(
+      pool, infinity, true, true, "test",
+      retainedProductionEmbeddingProfileAttestation,
+    );
     const deletionOnly = requiredHistoricalRuntime(pool, infinity, false, false, "test");
     try {
       // Retrieval/exhaustive adapters can be constructed before startup; only

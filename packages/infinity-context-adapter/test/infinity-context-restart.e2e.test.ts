@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   HistoricalSyncWorker,
   buildHistoricalIndexPlan,
+  historicalEmbeddingTokenProfile,
   type HistoricalMemoryPort,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 
@@ -31,6 +32,7 @@ const exactTokenizer = new PinnedMultilingualMiniLmTokenizer();
 function adapter(endpoint: DisposableInfinityEndpoint) {
   return new InfinityContextHistoricalMemoryAdapter({
     baseUrl: "http://disposable.infinity.invalid",
+    embeddingTokenProfile: () => historicalEmbeddingTokenProfile(exactTokenizer),
     operationTimeoutMs: 30_000,
     requestTimeoutMs: 1_000,
     schemaVersion: 1,

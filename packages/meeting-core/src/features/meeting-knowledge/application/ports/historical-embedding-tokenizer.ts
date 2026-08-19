@@ -15,12 +15,17 @@ export interface HistoricalEmbeddingTokenizerPort {
 }
 
 export function historicalEmbeddingTokenProfile(
-  tokenizer: HistoricalEmbeddingTokenizerPort | undefined,
+  tokenizer?: HistoricalEmbeddingTokenizerPort,
 ): string {
   if (tokenizer === undefined) {
     return "meeting-knowledge.wordpiece-conservative.v1";
   }
-  const profile = tokenizer.profile;
+  return historicalEmbeddingTokenProfileFromProfile(tokenizer.profile);
+}
+
+export function historicalEmbeddingTokenProfileFromProfile(
+  profile: HistoricalEmbeddingTokenizerProfileV1,
+): string {
   return [
     "meeting-knowledge.multilingual-minilm-exact.v1",
     profile.id,

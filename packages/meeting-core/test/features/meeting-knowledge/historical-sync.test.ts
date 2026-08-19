@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  HistoricalIndexPlannerUnavailableError,
   HistoricalSyncWorker,
   RequestHistoricalMeetingDeletion,
   admitAcceptedFinalMeeting,
@@ -182,6 +183,34 @@ function lease(
     remoteDocumentIds: {},
   };
 }
+
+describe("historical exact planning", () => {
+  it("retries a transiently unavailable exact planner without dead-lettering", async () => {
+    const accepted = meeting();
+    const store = new QueueStore([lease(accepted, "index", 1)]);
+    const indexFinalMeeting = vi.fn();
+    const worker = new HistoricalSyncWorker({
+      authority: { loadAcceptedFinalMeeting: async () => accepted },
+      ids: new TestIds(),
+      memory: { deleteMeeting: vi.fn(), indexFinalMeeting, searchRoom: vi.fn() },
+      planner: {
+        prepareWindows: async () => {
+          throw new HistoricalIndexPlannerUnavailableError("planner busy");
+        },
+      },
+      store,
+    });
+
+    await expect(worker.executeOnce({ indexingEnabled: true })).resolves.toMatchObject({
+      status: "retry_scheduled",
+    });
+    expect(store.retries).toEqual(["historical_index_planner.unavailable"]);
+    expect(store.deadLetters).toEqual([]);
+    expect(store.plans).toEqual([]);
+    expect(indexFinalMeeting).not.toHaveBeenCalled();
+  });
+
+});
 
 describe("historical projection sync worker", () => {
   it("persists authorized source withdrawal independently of serving flags", async () => {
