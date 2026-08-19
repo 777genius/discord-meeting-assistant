@@ -106,17 +106,12 @@ export function sliceReferencedTurn(
   turn: CanonicalEvidenceTurn,
   reference: FocusedMemoryReference,
 ): CanonicalEvidenceTurn | null {
-  const hasStart = reference.sourceStartCodePoint !== undefined;
-  const hasEnd = reference.sourceEndCodePoint !== undefined;
-  if (hasStart !== hasEnd) {
-    return null;
-  }
-  if (!hasStart) {
+  const start: unknown = reference.sourceStartCodePoint;
+  const end: unknown = reference.sourceEndCodePoint;
+  if (start === undefined && end === undefined) {
     return turn;
   }
-  const start = reference.sourceStartCodePoint;
-  const end = reference.sourceEndCodePoint;
-  if (start === undefined || end === undefined) {
+  if (typeof start !== "number" || typeof end !== "number") {
     return null;
   }
   const codePoints = Array.from(turn.text);
