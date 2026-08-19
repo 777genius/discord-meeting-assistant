@@ -20,7 +20,7 @@ export const requiredRelations = [
   "meeting_core.historical_memory_sync",
   "meeting_core.historical_coverage_checkpoints",
   ...meetingKnowledgeRequiredRelations,
-  "guild_configuration.guild_installations",
+  "meeting_routing.source_configurations",
 ] as const;
 
 export const requiredIndexes = [
@@ -109,11 +109,11 @@ export const requiredColumns = [
   "meeting_core.historical_coverage_checkpoints.attempt_count",
   "meeting_core.historical_coverage_checkpoints.lease_fence",
   ...meetingKnowledgeRequiredColumns,
-  "guild_configuration.guild_installations.guild_id",
-  "guild_configuration.guild_installations.revision",
-  "guild_configuration.guild_installations.snapshot",
-  "guild_configuration.guild_installations.created_at",
-  "guild_configuration.guild_installations.updated_at",
+  "meeting_routing.source_configurations.source_id",
+  "meeting_routing.source_configurations.revision",
+  "meeting_routing.source_configurations.snapshot",
+  "meeting_routing.source_configurations.created_at",
+  "meeting_routing.source_configurations.updated_at",
 ] as const;
 
 export const requiredCheckConstraints = [
@@ -166,9 +166,10 @@ export const requiredCheckConstraints = [
   ["meeting_core", "historical_coverage_checkpoints", "historical_coverage_state_is_supported"],
   ["meeting_core", "historical_coverage_checkpoints", "historical_coverage_completion_is_consistent"],
   ...meetingKnowledgeRequiredCheckConstraints,
-  ["guild_configuration", "guild_installations", "guild_installations_snapshot_is_object"],
-  ["guild_configuration", "guild_installations", "guild_installations_snapshot_identity_matches"],
-  ["guild_configuration", "guild_installations", "guild_installations_snapshot_revision_matches"],
+  ["meeting_routing", "source_configurations", "source_configurations_snapshot_is_object"],
+  ["meeting_routing", "source_configurations", "source_configurations_snapshot_identity_matches"],
+  ["meeting_routing", "source_configurations", "source_configurations_snapshot_revision_matches"],
+  ["meeting_routing", "source_configurations", "source_configurations_snapshot_route_is_valid"],
 ] as const;
 
 export const requiredStructuralConstraints = [
@@ -220,5 +221,5 @@ export const requiredStructuralConstraints = [
   ["meeting_core", "historical_memory_sync", "historical_memory_sync_transcript_policy_unique", "u"],
   ["meeting_core", "historical_coverage_checkpoints", "historical_coverage_checkpoints_pkey", "p"],
   ...meetingKnowledgeRequiredStructuralConstraints,
-  ["guild_configuration", "guild_installations", "guild_installations_pkey", "p"],
+  ["meeting_routing", "source_configurations", "source_configurations_pkey", "p"],
 ] as const;

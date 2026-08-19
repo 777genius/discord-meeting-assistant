@@ -1,6 +1,6 @@
 import { S3Client } from "@aws-sdk/client-s3";
 import type { ConnectionOptions } from "bullmq";
-import { ResolveGuildMeetingTarget } from "@discord-meeting/guild-configuration-core";
+import { ResolveMeetingPublicationTarget } from "@discord-meeting/meeting-routing-core";
 import {
   type FinalTranscriptionPort,
 } from "@discord-meeting/meeting-core/transcription";
@@ -10,7 +10,7 @@ import {
 } from "@discord-meeting/object-storage-adapter";
 import type { Logger, PrometheusMetrics } from "@discord-meeting/observability-adapter";
 import {
-  PostgresGuildConfigurationRepository,
+  PostgresMeetingSourceConfigurationRepository,
   PostgresLiveMeetingRepository,
   PostgresMeetingRepository,
   PostgresSummaryPublicationEffectLedger,
@@ -44,7 +44,7 @@ const postgresPoolConnectionTimeoutMillis = 5_000;
 
 export interface PlatformCoreResources {
   readonly connection: ConnectionOptions;
-  readonly guildConfigurations: PostgresGuildConfigurationRepository;
+  readonly sourceConfigurations: PostgresMeetingSourceConfigurationRepository;
   readonly liveMeetings: PostgresLiveMeetingRepository;
   readonly meetings: PostgresMeetingRepository;
   readonly pool: Pool;
@@ -92,9 +92,9 @@ export function createPlatformCoreResources(input: {
   input.cleanup.defer("recording ingress spool", () => recordings.close());
   const meetings = new PostgresMeetingRepository(pool);
   const transcriptionExecutionBindings = new PostgresTranscriptionExecutionBindingStore(pool);
-  const guildConfigurations = new PostgresGuildConfigurationRepository(pool);
+  const sourceConfigurations = new PostgresMeetingSourceConfigurationRepository(pool);
   const publicationTargets = new DiscordPublicationTargetResolver(
-    new ResolveGuildMeetingTarget(guildConfigurations),
+    new ResolveMeetingPublicationTarget(sourceConfigurations),
     input.config.discordLegacyRoute,
   );
   const rawRuntimeTransport = new GrpcSubscriptionRuntimeTransport({
@@ -111,7 +111,7 @@ export function createPlatformCoreResources(input: {
   );
   return {
     connection: redisConnection(input.config.secrets.redisUrl),
-    guildConfigurations,
+    sourceConfigurations,
     liveMeetings: new PostgresLiveMeetingRepository(pool),
     meetings,
     pool,

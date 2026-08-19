@@ -204,28 +204,38 @@
     },
     {
       "id": "ADR-0042",
-      "path": "docs/decisions/0042-bounded-evidence-selector.md",
-      "immutableDigest": "sha256:aea468257c48adea526531d60caa73f50e17d88011b5dd630da226bbc256c72f"
+      "path": "docs/decisions/0042-provider-neutral-meeting-source-routing.md",
+      "immutableDigest": "sha256:a05f024e422459dd8ad9ea3ef79e67c2d9463afc968060cb8226a2f66b1e159e"
     },
     {
       "id": "ADR-0043",
-      "path": "docs/decisions/0043-source-bound-infinity-index-semantics.md",
-      "immutableDigest": "sha256:5ebf72862e2ee69d1b3cb16a0f1de0084b6a9419e4f7cf268282648703d1ec57"
+      "path": "docs/decisions/0043-attach-authoritative-transcript-to-final-publication.md",
+      "immutableDigest": "sha256:2323451925963e9d1c8a7c458d0d65df5ea32523b79ad29d07427428758102aa"
     },
     {
       "id": "ADR-0044",
-      "path": "docs/decisions/0044-scoped-infinity-deletion-reconciliation.md",
-      "immutableDigest": "sha256:739cef236031a4e7b41cf0a6e7239a440303b3eeb4c14f3867bfcac59c7a1c2a"
+      "path": "docs/decisions/0044-bounded-evidence-selector.md",
+      "immutableDigest": "sha256:98deafc2f306aebe861da2c6deae6ec07af110767ce98697d4bc57118813f18b"
     },
     {
       "id": "ADR-0045",
-      "path": "docs/decisions/0045-active-only-scoped-document-enumeration.md",
-      "immutableDigest": "sha256:05e4d589f0d5b5fbc87a3d3f376d0ea988eb5f4bd295d1462714e5d18ff76933"
+      "path": "docs/decisions/0045-source-bound-infinity-index-semantics.md",
+      "immutableDigest": "sha256:045d5a01910f7ba49621e35c835a520cdf8d6229c4b6ba0bbfb4e62ff023cb59"
     },
     {
       "id": "ADR-0046",
-      "path": "docs/decisions/0046-exact-head-infinity-deletion-qualification.md",
-      "immutableDigest": "sha256:58ec4cdedaea7684e4e0fa2e40d317e9788b0e722af6658d28e36e8e1e8c81a4"
+      "path": "docs/decisions/0046-scoped-infinity-deletion-reconciliation.md",
+      "immutableDigest": "sha256:cd2ff445e538711e1b449cb860262560e8251816be4bc67574ba31a835c59822"
+    },
+    {
+      "id": "ADR-0047",
+      "path": "docs/decisions/0047-active-only-scoped-document-enumeration.md",
+      "immutableDigest": "sha256:4e5a77e3d139c3582be08a4438181d50d9788d2ad8a40b6c942def0594d1d346"
+    },
+    {
+      "id": "ADR-0048",
+      "path": "docs/decisions/0048-exact-head-infinity-deletion-qualification.md",
+      "immutableDigest": "sha256:87d3934bea1fd34f31afedb698b53691fb176ddde2f808b32c0c6687b877e0f5"
     }
   ]
 }

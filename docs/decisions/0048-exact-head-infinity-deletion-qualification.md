@@ -1,21 +1,21 @@
 ---
-id: ADR-0046
+id: ADR-0048
 status: accepted
 supersedes: []
 superseded_by: []
 ---
 
-# ADR-0046: Exact-head Infinity deletion qualification
+# ADR-0048: Exact-head Infinity deletion qualification
 
 ## Status
 
-Accepted on 2026-08-19. This decision extends ADR-0045. It reaffirms that
+Accepted on 2026-08-19. This decision extends ADR-0047. It reaffirms that
 decision's active-only exact-scope contract and closes the evidence gap between
 its qualified revision and the current service revision consumed by this repository.
 
 ## Context
 
-ADR-0045 pinned revision
+ADR-0047 pinned revision
 `15809619e61ae76f45d04176d1b681a78bf41de3`. The retained package was later
 repinned through `698537f91162b21070b2f43445650a85e8d90737` to
 `249245a98bdae6d357c586aa078374c2a9da728c` for CI lifecycle fixes. Runtime

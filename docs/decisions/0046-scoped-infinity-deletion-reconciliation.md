@@ -1,15 +1,15 @@
 ---
-id: ADR-0044
+id: ADR-0046
 status: accepted
 supersedes: []
 superseded_by: []
 ---
 
-# ADR-0044: Scoped Infinity deletion reconciliation
+# ADR-0046: Scoped Infinity deletion reconciliation
 
 ## Status
 
-Accepted on 2026-08-19. This decision narrows ADR-0031 and ADR-0043 without
+Accepted on 2026-08-19. This decision narrows ADR-0031 and ADR-0045 without
 changing their local-authority, scope-isolation, or fail-closed rules.
 
 ## Context

@@ -27,7 +27,8 @@ Craig Voice Gateway
 The server also consumes Craig's best-effort Opus packet tee for a derived live
 projection. The browser is not part of this path: audio, Voicetext credentials,
 and subscription-runtime authentication remain server-side. Discord receives
-only rendered summary and caption embeds.
+rendered summary and live-caption embeds; the final transcript is attached as
+a Markdown file instead of being repeated in the final message.
 
 Craig is the first recording-source adapter, not application vocabulary. The
 application identifies a source by opaque scope and room IDs and accepts a
@@ -71,9 +72,9 @@ deployments:
 - Recording Playback owns possession-based access to the authoritative private
   speaker tracks. Its public page presents one synchronized player, while
   byte-range delivery and access tokens remain outside Meeting Core.
-- Guild Installation & Configuration owns the administrator-approved mapping
-  from one Discord guild and voice channel to its results channel. Discord
-  commands and PostgreSQL remain adapters around this context.
+- Meeting Source Routing owns the administrator-approved mapping from one
+  opaque meeting source and room to its publication target. Discord commands
+  and PostgreSQL remain adapters around this context.
 - Meeting Knowledge owns provider-neutral knowledge admission identity and, in
   its historical-memory slice, deterministic final-human evidence blocks,
   durable derived-index intent, same-room local reauthorization, focused
@@ -191,6 +192,6 @@ secrets, clocks, and provider canary before any external child can start.
 - Unknown external outcomes are reconciled rather than retried with a new ID.
 - A later stage never destroys an earlier authoritative artifact.
 - Final transcript replaces live evidence only through explicit versioning and
-  becomes the timeline retained beside the final Discord summary.
+  is attached in full beside the final Discord summary.
 - Published summaries contain no decision or action item without valid evidence
   turn references.

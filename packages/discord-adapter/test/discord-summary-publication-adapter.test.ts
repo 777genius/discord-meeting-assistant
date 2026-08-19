@@ -152,14 +152,13 @@ describe("DiscordSummaryPublicationAdapter transcript projection", () => {
     });
 
     const attachment = projector.inputs[0]?.transcriptAttachment?.content ?? "";
-    expect(projector.inputs[0]?.liveCaptionsMarkdown).toContain("Релиз в пятницу.");
-    expect(projector.inputs[0]?.liveCaptionsMarkdown).toContain("Подготовлю дашборд.");
+    expect(projector.inputs[0]?.liveCaptionsMarkdown).toBeUndefined();
     expect(attachment).toContain("## `00:00-00:01` · speaker-a");
     expect(attachment).toContain("## `00:00-00:02` · speaker-b");
     expect(attachment).toContain("Подготовлю дашборд");
   });
 
-  it("falls back to raw turns in the final preview when readable segments are empty", async () => {
+  it("falls back to raw turns in the final attachment when readable segments are empty", async () => {
     const projector = new FakeProjector();
     const adapter = new DiscordSummaryPublicationAdapter(projector);
 
@@ -168,8 +167,10 @@ describe("DiscordSummaryPublicationAdapter transcript projection", () => {
       transcript: { ...request.transcript, readableSegments: [] },
     });
 
-    expect(projector.inputs[0]?.liveCaptionsMarkdown).toContain("Релиз в пятницу");
-    expect(projector.inputs[0]?.liveCaptionsMarkdown).toContain("Подготовлю дашборд");
+    const attachment = projector.inputs[0]?.transcriptAttachment?.content ?? "";
+    expect(projector.inputs[0]?.liveCaptionsMarkdown).toBeUndefined();
+    expect(attachment).toContain("Релиз в пятницу");
+    expect(attachment).toContain("Подготовлю дашборд");
   });
 });
 
@@ -615,9 +616,7 @@ describe("DiscordSummaryPublicationAdapter rendering bounds", () => {
     });
 
     const attachment = projector.inputs[0]?.transcriptAttachment?.content ?? "";
-    expect(projector.inputs[0]?.liveCaptionsMarkdown).toContain(
-      "<@1533227577286852649>",
-    );
+    expect(projector.inputs[0]?.liveCaptionsMarkdown).toBeUndefined();
     for (const speakerId of speakers) {
       expect(attachment).toContain(`<@${speakerId}>`);
     }
@@ -625,7 +624,7 @@ describe("DiscordSummaryPublicationAdapter rendering bounds", () => {
     expect(projector.inputs[0]?.markdown).not.toContain("`00:10-00:15`");
   });
 
-  it("keeps every final turn in the attachment and only the newest turns in a bounded preview", async () => {
+  it("keeps every final turn in the authoritative attachment", async () => {
     const projector = new FakeProjector();
     const adapter = new DiscordSummaryPublicationAdapter(projector);
     const turns = Array.from({ length: 45 }, (_, index) => ({
@@ -643,10 +642,7 @@ describe("DiscordSummaryPublicationAdapter rendering bounds", () => {
 
     const attachment = projector.inputs[0]?.transcriptAttachment;
     const attachmentContent = attachment?.content ?? "";
-    const preview = projector.inputs[0]?.liveCaptionsMarkdown ?? "";
-    expect(preview).toContain("captions are available in the attached full transcript");
-    expect(preview).not.toContain("Caption 0:");
-    expect(preview).toContain("Caption 44:");
+    expect(projector.inputs[0]?.liveCaptionsMarkdown).toBeUndefined();
     expect(attachment?.filename).toBe("meeting-transcript.md");
     expect(attachmentContent).toContain("Caption 0:");
     expect(attachmentContent).toContain("Caption 44:");

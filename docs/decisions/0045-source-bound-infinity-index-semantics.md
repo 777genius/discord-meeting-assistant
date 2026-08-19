@@ -1,11 +1,11 @@
 ---
-id: ADR-0043
+id: ADR-0045
 status: accepted
 supersedes: []
 superseded_by: []
 ---
 
-# ADR-0043: Source-bound Infinity index semantics and migration
+# ADR-0045: Source-bound Infinity index semantics and migration
 
 ## Status
 

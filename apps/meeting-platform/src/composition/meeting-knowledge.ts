@@ -33,7 +33,7 @@ import {
   canonicalFinalReplyTurnHash,
   PostgresFinalReplyEvidence,
   PostgresFocusedMemoryRetrieval,
-  PostgresGuildConfigurationRepository,
+  PostgresMeetingSourceConfigurationRepository,
   PostgresQuestionAdmissionCommit,
   PostgresQuestionJobStore,
 } from "@discord-meeting/postgres-adapter";
@@ -54,13 +54,16 @@ const processIntervalMilliseconds = 500;
 const reconciliationIntervalMilliseconds = 30_000;
 const maximumMaintenanceJobsPerPass = 100;
 const shutdownDrainTimeoutMilliseconds = 5_000;
-const focusedEvidenceSelectorTimeoutMilliseconds = 60_000;
-const groundedAnswerTimeoutMilliseconds = 180_000;
-const providerAttemptLeaseSafetyMilliseconds = 120_000;
+export const meetingKnowledgeProviderLeasePolicy = Object.freeze({
+  focusedEvidenceSelectorTimeoutMilliseconds: 60_000,
+  groundedAnswerTimeoutMilliseconds: 180_000,
+  maximumGroundedAnswerExecutions: 2, safetyMilliseconds: 120_000,
+});
 const providerAttemptLeaseSeconds = (
-  focusedEvidenceSelectorTimeoutMilliseconds +
-  groundedAnswerTimeoutMilliseconds +
-  providerAttemptLeaseSafetyMilliseconds
+  meetingKnowledgeProviderLeasePolicy.focusedEvidenceSelectorTimeoutMilliseconds +
+  (meetingKnowledgeProviderLeasePolicy.maximumGroundedAnswerExecutions *
+    meetingKnowledgeProviderLeasePolicy.groundedAnswerTimeoutMilliseconds) +
+  meetingKnowledgeProviderLeasePolicy.safetyMilliseconds
 ) / 1_000;
 
 export class MeetingKnowledgeDrainTimeoutError extends Error {
@@ -92,8 +95,9 @@ export const localFinalReplyPolicy: LocalFinalReplyPolicy = Object.freeze({
     safeInputTokens: 300_000,
     tokenDriftReserve: 32_768,
   }),
-  // One reservation spans selector and answer generation. Keep their explicit
-  // deadlines plus bounded orchestration slack inside the durable lease.
+  // One reservation spans selector, answer generation, and at most one
+  // provider-output repair execution. Keep both answer deadlines plus bounded
+  // orchestration slack inside the durable lease.
   jobLeaseSeconds: providerAttemptLeaseSeconds,
   maximumProviderAttempts: 2,
   policyVersion: "meeting-knowledge.focused-memory-final-reply.v3",
@@ -129,13 +133,13 @@ export interface MeetingKnowledgeLocalFinalReplyRuntime {
 
 class ConfiguredDiscordQuestionScope implements DiscordQuestionScopePort {
   public constructor(
-    private readonly configurations: PostgresGuildConfigurationRepository,
+    private readonly configurations: PostgresMeetingSourceConfigurationRepository,
   ) {}
 
   public async resultsContainerForGuild(guildId: string): Promise<string | null> {
-    const configuration = await this.configurations.findByGuildId(guildId);
+    const configuration = await this.configurations.findBySourceId(guildId);
     return configuration?.status === "active"
-      ? configuration.resultsChannelId
+      ? configuration.publicationTargetId
       : null;
   }
 }
@@ -147,7 +151,7 @@ function createGroundedAnswerGenerator(input: {
   return new SubscriptionRuntimeGroundedAnswerAdapter(input.runtimeTransport, {
     expectedLauncherSha256: input.launcherSha256,
     expectedRuntimeEngine: subscriptionRuntimeCliEngine,
-    timeoutMs: groundedAnswerTimeoutMilliseconds,
+    timeoutMs: meetingKnowledgeProviderLeasePolicy.groundedAnswerTimeoutMilliseconds,
   });
 }
 
@@ -162,7 +166,7 @@ function createFocusedEvidenceSelector(input: {
       {
         expectedLauncherSha256: input.launcherSha256,
         expectedRuntimeEngine: subscriptionRuntimeCliEngine,
-        timeoutMs: focusedEvidenceSelectorTimeoutMilliseconds,
+        timeoutMs: meetingKnowledgeProviderLeasePolicy.focusedEvidenceSelectorTimeoutMilliseconds,
       },
     ),
     (measurement) => {
@@ -177,7 +181,7 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
   readonly answers?: GroundedMeetingAnswer;
   readonly client: Client;
   readonly config: PlatformConfig;
-  readonly guildConfigurations: PostgresGuildConfigurationRepository;
+  readonly sourceConfigurations: PostgresMeetingSourceConfigurationRepository;
   readonly historicalMemory?: PlatformHistoricalMemoryRuntime;
   readonly logger: Logger;
   readonly pool: Pool;
@@ -309,7 +313,7 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
     principals,
     publication,
     reportError,
-    scopes: new ConfiguredDiscordQuestionScope(input.guildConfigurations),
+    scopes: new ConfiguredDiscordQuestionScope(input.sourceConfigurations),
   });
   return createMeetingKnowledgePollingRuntime({
     handler,

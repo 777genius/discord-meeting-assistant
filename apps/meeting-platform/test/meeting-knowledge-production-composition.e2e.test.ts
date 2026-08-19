@@ -47,7 +47,7 @@ import {
 } from "../src/composition/historical-memory.js";
 import { MeetingKnowledgeGroundedAnswerAcl } from
   "../src/adapters/outbound/meeting-knowledge-grounded-answer-acl.js";
-import { localFinalReplyPolicy } from "../src/composition/meeting-knowledge.js";
+import { localFinalReplyPolicy, meetingKnowledgeProviderLeasePolicy } from "../src/composition/meeting-knowledge.js";
 import {
   allowOnlySyntheticRoom,
   botApplicationIdentity,
@@ -97,8 +97,8 @@ let container: StartedTestContainer | undefined;
 let database: Pool | undefined;
 
 describe("Meeting Knowledge production-composition qualification", () => {
-  it("leases one provider attempt across selector, answer, and safety deadlines", () => {
-    expect(localFinalReplyPolicy.jobLeaseSeconds).toBe(360);
+  it("leases one provider attempt across selector, answer repair, and safety deadlines", () => {
+    expect([meetingKnowledgeProviderLeasePolicy.maximumGroundedAnswerExecutions, localFinalReplyPolicy.jobLeaseSeconds]).toEqual([2, (meetingKnowledgeProviderLeasePolicy.focusedEvidenceSelectorTimeoutMilliseconds + (meetingKnowledgeProviderLeasePolicy.maximumGroundedAnswerExecutions * meetingKnowledgeProviderLeasePolicy.groundedAnswerTimeoutMilliseconds) + meetingKnowledgeProviderLeasePolicy.safetyMilliseconds) / 1_000]);
   });
 
   it("degrades transient Infinity health without blocking application readiness", async () => {

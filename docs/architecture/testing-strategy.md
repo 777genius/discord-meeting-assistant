@@ -135,7 +135,7 @@ The critical flow is:
    details remain compact topic points, and action/evidence references are validated;
 10. publishing creates one separate idempotent final message by default while
     retaining the live draft; compatibility mode replaces the live draft in the
-    same Discord container/message. Both retain a bounded authoritative timeline;
+    same Discord container/message. Both attach the complete authoritative transcript;
 11. a save/enqueue crash is recovered from the PostgreSQL outbox;
 12. rerunning each stage produces no duplicate business effect.
 

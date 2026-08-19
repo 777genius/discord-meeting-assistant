@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 
 import type { DisposableInfinityHttpService } from
   "@discord-meeting/infinity-context-adapter/test-support";
-import { GuildConfiguration } from "@discord-meeting/guild-configuration-core";
+import { MeetingSourceConfiguration } from "@discord-meeting/meeting-routing-core";
 import {
   GroundedMeetingAnswer,
   LiveFinalizedMemoryWorker,
@@ -15,7 +15,7 @@ import {
   type AnswerDeliveryPort,
 } from "@discord-meeting/meeting-core/publishing";
 import {
-  PostgresGuildConfigurationRepository,
+  PostgresMeetingSourceConfigurationRepository,
   PostgresAnswerEffectStore,
   PostgresLiveFinalizedMemoryLifecycle,
   PostgresLiveFinalizedMemoryStore,
@@ -121,12 +121,12 @@ export async function qualifyLiveProjectionReply(input: {
   await appendLiveTurns(liveMeetings, meetingId, participantId);
   await projectLiveTurns(input.pool, meetingId);
 
-  const guildConfigurations = new PostgresGuildConfigurationRepository(input.pool);
-  await guildConfigurations.save(GuildConfiguration.configure({
-    configuredByUserId: participantId,
-    guildId: scopeId,
-    resultsChannelId: resultsContainerId,
-    voiceChannelId: roomId,
+  const sourceConfigurations = new PostgresMeetingSourceConfigurationRepository(input.pool);
+  await sourceConfigurations.save(MeetingSourceConfiguration.configure({
+    configuredByActorId: participantId,
+    sourceId: scopeId,
+    publicationTargetId: resultsContainerId,
+    roomId,
   }).toSnapshot(), null);
   const permissionSet = {
     bitfield: PermissionFlagsBits.ViewChannel | PermissionFlagsBits.ReadMessageHistory,
@@ -204,7 +204,7 @@ export async function qualifyLiveProjectionReply(input: {
     answers: generator,
     client,
     config,
-    guildConfigurations,
+    sourceConfigurations,
     historicalMemory: input.runtime,
     logger: silentLogger,
     pool: input.pool,

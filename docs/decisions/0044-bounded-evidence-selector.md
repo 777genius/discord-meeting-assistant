@@ -1,11 +1,11 @@
 ---
-id: ADR-0042
+id: ADR-0044
 status: accepted
 supersedes: []
 superseded_by: []
 ---
 
-# ADR-0042: Bounded evidence selector accounting
+# ADR-0044: Bounded evidence selector accounting
 
 ## Status
 

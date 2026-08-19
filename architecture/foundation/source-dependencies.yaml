@@ -14,7 +14,7 @@ governedRoots:
   - packages/conversation-runtime-contracts/src
   - packages/craig-playback-adapter/src
   - packages/discord-adapter/src
-  - packages/guild-configuration-core/src
+  - packages/meeting-routing-core/src
   - packages/infinity-context-adapter/src
   - packages/meeting-core/src
   - packages/object-storage-adapter/src
@@ -27,9 +27,9 @@ governedRoots:
   - packages/voicetext-adapter/src
   - tooling/architecture-baseline/src
 boundaries:
-  - id: core.guild-configuration
+  - id: core.meeting-routing
     roots:
-      - packages/guild-configuration-core/src
+      - packages/meeting-routing-core/src
     entrypoints: []
     allow:
       boundaries: []
@@ -213,12 +213,12 @@ boundaries:
     entrypoints: []
     allow:
       boundaries:
-        - core.guild-configuration
+        - core.meeting-routing
         - core.meeting.live-meeting
         - core.meeting.knowledge
         - core.meeting.publishing
       packages:
-        - "@discord-meeting/guild-configuration-core"
+        - "@discord-meeting/meeting-routing-core"
         - "@discord-meeting/meeting-core"
         - discord.js
         - zod
@@ -232,7 +232,7 @@ boundaries:
       - packages/postgres-adapter/src/run-migrations.ts
     allow:
       boundaries:
-        - core.guild-configuration
+        - core.meeting-routing
         - core.meeting.lifecycle
         - core.meeting.live-meeting
         - core.meeting.knowledge
@@ -240,7 +240,7 @@ boundaries:
         - core.meeting.publishing
         - core.meeting.transcription
       packages:
-        - "@discord-meeting/guild-configuration-core"
+        - "@discord-meeting/meeting-routing-core"
         - "@discord-meeting/meeting-core"
         - pg
         - zod
@@ -508,14 +508,17 @@ boundaries:
     roots:
       - apps/meeting-platform/src/adapters/inbound/craig
     entrypoints:
+      - apps/meeting-platform/src/adapters/inbound/craig/craig-recording-configuration-adapter.ts
       - apps/meeting-platform/src/adapters/inbound/craig/craig-inbound-routes.ts
     allow:
       boundaries:
         - apps.meeting-platform.application
         - apps.meeting-platform.http
         - contracts.craig-gateway
+        - core.meeting-routing
       packages:
         - "@discord-meeting/craig-gateway-contracts"
+        - "@discord-meeting/meeting-routing-core"
         - fastify
         - zod
       builtins: []
@@ -613,7 +616,7 @@ boundaries:
         - apps.meeting-platform.recording-playback-adapters
         - apps.meeting-platform.recording-playback-application
         - contracts.craig-gateway
-        - core.guild-configuration
+        - core.meeting-routing
         - core.meeting.conversation
         - core.meeting.intelligence
         - core.meeting.live-meeting
@@ -627,7 +630,7 @@ boundaries:
         - "@discord-meeting/craig-gateway-contracts"
         - "@discord-meeting/craig-playback-adapter"
         - "@discord-meeting/discord-adapter"
-        - "@discord-meeting/guild-configuration-core"
+        - "@discord-meeting/meeting-routing-core"
         - "@discord-meeting/infinity-context-adapter"
         - "@discord-meeting/meeting-core"
         - "@discord-meeting/object-storage-adapter"

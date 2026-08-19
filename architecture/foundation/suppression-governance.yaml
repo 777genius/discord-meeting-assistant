@@ -19,8 +19,8 @@ governedRoots:
   - packages/craig-playback-adapter/test
   - packages/discord-adapter/src
   - packages/discord-adapter/test
-  - packages/guild-configuration-core/src
-  - packages/guild-configuration-core/test
+  - packages/meeting-routing-core/src
+  - packages/meeting-routing-core/test
   - packages/meeting-core/src
   - packages/meeting-core/test
   - packages/object-storage-adapter/src

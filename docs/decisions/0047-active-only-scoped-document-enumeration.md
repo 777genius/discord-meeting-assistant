@@ -1,16 +1,16 @@
 ---
-id: ADR-0045
+id: ADR-0047
 status: accepted
 supersedes: []
 superseded_by: []
 ---
 
-# ADR-0045: Active-only scoped document enumeration
+# ADR-0047: Active-only scoped document enumeration
 
 ## Status
 
 Accepted on 2026-08-19. This decision narrows the public listing contract from
-ADR-0044 without changing its exact-scope deletion reconciliation.
+ADR-0046 without changing its exact-scope deletion reconciliation.
 
 ## Context
 

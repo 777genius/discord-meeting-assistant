@@ -217,7 +217,7 @@ describe("schema 17 answer-delivery upgrade", () => {
       }
 
       await expect(new PostgresMigrationRunner(isolated.pool).migrate()).resolves.toEqual({
-        appliedVersions: [18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30],
+        appliedVersions: [18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31],
         version: requiredPostgresSchemaVersion,
       });
       await expect(new PostgresMigrationRunner(isolated.pool).migrate()).resolves.toEqual({
@@ -492,7 +492,7 @@ describe("schema 21 withdrawal upgrade", () => {
         }],
       });
       await expect(new PostgresMigrationRunner(isolated.pool).migrate()).resolves.toEqual({
-        appliedVersions: [23, 24, 25, 26, 27, 28, 29, 30],
+        appliedVersions: [23, 24, 25, 26, 27, 28, 29, 30, 31],
         version: requiredPostgresSchemaVersion,
       });
       await expect(new PostgresSchemaReadiness(isolated.pool).assertReady())

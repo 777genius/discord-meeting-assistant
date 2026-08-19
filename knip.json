@@ -18,6 +18,10 @@
       "ignoreDependencies": ["@huggingface/tokenizers"],
       "project": ["src/**/*.ts", "test/**/*.ts"]
     },
+    "packages/meeting-routing-core": {
+      "entry": ["src/index.ts"],
+      "project": ["src/**/*.ts", "test/**/*.ts"]
+    },
     "packages/bullmq-adapter": {
       "entry": ["src/index.ts"],
       "project": ["src/**/*.ts", "test/**/*.ts"]

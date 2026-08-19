@@ -605,9 +605,7 @@ describe("DiscordSummaryPublisher finalization contract", () => {
     expect(client.threads[0]?.message?.body.markdown).not.toContain(
       "Обновлено после завершения финальной обработки.",
     );
-    expect(client.threads[0]?.message?.body.liveCaptionsMarkdown).toContain(
-      "✓ `00:05-00:08` **speaker-a:** Обсуждаем выпуск.",
-    );
+    expect(client.threads[0]?.message?.body.liveCaptionsMarkdown).toBeUndefined();
     expect(client.threads[0]?.message?.body.summaryAttachment).toMatchObject({
       filename: "meeting-summary.md",
     });
