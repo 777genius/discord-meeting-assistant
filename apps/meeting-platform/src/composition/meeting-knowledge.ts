@@ -9,6 +9,7 @@ import {
   createDiscordOneAttemptAnswerRest,
   decodeDiscordQuestionPrincipalKey,
   discordParticipantQuestionPolicyVersion,
+  type DiscordLocalFinalReplyHandlerOptions,
   type DiscordQuestionScopePort,
 } from "@discord-meeting/discord-adapter";
 import {
@@ -97,6 +98,18 @@ export const localFinalReplyPolicyRelease = Object.freeze({
   policyEpoch: 1,
   policyVersion: localFinalReplyPolicy.policyVersion,
 });
+
+function discordQuestionIngressOptions(
+  config: PlatformConfig,
+): DiscordLocalFinalReplyHandlerOptions {
+  const actorIds = config.meetingKnowledge?.e2eSyntheticHumanActorIds;
+  return {
+    ...(actorIds === undefined
+      ? {}
+      : { e2eSyntheticHumanAuthorIds: actorIds }),
+    principalTtlSeconds: localFinalReplyPolicy.admission.jobTtlSeconds,
+  };
+}
 
 export interface MeetingKnowledgeLocalFinalReplyRuntime {
   close(): Promise<void>;
@@ -249,7 +262,7 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
     admissions,
     client: input.client,
     jobs,
-    options: { principalTtlSeconds: localFinalReplyPolicy.admission.jobTtlSeconds },
+    options: discordQuestionIngressOptions(input.config),
     principals,
     publication,
     reportError,

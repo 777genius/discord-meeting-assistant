@@ -731,3 +731,65 @@ describe("Discord Local Final Reply ingress", () => {
     handler.close();
   });
 });
+
+describe("Discord Local Final Reply synthetic human E2E ingress", () => {
+  it("admits only an explicitly allowlisted bot and still rejects webhooks", async () => {
+    const syntheticHumanId = "77777777777777777";
+    const execute = vi.fn().mockResolvedValue({
+      jobId: questionId,
+      status: "accepted",
+    });
+    const client = new EventEmitter();
+    const handler = new DiscordLocalFinalReplyHandler({
+      admission: { execute },
+      admissions: { withdrawProjection: vi.fn().mockResolvedValue([]) },
+      client: client as unknown as Client,
+      jobs: {
+        cancelQuestion: vi.fn().mockImplementation(() => Promise.resolve()),
+        hasActiveQuestion: vi.fn().mockResolvedValue(false),
+      },
+      options: {
+        e2eSyntheticHumanAuthorIds: [syntheticHumanId],
+        principalTtlSeconds: 900,
+      },
+      principals: new DiscordQuestionPrincipalCodec(Buffer.alloc(32, 7)),
+      publication: { cancelBeforeRequest: vi.fn().mockResolvedValue(false) },
+      scopes: { resultsContainerForGuild: () => Promise.resolve(containerId) },
+    });
+    handler.start();
+    for (const authorId of ["88888888888888888", syntheticHumanId]) {
+      client.emit("messageCreate", {
+        author: { bot: true, id: authorId },
+        channel: { isThread: () => false },
+        channelId: containerId,
+        content: "What was decided?",
+        guildId: "66666666666666666",
+        id: authorId,
+        reference: { messageId: "44444444444444444" },
+        webhookId: null,
+      });
+    }
+    await vi.waitFor(() => {
+      expect(execute).toHaveBeenCalledTimes(1);
+    });
+    expect(execute.mock.calls[0]?.[0]).toMatchObject({
+      questionId: syntheticHumanId,
+      questionText: "What was decided?",
+    });
+    client.emit("messageCreate", {
+      author: { bot: true, id: syntheticHumanId },
+      channel: { isThread: () => false },
+      channelId: containerId,
+      content: "Webhook question?",
+      guildId: "66666666666666666",
+      id: "99999999999999998",
+      reference: { messageId: "44444444444444444" },
+      webhookId: "99999999999999997",
+    });
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve);
+    });
+    expect(execute).toHaveBeenCalledTimes(1);
+    handler.close();
+  });
+});
