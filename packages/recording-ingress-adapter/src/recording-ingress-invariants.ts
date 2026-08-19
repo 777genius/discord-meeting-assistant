@@ -406,8 +406,7 @@ export function verifyWriteReceipt(
   if (
     receipt.checksumSha256 !== request.checksumSha256 ||
     receipt.sizeBytes !== request.sizeBytes ||
-    typeof receipt.locator !== "string" ||
-    receipt.locator.length === 0
+    receipt.locator !== request.locator
   ) {
     throw new RecordingIngressError(
       "artifact-write-mismatch",

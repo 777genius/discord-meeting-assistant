@@ -16,6 +16,19 @@ const actors = [
   { actorId: "1533227577286852650", kind: "automation" as const },
 ];
 
+function authoritativeTrackReceipt() {
+  return {
+    checksumSha256: "a".repeat(64),
+    locator: "s3://meeting/recordings/recording-1/speaker.ogg",
+    recordingId: "recording-1",
+    replayed: false,
+    sizeBytes: 3,
+    trackNumber: 1,
+    uploadId: "recording-1:track:1",
+    versionId: "version-1",
+  } as const;
+}
+
 function ingress(
   result: RecordingLifecycleIngressResult,
   saved: MeetingSnapshot[],
@@ -24,7 +37,7 @@ function ingress(
     dispatcher: { dispatchPending: async () => ({ dispatched: 1, failed: 0 }) },
     failureClassifier: { classify: () => null },
     ingress: {
-      ingestAuthoritativeTrack: async () => ({ replayed: false }),
+      ingestAuthoritativeTrack: async () => authoritativeTrackReceipt(),
       ingestLifecycleEvent: async () => result,
       ingestPacketBatch: async () => ({
         acceptedPackets: 0,

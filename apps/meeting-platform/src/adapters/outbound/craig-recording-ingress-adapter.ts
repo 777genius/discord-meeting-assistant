@@ -6,6 +6,7 @@ import type {
 
 import type {
   AuthoritativeSpeakerTrackUpload,
+  AuthoritativeTrackDurabilityReceipt,
   LiveVoicePacketBatchCommand,
   RecordingDurabilityPort,
   RecordingLifecycleCommand,
@@ -16,7 +17,7 @@ interface CraigRecordingIngressDelegate {
   ingestAuthoritativeTrack(
     metadata: AuthoritativeTrackUploadMetadata,
     body: AsyncIterable<Uint8Array>,
-  ): Promise<{ readonly replayed: boolean }>;
+  ): Promise<AuthoritativeTrackDurabilityReceipt>;
   ingestLifecycleEvent(
     event: CraigLifecycleEvent,
   ): Promise<RecordingLifecycleIngressResult>;
@@ -34,7 +35,7 @@ export class CraigRecordingIngressAdapter implements RecordingDurabilityPort {
   public ingestAuthoritativeTrack(
     metadata: AuthoritativeSpeakerTrackUpload,
     body: AsyncIterable<Uint8Array>,
-  ): Promise<{ readonly replayed: boolean }> {
+  ): Promise<AuthoritativeTrackDurabilityReceipt> {
     return this.delegate.ingestAuthoritativeTrack(
       {
         channelId: metadata.source.roomId,

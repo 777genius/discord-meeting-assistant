@@ -202,6 +202,17 @@ export interface AuthoritativeSpeakerTrackUpload {
   readonly uploadId: string;
 }
 
+export interface AuthoritativeTrackDurabilityReceipt {
+  readonly checksumSha256: string;
+  readonly locator: string;
+  readonly recordingId: string;
+  readonly replayed: boolean;
+  readonly sizeBytes: number;
+  readonly trackNumber: number;
+  readonly uploadId: string;
+  readonly versionId: string;
+}
+
 interface DeferredPublicationTarget {
   resolve(): Promise<string | null>;
 }
@@ -288,7 +299,7 @@ export interface RecordingDurabilityPort {
   ingestAuthoritativeTrack(
     metadata: AuthoritativeSpeakerTrackUpload,
     body: AsyncIterable<Uint8Array>,
-  ): Promise<{ readonly replayed: boolean }>;
+  ): Promise<AuthoritativeTrackDurabilityReceipt>;
   ingestLifecycleEvent(
     event: RecordingLifecycleCommand,
   ): Promise<RecordingLifecycleIngressResult>;
@@ -303,7 +314,7 @@ export interface MeetingRecordingIngress {
   ingestAuthoritativeTrack(
     metadata: AuthoritativeSpeakerTrackUpload,
     body: AsyncIterable<Uint8Array>,
-  ): Promise<{ readonly replayed: boolean }>;
+  ): Promise<AuthoritativeTrackDurabilityReceipt>;
   ingestLifecycle(event: RecordingLifecycleCommand): Promise<void>;
   ingestVoiceBatch(batch: LiveVoicePacketBatchCommand): Promise<void>;
 }

@@ -22,6 +22,16 @@ import {
   type StoredAuthoritativeTrack,
 } from "./spool.js";
 
+function requireImmutableArtifactVersionId(versionId: string | null | undefined): string {
+  if (typeof versionId !== "string" || versionId.length === 0 || versionId === "null") {
+    throw new RecordingIngressError(
+      "artifact-write-mismatch",
+      "artifact writer did not confirm an immutable object version",
+    );
+  }
+  return versionId;
+}
+
 interface AuthoritativeTrackUpload {
   readonly identity: {
     readonly channelId: string;
@@ -97,7 +107,7 @@ async function ingestLockedAuthoritativeTrack(
   if (completed !== undefined) {
     ensureRecordingIdentity(completed, identity);
     const track = completedTrackForUpload(completed, createTrackCandidate(upload));
-    return completedTrackResult(upload, track.audioLocator, true);
+    return completedTrackResult(upload, track, true);
   }
   const aborted = await runtime.spool.readAborted(identity.recordingId);
   if (aborted !== undefined) {
@@ -126,7 +136,7 @@ async function ingestLockedAuthoritativeTrack(
   const candidate = createTrackCandidate(upload);
   const existing = findExistingTrack(state, candidate, runtime.limits.maxSpeakersPerRecording);
   if (existing?.durability === "completed") {
-    return completedTrackResult(upload, existing.track.audioLocator, true);
+    return completedTrackResult(upload, existing.track, true);
   }
   const pendingState = existing === undefined
     ? {
@@ -140,19 +150,24 @@ async function ingestLockedAuthoritativeTrack(
   }
   const receipt = await runtime.writer.write(request);
   verifyWriteReceipt(request, receipt);
+  const completedTrack = {
+    ...candidate,
+    artifactVersionId: requireImmutableArtifactVersionId(receipt.versionId),
+  };
   await runtime.spool.writeRecording({
     ...pendingState,
-    authoritativeTracks: [...pendingState.authoritativeTracks, candidate]
+    authoritativeTracks: [...pendingState.authoritativeTracks, completedTrack]
       .toSorted((left, right) => left.trackNumber - right.trackNumber),
     pendingAuthoritativeTracks: pendingState.pendingAuthoritativeTracks.filter(
       ({ uploadId }) => uploadId !== candidate.uploadId,
     ),
   });
-  return completedTrackResult(upload, receipt.locator, existing !== undefined);
+  return completedTrackResult(upload, completedTrack, existing !== undefined);
 }
 
 function createTrackCandidate(upload: AuthoritativeTrackUpload): StoredAuthoritativeTrack {
   return {
+    artifactVersionId: null,
     audioLocator: upload.request.locator,
     checksumSha256: upload.metadata.checksumSha256,
     sizeBytes: upload.metadata.sizeBytes,
@@ -252,13 +267,19 @@ function sameTrackIdentity(
 
 function completedTrackResult(
   upload: AuthoritativeTrackUpload,
-  locator: string,
+  track: StoredAuthoritativeTrack,
   replayed: boolean,
 ): AuthoritativeTrackIngressResult {
+  const versionId = requireImmutableArtifactVersionId(track.artifactVersionId);
   return {
-    locator,
+    checksumSha256: track.checksumSha256,
+    locator: track.audioLocator,
     recordingId: upload.identity.recordingId,
     replayed,
+    sizeBytes: track.sizeBytes,
     speakerId: upload.speakerId,
+    trackNumber: track.trackNumber,
+    uploadId: track.uploadId,
+    versionId,
   };
 }

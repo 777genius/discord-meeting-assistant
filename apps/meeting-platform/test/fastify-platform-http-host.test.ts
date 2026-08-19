@@ -84,7 +84,7 @@ function createHost(
 }
 
 function createIngress() {
-  const ingestAuthoritativeTrack = vi.fn(async () => ({ replayed: false }));
+  const ingestAuthoritativeTrack = vi.fn(async () => authoritativeTrackReceipt());
   const ingestLifecycle = vi.fn(async () => {});
   const ingestVoiceBatch = vi.fn(async () => {});
   return {
@@ -93,6 +93,19 @@ function createIngress() {
     ingestVoiceBatch,
     port: { ingestAuthoritativeTrack, ingestLifecycle, ingestVoiceBatch } satisfies CraigIngressPort,
   };
+}
+
+function authoritativeTrackReceipt(replayed = false) {
+  return {
+    checksumSha256: "a".repeat(64),
+    locator: "s3://test-recordings/recordings/recording-1/track-1.ogg",
+    recordingId: "recording-1",
+    replayed,
+    sizeBytes: 22,
+    trackNumber: 1,
+    uploadId: "recording-1:track:1",
+    versionId: "version-1",
+  } as const;
 }
 
 describe("Fastify platform HTTP host", () => {
@@ -418,7 +431,7 @@ describe("Fastify Craig ingress safeguards", () => {
         for await (const chunk of body) {
           received.push(chunk);
         }
-        return { replayed: false };
+        return authoritativeTrackReceipt();
       },
     );
     const ingress: CraigIngressPort = {
@@ -442,9 +455,64 @@ describe("Fastify Craig ingress safeguards", () => {
     });
 
     expect(response.statusCode).toBe(201);
-    expect(response.json()).toEqual({ status: "accepted" });
+    expect(response.json()).toEqual({
+      checksumSha256: "a".repeat(64),
+      durable: true,
+      immutable: true,
+      object: {
+        bucket: "test-recordings",
+        key: "recordings/recording-1/track-1.ogg",
+        provider: "s3",
+        versionId: "version-1",
+      },
+      recordingId: "recording-1",
+      schemaVersion: 1,
+      sizeBytes: 22,
+      trackNumber: 1,
+      uploadId: "recording-1:track:1",
+    });
     expect(Buffer.concat(received)).toEqual(body);
     expect(ingestAuthoritativeTrack).toHaveBeenCalledOnce();
+  });
+
+  it("returns the same strict immutable acknowledgement for an upload replay", async () => {
+    const ingress: CraigIngressPort = {
+      ingestAuthoritativeTrack: vi.fn(async () => authoritativeTrackReceipt(true)),
+      ingestLifecycle: vi.fn(async () => {}),
+      ingestVoiceBatch: vi.fn(async () => {}),
+    };
+    const context = createHost({ ingress });
+    const body = Buffer.from("OggS-authoritative-test", "utf8");
+
+    const response = await context.host.inject({
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-length": String(body.byteLength),
+        "content-type": "audio/ogg",
+        "x-craig-authoritative-track-metadata": authoritativeTrackMetadata(body.byteLength),
+      },
+      method: "POST",
+      payload: body,
+      url: "/v1/craig/authoritative-tracks",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(Object.keys(response.json()).toSorted()).toEqual([
+      "checksumSha256",
+      "durable",
+      "immutable",
+      "object",
+      "recordingId",
+      "schemaVersion",
+      "sizeBytes",
+      "trackNumber",
+      "uploadId",
+    ]);
+    expect(response.json()).toMatchObject({
+      durable: true,
+      immutable: true,
+      object: { provider: "s3", versionId: "version-1" },
+    });
   });
 
   it("enforces the authoritative-track bearer, media type, and declared-size ACL", async () => {
