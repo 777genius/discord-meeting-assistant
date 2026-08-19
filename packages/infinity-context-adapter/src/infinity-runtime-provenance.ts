@@ -85,7 +85,7 @@ export interface InfinityContextCapabilityAttestationV1 {
 export interface InfinityContextProductionQualificationPolicyV1 {
   readonly embeddingProfileDigestSha256: string;
   readonly embeddingProfileId: string;
-  readonly productionSemanticQualification: true;
+  readonly productionSemanticQualification: boolean;
   readonly qualificationManifestSha256: string;
   readonly sdkCommit: string;
   readonly serviceRevision: string;
@@ -336,6 +336,7 @@ function assertProductionQualificationPolicy(
     policy.serviceRevision !== INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedServiceRevision ||
     policy.embeddingProfileId !== INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedEmbeddingProfileId ||
     policy.embeddingProfileId !== attestation.embeddingProfile ||
+    policy.productionSemanticQualification !== true ||
     policy.embeddingProfileDigestSha256 !== attestation.embeddingProfileDigestSha256 ||
     policy.qualificationManifestSha256 !== activation.qualificationManifestSha256
   ) {

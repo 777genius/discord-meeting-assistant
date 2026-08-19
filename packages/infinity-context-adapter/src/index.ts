@@ -15,8 +15,12 @@ export {
   type InfinityContextProductionQualificationPolicyV1,
   type InfinityContextRuntimeActivationV1,
 } from "./infinity-runtime-provenance.js";
-export { INFINITY_CONTEXT_PRODUCTION_QUALIFICATION } from
-  "./infinity-production-qualification.js";
+export {
+  INFINITY_CONTEXT_PLANNING_COMPATIBILITY,
+  INFINITY_CONTEXT_PRODUCTION_QUALIFICATION,
+  assertInfinityContextPlanningCompatibility,
+  type InfinityContextPlanningCompatibilityInputV1,
+} from "./infinity-production-qualification.js";
 export {
   createInfinitySemanticQualificationManifest,
   infinitySemanticQualificationSchema,

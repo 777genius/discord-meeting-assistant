@@ -8,8 +8,11 @@ import type { BuildContextInput } from "@infinity-context/sdk";
 import { describe, expect, it } from "vitest";
 
 import {
+  INFINITY_CONTEXT_PRODUCTION_QUALIFICATION,
   INFINITY_CONTEXT_SDK_PROVENANCE,
+  PINNED_MULTILINGUAL_MINILM_TOKENIZER_PROFILE,
   InfinityContextActivationError,
+  assertInfinityContextPlanningCompatibility,
   assertInfinityContextActivation,
   assertInfinityContextSearchActivation,
   decodeInfinityContextCapabilityAttestation,
@@ -110,6 +113,52 @@ describe("Infinity Context official SDK provenance", () => {
   });
 });
 
+describe("Infinity Context planning compatibility", () => {
+  const assertCompatibility = (
+    productionQualification = INFINITY_CONTEXT_PRODUCTION_QUALIFICATION,
+    tokenizerProfile = PINNED_MULTILINGUAL_MINILM_TOKENIZER_PROFILE,
+  ): void => {
+    assertInfinityContextPlanningCompatibility({
+      productionQualification,
+      tokenizerProfile,
+    });
+  };
+
+  it("retains the reviewed b77 dense service and tokenizer tuple", () => {
+    expect(() => { assertCompatibility(); }).not.toThrow();
+  });
+
+  it.each([
+    ["service profile id", {
+      ...INFINITY_CONTEXT_PRODUCTION_QUALIFICATION,
+      embeddingProfileId: "another-dense-profile",
+    }],
+    ["service profile digest", {
+      ...INFINITY_CONTEXT_PRODUCTION_QUALIFICATION,
+      embeddingProfileDigestSha256: `sha256:${"c".repeat(64)}`,
+    }],
+  ] as const)("fails closed on a wrong %s", (_label, productionQualification) => {
+    expect(() => { assertCompatibility(productionQualification); })
+      .toThrow(/service profile mismatch/u);
+  });
+
+  it.each([
+    ["local profile id", {
+      ...PINNED_MULTILINGUAL_MINILM_TOKENIZER_PROFILE,
+      id: "sentence-transformers/another-model",
+    }],
+    ["tokenizer revision", {
+      ...PINNED_MULTILINGUAL_MINILM_TOKENIZER_PROFILE,
+      embeddingModelRevision: "f".repeat(40),
+    }],
+  ] as const)("fails closed on a wrong %s", (_label, tokenizerProfile) => {
+    expect(() => { assertCompatibility(
+      INFINITY_CONTEXT_PRODUCTION_QUALIFICATION,
+      tokenizerProfile,
+    ); }).toThrow(/tokenizer profile mismatch/u);
+  });
+});
+
 describe("Infinity Context source-pinned activation", () => {
   it("changes durable index identity when the qualified instance digest changes", () => {
     const secondDigest = `sha256:${"b".repeat(64)}`;
@@ -136,6 +185,15 @@ describe("Infinity Context source-pinned activation", () => {
     expect(() => {
       assertInfinityContextSearchActivation(activation, testProductionPolicy);
     }).not.toThrow();
+    expect(
+      INFINITY_CONTEXT_PRODUCTION_QUALIFICATION.productionSemanticQualification,
+    ).toBe(false);
+    expect(() => {
+      assertInfinityContextSearchActivation(
+        activation,
+        INFINITY_CONTEXT_PRODUCTION_QUALIFICATION,
+      );
+    }).toThrow(/retained b77 qualification/u);
     expect(() => { assertInfinityContextSearchActivation(activation); })
       .toThrow(/retained b77 qualification/u);
   });
