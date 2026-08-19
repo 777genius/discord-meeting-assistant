@@ -1,79 +1,134 @@
-# Discord AI Meeting Assistant
+# Botik - AI Meeting Assistant for Discord
 
-Summary-first meeting intelligence for Discord. The system records through an
-isolated Craig fork, produces a speaker-attributed final transcript, generates an
-evidence-backed summary, and publishes it to Discord.
+**Turn every Discord voice meeting into clear, reliable team memory.**
 
-<img width="776" height="594" alt="image" src="https://github.com/user-attachments/assets/820f6a34-6f18-4577-9828-a3c557b4a624" />
-<img width="556" height="590" alt="image" src="https://github.com/user-attachments/assets/7d6b9613-e257-4970-a273-056cd45aef11" />
-<img width="558" height="567" alt="image" src="https://github.com/user-attachments/assets/391d71f1-2955-4ae5-a719-12892f228e97" />
+Botik records your meeting and publishes the final notes directly to Discord.
+Your team gets decisions, action items, open questions, and an attached
+speaker-attributed transcript without moving the conversation to another app.
+Optional live features add captions, an evolving summary, voice conversation,
+grounded Q&A, historical meeting memory, and private recording playback.
 
+[**Add Botik to Discord**](https://discord.com/oauth2/authorize?client_id=1533224474609057793&integration_type=0&permissions=1133568&scope=bot%20applications.commands)
 
-## Current phase
+## See the Discord result
 
-This repository contains the executable V1 vertical slice and its architecture
-governance. The deployed flow is:
+The final post stays compact: it shows the meeting notes and attaches
+`meeting-summary.md` plus the complete `meeting-transcript.md`. The transcript
+is not repeated in the message body. A private recording link appears when
+playback is enabled.
+
+| Summary and attachments | Actions, questions, and recording |
+| :---: | :---: |
+| <img src="https://github.com/user-attachments/assets/820f6a34-6f18-4577-9828-a3c557b4a624" alt="Botik meeting summary with attached full summary and transcript" width="100%"> | <img src="https://github.com/user-attachments/assets/7d6b9613-e257-4970-a273-056cd45aef11" alt="Botik action items, open questions, and meeting recording link" width="100%"> |
+
+## What Botik does
+
+| Capability | What your team gets | Availability |
+| --- | --- | --- |
+| Automatic recording | Recording starts when people join the configured voice channel. | Core flow |
+| Final summary | A concise overview, key details, decisions, action items with owners and deadlines, and unresolved questions. | Core flow |
+| Full transcript | Every final result attaches a complete Markdown transcript with speakers and timestamps. | Core flow |
+| Live captions and brief | One Discord post follows the conversation and updates key topics, decisions, actions, and questions during the call. | Optional live mode |
+| Voice assistant | Address Botik for a spoken answer that can be interrupted. Optional greetings and farewells make the assistant present throughout the call. | Optional live mode |
+| Grounded meeting Q&A | Reply to the current final Botik post, or ask by voice when enabled, for an answer tied to accepted transcript evidence. Botik abstains when evidence or authorization is insufficient. | Optional, rollout-gated |
+| Historical meeting memory | Ground answers in authorized previous meetings from the same configured room. | Optional, requires qualified memory serving |
+| Recording playback | Open a private signed link to a synchronized browser player. | Optional deployment feature |
+| Localized output | Final Discord summaries and transcripts have English, Russian, and Ukrainian presentation. Voice flows are qualified in English and Russian. | Depends on the feature |
+
+Optional capabilities are enabled independently by each deployment. The core
+post-call flow does not depend on live voice, historical memory, or playback.
+
+## How it works
+
+1. **Install and choose your channels.** A server administrator runs
+   `/setup-voice-bot`, then selects one voice channel to record and one text
+   channel for results. Botik checks permissions and posts a test message before
+   saving the setup.
+2. **Meet as usual.** Recording starts automatically when people join. When live
+   mode is enabled, captions and the meeting brief stay in one Discord post
+   instead of flooding the channel.
+3. **Leave with a complete handoff.** After the call, Botik reconciles the live
+   draft, when present, with the full recording, publishes the final summary,
+   and attaches the complete transcript without duplicate messages.
+   Playback-enabled deployments also include a private recording link.
+
+## Built for trustworthy meeting notes
+
+- **Claims stay connected to the conversation.** Decisions and action items
+  must reference real transcript turns. The attached full summary includes the
+  supporting evidence.
+- **The recording remains the source of truth.** Live captions are useful during
+  the call, but the final transcript is produced from the original per-speaker
+  recording.
+- **Failures do not erase the meeting.** A transcription, summary, or publishing
+  failure cannot delete or invalidate the original recording.
+- **Retries do not create duplicate results.** Post-call stages and Discord
+  publication use stable identities and reconcile uncertain outcomes.
+- **Discord access stays narrow.** Setup uses an official bot installation,
+  requires `Manage Server`, verifies channel permissions, and never asks for a
+  Discord user token.
+
+## Set up your Discord server
+
+1. [Add Botik to Discord](https://discord.com/oauth2/authorize?client_id=1533224474609057793&integration_type=0&permissions=1133568&scope=bot%20applications.commands).
+2. Open any text channel and run `/setup-voice-bot`.
+3. Select the voice channel to record and the text channel that should receive
+   final results and, when enabled, live updates.
+
+The current Meeting Platform and isolated Craig Voice Gateway share one official
+bot identity, so the standard deployment needs only one installation. A
+deployment with a separate Craig identity exposes its own explicit second
+installation step.
+
+## Current status
+
+This repository contains the executable V1 vertical slice and production
+packages. The complete recording-to-summary flow is implemented. Live voice,
+grounded Q&A, historical memory, and playback are separately enabled,
+fail-closed capabilities while the project remains under active development.
+
+## Technical overview
 
 ```text
-authoritative Craig multitrack recording
-  -> checksummed per-speaker artifact import
-  -> post-call transcription
-  -> final speaker-attributed transcript
+original multitrack recording
+  -> checksummed per-speaker audio
+  -> final transcription
+  -> speaker-attributed transcript
   -> evidence-backed summary
   -> idempotent Discord publication
 ```
 
-Live voice conversation is an executable stateless vertical slice behind
-consumer-owned `ConversationRuntime` and `VoicePlaybackPort` boundaries. Pipecat,
-realtime STT, TTS providers, and Craig transport do not enter the meeting domain.
-Memory, RAG, and tools remain intentionally out of scope.
+The original Craig recording, final transcript, and meeting database are the
+authoritative evidence. Live captions and incremental summaries are derived
+views and never replace them.
 
-VoiceText provider selection is explicit and independent for authoritative
-batch and derived live transcription. `VOICETEXT_BATCH_PROFILE` accepts
-`deepgram-nova-3` (default) or `elevenlabs-scribe-v2`;
-`VOICETEXT_LIVE_PROFILE` accepts `deepgram-nova-3` (default) or
-`elevenlabs-scribe-v2-realtime`. Invalid values fail startup. These selectors
-change only the server-side VoiceText boundary: Discord receives no upstream
-credentials, endpoints, provider probes, provider names, or SDK types.
+### Repository scope
 
-## Repository boundary
+- The isolated Craig fork is a separate Voice Gateway repository and owns
+  Discord voice transport plus the authoritative multitrack recording.
+- This repository owns Meeting Core, live conversation, post-call processing,
+  transcription, meeting knowledge, summary generation, recording playback,
+  Discord publication, and their contracts.
+- Provider and transport details stay behind adapters so the meeting model is
+  not tied to Craig, Discord, a specific speech provider, or an LLM SDK.
 
-- The Craig fork is a separate Voice Gateway repository and keeps its upstream
-  recording path authoritative.
-- This repository owns Meeting Core, post-call processing, summary generation,
-  publishing, and their contracts.
-- Provider and transport details enter only through adapters and composition.
+Start with the [architecture overview](docs/architecture/overview.md),
+[dependency rules](docs/architecture/dependency-rules.md),
+[testing strategy](docs/architecture/testing-strategy.md), and
+[accepted decisions](docs/decisions/README.md).
 
-See [architecture overview](docs/architecture/overview.md),
-[dependency rules](docs/architecture/dependency-rules.md), and
-[decisions](docs/decisions/README.md).
+### Transcription providers
 
-## Discord guild onboarding
+Authoritative batch transcription and derived live transcription are selected
+independently:
 
-[Add Voice Bot to Discord](https://discord.com/oauth2/authorize?client_id=1533224474609057793&integration_type=0&permissions=1133568&scope=bot%20applications.commands)
+- `VOICETEXT_BATCH_PROFILE`: `deepgram-nova-3` (default) or
+  `elevenlabs-scribe-v2`;
+- `VOICETEXT_LIVE_PROFILE`: `deepgram-nova-3` (default) or
+  `elevenlabs-scribe-v2-realtime`.
 
-After installation, open any text channel and run `/setup-voice-bot`.
-
-Meeting Platform generates and logs a least-privilege official Discord install
-URL. It also serves the same redirect at internal `GET /discord/install` for a
-deployment that reverse-proxies only that path. The current Meeting Platform and
-isolated Craig Voice Gateway processes share one official bot identity, so this
-is one installation step. Deployments using a distinct Craig identity can expose
-its explicit second redirect from internal `GET /discord/install/craig`.
-
-After the required application identity is installed, a server administrator runs
-`/setup-voice-bot`,
-selects the recorded voice channel and the text results channel, and receives an
-ephemeral result. The command verifies `Manage Guild`, both bots' effective
-channel permissions, and a visible test publication before storing the
-guild-scoped route. Recording starts automatically when people join the selected
-voice channel. No Discord user access token or OAuth callback is used.
-
-Craig refreshes its recordable targets through authenticated internal
-`GET /v1/craig/configuration`. Its `{ schemaVersion: 1, channels }` response
-contains only active `guildId` and `voiceChannelId` pairs in deterministic
-order; it never returns results-channel routes, administrator identities,
-revisions, or credentials.
+Invalid values stop startup. Provider credentials, endpoints, health probes,
+names, and SDK types are never exposed to Discord.
 
 ## Development
 
@@ -82,19 +137,19 @@ Required versions:
 - Node.js `24.18.0`;
 - pnpm `11.18.0`.
 
-Install and run every local gate:
+Install dependencies and run the complete repository check:
 
 ```bash
 pnpm install --frozen-lockfile
 pnpm run check
 ```
 
-For faster feedback while editing, use `pnpm run check:changed`. Before handoff,
-run `pnpm run check:fast`; the complete `pnpm run check` remains the authoritative
-pull-request gate.
+Use `pnpm run check:changed` for quick feedback while editing and
+`pnpm run check:fast` before handoff. The complete `pnpm run check` remains the
+authoritative pull-request gate.
 
-The private real-Discord acceptance flow, Russian/English synthetic fixtures,
-recovery checks, and retained-evidence verifier are documented in the
+Private real-Discord acceptance, Russian and English synthetic fixtures,
+recovery checks, and retained-evidence verification are documented in the
 [E2E runbook](docs/operations/real-e2e-runbook.md).
 
 `@agent-teams/engineering-foundation` is an exact development-only dependency.
