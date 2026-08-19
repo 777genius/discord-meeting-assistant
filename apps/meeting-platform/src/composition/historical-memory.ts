@@ -363,7 +363,7 @@ export function createPlatformHistoricalMemory(
       await refreshQualification(signal);
     } catch (error) {
       signal?.throwIfAborted();
-      transportQualified = projectionQualified = searchQualified = false;
+      projectionQualified = searchQualified = false;
       qualifiedTokenProfile = undefined; qualifiedTokenizer = undefined;
       input.logger.warn("Historical memory qualification unavailable; external indexing is disabled", {
         errorType: error instanceof Error ? error.name : "unknown",
