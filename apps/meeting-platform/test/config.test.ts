@@ -281,6 +281,14 @@ describe("synthetic human question actor configuration", () => {
     await expect(loadPlatformConfig({
       ...environment,
       E2E_TEST_ONLY_LABEL: "true",
+      MEETING_KNOWLEDGE_E2E_SYNTHETIC_HUMAN_ACTOR_IDS: actorIds,
+      MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED: "false",
+    }, async () => "value")).rejects.toThrow(
+      "synthetic human question actors require local final reply",
+    );
+    await expect(loadPlatformConfig({
+      ...environment,
+      E2E_TEST_ONLY_LABEL: "true",
       MEETING_KNOWLEDGE_E2E_SYNTHETIC_HUMAN_ACTOR_IDS:
         environment.DISCORD_APPLICATION_ID,
       MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED: "true",
