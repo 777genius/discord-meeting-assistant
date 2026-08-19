@@ -15,6 +15,7 @@ import {
   type HistoricalAuthorizationObservationV1,
   type HistoricalCandidateRecordV1,
   type HistoricalEvidenceAuthority,
+  type HistoricalEmbeddingTokenizerPort,
   type HistoricalOpaqueIdPort,
   type HistoricalReleaseBindingV1,
   type HistoricalSyncStore,
@@ -38,6 +39,19 @@ const blockPolicy = {
   maxTurnsPerBlock: 64,
   version: "meeting-knowledge.block-policy.v1",
 } as const;
+
+const impossibleTokenizer: HistoricalEmbeddingTokenizerPort = Object.freeze({
+  countTokens: () => 97,
+  profile: Object.freeze({
+    conformanceVectorSetSha256: `sha256:${"c".repeat(64)}`,
+    embeddingModelRevision: "a".repeat(40),
+    id: "impossible-test-tokenizer",
+    maxInputTokens: 96,
+    servingRuntimeRevision: "b".repeat(40),
+    tokenizerArtifactSha256: `sha256:${"d".repeat(64)}`,
+    tokenizerConfigSha256: `sha256:${"e".repeat(64)}`,
+  }),
+});
 
 const qualifiedTwoHourProfile = {
   minimumDurationMs: 7_200_000,
@@ -311,7 +325,9 @@ function useCase(input: {
   readonly meetings: readonly AcceptedFinalMeetingV1[];
   readonly processingRelease?: string;
   readonly store: BindingStore;
+  readonly tokenizer?: HistoricalEmbeddingTokenizerPort;
 }) {
+  const tokenizer = input.tokenizer;
   return new ExhaustiveCoverage({
     authority: authority(input.meetings),
     authorization: {
@@ -365,6 +381,7 @@ function useCase(input: {
       },
     },
     sync: input.store,
+    ...(tokenizer === undefined ? {} : { tokenizer: () => tokenizer }),
   }, {
     blockPolicy,
     checkpointRetentionSeconds: 86_400,
@@ -734,7 +751,7 @@ describe("exhaustive historical coverage checkpoint lifecycle", () => {
     expect(extractor.mock.calls.length).toBe(callsAfterFirstProfile * 2);
   });
 
-  it("returns an honest unsupported result when an authoritative turn exceeds the block profile", async () => {
+  it("returns an honest unsupported result when an authoritative turn cannot fit the tokenizer profile", async () => {
     const binding = createHistoricalReleaseBinding({
       acceptedMeetingRevision: 3,
       desiredGeneration: 1,
@@ -777,6 +794,7 @@ describe("exhaustive historical coverage checkpoint lifecycle", () => {
       extractor: vi.fn(),
       meetings: [meeting],
       store: new BindingStore([binding]),
+      tokenizer: impossibleTokenizer,
     }).buildPlan(request)).resolves.toEqual({
       reason: "exhaustive_block_plan_not_qualified",
       status: "unsupported",
