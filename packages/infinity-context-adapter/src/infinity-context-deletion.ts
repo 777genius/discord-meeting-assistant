@@ -45,12 +45,19 @@ async function deleteRelease(
       };
     }
     const alreadyAbsent = new Set<string>();
+    const missingKnownTargets: [string, string][] = [];
     for (const [remoteDocumentId, externalId] of remoteTargets) {
-      if (await documentAlreadyAbsent(
+      const state = await inspectKnownDocument(
         client, remoteDocumentId, externalId, requestTimeoutMs, operation,
-      )) {
+      );
+      if (state === "deleted") {
         alreadyAbsent.add(remoteDocumentId);
+      } else if (state === "missing") {
+        missingKnownTargets.push([remoteDocumentId, externalId]);
       }
+    }
+    for (const [remoteDocumentId] of missingKnownTargets) {
+      remoteTargets.delete(remoteDocumentId);
     }
     for (const externalId of targetExternalIds) {
       if (![...remoteTargets.values()].includes(externalId)) {
@@ -171,13 +178,13 @@ function releaseRemoteTargets(
   return targets;
 }
 
-async function documentAlreadyAbsent(
+async function inspectKnownDocument(
   client: InfinityContextClient,
   remoteDocumentId: string,
   expectedExternalId: string,
   requestTimeoutMs: number,
   operation: InfinityOperationDeadline,
-): Promise<boolean> {
+): Promise<"deleted" | "missing" | "present"> {
   try {
     const remote = (await operation.request(requestTimeoutMs, (signal) =>
       client.documents.getDocument(remoteDocumentId, { signal })
@@ -187,10 +194,10 @@ async function documentAlreadyAbsent(
         "stored remote document identity does not match its release document",
       );
     }
-    return documentIsDeleted(remote);
+    return documentIsDeleted(remote) ? "deleted" : "present";
   } catch (error) {
     if (isNotFound(error)) {
-      return true;
+      return "missing";
     }
     throw error;
   }

@@ -51,6 +51,16 @@ function fixture() {
   } };
 }
 
+function adapter(endpoint: DisposableInfinityEndpoint) {
+  return new InfinityContextHistoricalMemoryAdapter({
+    baseUrl: "http://disposable.infinity.invalid",
+    embeddingTokenProfile: () => historicalEmbeddingTokenProfile(tokenizer),
+    requestTimeoutMs: 1_000,
+    schemaVersion: 1,
+    transport: endpoint,
+  });
+}
+
 describe("Infinity Context delete reconciliation contract", () => {
   it.each([
     ["mismatched sets", ({ plan, request }: ReturnType<typeof fixture>) => ({
@@ -88,19 +98,63 @@ describe("Infinity Context delete reconciliation contract", () => {
     })],
   ])("rejects %s before contacting the provider", async (_name, mutate) => {
     const endpoint = new DisposableInfinityEndpoint();
-    const adapter = new InfinityContextHistoricalMemoryAdapter({
-      baseUrl: "http://disposable.infinity.invalid",
-      embeddingTokenProfile: () => historicalEmbeddingTokenProfile(tokenizer),
-      requestTimeoutMs: 1_000,
-      schemaVersion: 1,
-      transport: endpoint,
-    });
+    const memory = adapter(endpoint);
 
-    await expect(adapter.deleteMeeting(mutate(fixture()))).resolves.toEqual({
+    await expect(memory.deleteMeeting(mutate(fixture()))).resolves.toEqual({
       code: "memory.invalid_delete_request",
       retryable: false,
       status: "rejected",
     });
     expect(endpoint.requests).toEqual([]);
+  });
+
+  it("recovers and deletes the canonical document behind a stale missing ID", async () => {
+    const endpoint = new DisposableInfinityEndpoint();
+    const memory = adapter(endpoint);
+    const { plan, request } = fixture();
+    const indexed = await memory.indexFinalMeeting(plan);
+    expect(indexed.status).toBe("applied");
+    const processCount = endpoint.requests.filter(({ path }) =>
+      path.endsWith("/process")
+    ).length;
+
+    await expect(memory.deleteMeeting({
+      ...request,
+      remoteDocumentIds: Object.fromEntries(request.documentExternalIds.map(
+        (externalId, index) => [externalId, `missing-stored-id-${index}`],
+      )),
+    })).resolves.toEqual({ status: "verified_absent" });
+
+    expect(endpoint.documentCount()).toBe(0);
+    expect(endpoint.requests.some(({ method, path }) =>
+      method === "GET" && path === "/v1/documents"
+    )).toBe(false);
+    expect(endpoint.requests.filter(({ path }) => path.endsWith("/process")))
+      .toHaveLength(processCount);
+    expect(endpoint.requests.some(({ method, path }) =>
+      method === "DELETE" && /^\/v1\/documents\/document-\d+$/u.test(path)
+    )).toBe(true);
+  });
+
+  it("materializes an unprocessed canonical document solely to verify deletion", async () => {
+    const endpoint = new DisposableInfinityEndpoint();
+    const memory = adapter(endpoint);
+    const { plan, request } = fixture();
+
+    await expect(memory.deleteMeeting({
+      ...request,
+      remoteDocumentIds: Object.fromEntries(request.documentExternalIds.map(
+        (externalId, index) => [externalId, `missing-stored-id-${index}`],
+      )),
+    })).resolves.toEqual({ status: "verified_absent" });
+
+    expect(endpoint.documentCount()).toBe(0);
+    expect(endpoint.requests.filter(({ method, path }) =>
+      method === "POST" && path === "/v1/documents"
+    )).toHaveLength(plan.documents.length);
+    expect(endpoint.requests.some(({ path }) => path.endsWith("/process"))).toBe(false);
+    expect(endpoint.requests.some(({ method, path }) =>
+      method === "GET" && path === "/v1/documents"
+    )).toBe(false);
   });
 });
