@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, symlink, writeFile } from "node:fs/promises";
+import { chmod, link, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -34,6 +34,16 @@ const gate = (overrides: Record<string, unknown> = {}) => ({
   },
   ...overrides,
 });
+
+async function publishGate(path: string, value: unknown): Promise<void> {
+  const temporaryPath = `${path}.partial`;
+  try {
+    await writeFile(temporaryPath, JSON.stringify(value), { encoding: "utf8", flag: "wx", mode: 0o600 });
+    await link(temporaryPath, path);
+  } finally {
+    await rm(temporaryPath, { force: true });
+  }
+}
 
 describe("hosted actor release gate", () => {
   it("does not connect any actor until the hosted release is accepted", async () => {
@@ -107,7 +117,7 @@ describe("hosted actor release gate", () => {
     const waiting = waitForActorReleaseGate(expectation(path), AbortSignal.timeout(2_000));
     await waitForActorGateArmed(expectation(path), AbortSignal.timeout(2_000));
 
-    await writeFile(path, JSON.stringify(gate()), { encoding: "utf8", flag: "wx", mode: 0o600 });
+    await publishGate(path, gate());
 
     await expect(waiting).resolves.toBeUndefined();
   });
@@ -136,7 +146,7 @@ describe("hosted actor release gate", () => {
     const path = join(root, "release.json");
     const waiting = waitForActorReleaseGate(expectation(path), AbortSignal.timeout(2_000));
     await waitForActorGateArmed(expectation(path), AbortSignal.timeout(2_000));
-    await writeFile(path, JSON.stringify(gate(overrides)), { mode: 0o600 });
+    await publishGate(path, gate(overrides));
 
     await expect(waiting).rejects.toThrow(expectedError);
   });
