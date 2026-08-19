@@ -57,6 +57,7 @@ export interface PlatformConfig {
     readonly requestTimeoutMs: number;
   };
   readonly meetingKnowledge?: {
+    readonly e2eSyntheticHumanActorIds?: readonly string[];
     readonly groundedVoice?: {
       readonly rolloutEpoch: string;
       readonly rolloutStateFile: string;

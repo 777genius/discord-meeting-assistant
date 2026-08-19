@@ -69,6 +69,26 @@ const optionalReadinessTimeout = z.preprocess(
   (value) => value === "" ? undefined : value,
   z.coerce.number().int().min(1_000).max(120_000).optional(),
 );
+const e2eSyntheticHumanActorIds = z.string().default("").transform(
+  (value, context): readonly string[] => {
+    if (value.trim().length === 0) {
+      return Object.freeze([]);
+    }
+    const actorIds = value.split(",").map((actorId) => actorId.trim());
+    if (
+      actorIds.length > 128 ||
+      new Set(actorIds).size !== actorIds.length ||
+      actorIds.some((actorId) => !/^\d{17,20}$/u.test(actorId))
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "E2E synthetic human actor IDs must be at most 128 unique Discord snowflakes",
+      });
+      return z.NEVER;
+    }
+    return Object.freeze(actorIds);
+  },
+);
 const httpUrl = z.url().refine((value) => {
   const url = new URL(value);
   return (
@@ -164,6 +184,7 @@ const environmentSchema = z
       .transform((value) => value === "true"),
     MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_EPOCH: profileIdentifier.optional(),
     MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_STATE_FILE: absolutePath.optional(),
+    MEETING_KNOWLEDGE_E2E_SYNTHETIC_HUMAN_ACTOR_IDS: e2eSyntheticHumanActorIds,
     MEETING_KNOWLEDGE_PRINCIPAL_KEY_FILE: absolutePath.optional(),
     MEETING_KNOWLEDGE_TWO_HOUR_QUALIFICATION_FILE: optionalAbsolutePath,
     NODE_ENV: z

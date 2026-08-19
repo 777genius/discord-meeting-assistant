@@ -91,6 +91,13 @@ function meetingKnowledgeConfig(
   }
   return {
     meetingKnowledge: {
+      ...(environment.MEETING_KNOWLEDGE_E2E_SYNTHETIC_HUMAN_ACTOR_IDS.length === 0
+        ? {}
+        : {
+            e2eSyntheticHumanActorIds: Object.freeze([
+              ...environment.MEETING_KNOWLEDGE_E2E_SYNTHETIC_HUMAN_ACTOR_IDS,
+            ]),
+          }),
       ...(environment.MEETING_KNOWLEDGE_GROUNDED_VOICE_ENABLED &&
         environment.MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_EPOCH !== undefined &&
         environment.MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_STATE_FILE !== undefined
