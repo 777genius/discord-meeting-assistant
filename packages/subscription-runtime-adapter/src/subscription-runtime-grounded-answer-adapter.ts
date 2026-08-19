@@ -15,6 +15,7 @@ import {
   type KnowledgeAnswerRequestOptions,
 } from "./knowledge-answer-request-mapper.js";
 import { providerKnowledgeAnswerSchema } from "./provider-knowledge-schema.js";
+import { stableSubscriptionRuntimeId } from "./stable-id.js";
 import {
   validateAttestationExpectation,
 } from "./summary-adapter-options.js";
@@ -92,10 +93,21 @@ export class SubscriptionRuntimeGroundedAnswerAdapter
     options: { readonly signal?: AbortSignal } = {},
   ): Promise<GroundedAnswerGenerationResult> {
     options.signal?.throwIfAborted();
-    const runtimeRequest = this.build(request);
+    let runtimeRequest = this.build(request);
+    let repairedProviderOutput = false;
     let result;
     try {
       result = await this.transport.execute(runtimeRequest, options);
+      if (
+        result.protocolVersion === 1 &&
+        result.status === "failed" &&
+        result.failure.code === "provider_output_invalid"
+      ) {
+        options.signal?.throwIfAborted();
+        runtimeRequest = providerOutputRepairRequest(runtimeRequest);
+        result = await this.transport.execute(runtimeRequest, options);
+        repairedProviderOutput = true;
+      }
     } catch {
       options.signal?.throwIfAborted();
       return { code: "runtime_unavailable", retryable: true, status: "failed" };
@@ -109,7 +121,10 @@ export class SubscriptionRuntimeGroundedAnswerAdapter
     if (result.status === "failed") {
       return {
         code: result.failure.code,
-        retryable: result.failure.retryable || result.failure.reconnectRequired,
+        retryable: repairedProviderOutput &&
+            result.failure.code === "provider_output_invalid"
+          ? false
+          : result.failure.retryable || result.failure.reconnectRequired,
         status: "failed",
       };
     }
@@ -127,6 +142,30 @@ export class SubscriptionRuntimeGroundedAnswerAdapter
   private build(request: GroundedAnswerGenerationRequest) {
     return buildSubscriptionRuntimeKnowledgeAnswerRequest(request, this.requestOptions);
   }
+}
+
+function providerOutputRepairRequest(
+  request: ReturnType<typeof buildSubscriptionRuntimeKnowledgeAnswerRequest>,
+): ReturnType<typeof buildSubscriptionRuntimeKnowledgeAnswerRequest> {
+  const runId = stableSubscriptionRuntimeId(
+    "knowledge-answer-provider-output-repair",
+    request.runId,
+  );
+  return {
+    ...request,
+    context: {
+      ...request.context,
+      correlationId: runId,
+    },
+    runId,
+    task: {
+      ...request.task,
+      systemPrompt: [
+        request.task.systemPrompt,
+        "A previous generation failed strict output validation. Regenerate once from the original supplied question and evidence and obey every schema bound exactly.",
+      ].join(" "),
+    },
+  };
 }
 
 function inputSurface(

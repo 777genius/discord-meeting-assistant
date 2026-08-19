@@ -6,6 +6,7 @@ export function stableSubscriptionRuntimeId(
     | "conversation-answer-request"
     | "decision"
     | "incremental-summary-request"
+    | "knowledge-answer-provider-output-repair"
     | "knowledge-answer-request"
     | "knowledge-coverage-extract"
     | "question"
