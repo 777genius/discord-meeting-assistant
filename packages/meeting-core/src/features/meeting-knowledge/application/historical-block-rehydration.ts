@@ -266,9 +266,8 @@ function historicalBindingMatches(
 ): boolean {
   return left.acceptedMeetingRevision === right.acceptedMeetingRevision &&
     left.desiredGeneration === right.desiredGeneration &&
-    left.evidencePolicyVersion === right.evidencePolicyVersion &&
     left.meetingId === right.meetingId && left.releaseId === right.releaseId &&
-    left.roomId === right.roomId && left.schemaVersion === right.schemaVersion &&
+    left.roomId === right.roomId &&
     left.scopeId === right.scopeId && left.transcriptId === right.transcriptId &&
     left.transcriptVersion === right.transcriptVersion;
 }
