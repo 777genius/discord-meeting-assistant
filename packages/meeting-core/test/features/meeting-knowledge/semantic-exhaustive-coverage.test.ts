@@ -21,6 +21,7 @@ import {
   type GroundingPlan,
   type HistoricalAuthorizationPort,
   type HistoricalEvidenceAuthority,
+  type HistoricalIndexPlanV1,
   type HistoricalOpaqueIdPort,
   type HistoricalReleaseBindingV1,
   type HistoricalSyncStore,
@@ -191,7 +192,10 @@ function semanticCoverage(
     loadAcceptedFinalMeeting: async (binding) =>
       binding.releaseId === meeting.binding.releaseId ? meeting : null,
   };
-  const sync = semanticSync(meeting.binding);
+  const sync = semanticSync(
+    meeting.binding,
+    buildHistoricalIndexPlan(meeting, new SemanticIds(), semanticBlockPolicy),
+  );
   return new ExhaustiveCoverage({
     authority,
     authorization: authorization ?? { authorize: async () => ({
@@ -263,7 +267,10 @@ function semanticCoverage(
   });
 }
 
-function semanticSync(binding: HistoricalReleaseBindingV1): HistoricalSyncStore {
+function semanticSync(
+  binding: HistoricalReleaseBindingV1,
+  plan: HistoricalIndexPlanV1,
+): HistoricalSyncStore {
   return {
     claimNext: async () => null,
     enqueueAppliedProfileRebuilds: async () => ({
@@ -272,7 +279,7 @@ function semanticSync(binding: HistoricalReleaseBindingV1): HistoricalSyncStore 
     }),
     findCurrentCandidate: async () => null,
     isCurrentGeneration: async () => true,
-    listCurrentRoomPlans: async () => [],
+    listCurrentRoomPlans: async () => [{ binding, plan, remoteDocumentIds: {} }],
     listDesiredRoomBindings: async () => [binding],
     recordApplied: () => Promise.resolve(),
     recordDeadLetter: () => Promise.resolve(),
