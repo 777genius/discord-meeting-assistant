@@ -296,7 +296,7 @@ export class PostgresFinalReplyEvidence implements FinalReplyEvidencePort {
       }
       authorities.set(row.meeting_id, authority);
     }
-    if (authorities.size !== meetingIds.length) {
+    if (meetingIds.some((meetingId) => !authorities.has(meetingId))) {
       return { status: "invalid_selection" } as const;
     }
     const turns = references.flatMap((reference) => {

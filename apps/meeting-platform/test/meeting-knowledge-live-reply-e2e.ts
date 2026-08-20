@@ -333,7 +333,9 @@ function createGroundedAnswer(onGenerate: () => number): GroundedMeetingAnswer {
     generate: async (request) => {
       const invocation = onGenerate();
       const early = request.plan.evidence.find(({ text }) => text.includes("EARLY-COMET"));
-      const historical = request.plan.evidence.find(({ text }) => text.includes("PINE-GOLF"));
+      const historical = request.plan.evidence.find(({ source, text }) =>
+        source?.meetingId === historicalMeetingId && text.includes("PINE-GOLF")
+      );
       expect(request.plan.mode).toBe("focused_retrieval");
       expect(request.plan.evidence.length).toBeLessThanOrEqual(24);
       expect(early).toBeDefined();

@@ -1,13 +1,11 @@
 import {
+  type CanonicalEvidenceTurn,
   decomposeHistoricalQuery,
+  type FocusedMemoryReference,
+  type FocusedMemoryRetrievalPort,
+  type FocusedMemoryRetrievalResult,
   resolveRequestedSpeakerIds,
   type SpeakerAliasMapV1,
-} from "@discord-meeting/meeting-core/meeting-knowledge";
-import type {
-  CanonicalEvidenceTurn,
-  FocusedMemoryReference,
-  FocusedMemoryRetrievalPort,
-  FocusedMemoryRetrievalResult,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import type { Pool } from "pg";
 
@@ -37,6 +35,7 @@ const ignoredQueryTerms = new Set([
   "does",
   "from",
   "have",
+  "how",
   "please",
   "tell",
   "the",
