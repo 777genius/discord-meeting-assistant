@@ -1,8 +1,11 @@
-import type {
-  CanonicalEvidenceTurn,
-  FocusedMemoryReference,
-  FocusedMemoryRetrievalPort,
-  FocusedMemoryRetrievalResult,
+import {
+  type CanonicalEvidenceTurn,
+  decomposeHistoricalQuery,
+  type FocusedMemoryReference,
+  type FocusedMemoryRetrievalPort,
+  type FocusedMemoryRetrievalResult,
+  resolveRequestedSpeakerIds,
+  type SpeakerAliasMapV1,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import type { Pool } from "pg";
 
@@ -15,9 +18,13 @@ import {
 interface ScoredTurn {
   readonly index: number;
   readonly matchedTerms: number;
-  readonly score: number;
+  readonly queryIndex: number;
+  readonly relevanceScore: number;
   readonly turn: CanonicalEvidenceTurn;
 }
+
+const maximumQueries = 4;
+const minimumRelevanceScore = 0.2;
 
 const ignoredQueryTerms = new Set([
   "about",
@@ -28,6 +35,7 @@ const ignoredQueryTerms = new Set([
   "does",
   "from",
   "have",
+  "how",
   "please",
   "tell",
   "the",
@@ -44,6 +52,15 @@ const ignoredQueryTerms = new Set([
   "would",
   "were",
   "was",
+  "early",
+  "earlier",
+  "final",
+  "first",
+  "initial",
+  "last",
+  "late",
+  "latest",
+  "recent",
   "были",
   "было",
   "быть",
@@ -59,6 +76,10 @@ const ignoredQueryTerms = new Set([
   "сказа",
   "этого",
   "что",
+  "итог",
+  "начал",
+  "перв",
+  "послед",
 ].map(termRoot));
 
 const correctionOrConflict = /\b(?:actually|correction|instead|not|rather|revised|updated)\b|(?:вообще-то|исправ|не\s|нет|обнов|поправ|уточн)/iu;
@@ -81,30 +102,73 @@ function queryTerms(value: string): ReadonlySet<string> {
 
 function scoreTurns(
   turns: readonly CanonicalEvidenceTurn[],
-  terms: ReadonlySet<string>,
+  question: string,
+  requestedSpeakerIds: ReadonlySet<string>,
 ): readonly ScoredTurn[] {
-  return turns.map((turn, index) => {
+  const queries = decomposeHistoricalQuery(question, maximumQueries);
+  const normalizedQuestion = question.normalize("NFKC").toLocaleLowerCase("und");
+  const wantsCorrection = /\b(?:actual|correct|final|instead|latest|revised|updated)\b|(?:исправ|итог|послед|поправ|уточн)/iu
+    .test(normalizedQuestion);
+  const wantsStart = /\b(?:beginning|early|earlier|first|initial|start)\b|(?:вначал|начал|перв|раньш)/iu
+    .test(normalizedQuestion);
+  const wantsEnd = /\b(?:end|final|last|late|latest|recent)\b|(?:в\s+конце|итог|конеч|послед|поздн)/iu
+    .test(normalizedQuestion);
+  const profiles = queries.map((query, queryIndex) => ({
+    queryIndex,
+    terms: queryTerms(query),
+  })).filter(({ terms }) => terms.size > 0);
+  const maximumStartMs = turns.at(-1)?.startMs ?? 0;
+  const best = new Map<number, ScoredTurn>();
+  for (const [index, turn] of turns.entries()) {
     const turnTerms = searchableTerms(turn.text);
-    let matchedTerms = 0;
-    for (const term of terms) {
-      if (turnTerms.has(term)) {
-        matchedTerms += 1;
+    for (const profile of profiles) {
+      const matchedTerms = [...profile.terms].filter((term) => turnTerms.has(term)).length;
+      if (matchedTerms === 0) {
+        continue;
+      }
+      const lexicalScore = matchedTerms / profile.terms.size;
+      const speakerScore = requestedSpeakerIds.has(turn.speakerId) ||
+          normalizedQuestion.includes(
+            turn.speakerId.normalize("NFKC").toLocaleLowerCase("und"),
+          )
+        ? 1
+        : 0;
+      const position = maximumStartMs <= 0 ? 1 : turn.startMs / maximumStartMs;
+      const temporalScore = wantsStart === wantsEnd
+        ? 0
+        : wantsEnd ? position : 1 - position;
+      const relevanceScore = Math.min(1, lexicalScore * 0.75 +
+        (wantsCorrection && correctionOrConflict.test(turn.text) ? 0.1 : 0) +
+        speakerScore * 0.1 + temporalScore * 0.05);
+      if (relevanceScore < minimumRelevanceScore) {
+        continue;
+      }
+      const candidate = Object.freeze({
+        index,
+        matchedTerms,
+        queryIndex: profile.queryIndex,
+        relevanceScore,
+        turn,
+      });
+      const previous = best.get(index);
+      if (previous === undefined || compareScored(candidate, previous) < 0) {
+        best.set(index, candidate);
       }
     }
-    return Object.freeze({
-      index,
-      matchedTerms,
-      score: matchedTerms * 100 +
-        (matchedTerms > 0 && correctionOrConflict.test(turn.text) ? 25 : 0),
-      turn,
-    });
-  }).filter(({ matchedTerms }) => matchedTerms > 0)
+  }
+  return [...best.values()]
     .toSorted((left, right) =>
-      right.score - left.score ||
+      compareScored(left, right) ||
       left.turn.startMs - right.turn.startMs ||
       left.turn.endMs - right.turn.endMs ||
       left.turn.turnId.localeCompare(right.turn.turnId)
     );
+}
+
+function compareScored(left: ScoredTurn, right: ScoredTurn): number {
+  return right.relevanceScore - left.relevanceScore ||
+    right.matchedTerms - left.matchedTerms ||
+    left.queryIndex - right.queryIndex;
 }
 
 function selectFocusedTurns(
@@ -112,14 +176,29 @@ function selectFocusedTurns(
   scored: readonly ScoredTurn[],
   maximumCandidates: number,
   neighborTurns: number,
-): readonly CanonicalEvidenceTurn[] {
+): readonly ScoredTurn[] {
   const neighborhoodWidth = neighborTurns * 2 + 1;
   const primaryHitCount = Math.max(
     1,
     Math.min(scored.length, Math.floor(maximumCandidates / neighborhoodWidth)),
   );
-  const selected = new Set<number>();
-  for (const hit of scored.slice(0, primaryHitCount)) {
+  const primary = new Map<number, ScoredTurn>();
+  for (const hit of scored) {
+    if (![...primary.values()].some(({ queryIndex }) => queryIndex === hit.queryIndex)) {
+      primary.set(hit.index, hit);
+    }
+    if (primary.size >= primaryHitCount) {
+      break;
+    }
+  }
+  for (const hit of scored) {
+    if (primary.size >= primaryHitCount) {
+      break;
+    }
+    primary.set(hit.index, hit);
+  }
+  const selected = new Map<number, ScoredTurn>();
+  for (const hit of primary.values()) {
     for (
       let index = Math.max(0, hit.index - neighborTurns);
       index <= Math.min(turns.length - 1, hit.index + neighborTurns);
@@ -128,26 +207,48 @@ function selectFocusedTurns(
       if (selected.size >= maximumCandidates) {
         break;
       }
-      selected.add(index);
+      const turn = turns[index];
+      if (turn === undefined) {
+        continue;
+      }
+      const distance = Math.abs(index - hit.index);
+      const candidate = distance === 0 ? hit : Object.freeze({
+        index,
+        matchedTerms: 0,
+        queryIndex: hit.queryIndex,
+        relevanceScore: hit.relevanceScore * 0.5 / distance,
+        turn,
+      });
+      const previous = selected.get(index);
+      if (previous === undefined || compareScored(candidate, previous) < 0) {
+        selected.set(index, candidate);
+      }
     }
   }
   for (const hit of scored) {
     if (selected.size >= maximumCandidates) {
       break;
     }
-    selected.add(hit.index);
+    const previous = selected.get(hit.index);
+    if (previous === undefined || compareScored(hit, previous) < 0) {
+      selected.set(hit.index, hit);
+    }
   }
-  return Object.freeze([...selected].toSorted((left, right) => left - right)
-    .map((index) => turns[index])
-    .filter((turn): turn is CanonicalEvidenceTurn => turn !== undefined));
+  return Object.freeze([...selected.values()].toSorted((left, right) =>
+    compareScored(left, right) ||
+    left.turn.startMs - right.turn.startMs ||
+    left.turn.turnId.localeCompare(right.turn.turnId)
+  ));
 }
 
 function referenceFor(
   input: Parameters<FocusedMemoryRetrievalPort["retrieve"]>[0],
-  turn: CanonicalEvidenceTurn,
+  scored: ScoredTurn,
 ): FocusedMemoryReference {
+  const { turn } = scored;
   return Object.freeze({
     meetingId: input.meetingId,
+    relevanceScore: scored.relevanceScore,
     transcriptId: input.transcriptId,
     transcriptVersion: input.transcriptVersion,
     turnHash: canonicalFinalReplyTurnHash(turn),
@@ -196,6 +297,7 @@ export class PostgresFocusedMemoryRetrieval
   public constructor(
     private readonly pool: Pool,
     private readonly botApplicationIdentity: string,
+    private readonly speakerAliases: SpeakerAliasMapV1 = {},
   ) {}
 
   public async retrieve(
@@ -230,11 +332,14 @@ export class PostgresFocusedMemoryRetrieval
       const humanTurns = authority.turns.filter(({ speakerId }) =>
         humanActors.has(speakerId)
       );
-      const terms = queryTerms(input.question);
-      if (terms.size === 0) {
+      if (queryTerms(input.question).size === 0) {
         return { schemaVersion: 1, status: "low_coverage" };
       }
-      const scored = scoreTurns(humanTurns, terms);
+      const scored = scoreTurns(
+        humanTurns,
+        input.question,
+        resolveRequestedSpeakerIds(input.question, this.speakerAliases),
+      );
       if (scored.length === 0) {
         return { schemaVersion: 1, status: "low_coverage" };
       }

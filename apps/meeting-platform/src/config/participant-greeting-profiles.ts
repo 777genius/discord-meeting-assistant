@@ -40,6 +40,17 @@ export type ParticipantGreetingProfiles = Readonly<
   Record<string, ParticipantGreetingProfile>
 >;
 
+export function participantSpeakerAliases(
+  profiles: ParticipantGreetingProfiles,
+): Readonly<Record<string, readonly string[]>> {
+  return Object.freeze(Object.fromEntries(Object.entries(profiles).map(
+    ([participantId, profile]) => [
+      participantId,
+      Object.freeze([...new Set([profile.displayName, profile.spokenName])]),
+    ],
+  )));
+}
+
 export const participantGreetingProfilesEnvironmentSchema = z
   .string()
   .max(64_000)

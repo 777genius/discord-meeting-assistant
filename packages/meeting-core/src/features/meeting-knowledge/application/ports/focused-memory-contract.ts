@@ -17,6 +17,9 @@ export const focusedMemoryContractVersion = 1 as const;
 
 function focusedMemoryReferenceKey(reference: FocusedMemoryReference): string {
   return [
+    reference.historicalSource?.releaseId ?? "current",
+    reference.historicalSource?.indexGeneration ?? "current",
+    reference.historicalSource?.candidateLocator ?? "current",
     reference.meetingId,
     reference.transcriptId,
     reference.transcriptVersion,
@@ -30,10 +33,18 @@ function focusedMemoryReferenceKey(reference: FocusedMemoryReference): string {
 export function mergeFocusedHydrationReferences(
   references: readonly FocusedMemoryReference[],
 ): readonly FocusedMemoryReference[] {
-  return Object.freeze([...new Map(references.map((reference) => [
-    focusedMemoryReferenceKey(reference),
-    reference,
-  ])).values()]);
+  const merged = new Map<string, FocusedMemoryReference>();
+  for (const reference of references) {
+    const key = focusedMemoryReferenceKey(reference);
+    const previous = merged.get(key);
+    if (
+      previous === undefined ||
+      (reference.relevanceScore ?? 0) > (previous.relevanceScore ?? 0)
+    ) {
+      merged.set(key, reference);
+    }
+  }
+  return Object.freeze([...merged.values()]);
 }
 
 const terminalStatuses = new Set([
@@ -180,7 +191,9 @@ function decodeCandidates(
     assertOnlyKeys(
       candidate,
       new Set([
+        "historicalSource",
         "meetingId",
+        "relevanceScore",
         "sourceEndCodePoint",
         "sourceStartCodePoint",
         "transcriptId",
@@ -191,12 +204,22 @@ function decodeCandidates(
       `${field}[${index}]`,
     );
     const range = decodeCandidateSourceRange(candidate, `${field}[${index}]`);
+    const historicalSource = decodeHistoricalSource(
+      candidate.historicalSource,
+      `${field}[${index}].historicalSource`,
+    );
+    const relevanceScore = decodeRelevanceScore(
+      candidate.relevanceScore,
+      `${field}[${index}].relevanceScore`,
+    );
     return Object.freeze({
+      ...(historicalSource === undefined ? {} : { historicalSource }),
       meetingId: requireKnowledgeText(
         candidate.meetingId as string,
         `${field}[${index}].meetingId`,
         1_024,
       ),
+      ...(relevanceScore === undefined ? {} : { relevanceScore }),
       ...range,
       transcriptId: requireKnowledgeText(
         candidate.transcriptId as string,
@@ -226,6 +249,54 @@ function decodeCandidates(
     );
   }
   return candidates;
+}
+
+function decodeHistoricalSource(
+  value: unknown,
+  field: string,
+): FocusedMemoryReference["historicalSource"] {
+  if (value === undefined) {
+    return undefined;
+  }
+  const source = record(value, field);
+  assertOnlyKeys(
+    source,
+    new Set(["candidateLocator", "indexGeneration", "releaseId"]),
+    field,
+  );
+  return Object.freeze({
+    candidateLocator: requireKnowledgeText(
+      source.candidateLocator as string,
+      `${field}.candidateLocator`,
+      1_024,
+    ),
+    indexGeneration: requireKnowledgeText(
+      source.indexGeneration as string,
+      `${field}.indexGeneration`,
+      1_024,
+    ),
+    releaseId: requireKnowledgeText(
+      source.releaseId as string,
+      `${field}.releaseId`,
+      1_024,
+    ),
+  });
+}
+
+function decodeRelevanceScore(
+  value: unknown,
+  field: string,
+): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) {
+    throw new MeetingKnowledgeInvariantError(
+      "INVALID_GROUNDING_PLAN",
+      `${field} must be a finite normalized score`,
+    );
+  }
+  return value;
 }
 
 function decodeCandidateSourceRange(
@@ -262,6 +333,7 @@ function decodeCandidateSourceRange(
 }
 
 function candidateKey(candidate: {
+  readonly historicalSource?: FocusedMemoryReference["historicalSource"];
   readonly meetingId: string;
   readonly sourceEndCodePoint?: number;
   readonly sourceStartCodePoint?: number;
@@ -270,6 +342,9 @@ function candidateKey(candidate: {
   readonly turnId: string;
 }): string {
   return [
+    candidate.historicalSource?.releaseId ?? "current",
+    candidate.historicalSource?.indexGeneration ?? "current",
+    candidate.historicalSource?.candidateLocator ?? "current",
     candidate.meetingId,
     candidate.transcriptId,
     candidate.transcriptVersion,

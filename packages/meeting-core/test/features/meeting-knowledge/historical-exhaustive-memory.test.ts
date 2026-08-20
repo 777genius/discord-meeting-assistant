@@ -86,6 +86,13 @@ describe("historical exhaustive memory exact slice serving", () => {
       expect(result.candidates.map(({ sourceEndCodePoint, sourceStartCodePoint }) =>
         [sourceStartCodePoint, sourceEndCodePoint]
       )).toEqual([[0, 5], [5, 10]]);
+      expect(result.candidates.map(({ historicalSource }) => historicalSource))
+        .toEqual([
+          { candidateLocator: "block-0", indexGeneration: "generation-1",
+            releaseId: binding.releaseId },
+          { candidateLocator: "block-1", indexGeneration: "generation-1",
+            releaseId: binding.releaseId },
+        ]);
       expect(result.coverageReduction.selectedCanonicalTurnCount).toBe(2);
     }
   });

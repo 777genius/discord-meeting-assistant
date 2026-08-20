@@ -4,6 +4,10 @@ import type {
   HistoricalMemoryPort,
   LocallyRehydratedEvidenceBlockV1,
 } from "./ports/historical-memory.js";
+export {
+  resolveRequestedSpeakerIds,
+  type SpeakerAliasMapV1,
+} from "./speaker-alias-resolution.js";
 
 interface HistoricalRerankBounds {
   readonly maximumEvidenceBytes: number;
@@ -11,6 +15,14 @@ interface HistoricalRerankBounds {
   readonly neighborRadius: number;
   readonly rerankLimit: number;
 }
+
+const minimumQualifiedScore = 0.2;
+const ignoredQueryTokens = new Set([
+  "about", "and", "are", "did", "do", "does", "for", "from", "how", "is",
+  "the", "that", "this", "was", "were", "what", "when", "where", "which",
+  "who", "why", "with",
+  "был", "была", "были", "для", "как", "когда", "кто", "почему", "что",
+]);
 
 export interface RankedHistoricalBlockV1 {
   readonly block: LocallyRehydratedEvidenceBlockV1;
@@ -25,10 +37,19 @@ export function decomposeHistoricalQuery(
   limit: number,
 ): readonly string[] {
   const normalized = normalizeHistoricalQuestion(question);
-  const candidates = [
-    normalized,
-    ...normalized.split(/[?;.!]+|\s+(?:and|then|also|и|затем|также)\s+/iu),
-  ].map((value) => value.trim()).filter((value) => value.length >= 3);
+  if (!Number.isSafeInteger(limit) || limit < 1) {
+    return Object.freeze([]);
+  }
+  if (limit === 1) {
+    return Object.freeze([normalized]);
+  }
+  const clauses = normalized
+    .split(/[?;.!]+|\s+(?:and|then|also|but|и|затем|также|но)\s+/iu)
+    .map((value) => value.trim())
+    .filter((value) => value.length >= 3);
+  // Keep the complete question even when clause expansion reaches the bound,
+  // so omitted clauses still contribute to retrieval and abstention.
+  const candidates = clauses.length > 1 ? [normalized, ...clauses] : [normalized];
   const seen = new Set<string>();
   const output: string[] = [];
   for (const candidate of candidates) {
@@ -99,8 +120,9 @@ export function rerankHistoricalBlocks(
   queries: readonly string[],
   candidates: readonly HistoricalCandidateLocatorV1[],
   bounds: HistoricalRerankBounds,
+  requestedSpeakerIds: ReadonlySet<string> = new Set<string>(),
 ): readonly RankedHistoricalBlockV1[] {
-  const queryTokens = tokens(queries.join(" "));
+  const queryTokens = relevantQueryTokens(queries);
   const providerSignals = new Map(
     candidates.map(({ locator, providerRank, providerScore }) => [
       locator,
@@ -112,19 +134,27 @@ export function rerankHistoricalBlocks(
     const provider = providerSignals.get(block.candidateLocator);
     const normalizedProviderScore = provider === undefined
       ? 0
-      : Math.max(0, Math.min(1, provider.providerScore));
+      : normalizeProviderScore(provider.providerScore);
+    const speaker = speakerScore(block, queryTokens, requestedSpeakerIds);
+    const temporal = temporalScore(block, blocks, queries);
     return Object.freeze({
       block,
       lexicalScore: lexical,
       providerRank: provider?.providerRank ?? null,
       providerScore: provider?.providerScore ?? null,
-      qualifiedScore: lexical * 0.7 + normalizedProviderScore * 0.25 +
-        (provider === undefined ? 0 : 0.05 / (1 + provider.providerRank)),
+      qualifiedScore: Math.min(1, lexical * 0.6 +
+        normalizedProviderScore * 0.25 + speaker * 0.1 + temporal * 0.02 +
+        (provider === undefined ? 0 : 0.03 / (1 + provider.providerRank))),
     });
   });
-  const primary = scored.filter(({ lexicalScore: lexical, providerScore }) =>
-    lexical > 0 ||
-    (providerScore !== null && providerScore >= bounds.minimumProviderScore)
+  const primary = scored.filter(({
+    lexicalScore: lexical,
+    providerScore,
+    qualifiedScore,
+  }) =>
+    qualifiedScore >= minimumQualifiedScore &&
+    (lexical > 0 ||
+      (providerScore !== null && providerScore >= bounds.minimumProviderScore))
   );
   const ranked = scored.map((item): RankedHistoricalBlockV1 | null => {
     if (primary.some(({ block }) =>
@@ -172,6 +202,16 @@ export function rerankHistoricalBlocks(
   return Object.freeze(selected);
 }
 
+function normalizeProviderScore(score: number): number {
+  if (!Number.isFinite(score)) {
+    return 0;
+  }
+  if (score >= 0 && score <= 1) {
+    return score;
+  }
+  return score > 1 ? score / (1 + score) : 0;
+}
+
 export function retainStrictSourceSubsets(
   blocks: readonly LocallyRehydratedEvidenceBlockV1[],
   authoritativeLocators: ReadonlyMap<string, ReadonlySet<string>>,
@@ -214,6 +254,12 @@ function tokens(value: string): ReadonlySet<string> {
   );
 }
 
+function relevantQueryTokens(queries: readonly string[]): ReadonlySet<string> {
+  return new Set([...tokens(queries.join(" "))].filter((token) =>
+    !ignoredQueryTokens.has(token)
+  ));
+}
+
 function blockBytes(block: LocallyRehydratedEvidenceBlockV1): number {
   return new TextEncoder().encode(
     block.turns.map(({ text }) => text).join("\n"),
@@ -232,6 +278,50 @@ function lexicalScore(
     }
   }
   return queryTokens.size === 0 ? 0 : matches / queryTokens.size;
+}
+
+function speakerScore(
+  block: LocallyRehydratedEvidenceBlockV1,
+  queryTokens: ReadonlySet<string>,
+  requestedSpeakerIds: ReadonlySet<string>,
+): number {
+  if (block.turns.some(({ speakerId }) => requestedSpeakerIds.has(speakerId))) {
+    return 1;
+  }
+  const speakerTokens = tokens(block.turns.map(({ speakerId }) => speakerId).join(" "));
+  return [...queryTokens].some((token) => speakerTokens.has(token)) ? 1 : 0;
+}
+
+function temporalScore(
+  block: LocallyRehydratedEvidenceBlockV1,
+  blocks: readonly LocallyRehydratedEvidenceBlockV1[],
+  queries: readonly string[],
+): number {
+  if (new Set(blocks.map(({ binding }) => binding.releaseId)).size > 1) {
+    return 0;
+  }
+  const question = queries.join(" ").toLocaleLowerCase("und");
+  const wantsStart = /\b(?:beginning|early|earlier|first|initial|start)\b|(?:вначал|начал|перв|раньш)/iu
+    .test(question);
+  const wantsEnd = /\b(?:end|final|last|late|latest|recent)\b|(?:в\s+конце|итог|конеч|послед|поздн)/iu
+    .test(question);
+  if (wantsStart === wantsEnd) {
+    return 0;
+  }
+  let minimum = Number.MAX_SAFE_INTEGER;
+  let maximum = 0;
+  for (const candidate of blocks) {
+    for (const { startMs } of candidate.turns) {
+      minimum = Math.min(minimum, startMs);
+      maximum = Math.max(maximum, startMs);
+    }
+  }
+  if (minimum === Number.MAX_SAFE_INTEGER) {
+    minimum = 0;
+  }
+  const start = block.turns[0]?.startMs ?? minimum;
+  const position = maximum === minimum ? 1 : (start - minimum) / (maximum - minimum);
+  return wantsEnd ? position : 1 - position;
 }
 
 function compareOpaque(left: string, right: string): number {

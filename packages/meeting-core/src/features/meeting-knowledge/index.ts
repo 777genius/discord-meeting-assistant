@@ -89,7 +89,15 @@ export {
   type FocusedRetrievalPolicyV1,
   type FocusedRetrievalResultV1,
 } from "./application/historical-retrieval.js";
-export { decomposeHistoricalQuery } from "./application/historical-retrieval-ranking.js";
+export {
+  decomposeHistoricalQuery,
+} from "./application/historical-retrieval-ranking.js";
+export {
+  resolveRequestedSpeakerAliases,
+  resolveRequestedSpeakerIds,
+  type RequestedSpeakerAliasV1,
+  type SpeakerAliasMapV1,
+} from "./application/speaker-alias-resolution.js";
 export {
   SameRoomFocusedMemoryRetrieval,
   type CanonicalEvidenceTurnHashPort,
@@ -230,6 +238,10 @@ export {
   type GroundingSafetyLimits,
   type RehydratedEvidenceTurn,
 } from "./domain/grounding-plan.js";
+export {
+  historicalEvidenceSourceKey,
+  type HistoricalEvidenceSource,
+} from "./domain/historical-evidence-source.js";
 export {
   GroundedAnswer,
   type FixedFinalReplyOutcome,

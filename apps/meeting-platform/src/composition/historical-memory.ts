@@ -17,19 +17,17 @@ import {
   type HistoricalEmbeddingTokenizerPort, type HistoricalSyncStore,
   type HistoricalWindowPlanningProfileV1, type TwoHourHistoricalRetrievalProfileV1,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
-import {
-  PostgresHistoricalEvidenceAuthority,
-  PostgresExhaustiveCoverageStore,
-  PostgresHistoricalMemoryStore,
-} from "@discord-meeting/postgres-adapter";
+import { PostgresExhaustiveCoverageStore, PostgresHistoricalEvidenceAuthority,
+  PostgresHistoricalMemoryStore } from "@discord-meeting/postgres-adapter";
 import type { Logger } from "@discord-meeting/observability-adapter";
-import {
-  SubscriptionRuntimeCoverageExtractorAdapter, subscriptionRuntimeCliEngine,
+import { SubscriptionRuntimeCoverageExtractorAdapter, subscriptionRuntimeCliEngine,
   type SubscriptionRuntimeTransportPort,
 } from "@discord-meeting/subscription-runtime-adapter";
 import type { Pool } from "pg";
 
 import type { PlatformConfig } from "../config.js";
+import { participantSpeakerAliases } from
+  "../config/participant-greeting-profiles.js";
 
 const reconciliationIntervalMs = 5_000;
 const maximumOperationsPerPass = 25;
@@ -409,6 +407,9 @@ export function createPlatformHistoricalMemory(
       authorization,
       ids: new HmacHistoricalOpaqueIds(topologyKey),
       memory,
+      speakerAliases: participantSpeakerAliases(
+        input.config.participantGreetingProfiles,
+      ),
       store: new PostgresHistoricalMemoryStore(input.pool),
       tokenizer: () => qualifiedTokenizer,
     }, undefined, twoHourProfile),

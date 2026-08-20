@@ -107,6 +107,7 @@ export class EvidenceFake implements FinalReplyEvidencePort {
     status: "current",
     turns: selectedTurns,
   };
+  public readonly hydrationResults: CanonicalFinalReplyEvidenceResult[] = [];
   public readonly references: (readonly FocusedMemoryReference[])[] = [];
   public rechecks = 0;
 
@@ -124,7 +125,7 @@ export class EvidenceFake implements FinalReplyEvidencePort {
     input: readonly FocusedMemoryReference[],
   ): Promise<CanonicalFinalReplyEvidenceResult> {
     this.references.push(input);
-    return Promise.resolve(this.hydrated);
+    return Promise.resolve(this.hydrationResults.shift() ?? this.hydrated);
   }
 }
 

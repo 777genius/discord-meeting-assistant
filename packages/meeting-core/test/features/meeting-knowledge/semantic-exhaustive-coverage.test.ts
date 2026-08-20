@@ -289,6 +289,7 @@ function semanticSync(
       remaining: false,
     }),
     findCurrentCandidate: async () => null,
+    findCurrentCandidates: async () => [],
     isCurrentGeneration: async () => true,
     listCurrentRoomPlans: async () => [{ binding, plan, remoteDocumentIds: {} }],
     listDesiredRoomBindings: async () => [binding],

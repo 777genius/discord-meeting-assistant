@@ -4,6 +4,8 @@ import {
   type GroundingPlan,
   type RehydratedEvidenceTurn,
 } from "../domain/grounding-plan.js";
+import { historicalEvidenceSourceKey } from
+  "../domain/historical-evidence-source.js";
 import type { QuestionBindingSnapshot } from "../domain/question-job.js";
 import { admittedHumanActors } from "./admitted-human-evidence.js";
 import { authorityMatchesBinding } from "./final-reply-checks.js";
@@ -344,12 +346,15 @@ export function focusedHydrationMatchesReferences(
     }
     if (turn.source === undefined) {
       return reference.meetingId === binding.meetingId &&
+        reference.historicalSource === undefined &&
         reference.transcriptId === binding.transcriptId &&
         reference.transcriptVersion === binding.transcriptVersion &&
         reference.sourceStartCodePoint === undefined &&
         reference.sourceEndCodePoint === undefined;
     }
     return turn.source.meetingId === reference.meetingId &&
+      historicalEvidenceSourceKey(turn.source.historicalSource) ===
+        historicalEvidenceSourceKey(reference.historicalSource) &&
       turn.source.transcriptId === reference.transcriptId &&
       turn.source.transcriptVersion === reference.transcriptVersion &&
       turn.source.sourceStartCodePoint === reference.sourceStartCodePoint &&

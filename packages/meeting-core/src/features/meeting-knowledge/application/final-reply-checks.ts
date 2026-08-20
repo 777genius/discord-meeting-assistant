@@ -6,9 +6,13 @@ import {
   type GroundingPlan,
   type RehydratedEvidenceTurn,
 } from "../domain/grounding-plan.js";
+import { historicalEvidenceSourceKey } from
+  "../domain/historical-evidence-source.js";
 import type { QuestionBindingSnapshot } from "../domain/question-job.js";
+import { admittedHumanActors } from "./admitted-human-evidence.js";
 import type {
   CurrentFinalReplyBinding,
+  FinalReplyEvidencePort,
   FocusedMemoryRetrievalPort,
   QuestionAuthorizationObservation,
 } from "./ports/final-reply.js";
@@ -58,6 +62,9 @@ export function referencesFromPlan(
   plan: GroundingPlan,
 ): readonly FocusedMemoryReference[] {
   return Object.freeze(plan.evidence.map(({ source, turnHash, turnId }) => Object.freeze({
+    ...(source?.historicalSource === undefined
+      ? {}
+      : { historicalSource: source.historicalSource }),
     meetingId: source?.meetingId ?? binding.meetingId,
     ...(source?.sourceEndCodePoint === undefined
       ? {}
@@ -98,6 +105,8 @@ function sameEvidenceSource(
   right: GroundingEvidence["source"],
 ): boolean {
   return left?.meetingId === right?.meetingId &&
+    historicalEvidenceSourceKey(left?.historicalSource) ===
+      historicalEvidenceSourceKey(right?.historicalSource) &&
     left?.sourceStartCodePoint === right?.sourceStartCodePoint &&
     left?.sourceEndCodePoint === right?.sourceEndCodePoint &&
     left?.transcriptId === right?.transcriptId &&
@@ -147,6 +156,7 @@ function planUsesHistoricalEvidence(
 ): boolean {
   return plan.evidence.some(({ source }) =>
     source !== undefined && (
+      source.historicalSource !== undefined ||
       source.meetingId !== binding.meetingId ||
       source.transcriptId !== binding.transcriptId ||
       source.transcriptVersion !== binding.transcriptVersion
@@ -168,4 +178,42 @@ export function reauthorizeHistoricalPlan(
     roomId: binding.roomId,
     scopeId: binding.scopeId,
   }) ?? Promise.resolve(false);
+}
+
+/** Rehydrates the exact plan again so an indexed-source rebuild cannot leak stale text. */
+export async function planEvidenceIsCurrent(
+  evidence: FinalReplyEvidencePort,
+  binding: QuestionBindingSnapshot,
+  plan: GroundingPlan,
+  prerequisite?: () => Promise<boolean>,
+): Promise<boolean> {
+  if (prerequisite !== undefined && !await prerequisite()) {
+    return false;
+  }
+  if (plan.evidence.length === 0) {
+    const current = await evidence.recheckCurrentBinding(binding);
+    return current.status === "current" &&
+      authorityMatchesBinding(current.binding, binding);
+  }
+  const rehydrated = await evidence.rehydrateSelectedEvidence(
+    binding,
+    referencesFromPlan(binding, plan),
+  );
+  if (
+    rehydrated.status !== "current" ||
+    !authorityMatchesBinding(rehydrated.binding, binding)
+  ) {
+    return false;
+  }
+  try {
+    const currentPlan = rebuildGroundingPlan(
+      plan,
+      rehydrated.turns,
+      admittedHumanActors(rehydrated),
+    );
+    return sameGroundingPlanEvidenceSections(plan, currentPlan) &&
+      sameEvidenceIdentity(plan.evidence, currentPlan.evidence);
+  } catch {
+    return false;
+  }
 }

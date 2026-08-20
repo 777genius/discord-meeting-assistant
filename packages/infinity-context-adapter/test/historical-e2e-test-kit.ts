@@ -252,6 +252,17 @@ export class MemoryHistoricalStore implements HistoricalSyncStore {
     return null;
   }
 
+  public async findCurrentCandidates(
+    scopeId: string,
+    roomId: string,
+    candidateLocators: readonly string[],
+  ): Promise<readonly HistoricalCandidateRecordV1[]> {
+    const records = await Promise.all(candidateLocators.map((candidateLocator) =>
+      this.findCurrentCandidate(scopeId, roomId, candidateLocator)
+    ));
+    return records.filter((record): record is HistoricalCandidateRecordV1 => record !== null);
+  }
+
   public async listCurrentRoomPlans(
     scopeId: string,
     roomId: string,

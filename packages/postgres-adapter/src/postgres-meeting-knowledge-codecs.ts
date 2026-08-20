@@ -13,6 +13,11 @@ import { z } from "zod";
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/u);
 const boundedText = z.string().trim().min(1).max(32_768);
 const localeSchema = z.enum(["en", "mixed", "ru"]);
+const historicalEvidenceSourceSchema = z.object({
+  candidateLocator: z.string().trim().min(1).max(1_024),
+  indexGeneration: z.string().trim().min(1).max(1_024),
+  releaseId: z.string().trim().min(1).max(1_024),
+}).strict();
 
 export function canonicalFinalReplyTurns(
   snapshot: MeetingSnapshot,
@@ -74,6 +79,7 @@ const groundingEvidenceSchema = z.object({
   evidenceId: boundedText,
   speakerId: boundedText,
   source: z.object({
+    historicalSource: historicalEvidenceSourceSchema.optional(),
     meetingId: boundedText,
     sourceEndCodePoint: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
     sourceStartCodePoint: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
@@ -234,6 +240,17 @@ export function decodeGroundingPlan(value: unknown): GroundingPlan {
         ? {}
         : {
             source: {
+              ...(evidence.source.historicalSource === undefined
+                ? {}
+                : {
+                    historicalSource: {
+                      candidateLocator:
+                        evidence.source.historicalSource.candidateLocator,
+                      indexGeneration:
+                        evidence.source.historicalSource.indexGeneration,
+                      releaseId: evidence.source.historicalSource.releaseId,
+                    },
+                  }),
               meetingId: evidence.source.meetingId,
               ...(evidence.source.sourceEndCodePoint === undefined
                 ? {}

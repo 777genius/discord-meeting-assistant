@@ -9,6 +9,7 @@ import {
 import {
   authorityMatchesBinding,
   authorizedForJob,
+  planEvidenceIsCurrent,
   rebuildGroundingPlan,
   referencesFromPlan,
   reauthorizeHistoricalPlan,
@@ -107,8 +108,8 @@ export class PublishFinalReply {
       return this.settle(lease, "stale_binding");
     }
     const coverageCurrent = coverage.recheck;
-    const historicalAuthorizationCurrent = () =>
-      reauthorizeHistoricalPlan(this.memory, lease.binding, plan);
+    const historicalAuthorizationCurrent = () => reauthorizeHistoricalPlan(this.memory, lease.binding, plan);
+    const publicationEvidenceCurrent = () => planEvidenceIsCurrent(this.evidence, lease.binding, plan, coverageCurrent);
     if (!await historicalAuthorizationCurrent()) {
       return this.settle(lease, "stale_authorization");
     }
@@ -173,7 +174,7 @@ export class PublishFinalReply {
         }),
         "answered",
         {
-          ...(coverageCurrent === undefined ? {} : { coverageCurrent }),
+          coverageCurrent: publicationEvidenceCurrent,
           historicalAuthorizationCurrent,
           sourceMeetingIds: sourceMeetingsForPlan(lease, currentPlan),
         },

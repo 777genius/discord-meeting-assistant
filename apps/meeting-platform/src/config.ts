@@ -285,14 +285,11 @@ const environmentSchema = z
         path: ["CONVERSATION_ENABLED"],
       });
     }
-    if (
-      Object.keys(environment.PARTICIPANT_GREETING_PROFILES_JSON).length > 0 &&
-      !environment.CONVERSATION_ENABLED
-    ) {
+    if (participantProfilesHaveNoConsumer(environment)) {
       context.addIssue({
         code: "custom",
         message:
-          "participant greeting profiles require live conversation to be enabled",
+          "participant greeting profiles require live conversation or local final reply to be enabled",
         path: ["PARTICIPANT_GREETING_PROFILES_JSON"],
       });
     }
@@ -364,6 +361,16 @@ const environmentSchema = z
       });
     }
   });
+
+function participantProfilesHaveNoConsumer(environment: {
+  readonly CONVERSATION_ENABLED: boolean;
+  readonly MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED: boolean;
+  readonly PARTICIPANT_GREETING_PROFILES_JSON: Readonly<Record<string, unknown>>;
+}): boolean {
+  return Object.keys(environment.PARTICIPANT_GREETING_PROFILES_JSON).length > 0 &&
+    !environment.CONVERSATION_ENABLED &&
+    !environment.MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED;
+}
 
 export type ParsedPlatformEnvironment = z.infer<typeof environmentSchema>;
 

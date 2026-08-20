@@ -303,6 +303,34 @@ describe("focused-memory boundary contract", () => {
       ...valid,
       candidates: [references[0], references[0]],
     })).toThrow("must be unique");
+    expect(decodeFocusedMemoryRetrievalResult({
+      ...valid,
+      candidates: [{ ...references[0], relevanceScore: 0.75 }],
+    })).toMatchObject({ candidates: [{ relevanceScore: 0.75 }] });
+    expect(() => decodeFocusedMemoryRetrievalResult({
+      ...valid,
+      candidates: [{ ...references[0], relevanceScore: 1.01 }],
+    })).toThrow("finite normalized score");
+    const historical = {
+      ...references[0],
+      historicalSource: {
+        candidateLocator: "candidate-1",
+        indexGeneration: "generation-1",
+        releaseId: "release-1",
+      },
+      meetingId: "historical-meeting",
+    };
+    expect(decodeFocusedMemoryRetrievalResult({
+      ...valid,
+      candidates: [historical],
+    })).toMatchObject({ candidates: [historical] });
+    expect(() => decodeFocusedMemoryRetrievalResult({
+      ...valid,
+      candidates: [{
+        ...historical,
+        historicalSource: { releaseId: "release-1" },
+      }],
+    })).toThrow();
   });
 });
 
@@ -404,9 +432,11 @@ describe("ProcessFinalReplyJob", () => {
     expect(memory.calls).toHaveLength(1);
     expect(memory.calls[0]).not.toHaveProperty("turns");
     expect(memory.calls[0]).not.toHaveProperty("transcript");
-    expect(evidence.references).toHaveLength(3);
+    expect(evidence.references).toHaveLength(5);
     expect(evidence.references[0]).toEqual(references);
     expect(evidence.references[1]).toEqual(references);
+    expect(evidence.references[3]).toEqual(references);
+    expect(evidence.references[4]).toEqual(references);
     expect(generator.requests[0]?.plan).toMatchObject({
       authorityGeneration: authority.memoryGeneration,
       mode: "focused_retrieval",

@@ -151,11 +151,28 @@ class RuntimeFake implements SubscriptionRuntimeTransportPort {
   }
 }
 
-function adapter(runtime: RuntimeFake) {
+function adapter(
+  runtime: RuntimeFake,
+  speakerAliases?: Readonly<Record<string, readonly string[]>>,
+) {
   return new SubscriptionRuntimeGroundedAnswerAdapter(runtime, {
     expectedLauncherSha256: launcherSha256,
     expectedRuntimeEngine: subscriptionRuntimeCliEngine,
+    ...(speakerAliases === undefined ? {} : { speakerAliases }),
   });
+}
+
+function historicalSource(meetingId: string) {
+  return {
+    historicalSource: {
+      candidateLocator: `candidate-${meetingId}`,
+      indexGeneration: `generation-${meetingId}`,
+      releaseId: `release-${meetingId}`,
+    },
+    meetingId,
+    transcriptId: `transcript-${meetingId}`,
+    transcriptVersion: 1,
+  };
 }
 
 describe("Meeting Knowledge subscription runtime contract", () => {
@@ -218,6 +235,36 @@ describe("Meeting Knowledge subscription runtime contract", () => {
     );
     expect(runtime.request?.task.systemPrompt).toContain(
       knowledgeAnswerStatusContract,
+    );
+  });
+
+  it("binds a name in the question to anonymous speaker evidence", async () => {
+    const runtime = new RuntimeFake();
+    const request = {
+      ...generationRequest(),
+      question: "What did Vlad propose?",
+    };
+
+    await adapter(runtime, {
+      "77777777777777777": ["Anna"],
+      "88888888888888888": ["Vlad", "Влад"],
+    }).generate(request);
+
+    const serializedPrompt = runtime.request?.task.prompt ?? "";
+    const prompt = JSON.parse(serializedPrompt) as {
+      readonly questionSpeakerBindings: readonly {
+        readonly name: string;
+        readonly speakerReference: string;
+      }[];
+    };
+    expect(prompt.questionSpeakerBindings).toEqual([
+      { name: "Vlad", speakerReference: "S2" },
+    ]);
+    expect(serializedPrompt).not.toContain("77777777777777777");
+    expect(serializedPrompt).not.toContain("88888888888888888");
+    expect(serializedPrompt).not.toContain("Anna");
+    expect(runtime.request?.task.systemPrompt).toContain(
+      "use them for attribution",
     );
   });
 
@@ -504,6 +551,68 @@ describe("Meeting Knowledge grounding runtime contract", () => {
       extracts: [],
       providerPayload: "forbidden",
     }).success).toBe(false);
+  });
+});
+
+describe("Meeting Knowledge answer privacy regressions", () => {
+  it("does not bind a configured compound name from separated question words", async () => {
+    const runtime = new RuntimeFake();
+    await adapter(runtime, {
+      "88888888888888888": ["Anna Smith"],
+    }).generate({
+      ...generationRequest(),
+      question: "Did Smith agree with Anna?",
+    });
+
+    const prompt = JSON.parse(runtime.request?.task.prompt ?? "null") as {
+      readonly questionSpeakerBindings: readonly unknown[];
+    };
+    expect(prompt.questionSpeakerBindings).toEqual([]);
+  });
+
+  it("preserves anonymous meeting boundaries for relative timestamps", async () => {
+    const runtime = new RuntimeFake();
+    const base = generationRequest();
+    const plan = createFocusedRetrievalGroundingPlan({
+      authorityGeneration: base.plan.authorityGeneration,
+      coverage: "sufficient",
+      humanActorIds: ["77777777777777777", "88888888888888888"],
+      turns: [{
+        endMs: 5_401_000,
+        source: historicalSource("older"),
+        speakerId: "77777777777777777",
+        startMs: 5_400_000,
+        text: "Older meeting late turn.",
+        turnHash: "7".repeat(64),
+        turnId: "older-late",
+      }, {
+        endMs: 301_000,
+        source: historicalSource("newer"),
+        speakerId: "88888888888888888",
+        startMs: 300_000,
+        text: "Newer meeting early turn.",
+        turnHash: "8".repeat(64),
+        turnId: "newer-early",
+      }],
+    });
+
+    await adapter(runtime).generate({ ...base, plan });
+
+    const serializedPrompt = runtime.request?.task.prompt ?? "";
+    const prompt = JSON.parse(serializedPrompt) as {
+      readonly evidence: readonly { readonly meetingReference: string }[];
+    };
+    expect(prompt.evidence.map(({ meetingReference }) => meetingReference))
+      .toEqual(["M1", "M2"]);
+    expect(serializedPrompt).not.toContain("transcript-older");
+    expect(serializedPrompt).not.toContain("transcript-newer");
+    expect(serializedPrompt).not.toContain("release-older");
+    expect(serializedPrompt).not.toContain("generation-older");
+    expect(serializedPrompt).not.toContain("candidate-older");
+    expect(serializedPrompt).not.toContain('"meetingId"');
+    expect(runtime.request?.task.systemPrompt).toContain(
+      "never infer chronology or compare relative times",
+    );
   });
 });
 

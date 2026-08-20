@@ -98,6 +98,13 @@ export interface HistoricalSyncStore {
     options?: HistoricalOperationOptionsV1,
   ): Promise<HistoricalCandidateRecordV1 | null>;
 
+  findCurrentCandidates(
+    scopeId: string,
+    roomId: string,
+    candidateLocators: readonly string[],
+    options?: HistoricalOperationOptionsV1,
+  ): Promise<readonly HistoricalCandidateRecordV1[]>;
+
   listCurrentRoomPlans(
     scopeId: string,
     roomId: string,

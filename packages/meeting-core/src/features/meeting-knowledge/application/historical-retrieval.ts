@@ -8,8 +8,6 @@ import {
   buildHistoricalRoomTopology,
   HistoricalIndexPlanError,
   rehydrateHistoricalBlock,
-  type HistoricalEvidenceBlockPolicyV1,
-  DEFAULT_HISTORICAL_EVIDENCE_BLOCK_POLICY,
 } from "./historical-index-plan.js";
 import type { HistoricalAuthorizationObservationV1, HistoricalAuthorizationPort } from "./ports/historical-grounding.js";
 import type { HistoricalCandidateLocatorV1, HistoricalMemoryPort, HistoricalOpaqueIdPort, LocallyRehydratedEvidenceBlockV1 } from "./ports/historical-memory.js";
@@ -18,38 +16,21 @@ import {
   decomposeHistoricalQuery,
   isRequestedMeeting,
   mergeQualifiedHistoricalSearchResults,
+  resolveRequestedSpeakerIds,
   rerankHistoricalBlocks,
+  type SpeakerAliasMapV1,
 } from "./historical-retrieval-ranking.js";
 import { refreshStrictFocusedBlocks } from "./historical-focused-refresh.js";
 import type { HistoricalEmbeddingTokenizerPort } from "./ports/historical-embedding-tokenizer.js";
-
-export interface FocusedRetrievalPolicyV1 {
-  readonly blockPolicy: HistoricalEvidenceBlockPolicyV1;
-  readonly candidateLimitPerQuery: number;
-  readonly maximumDecomposedQueries: number;
-  readonly maximumEvidenceBytes: number;
-  readonly maximumLocalScanBlocks: number;
-  readonly minimumProviderScore: number;
-  readonly neighborRadius: number;
-  readonly rerankLimit: number;
-  readonly searchTimeoutMs: number;
-  readonly version: "meeting-knowledge.focused-retrieval.v1";
-}
-
-type FocusedRetrievalPolicyInputV1 = Omit<FocusedRetrievalPolicyV1, "version"> & { readonly version: string };
-
-export const DEFAULT_FOCUSED_RETRIEVAL_POLICY: FocusedRetrievalPolicyV1 = Object.freeze({
-  blockPolicy: DEFAULT_HISTORICAL_EVIDENCE_BLOCK_POLICY,
-  candidateLimitPerQuery: 40,
-  maximumDecomposedQueries: 4,
-  maximumEvidenceBytes: 24_000,
-  maximumLocalScanBlocks: 512,
-  minimumProviderScore: 0.01,
-  neighborRadius: 1,
-  rerankLimit: 8,
-  searchTimeoutMs: 3_000,
-  version: "meeting-knowledge.focused-retrieval.v1",
-});
+import {
+  DEFAULT_FOCUSED_RETRIEVAL_POLICY,
+  validateFocusedRetrievalPolicy,
+  type FocusedRetrievalPolicyV1,
+} from "./historical-retrieval-policy.js";
+export {
+  DEFAULT_FOCUSED_RETRIEVAL_POLICY,
+  type FocusedRetrievalPolicyV1,
+} from "./historical-retrieval-policy.js";
 
 export interface FocusedGroundingPlanV1 {
   readonly blocks: readonly LocallyRehydratedEvidenceBlockV1[];
@@ -81,29 +62,6 @@ function authorizationMatches(before: HistoricalAuthorizationObservationV1, afte
     before.policyVersion === after.policyVersion;
 }
 
-function isBoundedInteger(value: number, minimum: number, maximum: number): boolean {
-  return Number.isSafeInteger(value) && value >= minimum && value <= maximum;
-}
-
-function assertPolicy(policy: FocusedRetrievalPolicyInputV1): FocusedRetrievalPolicyV1 {
-  if (
-    policy.version !== "meeting-knowledge.focused-retrieval.v1" ||
-    !isBoundedInteger(policy.candidateLimitPerQuery, 1, 100) ||
-    !isBoundedInteger(policy.maximumDecomposedQueries, 1, 8) ||
-    !isBoundedInteger(policy.maximumEvidenceBytes, 256, 131_072) ||
-    !isBoundedInteger(policy.maximumLocalScanBlocks, 1, 2_048) ||
-    !Number.isFinite(policy.minimumProviderScore) ||
-    policy.minimumProviderScore < 0 ||
-    policy.minimumProviderScore > 1 ||
-    !isBoundedInteger(policy.neighborRadius, 0, 4) ||
-    !isBoundedInteger(policy.rerankLimit, 1, 64) ||
-    !isBoundedInteger(policy.searchTimeoutMs, 1, 60_000)
-  ) {
-    throw new RangeError("focused historical retrieval policy is outside its qualified bounds");
-  }
-  return Object.freeze({ ...policy, version: "meeting-knowledge.focused-retrieval.v1" });
-}
-
 export class HistoricalFocusedRetrieval {
   readonly #policy: FocusedRetrievalPolicyV1;
   readonly #twoHourProfile: TwoHourHistoricalRetrievalProfileV1;
@@ -114,6 +72,7 @@ export class HistoricalFocusedRetrieval {
       readonly authorization: HistoricalAuthorizationPort;
       readonly ids: HistoricalOpaqueIdPort;
       readonly memory: HistoricalMemoryPort;
+      readonly speakerAliases?: SpeakerAliasMapV1;
       readonly store: HistoricalSyncStore;
       readonly tokenizer?: () => HistoricalEmbeddingTokenizerPort | undefined;
     },
@@ -121,7 +80,7 @@ export class HistoricalFocusedRetrieval {
     twoHourProfile: TwoHourHistoricalRetrievalProfileV1 =
       DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
   ) {
-    this.#policy = assertPolicy(policy);
+    this.#policy = validateFocusedRetrievalPolicy(policy);
     this.#twoHourProfile = Object.freeze({ ...twoHourProfile });
   }
 
@@ -159,6 +118,10 @@ export class HistoricalFocusedRetrieval {
       question,
       this.#policy.maximumDecomposedQueries,
     );
+    const requestedSpeakerIds = resolveRequestedSpeakerIds(
+      question,
+      this.dependencies.speakerAliases,
+    );
     const remoteCandidates = await this.remoteCandidates(input, queries);
     const candidates = remoteCandidates?.candidates ?? [];
     let retrievalSource: FocusedGroundingPlanV1["retrievalSource"] =
@@ -179,6 +142,7 @@ export class HistoricalFocusedRetrieval {
       queries,
       candidates,
       this.#policy,
+      requestedSpeakerIds,
     );
     if (ranked.length === 0) {
       return { reason: "focused_evidence_budget_exhausted", status: "insufficient_evidence" };
@@ -276,43 +240,52 @@ export class HistoricalFocusedRetrieval {
     candidates: readonly HistoricalCandidateLocatorV1[],
   ): Promise<readonly LocallyRehydratedEvidenceBlockV1[]> {
     const output = new Map<string, LocallyRehydratedEvidenceBlockV1>();
-    for (const candidate of candidates) {
-      const record = await this.dependencies.store.findCurrentCandidate(
-        input.scopeId,
-        input.roomId,
-        candidate.locator,
-        input.signal === undefined ? {} : { signal: input.signal },
-      );
-      if (
-        record === null ||
-        !isRequestedMeeting(record.binding.meetingId, input)
-      ) {
+    const records = await this.dependencies.store.findCurrentCandidates(
+      input.scopeId,
+      input.roomId,
+      candidates.map(({ locator }) => locator),
+      input.signal === undefined ? {} : { signal: input.signal },
+    );
+    const meetingByRelease = new Map<string, Awaited<ReturnType<
+      HistoricalEvidenceAuthority["loadAcceptedFinalMeeting"]>>>();
+    const generationByRelease = new Map<string, boolean>();
+    for (const record of records) {
+      if (!isRequestedMeeting(record.binding.meetingId, input)) {
         continue;
       }
-      await this.rehydratePlanNeighborhood(record, output, input.signal);
+      const sourceKey = record.binding.releaseId;
+      let meeting = meetingByRelease.get(sourceKey);
+      if (!meetingByRelease.has(sourceKey)) {
+        meeting = await this.dependencies.authority.loadAcceptedFinalMeeting(
+          record.binding,
+          input.signal === undefined ? {} : { signal: input.signal },
+        );
+        meetingByRelease.set(sourceKey, meeting ?? null);
+      }
+      let currentGeneration = generationByRelease.get(sourceKey);
+      if (currentGeneration === undefined) {
+        currentGeneration = await this.dependencies.store.isCurrentGeneration(
+          record.binding,
+          record.plan.topology.indexGeneration,
+          input.signal === undefined ? {} : { signal: input.signal },
+        );
+        generationByRelease.set(sourceKey, currentGeneration);
+      }
+      if (meeting === null || meeting === undefined ||
+        !admitsHistoricalRetrieval(meeting, this.#twoHourProfile) || !currentGeneration) {
+        continue;
+      }
+      this.rehydratePlanNeighborhood(record, meeting, output);
     }
     return Object.freeze([...output.values()]);
   }
 
-  private async rehydratePlanNeighborhood(
+  private rehydratePlanNeighborhood(
     record: HistoricalAppliedPlanV1 & { readonly ordinal: number },
+    meeting: NonNullable<Awaited<ReturnType<
+      HistoricalEvidenceAuthority["loadAcceptedFinalMeeting"]>>>,
     output: Map<string, LocallyRehydratedEvidenceBlockV1>,
-    signal?: AbortSignal,
-  ): Promise<void> {
-    const meeting = await this.dependencies.authority.loadAcceptedFinalMeeting(
-      record.binding,
-      signal === undefined ? {} : { signal },
-    );
-    if (
-      meeting === null ||
-      !admitsHistoricalRetrieval(meeting, this.#twoHourProfile) ||
-      !await this.dependencies.store.isCurrentGeneration(
-      record.binding,
-      record.plan.topology.indexGeneration,
-      signal === undefined ? {} : { signal },
-    )) {
-      return;
-    }
+  ): void {
     const first = Math.max(0, record.ordinal - this.#policy.neighborRadius);
     const last = Math.min(record.plan.documents.length - 1,
       record.ordinal + this.#policy.neighborRadius);
