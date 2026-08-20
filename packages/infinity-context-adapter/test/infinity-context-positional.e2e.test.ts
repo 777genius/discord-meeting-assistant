@@ -432,7 +432,7 @@ describe("Infinity Context positional retrieval qualification", () => {
     await expect(focused.buildPlan({
       authorizationPrincipalRef: "principal",
       currentMeetingId: meeting.binding.meetingId,
-      question: "Where was QUARTZ-CHARLIE discussed?",
+      question: "Where is QUARTZ-ECHO detail?",
       roomId: meeting.binding.roomId,
       scopeId: meeting.binding.scopeId,
       searchEnabled: true,
