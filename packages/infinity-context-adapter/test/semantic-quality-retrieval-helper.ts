@@ -48,7 +48,7 @@ export interface SemanticQualityRetrievalOutcome {
   readonly providerPayloadWasReferenceOnly: true;
   readonly queryId: string;
   readonly rehydratedTurnIds: readonly string[];
-  readonly status: "ready" | "unavailable";
+  readonly status: "expected_abstention" | "ready" | "unavailable";
   readonly topFiveTurnIds: readonly string[];
   readonly wholeTranscriptIncluded: false;
 }
@@ -129,15 +129,26 @@ export async function runSemanticQualityRetrieval(
         sourceSet: "current",
       });
       if (result.status !== "ready") {
+        const expectedAbstention = question.kind === "unsupported";
+        const answerRequest = expectedAbstention
+          ? Object.freeze({
+              evidence: Object.freeze([]),
+              question: question.question,
+              requestBytes: Buffer.byteLength(JSON.stringify({
+                evidence: [],
+                question: question.question,
+              }), "utf8"),
+            })
+          : null;
         outcomes.push(Object.freeze({
-          answerRequest: null,
+          answerRequest,
           candidateBlockCountAt5: 0,
           localRehydrationVerified: true,
           latencyMs: performance.now() - retrievalStartedAt,
           providerPayloadWasReferenceOnly: true,
           queryId: question.id,
           rehydratedTurnIds: Object.freeze([]),
-          status: "unavailable",
+          status: expectedAbstention ? "expected_abstention" : "unavailable",
           topFiveTurnIds: Object.freeze([]),
           wholeTranscriptIncluded: false,
         }));

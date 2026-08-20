@@ -78,7 +78,9 @@ export async function runAuthenticatedAnswerEvaluation(input: {
   }
   const requests = input.corpus.questions.map((question) => {
     const retrieval = input.retrieval.outcomes.find(({ queryId }) => queryId === question.id);
-    if (retrieval?.status !== "ready" || retrieval.answerRequest === null) {
+    const retrievalIsAdmitted = retrieval?.status === "ready" ||
+      (question.kind === "unsupported" && retrieval?.status === "expected_abstention");
+    if (!retrievalIsAdmitted || retrieval.answerRequest === null) {
       throw new Error(`answer run requires ready bounded evidence for ${question.id}`);
     }
     return Object.freeze({ evidence: retrieval.answerRequest.evidence, queryId: question.id,
@@ -179,6 +181,7 @@ function validateReceipt(receipt: SubscriptionAnswerReceipt, expectedDigest: str
     const evidenceById = new Map(request.evidence.map((turn) => [turn.turnId, turn]));
     for (const claim of answer.claims) {
       if (claim.text.trim() === "" || Buffer.byteLength(claim.text, "utf8") > maximumClaimTextBytes ||
+        claim.citedTurnIds.length === 0 ||
         new Set(claim.citedTurnIds).size !== claim.citedTurnIds.length ||
         claim.citationRefs.length !== claim.citedTurnIds.length ||
         claim.citationRefs.some((reference, index) => {

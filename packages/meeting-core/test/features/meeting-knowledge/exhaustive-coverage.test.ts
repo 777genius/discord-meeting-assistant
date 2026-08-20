@@ -288,6 +288,7 @@ class BindingStore implements HistoricalSyncStore {
   public async recordDeleted(): Promise<void> {}
   public async requestMeetingDeletion(): Promise<void> {}
   public async findCurrentCandidate(): Promise<HistoricalCandidateRecordV1 | null> { return null; }
+  public async findCurrentCandidates(): Promise<readonly HistoricalCandidateRecordV1[]> { return []; }
   public async listCurrentRoomPlans(): Promise<readonly HistoricalAppliedPlanV1[]> {
     this.currentPlanReads += 1;
     return this.currentPlans;

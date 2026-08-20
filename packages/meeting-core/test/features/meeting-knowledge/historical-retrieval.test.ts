@@ -104,6 +104,8 @@ function twoBlockTurns(primary: string, primaryId: string) {
 }
 
 class AppliedStore implements HistoricalSyncStore {
+  public candidateBatchReads = 0;
+  public candidatePointReads = 0;
   public current = true;
   public currentSequence: boolean[] = [];
 
@@ -126,6 +128,7 @@ class AppliedStore implements HistoricalSyncStore {
     roomId: string,
     candidateLocator: string,
   ): Promise<HistoricalCandidateRecordV1 | null> {
+    this.candidatePointReads += 1;
     for (const record of this.records) {
       if (record.binding.scopeId !== scopeId || record.binding.roomId !== roomId) {
         continue;
@@ -138,6 +141,25 @@ class AppliedStore implements HistoricalSyncStore {
       }
     }
     return null;
+  }
+
+  public async findCurrentCandidates(
+    scopeId: string,
+    roomId: string,
+    candidateLocators: readonly string[],
+  ): Promise<readonly HistoricalCandidateRecordV1[]> {
+    this.candidateBatchReads += 1;
+    const requested = new Set(candidateLocators);
+    return this.records.flatMap((record) => {
+      if (record.binding.scopeId !== scopeId || record.binding.roomId !== roomId) {
+        return [];
+      }
+      return record.plan.documents.flatMap(({ manifest }) =>
+        requested.has(manifest.candidateLocator)
+          ? [{ ...record, ordinal: manifest.ordinal }]
+          : []
+      );
+    });
   }
 
   public async listCurrentRoomPlans(
@@ -300,6 +322,8 @@ describe("focused historical retrieval", () => {
       }),
     ]));
     expect(result.plan).not.toHaveProperty("currentTranscriptRequirement");
+    expect(store.candidateBatchReads).toBe(1);
+    expect(store.candidatePointReads).toBe(0);
   });
 
   it("preserves ordering when a qualified provider uses scores above one", async () => {

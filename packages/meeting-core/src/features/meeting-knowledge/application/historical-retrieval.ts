@@ -284,43 +284,52 @@ export class HistoricalFocusedRetrieval {
     candidates: readonly HistoricalCandidateLocatorV1[],
   ): Promise<readonly LocallyRehydratedEvidenceBlockV1[]> {
     const output = new Map<string, LocallyRehydratedEvidenceBlockV1>();
-    for (const candidate of candidates) {
-      const record = await this.dependencies.store.findCurrentCandidate(
-        input.scopeId,
-        input.roomId,
-        candidate.locator,
-        input.signal === undefined ? {} : { signal: input.signal },
-      );
-      if (
-        record === null ||
-        !isRequestedMeeting(record.binding.meetingId, input)
-      ) {
+    const records = await this.dependencies.store.findCurrentCandidates(
+      input.scopeId,
+      input.roomId,
+      candidates.map(({ locator }) => locator),
+      input.signal === undefined ? {} : { signal: input.signal },
+    );
+    const meetingByRelease = new Map<string, Awaited<ReturnType<
+      HistoricalEvidenceAuthority["loadAcceptedFinalMeeting"]>>>();
+    const generationByRelease = new Map<string, boolean>();
+    for (const record of records) {
+      if (!isRequestedMeeting(record.binding.meetingId, input)) {
         continue;
       }
-      await this.rehydratePlanNeighborhood(record, output, input.signal);
+      const sourceKey = record.binding.releaseId;
+      let meeting = meetingByRelease.get(sourceKey);
+      if (!meetingByRelease.has(sourceKey)) {
+        meeting = await this.dependencies.authority.loadAcceptedFinalMeeting(
+          record.binding,
+          input.signal === undefined ? {} : { signal: input.signal },
+        );
+        meetingByRelease.set(sourceKey, meeting ?? null);
+      }
+      let currentGeneration = generationByRelease.get(sourceKey);
+      if (currentGeneration === undefined) {
+        currentGeneration = await this.dependencies.store.isCurrentGeneration(
+          record.binding,
+          record.plan.topology.indexGeneration,
+          input.signal === undefined ? {} : { signal: input.signal },
+        );
+        generationByRelease.set(sourceKey, currentGeneration);
+      }
+      if (meeting === null || meeting === undefined ||
+        !admitsHistoricalRetrieval(meeting, this.#twoHourProfile) || !currentGeneration) {
+        continue;
+      }
+      this.rehydratePlanNeighborhood(record, meeting, output);
     }
     return Object.freeze([...output.values()]);
   }
 
-  private async rehydratePlanNeighborhood(
+  private rehydratePlanNeighborhood(
     record: HistoricalAppliedPlanV1 & { readonly ordinal: number },
+    meeting: NonNullable<Awaited<ReturnType<
+      HistoricalEvidenceAuthority["loadAcceptedFinalMeeting"]>>>,
     output: Map<string, LocallyRehydratedEvidenceBlockV1>,
-    signal?: AbortSignal,
-  ): Promise<void> {
-    const meeting = await this.dependencies.authority.loadAcceptedFinalMeeting(
-      record.binding,
-      signal === undefined ? {} : { signal },
-    );
-    if (
-      meeting === null ||
-      !admitsHistoricalRetrieval(meeting, this.#twoHourProfile) ||
-      !await this.dependencies.store.isCurrentGeneration(
-      record.binding,
-      record.plan.topology.indexGeneration,
-      signal === undefined ? {} : { signal },
-    )) {
-      return;
-    }
+  ): void {
     const first = Math.max(0, record.ordinal - this.#policy.neighborRadius);
     const last = Math.min(record.plan.documents.length - 1,
       record.ordinal + this.#policy.neighborRadius);

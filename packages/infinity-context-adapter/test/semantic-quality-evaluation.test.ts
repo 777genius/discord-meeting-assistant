@@ -143,7 +143,9 @@ describe("Infinity Context semantic and final-answer quality harness", () => {
       ...perfectOutcome(firstUnsupported),
       adjudication: { claims: [{ citationValid: false, matchedGoldClaimId: null,
         verdict: "unsupported" }], status: "fixture" },
-      answer: { claims: [{ citationRefs: [], citedTurnIds: [],
+      answer: { claims: [{ citationRefs: [citationReference(
+        firstUnsupported.distractorTurnIds[0] ?? "",
+      )], citedTurnIds: [firstUnsupported.distractorTurnIds[0] ?? ""],
         text: "Unsupported approval was invented." }], status: "answered" },
     });
     const evidence = createSemanticQualityRunEvidence({
@@ -177,7 +179,8 @@ describe("Infinity Context semantic and final-answer quality harness", () => {
       answer: { claims: [
         { citationRefs: question.goldTurnIds.map(citationReference),
           citedTurnIds: question.goldTurnIds, text: "Supported claim" },
-        { citationRefs: [], citedTurnIds: [], text: "Unrelated duplicate mapping" },
+        { citationRefs: [citationReference(question.goldTurnIds[0] ?? "")],
+          citedTurnIds: [question.goldTurnIds[0] ?? ""], text: "Unrelated duplicate mapping" },
       ], status: "answered" },
     });
     const evidence = createSemanticQualityRunEvidence({
@@ -300,6 +303,21 @@ describe("subscription answer quality receipt", () => {
     expect(run.binding.releaseTree).toBe("5".repeat(40));
   });
 
+  it("sends unsupported focused misses as explicit empty-evidence abstention requests", async () => {
+    const corpus = frozenSemanticQualityCorpus();
+    const retrieval = retrievalRun(corpus);
+    const unsupported = corpus.questions.find(({ kind }) => kind === "unsupported");
+    if (unsupported === undefined) {throw new Error("missing unsupported fixture");}
+    const outcome = retrieval.outcomes.find(({ queryId }) => queryId === unsupported.id);
+    expect(outcome?.status).toBe("expected_abstention");
+    expect(outcome?.answerRequest?.evidence).toEqual([]);
+    await expect(runAuthenticatedAnswerEvaluation({
+      build: { releaseRevision: "4".repeat(40), releaseTree: "5".repeat(40) }, corpus,
+      observedAt: "2026-08-18T04:00:00.000Z", repetition: 1,
+      retrieval, runId: "answer-run-expected-abstention", transport: answerTransport(),
+    })).resolves.toBeDefined();
+  });
+
   it("rejects an answer receipt that is not bound to the exact request batch", async () => {
     const corpus = frozenSemanticQualityCorpus();
     await expect(runAuthenticatedAnswerEvaluation({
@@ -318,6 +336,16 @@ describe("subscription answer quality receipt", () => {
       retrieval: retrievalRun(corpus), runId: "answer-run-bad-citation",
       transport: answerTransport({ outsideCitation: true }),
     })).rejects.toThrow(/outside its bounded request/u);
+  });
+
+  it("rejects an answered claim without a citation", async () => {
+    const corpus = frozenSemanticQualityCorpus();
+    await expect(runAuthenticatedAnswerEvaluation({
+      build: { releaseRevision: "4".repeat(40), releaseTree: "5".repeat(40) }, corpus,
+      observedAt: "2026-08-18T04:00:00.000Z", repetition: 1,
+      retrieval: retrievalRun(corpus), runId: "answer-run-missing-citation",
+      transport: answerTransport({ missingCitation: true }),
+    })).rejects.toThrow(/invalid or oversized/u);
   });
 });
 
@@ -454,7 +482,10 @@ function retrievalRun(corpus: ReturnType<typeof frozenSemanticQualityCorpus>) {
       candidateBlockCountAt5: 1, localRehydrationVerified: true,
       latencyMs: 25,
       providerPayloadWasReferenceOnly: true as const, queryId: question.id,
-      rehydratedTurnIds: question.goldTurnIds, status: "ready" as const,
+      rehydratedTurnIds: question.goldTurnIds,
+      status: question.kind === "unsupported"
+        ? "expected_abstention" as const
+        : "ready" as const,
       topFiveTurnIds: question.goldTurnIds, wholeTranscriptIncluded: false as const,
     })),
     remoteCleanupVerified: true as const,
@@ -479,13 +510,16 @@ function humanReceipt(
 }
 
 function answerTransport(options: {
+  readonly missingCitation?: boolean;
   readonly outsideCitation?: boolean;
   readonly wrongBatchDigest?: boolean;
 } = {}): SubscriptionAnswerTransport {
   return {
     execute: async (batch) => ({
       answers: batch.requests.map((request, index) => ({
-        claims: options.outsideCitation === true && index === 0
+        claims: options.missingCitation === true && index === 0
+          ? [{ citationRefs: [], citedTurnIds: [], text: "Claim without citation" }]
+          : options.outsideCitation === true && index === 0
           ? [{ citationRefs: [citationReference("quality-turn-420")],
               citedTurnIds: ["quality-turn-420"], text: "Out-of-request claim" }]
           : [],
@@ -496,7 +530,7 @@ function answerTransport(options: {
           requestSha256: createHash("sha256").update(JSON.stringify(request)).digest("hex"),
         },
         queryId: request.queryId,
-        status: options.outsideCitation === true && index === 0
+        status: (options.missingCitation === true || options.outsideCitation === true) && index === 0
           ? "answered" as const : "abstained" as const,
       })),
       attestation: { authKind: "subscription_session", modelConfigurationSha256: "1".repeat(64),

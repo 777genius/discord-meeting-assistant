@@ -339,6 +339,53 @@ export class PostgresHistoricalMemoryStore implements HistoricalSyncStore {
       : Object.freeze({ ...applied, ordinal: document.manifest.ordinal });
   }
 
+  public async findCurrentCandidates(
+    scopeId: string,
+    roomId: string,
+    candidateLocators: readonly string[],
+    options: HistoricalOperationOptionsV1 = {},
+  ): Promise<readonly HistoricalCandidateRecordV1[]> {
+    const locators = [...new Set(candidateLocators)];
+    if (locators.length === 0) {
+      return Object.freeze([]);
+    }
+    if (locators.length > 800 || locators.some((locator) => locator.trim() === "")) {
+      throw new RangeError("historical candidate batch is outside its qualified bounds");
+    }
+    const result = await queryHistoricalPostgres<HistoricalSyncRow>(this.pool, {
+      text: `
+        SELECT ${historicalSyncRowProjection}
+        FROM meeting_core.historical_memory_sync
+        WHERE scope_id = $1 AND room_id = $2 AND is_current
+          AND operation = 'index' AND state = 'applied'
+          AND EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements(plan -> 'documents') AS document
+            WHERE document -> 'manifest' ->> 'candidateLocator' = ANY($3::text[])
+          )
+        ORDER BY meeting_id, desired_generation
+      `,
+      values: [scopeId, roomId, locators],
+    }, options.signal, this.cancellation);
+    const requested = new Set(locators);
+    const recordsByLocator = new Map<string, HistoricalCandidateRecordV1>();
+    for (const row of result.rows) {
+      const applied = historicalAppliedFromRow(row);
+      for (const document of applied.plan.documents) {
+        if (requested.has(document.manifest.candidateLocator)) {
+          recordsByLocator.set(document.manifest.candidateLocator, Object.freeze({
+            ...applied,
+            ordinal: document.manifest.ordinal,
+          }));
+        }
+      }
+    }
+    return Object.freeze(locators.flatMap((locator) => {
+      const record = recordsByLocator.get(locator);
+      return record === undefined ? [] : [record];
+    }));
+  }
+
   public async listCurrentRoomPlans(
     scopeId: string,
     roomId: string,

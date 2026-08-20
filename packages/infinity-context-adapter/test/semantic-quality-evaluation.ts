@@ -426,7 +426,8 @@ function validateOutcome(outcome: QualityRawOutcome): void {
     throw new Error("quality adjudication requires exactly one gold mapping per emitted claim");
   }
   for (const claim of outcome.answer.claims) {
-    if (claim.citationRefs.length !== claim.citedTurnIds.length ||
+    if (claim.citedTurnIds.length === 0 ||
+      claim.citationRefs.length !== claim.citedTurnIds.length ||
       claim.citationRefs.some((reference, index) =>
         reference.turnId !== claim.citedTurnIds[index] || reference.speakerId.trim() === "" ||
         !Number.isSafeInteger(reference.startMs) || reference.startMs < 0 ||

@@ -144,6 +144,10 @@ class QueueStore implements HistoricalSyncStore {
     return null;
   }
 
+  public async findCurrentCandidates(): Promise<readonly HistoricalCandidateRecordV1[]> {
+    return [];
+  }
+
   public async listCurrentRoomPlans(
     _scopeId: string,
     _roomId: string,
