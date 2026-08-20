@@ -303,6 +303,14 @@ describe("focused-memory boundary contract", () => {
       ...valid,
       candidates: [references[0], references[0]],
     })).toThrow("must be unique");
+    expect(decodeFocusedMemoryRetrievalResult({
+      ...valid,
+      candidates: [{ ...references[0], relevanceScore: 0.75 }],
+    })).toMatchObject({ candidates: [{ relevanceScore: 0.75 }] });
+    expect(() => decodeFocusedMemoryRetrievalResult({
+      ...valid,
+      candidates: [{ ...references[0], relevanceScore: 1.01 }],
+    })).toThrow("finite normalized score");
   });
 });
 

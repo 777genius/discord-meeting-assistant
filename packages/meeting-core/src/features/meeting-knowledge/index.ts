@@ -89,7 +89,11 @@ export {
   type FocusedRetrievalPolicyV1,
   type FocusedRetrievalResultV1,
 } from "./application/historical-retrieval.js";
-export { decomposeHistoricalQuery } from "./application/historical-retrieval-ranking.js";
+export {
+  decomposeHistoricalQuery,
+  resolveRequestedSpeakerIds,
+  type SpeakerAliasMapV1,
+} from "./application/historical-retrieval-ranking.js";
 export {
   SameRoomFocusedMemoryRetrieval,
   type CanonicalEvidenceTurnHashPort,

@@ -18,7 +18,9 @@ import {
   decomposeHistoricalQuery,
   isRequestedMeeting,
   mergeQualifiedHistoricalSearchResults,
+  resolveRequestedSpeakerIds,
   rerankHistoricalBlocks,
+  type SpeakerAliasMapV1,
 } from "./historical-retrieval-ranking.js";
 import { refreshStrictFocusedBlocks } from "./historical-focused-refresh.js";
 import type { HistoricalEmbeddingTokenizerPort } from "./ports/historical-embedding-tokenizer.js";
@@ -114,6 +116,7 @@ export class HistoricalFocusedRetrieval {
       readonly authorization: HistoricalAuthorizationPort;
       readonly ids: HistoricalOpaqueIdPort;
       readonly memory: HistoricalMemoryPort;
+      readonly speakerAliases?: SpeakerAliasMapV1;
       readonly store: HistoricalSyncStore;
       readonly tokenizer?: () => HistoricalEmbeddingTokenizerPort | undefined;
     },
@@ -159,6 +162,10 @@ export class HistoricalFocusedRetrieval {
       question,
       this.#policy.maximumDecomposedQueries,
     );
+    const requestedSpeakerIds = resolveRequestedSpeakerIds(
+      question,
+      this.dependencies.speakerAliases,
+    );
     const remoteCandidates = await this.remoteCandidates(input, queries);
     const candidates = remoteCandidates?.candidates ?? [];
     let retrievalSource: FocusedGroundingPlanV1["retrievalSource"] =
@@ -179,6 +186,7 @@ export class HistoricalFocusedRetrieval {
       queries,
       candidates,
       this.#policy,
+      requestedSpeakerIds,
     );
     if (ranked.length === 0) {
       return { reason: "focused_evidence_budget_exhausted", status: "insufficient_evidence" };

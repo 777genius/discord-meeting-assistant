@@ -23,6 +23,12 @@ export interface CanonicalEvidenceTurn {
 /** A provider-neutral candidate identity. Candidate locators never return text. */
 export interface FocusedMemoryReference {
   readonly meetingId: string;
+  /**
+   * Deterministic, normalized retrieval relevance. This is ranking metadata,
+   * never evidence authority; canonical text and identity are still reloaded
+   * locally before generation.
+   */
+  readonly relevanceScore?: number;
   readonly sourceEndCodePoint?: number;
   readonly sourceStartCodePoint?: number;
   readonly transcriptId: string;

@@ -30,10 +30,18 @@ function focusedMemoryReferenceKey(reference: FocusedMemoryReference): string {
 export function mergeFocusedHydrationReferences(
   references: readonly FocusedMemoryReference[],
 ): readonly FocusedMemoryReference[] {
-  return Object.freeze([...new Map(references.map((reference) => [
-    focusedMemoryReferenceKey(reference),
-    reference,
-  ])).values()]);
+  const merged = new Map<string, FocusedMemoryReference>();
+  for (const reference of references) {
+    const key = focusedMemoryReferenceKey(reference);
+    const previous = merged.get(key);
+    if (
+      previous === undefined ||
+      (reference.relevanceScore ?? 0) > (previous.relevanceScore ?? 0)
+    ) {
+      merged.set(key, reference);
+    }
+  }
+  return Object.freeze([...merged.values()]);
 }
 
 const terminalStatuses = new Set([
@@ -181,6 +189,7 @@ function decodeCandidates(
       candidate,
       new Set([
         "meetingId",
+        "relevanceScore",
         "sourceEndCodePoint",
         "sourceStartCodePoint",
         "transcriptId",
@@ -191,12 +200,17 @@ function decodeCandidates(
       `${field}[${index}]`,
     );
     const range = decodeCandidateSourceRange(candidate, `${field}[${index}]`);
+    const relevanceScore = decodeRelevanceScore(
+      candidate.relevanceScore,
+      `${field}[${index}].relevanceScore`,
+    );
     return Object.freeze({
       meetingId: requireKnowledgeText(
         candidate.meetingId as string,
         `${field}[${index}].meetingId`,
         1_024,
       ),
+      ...(relevanceScore === undefined ? {} : { relevanceScore }),
       ...range,
       transcriptId: requireKnowledgeText(
         candidate.transcriptId as string,
@@ -226,6 +240,22 @@ function decodeCandidates(
     );
   }
   return candidates;
+}
+
+function decodeRelevanceScore(
+  value: unknown,
+  field: string,
+): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) {
+    throw new MeetingKnowledgeInvariantError(
+      "INVALID_GROUNDING_PLAN",
+      `${field} must be a finite normalized score`,
+    );
+  }
+  return value;
 }
 
 function decodeCandidateSourceRange(

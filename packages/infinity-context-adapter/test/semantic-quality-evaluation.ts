@@ -32,25 +32,31 @@ export interface QualityRunBinding {
 
 interface QualityResourceMeasurement {
   readonly estimatedCostUsd: number;
+  readonly generationLatencyMs: number;
   readonly inputTokens: number;
   readonly latencyMs: number;
   readonly outputTokens: number;
   readonly peakMemoryBytes: number;
   readonly requestBytes: number;
   readonly requestSha256: string;
+  readonly retrievalLatencyMs: number;
 }
 
-interface QualityResourceSummary {
+export interface QualityResourceSummary {
   readonly estimatedCostUsd: number;
+  readonly generationLatencyMs: LatencyDistribution;
   readonly inputTokens: number;
-  readonly latencyMs: {
-    readonly maximum: number;
-    readonly p50: number;
-    readonly p95: number;
-  };
+  readonly latencyMs: LatencyDistribution;
   readonly outputTokens: number;
   readonly peakMemoryBytes: number;
   readonly requestBytes: number;
+  readonly retrievalLatencyMs: LatencyDistribution;
+}
+
+interface LatencyDistribution {
+  readonly maximum: number;
+  readonly p50: number;
+  readonly p95: number;
 }
 
 export interface QualityRawOutcome {
@@ -63,13 +69,23 @@ export interface QualityRawOutcome {
     readonly status: "fixture" | "human_verified" | "pending";
   };
   readonly answer: {
-    readonly claims: readonly { readonly citedTurnIds: readonly string[]; readonly text: string }[];
+    readonly claims: readonly {
+      readonly citationRefs: readonly {
+        readonly endMs: number;
+        readonly speakerId: string;
+        readonly startMs: number;
+        readonly turnId: string;
+      }[];
+      readonly citedTurnIds: readonly string[];
+      readonly text: string;
+    }[];
     readonly status: "answered" | "abstained";
   };
   readonly measurement: QualityResourceMeasurement;
   readonly queryId: string;
   readonly retrieval: {
     readonly localRehydrationVerified: boolean;
+    readonly latencyMs: number;
     readonly candidateBlockCountAt5: number;
     readonly providerPayloadWasReferenceOnly: boolean;
     readonly rehydratedTurnIds: readonly string[];
@@ -86,8 +102,11 @@ interface ProportionMetric {
 }
 
 export interface QualityScore {
+  readonly abstentionPrecision: ProportionMetric;
   readonly abstentionRecall: ProportionMetric;
   readonly answerRecall: ProportionMetric;
+  readonly citationSpeakerAccuracy: ProportionMetric;
+  readonly citationTimestampAccuracy: ProportionMetric;
   readonly citationValidity: ProportionMetric;
   readonly claimPrecision: ProportionMetric;
   readonly retrievalRecallAt5: ProportionMetric;
@@ -104,6 +123,7 @@ export interface SemanticQualityRunEvidence {
   readonly outcomes: readonly QualityRawOutcome[];
   readonly overall: QualityScore;
   readonly perLocale: Readonly<Record<QualityLocale, QualityScore>>;
+  readonly resourcesByLocale: Readonly<Record<QualityLocale, QualityResourceSummary>>;
   readonly schemaVersion: "meeting_knowledge.semantic_quality_run.v1";
   readonly sdk: {
     readonly commit: string;
@@ -162,8 +182,9 @@ export function createSemanticQualityRunEvidence(input: {
     throw new Error("human-verified evidence requires every outcome to be human adjudicated");
   }
   validateAdjudicationReceipt(input);
+  const outcomesById = new Map(input.outcomes.map((outcome) => [outcome.queryId, outcome]));
   const score = (slice: readonly FrozenQualityQuestion[]): QualityScore =>
-    scoreSlice(slice, new Map(input.outcomes.map((outcome) => [outcome.queryId, outcome])));
+    scoreSlice(slice, outcomesById, input.corpus);
   const perLocale = Object.freeze({
     en: score(questions.filter(({ locale }) => locale === "en")),
     mixed: score(questions.filter(({ locale }) => locale === "mixed")),
@@ -184,6 +205,11 @@ export function createSemanticQualityRunEvidence(input: {
     outcomes: Object.freeze([...input.outcomes]),
     overall: score(questions),
     perLocale,
+    resourcesByLocale: Object.freeze({
+      en: summarizeResources(input.outcomes.filter(({ queryId }) => byId.get(queryId)?.locale === "en")),
+      mixed: summarizeResources(input.outcomes.filter(({ queryId }) => byId.get(queryId)?.locale === "mixed")),
+      ru: summarizeResources(input.outcomes.filter(({ queryId }) => byId.get(queryId)?.locale === "ru")),
+    }),
     schemaVersion: "meeting_knowledge.semantic_quality_run.v1",
     resources: summarizeResources(input.outcomes),
     sdk: Object.freeze({
@@ -243,15 +269,21 @@ function bindingKey(run: SemanticQualityRunEvidence): string {
 function scoreSlice(
   questions: readonly FrozenQualityQuestion[],
   outcomes: ReadonlyMap<string, QualityRawOutcome>,
+  corpus: FrozenSemanticQualityCorpus,
 ): QualityScore {
   let retrievalHits = 0;
   let answerHits = 0;
   let abstentionHits = 0;
   let validCitations = 0;
+  let speakerCorrect = 0;
+  let timestampCorrect = 0;
+  let emittedCitations = 0;
+  let totalAbstentions = 0;
   let emittedClaims = 0;
   let matchedClaims = 0;
   const answerable = questions.filter(({ kind }) => kind === "answerable");
   const unsupported = questions.filter(({ kind }) => kind === "unsupported");
+  const canonicalTurns = new Map(corpus.meeting.humanTurns.map((turn) => [turn.turnId, turn]));
   for (const question of questions) {
     const outcome = outcomes.get(question.id);
     if (outcome === undefined) {
@@ -281,11 +313,25 @@ function scoreSlice(
       outcome.answer.claims.length === 0) {
       abstentionHits += 1;
     }
+    if (outcome.answer.status === "abstained") {totalAbstentions += 1;}
+    for (const claim of outcome.answer.claims) {
+      for (const reference of claim.citationRefs) {
+        const canonical = canonicalTurns.get(reference.turnId);
+        emittedCitations += 1;
+        if (canonical?.speakerId === reference.speakerId) {speakerCorrect += 1;}
+        if (canonical?.startMs === reference.startMs && canonical.endMs === reference.endMs) {
+          timestampCorrect += 1;
+        }
+      }
+    }
     validCitations += outcome.adjudication.claims.filter(({ citationValid }) => citationValid).length;
   }
   return Object.freeze({
+    abstentionPrecision: proportion(abstentionHits, totalAbstentions),
     abstentionRecall: proportion(abstentionHits, unsupported.length),
     answerRecall: proportion(answerHits, answerable.length),
+    citationSpeakerAccuracy: proportion(speakerCorrect, emittedCitations),
+    citationTimestampAccuracy: proportion(timestampCorrect, emittedCitations),
     citationValidity: proportion(validCitations, emittedClaims),
     claimPrecision: proportion(matchedClaims, emittedClaims),
     retrievalRecallAt5: proportion(retrievalHits, answerable.length),
@@ -311,23 +357,30 @@ function proportion(numerator: number, denominator: number): ProportionMetric {
   });
 }
 function summarizeResources(outcomes: readonly QualityRawOutcome[]): QualityResourceSummary {
-  const latencies = outcomes.map(({ measurement }) => measurement.latencyMs)
-    .toSorted((left, right) => left - right);
   const sum = (field: keyof Omit<QualityResourceMeasurement, "requestSha256">): number =>
     outcomes.reduce((total, outcome) => total + outcome.measurement[field], 0);
-  const percentile = (fraction: number): number =>
-    latencies[Math.max(0, Math.ceil(latencies.length * fraction) - 1)] ?? 0;
   return Object.freeze({
     estimatedCostUsd: sum("estimatedCostUsd"),
+    generationLatencyMs: latencyDistribution(outcomes.map(({ measurement }) =>
+      measurement.generationLatencyMs)),
     inputTokens: sum("inputTokens"),
-    latencyMs: Object.freeze({
-      maximum: latencies.at(-1) ?? 0,
-      p50: percentile(0.5),
-      p95: percentile(0.95),
-    }),
+    latencyMs: latencyDistribution(outcomes.map(({ measurement }) => measurement.latencyMs)),
     outputTokens: sum("outputTokens"),
     peakMemoryBytes: Math.max(0, ...outcomes.map(({ measurement }) => measurement.peakMemoryBytes)),
     requestBytes: sum("requestBytes"),
+    retrievalLatencyMs: latencyDistribution(outcomes.map(({ measurement }) =>
+      measurement.retrievalLatencyMs)),
+  });
+}
+
+function latencyDistribution(values: readonly number[]): LatencyDistribution {
+  const sorted = values.toSorted((left, right) => left - right);
+  const percentile = (fraction: number): number =>
+    sorted[Math.max(0, Math.ceil(sorted.length * fraction) - 1)] ?? 0;
+  return Object.freeze({
+    maximum: sorted.at(-1) ?? 0,
+    p50: percentile(0.5),
+    p95: percentile(0.95),
   });
 }
 
@@ -365,11 +418,21 @@ function validateOutcome(outcome: QualityRawOutcome): void {
     throw new Error("quality outcome violated reference-only retrieval or local rehydration");
   }
   if (!Number.isSafeInteger(outcome.retrieval.candidateBlockCountAt5) ||
-    outcome.retrieval.candidateBlockCountAt5 < 0 || outcome.retrieval.candidateBlockCountAt5 > 5) {
+    outcome.retrieval.candidateBlockCountAt5 < 0 || outcome.retrieval.candidateBlockCountAt5 > 5 ||
+    !Number.isFinite(outcome.retrieval.latencyMs) || outcome.retrieval.latencyMs < 0) {
     throw new Error("retrieval recall@5 received more than five candidate blocks");
   }
   if (outcome.adjudication.claims.length !== outcome.answer.claims.length) {
     throw new Error("quality adjudication requires exactly one gold mapping per emitted claim");
+  }
+  for (const claim of outcome.answer.claims) {
+    if (claim.citationRefs.length !== claim.citedTurnIds.length ||
+      claim.citationRefs.some((reference, index) =>
+        reference.turnId !== claim.citedTurnIds[index] || reference.speakerId.trim() === "" ||
+        !Number.isSafeInteger(reference.startMs) || reference.startMs < 0 ||
+        !Number.isSafeInteger(reference.endMs) || reference.endMs <= reference.startMs)) {
+      throw new Error("quality outcome contains malformed speaker/time citation references");
+    }
   }
   for (const claim of outcome.adjudication.claims) {
     if (claim.verdict !== "supported" && claim.matchedGoldClaimId !== null) {

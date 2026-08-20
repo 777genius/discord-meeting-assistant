@@ -28,14 +28,23 @@ export interface SemanticQualityRetrievalConfig {
   readonly token?: string;
 }
 
+export interface SemanticQualityEvidenceTurn {
+  readonly endMs: number;
+  readonly speakerId: string;
+  readonly startMs: number;
+  readonly text: string;
+  readonly turnId: string;
+}
+
 export interface SemanticQualityRetrievalOutcome {
   readonly answerRequest: {
-    readonly evidence: readonly { readonly text: string; readonly turnId: string }[];
+    readonly evidence: readonly SemanticQualityEvidenceTurn[];
     readonly question: string;
     readonly requestBytes: number;
   } | null;
   readonly candidateBlockCountAt5: number;
   readonly localRehydrationVerified: boolean;
+  readonly latencyMs: number;
   readonly providerPayloadWasReferenceOnly: true;
   readonly queryId: string;
   readonly rehydratedTurnIds: readonly string[];
@@ -108,6 +117,7 @@ export async function runSemanticQualityRetrieval(
     const retrieval = focusedRetrieval(adapter, authority, store, ids);
     const outcomes: SemanticQualityRetrievalOutcome[] = [];
     for (const question of corpus.questions) {
+      const retrievalStartedAt = performance.now();
       const result = await retrieval.buildPlan({
         authorizationPrincipalRef: "semantic-quality-principal",
         currentMeetingId: corpus.meeting.binding.meetingId,
@@ -123,6 +133,7 @@ export async function runSemanticQualityRetrieval(
           answerRequest: null,
           candidateBlockCountAt5: 0,
           localRehydrationVerified: true,
+          latencyMs: performance.now() - retrievalStartedAt,
           providerPayloadWasReferenceOnly: true,
           queryId: question.id,
           rehydratedTurnIds: Object.freeze([]),
@@ -154,6 +165,7 @@ export async function runSemanticQualityRetrieval(
         answerRequest,
         candidateBlockCountAt5: topLocators.length,
         localRehydrationVerified: locallyMatches(corpus.meeting, result.plan.blocks),
+        latencyMs: performance.now() - retrievalStartedAt,
         providerPayloadWasReferenceOnly: true,
         queryId: question.id,
         rehydratedTurnIds,
@@ -244,10 +256,14 @@ function focusedRetrieval(
 
 function locallyMatches(
   meeting: AcceptedFinalMeetingV1,
-  blocks: readonly { readonly turns: readonly { readonly text: string; readonly turnId: string }[] }[],
+  blocks: readonly { readonly turns: readonly SemanticQualityEvidenceTurn[] }[],
 ): boolean {
-  const local = new Map(meeting.humanTurns.map(({ text, turnId }) => [turnId, text]));
-  return blocks.every((block) => block.turns.every((turn) => local.get(turn.turnId) === turn.text));
+  const local = new Map(meeting.humanTurns.map((turn) => [turn.turnId, turn]));
+  return blocks.every((block) => block.turns.every((turn) => {
+    const source = local.get(turn.turnId);
+    return source?.text === turn.text && source.speakerId === turn.speakerId &&
+      source.startMs === turn.startMs && source.endMs === turn.endMs;
+  }));
 }
 
 function unique(values: readonly string[]): readonly string[] {
@@ -255,9 +271,9 @@ function unique(values: readonly string[]): readonly string[] {
 }
 
 function uniqueTurns(
-  turns: readonly { readonly text: string; readonly turnId: string }[],
-): readonly { readonly text: string; readonly turnId: string }[] {
-  const byId = new Map<string, { readonly text: string; readonly turnId: string }>();
+  turns: readonly SemanticQualityEvidenceTurn[],
+): readonly SemanticQualityEvidenceTurn[] {
+  const byId = new Map<string, SemanticQualityEvidenceTurn>();
   for (const turn of turns) {byId.set(turn.turnId, Object.freeze({ ...turn }));}
   return Object.freeze([...byId.values()]);
 }

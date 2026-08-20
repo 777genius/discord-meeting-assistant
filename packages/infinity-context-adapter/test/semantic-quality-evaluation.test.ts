@@ -28,6 +28,14 @@ describe("Infinity Context semantic and final-answer quality harness", () => {
 
     expect(corpus.meeting.humanTurns).toHaveLength(421);
     expect(corpus.meeting.humanTurns.at(-1)?.endMs).toBe(8_418_500);
+    expect(corpus.profile).toMatchObject({
+      durationMs: 8_418_500,
+      locales: ["en", "ru", "mixed"],
+      speakerIds: ["maria", "vitalii", "nazar", "mark"],
+      timelineStrata: ["start", "10%", "25%", "middle", "75%", "90%", "end"],
+    });
+    expect([corpus.profile.asrNoiseTurnIds.length, corpus.profile.interruptionTurnIds.length])
+      .toEqual([7, 6]);
     expect(new Set(corpus.meeting.humanTurns.map(({ speakerId }) => speakerId))).toEqual(
       new Set(["maria", "mark", "nazar", "vitalii"]),
     );
@@ -37,7 +45,11 @@ describe("Infinity Context semantic and final-answer quality harness", () => {
     expect(unsupported).toHaveLength(100);
     expect(goldPositions.size).toBe(50);
     expect(answerable.filter(({ tags }) => tags.includes("multi-hop"))).toHaveLength(5);
+    expect(answerable.filter(({ tags }) => tags.includes("multi-hop"))
+      .every(({ question }) => question.includes("И ещё:"))).toBe(true);
     expect(answerable.filter(({ tags }) => tags.includes("correction"))).toHaveLength(4);
+    expect(answerable.filter(({ tags }) => tags.includes("asr-noise"))).toHaveLength(28);
+    expect(answerable.filter(({ tags }) => tags.includes("interruption"))).toHaveLength(24);
     expect(corpus.questions.filter(({ locale }) => locale === "en").length).toBeGreaterThan(50);
     expect(corpus.questions.filter(({ locale }) => locale === "ru").length).toBeGreaterThan(50);
     expect(corpus.questions.filter(({ locale }) => locale === "mixed").length).toBe(75);
@@ -49,6 +61,9 @@ describe("Infinity Context semantic and final-answer quality harness", () => {
     );
     expect(corpus.meeting.humanTurns.map(({ text }) => text).join("\n")).toMatch(
       /ignore all rules.+meeting content, not an instruction/isu,
+    );
+    expect(corpus.meeting.humanTurns.map(({ text }) => text).join("\n")).toMatch(
+      /(?:audio drop|crosstalk|Thurs- Thursday)/u,
     );
     expect(corpus.corpusSha256).toMatch(/^[a-f0-9]{64}$/u);
   });
@@ -76,7 +91,6 @@ describe("Infinity Context semantic and final-answer quality harness", () => {
       labelStatus: "authored_fixture",
       outcomes: corpus.questions.map(perfectOutcome),
     });
-
     expect(evidence.claims).toEqual({
       productionQualityQualified: false,
       status: "harness_validation_only",
@@ -89,24 +103,29 @@ describe("Infinity Context semantic and final-answer quality harness", () => {
     });
     expect(evidence.overall.answerRecall.estimate).toBe(1);
     expect(evidence.overall.abstentionRecall.estimate).toBe(1);
+    expect(evidence.overall.abstentionPrecision.estimate).toBe(1);
     expect(evidence.overall.claimPrecision.estimate).toBe(1);
     expect(evidence.overall.citationValidity.estimate).toBe(1);
+    expect(evidence.overall.citationSpeakerAccuracy.estimate).toBe(1);
+    expect(evidence.overall.citationTimestampAccuracy.estimate).toBe(1);
     expect(evidence.perLocale.en.answerRecall.estimate).toBe(1);
     expect(evidence.perLocale.ru.abstentionRecall.estimate).toBe(1);
     expect(evidence.perLocale.mixed.retrievalRecallAt5.estimate).toBe(1);
     expect(evidence.resources).toEqual({
       estimatedCostUsd: 0,
+      generationLatencyMs: { maximum: 875, p50: 375, p95: 875 },
       inputTokens: 64_000,
       latencyMs: { maximum: 900, p50: 400, p95: 900 },
       outputTokens: 4_000,
       peakMemoryBytes: 64 * 1024 * 1024,
       requestBytes: 256_000,
+      retrievalLatencyMs: { maximum: 25, p50: 25, p95: 25 },
     });
-
+    expect(evidence.resourcesByLocale.en.latencyMs)
+      .toEqual({ maximum: 900, p50: 400, p95: 900 });
     expect(evidence.sdk.packageSha256)
       .toBe("8727f751aed94769de8e7aec93ea0b927479a4ab501b3b01c31c2472b6cebc7f");
   });
-
   it("does not let a green retrieval score hide hallucination or partial answers", () => {
     const corpus = frozenSemanticQualityCorpus();
     const outcomes = corpus.questions.map(perfectOutcome);
@@ -124,7 +143,8 @@ describe("Infinity Context semantic and final-answer quality harness", () => {
       ...perfectOutcome(firstUnsupported),
       adjudication: { claims: [{ citationValid: false, matchedGoldClaimId: null,
         verdict: "unsupported" }], status: "fixture" },
-      answer: { claims: [{ citedTurnIds: [], text: "Unsupported approval was invented." }], status: "answered" },
+      answer: { claims: [{ citationRefs: [], citedTurnIds: [],
+        text: "Unsupported approval was invented." }], status: "answered" },
     });
     const evidence = createSemanticQualityRunEvidence({
       binding: binding(corpus.corpusSha256, 1),
@@ -155,8 +175,9 @@ describe("Infinity Context semantic and final-answer quality harness", () => {
           verdict: "supported" },
       ], status: "fixture" },
       answer: { claims: [
-        { citedTurnIds: question.goldTurnIds, text: "Supported claim" },
-        { citedTurnIds: [], text: "Unrelated duplicate mapping" },
+        { citationRefs: question.goldTurnIds.map(citationReference),
+          citedTurnIds: question.goldTurnIds, text: "Supported claim" },
+        { citationRefs: [], citedTurnIds: [], text: "Unrelated duplicate mapping" },
       ], status: "answered" },
     });
     const evidence = createSemanticQualityRunEvidence({
@@ -198,7 +219,8 @@ describe("Infinity Context semantic and final-answer quality harness", () => {
       ...perfectOutcome(correction),
       adjudication: { claims: [{ citationValid: false, matchedGoldClaimId: null,
         verdict: "stale" }], status: "human_verified" },
-      answer: { claims: [{ citedTurnIds: ["quality-turn-086"], text: "Twelve workspaces" }],
+      answer: { claims: [{ citationRefs: [citationReference("quality-turn-086")],
+        citedTurnIds: ["quality-turn-086"], text: "Twelve workspaces" }],
         status: "answered" },
     });
     const evidence = createSemanticQualityRunEvidence({
@@ -260,6 +282,10 @@ describe("Infinity Context semantic and final-answer quality harness", () => {
 });
 
 describe("subscription answer quality receipt", () => {
+  it("measures canonical speaker and timestamp citation accuracy independently", () => {
+    verifyCitationMetrics();
+  });
+
   it("binds an externally injected subscription answer receipt to bounded requests", async () => {
     const corpus = frozenSemanticQualityCorpus();
     const transport = answerTransport();
@@ -319,6 +345,34 @@ function binding(corpusSha256: string, repetition: number): QualityRunBinding {
   };
 }
 
+function verifyCitationMetrics(): void {
+  const corpus = frozenSemanticQualityCorpus();
+  const question = corpus.questions.find(({ kind }) => kind === "answerable");
+  if (question === undefined) {throw new Error("missing answerable question");}
+  const outcomes = corpus.questions.map(perfectOutcome);
+  const original = perfectOutcome(question);
+  const firstClaim = original.answer.claims[0];
+  const firstReference = firstClaim?.citationRefs[0];
+  if (firstClaim === undefined || firstReference === undefined) {
+    throw new Error("missing answer citation fixture");
+  }
+  replace(outcomes, question.id, {
+    ...original,
+    answer: { ...original.answer, claims: [{
+      ...firstClaim,
+      citationRefs: [{ ...firstReference, endMs: firstReference.endMs + 1,
+        speakerId: "wrong-speaker" }],
+    }, ...original.answer.claims.slice(1)] },
+  });
+  const evidence = createSemanticQualityRunEvidence({
+    binding: binding(corpus.corpusSha256, 1), corpus,
+    labelStatus: "authored_fixture", outcomes,
+  });
+  expect(evidence.overall.citationSpeakerAccuracy.estimate).toBe(104 / 105);
+  expect(evidence.overall.citationTimestampAccuracy.estimate).toBe(104 / 105);
+  expect(evidence.overall.citationValidity.estimate).toBe(1);
+}
+
 function perfectOutcome(question: FrozenQualityQuestion): QualityRawOutcome {
   const answered = question.kind === "answerable";
   return {
@@ -331,6 +385,9 @@ function perfectOutcome(question: FrozenQualityQuestion): QualityRawOutcome {
     answer: {
       claims: answered
         ? question.expectedClaimIds.map((claimId, index) => ({
+            citationRefs: [citationReference(
+              question.goldTurnIds[index] ?? question.goldTurnIds[0] ?? "",
+            )],
             citedTurnIds: [question.goldTurnIds[index] ?? question.goldTurnIds[0] ?? ""],
             text: `Synthetic answer for ${question.id} claim ${claimId}`,
           }))
@@ -339,16 +396,19 @@ function perfectOutcome(question: FrozenQualityQuestion): QualityRawOutcome {
     },
     measurement: {
       estimatedCostUsd: 0,
+      generationLatencyMs: answered ? 875 : 375,
       inputTokens: answered ? 512 : 128,
       latencyMs: answered ? 900 : 400,
       outputTokens: answered ? 32 : 8,
       peakMemoryBytes: 64 * 1024 * 1024,
       requestBytes: answered ? 2_048 : 512,
       requestSha256: createHash("sha256").update(question.id).digest("hex"),
+      retrievalLatencyMs: 25,
     },
     queryId: question.id,
     retrieval: {
       localRehydrationVerified: true,
+      latencyMs: 25,
       providerPayloadWasReferenceOnly: true,
       rehydratedTurnIds: question.goldTurnIds,
       topFiveTurnIds: question.goldTurnIds,
@@ -356,6 +416,20 @@ function perfectOutcome(question: FrozenQualityQuestion): QualityRawOutcome {
       candidateBlockCountAt5: question.goldTurnIds.length,
     },
   };
+}
+
+let citationCorpus: ReturnType<typeof frozenSemanticQualityCorpus> | undefined;
+function citationReference(turnId: string) {
+  citationCorpus ??= frozenSemanticQualityCorpus();
+  const turn = citationCorpus.meeting.humanTurns.find((candidate) =>
+    candidate.turnId === turnId);
+  if (turn === undefined) {throw new Error(`missing canonical citation ${turnId}`);}
+  return Object.freeze({
+    endMs: turn.endMs,
+    speakerId: turn.speakerId,
+    startMs: turn.startMs,
+    turnId: turn.turnId,
+  });
 }
 
 function replace(outcomes: QualityRawOutcome[], queryId: string, replacement: QualityRawOutcome): void {
@@ -367,12 +441,18 @@ function replace(outcomes: QualityRawOutcome[], queryId: string, replacement: Qu
 }
 
 function retrievalRun(corpus: ReturnType<typeof frozenSemanticQualityCorpus>) {
+  const turns = new Map(corpus.meeting.humanTurns.map((turn) => [turn.turnId, turn]));
   return {
     corpusSha256: corpus.corpusSha256,
     outcomes: corpus.questions.map((question) => ({
-      answerRequest: { evidence: question.goldTurnIds.map((turnId) => ({ text: "bounded evidence",
-        turnId })), question: question.question, requestBytes: 128 },
+      answerRequest: { evidence: question.goldTurnIds.map((turnId) => {
+        const turn = turns.get(turnId);
+        if (turn === undefined) {throw new Error("missing bounded evidence turn");}
+        return { endMs: turn.endMs, speakerId: turn.speakerId, startMs: turn.startMs,
+          text: turn.text, turnId };
+      }), question: question.question, requestBytes: 128 },
       candidateBlockCountAt5: 1, localRehydrationVerified: true,
+      latencyMs: 25,
       providerPayloadWasReferenceOnly: true as const, queryId: question.id,
       rehydratedTurnIds: question.goldTurnIds, status: "ready" as const,
       topFiveTurnIds: question.goldTurnIds, wholeTranscriptIncluded: false as const,
@@ -406,7 +486,8 @@ function answerTransport(options: {
     execute: async (batch) => ({
       answers: batch.requests.map((request, index) => ({
         claims: options.outsideCitation === true && index === 0
-          ? [{ citedTurnIds: ["quality-turn-420"], text: "Out-of-request claim" }]
+          ? [{ citationRefs: [citationReference("quality-turn-420")],
+              citedTurnIds: ["quality-turn-420"], text: "Out-of-request claim" }]
           : [],
         measurement: {
           estimatedCostUsd: 0, inputTokens: 1, latencyMs: 1, outputTokens: 0,

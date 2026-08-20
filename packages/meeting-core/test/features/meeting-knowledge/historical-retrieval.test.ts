@@ -17,6 +17,7 @@ import {
   type HistoricalOpaqueIdPort,
   type HistoricalReleaseBindingV1,
   type HistoricalSyncStore,
+  type SpeakerAliasMapV1,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 
 class TestIds implements HistoricalOpaqueIdPort {
@@ -54,7 +55,8 @@ function makeMeeting(input: {
   readonly meetingId: string;
   readonly roomId?: string;
   readonly transcriptId?: string;
-  readonly turns: readonly { readonly endMs: number; readonly startMs: number; readonly text: string; readonly turnId: string }[];
+  readonly turns: readonly { readonly endMs: number; readonly speakerId?: string;
+    readonly startMs: number; readonly text: string; readonly turnId: string }[];
 }): AcceptedFinalMeetingV1 {
   const binding = createHistoricalReleaseBinding({
     acceptedMeetingRevision: 4,
@@ -66,7 +68,8 @@ function makeMeeting(input: {
     transcriptVersion: 1,
   });
   const meeting = admitAcceptedFinalMeeting({
-    actors: [{ actorId: "speaker", kind: "human" }],
+    actors: [...new Set(input.turns.map(({ speakerId }) => speakerId ?? "speaker"))]
+      .map((actorId) => ({ actorId, kind: "human" as const })),
     authoritativeDurationMs: input.authoritativeDurationMs ?? 60_000,
     binding,
     identityProvenance: {
@@ -82,7 +85,10 @@ function makeMeeting(input: {
     scopeId: binding.scopeId,
     transcriptId: binding.transcriptId,
     transcriptVersion: 1,
-    turns: input.turns.map((turn) => ({ ...turn, speakerId: "speaker" })),
+    turns: input.turns.map((turn) => ({
+      ...turn,
+      speakerId: turn.speakerId ?? "speaker",
+    })),
   });
   if (meeting === null) {
     throw new Error("fixture admission failed");
@@ -169,6 +175,7 @@ function retrieval(input: {
   readonly meetings: readonly AcceptedFinalMeetingV1[];
   readonly memory: HistoricalMemoryPort;
   readonly policy?: FocusedRetrievalPolicyV1;
+  readonly speakerAliases?: SpeakerAliasMapV1;
   readonly store: AppliedStore;
   readonly twoHourEnabled?: boolean;
 }) {
@@ -184,6 +191,9 @@ function retrieval(input: {
     },
     ids: new TestIds(),
     memory: input.memory,
+    ...(input.speakerAliases === undefined
+      ? {}
+      : { speakerAliases: input.speakerAliases }),
     store: input.store,
   }, input.policy ?? retrievalPolicy, {
     ...DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
@@ -290,6 +300,130 @@ describe("focused historical retrieval", () => {
       }),
     ]));
     expect(result.plan).not.toHaveProperty("currentTranscriptRequirement");
+  });
+
+  it("preserves ordering when a qualified provider uses scores above one", async () => {
+    const meeting = makeMeeting({
+      meetingId: "score-scale-meeting",
+      turns: [
+        { endMs: 1_000, startMs: 0,
+          text: `cedar primary decision ${"x".repeat(260)}`, turnId: "high-score" },
+        { endMs: 2_000, startMs: 1_000,
+          text: `cedar secondary note ${"y".repeat(260)}`, turnId: "lower-score" },
+      ],
+    });
+    const plan = buildHistoricalIndexPlan(meeting, new TestIds(), blockPolicy);
+    const targets = plan.documents.filter(({ remoteText }) =>
+      remoteText.includes("cedar")
+    );
+    expect(targets).toHaveLength(2);
+    const high = targets[0]?.manifest.candidateLocator;
+    const lower = targets[1]?.manifest.candidateLocator;
+    if (high === undefined || lower === undefined) {
+      throw new Error("score-scale candidates missing");
+    }
+    const store = new AppliedStore([{
+      binding: meeting.binding,
+      plan,
+      remoteDocumentIds: {},
+    }]);
+    const result = await retrieval({
+      meetings: [meeting],
+      memory: {
+        deleteMeeting: vi.fn(),
+        indexFinalMeeting: vi.fn(),
+        searchRoom: vi.fn().mockResolvedValue({
+          candidates: [
+            { locator: "mkcandidate1.stale-outlier", providerRank: 0,
+              providerScore: 1_000 },
+            { locator: high, providerRank: 0, providerScore: 12 },
+            { locator: lower, providerRank: 1, providerScore: 8 },
+          ],
+          hybridQualified: true,
+          status: "available",
+        }),
+      },
+      policy: { ...retrievalPolicy, neighborRadius: 0, rerankLimit: 2 },
+      store,
+    }).buildPlan({
+      authorizationPrincipalRef: "principal",
+      currentMeetingId: meeting.binding.meetingId,
+      question: "What was the cedar decision?",
+      roomId: "room-1",
+      scopeId: "scope-1",
+      searchEnabled: true,
+      servingAuthorized: true,
+      sourceSet: "current",
+    });
+
+    expect(result.status).toBe("ready");
+    if (result.status !== "ready") {
+      throw new Error("score-scale plan was not ready");
+    }
+    const highSource = result.plan.sources.find(({ locator }) => locator === high);
+    const lowerSource = result.plan.sources.find(({ locator }) => locator === lower);
+    expect(highSource?.providerScore).toBe(12);
+    expect(lowerSource?.providerScore).toBe(8);
+    expect(highSource?.qualifiedScore).toBeGreaterThan(0.9);
+    expect(highSource?.qualifiedScore).toBeGreaterThan(
+      lowerSource?.qualifiedScore ?? 1,
+    );
+  });
+
+  it("reranks topical evidence using configured names for opaque speakers", async () => {
+    const meeting = makeMeeting({
+      meetingId: "speaker-alias-meeting",
+      turns: [
+        { endMs: 1_000, speakerId: "opaque-other", startMs: 0,
+          text: `release topic background ${"x".repeat(260)}`, turnId: "other" },
+        { endMs: 2_000, speakerId: "opaque-vlad", startMs: 1_000,
+          text: `release topic decision ${"y".repeat(260)}`, turnId: "vlad" },
+      ],
+    });
+    const plan = buildHistoricalIndexPlan(meeting, new TestIds(), blockPolicy);
+    expect(plan.documents).toHaveLength(2);
+    const other = plan.documents[0]?.manifest.candidateLocator;
+    const vlad = plan.documents[1]?.manifest.candidateLocator;
+    if (other === undefined || vlad === undefined) {
+      throw new Error("speaker alias candidates missing");
+    }
+    const result = await retrieval({
+      meetings: [meeting],
+      memory: {
+        deleteMeeting: vi.fn(),
+        indexFinalMeeting: vi.fn(),
+        searchRoom: vi.fn().mockResolvedValue({
+          candidates: [
+            { locator: other, providerRank: 0, providerScore: 0.8 },
+            { locator: vlad, providerRank: 1, providerScore: 0.8 },
+          ],
+          hybridQualified: true,
+          status: "available",
+        }),
+      },
+      policy: { ...retrievalPolicy, neighborRadius: 0, rerankLimit: 2 },
+      speakerAliases: { "opaque-vlad": ["Влад", "Vlad"] },
+      store: new AppliedStore([{
+        binding: meeting.binding,
+        plan,
+        remoteDocumentIds: {},
+      }]),
+    }).buildPlan({
+      authorizationPrincipalRef: "principal",
+      currentMeetingId: meeting.binding.meetingId,
+      question: "Что Влад решил про release?",
+      roomId: "room-1",
+      scopeId: "scope-1",
+      searchEnabled: true,
+      servingAuthorized: true,
+      sourceSet: "current",
+    });
+
+    expect(result.status).toBe("ready");
+    if (result.status !== "ready") {
+      throw new Error("speaker alias plan was not ready");
+    }
+    expect(result.plan.sources[0]?.locator).toBe(vlad);
   });
 
   it("falls back locally on provider failure and rejects stale or cross-room candidates", async () => {
@@ -568,7 +702,7 @@ describe("same-room focused memory merge", () => {
 
     expect(result).toMatchObject({
       authorityGeneration: "authority-1",
-      candidates: [{ meetingId: "meeting-historical-only" }],
+      candidates: [{ meetingId: "meeting-historical-only", relevanceScore: 1 }],
       status: "current",
     });
     expect(requestedSourceSets).toEqual(["historical"]);
@@ -664,7 +798,6 @@ describe("same-room focused memory merge", () => {
     if (result.status === "current") {
       expect(result.candidates).toHaveLength(4);
       expect(result.candidates[0]).toEqual(currentCandidates[0]);
-      expect(result.candidates[2]).toEqual(currentCandidates[1]);
       expect(result.candidates.some(({ meetingId }) => meetingId === "meeting-historical"))
         .toBe(true);
     }

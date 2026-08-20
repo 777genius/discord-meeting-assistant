@@ -14,6 +14,7 @@ const liveDescribe = enabled ? describe : describe.skip;
 liveDescribe("Infinity Context frozen semantic quality retrieval", () => {
   it("emits retrieval-only evidence for a separately authenticated answer run", async () => {
     const config = semanticQualityConfig(process.env);
+    const corpus = frozenSemanticQualityCorpus();
     const result = await runSemanticQualityRetrieval(config.service);
     expect(result.outcomes).toHaveLength(200);
     expect(result.remoteCleanupVerified).toBe(true);
@@ -30,6 +31,7 @@ liveDescribe("Infinity Context frozen semantic quality retrieval", () => {
         retrievalOnly: true,
       }),
       outcomes: result.outcomes,
+      profile: corpus.profile,
       schemaVersion: "meeting_knowledge.semantic_quality_retrieval.v1",
       service: result.service,
     });
@@ -37,7 +39,6 @@ liveDescribe("Infinity Context frozen semantic quality retrieval", () => {
       `INFINITY_CONTEXT_SEMANTIC_QUALITY_RETRIEVAL_V1 ${JSON.stringify(artifact)}\n`,
     );
     if (process.env.INFINITY_CONTEXT_SEMANTIC_ANSWER_E2E === "1") {
-      const corpus = frozenSemanticQualityCorpus();
       const transport = await injectedTransport(process.env);
       const answerRun = await runAuthenticatedAnswerEvaluation({
         build: immutableCheckoutProvenance(repositoryRoot()),

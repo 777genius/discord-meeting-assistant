@@ -3,7 +3,10 @@ import { execFileSync } from "node:child_process";
 
 import type { FrozenSemanticQualityCorpus } from "./semantic-quality-corpus.js";
 import type { QualityRawOutcome, QualityRunBinding } from "./semantic-quality-evaluation.js";
-import type { SemanticQualityRetrievalRun } from "./semantic-quality-retrieval-helper.js";
+import type {
+  SemanticQualityEvidenceTurn,
+  SemanticQualityRetrievalRun,
+} from "./semantic-quality-retrieval-helper.js";
 
 const maximumResponseBytes = 1_000_000;
 const maximumClaimTextBytes = 2_048;
@@ -15,8 +18,13 @@ export interface ImmutableBuildProvenance {
 
 interface SubscriptionAnswerReceipt {
   readonly answers: readonly {
-    readonly claims: readonly { readonly citedTurnIds: readonly string[]; readonly text: string }[];
-    readonly measurement: QualityRawOutcome["measurement"];
+    readonly claims: readonly {
+      readonly citationRefs: readonly Omit<SemanticQualityEvidenceTurn, "text">[];
+      readonly citedTurnIds: readonly string[];
+      readonly text: string;
+    }[];
+    readonly measurement: Omit<QualityRawOutcome["measurement"],
+    "generationLatencyMs" | "retrievalLatencyMs">;
     readonly queryId: string;
     readonly status: "abstained" | "answered";
   }[];
@@ -37,7 +45,7 @@ interface SubscriptionAnswerReceipt {
 export interface SubscriptionAnswerTransport {
   execute(input: {
     readonly requests: readonly {
-      readonly evidence: readonly { readonly text: string; readonly turnId: string }[];
+      readonly evidence: readonly SemanticQualityEvidenceTurn[];
       readonly queryId: string;
       readonly question: string;
     }[];
@@ -106,10 +114,18 @@ export async function runAuthenticatedAnswerEvaluation(input: {
         status: "pending" as const,
       }),
       answer: Object.freeze({ claims: Object.freeze(answer.claims.map((claim) => Object.freeze({
+        citationRefs: Object.freeze(claim.citationRefs.map((reference) => Object.freeze({
+          ...reference,
+        }))),
         citedTurnIds: Object.freeze([...claim.citedTurnIds]), text: claim.text }))), status: answer.status }),
-      measurement: Object.freeze({ ...answer.measurement }), queryId: question.id,
+      measurement: Object.freeze({
+        ...answer.measurement,
+        generationLatencyMs: answer.measurement.latencyMs,
+        latencyMs: retrieval.latencyMs + answer.measurement.latencyMs,
+        retrievalLatencyMs: retrieval.latencyMs,
+      }), queryId: question.id,
       retrieval: Object.freeze({ candidateBlockCountAt5: retrieval.candidateBlockCountAt5,
-        localRehydrationVerified: retrieval.localRehydrationVerified,
+        latencyMs: retrieval.latencyMs, localRehydrationVerified: retrieval.localRehydrationVerified,
         providerPayloadWasReferenceOnly: retrieval.providerPayloadWasReferenceOnly,
         rehydratedTurnIds: retrieval.rehydratedTurnIds, topFiveTurnIds: retrieval.topFiveTurnIds,
         wholeTranscriptIncluded: retrieval.wholeTranscriptIncluded }),
@@ -135,7 +151,7 @@ export async function runAuthenticatedAnswerEvaluation(input: {
 
 function validateReceipt(receipt: SubscriptionAnswerReceipt, expectedDigest: string,
   corpus: FrozenSemanticQualityCorpus, requests: readonly {
-    readonly evidence: readonly { readonly text: string; readonly turnId: string }[];
+    readonly evidence: readonly SemanticQualityEvidenceTurn[];
     readonly queryId: string;
     readonly question: string;
   }[]): void {
@@ -160,9 +176,17 @@ function validateReceipt(receipt: SubscriptionAnswerReceipt, expectedDigest: str
       throw new Error("subscription answer receipt has unknown, duplicate, or excessive claims");
     }
     seen.add(answer.queryId);
+    const evidenceById = new Map(request.evidence.map((turn) => [turn.turnId, turn]));
     for (const claim of answer.claims) {
       if (claim.text.trim() === "" || Buffer.byteLength(claim.text, "utf8") > maximumClaimTextBytes ||
-        new Set(claim.citedTurnIds).size !== claim.citedTurnIds.length) {
+        new Set(claim.citedTurnIds).size !== claim.citedTurnIds.length ||
+        claim.citationRefs.length !== claim.citedTurnIds.length ||
+        claim.citationRefs.some((reference, index) => {
+          const source = evidenceById.get(reference.turnId);
+          return reference.turnId !== claim.citedTurnIds[index] || (source !== undefined &&
+            (reference.speakerId !== source.speakerId || reference.startMs !== source.startMs ||
+              reference.endMs !== source.endMs));
+        })) {
         throw new Error("subscription answer claim is invalid or oversized");
       }
     }

@@ -47,6 +47,8 @@ import type { Client } from "discord.js";
 import type { Pool } from "pg";
 
 import type { PlatformConfig } from "../config.js";
+import { participantSpeakerAliases } from
+  "../config/participant-greeting-profiles.js";
 import { classifyPlatformError } from "./observability.js";
 import type { PlatformHistoricalMemoryRuntime } from "./historical-memory.js";
 
@@ -245,6 +247,7 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
   const currentMemory = new PostgresFocusedMemoryRetrieval(
     input.pool,
     input.config.discordApplicationId,
+    participantSpeakerAliases(input.config.participantGreetingProfiles),
   );
   const historicalAuthorization = input.historicalMemory === undefined
     ? undefined

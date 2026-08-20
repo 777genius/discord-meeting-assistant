@@ -5,6 +5,8 @@ import { describe, expect, it } from "vitest";
 import { INFINITY_CONTEXT_SDK_PROVENANCE } from "@discord-meeting/infinity-context-adapter";
 
 import { loadPlatformConfig } from "../src/config.js";
+import { participantSpeakerAliases } from
+  "../src/config/participant-greeting-profiles.js";
 import { platformTestEnvironment as environment } from "./config-test-environment.js";
 
 function buildProvenance(releaseRevision = "c".repeat(40)) {
@@ -408,6 +410,10 @@ describe("participant greeting profile configuration", () => {
       displayName: "Елена",
       greetingLocale: "ru",
       spokenName: "Лена",
+    });
+    expect(participantSpeakerAliases(config.participantGreetingProfiles)).toEqual({
+      "1533224474609057795": ["Alex", "Alexander"],
+      "2533224474609057795": ["Елена", "Лена"],
     });
     expect(Object.isFrozen(config.participantGreetingProfiles)).toBe(true);
     expect(
