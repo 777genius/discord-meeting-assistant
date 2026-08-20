@@ -197,7 +197,7 @@ describe("Infinity Context semantic and final-answer quality harness", () => {
     const correction = corpus.questions.filter(({ tags }) => tags.includes("correction"));
     expect(correction).toHaveLength(4);
     expect(correction.every(({ goldTurnIds }) =>
-      goldTurnIds.includes("quality-turn-086") && goldTurnIds.includes("quality-turn-088")))
+      goldTurnIds.includes("quality-turn-016") && goldTurnIds.includes("quality-turn-088")))
       .toBe(true);
     expect(corpus.questions.filter(({ kind }) => kind === "unsupported")
       .every(({ distractorTurnIds }) => distractorTurnIds.length === 1)).toBe(true);
@@ -222,8 +222,8 @@ describe("Infinity Context semantic and final-answer quality harness", () => {
       ...perfectOutcome(correction),
       adjudication: { claims: [{ citationValid: false, matchedGoldClaimId: null,
         verdict: "stale" }], status: "human_verified" },
-      answer: { claims: [{ citationRefs: [citationReference("quality-turn-086")],
-        citedTurnIds: ["quality-turn-086"], text: "Twelve workspaces" }],
+      answer: { claims: [{ citationRefs: [citationReference("quality-turn-016")],
+        citedTurnIds: ["quality-turn-016"], text: "Twelve workspaces" }],
         status: "answered" },
     });
     const evidence = createSemanticQualityRunEvidence({

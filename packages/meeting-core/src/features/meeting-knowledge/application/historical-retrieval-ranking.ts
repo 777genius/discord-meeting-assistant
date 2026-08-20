@@ -46,7 +46,9 @@ export function decomposeHistoricalQuery(
     .split(/[?;.!]+|\s+(?:and|then|also|but|и|затем|также|но)\s+/iu)
     .map((value) => value.trim())
     .filter((value) => value.length >= 3);
-  const candidates = clauses.length > 1 ? [...clauses, normalized] : [normalized];
+  // Keep the complete question even when clause expansion reaches the bound,
+  // so omitted clauses still contribute to retrieval and abstention.
+  const candidates = clauses.length > 1 ? [normalized, ...clauses] : [normalized];
   const seen = new Set<string>();
   const output: string[] = [];
   for (const candidate of candidates) {

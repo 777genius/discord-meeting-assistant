@@ -6,14 +6,14 @@ import {
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 
 describe("focused query decomposition", () => {
-  it("prioritizes unique clauses within the configured multi-query bound", () => {
+  it("reserves the complete question before bounded clause expansion", () => {
     expect(decomposeHistoricalQuery(
       "Who owns Atlas and when does it ship; what changed then who approved it?",
       3,
     )).toEqual([
+      "Who owns Atlas and when does it ship; what changed then who approved it?",
       "Who owns Atlas",
       "when does it ship",
-      "what changed",
     ]);
     expect(decomposeHistoricalQuery("Where is cedar discussed?", 1))
       .toEqual(["Where is cedar discussed?"]);

@@ -342,16 +342,6 @@ function createGroundedAnswer(onGenerate: () => number): GroundedMeetingAnswer {
       if (invocation === 2) {
         expect(early?.turnId).toBe("same-meeting-final-turn-1");
       }
-      if (invocation === 3) {
-        return {
-          answer: {
-            claims: [],
-            locale: "en" as const,
-            status: "insufficient_evidence" as const,
-          },
-          status: "completed" as const,
-        };
-      }
       return {
         answer: {
           claims: [{
@@ -542,7 +532,7 @@ async function finalizeAndProveCanonicalTransition(input: {
     "There is not enough confirmed meeting evidence to answer that.",
   );
   expect(input.delivered[2]).not.toContain("-#");
-  expect(input.generatorInvocations()).toBe(3);
+  expect(input.generatorInvocations()).toBe(2);
   expect(input.selectorInvocations()).toBe(3);
 
   input.emitQuestion({
@@ -558,7 +548,7 @@ async function finalizeAndProveCanonicalTransition(input: {
   await input.runtime.settleIngress();
   await expectQuestionEffects(input.pool, 3);
   expect(input.delivered).toHaveLength(3);
-  expect(input.generatorInvocations()).toBe(3);
+  expect(input.generatorInvocations()).toBe(2);
   expect(input.selectorInvocations()).toBe(3);
 
   input.deleteProjection(finalMessageId);
@@ -575,7 +565,7 @@ async function finalizeAndProveCanonicalTransition(input: {
   await input.runtime.settleIngress();
   await expectQuestionEffects(input.pool, 3);
   expect(input.delivered).toHaveLength(3);
-  expect(input.generatorInvocations()).toBe(3);
+  expect(input.generatorInvocations()).toBe(2);
   const deleting = requiredHistoricalRuntime(
     input.pool,
     input.infinity,
@@ -740,6 +730,7 @@ class SyntheticFocusedSelectorRuntime implements SubscriptionRuntimeTransportPor
         readonly candidateId: string;
         readonly snippet: string;
       }[];
+      readonly question: string;
     };
     expect(new Set(prompt.candidates.map(({ candidateId }) => candidateId)).size)
       .toBe(prompt.candidates.length);
@@ -754,15 +745,19 @@ class SyntheticFocusedSelectorRuntime implements SubscriptionRuntimeTransportPor
       snippet.includes("BOTIK INTERIM TRANSCRIPT MUST NEVER BE INDEXED")
     )).toBe(false);
     this.candidateCounts.push(prompt.candidates.length);
-    const selectedCandidateIds = prompt.candidates
-      .filter(({ snippet }) => /EARLY-COMET|PINE-GOLF/u.test(snippet))
-      .map(({ candidateId }) => candidateId)
-      .slice(0, 5);
-    expect(selectedCandidateIds.length).toBeGreaterThan(0);
+    const selectedCandidateIds = prompt.question.includes("ZEBRA-MOON")
+      ? []
+      : prompt.candidates
+        .filter(({ snippet }) => /EARLY-COMET|PINE-GOLF/u.test(snippet))
+        .map(({ candidateId }) => candidateId)
+        .slice(0, 5);
+    if (!prompt.question.includes("ZEBRA-MOON")) {
+      expect(selectedCandidateIds.length).toBeGreaterThan(0);
+    }
     const output: JsonObject = {
       schemaVersion: 1,
       selectedCandidateIds,
-      status: "selected",
+      status: selectedCandidateIds.length === 0 ? "insufficient_evidence" : "selected",
     };
     return Promise.resolve({
       executionAttestation: {
