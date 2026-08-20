@@ -91,11 +91,13 @@ export {
 } from "./application/historical-retrieval.js";
 export {
   decomposeHistoricalQuery,
+} from "./application/historical-retrieval-ranking.js";
+export {
   resolveRequestedSpeakerAliases,
   resolveRequestedSpeakerIds,
   type RequestedSpeakerAliasV1,
   type SpeakerAliasMapV1,
-} from "./application/historical-retrieval-ranking.js";
+} from "./application/speaker-alias-resolution.js";
 export {
   SameRoomFocusedMemoryRetrieval,
   type CanonicalEvidenceTurnHashPort,

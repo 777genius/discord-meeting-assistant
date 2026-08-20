@@ -269,6 +269,36 @@ describe("requested speaker alias matching", () => {
       aliases,
     )).toEqual([]);
   });
+
+  it("preserves repeated and one-character aliases", () => {
+    expect(resolveRequestedSpeakerAliases(
+      "What did Jo Jo propose to Q?",
+      {
+        "opaque-jojo": ["Jo Jo"],
+        "opaque-q": ["Q"],
+      },
+    )).toEqual([
+      { matchedAlias: "Jo Jo", speakerId: "opaque-jojo" },
+      { matchedAlias: "Q", speakerId: "opaque-q" },
+    ]);
+  });
+
+  it("fails closed when one question span identifies multiple speakers", () => {
+    expect(resolveRequestedSpeakerAliases(
+      "What did Anna Smith propose?",
+      {
+        "opaque-anna": ["Anna"],
+        "opaque-anna-smith": ["Anna Smith"],
+      },
+    )).toEqual([]);
+    expect(resolveRequestedSpeakerAliases(
+      "What did Sasha propose?",
+      {
+        "opaque-first-sasha": ["Sasha"],
+        "opaque-second-sasha": ["Sasha"],
+      },
+    )).toEqual([]);
+  });
 });
 
 describe("focused historical cross-meeting ranking", () => {

@@ -4,21 +4,18 @@ import type {
   HistoricalMemoryPort,
   LocallyRehydratedEvidenceBlockV1,
 } from "./ports/historical-memory.js";
+export {
+  resolveRequestedSpeakerAliases,
+  resolveRequestedSpeakerIds,
+  type RequestedSpeakerAliasV1,
+  type SpeakerAliasMapV1,
+} from "./speaker-alias-resolution.js";
 
 interface HistoricalRerankBounds {
   readonly maximumEvidenceBytes: number;
   readonly minimumProviderScore: number;
   readonly neighborRadius: number;
   readonly rerankLimit: number;
-}
-
-export interface SpeakerAliasMapV1 {
-  readonly [speakerId: string]: readonly string[];
-}
-
-export interface RequestedSpeakerAliasV1 {
-  readonly matchedAlias: string;
-  readonly speakerId: string;
 }
 
 const minimumQualifiedScore = 0.2;
@@ -205,76 +202,6 @@ export function rerankHistoricalBlocks(
     }
   }
   return Object.freeze(selected);
-}
-
-export function resolveRequestedSpeakerIds(
-  question: string,
-  aliases: SpeakerAliasMapV1 = {},
-): ReadonlySet<string> {
-  return new Set(resolveRequestedSpeakerAliases(question, aliases).map(
-    ({ speakerId }) => speakerId,
-  ));
-}
-
-export function resolveRequestedSpeakerAliases(
-  question: string,
-  aliases: SpeakerAliasMapV1 = {},
-): readonly RequestedSpeakerAliasV1[] {
-  const selected = new Map<string, RequestedSpeakerAliasV1>();
-  for (const [speakerId, values] of Object.entries(aliases)) {
-    const matchedAlias = values.map((value) => {
-      const aliasTokens = tokens(value);
-      const questionSpan = contiguousAliasSpan(question, value);
-      return questionSpan !== undefined && aliasTokens.size > 0 &&
-          aliasMentionIsUnambiguous(question, questionSpan, aliasTokens)
-        ? questionSpan
-        : undefined;
-    }).find((value): value is string => value !== undefined);
-    if (matchedAlias !== undefined) {
-      selected.set(speakerId, Object.freeze({ matchedAlias, speakerId }));
-    }
-  }
-  return Object.freeze([...selected.values()]);
-}
-
-const ambiguousEnglishAliasTokens = new Set([
-  "bill", "mark", "may", "will",
-]);
-
-function aliasMentionIsUnambiguous(
-  question: string,
-  alias: string,
-  aliasTokens: ReadonlySet<string>,
-): boolean {
-  if (aliasTokens.size !== 1) {
-    return true;
-  }
-  const token = [...aliasTokens][0];
-  if (token === undefined || !ambiguousEnglishAliasTokens.has(token)) {
-    return true;
-  }
-  const escaped = escapeRegExp(alias.trim());
-  return new RegExp(
-    `(?:\\b(?:by|did|from|has|said)\\s+${escaped}\\b|\\b${escaped}\\s+(?:decided|proposed|said|suggested)\\b)`,
-    "iu",
-  ).test(question);
-}
-
-function contiguousAliasSpan(question: string, alias: string): string | undefined {
-  const aliasTokens = [...tokens(alias)];
-  if (aliasTokens.length === 0) {
-    return undefined;
-  }
-  const pattern = aliasTokens.map(escapeRegExp).join("[^\\p{L}\\p{N}]+");
-  const match = new RegExp(
-    `(?<![\\p{L}\\p{N}])(${pattern})(?![\\p{L}\\p{N}])`,
-    "iu",
-  ).exec(question);
-  return match?.[1];
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
 function normalizeProviderScore(score: number): number {

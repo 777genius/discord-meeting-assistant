@@ -434,7 +434,32 @@ describe("participant greeting profile configuration", () => {
     expect(empty.participantGreetingProfiles).toEqual({});
   });
 
-  it("rejects configured greeting profiles while live conversation is disabled", async () => {
+  it("shares participant profiles with reply-only meeting knowledge", async () => {
+    const principalKeyPath = "/run/secrets/meeting-knowledge-principal-key";
+    const config = await loadPlatformConfig(
+      {
+        ...environment,
+        MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED: "true",
+        MEETING_KNOWLEDGE_PRINCIPAL_KEY_FILE: principalKeyPath,
+        PARTICIPANT_GREETING_PROFILES_JSON: JSON.stringify({
+          "1533224474609057795": {
+            displayName: "Alex",
+            greetingLocale: "en",
+            spokenName: "Alexander",
+          },
+        }),
+      },
+      async () => "value",
+    );
+
+    expect(participantSpeakerAliases(config.participantGreetingProfiles)).toEqual({
+      "1533224474609057795": ["Alex", "Alexander"],
+    });
+    expect(config.conversation).toBeUndefined();
+    expect(config.meetingKnowledge?.localFinalReply).toBe(true);
+  });
+
+  it("rejects configured profiles when neither consumer is enabled", async () => {
     await expect(
       loadPlatformConfig(
         {
@@ -450,7 +475,7 @@ describe("participant greeting profile configuration", () => {
         async () => "value",
       ),
     ).rejects.toThrow(
-      "participant greeting profiles require live conversation to be enabled",
+      "participant greeting profiles require live conversation or local final reply to be enabled",
     );
   });
 
