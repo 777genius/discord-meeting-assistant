@@ -13,7 +13,7 @@ import {
   TestIds,
   blockPolicy,
   makeMeeting,
-} from "./historical-retrieval-fixtures.js";
+} from "../../fixtures/historical-retrieval-fixtures.js";
 
 function historicalBlock(
   meetingId: string,

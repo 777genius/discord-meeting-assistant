@@ -14,7 +14,7 @@ import {
   retrieval,
   retrievalPolicy,
   twoBlockTurns,
-} from "./historical-retrieval-fixtures.js";
+} from "../../fixtures/historical-retrieval-fixtures.js";
 
 describe("focused historical long-turn retrieval", () => {
   it("retains a bounded matching slice near the end of one long turn", async () => {
