@@ -5,9 +5,7 @@ import type {
   LocallyRehydratedEvidenceBlockV1,
 } from "./ports/historical-memory.js";
 export {
-  resolveRequestedSpeakerAliases,
   resolveRequestedSpeakerIds,
-  type RequestedSpeakerAliasV1,
   type SpeakerAliasMapV1,
 } from "./speaker-alias-resolution.js";
 

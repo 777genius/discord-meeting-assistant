@@ -42,7 +42,7 @@ interface QualityResourceMeasurement {
   readonly retrievalLatencyMs: number;
 }
 
-export interface QualityResourceSummary {
+interface QualityResourceSummary {
   readonly estimatedCostUsd: number;
   readonly generationLatencyMs: LatencyDistribution;
   readonly inputTokens: number;

@@ -4,7 +4,7 @@ import { admitAcceptedFinalMeeting, createHistoricalReleaseBinding, type Accepte
 
 export type QualityLocale = "en" | "mixed" | "ru";
 export interface FrozenQualityQuestion { readonly contradictedClaimIds: readonly string[]; readonly distractorTurnIds: readonly string[]; readonly expectedClaimIds: readonly string[]; readonly goldTurnIds: readonly string[]; readonly id: string; readonly kind: "answerable" | "unsupported"; readonly locale: QualityLocale; readonly question: string; readonly tags: readonly string[] }
-export interface QualityMeetingProfile {
+interface QualityMeetingProfile {
   readonly asrNoiseTurnIds: readonly string[];
   readonly durationMs: number;
   readonly interruptionTurnIds: readonly string[];
