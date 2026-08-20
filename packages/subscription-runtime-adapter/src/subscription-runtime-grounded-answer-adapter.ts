@@ -3,6 +3,7 @@ import type {
   GroundedAnswerGenerationResult,
   GroundedAnswerGenerator,
   GroundedAnswerMeasurement,
+  SpeakerAliasMapV1,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 
 import {
@@ -50,6 +51,7 @@ export interface SubscriptionRuntimeGroundedAnswerAdapterOptions {
   readonly expectedRuntimePackageVersion?: string;
   readonly isolatedCwd?: string;
   readonly maxOutputTokens?: number;
+  readonly speakerAliases?: SpeakerAliasMapV1;
   readonly timeoutMs?: number;
   readonly tokenCounter?: KnowledgeAnswerTokenCounter;
 }
@@ -200,5 +202,12 @@ function validateRequestOptions(
   ) {
     throw new Error("knowledge answer options conflict with the pinned runtime profile");
   }
-  return { isolatedCwd, maxOutputTokens, timeoutMs };
+  return {
+    isolatedCwd,
+    maxOutputTokens,
+    ...(options.speakerAliases === undefined
+      ? {}
+      : { speakerAliases: Object.freeze({ ...options.speakerAliases }) }),
+    timeoutMs,
+  };
 }

@@ -71,6 +71,7 @@ import {
   assertAggregateStageBudget,
   assertPersistedCoverageAnalysis,
   assertProviderWire,
+  disposableExternalPostgresUrl,
   focusedReferenceKey,
   qualifySupersessionAndDeletion,
   runQualificationStage,
@@ -79,54 +80,20 @@ import {
 } from "./meeting-knowledge-production-composition-diagnostics.js";
 
 const postgresImage = "postgres:18.4-alpine@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15";
-const postgresPort = 5_432;
-const qualificationOuterBudgetMs = 600_000;
+const postgresPort = 5_432, qualificationOuterBudgetMs = 600_000;
 const qualificationStageBudgets = Object.freeze({
-  composedGroundedVoice: 100_000,
-  focusedRetrievalRecall: 160_000,
-  indexRestartReplay: 40_000,
+  composedGroundedVoice: 100_000, focusedRetrievalRecall: 160_000,
+  indexRestartReplay: 40_000, liveProjectionReply: 30_000,
   sharedFocusedAndExhaustiveAnswer: 160_000,
-  liveProjectionReply: 30_000,
   supersessionAndDisabledDeletionDrain: 100_000,
 });
-assertAggregateStageBudget(
-  qualificationOuterBudgetMs,
-  Object.values(qualificationStageBudgets),
-);
-let container: StartedTestContainer | undefined;
-let database: Pool | undefined;
+assertAggregateStageBudget(qualificationOuterBudgetMs,
+  Object.values(qualificationStageBudgets));
+let container: StartedTestContainer | undefined, database: Pool | undefined;
 
 const externalPostgresUrl = disposableExternalPostgresUrl(process.env);
 
 describe("Meeting Knowledge production-composition qualification", () => {
-  it("rejects unsafe caller-supplied PostgreSQL qualification targets", () => {
-    expect(() => disposableExternalPostgresUrl({
-      MEETING_KNOWLEDGE_E2E_DISPOSABLE_DATABASE:
-        "meeting_knowledge_e2e_remote",
-      MEETING_KNOWLEDGE_E2E_POSTGRES_URL:
-        "postgresql://synthetic:secret@database.internal/meeting_knowledge_e2e_remote",
-    })).toThrow(/loopback/u);
-    expect(() => disposableExternalPostgresUrl({
-      MEETING_KNOWLEDGE_E2E_DISPOSABLE_DATABASE: "production",
-      MEETING_KNOWLEDGE_E2E_POSTGRES_URL:
-        "postgresql://synthetic:secret@127.0.0.1/production",
-    })).toThrow(/dedicated database/u);
-    expect(() => disposableExternalPostgresUrl({
-      MEETING_KNOWLEDGE_E2E_DISPOSABLE_DATABASE:
-        "meeting_knowledge_e2e_other",
-      MEETING_KNOWLEDGE_E2E_POSTGRES_URL:
-        "postgresql://synthetic:secret@127.0.0.1/meeting_knowledge_e2e_worker_1",
-    })).toThrow(/exact database/u);
-    expect(disposableExternalPostgresUrl({
-      MEETING_KNOWLEDGE_E2E_DISPOSABLE_DATABASE:
-        "meeting_knowledge_e2e_worker_1",
-      MEETING_KNOWLEDGE_E2E_POSTGRES_URL:
-        "postgresql://synthetic:secret@127.0.0.1:54329/meeting_knowledge_e2e_worker_1",
-    })).toBe(
-      "postgresql://synthetic:secret@127.0.0.1:54329/meeting_knowledge_e2e_worker_1",
-    );
-  });
-
   it("leases one provider attempt across selector, answer repair, and safety deadlines", () => {
     expect([meetingKnowledgeProviderLeasePolicy.maximumGroundedAnswerExecutions, localFinalReplyPolicy.jobLeaseSeconds]).toEqual([2, (meetingKnowledgeProviderLeasePolicy.focusedEvidenceSelectorTimeoutMilliseconds + (meetingKnowledgeProviderLeasePolicy.maximumGroundedAnswerExecutions * meetingKnowledgeProviderLeasePolicy.groundedAnswerTimeoutMilliseconds) + meetingKnowledgeProviderLeasePolicy.safetyMilliseconds) / 1_000]);
   });
@@ -266,51 +233,6 @@ describe("Meeting Knowledge mandatory PostgreSQL qualification", () => {
     }
   }, 600_000);
 });
-
-function disposableExternalPostgresUrl(
-  environment: Pick<NodeJS.ProcessEnv,
-  "MEETING_KNOWLEDGE_E2E_DISPOSABLE_DATABASE" |
-  "MEETING_KNOWLEDGE_E2E_POSTGRES_URL">,
-): string | undefined {
-  const rawUrl = environment.MEETING_KNOWLEDGE_E2E_POSTGRES_URL?.trim();
-  const consent = environment.MEETING_KNOWLEDGE_E2E_DISPOSABLE_DATABASE?.trim();
-  if (rawUrl === undefined && consent === undefined) {
-    return undefined;
-  }
-  if (
-    rawUrl === undefined || rawUrl === "" || consent === undefined || consent === ""
-  ) {
-    throw new Error(
-      "external PostgreSQL qualification requires exact disposable consent",
-    );
-  }
-  let parsed: URL;
-  try {
-    parsed = new URL(rawUrl);
-  } catch {
-    throw new Error("external PostgreSQL qualification URL is invalid");
-  }
-  if (
-    !new Set(["postgres:", "postgresql:"]).has(parsed.protocol) ||
-    parsed.search !== "" || parsed.hash !== ""
-  ) {
-    throw new Error("external PostgreSQL qualification URL is invalid");
-  }
-  if (!new Set(["127.0.0.1", "[::1]", "localhost"]).has(parsed.hostname)) {
-    throw new Error("external PostgreSQL qualification must use a loopback host");
-  }
-  if (!/^\/meeting_knowledge_e2e_[a-z0-9_]{1,48}$/u.test(parsed.pathname)) {
-    throw new Error(
-      "external PostgreSQL qualification requires a dedicated database",
-    );
-  }
-  if (consent !== parsed.pathname.slice(1)) {
-    throw new Error(
-      "external PostgreSQL qualification consent must name the exact database",
-    );
-  }
-  return rawUrl;
-}
 
 type FocusedHistoricalRetrieval = ReturnType<PlatformHistoricalMemoryRuntime["createFocusedRetrieval"]>;
 

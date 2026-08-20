@@ -91,7 +91,9 @@ export {
 } from "./application/historical-retrieval.js";
 export {
   decomposeHistoricalQuery,
+  resolveRequestedSpeakerAliases,
   resolveRequestedSpeakerIds,
+  type RequestedSpeakerAliasV1,
   type SpeakerAliasMapV1,
 } from "./application/historical-retrieval-ranking.js";
 export {

@@ -1,5 +1,7 @@
-import type {
-  GroundedAnswerGenerationRequest,
+import {
+  resolveRequestedSpeakerAliases,
+  type GroundedAnswerGenerationRequest,
+  type SpeakerAliasMapV1,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 
 import { SubscriptionRuntimeAdapterError } from "./errors.js";
@@ -26,7 +28,8 @@ const commonKnowledgeAnswerSystemPrompt = [
   "For a Russian request only, a valid answered shape is {\"claims\":[{\"evidenceIds\":[\"evidence-000001\"],\"text\":\"Подтвержденный ответ\"}],\"locale\":\"ru\",\"status\":\"answered\"}, and a valid insufficient shape is {\"claims\":[],\"locale\":\"ru\",\"status\":\"insufficient_evidence\"}. Use these as shape examples only, copy no example content, and always use the actual requested locale.",
   "For answered status, emit concise claims and cite the smallest direct evidenceId set for every claim.",
   "Include material correction or contradiction evidence; do not resolve conflicts by silently choosing one turn.",
-  "Never cite an ID absent from evidence. Never expose speaker references as identities.",
+  "questionSpeakerBindings map only a name already present in the question to its anonymous evidence speakerReference; use them for attribution.",
+  "Never cite an ID absent from evidence. Never expose speaker references as identities or output S1/S2 labels.",
   "Use not_a_question only when the input is not a question. Do not emit links, Discord mentions, markdown, bidi controls, or invented facts.",
 ].join(" ");
 
@@ -51,6 +54,7 @@ export const knowledgeAnswerRuntimeProfile =
 export interface KnowledgeAnswerRequestOptions {
   readonly isolatedCwd: string;
   readonly maxOutputTokens: number;
+  readonly speakerAliases?: SpeakerAliasMapV1;
   readonly timeoutMs: number;
 }
 
@@ -98,6 +102,15 @@ export function buildSubscriptionRuntimeKnowledgeAnswerRequest(
       text: turn.text,
     };
   });
+  const questionSpeakerBindings = resolveRequestedSpeakerAliases(
+    request.question,
+    options.speakerAliases,
+  ).flatMap(({ matchedAlias, speakerId }) => {
+    const speakerReference = speakerReferences.get(speakerId);
+    return speakerReference === undefined
+      ? []
+      : [{ name: matchedAlias, speakerReference }];
+  });
   const prompt = JSON.stringify({
     ...(request.plan.mode === "exhaustive_coverage"
       ? {
@@ -109,6 +122,7 @@ export function buildSubscriptionRuntimeKnowledgeAnswerRequest(
     evidence,
     groundingMode: request.plan.mode,
     locale: request.locale,
+    questionSpeakerBindings,
     question: request.question,
   });
   const runId = stableSubscriptionRuntimeId(

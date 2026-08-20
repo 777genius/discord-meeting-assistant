@@ -151,10 +151,14 @@ class RuntimeFake implements SubscriptionRuntimeTransportPort {
   }
 }
 
-function adapter(runtime: RuntimeFake) {
+function adapter(
+  runtime: RuntimeFake,
+  speakerAliases?: Readonly<Record<string, readonly string[]>>,
+) {
   return new SubscriptionRuntimeGroundedAnswerAdapter(runtime, {
     expectedLauncherSha256: launcherSha256,
     expectedRuntimeEngine: subscriptionRuntimeCliEngine,
+    ...(speakerAliases === undefined ? {} : { speakerAliases }),
   });
 }
 
@@ -218,6 +222,36 @@ describe("Meeting Knowledge subscription runtime contract", () => {
     );
     expect(runtime.request?.task.systemPrompt).toContain(
       knowledgeAnswerStatusContract,
+    );
+  });
+
+  it("binds a name in the question to anonymous speaker evidence", async () => {
+    const runtime = new RuntimeFake();
+    const request = {
+      ...generationRequest(),
+      question: "What did Vlad propose?",
+    };
+
+    await adapter(runtime, {
+      "77777777777777777": ["Anna"],
+      "88888888888888888": ["Vlad", "Влад"],
+    }).generate(request);
+
+    const serializedPrompt = runtime.request?.task.prompt ?? "";
+    const prompt = JSON.parse(serializedPrompt) as {
+      readonly questionSpeakerBindings: readonly {
+        readonly name: string;
+        readonly speakerReference: string;
+      }[];
+    };
+    expect(prompt.questionSpeakerBindings).toEqual([
+      { name: "Vlad", speakerReference: "S2" },
+    ]);
+    expect(serializedPrompt).not.toContain("77777777777777777");
+    expect(serializedPrompt).not.toContain("88888888888888888");
+    expect(serializedPrompt).not.toContain("Anna");
+    expect(runtime.request?.task.systemPrompt).toContain(
+      "use them for attribution",
     );
   });
 

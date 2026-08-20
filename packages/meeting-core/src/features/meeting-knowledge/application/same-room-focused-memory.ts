@@ -34,9 +34,12 @@ function historicalPriorityCandidates(
     ]),
   );
   return Object.freeze(result.plan.blocks.flatMap((block) =>
-    block.turns.map((turn) => Object.freeze({
+    block.turns.map((turn, turnIndex) => Object.freeze({
       meetingId: block.binding.meetingId,
-      relevanceScore: scores.get(block.candidateLocator) ?? 0,
+      // A provider score qualifies the block, not every turn inside it. Decay
+      // successive turns so one wide block cannot monopolize the fused top-k.
+      relevanceScore: (scores.get(block.candidateLocator) ?? 0) /
+        (turnIndex + 1),
       sourceEndCodePoint: turn.sourceEndCodePoint,
       sourceStartCodePoint: turn.sourceStartCodePoint,
       transcriptId: block.binding.transcriptId,

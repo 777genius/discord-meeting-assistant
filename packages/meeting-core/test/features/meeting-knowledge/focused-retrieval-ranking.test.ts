@@ -28,4 +28,12 @@ describe("focused query decomposition", () => {
       },
     )]).toEqual(["417240344673910785"]);
   });
+
+  it("does not mistake an ambiguous English name for an ordinary word", () => {
+    const aliases = { "opaque-will": ["Will"] };
+    expect([...resolveRequestedSpeakerIds("When will Atlas ship?", aliases)])
+      .toEqual([]);
+    expect([...resolveRequestedSpeakerIds("What did Will propose?", aliases)])
+      .toEqual(["opaque-will"]);
+  });
 });

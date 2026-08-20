@@ -32,31 +32,51 @@ export async function refreshStrictFocusedBlocks(input: {
 }): Promise<readonly LocallyRehydratedEvidenceBlockV1[]> {
   const refreshed: LocallyRehydratedEvidenceBlockV1[] = [];
   const authoritativeLocators = new Map<string, ReadonlySet<string>>();
+  const options = input.signal === undefined ? {} : { signal: input.signal };
+  const records = await input.store.findCurrentCandidates(
+    input.scopeId,
+    input.roomId,
+    input.selected.map(({ candidateLocator }) => candidateLocator),
+    options,
+  );
+  const recordsByLocator = new Map(records.flatMap((record) => {
+    const locator = record.plan.documents[record.ordinal]?.manifest.candidateLocator;
+    return locator === undefined ? [] : [[locator, record] as const];
+  }));
+  const currentGenerationByRelease = new Map<string, boolean>();
+  const meetingByRelease = new Map<string, Awaited<ReturnType<
+    HistoricalEvidenceAuthority["loadAcceptedFinalMeeting"]>>>();
   for (const prior of input.selected) {
-    const options = input.signal === undefined ? {} : { signal: input.signal };
-    const record = await input.store.findCurrentCandidate(
-      input.scopeId,
-      input.roomId,
-      prior.candidateLocator,
-      options,
-    );
+    const record = recordsByLocator.get(prior.candidateLocator);
     if (
-      record === null ||
+      record === undefined ||
       !input.requestedMeeting(record.binding.meetingId) ||
-      record.plan.topology.indexGeneration !== prior.indexGeneration ||
-      !await input.store.isCurrentGeneration(
-        record.binding,
-        prior.indexGeneration,
-        options,
-      )
+      record.plan.topology.indexGeneration !== prior.indexGeneration
     ) {
       continue;
     }
-    const meeting = await input.authority.loadAcceptedFinalMeeting(
-      record.binding,
-      options,
-    );
-    if (meeting === null) {
+    const releaseId = record.binding.releaseId;
+    let currentGeneration = currentGenerationByRelease.get(releaseId);
+    if (currentGeneration === undefined) {
+      currentGeneration = await input.store.isCurrentGeneration(
+        record.binding,
+        prior.indexGeneration,
+        options,
+      );
+      currentGenerationByRelease.set(releaseId, currentGeneration);
+    }
+    if (!currentGeneration) {
+      continue;
+    }
+    let meeting = meetingByRelease.get(releaseId);
+    if (!meetingByRelease.has(releaseId)) {
+      meeting = await input.authority.loadAcceptedFinalMeeting(
+        record.binding,
+        options,
+      );
+      meetingByRelease.set(releaseId, meeting ?? null);
+    }
+    if (meeting === null || meeting === undefined) {
       continue;
     }
     authoritativeLocators.set(

@@ -146,13 +146,12 @@ class ConfiguredDiscordQuestionScope implements DiscordQuestionScopePort {
   }
 }
 
-function createGroundedAnswerGenerator(input: {
-  readonly launcherSha256: string;
-  readonly runtimeTransport: SubscriptionRuntimeTransportPort;
-}): SubscriptionRuntimeGroundedAnswerAdapter {
-  return new SubscriptionRuntimeGroundedAnswerAdapter(input.runtimeTransport, {
-    expectedLauncherSha256: input.launcherSha256,
+function createGroundedAnswerGenerator(config: PlatformConfig,
+  runtimeTransport: SubscriptionRuntimeTransportPort) {
+  return new SubscriptionRuntimeGroundedAnswerAdapter(runtimeTransport, {
+    expectedLauncherSha256: config.subscriptionRuntime.launcherSha256,
     expectedRuntimeEngine: subscriptionRuntimeCliEngine,
+    speakerAliases: participantSpeakerAliases(config.participantGreetingProfiles),
     timeoutMs: meetingKnowledgeProviderLeasePolicy.groundedAnswerTimeoutMilliseconds,
   });
 }
@@ -273,10 +272,7 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
     admissions,
     localFinalReplyPolicy,
   );
-  const generator = createGroundedAnswerGenerator({
-    launcherSha256: input.config.subscriptionRuntime.launcherSha256,
-    runtimeTransport: input.runtimeTransport,
-  });
+  const generator = createGroundedAnswerGenerator(input.config, input.runtimeTransport);
   const selector = createFocusedEvidenceSelector({
     launcherSha256: input.config.subscriptionRuntime.launcherSha256,
     logger: input.logger,

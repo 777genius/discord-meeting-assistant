@@ -16,10 +16,16 @@ export interface SpeakerAliasMapV1 {
   readonly [speakerId: string]: readonly string[];
 }
 
+export interface RequestedSpeakerAliasV1 {
+  readonly matchedAlias: string;
+  readonly speakerId: string;
+}
+
 const minimumQualifiedScore = 0.2;
 const ignoredQueryTokens = new Set([
-  "about", "and", "did", "does", "for", "from", "how", "the", "that",
-  "this", "what", "when", "where", "which", "who", "why", "with",
+  "about", "and", "are", "did", "do", "does", "for", "from", "how", "is",
+  "the", "that", "this", "was", "were", "what", "when", "where", "which",
+  "who", "why", "with",
   "был", "была", "были", "для", "как", "когда", "кто", "почему", "что",
 ]);
 
@@ -205,19 +211,56 @@ export function resolveRequestedSpeakerIds(
   question: string,
   aliases: SpeakerAliasMapV1 = {},
 ): ReadonlySet<string> {
+  return new Set(resolveRequestedSpeakerAliases(question, aliases).map(
+    ({ speakerId }) => speakerId,
+  ));
+}
+
+export function resolveRequestedSpeakerAliases(
+  question: string,
+  aliases: SpeakerAliasMapV1 = {},
+): readonly RequestedSpeakerAliasV1[] {
   const questionTokens = tokens(question);
-  const selected = new Set<string>();
+  const selected = new Map<string, RequestedSpeakerAliasV1>();
   for (const [speakerId, values] of Object.entries(aliases)) {
-    if (values.some((value) => {
+    const matchedAlias = values.find((value) => {
       const aliasTokens = tokens(value);
       return aliasTokens.size > 0 && [...aliasTokens].every((token) =>
         questionTokens.has(token)
-      );
-    })) {
-      selected.add(speakerId);
+      ) && aliasMentionIsUnambiguous(question, value, aliasTokens);
+    });
+    if (matchedAlias !== undefined) {
+      selected.set(speakerId, Object.freeze({ matchedAlias, speakerId }));
     }
   }
-  return selected;
+  return Object.freeze([...selected.values()]);
+}
+
+const ambiguousEnglishAliasTokens = new Set([
+  "bill", "mark", "may", "will",
+]);
+
+function aliasMentionIsUnambiguous(
+  question: string,
+  alias: string,
+  aliasTokens: ReadonlySet<string>,
+): boolean {
+  if (aliasTokens.size !== 1) {
+    return true;
+  }
+  const token = [...aliasTokens][0];
+  if (token === undefined || !ambiguousEnglishAliasTokens.has(token)) {
+    return true;
+  }
+  const escaped = escapeRegExp(alias.trim());
+  return new RegExp(
+    `(?:\\b(?:by|did|from|has|said)\\s+${escaped}\\b|\\b${escaped}\\s+(?:decided|proposed|said|suggested)\\b)`,
+    "u",
+  ).test(question);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
 function normalizeProviderScore(score: number): number {
@@ -315,6 +358,9 @@ function temporalScore(
   blocks: readonly LocallyRehydratedEvidenceBlockV1[],
   queries: readonly string[],
 ): number {
+  if (new Set(blocks.map(({ binding }) => binding.releaseId)).size > 1) {
+    return 0;
+  }
   const question = queries.join(" ").toLocaleLowerCase("und");
   const wantsStart = /\b(?:beginning|early|earlier|first|initial|start)\b|(?:вначал|начал|перв|раньш)/iu
     .test(question);
