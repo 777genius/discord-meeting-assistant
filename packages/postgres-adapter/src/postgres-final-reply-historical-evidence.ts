@@ -26,21 +26,18 @@ export async function loadCurrentHistoricalReferenceRows(
   binding: QuestionBindingSnapshot,
   references: readonly FocusedMemoryReference[],
 ): Promise<readonly ReferencedMeetingRow[] | null> {
-  const historicalReferences = references.filter(({ meetingId }) =>
-    meetingId !== binding.meetingId
+  const historicalReferences = references.filter(({ historicalSource }) =>
+    historicalSource !== undefined
   );
-  if (
-    historicalReferences.some(({ historicalSource }) =>
-      historicalSource === undefined
-    ) ||
-    references.some(({ historicalSource, meetingId }) =>
-      meetingId === binding.meetingId && historicalSource !== undefined
-    )
-  ) {
+  if (references.some(({ historicalSource, meetingId }) =>
+    meetingId !== binding.meetingId && historicalSource === undefined
+  )) {
     return null;
   }
   const historicalMeetingIds = [
-    ...new Set(historicalReferences.map(({ meetingId }) => meetingId)),
+    ...new Set(references.flatMap(({ meetingId }) =>
+      meetingId === binding.meetingId ? [] : [meetingId]
+    )),
   ];
   const referencedRows = historicalMeetingIds.length === 0
     ? []
