@@ -17,14 +17,10 @@ import {
   type HistoricalEmbeddingTokenizerPort, type HistoricalSyncStore,
   type HistoricalWindowPlanningProfileV1, type TwoHourHistoricalRetrievalProfileV1,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
-import {
-  PostgresHistoricalEvidenceAuthority,
-  PostgresExhaustiveCoverageStore,
-  PostgresHistoricalMemoryStore,
-} from "@discord-meeting/postgres-adapter";
+import { PostgresExhaustiveCoverageStore, PostgresHistoricalEvidenceAuthority,
+  PostgresHistoricalMemoryStore } from "@discord-meeting/postgres-adapter";
 import type { Logger } from "@discord-meeting/observability-adapter";
-import {
-  SubscriptionRuntimeCoverageExtractorAdapter, subscriptionRuntimeCliEngine,
+import { SubscriptionRuntimeCoverageExtractorAdapter, subscriptionRuntimeCliEngine,
   type SubscriptionRuntimeTransportPort,
 } from "@discord-meeting/subscription-runtime-adapter";
 import type { Pool } from "pg";

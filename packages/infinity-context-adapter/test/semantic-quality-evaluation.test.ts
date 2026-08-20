@@ -264,7 +264,10 @@ describe("Infinity Context semantic and final-answer quality harness", () => {
     })).toThrow(/reference-only retrieval/u);
   });
 
-  it("summarizes repeated exact-binding runs without collapsing their raw outcomes", () => {
+});
+
+describe("Infinity Context repeated semantic quality evidence", () => {
+  it("preserves raw outcomes across exact-binding runs", () => {
     const corpus = frozenSemanticQualityCorpus();
     const runs = [1, 2, 3].map((repetition) => createSemanticQualityRunEvidence({
       binding: binding(corpus.corpusSha256, repetition),
@@ -281,7 +284,6 @@ describe("Infinity Context semantic and final-answer quality harness", () => {
       /at least three repetitions/u,
     );
   });
-
 });
 
 describe("subscription answer quality receipt", () => {
