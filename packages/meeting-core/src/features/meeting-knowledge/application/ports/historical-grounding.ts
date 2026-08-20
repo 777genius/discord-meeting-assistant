@@ -1,5 +1,8 @@
 import type { HistoricalReleaseBindingV1 } from "../../domain/historical-evidence.js";
-import type { LocallyRehydratedEvidenceBlockV1 } from "./historical-memory.js";
+import type {
+  HistoricalEvidenceSliceV1,
+  LocallyRehydratedEvidenceBlockV1,
+} from "./historical-memory.js";
 
 export interface HistoricalAuthorizationRequestV1 {
   readonly authorizationPrincipalRef: string;
@@ -31,6 +34,9 @@ type CoverageTurnRelevanceV1 = "conflicting" | "context" | "direct";
 export interface CoverageSelectedTurnV1 {
   readonly blockLocator: string;
   readonly relevance: CoverageTurnRelevanceV1;
+  readonly sourceEndCodePoint: number;
+  readonly sourceRef: string;
+  readonly sourceStartCodePoint: number;
   readonly turnId: string;
 }
 
@@ -60,6 +66,7 @@ export interface CoverageExtractorPort {
   readonly profile: string;
 
   extract(input: {
+    readonly analysisTurns: readonly HistoricalEvidenceSliceV1[];
     readonly block: LocallyRehydratedEvidenceBlockV1;
     readonly question: string;
     readonly signal?: AbortSignal;

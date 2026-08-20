@@ -5,6 +5,7 @@ import type {
   CoverageReductionV1,
   CoverageSelectedTurnV1,
 } from "./ports/historical-grounding.js";
+import { selectedTurnIdentity } from "./exhaustive-coverage-contract.js";
 
 const word = /[\p{L}\p{N}]{3,}/gu;
 const ignoredQuestionTerms = new Set([
@@ -61,7 +62,7 @@ export class DeterministicExhaustiveCoverageExtraction
   ): Promise<CoverageExtractV1> {
     input.signal?.throwIfAborted();
     const queryTerms = terms(input.question);
-    const matchedOrdinals = input.block.turns.flatMap((turn, ordinal) => {
+    const matchedOrdinals = input.analysisTurns.flatMap((turn, ordinal) => {
       const turnTerms = terms(turn.text);
       return (queryTerms.size === 0 ||
           [...queryTerms].some((term) => turnTerms.has(term)))
@@ -74,18 +75,18 @@ export class DeterministicExhaustiveCoverageExtraction
       if (ordinal > 0) {
         selectedOrdinals.add(ordinal - 1);
       }
-      if (ordinal + 1 < input.block.turns.length) {
+      if (ordinal + 1 < input.analysisTurns.length) {
         selectedOrdinals.add(ordinal + 1);
       }
     }
-    for (const [ordinal, turn] of input.block.turns.entries()) {
+    for (const [ordinal, turn] of input.analysisTurns.entries()) {
       if (matchedOrdinals.length > 0 && correctionOrConflict.test(turn.text)) {
         selectedOrdinals.add(ordinal);
       }
     }
     const selectedTurns = [...selectedOrdinals].toSorted((left, right) => left - right)
       .map((ordinal): CoverageSelectedTurnV1 | undefined => {
-        const turn = input.block.turns[ordinal];
+        const turn = input.analysisTurns[ordinal];
         if (turn === undefined) {
           return undefined;
         }
@@ -96,6 +97,9 @@ export class DeterministicExhaustiveCoverageExtraction
             : correctionOrConflict.test(turn.text)
               ? "conflicting" as const
               : "context" as const,
+          sourceEndCodePoint: turn.sourceEndCodePoint,
+          sourceRef: turn.sourceRef,
+          sourceStartCodePoint: turn.sourceStartCodePoint,
           turnId: turn.turnId,
         });
       })
@@ -114,7 +118,7 @@ export class DeterministicExhaustiveCoverageExtraction
         blocksReviewed: 1,
         lexicalMatches: matchedOrdinals.length,
         selectedTurnCount: selectedTurns.length,
-        turnsReviewed: input.block.turns.length,
+        turnsReviewed: input.analysisTurns.length,
       }),
       selectedTurns: Object.freeze(selectedTurns),
       selectionStatus: selectedTurns.length === 0 ? "no_match" : "selected",
@@ -183,11 +187,18 @@ function reduceSelections(
   const selected = new Map<string, CoverageSelectedTurnV1>();
   for (const value of input.values) {
     for (const turn of value.selectedTurns) {
-      selected.set(`${turn.blockLocator}\u0000${turn.turnId}`, turn);
+      const identity = selectedTurnIdentity(turn);
+      const prior = selected.get(identity);
+      if (prior === undefined || preferredSelection(turn, prior) === turn) {
+        selected.set(identity, turn);
+      }
     }
   }
   const selectedTurns = [...selected.values()].toSorted((left, right) =>
     left.blockLocator.localeCompare(right.blockLocator) ||
+    left.sourceRef.localeCompare(right.sourceRef) ||
+    left.sourceStartCodePoint - right.sourceStartCodePoint ||
+    left.sourceEndCodePoint - right.sourceEndCodePoint ||
     left.turnId.localeCompare(right.turnId)
   );
   const evidenceLocators = [...new Set(
@@ -223,4 +234,16 @@ function reduceSelections(
     selectionStatus: selectedTurns.length === 0 ? "no_match" : "selected",
     schemaVersion: 1,
   }));
+}
+
+function preferredSelection(
+  left: CoverageSelectedTurnV1,
+  right: CoverageSelectedTurnV1,
+): CoverageSelectedTurnV1 {
+  const relevance = { conflicting: 2, context: 1, direct: 3 } as const;
+  const difference = relevance[left.relevance] - relevance[right.relevance];
+  return difference > 0 ||
+      (difference === 0 && left.blockLocator.localeCompare(right.blockLocator) < 0)
+    ? left
+    : right;
 }

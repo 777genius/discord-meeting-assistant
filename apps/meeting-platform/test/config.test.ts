@@ -5,6 +5,8 @@ import { describe, expect, it } from "vitest";
 import { INFINITY_CONTEXT_SDK_PROVENANCE } from "@discord-meeting/infinity-context-adapter";
 
 import { loadPlatformConfig } from "../src/config.js";
+import { participantSpeakerAliases } from
+  "../src/config/participant-greeting-profiles.js";
 import { platformTestEnvironment as environment } from "./config-test-environment.js";
 
 function buildProvenance(releaseRevision = "c".repeat(40)) {
@@ -80,7 +82,7 @@ describe("platform configuration", () => {
     }, async () => "fixture-value" )).rejects.toThrow("configured together");
   });
 
-  it("loads production search only with the nested retained r79 semantic attestation", async () => {
+  it("loads production search only with the source-pinned profile and instance echo", async () => {
     const activation = JSON.stringify({
       apiVersion: "v1",
       archiveSha256: INFINITY_CONTEXT_SDK_PROVENANCE.archiveSha256,
@@ -88,21 +90,15 @@ describe("platform configuration", () => {
       immutablePackageIntegrity: INFINITY_CONTEXT_SDK_PROVENANCE.immutablePackageIntegrity,
       indexingEnabled: true,
       packageSource: "immutable_package",
-      productionEmbeddingProfileAttestation: {
+      embeddingProfileAttestation: {
         embeddingProfile:
-          "local-open-source-paraphrase-multilingual-minilm-l12-v2-hybrid-bm25.r73",
+          INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedEmbeddingProfileId,
         embeddingProfileDigestSha256:
-          "sha256:5ecd36edd098940cd8a6540509f90815ddc1802b4410ced2bf063c0f8c650cac",
-        productionSemanticQualification: true,
-        qualificationManifestSha256:
-          INFINITY_CONTEXT_SDK_PROVENANCE
-            .retainedProductionSemanticQualificationManifestSha256,
-        releaseRevision:
-          INFINITY_CONTEXT_SDK_PROVENANCE.retainedProductionSemanticReleaseRevision,
+          `sha256:${"a".repeat(64)}`,
         schemaVersion: 1,
       },
       qualificationManifestSha256:
-        INFINITY_CONTEXT_SDK_PROVENANCE.retainedLiveQualificationManifestSha256,
+        INFINITY_CONTEXT_SDK_PROVENANCE.retainedExactHeadQualificationManifestSha256,
       schemaVersion: 1,
       sdkCommit: INFINITY_CONTEXT_SDK_PROVENANCE.commit,
       sdkTree: INFINITY_CONTEXT_SDK_PROVENANCE.tree,
@@ -122,11 +118,8 @@ describe("platform configuration", () => {
 
     expect(configured.infinityContext?.activation).toMatchObject({
       environment: "production",
-      productionEmbeddingProfileAttestation: {
-        productionSemanticQualification: true,
-        qualificationManifestSha256:
-          INFINITY_CONTEXT_SDK_PROVENANCE
-            .retainedProductionSemanticQualificationManifestSha256,
+      embeddingProfileAttestation: {
+        embeddingProfile: INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedEmbeddingProfileId,
       },
       searchEnabled: true,
     });
@@ -418,6 +411,10 @@ describe("participant greeting profile configuration", () => {
       greetingLocale: "ru",
       spokenName: "Лена",
     });
+    expect(participantSpeakerAliases(config.participantGreetingProfiles)).toEqual({
+      "1533224474609057795": ["Alex", "Alexander"],
+      "2533224474609057795": ["Елена", "Лена"],
+    });
     expect(Object.isFrozen(config.participantGreetingProfiles)).toBe(true);
     expect(
       Object.isFrozen(
@@ -437,7 +434,32 @@ describe("participant greeting profile configuration", () => {
     expect(empty.participantGreetingProfiles).toEqual({});
   });
 
-  it("rejects configured greeting profiles while live conversation is disabled", async () => {
+  it("shares participant profiles with reply-only meeting knowledge", async () => {
+    const principalKeyPath = "/run/secrets/meeting-knowledge-principal-key";
+    const config = await loadPlatformConfig(
+      {
+        ...environment,
+        MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED: "true",
+        MEETING_KNOWLEDGE_PRINCIPAL_KEY_FILE: principalKeyPath,
+        PARTICIPANT_GREETING_PROFILES_JSON: JSON.stringify({
+          "1533224474609057795": {
+            displayName: "Alex",
+            greetingLocale: "en",
+            spokenName: "Alexander",
+          },
+        }),
+      },
+      async () => "value",
+    );
+
+    expect(participantSpeakerAliases(config.participantGreetingProfiles)).toEqual({
+      "1533224474609057795": ["Alex", "Alexander"],
+    });
+    expect(config.conversation).toBeUndefined();
+    expect(config.meetingKnowledge?.localFinalReply).toBe(true);
+  });
+
+  it("rejects configured profiles when neither consumer is enabled", async () => {
     await expect(
       loadPlatformConfig(
         {
@@ -453,7 +475,7 @@ describe("participant greeting profile configuration", () => {
         async () => "value",
       ),
     ).rejects.toThrow(
-      "participant greeting profiles require live conversation to be enabled",
+      "participant greeting profiles require live conversation or local final reply to be enabled",
     );
   });
 

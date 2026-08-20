@@ -250,6 +250,50 @@ class RecordingPlayback implements VoicePlaybackPort {
   }
 }
 
+class ReceiptControlledPlaybackSession implements VoicePlaybackSession {
+  public readonly cancellationRequests: VoicePlaybackCancellationRequest[] = [];
+  public readonly chunks: ConversationAudioChunk[] = [];
+  public readonly events = new EventStream<VoicePlaybackEvent>();
+
+  public constructor(public readonly request: VoicePlaybackRequest) {}
+
+  public cancel(
+    request: VoicePlaybackCancellationRequest,
+  ): Promise<ConversationPortResult<"cancelled" | "reused">> {
+    this.cancellationRequests.push(structuredClone(request));
+    this.events.push({
+      attemptId: this.request.attemptId,
+      finishedAtMs: request.cancellationObservedAtMs,
+      type: "finished",
+    });
+    this.events.close();
+    return Promise.resolve({ ok: true, value: "cancelled" });
+  }
+
+  public finish(): Promise<ConversationPortResult<"finished" | "reused">> {
+    return Promise.resolve({ ok: true, value: "finished" });
+  }
+
+  public write(
+    chunk: ConversationAudioChunk,
+  ): Promise<ConversationPortResult<"accepted" | "reused">> {
+    this.chunks.push(chunk);
+    return Promise.resolve({ ok: true, value: "accepted" });
+  }
+}
+
+class ReceiptControlledPlayback implements VoicePlaybackPort {
+  public readonly sessions: ReceiptControlledPlaybackSession[] = [];
+
+  public open(
+    request: VoicePlaybackRequest,
+  ): Promise<ConversationPortResult<VoicePlaybackSession>> {
+    const session = new ReceiptControlledPlaybackSession(request);
+    this.sessions.push(session);
+    return Promise.resolve({ ok: true, value: session });
+  }
+}
+
 class DelayedFirstOpenPlayback implements VoicePlaybackPort {
   public readonly requests: VoicePlaybackRequest[] = [];
   public readonly sessions: RecordingPlaybackSession[] = [];
@@ -514,6 +558,7 @@ export {
   HeldFirstTerminalPlayback,
   HeldTerminalPlaybackSession,
   RecordingPlayback,
+  ReceiptControlledPlayback,
   ScriptedRuntime,
   audioChunk,
   closedStream,

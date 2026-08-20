@@ -3,11 +3,13 @@ import {
   providerIncrementalMeetingSummarySchema,
   providerKnowledgeAnswerSchema,
   providerKnowledgeCoverageExtractSchema,
+  providerFocusedEvidenceSelectionSchema,
   providerMeetingSummarySchema,
   subscriptionRuntimeConversationPurpose,
   subscriptionRuntimeIncrementalPurpose,
   subscriptionRuntimeKnowledgeAnswerPurpose,
   subscriptionRuntimeKnowledgeCoveragePurpose,
+  subscriptionRuntimeKnowledgeEvidenceSelectorPurpose,
   subscriptionRuntimePurpose,
   type JsonObject,
   type SubscriptionRuntimeExecutionProfile,
@@ -87,7 +89,9 @@ export function validateStructuredOutput(
         ? providerKnowledgeAnswerSchema.safeParse(value)
         : purpose === subscriptionRuntimeKnowledgeCoveragePurpose
           ? providerKnowledgeCoverageExtractSchema.safeParse(value)
-          : undefined;
+          : purpose === subscriptionRuntimeKnowledgeEvidenceSelectorPurpose
+            ? providerFocusedEvidenceSelectionSchema.safeParse(value)
+            : undefined;
   if (parsed === undefined) {
     return undefined;
   }

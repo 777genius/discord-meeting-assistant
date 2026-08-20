@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "base_revision": "9b5c0e38bf46cdabe32698c84e62e1711a8b0aee",
+  "head_revision": "15809619e61ae76f45d04176d1b681a78bf41de3",
+  "root_tree": "6300ef1ce3f0e427adc7925238353f48d4a9ebf8",
+  "sdk_tree": "5c08ffaa071b2a4e511ad8096b1fbf828f1e4145",
+  "sdk_source_archive_sha256": "a14b3d0c071b08fcef003436f4f46b52b948f734e8093096abc699c09d5deaa8",
+  "source_bundle_sha256": "7589f280963392853e3402c1ce48157930e21fac79490c27275bdfff0ffbbf91",
+  "sdk_tarball_sha256": "a59e128c9c0b38c9e665f1da608cb5df09d25f2d14677d32f1a44d6eefc6efe9",
+  "sdk_tarball_integrity": "sha512-+g8mKVBvJCJWkpmMgUUBjwPZT86Q6KIIwVADy2nLvxfR8n5leA+gHJL/0JU8oYfG08tOlonSLfhPo4JxH+2q5Q==",
+  "qualification": {
+    "server_openapi_tests": "9/9 passed",
+    "sdk_tests": "86/86 passed",
+    "bidirectional_api_parity": "93/93 passed",
+    "sdk_verify": "passed",
+    "production_indexing": false,
+    "production_semantic_search": false
+  }
+}

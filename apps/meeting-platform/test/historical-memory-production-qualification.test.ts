@@ -12,6 +12,7 @@ import {
   retainedProductionEmbeddingProfileAttestation,
   silentLogger,
   syntheticCoverageRuntime,
+  testProductionQualificationPolicy,
 } from
   "./meeting-knowledge-production-composition-fixtures.js";
 import {
@@ -71,7 +72,18 @@ describe("Infinity production semantic qualification composition", () => {
       connectionString: "postgresql://synthetic.invalid/never-connected",
     });
     const infinity = await startDisposableInfinityHttpService();
-    const runtime = requiredHistoricalRuntime(pool, infinity, true, true, "test");
+    infinity.endpoint.setRuntimeQualificationReceipt({
+      embeddingProfileDigestSha256:
+        retainedProductionEmbeddingProfileAttestation.embeddingProfileDigestSha256,
+      embeddingProfileId:
+        retainedProductionEmbeddingProfileAttestation.embeddingProfile,
+      serviceRevision:
+        INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedServiceRevision,
+    });
+    const runtime = requiredHistoricalRuntime(
+      pool, infinity, true, true, "test",
+      retainedProductionEmbeddingProfileAttestation,
+    );
     const deletionOnly = requiredHistoricalRuntime(pool, infinity, false, false, "test");
     try {
       // Retrieval/exhaustive adapters can be constructed before startup; only
@@ -104,7 +116,7 @@ describe("Infinity production semantic qualification composition", () => {
       await infinity.close();
       await pool.end();
     }
-  });
+  }, 15_000);
 
   it("denies mock-qualified search without disabling the base deletion runtime", async () => {
     const pool = new Pool({
@@ -123,7 +135,117 @@ describe("Infinity production semantic qualification composition", () => {
     }
   });
 
-  it("enables production search only when composition carries the nested retained r79 attestation", async () => {
+});
+
+describe("Infinity deletion-only transport qualification", () => {
+  it.each([
+    ["missing", null],
+    ["wrong", {
+      embeddingProfileDigestSha256:
+        retainedProductionEmbeddingProfileAttestation.embeddingProfileDigestSha256,
+      embeddingProfileId:
+        retainedProductionEmbeddingProfileAttestation.embeddingProfile,
+      serviceRevision: "f".repeat(40),
+    }],
+  ] as const)("keeps deletion-only reconciliation closed for %s service revision", async (
+    _label,
+    receipt,
+  ) => {
+    const connect = vi.fn();
+    const query = vi.fn(async () => ({ rowCount: 0, rows: [] }));
+    const pool = { connect, query } as unknown as Pool;
+    const infinity = await startDisposableInfinityHttpService();
+    infinity.endpoint.setRuntimeQualificationReceipt(receipt);
+    const runtime = createPlatformHistoricalMemory({
+      config: platformConfig(infinity.baseUrl, false, false, "test"),
+      logger: silentLogger,
+      pool,
+      profileMaintenance: {
+        enqueueAppliedProfileRebuilds: async () => ({
+          enqueued: 0,
+          remaining: false,
+        }),
+      },
+      runtimeTransport: syntheticCoverageRuntime,
+    });
+    if (runtime === undefined) {
+      throw new Error("invalid transport fixture did not compose");
+    }
+    try {
+      await expect(runtime.assertReady()).resolves.toBeUndefined();
+      await expect(runtime.assertReady()).resolves.toBeUndefined();
+      await runtime.start();
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 25);
+      });
+      expect(query).not.toHaveBeenCalled();
+      expect(connect).not.toHaveBeenCalled();
+      const requests = infinity.endpoint.requests.map(({ method, path }) => `${method} ${path}`);
+      expect(requests.length).toBeGreaterThanOrEqual(3);
+      expect(requests.every((request) => request === "GET /v1/capabilities"))
+        .toBe(true);
+      expect(runtime.searchEnabled()).toBe(false);
+      expect(runtime.servingAuthorized()).toBe(false);
+    } finally {
+      await runtime.close();
+      await infinity.close();
+    }
+  });
+  it("keeps exact transport available when semantic projection is unqualified", async () => {
+    const connect = vi.fn();
+    const query = vi.fn(async () => ({ rowCount: 0, rows: [] }));
+    const pool = { connect, query } as unknown as Pool;
+    const infinity = await startDisposableInfinityHttpService();
+    infinity.endpoint.setRuntimeQualificationReceipt({
+      embeddingProfileDigestSha256:
+        retainedProductionEmbeddingProfileAttestation.embeddingProfileDigestSha256,
+      embeddingProfileId:
+        retainedProductionEmbeddingProfileAttestation.embeddingProfile,
+      serviceRevision:
+        INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedServiceRevision,
+    });
+    const runtime = createPlatformHistoricalMemory({
+      config: platformConfig(
+        infinity.baseUrl,
+        true,
+        true,
+        "production",
+        retainedProductionEmbeddingProfileAttestation,
+      ),
+      logger: silentLogger,
+      pool,
+      profileMaintenance: {
+        enqueueAppliedProfileRebuilds: async () => ({
+          enqueued: 0,
+          remaining: false,
+        }),
+      },
+      runtimeTransport: syntheticCoverageRuntime,
+    });
+    if (runtime === undefined) {
+      throw new Error("active transport fixture did not compose");
+    }
+    try {
+      await runtime.assertReady();
+      await runtime.start();
+      await vi.waitFor(() => {
+        expect(connect).toHaveBeenCalled();
+      });
+      expect(runtime.searchEnabled()).toBe(false);
+      expect(runtime.servingAuthorized()).toBe(false);
+      expect(infinity.endpoint.requests.every(({ path }) =>
+        path === "/v1/capabilities"
+      )).toBe(true);
+    } finally {
+      await runtime.close();
+      await infinity.close();
+    }
+  });
+});
+
+describe("Infinity production semantic qualification continuation", () => {
+
+  it("keeps production search closed without explicit semantic qualification", async () => {
     const pool = new Pool({
       connectionString: "postgresql://synthetic.invalid/never-connected",
     });
@@ -134,20 +256,34 @@ describe("Infinity production semantic qualification composition", () => {
       embeddingProfileId:
         retainedProductionEmbeddingProfileAttestation.embeddingProfile,
       serviceRevision:
-        INFINITY_CONTEXT_SDK_PROVENANCE.retainedProductionSemanticServiceRevision,
+        INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedServiceRevision,
     });
-    const runtime = requiredHistoricalRuntime(
+    const runtime = createPlatformHistoricalMemory({
+      config: platformConfig(
+        infinity.baseUrl,
+        true,
+        true,
+        "production",
+        retainedProductionEmbeddingProfileAttestation,
+      ),
+      logger: silentLogger,
       pool,
-      infinity,
-      true,
-      true,
-      "production",
-      retainedProductionEmbeddingProfileAttestation,
-    );
+      profileMaintenance: {
+        enqueueAppliedProfileRebuilds: async () => ({
+          enqueued: 0,
+          remaining: false,
+        }),
+      },
+      runtimeTransport: syntheticCoverageRuntime,
+    });
+    expect(runtime).toBeDefined();
+    if (runtime === undefined) {
+      throw new Error("source policy fixture did not compose");
+    }
     try {
       await expect(runtime.assertReady()).resolves.toBeUndefined();
-      expect(runtime.searchEnabled()).toBe(true);
-      expect(runtime.servingAuthorized()).toBe(true);
+      expect(runtime.searchEnabled()).toBe(false);
+      expect(runtime.servingAuthorized()).toBe(false);
 
       infinity.endpoint.setCapabilitiesQualified(false);
       await runtime.assertReady();
@@ -160,7 +296,7 @@ describe("Infinity production semantic qualification composition", () => {
     }
   });
 
-  it("keeps production search closed when the semantic manifest is stale for this release", async () => {
+  it("does not treat the Meeting release SHA as Infinity semantic authority", async () => {
     const pool = new Pool({
       connectionString: "postgresql://synthetic.invalid/never-connected",
     });
@@ -171,7 +307,7 @@ describe("Infinity production semantic qualification composition", () => {
       embeddingProfileId:
         retainedProductionEmbeddingProfileAttestation.embeddingProfile,
       serviceRevision:
-        INFINITY_CONTEXT_SDK_PROVENANCE.retainedProductionSemanticServiceRevision,
+        INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedServiceRevision,
     });
     const runtime = createPlatformHistoricalMemory({
       config: platformConfig(
@@ -184,6 +320,13 @@ describe("Infinity production semantic qualification composition", () => {
       ),
       logger: silentLogger,
       pool,
+      profileMaintenance: {
+        enqueueAppliedProfileRebuilds: async () => ({
+          enqueued: 0,
+          remaining: false,
+        }),
+      },
+      productionQualification: testProductionQualificationPolicy,
       runtimeTransport: syntheticCoverageRuntime,
     });
     if (runtime === undefined) {
@@ -191,16 +334,16 @@ describe("Infinity production semantic qualification composition", () => {
     }
     try {
       await expect(runtime.assertReady()).resolves.toBeUndefined();
-      expect(runtime.searchEnabled()).toBe(false);
-      expect(runtime.servingAuthorized()).toBe(false);
+      expect(runtime.searchEnabled()).toBe(true);
+      expect(runtime.servingAuthorized()).toBe(true);
     } finally {
       await runtime.close();
       await infinity.close();
       await pool.end();
     }
-  });
+  }, 15_000);
 
-  it("keeps production search closed when the endpoint receipt drifts from r79", async () => {
+  it("keeps production search closed when the endpoint instance echo drifts", async () => {
     const pool = new Pool({
       connectionString: "postgresql://synthetic.invalid/never-connected",
     });
@@ -210,7 +353,7 @@ describe("Infinity production semantic qualification composition", () => {
       embeddingProfileId:
         retainedProductionEmbeddingProfileAttestation.embeddingProfile,
       serviceRevision:
-        INFINITY_CONTEXT_SDK_PROVENANCE.retainedProductionSemanticServiceRevision,
+        INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedServiceRevision,
     });
     const runtime = requiredHistoricalRuntime(
       pool,

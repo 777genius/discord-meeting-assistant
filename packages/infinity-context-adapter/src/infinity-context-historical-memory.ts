@@ -47,6 +47,8 @@ export interface InfinityContextHistoricalMemoryConfigV1 {
   readonly requestTimeoutMs: number;
   readonly schemaVersion: 1;
   readonly token?: string | (() => Promise<string | null | undefined> | string | null | undefined);
+  /** Qualified provider-neutral exact planning profile identity. */
+  readonly embeddingTokenProfile?: () => string | undefined;
   /** Test-only injection still traverses the official SDK request executor. */
   readonly transport?: unknown;
 }
@@ -60,6 +62,7 @@ export class InfinityContextHistoricalMemoryAdapter implements HistoricalMemoryP
   readonly #client: InfinityContextClient;
   readonly #operationTimeoutMs: number;
   readonly #requestTimeoutMs: number;
+  readonly #embeddingTokenProfile: (() => string | undefined) | undefined;
   #capabilities: InfinityContextCapabilities | null = null;
 
   public constructor(config: InfinityContextHistoricalMemoryConfigV1);
@@ -80,6 +83,7 @@ export class InfinityContextHistoricalMemoryAdapter implements HistoricalMemoryP
     this.#requestTimeoutMs = config.requestTimeoutMs;
     this.#operationTimeoutMs = config.operationTimeoutMs ??
       DEFAULT_HISTORICAL_MEMORY_OPERATION_TIMEOUT_MS;
+    this.#embeddingTokenProfile = config.embeddingTokenProfile;
     this.#client = new InfinityContextClient({
       baseUrl: config.baseUrl,
       retryPolicy: { maxAttempts: 1 },
@@ -114,7 +118,11 @@ export class InfinityContextHistoricalMemoryAdapter implements HistoricalMemoryP
     request: HistoricalIndexPlanV1,
     options: HistoricalMemoryOperationOptionsV1 = {},
   ): Promise<HistoricalIndexResultV1> {
-    if (!validIndexPlan(request)) {
+    const embeddingTokenProfile = this.#embeddingTokenProfile?.();
+    if (
+      embeddingTokenProfile === undefined ||
+      !validIndexPlan(request, embeddingTokenProfile)
+    ) {
       return {
         code: "memory.index_plan_outside_qualified_bounds",
         retryable: false,
@@ -147,6 +155,7 @@ export class InfinityContextHistoricalMemoryAdapter implements HistoricalMemoryP
           maxChunks: request.candidateLimit,
           maxEvidenceItems: request.candidateLimit,
           maxFacts: 0,
+          projectAnchorPolicy: "advisory",
           query: request.query,
           readScope: ReadScope.external({
             memoryScopeExternalRefs: [request.roomScopeExternalRef],

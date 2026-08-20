@@ -7,11 +7,14 @@ import type { HistoricalIndexPlanV1 } from "./historical-memory.js";
 export type HistoricalSyncOperationV1 = "delete_meeting" | "delete_release" | "index";
 
 export interface HistoricalSyncLeaseV1 {
+  /** Null until this exact derived projection has been applied under a qualified profile. */
+  readonly appliedIndexProfileId: string | null;
   readonly attempt: number;
   readonly binding: HistoricalReleaseBindingV1;
   readonly fence: number;
   readonly operation: HistoricalSyncOperationV1;
   readonly plan: HistoricalIndexPlanV1 | null;
+  readonly profileRebuildRequired: boolean;
   readonly remoteDocumentIds: Readonly<Record<string, string>>;
 }
 
@@ -41,6 +44,12 @@ export interface HistoricalOperationOptionsV1 {
 }
 
 export interface HistoricalSyncStore {
+  enqueueAppliedProfileRebuilds(
+    indexProfileId: string,
+    maximumRows: number,
+    options?: HistoricalOperationOptionsV1,
+  ): Promise<{ readonly enqueued: number; readonly remaining: boolean }>;
+
   claimNext(
     options: HistoricalSyncClaimOptionsV1,
     operationOptions?: HistoricalOperationOptionsV1,
@@ -56,6 +65,7 @@ export interface HistoricalSyncStore {
     lease: HistoricalSyncLeaseV1,
     plan: HistoricalIndexPlanV1,
     remoteDocumentIds: Readonly<Record<string, string>>,
+    indexProfileId: string,
     options?: HistoricalOperationOptionsV1,
   ): Promise<void>;
 
@@ -87,6 +97,13 @@ export interface HistoricalSyncStore {
     candidateLocator: string,
     options?: HistoricalOperationOptionsV1,
   ): Promise<HistoricalCandidateRecordV1 | null>;
+
+  findCurrentCandidates(
+    scopeId: string,
+    roomId: string,
+    candidateLocators: readonly string[],
+    options?: HistoricalOperationOptionsV1,
+  ): Promise<readonly HistoricalCandidateRecordV1[]>;
 
   listCurrentRoomPlans(
     scopeId: string,

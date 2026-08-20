@@ -1,200 +1,55 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
-  HistoricalFocusedRetrieval,
-  SameRoomFocusedMemoryRetrieval,
-  admitAcceptedFinalMeeting,
   buildHistoricalIndexPlan,
-  createHistoricalReleaseBinding,
-  rehydrateHistoricalBlock,
-  type AcceptedFinalMeetingV1,
-  type FocusedRetrievalPolicyV1,
-  type HistoricalAppliedPlanV1,
-  type HistoricalCandidateRecordV1,
-  type HistoricalEvidenceAuthority,
+  resolveRequestedSpeakerAliases,
   type HistoricalMemoryPort,
-  type HistoricalOpaqueIdPort,
-  type HistoricalReleaseBindingV1,
-  type HistoricalSyncStore,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 
-class TestIds implements HistoricalOpaqueIdPort {
-  public keyedId(namespace: string, parts: readonly string[]): string {
-    let hash = 0x811c9dc5;
-    for (const character of `${namespace}:${parts.join("|")}`) {
-      hash = Math.imul(hash ^ (character.codePointAt(0) ?? 0), 0x01000193) >>> 0;
-    }
-    return hash.toString(16).padStart(8, "0");
-  }
-}
-
-const blockPolicy = {
-  maxBlockUtf8Bytes: 512,
-  maxBlocksPerMeeting: 100,
-  maxTurnsPerBlock: 64,
-  version: "meeting-knowledge.block-policy.v1",
-} as const;
-
-const retrievalPolicy: FocusedRetrievalPolicyV1 = {
+import {
+  AppliedStore,
+  TestIds,
   blockPolicy,
-  candidateLimitPerQuery: 8,
-  maximumDecomposedQueries: 4,
-  maximumEvidenceBytes: 16_000,
-  maximumLocalScanBlocks: 512,
-  minimumProviderScore: 0.01,
-  neighborRadius: 1,
-  rerankLimit: 5,
-  searchTimeoutMs: 100,
-  version: "meeting-knowledge.focused-retrieval.v1",
-};
+  makeMeeting,
+  retrieval,
+  retrievalPolicy,
+  twoBlockTurns,
+} from "../../fixtures/historical-retrieval-fixtures.js";
 
-function makeMeeting(input: {
-  readonly authoritativeDurationMs?: number;
-  readonly meetingId: string;
-  readonly roomId?: string;
-  readonly transcriptId?: string;
-  readonly turns: readonly { readonly endMs: number; readonly startMs: number; readonly text: string; readonly turnId: string }[];
-}): AcceptedFinalMeetingV1 {
-  const binding = createHistoricalReleaseBinding({
-    acceptedMeetingRevision: 4,
-    desiredGeneration: 1,
-    meetingId: input.meetingId,
-    roomId: input.roomId ?? "room-1",
-    scopeId: "scope-1",
-    transcriptId: input.transcriptId ?? `transcript-${input.meetingId}`,
-    transcriptVersion: 1,
+describe("focused historical long-turn retrieval", () => {
+  it("retains a bounded matching slice near the end of one long turn", async () => {
+    const marker = "ORBITAL-CEDAR-947 launches on Friday";
+    const meeting = makeMeeting({ meetingId: "long-turn-meeting", turns: [{
+      endMs: 60_000, startMs: 0, text: `${"planning filler ".repeat(1_700)}${marker}`,
+      turnId: "one-long-turn",
+    }] });
+    const plan = buildHistoricalIndexPlan(meeting, new TestIds(), blockPolicy);
+    const target = plan.documents.find(({ remoteText }) => remoteText.includes(marker));
+    if (target === undefined) { throw new Error("long-turn marker slice missing"); }
+    const store = new AppliedStore([{ binding: meeting.binding, plan, remoteDocumentIds: {} }]);
+    const result = await retrieval({
+      meetings: [meeting],
+      memory: { deleteMeeting: vi.fn(), indexFinalMeeting: vi.fn(),
+        searchRoom: vi.fn().mockResolvedValue({ candidates: [{
+          locator: target.manifest.candidateLocator, providerRank: 0, providerScore: 0.99,
+        }], hybridQualified: true, status: "available" }) },
+      policy: { ...retrievalPolicy, neighborRadius: 0, rerankLimit: 1 },
+      store,
+    }).buildPlan({
+      authorizationPrincipalRef: "principal", currentMeetingId: meeting.binding.meetingId,
+      question: "When does ORBITAL-CEDAR-947 launch?",
+      roomId: "room-1", scopeId: "scope-1", searchEnabled: true,
+      servingAuthorized: true, sourceSet: "current",
+    });
+
+    expect(result.status).toBe("ready");
+    if (result.status !== "ready") { throw new Error("focused grounding failed"); }
+    expect(result.plan.blocks).toHaveLength(1);
+    expect(result.plan.blocks[0]?.turns[0]?.text).toContain(marker);
+    expect(new TextEncoder().encode(JSON.stringify(result.plan.blocks)).byteLength)
+      .toBeLessThanOrEqual(retrievalPolicy.maximumEvidenceBytes);
   });
-  const meeting = admitAcceptedFinalMeeting({
-    actors: [{ actorId: "speaker", kind: "human" }],
-    authoritativeDurationMs: input.authoritativeDurationMs ?? 60_000,
-    binding,
-    identityProvenance: {
-      actorObservationState: "consistent",
-      actorSemanticsVersion: 1,
-      producerCapabilityId: "meeting.lifecycle.sealed-actor-roster.v1",
-      producerRevision: "fixture-r1",
-      rosterState: "sealed",
-    },
-    lifecycleGeneration: 3,
-    meetingRevision: 4,
-    roomId: binding.roomId,
-    scopeId: binding.scopeId,
-    transcriptId: binding.transcriptId,
-    transcriptVersion: 1,
-    turns: input.turns.map((turn) => ({ ...turn, speakerId: "speaker" })),
-  });
-  if (meeting === null) {
-    throw new Error("fixture admission failed");
-  }
-  return meeting;
-}
-
-function twoBlockTurns(primary: string, primaryId: string) {
-  return [
-    { endMs: 1_000, startMs: 0, text: `${primary} ${"x".repeat(260)}`, turnId: primaryId },
-    { endMs: 2_000, startMs: 1_000, text: `unrelated budget detail ${"y".repeat(260)}`, turnId: `${primaryId}-noise` },
-  ];
-}
-
-class AppliedStore implements HistoricalSyncStore {
-  public current = true;
-  public currentSequence: boolean[] = [];
-
-  public constructor(private readonly records: readonly HistoricalAppliedPlanV1[]) {}
-
-  public async acceptRelease(_binding: HistoricalReleaseBindingV1): Promise<"replayed"> {
-    return "replayed";
-  }
-
-  public async claimNext(): Promise<null> { return null; }
-  public async recordPlan(): Promise<void> {}
-  public async recordApplied(): Promise<void> {}
-  public async recordRetry(): Promise<void> {}
-  public async recordDeadLetter(): Promise<void> {}
-  public async recordDeleted(): Promise<void> {}
-  public async requestMeetingDeletion(): Promise<void> {}
-
-  public async findCurrentCandidate(
-    scopeId: string,
-    roomId: string,
-    candidateLocator: string,
-  ): Promise<HistoricalCandidateRecordV1 | null> {
-    for (const record of this.records) {
-      if (record.binding.scopeId !== scopeId || record.binding.roomId !== roomId) {
-        continue;
-      }
-      const document = record.plan.documents.find(({ manifest }) =>
-        manifest.candidateLocator === candidateLocator
-      );
-      if (document !== undefined) {
-        return { ...record, ordinal: document.manifest.ordinal };
-      }
-    }
-    return null;
-  }
-
-  public async listCurrentRoomPlans(
-    scopeId: string,
-    roomId: string,
-  ): Promise<readonly HistoricalAppliedPlanV1[]> {
-    return this.records.filter(({ binding }) =>
-      binding.scopeId === scopeId && binding.roomId === roomId
-    );
-  }
-
-  public async listDesiredRoomBindings(
-    scopeId: string,
-    roomId: string,
-  ): Promise<readonly HistoricalReleaseBindingV1[]> {
-    return (await this.listCurrentRoomPlans(scopeId, roomId)).map(({ binding }) => binding);
-  }
-
-  public async isCurrentGeneration(
-    _binding: HistoricalReleaseBindingV1,
-    _indexGeneration: string,
-  ): Promise<boolean> {
-    return this.currentSequence.shift() ?? this.current;
-  }
-}
-
-function authority(meetings: readonly AcceptedFinalMeetingV1[]): HistoricalEvidenceAuthority {
-  const byRelease = new Map(meetings.map((meeting) => [meeting.binding.releaseId, meeting]));
-  return {
-    loadAcceptedFinalMeeting: async (binding) => byRelease.get(binding.releaseId) ?? null,
-  };
-}
-
-function retrieval(input: {
-  readonly meetings: readonly AcceptedFinalMeetingV1[];
-  readonly memory: HistoricalMemoryPort;
-  readonly policy?: FocusedRetrievalPolicyV1;
-  readonly store: AppliedStore;
-  readonly twoHourEnabled?: boolean;
-}) {
-  return new HistoricalFocusedRetrieval({
-    authority: authority(input.meetings),
-    authorization: {
-      authorize: async ({ authorizationPrincipalRef, roomId }) => ({
-        authorizationDigest: `${authorizationPrincipalRef}:${roomId}:v1`,
-        authorizationEpoch: "1",
-        authorized: authorizationPrincipalRef === "principal" && roomId === "room-1",
-        policyVersion: "room-policy.v1",
-      }),
-    },
-    ids: new TestIds(),
-    memory: input.memory,
-    store: input.store,
-  }, input.policy ?? retrievalPolicy, {
-    ...DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
-    qualification: input.twoHourEnabled === true ? {
-      evidenceSha256: "e".repeat(64),
-      releaseRevision: "f".repeat(40),
-      rolloutEpoch: "test-r1",
-      schemaVersion: 1,
-    } : null,
-  });
-}
+});
 
 describe("focused historical retrieval", () => {
   it("deduplicates provider locators, expands neighbors, and only prioritizes current evidence", async () => {
@@ -255,6 +110,281 @@ describe("focused historical retrieval", () => {
       }),
     ]));
     expect(result.plan).not.toHaveProperty("currentTranscriptRequirement");
+    expect(store.candidateBatchReads).toBe(2);
+    expect(store.candidatePointReads).toBe(0);
+  });
+
+  it("preserves ordering when a qualified provider uses scores above one", async () => {
+    const meeting = makeMeeting({
+      meetingId: "score-scale-meeting",
+      turns: [
+        { endMs: 1_000, startMs: 0,
+          text: `cedar primary decision ${"x".repeat(260)}`, turnId: "high-score" },
+        { endMs: 2_000, startMs: 1_000,
+          text: `cedar secondary note ${"y".repeat(260)}`, turnId: "lower-score" },
+        { endMs: 3_000, startMs: 2_000,
+          text: `unrelated budget appendix ${"z".repeat(260)}`, turnId: "noise" },
+      ],
+    });
+    const plan = buildHistoricalIndexPlan(meeting, new TestIds(), blockPolicy);
+    const targets = plan.documents.filter(({ remoteText }) =>
+      remoteText.includes("cedar")
+    );
+    expect(targets).toHaveLength(2);
+    const high = targets[0]?.manifest.candidateLocator;
+    const lower = targets[1]?.manifest.candidateLocator;
+    if (high === undefined || lower === undefined) {
+      throw new Error("score-scale candidates missing");
+    }
+    const store = new AppliedStore([{
+      binding: meeting.binding,
+      plan,
+      remoteDocumentIds: {},
+    }]);
+    const result = await retrieval({
+      meetings: [meeting],
+      memory: {
+        deleteMeeting: vi.fn(),
+        indexFinalMeeting: vi.fn(),
+        searchRoom: vi.fn().mockResolvedValue({
+          candidates: [
+            { locator: "mkcandidate1.stale-outlier", providerRank: 0,
+              providerScore: 1_000 },
+            { locator: high, providerRank: 0, providerScore: 12 },
+            { locator: lower, providerRank: 1, providerScore: 8 },
+          ],
+          hybridQualified: true,
+          status: "available",
+        }),
+      },
+      policy: { ...retrievalPolicy, neighborRadius: 0, rerankLimit: 2 },
+      store,
+    }).buildPlan({
+      authorizationPrincipalRef: "principal",
+      currentMeetingId: meeting.binding.meetingId,
+      question: "What was the cedar decision?",
+      roomId: "room-1",
+      scopeId: "scope-1",
+      searchEnabled: true,
+      servingAuthorized: true,
+      sourceSet: "current",
+    });
+
+    expect(result.status).toBe("ready");
+    if (result.status !== "ready") {
+      throw new Error("score-scale plan was not ready");
+    }
+    const highSource = result.plan.sources.find(({ locator }) => locator === high);
+    const lowerSource = result.plan.sources.find(({ locator }) => locator === lower);
+    expect(highSource?.providerScore).toBe(12);
+    expect(lowerSource?.providerScore).toBe(8);
+    expect(highSource?.qualifiedScore).toBeGreaterThan(0.8);
+    expect(highSource?.qualifiedScore).toBeGreaterThan(
+      lowerSource?.qualifiedScore ?? 1,
+    );
+  });
+
+  it("reranks topical evidence using configured names for opaque speakers", async () => {
+    const meeting = makeMeeting({
+      meetingId: "speaker-alias-meeting",
+      turns: [
+        { endMs: 1_000, speakerId: "opaque-other", startMs: 0,
+          text: `release topic background ${"x".repeat(260)}`, turnId: "other" },
+        { endMs: 2_000, speakerId: "opaque-vlad", startMs: 1_000,
+          text: `release topic decision ${"y".repeat(260)}`, turnId: "vlad" },
+      ],
+    });
+    const plan = buildHistoricalIndexPlan(meeting, new TestIds(), blockPolicy);
+    expect(plan.documents).toHaveLength(2);
+    const other = plan.documents[0]?.manifest.candidateLocator;
+    const vlad = plan.documents[1]?.manifest.candidateLocator;
+    if (other === undefined || vlad === undefined) {
+      throw new Error("speaker alias candidates missing");
+    }
+    const result = await retrieval({
+      meetings: [meeting],
+      memory: {
+        deleteMeeting: vi.fn(),
+        indexFinalMeeting: vi.fn(),
+        searchRoom: vi.fn().mockResolvedValue({
+          candidates: [
+            { locator: other, providerRank: 0, providerScore: 0.8 },
+            { locator: vlad, providerRank: 1, providerScore: 0.8 },
+          ],
+          hybridQualified: true,
+          status: "available",
+        }),
+      },
+      policy: { ...retrievalPolicy, neighborRadius: 0, rerankLimit: 2 },
+      speakerAliases: { "opaque-vlad": ["Влад", "Vlad"] },
+      store: new AppliedStore([{
+        binding: meeting.binding,
+        plan,
+        remoteDocumentIds: {},
+      }]),
+    }).buildPlan({
+      authorizationPrincipalRef: "principal",
+      currentMeetingId: meeting.binding.meetingId,
+      question: "Что Влад решил про release?",
+      roomId: "room-1",
+      scopeId: "scope-1",
+      searchEnabled: true,
+      servingAuthorized: true,
+      sourceSet: "current",
+    });
+
+    expect(result.status).toBe("ready");
+    if (result.status !== "ready") {
+      throw new Error("speaker alias plan was not ready");
+    }
+    expect(result.plan.sources[0]?.locator).toBe(vlad);
+  });
+
+});
+
+describe("requested speaker alias matching", () => {
+  const aliases = {
+    "opaque-anna": ["Anna Smith"],
+    "opaque-will": ["Will"],
+  } as const;
+
+  it("requires a contiguous name span and preserves the exact question text", () => {
+    expect(resolveRequestedSpeakerAliases(
+      "Did Smith agree with Anna?",
+      aliases,
+    )).toEqual([]);
+    expect(resolveRequestedSpeakerAliases(
+      "What did anna smith propose?",
+      aliases,
+    )).toEqual([{ matchedAlias: "anna smith", speakerId: "opaque-anna" }]);
+  });
+
+  it("recognizes an unambiguous sentence-initial ambiguous English name", () => {
+    expect(resolveRequestedSpeakerAliases(
+      "Did Will propose the launch date?",
+      aliases,
+    )).toEqual([{ matchedAlias: "Will", speakerId: "opaque-will" }]);
+    expect(resolveRequestedSpeakerAliases(
+      "When will Atlas launch?",
+      aliases,
+    )).toEqual([]);
+  });
+
+  it("preserves repeated and one-character aliases", () => {
+    expect(resolveRequestedSpeakerAliases(
+      "What did Jo Jo propose to Q?",
+      {
+        "opaque-jojo": ["Jo Jo"],
+        "opaque-q": ["Q"],
+      },
+    )).toEqual([
+      { matchedAlias: "Jo Jo", speakerId: "opaque-jojo" },
+      { matchedAlias: "Q", speakerId: "opaque-q" },
+    ]);
+  });
+
+  it("fails closed when one question span identifies multiple speakers", () => {
+    expect(resolveRequestedSpeakerAliases(
+      "What did Anna Smith propose?",
+      {
+        "opaque-anna": ["Anna"],
+        "opaque-anna-smith": ["Anna Smith"],
+      },
+    )).toEqual([]);
+    expect(resolveRequestedSpeakerAliases(
+      "What did Sasha propose?",
+      {
+        "opaque-first-sasha": ["Sasha"],
+        "opaque-second-sasha": ["Sasha"],
+      },
+    )).toEqual([]);
+  });
+
+  it("does not hide a shared alias behind another alias of one owner", () => {
+    expect(resolveRequestedSpeakerAliases(
+      "What did Alex say about Sasha?",
+      {
+        "opaque-alex": ["Alex", "Sasha"],
+        "opaque-sasha": ["Sasha"],
+      },
+    )).toEqual([{ matchedAlias: "Alex", speakerId: "opaque-alex" }]);
+  });
+});
+
+describe("focused historical cross-meeting ranking", () => {
+  it("does not infer meeting recency from transcript-relative start offsets", async () => {
+    const shortOffsetMeeting = makeMeeting({
+      authoritativeDurationMs: 400_000,
+      meetingId: "meeting-short-offset",
+      turns: [
+        { endMs: 301_000, startMs: 300_000,
+          text: `cedar status is approved ${"x".repeat(260)}`,
+          turnId: "short-offset" },
+        { endMs: 302_000, startMs: 301_000,
+          text: `unrelated budget appendix ${"y".repeat(260)}`,
+          turnId: "short-noise" },
+      ],
+    });
+    const longOffsetMeeting = makeMeeting({
+      authoritativeDurationMs: 3_400_000,
+      meetingId: "meeting-long-offset",
+      turns: [
+        { endMs: 3_301_000, startMs: 3_300_000,
+          text: `cedar status is approved ${"x".repeat(260)}`,
+          turnId: "long-offset" },
+        { endMs: 3_302_000, startMs: 3_301_000,
+          text: `unrelated budget appendix ${"y".repeat(260)}`,
+          turnId: "long-noise" },
+      ],
+    });
+    const ids = new TestIds();
+    const shortPlan = buildHistoricalIndexPlan(shortOffsetMeeting, ids, blockPolicy);
+    const longPlan = buildHistoricalIndexPlan(longOffsetMeeting, ids, blockPolicy);
+    const shortLocator = shortPlan.documents[0]?.manifest.candidateLocator;
+    const longLocator = longPlan.documents[0]?.manifest.candidateLocator;
+    if (shortLocator === undefined || longLocator === undefined) {
+      throw new Error("temporal fixtures missing");
+    }
+    const memory: HistoricalMemoryPort = {
+      deleteMeeting: vi.fn(),
+      indexFinalMeeting: vi.fn(),
+      searchRoom: vi.fn().mockResolvedValue({
+        candidates: [
+          { locator: shortLocator, providerRank: 0, providerScore: 0.8 },
+          { locator: longLocator, providerRank: 0, providerScore: 0.8 },
+        ],
+        hybridQualified: true,
+        status: "available",
+      }),
+    };
+    const useCase = retrieval({
+      meetings: [shortOffsetMeeting, longOffsetMeeting],
+      memory,
+      policy: { ...retrievalPolicy, neighborRadius: 0, rerankLimit: 2 },
+      store: new AppliedStore([
+        { binding: shortOffsetMeeting.binding, plan: shortPlan,
+          remoteDocumentIds: {} },
+        { binding: longOffsetMeeting.binding, plan: longPlan,
+          remoteDocumentIds: {} },
+      ]),
+    });
+    const result = await useCase.buildPlan({
+      authorizationPrincipalRef: "principal",
+      question: "What is the latest cedar status?",
+      roomId: "room-1",
+      scopeId: "scope-1",
+      searchEnabled: true,
+      servingAuthorized: true,
+      sourceSet: "room",
+    });
+
+    expect(result.status).toBe("ready");
+    if (result.status !== "ready") {
+      throw new Error("cross-meeting temporal plan was not ready");
+    }
+    expect(result.plan.sources).toHaveLength(2);
+    expect(result.plan.sources[0]?.qualifiedScore)
+      .toBe(result.plan.sources[1]?.qualifiedScore);
   });
 
   it("falls back locally on provider failure and rejects stale or cross-room candidates", async () => {
@@ -360,6 +490,9 @@ describe("focused historical retrieval", () => {
     });
   });
 
+});
+
+describe("focused historical retrieval fail-safe behavior", () => {
   it("abstains when local fallback has no qualified lexical evidence", async () => {
     const meeting = makeMeeting({
       meetingId: "meeting-low-recall",
@@ -450,188 +583,6 @@ describe("focused historical retrieval", () => {
       expect(result.plan.blocks.every(({ binding }) => binding.roomId === "room-1"))
         .toBe(true);
       expect(JSON.stringify(result.plan.blocks)).not.toContain("foreign quartz evidence");
-    }
-  });
-});
-
-describe("same-room focused memory merge", () => {
-  it("answers a historical-only match when the current meeting has low recall", async () => {
-    const historicalMeeting = makeMeeting({
-      meetingId: "meeting-historical-only",
-      turns: [{
-        endMs: 1_000,
-        startMs: 0,
-        text: "cedar was approved in the earlier meeting",
-        turnId: "historical-only-turn",
-      }],
-    });
-    const historicalPlan = buildHistoricalIndexPlan(
-      historicalMeeting,
-      new TestIds(),
-      blockPolicy,
-    );
-    const block = rehydrateHistoricalBlock(
-      historicalMeeting,
-      historicalPlan,
-      0,
-      new TestIds(),
-      blockPolicy,
-    );
-    const requestedSourceSets: string[] = [];
-    const sameRoom = new SameRoomFocusedMemoryRetrieval({
-      current: {
-        retrieve: async () => ({ schemaVersion: 1, status: "low_coverage" }),
-      },
-      historical: {
-        buildPlan: async (input) => {
-          requestedSourceSets.push(input.sourceSet);
-          return ({
-          plan: {
-            blocks: [block],
-            completenessClaim: false,
-            evidenceLocators: [block.candidateLocator],
-            queries: ["cedar"],
-            retrievalSource: "local_fallback",
-            schemaVersion: 1,
-            selection: "locally_rehydrated_focused_blocks_only",
-            sources: [{
-              kind: "historical",
-              locator: block.candidateLocator,
-              providerRank: null,
-              providerScore: null,
-              qualifiedScore: 1,
-            }],
-            strategy: "focused_retrieval",
-          },
-          status: "ready",
-          });
-        },
-        reauthorizeRoom: async () => true,
-      },
-      turnHashes: { hash: (turn) => `historical-hash-${turn.turnId}` },
-    }, {
-      historicalServingAuthorized: true,
-      remoteSearchAvailable: true,
-    });
-
-    const result = await sameRoom.retrieve({
-      authorizationPrincipalRef: "principal",
-      canonicalEvidenceHash: "a".repeat(64),
-      expectedAuthorityGeneration: "authority-1",
-      finalProjectionReceipt: "receipt-1",
-      maximumCandidates: 4,
-      meetingId: "meeting-current",
-      meetingRevision: 1,
-      neighborTurns: 1,
-      projectionTargetContainerId: "container-1",
-      question: "What was approved about cedar?",
-      roomId: "room-1",
-      scopeId: "scope-1",
-      transcriptId: "transcript-current",
-      transcriptVersion: 1,
-    });
-
-    expect(result).toMatchObject({
-      authorityGeneration: "authority-1",
-      candidates: [{ meetingId: "meeting-historical-only" }],
-      status: "current",
-    });
-    expect(requestedSourceSets).toEqual(["historical"]);
-  });
-
-  it("reserves current-meeting evidence when historical recall is dense", async () => {
-    const historicalMeeting = makeMeeting({
-      meetingId: "meeting-historical",
-      turns: Array.from({ length: 8 }, (_, index) => ({
-        endMs: (index + 1) * 1_000,
-        startMs: index * 1_000,
-        text: `cedar historical evidence ${index} ${"x".repeat(300)}`,
-        turnId: `historical-turn-${index}`,
-      })),
-    });
-    const historicalPlan = buildHistoricalIndexPlan(
-      historicalMeeting,
-      new TestIds(),
-      blockPolicy,
-    );
-    const historicalBlocks = historicalPlan.documents.map((_, ordinal) =>
-      rehydrateHistoricalBlock(
-        historicalMeeting,
-        historicalPlan,
-        ordinal,
-        new TestIds(),
-        blockPolicy,
-      )
-    );
-    const currentCandidates = Array.from({ length: 4 }, (_, index) => ({
-      meetingId: "meeting-current",
-      transcriptId: "transcript-current",
-      transcriptVersion: 1,
-      turnHash: `current-hash-${index}`,
-      turnId: `current-turn-${index}`,
-    }));
-    const sameRoom = new SameRoomFocusedMemoryRetrieval({
-      current: {
-        retrieve: async () => ({
-          authorityGeneration: "authority-1",
-          candidates: currentCandidates,
-          schemaVersion: 1,
-          status: "current",
-        }),
-      },
-      historical: {
-        buildPlan: async () => ({
-          plan: {
-            blocks: historicalBlocks,
-            completenessClaim: false,
-            evidenceLocators: historicalBlocks.map(({ candidateLocator }) => candidateLocator),
-            queries: ["cedar"],
-            retrievalSource: "local_fallback",
-            schemaVersion: 1,
-            selection: "locally_rehydrated_focused_blocks_only",
-            sources: historicalBlocks.map(({ candidateLocator }) => ({
-              kind: "historical" as const,
-              locator: candidateLocator,
-              providerRank: null,
-              providerScore: null,
-              qualifiedScore: 1,
-            })),
-            strategy: "focused_retrieval",
-          },
-          status: "ready",
-        }),
-        reauthorizeRoom: async () => true,
-      },
-      turnHashes: { hash: (turn) => `historical-hash-${turn.turnId}` },
-    }, {
-      historicalServingAuthorized: true,
-      remoteSearchAvailable: true,
-    });
-
-    const result = await sameRoom.retrieve({
-      authorizationPrincipalRef: "principal",
-      canonicalEvidenceHash: "a".repeat(64),
-      expectedAuthorityGeneration: "authority-1",
-      finalProjectionReceipt: "receipt-1",
-      maximumCandidates: 4,
-      meetingId: "meeting-current",
-      meetingRevision: 1,
-      neighborTurns: 1,
-      projectionTargetContainerId: "container-1",
-      question: "What was decided about cedar?",
-      roomId: "room-1",
-      scopeId: "scope-1",
-      transcriptId: "transcript-current",
-      transcriptVersion: 1,
-    });
-
-    expect(result.status).toBe("current");
-    if (result.status === "current") {
-      expect(result.candidates).toHaveLength(4);
-      expect(result.candidates[0]).toEqual(currentCandidates[0]);
-      expect(result.candidates[2]).toEqual(currentCandidates[1]);
-      expect(result.candidates.some(({ meetingId }) => meetingId === "meeting-historical"))
-        .toBe(true);
     }
   });
 });

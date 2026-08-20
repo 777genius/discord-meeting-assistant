@@ -67,6 +67,7 @@ export class CraigVoicePlaybackSession implements VoicePlaybackSession {
   private expectedSequence = 0;
   private finishPromise: Promise<ConversationPortResult<"finished" | "reused">> | undefined;
   private pacingRemainder = 0;
+  private playbackStarted = false;
   private resolveFinish:
     | ((result: ConversationPortResult<"finished" | "reused">) => void)
     | undefined;
@@ -281,9 +282,10 @@ export class CraigVoicePlaybackSession implements VoicePlaybackSession {
       return;
     }
     if (event.type === "playback-started") {
-      if (this.state === "cancelling") {
+      if (this.state === "cancelling" || this.playbackStarted) {
         return;
       }
+      this.playbackStarted = true;
       this.eventBuffer.push({
         type: "started",
         attemptId: event.attemptId,

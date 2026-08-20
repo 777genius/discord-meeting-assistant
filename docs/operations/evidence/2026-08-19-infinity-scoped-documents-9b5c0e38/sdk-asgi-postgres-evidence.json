@@ -1,0 +1,207 @@
+{
+  "status": "passed",
+  "pages": 4,
+  "documents": 7,
+  "wire": [
+    {
+      "method": "POST",
+      "path": "/v1/documents",
+      "status": 201
+    },
+    {
+      "method": "POST",
+      "path": "/v1/documents",
+      "status": 201
+    },
+    {
+      "method": "POST",
+      "path": "/v1/documents",
+      "status": 201
+    },
+    {
+      "method": "POST",
+      "path": "/v1/documents",
+      "status": 201
+    },
+    {
+      "method": "POST",
+      "path": "/v1/documents",
+      "status": 201
+    },
+    {
+      "method": "POST",
+      "path": "/v1/documents",
+      "status": 201
+    },
+    {
+      "method": "POST",
+      "path": "/v1/documents",
+      "status": 201
+    },
+    {
+      "method": "POST",
+      "path": "/v1/documents",
+      "status": 201
+    },
+    {
+      "method": "POST",
+      "path": "/v1/documents",
+      "status": 201
+    },
+    {
+      "method": "POST",
+      "path": "/v1/documents",
+      "status": 201
+    },
+    {
+      "method": "POST",
+      "path": "/v1/documents",
+      "status": 201
+    },
+    {
+      "method": "GET",
+      "path": "/v1/documents",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/documents",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/documents",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/documents",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/documents",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/documents",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/documents",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/documents",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/documents",
+      "status": 400
+    },
+    {
+      "method": "GET",
+      "path": "/v1/documents",
+      "status": 400
+    },
+    {
+      "method": "GET",
+      "path": "/v1/documents",
+      "status": 400
+    },
+    {
+      "method": "GET",
+      "path": "/v1/documents",
+      "status": 400
+    },
+    {
+      "method": "GET",
+      "path": "/v1/spaces",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/documents",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/spaces",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/documents",
+      "status": 400
+    },
+    {
+      "method": "GET",
+      "path": "/v1/documents",
+      "status": 400
+    },
+    {
+      "method": "GET",
+      "path": "/v1/documents",
+      "status": 400
+    },
+    {
+      "method": "GET",
+      "path": "/v1/documents",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/documents",
+      "status": 403
+    },
+    {
+      "method": "GET",
+      "path": "/v1/documents",
+      "status": 403
+    },
+    {
+      "method": "GET",
+      "path": "/v1/documents",
+      "status": 403
+    },
+    {
+      "method": "GET",
+      "path": "/v1/documents",
+      "status": 403
+    },
+    {
+      "method": "POST",
+      "path": "/v1/code-repositories/resolve",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/documents",
+      "status": 403
+    },
+    {
+      "method": "GET",
+      "path": "/v1/documents",
+      "status": 403
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/documents/doc_6d1c6102eaa0425caf157b862650ac38",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/documents",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/documents",
+      "status": 200
+    }
+  ]
+}

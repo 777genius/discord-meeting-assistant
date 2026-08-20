@@ -1,41 +1,39 @@
 import {
-  HmacHistoricalOpaqueIds,
-  InfinityContextHistoricalMemoryAdapter,
-  assertInfinityContextActivation,
-  assertInfinityContextSearchActivation,
+  CooperativeHistoricalIndexPlanner, HmacHistoricalOpaqueIds,
+  InfinityContextHistoricalMemoryAdapter, INFINITY_CONTEXT_PRODUCTION_QUALIFICATION,
+  PINNED_MULTILINGUAL_MINILM_TOKENIZER_PROFILE, PinnedMultilingualMiniLmTokenizer,
+  Sha256HistoricalReceiptDigest, assertInfinityContextActivation,
+  assertInfinityContextPlanningCompatibility, assertInfinityContextSearchActivation,
+  assertInfinityContextTransportCapabilities,
+  infinityContextHistoricalIndexProfileId,
+  type InfinityContextProductionQualificationPolicyV1,
 } from "@discord-meeting/infinity-context-adapter";
 import {
-  DEFAULT_HISTORICAL_SYNC_POLICY,
-  DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
-  DeterministicCoverageReducer,
-  ExhaustiveCoverage,
-  HistoricalFocusedRetrieval,
-  HistoricalSyncWorker,
-  historicalSyncLeaseDurationMs,
-  RequestHistoricalMeetingDeletion,
-  type HistoricalAuthorizationPort,
+  DEFAULT_HISTORICAL_SYNC_POLICY, DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
+  DeterministicCoverageReducer, ExhaustiveCoverage, HistoricalFocusedRetrieval,
+  HistoricalSyncWorker, RequestHistoricalMeetingDeletion,
+  historicalEmbeddingTokenProfile, historicalSyncLeaseDurationMs,
+  prepareQualifiedHistoricalEmbeddingTokenizer, type HistoricalAuthorizationPort,
+  type HistoricalEmbeddingTokenizerPort, type HistoricalSyncStore,
+  type HistoricalWindowPlanningProfileV1, type TwoHourHistoricalRetrievalProfileV1,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
-import {
-  PostgresHistoricalEvidenceAuthority,
-  PostgresExhaustiveCoverageStore,
-  PostgresHistoricalMemoryStore,
-} from "@discord-meeting/postgres-adapter";
+import { PostgresExhaustiveCoverageStore, PostgresHistoricalEvidenceAuthority,
+  PostgresHistoricalMemoryStore } from "@discord-meeting/postgres-adapter";
 import type { Logger } from "@discord-meeting/observability-adapter";
-import {
-  SubscriptionRuntimeCoverageExtractorAdapter,
-  subscriptionRuntimeCliEngine,
+import { SubscriptionRuntimeCoverageExtractorAdapter, subscriptionRuntimeCliEngine,
   type SubscriptionRuntimeTransportPort,
 } from "@discord-meeting/subscription-runtime-adapter";
 import type { Pool } from "pg";
 
 import type { PlatformConfig } from "../config.js";
+import { participantSpeakerAliases } from
+  "../config/participant-greeting-profiles.js";
 
 const reconciliationIntervalMs = 5_000;
 const maximumOperationsPerPass = 25;
 const shutdownDrainTimeoutMs = 5_000;
 
-export { historicalSyncLeaseDurationMs } from
-  "@discord-meeting/meeting-core/meeting-knowledge";
+export { historicalSyncLeaseDurationMs } from "@discord-meeting/meeting-core/meeting-knowledge";
 
 async function awaitBoundedPass(pass: Promise<void> | undefined): Promise<void> {
   if (pass === undefined) {
@@ -112,11 +110,11 @@ export function createHistoricalReconciliationLifecycle(input: {
 
 function semanticSearchQualified(
   activation: NonNullable<PlatformConfig["infinityContext"]>["activation"],
-  currentReleaseRevision: string | undefined,
   logger: Logger,
+  productionQualification: InfinityContextProductionQualificationPolicyV1,
 ): boolean {
   try {
-    assertInfinityContextSearchActivation(activation, currentReleaseRevision);
+    assertInfinityContextSearchActivation(activation, productionQualification);
     return true;
   } catch (error) {
     logger.warn(
@@ -125,6 +123,56 @@ function semanticSearchQualified(
     );
     return false;
   }
+}
+
+function qualifyEmbeddingTokenizer(
+  tokenizer: HistoricalEmbeddingTokenizerPort,
+  expected: {
+    readonly embeddingProfile: string;
+    readonly embeddingProfileDigestSha256: string;
+  } | null,
+  observed: {
+    readonly embeddingProfileDigestSha256: string | null;
+    readonly embeddingProfileId: string | null;
+  },
+): HistoricalEmbeddingTokenizerPort {
+  if (
+    expected === null
+  ) {
+    throw new Error("Infinity dense embedding profile attestation is required");
+  }
+  return prepareQualifiedHistoricalEmbeddingTokenizer(tokenizer, {
+    expectedEmbeddingProfileDigestSha256:
+      expected.embeddingProfileDigestSha256 as `sha256:${string}`,
+    expectedEmbeddingProfileId: expected.embeddingProfile,
+    expectedTokenizerProfile: PINNED_MULTILINGUAL_MINILM_TOKENIZER_PROFILE,
+    observedEmbeddingProfileDigestSha256:
+      observed.embeddingProfileDigestSha256,
+    observedEmbeddingProfileId: observed.embeddingProfileId,
+  });
+}
+
+function qualifyPlanningProfile(
+  profile: HistoricalWindowPlanningProfileV1,
+  tokenizer: HistoricalEmbeddingTokenizerPort,
+): string {
+  if (
+    !/^sha256:[a-f0-9]{64}/u.test(profile.digestSha256) ||
+    profile.identity !== historicalEmbeddingTokenProfile(tokenizer) ||
+    profile.maximumInputTokens !== tokenizer.profile.maxInputTokens
+  ) {
+    throw new Error("local dense planning profile attestation is required");
+  }
+  return profile.identity;
+}
+
+interface PlatformHistoricalMemoryInput {
+  readonly config: PlatformConfig;
+  readonly logger: Logger;
+  readonly pool: Pool;
+  readonly profileMaintenance?: Pick<HistoricalSyncStore, "enqueueAppliedProfileRebuilds">;
+  readonly productionQualification?: InfinityContextProductionQualificationPolicyV1;
+  readonly runtimeTransport: SubscriptionRuntimeTransportPort;
 }
 
 export interface PlatformHistoricalMemoryRuntime {
@@ -136,18 +184,91 @@ export interface PlatformHistoricalMemoryRuntime {
   createFocusedRetrieval(
     authorization: HistoricalAuthorizationPort,
   ): HistoricalFocusedRetrieval;
+  embeddingTokenizer(): HistoricalEmbeddingTokenizerPort | undefined;
   searchEnabled(): boolean;
   servingAuthorized(): boolean;
   requestMeetingDeletion(meetingId: string): Promise<void>;
   start(): Promise<void>;
 }
 
-export function createPlatformHistoricalMemory(input: {
-  readonly config: PlatformConfig;
+interface HistoricalRetrievalFactoryInput {
+  readonly authorization: HistoricalAuthorizationPort;
+  readonly checkpoints: PostgresExhaustiveCoverageStore;
+  readonly input: PlatformHistoricalMemoryInput;
+  readonly profile: TwoHourHistoricalRetrievalProfileV1;
+  readonly tokenizer: () => HistoricalEmbeddingTokenizerPort | undefined;
+  readonly topologyKey: string;
+}
+
+function createPlatformExhaustiveCoverage(
+  factory: HistoricalRetrievalFactoryInput,
+): ExhaustiveCoverage {
+  const extraction = new SubscriptionRuntimeCoverageExtractorAdapter(
+    factory.input.runtimeTransport,
+    {
+      expectedLauncherSha256: factory.input.config.subscriptionRuntime.launcherSha256,
+      expectedRuntimeEngine: subscriptionRuntimeCliEngine,
+    },
+  );
+  return new ExhaustiveCoverage({
+    authority: new PostgresHistoricalEvidenceAuthority(factory.input.pool),
+    authorization: factory.authorization,
+    checkpoints: factory.checkpoints,
+    extractor: extraction,
+    ids: new HmacHistoricalOpaqueIds(factory.topologyKey),
+    reducer: new DeterministicCoverageReducer(64, 256),
+    sync: new PostgresHistoricalMemoryStore(factory.input.pool),
+    tokenizer: factory.tokenizer,
+  }, undefined, factory.profile);
+}
+
+async function executeHistoricalPass(input: {
+  readonly checkpoints: PostgresExhaustiveCoverageStore;
+  readonly indexingEnabled: () => boolean;
   readonly logger: Logger;
-  readonly pool: Pool;
-  readonly runtimeTransport: SubscriptionRuntimeTransportPort;
-}): PlatformHistoricalMemoryRuntime | undefined {
+  readonly worker: HistoricalSyncWorker;
+}, signal?: AbortSignal): Promise<void> {
+  for (let count = 0; count < maximumOperationsPerPass; count += 1) {
+    signal?.throwIfAborted();
+    const result = await input.worker.executeOnce({
+      indexingEnabled: input.indexingEnabled(),
+      ...(signal === undefined ? {} : { signal }),
+    });
+    if (result.status === "idle") {
+      break;
+    }
+    input.logger.info("Historical memory reconciliation settled", {
+      operation: result.operation,
+      state: result.status,
+    });
+  }
+  signal?.throwIfAborted();
+  await input.checkpoints.scrubExpired(100, signal === undefined ? {} : { signal });
+}
+
+function requireHistoricalRuntimeSecrets(config: PlatformConfig): {
+  readonly token: string;
+  readonly topologyKey: string;
+} {
+  const token = config.secrets.infinityContextToken;
+  const topologyKey = config.secrets.infinityContextTopologyKey;
+  if (token === undefined || topologyKey === undefined) {
+    throw new Error("Infinity runtime secrets are missing after configuration validation");
+  }
+  return { token, topologyKey };
+}
+
+function configuredHistoricalIndexProfileId(
+  activation: NonNullable<PlatformConfig["infinityContext"]>["activation"],
+): string {
+  const digest = activation.embeddingProfileAttestation
+    ?.embeddingProfileDigestSha256 ?? "sha256:" + "0".repeat(64);
+  return infinityContextHistoricalIndexProfileId(digest);
+}
+
+export function createPlatformHistoricalMemory(
+  input: PlatformHistoricalMemoryInput,
+): PlatformHistoricalMemoryRuntime | undefined {
   const config = input.config.infinityContext;
   if (config === undefined) {
     return undefined;
@@ -155,30 +276,38 @@ export function createPlatformHistoricalMemory(input: {
   if (config.activation.environment !== input.config.nodeEnvironment) {
     throw new Error("Infinity activation environment does not match Meeting Platform");
   }
-  const token = input.config.secrets.infinityContextToken;
-  const topologyKey = input.config.secrets.infinityContextTopologyKey;
-  if (token === undefined || topologyKey === undefined) {
-    throw new Error("Infinity runtime secrets are missing after configuration validation");
-  }
+  const { token, topologyKey } = requireHistoricalRuntimeSecrets(input.config);
+  const productionQualification = input.productionQualification ??
+    INFINITY_CONTEXT_PRODUCTION_QUALIFICATION;
+  let qualifiedTokenProfile: string | undefined;
+  let qualifiedTokenizer: HistoricalEmbeddingTokenizerPort | undefined;
   const memory = new InfinityContextHistoricalMemoryAdapter({
     baseUrl: config.baseUrl,
     operationTimeoutMs: config.operationTimeoutMs,
     requestTimeoutMs: config.requestTimeoutMs,
     schemaVersion: 1,
     token: () => token,
+    embeddingTokenProfile: () => qualifiedTokenProfile,
   });
+  let embeddingTokenizer: PinnedMultilingualMiniLmTokenizer | undefined;
+  const planner = new CooperativeHistoricalIndexPlanner();
   const store = new PostgresHistoricalMemoryStore(input.pool);
+  const profileMaintenance = input.profileMaintenance ?? store;
   const checkpoints = new PostgresExhaustiveCoverageStore(input.pool);
   const worker = new HistoricalSyncWorker({
     authority: new PostgresHistoricalEvidenceAuthority(input.pool),
     ids: new HmacHistoricalOpaqueIds(topologyKey),
+    indexProfileId: configuredHistoricalIndexProfileId(config.activation),
     memory,
     store,
+    planner,
+    receiptDigest: new Sha256HistoricalReceiptDigest(),
   }, {
     ...DEFAULT_HISTORICAL_SYNC_POLICY,
     leaseDurationMs: historicalSyncLeaseDurationMs(config.operationTimeoutMs),
   });
   let transportQualified = false;
+  let projectionQualified = false;
   let searchQualified = false;
   const deletion = new RequestHistoricalMeetingDeletion(store);
   const twoHourProfile = Object.freeze({
@@ -188,20 +317,40 @@ export function createPlatformHistoricalMemory(input: {
   });
 
   const refreshQualification = async (signal?: AbortSignal): Promise<void> => {
-    transportQualified = false;
-    searchQualified = false;
-    if (!config.activation.indexingEnabled && !config.activation.searchEnabled) {
-      return;
-    }
+    transportQualified = projectionQualified = searchQualified = false;
+    qualifiedTokenProfile = undefined; qualifiedTokenizer = undefined;
     const capabilities = await memory.qualifyCapabilities(
       signal === undefined ? {} : { signal },
     );
-    assertInfinityContextActivation(config.activation, capabilities);
+    assertInfinityContextTransportCapabilities(config.activation, capabilities);
     transportQualified = true;
-    searchQualified = semanticSearchQualified(
-      config.activation,
-      input.config.sourceRevision,
-      input.logger,
+    if (!config.activation.indexingEnabled && !config.activation.searchEnabled) { return; }
+    assertInfinityContextActivation(
+      config.activation, capabilities, productionQualification,
+    );
+    qualifiedTokenizer = qualifyEmbeddingTokenizer(
+      embeddingTokenizer ??= new PinnedMultilingualMiniLmTokenizer(),
+      config.activation.embeddingProfileAttestation,
+      capabilities,
+    );
+    assertInfinityContextPlanningCompatibility({
+      productionQualification,
+      tokenizerProfile: qualifiedTokenizer.profile,
+    });
+    const planningProfile = await planner.start();
+    qualifiedTokenProfile = qualifyPlanningProfile(
+      planningProfile, qualifiedTokenizer,
+    );
+    const indexProfileId = configuredHistoricalIndexProfileId(config.activation);
+    const rebuilds = await profileMaintenance.enqueueAppliedProfileRebuilds(
+      indexProfileId, 4_096, signal === undefined ? {} : { signal },
+    );
+    if (rebuilds.enqueued > 0 || rebuilds.remaining) {
+      input.logger.info("Historical index profile rebuilds enqueued", rebuilds);
+    }
+    projectionQualified = true;
+    searchQualified = !rebuilds.remaining && semanticSearchQualified(
+      config.activation, input.logger, productionQualification,
     );
   };
 
@@ -212,36 +361,24 @@ export function createPlatformHistoricalMemory(input: {
       await refreshQualification(signal);
     } catch (error) {
       signal?.throwIfAborted();
-      transportQualified = false;
-      searchQualified = false;
+      projectionQualified = searchQualified = false;
+      qualifiedTokenProfile = undefined; qualifiedTokenizer = undefined;
       input.logger.warn("Historical memory qualification unavailable; external indexing is disabled", {
         errorType: error instanceof Error ? error.name : "unknown",
       });
     }
   };
 
-  const runPass = async (signal?: AbortSignal): Promise<void> => {
-    for (let count = 0; count < maximumOperationsPerPass; count += 1) {
-      signal?.throwIfAborted();
-      const result = await worker.executeOnce({
-        indexingEnabled: config.activation.indexingEnabled && transportQualified,
-        ...(signal === undefined ? {} : { signal }),
-      });
-      if (result.status === "idle") {
-        break;
-      }
-      input.logger.info("Historical memory reconciliation settled", {
-        operation: result.operation,
-        state: result.status,
-      });
-    }
-    signal?.throwIfAborted();
-    await checkpoints.scrubExpired(100, signal === undefined ? {} : { signal });
-  };
   const reconciliation = createHistoricalReconciliationLifecycle({
     executePass: async (signal) => {
       await refreshQualificationForReconciliation(signal);
-      await runPass(signal);
+      if (!transportQualified) { return; }
+      await executeHistoricalPass({
+        checkpoints,
+        indexingEnabled: () => config.activation.indexingEnabled && projectionQualified,
+        logger: input.logger,
+        worker,
+      }, signal);
     },
     logger: input.logger,
   });
@@ -251,32 +388,32 @@ export function createPlatformHistoricalMemory(input: {
     // decoding. A transient endpoint or capability response only disables the
     // derived memory slice; it must not block recording/transcription startup.
     assertReady: refreshQualificationForReconciliation,
-    close: reconciliation.close,
+    close: async () => {
+      await reconciliation.close();
+      await planner.close();
+    },
     createExhaustiveCoverage: (authorization) => {
-      const extraction = new SubscriptionRuntimeCoverageExtractorAdapter(
-        input.runtimeTransport,
-        {
-          expectedLauncherSha256: input.config.subscriptionRuntime.launcherSha256,
-          expectedRuntimeEngine: subscriptionRuntimeCliEngine,
-        },
-      );
-      return new ExhaustiveCoverage({
-        authority: new PostgresHistoricalEvidenceAuthority(input.pool),
+      return createPlatformExhaustiveCoverage({
         authorization,
         checkpoints,
-        extractor: extraction,
-        ids: new HmacHistoricalOpaqueIds(topologyKey),
-        reducer: new DeterministicCoverageReducer(64, 256),
-        sync: new PostgresHistoricalMemoryStore(input.pool),
-      }, undefined, twoHourProfile);
+        input,
+        profile: twoHourProfile,
+        tokenizer: () => qualifiedTokenizer,
+        topologyKey,
+      });
     },
     createFocusedRetrieval: (authorization) => new HistoricalFocusedRetrieval({
       authority: new PostgresHistoricalEvidenceAuthority(input.pool),
       authorization,
       ids: new HmacHistoricalOpaqueIds(topologyKey),
       memory,
+      speakerAliases: participantSpeakerAliases(
+        input.config.participantGreetingProfiles,
+      ),
       store: new PostgresHistoricalMemoryStore(input.pool),
+      tokenizer: () => qualifiedTokenizer,
     }, undefined, twoHourProfile),
+    embeddingTokenizer: () => qualifiedTokenizer,
     searchEnabled: () =>
       config.activation.searchEnabled && transportQualified && searchQualified,
     servingAuthorized: () => config.activation.searchEnabled && searchQualified,

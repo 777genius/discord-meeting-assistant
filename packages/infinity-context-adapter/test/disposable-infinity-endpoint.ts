@@ -14,6 +14,7 @@ interface StoredDocument {
   processed: boolean;
   readonly sourceExternalId: string;
   readonly sourceRefs: readonly SourceRef[];
+  readonly sourceType: string;
   readonly spaceSlug: string;
   readonly text: string;
   readonly threadExternalRef: string;
@@ -110,6 +111,7 @@ export class DisposableInfinityEndpoint implements HttpTransport {
   #loseProcessResponse = false;
   #loseThreadDeleteResponse = false;
   #failDocumentDelete = false;
+  #failDocumentDeleteAfter: number | null = null;
   #hangSearch = false;
   #hangRequestPath: string | null = null;
   #requestDelayMs = 0;
@@ -119,6 +121,9 @@ export class DisposableInfinityEndpoint implements HttpTransport {
   #runtimeQualificationReceipt:
     DisposableInfinityRuntimeQualificationReceipt | null = null;
   #ingestGate: IngestGate | null = null;
+  #scopeListPageSize = 100;
+  #scopeListCursorFault: "missing" | "overlong" | "oversized" | "repeated" | "repeated_rows" | null = null;
+  #scopeListCursorFormat: "encoded" | "numeric" = "numeric";
   public readonly requests: RecordedRequest[] = [];
 
   public pauseNextIngest(): {
@@ -144,6 +149,20 @@ export class DisposableInfinityEndpoint implements HttpTransport {
 
   public failNextDocumentDelete(): void {
     this.#failDocumentDelete = true;
+  }
+
+  public failDocumentDeleteAfter(successfulDeletes: number): void {
+    this.#failDocumentDeleteAfter = successfulDeletes;
+  }
+
+  public configureScopeList(
+    pageSize: number,
+    cursorFault: "missing" | "overlong" | "oversized" | "repeated" | "repeated_rows" | null = null,
+    cursorFormat: "encoded" | "numeric" = "numeric",
+  ): void {
+    this.#scopeListPageSize = pageSize;
+    this.#scopeListCursorFault = cursorFault;
+    this.#scopeListCursorFormat = cursorFormat;
   }
 
   public preserveNextThreadDocumentAndHideItFromStatus(): void {
@@ -371,21 +390,7 @@ export class DisposableInfinityEndpoint implements HttpTransport {
 
   #documentsRequest(request: HttpRequest, body: JsonValue | null): HttpResponse | Promise<HttpResponse> {
     if (request.method === "GET") {
-      const scope = request.url.searchParams.get("memory_scope_external_ref");
-      const space = request.url.searchParams.get("space_slug");
-      const thread = request.url.searchParams.get("thread_external_ref");
-      const requestedLimit = Number.parseInt(request.url.searchParams.get("limit") ?? "100", 10);
-      const limit = Number.isSafeInteger(requestedLimit) && requestedLimit > 0
-        ? requestedLimit
-        : 100;
-      return envelope([...this.#documents.values()]
-        .filter((document) =>
-          document.memoryScopeExternalRef === scope &&
-          document.spaceSlug === space &&
-          document.threadExternalRef === thread
-        )
-        .slice(0, limit)
-        .map((document) => this.#documentRecord(document)));
+      return this.#listScopeDocuments(request.url);
     }
     const gate = this.#ingestGate;
     if (gate !== null) {
@@ -424,6 +429,7 @@ export class DisposableInfinityEndpoint implements HttpTransport {
     const idempotencyKey = request.headers.get("idempotency-key") ?? "";
     const priorId = this.#ingestIdempotency.get(idempotencyKey);
     let document = priorId === undefined ? undefined : this.#documents.get(priorId);
+    const replayed = document !== undefined;
     if (document === undefined) {
       document = {
         id: `document-${this.#nextDocument++}`,
@@ -437,6 +443,7 @@ export class DisposableInfinityEndpoint implements HttpTransport {
               return { source_id: string(source.source_id), source_type: string(source.source_type) };
             })
           : [],
+        sourceType: string(input.source_type),
         spaceSlug: string(input.space_slug),
         status: "active",
         text: string(input.text),
@@ -445,6 +452,9 @@ export class DisposableInfinityEndpoint implements HttpTransport {
       };
       this.#documents.set(document.id, document);
       this.#ingestIdempotency.set(idempotencyKey, document.id);
+    }
+    if (replayed && document.processed) {
+      document.indexingStatus = "already_indexed_or_pending";
     }
     if (this.#loseIngestResponse) {
       this.#loseIngestResponse = false;
@@ -478,6 +488,13 @@ export class DisposableInfinityEndpoint implements HttpTransport {
       return envelope(this.#documentRecord(document));
     }
     if (request.method === "DELETE") {
+      if (this.#failDocumentDeleteAfter !== null) {
+        if (this.#failDocumentDeleteAfter === 0) {
+          this.#failDocumentDeleteAfter = null;
+          return Promise.reject(new Error("synthetic delayed document deletion failure"));
+        }
+        this.#failDocumentDeleteAfter -= 1;
+      }
       if (this.#failDocumentDelete) {
         this.#failDocumentDelete = false;
         return Promise.reject(new Error("synthetic uncommitted document deletion failure"));
@@ -492,6 +509,52 @@ export class DisposableInfinityEndpoint implements HttpTransport {
     }
     return json(405, {
       error: { code: "memory.method_not_allowed", message: request.method },
+    });
+  }
+
+  #listScopeDocuments(url: URL): HttpResponse {
+    const limit = Number.parseInt(url.searchParams.get("limit") ?? "100", 10);
+    const requestedLimit = Number.isSafeInteger(limit) && limit > 0 ? limit : 100;
+    const pageSize = Math.min(requestedLimit, this.#scopeListPageSize);
+    const cursor = url.searchParams.get("cursor");
+    const cursorOffset = cursor !== null && this.#scopeListCursorFormat === "encoded"
+      ? cursor.slice(cursor.lastIndexOf(":") + 1)
+      : cursor;
+    const offset = cursorOffset === null ? 0 : Number.parseInt(cursorOffset, 10);
+    if (!Number.isSafeInteger(offset) || offset < 0) {
+      return json(400, { detail: "invalid cursor" });
+    }
+    const sourceExternalId = url.searchParams.get("source_external_id");
+    const documents = [...this.#documents.values()].filter((document) =>
+      document.status === (url.searchParams.get("status") ?? "active") &&
+      document.memoryScopeExternalRef === url.searchParams.get("memory_scope_external_ref") &&
+      document.spaceSlug === url.searchParams.get("space_slug") &&
+      document.threadExternalRef === url.searchParams.get("thread_external_ref") &&
+      (sourceExternalId === null || document.sourceExternalId === sourceExternalId)
+    );
+    const requestedEnd = offset + pageSize;
+    const page = documents.slice(offset, requestedEnd);
+    const responsePage = this.#scopeListCursorFault === "oversized" && page[0] !== undefined
+      ? Array.from({ length: requestedLimit + 1 }, () => page[0]!)
+      : this.#scopeListCursorFault === "repeated_rows" && documents[0] !== undefined
+        ? [documents[0]]
+        : page;
+    const nextOffset = offset + page.length;
+    const nextCursor = nextOffset < documents.length
+      ? this.#scopeListCursorFormat === "encoded"
+        ? "opaque-token".repeat(22) + ":" + nextOffset
+        : String(nextOffset)
+      : null;
+    if (this.#scopeListCursorFault === "missing" && nextCursor !== null) {
+      return json(200, { data: responsePage.map((document) => this.#documentRecord(document)) });
+    }
+    return json(200, {
+      data: responsePage.map((document) => this.#documentRecord(document)),
+      next_cursor: this.#scopeListCursorFault === "repeated" && nextCursor !== null
+        ? (cursor ?? "0")
+        : this.#scopeListCursorFault === "overlong" && nextCursor !== null
+          ? "x".repeat(1_001)
+          : nextCursor,
     });
   }
 
@@ -620,6 +683,7 @@ export class DisposableInfinityEndpoint implements HttpTransport {
       indexing_status: document.indexingStatus,
       source_external_id: document.sourceExternalId,
       source_refs: document.sourceRefs,
+      source_type: document.sourceType,
       status: document.status,
       title: document.title,
     };

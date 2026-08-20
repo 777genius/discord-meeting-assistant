@@ -27,9 +27,26 @@ function historicalPriorityCandidates(
   if (result?.status !== "ready") {
     return [];
   }
+  const scores = new Map(
+    result.plan.sources.map(({ locator, qualifiedScore }) => [
+      locator,
+      normalizedScore(qualifiedScore),
+    ]),
+  );
   return Object.freeze(result.plan.blocks.flatMap((block) =>
-    block.turns.map((turn) => Object.freeze({
+    block.turns.map((turn, turnIndex) => Object.freeze({
+      historicalSource: Object.freeze({
+        candidateLocator: block.candidateLocator,
+        indexGeneration: block.indexGeneration,
+        releaseId: block.binding.releaseId,
+      }),
       meetingId: block.binding.meetingId,
+      // A provider score qualifies the block, not every turn inside it. Decay
+      // successive turns so one wide block cannot monopolize the fused top-k.
+      relevanceScore: (scores.get(block.candidateLocator) ?? 0) /
+        (turnIndex + 1),
+      sourceEndCodePoint: turn.sourceEndCodePoint,
+      sourceStartCodePoint: turn.sourceStartCodePoint,
       transcriptId: block.binding.transcriptId,
       transcriptVersion: block.binding.transcriptVersion,
       turnHash: turnHashes.hash(turn),
@@ -150,35 +167,47 @@ function enabled(value: boolean | (() => boolean)): boolean {
   return typeof value === "function" ? value() : value;
 }
 
-/**
- * Deterministic rank fusion across current and historical source lists. Each
- * list is already in qualified relevance order. Alternating equal ranks keeps
- * history from starving live-final evidence while leaving unused capacity to
- * whichever source still has candidates.
- */
+/** Deterministic score fusion that retains both non-empty evidence sources. */
 function crossSourceRank(
   current: readonly FocusedMemoryReference[],
   historical: readonly FocusedMemoryReference[],
   maximumCandidates: number,
 ): FocusedMemoryReference[] {
+  const decorated = [
+    ...current.map((candidate, rank) => ({ candidate, rank, source: 0 })),
+    ...historical.map((candidate, rank) => ({ candidate, rank, source: 1 })),
+  ].toSorted((left, right) =>
+    scoreFor(right.candidate, right.rank) - scoreFor(left.candidate, left.rank) ||
+    left.source - right.source ||
+    left.rank - right.rank ||
+    referenceKey(left.candidate).localeCompare(referenceKey(right.candidate))
+  );
   const selected: FocusedMemoryReference[] = [];
-  for (let rank = 0; selected.length < maximumCandidates; rank += 1) {
-    const currentCandidate = current[rank];
-    const historicalCandidate = historical[rank];
-    if (currentCandidate === undefined && historicalCandidate === undefined) {
+  const reservedCurrent = current[0];
+  const reservedHistorical = historical[0];
+  if (reservedCurrent !== undefined && maximumCandidates > 0) {
+    selected.push(reservedCurrent);
+  }
+  if (reservedHistorical !== undefined && selected.length < maximumCandidates) {
+    selected.push(reservedHistorical);
+  }
+  for (const { candidate } of decorated) {
+    if (selected.length >= maximumCandidates) {
       break;
     }
-    if (currentCandidate !== undefined) {
-      selected.push(currentCandidate);
-    }
-    if (
-      historicalCandidate !== undefined &&
-      selected.length < maximumCandidates
-    ) {
-      selected.push(historicalCandidate);
+    if (candidate !== reservedCurrent && candidate !== reservedHistorical) {
+      selected.push(candidate);
     }
   }
   return selected;
+}
+
+function scoreFor(candidate: FocusedMemoryReference, rank: number): number {
+  return candidate.relevanceScore ?? 1 / (rank + 2);
+}
+
+function normalizedScore(score: number): number {
+  return Number.isFinite(score) ? Math.max(0, Math.min(1, score)) : 0;
 }
 
 function deduplicate(
@@ -188,7 +217,11 @@ function deduplicate(
   const values = new Map<string, FocusedMemoryReference>();
   for (const candidate of candidates) {
     const key = referenceKey(candidate);
-    if (!excluded.has(key) && !values.has(key)) {
+    const previous = values.get(key);
+    if (!excluded.has(key) && (
+      previous === undefined ||
+      (candidate.relevanceScore ?? 0) > (previous.relevanceScore ?? 0)
+    )) {
       values.set(key, candidate);
     }
   }
@@ -197,9 +230,14 @@ function deduplicate(
 
 function referenceKey(candidate: FocusedMemoryReference): string {
   return [
+    candidate.historicalSource?.releaseId ?? "current",
+    candidate.historicalSource?.indexGeneration ?? "current",
+    candidate.historicalSource?.candidateLocator ?? "current",
     candidate.meetingId,
     candidate.transcriptId,
     candidate.transcriptVersion,
     candidate.turnId,
+    candidate.sourceStartCodePoint ?? "whole",
+    candidate.sourceEndCodePoint ?? "whole",
   ].join("\u0000");
 }

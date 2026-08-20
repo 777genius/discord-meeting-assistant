@@ -9,6 +9,7 @@ import {
   GroundedAnswer,
   GroundedMeetingAnswer,
   admitAcceptedFinalMeeting,
+  buildHistoricalIndexPlan,
   createExhaustiveCoverageGroundingPlan,
   createHistoricalReleaseBinding,
   exhaustiveCoverageProvesAbsence,
@@ -20,10 +21,18 @@ import {
   type GroundingPlan,
   type HistoricalAuthorizationPort,
   type HistoricalEvidenceAuthority,
+  type HistoricalIndexPlanV1,
   type HistoricalOpaqueIdPort,
   type HistoricalReleaseBindingV1,
   type HistoricalSyncStore,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
+
+const semanticBlockPolicy = {
+  maxBlockUtf8Bytes: 32_768,
+  maxBlocksPerMeeting: 100,
+  maxTurnsPerBlock: 64,
+  version: "meeting-knowledge.block-policy.v1",
+} as const;
 
 class SemanticIds implements HistoricalOpaqueIdPort {
   public keyedId(namespace: string, parts: readonly string[]): string {
@@ -116,6 +125,14 @@ class SemanticCheckpoints implements ExhaustiveCoverageStore {
     return Promise.resolve(0);
   }
 
+  public corruptCompletedReduction(reduction: CoverageReductionV1): void {
+    for (const [checkpointId, row] of this.#rows) {
+      if (row.state === "completed") {
+        this.#rows.set(checkpointId, { ...row, reduction });
+      }
+    }
+  }
+
   private required(checkpointId: string): CoverageCheckpointLeaseV1 {
     const row = this.#rows.get(checkpointId);
     if (row === undefined) {
@@ -183,7 +200,10 @@ function semanticCoverage(
     loadAcceptedFinalMeeting: async (binding) =>
       binding.releaseId === meeting.binding.releaseId ? meeting : null,
   };
-  const sync = semanticSync(meeting.binding);
+  const sync = semanticSync(
+    meeting.binding,
+    buildHistoricalIndexPlan(meeting, new SemanticIds(), semanticBlockPolicy),
+  );
   return new ExhaustiveCoverage({
     authority,
     authorization: authorization ?? { authorize: async () => ({
@@ -195,19 +215,22 @@ function semanticCoverage(
     checkpoints,
     extractor: {
       profile: "meeting-knowledge.test-semantic-every-block.v1",
-      extract: async ({ block, question }) => {
+      extract: async ({ analysisTurns, block, question }) => {
         const asksForGamma = /гамм|gamma/iu.test(question);
         const asksForZeta = /zeta|зет/iu.test(question);
-        const selectedTurns = asksForZeta ? [] : block.turns.filter(({ text }) =>
+        const selectedTurns = asksForZeta ? [] : analysisTurns.filter(({ text }) =>
           asksForGamma
             ? /гамм|gamma/iu.test(text)
             : /agreed to ship Beta|договорилась запустить Гамма|settled on Project Delta|Correction: Beta|approved Omega/iu.test(text)
-        ).map(({ text, turnId }) => ({
+        ).map((turn) => ({
           blockLocator: block.candidateLocator,
-          relevance: /Correction:/u.test(text)
+          relevance: /Correction:/u.test(turn.text)
             ? "conflicting" as const
             : "direct" as const,
-          turnId,
+          sourceEndCodePoint: turn.sourceEndCodePoint,
+          sourceRef: turn.sourceRef,
+          sourceStartCodePoint: turn.sourceStartCodePoint,
+          turnId: turn.turnId,
         }));
         return {
           blockLocator: block.candidateLocator,
@@ -217,7 +240,7 @@ function semanticCoverage(
           payload: {
             blocksReviewed: 1,
             semanticClaimCount: selectedTurns.length,
-            turnsReviewed: block.turns.length,
+            turnsReviewed: analysisTurns.length,
           },
           selectedTurns,
           selectionStatus: selectedTurns.length === 0
@@ -231,12 +254,7 @@ function semanticCoverage(
     reducer: new DeterministicCoverageReducer(64, 256),
     sync,
   }, {
-    blockPolicy: {
-      maxBlockUtf8Bytes: 32_768,
-      maxBlocksPerMeeting: 100,
-      maxTurnsPerBlock: 64,
-      version: "meeting-knowledge.block-policy.v1",
-    },
+    blockPolicy: semanticBlockPolicy,
     checkpointRetentionSeconds: 86_400,
     maximumBlocks: 100,
     maximumCheckpointAttempts: 8,
@@ -260,12 +278,20 @@ function semanticCoverage(
   });
 }
 
-function semanticSync(binding: HistoricalReleaseBindingV1): HistoricalSyncStore {
+function semanticSync(
+  binding: HistoricalReleaseBindingV1,
+  plan: HistoricalIndexPlanV1,
+): HistoricalSyncStore {
   return {
     claimNext: async () => null,
+    enqueueAppliedProfileRebuilds: async () => ({
+      enqueued: 0,
+      remaining: false,
+    }),
     findCurrentCandidate: async () => null,
+    findCurrentCandidates: async () => [],
     isCurrentGeneration: async () => true,
-    listCurrentRoomPlans: async () => [],
+    listCurrentRoomPlans: async () => [{ binding, plan, remoteDocumentIds: {} }],
     listDesiredRoomBindings: async () => [binding],
     recordApplied: () => Promise.resolve(),
     recordDeadLetter: () => Promise.resolve(),
@@ -288,7 +314,12 @@ function answerPlan(
   ]));
   const turns = result.plan.reduction.selectedTurns.map((selection) => {
     const block = blocks.get(selection.blockLocator);
-    const turn = block?.turns.find(({ turnId }) => turnId === selection.turnId);
+    const turn = block?.turns.find((candidate) =>
+      candidate.turnId === selection.turnId &&
+      candidate.sourceRef === selection.sourceRef &&
+      candidate.sourceStartCodePoint === selection.sourceStartCodePoint &&
+      candidate.sourceEndCodePoint === selection.sourceEndCodePoint
+    );
     if (block === undefined || turn === undefined) {
       throw new Error("semantic selection did not rehydrate locally");
     }
@@ -320,15 +351,21 @@ function answerPlan(
 }
 
 async function coverageFor(question: string, requestId: string) {
+  const meeting = corpus();
   const checkpoints = new SemanticCheckpoints();
-  const result = await semanticCoverage(corpus(), checkpoints).buildPlan({
+  const result = await semanticCoverage(meeting, checkpoints).buildPlan({
     authorizationPrincipalRef: "principal",
     question,
     requestId,
     roomId: "room-1",
     scopeId: "scope-1",
   });
-  return { checkpoints, result };
+  const blockCount = buildHistoricalIndexPlan(
+    meeting,
+    new SemanticIds(),
+    semanticBlockPolicy,
+  ).documents.length;
+  return { blockCount, checkpoints, result };
 }
 
 function revokingAuthorization(input: {
@@ -381,11 +418,20 @@ describe("semantic exhaustive coverage exact-answer oracles", () => {
 
   it("stops before the next reducer when authorization is revoked mid-pass", async () => {
     const signal = new AbortController().signal;
-    // Initial admission + seven blocks + first reducer are authorized.
-    const authorization = revokingAuthorization({ revokeOnCall: 10, signal });
+    const meeting = corpus();
+    const blockCount = buildHistoricalIndexPlan(
+      meeting,
+      new SemanticIds(),
+      semanticBlockPolicy,
+    ).documents.length;
+    // Initial admission + every block + first reducer are authorized.
+    const authorization = revokingAuthorization({
+      revokeOnCall: blockCount + 3,
+      signal,
+    });
     const checkpoints = new SemanticCheckpoints();
     const result = await semanticCoverage(
-      corpus(),
+      meeting,
       checkpoints,
       authorization.port,
     ).buildPlan({
@@ -401,8 +447,8 @@ describe("semantic exhaustive coverage exact-answer oracles", () => {
       reason: "authorization_changed",
       status: "unauthorized",
     });
-    expect(checkpoints.extractionCount).toBe(7);
-    expect(authorization.calls()).toBe(10);
+    expect(checkpoints.extractionCount).toBe(blockCount);
+    expect(authorization.calls()).toBe(blockCount + 3);
   });
 
   it("does not call the final provider without a fresh exhaustive authorization fence", async () => {
@@ -469,15 +515,15 @@ describe("semantic exhaustive coverage exact-answer oracles", () => {
   });
 
   it("returns exact count and all/list answers across more than 400 turns, retaining duplicates and contradictions", async () => {
-    const { checkpoints, result } = await coverageFor(
+    const { blockCount, checkpoints, result } = await coverageFor(
       "Count every decision assertion and list all of them",
       "request-count-list",
     );
     if (result.status !== "ready") {
       throw new Error("semantic coverage was not ready");
     }
-    expect(result.plan.coverageBitmap).toHaveLength(7);
-    expect(checkpoints.extractionCount).toBe(7);
+    expect(result.plan.coverageBitmap).toHaveLength(blockCount);
+    expect(checkpoints.extractionCount).toBe(blockCount);
     expect(result.plan.coverageBitmap.every(Boolean)).toBe(true);
     expect(result.plan.reduction.selectedTurns.map(({ turnId }) => turnId).toSorted()).toEqual([
       "meeting-semantic-420-turn-0003",
@@ -589,5 +635,60 @@ describe("semantic exhaustive coverage exact-answer oracles", () => {
       groundingMode: "exhaustive_coverage",
       question: "Was Project Zeta ever approved?",
     })).toThrow("between one and eight citations");
+  }, 15_000);
+});
+
+describe("semantic exhaustive coverage checkpoint replay", () => {
+  it("rejects a completed checkpoint that selects an overlap-excluded slice", async () => {
+    const meeting = corpus();
+    const checkpoints = new SemanticCheckpoints();
+    const coverage = semanticCoverage(meeting, checkpoints);
+    const plan = buildHistoricalIndexPlan(meeting, new SemanticIds(), semanticBlockPolicy);
+    const occurrences = plan.documents.flatMap(({ manifest }) =>
+      manifest.turnSources.map((source) => ({
+        blockLocator: manifest.candidateLocator,
+        identity: JSON.stringify([
+          source.sourceRef,
+          source.sourceStartCodePoint,
+          source.sourceEndCodePoint,
+        ]),
+        source,
+      }))
+    );
+    const excluded = occurrences.find((candidate, index) =>
+      occurrences.findIndex(({ identity }) => identity === candidate.identity) < index
+    );
+    if (excluded === undefined) {
+      throw new Error("semantic fixture has no overlap-excluded source slice");
+    }
+    const checkpointRequest = {
+      authorizationPrincipalRef: "principal",
+      question: "Was Project Zeta ever approved? Check all discussions.",
+      requestId: "request-corrupt-overlap-checkpoint",
+      roomId: "room-1",
+      scopeId: "scope-1",
+    } as const;
+    await expect(coverage.buildPlan(checkpointRequest)).resolves.toMatchObject({
+      status: "ready",
+    });
+    checkpoints.corruptCompletedReduction({
+      evidenceLocators: [excluded.blockLocator],
+      payload: { staleOverlapSelection: true },
+      selectedTurns: [{
+        blockLocator: excluded.blockLocator,
+        relevance: "direct",
+        sourceEndCodePoint: excluded.source.sourceEndCodePoint,
+        sourceRef: excluded.source.sourceRef,
+        sourceStartCodePoint: excluded.source.sourceStartCodePoint,
+        turnId: excluded.source.turnId,
+      }],
+      selectionStatus: "selected",
+      schemaVersion: 1,
+    });
+
+    await expect(coverage.buildPlan(checkpointRequest)).resolves.toEqual({
+      reason: "coverage_checkpoint_reduction_invalid",
+      status: "invalidated",
+    });
   });
 });

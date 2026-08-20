@@ -5,10 +5,7 @@ import {
   requireSha256,
 } from "../../domain/errors.js";
 import {
-  createFocusedRetrievalGroundingPlan,
   type FocusedMemoryReference,
-  type GroundingPlan,
-  type RehydratedEvidenceTurn,
 } from "../../domain/grounding-plan.js";
 import type {
   FocusedMemoryRetrievalPort,
@@ -20,60 +17,34 @@ export const focusedMemoryContractVersion = 1 as const;
 
 function focusedMemoryReferenceKey(reference: FocusedMemoryReference): string {
   return [
+    reference.historicalSource?.releaseId ?? "current",
+    reference.historicalSource?.indexGeneration ?? "current",
+    reference.historicalSource?.candidateLocator ?? "current",
     reference.meetingId,
     reference.transcriptId,
     reference.transcriptVersion,
     reference.turnId,
     reference.turnHash,
+    reference.sourceStartCodePoint ?? "whole",
+    reference.sourceEndCodePoint ?? "whole",
   ].join("\u0000");
 }
 
 export function mergeFocusedHydrationReferences(
   references: readonly FocusedMemoryReference[],
 ): readonly FocusedMemoryReference[] {
-  return Object.freeze([...new Map(references.map((reference) => [
-    focusedMemoryReferenceKey(reference),
-    reference,
-  ])).values()]);
-}
-
-function selectHydratedTurns(
-  selected: readonly FocusedMemoryReference[],
-  hydratedReferences: readonly FocusedMemoryReference[],
-  turns: readonly RehydratedEvidenceTurn[],
-): readonly RehydratedEvidenceTurn[] {
-  if (hydratedReferences.length !== turns.length) {
-    throw new Error("canonical hydration did not preserve the selected reference cardinality");
-  }
-  const turnsByReference = new Map(hydratedReferences.map((reference, index) => [
-    focusedMemoryReferenceKey(reference),
-    turns[index],
-  ]));
-  return Object.freeze(selected.map((reference) => {
-    const turn = turnsByReference.get(focusedMemoryReferenceKey(reference));
-    if (turn === undefined) {
-      throw new Error("canonical hydration omitted a selected reference");
+  const merged = new Map<string, FocusedMemoryReference>();
+  for (const reference of references) {
+    const key = focusedMemoryReferenceKey(reference);
+    const previous = merged.get(key);
+    if (
+      previous === undefined ||
+      (reference.relevanceScore ?? 0) > (previous.relevanceScore ?? 0)
+    ) {
+      merged.set(key, reference);
     }
-    return turn;
-  }));
-}
-
-export function createPlanFromFocusedHydration(
-  retrieval: Extract<FocusedMemoryRetrievalResult, { readonly status: "current" }>,
-  hydratedReferences: readonly FocusedMemoryReference[],
-  turns: readonly RehydratedEvidenceTurn[],
-  humanActorIds: readonly string[],
-): GroundingPlan {
-  return createFocusedRetrievalGroundingPlan({
-    authorityGeneration: retrieval.authorityGeneration,
-    coverage: "sufficient",
-    humanActorIds,
-    turns: selectHydratedTurns(
-      retrieval.candidates,
-      hydratedReferences,
-      turns,
-    ),
-  });
+  }
+  return Object.freeze([...merged.values()]);
 }
 
 const terminalStatuses = new Set([
@@ -219,15 +190,37 @@ function decodeCandidates(
     const candidate = record(candidateValue, `${field}[${index}]`);
     assertOnlyKeys(
       candidate,
-      new Set(["meetingId", "transcriptId", "transcriptVersion", "turnHash", "turnId"]),
+      new Set([
+        "historicalSource",
+        "meetingId",
+        "relevanceScore",
+        "sourceEndCodePoint",
+        "sourceStartCodePoint",
+        "transcriptId",
+        "transcriptVersion",
+        "turnHash",
+        "turnId",
+      ]),
       `${field}[${index}]`,
     );
+    const range = decodeCandidateSourceRange(candidate, `${field}[${index}]`);
+    const historicalSource = decodeHistoricalSource(
+      candidate.historicalSource,
+      `${field}[${index}].historicalSource`,
+    );
+    const relevanceScore = decodeRelevanceScore(
+      candidate.relevanceScore,
+      `${field}[${index}].relevanceScore`,
+    );
     return Object.freeze({
+      ...(historicalSource === undefined ? {} : { historicalSource }),
       meetingId: requireKnowledgeText(
         candidate.meetingId as string,
         `${field}[${index}].meetingId`,
         1_024,
       ),
+      ...(relevanceScore === undefined ? {} : { relevanceScore }),
+      ...range,
       transcriptId: requireKnowledgeText(
         candidate.transcriptId as string,
         `${field}[${index}].transcriptId`,
@@ -258,16 +251,105 @@ function decodeCandidates(
   return candidates;
 }
 
+function decodeHistoricalSource(
+  value: unknown,
+  field: string,
+): FocusedMemoryReference["historicalSource"] {
+  if (value === undefined) {
+    return undefined;
+  }
+  const source = record(value, field);
+  assertOnlyKeys(
+    source,
+    new Set(["candidateLocator", "indexGeneration", "releaseId"]),
+    field,
+  );
+  return Object.freeze({
+    candidateLocator: requireKnowledgeText(
+      source.candidateLocator as string,
+      `${field}.candidateLocator`,
+      1_024,
+    ),
+    indexGeneration: requireKnowledgeText(
+      source.indexGeneration as string,
+      `${field}.indexGeneration`,
+      1_024,
+    ),
+    releaseId: requireKnowledgeText(
+      source.releaseId as string,
+      `${field}.releaseId`,
+      1_024,
+    ),
+  });
+}
+
+function decodeRelevanceScore(
+  value: unknown,
+  field: string,
+): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) {
+    throw new MeetingKnowledgeInvariantError(
+      "INVALID_GROUNDING_PLAN",
+      `${field} must be a finite normalized score`,
+    );
+  }
+  return value;
+}
+
+function decodeCandidateSourceRange(
+  candidate: Record<string, unknown>,
+  field: string,
+): Pick<FocusedMemoryReference, "sourceEndCodePoint" | "sourceStartCodePoint"> {
+  const hasStart = candidate.sourceStartCodePoint !== undefined;
+  const hasEnd = candidate.sourceEndCodePoint !== undefined;
+  if (hasStart !== hasEnd) {
+    throw new MeetingKnowledgeInvariantError(
+      "INVALID_GROUNDING_PLAN",
+      `${field} source range must be complete`,
+    );
+  }
+  if (!hasStart) {
+    return {};
+  }
+  const sourceStartCodePoint = requireKnowledgeInteger(
+    candidate.sourceStartCodePoint as number,
+    `${field}.sourceStartCodePoint`,
+  );
+  const sourceEndCodePoint = requireKnowledgeInteger(
+    candidate.sourceEndCodePoint as number,
+    `${field}.sourceEndCodePoint`,
+    1,
+  );
+  if (sourceEndCodePoint <= sourceStartCodePoint) {
+    throw new MeetingKnowledgeInvariantError(
+      "INVALID_GROUNDING_PLAN",
+      `${field} source range is invalid`,
+    );
+  }
+  return { sourceEndCodePoint, sourceStartCodePoint };
+}
+
 function candidateKey(candidate: {
+  readonly historicalSource?: FocusedMemoryReference["historicalSource"];
   readonly meetingId: string;
+  readonly sourceEndCodePoint?: number;
+  readonly sourceStartCodePoint?: number;
   readonly transcriptId: string;
   readonly transcriptVersion: number;
   readonly turnId: string;
 }): string {
   return [
+    candidate.historicalSource?.releaseId ?? "current",
+    candidate.historicalSource?.indexGeneration ?? "current",
+    candidate.historicalSource?.candidateLocator ?? "current",
     candidate.meetingId,
     candidate.transcriptId,
     candidate.transcriptVersion,
     candidate.turnId,
+    candidate.sourceStartCodePoint ?? "whole",
+    candidate.sourceEndCodePoint ?? "whole",
   ].join("\u0000");
 }

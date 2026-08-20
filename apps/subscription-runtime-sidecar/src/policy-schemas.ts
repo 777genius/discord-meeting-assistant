@@ -7,6 +7,8 @@ import {
   knowledgeAnswerPolicyVersion,
   knowledgeCoverageOutputSchemaName,
   knowledgeCoveragePolicyVersion,
+  knowledgeEvidenceSelectorOutputSchemaName,
+  knowledgeEvidenceSelectorPolicyVersion,
   meetingSummaryOutputSchemaName,
   meetingSummaryPolicyVersion,
   subscriptionRuntimeConversationModel,
@@ -17,6 +19,7 @@ import {
   subscriptionRuntimeIncrementalReasoningEffort,
   subscriptionRuntimeKnowledgeAnswerPurpose,
   subscriptionRuntimeKnowledgeCoveragePurpose,
+  subscriptionRuntimeKnowledgeEvidenceSelectorPurpose,
   subscriptionRuntimeModel,
   subscriptionRuntimeProtocolVersion,
   subscriptionRuntimePurpose,
@@ -55,6 +58,7 @@ export const controlsSchema = z
       z.literal(conversationAnswerOutputSchemaName),
       z.literal(knowledgeAnswerOutputSchemaName),
       z.literal(knowledgeCoverageOutputSchemaName),
+      z.literal(knowledgeEvidenceSelectorOutputSchemaName),
     ]),
     permissionMode: z.literal("read-only"),
     reasoningEffort: z.union([
@@ -144,6 +148,10 @@ export const knowledgeCoverageTransportMetadataSchema = z
     transcriptVersion: nonEmptyText,
   })
   .strict();
+export const knowledgeEvidenceSelectorTransportMetadataSchema =
+  knowledgeCoverageTransportMetadataSchema.extend({
+    policyVersion: z.literal(knowledgeEvidenceSelectorPolicyVersion),
+  });
 
 const transportMetadataSchema = z.union([
   finalTransportMetadataSchema,
@@ -151,6 +159,7 @@ const transportMetadataSchema = z.union([
   conversationTransportMetadataSchema,
   knowledgeAnswerTransportMetadataSchema,
   knowledgeCoverageTransportMetadataSchema,
+  knowledgeEvidenceSelectorTransportMetadataSchema,
 ]);
 
 export const finalContextMetadataSchema = z
@@ -199,6 +208,10 @@ export const knowledgeCoverageContextMetadataSchema = z
     transcriptVersion: nonEmptyText,
   })
   .strict();
+export const knowledgeEvidenceSelectorContextMetadataSchema =
+  knowledgeCoverageContextMetadataSchema.extend({
+    policyVersion: z.literal(knowledgeEvidenceSelectorPolicyVersion),
+  });
 
 const contextMetadataSchema = z.union([
   finalContextMetadataSchema,
@@ -206,6 +219,7 @@ const contextMetadataSchema = z.union([
   conversationContextMetadataSchema,
   knowledgeAnswerContextMetadataSchema,
   knowledgeCoverageContextMetadataSchema,
+  knowledgeEvidenceSelectorContextMetadataSchema,
 ]);
 
 const canonicalTaskMetadataSchema = z.union([
@@ -214,6 +228,7 @@ const canonicalTaskMetadataSchema = z.union([
   conversationTransportMetadataSchema.omit({ application: true, locale: true, meetingId: true, recordingId: true, turnId: true }),
   knowledgeAnswerTransportMetadataSchema.omit({ application: true, locale: true, meetingId: true, transcriptId: true, transcriptVersion: true }),
   knowledgeCoverageTransportMetadataSchema.omit({ application: true, meetingId: true, transcriptId: true, transcriptVersion: true }),
+  knowledgeEvidenceSelectorTransportMetadataSchema.omit({ application: true, meetingId: true, transcriptId: true, transcriptVersion: true }),
 ]);
 
 export const canonicalRequestSchema = z
@@ -229,6 +244,7 @@ export const canonicalRequestSchema = z
           z.literal(subscriptionRuntimeConversationPurpose),
           z.literal(subscriptionRuntimeKnowledgeAnswerPurpose),
           z.literal(subscriptionRuntimeKnowledgeCoveragePurpose),
+          z.literal(subscriptionRuntimeKnowledgeEvidenceSelectorPurpose),
         ]),
       })
       .strict(),
@@ -246,6 +262,7 @@ export const canonicalRequestSchema = z
           z.literal(conversationAnswerOutputSchemaName),
           z.literal(knowledgeAnswerOutputSchemaName),
           z.literal(knowledgeCoverageOutputSchemaName),
+          z.literal(knowledgeEvidenceSelectorOutputSchemaName),
         ]),
         prompt: z.string().min(1),
         systemPrompt: z.string().min(1),
@@ -273,6 +290,7 @@ export const rawGrpcRequestSchema = z
       z.literal(subscriptionRuntimeConversationPurpose),
       z.literal(subscriptionRuntimeKnowledgeAnswerPurpose),
       z.literal(subscriptionRuntimeKnowledgeCoveragePurpose),
+      z.literal(subscriptionRuntimeKnowledgeEvidenceSelectorPurpose),
     ]),
     systemPrompt: z.string().min(1),
     prompt: z.string().min(1),

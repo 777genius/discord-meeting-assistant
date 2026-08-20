@@ -15,6 +15,8 @@ import type {
   HistoricalOpaqueIdPort,
   LocallyRehydratedEvidenceBlockV1,
 } from "./ports/historical-memory.js";
+import type { HistoricalEmbeddingTokenizerPort } from
+  "./ports/historical-embedding-tokenizer.js";
 
 export async function refreshStrictFocusedBlocks(input: {
   readonly authority: HistoricalEvidenceAuthority;
@@ -26,39 +28,60 @@ export async function refreshStrictFocusedBlocks(input: {
   readonly selected: readonly LocallyRehydratedEvidenceBlockV1[];
   readonly signal: AbortSignal | undefined;
   readonly store: HistoricalSyncStore;
+  readonly tokenizer: HistoricalEmbeddingTokenizerPort | undefined;
 }): Promise<readonly LocallyRehydratedEvidenceBlockV1[]> {
   const refreshed: LocallyRehydratedEvidenceBlockV1[] = [];
-  const authoritativeTurnCounts = new Map<string, number>();
+  const authoritativeLocators = new Map<string, ReadonlySet<string>>();
+  const options = input.signal === undefined ? {} : { signal: input.signal };
+  const records = await input.store.findCurrentCandidates(
+    input.scopeId,
+    input.roomId,
+    input.selected.map(({ candidateLocator }) => candidateLocator),
+    options,
+  );
+  const recordsByLocator = new Map(records.flatMap((record) => {
+    const locator = record.plan.documents[record.ordinal]?.manifest.candidateLocator;
+    return locator === undefined ? [] : [[locator, record] as const];
+  }));
+  const currentGenerationByRelease = new Map<string, boolean>();
+  const meetingByRelease = new Map<string, Awaited<ReturnType<
+    HistoricalEvidenceAuthority["loadAcceptedFinalMeeting"]>>>();
   for (const prior of input.selected) {
-    const options = input.signal === undefined ? {} : { signal: input.signal };
-    const record = await input.store.findCurrentCandidate(
-      input.scopeId,
-      input.roomId,
-      prior.candidateLocator,
-      options,
-    );
+    const record = recordsByLocator.get(prior.candidateLocator);
     if (
-      record === null ||
+      record === undefined ||
       !input.requestedMeeting(record.binding.meetingId) ||
-      record.plan.topology.indexGeneration !== prior.indexGeneration ||
-      !await input.store.isCurrentGeneration(
-        record.binding,
-        prior.indexGeneration,
-        options,
-      )
+      record.plan.topology.indexGeneration !== prior.indexGeneration
     ) {
       continue;
     }
-    const meeting = await input.authority.loadAcceptedFinalMeeting(
-      record.binding,
-      options,
-    );
-    if (meeting === null) {
+    const releaseId = record.binding.releaseId;
+    let currentGeneration = currentGenerationByRelease.get(releaseId);
+    if (currentGeneration === undefined) {
+      currentGeneration = await input.store.isCurrentGeneration(
+        record.binding,
+        prior.indexGeneration,
+        options,
+      );
+      currentGenerationByRelease.set(releaseId, currentGeneration);
+    }
+    if (!currentGeneration) {
       continue;
     }
-    authoritativeTurnCounts.set(
+    let meeting = meetingByRelease.get(releaseId);
+    if (!meetingByRelease.has(releaseId)) {
+      meeting = await input.authority.loadAcceptedFinalMeeting(
+        record.binding,
+        options,
+      );
+      meetingByRelease.set(releaseId, meeting ?? null);
+    }
+    if (meeting === null || meeting === undefined) {
+      continue;
+    }
+    authoritativeLocators.set(
       historicalSourceKey(record.binding),
-      meeting.humanTurns.length,
+      new Set(record.plan.documents.map(({ manifest }) => manifest.candidateLocator)),
     );
     try {
       const block = rehydrateHistoricalBlock(
@@ -66,7 +89,7 @@ export async function refreshStrictFocusedBlocks(input: {
         record.plan,
         record.ordinal,
         input.ids,
-        input.blockPolicy,
+        { policy: input.blockPolicy, tokenizer: input.tokenizer },
       );
       if (
         block.candidateLocator === prior.candidateLocator &&
@@ -80,5 +103,5 @@ export async function refreshStrictFocusedBlocks(input: {
       }
     }
   }
-  return retainStrictSourceSubsets(refreshed, authoritativeTurnCounts);
+  return retainStrictSourceSubsets(refreshed, authoritativeLocators);
 }

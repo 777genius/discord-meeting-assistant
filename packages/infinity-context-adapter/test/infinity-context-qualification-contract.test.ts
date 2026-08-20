@@ -60,7 +60,7 @@ describe("Infinity Context combined qualification corpus contract", () => {
       .toSorted((left, right) => left.href.localeCompare(right.href));
     // Adding a production source expands the reviewed transport boundary and
     // must fail this contract until the exhaustive inventory is re-attested.
-    expect(productionPaths).toHaveLength(9);
+    expect(productionPaths).toHaveLength(13);
     const sourceFiles = productionPaths.map((path) => readFileSync(path, "utf8"));
     const source = sourceFiles.join("\n");
 

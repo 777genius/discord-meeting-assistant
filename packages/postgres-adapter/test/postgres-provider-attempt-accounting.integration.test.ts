@@ -16,7 +16,7 @@ const questionPolicy = Object.freeze({
 
 
 describe("PostgreSQL provider attempt accounting", () => {
-  it("never reclaims an expired reserved provider attempt", async (context) => {
+  it("never replays selection after a reserved-attempt crash window", async (context) => {
     const database = databaseOrSkip(context);
     const questionId = "77777777777777776";
     await database.query(
@@ -119,6 +119,7 @@ describe("PostgreSQL provider attempt accounting", () => {
       maximumProviderAttempts: 2,
     })).resolves.toBe(false);
   });
+
 });
 
 describe("PostgreSQL provider attempt recovery", () => {

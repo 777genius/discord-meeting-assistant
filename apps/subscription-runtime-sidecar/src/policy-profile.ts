@@ -1,9 +1,11 @@
 import {
   canonicalJsonSha256,
   conversationAnswerPolicyVersion,
+  focusedEvidenceSelectorJsonSchema,
   incrementalMeetingSummaryPolicyVersion,
   knowledgeAnswerPolicyVersion,
   knowledgeCoveragePolicyVersion,
+  knowledgeEvidenceSelectorPolicyVersion,
   meetingSummaryPolicyVersion,
   providerConversationAnswerJsonSchema,
   providerIncrementalMeetingSummaryJsonSchema,
@@ -18,6 +20,7 @@ import {
   subscriptionRuntimeIncrementalReasoningEffort,
   subscriptionRuntimeKnowledgeAnswerPurpose,
   subscriptionRuntimeKnowledgeCoveragePurpose,
+  subscriptionRuntimeKnowledgeEvidenceSelectorPurpose,
   subscriptionRuntimeModel,
   subscriptionRuntimeProfileForPurpose,
   subscriptionRuntimePurpose,
@@ -40,6 +43,8 @@ import {
   knowledgeAnswerTransportMetadataSchema,
   knowledgeCoverageContextMetadataSchema,
   knowledgeCoverageTransportMetadataSchema,
+  knowledgeEvidenceSelectorContextMetadataSchema,
+  knowledgeEvidenceSelectorTransportMetadataSchema,
 } from "./policy-schemas.js";
 
 interface PolicyParser {
@@ -120,18 +125,29 @@ export function reconstructProfileMetadata(
       ),
     };
   }
-  if (purpose === subscriptionRuntimeKnowledgeCoveragePurpose) {
-    const parsed = parseWithPolicy(knowledgeCoverageTransportMetadataSchema, metadata);
+  if (
+    purpose === subscriptionRuntimeKnowledgeCoveragePurpose ||
+    purpose === subscriptionRuntimeKnowledgeEvidenceSelectorPurpose
+  ) {
+    const parsed = purpose === subscriptionRuntimeKnowledgeCoveragePurpose
+      ? parseWithPolicy(knowledgeCoverageTransportMetadataSchema, metadata)
+      : parseWithPolicy(
+          knowledgeEvidenceSelectorTransportMetadataSchema,
+          metadata,
+        );
+    const policyVersion = purpose === subscriptionRuntimeKnowledgeCoveragePurpose
+      ? knowledgeCoveragePolicyVersion
+      : knowledgeEvidenceSelectorPolicyVersion;
     return {
       context: {
         meetingId: parsed.meetingId,
-        policyVersion: knowledgeCoveragePolicyVersion,
+        policyVersion,
         transcriptId: parsed.transcriptId,
         transcriptVersion: parsed.transcriptVersion,
       },
       task: fixedTaskMetadata(
         subscriptionRuntimeModel,
-        knowledgeCoveragePolicyVersion,
+        policyVersion,
         subscriptionRuntimeReasoningEffort,
       ),
     };
@@ -200,11 +216,20 @@ export function assertCanonicalProfile(
     }, parseWithPolicy);
     return;
   }
-  if (request.context.purpose === subscriptionRuntimeKnowledgeCoveragePurpose) {
-    const metadata = parseWithPolicy(
-      knowledgeCoverageContextMetadataSchema,
-      request.context.metadata,
-    );
+  if (
+    request.context.purpose === subscriptionRuntimeKnowledgeCoveragePurpose ||
+    request.context.purpose === subscriptionRuntimeKnowledgeEvidenceSelectorPurpose
+  ) {
+    const metadata =
+      request.context.purpose === subscriptionRuntimeKnowledgeCoveragePurpose
+        ? parseWithPolicy(
+            knowledgeCoverageContextMetadataSchema,
+            request.context.metadata,
+          )
+        : parseWithPolicy(
+            knowledgeEvidenceSelectorContextMetadataSchema,
+            request.context.metadata,
+          );
     reconstructProfileMetadata(request.context.purpose, {
       ...commonMetadata,
       transcriptId: metadata.transcriptId,
@@ -234,7 +259,9 @@ export function assertExactOutputSchema(
           ? providerKnowledgeAnswerJsonSchema
           : purpose === subscriptionRuntimeKnowledgeCoveragePurpose
             ? providerKnowledgeCoverageExtractJsonSchema
-        : undefined;
+            : purpose === subscriptionRuntimeKnowledgeEvidenceSelectorPurpose
+              ? focusedEvidenceSelectorJsonSchema
+              : undefined;
   if (
     expectedSchema === undefined ||
     canonicalJsonSha256(value) !== canonicalJsonSha256(expectedSchema)

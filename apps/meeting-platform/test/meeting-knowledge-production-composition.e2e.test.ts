@@ -47,7 +47,7 @@ import {
 } from "../src/composition/historical-memory.js";
 import { MeetingKnowledgeGroundedAnswerAcl } from
   "../src/adapters/outbound/meeting-knowledge-grounded-answer-acl.js";
-import { localFinalReplyPolicy } from "../src/composition/meeting-knowledge.js";
+import { localFinalReplyPolicy, meetingKnowledgeProviderLeasePolicy } from "../src/composition/meeting-knowledge.js";
 import {
   allowOnlySyntheticRoom,
   botApplicationIdentity,
@@ -67,9 +67,12 @@ import {
 } from "./meeting-knowledge-production-composition-fixtures.js";
 import { proveComposedGroundedVoice } from "./meeting-knowledge-composed-voice-e2e.js";
 import { qualifyLiveProjectionReply } from "./meeting-knowledge-live-reply-e2e.js";
+import { prepareHistoricalReadyPublicationFence } from "./meeting-knowledge-historical-generation-e2e.js";
 import {
   assertAggregateStageBudget,
+  assertPersistedCoverageAnalysis,
   assertProviderWire,
+  disposableExternalPostgresUrl,
   focusedReferenceKey,
   qualifySupersessionAndDeletion,
   runQualificationStage,
@@ -78,24 +81,22 @@ import {
 } from "./meeting-knowledge-production-composition-diagnostics.js";
 
 const postgresImage = "postgres:18.4-alpine@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15";
-const postgresPort = 5_432;
-const qualificationOuterBudgetMs = 600_000;
-const qualificationStageBudgets = Object.freeze({
-  composedGroundedVoice: 100_000,
-  focusedRetrievalRecall: 160_000,
-  indexRestartReplay: 40_000,
-  sharedFocusedAndExhaustiveAnswer: 160_000,
-  liveProjectionReply: 30_000,
+const postgresPort = 5_432, qualificationOuterBudgetMs = 600_000;
+const qualificationStageBudgets = Object.freeze({ composedGroundedVoice: 100_000, focusedRetrievalRecall: 160_000,
+  indexRestartReplay: 40_000, liveProjectionReply: 30_000, sharedFocusedAndExhaustiveAnswer: 160_000,
   supersessionAndDisabledDeletionDrain: 100_000,
 });
-assertAggregateStageBudget(
-  qualificationOuterBudgetMs,
-  Object.values(qualificationStageBudgets),
-);
-let container: StartedTestContainer | undefined;
-let database: Pool | undefined;
+assertAggregateStageBudget(qualificationOuterBudgetMs,
+  Object.values(qualificationStageBudgets));
+let container: StartedTestContainer | undefined, database: Pool | undefined;
+
+const externalPostgresUrl = disposableExternalPostgresUrl(process.env);
 
 describe("Meeting Knowledge production-composition qualification", () => {
+  it("leases one provider attempt across selector, answer repair, and safety deadlines", () => {
+    expect([meetingKnowledgeProviderLeasePolicy.maximumGroundedAnswerExecutions, localFinalReplyPolicy.jobLeaseSeconds]).toEqual([2, (meetingKnowledgeProviderLeasePolicy.focusedEvidenceSelectorTimeoutMilliseconds + (meetingKnowledgeProviderLeasePolicy.maximumGroundedAnswerExecutions * meetingKnowledgeProviderLeasePolicy.groundedAnswerTimeoutMilliseconds) + meetingKnowledgeProviderLeasePolicy.safetyMilliseconds) / 1_000]);
+  });
+
   it("degrades transient Infinity health without blocking application readiness", async () => {
     const transientPool = new Pool({
       connectionString: "postgresql://synthetic.invalid/never-connected",
@@ -120,25 +121,29 @@ describe("Meeting Knowledge production-composition qualification", () => {
 
 describe("Meeting Knowledge mandatory PostgreSQL qualification", () => {
   beforeAll(async () => {
-    container = await new GenericContainer(postgresImage)
-      .withEnvironment({
-        POSTGRES_DB: "meeting_knowledge_e2e",
-        POSTGRES_PASSWORD: "synthetic-only",
-        POSTGRES_USER: "meeting_knowledge_e2e",
-      })
-      .withExposedPorts(postgresPort)
-      .withWaitStrategy(
-        Wait.forLogMessage(/database system is ready to accept connections/u, 2),
-      )
-      .withStartupTimeout(120_000)
-      .start();
-    database = new Pool({
-      database: "meeting_knowledge_e2e",
-      host: container.getHost(),
-      password: "synthetic-only",
-      port: container.getMappedPort(postgresPort),
-      user: "meeting_knowledge_e2e",
-    });
+    if (externalPostgresUrl === undefined) {
+      container = await new GenericContainer(postgresImage)
+        .withEnvironment({
+          POSTGRES_DB: "meeting_knowledge_e2e",
+          POSTGRES_PASSWORD: "synthetic-only",
+          POSTGRES_USER: "meeting_knowledge_e2e",
+        })
+        .withExposedPorts(postgresPort)
+        .withWaitStrategy(
+          Wait.forLogMessage(/database system is ready to accept connections/u, 2),
+        )
+        .withStartupTimeout(120_000)
+        .start();
+      database = new Pool({
+        database: "meeting_knowledge_e2e",
+        host: container.getHost(),
+        password: "synthetic-only",
+        port: container.getMappedPort(postgresPort),
+        user: "meeting_knowledge_e2e",
+      });
+    } else {
+      database = new Pool({ connectionString: externalPostgresUrl });
+    }
     await database.query("SELECT 1");
     await new PostgresMigrationRunner(database).migrate();
   }, 150_000);
@@ -169,14 +174,10 @@ describe("Meeting Knowledge mandatory PostgreSQL qualification", () => {
         timings,
         (signal) => qualifyFocusedRetrieval(qualifiedRuntime, infinity, signal),
       );
-      await runQualificationStage("shared_focused_and_exhaustive_answer", qualificationStageBudgets.sharedFocusedAndExhaustiveAnswer, timings, (signal) =>
+      const historicalReadyFence = await runQualificationStage("shared_focused_and_exhaustive_answer", qualificationStageBudgets.sharedFocusedAndExhaustiveAnswer, timings, (signal) =>
         qualifySharedAnswers({
-          authorization,
-          current: indexed.current,
-          historicalRetrieval,
-          pool,
-          runtime: qualifiedRuntime,
-          signal,
+          authorization, current: indexed.current, historicalRetrieval,
+          pool, runtime: qualifiedRuntime, signal,
         })
       );
       await runQualificationStage(
@@ -210,6 +211,7 @@ describe("Meeting Knowledge mandatory PostgreSQL qualification", () => {
           indexed.repository,
           indexed.historical,
           signal,
+          historicalReadyFence,
         ),
       );
       expect(timings.map(({ stage }) => stage)).toEqual([
@@ -228,16 +230,9 @@ describe("Meeting Knowledge mandatory PostgreSQL qualification", () => {
   }, 600_000);
 });
 
-type FocusedHistoricalRetrieval = ReturnType<
-  PlatformHistoricalMemoryRuntime["createFocusedRetrieval"]
->;
+type FocusedHistoricalRetrieval = ReturnType<PlatformHistoricalMemoryRuntime["createFocusedRetrieval"]>;
 
-interface IndexedComposition {
-  readonly current: MeetingSnapshot;
-  readonly historical: MeetingSnapshot;
-  readonly repository: PostgresMeetingRepository;
-  readonly runtime: PlatformHistoricalMemoryRuntime;
-}
+interface IndexedComposition { readonly current: MeetingSnapshot; readonly historical: MeetingSnapshot; readonly repository: PostgresMeetingRepository; readonly runtime: PlatformHistoricalMemoryRuntime; }
 
 async function indexAndRestart(
   pool: Pool,
@@ -388,7 +383,7 @@ async function qualifySharedAnswers(input: {
   readonly pool: Pool;
   readonly runtime: PlatformHistoricalMemoryRuntime;
   readonly signal: AbortSignal;
-}): Promise<void> {
+}): Promise<ReturnType<typeof prepareHistoricalReadyPublicationFence>> {
   input.signal.throwIfAborted();
   const evidence = new PostgresFinalReplyEvidence(
     input.pool,
@@ -403,14 +398,14 @@ async function qualifySharedAnswers(input: {
   }
   const binding = QuestionBinding.create({
     authorizationDigest: "a".repeat(64),
-    authorizationPolicyVersion: "synthetic-room-policy.v1",
+    authorizationPolicyVersion: localFinalReplyPolicy.authorizationPolicyVersion,
     authorizationPrincipalRef: "synthetic-principal",
     ...currentAuthority,
     deliveryContainerId: currentAuthority.projectionTargetContainerId,
     expectedLocale: "en",
-    policyVersion: "meeting-knowledge.focused-memory-final-reply.v2",
+    policyVersion: localFinalReplyPolicy.policyVersion,
     questionHash: "b".repeat(64),
-    questionId: "synthetic-question-1",
+    questionId: "666666666666666666",
     requesterSubject: "c".repeat(64),
   }).toSnapshot();
   const sameRoom = new SameRoomFocusedMemoryRetrieval({
@@ -477,6 +472,9 @@ async function qualifySharedAnswers(input: {
     pool: input.pool,
     runtime: input.runtime,
     signal: input.signal,
+  });
+  return prepareHistoricalReadyPublicationFence({
+    binding, evidence, historicalMeetingId, plan: focusedPlan, pool: input.pool,
   });
 }
 
@@ -550,7 +548,15 @@ async function qualifyFocusedAndExhaustiveGeneration(input: {
     throw new Error("exhaustive coverage did not reach synthesis");
   }
   expect(exhaustive.coverageBitmap.every(Boolean)).toBe(true);
-  expect(exhaustive.coverageReduction.payload).toMatchObject({ turnsReviewed: 736 });
+  const uniqueAuthorizedSlices = await assertPersistedCoverageAnalysis(
+    input.pool,
+    scopeId,
+    roomId,
+    input.signal,
+  );
+  expect(exhaustive.coverageReduction.payload).toMatchObject({
+    turnsReviewed: uniqueAuthorizedSlices,
+  });
   expect(exhaustive.candidates.length).toBeLessThanOrEqual(256);
   expect(exhaustive.candidates).toContainEqual(expect.objectContaining({
     turnId: "history-turn-0719",
@@ -812,8 +818,6 @@ async function qualifyComposedGroundedVoice(input: {
 }
 
 function requiredDatabase(): Pool {
-  if (database !== undefined) {
-    return database;
-  }
-  throw new Error("mandatory PostgreSQL qualification database was not initialized");
+  if (database === undefined) { throw new Error("mandatory PostgreSQL qualification database was not initialized"); }
+  return database;
 }

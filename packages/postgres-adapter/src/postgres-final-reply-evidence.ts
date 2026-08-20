@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import {
   MeetingKnowledgeIdentity,
   type CanonicalEvidenceTurn,
@@ -16,59 +14,25 @@ import {
 import type { Pool, PoolClient } from "pg";
 
 import { loadLiveReplyAuthority } from "./postgres-live-reply-evidence.js";
+import { loadCurrentHistoricalReferenceRows } from
+  "./postgres-final-reply-historical-evidence.js";
+import {
+  canonicalFinalReplyEvidenceHash,
+  canonicalFinalReplyTurnHash,
+  canonicalFinalReplyTurns,
+  sliceReferencedTurn,
+} from "./postgres-meeting-knowledge-codecs.js";
+
+export { canonicalFinalReplyTurnHash } from "./postgres-meeting-knowledge-codecs.js";
 
 interface StoredMeetingRow {
   readonly meeting_id?: string;
   readonly snapshot: unknown;
 }
 
-interface ReferencedMeetingRow extends StoredMeetingRow {
-  readonly historical_current: boolean;
-  readonly meeting_id: string;
-}
-
 export interface ResolvedFinalReplyAuthority {
   readonly binding: CurrentFinalReplyBinding;
   readonly turns: readonly CanonicalEvidenceTurn[];
-}
-
-function canonicalTurns(snapshot: MeetingSnapshot): readonly CanonicalEvidenceTurn[] {
-  const transcript = snapshot.transcript;
-  if (transcript === null) {
-    return [];
-  }
-  return Object.freeze(transcript.turns.map((turn) => Object.freeze({
-    endMs: turn.endMs,
-    speakerId: turn.speakerId,
-    startMs: turn.startMs,
-    text: turn.text,
-    turnId: turn.turnId,
-  })).toSorted((left, right) =>
-    left.startMs - right.startMs ||
-    left.endMs - right.endMs ||
-    (left.turnId < right.turnId ? -1 : left.turnId > right.turnId ? 1 : 0)
-  ));
-}
-
-function canonicalEvidenceHash(snapshot: MeetingSnapshot): string {
-  if (snapshot.transcript === null) {
-    throw new Error("final reply authority requires an accepted transcript");
-  }
-  return createHash("sha256").update(JSON.stringify({
-    transcriptId: snapshot.transcript.transcriptId,
-    turns: canonicalTurns(snapshot),
-    version: snapshot.transcript.version,
-  }), "utf8").digest("hex");
-}
-
-export function canonicalFinalReplyTurnHash(turn: CanonicalEvidenceTurn): string {
-  return createHash("sha256").update(JSON.stringify({
-    endMs: turn.endMs,
-    speakerId: turn.speakerId,
-    startMs: turn.startMs,
-    text: turn.text,
-    turnId: turn.turnId,
-  }), "utf8").digest("hex");
 }
 
 export function resolveFinalReplyAuthority(
@@ -103,11 +67,11 @@ export function resolveFinalReplyAuthority(
   if (identity === null || identity.humanActorIds.length === 0) {
     return null;
   }
-  const turns = canonicalTurns(snapshot);
+  const turns = canonicalFinalReplyTurns(snapshot);
   if (!turns.some(({ speakerId }) => identity.supportsHumanActor(speakerId))) {
     return null;
   }
-  const evidenceHash = canonicalEvidenceHash(snapshot);
+  const evidenceHash = canonicalFinalReplyEvidenceHash(snapshot);
   return Object.freeze({
     binding: Object.freeze({
       botApplicationIdentity: publisherIdentity,
@@ -269,10 +233,15 @@ export class PostgresFinalReplyEvidence implements FinalReplyEvidencePort {
       references.length === 0 ||
       references.length > 256 ||
       new Set(references.map((reference) => [
+        reference.historicalSource?.releaseId ?? "current",
+        reference.historicalSource?.indexGeneration ?? "current",
+        reference.historicalSource?.candidateLocator ?? "current",
         reference.meetingId,
         reference.transcriptId,
         reference.transcriptVersion,
         reference.turnId,
+        reference.sourceStartCodePoint ?? "whole",
+        reference.sourceEndCodePoint ?? "whole",
       ].join("\u0000"))).size !== references.length
     ) {
       return { status: "invalid_selection" } as const;
@@ -285,34 +254,18 @@ export class PostgresFinalReplyEvidence implements FinalReplyEvidencePort {
       return { status: "stale" } as const;
     }
     const meetingIds = [...new Set(references.map(({ meetingId }) => meetingId))];
-    const historicalMeetingIds = meetingIds.filter((meetingId) =>
-      meetingId !== binding.meetingId
+    const referencedRows = await loadCurrentHistoricalReferenceRows(
+      this.pool,
+      binding,
+      references,
     );
-    const result = await this.pool.query<ReferencedMeetingRow>(
-      `
-        SELECT meeting.meeting_id,
-               meeting.snapshot,
-               EXISTS (
-                 SELECT 1
-                 FROM meeting_core.historical_memory_sync AS historical
-                 WHERE historical.meeting_id = meeting.meeting_id
-                   AND historical.is_current
-                   AND historical.operation = 'index'
-                   AND historical.state = 'applied'
-                   AND historical.transcript_id =
-                     meeting.snapshot -> 'transcript' ->> 'transcriptId'
-                   AND historical.transcript_version =
-                     (meeting.snapshot -> 'transcript' ->> 'version')::bigint
-               ) AS historical_current
-        FROM meeting_core.meetings AS meeting
-        WHERE meeting.meeting_id = ANY($1::text[])
-      `,
-      [historicalMeetingIds],
-    );
+    if (referencedRows === null) {
+      return { status: "invalid_selection" } as const;
+    }
     const authorities = new Map<string, ResolvedFinalReplyAuthority>([
       [binding.meetingId, anchor],
     ]);
-    for (const row of result.rows) {
+    for (const row of referencedRows) {
       if (row.meeting_id === binding.meetingId) {
         continue;
       }
@@ -320,14 +273,13 @@ export class PostgresFinalReplyEvidence implements FinalReplyEvidencePort {
       if (
         authority === null ||
         authority.binding.scopeId !== binding.scopeId ||
-        authority.binding.roomId !== binding.roomId ||
-        !row.historical_current
+        authority.binding.roomId !== binding.roomId
       ) {
         return { status: "invalid_selection" } as const;
       }
       authorities.set(row.meeting_id, authority);
     }
-    if (authorities.size !== meetingIds.length) {
+    if (meetingIds.some((meetingId) => !authorities.has(meetingId))) {
       return { status: "invalid_selection" } as const;
     }
     const turns = references.flatMap((reference) => {
@@ -340,19 +292,29 @@ export class PostgresFinalReplyEvidence implements FinalReplyEvidencePort {
         return [];
       }
       const turn = authority.turns.find(({ turnId }) => turnId === reference.turnId);
-      const turnHash = turn === undefined ? null : canonicalFinalReplyTurnHash(turn);
+      const sliced = turn === undefined ? null : sliceReferencedTurn(turn, reference);
+      const turnHash = sliced === null ? null : canonicalFinalReplyTurnHash(sliced);
       if (
-        turn === undefined ||
+        sliced === null ||
         turnHash === null ||
-        !authority.binding.humanActorIds.includes(turn.speakerId) ||
+        !authority.binding.humanActorIds.includes(sliced.speakerId) ||
         reference.turnHash !== turnHash
       ) {
         return [];
       }
       return [Object.freeze({
-        ...turn,
+        ...sliced,
         source: Object.freeze({
+          ...(reference.historicalSource === undefined
+            ? {}
+            : { historicalSource: reference.historicalSource }),
           meetingId: reference.meetingId,
+          ...(reference.sourceEndCodePoint === undefined
+            ? {}
+            : {
+                sourceEndCodePoint: reference.sourceEndCodePoint,
+                sourceStartCodePoint: reference.sourceStartCodePoint,
+              }),
           transcriptId: reference.transcriptId,
           transcriptVersion: reference.transcriptVersion,
         }),

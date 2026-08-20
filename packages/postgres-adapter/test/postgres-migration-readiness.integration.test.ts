@@ -253,7 +253,7 @@ describe("PostgresMigrationRunner and PostgresSchemaReadiness validation", () =>
 
       await expect(new PostgresMigrationRunner(isolated.pool, {
         migrations,
-      }).migrate()).resolves.toEqual({ appliedVersions: [30], version: 30 });
+      }).migrate()).resolves.toEqual({ appliedVersions: [30, 31], version: 31 });
       const migrated = await isolated.pool.query(
         "SELECT source_id, revision::float8 AS revision, snapshot FROM meeting_routing.source_configurations",
       );

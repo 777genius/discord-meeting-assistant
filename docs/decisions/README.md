@@ -45,6 +45,11 @@
 - [ADR-0041: Fence binding recovery from legacy workers](0041-fence-binding-recovery-from-legacy-workers.md)
 - [ADR-0042: Provider-neutral meeting source routing](0042-provider-neutral-meeting-source-routing.md)
 - [ADR-0043: Attach the authoritative transcript to final publication](0043-attach-authoritative-transcript-to-final-publication.md)
+- [ADR-0044: Bounded evidence selector accounting](0044-bounded-evidence-selector.md)
+- [ADR-0045: Source-bound Infinity index semantics and migration](0045-source-bound-infinity-index-semantics.md)
+- [ADR-0046: Scoped Infinity deletion reconciliation](0046-scoped-infinity-deletion-reconciliation.md)
+- [ADR-0047: Active-only scoped document enumeration](0047-active-only-scoped-document-enumeration.md)
+- [ADR-0048: Exact-head Infinity deletion qualification](0048-exact-head-infinity-deletion-qualification.md)
 
 ## Superseded
 

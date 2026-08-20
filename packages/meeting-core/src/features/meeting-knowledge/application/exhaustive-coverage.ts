@@ -35,13 +35,15 @@ import type {
   HistoricalAuthorizationPort,
 } from "./ports/historical-grounding.js";
 import type {
+  HistoricalEvidenceSliceV1,
   HistoricalOpaqueIdPort,
-  LocallyRehydratedEvidenceBlockV1,
 } from "./ports/historical-memory.js";
 import type {
   HistoricalEvidenceAuthority,
   HistoricalSyncStore,
 } from "./ports/historical-state.js";
+import type { HistoricalEmbeddingTokenizerPort } from
+  "./ports/historical-embedding-tokenizer.js";
 
 export class ExhaustiveCoverage {
   readonly #policy: ExhaustiveCoveragePolicyV1;
@@ -56,6 +58,7 @@ export class ExhaustiveCoverage {
       readonly ids: HistoricalOpaqueIdPort;
       readonly reducer: CoverageReducerPort;
       readonly sync: HistoricalSyncStore;
+      readonly tokenizer?: () => HistoricalEmbeddingTokenizerPort | undefined;
     },
     policy: ExhaustiveCoveragePolicyV1 = DEFAULT_EXHAUSTIVE_COVERAGE_POLICY,
     twoHourProfile: TwoHourHistoricalRetrievalProfileV1 =
@@ -122,7 +125,7 @@ export class ExhaustiveCoverage {
     if (loaded.blocks.length > this.#policy.maximumBlocks) {
       return { reason: "exhaustive_block_bound_not_qualified", status: "unsupported" };
     }
-    if (coverageInputUpperBoundBytes(loaded.blocks, request.question) >
+    if (coverageInputUpperBoundBytes(loaded.analysisTurns, request.question) >
       this.#policy.maximumCumulativeEvidenceUtf8Bytes) {
       return { reason: "exhaustive_evidence_budget_exceeded", status: "unsupported" };
     }
@@ -173,10 +176,13 @@ export class ExhaustiveCoverage {
           reduction: validateReduction(
             stored,
             new Set(loaded.blocks.map(({ candidateLocator }) => candidateLocator)),
-            new Set(loaded.blocks.flatMap((block) =>
-              block.turns.map(({ turnId }) => selectedTurnIdentity({
+            new Set(loaded.blocks.flatMap((block, ordinal) =>
+              (loaded.analysisTurns[ordinal] ?? []).map((turn) => selectedTurnIdentity({
                 blockLocator: block.candidateLocator,
-                turnId,
+                sourceEndCodePoint: turn.sourceEndCodePoint,
+                sourceRef: turn.sourceRef,
+                sourceStartCodePoint: turn.sourceStartCodePoint,
+                turnId: turn.turnId,
               }))
             )),
             this.#policy,
@@ -340,12 +346,12 @@ export class ExhaustiveCoverage {
 }
 
 function coverageInputUpperBoundBytes(
-  blocks: readonly LocallyRehydratedEvidenceBlockV1[],
+  analysisTurns: readonly (readonly HistoricalEvidenceSliceV1[])[],
   question: string,
 ): number {
   const encoder = new TextEncoder();
   const questionBytes = encoder.encode(question).byteLength;
-  return blocks.reduce((total, block) => total + questionBytes + 1_024 +
-    block.turns.reduce((turnTotal, turn) =>
+  return analysisTurns.reduce((total, turns) => total + questionBytes + 1_024 +
+    turns.reduce((turnTotal, turn) =>
       turnTotal + encoder.encode(turn.text).byteLength + 512, 0), 0);
 }

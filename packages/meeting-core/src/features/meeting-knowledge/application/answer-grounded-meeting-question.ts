@@ -283,7 +283,14 @@ export class AnswerGroundedMeetingQuestion {
         historicalTurns.push(...block.turns.map((turn) => Object.freeze({
           ...turn,
           source: Object.freeze({
+            historicalSource: Object.freeze({
+              candidateLocator: block.candidateLocator,
+              indexGeneration: block.indexGeneration,
+              releaseId: block.binding.releaseId,
+            }),
             meetingId: block.binding.meetingId,
+            sourceEndCodePoint: turn.sourceEndCodePoint,
+            sourceStartCodePoint: turn.sourceStartCodePoint,
             transcriptId: block.binding.transcriptId,
             transcriptVersion: block.binding.transcriptVersion,
           }),

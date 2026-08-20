@@ -46,11 +46,23 @@ export {
   DEFAULT_HISTORICAL_EVIDENCE_BLOCK_POLICY,
   HistoricalIndexPlanError,
   buildHistoricalIndexPlan,
+  buildHistoricalIndexPlanFromPreparedWindows,
+  canonicalHistoricalPlannerJson,
   buildHistoricalRoomTopology,
   buildHistoricalTopology,
   rehydrateHistoricalBlock,
   type HistoricalEvidenceBlockPolicyV1,
 } from "./application/historical-index-plan.js";
+export {
+  estimateHistoricalEmbeddingTokens,
+  historicalEmbeddingText,
+  partitionHistoricalEmbeddingWindows,
+  planHistoricalEmbeddingWindows,
+  type HistoricalEmbeddingPartitions,
+  type HistoricalEmbeddingWindowPolicy,
+  type HistoricalWindowPlanningAction,
+  type HistoricalTurnProjection,
+} from "./application/historical-embedding-windows.js";
 export {
   HistoricalContractCodecError,
   decodeCoverageExtractV1,
@@ -77,7 +89,15 @@ export {
   type FocusedRetrievalPolicyV1,
   type FocusedRetrievalResultV1,
 } from "./application/historical-retrieval.js";
-export { decomposeHistoricalQuery } from "./application/historical-retrieval-ranking.js";
+export {
+  decomposeHistoricalQuery,
+} from "./application/historical-retrieval-ranking.js";
+export {
+  resolveRequestedSpeakerAliases,
+  resolveRequestedSpeakerIds,
+  type RequestedSpeakerAliasV1,
+  type SpeakerAliasMapV1,
+} from "./application/speaker-alias-resolution.js";
 export {
   SameRoomFocusedMemoryRetrieval,
   type CanonicalEvidenceTurnHashPort,
@@ -142,11 +162,25 @@ export type {
 export {
   CoverageExtractionCapacityError,
 } from "./application/ports/historical-grounding.js";
+export {
+  HistoricalIndexPlannerUnavailableError,
+} from "./application/ports/historical-index-planner.js";
+export type {
+  HistoricalIndexPlannerOptionsV1,
+  HistoricalIndexPlannerPort,
+  HistoricalIndexPlannerReceiptV1,
+  HistoricalIndexPlannerResultV1,
+  HistoricalPreparedSegmentV1,
+  HistoricalPreparedWindowV1,
+  HistoricalReceiptDigestPort,
+  HistoricalWindowPlanningProfileV1,
+} from "./application/ports/historical-index-planner.js";
 export type {
   HistoricalBlockManifestV1,
   HistoricalCandidateLocatorV1,
   HistoricalDeleteRequestV1,
   HistoricalDeleteResultV1,
+  HistoricalEvidenceSliceV1,
   HistoricalIndexDocumentV1,
   HistoricalIndexPlanV1,
   HistoricalIndexResultV1,
@@ -156,6 +190,7 @@ export type {
   HistoricalSearchRequestV1,
   HistoricalSearchResultV1,
   HistoricalTopologyV1,
+  HistoricalTurnSourceV1,
   LocallyRehydratedEvidenceBlockV1,
 } from "./application/ports/historical-memory.js";
 export type {
@@ -169,6 +204,15 @@ export type {
   HistoricalSyncRetryV1,
   HistoricalSyncStore,
 } from "./application/ports/historical-state.js";
+export {
+  HistoricalEmbeddingTokenizerQualificationError,
+  historicalEmbeddingTokenProfile,
+  historicalEmbeddingTokenProfileFromProfile,
+  prepareQualifiedHistoricalEmbeddingTokenizer,
+  type HistoricalEmbeddingRuntimeCompatibilityV1,
+  type HistoricalEmbeddingTokenizerPort,
+  type HistoricalEmbeddingTokenizerProfileV1,
+} from "./application/ports/historical-embedding-tokenizer.js";
 export {
   resolveAnswerLocale,
   type AnswerLocale,
@@ -194,6 +238,10 @@ export {
   type GroundingSafetyLimits,
   type RehydratedEvidenceTurn,
 } from "./domain/grounding-plan.js";
+export {
+  historicalEvidenceSourceKey,
+  type HistoricalEvidenceSource,
+} from "./domain/historical-evidence-source.js";
 export {
   GroundedAnswer,
   type FixedFinalReplyOutcome,
@@ -222,6 +270,15 @@ export {
   ProcessFinalReplyJob,
   type ProcessFinalReplyResult,
 } from "./application/process-final-reply.js";
+export {
+  SelectFocusedEvidence,
+  type FocusedEvidenceSelection,
+} from "./application/select-focused-evidence.js";
+export type {
+  FocusedEvidenceSelectionCandidateV1,
+  FocusedEvidenceSelectionResultV1,
+  FocusedEvidenceSelectorPort,
+} from "./application/ports/focused-evidence-selector.js";
 export type {
   AnswerEffectDeliveryResult,
   AnswerEffectReservation,

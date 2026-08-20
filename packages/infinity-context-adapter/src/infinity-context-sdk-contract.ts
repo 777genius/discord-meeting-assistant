@@ -1,9 +1,10 @@
-import type {
-  HistoricalCandidateLocatorV1,
-  HistoricalDeleteRequestV1,
-  HistoricalIndexPlanV1,
-  HistoricalSearchRequestV1,
-  HistoricalTopologyV1,
+import {
+  type HistoricalCandidateLocatorV1,
+  type HistoricalDeleteRequestV1,
+  type HistoricalIndexDocumentV1,
+  type HistoricalIndexPlanV1,
+  type HistoricalSearchRequestV1,
+  type HistoricalTopologyV1,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import {
   InfinityContextError,
@@ -12,9 +13,9 @@ import {
   type InfinityContextClient,
 } from "@infinity-context/sdk";
 
-export const CANDIDATE_SOURCE_TYPE = "meeting_evidence_locator";
+const CANDIDATE_SOURCE_TYPE = "meeting_evidence_locator";
 export const DOCUMENT_SOURCE_TYPE = "meeting_final_human_evidence";
-const MAXIMUM_SCOPE_DOCUMENTS = 100;
+const MAXIMUM_SCOPE_DOCUMENTS = 500;
 const acceptedProcessStatuses = new Set([
   "already_indexed_or_pending",
   "indexed",
@@ -24,6 +25,7 @@ const acceptedProcessStatuses = new Set([
 const CANDIDATE_LOCATOR_PREFIX = "mkcandidate1.";
 const MAXIMUM_PROVIDER_ITEMS_MULTIPLIER = 4;
 const MAXIMUM_PROVIDER_SOURCE_REFS_PER_ITEM = 16;
+const MAXIMUM_QUALIFIED_EMBEDDING_TOKENS = 128;
 
 type HistoricalDeleteRequestInputV1 = Omit<HistoricalDeleteRequestV1, "schemaVersion"> & {
   readonly schemaVersion: number;
@@ -90,12 +92,35 @@ export function documentId(document: DocumentRecord): string {
   return value;
 }
 
-export function isNotFound(error: unknown): boolean {
-  return error instanceof InfinityContextError && error.statusCode === 404;
+export async function ingestHistoricalDocument(
+  client: InfinityContextClient,
+  topology: HistoricalTopologyV1,
+  document: HistoricalIndexDocumentV1,
+  signal: AbortSignal,
+): Promise<DocumentRecord> {
+  return (await client.documents.ingestDocument({
+    classification: "internal",
+    idempotencyKey: document.mutationId,
+    memoryScopeExternalRef: topology.roomScopeExternalRef,
+    signal,
+    sourceExternalId: document.manifest.documentExternalId,
+    sourceRefs: [{
+      source_id: document.manifest.candidateLocator,
+      source_type: CANDIDATE_SOURCE_TYPE,
+    }, ...document.manifest.turnSources.map(({ sourceRef }) => ({
+      source_id: sourceRef,
+      source_type: "meeting_evidence_turn",
+    }))],
+    sourceType: DOCUMENT_SOURCE_TYPE,
+    spaceSlug: topology.spaceSlug,
+    text: document.embeddingText,
+    threadExternalRef: topology.threadExternalRef,
+    title: document.title,
+  })).data;
 }
 
-export function isMethodNotAllowed(error: unknown): boolean {
-  return error instanceof InfinityContextError && error.statusCode === 405;
+export function isNotFound(error: unknown): boolean {
+  return error instanceof InfinityContextError && error.statusCode === 404;
 }
 
 export function failure<
@@ -170,7 +195,10 @@ function isBoundedInteger(value: number, minimum: number, maximum: number): bool
   return Number.isSafeInteger(value) && value >= minimum && value <= maximum;
 }
 
-export function validIndexPlan(request: HistoricalIndexPlanInputV1): boolean {
+export function validIndexPlan(
+  request: HistoricalIndexPlanInputV1,
+  expectedTokenProfile: string,
+): boolean {
   const candidateLocatorSet = new Set(
     request.documents.map(({ manifest }) => manifest.candidateLocator),
   );
@@ -190,7 +218,23 @@ export function validIndexPlan(request: HistoricalIndexPlanInputV1): boolean {
     request.documents.every((document) =>
       boundedString(document.manifest.candidateLocator, 200) &&
       boundedString(document.manifest.documentExternalId, 200) &&
+      document.manifest.embeddingTokenProfile === expectedTokenProfile &&
+      isBoundedInteger(document.manifest.embeddingTokenEstimate, 1,
+        document.manifest.embeddingTokenLimit) &&
+      isBoundedInteger(document.manifest.embeddingTokenLimit, 16,
+        MAXIMUM_QUALIFIED_EMBEDDING_TOKENS) &&
+      document.manifest.turnSources.length > 0 &&
+      document.manifest.turnSources.length < MAXIMUM_PROVIDER_SOURCE_REFS_PER_ITEM &&
+      document.manifest.turnSources.every((source) =>
+        boundedString(source.sourceRef, 200) &&
+        boundedString(source.speakerId, 200) &&
+        boundedString(source.turnId, 200) &&
+        source.endMs > source.startMs &&
+        source.sourceEndCodePoint > source.sourceStartCodePoint &&
+        source.embeddingEndCodePoint > source.embeddingStartCodePoint
+      ) &&
       boundedString(document.mutationId, 200) &&
+      boundedString(document.embeddingText, 4_096) &&
       boundedString(document.remoteText, 32_768) &&
       boundedString(document.title, 200)
     );
@@ -208,6 +252,15 @@ export function validSearchRequest(request: HistoricalSearchRequestInputV1): boo
 
 export function validDeleteRequest(request: HistoricalDeleteRequestInputV1): boolean {
   const documentExternalIds = new Set(request.documentExternalIds);
+  const reconciliationExternalIds = new Set(request.reconciliationDocuments.map(
+    ({ manifest }) => manifest.documentExternalId,
+  ));
+  const mutationIds = new Set(request.reconciliationDocuments.map(
+    ({ mutationId }) => mutationId,
+  ));
+  const ordinals = new Set(request.reconciliationDocuments.map(
+    ({ manifest }) => manifest.ordinal,
+  ));
   return request.schemaVersion === 1 &&
     boundedString(request.deleteMutationId, 200) &&
     boundedString(request.topology.roomScopeExternalRef, 200) &&
@@ -215,12 +268,36 @@ export function validDeleteRequest(request: HistoricalDeleteRequestInputV1): boo
     boundedString(request.topology.threadExternalRef, 200) &&
     request.documentExternalIds.length <= MAXIMUM_SCOPE_DOCUMENTS &&
     Object.keys(request.remoteDocumentIds).length <= MAXIMUM_SCOPE_DOCUMENTS &&
+    request.reconciliationDocuments.length <= MAXIMUM_SCOPE_DOCUMENTS &&
+    reconciliationExternalIds.size === request.reconciliationDocuments.length &&
+    mutationIds.size === request.reconciliationDocuments.length &&
+    ordinals.size === request.reconciliationDocuments.length &&
+    sameStringSets(documentExternalIds, reconciliationExternalIds) &&
     request.documentExternalIds.every((value) => boundedString(value, 200)) &&
+    request.reconciliationDocuments.every((document) =>
+      documentExternalIds.has(document.manifest.documentExternalId) &&
+      document.manifest.indexGeneration === request.topology.indexGeneration &&
+      isBoundedInteger(document.manifest.ordinal, 0, MAXIMUM_SCOPE_DOCUMENTS - 1) &&
+      boundedString(document.manifest.candidateLocator, 200) &&
+      boundedString(document.manifest.documentExternalId, 200) &&
+      boundedString(document.mutationId, 200) &&
+      boundedString(document.embeddingText, 4_096) &&
+      boundedString(document.title, 200) &&
+      document.manifest.turnSources.length > 0 &&
+      document.manifest.turnSources.length < MAXIMUM_PROVIDER_SOURCE_REFS_PER_ITEM &&
+      document.manifest.turnSources.every(({ sourceRef }) =>
+        boundedString(sourceRef, 200)
+      )
+    ) &&
     Object.entries(request.remoteDocumentIds).every(([externalId, remoteId]) =>
       boundedString(externalId, 200) &&
       boundedString(remoteId, 200) &&
       (request.mode !== "release" || documentExternalIds.has(externalId))
     );
+}
+
+function sameStringSets(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
+  return left.size === right.size && [...left].every((value) => right.has(value));
 }
 
 export function candidateLocators(
@@ -304,34 +381,4 @@ function providerSearchItem(item: unknown): {
 
 function boundedProviderScore(score: number): boolean {
   return score >= -1_000_000 && score <= 1_000_000;
-}
-
-export async function listTopologyDocuments(
-  client: InfinityContextClient,
-  topology: HistoricalTopologyV1,
-  signal: AbortSignal,
-): Promise<readonly DocumentRecord[]> {
-  const response = await client.documents.listScopeDocuments({
-    limit: MAXIMUM_SCOPE_DOCUMENTS,
-    memoryScopeExternalRef: topology.roomScopeExternalRef,
-    signal,
-    spaceSlug: topology.spaceSlug,
-    threadExternalRef: topology.threadExternalRef,
-  });
-  if (!Array.isArray(response.data) || response.data.length > MAXIMUM_SCOPE_DOCUMENTS) {
-    throw new InfinityContextAdapterContractError(
-      "official SDK returned an invalid bounded document collection",
-    );
-  }
-  return response.data;
-}
-
-/**
- * The reviewed SDK's scope-document operation has no cursor or total count.
- * A full page therefore cannot prove that an omitted document is absent.
- */
-export function topologyDocumentListingProvesCompleteness(
-  documents: readonly DocumentRecord[],
-): boolean {
-  return documents.length < MAXIMUM_SCOPE_DOCUMENTS;
 }

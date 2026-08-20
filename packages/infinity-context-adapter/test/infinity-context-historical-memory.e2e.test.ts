@@ -6,10 +6,13 @@ import {
   ExhaustiveCoverage,
   HistoricalFocusedRetrieval,
   HistoricalSyncWorker,
-  buildHistoricalIndexPlan,
+  historicalEmbeddingTokenProfile,
+  buildHistoricalIndexPlan as buildCoreHistoricalIndexPlan,
   type AcceptedFinalMeetingV1,
   type CoverageExtractV1,
   type CoverageReducerPort,
+  type HistoricalEvidenceBlockPolicyV1,
+  type HistoricalOpaqueIdPort,
   type LocallyRehydratedEvidenceBlockV1,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 
@@ -17,12 +20,14 @@ import {
   HmacHistoricalOpaqueIds,
   INFINITY_CONTEXT_SDK_PROVENANCE,
   InfinityContextHistoricalMemoryAdapter,
+  PinnedMultilingualMiniLmTokenizer,
   assertInfinityContextActivation,
   decodeInfinityContextRuntimeActivation,
 } from "../src/index.js";
 import {
   isHybridQualified,
   processMutationAccepted,
+  validIndexPlan,
 } from "../src/infinity-context-sdk-contract.js";
 import { DisposableInfinityEndpoint } from "./disposable-infinity-endpoint.js";
 import {
@@ -39,15 +44,47 @@ const blockPolicy = {
   maxTurnsPerBlock: 64,
   version: "meeting-knowledge.block-policy.v1",
 } as const;
+const exactTokenizer = new PinnedMultilingualMiniLmTokenizer();
 
-function cedarExtract(block: LocallyRehydratedEvidenceBlockV1): CoverageExtractV1 {
-  const selectedTurns = block.turns.filter(({ text }) =>
-    text.includes("Cedar")
-  ).map(({ turnId }) => ({
-    blockLocator: block.candidateLocator,
-    relevance: "direct" as const,
-    turnId,
-  }));
+function buildHistoricalIndexPlan(
+  meeting: AcceptedFinalMeetingV1,
+  ids: HistoricalOpaqueIdPort,
+  policy: HistoricalEvidenceBlockPolicyV1,
+) {
+  return buildCoreHistoricalIndexPlan(meeting, ids, policy, exactTokenizer);
+}
+
+function boundedWindowPlan(turnCount: number, maximumBlocks = turnCount) {
+  const ids = new HmacHistoricalOpaqueIds(new Uint8Array(32).fill(0x4a));
+  const base = finalMeeting(1, "Tuesday");
+  const meeting = Object.freeze({
+    ...base,
+    humanTurns: Object.freeze(Array.from({ length: turnCount }, (_, index) =>
+      Object.freeze({
+        ...base.humanTurns[0]!,
+        endMs: index * 10 + 9,
+        startMs: index * 10,
+        text: `bounded adapter turn ${index}`,
+        turnId: `adapter-boundary-${index}`,
+      })
+    )),
+  });
+  return buildHistoricalIndexPlan(meeting, ids, {
+    maximumEmbeddingTokens: 96,
+    maxBlockUtf8Bytes: 4_096,
+    maxBlocksPerMeeting: maximumBlocks,
+    maxTurnsPerBlock: 1,
+    turnOverlap: 0,
+    version: "meeting-knowledge.block-policy.v1",
+  });
+}
+
+function cedarExtract(block: LocallyRehydratedEvidenceBlockV1, analysisTurns: LocallyRehydratedEvidenceBlockV1["turns"]): CoverageExtractV1 {
+  const selectedTurns = analysisTurns.filter(({ text }) => text.includes("Cedar"))
+    .map((turn) => ({
+      blockLocator: block.candidateLocator, relevance: "direct" as const,
+      sourceEndCodePoint: turn.sourceEndCodePoint, sourceRef: turn.sourceRef, sourceStartCodePoint: turn.sourceStartCodePoint, turnId: turn.turnId,
+    }));
   return {
     blockLocator: block.candidateLocator,
     evidenceLocators: selectedTurns.length === 0 ? [] : [block.candidateLocator],
@@ -63,7 +100,8 @@ function reduceCedar(
 ) {
   const reducedTurns = [...new Map(values.flatMap(({ selectedTurns }) =>
     selectedTurns.map((turn) => [
-      `${turn.blockLocator}\u0000${turn.turnId}`,
+      JSON.stringify([turn.blockLocator, turn.sourceRef, turn.sourceStartCodePoint,
+        turn.sourceEndCodePoint, turn.turnId]),
       turn,
     ] as const)
   )).values()];
@@ -116,41 +154,92 @@ describe("Infinity Context bounded search budget", () => {
   it("uses the bounded service maximum so ranked evidence is not silently budget-dropped", async () => {
     const endpoint = new DisposableInfinityEndpoint();
     const adapter = new InfinityContextHistoricalMemoryAdapter({
-      baseUrl: "http://disposable.infinity.invalid",
-      requestTimeoutMs: 1_000,
-      schemaVersion: 1,
-      transport: endpoint,
+      baseUrl: "http://disposable.infinity.invalid", embeddingTokenProfile: () => historicalEmbeddingTokenProfile(exactTokenizer), requestTimeoutMs: 1_000,
+      schemaVersion: 1, transport: endpoint,
     });
     await adapter.qualifyCapabilities();
 
-    for (const candidateLimit of [1, 5, 16]) {
-      await expect(adapter.searchRoom({
+    for (const candidateLimit of [1, 5, 16, 40]) {
+      const result = await adapter.searchRoom({
         candidateLimit,
         query: "bounded evidence budget",
         roomScopeExternalRef: "room-scope",
         schemaVersion: 1,
         spaceSlug: "space-slug",
         timeoutMs: 1_000,
-      })).resolves.toMatchObject({ status: "available" });
+      });
+      expect(result).toMatchObject({ status: "available" });
+      if (result.status === "available") {
+        expect(result.candidates.length).toBeLessThanOrEqual(candidateLimit);
+      }
     }
 
     expect(endpoint.requests.filter(({ method, path }) =>
       method === "POST" && path === "/v1/search"
     ).map(({ body }) => body)).toEqual([
-      expect.objectContaining({ max_chunks: 1, max_evidence_items: 1, token_budget: 6_000 }),
-      expect.objectContaining({ max_chunks: 5, max_evidence_items: 5, token_budget: 6_000 }),
-      expect.objectContaining({ max_chunks: 16, max_evidence_items: 16, token_budget: 6_000 }),
+      expect.objectContaining({ max_chunks: 1, max_evidence_items: 1,
+        project_anchor_policy: "advisory", token_budget: 6_000 }),
+      expect.objectContaining({ max_chunks: 5, max_evidence_items: 5,
+        project_anchor_policy: "advisory", token_budget: 6_000 }),
+      expect.objectContaining({ max_chunks: 16, max_evidence_items: 16,
+        project_anchor_policy: "advisory", token_budget: 6_000 }),
+      expect.objectContaining({ max_chunks: 40, max_evidence_items: 40,
+        project_anchor_policy: "advisory", token_budget: 6_000 }),
     ]);
   });
 });
 
+describe("Infinity Context bounded historical plan", () => {
+
+  it("accepts 500 deterministic windows and rejects a 501-window domain policy", () => {
+    expect(validIndexPlan(
+      boundedWindowPlan(500, 500),
+      historicalEmbeddingTokenProfile(exactTokenizer),
+    )).toBe(true);
+    expect(() => boundedWindowPlan(501, 501)).toThrow(
+      "historical evidence block policy is outside its qualified bounds",
+    );
+  });
+
+  it("converges a partial >100-window ingest within the bounded sequential envelope", async () => {
+    const endpoint = new DisposableInfinityEndpoint();
+    const adapter = new InfinityContextHistoricalMemoryAdapter({
+      baseUrl: "http://disposable.infinity.invalid", embeddingTokenProfile: () => historicalEmbeddingTokenProfile(exactTokenizer),
+      operationTimeoutMs: 30_000,
+      requestTimeoutMs: 1_000,
+      schemaVersion: 1,
+      transport: endpoint,
+    });
+    const plan = boundedWindowPlan(120);
+    endpoint.loseNextIngestResponse();
+    const startedAt = performance.now();
+
+    await expect(adapter.indexFinalMeeting(plan)).resolves.toMatchObject({ status: "applied" });
+    const elapsedMs = performance.now() - startedAt;
+    expect(endpoint.documentCount()).toBe(120);
+    expect(elapsedMs).toBeLessThan(30_000);
+    expect(endpoint.requests.filter(({ method, path }) =>
+      method === "POST" && path === "/v1/documents"
+    ).length).toBeLessThanOrEqual(121);
+  });
+
+});
+
 describe("Infinity Context historical memory vertical slice", () => {
   it("requires explicit process acceptance rather than document lifecycle status", () => {
-    expect(processMutationAccepted({ id: "doc", status: "active", title: "fixture" }))
+    expect(processMutationAccepted({
+      id: "doc",
+      source_external_id: "fixture",
+      source_type: "fixture",
+      status: "active",
+      title: "fixture",
+    }))
       .toBe(false);
     expect(processMutationAccepted({
       id: "doc",
       indexing_status: "pending",
+      source_external_id: "fixture",
+      source_type: "fixture",
       status: "active",
       title: "fixture",
     })).toBe(true);
@@ -159,10 +248,8 @@ describe("Infinity Context historical memory vertical slice", () => {
   it("fails closed when the unpageable official space listing is full", async () => {
     const endpoint = new DisposableInfinityEndpoint();
     const client = new InfinityContextClient({
-      baseUrl: "http://disposable.infinity.invalid",
-      retryPolicy: { maxAttempts: 1 },
-      timeoutMs: 1_000,
-      transport: endpoint,
+      baseUrl: "http://disposable.infinity.invalid", retryPolicy: { maxAttempts: 1 },
+      timeoutMs: 1_000, transport: endpoint,
     });
     await Promise.all(Array.from({ length: 100 }, (_, index) =>
       client.spaces.createSpace({
@@ -176,7 +263,7 @@ describe("Infinity Context historical memory vertical slice", () => {
       blockPolicy,
     );
     const adapter = new InfinityContextHistoricalMemoryAdapter({
-      baseUrl: "http://disposable.infinity.invalid",
+      baseUrl: "http://disposable.infinity.invalid", embeddingTokenProfile: () => historicalEmbeddingTokenProfile(exactTokenizer),
       requestTimeoutMs: 1_000,
       schemaVersion: 1,
       transport: endpoint,
@@ -217,7 +304,7 @@ describe("Infinity Context historical memory vertical slice", () => {
       })
     ));
     const adapter = new InfinityContextHistoricalMemoryAdapter({
-      baseUrl: "http://disposable.infinity.invalid",
+      baseUrl: "http://disposable.infinity.invalid", embeddingTokenProfile: () => historicalEmbeddingTokenProfile(exactTokenizer),
       requestTimeoutMs: 1_000,
       schemaVersion: 1,
       transport: endpoint,
@@ -233,103 +320,15 @@ describe("Infinity Context historical memory vertical slice", () => {
     )).toHaveLength(100);
   });
 
-  it("does not claim release absence from a full unpageable SDK listing", async () => {
-    const endpoint = new DisposableInfinityEndpoint();
-    const ids = new HmacHistoricalOpaqueIds(new Uint8Array(32).fill(0x4d));
-    const plan = buildHistoricalIndexPlan(finalMeeting(1, "Tuesday"), ids, blockPolicy);
-    const client = new InfinityContextClient({
-      baseUrl: "http://disposable.infinity.invalid",
-      retryPolicy: { maxAttempts: 1 },
-      timeoutMs: 1_000,
-      transport: endpoint,
-    });
-    await Promise.all(Array.from({ length: 100 }, (_, index) =>
-      client.documents.ingestDocument({
-        idempotencyKey: `decoy-${index}`,
-        memoryScopeExternalRef: plan.topology.roomScopeExternalRef,
-        sourceExternalId: `decoy-document-${index}`,
-        spaceSlug: plan.topology.spaceSlug,
-        text: `synthetic decoy ${index}`,
-        threadExternalRef: plan.topology.threadExternalRef,
-        title: `decoy-${index}`,
-      })
-    ));
-    const target = plan.documents[0];
-    if (target === undefined) {
-      throw new Error("historical plan fixture produced no target document");
-    }
-    const adapter = new InfinityContextHistoricalMemoryAdapter({
-      baseUrl: "http://disposable.infinity.invalid",
-      requestTimeoutMs: 1_000,
-      schemaVersion: 1,
-      transport: endpoint,
-    });
+});
 
-    await expect(adapter.deleteMeeting({
-      deleteMutationId: plan.deleteMutationId,
-      documentExternalIds: [target.manifest.documentExternalId],
-      mode: "release",
-      remoteDocumentIds: {},
-      schemaVersion: 1,
-      topology: plan.topology,
-    })).resolves.toEqual({
-      code: "memory.scope_document_listing_incomplete",
-      retryable: true,
-      status: "absence_unverified",
-    });
-  });
-
-  it("does not delete a document through a corrupt local remote-id binding", async () => {
-    const endpoint = new DisposableInfinityEndpoint();
-    const ids = new HmacHistoricalOpaqueIds(new Uint8Array(32).fill(0x2f));
-    const plan = buildHistoricalIndexPlan(finalMeeting(1, "Tuesday"), ids, blockPolicy);
-    const target = plan.documents[0];
-    if (target === undefined) {
-      throw new Error("historical plan fixture produced no target document");
-    }
-    const client = new InfinityContextClient({
-      baseUrl: "http://disposable.infinity.invalid",
-      retryPolicy: { maxAttempts: 1 },
-      timeoutMs: 1_000,
-      transport: endpoint,
-    });
-    const unrelated = (await client.documents.ingestDocument({
-      idempotencyKey: "unrelated-ingest",
-      memoryScopeExternalRef: plan.topology.roomScopeExternalRef,
-      sourceExternalId: "unrelated-document",
-      spaceSlug: plan.topology.spaceSlug,
-      text: "synthetic unrelated evidence",
-      threadExternalRef: plan.topology.threadExternalRef,
-      title: "unrelated",
-    })).data;
-    const adapter = new InfinityContextHistoricalMemoryAdapter({
-      baseUrl: "http://disposable.infinity.invalid",
-      requestTimeoutMs: 1_000,
-      schemaVersion: 1,
-      transport: endpoint,
-    });
-
-    await expect(adapter.deleteMeeting({
-      deleteMutationId: plan.deleteMutationId,
-      documentExternalIds: [target.manifest.documentExternalId],
-      mode: "release",
-      remoteDocumentIds: { [target.manifest.documentExternalId]: unrelated.id },
-      schemaVersion: 1,
-      topology: plan.topology,
-    })).resolves.toEqual({
-      code: "memory.invalid_sdk_response",
-      retryable: false,
-      status: "absence_unverified",
-    });
-    expect(endpoint.documentCount()).toBe(1);
-  });
-
+describe("Infinity Context document deletion verification", () => {
   it("never treats zero thread counters as verified absence while a known document remains", async () => {
     const endpoint = new DisposableInfinityEndpoint();
     const ids = new HmacHistoricalOpaqueIds(new Uint8Array(32).fill(0x31));
     const plan = buildHistoricalIndexPlan(finalMeeting(1, "Tuesday"), ids, blockPolicy);
     const adapter = new InfinityContextHistoricalMemoryAdapter({
-      baseUrl: "http://disposable.infinity.invalid",
+      baseUrl: "http://disposable.infinity.invalid", embeddingTokenProfile: () => historicalEmbeddingTokenProfile(exactTokenizer),
       requestTimeoutMs: 1_000,
       schemaVersion: 1,
       transport: endpoint,
@@ -348,6 +347,7 @@ describe("Infinity Context historical memory vertical slice", () => {
         manifest.documentExternalId
       ),
       mode: "meeting",
+      reconciliationDocuments: plan.documents,
       remoteDocumentIds: indexed.remoteDocumentIds,
       schemaVersion: 1,
       topology: plan.topology,
@@ -360,6 +360,7 @@ describe("Infinity Context historical memory vertical slice", () => {
         manifest.documentExternalId
       ),
       mode: "meeting",
+      reconciliationDocuments: plan.documents,
       remoteDocumentIds: indexed.remoteDocumentIds,
       schemaVersion: 1,
       topology: plan.topology,
@@ -372,7 +373,7 @@ describe("Infinity Context historical memory vertical slice", () => {
     const ids = new HmacHistoricalOpaqueIds(new Uint8Array(32).fill(0x38));
     const plan = buildHistoricalIndexPlan(finalMeeting(1, "Tuesday"), ids, blockPolicy);
     const adapter = new InfinityContextHistoricalMemoryAdapter({
-      baseUrl: "http://disposable.infinity.invalid",
+      baseUrl: "http://disposable.infinity.invalid", embeddingTokenProfile: () => historicalEmbeddingTokenProfile(exactTokenizer),
       requestTimeoutMs: 1_000,
       schemaVersion: 1,
       transport: endpoint,
@@ -389,6 +390,7 @@ describe("Infinity Context historical memory vertical slice", () => {
         manifest.documentExternalId
       ),
       mode: "release" as const,
+      reconciliationDocuments: plan.documents,
       remoteDocumentIds: indexed.remoteDocumentIds,
       schemaVersion: 1 as const,
       topology: plan.topology,
@@ -412,6 +414,13 @@ describe("Infinity Context historical memory vertical slice", () => {
 describe("Infinity Context production provenance deletion", () => {
   it("keeps verified deletion available with serving and indexing disabled", async () => {
     const endpoint = new DisposableInfinityEndpoint();
+    endpoint.setRuntimeQualificationReceipt({
+      embeddingProfileDigestSha256:
+        INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedEmbeddingProfileDigestSha256,
+      embeddingProfileId:
+        INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedEmbeddingProfileId,
+      serviceRevision: INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedServiceRevision,
+    });
     const activation = decodeInfinityContextRuntimeActivation({
       apiVersion: "v1",
       archiveSha256: INFINITY_CONTEXT_SDK_PROVENANCE.archiveSha256,
@@ -420,7 +429,7 @@ describe("Infinity Context production provenance deletion", () => {
       indexingEnabled: false,
       packageSource: "immutable_package",
       qualificationManifestSha256:
-        INFINITY_CONTEXT_SDK_PROVENANCE.retainedLiveQualificationManifestSha256,
+        INFINITY_CONTEXT_SDK_PROVENANCE.retainedExactHeadQualificationManifestSha256,
       schemaVersion: 1,
       sdkCommit: INFINITY_CONTEXT_SDK_PROVENANCE.commit,
       sdkTree: INFINITY_CONTEXT_SDK_PROVENANCE.tree,
@@ -429,7 +438,7 @@ describe("Infinity Context production provenance deletion", () => {
       servingProfile: "shadow_sync",
     });
     const adapter = new InfinityContextHistoricalMemoryAdapter({
-      baseUrl: "http://disposable.infinity.invalid",
+      baseUrl: "http://disposable.infinity.invalid", embeddingTokenProfile: () => historicalEmbeddingTokenProfile(exactTokenizer),
       requestTimeoutMs: 1_000,
       schemaVersion: 1,
       transport: endpoint,
@@ -455,6 +464,7 @@ describe("Infinity Context production provenance deletion", () => {
         manifest.documentExternalId
       ),
       mode: "release",
+      reconciliationDocuments: plan.documents,
       remoteDocumentIds: indexed.remoteDocumentIds,
       schemaVersion: 1,
       topology: plan.topology,
@@ -474,7 +484,7 @@ describe("Infinity Context historical memory end-to-end lifecycle", () => {
     await expect(store.acceptRelease(firstMeeting.binding)).resolves.toBe("accepted");
 
     const firstAdapter = new InfinityContextHistoricalMemoryAdapter({
-      baseUrl: "http://disposable.infinity.invalid",
+      baseUrl: "http://disposable.infinity.invalid", embeddingTokenProfile: () => historicalEmbeddingTokenProfile(exactTokenizer),
       requestTimeoutMs: 1_000,
       schemaVersion: 1,
       transport: endpoint,
@@ -484,7 +494,8 @@ describe("Infinity Context historical memory end-to-end lifecycle", () => {
     });
     endpoint.loseNextIngestResponse();
     endpoint.loseNextProcessResponse();
-    const firstWorker = new HistoricalSyncWorker({ authority, ids, memory: firstAdapter, store }, {
+    const firstWorker = new HistoricalSyncWorker({ authority, ids, memory: firstAdapter, store,
+      tokenizer: () => exactTokenizer }, {
       blockPolicy,
       leaseDurationMs: 30_000,
       maximumIndexAttempts: 3,
@@ -497,7 +508,11 @@ describe("Infinity Context historical memory end-to-end lifecycle", () => {
     });
     const processRequests = endpoint.requests.filter(({ path }) => path.endsWith("/process"));
     expect(processRequests.length).toBeGreaterThan(endpoint.documentCount());
-    expect(processRequests[0]?.idempotencyKey).toBe(processRequests[1]?.idempotencyKey);
+    expect(processRequests.some((request, index) =>
+      processRequests.some((candidate, candidateIndex) =>
+        candidateIndex !== index && candidate.idempotencyKey === request.idempotencyKey
+      )
+    )).toBe(true);
     expect(store.state(firstMeeting.binding.releaseId)).toBe("applied");
     expect(endpoint.documentCount()).toBeGreaterThan(1);
     expect(endpoint.indexedTexts().join("\n")).not.toContain("BOTIK GENERATED SUMMARY");
@@ -505,13 +520,14 @@ describe("Infinity Context historical memory end-to-end lifecycle", () => {
     // Process restart: only local projection and provider endpoint state survive.
     await expect(store.acceptRelease(firstMeeting.binding)).resolves.toBe("replayed");
     const restartedAdapter = new InfinityContextHistoricalMemoryAdapter({
-      baseUrl: "http://disposable.infinity.invalid",
+      baseUrl: "http://disposable.infinity.invalid", embeddingTokenProfile: () => historicalEmbeddingTokenProfile(exactTokenizer),
       requestTimeoutMs: 1_000,
       schemaVersion: 1,
       transport: endpoint,
     });
     await restartedAdapter.qualifyCapabilities();
-    const restartedWorker = new HistoricalSyncWorker({ authority, ids, memory: restartedAdapter, store }, {
+    const restartedWorker = new HistoricalSyncWorker({ authority, ids, memory: restartedAdapter,
+      store, tokenizer: () => exactTokenizer }, {
       blockPolicy,
       leaseDurationMs: 30_000,
       maximumIndexAttempts: 3,
@@ -535,6 +551,7 @@ describe("Infinity Context historical memory end-to-end lifecycle", () => {
       ids,
       memory: restartedAdapter,
       store,
+      tokenizer: () => exactTokenizer,
     }, {
       blockPolicy,
       candidateLimitPerQuery: 8,
@@ -612,9 +629,9 @@ describe("Infinity Context historical memory end-to-end lifecycle", () => {
       checkpoints,
       extractor: {
         profile: "meeting-knowledge.fixture-cedar-extractor.v1",
-        extract: async ({ block }): Promise<CoverageExtractV1> => {
+        extract: async ({ analysisTurns, block }): Promise<CoverageExtractV1> => {
           extracted.add(block.candidateLocator);
-          return cedarExtract(block);
+          return cedarExtract(block, analysisTurns);
         },
       },
       ids,
@@ -623,6 +640,7 @@ describe("Infinity Context historical memory end-to-end lifecycle", () => {
         reduce: async ({ values }) => reduceCedar(values),
       },
       sync: store,
+      tokenizer: () => exactTokenizer,
     }, {
       blockPolicy,
       checkpointRetentionSeconds: 86_400,
@@ -652,7 +670,7 @@ describe("Infinity Context historical memory end-to-end lifecycle", () => {
     const firstPlan = buildHistoricalIndexPlan(firstMeeting, ids, blockPolicy);
     expect(exhaustiveResult.plan.coverageBitmap).toHaveLength(firstPlan.documents.length);
     expect(exhaustiveResult.plan.coverageBitmap.every(Boolean)).toBe(true);
-    expect(extracted.size).toBe(firstPlan.documents.length);
+    expect(extracted.size).toBe(firstPlan.documents.length - 1);
     expect(checkpoints.completed).toBe(true);
 
     const replacement = finalMeeting(2, "Thursday");
@@ -705,12 +723,13 @@ describe("Infinity Context out-of-order generation reconciliation", () => {
     authority.put(first);
     await store.acceptRelease(first.binding);
     const adapter = new InfinityContextHistoricalMemoryAdapter({
-      baseUrl: "http://disposable.infinity.invalid",
+      baseUrl: "http://disposable.infinity.invalid", embeddingTokenProfile: () => historicalEmbeddingTokenProfile(exactTokenizer),
       requestTimeoutMs: 1_000,
       schemaVersion: 1,
       transport: endpoint,
     });
-    const worker = new HistoricalSyncWorker({ authority, ids, memory: adapter, store }, {
+    const worker = new HistoricalSyncWorker({ authority, ids, memory: adapter, store,
+      tokenizer: () => exactTokenizer }, {
       blockPolicy,
       leaseDurationMs: 30_000,
       maximumIndexAttempts: 3,

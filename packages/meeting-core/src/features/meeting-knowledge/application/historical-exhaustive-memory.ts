@@ -46,21 +46,37 @@ export class HistoricalExhaustiveMemoryRetrieval
     ]));
     const selectedTurns = result.plan.reduction.selectedTurns.flatMap((selection) => {
       const block = blocks.get(selection.blockLocator);
-      const turn = block?.turns.find(({ turnId }) => turnId === selection.turnId);
+      const turn = block?.turns.find((candidate) =>
+        candidate.turnId === selection.turnId &&
+        candidate.sourceRef === selection.sourceRef &&
+        candidate.sourceStartCodePoint === selection.sourceStartCodePoint &&
+        candidate.sourceEndCodePoint === selection.sourceEndCodePoint
+      );
       return block === undefined || turn === undefined ? [] : [{ block, turn }];
     });
     if (
       selectedTurns.length !== result.plan.reduction.selectedTurns.length ||
       selectedTurns.length > 256 ||
-      new Set(selectedTurns.map(({ block, turn }) =>
-        `${block.candidateLocator}\u0000${turn.turnId}`
-      )).size !== selectedTurns.length
+      new Set(result.plan.reduction.selectedTurns.map((selection) => JSON.stringify([
+        selection.blockLocator,
+        selection.turnId,
+        selection.sourceRef,
+        selection.sourceStartCodePoint,
+        selection.sourceEndCodePoint,
+      ]))).size !== selectedTurns.length
     ) {
       return { schemaVersion: 1, status: "unsupported" };
     }
     const candidates = selectedTurns.map(({ block, turn }) =>
       Object.freeze({
+        historicalSource: Object.freeze({
+          candidateLocator: block.candidateLocator,
+          indexGeneration: block.indexGeneration,
+          releaseId: block.binding.releaseId,
+        }),
         meetingId: block.binding.meetingId,
+        sourceEndCodePoint: turn.sourceEndCodePoint,
+        sourceStartCodePoint: turn.sourceStartCodePoint,
         transcriptId: block.binding.transcriptId,
         transcriptVersion: block.binding.transcriptVersion,
         turnHash: this.hashes.hash(turn),
@@ -68,10 +84,15 @@ export class HistoricalExhaustiveMemoryRetrieval
       })
     );
     const unique = new Map(candidates.map((candidate) => [[
+      candidate.historicalSource.releaseId,
+      candidate.historicalSource.indexGeneration,
+      candidate.historicalSource.candidateLocator,
       candidate.meetingId,
       candidate.transcriptId,
       candidate.transcriptVersion,
       candidate.turnId,
+      candidate.sourceStartCodePoint,
+      candidate.sourceEndCodePoint,
     ].join("\u0000"), candidate]));
     if (unique.size > 256) {
       return { schemaVersion: 1, status: "unsupported" };

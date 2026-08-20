@@ -47,6 +47,7 @@ const migrationDefinitions = [
     transactional: false,
   },
   { fileName: "0030_provider_neutral_meeting_source_routing.sql" },
+  { fileName: "0031_historical_memory_profile_rebuild.sql" },
 ] as const;
 
 const migrationLockKey = "718330091620232601";

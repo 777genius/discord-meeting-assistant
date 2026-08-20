@@ -12,6 +12,7 @@ import {
   HistoricalSyncWorker,
   buildHistoricalIndexPlan,
   createExhaustiveCoverageGroundingPlan,
+  historicalEmbeddingTokenProfile,
   type AcceptedFinalMeetingV1,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 
@@ -43,10 +44,11 @@ const positionalNeedles = qualificationQuestions.focused.map((question) => {
 
 const twoHourBlockPolicy = {
   maxBlockUtf8Bytes: 1_536,
-  maxBlocksPerMeeting: 100,
+  maxBlocksPerMeeting: 500,
   maxTurnsPerBlock: 64,
   version: "meeting-knowledge.block-policy.v1",
 } as const;
+const expectedTokenProfile = historicalEmbeddingTokenProfile();
 
 async function expectOverSelectionToAbstain(
   retrieval: HistoricalExhaustiveMemoryRetrieval,
@@ -66,6 +68,7 @@ async function assertExhaustiveQuestionFamilies(
   retrieval: HistoricalExhaustiveMemoryRetrieval,
   meeting: AcceptedFinalMeetingV1,
   evidenceBlockCount: number,
+  uniqueTurnCount: number,
 ): Promise<void> {
   for (const [kind, question] of Object.entries({
     absence: qualificationQuestions.absence,
@@ -88,7 +91,7 @@ async function assertExhaustiveQuestionFamilies(
     expect(result.coverageBitmap.every(Boolean)).toBe(true);
     expect(result.coverageReduction.payload).toMatchObject({
       blocksReviewed: evidenceBlockCount,
-      turnsReviewed: QUALIFICATION_CORPUS_TURN_COUNT,
+      turnsReviewed: uniqueTurnCount,
     });
     if (kind === "absence") {
       expect(result.candidates).toEqual([]);
@@ -131,9 +134,12 @@ function assertExactBoundedModelRequest(
   expect(parsedModelRequest.plan.evidence.length).toBeLessThanOrEqual(256);
   const exactPromptBytes = new TextEncoder().encode(exactModelRequest).byteLength;
   expect(exactPromptBytes).toBeLessThanOrEqual(64_000);
-  expect(exactPromptBytes).toBe(15_414);
+  expect(exactPromptBytes).toBe(12_911);
+  // This digest freezes the canonical persisted-plan rehydration request. Keep the
+  // structural, cardinality, byte-bound and forbidden-material assertions beside
+  // it so a digest refresh cannot hide prompt growth or evidence leakage.
   expect(createHash("sha256").update(exactModelRequest, "utf8").digest("hex"))
-    .toBe("93b5ede6225c1dbf62c91971e39c0f1aab5f01c6f2301d3bae3e5a98651cb389");
+    .toBe("b1dffdb85235d63546c279e9a07d3621aeba9a226b8f94166fa826ba7d0c273e");
   expect(exactModelRequest).not.toContain("current_complete");
   expect(exactModelRequest).not.toContain(forbiddenPromptMaterial.summary);
   expect(exactModelRequest).not.toContain(forbiddenPromptMaterial.transcriptPrefix);
@@ -194,11 +200,10 @@ describe("Infinity Context positional retrieval qualification", () => {
     const meeting = combinedQualificationMeeting();
     expect(meeting.humanTurns).toHaveLength(QUALIFICATION_CORPUS_TURN_COUNT);
     expect(meeting.humanTurns.at(-1)?.endMs).toBe(8_420_000);
-    authority.put(meeting);
-    await store.acceptRelease(meeting.binding);
-
+    authority.put(meeting); await store.acceptRelease(meeting.binding);
     const adapter = new InfinityContextHistoricalMemoryAdapter({
       baseUrl: "http://disposable.infinity.invalid",
+      embeddingTokenProfile: () => expectedTokenProfile,
       requestTimeoutMs: 250,
       schemaVersion: 1,
       transport: endpoint,
@@ -217,8 +222,7 @@ describe("Infinity Context positional retrieval qualification", () => {
     });
     const localPlan = buildHistoricalIndexPlan(meeting, ids, twoHourBlockPolicy);
     expect(localPlan.documents.length).toBeGreaterThan(5);
-    expect(localPlan.documents.length).toBeLessThanOrEqual(100);
-
+    expect(localPlan.documents.length).toBeLessThanOrEqual(500);
     const officialClient = new InfinityContextClient({
       baseUrl: "http://disposable.infinity.invalid",
       retryPolicy: { maxAttempts: 1 },
@@ -251,13 +255,13 @@ describe("Infinity Context positional retrieval qualification", () => {
       store,
     }, {
       blockPolicy: twoHourBlockPolicy,
-      candidateLimitPerQuery: 8,
+      candidateLimitPerQuery: 40,
       maximumDecomposedQueries: 4,
       maximumEvidenceBytes: 16_000,
-      maximumLocalScanBlocks: 100,
+      maximumLocalScanBlocks: 500,
       minimumProviderScore: 0.01,
       neighborRadius: 1,
-      rerankLimit: 5,
+      rerankLimit: 8,
       searchTimeoutMs: 40,
       version: "meeting-knowledge.focused-retrieval.v1",
     }, {
@@ -286,7 +290,7 @@ describe("Infinity Context positional retrieval qualification", () => {
       }, {
         blockPolicy: twoHourBlockPolicy,
         checkpointRetentionSeconds: 86_400,
-        maximumBlocks: 100,
+        maximumBlocks: 500,
         maximumCheckpointAttempts: 8,
         maximumCumulativeEvidenceUtf8Bytes: 8_388_608,
         maximumExtractPayloadUtf8Bytes: 4_096,
@@ -316,9 +320,13 @@ describe("Infinity Context positional retrieval qualification", () => {
       throw new Error("two-hour exhaustive coverage did not reach synthesis");
     }
     expect(exhaustive.coverageBitmap).toHaveLength(localPlan.documents.length);
+    const turnReferences = localPlan.documents.flatMap(({ manifest }) => manifest.turnIds);
+    const uniqueTurnReferences = new Set(turnReferences);
+    expect(uniqueTurnReferences.size).toBe(QUALIFICATION_CORPUS_TURN_COUNT);
+    expect(turnReferences).toHaveLength(701);
     expect(exhaustive.coverageReduction.payload).toMatchObject({
       blocksReviewed: localPlan.documents.length,
-      turnsReviewed: QUALIFICATION_CORPUS_TURN_COUNT,
+      turnsReviewed: uniqueTurnReferences.size,
     });
     expect(exhaustive.candidates.length).toBeLessThan(QUALIFICATION_CORPUS_TURN_COUNT);
     expect(exhaustive.candidates.length).toBeLessThanOrEqual(256);
@@ -337,6 +345,7 @@ describe("Infinity Context positional retrieval qualification", () => {
       exhaustiveMemory,
       meeting,
       localPlan.documents.length,
+      uniqueTurnReferences.size,
     );
 
     await expectOverSelectionToAbstain(exhaustiveMemory, meeting);
@@ -423,7 +432,7 @@ describe("Infinity Context positional retrieval qualification", () => {
     await expect(focused.buildPlan({
       authorizationPrincipalRef: "principal",
       currentMeetingId: meeting.binding.meetingId,
-      question: "Where was QUARTZ-CHARLIE discussed?",
+      question: "Where is QUARTZ-ECHO detail?",
       roomId: meeting.binding.roomId,
       scopeId: meeting.binding.scopeId,
       searchEnabled: true,

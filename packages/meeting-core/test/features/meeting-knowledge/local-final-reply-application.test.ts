@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   AdmitCurrentFinalReply,
   ProcessFinalReplyJob,
+  SelectFocusedEvidence,
   createFocusedRetrievalGroundingPlan,
   decodeFocusedMemoryRetrievalResult,
   focusedMemoryGeneration,
@@ -10,6 +11,8 @@ import {
   type ExhaustiveMemoryRetrievalPort,
   type FinalReplyRendererPort,
   type GroundedAnswerGenerationRequest,
+  type FocusedEvidenceSelectorPort,
+  type FocusedEvidenceSelectionResultV1,
   type GroundedAnswerGenerationResult,
   type GroundedAnswerGenerator,
   type LocalFinalReplyPolicy,
@@ -300,10 +303,61 @@ describe("focused-memory boundary contract", () => {
       ...valid,
       candidates: [references[0], references[0]],
     })).toThrow("must be unique");
+    expect(decodeFocusedMemoryRetrievalResult({
+      ...valid,
+      candidates: [{ ...references[0], relevanceScore: 0.75 }],
+    })).toMatchObject({ candidates: [{ relevanceScore: 0.75 }] });
+    expect(() => decodeFocusedMemoryRetrievalResult({
+      ...valid,
+      candidates: [{ ...references[0], relevanceScore: 1.01 }],
+    })).toThrow("finite normalized score");
+    const historical = {
+      ...references[0],
+      historicalSource: {
+        candidateLocator: "candidate-1",
+        indexGeneration: "generation-1",
+        releaseId: "release-1",
+      },
+      meetingId: "historical-meeting",
+    };
+    expect(decodeFocusedMemoryRetrievalResult({
+      ...valid,
+      candidates: [historical],
+    })).toMatchObject({ candidates: [historical] });
+    expect(() => decodeFocusedMemoryRetrievalResult({
+      ...valid,
+      candidates: [{
+        ...historical,
+        historicalSource: { releaseId: "release-1" },
+      }],
+    })).toThrow();
   });
 });
 
-function processingFixture(exhaustiveMemory?: ExhaustiveMemoryRetrievalPort) {
+function focusedSelector(
+  result?: FocusedEvidenceSelectionResultV1,
+  onSelect: () => void = () => {},
+) {
+  const provider: FocusedEvidenceSelectorPort = {
+    profile: "focused-selector-test.v1",
+    select: ({ candidates }) => {
+      onSelect();
+      return Promise.resolve(result ?? {
+        schemaVersion: 1,
+        selectedCandidateIds: candidates.slice(0, 2).map(({ candidateId }) =>
+          candidateId
+        ),
+        status: "selected",
+      });
+    },
+  };
+  return new SelectFocusedEvidence(provider, () => {}, () => 1);
+}
+
+function processingFixture(
+  exhaustiveMemory?: ExhaustiveMemoryRetrievalPort,
+  selector = focusedSelector(),
+) {
   const evidence = new EvidenceFake();
   const authorization = new AuthorizationFake();
   const jobs = new QuestionJobStoreFake({
@@ -328,6 +382,7 @@ function processingFixture(exhaustiveMemory?: ExhaustiveMemoryRetrievalPort) {
     jobs,
     memory,
     policy,
+    selector,
     renderer,
     workerId: "worker-1",
   });
@@ -377,8 +432,11 @@ describe("ProcessFinalReplyJob", () => {
     expect(memory.calls).toHaveLength(1);
     expect(memory.calls[0]).not.toHaveProperty("turns");
     expect(memory.calls[0]).not.toHaveProperty("transcript");
-    expect(evidence.references).toHaveLength(2);
+    expect(evidence.references).toHaveLength(5);
     expect(evidence.references[0]).toEqual(references);
+    expect(evidence.references[1]).toEqual(references);
+    expect(evidence.references[3]).toEqual(references);
+    expect(evidence.references[4]).toEqual(references);
     expect(generator.requests[0]?.plan).toMatchObject({
       authorityGeneration: authority.memoryGeneration,
       mode: "focused_retrieval",
@@ -418,6 +476,7 @@ describe("ProcessFinalReplyJob", () => {
       "before_retrieval",
       "before_hydration",
       "before_generation",
+      "before_generation",
       "before_hydration",
       "before_effect_reservation",
       "before_send_cas",
@@ -427,6 +486,34 @@ describe("ProcessFinalReplyJob", () => {
     expect(publication.sends).toHaveLength(1);
   });
 
+  it("abstains before answer generation when focused selection finds no support", async () => {
+    const selector = focusedSelector({
+      schemaVersion: 1,
+      selectedCandidateIds: [],
+      status: "insufficient_evidence",
+    });
+    const { generator, jobs, processor, publication } = processingFixture(
+      undefined,
+      selector,
+    );
+
+    await expect(processor.executeOnce()).resolves.toMatchObject({
+      outcome: "insufficient_evidence",
+      status: "settled",
+    });
+    expect(generator.generationCalls).toBe(0);
+    expect(generator.requests).toEqual([]);
+    expect(jobs.providerReservations).toHaveLength(1);
+    expect(jobs.providerCompletions).toEqual([]);
+    expect(jobs.providerFailures).toEqual([]);
+    expect(publication.reservations[0]?.content).toContain(
+      "not enough confirmed",
+    );
+  });
+
+});
+
+describe("ProcessFinalReplyJob answer generation", () => {
   it("uses checkpointed every-block coverage and rechecks it before an exhaustive answer", async () => {
     const exhaustive = new ExhaustiveMemoryFake();
     const { generator, jobs, memory, processor } = processingFixture(exhaustive);
@@ -536,13 +623,18 @@ describe("ProcessFinalReplyJob", () => {
   });
 
   it("does not call the provider when the durable attempt reservation loses its fence", async () => {
-    const { generator, jobs, processor } = processingFixture();
+    let selectorCalls = 0;
+    const selector = focusedSelector(undefined, () => {
+      selectorCalls += 1;
+    });
+    const { generator, jobs, processor } = processingFixture(undefined, selector);
     jobs.providerReservationResult = false;
 
     await expect(processor.executeOnce()).resolves.toEqual(
       { jobId: "question-1", status: "stale_generation" },
     );
     expect(generator.generationCalls).toBe(0);
+    expect(selectorCalls).toBe(0);
     expect(jobs.providerReservations).toHaveLength(1);
   });
 

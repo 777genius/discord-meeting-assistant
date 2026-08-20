@@ -2,21 +2,28 @@ import type {
   HistoricalDeleteRequestV1,
   HistoricalDeleteResultV1,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
-import type { InfinityContextClient } from "@infinity-context/sdk";
+import {
+  ValueError,
+  type DocumentRecord,
+  type InfinityContextClient,
+  type ListScopeDocumentsInput,
+  type PaginatedEnvelope,
+} from "@infinity-context/sdk";
 
 import { InfinityOperationDeadline } from "./infinity-request-deadline.js";
 
 import {
+  DOCUMENT_SOURCE_TYPE,
   InfinityContextAdapterContractError,
   documentId,
   documentIsDeleted,
   documentSourceExternalId,
   failure,
-  isMethodNotAllowed,
   isNotFound,
-  listTopologyDocuments,
-  topologyDocumentListingProvesCompleteness,
 } from "./infinity-context-sdk-contract.js";
+
+const SCOPE_PAGE_LIMIT = 100;
+const MAXIMUM_SCOPE_PAGES = 1_000;
 
 export function deleteHistoricalMeeting(
   client: InfinityContextClient,
@@ -37,35 +44,27 @@ async function deleteRelease(
 ): Promise<HistoricalDeleteResultV1> {
   try {
     const targetExternalIds = new Set(request.documentExternalIds);
-    const remoteTargets = releaseRemoteTargets(request, targetExternalIds);
-    if (targetExternalIds.size === 0 && remoteTargets.size === 0) {
+    if (targetExternalIds.size === 0) {
       return {
         code: "memory.release_delete_has_no_reconciliation_identity",
         retryable: false,
         status: "rejected",
       };
     }
-    const discovered = await listDocumentsWhenSupported(
-      client,
-      request,
-      requestTimeoutMs,
-      operation,
+    const knownTargets = releaseRemoteTargets(request, targetExternalIds);
+    for (const [remoteDocumentId, externalId] of knownTargets) {
+      await validateKnownDocumentHint(
+        client, remoteDocumentId, externalId, requestTimeoutMs, operation,
+      );
+    }
+
+    // A known ID is only a hint. The exact-scope list is the authority that
+    // prevents a stale or corrupt local binding from deleting a foreign row.
+    const remoteTargets = await listActiveRemoteTargets(
+      client, request, targetExternalIds, requestTimeoutMs, operation,
     );
-    bindDiscoveredReleaseTargets(remoteTargets, targetExternalIds, discovered);
-    const resolvedExternalIds = new Set<string>();
-    for (const [remoteDocumentId, externalId] of remoteTargets) {
+    for (const [remoteDocumentId] of remoteTargets) {
       operation.throwIfAborted();
-      if (await documentAlreadyAbsent(
-        client,
-        remoteDocumentId,
-        externalId,
-        requestTimeoutMs,
-        operation,
-      )) {
-        resolvedExternalIds.add(externalId);
-        continue;
-      }
-      resolvedExternalIds.add(externalId);
       try {
         await operation.request(requestTimeoutMs, (signal) =>
           client.documents.deleteDocument(remoteDocumentId, {
@@ -96,38 +95,13 @@ async function deleteRelease(
         };
       }
     }
-    const remaining = await listDocumentsWhenSupported(
-      client,
-      request,
-      requestTimeoutMs,
-      operation,
+
+    const remaining = await listActiveRemoteTargets(
+      client, request, targetExternalIds, requestTimeoutMs, operation,
     );
-    if (remaining !== null && remaining.some((document) => {
-      const sourceExternalId = documentSourceExternalId(document);
-      return !documentIsDeleted(document) &&
-        sourceExternalId !== null && targetExternalIds.has(sourceExternalId);
-    })) {
+    if (remaining.size > 0) {
       return {
-        code: "memory.release_document_still_present",
-        retryable: true,
-        status: "absence_unverified",
-      };
-    }
-    if (remaining === null &&
-      [...targetExternalIds].some((externalId) => !resolvedExternalIds.has(externalId))) {
-      return {
-        code: "memory.scope_document_listing_unsupported_for_unresolved_identity",
-        retryable: false,
-        status: "absence_unverified",
-      };
-    }
-    if (
-      remaining !== null &&
-      !topologyDocumentListingProvesCompleteness(remaining) &&
-      [...targetExternalIds].some((externalId) => !resolvedExternalIds.has(externalId))
-    ) {
-      return {
-        code: "memory.scope_document_listing_incomplete",
+        code: "memory.release_document_absence_unresolved",
         retryable: true,
         status: "absence_unverified",
       };
@@ -136,6 +110,120 @@ async function deleteRelease(
   } catch (error) {
     return failure(error, "absence_unverified");
   }
+}
+
+async function listActiveRemoteTargets(
+  client: InfinityContextClient,
+  request: HistoricalDeleteRequestV1,
+  targetExternalIds: ReadonlySet<string>,
+  requestTimeoutMs: number,
+  operation: InfinityOperationDeadline,
+): Promise<Map<string, string>> {
+  const targets = new Map<string, string>();
+  const seenCursors = new Set<string>();
+  const seenDocumentIds = new Set<string>();
+  let cursor: string | undefined;
+  for (let pageNumber = 0; pageNumber < MAXIMUM_SCOPE_PAGES; pageNumber += 1) {
+    let page: PaginatedEnvelope<readonly DocumentRecord[]>;
+    try {
+      page = await operation.request(requestTimeoutMs, (signal) =>
+        client.documents.listScopeDocuments({
+          ...(cursor === undefined ? {} : { cursor }),
+          limit: SCOPE_PAGE_LIMIT,
+          memoryScopeExternalRef: request.topology.roomScopeExternalRef,
+          signal,
+          spaceSlug: request.topology.spaceSlug,
+          status: "active",
+          threadExternalRef: request.topology.threadExternalRef,
+        } satisfies ListScopeDocumentsInput)
+      );
+    } catch (error) {
+      if (cursor !== undefined && (error instanceof ValueError ||
+        (error instanceof Error && error.name === "ValueError"))) {
+        throw new InfinityContextAdapterContractError(
+          "official SDK rejected a document cursor returned by the provider",
+        );
+      }
+      throw error;
+    }
+    const remoteDocuments = scopeDocumentRecords(page.data);
+    if (remoteDocuments.length > SCOPE_PAGE_LIMIT) {
+      throw new InfinityContextAdapterContractError(
+        "official SDK returned a malformed or oversized document page",
+      );
+    }
+    for (const remote of remoteDocuments) {
+        const remoteId = rememberScopeDocumentId(seenDocumentIds, remote);
+      const externalId = documentSourceExternalId(remote);
+      const sourceType = documentSourceType(remote);
+      if (documentIsDeleted(remote) || asStatus(remote) !== "active") {
+        throw new InfinityContextAdapterContractError(
+          "active scope listing returned a non-active document",
+        );
+      }
+      if (externalId === null || sourceType === null) {
+        throw new InfinityContextAdapterContractError(
+          "scope listing returned a document without source identity",
+        );
+      }
+      if (
+        targetExternalIds.has(externalId) && sourceType === DOCUMENT_SOURCE_TYPE
+      ) {
+        bindRemoteTarget(targets, remoteId, externalId);
+      }
+    }
+    const nextCursor = page.next_cursor;
+    if (nextCursor === null) {
+      return targets;
+    }
+    if (
+      typeof nextCursor !== "string" || nextCursor.length === 0 ||
+      remoteDocuments.length === 0 ||
+      seenCursors.has(nextCursor)
+    ) {
+      throw new InfinityContextAdapterContractError(
+        "official SDK returned an incomplete document cursor chain",
+      );
+    }
+    seenCursors.add(nextCursor);
+    cursor = nextCursor;
+  }
+  throw new InfinityContextAdapterContractError(
+    "official SDK document pagination exceeded its bounded contract",
+  );
+}
+
+function rememberScopeDocumentId(
+  seenDocumentIds: Set<string>,
+  remote: DocumentRecord,
+): string {
+  const remoteId = documentId(remote);
+  if (seenDocumentIds.has(remoteId)) {
+    throw new InfinityContextAdapterContractError(
+      "official SDK repeated a document across cursor pages",
+    );
+  }
+  seenDocumentIds.add(remoteId);
+  return remoteId;
+}
+
+function scopeDocumentRecords(value: unknown): readonly DocumentRecord[] {
+  if (!Array.isArray(value)) {
+    throw new InfinityContextAdapterContractError(
+      "official SDK returned a malformed document page",
+    );
+  }
+  return value as readonly DocumentRecord[];
+}
+
+function asStatus(document: DocumentRecord): string | null {
+  const status = (document as Readonly<Record<string, unknown>>).status;
+  return typeof status === "string" ? status : null;
+}
+
+function documentSourceType(document: DocumentRecord): string | null {
+  const sourceType = (document as Readonly<Record<string, unknown>>).source_type;
+  return typeof sourceType === "string" && sourceType.length > 0 ? sourceType : null;
 }
 
 function releaseRemoteTargets(
@@ -151,57 +239,36 @@ function releaseRemoteTargets(
   return targets;
 }
 
-function bindDiscoveredReleaseTargets(
-  targets: Map<string, string>,
-  targetExternalIds: ReadonlySet<string>,
-  documents: readonly import("@infinity-context/sdk").DocumentRecord[] | null,
-): void {
-  for (const document of documents ?? []) {
-    const sourceExternalId = documentSourceExternalId(document);
-    if (sourceExternalId !== null && targetExternalIds.has(sourceExternalId)) {
-      bindRemoteTarget(targets, documentId(document), sourceExternalId);
-    }
-  }
-}
-
-async function listDocumentsWhenSupported(
-  client: InfinityContextClient,
-  request: HistoricalDeleteRequestV1,
-  requestTimeoutMs: number,
-  operation: InfinityOperationDeadline,
-): Promise<readonly import("@infinity-context/sdk").DocumentRecord[] | null> {
-  try {
-    return await operation.request(requestTimeoutMs, (signal) =>
-      listTopologyDocuments(client, request.topology, signal)
-    );
-  } catch (error) {
-    if (isMethodNotAllowed(error)) {
-      return null;
-    }
-    throw error;
-  }
-}
-
-async function documentAlreadyAbsent(
+async function validateKnownDocumentHint(
   client: InfinityContextClient,
   remoteDocumentId: string,
   expectedExternalId: string,
   requestTimeoutMs: number,
   operation: InfinityOperationDeadline,
-): Promise<boolean> {
+): Promise<void> {
   try {
     const remote = (await operation.request(requestTimeoutMs, (signal) =>
       client.documents.getDocument(remoteDocumentId, { signal })
     )).data;
-    if (documentSourceExternalId(remote) !== expectedExternalId) {
+    if (documentId(remote) !== remoteDocumentId) {
       throw new InfinityContextAdapterContractError(
-        "stored remote document identity does not match its release document",
+        "official SDK returned a conflicting document identity",
       );
     }
-    return documentIsDeleted(remote);
+    if (
+      documentSourceExternalId(remote) !== expectedExternalId ||
+      documentSourceType(remote) !== DOCUMENT_SOURCE_TYPE
+    ) {
+      return;
+    }
+    if (!documentIsDeleted(remote) && asStatus(remote) !== "active") {
+      throw new InfinityContextAdapterContractError(
+        "known document returned an unsupported lifecycle status",
+      );
+    }
   } catch (error) {
     if (isNotFound(error)) {
-      return true;
+      return;
     }
     throw error;
   }
@@ -287,9 +354,8 @@ async function deleteWholeMeeting(
         status: "absence_unverified",
       };
     }
-    // Thread counters do not prove that source documents disappeared. Verify
-    // every locally known document identity through the official SDK and a
-    // bounded scope listing before claiming absence.
+    // Thread counters do not prove source-document absence. Reconcile every
+    // persisted plan identity, then verify each remote ID through GET-by-ID.
     return deleteRelease(client, request, requestTimeoutMs, operation);
   } catch (error) {
     return failure(error, "absence_unverified");

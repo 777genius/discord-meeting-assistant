@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { buildHistoricalIndexPlan } from
+import {
+  buildHistoricalIndexPlan,
+  historicalEmbeddingTokenProfile,
+} from
   "@discord-meeting/meeting-core/meeting-knowledge";
 
 import {
@@ -16,6 +19,7 @@ const blockPolicy = {
   maxTurnsPerBlock: 64,
   version: "meeting-knowledge.block-policy.v1",
 } as const;
+const expectedTokenProfile = historicalEmbeddingTokenProfile();
 
 function plan(seed: number) {
   return buildHistoricalIndexPlan(
@@ -28,7 +32,7 @@ function plan(seed: number) {
 describe("Infinity Context SDK request and resumable operation deadlines", () => {
   it("indexes and drains a maximum-size valid plan with fresh request deadlines", async () => {
     const endpoint = new DisposableInfinityEndpoint();
-    endpoint.delayEveryRequest(8);
+    endpoint.delayEveryRequest(10);
     const seed = plan(0x73);
     const source = seed.documents[0];
     if (source === undefined) {
@@ -51,8 +55,9 @@ describe("Infinity Context SDK request and resumable operation deadlines", () =>
     };
     const adapter = new InfinityContextHistoricalMemoryAdapter({
       baseUrl: "http://disposable.infinity.invalid",
+      embeddingTokenProfile: () => expectedTokenProfile,
       operationTimeoutMs: 30_000,
-      requestTimeoutMs: 1_000,
+      requestTimeoutMs: 500,
       schemaVersion: 1,
       transport: endpoint,
     });
@@ -64,15 +69,16 @@ describe("Infinity Context SDK request and resumable operation deadlines", () =>
     }
     expect(Object.keys(indexed.remoteDocumentIds)).toHaveLength(100);
     // More than 200 bounded SDK calls make aggregate wall time exceed one
-    // request deadline. A shared 1s signal deterministically fails here;
-    // fresh per-call deadlines remain comfortably above each 8ms request.
-    expect(indexDurationMs).toBeGreaterThan(1_000);
+    // request deadline. A shared 500ms signal deterministically fails here;
+    // fresh per-call deadlines remain comfortably above each 10ms request.
+    expect(indexDurationMs).toBeGreaterThan(500);
     await expect(adapter.deleteMeeting({
       deleteMutationId: largePlan.deleteMutationId,
       documentExternalIds: largePlan.documents.map(({ manifest }) =>
         manifest.documentExternalId
       ),
       mode: "release",
+      reconciliationDocuments: largePlan.documents,
       remoteDocumentIds: indexed.remoteDocumentIds,
       schemaVersion: 1,
       topology: largePlan.topology,
@@ -85,6 +91,7 @@ describe("Infinity Context SDK request and resumable operation deadlines", () =>
     endpoint.hangNextRequestUntilDeadline("/v1/spaces");
     const adapter = new InfinityContextHistoricalMemoryAdapter({
       baseUrl: "http://disposable.infinity.invalid",
+      embeddingTokenProfile: () => expectedTokenProfile,
       operationTimeoutMs: 1_000,
       requestTimeoutMs: 500,
       schemaVersion: 1,
@@ -111,6 +118,7 @@ describe("Infinity Context SDK request and resumable operation deadlines", () =>
     perCallEndpoint.hangNextRequestUntilDeadline("/v1/spaces");
     const perCall = new InfinityContextHistoricalMemoryAdapter({
       baseUrl: "http://disposable.infinity.invalid",
+      embeddingTokenProfile: () => expectedTokenProfile,
       operationTimeoutMs: 500,
       requestTimeoutMs: 20,
       schemaVersion: 1,
@@ -126,6 +134,7 @@ describe("Infinity Context SDK request and resumable operation deadlines", () =>
     overallEndpoint.delayEveryRequest(18);
     const overall = new InfinityContextHistoricalMemoryAdapter({
       baseUrl: "http://disposable.infinity.invalid",
+      embeddingTokenProfile: () => expectedTokenProfile,
       operationTimeoutMs: 55,
       requestTimeoutMs: 40,
       schemaVersion: 1,

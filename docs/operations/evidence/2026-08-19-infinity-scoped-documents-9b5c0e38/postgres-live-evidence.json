@@ -1,0 +1,23 @@
+{
+  "cancelled_attempt_error": "DBAPIError",
+  "explain_after_recovery": {
+    "with_source": "ix_memory_documents_scope_thread_source_page",
+    "without_source": "ix_memory_documents_scope_thread_status_page"
+  },
+  "explain_before_recovery": {
+    "with_source": "ix_memory_documents_scope_thread_source_page",
+    "without_source": "ix_memory_documents_scope_thread_status_page"
+  },
+  "history_recorded_exactly_once": true,
+  "initial_migrations": 34,
+  "invalid_index_observed": [
+    "ix_memory_documents_scope_status_page"
+  ],
+  "recovered_indexes": {
+    "ix_memory_documents_scope_status_page": true,
+    "ix_memory_documents_scope_thread_source_page": true,
+    "ix_memory_documents_scope_thread_status_page": true
+  },
+  "status": "passed",
+  "writer_during_concurrent_build": "passed"
+}

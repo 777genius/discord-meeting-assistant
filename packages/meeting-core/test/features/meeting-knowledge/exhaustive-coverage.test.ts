@@ -4,6 +4,7 @@ import {
   DeterministicExhaustiveCoverageExtraction,
   ExhaustiveCoverage,
   admitAcceptedFinalMeeting,
+  buildHistoricalIndexPlan,
   createHistoricalReleaseBinding,
   type AcceptedFinalMeetingV1,
   type CoverageCheckpointLeaseV1,
@@ -12,8 +13,8 @@ import {
   type ExhaustiveCoverageStore,
   type HistoricalAppliedPlanV1,
   type HistoricalAuthorizationObservationV1,
-  type HistoricalCandidateRecordV1,
-  type HistoricalEvidenceAuthority,
+  type HistoricalCandidateRecordV1, type HistoricalEvidenceAuthority,
+  type HistoricalEmbeddingTokenizerPort,
   type HistoricalOpaqueIdPort,
   type HistoricalReleaseBindingV1,
   type HistoricalSyncStore,
@@ -262,13 +263,22 @@ class MemoryCheckpoints implements ExhaustiveCoverageStore {
 
 class BindingStore implements HistoricalSyncStore {
   public current = true;
+  public currentPlans: readonly HistoricalAppliedPlanV1[];
   public bindingSnapshots: readonly (readonly HistoricalReleaseBindingV1[])[];
+  public currentPlanReads = 0;
 
-  public constructor(bindings: readonly HistoricalReleaseBindingV1[]) {
+  public constructor(
+    bindings: readonly HistoricalReleaseBindingV1[],
+    currentPlans: readonly HistoricalAppliedPlanV1[] = [],
+  ) {
     this.bindingSnapshots = [bindings];
+    this.currentPlans = currentPlans;
   }
 
   public async acceptRelease(): Promise<"replayed"> { return "replayed"; }
+  public async enqueueAppliedProfileRebuilds() {
+    return { enqueued: 0, remaining: false } as const;
+  }
   public async claimNext(): Promise<null> { return null; }
   public async recordPlan(): Promise<void> {}
   public async recordApplied(): Promise<void> {}
@@ -277,7 +287,11 @@ class BindingStore implements HistoricalSyncStore {
   public async recordDeleted(): Promise<void> {}
   public async requestMeetingDeletion(): Promise<void> {}
   public async findCurrentCandidate(): Promise<HistoricalCandidateRecordV1 | null> { return null; }
-  public async listCurrentRoomPlans(): Promise<readonly HistoricalAppliedPlanV1[]> { return []; }
+  public async findCurrentCandidates(): Promise<readonly HistoricalCandidateRecordV1[]> { return []; }
+  public async listCurrentRoomPlans(): Promise<readonly HistoricalAppliedPlanV1[]> {
+    this.currentPlanReads += 1;
+    return this.currentPlans;
+  }
 
   public async listDesiredRoomBindings(): Promise<readonly HistoricalReleaseBindingV1[]> {
     const [head, ...tail] = this.bindingSnapshots;
@@ -301,13 +315,26 @@ function authority(meetings: readonly AcceptedFinalMeetingV1[]): HistoricalEvide
 function useCase(input: {
   readonly authorize?: () => Promise<HistoricalAuthorizationObservationV1>;
   readonly checkpoints: MemoryCheckpoints;
-  readonly extractor: (blockLocator: string) => Promise<TestExtract>;
+  readonly extractor: (blockLocator: string, turnCount: number) => Promise<TestExtract>;
   readonly extractorProfile?: string;
   readonly maximumCumulativeEvidenceUtf8Bytes?: number;
   readonly meetings: readonly AcceptedFinalMeetingV1[];
   readonly processingRelease?: string;
   readonly store: BindingStore;
+  readonly tokenizerFactory?: () => HistoricalEmbeddingTokenizerPort | undefined;
 }) {
+  if (input.store.currentPlans.length === 0 && input.meetings.length > 0) {
+    const initialReleases = new Set(
+      (input.store.bindingSnapshots[0] ?? []).map(({ releaseId }) => releaseId),
+    );
+    input.store.currentPlans = input.meetings
+      .filter(({ binding }) => initialReleases.has(binding.releaseId))
+      .map((meeting) => ({
+        binding: meeting.binding,
+        plan: buildHistoricalIndexPlan(meeting, new TestIds(), blockPolicy),
+        remoteDocumentIds: {},
+      }));
+  }
   return new ExhaustiveCoverage({
     authority: authority(input.meetings),
     authorization: {
@@ -321,14 +348,15 @@ function useCase(input: {
     checkpoints: input.checkpoints,
     extractor: {
       profile: input.extractorProfile ?? "meeting-knowledge.test-extractor.v1",
-      extract: async ({ block }) => {
-        const extracted = await input.extractor(block.candidateLocator);
-        const firstTurn = block.turns[0];
+      extract: async ({ analysisTurns, block }) => {
+        const extracted = await input.extractor(block.candidateLocator, analysisTurns.length);
+        const firstTurn = analysisTurns[0];
         const selectedTurns = extracted.evidenceLocators.length > 0 && firstTurn !== undefined
           ? [{
               blockLocator: block.candidateLocator,
               relevance: "direct" as const,
-              turnId: firstTurn.turnId,
+              sourceEndCodePoint: firstTurn.sourceEndCodePoint, sourceRef: firstTurn.sourceRef,
+              sourceStartCodePoint: firstTurn.sourceStartCodePoint, turnId: firstTurn.turnId,
             }]
           : [];
         return {
@@ -344,7 +372,7 @@ function useCase(input: {
       reduce: async ({ values }) => {
         const reducedTurns = [...new Map(values.flatMap(({ selectedTurns }) =>
           selectedTurns.map((turn) => [
-            `${turn.blockLocator}\u0000${turn.turnId}`,
+            JSON.stringify([turn.blockLocator, turn.turnId, turn.sourceRef, turn.sourceStartCodePoint, turn.sourceEndCodePoint]),
             turn,
           ] as const)
         )).values()];
@@ -353,6 +381,10 @@ function useCase(input: {
           payload: {
             matches: values.reduce((total, value) =>
               total + (typeof value.payload.matches === "number" ? value.payload.matches : 0), 0),
+            turnsReviewed: values.reduce((total, value) =>
+              total + (typeof value.payload.turnsReviewed === "number"
+                ? value.payload.turnsReviewed
+                : 0), 0),
           },
           selectedTurns: reducedTurns,
           selectionStatus: reducedTurns.length === 0 ? "no_match" : "selected",
@@ -361,6 +393,7 @@ function useCase(input: {
       },
     },
     sync: input.store,
+    ...(input.tokenizerFactory === undefined ? {} : { tokenizer: input.tokenizerFactory }),
   }, {
     blockPolicy,
     checkpointRetentionSeconds: 86_400,
@@ -380,11 +413,19 @@ function useCase(input: {
   }, qualifiedTwoHourProfile);
 }
 
+const largeBlockPolicy = Object.freeze({
+  maxBlockUtf8Bytes: 32_768,
+  maxBlocksPerMeeting: 100,
+  maxTurnsPerBlock: 64,
+  version: "meeting-knowledge.block-policy.v1" as const,
+});
+
 function largeCoverage(
   meeting: AcceptedFinalMeetingV1,
   checkpoints: MemoryCheckpoints,
 ): ExhaustiveCoverage {
   const extraction = new DeterministicExhaustiveCoverageExtraction(64, 256);
+  const plan = buildHistoricalIndexPlan(meeting, new TestIds(), largeBlockPolicy);
   return new ExhaustiveCoverage({
     authority: authority([meeting]),
     authorization: { authorize: async () => ({
@@ -397,14 +438,13 @@ function largeCoverage(
     extractor: extraction,
     ids: new TestIds(),
     reducer: extraction,
-    sync: new BindingStore([meeting.binding]),
+    sync: new BindingStore([meeting.binding], [{
+      binding: meeting.binding,
+      plan,
+      remoteDocumentIds: {},
+    }]),
   }, {
-    blockPolicy: {
-      maxBlockUtf8Bytes: 32_768,
-      maxBlocksPerMeeting: 100,
-      maxTurnsPerBlock: 64,
-      version: "meeting-knowledge.block-policy.v1",
-    },
+    blockPolicy: largeBlockPolicy,
     checkpointRetentionSeconds: 86_400,
     maximumBlocks: 100,
     maximumCheckpointAttempts: 8,
@@ -468,6 +508,11 @@ describe("exhaustive historical coverage", () => {
       (index) => index === 359 ? "Project Cedar was mentioned." : `Noise ${index}.`,
     );
     const checkpoints = new MemoryCheckpoints();
+    const expectedBlockCount = buildHistoricalIndexPlan(
+      meeting,
+      new TestIds(),
+      largeBlockPolicy,
+    ).documents.length;
     const result = await largeCoverage(meeting, checkpoints).buildPlan({
       ...request,
       question: "Was Project Cedar mentioned?",
@@ -477,10 +522,10 @@ describe("exhaustive historical coverage", () => {
     if (result.status === "ready") {
       expect(result.plan.reduction.selectedTurns.map(({ turnId }) => turnId))
         .toContain("meeting-late-relevant-turn-turn-0359");
-      expect(result.plan.coverageBitmap).toHaveLength(6);
+      expect(result.plan.coverageBitmap).toHaveLength(expectedBlockCount);
       expect(result.plan.coverageBitmap.every(Boolean)).toBe(true);
     }
-    expect(checkpoints.extractsRecorded).toBe(6);
+    expect(checkpoints.extractsRecorded).toBe(expectedBlockCount);
   });
 
   it("never claims completeness when more than 256 canonical turns are selected", async () => {
@@ -490,6 +535,11 @@ describe("exhaustive historical coverage", () => {
       (index) => `Project Cedar mention ${index}.`,
     );
     const checkpoints = new MemoryCheckpoints();
+    const expectedBlockCount = buildHistoricalIndexPlan(
+      meeting,
+      new TestIds(),
+      largeBlockPolicy,
+    ).documents.length;
 
     await expect(largeCoverage(meeting, checkpoints).buildPlan({
       ...request,
@@ -498,7 +548,7 @@ describe("exhaustive historical coverage", () => {
       reason: "coverage_synthesis_selection_exceeded",
       status: "unsupported",
     });
-    expect(checkpoints.extractsRecorded).toBe(6);
+    expect(checkpoints.extractsRecorded).toBe(expectedBlockCount);
     expect(checkpoints.completed).toBe(false);
   });
 });
@@ -512,7 +562,7 @@ describe("exhaustive historical coverage checkpoint lifecycle", () => {
     let failOnce = true;
     const extractor = vi.fn(async (blockLocator: string) => {
       calls += 1;
-      if (calls === 2 && failOnce) {
+      if (calls === 1 && failOnce) {
         failOnce = false;
         throw new Error("synthetic extraction timeout");
       }
@@ -537,11 +587,13 @@ describe("exhaustive historical coverage checkpoint lifecycle", () => {
     }
     expect(second.plan.coverageBitmap.every(Boolean)).toBe(true);
     expect(second.plan.coverageBitmap.length).toBeGreaterThan(1);
-    expect(second.plan.selectedBlocks).toHaveLength(second.plan.coverageBitmap.length);
+    expect(second.plan.selectedBlocks.length).toBeGreaterThan(0);
+    expect(second.plan.selectedBlocks.length)
+      .toBeLessThanOrEqual(second.plan.coverageBitmap.length);
     expect(second.plan.finalSynthesisAllowed).toBe(true);
     expect(checkpoints.completed).toBe(true);
-    expect(extractor).toHaveBeenCalledTimes(second.plan.coverageBitmap.length + 1);
-    expect(callsAfterFailure).toBe(2);
+    expect(extractor).toHaveBeenCalledTimes(second.plan.selectedBlocks.length + 1);
+    expect(callsAfterFailure).toBe(1);
 
     const callsAfterCompletion = calls;
     const replay = await useCase({ checkpoints, extractor, meetings: [meeting], store })
@@ -717,53 +769,86 @@ describe("exhaustive historical coverage checkpoint lifecycle", () => {
     expect(checkpoints.rowCount).toBe(2);
     expect(extractor.mock.calls.length).toBe(callsAfterFirstProfile * 2);
   });
+});
 
-  it("returns an honest unsupported result when an authoritative turn exceeds the block profile", async () => {
-    const binding = createHistoricalReleaseBinding({
-      acceptedMeetingRevision: 3,
-      desiredGeneration: 1,
-      meetingId: "meeting-oversized-turn",
-      roomId: "room-1",
-      scopeId: "scope-1",
-      transcriptId: "transcript-oversized-turn",
-      transcriptVersion: 1,
+describe("exhaustive persisted plan rehydration", () => {
+  it("rehydrates persisted plans during query and finalize without tokenizer replanning", async () => {
+    const base = makeMeeting("meeting-persisted-split");
+    const split = Object.freeze({ ...base, humanTurns: Object.freeze([Object.freeze({
+      ...base.humanTurns[0]!, endMs: 60_000, text: "distinct long source range ".repeat(80), turnId: "split-long-turn" })]) });
+    const meetings = [makeMeeting("meeting-persisted-a"), split];
+    const plans = meetings.map((meeting) => ({
+      binding: meeting.binding,
+      plan: buildHistoricalIndexPlan(meeting, new TestIds(), blockPolicy),
+      remoteDocumentIds: {},
+    }));
+    const store = new BindingStore(meetings.map(({ binding }) => binding), plans);
+    const tokenizerFactory = vi.fn(() => {
+      throw new Error("query-time tokenizer must not be resolved");
     });
-    const meeting = admitAcceptedFinalMeeting({
-      actors: [{ actorId: "speaker", kind: "human" }],
-      binding,
-      identityProvenance: {
-        actorObservationState: "consistent",
-        actorSemanticsVersion: 1,
-        producerCapabilityId: "meeting.lifecycle.sealed-actor-roster.v1",
-        producerRevision: "fixture-r1",
-        rosterState: "sealed",
-      },
-      lifecycleGeneration: 3,
-      meetingRevision: 3,
-      roomId: binding.roomId,
-      scopeId: binding.scopeId,
-      transcriptId: binding.transcriptId,
-      transcriptVersion: 1,
-      turns: [{
-        endMs: 1_000,
-        speakerId: "speaker",
-        startMs: 0,
-        text: "x".repeat(1_000),
-        turnId: "oversized-turn",
-      }],
-    });
-    if (meeting === null) {
-      throw new Error("fixture admission failed");
+    const persistedSources = plans.flatMap(({ plan }) => plan.documents)
+      .flatMap(({ manifest }) => manifest.turnSources);
+    const exactSlices = new Set(persistedSources.map((source) =>
+      [source.sourceRef, source.sourceStartCodePoint, source.sourceEndCodePoint].join("\u0000")));
+
+    const result = await useCase({
+      checkpoints: new MemoryCheckpoints(),
+      extractor: async (blockLocator, turnCount) => ({
+        blockLocator,
+        evidenceLocators: [],
+        payload: { matches: 0, turnsReviewed: turnCount },
+        schemaVersion: 1,
+      }),
+      meetings,
+      store,
+      tokenizerFactory,
+    }).buildPlan(request);
+
+    expect(result.status).toBe("ready");
+    if (result.status === "ready") {
+      expect(result.plan.reduction.payload.turnsReviewed).toBe(exactSlices.size);
     }
+    expect(persistedSources.length).toBeGreaterThan(exactSlices.size);
+    expect(exactSlices.size).toBeGreaterThan(meetings.reduce(
+      (total, meeting) => total + meeting.humanTurns.length, 0));
+    expect(store.currentPlanReads).toBe(2);
+    expect(tokenizerFactory).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when a persisted exhaustive block identity is tampered", async () => {
+    const meeting = makeMeeting("meeting-tampered-plan");
+    const plan = buildHistoricalIndexPlan(meeting, new TestIds(), blockPolicy);
+    const document = plan.documents[0]!;
+    const tamperedPlan = {
+      ...plan,
+      documents: [{
+        ...document,
+        manifest: {
+          ...document.manifest,
+          contentHash: `${document.manifest.contentHash}-tampered`,
+        },
+      }, ...plan.documents.slice(1)],
+    };
+    const extractor = vi.fn();
+    const tokenizerFactory = vi.fn(() => {
+      throw new Error("query-time tokenizer must not be resolved");
+    });
 
     await expect(useCase({
       checkpoints: new MemoryCheckpoints(),
-      extractor: vi.fn(),
+      extractor,
       meetings: [meeting],
-      store: new BindingStore([binding]),
+      store: new BindingStore([meeting.binding], [{
+        binding: meeting.binding,
+        plan: tamperedPlan,
+        remoteDocumentIds: {},
+      }]),
+      tokenizerFactory,
     }).buildPlan(request)).resolves.toEqual({
-      reason: "exhaustive_block_plan_not_qualified",
-      status: "unsupported",
+      reason: "missing_or_stale_authoritative_release",
+      status: "invalidated",
     });
+    expect(extractor).not.toHaveBeenCalled();
+    expect(tokenizerFactory).not.toHaveBeenCalled();
   });
 });

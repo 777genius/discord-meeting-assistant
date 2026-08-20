@@ -23,8 +23,16 @@ import {
   PostgresMeetingRepository,
   canonicalFinalReplyTurnHash,
 } from "@discord-meeting/postgres-adapter";
-import type { SubscriptionRuntimeTransportPort } from
-  "@discord-meeting/subscription-runtime-adapter";
+import {
+  auditedSubscriptionRuntimePackageVersion,
+  canonicalJsonSha256,
+  subscriptionRuntimeCliEngine,
+  subscriptionRuntimeKnowledgeEvidenceSelectorPurpose,
+  type JsonObject,
+  type SubscriptionRuntimeAgentTaskRequest,
+  type SubscriptionRuntimeTaskResult,
+  type SubscriptionRuntimeTransportPort,
+} from "@discord-meeting/subscription-runtime-adapter";
 import { ChannelType, PermissionFlagsBits, type Client } from "discord.js";
 import type { Pool } from "pg";
 import { expect } from "vitest";
@@ -39,6 +47,7 @@ import {
 import { DiscordAnswerPayloadCodec } from "@discord-meeting/discord-adapter";
 import {
   botApplicationIdentity,
+  historicalMeetingId,
   historicalRows,
   platformConfig,
   requiredHistoricalRuntime,
@@ -149,6 +158,7 @@ export async function qualifyLiveProjectionReply(input: {
   const emitter = new EventEmitter();
   const client = Object.assign(emitter, {
     guilds: { fetch: () => Promise.resolve(guild) },
+    user: { id: botApplicationIdentity },
   }) as unknown as Client;
   const delivered: string[] = [];
   const deliveryCalls: Parameters<AnswerDeliveryPort["create"]>[0][] = [];
@@ -181,6 +191,7 @@ export async function qualifyLiveProjectionReply(input: {
     generatorInvocations += 1;
     return generatorInvocations;
   });
+  const selectorRuntime = new SyntheticFocusedSelectorRuntime();
   const baseConfig = platformConfig(input.infinity.baseUrl, true, true, "test");
   const config = {
     ...baseConfig,
@@ -199,7 +210,7 @@ export async function qualifyLiveProjectionReply(input: {
     historicalMemory: input.runtime,
     logger: silentLogger,
     pool: input.pool,
-    runtimeTransport: unusedRuntimeTransport,
+    runtimeTransport: selectorRuntime,
   });
   const emitQuestion = (overrides: Record<string, unknown> = {}): void => {
     emitter.emit("messageCreate", {
@@ -212,6 +223,15 @@ export async function qualifyLiveProjectionReply(input: {
       reference: { channelId: threadId, messageId: liveMessageId },
       webhookId: null,
       ...overrides,
+    });
+  };
+  const deleteProjection = (messageId: string): void => {
+    emitter.emit("messageDelete", {
+      author: { bot: true, id: botApplicationIdentity },
+      channel: { isThread: () => false },
+      channelId: resultsContainerId,
+      guildId: scopeId,
+      id: messageId,
     });
   };
   runtime.start();
@@ -243,11 +263,20 @@ export async function qualifyLiveProjectionReply(input: {
     });
     await waitForQuestionEffect(input.pool, questionId, input.signal);
     expect(delivered).toHaveLength(1);
+    expect(selectorRuntime.invocations).toBe(1);
+    expect(selectorRuntime.candidateCounts).toHaveLength(1);
+    expect(selectorRuntime.candidateCounts[0]).toBeGreaterThan(0);
+    expect(selectorRuntime.candidateCounts[0]).toBeLessThanOrEqual(
+      localFinalReplyPolicy.retrieval.maximumCandidates,
+    );
     expect(generatorInvocations).toBe(1);
     await expectQuestionEffects(input.pool, 1);
     expect(delivered[0]).toContain("Ana owns the active release");
+    expect(delivered[0]).toContain("live-reply-turn-00");
+    expect(delivered[0]).toContain("history-turn-0719");
     expect(delivered[0]).not.toContain("Ongoing live ingestion detail 19");
     await finalizeAndProveCanonicalTransition({
+      deleteProjection,
       delivered,
       emitQuestion,
       finalMeetings,
@@ -259,6 +288,7 @@ export async function qualifyLiveProjectionReply(input: {
       participantId,
       pool: input.pool,
       runtime,
+      selectorInvocations: () => selectorRuntime.invocations,
       signal: input.signal,
     });
   } finally {
@@ -303,11 +333,14 @@ function createGroundedAnswer(onGenerate: () => number): GroundedMeetingAnswer {
     generate: async (request) => {
       const invocation = onGenerate();
       const early = request.plan.evidence.find(({ text }) => text.includes("EARLY-COMET"));
-      const historical = request.plan.evidence.find(({ text }) => text.includes("PINE-GOLF"));
+      const historical = request.plan.evidence.find(({ source, text }) =>
+        source?.meetingId === historicalMeetingId && text.includes("PINE-GOLF")
+      );
       expect(request.plan.mode).toBe("focused_retrieval");
       expect(request.plan.evidence.length).toBeLessThanOrEqual(24);
       expect(early).toBeDefined();
       expect(historical).toBeDefined();
+      expect(historical?.source?.meetingId).toBe(historicalMeetingId);
       if (invocation === 2) {
         expect(early?.turnId).toBe("same-meeting-final-turn-1");
       }
@@ -361,6 +394,7 @@ function emitRejectedQuestions(
 }
 
 async function finalizeAndProveCanonicalTransition(input: {
+  readonly deleteProjection: (messageId: string) => void;
   readonly delivered: readonly string[];
   readonly emitQuestion: (overrides?: Record<string, unknown>) => void;
   readonly finalMeetings: PostgresMeetingRepository;
@@ -372,6 +406,7 @@ async function finalizeAndProveCanonicalTransition(input: {
   readonly participantId: string;
   readonly pool: Pool;
   readonly runtime: NonNullable<ReturnType<typeof createMeetingKnowledgeLocalFinalReply>>;
+  readonly selectorInvocations: () => number;
   readonly signal: AbortSignal;
 }): Promise<void> {
   const current = await input.liveMeetings.findById(input.meetingId);
@@ -470,6 +505,69 @@ async function finalizeAndProveCanonicalTransition(input: {
   if (input.generatorInvocations() !== 2) {
     throw new Error(`final reply bypassed canonical generation: ${input.delivered[1]}`);
   }
+  expect(input.delivered[1]).toContain("same-meeting-final-turn-1");
+  expect(input.delivered[1]).toContain("history-turn-0719");
+  expect(input.delivered[1]).not.toContain("live-reply-turn-00");
+
+  const unanswerableQuestionId = "777777777777777779";
+  input.emitQuestion({
+    channel: { isThread: () => false },
+    channelId: resultsContainerId,
+    content: "What confirmed meeting evidence identifies ZEBRA-MOON?",
+    id: unanswerableQuestionId,
+    reference: {
+      channelId: resultsContainerId,
+      messageId: finalMessageId,
+    },
+  });
+  await input.runtime.settleIngress();
+  await waitForQuestionEffect(input.pool, unanswerableQuestionId, input.signal);
+  await expectQuestionEffects(input.pool, 3);
+  await waitForQuestionOutcome(
+    input.pool,
+    unanswerableQuestionId,
+    "insufficient_evidence",
+    input.signal,
+  );
+  expect(input.delivered).toHaveLength(3);
+  expect(input.delivered[2]).toContain(
+    "There is not enough confirmed meeting evidence to answer that.",
+  );
+  expect(input.delivered[2]).not.toContain("-#");
+  expect(input.generatorInvocations()).toBe(2);
+  expect(input.selectorInvocations()).toBe(3);
+
+  input.emitQuestion({
+    channel: { isThread: () => false },
+    channelId: resultsContainerId,
+    content: "What confirmed meeting evidence identifies ZEBRA-MOON?",
+    id: unanswerableQuestionId,
+    reference: {
+      channelId: resultsContainerId,
+      messageId: finalMessageId,
+    },
+  });
+  await input.runtime.settleIngress();
+  await expectQuestionEffects(input.pool, 3);
+  expect(input.delivered).toHaveLength(3);
+  expect(input.generatorInvocations()).toBe(2);
+  expect(input.selectorInvocations()).toBe(3);
+
+  input.deleteProjection(finalMessageId);
+  await input.runtime.settleIngress();
+  input.emitQuestion({
+    channel: { isThread: () => false },
+    channelId: resultsContainerId,
+    id: "777777777777777780",
+    reference: {
+      channelId: resultsContainerId,
+      messageId: finalMessageId,
+    },
+  });
+  await input.runtime.settleIngress();
+  await expectQuestionEffects(input.pool, 3);
+  expect(input.delivered).toHaveLength(3);
+  expect(input.generatorInvocations()).toBe(2);
   const deleting = requiredHistoricalRuntime(
     input.pool,
     input.infinity,
@@ -557,6 +655,30 @@ async function expectQuestionEffects(pool: Pool, expected: number): Promise<void
   expect(effects.rows[0]?.count).toBe(expected);
 }
 
+async function waitForQuestionOutcome(
+  pool: Pool,
+  questionId: string,
+  expectedOutcome: string,
+  signal: AbortSignal,
+): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    signal.throwIfAborted();
+    const result = await pool.query<{ readonly outcome: string | null }>(
+      "SELECT outcome FROM meeting_knowledge.question_jobs WHERE question_id = $1",
+      [questionId],
+    );
+    if (result.rows[0]?.outcome === expectedOutcome) {
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 100);
+    });
+  }
+  throw new Error(
+    `question ${questionId} did not settle as ${expectedOutcome}`,
+  );
+}
+
 async function waitForQuestionEffect(
   pool: Pool,
   questionId: string,
@@ -580,7 +702,83 @@ async function waitForQuestionEffect(
   throw new Error(`question effect ${questionId} did not settle`);
 }
 
-const unusedRuntimeTransport = {
-  checkHealth: () => Promise.reject(new Error("unused synthetic runtime")),
-  execute: () => Promise.reject(new Error("unused synthetic runtime")),
-} as SubscriptionRuntimeTransportPort;
+const syntheticLauncherSha256 = "d".repeat(64);
+
+class SyntheticFocusedSelectorRuntime implements SubscriptionRuntimeTransportPort {
+  public invocations = 0;
+  public readonly candidateCounts: number[] = [];
+
+  public checkHealth() {
+    return Promise.resolve({
+      launcherSha256: syntheticLauncherSha256,
+      runtimeEngine: subscriptionRuntimeCliEngine,
+      runtimeVersion: auditedSubscriptionRuntimePackageVersion,
+      status: "serving" as const,
+      warningCodes: [],
+    });
+  }
+
+  public execute(
+    request: SubscriptionRuntimeAgentTaskRequest,
+    options: { readonly signal?: AbortSignal } = {},
+  ): Promise<SubscriptionRuntimeTaskResult> {
+    options.signal?.throwIfAborted();
+    expect(request.context.purpose).toBe(
+      subscriptionRuntimeKnowledgeEvidenceSelectorPurpose,
+    );
+    this.invocations += 1;
+    const prompt = JSON.parse(request.task.prompt) as {
+      readonly candidates: readonly {
+        readonly candidateId: string;
+        readonly snippet: string;
+      }[];
+      readonly question: string;
+    };
+    expect(new Set(prompt.candidates.map(({ candidateId }) => candidateId)).size)
+      .toBe(prompt.candidates.length);
+    expect(prompt.candidates.length).toBeGreaterThan(0);
+    expect(prompt.candidates.length).toBeLessThanOrEqual(
+      localFinalReplyPolicy.retrieval.maximumCandidates,
+    );
+    expect(prompt.candidates.every(({ snippet }) =>
+      new TextEncoder().encode(snippet).byteLength <= 1_600
+    )).toBe(true);
+    expect(prompt.candidates.some(({ snippet }) =>
+      snippet.includes("BOTIK INTERIM TRANSCRIPT MUST NEVER BE INDEXED")
+    )).toBe(false);
+    this.candidateCounts.push(prompt.candidates.length);
+    const selectedCandidateIds = prompt.question.includes("ZEBRA-MOON")
+      ? []
+      : prompt.candidates
+        .filter(({ snippet }) => /EARLY-COMET|PINE-GOLF/u.test(snippet))
+        .map(({ candidateId }) => candidateId)
+        .slice(0, 5);
+    if (!prompt.question.includes("ZEBRA-MOON")) {
+      expect(selectedCandidateIds.length).toBeGreaterThan(0);
+    }
+    const output: JsonObject = {
+      schemaVersion: 1,
+      selectedCandidateIds,
+      status: selectedCandidateIds.length === 0 ? "insufficient_evidence" : "selected",
+    };
+    return Promise.resolve({
+      executionAttestation: {
+        canonicalRequestSha256: canonicalJsonSha256(request),
+        launcherSha256: syntheticLauncherSha256,
+        model: request.task.controls.model,
+        provider: "codex",
+        purpose: request.context.purpose,
+        reasoningEffort: request.task.controls.reasoningEffort,
+        requestId: request.runId,
+        runtimeEngine: subscriptionRuntimeCliEngine,
+        runtimePackageVersion: auditedSubscriptionRuntimePackageVersion,
+        schemaVersion: 1,
+        selectedOutputKind: "structured_output",
+        selectedOutputSha256: canonicalJsonSha256(output),
+      },
+      protocolVersion: 1,
+      status: "completed",
+      structuredOutput: output,
+    });
+  }
+}

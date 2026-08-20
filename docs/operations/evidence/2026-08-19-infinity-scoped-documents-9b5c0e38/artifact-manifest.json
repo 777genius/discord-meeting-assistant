@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "head_sha": "9b5c0e38bf46cdabe32698c84e62e1711a8b0aee",
+  "files": [
+    {
+      "name": "infinity-context-scoped-documents-9b5c0e38.bundle",
+      "sha256": "c11675a395cbf3deed2ca87f39a26b4d78d862be792daf31175930856e7f32df"
+    },
+    {
+      "name": "infinity-context-sdk-0.1.0.tgz",
+      "sha256": "8f8015583ba3ccb71b1654d11ad6af111881ceedde68dec52241edc431981dc0"
+    },
+    {
+      "name": "infinity-context-source-9b5c0e38.tar.gz",
+      "sha256": "c14b5bd5f24862b0e10eb8dc067d4270ad4d6a0496eb5d7e2f6282d813435cf8"
+    },
+    {
+      "name": "openapi-9b5c0e38.json",
+      "sha256": "a9f946c4a72b0a74e8bec1242c40245a84de29a27449b18be579b10168c4da1b"
+    },
+    {
+      "name": "parity-baseline-9b5c0e38.sha256",
+      "sha256": "d7e58a5d8d1ef010c413d2b76a35ac196ee6f5ba7033573fcab100fca040fa97"
+    },
+    {
+      "name": "postgres-live-evidence-9b5c0e38.json",
+      "sha256": "4331f5ca203cdc6a2b2c654820675a51a355fffc4ad0f900e1f7c33c9e1850ba"
+    },
+    {
+      "name": "sdk-asgi-postgres-evidence-9b5c0e38.json",
+      "sha256": "63a31a0f2ea0a40b7802612838ea045998a59bda2646236e7a88190923e84487"
+    },
+    {
+      "name": "service-manifest-9b5c0e38.json",
+      "sha256": "42807626aa1867c8d9663fa4a8c9ad27cc08c0d2eb93adbcea8f138a3f230c43"
+    },
+    {
+      "name": "source-manifest-9b5c0e38.json",
+      "sha256": "1cb58cab405ec3563088f952837f6da9eaf5ffd7c8ad7be9e8faf7ccbd749caf"
+    },
+    {
+      "name": "source-tree-files-9b5c0e38.sha256",
+      "sha256": "c3b04f0eba07467209de62e0d92c913ab182e4b55ce1ee645d04494079cf2428"
+    }
+  ]
+}

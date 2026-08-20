@@ -1,5 +1,7 @@
 import { resolveAnswerLocale, type AnswerLocale } from "../domain/answer-locale.js";
 import type { RehydratedEvidenceTurn } from "../domain/grounding-plan.js";
+import { historicalEvidenceSourceKey } from
+  "../domain/historical-evidence-source.js";
 import { requiresExhaustiveCoverage } from "../domain/question-scope.js";
 import type { HistoricalAuthorizationObservationV1 } from "./ports/historical-grounding.js";
 import type { LiveFinalizedMemoryQueryPort } from "./ports/live-finalized-memory.js";
@@ -145,10 +147,13 @@ export function deduplicateEvidenceTurns(
   for (const turn of values) {
     const source = turn.source;
     const key = [
+      historicalEvidenceSourceKey(source?.historicalSource),
       source?.meetingId ?? fallback.meetingId,
       source?.transcriptId ?? fallback.transcriptId,
       String(source?.transcriptVersion ?? fallback.transcriptVersion),
       turn.turnId,
+      String(source?.sourceStartCodePoint ?? "whole"),
+      String(source?.sourceEndCodePoint ?? "whole"),
     ].join("\u0000");
     if (!existing.has(key)) {
       existing.set(key, turn);

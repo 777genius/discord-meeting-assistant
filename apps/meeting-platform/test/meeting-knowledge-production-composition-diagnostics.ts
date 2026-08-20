@@ -4,8 +4,10 @@ import type { FocusedMemoryReference } from
   "@discord-meeting/meeting-core/meeting-knowledge";
 import { Meeting, type MeetingSnapshot } from
   "@discord-meeting/meeting-core/meeting-lifecycle";
-import type { PostgresMeetingRepository } from
-  "@discord-meeting/postgres-adapter";
+import {
+  PostgresHistoricalMemoryStore,
+  type PostgresMeetingRepository,
+} from "@discord-meeting/postgres-adapter";
 import type { Pool } from "pg";
 import { expect } from "vitest";
 
@@ -23,6 +25,52 @@ export interface QualificationStageTiming {
 }
 
 const qualificationCleanupGraceMs = 5_000;
+
+export function disposableExternalPostgresUrl(
+  environment: Readonly<{
+    readonly MEETING_KNOWLEDGE_E2E_DISPOSABLE_DATABASE?: string;
+    readonly MEETING_KNOWLEDGE_E2E_POSTGRES_URL?: string;
+  }>,
+): string | undefined {
+  const rawUrl = environment.MEETING_KNOWLEDGE_E2E_POSTGRES_URL?.trim();
+  const consent = environment.MEETING_KNOWLEDGE_E2E_DISPOSABLE_DATABASE?.trim();
+  if (rawUrl === undefined && consent === undefined) {
+    return undefined;
+  }
+  if (
+    rawUrl === undefined || rawUrl === "" || consent === undefined || consent === ""
+  ) {
+    throw new Error(
+      "external PostgreSQL qualification requires exact disposable consent",
+    );
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new Error("external PostgreSQL qualification URL is invalid");
+  }
+  if (
+    !new Set(["postgres:", "postgresql:"]).has(parsed.protocol) ||
+    parsed.search !== "" || parsed.hash !== ""
+  ) {
+    throw new Error("external PostgreSQL qualification URL is invalid");
+  }
+  if (!new Set(["127.0.0.1", "[::1]", "localhost"]).has(parsed.hostname)) {
+    throw new Error("external PostgreSQL qualification must use a loopback host");
+  }
+  if (!/^\/meeting_knowledge_e2e_[a-z0-9_]{1,48}$/u.test(parsed.pathname)) {
+    throw new Error(
+      "external PostgreSQL qualification requires a dedicated database",
+    );
+  }
+  if (consent !== parsed.pathname.slice(1)) {
+    throw new Error(
+      "external PostgreSQL qualification consent must name the exact database",
+    );
+  }
+  return rawUrl;
+}
 
 export function assertAggregateStageBudget(
   outerBudgetMs: number,
@@ -44,6 +92,36 @@ export function focusedReferenceKey(reference: FocusedMemoryReference): string {
     reference.turnId,
     reference.turnHash,
   ].join("\u0000");
+}
+
+export async function assertPersistedCoverageAnalysis(
+  pool: Pool,
+  scopeId: string,
+  roomId: string,
+  signal: AbortSignal,
+): Promise<number> {
+  const plans = await new PostgresHistoricalMemoryStore(pool)
+    .listCurrentRoomPlans(scopeId, roomId, 3, { signal });
+  const slices = plans.flatMap(({ binding, plan }) =>
+    plan.documents.flatMap(({ manifest }) => manifest.turnSources.map((source) => [
+      binding.meetingId,
+      binding.releaseId,
+      source.sourceRef,
+      source.sourceStartCodePoint,
+      source.sourceEndCodePoint,
+    ].join("\u0000")))
+  );
+  const uniqueSlices = new Set(slices);
+  expect({
+    duplicateOverlapSlices: slices.length - uniqueSlices.size,
+    persistedSlices: slices.length,
+    uniqueAuthorizedSlices: uniqueSlices.size,
+  }).toEqual({
+    duplicateOverlapSlices: 352,
+    persistedSlices: 1_088,
+    uniqueAuthorizedSlices: 736,
+  });
+  return uniqueSlices.size;
 }
 
 export async function waitForHistoricalRows(
@@ -154,7 +232,13 @@ export async function qualifySupersessionAndDeletion(
   repository: PostgresMeetingRepository,
   historical: MeetingSnapshot,
   signal: AbortSignal,
+  hooks?: {
+    readonly afterSupersession: () => Promise<void>;
+    readonly beforeSupersession: () => Promise<void>;
+  },
 ): Promise<void> {
+  signal.throwIfAborted();
+  await hooks?.beforeSupersession();
   signal.throwIfAborted();
   const corrected = correctedHistoricalSnapshot(historical);
   await repository.save(corrected, historical.revision);
@@ -181,6 +265,8 @@ export async function qualifySupersessionAndDeletion(
   );
   expect(supersededRows.map(({ state }) => state).toSorted())
     .toEqual(["applied", "deleted"]);
+  signal.throwIfAborted();
+  await hooks?.afterSupersession();
 
   signal.throwIfAborted();
   if (corrected.transcript === null) {

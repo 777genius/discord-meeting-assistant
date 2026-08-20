@@ -7,18 +7,21 @@ import type { DocumentRecord, InfinityContextClient } from "@infinity-context/sd
 
 import { InfinityOperationDeadline } from "./infinity-request-deadline.js";
 import {
-  CANDIDATE_SOURCE_TYPE,
-  DOCUMENT_SOURCE_TYPE,
   InfinityContextAdapterContractError,
   documentId,
   documentSourceExternalId,
   failure,
-  isMethodNotAllowed,
-  listTopologyDocuments,
+  ingestHistoricalDocument,
   processMutationAccepted,
 } from "./infinity-context-sdk-contract.js";
 
 const maximumTopologyListEntries = 100;
+const maximumParallelDocuments = 4;
+
+type IndexWorkerOutcome =
+  | { readonly status: "complete" }
+  | { readonly status: "processing_unknown" }
+  | { readonly error: Error; readonly sequence: number; readonly status: "failed" };
 
 export async function indexHistoricalMeeting(input: {
   readonly client: InfinityContextClient;
@@ -61,69 +64,92 @@ class HistoricalMeetingIndexer {
 
   public async execute(request: HistoricalIndexPlanV1): Promise<HistoricalIndexResultV1> {
     await this.ensureTopology(request);
-    let existing: readonly DocumentRecord[] = [];
-    try {
-      existing = await this.listDocuments(request);
-    } catch (error) {
-      if (!isMethodNotAllowed(error)) {
-        throw error;
-      }
+    const indexed = await this.indexDocuments(request);
+    if (indexed === null) {
+      return {
+        code: "memory.document_processing_outcome_unknown",
+        retryable: true,
+        status: "outcome_unknown",
+      };
     }
-    const remoteDocumentIds: Record<string, string> = {};
-    for (const document of request.documents) {
-      this.operation.throwIfAborted();
-      const remote = await this.ingestOrReconcile(request, document, existing);
-      if (documentSourceExternalId(remote) !== document.manifest.documentExternalId) {
-        throw new InfinityContextAdapterContractError(
-          "official SDK reconciled an index mutation to a conflicting document",
-        );
-      }
-      const remoteId = documentId(remote);
-      remoteDocumentIds[document.manifest.documentExternalId] = remoteId;
-      if (!await this.ensureProcessed(remoteId, document.mutationId)) {
+    const remoteDocumentIds = Object.fromEntries(indexed.map(({ externalId, remoteId }) =>
+      [externalId, remoteId]
+    ));
+    return { remoteDocumentIds: Object.freeze(remoteDocumentIds), status: "applied" };
+  }
+
+  private async indexDocuments(
+    request: HistoricalIndexPlanV1,
+  ): Promise<readonly { readonly externalId: string; readonly remoteId: string }[] | null> {
+    const results: ({ readonly externalId: string; readonly remoteId: string } | undefined)[] =
+      Array.from({ length: request.documents.length });
+    let cursor = 0;
+    let failureSequence = 0;
+    const coordination = { stopped: false };
+    const worker = async (): Promise<IndexWorkerOutcome> => {
+      try {
+        while (!coordination.stopped) {
+          const index = cursor;
+          cursor += 1;
+          const document = request.documents[index];
+          if (document === undefined) { return { status: "complete" }; }
+          this.operation.throwIfAborted();
+          const remote = await this.ingestOrReconcile(request, document);
+          if (documentSourceExternalId(remote) !== document.manifest.documentExternalId) {
+            throw new InfinityContextAdapterContractError(
+              "official SDK reconciled an index mutation to a conflicting document",
+            );
+          }
+          const remoteId = documentId(remote);
+          if (!processMutationAlreadyComplete(remote) &&
+            !await this.ensureProcessed(remoteId, document.mutationId)) {
+            coordination.stopped = true;
+            return { status: "processing_unknown" };
+          }
+          results[index] = { externalId: document.manifest.documentExternalId, remoteId };
+        }
+        return { status: "complete" };
+      } catch (error) {
+        coordination.stopped = true;
+        const sequence = failureSequence;
+        failureSequence += 1;
         return {
-          code: "memory.document_processing_outcome_unknown",
-          retryable: true,
-          status: "outcome_unknown",
+          error: error instanceof Error
+            ? error
+            : new Error("historical document indexing failed", { cause: error }),
+          sequence,
+          status: "failed",
         };
       }
+    };
+    const outcomes = await Promise.all(Array.from(
+      { length: Math.min(maximumParallelDocuments, request.documents.length) },
+      worker,
+    ));
+    const failures = outcomes
+      .filter((outcome): outcome is Extract<IndexWorkerOutcome, { readonly status: "failed" }> =>
+        outcome.status === "failed")
+      .toSorted((left, right) => left.sequence - right.sequence);
+    if (failures[0] !== undefined) { throw failures[0].error; }
+    if (outcomes.some(({ status }) => status === "processing_unknown")) { return null; }
+    const complete = results.filter((result): result is NonNullable<typeof result> =>
+      result !== undefined
+    );
+    if (complete.length !== request.documents.length) {
+      throw new InfinityContextAdapterContractError("parallel index result is incomplete");
     }
-    return { remoteDocumentIds: Object.freeze(remoteDocumentIds), status: "applied" };
+    return Object.freeze(complete);
   }
 
   private async ingestOrReconcile(
     request: HistoricalIndexPlanV1,
     document: HistoricalIndexPlanV1["documents"][number],
-    existing: readonly DocumentRecord[],
   ): Promise<DocumentRecord> {
-    const found = existing.find((candidate) =>
-      documentSourceExternalId(candidate) === document.manifest.documentExternalId
-    );
-    if (found !== undefined) {
-      return found;
-    }
     try {
       return await this.ingest(request, document);
     } catch (error) {
       this.operation.throwIfAborted();
-      try {
-        return await this.ingest(request, document);
-      } catch {
-        let reconciled: DocumentRecord | undefined;
-        try {
-          reconciled = (await this.listDocuments(request)).find((candidate) =>
-            documentSourceExternalId(candidate) === document.manifest.documentExternalId
-          );
-        } catch (listError) {
-          if (!isMethodNotAllowed(listError)) {
-            throw listError;
-          }
-        }
-        if (reconciled === undefined) {
-          throw error;
-        }
-        return reconciled;
-      }
+      return this.ingest(request, document).catch(() => { throw error; });
     }
   }
 
@@ -131,24 +157,9 @@ class HistoricalMeetingIndexer {
     request: HistoricalIndexPlanV1,
     document: HistoricalIndexPlanV1["documents"][number],
   ): Promise<DocumentRecord> {
-    return (await this.operation.request(this.requestTimeoutMs, (signal) =>
-      this.client.documents.ingestDocument({
-        classification: "internal",
-        idempotencyKey: document.mutationId,
-        memoryScopeExternalRef: request.topology.roomScopeExternalRef,
-        signal,
-        sourceExternalId: document.manifest.documentExternalId,
-        sourceRefs: [{
-          source_id: document.manifest.candidateLocator,
-          source_type: CANDIDATE_SOURCE_TYPE,
-        }],
-        sourceType: DOCUMENT_SOURCE_TYPE,
-        spaceSlug: request.topology.spaceSlug,
-        text: document.remoteText,
-        threadExternalRef: request.topology.threadExternalRef,
-        title: document.title,
-      })
-    )).data;
+    return this.operation.request(this.requestTimeoutMs, (signal) =>
+      ingestHistoricalDocument(this.client, request.topology, document, signal)
+    );
   }
 
   private async ensureTopology(request: HistoricalIndexPlanV1): Promise<void> {
@@ -236,12 +247,6 @@ class HistoricalMeetingIndexer {
     return response.data;
   }
 
-  private listDocuments(request: HistoricalIndexPlanV1): Promise<readonly DocumentRecord[]> {
-    return this.operation.request(this.requestTimeoutMs, (signal) =>
-      listTopologyDocuments(this.client, request.topology, signal)
-    );
-  }
-
   private async ensureProcessed(documentIdValue: string, mutationId: string): Promise<boolean> {
     const idempotencyKey = `${mutationId}:process`;
     try {
@@ -262,6 +267,12 @@ class HistoricalMeetingIndexer {
       this.client.documents.processDocument(documentIdValue, { idempotencyKey, signal })
     )).data;
   }
+}
+
+function processMutationAlreadyComplete(document: DocumentRecord): boolean {
+  return processMutationAccepted(document) &&
+    (document.indexing_status === "indexed" ||
+      document.indexing_status === "already_indexed_or_pending");
 }
 
 function assertTopologyLookupComplete(values: readonly unknown[], subject: string): void {

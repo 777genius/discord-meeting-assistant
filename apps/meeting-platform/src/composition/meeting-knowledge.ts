@@ -19,6 +19,7 @@ import {
   MaintainFinalReplies,
   ProcessFinalReplyJob,
   SameRoomFocusedMemoryRetrieval,
+  SelectFocusedEvidence,
   type LocalFinalReplyPolicy,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import {
@@ -38,6 +39,7 @@ import {
 } from "@discord-meeting/postgres-adapter";
 import {
   SubscriptionRuntimeGroundedAnswerAdapter,
+  SubscriptionRuntimeFocusedEvidenceSelectorAdapter,
   subscriptionRuntimeCliEngine,
   type SubscriptionRuntimeTransportPort,
 } from "@discord-meeting/subscription-runtime-adapter";
@@ -45,6 +47,8 @@ import type { Client } from "discord.js";
 import type { Pool } from "pg";
 
 import type { PlatformConfig } from "../config.js";
+import { participantSpeakerAliases } from
+  "../config/participant-greeting-profiles.js";
 import { classifyPlatformError } from "./observability.js";
 import type { PlatformHistoricalMemoryRuntime } from "./historical-memory.js";
 
@@ -52,6 +56,17 @@ const processIntervalMilliseconds = 500;
 const reconciliationIntervalMilliseconds = 30_000;
 const maximumMaintenanceJobsPerPass = 100;
 const shutdownDrainTimeoutMilliseconds = 5_000;
+export const meetingKnowledgeProviderLeasePolicy = Object.freeze({
+  focusedEvidenceSelectorTimeoutMilliseconds: 60_000,
+  groundedAnswerTimeoutMilliseconds: 180_000,
+  maximumGroundedAnswerExecutions: 2, safetyMilliseconds: 120_000,
+});
+const providerAttemptLeaseSeconds = (
+  meetingKnowledgeProviderLeasePolicy.focusedEvidenceSelectorTimeoutMilliseconds +
+  (meetingKnowledgeProviderLeasePolicy.maximumGroundedAnswerExecutions *
+    meetingKnowledgeProviderLeasePolicy.groundedAnswerTimeoutMilliseconds) +
+  meetingKnowledgeProviderLeasePolicy.safetyMilliseconds
+) / 1_000;
 
 export class MeetingKnowledgeDrainTimeoutError extends Error {
   public constructor(timeoutMilliseconds: number) {
@@ -82,20 +97,21 @@ export const localFinalReplyPolicy: LocalFinalReplyPolicy = Object.freeze({
     safeInputTokens: 300_000,
     tokenDriftReserve: 32_768,
   }),
-  // Longer than the grounded-answer adapter's maximum allowed 300-second provider deadline.
-  // Reservation renews this lease immediately before the provider call.
-  jobLeaseSeconds: 360,
+  // One reservation spans selector, answer generation, and at most one
+  // provider-output repair execution. Keep both answer deadlines plus bounded
+  // orchestration slack inside the durable lease.
+  jobLeaseSeconds: providerAttemptLeaseSeconds,
   maximumProviderAttempts: 2,
-  policyVersion: "meeting-knowledge.focused-memory-final-reply.v2",
+  policyVersion: "meeting-knowledge.focused-memory-final-reply.v3",
   retrieval: Object.freeze({
-    maximumCandidates: 24,
+    maximumCandidates: 40,
     neighborTurns: 2,
   }),
 });
 
 export const localFinalReplyPolicyRelease = Object.freeze({
   authorizationPolicyVersion: localFinalReplyPolicy.authorizationPolicyVersion,
-  policyEpoch: 1,
+  policyEpoch: 2,
   policyVersion: localFinalReplyPolicy.policyVersion,
 });
 
@@ -130,8 +146,38 @@ class ConfiguredDiscordQuestionScope implements DiscordQuestionScopePort {
   }
 }
 
+function createGroundedAnswerGenerator(config: PlatformConfig,
+  runtimeTransport: SubscriptionRuntimeTransportPort) {
+  return new SubscriptionRuntimeGroundedAnswerAdapter(runtimeTransport, {
+    expectedLauncherSha256: config.subscriptionRuntime.launcherSha256,
+    expectedRuntimeEngine: subscriptionRuntimeCliEngine,
+    speakerAliases: participantSpeakerAliases(config.participantGreetingProfiles),
+    timeoutMs: meetingKnowledgeProviderLeasePolicy.groundedAnswerTimeoutMilliseconds,
+  });
+}
+
+function createFocusedEvidenceSelector(input: {
+  readonly launcherSha256: string;
+  readonly logger: Logger;
+  readonly runtimeTransport: SubscriptionRuntimeTransportPort;
+}): SelectFocusedEvidence {
+  return new SelectFocusedEvidence(
+    new SubscriptionRuntimeFocusedEvidenceSelectorAdapter(
+      input.runtimeTransport,
+      {
+        expectedLauncherSha256: input.launcherSha256,
+        expectedRuntimeEngine: subscriptionRuntimeCliEngine,
+        timeoutMs: meetingKnowledgeProviderLeasePolicy.focusedEvidenceSelectorTimeoutMilliseconds,
+      },
+    ),
+    (measurement) => {
+      input.logger.info("Focused evidence selection settled", measurement);
+    },
+    () => performance.now(),
+  );
+}
+
 export function createMeetingKnowledgeLocalFinalReply(input: {
-  /** Deterministic transport fake for production-composition qualification. */
   readonly answerDelivery?: AnswerDeliveryPort;
   readonly answers?: GroundedMeetingAnswer;
   readonly client: Client;
@@ -142,8 +188,7 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
   readonly pool: Pool;
   readonly runtimeTransport: SubscriptionRuntimeTransportPort;
 }): MeetingKnowledgeLocalFinalReplyRuntime {
-  const servingEnabled =
-    input.config.meetingKnowledge?.localFinalReply === true;
+  const servingEnabled = input.config.meetingKnowledge?.localFinalReply === true;
   const jobs = new PostgresQuestionJobStore(input.pool, localFinalReplyPolicyRelease);
   const publication = new DurableAnswerPublication({
     delivery: input.answerDelivery ?? new DiscordAnswerDeliveryAdapter(
@@ -201,6 +246,7 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
   const currentMemory = new PostgresFocusedMemoryRetrieval(
     input.pool,
     input.config.discordApplicationId,
+    participantSpeakerAliases(input.config.participantGreetingProfiles),
   );
   const historicalAuthorization = input.historicalMemory === undefined
     ? undefined
@@ -226,13 +272,12 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
     admissions,
     localFinalReplyPolicy,
   );
-  const generator = new SubscriptionRuntimeGroundedAnswerAdapter(
-    input.runtimeTransport,
-    {
-      expectedLauncherSha256: input.config.subscriptionRuntime.launcherSha256,
-      expectedRuntimeEngine: subscriptionRuntimeCliEngine,
-    },
-  );
+  const generator = createGroundedAnswerGenerator(input.config, input.runtimeTransport);
+  const selector = createFocusedEvidenceSelector({
+    launcherSha256: input.config.subscriptionRuntime.launcherSha256,
+    logger: input.logger,
+    runtimeTransport: input.runtimeTransport,
+  });
   const processor = new ProcessFinalReplyJob({
     answerPublication: publication,
     ...(input.answers === undefined ? {} : { answers: input.answers }),
@@ -253,6 +298,7 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
     generator,
     jobs,
     memory,
+    selector,
     policy: localFinalReplyPolicy,
     renderer: new DiscordGroundedAnswerRenderer(),
     workerId: `local-final-reply-e${localFinalReplyPolicyRelease.policyEpoch}-${process.pid}`,

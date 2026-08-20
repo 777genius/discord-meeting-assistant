@@ -9,6 +9,7 @@ import {
   type LoadedCoveragePlan,
 } from "./exhaustive-coverage-contract.js";
 import type {
+  CoverageExtractV1,
   CoverageCheckpointLeaseV1,
   CoverageExtractorPort,
   ExhaustiveCoverageStore,
@@ -16,6 +17,7 @@ import type {
 import { CoverageExtractionCapacityError } from "./ports/historical-grounding.js";
 import type {
   HistoricalOpaqueIdPort,
+  HistoricalEvidenceSliceV1,
   LocallyRehydratedEvidenceBlockV1,
 } from "./ports/historical-memory.js";
 
@@ -31,6 +33,7 @@ type ExtractOneResult =
   | ExhaustiveCoverageResultV1;
 
 interface ExtractOneInput {
+  readonly analysisTurns: readonly HistoricalEvidenceSliceV1[];
   readonly block: LocallyRehydratedEvidenceBlockV1;
   readonly checkpoint: CoverageCheckpointLeaseV1;
   readonly checkpointId: string;
@@ -77,7 +80,12 @@ export async function extractEveryCoverageBlock(
     if (checkpoint.bitmap[ordinal] === true) {
       continue;
     }
+    const analysisTurns = loaded.analysisTurns[ordinal];
+    if (analysisTurns === undefined) {
+      return { reason: "coverage_analysis_projection_missing", status: "invalidated" };
+    }
     const result = await extractOneBlock({
+      analysisTurns,
       block,
       checkpoint,
       checkpointId,
@@ -116,6 +124,7 @@ export async function extractEveryCoverageBlock(
           extract,
           loaded.blocks[ordinal] ?? blockMissing(),
           policy,
+          loaded.analysisTurns[ordinal] ?? blockMissing(),
         );
       })),
     };
@@ -175,13 +184,22 @@ async function extractOneBlock(input: ExtractOneInput): Promise<ExtractOneResult
         status: "unauthorized",
       };
     }
-    const extract = validateExtract(await input.dependencies.extractor.extract({
-      block: input.block,
-      question: input.request.question,
-      ...(input.request.signal === undefined
-        ? {}
-        : { signal: input.request.signal }),
-    }), input.block, input.policy);
+    const candidate = input.analysisTurns.length === 0
+      ? emptyCoverageExtract(input.block.candidateLocator)
+      : await input.dependencies.extractor.extract({
+          analysisTurns: input.analysisTurns,
+          block: input.block,
+          question: input.request.question,
+          ...(input.request.signal === undefined
+            ? {}
+            : { signal: input.request.signal }),
+        });
+    const extract = validateExtract(
+      candidate,
+      input.block,
+      input.policy,
+      input.analysisTurns,
+    );
     const refreshed = await input.dependencies.checkpoints.recordExtract({
       blockOrdinal: input.ordinal,
       checkpointId: input.checkpointId,
@@ -213,6 +231,22 @@ async function extractOneBlock(input: ExtractOneInput): Promise<ExtractOneResult
       status: "incomplete",
     };
   }
+}
+
+function emptyCoverageExtract(blockLocator: string): CoverageExtractV1 {
+  return Object.freeze({
+    blockLocator,
+    evidenceLocators: Object.freeze([]),
+    payload: Object.freeze({
+      blocksReviewed: 1,
+      selectedTurnCount: 0,
+      semanticClaimCount: 0,
+      turnsReviewed: 0,
+    }),
+    selectedTurns: Object.freeze([]),
+    selectionStatus: "no_match",
+    schemaVersion: 1,
+  });
 }
 
 function blockMissing(): never {

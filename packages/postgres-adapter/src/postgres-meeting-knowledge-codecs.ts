@@ -1,13 +1,53 @@
+import { createHash } from "node:crypto";
+
 import type {
+  CanonicalEvidenceTurn,
+  FocusedMemoryReference,
   GroundedAnswerCandidate,
   GroundingPlan,
   QuestionBindingSnapshot,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
+import type { MeetingSnapshot } from "@discord-meeting/meeting-core/meeting-lifecycle";
 import { z } from "zod";
 
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/u);
 const boundedText = z.string().trim().min(1).max(32_768);
 const localeSchema = z.enum(["en", "mixed", "ru"]);
+const historicalEvidenceSourceSchema = z.object({
+  candidateLocator: z.string().trim().min(1).max(1_024),
+  indexGeneration: z.string().trim().min(1).max(1_024),
+  releaseId: z.string().trim().min(1).max(1_024),
+}).strict();
+
+export function canonicalFinalReplyTurns(
+  snapshot: MeetingSnapshot,
+): readonly CanonicalEvidenceTurn[] {
+  const transcript = snapshot.transcript;
+  if (transcript === null) {
+    return [];
+  }
+  return Object.freeze(transcript.turns.map((turn) => Object.freeze({
+    endMs: turn.endMs,
+    speakerId: turn.speakerId,
+    startMs: turn.startMs,
+    text: turn.text,
+    turnId: turn.turnId,
+  })).toSorted((left, right) =>
+    left.startMs - right.startMs || left.endMs - right.endMs ||
+    (left.turnId < right.turnId ? -1 : left.turnId > right.turnId ? 1 : 0)
+  ));
+}
+
+export function canonicalFinalReplyEvidenceHash(snapshot: MeetingSnapshot): string {
+  if (snapshot.transcript === null) {
+    throw new Error("final reply authority requires an accepted transcript");
+  }
+  return createHash("sha256").update(JSON.stringify({
+    transcriptId: snapshot.transcript.transcriptId,
+    turns: canonicalFinalReplyTurns(snapshot),
+    version: snapshot.transcript.version,
+  }), "utf8").digest("hex");
+}
 
 const questionBindingV1Schema = z.object({
   authorizationDigest: sha256Schema,
@@ -39,15 +79,54 @@ const groundingEvidenceSchema = z.object({
   evidenceId: boundedText,
   speakerId: boundedText,
   source: z.object({
+    historicalSource: historicalEvidenceSourceSchema.optional(),
     meetingId: boundedText,
+    sourceEndCodePoint: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+    sourceStartCodePoint: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
     transcriptId: boundedText,
     transcriptVersion: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-  }).strict().optional(),
+  }).strict().superRefine((source, context) => {
+    const hasStart = source.sourceStartCodePoint !== undefined;
+    const hasEnd = source.sourceEndCodePoint !== undefined;
+    if (hasStart !== hasEnd || (hasStart && source.sourceEndCodePoint! <= source.sourceStartCodePoint!)) {
+      context.addIssue({ code: "custom", message: "evidence source range is invalid" });
+    }
+  }).optional(),
   startMs: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   text: boundedText,
   turnHash: sha256Schema,
   turnId: boundedText,
 }).strict();
+
+export function canonicalFinalReplyTurnHash(turn: CanonicalEvidenceTurn): string {
+  return createHash("sha256").update(JSON.stringify({
+    endMs: turn.endMs,
+    speakerId: turn.speakerId,
+    startMs: turn.startMs,
+    text: turn.text,
+    turnId: turn.turnId,
+  }), "utf8").digest("hex");
+}
+
+export function sliceReferencedTurn(
+  turn: CanonicalEvidenceTurn,
+  reference: FocusedMemoryReference,
+): CanonicalEvidenceTurn | null {
+  const start: unknown = reference.sourceStartCodePoint;
+  const end: unknown = reference.sourceEndCodePoint;
+  if (start === undefined && end === undefined) {
+    return turn;
+  }
+  if (typeof start !== "number" || typeof end !== "number") {
+    return null;
+  }
+  const codePoints = Array.from(turn.text);
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) ||
+    start < 0 || end <= start || end > codePoints.length) {
+    return null;
+  }
+  return Object.freeze({ ...turn, text: codePoints.slice(start, end).join("") });
+}
 
 const coverageReductionValueSchema = z.union([
   z.boolean(),
@@ -157,7 +236,32 @@ export function decodeGroundingPlan(value: unknown): GroundingPlan {
       endMs: evidence.endMs,
       evidenceId: evidence.evidenceId,
       speakerId: evidence.speakerId,
-      ...(evidence.source === undefined ? {} : { source: evidence.source }),
+      ...(evidence.source === undefined
+        ? {}
+        : {
+            source: {
+              ...(evidence.source.historicalSource === undefined
+                ? {}
+                : {
+                    historicalSource: {
+                      candidateLocator:
+                        evidence.source.historicalSource.candidateLocator,
+                      indexGeneration:
+                        evidence.source.historicalSource.indexGeneration,
+                      releaseId: evidence.source.historicalSource.releaseId,
+                    },
+                  }),
+              meetingId: evidence.source.meetingId,
+              ...(evidence.source.sourceEndCodePoint === undefined
+                ? {}
+                : {
+                    sourceEndCodePoint: evidence.source.sourceEndCodePoint,
+                    sourceStartCodePoint: evidence.source.sourceStartCodePoint!,
+                  }),
+              transcriptId: evidence.source.transcriptId,
+              transcriptVersion: evidence.source.transcriptVersion,
+            },
+          }),
       startMs: evidence.startMs,
       text: evidence.text,
       turnHash: evidence.turnHash,

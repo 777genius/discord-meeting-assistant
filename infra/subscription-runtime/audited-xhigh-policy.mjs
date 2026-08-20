@@ -36,6 +36,17 @@ const profiles = Object.freeze({
     reasoningEffort: "medium",
     responseFormat: "json",
   }),
+  "discord_meeting.knowledge.evidence_select.v1": Object.freeze({
+    maxOutputTokens: 1_024,
+    model: subscriptionRuntimeFinalCodexModel,
+    outputKind: "structured_output",
+    outputSchemaName: "discord_meeting_knowledge_evidence_select_v1",
+    policyVersion: "meeting-knowledge.evidence-select.subscription-runtime.v1",
+    provider: "codex",
+    purpose: "discord_meeting.knowledge.evidence_select.v1",
+    reasoningEffort: "medium",
+    responseFormat: "json",
+  }),
   "discord_meeting.summary.generate": Object.freeze({
     maxOutputTokens: 8_192,
     model: subscriptionRuntimeFinalCodexModel,

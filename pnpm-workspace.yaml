@@ -19,6 +19,7 @@ catalog:
   "@ast-grep/cli": 0.45.0
   "@discordjs/opus": 0.10.0
   "@discordjs/voice": 0.19.2
+  "@huggingface/tokenizers": 0.1.3
   "@types/node": 24.13.3
   "@types/pg": 8.20.1
   "@types/ws": 8.18.1
@@ -58,4 +59,4 @@ allowBuilds:
   ssh2: false
 
 overrides:
-  "@infinity-context/sdk": "file:vendor/infinity-context/artifacts/infinity-context-sdk-0.1.0-897efd21.tgz"
+  "@infinity-context/sdk": "file:vendor/infinity-context/artifacts/infinity-context-sdk-0.1.0-249245a9.tgz"

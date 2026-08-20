@@ -9,6 +9,7 @@ export function stableSubscriptionRuntimeId(
     | "knowledge-answer-provider-output-repair"
     | "knowledge-answer-request"
     | "knowledge-coverage-extract"
+    | "knowledge-evidence-select"
     | "question"
     | "summary"
     | "summary-action-term-repair"

@@ -6,9 +6,13 @@ import {
   type GroundingPlan,
   type RehydratedEvidenceTurn,
 } from "../domain/grounding-plan.js";
+import { historicalEvidenceSourceKey } from
+  "../domain/historical-evidence-source.js";
 import type { QuestionBindingSnapshot } from "../domain/question-job.js";
+import { admittedHumanActors } from "./admitted-human-evidence.js";
 import type {
   CurrentFinalReplyBinding,
+  FinalReplyEvidencePort,
   FocusedMemoryRetrievalPort,
   QuestionAuthorizationObservation,
 } from "./ports/final-reply.js";
@@ -58,7 +62,16 @@ export function referencesFromPlan(
   plan: GroundingPlan,
 ): readonly FocusedMemoryReference[] {
   return Object.freeze(plan.evidence.map(({ source, turnHash, turnId }) => Object.freeze({
+    ...(source?.historicalSource === undefined
+      ? {}
+      : { historicalSource: source.historicalSource }),
     meetingId: source?.meetingId ?? binding.meetingId,
+    ...(source?.sourceEndCodePoint === undefined
+      ? {}
+      : {
+          sourceEndCodePoint: source.sourceEndCodePoint,
+          sourceStartCodePoint: source.sourceStartCodePoint,
+        }),
     transcriptId: source?.transcriptId ?? binding.transcriptId,
     transcriptVersion: source?.transcriptVersion ?? binding.transcriptVersion,
     turnHash,
@@ -72,18 +85,32 @@ export function sameEvidenceIdentity(
 ): boolean {
   return left.length === right.length && left.every((item, index) => {
     const candidate = right[index];
-    return candidate !== undefined &&
-      item.evidenceId === candidate.evidenceId &&
-      item.turnHash === candidate.turnHash &&
-      item.turnId === candidate.turnId &&
-      item.source?.meetingId === candidate.source?.meetingId &&
-      item.source?.transcriptId === candidate.source?.transcriptId &&
-      item.source?.transcriptVersion === candidate.source?.transcriptVersion &&
-      item.speakerId === candidate.speakerId &&
-      item.startMs === candidate.startMs &&
-      item.endMs === candidate.endMs &&
-      item.text === candidate.text;
+    return candidate !== undefined && sameEvidenceItem(item, candidate);
   });
+}
+
+function sameEvidenceItem(left: GroundingEvidence, right: GroundingEvidence): boolean {
+  return left.evidenceId === right.evidenceId &&
+    left.turnHash === right.turnHash &&
+    left.turnId === right.turnId &&
+    sameEvidenceSource(left.source, right.source) &&
+    left.speakerId === right.speakerId &&
+    left.startMs === right.startMs &&
+    left.endMs === right.endMs &&
+    left.text === right.text;
+}
+
+function sameEvidenceSource(
+  left: GroundingEvidence["source"],
+  right: GroundingEvidence["source"],
+): boolean {
+  return left?.meetingId === right?.meetingId &&
+    historicalEvidenceSourceKey(left?.historicalSource) ===
+      historicalEvidenceSourceKey(right?.historicalSource) &&
+    left?.sourceStartCodePoint === right?.sourceStartCodePoint &&
+    left?.sourceEndCodePoint === right?.sourceEndCodePoint &&
+    left?.transcriptId === right?.transcriptId &&
+    left?.transcriptVersion === right?.transcriptVersion;
 }
 
 export function rebuildGroundingPlan(
@@ -129,6 +156,7 @@ function planUsesHistoricalEvidence(
 ): boolean {
   return plan.evidence.some(({ source }) =>
     source !== undefined && (
+      source.historicalSource !== undefined ||
       source.meetingId !== binding.meetingId ||
       source.transcriptId !== binding.transcriptId ||
       source.transcriptVersion !== binding.transcriptVersion
@@ -150,4 +178,42 @@ export function reauthorizeHistoricalPlan(
     roomId: binding.roomId,
     scopeId: binding.scopeId,
   }) ?? Promise.resolve(false);
+}
+
+/** Rehydrates the exact plan again so an indexed-source rebuild cannot leak stale text. */
+export async function planEvidenceIsCurrent(
+  evidence: FinalReplyEvidencePort,
+  binding: QuestionBindingSnapshot,
+  plan: GroundingPlan,
+  prerequisite?: () => Promise<boolean>,
+): Promise<boolean> {
+  if (prerequisite !== undefined && !await prerequisite()) {
+    return false;
+  }
+  if (plan.evidence.length === 0) {
+    const current = await evidence.recheckCurrentBinding(binding);
+    return current.status === "current" &&
+      authorityMatchesBinding(current.binding, binding);
+  }
+  const rehydrated = await evidence.rehydrateSelectedEvidence(
+    binding,
+    referencesFromPlan(binding, plan),
+  );
+  if (
+    rehydrated.status !== "current" ||
+    !authorityMatchesBinding(rehydrated.binding, binding)
+  ) {
+    return false;
+  }
+  try {
+    const currentPlan = rebuildGroundingPlan(
+      plan,
+      rehydrated.turns,
+      admittedHumanActors(rehydrated),
+    );
+    return sameGroundingPlanEvidenceSections(plan, currentPlan) &&
+      sameEvidenceIdentity(plan.evidence, currentPlan.evidence);
+  } catch {
+    return false;
+  }
 }

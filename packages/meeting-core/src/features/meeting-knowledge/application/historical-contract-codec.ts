@@ -6,6 +6,7 @@ import type {
   HistoricalBlockManifestV1,
   HistoricalIndexDocumentV1,
   HistoricalIndexPlanV1,
+  HistoricalTurnSourceV1,
   HistoricalTopologyV1,
 } from "./ports/historical-memory.js";
 import type {
@@ -17,14 +18,12 @@ import type {
 export class HistoricalContractCodecError extends Error {
   public override readonly name = "HistoricalContractCodecError";
 }
-
 function record(value: unknown, field: string): Readonly<Record<string, unknown>> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new HistoricalContractCodecError(`${field} must be an object`);
   }
   return value as Readonly<Record<string, unknown>>;
 }
-
 function exactFields(
   input: Readonly<Record<string, unknown>>,
   allowed: readonly string[],
@@ -35,28 +34,24 @@ function exactFields(
     throw new HistoricalContractCodecError(`${field} contains an unknown field`);
   }
 }
-
 function string(value: unknown, field: string): string {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new HistoricalContractCodecError(`${field} must be a non-empty string`);
   }
   return value;
 }
-
 function integer(value: unknown, field: string, minimum: number): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < minimum) {
     throw new HistoricalContractCodecError(`${field} must be a safe integer`);
   }
   return value;
 }
-
 function stringArray(value: unknown, field: string): readonly string[] {
   if (!Array.isArray(value)) {
     throw new HistoricalContractCodecError(`${field} must be an array`);
   }
   return Object.freeze(value.map((item, index) => string(item, `${field}[${index}]`)));
 }
-
 export function decodeHistoricalReleaseBindingV1(
   value: unknown,
 ): HistoricalReleaseBindingV1 {
@@ -125,10 +120,14 @@ function decodeManifest(value: unknown, ordinal: number): HistoricalBlockManifes
     "candidateLocator",
     "contentHash",
     "documentExternalId",
+    "embeddingTokenEstimate",
+    "embeddingTokenLimit",
+    "embeddingTokenProfile",
     "endMs",
     "indexGeneration",
     "ordinal",
     "startMs",
+    "turnSources",
     "turnIds",
   ], `plan.documents[${ordinal}].manifest`);
   const manifestOrdinal = integer(input.ordinal, "manifest.ordinal", 0);
@@ -139,24 +138,95 @@ function decodeManifest(value: unknown, ordinal: number): HistoricalBlockManifes
     candidateLocator: string(input.candidateLocator, "manifest.candidateLocator"),
     contentHash: string(input.contentHash, "manifest.contentHash"),
     documentExternalId: string(input.documentExternalId, "manifest.documentExternalId"),
+    embeddingTokenEstimate: integer(
+      input.embeddingTokenEstimate,
+      "manifest.embeddingTokenEstimate",
+      1,
+    ),
+    embeddingTokenLimit: integer(input.embeddingTokenLimit, "manifest.embeddingTokenLimit", 1),
+    embeddingTokenProfile: tokenProfile(input.embeddingTokenProfile),
     endMs: integer(input.endMs, "manifest.endMs", 1),
     indexGeneration: string(input.indexGeneration, "manifest.indexGeneration"),
     ordinal: manifestOrdinal,
     startMs: integer(input.startMs, "manifest.startMs", 0),
+    turnSources: decodeTurnSources(input.turnSources, ordinal),
     turnIds: stringArray(input.turnIds, "manifest.turnIds"),
   });
 }
 
+function tokenProfile(value: unknown): string {
+  return string(value, "manifest.embeddingTokenProfile");
+}
+
+function decodeTurnSources(value: unknown, ordinal: number): readonly HistoricalTurnSourceV1[] {
+  if (!Array.isArray(value)) {
+    throw new HistoricalContractCodecError("manifest.turnSources must be an array");
+  }
+  return Object.freeze(value.map((item, index) => {
+    const field = `plan.documents[${ordinal}].manifest.turnSources[${index}]`;
+    const input = record(item, field);
+    exactFields(input, [
+      "embeddingEndCodePoint",
+      "embeddingStartCodePoint",
+      "endMs",
+      "sourceEndCodePoint",
+      "sourceRef",
+      "sourceStartCodePoint",
+      "speakerId",
+      "startMs",
+      "turnId",
+    ], field);
+    return Object.freeze({
+      embeddingEndCodePoint: integer(input.embeddingEndCodePoint,
+        `${field}.embeddingEndCodePoint`, 1),
+      embeddingStartCodePoint: integer(input.embeddingStartCodePoint,
+        `${field}.embeddingStartCodePoint`, 0),
+      endMs: integer(input.endMs, `${field}.endMs`, 1),
+      sourceEndCodePoint: integer(input.sourceEndCodePoint, `${field}.sourceEndCodePoint`, 1),
+      sourceRef: string(input.sourceRef, `${field}.sourceRef`),
+      sourceStartCodePoint: integer(input.sourceStartCodePoint,
+        `${field}.sourceStartCodePoint`, 0),
+      speakerId: string(input.speakerId, `${field}.speakerId`),
+      startMs: integer(input.startMs, `${field}.startMs`, 0),
+      turnId: string(input.turnId, `${field}.turnId`),
+    });
+  }));
+}
+
 function decodeDocument(value: unknown, ordinal: number): HistoricalIndexDocumentV1 {
   const input = record(value, `plan.documents[${ordinal}]`);
-  exactFields(input, ["manifest", "mutationId", "remoteText", "title"],
+  exactFields(input, ["embeddingText", "manifest", "mutationId", "remoteText", "title"],
     `plan.documents[${ordinal}]`);
-  return Object.freeze({
+  const document = Object.freeze({
+    embeddingText: string(input.embeddingText, "document.embeddingText"),
     manifest: decodeManifest(input.manifest, ordinal),
     mutationId: string(input.mutationId, "document.mutationId"),
     remoteText: string(input.remoteText, "document.remoteText"),
     title: string(input.title, "document.title"),
   });
+  if (!validProjectionMetadata(document)) {
+    throw new HistoricalContractCodecError("historical embedding projection is inconsistent");
+  }
+  return document;
+}
+
+function validProjectionMetadata(document: HistoricalIndexDocumentV1): boolean {
+  const { manifest } = document;
+  const embeddingLength = Array.from(document.embeddingText).length;
+  const projectedTurnIds = new Set(manifest.turnSources.map(({ turnId }) => turnId));
+  let expectedStart = 0;
+  for (const source of manifest.turnSources) {
+    if (
+      source.embeddingStartCodePoint !== expectedStart ||
+      source.embeddingEndCodePoint > embeddingLength
+    ) {
+      return false;
+    }
+    expectedStart = source.embeddingEndCodePoint + 1;
+  }
+  return expectedStart - 1 === embeddingLength &&
+    manifest.turnIds.length === projectedTurnIds.size &&
+    manifest.turnIds.every((turnId) => projectedTurnIds.has(turnId));
 }
 
 export function decodeHistoricalIndexPlanV1(value: unknown): HistoricalIndexPlanV1 {
@@ -165,6 +235,7 @@ export function decodeHistoricalIndexPlanV1(value: unknown): HistoricalIndexPlan
     "binding",
     "deleteMutationId",
     "documents",
+    "effectiveTurnOverlap",
     "indexMutationId",
     "planDigest",
     "schemaVersion",
@@ -175,15 +246,26 @@ export function decodeHistoricalIndexPlanV1(value: unknown): HistoricalIndexPlan
   }
   const binding = decodeHistoricalReleaseBindingV1(input.binding);
   const topology = decodeTopology(input.topology);
-  const documents = Object.freeze(
-    input.documents.map((document, ordinal) => decodeDocument(document, ordinal)),
-  );
+  const documents = Object.freeze(input.documents.map(
+    (document, ordinal) => decodeDocument(document, ordinal),
+  ));
+  const effectiveTurnOverlap = integer(input.effectiveTurnOverlap,
+    "plan.effectiveTurnOverlap", 0);
   if (
+    effectiveTurnOverlap > 8 ||
     documents.length === 0 ||
     documents.some(({ manifest }) =>
       manifest.indexGeneration !== topology.indexGeneration ||
       manifest.endMs <= manifest.startMs ||
-      manifest.turnIds.length === 0
+      manifest.turnIds.length === 0 ||
+      manifest.turnSources.length === 0 ||
+      manifest.embeddingTokenEstimate > manifest.embeddingTokenLimit ||
+      manifest.turnSources.some((source) =>
+        source.endMs <= source.startMs ||
+        source.sourceEndCodePoint <= source.sourceStartCodePoint ||
+        source.embeddingEndCodePoint <= source.embeddingStartCodePoint ||
+        !manifest.turnIds.includes(source.turnId)
+      )
     ) ||
     new Set(documents.map(({ manifest }) => manifest.candidateLocator)).size !== documents.length
   ) {
@@ -193,6 +275,7 @@ export function decodeHistoricalIndexPlanV1(value: unknown): HistoricalIndexPlan
     binding,
     deleteMutationId: string(input.deleteMutationId, "plan.deleteMutationId"),
     documents,
+    effectiveTurnOverlap,
     indexMutationId: string(input.indexMutationId, "plan.indexMutationId"),
     planDigest: string(input.planDigest, "plan.planDigest"),
     schemaVersion: 1,
@@ -293,7 +376,14 @@ function coverageSelectedTurns(
   }
   return Object.freeze(value.map((candidate, index) => {
     const selected = record(candidate, `${field}[${index}]`);
-    exactFields(selected, ["blockLocator", "relevance", "turnId"], `${field}[${index}]`);
+    exactFields(selected, [
+      "blockLocator",
+      "relevance",
+      "sourceEndCodePoint",
+      "sourceRef",
+      "sourceStartCodePoint",
+      "turnId",
+    ], `${field}[${index}]`);
     const relevance = selected.relevance;
     if (!new Set(["conflicting", "context", "direct"]).has(relevance as string)) {
       throw new HistoricalContractCodecError(`${field}[${index}].relevance is unsupported`);
@@ -301,6 +391,11 @@ function coverageSelectedTurns(
     return Object.freeze({
       blockLocator: string(selected.blockLocator, `${field}[${index}].blockLocator`),
       relevance: relevance as CoverageSelectedTurnV1["relevance"],
+      sourceEndCodePoint: integer(selected.sourceEndCodePoint,
+        `${field}[${index}].sourceEndCodePoint`, 1),
+      sourceRef: string(selected.sourceRef, `${field}[${index}].sourceRef`),
+      sourceStartCodePoint: integer(selected.sourceStartCodePoint,
+        `${field}[${index}].sourceStartCodePoint`, 0),
       turnId: string(selected.turnId, `${field}[${index}].turnId`),
     });
   }));

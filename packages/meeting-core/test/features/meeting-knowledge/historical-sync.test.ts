@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  HistoricalIndexPlannerUnavailableError,
   HistoricalSyncWorker,
   RequestHistoricalMeetingDeletion,
   admitAcceptedFinalMeeting,
@@ -10,6 +11,7 @@ import {
   type HistoricalAppliedPlanV1,
   type HistoricalCandidateRecordV1,
   type HistoricalIndexPlanV1,
+  type HistoricalEmbeddingTokenizerPort,
   type HistoricalMemoryPort,
   type HistoricalOpaqueIdPort,
   type HistoricalReleaseBindingV1,
@@ -17,6 +19,19 @@ import {
   type HistoricalSyncLeaseV1,
   type HistoricalSyncStore,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
+
+const exactTokenizer: HistoricalEmbeddingTokenizerPort = Object.freeze({
+  countTokens: (text: string) => 2 + Array.from(text).length,
+  profile: Object.freeze({
+    conformanceVectorSetSha256: `sha256:${"c".repeat(64)}`,
+    embeddingModelRevision: "a".repeat(40),
+    servingRuntimeRevision: "b".repeat(40),
+    id: "fixture-exact-tokenizer",
+    maxInputTokens: 128,
+    tokenizerArtifactSha256: `sha256:${"d".repeat(64)}`,
+    tokenizerConfigSha256: `sha256:${"e".repeat(64)}`,
+  }),
+});
 
 class TestIds implements HistoricalOpaqueIdPort {
   public keyedId(namespace: string, parts: readonly string[]): string {
@@ -79,6 +94,12 @@ class QueueStore implements HistoricalSyncStore {
     return "accepted";
   }
 
+  public async enqueueAppliedProfileRebuilds(): Promise<{
+    readonly enqueued: number; readonly remaining: boolean;
+  }> {
+    return { enqueued: 0, remaining: false };
+  }
+
   public async claimNext(options: HistoricalSyncClaimOptionsV1): Promise<HistoricalSyncLeaseV1 | null> {
     this.claimedLeaseDurations.push(options.leaseDurationMs);
     return this.claims.shift() ?? null;
@@ -123,6 +144,10 @@ class QueueStore implements HistoricalSyncStore {
     return null;
   }
 
+  public async findCurrentCandidates(): Promise<readonly HistoricalCandidateRecordV1[]> {
+    return [];
+  }
+
   public async listCurrentRoomPlans(
     _scopeId: string,
     _roomId: string,
@@ -145,6 +170,34 @@ class QueueStore implements HistoricalSyncStore {
   }
 }
 
+class LegacyProfileRebuildStore extends QueueStore {
+  #checkpointedPlan: HistoricalIndexPlanV1 | null = null;
+
+  public override async recordPlan(
+    syncLease: HistoricalSyncLeaseV1,
+    plan: HistoricalIndexPlanV1,
+  ): Promise<void> {
+    await super.recordPlan(syncLease, plan);
+    this.#checkpointedPlan = plan;
+  }
+
+  public override async recordRetry(
+    syncLease: HistoricalSyncLeaseV1,
+    failure: { readonly code: string; readonly retryAfterMs: number },
+  ): Promise<void> {
+    await super.recordRetry(syncLease, failure);
+    if (this.#checkpointedPlan === null) {
+      throw new Error("profile rebuild retry has no durable plan checkpoint");
+    }
+    this.claims.push({
+      ...syncLease,
+      attempt: syncLease.attempt + 1,
+      fence: syncLease.fence + 1,
+      plan: this.#checkpointedPlan,
+    });
+  }
+}
+
 function lease(
   accepted: AcceptedFinalMeetingV1,
   operation: HistoricalSyncLeaseV1["operation"],
@@ -152,14 +205,44 @@ function lease(
   plan: HistoricalIndexPlanV1 | null = null,
 ): HistoricalSyncLeaseV1 {
   return {
+    appliedIndexProfileId: null,
     attempt,
     binding: accepted.binding,
     fence: attempt,
     operation,
     plan,
+    profileRebuildRequired: false,
     remoteDocumentIds: {},
   };
 }
+
+describe("historical exact planning", () => {
+  it("retries a transiently unavailable exact planner without dead-lettering", async () => {
+    const accepted = meeting();
+    const store = new QueueStore([lease(accepted, "index", 1)]);
+    const indexFinalMeeting = vi.fn();
+    const worker = new HistoricalSyncWorker({
+      authority: { loadAcceptedFinalMeeting: async () => accepted },
+      ids: new TestIds(),
+      memory: { deleteMeeting: vi.fn(), indexFinalMeeting, searchRoom: vi.fn() },
+      planner: {
+        prepareWindows: async () => {
+          throw new HistoricalIndexPlannerUnavailableError("planner busy");
+        },
+      },
+      store,
+    });
+
+    await expect(worker.executeOnce({ indexingEnabled: true })).resolves.toMatchObject({
+      status: "retry_scheduled",
+    });
+    expect(store.retries).toEqual(["historical_index_planner.unavailable"]);
+    expect(store.deadLetters).toEqual([]);
+    expect(store.plans).toEqual([]);
+    expect(indexFinalMeeting).not.toHaveBeenCalled();
+  });
+
+});
 
 describe("historical projection sync worker", () => {
   it("persists authorized source withdrawal independently of serving flags", async () => {
@@ -231,9 +314,65 @@ describe("historical projection sync worker", () => {
       status: "deleted",
     });
     expect(deleteMeeting).toHaveBeenCalledWith(expect.objectContaining({
+      deleteMutationId: plan.deleteMutationId,
       documentExternalIds: plan.documents.map(({ manifest }) => manifest.documentExternalId),
       mode: "release",
+      reconciliationDocuments: plan.documents,
+      remoteDocumentIds: {},
     }));
+  });
+
+  it("retains persisted reconciliation documents after an unknown ingest outcome", async () => {
+    const accepted = meeting();
+    const ids = new TestIds();
+    const indexingStore = new QueueStore([lease(accepted, "index", 1)]);
+    const indexFinalMeeting = vi.fn().mockResolvedValue({
+      code: "memory.network_error",
+      retryable: true,
+      status: "outcome_unknown",
+    });
+    const indexing = new HistoricalSyncWorker({
+      authority: { loadAcceptedFinalMeeting: async () => accepted },
+      ids,
+      memory: { deleteMeeting: vi.fn(), indexFinalMeeting, searchRoom: vi.fn() },
+      store: indexingStore,
+    });
+
+    await expect(indexing.executeOnce({ indexingEnabled: true })).resolves.toMatchObject({
+      status: "retry_scheduled",
+    });
+    const persisted = indexingStore.plans[0];
+    if (persisted === undefined) {
+      throw new Error("unknown ingest outcome did not retain its persisted plan");
+    }
+    const deletionStore = new QueueStore([
+      lease(accepted, "delete_release", 2, persisted),
+    ]);
+    const deleteMeeting = vi.fn().mockResolvedValue({ status: "verified_absent" });
+    const deleting = new HistoricalSyncWorker({
+      authority: { loadAcceptedFinalMeeting: async () => accepted },
+      ids,
+      memory: { deleteMeeting, indexFinalMeeting: vi.fn(), searchRoom: vi.fn() },
+      store: deletionStore,
+    });
+
+    await expect(deleting.executeOnce({ indexingEnabled: false })).resolves.toMatchObject({
+      status: "deleted",
+    });
+    expect(deleteMeeting).toHaveBeenCalledWith({
+      deleteMutationId: persisted.deleteMutationId,
+      documentExternalIds: persisted.documents.map(
+        ({ manifest }) => manifest.documentExternalId,
+      ),
+      mode: "release",
+      reconciliationDocuments: persisted.documents,
+      remoteDocumentIds: {},
+      schemaVersion: 1,
+      topology: persisted.topology,
+    });
+    expect(persisted.documents.map(({ mutationId }) => mutationId)).toEqual(
+      indexingStore.plans[0]?.documents.map(({ mutationId }) => mutationId),
+    );
   });
 
   it("replays the persisted mutation plan exactly after policy drift", async () => {
@@ -264,6 +403,176 @@ describe("historical projection sync worker", () => {
     expect(store.plans).toEqual([persisted]);
   });
 
+  it("dead-letters a persisted projection that no longer matches authoritative evidence", async () => {
+    const accepted = meeting();
+    const ids = new TestIds();
+    const persisted = buildHistoricalIndexPlan(accepted, ids);
+    const first = persisted.documents[0]!;
+    const tampered = {
+      ...persisted,
+      documents: [{ ...first, embeddingText: `${first.embeddingText} tampered` }],
+    };
+    const store = new QueueStore([lease(accepted, "index", 2, tampered)]);
+    const indexFinalMeeting = vi.fn();
+    const worker = new HistoricalSyncWorker({
+      authority: { loadAcceptedFinalMeeting: async () => accepted },
+      ids,
+      memory: { deleteMeeting: vi.fn(), indexFinalMeeting, searchRoom: vi.fn() },
+      store,
+    });
+
+    await expect(worker.executeOnce({ indexingEnabled: true })).resolves.toMatchObject({
+      status: "dead_lettered",
+    });
+    expect(store.deadLetters).toEqual(["historical_index_plan.stale_plan"]);
+    expect(store.plans).toEqual([]);
+    expect(indexFinalMeeting).not.toHaveBeenCalled();
+  });
+
+  it("deletes and rebuilds a persisted pre-tokenizer plan before restart convergence", async () => {
+    const accepted = meeting();
+    const ids = new TestIds();
+    const stale = buildHistoricalIndexPlan(accepted, ids);
+    const store = new QueueStore([lease(accepted, "index", 2, stale)]);
+    const deleteMeeting = vi.fn().mockResolvedValue({ status: "verified_absent" });
+    const indexFinalMeeting = vi.fn().mockImplementation(
+      async (plan: HistoricalIndexPlanV1) => ({
+        remoteDocumentIds: {
+          [plan.documents[0]!.manifest.documentExternalId]: "remote-rebuilt",
+        },
+        status: "applied",
+      }),
+    );
+    const worker = new HistoricalSyncWorker({
+      authority: { loadAcceptedFinalMeeting: async () => accepted },
+      ids,
+      memory: { deleteMeeting, indexFinalMeeting, searchRoom: vi.fn() },
+      store,
+      tokenizer: () => exactTokenizer,
+    });
+
+    await expect(worker.executeOnce({ indexingEnabled: true })).resolves.toMatchObject({
+      status: "applied",
+    });
+    expect(deleteMeeting).toHaveBeenCalledWith(expect.objectContaining({
+      documentExternalIds: stale.documents.map(({ manifest }) => manifest.documentExternalId),
+    }), {});
+    expect(store.plans[0]?.documents[0]?.manifest.embeddingTokenProfile)
+      .toContain("meeting-knowledge.multilingual-minilm-exact.v1");
+    expect(store.plans[0]?.planDigest).not.toBe(stale.planDigest);
+  });
+
+});
+
+describe("historical profile rebuild retry", () => {
+  it.each([
+    {
+      code: "memory.network_error",
+      retryable: true,
+      status: "outcome_unknown",
+    },
+    {
+      code: "memory.known_failure",
+      retryable: true,
+      status: "rejected",
+    },
+  ] as const)(
+    "converges a profile rebuild after $status without leaking the old projection",
+    async (firstIndexResult) => {
+      const accepted = meeting();
+      const ids = new TestIds();
+      const blockPolicy = {
+        maxBlockUtf8Bytes: 4_096,
+        maxBlocksPerMeeting: 100,
+        maxTurnsPerBlock: 64,
+        version: "meeting-knowledge.block-policy.v1" as const,
+      };
+      const oldPlan = buildHistoricalIndexPlan(accepted, ids, blockPolicy);
+      const oldExternalId = oldPlan.documents[0]!.manifest.documentExternalId;
+      const oldRemoteIds = { [oldExternalId]: "remote-old" };
+      const initialLease = {
+        ...lease(accepted, "index", 1, oldPlan),
+        appliedIndexProfileId: "old-profile",
+        profileRebuildRequired: true,
+        remoteDocumentIds: oldRemoteIds,
+      };
+      const store = new LegacyProfileRebuildStore([initialLease]);
+      const remoteDocuments = new Map([["remote-old", oldExternalId]]);
+      let remoteSequence = 0;
+      const deleteMeeting = vi.fn(async (request: Parameters<
+        HistoricalMemoryPort["deleteMeeting"]
+      >[0]) => {
+        const targets = new Set(request.documentExternalIds);
+        if (Object.keys(request.remoteDocumentIds).some((externalId) =>
+          !targets.has(externalId)
+        )) {
+          return {
+            code: "memory.contract_rejected",
+            retryable: false,
+            status: "absence_unverified" as const,
+          };
+        }
+        for (const [remoteId, externalId] of remoteDocuments) {
+          if (targets.has(externalId)) {
+            remoteDocuments.delete(remoteId);
+          }
+        }
+        return { status: "verified_absent" as const };
+      });
+      const indexFinalMeeting = vi.fn(async (plan: HistoricalIndexPlanV1) => {
+        const externalId = plan.documents[0]!.manifest.documentExternalId;
+        remoteSequence += 1;
+        remoteDocuments.set(`remote-new-${remoteSequence}`, externalId);
+        return remoteSequence === 1
+          ? firstIndexResult
+          : {
+              remoteDocumentIds: { [externalId]: `remote-new-${remoteSequence}` },
+              status: "applied" as const,
+            };
+      });
+      const worker = new HistoricalSyncWorker({
+        authority: { loadAcceptedFinalMeeting: async () => accepted },
+        ids,
+        indexProfileId: "new-profile",
+        memory: { deleteMeeting, indexFinalMeeting, searchRoom: vi.fn() },
+        store,
+        tokenizer: () => exactTokenizer,
+      }, {
+        blockPolicy,
+        leaseDurationMs: 30_000,
+        maximumIndexAttempts: 3,
+        retryBackoffMs: [1],
+        version: "meeting-knowledge.historical-sync.v1",
+      });
+
+      await expect(worker.executeOnce({ indexingEnabled: true })).resolves.toMatchObject({
+        status: "retry_scheduled",
+      });
+      await expect(worker.executeOnce({ indexingEnabled: true })).resolves.toMatchObject({
+        status: "applied",
+      });
+
+      const rebuiltPlan = store.plans[0]!;
+      const rebuiltExternalId = rebuiltPlan.documents[0]!.manifest.documentExternalId;
+      expect(rebuiltExternalId).not.toBe(oldExternalId);
+      expect(deleteMeeting).toHaveBeenNthCalledWith(1, expect.objectContaining({
+        documentExternalIds: [oldExternalId],
+        remoteDocumentIds: oldRemoteIds,
+      }), {});
+      expect(deleteMeeting).toHaveBeenNthCalledWith(2, expect.objectContaining({
+        documentExternalIds: [rebuiltExternalId],
+        remoteDocumentIds: {},
+      }), {});
+      expect([...remoteDocuments.values()]).toEqual([rebuiltExternalId]);
+      expect(store.retries).toEqual([firstIndexResult.code]);
+      expect(store.applied).toEqual([accepted.binding.releaseId]);
+      expect(store.deadLetters).toEqual([]);
+    },
+  );
+
+});
+
+describe("historical projection sync worker recovery", () => {
   it("never abandons authorized deletion in a dead letter", async () => {
     const accepted = meeting();
     const ids = new TestIds();

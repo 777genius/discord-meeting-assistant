@@ -7,7 +7,6 @@ import {
   authorityMatchesBinding,
   authorizedForJob,
 } from "./final-reply-checks.js";
-import { admittedHumanActors } from "./admitted-human-evidence.js";
 import { prepareExhaustiveFinalReply } from "./exhaustive-final-reply.js";
 import { GroundedMeetingAnswer } from "./grounded-meeting-answer.js";
 import {
@@ -15,8 +14,12 @@ import {
   type PreparedAnswerGrounding,
 } from "./final-reply-answer-generation.js";
 import {
+  nextProviderAttemptId,
+  providerAttemptAvailable,
+  reserveProviderAttempt,
+} from "./provider-attempt-accounting.js";
+import {
   fixedOutcomeForFocusedRetrieval,
-  createPlanFromFocusedHydration,
   mergeFocusedHydrationReferences,
   retrieveFocusedMemory,
 } from "./ports/focused-memory-contract.js";
@@ -24,6 +27,11 @@ import {
   PublishFinalReply,
   type FinalReplyJobResult,
 } from "./publish-final-reply.js";
+import {
+  focusedHydrationMatchesReferences,
+  prepareSelectedFocusedEvidence,
+  type SelectFocusedEvidence,
+} from "./select-focused-evidence.js";
 import type {
   AnswerPublicationPort,
   CurrentFinalReplyBinding,
@@ -65,6 +73,7 @@ export class ProcessFinalReplyJob {
       readonly generator: GroundedAnswerGenerator;
       readonly jobs: QuestionJobStore;
       readonly memory: FocusedMemoryRetrievalPort;
+      readonly selector: Pick<SelectFocusedEvidence, "execute">;
       readonly policy: LocalFinalReplyPolicy;
       readonly renderer: FinalReplyRendererPort;
       readonly workerId: string;
@@ -242,18 +251,60 @@ export class ProcessFinalReplyJob {
     if (!authorityMatchesBinding(hydrated.binding, binding)) {
       return this.settled(await this.publisher.settle(lease, "stale_binding"));
     }
+    if (!focusedHydrationMatchesReferences(
+      binding,
+      hydrationReferences,
+      hydrated.turns,
+    )) {
+      return this.settled(await this.publisher.publishFixed(
+        lease,
+        current.binding,
+        "unavailable",
+      ));
+    }
+    if (!providerAttemptAvailable(lease, this.input.policy)) {
+      return this.settled(await this.publisher.publishFixed(
+        lease,
+        current.binding,
+        "unavailable",
+      ));
+    }
+    const beforeSelection = await this.observe(lease, "before_generation");
+    if (!authorizedForJob(beforeSelection, current.binding, binding)) {
+      return this.settled(
+        await this.publisher.settle(lease, "stale_authorization"),
+      );
+    }
+    const providerAttemptId = nextProviderAttemptId(lease);
+    if (!await reserveProviderAttempt(
+      this.input.jobs,
+      lease,
+      this.input.policy,
+      providerAttemptId,
+    )) {
+      return this.settled({
+        jobId: lease.jobId,
+        status: "stale_generation",
+      });
+    }
     try {
-      const humanActorIds = admittedHumanActors(hydrated);
-      return {
-        authority: hydrated.binding,
-        plan: createPlanFromFocusedHydration(
-          retrieval,
-          hydrationReferences,
-          hydrated.turns,
-          humanActorIds,
-        ),
-        status: "prepared",
-      };
+      const prepared = await prepareSelectedFocusedEvidence({
+        authorityGeneration: retrieval.authorityGeneration,
+        binding,
+        evidence: this.input.evidence,
+        hydrationReferences,
+        providerAttemptId,
+        question: lease.questionText,
+        selector: this.input.selector,
+        turns: hydrated.turns,
+      });
+      if (prepared.status === "prepared") {
+        return { ...prepared, providerAttemptId };
+      }
+      const result = prepared.status === "stale_binding"
+        ? await this.publisher.settle(lease, "stale_binding")
+        : await this.publisher.publishFixed(lease, current.binding, prepared.status);
+      return this.settled(result);
     } catch {
       return this.settled(await this.publisher.publishFixed(
         lease,

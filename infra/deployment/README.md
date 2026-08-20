@@ -135,7 +135,7 @@ Set these non-secret values in the deployment environment file:
 INFINITY_CONTEXT_URL=https://infinity-context.example.internal
 INFINITY_CONTEXT_REQUEST_TIMEOUT_MS=10000
 INFINITY_CONTEXT_OPERATION_TIMEOUT_MS=300000
-INFINITY_CONTEXT_ACTIVATION={"apiVersion":"v1","archiveSha256":"1aad93c1c9deea91f0c0ec750b99e91d1092e9d208751e11c6231badd5fbd9d2","environment":"production","immutablePackageIntegrity":"sha512-ohD89uSSlW7zT/BqaEufIBZ7EAVcq1LYAWn/rRel8EOyMAnq5DXSh3PqjYXAYJdE9WsHgLWx7Tysy9jAY7XaHw==","indexingEnabled":true,"packageSource":"immutable_package","productionEmbeddingProfileAttestation":{"embeddingProfile":"local-open-source-paraphrase-multilingual-minilm-l12-v2-hybrid-bm25.r73","embeddingProfileDigestSha256":"sha256:5ecd36edd098940cd8a6540509f90815ddc1802b4410ced2bf063c0f8c650cac","productionSemanticQualification":true,"qualificationManifestSha256":"sha256:2b0ea368ea4d1feef4616fb185ce1267b9f8735e44d03634d81f03c8d58af965","releaseRevision":"8cc180cd043b95469f295ad9247bcb7886d29f10","schemaVersion":1},"qualificationManifestSha256":"sha256:abe694b3e1cf0dcec9d5ff7c0d8b65f30ec5364ac11bb2526bd1c3a3b176c207","schemaVersion":1,"sdkCommit":"897efd211151e9a81a7466fdd6be5cb067ddb8eb","sdkTree":"67a744b1accc0d4628c19f28849660bc917b8b62","searchEnabled":true,"serviceName":"infinity-context","servingProfile":"same_room_retrieval"}
+INFINITY_CONTEXT_ACTIVATION={"apiVersion":"v1","archiveSha256":"4d96f50ae01f9000e9ac4c50eaa61b4d875c3a452aed58f7e2efe1d69ee8d08d","embeddingProfileAttestation":{"embeddingProfile":"tei-sentence-transformers-paraphrase-multilingual-minilm-l12-v2-384d-dense.v1","embeddingProfileDigestSha256":"sha256:b183b9d6350dfaf9f874cab9fef993d3ded5060a4a18d972c45ec97def5faf31","schemaVersion":1},"environment":"production","immutablePackageIntegrity":"sha512-YurXjgFGoRxwc5zJghj69ZFyZx8WLS1ucvgVvV2EFjZMCATxr9YrJW1ueeyLqwkaLKnO1JEvbTpqn7Q8K33b+A==","indexingEnabled":true,"packageSource":"immutable_package","qualificationManifestSha256":"sha256:2ba18c3e7b2297e6103fd0d285bb2db424f0d3ac5ea407b857422e3204925133","schemaVersion":1,"sdkCommit":"b77b490cebbf9d80d4204425df3d795b4866ea19","sdkTree":"ac25c12c4733953bf7a4882d5c2c4476589455f2","searchEnabled":true,"serviceName":"infinity-context","servingProfile":"same_room_retrieval"}
 ```
 
 Treat that activation as a reviewed release attestation, not an operator-tuned
@@ -143,9 +143,10 @@ feature flag. Update it only together with retained qualification evidence and
 the pinned SDK provenance in the application release. CI derives commit and
 canonical tree SHA-256 from a clean checkout and embeds the generated root-owned,
 read-only provenance artifact. Docker build arguments and runtime environment
-cannot replace it. Production search stays closed unless it
-equals the qualification manifest's `releaseRevision`. The retained r79
-manifest is intentionally stale for newer releases and must not activate them.
+cannot replace it. Replace the all-`a` digest above with the exact digest echoed
+by that deployment instance. The digest detects instance drift; semantic
+compatibility comes only from the source-pinned service/profile pair and the
+locally verified tokenizer conformance receipt.
 
 Two-hour historical retrieval has no operator boolean. It remains unavailable
 until the release retains an accepted evidence digest, exact release revision,
@@ -160,11 +161,11 @@ Before the stop-first rollout, validate interpolation with `docker compose
 DNS, TLS, routing, and bearer authentication from a disposable container on the
 `discord-meeting-egress` network. The service capability response must identify
 `infinity-context`, API `v1`, Qdrant support, the required adapters,
-`service_revision=897efd211151e9a81a7466fdd6be5cb067ddb8eb`, and these
+`service_revision=b77b490cebbf9d80d4204425df3d795b4866ea19`, and these
 activation-bound semantic fields:
-`embedding_profile_id=local-open-source-paraphrase-multilingual-minilm-l12-v2-hybrid-bm25.r73`
+`embedding_profile_id=tei-sentence-transformers-paraphrase-multilingual-minilm-l12-v2-384d-dense.v1`
 and
-`embedding_profile_digest_sha256=sha256:5ecd36edd098940cd8a6540509f90815ddc1802b4410ced2bf063c0f8c650cac`.
+the exact activation-injected `embedding_profile_digest_sha256` instance echo.
 Meeting Platform still starts when the endpoint is unreachable or a capability
 differs so recording and authoritative publication remain available. Historical
 indexing and search are soft-disabled, a warning is emitted, and deletion and
