@@ -90,21 +90,30 @@ class GeneratorFake implements GroundedAnswerGenerator {
 }
 
 class PublicationFake implements AnswerPublicationPort {
+  public cancellations: Parameters<AnswerPublicationPort["cancelBeforeRequest"]>[0][] = [];
+  public reservations: Parameters<AnswerPublicationPort["reserve"]>[0][] = [];
+  public sends: Parameters<AnswerPublicationPort["send"]>[0][] = [];
+
   public reserve(input: Parameters<AnswerPublicationPort["reserve"]>[0]) {
+    this.reservations.push(input);
     return Promise.resolve({
       effectId: input.binding.questionId,
       status: "reserved",
     } as const);
   }
 
-  public send() {
+  public send(input: Parameters<AnswerPublicationPort["send"]>[0]) {
+    this.sends.push(input);
     return Promise.resolve({
       externalReceipt: "answer-message-1",
       status: "delivered",
     } as const);
   }
 
-  public cancelBeforeRequest() {
+  public cancelBeforeRequest(
+    input: Parameters<AnswerPublicationPort["cancelBeforeRequest"]>[0],
+  ) {
+    this.cancellations.push(input);
     return Promise.resolve(true);
   }
 }
@@ -142,19 +151,48 @@ function processingFixture(selector = focusedSelector()) {
     state: "running",
   });
   const generator = new GeneratorFake();
+  const memory = new MemoryFake();
+  const publication = new PublicationFake();
   const processor = new ProcessFinalReplyJob({
-    answerPublication: new PublicationFake(),
+    answerPublication: publication,
     authorization: new AuthorizationFake(),
     evidence,
     generator,
     jobs,
-    memory: new MemoryFake(),
+    memory,
     policy,
     selector,
     renderer,
     workerId: "worker-1",
   });
-  return { evidence, generator, jobs, processor };
+  return { evidence, generator, jobs, memory, processor, publication };
+}
+
+function indexedAnchorEvidence(indexGeneration = "generation-1") {
+  const turns = selectedTurns.map((turn, index) => Object.freeze({
+    ...turn,
+    source: Object.freeze({
+      historicalSource: Object.freeze({
+        candidateLocator: `candidate-${index + 1}`,
+        indexGeneration,
+        releaseId: "release-1",
+      }),
+      meetingId: authority.meetingId,
+      transcriptId: authority.transcriptId,
+      transcriptVersion: authority.transcriptVersion,
+    }),
+  }));
+  return {
+    references: turns.map(({ source, turnHash, turnId }) => Object.freeze({
+      historicalSource: source.historicalSource,
+      meetingId: source.meetingId,
+      transcriptId: source.transcriptId,
+      transcriptVersion: source.transcriptVersion,
+      turnHash,
+      turnId,
+    })),
+    turns,
+  };
 }
 
 describe("post-selector evidence rehydration", () => {
@@ -274,5 +312,109 @@ describe("post-selector evidence rehydration", () => {
     expect(fixture.evidence.references).toEqual([references, references]);
     expect(fixture.generator.requests).toEqual([]);
     expect(fixture.generator.generationCalls).toBe(0);
+  });
+});
+
+describe("indexed-anchor final reply fences", () => {
+  it("reauthorizes a same-tuple indexed anchor before generation", async () => {
+    const fixture = processingFixture();
+    const indexed = indexedAnchorEvidence();
+    fixture.memory.result = {
+      authorityGeneration: authority.memoryGeneration,
+      candidates: indexed.references,
+      schemaVersion: 1,
+      status: "current",
+    };
+    fixture.memory.historicalAuthorizationResults = [false];
+    fixture.evidence.hydrated = {
+      binding: authority,
+      status: "current",
+      turns: indexed.turns,
+    };
+
+    await expect(fixture.processor.executeOnce()).resolves.toMatchObject({
+      outcome: "stale_authorization",
+      status: "settled",
+    });
+    expect(fixture.memory.historicalAuthorizationCalls).toBe(1);
+    expect(fixture.generator.generationCalls).toBe(0);
+    expect(fixture.publication.reservations).toEqual([]);
+    expect(fixture.publication.sends).toEqual([]);
+  });
+
+  it.each([
+    ["before reservation", [true, true, false], false],
+    ["before send", [true, true, true, false], true],
+  ] as const)("reauthorizes a same-tuple indexed anchor %s", async (
+    _label,
+    authorizationResults,
+    reserved,
+  ) => {
+    const fixture = processingFixture();
+    const indexed = indexedAnchorEvidence();
+    fixture.memory.result = {
+      authorityGeneration: authority.memoryGeneration,
+      candidates: indexed.references,
+      schemaVersion: 1,
+      status: "current",
+    };
+    fixture.memory.historicalAuthorizationResults = [...authorizationResults];
+    fixture.evidence.hydrated = {
+      binding: authority,
+      status: "current",
+      turns: indexed.turns,
+    };
+
+    await expect(fixture.processor.executeOnce()).resolves.toMatchObject({
+      outcome: "stale_authorization",
+      status: "settled",
+    });
+    expect(fixture.memory.historicalAuthorizationCalls).toBe(
+      authorizationResults.length,
+    );
+    expect(fixture.generator.generationCalls).toBe(1);
+    expect(fixture.publication.reservations).toHaveLength(reserved ? 1 : 0);
+    expect(fixture.publication.cancellations).toHaveLength(reserved ? 1 : 0);
+    expect(fixture.publication.sends).toEqual([]);
+  });
+
+  it.each([
+    ["before reservation", 3, false],
+    ["before send", 4, true],
+  ] as const)("rejects an indexed evidence rebuild %s", async (
+    _label,
+    stableFenceCalls,
+    reserved,
+  ) => {
+    const fixture = processingFixture();
+    const initial = indexedAnchorEvidence("generation-1");
+    const rebuilt = indexedAnchorEvidence("generation-2");
+    fixture.memory.result = {
+      authorityGeneration: authority.memoryGeneration,
+      candidates: initial.references,
+      schemaVersion: 1,
+      status: "current",
+    };
+    fixture.evidence.hydrated = {
+      binding: authority,
+      status: "current",
+      turns: initial.turns,
+    };
+    fixture.evidence.hydrationResults.push(
+      ...Array.from({ length: stableFenceCalls }, () => ({
+        binding: authority,
+        status: "current" as const,
+        turns: initial.turns,
+      })),
+      { binding: authority, status: "current", turns: rebuilt.turns },
+    );
+
+    await expect(fixture.processor.executeOnce()).resolves.toMatchObject({
+      outcome: "stale_binding",
+      status: "settled",
+    });
+    expect(fixture.publication.reservations).toHaveLength(reserved ? 1 : 0);
+    expect(fixture.publication.cancellations).toHaveLength(reserved ? 1 : 0);
+    expect(fixture.publication.sends).toEqual([]);
   });
 });

@@ -432,9 +432,11 @@ describe("ProcessFinalReplyJob", () => {
     expect(memory.calls).toHaveLength(1);
     expect(memory.calls[0]).not.toHaveProperty("turns");
     expect(memory.calls[0]).not.toHaveProperty("transcript");
-    expect(evidence.references).toHaveLength(3);
+    expect(evidence.references).toHaveLength(5);
     expect(evidence.references[0]).toEqual(references);
     expect(evidence.references[1]).toEqual(references);
+    expect(evidence.references[3]).toEqual(references);
+    expect(evidence.references[4]).toEqual(references);
     expect(generator.requests[0]?.plan).toMatchObject({
       authorityGeneration: authority.memoryGeneration,
       mode: "focused_retrieval",

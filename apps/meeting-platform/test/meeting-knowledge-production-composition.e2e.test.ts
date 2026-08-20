@@ -67,7 +67,7 @@ import {
 } from "./meeting-knowledge-production-composition-fixtures.js";
 import { proveComposedGroundedVoice } from "./meeting-knowledge-composed-voice-e2e.js";
 import { qualifyLiveProjectionReply } from "./meeting-knowledge-live-reply-e2e.js";
-import { expectHistoricalRebuildToInvalidateReferences } from "./meeting-knowledge-historical-generation-e2e.js";
+import { prepareHistoricalReadyPublicationFence } from "./meeting-knowledge-historical-generation-e2e.js";
 import {
   assertAggregateStageBudget,
   assertPersistedCoverageAnalysis,
@@ -174,14 +174,10 @@ describe("Meeting Knowledge mandatory PostgreSQL qualification", () => {
         timings,
         (signal) => qualifyFocusedRetrieval(qualifiedRuntime, infinity, signal),
       );
-      await runQualificationStage("shared_focused_and_exhaustive_answer", qualificationStageBudgets.sharedFocusedAndExhaustiveAnswer, timings, (signal) =>
+      const historicalReadyFence = await runQualificationStage("shared_focused_and_exhaustive_answer", qualificationStageBudgets.sharedFocusedAndExhaustiveAnswer, timings, (signal) =>
         qualifySharedAnswers({
-          authorization,
-          current: indexed.current,
-          historicalRetrieval,
-          pool,
-          runtime: qualifiedRuntime,
-          signal,
+          authorization, current: indexed.current, historicalRetrieval,
+          pool, runtime: qualifiedRuntime, signal,
         })
       );
       await runQualificationStage(
@@ -215,6 +211,7 @@ describe("Meeting Knowledge mandatory PostgreSQL qualification", () => {
           indexed.repository,
           indexed.historical,
           signal,
+          historicalReadyFence,
         ),
       );
       expect(timings.map(({ stage }) => stage)).toEqual([
@@ -386,7 +383,7 @@ async function qualifySharedAnswers(input: {
   readonly pool: Pool;
   readonly runtime: PlatformHistoricalMemoryRuntime;
   readonly signal: AbortSignal;
-}): Promise<void> {
+}): Promise<ReturnType<typeof prepareHistoricalReadyPublicationFence>> {
   input.signal.throwIfAborted();
   const evidence = new PostgresFinalReplyEvidence(
     input.pool,
@@ -401,14 +398,14 @@ async function qualifySharedAnswers(input: {
   }
   const binding = QuestionBinding.create({
     authorizationDigest: "a".repeat(64),
-    authorizationPolicyVersion: "synthetic-room-policy.v1",
+    authorizationPolicyVersion: localFinalReplyPolicy.authorizationPolicyVersion,
     authorizationPrincipalRef: "synthetic-principal",
     ...currentAuthority,
     deliveryContainerId: currentAuthority.projectionTargetContainerId,
     expectedLocale: "en",
-    policyVersion: "meeting-knowledge.focused-memory-final-reply.v2",
+    policyVersion: localFinalReplyPolicy.policyVersion,
     questionHash: "b".repeat(64),
-    questionId: "synthetic-question-1",
+    questionId: "666666666666666666",
     requesterSubject: "c".repeat(64),
   }).toSnapshot();
   const sameRoom = new SameRoomFocusedMemoryRetrieval({
@@ -458,7 +455,6 @@ async function qualifySharedAnswers(input: {
   if (hydrated.status !== "current") {
     throw new Error("same-room candidates did not rehydrate locally");
   }
-  await expectHistoricalRebuildToInvalidateReferences(input.pool, evidence, binding, historicalMeetingId, hydrationReferences);
   expect(hydrated.turns).toHaveLength(hydrationReferences.length);
   expect(JSON.stringify(hydrated.turns)).not.toContain("UNTRUSTED SDK");
   const focusedPlan = createFocusedRetrievalGroundingPlan({
@@ -476,6 +472,9 @@ async function qualifySharedAnswers(input: {
     pool: input.pool,
     runtime: input.runtime,
     signal: input.signal,
+  });
+  return prepareHistoricalReadyPublicationFence({
+    binding, evidence, historicalMeetingId, plan: focusedPlan, pool: input.pool,
   });
 }
 

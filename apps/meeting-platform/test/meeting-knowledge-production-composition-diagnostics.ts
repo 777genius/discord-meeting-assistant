@@ -232,7 +232,13 @@ export async function qualifySupersessionAndDeletion(
   repository: PostgresMeetingRepository,
   historical: MeetingSnapshot,
   signal: AbortSignal,
+  hooks?: {
+    readonly afterSupersession: () => Promise<void>;
+    readonly beforeSupersession: () => Promise<void>;
+  },
 ): Promise<void> {
+  signal.throwIfAborted();
+  await hooks?.beforeSupersession();
   signal.throwIfAborted();
   const corrected = correctedHistoricalSnapshot(historical);
   await repository.save(corrected, historical.revision);
@@ -259,6 +265,8 @@ export async function qualifySupersessionAndDeletion(
   );
   expect(supersededRows.map(({ state }) => state).toSorted())
     .toEqual(["applied", "deleted"]);
+  signal.throwIfAborted();
+  await hooks?.afterSupersession();
 
   signal.throwIfAborted();
   if (corrected.transcript === null) {
