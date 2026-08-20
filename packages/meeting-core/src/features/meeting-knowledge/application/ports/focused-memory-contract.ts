@@ -17,6 +17,9 @@ export const focusedMemoryContractVersion = 1 as const;
 
 function focusedMemoryReferenceKey(reference: FocusedMemoryReference): string {
   return [
+    reference.historicalSource?.releaseId ?? "current",
+    reference.historicalSource?.indexGeneration ?? "current",
+    reference.historicalSource?.candidateLocator ?? "current",
     reference.meetingId,
     reference.transcriptId,
     reference.transcriptVersion,
@@ -188,6 +191,7 @@ function decodeCandidates(
     assertOnlyKeys(
       candidate,
       new Set([
+        "historicalSource",
         "meetingId",
         "relevanceScore",
         "sourceEndCodePoint",
@@ -200,11 +204,16 @@ function decodeCandidates(
       `${field}[${index}]`,
     );
     const range = decodeCandidateSourceRange(candidate, `${field}[${index}]`);
+    const historicalSource = decodeHistoricalSource(
+      candidate.historicalSource,
+      `${field}[${index}].historicalSource`,
+    );
     const relevanceScore = decodeRelevanceScore(
       candidate.relevanceScore,
       `${field}[${index}].relevanceScore`,
     );
     return Object.freeze({
+      ...(historicalSource === undefined ? {} : { historicalSource }),
       meetingId: requireKnowledgeText(
         candidate.meetingId as string,
         `${field}[${index}].meetingId`,
@@ -240,6 +249,38 @@ function decodeCandidates(
     );
   }
   return candidates;
+}
+
+function decodeHistoricalSource(
+  value: unknown,
+  field: string,
+): FocusedMemoryReference["historicalSource"] {
+  if (value === undefined) {
+    return undefined;
+  }
+  const source = record(value, field);
+  assertOnlyKeys(
+    source,
+    new Set(["candidateLocator", "indexGeneration", "releaseId"]),
+    field,
+  );
+  return Object.freeze({
+    candidateLocator: requireKnowledgeText(
+      source.candidateLocator as string,
+      `${field}.candidateLocator`,
+      1_024,
+    ),
+    indexGeneration: requireKnowledgeText(
+      source.indexGeneration as string,
+      `${field}.indexGeneration`,
+      1_024,
+    ),
+    releaseId: requireKnowledgeText(
+      source.releaseId as string,
+      `${field}.releaseId`,
+      1_024,
+    ),
+  });
 }
 
 function decodeRelevanceScore(
@@ -292,6 +333,7 @@ function decodeCandidateSourceRange(
 }
 
 function candidateKey(candidate: {
+  readonly historicalSource?: FocusedMemoryReference["historicalSource"];
   readonly meetingId: string;
   readonly sourceEndCodePoint?: number;
   readonly sourceStartCodePoint?: number;
@@ -300,6 +342,9 @@ function candidateKey(candidate: {
   readonly turnId: string;
 }): string {
   return [
+    candidate.historicalSource?.releaseId ?? "current",
+    candidate.historicalSource?.indexGeneration ?? "current",
+    candidate.historicalSource?.candidateLocator ?? "current",
     candidate.meetingId,
     candidate.transcriptId,
     candidate.transcriptVersion,

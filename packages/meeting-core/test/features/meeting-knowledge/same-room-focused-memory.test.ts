@@ -120,7 +120,15 @@ describe("same-room focused memory merge", () => {
 
     expect(result).toMatchObject({
       authorityGeneration: "authority-1",
-      candidates: [{ meetingId: "meeting-historical-only", relevanceScore: 1 }],
+      candidates: [{
+        historicalSource: {
+          candidateLocator: block.candidateLocator,
+          indexGeneration: block.indexGeneration,
+          releaseId: block.binding.releaseId,
+        },
+        meetingId: "meeting-historical-only",
+        relevanceScore: 1,
+      }],
       status: "current",
     });
     expect(sourceSets).toEqual(["historical"]);

@@ -37,21 +37,31 @@ export function resolveRequestedSpeakerAliases(
 ): readonly RequestedSpeakerAliasV1[] {
   const candidates: AliasCandidate[] = [];
   for (const [speakerId, values] of Object.entries(aliases)) {
-    const match = values
-      .map((alias) => matchAlias(question, alias))
-      .find((value): value is AliasQuestionSpan => value !== undefined);
-    if (match !== undefined) {
-      candidates.push(Object.freeze({
-        end: match.end,
-        matchedAlias: match.text,
-        speakerId,
-        start: match.start,
+    for (const alias of values) {
+      const match = matchAlias(question, alias);
+      if (match !== undefined) {
+        candidates.push(Object.freeze({
+          end: match.end,
+          matchedAlias: match.text,
+          speakerId,
+          start: match.start,
+        }));
+      }
+    }
+  }
+  const selected = new Map<string, RequestedSpeakerAliasV1>();
+  for (const candidate of candidates) {
+    if (
+      !selected.has(candidate.speakerId) &&
+      !hasConflictingOwner(candidate, candidates)
+    ) {
+      selected.set(candidate.speakerId, Object.freeze({
+        matchedAlias: candidate.matchedAlias,
+        speakerId: candidate.speakerId,
       }));
     }
   }
-  return Object.freeze(candidates
-    .filter((candidate) => !hasConflictingOwner(candidate, candidates))
-    .map(({ matchedAlias, speakerId }) => Object.freeze({ matchedAlias, speakerId })));
+  return Object.freeze([...selected.values()]);
 }
 
 function matchAlias(question: string, alias: string): AliasQuestionSpan | undefined {

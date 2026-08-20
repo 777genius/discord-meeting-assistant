@@ -35,6 +35,11 @@ function historicalPriorityCandidates(
   );
   return Object.freeze(result.plan.blocks.flatMap((block) =>
     block.turns.map((turn, turnIndex) => Object.freeze({
+      historicalSource: Object.freeze({
+        candidateLocator: block.candidateLocator,
+        indexGeneration: block.indexGeneration,
+        releaseId: block.binding.releaseId,
+      }),
       meetingId: block.binding.meetingId,
       // A provider score qualifies the block, not every turn inside it. Decay
       // successive turns so one wide block cannot monopolize the fused top-k.
@@ -225,6 +230,9 @@ function deduplicate(
 
 function referenceKey(candidate: FocusedMemoryReference): string {
   return [
+    candidate.historicalSource?.releaseId ?? "current",
+    candidate.historicalSource?.indexGeneration ?? "current",
+    candidate.historicalSource?.candidateLocator ?? "current",
     candidate.meetingId,
     candidate.transcriptId,
     candidate.transcriptVersion,

@@ -14,6 +14,8 @@ import {
 import type { Pool, PoolClient } from "pg";
 
 import { loadLiveReplyAuthority } from "./postgres-live-reply-evidence.js";
+import { loadCurrentHistoricalReferenceRows } from
+  "./postgres-final-reply-historical-evidence.js";
 import {
   canonicalFinalReplyEvidenceHash,
   canonicalFinalReplyTurnHash,
@@ -26,11 +28,6 @@ export { canonicalFinalReplyTurnHash } from "./postgres-meeting-knowledge-codecs
 interface StoredMeetingRow {
   readonly meeting_id?: string;
   readonly snapshot: unknown;
-}
-
-interface ReferencedMeetingRow extends StoredMeetingRow {
-  readonly historical_current: boolean;
-  readonly meeting_id: string;
 }
 
 export interface ResolvedFinalReplyAuthority {
@@ -236,6 +233,9 @@ export class PostgresFinalReplyEvidence implements FinalReplyEvidencePort {
       references.length === 0 ||
       references.length > 256 ||
       new Set(references.map((reference) => [
+        reference.historicalSource?.releaseId ?? "current",
+        reference.historicalSource?.indexGeneration ?? "current",
+        reference.historicalSource?.candidateLocator ?? "current",
         reference.meetingId,
         reference.transcriptId,
         reference.transcriptVersion,
@@ -254,34 +254,18 @@ export class PostgresFinalReplyEvidence implements FinalReplyEvidencePort {
       return { status: "stale" } as const;
     }
     const meetingIds = [...new Set(references.map(({ meetingId }) => meetingId))];
-    const historicalMeetingIds = meetingIds.filter((meetingId) =>
-      meetingId !== binding.meetingId
+    const referencedRows = await loadCurrentHistoricalReferenceRows(
+      this.pool,
+      binding,
+      references,
     );
-    const result = await this.pool.query<ReferencedMeetingRow>(
-      `
-        SELECT meeting.meeting_id,
-               meeting.snapshot,
-               EXISTS (
-                 SELECT 1
-                 FROM meeting_core.historical_memory_sync AS historical
-                 WHERE historical.meeting_id = meeting.meeting_id
-                   AND historical.is_current
-                   AND historical.operation = 'index'
-                   AND historical.state = 'applied'
-                   AND historical.transcript_id =
-                     meeting.snapshot -> 'transcript' ->> 'transcriptId'
-                   AND historical.transcript_version =
-                     (meeting.snapshot -> 'transcript' ->> 'version')::bigint
-               ) AS historical_current
-        FROM meeting_core.meetings AS meeting
-        WHERE meeting.meeting_id = ANY($1::text[])
-      `,
-      [historicalMeetingIds],
-    );
+    if (referencedRows === null) {
+      return { status: "invalid_selection" } as const;
+    }
     const authorities = new Map<string, ResolvedFinalReplyAuthority>([
       [binding.meetingId, anchor],
     ]);
-    for (const row of result.rows) {
+    for (const row of referencedRows) {
       if (row.meeting_id === binding.meetingId) {
         continue;
       }
@@ -289,8 +273,7 @@ export class PostgresFinalReplyEvidence implements FinalReplyEvidencePort {
       if (
         authority === null ||
         authority.binding.scopeId !== binding.scopeId ||
-        authority.binding.roomId !== binding.roomId ||
-        !row.historical_current
+        authority.binding.roomId !== binding.roomId
       ) {
         return { status: "invalid_selection" } as const;
       }
@@ -322,6 +305,9 @@ export class PostgresFinalReplyEvidence implements FinalReplyEvidencePort {
       return [Object.freeze({
         ...sliced,
         source: Object.freeze({
+          ...(reference.historicalSource === undefined
+            ? {}
+            : { historicalSource: reference.historicalSource }),
           meetingId: reference.meetingId,
           ...(reference.sourceEndCodePoint === undefined
             ? {}

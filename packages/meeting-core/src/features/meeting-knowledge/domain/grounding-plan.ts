@@ -9,6 +9,8 @@ import {
   normalizeRehydratedTurns,
   opaqueEvidenceId,
 } from "./grounding-plan-internals.js";
+import type { HistoricalEvidenceSource } from
+  "./historical-evidence-source.js";
 
 export type GroundingPlanMode = "exhaustive_coverage" | "focused_retrieval";
 
@@ -22,6 +24,8 @@ export interface CanonicalEvidenceTurn {
 
 /** A provider-neutral candidate identity. Candidate locators never return text. */
 export interface FocusedMemoryReference {
+  /** Exact local historical plan identity. Current-meeting references omit it. */
+  readonly historicalSource?: HistoricalEvidenceSource;
   readonly meetingId: string;
   /**
    * Deterministic, normalized retrieval relevance. This is ranking metadata,
@@ -45,6 +49,7 @@ export interface RehydratedEvidenceTurn extends CanonicalEvidenceTurn {
    * binding. Provider adapters never receive these local identities.
    */
   readonly source?: {
+    readonly historicalSource?: HistoricalEvidenceSource;
     readonly meetingId: string;
     readonly sourceEndCodePoint?: number;
     readonly sourceStartCodePoint?: number;

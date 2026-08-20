@@ -312,7 +312,7 @@ describe("subscription answer quality receipt", () => {
     if (unsupported === undefined) {throw new Error("missing unsupported fixture");}
     const outcome = retrieval.outcomes.find(({ queryId }) => queryId === unsupported.id);
     expect(outcome?.status).toBe("expected_abstention");
-    expect(outcome?.answerRequest?.evidence).toEqual([]);
+    expect(outcome?.answerRequest.evidence).toEqual([]);
     await expect(runAuthenticatedAnswerEvaluation({
       build: { releaseRevision: "4".repeat(40), releaseTree: "5".repeat(40) }, corpus,
       observedAt: "2026-08-18T04:00:00.000Z", repetition: 1,

@@ -239,6 +239,10 @@ export {
   type RehydratedEvidenceTurn,
 } from "./domain/grounding-plan.js";
 export {
+  historicalEvidenceSourceKey,
+  type HistoricalEvidenceSource,
+} from "./domain/historical-evidence-source.js";
+export {
   GroundedAnswer,
   type FixedFinalReplyOutcome,
   type GroundedAnswerCandidate,

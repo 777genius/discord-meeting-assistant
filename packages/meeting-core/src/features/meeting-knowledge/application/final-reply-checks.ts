@@ -6,6 +6,8 @@ import {
   type GroundingPlan,
   type RehydratedEvidenceTurn,
 } from "../domain/grounding-plan.js";
+import { historicalEvidenceSourceKey } from
+  "../domain/historical-evidence-source.js";
 import type { QuestionBindingSnapshot } from "../domain/question-job.js";
 import type {
   CurrentFinalReplyBinding,
@@ -58,6 +60,9 @@ export function referencesFromPlan(
   plan: GroundingPlan,
 ): readonly FocusedMemoryReference[] {
   return Object.freeze(plan.evidence.map(({ source, turnHash, turnId }) => Object.freeze({
+    ...(source?.historicalSource === undefined
+      ? {}
+      : { historicalSource: source.historicalSource }),
     meetingId: source?.meetingId ?? binding.meetingId,
     ...(source?.sourceEndCodePoint === undefined
       ? {}
@@ -98,6 +103,8 @@ function sameEvidenceSource(
   right: GroundingEvidence["source"],
 ): boolean {
   return left?.meetingId === right?.meetingId &&
+    historicalEvidenceSourceKey(left?.historicalSource) ===
+      historicalEvidenceSourceKey(right?.historicalSource) &&
     left?.sourceStartCodePoint === right?.sourceStartCodePoint &&
     left?.sourceEndCodePoint === right?.sourceEndCodePoint &&
     left?.transcriptId === right?.transcriptId &&

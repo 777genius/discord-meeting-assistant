@@ -311,6 +311,26 @@ describe("focused-memory boundary contract", () => {
       ...valid,
       candidates: [{ ...references[0], relevanceScore: 1.01 }],
     })).toThrow("finite normalized score");
+    const historical = {
+      ...references[0],
+      historicalSource: {
+        candidateLocator: "candidate-1",
+        indexGeneration: "generation-1",
+        releaseId: "release-1",
+      },
+      meetingId: "historical-meeting",
+    };
+    expect(decodeFocusedMemoryRetrievalResult({
+      ...valid,
+      candidates: [historical],
+    })).toMatchObject({ candidates: [historical] });
+    expect(() => decodeFocusedMemoryRetrievalResult({
+      ...valid,
+      candidates: [{
+        ...historical,
+        historicalSource: { releaseId: "release-1" },
+      }],
+    })).toThrow();
   });
 });
 

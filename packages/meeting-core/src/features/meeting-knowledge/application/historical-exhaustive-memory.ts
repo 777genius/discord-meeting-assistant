@@ -69,6 +69,11 @@ export class HistoricalExhaustiveMemoryRetrieval
     }
     const candidates = selectedTurns.map(({ block, turn }) =>
       Object.freeze({
+        historicalSource: Object.freeze({
+          candidateLocator: block.candidateLocator,
+          indexGeneration: block.indexGeneration,
+          releaseId: block.binding.releaseId,
+        }),
         meetingId: block.binding.meetingId,
         sourceEndCodePoint: turn.sourceEndCodePoint,
         sourceStartCodePoint: turn.sourceStartCodePoint,
@@ -79,6 +84,9 @@ export class HistoricalExhaustiveMemoryRetrieval
       })
     );
     const unique = new Map(candidates.map((candidate) => [[
+      candidate.historicalSource.releaseId,
+      candidate.historicalSource.indexGeneration,
+      candidate.historicalSource.candidateLocator,
       candidate.meetingId,
       candidate.transcriptId,
       candidate.transcriptVersion,

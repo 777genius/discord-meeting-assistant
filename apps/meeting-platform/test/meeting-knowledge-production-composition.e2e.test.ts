@@ -67,6 +67,7 @@ import {
 } from "./meeting-knowledge-production-composition-fixtures.js";
 import { proveComposedGroundedVoice } from "./meeting-knowledge-composed-voice-e2e.js";
 import { qualifyLiveProjectionReply } from "./meeting-knowledge-live-reply-e2e.js";
+import { expectHistoricalRebuildToInvalidateReferences } from "./meeting-knowledge-historical-generation-e2e.js";
 import {
   assertAggregateStageBudget,
   assertPersistedCoverageAnalysis,
@@ -81,10 +82,8 @@ import {
 
 const postgresImage = "postgres:18.4-alpine@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15";
 const postgresPort = 5_432, qualificationOuterBudgetMs = 600_000;
-const qualificationStageBudgets = Object.freeze({
-  composedGroundedVoice: 100_000, focusedRetrievalRecall: 160_000,
-  indexRestartReplay: 40_000, liveProjectionReply: 30_000,
-  sharedFocusedAndExhaustiveAnswer: 160_000,
+const qualificationStageBudgets = Object.freeze({ composedGroundedVoice: 100_000, focusedRetrievalRecall: 160_000,
+  indexRestartReplay: 40_000, liveProjectionReply: 30_000, sharedFocusedAndExhaustiveAnswer: 160_000,
   supersessionAndDisabledDeletionDrain: 100_000,
 });
 assertAggregateStageBudget(qualificationOuterBudgetMs,
@@ -459,6 +458,7 @@ async function qualifySharedAnswers(input: {
   if (hydrated.status !== "current") {
     throw new Error("same-room candidates did not rehydrate locally");
   }
+  await expectHistoricalRebuildToInvalidateReferences(input.pool, evidence, binding, historicalMeetingId, hydrationReferences);
   expect(hydrated.turns).toHaveLength(hydrationReferences.length);
   expect(JSON.stringify(hydrated.turns)).not.toContain("UNTRUSTED SDK");
   const focusedPlan = createFocusedRetrievalGroundingPlan({

@@ -4,10 +4,8 @@ import {
   requireKnowledgeText,
   requireSha256,
 } from "./errors.js";
-import type {
-  GroundingPlan,
-  RehydratedEvidenceTurn,
-} from "./grounding-plan.js";
+import type { GroundingPlan, RehydratedEvidenceTurn } from "./grounding-plan.js";
+import { historicalEvidenceSourceKey } from "./historical-evidence-source.js";
 
 function compareCanonicalTurns(
   left: RehydratedEvidenceTurn,
@@ -29,7 +27,13 @@ function canonicalSourceKey(turn: RehydratedEvidenceTurn): string {
   const source = turn.source;
   return source === undefined
     ? "0:current"
-    : `1:${source.meetingId}\u0000${source.transcriptId}\u0000${source.transcriptVersion}`;
+    : [
+        "1",
+        historicalEvidenceSourceKey(source.historicalSource),
+        source.meetingId,
+        source.transcriptId,
+        source.transcriptVersion,
+      ].join("\u0000");
 }
 
 function normalizeEvidenceSource(
@@ -60,6 +64,27 @@ function normalizeEvidenceSource(
     );
   }
   return Object.freeze({
+    ...(source.historicalSource === undefined
+      ? {}
+      : {
+          historicalSource: Object.freeze({
+            candidateLocator: requireKnowledgeText(
+              source.historicalSource.candidateLocator,
+              "evidence.source.historicalSource.candidateLocator",
+              1_024,
+            ),
+            indexGeneration: requireKnowledgeText(
+              source.historicalSource.indexGeneration,
+              "evidence.source.historicalSource.indexGeneration",
+              1_024,
+            ),
+            releaseId: requireKnowledgeText(
+              source.historicalSource.releaseId,
+              "evidence.source.historicalSource.releaseId",
+              1_024,
+            ),
+          }),
+        }),
     meetingId: requireKnowledgeText(source.meetingId, "evidence.source.meetingId", 1_024),
     ...(sourceEndCodePoint === undefined
       ? {}
@@ -129,6 +154,7 @@ export function normalizeRehydratedTurns(
     (!allowEmpty && normalized.length === 0) ||
     normalized.length > 256 ||
     new Set(normalized.map((turn) => [
+      historicalEvidenceSourceKey(turn.source?.historicalSource),
       turn.source?.meetingId ?? "current",
       turn.source?.transcriptId ?? "current",
       turn.source?.transcriptVersion ?? 0,
@@ -137,6 +163,7 @@ export function normalizeRehydratedTurns(
       turn.source?.sourceEndCodePoint ?? "whole",
     ].join("\u0000"))).size !== normalized.length ||
     new Set(normalized.map((turn) => [
+      historicalEvidenceSourceKey(turn.source?.historicalSource),
       turn.source?.meetingId ?? "current",
       turn.source?.transcriptId ?? "current",
       turn.source?.transcriptVersion ?? 0,

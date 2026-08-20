@@ -164,6 +164,11 @@ function adapter(
 
 function historicalSource(meetingId: string) {
   return {
+    historicalSource: {
+      candidateLocator: `candidate-${meetingId}`,
+      indexGeneration: `generation-${meetingId}`,
+      releaseId: `release-${meetingId}`,
+    },
     meetingId,
     transcriptId: `transcript-${meetingId}`,
     transcriptVersion: 1,
@@ -601,6 +606,9 @@ describe("Meeting Knowledge answer privacy regressions", () => {
       .toEqual(["M1", "M2"]);
     expect(serializedPrompt).not.toContain("transcript-older");
     expect(serializedPrompt).not.toContain("transcript-newer");
+    expect(serializedPrompt).not.toContain("release-older");
+    expect(serializedPrompt).not.toContain("generation-older");
+    expect(serializedPrompt).not.toContain("candidate-older");
     expect(serializedPrompt).not.toContain('"meetingId"');
     expect(runtime.request?.task.systemPrompt).toContain(
       "never infer chronology or compare relative times",

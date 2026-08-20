@@ -299,6 +299,16 @@ describe("requested speaker alias matching", () => {
       },
     )).toEqual([]);
   });
+
+  it("does not hide a shared alias behind another alias of one owner", () => {
+    expect(resolveRequestedSpeakerAliases(
+      "What did Alex say about Sasha?",
+      {
+        "opaque-alex": ["Alex", "Sasha"],
+        "opaque-sasha": ["Sasha"],
+      },
+    )).toEqual([{ matchedAlias: "Alex", speakerId: "opaque-alex" }]);
+  });
 });
 
 describe("focused historical cross-meeting ranking", () => {
